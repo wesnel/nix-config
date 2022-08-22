@@ -1,0 +1,6 @@
+secrets.nix
+result
+.DS_Store
+.nvimlog
+*~
+flycheck_*
