@@ -5,14 +5,10 @@ inputs@
 }:
 
 let
-  host = {
-    custom = "wesnel.dev";
-    fastmail = "fastmail.com";
-  };
-
-  realName = "Wesley Nelson";
   username = "wgn";
-  address = "${username}@${host.custom}";
+  host = "fastmail.com";
+  realName = "Wesley Nelson";
+  address = "${username}@${host}";
 in {
   imports = [
     ../../../programs/afew
@@ -27,22 +23,13 @@ in {
     primary = true;
 
     userName = address;
-    passwordCommand = "pass show mail/imap/${host.custom}/${username}";
+    passwordCommand = "pass show mail/imap/${host}/${username}";
 
-    imap.host = "imap.${host.fastmail}";
-    smtp.host = "smtp.${host.fastmail}";
+    imap.host = "imap.${host}";
+    smtp.host = "smtp.${host}";
 
     msmtp.enable = true;
     notmuch.enable = true;
-
-    signature = {
-      text = ''
-        ${realName}
-        https://${host.custom}
-      '';
-
-      showSignature = "append";
-    };
 
     gpg = {
       key = "0x8AB4F50FF6C15D42";

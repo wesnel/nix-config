@@ -6,7 +6,7 @@ inputs@
 
 {
   imports = [
-    ../../accounts/email/wesnel.dev
+    ../../accounts/email/fastmail
     ../../programs/bat
     ../../programs/direnv
     ../../programs/emacs
