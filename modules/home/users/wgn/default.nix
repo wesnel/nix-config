@@ -22,6 +22,7 @@ inputs@
     ../../programs/nvim
     ../../programs/pass
     ../../services/gpg-agent
+    ../../services/lorri
   ];
 
   home = {
