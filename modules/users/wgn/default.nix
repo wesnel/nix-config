@@ -10,6 +10,7 @@ inputs@
     shell = pkgs.fish;
 
     extraGroups = [
+      "docker"
       "networkmanager"
       "wheel"
     ];

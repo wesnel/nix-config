@@ -16,6 +16,7 @@ inputs@
     ../../modules/services/mullvad-vpn
     ../../modules/services/printing
     ../../modules/users/wgn
+    ../../modules/virtualisation
   ];
 
   boot = {
