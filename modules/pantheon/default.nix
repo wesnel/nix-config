@@ -17,4 +17,6 @@ inputs@
       greeters.pantheon.enable = true;
     };
   };
+
+  sound.enable = true;
 }

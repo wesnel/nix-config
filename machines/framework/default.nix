@@ -13,7 +13,6 @@ inputs@
     ../../modules/pantheon
     ../../modules/programs/steam
     ../../modules/services/fwupd
-    ../../modules/services/pipewire
     ../../modules/services/printing
     ../../modules/users/wgn
   ];
