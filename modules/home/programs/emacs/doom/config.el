@@ -76,9 +76,14 @@
 ;;
 ;; You can also try 'gd' (or 'C-c c d') to jump to their definition and see how
 ;; they are implemented.
+
+;; Email settings:
 (setq +notmuch-sync-backend 'mbsync
+      notmuch-fcc-dirs "fastmail/Sent +sent -unread"
+      notmuch-draft-folder "fastmail/Drafts"
       +notmuch-home-function (lambda ()
                                (notmuch-search "tag:inbox")))
 (setq mml-secure-openpgp-signers '("0x8AB4F50FF6C15D42")
       mml-secure-openpgp-encrypt-to-self t)
 (add-hook 'message-setup-hook 'mml-secure-message-sign)
+(setq mail-specify-envelope-from t)

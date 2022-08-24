@@ -5,14 +5,25 @@ inputs@
 
 {
   imports = [
+    ../afew
     ../mbsync
   ];
 
   programs.notmuch = {
     enable = true;
 
+    new = {
+      tags = [ "new" ];
+    };
+
     hooks = {
-      preNew = "mbsync --all";
+      preNew = ''
+        mbsync --all
+      '';
+
+      postNew = ''
+        afew -tn
+      '';
     };
   };
 }

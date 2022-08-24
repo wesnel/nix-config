@@ -6,39 +6,47 @@ inputs@
 
 let
   username = "wgn";
-  host = "fastmail.com";
   realName = "Wesley Nelson";
-  address = "${username}@${host}";
+  address = "${username}@${host.fastmail}";
+  flavor = host.fastmail;
+
+  host = {
+    fastmail = "fastmail.com";
+    wesnel = "wesnel.dev";
+  };
 in {
   imports = [
-    ../../../programs/afew
     ../../../programs/msmtp
     ../../../programs/notmuch
   ];
 
-  accounts.email.accounts.wesnel-dev = {
-    inherit address
-            realName;
+  accounts.email.accounts = {
+    fastmail = {
+      inherit address
+              flavor
+              realName;
 
-    primary = true;
+      primary = true;
+      userName = address;
+      passwordCommand = "pass show mail/imap/${host.fastmail}/${username}";
 
-    userName = address;
-    passwordCommand = "pass show mail/imap/${host}/${username}";
+      aliases = [
+        "${username}@${host.wesnel}"
+        "hire.me@${host.wesnel}"
+      ];
 
-    imap.host = "imap.${host}";
-    smtp.host = "smtp.${host}";
+      msmtp.enable = true;
+      notmuch.enable = true;
 
-    msmtp.enable = true;
-    notmuch.enable = true;
+      gpg = {
+        key = "0x8AB4F50FF6C15D42";
+        signByDefault = true;
+      };
 
-    gpg = {
-      key = "0x8AB4F50FF6C15D42";
-      signByDefault = true;
-    };
-
-    mbsync = {
-      enable = true;
-      create = "maildir";
+      mbsync = {
+        enable = true;
+        create = "maildir";
+      };
     };
   };
 }
