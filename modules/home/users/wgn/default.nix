@@ -16,13 +16,10 @@ inputs@
     ../../programs/home-manager
     ../../programs/htop
     ../../programs/jq
-    ../../programs/kitty
     ../../programs/man
     ../../programs/nix-index
     ../../programs/nvim
     ../../programs/pass
-    ../../services/gpg-agent
-    ../../services/lorri
   ];
 
   home = {
@@ -34,6 +31,7 @@ inputs@
       fd
       gcc
       gnumake
+      gnupg
       ispell
       libtool
       moreutils

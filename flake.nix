@@ -53,6 +53,9 @@
           # nix-darwin configuration:
           ./machines/shipt
 
+          # use more recent emacs:
+          (inputs@{ ... }: { nixpkgs.overlays = [ (import emacs-overlay) ]; })
+
           home-manager.darwinModules.home-manager {
             imports = [
               # general home-manager configuration:
@@ -126,6 +129,9 @@
                     # nixOS-specific:
                     ./modules/home/programs/firefox
                     ./modules/home/programs/fish
+                    ./modules/home/programs/kitty
+                    ./modules/home/services/gpg-agent
+                    ./modules/home/services/lorri
                   ];
                 };
               };
