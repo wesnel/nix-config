@@ -128,7 +128,6 @@
 
                     # nixOS-specific:
                     ./modules/home/programs/firefox
-                    ./modules/home/programs/fish
                     ./modules/home/programs/kitty
                     ./modules/home/services/gpg-agent
                     ./modules/home/services/lorri

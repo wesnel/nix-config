@@ -11,6 +11,7 @@ inputs@
     ../../modules/fonts
     ../../modules/homebrew
     ../../modules/nix
+    ../../modules/programs/fish
     ../../modules/programs/gnupg
     ../../modules/programs/zsh
     ../../modules/services/nix-daemon
@@ -27,7 +28,12 @@ inputs@
   };
 
   environment = {
-    loginShell = "/etc/profiles/per-user/${username}/bin/zsh";
+    loginShell = pkgs.fish;
+
+    shells = with pkgs; [
+      fish
+      zsh
+    ];
   };
 
   system = {

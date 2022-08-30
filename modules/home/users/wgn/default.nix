@@ -10,6 +10,7 @@ inputs@
     ../../programs/bat
     ../../programs/direnv
     ../../programs/emacs
+    ../../programs/fish
     ../../programs/fzf
     ../../programs/git
     ../../programs/gpg
