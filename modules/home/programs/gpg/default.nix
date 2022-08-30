@@ -29,5 +29,10 @@ inputs@
       use-agent = true;
       with-fingerprint = true;
     };
+
+    scdaemonSettings = {
+      disable-ccid = true;
+      reader-port = "Yubico YubiKey OTP+FIDO+CCID";
+    };
   };
 }
