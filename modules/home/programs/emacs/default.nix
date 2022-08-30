@@ -7,7 +7,6 @@ inputs@
 
 let
   package = pkgs.emacsUnstable;
-  emacs = "${package}/bin/emacs";
   emacsBin = "${config.home.homeDirectory}/.emacs.d/bin";
 in {
   programs.emacs = {
@@ -25,6 +24,6 @@ in {
     };
   };
 
-  home.sessionVariables.EDITOR = "${emacs} -nw";
-  programs.fish.interactiveShellInit = "set -gx EDITOR ${emacs} -nw";
+  home.sessionVariables.EDITOR = "emacsclient -t --alternate-editor=''";
+  programs.fish.interactiveShellInit = "set -gx EDITOR emacsclient -t --alternate-editor=''";
 }
