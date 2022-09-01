@@ -15,7 +15,9 @@ inputs@
     ../../modules/services/fwupd
     ../../modules/services/interception-tools
     ../../modules/services/mullvad-vpn
+    ../../modules/services/pcscd
     ../../modules/services/printing
+    ../../modules/services/udev
     ../../modules/users/wgn
     ../../modules/virtualisation
   ];

@@ -32,7 +32,6 @@ inputs@
       fd
       gcc
       gnumake
-      gnupg
       ispell
       libtool
       moreutils
