@@ -13,6 +13,7 @@ inputs@
     ../../modules/pantheon
     ../../modules/programs/steam
     ../../modules/services/fwupd
+    ../../modules/services/interception-tools
     ../../modules/services/mullvad-vpn
     ../../modules/services/printing
     ../../modules/users/wgn
