@@ -4,19 +4,17 @@ inputs@
 }:
 
 {
-  programs = {
-    zsh = {
+  programs.zsh = {
+    enable = true;
+
+    oh-my-zsh = {
       enable = true;
+      theme = "robbyrussell";
 
-      oh-my-zsh = {
-        enable = true;
-        theme = "robbyrussell";
-
-        plugins = [
-          "git"
-          "sudo"
-        ];
-      };
+      plugins = [
+        "git"
+        "sudo"
+      ];
     };
   };
 }
