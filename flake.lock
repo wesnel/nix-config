@@ -108,13 +108,29 @@
         "type": "github"
       }
     },
+    "nur": {
+      "locked": {
+        "lastModified": 1662091618,
+        "narHash": "sha256-i5wJz2yWNvZOpdKZfffyRWNbBrFb9UYv/mhWE0t/6UQ=",
+        "owner": "nix-community",
+        "repo": "NUR",
+        "rev": "d2d475f7582003c551f58f690318a7d71fd490e8",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-community",
+        "repo": "NUR",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "darwin": "darwin",
         "emacs-overlay": "emacs-overlay",
         "home-manager": "home-manager",
         "nixos-hardware": "nixos-hardware",
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "nur": "nur"
       }
     },
     "utils": {

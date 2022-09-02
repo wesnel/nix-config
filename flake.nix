@@ -25,6 +25,11 @@
     nixpkgs = {
       url = "github:nixos/nixpkgs/nixos-unstable";
     };
+
+    nur = {
+      url = "github:nix-community/NUR";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = inputs@
@@ -33,6 +38,7 @@
   , home-manager
   , nixos-hardware
   , nixpkgs
+  , nur
   , ...
   }: {
     darwinConfigurations = {
@@ -104,6 +110,9 @@
           # community configuration for the framework laptop:
           nixos-hardware.nixosModules.framework
 
+          # nix user repository:
+          nur.nixosModules.nur
+
           # nixOS configuration:
           ./machines/framework
 
@@ -111,6 +120,10 @@
           (inputs@{ ... }: { nixpkgs.overlays = [ (import emacs-overlay) ]; })
 
           home-manager.nixosModules.home-manager {
+            nixpkgs.overlays = [
+              nur.overlay
+            ];
+
             imports = [
               # general home-manager configuration:
               ./modules/home-manager
