@@ -14,6 +14,7 @@ inputs@
     ../../modules/programs/steam
     ../../modules/services/fwupd
     ../../modules/services/interception-tools
+    ../../modules/services/ipfs
     ../../modules/services/mullvad-vpn
     ../../modules/services/pcscd
     ../../modules/services/printing
