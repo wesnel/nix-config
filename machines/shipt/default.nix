@@ -8,9 +8,11 @@ inputs@
 
 {
   imports = [
+    ../../modules/etc/paths
     ../../modules/fonts
     ../../modules/homebrew
     ../../modules/nix
+    ../../modules/programs/bash
     ../../modules/programs/fish
     ../../modules/programs/gnupg
     ../../modules/programs/zsh

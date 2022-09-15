@@ -8,6 +8,7 @@ inputs@
   imports = [
     ../../accounts/email/fastmail
     ../../programs/bat
+    ../../programs/bash
     ../../programs/direnv
     ../../programs/emacs
     ../../programs/fish

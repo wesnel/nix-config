@@ -10,6 +10,8 @@
     - [emacs](#emacs)
         - [config change not applying](#config-change-not-applying)
         - [weird environment variables](#weird-environment-variables)
+    - [macOS](#macos)
+        - [`$PATH` gets mangled](#path-gets-mangled)
 
 <!-- markdown-toc end -->
 # directory structure
@@ -80,3 +82,9 @@ doom sync
 ```bash
 doom env -a '^SSH_'
 ```
+
+## macOS
+
+### `$PATH` gets mangled
+
+On MacOS, there is an `/etc/paths` file and an `/etc/paths.d` directory, which a tool called `path_helper` consults to put things on your `$PATH`. The default `/etc/profile` seems to be responsible for executing `path_helper`. This was never relevant to me or my Mac, until I noticed that everything Nix-related in my `$PATH` was suddenly moved to the end of the `$PATH`. This caused a lot of things to break, since, for example, I would end up using the `git` from `/usr/bin` rather than the one from `/etc/profiles/per-user`. I doubt the following is the "correct" way to fix this, but I seem to have resolved this issue by modifying the `/etc/paths` file using Nix, as you can see in [my config](./modules/etc/paths/default.nix).
