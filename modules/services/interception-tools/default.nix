@@ -9,6 +9,9 @@ inputs@
     plugins = [ pkgs.interception-tools-plugins.caps2esc ];
 
     udevmonConfig = ''
+      - JOB: "${pkgs.interception-tools}/bin/intercept -g $DEVNODE | ${pkgs.interception-tools}/bin/uinput -d $DEVNODE"
+        DEVICE:
+          LINK: /dev/input/by-id/.*PFU_Limited_HHKB-Classic-.*event-kbd
       - JOB: "${pkgs.interception-tools}/bin/intercept -g $DEVNODE | ${pkgs.interception-tools-plugins.caps2esc}/bin/caps2esc | ${pkgs.interception-tools}/bin/uinput -d $DEVNODE"
         DEVICE:
           EVENTS:
