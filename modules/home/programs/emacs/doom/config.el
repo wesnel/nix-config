@@ -29,8 +29,8 @@
 ;; up, `M-x eval-region' to execute elisp code, and 'M-x doom/reload-font' to
 ;; refresh your font settings. If Emacs still can't find your font, it likely
 ;; wasn't installed correctly. Font issues are rarely Doom issues!
-(setq doom-font (font-spec :family "FiraCode Nerd Font" :size 12 :weight 'semi-light)
-      doom-variable-pitch-font (font-spec :family "Ubuntu Nerd Font" :size 13))
+(setq doom-font (font-spec :family "Iosevka Nerd Font Mono" :size 12)
+      doom-variable-pitch-font (font-spec :family "Iosevka Nerd Font" :size 12))
 
 ;; There are two ways to load a theme. Both assume the theme is installed and
 ;; available. You can either set `doom-theme' or manually load a theme with the
