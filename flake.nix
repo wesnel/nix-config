@@ -58,6 +58,7 @@
         modules = [
           # nix-darwin configuration:
           ./machines/shipt
+          ./modules/darwin
 
           # use more recent emacs:
           (inputs@{ ... }: { nixpkgs.overlays = [ (import emacs-overlay) ]; })
