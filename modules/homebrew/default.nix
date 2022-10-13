@@ -12,6 +12,10 @@ inputs@
     brews = [
       "adr-tools"
       "mas"
+      "pkg-config"
+      "poppler"
+      "autoconf"
+      "automake"
     ];
 
     casks = [
