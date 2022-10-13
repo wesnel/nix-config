@@ -10,6 +10,10 @@ inputs@
     enable = true;
     theme = "Gruvbox Dark";
 
+    settings = {
+      "macos_option_as_alt" = true;
+    };
+
     font = {
       name = "FiraCode Nerd Font";
       package = pkgs.nerdfonts;

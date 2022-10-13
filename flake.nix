@@ -60,8 +60,12 @@
           ./machines/shipt
           ./modules/darwin
 
-          # use more recent emacs:
-          (inputs@{ ... }: { nixpkgs.overlays = [ (import emacs-overlay) ]; })
+          (inputs@{ ... }: {
+            nixpkgs.overlays = [
+              (import emacs-overlay)
+              (import ./modules/home/programs/kitty/overlays)
+            ];
+          })
 
           home-manager.darwinModules.home-manager {
             imports = [
@@ -142,7 +146,6 @@
 
                     # nixOS-specific:
                     ./modules/home/programs/firefox
-                    ./modules/home/programs/kitty
                     ./modules/home/services/gpg-agent
                     ./modules/home/services/lorri
                   ];
