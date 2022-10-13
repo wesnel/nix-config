@@ -6,7 +6,7 @@ inputs@
 
 {
   homebrew = {
-    enable = true;
+    enable = false;
     brewPrefix = "${brewPrefix}/bin";
 
     brews = [
