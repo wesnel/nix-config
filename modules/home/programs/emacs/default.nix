@@ -24,6 +24,7 @@ in {
     };
   };
 
-  home.sessionVariables.EDITOR = "emacsclient -t --alternate-editor=''";
-  programs.fish.interactiveShellInit = "set -gx EDITOR emacsclient -t --alternate-editor=''";
+  # FIXME: make configurable with conflicting helix options
+  # home.sessionVariables.EDITOR = "emacsclient -t --alternate-editor=''";
+  # programs.fish.interactiveShellInit = "set -gx EDITOR emacsclient -t --alternate-editor=''";
 }

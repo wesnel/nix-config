@@ -15,6 +15,7 @@ inputs@
     ../../programs/fzf
     ../../programs/git
     ../../programs/gpg
+    ../../programs/helix
     ../../programs/home-manager
     ../../programs/htop
     ../../programs/jq
