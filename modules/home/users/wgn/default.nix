@@ -38,6 +38,7 @@ inputs@
       libtool
       moreutils
       ripgrep
+      texlive.combined.scheme-full
     ];
   };
 }
