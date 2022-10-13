@@ -22,6 +22,10 @@ in {
       target = ".doom.d";
       recursive = true;
     };
+
+    packages = with pkgs.emacsPackages; [
+      vterm
+    ];
   };
 
   # FIXME: make configurable with conflicting helix options
