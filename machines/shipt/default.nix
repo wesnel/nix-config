@@ -21,6 +21,10 @@ inputs@
     (import ../../modules/services/yabai inputs)
   ];
 
+  environment.systemPackages = with pkgs; [
+    xcodebuild
+  ];
+
   networking = let
     computerName = "wgn-shipt";
   in {
