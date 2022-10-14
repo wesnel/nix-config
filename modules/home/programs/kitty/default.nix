@@ -20,4 +20,8 @@ inputs@
       size = 10;
     };
   };
+
+  home.packages = with pkgs; [
+    imagemagick
+  ];
 }
