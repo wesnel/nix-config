@@ -65,6 +65,10 @@ inputs@
     extraModulePackages = [ ];
   };
 
+  environment = {
+    enableAllTerminfo = true;
+  };
+
   fileSystems = {
     "/" = {
       device = "/dev/disk/by-uuid/28fafdc3-1134-4616-9060-f75f6572c415";

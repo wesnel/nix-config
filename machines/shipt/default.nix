@@ -8,7 +8,7 @@ inputs@
 
 {
   imports = [
-    ../../modules/etc/paths
+    ../../modules/environment/etc/paths
     ../../modules/fonts
     ../../modules/homebrew
     ../../modules/nix
@@ -18,6 +18,7 @@ inputs@
     ../../modules/programs/zsh
     ../../modules/services/nix-daemon
     ../../modules/services/skhd
+    ../../modules/terminfo
     (import ../../modules/services/yabai inputs)
   ];
 
@@ -34,6 +35,7 @@ inputs@
   };
 
   environment = {
+    enableAllTerminfo = true;
     loginShell = pkgs.fish;
 
     shells = with pkgs; [
