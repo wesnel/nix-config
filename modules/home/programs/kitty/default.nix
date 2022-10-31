@@ -21,7 +21,7 @@ inputs@
     };
 
     font = {
-      name = "FiraCode Nerd Font";
+      name = "Iosevka Nerd Font Mono";
       package = pkgs.nerdfonts;
       size = 10;
     };
