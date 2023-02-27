@@ -13,15 +13,6 @@ inputs@
       };
     };
 
-    extensions = with pkgs.nur.repos.rycee.firefox-addons; [
-      bitwarden
-      darkreader
-      ipfs-companion
-      tridactyl
-      ublock-origin
-      umatrix
-    ];
-
     profiles = {
       wgn = {
         settings = {
@@ -31,6 +22,15 @@ inputs@
         userChrome = ''
           .tab-close-button { display:none !important; }
         '';
+
+        extensions = with pkgs.nur.repos.rycee.firefox-addons; [
+          bitwarden
+          darkreader
+          ipfs-companion
+          tree-style-tab
+          ublock-origin
+          umatrix
+        ];
       };
     };
   };
