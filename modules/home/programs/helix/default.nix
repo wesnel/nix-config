@@ -14,6 +14,6 @@ inputs@
   };
 
   # FIXME: make configurable with conflicting emacs options
-  home.sessionVariables.EDITOR = "hx";
-  programs.fish.interactiveShellInit = "set -gx EDITOR hx";
+  # home.sessionVariables.EDITOR = "hx";
+  # programs.fish.interactiveShellInit = "set -gx EDITOR hx";
 }

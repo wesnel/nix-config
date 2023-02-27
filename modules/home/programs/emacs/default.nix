@@ -6,29 +6,40 @@ inputs@
 }:
 
 let
-  package = pkgs.emacsUnstable;
   emacsBin = "${config.home.homeDirectory}/.emacs.d/bin";
 in {
   programs.emacs = {
     enable = true;
-    inherit package;
+    package = pkgs.emacsGit;
   };
 
   home = {
-    sessionPath = [ emacsBin ];
-
-    file.".doom.d" = {
-      source = ./doom;
-      target = ".doom.d";
-      recursive = true;
-    };
-
-    packages = with pkgs.emacsPackages; [
-      vterm
+    packages = with pkgs; [
+      emacsPackages.vterm
     ];
+
+    sessionPath = [
+      emacsBin
+    ];
+
+    file = {
+      ".emacs.d" = {
+        source = pkgs.fetchFromGitHub {
+          owner = "bbatsov";
+          repo = "prelude";
+          rev = "fcb629acb645cdff7fdd5f7332bb669c75527fdb";
+          sha256 = "sha256-Q+MFNEqr6HnyO+gDulVyHjWpVzWhXcv+scCIRMIVm5A=";
+        };
+
+        recursive = true;
+      };
+
+      ".emacs.d/prelude-modules.el" = {
+        source = ./.emacs.d/prelude-modules.el;
+      };
+    };
   };
 
-  # FIXME: make configurable with conflicting helix options
-  # home.sessionVariables.EDITOR = "emacsclient -t --alternate-editor=''";
-  # programs.fish.interactiveShellInit = "set -gx EDITOR emacsclient -t --alternate-editor=''";
+  home.sessionVariables.EDITOR = "emacsclient -t --alternate-editor=''";
+  programs.fish.interactiveShellInit = "set -gx EDITOR emacsclient -t --alternate-editor=''";
 }
