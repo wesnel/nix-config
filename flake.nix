@@ -19,7 +19,6 @@
 
     nixos-hardware = {
       url = github:nixos/nixos-hardware;
-      inputs.nixpkgs.follows = "nixpkgs";
     };
 
     nixpkgs = {
@@ -28,7 +27,6 @@
 
     nur = {
       url = github:nix-community/NUR;
-      inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
