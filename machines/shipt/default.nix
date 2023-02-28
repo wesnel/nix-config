@@ -55,7 +55,7 @@ inputs@
         NSAutomaticPeriodSubstitutionEnabled = false;
         NSAutomaticQuoteSubstitutionEnabled  = false;
         NSAutomaticSpellingCorrectionEnabled = false;
-        "com.apple.sound.beep.volume"        = "0.0";
+        "com.apple.sound.beep.volume"        = 0.0;
       };
 
       SoftwareUpdate.AutomaticallyInstallMacOSUpdates = false;
