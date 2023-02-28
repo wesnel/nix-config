@@ -14,10 +14,6 @@ in {
   };
 
   home = {
-    packages = with pkgs; [
-      emacsPackages.vterm
-    ];
-
     sessionPath = [
       emacsBin
     ];
@@ -34,9 +30,9 @@ in {
         recursive = true;
       };
 
-      ".emacs.d/prelude-modules.el" = {
-        source = ./.emacs.d/prelude-modules.el;
-      };
+      ".emacs.d/personal/config-go-mode.el".source = ./.emacs.d/personal/config-go-mode.el;
+      ".emacs.d/personal/config-nix-mode.el".source = ./.emacs.d/personal/config-nix-mode.el;
+      ".emacs.d/personal/prelude-modules.el".source = ./.emacs.d/personal/prelude-modules.el;
     };
   };
 
