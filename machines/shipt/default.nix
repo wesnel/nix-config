@@ -17,9 +17,7 @@ inputs@
     ../../modules/programs/gnupg
     ../../modules/programs/zsh
     ../../modules/services/nix-daemon
-    ../../modules/services/skhd
     ../../modules/terminfo
-    (import ../../modules/services/yabai inputs)
   ];
 
   environment.systemPackages = with pkgs; [

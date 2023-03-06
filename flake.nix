@@ -83,8 +83,6 @@
 
                     # darwin-specific:
                     ./modules/home/programs/zsh
-                    ./modules/home/skhd
-                    ./modules/home/yabai
                   ];
                 };
               };
