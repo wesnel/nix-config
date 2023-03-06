@@ -5,34 +5,24 @@ inputs@
 , ...
 }:
 
-let
-  emacsBin = "${config.home.homeDirectory}/.emacs.d/bin";
-in {
+{
   programs.emacs = {
     enable = true;
     package = pkgs.emacsGit;
   };
 
   home = {
-    sessionPath = [
-      emacsBin
-    ];
-
     file = {
       ".emacs.d" = {
         source = pkgs.fetchFromGitHub {
-          owner = "bbatsov";
+          owner = "wesnel";
           repo = "prelude";
-          rev = "fcb629acb645cdff7fdd5f7332bb669c75527fdb";
-          sha256 = "sha256-Q+MFNEqr6HnyO+gDulVyHjWpVzWhXcv+scCIRMIVm5A=";
+          rev = "6df3f76a09e344435648d129352ef84f98733df6";
+          sha256 = "sha256-ax1ZGm2M6nSEDDa5g98gPMkjjxRldv9cRPEPCGQxv/4=";
         };
 
         recursive = true;
       };
-
-      ".emacs.d/personal/config-go-mode.el".source = ./.emacs.d/personal/config-go-mode.el;
-      ".emacs.d/personal/config-nix-mode.el".source = ./.emacs.d/personal/config-nix-mode.el;
-      ".emacs.d/personal/prelude-modules.el".source = ./.emacs.d/personal/prelude-modules.el;
     };
   };
 
