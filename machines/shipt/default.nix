@@ -20,10 +20,6 @@ inputs@
     ../../modules/terminfo
   ];
 
-  environment.systemPackages = with pkgs; [
-    xcodebuild
-  ];
-
   networking = let
     computerName = "wgn-shipt";
   in {
