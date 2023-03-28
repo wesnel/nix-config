@@ -10,10 +10,10 @@ inputs@
     ../../modules/fonts
     ../../modules/nix
     ../../modules/nixpkgs
-    ../../modules/pantheon
     ../../modules/programs/steam
     ../../modules/services/fwupd
     ../../modules/services/interception-tools
+    ../../modules/services/kde
     ../../modules/services/mullvad-vpn
     ../../modules/services/pcscd
     ../../modules/services/printing
