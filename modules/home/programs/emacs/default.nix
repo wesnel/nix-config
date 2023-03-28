@@ -28,8 +28,8 @@ inputs@
         source = pkgs.fetchFromGitHub {
           owner = "wesnel";
           repo = "prelude";
-          rev = "5d2d01c3aed8ebf12353634c6645c7e142ba183c";
-          sha256 = "sha256-JfghBx9RpFawv8tQ9vcQuPDLhkLCvThH/FtKxpJ+WVc=";
+          rev = "f9bc050123e9fbf600a248c53f3dc2d75544af63";
+          sha256 = "sha256-oosvKPfrfPU3sqYSvImBgjhanYL/NyNsuATH02YjfEE=";
         };
 
         recursive = true;

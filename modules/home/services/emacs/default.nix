@@ -7,7 +7,7 @@ inputs@
 
 {
   services.emacs = {
-    enable = true;
+    enable = pkgs.stdenv.hostPlatform.isLinux;
     client.enable = true;
     defaultEditor = true;
   };
