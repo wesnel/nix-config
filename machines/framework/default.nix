@@ -10,6 +10,7 @@ inputs@
     ../../modules/fonts
     ../../modules/nix
     ../../modules/nixpkgs
+    ../../modules/programs/fish
     ../../modules/programs/steam
     ../../modules/services/fwupd
     ../../modules/services/interception-tools
@@ -107,7 +108,6 @@ inputs@
     cpu.intel.updateMicrocode = true;
     enableRedistributableFirmware = true;
     opengl.enable = true;
-    video.hidpi.enable = true;
   };
 
   system = {
