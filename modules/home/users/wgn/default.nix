@@ -24,6 +24,7 @@ inputs@
     ../../programs/nix-index
     ../../programs/nvim
     ../../programs/pass
+    ../../services/emacs
   ];
 
   home = {
