@@ -27,5 +27,13 @@ inputs@
     ];
   };
 
+  home.packages = with pkgs; [
+    (aspellWithDicts (d: with d; [
+      en
+      en-computers
+      en-science
+    ]))
+  ];
+
   programs.fish.interactiveShellInit = "set -gx EDITOR emacsclient -t --alternate-editor=''";
 }

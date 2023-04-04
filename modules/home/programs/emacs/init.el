@@ -134,57 +134,58 @@
   (use-package consult
     :ensure t
 
-    :bind (;; C-c bindings (mode-specific-map)
-           ("C-c M-x" . consult-mode-command)
-           ("C-c h" . consult-history)
-           ("C-c k" . consult-kmacro)
-           ("C-c m" . consult-man)
-           ("C-c i" . consult-info)
-           ([remap Info-search] . consult-info)
-           ;; C-x bindings (ctl-x-map)
-           ("C-x M-:" . consult-complex-command)     ;; orig. repeat-complex-command
-           ("C-x b" . consult-buffer)                ;; orig. switch-to-buffer
-           ("C-x 4 b" . consult-buffer-other-window) ;; orig. switch-to-buffer-other-window
-           ("C-x 5 b" . consult-buffer-other-frame)  ;; orig. switch-to-buffer-other-frame
-           ("C-x r b" . consult-bookmark)            ;; orig. bookmark-jump
-           ("C-x p b" . consult-project-buffer)      ;; orig. project-switch-to-buffer
-           ;; Custom M-# bindings for fast register access
-           ("M-#" . consult-register-load)
-           ("M-'" . consult-register-store)          ;; orig. abbrev-prefix-mark (unrelated)
-           ("C-M-#" . consult-register)
-           ;; Other custom bindings
-           ("M-y" . consult-yank-pop)                ;; orig. yank-pop
-           ;; M-g bindings (goto-map)
-           ("M-g e" . consult-compile-error)
-           ("M-g f" . consult-flymake)               ;; Alternative: consult-flycheck
-           ("M-g g" . consult-goto-line)             ;; orig. goto-line
-           ("M-g M-g" . consult-goto-line)           ;; orig. goto-line
-           ("M-g o" . consult-outline)               ;; Alternative: consult-org-heading
-           ("M-g m" . consult-mark)
-           ("M-g k" . consult-global-mark)
-           ("M-g i" . consult-imenu)
-           ("M-g I" . consult-imenu-multi)
-           ;; M-s bindings (search-map)
-           ("M-s d" . consult-find)
-           ("M-s D" . consult-locate)
-           ("M-s g" . consult-grep)
-           ("M-s G" . consult-git-grep)
-           ("M-s r" . consult-ripgrep)
-           ("M-s l" . consult-line)
-           ("M-s L" . consult-line-multi)
-           ("M-s k" . consult-keep-lines)
-           ("M-s u" . consult-focus-lines)
-           ;; Isearch integration
-           ("M-s e" . consult-isearch-history)
-           :map isearch-mode-map
-           ("M-e" . consult-isearch-history)         ;; orig. isearch-edit-string
-           ("M-s e" . consult-isearch-history)       ;; orig. isearch-edit-string
-           ("M-s l" . consult-line)                  ;; needed by consult-line to detect isearch
-           ("M-s L" . consult-line-multi)            ;; needed by consult-line to detect isearch
-           ;; Minibuffer history
-           :map minibuffer-local-map
-           ("M-s" . consult-history)                 ;; orig. next-matching-history-element
-           ("M-r" . consult-history))                ;; orig. previous-matching-history-element
+    :bind
+    ;; C-c bindings (mode-specific-map)
+    (("C-c M-x" . consult-mode-command)
+     ("C-c h" . consult-history)
+     ("C-c k" . consult-kmacro)
+     ("C-c m" . consult-man)
+     ("C-c i" . consult-info)
+     ([remap Info-search] . consult-info)
+     ;; C-x bindings (ctl-x-map)
+     ("C-x M-:" . consult-complex-command)     ;; orig. repeat-complex-command
+     ("C-x b" . consult-buffer)                ;; orig. switch-to-buffer
+     ("C-x 4 b" . consult-buffer-other-window) ;; orig. switch-to-buffer-other-window
+     ("C-x 5 b" . consult-buffer-other-frame)  ;; orig. switch-to-buffer-other-frame
+     ("C-x r b" . consult-bookmark)            ;; orig. bookmark-jump
+     ("C-x p b" . consult-project-buffer)      ;; orig. project-switch-to-buffer
+     ;; Custom M-# bindings for fast register access
+     ("M-#" . consult-register-load)
+     ("M-'" . consult-register-store)          ;; orig. abbrev-prefix-mark (unrelated)
+     ("C-M-#" . consult-register)
+     ;; Other custom bindings
+     ("M-y" . consult-yank-pop)                ;; orig. yank-pop
+     ;; M-g bindings (goto-map)
+     ("M-g e" . consult-compile-error)
+     ("M-g f" . consult-flymake)               ;; Alternative: consult-flycheck
+     ("M-g g" . consult-goto-line)             ;; orig. goto-line
+     ("M-g M-g" . consult-goto-line)           ;; orig. goto-line
+     ("M-g o" . consult-outline)               ;; Alternative: consult-org-heading
+     ("M-g m" . consult-mark)
+     ("M-g k" . consult-global-mark)
+     ("M-g i" . consult-imenu)
+     ("M-g I" . consult-imenu-multi)
+     ;; M-s bindings (search-map)
+     ("M-s d" . consult-find)
+     ("M-s D" . consult-locate)
+     ("M-s g" . consult-grep)
+     ("M-s G" . consult-git-grep)
+     ("M-s r" . consult-ripgrep)
+     ("M-s l" . consult-line)
+     ("M-s L" . consult-line-multi)
+     ("M-s k" . consult-keep-lines)
+     ("M-s u" . consult-focus-lines)
+     ;; Isearch integration
+     ("M-s e" . consult-isearch-history)
+     :map isearch-mode-map
+     ("M-e" . consult-isearch-history)         ;; orig. isearch-edit-string
+     ("M-s e" . consult-isearch-history)       ;; orig. isearch-edit-string
+     ("M-s l" . consult-line)                  ;; needed by consult-line to detect isearch
+     ("M-s L" . consult-line-multi)            ;; needed by consult-line to detect isearch
+     ;; Minibuffer history
+     :map minibuffer-local-map
+     ("M-s" . consult-history)                 ;; orig. next-matching-history-element
+     ("M-r" . consult-history))                ;; orig. previous-matching-history-element
 
     ;; Enable automatic preview at point in the *Completions* buffer. This is
     ;; relevant when you use the default completion UI.
@@ -206,6 +207,28 @@
     (setq xref-show-xrefs-function #'consult-xref
           xref-show-definitions-function #'consult-xref))
 
+  ;; Convenient jumping between windows.
+  (use-package ace-window
+    :ensure t
+
+    :bind
+    (([remap other-window] . ace-window)
+     ("s-w" . ace-window)))
+
+  ;; Convenient jumping to text.
+  (use-package avy
+    :ensure t
+
+    :bind
+    (("C-:" . avy-goto-char)
+     ("s-," . avy-goto-char)
+     ("C-'" . avy-goto-char-2)
+     ("M-g f" . avy-goto-line)
+     ("M-g w" . avy-goto-word-1)
+     ("M-g e" . avy-goto-word-0)
+     ("s-." . avy-goto-word-or-subword-1)
+     ("C-c v" . avy-goto-word-or-subword-1)))
+
   ;;
   ;; History
   ;;
@@ -225,12 +248,14 @@
           savehist-autosave-interval 60
           ;; Keep the home clean.
           savehist-file (expand-file-name "savehist" savefile-dir))
+
     (savehist-mode +1))
 
   ;; Remember your location in a file when saving files.
   (use-package saveplace
     :config
     (setq save-place-file (expand-file-name "saveplace" savefile-dir))
+
     (save-place-mode +1))
 
   ;; Save recent files.
@@ -242,6 +267,7 @@
           ;; Disable recentf-cleanup on Emacs start, because it can cause
           ;; problems with remote files.
           recentf-auto-cleanup 'never)
+
     (recentf-mode +1))
 
   ;; Supercharge your undo/redo with undo-tree.
@@ -250,9 +276,8 @@
 
     :config
     ;; Autosave the undo-tree history.
-    (setq undo-tree-history-directory-alist
-          `((".*" . ,temporary-file-directory)))
-    (setq undo-tree-auto-save-history t)
+    (setq undo-tree-history-directory-alist `((".*" . ,temporary-file-directory))
+          undo-tree-auto-save-history t)
 
     (global-undo-tree-mode +1))
 
@@ -289,6 +314,15 @@
           sp-hybrid-kill-entire-symbol nil)
 
     (sp-use-paredit-bindings))
+
+  (use-package flyspell
+    :hook
+    ((text-mode . flyspell-mode)
+     (prog-mode . flyspell-prog-mode))
+
+    :config
+    (setq ispell-program-name "aspell" ; use aspell instead of ispell
+          ispell-extra-args '("--sug-mode=ultra")))
 
   ;;
   ;; Text Expansion
@@ -329,6 +363,10 @@
   ;;
 
   (use-package eshell
+    :bind
+    (("C-x m" . eshell)
+     ("C-x M" . (lambda () (interactive) (eshell t))))
+
     :config
     (setq eshell-directory-name (expand-file-name "eshell" savefile-dir)))
 
@@ -348,8 +386,42 @@
           ("C-c C-l d" . eldoc)
           ("C-c C-l e" . eglot-code-actions)))
 
+  (use-package flycheck
+    :ensure t
+    :hook eglot-connect-hook)
+
+  (use-package flycheck-eglot
+    :ensure t
+    :hook flycheck-mode)
+
   (use-package realgud
-    :ensure t)
+    :ensure t
+    :defer t
+
+    :init
+    (defvar realgud-alist
+      '((realgud:bashdb    :modes (sh-mode bash-ts-mode))
+        (realgud:gdb)
+        (realgud:gub       :modes (go-mode go-ts-mode))
+        (realgud:kshdb     :modes (sh-mode bash-ts-mode))
+        (realgud:pdb       :modes (python-mode python-ts-mode))
+        (realgud:perldb    :modes (perl-mode))
+        (realgud:rdebug    :modes (ruby-mode ruby-ts-mode))
+        (realgud:remake)
+        (realgud:trepan    :modes (perl-mode))
+        (realgud:trepan2   :modes (python-mode python-ts-mode))
+        (realgud:trepan3k  :modes (python-mode python-ts-mode))
+        (realgud:trepanjs  :modes (javascript-mode js2-mode js3-mode js-ts-mode))
+        (realgud:trepanpl  :modes (perl-mode))
+        (realgud:zshdb     :modes (sh-mode bash-ts-mode))))
+
+    ;; Realgud doesn't generate its autoloads properly so we do it ourselves
+    (dolist (debugger realgud-alist)
+      (autoload (car debugger)
+        (if-let (sym (plist-get (cdr debugger) :package))
+            (symbol-name sym)
+          "realgud")
+        nil t)))
 
   (use-package chatgpt-shell
     :commands
@@ -358,6 +430,16 @@
     :config
     (setq chatgpt-shell-openai-key (lambda ()
                                      (nth 0 (process-lines "pass" "show" "openai-key")))))
+
+  (use-package helpful
+    :ensure t
+
+    :bind
+    (("C-h f" . helpful-callable)
+     ("C-h v" . helpful-variable)
+     ("C-h k" . helpful-key)
+     ("C-h x" . helpful-command)
+     ("C-c C-d" . helpful-at-point)))
 
   ;;
   ;; Coding Language Support
