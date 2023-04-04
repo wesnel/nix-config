@@ -384,15 +384,11 @@
           ("C-c C-l r" . eglot-rename)
           ("C-c C-l i" . eglot-find-implementation)
           ("C-c C-l d" . eldoc)
-          ("C-c C-l e" . eglot-code-actions)))
+          ("C-c C-l e" . eglot-code-actions))
 
-  (use-package flycheck
-    :ensure t
-    :hook eglot-connect-hook)
-
-  (use-package flycheck-eglot
-    :ensure t
-    :hook flycheck-mode)
+    :config
+    (defun eglot-code-action-organize-imports-interactive ()
+      (eglot-code-actions nil nil "source.organizeImports" t)))
 
   (use-package realgud
     :ensure t
@@ -463,7 +459,7 @@
     ;; Set up eglot for go-ts-mode.
     (defun go-ts-mode-before-save-hook-setup ()
       (add-hook 'before-save-hook #'eglot-format-buffer t t)
-      (add-hook 'before-save-hook #'eglot-code-action-organize-imports t t))
+      (add-hook 'before-save-hook #'eglot-code-action-organize-imports-interactive t t))
     (add-hook 'go-ts-mode-hook #'go-ts-mode-before-save-hook-setup)
 
     :config
@@ -481,7 +477,11 @@
           ("C-c m" . go-test-current-file)
           ("C-c ." . go-test-current-test)
           ("C-c b" . go-run)
-          ("C-h f" . godoc-at-point))))
+          ("C-h f" . godoc-at-point)))
+
+  (use-package nix-mode
+    :ensure t
+    :mode "\\.nix\\'"))
 
 (provide 'init)
 ;;; init.el ends here
