@@ -8,7 +8,12 @@ inputs@
 {
   programs.emacs = {
     enable = true;
-    package = pkgs.emacsGit;
+
+    package = pkgs.emacsWithPackagesFromUsePackage {
+      package = pkgs.emacsGit;
+      config = ./init.el;
+      defaultInitFile = true;
+    };
 
     overrides = final: prev: {
       chatgpt-shell = pkgs.callPackage ./overrides/chatgpt-shell {
@@ -22,18 +27,5 @@ inputs@
     ];
   };
 
-  home = {
-    file = {
-      ".emacs.d" = {
-        source = pkgs.fetchFromGitHub {
-          owner = "wesnel";
-          repo = "prelude";
-          rev = "f9bc050123e9fbf600a248c53f3dc2d75544af63";
-          sha256 = "sha256-oosvKPfrfPU3sqYSvImBgjhanYL/NyNsuATH02YjfEE=";
-        };
-
-        recursive = true;
-      };
-    };
-  };
+  programs.fish.interactiveShellInit = "set -gx EDITOR emacsclient -t --alternate-editor=''";
 }
