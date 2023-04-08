@@ -7,8 +7,8 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    emacs-overlay = {
-      url = github:nix-community/emacs-overlay;
+    emacs-config = {
+      url = "git+https://git.sr.ht/~wgn/emacs-config";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
@@ -31,14 +31,13 @@
   };
 
   outputs = inputs@
-  { darwin
-  , emacs-overlay
-  , home-manager
-  , nixos-hardware
-  , nixpkgs
-  , nur
-  , ...
-  }: {
+    { self
+    , darwin
+    , emacs-config
+    , home-manager
+    , nixos-hardware
+    , nixpkgs
+    , nur }: {
     darwinConfigurations = {
       wgn-shipt = let
         args = {
@@ -60,8 +59,11 @@
 
           (inputs@{ ... }: {
             nixpkgs.overlays = [
-              (import emacs-overlay)
               (import ./modules/home/programs/kitty/overlays)
+
+              (final: prev: {
+                emacs-config = emacs-config.packages.${args.system}.default;
+              })
             ];
           })
 
@@ -117,8 +119,9 @@
           # nixOS configuration:
           ./machines/framework
 
-          # use more recent emacs:
-          (inputs@{ ... }: { nixpkgs.overlays = [ (import emacs-overlay) ]; })
+          (final: prev: {
+            emacs-config = emacs-config.${args.system}.default;
+          })
 
           home-manager.nixosModules.home-manager {
             nixpkgs.overlays = [
