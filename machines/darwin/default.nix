@@ -1,0 +1,5 @@
+_:
+
+{
+  shipt = import ./shipt { };
+}

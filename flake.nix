@@ -1,8 +1,8 @@
 {
-  description = "configuration for nixOS / nix-darwin";
+  description = "Wesley's Nix Configurations";
 
   inputs = {
-    darwin = {
+    nix-darwin = {
       url = github:lnl7/nix-darwin;
       inputs.nixpkgs.follows = "nixpkgs";
     };
@@ -17,147 +17,101 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    nixos-hardware = {
-      url = github:nixos/nixos-hardware;
-    };
-
     nixpkgs = {
       url = github:nixos/nixpkgs/nixos-unstable;
     };
-
-    nur = {
-      url = github:nix-community/NUR;
-    };
   };
 
-  outputs = inputs@
+  outputs =
     { self
-    , darwin
+    , nix-darwin
     , emacs-config
     , home-manager
-    , nixos-hardware
-    , nixpkgs
-    , nur }: {
-    darwinConfigurations = {
-      wgn-shipt = let
-        args = {
-          system = "x86_64-darwin";
-          username = "wesleynelson";
-          homeDirectory = "/Users/${args.username}";
+    , nixpkgs }:
 
-          brewPrefix = if nixpkgs.legacyPackages.${args.system}.stdenv.hostPlatform.isAarch64
-            then "/opt/homebrew"
-            else "/usr/local";
-        };
-      in darwin.lib.darwinSystem {
-        system = args.system;
+    let
+      overlays =
+        { system }:
 
-        modules = [
-          # nix-darwin configuration:
-          ./machines/shipt
-          ./modules/darwin
+        import ./overlays
+          {
+            emacs = emacs-config.defaultPackage.${system};
+          };
 
-          (inputs@{ ... }: {
-            nixpkgs.overlays = [
-              (import ./modules/home/programs/kitty/overlays)
+      buildDarwinConfiguration =
+        args@{ computerName
+             , username
+             , homeDirectory
+             , system }:
 
-              (final: prev: {
-                emacs-config = emacs-config.packages.${args.system}.default;
+        darwinModules:
+
+        homeManagerModules:
+
+        nix-darwin.lib.darwinSystem {
+          inherit
+            system;
+
+          modules =
+            darwinModules ++ [
+              (_: { system.stateVersion = 4; })
+
+              (_: {
+                nixpkgs.overlays = overlays {
+                  inherit
+                    system;
+                };
               })
-            ];
-          })
+            ] ++ [
+              home-manager.darwinModules.home-manager {
+                home-manager = {
+                  users = {
+                    "${username}" = _:
 
-          home-manager.darwinModules.home-manager {
-            imports = [
-              # general home-manager configuration:
-              ./modules/home-manager
-            ];
+                      {
+                        home.stateVersion = "22.05";
+                        programs.home-manager.enable = true;
+                        imports = homeManagerModules;
+                      };
+                  };
 
-            home-manager = {
-              users = {
-                # user-specific home-manager configuration:
-                "${args.username}" = inputs@{ ... }: {
-                  imports = [
-                    # general functionality for all users:
-                    ./modules/home
-                    # config specifically for this user:
-                    ./modules/home/users/wgn
-
-                    # darwin-specific:
-                    ./modules/home/programs/zsh
-                  ];
+                  extraSpecialArgs = args;
+                  useUserPackages = true;
+                  useGlobalPkgs = true;
+                  verbose = true;
                 };
-              };
+              }
+            ];
 
-              extraSpecialArgs = args;
-            };
-          }
-        ];
-
-        specialArgs = args;
-      };
-    };
-
-    nixosConfigurations = {
-      framework = let
-        args = {
-          system = "x86_64-linux";
-          username = "wgn";
-          homeDirectory = "/home/${args.username}";
-          hostname = "framework";
+          specialArgs = args;
         };
-      in nixpkgs.lib.nixosSystem {
-        system = args.system;
 
-        modules = [
-          # community configuration for the framework laptop:
-          nixos-hardware.nixosModules.framework
+      darwinSystems = import ./machines/darwin { };
 
-          # nix user repository:
-          nur.nixosModules.nur
+      darwinConfigurations = let
+        op =
+          _:
 
-          # nixOS configuration:
-          ./machines/framework
+          { computerName
+          , username
+          , homeDirectory
+          , system
+          , homeManagerModules ? [ ]
+          , darwinModules ? [ ] }:
 
-          (final: prev: {
-            emacs-config = emacs-config.${args.system}.default;
-          })
-
-          home-manager.nixosModules.home-manager {
-            nixpkgs.overlays = [
-              nur.overlay
-            ];
-
-            imports = [
-              # general home-manager configuration:
-              ./modules/home-manager
-            ];
-
-            home-manager = {
-              users = {
-                # user-specific home-manager configuration:
-                "${args.username}" = inputs@{ ... }: {
-                  imports = [
-                    # general functionality for all users:
-                    ./modules/home
-                    # config specifically for this user:
-                    ./modules/home/users/wgn
-
-                    # nixOS-specific:
-                    ./modules/home/programs/firefox
-                    ./modules/home/services/gpg-agent
-                    ./modules/home/services/lorri
-                  ];
-                };
-              };
-
-              extraSpecialArgs = args;
-            };
-          }
-        ];
-
-        specialArgs = args;
-      };
+          buildDarwinConfiguration
+            {
+              inherit
+                computerName
+                username
+                homeDirectory
+                system;
+            }
+            darwinModules
+            homeManagerModules;
+      in (builtins.mapAttrs op darwinSystems);
+    in {
+      inherit
+        darwinConfigurations;
     };
-  };
 }
