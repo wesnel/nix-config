@@ -17,6 +17,10 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    nixos-hardware = {
+      url = github:nixos/nixos-hardware;
+    };
+
     nixpkgs = {
       url = github:nixos/nixpkgs/nixos-unstable;
     };
@@ -27,6 +31,7 @@
     , nix-darwin
     , emacs-config
     , home-manager
+    , nixos-hardware
     , nixpkgs }:
 
     let
@@ -37,6 +42,88 @@
           {
             emacs = emacs-config.defaultPackage.${system};
           };
+
+      buildNixosConfiguration =
+        args@{ computerName
+             , username
+             , homeDirectory
+             , system }:
+
+        nixosModules:
+
+        homeManagerModules:
+
+        nixpkgs.lib.nixosSystem {
+          inherit
+            system;
+
+          modules =
+            nixosModules ++ [
+              (_:
+
+                {
+                  system.stateVersion = "22.05";
+                })
+
+              (_:
+
+                {
+                  nixpkgs.overlays = overlays {
+                    inherit
+                      system;
+                  };
+                })
+            ] ++ [
+              home-manager.nixosModules.home-manager {
+                home-manager = {
+                  users = {
+                    "${username}" = _:
+
+                      {
+                        home.stateVersion = "22.05";
+                        programs.home-manager.enable = true;
+                        imports = homeManagerModules;
+                      };
+                  };
+
+                  extraSpecialArgs = args;
+                  useUserPackages = true;
+                  useGlobalPkgs = true;
+                  verbose = true;
+                };
+              }
+            ];
+
+          specialArgs = args;
+        };
+
+      nixosSystems = import ./machines/nixos {
+        inherit
+          nixos-hardware;
+      };
+
+      nixosConfigurations = let
+        op =
+          _:
+
+          { computerName
+          , username
+          , homeDirectory
+          , system
+          , homeManagerModules ? [ ]
+          , nixosModules ? [ ] }:
+
+          buildNixosConfiguration
+            {
+              inherit
+                computerName
+                username
+                homeDirectory
+                system;
+            }
+            nixosModules
+            homeManagerModules;
+      in (builtins.mapAttrs op nixosSystems);
 
       buildDarwinConfiguration =
         args@{ computerName
@@ -54,14 +141,20 @@
 
           modules =
             darwinModules ++ [
-              (_: { system.stateVersion = 4; })
+              (_:
 
-              (_: {
-                nixpkgs.overlays = overlays {
-                  inherit
-                    system;
-                };
-              })
+                {
+                  system.stateVersion = 4;
+                })
+
+              (_:
+
+                {
+                  nixpkgs.overlays = overlays {
+                    inherit
+                      system;
+                  };
+                })
             ] ++ [
               home-manager.darwinModules.home-manager {
                 home-manager = {
@@ -112,6 +205,7 @@
       in (builtins.mapAttrs op darwinSystems);
     in {
       inherit
-        darwinConfigurations;
+        darwinConfigurations
+        nixosConfigurations;
     };
 }
