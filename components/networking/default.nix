@@ -3,7 +3,6 @@
 
 {
   networking = {
-    inherit computerName;
     hostName = computerName;
   };
 }

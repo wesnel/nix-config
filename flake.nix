@@ -8,7 +8,7 @@
     };
 
     emacs-config = {
-      url = "git+https://git.sr.ht/~wgn/emacs-config";
+      url = "git+https://git.sr.ht/~wgn/emacs-config?ref=main";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
