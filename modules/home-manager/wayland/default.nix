@@ -60,8 +60,10 @@
 
     config = let
       background-image = "${config.home.homeDirectory}/.background-image";
+
+      foot = config.programs.foot.package;
     in {
-      menu = "exec foot -a 'launcher' bash -c 'compgen -c | sort -u | fzf | xargs -r swaymsg -t command exec'";
+      menu = "exec ${foot}/bin/foot -a 'launcher' bash -c 'compgen -c | sort -u | ${pkgs.fzf}/bin/fzf | xargs -r swaymsg -t command exec'";
       modifier = "Mod4";
       terminal = "foot";
 
