@@ -25,6 +25,7 @@ let
 
        {
          home.packages = with pkgs; [
+           filmulator-gui
            gcc
          ];
 
@@ -43,8 +44,8 @@ let
                "XF86AudioMicMute"     = "exec --no-startup-id ${pkgs.pulseaudio-ctl}/bin/pulseaudio-ctl mute-input";
 
                # video
-               "XF86MonBrightnessUp"   = "exec --no-startup-id ${pkgs.brightnessctl}/bin/brightnessctl set +100";
-               "XF86MonBrightnessDown" = "exec --no-startup-id ${pkgs.brightnessctl}/bin/brightnessctl set 100-";
+               "XF86MonBrightnessUp"   = "exec --no-startup-id ${pkgs.brightnessctl}/bin/brightnessctl set +5%";
+               "XF86MonBrightnessDown" = "exec --no-startup-id ${pkgs.brightnessctl}/bin/brightnessctl set 5%-";
 
                # media
                "XF86AudioPlay"  = "exec --no-startup-id ${pkgs.mpc_cli}/bin/mpc toggle";
@@ -68,6 +69,7 @@ let
     ../../../modules/nixos/fonts
     ../../../modules/nixos/networking
     ../../../modules/nixos/nix
+    ../../../modules/nixos/openvpn
     ../../../modules/nixos/users
     ../../../modules/nixos/wayland
     ../../../modules/nixos/yubikey
