@@ -3,7 +3,7 @@
 
   inputs = {
     nix-darwin = {
-      url = github:lnl7/nix-darwin;
+      url = "github:lnl7/nix-darwin";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
@@ -12,16 +12,16 @@
     };
 
     home-manager = {
-      url = github:nix-community/home-manager;
+      url = "github:nix-community/home-manager";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
     nixos-hardware = {
-      url = github:nixos/nixos-hardware;
+      url = "github:nixos/nixos-hardware";
     };
 
     nixpkgs = {
-      url = github:nixos/nixpkgs/nixos-unstable;
+      url = "github:nixos/nixpkgs/nixos-unstable";
     };
   };
 
@@ -39,7 +39,7 @@
 
         import ./overlays
           {
-            emacs = emacs-config.defaultPackage.${system};
+            emacs = emacs-config.legacyPackages.${system}.wgn-emacs;
           };
 
       buildNixosConfiguration =
