@@ -9,7 +9,6 @@
   ];
 
   config = let
-    gpgPkg = config.programs.gpg.package;
     KEYID = "0xC9F55C247EBA37F4!";
     SSH_AUTH_SOCK = "${homeDirectory}/.gnupg/S.gpg-agent.ssh";
   in {

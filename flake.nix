@@ -9,11 +9,16 @@
 
     emacs-config = {
       url = "git+https://git.sr.ht/~wgn/emacs-config?ref=main";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
 
     home-manager = {
       url = "github:nix-community/home-manager";
       inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+    mujmap = {
+      url = "github:wesnel/mujmap/wesnel/add-darwin-to-flake";
     };
 
     nixos-hardware = {
@@ -30,6 +35,7 @@
     , nix-darwin
     , emacs-config
     , home-manager
+    , mujmap
     , nixos-hardware
     , nixpkgs }:
 
@@ -40,6 +46,7 @@
         import ./overlays
           {
             emacs = emacs-config.legacyPackages.${system}.wgn-emacs;
+            mujmap = mujmap.packages.${system}.mujmap;
           };
 
       buildNixosConfiguration =

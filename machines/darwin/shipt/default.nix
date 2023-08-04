@@ -26,6 +26,7 @@ let
     ../../../modules/darwin/nix
     ../../../modules/darwin/paths
     ../../../modules/darwin/users
+    ../../../modules/darwin/yubikey
   ];
 in {
   inherit

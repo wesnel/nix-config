@@ -1,10 +1,13 @@
-{ emacs }:
+{ emacs
+, mujmap }:
 
 [
   (final: prev:
 
     {
-      inherit emacs;
+      inherit
+        emacs
+        mujmap;
 
       filmulator-gui = let
         qtVersion = "5";
@@ -82,10 +85,5 @@
 
         meta.broken = builtins.compareVersions qt.qtbase.version "5.15" < 0;
       };
-
-      # FIXME: emacs-related notmuch tests fail.
-      notmuch = prev.notmuch.overrideAttrs(old: {
-        doCheck = false;
-      });
     })
 ]

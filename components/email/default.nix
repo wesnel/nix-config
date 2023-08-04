@@ -1,6 +1,5 @@
 { config
 , lib
-, pkgs
 , ... }:
 
 let
@@ -12,6 +11,7 @@ let
   host = {
     fastmail = "fastmail.com";
     wesnel = "wesnel.dev";
+    wgn = "wgn.dev";
   };
 in {
   config = {
@@ -24,68 +24,45 @@ in {
 
         primary = true;
         userName = address;
-        passwordCommand = lib.mkIf config.programs.password-store.enable ''
-          ${config.programs.password-store.package}/bin/pass show mail/imap/${host.fastmail}/${username}
-        '';
 
         aliases = [
+          "${username}@${host.wgn}"
           "${username}@${host.wesnel}"
           "hire.me@${host.wesnel}"
         ];
 
-        msmtp.enable = true;
-        notmuch.enable = true;
+        notmuch = {
+          enable = true;
+        };
 
         gpg = {
           key = "0x8AB4F50FF6C15D42";
           signByDefault = true;
         };
 
-        mbsync = {
+        mujmap = {
           enable = true;
-          create = "maildir";
+
+          settings = {
+            password_command = lib.mkIf config.programs.password-store.enable ''
+              ${config.programs.fish.package}/bin/fish -c '${config.programs.password-store.package}/bin/pass show mail/${host.fastmail}/${username}'
+            '';
+          };
         };
       };
     };
 
     programs = {
-      afew = {
-        enable = true;
-
-        extraConfig = ''
-          [SpamFilter]
-          [KillThreadsFilter]
-          [ListMailsFilter]
-          [ArchiveSentMailsFilter]
-          [InboxFilter]
-          [MailMover]
-          folders = Inbox
-          Inbox = 'tag:sent':Sent
-        '';
-      };
-
-      mbsync = {
-        enable = true;
-      };
-
-      msmtp = {
+      mujmap = {
         enable = true;
       };
 
       notmuch = {
         enable = true;
 
-        new = {
-          tags = [ "new" ];
-        };
-
         hooks = {
-          preNew = ''
-            ${config.programs.mbsync.package}/bin/mbsync --all
-          '';
-
-          postNew = ''
-            ${pkgs.afew}/bin/afew -tn
+          preNew = lib.mkIf config.programs.mujmap.enable ''
+            ${config.programs.fish.package}/bin/fish -c '${config.programs.mujmap.package}/bin/mujmap -C ${config.accounts.email.accounts.fastmail.maildir.absPath} sync'
           '';
         };
       };
