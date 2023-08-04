@@ -7,11 +7,11 @@
         "nixpkgs": "nixpkgs_2"
       },
       "locked": {
-        "lastModified": 1691113414,
-        "narHash": "sha256-B4ciPZo+Z0yESYH0jw3CYtQYhJLGSAJl9B5+3REcL2w=",
+        "lastModified": 1691114139,
+        "narHash": "sha256-pDtnsokFFcHBjsBkj7Gcwts8hIklD1krgYOPtSaZ91s=",
         "ref": "main",
-        "rev": "df2d276012989684228541f03eaab598887303fa",
-        "revCount": 44,
+        "rev": "5c3d30994e19881ebc45ecdab7b7991023bd2560",
+        "revCount": 46,
         "type": "git",
         "url": "https://git.sr.ht/~wgn/emacs-config"
       },

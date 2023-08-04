@@ -1,5 +1,6 @@
 { lib
 , config
+, homeDirectory
 , ... }:
 
 {
@@ -7,7 +8,7 @@
     gpgPkg = config.programs.gpg.package;
     key = "0xC9F55C247EBA37F4!";
     signingKey = "0x8AB4F50FF6C15D42!";
-    sshAuthSock = "(${gpgPkg}/bin/gpgconf --list-dirs agent-ssh-socket)";
+    sshAuthSock = "${homeDirectory}/.gnupg/S.gpg-agent.ssh";
   in {
     programs.git.signing = lib.mkIf config.programs.git.enable {
       signByDefault = true;
