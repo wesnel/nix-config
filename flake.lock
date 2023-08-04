@@ -31,11 +31,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1691146284,
-        "narHash": "sha256-EXzTObw+Xc+plkEJaXWn1jwj2PU9BXgtHU85bOaO798=",
+        "lastModified": 1691192285,
+        "narHash": "sha256-WDtdOblnRWJjOnJc5N+pgkaFluouNFPBsdbUzyi8kSk=",
         "ref": "main",
-        "rev": "9788cc65bacedd70a771f7830fda94a6183c63a3",
-        "revCount": 50,
+        "rev": "9003a3ca335d5c67b1796487ab763cb360bc77c5",
+        "revCount": 56,
         "type": "git",
         "url": "https://git.sr.ht/~wgn/emacs-config"
       },
@@ -217,11 +217,11 @@
     },
     "nixos-hardware": {
       "locked": {
-        "lastModified": 1690957133,
-        "narHash": "sha256-0Y4CiOIszhHDDXHFmvHUpmhUotKOIn0m3jpMlm6zUTE=",
+        "lastModified": 1691179816,
+        "narHash": "sha256-WSMwqzU70ZMRHv1CUAfHEEKJuB0c9c9r0F+lJehXfSI=",
         "owner": "nixos",
         "repo": "nixos-hardware",
-        "rev": "24f9162b26f0debd163f6d94752aa2acb9db395a",
+        "rev": "87e3122b67587492a617764f88c71991893fcf8a",
         "type": "github"
       },
       "original": {
