@@ -7,6 +7,7 @@ let
   system = "x86_64-darwin";
 
   homeManagerModules = [
+    ../../../modules/home-manager/emacs
     ../../../modules/home-manager/email
     ../../../modules/home-manager/fish
     ../../../modules/home-manager/git

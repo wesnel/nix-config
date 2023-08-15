@@ -40,13 +40,22 @@
     , nixpkgs }:
 
     let
-      overlays =
+      overlays = let
+
+        flakes = {
+          inherit
+            emacs-config
+            mujmap;
+        };
+
+      in
         { system }:
 
         import ./overlays
           {
-            emacs = emacs-config.legacyPackages.${system}.wgn-emacs;
-            mujmap = mujmap.packages.${system}.mujmap;
+            inherit
+              flakes
+              system;
           };
 
       buildNixosConfiguration =

@@ -1,13 +1,15 @@
-{ emacs
-, mujmap }:
+{ flakes
+, system }:
 
 [
   (final: prev:
 
     {
-      inherit
-        emacs
-        mujmap;
+      emacs = if final.stdenv.isDarwin
+              then flakes.emacs-config.legacyPackages.${system}.wgn-emacs-macport
+              else flakes.emacs-config.legacyPackages.${system}.wgn-emacs;
+
+      mujmap = flakes.mujmap.packages.${system}.mujmap;
 
       filmulator-gui = let
         qtVersion = "5";
