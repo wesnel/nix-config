@@ -6,13 +6,21 @@
     ../../../components/emacs
   ];
 
-  config = {
-    environment.systemPackages = with pkgs; [
-      emacs
+  environment = {
+    pathsToLink = [
+      "/share/hunspell"
     ];
 
-    services.emacs = {
-      enable = true;
-    };
+    systemPackages = (with pkgs; [
+      emacs
+      enchant2
+      nuspell
+    ]) ++ (with pkgs.hunspellDicts; [
+      en-us-large
+    ]);
+  };
+
+  services.emacs = {
+    enable = true;
   };
 }
