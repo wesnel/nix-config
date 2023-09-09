@@ -9,6 +9,7 @@ let
   homeManagerModules = [
     ../../../modules/home-manager/emacs
     ../../../modules/home-manager/email
+    ../../../modules/home-manager/filmulator
     ../../../modules/home-manager/firefox
     ../../../modules/home-manager/fish
     ../../../modules/home-manager/git
@@ -25,7 +26,6 @@ let
 
        {
          home.packages = with pkgs; [
-           filmulator-gui
            gcc
          ];
 

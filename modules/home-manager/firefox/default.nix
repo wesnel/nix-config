@@ -1,10 +1,9 @@
 _:
 
 {
-  programs = {  
+  programs = {
     firefox = {
       enable = true;
     };
   };
 }
-
