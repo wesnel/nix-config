@@ -31,11 +31,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1694218484,
-        "narHash": "sha256-yJICSytgZcfozj0+25jeTKWwGbPzSzVVOPSkXS3vMVk=",
+        "lastModified": 1696360494,
+        "narHash": "sha256-o36uZ+9WZE2TvcwnZ3bLMwiztcn/TRhVn9IkUY0rd5k=",
         "ref": "main",
-        "rev": "e89ea0238bca7bd84f90ed21f45f9e45cbd65f46",
-        "revCount": 82,
+        "rev": "2257d45732a1ecab0e857330413a1bc3310f40db",
+        "revCount": 83,
         "type": "git",
         "url": "https://git.sr.ht/~wgn/emacs-config"
       },
