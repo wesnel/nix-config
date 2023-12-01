@@ -6,18 +6,9 @@
     ../../../components/emacs
   ];
 
-  environment = {
-    pathsToLink = [
-      "/share/hunspell"
-    ];
-
-    systemPackages = (with pkgs; [
-      emacs
-      enchant2
-      nuspell
-    ]) ++ (with pkgs.hunspellDicts; [
-      en-us-large
-    ]);
+  programs.wgn.emacs = {
+    enable = true;
+    package = pkgs.emacs;
   };
 
   services.emacs = {

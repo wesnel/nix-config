@@ -5,5 +5,5 @@ _:
     ../../../components/emacs
   ];
 
-  home.file.".emacs.d/early-init.el".source = ../../../components/emacs/early-init.el;
+  home.programs.wgn.emacs.enable = true;
 }

@@ -1,5 +1,5 @@
-_:
+args:
 
 {
-  shipt = import ./shipt { };
+  shipt = import ./shipt args;
 }

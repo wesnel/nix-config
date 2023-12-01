@@ -1,4 +1,5 @@
-{ nixos-hardware }:
+{ nixos-hardware
+, emacs-config }:
 
 let
   computerName = "x230";
@@ -7,6 +8,8 @@ let
   system = "x86_64-linux";
 
   homeManagerModules = [
+    emacs-config.nixosModules.home
+
     ../../../modules/home-manager/emacs
     ../../../modules/home-manager/email
     ../../../modules/home-manager/filmulator
@@ -63,6 +66,7 @@ let
   ];
 
   nixosModules = [
+    emacs-config.nixosModules.nixos
     nixos-hardware.nixosModules.lenovo-thinkpad-x230
 
     ../../../modules/nixos/fish

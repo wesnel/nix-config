@@ -1,4 +1,4 @@
-_:
+{ emacs-config }:
 
 let
   computerName = "shipt";
@@ -7,6 +7,8 @@ let
   system = "x86_64-darwin";
 
   homeManagerModules = [
+    emacs-config.nixosModules.home
+
     ../../../modules/home-manager/emacs
     ../../../modules/home-manager/email
     ../../../modules/home-manager/fish
@@ -18,6 +20,8 @@ let
   ];
 
   darwinModules = [
+    emacs-config.nixosModules.nixos
+
     ../../../modules/darwin/defaults
     ../../../modules/darwin/emacs
     ../../../modules/darwin/fish

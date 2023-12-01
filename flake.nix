@@ -114,6 +114,7 @@
 
       nixosSystems = import ./machines/nixos {
         inherit
+          emacs-config
           nixos-hardware;
       };
 
@@ -194,7 +195,10 @@
           specialArgs = args;
         };
 
-      darwinSystems = import ./machines/darwin { };
+      darwinSystems = import ./machines/darwin {
+        inherit
+          emacs-config;
+      };
 
       darwinConfigurations = let
         op =

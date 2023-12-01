@@ -1,4 +1,5 @@
-{ nixos-hardware }:
+{ nixos-hardware
+, emacs-config }:
 
 let
   computerName = "framework";
@@ -7,6 +8,8 @@ let
   system = "x86_64-linux";
 
   homeManagerModules = [
+    emacs-config.nixosModules.home
+
     ../../../modules/home-manager/emacs
     ../../../modules/home-manager/email
     ../../../modules/home-manager/fish
@@ -18,6 +21,7 @@ let
   ];
 
   nixosModules = [
+    emacs-config.nixosModules.nixos
     nixos-hardware.nixosModules.framework
 
     ../../../modules/nixos/fish
