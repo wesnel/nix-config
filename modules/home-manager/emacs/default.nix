@@ -10,7 +10,7 @@
     packages = with pkgs; [
       emacs
     ];
-    
+
     programs.wgn.emacs.enable = true;
   };
 }

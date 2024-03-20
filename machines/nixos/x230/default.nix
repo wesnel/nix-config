@@ -30,6 +30,7 @@ let
     emacs-config.nixosModules.nixos
     nixos-hardware.nixosModules.lenovo-thinkpad-x230
 
+    ../../../modules/nixos/emacs
     ../../../modules/nixos/fish
     ../../../modules/nixos/fonts
     ../../../modules/nixos/networking
