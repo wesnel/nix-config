@@ -9,7 +9,7 @@
     {
       emacs = if final.stdenv.isDarwin
               then flakes.emacs-config.packages.${system}.wgn-emacs-macport
-              else flakes.emacs-config.packages.${system}.wgn-emacs-unstable;
+              else flakes.emacs-config.packages.${system}.wgn-emacs;
 
       mujmap = flakes.mujmap.packages.${system}.mujmap;
 
