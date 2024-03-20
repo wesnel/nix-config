@@ -2,6 +2,8 @@
 , system }:
 
 [
+  flakes.nur.overlay
+
   (final: prev:
 
     {

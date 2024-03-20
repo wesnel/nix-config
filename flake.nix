@@ -28,6 +28,10 @@
     nixpkgs = {
       url = "github:nixos/nixpkgs/nixos-unstable";
     };
+
+    nur = {
+      url = "github:nix-community/NUR";
+    };
   };
 
   outputs =
@@ -37,7 +41,8 @@
     , home-manager
     , mujmap
     , nixos-hardware
-    , nixpkgs }:
+    , nixpkgs
+    , nur }:
 
     let
       # yubikey
@@ -49,7 +54,8 @@
         flakes = {
           inherit
             emacs-config
-            mujmap;
+            mujmap
+            nur;
         };
 
       in
