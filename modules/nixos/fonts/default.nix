@@ -6,7 +6,7 @@ _:
   ];
 
   fonts = {
-    enableDefaultFonts = true;
+    enableDefaultPackages = true;
 
     fontconfig = {
       defaultFonts = {

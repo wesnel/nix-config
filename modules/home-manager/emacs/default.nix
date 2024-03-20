@@ -1,9 +1,16 @@
-_:
+{ pkgs
+, ... }:
 
 {
   imports = [
     ../../../components/emacs
   ];
 
-  home.programs.wgn.emacs.enable = true;
+  home = {
+    packages = with pkgs; [
+      emacs
+    ];
+    
+    programs.wgn.emacs.enable = true;
+  };
 }

@@ -1,5 +1,6 @@
 { config
 , lib
+, signingKey
 , ... }:
 
 let
@@ -36,7 +37,7 @@ in {
         };
 
         gpg = {
-          key = "0x8AB4F50FF6C15D42";
+          key = signingKey;
           signByDefault = true;
         };
 

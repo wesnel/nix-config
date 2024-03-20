@@ -1,4 +1,5 @@
 { pkgs
+, key
 , ... }:
 
 {
@@ -14,7 +15,7 @@
 
     settings = {
       charset = "utf-8";
-      default-key = "0xC9F55C247EBA37F4!";
+      default-key = key;
       keyid-format = "0xlong";
       keyserver = "hkps://keys.openpgp.org";
       no-comments = true;
@@ -30,6 +31,7 @@
   services.gpg-agent = {
     enable = pkgs.stdenv.hostPlatform.isLinux;
     enableSshSupport = true;
+    pinentryPackage = pkgs.pinentry-qt;
 
     sshKeys = [
       "E1A99D519849CB5FE1C1AE4D88B2AA7DD529E17D"

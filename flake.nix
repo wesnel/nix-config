@@ -40,6 +40,10 @@
     , nixpkgs }:
 
     let
+      # yubikey
+      key = "0xC9F55C247EBA37F4!";
+      signingKey = "0x8AB4F50FF6C15D42!";
+
       overlays = let
 
         flakes = {
@@ -62,6 +66,8 @@
         args@{ computerName
              , username
              , homeDirectory
+             , key
+             , signingKey
              , system }:
 
         nixosModules:
@@ -135,6 +141,8 @@
                 computerName
                 username
                 homeDirectory
+                key
+                signingKey
                 system;
             }
             nixosModules
@@ -145,6 +153,8 @@
         args@{ computerName
              , username
              , homeDirectory
+             , key
+             , signingKey
              , system }:
 
         darwinModules:
@@ -217,6 +227,8 @@
                 computerName
                 username
                 homeDirectory
+                key
+                signingKey
                 system;
             }
             darwinModules

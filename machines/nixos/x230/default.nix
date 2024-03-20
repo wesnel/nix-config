@@ -12,7 +12,7 @@ let
 
     ../../../modules/home-manager/emacs
     ../../../modules/home-manager/email
-    ../../../modules/home-manager/filmulator
+    # ../../../modules/home-manager/filmulator
     ../../../modules/home-manager/firefox
     ../../../modules/home-manager/fish
     ../../../modules/home-manager/git
@@ -22,47 +22,8 @@ let
     ../../../modules/home-manager/wayland
     ../../../modules/home-manager/yubikey
 
-    ({ lib
-     , config
-     , pkgs
-     , ... }:
-
-       {
-         home.packages = with pkgs; [
-           gcc
-         ];
-
-         wayland.windowManager.sway = {
-           config = {
-             keybindings = let
-               modifier = config.wayland.windowManager.sway.config.modifier;
-               background-image = "${config.home.homeDirectory}/.background-image";
-             in lib.mkOptionDefault {
-               "XF86Battery" = "exec --no-startup-id ${pkgs.swaylock}/bin/swaylock -elfF -s fill -i ${background-image}";
-
-               # audio
-               "XF86AudioRaiseVolume" = "exec --no-startup-id ${pkgs.pulseaudio-ctl}/bin/pulseaudio-ctl up";
-               "XF86AudioLowerVolume" = "exec --no-startup-id ${pkgs.pulseaudio-ctl}/bin/pulseaudio-ctl down";
-               "XF86AudioMute"        = "exec --no-startup-id ${pkgs.pulseaudio-ctl}/bin/pulseaudio-ctl mute";
-               "XF86AudioMicMute"     = "exec --no-startup-id ${pkgs.pulseaudio-ctl}/bin/pulseaudio-ctl mute-input";
-
-               # video
-               "XF86MonBrightnessUp"   = "exec --no-startup-id ${pkgs.brightnessctl}/bin/brightnessctl set +5%";
-               "XF86MonBrightnessDown" = "exec --no-startup-id ${pkgs.brightnessctl}/bin/brightnessctl set 5%-";
-
-               # media
-               "XF86AudioPlay"  = "exec --no-startup-id ${pkgs.mpc_cli}/bin/mpc toggle";
-               "XF86AudioPause" = "exec --no-startup-id ${pkgs.mpc_cli}/bin/mpc toggle";
-               "XF86AudioNext"  = "exec --no-startup-id ${pkgs.mpc_cli}/bin/mpc next";
-               "XF86AudioPrev"  = "exec --no-startup-id ${pkgs.mpc_cli}/bin/mpc prev";
-
-               # include workspace 10
-               "${modifier}+0" = "workspace number 10";
-               "${modifier}+Shift+0" = "move container to workspace number 10";
-             };
-           };
-         };
-       })
+    # x230-specific wayland config:
+    ./wayland
   ];
 
   nixosModules = [
@@ -73,7 +34,6 @@ let
     ../../../modules/nixos/fonts
     ../../../modules/nixos/networking
     ../../../modules/nixos/nix
-    ../../../modules/nixos/openvpn
     ../../../modules/nixos/users
     ../../../modules/nixos/wayland
     ../../../modules/nixos/yubikey
@@ -93,6 +53,22 @@ let
                "sd_mod"
                "sdhci_pci"
              ];
+
+             luks.devices = {
+               "luks-218b6575-8a29-4780-b81f-7902dcb96081" = {
+                 device = "/dev/disk/by-uuid/218b6575-8a29-4780-b81f-7902dcb96081";
+                 keyFile = "/crypto_keyfile.bin";
+               };
+
+               "luks-06fd1c4e-6e98-4096-b71b-222651992289" = {
+                 device = "/dev/disk/by-uuid/06fd1c4e-6e98-4096-b71b-222651992289";
+                 keyFile = "/crypto_keyfile.bin";
+               };
+             };
+
+             secrets = {
+               "/crypto_keyfile.bin" = null;
+             };
            };
 
            kernelModules = [
@@ -101,22 +77,14 @@ let
              "thinkpad_acpi"
            ];
 
-           kernelPackages = config.boot.zfs.package.latestCompatibleLinuxPackages;
-           kernelParams = [ "nohibernate" ];
-
            loader.grub = {
              enable = true;
              device = "/dev/sda";
+             enableCryptodisk = true;
            };
-
-           supportedFilesystems = [ "zfs" ];
 
            tmp = {
              cleanOnBoot = true;
-           };
-
-           zfs = {
-             requestEncryptionCredentials = true;
            };
          };
 
@@ -137,18 +105,8 @@ let
 
          fileSystems = {
            "/" = {
-             device = "zroot/root/nixos";
-             fsType = "zfs";
-           };
-
-           "/home" = {
-             device = "zroot/home";
-             fsType = "zfs";
-           };
-
-           "/boot" = {
-             device = "/dev/disk/by-uuid/67E6-E2E5";
-             fsType = "vfat";
+             device = "/dev/disk/by-uuid/27f44223-029e-4a1f-90c0-c7bc1fe38eaa";
+             fsType = "ext4";
            };
          };
 
@@ -170,7 +128,6 @@ let
              enable = true;
              driSupport = true;
              driSupport32Bit = true;
-             extraPackages = [ pkgs.beignet ];
            };
 
            pulseaudio = {
@@ -183,22 +140,6 @@ let
               load-module module-switch-on-connect
             '';
            };
-         };
-
-         networking = {
-           firewall.allowedTCPPorts = [ 22 ];
-           hostId = "6f480610";
-
-           interfaces = {
-             eno0.useDHCP = true;
-             wlp2s0.useDHCP = true;
-           };
-
-           networkmanager = {
-             enable = true;
-           };
-
-           useDHCP = false;
          };
 
          powerManagement.powertop.enable = true;
@@ -222,28 +163,6 @@ let
 
            printing.enable = true;
 
-           thinkfan = {
-             enable = true;
-
-             levels = [
-               [ 0 0  60 ]
-               [ 1 53 65 ]
-               [ 2 55 66 ]
-               [ 3 57 68 ]
-               [ 4 61 70 ]
-               [ 5 64 71 ]
-               [ 7 68 32767 ]
-               [ "level full-speed" 68 32767 ]
-             ];
-
-             sensors = [
-               {
-                 query = "/sys/devices/virtual/thermal/thermal_zone0/temp";
-                 type = "hwmon";
-               }
-             ];
-           };
-
            tlp = {
              enable = true;
 
@@ -266,6 +185,12 @@ let
          };
 
          sound.enable = true;
+
+         swapDevices = [
+           {
+             device = "/dev/disk/by-uuid/21677623-f6fc-4c77-a51b-aaf663b0776d";
+           }
+         ];
        })
   ];
 in {

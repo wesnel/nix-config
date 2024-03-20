@@ -56,7 +56,10 @@
 
   wayland.windowManager.sway = {
     enable = true;
-    systemdIntegration = true;
+    
+    systemd = {
+      enable = true;
+    };
 
     config = let
       background-image = "${config.home.homeDirectory}/.background-image";

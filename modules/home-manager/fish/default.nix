@@ -8,7 +8,7 @@
 
   home.shellAliases = let
     e = "$EDITOR";
-    ls = "${pkgs.exa}/bin/exa";
+    ls = "${pkgs.eza}/bin/eza";
     l = "${ls} -laF --color=always --color-scale --icons --git";
     tree = "${ls} -T";
     t = "${l} -T";
