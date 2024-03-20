@@ -30,11 +30,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1710895551,
-        "narHash": "sha256-13wbbEs4xMRFYqhh1VyrBPgd8G+F99UCbeKAhFTSKec=",
+        "lastModified": 1710897858,
+        "narHash": "sha256-kFAbi3olF46Hxb5rxGGAggsW3mtjoUtGwLTfux9YvM0=",
         "ref": "main",
-        "rev": "115f1e176ae2d42bbc2d3d8360daa47db0cca64b",
-        "revCount": 137,
+        "rev": "48700bd71764239c21a2bcc87e5af9a96a43fa3f",
+        "revCount": 140,
         "type": "git",
         "url": "https://git.sr.ht/~wgn/emacs-config"
       },
@@ -275,6 +275,21 @@
         "type": "github"
       }
     },
+    "nur": {
+      "locked": {
+        "lastModified": 1710898620,
+        "narHash": "sha256-sTCWEtyFHC4g6SZ50Yj/V39PMQb6DgAIzf3SgRe8eXc=",
+        "owner": "nix-community",
+        "repo": "NUR",
+        "rev": "a64e9d1d40f14eb1902d1e62b9f3ecbbc4a255bf",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-community",
+        "repo": "NUR",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "emacs-config": "emacs-config",
@@ -282,7 +297,8 @@
         "mujmap": "mujmap",
         "nix-darwin": "nix-darwin",
         "nixos-hardware": "nixos-hardware",
-        "nixpkgs": "nixpkgs_3"
+        "nixpkgs": "nixpkgs_3",
+        "nur": "nur"
       }
     },
     "rust-overlay": {
