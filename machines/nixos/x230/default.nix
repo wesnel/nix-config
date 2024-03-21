@@ -88,6 +88,14 @@ let
              "thinkpad_acpi"
            ];
 
+           kernelPackages = pkgs.linuxPackages_latest;
+
+           kernelParams = [
+             "iomem=relaxed"
+             "quiet"
+             "splash"
+           ];
+
            loader.grub = {
              enable = true;
              device = "/dev/sda";
