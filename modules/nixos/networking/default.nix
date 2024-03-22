@@ -7,7 +7,11 @@
   ];
 
   networking = {
-    firewall.allowedTCPPorts = [ 22 ];
+    firewall.allowedTCPPorts = [
+      22
+      80
+    ];
+
     networkmanager.enable = true;
     useDHCP = lib.mkDefault true;
   };
@@ -17,7 +21,7 @@
   };
 
   time.timeZone = "America/Los_Angeles";
-  
+
   i18n = {
     defaultLocale = "en_US.utf8";
 
