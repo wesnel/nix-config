@@ -21,7 +21,7 @@
       set -gx SSH_AUTH_SOCK (gpgconf --list-dirs agent-ssh-socket)
       set -gx KEYID ${key}
 
-      gpgconf --launch gpg-agent
+      gpg-connect-agent updatestartuptty /bye > /dev/null
     '';
   };
 }
