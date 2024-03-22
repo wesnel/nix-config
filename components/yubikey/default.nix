@@ -2,6 +2,7 @@
 , config
 , key
 , signingKey
+, homeDirectory
 , ... }:
 
 {
@@ -16,12 +17,14 @@
       PASSWORD_STORE_SIGNING_KEY = signingKey;
     };
 
-    programs.fish.interactiveShellInit = lib.mkIf config.programs.fish.enable ''
+    programs.fish.interactiveShellInit = let
+      gpg = config.programs.gpg.package;
+    in lib.mkIf config.programs.fish.enable ''
       set -gx GPG_TTY (tty)
-      set -gx SSH_AUTH_SOCK (gpgconf --list-dirs agent-ssh-socket)
+      set -gx SSH_AUTH_SOCK ${homeDirectory}/.gnupg/S.gpg-agent.ssh
       set -gx KEYID ${key}
 
-      gpg-connect-agent updatestartuptty /bye > /dev/null
+      ${gpg}/bin/gpg-connect-agent updatestartuptty /bye > /dev/null
     '';
   };
 }
