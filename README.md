@@ -63,6 +63,12 @@ home-manager switch --flake '.#shipt'
 
 # troubleshooting
 
+## nixOS
+
+### stale lockfiles in `.gnupg/public-keys.d/` cause gpg to hang
+
+Remove `use_keyboxd` from `.gnupg/common.conf`. This file seems to be a rogue file created by GPG, rather than one managed by Nix.
+
 ## macOS
 
 ### `$PATH` gets mangled
