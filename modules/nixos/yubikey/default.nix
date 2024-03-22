@@ -2,7 +2,6 @@
 , ... }:
 
 {
-  hardware.gpgSmartcards.enable = true;
   programs.ssh.startAgent = false;
 
   services = {
