@@ -66,13 +66,13 @@ let
                # import those paths and use only the parts of that
                # configuration which use these ugly UUIDs.
                # specifically: LUKS, swapfile, and file system.
-               "luks-1b5ef646-e679-4c48-8070-751986f55840" = {
-                 device = "/dev/disk/by-uuid/1b5ef646-e679-4c48-8070-751986f55840";
+               "luks-4207872f-7abb-4e16-afb4-1c716f20ffa5" = {
+                 device = "/dev/disk/by-uuid/4207872f-7abb-4e16-afb4-1c716f20ffa5";
                  keyFile = "/crypto_keyfile.bin";
                };
 
-               "luks-de8b3c97-6526-47e0-ae3e-5a30b2c8d951" = {
-                 device = "/dev/disk/by-uuid/de8b3c97-6526-47e0-ae3e-5a30b2c8d951";
+               "luks-b1c504f1-f6b3-493d-b74b-9b52bf42a37c" = {
+                 device = "/dev/disk/by-uuid/b1c504f1-f6b3-493d-b74b-9b52bf42a37c";
                  keyFile = "/crypto_keyfile.bin";
                };
              };
@@ -124,7 +124,7 @@ let
 
          fileSystems = {
            "/" = {
-             device = "/dev/disk/by-uuid/81b5cb25-e9b7-48d8-9016-969c9cfc80bf";
+             device = "/dev/disk/by-uuid/c178d62a-806a-41f5-ab27-e4a96e795d17";
              fsType = "ext4";
            };
          };
@@ -207,7 +207,7 @@ let
 
          swapDevices = [
            {
-             device = "/dev/disk/by-uuid/edb8681e-a67d-466e-abe4-f15f48d3f618";
+             device = "/dev/disk/by-uuid/6b4f50ab-03bd-4c7a-937c-bc6287cf5647";
            }
          ];
        })
