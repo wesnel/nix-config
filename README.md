@@ -7,6 +7,9 @@
     - [nix-darwin](#nix-darwin)
     - [home-manager](#home-manager)
 - [troubleshooting](#troubleshooting)
+    - [nixOS](#nixos-1)
+        - [stale lockfiles in `.gnupg/public-keys.d/` cause gpg to hang](#stale-lockfiles-in-gnupgpublic-keysd-cause-gpg-to-hang)
+        - [error with `command-not-found` helper function](#error-with-command-not-found-helper-function)
     - [macOS](#macos)
         - [`$PATH` gets mangled](#path-gets-mangled)
 
@@ -68,6 +71,15 @@ home-manager switch --flake '.#shipt'
 ### stale lockfiles in `.gnupg/public-keys.d/` cause gpg to hang
 
 Remove `use_keyboxd` from `.gnupg/common.conf`. This file seems to be a rogue file created by GPG, rather than one managed by Nix.
+
+### error with `command-not-found` helper function
+
+```
+DBI connect('dbname=/nix/var/nix/profiles/per-user/root/channels/nixos/programs.sqlite','',...) failed: unable to open database file at /run/current-system/sw/bin/command-not-found line 13.
+cannot open database `/nix/var/nix/profiles/per-user/root/channels/nixos/programs.sqlite' at /run/current-system/sw/bin/command-not-found line 13.
+```
+
+The fix is to run `sudo nix-channel --update` to update the channel that this command uses to find software.
 
 ## macOS
 
