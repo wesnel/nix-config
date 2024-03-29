@@ -12,7 +12,7 @@ let
 
     ../../../modules/home-manager/emacs
     ../../../modules/home-manager/email
-    # ../../../modules/home-manager/filmulator
+    ../../../modules/home-manager/filmulator
     ../../../modules/home-manager/firefox
     ../../../modules/home-manager/fish
     ../../../modules/home-manager/git
