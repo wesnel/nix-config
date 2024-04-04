@@ -17,6 +17,7 @@ let
     ../../../modules/home-manager/git
     ../../../modules/home-manager/gnupg
     ../../../modules/home-manager/man
+    ../../../modules/home-manager/music
     ../../../modules/home-manager/pass
     ../../../modules/home-manager/photos
     ../../../modules/home-manager/wayland
