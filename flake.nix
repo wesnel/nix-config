@@ -86,10 +86,11 @@
 
           modules =
             nixosModules ++ [
-              (_:
+              ({ lib
+               , ... }:
 
                 {
-                  system.stateVersion = "22.05";
+                  system.stateVersion = lib.mkDefault "22.05";
                 })
 
               (_:
@@ -104,15 +105,17 @@
               home-manager.nixosModules.home-manager {
                 home-manager = {
                   users = {
-                    "${username}" = _:
+                    "${username}" = { lib
+                                    , ... }:
 
                       {
-                        home.stateVersion = "22.05";
+                        home.stateVersion = lib.mkDefault "22.05";
                         programs.home-manager.enable = true;
                         imports = homeManagerModules;
                       };
                   };
 
+                  backupFileExtension = "backup";
                   extraSpecialArgs = args;
                   useUserPackages = true;
                   useGlobalPkgs = true;
@@ -191,10 +194,11 @@
               home-manager.darwinModules.home-manager {
                 home-manager = {
                   users = {
-                    "${username}" = _:
+                    "${username}" = { lib
+                                    , ... }:
 
                       {
-                        home.stateVersion = "22.05";
+                        home.stateVersion = lib.mkDefault "22.05";
                         programs.home-manager.enable = true;
                         imports = homeManagerModules;
                       };

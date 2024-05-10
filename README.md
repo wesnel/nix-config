@@ -48,6 +48,16 @@ Assuming you're in this directory:
 sudo nixos-rebuild switch --flake '.#framework'
 ```
 
+## orbstack nixOS virtual machine
+
+Assuming you're in this directory:
+
+``` bash
+sudo nixos-rebuild switch --flake '.#orb' --impure
+```
+
+This is intended to be used in an [OrbStack](https://orbstack.dev) virtual machine running NixOS.
+
 ## nix-darwin
 
 Assuming you're in this directory:

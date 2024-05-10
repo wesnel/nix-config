@@ -10,7 +10,7 @@
   users = {
     users.${username} = {
       isNormalUser = true;
-      home = "/home/${username}";
+      home = homeDirectory;
       createHome = true;
 
       extraGroups = [
