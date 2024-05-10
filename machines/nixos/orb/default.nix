@@ -4,7 +4,7 @@
 let
   computerName = "orb";
   username = "wesleynelson";
-  homeDirectory = "/mnt/mac/Users/${username}";
+  homeDirectory = "/home/${username}";
   system = "x86_64-linux";
 
   homeManagerModules = [
