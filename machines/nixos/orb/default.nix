@@ -23,10 +23,12 @@ let
   nixosModules = [
     emacs-config.nixosModules.nixos
 
+    ../../../modules/nixos/emacs
     ../../../modules/nixos/fish
     ../../../modules/nixos/fonts
     ../../../modules/nixos/nix
     ../../../modules/nixos/users
+    ../../../modules/nixos/yubikey
 
     /etc/nixos/configuration.nix
   ];
