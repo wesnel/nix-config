@@ -4,24 +4,24 @@
 , ... }:
 
 {
-  home.packages = with pkgs; [
-    grim
-    slurp
-    wl-clipboard
-  ];
+  config = {
+    home.packages = with pkgs; [
+      grim
+      slurp
+      wl-clipboard
+    ];
 
-  services = {
-    gammastep = {
-      enable = true;
-      latitude = "33.522861";
-      longitude = "-86.807701";
+    services = {
+      gammastep = {
+        enable = true;
+        latitude = "33.522861";
+        longitude = "-86.807701";
+      };
+
+      kanshi.enable = true;
+      mako.enable = true;
     };
 
-    kanshi.enable = true;
-    mako.enable = true;
-  };
-
-  config = {
     wayland.windowManager.sway = {
       enable = true;
 

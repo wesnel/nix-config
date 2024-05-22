@@ -8,11 +8,6 @@ _:
 
     displayManager = {
       defaultSession = "plasma";
-
-      sddm = {
-        enable = true;
-        wayland.enable = true;
-      };
     };
   };
 

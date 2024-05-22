@@ -36,6 +36,7 @@ let
     ../../../modules/nixos/mullvad
     ../../../modules/nixos/networking
     ../../../modules/nixos/nix
+    ../../../modules/nixos/sddm
     ../../../modules/nixos/steam
     ../../../modules/nixos/users
     ../../../modules/nixos/yubikey

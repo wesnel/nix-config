@@ -37,6 +37,7 @@ let
     ../../../modules/nixos/fonts
     ../../../modules/nixos/networking
     ../../../modules/nixos/nix
+    ../../../modules/nixos/sddm
     ../../../modules/nixos/users
     ../../../modules/nixos/wayland
     ../../../modules/nixos/yubikey

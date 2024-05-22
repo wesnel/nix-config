@@ -9,17 +9,9 @@
     '';
   };
 
-  services.xserver = {
-    enable = true;
-
-    displayManager = {
-      sessionPackages = with pkgs; [
-        sway
-      ];
-
-      sddm.enable = true;
-    };
-  };
+  services.displayManager.sessionPackages = with pkgs; [
+    sway
+  ];
 
   # other wayland things are managed by home-manager.
 }
