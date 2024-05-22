@@ -2,7 +2,14 @@ _:
 
 {
   services = {
-    displayManager.sddm.enable = true;
+    displayManager = {
+      defaultSession = "plasma";
+
+      sddm = {
+        enable = true;
+        wayland.enable = true;
+      };
+    };
 
     xserver = {
       enable = true;
