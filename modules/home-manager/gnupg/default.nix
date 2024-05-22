@@ -44,12 +44,11 @@
   services.gpg-agent = {
     enable = pkgs.stdenv.hostPlatform.isLinux;
     enableSshSupport = true;
+    pinentryPackage = pkgs.pinentry-qt;
 
     extraConfig = ''
       allow-emacs-pinentry
       allow-loopback-pinentry
-
-      pinentry-mode loopback
     '';
 
     sshKeys = [

@@ -56,7 +56,7 @@
 
   wayland.windowManager.sway = {
     enable = true;
-    
+
     systemd = {
       enable = true;
     };

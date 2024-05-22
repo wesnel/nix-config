@@ -12,23 +12,33 @@ let
 
     ../../../modules/home-manager/emacs
     ../../../modules/home-manager/email
+    ../../../modules/home-manager/firefox
     ../../../modules/home-manager/fish
     ../../../modules/home-manager/git
     ../../../modules/home-manager/gnupg
+    ../../../modules/home-manager/kitty
     ../../../modules/home-manager/man
+    ../../../modules/home-manager/music
     ../../../modules/home-manager/pass
+    ../../../modules/home-manager/photos
     ../../../modules/home-manager/yubikey
   ];
 
   nixosModules = [
     emacs-config.nixosModules.nixos
-    nixos-hardware.nixosModules.framework
+    nixos-hardware.nixosModules.framework-12th-gen-intel
 
+    ../../../modules/nixos/emacs
     ../../../modules/nixos/fish
     ../../../modules/nixos/fonts
+    ../../../modules/nixos/kde
+    ../../../modules/nixos/interception-tools
+    ../../../modules/nixos/mullvad
     ../../../modules/nixos/networking
     ../../../modules/nixos/nix
+    ../../../modules/nixos/steam
     ../../../modules/nixos/users
+    ../../../modules/nixos/yubikey
 
     ({ pkgs
      , ... }:

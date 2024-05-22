@@ -108,6 +108,12 @@
                       system;
                   };
                 })
+
+              (_:
+
+                {
+                  nixpkgs.config.allowUnfree = true;
+                })
             ] ++ [
               home-manager.nixosModules.home-manager {
                 home-manager = {
