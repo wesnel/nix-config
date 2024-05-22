@@ -14,13 +14,14 @@ let
     ../../../modules/home-manager/email
     ../../../modules/home-manager/firefox
     ../../../modules/home-manager/fish
+    ../../../modules/home-manager/foot
     ../../../modules/home-manager/git
     ../../../modules/home-manager/gnupg
     ../../../modules/home-manager/man
     ../../../modules/home-manager/music
     ../../../modules/home-manager/pass
     ../../../modules/home-manager/photos
-    ../../../modules/home-manager/wayland
+    ../../../modules/home-manager/sway
     ../../../modules/home-manager/yubikey
 
     # x230-specific wayland config:
