@@ -2,6 +2,10 @@ _:
 
 {
   services = {
+    desktopManager = {
+      plasma6.enable = true;
+    };
+
     displayManager = {
       defaultSession = "plasma";
 
@@ -9,12 +13,6 @@ _:
         enable = true;
         wayland.enable = true;
       };
-    };
-
-    xserver = {
-      enable = true;
-
-      desktopManager.plasma6.enable = true;
     };
   };
 
