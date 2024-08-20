@@ -148,8 +148,6 @@ let
 
            opengl = {
              enable = true;
-             driSupport = true;
-             driSupport32Bit = true;
            };
 
            pulseaudio = {
@@ -205,8 +203,6 @@ let
 
            upower.enable = true;
          };
-
-         sound.enable = true;
 
          swapDevices = [
            {
