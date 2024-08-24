@@ -120,8 +120,6 @@ let
            };
          };
 
-         sound.enable = true;
-
          swapDevices = [
            {
              device = "/dev/disk/by-uuid/9fb715ce-898c-4a5a-80fd-cd19b7052784";
