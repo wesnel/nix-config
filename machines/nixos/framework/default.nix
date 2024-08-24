@@ -15,6 +15,7 @@ let
     ../../../modules/home-manager/firefox
     ../../../modules/home-manager/fish
     ../../../modules/home-manager/foot
+    ../../../modules/home-manager/gamedev
     ../../../modules/home-manager/git
     ../../../modules/home-manager/gnupg
     ../../../modules/home-manager/man
