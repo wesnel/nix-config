@@ -46,7 +46,7 @@ in {
 
           settings = {
             password_command = lib.mkIf config.programs.password-store.enable ''
-              ${config.programs.fish.package}/bin/fish -c '${config.programs.password-store.package}/bin/pass show mail/${host.fastmail}/${username}'
+              ${config.programs.fish.package}/bin/fish -c '${config.programs.password-store.package}/bin/pass show mail/imap/${host.fastmail}/${username}'
             '';
           };
         };
