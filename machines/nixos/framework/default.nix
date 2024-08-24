@@ -49,7 +49,7 @@ let
          hardware = {
            cpu.intel.updateMicrocode = true;
            enableRedistributableFirmware = true;
-           opengl.enable = true;
+           graphics.enable = true;
          };
 
          boot = {

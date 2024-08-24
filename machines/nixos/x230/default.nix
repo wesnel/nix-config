@@ -145,10 +145,7 @@ let
 
            cpu.intel.updateMicrocode = true;
            enableRedistributableFirmware = true;
-
-           opengl = {
-             enable = true;
-           };
+           graphics.enable = true;
 
            pulseaudio = {
              enable = true;
