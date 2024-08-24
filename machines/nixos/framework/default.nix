@@ -21,6 +21,7 @@ let
     ../../../modules/home-manager/music
     ../../../modules/home-manager/pass
     ../../../modules/home-manager/photos
+    ../../../modules/home-manager/video
     ../../../modules/home-manager/yubikey
   ];
 
