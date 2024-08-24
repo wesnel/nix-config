@@ -107,6 +107,21 @@ let
            };
          };
 
+         services = {
+           pipewire = {
+             enable = true;
+
+             alsa = {
+               enable = true;
+               support32Bit = true;
+             };
+
+             pulse.enable = true;
+           };
+         };
+
+         sound.enable = true;
+
          swapDevices = [
            {
              device = "/dev/disk/by-uuid/9fb715ce-898c-4a5a-80fd-cd19b7052784";
