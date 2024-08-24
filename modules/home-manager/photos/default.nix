@@ -3,7 +3,7 @@
 
 {
   home.packages = with pkgs; [
-    darktable
+    ansel
     filmulator-gui
     gimp-with-plugins
   ];
