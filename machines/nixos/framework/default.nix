@@ -41,6 +41,7 @@ let
     ../../../modules/nixos/sddm
     ../../../modules/nixos/steam
     ../../../modules/nixos/users
+    ../../../modules/nixos/virtualisation
     ../../../modules/nixos/yubikey
 
     ({ pkgs
