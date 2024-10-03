@@ -35,9 +35,9 @@
       # NOTE: Some options for this (in increasing order of stability)
       #       could be:
       #
-      url = "github:nixos/nixpkgs/master";
+      # url = "github:nixos/nixpkgs/master";
       #
-      # url = "github:nixos/nixpkgs/nixos-unstable";
+      url = "github:nixos/nixpkgs/nixos-unstable";
       #
       # url = "github:nixos/nixpkgs/nixos-24.05";
     };
