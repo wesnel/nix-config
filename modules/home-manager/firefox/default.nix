@@ -1,22 +1,33 @@
-{ pkgs
-, ... }:
-
 {
-  programs = {
-    firefox = {
-      enable = true;
+  config,
+  lib,
+  pkgs,
+  ...
+}:
+with lib; let
+  cfg = config.wgn.home.firefox;
+in {
+  options.wgn.home.firefox = {
+    enable = mkEnableOption "Enables my Firefox setup for home-manager";
+  };
 
-      profiles.wgn = {
-        userChrome = ''
-          .tab-close-button { display:none !important; }
-        '';
+  config = mkIf cfg.enable {
+    programs = {
+      firefox = {
+        enable = true;
 
-        extensions = with pkgs.nur.repos.rycee.firefox-addons; [
-          bitwarden
-          kagi-search
-          privacy-badger
-          ublock-origin
-        ];
+        profiles.wgn = {
+          userChrome = ''
+            .tab-close-button { display:none !important; }
+          '';
+
+          extensions = with pkgs.nur.repos.rycee.firefox-addons; [
+            bitwarden
+            kagi-search
+            privacy-badger
+            ublock-origin
+          ];
+        };
       };
     };
   };

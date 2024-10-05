@@ -1,37 +1,43 @@
-{ emacs-config }:
-
-let
+{emacs-config}: let
   computerName = "shipt";
   username = "wesleynelson";
   homeDirectory = "/Users/${username}";
   system = "x86_64-darwin";
 
-  homeManagerModules = [
+  extraHomeManagerModules = [
     emacs-config.nixosModules.home
 
-    ../../../modules/home-manager/emacs
-    ../../../modules/home-manager/email
-    ../../../modules/home-manager/fish
-    ../../../modules/home-manager/git
-    ../../../modules/home-manager/gnupg
-    ../../../modules/home-manager/man
-    ../../../modules/home-manager/pass
-    ../../../modules/home-manager/yubikey
+    (_: {
+      wgn.home = {
+        emacs.enable = true;
+        email.enable = true;
+        fish.enable = true;
+        git.enable = true;
+        gnupg.enable = true;
+        man.enable = true;
+        pass.enable = true;
+        yubikey.enable = true;
+      };
+    })
   ];
 
-  darwinModules = [
+  extraDarwinModules = [
     emacs-config.nixosModules.nixos
 
-    ../../../modules/darwin/defaults
-    ../../../modules/darwin/emacs
-    ../../../modules/darwin/fish
-    ../../../modules/darwin/fonts
-    ../../../modules/darwin/gnupg
-    ../../../modules/darwin/networking
-    ../../../modules/darwin/nix
-    ../../../modules/darwin/paths
-    ../../../modules/darwin/users
-    ../../../modules/darwin/yubikey
+    (_: {
+      wgn.darwin = {
+        defaults.enable = true;
+        emacs.enable = true;
+        fish.enable = true;
+        fonts.enable = true;
+        gnupg.enable = true;
+        networking.enable = true;
+        nix.enable = true;
+        paths.enable = true;
+        users.enable = true;
+        yubikey.enable = true;
+      };
+    })
   ];
 in {
   inherit
@@ -39,6 +45,7 @@ in {
     username
     homeDirectory
     system
-    homeManagerModules
-    darwinModules;
+    extraHomeManagerModules
+    extraDarwinModules
+    ;
 }

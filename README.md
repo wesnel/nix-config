@@ -4,6 +4,7 @@
 - [directory structure](#directory-structure)
 - [updating systems](#updating-systems)
     - [nixOS](#nixos)
+    - [orbstack nixOS virtual machine](#orbstack-nixos-virtual-machine)
     - [nix-darwin](#nix-darwin)
     - [home-manager](#home-manager)
 - [troubleshooting](#troubleshooting)
@@ -30,8 +31,6 @@
 │  │  └── opinionated home-manager configuration modules
 │  └── darwin
 │     └── opinionated darwin configuration modules
-├── components
-│  └── opinionated reusable configuration modules
 ├── flake.lock
 ├── flake.nix <-- main entrypoint
 ├── LICENSE.txt

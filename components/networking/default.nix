@@ -1,8 +1,0 @@
-{ computerName
-, ... }:
-
-{
-  networking = {
-    hostName = computerName;
-  };
-}

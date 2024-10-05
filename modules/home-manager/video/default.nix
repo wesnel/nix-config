@@ -1,17 +1,28 @@
-{ pkgs
-, ... }:
-
 {
-  home.packages = with pkgs; [
-    blender
-    handbrake
-  ];
+  config,
+  lib,
+  pkgs,
+  ...
+}:
+with lib; let
+  cfg = config.wgn.home.video;
+in {
+  options.wgn.home.video = {
+    enable = mkEnableOption "Enables my video setup for home-manager";
+  };
 
-  programs.obs-studio = {
-    enable = true;
-
-    plugins = with pkgs.obs-studio-plugins; [
-      wlrobs
+  config = mkIf cfg.enable {
+    home.packages = with pkgs; [
+      blender
+      handbrake
     ];
+
+    programs.obs-studio = {
+      enable = true;
+
+      plugins = with pkgs.obs-studio-plugins; [
+        wlrobs
+      ];
+    };
   };
 }

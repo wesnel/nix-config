@@ -1,6 +1,4 @@
-args:
-
-{
+args: {
   framework = import ./framework args;
   ingot = import ./ingot args;
   orb = import ./orb args;
