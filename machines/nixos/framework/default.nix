@@ -25,6 +25,7 @@
         pass.enable = true;
         photos.enable = true;
         video.enable = true;
+        virtualisation.enable = true;
         yubikey.enable = true;
       };
     })

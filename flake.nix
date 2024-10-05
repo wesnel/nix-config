@@ -99,6 +99,7 @@
       ./modules/home-manager/photos
       ./modules/home-manager/sway
       ./modules/home-manager/video
+      ./modules/home-manager/virtualisation
       ./modules/home-manager/yubikey
     ];
 
