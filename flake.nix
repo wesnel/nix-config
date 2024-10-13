@@ -101,6 +101,7 @@
       ./modules/home-manager/video
       ./modules/home-manager/virtualisation
       ./modules/home-manager/yubikey
+      ./modules/home-manager/zwift
     ];
 
     buildNixosConfiguration = args @ {

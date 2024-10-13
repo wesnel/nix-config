@@ -14,7 +14,10 @@ in {
 
   config = mkIf cfg.enable {
     virtualisation = {
-      docker.enable = true;
+      podman = {
+        enable = true;
+        dockerCompat = true;
+      };
 
       libvirtd = {
         enable = true;
@@ -47,8 +50,8 @@ in {
     };
 
     environment.systemPackages = with pkgs; [
+      adwaita-icon-theme
       docker-compose
-      gnome.adwaita-icon-theme
       spice
       spice-gtk
       spice-protocol
