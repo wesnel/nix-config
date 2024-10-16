@@ -51,6 +51,7 @@
         users.enable = true;
         virtualisation.enable = true;
         yubikey.enable = true;
+        zwift.offline = true;
       };
     })
 

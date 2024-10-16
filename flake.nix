@@ -66,24 +66,6 @@
     key = "0xC9F55C247EBA37F4!";
     signingKey = "0x8AB4F50FF6C15D42!";
 
-    overlays = let
-      flakes = {
-        inherit
-          emacs-config
-          mujmap
-          nur
-          ;
-      };
-    in
-      {system}:
-        import ./overlays
-        {
-          inherit
-            flakes
-            system
-            ;
-        };
-
     homeManagerModules = [
       ./modules/home-manager/emacs
       ./modules/home-manager/email
@@ -113,7 +95,7 @@
       system,
       extraNixOSModules,
       extraHomeManagerModules,
-    }: nixosModules: homeManagerModules:
+    }: nixosModules: homeManagerModules: overlay:
       nixpkgs.lib.nixosSystem {
         inherit
           system
@@ -128,11 +110,10 @@
             })
 
             (_: {
-              nixpkgs.overlays = overlays {
-                inherit
-                  system
-                  ;
-              };
+              nixpkgs.overlays = [
+                nur.overlay
+                overlay
+              ];
             })
 
             (_: {
@@ -170,32 +151,6 @@
         ;
     };
 
-    nixosConfigurations = let
-      op = _: {
-        computerName,
-        username,
-        homeDirectory,
-        system,
-        extraNixOSModules,
-        extraHomeManagerModules,
-      }:
-        buildNixosConfiguration
-        {
-          inherit
-            computerName
-            username
-            homeDirectory
-            key
-            signingKey
-            system
-            extraNixOSModules
-            extraHomeManagerModules
-            ;
-        }
-        nixosModules
-        homeManagerModules;
-    in (builtins.mapAttrs op nixosSystems);
-
     nixosModules = [
       ./modules/nixos/emacs
       ./modules/nixos/fish
@@ -211,6 +166,7 @@
       ./modules/nixos/virtualisation
       ./modules/nixos/wayland
       ./modules/nixos/yubikey
+      ./modules/nixos/zwift
     ];
 
     buildDarwinConfiguration = args @ {
@@ -222,7 +178,7 @@
       system,
       extraHomeManagerModules,
       extraDarwinModules,
-    }: darwinModules: homeManagerModules:
+    }: darwinModules: homeManagerModules: overlay:
       nix-darwin.lib.darwinSystem {
         inherit
           system
@@ -237,11 +193,10 @@
             })
 
             (_: {
-              nixpkgs.overlays = overlays {
-                inherit
-                  system
-                  ;
-              };
+              nixpkgs.overlays = [
+                nur.overlay
+                overlay
+              ];
             })
           ]
           ++ [
@@ -273,32 +228,6 @@
         ;
     };
 
-    darwinConfigurations = let
-      op = _: {
-        computerName,
-        username,
-        homeDirectory,
-        system,
-        extraHomeManagerModules,
-        extraDarwinModules,
-      }:
-        buildDarwinConfiguration
-        {
-          inherit
-            computerName
-            username
-            homeDirectory
-            key
-            signingKey
-            system
-            extraHomeManagerModules
-            extraDarwinModules
-            ;
-        }
-        darwinModules
-        homeManagerModules;
-    in (builtins.mapAttrs op darwinSystems);
-
     darwinModules = [
       ./modules/darwin/defaults
       ./modules/darwin/emacs
@@ -311,30 +240,95 @@
       ./modules/darwin/users
       ./modules/darwin/yubikey
     ];
-  in {
-    inherit
-      darwinConfigurations
-      darwinModules
-      homeManagerModules
-      nixosConfigurations
-      nixosModules
-      ;
+  in
+    flake-utils.lib.eachDefaultSystemPassThrough (system: rec {
+      overlays = {
+        default = let
+          flakes = {
+            inherit
+              mujmap
+              ;
+          };
+        in
+          import ./overlays {
+            inherit flakes system;
+          };
+      };
 
-    formatter = flake-utils.lib.eachDefaultSystem (system: let
-      pkgs = nixpkgs.legacyPackages.${system};
-    in {
-      ${system} = pkgs.alejandra;
-    });
+      darwinConfigurations = let
+        op = _: {
+          computerName,
+          username,
+          homeDirectory,
+          system,
+          extraHomeManagerModules,
+          extraDarwinModules,
+        }:
+          buildDarwinConfiguration
+          {
+            inherit
+              computerName
+              username
+              homeDirectory
+              key
+              signingKey
+              system
+              extraHomeManagerModules
+              extraDarwinModules
+              ;
+          }
+          darwinModules
+          homeManagerModules
+          overlays.default;
+      in (builtins.mapAttrs op darwinSystems);
 
-    devShells = flake-utils.lib.eachDefaultSystem (system: let
-      pkgs = nixpkgs.legacyPackages.${system};
+      nixosConfigurations = let
+        op = _: {
+          computerName,
+          username,
+          homeDirectory,
+          system,
+          extraNixOSModules,
+          extraHomeManagerModules,
+        }:
+          buildNixosConfiguration
+          {
+            inherit
+              computerName
+              username
+              homeDirectory
+              key
+              signingKey
+              system
+              extraNixOSModules
+              extraHomeManagerModules
+              ;
+          }
+          nixosModules
+          homeManagerModules
+          overlays.default;
+      in (builtins.mapAttrs op nixosSystems);
+
+      inherit
+        darwinModules
+        homeManagerModules
+        nixosModules
+        ;
+    })
+    // flake-utils.lib.eachDefaultSystem (system: let
+      pkgs = import nixpkgs {
+        inherit system;
+      };
     in {
-      default = pkgs.mkShell {
-        buildInputs = with pkgs; [
-          alejandra
-          nil
-        ];
+      formatter = pkgs.alejandra;
+
+      devShells = {
+        default = pkgs.mkShell {
+          buildInputs = with pkgs; [
+            alejandra
+            nil
+          ];
+        };
       };
     });
-  };
 }

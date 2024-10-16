@@ -14,9 +14,13 @@ in {
 
   config = mkIf cfg.enable {
     virtualisation = {
-      podman = {
+      docker = {
         enable = true;
-        dockerCompat = true;
+
+        rootless = {
+          enable = true;
+          setSocketVariable = true;
+        };
       };
 
       libvirtd = {
@@ -62,7 +66,6 @@ in {
     ];
 
     users.users.${username}.extraGroups = [
-      "docker"
       "libvirtd"
     ];
   };
