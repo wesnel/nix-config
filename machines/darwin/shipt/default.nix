@@ -5,7 +5,7 @@
   system = "x86_64-darwin";
 
   extraHomeManagerModules = [
-    emacs-config.nixosModules.home
+    emacs-config.homeManagerModules.default
 
     (_: {
       wgn.home = {

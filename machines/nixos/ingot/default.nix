@@ -8,7 +8,7 @@
   system = "x86_64-linux";
 
   extraHomeManagerModules = [
-    emacs-config.nixosModules.home
+    emacs-config.homeManagerModules.default
 
     (_: {
       wgn.home = {
