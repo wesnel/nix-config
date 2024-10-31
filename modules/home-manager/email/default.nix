@@ -1,7 +1,7 @@
 {
   config,
   lib,
-  signingKey,
+  key,
   ...
 }:
 with lib; let
@@ -46,7 +46,7 @@ in {
           };
 
           gpg = {
-            key = signingKey;
+            inherit key;
             signByDefault = true;
           };
 

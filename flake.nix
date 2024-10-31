@@ -62,9 +62,7 @@
     nixpkgs,
     nur,
   }: let
-    # yubikey
-    key = "0xC9F55C247EBA37F4!";
-    signingKey = "0x8AB4F50FF6C15D42!";
+    key = "0xA776D2AD099E8BC0";
 
     homeManagerModules = [
       ./modules/home-manager/emacs
@@ -91,7 +89,6 @@
       username,
       homeDirectory,
       key,
-      signingKey,
       system,
       extraNixOSModules,
       extraHomeManagerModules,
@@ -176,7 +173,6 @@
       username,
       homeDirectory,
       key,
-      signingKey,
       system,
       extraHomeManagerModules,
       extraDarwinModules,
@@ -275,7 +271,6 @@
               username
               homeDirectory
               key
-              signingKey
               system
               extraHomeManagerModules
               extraDarwinModules
@@ -302,7 +297,6 @@
               username
               homeDirectory
               key
-              signingKey
               system
               extraNixOSModules
               extraHomeManagerModules

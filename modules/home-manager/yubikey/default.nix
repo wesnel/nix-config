@@ -2,7 +2,6 @@
   lib,
   config,
   key,
-  signingKey,
   ...
 }:
 with lib; let
@@ -16,12 +15,12 @@ in {
     programs = {
       git.signing = lib.mkIf config.programs.git.enable {
         signByDefault = true;
-        key = signingKey;
+        inherit key;
       };
 
       password-store.settings = lib.mkIf config.programs.password-store.enable {
         PASSWORD_STORE_KEY = key;
-        PASSWORD_STORE_SIGNING_KEY = signingKey;
+        PASSWORD_STORE_SIGNING_KEY = key;
       };
 
       gpg.scdaemonSettings = lib.mkIf config.programs.gpg.enable {

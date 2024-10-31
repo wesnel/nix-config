@@ -36,6 +36,7 @@ in {
       ];
 
       settings = {
+        armor = true;
         charset = "utf-8";
         default-key = key;
         keyid-format = "0xlong";
@@ -59,10 +60,6 @@ in {
         allow-emacs-pinentry
         allow-loopback-pinentry
       '';
-
-      sshKeys = [
-        "E1A99D519849CB5FE1C1AE4D88B2AA7DD529E17D"
-      ];
     };
   };
 }
