@@ -15,7 +15,7 @@ in {
     programs.git = let
       name = "Wesley Nelson";
       username = "wgn";
-      host = "wesnel.dev";
+      host = "wgn.dev";
     in {
       enable = true;
       userName = name;
