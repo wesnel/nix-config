@@ -118,6 +118,14 @@
       };
 
       services = {
+        openssh = {
+          enable = true;
+
+          settings = {
+            PasswordAuthentication = false;
+          };
+        };
+
         pipewire = {
           enable = true;
 

@@ -49,6 +49,11 @@
     nur = {
       url = "github:nix-community/NUR";
     };
+
+    sops-nix = {
+      url = "github:Mic92/sops-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs = {
@@ -61,10 +66,17 @@
     nixos-hardware,
     nixpkgs,
     nur,
+    sops-nix,
   }: let
     key = "0xA776D2AD099E8BC0";
 
     homeManagerModules = [
+      sops-nix.homeManagerModules.sops
+
+      (_: {
+        sops.gnupg.sshKeyPaths = ["/etc/ssh/ssh_host_ed25519_key"];
+      })
+
       ./modules/home-manager/emacs
       ./modules/home-manager/email
       ./modules/home-manager/firefox
@@ -82,6 +94,43 @@
       ./modules/home-manager/virtualisation
       ./modules/home-manager/yubikey
       ./modules/home-manager/zwift
+    ];
+
+    nixosModules = [
+      sops-nix.nixosModules.sops
+
+      (_: {
+        sops.gnupg.sshKeyPaths = ["/etc/ssh/ssh_host_ed25519_key"];
+      })
+
+      ./modules/nixos/emacs
+      ./modules/nixos/fish
+      ./modules/nixos/fonts
+      ./modules/nixos/interception-tools
+      ./modules/nixos/kde
+      ./modules/nixos/mullvad
+      ./modules/nixos/networking
+      ./modules/nixos/nix
+      ./modules/nixos/sddm
+      ./modules/nixos/steam
+      ./modules/nixos/users
+      ./modules/nixos/virtualisation
+      ./modules/nixos/wayland
+      ./modules/nixos/yubikey
+      ./modules/nixos/zwift
+    ];
+
+    darwinModules = [
+      ./modules/darwin/defaults
+      ./modules/darwin/emacs
+      ./modules/darwin/fish
+      ./modules/darwin/fonts
+      ./modules/darwin/gnupg
+      ./modules/darwin/networking
+      ./modules/darwin/nix
+      ./modules/darwin/paths
+      ./modules/darwin/users
+      ./modules/darwin/yubikey
     ];
 
     buildNixosConfiguration = args @ {
@@ -150,24 +199,6 @@
         ;
     };
 
-    nixosModules = [
-      ./modules/nixos/emacs
-      ./modules/nixos/fish
-      ./modules/nixos/fonts
-      ./modules/nixos/interception-tools
-      ./modules/nixos/kde
-      ./modules/nixos/mullvad
-      ./modules/nixos/networking
-      ./modules/nixos/nix
-      ./modules/nixos/sddm
-      ./modules/nixos/steam
-      ./modules/nixos/users
-      ./modules/nixos/virtualisation
-      ./modules/nixos/wayland
-      ./modules/nixos/yubikey
-      ./modules/nixos/zwift
-    ];
-
     buildDarwinConfiguration = args @ {
       computerName,
       username,
@@ -227,19 +258,6 @@
         emacs-config
         ;
     };
-
-    darwinModules = [
-      ./modules/darwin/defaults
-      ./modules/darwin/emacs
-      ./modules/darwin/fish
-      ./modules/darwin/fonts
-      ./modules/darwin/gnupg
-      ./modules/darwin/networking
-      ./modules/darwin/nix
-      ./modules/darwin/paths
-      ./modules/darwin/users
-      ./modules/darwin/yubikey
-    ];
   in
     flake-utils.lib.eachDefaultSystemPassThrough (system: rec {
       overlays = {

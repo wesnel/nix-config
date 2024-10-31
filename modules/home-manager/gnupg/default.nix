@@ -30,7 +30,7 @@ in {
 
       publicKeys = [
         {
-          source = ./F84480B20CA9D6CCC7F52479A776D2AD099E8BC0.asc;
+          source = ../../../keys/users/F84480B20CA9D6CCC7F52479A776D2AD099E8BC0.asc;
           trust = 5;
         }
       ];

@@ -1,0 +1,9 @@
+keys:
+  - &user_wgn "0xA776D2AD099E8BC0"
+  - &machine_framework 9338d3feb1109706b0c77b83f2d22f565dcfba7d
+creation_rules:
+  - path_regex: secrets/[^/]+\.(yaml|json|env|ini)$
+    key_groups:
+      - pgp:
+        - *user_wgn
+        - *machine_framework
