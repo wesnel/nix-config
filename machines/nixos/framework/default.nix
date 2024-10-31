@@ -8,7 +8,7 @@
   system = "x86_64-linux";
 
   extraHomeManagerModules = [
-    emacs-config.nixosModules.home
+    emacs-config.homeManagerModules.default
 
     (_: {
       wgn.home = {
@@ -33,7 +33,7 @@
   ];
 
   extraNixOSModules = [
-    emacs-config.nixosModules.nixos
+    emacs-config.nixosModules.default
     nixos-hardware.nixosModules.framework-12th-gen-intel
 
     (_: {
