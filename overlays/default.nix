@@ -2,11 +2,6 @@
   flakes,
   system,
 }: final: prev: {
-  imports = [
-    flakes.emacs-config.overlays.default
-    flakes.emacs-config.overlays.emacs
-  ];
-
   mujmap = flakes.mujmap.packages.${system}.mujmap;
 
   # FIXME: This is blocked by CrowdStrike on my work laptop :(

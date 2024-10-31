@@ -112,6 +112,8 @@
             (_: {
               nixpkgs.overlays = [
                 nur.overlay
+                emacs-config.overlays.default
+                emacs-config.overlays.emacs
                 overlay
               ];
             })
@@ -195,6 +197,8 @@
             (_: {
               nixpkgs.overlays = [
                 nur.overlay
+                emacs-config.overlays.default
+                emacs-config.overlays.emacs
                 overlay
               ];
             })

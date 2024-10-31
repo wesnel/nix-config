@@ -31,11 +31,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1730338989,
-        "narHash": "sha256-Y8y+RsWhYrAhEkYcDsuxQVAfBfohStQZ5v0BVmRSMRM=",
+        "lastModified": 1730342556,
+        "narHash": "sha256-CFAiLPP0CFULSaE3mmqYCZlm7o01Bipg8bfRln6yP0c=",
         "ref": "main",
-        "rev": "05522cd6dfa55ba6fcbd6a9e667896877efc1833",
-        "revCount": 208,
+        "rev": "e6d8b072dfa670f353d34a3b837183b5575adfad",
+        "revCount": 211,
         "type": "git",
         "url": "https://git.sr.ht/~wgn/emacs-config"
       },
@@ -302,11 +302,11 @@
     },
     "nur": {
       "locked": {
-        "lastModified": 1730338467,
-        "narHash": "sha256-i3QfnmAS/QITW9LKDd9bsrXQObJcdwRpoJbPUoJiYRI=",
+        "lastModified": 1730340513,
+        "narHash": "sha256-CZmauwFFJ80mo4eXkQ+5R0MfD5szzWXDCG7M2sJbZg8=",
         "owner": "nix-community",
         "repo": "NUR",
-        "rev": "740c39ecbfb250f20344e47fb7e6b6c2820257f9",
+        "rev": "73638442a5d792fd3d922d014c856e3970d185f3",
         "type": "github"
       },
       "original": {
