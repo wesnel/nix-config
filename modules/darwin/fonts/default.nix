@@ -14,7 +14,7 @@ in {
     fonts = {
       packages = with pkgs; [
         inter
-        inter-ui
+        inter
         nerdfonts
         unifont
       ];
