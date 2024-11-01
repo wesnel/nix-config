@@ -19,7 +19,10 @@ in {
     };
 
     home = {
-      programs.wgn.emacs.enable = true;
+      programs.wgn.emacs = {
+        enable = true;
+        gnus.enable = true;
+      };
 
       packages = with pkgs; [
         emacs

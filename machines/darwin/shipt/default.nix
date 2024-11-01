@@ -10,7 +10,6 @@
     (_: {
       wgn.home = {
         emacs.enable = true;
-        email.enable = true;
         fish.enable = true;
         git.enable = true;
         gnupg.enable = true;

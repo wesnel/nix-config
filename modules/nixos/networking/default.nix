@@ -16,6 +16,8 @@ in {
       firewall.allowedTCPPorts = [
         22
         80
+        993
+        465
       ];
 
       hostName = computerName;

@@ -13,7 +13,6 @@
     (_: {
       wgn.home = {
         emacs.enable = true;
-        email.enable = true;
         firefox.enable = true;
         fish.enable = true;
         foot.enable = true;
