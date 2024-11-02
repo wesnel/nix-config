@@ -31,18 +31,17 @@
         ]
       },
       "locked": {
-        "lastModified": 1730429553,
-        "narHash": "sha256-g46wSYm0xnoJTwr3UkTlSmZSdwL3QDTmtHVIhz/OqKs=",
-        "ref": "main",
-        "rev": "d105cfab914006920ad0ef27d700c8f7e9d40c27",
-        "revCount": 220,
-        "type": "git",
-        "url": "https://git.sr.ht/~wgn/emacs-config"
+        "lastModified": 1730505702,
+        "narHash": "sha256-BlK2XJe8qkxWOcIfUrgiyRt7tIhvG5Upvu+m1l+w4Ck=",
+        "owner": "wesnel",
+        "repo": "emacs-config",
+        "rev": "76a41ce45cf93d479eb75ba8a3172ef9656c291f",
+        "type": "github"
       },
       "original": {
-        "ref": "main",
-        "type": "git",
-        "url": "https://git.sr.ht/~wgn/emacs-config"
+        "owner": "wesnel",
+        "repo": "emacs-config",
+        "type": "github"
       }
     },
     "emacs-overlay": {
