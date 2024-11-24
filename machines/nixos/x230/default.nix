@@ -32,7 +32,7 @@
   ];
 
   extraNixOSModules = [
-    emacs-config.nixosModules.nixos
+    emacs-config.nixosModules.default
     nixos-hardware.nixosModules.lenovo-thinkpad-x230
 
     (_: {

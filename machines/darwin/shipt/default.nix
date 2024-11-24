@@ -21,7 +21,7 @@
   ];
 
   extraDarwinModules = [
-    emacs-config.nixosModules.nixos
+    emacs-config.nixosModules.default
 
     (_: {
       wgn.darwin = {
