@@ -79,6 +79,14 @@
             "luks-9f8c9e84-d147-4537-84cd-747c1d88c8e9" = {
               device = "/dev/disk/by-uuid/9f8c9e84-d147-4537-84cd-747c1d88c8e9";
             };
+
+            "luks-bc4abb19-ad39-4988-b805-88f5491bc177" = {
+              device = "/dev/disk/by-uuid/bc4abb19-ad39-4988-b805-88f5491bc177";
+            };
+
+            "luks-8d75d819-ecf0-41f7-b016-5bb094427560" = {
+              device = "/dev/disk/by-uuid/8d75d819-ecf0-41f7-b016-5bb094427560";
+            };
           };
         };
 
@@ -122,6 +130,16 @@
           device = "/dev/disk/by-uuid/8B69-07CC";
           fsType = "vfat";
         };
+
+        "${homeDirectory}/mnt/data-001" = {
+          device = "/dev/disk/by-uuid/25cfb1d6-efe8-48bd-8f75-89e1f2401459";
+          fsType = "ext4";
+        };
+
+        "${homeDirectory}/mnt/data-002" = {
+          device = "/dev/disk/by-uuid/471c41a9-b716-41af-a710-7118f1c18453";
+          fsType = "ext4";
+        };
       };
 
       hardware = {
@@ -136,7 +154,6 @@
         interfaces = {
           enp37s0.useDHCP = true;
           wlp38s0.useDHCP = true;
-          wlp3s0f0u5.useDHCP = true;
         };
 
         networkmanager = {
