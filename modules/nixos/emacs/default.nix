@@ -12,6 +12,10 @@ in {
   };
 
   config = mkIf cfg.enable {
+    environment.systemPackages = [
+      config.programs.wgn.emacs.package
+    ];
+
     programs = {
       fish.interactiveShellInit =
         lib.mkIf config.programs.fish.enable
@@ -19,7 +23,7 @@ in {
 
       wgn.emacs = {
         enable = true;
-        package = pkgs.emacs;
+        package = mkDefault pkgs.emacs;
       };
     };
 

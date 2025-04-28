@@ -21,7 +21,7 @@ in {
             .tab-close-button { display:none !important; }
           '';
 
-          extensions = with pkgs.nur.repos.rycee.firefox-addons; [
+          extensions.packages = with pkgs.nur.repos.rycee.firefox-addons; [
             bitwarden
             kagi-search
             privacy-badger

@@ -84,6 +84,7 @@
       ./modules/home-manager/gamedev
       ./modules/home-manager/git
       ./modules/home-manager/gnupg
+      ./modules/home-manager/hyprland
       ./modules/home-manager/man
       ./modules/home-manager/music
       ./modules/home-manager/pass
@@ -105,6 +106,7 @@
       ./modules/nixos/emacs
       ./modules/nixos/fish
       ./modules/nixos/fonts
+      ./modules/nixos/hyprland
       ./modules/nixos/interception-tools
       ./modules/nixos/kde
       ./modules/nixos/mullvad
@@ -156,7 +158,7 @@
 
             (_: {
               nixpkgs.overlays = [
-                nur.overlay
+                nur.overlays.default
                 emacs-config.overlays.default
                 emacs-config.overlays.emacs
                 overlay
@@ -222,7 +224,7 @@
 
             (_: {
               nixpkgs.overlays = [
-                nur.overlay
+                nur.overlays.default
                 emacs-config.overlays.default
                 emacs-config.overlays.emacs
                 overlay

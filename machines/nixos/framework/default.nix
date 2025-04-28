@@ -19,6 +19,7 @@
         gamedev.enable = true;
         git.enable = true;
         gnupg.enable = true;
+        hyprland.enable = true;
         man.enable = true;
         music.enable = true;
         pass.enable = true;
@@ -40,12 +41,11 @@
         emacs.enable = true;
         fish.enable = true;
         fonts.enable = true;
-        kde.enable = true;
+        hyprland.enable = true;
         interception-tools.enable = true;
         mullvad.enable = true;
         networking.enable = true;
         nix.enable = true;
-        sddm.enable = true;
         steam.enable = true;
         users.enable = true;
         virtualisation.enable = true;

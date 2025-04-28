@@ -23,10 +23,6 @@ in {
         enable = true;
         gnus.enable = true;
       };
-
-      packages = with pkgs; [
-        emacs
-      ];
     };
   };
 }
