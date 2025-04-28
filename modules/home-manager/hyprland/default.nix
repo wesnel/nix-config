@@ -209,7 +209,7 @@ in {
       };
 
       fish.loginShellInit = ''
-        uwsm check may-start && uwsm start Hyprland.desktop
+        uwsm check may-start && uwsm start select
       '';
     };
 
