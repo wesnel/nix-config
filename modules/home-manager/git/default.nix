@@ -13,6 +13,7 @@ in {
 
   config = mkIf cfg.enable {
     programs.git = let
+      # TODO: Read these from secrets instead of hard-coding them.
       name = "Wesley Nelson";
       username = "wgn";
       host = "wgn.dev";

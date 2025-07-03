@@ -18,7 +18,6 @@ in {
     };
 
     environment = with pkgs; {
-      loginShell = fish;
       shells = [fish];
     };
 

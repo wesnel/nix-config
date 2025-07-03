@@ -1,6 +1,7 @@
 {emacs-config}: let
   computerName = "shipt";
-  username = "wesleynelson";
+  # TODO: Read this from secrets instead of hard-coding it.
+  username = "wesley.nelson";
   homeDirectory = "/Users/${username}";
   system = "x86_64-darwin";
 

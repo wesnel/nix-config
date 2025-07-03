@@ -11,6 +11,10 @@ in {
   };
 
   config = mkIf cfg.enable {
+    # HACK: This line only exists because I installed nix in a way
+    # that nix-darwin doesn't like.
+    ids.gids.nixbld = 350;
+
     system.defaults = {
       NSGlobalDomain = {
         AppleShowAllExtensions = true;
@@ -29,10 +33,6 @@ in {
       finder = {
         AppleShowAllExtensions = true;
         AppleShowAllFiles = true;
-      };
-
-      universalaccess = {
-        reduceTransparency = false;
       };
     };
 

@@ -1,4 +1,5 @@
 {
+  config,
   pkgs,
   lib,
   ...
@@ -12,12 +13,12 @@ in {
 
   config = mkIf cfg.enable {
     fonts = {
-      packages = with pkgs; [
-        inter
-        inter
-        nerdfonts
-        unifont
-      ];
+      packages = with pkgs;
+        [
+          inter
+          unifont
+        ]
+        ++ builtins.filter attrsets.isDerivation (builtins.attrValues pkgs.nerd-fonts);
     };
   };
 }

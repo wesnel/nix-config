@@ -3,6 +3,7 @@
   emacs-config,
 }: let
   computerName = "ingot";
+  # TODO: Read this from secrets instead of hard-coding it.
   username = "wgn";
   homeDirectory = "/home/${username}";
   system = "x86_64-linux";

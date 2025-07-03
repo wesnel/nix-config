@@ -20,11 +20,5 @@ in {
         show-trace = true
       '';
     };
-
-    services = {
-      nix-daemon = {
-        enable = true;
-      };
-    };
   };
 }
