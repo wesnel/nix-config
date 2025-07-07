@@ -3,7 +3,7 @@
   # TODO: Read this from secrets instead of hard-coding it.
   username = "wesley.nelson";
   homeDirectory = "/Users/${username}";
-  system = "x86_64-darwin";
+  system = "aarch64-darwin";
 
   extraHomeManagerModules = [
     emacs-config.homeManagerModules.default
