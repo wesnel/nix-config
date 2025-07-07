@@ -13,6 +13,8 @@ in {
   };
 
   config = mkIf cfg.enable {
+    system.primaryUser = username;
+
     users = {
       users.${username} = {
         home = homeDirectory;
