@@ -15,6 +15,8 @@ in {
     # that nix-darwin doesn't like.
     ids.gids.nixbld = 350;
 
+    security.pam.services.sudo_local.touchIdAuth = true;
+
     system.defaults = {
       NSGlobalDomain = {
         AppleShowAllExtensions = true;

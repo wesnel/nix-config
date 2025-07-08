@@ -161,7 +161,6 @@
               nixpkgs.overlays = [
                 nur.overlays.default
                 emacs-config.overlays.default
-                emacs-config.overlays.emacs
                 overlay
               ];
             })
@@ -227,7 +226,6 @@
               nixpkgs.overlays = [
                 nur.overlays.default
                 emacs-config.overlays.default
-                emacs-config.overlays.emacs
                 overlay
               ];
             })

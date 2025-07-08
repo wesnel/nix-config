@@ -23,7 +23,7 @@ in {
 
       wgn.emacs = {
         enable = true;
-        package = mkDefault pkgs.emacs;
+        package = mkDefault pkgs.wgn-emacs-macport;
       };
     };
 
