@@ -34,7 +34,7 @@
         gnupg.enable = true;
         networking.enable = true;
         nix.enable = true;
-        paths.enable = true;
+        paths.enable = false;
         users.enable = true;
         yubikey.enable = true;
       };
