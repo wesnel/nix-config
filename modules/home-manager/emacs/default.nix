@@ -37,6 +37,10 @@ in {
       };
 
       home = {
+        packages = [
+          openNewEmacsApp
+        ];
+
         programs.wgn.emacs = {
           enable = true;
           gnus.enable = true;
