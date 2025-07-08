@@ -17,10 +17,6 @@ in {
     ];
 
     programs = {
-      fish.interactiveShellInit =
-        lib.mkIf config.programs.fish.enable
-        "set -gx EDITOR emacs";
-
       wgn.emacs = {
         enable = true;
         package = mkDefault pkgs.wgn-emacs-macport;
