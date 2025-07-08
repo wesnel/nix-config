@@ -14,6 +14,7 @@
         fish.enable = true;
         git.enable = true;
         gnupg.enable = true;
+        go.enable = true;
         man.enable = true;
         pass.enable = true;
         yubikey.enable = true;

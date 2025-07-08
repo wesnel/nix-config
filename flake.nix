@@ -84,6 +84,7 @@
       ./modules/home-manager/gamedev
       ./modules/home-manager/git
       ./modules/home-manager/gnupg
+      ./modules/home-manager/go
       ./modules/home-manager/hyprland
       ./modules/home-manager/man
       ./modules/home-manager/music
