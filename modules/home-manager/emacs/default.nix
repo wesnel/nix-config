@@ -23,6 +23,7 @@ in {
       programs.wgn.emacs = {
         enable = true;
         gnus.enable = true;
+        llm.enable = true;
       };
     };
   };
