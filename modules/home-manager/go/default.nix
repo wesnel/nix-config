@@ -2,6 +2,7 @@
   config,
   lib,
   pkgs,
+  homeDirectory,
   ...
 }:
 with lib; let
@@ -16,5 +17,13 @@ in {
       go
       gopls
     ];
+
+    programs = {
+      fish.interactiveShellInit =
+        lib.mkIf config.programs.fish.enable
+        ''
+          fish_add_path ${homeDirectory}/go/bin
+        '';
+    };
   };
 }
