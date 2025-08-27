@@ -16,6 +16,7 @@
         gnupg.enable = true;
         go.enable = true;
         man.enable = true;
+        ollama.enable = true;
         pass.enable = true;
         yubikey.enable = true;
       };
@@ -32,6 +33,7 @@
         fish.enable = true;
         fonts.enable = true;
         gnupg.enable = true;
+        homebrew.enable = true;
         networking.enable = true;
         nix.enable = true;
         paths.enable = false;

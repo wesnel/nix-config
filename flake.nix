@@ -88,6 +88,7 @@
       ./modules/home-manager/hyprland
       ./modules/home-manager/man
       ./modules/home-manager/music
+      ./modules/home-manager/ollama
       ./modules/home-manager/pass
       ./modules/home-manager/photos
       ./modules/home-manager/sway
@@ -128,6 +129,7 @@
       ./modules/darwin/fish
       ./modules/darwin/fonts
       ./modules/darwin/gnupg
+      ./modules/darwin/homebrew
       ./modules/darwin/networking
       ./modules/darwin/nix
       ./modules/darwin/paths
