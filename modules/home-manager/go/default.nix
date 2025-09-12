@@ -19,11 +19,12 @@ in {
     ];
 
     programs = {
-      fish.interactiveShellInit =
-        lib.mkIf config.programs.fish.enable
-        ''
-          fish_add_path ${homeDirectory}/go/bin
-        '';
+      # TODO: Remove Shipt-specific configuration from here.
+      fish.interactiveShellInit = lib.mkIf config.programs.fish.enable ''
+        set -gx GOPRIVATE 'github.com/shipt/*'
+
+        fish_add_path ${homeDirectory}/go/bin
+      '';
     };
   };
 }
