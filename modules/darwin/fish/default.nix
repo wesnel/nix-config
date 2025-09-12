@@ -29,6 +29,8 @@ in {
 
           set -gx GITHUB_TOKEN (gpg --card-status > /dev/null && emacs --quick --batch --load 'auth-source' --eval "(condition-case nil (princ (auth-info-password (nth 0 (auth-source-search :host \"github.com\" :user \"wesnel\" :max 1)))) (file-error nil))")
           set -gx HF_TOKEN (gpg --card-status > /dev/null && emacs --quick --batch --load 'auth-source' --eval "(condition-case nil (princ (auth-info-password (nth 0 (auth-source-search :host \"huggingface.co\" :user \"${username}@shipt.com\" :max 1)))) (file-error nil))")
+          set -gx DD_APP_KEY (gpg --card-status > /dev/null && emacs --quick --batch --load 'auth-source' --eval "(condition-case nil (princ (auth-info-password (nth 0 (auth-source-search :host \"datadoghq.com\" :user \"${username}@shipt.com\" :max 1)))) (file-error nil))")
+          set -gx DD_API_KEY (gpg --card-status > /dev/null && emacs --quick --batch --load 'auth-source' --eval "(condition-case nil (princ (auth-info-password (nth 0 (auth-source-search :host \"datadoghq.com\" :user \"shipt\" :max 1)))) (file-error nil))")
         '';
     };
 
