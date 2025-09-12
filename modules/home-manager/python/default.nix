@@ -14,10 +14,8 @@ in {
   config = mkIf cfg.enable {
     home.packages = with pkgs; [
       (python313.withPackages
-        (pp:
-          with pp; [
-            python-lsp-server
-          ]))
+        (pp: [
+        ]))
 
       poetry
       ruff
