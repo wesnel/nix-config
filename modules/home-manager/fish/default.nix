@@ -2,6 +2,7 @@
   config,
   lib,
   pkgs,
+  homeDirectory,
   ...
 }:
 with lib; let
@@ -14,6 +15,10 @@ in {
   config = mkIf cfg.enable {
     programs.fish = {
       enable = true;
+
+      interactiveShellInit = lib.mkIf config.programs.fish.enable ''
+        fish_add_path ${homeDirectory}/.local/bin
+      '';
     };
 
     home.shellAliases = let
