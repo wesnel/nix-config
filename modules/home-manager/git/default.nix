@@ -12,6 +12,11 @@ in {
   };
 
   config = mkIf cfg.enable {
+    programs.delta = {
+      enable = true;
+      enableGitIntegration = true;
+    };
+
     programs.git = let
       # TODO: Read these from secrets instead of hard-coding them.
       name = "Wesley Nelson";
@@ -19,13 +24,18 @@ in {
       host = "wgn.dev";
     in {
       enable = true;
-      userName = name;
-      userEmail = "${username}@${host}";
       package = pkgs.gitAndTools.gitFull;
-      delta.enable = true;
       lfs.enable = true;
 
-      extraConfig = {
+      settings = {
+        user = {
+          email = "${username}@${host}";
+
+          inherit
+            name
+            ;
+        };
+
         init = {
           defaultBranch = "main";
         };

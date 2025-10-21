@@ -12,6 +12,12 @@ in {
   };
 
   config = mkIf cfg.enable {
+    nixpkgs = {
+      config = {
+        allowUnfree = true;
+      };
+    };
+
     nix = {
       package = pkgs.nixVersions.stable;
 
