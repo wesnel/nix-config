@@ -12,6 +12,7 @@
       wgn.home = {
         emacs.enable = true;
         fish.enable = true;
+        gcloud.enable = true;
         git.enable = true;
         gnupg.enable = true;
         go.enable = true;
