@@ -15,7 +15,9 @@ in {
     home.packages = with pkgs; [
       (google-cloud-sdk.withExtraComponents (with google-cloud-sdk.components; [
         cbt
+        cloud_sql_proxy
         gke-gcloud-auth-plugin
+        kubectl
       ]))
     ];
   };
