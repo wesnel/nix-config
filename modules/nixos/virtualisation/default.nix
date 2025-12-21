@@ -29,14 +29,6 @@ in {
         qemu = {
           package = pkgs.qemu_kvm;
           swtpm.enable = true;
-
-          ovmf = {
-            enable = true;
-
-            packages = with pkgs; [
-              OVMFFull.fd
-            ];
-          };
         };
       };
 
@@ -62,7 +54,7 @@ in {
       virt-manager
       virt-viewer
       win-spice
-      win-virtio
+      virtio-win
     ];
 
     users.users.${username}.extraGroups = [

@@ -16,6 +16,7 @@
         emacs.enable = true;
         firefox.enable = true;
         fish.enable = true;
+        fonts.enable = true;
         foot.enable = true;
         gamedev.enable = true;
         git.enable = true;

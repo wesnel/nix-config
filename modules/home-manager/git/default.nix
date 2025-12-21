@@ -24,7 +24,6 @@ in {
       host = "wgn.dev";
     in {
       enable = true;
-      package = pkgs.gitAndTools.gitFull;
       lfs.enable = true;
 
       settings = {

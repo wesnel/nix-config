@@ -80,6 +80,7 @@
       ./modules/home-manager/emacs
       ./modules/home-manager/firefox
       ./modules/home-manager/fish
+      ./modules/home-manager/fonts
       ./modules/home-manager/foot
       ./modules/home-manager/gamedev
       ./modules/home-manager/gcloud

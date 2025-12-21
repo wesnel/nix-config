@@ -1,7 +1,6 @@
 {
   config,
   lib,
-  pkgs,
   ...
 }:
 with lib; let
@@ -13,24 +12,9 @@ in {
 
   config = mkIf cfg.enable {
     fonts = {
-      packages = with pkgs;
-        [
-          inter
-          unifont
-        ]
-        ++ builtins.filter attrsets.isDerivation (builtins.attrValues pkgs.nerd-fonts);
-    };
-
-    fonts = {
       enableDefaultPackages = true;
-
-      fontconfig = {
-        defaultFonts = {
-          monospace = [
-            "Iosevka Term"
-          ];
-        };
-      };
+      fontDir.enable = true;
+      fontconfig.enable = false;
     };
   };
 }

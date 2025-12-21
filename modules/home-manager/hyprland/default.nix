@@ -151,21 +151,20 @@ in {
       hyprsunset = {
         enable = true;
 
-        transitions = {
-          sunrise = {
-            calendar = "*-*-* 06:00:00";
-            requests = [
-              ["temperature" "6500"]
-              ["gamma 100"]
-            ];
-          };
+        settings = {
+          max-gamma = 150;
 
-          sunset = {
-            calendar = "*-*-* 19:00:00";
-            requests = [
-              ["temperature" "3500"]
-            ];
-          };
+          profile = [
+            {
+              time = "7:30";
+              identity = true;
+            }
+            {
+              time = "21:00";
+              temperature = 5000;
+              gamma = 0.8;
+            }
+          ];
         };
       };
     };
@@ -174,6 +173,12 @@ in {
       waybar = {
         enable = true;
         systemd.enable = true;
+
+        style = ''
+          * {
+            font-family: Unifont;
+          }
+        '';
       };
 
       hyprlock = {
