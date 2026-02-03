@@ -77,6 +77,7 @@
         sops.gnupg.sshKeyPaths = ["/etc/ssh/ssh_host_ed25519_key"];
       })
 
+      ./modules/home-manager/copilot
       ./modules/home-manager/emacs
       ./modules/home-manager/firefox
       ./modules/home-manager/fish

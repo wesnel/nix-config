@@ -10,6 +10,7 @@
 
     (_: {
       wgn.home = {
+        copilot.enable = true;
         emacs.enable = true;
         fish.enable = true;
         gcloud.enable = true;
