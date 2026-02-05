@@ -22,7 +22,7 @@
       #
       url = "github:nix-community/home-manager";
       #
-      # url = "github:nix-community/home-manager/release-24.05";
+      # url = "github:nix-community/home-manager/release-25.11";
       #
       inputs.nixpkgs.follows = "nixpkgs";
     };
@@ -43,7 +43,11 @@
       #
       url = "github:nixos/nixpkgs/nixos-unstable";
       #
-      # url = "github:nixos/nixpkgs/nixos-24.05";
+      # url = "github:nixos/nixpkgs/nixos-25.11";
+    };
+
+    nixpkgs-stable = {
+      url = "github:nixos/nixpkgs/nixos-25.11";
     };
 
     nur = {
@@ -65,6 +69,7 @@
     mujmap,
     nixos-hardware,
     nixpkgs,
+    nixpkgs-stable,
     nur,
     sops-nix,
   }: let
@@ -273,9 +278,15 @@
               mujmap
               ;
           };
+
+          stable = import nixpkgs-stable {
+            inherit
+              system
+              ;
+          };
         in
           import ./overlays {
-            inherit flakes system;
+            inherit flakes system stable;
           };
       };
 
