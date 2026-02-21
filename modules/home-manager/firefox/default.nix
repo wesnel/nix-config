@@ -2,6 +2,7 @@
   config,
   lib,
   pkgs,
+  username,
   ...
 }:
 with lib; let
@@ -13,10 +14,16 @@ in {
 
   config = mkIf cfg.enable {
     programs = {
-      firefox = {
+      firefox = let
+        pkg =
+          if pkgs.stdenv.isDarwin
+          then makeOverridable ({...}: pkgs.firefox-bin) {}
+          else pkgs.firefox;
+      in {
         enable = true;
+        package = pkg;
 
-        profiles.wgn = {
+        profiles."${username}" = {
           userChrome = ''
             .tab-close-button { display:none !important; }
           '';
