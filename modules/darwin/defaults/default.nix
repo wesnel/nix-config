@@ -11,8 +11,7 @@ in {
   };
 
   config = mkIf cfg.enable {
-    # HACK: This line only exists because I installed nix in a way
-    # that nix-darwin doesn't like.
+    # HACK: This line only exists because I installed nix in a way that nix-darwin doesn't like.
     ids.gids.nixbld = 350;
 
     security.pam.services.sudo_local.touchIdAuth = true;

@@ -1,8 +1,8 @@
 {emacs-config}: let
-  computerName = "shipt";
-  username = "wesley.nelson";
+  computerName = "artifact";
+  username = "wgn";
   homeDirectory = "/Users/${username}";
-  system = "aarch64-darwin";
+  system = "x86_64-darwin";
 
   extraHomeManagerModules = [
     emacs-config.homeManagerModules.default
@@ -11,7 +11,10 @@
       wgn.home = {
         copilot.enable = true;
         emacs.enable = true;
+        firefox.enable = true;
         fish.enable = true;
+        gamedev.enable = true;
+        games.enable = true;
         gcloud.enable = true;
         git.enable = true;
         gnupg.enable = true;
@@ -20,6 +23,12 @@
         pass.enable = true;
         python.enable = true;
         yubikey.enable = true;
+      };
+    })
+
+    (_: {
+      sops = {
+        defaultSopsFile = ../../../secrets/wgn.yaml;
       };
     })
   ];
@@ -40,6 +49,14 @@
         paths.enable = false;
         users.enable = true;
         yubikey.enable = true;
+      };
+    })
+
+    (_: {
+      services = {
+        openssh = {
+          enable = true;
+        };
       };
     })
   ];

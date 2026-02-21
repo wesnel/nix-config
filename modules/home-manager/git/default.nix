@@ -1,7 +1,7 @@
 {
   config,
   lib,
-  pkgs,
+  key,
   ...
 }:
 with lib; let
@@ -12,29 +12,40 @@ in {
   };
 
   config = mkIf cfg.enable {
+    sops = {
+      secrets = {
+        email = {};
+        name = {};
+      };
+
+      templates = {
+        "git.inc" = {
+          content = ''
+            [user]
+              email = "${config.sops.placeholder.email}"
+              name = "${config.sops.placeholder.name}"
+          '';
+        };
+      };
+    };
+
     programs.delta = {
       enable = true;
       enableGitIntegration = true;
     };
 
-    programs.git = let
-      # TODO: Read these from secrets instead of hard-coding them.
-      name = "Wesley Nelson";
-      username = "wgn";
-      host = "wgn.dev";
-    in {
+    programs.git = {
       enable = true;
       lfs.enable = true;
 
+      includes = [
+        {
+          path = config.sops.templates."git.inc".path;
+        }
+        # TODO: Add work-specific git config using includes.*.condition
+      ];
+
       settings = {
-        user = {
-          email = "${username}@${host}";
-
-          inherit
-            name
-            ;
-        };
-
         init = {
           defaultBranch = "main";
         };

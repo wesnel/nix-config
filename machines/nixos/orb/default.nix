@@ -3,7 +3,6 @@
   nixos-hardware,
 }: let
   computerName = "orb";
-  # TODO: Read this from secrets instead of hard-coding it.
   username = "wesley.nelson";
   homeDirectory = "/home/${username}";
   system = "x86_64-linux";

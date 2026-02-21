@@ -85,7 +85,9 @@
       sops-nix.homeManagerModules.sops
 
       (_: {
-        sops.gnupg.sshKeyPaths = ["/etc/ssh/ssh_host_ed25519_key"];
+        sops = {
+          gnupg.sshKeyPaths = ["/etc/ssh/ssh_host_rsa_key"];
+        };
       })
 
       ./modules/home-manager/copilot
@@ -118,7 +120,9 @@
       sops-nix.nixosModules.sops
 
       (_: {
-        sops.gnupg.sshKeyPaths = ["/etc/ssh/ssh_host_ed25519_key"];
+        sops = {
+          gnupg.sshKeyPaths = ["/etc/ssh/ssh_host_rsa_key"];
+        };
       })
 
       ./modules/nixos/emacs

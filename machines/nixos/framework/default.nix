@@ -3,7 +3,6 @@
   emacs-config,
 }: let
   computerName = "framework";
-  # TODO: Read this from secrets instead of hard-coding it.
   username = "wgn";
   homeDirectory = "/home/${username}";
   system = "x86_64-linux";
