@@ -14,6 +14,7 @@ in {
   config = mkIf cfg.enable {
     services.mullvad-vpn = {
       enable = true;
+      enableEarlyBootBlocking = true;
       package = pkgs.mullvad-vpn;
     };
   };
