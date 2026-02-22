@@ -21,6 +21,7 @@
         gnupg.enable = true;
         go.enable = true;
         man.enable = true;
+        ollama.enable = true;
         pass.enable = true;
         python.enable = true;
         slack.enable = true;
