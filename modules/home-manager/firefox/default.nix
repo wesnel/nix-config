@@ -23,6 +23,7 @@ in {
           extensions.packages = with pkgs.nur.repos.rycee.firefox-addons; [
             bitwarden
             kagi-search
+            kagi-translate
             privacy-badger
             pwas-for-firefox
             ublock-origin
