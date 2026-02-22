@@ -25,7 +25,6 @@ in {
             kagi-search
             kagi-translate
             privacy-badger
-            pwas-for-firefox
             ublock-origin
           ];
         };
