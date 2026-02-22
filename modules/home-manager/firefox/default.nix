@@ -14,24 +14,17 @@ in {
 
   config = mkIf cfg.enable {
     programs = {
-      firefox = let
-        pkg =
-          if pkgs.stdenv.isDarwin
-          then makeOverridable ({...}: pkgs.firefox-bin) {}
-          else pkgs.firefox;
-      in {
+      firefox = {
         enable = true;
-        package = pkg;
+        package = mkIf pkgs.stdenv.isDarwin (makeOverridable ({...}: pkgs.zen-browser-bin) {});
+        configPath = mkIf pkgs.stdenv.isDarwin "Library/Application Support/zen";
 
         profiles."${username}" = {
-          userChrome = ''
-            .tab-close-button { display:none !important; }
-          '';
-
           extensions.packages = with pkgs.nur.repos.rycee.firefox-addons; [
             bitwarden
             kagi-search
             privacy-badger
+            pwas-for-firefox
             ublock-origin
           ];
         };
