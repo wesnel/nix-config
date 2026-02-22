@@ -23,6 +23,7 @@
         man.enable = true;
         pass.enable = true;
         python.enable = true;
+        slack.enable = true;
         yubikey.enable = true;
       };
     })

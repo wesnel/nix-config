@@ -110,6 +110,7 @@
       ./modules/home-manager/pass
       ./modules/home-manager/photos
       ./modules/home-manager/python
+      ./modules/home-manager/slack
       ./modules/home-manager/sway
       ./modules/home-manager/video
       ./modules/home-manager/virtualisation
