@@ -19,16 +19,16 @@ in {
       delve
     ];
 
+    # TODO: Remove Shipt-specific configuration from here.
     programs = {
       git.settings = {
         url = {
-          "git@github.com:" = {
-            insteadOf = "https://github.com/";
+          "git@github.com:shipt" = {
+            insteadOf = "https://github.com/shipt";
           };
         };
       };
 
-      # TODO: Remove Shipt-specific configuration from here.
       fish.interactiveShellInit = lib.mkIf config.programs.fish.enable ''
         set -gx GOPRIVATE 'github.com/shipt/*'
 
