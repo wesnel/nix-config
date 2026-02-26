@@ -16,35 +16,59 @@ in {
       launchd.enable = true;
 
       settings = {
+        enable-normalization-flatten-containers = true;
+        enable-normalization-opposite-orientation-for-nested-containers = true;
+
+        accordion-padding = 30;
+
+        default-root-container-layout = "tiles";
+        default-root-container-orientation = "auto";
+        on-focused-monitor-changed = ["move-mouse monitor-lazy-center"];
+
+        automatically-unhide-macos-hidden-apps = false;
+
+        key-mapping.preset = "qwerty";
+
         gaps = {
+          inner.horizontal = 0;
+          inner.vertical = 0;
           outer.left = 8;
           outer.bottom = 8;
           outer.top = 8;
           outer.right = 8;
         };
 
+        workspace-to-monitor-force-assignment = {
+          "0" = "secondary";
+          "1" = "main";
+          "2" = "main";
+          "3" = "main";
+          "4" = "main";
+          "5" = "main";
+          "6" = "main";
+          "7" = "main";
+          "8" = "secondary";
+          "9" = "secondary";
+        };
+
         mode.main.binding = {
-          # See: https://nikitabobko.github.io/AeroSpace/commands#layout
           alt-slash = "layout tiles horizontal vertical";
           alt-comma = "layout accordion horizontal vertical";
 
-          # See: https://nikitabobko.github.io/AeroSpace/commands#focus
           alt-h = "focus left";
           alt-j = "focus down";
           alt-k = "focus up";
           alt-l = "focus right";
 
-          # See: https://nikitabobko.github.io/AeroSpace/commands#move
           alt-shift-h = "move left";
           alt-shift-j = "move down";
           alt-shift-k = "move up";
           alt-shift-l = "move right";
 
-          # See: https://nikitabobko.github.io/AeroSpace/commands#resize
           alt-minus = "resize smart -50";
           alt-equal = "resize smart +50";
 
-          # See: https://nikitabobko.github.io/AeroSpace/commands#workspace
+          alt-0 = "workspace 0";
           alt-1 = "workspace 1";
           alt-2 = "workspace 2";
           alt-3 = "workspace 3";
@@ -55,7 +79,7 @@ in {
           alt-8 = "workspace 8";
           alt-9 = "workspace 9";
 
-          # See: https://nikitabobko.github.io/AeroSpace/commands#move-node-to-workspace
+          alt-shift-0 = "move-node-to-workspace 0";
           alt-shift-1 = "move-node-to-workspace 1";
           alt-shift-2 = "move-node-to-workspace 2";
           alt-shift-3 = "move-node-to-workspace 3";
@@ -66,13 +90,21 @@ in {
           alt-shift-8 = "move-node-to-workspace 8";
           alt-shift-9 = "move-node-to-workspace 9";
 
-          # See: https://nikitabobko.github.io/AeroSpace/commands#workspace-back-and-forth
           alt-tab = "workspace-back-and-forth";
-          # See: https://nikitabobko.github.io/AeroSpace/commands#move-workspace-to-monitor
           alt-shift-tab = "move-workspace-to-monitor --wrap-around next";
-
-          # See: https://nikitabobko.github.io/AeroSpace/commands#mode
           alt-shift-semicolon = "mode service";
+        };
+
+        mode.service.binding = {
+          esc = ["reload-config" "mode main"];
+          r = ["flatten-workspace-tree" "mode main"];
+          f = ["layout floating tiling" "mode main"];
+          backspace = ["close-all-windows-but-current" "mode main"];
+
+          alt-shift-h = ["join-with left" "mode main"];
+          alt-shift-j = ["join-with down" "mode main"];
+          alt-shift-k = ["join-with up" "mode main"];
+          alt-shift-l = ["join-with right" "mode main"];
         };
       };
     };
