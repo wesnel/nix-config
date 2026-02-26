@@ -115,6 +115,7 @@
       ./modules/home-manager/video
       ./modules/home-manager/virtualisation
       ./modules/home-manager/yubikey
+      ./modules/home-manager/zoom
       ./modules/home-manager/zwift
     ];
 

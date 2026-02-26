@@ -26,6 +26,7 @@
         python.enable = true;
         slack.enable = true;
         yubikey.enable = true;
+        zoom.enable = true;
       };
     })
 
