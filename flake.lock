@@ -25,17 +25,18 @@
     "emacs-config": {
       "inputs": {
         "emacs-overlay": "emacs-overlay",
+        "emacs-skills": "emacs-skills",
         "flake-utils": "flake-utils",
         "nixpkgs": [
           "nixpkgs"
         ]
       },
       "locked": {
-        "lastModified": 1772362450,
-        "narHash": "sha256-j4vffSZ8vGHasi0kPvUwCqKl3hE1d+bv/m9jLD5mQEY=",
+        "lastModified": 1772363948,
+        "narHash": "sha256-LmlLFZEnut0lI5R4xczcX1BxYXk31NZbHZhFd+v4Jm4=",
         "owner": "wesnel",
         "repo": "emacs-config",
-        "rev": "57efb4f992280417cb6fd6bfbe188d6108625267",
+        "rev": "81e0f6bdf4a85a3a6513cf31268a794b48f50c27",
         "type": "github"
       },
       "original": {
@@ -63,6 +64,22 @@
       "original": {
         "owner": "nix-community",
         "repo": "emacs-overlay",
+        "type": "github"
+      }
+    },
+    "emacs-skills": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1772216935,
+        "narHash": "sha256-V1vA/4v4xCZT/zApaF1fHDzHrX7G4E1Q4GsJRxzgZBU=",
+        "owner": "xenodium",
+        "repo": "emacs-skills",
+        "rev": "35741fd1bc0e6996f89533b6eee0515adf84d4db",
+        "type": "github"
+      },
+      "original": {
+        "owner": "xenodium",
+        "repo": "emacs-skills",
         "type": "github"
       }
     },
