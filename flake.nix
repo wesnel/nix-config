@@ -112,6 +112,7 @@
       ./modules/home-manager/python
       ./modules/home-manager/slack
       ./modules/home-manager/sway
+      ./modules/home-manager/teams
       ./modules/home-manager/tex
       ./modules/home-manager/video
       ./modules/home-manager/virtualisation
