@@ -25,7 +25,6 @@
         pass.enable = true;
         python.enable = true;
         slack.enable = true;
-        teams.enable = true;
         tex.enable = true;
         yubikey.enable = true;
         zoom.enable = true;
