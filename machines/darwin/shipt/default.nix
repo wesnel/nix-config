@@ -9,7 +9,6 @@
 
     (_: {
       wgn.home = {
-        copilot.enable = true;
         emacs.enable = true;
         fish.enable = true;
         gcloud.enable = true;
@@ -21,6 +20,8 @@
         python.enable = true;
         yubikey.enable = true;
       };
+
+      home.programs.wgn.emacs.copilot.enable = true;
     })
   ];
 

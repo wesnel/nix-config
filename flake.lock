@@ -31,11 +31,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1771925481,
-        "narHash": "sha256-kWgbRenZ7EhQK3dKzi0o38rIjyli3FtsoYz1BVOBsHk=",
+        "lastModified": 1772362450,
+        "narHash": "sha256-j4vffSZ8vGHasi0kPvUwCqKl3hE1d+bv/m9jLD5mQEY=",
         "owner": "wesnel",
         "repo": "emacs-config",
-        "rev": "bcd774601f2e1a6d51741fe7ed61576a118c652e",
+        "rev": "57efb4f992280417cb6fd6bfbe188d6108625267",
         "type": "github"
       },
       "original": {

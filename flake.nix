@@ -91,7 +91,6 @@
       })
 
       ./modules/home-manager/aerospace
-      ./modules/home-manager/copilot
       ./modules/home-manager/emacs
       ./modules/home-manager/firefox
       ./modules/home-manager/fish

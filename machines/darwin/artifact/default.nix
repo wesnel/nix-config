@@ -10,7 +10,6 @@
     (_: {
       wgn.home = {
         aerospace.enable = true;
-        copilot.enable = true;
         emacs.enable = true;
         firefox.enable = true;
         fish.enable = true;
@@ -29,6 +28,8 @@
         yubikey.enable = true;
         zoom.enable = true;
       };
+
+      home.programs.wgn.emacs.claude.enable = true;
     })
 
     (_: {
