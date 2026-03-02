@@ -1,7 +1,7 @@
 {
   config,
   lib,
-  key,
+  pkgs,
   ...
 }:
 with lib; let
@@ -12,6 +12,10 @@ in {
   };
 
   config = mkIf cfg.enable {
+    home.packages = with pkgs; [
+      gh
+    ];
+
     sops = {
       secrets = {
         email = {};
