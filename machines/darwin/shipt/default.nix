@@ -13,6 +13,7 @@
         fish.enable = true;
         gcloud.enable = true;
         git.enable = true;
+        git.shipt.enable = true;
         gnupg.enable = true;
         go.enable = true;
         man.enable = true;

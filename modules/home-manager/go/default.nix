@@ -10,30 +10,38 @@ with lib; let
 in {
   options.wgn.home.go = {
     enable = mkEnableOption "Enables my Go setup for home-manager";
+    shipt.enable = mkEnableOption "Enables my Shipt-specific Go setup for home-manager";
   };
 
   config = mkIf cfg.enable {
     home.packages = with pkgs; [
-      go
-      gopls
       delve
+      go
+      gofumpt
+      golangci-lint
+      gopls
+      govulncheck
     ];
 
     # TODO: Remove Shipt-specific configuration from here.
-    programs = {
-      git.settings = {
-        url = {
-          "git@github.com:shipt" = {
-            insteadOf = "https://github.com/shipt";
-          };
+    programs.git.settings = mkIf cfg.shipt.enable {
+      url = {
+        "git@github.com:shipt" = {
+          insteadOf = "https://github.com/shipt";
         };
       };
-
-      fish.interactiveShellInit = lib.mkIf config.programs.fish.enable ''
-        set -gx GOPRIVATE 'github.com/shipt/*'
-
-        fish_add_path ${homeDirectory}/go/bin
-      '';
     };
+
+    programs.fish.interactiveShellInit = let
+      shipt =
+        if cfg.shipt.enable
+        then ''
+          set -gx GOPRIVATE 'github.com/shipt/*'
+        ''
+        else "";
+    in ''
+      fish_add_path ${homeDirectory}/go/bin
+      ${shipt}
+    '';
   };
 }
