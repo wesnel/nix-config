@@ -1,6 +1,7 @@
 {
   lib,
   config,
+  pkgs,
   key,
   ...
 }:
@@ -12,6 +13,10 @@ in {
   };
 
   config = mkIf cfg.enable {
+    home.packages = with pkgs; [
+      yubikey-manager
+    ];
+
     programs = {
       git.signing = lib.mkIf config.programs.git.enable {
         signByDefault = true;
