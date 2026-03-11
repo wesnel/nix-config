@@ -15,7 +15,6 @@
         fish.enable = true;
         gamedev.enable = true;
         games.enable = true;
-        gcloud.enable = true;
         git.enable = true;
         gnupg.enable = true;
         go.enable = true;
@@ -30,12 +29,6 @@
       };
 
       home.programs.wgn.emacs.claude.enable = true;
-    })
-
-    (_: {
-      sops = {
-        defaultSopsFile = ../../../secrets/wgn.yaml;
-      };
     })
   ];
 

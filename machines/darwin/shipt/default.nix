@@ -9,13 +9,14 @@
 
     (_: {
       wgn.home = {
+        aerospace.enable = true;
         emacs.enable = true;
         fish.enable = true;
         gcloud.enable = true;
         git.enable = true;
-        git.shipt.enable = true;
         gnupg.enable = true;
         go.enable = true;
+        go.shipt.enable = true;
         man.enable = true;
         pass.enable = true;
         python.enable = true;
@@ -42,6 +43,14 @@
         paths.enable = false;
         users.enable = true;
         yubikey.enable = true;
+      };
+    })
+
+    (_: {
+      services = {
+        openssh = {
+          enable = true;
+        };
       };
     })
   ];

@@ -86,6 +86,7 @@
 
       (_: {
         sops = {
+          defaultSopsFile = ./secrets/wgn.yaml;
           gnupg.sshKeyPaths = ["/etc/ssh/ssh_host_rsa_key"];
         };
       })

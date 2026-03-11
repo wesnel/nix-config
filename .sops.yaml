@@ -1,9 +1,11 @@
 keys:
   - &user_wgn "0xA776D2AD099E8BC0"
-  - &machine_artifact e330df159175bfd253a83db6fb4a96ef682440d9
+  - &machine_artifact "e330df159175bfd253a83db6fb4a96ef682440d9"
+  - &machine_shipt "c56666da854b90c1c4fa3de2089ea4f8f38b1960"
 creation_rules:
   - path_regex: secrets/[^/]+\.(yaml|json|env|ini)$
     key_groups:
       - pgp:
         - *user_wgn
         - *machine_artifact
+        - *machine_shipt

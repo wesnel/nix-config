@@ -37,6 +37,46 @@
 └── README.md
 ```
 
+# adding new systems
+
+## secrets
+
+You will need to configure your system with all necessary secrets via [sops-nix](https://github.com/Mic92/sops-nix).
+
+### generate host key
+
+Generate an SSH key if one does not already exist:
+
+``` bash
+sudo ssh-keygen -t rsa -b 4096 -f /etc/ssh/ssh_host_rsa_key -N ""
+```
+
+Next, import it into GPG:
+
+``` bash
+nix-shell -p gnupg -p ssh-to-pgp --run "sudo ssh-to-pgp -private-key -i /etc/ssh/ssh_host_rsa_key | gpg --import --quiet"
+```
+
+This will import the key and also print the key fingerprint to `stdout`.
+
+### add public key to git repo
+
+Let's assume that the fingerprint from the last step is `c56666da854b90c1c4fa3de2089ea4f8f38b1960`. Run the following in the root of the repo:
+
+``` bash
+FINGERPRINT=c56666da854b90c1c4fa3de2089ea4f8f38b1960 gpg --export $FINGERPRINT > keys/hosts/$FINGERPRINT.asc
+```
+
+### add host key to sops config
+
+Add the key fingerprint to `.sops.yaml` by following the pattern set in that file for other machines.
+
+### update keys with new host
+
+``` bash
+nix-shell --run "sops updatekeys secrets/wgn.yaml"
+```
+
 # updating systems
 
 ## nixOS
