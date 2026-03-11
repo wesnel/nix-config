@@ -32,6 +32,10 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    mac-app-util = {
+      url = "github:hraban/mac-app-util";
+    };
+
     mujmap = {
       url = "github:wesnel/mujmap/wesnel/add-darwin-to-flake";
     };
@@ -72,6 +76,7 @@
     firefox-overlay,
     flake-utils,
     home-manager,
+    mac-app-util,
     mujmap,
     nixos-hardware,
     nixpkgs,
@@ -90,6 +95,8 @@
           gnupg.sshKeyPaths = ["/etc/ssh/ssh_host_rsa_key"];
         };
       })
+
+      mac-app-util.homeManagerModules.default
 
       ./modules/home-manager/aerospace
       ./modules/home-manager/emacs
@@ -148,6 +155,8 @@
     ];
 
     darwinModules = [
+      mac-app-util.darwinModules.default
+
       ./modules/darwin/defaults
       ./modules/darwin/emacs
       ./modules/darwin/fish
