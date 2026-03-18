@@ -161,7 +161,6 @@
       ./modules/darwin/emacs
       ./modules/darwin/fish
       ./modules/darwin/fonts
-      ./modules/darwin/gnupg
       ./modules/darwin/homebrew
       ./modules/darwin/networking
       ./modules/darwin/nix

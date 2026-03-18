@@ -35,7 +35,6 @@
         emacs.enable = true;
         fish.enable = true;
         fonts.enable = true;
-        gnupg.enable = true;
         networking.enable = true;
         nix.enable = true;
         paths.enable = false;

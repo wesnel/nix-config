@@ -2,3 +2,4 @@ result
 .DS_Store
 *.ovpn
 .direnv
+/.agent-shell/

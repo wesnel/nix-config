@@ -41,7 +41,6 @@
         emacs.enable = true;
         fish.enable = true;
         fonts.enable = true;
-        gnupg.enable = true;
         homebrew.enable = true;
         networking.enable = true;
         nix.enable = true;
