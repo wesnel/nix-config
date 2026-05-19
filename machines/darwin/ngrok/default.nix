@@ -1,6 +1,6 @@
 {emacs-config}: let
-  computerName = "shipt";
-  username = "wesley.nelson";
+  computerName = "ngrok";
+  username = "wgn";
   homeDirectory = "/Users/${username}";
   system = "aarch64-darwin";
 
@@ -11,18 +11,16 @@
       wgn.home = {
         emacs.enable = true;
         fish.enable = true;
-        gcloud.enable = true;
         git.enable = true;
         gnupg.enable = true;
         go.enable = true;
-        go.shipt.enable = true;
         man.enable = true;
         pass.enable = true;
         python.enable = true;
         yubikey.enable = true;
       };
 
-      home.programs.wgn.emacs.copilot.enable = true;
+      home.programs.wgn.emacs.claude.enable = true;
     })
   ];
 

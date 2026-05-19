@@ -102,7 +102,7 @@ This is intended to be used in an [OrbStack](https://orbstack.dev) virtual machi
 Assuming you're in this directory:
 
 ```bash
-darwin-rebuild switch --flake '.#shipt'
+darwin-rebuild switch --flake '.#artifact'
 ```
 
 ## home-manager
@@ -110,7 +110,7 @@ darwin-rebuild switch --flake '.#shipt'
 Assuming you're in this directory:
 
 ```bash
-home-manager switch --flake '.#shipt'
+home-manager switch --flake '.#artifact'
 ```
 
 # troubleshooting

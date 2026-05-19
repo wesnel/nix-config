@@ -1,4 +1,4 @@
 args: {
   artifact = import ./artifact args;
-  shipt = import ./shipt args;
+  ngrok = import ./ngrok args;
 }

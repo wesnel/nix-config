@@ -1,7 +1,6 @@
 {
   flakes,
   system,
-  stable,
 }: final: prev: {
   github-copilot-cli = prev.github-copilot-cli.overrideAttrs (_old: {
     postInstall = ''
@@ -45,14 +44,6 @@
     # FIXME: These tests seem to just be failing due to an upstream formatting issue.
     NOTMUCH_SKIP_TESTS = "T310-emacs.62 T315-emacs-tagging.8 T315-emacs-tagging.9";
   });
-
-  poetry = stable.poetry;
-
-  python3Packages =
-    prev.python3Packages
-    // {
-      poetry = stable.python3Packages.poetry;
-    };
 
   zwift-offline-image = let
     imageDigest = "sha256:74d461d0271c1b11520a3d8aa8973dc9254fcecd2ef07c7ed53c618a741279b0";

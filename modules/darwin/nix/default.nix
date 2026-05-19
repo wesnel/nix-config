@@ -19,12 +19,7 @@ in {
     };
 
     nix = {
-      package = pkgs.nixVersions.stable;
-
-      extraOptions = ''
-        experimental-features = nix-command flakes
-        show-trace = true
-      '';
+      settings.experimental-features = "nix-command flakes";
     };
   };
 }

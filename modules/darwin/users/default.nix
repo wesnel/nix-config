@@ -16,8 +16,13 @@ in {
     system.primaryUser = username;
 
     users = {
+      knownUsers = [
+        "${username}"
+      ];
+
       users.${username} = {
         home = homeDirectory;
+        uid = 501;
       };
     };
   };

@@ -20,5 +20,9 @@ in {
       KEYID = key;
       GPG_TTY = "$(tty)";
     };
+
+    programs.fish.interactiveShellInit = mkIf config.programs.fish.enable ''
+      gpg --card-status > /dev/null
+    '';
   };
 }

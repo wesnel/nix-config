@@ -3,7 +3,7 @@
 
   inputs = {
     nix-darwin = {
-      url = "github:lnl7/nix-darwin";
+      url = "github:lnl7/nix-darwin/master";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
@@ -55,10 +55,6 @@
       # url = "github:nixos/nixpkgs/nixos-25.11";
     };
 
-    nixpkgs-stable = {
-      url = "github:nixos/nixpkgs/nixos-25.11";
-    };
-
     nur = {
       url = "github:nix-community/NUR";
     };
@@ -80,7 +76,6 @@
     mujmap,
     nixos-hardware,
     nixpkgs,
-    nixpkgs-stable,
     nur,
     sops-nix,
   }: let
@@ -253,7 +248,8 @@
           ++ extraDarwinModules
           ++ [
             (_: {
-              system.stateVersion = 4;
+              system.configurationRevision = self.rev or self.dirtyRev or null;
+              system.stateVersion = 6;
             })
 
             (_: {
@@ -302,15 +298,9 @@
               mujmap
               ;
           };
-
-          stable = import nixpkgs-stable {
-            inherit
-              system
-              ;
-          };
         in
           import ./overlays {
-            inherit flakes system stable;
+            inherit flakes system;
           };
       };
 
