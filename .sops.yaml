@@ -1,11 +1,10 @@
 keys:
   - &user_wgn "0xA776D2AD099E8BC0"
-  - &machine_artifact "e330df159175bfd253a83db6fb4a96ef682440d9"
-  - &machine_ngrok "85b6f2cd90fdf0f1a59c10bb63f0d30609521765"
+  - &machine_ngrok "age18x562mzy0377e2d9y28l4xeh7nqpyrt26ahsmrs9l0mueqperfqsx7eutq"
 creation_rules:
   - path_regex: secrets/[^/]+\.(yaml|json|env|ini)$
     key_groups:
-      - pgp:
-          - *user_wgn
-          - *machine_artifact
+      - age:
           - *machine_ngrok
+        pgp:
+          - *user_wgn

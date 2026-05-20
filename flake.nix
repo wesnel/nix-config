@@ -81,15 +81,23 @@
   }: let
     key = "0xA776D2AD099E8BC0";
 
+    sops = {homeDirectory, ...}: {
+      sops = {
+        defaultSopsFile = ./secrets/wgn.yaml;
+        defaultSopsFormat = "yaml";
+
+        age = {
+          # This is using an age key that is expected to already be in the filesystem
+          keyFile = "${homeDirectory}/.config/sops-nix/key.txt";
+          # This will generate a new key if the key specified above does not exist
+          generateKey = true;
+        };
+      };
+    };
+
     homeManagerModules = [
       sops-nix.homeManagerModules.sops
-
-      (_: {
-        sops = {
-          defaultSopsFile = ./secrets/wgn.yaml;
-          gnupg.sshKeyPaths = ["/etc/ssh/ssh_host_rsa_key"];
-        };
-      })
+      sops
 
       mac-app-util.homeManagerModules.default
 
@@ -124,12 +132,7 @@
 
     nixosModules = [
       sops-nix.nixosModules.sops
-
-      (_: {
-        sops = {
-          gnupg.sshKeyPaths = ["/etc/ssh/ssh_host_rsa_key"];
-        };
-      })
+      sops
 
       ./modules/nixos/emacs
       ./modules/nixos/fish
