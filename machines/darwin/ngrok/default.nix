@@ -32,11 +32,25 @@
 
         templates = {
           "ssh.inc" = {
+            # NOTE: In order to get RemoteForward to work, first
+            # ensure that the user ID matches what's on the remote.
+            # Then, ensure that the remote /etc/sshd_config includes:
+            #
+            #   StreamLocalBindUnlink yes
+            #
+            # and that afterwards you have called:
+            #
+            #   sudo systemctl reload sshd
+            #
+            # Then you will need to manually import your public key on
+            # the remote.
             content = ''
               Host devbox devbox-*
                   HostName ${config.sops.placeholder.devbox-host}
                   User ${config.sops.placeholder.devbox-user}
                   ForwardAgent yes
+                  AddKeysToAgent yes
+                  RemoteForward /run/user/1000/gnupg/S.gpg-agent ${homeDirectory}/.gnupg/S.gpg-agent.extra
             '';
           };
         };
