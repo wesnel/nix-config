@@ -9,6 +9,7 @@
 
     (_: {
       wgn.home = {
+        aerospace.enable = true;
         emacs.enable = true;
         fish.enable = true;
         git.enable = true;
