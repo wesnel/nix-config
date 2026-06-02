@@ -21,7 +21,10 @@
         yubikey.enable = true;
       };
 
-      home.programs.wgn.emacs.claude.enable = true;
+      home.programs.wgn.emacs = {
+        claude.enable = true;
+        codex.enable = true;
+      };
     })
 
     ({config, ...}: {
