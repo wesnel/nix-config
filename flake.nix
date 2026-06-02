@@ -114,6 +114,7 @@
       ./modules/home-manager/gnupg
       ./modules/home-manager/go
       ./modules/home-manager/hyprland
+      ./modules/home-manager/iterm
       ./modules/home-manager/man
       ./modules/home-manager/music
       ./modules/home-manager/ollama

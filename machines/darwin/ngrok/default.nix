@@ -15,6 +15,7 @@
         git.enable = true;
         gnupg.enable = true;
         go.enable = true;
+        iterm.enable = true;
         man.enable = true;
         pass.enable = true;
         python.enable = true;
