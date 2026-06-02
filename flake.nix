@@ -150,6 +150,7 @@
       ./modules/nixos/virtualisation
       ./modules/nixos/wayland
       ./modules/nixos/yubikey
+      ./modules/nixos/zsa
       ./modules/nixos/zwift
     ];
 
@@ -200,6 +201,12 @@
 
             (_: {
               nixpkgs.config.allowUnfree = true;
+            })
+
+            (_: {
+              wgn.nixos = {
+                zsa.enable = true;
+              };
             })
           ]
           ++ [
