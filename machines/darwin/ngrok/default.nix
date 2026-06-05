@@ -70,6 +70,83 @@
         ];
       };
     })
+
+    ({
+      config,
+      lib,
+      ...
+    }: {
+      sops = {
+        secrets = {
+          email-work = {};
+        };
+
+        templates = {
+          "secrets.fish" = {
+            content = ''
+              set -l __authinfo_elisp '
+              (progn
+                (require (quote auth-source))
+                (require (quote cl-lib))
+                (require (quote rx))
+                (let* ((specs
+                        (quote
+                         (("NGROK_AUTHTOKEN" :host "ngrok.com" :user "${config.sops.placeholder.email-work}"))))
+                       (fish-quote
+                        (lambda (s)
+                          (concat
+                           (string #x27)
+                           (replace-regexp-in-string
+                            (string #x27) (string #x27 #x5c #x27 #x27)
+                            (format "%s" s)
+                            t t)
+                           (string #x27)))))
+                  (intern
+                   (mapconcat
+                    (lambda (spec)
+                      (let* ((env (car spec))
+                             (query (cdr spec))
+                             (auth
+                              (car
+                               (apply
+                                (function auth-source-search)
+                                (append query (list :max 1 :require (list :secret))))))
+                             (secret (and auth (auth-info-password auth))))
+                        (unless (string-match-p
+                                 (rx string-start (or alpha "_") (* (or alnum "_")) string-end)
+                                 env)
+                          (error "Invalid env var name: %s" env))
+                        (unless secret
+                          (error "No auth-source secret for %s" env))
+                        (format "set -gx %s %s" env (funcall fish-quote secret))))
+                    specs
+                    "; "))))
+              '
+
+              set -l __authinfo_fish (
+                  emacsclient \
+                      --socket-name="$HOME/.emacs.d/var/server/socket/server" \
+                      --alternate-editor=false \
+                      --eval "$__authinfo_elisp" \
+                      2>/dev/null
+              )
+              set -l __authinfo_status $status
+
+              if test $__authinfo_status -eq 0; and test -n "$__authinfo_fish"; and test "$__authinfo_fish" != nil
+                  set -l __authinfo_script (string unescape --style=script -- "$__authinfo_fish")
+                  eval "$__authinfo_script"
+              end
+
+              set -e __authinfo_elisp __authinfo_fish __authinfo_status __authinfo_script
+            '';
+          };
+        };
+      };
+
+      programs.fish.interactiveShellInit = lib.mkAfter ''
+        source ${config.sops.templates."secrets.fish".path}
+      '';
+    })
   ];
 
   extraDarwinModules = [
