@@ -12,6 +12,7 @@
         aerospace.enable = true;
         emacs.enable = true;
         fish.enable = true;
+        ghostty.enable = true;
         git.enable = true;
         gnupg.enable = true;
         go.enable = true;
@@ -189,6 +190,12 @@
           enable = true;
         };
       };
+    })
+
+    (_: {
+      homebrew.casks = [
+        "ghostty"
+      ];
     })
 
     (_: {
