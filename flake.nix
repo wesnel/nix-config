@@ -118,6 +118,7 @@
       ./modules/home-manager/hyprland
       ./modules/home-manager/iterm
       ./modules/home-manager/man
+      ./modules/home-manager/mosh
       ./modules/home-manager/music
       ./modules/home-manager/ollama
       ./modules/home-manager/pass
