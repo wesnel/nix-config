@@ -110,6 +110,7 @@
       ./modules/home-manager/gamedev
       ./modules/home-manager/games
       ./modules/home-manager/gcloud
+      ./modules/home-manager/ghostty
       ./modules/home-manager/git
       ./modules/home-manager/gnupg
       ./modules/home-manager/go

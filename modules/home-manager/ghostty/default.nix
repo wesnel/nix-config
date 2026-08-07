@@ -1,6 +1,7 @@
 {
   config,
   lib,
+  pkgs,
   ...
 }:
 with lib; let
@@ -14,6 +15,15 @@ in {
     programs = {
       ghostty = {
         enable = true;
+
+        # Ghostty is not packaged for Darwin in nixpkgs; on macOS the app
+        # is expected to be installed out-of-band (e.g. via Homebrew) and
+        # home-manager only manages the config file.
+        package = mkDefault (
+          if pkgs.stdenv.isDarwin
+          then null
+          else pkgs.ghostty
+        );
 
         settings = {
           "desktop-notifications" = true;
