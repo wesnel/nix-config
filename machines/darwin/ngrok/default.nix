@@ -55,7 +55,20 @@
                   User ${config.sops.placeholder.devbox-user}
                   ForwardAgent yes
                   AddKeysToAgent yes
+                  ControlMaster auto
+                  ControlPath ~/.ssh/control/%r@%h:%p
+                  ControlPersist yes
+
+              # Used only by the devbox-agent-forward launchd service to
+              # maintain RemoteForward sockets independently of Mosh sessions.
+              Host devbox-agent
+                  HostName ${config.sops.placeholder.devbox-host}
+                  User ${config.sops.placeholder.devbox-user}
+                  ControlMaster no
+                  ServerAliveInterval 30
+                  ServerAliveCountMax 3
                   RemoteForward /run/user/1000/gnupg/S.gpg-agent ${homeDirectory}/.gnupg/S.gpg-agent.extra
+                  RemoteForward /run/user/1000/gnupg/S.gpg-agent.ssh ${homeDirectory}/.gnupg/S.gpg-agent.ssh
             '';
           };
         };
@@ -69,6 +82,8 @@
           "${config.sops.templates."ssh.inc".path}"
         ];
       };
+
+      home.file.".ssh/control/.keep".text = "";
     })
 
     ({
@@ -91,7 +106,8 @@
                 (require (quote rx))
                 (let* ((specs
                         (quote
-                         (("NGROK_AUTHTOKEN" :host "ngrok.com" :user "${config.sops.placeholder.email-work}"))))
+                         (("NGROK_AUTHTOKEN_PROD" :host "ngrok.com" :user "${config.sops.placeholder.email-work}")
+                          ("NGROK_AUTHTOKEN" :host "ngrok.com.lan" :user "all@example.com"))))
                        (fish-quote
                         (lambda (s)
                           (concat
@@ -171,6 +187,21 @@
       services = {
         openssh = {
           enable = true;
+        };
+      };
+    })
+
+    (_: {
+      launchd.user.agents.devbox-agent-forward = {
+        serviceConfig = {
+          ProgramArguments = [ "/usr/bin/ssh" "-N" "devbox-agent" ];
+          EnvironmentVariables = {
+            SSH_AUTH_SOCK = "${homeDirectory}/.gnupg/S.gpg-agent.ssh";
+          };
+          KeepAlive = true;
+          ThrottleInterval = 30;
+          StandardErrorPath = "/tmp/devbox-agent-forward.log";
+          StandardOutPath = "/tmp/devbox-agent-forward.log";
         };
       };
     })
