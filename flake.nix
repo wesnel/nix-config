@@ -300,6 +300,56 @@
         emacs-config
         ;
     };
+
+    buildHomeManagerConfiguration = args @ {
+      computerName,
+      username,
+      homeDirectory,
+      key,
+      system,
+      extraHomeManagerModules,
+    }: homeManagerModules: overlay:
+      home-manager.lib.homeManagerConfiguration {
+        pkgs = import nixpkgs {
+          inherit system;
+
+          overlays = [
+            nur.overlays.default
+            emacs-config.overlays.default
+            overlay
+          ];
+
+          config = {
+            allowUnfree = true;
+          };
+        };
+
+        modules =
+          homeManagerModules
+          ++ extraHomeManagerModules
+          ++ [
+            ({lib, ...}: {
+              home = {
+                inherit
+                  username
+                  homeDirectory
+                  ;
+
+                stateVersion = lib.mkDefault "22.05";
+              };
+
+              programs.home-manager.enable = true;
+            })
+          ];
+
+        extraSpecialArgs = args;
+      };
+
+    homeManagerSystems = import ./machines/home-manager {
+      inherit
+        emacs-config
+        ;
+    };
   in
     flake-utils.lib.eachDefaultSystemPassThrough (system: rec {
       overlays = {
@@ -367,11 +417,28 @@
           overlays.default;
       in (builtins.mapAttrs op nixosSystems);
 
-      inherit
-        darwinModules
-        homeManagerModules
-        nixosModules
-        ;
+      homeConfigurations = let
+        op = _: {
+          computerName,
+          username,
+          homeDirectory,
+          system,
+          extraHomeManagerModules,
+        }:
+          buildHomeManagerConfiguration
+          {
+            inherit
+              computerName
+              username
+              homeDirectory
+              key
+              system
+              extraHomeManagerModules
+              ;
+          }
+          homeManagerModules
+          overlays.default;
+      in (builtins.mapAttrs op homeManagerSystems);
     })
     // flake-utils.lib.eachDefaultSystem (system: let
       pkgs = import nixpkgs {
