@@ -84,12 +84,10 @@ in {
         hostname
       ];
 
-      text = let
-        script = builtins.readFile "${pkgs.zwift-script}/bin/zwift.sh";
-      in ''
+      text = ''
         docker image load -i ${pkgs.zwift-image}
 
-        ${script}
+        exec ${pkgs.zwift-script}/bin/zwift.sh "$@"
       '';
     };
   in
