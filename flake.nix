@@ -114,6 +114,7 @@
       ./modules/home-manager/git
       ./modules/home-manager/gnupg
       ./modules/home-manager/go
+      ./modules/home-manager/helix
       ./modules/home-manager/hyprland
       ./modules/home-manager/iterm
       ./modules/home-manager/man
