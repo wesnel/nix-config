@@ -2,6 +2,7 @@
   config,
   lib,
   pkgs,
+  key,
   ...
 }:
 with lib; let
@@ -50,8 +51,20 @@ in {
       ];
 
       settings = {
+        commit = {
+          gpgsign = true;
+        };
+
         init = {
           defaultBranch = "main";
+        };
+
+        tag = {
+          gpgsign = true;
+        };
+
+        user = {
+          signingkey = key;
         };
       };
     };
