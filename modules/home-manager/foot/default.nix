@@ -16,7 +16,7 @@ in {
         enable = true;
 
         settings = {
-          colors = {
+          colors-dark = {
             foreground = "b4abac";
             background = "090a18";
             regular0 = "090a18"; # black
@@ -35,10 +35,6 @@ in {
             bright5 = "e08bd6"; # bright magenta
             bright6 = "2cbab6"; # bright cyan
             bright7 = "b4abac"; # bright white
-          };
-
-          cursor = {
-            color = "090a18 b4abac";
           };
         };
       };

@@ -20,7 +20,7 @@ in {
         # is expected to be installed out-of-band (e.g. via Homebrew) and
         # home-manager only manages the config file.
         package = mkDefault (
-          if pkgs.stdenv.isDarwin
+          if pkgs.stdenv.hostPlatform.isDarwin
           then null
           else pkgs.ghostty
         );
@@ -33,6 +33,8 @@ in {
           "copy-on-select" = "clipboard";
           "window-save-state" = "always";
           "confirm-close-surface" = false;
+          "font-size" = 10;
+          "font-family" = "ComicShannsMono Nerd Font Mono";
         };
       };
     };

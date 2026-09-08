@@ -15,15 +15,23 @@
         emacs.enable = true;
         firefox.enable = true;
         fish.enable = true;
-        foot.enable = true;
+        fonts.enable = true;
+        ghostty.enable = true;
         git.enable = true;
         gnupg.enable = true;
+        go.enable = true;
         man.enable = true;
         music.enable = true;
         pass.enable = true;
         photos.enable = true;
+        python.enable = true;
         sway.enable = true;
         yubikey.enable = true;
+      };
+
+      home.programs.wgn.emacs = {
+        claude.enable = true;
+        codex.enable = true;
       };
     })
 
@@ -47,6 +55,25 @@
         wayland.enable = true;
         yubikey.enable = true;
       };
+    })
+
+    # HACK: Workaround for x230 not supporting the minimum OpenGL version for ghostty:
+    (_: {
+      nixpkgs.overlays = [
+        (final: prev: {
+          ghostty = prev.ghostty.overrideAttrs (old: {
+            nativeBuildInputs = (old.nativeBuildInputs or []) ++ [prev.makeWrapper];
+
+            postFixup =
+              (old.postFixup or "")
+              + ''
+                wrapProgram $out/bin/ghostty \
+                  --set MESA_GL_VERSION_OVERRIDE '4.3' \
+                  --set MESA_GLSL_VERSION_OVERRIDE '430'
+              '';
+          });
+        })
+      ];
     })
 
     ({
@@ -153,28 +180,26 @@
         cpu.intel.updateMicrocode = true;
         enableRedistributableFirmware = true;
         graphics.enable = true;
-
-        pulseaudio = {
-          enable = true;
-          support32Bit = true;
-          package = pkgs.pulseaudioFull;
-
-          extraConfig = ''
-            # automatically switch to newly-connected devices
-            load-module module-switch-on-connect
-          '';
-        };
       };
 
       powerManagement.powertop.enable = true;
 
+      security = {
+        pam.services.sudo.fprintAuth = true;
+      };
+
       services = {
         acpid.enable = true;
         blueman.enable = true;
+        fprintd.enable = true;
 
         logind = {
-          lidSwitch = "suspend";
-          lidSwitchDocked = "suspend";
+          settings = {
+            Login = {
+              HandleLidSwitch = "suspend";
+              HandleLidSwitchDocked = "suspend";
+            };
+          };
         };
 
         openssh = {
@@ -186,15 +211,29 @@
         };
 
         printing.enable = true;
+        pipewire.enable = false;
+
+        pulseaudio = {
+          enable = true;
+          support32Bit = true;
+          package = pkgs.pulseaudioFull;
+
+          extraConfig = ''
+            # automatically switch to newly-connected devices
+            load-module module-switch-on-connect
+          '';
+        };
 
         tlp = {
           enable = true;
 
           settings = {
+            SATA_LINKPWR_ON_AC = "max_performance";
             SATA_LINKPWR_ON_BAT = "max_performance";
             STOP_CHARGE_THRESH_BAT0 = 80;
-            CPU_SCALING_GOVERNOR_ON_BAT = "powersave";
-            ENERGY_PERF_POLICY_ON_BAT = "powersave";
+            CPU_SCSALING_GOVERNOR_ON_AC = "performance";
+            CPU_SCALING_GOVERNOR_ON_BAT = "schedutil";
+            CPU_SCALING_GOVERNOR_ON_SAV = "schedutil";
           };
         };
 

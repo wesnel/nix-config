@@ -16,7 +16,7 @@ in {
       [
         forge-mtg
       ]
-      ++ (optionals stdenv.isLinux [
+      ++ (optionals stdenv.hostPlatform.isLinux [
         (dwarf-fortress-packages.dwarf-fortress-full.override (_: {
           enableDFHack = true;
         }))

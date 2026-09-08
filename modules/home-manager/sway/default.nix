@@ -18,6 +18,12 @@ in {
       wl-clipboard
     ];
 
+    programs = {
+      waybar = {
+        enable = true;
+      };
+    };
+
     services = {
       gammastep = {
         enable = true;
@@ -41,13 +47,26 @@ in {
 
       config = let
         background-image = "${config.home.homeDirectory}/.background-image";
+
+        foot = config.programs.foot;
+        ghostty = config.programs.ghostty;
+
+        terminal =
+          if ghostty.enable
+          then "${ghostty.package}/bin/ghostty"
+          else if foot.enable
+          then "${foot.package}/bin/foot"
+          else null;
       in {
-        menu = let
-          foot = config.programs.foot.package;
-        in
-          lib.mkIf config.programs.foot.enable "exec ${foot}/bin/foot -a 'launcher' bash -c 'compgen -c | sort -u | ${pkgs.fzf}/bin/fzf | xargs -r swaymsg -t command exec'";
+        menu = "${pkgs.albert}/bin/albert toggle";
         modifier = "Mod4";
-        terminal = lib.mkIf config.programs.foot.enable "foot";
+        terminal = lib.mkIf (terminal != null) terminal;
+
+        bars = [
+          {
+            command = "${config.programs.waybar.package}/bin/waybar";
+          }
+        ];
 
         input = {
           "*" = {
@@ -72,12 +91,12 @@ in {
                   -i ${background-image}'
             '';
           }
+          {
+            always = true;
+            command = "${pkgs.albert}/bin/albert";
+          }
         ];
       };
-
-      extraConfig = ''
-        for_window [app_id="^launcher$"] floating enable, border none, resize set width 25 ppt height 100 ppt, move position 0 px 0 px
-      '';
 
       extraSessionCommands = ''
         export MOZ_ENABLE_WAYLAND=1

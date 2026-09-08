@@ -24,10 +24,10 @@
           "XF86MonBrightnessDown" = "exec --no-startup-id ${pkgs.brightnessctl}/bin/brightnessctl set 5%-";
 
           # media
-          "XF86AudioPlay" = "exec --no-startup-id ${pkgs.mpc_cli}/bin/mpc toggle";
-          "XF86AudioPause" = "exec --no-startup-id ${pkgs.mpc_cli}/bin/mpc toggle";
-          "XF86AudioNext" = "exec --no-startup-id ${pkgs.mpc_cli}/bin/mpc next";
-          "XF86AudioPrev" = "exec --no-startup-id ${pkgs.mpc_cli}/bin/mpc prev";
+          "XF86AudioPlay" = "exec --no-startup-id ${pkgs.mpc}/bin/mpc toggle";
+          "XF86AudioPause" = "exec --no-startup-id ${pkgs.mpc}/bin/mpc toggle";
+          "XF86AudioNext" = "exec --no-startup-id ${pkgs.mpc}/bin/mpc next";
+          "XF86AudioPrev" = "exec --no-startup-id ${pkgs.mpc}/bin/mpc prev";
 
           # include workspace 10
           "${modifier}+0" = "workspace number 10";
