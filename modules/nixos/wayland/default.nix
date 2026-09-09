@@ -12,12 +12,7 @@ in {
   };
 
   config = mkIf cfg.enable {
-    # swaywm/sway/issues/2773
-    security.pam.services.swaylock = {
-      text = ''
-        auth include login
-      '';
-    };
+    security.pam.services.swaylock = {};
 
     services.displayManager.sessionPackages = with pkgs; [
       sway

@@ -184,10 +184,6 @@
 
       powerManagement.powertop.enable = true;
 
-      security = {
-        pam.services.sudo.fprintAuth = true;
-      };
-
       services = {
         acpid.enable = true;
         blueman.enable = true;

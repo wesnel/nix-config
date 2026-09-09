@@ -19,6 +19,11 @@ in {
     ];
 
     programs = {
+      swaylock = {
+        enable = true;
+        settings = {};
+      };
+
       waybar = {
         enable = true;
       };

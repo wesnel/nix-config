@@ -11,6 +11,8 @@ in {
   };
 
   config = mkIf cfg.enable {
+    security.pam.services.sddm = {};
+
     services.displayManager.sddm = {
       enable = true;
       wayland.enable = true;
