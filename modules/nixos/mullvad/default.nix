@@ -1,7 +1,6 @@
 {
   config,
   lib,
-  pkgs,
   ...
 }:
 with lib; let
@@ -15,7 +14,12 @@ in {
     services.mullvad-vpn = {
       enable = true;
       enableEarlyBootBlocking = true;
-      package = pkgs.mullvad-vpn;
+
+      # The daemon and the desktop app are separate packages; `package` holds
+      # the daemon, so the app has to be asked for on its own.
+      gui = {
+        enable = true;
+      };
     };
   };
 }
