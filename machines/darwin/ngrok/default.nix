@@ -10,13 +10,14 @@
     (_: {
       wgn.home = {
         aerospace.enable = true;
+        claude.enable = true;
         emacs.enable = true;
         fish.enable = true;
+        fonts.enable = true;
         ghostty.enable = true;
         git.enable = true;
         gnupg.enable = true;
         go.enable = true;
-        iterm.enable = true;
         man.enable = true;
         pass.enable = true;
         python.enable = true;
