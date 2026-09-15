@@ -8,7 +8,6 @@ in
     SOPS_AGE_KEY_FILE = "~/.config/sops-nix/key.txt";
 
     sopsPGPKeyDirs = [
-      "${toString ./.}/keys/hosts"
       "${toString ./.}/keys/users"
     ];
 

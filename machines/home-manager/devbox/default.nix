@@ -4,6 +4,16 @@
   homeDirectory = "/home/${username}";
   system = "x86_64-linux";
 
+  deploy = {
+    # Resolved through the `Host devbox` block that the ngrok machine writes
+    # into ~/.ssh/config, which keeps the real hostname in secrets/wgn.yaml.
+    hostname = "devbox";
+
+    # This machine is deployed from an aarch64-darwin one, which cannot build
+    # the x86_64-linux closure it is pushing.
+    remoteBuild = true;
+  };
+
   extraHomeManagerModules = [
     emacs-config.homeManagerModules.default
 
@@ -27,7 +37,11 @@
       };
     })
 
-    ({lib, ...}: {
+    ({
+      config,
+      lib,
+      ...
+    }: {
       home = {
         stateVersion = "25.11";
 
@@ -40,9 +54,12 @@
           export SSH_AUTH_SOCK=/run/user/1000/gnupg/S.gpg-agent.ssh
         '';
 
+        # The activation PATH carries only the store paths home-manager puts
+        # there, so systemctl has to be named in full or the loop silently
+        # does nothing.
         activation.maskGpgAgentSockets = lib.hm.dag.entryAfter ["writeBoundary"] ''
           for unit in gpg-agent.socket gpg-agent-ssh.socket gpg-agent-extra.socket gpg-agent-browser.socket; do
-            $DRY_RUN_CMD systemctl --user mask --now "$unit" 2>/dev/null || true
+            $DRY_RUN_CMD ${config.systemd.user.systemctlPath} --user mask --now "$unit"
           done
         '';
       };
@@ -78,6 +95,7 @@ in {
     username
     homeDirectory
     system
+    deploy
     extraHomeManagerModules
     ;
 }

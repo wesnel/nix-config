@@ -7,6 +7,11 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    deploy-rs = {
+      url = "github:serokell/deploy-rs";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     emacs-config = {
       url = "github:wesnel/emacs-config";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -68,6 +73,7 @@
   outputs = {
     self,
     nix-darwin,
+    deploy-rs,
     emacs-config,
     firefox-overlay,
     flake-utils,
@@ -355,6 +361,56 @@
         emacs-config
         ;
     };
+
+    # deploy-rs.lib for a given system, with the deploy-rs binary that the
+    # activation wrappers embed taken from nixpkgs rather than built from the
+    # flake's own source.
+    deployLib = system: let
+      pkgs = import nixpkgs {
+        inherit system;
+      };
+    in
+      (import nixpkgs {
+        inherit system;
+
+        overlays = [
+          deploy-rs.overlays.default
+
+          (_: prev: {
+            deploy-rs = {
+              inherit (prev.deploy-rs) lib;
+              inherit (pkgs) deploy-rs;
+            };
+          })
+        ];
+      })
+      .deploy-rs
+      .lib;
+
+    buildDeployNode = {
+      computerName,
+      username,
+      homeDirectory,
+      system,
+      deploy,
+      extraHomeManagerModules,
+    }: homeConfiguration:
+      deploy
+      // {
+        profiles = {
+          home = {
+            user = username;
+            sshUser = username;
+
+            # home-manager points ../profiles/home-manager at its own
+            # generation on every activation, so deploy-rs needs a profile of
+            # its own to roll back.
+            profilePath = "${homeDirectory}/.local/state/nix/profiles/home";
+
+            path = (deployLib system).activate.home-manager homeConfiguration;
+          };
+        };
+      };
   in
     flake-utils.lib.eachDefaultSystemPassThrough (system: rec {
       overlays = {
@@ -422,12 +478,38 @@
           overlays.default;
       in (builtins.mapAttrs op nixosSystems);
 
+      deploy = {
+        nodes = let
+          op = name: {
+            computerName,
+            username,
+            homeDirectory,
+            system,
+            deploy,
+            extraHomeManagerModules,
+          }:
+            buildDeployNode
+            {
+              inherit
+                computerName
+                username
+                homeDirectory
+                system
+                deploy
+                extraHomeManagerModules
+                ;
+            }
+            homeConfigurations.${name};
+        in (builtins.mapAttrs op homeManagerSystems);
+      };
+
       homeConfigurations = let
         op = _: {
           computerName,
           username,
           homeDirectory,
           system,
+          deploy,
           extraHomeManagerModules,
         }:
           buildHomeManagerConfiguration
@@ -454,9 +536,11 @@
 
       devShells = {
         default = pkgs.mkShell {
-          buildInputs = with pkgs; [
-            alejandra
-            nil
+          buildInputs = [
+            # Not `with pkgs`: the deploy-rs flake input shadows pkgs.deploy-rs.
+            pkgs.alejandra
+            pkgs.deploy-rs
+            pkgs.nil
           ];
         };
       };

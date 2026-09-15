@@ -39,18 +39,11 @@
 
         templates = {
           "ssh.inc" = {
-            # NOTE: In order to get RemoteForward to work, first
-            # ensure that the user ID matches what's on the remote.
-            # Then, ensure that the remote /etc/sshd_config includes:
-            #
-            #   StreamLocalBindUnlink yes
-            #
-            # and that afterwards you have called:
-            #
-            #   sudo systemctl reload sshd
-            #
-            # Then you will need to manually import your public key on
-            # the remote.
+            # NOTE: The RemoteForward paths below hardcode UID 1000, which has
+            # to be the user's UID on the remote. The remote also needs
+            # StreamLocalBindUnlink enabled, or sshd refuses to replace socket
+            # files that are already bound and every forward fails; see
+            # "replacing the devbox" in the README.
             content = ''
               Host devbox devbox-*
                   HostName ${config.sops.placeholder.devbox-host}
@@ -202,7 +195,7 @@
     (_: {
       launchd.user.agents.devbox-agent-forward = {
         serviceConfig = {
-          ProgramArguments = [ "/usr/bin/ssh" "-N" "devbox-agent" ];
+          ProgramArguments = ["/usr/bin/ssh" "-N" "devbox-agent"];
           EnvironmentVariables = {
             SSH_AUTH_SOCK = "${homeDirectory}/.gnupg/S.gpg-agent.ssh";
           };

@@ -2,11 +2,17 @@
 **Table of Contents**
 
 - [directory structure](#directory-structure)
+- [adding new systems](#adding-new-systems)
+    - [secrets](#secrets)
+        - [add the machine's age key to sops config](#add-the-machines-age-key-to-sops-config)
+        - [update keys with new host](#update-keys-with-new-host)
+    - [replacing the devbox](#replacing-the-devbox)
 - [updating systems](#updating-systems)
     - [nixOS](#nixos)
     - [orbstack nixOS virtual machine](#orbstack-nixos-virtual-machine)
     - [nix-darwin](#nix-darwin)
     - [home-manager](#home-manager)
+    - [devbox](#devbox)
 - [troubleshooting](#troubleshooting)
     - [nixOS](#nixos-1)
         - [stale lockfiles in `.gnupg/public-keys.d/` cause gpg to hang](#stale-lockfiles-in-gnupgpublic-keysd-cause-gpg-to-hang)
@@ -43,39 +49,64 @@
 
 You will need to configure your system with all necessary secrets via [sops-nix](https://github.com/Mic92/sops-nix).
 
-### generate host key
+### add the machine's age key to sops config
 
-Generate an SSH key if one does not already exist:
-
-``` bash
-sudo ssh-keygen -t rsa -b 4096 -f /etc/ssh/ssh_host_rsa_key -N ""
-```
-
-Next, import it into GPG:
+The machine's age key is generated during its first activation. Read the public
+half of it on that machine:
 
 ``` bash
-nix-shell -p gnupg -p ssh-to-pgp --run "sudo ssh-to-pgp -private-key -i /etc/ssh/ssh_host_rsa_key | gpg --import --quiet"
+nix-shell -p age --run "age-keygen -y ~/.config/sops-nix/key.txt"
 ```
 
-This will import the key and also print the key fingerprint to `stdout`.
-
-### add public key to git repo
-
-Let's assume that the fingerprint from the last step is `c56666da854b90c1c4fa3de2089ea4f8f38b1960`. Run the following in the root of the repo:
-
-``` bash
-FINGERPRINT=c56666da854b90c1c4fa3de2089ea4f8f38b1960 gpg --export $FINGERPRINT > keys/hosts/$FINGERPRINT.asc
-```
-
-### add host key to sops config
-
-Add the key fingerprint to `.sops.yaml` by following the pattern set in that file for other machines.
+Add that to `.sops.yaml` by following the pattern set in that file for other
+machines: an anchor under `keys`, and an entry in the `age` list of the creation
+rule.
 
 ### update keys with new host
 
 ``` bash
 nix-shell --run "sops updatekeys secrets/wgn.yaml"
 ```
+
+## replacing the devbox
+
+A replacement devbox arrives as an Ubuntu host with Nix already on it, reachable
+as `wesley` with UID 1000. The home-manager generation is carried over by
+deploying it, but the following are not.
+
+`devbox-host` holds a bare IPv4 address, which the replacement will not reuse:
+
+``` bash
+nix-shell --run "sops secrets/wgn.yaml"
+```
+
+The `Host devbox` block is rendered from that secret during activation, so ngrok
+has to be rebuilt before `devbox` resolves anywhere new:
+
+``` bash
+darwin-rebuild switch --flake '.#ngrok'
+ssh-keygen -R <previous address>
+```
+
+Permit the forwarded GnuPG agent sockets to replace the ones already bound on
+the host. The `RemoteForward` lines in the ngrok machine depend on this, and it
+is not stored anywhere Nix manages:
+
+``` bash
+echo 'StreamLocalBindUnlink yes' | sudo tee /etc/ssh/sshd_config.d/99-streamlocal-bind-unlink.conf
+sudo sshd -t && sudo systemctl reload ssh.service
+```
+
+Then start the forward, touching the YubiKey when it flashes:
+
+``` bash
+launchctl kickstart -k gui/$(id -u)/org.nixos.devbox-agent-forward
+```
+
+`ssh devbox "ssh-add -l"` naming the card means the agent is through and the
+deploy can decrypt. Note that `gpg --card-status` on the devbox answers
+`Forbidden` even when everything is working, because the socket it reaches is
+ngrok's restricted one.
 
 # updating systems
 
@@ -112,6 +143,19 @@ Assuming you're in this directory:
 ```bash
 home-manager switch --flake '.#artifact'
 ```
+
+## devbox
+
+devbox runs Ubuntu rather than nixOS, so only its home-manager generation is
+deployed, and it is pushed from another machine rather than switched in place.
+From the dev shell in this directory:
+
+``` bash
+deploy '.#devbox'
+```
+
+The `devbox` host alias is written into `~/.ssh/config` by the ngrok machine, so
+this only resolves where that machine's sops secrets are decrypted.
 
 # troubleshooting
 
