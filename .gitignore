@@ -2,7 +2,6 @@ result
 .DS_Store
 *.ovpn
 .direnv
-/.agent-shell/
 
 # Written per run; the goal file beside them is the part worth keeping.
 /.eca/overnight-state.json

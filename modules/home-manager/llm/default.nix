@@ -71,13 +71,6 @@ in {
 
       default =
         {
-          # Greps transcripts kept in the workspace, which is mounted, so it
-          # is the one skill here that needs nothing of this machine.
-          agent-shell-memory = {
-            source = ./skills/agent-shell-memory/SKILL.md;
-            sandbox = true;
-          };
-
           mcp-cli = ./skills/mcp-cli/SKILL.md;
           notify = ./skills/notify/SKILL.md;
 
