@@ -81,12 +81,17 @@ proxy_pid=$!
 
 ca="$confdir/mitmproxy-ca-cert.pem"
 
+# Wait for the port, not for the CA file: the CA is kept between runs so that
+# it stays stable, which means it already exists before this proxy starts and
+# says nothing about whether it is listening yet.
 for _ in $(seq 1 100); do
-    [[ -r "$ca" ]] && break
+    if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+        break
+    fi
     sleep 0.1
 done
 
-if [[ ! -r "$ca" ]]; then
+if ! (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null || [[ ! -r "$ca" ]]; then
     printf 'eca-bwrap: proxy failed to start; see %s\n' "$proxy_log" >&2
     exit 1
 fi
