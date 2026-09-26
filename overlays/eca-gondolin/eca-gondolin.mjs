@@ -168,9 +168,16 @@ const vm = new VM({
   vfs: {mounts},
   httpHooks,
 
-  // Without this the guest falls back to /tmp, which is where the config and
-  // state mounts would not be.
-  env: {...(env ?? {}), HOME: GUEST_HOME},
+  // The guest image points the XDG variables at /tmp, and the server resolves
+  // its config and cache through those rather than through HOME, so setting
+  // HOME alone leaves both mounts unused: skills stay invisible and logins are
+  // discarded with the VM.
+  env: {
+    ...(env ?? {}),
+    HOME: GUEST_HOME,
+    XDG_CONFIG_HOME: `${GUEST_HOME}/.config`,
+    XDG_CACHE_HOME: `${GUEST_HOME}/.cache`,
+  },
 
   // Anything not resolvable is unreachable, which is what makes the
   // allowlist an enforced boundary rather than a cooperative one.
