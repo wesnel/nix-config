@@ -84,6 +84,7 @@ const opts = parseArgs(process.argv.slice(2));
 
 const path = await import("node:path");
 const fs = await import("node:fs");
+const os = await import("node:os");
 
 // Every tool the agent runs is a child of the server process, so the VM
 // boundary covers the whole tool surface rather than just shell commands.
@@ -114,12 +115,52 @@ if (opts.eca) {
 // nothing every session: no skills, and a login that has to be redone.
 const GUEST_HOME = "/root";
 
+// Home-manager writes this tree as symlinks into the Nix store, which the
+// guest has no copy of. Mounted as it stands, every leaf dangles there: the
+// skill and agent directories list normally and not one of their files can be
+// opened. Copying with the links resolved is what puts the contents in the
+// guest, and it is small enough to do on each start.
+// `cp' with `dereference' resolves only what it is handed, not the links it
+// finds below that, so the copy has to walk the tree itself: `stat' follows a
+// link and `copyFile' reads through one, which together turn each entry into
+// a file the guest can open.
+const copyResolved = (from, to) => {
+  fs.mkdirSync(to, {recursive: true});
+
+  for (const entry of fs.readdirSync(from, {withFileTypes: true})) {
+    const source = path.join(from, entry.name);
+    const target = path.join(to, entry.name);
+
+    let stat;
+
+    try {
+      stat = fs.statSync(source);
+    } catch {
+      // A link whose target is gone is the one thing worth stepping over
+      // rather than failing the session for.
+      continue;
+    }
+
+    if (stat.isDirectory()) {
+      copyResolved(source, target);
+    } else {
+      fs.copyFileSync(source, target);
+    }
+  }
+};
+
+let staged = null;
+
 if (opts.config) {
   const config = path.resolve(opts.config);
 
   if (fs.existsSync(config)) {
+    staged = fs.mkdtempSync(path.join(os.tmpdir(), "eca-gondolin-config-"));
+
+    copyResolved(config, staged);
+
     mounts[`${GUEST_HOME}/.config/eca`] = new ReadonlyProvider(
-      new RealFSProvider(config),
+      new RealFSProvider(staged),
     );
   }
 }
@@ -334,6 +375,10 @@ const shutdown = async (code) => {
     await vm.close();
   } catch {
     // Already gone.
+  }
+
+  if (staged) {
+    fs.rmSync(staged, {recursive: true, force: true});
   }
 
   process.exit(code);
