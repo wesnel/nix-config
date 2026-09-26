@@ -16,6 +16,8 @@
 
   mujmap = flakes.mujmap.packages.${system}.mujmap;
 
+  mcp-cli = final.callPackage ./mcp-cli {};
+
   # FIXME: This is blocked by CrowdStrike on my work laptop :(
   # https://github.com/Mozilla-Ocho/llamafile/issues/14
   llava = final.stdenv.mkDerivation rec {
