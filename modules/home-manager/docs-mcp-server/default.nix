@@ -41,6 +41,12 @@ with lib; let
       # Unused by a local model server, but the client refuses to construct
       # itself without one.
       OPENAI_API_KEY = "unused";
+
+      # The package's entry point is `#!/usr/bin/env node', so node has to be
+      # findable by name. A service inherits none of the login shell's path,
+      # and npx resolving through its own absolute shebang is not enough to
+      # carry the interpreter through to what it then runs.
+      PATH = "${pkgs.nodejs}/bin:/usr/bin:/bin";
     }
     // optionalAttrs (cfg.vectorDimension != null) {
       DOCS_MCP_EMBEDDINGS_VECTOR_DIMENSION = toString cfg.vectorDimension;
@@ -129,6 +135,11 @@ in {
           EnvironmentVariables = environment;
           RunAtLoad = true;
           KeepAlive = true;
+
+          # Without these the only evidence of a failed start is an exit code
+          # from `launchctl print', which does not say what went wrong.
+          StandardOutPath = "${config.xdg.stateHome}/docs-mcp-server.log";
+          StandardErrorPath = "${config.xdg.stateHome}/docs-mcp-server.log";
         };
       };
     })
