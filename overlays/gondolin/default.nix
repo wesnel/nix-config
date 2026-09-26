@@ -30,10 +30,27 @@ in
     #
     # The tarball has no lockfile, so package-lock.json beside this file is
     # generated from the pruned package.json and pins the dependency tree.
+    # Any upgrade that is not a WebSocket is answered 501, which makes the
+    # proxy unusable for a Java HTTP client: those offer `h2c' on every
+    # request, so a client that never intended to upgrade cannot make a plain
+    # request either. That is what the ECA server is built on.
+    #
+    # RFC 7230 6.7 lets a server ignore `Upgrade' and carry on with the
+    # current protocol, so the offer is dropped rather than refused. This is
+    # the conservative direction: the connection stays HTTP/1.1 and fully
+    # inspected, where honouring the upgrade would produce exactly the opaque
+    # tunnel the 501 exists to prevent. WebSocket handling is untouched.
     postPatch = ''
-      ${lib.getExe jq} 'del(.optionalDependencies)' package.json > package.json.pruned
-      mv package.json.pruned package.json
-      cp ${./package-lock.json} package-lock.json
+            ${lib.getExe jq} 'del(.optionalDependencies)' package.json > package.json.pruned
+            mv package.json.pruned package.json
+            cp ${./package-lock.json} package-lock.json
+
+            anchor='const hasUpgrade = (() => {'
+            replacement="$(cat ${./ignore-non-websocket-upgrade.js})
+      $anchor"
+
+            substituteInPlace dist/src/qemu/http.js \
+              --replace-fail "$anchor" "$replacement"
     '';
 
     npmDepsHash = "sha256-LVPLYoihHF+2TC/A3025EhfrijHWQMuzK+V2PKLOeEg=";
