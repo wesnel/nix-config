@@ -22,6 +22,7 @@
         amp.enable = true;
         claude.enable = true;
         codex.enable = true;
+        eca.enable = true;
         emacs.enable = true;
         fish.enable = true;
         git.enable = true;

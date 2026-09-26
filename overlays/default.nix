@@ -18,6 +18,11 @@
 
   mcp-cli = final.callPackage ./mcp-cli {};
 
+  # One table for both, so the sandboxed and unsandboxed servers cannot drift
+  # to different versions.
+  eca = final.callPackage ./eca {};
+  eca-guest = final.callPackage ./eca {target = "guest";};
+
   # FIXME: This is blocked by CrowdStrike on my work laptop :(
   # https://github.com/Mozilla-Ocho/llamafile/issues/14
   llava = final.stdenv.mkDerivation rec {
