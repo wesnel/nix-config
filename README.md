@@ -72,7 +72,28 @@ rule.
 nix-shell --run "sops updatekeys secrets/wgn.yaml"
 ```
 
-## building the eca sandbox image
+# the coding assistant
+
+[ECA](https://eca.dev) is configured here; what follows is only the part that
+is particular to this repository. Providers, authentication, agents and the
+rest are covered by ECA's own documentation.
+
+## what nix owns
+
+`wgn.home.eca.enable` installs the server and its skills, and
+`sandbox.enable` adds the wrapper. The Emacs client needs no toggle of its
+own: `eca-emacs` talks to the server directly, where `claude` and `codex`
+gate an agent-shell bridge that has to be installed alongside them.
+
+The server is pinned here rather than left to fetch itself: `eca-emacs`
+otherwise downloads a copy from the GitHub releases API on first start.
+
+Nix writes only the files ECA reads and never writes -- `skills/`, `agents/`
+and `hooks/` under `~/.config/eca`. `config.json` beside them is yours,
+because ECA writes to it itself; a read-only file there is the one thing that
+stops it working.
+
+## building the sandbox image
 
 `eca-gondolin` runs the ECA server inside a Gondolin micro-VM. The guest lives
 in `~/.cache/gondolin`, outside anything Nix manages, so each machine builds it
@@ -136,7 +157,7 @@ Nothing sees that traffic -- no log, no allowlist, no header rewrite -- so it
 is for services that do not speak HTTP, and `--http-map` is the one to reach
 for otherwise.
 
-### running against a model on this machine
+## running against a model on this machine
 
 With a model served locally, the sandbox can be closed entirely: deny every
 host and open one mapping to the server, so reaching a hosted provider is not
@@ -153,7 +174,23 @@ something the agent could do rather than something it is asked not to.
 `OLLAMA_API_URL` overrides the `http://localhost:11434` the server would
 otherwise use, which inside the guest would be the guest itself.
 
-### the documentation index
+`wgn.home.ollama.enable` runs the server; the model itself is pulled by hand:
+
+``` sh
+ollama pull qwen2.5-coder:7b
+```
+
+`wgn.home.eca.localModel` names it on an agent that inherits `explorer`, so
+the model is selected by choosing that agent. It declares nothing else: the
+window and cost belong to the provider entry in ECA's `config.json`, and
+without them the window is treated as unbounded and a conversation is
+truncated rather than compacted.
+
+Set `wgn.home.ollama.contextLength` to the same figure as that entry. Left
+unset the server sizes the window from available memory, so it differs
+between machines and a client can be promised more room than it will get.
+
+## the documentation index
 
 `wgn.home.docs-mcp-server.enable` runs the index as a service rather than
 leaving each client to start its own, so there is one database and one set of
@@ -174,7 +211,7 @@ ollama pull nomic-embed-text
 indexer. Changing either it or `embeddingModel` invalidates the index, since
 vectors from one model cannot be compared with another's.
 
-### working unattended
+## working unattended
 
 A `postRequest` hook decides after each turn whether there is more to do, so a
 session can be left to run against a fixed set of goals. Put them in
@@ -213,7 +250,7 @@ The hook is installed to `~/.config/eca/hooks/overnight.mjs`, which is on the
 config mount, so the same path resolves whether the server runs on this
 machine or inside the guest.
 
-### running the sandbox on a remote host
+## running the sandbox on a remote host
 
 `eca-emacs` starts the server with `make-process :file-handler t`, so when
 `default-directory` is a TRAMP path the command runs on that host. A
@@ -233,7 +270,7 @@ Most cloud instances are themselves guests and do not expose this; the devbox
 is an EC2 instance with no virtualization extensions at all, so it uses the
 `bubblewrap` backend instead.
 
-### the bubblewrap backend
+## the bubblewrap backend
 
 For hosts without virtualization. Bubblewrap gives the filesystem boundary —
 `/` read-only, the workspace and state writable — and a local `mitmdump`
@@ -254,7 +291,7 @@ everything that honours `$HTTPS_PROXY` is covered — the server, and the
 variables reaches the network directly. Gondolin has no such gap, because
 there the allowlist is enforced by the guest's DNS rather than by consent.
 
-## replacing the devbox
+# replacing the devbox
 
 A replacement devbox arrives as an Ubuntu host with Nix already on it, reachable
 as `wesley` with UID 1000. The home-manager generation is carried over by
