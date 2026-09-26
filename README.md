@@ -8,6 +8,7 @@
         - [update keys with new host](#update-keys-with-new-host)
     - [building the eca sandbox image](#building-the-eca-sandbox-image)
         - [running the sandbox on a remote host](#running-the-sandbox-on-a-remote-host)
+        - [running against a model on this machine](#running-against-a-model-on-this-machine)
         - [the bubblewrap backend](#the-bubblewrap-backend)
     - [replacing the devbox](#replacing-the-devbox)
 - [updating systems](#updating-systems)
@@ -112,8 +113,33 @@ instead of mirroring cannot be made to work over TRAMP anyway: the outbound
 path conversion strips the TRAMP prefix before applying any mapping, and the
 inbound one never restores it, so no single mapping satisfies both directions.
 
-`--allow-host` is default-deny; `models.dev` is always allowed because the
-server fetches its model catalog from there on startup.
+`--allow-host` is default-deny, and nothing is allowed implicitly. The server
+fetches its model catalogue from `models.dev` on startup but carries on
+without it, so an empty allowlist is a working configuration rather than a
+broken one.
+
+`--tcp-map GUEST_HOST[:PORT]=UPSTREAM_HOST:PORT` reaches a service on this
+machine from inside the guest, and `--env KEY=VALUE` sets a variable there.
+A mapping is itself the grant: mapped hosts need no `--allow-host`, while
+everything else stays blocked. The guest name has to be one the guest would
+not otherwise resolve, because `localhost` answers inside the VM and never
+reaches the resolver that would map it back here.
+
+### running against a model on this machine
+
+With a model served locally, the sandbox can be closed entirely: deny every
+host and open one mapping to the server, so reaching a hosted provider is not
+something the agent could do rather than something it is asked not to.
+
+``` elisp
+((nil . ((eca-custom-command
+          . ("eca-sandbox" "--image" "eca:latest"
+             "--tcp-map" "ollama:11434=127.0.0.1:11434"
+             "--env" "OLLAMA_API_URL=http://ollama:11434")))))
+```
+
+`OLLAMA_API_URL` overrides the `http://localhost:11434` the server would
+otherwise use, which inside the guest would be the guest itself.
 
 ### running the sandbox on a remote host
 

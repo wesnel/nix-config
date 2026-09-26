@@ -12,6 +12,22 @@ in {
   options.wgn.home.eca = {
     enable = mkEnableOption "Enables my Editor Code Assistant skills for home-manager";
 
+    localModel = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = "ollama/qwen2.5-coder:7b";
+
+      description = ''
+        Model backing the `local-explorer` agent, as `provider/model`. The
+        model itself is pulled by hand; only the agent that selects it is
+        declared here.
+
+        Its context window and cost still have to be set under
+        {option}`providers` in ECA's own config, which ECA owns: without them
+        it treats the window as unbounded and never auto-compacts.
+      '';
+    };
+
     sandbox = {
       enable = mkEnableOption "Installs the wrapper that runs the server in a sandbox";
 
@@ -47,6 +63,18 @@ in {
       # rather than a share.
       xdg.configFile = llm.mkSkillFiles "eca/skills" config.wgn.home.llm.skills;
     }
+
+    # ~/.config/eca/agents is read and never written by ECA, so an agent can
+    # be declared here without taking over the config file ECA writes itself.
+    (mkIf (cfg.localModel != null) {
+      xdg.configFile."eca/agents/local-explorer.md".text = ''
+        ---
+        inherit: explorer
+        description: Explores the codebase using a model running on this machine
+        model: ${cfg.localModel}
+        ---
+      '';
+    })
 
     (mkIf (cfg.sandbox.enable && cfg.sandbox.backend == "gondolin") {
       home.packages = with pkgs; [

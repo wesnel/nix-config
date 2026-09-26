@@ -15,6 +15,7 @@
         codex.enable = true;
         eca = {
           enable = true;
+          localModel = "ollama/qwen2.5-coder:7b";
           sandbox.enable = true;
         };
         emacs.enable = true;
@@ -25,6 +26,7 @@
         gnupg.enable = true;
         go.enable = true;
         man.enable = true;
+        ollama.enable = true;
         pass.enable = true;
         python.enable = true;
         yubikey.enable = true;
