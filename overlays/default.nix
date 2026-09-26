@@ -27,6 +27,8 @@
   # step that runs the CLI directly; see "building the eca sandbox image".
   gondolin = final.callPackage ./gondolin {};
 
+  eca-gondolin = final.callPackage ./eca-gondolin {};
+
   # FIXME: This is blocked by CrowdStrike on my work laptop :(
   # https://github.com/Mozilla-Ocho/llamafile/issues/14
   llava = final.stdenv.mkDerivation rec {

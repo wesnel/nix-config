@@ -6,6 +6,8 @@
     - [secrets](#secrets)
         - [add the machine's age key to sops config](#add-the-machines-age-key-to-sops-config)
         - [update keys with new host](#update-keys-with-new-host)
+    - [building the eca sandbox image](#building-the-eca-sandbox-image)
+        - [running the sandbox on a remote host](#running-the-sandbox-on-a-remote-host)
     - [replacing the devbox](#replacing-the-devbox)
 - [updating systems](#updating-systems)
     - [nixOS](#nixos)
@@ -67,6 +69,66 @@ rule.
 ``` bash
 nix-shell --run "sops updatekeys secrets/wgn.yaml"
 ```
+
+## building the eca sandbox image
+
+`eca-gondolin` runs the ECA server inside a Gondolin micro-VM. The guest lives
+in `~/.cache/gondolin`, outside anything Nix manages, so each machine builds it
+once:
+
+``` bash
+nix shell nixpkgs#e2fsprogs --command \
+    gondolin build --config overlays/eca-gondolin/build-config.json \
+        --arch aarch64 --tag eca:latest
+```
+
+`mke2fs` is the reason for the `nix shell`: Gondolin's wrapper does not carry
+e2fsprogs, and the build fails without it. Set `--arch x86_64` to match the
+target machine.
+
+The config adds `gcompat` to Alpine's package set. The server is a
+glibc-linked native image and Alpine is musl, so without it the binary cannot
+start at all.
+
+Point a project at the sandbox from its `.dir-locals.el`:
+
+``` elisp
+((nil . ((eca-custom-command . ("eca-gondolin" "--image" "eca:latest"
+                                "--allow-host" "api.openai.com")))))
+```
+
+Per project rather than globally: `eca-custom-command` is consulted before
+`eca' is looked up on a remote host, so a global value would send TRAMP
+sessions to this machine's sandbox instead of the host they are editing.
+
+No `eca-local-to-remote-prefix-map` is needed, because the workspace is
+mounted in the guest at the path it already has on the host. Translating
+instead of mirroring cannot be made to work over TRAMP anyway: the outbound
+path conversion strips the TRAMP prefix before applying any mapping, and the
+inbound one never restores it, so no single mapping satisfies both directions.
+
+`--allow-host` is default-deny; `models.dev` is always allowed because the
+server fetches its model catalog from there on startup.
+
+### running the sandbox on a remote host
+
+`eca-emacs` starts the server with `make-process :file-handler t`, so when
+`default-directory` is a TRAMP path the command runs on that host. A
+`.dir-locals.el` like the one above, in a project opened over TRAMP, therefore
+starts the sandbox on the remote rather than locally.
+
+That host needs `eca-gondolin`, its own guest image built for its
+architecture, and **hardware virtualization**. Gondolin runs QEMU, which
+without `/dev/kvm` falls back to software emulation and is far too slow to
+use. Check before building anything:
+
+``` bash
+ls -l /dev/kvm && grep -oE "vmx|svm" /proc/cpuinfo | sort -u
+```
+
+Most cloud instances are themselves guests and do not expose this; the devbox
+is an EC2 instance with no virtualization extensions at all, so the sandbox
+cannot run there.
 
 ## replacing the devbox
 
