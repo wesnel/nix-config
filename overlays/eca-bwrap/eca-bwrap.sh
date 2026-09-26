@@ -129,4 +129,6 @@ if [[ ${#command[@]} -eq 0 ]]; then
     command=("$eca" server)
 fi
 
-exec "@bwrap@" "${bwrap_args[@]}" -- "${command[@]}"
+# Not exec: that would replace this shell and with it the trap that stops the
+# proxy, leaving one behind after every session.
+"@bwrap@" "${bwrap_args[@]}" -- "${command[@]}"
