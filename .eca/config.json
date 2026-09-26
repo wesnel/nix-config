@@ -1,5 +1,16 @@
 {
   "hooks": {
+    "overnight-start": {
+      "type": "preRequest",
+      "description": "Exchanges the trigger word for the first unmet goal",
+      "actions": [
+        {
+          "type": "shell",
+          "shell": "node \"$HOME/.config/eca/hooks/overnight.mjs\"",
+          "timeout": 900000
+        }
+      ]
+    },
     "overnight": {
       "type": "postRequest",
       "description": "Continues an unattended run while goals remain unmet",

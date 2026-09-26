@@ -231,6 +231,13 @@ session can be left to run against a fixed set of goals. Put them in
 }
 ```
 
+Start a run by sending the trigger word on its own -- `overnight` unless
+`trigger` says otherwise -- and it is exchanged for the first unmet goal. The
+first turn has nothing behind it for a hook to answer, so without this it
+would be spent on whatever was typed rather than on a goal. Only that exact
+word is replaced: a session in a workspace that has goals is otherwise an
+ordinary one.
+
 Each goal needs a `check`, and that command is the only thing that decides
 whether the goal is met -- not the assistant's own account of it. A goal that
 still fails after `attemptsPerGoal` turns is left alone and the run moves on,
