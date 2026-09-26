@@ -68,7 +68,6 @@
     "emacs-config": {
       "inputs": {
         "emacs-overlay": "emacs-overlay",
-        "emacs-skills": "emacs-skills",
         "emacs-tramp-rpc": "emacs-tramp-rpc",
         "flake-utils": "flake-utils",
         "nixpkgs": [
@@ -76,11 +75,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1789502972,
-        "narHash": "sha256-pmROvyaM6wPMwGadQtnkzyeHHgZdLbN/UmBMVkQeWdE=",
+        "lastModified": 1790381799,
+        "narHash": "sha256-liAYn8pffvvkQRoRkiajTQ5rq6IEvBX4zUXa+nJH2MU=",
         "owner": "wesnel",
         "repo": "emacs-config",
-        "rev": "3b3f27859d29b4165ea71c5d064ed9bc91444abb",
+        "rev": "62aaddde59f87571f714c853115d0133531751b3",
         "type": "github"
       },
       "original": {
@@ -633,6 +632,7 @@
       "inputs": {
         "deploy-rs": "deploy-rs",
         "emacs-config": "emacs-config",
+        "emacs-skills": "emacs-skills",
         "firefox-overlay": "firefox-overlay",
         "flake-utils": "flake-utils_2",
         "home-manager": "home-manager",

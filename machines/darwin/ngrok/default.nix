@@ -10,7 +10,9 @@
     (_: {
       wgn.home = {
         aerospace.enable = true;
+        amp.enable = true;
         claude.enable = true;
+        codex.enable = true;
         emacs.enable = true;
         fish.enable = true;
         fonts.enable = true;

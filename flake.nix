@@ -17,6 +17,11 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    emacs-skills = {
+      url = "github:xenodium/emacs-skills";
+      flake = false;
+    };
+
     firefox-overlay = {
       url = "github:bandithedoge/nixpkgs-firefox-darwin";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -75,6 +80,7 @@
     nix-darwin,
     deploy-rs,
     emacs-config,
+    emacs-skills,
     firefox-overlay,
     flake-utils,
     home-manager,
@@ -107,8 +113,19 @@
 
       mac-app-util.homeManagerModules.default
 
+      (_: {
+        _module.args = {
+          inherit
+            emacs-skills
+            ;
+        };
+      })
+
       ./modules/home-manager/aerospace
+      ./modules/home-manager/amp
       ./modules/home-manager/claude
+      ./modules/home-manager/codex
+      ./modules/home-manager/copilot
       ./modules/home-manager/emacs
       ./modules/home-manager/firefox
       ./modules/home-manager/fish
@@ -124,6 +141,7 @@
       ./modules/home-manager/helix
       ./modules/home-manager/hyprland
       ./modules/home-manager/iterm
+      ./modules/home-manager/llm
       ./modules/home-manager/man
       ./modules/home-manager/mosh
       ./modules/home-manager/music

@@ -1,0 +1,80 @@
+{
+  config,
+  emacs-skills,
+  lib,
+  pkgs,
+  ...
+}:
+with lib; let
+  cfg = config.wgn.home.llm;
+in {
+  options.wgn.home.llm = {
+    enable = mkEnableOption "Enables the plumbing shared by my coding agents";
+
+    skills = mkOption {
+      type = with types; attrsOf (either path lines);
+
+      description = ''
+        Skills offered to every enabled coding agent. A path is linked into
+        the agent's skill directory; a string is written there verbatim.
+      '';
+
+      default =
+        {
+          agent-shell-memory = ./skills/agent-shell-memory/SKILL.md;
+          mcp-cli = ./skills/mcp-cli/SKILL.md;
+          notify = ./skills/notify/SKILL.md;
+
+          describe = builtins.readFile "${emacs-skills}/skills/describe/SKILL.md";
+          dired = builtins.readFile "${emacs-skills}/skills/dired/SKILL.md";
+          emacsclient = builtins.readFile "${emacs-skills}/skills/emacsclient/SKILL.md";
+          file-links = builtins.readFile "${emacs-skills}/skills/file-links/SKILL.md";
+          highlight = builtins.readFile "${emacs-skills}/skills/highlight/SKILL.md";
+          open = builtins.readFile "${emacs-skills}/skills/open/SKILL.md";
+          select = builtins.readFile "${emacs-skills}/skills/select/SKILL.md";
+        }
+        // optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+          trash = ./skills/trash/SKILL.md;
+        };
+    };
+  };
+
+  config = mkIf cfg.enable {
+    home.packages = with pkgs; [
+      mcp-cli
+
+      # mcp-cli shells out to npx for servers distributed on npm.
+      nodejs
+    ];
+
+    # This writes only ~/.config/mcp/mcp.json, which mcp-cli reads and no
+    # agent writes to. Each agent is told about these servers through its own
+    # `mcp add`, so that none of their settings files have to be generated.
+    programs.mcp = {
+      enable = true;
+
+      servers = {
+        docs-mcp-server = {
+          type = "stdio";
+          command = "${pkgs.nodejs}/bin/npx";
+
+          args = [
+            "-y"
+            "@arabold/docs-mcp-server@latest"
+          ];
+
+          env = {
+            DOCS_MCP_TELEMETRY = "false";
+          };
+        };
+      };
+    };
+
+    # Some clients look for the older file name, which programs.mcp does not
+    # write.
+    xdg.configFile."mcp/mcp_servers.json" = {
+      enable = true;
+      source = config.xdg.configFile."mcp/mcp.json".source;
+    };
+  };
+}
