@@ -68,6 +68,16 @@ in {
       xdg.configFile =
         (llm.mkSkillFiles "eca/skills" config.wgn.home.llm.skills)
         // {
+          # Which skills the wrapper may carry into the guest. It is a list
+          # beside the skills rather than a mark inside each one, because a
+          # skill directory is shared with the other agents and they have no
+          # use for it -- and because home-manager links such a directory
+          # whole, leaving nowhere to put a file the set does not declare.
+          "eca/sandbox-skills.json".text =
+            builtins.toJSON
+            (llm.sandboxSkillNames config.wgn.home.llm.skills);
+        }
+        // {
           # Lives here rather than on PATH because a sandboxed session runs
           # the hook inside the guest, where the store is not mounted and
           # this directory is. Inert until a workspace has a goal file, so

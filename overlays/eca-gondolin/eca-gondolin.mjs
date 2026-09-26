@@ -124,18 +124,12 @@ const GUEST_HOME = "/root";
 // finds below that, so the copy has to walk the tree itself: `stat' follows a
 // link and `copyFile' reads through one, which together turn each entry into
 // a file the guest can open.
-// A directory carrying this is left on the host. Skills are marked with it
-// where they drive an editor, a notifier or a command installed here, none of
-// which the guest has: offered there, the agent calls one and spends the turn
-// finding out it does nothing.
-const HOST_ONLY = ".host-only";
-
-const copyResolved = (from, to) => {
-  if (fs.existsSync(path.join(from, HOST_ONLY))) return;
-
+const copyResolved = (from, to, keep = null) => {
   fs.mkdirSync(to, {recursive: true});
 
   for (const entry of fs.readdirSync(from, {withFileTypes: true})) {
+    if (keep && !keep.has(entry.name)) continue;
+
     const source = path.join(from, entry.name);
     const target = path.join(to, entry.name);
 
@@ -157,6 +151,25 @@ const copyResolved = (from, to) => {
   }
 };
 
+// Most skills drive an editor, a notifier or a command installed on the host,
+// and none of that exists in the guest. Carried across regardless they are
+// worse than absent: the agent is told they exist and spends a turn calling
+// one. The config says which may come, and a config that does not say is
+// taken at its word rather than second-guessed.
+const sandboxSkills = (config) => {
+  try {
+    const listed = JSON.parse(
+      fs.readFileSync(path.join(config, "sandbox-skills.json"), "utf8"),
+    );
+
+    if (Array.isArray(listed)) return new Set(listed);
+  } catch {
+    // Absent or unreadable: nothing is claimed, so nothing is withheld.
+  }
+
+  return null;
+};
+
 let staged = null;
 
 if (opts.config) {
@@ -166,6 +179,18 @@ if (opts.config) {
     staged = fs.mkdtempSync(path.join(os.tmpdir(), "eca-gondolin-config-"));
 
     copyResolved(config, staged);
+
+    const keep = sandboxSkills(config);
+
+    if (keep) {
+      fs.rmSync(path.join(staged, "skills"), {recursive: true, force: true});
+
+      const skills = path.join(config, "skills");
+
+      if (fs.existsSync(skills)) {
+        copyResolved(skills, path.join(staged, "skills"), keep);
+      }
+    }
 
     mounts[`${GUEST_HOME}/.config/eca`] = new ReadonlyProvider(
       new RealFSProvider(staged),
