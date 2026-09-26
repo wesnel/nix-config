@@ -26,7 +26,12 @@
         gnupg.enable = true;
         go.enable = true;
         man.enable = true;
-        ollama.enable = true;
+        ollama = {
+          enable = true;
+
+          # Matches the limit qwen2.5-coder:7b is given in ECA's own config.
+          contextLength = 32768;
+        };
         pass.enable = true;
         python.enable = true;
         yubikey.enable = true;
