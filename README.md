@@ -174,6 +174,45 @@ ollama pull nomic-embed-text
 indexer. Changing either it or `embeddingModel` invalidates the index, since
 vectors from one model cannot be compared with another's.
 
+### working unattended
+
+A `postRequest` hook decides after each turn whether there is more to do, so a
+session can be left to run against a fixed set of goals. Put them in
+`.eca/overnight.json` at the root of the workspace:
+
+``` json
+{
+  "until": "07:00",
+  "attemptsPerGoal": 3,
+  "goals": [
+    {
+      "id": "flake-check",
+      "goal": "Make `nix flake check` pass on this machine.",
+      "check": "nix flake check --no-build"
+    }
+  ]
+}
+```
+
+Each goal needs a `check`, and that command is the only thing that decides
+whether the goal is met -- not the assistant's own account of it. A goal that
+still fails after `attemptsPerGoal` turns is left alone and the run moves on,
+so one unreachable goal costs a bounded number of turns rather than the whole
+night. `until` ends the run at a wall-clock time whatever is left.
+
+The follow-up text is built from the goal file, so a run cannot take on work
+beyond the goals it started with. With no `.eca/overnight.json` present the
+hook does nothing, which is what makes it safe to configure once and leave.
+
+Two files are written beside the goals and are worth reading in the morning:
+`overnight-journal.jsonl`, a line per attempt and per goal met, and
+`overnight-state.json`, the attempt counts. `eca read-chat` streams the
+conversation itself.
+
+The hook is installed to `~/.config/eca/hooks/overnight.mjs`, which is on the
+config mount, so the same path resolves whether the server runs on this
+machine or inside the guest.
+
 ### running the sandbox on a remote host
 
 `eca-emacs` starts the server with `make-process :file-handler t`, so when

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "overnight": {
+      "type": "postRequest",
+      "description": "Continues an unattended run while goals remain unmet",
+      "actions": [
+        {
+          "type": "shell",
+          "shell": "node \"$HOME/.config/eca/hooks/overnight.mjs\"",
+          "timeout": 900000
+        }
+      ]
+    }
+  }
+}

@@ -61,7 +61,15 @@ in {
       # ECA discovers global skills under ~/.config/eca/skills rather than the
       # ~/.config/agents/skills that Amp reads, so this is its own directory
       # rather than a share.
-      xdg.configFile = llm.mkSkillFiles "eca/skills" config.wgn.home.llm.skills;
+      xdg.configFile =
+        (llm.mkSkillFiles "eca/skills" config.wgn.home.llm.skills)
+        // {
+          # Lives here rather than on PATH because a sandboxed session runs
+          # the hook inside the guest, where the store is not mounted and
+          # this directory is. Inert until a workspace has a goal file, so
+          # there is nothing to switch on.
+          "eca/hooks/overnight.mjs".source = ./hooks/overnight.mjs;
+        };
     }
 
     # ~/.config/eca/agents is read and never written by ECA, so an agent can
