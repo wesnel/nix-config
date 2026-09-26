@@ -37,6 +37,7 @@ const parseArgs = (argv) => {
       .map((h) => h.trim())
       .filter(Boolean),
     tcpMaps: [],
+    httpMaps: [],
     env: {},
     command: [],
   };
@@ -65,6 +66,8 @@ const parseArgs = (argv) => {
       opts.allowedHosts.push(argv[++i]);
     } else if (arg === "--tcp-map") {
       opts.tcpMaps.push(argv[++i]);
+    } else if (arg === "--http-map") {
+      opts.httpMaps.push(argv[++i]);
     } else if (arg === "--env") {
       const [key, ...rest] = argv[++i].split("=");
       opts.env[key] = rest.join("=");
@@ -144,6 +147,110 @@ const appendLog = (record) => {
   }
 };
 
+// Both map options read GUEST_HOST[:PORT]=UPSTREAM_HOST:PORT. A guest name
+// has to be synthetic: `localhost' resolves inside the VM and never reaches
+// the resolver that would map it back to a service on this machine.
+const parseMap = (spec) => {
+  const eq = spec.indexOf("=");
+
+  if (eq <= 0 || eq === spec.length - 1) {
+    process.stderr.write(
+      `eca-gondolin: expected GUEST_HOST[:PORT]=UPSTREAM_HOST:PORT, got ${spec}\n`,
+    );
+    process.exit(2);
+  }
+
+  return [spec.slice(0, eq).trim(), spec.slice(eq + 1).trim()];
+};
+
+const splitHostPort = (value, what) => {
+  const colon = value.lastIndexOf(":");
+  const port = colon < 0 ? NaN : Number(value.slice(colon + 1));
+
+  if (!Number.isInteger(port) || port <= 0) {
+    process.stderr.write(`eca-gondolin: ${what} needs a port, got ${value}\n`);
+    process.exit(2);
+  }
+
+  return {host: value.slice(0, colon), port};
+};
+
+// Forwarded as raw TCP, below the proxy: the hooks never see this traffic, so
+// a tcp map is reachability without observability. Prefer `--http-map' for
+// anything speaking HTTP.
+const tcpHosts = Object.fromEntries(opts.tcpMaps.map(parseMap));
+const mapped = Object.keys(tcpHosts).length > 0;
+
+// An http map instead rewrites the request as it passes through the proxy, so
+// the traffic stays logged and policed. It also repoints the `Host' header,
+// which a raw forward leaves naming the guest-side name -- enough on its own
+// for a server bound to loopback to refuse the request as DNS rebinding.
+const httpMaps = opts.httpMaps.map(parseMap).map(([guest, upstream]) => {
+  const colon = guest.lastIndexOf(":");
+  const guestPort = colon < 0 ? null : Number(guest.slice(colon + 1));
+
+  return {
+    host: colon < 0 ? guest : guest.slice(0, colon),
+    port: Number.isInteger(guestPort) && guestPort > 0 ? guestPort : null,
+    upstream: splitHostPort(upstream, "http map upstream"),
+  };
+});
+
+// The upstream name is what every policy check sees, because the rewrite runs
+// before them: `onRequest' is not marked early-policy-safe, so Gondolin skips
+// its pre-body precheck and evaluates the rewritten request instead.
+const upstreamHosts = new Set(httpMaps.map((m) => m.upstream.host));
+
+// Loopback and private ranges are refused by default; naming the upstream
+// here is what makes a service on this machine reachable at all.
+const allowedInternalHosts = [...upstreamHosts];
+
+for (const host of upstreamHosts) {
+  if (!opts.allowedHosts.includes(host)) {
+    opts.allowedHosts.push(host);
+  }
+}
+
+// Allowing the upstream host would otherwise expose every port it listens on,
+// so the mapped ports are the only ones that may be dialled.
+const upstreamTargets = new Set(
+  httpMaps.map((m) => `${m.upstream.host}:${m.upstream.port}`),
+);
+
+const rewrite = (req) => {
+  let url;
+
+  try {
+    url = new URL(req.url);
+  } catch {
+    return undefined;
+  }
+
+  const port = Number(url.port) || (url.protocol === "https:" ? 443 : 80);
+  const map = httpMaps.find(
+    (m) => m.host === url.hostname && (m.port === null || m.port === port),
+  );
+
+  if (!map) return undefined;
+
+  url.hostname = map.upstream.host;
+  url.port = String(map.upstream.port);
+
+  // Dropping it lets the client derive the header from the rewritten URL; a
+  // copied one would still name the guest-side host.
+  const headers = new Headers(req.headers);
+
+  headers.delete("host");
+
+  const hasBody = req.method !== "GET" && req.method !== "HEAD";
+
+  return new Request(url.toString(), {
+    method: req.method,
+    headers,
+    ...(hasBody ? {body: req.body, duplex: "half"} : {}),
+  });
+};
+
 // Gondolin terminates TLS with a CA it mints and installs in the guest trust
 // store, so these see decrypted requests without the server being configured
 // to trust anything.
@@ -152,14 +259,26 @@ const appendLog = (record) => {
 // whole.
 const {httpHooks, env} = createHttpHooks({
   allowedHosts: opts.allowedHosts,
+  allowedInternalHosts,
+
+  // Reached only once the allowlist has already admitted the host, so this
+  // can narrow that decision but never widen it.
+  isIpAllowed: (info) =>
+    !upstreamHosts.has(info.hostname) ||
+    upstreamTargets.has(`${info.hostname}:${info.port}`),
 
   onRequest: (req) => {
+    const next = rewrite(req);
+
     appendLog({
       at: new Date().toISOString(),
       dir: "request",
       method: req?.method,
       url: req?.url,
+      ...(next ? {to: next.url} : {}),
     });
+
+    return next;
   },
 
   // The response itself carries no URL; it arrives with the request it
@@ -173,26 +292,6 @@ const {httpHooks, env} = createHttpHooks({
     });
   },
 });
-
-// GUEST_HOST[:PORT]=UPSTREAM_HOST:PORT. A guest name has to be synthetic:
-// `localhost` resolves inside the VM and never reaches the resolver that
-// would map it back to a service on this machine.
-const tcpHosts = {};
-
-for (const spec of opts.tcpMaps) {
-  const eq = spec.indexOf("=");
-
-  if (eq <= 0 || eq === spec.length - 1) {
-    process.stderr.write(
-      `eca-gondolin: expected GUEST_HOST[:PORT]=UPSTREAM_HOST:PORT, got ${spec}\n`,
-    );
-    process.exit(2);
-  }
-
-  tcpHosts[spec.slice(0, eq).trim()] = spec.slice(eq + 1).trim();
-}
-
-const mapped = Object.keys(tcpHosts).length > 0;
 
 const vm = new VM({
   vfs: {mounts},
@@ -217,8 +316,6 @@ const vm = new VM({
     ...(mapped ? {syntheticHostMapping: "per-host"} : {}),
   },
 
-  // A mapping is itself the grant: mapped hosts are reachable without being
-  // on the allowlist, which still governs everything else.
   ...(mapped ? {tcp: {hosts: tcpHosts}} : {}),
 
   // The stock guest is Alpine, whose musl has no glibc loader, so the

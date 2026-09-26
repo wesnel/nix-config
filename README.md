@@ -118,12 +118,23 @@ fetches its model catalogue from `models.dev` on startup but carries on
 without it, so an empty allowlist is a working configuration rather than a
 broken one.
 
-`--tcp-map GUEST_HOST[:PORT]=UPSTREAM_HOST:PORT` reaches a service on this
+`--http-map GUEST_HOST[:PORT]=UPSTREAM_HOST:PORT` reaches a service on this
 machine from inside the guest, and `--env KEY=VALUE` sets a variable there.
-A mapping is itself the grant: mapped hosts need no `--allow-host`, while
-everything else stays blocked. The guest name has to be one the guest would
-not otherwise resolve, because `localhost` answers inside the VM and never
-reaches the resolver that would map it back here.
+The guest name has to be one the guest would not otherwise resolve, because
+`localhost` answers inside the VM and never reaches the resolver that would
+map it back here.
+
+A mapping grants only what it names. The upstream is reachable on the mapped
+port alone, so pointing one at a machine that also runs a database or an SSH
+daemon does not expose those. The request is rewritten as it crosses the
+proxy, which both keeps it in the `--log` and repoints its `Host` header: a
+server bound to loopback refuses a request still naming the guest-side host,
+treating it as DNS rebinding.
+
+`--tcp-map` takes the same argument but forwards below the proxy, as raw TCP.
+Nothing sees that traffic -- no log, no allowlist, no header rewrite -- so it
+is for services that do not speak HTTP, and `--http-map` is the one to reach
+for otherwise.
 
 ### running against a model on this machine
 
@@ -134,7 +145,7 @@ something the agent could do rather than something it is asked not to.
 ``` elisp
 ((nil . ((eca-custom-command
           . ("eca-sandbox" "--image" "eca:latest"
-             "--tcp-map" "ollama:11434=127.0.0.1:11434"
+             "--http-map" "ollama:11434=127.0.0.1:11434"
              "--env" "OLLAMA_API_URL=http://ollama:11434")))))
 ```
 
