@@ -7,6 +7,7 @@
 }:
 with lib; let
   cfg = config.wgn.home.llm;
+  docs = config.wgn.home.docs-mcp-server;
 in {
   options.wgn.home.llm = {
     enable = mkEnableOption "Enables the plumbing shared by my coding agents";
@@ -54,19 +55,28 @@ in {
       enable = true;
 
       servers = {
-        docs-mcp-server = {
-          type = "stdio";
-          command = "${pkgs.nodejs}/bin/npx";
+        # Started per client unless a service already runs it, in which case
+        # every client reaches that one and shares the index rather than
+        # building a private one and contending for the same database.
+        docs-mcp-server =
+          if docs.enable
+          then {
+            type = "http";
+            url = "http://127.0.0.1:${toString docs.port}/mcp";
+          }
+          else {
+            type = "stdio";
+            command = "${pkgs.nodejs}/bin/npx";
 
-          args = [
-            "-y"
-            "@arabold/docs-mcp-server@latest"
-          ];
+            args = [
+              "-y"
+              "@arabold/docs-mcp-server@latest"
+            ];
 
-          env = {
-            DOCS_MCP_TELEMETRY = "false";
+            env = {
+              DOCS_MCP_TELEMETRY = "false";
+            };
           };
-        };
       };
     };
 

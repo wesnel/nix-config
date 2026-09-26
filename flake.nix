@@ -126,6 +126,7 @@
       ./modules/home-manager/claude
       ./modules/home-manager/codex
       ./modules/home-manager/copilot
+      ./modules/home-manager/docs-mcp-server
       ./modules/home-manager/eca
       ./modules/home-manager/emacs
       ./modules/home-manager/firefox

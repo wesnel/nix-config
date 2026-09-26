@@ -13,6 +13,7 @@
         amp.enable = true;
         claude.enable = true;
         codex.enable = true;
+        docs-mcp-server.enable = true;
         eca = {
           enable = true;
           localModel = "ollama/qwen2.5-coder:7b";
