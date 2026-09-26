@@ -29,10 +29,15 @@ const parseArgs = (argv) => {
     log: process.env.ECA_GONDOLIN_LOG || null,
     config: process.env.ECA_GONDOLIN_CONFIG || null,
     state: process.env.ECA_GONDOLIN_STATE || null,
-    allowedHosts: (process.env.ECA_GONDOLIN_ALLOW_HOSTS || "models.dev")
+    // No default: the allowlist has to be able to express "nothing", which it
+    // cannot if some host is always in it. ECA starts without reaching the
+    // model catalogue, so there is nothing that must be reachable.
+    allowedHosts: (process.env.ECA_GONDOLIN_ALLOW_HOSTS || "")
       .split(",")
       .map((h) => h.trim())
       .filter(Boolean),
+    tcpMaps: [],
+    env: {},
     command: [],
   };
 
@@ -58,6 +63,11 @@ const parseArgs = (argv) => {
       opts.log = argv[++i];
     } else if (arg === "--allow-host") {
       opts.allowedHosts.push(argv[++i]);
+    } else if (arg === "--tcp-map") {
+      opts.tcpMaps.push(argv[++i]);
+    } else if (arg === "--env") {
+      const [key, ...rest] = argv[++i].split("=");
+      opts.env[key] = rest.join("=");
     } else {
       process.stderr.write(`eca-gondolin: unknown option ${arg}\n`);
       process.exit(2);
@@ -164,6 +174,26 @@ const {httpHooks, env} = createHttpHooks({
   },
 });
 
+// GUEST_HOST[:PORT]=UPSTREAM_HOST:PORT. A guest name has to be synthetic:
+// `localhost` resolves inside the VM and never reaches the resolver that
+// would map it back to a service on this machine.
+const tcpHosts = {};
+
+for (const spec of opts.tcpMaps) {
+  const eq = spec.indexOf("=");
+
+  if (eq <= 0 || eq === spec.length - 1) {
+    process.stderr.write(
+      `eca-gondolin: expected GUEST_HOST[:PORT]=UPSTREAM_HOST:PORT, got ${spec}\n`,
+    );
+    process.exit(2);
+  }
+
+  tcpHosts[spec.slice(0, eq).trim()] = spec.slice(eq + 1).trim();
+}
+
+const mapped = Object.keys(tcpHosts).length > 0;
+
 const vm = new VM({
   vfs: {mounts},
   httpHooks,
@@ -177,11 +207,19 @@ const vm = new VM({
     HOME: GUEST_HOME,
     XDG_CONFIG_HOME: `${GUEST_HOME}/.config`,
     XDG_CACHE_HOME: `${GUEST_HOME}/.cache`,
+    ...opts.env,
   },
 
   // Anything not resolvable is unreachable, which is what makes the
   // allowlist an enforced boundary rather than a cooperative one.
-  dns: {mode: "synthetic"},
+  dns: {
+    mode: "synthetic",
+    ...(mapped ? {syntheticHostMapping: "per-host"} : {}),
+  },
+
+  // A mapping is itself the grant: mapped hosts are reachable without being
+  // on the allowlist, which still governs everything else.
+  ...(mapped ? {tcp: {hosts: tcpHosts}} : {}),
 
   // The stock guest is Alpine, whose musl has no glibc loader, so the
   // server's native build cannot start there. An image built with `gcompat'
