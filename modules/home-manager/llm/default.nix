@@ -13,16 +13,71 @@ in {
     enable = mkEnableOption "Enables the plumbing shared by my coding agents";
 
     skills = mkOption {
-      type = with types; attrsOf (either path lines);
+      type = with types;
+        attrsOf (
+          coercedTo (either path lines)
+          (content:
+            if isPath content
+            then {source = content;}
+            else {text = content;})
+          (submodule {
+            options = {
+              source = mkOption {
+                type = nullOr path;
+                default = null;
+
+                description = ''
+                  File linked in as the skill. Mutually exclusive with
+                  {option}`text`.
+                '';
+              };
+
+              text = mkOption {
+                type = nullOr lines;
+                default = null;
+
+                description = ''
+                  Skill written verbatim. Mutually exclusive with
+                  {option}`source`.
+                '';
+              };
+
+              sandbox = mkOption {
+                type = bool;
+                default = false;
+
+                description = ''
+                  Whether the skill works with nothing but the workspace and
+                  the sandbox's own tools.
+
+                  Off by default, because most of these drive something on
+                  this machine -- an editor, a notifier, a command installed
+                  here -- and none of it exists in the guest. Such a skill is
+                  worse there than missing: it is offered to the agent, which
+                  spends a turn calling it and gets nothing back.
+                '';
+              };
+            };
+          })
+        );
 
       description = ''
         Skills offered to every enabled coding agent. A path is linked into
         the agent's skill directory; a string is written there verbatim.
+
+        Give {option}`sandbox` instead of a bare path or string to say the
+        skill may also be carried into a sandboxed session.
       '';
 
       default =
         {
-          agent-shell-memory = ./skills/agent-shell-memory/SKILL.md;
+          # Greps transcripts kept in the workspace, which is mounted, so it
+          # is the one skill here that needs nothing of this machine.
+          agent-shell-memory = {
+            source = ./skills/agent-shell-memory/SKILL.md;
+            sandbox = true;
+          };
+
           mcp-cli = ./skills/mcp-cli/SKILL.md;
           notify = ./skills/notify/SKILL.md;
 

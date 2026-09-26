@@ -124,7 +124,15 @@ const GUEST_HOME = "/root";
 // finds below that, so the copy has to walk the tree itself: `stat' follows a
 // link and `copyFile' reads through one, which together turn each entry into
 // a file the guest can open.
+// A directory carrying this is left on the host. Skills are marked with it
+// where they drive an editor, a notifier or a command installed here, none of
+// which the guest has: offered there, the agent calls one and spends the turn
+// finding out it does nothing.
+const HOST_ONLY = ".host-only";
+
 const copyResolved = (from, to) => {
+  if (fs.existsSync(path.join(from, HOST_ONLY))) return;
+
   fs.mkdirSync(to, {recursive: true});
 
   for (const entry of fs.readdirSync(from, {withFileTypes: true})) {
