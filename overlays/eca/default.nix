@@ -4,6 +4,7 @@
   fetchurl,
   unzip,
   autoPatchelfHook,
+  zlib,
   # "host" is the binary that runs on this machine; "guest" is the Linux build
   # the Gondolin sandbox mounts. Both come from one table so that the sandboxed
   # and unsandboxed servers cannot drift to different versions.
@@ -70,6 +71,12 @@ in
       ++ lib.optionals (stdenvNoCC.hostPlatform.isLinux && !isForeign) [
         autoPatchelfHook
       ];
+
+    # The native image links zlib dynamically, which autoPatchelfHook has to
+    # be able to resolve.
+    buildInputs = lib.optionals (stdenvNoCC.hostPlatform.isLinux && !isForeign) [
+      zlib
+    ];
 
     # The upstream Mach-O binaries are signed with the hardened runtime, and
     # nothing here rewrites them, so the signature has to be left intact.
