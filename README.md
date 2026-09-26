@@ -8,6 +8,7 @@
         - [update keys with new host](#update-keys-with-new-host)
     - [building the eca sandbox image](#building-the-eca-sandbox-image)
         - [running the sandbox on a remote host](#running-the-sandbox-on-a-remote-host)
+        - [the bubblewrap backend](#the-bubblewrap-backend)
     - [replacing the devbox](#replacing-the-devbox)
 - [updating systems](#updating-systems)
     - [nixOS](#nixos)
@@ -93,9 +94,13 @@ start at all.
 Point a project at the sandbox from its `.dir-locals.el`:
 
 ``` elisp
-((nil . ((eca-custom-command . ("eca-gondolin" "--image" "eca:latest"
+((nil . ((eca-custom-command . ("eca-sandbox" "--image" "eca:latest"
                                 "--allow-host" "api.openai.com")))))
 ```
+
+`eca-sandbox` is whichever backend the machine provides, so one file serves
+every host. `wgn.home.eca.sandbox.backend` selects it: `gondolin` where there
+is hardware virtualization, `bubblewrap` otherwise.
 
 Per project rather than globally: `eca-custom-command` is consulted before
 `eca' is looked up on a remote host, so a global value would send TRAMP
@@ -127,8 +132,29 @@ ls -l /dev/kvm && grep -oE "vmx|svm" /proc/cpuinfo | sort -u
 ```
 
 Most cloud instances are themselves guests and do not expose this; the devbox
-is an EC2 instance with no virtualization extensions at all, so the sandbox
-cannot run there.
+is an EC2 instance with no virtualization extensions at all, so it uses the
+`bubblewrap` backend instead.
+
+### the bubblewrap backend
+
+For hosts without virtualization. Bubblewrap gives the filesystem boundary —
+`/` read-only, the workspace and state writable — and a local `mitmdump`
+enforces `--allow-host`, refusing anything else with a 403 and writing the
+same request log as the Gondolin backend.
+
+It is weaker in one specific way, and says so on every start:
+
+```
+eca-bwrap: egress is proxy-enforced and bypassable; allowed hosts: models.dev
+```
+
+An unprivileged namespace cannot route traffic without a veth pair, so the
+choice is the host's network or none at all. The wrapper sets the proxy
+variables and forces `no_proxy` empty so a project cannot widen them, and
+everything that honours `$HTTPS_PROXY` is covered — the server, and the
+`curl` and `git` its tools run. Something that deliberately clears those
+variables reaches the network directly. Gondolin has no such gap, because
+there the allowlist is enforced by the guest's DNS rather than by consent.
 
 ## replacing the devbox
 

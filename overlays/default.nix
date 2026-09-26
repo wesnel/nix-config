@@ -28,6 +28,7 @@
   gondolin = final.callPackage ./gondolin {};
 
   eca-gondolin = final.callPackage ./eca-gondolin {};
+  eca-bwrap = final.callPackage ./eca-bwrap {};
 
   # FIXME: This is blocked by CrowdStrike on my work laptop :(
   # https://github.com/Mozilla-Ocho/llamafile/issues/14

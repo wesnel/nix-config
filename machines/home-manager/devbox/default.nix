@@ -22,7 +22,13 @@
         amp.enable = true;
         claude.enable = true;
         codex.enable = true;
-        eca.enable = true;
+        eca = {
+          enable = true;
+          sandbox = {
+            enable = true;
+            backend = "bubblewrap";
+          };
+        };
         emacs.enable = true;
         fish.enable = true;
         git.enable = true;

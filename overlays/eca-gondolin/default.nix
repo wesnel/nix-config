@@ -31,6 +31,10 @@ stdenvNoCC.mkDerivation {
       --run 'export ECA_GONDOLIN_STATE="''${ECA_GONDOLIN_STATE:-''${XDG_CACHE_HOME:-$HOME/.cache}/eca-gondolin}"' \
       --prefix PATH : ${gondolin}/bin
 
+    # Both backends answer to one name so that a project's .dir-locals.el is
+    # portable across machines; only one is ever installed.
+    ln -s eca-gondolin $out/bin/eca-sandbox
+
     runHook postInstall
   '';
 
