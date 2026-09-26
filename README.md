@@ -239,11 +239,29 @@ deployed, and it is pushed from another machine rather than switched in place.
 From the dev shell in this directory:
 
 ``` bash
-deploy '.#devbox'
+deploy --skip-checks '.#devbox'
 ```
 
 The `devbox` host alias is written into `~/.ssh/config` by the ngrok machine, so
 this only resolves where that machine's sops secrets are decrypted.
+
+`--skip-checks` is required from a darwin machine. It suppresses one thing,
+deploy-rs's `nix flake check`, which covers every machine in the flake rather
+than the one being deployed; devbox is still evaluated and built. That check
+fails here because evaluating the x230 configuration builds its Emacs
+configuration, and that build is `x86_64-linux`:
+
+```
+error: Cannot build '...-emacs-treesit-grammars.drv'.
+       Reason: platform mismatch
+       Required system: 'x86_64-linux'
+       Current system: 'aarch64-darwin'
+```
+
+Passing `--no-build` instead does not help, and cannot be aimed at the check
+alone: deploy-rs forwards trailing arguments to its build and eval commands
+too, and `nix build` rejects that flag. Deploying from an `x86_64-linux`
+machine needs no such flag.
 
 # troubleshooting
 
