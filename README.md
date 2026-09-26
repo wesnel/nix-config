@@ -146,11 +146,33 @@ something the agent could do rather than something it is asked not to.
 ((nil . ((eca-custom-command
           . ("eca-sandbox" "--image" "eca:latest"
              "--http-map" "ollama:11434=127.0.0.1:11434"
+             "--http-map" "docs:6280=127.0.0.1:6280"
              "--env" "OLLAMA_API_URL=http://ollama:11434")))))
 ```
 
 `OLLAMA_API_URL` overrides the `http://localhost:11434` the server would
 otherwise use, which inside the guest would be the guest itself.
+
+### the documentation index
+
+`wgn.home.docs-mcp-server.enable` runs the index as a service rather than
+leaving each client to start its own, so there is one database and one set of
+scraped pages. Clients find it at `http://127.0.0.1:6280/mcp`, which
+`programs.mcp` writes for them; the second mapping above is what carries that
+into the guest.
+
+Pages are embedded by a model served on this machine, named through the
+`openai` provider because that is the API it answers. Pull it before enabling
+the service:
+
+``` sh
+ollama pull nomic-embed-text
+```
+
+`vectorDimension` has to match what that model returns -- 768 for
+`nomic-embed-text` -- because only OpenAI's own model sizes are known to the
+indexer. Changing either it or `embeddingModel` invalidates the index, since
+vectors from one model cannot be compared with another's.
 
 ### running the sandbox on a remote host
 

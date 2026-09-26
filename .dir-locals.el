@@ -10,5 +10,6 @@
           . ("eca-sandbox"
              "--image" "eca:latest"
              "--http-map" "ollama:11434=127.0.0.1:11434"
+             "--http-map" "docs:6280=127.0.0.1:6280"
              "--env" "OLLAMA_API_URL=http://ollama:11434"))))
  (nix-mode . ((eglot-workspace-configuration . (:nil (:formatting (:command ["alejandra"])))))))
