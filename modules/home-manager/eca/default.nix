@@ -18,9 +18,13 @@ in {
       example = "ollama/qwen2.5-coder:7b";
 
       description = ''
-        Model backing the `local-explorer` agent, as `provider/model`. The
-        model itself is pulled by hand; only the agent that selects it is
-        declared here.
+        Model backing the `local` agent, as `provider/model`. The model itself
+        is pulled by hand; only the agent that selects it is declared here.
+
+        It has to be one that calls tools natively. A model that instead
+        describes the call in its reply -- which several coding models do,
+        whatever capabilities they advertise -- leaves the agent with nothing
+        to run, so it reads and edits nothing.
 
         Its context window and cost still have to be set under
         {option}`providers` in ECA's own config, which ECA owns: without them
@@ -75,10 +79,13 @@ in {
     # ~/.config/eca/agents is read and never written by ECA, so an agent can
     # be declared here without taking over the config file ECA writes itself.
     (mkIf (cfg.localModel != null) {
-      xdg.configFile."eca/agents/local-explorer.md".text = ''
+      # `explorer' is the read-only agent the planner delegates investigation
+      # to, so an agent inheriting it cannot change a file: it is the wrong
+      # base for unattended work, which exists to leave changes behind.
+      xdg.configFile."eca/agents/local.md".text = ''
         ---
-        inherit: explorer
-        description: Explores the codebase using a model running on this machine
+        inherit: code
+        description: Works in the codebase using a model running on this machine
         model: ${cfg.localModel}
         ---
       '';
