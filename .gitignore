@@ -2,7 +2,3 @@ result
 .DS_Store
 *.ovpn
 .direnv
-
-# Written per run; the goal file beside them is the part worth keeping.
-/.eca/overnight-state.json
-/.eca/overnight-journal.jsonl

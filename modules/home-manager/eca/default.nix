@@ -76,13 +76,6 @@ in {
           "eca/sandbox-skills.json".text =
             builtins.toJSON
             (llm.sandboxSkillNames config.wgn.home.llm.skills);
-        }
-        // {
-          # Lives here rather than on PATH because a sandboxed session runs
-          # the hook inside the guest, where the store is not mounted and
-          # this directory is. Inert until a workspace has a goal file, so
-          # there is nothing to switch on.
-          "eca/hooks/overnight.mjs".source = ./hooks/overnight.mjs;
         };
     }
 
