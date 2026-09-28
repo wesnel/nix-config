@@ -36,6 +36,13 @@ const parseArgs = (argv) => {
       .split(",")
       .map((h) => h.trim())
       .filter(Boolean),
+    // Everything is reachable and everything is recorded. The proxy still
+    // terminates TLS, so `--log' sees each request either way: the choice is
+    // whether the boundary refuses traffic or only watches it.
+    observe: process.env.ECA_GONDOLIN_OBSERVE === "1",
+    // Refused whichever mode is in force, so a host can be shut out of an
+    // otherwise open session without naming every host that stays open.
+    deniedHosts: [],
     tcpMaps: [],
     httpMaps: [],
     env: {},
@@ -64,6 +71,10 @@ const parseArgs = (argv) => {
       opts.log = argv[++i];
     } else if (arg === "--allow-host") {
       opts.allowedHosts.push(argv[++i]);
+    } else if (arg === "--observe") {
+      opts.observe = true;
+    } else if (arg === "--deny-host") {
+      opts.deniedHosts.push(argv[++i]);
     } else if (arg === "--tcp-map") {
       opts.tcpMaps.push(argv[++i]);
     } else if (arg === "--http-map") {
@@ -331,15 +342,52 @@ const rewrite = (req) => {
 // Returns the hooks alongside the environment the guest needs for secret
 // placeholders, so both have to be destructured rather than passed through
 // whole.
+// `*' alone matches everything; a leading `*.' matches any subdomain and the
+// domain itself. Anything else is the host exactly.
+const matchesHost = (hostname, pattern) => {
+  if (pattern === "*") return true;
+
+  if (pattern.startsWith("*.")) {
+    const domain = pattern.slice(2);
+
+    return hostname === domain || hostname.endsWith(`.${domain}`);
+  }
+
+  return hostname === pattern;
+};
+
+const denied = (hostname) =>
+  opts.deniedHosts.some((pattern) => matchesHost(hostname, pattern));
+
+if (opts.observe && opts.allowedHosts.length > 0) {
+  process.stderr.write(
+    "eca-gondolin: --observe reaches every host, so --allow-host adds nothing\n",
+  );
+}
+
+if (opts.observe) {
+  process.stderr.write(
+    "eca-gondolin: observing egress, not restricting it" +
+      (opts.deniedHosts.length > 0
+        ? ` (except ${opts.deniedHosts.join(", ")})`
+        : "") +
+      (opts.log ? "" : "; no --log, so nothing is being recorded either") +
+      "\n",
+  );
+}
+
 const {httpHooks, env} = createHttpHooks({
-  allowedHosts: opts.allowedHosts,
+  // Undefined is how the allowlist is turned off altogether; an array, even
+  // an empty one, means the hosts in it and nothing else.
+  allowedHosts: opts.observe ? undefined : opts.allowedHosts,
   allowedInternalHosts,
 
   // Reached only once the allowlist has already admitted the host, so this
   // can narrow that decision but never widen it.
   isIpAllowed: (info) =>
-    !upstreamHosts.has(info.hostname) ||
-    upstreamTargets.has(`${info.hostname}:${info.port}`),
+    !denied(info.hostname) &&
+    (!upstreamHosts.has(info.hostname) ||
+      upstreamTargets.has(`${info.hostname}:${info.port}`)),
 
   onRequest: (req) => {
     const next = rewrite(req);

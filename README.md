@@ -139,6 +139,18 @@ fetches its model catalogue from `models.dev` on startup but carries on
 without it, so an empty allowlist is a working configuration rather than a
 broken one.
 
+`--observe` reaches everything instead, and `--deny-host PATTERN` shuts a host
+out of a session that is otherwise open -- `*.example.com` matches the domain
+and its subdomains. This is the mode for a hosted model, where naming every
+host a provider touches is guesswork and the point is to see what it did
+rather than to decide in advance.
+
+The proxy terminates TLS either way, so `--log` records the same decrypted
+requests in both modes and a refusal is a request with no response beside it.
+What changes is only whether the boundary turns traffic away, so the log is
+worth as much when nothing is blocked -- and without `--log`, `--observe`
+neither restricts nor records, which the wrapper says on startup.
+
 `--http-map GUEST_HOST[:PORT]=UPSTREAM_HOST:PORT` reaches a service on this
 machine from inside the guest, and `--env KEY=VALUE` sets a variable there.
 The guest name has to be one the guest would not otherwise resolve, because
