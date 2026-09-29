@@ -24,10 +24,6 @@
         codex.enable = true;
         eca = {
           enable = true;
-          sandbox = {
-            enable = true;
-            backend = "bubblewrap";
-          };
         };
         emacs.enable = true;
         fish.enable = true;
@@ -41,6 +37,13 @@
       };
 
       home.programs.wgn.emacs = {
+        eca = {
+          enable = true;
+          sandbox = {
+            enable = true;
+            backend = "bubblewrap";
+          };
+        };
         claude.enable = true;
         codex.enable = true;
       };

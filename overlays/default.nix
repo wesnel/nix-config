@@ -18,18 +18,6 @@
 
   mcp-cli = final.callPackage ./mcp-cli {};
 
-  # One table for both, so the sandboxed and unsandboxed servers cannot drift
-  # to different versions.
-  eca = final.callPackage ./eca {};
-  eca-guest = final.callPackage ./eca {target = "guest";};
-
-  # Exposed in its own right because building the guest image is a manual
-  # step that runs the CLI directly; see "building the eca sandbox image".
-  gondolin = final.callPackage ./gondolin {};
-
-  eca-gondolin = final.callPackage ./eca-gondolin {};
-  eca-bwrap = final.callPackage ./eca-bwrap {};
-
   # FIXME: This is blocked by CrowdStrike on my work laptop :(
   # https://github.com/Mozilla-Ocho/llamafile/issues/14
   llava = final.stdenv.mkDerivation rec {

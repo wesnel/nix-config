@@ -8,7 +8,7 @@
         - [update keys with new host](#update-keys-with-new-host)
 - [the coding assistant](#the-coding-assistant)
     - [what nix owns](#what-nix-owns)
-    - [building the sandbox image](#building-the-sandbox-image)
+    - [the sandbox image](#the-sandbox-image)
     - [reaching a hosted provider](#reaching-a-hosted-provider)
     - [running against a model on this machine](#running-against-a-model-on-this-machine)
     - [the documentation index](#the-documentation-index)
@@ -84,117 +84,37 @@ rest are covered by ECA's own documentation.
 
 ## what nix owns
 
-`wgn.home.eca.enable` installs the server and its skills, and
-`sandbox.enable` adds the wrapper. The Emacs client needs no toggle of its
-own: `eca-emacs` talks to the server directly, where `claude` and `codex`
-gate an agent-shell bridge that has to be installed alongside them.
-
-The server is pinned here rather than left to fetch itself: `eca-emacs`
-otherwise downloads a copy from the GitHub releases API on first start.
+`wgn.home.eca.enable` configures shared skills and model agents here.
+The imported `emacs-config` owns the pinned server, sandbox packages and
+Emacs launch settings. Enable them with `home.programs.wgn.emacs.eca.enable`
+and `home.programs.wgn.emacs.eca.sandbox.enable`.
 
 Nix writes only the files ECA reads and never writes -- `skills/`, `agents/`
 and `hooks/` under `~/.config/eca`. `config.json` beside them is yours,
 because ECA writes to it itself; a read-only file there is the one thing that
 stops it working.
 
-## building the sandbox image
+## the sandbox image
 
-`eca-gondolin` runs the ECA server inside a Gondolin micro-VM. The guest lives
-in `~/.cache/gondolin`, outside anything Nix manages, so each machine builds it
-once:
+Home Manager prepares and caches the Gondolin guest image during activation.
+The first build requires network access; later activations reuse the image
+unless its configuration or builder changes. An explicit `--image` selects
+a custom image and skips automatic preparation.
 
-``` bash
-nix shell nixpkgs#e2fsprogs --command \
-    gondolin build --config overlays/eca-gondolin/build-config.json \
-        --arch aarch64 --tag eca:latest
-```
+See the imported module's [ECA setup](https://github.com/wesnel/emacs-config#eca-and-sandboxed-local-workspaces)
+and [guest image provisioning](https://github.com/wesnel/emacs-config#gondolin-guest-image).
 
-`mke2fs` is the reason for the `nix shell`: Gondolin's wrapper does not carry
-e2fsprogs, and the build fails without it. Set `--arch x86_64` to match the
-target machine.
-
-The config adds `gcompat` to Alpine's package set. The server is a
-glibc-linked native image and Alpine is musl, so without it the binary cannot
-start at all.
-
-Point a project at the sandbox from its `.dir-locals.el`:
-
-``` elisp
-((nil . ((eca-send-process-id . nil)
-         (eca-custom-command . ("eca-sandbox" "--image" "eca:latest"
-                                "--allow-host" "api.openai.com")))))
-```
-
-Both settings are needed. `eca-emacs` otherwise sends the Emacs process id and
-the server watches it to know when the editor has gone; the server runs in the
-guest, where that id belongs to nothing, so it decides the editor has already
-exited and stops during startup.
-
-`eca-sandbox` is whichever backend the machine provides, so one file serves
-every host. `wgn.home.eca.sandbox.backend` selects it: `gondolin` where there
-is hardware virtualization, `bubblewrap` otherwise.
-
-Per project rather than globally: `eca-custom-command` is consulted before
-`eca' is looked up on a remote host, so a global value would send TRAMP
-sessions to this machine's sandbox instead of the host they are editing.
-
-No `eca-local-to-remote-prefix-map` is needed, because the workspace is
-mounted in the guest at the path it already has on the host. Translating
-instead of mirroring cannot be made to work over TRAMP anyway: the outbound
-path conversion strips the TRAMP prefix before applying any mapping, and the
-inbound one never restores it, so no single mapping satisfies both directions.
-
-`--allow-host` is default-deny, and nothing is allowed implicitly. The server
-fetches its model catalogue from `models.dev` on startup but carries on
-without it, so an empty allowlist is a working configuration rather than a
-broken one.
-
-`--observe` reaches everything instead, and `--deny-host PATTERN` shuts a host
-out of a session that is otherwise open -- `*.example.com` matches the domain
-and its subdomains. This is the mode for a hosted model, where naming every
-host a provider touches is guesswork and the point is to see what it did
-rather than to decide in advance.
-
-The proxy terminates TLS either way, so `--log` records the same decrypted
-requests in both modes and a refusal is a request with no response beside it.
-What changes is only whether the boundary turns traffic away, so the log is
-worth as much when nothing is blocked -- and without `--log`, `--observe`
-neither restricts nor records, which the wrapper says on startup.
+Sandbox flags, including Gondolin's `--observe`, `--deny-host` and `--log`,
+are documented under [network policy and request logging](https://github.com/wesnel/emacs-config#network-policy-and-request-logging).
+The wrappers have different defaults and supported flags; check the
+[backend comparison](https://github.com/wesnel/emacs-config#remote-hosts-and-backend-differences).
 
 ## reaching a hosted provider
 
-`/login` opens a browser and waits on a loopback port, and the guest has
-neither, so a provider is authenticated on this machine and the tokens are
-carried in. They sit in the same file as the chat history, under the state
-directory the guest keeps separately, so they do not arrive on their own.
-
-`--share-login` copies that file in the first time the guest has none. It is
-asked for rather than assumed: a session against a model on this machine has
-no use for provider tokens, and this puts them somewhere the agent can read.
-
-It leaves an existing copy alone. The guest refreshes these tokens as it runs
-and providers commonly retire the old one when it does, so replacing its copy
-each start would throw away the live credential. Delete the file from the
-state directory to take this machine's again -- after logging in afresh, for
-instance.
-
-`--http-map GUEST_HOST[:PORT]=UPSTREAM_HOST:PORT` reaches a service on this
-machine from inside the guest, and `--env KEY=VALUE` sets a variable there.
-The guest name has to be one the guest would not otherwise resolve, because
-`localhost` answers inside the VM and never reaches the resolver that would
-map it back here.
-
-A mapping grants only what it names. The upstream is reachable on the mapped
-port alone, so pointing one at a machine that also runs a database or an SSH
-daemon does not expose those. The request is rewritten as it crosses the
-proxy, which both keeps it in the `--log` and repoints its `Host` header: a
-server bound to loopback refuses a request still naming the guest-side host,
-treating it as DNS rebinding.
-
-`--tcp-map` takes the same argument but forwards below the proxy, as raw TCP.
-Nothing sees that traffic -- no log, no allowlist, no header rewrite -- so it
-is for services that do not speak HTTP, and `--http-map` is the one to reach
-for otherwise.
+See `emacs-config` for [hosted provider authentication](https://github.com/wesnel/emacs-config#hosted-provider-authentication)
+and [network policy](https://github.com/wesnel/emacs-config#network-policy-and-request-logging).
+Gondolin's `--share-login` imports an authenticated host session; the flag
+is not supported by Bubblewrap.
 
 ## running against a model on this machine
 
@@ -202,12 +122,12 @@ With a model served locally, the sandbox can be closed entirely: deny every
 host and open one mapping to the server, so reaching a hosted provider is not
 something the agent could do rather than something it is asked not to.
 
-``` elisp
-((nil . ((eca-custom-command
-          . ("eca-sandbox" "--image" "eca:latest"
-             "--http-map" "ollama:11434=127.0.0.1:11434"
-             "--http-map" "docs:6280=127.0.0.1:6280"
-             "--env" "OLLAMA_API_URL=http://ollama:11434")))))
+``` nix
+home.programs.wgn.emacs.eca.sandbox.args = [
+  "--http-map" "ollama:11434=127.0.0.1:11434"
+  "--http-map" "docs:6280=127.0.0.1:6280"
+  "--env" "OLLAMA_API_URL=http://ollama:11434"
+];
 ```
 
 `OLLAMA_API_URL` overrides the `http://localhost:11434` the server would
@@ -219,7 +139,7 @@ otherwise use, which inside the guest would be the guest itself.
 ollama pull qwen2.5-coder:7b
 ```
 
-`wgn.home.eca.localModel` names it on an agent that inherits `explorer`, so
+`wgn.home.eca.localModel` names it on an agent that inherits `code`, so
 the model is selected by choosing that agent. It declares nothing else: the
 window and cost belong to the provider entry in ECA's `config.json`, and
 without them the window is treated as unbounded and a conversation is
@@ -252,44 +172,16 @@ vectors from one model cannot be compared with another's.
 
 ## running the sandbox on a remote host
 
-`eca-emacs` starts the server with `make-process :file-handler t`, so when
-`default-directory` is a TRAMP path the command runs on that host. A
-`.dir-locals.el` like the one above, in a project opened over TRAMP, therefore
-starts the sandbox on the remote rather than locally.
+The devbox is an EC2 guest without hardware virtualization, so its native
+Emacs sessions use Bubblewrap. TRAMP sessions started by Emacs on another
+machine resolve the devbox's `eca` and run it directly.
 
-That host needs `eca-gondolin`, its own guest image built for its
-architecture, and **hardware virtualization**. Gondolin runs QEMU, which
-without `/dev/kvm` falls back to software emulation and is far too slow to
-use. Check before building anything:
-
-``` bash
-ls -l /dev/kvm && grep -oE "vmx|svm" /proc/cpuinfo | sort -u
-```
-
-Most cloud instances are themselves guests and do not expose this; the devbox
-is an EC2 instance with no virtualization extensions at all, so it uses the
-`bubblewrap` backend instead.
+See `emacs-config` for [remote launch behavior and virtualization requirements](https://github.com/wesnel/emacs-config#remote-hosts-and-backend-differences).
 
 ## the bubblewrap backend
 
-For hosts without virtualization. Bubblewrap gives the filesystem boundary —
-`/` read-only, the workspace and state writable — and a local `mitmdump`
-enforces `--allow-host`, refusing anything else with a 403 and writing the
-same request log as the Gondolin backend.
-
-It is weaker in one specific way, and says so on every start:
-
-```
-eca-bwrap: egress is proxy-enforced and bypassable; allowed hosts: models.dev
-```
-
-An unprivileged namespace cannot route traffic without a veth pair, so the
-choice is the host's network or none at all. The wrapper sets the proxy
-variables and forces `no_proxy` empty so a project cannot widen them, and
-everything that honours `$HTTPS_PROXY` is covered — the server, and the
-`curl` and `git` its tools run. Something that deliberately clears those
-variables reaches the network directly. Gondolin has no such gap, because
-there the allowlist is enforced by the guest's DNS rather than by consent.
+See the [backend comparison in emacs-config](https://github.com/wesnel/emacs-config#remote-hosts-and-backend-differences)
+for filesystem isolation, proxy enforcement and supported flags.
 
 # replacing the devbox
 

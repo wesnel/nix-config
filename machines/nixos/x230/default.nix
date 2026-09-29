@@ -34,6 +34,9 @@
       };
 
       home.programs.wgn.emacs = {
+        eca = {
+          enable = true;
+        };
         claude.enable = true;
         codex.enable = true;
       };

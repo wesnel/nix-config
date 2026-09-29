@@ -17,7 +17,6 @@
         eca = {
           enable = true;
           localModel = "ollama/qwen2.5-coder:7b";
-          sandbox.enable = true;
         };
         emacs.enable = true;
         fish.enable = true;
@@ -39,6 +38,20 @@
       };
 
       home.programs.wgn.emacs = {
+        eca = {
+          enable = true;
+          sandbox = {
+            enable = true;
+            args = [
+              "--http-map"
+              "ollama:11434=127.0.0.1:11434"
+              "--http-map"
+              "docs:6280=127.0.0.1:6280"
+              "--env"
+              "OLLAMA_API_URL=http://ollama:11434"
+            ];
+          };
+        };
         claude.enable = true;
         codex.enable = true;
       };
