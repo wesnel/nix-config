@@ -9,6 +9,7 @@
 - [the coding assistant](#the-coding-assistant)
     - [what nix owns](#what-nix-owns)
     - [building the sandbox image](#building-the-sandbox-image)
+    - [reaching a hosted provider](#reaching-a-hosted-provider)
     - [running against a model on this machine](#running-against-a-model-on-this-machine)
     - [the documentation index](#the-documentation-index)
     - [running the sandbox on a remote host](#running-the-sandbox-on-a-remote-host)
@@ -119,9 +120,15 @@ start at all.
 Point a project at the sandbox from its `.dir-locals.el`:
 
 ``` elisp
-((nil . ((eca-custom-command . ("eca-sandbox" "--image" "eca:latest"
+((nil . ((eca-send-process-id . nil)
+         (eca-custom-command . ("eca-sandbox" "--image" "eca:latest"
                                 "--allow-host" "api.openai.com")))))
 ```
+
+Both settings are needed. `eca-emacs` otherwise sends the Emacs process id and
+the server watches it to know when the editor has gone; the server runs in the
+guest, where that id belongs to nothing, so it decides the editor has already
+exited and stops during startup.
 
 `eca-sandbox` is whichever backend the machine provides, so one file serves
 every host. `wgn.home.eca.sandbox.backend` selects it: `gondolin` where there
@@ -153,6 +160,23 @@ requests in both modes and a refusal is a request with no response beside it.
 What changes is only whether the boundary turns traffic away, so the log is
 worth as much when nothing is blocked -- and without `--log`, `--observe`
 neither restricts nor records, which the wrapper says on startup.
+
+## reaching a hosted provider
+
+`/login` opens a browser and waits on a loopback port, and the guest has
+neither, so a provider is authenticated on this machine and the tokens are
+carried in. They sit in the same file as the chat history, under the state
+directory the guest keeps separately, so they do not arrive on their own.
+
+`--share-login` copies that file in the first time the guest has none. It is
+asked for rather than assumed: a session against a model on this machine has
+no use for provider tokens, and this puts them somewhere the agent can read.
+
+It leaves an existing copy alone. The guest refreshes these tokens as it runs
+and providers commonly retire the old one when it does, so replacing its copy
+each start would throw away the live credential. Delete the file from the
+state directory to take this machine's again -- after logging in afresh, for
+instance.
 
 `--http-map GUEST_HOST[:PORT]=UPSTREAM_HOST:PORT` reaches a service on this
 machine from inside the guest, and `--env KEY=VALUE` sets a variable there.

@@ -40,6 +40,7 @@ const parseArgs = (argv) => {
     // terminates TLS, so `--log' sees each request either way: the choice is
     // whether the boundary refuses traffic or only watches it.
     observe: process.env.ECA_GONDOLIN_OBSERVE === "1",
+    shareLogin: process.env.ECA_GONDOLIN_SHARE_LOGIN === "1",
     // Refused whichever mode is in force, so a host can be shut out of an
     // otherwise open session without naming every host that stays open.
     deniedHosts: [],
@@ -73,6 +74,8 @@ const parseArgs = (argv) => {
       opts.allowedHosts.push(argv[++i]);
     } else if (arg === "--observe") {
       opts.observe = true;
+    } else if (arg === "--share-login") {
+      opts.shareLogin = true;
     } else if (arg === "--deny-host") {
       opts.deniedHosts.push(argv[++i]);
     } else if (arg === "--tcp-map") {
@@ -125,6 +128,14 @@ if (opts.eca) {
 // written under ~/.cache/eca. Without both mounted the guest starts from
 // nothing every session: no skills, and a login that has to be redone.
 const GUEST_HOME = "/root";
+
+// Where the server keeps its own state on this machine, resolved the way it
+// resolves it: XDG_CACHE_HOME when that is absolute, and ~/.cache otherwise.
+const hostCache = () => {
+  const xdg = process.env.XDG_CACHE_HOME;
+
+  return xdg && path.isAbsolute(xdg) ? xdg : path.join(os.homedir(), ".cache");
+};
 
 // Home-manager writes this tree as symlinks into the Nix store, which the
 // guest has no copy of. Mounted as it stands, every leaf dangles there: the
@@ -213,6 +224,37 @@ if (opts.state) {
   const state = path.resolve(opts.state);
 
   fs.mkdirSync(state, {recursive: true});
+
+  // `/login' opens a browser and answers on a loopback port, neither of which
+  // the guest has, so a hosted provider can only be authenticated on this
+  // machine. The tokens live in the same file as the chat history, and the
+  // guest keeps its own state directory, so they do not arrive on their own.
+  if (opts.shareLogin) {
+    const file = "db.transit.json";
+    const from = path.join(hostCache(), "eca", file);
+    const to = path.join(state, file);
+
+    if (!fs.existsSync(from)) {
+      process.stderr.write(
+        `eca-gondolin: --share-login found no ${from}; log in on this machine first\n`,
+      );
+    } else if (fs.existsSync(to)) {
+      // Left alone once it is there: the guest refreshes these tokens as it
+      // runs, and providers commonly retire the old one when it does, so
+      // overwriting its copy each start would discard the live credential.
+      // Delete the file to take this machine's again.
+      process.stderr.write(
+        "eca-gondolin: --share-login kept the guest's existing credentials\n",
+      );
+    } else {
+      fs.copyFileSync(from, to);
+      fs.chmodSync(to, 0o600);
+
+      process.stderr.write(
+        "eca-gondolin: --share-login copied provider tokens into the guest\n",
+      );
+    }
+  }
 
   mounts[`${GUEST_HOME}/.cache/eca`] = new RealFSProvider(state);
 }
