@@ -56,9 +56,8 @@ in {
     # ~/.config/eca/agents is read and never written by ECA, so an agent can
     # be declared here without taking over the config file ECA writes itself.
     (mkIf (cfg.localModel != null) {
-      # `explorer' is the read-only agent the planner delegates investigation
-      # to, so an agent inheriting it cannot change a file: it is the wrong
-      # base for unattended work, which exists to leave changes behind.
+      # Not `explorer', the read-only agent the planner delegates
+      # investigation to: an agent inheriting it cannot change a file.
       xdg.configFile."eca/agents/local.md".text = ''
         ---
         inherit: code

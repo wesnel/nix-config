@@ -98,7 +98,7 @@ stops it working.
 
 Home Manager prepares and caches the Gondolin guest image during activation.
 The first build requires network access; later activations reuse the image
-unless its configuration or builder changes. An explicit `--image` selects
+unless its configuration or the Gondolin version changes. An explicit `--image` selects
 a custom image and skips automatic preparation.
 
 See the imported module's [ECA setup](https://github.com/wesnel/emacs-config#eca-and-sandboxed-local-workspaces)
@@ -174,7 +174,7 @@ vectors from one model cannot be compared with another's.
 
 The devbox is an EC2 guest without hardware virtualization, so its native
 Emacs sessions use Bubblewrap. TRAMP sessions started by Emacs on another
-machine resolve the devbox's `eca` and run it directly.
+machine run the devbox's `eca-sandbox`, and so use Bubblewrap too.
 
 See `emacs-config` for [remote launch behavior and virtualization requirements](https://github.com/wesnel/emacs-config#remote-hosts-and-backend-differences).
 
