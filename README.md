@@ -6,6 +6,14 @@
     - [secrets](#secrets)
         - [add the machine's age key to sops config](#add-the-machines-age-key-to-sops-config)
         - [update keys with new host](#update-keys-with-new-host)
+- [coding agents](#coding-agents)
+    - [what nix sets up](#what-nix-sets-up)
+    - [committing: unsigned work, one signing pass](#committing-unsigned-work-one-signing-pass)
+    - [the bot review loop](#the-bot-review-loop)
+        - [starting a loop](#starting-a-loop)
+        - [after the loop](#after-the-loop)
+        - [what a loop session enforces](#what-a-loop-session-enforces)
+    - [MCP servers](#mcp-servers)
 - [the coding assistant](#the-coding-assistant)
     - [what nix owns](#what-nix-owns)
     - [the sandbox image](#the-sandbox-image)
@@ -45,6 +53,8 @@
 │  │  └── opinionated home-manager configuration modules
 │  └── darwin
 │     └── opinionated darwin configuration modules
+├── overlays
+│  └── packages built here, including agent-tools (see coding agents)
 ├── flake.lock
 ├── flake.nix <-- main entrypoint
 ├── LICENSE.txt
@@ -76,6 +86,176 @@ rule.
 nix-shell --run "sops updatekeys secrets/wgn.yaml"
 ```
 
+# coding agents
+
+Claude Code (`wgn.home.claude`), Codex (`wgn.home.codex`) and ECA
+(`wgn.home.eca`) share one setup. Amp and Copilot receive the shared
+instructions and skills and nothing else.
+
+## what nix sets up
+
+Enabling any of those modules enables `wgn.home.llm`, which provides:
+
+- **Instructions.** `modules/home-manager/llm/AGENTS.md` is linked to where
+  each agent reads its user-level instructions.
+- **Skills.** `wgn.home.llm.skills` are linked into each agent's skill
+  directory. A skill marked `sandbox = true` is also carried into sandboxed
+  sessions; the rest drive something on this machine, such as Emacs.
+- **`agent-tools`** on `PATH`: `git sign-pass`, `pr-loop` and
+  `sandbox-relay`, built from `overlays/agent-tools`.
+
+Agents write the files below themselves, so Nix merges its keys into them on
+every switch rather than owning them. Everything else in them is left alone,
+and a change to one of these keys made from inside an agent is undone by the
+next switch.
+
+| File | Keys set on every switch |
+| --- | --- |
+| `~/.claude/settings.json` | `wgn.home.claude.settings`: attribution off, and the ngrok hook (a hook list here replaces the file's own) |
+| `~/.claude.json` | `mcpServers` entries for the MCP proxy |
+| `~/.codex/config.toml` | `[mcp_servers.*]` tables for the MCP proxy |
+| `~/.config/eca/config.json` | `mcpServers` entries for the MCP proxy |
+
+## committing: unsigned work, one signing pass
+
+Commits and pushes are signed with a YubiKey that needs a touch, so agents
+commit unsigned, fold corrections into the commit they correct with
+`git commit --fixup`, and never push or tag. The instructions and the
+`signing-pass` skill tell them so. When the work is done, see what will be
+signed and sign it, in a terminal of your own:
+
+``` sh
+git log --format='%h %G? %s' main..HEAD   # N marks an unsigned commit
+git sign-pass                              # squash fixups and sign; nothing is pushed
+git sign-pass --push                       # then push every branch that moved to its upstream
+```
+
+`git sign-pass` re-signs from the oldest unsigned commit, or the oldest one a
+fixup folds into, to the tip, one touch per commit. Branches stacked inside
+that range move with it. It squashes the fixups unsigned in a scratch
+worktree first, so a conflicting fixup is named before any touch, and it
+refuses if a commit's files, author or message would change, or, when
+squashing, if the files at the tip would. Merges are refused. The unsigned
+tip is kept at `refs/sign-pass/backup/<branch>`.
+
+If it stops at a missed touch, run `git rebase --continue`, touching the key
+when it flashes, then `git sign-pass --resume`. Pass `--base REF` when the
+branch does not start from `origin`'s default branch or the local `main` or
+`master`.
+
+## the bot review loop
+
+An agent can drive a stack of draft pull requests through CI and the review
+bots unattended: fixing failures and review comments as fixups, answering in
+each bot's threads, and stopping with a report for you to sign.
+
+### starting a loop
+
+You need, on this machine:
+
+- `gh auth login`, which `pr-loop` uses on the host;
+- open draft PRs by you, in one repository, stacked by base branch;
+- a clean main worktree.
+
+Then, in the repository, start one of:
+
+- `claude-pr-loop`, and ask it to run the review loop on the branch;
+- `codex-pr-loop`, and ask the same. Codex skips a hook until it is trusted,
+  so trust `pr-loop guard` in `/hooks` the first time, and again after a
+  switch changes it;
+- `M-x wgn/eca-pr-loop`, then choose the `pr-coordinator` agent.
+
+Each runs the agent's commands in a sandbox without credentials, beside a
+`sandbox-relay` that runs `pr-loop` on this machine with your `gh` login. The
+`review-loop` skill refuses to start anywhere else. On Linux, Claude Code's
+sandbox needs `bubblewrap` and `socat` on `PATH`.
+
+The coordinator gives each PR to an owner sub-agent, which works in its own
+worktree under `.pr-loop/<number>`, where signing is off. Each round waits
+for CI, requests reviews from the bots in `wgn.home.llm.prLoop.bots`
+(Copilot and Qodo by default), triages their threads, fixes in fixups,
+restacks, pushes the stack through the GitHub API, then replies and resolves.
+It stops when the bots are satisfied or the loop needs a decision, and
+writes `.git/pr-loop/report.md`.
+
+`pr-loop` touches only the registered branches, each an open draft by you in
+the same repository and not the default branch. It re-checks that before
+every write, and accepts only fixups of each PR's own commits.
+
+### after the loop
+
+In a terminal of your own, in the repository:
+
+``` sh
+pr-loop sign        # squash the fixups, sign, and push the stack over SSH (--no-push to keep it local)
+pr-loop end         # delete the bots' trigger comments and the loop's state
+```
+
+`pr-loop sign` refuses unless every PR ends with exactly the commits it
+started with and the files the loop left. `pr-loop end --prune` also deletes
+the round snapshots and backups. Until then, each round's work is reviewable
+with:
+
+``` sh
+git range-diff refs/pr-loop/rounds/0/<branch>...refs/pr-loop/rounds/<n>/<branch>
+```
+
+These stay yours: waiving a CI failure (`pr-loop request --accept-failure
+CHECK`), pruning, marking a PR ready for review, merging, and any change to
+Linear, which the report proposes instead.
+
+### what a loop session enforces
+
+- **Sandbox.** Every launcher takes its rules from `wgn.home.llm.prLoop`:
+  `deniedReads` (credentials, the keychain, the MCP proxy's token),
+  `protectedPaths` (read-only in the workspace: git hooks and config, and
+  agents' project settings), `allowedDomains` (the only network, for
+  dependencies) and `cacheDir` (the only build cache it writes).
+- **Guard.** `pr-loop guard` runs before every tool call in all three agents
+  and denies other ways to write to GitHub or Linear, unsigned-workflow
+  violations and your decisions. ECA's agents also carry deny patterns built
+  from `overlays/agent-tools/internal/guard/policy.json`. Add a rule there,
+  with commands it must deny and allow: the guard's tests and the package
+  build hold both to those examples.
+
+An ordinary session of any agent runs with none of this, and with your
+credentials.
+
+## MCP servers
+
+`wgn.home.mcp-proxy.enable` runs one MCP proxy for every agent at
+`http://127.0.0.1:6290/<name>/mcp`:
+
+| Name | Upstream | Access |
+| --- | --- | --- |
+| `linear` | Linear's `/mcp/readonly` | read tools only, OAuth |
+| `buildkite` | Buildkite's `/mcp/readonly` | read tools only, OAuth |
+| `docs` | the documentation index | search and listing only |
+
+The proxy signs in to Linear and Buildkite itself and refreshes their
+short-lived tokens, so agents hold only the proxy's own token, kept in
+`~/.local/state/mcp-proxy/token`. The servers are registered with Claude
+Code, Codex and ECA on every switch, and each reads the token when it
+connects. Sandboxed ECA sessions reach the proxy at `http://mcp-proxy:6290`,
+and see only a placeholder for the token.
+
+Authorize each server once, in a browser, after the first switch:
+
+``` sh
+mcp-proxy-authorize linear
+mcp-proxy-authorize buildkite
+mcp-proxy-status
+```
+
+Run `mcp-proxy-authorize` again if a server's token stops being accepted.
+The proxy logs to `~/.local/state/mcp-proxy.log`.
+
+GitHub is read through `gh`. ngrok's account server is registered in Claude
+Code only, signed in from there, and the ngrok hook lets through only tools
+whose names say they read. Claude's claude.ai connectors belong to the
+account rather than this configuration: disconnect them in claude.ai's
+settings to keep Claude to the proxy.
+
 # the coding assistant
 
 [ECA](https://eca.dev) is configured here; what follows is only the part that
@@ -92,7 +272,11 @@ and `home.programs.wgn.emacs.eca.sandbox.enable`.
 Nix writes only the files ECA reads and never writes -- `skills/`, `agents/`
 and `hooks/` under `~/.config/eca`. `config.json` beside them is yours,
 because ECA writes to it itself; a read-only file there is the one thing that
-stops it working.
+stops it working. Only its MCP proxy entries are merged in on every switch.
+
+Sessions are sandboxed when the sandbox is enabled. `M-x wgn/eca-unsandboxed`
+starts one without it, with every skill, including those that drive Emacs;
+see `emacs-config`.
 
 ## the sandbox image
 
