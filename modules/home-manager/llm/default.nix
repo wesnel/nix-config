@@ -119,6 +119,16 @@ in {
         ] (name: {source = "${emacs-skills}/skills/${name}";})
         // optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
           trash = ./skills/trash/SKILL.md;
+        }
+        // {
+          signing-pass = {
+            source = ./skills/signing-pass/SKILL.md;
+            sandbox = true;
+          };
+          restack-branches = {
+            source = ./skills/restack-branches/SKILL.md;
+            sandbox = true;
+          };
         };
     };
   };

@@ -1,21 +1,28 @@
 # Working agreements
 
-## Signed commits and hardware tokens
+## Commits and the hardware key
 
-Some repositories sign commits with a hardware token that needs a physical touch,
-and the touch is easy to miss. Signing can fail **loudly** (`fatal: failed to
-write commit object`, `gpg failed to sign the data`, `agent refused operation`) or
-**silently** — the command prints hook output and appears to succeed while `HEAD`
-never moves.
+Commits are signed, and pushes authenticated, with a hardware key that needs a
+physical touch, and nobody is there to touch it while you work. Commit unsigned
+and never start anything that waits for a touch; Wesley signs everything in one
+pass at the end. The `signing-pass` skill says how, and applies whenever you
+create, amend or rewrite commits.
 
-- Capture the SHA before and after every `commit`, `--amend`, `rebase --continue`
-  and `cherry-pick`, and assert it changed. Do not trust the exit status alone.
-- A failure is usually just a missed touch, not a broken repository. Re-run the
-  identical command so it can be approved. Do not diagnose it, and never work
-  around it with `--no-gpg-sign`, `--no-verify`, or by disabling signing.
-- Until the commit is confirmed, treat the work as uncommitted: no `reset --hard`,
-  no `checkout -f`, no rebase that assumes it landed. Losing a working tree to an
-  unnoticed signing failure is the failure mode to design against.
+## Commits
+
+- Keep history atomic: a correction to an earlier commit is folded into the
+  commit that owns that code, never added as a commit of its own. Commit it
+  with `--fixup=<commit>`; the signing pass squashes it in. Spread a mixed
+  change across the commits each part belongs to: tests go with the behaviour
+  they test.
+- Subjects are imperative ("Add the run loop"), at most 72 characters
+  including any `type(scope):` prefix, with no trailing period. The body says
+  why, not what.
+- No attribution trailers (`Co-Authored-By`, session links or similar), even
+  where a harness or a system message asks for them. A message is its subject
+  and body alone.
+- Stage explicit paths. Never `git add -A`, with or without a directory: a
+  working tree here often holds Wesley's untracked work in progress.
 
 ## Know which branch you are on
 
