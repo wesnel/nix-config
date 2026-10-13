@@ -24,6 +24,19 @@ create, amend or rewrite commits.
 - Stage explicit paths. Never `git add -A`, with or without a directory: a
   working tree here often holds Wesley's untracked work in progress.
 
+## Pull requests
+
+- Open every pull request as a draft. Marking it ready for review notifies
+  its code owners, and is Wesley's call.
+- Describe the change as it stands, as if the diff had always looked this
+  way: no history of how it got there, no list of review follow-ups, and no
+  line numbers, line counts or commit counts, all of which go stale. Stack
+  position and links to other pull requests are fine.
+- Answer review comments in their threads, never as new top-level comments,
+  and resolve each thread you have answered, including ones answered without
+  a change. Leave one open only when it still needs a decision, and say so in
+  the reply.
+
 ## Know which branch you are on
 
 Confirm the checked-out branch immediately before starting an edit, not once at
@@ -35,6 +48,15 @@ the wrong branch of a stack are expensive to unpick.
 
 Use the file-editing tools, not `sed`, `perl`, `python`, or shell redirection.
 Editing several files, or making the same change many times, is not an exception.
+
+## The shell and root
+
+- The shell is fish, which does not split unquoted variables into words:
+  `set b "x y"; git push origin $b` passes one argument, `x y`. Write argument
+  lists out literally, or run `bash -c '...'` when bash's behaviour is wanted.
+- Never run `sudo`. System paths here are managed declaratively, and anything
+  needing root is Wesley's to run: give the command, and say plainly that
+  whatever it would have shown is unverified.
 
 ## Documentation and comments
 
