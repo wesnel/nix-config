@@ -20,6 +20,7 @@
     (_: {
       wgn.home = {
         amp.enable = true;
+        bash.enable = true;
         claude.enable = true;
         codex.enable = true;
         eca = {
@@ -53,17 +54,21 @@
       lib,
       ...
     }: {
+      # The GnuPG and SSH agent sockets under /run/user/1000/gnupg are
+      # RemoteForward'd here from the ngrok machine, which holds the
+      # YubiKey. Anything that starts a local gpg-agent binds those paths
+      # first and breaks the forward, so the local agent stays off and the
+      # distro's socket units are masked on every activation.
+      programs.bash.initExtra = ''
+        export SSH_AUTH_SOCK=/run/user/1000/gnupg/S.gpg-agent.ssh
+      '';
+
       home = {
         stateVersion = "25.11";
 
-        # The GnuPG and SSH agent sockets under /run/user/1000/gnupg are
-        # RemoteForward'd here from the ngrok machine, which holds the
-        # YubiKey. Anything that starts a local gpg-agent binds those paths
-        # first and breaks the forward, so the local agent stays off and the
-        # distro's socket units are masked on every activation.
-        file.".bash_aliases".text = ''
-          export SSH_AUTH_SOCK=/run/user/1000/gnupg/S.gpg-agent.ssh
-        '';
+        # Ubuntu ships its own ~/.bashrc and ~/.profile, which home-manager
+        # replaces; without this, activation refuses to overwrite them.
+        backupFileExtension = "backup";
 
         # The activation PATH carries only the store paths home-manager puts
         # there, so systemctl has to be named in full or the loop silently

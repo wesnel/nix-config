@@ -123,6 +123,7 @@
 
       ./modules/home-manager/aerospace
       ./modules/home-manager/amp
+      ./modules/home-manager/bash
       ./modules/home-manager/claude
       ./modules/home-manager/codex
       ./modules/home-manager/copilot
