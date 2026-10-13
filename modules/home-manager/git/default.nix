@@ -43,12 +43,24 @@ in {
       enable = true;
       lfs.enable = true;
 
-      includes = [
-        {
-          path = config.sops.templates."git.inc".path;
-        }
-        # TODO: Add work-specific git config using includes.*.condition
-      ];
+      includes =
+        [
+          {
+            path = config.sops.templates."git.inc".path;
+          }
+          # TODO: Add work-specific git config using includes.*.condition
+        ]
+        # These repositories are mirrored on sourcehut, which is the canonical
+        # public copy of emacs-config, so a push to origin goes to both. A
+        # push URL replaces the fetch URL for pushing, which is why GitHub is
+        # listed as well.
+        ++ map (repo: {
+          condition = "gitdir:~/git/github.com/wesnel/${repo}/";
+          contents.remote.origin.pushurl = [
+            "git@github.com:wesnel/${repo}.git"
+            "git@git.sr.ht:~wgn/${repo}"
+          ];
+        }) ["nix-config" "emacs-config"];
 
       settings = {
         commit = {
