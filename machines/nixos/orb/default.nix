@@ -17,7 +17,6 @@
         git.enable = true;
         gnupg.enable = true;
         man.enable = true;
-        pass.enable = true;
         yubikey.enable = true;
       };
     })

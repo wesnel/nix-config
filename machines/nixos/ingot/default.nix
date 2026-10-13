@@ -21,7 +21,6 @@
         gnupg.enable = true;
         man.enable = true;
         music.enable = true;
-        pass.enable = true;
         photos.enable = true;
         video.enable = true;
         virtualisation.enable = true;

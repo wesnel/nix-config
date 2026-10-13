@@ -32,7 +32,6 @@
           # Matches the limit qwen2.5-coder:7b is given in ECA's own config.
           contextLength = 32768;
         };
-        pass.enable = true;
         python.enable = true;
         yubikey.enable = true;
       };
@@ -211,6 +210,14 @@
           enable = true;
         };
       };
+    })
+
+    (_: {
+      # Emacs reads every auth-source secret through this CLI once it is on
+      # PATH, so the ngrok tokens in secrets.fish and the Gnus IMAP logins
+      # have to be Login items in 1Password. The CLI reaches the desktop app
+      # only with Settings > Developer > "Integrate with 1Password CLI" on.
+      programs._1password.enable = true;
     })
 
     (_: {

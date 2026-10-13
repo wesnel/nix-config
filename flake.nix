@@ -148,7 +148,6 @@
       ./modules/home-manager/mosh
       ./modules/home-manager/music
       ./modules/home-manager/ollama
-      ./modules/home-manager/pass
       ./modules/home-manager/photos
       ./modules/home-manager/python
       ./modules/home-manager/slack

@@ -26,7 +26,6 @@
         go.enable = true;
         man.enable = true;
         music.enable = true;
-        pass.enable = true;
         photos.enable = true;
         python.enable = true;
         sway.enable = true;

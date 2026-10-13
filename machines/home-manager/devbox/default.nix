@@ -32,7 +32,6 @@
         helix.enable = true;
         man.enable = true;
         mosh.enable = true;
-        pass.enable = true;
         zellij.enable = true;
       };
 

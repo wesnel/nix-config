@@ -23,11 +23,6 @@ in {
         inherit key;
       };
 
-      password-store.settings = lib.mkIf config.programs.password-store.enable {
-        PASSWORD_STORE_KEY = key;
-        PASSWORD_STORE_SIGNING_KEY = key;
-      };
-
       gpg.scdaemonSettings = lib.mkIf config.programs.gpg.enable {
         disable-ccid = true;
         reader-port = "Yubico YubiKey OTP+FIDO+CCID";
