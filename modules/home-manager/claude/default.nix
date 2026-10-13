@@ -40,6 +40,7 @@ with lib; let
   '';
 
   darwin = pkgs.stdenv.hostPlatform.isDarwin;
+  mcpProxy = config.wgn.home.mcp-proxy;
 
   # The session's commands run in Claude Code's sandbox with no credentials and
   # no route to GitHub; `sandbox-relay session` serves `pr-loop` on a private
@@ -209,6 +210,31 @@ in {
     (mkIf cfg.prLoop.enable {
       wgn.home.llm.prLoop.enable = true;
       home.packages = [prLoopLauncher];
+    })
+
+    # User-scoped servers live in ~/.claude.json, which Claude Code rewrites
+    # constantly, so these entries are merged in on every switch rather than
+    # owned. headersHelper reads the token when Claude Code connects.
+    (mkIf mcpProxy.enable {
+      home.activation.claudeMcpServers = lib.hm.dag.entryAfter ["writeBoundary" "mcpProxyToken"] ''
+        state="$HOME/.claude.json"
+        servers=${escapeShellArg (builtins.toJSON (mapAttrs (_: path: {
+            type = "http";
+            url = mcpProxy.url + path;
+            inherit (mcpProxy) headersHelper;
+          })
+          mcpProxy.endpoints))}
+
+        if [ ! -e "$state" ]; then
+          verboseEcho "$state does not exist yet; the MCP proxy is registered at the next switch after Claude Code first runs."
+        elif merged=$(${pkgs.jq}/bin/jq --argjson servers "$servers" '.mcpServers = ((.mcpServers // {}) + $servers)' "$state"); then
+          if [ "$merged" != "$(cat "$state")" ] && [ -z "''${DRY_RUN:-}" ]; then
+            printf '%s\n' "$merged" > "$state"
+          fi
+        else
+          warnEcho "$state is not valid JSON, so the MCP proxy was not registered with Claude Code."
+        fi
+      '';
     })
   ]);
 }

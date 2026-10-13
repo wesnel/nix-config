@@ -14,6 +14,7 @@
         claude.enable = true;
         codex.enable = true;
         docs-mcp-server.enable = true;
+        mcp-proxy.enable = true;
         eca = {
           enable = true;
           localModel = "ollama/qwen2.5-coder:7b";

@@ -123,12 +123,14 @@ in {
 
         default = let
           home = config.home.homeDirectory;
+          proxy = config.wgn.home.mcp-proxy;
         in
           ["${home}/.config/gh" "${home}/.gnupg" "${home}/.ssh"]
           # gh keeps its token in the login keychain, which a sandboxed
           # command can otherwise read.
           ++ optional pkgs.stdenv.hostPlatform.isDarwin "${home}/Library/Keychains"
-          ++ optional pkgs.stdenv.hostPlatform.isLinux "/run/user";
+          ++ optional pkgs.stdenv.hostPlatform.isLinux "/run/user"
+          ++ optionals proxy.enable [proxy.stateDir proxy.oauthDir];
       };
 
       protectedPaths = mkOption {

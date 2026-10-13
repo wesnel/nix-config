@@ -9,6 +9,38 @@ with lib; let
 
   llm = import ../llm/lib.nix {inherit lib;};
 
+  mcpProxy = config.wgn.home.mcp-proxy;
+
+  registerMcpServers = pkgs.writers.writePython3 "codex-mcp-servers" {libraries = [pkgs.python3Packages.tomlkit];} ''
+    import json
+    import os
+    import sys
+
+    import tomlkit
+
+    path = sys.argv[1]
+    servers = json.loads(sys.argv[2])
+
+    doc = tomlkit.document()
+    if os.path.exists(path):
+        with open(path) as f:
+            doc = tomlkit.parse(f.read())
+
+    tables = doc.setdefault("mcp_servers", tomlkit.table(is_super_table=True))
+    changed = False
+    for name, entry in servers.items():
+        if tables.get(name) != entry:
+            table = tomlkit.table()
+            table.update(entry)
+            tables[name] = table
+            changed = True
+
+    if changed:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(tomlkit.dumps(doc))
+  '';
+
   toml = value:
     if isAttrs value
     then "{${concatStringsSep ", " (mapAttrsToList (k: v: "${builtins.toJSON k}=${toml v}") value)}}"
@@ -98,6 +130,22 @@ in {
     (mkIf cfg.prLoop.enable {
       wgn.home.llm.prLoop.enable = true;
       home.packages = [prLoopLauncher];
+    })
+
+    # Merged into the config.toml Codex writes, keeping its formatting and
+    # everything else in it. Each named entry is replaced whole.
+    # http_headers_helper reads the token when Codex connects.
+    (mkIf mcpProxy.enable {
+      home.activation.codexMcpServers = lib.hm.dag.entryAfter ["writeBoundary" "mcpProxyToken"] ''
+        if [ -z "''${DRY_RUN:-}" ]; then
+          ${registerMcpServers} "$HOME/.codex/config.toml" ${escapeShellArg (builtins.toJSON (mapAttrs (_: path: {
+            url = mcpProxy.url + path;
+            http_headers_helper = mcpProxy.headersHelper;
+          })
+          mcpProxy.endpoints))} \
+            || warnEcho "The MCP proxy was not registered with Codex."
+        fi
+      '';
     })
   ]);
 }

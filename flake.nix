@@ -145,6 +145,7 @@
       ./modules/home-manager/iterm
       ./modules/home-manager/llm
       ./modules/home-manager/man
+      ./modules/home-manager/mcp-proxy
       ./modules/home-manager/mosh
       ./modules/home-manager/music
       ./modules/home-manager/ollama

@@ -24,6 +24,8 @@
 
   agent-tools = final.callPackage ./agent-tools {};
 
+  tbxark-mcp-proxy = final.callPackage ./tbxark-mcp-proxy {};
+
   # FIXME: This is blocked by CrowdStrike on my work laptop :(
   # https://github.com/Mozilla-Ocho/llamafile/issues/14
   llava = final.stdenv.mkDerivation rec {

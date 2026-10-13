@@ -10,6 +10,24 @@ with lib; let
 
   llm = import ../llm/lib.nix {inherit lib;};
 
+  mcpProxy = config.wgn.home.mcp-proxy;
+  gondolin =
+    (options ? home.programs.wgn.emacs.eca.sandbox.backend)
+    && config.home.programs.wgn.emacs.eca.sandbox.enable
+    && config.home.programs.wgn.emacs.eca.sandbox.backend == "gondolin";
+
+  # One entry serves both sides. On this machine the URL falls back to the
+  # proxy itself and the token is read from its file. In the guest the
+  # wrapper sets MCP_PROXY_URL to a mapped name, the file is absent, and
+  # MCP_PROXY_TOKEN holds Gondolin's placeholder, which it swaps for the real
+  # token only on requests to the proxy.
+  ecaMcpServers =
+    mapAttrs (_: path: {
+      url = "\${env:MCP_PROXY_URL:${mcpProxy.url}}${path}";
+      headers.Authorization = "Bearer \${cmd:cat ${mcpProxy.tokenFile} 2>/dev/null || printenv MCP_PROXY_TOKEN}";
+    })
+    mcpProxy.endpoints;
+
   # Shell commands the review loop's agents may not run, as Java regexes that
   # ECA matches against the whole command string. ECA's deny rules win over
   # trust mode and remembered approvals. An agent's deny list replaces the
@@ -154,5 +172,48 @@ in {
         ---
       '';
     })
+
+    # config.json is ECA's own file, so the servers are merged into it on
+    # every switch rather than owned.
+    (mkIf mcpProxy.enable {
+      home.activation.ecaMcpServers = hm.dag.entryAfter ["writeBoundary"] ''
+        conf="${config.xdg.configHome}/eca/config.json"
+        servers=${escapeShellArg (builtins.toJSON ecaMcpServers)}
+
+        if [ ! -e "$conf" ]; then
+          current='{}'
+        else
+          current=$(cat "$conf")
+        fi
+
+        if merged=$(printf '%s' "$current" | ${pkgs.jq}/bin/jq --argjson servers "$servers" '.mcpServers = ((.mcpServers // {}) + $servers)'); then
+          if [ "$merged" != "$current" ] && [ -z "''${DRY_RUN:-}" ]; then
+            mkdir -p "$(dirname "$conf")"
+            printf '%s\n' "$merged" > "$conf"
+          fi
+        else
+          warnEcho "$conf is not plain JSON, so the MCP proxy was not registered with ECA."
+        fi
+      '';
+    })
+
+    # Only Gondolin can map a host service and inject a secret into the guest.
+    (optionalAttrs (options ? home.programs.wgn.emacs.eca.sandbox.secretFiles) (mkIf (mcpProxy.enable && gondolin) {
+      home.programs.wgn.emacs.eca.sandbox = {
+        secretFiles.MCP_PROXY_TOKEN = mcpProxy.tokenFile;
+        args = [
+          "--http-map"
+          "mcp-proxy:${toString mcpProxy.port}=127.0.0.1:${toString mcpProxy.port}"
+          "--env"
+          "MCP_PROXY_URL=http://mcp-proxy:${toString mcpProxy.port}"
+          # Matched against the host after the map rewrites it, so this is
+          # the upstream's; naming `mcp-proxy` instead gets the request
+          # refused. Every service mapped to 127.0.0.1 can therefore be sent
+          # the token, all of them on this machine.
+          "--secret"
+          "MCP_PROXY_TOKEN=127.0.0.1"
+        ];
+      };
+    }))
   ]);
 }
