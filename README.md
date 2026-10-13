@@ -153,9 +153,8 @@ between machines and a client can be promised more room than it will get.
 
 `wgn.home.docs-mcp-server.enable` runs the index as a service rather than
 leaving each client to start its own, so there is one database and one set of
-scraped pages. Clients find it at `http://127.0.0.1:6280/mcp`, which
-`programs.mcp` writes for them; the second mapping above is what carries that
-into the guest.
+scraped pages. Clients reach it at `http://127.0.0.1:6280/mcp`; the second
+mapping above is what carries that into the guest.
 
 Pages are embedded by a model served on this machine, named through the
 `openai` provider because that is the API it answers. Pull it before enabling

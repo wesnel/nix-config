@@ -7,7 +7,6 @@
 }:
 with lib; let
   cfg = config.wgn.home.llm;
-  docs = config.wgn.home.docs-mcp-server;
 in {
   options.wgn.home.llm = {
     enable = mkEnableOption "Enables the plumbing shared by my coding agents";
@@ -71,7 +70,6 @@ in {
 
       default =
         {
-          mcp-cli = ./skills/mcp-cli/SKILL.md;
           notify = ./skills/notify/SKILL.md;
 
           describe = builtins.readFile "${emacs-skills}/skills/describe/SKILL.md";
@@ -88,51 +86,5 @@ in {
     };
   };
 
-  config = mkIf cfg.enable {
-    home.packages = with pkgs; [
-      mcp-cli
-
-      # mcp-cli shells out to npx for servers distributed on npm.
-      nodejs
-    ];
-
-    # This writes only ~/.config/mcp/mcp.json, which mcp-cli reads and no
-    # agent writes to. Each agent is told about these servers through its own
-    # `mcp add`, so that none of their settings files have to be generated.
-    programs.mcp = {
-      enable = true;
-
-      servers = {
-        # Started per client unless a service already runs it, in which case
-        # every client reaches that one and shares the index rather than
-        # building a private one and contending for the same database.
-        docs-mcp-server =
-          if docs.enable
-          then {
-            type = "http";
-            url = "http://127.0.0.1:${toString docs.port}/mcp";
-          }
-          else {
-            type = "stdio";
-            command = "${pkgs.nodejs}/bin/npx";
-
-            args = [
-              "-y"
-              "@arabold/docs-mcp-server@latest"
-            ];
-
-            env = {
-              DOCS_MCP_TELEMETRY = "false";
-            };
-          };
-      };
-    };
-
-    # Some clients look for the older file name, which programs.mcp does not
-    # write.
-    xdg.configFile."mcp/mcp_servers.json" = {
-      enable = true;
-      source = config.xdg.configFile."mcp/mcp.json".source;
-    };
-  };
+  config = mkIf cfg.enable {};
 }
