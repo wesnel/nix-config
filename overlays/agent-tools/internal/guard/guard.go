@@ -31,6 +31,10 @@ type input struct {
 	ToolName  string          `json:"tool_name"`
 	Server    string          `json:"server"` // ECA's MCP server name
 	ToolInput json.RawMessage `json:"tool_input"`
+	// Claude Code names the subagent making the call, prefixed with its
+	// plugin's name ("pr-loop:pr-owner"). ECA's owner carries the owner-only
+	// rules as deny patterns instead.
+	AgentType string `json:"agent_type"`
 }
 
 // Main reads one hook event and writes a denial in the caller's format, or
@@ -40,7 +44,8 @@ func Main(stdin io.Reader, stdout io.Writer) int {
 	if err := json.NewDecoder(stdin).Decode(&in); err != nil {
 		return 0
 	}
-	reason := Check(in.ToolName, in.Server, in.ToolInput)
+	owner := in.AgentType == "pr-owner" || strings.HasSuffix(in.AgentType, ":pr-owner")
+	reason := check(in.ToolName, in.Server, in.ToolInput, owner)
 	if reason == "" {
 		return 0
 	}
@@ -55,8 +60,19 @@ func Main(stdin io.Reader, stdout io.Writer) int {
 	return 0
 }
 
-// Check returns why a tool call is denied, or "" to allow it.
+// Check returns why a tool call by the coordinator is denied, or "" to allow
+// it.
 func Check(tool, server string, toolInput json.RawMessage) string {
+	return check(tool, server, toolInput, false)
+}
+
+// CheckOwner is Check for a pr-owner, which is also denied the steps the
+// coordinator alone takes.
+func CheckOwner(tool, server string, toolInput json.RawMessage) string {
+	return check(tool, server, toolInput, true)
+}
+
+func check(tool, server string, toolInput json.RawMessage, owner bool) string {
 	full := tool
 	if server != "" {
 		full = server + "__" + tool
@@ -68,7 +84,7 @@ func Check(tool, server string, toolInput json.RawMessage) string {
 			Command string `json:"command"`
 		}
 		json.Unmarshal(toolInput, &args)
-		return command(args.Command, 0)
+		return command(args.Command, 0, owner)
 	case strings.Contains(strings.ToLower(full), "linear") && !readOnlyTool.MatchString(full):
 		return "The review loop does not change Linear. Put the proposed change in the final report for Wesley to approve."
 	case strings.Contains(strings.ToLower(full), "github") && !readOnlyTool.MatchString(full):
@@ -77,7 +93,7 @@ func Check(tool, server string, toolInput json.RawMessage) string {
 	return ""
 }
 
-func command(text string, depth int) string {
+func command(text string, depth int, owner bool) string {
 	for _, segment := range segments(text) {
 		words := strip(tokens(segment))
 		if len(words) == 0 {
@@ -89,18 +105,18 @@ func command(text string, depth int) string {
 		case shells[name] && depth < 3:
 			for i, w := range words {
 				if w == "-c" && i+1 < len(words) {
-					reason = command(words[i+1], depth+1)
+					reason = command(words[i+1], depth+1, owner)
 					break
 				}
 			}
 		case name == "eval" && depth < 3:
-			reason = command(strings.Join(words[1:], " "), depth+1)
+			reason = command(strings.Join(words[1:], " "), depth+1, owner)
 		case name == "git":
 			reason = checkGit(words)
 		case name == "gh":
 			reason = checkGh(words[1:])
 		case name == "pr-loop":
-			reason = checkPrLoop(words[1:])
+			reason = checkPrLoop(words[1:], owner)
 		case name == "git-sign-pass":
 			reason = signing
 		}
@@ -115,11 +131,19 @@ const signing = "Signing needs Wesley's hardware key. Leave the commits unsigned
 
 const pushGuard = "Publishing private history in a public repository is Wesley's decision. Stop and ask instead of changing push-guard.* settings."
 
+// coordinatorOnly are the pr-loop steps an owner leaves to the coordinator,
+// which keeps the stack consistent across PRs.
+var coordinatorOnly = map[string]bool{"begin": true, "push": true, "reply": true, "resolve": true,
+	"request": true, "worktrees": true, "sign": true, "end": true}
+
 // checkPrLoop keeps the decisions that are Wesley's: waiving a CI failure,
 // and discarding the unsquashed history.
-func checkPrLoop(args []string) string {
+func checkPrLoop(args []string, owner bool) string {
 	if len(args) == 0 {
 		return ""
+	}
+	if owner && coordinatorOnly[args[0]] {
+		return "The coordinator alone runs `pr-loop " + args[0] + "`. Report what you need it to do instead."
 	}
 	for _, a := range args[1:] {
 		switch {

@@ -73,8 +73,7 @@ func TestCheck(t *testing.T) {
 
 // TestPolicy holds the guard to the examples in policy.json, which ECA's deny
 // patterns are built from and checked against at package build time, so the
-// two cannot drift apart. Owner-only rules restrict an agent, which a hook
-// cannot tell apart, so only the patterns enforce them.
+// two cannot drift apart. Owner-only rules hold only for an owner.
 func TestPolicy(t *testing.T) {
 	data, err := os.ReadFile("policy.json")
 	if err != nil {
@@ -90,17 +89,20 @@ func TestPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, r := range rules {
-		if r.OwnerOnly {
-			continue
-		}
 		if len(r.Deny) == 0 || len(r.Allow) == 0 {
 			t.Errorf("%s: needs examples both ways", r.Pattern)
 		}
 		for want, commands := range map[bool][]string{true: r.Deny, false: r.Allow} {
 			for _, command := range commands {
 				input, _ := json.Marshal(map[string]string{"command": command})
-				if got := Check("Bash", "", input) != ""; got != want {
-					t.Errorf("%s: guard deny=%v for %q", r.Pattern, got, command)
+				// Another rule's allow example can be a step the coordinator
+				// alone takes, so an owner is held only to denials and to the
+				// owner-only rules' examples.
+				if got := CheckOwner("Bash", "", input) != ""; got != want && (want || r.OwnerOnly) {
+					t.Errorf("%s: guard deny=%v for an owner's %q", r.Pattern, got, command)
+				}
+				if got := Check("Bash", "", input) != ""; got != (want && !r.OwnerOnly) {
+					t.Errorf("%s: guard deny=%v for the coordinator's %q", r.Pattern, got, command)
 				}
 			}
 		}
@@ -122,6 +124,16 @@ func TestFormats(t *testing.T) {
 	Main(strings.NewReader(`{"hook_type":"preToolCall","server":"linear","tool_name":"save_issue","tool_input":{}}`), &out)
 	if !strings.Contains(out.String(), `"approval":"deny"`) {
 		t.Errorf("ECA MCP tool: %s", out.String())
+	}
+	out.Reset()
+	Main(strings.NewReader(`{"tool_name":"Bash","agent_type":"pr-loop:pr-owner","tool_input":{"command":"pr-loop push"}}`), &out)
+	if !strings.Contains(out.String(), `"permissionDecision":"deny"`) {
+		t.Errorf("Claude Code owner: %s", out.String())
+	}
+	out.Reset()
+	Main(strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"pr-loop push"}}`), &out)
+	if out.Len() != 0 {
+		t.Errorf("coordinator's push printed %s", out.String())
 	}
 	out.Reset()
 	Main(strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"ls"}}`), &out)

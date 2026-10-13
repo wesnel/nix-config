@@ -239,7 +239,9 @@ Linear, which the report proposes instead.
   dependencies) and `cacheDir` (the only build cache it writes).
 - **Guard.** `pr-loop guard` runs before every tool call in all three agents
   and denies other ways to write to GitHub or Linear, unsigned-workflow
-  violations and your decisions. ECA's agents also carry deny patterns built
+  violations and your decisions. Owner agents are also denied the steps the
+  coordinator alone takes (`pr-loop push`, `reply` and the like) in Claude
+  Code and ECA. ECA's agents also carry deny patterns built
   from `overlays/agent-tools/internal/guard/policy.json`. Add a rule there,
   with commands it must deny and allow: the guard's tests and the package
   build hold both to those examples.
