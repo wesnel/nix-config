@@ -10,10 +10,13 @@ import (
 // programKeys are config keys that make git run a program, send data
 // somewhere else, or read more config. In a repository's own config (which a
 // sandboxed agent can write) they would run with the host's credentials when
-// these tools call git. Hooks and the fsmonitor are switched off for every
-// call instead, so a repository that uses them for itself still works.
+// these tools call git. The hooks directory and the fsmonitor are switched
+// off for every call instead, so a repository that uses them for itself
+// still works. Hooks defined in config run even with core.hooksPath set to
+// /dev/null, so those are refused here.
 var programKeys = regexp.MustCompile(`^(` + strings.Join([]string{
 	`core\.(sshcommand|gitproxy|askpass|editor|pager|attributesfile)`,
+	`hook\..*`,
 	`(pager|interactive)\..*`,
 	`sequence\.editor`,
 	`diff\.external`,

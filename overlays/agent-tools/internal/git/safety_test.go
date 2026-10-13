@@ -48,7 +48,7 @@ func TestHardening(t *testing.T) {
 		t.Errorf("hooks and the fsmonitor are neutralised, not refused: %v", err)
 	}
 
-	for _, key := range []string{"core.sshCommand", "filter.x.clean", "diff.x.textconv", "credential.helper", "gpg.program", "include.path", "url.https://evil/.insteadOf"} {
+	for _, key := range []string{"core.sshCommand", "filter.x.clean", "diff.x.textconv", "credential.helper", "gpg.program", "include.path", "url.https://evil/.insteadOf", "hook.x.command"} {
 		gitIn(t, dir, "config", key, "x")
 		if err := CheckConfig(dir); err == nil {
 			t.Errorf("%s was accepted", key)
