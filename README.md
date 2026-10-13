@@ -168,7 +168,7 @@ In a review-loop session the guard denies setting `push-guard.*`.
 
 ## the bot review loop
 
-An agent can drive a stack of draft pull requests through CI and the review
+An agent can drive a stack of open pull requests through CI and the review
 bots unattended: fixing failures and review comments as fixups, answering in
 each bot's threads, and stopping with a report for you to sign.
 
@@ -177,7 +177,9 @@ each bot's threads, and stopping with a report for you to sign.
 You need, on this machine:
 
 - `gh auth login`, which `pr-loop` uses on the host;
-- open draft PRs by you, in one repository, stacked by base branch;
+- open PRs by you, draft or ready, in one repository, stacked by base
+  branch. On a ready PR, the loop's pushes, replies and review requests
+  notify its reviewers and code owners;
 - a clean main worktree.
 
 Then, in the repository, start one of:
@@ -204,7 +206,7 @@ restacks, pushes the stack through the GitHub API, then replies and resolves.
 It stops when the bots are satisfied or the loop needs a decision, and
 writes `.git/pr-loop/report.md`.
 
-`pr-loop` touches only the registered branches, each an open draft by you in
+`pr-loop` touches only the registered branches, each an open PR by you in
 the same repository and not the default branch. It re-checks that before
 every write, and accepts only fixups of each PR's own commits.
 

@@ -24,12 +24,12 @@ import (
 const usage = `pr-loop: the review loop's only way to write to GitHub.
 
 Policy: only branches registered with begin are touched, each the head of an
-open draft PR by the authenticated user in the same repository and not the
-default branch; drafts are re-checked before every write. Everything the loop
-commits must be a fixup of the PR's own commits.
+open PR, draft or ready, by the authenticated user in the same repository and
+not the default branch; this is re-checked before every write. Everything the
+loop commits must be a fixup of the PR's own commits.
 
   stack [BRANCH]              the stack of open PRs containing BRANCH (default HEAD)
-  begin [BRANCH...]           register draft branches of one stack (default: the current stack)
+  begin [BRANCH...]           register the branches of one stack (default: the current stack)
   worktrees [--remove]        a worktree per PR under .pr-loop/, where commits are unsigned
   push [--dry-run] [BRANCH...]  push through the GitHub API, atomically
   threads [--all] PR          unresolved review threads, labelled by bot

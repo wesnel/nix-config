@@ -125,8 +125,10 @@ func openPRs(repo *Repo) (map[string]*PR, error) {
 	return prs, nil
 }
 
-// checkBranch is the policy every write re-applies: an open draft PR by the
-// user, in this repository, that is not the default branch.
+// checkBranch is the policy every write re-applies: an open PR by the user,
+// in this repository, that is not the default branch. Ready PRs are accepted
+// as well as drafts, so on one the loop's pushes, replies and review
+// requests notify its reviewers and code owners.
 func checkBranch(repo *Repo, prs map[string]*PR, branch string) (*PR, error) {
 	if branch == repo.Default || branch == "main" || branch == "master" {
 		return nil, refuse("%s is a default branch; the loop never writes to it", branch)
@@ -137,10 +139,6 @@ func checkBranch(repo *Repo, prs map[string]*PR, branch string) (*PR, error) {
 	}
 	if pr.IsCrossRepository || pr.Author.Login != repo.Viewer {
 		return nil, refuse("#%d is not a same-repository pull request by %s", pr.Number, repo.Viewer)
-	}
-	if !pr.IsDraft {
-		return nil, refuse("#%d is not a draft. The loop only works on drafts, because every push, "+
-			"comment and review request on a ready PR notifies its code owners", pr.Number)
 	}
 	return pr, nil
 }

@@ -125,7 +125,7 @@ with lib; let
     autoMode = {
       environment = [
         "$defaults"
-        "This is an unattended review-loop session over draft pull requests. Its only route to GitHub is the `pr-loop` command, which enforces the loop's policy."
+        "This is an unattended review-loop session over open pull requests. Its only route to GitHub is the `pr-loop` command, which enforces the loop's policy."
       ];
       hard_deny = [
         "$defaults"

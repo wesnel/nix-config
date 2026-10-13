@@ -126,7 +126,7 @@ in {
             ---
             mode: primary
             inherit: code
-            description: Runs the bot review loop over a stack of draft pull requests, delegating each PR to a pr-owner.
+            description: Runs the bot review loop over a stack of open pull requests, delegating each PR to a pr-owner.
             ${loopFrontmatter loopDenied}
             ---
             You coordinate the bot review loop. Load the `review-loop` skill

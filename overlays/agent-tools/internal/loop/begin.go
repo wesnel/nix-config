@@ -58,7 +58,7 @@ func Stack(branch string) (any, error) {
 	return map[string]any{"repo": repo.Slug, "linear": linear, "stack": entries}, nil
 }
 
-// Begin registers draft branches (default: the stack containing HEAD).
+// Begin registers branches of one stack (default: the stack containing HEAD).
 func Begin(branches []string) (any, error) {
 	repo, err := repository()
 	if err != nil {
@@ -79,7 +79,7 @@ func Begin(branches []string) (any, error) {
 		branches = stackOrder(prs, current)
 	} else if prs[branches[0]] != nil {
 		// Only one stack per loop, so an agent cannot widen the loop to
-		// drafts it was not asked about.
+		// PRs it was not asked about.
 		stack := map[string]bool{}
 		for _, b := range stackOrder(prs, branches[0]) {
 			stack[b] = true

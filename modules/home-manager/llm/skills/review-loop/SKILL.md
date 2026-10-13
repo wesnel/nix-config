@@ -1,6 +1,6 @@
 ---
 name: review-loop
-description: Drive a draft pull request, or a stack of them, through CI and automated review bots (Copilot, Qodo and any others configured) without supervision, then hand back to Wesley for a signing pass. Use when asked to address, iterate on or loop over bot review feedback on a PR or a stack.
+description: Drive an open pull request, or a stack of them, draft or ready, through CI and automated review bots (Copilot, Qodo and any others configured) without supervision, then hand back to Wesley for a signing pass. Use when asked to address, iterate on or loop over bot review feedback on a PR or a stack.
 ---
 
 # Bot review loop
@@ -36,8 +36,10 @@ Commit as the `signing-pass` skill says: unsigned, never pushing or signing
 yourself, with one signing pass at the end. In the loop's worktrees signing is
 already off, so there the `-c commit.gpgsign=false` it asks for changes
 nothing. Every write to GitHub goes through `pr-loop`, which needs no key
-touch. `pr-loop` refuses anything outside the loop's draft PRs; a refusal is a
-decision for Wesley, so stop rather than route around it.
+touch. `pr-loop` refuses anything outside the loop's PRs; a refusal is a
+decision for Wesley, so stop rather than route around it. On a PR that is
+ready for review, every push, reply and review request also notifies its
+reviewers and code owners.
 
 Every commit the loop makes is also a fixup of one of the PR's own commits,
 one per review item, carrying the review's details as trailers:
@@ -87,7 +89,7 @@ when you need to know where something belongs.
 ## Setup
 
 1. `pr-loop stack` from the branch you were pointed at. If `linear` is false,
-   or any PR is not a draft, stop and ask.
+   stop and ask.
 2. The main worktree must be clean. Detach it (`git switch --detach`) so each
    branch can be checked out in its owner's worktree.
 3. `pr-loop begin`.
@@ -162,7 +164,7 @@ Stop and hand back when any of these holds:
   handing over to a person.
 - Every bot reviewed every head without new comments, and the only open
   threads are deferred or need Wesley.
-- A PR stopped being a draft, `pr-loop` refused a push, CI keeps failing
+- `pr-loop` refused a push, CI keeps failing
   after two rounds spent on it, or an owner showed a CI failure is not the
   PR's doing.
 - A bot reopens a problem already fixed twice on the same thread.

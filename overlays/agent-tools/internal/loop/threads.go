@@ -133,7 +133,7 @@ type threadCheck struct {
 }
 
 // checkedThread applies the policy for answering a thread: a bot started it,
-// on an open draft of the user's that this loop registered.
+// on an open PR of the user's that this loop registered.
 func checkedThread(id string) (*threadCheck, error) {
 	state, err := loadState(true)
 	if err != nil {
@@ -148,7 +148,6 @@ func checkedThread(id string) (*threadCheck, error) {
 			PullRequest struct {
 				Number      int
 				State       string
-				IsDraft     bool
 				HeadRefName string
 				Author      login
 				Repository  struct{ NameWithOwner string }
@@ -158,7 +157,7 @@ func checkedThread(id string) (*threadCheck, error) {
 		}
 	}
 	err = gh.GraphQL(`query($id: ID!) { node(id: $id) { ... on PullRequestReviewThread {
-		pullRequest { number state isDraft headRefName author { login } repository { nameWithOwner } }
+		pullRequest { number state headRefName author { login } repository { nameWithOwner } }
 		first: comments(first: 1) { nodes { author { login } } }
 		last: comments(last: 1) { nodes { author { login } } }
 	} } }`, map[string]any{"id": id}, &data)
@@ -174,8 +173,6 @@ func checkedThread(id string) (*threadCheck, error) {
 		return nil, refuse("%s is in %s, not %s", id, pr.Repository.NameWithOwner, state.Repo)
 	case pr.State != "OPEN" || pr.Author.Login != repo.Viewer:
 		return nil, refuse("#%d is not an open pull request by %s", pr.Number, repo.Viewer)
-	case !pr.IsDraft:
-		return nil, refuse("#%d is no longer a draft; stop and ask", pr.Number)
 	case state.Branches[pr.HeadRefName] == nil:
 		return nil, refuse("#%d is not part of this loop", pr.Number)
 	}
