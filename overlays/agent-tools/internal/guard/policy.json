@@ -1,0 +1,81 @@
+[
+  {
+    "why": "Pushing goes through `pr-loop push`.",
+    "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?push\\b.*",
+    "deny": ["git push origin wesley/x", "git -C /tmp/r push --force-with-lease", "cd repo && git push", "true\ngit push"],
+    "allow": ["git status", "git log --oneline -5 && git status"]
+  },
+  {
+    "why": "An alias can stand for any command, including a push.",
+    "pattern": ".*\\bgit\\b.*\\balias\\..*",
+    "deny": ["git config alias.p push", "git -c alias.x=push x origin HEAD"],
+    "allow": ["git config --get-regexp alias"]
+  },
+  {
+    "why": "Every commit is a fixup the signing pass can squash.",
+    "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?commit\\b(?!.*--fixup).*",
+    "deny": ["git commit -m 'plain commit'"],
+    "allow": ["git commit --fixup=abc123 --trailer 'Review-Thread: https://x/1'"]
+  },
+  {
+    "why": "The loop never rewrites the PR's own commits.",
+    "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?commit\\b.*--amend.*",
+    "deny": ["git commit --amend --no-edit"],
+    "allow": ["git commit --fixup=abc"]
+  },
+  {
+    "why": "Repository hooks stay on.",
+    "pattern": ".*--no-verify.*",
+    "deny": ["git commit --no-verify --fixup=abc"],
+    "allow": ["git commit --fixup=abc"]
+  },
+  {
+    "why": "GitHub writes go through pr-loop; reading is fine.",
+    "pattern": ".*\\bgh\\s+(pr|issue|release|repo|gist|label|secret|variable|workflow|run)\\s+(?!(view|list|diff|checks|status)\\b)\\S+.*",
+    "deny": ["gh pr merge 123", "gh pr comment 123 -b hi", "gh pr ready 123"],
+    "allow": ["gh pr view 123 --json title"]
+  },
+  {
+    "why": "GitHub writes go through pr-loop; reading is fine.",
+    "pattern": ".*\\bgh\\s+api\\b.*(\\s-X\\s|--method|\\s-f\\s|\\s-F\\s|--field|--raw-field|--input|mutation).*",
+    "deny": ["gh api -X POST repos/o/r/issues/1/comments -f body=x", "gh api repos/o/r/issues/1/comments -f body=x"],
+    "allow": ["gh api repos/o/r/pulls/1/reviews --paginate"]
+  },
+  {
+    "why": "Signing needs the hardware key.",
+    "pattern": ".*\\bgit\\b.*\\bsign-pass\\b.*",
+    "deny": ["git sign-pass --push"],
+    "allow": ["git status"]
+  },
+  {
+    "why": "Signing needs the hardware key.",
+    "pattern": ".*\\bgit-sign-pass\\b.*",
+    "deny": ["git-sign-pass"],
+    "allow": ["git status"]
+  },
+  {
+    "why": "Whether a CI failure is not the PR's doing is Wesley's call.",
+    "pattern": ".*\\bpr-loop\\b.*--accept-failure.*",
+    "deny": ["pr-loop request --accept-failure windows-tuntap 663", "pr-loop request 663 --accept-failure=ci"],
+    "allow": ["pr-loop request 663"]
+  },
+  {
+    "why": "Pruning the loop's history is Wesley's call.",
+    "pattern": ".*\\bpr-loop\\s+end\\b.*--prune.*",
+    "deny": ["pr-loop end --prune"],
+    "allow": ["pr-loop end"]
+  },
+  {
+    "why": "pr-loop.* settings are Wesley's to change.",
+    "pattern": ".*\\bgit\\b.*\\bconfig\\b.*\\bpr-loop\\..*",
+    "deny": ["git config pr-loop.x 1", "git config --unset pr-loop.x"],
+    "allow": ["git config user.name"]
+  },
+  {
+    "why": "The coordinator alone pushes, replies, resolves and requests reviews.",
+    "ownerOnly": true,
+    "pattern": ".*\\bpr-loop\\s+(begin|push|reply|resolve|request|worktrees|sign|end)\\b.*",
+    "deny": ["pr-loop push", "pr-loop reply T --body-file -"],
+    "allow": ["pr-loop threads 12", "pr-loop status"]
+  }
+]

@@ -124,11 +124,16 @@ in {
   };
 
   config = mkIf cfg.enable {
-    home.packages = with pkgs; [
-      # For the d2 and github-activity skills; the latter fetches
-      # matplotlib through uv when it runs.
-      d2Png
-      uv
-    ];
+    home.packages = with pkgs;
+      [
+        # For the d2 and github-activity skills; the latter fetches
+        # matplotlib through uv when it runs.
+        d2Png
+        uv
+      ]
+      # Every agent is told to leave signing to `git sign-pass`, which this
+      # installs. These run the git and gh on PATH, so the user's signing and
+      # SSH settings apply.
+      ++ [agent-tools];
   };
 }

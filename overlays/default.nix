@@ -22,6 +22,8 @@
 
   mujmap = flakes.mujmap.packages.${system}.mujmap;
 
+  agent-tools = final.callPackage ./agent-tools {};
+
   # FIXME: This is blocked by CrowdStrike on my work laptop :(
   # https://github.com/Mozilla-Ocho/llamafile/issues/14
   llava = final.stdenv.mkDerivation rec {
