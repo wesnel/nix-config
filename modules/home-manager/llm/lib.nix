@@ -19,6 +19,10 @@
   sandboxSkillNames = skills:
     lib.attrNames (lib.filterAttrs (_: skill: (normalise skill).sandbox) skills);
 
+  # A source that is not itself a SKILL.md is the skill's whole directory:
+  # SKILL.md with the scripts and Emacs Lisp it loads from beside itself.
+  isDirectory = source: !(lib.hasSuffix "/SKILL.md" (toString source));
+
   # Renders a skill set as home.file entries under dir. The agents all
   # discover skills the same way, as <dir>/<name>/SKILL.md, and they read
   # that directory without writing to it, which is what makes it the one
@@ -28,11 +32,14 @@
       name: given: let
         skill = normalise given;
       in
-        lib.nameValuePair "${dir}/${name}/SKILL.md" (
-          if skill.source != null
-          then {source = skill.source;}
-          else {text = skill.text;}
-        )
+        if skill.source != null && isDirectory skill.source
+        then lib.nameValuePair "${dir}/${name}" {source = skill.source;}
+        else
+          lib.nameValuePair "${dir}/${name}/SKILL.md" (
+            if skill.source != null
+            then {source = skill.source;}
+            else {text = skill.text;}
+          )
     )
     skills;
 }

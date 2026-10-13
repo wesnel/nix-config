@@ -7,6 +7,25 @@
 }:
 with lib; let
   cfg = config.wgn.home.llm;
+
+  # d2 renders a PNG through a Chromium it downloads at run time, after asking
+  # on the terminal, which an agent cannot answer and a sandbox cannot
+  # download. So a PNG is rendered as SVG, which needs no browser, and
+  # converted.
+  d2Png = pkgs.writeShellApplication {
+    name = "d2";
+    runtimeInputs = [pkgs.d2 pkgs.librsvg];
+    text = ''
+      out="''${*: -1}"
+      if [[ $# -lt 2 || "$out" != *.png ]]; then
+        exec d2 "$@"
+      fi
+      tmp="$(mktemp -d)"
+      trap 'rm -rf "$tmp"' EXIT
+      d2 "''${@:1:$#-1}" "$tmp/diagram.svg"
+      rsvg-convert -f png -o "$out" "$tmp/diagram.svg"
+    '';
+  };
 in {
   options.wgn.home.llm = {
     enable = mkEnableOption "Enables the plumbing shared by my coding agents";
@@ -36,8 +55,9 @@ in {
                 default = null;
 
                 description = ''
-                  File linked in as the skill. Mutually exclusive with
-                  {option}`text`.
+                  File linked in as the skill's SKILL.md, or the skill's
+                  whole directory when the skill keeps scripts or Emacs Lisp
+                  beside it. Mutually exclusive with {option}`text`.
                 '';
               };
 
@@ -82,19 +102,33 @@ in {
         {
           notify = ./skills/notify/SKILL.md;
 
-          describe = builtins.readFile "${emacs-skills}/skills/describe/SKILL.md";
-          dired = builtins.readFile "${emacs-skills}/skills/dired/SKILL.md";
-          emacsclient = builtins.readFile "${emacs-skills}/skills/emacsclient/SKILL.md";
-          file-links = builtins.readFile "${emacs-skills}/skills/file-links/SKILL.md";
-          highlight = builtins.readFile "${emacs-skills}/skills/highlight/SKILL.md";
-          open = builtins.readFile "${emacs-skills}/skills/open/SKILL.md";
-          select = builtins.readFile "${emacs-skills}/skills/select/SKILL.md";
         }
+        # Whole directories: most of these load Emacs Lisp or run a script
+        # that sits beside their SKILL.md. d2 and github-activity run only
+        # when invoked by name.
+        // genAttrs [
+          "d2"
+          "describe"
+          "dired"
+          "emacsclient"
+          "file-links"
+          "github-activity"
+          "highlight"
+          "open"
+          "select"
+        ] (name: {source = "${emacs-skills}/skills/${name}";})
         // optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
           trash = ./skills/trash/SKILL.md;
         };
     };
   };
 
-  config = mkIf cfg.enable {};
+  config = mkIf cfg.enable {
+    home.packages = with pkgs; [
+      # For the d2 and github-activity skills; the latter fetches
+      # matplotlib through uv when it runs.
+      d2Png
+      uv
+    ];
+  };
 }
