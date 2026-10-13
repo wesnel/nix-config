@@ -28,6 +28,12 @@ in {
         Its context window and cost still have to be set under
         {option}`providers` in ECA's own config, which ECA owns: without them
         it treats the window as unbounded and never auto-compacts.
+
+        ECA asks Ollama for thinking on every request, which Ollama refuses
+        for a model that cannot think, so nothing is generated. Give such a
+        model `"extraPayload": { "think": false }` beside its limits there.
+        Leave `models.dev` unreachable: it has no Ollama provider, and once
+        its catalogue is loaded ECA offers an `ollama/` model no tools.
       '';
     };
   };
