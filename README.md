@@ -102,7 +102,8 @@ Enabling any of those modules enables `wgn.home.llm`, which provides:
   directory. A skill marked `sandbox = true` is also carried into sandboxed
   sessions; the rest drive something on this machine, such as Emacs.
 - **`agent-tools`** on `PATH`: `git sign-pass`, `pr-loop` and
-  `sandbox-relay`, built from `overlays/agent-tools`.
+  `sandbox-relay`, built from `overlays/agent-tools`. `wgn.home.git` uses
+  its `git-push-guard` as well.
 
 Agents write the files below themselves, so Nix merges its keys into them on
 every switch rather than owning them. Everything else in them is left alone,
@@ -142,6 +143,28 @@ If it stops at a missed touch, run `git rebase --continue`, touching the key
 when it flashes, then `git sign-pass --resume`. Pass `--base REF` when the
 branch does not start from `origin`'s default branch or the local `main` or
 `master`.
+
+## pushing: private history stays private
+
+`wgn.home.git` runs `git-push-guard` before every push from every
+repository, next to the repository's own pre-push hook. It refuses a push to
+a public GitHub repository when a commit it sends is reachable from a
+remote-tracking ref of a private GitHub repository that one of the checkout's
+remotes fetches from: for example a private repository's `main` pushed to a
+public one, whether through a stray remote, a push URL or a URL typed out.
+Commits the target or any other public remote already has are not counted, so
+a private fork can still push upstream's own history and new work on top of
+it. It sees history only, not private code copied in as new commits.
+
+Each push to GitHub looks up the visibility of the target and of the
+checkout's other GitHub remotes with your `gh` login, and is refused when
+that fails. To publish private history in one public repository on purpose:
+
+``` sh
+git -c push-guard.allowPublic=OWNER/NAME push ...
+```
+
+In a review-loop session the guard denies setting `push-guard.*`.
 
 ## the bot review loop
 

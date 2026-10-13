@@ -113,6 +113,8 @@ func command(text string, depth int) string {
 
 const signing = "Signing needs Wesley's hardware key. Leave the commits unsigned and hand over with the command to run."
 
+const pushGuard = "Publishing private history in a public repository is Wesley's decision. Stop and ask instead of changing push-guard.* settings."
+
 // checkPrLoop keeps the decisions that are Wesley's: waiving a CI failure,
 // and discarding the unsquashed history.
 func checkPrLoop(args []string) string {
@@ -137,6 +139,9 @@ func checkGit(words []string) string {
 			// An alias given on the command line can stand for any command.
 			if words[i] == "-c" && i+1 < len(words) && strings.HasPrefix(strings.ToLower(words[i+1]), "alias.") {
 				return "Git aliases are not used in the review loop; run the command itself."
+			}
+			if words[i] == "-c" && i+1 < len(words) && strings.HasPrefix(strings.ToLower(words[i+1]), "push-guard.") {
+				return pushGuard
 			}
 			i++
 		}
@@ -178,6 +183,8 @@ func checkGit(words []string) string {
 			case reading:
 			case strings.HasPrefix(key, "pr-loop."):
 				return "pr-loop.* settings are Wesley's to change. Stop and ask for a decision instead."
+			case strings.HasPrefix(key, "push-guard."):
+				return pushGuard
 			case strings.HasPrefix(key, "alias."):
 				return "Git aliases are not used in the review loop; run the command itself."
 			}

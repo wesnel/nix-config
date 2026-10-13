@@ -72,6 +72,12 @@
     "allow": ["git config user.name"]
   },
   {
+    "why": "Publishing private history in a public repository is Wesley's decision.",
+    "pattern": "(?i).*\\bpush-guard\\.allowpublic\\b.*",
+    "deny": ["git config push-guard.allowPublic ngrok/ngrok", "git -c push-guard.allowpublic=o/r push"],
+    "allow": ["git config --get user.email"]
+  },
+  {
     "why": "The coordinator alone pushes, replies, resolves and requests reviews.",
     "ownerOnly": true,
     "pattern": ".*\\bpr-loop\\s+(begin|push|reply|resolve|request|worktrees|sign|end)\\b.*",

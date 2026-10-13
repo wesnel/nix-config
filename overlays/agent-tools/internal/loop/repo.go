@@ -4,7 +4,6 @@ package loop
 
 import (
 	"fmt"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -12,8 +11,6 @@ import (
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/git"
 )
-
-var githubURL = regexp.MustCompile(`^(?:git@github\.com:|ssh://git@github\.com/|https://github\.com/)([^/]+)/(.+?)(?:\.git)?/?$`)
 
 // githubRemotes maps each remote whose fetch URL is on GitHub to owner/name.
 func githubRemotes() (map[string]string, error) {
@@ -27,8 +24,8 @@ func githubRemotes() (map[string]string, error) {
 		if len(fields) != 3 || fields[2] != "(fetch)" {
 			continue
 		}
-		if m := githubURL.FindStringSubmatch(fields[1]); m != nil {
-			remotes[fields[0]] = m[1] + "/" + m[2]
+		if slug := gh.Slug(fields[1]); slug != "" {
+			remotes[fields[0]] = slug
 		}
 	}
 	return remotes, nil

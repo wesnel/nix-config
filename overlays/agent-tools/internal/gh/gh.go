@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -82,9 +83,27 @@ func do(method, url string, body any, accept string) ([]byte, error) {
 		return nil, err
 	}
 	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("%s %s: %s: %s", method, strings.TrimPrefix(url, api), resp.Status, strings.TrimSpace(string(data)))
+		return nil, &StatusError{resp.StatusCode, fmt.Sprintf("%s %s: %s: %s", method, strings.TrimPrefix(url, api), resp.Status, strings.TrimSpace(string(data)))}
 	}
 	return data, nil
+}
+
+// StatusError is a reply from GitHub with a status of 300 or above.
+type StatusError struct {
+	Code int
+	msg  string
+}
+
+func (e *StatusError) Error() string { return e.msg }
+
+var slugURL = regexp.MustCompile(`^(?:git@github\.com:|ssh://git@github\.com/|https://github\.com/)([^/]+)/(.+?)(?:\.git)?/?$`)
+
+// Slug returns owner/name for a GitHub remote URL, or "" for any other URL.
+func Slug(url string) string {
+	if m := slugURL.FindStringSubmatch(url); m != nil {
+		return m[1] + "/" + m[2]
+	}
+	return ""
 }
 
 // REST sends a JSON body (nil for none) and decodes the reply into out (nil to discard).

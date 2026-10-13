@@ -67,6 +67,16 @@ in {
           gpgsign = true;
         };
 
+        # Runs before every push from every repository, beside the
+        # repository's own pre-push hook, and refuses to publish a private
+        # GitHub repository's history in a public one. Only a git that
+        # supports hooks in config (2.54 and later) runs it, so a distro's
+        # older git ahead of this one on PATH skips it without a word.
+        hook.push-guard = {
+          event = "pre-push";
+          command = getExe' pkgs.agent-tools "git-push-guard";
+        };
+
         init = {
           defaultBranch = "main";
         };
