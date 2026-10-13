@@ -32,6 +32,7 @@
         gnupg.enable = true;
         helix.enable = true;
         man.enable = true;
+        mcp-proxy.enable = true;
         mosh.enable = true;
         zellij.enable = true;
       };

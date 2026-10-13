@@ -236,8 +236,9 @@ The proxy signs in to Linear and Buildkite itself and refreshes their
 short-lived tokens, so agents hold only the proxy's own token, kept in
 `~/.local/state/mcp-proxy/token`. The servers are registered with Claude
 Code, Codex and ECA on every switch, and each reads the token when it
-connects. Sandboxed ECA sessions reach the proxy at `http://mcp-proxy:6290`,
-and see only a placeholder for the token.
+connects. ECA sessions sandboxed by Gondolin reach the proxy at
+`http://mcp-proxy:6290`, and see only a placeholder for the token; those
+sandboxed by bubblewrap cannot reach it.
 
 Authorize each server once, in a browser, after the first switch:
 
@@ -245,6 +246,15 @@ Authorize each server once, in a browser, after the first switch:
 mcp-proxy-authorize linear
 mcp-proxy-authorize buildkite
 mcp-proxy-status
+```
+
+The browser is sent back to `http://localhost:8090/oauth/callback` on the
+machine running the proxy. On one without a browser, such as the devbox,
+authorize over SSH with that port forwarded, and open the URL it logs on
+the machine running SSH:
+
+``` sh
+ssh -L 8090:localhost:8090 devbox mcp-proxy-authorize linear
 ```
 
 Run `mcp-proxy-authorize` again if a server's token stops being accepted.
