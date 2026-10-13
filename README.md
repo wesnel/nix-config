@@ -159,6 +159,9 @@ You need, on this machine:
 
 Then, in the repository, start one of:
 
+- any Claude Code session, and ask it to run the review loop on the branch.
+  It starts `claude-pr-loop` headless in the background, logging to
+  `.git/pr-loop-session.jsonl` and `.err`, and shows the report when the loop exits;
 - `claude-pr-loop`, and ask it to run the review loop on the branch;
 - `codex-pr-loop`, and ask the same. Codex skips a hook until it is trusted,
   so trust `pr-loop guard` in `/hooks` the first time, and again after a

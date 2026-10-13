@@ -9,10 +9,28 @@ You coordinate. One `pr-owner` sub-agent per pull request owns that PR's
 code; you own the decisions that span PRs, the restack, every push, every
 reply and every review request.
 
-Start only if `PR_LOOP_SESSION=1` is set. Otherwise stop and tell Wesley to
-start the session the loop's way (`claude-pr-loop`, `codex-pr-loop`, or
-`M-x wgn/eca-pr-loop` with the `pr-coordinator` agent): without it, the
-loop's guards are absent.
+Run the loop only if `PR_LOOP_SESSION=1` is set: only a session started the
+loop's way has its sandbox and guards. Anywhere else, never run it in the
+current session.
+
+- **Claude Code:** start the loop as a separate session instead. From the
+  repository, run this with the Bash tool's `run_in_background`, naming the
+  branch you were pointed at:
+
+  ```sh
+  log="$(git rev-parse --git-common-dir)/pr-loop-session"
+  claude-pr-loop -p "Run the review loop on <branch>." \
+    --output-format stream-json --verbose \
+    < /dev/null > "$log.jsonl" 2> "$log.err"
+  ```
+
+  Tell Wesley it has started and where the logs are. Leave the repository
+  alone until it exits: the loop detaches the main worktree and works in
+  `.pr-loop/`. When it exits, show
+  `$(git rev-parse --git-common-dir)/pr-loop/report.md`, or the end of the
+  log if there is no report.
+- **Elsewhere:** stop and tell Wesley to start `codex-pr-loop`, or
+  `M-x wgn/eca-pr-loop` with the `pr-coordinator` agent.
 
 Commit as the `signing-pass` skill says: unsigned, never pushing or signing
 yourself, with one signing pass at the end. In the loop's worktrees signing is
