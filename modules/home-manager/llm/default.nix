@@ -11,6 +11,16 @@ in {
   options.wgn.home.llm = {
     enable = mkEnableOption "Enables the plumbing shared by my coding agents";
 
+    instructions = mkOption {
+      type = types.path;
+      default = ./AGENTS.md;
+
+      description = ''
+        Working agreements every enabled coding agent loads into each session,
+        linked to wherever that agent reads its user-level instructions.
+      '';
+    };
+
     skills = mkOption {
       type = with types;
         attrsOf (

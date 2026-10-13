@@ -18,6 +18,11 @@ in {
     # Codex is installed and updated by itself, and writes ~/.codex/config.toml
     # to record project trust, MCP servers and model choice. Generating that
     # file is what stops it being able to.
-    home.file = llm.mkSkillFiles ".codex/skills" config.wgn.home.llm.skills;
+    home.file =
+      llm.mkSkillFiles ".codex/skills" config.wgn.home.llm.skills
+      // {
+        # Codex skips this when an AGENTS.override.md beside it is non-empty.
+        ".codex/AGENTS.md".source = config.wgn.home.llm.instructions;
+      };
   };
 }

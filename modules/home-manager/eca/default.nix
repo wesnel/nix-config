@@ -50,6 +50,9 @@ in {
           "eca/sandbox-skills.json".text =
             builtins.toJSON
             (llm.sandboxSkillNames config.wgn.home.llm.skills);
+
+          # Carried into the sandbox with the rest of the config.
+          "eca/AGENTS.md".source = config.wgn.home.llm.instructions;
         };
     }
 

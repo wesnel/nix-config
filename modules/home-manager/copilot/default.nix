@@ -15,6 +15,10 @@ in {
   config = mkIf cfg.enable {
     wgn.home.llm.enable = true;
 
-    home.file = llm.mkSkillFiles ".copilot/skills" config.wgn.home.llm.skills;
+    home.file =
+      llm.mkSkillFiles ".copilot/skills" config.wgn.home.llm.skills
+      // {
+        ".copilot/copilot-instructions.md".source = config.wgn.home.llm.instructions;
+      };
   };
 }

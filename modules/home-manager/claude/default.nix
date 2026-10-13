@@ -26,7 +26,7 @@ in {
         }
       )
       // {
-        ".claude/CLAUDE.md".source = ./CLAUDE.md;
+        ".claude/CLAUDE.md".source = config.wgn.home.llm.instructions;
       };
   };
 }
