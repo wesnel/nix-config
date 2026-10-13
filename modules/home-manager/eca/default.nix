@@ -1,15 +1,52 @@
 {
   config,
   lib,
+  options,
+  pkgs,
   ...
 }:
 with lib; let
   cfg = config.wgn.home.eca;
 
   llm = import ../llm/lib.nix {inherit lib;};
+
+  # Shell commands the review loop's agents may not run, as Java regexes that
+  # ECA matches against the whole command string. ECA's deny rules win over
+  # trust mode and remembered approvals. An agent's deny list replaces the
+  # global one rather than adding to it, so a deny rule added to ECA's own
+  # config has to be repeated here to apply to these agents. Add a rule to
+  # the guard's policy.json, with examples, not here.
+  loopDenied = pkgs.agent-tools.ecaDenied.coordinator;
+  ownerDenied = pkgs.agent-tools.ecaDenied.owner;
+
+  # ECA's git tool runs any git or gh command line and takes no argument
+  # patterns, so it is hidden and the shell, which does, is used instead.
+  loopFrontmatter = denied:
+    concatStringsSep "\n" ([
+        "disabledTools:"
+        "  - git"
+        "  - '(?i).*linear.*__(?!(get|list|search|fetch|read|query)).*'"
+        "tools:"
+        "  deny:"
+      ]
+      ++ map (p: "    - 'eca__shell_command(${p})'") denied);
 in {
   options.wgn.home.eca = {
     enable = mkEnableOption "Configure my Editor Code Assistant skills and agents";
+
+    prLoop.enable = mkOption {
+      type = types.bool;
+      default = true;
+
+      description = ''
+        Offers the bot review loop: the `pr-coordinator` agent and its
+        `pr-owner` sub-agent, and, where the emacs-config sandbox is in use,
+        `M-x wgn/eca-pr-loop` to start a sandboxed session with
+        `sandbox-relay serve` beside it, so the loop reaches GitHub through
+        `pr-loop` without the sandbox holding a credential. Ordinary sessions
+        do not get the relay.
+      '';
+    };
 
     localModel = mkOption {
       type = types.nullOr types.str;
@@ -61,6 +98,48 @@ in {
           "eca/AGENTS.md".source = config.wgn.home.llm.instructions;
         };
     }
+
+    (mkIf cfg.prLoop.enable (mkMerge [
+      {
+        wgn.home.llm.prLoop.enable = true;
+
+        xdg.configFile = {
+          "eca/agents/pr-coordinator.md".text = ''
+            ---
+            mode: primary
+            inherit: code
+            description: Runs the bot review loop over a stack of draft pull requests, delegating each PR to a pr-owner.
+            ${loopFrontmatter loopDenied}
+            ---
+            You coordinate the bot review loop. Load the `review-loop` skill
+            before doing anything else, and follow it. Spawn one `pr-owner`
+            per pull request for the work on its code.
+          '';
+
+          # Each spawn starts a fresh chat, so the owner keeps what it learns
+          # in the notes file the review-loop skill names.
+          "eca/agents/pr-owner.md".text = ''
+            ---
+            mode: subagent
+            inherit: code
+            spawnableBy: pr-coordinator
+            description: Owns one pull request of a stack during the bot review loop. Triages its bot threads and CI failures, fixes and restacks it in its own worktree, and answers questions about its code.
+            maxSteps: 150
+            ${loopFrontmatter ownerDenied}
+            ---
+            ${builtins.readFile ../llm/pr-loop/pr-owner.md}
+          '';
+        };
+      }
+
+      (optionalAttrs (options ? home.programs.wgn.emacs.eca.sandbox.prLoop) {
+        home.programs.wgn.emacs.eca.sandbox = {
+          prLoop = "${config.wgn.home.llm.prLoop.client}/bin";
+          # Applied by either backend only in a review-loop session.
+          args = concatMap (p: ["--protect" p]) config.wgn.home.llm.prLoop.protectedPaths;
+        };
+      })
+    ]))
 
     # ~/.config/eca/agents is read and never written by ECA, so an agent can
     # be declared here without taking over the config file ECA writes itself.

@@ -40,6 +40,155 @@ in {
       '';
     };
 
+    prLoop = {
+      enable = mkEnableOption ''
+        the `pr-loop` command and `review-loop` skill, through which an
+        unattended review loop pushes, replies and requests reviews on
+        GitHub. Run directly, it uses the `gh` login, so its policy guards
+        an agent that forgets a rule but does not stop one that runs `gh`
+        itself. Run through `sandbox-relay` for a sandbox without
+        credentials, it is the only way out
+      '';
+
+      bots = mkOption {
+        type = types.attrsOf types.attrs;
+
+        description = ''
+          Review bots the loop requests, waits for and answers, by name.
+
+          - `login`: regex matching the bot's GitHub login
+          - `request`: `{ reviewer = "@login"; }` to request it as a
+            reviewer, or `{ comment = "..."; }` to post a top-level trigger
+            comment, which the loop deletes once superseded
+          - `verdicts` (optional): verdict name to text found in the bot's
+            review body
+          - `resolvesOwnThreads` (optional): the bot resolves its threads
+            itself when it re-reviews, so the loop leaves fixed ones to it
+          - `repos` (optional): `owner/name` globs it is limited to
+        '';
+
+        default = {
+          copilot = {
+            login = "^copilot";
+            request.reviewer = "@copilot";
+            verdicts = {
+              approval = "Approval recommended";
+              changes = "Changes recommended";
+              closer-look = "Needs a closer look";
+              error = "encountered an error";
+            };
+          };
+
+          # Reviews once on its own when a PR opens or leaves draft, and never
+          # on push. A bare @-mention gets a chat reply rather than a review.
+          qodo = {
+            login = "^qodo-code-review";
+            request.comment = "/agentic_review";
+            resolvesOwnThreads = true;
+          };
+        };
+      };
+
+      allowedDomains = mkOption {
+        type = types.listOf types.str;
+
+        description = ''
+          Hosts a sandboxed loop session's commands may reach, for fetching
+          dependencies when building and testing. GitHub must not be among
+          them: the relay is the loop's only way there.
+        '';
+
+        default = [
+          "proxy.golang.org"
+          "sum.golang.org"
+          "storage.googleapis.com"
+          "registry.npmjs.org"
+          "pypi.org"
+          "files.pythonhosted.org"
+          "crates.io"
+          "index.crates.io"
+          "static.crates.io"
+        ];
+      };
+
+      deniedReads = mkOption {
+        type = types.listOf types.str;
+        readOnly = true;
+
+        description = ''
+          Absolute paths a sandboxed loop session's commands may not read:
+          credentials, and where agent sockets live. Every sandboxing
+          launcher takes its list from here.
+        '';
+
+        default = let
+          home = config.home.homeDirectory;
+        in
+          ["${home}/.config/gh" "${home}/.gnupg" "${home}/.ssh"]
+          # gh keeps its token in the login keychain, which a sandboxed
+          # command can otherwise read.
+          ++ optional pkgs.stdenv.hostPlatform.isDarwin "${home}/Library/Keychains"
+          ++ optional pkgs.stdenv.hostPlatform.isLinux "/run/user";
+      };
+
+      protectedPaths = mkOption {
+        type = types.listOf types.str;
+        readOnly = true;
+
+        description = ''
+          Paths in the workspace that programs outside the sandbox run or
+          load, which a loop session may read but not change: git hooks and
+          config, which the next git command run outside would obey, and
+          agents' project settings, which can name hooks that run outside any
+          sandbox. Every sandboxing launcher takes its list from here.
+        '';
+
+        default = [".git/hooks" ".git/config" ".claude" ".codex" ".eca"];
+      };
+
+      cacheDir = mkOption {
+        type = types.str;
+        readOnly = true;
+        default = "${config.xdg.cacheHome}/pr-loop";
+
+        description = ''
+          Build caches for sandboxed loop sessions, which may write here and
+          nowhere that builds outside the sandbox read: a cache entry written
+          by an agent would otherwise be compiled into a later build on the
+          host.
+        '';
+      };
+
+      sandboxCaches = mkOption {
+        type = types.lines;
+        readOnly = true;
+
+        description = ''
+          Shell lines a loop launcher runs before starting its sandboxed
+          session, pointing the build caches at {option}`cacheDir`.
+        '';
+
+        default = ''
+          export GOCACHE=${escapeShellArg "${cfg.prLoop.cacheDir}/go-build"}
+          export GOMODCACHE=${escapeShellArg "${cfg.prLoop.cacheDir}/go-mod"}
+          mkdir -p "$GOCACHE" "$GOMODCACHE"
+        '';
+      };
+
+      client = mkOption {
+        type = types.package;
+        readOnly = true;
+
+        description = ''
+          A static Linux build of `pr-loop` for this machine's architecture,
+          in `bin`, for a sandbox guest to run as a client of
+          `sandbox-relay serve`.
+        '';
+
+        default = pkgs.agent-tools.linuxClient;
+      };
+    };
+
     skills = mkOption {
       type = with types;
         attrsOf (
@@ -129,11 +278,23 @@ in {
             source = ./skills/restack-branches/SKILL.md;
             sandbox = true;
           };
+        }
+        // optionalAttrs cfg.prLoop.enable {
+          review-loop = {
+            source = ./skills/review-loop/SKILL.md;
+            sandbox = true;
+          };
         };
     };
   };
 
   config = mkIf cfg.enable {
+    # Read by `pr-loop` on the host, including when the relay runs it; a
+    # sandboxed client never needs it.
+    xdg.configFile."pr-loop/config.json" = mkIf cfg.prLoop.enable {
+      text = builtins.toJSON {inherit (cfg.prLoop) bots;};
+    };
+
     home.packages = with pkgs;
       [
         # For the d2 and github-activity skills; the latter fetches
