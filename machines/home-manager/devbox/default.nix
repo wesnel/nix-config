@@ -84,11 +84,18 @@
       services.gpg-agent.enable = lib.mkForce false;
     })
 
-    ({lib, ...}: {
-      # There is no age recipient for this machine in .sops.yaml, so secrets
-      # are decrypted with the PGP key on the YubiKey, reached through the
-      # forwarded agent. The default GnuPG home resolves to the forwarded
-      # socket directory, and each decryption needs a touch on ngrok.
+    ({
+      config,
+      lib,
+      pkgs,
+      ...
+    }: {
+      # This machine belongs to an employer, so it holds no key of its own in
+      # .sops.yaml: secrets are decrypted with the PGP key on the YubiKey,
+      # reached through the forwarded agent. The default GnuPG home resolves
+      # to the forwarded socket directory, and each decryption needs a touch
+      # on ngrok. Secrets live in /run/user, so after a reboot they are back
+      # only once ngrok's forward is.
       sops = {
         age = {
           keyFile = lib.mkForce null;
@@ -98,12 +105,42 @@
         gnupg = {
           home = "${homeDirectory}/.gnupg";
         };
+
+        # Without the forward, gpg would start a local agent on the forwarded
+        # socket's path, which stops the forward binding.
+        environment.SOPS_GPG_EXEC = "${pkgs.writeShellScript "gpg-no-autostart" ''
+          exec ${config.sops.gnupg.package}/bin/gpg --no-autostart "$@"
+        ''}";
       };
 
-      # Setting sops.gnupg.home makes sops-nix wait for
-      # graphical-session-pre.target, which never activates on this headless
-      # machine, so secrets would only exist until the next reboot.
-      systemd.user.services.sops-nix.Install.WantedBy = lib.mkForce ["default.target"];
+      systemd.user = {
+        # Setting sops.gnupg.home makes sops-nix wait for
+        # graphical-session-pre.target, which never activates on this headless
+        # machine, so secrets would only exist until the next reboot.
+        services.sops-nix = {
+          Install.WantedBy = lib.mkForce ["default.target"];
+          # Stays active after decrypting, or the path unit below would start
+          # it again while the socket exists, asking for a touch each time.
+          Service.RemainAfterExit = true;
+          # The path unit also starts it again after a failure. A missed
+          # touch takes long enough that systemd's default start limit never
+          # trips, so without this it would ask for touches indefinitely.
+          Unit = {
+            StartLimitIntervalSec = 600;
+            StartLimitBurst = 3;
+          };
+        };
+
+        # Decrypts again when ngrok's forward appears, for a boot that came
+        # before it. After three failures in ten minutes it stops; then
+        # `systemctl --user reset-failed sops-nix` and
+        # `systemctl --user restart sops-nix sops-nix.path`.
+        paths.sops-nix = {
+          Unit.Description = "Decrypt secrets once the YubiKey is forwarded";
+          Path.PathExists = "/run/user/1000/gnupg/S.gpg-agent";
+          Install.WantedBy = ["default.target"];
+        };
+      };
     })
   ];
 in {
