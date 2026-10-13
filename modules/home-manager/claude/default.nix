@@ -42,6 +42,28 @@ with lib; let
   darwin = pkgs.stdenv.hostPlatform.isDarwin;
   mcpProxy = config.wgn.home.mcp-proxy;
 
+  # Lets a tool through only when its name has a reading verb and no writing
+  # one as a whole `_`-separated word; any other name is denied.
+  ngrokReadOnly = pkgs.writeShellApplication {
+    name = "claude-ngrok-read-only";
+    runtimeInputs = [pkgs.jq];
+    text = ''
+      tool=$(jq -r '.tool_name // empty')
+      name="''${tool##*__}"
+      words="_''${name//-/_}_"
+      reads='_(get|list|search|read|query|describe|show|find|fetch|view)_'
+      writes='_(create|update|delete|remove|start|stop|restart|set|put|patch|post|add|replace|rotate|enable|disable|revoke|write|manage|submit|send|run|exec|execute|invoke|import|upload|attach|detach)_'
+      if [[ "$words" =~ $reads ]] && ! [[ "$words" =~ $writes ]]; then
+        exit 0
+      fi
+      jq -n --arg tool "$tool" '{hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: ("ngrok MCP tools are read-only here, and \($tool) is not named as a read. Report what you wanted it to do instead.")
+      }}'
+    '';
+  };
+
   # The session's commands run in Claude Code's sandbox with no credentials and
   # no route to GitHub; `sandbox-relay session` serves `pr-loop` on a private
   # socket, whose path replaces {socket}. Hooks, MCP servers and WebFetch run outside
@@ -166,6 +188,21 @@ in {
           pr = "";
           sessionUrl = false;
         };
+
+        # The ngrok account server's write scopes reach production, and its
+        # tools are not published, so it is filtered by name, failing closed.
+        # A hook list set here replaces the file's own on every switch.
+        hooks.PreToolUse = [
+          {
+            matcher = "mcp__ngrok__.*";
+            hooks = [
+              {
+                type = "command";
+                command = getExe ngrokReadOnly;
+              }
+            ];
+          }
+        ];
       };
     };
   };
