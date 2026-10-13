@@ -14,6 +14,12 @@
     '';
   });
 
+  # FIXME: Its tests load Codex's configuration, which reads macOS managed
+  # preferences, and the Darwin build sandbox refuses that.
+  codex-acp = prev.codex-acp.overrideAttrs (_old: {
+    doCheck = false;
+  });
+
   mujmap = flakes.mujmap.packages.${system}.mujmap;
 
   mcp-cli = final.callPackage ./mcp-cli {};
