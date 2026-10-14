@@ -61,56 +61,58 @@ func decoy(t *testing.T) (snapshot func() string) {
 	return snapshot
 }
 
-// The sequence is what a package's test setup does.
-func TestIsolateKeepsSetupOutOfCallersRepository(t *testing.T) {
-	snapshot := decoy(t)
-	before := snapshot()
-	t.Setenv("GIT_CONFIG_GLOBAL", "/nonexistent")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "0")
-	Isolate()
+func TestIsolate(t *testing.T) {
+	// The sequence is what a package's test setup does.
+	t.Run("keeps setup out of the caller's repository", func(t *testing.T) {
+		snapshot := decoy(t)
+		before := snapshot()
+		t.Setenv("GIT_CONFIG_GLOBAL", "/nonexistent")
+		t.Setenv("GIT_CONFIG_NOSYSTEM", "0")
+		Isolate()
 
-	scratch := t.TempDir()
-	git(t, scratch, "init", "-q", "-b", "main")
-	git(t, scratch, "init", "-q", "--bare", filepath.Join(scratch, "fork.git"))
-	git(t, scratch, "remote", "add", "fork", "https://example.invalid/fork.git")
-	git(t, scratch, "-c", "user.name=T", "-c", "user.email=t@e", "commit", "-q", "--allow-empty", "-m", "x")
-	git(t, scratch, "config", "core.bare", "true")
+		scratch := t.TempDir()
+		git(t, scratch, "init", "-q", "-b", "main")
+		git(t, scratch, "init", "-q", "--bare", filepath.Join(scratch, "fork.git"))
+		git(t, scratch, "remote", "add", "fork", "https://example.invalid/fork.git")
+		git(t, scratch, "-c", "user.name=T", "-c", "user.email=t@e", "commit", "-q", "--allow-empty", "-m", "x")
+		git(t, scratch, "config", "core.bare", "true")
 
-	if after := snapshot(); after != before {
-		t.Errorf("the caller's repository changed:\n--- before\n%s\n--- after\n%s", before, after)
-	}
-	if got := os.Getenv("GIT_CONFIG_GLOBAL"); got != "/dev/null" {
-		t.Errorf("GIT_CONFIG_GLOBAL = %q", got)
-	}
-	if got := os.Getenv("GIT_CONFIG_NOSYSTEM"); got != "1" {
-		t.Errorf("GIT_CONFIG_NOSYSTEM = %q", got)
-	}
-	if remotes := git(t, scratch, "remote"); strings.TrimSpace(remotes) != "fork" {
-		t.Errorf("remotes of the scratch repository: %q", remotes)
-	}
+		if after := snapshot(); after != before {
+			t.Errorf("the caller's repository changed:\n--- before\n%s\n--- after\n%s", before, after)
+		}
+		if got := os.Getenv("GIT_CONFIG_GLOBAL"); got != "/dev/null" {
+			t.Errorf("GIT_CONFIG_GLOBAL = %q", got)
+		}
+		if got := os.Getenv("GIT_CONFIG_NOSYSTEM"); got != "1" {
+			t.Errorf("GIT_CONFIG_NOSYSTEM = %q", got)
+		}
+		if remotes := git(t, scratch, "remote"); strings.TrimSpace(remotes) != "fork" {
+			t.Errorf("remotes of the scratch repository: %q", remotes)
+		}
+	})
+
+	// Packages must be isolated by their own TestMain, not by setup helpers
+	// that remember to be careful.
+	t.Run("in each package's TestMain", func(t *testing.T) {
+		if testing.Short() {
+			t.Skip("runs other packages' tests")
+		}
+		snapshot := decoy(t)
+		before := snapshot()
+		cmd := exec.Command("go", "test", "-count=1", "../git", "../repos", "../pushguard")
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Logf("go test: %v\n%s", err, out)
+		}
+		if after := snapshot(); after != before {
+			t.Errorf("the caller's repository changed:\n--- before\n%s\n--- after\n%s", before, after)
+		}
+	})
 }
 
 func TestWithout(t *testing.T) {
 	env := []string{"GIT_DIR=/r/.git", "PATH=/bin", "GIT_WORK_TREE=/r", "GIT_DIRECTORY=x", "GIT_CONFIG_GLOBAL=/dev/null"}
 	if got := strings.Join(Without(env), " "); got != "PATH=/bin GIT_DIRECTORY=x GIT_CONFIG_GLOBAL=/dev/null" {
 		t.Errorf("Without: %s", got)
-	}
-}
-
-// Packages must be isolated by their own TestMain, not by setup helpers that
-// remember to be careful.
-func TestPackagesIsolateThemselves(t *testing.T) {
-	if testing.Short() {
-		t.Skip("runs other packages' tests")
-	}
-	snapshot := decoy(t)
-	before := snapshot()
-	cmd := exec.Command("go", "test", "-count=1", "../git", "../repos", "../pushguard")
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Logf("go test: %v\n%s", err, out)
-	}
-	if after := snapshot(); after != before {
-		t.Errorf("the caller's repository changed:\n--- before\n%s\n--- after\n%s", before, after)
 	}
 }
