@@ -3,163 +3,118 @@ package plans
 import (
 	"encoding/json"
 	"fmt"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
+// DecideOptions settle a question: Answer is Wesley's answer, or with Drop
+// why the question is dropped. Supersedes names a settled question this
+// decision replaces.
+type DecideOptions struct {
+	Answer, Supersedes, Role string
+	Drop                     bool
+}
+
 // Decided is what Decide did.
 type Decided struct {
-	Question string `json:"question"`
-	Decision string `json:"decision"`
-	File     string `json:"file"`
-	Event    Event  `json:"event"`
+	Question   string `json:"question"`
+	State      string `json:"state"`
+	Answer     string `json:"answer"`
+	Supersedes string `json:"supersedes,omitempty"`
+	File       string `json:"file"`
+	Event      Event  `json:"event"`
 }
 
-var (
-	starLine = regexp.MustCompile(`^(\*+)\s`)
-	idLine   = regexp.MustCompile(`^\s*:ID:\s*(\S+)\s*$`)
-)
-
-func level(line string) int {
-	if m := starLine.FindStringSubmatch(line); m != nil {
-		return len(m[1])
-	}
-	return 0
-}
-
-// section is the lines of the level-2 heading titled title: from the
-// heading to the next heading of level 1 or 2.
-func section(lines []string, title string) (start, end int, ok bool) {
-	for i, l := range lines {
-		if level(l) == 2 && strings.TrimSpace(strings.TrimLeft(l, "*")) == title {
-			for end = i + 1; end < len(lines); end++ {
-				if n := level(lines[end]); n == 1 || n == 2 {
-					break
-				}
-			}
-			return i, end, true
-		}
-	}
-	return 0, 0, false
-}
-
-// Decide settles open question qid with Wesley's answer: it moves the
-// question, its recommendation and context kept, from Open questions to
-// the end of Decisions as the next decision ID of its file, records the
-// answer there, and logs a decided event.
-func (p Plan) Decide(qid, answer string, now time.Time) (Decided, error) {
+// Decide settles open question qid in place: DECIDED, or DROPPED with
+// Drop, with CLOSED and the answer written as Org does, and tagged
+// ARCHIVE so Org folds it. A question it supersedes becomes SUPERSEDED.
+// The log records a decided event.
+func (p Plan) Decide(qid string, o DecideOptions, now time.Time) (Decided, error) {
 	if err := p.checkOwn(); err != nil {
 		return Decided{}, err
 	}
-	answer = strings.TrimSpace(answer)
-	if answer == "" {
-		return Decided{}, refusal.New("a decision needs Wesley's answer. Pass it with `--answer 'one line'`")
+	o.Answer = strings.TrimSpace(o.Answer)
+	if o.Answer == "" {
+		return Decided{}, refusal.New("a decision needs Wesley's answer, or why the question is dropped. Pass it with `--answer 'one line'`")
 	}
-	if err := checkLine("answer", answer); err != nil {
+	if err := checkLine("answer", o.Answer); err != nil {
 		return Decided{}, err
+	}
+	if o.Drop && o.Supersedes != "" {
+		return Decided{}, refusal.New("a dropped question settles nothing, so it supersedes nothing. Pass `--drop` or `--supersedes`, not both")
+	}
+	state := kwDecided
+	if o.Drop {
+		state = kwDropped
 	}
 	var d Decided
 	err := p.withLock(func(l *lockedPlan) error {
-		qs, err := p.Questions(true)
+		items, err := p.items()
 		if err != nil {
 			return err
 		}
-		var q *Question
-		for i := range qs {
-			if qs[i].ID == qid {
-				q = &qs[i]
+		q, ok := items[qid]
+		if !ok || !questionID.MatchString(qid) || q.Keyword == "" || q.Done {
+			return refusal.New("%q is not an open question of %s. Use an ID `agent-plan questions %s --all --waiting` lists", qid, p.Name, p.file(""))
+		}
+		var target item
+		if o.Supersedes != "" {
+			target, ok = items[o.Supersedes]
+			switch {
+			case !ok || !questionID.MatchString(o.Supersedes) || target.Keyword == "":
+				return refusal.New("%q is not a question of %s. Pass the ID of the decision this one replaces, as `agent-plan decisions %s --all` lists it", o.Supersedes, p.Name, p.file(""))
+			case !target.Done:
+				return refusal.New("%s is still open, so there is no decision to supersede. Drop it with `agent-plan decide %s %s --drop --answer 'why'`", o.Supersedes, p.file(""), o.Supersedes)
 			}
 		}
-		if q == nil {
-			return refusal.New("%q is not an open question of %s. Use an ID `agent-plan questions %s --all` lists", qid, p.Name, p.file(""))
-		}
-		prefix := ""
-		if q.Part != "" {
-			prefix = q.Part + "."
-		}
-		items, err := p.itemList()
-		if err != nil {
-			return err
-		}
-		next := 1
-		decision := idOf(prefix, "D")
-		for _, it := range items {
-			if m := decision.FindStringSubmatch(it.ID); m != nil {
-				if n, _ := strconv.Atoi(m[1]); n >= next {
-					next = n + 1
-				}
-			}
-		}
-		did := fmt.Sprintf("%sD%d", prefix, next)
 		err = l.edit(q.File, func(lines []string) ([]string, error) {
-			text, err := moveQuestion(strings.Join(lines, "\n"), qid, did, answer)
-			return strings.Split(text, "\n"), err
+			return settle(lines, qid, state, o.Answer, "", o.Supersedes, now)
 		})
 		if err != nil {
 			return err
 		}
-		e, err := l.log(Event{Kind: "decided", Item: did, Summary: qid + ": " + answer}, now)
-		d = Decided{Question: qid, Decision: did, File: q.File, Event: e}
+		if o.Supersedes != "" {
+			err = l.edit(target.File, func(lines []string) ([]string, error) {
+				at := headingWithID(lines, o.Supersedes)
+				if at < 0 {
+					return nil, fmt.Errorf("%s left %s while being superseded", o.Supersedes, target.File)
+				}
+				return setKeyword(lines, at, kwSuperseded, fileKeywords(strings.Join(lines, "\n")), now), nil
+			})
+			if err != nil {
+				return err
+			}
+		}
+		e, err := l.log(Event{Kind: "decided", Item: qid, Summary: o.Answer, Role: o.Role}, now)
+		d = Decided{Question: qid, State: state, Answer: o.Answer, Supersedes: o.Supersedes, File: q.File, Event: e}
 		return err
 	})
 	return d, err
 }
 
-// moveQuestion is text with question qid's subtree moved to the end of
-// Decisions as decision did, answered.
-func moveQuestion(text, qid, did, answer string) (string, error) {
-	lines := strings.Split(text, "\n")
-	start, end, ok := section(lines, "Open questions")
-	if !ok {
-		return "", fmt.Errorf("no Open questions heading")
+// settle is lines with the question whose ID is id settled as state, with
+// its answer, who decided it unless Wesley did, and the decision it
+// supersedes.
+func settle(lines []string, id, state, answer, decidedBy, supersedes string, now time.Time) ([]string, error) {
+	at := headingWithID(lines, id)
+	if at < 0 {
+		return nil, fmt.Errorf("%s is no longer in its file", id)
 	}
-	var block []string
-	for i := start + 1; i < end && block == nil; i++ {
-		if level(lines[i]) != 3 {
-			continue
-		}
-		j := i + 1
-		for j < end && (level(lines[j]) == 0 || level(lines[j]) > 3) {
-			j++
-		}
-		for _, l := range lines[i:j] {
-			if m := idLine.FindStringSubmatch(l); m != nil && m[1] == qid {
-				block = append([]string{}, lines[i:j]...)
-				lines = append(lines[:i:i], lines[j:]...)
-				break
-			}
-		}
+	ks := fileKeywords(strings.Join(lines, "\n"))
+	if !ks.done[state] {
+		return nil, refusal.New("the plan file of %s does not define %s as a done keyword. Restore its `#+TODO:` lines as `agent-plan new` writes them, then run the command again", id, state)
 	}
-	if block == nil {
-		return "", fmt.Errorf("%s is not under Open questions", qid)
+	lines = setKeyword(lines, at, state, ks, now)
+	lines = setProperty(lines, at, "ANSWER", answer)
+	if decidedBy != "" {
+		lines = setProperty(lines, at, "DECIDED_BY", decidedBy)
 	}
-	var moved []string
-	answered := false
-	for _, l := range block {
-		switch {
-		case idLine.MatchString(l):
-			moved = append(moved, ":ID: "+did, ":QUESTION: "+qid)
-			continue
-		case !answered && strings.TrimSpace(l) == ":END:":
-			moved = append(moved, ":ANSWER: "+answer)
-			answered = true
-		}
-		moved = append(moved, l)
+	if supersedes != "" {
+		lines = setProperty(lines, at, "SUPERSEDES", supersedes)
 	}
-	_, end, ok = section(lines, "Decisions")
-	if !ok {
-		return "", fmt.Errorf("no Decisions heading")
-	}
-	// A section ending the file ends at its final empty line.
-	if end == len(lines) && lines[end-1] == "" {
-		end--
-	}
-	out := append(append(append([]string{}, lines[:end]...), moved...), lines[end:]...)
-	return strings.Join(out, "\n"), nil
+	return addTag(lines, at, archiveTag), nil
 }
 
 // StatusLine is the status line for the session its input names, else for

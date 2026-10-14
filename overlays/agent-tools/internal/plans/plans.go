@@ -218,7 +218,7 @@ func (c Config) newPart(o NewOptions) (Created, error) {
 // a parent alone.
 func planText(o NewOptions, id string, extra map[string]string, parent bool) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "#+title: %s\n#+TODO: TODO NEXT | DONE\n\n* Plan\n:PROPERTIES:\n:ID: %s\n", o.Title, id)
+	fmt.Fprintf(&b, "#+title: %s\n%s\n* Plan\n:PROPERTIES:\n:ID: %s\n", o.Title, todoLines(), id)
 	property := func(name, value string) {
 		if value == "" {
 			fmt.Fprintf(&b, ":%s:\n", name)
@@ -240,7 +240,7 @@ func planText(o NewOptions, id string, extra map[string]string, parent bool) str
 	property("PULL_REQUESTS", "")
 	property("PIPELINE", "full")
 	b.WriteString(":END:\n")
-	sections := []string{"Goal", "Decisions", "Steps", "Distribution", "Open questions", "Verification"}
+	sections := []string{"Goal", "Steps", "Distribution", "Questions", "Verification"}
 	for _, s := range sections {
 		if s == "Distribution" && !parent {
 			continue
@@ -366,8 +366,8 @@ func (c Config) Open(arg string) (Plan, error) {
 
 // item is a heading with an ID in one of a plan's files.
 type item struct {
-	ID, Title, File, Part string
-	Props                 map[string]string
+	heading
+	ID, File, Part string
 }
 
 // files are the plan's own files: the plan's, then each part's in order.
@@ -421,7 +421,7 @@ func (p Plan) itemList() ([]item, error) {
 				continue
 			}
 			seen[id] = true
-			out = append(out, item{ID: id, Title: h.Title, File: f, Part: part, Props: h.Props})
+			out = append(out, item{heading: h, ID: id, File: f, Part: part})
 		}
 	}
 	return out, nil
