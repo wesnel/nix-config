@@ -202,6 +202,18 @@ in {
                 ];
               }
             ];
+            # Blocks a stop once when the work is not as the plan-work and
+            # review-change skills leave it; never while stop_hook_active.
+            hooks.Stop = [
+              {
+                hooks = [
+                  {
+                    type = "command";
+                    command = "agent-plan stop-check";
+                  }
+                ];
+              }
+            ];
           };
         };
     }

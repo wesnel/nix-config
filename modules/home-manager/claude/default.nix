@@ -327,6 +327,19 @@ in {
           }
         ];
 
+        # Blocks a stop once when the work is not as the plan-work and
+        # review-change skills leave it; never while stop_hook_active.
+        hooks.Stop = [
+          {
+            hooks = [
+              {
+                type = "command";
+                command = "${agentPlan} stop-check";
+              }
+            ];
+          }
+        ];
+
         # How many open questions the session's plan has, from its files
         # alone, which the `questions` skill asks Wesley.
         statusLine = {

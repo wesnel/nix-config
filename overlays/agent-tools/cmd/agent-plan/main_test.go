@@ -264,3 +264,37 @@ func TestClaudeHooks(t *testing.T) {
 		t.Errorf("find --hook for a session without a plan: %d %q", code, out)
 	}
 }
+
+// ECA's postRequest hook gets the reason on stderr with exit 2, once per chat.
+func TestStopCheckECA(t *testing.T) {
+	setup(t)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	for _, v := range []string{"GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"} {
+		t.Setenv(v, "T")
+	}
+	for _, v := range []string{"GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"} {
+		t.Setenv(v, "t@e")
+	}
+	repo, _ := filepath.EvalSymlinks(t.TempDir())
+	for _, args := range [][]string{
+		{"init", "-q", "-b", "main"},
+		{"commit", "-q", "--allow-empty", "-m", "base"},
+		{"update-ref", "refs/remotes/origin/main", "HEAD"},
+		{"commit", "-q", "--allow-empty", "-m", "Add x"},
+	} {
+		if out, err := exec.Command("git", append([]string{"-C", repo, "-c", "commit.gpgsign=false"}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	event, _ := json.Marshal(map[string]any{"hook_type": "postRequest", "chat_id": "chat-1", "cwd": repo})
+	code, out, errs := agentPlan(t, string(event), "stop-check")
+	if code != 2 || out != "" || !strings.Contains(errs, "agent-plan new") {
+		t.Fatalf("first stop: %d %q %q", code, out, errs)
+	}
+	if code, out, errs = agentPlan(t, string(event), "stop-check"); code != 0 || out != "" || errs != "" {
+		t.Errorf("second stop: %d %q %q", code, out, errs)
+	}
+	if _, err := os.Stat(plans.StopStateDir()); err != nil {
+		t.Errorf("state dir: %v", err)
+	}
+}
