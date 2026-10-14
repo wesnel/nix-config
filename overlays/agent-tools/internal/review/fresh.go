@@ -35,23 +35,23 @@ and what is not this change's job), the items the change answers (threads,
 CI checks, earlier findings and how each was settled), and the earlier
 findings of this review.
 
-By default Codex reviews, as a model family other than the author's:
-codex exec -s read-only --ephemeral, in a throwaway worktree of TIP under
-the git directory's fresh-review/, removed on every exit. Codex's sandbox
-cannot start inside another macOS sandbox, so run this outside one. Where the
-repository has test settings, git red-check BASE..TIP runs first and its JSON
-goes in the prompt.
+With --reviewer codex, Codex reviews, as a model family other than the
+author's: codex exec -s read-only --ephemeral, in a throwaway worktree of
+TIP under the git directory's fresh-review/, removed on every exit. Codex's
+sandbox cannot start inside another macOS sandbox, so run this outside one.
+Where the repository has test settings, git red-check BASE..TIP runs first
+and its JSON goes in the prompt.
 
-Where Codex cannot review, review with a fresh sub-agent instead: give it
+Where Codex does not review, review with a fresh sub-agent instead: give it
 the prompt --print-prompt prints, save its reply, and check that with
 --check, which prints and exits as a review does.
 
   --goal FILE       the goal statement (required)
   --items FILE      the items the change answers, and how each was settled
   --prior FILE      earlier rounds' findings and how each was settled
-  --reviewer R      auto (default): Codex, unless called from inside Codex,
-                    where a sub-agent is the fresh reviewer; codex: Codex
-                    even then
+  --reviewer R      auto (default): a sub-agent, as Codex's sandbox can read
+                    every file on this machine; codex: Codex, only for a
+                    change Wesley wrote
   --model M         the Codex model (default: Codex's own)
   --timeout S       seconds before the review is stopped (default 1800)
   --no-red-check    leave git red-check out of the prompt
@@ -63,9 +63,9 @@ that do not fit the schema, each with its reason) and unverified. Exit
 status:
   0  no findings
   3  findings
-  4  Codex cannot review here: it is not installed or not signed in, this
-     is a review-loop session (PR_LOOP_SESSION or SANDBOX_RELAYED is set),
-     or, with --reviewer auto, the caller is Codex (CODEX_SANDBOX is set)
+  4  Codex does not review: --reviewer is auto, it is not installed or not
+     signed in, or this is a review-loop session (PR_LOOP_SESSION or
+     SANDBOX_RELAYED is set)
   1  the review could not run; 2 a usage error or refusal
 `
 
@@ -232,6 +232,9 @@ func unavailable(auto bool) string {
 		return "this runs behind sandbox-relay (SANDBOX_RELAYED is set)"
 	case auto && os.Getenv("CODEX_SANDBOX") != "":
 		return "the caller is Codex (CODEX_SANDBOX is set), so a sub-agent is already a fresh reviewer"
+	case auto:
+		return "Codex's read-only sandbox reads every file on this machine, credentials included, so a change it " +
+			"reviews could steer it into sending them to OpenAI; pass `--reviewer codex` only for a change Wesley wrote"
 	}
 	if _, err := exec.LookPath("codex"); err != nil {
 		return "codex is not on PATH"

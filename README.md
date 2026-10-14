@@ -176,19 +176,21 @@ git fresh-review --goal goal.md origin/main..HEAD
 git fresh-review --goal goal.md --items threads.md --prior round1.json origin/main..HEAD
 ```
 
-The reviewer is Codex, a model family other than the author's, run as
-`codex exec -s read-only --ephemeral` in a throwaway worktree of the range's
-tip under `.git/fresh-review/`, removed however the review ends. Codex's
-sandbox cannot start inside another macOS sandbox. Its contract is
+With `--reviewer codex`, the reviewer is Codex, a model family other than the
+author's, run as `codex exec -s read-only --ephemeral` in a throwaway worktree
+of the range's tip under `.git/fresh-review/`, removed however the review
+ends. Codex's read-only sandbox reads every file on the machine, so ask for
+it only for a change you wrote. Codex's sandbox cannot start inside another
+macOS sandbox. Its contract is
 `overlays/agent-tools/internal/review/reviewer.md`, the same text the
 `reviewer` agent of Claude Code and ECA loads, and its reply must fit
 `findings.schema.json` beside it. Findings that point at no line at the tip
 are dropped with the reason. It prints JSON and exits 0 with no findings, 3
-with findings, and 4 when Codex cannot review: not installed, not signed in,
-called from inside Codex, or in a review-loop session, where `pr-loop` must
-stay the only way out. Then `--print-prompt` gives the same prompt for a
-fresh `reviewer` sub-agent, and `--check FILE` validates its reply the same
-way. See `git fresh-review -h`.
+with findings, and 4 when Codex does not review: by default, not installed,
+not signed in, or in a review-loop session, where `pr-loop` must stay the
+only way out. Then `--print-prompt` gives the same prompt for a fresh
+`reviewer` sub-agent, and `--check FILE` validates its reply the same way.
+See `git fresh-review -h`.
 
 Where the repository has test settings, `git red-check` on the range runs
 first and its result goes in the prompt.

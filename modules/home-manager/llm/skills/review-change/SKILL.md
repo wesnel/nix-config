@@ -56,7 +56,7 @@ as `origin/main` or the parent branch in a stack.
 1. Write the goal statement to a file, and the items the change answers
    (threads, CI checks) with how each was settled to another, if any.
 2. Run `git fresh-review --goal GOAL [--items ITEMS] BASE..TIP`. It exits 0
-   with no findings, 3 with findings, and 4 when Codex cannot review here.
+   with no findings, 3 with findings, and 4 when Codex does not review.
    On 4, or when Codex fails to start its sandbox, review with a sub-agent
    instead:
    - `git fresh-review --print-prompt` with the same files and range prints
@@ -75,11 +75,13 @@ as `origin/main` or the parent branch in a stack.
 
 ## Harness choice
 
-- Codex, through `git fresh-review`, by default: a model family other than
-  the author's.
-- A fresh sub-agent where Codex cannot review: the `reviewer` agent in
-  Claude Code and ECA; elsewhere a new sub-agent told to follow the prompt
-  and only read.
+- A fresh sub-agent by default: the `reviewer` agent in Claude Code and
+  ECA; elsewhere a new sub-agent told to follow the prompt and only read.
+  Codex's read-only sandbox reads every file on the machine, credentials
+  included, so a change under review could steer it into sending them to
+  OpenAI.
+- Codex, through `git fresh-review --reviewer codex`, only for a change
+  Wesley wrote: a model family other than the author's.
 - Never Codex in a review-loop session: there `git fresh-review` exits 4 and
   the reviewer is a sub-agent, so `pr-loop` stays the session's only way out.
 - A Codex author reviews with a Codex sub-agent: from inside Codex,

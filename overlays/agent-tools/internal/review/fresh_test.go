@@ -160,7 +160,7 @@ func (f *fixture) checkCleanedUp(t *testing.T) {
 
 func TestCodexReview(t *testing.T) {
 	f := setUp(t, true)
-	code, out, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+"..HEAD")
+	code, out, stderr := freshReview(t, "--reviewer", "codex", "--goal", ".git/goal.md", f.base+"..HEAD")
 	if code != 3 {
 		t.Fatalf("exit %d, want 3 for findings\n%s", code, stderr)
 	}
@@ -209,7 +209,7 @@ func TestRepositoryTheEnvironmentNames(t *testing.T) {
 	f := setUp(t, true)
 	t.Setenv("FAKE_CODEX", "none")
 	t.Setenv("GIT_DIR", filepath.Join(f.repo, ".git"))
-	if code, _, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+"..HEAD"); code != 0 {
+	if code, _, stderr := freshReview(t, "--reviewer", "codex", "--goal", ".git/goal.md", f.base+"..HEAD"); code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
 	if location, _ := os.ReadFile(filepath.Join(f.log, "location")); len(location) != 0 {
@@ -227,7 +227,7 @@ func TestRepositoryTheEnvironmentNames(t *testing.T) {
 func TestNoFindings(t *testing.T) {
 	f := setUp(t, true)
 	t.Setenv("FAKE_CODEX", "none")
-	if code, out, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+".."+f.tip); code != 0 || len(out.Findings) != 0 {
+	if code, out, stderr := freshReview(t, "--reviewer", "codex", "--goal", ".git/goal.md", f.base+".."+f.tip); code != 0 || len(out.Findings) != 0 {
 		t.Errorf("exit %d, findings %v\n%s", code, out.Findings, stderr)
 	}
 	f.checkCleanedUp(t)
@@ -244,7 +244,7 @@ func TestCodexFailures(t *testing.T) {
 		t.Run(c.mode, func(t *testing.T) {
 			f := setUp(t, true)
 			t.Setenv("FAKE_CODEX", c.mode)
-			args := append(append([]string{"--goal", ".git/goal.md"}, c.args...), f.base+"..HEAD")
+			args := append(append([]string{"--reviewer", "codex", "--goal", ".git/goal.md"}, c.args...), f.base+"..HEAD")
 			if code, _, stderr := freshReview(t, args...); code != 1 {
 				t.Errorf("exit %d, want 1\n%s", code, stderr)
 			}
@@ -263,8 +263,9 @@ func TestUnavailable(t *testing.T) {
 		args      []string
 		want      int
 	}{
-		{"missing", false, nil, nil, 4},
-		{"unauthenticated", true, map[string]string{"FAKE_CODEX": "unauthenticated"}, nil, 4},
+		{"by default", true, map[string]string{"FAKE_CODEX": "none"}, nil, 4},
+		{"missing", false, nil, []string{"--reviewer", "codex"}, 4},
+		{"unauthenticated", true, map[string]string{"FAKE_CODEX": "unauthenticated"}, []string{"--reviewer", "codex"}, 4},
 		{"in a loop session", true, map[string]string{"PR_LOOP_SESSION": "1"}, nil, 4},
 		{"behind the relay", true, map[string]string{"SANDBOX_RELAYED": "1"}, nil, 4},
 		{"loop session, Codex asked for", true, map[string]string{"PR_LOOP_SESSION": "1"}, []string{"--reviewer", "codex"}, 4},
