@@ -393,3 +393,30 @@ func TestRehearse(t *testing.T) {
 		t.Errorf("conflicting fixup: %v", err)
 	}
 }
+
+func TestRedCheckConfig(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	config := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PR_LOOP_CONFIG", config)
+	dir := t.TempDir()
+	gitIn(t, dir, "init", "-q", "-b", "main")
+	gitIn(t, dir, "remote", "add", "origin", "https://github.com/O/R.git")
+	git.Dir = dir
+	defer func() { git.Dir = "" }()
+
+	if c, err := RedCheckConfig(); err != nil || c.Test != "" {
+		t.Errorf("without a config: %+v, %v", c, err)
+	}
+	os.WriteFile(config, []byte(`{"redCheck": {
+		"o/r": {"test": "go test ./...", "build": "go vet ./...", "testFiles": ["**/*_test.go"]},
+		"o/other": {"test": "make check", "testFiles": ["t/**"]}}}`), 0o644)
+	c, err := RedCheckConfig()
+	if err != nil || c.Repo != "o/r" || c.Test != "go test ./..." || c.Build != "go vet ./..." || len(c.TestFiles) != 1 {
+		t.Fatalf("configured: %+v, %v", c, err)
+	}
+	gitIn(t, dir, "remote", "add", "fork", "https://github.com/o/other.git")
+	if _, err := RedCheckConfig(); err == nil {
+		t.Error("two remotes with different settings were accepted")
+	}
+}

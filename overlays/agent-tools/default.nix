@@ -75,7 +75,7 @@
       '';
     });
 
-    meta.description = "pr-loop (the review loop), git-sign-pass (the signing pass), git-push-guard (keeps private history out of public repositories) and sandbox-relay (host programs for a sandbox)";
+    meta.description = "pr-loop (the review loop), git-sign-pass (the signing pass), git-red-check (checks a commit's tests fail without its change), git-push-guard (keeps private history out of public repositories) and sandbox-relay (host programs for a sandbox)";
   };
 in
   agent-tools
