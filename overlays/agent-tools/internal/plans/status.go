@@ -40,11 +40,23 @@ type Status struct {
 	// open questions that still wait, with what for.
 	Ready   []string  `json:"ready"`
 	Waiting []Waiting `json:"waiting"`
+	// KeywordDrift are the steps and parts whose heading keyword is not the
+	// one their log gives them: changed in Emacs, or not written while
+	// Emacs held unsaved changes to the file.
+	KeywordDrift []Drift `json:"keywordDrift"`
 	// Tokens is every event's tokens; TokensByPart keys a part's by its ID,
 	// and the rest by "".
 	Tokens       int64            `json:"tokens"`
 	TokensByPart map[string]int64 `json:"tokensByPart"`
 	TokensBy     []TokenRow       `json:"tokensBy"`
+}
+
+// Drift is an item whose heading keyword, File, is not Log, the one its
+// log gives it.
+type Drift struct {
+	ID   string `json:"id"`
+	File string `json:"file"`
+	Log  string `json:"log"`
 }
 
 // Status reads the plan and its log.
@@ -63,7 +75,7 @@ func (p Plan) Status() (Status, error) {
 	}
 	s := Status{Plan: p.file(""), Title: orgTitle(string(data)), Steps: []Step{}, NotDone: []string{},
 		DoneNotVerified: []string{}, TokensByPart: map[string]int64{}, TokensBy: tokenRows(events),
-		Ready: []string{}, Waiting: []Waiting{}}
+		Ready: []string{}, Waiting: []Waiting{}, KeywordDrift: []Drift{}}
 	open, err := p.Questions(true)
 	if err != nil {
 		return Status{}, err
@@ -86,6 +98,9 @@ func (p Plan) Status() (Status, error) {
 			} else if partPattern.MatchString(it.ID) && !started(it.ID, events) {
 				s.Ready = append(s.Ready, it.ID)
 			}
+		}
+		if state := stepState(events, it.ID); projected(it.ID) && it.Keyword != state {
+			s.KeywordDrift = append(s.KeywordDrift, Drift{ID: it.ID, File: it.Keyword, Log: state})
 		}
 		if !stepPattern.MatchString(it.ID) {
 			continue
@@ -187,6 +202,17 @@ func (s Status) Org() string {
 			waits = append(waits, w.ID+" for "+strings.Join(w.On, ", "))
 		}
 		fmt.Fprintf(&b, "- Waiting: %s\n", strings.Join(waits, "; "))
+	}
+	if len(s.KeywordDrift) > 0 {
+		var drifts []string
+		for _, d := range s.KeywordDrift {
+			file := d.File
+			if file == "" {
+				file = "none"
+			}
+			drifts = append(drifts, fmt.Sprintf("%s (file %s, log %s)", d.ID, file, d.Log))
+		}
+		fmt.Fprintf(&b, "- Keyword drift: %s\n", strings.Join(drifts, "; "))
 	}
 	fmt.Fprintf(&b, "- Tokens: %d\n", s.Tokens)
 	if len(s.TokensByPart) > 0 {

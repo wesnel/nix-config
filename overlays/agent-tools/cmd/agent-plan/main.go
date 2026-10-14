@@ -32,7 +32,8 @@ directory and host come from "plans" in the user's agent-tools/config.json.
   log PLAN --item ID --kind KIND [--summary S] [--role R] [--agent A] [--branch B]
       [--commit SUBJECT] [--evidence E] [--review ROUND.ID --outcome O]
       [--tokens N] [--model M] [--effort E]
-                     append an event about item ID to the plan's log
+                     append an event about item ID to the plan's log, and
+                     write a step's or part's heading keyword from its log
   find [--session ID] [--worktree DIR] [--branch B]
                      this host's plan files that match any one given (default:
                      this session, worktree and branch)
@@ -116,7 +117,7 @@ decisions.
 `
 
 // relayed are the commands a sandbox may run through the relay: reading
-// plans and appending to their logs.
+// plans, appending to their logs, and the keywords log writes.
 var relayed = map[string]bool{"log": true, "goal": true, "status": true, "find": true, "questions": true,
 	"decisions": true}
 
