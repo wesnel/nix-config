@@ -39,6 +39,9 @@ create, amend or rewrite commits.
 - Explain the approach and what it rests on, not each file in turn; the diff
   already gives that tour. A validation section names only what a reviewer
   cannot see from CI, never a lint, format, typecheck or codegen run.
+- Say whether the change is easy to back out (a two-way door) or not (a
+  one-way door: a migration, a stored format, a published interface), and
+  what it could break if it is wrong.
 - Answer review comments in their threads, never as new top-level comments.
   On Wesley's own pull requests, `pr-loop threads`, `reply` and `resolve` do
   this for review bots' threads.
@@ -102,6 +105,10 @@ never run `sudo`, since system paths here are managed declaratively.
 `pr-loop guard` enforces these rules before every tool call, and its refusal
 says what to do instead: do that.
 
+A secret that reaches the session anyway, in a log, a captured request or a
+fixture, is written nowhere: put `<REDACTED>` in its place in reports, plans,
+pull requests and replies.
+
 ## Commands Wesley runs
 
 Anything that is Wesley's to run, such as a key touch, root or an interactive
@@ -111,7 +118,7 @@ keep it valid in fish. In Claude Code's and Codex's terminal interfaces, which
 run a prompt line beginning with `!` as a shell command in the session, begin
 the line with `!` so its output lands in the conversation; ECA and Claude Code
 through agent-shell do not, so there the line is plain, for `M-!` or a Ghostel
-terminal.
+terminal. A line whose output shows a secret is always plain.
 
 ## Documentation and comments
 
@@ -136,14 +143,17 @@ state came about.
 - **Write plainly.** One term per concept, reused exactly; code is named by its
   exact identifier. No filler or hype: leverage, robust, seamless, powerful,
   simply, just, easily. Prefer the active voice, and state the condition before
-  the action: "if the cache is stale, rebuild it".
+  the action: "if the cache is stale, rebuild it". Define a term before the
+  text relies on it.
 
 ## Verify before asserting
 
 For how a tool, platform or API actually behaves, test it rather than recalling
 it — especially where the plausible answer and the true one differ. State what was
 observed. When a claim cannot be checked in the current environment, say so
-explicitly instead of implying it was verified.
+explicitly instead of implying it was verified, and read the source that owns
+the behaviour (its code, its official docs, its specification) rather than a
+write-up about it, naming which.
 
 The same applies to review feedback, human or automated: confirm the problem is
 real, and confirm the fix works, before reporting either. A reviewer being wrong is
@@ -154,7 +164,8 @@ A failure is no different. Reproduce it before fixing it, and show it gone
 afterwards with the same reproduction; for an intermittent one, show how often
 it fails before and after. A retry, a skip or a loosened assertion that hides a
 failure is not a fix unless Wesley asked for one. Load the `diagnose-failure`
-skill before looking for a failure's cause.
+skill before looking for a failure's cause. When a failure could recur, the
+`retro` skill says how to propose what would prevent it.
 
 ## Tests
 
@@ -162,6 +173,10 @@ A test earns its place only if it can fail. A change in behaviour (a feature,
 a fix, a changed contract) starts with its test, seen failing for the expected
 reason before the code changes, and the report shows both runs. Load the
 `write-tests` skill before writing, changing or reviewing tests.
+
+A new or changed check, such as a lint rule, CI step, hook, guard rule or Nix
+assertion, is shown the same way: failing on a deliberate violation for the
+expected reason, then passing, with both runs in the report.
 
 ## Prefer git to gh
 
