@@ -167,7 +167,8 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 		}
 		json.Unmarshal(toolInput, &args)
 		return command(args.Command, 0, who, dir)
-	case tool == "Edit" || tool == "Write" || tool == "MultiEdit" || tool == "NotebookEdit" || tool == "apply_patch":
+	case tool == "Edit" || tool == "Write" || tool == "MultiEdit" || tool == "NotebookEdit" || tool == "apply_patch",
+		server == "eca" && (tool == "write_file" || tool == "edit_file" || tool == "move_file"):
 		return checkFileTool(tool, toolInput, dir)
 	case who == baseline:
 		return checkConnector(full)
@@ -272,6 +273,8 @@ func program(c call, who role, files, dir string) string {
 		return checkPrLoop(words[1:], who)
 	case name == "git-fresh-review" && who == reviewer:
 		return nestedReview
+	case name == "agent-plan" && who == reviewer && (len(words) < 2 || !planReads[words[1]]):
+		return reviewerReport
 	case name == "git-sign-pass" && who == reviewer:
 		return reviewerReport
 	case name == "git-sign-pass" && who >= coordinator:
@@ -425,6 +428,9 @@ var coordinatorOnly = map[string]bool{"open": true, "begin": true, "push": true,
 // `wait ci`.
 var reviewerReads = map[string]bool{"stack": true, "threads": true, "status": true, "ci": true, "logs": true,
 	"setup-command": true}
+
+// planReads are the agent-plan commands a reviewer may run.
+var planReads = set("status", "goal", "find", "-h", "--help", "help")
 
 // reviewerReport is why a reviewer may not make a change.
 const reviewerReport = "A reviewer only reads. Report the finding with its evidence; whoever started the review acts on it."

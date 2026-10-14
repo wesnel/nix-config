@@ -289,5 +289,12 @@
     "pattern": ".*\\bgit(\\s+(-C\\s+\\S+\\s+)?|-)fresh-review\\b.*",
     "deny": ["git fresh-review --goal g.md main..HEAD", "git -C .pr-loop/12 fresh-review --print-prompt --goal g.md a..b", "git-fresh-review --goal g.md a..b"],
     "allow": ["git log --oneline main..HEAD", "grep -nE 'git\\s+fresh-review' SKILL.md"]
+  },
+  {
+    "why": "A reviewer reads plans; whoever started it logs what it found.",
+    "scope": "reviewer",
+    "pattern": ".*\\bagent-plan\\s+(?!(status|goal|find)\\b)\\S+.*",
+    "deny": ["agent-plan log /p/box/2026-10-14-x --item S1 --kind verified", "agent-plan new --title T --slug t", "agent-plan ask /p/2026-10-14-x.box.org --question q --recommendation r"],
+    "allow": ["agent-plan status /p/box/2026-10-14-x", "agent-plan goal /p/box/2026-10-14-x --part P1", "grep -nE 'agent-plan\\s+log' SKILL.md"]
   }
 ]
