@@ -107,7 +107,9 @@ Record every branch's tip at the start of the round; the restack needs the
 old parent tips.
 
 1. **CI.** `pr-loop wait ci` (repeat while it exits 3), then `pr-loop ci`.
-   For every failure whose `onBase` is not `failed`, have the owner read
+   If it exits 4 (`noChecks`), CI never reported on a head, and `pr-loop
+   request` refuses until it does: stop and say so in the report. For every
+   failure whose `onBase` is not `failed`, have the owner read
    `pr-loop logs <number> <check>` and either fix it or show it is not the
    PR's doing (a flaky test, an infrastructure fault). Waiving a failure is
    Wesley's decision: if the owner shows one is not the PR's, stop and put

@@ -144,12 +144,14 @@ pr-loop wait ci --timeout 3600
 
 It waits for the pushed commit to become the pull request's head, so it
 never reports the previous head's checks, and prints a `result`: `passed`,
-`failed`, `failedOnBase` or `timedOut` (exit 3). Each failed check names the
-`pr-loop logs` command for its log and says whether it fails on the base
-too (`onBase`).
+`failed`, `failedOnBase`, `noChecks` (exit 4) or `timedOut` (exit 3). Each
+failed check names the `pr-loop logs` command for its log and says whether
+it fails on the base too (`onBase`).
 
 - A failure the pull request caused: fix it as a fixup, as above, and hand
   over again.
 - A failure that is not its doing (failing on the base, a flaky test, an
   infrastructure fault): report it to Wesley with the evidence from the log.
   Never rerun CI or push again in the hope that it passes.
+- `noChecks`: no check reported on the head within `--grace` (default three
+  minutes). Tell Wesley that CI did not run; it is not a pass.

@@ -217,8 +217,10 @@ func CIStatuses(args []string) (any, error) {
 // CIWait is what WaitCI found.
 type CIWait struct {
 	// Result is passed; failed, when a check fails that does not fail on the
-	// base; failedOnBase, when every failing check fails on the base too; or
-	// timedOut, when some PR's state is still awaitingHead, none or pending.
+	// base; failedOnBase, when every failing check fails on the base too;
+	// noChecks, when nothing failed but some PR's head still had no checks a
+	// grace period after it became the expected head; or timedOut, when some
+	// PR's state is still awaitingHead, pending, or none within its grace.
 	Result string `json:"result"`
 	PRs    []*CI  `json:"prs"`
 }
@@ -231,7 +233,10 @@ var (
 
 // WaitCI polls until CI has finished on every PR's expected head, or the
 // timeout passes. sha names the commit a single PR's head is expected to be.
-func WaitCI(args []string, sha string, timeout, interval time.Duration) (*CIWait, bool, error) {
+// A head that has no checks grace after WaitCI first sees it as the PR's
+// expected head counts as finished, with no checks; the grace restarts when
+// the head moves, since a new head's checks take time to register.
+func WaitCI(args []string, sha string, timeout, interval, grace time.Duration) (*CIWait, bool, error) {
 	slug, numbers, err := ciTargets(args)
 	if err != nil {
 		return nil, false, err
@@ -245,17 +250,31 @@ func WaitCI(args []string, sha string, timeout, interval time.Duration) (*CIWait
 			return nil, false, err
 		}
 	}
+	type sighting struct {
+		oid string
+		at  time.Time
+	}
+	seen := map[int]sighting{}
 	deadline := now().Add(timeout)
 	for {
 		out := &CIWait{Result: "passed", PRs: []*CI{}}
-		settled := true
+		settled, noChecks := true, false
 		for _, n := range numbers {
 			ci, err := ciStatus(slug, n, want)
 			if err != nil {
 				return nil, false, err
 			}
 			out.PRs = append(out.PRs, ci)
-			settled = settled && ci.finished()
+			finished := ci.finished()
+			if ci.State != "awaitingHead" {
+				if s, ok := seen[n]; !ok || s.oid != ci.HeadOid {
+					seen[n] = sighting{ci.HeadOid, now()}
+				}
+				if ci.State == "none" && now().Sub(seen[n].at) >= grace {
+					finished, noChecks = true, true
+				}
+			}
+			settled = settled && finished
 			for _, c := range ci.Failed {
 				if c.OnBase != "failed" {
 					out.Result = "failed"
@@ -263,6 +282,9 @@ func WaitCI(args []string, sha string, timeout, interval time.Duration) (*CIWait
 					out.Result = "failedOnBase"
 				}
 			}
+		}
+		if noChecks && out.Result == "passed" {
+			out.Result = "noChecks"
 		}
 		left := deadline.Sub(now())
 		if settled || left <= 0 {
