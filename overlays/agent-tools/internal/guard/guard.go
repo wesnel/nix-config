@@ -72,6 +72,11 @@ func CheckOwner(tool, server string, toolInput json.RawMessage) string {
 	return check(tool, server, toolInput, true)
 }
 
+// check returns a denial's reason, which reaches the agent verbatim: a first
+// sentence saying why, then what to do instead, naming the command in
+// backticks or handing the step to Wesley. A reason that only says no sends
+// the agent looking for another way through. TestCheck and TestPolicy hold
+// every reason to this.
 func check(tool, server string, toolInput json.RawMessage, owner bool) string {
 	full := tool
 	if server != "" {
@@ -88,7 +93,7 @@ func check(tool, server string, toolInput json.RawMessage, owner bool) string {
 	case strings.Contains(strings.ToLower(full), "linear") && !readOnlyTool.MatchString(full):
 		return "The review loop does not change Linear. Put the proposed change in the final report for Wesley to approve."
 	case strings.Contains(strings.ToLower(full), "github") && !readOnlyTool.MatchString(full):
-		return "GitHub writes in the review loop go through pr-loop."
+		return "GitHub writes in the review loop go through pr-loop. " + prLoopWrites
 	}
 	return ""
 }
@@ -127,9 +132,13 @@ func command(text string, depth int, owner bool) string {
 	return ""
 }
 
-const signing = "Signing needs Wesley's hardware key. Leave the commits unsigned and hand over with the command to run."
+const signing = "Signing needs Wesley's hardware key. Leave the commits unsigned and end the report with the command for Wesley to run: `pr-loop sign` for the loop's stack."
 
-const pushGuard = "Publishing private history in a public repository is Wesley's decision. Stop and ask instead of changing push-guard.* settings."
+const pushGuard = "Publishing private history in a public repository is Wesley's decision. Leave push-guard.* alone, and name the repository and the commits in the report for Wesley."
+
+const prLoopWrites = "Use `pr-loop push`, `reply`, `resolve` or `request`; any other write goes in the report for Wesley."
+
+const alias = "A git alias can stand for any command, which the guard cannot check. Run the command itself, as `git <command>`."
 
 // coordinatorOnly are the pr-loop steps an owner leaves to the coordinator,
 // which keeps the stack consistent across PRs.
@@ -148,9 +157,9 @@ func checkPrLoop(args []string, owner bool) string {
 	for _, a := range args[1:] {
 		switch {
 		case args[0] == "request" && (a == "--accept-failure" || strings.HasPrefix(a, "--accept-failure=")):
-			return "Whether a CI failure is not this PR's doing is Wesley's call. Stop and put the evidence in the report."
+			return "Whether a CI failure is not this PR's doing is Wesley's call. Put the evidence in the report, with `pr-loop request --accept-failure CHECK PR` for Wesley to run if he agrees."
 		case args[0] == "end" && a == "--prune":
-			return "Pruning deletes the unsquashed history and round snapshots; leave that to Wesley."
+			return "Pruning deletes the unsquashed history and round snapshots, which is Wesley's call. Leave `pr-loop end --prune` to him."
 		}
 	}
 	return ""
@@ -162,7 +171,7 @@ func checkGit(words []string) string {
 		if gitValueFlags[words[i]] {
 			// An alias given on the command line can stand for any command.
 			if words[i] == "-c" && i+1 < len(words) && strings.HasPrefix(strings.ToLower(words[i+1]), "alias.") {
-				return "Git aliases are not used in the review loop; run the command itself."
+				return alias
 			}
 			if words[i] == "-c" && i+1 < len(words) && strings.HasPrefix(strings.ToLower(words[i+1]), "push-guard.") {
 				return pushGuard
@@ -193,11 +202,11 @@ func checkGit(words []string) string {
 	case "commit":
 		switch {
 		case has("--no-verify", "-n"):
-			return "Repository hooks stay on in the review loop; fix what they report."
+			return "Repository hooks stay on in the review loop. Fix what they report and commit again with `git commit --fixup=<commit>`."
 		case has("--amend"):
 			return "The review loop never rewrites the PR's commits. Commit the change with `git commit --fixup=<commit>`; the signing pass squashes it in."
 		case !has("--fixup"):
-			return "Every commit in the review loop is `git commit --fixup=<commit>` against the PR commit it belongs to, with the review details as --trailer lines, so the signing pass can squash it in."
+			return "Every commit in the review loop is a fixup the signing pass can squash in. Commit with `git commit --fixup=<commit>` against the PR commit it belongs to, with the review details as --trailer lines."
 		}
 	case "config":
 		reading := has("--get", "--get-all", "--get-regexp", "-l", "--list")
@@ -206,11 +215,11 @@ func checkGit(words []string) string {
 			switch {
 			case reading:
 			case strings.HasPrefix(key, "pr-loop."):
-				return "pr-loop.* settings are Wesley's to change. Stop and ask for a decision instead."
+				return "pr-loop.* settings are Wesley's to change. Read them with `git config --get`, and put the `git config` command you propose in the report for Wesley."
 			case strings.HasPrefix(key, "push-guard."):
 				return pushGuard
 			case strings.HasPrefix(key, "alias."):
-				return "Git aliases are not used in the review loop; run the command itself."
+				return alias
 			}
 		}
 	}
@@ -219,7 +228,7 @@ func checkGit(words []string) string {
 		for _, line := range strings.Split(string(aliases), "\n") {
 			name, _, _ := strings.Cut(line, " ")
 			if strings.TrimPrefix(name, "alias.") == sub {
-				return "`git " + sub + "` is an alias; run the command it stands for, so it can be checked."
+				return "`git " + sub + "` is an alias, so the guard cannot see what it runs. Run the command it stands for, which `git config --get alias." + sub + "` shows."
 			}
 		}
 	}
@@ -231,7 +240,7 @@ func checkGh(args []string) string {
 		return ""
 	}
 	if len(args) >= 2 && args[0] == "auth" && args[1] == "token" {
-		return "The review loop does not read GitHub credentials; pr-loop holds the login."
+		return "The review loop does not read GitHub credentials, which pr-loop holds. Read GitHub with `pr-loop status`, `ci`, `logs` or `threads`."
 	}
 	if len(args) >= 1 && args[0] == "api" {
 		rest := args[1:]
@@ -244,7 +253,7 @@ func checkGh(args []string) string {
 		}
 		if endpoint == "graphql" {
 			if strings.Contains(strings.Join(rest, " "), "mutation") {
-				return "GraphQL mutations go through pr-loop (reply, resolve, push)."
+				return "GraphQL mutations in the review loop go through pr-loop. " + prLoopWrites
 			}
 			return ""
 		}
@@ -260,7 +269,7 @@ func checkGh(args []string) string {
 			}
 		}
 		if method != "GET" || (fields && !explicit) {
-			return "Only read-only `gh api` calls are allowed in the review loop; writes go through pr-loop."
+			return "Only read-only `gh api` calls are allowed in the review loop. " + prLoopWrites
 		}
 		return ""
 	}

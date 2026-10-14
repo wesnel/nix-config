@@ -4,9 +4,60 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
+
+// handOff is what the rest of a reason, after the sentence saying why, must
+// contain: a command in backticks, or the step handed to Wesley or the report.
+var handOff = regexp.MustCompile("`|Wesley|(?i:report)")
+
+// saysInstead reports whether a denial's reason goes on, after the sentence
+// saying why, to say what to do instead.
+func saysInstead(reason string) bool {
+	quoted := false
+	for i := 0; i+1 < len(reason); i++ {
+		switch {
+		case reason[i] == '`':
+			quoted = !quoted
+		case !quoted && (reason[i] == '.' || reason[i] == ';') && reason[i+1] == ' ':
+			return handOff.MatchString(reason[i+2:])
+		}
+	}
+	return false
+}
+
+func TestSaysInstead(t *testing.T) {
+	for reason, want := range map[string]bool{
+		"Pushing goes through `pr-loop push`.":                       false,
+		"No. Try something else.":                                    false,
+		"Pushing is checked. Use `pr-loop push`.":                    true,
+		"Pruning is Wesley's call; leave it to him.":                 false,
+		"Pruning is a decision. Leave `pr-loop end --prune` to him.": true,
+		"`git x. y` is an alias; ask Wesley.":                        true,
+	} {
+		if got := saysInstead(reason); got != want {
+			t.Errorf("saysInstead(%q) = %v", reason, got)
+		}
+	}
+}
+
+// TestAliasDenial covers the alias already in the git config, which the
+// guard looks up at run time.
+func TestAliasDenial(t *testing.T) {
+	config := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(config, []byte("[alias]\n\tpp = push\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", config)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	input, _ := json.Marshal(map[string]string{"command": "git pp origin HEAD"})
+	if reason := Check("Bash", "", input); !saysInstead(reason) {
+		t.Errorf("alias denial %q does not say what to do instead", reason)
+	}
+}
 
 func TestCheck(t *testing.T) {
 	cases := []struct {
@@ -69,12 +120,17 @@ func TestCheck(t *testing.T) {
 		if (reason != "") != c.deny {
 			t.Errorf("%s %q: deny=%v, reason %q", c.tool, c.command, !c.deny, reason)
 		}
+		if reason != "" && !saysInstead(reason) {
+			t.Errorf("%s %q: reason %q does not say what to do instead", c.tool, c.command, reason)
+		}
 	}
 }
 
 // TestPolicy holds the guard to the examples in policy.json, which ECA's deny
 // patterns are built from and checked against at package build time, so the
-// two cannot drift apart. Owner-only rules hold only for an owner.
+// two cannot drift apart. Owner-only rules hold only for an owner. Each
+// denial's reason, which is what the agent sees, must say what to do instead;
+// a rule's `why` is for whoever maintains it and reaches no agent.
 func TestPolicy(t *testing.T) {
 	data, err := os.ReadFile("policy.json")
 	if err != nil {
@@ -99,11 +155,17 @@ func TestPolicy(t *testing.T) {
 				// Another rule's allow example can be a step the coordinator
 				// alone takes, so an owner is held only to denials and to the
 				// owner-only rules' examples.
-				if got := CheckOwner("Bash", "", input) != ""; got != want && (want || r.OwnerOnly) {
+				owner, coordinator := CheckOwner("Bash", "", input), Check("Bash", "", input)
+				if got := owner != ""; got != want && (want || r.OwnerOnly) {
 					t.Errorf("%s: guard deny=%v for an owner's %q", r.Pattern, got, command)
 				}
-				if got := Check("Bash", "", input) != ""; got != (want && !r.OwnerOnly) {
+				if got := coordinator != ""; got != (want && !r.OwnerOnly) {
 					t.Errorf("%s: guard deny=%v for the coordinator's %q", r.Pattern, got, command)
+				}
+				for _, reason := range []string{owner, coordinator} {
+					if reason != "" && !saysInstead(reason) {
+						t.Errorf("%s: reason %q for %q does not say what to do instead", r.Pattern, reason, command)
+					}
 				}
 			}
 		}
