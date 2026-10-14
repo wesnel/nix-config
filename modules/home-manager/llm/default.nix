@@ -597,6 +597,13 @@ in {
           };
           # Reads the session transcripts this machine keeps.
           retro = ./skills/retro/SKILL.md;
+          # A directory for agents/openai.yaml, which keeps Codex from
+          # invoking it unasked, as disable-model-invocation does in Claude
+          # Code.
+          grill = {
+            source = ./skills/grill;
+            sandbox = true;
+          };
 
           # Linked as published, with the repository's MIT licence beside
           # it: the licence requires its notice in every copy.

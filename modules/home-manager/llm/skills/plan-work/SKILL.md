@@ -119,6 +119,12 @@ waiting questions askable, so list them again until none are left. In
 Claude Code, Wesley answers them through `/questions`; elsewhere, print
 them and take his answers in the chat.
 
+An open question is a decision only Wesley can make. A fact that a
+command, a file, the docs or a sub-agent's lookup can establish is yours to
+find; write what you found into the question it informs. Each question
+holds one idea, worded so that "yes" accepts your recommendation, and the
+most important comes first.
+
 ## Other hosts
 
 Plans reach every host through the notes repository around the plans
