@@ -54,6 +54,8 @@ type input struct {
 	// Set by Codex alone, whose hooks cannot ask the user.
 	TurnID    string `json:"turn_id"`
 	SessionID string `json:"session_id"`
+	// Set by Claude Code and Codex for a sub-agent's call alone.
+	AgentID string `json:"agent_id"`
 }
 
 // role is who makes a call. Each role is denied everything the one before it
@@ -106,6 +108,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	who := roleOf(in.AgentType+in.Agent, fallback)
 	reason := check(in.ToolName, in.Server, in.ToolInput, who, in.Cwd)
+	if reason == "" {
+		reason = checkOwner(in)
+	}
 	if reason == "" {
 		edit := in.ToolName == "Edit" || in.ToolName == "Write" || in.ToolName == "MultiEdit"
 		if fallback == baseline && edit && in.HookType == "" {
