@@ -73,8 +73,10 @@ no attribution lines, and on a fixup only Review-* trailers.
   end [--prune]               delete trigger comments and loop state
   guard [--baseline]          PreToolUse hook for Claude Code, Codex and ECA (reads stdin):
                               a loop's rules, or with --baseline every session's, by agent
-  guard --post                PostToolUse hook for Claude Code and ECA (reads stdin): after
-                              a push to GitHub, names the pr-loop wait ci to start
+  guard --post                PostToolUse hook for Claude Code, Codex and ECA (reads stdin):
+                              records the shell call's commits, pushes, new worktrees,
+                              branches and PRs in the plan of its session or worktree;
+                              after a push to GitHub, names the pr-loop wait ci to start
 ` + prreview.Usage + `
 reply and resolve take a thread on an open PR by the authenticated user in
 this repository, people's threads included, and need no begin. In a loop
