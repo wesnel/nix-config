@@ -100,6 +100,10 @@ type PR struct {
 	BaseRefName string `json:"baseRefName"`
 }
 
+// prFields are the GraphQL fields a PR is decoded from.
+const prFields = `id number isDraft url title isCrossRepository author { login }
+				headRefName headRefOid baseRefName`
+
 // openPRs maps head branch to PR, for the user's open PRs in repo.
 func openPRs(repo *Repo) (map[string]*PR, error) {
 	var data struct {
@@ -107,10 +111,7 @@ func openPRs(repo *Repo) (map[string]*PR, error) {
 	}
 	err := gh.GraphQL(`query($q: String!) {
 		search(query: $q, type: ISSUE, first: 100) {
-			nodes { ... on PullRequest {
-				id number isDraft url title isCrossRepository author { login }
-				headRefName headRefOid baseRefName
-			} }
+			nodes { ... on PullRequest { `+prFields+` } }
 		}
 	}`, map[string]any{"q": fmt.Sprintf("repo:%s is:pr is:open author:%s", repo.Slug, repo.Viewer)}, &data)
 	if err != nil {

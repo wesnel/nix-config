@@ -121,9 +121,15 @@ next switch.
 
 Commits and pushes are signed with a YubiKey that needs a touch, so agents
 commit unsigned, fold corrections into the commit they correct with
-`git commit --fixup`, and never push or tag. The instructions and the
-`signing-pass` skill tell them so. When the work is done, see what will be
-signed and sign it, in a terminal of your own:
+`git commit --fixup`, and never `git push` or tag. The instructions and the
+`signing-pass` skill tell them so. To open a pull request for a new branch,
+an agent runs `pr-loop open`, which pushes the unsigned commits through the
+GitHub API with your `gh` login and opens a draft. It refuses a default
+branch, a branch GitHub already has, and any base but the default branch or
+the head of another open pull request of yours in the same repository, runs
+`git-push-guard`'s check, and points the branch's upstream at its copy on
+GitHub. When the work is done, see what will be signed and sign it, in a
+terminal of your own:
 
 ``` sh
 git log --format='%h %G? %s' origin/main..HEAD   # N marks an unsigned commit
