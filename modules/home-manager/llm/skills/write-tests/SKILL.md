@@ -1,6 +1,6 @@
 ---
 name: write-tests
-description: Checklist for tests that can fail and say why. Load before writing, changing or reviewing tests in any language, including a test that comes with a bug fix.
+description: Checklist for tests that can fail and say why. Load before writing, changing or reviewing tests in any language, and before any change in behaviour (a feature, a fix, a changed contract), which starts with its test.
 ---
 
 # Tests that can fail
@@ -50,12 +50,27 @@ red, and the failure points at what broke. Everything below follows from that.
 - Keep a fake faithful where it matters: it fails the way the real thing
   fails, and returns data shaped like the real thing's.
 
-## Bug fixes
+## Test first
 
-- Write the test first, from the symptom the bug report describes, and watch
-  it fail against the unfixed code. Then fix the code and watch it pass.
-- Assert the symptom (the wrong output, the crash, the lost write), not the
-  line that changed. The next regression may come from somewhere else.
+- Every change in behaviour (a feature, a fix, a changed contract) starts
+  with its test. Write or change the test, run it against the unchanged code,
+  and see it fail for the reason you expect: an assertion about the missing
+  behaviour, not a compile error or a missing fixture. Then change the code
+  until it passes.
+- Keep both runs as evidence: the failing output, or its key lines, and the
+  passing run. Both go in your final report and in what you hand a
+  coordinator. A pull request description still names only what a reviewer
+  cannot see from CI.
+- The failing stage is never committed. The test lands in the same commit as
+  the code it covers.
+- For a bug, write the test from the symptom the report describes (the wrong
+  output, the crash, the lost write), not from the line that changed. The
+  next regression may come from somewhere else.
+- A pure refactor changes no tests: the existing ones pass before and after,
+  unchanged. If one has to change, the behaviour changed, and this section
+  applies.
+- Docs, configuration with nothing to test, and exploration that is not
+  committed need no test first.
 
 ## Timing, order and isolation
 
@@ -67,9 +82,10 @@ red, and the failure points at what broke. Everything below follows from that.
 
 ## Before finishing
 
-- For each new or changed test, make the one-line change you named, run the
-  test, and see it fail for the reason you expected. Then restore the code.
-  A test that passes on its first run has not yet shown it can fail.
+- For each new or changed test that did not fail first, make the one-line
+  change you named, run the test, and see it fail for the reason you
+  expected. Then restore the code. A test that passes on its first run has
+  not yet shown it can fail.
 - Run the whole suite, not only the new tests.
 - When reviewing someone else's tests, apply the same checks and name any
   test that cannot fail, with the change it misses.

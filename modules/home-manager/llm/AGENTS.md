@@ -139,7 +139,12 @@ core of it:
 - One case per distinct behaviour or boundary, not one per input.
 - Fake only where data enters (the store, the network, the clock), and never
   assert that a fake received what the test handed it.
-- A bug fix comes with a test that fails before the fix and checks the symptom.
+- A change in behaviour (a feature, a fix, a changed contract) starts with its
+  test: write or change it, see it fail for the expected reason, then make it
+  pass, and report both runs. A fix's test checks the symptom. The failing
+  stage is never committed. A pure refactor keeps the existing tests unchanged
+  and passing; docs, configuration with nothing to test and uncommitted
+  exploration need no new test.
 - Never wait with a sleep, and never depend on the order tests run in.
 - Before finishing, check each new test against what it would catch.
 
