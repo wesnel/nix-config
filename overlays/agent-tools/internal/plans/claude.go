@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -130,7 +131,11 @@ func appendFile(path, text string) error {
 		f.Close()
 		return err
 	}
-	return f.Close()
+	if err := f.Close(); err != nil {
+		return err
+	}
+	touch(filepath.Dir(path))
+	return nil
 }
 
 // planTitle is a Markdown plan's first heading, or its first line.

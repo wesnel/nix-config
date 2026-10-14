@@ -303,5 +303,12 @@
     "pattern": ".*\\bagent-plan\\s+(?!(status|goal|find|tokens)\\b)\\S+.*",
     "deny": ["agent-plan log /p/2026-10-14-x.box.org --item S1 --kind verified", "agent-plan new --title T --slug t", "agent-plan import-claude"],
     "allow": ["agent-plan status /p/2026-10-14-x.box.org", "agent-plan goal 2026-10-14-x.box --part P1", "grep -nE 'agent-plan\\s+log' SKILL.md"]
+  },
+  {
+    "why": "The watcher syncs plans, and resealing a log is Wesley's call.",
+    "scope": "baseline",
+    "pattern": ".*\\bagent-plan\\s+(sync|reseal)\\b.*",
+    "deny": ["agent-plan sync", "agent-plan sync --pull", "agent-plan reseal /p/2026-10-14-x.box.org"],
+    "allow": ["agent-plan status /p/2026-10-14-x.box.org", "grep -nE 'agent-plan\\s+sync' SKILL.md"]
   }
 ]

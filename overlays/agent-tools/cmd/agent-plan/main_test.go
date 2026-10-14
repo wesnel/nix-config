@@ -109,6 +109,21 @@ func TestCommands(t *testing.T) {
 	if code != 2 {
 		t.Errorf("a summary with a newline: %d %s", code, errs)
 	}
+	code, out, errs = agentPlan(t, "", "sync", "--settle", "0s")
+	if code != 0 || !strings.Contains(out, `"skipped"`) {
+		t.Errorf("sync outside a repository: %d %s %s", code, out, errs)
+	}
+	code, _, errs = agentPlan(t, "", "reseal", plan)
+	if code != 2 || !strings.Contains(errs, "nothing to reseal") {
+		t.Errorf("reseal of an intact log: %d %s", code, errs)
+	}
+	log := strings.TrimSuffix(plan, ".org") + ".log.org"
+	data, _ = os.ReadFile(log)
+	os.WriteFile(log, append(data, "by hand\n"...), 0o644)
+	code, out, errs = agentPlan(t, "", "reseal", plan)
+	if code != 0 || !strings.Contains(out, `"kind": "resealed"`) {
+		t.Errorf("reseal: %d %s %s", code, out, errs)
+	}
 }
 
 // Under the relay, a sandbox may log to and read plans, and nothing else.
@@ -122,6 +137,9 @@ func TestRelayed(t *testing.T) {
 		{"import-claude"},
 		{"tokens"},
 		{"find", "--hook"},
+		{"sync"},
+		{"sync", "--pull"},
+		{"reseal", plan},
 		{"bogus"},
 	} {
 		code, _, errs := agentPlan(t, "{}", args...)

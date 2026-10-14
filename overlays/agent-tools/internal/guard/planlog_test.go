@@ -139,6 +139,34 @@ func TestReviewerPlans(t *testing.T) {
 	}
 }
 
+// Syncing and resealing plans are the watcher's and Wesley's, in every
+// session and role; the deploy key the sync pushes with is a credential.
+func TestPlansForWesley(t *testing.T) {
+	_, plan := plansHome(t)
+	for command, deny := range map[string]bool{
+		"agent-plan sync":                      true,
+		"agent-plan sync --pull":               true,
+		"agent-plan reseal " + plan:            true,
+		"cd /tmp && agent-plan sync":           true,
+		"bash -c 'agent-plan reseal x'":        true,
+		"cat ~/.ssh/id_notes_deploy":           true,
+		"ssh -i ~/.ssh/id_notes_deploy github": true,
+		"agent-plan status " + plan:            false,
+		"grep -n 'agent-plan sync' SKILL.md":   false,
+	} {
+		input, _ := json.Marshal(map[string]string{"command": command})
+		for _, who := range []role{baseline, coordinator, owner, reviewer} {
+			reason := check("Bash", "", input, who, "")
+			if (reason != "") != deny {
+				t.Errorf("role %d %q: deny=%v, reason %q", who, command, !deny, reason)
+			}
+			if reason != "" && !saysInstead(reason) {
+				t.Errorf("%q: reason %q does not say what to do instead", command, reason)
+			}
+		}
+	}
+}
+
 // The hook, as Claude Code calls it, lets agent-plan through and stops an
 // Edit of a log.
 func TestPlanLogHook(t *testing.T) {
