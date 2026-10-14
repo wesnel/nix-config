@@ -196,7 +196,8 @@ func checkSession(c call, dir string) string {
 			return reason
 		}
 	}
-	for _, target := range redirections(words) {
+	redirected := redirections(words)
+	for _, target := range redirected {
 		if guardFile(expandPath(target, dir)) {
 			return guardOff
 		}
@@ -205,6 +206,9 @@ func checkSession(c call, dir string) string {
 		}
 	}
 	if reason := checkPlanLogWrite(name, args, dir); reason != "" {
+		return reason
+	}
+	if reason := checkShellEdit(name, args, redirected, dir); reason != "" {
 		return reason
 	}
 	has := func(flags ...string) bool {
@@ -685,15 +689,9 @@ func planLog(path string) bool {
 // log.
 func checkPlanLogWrite(name string, args []string, dir string) string {
 	var positional, targets []string
-	inPlace := false
 	for _, a := range args {
-		switch {
-		case !strings.HasPrefix(a, "-"):
+		if !strings.HasPrefix(a, "-") {
 			positional = append(positional, a)
-		case a == "--in-place" || strings.HasPrefix(a, "--in-place="),
-			name == "sed" && strings.HasPrefix(a, "-i"),
-			name == "perl" && !strings.HasPrefix(a, "--") && strings.Contains(a, "i"):
-			inPlace = true
 		}
 	}
 	switch name {
@@ -710,7 +708,7 @@ func checkPlanLogWrite(name string, args []string, dir string) string {
 			}
 		}
 	case "sed", "perl":
-		if inPlace {
+		if inPlace(name, args) {
 			targets = positional
 		}
 	}
@@ -720,6 +718,75 @@ func checkPlanLogWrite(name string, args []string, dir string) string {
 		}
 	}
 	return ""
+}
+
+const shellEdit = "`%s` is a tracked file, and editing it from the shell bypasses the file-editing tools AGENTS.md requires. " +
+	"Use the file-editing tools (`Edit`, `Write`, `apply_patch`, ECA's `edit_file`), or write scratch output under `$TMPDIR` or /tmp."
+
+// checkShellEdit denies a command that writes a tracked file with a
+// redirection, tee, ed, or sed or perl in place, run in dir.
+func checkShellEdit(name string, args, redirected []string, dir string) string {
+	targets := redirected
+	if name == "tee" || name == "ed" || (name == "sed" || name == "perl") && inPlace(name, args) {
+		for _, a := range args {
+			if !strings.HasPrefix(a, "-") {
+				targets = append(targets, a)
+			}
+		}
+	}
+	for _, t := range targets {
+		if !strings.HasPrefix(t, "&") && trackedFile(expandPath(t, dir)) {
+			return fmt.Sprintf(shellEdit, t)
+		}
+	}
+	return ""
+}
+
+// trackedFile reports whether path is a file git tracks, outside the
+// scratch roots, that the repository's ignore rules do not name.
+func trackedFile(path string) bool {
+	if !filepath.IsAbs(path) {
+		return false
+	}
+	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	for _, root := range scratchRoots() {
+		for _, r := range []string{root, realPath(root)} {
+			if r != "" && (real == r || strings.HasPrefix(real, strings.TrimSuffix(r, "/")+"/")) {
+				return false
+			}
+		}
+	}
+	g, name := gitState{dir: filepath.Dir(real)}, filepath.Base(real)
+	if _, ok := g.run("ls-files", "--error-unmatch", "--", name); !ok {
+		return false
+	}
+	_, ignored := g.run("check-ignore", "-q", "--no-index", "--", name)
+	return !ignored
+}
+
+// realPath is path with its symlinks resolved, or "" when it cannot be.
+func realPath(path string) string {
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return ""
+	}
+	return real
+}
+
+// scratchRoots are the directories a shell command may write files in,
+// tracked or not: the session's temporary directories.
+var scratchRoots = func() []string {
+	roots := []string{"/tmp", "/private/tmp"}
+	if dir := os.Getenv("TMPDIR"); dir != "" {
+		roots = append(roots, dir)
+	}
+	return roots
 }
 
 var redirect = regexp.MustCompile(`^[0-9&]?>>?\|?`)
