@@ -1,5 +1,10 @@
 # Working agreements
 
+Each heading below, and each bold phrase that opens a rule, names a
+principle. Cite a name in a plan, report or review together with the
+decision it changed ("subtract first: deleted the old parser before adding
+the flag"), and only then.
+
 ## Commits and the hardware key
 
 Commits are signed, and pushes authenticated, with a hardware key that needs a
@@ -127,8 +132,8 @@ terminal. A line whose output shows a secret is always plain.
 Say what someone needs in order not to break things. Do not record how the current
 state came about.
 
-- No decision narratives and no version archaeology: describe things as they
-  are, never what they used to be.
+- **Describe what is.** Describe things as they are, never what they used
+  to be: no decision narratives and no version archaeology.
 - **Do not document an absence.** Explaining why a section, option or abstraction
   is *not* there is noise; the reader is not looking for it.
 - **Temporal state does not belong in the repository.** "Not yet wired up",
@@ -184,14 +189,14 @@ real, and confirm the fix works, before reporting either. A reviewer being wrong
 worth demonstrating politely; a reviewer being right about something subtle is
 worth acting on even when the exploit does not reproduce.
 
-A failure is no different. Reproduce it before fixing it, and show it gone
+**Reproduce first.** Reproduce a failure before fixing it, and show it gone
 afterwards with the same reproduction; for an intermittent one, show how often
 it fails before and after. A retry, a skip or a loosened assertion that hides a
 failure is not a fix unless Wesley asked for one. Load the `diagnose-failure`
 skill before looking for a failure's cause. When a failure could recur, the
 `retro` skill says how to propose what would prevent it.
 
-## Tests
+## Tests that can fail
 
 A test earns its place only if it can fail. A change in behaviour (a feature,
 a fix, a changed contract) starts with its test, seen failing for the expected
