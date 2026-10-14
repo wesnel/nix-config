@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -787,7 +788,19 @@ func checkBaselineGh(args []string, expanded []bool, workspace string) string {
 	case group == "auth" && !ghReads[group][verb]:
 		return ghAuth
 	case group == "pr" && verb == "create":
-		if has("--draft", "-d") {
+		// The last --draft or -d decides, and a value must parse as true.
+		draft := false
+		for _, a := range args {
+			name, value, valued := strings.Cut(a, "=")
+			if name != "--draft" && name != "-d" {
+				continue
+			}
+			draft = true
+			if valued {
+				draft, _ = strconv.ParseBool(value)
+			}
+		}
+		if draft {
 			return ""
 		}
 		return ghDraft
