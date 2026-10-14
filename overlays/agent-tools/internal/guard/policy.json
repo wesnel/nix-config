@@ -197,6 +197,14 @@
     "allow": ["git stash list", "git stash show -p stash@{0}"]
   },
   {
+    "why": "Every worktree shares one stash, so an untagged entry, or a pop or apply of the top one, can take another session's work.",
+    "scope": "baseline",
+    "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?stash(\\s*($|[;&|)\\n])|\\s+(?=push\\b|-)(?!.*(?<!\\S)(-[a-z]*m|--message)\\b)|\\s+(pop|apply)(\\s+-\\S+)*\\s*($|[;&|)\\n])).*",
+    "deny": ["git stash", "git stash push -u", "git stash -k", "git stash pop", "git stash apply", "git -C ../x stash pop --index",
+      "git stash && git status"],
+    "allow": ["git stash push -m agent-x-1", "git stash -m agent-x-1", "git stash apply 3f2a9c1", "git stash pop stash@{2}", "git stash list"]
+  },
+  {
     "why": "The hooks that run the guard stay on.",
     "scope": "baseline",
     "pattern": ".*((^|\\s)(>>?|tee|cp|mv|ln|install|-i)\\s+(.*\\s)?\\S*(\\.claude/settings[^/\\s]*\\.json|\\.codex/(config\\.toml|hooks\\.json)|\\.config/eca/config\\.json)|\\bclaude\\b.*(--(allow-)?dangerously-skip-permissions|bypassPermissions)|\\bcodex\\b.*--dangerously-bypass).*",
