@@ -276,51 +276,50 @@ func TestGraphQLQuerySources(t *testing.T) {
 
 // TestPolicy holds the guard to the examples in policy.json, which ECA's deny
 // patterns are built from and checked against at package build time, so the
-// two cannot drift apart. An owner-only rule holds for an owner and a
-// reviewer, and a reviewer-only rule for a reviewer alone. Each denial's
-// reason, which is what the agent sees, must say what to do instead; a rule's
-// `why` is for whoever maintains it and reaches no agent.
+// two cannot drift apart. A rule's scope is the least strict role it holds
+// for: baseline (every session), coordinator, owner or reviewer. Each
+// denial's reason, which is what the agent sees, must say what to do
+// instead; a rule's `why` is for whoever maintains it and reaches no agent.
 func TestPolicy(t *testing.T) {
 	data, err := os.ReadFile("policy.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var rules []struct {
-		Pattern      string   `json:"pattern"`
-		OwnerOnly    bool     `json:"ownerOnly"`
-		ReviewerOnly bool     `json:"reviewerOnly"`
-		Deny         []string `json:"deny"`
-		Allow        []string `json:"allow"`
+		Why     string   `json:"why"`
+		Pattern string   `json:"pattern"`
+		Scope   string   `json:"scope"`
+		Deny    []string `json:"deny"`
+		Allow   []string `json:"allow"`
 	}
-	if err := json.Unmarshal(data, &rules); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&rules); err != nil {
 		t.Fatal(err)
 	}
 	checks := map[role]func(string, string, json.RawMessage) string{
-		coordinator: Check, owner: CheckOwner, reviewer: CheckReviewer}
-	names := map[role]string{coordinator: "coordinator", owner: "owner", reviewer: "reviewer"}
+		baseline: CheckBaseline, coordinator: Check, owner: CheckOwner, reviewer: CheckReviewer}
+	names := map[role]string{baseline: "baseline", coordinator: "coordinator", owner: "owner", reviewer: "reviewer"}
+	scopes := map[string]role{"baseline": baseline, "coordinator": coordinator, "owner": owner, "reviewer": reviewer}
 	for _, r := range rules {
 		if len(r.Deny) == 0 || len(r.Allow) == 0 {
 			t.Errorf("%s: needs examples both ways", r.Pattern)
 		}
-		scope := coordinator
-		switch {
-		case r.ReviewerOnly:
-			scope = reviewer
-		case r.OwnerOnly:
-			scope = owner
+		scope, ok := scopes[r.Scope]
+		if !ok {
+			t.Errorf("%s: scope %q is not a role", r.Pattern, r.Scope)
 		}
 		for denied, commands := range map[bool][]string{true: r.Deny, false: r.Allow} {
 			for _, command := range commands {
 				input, _ := json.Marshal(map[string]string{"command": command})
 				for who, check := range checks {
 					// A denial holds for the rule's role and every stricter
-					// one, and a narrower rule's denials are steps the
-					// coordinator takes. An allow example holds only for the
-					// rule's own role: another rule can deny it to a
-					// stricter one.
+					// one, and an owner's denials are steps the coordinator
+					// takes. An allow example holds only for the rule's own
+					// role: another rule can deny it to a stricter one.
 					want, held := denied && who >= scope, who == scope
 					if denied {
-						held = who >= scope || who == coordinator
+						held = who >= scope || (scope == owner && who == coordinator)
 					}
 					reason := check("Bash", "", input)
 					if got := reason != ""; held && got != want {
@@ -331,6 +330,132 @@ func TestPolicy(t *testing.T) {
 					}
 				}
 			}
+		}
+	}
+}
+
+// TestBaseline covers the rules for every session that no ECA pattern
+// expresses, and the baseline's allowances that a loop role does not share.
+func TestBaseline(t *testing.T) {
+	cases := []struct {
+		deny    bool
+		command string
+	}{
+		{true, "git push https://github.com/o/r HEAD"},
+		{true, "timeout 60 gh pr merge 1"},
+		{true, "bash -lc 'gh pr merge 1'"},
+		{true, "gh api -XPOST repos/o/r/merges"},
+		{true, "gh -R o/r pr merge 1"},
+		{true, "gh pr -R o/r merge 1"},
+		{true, "gh pr ready 1"},
+		{true, "gh pr create --title t --body b"},
+		{true, "gh pr edit 1 --add-label bug"},
+		{true, "gh pr edit 1 --title t --add-reviewer u"},
+		{true, "gh issue comment 1 -b x"},
+		{true, "gh auth token"},
+		{true, "gh auth status --show-token"},
+		{true, "gh auth status -t"},
+		{true, "gh auth setup-git"},
+		{true, "gh repo deploy-key add k.pub"},
+		{true, "gh secret set X"},
+		{true, "gh run rerun 1"},
+		{true, "gh workflow run ci.yml"},
+		{true, "gh codespace create"},
+		{true, "gh frobnicate"},
+		{true, "gh api graphql -f query='mutation { x }'"},
+		{true, "git -c credential.helper=osxkeychain fetch"},
+		{true, "git -c http.https://github.com/.extraHeader='Authorization: x' fetch"},
+		{true, "git config --global url.git@github.com:.insteadOf https://github.com/"},
+		{true, "git config core.sshCommand 'ssh -i k'"},
+		{true, "git config --global credential.helper store"},
+		{true, "GIT_SSH_COMMAND='ssh -i k' git fetch"},
+		{true, "GIT_ASKPASS=/tmp/p git fetch"},
+		{true, "env GIT_SSH=/tmp/s git fetch"},
+		{true, "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=store git fetch"},
+		{true, `GIT_CONFIG_PARAMETERS="'url.x.insteadof'='https://github.com/'" git fetch`},
+		{true, "git remote add fork https://github.com/me/r"},
+		{true, "git remote set-url origin https://github.com/me/r"},
+		{true, "git config remote.origin.pushurl https://github.com/me/r"},
+		{true, "curl -X POST https://api.github.com/repos/o/r/issues -d '{}'"},
+		{true, "curl --json '{}' https://api.github.com/repos/o/r/issues"},
+		{true, "wget --post-data=x https://api.github.com/repos/o/r/issues"},
+		{true, "http POST https://api.github.com/repos/o/r/issues title=x"},
+		{true, "curl -T f https://uploads.github.com/repos/o/r/releases/1/assets"},
+		{true, "pr-loop request --accept-failure ci 1"},
+		{false, "gh pr view 1"},
+		{false, "gh pr create --draft --title t --body-file b"},
+		{false, "gh pr create -d --title t --body b"},
+		{false, "pr-loop open --title T --body-file - x"},
+		{false, "pr-loop push"},
+		{false, "gh pr edit 1 --title t --body-file b"},
+		{false, "gh pr edit 1 -B main"},
+		{false, "gh pr ready 1 --undo"},
+		{false, "gh pr diff 1"},
+		{false, "gh pr checks 1"},
+		{false, "gh run watch 1"},
+		{false, "gh run download 1"},
+		{false, "gh release download v1"},
+		{false, "gh search prs --author @me"},
+		{false, "gh repo clone o/r"},
+		{false, "gh repo set-default o/r"},
+		{false, "gh browse"},
+		{false, "gh auth status"},
+		{false, "gh status"},
+		{false, "gh"},
+		{false, "gh api repos/o/r/pulls"},
+		{false, "gh api -X GET search/issues -f q=x"},
+		{false, "gh api graphql -f query='{ viewer { login } }'"},
+		{false, "git commit -m 'plain commit'"},
+		{false, "git commit --amend --no-edit"},
+		{false, "git fetch origin"},
+		{false, "git remote -v"},
+		{false, "git config --get credential.helper"},
+		{false, "git config --get remote.origin.url"},
+		{false, "git config user.name T"},
+		{false, "GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 go test ./..."},
+		{false, "curl -s https://api.github.com/repos/o/r"},
+		{false, "curl -X POST https://example.com -d x"},
+		{false, "http GET https://api.github.com/repos/o/r"},
+	}
+	for _, c := range cases {
+		input, _ := json.Marshal(map[string]string{"command": c.command})
+		reason := CheckBaseline("Bash", "", input)
+		if (reason != "") != c.deny {
+			t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
+		}
+		if reason != "" && !saysInstead(reason) {
+			t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+		}
+	}
+}
+
+// TestBaselineRoles covers the hook every ordinary session runs: an agent
+// with a loop role has that role's rules, and every other call the
+// baseline's.
+func TestBaselineRoles(t *testing.T) {
+	for _, c := range []struct {
+		deny      bool
+		agentType string
+		command   string
+	}{
+		{true, "", "git push origin x"},
+		{true, "Explore", "gh pr merge 1"},
+		{false, "", "git commit -m x"},
+		{false, "", "pr-loop push"},
+		{true, "reviewer", "git commit -m x"},
+		{true, "some-plugin:reviewer", "git stash"},
+		{true, "pr-loop:pr-owner", "pr-loop push"},
+		{false, "pr-loop:pr-owner", "git commit --fixup=abc"},
+		{true, "pr-loop:pr-owner", "git commit -m x"},
+	} {
+		event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "agent_type": c.agentType,
+			"tool_input": map[string]string{"command": c.command}})
+		var out, errs bytes.Buffer
+		if code := Main([]string{"--baseline"}, bytes.NewReader(event), &out, &errs); code != 0 {
+			t.Errorf("%s %q: exit %d: %s", c.agentType, c.command, code, errs.String())
+		}
+		if denied := strings.Contains(out.String(), `"permissionDecision":"deny"`); denied != c.deny {
+			t.Errorf("%s %q: deny=%v, output %s", c.agentType, c.command, denied, out.String())
 		}
 	}
 }

@@ -1,38 +1,96 @@
 [
   {
-    "why": "Pushing goes through `pr-loop push`.",
+    "why": "Publishing goes through Wesley's signed push or `pr-loop`, never a plain push.",
+    "scope": "baseline",
     "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?push\\b.*",
     "deny": ["git push origin wesley/x", "git -C /tmp/r push --force-with-lease", "cd repo && git push", "true\ngit push",
-      "nice -n 5 git push", "env -u HOME git push", "if true; then git push; fi", "find . -maxdepth 0 -exec git push \\;"],
+      "nice -n 5 git push", "env -u HOME git push", "if true; then git push; fi", "find . -maxdepth 0 -exec git push \\;",
+      "git push https://github.com/o/r HEAD"],
     "allow": ["git status", "git log --oneline -5 && git status", "grep -nE 'git\\s+push' README.md"]
   },
   {
     "why": "Every commit is a fixup the signing pass can squash.",
+    "scope": "coordinator",
     "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?commit\\b(?!.*--fixup).*",
     "deny": ["git commit -m 'plain commit'"],
     "allow": ["git commit --fixup=abc123 --trailer 'Review-Thread: https://x/1'", "grep -nE 'git\\s+commit' SKILL.md"]
   },
   {
     "why": "The loop never rewrites the PR's own commits.",
+    "scope": "coordinator",
     "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?commit\\b.*--amend.*",
     "deny": ["git commit --amend --no-edit"],
     "allow": ["git commit --fixup=abc"]
   },
   {
     "why": "Repository hooks stay on.",
+    "scope": "coordinator",
     "pattern": ".*--no-verify.*",
     "deny": ["git commit --no-verify --fixup=abc"],
     "allow": ["git commit --fixup=abc", "grep -rn -e '--no-verif[y]' ."]
   },
   {
-    "why": "GitHub writes go through pr-loop; reading is fine.",
+    "why": "A loop's GitHub writes go through pr-loop; reading is fine.",
+    "scope": "coordinator",
     "pattern": ".*\\bgh\\s+(pr|issue|release|repo|gist|label|secret|variable|workflow|run)\\s+(?!(view|list|diff|checks|status)\\b)\\S+.*",
-    "deny": ["gh pr merge 123", "gh pr comment 123 -b hi", "gh pr ready 123", "timeout 60 gh pr merge 1", "bash -lc 'gh pr merge 1'",
-      "xargs -n 1 gh pr merge", "nix shell nixpkgs#gh -c gh pr merge 1"],
+    "deny": ["gh pr create --draft --title t --body-file b", "gh pr edit 1 --title t", "gh repo clone o/r"],
     "allow": ["gh pr view 123 --json title", "grep -nE 'gh\\s+pr\\s+merge' SKILL.md"]
   },
   {
-    "why": "GitHub writes go through pr-loop; reading is fine.",
+    "why": "Merging, closing, reopening, reviewing and top-level comments are Wesley's.",
+    "scope": "baseline",
+    "pattern": ".*\\bgh\\s+pr\\s+(merge|close|reopen|review|comment)\\b.*",
+    "deny": ["gh pr merge 123", "gh pr comment 123 -b hi", "timeout 60 gh pr merge 1", "bash -lc 'gh pr merge 1'",
+      "xargs -n 1 gh pr merge", "nix shell nixpkgs#gh -c gh pr merge 1", "gh pr review 1 --approve"],
+    "allow": ["gh pr view 1", "gh pr create --draft --title t --body-file b", "grep -nE 'gh\\s+pr\\s+merge' SKILL.md"]
+  },
+  {
+    "why": "Marking a PR ready notifies its code owners, which is Wesley's call.",
+    "scope": "baseline",
+    "pattern": ".*\\bgh\\s+pr\\s+ready\\b(?!.*--undo).*",
+    "deny": ["gh pr ready 123"],
+    "allow": ["gh pr ready 123 --undo"]
+  },
+  {
+    "why": "Every PR opens as a draft.",
+    "scope": "baseline",
+    "pattern": ".*\\bgh\\s+pr\\s+create\\b(?!.*(--draft|\\s-d\\b)).*",
+    "deny": ["gh pr create --title t --body b", "gh pr create --fill"],
+    "allow": ["gh pr create --draft --title t --body-file b", "gh pr create -d --title t --body b"]
+  },
+  {
+    "why": "Only a PR's base, title and body may change; labels, reviewers and the rest are Wesley's.",
+    "scope": "baseline",
+    "pattern": ".*\\bgh\\s+pr\\s+edit\\b.*\\s(--(?!(base|title|body-file|body)(=|\\s|$))|-(?!-|[BtbF](\\s|$)))\\S.*",
+    "deny": ["gh pr edit 1 --add-label bug", "gh pr edit 1 --title t --add-reviewer u", "gh pr edit 1 -m v1"],
+    "allow": ["gh pr edit 1 --title t --body-file b", "gh pr edit 1 -B main", "gh pr edit 1 --body=x"]
+  },
+  {
+    "why": "Issues and their comments are Wesley's to write.",
+    "scope": "baseline",
+    "pattern": ".*\\bgh\\s+issue\\s+(?!(view|list|status)\\b)\\S+.*",
+    "deny": ["gh issue comment 1 -b x", "gh issue create -t x -b y", "gh issue close 1"],
+    "allow": ["gh issue view 1", "gh issue list --state open"]
+  },
+  {
+    "why": "GitHub credentials stay with gh and pr-loop.",
+    "scope": "baseline",
+    "pattern": ".*\\bgh\\s+auth\\s+((token|refresh|login|logout|switch|setup-git)\\b|status\\b.*(\\s-t\\b|--show-token)).*",
+    "deny": ["gh auth token", "gh auth status -t", "gh auth status --show-token", "gh auth setup-git", "gh auth login"],
+    "allow": ["gh auth status"]
+  },
+  {
+    "why": "Repository settings, releases, secrets, labels, workflow runs, gists and gh's own setup are Wesley's.",
+    "scope": "baseline",
+    "pattern": ".*\\bgh\\s+(repo\\s+(create|edit|delete|archive|unarchive|rename|fork|sync|deploy-key\\s+(add|delete))|release\\s+(create|edit|delete|upload|delete-asset)|secret\\s+(set|delete|remove)|variable\\s+(set|delete)|label\\s+(create|edit|delete|clone)|ruleset\\s+(create|edit|delete)|cache\\s+delete|workflow\\s+(run|enable|disable)|run\\s+(rerun|cancel|delete)|gist\\s+(create|edit|delete)|extension\\s+(install|exec|upgrade|remove)|alias\\s+(set|import|delete))\\b.*",
+    "deny": ["gh repo delete o/r --yes", "gh repo deploy-key add k.pub", "gh release create v1", "gh secret set X",
+      "gh variable delete X", "gh label create bug", "gh cache delete --all", "gh workflow run ci.yml", "gh run rerun 1",
+      "gh run cancel 1", "gh gist create f", "gh extension install o/gh-x", "gh alias set co 'pr checkout'"],
+    "allow": ["gh repo clone o/r", "gh repo set-default o/r", "gh release download v1", "gh run watch 1", "gh run view 1 --log"]
+  },
+  {
+    "why": "GitHub writes go through pr-loop or gh's checked commands; reading is fine.",
+    "scope": "baseline",
     "pattern": ".*\\bgh\\s+api\\b.*(\\s-[XfF]|--method|--field|--raw-field|--input|mutation).*",
     "deny": ["gh api -X POST repos/o/r/issues/1/comments -f body=x", "gh api repos/o/r/issues/1/comments -f body=x",
       "gh api graphql -F query=@- < q.graphql", "gh api graphql -Fquery=@q.graphql","gh api graphql --input -", "gh api graphql -f query=\"$QUERY\"",
@@ -40,65 +98,102 @@
     "allow": ["gh api repos/o/r/pulls/1/reviews --paginate"]
   },
   {
+    "why": "Credentials and the transport git uses are Wesley's configuration.",
+    "scope": "baseline",
+    "pattern": "(?i).*\\bgit\\b.*(\\bcredential\\.|\\bhttp\\.\\S*extraheader|\\burl\\..*insteadof|\\bcore\\.sshcommand).*",
+    "deny": ["git -c credential.helper=osxkeychain fetch", "git -c http.https://github.com/.extraHeader='Authorization: x' fetch",
+      "git config --global url.git@github.com:.insteadOf https://github.com/", "git config core.sshCommand 'ssh -i k'"],
+    "allow": ["git fetch origin", "git config user.name T"]
+  },
+  {
+    "why": "Credentials and the transport git uses are Wesley's configuration.",
+    "scope": "baseline",
+    "pattern": ".*\\bGIT_(SSH|SSH_COMMAND|ASKPASS)=.*",
+    "deny": ["GIT_SSH_COMMAND='ssh -i k' git fetch", "GIT_ASKPASS=/tmp/p git fetch", "env GIT_SSH=/tmp/s git fetch"],
+    "allow": ["git fetch", "GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 go test ./..."]
+  },
+  {
+    "why": "Where a repository's remotes point is Wesley's configuration.",
+    "scope": "baseline",
+    "pattern": ".*\\bgit\\b.*(\\bremote\\s+(add|set-url)\\b|\\bconfig\\b.*\\bremote\\.\\S+\\.(push)?url\\b).*",
+    "deny": ["git remote add fork https://github.com/me/r", "git remote set-url origin https://github.com/me/r",
+      "git config remote.origin.pushurl https://github.com/me/r"],
+    "allow": ["git remote -v", "git fetch origin"]
+  },
+  {
+    "why": "GitHub writes go through gh or pr-loop, which the guard can check.",
+    "scope": "baseline",
+    "pattern": ".*\\b(curl|wget|https?|xh)\\b.*\\b(api|uploads)\\.github\\.com\\b.*",
+    "deny": ["curl -X POST https://api.github.com/repos/o/r/issues -d '{}'", "wget --post-data=x https://api.github.com/repos/o/r/issues",
+      "http POST https://api.github.com/repos/o/r/issues title=x", "curl -T f https://uploads.github.com/repos/o/r/releases/1/assets"],
+    "allow": ["curl -X POST https://example.com -d x"]
+  },
+  {
     "why": "Signing needs the hardware key.",
+    "scope": "coordinator",
     "pattern": ".*\\bgit\\b.*\\bsign-pass\\b.*",
     "deny": ["git sign-pass --push"],
     "allow": ["git status"]
   },
   {
     "why": "Signing needs the hardware key.",
+    "scope": "coordinator",
     "pattern": ".*\\bgit-sign-pass\\b.*",
     "deny": ["git-sign-pass"],
     "allow": ["git status", "cat overlays/agent-tools/cmd/git-sign-'pass'/main.go"]
   },
   {
     "why": "Whether a CI failure is not the PR's doing is Wesley's call.",
+    "scope": "baseline",
     "pattern": ".*\\bpr-loop\\b.*--accept-failure.*",
     "deny": ["pr-loop request --accept-failure windows-tuntap 663", "pr-loop request 663 --accept-failure=ci"],
     "allow": ["pr-loop request 663"]
   },
   {
     "why": "Pruning the loop's history is Wesley's call.",
+    "scope": "baseline",
     "pattern": ".*\\bpr-loop\\s+end\\b.*--prune.*",
     "deny": ["pr-loop end --prune"],
     "allow": ["pr-loop end"]
   },
   {
     "why": "pr-loop.* settings are Wesley's to change.",
+    "scope": "baseline",
     "pattern": ".*\\bgit\\b.*\\bconfig\\b.*\\bpr-loop\\..*",
     "deny": ["git config pr-loop.x 1", "git config --unset pr-loop.x"],
     "allow": ["git config user.name"]
   },
   {
     "why": "Publishing private history in a public repository is Wesley's decision.",
+    "scope": "baseline",
     "pattern": "(?i).*\\bpush-guard\\.allowpublic\\b.*",
     "deny": ["git config push-guard.allowPublic ngrok/ngrok", "git -c push-guard.allowpublic=o/r push"],
     "allow": ["git config --get user.email", "grep -rn 'push-guard[.]allowPublic' README.md"]
   },
   {
     "why": "The coordinator alone opens, pushes, replies, resolves and requests reviews.",
-    "ownerOnly": true,
+    "scope": "owner",
     "pattern": ".*\\bpr-loop\\s+(open|begin|push|reply|resolve|request|worktrees|sign|end)\\b.*",
     "deny": ["pr-loop push", "pr-loop reply T --body-file -", "pr-loop open --title T --body-file - x"],
     "allow": ["pr-loop threads 12", "pr-loop status", "grep -nE 'pr-loop\\s+push' SKILL.md"]
   },
   {
     "why": "A reviewer only reads; whoever started it acts on its findings.",
-    "reviewerOnly": true,
+    "scope": "reviewer",
     "pattern": ".*\\bpr-loop\\s+(?!(stack|threads|status|ci|logs|setup-command|wait\\s+ci)\\b)\\S+.*",
     "deny": ["pr-loop wait reviews", "pr-loop push", "pr-loop reply T --body-file -", "pr-loop setup .pr-loop/12"],
     "allow": ["pr-loop threads 12", "pr-loop logs 12 test", "pr-loop status", "pr-loop wait ci --timeout 3600", "pr-loop setup-command"]
   },
   {
     "why": "A reviewer only reads; whoever started it changes the code.",
-    "reviewerOnly": true,
+    "scope": "reviewer",
     "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?(commit|rebase|reset|checkout|switch|restore|merge|cherry-pick|revert|am|apply|stash|add|rm|mv|clean|tag|update-ref|notes|worktree\\s+(?!list\\b))\\b.*",
     "deny": ["git commit --fixup=abc", "git -C .pr-loop/12 rebase --onto a b c", "git checkout main", "git stash push -u", "git worktree add ../x"],
     "allow": ["git log --oneline main..HEAD", "git -C .pr-loop/12 show abc --stat", "git diff a b", "git worktree list", "git range-diff a...b"]
   },
   {
     "why": "A reviewer does not start a review of its own; whoever started it decides on another round.",
-    "reviewerOnly": true,
+    "scope": "reviewer",
     "pattern": ".*\\bgit(\\s+(-C\\s+\\S+\\s+)?|-)fresh-review\\b.*",
     "deny": ["git fresh-review --goal g.md main..HEAD", "git -C .pr-loop/12 fresh-review --print-prompt --goal g.md a..b", "git-fresh-review --goal g.md a..b"],
     "allow": ["git log --oneline main..HEAD", "grep -nE 'git\\s+fresh-review' SKILL.md"]
