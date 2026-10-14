@@ -44,8 +44,6 @@ var (
 	// A host is part of every file name, between dots, so it holds none.
 	hostPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 	slugPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
-	partPattern = regexp.MustCompile(`^P[0-9]+$`)
-	stepPattern = regexp.MustCompile(`^(P[0-9]+\.)?S[0-9]+$`)
 	// planFile is a plan's file name: the plan's name, which is its date and
 	// slug, then its host, and then a part's ID or "log" for those files.
 	planFile = regexp.MustCompile(`^([0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9]+(?:-[a-z0-9]+)*\.([A-Za-z0-9][A-Za-z0-9_-]*))(?:\.(P[0-9]+|log))?\.org$`)

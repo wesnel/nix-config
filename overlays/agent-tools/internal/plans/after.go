@@ -1,11 +1,6 @@
 package plans
 
-import (
-	"regexp"
-	"strings"
-)
-
-var decisionPattern = regexp.MustCompile(`^(P[0-9]+\.)?D[0-9]+$`)
+import "strings"
 
 // afterIDs is the AFTER property of props: the IDs a question or a part
 // waits for.

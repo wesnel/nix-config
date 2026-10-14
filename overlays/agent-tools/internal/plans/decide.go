@@ -86,7 +86,7 @@ func (p Plan) Decide(qid, answer string, now time.Time) (Decided, error) {
 			return err
 		}
 		next := 1
-		decision := regexp.MustCompile(`^` + regexp.QuoteMeta(prefix) + `D([0-9]+)$`)
+		decision := idOf(prefix, "D")
 		for _, it := range items {
 			if m := decision.FindStringSubmatch(it.ID); m != nil {
 				if n, _ := strconv.Atoi(m[1]); n >= next {
