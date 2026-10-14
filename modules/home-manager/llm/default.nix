@@ -130,6 +130,52 @@ in {
         ];
       };
 
+      redCheck = mkOption {
+        type = types.attrsOf (types.submodule {
+          options = {
+            test = mkOption {
+              type = types.str;
+              description = "The test command, run with `sh` at the top of a checkout.";
+            };
+
+            build = mkOption {
+              type = types.nullOr types.str;
+              default = null;
+
+              description = ''
+                A command that builds the tests without running them, which
+                tells a test that fails to build without a change from one
+                that fails as asserted. Without it, no commit's check
+                exits 0.
+              '';
+            };
+
+            testFiles = mkOption {
+              type = types.listOf types.str;
+              description = "Git pathspec globs (`:(glob)` magic) that match the test files.";
+            };
+          };
+        });
+
+        default = {};
+        example = {
+          "owner/name" = {
+            test = "go test ./...";
+            build = "go vet ./...";
+            testFiles = ["**/*_test.go"];
+          };
+        };
+
+        description = ''
+          How `git red-check` tests each GitHub repository, by `owner/name`,
+          where its flags do not say. It runs these wherever it is called,
+          inside a sandboxed session's sandbox.
+
+          They come only from here, never from the repository: a repository
+          that could name them would make agents run its commands.
+        '';
+      };
+
       deniedReads = mkOption {
         type = types.listOf types.str;
         readOnly = true;
@@ -310,10 +356,11 @@ in {
   };
 
   config = mkIf cfg.enable {
-    # Read by `pr-loop` where it runs; a client with a relay asks the relay,
-    # which reads it on the host.
+    # Read by `pr-loop` where it runs (a client with a relay asks the relay,
+    # which reads it on the host), and by `git red-check` wherever it runs,
+    # so a sandbox that runs it must let it read this.
     xdg.configFile."pr-loop/config.json" = mkIf cfg.prLoop.enable {
-      text = builtins.toJSON {inherit (cfg.prLoop) bots setup;};
+      text = builtins.toJSON {inherit (cfg.prLoop) bots setup redCheck;};
     };
 
     home.packages = with pkgs;
