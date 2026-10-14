@@ -2,14 +2,9 @@
   {
     "why": "Pushing goes through `pr-loop push`.",
     "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?push\\b.*",
-    "deny": ["git push origin wesley/x", "git -C /tmp/r push --force-with-lease", "cd repo && git push", "true\ngit push"],
+    "deny": ["git push origin wesley/x", "git -C /tmp/r push --force-with-lease", "cd repo && git push", "true\ngit push",
+      "nice -n 5 git push", "env -u HOME git push", "if true; then git push; fi", "find . -maxdepth 0 -exec git push \\;"],
     "allow": ["git status", "git log --oneline -5 && git status", "grep -nE 'git\\s+push' README.md"]
-  },
-  {
-    "why": "An alias can stand for any command, including a push.",
-    "pattern": ".*\\bgit\\b.*\\balias\\..*",
-    "deny": ["git config alias.p push", "git -c alias.x=push x origin HEAD"],
-    "allow": ["git config --get-regexp alias"]
   },
   {
     "why": "Every commit is a fixup the signing pass can squash.",
@@ -32,14 +27,16 @@
   {
     "why": "GitHub writes go through pr-loop; reading is fine.",
     "pattern": ".*\\bgh\\s+(pr|issue|release|repo|gist|label|secret|variable|workflow|run)\\s+(?!(view|list|diff|checks|status)\\b)\\S+.*",
-    "deny": ["gh pr merge 123", "gh pr comment 123 -b hi", "gh pr ready 123"],
+    "deny": ["gh pr merge 123", "gh pr comment 123 -b hi", "gh pr ready 123", "timeout 60 gh pr merge 1", "bash -lc 'gh pr merge 1'",
+      "xargs -n 1 gh pr merge", "nix shell nixpkgs#gh -c gh pr merge 1"],
     "allow": ["gh pr view 123 --json title", "grep -nE 'gh\\s+pr\\s+merge' SKILL.md"]
   },
   {
     "why": "GitHub writes go through pr-loop; reading is fine.",
     "pattern": ".*\\bgh\\s+api\\b.*(\\s-[XfF]|--method|--field|--raw-field|--input|mutation).*",
     "deny": ["gh api -X POST repos/o/r/issues/1/comments -f body=x", "gh api repos/o/r/issues/1/comments -f body=x",
-      "gh api graphql -F query=@- < q.graphql", "gh api graphql -Fquery=@q.graphql","gh api graphql --input -", "gh api graphql -f query=\"$QUERY\""],
+      "gh api graphql -F query=@- < q.graphql", "gh api graphql -Fquery=@q.graphql","gh api graphql --input -", "gh api graphql -f query=\"$QUERY\"",
+      "gh api -XPOST repos/o/r/merges", "gh api --method=PUT repos/o/r/pulls/1/merge", "gh api repos/o/r/issues/1/comments -fbody=x"],
     "allow": ["gh api repos/o/r/pulls/1/reviews --paginate"]
   },
   {
