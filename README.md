@@ -446,7 +446,9 @@ with your credentials, but has the guard in every session.
 - Claude Code: a `PreToolUse` hook in `~/.claude/settings.json` for the shell,
   Monitor, ExitWorktree, the file tools and MCP tools. `Read` is denied the credential files
   through `permissions.deny` instead, made from the same list as the
-  guard's, `wgn.home.llm.guard.credentialPaths`. A Monitor's WebSocket is denied unless
+  guard's, `wgn.home.llm.guard.credentialPaths`. In auto mode the classifier
+  also holds every session to `autoMode.hard_deny` rules that restate the
+  guard's hardest lines in prose. A Monitor's WebSocket is denied unless
   `wgn.home.llm.guard.webSockets` names its URL.
 - Codex: `~/.codex/hooks.json`, for every tool. Codex skips a hook until it
   is trusted, so trust it with `/hooks` once after the first switch.
