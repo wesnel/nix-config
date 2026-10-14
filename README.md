@@ -462,8 +462,8 @@ uncommitted work, reading credentials or the whole environment, ngrok API writes
 with `NGROK_ENV` set to prod or stage however it is set, switching
 the system, root, publishing packages, killing Emacs, gpg-agent, ssh,
 nix-daemon or mcp-proxy, destroying the home directory, the Nix store or
-your keys, switching its own hooks off, and writing a plan's log other than
-with `agent-plan log`. A write through a claude.ai
+your keys, switching its own hooks off, sleeping 30 seconds or more in the
+foreground, and writing a plan's log other than with `agent-plan log`. A write through a claude.ai
 connector asks you first in Claude Code, and is denied in Codex. Each
 refusal says what to do instead. An agent with a loop role (`pr-owner`,
 `reviewer`, ECA's `pr-coordinator`) has that role's rules in any session.

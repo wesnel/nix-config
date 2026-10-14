@@ -306,24 +306,35 @@ func contains(words []string, w string) bool {
 // out of double quotes, is a command of its own, and stands in the command
 // around it as `$_`, a word the shell expands.
 func segments(text string) []string {
+	out, _ := backgroundSegments(text)
+	return out
+}
+
+// backgroundSegments is segments, with whether each runs in the
+// background: it, or the subshell it is in, ends with a lone &.
+func backgroundSegments(text string) ([]string, []bool) {
 	type frame struct {
 		cur      strings.Builder
-		quote    byte // the quote this frame is inside, if any
-		backtick bool // the frame is a backquoted substitution
-		parens   int  // subshells open inside a $( ) frame
-		sub      bool // the frame is a substitution
+		quote    byte  // the quote this frame is inside, if any
+		backtick bool  // the frame is a backquoted substitution
+		parens   int   // subshells open inside a $( ) frame
+		sub      bool  // the frame is a substitution
+		groups   []int // where each subshell open in the frame starts in out
+		closed   int   // where the subshell that just closed started, or -1
 	}
 	var out []string
-	stack := []*frame{{}}
+	var background []bool
+	stack := []*frame{{closed: -1}}
 	top := func() *frame { return stack[len(stack)-1] }
 	flush := func() {
 		f := top()
 		out = append(out, f.cur.String())
+		background = append(background, false)
 		f.cur.Reset()
 	}
 	open := func(backtick bool) {
 		top().cur.WriteString("$_")
-		stack = append(stack, &frame{backtick: backtick, sub: true})
+		stack = append(stack, &frame{backtick: backtick, sub: true, closed: -1})
 	}
 	closeSub := func() {
 		flush()
@@ -331,6 +342,9 @@ func segments(text string) []string {
 	}
 	for i := 0; i < len(text); i++ {
 		c, f := text[i], top()
+		if c != ' ' && c != '\t' && c != '&' {
+			f.closed = -1
+		}
 		switch {
 		case f.quote == '\'':
 			if c == '\'' {
@@ -361,9 +375,28 @@ func segments(text string) []string {
 		case c == '(':
 			f.parens++
 			flush()
+			f.groups = append(f.groups, len(out))
 		case c == ')':
 			f.parens = max(0, f.parens-1)
 			flush()
+			if n := len(f.groups); n > 0 {
+				f.closed, f.groups = f.groups[n-1], f.groups[:n-1]
+			}
+		case c == '&' && i > 0 && (text[i-1] == '>' || text[i-1] == '<'),
+			c == '&' && i+1 < len(text) && text[i+1] == '>':
+			// A redirection: >&2, 2>&1, <&3, &>file.
+			f.cur.WriteByte(c)
+		case c == '&' && (i == 0 || text[i-1] != '&' && text[i-1] != '|') && (i+1 == len(text) || text[i+1] != '&'):
+			whole := strings.TrimSpace(f.cur.String()) == "" && f.closed >= 0
+			flush()
+			from := len(out) - 1
+			if whole {
+				from = f.closed
+			}
+			for j := from; j < len(out); j++ {
+				background[j] = true
+			}
+			f.closed = -1
 		case c == ';' || c == '\n' || c == '|' || c == '&':
 			flush()
 		default:
@@ -374,7 +407,7 @@ func segments(text string) []string {
 		closeSub()
 	}
 	flush()
-	return out
+	return out, background
 }
 
 // split splits one segment into words the way a shell would, removing quotes,
