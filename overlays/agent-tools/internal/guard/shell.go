@@ -45,6 +45,9 @@ var wrappers = map[string]wrapper{
 	"xargs": {values: set("-n", "-L", "-I", "-P", "-s", "-d", "-E", "-a", "-J", "-R", "-S",
 		"--max-args", "--max-lines", "--max-procs", "--max-chars", "--delimiter", "--eof", "--arg-file", "--process-slot-var")},
 	"watch": {values: set("-n", "--interval", "-q", "--equexit")},
+	// They run a package's program, which bears its name.
+	"npx":  {values: set("-p", "--package", "-c", "--call")},
+	"bunx": {values: set("-p", "--package")},
 }
 
 // envValues are env's options whose value is the next word.
@@ -185,9 +188,9 @@ func unwrap(c call, v visitor) string {
 				env = append(env, a)
 			}
 		}
-		return v.call(call{env: env})
+		return v.call(call{words: c.words, expands: c.expands, env: env})
 	}
-	return v.call(call{words: append([]string{name}, args...), expands: c.expands, env: c.env})
+	return v.call(c)
 }
 
 // unwrapEnv reads env's options and assignments, and hands on the command

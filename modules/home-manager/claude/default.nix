@@ -196,6 +196,20 @@ in {
           sessionUrl = false;
         };
 
+        # Credentials stay out of every session. The guard denies shell
+        # commands naming these files; Read is not hooked, so it is denied
+        # here. Keep the two lists alike (internal/guard/baseline.go).
+        permissions.deny = map (p: "Read(${p})") [
+          "~/.ssh/id_*"
+          "~/.gnupg/private-keys*/**"
+          "~/.codex/auth.json"
+          "~/.claude/.credentials.json"
+          "/${mcpProxy.tokenFile}"
+          "/${mcpProxy.oauthDir}/**"
+          "~/.config/sops/age/**"
+          "~/.config/ngrok/**"
+        ];
+
         # Applies wherever a project turns the sandbox on, and merges into
         # claude-pr-loop's sandbox, which denies what it must not have.
         sandbox =

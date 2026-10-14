@@ -49,6 +49,8 @@ type input struct {
 	// The directory the command runs in, which bounds the files the guard
 	// reads. Without it, the guard's own working directory stands in.
 	Cwd string `json:"cwd"`
+	// Set by Codex alone, whose hooks cannot ask the user.
+	TurnID string `json:"turn_id"`
 }
 
 // role is who makes a call. Each role is denied everything the one before it
@@ -109,11 +111,16 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	}
 	var out any
+	decision := "deny"
+	if reason == connector && who == baseline && in.TurnID == "" {
+		// Claude Code asks Wesley; Codex and ECA cannot.
+		decision = "ask"
+	}
 	if in.HookType != "" {
 		out = map[string]string{"approval": "deny", "additionalContext": reason}
 	} else {
 		out = map[string]any{"hookSpecificOutput": map[string]string{
-			"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}
+			"hookEventName": "PreToolUse", "permissionDecision": decision, "permissionDecisionReason": reason}}
 	}
 	json.NewEncoder(stdout).Encode(out)
 	return 0
@@ -158,14 +165,17 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 		full = server + "__" + tool
 	}
 	switch {
-	case tool == "Bash" || tool == "shell_command" || tool == "git":
+	case tool == "Bash" || tool == "exec_command" || tool == "shell_command" || tool == "git":
 		// ECA's git tool takes a whole git or gh command line, like the shell.
 		var args struct {
 			Command string `json:"command"`
 		}
 		json.Unmarshal(toolInput, &args)
 		return command(args.Command, 0, who, dir)
+	case tool == "Edit" || tool == "Write" || tool == "MultiEdit" || tool == "NotebookEdit" || tool == "apply_patch":
+		return checkFileTool(tool, toolInput, dir)
 	case who == baseline:
+		return checkConnector(full)
 	case (strings.Contains(strings.ToLower(full), "linear") || strings.Contains(strings.ToLower(full), "github")) &&
 		!readOnlyTool.MatchString(full) && who == reviewer:
 		return reviewerReport
@@ -174,7 +184,7 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 	case strings.Contains(strings.ToLower(full), "github") && !readOnlyTool.MatchString(full):
 		return "GitHub writes in the review loop go through pr-loop. " + prLoopWrites
 	}
-	return ""
+	return checkConnector(full)
 }
 
 // maxDepth is how many shells, evals and watches deep the guard reads a
@@ -191,15 +201,28 @@ func command(text string, depth int, who role, dir string) string {
 			calls = append(calls, call{words: words, expands: expands})
 		}
 	}
+	// The dump in `env | grep PATTERN` is checked with its search.
+	if envSearch(text, calls) {
+		calls = calls[1:]
+	}
 	// A file a gh call reads is what the guard sees only when nothing else
 	// on the command line can have written it first.
 	files := ""
 	if depth == 0 && len(calls) == 1 {
 		files = dir
 	}
+	// Where each command runs, as cd moves it; "" once the guard cannot
+	// tell.
+	cwd := dir
 	v := visitor{
-		script: func(text string) string { return command(text, depth+1, who, dir) },
-		call:   func(c call) string { return program(c, who, files) },
+		script: func(text string) string { return command(text, depth+1, who, cwd) },
+		call: func(c call) string {
+			if len(c.words) > 0 && !c.expands[0] && (c.words[0] == "cd" || c.words[0] == "pushd") {
+				cwd = cdTarget(c, cwd)
+				return ""
+			}
+			return program(c, who, files, cwd)
+		},
 	}
 	for _, c := range calls {
 		if reason := unwrap(c, v); reason != "" {
@@ -209,18 +232,41 @@ func command(text string, depth int, who role, dir string) string {
 	return ""
 }
 
-// program judges a call once unwrap has found the program it runs.
-func program(c call, who role, files string) string {
+// cdTarget is where cd moves from cwd: "" when the shell decides, or cwd
+// is unknown and the target relative.
+func cdTarget(c call, cwd string) string {
+	args, expands := c.words[1:], c.expands[1:]
+	for len(args) > 0 && strings.HasPrefix(args[0], "-") && args[0] != "-" {
+		args, expands = args[1:], expands[1:]
+	}
+	switch {
+	case len(args) == 0:
+		return home
+	case expands[0] || args[0] == "-":
+		return ""
+	}
+	path := expandPath(args[0], cwd)
+	if !filepath.IsAbs(path) {
+		return ""
+	}
+	return path
+}
+
+// program judges a call once unwrap has found the program it runs, in dir.
+func program(c call, who role, files, dir string) string {
 	if reason := checkEnv(c.env); reason != "" {
 		return reason
 	}
 	if len(c.words) == 0 || c.expands[0] {
 		return ""
 	}
+	if reason := checkSession(c, dir); reason != "" {
+		return reason
+	}
 	words := c.words
 	switch name := base(words[0]); {
 	case name == "git":
-		return checkGit(words, who)
+		return checkGit(words, who, dir)
 	case name == "gh":
 		if reason := checkGh(words[1:], c.expands[1:], files, who); reason != "" && who == reviewer {
 			return reviewerReport
@@ -422,7 +468,9 @@ var gitWrites = map[string]bool{"commit": true, "rebase": true, "reset": true, "
 	"add": true, "rm": true, "mv": true, "clean": true, "tag": true, "update-ref": true, "notes": true, "worktree": true,
 	"push": true, "sign-pass": true}
 
-func checkGit(words []string, who role) string {
+// checkGit checks a git command run in dir, "" when the guard cannot tell
+// where.
+func checkGit(words []string, who role, dir string) string {
 	i := 1
 	for i < len(words) && strings.HasPrefix(words[i], "-") {
 		// Configuration given on the command line.
@@ -432,6 +480,12 @@ func checkGit(words []string, who role) string {
 			key, _, _ = strings.Cut(words[i+1], "=")
 		case strings.HasPrefix(w, "--config-env="):
 			key, _, _ = strings.Cut(strings.TrimPrefix(w, "--config-env="), "=")
+		case w == "-C" && i+1 < len(words):
+			if dir = expandPath(words[i+1], dir); !filepath.IsAbs(dir) {
+				dir = ""
+			}
+		case w == "--git-dir" || w == "--work-tree" || strings.HasPrefix(w, "--git-dir=") || strings.HasPrefix(w, "--work-tree="):
+			dir = ""
 		}
 		if reason := checkConfigKey(key); reason != "" {
 			return reason
@@ -451,6 +505,9 @@ func checkGit(words []string, who role) string {
 	if who == reviewer && gitWrites[sub] && !(sub == "worktree" && len(rest) > 0 && rest[0] == "list") {
 		return reviewerReport
 	}
+	if reason := checkGitSession(sub, rest, gitState{dir: dir}); reason != "" {
+		return reason
+	}
 	has := func(flags ...string) bool {
 		for _, w := range rest {
 			for _, f := range flags {
@@ -462,6 +519,9 @@ func checkGit(words []string, who role) string {
 		return false
 	}
 	switch {
+	case sub == "credential" && len(rest) > 0 && rest[0] == "fill",
+		sub == "credential-osxkeychain" && len(rest) > 0 && rest[0] == "get":
+		return secretRead
 	case sub == "sign-pass" && who >= coordinator:
 		return signing
 	case sub == "push" && who >= coordinator:
@@ -490,6 +550,9 @@ func checkGit(words []string, who role) string {
 			}
 			if reason := checkConfigKey(key); reason != "" {
 				return reason
+			}
+			if !has("--worktree") && sharedKeys.MatchString(key) {
+				return sharedConfig
 			}
 		}
 	}

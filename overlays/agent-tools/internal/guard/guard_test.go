@@ -167,7 +167,7 @@ func TestWrappedCommands(t *testing.T) {
 		{false, "bash script.sh"},
 		{false, "nice -n 5 go test ./..."},
 		{false, "env -u FOO go test ./..."},
-		{false, "env"},
+		{false, "env FOO=1 true"},
 		{false, `find . -name '*.go' -exec grep -n push {} \;`},
 		{false, "nix develop -c go test ./..."},
 		{false, "nix run nixpkgs#hello -- --greeting push"},
