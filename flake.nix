@@ -159,6 +159,7 @@
       ./modules/home-manager/ollama
       ./modules/home-manager/photos
       ./modules/home-manager/python
+      ./modules/home-manager/ring-mcp
       ./modules/home-manager/slack
       ./modules/home-manager/sway
       ./modules/home-manager/tex

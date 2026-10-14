@@ -35,6 +35,7 @@
         man.enable = true;
         mcp-proxy.enable = true;
         mosh.enable = true;
+        ring-mcp.enable = true;
         zellij.enable = true;
       };
 
