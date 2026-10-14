@@ -899,6 +899,8 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 	switch {
 	case sub == "stash" && (first == "drop" || first == "clear"):
 		return sharedStash
+	case sub == "stash" && untaggedStash(rest):
+		return untagged
 	case sub == "reset" && has("--hard"),
 		sub == "checkout" && (has("-f", "--force") || everything()),
 		sub == "restore" && everything() && (!has("--staged", "-S") || has("--worktree", "-W")),
@@ -940,6 +942,40 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 		}
 	}
 	return ""
+}
+
+const untagged = "Every worktree shares one stash, so an untagged entry, or a pop or apply of whatever is on top, can take another session's work. " +
+	"Use a tagged entry: `git stash push -u -m <unique-tag>`, take its SHA from `git stash list --format='%H %s'`, " +
+	"restore it with `git stash apply <sha>`, and for the drop, which is Wesley's, put `git stash drop stash@{N}` in your report, " +
+	"N found again by the tag in `git stash list`."
+
+// untaggedStash reports whether `git stash` with these arguments makes an
+// entry without a message, or pops or applies one without naming it.
+func untaggedStash(args []string) bool {
+	verb := ""
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		verb, args = args[0], args[1:]
+	}
+	named := false
+	for _, a := range args {
+		named = named || !strings.HasPrefix(a, "-")
+	}
+	switch verb {
+	case "", "push":
+		for _, a := range args {
+			if a == "--" {
+				break
+			}
+			if a == "--message" || strings.HasPrefix(a, "--message=") ||
+				strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.Contains(a, "m") {
+				return false
+			}
+		}
+		return true
+	case "save", "pop", "apply":
+		return !named
+	}
+	return false
 }
 
 // sharedKeys are the git config keys whose shared value is Wesley's.
