@@ -264,7 +264,8 @@ Linear, which the report proposes instead.
   Code and ECA. ECA's agents also carry deny patterns built
   from `overlays/agent-tools/internal/guard/policy.json`. Add a rule there,
   with commands it must deny and allow: the guard's tests and the package
-  build hold both to those examples.
+  build hold both to those examples, and fail on a denial whose reason does
+  not go on to say what to do instead.
 
 An ordinary session of any agent runs with none of this, and with your
 credentials.
