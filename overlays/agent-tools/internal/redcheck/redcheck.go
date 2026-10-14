@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
@@ -134,14 +135,6 @@ func (r *Result) Exit() int {
 	return code
 }
 
-// gitLocation is the environment that would point git somewhere other than
-// the directory it runs in. It is cleared once the repository is found, so
-// neither these tools' git nor the test command reaches the caller's tree.
-var gitLocation = []string{
-	"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_PREFIX",
-	"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE",
-}
-
 // Do checks rev: a commit, against its parent, or a range A..B, each
 // non-merge commit in it against its own parent.
 //
@@ -172,9 +165,9 @@ func Do(ctx context.Context, rev string, opts Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, name := range gitLocation {
-		os.Unsetenv(name)
-	}
+	// Once the repository is found, neither these tools' git nor the test
+	// command may reach the caller's tree.
+	gitenv.Clear()
 	commits, err := commitsOf(top, rev, opts.Fixups)
 	if err != nil {
 		return nil, err
