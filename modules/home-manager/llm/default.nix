@@ -1,4 +1,5 @@
 {
+  computerName,
   config,
   emacs-skills,
   lib,
@@ -109,6 +110,31 @@ in {
         They come only from here, never from the repository: a repository
         that could name them would make agents run its commands.
       '';
+    };
+
+    plans = {
+      dir = mkOption {
+        type = types.str;
+        default = "${config.home.homeDirectory}/git/org/agents";
+
+        description = ''
+          Where `agent-plan` keeps agents' plans, a directory per host. If
+          the directory above it is a git repository's top level, as the
+          ring's ~/git/org is, `agent-plan new` lists this directory in that
+          repository's `.git/info/exclude`, so plans are never committed
+          there. Org agenda files and refile targets must not include it.
+        '';
+      };
+
+      host = mkOption {
+        type = types.str;
+        default = computerName;
+
+        description = ''
+          This machine's directory under {option}`dir`. Another machine's
+          plans mirrored here sit beside it, under that machine's name.
+        '';
+      };
     };
 
     prLoop = {
@@ -377,9 +403,13 @@ in {
       text = builtins.toJSON {inherit (cfg.prLoop) bots;};
     };
 
-    # Read by `pr-loop setup` and `worktrees` as pr-loop's config is, and by
-    # `git red-check` wherever it runs.
-    xdg.configFile."agent-tools/config.json".text = builtins.toJSON {inherit (cfg) repos;};
+    # Read by `pr-loop setup` and `worktrees` as pr-loop's config is, by
+    # `git red-check` wherever it runs, and by `agent-plan` and the guard,
+    # which keeps each plan's log.org append-only.
+    xdg.configFile."agent-tools/config.json".text = builtins.toJSON {
+      inherit (cfg) repos;
+      plans = {inherit (cfg.plans) dir host;};
+    };
 
     home.packages = with pkgs;
       [
