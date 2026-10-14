@@ -555,6 +555,10 @@ func checkGit(words, env []string, who role, dir string) string {
 		case !has("--fixup"):
 			return "Every commit in the review loop is a fixup the signing pass can squash in. Commit with `git commit --fixup=<commit>` against the PR commit it belongs to, with the review details as --trailer lines."
 		}
+	case has("--no-verify") || sub == "commit" && has("-n"):
+		return "Repository hooks check every change, and stay on. Fix what they report and run the command again without `--no-verify`; if a hook itself is broken, say so in your report for Wesley."
+	case sub == "tag" && tagWrites(rest):
+		return "Tags are published history, which is Wesley's to make or remove. List them with `git tag -l`, and put the `git tag` command in your report for Wesley."
 	case sub == "config" && !configRead(rest):
 		for _, w := range rest {
 			key := strings.ToLower(w)
@@ -585,6 +589,29 @@ func checkGit(words, env []string, who role, dir string) string {
 		}
 	}
 	return ""
+}
+
+// tagLists are the `git tag` options that make it list or verify tags.
+var tagLists = set("-l", "--list", "-v", "--verify", "--contains", "--no-contains", "--merged", "--no-merged", "--points-at")
+
+// tagWrites reports whether `git tag` with these arguments creates,
+// deletes or moves a tag rather than listing or verifying them.
+func tagWrites(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		name, _, _ := strings.Cut(a, "=")
+		switch {
+		case tagLists[name], strings.HasPrefix(a, "-n") && !strings.HasPrefix(a, "--"):
+			return false
+		case a == "--sort" || a == "--format" || a == "--color" || a == "--column":
+			i++
+		case !strings.HasPrefix(a, "-"),
+			set("-a", "-s", "-u", "-f", "-d", "-m", "-F", "-e", "--annotate", "--sign", "--local-user", "--force",
+				"--delete", "--message", "--file", "--edit")[name]:
+			return true
+		}
+	}
+	return false
 }
 
 const remotes = "Where a repository's remotes point is Wesley's configuration. Use the remotes as they are, and put the change you need in your report for Wesley."
