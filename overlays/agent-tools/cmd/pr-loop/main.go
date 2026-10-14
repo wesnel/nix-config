@@ -234,6 +234,9 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 		return code
 	}
 	rest := flags.Args()
+	if err := git.CheckLocation(); err != nil {
+		return cli.Report("pr-loop", nil, err, 0, stdout, stderr)
+	}
 	if err := git.CheckConfig(""); err != nil {
 		return cli.Report("pr-loop", nil, err, 0, stdout, stderr)
 	}
@@ -403,7 +406,7 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 			}
 		}
 		var dir string
-		if dir, err = git.Run("rev-parse", "--show-toplevel"); err != nil {
+		if dir, err = git.Toplevel(); err != nil {
 			break
 		}
 		var setup *loop.Setup

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
@@ -42,6 +44,7 @@ fi
 printf 'OpenAI Codex v0\n--------\nworkdir: %s\nmodel: fake-model\nsandbox: read-only\n--------\n' "$wt" >&2
 cat > "$FAKE_CODEX_LOG/prompt"
 echo "$wt" > "$FAKE_CODEX_LOG/worktree"
+printf '%s' "$GIT_DIR$GIT_WORK_TREE" > "$FAKE_CODEX_LOG/location"
 git -C "$wt" rev-parse HEAD > "$FAKE_CODEX_LOG/head"
 ls -A "$wt" > "$FAKE_CODEX_LOG/files"
 case "$FAKE_CODEX" in
@@ -68,6 +71,7 @@ func run(t *testing.T, dir string, name string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
+	cmd.Env = gitenv.Without(os.Environ())
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s %v: %v\n%s", name, args, err, out)
@@ -196,6 +200,28 @@ func TestCodexReview(t *testing.T) {
 		t.Errorf("Codex was not given the contract and the goal:\n%s", prompt)
 	}
 	f.checkCleanedUp(t)
+}
+
+// GIT_DIR naming the repository under review, as git sets it for a hook,
+// reaches neither the review's worktree nor Codex; naming another, it is
+// refused.
+func TestRepositoryTheEnvironmentNames(t *testing.T) {
+	f := setUp(t, true)
+	t.Setenv("FAKE_CODEX", "none")
+	t.Setenv("GIT_DIR", filepath.Join(f.repo, ".git"))
+	if code, _, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+"..HEAD"); code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	if location, _ := os.ReadFile(filepath.Join(f.log, "location")); len(location) != 0 {
+		t.Errorf("Codex inherited %s", location)
+	}
+	f.checkCleanedUp(t)
+
+	gitenvtest.Decoy(t)
+	os.Unsetenv("GIT_WORK_TREE")
+	if code, _, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+"..HEAD"); code != 2 || !strings.Contains(stderr, "GIT_DIR") {
+		t.Errorf("GIT_DIR naming another repository: exit %d\n%s", code, stderr)
+	}
 }
 
 func TestNoFindings(t *testing.T) {

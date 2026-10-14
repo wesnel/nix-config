@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
 )
 
 func TestIdentity(t *testing.T) {
@@ -202,7 +204,7 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-c", "user.name=T", "-c", "user.email=t@e", "-c", "commit.gpgsign=false"}, args...)...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	cmd.Env = append(gitenv.Without(os.Environ()), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -218,6 +220,7 @@ func TestWorktrees(t *testing.T) {
 	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "base")
 	gitIn(t, dir, "branch", "feature")
 	gitIn(t, dir, "config", "commit.gpgsign", "true")
+	gitenvtest.Decoy(t)
 	git.Dir = dir
 	defer func() { git.Dir = "" }()
 	state := &State{Repo: "o/r", Order: []string{"feature"}, Branches: map[string]*Branch{"feature": {PR: 7, Base: "main"}}}
@@ -230,7 +233,9 @@ func TestWorktrees(t *testing.T) {
 	path := filepath.Join(dir, ".pr-loop", "7")
 	// Read without gitIn, which forces signing off.
 	read := func(where string) string {
-		out, _ := exec.Command("git", "-C", where, "config", "commit.gpgsign").Output()
+		cmd := exec.Command("git", "-C", where, "config", "commit.gpgsign")
+		cmd.Env = gitenv.Without(os.Environ())
+		out, _ := cmd.Output()
 		return strings.TrimSpace(string(out))
 	}
 	if got := read(path); got != "false" {
@@ -259,6 +264,7 @@ func TestSetup(t *testing.T) {
 	gitIn(t, dir, "init", "-q", "-b", "main")
 	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "base")
 	gitIn(t, dir, "remote", "add", "origin", "https://github.com/O/R.git")
+	gitenvtest.Decoy(t)
 	git.Dir = dir
 	defer func() { git.Dir = "" }()
 
@@ -306,6 +312,12 @@ func TestSetup(t *testing.T) {
 	if runs := RunSetup("exit 3", []string{wt}, &log); runs[0].Exit != 3 || !NeedsSetup(wt) {
 		t.Errorf("a failed setup: %+v, needs setup: %v", runs, NeedsSetup(wt))
 	}
+	// The command's git finds the worktree's repository.
+	RunSetup("git rev-parse --absolute-git-dir > where", []string{wt}, &log)
+	where, _ := os.ReadFile(filepath.Join(wt, "where"))
+	if got, want := strings.TrimSpace(string(where)), gitIn(t, wt, "rev-parse", "--absolute-git-dir"); got != want {
+		t.Errorf("the setup command's git found %q, not %q", got, want)
+	}
 }
 
 // TestRehearse builds a two-branch stack with fixups in both branches and
@@ -337,6 +349,7 @@ func TestRehearse(t *testing.T) {
 	gitIn(t, dir, "add", "c")
 	gitIn(t, dir, "commit", "-qm", "U1 add c")
 
+	gitenvtest.Decoy(t)
 	git.Dir = dir
 	defer func() { git.Dir = "" }()
 	original := func(base, tip string) []Commit {

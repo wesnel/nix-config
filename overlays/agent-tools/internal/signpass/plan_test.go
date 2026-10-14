@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
 )
 
 // TestPlan signs three stacks in one pass: a parent P with two children, each
@@ -61,6 +62,7 @@ func TestPlan(t *testing.T) {
 
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
 	t.Setenv("GIT_EDITOR", ":")
+	gitenvtest.Decoy(t)
 	git.Dir = repo
 	defer func() { git.Dir = "" }()
 

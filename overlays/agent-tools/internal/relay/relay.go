@@ -20,6 +20,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+
+	"github.com/wesnel/agent-tools/internal/gitenv"
 )
 
 // URLEnv names the relay a client inside a sandbox sends commands to.
@@ -217,7 +219,7 @@ func Session(args []string, stderr io.Writer) int {
 	}
 	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	cmd.Env = append(withoutURL(os.Environ()), URLEnv+"=unix:"+socket, "SANDBOX_RELAY_SOCKET="+socket)
+	cmd.Env = append(childEnv(), URLEnv+"=unix:"+socket, "SANDBOX_RELAY_SOCKET="+socket)
 	// The terminal's interrupt reaches the command directly; this process
 	// only has to outlive it.
 	signal.Ignore(os.Interrupt)
@@ -272,7 +274,7 @@ func handle(req Request, root, guest string, paths map[string]string) Reply {
 	cmd := exec.CommandContext(context.Background(), path, req.Argv...)
 	cmd.Dir = cwd
 	cmd.Stdin = strings.NewReader(req.Stdin)
-	cmd.Env = append(withoutURL(os.Environ()), RelayEnv+"=1")
+	cmd.Env = append(childEnv(), RelayEnv+"=1")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	code := 0
@@ -285,6 +287,12 @@ func handle(req Request, root, guest string, paths map[string]string) Reply {
 		}
 	}
 	return Reply{Code: code, Stdout: stdout.String(), Stderr: stderr.String()}
+}
+
+// childEnv is the environment of a program the relay starts, in a directory
+// of its own: without the repository this process's environment names.
+func childEnv() []string {
+	return withoutURL(gitenv.Without(os.Environ()))
 }
 
 // withoutURL keeps a relayed program from relaying again, and drops a

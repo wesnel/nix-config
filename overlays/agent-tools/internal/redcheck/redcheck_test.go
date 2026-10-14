@@ -8,6 +8,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
+	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
 // The throwaway repositories are Go modules, so that a test needing the new
@@ -23,6 +27,7 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-c", "user.name=T", "-c", "user.email=t@e", "-c", "commit.gpgsign=false"}, args...)...)
 	cmd.Dir = dir
+	cmd.Env = gitenv.Without(os.Environ())
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -280,6 +285,28 @@ func TestCleanupOnInterrupt(t *testing.T) {
 	}
 	if d := time.Since(start); d > 10*time.Second {
 		t.Errorf("the test command outlived the interruption by %s", d)
+	}
+}
+
+// The repository checked is the one opts.Dir names, or else the one git finds
+// from the process's directory, whatever repository the environment names.
+func TestRepositoryTheEnvironmentNames(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, "calc.go", fixedAdd)
+	write(t, dir, "calc_test.go", addTest)
+	fix := commit(t, dir, "Make Add add")
+
+	gitenvtest.Decoy(t)
+	if c := only(t, check(t, dir, "HEAD", Options{})); c.Commit != fix || c.Verdict != FailsWithoutChange {
+		t.Errorf("with GIT_DIR naming another repository: %s %s", c.Commit, c.Verdict)
+	}
+
+	gitenvtest.Decoy(t)
+	os.Unsetenv("GIT_WORK_TREE")
+	t.Chdir(dir)
+	_, err := Do(context.Background(), "HEAD", Options{Test: goTest, TestFiles: goTests})
+	if _, ok := err.(refusal.Refusal); !ok {
+		t.Errorf("found from a directory GIT_DIR does not name: %v", err)
 	}
 }
 

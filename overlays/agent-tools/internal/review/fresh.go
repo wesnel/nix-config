@@ -17,6 +17,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/redcheck"
 	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/repos"
@@ -165,7 +166,7 @@ func resolve(given string) (*span, error) {
 	}
 	r := &span{given: given}
 	var err error
-	if r.top, err = git.Run("rev-parse", "--show-toplevel"); err != nil {
+	if r.top, err = git.Toplevel(); err != nil {
 		return nil, err
 	}
 	if r.common, err = git.Run("-C", r.top, "rev-parse", "--path-format=absolute", "--git-common-dir"); err != nil {
@@ -305,6 +306,7 @@ func codexReview(ctx context.Context, in inputs, model string, timeout time.Dura
 	}
 	cmd := exec.CommandContext(ctx, "codex", append(args, "-")...)
 	cmd.Dir = wt
+	cmd.Env = gitenv.Without(os.Environ())
 	cmd.Stdin = strings.NewReader(prompt(in))
 	banner := &bannerModel{w: log}
 	cmd.Stdout, cmd.Stderr = log, banner
