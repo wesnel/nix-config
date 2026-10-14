@@ -125,6 +125,20 @@ func TestCommands(t *testing.T) {
 			t.Errorf("%s: %d %q %s", args, code, out, errs)
 		}
 	}
+	code, out, _ = agentPlan(t, `{"session_id":"s-1","cwd":"/nowhere"}`, "statusline")
+	if code != 0 || out != "1 open question · /questions\n" {
+		t.Errorf("statusline: %d %q", code, out)
+	}
+	code, out, errs = agentPlan(t, "", "decide", plan, "Q1", "--answer", "yes")
+	if code != 0 || !strings.Contains(out, `"decision": "D1"`) {
+		t.Errorf("decide: %d %s %s", code, out, errs)
+	}
+	for _, stdin := range []string{`{"session_id":"s-1"}`, `{`, ``} {
+		code, out, errs = agentPlan(t, stdin, "statusline")
+		if code != 0 || out != "" || errs != "" {
+			t.Errorf("statusline with %q: %d %q %q", stdin, code, out, errs)
+		}
+	}
 	code, out, errs = agentPlan(t, "", "sync", "--settle", "0s")
 	if code != 0 || !strings.Contains(out, `"skipped"`) {
 		t.Errorf("sync outside a repository: %d %s %s", code, out, errs)
@@ -182,7 +196,7 @@ func TestRelayed(t *testing.T) {
 
 // Hooks run on the host, so a session's relay never takes them.
 func TestClientSide(t *testing.T) {
-	for args, want := range map[string]bool{"import-claude": true, "find --hook": true, "find --session x": false,
+	for args, want := range map[string]bool{"import-claude": true, "find --hook": true, "statusline": true, "find --session x": false,
 		"log P --item S1": false, "new --title T": false} {
 		if got := clientSide(strings.Fields(args)); got != want {
 			t.Errorf("clientSide(%s) = %v", args, got)

@@ -303,6 +303,13 @@ in {
           }
         ];
 
+        # How many open questions the session's plan has, from its files
+        # alone, which the `questions` skill asks Wesley.
+        statusLine = {
+          type = "command";
+          command = "${agentPlan} statusline";
+        };
+
         # The ngrok account server's write scopes reach production, and its
         # tools are not published, so it is filtered by name, failing closed.
         # A hook list set here replaces the file's own on every switch.
@@ -353,6 +360,35 @@ in {
             tools: Read, Grep, Glob, Bash
             ---
             ${pkgs.agent-tools.reviewerPrompt}
+          '';
+
+          # Run only as /questions, so it costs nothing until Wesley asks.
+          # AskUserQuestion takes one to four questions of two to four
+          # options each, and adds "Other" itself.
+          ".claude/skills/questions/SKILL.md".text = ''
+            ---
+            name: questions
+            description: Ask Wesley the open questions of this session's plan, and record his answers as decisions.
+            disable-model-invocation: true
+            ---
+
+            # Questions
+
+            1. Run `agent-plan find`; its first result's `plan` is PLAN. With
+               none, say this session has no plan, and stop.
+            2. Run `agent-plan questions PLAN --all --json`. With none, say so,
+               and stop.
+            3. Ask them with AskUserQuestion, in order, at most four per call.
+               Each question's header is its `id`, its text its `question`,
+               then its `context` if any. Its options: the `recommendation`
+               first, labelled with " (Recommended)" after it, then its
+               `alternatives`, four options at most; with fewer than two, add
+               "Leave it open".
+            4. For each answer but "Leave it open", run
+               `agent-plan decide PLAN ID --answer 'ANSWER'`, the answer on one
+               line, without " (Recommended)".
+            5. Report each decision in one line: its ID, the question, the
+               answer.
           '';
         };
 

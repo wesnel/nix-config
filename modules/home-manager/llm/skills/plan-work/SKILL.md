@@ -104,8 +104,10 @@ recommendation, and nowhere else. Never restate open questions in a
 message: when a sub-agent reports, say only what changed, add its new
 questions to the plan, and at most give their number. When Wesley asks,
 print `agent-plan questions PLAN --all` or point him to the plan. When he
-answers, move each question under Decisions as the next `D` ID, with his
-answer, and log `decided` for it.
+answers, record each answer with `agent-plan decide PLAN Q1 --answer
+'ANSWER'`, which moves the question under Decisions as the next `D` ID and
+logs `decided`. In Claude Code, Wesley answers them through `/questions`;
+elsewhere, print them and take his answers in the chat.
 
 ## Other hosts
 

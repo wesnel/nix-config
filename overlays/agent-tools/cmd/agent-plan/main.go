@@ -43,6 +43,11 @@ directory and host come from "plans" in the user's agent-tools/config.json.
   questions PLAN [--all] [--json | --count]
                      the open questions with their recommendations; --all adds
                      the parts'
+  decide PLAN QID --answer TEXT
+                     move open question QID to Decisions as the next decision,
+                     with Wesley's answer, and log it as decided
+  statusline         Claude Code's status line (reads stdin): the session's
+                     open questions, or nothing; never touches the network
   tokens [--format org|json]
                      every plan's tokens by event kind, model and effort
   import-claude      Claude Code's PostToolUse hook on ExitPlanMode (reads stdin):
@@ -80,7 +85,7 @@ func clientSide(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	if args[0] == "import-claude" {
+	if args[0] == "import-claude" || args[0] == "statusline" {
 		return true
 	}
 	if args[0] == "find" {
@@ -117,6 +122,16 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if cli.IsHelp(args[0]) {
 		fmt.Fprint(stdout, usage)
+		return 0
+	}
+	if args[0] == "statusline" {
+		// Claude Code shows whatever this prints, so a failure prints
+		// nothing.
+		if c, err := plans.Load(); err == nil {
+			if line := c.StatusLine(readAll(stdin)); line != "" {
+				fmt.Fprintln(stdout, line)
+			}
+		}
 		return 0
 	}
 	if url := os.Getenv(relay.URLEnv); url != "" && !clientSide(args) {
@@ -202,6 +217,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		all      = flags.Bool("all", false, "")
 		asJSON   = flags.Bool("json", false, "")
 		count    = flags.Bool("count", false, "")
+		answer   = flags.String("answer", "", "")
 		settle   = flags.Duration("settle", 0, "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
@@ -328,6 +344,16 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			io.WriteString(stdout, plans.QuestionsOrg(qs))
 		}
 		return 0
+	case "decide":
+		if len(positional) != 2 {
+			fmt.Fprint(stderr, "agent-plan decide: takes PLAN QID --answer TEXT\n")
+			return 2
+		}
+		p, err := c.Open(positional[0])
+		if err != nil {
+			return report(nil, err)
+		}
+		return report(p.Decide(positional[1], *answer, time.Now()))
 	case "init":
 		r, err := c.Init()
 		if r.Note != "" {
