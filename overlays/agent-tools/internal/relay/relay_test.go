@@ -2,6 +2,7 @@ package relay
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -53,6 +54,38 @@ func TestHandle(t *testing.T) {
 	// environment names.
 	if strings.Contains(string(env), "GIT_DIR=") || strings.Contains(string(env), "GIT_WORK_TREE=") {
 		t.Errorf("a relayed program inherited the relay's repository:\n%s", env)
+	}
+}
+
+// TestSessionGitDir holds {gitdir} to the git directory a linked worktree's
+// commands need, which lies outside the worktree, and to the workspace itself
+// where it is no repository.
+func TestSessionGitDir(t *testing.T) {
+	main, _ := filepath.EvalSymlinks(t.TempDir())
+	linked := filepath.Join(t.TempDir(), "linked")
+	for _, args := range [][]string{
+		{"-C", main, "init", "-q"},
+		{"-C", main, "-c", "user.name=T", "-c", "user.email=t@e", "commit", "-q", "--allow-empty", "-m", "Start"},
+		{"-C", main, "worktree", "add", "-q", linked},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	plain, _ := filepath.EvalSymlinks(t.TempDir())
+	for _, c := range []struct{ workspace, want string }{
+		{linked, filepath.Join(main, ".git")},
+		{plain, plain},
+	} {
+		out := filepath.Join(t.TempDir(), "gitdir")
+		code := Session([]string{"--workspace", c.workspace, "--program", "sh", "--", "sh", "-c",
+			`printf '%s' "$1" > ` + out, "sh", "{gitdir}"}, os.Stderr)
+		if code != 0 {
+			t.Fatalf("session exited %d", code)
+		}
+		if got, _ := os.ReadFile(out); string(got) != c.want {
+			t.Errorf("{gitdir} for %s is %q, want %q", c.workspace, got, c.want)
+		}
 	}
 }
 
