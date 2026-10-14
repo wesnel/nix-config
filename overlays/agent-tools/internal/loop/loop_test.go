@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -246,6 +247,64 @@ func TestWorktrees(t *testing.T) {
 	}
 	if _, err := Worktrees(true); err != nil || exists(path) {
 		t.Errorf("remove: %v, still there: %v", err, exists(path))
+	}
+}
+
+func TestSetup(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	config := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PR_LOOP_CONFIG", config)
+	dir := t.TempDir()
+	gitIn(t, dir, "init", "-q", "-b", "main")
+	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "base")
+	gitIn(t, dir, "remote", "add", "origin", "https://github.com/O/R.git")
+	git.Dir = dir
+	defer func() { git.Dir = "" }()
+
+	if s, err := SetupCommand(); err != nil || s.Command != "" {
+		t.Errorf("without a config: %+v, %v", s, err)
+	}
+	os.WriteFile(config, []byte(`{"setup": {"o/r": "echo generated > gen", "o/other": "false"}}`), 0o644)
+	s, err := SetupCommand()
+	if err != nil || s.Command != "echo generated > gen" || s.Repo != "o/r" {
+		t.Fatalf("configured: %+v, %v", s, err)
+	}
+	gitIn(t, dir, "remote", "add", "fork", "https://github.com/o/other.git")
+	if _, err := SetupCommand(); err == nil {
+		t.Error("two remotes with different setup commands were accepted")
+	}
+	gitIn(t, dir, "remote", "remove", "fork")
+
+	gitIn(t, dir, "branch", "feature")
+	wt := filepath.Join(t.TempDir(), "wt")
+	gitIn(t, dir, "worktree", "add", "-q", wt, "feature")
+	if !NeedsSetup(wt) {
+		t.Error("a fresh worktree does not need setup")
+	}
+	var log bytes.Buffer
+	runs := RunSetup(s.Command, []string{wt}, &log)
+	if len(runs) != 1 || runs[0].Exit != 0 || !exists(filepath.Join(wt, "gen")) {
+		t.Fatalf("setup did not run in the worktree: %+v\n%s", runs, log.String())
+	}
+	if !strings.Contains(log.String(), "setup in "+wt+": echo generated > gen\n") || !strings.Contains(log.String(), ": exit 0\n") {
+		t.Errorf("the command or its status was not reported:\n%s", log.String())
+	}
+	if NeedsSetup(wt) {
+		t.Error("needs setup again right after it")
+	}
+	if !NeedsSetup(dir) {
+		t.Error("another worktree counts as set up")
+	}
+	if got := gitIn(t, wt, "status", "--porcelain"); got != "?? gen" {
+		t.Errorf("the record of setup shows in the worktree: %q", got)
+	}
+	gitIn(t, wt, "commit", "-q", "--allow-empty", "-m", "moved")
+	if !NeedsSetup(wt) {
+		t.Error("a moved worktree does not need setup")
+	}
+	if runs := RunSetup("exit 3", []string{wt}, &log); runs[0].Exit != 3 || !NeedsSetup(wt) {
+		t.Errorf("a failed setup: %+v, needs setup: %v", runs, NeedsSetup(wt))
 	}
 }
 

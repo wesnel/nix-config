@@ -17,6 +17,8 @@ func TestRelayRefusal(t *testing.T) {
 		{"reply", "--from=/etc/passwd"},
 		{"reply", "-from", "-"},
 		{"reply", "--from"},
+		{"setup"},
+		{"setup", "/x"},
 	} {
 		if relayRefusal(argv) == "" {
 			t.Errorf("%v was accepted", argv)
@@ -27,6 +29,7 @@ func TestRelayRefusal(t *testing.T) {
 		{"reply", "--from", "-"},
 		{"status", "12"},
 		{"open", "--title", "T", "--body-file", "-", "--base", "parent", "x"},
+		{"setup-command"},
 	} {
 		if reason := relayRefusal(argv); reason != "" {
 			t.Errorf("%v was refused: %s", argv, reason)

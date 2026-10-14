@@ -13,24 +13,25 @@ import (
 // inside the workspace so a sandbox that mounts only the workspace sees them.
 // Commits there are unsigned through each worktree's own config, so nothing
 // else in the session stops signing. With remove, it removes clean ones.
+//
+// It never runs the repository's setup command: through the relay it runs
+// on the host, and setup belongs in the sandbox. The caller runs it there
+// with RunSetup.
 func Worktrees(remove bool) (any, error) {
 	state, err := loadState(true)
 	if err != nil {
 		return nil, err
 	}
-	common, err := git.Run("rev-parse", "--path-format=absolute", "--git-common-dir")
+	top, err := worktreeTop()
 	if err != nil {
 		return nil, err
 	}
-	if filepath.Base(common) != ".git" {
-		return nil, refuse("worktrees need a non-bare repository whose git directory is <top>/.git")
-	}
-	top := filepath.Dir(common)
+	common := filepath.Join(top, ".git")
 	out := map[string]string{}
 
 	if remove {
 		for _, b := range state.Order {
-			path := filepath.Join(top, ".pr-loop", fmt.Sprint(state.Branches[b].PR))
+			path := worktreePath(top, state.Branches[b].PR)
 			if !exists(path) {
 				continue
 			}
@@ -68,7 +69,7 @@ func Worktrees(remove bool) (any, error) {
 		return nil, err
 	}
 	for _, b := range state.Order {
-		path := filepath.Join(top, ".pr-loop", fmt.Sprint(state.Branches[b].PR))
+		path := worktreePath(top, state.Branches[b].PR)
 		if !exists(path) {
 			if _, err := git.Run("worktree", "add", path, b); err != nil {
 				return nil, refuse("cannot check out %s in %s (detach the main worktree first if it has it): %v", b, path, err)
@@ -80,4 +81,20 @@ func Worktrees(remove bool) (any, error) {
 		out[b] = path
 	}
 	return out, nil
+}
+
+// worktreeTop is the main worktree, under which the PR worktrees live.
+func worktreeTop() (string, error) {
+	common, err := git.Run("rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return "", err
+	}
+	if filepath.Base(common) != ".git" {
+		return "", refuse("worktrees need a non-bare repository whose git directory is <top>/.git")
+	}
+	return filepath.Dir(common), nil
+}
+
+func worktreePath(top string, pr int) string {
+	return filepath.Join(top, ".pr-loop", fmt.Sprint(pr))
 }

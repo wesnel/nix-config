@@ -99,7 +99,9 @@ when you need to know where something belongs.
    not this PR's job.
 5. `pr-loop worktrees` creates a worktree per PR at `.pr-loop/<number>`
    inside the repository, ignored by Git, with commit signing off in those
-   worktrees only.
+   worktrees only. Where Wesley configured a setup command for the
+   repository, it also runs that in each one, such as generating files the
+   repository does not commit. If a setup fails, stop and report its output.
 
 ## Each round
 

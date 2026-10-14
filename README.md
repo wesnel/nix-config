@@ -217,6 +217,13 @@ restacks, pushes the stack through the GitHub API, then replies and resolves.
 It stops when the bots are satisfied or the loop needs a decision, and
 writes `.git/pr-loop/report.md`.
 
+A repository whose fresh checkouts need preparing, such as generating files
+it does not commit, gets a command in `wgn.home.llm.prLoop.setup`, keyed by
+`owner/name`. `pr-loop worktrees` runs it in the sandbox in each worktree
+whose HEAD moved since its last setup, printing the command and its exit
+status, and `pr-loop setup [PATH]` runs it in any worktree, such as one an
+agent made by hand. A repository cannot name a setup command itself.
+
 `pr-loop` touches only the registered branches, each an open PR by you in
 the same repository and not the default branch. It re-checks that before
 every write, and accepts only fixups of each PR's own commits.
