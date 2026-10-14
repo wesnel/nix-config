@@ -240,6 +240,7 @@ missing.
 ``` sh
 agent-plan find --branch BRANCH          # plans for a branch on this host
 agent-plan status PLAN                   # what is done, verified and left, as Org
+agent-plan questions PLAN --all          # open questions, each with its recommendation
 agent-plan tokens                        # tokens by event kind, model and effort
 ```
 

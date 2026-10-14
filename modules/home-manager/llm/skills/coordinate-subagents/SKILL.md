@@ -198,7 +198,9 @@ Before relaying a report, confirm it:
 - The specific tests it cites pass when you run them; whole suites are left
   to the fresh review and `git red-check`.
 
-Relay only what you confirmed, and say what you did not.
+Relay only what you confirmed, and say what you did not. Questions it
+raises go in the plan, as the `plan-work` skill's "Questions for Wesley"
+says, not in your message.
 
 ## Review each branch
 

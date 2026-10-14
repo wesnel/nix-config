@@ -45,8 +45,9 @@ agent-plan new --parent PLAN --part P1 --title 'Add the run loop flag' --branch 
 - `** Distribution`, in a plan split among sub-agents: a heading per part
   with `:ID: P1`…, its branch, base and worktree, a link to its file, and
   its steps.
-- `** Open questions`: `:ID: Q1`…, each with your recommendation. A settled
-  one becomes a decision.
+- `** Open questions`: `*** <the question>` headings with `:ID: Q1`… (a
+  part's `P1.Q1`…) and `:RECOMMENDATION:` yours, then any context, and the
+  other answers as `- ` items. A settled one becomes a decision.
 - `** Verification`: how the change is shown to work.
 
 An ID is never reused or renumbered; a step dropped from the work keeps its
@@ -95,6 +96,16 @@ else, then read it and `agent-plan status PLAN`:
 Only this host's plans, the files named for it, are yours to change; another
 host's beside them are read-only here, and `agent-plan` refuses to write
 them.
+
+## Questions for Wesley
+
+Every question for Wesley lives in the plan's Open questions, with your
+recommendation, and nowhere else. Never restate open questions in a
+message: when a sub-agent reports, say only what changed, add its new
+questions to the plan, and at most give their number. When Wesley asks,
+print `agent-plan questions PLAN --all` or point him to the plan. When he
+answers, move each question under Decisions as the next `D` ID, with his
+answer, and log `decided` for it.
 
 ## Other hosts
 

@@ -40,6 +40,9 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      the goal statement, the text under "** Goal"
   status PLAN [--format org|json]
                      steps without done, done without verified, and tokens
+  questions PLAN [--all] [--json | --count]
+                     the open questions with their recommendations; --all adds
+                     the parts'
   tokens [--format org|json]
                      every plan's tokens by event kind, model and effort
   import-claude      Claude Code's PostToolUse hook on ExitPlanMode (reads stdin):
@@ -64,12 +67,12 @@ OUTCOME: ` + strings.Join(plans.Outcomes, ", ") + `
 EFFORT: ` + strings.Join(plans.Efforts, ", ") + `
 
 With ` + relay.URLEnv + ` set, every command but the hooks is sent to that
-sandbox-relay, which serves only log, goal, status and find.
+sandbox-relay, which serves only log, goal, status, find and questions.
 `
 
 // relayed are the commands a sandbox may run through the relay: reading
 // plans and appending to their logs.
-var relayed = map[string]bool{"log": true, "goal": true, "status": true, "find": true}
+var relayed = map[string]bool{"log": true, "goal": true, "status": true, "find": true, "questions": true}
 
 // clientSide reports whether args run in this process even with a relay:
 // the hooks, which Claude Code runs on the host.
@@ -94,7 +97,7 @@ func clientSide(args []string) bool {
 func relayRefusal(args []string) string {
 	if len(args) == 0 || !relayed[args[0]] || clientSide(args) {
 		name := strings.Join(args[:min(len(args), 2)], " ")
-		return fmt.Sprintf("%q is not served through the relay. A sandbox runs `agent-plan log`, `goal`, `status` and `find`; put anything else in your report for Wesley", name)
+		return fmt.Sprintf("%q is not served through the relay. A sandbox runs `agent-plan log`, `goal`, `status`, `find` and `questions`; put anything else in your report for Wesley", name)
 	}
 	return ""
 }
@@ -196,6 +199,9 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		format   = flags.String("format", "org", "")
 		hook     = flags.Bool("hook", false, "")
 		pull     = flags.Bool("pull", false, "")
+		all      = flags.Bool("all", false, "")
+		asJSON   = flags.Bool("json", false, "")
+		count    = flags.Bool("count", false, "")
 		settle   = flags.Duration("settle", 0, "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
@@ -306,6 +312,21 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return report(s, err)
 		}
 		io.WriteString(stdout, s.Org())
+		return 0
+	case "questions":
+		p, ok := wantPlan()
+		if !ok {
+			return 2
+		}
+		qs, err := p.Questions(*all)
+		switch {
+		case err != nil || *asJSON:
+			return report(qs, err)
+		case *count:
+			fmt.Fprintln(stdout, len(qs))
+		default:
+			io.WriteString(stdout, plans.QuestionsOrg(qs))
+		}
 		return 0
 	case "init":
 		r, err := c.Init()

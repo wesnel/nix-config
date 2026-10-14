@@ -109,6 +109,22 @@ func TestCommands(t *testing.T) {
 	if code != 2 {
 		t.Errorf("a summary with a newline: %d %s", code, errs)
 	}
+	data, _ = os.ReadFile(plan)
+	os.WriteFile(plan, []byte(strings.Replace(string(data), "** Open questions\n",
+		"** Open questions\n*** Rename it?\n:PROPERTIES:\n:ID: Q1\n:RECOMMENDATION: no\n:END:\n- yes\n", 1)), 0o644)
+	for args, want := range map[string]string{
+		"questions PLAN":          "- Q1 :: Rename it? Recommended: no. Or: yes.\n",
+		"questions PLAN --all":    "- Q1 :: Rename it? Recommended: no. Or: yes.\n",
+		"questions PLAN --count":  "1\n",
+		"questions --json PLAN":   `"recommendation": "no"`,
+		"questions PLAN --format": "",
+	} {
+		words := strings.Fields(strings.Replace(args, "PLAN", plan, 1))
+		code, out, errs = agentPlan(t, "", words...)
+		if (want == "") != (code != 0) || !strings.Contains(out, want) {
+			t.Errorf("%s: %d %q %s", args, code, out, errs)
+		}
+	}
 	code, out, errs = agentPlan(t, "", "sync", "--settle", "0s")
 	if code != 0 || !strings.Contains(out, `"skipped"`) {
 		t.Errorf("sync outside a repository: %d %s %s", code, out, errs)
@@ -151,6 +167,7 @@ func TestRelayed(t *testing.T) {
 	for _, args := range [][]string{
 		{"log", plan, "--item", "S1", "--kind", "started"},
 		{"status", plan},
+		{"questions", plan},
 		{"find", "--branch", "loop"},
 	} {
 		if code, _, errs := agentPlan(t, "", args...); code != 0 {
