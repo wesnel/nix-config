@@ -65,13 +65,16 @@ agent-plan new --parent PLAN --part P1 --title 'Add the run loop flag' --branch 
   rejected for a reason that will still hold, such as a constraint rather
   than a lack of time, is a decision too, with that reason, so a later
   design review finds it instead of proposing it again.
+- `** Follow-ups`: work found while doing an item but outside this
+  change's job, each with `:ID: F1`, `F2`… and the `:FOUND_IN:` item, as
+  "Follow-ups" says.
 - `** Verification`: how the change is shown to work: each seam the tests
   cross, and what each cannot catch.
 
 The `#+TODO:` lines `agent-plan new` writes define the keywords; Emacs and
 `agent-plan` both read them, so leave them as they are. The ID patterns
-(`S`, `P`, `Q`, with an optional `P<n>.` prefix) are what Emacs's plan
-views select entries by.
+(`S`, `P`, `Q`, `F`, with an optional `P<n>.` prefix) are what Emacs's
+plan views select entries by.
 
 A question or a part that cannot start before others are settled lists
 their IDs in `:AFTER:`, separated by spaces (a question's through
@@ -174,6 +177,20 @@ The one decision of your own a plan records is one a fact or constraint
 that already holds forces, never a choice: write it with
 `agent-plan ask PLAN --question ... --recommendation ... --answer 'ANSWER: the constraint' --role R`,
 which writes it already decided, so every decision is in one place.
+
+## Follow-ups
+
+Work you find while doing an item that is not this change's job is
+recorded, not done:
+
+```sh
+agent-plan followup PLAN --title 'Guard accepts --draft=false' --found-in S1 \
+  --context 'The guard reads only whether the flag is present.'
+```
+
+It becomes a `TODO` under Follow-ups with the next `F` ID (`--part P1`
+for a part's file), and its keyword then follows `agent-plan log` as a
+step's does. `agent-plan status` lists those still open.
 
 ## Other hosts
 

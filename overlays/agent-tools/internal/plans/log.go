@@ -40,7 +40,7 @@ type Event struct {
 var (
 	// Kinds are what an event records about its item.
 	Kinds = []string{"planned", "plan-reviewed", "started", "done", "blocked", "abandoned", "verified",
-		"reviewed", "finding-settled", "asked", "decided", "handed-back", "committed", "pushed", "postponed"}
+		"reviewed", "finding-settled", "asked", "decided", "handed-back", "committed", "pushed", "postponed", "discovered"}
 	// Roles are who logs an event.
 	Roles = []string{"single", "parent", "subagent", "reviewer", "design-reviewer"}
 	// Outcomes are the review-change skill's triage outcomes.
@@ -112,9 +112,10 @@ func (p Plan) Log(e Event, now time.Time) (Event, error) {
 	return e, err
 }
 
-// projected reports whether id's heading keyword is the log's projection.
+// projected reports whether id's heading keyword is the log's projection:
+// a step's, a part's or a follow-up's.
 func projected(id string) bool {
-	return stepPattern.MatchString(id) || partPattern.MatchString(id)
+	return stepPattern.MatchString(id) || partPattern.MatchString(id) || followupID.MatchString(id)
 }
 
 // project writes the keyword the log gives id into its heading, unless it

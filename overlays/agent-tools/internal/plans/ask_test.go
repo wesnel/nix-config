@@ -47,7 +47,7 @@ func TestAsk(t *testing.T) {
 		}
 		data, _ := os.ReadFile(p.file(""))
 		text := string(data)
-		if section := text[strings.Index(text, "** Questions\n"):strings.Index(text, "** Verification\n")]; !strings.HasSuffix(section,
+		if section := text[strings.Index(text, "** Questions\n"):strings.Index(text, "** Follow-ups\n")]; !strings.HasSuffix(section,
 			"*** ASK [#A] Keep the old flag?\n:PROPERTIES:\n:ID: Q4\n:RECOMMENDATION: no, drop it\n:AFTER: Q1\n:END:\nNothing reads it.\n- keep it\n- deprecate it\n") {
 			t.Errorf("Questions:\n%s", section)
 		}

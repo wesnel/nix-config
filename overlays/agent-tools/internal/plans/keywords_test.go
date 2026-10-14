@@ -15,12 +15,12 @@ var orgClosed = time.Date(2026, 10, 14, 16, 29, 0, 0, time.Local)
 // the form Org itself writes.
 func TestStepKeywords(t *testing.T) {
 	// logged makes a plan from open.org and logs what Org's fixture shows:
-	// S1 and P1 done, S2 verified, S3 abandoned.
+	// S1, P1 and F1 done, S2 verified, S3 abandoned.
 	logged := func(t *testing.T) Plan {
 		t.Helper()
 		p := fromFixture(t, "open.org")
 		for _, e := range []Event{{Kind: "done", Item: "S1"}, {Kind: "done", Item: "S2"}, {Kind: "verified", Item: "S2"},
-			{Kind: "abandoned", Item: "S3"}, {Kind: "done", Item: "P1"}} {
+			{Kind: "abandoned", Item: "S3"}, {Kind: "done", Item: "P1"}, {Kind: "done", Item: "F1"}} {
 			if _, err := p.Log(e, orgClosed); err != nil {
 				t.Fatal(err)
 			}
@@ -32,11 +32,8 @@ func TestStepKeywords(t *testing.T) {
 		p := logged(t)
 		got, _ := os.ReadFile(p.file(""))
 		want, _ := os.ReadFile("testdata/emacs-closed.org")
-		// F1, a follow-up, is no step: its keyword is open.org's.
-		wanted := strings.Replace(string(want), "*** DONE Guard accepts --draft=false\nCLOSED: [2026-10-14 Wed 16:29]\n",
-			"*** TODO Guard accepts --draft=false\n", 1)
-		if string(got) != wanted {
-			t.Errorf("differs from Org's own output:\n%s\nwant:\n%s", got, wanted)
+		if string(got) != string(want) {
+			t.Errorf("differs from Org's own output:\n%s\nwant:\n%s", got, want)
 		}
 	})
 

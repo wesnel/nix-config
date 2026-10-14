@@ -111,7 +111,9 @@ decisions already made, as final; and, where you know it, the commit each
 correction folds into. It says what the part must do, not how, as
 acceptance criteria each checkable on its own. A sub-agent that finds a fact contradicting a
 decision, or a base it was given, stops that item and reports it instead of
-following or reopening it.
+following or reopening it. Work it finds outside the part's job it records
+with `agent-plan followup PLAN --part P1 --title '...' --found-in <item>`
+and leaves undone.
 
 Each sub-agent reports, as its final message and within the length the task
 gives, with no narrative:

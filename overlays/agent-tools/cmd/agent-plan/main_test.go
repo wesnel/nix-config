@@ -215,6 +215,19 @@ func TestCommands(t *testing.T) {
 		}
 	})
 
+	t.Run("followup", func(t *testing.T) {
+		plan := sessionPlan(t)
+		code, out, errs := agentPlan(t, "", "followup", plan, "--title", "Guard accepts --draft=false", "--found-in", "S1",
+			"--context", "Found while adding the loop.")
+		if code != 0 || !strings.Contains(out, `"id": "F1"`) || !strings.Contains(out, `"kind": "discovered"`) {
+			t.Errorf("followup: %d %s %s", code, out, errs)
+		}
+		code, out, _ = agentPlan(t, "", "status", plan)
+		if code != 0 || !strings.Contains(out, "- Follow-ups open: F1\n") {
+			t.Errorf("status: %d\n%s", code, out)
+		}
+	})
+
 	t.Run("postpone", func(t *testing.T) {
 		plan := sessionPlan(t)
 		readySteps := func() []string {
@@ -301,6 +314,7 @@ func TestRelayed(t *testing.T) {
 		{"sync"},
 		{"sync", "--pull"},
 		{"reseal", "PLAN"},
+		{"followup", "PLAN", "--title", "T", "--found-in", "S1"},
 		{"bogus"},
 	} {
 		t.Run("refused/"+strings.Join(args, " "), func(t *testing.T) {
