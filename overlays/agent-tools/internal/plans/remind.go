@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var (
@@ -25,7 +26,7 @@ var (
 //     on Claude Code's PreCompact, whose output becomes the compaction's
 //     instructions, as text for the summary to keep; and after one, where
 //     the harness cannot add context before it, on Codex's SessionStart
-//     from a compaction and ECA's postCompact.
+//     from a compaction and ECA's postCompact, with the plan's brief.
 //
 // It returns the hook's output, or nothing, on any error too.
 func (c Config) Remind(input []byte) []byte {
@@ -46,6 +47,7 @@ func (c Config) Remind(input []byte) []byte {
 	}
 	// The plan's file, found once it is needed: most events need none.
 	file, looked := "", false
+	var found Plan
 	plan := func() string {
 		if looked {
 			return file
@@ -57,7 +59,7 @@ func (c Config) Remind(input []byte) []byte {
 		}
 		top, _ := checkout(in.Cwd)
 		if p, _, ok := c.Locate(session, top); ok {
-			file = p.File()
+			found, file = p, p.File()
 		}
 		return file
 	}
@@ -70,8 +72,15 @@ func (c Config) Remind(input []byte) []byte {
 			"before relaying any of it, then log its part's outcome in %s: %s.", what, plan(), log)
 	}
 	compacted := func() string {
-		return fmt.Sprintf("The conversation was compacted. Bring %s up to date before going on: log the steps done or "+
+		context := fmt.Sprintf("The conversation was compacted. Bring %s up to date before going on: log the steps done or "+
 			"verified, the decisions, findings and sub-agent outcomes it does not yet record.", plan())
+		if file == "" {
+			return context
+		}
+		if brief, err := found.Brief(time.Now()); err == nil {
+			context += "\n\n" + brief
+		}
+		return context
 	}
 	var event, context string
 	switch {

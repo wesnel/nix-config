@@ -14,6 +14,8 @@ import (
 type claudeHook struct {
 	SessionID string `json:"session_id"`
 	Cwd       string `json:"cwd"`
+	// Source is why SessionStart fired: "compact" after a compaction.
+	Source    string `json:"source"`
 	ToolInput struct {
 		Plan         string `json:"plan"`
 		PlanFilePath string `json:"planFilePath"`
@@ -168,7 +170,8 @@ func slug(title string) string {
 
 // SessionHook names the plans of the session Claude Code's SessionStart
 // hook describes, matched by session or by the worktree it runs in, as
-// the hook's output; nothing when there are none.
+// the hook's output, with the first one's brief after a compaction;
+// nothing when there are none.
 func (c Config) SessionHook(hook []byte) ([]byte, error) {
 	var in claudeHook
 	if err := json.Unmarshal(hook, &in); err != nil {
@@ -190,6 +193,14 @@ func (c Config) SessionHook(hook []byte) ([]byte, error) {
 	for _, f := range found {
 		lines = append(lines, fmt.Sprintf("- %s (%s, status %s, matched by %s)", f.File, f.Title, f.State, strings.Join(f.Matched, " and ")))
 	}
-	return hookOutput("SessionStart", "Plans for this session:\n"+strings.Join(lines, "\n")+
-		"\nRead yours, and `agent-plan status PLAN` for its progress, before going on; keep it true as the plan-work skill says.")
+	context := "Plans for this session:\n" + strings.Join(lines, "\n") +
+		"\nRead yours, and `agent-plan status PLAN` for its progress, before going on; keep it true as the plan-work skill says."
+	if in.Source == "compact" {
+		if p, err := c.Open(found[0].Plan); err == nil {
+			if brief, err := p.Brief(time.Now()); err == nil {
+				context += "\n\n" + brief
+			}
+		}
+	}
+	return hookOutput("SessionStart", context)
 }
