@@ -42,7 +42,9 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      the goal statement, the text under "** Goal"
   status PLAN [--format org|json]
                      steps without done, done without verified, parts ready
-                     to start, what still waits, and tokens
+                     to start, steps ready now (no open AFTER item, earlier
+                     ORDERED siblings settled, not scheduled for later),
+                     what still waits, keyword drift, and tokens
   questions PLAN [--all] [--waiting] [--json | --count]
                      the open questions Wesley can answer now, by priority,
                      with their recommendations; --all adds the parts',

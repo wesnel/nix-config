@@ -3,6 +3,7 @@ package plans
 import (
 	"regexp"
 	"strings"
+	"time"
 )
 
 // heading is one Org heading, with its property drawer and the lines up to
@@ -16,7 +17,11 @@ type heading struct {
 	Priority string
 	Title    string
 	Tags     []string
-	Props    map[string]string
+	// Scheduled is the SCHEDULED timestamp's day, or its time when it has
+	// one; zero without one.
+	Scheduled        time.Time
+	ScheduledHasTime bool
+	Props            map[string]string
 	// Body is the text outside drawers, and Notes the lines inside drawers
 	// other than the property drawer, such as LOGBOOK.
 	Body  []string
@@ -31,6 +36,9 @@ var (
 	priorityWord = regexp.MustCompile(`^\[#([A-Z0-9])\]$`)
 	tagsSuffix   = regexp.MustCompile(`\s+:((?:[\p{L}\p{N}_@#%]+:)+)$`)
 	drawerStart  = regexp.MustCompile(`^\s*:([A-Za-z0-9_-]+):\s*$`)
+	// scheduledStamp is a SCHEDULED timestamp's date and, if it has one,
+	// time of day.
+	scheduledStamp = regexp.MustCompile(`SCHEDULED:\s*<([0-9]{4}-[0-9]{2}-[0-9]{2})[^>0-9]*(?:([0-9]{1,2}:[0-9]{2})[^>]*)?>`)
 )
 
 func set(words ...string) map[string]bool {
@@ -72,6 +80,14 @@ func parseOrg(text string) []heading {
 		trimmed := strings.TrimSpace(line)
 		switch {
 		case at == top && len(h.Body) == 0 && planningLine.MatchString(line):
+			if m := scheduledStamp.FindStringSubmatch(line); m != nil {
+				if m[2] == "" {
+					h.Scheduled, _ = time.ParseInLocation("2006-01-02", m[1], time.Local)
+				} else {
+					h.Scheduled, _ = time.ParseInLocation("2006-01-02 15:04", m[1]+" "+m[2], time.Local)
+					h.ScheduledHasTime = true
+				}
+			}
 			continue
 		case at == top && len(h.Body) == 0 && trimmed == ":PROPERTIES:":
 			at = properties

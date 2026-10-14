@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Step is one step's progress.
@@ -40,6 +41,11 @@ type Status struct {
 	// open questions that still wait, with what for.
 	Ready   []string  `json:"ready"`
 	Waiting []Waiting `json:"waiting"`
+	// ReadySteps are the open steps that can be worked on now: none of
+	// their AFTER items open, every earlier sibling settled under a parent
+	// whose ORDERED property is t, and not scheduled for later, as Emacs's
+	// agenda shows them.
+	ReadySteps []string `json:"readySteps"`
 	// KeywordDrift are the steps and parts whose heading keyword is not the
 	// one their log gives them: changed in Emacs, or not written while
 	// Emacs held unsaved changes to the file.
@@ -59,8 +65,69 @@ type Drift struct {
 	Log  string `json:"log"`
 }
 
-// Status reads the plan and its log.
-func (p Plan) Status() (Status, error) {
+// scheduledLater reports whether h is scheduled after now: for a
+// timestamp with a time of day, after that time; for one without, on a
+// later day, as Org's agenda reads it.
+func scheduledLater(h heading, now time.Time) bool {
+	if h.ScheduledHasTime {
+		return h.Scheduled.After(now)
+	}
+	y, m, d := now.Date()
+	return h.Scheduled.After(time.Date(y, m, d, 0, 0, 0, 0, now.Location()))
+}
+
+// readySteps are the plan's open steps, in file order, that can be worked
+// on at now: see Status.ReadySteps.
+func (p Plan) readySteps(isSettled func(string) bool, events []Event, now time.Time) ([]string, error) {
+	files, err := p.files()
+	if err != nil {
+		return nil, err
+	}
+	out := []string{}
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			return nil, err
+		}
+		hs := parseOrg(string(data))
+		for i, h := range hs {
+			id := h.Props["ID"]
+			if !stepPattern.MatchString(id) || planKeywords.done[stepState(events, id)] ||
+				len(unsettled(afterIDs(h.Props), isSettled)) > 0 || scheduledLater(h, now) || !earlierSettled(hs, i, isSettled) {
+				continue
+			}
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
+// earlierSettled reports whether the siblings before hs[i] are settled,
+// where its parent's ORDERED property says they must be.
+func earlierSettled(hs []heading, i int, isSettled func(string) bool) bool {
+	parent := i - 1
+	for parent >= 0 && hs[parent].Level >= hs[i].Level {
+		parent--
+	}
+	if parent < 0 || hs[parent].Props["ORDERED"] != "t" {
+		return true
+	}
+	for j := parent + 1; j < i; j++ {
+		if hs[j].Level != hs[i].Level {
+			continue
+		}
+		if id := hs[j].Props["ID"]; id != "" && !isSettled(id) || id == "" && hs[j].Keyword != "" && !hs[j].Done {
+			return false
+		}
+	}
+	return true
+}
+
+// Status reads the plan and its log, now.
+func (p Plan) Status() (Status, error) { return p.StatusAt(time.Now()) }
+
+// StatusAt reads the plan and its log as at now.
+func (p Plan) StatusAt(now time.Time) (Status, error) {
 	list, err := p.itemList()
 	if err != nil {
 		return Status{}, err
@@ -85,6 +152,9 @@ func (p Plan) Status() (Status, error) {
 		isOpen[q.ID] = true
 	}
 	isSettled := settled(list, events)
+	if s.ReadySteps, err = p.readySteps(isSettled, events, now); err != nil {
+		return Status{}, err
+	}
 	partOf := map[string]string{}
 	index := map[string]int{}
 	for _, it := range list {
@@ -196,6 +266,7 @@ func (s Status) Org() string {
 	fmt.Fprintf(&b, "\n- Status: %s\n- Implemented: %s verified\n- Without done: %s\n- Done, not verified: %s\n",
 		s.State, s.Implemented, list(s.NotDone), list(s.DoneNotVerified))
 	fmt.Fprintf(&b, "- Parts ready to start: %s\n", list(s.Ready))
+	fmt.Fprintf(&b, "- Steps ready: %s\n", list(s.ReadySteps))
 	if len(s.Waiting) > 0 {
 		var waits []string
 		for _, w := range s.Waiting {

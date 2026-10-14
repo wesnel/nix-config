@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // insertUnder puts text right after the line under in file.
@@ -267,6 +268,66 @@ func testStatusReadyParts(t *testing.T) {
 		logAll(t, p, Event{Kind: "started", Item: "P2.S1"})
 		if s, _ := p.Status(); strings.Join(s.Ready, " ") != "P3" {
 			t.Errorf("after P2.S1 started: ready %v", s.Ready)
+		}
+	})
+}
+
+// testStatusReadySteps: status lists the open steps that can be worked
+// on now, as Emacs's agenda does: none of their AFTER items open, every
+// earlier sibling settled under an ORDERED parent, and not scheduled for a
+// later day.
+func testStatusReadySteps(t *testing.T) {
+	// steps makes a plan whose S1 and S2 are ORDERED, S3 waits for P1.S1
+	// in part P1's file, S4 is scheduled for 2026-10-20, and S5 waits for
+	// S6.
+	steps := func(t *testing.T) Plan {
+		t.Helper()
+		c := testConfig(t)
+		p := newPlan(t, c, "x")
+		addItems(t, p.file(""), "** Distribution", "P1")
+		made, err := c.New(NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		addItems(t, made.File, "** Steps", "P1.S1")
+		insertUnder(t, p.file(""), "** Steps", "*** Linear\n:PROPERTIES:\n:ORDERED: t\n:END:\n"+
+			"**** TODO First\n:PROPERTIES:\n:ID: S1\n:END:\n**** TODO Second\n:PROPERTIES:\n:ID: S2\n:END:\n"+
+			"*** TODO After the part's step\n:PROPERTIES:\n:ID: S3\n:AFTER: P1.S1\n:END:\n"+
+			"*** TODO Later\nSCHEDULED: <2026-10-20 Tue>\n:PROPERTIES:\n:ID: S4\n:END:\n"+
+			"*** TODO After S6\n:PROPERTIES:\n:ID: S5\n:AFTER: S6\n:END:\n"+
+			"*** TODO Free\n:PROPERTIES:\n:ID: S6\n:END:\n")
+		return p
+	}
+
+	t.Run("at the start", func(t *testing.T) {
+		p := steps(t)
+		s, err := p.StatusAt(day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Join(s.ReadySteps, " "); got != "S1 S6 P1.S1" {
+			t.Errorf("ready steps %q", got)
+		}
+		if !strings.Contains(s.Org(), "- Steps ready: S1, S6, P1.S1\n") {
+			t.Errorf("org:\n%s", s.Org())
+		}
+	})
+
+	// An abandoned step settles what waits for it, as a done one does.
+	t.Run("once their blockers settle", func(t *testing.T) {
+		p := steps(t)
+		for _, e := range []Event{{Kind: "done", Item: "S1"}, {Kind: "done", Item: "P1.S1"}, {Kind: "abandoned", Item: "S6"}} {
+			if _, err := p.Log(e, day); err != nil {
+				t.Fatal(err)
+			}
+		}
+		s, _ := p.StatusAt(day)
+		if got := strings.Join(s.ReadySteps, " "); got != "S2 S3 S5" {
+			t.Errorf("ready steps %q", got)
+		}
+		on := time.Date(2026, 10, 20, 9, 0, 0, 0, time.Local)
+		if s, _ := p.StatusAt(on); strings.Join(s.ReadySteps, " ") != "S2 S3 S4 S5" {
+			t.Errorf("ready steps on the day S4 is scheduled %q", strings.Join(s.ReadySteps, " "))
 		}
 	})
 }

@@ -447,6 +447,7 @@ func TestLog(t *testing.T) {
 func TestStatus(t *testing.T) {
 	t.Run("items and tokens", testStatusItems)
 	t.Run("ready parts", testStatusReadyParts)
+	t.Run("ready steps", testStatusReadySteps)
 }
 
 func testStatusItems(t *testing.T) {
