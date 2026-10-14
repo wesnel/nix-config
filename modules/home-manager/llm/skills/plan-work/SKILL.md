@@ -55,14 +55,15 @@ agent-plan new --parent PLAN --part P1 --title 'Add the run loop flag' --branch 
 - `** Distribution`, in a plan split among sub-agents: a heading per part
   with `:ID: P1`…, its branch, base and worktree, a link to its file, and
   its steps.
-- `** Open questions`: `*** <the question>` headings with `:ID: Q1`… (a
-  part's `P1.Q1`…) and `:RECOMMENDATION:` yours, then any context, and the
-  other answers as `- ` items. A settled one becomes a decision.
+- `** Open questions`: the questions for Wesley, each written by
+  `agent-plan ask` as "Questions for Wesley" says, never by hand. A settled
+  one becomes a decision.
 - `** Verification`: how the change is shown to work: each seam the tests
   cross, and what each cannot catch.
 
 A question or a part that cannot start before others are settled lists
-their IDs in `:AFTER:`, separated by spaces: a question is settled once
+their IDs in `:AFTER:`, separated by spaces (a question's through
+`agent-plan ask --after`): a question is settled once
 decided, a part or step once `done` is logged for it. Until then the
 question is not put to Wesley and the part is not ready.
 
@@ -118,7 +119,16 @@ them.
 ## Questions for Wesley
 
 Every question for Wesley lives in the plan's Open questions, with your
-recommendation, and nowhere else. Never restate open questions in a
+recommendation, and nowhere else. Write each with `agent-plan ask`, which
+gives it the next ID and the form `agent-plan questions` reads; a question
+written by hand in another form never reaches Wesley:
+
+```sh
+agent-plan ask PLAN --question 'Keep the old flag?' --recommendation 'no, drop it' \
+  --context 'Nothing reads it.' --alternative 'keep it' --after Q1
+```
+
+`--part P1` puts it in that part's file. Never restate open questions in a
 message: when a sub-agent reports, say only what changed, add its new
 questions to the plan, and at most give their number. When Wesley asks,
 print `agent-plan questions PLAN --all`, the questions he can answer now,
@@ -148,7 +158,7 @@ log refused as changed stays as it is: name it in your report.
 ## Spikes
 
 When running code is the quickest way to answer a design question, write
-the question into Open questions first, then answer it with throwaway code
+the question with `agent-plan ask` first, then answer it with throwaway code
 on a local branch `spike/<slug>`, never pushed and never merged. Put what
 it showed and the branch's name into the question, for Wesley to decide.
 The real change is then written fresh under the plan; the spike's code is

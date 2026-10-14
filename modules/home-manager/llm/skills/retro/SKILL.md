@@ -50,8 +50,8 @@ behaved so without it, or the rule that enforces it.
 
 ## Report
 
-Write each proposal into the plan's Open questions, the most costly slip
-first: the slip with its evidence (log event, transcript line or finding),
-its class, the exact change (file and wording, or the rule with its
-examples) and what it would have prevented. Wesley answers them as any
-other question.
+Write each proposal into the plan with `agent-plan ask`, the most costly
+slip first: the exact change (file and wording, or the rule with its
+examples) as the recommendation, and as context the slip with its evidence
+(log event, transcript line or finding), its class and what the change
+would have prevented. Wesley answers them as any other question.

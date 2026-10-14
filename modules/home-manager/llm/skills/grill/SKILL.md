@@ -18,9 +18,8 @@ him as the `plan-work` skill's "Questions for Wesley" says.
 3. Look up every fact the tree needs, as "Questions for Wesley" says. Run
    slow lookups in the background, and write the questions that do not
    depend on them meanwhile.
-4. Write each remaining choice as an Open question in the `plan-work`
-   skill's form, with the IDs of the questions or steps it depends on in
-   `:AFTER:`.
+4. Write each remaining choice with `agent-plan ask`, passing the IDs of
+   the questions or steps it depends on as `--after`.
 5. Tell Wesley only how many questions he can answer now
    (`agent-plan questions PLAN --all --count`); in Claude Code,
    `/questions` asks them.

@@ -47,6 +47,11 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      recommendations; --all adds the parts', --waiting those
                      that wait for an AFTER item: a question until decided,
                      a part or step until logged done
+  ask PLAN --question TEXT --recommendation TEXT [--context TEXT]
+      [--alternative TEXT]... [--after ID]... [--part P1]
+                     write a question for Wesley under Open questions, in the
+                     plan's file or the part's, as its next question ID, in
+                     the form questions reads, and log it as asked
   decide PLAN QID --answer TEXT
                      move open question QID to Decisions as the next decision,
                      with Wesley's answer, and log it as decided
@@ -252,12 +257,20 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		waiting  = flags.Bool("waiting", false, "")
 		answer   = flags.String("answer", "", "")
 		settle   = flags.Duration("settle", 0, "")
+		question = flags.String("question", "", "")
+		context  = flags.String("context", "", "")
+		advice   = flags.String("recommendation", "", "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
 		branches multi
 		trees    multi
 		sessions multi
+		// Repeatable for ask.
+		alternatives multi
+		after        multi
 	)
+	flags.Var(&alternatives, "alternative", "")
+	flags.Var(&after, "after", "")
 	flags.Var(&repos, "repo", "")
 	flags.Var(&branches, "branch", "")
 	flags.Var(&trees, "worktree", "")
@@ -380,6 +393,13 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			io.WriteString(stdout, plans.QuestionsOrg(qs))
 		}
 		return 0
+	case "ask":
+		p, ok := wantPlan()
+		if !ok {
+			return 2
+		}
+		return report(p.Ask(plans.AskOptions{Part: *part, Question: *question, Context: *context,
+			Recommendation: *advice, Alternatives: alternatives, After: after}, time.Now()))
 	case "decide":
 		if len(positional) != 2 {
 			fmt.Fprint(stderr, "agent-plan decide: takes PLAN QID --answer TEXT\n")
