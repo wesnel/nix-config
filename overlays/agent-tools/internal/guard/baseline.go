@@ -656,27 +656,26 @@ func checkSecretPath(word, dir string) string {
 
 const appendOnly = "This is a plan's event log, which is append-only and written by agent-plan alone. Record the event with `agent-plan log PLAN --item ID --kind KIND`, and change the plan itself in its plan file."
 
-// planLog reports whether path is a plan's log.org, or the lock file that
-// records its state, under the plans directory agent-plan's config names.
-// A relative path counts, since where it is cannot be told.
+// planLog reports whether path is a plan's log, or the lock file that
+// records its state, in the plans directory agent-plan's config names. A
+// relative path counts, since where it is cannot be told.
 func planLog(path string) bool {
-	name := filepath.Base(path)
-	if name != "log.org" && name != "log.org.lock" {
+	if !plans.IsLog(filepath.Base(path)) {
 		return false
 	}
 	if !filepath.IsAbs(path) {
 		return true
 	}
-	dir := filepath.Join(home, "git", "org", "agents")
+	dir := filepath.Join(home, "git", "notes", "agents")
 	if c, err := plans.Load(); err == nil {
 		dir = c.Dir
 	}
-	if strings.HasPrefix(path, dir+"/") {
+	if filepath.Dir(path) == filepath.Clean(dir) {
 		return true
 	}
 	realDir, err1 := filepath.EvalSymlinks(dir)
 	parent, err2 := filepath.EvalSymlinks(filepath.Dir(path))
-	return err1 == nil && err2 == nil && strings.HasPrefix(filepath.Join(parent, name), realDir+"/")
+	return err1 == nil && err2 == nil && parent == realDir
 }
 
 // checkPlanLogWrite denies a command that writes, moves or removes a plan's

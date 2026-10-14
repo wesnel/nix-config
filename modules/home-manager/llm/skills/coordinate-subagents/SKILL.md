@@ -65,7 +65,7 @@ and adds only what they do not say. Put in it:
   for Claude Code, `~/.codex/AGENTS.md` for Codex, `~/.config/eca/AGENTS.md`
   for ECA) and the `SKILL.md` of the `signing-pass`, `write-tests`,
   `review-change` and `plan-work` skills in the agent's skill directory.
-- The plan's directory. Each sub-agent makes its part's file with
+- The plan's file. Each sub-agent makes its part's file with
   `agent-plan new --parent PLAN --part <its part ID>` and logs to the
   plan's log with `--role subagent`.
 - Work only in the worktree the task names, never the main checkout or another

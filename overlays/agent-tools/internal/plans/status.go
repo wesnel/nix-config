@@ -48,7 +48,7 @@ func (p Plan) Status() (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	s := Status{Plan: p.Dir, Title: orgTitle(string(data)), Steps: []Step{}, NotDone: []string{},
+	s := Status{Plan: p.file(""), Title: orgTitle(string(data)), Steps: []Step{}, NotDone: []string{},
 		DoneNotVerified: []string{}}
 	index := map[string]int{}
 	for _, it := range list {

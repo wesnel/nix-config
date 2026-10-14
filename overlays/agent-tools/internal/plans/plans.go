@@ -1,7 +1,7 @@
-// Package plans keeps agents' plan files and their append-only event logs:
-// one directory per plan under the plans directory, <host>/<date>-<slug>/,
-// holding plan.org, a <part>.org per sub-agent, and log.org, which only Log
-// writes to.
+// Package plans keeps agents' plan files and their append-only event logs,
+// side by side in one plans directory: a plan <date>-<slug>.<host>.org, a
+// <date>-<slug>.<host>.<part>.org per sub-agent, and the log
+// <date>-<slug>.<host>.log.org, which only Log writes to.
 package plans
 
 import (
@@ -17,7 +17,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/repos"
 )
@@ -25,22 +24,32 @@ import (
 // Config is where plans live, from "plans" in the user's
 // agent-tools/config.json.
 type Config struct {
-	// Dir holds a directory per host, each holding that host's plans.
+	// Dir holds every host's plans.
 	Dir string `json:"dir"`
-	// Host names this machine's directory under Dir.
+	// Host names this machine in its plans' file names.
 	Host string `json:"host"`
 }
 
 var (
-	idPattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	// A host is part of every file name, between dots, so it holds none.
+	hostPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 	slugPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 	partPattern = regexp.MustCompile(`^P[0-9]+$`)
-	partFile    = regexp.MustCompile(`^(P[0-9]+)\.org$`)
 	stepPattern = regexp.MustCompile(`^(P[0-9]+\.)?S[0-9]+$`)
+	// planFile is a plan's file name: the plan's name, which is its date and
+	// slug, then its host, and then a part's ID or "log" for those files.
+	planFile = regexp.MustCompile(`^([0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9]+(?:-[a-z0-9]+)*\.([A-Za-z0-9][A-Za-z0-9_-]*))(?:\.(P[0-9]+|log))?\.org$`)
 )
 
-// Load reads the config, defaulting to ~/git/org/agents and this machine's
-// short host name.
+// IsLog reports whether name is the file name of a plan's log, or of the
+// lock file that records the log's state.
+func IsLog(name string) bool {
+	m := planFile.FindStringSubmatch(strings.TrimSuffix(name, ".lock"))
+	return m != nil && m[3] == "log"
+}
+
+// Load reads the config, defaulting to ~/git/notes/agents and this
+// machine's short host name.
 func Load() (Config, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -48,7 +57,7 @@ func Load() (Config, error) {
 	}
 	host, _ := os.Hostname()
 	host, _, _ = strings.Cut(host, ".")
-	c := Config{Dir: filepath.Join(home, "git", "org", "agents"), Host: host}
+	c := Config{Dir: filepath.Join(home, "git", "notes", "agents"), Host: host}
 	data, err := os.ReadFile(repos.Path())
 	if errors.Is(err, fs.ErrNotExist) {
 		return c, nil
@@ -68,8 +77,8 @@ func Load() (Config, error) {
 	if file.Plans.Host != "" {
 		c.Host = file.Plans.Host
 	}
-	if !filepath.IsAbs(c.Dir) || !idPattern.MatchString(c.Host) {
-		return Config{}, fmt.Errorf("%s: plans.dir must be absolute and plans.host a plain name: %+v", repos.Path(), c)
+	if !filepath.IsAbs(c.Dir) || !hostPattern.MatchString(c.Host) {
+		return Config{}, fmt.Errorf("%s: plans.dir must be absolute and plans.host a plain name without dots: %+v", repos.Path(), c)
 	}
 	return c, nil
 }
@@ -86,13 +95,12 @@ type NewOptions struct {
 
 // Created is what New made.
 type Created struct {
+	// Plan is the plan's file, the PLAN the other commands take.
 	Plan string `json:"plan"`
+	// File is the file made: the plan's, or the part's.
 	File string `json:"file"`
 	ID   string `json:"id"`
 	Log  string `json:"log"`
-	// Excluded is the exclude file that keeps the plans directory out of
-	// the repository it sits in, if it does.
-	Excluded string `json:"excluded,omitempty"`
 }
 
 // checkLine refuses a value that would break the Org line it goes on.
@@ -114,8 +122,8 @@ func checkWords(what string, values []string) error {
 }
 
 // New creates a plan, or with Parent and Part, a part's plan file beside
-// its parent's. A new plan's directory is <host>/<date>-<slug>, with -2, -3
-// and so on for a slug already used that day.
+// its parent's. A new plan's name is <date>-<slug>, with -2, -3 and so on
+// for a slug this host already used that day.
 func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 	if strings.TrimSpace(o.Title) == "" {
 		return Created{}, refusal.New("a plan needs a title. Pass one with `--title`")
@@ -140,37 +148,31 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 	if !slugPattern.MatchString(o.Slug) {
 		return Created{}, refusal.New("slug %q is not lower-case words joined by hyphens. Pass one such as `--slug add-run-loop`", o.Slug)
 	}
-	ready, err := c.Init()
-	if err != nil {
+	if _, err := c.Init(); err != nil {
 		return Created{}, err
 	}
-	host, excluded := ready.Dir, ready.Excluded
 	base := now.Format("2006-01-02") + "-" + o.Slug
-	name := ""
-	for i := 1; name == "" && i < 1000; i++ {
+	var p Plan
+	for i := 1; p.Name == "" && i < 1000; i++ {
 		try := base
 		if i > 1 {
 			try = fmt.Sprintf("%s-%d", base, i)
 		}
-		switch err := os.Mkdir(filepath.Join(host, try), 0o755); {
+		candidate := Plan{Dir: c.Dir, Name: try + "." + c.Host, Host: c.Host, Own: true}
+		switch err := writeNew(candidate.file(""), planText(o, candidate.Name, map[string]string{"HOST": c.Host}, true)); {
 		case err == nil:
-			name = try
+			p = candidate
 		case !errors.Is(err, fs.ErrExist):
 			return Created{}, err
 		}
 	}
-	if name == "" {
-		return Created{}, fmt.Errorf("no free directory for %s under %s", base, host)
+	if p.Name == "" {
+		return Created{}, fmt.Errorf("no free name for %s.%s under %s", base, c.Host, c.Dir)
 	}
-	p := Plan{Dir: filepath.Join(host, name), Name: name}
-	text := planText(o, name, map[string]string{"HOST": c.Host}, true)
-	if err := writeNew(p.file(""), text); err != nil {
+	if err := p.append("#+title: Log of " + p.Name + "\n"); err != nil {
 		return Created{}, err
 	}
-	if err := p.append("#+title: Log of " + name + "\n"); err != nil {
-		return Created{}, err
-	}
-	return Created{Plan: p.Dir, File: p.file(""), ID: name, Log: p.log(), Excluded: excluded}, nil
+	return Created{Plan: p.file(""), File: p.file(""), ID: p.Name, Log: p.log()}, nil
 }
 
 func (c Config) newPart(o NewOptions) (Created, error) {
@@ -181,21 +183,24 @@ func (c Config) newPart(o NewOptions) (Created, error) {
 	if err != nil {
 		return Created{}, err
 	}
+	if err := p.checkOwn(); err != nil {
+		return Created{}, err
+	}
 	items, err := p.items()
 	if err != nil {
 		return Created{}, err
 	}
 	if item, ok := items[o.Part]; !ok || item.File != p.file("") {
-		return Created{}, refusal.New("%s is not in %s's Distribution. Ask whoever coordinates the plan to add it, or use a part ID `agent-plan status %s` lists", o.Part, p.Name, p.Dir)
+		return Created{}, refusal.New("%s is not in %s's Distribution. Ask whoever coordinates the plan to add it, or use a part ID `agent-plan status %s` lists", o.Part, p.Name, p.file(""))
 	}
-	text := planText(o, o.Part, map[string]string{"PARENT": "[[file:plan.org]]"}, false)
+	text := planText(o, o.Part, map[string]string{"PARENT": "[[file:" + filepath.Base(p.file("")) + "]]"}, false)
 	file := p.file(o.Part)
 	if err := writeNew(file, text); errors.Is(err, fs.ErrExist) {
-		return Created{}, refusal.New("%s already has its plan file, %s. Edit that file instead; `agent-plan goal %s --part %s` prints its goal", o.Part, file, p.Dir, o.Part)
+		return Created{}, refusal.New("%s already has its plan file, %s. Edit that file instead; `agent-plan goal %s --part %s` prints its goal", o.Part, file, p.file(""), o.Part)
 	} else if err != nil {
 		return Created{}, err
 	}
-	return Created{Plan: p.Dir, File: file, ID: o.Part, Log: p.log()}, nil
+	return Created{Plan: p.file(""), File: file, ID: o.Part, Log: p.log()}, nil
 }
 
 // planText is a new plan file: the parent's sections, and Distribution for
@@ -247,112 +252,88 @@ func writeNew(path, text string) error {
 	return f.Close()
 }
 
-// Ready is a host's plans directory, made ready for plans.
+// Ready is the plans directory, made ready for plans.
 type Ready struct {
-	Dir      string `json:"dir"`
-	Excluded string `json:"excluded,omitempty"`
+	Dir string `json:"dir"`
 }
 
-// Init makes this host's plans directory and lists the plans directory in
-// the exclude file of the repository around it, as New does, for a session
-// whose sandbox may write only inside the host's directory.
+// ignore keeps the logs' lock files, which only this machine's agent-plan
+// reads, out of the repository the plans directory is in.
+const ignore = "*.lock\n"
+
+// Init makes the plans directory, with a .gitignore for the lock files if
+// it has none, as New does, for a session whose sandbox may write only
+// inside it.
 func (c Config) Init() (Ready, error) {
-	host := filepath.Join(c.Dir, c.Host)
-	if err := os.MkdirAll(host, 0o755); err != nil {
+	if err := os.MkdirAll(c.Dir, 0o755); err != nil {
 		return Ready{}, err
 	}
-	excluded, err := c.exclude()
-	return Ready{Dir: host, Excluded: excluded}, err
+	err := writeNew(filepath.Join(c.Dir, ".gitignore"), ignore)
+	if err != nil && !errors.Is(err, fs.ErrExist) {
+		return Ready{}, err
+	}
+	return Ready{Dir: c.Dir}, nil
 }
 
-// exclude lists the plans directory in the exclude file of the repository
-// whose top level holds it, the one the ring commits to, and returns that
-// file. It does nothing when no repository has its top level there: git
-// runs aimed at that directory alone, never at the caller's repository.
-func (c Config) exclude() (string, error) {
-	parent := filepath.Dir(c.Dir)
-	top, err := git.Run("-C", parent, "rev-parse", "--show-toplevel")
-	if err != nil {
-		return "", nil
-	}
-	realTop, err1 := filepath.EvalSymlinks(top)
-	realParent, err2 := filepath.EvalSymlinks(parent)
-	if err1 != nil || err2 != nil || realTop != realParent {
-		return "", nil
-	}
-	path, err := git.Run("-C", parent, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude")
-	if err != nil {
-		return "", err
-	}
-	name := filepath.Base(c.Dir)
-	entry := "/" + name + "/"
-	existing, err := os.ReadFile(path)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return "", err
-	}
-	for _, line := range strings.Split(string(existing), "\n") {
-		if l := strings.TrimSpace(line); l == entry || l == name || l == name+"/" || l == "/"+name {
-			return path, nil
-		}
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return "", err
-	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	if len(existing) > 0 && !strings.HasSuffix(string(existing), "\n") {
-		entry = "\n" + entry
-	}
-	if _, err := f.WriteString(entry + "\n"); err != nil {
-		return "", err
-	}
-	return path, f.Close()
-}
-
-// Plan is one plan's directory.
+// Plan is one plan's files in the plans directory.
 type Plan struct {
 	Dir  string `json:"dir"`
 	Name string `json:"name"`
+	Host string `json:"host"`
+	// Own is whether the plan is this host's, which alone writes it.
+	Own bool `json:"own"`
 }
 
 func (p Plan) file(part string) string {
 	if part == "" {
-		return filepath.Join(p.Dir, "plan.org")
+		return filepath.Join(p.Dir, p.Name+".org")
 	}
-	return filepath.Join(p.Dir, part+".org")
+	return filepath.Join(p.Dir, p.Name+"."+part+".org")
 }
 
-func (p Plan) log() string { return filepath.Join(p.Dir, "log.org") }
+func (p Plan) log() string { return filepath.Join(p.Dir, p.Name+".log.org") }
 
-// Open finds the plan arg names: its directory, or a file in it. Only a
-// plan directory under the plans directory is one.
+// File is the plan's own file.
+func (p Plan) File() string { return p.file("") }
+
+// checkOwn refuses a write to another host's plan, whose files that host's
+// sync alone commits.
+func (p Plan) checkOwn() error {
+	if p.Own {
+		return nil
+	}
+	return refusal.New("%s is %s's plan, and only agent-plan on %s writes its files. Run the command on %s, or put it in your report for Wesley", p.Name, p.Host, p.Host, p.Host)
+}
+
+// Open finds the plan arg names: one of its files under the plans
+// directory, or its name.
 func (c Config) Open(arg string) (Plan, error) {
 	notPlan := func() error {
-		return refusal.New("%s is not a plan under %s. Pass the directory `agent-plan new` printed, or find it with `agent-plan find`", arg, c.Dir)
+		return refusal.New("%s is not a plan under %s. Pass the plan file `agent-plan new` printed, or find it with `agent-plan find`", arg, c.Dir)
 	}
-	dir, err := filepath.Abs(arg)
+	path := arg
+	if !strings.Contains(arg, "/") {
+		if _, err := os.Lstat(arg); err != nil {
+			path = filepath.Join(c.Dir, arg+".org")
+		}
+	}
+	path, err := filepath.Abs(path)
 	if err != nil {
 		return Plan{}, err
 	}
-	if info, err := os.Stat(dir); err == nil && !info.IsDir() {
-		dir = filepath.Dir(dir)
-	}
-	real, err := filepath.EvalSymlinks(dir)
+	real, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return Plan{}, notPlan()
 	}
 	root, err := filepath.EvalSymlinks(c.Dir)
-	if err != nil {
+	if err != nil || filepath.Dir(real) != root {
 		return Plan{}, notPlan()
 	}
-	rel, err := filepath.Rel(root, real)
-	if err != nil || strings.HasPrefix(rel, "..") || len(strings.Split(rel, string(filepath.Separator))) != 2 {
+	m := planFile.FindStringSubmatch(filepath.Base(real))
+	if m == nil {
 		return Plan{}, notPlan()
 	}
-	p := Plan{Dir: real, Name: filepath.Base(real)}
+	p := Plan{Dir: root, Name: m[1], Host: m[2], Own: m[2] == c.Host}
 	for _, f := range []string{p.file(""), p.log()} {
 		if info, err := os.Lstat(f); err != nil || !info.Mode().IsRegular() {
 			return Plan{}, notPlan()
@@ -367,7 +348,7 @@ type item struct {
 	Props                 map[string]string
 }
 
-// files are the plan's own files: plan.org, then each part's in order.
+// files are the plan's own files: the plan's, then each part's in order.
 func (p Plan) files() ([]string, error) {
 	entries, err := os.ReadDir(p.Dir)
 	if err != nil {
@@ -375,8 +356,9 @@ func (p Plan) files() ([]string, error) {
 	}
 	var parts []int
 	for _, e := range entries {
-		if m := partFile.FindStringSubmatch(e.Name()); m != nil && e.Type().IsRegular() {
-			n, _ := strconv.Atoi(m[1][1:])
+		if m := planFile.FindStringSubmatch(e.Name()); m != nil && m[1] == p.Name && partPattern.MatchString(m[3]) &&
+			e.Type().IsRegular() {
+			n, _ := strconv.Atoi(m[3][1:])
 			parts = append(parts, n)
 		}
 	}
@@ -386,6 +368,14 @@ func (p Plan) files() ([]string, error) {
 		files = append(files, p.file(fmt.Sprintf("P%d", n)))
 	}
 	return files, nil
+}
+
+// partOf is the part whose file f is, or "" for the plan's own.
+func partOf(f string) string {
+	if m := planFile.FindStringSubmatch(filepath.Base(f)); m != nil && partPattern.MatchString(m[3]) {
+		return m[3]
+	}
+	return ""
 }
 
 // itemList is every heading with an ID, in file order; the first of a
@@ -402,10 +392,7 @@ func (p Plan) itemList() ([]item, error) {
 		if err != nil {
 			return nil, err
 		}
-		part := ""
-		if m := partFile.FindStringSubmatch(filepath.Base(f)); m != nil {
-			part = m[1]
-		}
+		part := partOf(f)
 		for _, h := range parseOrg(string(data)) {
 			id := h.Props["ID"]
 			if id == "" || seen[id] {
@@ -439,7 +426,7 @@ func (p Plan) Goal(part string) (string, error) {
 	file := p.file(part)
 	data, err := os.ReadFile(file)
 	if errors.Is(err, fs.ErrNotExist) {
-		return "", refusal.New("%s has no plan file for part %s. The part's sub-agent creates it with `agent-plan new --parent %s --part %s`", p.Name, part, p.Dir, part)
+		return "", refusal.New("%s has no plan file for part %s. The part's sub-agent creates it with `agent-plan new --parent %s --part %s`", p.Name, part, p.file(""), part)
 	}
 	if err != nil {
 		return "", err
@@ -469,12 +456,35 @@ type FindOptions struct {
 
 // Found is a plan file that matched.
 type Found struct {
+	// Plan is the plan's own file, File the one that matched.
 	Plan    string   `json:"plan"`
 	File    string   `json:"file"`
 	Part    string   `json:"part,omitempty"`
 	Title   string   `json:"title"`
 	State   string   `json:"status"`
 	Matched []string `json:"matched"`
+}
+
+// ownPlans are this host's plans, newest first.
+func (c Config) ownPlans() ([]Plan, error) {
+	entries, err := os.ReadDir(c.Dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []Plan
+	for i := len(entries) - 1; i >= 0; i-- {
+		m := planFile.FindStringSubmatch(entries[i].Name())
+		if m == nil || m[2] != c.Host || m[3] != "" {
+			continue
+		}
+		if p, err := c.Open(filepath.Join(c.Dir, entries[i].Name())); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out, nil
 }
 
 // Find lists this host's plan files that match, newest plan first.
@@ -489,19 +499,12 @@ func (c Config) Find(o FindOptions) ([]Found, error) {
 			worktree = real
 		}
 	}
-	dirs, err := os.ReadDir(filepath.Join(c.Dir, c.Host))
-	if errors.Is(err, fs.ErrNotExist) {
-		return []Found{}, nil
-	}
+	own, err := c.ownPlans()
 	if err != nil {
 		return nil, err
 	}
 	found := []Found{}
-	for i := len(dirs) - 1; i >= 0; i-- {
-		p, err := c.Open(filepath.Join(c.Dir, c.Host, dirs[i].Name()))
-		if err != nil {
-			continue
-		}
+	for _, p := range own {
 		files, err := p.files()
 		if err != nil {
 			continue
@@ -543,11 +546,7 @@ func (c Config) Find(o FindOptions) ([]Found, error) {
 			if len(matched) == 0 {
 				continue
 			}
-			part := ""
-			if m := partFile.FindStringSubmatch(filepath.Base(f)); m != nil {
-				part = m[1]
-			}
-			found = append(found, Found{Plan: p.Dir, File: f, Part: part, Title: orgTitle(string(data)),
+			found = append(found, Found{Plan: p.file(""), File: f, Part: partOf(f), Title: orgTitle(string(data)),
 				State: top.Props["STATUS"], Matched: matched})
 		}
 	}

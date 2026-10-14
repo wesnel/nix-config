@@ -41,15 +41,22 @@ with lib; let
             f.write(tomlkit.dumps(doc))
   '';
 
-  # Adds a path to the writable roots of Codex's workspace-write sandbox,
-  # keeping the rest of the file and any roots set from inside Codex.
+  # Makes a path the one writable root of Codex's workspace-write sandbox
+  # that this module manages, keeping the rest of the file and any roots set
+  # from inside Codex. The third argument records the root added last time,
+  # which is removed when the path changes; no other root is removed.
   addWritableRoot = pkgs.writers.writePython3 "codex-writable-root" {libraries = [pkgs.python3Packages.tomlkit];} ''
     import os
     import sys
 
     import tomlkit
 
-    path, root = sys.argv[1], sys.argv[2]
+    path, root, state = sys.argv[1], sys.argv[2], sys.argv[3]
+
+    previous = None
+    if os.path.exists(state):
+        with open(state) as f:
+            previous = f.read().strip() or None
 
     doc = tomlkit.document()
     if os.path.exists(path):
@@ -58,11 +65,23 @@ with lib; let
 
     table = doc.setdefault("sandbox_workspace_write", tomlkit.table())
     roots = table.setdefault("writable_roots", tomlkit.array())
+    changed = False
+    if previous and previous != root:
+        for i in reversed(range(len(roots))):
+            if str(roots[i]) == previous:
+                del roots[i]
+                changed = True
     if root not in [str(r) for r in roots]:
         roots.append(root)
+        changed = True
+    if changed:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
             f.write(tomlkit.dumps(doc))
+
+    os.makedirs(os.path.dirname(state), exist_ok=True)
+    with open(state, "w") as f:
+        f.write(root + "\n")
   '';
 
   plans = config.wgn.home.llm.plans;
@@ -179,13 +198,14 @@ in {
       home.packages = [prLoopLauncher];
     })
 
-    # This host's plans are written with `agent-plan` and the file tools,
-    # from inside the workspace-write sandbox too. Merged into the
-    # config.toml Codex writes, as the MCP servers are.
+    # Plans are written with `agent-plan` and the file tools, from inside
+    # the workspace-write sandbox too. Merged into the config.toml Codex
+    # writes, as the MCP servers are.
     {
       home.activation.codexPlansRoot = lib.hm.dag.entryAfter ["writeBoundary"] ''
         if [ -z "''${DRY_RUN:-}" ]; then
-          ${addWritableRoot} "$HOME/.codex/config.toml" ${escapeShellArg "${plans.dir}/${plans.host}"} \
+          ${addWritableRoot} "$HOME/.codex/config.toml" ${escapeShellArg plans.dir} \
+            ${escapeShellArg "${config.xdg.stateHome}/codex/plans-root"} \
             || warnEcho "The plans directory was not made writable in Codex's sandbox."
         fi
       '';
