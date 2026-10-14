@@ -25,9 +25,10 @@ type fakeThread struct {
 // fakeGitHub answers the GraphQL that replying and resolving make, for the
 // viewer "me" in o/r.
 type fakeGitHub struct {
-	threads  map[string]*fakeThread
-	replies  map[string]string
-	resolved []string
+	threads   map[string]*fakeThread
+	replies   map[string]string
+	resolved  []string
+	failReply string
 }
 
 func (f *fakeGitHub) graphQL(query string, vars map[string]any, out any) error {
@@ -39,6 +40,9 @@ func (f *fakeGitHub) graphQL(query string, vars map[string]any, out any) error {
 	case strings.Contains(query, "addPullRequestReviewThreadReply"):
 		input := vars["input"].(map[string]any)
 		id := input["pullRequestReviewThreadId"].(string)
+		if id == f.failReply {
+			return errors.New("GraphQL: something broke")
+		}
 		f.replies[id] = input["body"].(string)
 		f.threads[id].last = "me"
 		data = map[string]any{"addPullRequestReviewThreadReply": map[string]any{"comment": map[string]any{"url": "https://x/" + id}}}
@@ -92,6 +96,8 @@ func fakeRepo(t *testing.T) *fakeGitHub {
 		"bot1":     {pr: 1, head: "feat", author: "me", state: "OPEN", starter: "copilot-pull-request-reviewer", last: "copilot-pull-request-reviewer"},
 		"human2":   {pr: 2, head: "other", author: "me", state: "OPEN", starter: "josh", last: "josh"},
 		"bot2":     {pr: 2, head: "other", author: "me", state: "OPEN", starter: "copilot-pull-request-reviewer", last: "copilot-pull-request-reviewer"},
+		"bot3":     {pr: 2, head: "other", author: "me", state: "OPEN", starter: "copilot-pull-request-reviewer", last: "copilot-pull-request-reviewer"},
+		"done2":    {pr: 2, head: "other", author: "me", state: "OPEN", starter: "copilot-pull-request-reviewer", last: "me", resolved: true},
 		"theirs":   {pr: 3, head: "x", author: "josh", state: "OPEN", starter: "me", last: "me"},
 		"closed":   {pr: 4, head: "y", author: "me", state: "MERGED", starter: "josh", last: "josh"},
 		"answered": {pr: 2, head: "other", author: "me", state: "OPEN", starter: "josh", last: "me"},

@@ -37,7 +37,8 @@ create, amend or rewrite commits.
   and resolve each thread you have answered, including ones answered without
   a change. Leave one open only when it still needs a decision, and say so in
   the reply. On Wesley's own pull requests, `pr-loop threads`, `reply` and
-  `resolve` do this for review bots' threads; see `pr-loop --help`.
+  `resolve` do this for review bots' threads, and `pr-loop reply --from FILE`
+  answers many threads at once; `pr-loop --help` has the file format.
 
 ## Know which branch you are on
 

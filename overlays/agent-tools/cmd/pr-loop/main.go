@@ -41,6 +41,7 @@ authenticated user in the same repository.
   push [--dry-run] [BRANCH...]  push through the GitHub API, atomically
   threads [--all] PR          unresolved review threads, labelled by bot
   reply THREAD --body-file F  reply inside a bot's thread (- reads stdin)
+  reply --from F              post the replies in a reply file (- reads stdin)
   resolve THREAD              resolve a bot's thread whose last comment is yours
   request [--bot B] [--accept-failure CHECK] [PR...]
                               ask each bot to review the head, once CI allows
@@ -58,6 +59,12 @@ reply and resolve take a thread a review bot started on an open PR by the
 authenticated user in this repository, and need no begin. In a loop session
 (relayed, or with PR_LOOP_SESSION=1), and on a PR registered with begin, they
 take only the loop's PRs.
+
+A reply file has a section per thread: a line "=== thread THREAD", or
+"=== thread THREAD resolve" to resolve the thread after replying, then the
+Markdown reply up to the next such line. Every line starting "=== thread" is
+a header. Every thread is checked before anything is posted; threads already
+resolved are skipped and reported.
 
 With ` + relay.URLEnv + ` set, every command except guard is sent to that
 sandbox-relay, where sign and end are refused: run those outside the session.
@@ -79,23 +86,29 @@ func relayRefusal(argv []string) string {
 		}
 		return fmt.Sprintf("%q is only run on the host", name)
 	}
-	// The client sends a --body-file itself; a path here would name a file on
-	// the host, which the sandbox must not be able to read out through GitHub.
+	// The client sends a --body-file or --from itself; a path here would name a
+	// file on the host, which the sandbox must not be able to read out through
+	// GitHub.
 	for i, a := range argv {
-		if (a == "--body-file" && (i+1 >= len(argv) || argv[i+1] != "-")) ||
-			(strings.HasPrefix(a, "--body-file=") && a != "--body-file=-") || a == "-body-file" || strings.HasPrefix(a, "-body-file=") {
-			return "a relayed command takes its body on stdin"
+		for _, f := range fileFlags {
+			if (a == "--"+f && (i+1 >= len(argv) || argv[i+1] != "-")) ||
+				(strings.HasPrefix(a, "--"+f+"=") && a != "--"+f+"=-") || a == "-"+f || strings.HasPrefix(a, "-"+f+"=") {
+				return "a relayed command takes its body on stdin"
+			}
 		}
 	}
 	return ""
 }
 
-// forward sends argv to the relay, reading a --body-file here, where the
-// sandbox can see it, and passing it on stdin.
+// fileFlags name files that forward reads in the sandbox and sends as stdin.
+var fileFlags = []string{"body-file", "from"}
+
+// forward sends argv to the relay, reading a --body-file or --from here,
+// where the sandbox can see it, and passing it on stdin.
 func forward(url string, argv []string) int {
 	var stdin []byte
 	for i, a := range argv {
-		if a == "--body-file" && i+1 < len(argv) {
+		if (a == "--body-file" || a == "--from") && i+1 < len(argv) {
 			var err error
 			if argv[i+1] == "-" {
 				stdin, err = io.ReadAll(os.Stdin)
@@ -149,6 +162,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		bodyFile = flags.String("body-file", "", "")
 		base     = flags.String("base", "", "")
 		title    = flags.String("title", "", "")
+		from     = flags.String("from", "", "")
 		lines    = flags.Int("lines", 200, "")
 		timeout  = flags.Int("timeout", 240, "")
 		interval = flags.Int("interval", 30, "")
@@ -237,7 +251,9 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			}
 		}
 	case "reply":
-		if err = need(1); err == nil {
+		if *from != "" {
+			result, err = replyFrom(*from, *bodyFile, rest, stdin)
+		} else if err = need(1); err == nil {
 			var text string
 			if text, err = body(); err == nil {
 				result, err = loop.Reply(rest[0], text)
@@ -309,10 +325,32 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	return cli.Report("pr-loop", result, err, code, stdout, stderr)
 }
 
+// replyFrom posts the replies in a reply file (- for stdin).
+func replyFrom(path, bodyFile string, rest []string, stdin io.Reader) (any, error) {
+	if bodyFile != "" || len(rest) != 0 {
+		return nil, errors.New("reply --from takes no THREAD and no --body-file; the file names the threads")
+	}
+	var data []byte
+	var err error
+	if path == "-" {
+		data, err = io.ReadAll(stdin)
+	} else {
+		data, err = os.ReadFile(path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	plan, err := loop.ParseReplies(string(data))
+	if err != nil {
+		return nil, err
+	}
+	return loop.ReplyAll(plan)
+}
+
 // interleave moves flags ahead of positional arguments, since the standard
 // flag package stops at the first positional one.
 func interleave(args []string) []string {
-	takesValue := map[string]bool{"-body-file": true, "--body-file": true, "-lines": true, "--lines": true,
+	takesValue := map[string]bool{"-body-file": true, "--body-file": true, "-from": true, "--from": true, "-lines": true, "--lines": true,
 		"-timeout": true, "--timeout": true, "-interval": true, "--interval": true, "-bot": true, "--bot": true,
 		"-accept-failure": true, "--accept-failure": true, "-base": true, "--base": true, "-title": true, "--title": true}
 	var flags, positional []string

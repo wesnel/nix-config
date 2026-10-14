@@ -167,12 +167,15 @@ func newThreadPolicy() (*threadPolicy, error) {
 
 // threadCheck is a thread the policy lets the caller answer.
 type threadCheck struct {
+	pr         int
+	resolved   bool
 	lastAuthor string
 }
 
 func (p *threadPolicy) check(id string) (*threadCheck, error) {
 	var data struct {
 		Node *struct {
+			IsResolved  bool
 			PullRequest struct {
 				Number      int
 				State       string
@@ -185,6 +188,7 @@ func (p *threadPolicy) check(id string) (*threadCheck, error) {
 		}
 	}
 	err := graphQL(`query($id: ID!) { node(id: $id) { ... on PullRequestReviewThread {
+		isResolved
 		pullRequest { number state headRefName author { login } repository { nameWithOwner } }
 		first: comments(first: 1) { nodes { author { login } } }
 		last: comments(last: 1) { nodes { author { login } } }
@@ -233,7 +237,7 @@ func (p *threadPolicy) check(id string) (*threadCheck, error) {
 	if n := data.Node.Last.Nodes; len(n) > 0 && n[0].Author != nil {
 		last = n[0].Author.Login
 	}
-	return &threadCheck{lastAuthor: last}, nil
+	return &threadCheck{pr: pr.Number, resolved: data.Node.IsResolved, lastAuthor: last}, nil
 }
 
 func postReply(id, body string) (string, error) {
