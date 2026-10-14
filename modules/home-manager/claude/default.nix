@@ -263,6 +263,9 @@ in {
             filesystem.allowWrite =
               [sessionCacheDir plans.dir]
               ++ optional darwin "${config.home.homeDirectory}/.Trash";
+
+            # Only the watcher's sync pushes plans.
+            filesystem.denyRead = [plans.repository.key];
           }
           // optionalAttrs darwin {
             # Go programs, gh and the go command among them, verify TLS

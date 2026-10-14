@@ -46,7 +46,8 @@ create, amend or rewrite commits.
 
 Every change has a plan, made with `agent-plan new` and kept true as the work
 changes. Log each step's start, completion and verification with
-`agent-plan log`, and never edit a plan's log. If Wesley asks you to plan,
+`agent-plan log`, and never edit a plan's log; a watcher syncs plans between
+hosts, never you. If Wesley asks you to plan,
 write the plan and stop: no edits outside the plan's files, no commits. The `plan-work` skill has the format and the commands.
 
 ## Reviews

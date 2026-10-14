@@ -26,7 +26,17 @@
         git.enable = true;
         gnupg.enable = true;
         go.enable = true;
-        llm.repos."ngrok-private/ngrok-agent".setup = "go tool buf generate";
+        llm = {
+          repos."ngrok-private/ngrok-agent".setup = "go tool buf generate";
+
+          # Told to pull over the devbox master below, when one is open.
+          plans.peers = [
+            {
+              ssh = "devbox";
+              command = "/home/wesley/.nix-profile/bin/agent-plan";
+            }
+          ];
+        };
         man.enable = true;
         ollama = {
           enable = true;
@@ -110,62 +120,6 @@
       };
 
       home.file.".ssh/control/.keep".text = "";
-    })
-
-    ({
-      config,
-      lib,
-      pkgs,
-      ...
-    }: let
-      plans = config.wgn.home.llm.plans;
-
-      # Mirrors SOURCE one way to HOST:DEST, only over a master connection
-      # that already exists: a new connection would wait for a touch of the
-      # YubiKey. If the master goes between the check and the copy, the copy
-      # has no key to offer and fails rather than waits. ssh is the one on
-      # PATH, which launchd sets.
-      mirror = pkgs.writeShellApplication {
-        name = "agent-plans-mirror";
-        runtimeInputs = [pkgs.rsync pkgs.coreutils];
-        text = ''
-          if [ $# -ne 2 ]; then
-            echo "usage: agent-plans-mirror SOURCE HOST:DEST" >&2
-            exit 2
-          fi
-          src=$1 dest=$2 host=''${2%%:*}
-          if [ ! -d "$src" ]; then
-            echo "$(date): $src does not exist; nothing to mirror"
-            exit 0
-          fi
-          if ! ssh -o BatchMode=yes -O check "$host" 2>/dev/null; then
-            echo "$(date): no master connection to $host; skipped"
-            exit 0
-          fi
-          timeout 120 rsync -a --delete \
-            -e "ssh -o ControlMaster=no -o BatchMode=yes -o ConnectTimeout=10 -o IdentityAgent=none -o IdentityFile=none -o ForwardAgent=no -o ClearAllForwardings=yes" \
-            "$src/" "$dest/"
-        '';
-      };
-
-      # The devbox keeps its plans at the same place relative to its home.
-      relative = lib.removePrefix "${config.home.homeDirectory}/" plans.dir;
-    in {
-      launchd.agents.agent-plans-mirror = {
-        enable = true;
-        config = {
-          ProgramArguments = [
-            (lib.getExe mirror)
-            "${plans.dir}/${plans.host}"
-            "devbox:${relative}/${plans.host}"
-          ];
-          StartInterval = 300;
-          ProcessType = "Background";
-          EnvironmentVariables.PATH = "/usr/bin:/bin";
-          StandardOutPath = "/tmp/agent-plans-mirror.log";
-          StandardErrorPath = "/tmp/agent-plans-mirror.log";
-        };
-      };
     })
 
     ({

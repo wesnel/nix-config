@@ -245,6 +245,33 @@ agent-plan tokens                        # tokens by event kind, model and effor
 
 Ask an agent only to plan, and it writes the plan and stops.
 
+`~/git/notes` is a clone of the private `wesnel/notes`, which activation
+clones where it is missing. A few seconds after a plan changes, a watcher (a
+launchd agent on macOS, a systemd path unit on Linux) runs `agent-plan
+sync`: it commits this host's plan files by name, unsigned, as "Sync plans
+from HOST", rebases onto the remote with any other edits stashed and put
+back, pushes, and on ngrok tells the devbox to pull over the devbox master
+when one is open. Its log is `/tmp/agent-plan-sync.log` on macOS and
+`journalctl --user -u agent-plan-sync` on Linux. Agents never sync: the
+guard denies `agent-plan sync`, and `agent-plan reseal PLAN`, which accepts
+a log edited by hand.
+
+git reaches the repository as `git@github-notes:wesnel/notes.git` through
+its own ssh config, `~/.config/agent-tools/notes-ssh-config`, whose only key
+is a deploy key installed from the `notes-deploy-key` secret at
+`~/.ssh/id_notes_deploy`. Until `secrets/wgn.yaml` holds that secret, the
+secret is not declared and activation says the key is missing. To set it
+up once:
+
+``` sh
+gh repo create wesnel/notes --private
+d=$(mktemp -d)
+ssh-keygen -q -t ed25519 -N '' -C notes-deploy -f "$d/key"
+gh repo deploy-key add "$d/key.pub" --repo wesnel/notes --title agent-plan-sync --allow-write
+sops set secrets/wgn.yaml '["notes-deploy-key"]' "$(jq -Rs . < "$d/key")"
+trash "$d"
+```
+
 ## pushing: private history stays private
 
 `wgn.home.git` runs `git-push-guard` before every push from every
