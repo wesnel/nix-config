@@ -48,8 +48,10 @@ authenticated user in the same repository.
   status [PR...]              CI, each bot's review, open threads, diff growth
   ci [PR...]                  checks on each head, compared with the base
   logs [--lines N] PR CHECK   the end of a failed GitHub Actions job's log
-  wait ci|reviews [--timeout S] [--interval S] [PR...]
-                              block until CI or requested reviews land (exit 3 on timeout)
+  wait ci [--sha REV] [--timeout S] [--interval S] [PR...]
+                              block until CI on each head finishes (exit 3 on timeout)
+  wait reviews [--timeout S] [--interval S] [PR...]
+                              block until requested reviews land (exit 3 on timeout)
   sign [--resume] [--no-push] squash the loop's fixups, sign with the hardware key, and
                               push the stack over SSH (outside a loop, use git sign-pass)
   end [--prune]               delete trigger comments and loop state
@@ -59,6 +61,19 @@ reply and resolve take a thread a review bot started on an open PR by the
 authenticated user in this repository, and need no begin. In a loop session
 (relayed, or with PR_LOOP_SESSION=1), and on a PR registered with begin, they
 take only the loop's PRs.
+
+ci, wait ci and logs take a PR by number or by branch and need no begin.
+Outside a loop session each must be an open PR by the authenticated user in
+this repository, by default the current branch's, or the loop's PRs where
+HEAD heads none and a loop is registered here. In a loop session they read
+the PRs named, or the loop's.
+
+wait ci prints {"result": R, "prs": [...]}, where R is passed, failed (a check
+fails that does not fail on the base), failedOnBase or timedOut, and exits 0
+once CI has finished. It waits for the PR's head to become the commit --sha
+names, or else the head branch's tip on GitHub, and never reports an earlier
+head's checks. Each failed check gives its state on the base (onBase) and,
+for a GitHub Actions job, the logs command that prints its log.
 
 A reply file has a section per thread: a line "=== thread THREAD", or
 "=== thread THREAD resolve" to resolve the thread after replying, then the
@@ -166,6 +181,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		lines    = flags.Int("lines", 200, "")
 		timeout  = flags.Int("timeout", 240, "")
 		interval = flags.Int("interval", 30, "")
+		sha      = flags.String("sha", "", "")
 		resume   = flags.Bool("resume", false, "")
 		noPush   = flags.Bool("no-push", false, "")
 		prune    = flags.Bool("prune", false, "")
@@ -274,19 +290,13 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			result, err = loop.Status(ns)
 		}
 	case "ci":
-		var ns []int
-		if ns, err = numbers(); err == nil {
-			result, err = loop.CIStatuses(ns)
-		}
+		result, err = loop.CIStatuses(rest)
 	case "logs":
 		if err = need(2); err == nil {
-			var n int
-			if n, err = strconv.Atoi(strings.TrimPrefix(rest[0], "#")); err == nil {
-				var text string
-				if text, err = loop.Logs(n, rest[1], *lines); err == nil {
-					fmt.Fprintln(stdout, text)
-					return 0
-				}
+			var text string
+			if text, err = loop.Logs(rest[0], rest[1], *lines); err == nil {
+				fmt.Fprintln(stdout, text)
+				return 0
 			}
 		}
 	case "wait":
@@ -296,13 +306,21 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		target := rest[0]
 		rest = rest[1:]
-		var ns []int
-		if ns, err = numbers(); err == nil {
-			var settled bool
-			result, settled, err = loop.Wait(target, ns, time.Duration(*timeout)*time.Second, time.Duration(*interval)*time.Second)
-			if !settled {
-				code = 3
+		wait, every := time.Duration(*timeout)*time.Second, time.Duration(*interval)*time.Second
+		settled := false
+		switch {
+		case target == "ci":
+			result, settled, err = loop.WaitCI(rest, *sha, wait, every)
+		case *sha != "":
+			err = errors.New("--sha is for wait ci")
+		default:
+			var ns []int
+			if ns, err = numbers(); err == nil {
+				result, settled, err = loop.WaitReviews(ns, wait, every)
 			}
+		}
+		if !settled {
+			code = 3
 		}
 	case "worktrees":
 		result, err = loop.Worktrees(*remove)
@@ -352,7 +370,8 @@ func replyFrom(path, bodyFile string, rest []string, stdin io.Reader) (any, erro
 func interleave(args []string) []string {
 	takesValue := map[string]bool{"-body-file": true, "--body-file": true, "-from": true, "--from": true, "-lines": true, "--lines": true,
 		"-timeout": true, "--timeout": true, "-interval": true, "--interval": true, "-bot": true, "--bot": true,
-		"-accept-failure": true, "--accept-failure": true, "-base": true, "--base": true, "-title": true, "--title": true}
+		"-accept-failure": true, "--accept-failure": true, "-base": true, "--base": true, "-title": true, "--title": true,
+		"-sha": true, "--sha": true}
 	var flags, positional []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]

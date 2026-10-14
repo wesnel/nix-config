@@ -154,7 +154,7 @@ func Status(numbers []int) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		ci, err := ciStatus(slug, n)
+		ci, err := ciStatus(slug, n, "")
 		if err != nil {
 			return nil, err
 		}
@@ -191,12 +191,16 @@ func Request(numbers []int, onlyBots, acceptFailures []string) (any, error) {
 		if !ok {
 			continue
 		}
-		ci, err := ciStatus(repo.Slug, pr.Number)
+		ci, err := ciStatus(repo.Slug, pr.Number, "")
 		if err != nil {
 			return nil, err
 		}
-		if ci.State == "pending" || ci.State == "none" {
-			return nil, refuse("CI on #%d has not finished (%s); wait first", pr.Number, strings.Join(ci.Pending, ", "))
+		if !ci.finished() {
+			reason := ci.State
+			if len(ci.Pending) > 0 {
+				reason = strings.Join(ci.Pending, ", ")
+			}
+			return nil, refuse("CI on #%d has not finished (%s); wait first", pr.Number, reason)
 		}
 		key := fmt.Sprintf("%d:%s", pr.Number, ci.HeadOid)
 		accepted := map[string]bool{}
@@ -263,9 +267,9 @@ func Request(numbers []int, onlyBots, acceptFailures []string) (any, error) {
 	return log, state.save()
 }
 
-// Wait blocks until CI finishes ("ci") or requested reviews land ("reviews").
-// It reports settled=false at the deadline rather than failing.
-func Wait(target string, numbers []int, timeout, interval time.Duration) (any, bool, error) {
+// WaitReviews blocks until requested reviews land. It reports settled=false
+// at the deadline rather than failing.
+func WaitReviews(numbers []int, timeout, interval time.Duration) (any, bool, error) {
 	slug, numbers, _, err := loopNumbers(numbers)
 	if err != nil {
 		return nil, false, err
@@ -275,15 +279,6 @@ func Wait(target string, numbers []int, timeout, interval time.Duration) (any, b
 		var statuses []any
 		settled := true
 		for _, n := range numbers {
-			if target == "ci" {
-				ci, err := ciStatus(slug, n)
-				if err != nil {
-					return nil, false, err
-				}
-				settled = settled && ci.State != "pending" && ci.State != "none"
-				statuses = append(statuses, ci)
-				continue
-			}
 			state, err := loadState(false)
 			if err != nil {
 				return nil, false, err
