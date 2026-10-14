@@ -240,7 +240,8 @@ that fails. To publish private history in one public repository on purpose:
 git -c push-guard.allowPublic=OWNER/NAME push ...
 ```
 
-In a review-loop session the guard denies setting `push-guard.*`.
+The guard (see [the guard in every session](#the-guard-in-every-session))
+denies an agent setting `push-guard.*`.
 
 ## the bot review loop
 
@@ -336,10 +337,42 @@ Linear, which the report proposes instead.
   build hold both to those examples, and fail on a denial whose reason does
   not go on to say what to do instead.
 
-An ordinary session of any agent runs with none of this, and with your
-credentials, except that the `reviewer` agent is held to the reviewer's
-rules everywhere: in Claude Code by `pr-loop guard --only reviewer` in
-`~/.claude/settings.json`, and in ECA by its deny patterns.
+An ordinary session has neither the sandbox nor the loop's rules, and runs
+with your credentials, but has the guard in every session.
+
+## the guard in every session
+
+`pr-loop guard --baseline` runs before every tool call of every session:
+
+- Claude Code: a `PreToolUse` hook in `~/.claude/settings.json` for the shell,
+  the file tools and MCP tools. `Read` is denied the credential files through
+  `permissions.deny` instead.
+- Codex: `~/.codex/hooks.json`, for every tool. Codex skips a hook until it
+  is trusted, so trust it with `/hooks` once after the first switch.
+- ECA: a `preToolCall` hook, `guard-baseline`, merged into
+  `~/.config/eca/config.json` on every switch.
+
+It denies what is yours to do: pushing (hand over `git sign-pass --push`,
+or open a draft with `pr-loop open`), merging, closing, marking ready,
+reviews and top-level comments, GitHub settings, gh's login and token, git
+credential and transport settings, remote rewrites, settings every worktree
+shares, discarding the main checkout's work, deleting unpushed history,
+reading credentials or the whole environment, ngrok API writes, switching
+the system, root, publishing packages, killing Emacs, gpg-agent, ssh,
+nix-daemon or mcp-proxy, destroying the home directory, the Nix store or
+your keys, and switching its own hooks off. A write through a claude.ai
+connector asks you first in Claude Code, and is denied in Codex. Each
+refusal says what to do instead. An agent with a loop role (`pr-owner`,
+`reviewer`, ECA's `pr-coordinator`) has that role's rules in any session.
+
+The guard reads commands as typed, through wrappers, shells and `env`, so it
+catches a forgotten rule, not a determined one. The rules ECA can also
+match as patterns are in `overlays/agent-tools/internal/guard/policy.json`,
+each with a `scope` (`baseline`, `coordinator`, `owner` or `reviewer`); the
+rest, which need the repository's state, are in the guard's Go tests.
+
+git itself does not use the keychain's GitHub login:
+`credential."https://github.com".helper` is empty in `wgn.home.git`.
 
 ## MCP servers
 

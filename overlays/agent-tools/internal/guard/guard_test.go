@@ -460,38 +460,37 @@ func TestBaselineRoles(t *testing.T) {
 	}
 }
 
-// TestOnlyReviewer covers the hook every ordinary session runs, which acts
-// only on the reviewer agent.
-func TestOnlyReviewer(t *testing.T) {
+// TestBaselineFormats covers the hook every session runs, as each agent
+// calls it: Claude Code with its agent_type, Codex with turn_id and no
+// agent, ECA with its agent's name in agent.
+func TestBaselineFormats(t *testing.T) {
 	for _, c := range []struct {
-		deny      bool
-		agentType string
-		command   string
+		event, want string
 	}{
-		{true, "reviewer", "git commit -m x"},
-		{true, "some-plugin:reviewer", "git stash"},
-		{true, "reviewer", "gh pr comment 1 -b hi"},
-		{true, "reviewer", "pr-loop setup"},
-		{false, "reviewer", "git log --oneline"},
-		{false, "reviewer", "pr-loop wait ci --timeout 3600"},
-		{false, "reviewer", "pr-loop setup-command"},
-		{false, "", "git push origin x"},
-		{false, "pr-loop:pr-owner", "pr-loop push"},
-		{false, "Explore", "git commit -m x"},
+		{`{"tool_name":"Bash","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
+		{`{"tool_name":"Bash","agent_type":"reviewer","tool_input":{"command":"git commit -m x"}}`, `"permissionDecision":"deny"`},
+		{`{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}`, ""},
+		{`{"tool_name":"Bash","turn_id":"t","tool_input":{"command":"gh pr merge 1"}}`, `"permissionDecision":"deny"`},
+		{`{"tool_name":"exec_command","turn_id":"t","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
+		{`{"tool_name":"apply_patch","turn_id":"t","tool_input":{"command":"*** Begin Patch\n*** Add File: .claude/settings.local.json\n+{\"disableAllHooks\": true}\n*** End Patch\n"}}`, `"permissionDecision":"deny"`},
+		{`{"tool_name":"apply_patch","turn_id":"t","tool_input":{"command":"*** Begin Patch\n*** Update File: main.go\n@@\n-a\n+b\n*** End Patch\n"}}`, ""},
+		{`{"hook_type":"preToolCall","agent":"code","tool_name":"shell_command","tool_input":{"command":"git push"}}`, `"approval":"deny"`},
+		{`{"hook_type":"preToolCall","agent":"code","tool_name":"shell_command","tool_input":{"command":"git commit -m x"}}`, ""},
+		{`{"hook_type":"preToolCall","agent":"pr-coordinator","tool_name":"shell_command","tool_input":{"command":"git commit -m x"}}`, `"approval":"deny"`},
+		{`{"hook_type":"preToolCall","agent":"pr-owner","tool_name":"shell_command","tool_input":{"command":"pr-loop push"}}`, `"approval":"deny"`},
+		{`{"hook_type":"preToolCall","agent":"reviewer","tool_name":"shell_command","tool_input":{"command":"git stash"}}`, `"approval":"deny"`},
 	} {
-		event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "agent_type": c.agentType,
-			"tool_input": map[string]string{"command": c.command}})
 		var out, errs bytes.Buffer
-		if code := Main([]string{"--only", "reviewer"}, bytes.NewReader(event), &out, &errs); code != 0 {
-			t.Errorf("%s %q: exit %d: %s", c.agentType, c.command, code, errs.String())
+		if code := Main([]string{"--baseline"}, strings.NewReader(c.event), &out, &errs); code != 0 {
+			t.Errorf("%s: exit %d: %s", c.event, code, errs.String())
 		}
-		if denied := strings.Contains(out.String(), `"permissionDecision":"deny"`); denied != c.deny {
-			t.Errorf("%s %q: deny=%v, output %s", c.agentType, c.command, denied, out.String())
+		if (c.want == "" && out.Len() != 0) || !strings.Contains(out.String(), c.want) {
+			t.Errorf("%s: printed %s", c.event, out.String())
 		}
 	}
 	var out, errs bytes.Buffer
-	if code := Main([]string{"--only", "nobody"}, strings.NewReader(`{"tool_name":"Bash"}`), &out, &errs); code == 0 {
-		t.Errorf("an unknown role was accepted: %s", out.String())
+	if code := Main([]string{"--only", "reviewer"}, strings.NewReader(`{"tool_name":"Bash"}`), &out, &errs); code == 0 {
+		t.Errorf("an unknown flag was accepted: %s", out.String())
 	}
 }
 

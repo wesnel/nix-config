@@ -9,10 +9,10 @@ with lib; let
 
   llm = import ../llm/lib.nix {inherit lib;};
 
-  # Loaded only by claude-pr-loop, so the guard hooks never apply to an
-  # ordinary session, except the reviewer's (see settings). The review-loop
-  # skill is shared with the other agents, and the loop's reviewer is the
-  # user-level `reviewer` agent.
+  # Loaded only by claude-pr-loop, so the loop's guard never applies to an
+  # ordinary session, which has the baseline guard (see settings). The
+  # review-loop skill is shared with the other agents, and the loop's
+  # reviewer is the user-level `reviewer` agent.
   prLoopPlugin = pkgs.runCommand "claude-pr-loop-plugin" {} ''
     mkdir -p $out/.claude-plugin $out/hooks $out/agents
     cp ${pkgs.writeText "pr-owner.md" ''
@@ -238,14 +238,14 @@ in {
               }
             ];
           }
-          # Keeps the `reviewer` agent to reading in every session; every
-          # other agent's calls pass untouched.
+          # Holds every session to the baseline: what is Wesley's to do,
+          # and the `reviewer` and `pr-owner` agents to their roles.
           {
-            matcher = "Bash|mcp__.*";
+            matcher = "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*";
             hooks = [
               {
                 type = "command";
-                command = "${getExe' pkgs.agent-tools "pr-loop"} guard --only reviewer";
+                command = "${getExe' pkgs.agent-tools "pr-loop"} guard --baseline";
               }
             ];
           }

@@ -67,6 +67,13 @@ in {
           gpgsign = true;
         };
 
+        # Nix's git names the macOS keychain as a credential helper in its
+        # system config, and the keychain holds a GitHub login, with which
+        # `git push https://github.com/...` would publish without a key touch.
+        # An empty helper empties the list for github.com, so git there uses
+        # SSH or nothing; gh and pr-loop keep their own login.
+        credential."https://github.com".helper = "";
+
         # Runs before every push from every repository, beside the
         # repository's own pre-push hook, and refuses to publish a private
         # GitHub repository's history in a public one. Only a git that

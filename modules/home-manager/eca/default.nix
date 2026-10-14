@@ -238,6 +238,44 @@ in {
       '';
     })
 
+    # config.json is ECA's own file, so the hook that holds every session to
+    # the baseline guard is merged into it on every switch rather than owned.
+    # The guard reads each call's agent, so the loop's agents get their
+    # roles' rules here too. It names `pr-loop` on PATH, which a sandboxed
+    # session reaches only where the sandbox serves it.
+    {
+      home.activation.ecaGuard = hm.dag.entryAfter ["writeBoundary"] ''
+        conf="${config.xdg.configHome}/eca/config.json"
+        hook=${escapeShellArg (builtins.toJSON {
+          type = "preToolCall";
+          matcher = ".*";
+          visible = false;
+          description = "pr-loop guard: what is Wesley's to do";
+          actions = [
+            {
+              type = "shell";
+              shell = "pr-loop guard --baseline";
+            }
+          ];
+        })}
+
+        if [ ! -e "$conf" ]; then
+          current='{}'
+        else
+          current=$(cat "$conf")
+        fi
+
+        if merged=$(printf '%s' "$current" | ${pkgs.jq}/bin/jq --argjson hook "$hook" '.hooks."guard-baseline" = $hook'); then
+          if [ "$merged" != "$current" ] && [ -z "''${DRY_RUN:-}" ]; then
+            mkdir -p "$(dirname "$conf")"
+            printf '%s\n' "$merged" > "$conf"
+          fi
+        else
+          warnEcho "$conf is not plain JSON, so the guard was not registered with ECA."
+        fi
+      '';
+    }
+
     # Only Gondolin can map a host service and inject a secret into the guest.
     (optionalAttrs (options ? home.programs.wgn.emacs.eca.sandbox.secretFiles) (mkIf (mcpProxy.enable && gondolin) {
       home.programs.wgn.emacs.eca.sandbox = {
