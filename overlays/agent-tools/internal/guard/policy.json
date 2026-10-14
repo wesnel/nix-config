@@ -31,10 +31,17 @@
   },
   {
     "why": "Repository hooks stay on.",
-    "scope": "coordinator",
+    "scope": "baseline",
     "pattern": ".*--no-verify.*",
     "deny": ["git commit --no-verify --fixup=abc"],
     "allow": ["git commit --fixup=abc", "grep -rn -e '--no-verif[y]' ."]
+  },
+  {
+    "why": "Tags are Wesley's to make; listing and verifying them is fine.",
+    "scope": "baseline",
+    "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?tag\\b(?!\\s*($|[;&|)\\n]))(?!\\s+(-l|--list|-v|--verify|-n\\d*|--contains|--no-contains|--merged|--no-merged|--points-at|--sort|--format|--column)\\b).*",
+    "deny": ["git tag v1", "git tag -a v1 -m x", "git tag -d v1", "git -C r tag -s v1", "git tag -l && git tag v2"],
+    "allow": ["git tag", "git tag -l", "git tag --list 'v*'", "git tag -v v1", "git tag --sort=-v:refname", "grep -nE 'git\\s+tag' x"]
   },
   {
     "why": "A loop's GitHub writes go through pr-loop; reading is fine.",
