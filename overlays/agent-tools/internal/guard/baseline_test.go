@@ -602,6 +602,23 @@ func TestShellEdits(t *testing.T) {
 		{false, "cat a.go | tee " + scratch + "/copy"},
 		{false, "echo x > " + outside + "/f"},
 		{false, "cd $SOMEWHERE && echo x > a.go"},
+		{true, `python3 -c "open('a.go','w').write('x')"`},
+		{true, `python3 -c 'open("a.go", "r+").write("x")'`},
+		{true, `timeout 10 python3 -c "open('a.go', mode='a').write('x')"`},
+		{true, `python -c "import pathlib; pathlib.Path('sub/b.go').write_text('x')"`},
+		{true, `node -e "require('fs').writeFileSync('a.go', 'x')"`},
+		{true, `node --eval "fs.appendFileSync('sub/b.go', 'x')"`},
+		{true, `ruby -e "File.write('a.go', 'x')"`},
+		{true, `ruby -e "File.open('a.go', 'w') { |f| f << 'x' }"`},
+		{false, `python3 -c "print(open('a.go').read())"`},
+		{false, `python3 -c "open('a.go', 'r')"`},
+		{false, `python3 -c "import pathlib; print(pathlib.Path('a.go').read_text())"`},
+		{false, `node -e "console.log(require('fs').readFileSync('a.go', 'utf8'))"`},
+		{false, `ruby -e "puts File.read('a.go')"`},
+		{false, `python3 -c "open('new.txt', 'w').write('x')"`},
+		{false, `ruby -e "File.write('build/out.log', 'x')"`},
+		{false, `python3 -c "open('` + scratch + `/out.txt', 'w').write('x')"`},
+		{false, `python3 script.py a.go`},
 	}
 	for _, c := range cases {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {

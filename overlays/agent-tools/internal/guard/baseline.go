@@ -613,7 +613,8 @@ const shellEdit = "`%s` is a tracked file, and editing it from the shell bypasse
 	"with the exact command in the commit body."
 
 // checkShellEdit denies a command that writes a tracked file with a
-// redirection, tee, ed, or sed or perl in place, run in dir.
+// redirection, tee, ed, sed or perl in place, or an interpreter's
+// one-liner, run in dir.
 func checkShellEdit(name string, args, redirected []string, dir string) string {
 	for _, t := range editTargets(name, args, redirected) {
 		if trackedFile(expandPath(t, dir)) {
@@ -624,7 +625,8 @@ func checkShellEdit(name string, args, redirected []string, dir string) string {
 }
 
 // editTargets are the files a command edits, as it names them: its output
-// redirections, and the files of tee, ed, and sed or perl in place.
+// redirections, the files of tee, ed, and sed or perl in place, and those
+// an interpreter's one-liner writes.
 func editTargets(name string, args, redirected []string) []string {
 	var targets []string
 	for _, t := range redirected {
@@ -637,6 +639,51 @@ func editTargets(name string, args, redirected []string) []string {
 			if !strings.HasPrefix(a, "-") {
 				targets = append(targets, a)
 			}
+		}
+	}
+	return append(targets, oneLinerWrites(name, args)...)
+}
+
+var (
+	interpreter = regexp.MustCompile(`^(python[0-9.]*|node|ruby)$`)
+	// openForWriting is Python's or Ruby's open of a literal path with a
+	// literal mode, which writes when the mode has w, a, x or +.
+	openForWriting = regexp.MustCompile(`\bopen\(\s*['"]([^'"]+)['"]\s*,\s*(?:mode\s*=\s*)?['"]([^'"]*)['"]`)
+	// writeCall is a call that writes the literal path it is given.
+	writeCall = regexp.MustCompile(`\bPath\(\s*['"]([^'"]+)['"]\s*\)\s*\.\s*write_(?:text|bytes)\(|` +
+		`\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream)\(\s*['"` + "`" + `]([^'"` + "`" + `]+)['"` + "`" + `]|` +
+		`\bFile\.(?:write|binwrite)\(\s*['"]([^'"]+)['"]`)
+)
+
+// oneLinerWrites are the files a Python, Node or Ruby one-liner (-c, -e,
+// --eval) writes, as it names them in string literals: a narrow reading of
+// the usual calls, not of every way code can write.
+func oneLinerWrites(name string, args []string) []string {
+	if !interpreter.MatchString(name) {
+		return nil
+	}
+	flags := set("-e", "--eval", "-p", "--print")
+	if strings.HasPrefix(name, "python") {
+		flags = set("-c")
+	}
+	var targets []string
+	for i, a := range args {
+		code, ok := "", false
+		if flag, value, attached := strings.Cut(a, "="); attached && flags[flag] && strings.HasPrefix(flag, "--") {
+			code, ok = value, true
+		} else if flags[a] && i+1 < len(args) {
+			code, ok = args[i+1], true
+		}
+		if !ok {
+			continue
+		}
+		for _, m := range openForWriting.FindAllStringSubmatch(code, -1) {
+			if strings.ContainsAny(m[2], "wax+") {
+				targets = append(targets, m[1])
+			}
+		}
+		for _, m := range writeCall.FindAllStringSubmatch(code, -1) {
+			targets = append(targets, m[1]+m[2]+m[3])
 		}
 	}
 	return targets
