@@ -82,14 +82,16 @@ when you need to know where something belongs.
 
 1. `pr-loop stack` from the branch you were pointed at. If `linear` is false,
    stop and ask.
-2. The main worktree must be clean. Detach it (`git switch --detach`) so each
+2. If its PRs chain by their bases but GitHub's stack (`github`) is null or
+   leaves some out, run `pr-loop link` once with them, bottom first.
+3. The main worktree must be clean. Detach it (`git switch --detach`) so each
    branch can be checked out in its owner's worktree.
-3. `pr-loop begin`.
-4. Write a scope statement per PR into its notes file: the goal from the PR
+4. `pr-loop begin`.
+5. Write a scope statement per PR into its notes file: the goal from the PR
    description and its Linear ticket (read-only; the ticket ID is usually in
    the branch name, e.g. `agent-911` is `AGENT-911`), and what is explicitly
    not this PR's job.
-5. `pr-loop worktrees` creates a worktree per PR at `.pr-loop/<number>`
+6. `pr-loop worktrees` creates a worktree per PR at `.pr-loop/<number>`
    inside the repository, ignored by Git, with commit signing off in those
    worktrees only. Where Wesley configured a setup command for the
    repository, it also runs that in each one, such as generating files the
