@@ -410,7 +410,8 @@ It denies what is yours to do: pushing (hand over `git sign-pass --push`,
 or open a draft with `pr-loop open`), merging, closing, marking ready,
 reviews and top-level comments, GitHub settings, gh's login and token, git
 credential and transport settings, remote rewrites, settings every worktree
-shares, discarding the main checkout's work, deleting unpushed history,
+shares, discarding the main checkout's work, dropping or clearing the stash
+every worktree shares, deleting unpushed history,
 reading credentials or the whole environment, ngrok API writes, switching
 the system, root, publishing packages, killing Emacs, gpg-agent, ssh,
 nix-daemon or mcp-proxy, destroying the home directory, the Nix store or

@@ -21,6 +21,7 @@ import (
 const (
 	mainCheckout = "This discards work in the repository's main checkout, which holds Wesley's work in progress. Do it in a worktree of your own (`git worktree add`), or ask Wesley."
 	historyLoss  = "This deletes history git cannot get back, which is Wesley's call. Leave it, and put the command in your report for Wesley."
+	sharedStash  = "Every worktree of a repository shares one stash, so this can discard another worktree's stashed work. Leave the stash as it is, and put the command in your report for Wesley."
 	sharedConfig = "This setting is shared by every worktree and changes how git runs for Wesley too. Put the `git config` command in your report for Wesley; a worktree's own setting takes `git config --worktree`."
 	secretRead   = "This reads a credential, which stays out of the session. Use the tool that holds it (`gh`, `pr-loop`, `git`), or ask Wesley for what you need from it."
 	ngrokWrite   = "ngrok API writes reach production. Use a list or get command, or hand Wesley the command."
@@ -686,12 +687,14 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 		first = rest[0]
 	}
 	switch {
+	case sub == "stash" && (first == "drop" || first == "clear"):
+		return sharedStash
 	case sub == "reset" && has("--hard"),
 		sub == "checkout" && (has("-f", "--force") || everything()),
 		sub == "restore" && everything() && (!has("--staged", "-S") || has("--worktree", "-W")),
 		sub == "switch" && has("-f", "--force", "--discard-changes"),
 		sub == "clean" && (short("f") || has("--force")),
-		sub == "stash" && (first == "drop" || first == "clear" || has("-u", "--include-untracked", "-a", "--all")):
+		sub == "stash" && has("-u", "--include-untracked", "-a", "--all"):
 		if g.main() {
 			return mainCheckout
 		}
