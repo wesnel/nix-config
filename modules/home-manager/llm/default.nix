@@ -3,6 +3,7 @@
   config,
   emacs-skills,
   lib,
+  mattpocock-skills,
   pkgs,
   ...
 }:
@@ -590,6 +591,17 @@ in {
             sandbox = true;
           };
           coordinate-subagents = ./skills/coordinate-subagents/SKILL.md;
+
+          # Linked as published, with the repository's MIT licence beside
+          # it: the licence requires its notice in every copy.
+          writing-for-agents = {
+            source = pkgs.runCommandLocal "writing-for-agents" {} ''
+              cp -R ${mattpocock-skills}/skills/productivity/writing-for-agents $out
+              chmod u+w $out
+              cp ${mattpocock-skills}/LICENSE $out/LICENSE
+            '';
+            sandbox = true;
+          };
         }
         // optionalAttrs cfg.prLoop.enable {
           review-loop = {

@@ -46,6 +46,11 @@
       url = "github:hraban/mac-app-util";
     };
 
+    mattpocock-skills = {
+      url = "github:mattpocock/skills";
+      flake = false;
+    };
+
     mujmap = {
       url = "github:wesnel/mujmap/wesnel/add-darwin-to-flake";
     };
@@ -85,6 +90,7 @@
     flake-utils,
     home-manager,
     mac-app-util,
+    mattpocock-skills,
     mujmap,
     nixos-hardware,
     nixpkgs,
@@ -117,6 +123,7 @@
         _module.args = {
           inherit
             emacs-skills
+            mattpocock-skills
             ;
         };
       })
