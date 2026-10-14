@@ -291,19 +291,74 @@ func save(p *pending, path, branch string) error {
 	if _, err := git.Run("update-ref", BackupRef+branch, "HEAD"); err != nil {
 		return err
 	}
-	data, _ := json.MarshalIndent(p, "", "  ")
+	return writeJSON(path, p)
+}
+
+func writeJSON(path string, v any) error {
+	data, _ := json.MarshalIndent(v, "", "  ")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	return os.WriteFile(path, data, 0o644)
 }
 
-func pendingPath() (string, error) {
+// readJSON reports false when path does not exist.
+func readJSON(path string, v any) (bool, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, json.Unmarshal(data, v)
+}
+
+// statePath is where a pass on branch keeps its state of one kind: "pending"
+// while signing, from the first touch until every commit is verified, and
+// "push" from then until its branches are pushed. Each pass has its own, so a
+// pass on one branch never waits on another.
+func statePath(kind, branch string) (string, error) {
 	dir, err := stateDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "pending.json"), nil
+	return filepath.Join(dir, kind, branch+".json"), nil
+}
+
+// pushes are the branches a signed pass has still to push.
+type pushes struct {
+	Branches    []string `json:"branches"`
+	SetUpstream bool     `json:"setUpstream,omitempty"`
+}
+
+// inProgress refuses when a signing pass that has not finished involves any of
+// branches: rebasing them again would leave its --resume nothing to verify.
+func inProgress(branches []string) error {
+	dir, err := stateDir()
+	if err != nil {
+		return err
+	}
+	root := filepath.Join(dir, "pending")
+	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".json") {
+			return err
+		}
+		var other pending
+		if _, err := readJSON(path, &other); err != nil {
+			return err
+		}
+		for _, b := range append([]string{other.Branch}, other.Stacked...) {
+			if slices.Contains(branches, b) {
+				return refuse("a signing pass on %s, which also moves %s, is in progress; finish it with "+
+					"`git sign-pass --resume` on %s, or remove %s", other.Branch, b, other.Branch, path)
+			}
+		}
+		return nil
+	})
 }
 
 // fullShape is a commit as re-signing must leave it: files, author and
@@ -361,36 +416,36 @@ func defaultBase(branch string) (string, error) {
 // ref names, after checking every destination before the first touch; with
 // setUpstream as well, so is every branch that moved and has none (see
 // pushMoved).
+//
+// The signing state lasts until every commit is verified; a push that fails
+// after that leaves only the list of branches to push, which --resume retries.
 func Run(base string, resume, push, setUpstream bool) (any, error) {
-	path, err := pendingPath()
+	branch, err := git.Run("rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	if rm, _ := git.Run("rev-parse", "--git-path", "rebase-merge"); resume && exists(rm) {
+		return nil, refuse("the rebase is still in progress; touch the key and run `git rebase --continue`")
+	}
+	if branch == "HEAD" {
+		return nil, refuse("HEAD is detached; switch to the branch to sign")
+	}
+	path, err := statePath("pending", branch)
 	if err != nil {
 		return nil, err
 	}
 	var p pending
 	if resume {
-		data, err := os.ReadFile(path)
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, refuse("no signing pass is in progress")
-		}
+		found, err := readJSON(path, &p)
 		if err != nil {
 			return nil, err
 		}
-		if err := json.Unmarshal(data, &p); err != nil {
-			return nil, err
-		}
-		if rm, _ := git.Run("rev-parse", "--git-path", "rebase-merge"); exists(rm) {
-			return nil, refuse("the rebase is still in progress; touch the key and run `git rebase --continue`")
+		if !found {
+			return retryPush(branch, setUpstream)
 		}
 	} else {
-		branch, err := git.Run("rev-parse", "--abbrev-ref", "HEAD")
-		if err != nil {
-			return nil, err
-		}
-		if branch == "HEAD" {
-			return nil, refuse("HEAD is detached; switch to the branch to sign")
-		}
 		if exists(path) {
-			return nil, refuse("a signing pass is already in progress; finish it with --resume, or remove %s", path)
+			return nil, refuse("a signing pass on %s is already in progress; finish it with --resume, or remove %s", branch, path)
 		}
 		if dirty, _ := git.Run("status", "--porcelain", "--untracked-files=no"); dirty != "" {
 			return nil, refuse("this worktree has uncommitted changes; commit them (unsigned) first")
@@ -422,8 +477,11 @@ func Run(base string, resume, push, setUpstream bool) (any, error) {
 			}
 		}
 		sort.Strings(p.Stacked)
+		if err := inProgress(append([]string{branch}, p.Stacked...)); err != nil {
+			return nil, err
+		}
 		if push || setUpstream {
-			if _, _, err := pushTargets(append([]string{branch}, p.Stacked...), setUpstream); err != nil {
+			if _, _, err := pushTargets(append([]string{branch}, p.Stacked...), setUpstream, "run the pass again"); err != nil {
 				return nil, err
 			}
 		}
@@ -547,15 +605,66 @@ func Run(base string, resume, push, setUpstream bool) (any, error) {
 		result["gainedFixups"] = gained
 	}
 
+	if err := os.Remove(path); err != nil {
+		return nil, err
+	}
 	if push || setUpstream {
-		pushed, err := pushMoved(moved, setUpstream)
+		branches := make([]string, 0, len(moved))
+		for b := range moved {
+			branches = append(branches, b)
+		}
+		sort.Strings(branches)
+		pushed, err := pushAll(p.Branch, pushes{branches, setUpstream})
 		if err != nil {
 			return nil, err
 		}
 		result["pushed"] = pushed
 	}
-	os.Remove(path)
 	return result, nil
+}
+
+// pushAll records branches as still to push, then pushes them, forgetting
+// each remote's branches once it has them, so --resume on branch retries only
+// what is left.
+func pushAll(branch string, todo pushes) (map[string]string, error) {
+	path, err := statePath("push", branch)
+	if err != nil {
+		return nil, err
+	}
+	if err := writeJSON(path, todo); err != nil {
+		return nil, err
+	}
+	retry := fmt.Sprintf("run `git sign-pass --resume` on %s", branch)
+	pushed, err := pushMoved(todo.Branches, todo.SetUpstream, retry, func(done []string) error {
+		todo.Branches = slices.DeleteFunc(todo.Branches, func(b string) bool { return slices.Contains(done, b) })
+		return writeJSON(path, todo)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return pushed, os.Remove(path)
+}
+
+// retryPush pushes what a signed pass on branch has left to push.
+func retryPush(branch string, setUpstream bool) (any, error) {
+	path, err := statePath("push", branch)
+	if err != nil {
+		return nil, err
+	}
+	var todo pushes
+	found, err := readJSON(path, &todo)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, refuse("no signing pass or push is in progress on %s", branch)
+	}
+	todo.SetUpstream = todo.SetUpstream || setUpstream
+	pushed, err := pushAll(branch, todo)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"pushed": pushed}, nil
 }
 
 // target is where one branch is pushed: refs/heads/BRANCH on remote, leased
@@ -570,8 +679,10 @@ type target struct {
 // any branch that would land on its remote's default branch. Run calls it
 // before the first key touch, and pushMoved again before pushing. Branches
 // without an upstream are listed in skipped unless setUpstream; a branch
-// tracking another branch is refused either way rather than re-pointed.
-func pushTargets(branches []string, setUpstream bool) (map[string][]target, map[string]string, error) {
+// tracking another branch is refused either way rather than re-pointed. Each
+// refusal ends by saying to retry, how depending on whether keys have been
+// touched yet.
+func pushTargets(branches []string, setUpstream bool, retry string) (map[string][]target, map[string]string, error) {
 	byRemote := map[string][]target{}
 	skipped := map[string]string{}
 	for _, b := range branches {
@@ -582,7 +693,7 @@ func pushTargets(branches []string, setUpstream bool) (map[string][]target, map[
 		case remote == "." && merge != "":
 			return nil, nil, refuse("%s tracks the local branch %s, so --push has nowhere to send it; drop that with "+
 				"`git branch --unset-upstream %s` and use --set-upstream, or set its remote branch with "+
-				"`git branch --set-upstream-to=REMOTE/%s %s`", b, strings.TrimPrefix(merge, "refs/heads/"), b, b, b)
+				"`git branch --set-upstream-to=REMOTE/%s %s`; then %s", b, strings.TrimPrefix(merge, "refs/heads/"), b, b, b, retry)
 		case remote != "" && merge != "":
 			if merge != "refs/heads/"+b {
 				fix := fmt.Sprintf("`git branch --unset-upstream %s` and use --set-upstream", b)
@@ -590,7 +701,7 @@ func pushTargets(branches []string, setUpstream bool) (map[string][]target, map[
 					fix = fmt.Sprintf("`git branch --set-upstream-to=%s/%s %s`", remote, b, b)
 				}
 				return nil, nil, refuse("%s tracks %s/%s, a different branch, and --push only pushes a branch to its own "+
-					"name; point it at its own with %s", b, remote, strings.TrimPrefix(merge, "refs/heads/"), fix)
+					"name; point it at its own with %s, then %s", b, remote, strings.TrimPrefix(merge, "refs/heads/"), fix, retry)
 			}
 			t.lease, _ = git.Run("rev-parse", "--verify", "-q", "refs/remotes/"+remote+"/"+b)
 		case !setUpstream:
@@ -598,12 +709,12 @@ func pushTargets(branches []string, setUpstream bool) (map[string][]target, map[
 			continue
 		default:
 			var err error
-			if t.remote, err = pushRemote(b); err != nil {
+			if t.remote, err = pushRemote(b, retry); err != nil {
 				return nil, nil, err
 			}
 			if git.OK("rev-parse", "--verify", "-q", "refs/remotes/"+t.remote+"/"+b) {
 				return nil, nil, refuse("%s has no upstream but %s already has a branch %s; if it is this one, run "+
-					"`git branch --set-upstream-to=%s/%s %s` and then `git sign-pass --resume --push`", b, t.remote, b, t.remote, b, b)
+					"`git branch --set-upstream-to=%s/%s %s`, then %s", b, t.remote, b, t.remote, b, b, retry)
 			}
 			// An empty lease pushes only if the remote has no such branch,
 			// whatever this repository last fetched.
@@ -636,14 +747,9 @@ func defaultBranches(remote string) []string {
 // With setUpstream, a moved branch without an upstream goes in the same push
 // to its push remote, only if the remote has no branch of that name, and that
 // becomes its upstream. Every branch is checked (pushTargets) before anything
-// is pushed, so a refusal leaves the pass for --resume.
-func pushMoved(moved map[string]string, setUpstream bool) (map[string]string, error) {
-	branches := make([]string, 0, len(moved))
-	for b := range moved {
-		branches = append(branches, b)
-	}
-	sort.Strings(branches)
-	byRemote, pushed, err := pushTargets(branches, setUpstream)
+// is pushed. done hears which branches each successful push sent.
+func pushMoved(branches []string, setUpstream bool, retry string, done func([]string) error) (map[string]string, error) {
+	byRemote, pushed, err := pushTargets(branches, setUpstream, retry)
 	if err != nil {
 		return nil, err
 	}
@@ -664,7 +770,14 @@ func pushMoved(moved map[string]string, setUpstream bool) (map[string]string, er
 		}
 		fmt.Fprintf(os.Stderr, "pushing to %s; touch the key if it blinks\n", remote)
 		if git.Attached(nil, args...) != 0 {
-			return nil, fmt.Errorf("the push to %s failed; the branches are signed, so push them again by hand", remote)
+			return nil, fmt.Errorf("the push to %s failed; the branches are signed, so fix the cause and %s", remote, retry)
+		}
+		sent := make([]string, 0, len(targets))
+		for _, t := range targets {
+			sent = append(sent, t.branch)
+		}
+		if err := done(sent); err != nil {
+			return nil, err
 		}
 		for _, t := range targets {
 			pushed[t.branch] = remote + " refs/heads/" + t.branch
@@ -686,7 +799,7 @@ func pushMoved(moved map[string]string, setUpstream bool) (map[string]string, er
 // pushRemote is where a branch without an upstream is published:
 // branch.NAME.pushRemote, then remote.pushDefault, then the only remote, then
 // origin.
-func pushRemote(branch string) (string, error) {
+func pushRemote(branch, retry string) (string, error) {
 	for _, key := range []string{"branch." + branch + ".pushRemote", "remote.pushDefault"} {
 		if remote, _ := git.Run("config", "--get", key); remote != "" {
 			return remote, nil
@@ -706,6 +819,5 @@ func pushRemote(branch string) (string, error) {
 		return "", refuse("%s has no upstream and there is no remote to publish it to", branch)
 	}
 	return "", refuse("%s has no upstream and it is not clear which of the remotes %s to publish it to; "+
-		"choose with `git config remote.pushDefault REMOTE`, then run `git sign-pass --resume --set-upstream`",
-		branch, strings.Join(remotes, ", "))
+		"choose with `git config remote.pushDefault REMOTE`, then %s", branch, strings.Join(remotes, ", "), retry)
 }

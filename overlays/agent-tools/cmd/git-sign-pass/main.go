@@ -24,7 +24,10 @@ clean (ignored files aside). The unsigned tip is kept under ` + signpass.BackupR
 
   --base REF        where the branch starts (default: where it left origin's
                     default branch, or the local main or master)
-  --resume          verify and finish a pass after ` + "`git rebase --continue`" + `
+  --resume          verify and finish the current branch's pass after
+                    ` + "`git rebase --continue`" + `, or retry its push once it is
+                    signed; a pass in progress blocks only passes that would
+                    move its branches
   --push            push every branch that moved to the branch of the same
                     name on its upstream's remote, guarded by its
                     remote-tracking ref; refused, before any key touch, for a
