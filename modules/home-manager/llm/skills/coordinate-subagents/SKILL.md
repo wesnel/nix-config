@@ -7,8 +7,9 @@ description: Split work with several parts across sub-agents, each doing one par
 
 You coordinate. One sub-agent per part does that part's work on its own
 branch, in its own worktree. You own the split, the order and base of every
-stacked branch, the decisions that span parts, the check of every report and
-the hand-back. Nothing reaches GitHub until Wesley has signed and pushed.
+stacked branch, the decisions that span parts, the check of every report,
+and coalescing every branch into one signing pass that Wesley runs. Nothing
+reaches GitHub until he has signed and pushed.
 
 A bot review loop over a stack has its own skill, `review-loop`, with the same
 shape.
@@ -142,13 +143,54 @@ Before relaying a report, confirm it:
 
 Relay only what you confirmed, and say what you did not.
 
+## Coalesce
+
+The branches go to Wesley as one piece of work. Before handing back, make
+them fit together:
+
+- Settle the order of every stack and the base of every branch.
+- For each pair of branches that touch the same files,
+  `git merge-tree --write-tree <a> <b>` must exit 0. On a conflict, resolve
+  it or restack one onto the other as the `restack-branches` skill says.
+- Every `fixup!` commit names a commit in `<base>..<branch>` of its own
+  branch.
+- After any restack, rerun that branch's checks, and those of every branch
+  stacked on it.
+- For each branch, `git rev-parse --abbrev-ref <branch>@{upstream}` is the
+  branch's own name on the remote, or fails because the branch is new. Know
+  which are new.
+
 ## Hand back
 
 - For every branch, bottom of each stack first,
   `git log --format='%h %G? %s' <base>..<branch>`.
-- The signing passes as the `signing-pass` skill gives them, one per fork
-  tip, as commands Wesley types himself. Never a script that wraps them: he
-  must be able to read what he runs.
-- The worktrees stay until the passes are done; then `git worktree remove`
-  each.
+- Beside it, one `git sign-pass` command per repository, which Wesley types
+  himself, naming the top of every stack, each child of a fork included.
+  Flags come before the branch names: `--set-upstream` when any branch is
+  new, otherwise `--push`.
+
+  ```sh
+  git sign-pass --set-upstream <top of stack 1> <top of stack 2> ...
+  ```
+
+  It prints the whole plan before the first touch; that plan is his audit.
+  Never a script that wraps it: he must be able to read what he runs.
+- The worktrees stay until the pass is done. Each must be clean, since the
+  pass moves the branches checked out in them.
 - Everything that needs Wesley's decision, and everything unverified.
+
+## After the push
+
+If you are still running once Wesley has pushed:
+
+- Open a draft pull request for each new branch, based on its parent branch
+  in a stack.
+- Run the **Publish** phase: the drafted replies, and every description
+  brought up to the change as it stands.
+- For every pull request, run `pr-loop wait ci --timeout 3600` from its
+  branch in the background, and act when it exits. A failure the change
+  caused is fixed as a fixup, coalesced and handed back the same way. Any
+  other (failing on the base, a flaky test, an infrastructure fault) is
+  reported to Wesley with the evidence from its log. Never rerun CI or push
+  again in the hope that it passes.
+- When nothing is left to fix, `git worktree remove` each worktree.
