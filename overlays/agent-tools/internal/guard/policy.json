@@ -61,9 +61,10 @@
   {
     "why": "Every PR opens as a draft.",
     "scope": "baseline",
-    "pattern": ".*\\bgh\\s+pr\\s+create\\b(?!.*(--draft|\\s-d\\b)).*",
-    "deny": ["gh pr create --title t --body b", "gh pr create --fill"],
-    "allow": ["gh pr create --draft --title t --body-file b", "gh pr create -d --title t --body b"]
+    "pattern": ".*\\bgh\\s+pr\\s+create\\b(?!.*(--draft|\\s-d)(=(true|1|t|T|TRUE|True))?(\\s|$)).*",
+    "deny": ["gh pr create --title t --body b", "gh pr create --fill", "gh pr create --draft=false --title t --body b",
+      "gh pr create -d=false --title t"],
+    "allow": ["gh pr create --draft --title t --body-file b", "gh pr create -d --title t --body b", "gh pr create --draft=true --title t --body b"]
   },
   {
     "why": "Only a PR's base, title and body may change; labels, reviewers and the rest are Wesley's.",
