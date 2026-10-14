@@ -223,7 +223,11 @@ in {
         # claude-pr-loop's sandbox, which denies what it must not have.
         sandbox =
           {
-            filesystem.allowWrite = [sessionCacheDir];
+            # `trash` moves a file on the home volume into ~/.Trash, which the
+            # trash skill asks for in place of rm.
+            filesystem.allowWrite =
+              [sessionCacheDir]
+              ++ optional darwin "${config.home.homeDirectory}/.Trash";
           }
           // optionalAttrs darwin {
             # Go programs, gh and the go command among them, verify TLS
