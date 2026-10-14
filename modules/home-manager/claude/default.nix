@@ -59,7 +59,7 @@ with lib; let
       jq -n --arg tool "$tool" '{hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "deny",
-        permissionDecisionReason: ("ngrok MCP tools are read-only here, and \($tool) is not named as a read. Report what you wanted it to do instead.")
+        permissionDecisionReason: ("ngrok MCP tools are read-only here, since writes reach production, and \($tool) is not named as a read. Use a get, list or describe tool, or hand Wesley what you wanted it to do.")
       }}'
     '';
   };
