@@ -863,6 +863,11 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 		if g.main() {
 			return sweeping
 		}
+	case (sub == "switch" || sub == "checkout") && changesBranch(sub, rest, g):
+		if g.main() {
+			return "Changing branch in the repository's main checkout moves Wesley's working tree under him. " +
+				"Work in a worktree of your own (`git worktree add ../PATH BRANCH`), or ask Wesley."
+		}
 	case sub == "reflog" && (first == "expire" || first == "delete"),
 		sub == "gc" && (has("--prune=now") || has("--prune=all")),
 		sub == "prune", sub == "filter-branch", sub == "filter-repo",
@@ -929,6 +934,34 @@ func untaggedStash(args []string) bool {
 		return !named
 	}
 	return false
+}
+
+// changesBranch reports whether `git switch` or `git checkout` with these
+// arguments moves the worktree to another branch or commit, rather than
+// detaching where it is or checking out files.
+func changesBranch(sub string, args []string, g gitState) bool {
+	var positional []string
+	for _, a := range args {
+		switch {
+		case a == "-h" || a == "--help" || a == "--":
+			return false
+		case a == "-" || !strings.HasPrefix(a, "-"):
+			positional = append(positional, a)
+		case set("-c", "-C", "--create", "--force-create", "-b", "-B", "--orphan")[strings.SplitN(a, "=", 2)[0]]:
+			return true
+		}
+	}
+	if sub == "switch" {
+		return len(positional) > 0
+	}
+	if len(positional) != 1 {
+		return false
+	}
+	if positional[0] == "-" {
+		return true
+	}
+	_, commit := g.run("rev-parse", "--verify", "-q", positional[0]+"^{commit}")
+	return commit
 }
 
 // sharedKeys are the git config keys whose shared value is Wesley's.
