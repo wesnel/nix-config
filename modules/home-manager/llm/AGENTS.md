@@ -153,7 +153,8 @@ worth acting on even when the exploit does not reproduce.
 A failure is no different. Reproduce it before fixing it, and show it gone
 afterwards with the same reproduction; for an intermittent one, show how often
 it fails before and after. A retry, a skip or a loosened assertion that hides a
-failure is not a fix unless Wesley asked for one.
+failure is not a fix unless Wesley asked for one. Load the `diagnose-failure`
+skill before looking for a failure's cause.
 
 ## Tests
 
