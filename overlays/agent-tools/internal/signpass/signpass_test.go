@@ -9,13 +9,15 @@ import (
 	"testing"
 
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
 )
 
 func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-c", "user.name=T", "-c", "user.email=t@e", "-c", "commit.gpgsign=false"}, args...)...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	cmd.Env = append(gitenv.Without(os.Environ()), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -61,6 +63,7 @@ func TestRun(t *testing.T) {
 	before := gitIn(t, repo, "log", "--format=%T %s", "main..upper")
 
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	gitenvtest.Decoy(t)
 	git.Dir = repo
 	defer func() { git.Dir = "" }()
 	result, err := Run("", false, false, false)
@@ -176,6 +179,7 @@ func TestWorktreeBranch(t *testing.T) {
 	os.WriteFile(filepath.Join(wt, "build"), []byte("output\n"), 0o644)
 
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	gitenvtest.Decoy(t)
 	git.Dir = repo
 	defer func() { git.Dir = "" }()
 	check := func(result any, wantA string) {
@@ -230,6 +234,7 @@ func TestWorktreeBranch(t *testing.T) {
 	// A worktree busy rebasing its branch is refused too.
 	rebase := exec.Command("git", "-c", "commit.gpgsign=false", "rebase", "-q", "--exec", "false", "main")
 	rebase.Dir = wt
+	rebase.Env = gitenv.Without(os.Environ())
 	rebase.Run()
 	if _, err := Run("", false, false, false); err == nil || !strings.Contains(err.Error(), "being rebased") {
 		t.Errorf("a worktree mid-rebase: %v", err)

@@ -2,7 +2,11 @@
 // repository git acts on, and the means to clear them.
 package gitenv
 
-import "os"
+import (
+	"os"
+	"slices"
+	"strings"
+)
 
 // Location is the environment that would point git somewhere other than the
 // directory it runs in. git sets it for commands it starts (rebase --exec,
@@ -16,6 +20,20 @@ var Location = []string{
 // commandConfig is configuration that `git -c` hands down to the commands it
 // starts.
 var commandConfig = []string{"GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT"}
+
+// Without is env, as os.Environ returns it, minus Location: the environment
+// for a git command aimed at a directory of its own, or a program started in
+// one, which must not act on the repository the caller's environment names.
+func Without(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if !slices.Contains(Location, name) {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
 
 // Clear removes Location from this process's environment.
 func Clear() {

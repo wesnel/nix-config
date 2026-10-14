@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/repos"
 )
 
@@ -46,6 +47,7 @@ func RunSetup(command string, dirs []string, log io.Writer) []SetupRun {
 		fmt.Fprintf(log, "pr-loop: setup in %s: %s\n", dir, command)
 		cmd := exec.Command("sh", "-c", command)
 		cmd.Dir = dir
+		cmd.Env = gitenv.Without(os.Environ())
 		cmd.Stdout, cmd.Stderr = log, log
 		run := SetupRun{Dir: dir}
 		if err := cmd.Run(); err != nil {

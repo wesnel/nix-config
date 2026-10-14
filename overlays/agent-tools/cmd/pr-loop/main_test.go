@@ -1,6 +1,34 @@
 package main
 
-import "testing"
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"strings"
+	"testing"
+
+	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
+)
+
+// A command run from a worktree that GIT_DIR, set by a git hook or
+// `rebase --exec` elsewhere, does not name is refused before it reads or
+// writes either repository.
+func TestRepositoryTheEnvironmentNames(t *testing.T) {
+	dir := t.TempDir()
+	cmd := exec.Command("git", "init", "-q", "-b", "main")
+	cmd.Dir, cmd.Env = dir, gitenv.Without(os.Environ())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	gitenvtest.Decoy(t)
+	os.Unsetenv("GIT_WORK_TREE")
+	t.Chdir(dir)
+	var stdout, stderr bytes.Buffer
+	if code := run("end", nil, "", false, strings.NewReader(""), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "GIT_DIR") {
+		t.Errorf("exit %d\n%s", code, stderr.String())
+	}
+}
 
 func TestRelayRefusal(t *testing.T) {
 	for _, argv := range [][]string{

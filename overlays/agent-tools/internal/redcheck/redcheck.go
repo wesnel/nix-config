@@ -157,7 +157,13 @@ func Do(ctx context.Context, rev string, opts Options) (*Result, error) {
 	if opts.Lines <= 0 {
 		opts.Lines = DefaultLines
 	}
-	top, err := git.Run("-C", opts.Dir, "rev-parse", "--show-toplevel")
+	var top string
+	var err error
+	if opts.Dir != "" {
+		top, err = git.Run("-C", opts.Dir, "rev-parse", "--show-toplevel")
+	} else {
+		top, err = git.Toplevel()
+	}
 	if err != nil {
 		return nil, err
 	}

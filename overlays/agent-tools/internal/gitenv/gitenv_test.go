@@ -90,6 +90,13 @@ func TestIsolateKeepsSetupOutOfCallersRepository(t *testing.T) {
 	}
 }
 
+func TestWithout(t *testing.T) {
+	env := []string{"GIT_DIR=/r/.git", "PATH=/bin", "GIT_WORK_TREE=/r", "GIT_DIRECTORY=x", "GIT_CONFIG_GLOBAL=/dev/null"}
+	if got := strings.Join(Without(env), " "); got != "PATH=/bin GIT_DIRECTORY=x GIT_CONFIG_GLOBAL=/dev/null" {
+		t.Errorf("Without: %s", got)
+	}
+}
+
 // Packages must be isolated by their own TestMain, not by setup helpers that
 // remember to be careful.
 func TestPackagesIsolateThemselves(t *testing.T) {
