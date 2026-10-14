@@ -637,6 +637,8 @@ in {
             source = ./skills/diagnose-failure/SKILL.md;
             sandbox = true;
           };
+          # Reads the session transcripts this machine keeps.
+          retro = ./skills/retro/SKILL.md;
 
           # Linked as published, with the repository's MIT licence beside
           # it: the licence requires its notice in every copy.

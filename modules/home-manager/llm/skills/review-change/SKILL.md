@@ -23,7 +23,9 @@ among sub-agents: a coordinator runs the same pipeline, and the
 6. **Hand back**: what the work's own instructions ask for, and
    - each finding, its outcome and its plan item ID, round by round;
    - findings still standing, with the reviewer's evidence;
-   - the design reviews' decisions for Wesley, as one list.
+   - the design reviews' decisions for Wesley, as one list;
+   - for each finding settled `fix`, what the `retro` skill proposes would
+     have prevented it, written into the plan as its questions.
 
 ## The goal statement
 
