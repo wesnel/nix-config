@@ -19,7 +19,8 @@ const usage = `usage: git sign-pass [--base REF] [--push | --set-upstream]
 Re-signs the current branch from its oldest unsigned commit (or the oldest
 commit a fixup folds into) to its tip, squashing fixups first. Every commit
 keeps its files, author and message; branches stacked inside the range move
-with it. The unsigned tip is kept under ` + signpass.BackupRef + `BRANCH.
+with it, and so does any other worktree one is checked out in, which must be
+clean (ignored files aside). The unsigned tip is kept under ` + signpass.BackupRef + `BRANCH.
 
   --base REF        where the branch starts (default: where it left origin's
                     default branch, or the local main or master)

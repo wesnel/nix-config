@@ -57,7 +57,10 @@ Suggest `--set-upstream` when a branch has never been pushed: it publishes the
 branch in the same push, and refuses one the remote already has.
 
 It re-signs every commit from the oldest unsigned one to the tip, and moves any
-branch stacked inside that range along with it. `fixup!` commits are squashed
+branch stacked inside that range along with it. A stacked branch checked out in
+another worktree moves too, and that worktree's files with it, so the worktree
+must have no uncommitted or untracked files (ignored ones may stay); otherwise
+the pass refuses before any touch. `fixup!` commits are squashed
 into the commits they name as part of the same pass. It tries the squash
 unsigned first and refuses before any touch if it would conflict. If nothing is
 squashed, it refuses when a commit's files, author or message would change. If

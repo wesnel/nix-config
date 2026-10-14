@@ -23,10 +23,11 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// TestRun signs with a throwaway SSH key, which git verifies through an
-// allowed-signers file, so the whole pass runs without a hardware key.
-func TestRun(t *testing.T) {
-	dir := t.TempDir()
+// signingConfig writes a global git config that signs with a throwaway SSH
+// key, which git verifies through an allowed-signers file, so a whole pass
+// runs without a hardware key.
+func signingConfig(t *testing.T, dir string) string {
+	t.Helper()
 	key := filepath.Join(dir, "key")
 	if out, err := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key).CombinedOutput(); err != nil {
 		t.Skipf("no ssh-keygen: %v %s", err, out)
@@ -38,6 +39,12 @@ func TestRun(t *testing.T) {
 	os.WriteFile(global, []byte("[user]\n\tname = T\n\temail = t@e\n\tsigningkey = "+key+
 		"\n[gpg]\n\tformat = ssh\n[gpg \"ssh\"]\n\tallowedSignersFile = "+signers+"\n"), 0o644)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	return global
+}
+
+func TestRun(t *testing.T) {
+	dir := t.TempDir()
+	global := signingConfig(t, dir)
 
 	repo := filepath.Join(dir, "repo")
 	os.Mkdir(repo, 0o755)
@@ -116,6 +123,128 @@ func TestRun(t *testing.T) {
 	}
 	if marks, _ := git.Run("log", "-1", "--format=%G?", "main"); marks != "G" {
 		t.Errorf("main's commit: %q", marks)
+	}
+}
+
+// TestWorktreeBranch signs a stack whose lower branch is checked out in a
+// worktree of its own, which --update-refs alone would leave behind.
+func TestWorktreeBranch(t *testing.T) {
+	dir := t.TempDir()
+	global := signingConfig(t, dir)
+	repo := filepath.Join(dir, "repo")
+	os.Mkdir(repo, 0o755)
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	os.WriteFile(filepath.Join(repo, ".git", "info", "exclude"), []byte("build\nc\n"), 0o644)
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+	gitIn(t, repo, "switch", "-qc", "lower")
+	os.WriteFile(filepath.Join(repo, "a"), []byte("a\n"), 0o644)
+	gitIn(t, repo, "add", "a")
+	gitIn(t, repo, "commit", "-q", "-m", "A1")
+	gitIn(t, repo, "switch", "-qc", "upper")
+	os.WriteFile(filepath.Join(repo, "b"), []byte("b\n"), 0o644)
+	gitIn(t, repo, "add", "b")
+	gitIn(t, repo, "commit", "-q", "-m", "B1")
+	wt := filepath.Join(dir, "lower-wt")
+	gitIn(t, repo, "worktree", "add", "-q", wt, "lower")
+	os.WriteFile(filepath.Join(wt, "build"), []byte("output\n"), 0o644)
+
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	git.Dir = repo
+	defer func() { git.Dir = "" }()
+	check := func(result any, wantA string) {
+		t.Helper()
+		lower, _ := git.Run("rev-parse", "lower")
+		if moved := result.(map[string]any)["moved"].(map[string]string); moved["lower"] != lower {
+			t.Errorf("moved: %v", moved)
+		}
+		if parent, _ := git.Run("rev-parse", "upper~1"); lower != parent {
+			t.Error("lower did not move with the signed commits")
+		}
+		if marks, _ := git.Run("log", "--format=%G?", "main..upper"); marks != "G\nG" {
+			t.Errorf("signatures: %q", marks)
+		}
+		if head := gitIn(t, wt, "symbolic-ref", "HEAD"); head != "refs/heads/lower" {
+			t.Errorf("the worktree is on %s", head)
+		}
+		if dirty := gitIn(t, wt, "status", "--porcelain"); dirty != "" {
+			t.Errorf("the worktree is not clean:\n%s", dirty)
+		}
+		if a, _ := os.ReadFile(filepath.Join(wt, "a")); string(a) != wantA {
+			t.Errorf("the worktree's a: %q", a)
+		}
+		if _, err := os.Stat(filepath.Join(wt, "build")); err != nil {
+			t.Error("the worktree lost its ignored file")
+		}
+	}
+	result, err := Run("", false, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check(result, "a\n")
+
+	// A worktree with untracked files is refused before anything is rewritten.
+	os.WriteFile(filepath.Join(repo, "a"), []byte("a fixed\n"), 0o644)
+	os.WriteFile(filepath.Join(repo, "c"), []byte("c\n"), 0o644)
+	gitIn(t, repo, "add", "-f", "c")
+	gitIn(t, repo, "commit", "-q", "-a", "--fixup=lower")
+	os.WriteFile(filepath.Join(wt, "notes"), []byte("mine\n"), 0o644)
+	refs := gitIn(t, repo, "for-each-ref")
+	if _, err := Run("", false, false, false); err == nil || !strings.Contains(err.Error(), wt) {
+		t.Errorf("a dirty worktree: %v", err)
+	}
+	if after := gitIn(t, repo, "for-each-ref"); after != refs {
+		t.Errorf("refs changed:\n%s\n%s", refs, after)
+	}
+	if head := gitIn(t, wt, "symbolic-ref", "HEAD"); head != "refs/heads/lower" {
+		t.Errorf("the refused worktree is on %s", head)
+	}
+	os.Remove(filepath.Join(wt, "notes"))
+
+	// A worktree busy rebasing its branch is refused too.
+	rebase := exec.Command("git", "-c", "commit.gpgsign=false", "rebase", "-q", "--exec", "false", "main")
+	rebase.Dir = wt
+	rebase.Run()
+	if _, err := Run("", false, false, false); err == nil || !strings.Contains(err.Error(), "being rebased") {
+		t.Errorf("a worktree mid-rebase: %v", err)
+	}
+	gitIn(t, wt, "rebase", "--abort")
+
+	// A rebase that stops leaves the worktree detached until --resume, which
+	// switches it back, gaining the fixup's files, but not over a file in the
+	// way, even an ignored one.
+	bad := filepath.Join(dir, "bad")
+	os.WriteFile(bad, []byte("[user]\n\tname = T\n\temail = t@e\n\tsigningkey = "+filepath.Join(dir, "nokey")+
+		"\n[gpg]\n\tformat = ssh\n"), 0o644)
+	t.Setenv("GIT_CONFIG_GLOBAL", bad)
+	os.WriteFile(filepath.Join(wt, "c"), []byte("ignored\n"), 0o644)
+	if _, err := Run("", false, false, false); err == nil || !strings.Contains(err.Error(), "--resume") {
+		t.Fatalf("a failed signature: %v", err)
+	}
+	if git.OK("-C", wt, "symbolic-ref", "-q", "HEAD") {
+		t.Error("the worktree was not detached for the rebase")
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	t.Setenv("GIT_EDITOR", ":")
+	// Git reschedules the pick it could not sign, leaving its changes staged.
+	if _, err := git.Run("reset", "-q", "--hard"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git.Run("rebase", "--continue"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run("", true, false, false); err == nil || !strings.Contains(err.Error(), "overwrite c") {
+		t.Errorf("an ignored file in the way: %v", err)
+	}
+	if c, _ := os.ReadFile(filepath.Join(wt, "c")); string(c) != "ignored\n" {
+		t.Errorf("the ignored file was overwritten: %q", c)
+	}
+	os.Remove(filepath.Join(wt, "c"))
+	if result, err = Run("", true, false, false); err != nil {
+		t.Fatal(err)
+	}
+	check(result, "a fixed\n")
+	if got := fmt.Sprint(result.(map[string]any)["gainedFixups"]); got != "[lower]" {
+		t.Errorf("gainedFixups: %s", got)
 	}
 }
 

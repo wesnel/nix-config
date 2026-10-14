@@ -35,6 +35,149 @@ type pending struct {
 	Squash bool              `json:"squash,omitempty"`
 	Kept   []history.Commit  `json:"kept,omitempty"`
 	Trees  map[string]string `json:"trees,omitempty"`
+	// Stacked are the other branches inside the range, which must all move.
+	Stacked []string `json:"stacked,omitempty"`
+	// Worktrees are where stacked branches are checked out, by branch. Each is
+	// detached for the rebase, since --update-refs skips a branch checked out
+	// anywhere, and switched back to its branch afterwards.
+	Worktrees map[string]string `json:"worktrees,omitempty"`
+}
+
+// checkout is another worktree's branch: checked out there, or being rebased
+// or bisected there (busy), which --update-refs skips either way.
+type checkout struct {
+	path, branch string
+	busy         bool
+}
+
+// otherCheckouts lists the branches every worktree but this one holds.
+func otherCheckouts() ([]checkout, error) {
+	here, err := git.Run("rev-parse", "--show-toplevel")
+	if err != nil {
+		return nil, err
+	}
+	here, _ = filepath.EvalSymlinks(here)
+	list, err := git.Run("worktree", "list", "--porcelain")
+	if err != nil {
+		return nil, err
+	}
+	var found []checkout
+	for _, block := range strings.Split(list, "\n\n") {
+		var c checkout
+		detached := false
+		for _, line := range strings.Split(block, "\n") {
+			if v, ok := strings.CutPrefix(line, "worktree "); ok {
+				c.path = v
+			}
+			if v, ok := strings.CutPrefix(line, "branch refs/heads/"); ok {
+				c.branch = v
+			}
+			detached = detached || line == "detached"
+		}
+		if resolved, _ := filepath.EvalSymlinks(c.path); c.path == "" || resolved == here {
+			continue
+		}
+		if detached {
+			c.branch, c.busy = busyBranch(c.path), true
+		}
+		if c.branch != "" {
+			found = append(found, c)
+		}
+	}
+	return found, nil
+}
+
+// busyBranch is the branch a detached worktree is rebasing or bisecting, if
+// any; git lists such a worktree as detached but still counts the branch as
+// checked out there.
+func busyBranch(path string) string {
+	for _, name := range []string{"rebase-merge/head-name", "rebase-apply/head-name", "BISECT_START"} {
+		file, err := git.Run("-C", path, "rev-parse", "--path-format=absolute", "--git-path", name)
+		if err != nil {
+			continue
+		}
+		data, err := os.ReadFile(file)
+		if err != nil {
+			continue
+		}
+		b := strings.TrimPrefix(strings.TrimSpace(string(data)), "refs/heads/")
+		if git.OK("-C", path, "rev-parse", "--verify", "-q", "refs/heads/"+b) {
+			return b
+		}
+	}
+	return ""
+}
+
+// detach takes each stacked branch's worktree off its branch, at the same
+// commit, so the rebase can move the branch. The worktrees must be clean:
+// switching back may change their files (a lower branch gains the fixups
+// folded into it), and a change or an untracked file there could make that
+// fail once keys have been touched. Ignored files may stay; reattach checks
+// that none is in the way.
+func detach(p *pending, checkouts []checkout) error {
+	var mine []checkout
+	for _, c := range checkouts {
+		if !slices.Contains(p.Stacked, c.branch) {
+			continue
+		}
+		if c.busy {
+			return refuse("%s is being rebased or bisected in %s; finish that first", c.branch, c.path)
+		}
+		dirty, err := git.Run("-C", c.path, "status", "--porcelain")
+		if err != nil {
+			return refuse("%s is checked out in %s, which git cannot read: %v", c.branch, c.path, err)
+		}
+		if dirty != "" {
+			return refuse("%s is checked out in %s, which has uncommitted or untracked files; commit them "+
+				"(unsigned), stash them or remove them there, then run the pass again", c.branch, c.path)
+		}
+		mine = append(mine, c)
+	}
+	p.Worktrees = map[string]string{}
+	for _, c := range mine {
+		if _, err := git.Run("-C", c.path, "switch", "-q", "--detach"); err != nil {
+			reattach(p)
+			return err
+		}
+		p.Worktrees[c.branch] = c.path
+	}
+	return nil
+}
+
+// reattach switches each detached worktree back to its branch, wherever the
+// rebase has moved it. It refuses rather than lose anything: when the
+// worktree has left the commit it was detached at, or when the branch's new
+// files would land on a file already there.
+func reattach(p *pending) error {
+	branches := make([]string, 0, len(p.Worktrees))
+	for b := range p.Worktrees {
+		branches = append(branches, b)
+	}
+	sort.Strings(branches)
+	for _, b := range branches {
+		path := p.Worktrees[b]
+		if head, _ := git.Run("-C", path, "symbolic-ref", "-q", "HEAD"); head == "refs/heads/"+b {
+			continue
+		}
+		if head, _ := git.Run("-C", path, "rev-parse", "HEAD"); head != p.Before[b] {
+			return refuse("%s was detached from %s for the pass and is now at %s; switch it back to %s by hand, "+
+				"keeping what you need, then run `git sign-pass --resume`", path, b, head, b)
+		}
+		added, err := git.Bytes(nil, "diff", "-z", "--name-only", "--no-renames", "--diff-filter=A", p.Before[b], "refs/heads/"+b)
+		if err != nil {
+			return err
+		}
+		for _, f := range strings.Split(string(added), "\x00") {
+			if _, err := os.Lstat(filepath.Join(path, f)); f != "" && err == nil {
+				return refuse("switching %s back to %s would overwrite %s there; move it away, then run "+
+					"`git sign-pass --resume`", path, b, f)
+			}
+		}
+		if _, err := git.Run("-C", path, "switch", "-q", b); err != nil {
+			return refuse("switching %s back to %s failed (%v); fix that, then run `git sign-pass --resume`", path, b, err)
+		}
+	}
+	return nil
 }
 
 func stateDir() (string, error) {
@@ -143,6 +286,18 @@ func mustTree(rev string) string {
 	return tree
 }
 
+// save records the pass for --resume and keeps the unsigned tip.
+func save(p *pending, path, branch string) error {
+	if _, err := git.Run("update-ref", BackupRef+branch, "HEAD"); err != nil {
+		return err
+	}
+	data, _ := json.MarshalIndent(p, "", "  ")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
 func pendingPath() (string, error) {
 	dir, err := stateDir()
 	if err != nil {
@@ -200,7 +355,8 @@ func defaultBase(branch string) (string, error) {
 // Run re-signs every commit from the oldest unsigned one on the current
 // branch to its tip, with the hardware key, leaving each commit's files,
 // author and message exactly as they were. Branches stacked inside that range
-// move with it. With push, every branch that moved and has an upstream is
+// move with it, and so does any other worktree they are checked out in, which
+// must be clean. With push, every branch that moved and has an upstream is
 // pushed over SSH, guarded by the commit its remote-tracking ref names; with
 // setUpstream as well, so is every branch that moved and has none (see
 // pushMoved).
@@ -258,6 +414,17 @@ func Run(base string, resume, push, setUpstream bool) (any, error) {
 			return nil, err
 		}
 		p = pending{Branch: branch, Start: start, Before: before, Squash: squash}
+		for b, oid := range before {
+			if b != branch && git.OK("merge-base", "--is-ancestor", oid, "HEAD") &&
+				!git.OK("merge-base", "--is-ancestor", oid, start) {
+				p.Stacked = append(p.Stacked, b)
+			}
+		}
+		sort.Strings(p.Stacked)
+		checkouts, err := otherCheckouts()
+		if err != nil {
+			return nil, err
+		}
 		if squash {
 			all, err := history.Between(start, "HEAD")
 			if err != nil {
@@ -280,14 +447,11 @@ func Run(base string, resume, push, setUpstream bool) (any, error) {
 		} else if p.Shape, err = fullShape(start, "HEAD"); err != nil {
 			return nil, err
 		}
-		if _, err := git.Run("update-ref", BackupRef+branch, "HEAD"); err != nil {
+		if err := detach(&p, checkouts); err != nil {
 			return nil, err
 		}
-		data, _ := json.MarshalIndent(p, "", "  ")
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(path, data, 0o644); err != nil {
+		if err := save(&p, path, branch); err != nil {
+			reattach(&p)
 			return nil, err
 		}
 		count, _ := git.Run("rev-list", "--count", start+"..HEAD")
@@ -297,10 +461,18 @@ func Run(base string, resume, push, setUpstream bool) (any, error) {
 			args = append(args, "-i", "--autosquash")
 		}
 		if git.Attached([]string{"GIT_SEQUENCE_EDITOR=:"}, append(args, start, branch)...) != 0 {
+			detached := ""
+			if len(p.Worktrees) > 0 {
+				detached = "; --resume also switches the worktrees detached for the pass back to their branches"
+			}
 			return nil, fmt.Errorf("the rebase stopped, usually at a missed key touch. Run `git rebase --continue` "+
-				"(touching the key when it blinks), then `git sign-pass --resume`. The unsigned branch is kept as "+
-				"%s%s", BackupRef, branch)
+				"(touching the key when it blinks), then `git sign-pass --resume`%s. The unsigned branch is kept as "+
+				"%s%s", detached, BackupRef, branch)
 		}
+	}
+
+	if err := reattach(&p); err != nil {
+		return nil, err
 	}
 
 	// A branch below the tip gains whatever fixups above it fold into its
@@ -337,6 +509,17 @@ func Run(base string, resume, push, setUpstream bool) (any, error) {
 		if f := strings.Fields(line); len(f) == 2 && f[1] != "G" && f[1] != "U" {
 			return nil, refuse("commit %s has no good signature", f[0])
 		}
+	}
+	var stale []string
+	for _, b := range p.Stacked {
+		if oid, _ := git.Run("rev-parse", "-q", "--verify", "refs/heads/"+b); oid == p.Before[b] {
+			stale = append(stale, b)
+		}
+	}
+	if len(stale) > 0 {
+		return nil, refuse("these branches still point at unsigned commits the pass replaced: %s; point each at its signed copy on %s "+
+			"(`git branch -f BRANCH COMMIT`, or `git reset --keep COMMIT` where it is checked out), then run "+
+			"`git sign-pass --resume`", strings.Join(stale, ", "), p.Branch)
 	}
 	after, err := localBranches()
 	if err != nil {
