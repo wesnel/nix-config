@@ -24,13 +24,9 @@ changing code:
 
 - thread ID, the bot, and `path:line`
 - the problem in one sentence, in your words
-- one of these outcomes:
-  - `fix`
-  - `belongs-in #<pr>`: code another PR introduced
-  - `duplicate-of <thread>`
-  - `decline`, with the evidence that the bot is wrong
-  - `defer`: real but out of scope, with the reason
-  - `needs-wesley`
+- its outcome, as the `review-change` skill's Triage defines them
+  (`belongs-in #<pr>` for code another PR introduced), with the evidence
+  for a rebuttal and the reason for a deferral
 - what the fix would touch, and what could break
 
 Mention anything the coordinator would need in order to decide across PRs,
@@ -46,42 +42,31 @@ which, with the evidence.
 ## Fixing
 
 Commit as the `signing-pass` skill says (unsigned; never push or sign), each
-fix separately as a fixup of the PR commit it belongs in, which the signing
-pass squashes into that commit:
-
-```sh
-git commit --fixup=<commit> \
-  --trailer "Review-Thread: <thread URL>" \
-  --trailer "Review-Bot: <bot>" \
-  --trailer "Review-Round: <round>"
-```
-
-Pick the commit that introduced the code you are changing. If a later commit
-in the PR changes the same lines, use that later one, or the squash will
-conflict. When unsure, use the PR's last commit. Never amend, reword or add a
-commit that is not a fixup. For a CI failure, use `Review-Check: <check>` in
-place of the thread and bot trailers.
+fix separately as a fixup of the PR commit it belongs in, aimed as that
+skill says, with the trailers the `review-change` skill's Answering gives.
+When unsure which commit, use the PR's last. Never amend, reword or add a
+commit that is not a fixup.
 
 Run the tests and linters the repository uses for the files you touched, and
 report:
 
-- commit SHAs, each with the thread or check it addresses
+- each fixup's SHA and subject, with the thread or check it addresses
 - test and lint results, including failures
-- a draft reply per thread: what changed and why, in two or three sentences
+- a draft reply per thread, in the reply-file format `review-change`'s
+  Answering gives: what changed and why, in two or three sentences, naming
+  commits by subject
 
 ## Review findings
 
 The coordinator passes on what a reviewer found in your fixups before they
-are pushed. Answer every finding, either way:
-
-- fix it in a further fixup with the same trailers as the fixup it is about,
-  and report the SHA and test results as for any fix;
-- or rebut it with evidence from the code or a test, not an assertion.
+are pushed. Settle every finding as the `review-change` skill's Triage says,
+and report a fix as any other.
 
 ## Restacking
 
-When told to, run `git rebase --onto <parent-branch> <old-parent-tip> <branch>`
-in your worktree. Where a conflict involves content the parent removed or
+When told to, run `git rebase --onto <parent-branch> <fork-point> <branch>`
+in your worktree, with the fork point the coordinator recorded before the
+parent changed. Where a conflict involves content the parent removed or
 moved on purpose, keep the parent's version. Run `pr-loop setup`, which
 regenerates what the repository's configured setup produces, then rerun the
 tests and report the new tip.
