@@ -2,6 +2,7 @@ package guard
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -835,8 +836,63 @@ func checkConnector(tool string) string {
 	return ""
 }
 
-// gitState is where a git command acts and what it finds there.
-type gitState struct{ dir string }
+// gitState is where a git command acts and what it finds there: its
+// directory, and for signs the -c and --config-env options and the
+// assignments it runs with.
+type gitState struct {
+	dir         string
+	config, env []string
+}
+
+// signs reports whether a commit written by the command would be signed, by
+// the configuration it would read; false where the guard cannot tell.
+func (g gitState) signs() bool {
+	if g.dir == "" {
+		return false
+	}
+	cmd := exec.Command("git", append(append([]string{}, g.config...), "-C", g.dir, "config", "--bool", "commit.gpgsign")...)
+	cmd.Env = append(gitenv.Without(os.Environ()), g.env...)
+	out, err := cmd.Output()
+	return err == nil && strings.TrimSpace(string(out)) == "true"
+}
+
+// commitWriters are the git commands that write commits, with the options
+// that make each write none.
+var commitWriters = map[string]map[string]bool{
+	"commit":      set("--dry-run"),
+	"rebase":      set("--abort", "--quit", "--edit-todo", "--show-current-patch"),
+	"cherry-pick": set("--abort", "--quit", "--no-commit", "-n"),
+	"revert":      set("--abort", "--quit", "--no-commit", "-n"),
+	"merge":       set("--abort", "--quit", "--no-commit", "--squash", "--ff-only"),
+	"am":          set("--abort", "--quit", "--show-current-patch"),
+	"pull":        set("--ff-only"),
+}
+
+const signingOn = "Signing needs Wesley's hardware key, which nobody is here to touch, and this `git %s` would sign. " +
+	"Run it as `git -c commit.gpgsign=false %s ...`, without -S or --gpg-sign; Wesley signs everything in one pass at the end."
+
+// checkSigning denies a command that would write a signed commit, which
+// waits for a key touch: commit.gpgsign is on where it runs, or it asks for
+// a signature.
+func checkSigning(sub string, rest []string, g gitState) string {
+	none, writes := commitWriters[sub]
+	if !writes {
+		return ""
+	}
+	asked := false
+	for _, w := range rest {
+		switch {
+		case w == "--no-gpg-sign", none[w], w == "-h", w == "--help":
+			return ""
+		case w == "--gpg-sign", strings.HasPrefix(w, "--gpg-sign="), strings.HasPrefix(w, "-S"):
+			asked = true
+		}
+	}
+	if !asked && !g.signs() {
+		return ""
+	}
+	return fmt.Sprintf(signingOn, sub, sub)
+}
 
 func (g gitState) run(args ...string) (string, bool) {
 	if g.dir == "" {
