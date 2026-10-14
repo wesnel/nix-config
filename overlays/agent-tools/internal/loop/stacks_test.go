@@ -3,10 +3,13 @@ package loop
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/relay"
@@ -17,11 +20,69 @@ type fakeStackPR struct {
 	draft                     bool
 }
 
-// fakeStacks answers the GraphQL that reading stacks makes, for the viewer
-// "me" in o/r, whose default branch is main.
+// fakeStacks answers the GraphQL that reading stacks makes, and the REST
+// calls that change them, for the viewer "me" in o/r, whose default branch
+// is main. Like GitHub, it answers 422 to a write whose PRs are not each
+// based on the one below.
 type fakeStacks struct {
-	prs    map[int]*fakeStackPR
-	stacks map[int][]int // stack number to its PRs, bottom first
+	prs       map[int]*fakeStackPR
+	stacks    map[int][]int // stack number to its PRs, bottom first
+	writes    []string
+	conflicts int   // how many writes to answer with 409 first
+	fail      error // the answer to the next write
+}
+
+// chains reports whether each of numbers is based on the one before.
+func (f *fakeStacks) chains(numbers []int) bool {
+	for i := 1; i < len(numbers); i++ {
+		if f.prs[numbers[i]].base != f.prs[numbers[i-1]].head {
+			return false
+		}
+	}
+	return true
+}
+
+func (f *fakeStacks) rest(method, path string, body, out any) error {
+	f.writes = append(f.writes, method+" "+path)
+	if f.conflicts > 0 {
+		f.conflicts--
+		return &gh.StatusError{Code: 409}
+	}
+	if err := f.fail; err != nil {
+		f.fail = nil
+		return err
+	}
+	numbers := body.(map[string]any)["pull_requests"].([]int)
+	number := 0
+	switch rest, ok := strings.CutPrefix(path, "repos/o/r/stacks/"); {
+	case method != "POST":
+		return errors.New("unexpected method: " + method)
+	case path == "repos/o/r/stacks":
+		for _, n := range numbers {
+			if f.stackOf(n) != 0 || !f.chains(numbers) {
+				return &gh.StatusError{Code: 422}
+			}
+		}
+		number = 20 + len(f.stacks)
+		f.stacks[number] = numbers
+	case ok && strings.HasSuffix(rest, "/add"):
+		number, _ = strconv.Atoi(strings.TrimSuffix(rest, "/add"))
+		members := f.stacks[number]
+		if members == nil {
+			return &gh.StatusError{Code: 404}
+		}
+		if !f.chains(append([]int{members[len(members)-1]}, numbers...)) {
+			return &gh.StatusError{Code: 422}
+		}
+		f.stacks[number] = append(members, numbers...)
+	default:
+		return errors.New("unexpected path: " + path)
+	}
+	if out == nil {
+		return nil
+	}
+	encoded, _ := json.Marshal(map[string]any{"number": number})
+	return json.Unmarshal(encoded, out)
 }
 
 func (f *fakeStacks) stackOf(number int) int {
@@ -78,8 +139,8 @@ func (f *fakeStacks) graphQL(query string, vars map[string]any, out any) error {
 
 // stacksRepo makes a checkout of o/r on branch b, whose PR is 2, with these
 // open PRs by me: 1 (a, on main) and 2 (b, on a), stacked as GitHub stack 10;
-// 3 (c, on b) and 4 (d, on c), not stacked; 5 (e, on main); and 6 (x, on
-// main) by josh.
+// 3 (c, on b) and 4 (d, on c), not stacked; 5 (e, on main) and 7 (f, on e),
+// not stacked; 8 (g, on a); and 6 (x, on main) by josh.
 func stacksRepo(t *testing.T) *fakeStacks {
 	t.Helper()
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -102,13 +163,160 @@ func stacksRepo(t *testing.T) *fakeStacks {
 			4: {head: "d", base: "c", author: "me", state: "OPEN"},
 			5: {head: "e", base: "main", author: "me", state: "OPEN"},
 			6: {head: "x", base: "main", author: "josh", state: "OPEN"},
+			7: {head: "f", base: "e", author: "me", state: "OPEN"},
+			8: {head: "g", base: "a", author: "me", state: "OPEN"},
 		},
 		stacks: map[int][]int{10: {1, 2}},
 	}
-	old := graphQL
-	graphQL = f.graphQL
-	t.Cleanup(func() { graphQL = old })
+	oldGraphQL, oldREST, oldSleep := graphQL, stacksREST, sleep
+	graphQL, stacksREST, sleep = f.graphQL, f.rest, func(time.Duration) {}
+	t.Cleanup(func() { graphQL, stacksREST, sleep = oldGraphQL, oldREST, oldSleep })
 	return f
+}
+
+// registerPRs records a loop over the PRs numbered, as begin would.
+func registerPRs(t *testing.T, f *fakeStacks, numbers ...int) {
+	t.Helper()
+	state := &State{Repo: "o/r", Branches: map[string]*Branch{}}
+	for _, n := range numbers {
+		pr := f.prs[n]
+		state.Order = append(state.Order, pr.head)
+		state.Branches[pr.head] = &Branch{PR: n, Base: pr.base}
+	}
+	if err := state.save(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// refusedWell reports whether err is a refusal that says what to do instead.
+func refusedWell(err error) bool {
+	return refused(err) && refusal.SaysInstead(err.Error())
+}
+
+func TestLink(t *testing.T) {
+	f := stacksRepo(t)
+
+	// Onto the top of an existing stack.
+	got, err := Link([]string{"3", "d"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(f.stacks[10]) != "[1 2 3 4]" || fmt.Sprint(f.writes) != "[POST repos/o/r/stacks/10/add]" {
+		t.Errorf("add: stack %v, writes %v", f.stacks[10], f.writes)
+	}
+	if r := got.(map[string]any); r["stack"] != 10 || fmt.Sprint(r["added"]) != "[3 4]" {
+		t.Errorf("add: %v", r)
+	}
+
+	// Idempotent, for part or all of a stack.
+	f.writes = nil
+	for _, args := range [][]string{{"3", "4"}, {"1", "2", "3", "4"}, {"2"}} {
+		got, err := Link(args)
+		if err != nil || len(f.writes) != 0 {
+			t.Errorf("again %v: %v, writes %v", args, err, f.writes)
+		} else if r := got.(map[string]any); r["stack"] != 10 || fmt.Sprint(r["added"]) != "[]" {
+			t.Errorf("again %v: %v", args, r)
+		}
+	}
+
+	// A new stack, once GitHub stops answering 409.
+	f.conflicts = 1
+	if _, err := Link([]string{"5", "7"}); err != nil {
+		t.Fatalf("after a 409: %v", err)
+	}
+	if s := f.stackOf(5); s == 0 || fmt.Sprint(f.stacks[s]) != "[5 7]" || len(f.writes) != 2 {
+		t.Errorf("create: stacks %v, writes %v", f.stacks, f.writes)
+	}
+}
+
+func TestLinkRefuses(t *testing.T) {
+	f := stacksRepo(t)
+	for name, args := range map[string][]string{
+		"bases that do not chain":   {"5", "3"},
+		"bottom first only":         {"7", "5"},
+		"someone else's PR":         {"6"},
+		"a PR that is not open":     {"99"},
+		"a default branch":          {"main"},
+		"a stack of one":            {"5"},
+		"above a PR that has a top": {"8"},
+	} {
+		if _, err := Link(args); !refusedWell(err) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if len(f.writes) != 0 {
+		t.Errorf("a refused link wrote: %v", f.writes)
+	}
+
+	// GitHub's own refusal is reported, and only a 409 is retried.
+	f.fail = &gh.StatusError{Code: 422}
+	if _, err := Link([]string{"5", "7"}); err == nil || refused(err) || len(f.writes) != 1 {
+		t.Errorf("a 422: %v, writes %v", err, f.writes)
+	}
+	f.writes, f.conflicts = nil, 2
+	if _, err := Link([]string{"5", "7"}); err == nil || len(f.writes) != 2 {
+		t.Errorf("two 409s: %v, writes %v", err, f.writes)
+	}
+}
+
+func TestLinkInALoop(t *testing.T) {
+	for _, env := range []string{relay.RelayEnv, sessionEnv} {
+		t.Run(env, func(t *testing.T) {
+			f := stacksRepo(t)
+			t.Setenv(env, "1")
+			if _, err := Link([]string{"5", "7"}); !refusedWell(err) {
+				t.Errorf("a session without a loop linked: %v", err)
+			}
+			registerPRs(t, f, 5)
+			if _, err := Link([]string{"5", "7"}); !refusedWell(err) {
+				t.Errorf("a session linked a PR outside its loop: %v", err)
+			}
+			if len(f.writes) != 0 {
+				t.Errorf("writes: %v", f.writes)
+			}
+			registerPRs(t, f, 5, 7)
+			if _, err := Link([]string{"5", "7"}); err != nil {
+				t.Errorf("the loop's own PRs: %v", err)
+			}
+		})
+	}
+}
+
+// A PR that open has just opened goes into its base's stack, and a failure
+// to stack it leaves it open, saying how to stack it later.
+func TestStackOpened(t *testing.T) {
+	f := stacksRepo(t)
+	repo := &Repo{Slug: "o/r", Default: "main", Viewer: "me"}
+	opened := func(n int, head, base string) map[string]any {
+		f.prs[n] = &fakeStackPR{head: head, base: base, author: "me", state: "OPEN", draft: true}
+		return stackOpened(repo, head, base, n)
+	}
+
+	if got := opened(11, "h", "main"); len(got) != 0 || len(f.writes) != 0 {
+		t.Errorf("on the default branch: %v, writes %v", got, f.writes)
+	}
+	if got := opened(12, "i", "b"); got["stack"] == nil || fmt.Sprint(f.stacks[10]) != "[1 2 12]" {
+		t.Errorf("onto a stack's top: %v, stack %v", got, f.stacks[10])
+	}
+	if got := opened(13, "j", "f"); got["stack"] == nil || fmt.Sprint(f.stacks[f.stackOf(13)]) != "[7 13]" {
+		t.Errorf("onto an unstacked PR: %v, stacks %v", got, f.stacks)
+	}
+	writes := len(f.writes)
+	got := opened(14, "k", "a")
+	reason, _ := got["unstacked"].(string)
+	if !refusal.SaysInstead(reason) || !strings.Contains(reason, "`pr-loop link 1 14`") || len(f.writes) != writes {
+		t.Errorf("onto a PR with another above it: %v, writes %v", got, f.writes[writes:])
+	}
+
+	t.Setenv(sessionEnv, "1")
+	registerPRs(t, f, 13)
+	got = opened(15, "l", "e")
+	if reason, _ := got["unstacked"].(string); !strings.Contains(reason, "Wesley") || len(f.writes) != writes {
+		t.Errorf("onto a PR outside the session's loop: %v, writes %v", got, f.writes[writes:])
+	}
+	if got := opened(16, "m", "j"); got["stack"] == nil || fmt.Sprint(f.stacks[f.stackOf(16)]) != "[7 13 16]" {
+		t.Errorf("onto the session's own PR: %v, stacks %v", got, f.stacks)
+	}
 }
 
 func TestStackShowsGitHubsRecord(t *testing.T) {

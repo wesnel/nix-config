@@ -277,18 +277,18 @@
     "allow": ["git config --get user.email", "grep -rn 'push-guard[.]allowPublic' README.md"]
   },
   {
-    "why": "The coordinator alone opens, pushes, replies, resolves and requests reviews.",
+    "why": "The coordinator alone opens, stacks, pushes, replies, resolves and requests reviews.",
     "scope": "owner",
-    "pattern": ".*\\bpr-loop\\s+(open|begin|push|reply|resolve|request|worktrees|sign|end)\\b.*",
-    "deny": ["pr-loop push", "pr-loop reply T --body-file -", "pr-loop open --title T --body-file - x"],
-    "allow": ["pr-loop threads 12", "pr-loop status", "grep -nE 'pr-loop\\s+push' SKILL.md"]
+    "pattern": ".*\\bpr-loop\\s+(open|link|begin|push|reply|resolve|request|worktrees|sign|end)\\b.*",
+    "deny": ["pr-loop push", "pr-loop reply T --body-file -", "pr-loop open --title T --body-file - x", "pr-loop link 12 13"],
+    "allow": ["pr-loop threads 12", "pr-loop status", "pr-loop stack 12", "grep -nE 'pr-loop\\s+push' SKILL.md"]
   },
   {
     "why": "A reviewer only reads; whoever started it acts on its findings.",
     "scope": "reviewer",
     "pattern": ".*\\bpr-loop\\s+(?!(stack|threads|status|ci|logs|setup-command|wait\\s+ci)\\b)\\S+.*",
-    "deny": ["pr-loop wait reviews", "pr-loop push", "pr-loop reply T --body-file -", "pr-loop setup .pr-loop/12"],
-    "allow": ["pr-loop threads 12", "pr-loop logs 12 test", "pr-loop status", "pr-loop wait ci --timeout 3600", "pr-loop setup-command"]
+    "deny": ["pr-loop wait reviews", "pr-loop push", "pr-loop reply T --body-file -", "pr-loop setup .pr-loop/12", "pr-loop link 12 13"],
+    "allow": ["pr-loop threads 12", "pr-loop logs 12 test", "pr-loop status", "pr-loop stack 12", "pr-loop wait ci --timeout 3600", "pr-loop setup-command"]
   },
   {
     "why": "A reviewer only reads; whoever started it changes the code.",

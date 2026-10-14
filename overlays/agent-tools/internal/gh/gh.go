@@ -50,7 +50,11 @@ func Token() (string, error) {
 	return token, tokenErr
 }
 
-func do(method, url string, body any, accept string) ([]byte, error) {
+// defaultVersion is the REST API version every call but RESTVersion's asks
+// for.
+const defaultVersion = "2022-11-28"
+
+func do(method, url string, body any, accept, version string) ([]byte, error) {
 	tok, err := Token()
 	if err != nil {
 		return nil, err
@@ -69,7 +73,7 @@ func do(method, url string, body any, accept string) ([]byte, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("Accept", accept)
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("X-GitHub-Api-Version", version)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -108,7 +112,13 @@ func Slug(url string) string {
 
 // REST sends a JSON body (nil for none) and decodes the reply into out (nil to discard).
 func REST(method, path string, body, out any) error {
-	data, err := do(method, api+"/"+strings.TrimPrefix(path, "/"), body, "application/vnd.github+json")
+	return RESTVersion(defaultVersion, method, path, body, out)
+}
+
+// RESTVersion is REST for an endpoint GitHub serves only under a later API
+// version, named in GitHub's documentation of the endpoint.
+func RESTVersion(version, method, path string, body, out any) error {
+	data, err := do(method, api+"/"+strings.TrimPrefix(path, "/"), body, "application/vnd.github+json", version)
 	if err != nil || out == nil || len(data) == 0 {
 		return err
 	}
@@ -117,12 +127,12 @@ func REST(method, path string, body, out any) error {
 
 // Raw returns a GET response body as is, following redirects.
 func Raw(path string) ([]byte, error) {
-	return do("GET", api+"/"+strings.TrimPrefix(path, "/"), nil, "application/vnd.github+json")
+	return do("GET", api+"/"+strings.TrimPrefix(path, "/"), nil, "application/vnd.github+json", defaultVersion)
 }
 
 // GraphQL runs a query and decodes its data into out.
 func GraphQL(query string, variables map[string]any, out any) error {
-	data, err := do("POST", api+"/graphql", map[string]any{"query": query, "variables": variables}, "application/json")
+	data, err := do("POST", api+"/graphql", map[string]any{"query": query, "variables": variables}, "application/json", defaultVersion)
 	if err != nil {
 		return err
 	}
