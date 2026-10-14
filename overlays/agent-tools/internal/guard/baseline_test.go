@@ -298,6 +298,9 @@ func TestGitState(t *testing.T) {
 		{true, main, "git worktree remove --force ../dirty"},
 		{false, main, "git worktree remove --force ../clean"},
 		{false, main, "git worktree remove ../dirty"},
+		{true, linked, "git switch --ignore-other-worktrees main"},
+		{true, linked, "git checkout --ignore-other-worktrees main"},
+		{false, linked, "git switch pushed"},
 	}
 	for _, c := range cases {
 		reason := judge(t, c.dir, c.command)
