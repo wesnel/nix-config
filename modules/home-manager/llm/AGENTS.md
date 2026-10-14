@@ -42,6 +42,14 @@ create, amend or rewrite commits.
   On Wesley's own pull requests, `pr-loop threads`, `reply` and `resolve` do
   this.
 
+## Plans
+
+Every change has a plan, made with `agent-plan new` and kept true as the work
+changes. Log each step's start, completion and verification with
+`agent-plan log`, and never edit a plan's `log.org`. If Wesley asks you to
+plan, write the plan and stop: no edits outside the plan's directory, no
+commits. The `plan-work` skill has the format and the commands.
+
 ## Reviews
 
 Every session that commits a change runs the review pipeline in the

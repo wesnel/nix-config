@@ -12,9 +12,10 @@ among sub-agents: a coordinator runs the same pipeline, and the
 
 ## The pipeline
 
-1. **Plan.** Before coding, write the plan: the goal, what is not this
-   change's job, and the items the change is made of, each with an ID.
-   Record every review outcome against the plan item ID it concerns.
+1. **Plan.** Before coding, write the plan as the `plan-work` skill says:
+   the goal, what is not this change's job, and the items the change is made
+   of, each with an ID. Record every review outcome against the plan item ID
+   it concerns, as "Recording it in the plan" below says.
 2. **Design review of the plan**, before coding.
 3. **The work**, committed as the `signing-pass` skill says.
 4. **Fresh review loop** over the committed change.
@@ -28,7 +29,24 @@ among sub-agents: a coordinator runs the same pipeline, and the
 
 The reviewer's only view of intent: a file holding the goal and what is not
 this change's job, taken from the plan, with nothing of how the work went.
-When the caller hands you a goal statement, use that file as it stands.
+Write it with `agent-plan goal PLAN [--part P1] > FILE`. When the caller
+hands you a goal statement, use that file as it stands.
+
+## Recording it in the plan
+
+Each stage is an event in the plan's log (the `plan-work` skill's
+`agent-plan log`), against the item it concerns: the plan's ID, a part's,
+or a step's.
+
+- Design review of the plan: `plan-reviewed`; each decision it brings goes
+  under Decisions with a `D` ID and is logged `decided` once settled.
+- Each fresh review round: `reviewed`, with the number of findings in the
+  summary.
+- Each finding settled: `finding-settled` against the item it concerns, with
+  `--review <round>.<id> --outcome <outcome>`, the outcome as Triage below.
+- Design review of the result: `reviewed` with `--role design-reviewer`.
+- Hand-back: `handed-back`, with `STATUS` set to `handed-back`.
+- When Wesley opts the task out, `PIPELINE` becomes `opted-out:<reason>`.
 
 ## Fresh review loop
 

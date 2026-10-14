@@ -221,6 +221,23 @@ Settings missing from the flags come from `test`, `build` and `testFiles` in
 test command runs the commit's code, so run it in a sandbox when the commit
 is not trusted.
 
+## plans: one file per change, one log
+
+Agents keep each change's plan with `agent-plan`, as the `plan-work` skill
+says: a directory under `wgn.home.llm.plans.dir` (`~/git/org/agents`), one
+per host, holding `plan.org`, a file per sub-agent's part, and `log.org`,
+the append-only record of each item's progress, review outcomes and tokens.
+Plans are never committed: `agent-plan new` lists the directory in
+`~/git/org`'s `.git/info/exclude`.
+
+``` sh
+agent-plan find --branch BRANCH          # plans for a branch on this host
+agent-plan status PLAN                   # what is done, verified and left, as Org
+agent-plan tokens                        # tokens by event kind, model and effort
+```
+
+Ask an agent only to plan, and it writes the plan and stops.
+
 ## pushing: private history stays private
 
 `wgn.home.git` runs `git-push-guard` before every push from every
