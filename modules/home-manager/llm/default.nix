@@ -61,7 +61,12 @@ in {
           test = mkOption {
             type = types.nullOr types.str;
             default = null;
-            description = "The test command `git red-check` runs, with `sh` at the top of a checkout.";
+
+            description = ''
+              The test command `git red-check` runs, with `sh` at the top of
+              a checkout. With it and {option}`testFiles`, `git fresh-review`
+              runs `git red-check` on the range it reviews.
+            '';
           };
 
           build = mkOption {

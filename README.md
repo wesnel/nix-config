@@ -101,8 +101,9 @@ Enabling any of those modules enables `wgn.home.llm`, which provides:
 - **Skills.** `wgn.home.llm.skills` are linked into each agent's skill
   directory. A skill marked `sandbox = true` is also carried into sandboxed
   sessions; the rest drive something on this machine, such as Emacs.
-- **`agent-tools`** on `PATH`: `git sign-pass`, `git red-check`, `pr-loop`
-  and `sandbox-relay`, built from `overlays/agent-tools`. `wgn.home.git` uses
+- **`agent-tools`** on `PATH`: `git sign-pass`, `git red-check`,
+  `git fresh-review`, `pr-loop` and `sandbox-relay`, built from
+  `overlays/agent-tools`. `wgn.home.git` uses
   its `git-push-guard` as well.
 
 Agents write the files below themselves, so Nix merges its keys into them on
