@@ -116,6 +116,12 @@ func checkLocal(repo *Repo, branch, base, baseOid string) (string, []string, err
 	if err != nil {
 		return "", nil, err
 	}
+	if parent, err := unmergedParent(repo, names, branch, base, local, known); err != nil {
+		return "", nil, err
+	} else if parent != "" {
+		return "", nil, refuse("%s contains commits of %s, a branch on GitHub that %s lacks, so its pull request would carry them; "+
+			"open it with `--base %s`", branch, parent, base, parent)
+	}
 	for _, name := range names {
 		known = append(known, "--remotes="+name+"/*")
 	}
@@ -131,6 +137,44 @@ func checkLocal(repo *Repo, branch, base, baseOid string) (string, []string, err
 		return "", nil, err
 	}
 	return local, known, nil
+}
+
+// unmergedParent names the remote branch, other than branch, base and the
+// default branch, that local contains and the base's commits (baseCommits)
+// lack: the nearest one, when there are several. It is "" when there is none.
+func unmergedParent(repo *Repo, remotes []string, branch, base, local string, baseCommits []string) (string, error) {
+	if len(baseCommits) == 0 {
+		// The base's tip is not in this checkout; what was fetched of it stands in.
+		for _, name := range remotes {
+			if git.OK("rev-parse", "--verify", "-q", "refs/remotes/"+name+"/"+base) {
+				baseCommits = append(baseCommits, "refs/remotes/"+name+"/"+base)
+			}
+		}
+	}
+	best, bestCount := "", 0
+	for _, name := range remotes {
+		refs, err := git.Run("for-each-ref", "--format=%(refname)", "refs/remotes/"+name+"/")
+		if err != nil {
+			return "", err
+		}
+		for _, ref := range strings.Fields(refs) {
+			short := strings.TrimPrefix(ref, "refs/remotes/"+name+"/")
+			if short == "HEAD" || short == branch || short == base || short == repo.Default ||
+				!git.OK("merge-base", "--is-ancestor", ref, local) {
+				continue
+			}
+			out, err := git.Run(append([]string{"rev-list", "--count", ref, "--not"}, baseCommits...)...)
+			if err != nil {
+				return "", err
+			}
+			// The branch with the most commits beyond the base is the one
+			// nearest the head; a tie goes to the first name.
+			if n, _ := strconv.Atoi(out); n > bestCount || (n == bestCount && n > 0 && short < best) {
+				best, bestCount = short, n
+			}
+		}
+	}
+	return best, nil
 }
 
 // lintNew refuses unless the commits local has and known lacks pass
