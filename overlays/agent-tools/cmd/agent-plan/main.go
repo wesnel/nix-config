@@ -64,9 +64,8 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      plan's file or the part's, as its next question ID, in
                      the form questions reads, and log it as asked
   ask PLAN ... --answer TEXT [--role R]
-                     write an agent's own decision on a constraint that
-                     already holds, settled as written, and log it as asked
-                     and decided
+                     write a reversible decision of your own, settled as
+                     written, and log it as asked and decided
   decide PLAN QID --answer TEXT [--drop | --supersedes QID] [--role R]
                      settle open question QID in place with Wesley's answer,
                      or with --drop as dropped, why in --answer; --supersedes
