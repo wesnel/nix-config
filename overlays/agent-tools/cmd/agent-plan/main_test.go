@@ -215,7 +215,7 @@ func TestRelayed(t *testing.T) {
 
 // Hooks run on the host, so a session's relay never takes them.
 func TestClientSide(t *testing.T) {
-	for args, want := range map[string]bool{"find --hook": true, "statusline": true, "find --session x": false,
+	for args, want := range map[string]bool{"find --hook": true, "statusline": true, "remind": true, "find --session x": false,
 		"log P --item S1": false, "new --title T": false} {
 		if got := clientSide(strings.Fields(args)); got != want {
 			t.Errorf("clientSide(%s) = %v", args, got)
@@ -274,5 +274,15 @@ func TestClaudeHooks(t *testing.T) {
 	code, out, _ = agentPlan(t, `{"session_id":"other","source":"resume","cwd":"/nowhere"}`, "find", "--hook")
 	if code != 0 || out != "" {
 		t.Errorf("find --hook for a session without a plan: %d %q", code, out)
+	}
+	code, out, errs := agentPlan(t, `{"session_id":"s-9","hook_event_name":"PreCompact","trigger":"auto"}`, "remind")
+	if code != 0 || !strings.Contains(out, plan) || errs != "" {
+		t.Errorf("remind before a compaction: %d %q %q", code, out, errs)
+	}
+	t.Setenv("SANDBOX_RELAY_URL", "http://127.0.0.1:1")
+	for _, stdin := range []string{`{"session_id":"other","hook_event_name":"PreCompact"}`, `{`, ``} {
+		if code, out, errs = agentPlan(t, stdin, "remind"); code != 0 || out != "" || errs != "" {
+			t.Errorf("remind with %q: %d %q %q", stdin, code, out, errs)
+		}
 	}
 }

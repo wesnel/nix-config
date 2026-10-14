@@ -101,7 +101,18 @@ func TestPostRecordsFacts(t *testing.T) {
 	os.WriteFile(filepath.Join(main, "a"), []byte("a\n"), 0o644)
 	gitIn(t, main, "add", "a")
 	commit := "git -c commit.gpgsign=false commit -m 'Add the loop'"
-	postHook(t, claudeEvent("s1", main, commit, gitOut(t, main, "commit", "-m", "Add the loop")))
+	out := postHook(t, claudeEvent("s1", main, commit, gitOut(t, main, "commit", "-m", "Add the loop")))
+	var asked struct {
+		Specific struct {
+			Event   string `json:"hookEventName"`
+			Context string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	json.Unmarshal([]byte(out), &asked)
+	if c := asked.Specific.Context; asked.Specific.Event != "PostToolUse" || !strings.Contains(c, p.File()) ||
+		!strings.Contains(c, "which step") || !strings.Contains(c, "--commit 'Add the loop'") {
+		t.Errorf("after a commit: %s", out)
+	}
 
 	// Codex hands the output over as one string after its own header.
 	codex, _ := json.Marshal(map[string]any{"session_id": "s9", "cwd": main, "hook_event_name": "PostToolUse",
@@ -138,7 +149,9 @@ func TestPostRecordsFacts(t *testing.T) {
 			gitOut(t, elsewhere, "commit", "--allow-empty", "-m", "Unplanned")),
 		`not json`,
 	} {
-		postHook(t, event)
+		if out := postHook(t, event); out != "" {
+			t.Errorf("%s: printed %s", event, out)
+		}
 	}
 
 	events, err := p.Events()

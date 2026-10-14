@@ -59,6 +59,14 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      record agent ID, the harness's ID for a sub-agent or
                      "main" for the session's main thread, as the one agent
                      that edits files in the worktree DIR (OWNERS in the plan)
+  remind             a hook (reads stdin) that asks, in a session with a plan,
+                     for the coordinator to check a finished sub-agent's report
+                     and log its part (Claude Code's UserPromptSubmit and
+                     PostToolUse on Agent, Codex's PostToolUse on wait_agent,
+                     ECA's postToolCall on spawn_agent), and for a compaction
+                     to keep what the plan lacks (Claude Code's PreCompact) or
+                     the plan to be brought up to date after one (Codex's
+                     SessionStart, ECA's postCompact); never blocks
   init               clone the plans' repository where it is missing and
                      "plans.remote" names it, then make the plans directory,
                      with a .gitignore for the lock files, as new does
@@ -90,7 +98,7 @@ func clientSide(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	if args[0] == "statusline" {
+	if args[0] == "statusline" || args[0] == "remind" {
 		return true
 	}
 	if args[0] == "find" {
@@ -135,6 +143,15 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if c, err := plans.Load(); err == nil {
 			if line := c.StatusLine(readAll(stdin)); line != "" {
 				fmt.Fprintln(stdout, line)
+			}
+		}
+		return 0
+	}
+	if args[0] == "remind" {
+		// A failure asks for nothing, quietly.
+		if c, err := plans.Load(); err == nil {
+			if out := c.Remind(readAll(stdin)); len(out) > 0 {
+				stdout.Write(append(out, '\n'))
 			}
 		}
 		return 0

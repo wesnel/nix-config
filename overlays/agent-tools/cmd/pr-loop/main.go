@@ -75,8 +75,9 @@ no attribution lines, and on a fixup only Review-* trailers.
                               a loop's rules, or with --baseline every session's, by agent
   guard --post                PostToolUse hook for Claude Code, Codex and ECA (reads stdin):
                               records the shell call's commits, pushes, new worktrees,
-                              branches and PRs in the plan of its session or worktree;
-                              after a push to GitHub, names the pr-loop wait ci to start
+                              branches and PRs in the plan of its session or worktree,
+                              asking which step a commit completes; after a push to
+                              GitHub, names the pr-loop wait ci to start
 ` + prreview.Usage + `
 reply and resolve take a thread a review bot started on an open PR by the
 authenticated user in this repository, and need no begin. In a loop session
