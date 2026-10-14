@@ -210,7 +210,7 @@ func TestWaitCIKeysOnTheNewHead(t *testing.T) {
 			f.checks["a2"] = []fakeCheck{{name: "build", status: "COMPLETED", conclusion: "FAILURE", job: 7}}
 		}
 	}
-	result, settled, err := WaitCI(nil, "", time.Hour, time.Minute)
+	result, settled, err := WaitCI(nil, "", time.Hour, time.Minute, 3*time.Minute)
 	if err != nil || !settled || result.Result != "failed" || polls != 4 {
 		t.Fatalf("wait: %+v, settled %v, %v after %d polls", result, settled, err, polls)
 	}
@@ -226,7 +226,7 @@ func TestWaitCITimesOut(t *testing.T) {
 	f.checks["a1"] = passing
 	sha := strings.Repeat("f", 40)
 	start := now()
-	result, settled, err := WaitCI([]string{"feat"}, sha, 5*time.Minute, 2*time.Minute)
+	result, settled, err := WaitCI([]string{"feat"}, sha, 5*time.Minute, 2*time.Minute, 0)
 	if err != nil || settled || result.Result != "timedOut" {
 		t.Fatalf("wait: %+v, settled %v, %v", result, settled, err)
 	}
@@ -236,14 +236,83 @@ func TestWaitCITimesOut(t *testing.T) {
 	if waited := now().Sub(start); waited != 5*time.Minute {
 		t.Errorf("waited %s", waited)
 	}
-	if _, _, err := WaitCI([]string{"1", "feat"}, sha, 0, 0); !refused(err) {
+	if _, _, err := WaitCI([]string{"1", "feat"}, sha, 0, 0, 0); !refused(err) {
 		t.Errorf("--sha with two PRs: %v", err)
 	}
 
-	// Checks that never start leave the head with none, which is not a result.
+	// Within its grace, a head without checks is still waiting for them.
 	f.checks = map[string][]fakeCheck{}
-	if result, settled, _ := WaitCI(nil, "", time.Minute, time.Minute); settled || result.PRs[0].State != "none" {
-		t.Errorf("no checks: %+v", result.PRs[0])
+	result, settled, _ = WaitCI(nil, "", time.Minute, time.Minute, 3*time.Minute)
+	if settled || result.Result != "timedOut" || result.PRs[0].State != "none" {
+		t.Errorf("no checks within the grace: %+v %+v", result, result.PRs[0])
+	}
+}
+
+// A head that still has no checks a grace period after it became the
+// expected head is a result of its own, counted from when it was seen.
+func TestWaitCINoChecks(t *testing.T) {
+	f := ciRepo(t)
+	start := now()
+	result, settled, err := WaitCI(nil, "", time.Hour, time.Minute, 3*time.Minute)
+	if err != nil || !settled || result.Result != "noChecks" || result.PRs[0].State != "none" {
+		t.Fatalf("no checks: %+v, settled %v, %v", result, settled, err)
+	}
+	if waited := now().Sub(start); waited != 3*time.Minute {
+		t.Errorf("waited %s", waited)
+	}
+
+	// The old head's checks are not the new head's, and the grace starts only
+	// once the PR shows the new head.
+	f.checks["a1"] = passing
+	f.prs[1].branchOid = "a2"
+	polls := 0
+	f.tick = func() {
+		if polls++; polls == 2 {
+			f.prs[1].headOid = "a2"
+		}
+	}
+	start = now()
+	result, settled, _ = WaitCI(nil, "", time.Hour, time.Minute, 3*time.Minute)
+	if !settled || result.Result != "noChecks" || result.PRs[0].HeadOid != "a2" {
+		t.Errorf("no checks on the new head: %+v", result)
+	}
+	if waited := now().Sub(start); waited != 5*time.Minute {
+		t.Errorf("waited %s for a head seen after 2m", waited)
+	}
+
+	// A push during the grace restarts it for the new head.
+	polls = 0
+	f.tick = func() {
+		if polls++; polls == 2 {
+			f.prs[1].headOid, f.prs[1].branchOid = "a3", "a3"
+		}
+	}
+	start = now()
+	if result, _, _ = WaitCI(nil, "", time.Hour, time.Minute, 3*time.Minute); result.Result != "noChecks" {
+		t.Errorf("after a second push: %+v", result)
+	}
+	if waited := now().Sub(start); waited != 5*time.Minute {
+		t.Errorf("waited %s for a head pushed after 2m", waited)
+	}
+
+	// Checks that register within the grace are waited for.
+	polls = 0
+	f.tick = func() {
+		if polls++; polls == 2 {
+			f.checks["a3"] = passing
+		}
+	}
+	if result, _, _ = WaitCI(nil, "", time.Hour, time.Minute, 3*time.Minute); result.Result != "passed" {
+		t.Errorf("checks within the grace: %+v", result)
+	}
+
+	// A failure elsewhere outranks a head without checks.
+	f.tick = nil
+	f.prs[1].headOid, f.prs[1].branchOid = "a4", "a4"
+	f.prs[5] = &fakeCIPR{author: "me", state: "OPEN", head: "other", headOid: "e1", branchOid: "e1"}
+	f.checks["e1"] = []fakeCheck{{name: "build", status: "COMPLETED", conclusion: "FAILURE", job: 1}}
+	if result, settled, _ = WaitCI([]string{"1", "5"}, "", time.Hour, time.Minute, 0); !settled || result.Result != "failed" {
+		t.Errorf("a failure beside no checks: %+v", result)
 	}
 }
 
@@ -259,12 +328,12 @@ func TestWaitCIComparesWithTheBase(t *testing.T) {
 	}
 	f.base = append(failing("lint"), fakeCheck{name: "test (unit)", status: "COMPLETED", conclusion: "SUCCESS"})
 	f.checks["a1"] = append(failing("lint"), passing...)
-	result, settled, err := WaitCI(nil, "", 0, 0)
+	result, settled, err := WaitCI(nil, "", 0, 0, 0)
 	if err != nil || !settled || result.Result != "failedOnBase" || result.PRs[0].Failed[0].OnBase != "failed" {
 		t.Errorf("a failure the base shares: %+v, %v", result, err)
 	}
 	f.checks["a1"] = failing("lint", "test (unit)", "new")
-	result, _, _ = WaitCI(nil, "", 0, 0)
+	result, _, _ = WaitCI(nil, "", 0, 0, 0)
 	onBase := map[string]string{}
 	for _, c := range result.PRs[0].Failed {
 		onBase[c.Name] = c.OnBase

@@ -48,8 +48,9 @@ authenticated user in the same repository.
   status [PR...]              CI, each bot's review, open threads, diff growth
   ci [PR...]                  checks on each head, compared with the base
   logs [--lines N] PR CHECK   the end of a failed GitHub Actions job's log
-  wait ci [--sha REV] [--timeout S] [--interval S] [PR...]
-                              block until CI on each head finishes (exit 3 on timeout)
+  wait ci [--sha REV] [--grace S] [--timeout S] [--interval S] [PR...]
+                              block until CI on each head finishes (exit 3 on timeout,
+                              4 when a head has no checks)
   wait reviews [--timeout S] [--interval S] [PR...]
                               block until requested reviews land (exit 3 on timeout)
   sign [--resume] [--no-push] squash the loop's fixups, sign with the hardware key, and
@@ -69,11 +70,16 @@ HEAD heads none and a loop is registered here. In a loop session they read
 the PRs named, or the loop's.
 
 wait ci prints {"result": R, "prs": [...]}, where R is passed, failed (a check
-fails that does not fail on the base), failedOnBase or timedOut, and exits 0
-once CI has finished. It waits for the PR's head to become the commit --sha
-names, or else the head branch's tip on GitHub, and never reports an earlier
-head's checks. Each failed check gives its state on the base (onBase) and,
-for a GitHub Actions job, the logs command that prints its log.
+fails that does not fail on the base), failedOnBase, noChecks or timedOut. It
+exits 0 once CI has finished, 3 on timedOut, and 4 on noChecks: nothing
+failed, but a head still had no checks --grace seconds (default 180) after
+wait ci first saw it as the PR's head, as on a branch no CI runs on. CI that
+takes longer than that to report its first check needs a longer --grace; a
+--grace beyond --timeout makes such a head time out instead. It waits for the
+PR's head to become the commit --sha names, or else the head branch's tip on
+GitHub, and never reports an earlier head's checks. Each failed check gives
+its state on the base (onBase) and, for a GitHub Actions job, the logs
+command that prints its log.
 
 A reply file has a section per thread: a line "=== thread THREAD", or
 "=== thread THREAD resolve" to resolve the thread after replying, then the
@@ -182,6 +188,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		timeout  = flags.Int("timeout", 240, "")
 		interval = flags.Int("interval", 30, "")
 		sha      = flags.String("sha", "", "")
+		grace    = flags.Int("grace", 180, "")
 		resume   = flags.Bool("resume", false, "")
 		noPush   = flags.Bool("no-push", false, "")
 		prune    = flags.Bool("prune", false, "")
@@ -307,12 +314,19 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		target := rest[0]
 		rest = rest[1:]
 		wait, every := time.Duration(*timeout)*time.Second, time.Duration(*interval)*time.Second
+		ciOnly := *sha != ""
+		flags.Visit(func(f *flag.Flag) { ciOnly = ciOnly || f.Name == "grace" })
 		settled := false
 		switch {
 		case target == "ci":
-			result, settled, err = loop.WaitCI(rest, *sha, wait, every)
-		case *sha != "":
-			err = errors.New("--sha is for wait ci")
+			var w *loop.CIWait
+			w, settled, err = loop.WaitCI(rest, *sha, wait, every, time.Duration(*grace)*time.Second)
+			result = w
+			if err == nil && w.Result == "noChecks" {
+				code = 4
+			}
+		case ciOnly:
+			err = errors.New("--sha and --grace are for wait ci")
 		default:
 			var ns []int
 			if ns, err = numbers(); err == nil {
@@ -371,7 +385,7 @@ func interleave(args []string) []string {
 	takesValue := map[string]bool{"-body-file": true, "--body-file": true, "-from": true, "--from": true, "-lines": true, "--lines": true,
 		"-timeout": true, "--timeout": true, "-interval": true, "--interval": true, "-bot": true, "--bot": true,
 		"-accept-failure": true, "--accept-failure": true, "-base": true, "--base": true, "-title": true, "--title": true,
-		"-sha": true, "--sha": true}
+		"-sha": true, "--sha": true, "-grace": true, "--grace": true}
 	var flags, positional []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
