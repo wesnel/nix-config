@@ -16,7 +16,7 @@
           "endLine": {"type": ["integer", "null"], "description": "The last line of a span, or null."},
           "kind": {
             "type": "string",
-            "enum": ["goal-unmet", "bug", "regression", "unresolved", "out-of-scope", "untested", "untrue-doc"]
+            "enum": ["goal-unmet", "bug", "regression", "unresolved", "out-of-scope", "untested", "untrue-doc", "convention"]
           },
           "claim": {"type": "string", "description": "The problem, in one sentence."},
           "evidence": {"type": "string", "description": "What shows it: a failing test and its output, a call site, a thread."},

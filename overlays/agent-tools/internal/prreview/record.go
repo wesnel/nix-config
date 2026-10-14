@@ -57,7 +57,7 @@ type Finding struct {
 }
 
 var severities = map[string]string{
-	"bug": "issue", "regression": "issue", "goal-unmet": "issue",
+	"bug": "issue", "regression": "issue", "goal-unmet": "issue", "convention": "issue",
 	"unresolved": "suggestion", "untested": "suggestion", "untrue-doc": "suggestion",
 	"out-of-scope": "question",
 }
