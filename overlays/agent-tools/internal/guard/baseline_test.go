@@ -528,6 +528,9 @@ func TestShellEdits(t *testing.T) {
 		{false, "sed -i '' s/a/b/ " + outside + "/f"},
 		{false, "sed s/a/b/ a.go > " + scratch + "/a.go"},
 		{false, "perl -ne 'print' a.go"},
+		{false, "gofmt -r 'a -> b' -w a.go"},
+		{false, "gopls rename -w a.go:#0 b"},
+		{false, "go fix ./..."},
 		{false, "cat a.go | tee " + scratch + "/copy"},
 		{false, "echo x > " + outside + "/f"},
 		{false, "cd $SOMEWHERE && echo x > a.go"},
@@ -543,6 +546,13 @@ func TestShellEdits(t *testing.T) {
 			}
 			if reason != "" && !saysInstead(reason) {
 				t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+			}
+			// A sweep over Go code has tools that edit it whole, and a
+			// reviewer reruns it from the commit body.
+			for _, tool := range []string{"gopls rename", "gofmt -r", "go fix", "commit body"} {
+				if reason != "" && !strings.Contains(reason, tool) {
+					t.Errorf("%q: reason %q does not name %s", c.command, reason, tool)
+				}
 			}
 		})
 	}

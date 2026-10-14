@@ -119,6 +119,9 @@ the wrong branch of a stack are expensive to unpick.
 
 Use the file-editing tools, not `sed`, `perl`, `python`, or shell redirection.
 Editing several files, or making the same change many times, is not an exception.
+A purely mechanical sweep over Go code may instead use `gopls rename`,
+`gofmt -r` or `go fix`, with the exact command in the commit body so a
+reviewer can rerun it.
 
 ## The shell
 

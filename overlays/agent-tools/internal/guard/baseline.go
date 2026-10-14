@@ -531,7 +531,9 @@ func inPlace(name string, args []string) bool {
 }
 
 const shellEdit = "`%s` is a tracked file, and editing it from the shell bypasses the file-editing tools AGENTS.md requires. " +
-	"Use the file-editing tools (`Edit`, `Write`, `apply_patch`, ECA's `edit_file`), or write scratch output under `$TMPDIR` or /tmp."
+	"Use the file-editing tools (`Edit`, `Write`, `apply_patch`, ECA's `edit_file`), or write scratch output under `$TMPDIR` or /tmp. " +
+	"For a mechanical sweep over Go code, use `gopls rename`, `gofmt -r 'PATTERN -> REPLACEMENT' -w` or `go fix`, " +
+	"with the exact command in the commit body."
 
 // checkShellEdit denies a command that writes a tracked file with a
 // redirection, tee, ed, or sed or perl in place, run in dir.
