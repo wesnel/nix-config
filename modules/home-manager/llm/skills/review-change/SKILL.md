@@ -137,18 +137,37 @@ each branch:
 
 - structure: what goes where, what is shared, which branches stack;
 - duplication of, or contradiction with, what already exists, documentation
-  and tooling included;
+  and tooling included, searched for by what it does rather than by name,
+  and saying where it looked;
 - the same file edited on parallel branches;
-- what the plan leaves undecided;
+- what the plan leaves undecided, against this bar: someone could build it
+  without asking a question;
 - designing for change:
   - one source of truth per fact or rule, which everything else reads;
-  - seams named and narrow, with their contract written at the seam;
+  - seams named and narrow, with their contract written at the seam: the
+    types, invariants, ordering, errors, configuration and cost a caller
+    relies on;
   - nothing speculative: no option, layer or interface without a current
     second user;
-  - each of the goal's likely next changes a local edit.
+  - each of the goal's likely next changes a local edit;
+  - each new module worth keeping: deleting it would spread its complexity
+    across its callers rather than move it, its interface is much smaller
+    than what it hides, and following one concept does not mean hopping
+    through many small modules;
+- as judgement calls, never as rules: data clumps, primitive obsession, a
+  middle man, the same switch in several places, feature envy, and one
+  module changed for unrelated reasons.
 
 It may read earlier plans in the same area (`agent-plan find`, or the
 plans directory) to see what kept changing there.
+
+While the plan leaves an interface undecided, design it at least three
+times before choosing: one sub-agent that only reads per design, each
+under a different constraint (the smallest interface; the commonest call
+made trivial; the most callers served; the dependency behind a port), each
+returning the interface with its contract, a call site and what it hides.
+Compare them by how much each hides and how local each likely next change
+stays, and bring the choice to Wesley with your recommendation.
 
 It reports in the fresh review's vocabulary where that fits. Settle what
 the goal statement already decides by Triage. The rest are Wesley's
