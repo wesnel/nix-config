@@ -26,8 +26,14 @@ const usage = `pr-loop: the review loop's only way to write to GitHub.
 Policy: only branches registered with begin are touched, each the head of an
 open PR, draft or ready, by the authenticated user in the same repository and
 not the default branch; this is re-checked before every write. Everything the
-loop commits must be a fixup of the PR's own commits.
+loop commits must be a fixup of the PR's own commits. The exception is open,
+which publishes a branch GitHub does not have, never a default branch, as a
+draft PR based on the default branch or on the head of another open PR by the
+authenticated user in the same repository.
 
+  open --title T --body-file F [--base BASE] [--dry-run] [BRANCH]
+                              push BRANCH (default HEAD) through the GitHub API and open
+                              it as a draft PR against BASE (default: the default branch)
   stack [BRANCH]              the stack of open PRs containing BRANCH (default HEAD)
   begin [BRANCH...]           register the branches of one stack (default: the current stack)
   worktrees [--remove]        a worktree per PR under .pr-loop/, where commits are unsigned
@@ -54,7 +60,7 @@ sandbox-relay, where sign and end are refused: run those outside the session.
 // relayed are the commands a sandbox may run through the relay. sign needs
 // the hardware key and end discards state, so a person runs those on the host.
 var relayed = map[string]bool{
-	"stack": true, "begin": true, "push": true, "threads": true, "reply": true, "resolve": true,
+	"open": true, "stack": true, "begin": true, "push": true, "threads": true, "reply": true, "resolve": true,
 	"request": true, "status": true, "ci": true, "logs": true, "wait": true, "worktrees": true,
 }
 
@@ -67,12 +73,12 @@ func relayRefusal(argv []string) string {
 		}
 		return fmt.Sprintf("%q is only run on the host", name)
 	}
-	// The client sends a reply's body itself; a path here would name a file on
+	// The client sends a --body-file itself; a path here would name a file on
 	// the host, which the sandbox must not be able to read out through GitHub.
 	for i, a := range argv {
 		if (a == "--body-file" && (i+1 >= len(argv) || argv[i+1] != "-")) ||
 			(strings.HasPrefix(a, "--body-file=") && a != "--body-file=-") || a == "-body-file" || strings.HasPrefix(a, "-body-file=") {
-			return "a relayed reply takes its body on stdin"
+			return "a relayed command takes its body on stdin"
 		}
 	}
 	return ""
@@ -135,6 +141,8 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		dryRun   = flags.Bool("dry-run", false, "")
 		all      = flags.Bool("all", false, "")
 		bodyFile = flags.String("body-file", "", "")
+		base     = flags.String("base", "", "")
+		title    = flags.String("title", "", "")
 		lines    = flags.Int("lines", 200, "")
 		timeout  = flags.Int("timeout", 240, "")
 		interval = flags.Int("interval", 30, "")
@@ -174,11 +182,37 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		return nil
 	}
+	body := func() (string, error) {
+		var data []byte
+		var err error
+		switch *bodyFile {
+		case "":
+			err = fmt.Errorf("%s needs --body-file", command)
+		case "-":
+			data, err = io.ReadAll(stdin)
+		default:
+			data, err = os.ReadFile(*bodyFile)
+		}
+		return string(data), err
+	}
 
 	var result any
 	var err error
 	code := 0
 	switch command {
+	case "open":
+		if len(rest) > 1 {
+			err = errors.New("open takes at most one branch; see pr-loop --help")
+			break
+		}
+		branch := ""
+		if len(rest) == 1 {
+			branch = rest[0]
+		}
+		var text string
+		if text, err = body(); err == nil {
+			result, err = loop.Open(branch, *base, *title, text, *dryRun)
+		}
 	case "stack":
 		branch := ""
 		if len(rest) > 0 {
@@ -198,17 +232,9 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 	case "reply":
 		if err = need(1); err == nil {
-			var body []byte
-			switch *bodyFile {
-			case "":
-				err = errors.New("reply needs --body-file")
-			case "-":
-				body, err = io.ReadAll(stdin)
-			default:
-				body, err = os.ReadFile(*bodyFile)
-			}
-			if err == nil {
-				result, err = loop.Reply(rest[0], string(body))
+			var text string
+			if text, err = body(); err == nil {
+				result, err = loop.Reply(rest[0], text)
 			}
 		}
 	case "resolve":
@@ -282,7 +308,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 func interleave(args []string) []string {
 	takesValue := map[string]bool{"-body-file": true, "--body-file": true, "-lines": true, "--lines": true,
 		"-timeout": true, "--timeout": true, "-interval": true, "--interval": true, "-bot": true, "--bot": true,
-		"-accept-failure": true, "--accept-failure": true}
+		"-accept-failure": true, "--accept-failure": true, "-base": true, "--base": true, "-title": true, "--title": true}
 	var flags, positional []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]

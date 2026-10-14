@@ -81,73 +81,22 @@ func Push(branches []string, dryRun bool) (any, error) {
 	for i, u := range updates {
 		tips[i] = u.after
 	}
-	exclude := append([]string{"--not"}, known...)
-
-	listed, err := git.Run(append(append([]string{"rev-list", "--objects"}, tips...), exclude...)...)
+	objects, err := missingObjects(tips, known)
 	if err != nil {
 		return nil, err
 	}
-	var shas []string
-	for _, line := range strings.Split(listed, "\n") {
-		if sha, _, _ := strings.Cut(line, " "); sha != "" {
-			shas = append(shas, sha)
-		}
-	}
-	kinds := map[string]string{}
-	var order []string
-	if len(shas) > 0 {
-		out, err := git.Bytes([]byte(strings.Join(shas, "\n")+"\n"), "cat-file", "--batch-check=%(objectname) %(objecttype)")
-		if err != nil {
-			return nil, err
-		}
-		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-			sha, kind, _ := strings.Cut(line, " ")
-			kinds[sha] = kind
-			order = append(order, sha)
-		}
-	}
-	commitsOut, err := git.Run(append(append([]string{"rev-list", "--topo-order", "--reverse"}, tips...), exclude...)...)
-	if err != nil {
-		return nil, err
-	}
-	commits := strings.Fields(commitsOut)
 
 	if dryRun {
-		counts := map[string]int{}
-		for _, k := range kinds {
-			counts[k]++
-		}
 		would := map[string]string{}
 		for _, u := range updates {
 			would[u.branch] = u.after
 		}
-		return map[string]any{"wouldUpdate": would, "objects": counts}, nil
+		return map[string]any{"wouldUpdate": would, "objects": objects.counts()}, nil
 	}
 
-	up := &uploader{slug: repo.Slug, missingTrees: map[string]bool{}, done: map[string]bool{}}
-	for sha, kind := range kinds {
-		if kind == "tree" {
-			up.missingTrees[sha] = true
-		}
-	}
-	for _, sha := range order {
-		if kinds[sha] == "blob" {
-			if err := up.blob(sha); err != nil {
-				return nil, err
-			}
-		}
-	}
-	for _, sha := range order {
-		if kinds[sha] == "tree" && !up.done[sha] {
-			if err := up.tree(sha); err != nil {
-				return nil, err
-			}
-		}
-	}
-	for _, sha := range commits {
-		if err := up.commit(sha); err != nil {
-			return nil, err
-		}
+	calls, err := objects.upload(repo.Slug)
+	if err != nil {
+		return nil, err
 	}
 
 	refUpdates := make([]map[string]any, len(updates))
@@ -171,7 +120,86 @@ func Push(branches []string, dryRun bool) (any, error) {
 	if err := snapshotRound(state); err != nil {
 		return nil, err
 	}
-	return map[string]any{"pushed": pushed, "round": state.Round, "apiCalls": up.calls}, state.save()
+	return map[string]any{"pushed": pushed, "round": state.Round, "apiCalls": calls}, state.save()
+}
+
+// objectSet is what GitHub needs before a branch can point at a tip: every
+// object reachable from the tips and from none of the commits it has.
+type objectSet struct {
+	kinds   map[string]string
+	order   []string
+	commits []string // parents first
+}
+
+func missingObjects(tips, known []string) (*objectSet, error) {
+	exclude := append([]string{"--not"}, known...)
+	listed, err := git.Run(append(append([]string{"rev-list", "--objects"}, tips...), exclude...)...)
+	if err != nil {
+		return nil, err
+	}
+	var shas []string
+	for _, line := range strings.Split(listed, "\n") {
+		if sha, _, _ := strings.Cut(line, " "); sha != "" {
+			shas = append(shas, sha)
+		}
+	}
+	set := &objectSet{kinds: map[string]string{}}
+	if len(shas) > 0 {
+		out, err := git.Bytes([]byte(strings.Join(shas, "\n")+"\n"), "cat-file", "--batch-check=%(objectname) %(objecttype)")
+		if err != nil {
+			return nil, err
+		}
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			sha, kind, _ := strings.Cut(line, " ")
+			set.kinds[sha] = kind
+			set.order = append(set.order, sha)
+		}
+	}
+	commits, err := git.Run(append(append([]string{"rev-list", "--topo-order", "--reverse"}, tips...), exclude...)...)
+	if err != nil {
+		return nil, err
+	}
+	set.commits = strings.Fields(commits)
+	return set, nil
+}
+
+func (s *objectSet) counts() map[string]int {
+	counts := map[string]int{}
+	for _, k := range s.kinds {
+		counts[k]++
+	}
+	return counts
+}
+
+// upload creates the objects through the Git Database API, children before
+// the trees and commits that name them, and returns the number of API calls.
+func (s *objectSet) upload(slug string) (int, error) {
+	up := &uploader{slug: slug, missingTrees: map[string]bool{}, done: map[string]bool{}}
+	for sha, kind := range s.kinds {
+		if kind == "tree" {
+			up.missingTrees[sha] = true
+		}
+	}
+	for _, sha := range s.order {
+		if s.kinds[sha] == "blob" {
+			if err := up.blob(sha); err != nil {
+				return up.calls, err
+			}
+		}
+	}
+	for _, sha := range s.order {
+		if s.kinds[sha] == "tree" && !up.done[sha] {
+			if err := up.tree(sha); err != nil {
+				return up.calls, err
+			}
+		}
+	}
+	for _, sha := range s.commits {
+		if err := up.commit(sha); err != nil {
+			return up.calls, err
+		}
+	}
+	return up.calls, nil
 }
 
 type uploader struct {

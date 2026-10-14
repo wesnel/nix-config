@@ -26,8 +26,9 @@ create, amend or rewrite commits.
 
 ## Pull requests
 
-- Open every pull request as a draft. Marking it ready for review notifies
-  its code owners, and is Wesley's call.
+- Open every pull request as a draft, with `pr-loop open`, which needs no
+  key touch (the `signing-pass` skill shows how). Marking it ready for review
+  notifies its code owners, and is Wesley's call.
 - Describe the change as it stands, as if the diff had always looked this
   way: no history of how it got there, no list of review follow-ups, and no
   line numbers, line counts or commit counts, all of which go stale. Stack

@@ -78,10 +78,10 @@
     "allow": ["git config --get user.email"]
   },
   {
-    "why": "The coordinator alone pushes, replies, resolves and requests reviews.",
+    "why": "The coordinator alone opens, pushes, replies, resolves and requests reviews.",
     "ownerOnly": true,
-    "pattern": ".*\\bpr-loop\\s+(begin|push|reply|resolve|request|worktrees|sign|end)\\b.*",
-    "deny": ["pr-loop push", "pr-loop reply T --body-file -"],
+    "pattern": ".*\\bpr-loop\\s+(open|begin|push|reply|resolve|request|worktrees|sign|end)\\b.*",
+    "deny": ["pr-loop push", "pr-loop reply T --body-file -", "pr-loop open --title T --body-file - x"],
     "allow": ["pr-loop threads 12", "pr-loop status"]
   }
 ]

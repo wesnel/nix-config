@@ -23,8 +23,19 @@ signing to one pass at the end, which Wesley runs.
 
   A rebase re-signs every commit it replays unless told not to, so it needs
   the flag as much as a commit does.
-- Never push. A push to GitHub authenticates with the same key over SSH and
-  waits for a touch too. Leave it to the signing pass.
+- Never `git push`. A push to GitHub authenticates with the same key over SSH
+  and waits for a touch too. Leave it to the signing pass.
+- To open a pull request for a branch GitHub does not have yet, publish it
+  with `pr-loop open`, which pushes the unsigned commits through the GitHub
+  API, needs no touch, and opens the pull request as a draft:
+
+  ```sh
+  pr-loop open --title "Say what changed" --body-file description.md feature
+  ```
+
+  The base is the default branch, or with `--base` the branch of an open
+  pull request of Wesley's that this one stacks on. It refuses a branch
+  GitHub already has; later commits reach GitHub through the signing pass.
 - Never create tags; they are signed as well.
 - If a command fails with `gpg failed to sign the data`, `failed to write
   commit object` or `agent refused operation`, or hangs, the flag was
