@@ -24,12 +24,10 @@ import (
 
 var (
 	readOnlyTool = regexp.MustCompile(`(?i)(^|__)(get|list|search|fetch|read|query)[_a-z]*$`)
-	assignment   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
-	wrappers     = map[string]bool{"env": true, "command": true, "nohup": true, "time": true, "timeout": true, "nice": true, "exec": true, "xargs": true}
-	shells       = map[string]bool{"bash": true, "sh": true, "zsh": true, "fish": true, "dash": true}
 	ghReadOnly   = map[string]bool{"pr view": true, "pr diff": true, "pr list": true, "pr checks": true, "pr status": true,
 		"issue view": true, "issue list": true, "repo view": true, "run view": true, "run list": true, "auth status": true}
-	gitValueFlags = map[string]bool{"-c": true, "-C": true, "--git-dir": true, "--work-tree": true, "--namespace": true}
+	gitValueFlags = map[string]bool{"-c": true, "-C": true, "--git-dir": true, "--work-tree": true, "--namespace": true,
+		"--config-env": true}
 	// ghAPIValueFlags are the `gh api` flags whose value is the next word,
 	// which is therefore not the endpoint.
 	ghAPIValueFlags = map[string]bool{"-X": true, "--method": true, "-H": true, "--header": true,
@@ -164,54 +162,121 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 	return ""
 }
 
+// maxDepth is how many shells, evals and watches deep the guard reads a
+// command; it denies a deeper one.
+const maxDepth = 3
+
+const tooDeep = "The guard reads commands nested at most three shells deep, and this one is deeper. Run the innermost command directly."
+
+// unknownProgram is why a command whose program the shell picks at run time
+// is denied when its words include a guarded verb.
+const unknownProgram = "The shell picks this command's program at run time, so the guard cannot check it. Run the program by name, as `git ...` or `gh ...`."
+
+// guardedVerbs are the words that make a command whose program the guard
+// cannot see one it denies.
+var guardedVerbs = set("push", "merge", "close", "reopen", "ready", "comment", "review", "edit", "create",
+	"delete", "token", "api", "commit", "config", "sign-pass")
+
 func command(text string, depth int, who role, dir string) string {
-	var commands [][]string
-	var expanded [][]bool
+	if depth > maxDepth {
+		return tooDeep
+	}
+	var calls []call
 	for _, segment := range segments(text) {
-		all, expands := split(segment)
-		words := strip(all)
-		if len(words) > 0 {
-			commands = append(commands, words)
-			expanded = append(expanded, expands[len(all)-len(words):])
+		if words, expands := split(segment); len(words) > 0 {
+			calls = append(calls, call{words: words, expands: expands})
 		}
 	}
-	for n, words := range commands {
-		name := words[0][strings.LastIndex(words[0], "/")+1:]
-		var reason string
-		switch {
-		case shells[name] && depth < 3:
-			for i, w := range words {
-				if w == "-c" && i+1 < len(words) {
-					reason = command(words[i+1], depth+1, who, dir)
-					break
-				}
-			}
-		case name == "eval" && depth < 3:
-			reason = command(strings.Join(words[1:], " "), depth+1, who, dir)
-		case name == "git":
-			reason = checkGit(words, who)
-		case name == "gh":
-			// A file the call reads is what the guard sees only when nothing
-			// else on the command line can have written it first.
-			files := ""
-			if depth == 0 && len(commands) == 1 {
-				files = dir
-			}
-			if reason = checkGh(words[1:], expanded[n][1:], files); reason != "" && who == reviewer {
-				reason = reviewerReport
-			}
-		case name == "pr-loop":
-			reason = checkPrLoop(words[1:], who)
-		case name == "git-fresh-review" && who == reviewer:
-			reason = nestedReview
-		case name == "git-sign-pass" && who == reviewer:
-			reason = reviewerReport
-		case name == "git-sign-pass":
-			reason = signing
-		}
-		if reason != "" {
+	// A file a gh call reads is what the guard sees only when nothing else
+	// on the command line can have written it first.
+	files := ""
+	if depth == 0 && len(calls) == 1 {
+		files = dir
+	}
+	v := visitor{
+		script: func(text string) string { return command(text, depth+1, who, dir) },
+		call:   func(c call) string { return program(c, who, files) },
+	}
+	for _, c := range calls {
+		if reason := unwrap(c, v); reason != "" {
 			return reason
 		}
+	}
+	return ""
+}
+
+// program judges a call once unwrap has found the program it runs.
+func program(c call, who role, files string) string {
+	if reason := checkEnv(c.env); reason != "" {
+		return reason
+	}
+	if len(c.words) == 0 {
+		return ""
+	}
+	if c.expands[0] {
+		for _, w := range c.words[1:] {
+			if guardedVerbs[w] {
+				return unknownProgram
+			}
+		}
+		return ""
+	}
+	words := c.words
+	switch name := base(words[0]); {
+	case name == "git":
+		return checkGit(words, who)
+	case name == "gh":
+		if reason := checkGh(words[1:], c.expands[1:], files); reason != "" && who == reviewer {
+			return reviewerReport
+		} else {
+			return reason
+		}
+	case name == "pr-loop":
+		return checkPrLoop(words[1:], who)
+	case name == "git-fresh-review" && who == reviewer:
+		return nestedReview
+	case name == "git-sign-pass" && who == reviewer:
+		return reviewerReport
+	case name == "git-sign-pass":
+		return signing
+	}
+	return ""
+}
+
+// configKey matches each key in GIT_CONFIG_PARAMETERS, whose entries are
+// 'key=value' or 'key'='value'.
+var configKey = regexp.MustCompile(`'([^'=]+)'?=`)
+
+// checkEnv checks the assignments made for a command, which reach every git
+// it runs, however deep.
+func checkEnv(env []string) string {
+	for _, kv := range env {
+		name, value, _ := strings.Cut(kv, "=")
+		switch {
+		case name == "GIT_CONFIG_PARAMETERS":
+			for _, m := range configKey.FindAllStringSubmatch(value, -1) {
+				if reason := checkConfigKey(m[1]); reason != "" {
+					return reason
+				}
+			}
+		case strings.HasPrefix(name, "GIT_CONFIG_KEY_"):
+			if reason := checkConfigKey(value); reason != "" {
+				return reason
+			}
+		}
+	}
+	return ""
+}
+
+// checkConfigKey checks a key set for one git command, by `-c`,
+// `--config-env` or the environment.
+func checkConfigKey(key string) string {
+	key = strings.ToLower(key)
+	switch {
+	case strings.HasPrefix(key, "alias."):
+		return alias
+	case strings.HasPrefix(key, "push-guard."):
+		return pushGuard
 	}
 	return ""
 }
@@ -274,14 +339,19 @@ var gitWrites = map[string]bool{"commit": true, "rebase": true, "reset": true, "
 func checkGit(words []string, who role) string {
 	i := 1
 	for i < len(words) && strings.HasPrefix(words[i], "-") {
+		// Configuration given on the command line, such as an alias, which
+		// can stand for any command.
+		key := ""
+		switch w := words[i]; {
+		case (w == "-c" || w == "--config-env") && i+1 < len(words):
+			key, _, _ = strings.Cut(words[i+1], "=")
+		case strings.HasPrefix(w, "--config-env="):
+			key, _, _ = strings.Cut(strings.TrimPrefix(w, "--config-env="), "=")
+		}
+		if reason := checkConfigKey(key); reason != "" {
+			return reason
+		}
 		if gitValueFlags[words[i]] {
-			// An alias given on the command line can stand for any command.
-			if words[i] == "-c" && i+1 < len(words) && strings.HasPrefix(strings.ToLower(words[i+1]), "alias.") {
-				return alias
-			}
-			if words[i] == "-c" && i+1 < len(words) && strings.HasPrefix(strings.ToLower(words[i+1]), "push-guard.") {
-				return pushGuard
-			}
 			i++
 		}
 		i++
@@ -371,17 +441,7 @@ func checkGh(args []string, expanded []bool, workspace string) string {
 		if endpoint == "graphql" {
 			return checkGraphQL(rest, expanded[1:], workspace)
 		}
-		method, explicit, fields := "GET", false, false
-		for i, a := range rest {
-			switch a {
-			case "-X", "--method":
-				if i+1 < len(rest) {
-					method, explicit = strings.ToUpper(rest[i+1]), true
-				}
-			case "-f", "-F", "--field", "--raw-field", "--input":
-				fields = true
-			}
-		}
+		method, explicit, fields := apiMethod(rest)
 		if method != "GET" || (fields && !explicit) {
 			return "Only read-only `gh api` calls are allowed in the review loop. " + prLoopWrites
 		}
@@ -480,100 +540,27 @@ func readQuery(workspace, path string) ([]byte, error) {
 	return os.ReadFile(real)
 }
 
-// strip drops leading environment assignments and wrapper commands.
-func strip(words []string) []string {
-	for len(words) > 0 && (assignment.MatchString(words[0]) || wrappers[words[0]]) {
-		words = words[1:]
-	}
-	return words
-}
-
-// segments splits a command line at ;, &&, ||, |, &, newlines and command
-// substitutions, outside quotes.
-func segments(text string) []string {
-	var out []string
-	var cur strings.Builder
-	quote := byte(0)
-	flush := func() {
-		out = append(out, cur.String())
-		cur.Reset()
-	}
-	for i := 0; i < len(text); i++ {
-		c := text[i]
+// apiMethod reads a `gh api` call's method, whether it was given, and
+// whether the call sends fields, which make gh POST unless a method is
+// given; each flag separate from its value or attached (-XPOST,
+// --method=PUT, -fbody=x).
+func apiMethod(args []string) (method string, explicit, fields bool) {
+	method = "GET"
+	for i, a := range args {
 		switch {
-		case quote != 0:
-			if c == quote {
-				quote = 0
-			} else if c == '\\' && quote == '"' && i+1 < len(text) {
-				cur.WriteByte(c)
-				i++
-				c = text[i]
+		case a == "-X" || a == "--method":
+			if i+1 < len(args) {
+				method, explicit = strings.ToUpper(args[i+1]), true
 			}
-			cur.WriteByte(c)
-		case c == '\'' || c == '"':
-			quote = c
-			cur.WriteByte(c)
-		case c == '\\' && i+1 < len(text):
-			cur.WriteByte(c)
-			i++
-			cur.WriteByte(text[i])
-		case c == ';' || c == '\n' || c == '|' || c == '&' || c == '`' || c == ')' || c == '(':
-			flush()
-		case c == '$' && i+1 < len(text) && text[i+1] == '(':
-			flush()
-			i++
-		default:
-			cur.WriteByte(c)
+		case strings.HasPrefix(a, "--method="):
+			method, explicit = strings.ToUpper(strings.TrimPrefix(a, "--method=")), true
+		case strings.HasPrefix(a, "-X"):
+			method, explicit = strings.ToUpper(strings.TrimPrefix(a[2:], "=")), true
+		case a == "-f" || a == "-F" || a == "--field" || a == "--raw-field" || a == "--input",
+			strings.HasPrefix(a, "-f") || strings.HasPrefix(a, "-F"),
+			strings.HasPrefix(a, "--field=") || strings.HasPrefix(a, "--raw-field=") || strings.HasPrefix(a, "--input="):
+			fields = true
 		}
 	}
-	flush()
-	return out
-}
-
-// split splits one segment into words the way a shell would, removing quotes,
-// and reports for each word whether the shell expands part of it: a $ or a
-// backquote outside single quotes and not escaped.
-func split(segment string) (words []string, expands []bool) {
-	var cur strings.Builder
-	in, quote, expand := false, byte(0), false
-	end := func() {
-		words, expands = append(words, cur.String()), append(expands, expand)
-		cur.Reset()
-		in, expand = false, false
-	}
-	for i := 0; i < len(segment); i++ {
-		c := segment[i]
-		switch {
-		case quote != 0:
-			if c == quote {
-				quote = 0
-			} else if c == '\\' && quote == '"' && i+1 < len(segment) {
-				i++
-				cur.WriteByte(segment[i])
-			} else {
-				expand = expand || quote == '"' && (c == '$' || c == '`')
-				cur.WriteByte(c)
-			}
-		case c == '\'' || c == '"':
-			quote, in = c, true
-		case c == '\\' && i+1 < len(segment):
-			i++
-			cur.WriteByte(segment[i])
-			in = true
-		case c == ' ' || c == '\t':
-			if in {
-				end()
-			}
-		case c == '#' && !in:
-			return words, expands
-		default:
-			expand = expand || c == '$' || c == '`'
-			cur.WriteByte(c)
-			in = true
-		}
-	}
-	if in {
-		end()
-	}
-	return words, expands
+	return method, explicit, fields
 }

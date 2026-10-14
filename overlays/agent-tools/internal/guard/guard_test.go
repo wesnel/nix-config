@@ -96,6 +96,100 @@ func TestCheck(t *testing.T) {
 	}
 }
 
+// TestWrappedCommands covers a command run through another program, a shell
+// keyword or flags the shell combines, which the guard reads as the command
+// it runs, and configuration handed to git through the environment.
+func TestWrappedCommands(t *testing.T) {
+	cases := []struct {
+		deny    bool
+		command string
+	}{
+		{true, "timeout 60 gh pr merge 1"},
+		{true, "timeout -s KILL -k 5 60 git push"},
+		{true, "timeout --signal=KILL 1m git push"},
+		{true, "bash -lc 'gh pr merge 1'"},
+		{true, "bash -ec 'git push'"},
+		{true, "sh -c -- 'git push'"},
+		{true, "bash -o pipefail -c 'git push'"},
+		{true, "fish --command='git push'"},
+		{true, "zsh -l -c 'git push'"},
+		{true, "gh api -XPOST repos/o/r/merges"},
+		{true, "gh api --method=PUT repos/o/r/pulls/1/merge"},
+		{true, "gh api -X=POST repos/o/r/merges"},
+		{true, "gh api repos/o/r/issues/1/comments -fbody=x"},
+		{true, "gh api repos/o/r/issues/1/comments --raw-field=body=x"},
+		{true, "gh api repos/o/r/issues/1/comments --input=body.json"},
+		{true, "nice -n 5 git push"},
+		{true, "nice -5 git push"},
+		{true, "env -i git push"},
+		{true, "env -u HOME PATH=/bin git push"},
+		{true, "env -S 'git push origin x'"},
+		{true, "env -- git push"},
+		{true, "xargs -n 1 gh pr merge"},
+		{true, "xargs -I {} gh pr merge {}"},
+		{true, "command -p git push"},
+		{true, "builtin eval 'git push'"},
+		{true, "exec -a x git push"},
+		{true, "stdbuf -oL git push"},
+		{true, "stdbuf -o L git push"},
+		{true, "caffeinate -i -t 60 git push"},
+		{true, "nohup git push"},
+		{true, "time -p git push"},
+		{true, "nix shell nixpkgs#gh -c gh pr merge 1"},
+		{true, "nix develop --command git push"},
+		{true, "nix develop .#ci -c bash -c 'git push'"},
+		{true, "nix run nixpkgs#gh -- pr merge 1"},
+		{true, "nix run nixpkgs#gh pr merge 1"},
+		{true, "nix-shell -p gh --run 'gh pr merge 1'"},
+		{true, "direnv exec . git push"},
+		{true, `find . -maxdepth 0 -exec git push \;`},
+		{true, "find . -execdir gh pr merge 1 +"},
+		{true, "watch -n 5 git push"},
+		{true, "if true; then git push; fi"},
+		{true, "while true; do git push; done"},
+		{true, "! git push"},
+		{true, "{ git push; }"},
+		{true, "time git push"},
+		{true, `GIT_CONFIG_PARAMETERS="'alias.x=push'" git x`},
+		{true, "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0=push git x"},
+		{true, "env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push-guard.allowPublic GIT_CONFIG_VALUE_0=o/r git status"},
+		{true, "export GIT_CONFIG_PARAMETERS=\"'alias.x=push'\"; git x"},
+		{true, "git --config-env=alias.x=CMD x"},
+		{true, "$g pr merge 1"},
+		{true, `"$GH" pr comment 1 -b hi`},
+		{true, "$(which git) push"},
+		{false, "timeout 60 gh pr view 1"},
+		{false, "bash -lc 'git status'"},
+		{false, "bash -o pipefail -c 'go test ./...'"},
+		{false, "bash script.sh"},
+		{false, "nice -n 5 go test ./..."},
+		{false, "env -u FOO go test ./..."},
+		{false, "env"},
+		{false, `find . -name '*.go' -exec grep -n push {} \;`},
+		{false, "nix develop -c go test ./..."},
+		{false, "nix run nixpkgs#hello -- --greeting push"},
+		{false, "$EDITOR notes.md"},
+		{false, `"$PAGER" README.md`},
+		{false, "command -v gh"},
+		{false, "gh api -XGET repos/o/r/pulls"},
+		{false, "gh api --method=GET repos/o/r/pulls"},
+		{false, "watch -n 5 gh pr checks 1"},
+		{false, "xargs -n 1 echo"},
+		{false, "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=T git status"},
+		{false, "if git diff --quiet; then echo clean; fi"},
+	}
+	for _, c := range cases {
+		input, _ := json.Marshal(map[string]string{"command": c.command})
+		reason := Check("Bash", "", input)
+		if (reason != "") != c.deny {
+			t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
+		}
+		if reason != "" && !saysInstead(reason) {
+			t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+		}
+	}
+}
+
 // TestGraphQLQuerySources covers a query that is not on the command line: the
 // guard reads a plain file of the workspace, and denies what it cannot read.
 func TestGraphQLQuerySources(t *testing.T) {
