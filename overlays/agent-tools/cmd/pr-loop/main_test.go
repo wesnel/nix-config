@@ -47,6 +47,19 @@ func TestRelayRefusal(t *testing.T) {
 		{"reply", "--from"},
 		{"setup"},
 		{"setup", "/x"},
+		// A relayed review names only its own pull request, never a path,
+		// another repository, Codex's model or a run of the code.
+		{"review"},
+		{"review", "o/r#7"},
+		{"review", "--run", "7"},
+		{"review", "--model", "m", "7"},
+		{"review", "--timeout", "5", "7"},
+		{"review", "--reviewer", "codex"},
+		{"review", "--reviewer", "other", "7"},
+		{"review", "7", "8"},
+		{"review", "--check", "/etc/passwd", "7"},
+		{"review", "settle", "7", "x"},
+		{"review", "--check", "settle", "7"},
 	} {
 		if relayRefusal(argv) == "" {
 			t.Errorf("%v was accepted", argv)
@@ -60,6 +73,11 @@ func TestRelayRefusal(t *testing.T) {
 		{"setup-command"},
 		{"stack", "12"},
 		{"link", "12", "13"},
+		{"review", "7"},
+		{"review", "--reviewer", "subagent", "7"},
+		{"review", "--reviewer=codex", "7"},
+		{"review", "--check", "7"},
+		{"review", "settle", "7"},
 	} {
 		if reason := relayRefusal(argv); reason != "" {
 			t.Errorf("%v was refused: %s", argv, reason)
