@@ -79,8 +79,8 @@ with lib; let
   };
 
   # The session's commands run in Claude Code's sandbox with no credentials and
-  # no route to GitHub; `sandbox-relay session` serves `pr-loop` on a private
-  # socket, whose path replaces {socket}. Hooks, MCP servers and WebFetch run outside
+  # no route to GitHub; `sandbox-relay session` serves `pr-loop` and
+  # `agent-plan` on a private socket, whose path replaces {socket}. Hooks, MCP servers and WebFetch run outside
   # the sandbox, which is why WebFetch to GitHub is denied as well.
   prLoopSettings = builtins.toJSON {
     permissions = {
@@ -118,8 +118,12 @@ with lib; let
       filesystem.denyRead = config.wgn.home.llm.prLoop.deniedReads;
 
       # Relative paths here are not resolved against the workspace, so
-      # `sandbox-relay session` fills in its real path.
-      filesystem.denyWrite = map (p: "{workspace}/${p}") config.wgn.home.llm.prLoop.protectedPaths;
+      # `sandbox-relay session` fills in its real path. The user settings'
+      # write grants merge into this session's, so the plans, which this
+      # session reaches through `agent-plan` on the relay, are taken back.
+      filesystem.denyWrite =
+        map (p: "{workspace}/${p}") config.wgn.home.llm.prLoop.protectedPaths
+        ++ [plans.dir];
 
       # The launcher points the build caches here.
       filesystem.allowWrite = [config.wgn.home.llm.prLoop.cacheDir];
@@ -166,7 +170,7 @@ with lib; let
       # "$defaults" in the settings is literal: Claude Code splices its own
       # auto-mode rules in there.
       # shellcheck disable=SC2016
-      exec ${lib.getExe' pkgs.agent-tools "sandbox-relay"} session -- claude \
+      exec ${lib.getExe' pkgs.agent-tools "sandbox-relay"} session --program pr-loop --program agent-plan -- claude \
         --plugin-dir ${prLoopPlugin} \
         --settings ${lib.escapeShellArg prLoopSettings} \
         --permission-mode auto \
@@ -232,8 +236,11 @@ in {
         sandbox =
           {
             # `trash` moves a file on the home volume into ~/.Trash, which the
-            # trash skill asks for in place of rm.
-            filesystem.allowWrite = optional darwin "${config.home.homeDirectory}/.Trash";
+            # trash skill asks for in place of rm. This host's plans are
+            # written with `agent-plan` and the file tools.
+            filesystem.allowWrite =
+              ["${plans.dir}/${plans.host}"]
+              ++ optional darwin "${config.home.homeDirectory}/.Trash";
           }
           // optionalAttrs darwin {
             # Go programs, gh and the go command among them, verify TLS
