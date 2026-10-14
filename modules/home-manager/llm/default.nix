@@ -19,6 +19,9 @@ with lib; let
       sshConfig = "${config.xdg.configHome}/agent-tools/notes-ssh-config";
       key = notesKey;
     };
+    guard = {
+      inherit (cfg.guard) webSockets;
+    };
   });
 
   agentPlan = getExe' pkgs.agent-tools "agent-plan";
@@ -244,6 +247,19 @@ in {
           connection could wait for a key touch.
         '';
       };
+    };
+
+    guard.webSockets = mkOption {
+      type = types.listOf types.str;
+      default = [];
+      example = ["wss://events.example.com/"];
+
+      description = ''
+        URL prefixes a Claude Code Monitor may open a WebSocket to; the guard
+        denies any other. Claude Code opens it itself, outside the sandbox.
+        End each with the `/` after the host, or a lookalike host matches
+        too.
+      '';
     };
 
     prLoop = {
