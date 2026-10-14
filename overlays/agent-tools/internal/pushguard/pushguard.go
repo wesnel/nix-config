@@ -20,6 +20,11 @@ import (
 // private history. Set it for one push with `git -c`.
 const AllowKey = "push-guard.allowPublic"
 
+// unchecked ends a refusal from a check that could not run, taking AllowKey
+// and the target.
+const unchecked = "Pushing without the check is Wesley's decision; an agent stops and asks him. " +
+	"He can push with: git -c %s=%s push ..."
+
 // Update is one line of pre-push's standard input.
 type Update struct {
 	LocalRef, Local, RemoteRef, Remote string
@@ -90,7 +95,7 @@ func Check(url string, updates []Update, public Lookup) error {
 	isPublic, err := public(target)
 	if err != nil {
 		return refusal.New("cannot tell whether %s is public, so the push is refused: %v\n"+
-			"Log in with `gh auth login`, or, if publishing to it is intended, push with `git -c %s=%s push ...`",
+			"If `gh auth status` shows no login, hand Wesley `gh auth login`.\n"+unchecked,
 			target, err, AllowKey, target)
 	}
 	if !isPublic {
@@ -127,7 +132,7 @@ func Check(url string, updates []Update, public Lookup) error {
 		if !pub {
 			if pub, err = public(slug); err != nil {
 				return refusal.New("cannot tell whether %s (remote %s) is private, so the push to %s is refused: %v\n"+
-					"Log in with `gh auth login`, or, if publishing is intended, push with `git -c %s=%s push ...`",
+					"If `gh auth status` shows no login, hand Wesley `gh auth login`.\n"+unchecked,
 					slug, name, target, err, AllowKey, target)
 			}
 		}
