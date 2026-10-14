@@ -21,7 +21,12 @@ been rewritten underneath it.
 
 ```bash
 git worktree add <scratch>/restack --detach <parent-branch>
+pr-loop setup <scratch>/restack                  # where pr-loop is installed
 ```
+
+`pr-loop setup` runs the setup command Wesley configured for the repository,
+such as generating files it does not commit, and does nothing where none is
+configured. Run it again in the worktree after each checkout or rebase there.
 
 Stage explicit paths there too, never `git add -A`.
 

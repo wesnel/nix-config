@@ -4,6 +4,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -37,7 +38,10 @@ authenticated user in the same repository.
                               it as a draft PR against BASE (default: the default branch)
   stack [BRANCH]              the stack of open PRs containing BRANCH (default HEAD)
   begin [BRANCH...]           register the branches of one stack (default: the current stack)
-  worktrees [--remove]        a worktree per PR under .pr-loop/, where commits are unsigned
+  worktrees [--remove]        a worktree per PR under .pr-loop/, where commits are unsigned;
+                              runs the setup command in each one whose HEAD moved since its last setup
+  setup [PATH]                run the setup command in the worktree at PATH (default: this one)
+  setup-command               the setup command configured for this repository
   push [--dry-run] [BRANCH...]  push through the GitHub API, atomically
   threads [--all] PR          unresolved review threads, labelled by bot
   reply THREAD --body-file F  reply inside a bot's thread (- reads stdin)
@@ -87,16 +91,30 @@ Markdown reply up to the next such line. Every line starting "=== thread" is
 a header. Every thread is checked before anything is posted; threads already
 resolved are skipped and reported.
 
-With ` + relay.URLEnv + ` set, every command except guard is sent to that
-sandbox-relay, where sign and end are refused: run those outside the session.
+A setup command prepares a fresh checkout, e.g. generating files the
+repository does not commit. It is taken from "setup" in the user's
+pr-loop/config.json, keyed by owner/name, and never from the repository. It
+runs with sh in this process, printed on stderr before it runs and followed
+by its exit status; a failed setup makes the command exit 1.
+
+With ` + relay.URLEnv + ` set, every command except guard, setup and
+worktrees is sent to that sandbox-relay, where sign and end are refused: run
+those outside the session. worktrees has the relay create the worktrees, and
+setup asks it for the command, then both run the command here, in the sandbox.
 `
 
 // relayed are the commands a sandbox may run through the relay. sign needs
 // the hardware key and end discards state, so a person runs those on the host.
+// setup runs a command, which belongs in the sandbox, never on the host.
 var relayed = map[string]bool{
 	"open": true, "stack": true, "begin": true, "push": true, "threads": true, "reply": true, "resolve": true,
 	"request": true, "status": true, "ci": true, "logs": true, "wait": true, "worktrees": true,
+	"setup-command": true,
 }
+
+// clientSide are the commands that run in this process even with a relay:
+// each does its part on the host through the relay itself.
+var clientSide = map[string]bool{"guard": true, "setup": true, "worktrees": true}
 
 // relayRefusal is why the relay's caller may not run argv, or "".
 func relayRefusal(argv []string) string {
@@ -104,6 +122,9 @@ func relayRefusal(argv []string) string {
 		name := ""
 		if len(argv) > 0 {
 			name = argv[0]
+		}
+		if name == "setup" {
+			return "setup runs its command in the caller's sandbox, never through the relay"
 		}
 		return fmt.Sprintf("%q is only run on the host", name)
 	}
@@ -163,19 +184,24 @@ func main() {
 		os.Exit(0)
 	}
 	command := args[0]
-	if url := os.Getenv(relay.URLEnv); url != "" && command != "guard" {
+	url := os.Getenv(relay.URLEnv)
+	if url != "" && !clientSide[command] {
 		os.Exit(forward(url, args))
 	}
-	if os.Getenv(relay.RelayEnv) == "1" {
+	relayed := os.Getenv(relay.RelayEnv) == "1"
+	if relayed {
 		if reason := relayRefusal(args); reason != "" {
 			fmt.Fprintf(os.Stderr, "pr-loop: refused: %s\n", reason)
 			os.Exit(2)
 		}
 	}
-	os.Exit(run(command, args[1:], os.Stdin, os.Stdout, os.Stderr))
+	os.Exit(run(command, args[1:], url, relayed, os.Stdin, os.Stdout, os.Stderr))
 }
 
-func run(command string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+// run runs command. url is the relay to do host work through, or "" to do it
+// here; relayed means this process is the relay's, on the host, where no
+// setup command may run.
+func run(command string, args []string, url string, relayed bool, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	var (
 		dryRun   = flags.Bool("dry-run", false, "")
@@ -337,7 +363,58 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			code = 3
 		}
 	case "worktrees":
-		result, err = loop.Worktrees(*remove)
+		if url == "" {
+			result, err = loop.Worktrees(*remove)
+			if code := cli.Report("pr-loop", result, err, 0, stdout, stderr); code != 0 || *remove || relayed {
+				return code
+			}
+		} else {
+			argv := []string{"worktrees"}
+			if *remove {
+				argv = append(argv, "--remove")
+			}
+			r, err := relay.Call(url, "pr-loop", argv, nil)
+			if err != nil {
+				return cli.Report("pr-loop", nil, err, 0, stdout, stderr)
+			}
+			io.WriteString(stdout, r.Stdout)
+			io.WriteString(stderr, r.Stderr)
+			if r.Code != 0 || *remove {
+				return r.Code
+			}
+		}
+		return setUpWorktrees(url, stderr)
+	case "setup":
+		if len(rest) > 1 {
+			err = errors.New("setup takes at most one path; see pr-loop --help")
+			break
+		}
+		if len(rest) == 1 {
+			// The repository is identified, and the relay checks the
+			// directory, from where the command runs.
+			if err = os.Chdir(rest[0]); err != nil {
+				break
+			}
+			if err = git.CheckConfig(""); err != nil {
+				break
+			}
+		}
+		var dir string
+		if dir, err = git.Run("rev-parse", "--show-toplevel"); err != nil {
+			break
+		}
+		var setup *loop.Setup
+		if setup, err = setupCommand(url); err != nil {
+			break
+		}
+		runs := []loop.SetupRun{}
+		if setup.Command != "" {
+			runs = loop.RunSetup(setup.Command, []string{dir}, stderr)
+		}
+		result = map[string]any{"repo": setup.Repo, "command": setup.Command, "runs": runs}
+		code = setupFailures(runs, stderr)
+	case "setup-command":
+		result, err = loop.SetupCommand()
 	case "sign":
 		var active bool
 		if active, err = loop.Active(); err == nil {
@@ -377,6 +454,64 @@ func replyFrom(path, bodyFile string, rest []string, stdin io.Reader) (any, erro
 		return nil, err
 	}
 	return loop.ReplyAll(plan)
+}
+
+// setupCommand looks the repository's setup command up where the user's
+// config is: on the host through the relay at url, or here.
+func setupCommand(url string) (*loop.Setup, error) {
+	if url == "" {
+		return loop.SetupCommand()
+	}
+	r, err := relay.Call(url, "pr-loop", []string{"setup-command"}, nil)
+	if err != nil {
+		return nil, err
+	}
+	if r.Code != 0 {
+		return nil, fmt.Errorf("setup-command through the relay exited %d: %s", r.Code, strings.TrimSpace(r.Stderr))
+	}
+	var setup loop.Setup
+	if err := json.Unmarshal([]byte(r.Stdout), &setup); err != nil {
+		return nil, fmt.Errorf("setup-command through the relay: %w", err)
+	}
+	return &setup, nil
+}
+
+// setUpWorktrees runs the setup command in each of the loop's worktrees
+// whose HEAD moved since its last successful setup, and returns the exit
+// code. The worktrees' JSON is already on stdout, so this writes to stderr.
+func setUpWorktrees(url string, stderr io.Writer) int {
+	setup, err := setupCommand(url)
+	if err != nil {
+		fmt.Fprintf(stderr, "pr-loop: %s\n", err)
+		return 1
+	}
+	if setup.Command == "" {
+		return 0
+	}
+	paths, err := loop.WorktreePaths()
+	if err != nil {
+		fmt.Fprintf(stderr, "pr-loop: %s\n", err)
+		return 1
+	}
+	var due []string
+	for _, p := range paths {
+		if loop.NeedsSetup(p) {
+			due = append(due, p)
+		}
+	}
+	return setupFailures(loop.RunSetup(setup.Command, due, stderr), stderr)
+}
+
+// setupFailures names each failed run and returns 1 if there was one.
+func setupFailures(runs []loop.SetupRun, stderr io.Writer) int {
+	code := 0
+	for _, r := range runs {
+		if r.Exit != 0 {
+			fmt.Fprintf(stderr, "pr-loop: setup failed in %s (exit %d)\n", r.Dir, r.Exit)
+			code = 1
+		}
+	}
+	return code
 }
 
 // interleave moves flags ahead of positional arguments, since the standard

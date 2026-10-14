@@ -89,6 +89,25 @@ in {
         };
       };
 
+      setup = mkOption {
+        type = types.attrsOf types.str;
+        default = {};
+        example = {"owner/name" = "go tool buf generate";};
+
+        description = ''
+          A command per GitHub repository, by `owner/name`, that prepares a
+          fresh checkout of it, such as generating files the repository does
+          not commit. `pr-loop worktrees` runs it with `sh` in each worktree
+          whose HEAD moved since its last setup, and `pr-loop setup [PATH]`
+          in any worktree. It runs where `pr-loop` was called, inside a
+          sandboxed session's sandbox; through the relay, only the lookup
+          happens on this machine.
+
+          Setup comes only from here, never from the repository: a repository
+          that could name it would make the loop run its code.
+        '';
+      };
+
       allowedDomains = mkOption {
         type = types.listOf types.str;
 
@@ -291,10 +310,10 @@ in {
   };
 
   config = mkIf cfg.enable {
-    # Read by `pr-loop` on the host, including when the relay runs it; a
-    # sandboxed client never needs it.
+    # Read by `pr-loop` where it runs; a client with a relay asks the relay,
+    # which reads it on the host.
     xdg.configFile."pr-loop/config.json" = mkIf cfg.prLoop.enable {
-      text = builtins.toJSON {inherit (cfg.prLoop) bots;};
+      text = builtins.toJSON {inherit (cfg.prLoop) bots setup;};
     };
 
     home.packages = with pkgs;
