@@ -237,6 +237,21 @@ in {
           # rule covers Write too.
           ++ map (p: "Edit(${rulePath plans.dir}/${p})") ["*.log.org" "*.log.org.lock"];
 
+        # The auto-mode classifier judges intent, so it also stops a rule
+        # broken where the guard cannot see, as through a script; the guard
+        # stays the enforcement. Claude Code adds claude-pr-loop's own
+        # rules to these. "$defaults" is literal: Claude Code splices its
+        # own rules in there.
+        autoMode.hard_deny = [
+          "$defaults"
+          "Reading credentials: SSH or GPG private keys, agents' logins, keychain items, tokens on disk, or the environment's secrets."
+          "Pushing to GitHub, or changing anything there (pull requests, issues, comments, reviews, releases, settings), other than through `pr-loop`."
+          "Running anything as root: sudo, doas, su, or an administrator prompt."
+          "Changing an agent's settings or hooks, or the guard's config: Claude Code's, Codex's or ECA's settings and hooks files, or agent-tools/config.json; or turning hooks or permission checks off."
+          "Publishing a package, container image or release."
+          "Running a command with NGROK_ENV set to prod or stage, however it is set."
+        ];
+
         # Applies wherever a project turns the sandbox on, and merges into
         # claude-pr-loop's sandbox, which denies what it must not have.
         sandbox =
