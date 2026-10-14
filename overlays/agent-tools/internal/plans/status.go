@@ -3,6 +3,7 @@ package plans
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -46,6 +47,13 @@ type Status struct {
 	ReadySteps []string `json:"readySteps"`
 	// Followups are the follow-ups not yet done, verified or abandoned.
 	Followups []string `json:"followups"`
+	// Stale are the steps started whose newest event is older than
+	// staleAfter.
+	Stale []string `json:"stale"`
+	// Unrecorded are the subjects of the commits logged that no done event
+	// names, a fixup, amend or squash commit counting as the commit it
+	// names.
+	Unrecorded []string `json:"unrecorded"`
 	// KeywordDrift are the steps and parts whose heading keyword is not the
 	// one their log gives them: changed in Emacs, or not written while
 	// Emacs held unsaved changes to the file.
@@ -118,6 +126,56 @@ func earlierSettled(hs []heading, i int, isSettled func(string) bool) bool {
 	return true
 }
 
+// staleAfter is how long a started step goes with nothing logged before
+// status calls it stale.
+const staleAfter = 24 * time.Hour
+
+// stale are the started steps of list whose newest event is older than
+// staleAfter at now.
+func stale(list []item, events []Event, now time.Time) []string {
+	newest := map[string]time.Time{}
+	for _, e := range events {
+		if at, err := time.ParseInLocation("[2006-01-02 Mon 15:04]", e.Time, now.Location()); err == nil && at.After(newest[e.Item]) {
+			newest[e.Item] = at
+		}
+	}
+	out := []string{}
+	for _, it := range list {
+		if stepPattern.MatchString(it.ID) && stepState(events, it.ID) == kwStarted && now.Sub(newest[it.ID]) > staleAfter {
+			out = append(out, it.ID)
+		}
+	}
+	return out
+}
+
+var rewritePrefix = regexp.MustCompile(`^(?:fixup|amend|squash)! `)
+
+// unrecorded are the subjects of the committed events no done event names
+// as its commit, a fixup!, amend! or squash! subject standing for the one
+// it names.
+func unrecorded(events []Event) []string {
+	recorded := map[string]bool{}
+	for _, e := range events {
+		if e.Kind == "done" && e.Commit != "" {
+			recorded[e.Commit] = true
+		}
+	}
+	out := []string{}
+	for _, e := range events {
+		if e.Kind != "committed" {
+			continue
+		}
+		subject := e.Commit
+		for rewritePrefix.MatchString(subject) {
+			subject = rewritePrefix.ReplaceAllString(subject, "")
+		}
+		if !recorded[subject] {
+			out = append(out, e.Commit)
+		}
+	}
+	return out
+}
+
 // Status reads the plan and its log, now.
 func (p Plan) Status() (Status, error) { return p.StatusAt(time.Now()) }
 
@@ -149,6 +207,7 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 	if s.ReadySteps, err = p.readySteps(isSettled, events, now); err != nil {
 		return Status{}, err
 	}
+	s.Stale, s.Unrecorded = stale(list, events, now), unrecorded(events)
 	index := map[string]int{}
 	for _, it := range list {
 		if it.ID == p.Name {
@@ -254,6 +313,12 @@ func (s Status) Org() string {
 	fmt.Fprintf(&b, "- Parts ready to start: %s\n", list(s.Ready))
 	fmt.Fprintf(&b, "- Steps ready: %s\n", list(s.ReadySteps))
 	fmt.Fprintf(&b, "- Follow-ups open: %s\n", list(s.Followups))
+	if len(s.Stale) > 0 {
+		fmt.Fprintf(&b, "- Stale, started with nothing logged for a day: %s\n", list(s.Stale))
+	}
+	if len(s.Unrecorded) > 0 {
+		fmt.Fprintf(&b, "- Commits no step records: %s\n", strings.Join(s.Unrecorded, "; "))
+	}
 	if len(s.Waiting) > 0 {
 		var waits []string
 		for _, w := range s.Waiting {

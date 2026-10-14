@@ -122,7 +122,11 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
 
 `agent-plan status PLAN` lists the steps without `done` and those done but
 not `verified`, the parts ready to start, the steps ready now, what still
-waits on an `:AFTER:` item, and keyword drift.
+waits on an `:AFTER:` item, keyword drift, steps started with nothing
+logged for a day, and commits no `done` event names (a `fixup!`, `amend!`
+or `squash!` commit counts as the one it names). Log `done` with the
+`--commit` of each listed commit that completes a step, or say why none
+does.
 
 ## Finding it again
 
