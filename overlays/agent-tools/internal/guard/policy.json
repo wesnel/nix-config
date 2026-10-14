@@ -175,6 +175,14 @@
     "allow": ["ngrok api endpoints list"]
   },
   {
+    "why": "NGROK_ENV set to prod or stage points ngrok's tooling at a real environment, however it is set.",
+    "scope": "baseline",
+    "pattern": ".*\\bNGROK_ENV['\"]?(=|\\s+)['\"]?(?i:prod|production|stage|staging)\\b.*",
+    "deny": ["NGROK_ENV=prod ngrok api endpoints list", "export NGROK_ENV=stage", "set -gx NGROK_ENV prod",
+      "env NGROK_ENV=production ./deploy.sh", "fish -c 'set -x NGROK_ENV stage; ./deploy.sh'", "make deploy NGROK_ENV='staging'"],
+    "allow": ["NGROK_ENV=dev ./deploy.sh", "set -x NGROK_ENV dev", "grep -rn NGROK_ENV ."]
+  },
+  {
     "why": "Activating a system or a profile is Wesley's step; building is not.",
     "scope": "baseline",
     "pattern": ".*(\\b(darwin-rebuild\\s+(.*\\s)?(switch|activate|rollback|--rollback)|home-manager\\s+(.*\\s)?(switch|activate|remove-generations|expire-generations|uninstall)|nixos-rebuild\\s+(.*\\s)?(switch|boot|test|--rollback)|nix\\s+profile\\s+(install|add|remove|upgrade|rollback|wipe-history)|nix-env\\s+(.*\\s)?(-[ieuG]\\w*|--install|--uninstall|--upgrade|--set|--rollback|--switch-generation|--delete-generations)|nix-collect-garbage\\s+(.*\\s)?(-d|--delete-old|--delete-older-than)|nix\\s+copy\\s+(.*\\s)?--to[=\\s]+\\S+://|cachix\\s+push)\\b|\\S*/activate(\\s|$)).*",

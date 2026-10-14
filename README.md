@@ -443,7 +443,8 @@ reviews and top-level comments, GitHub settings, gh's login and token, git
 credential and transport settings, remote rewrites, settings every worktree
 shares, discarding the main checkout's work, dropping or clearing the stash
 every worktree shares, deleting unpushed history or a worktree's
-uncommitted work, reading credentials or the whole environment, ngrok API writes, switching
+uncommitted work, reading credentials or the whole environment, ngrok API writes, running
+with `NGROK_ENV` set to prod or stage however it is set, switching
 the system, root, publishing packages, killing Emacs, gpg-agent, ssh,
 nix-daemon or mcp-proxy, destroying the home directory, the Nix store or
 your keys, switching its own hooks off, and writing a plan's log other than

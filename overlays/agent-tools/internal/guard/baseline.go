@@ -566,6 +566,37 @@ func writeTargets(name string, args []string) []string {
 	return args
 }
 
+const realEnvironment = "NGROK_ENV set to prod or stage points ngrok's tooling at a real environment, which is Wesley's to act on. " +
+	"Use a dev or local environment, or put the command in your report for Wesley."
+
+// realNgrokEnv matches a value of NGROK_ENV that names a real environment.
+var realNgrokEnv = regexp.MustCompile(`(?i)^(prod|production|stage|staging)$`)
+
+// checkNgrokEnv denies a call that sets NGROK_ENV to a real environment:
+// by an assignment the shell, env or export makes, or by arguments that
+// pass it on, as `make X NGROK_ENV=prod`, `docker run -e NGROK_ENV=prod`,
+// fish's `set -gx NGROK_ENV prod` and `launchctl setenv NGROK_ENV prod` do.
+func checkNgrokEnv(c call) string {
+	for _, kv := range c.env {
+		if name, value, _ := strings.Cut(kv, "="); name == "NGROK_ENV" && realNgrokEnv.MatchString(value) {
+			return realEnvironment
+		}
+	}
+	for i, w := range c.words {
+		if c.expands[i] {
+			continue
+		}
+		value, ok := strings.CutPrefix(w, "NGROK_ENV=")
+		if !ok && w == "NGROK_ENV" && i+1 < len(c.words) && !c.expands[i+1] {
+			value, ok = c.words[i+1], true
+		}
+		if ok && realNgrokEnv.MatchString(value) {
+			return realEnvironment
+		}
+	}
+	return ""
+}
+
 // nixEnvWrite is nix-env's short options that change a profile.
 var nixEnvWrite = regexp.MustCompile(`^-[ieuG]`)
 
