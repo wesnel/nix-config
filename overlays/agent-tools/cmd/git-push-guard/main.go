@@ -20,6 +20,10 @@ anyway: git -c ` + pushguard.AllowKey + `=OWNER/NAME push ...
 `
 
 func main() {
+	if len(os.Args) == 2 && cli.IsHelp(os.Args[1]) {
+		fmt.Fprint(os.Stdout, usage)
+		os.Exit(0)
+	}
 	if len(os.Args) != 3 {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
