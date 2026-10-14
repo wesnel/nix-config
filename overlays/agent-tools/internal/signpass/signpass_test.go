@@ -448,7 +448,7 @@ func TestFailedPush(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
 	git.Dir = repo
 	defer func() { git.Dir = "" }()
-	if _, err := Run("", false, true, false); err == nil || !strings.Contains(err.Error(), "`git sign-pass --resume` on one") {
+	if _, err := Run("", false, true, false); err == nil || !strings.Contains(err.Error(), "`git sign-pass --resume one`") {
 		t.Fatalf("a failed push: %v", err)
 	}
 	if marks, _ := git.Run("log", "--format=%G?", "main..one"); marks != "G" {

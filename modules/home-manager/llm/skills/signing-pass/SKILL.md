@@ -58,6 +58,17 @@ branch in the same push, and refuses one the remote already has. Both refuse,
 before any touch, a branch whose upstream is a branch of another name, and any
 push to the remote's default branch.
 
+For more than one branch, hand over one command that names the top of every
+stack, run from any worktree of the repository:
+
+```sh
+git sign-pass --push <top of stack 1> <top of stack 2> <each child of a fork> ...
+```
+
+It signs each stack from wherever its branch is checked out, replays a fork's
+other children onto the signed parent, and prints the whole plan, with the key
+touches, before the first touch. Do not write a script around it.
+
 It re-signs every commit from the oldest unsigned one to the tip, and moves any
 branch stacked inside that range along with it. A stacked branch checked out in
 another worktree moves too, and that worktree's files with it, so the worktree

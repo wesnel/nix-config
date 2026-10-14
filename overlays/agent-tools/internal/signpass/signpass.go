@@ -41,6 +41,16 @@ type pending struct {
 	// detached for the rebase, since --update-refs skips a branch checked out
 	// anywhere, and switched back to its branch afterwards.
 	Worktrees map[string]string `json:"worktrees,omitempty"`
+	// Dir is the worktree the rebase runs in.
+	Dir string `json:"dir"`
+	// For a fork's later child (see plan): the rebase replays Fork..Branch onto
+	// Onto, the signed copy of Fork, autosquashing when Fixups, and Shape is
+	// what the unsigned rehearsal of that produced. Start is then Onto.
+	Onto   string `json:"onto,omitempty"`
+	Fork   string `json:"fork,omitempty"`
+	Fixups bool   `json:"fixups,omitempty"`
+	// Plan is the rest of a multi-branch pass, which --resume carries on with.
+	Plan *plan `json:"plan,omitempty"`
 }
 
 // checkout is another worktree's branch: checked out there, or being rebased
@@ -57,6 +67,18 @@ func otherCheckouts() ([]checkout, error) {
 		return nil, err
 	}
 	here, _ = filepath.EvalSymlinks(here)
+	all, err := checkouts()
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(all, func(c checkout) bool {
+		resolved, _ := filepath.EvalSymlinks(c.path)
+		return resolved == here
+	}), nil
+}
+
+// checkouts lists the branches every worktree holds.
+func checkouts() ([]checkout, error) {
 	list, err := git.Run("worktree", "list", "--porcelain")
 	if err != nil {
 		return nil, err
@@ -74,7 +96,7 @@ func otherCheckouts() ([]checkout, error) {
 			}
 			detached = detached || line == "detached"
 		}
-		if resolved, _ := filepath.EvalSymlinks(c.path); c.path == "" || resolved == here {
+		if c.path == "" {
 			continue
 		}
 		if detached {
@@ -196,8 +218,8 @@ func exists(path string) bool {
 // rangeStart is the parent of the oldest commit the pass has to rewrite: the
 // oldest unsigned commit, or an older one that a fixup folds into. It also
 // reports whether there are fixups to squash.
-func rangeStart(base string) (string, bool, error) {
-	out, err := git.Run("log", "--reverse", "--format=%H%x00%G?%x00%s", base+"..HEAD")
+func rangeStart(base, tip string) (string, bool, error) {
+	out, err := git.Run("log", "--reverse", "--format=%H%x00%G?%x00%s", base+".."+tip)
 	if err != nil {
 		return "", false, err
 	}
@@ -240,45 +262,53 @@ func rangeStart(base string) (string, bool, error) {
 
 // rehearseSquash squashes start..tip unsigned in a throwaway worktree, and
 // checks the commits that remain and the files at the tip, so a conflict or a
-// change shows up before any key touch.
-func rehearseSquash(start, tip string, kept []history.Commit) error {
+// change shows up before any key touch. It returns the squashed tip.
+func rehearseSquash(start, tip string, kept []history.Commit) (string, error) {
+	head, err := rehearse("squashing", "retarget that fixup at a later commit", tip,
+		"-i", "--autosquash", "--force-rebase", start)
+	if err != nil {
+		return "", err
+	}
+	if err := history.Match(kept, start, head, tip); err != nil {
+		return "", err
+	}
+	if a, _ := git.Run("rev-parse", head+"^{tree}"); a != mustTree(tip) {
+		return "", refuse("squashing would change the files at %s", tip)
+	}
+	return head, nil
+}
+
+// rehearse runs an unsigned rebase of tip in a throwaway worktree and returns
+// where it ends; its commits outlive the worktree. what and fix word a
+// refusal.
+func rehearse(what, fix, tip string, args ...string) (string, error) {
 	dir, err := stateDir()
 	if err != nil {
-		return err
+		return "", err
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+		return "", err
 	}
 	scratch, err := os.MkdirTemp(dir, "rehearsal-")
 	if err != nil {
-		return err
+		return "", err
 	}
 	os.Remove(scratch)
 	if _, err := git.Run("worktree", "add", "--detach", scratch, tip); err != nil {
-		return err
+		return "", err
 	}
 	defer func() {
 		git.Run("-C", scratch, "rebase", "--abort")
 		git.Run("worktree", "remove", "--force", scratch)
 	}()
-	if _, err := git.Run("-C", scratch, "-c", "commit.gpgsign=false", "-c", "sequence.editor=:",
-		"rebase", "-i", "--autosquash", "--force-rebase", start); err != nil {
+	if _, err := git.Run(append([]string{"-C", scratch, "-c", "commit.gpgsign=false", "-c", "sequence.editor=:",
+		"-c", "rebase.updateRefs=false", "rebase"}, args...)...); err != nil {
 		if m := history.CouldNotApply.FindStringSubmatch(err.Error()); m != nil {
-			return refuse("squashing conflicts at %s %q: retarget that fixup at a later commit", m[1], m[2])
+			return "", refuse("%s conflicts at %s %q: %s", what, m[1], m[2], fix)
 		}
-		return refuse("squashing the fixups failed: %v", err)
+		return "", refuse("%s failed: %v", what, err)
 	}
-	head, err := git.Run("-C", scratch, "rev-parse", "HEAD")
-	if err != nil {
-		return err
-	}
-	if err := history.Match(kept, start, head, tip); err != nil {
-		return err
-	}
-	if a, _ := git.Run("rev-parse", head+"^{tree}"); a != mustTree(tip) {
-		return refuse("squashing would change the files at %s", tip)
-	}
-	return nil
+	return git.Run("-C", scratch, "rev-parse", "HEAD")
 }
 
 func mustTree(rev string) string {
@@ -288,7 +318,7 @@ func mustTree(rev string) string {
 
 // save records the pass for --resume and keeps the unsigned tip.
 func save(p *pending, path, branch string) error {
-	if _, err := git.Run("update-ref", BackupRef+branch, "HEAD"); err != nil {
+	if _, err := git.Run("update-ref", BackupRef+branch, "refs/heads/"+branch); err != nil {
 		return err
 	}
 	return writeJSON(path, p)
@@ -354,7 +384,7 @@ func inProgress(branches []string) error {
 		for _, b := range append([]string{other.Branch}, other.Stacked...) {
 			if slices.Contains(branches, b) {
 				return refuse("a signing pass on %s, which also moves %s, is in progress; finish it with "+
-					"`git sign-pass --resume` on %s, or remove %s", other.Branch, b, other.Branch, path)
+					"`git sign-pass --resume %s`, or remove %s", other.Branch, b, other.Branch, path)
 			}
 		}
 		return nil
@@ -391,9 +421,8 @@ func localBranches() (map[string]string, error) {
 	return branches, nil
 }
 
-// defaultBase is where the current branch left the default branch: the
-// remote's when there is one, and otherwise the local one, unless that is the
-// branch being signed.
+// defaultBase is where branch left the default branch: the remote's when there
+// is one, and otherwise the local one, unless that is the branch being signed.
 func defaultBase(branch string) (string, error) {
 	for _, ref := range []string{"refs/remotes/origin/HEAD", "refs/remotes/origin/main", "refs/remotes/origin/master",
 		"refs/heads/main", "refs/heads/master"} {
@@ -401,7 +430,7 @@ func defaultBase(branch string) (string, error) {
 			continue
 		}
 		if git.OK("rev-parse", "--verify", "-q", ref) {
-			return git.Run("merge-base", "HEAD", ref)
+			return git.Run("merge-base", "refs/heads/"+branch, ref)
 		}
 	}
 	return "", refuse("cannot tell where %s starts; pass --base REF", branch)
@@ -434,9 +463,9 @@ func Run(base string, resume, push, setUpstream bool) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	var p pending
+	p := &pending{}
 	if resume {
-		found, err := readJSON(path, &p)
+		found, err := readJSON(path, p)
 		if err != nil {
 			return nil, err
 		}
@@ -450,95 +479,219 @@ func Run(base string, resume, push, setUpstream bool) (any, error) {
 		if dirty, _ := git.Run("status", "--porcelain", "--untracked-files=no"); dirty != "" {
 			return nil, refuse("this worktree has uncommitted changes; commit them (unsigned) first")
 		}
-		if base == "" {
-			if base, err = defaultBase(branch); err != nil {
-				return nil, err
-			}
-		}
-		start, squash, err := rangeStart(base)
-		if err != nil {
-			return nil, err
-		}
-		if start == "" {
-			return map[string]string{"branch": branch, "signed": "every commit since the base is already signed"}, nil
-		}
-		if merges, _ := git.Run("rev-list", "--merges", start+"..HEAD"); merges != "" {
-			return nil, refuse("the commits to sign include merges, which re-signing would flatten; sign them by hand")
-		}
-		before, err := localBranches()
-		if err != nil {
-			return nil, err
-		}
-		p = pending{Branch: branch, Start: start, Before: before, Squash: squash}
-		for b, oid := range before {
-			if b != branch && git.OK("merge-base", "--is-ancestor", oid, "HEAD") &&
-				!git.OK("merge-base", "--is-ancestor", oid, start) {
-				p.Stacked = append(p.Stacked, b)
-			}
-		}
-		sort.Strings(p.Stacked)
-		if err := inProgress(append([]string{branch}, p.Stacked...)); err != nil {
-			return nil, err
+		var early any
+		if p, early, err = prepare(branch, base); err != nil || early != nil {
+			return early, err
 		}
 		if push || setUpstream {
 			if _, _, err := pushTargets(append([]string{branch}, p.Stacked...), setUpstream, "run the pass again"); err != nil {
 				return nil, err
 			}
 		}
-		checkouts, err := otherCheckouts()
+		if err := sign(p, path); err != nil {
+			return nil, err
+		}
+	}
+
+	result, moved, err := finish(p, path)
+	if err != nil {
+		return nil, err
+	}
+	if p.Plan != nil {
+		p.Plan.record(&p.Plan.Steps[p.Plan.Next-1], result, moved)
+		return runPlan(p.Plan)
+	}
+	if push || setUpstream {
+		branches := make([]string, 0, len(moved))
+		for b := range moved {
+			branches = append(branches, b)
+		}
+		sort.Strings(branches)
+		pushed, err := pushAll(p.Branch, pushes{branches, setUpstream})
 		if err != nil {
 			return nil, err
 		}
-		if squash {
-			all, err := history.Between(start, "HEAD")
-			if err != nil {
-				return nil, err
-			}
-			for _, c := range all {
-				if history.FixupTarget(c.Message) == "" {
-					p.Kept = append(p.Kept, c)
-				}
-			}
-			p.Trees = map[string]string{}
-			for b, oid := range before {
-				if git.OK("merge-base", "--is-ancestor", start, oid) && git.OK("merge-base", "--is-ancestor", oid, "HEAD") {
-					p.Trees[b] = mustTree(oid)
-				}
-			}
-			if err := rehearseSquash(start, "refs/heads/"+branch, p.Kept); err != nil {
-				return nil, err
-			}
-		} else if p.Shape, err = fullShape(start, "HEAD"); err != nil {
-			return nil, err
-		}
-		if err := detach(&p, checkouts); err != nil {
-			return nil, err
-		}
-		if err := save(&p, path, branch); err != nil {
-			reattach(&p)
-			return nil, err
-		}
-		count, _ := git.Run("rev-list", "--count", start+"..HEAD")
-		fmt.Fprintf(os.Stderr, "signing %s commits on %s, squashing fixups first if any; touch the key for each when it blinks\n", count, branch)
-		args := []string{"rebase", "--force-rebase", "--gpg-sign", "--update-refs"}
-		if squash {
-			args = append(args, "-i", "--autosquash")
-		}
-		if git.Attached([]string{"GIT_SEQUENCE_EDITOR=:"}, append(args, start, branch)...) != 0 {
-			detached := ""
-			if len(p.Worktrees) > 0 {
-				detached = "; --resume also switches the worktrees detached for the pass back to their branches"
-			}
-			return nil, fmt.Errorf("the rebase stopped, usually at a missed key touch. Run `git rebase --continue` "+
-				"(touching the key when it blinks), then `git sign-pass --resume`%s. The unsigned branch is kept as "+
-				"%s%s", detached, BackupRef, branch)
-		}
+		result["pushed"] = pushed
 	}
+	return result, nil
+}
 
-	if err := reattach(&p); err != nil {
+// Resume finishes the pass on branch from wherever its rebase ran, or retries
+// its push.
+func Resume(branch string, push, setUpstream bool) (any, error) {
+	path, err := statePath("pending", branch)
+	if err != nil {
 		return nil, err
 	}
+	var p pending
+	found, err := readJSON(path, &p)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return retryPush(branch, setUpstream)
+	}
+	if p.Dir != "" {
+		git.Dir = p.Dir
+	}
+	return Run("", true, push, setUpstream)
+}
 
+// prepare checks a pass on branch from base and records what it must leave,
+// touching nothing; early is the result when there is nothing to sign.
+func prepare(branch, base string) (p *pending, early any, err error) {
+	tip := "refs/heads/" + branch
+	if base == "" {
+		if base, err = defaultBase(branch); err != nil {
+			return nil, nil, err
+		}
+	}
+	start, squash, err := rangeStart(base, tip)
+	if err != nil {
+		return nil, nil, err
+	}
+	if start == "" {
+		return nil, map[string]string{"branch": branch, "signed": "every commit since the base is already signed"}, nil
+	}
+	if merges, _ := git.Run("rev-list", "--merges", start+".."+tip); merges != "" {
+		return nil, nil, refuse("the commits to sign include merges, which re-signing would flatten; sign them by hand")
+	}
+	before, err := localBranches()
+	if err != nil {
+		return nil, nil, err
+	}
+	p = &pending{Branch: branch, Start: start, Before: before, Squash: squash, Fixups: squash,
+		Stacked: stackedIn(before, branch, start, tip)}
+	if err := inProgress(append([]string{branch}, p.Stacked...)); err != nil {
+		return nil, nil, err
+	}
+	if !squash {
+		p.Shape, err = fullShape(start, tip)
+		return p, nil, err
+	}
+	if p.Kept, err = keptCommits(start, tip); err != nil {
+		return nil, nil, err
+	}
+	p.Trees = map[string]string{}
+	for b, oid := range before {
+		if git.OK("merge-base", "--is-ancestor", start, oid) && git.OK("merge-base", "--is-ancestor", oid, tip) {
+			p.Trees[b] = mustTree(oid)
+		}
+	}
+	_, err = rehearseSquash(start, tip, p.Kept)
+	return p, nil, err
+}
+
+// stackedIn lists the branches other than branch whose tips lie in from..tip.
+func stackedIn(before map[string]string, branch, from, tip string) []string {
+	var stacked []string
+	for b, oid := range before {
+		if b != branch && git.OK("merge-base", "--is-ancestor", oid, tip) && !git.OK("merge-base", "--is-ancestor", oid, from) {
+			stacked = append(stacked, b)
+		}
+	}
+	sort.Strings(stacked)
+	return stacked
+}
+
+// keptCommits are the commits in from..tip that are not fixups.
+func keptCommits(from, tip string) ([]history.Commit, error) {
+	all, err := history.Between(from, tip)
+	if err != nil {
+		return nil, err
+	}
+	var kept []history.Commit
+	for _, c := range all {
+		if history.FixupTarget(c.Message) == "" {
+			kept = append(kept, c)
+		}
+	}
+	return kept, nil
+}
+
+// sign detaches the worktrees the pass moves, records it, and rebases with the
+// key, in the current worktree.
+func sign(p *pending, path string) error {
+	checkouts, err := otherCheckouts()
+	if err != nil {
+		return err
+	}
+	if p.Dir, err = git.Run("rev-parse", "--show-toplevel"); err != nil {
+		return err
+	}
+	if err := detach(p, checkouts); err != nil {
+		return err
+	}
+	if err := save(p, path, p.Branch); err != nil {
+		reattach(p)
+		return err
+	}
+	upstream := []string{p.Start}
+	if p.Onto != "" {
+		upstream = []string{"--onto", p.Onto, p.Fork}
+	}
+	count, _ := git.Run("rev-list", "--count", upstream[len(upstream)-1]+"..refs/heads/"+p.Branch)
+	fmt.Fprintf(os.Stderr, "signing %s commits on %s, squashing fixups first if any; touch the key for each when it blinks\n", count, p.Branch)
+	args := []string{"rebase", "--force-rebase", "--gpg-sign", "--update-refs"}
+	if p.Fixups {
+		args = append(args, "-i", "--autosquash")
+	}
+	if git.Attached([]string{"GIT_SEQUENCE_EDITOR=:"}, append(append(args, upstream...), p.Branch)...) != 0 {
+		detached := ""
+		if len(p.Worktrees) > 0 {
+			detached = "; --resume also switches the worktrees detached for the pass back to their branches"
+		}
+		cont, resume := "git rebase --continue", "git sign-pass --resume"
+		if p.Plan != nil {
+			cont, resume = "git -C "+p.Dir+" rebase --continue", "git sign-pass --resume "+p.Branch
+			detached += ", and then carries on with the rest of the branches"
+		}
+		return fmt.Errorf("the rebase stopped, usually at a missed key touch. Run `%s` "+
+			"(touching the key when it blinks), then `%s`%s. The unsigned branch is kept as "+
+			"%s%s", cont, resume, detached, BackupRef, p.Branch)
+	}
+	return nil
+}
+
+// finish verifies a pass whose rebase has ended, switches detached worktrees
+// back, and clears its signing state. moved is every branch that moved.
+func finish(p *pending, path string) (result map[string]any, moved map[string]string, err error) {
+	if err := reattach(p); err != nil {
+		return nil, nil, err
+	}
+	gained, err := verify(p)
+	if err != nil {
+		return nil, nil, err
+	}
+	after, err := localBranches()
+	if err != nil {
+		return nil, nil, err
+	}
+	moved = map[string]string{}
+	for b, oid := range after {
+		if old, ok := p.Before[b]; ok && old != oid {
+			moved[b] = oid
+		}
+	}
+	signed := len(p.Shape)
+	if p.Squash {
+		signed = len(p.Kept)
+	}
+	result = map[string]any{"signed": signed, "squashed": p.Squash, "moved": moved}
+	if len(gained) > 0 {
+		sort.Strings(gained)
+		result["gainedFixups"] = gained
+	}
+	if err := os.Remove(path); err != nil {
+		return nil, nil, err
+	}
+	return result, moved, nil
+}
+
+// verify refuses unless the pass left its commits as recorded, all signed,
+// with every stacked branch moved. It lists the branches below the tip that
+// gained fixups.
+func verify(p *pending) ([]string, error) {
 	// A branch below the tip gains whatever fixups above it fold into its
 	// commits, which is the point of folding; only the tip must keep its files.
 	var gained []string
@@ -585,42 +738,7 @@ func Run(base string, resume, push, setUpstream bool) (any, error) {
 			"(`git branch -f BRANCH COMMIT`, or `git reset --keep COMMIT` where it is checked out), then run "+
 			"`git sign-pass --resume`", strings.Join(stale, ", "), p.Branch)
 	}
-	after, err := localBranches()
-	if err != nil {
-		return nil, err
-	}
-	moved := map[string]string{}
-	for b, oid := range after {
-		if old, ok := p.Before[b]; ok && old != oid {
-			moved[b] = oid
-		}
-	}
-	signed := len(p.Shape)
-	if p.Squash {
-		signed = len(p.Kept)
-	}
-	result := map[string]any{"signed": signed, "squashed": p.Squash, "moved": moved}
-	if len(gained) > 0 {
-		sort.Strings(gained)
-		result["gainedFixups"] = gained
-	}
-
-	if err := os.Remove(path); err != nil {
-		return nil, err
-	}
-	if push || setUpstream {
-		branches := make([]string, 0, len(moved))
-		for b := range moved {
-			branches = append(branches, b)
-		}
-		sort.Strings(branches)
-		pushed, err := pushAll(p.Branch, pushes{branches, setUpstream})
-		if err != nil {
-			return nil, err
-		}
-		result["pushed"] = pushed
-	}
-	return result, nil
+	return gained, nil
 }
 
 // pushAll records branches as still to push, then pushes them, forgetting
@@ -634,7 +752,7 @@ func pushAll(branch string, todo pushes) (map[string]string, error) {
 	if err := writeJSON(path, todo); err != nil {
 		return nil, err
 	}
-	retry := fmt.Sprintf("run `git sign-pass --resume` on %s", branch)
+	retry := fmt.Sprintf("run `git sign-pass --resume %s`", branch)
 	pushed, err := pushMoved(todo.Branches, todo.SetUpstream, retry, func(done []string) error {
 		todo.Branches = slices.DeleteFunc(todo.Branches, func(b string) bool { return slices.Contains(done, b) })
 		return writeJSON(path, todo)
