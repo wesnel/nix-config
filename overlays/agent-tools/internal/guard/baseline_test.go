@@ -296,7 +296,8 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 
 // gitStateRepos is a repository, main, with a linked worktree on feature,
 // whose commit no remote has, a branch origin has, pushed, and a clean and
-// a dirty detached worktree, all under the returned root. TestGitState's
+// a dirty detached worktree, the dirty one with an empty directory sub, all
+// under the returned root. TestGitState's
 // cases share it, built once, as it takes a dozen git commands to make and
 // the guard only reads it.
 var gitStateRepos = sync.OnceValues(func() (string, error) {
@@ -321,6 +322,9 @@ var gitStateRepos = sync.OnceValues(func() (string, error) {
 		[]string{main, "worktree", "add", "-q", "--detach", filepath.Join(root, "clean")},
 		[]string{main, "worktree", "add", "-q", "--detach", filepath.Join(root, "dirty")},
 	); err != nil {
+		return "", err
+	}
+	if err := os.Mkdir(filepath.Join(root, "dirty", "sub"), 0o755); err != nil {
 		return "", err
 	}
 	return root, os.WriteFile(filepath.Join(root, "dirty", "new"), []byte("x\n"), 0o644)
@@ -433,6 +437,46 @@ func TestGitState(t *testing.T) {
 			}
 			if reason != "" && !saysInstead(reason) {
 				t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+			}
+		})
+	}
+}
+
+// TestExitWorktree covers Claude Code's ExitWorktree, which with
+// discard_changes deletes the session's worktree and its branch whatever
+// they hold.
+func TestExitWorktree(t *testing.T) {
+	root := fixture(t, gitStateRepos)
+	discard := `{"action":"remove","discard_changes":true}`
+	for _, c := range []struct {
+		name, dir, input string
+		deny             bool
+	}{
+		{"commits no remote has", "linked", discard, true},
+		{"uncommitted files", "dirty", discard, true},
+		{"from a subdirectory of uncommitted files", "dirty/sub", discard, true},
+		{"outside a repository", "", discard, true},
+		{"nothing to lose", "clean", discard, false},
+		{"without discarding", "linked", `{"action":"remove"}`, false},
+		{"kept", "linked", `{"action":"keep","discard_changes":true}`, false},
+	} {
+		t.Run(caseName(c.deny, c.name), func(t *testing.T) {
+			dir := t.TempDir()
+			if c.dir != "" {
+				dir = filepath.Join(root, c.dir)
+			}
+			event, _ := json.Marshal(map[string]any{"tool_name": "ExitWorktree", "cwd": dir, "tool_input": json.RawMessage(c.input)})
+			var out bytes.Buffer
+			Main([]string{"--baseline"}, bytes.NewReader(event), &out, io.Discard)
+			if denied := strings.Contains(out.String(), `"permissionDecision":"deny"`); denied != c.deny {
+				t.Errorf("%s: deny=%v, printed %s", event, denied, out.String())
+			}
+			var decision struct {
+				HookSpecificOutput struct{ PermissionDecisionReason string }
+			}
+			json.Unmarshal(out.Bytes(), &decision)
+			if reason := decision.HookSpecificOutput.PermissionDecisionReason; reason != "" && !saysInstead(reason) {
+				t.Errorf("%s: reason %q does not say what to do instead", event, reason)
 			}
 		})
 	}

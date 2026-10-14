@@ -430,7 +430,7 @@ with your credentials, but has the guard in every session.
 `pr-loop guard --baseline` runs before every tool call of every session:
 
 - Claude Code: a `PreToolUse` hook in `~/.claude/settings.json` for the shell,
-  Monitor, the file tools and MCP tools. `Read` is denied the credential files
+  Monitor, ExitWorktree, the file tools and MCP tools. `Read` is denied the credential files
   through `permissions.deny` instead.
 - Codex: `~/.codex/hooks.json`, for every tool. Codex skips a hook until it
   is trusted, so trust it with `/hooks` once after the first switch.
@@ -442,8 +442,8 @@ or open a draft with `pr-loop open`), merging, closing, marking ready,
 reviews and top-level comments, GitHub settings, gh's login and token, git
 credential and transport settings, remote rewrites, settings every worktree
 shares, discarding the main checkout's work, dropping or clearing the stash
-every worktree shares, deleting unpushed history,
-reading credentials or the whole environment, ngrok API writes, switching
+every worktree shares, deleting unpushed history or a worktree's
+uncommitted work, reading credentials or the whole environment, ngrok API writes, switching
 the system, root, publishing packages, killing Emacs, gpg-agent, ssh,
 nix-daemon or mcp-proxy, destroying the home directory, the Nix store or
 your keys, switching its own hooks off, and writing a plan's log other than

@@ -1101,7 +1101,7 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 			if strings.HasPrefix(b, "-") {
 				continue
 			}
-			if out, ok := g.run("rev-list", "--max-count=1", "refs/heads/"+b, "--not", "--remotes"); !ok || out != "" {
+			if g.unpushed("refs/heads/" + b) {
 				return historyLoss
 			}
 		}
@@ -1110,11 +1110,45 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 			if strings.HasPrefix(p, "-") {
 				continue
 			}
-			target := gitState{dir: expandPath(p, g.dir)}
-			if out, ok := target.run("status", "--porcelain"); !ok || out != "" {
+			if (gitState{dir: expandPath(p, g.dir)}).dirty() {
 				return historyLoss
 			}
 		}
+	}
+	return ""
+}
+
+// unpushed reports whether ref has commits no remote-tracking branch has,
+// or may have: a ref git cannot read counts.
+func (g gitState) unpushed(ref string) bool {
+	out, ok := g.run("rev-list", "--max-count=1", ref, "--not", "--remotes")
+	return !ok || out != ""
+}
+
+// dirty reports whether the worktree at g.dir has changes or untracked
+// files, or may have: a directory git cannot read counts.
+func (g gitState) dirty() bool {
+	out, ok := g.run("status", "--porcelain")
+	return !ok || out != ""
+}
+
+const discardWorktree = "Removing this worktree with discard_changes deletes uncommitted files or commits no remote has, which git cannot get back. " +
+	"Exit with `keep`, or commit the work and put the removal in your report for Wesley."
+
+// checkExitWorktree denies Claude Code's ExitWorktree when it would discard
+// the worktree at dir and its branch while they hold work found nowhere
+// else.
+func checkExitWorktree(toolInput json.RawMessage, dir string) string {
+	var in struct {
+		Action         string `json:"action"`
+		DiscardChanges bool   `json:"discard_changes"`
+	}
+	json.Unmarshal(toolInput, &in)
+	if in.Action != "remove" || !in.DiscardChanges {
+		return ""
+	}
+	if g := (gitState{dir: dir}); g.dirty() || g.unpushed("HEAD") {
+		return discardWorktree
 	}
 	return ""
 }

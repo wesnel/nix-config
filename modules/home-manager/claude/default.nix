@@ -369,9 +369,10 @@ in {
           # Holds every session to the baseline: what is Wesley's to do,
           # and the `reviewer` and `pr-owner` agents to their roles. Every
           # tool that runs a command or writes a file belongs here: Monitor
-          # runs a shell command as Bash does.
+          # runs a shell command as Bash does, and ExitWorktree can delete a
+          # worktree and its branch.
           {
-            matcher = "Bash|Monitor|Edit|Write|MultiEdit|NotebookEdit|mcp__.*";
+            matcher = "Bash|Monitor|ExitWorktree|Edit|Write|MultiEdit|NotebookEdit|mcp__.*";
             hooks = [
               {
                 type = "command";
