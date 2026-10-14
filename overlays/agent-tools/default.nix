@@ -56,6 +56,10 @@
       reviewer = patterns rules;
     };
 
+    # The reviewer's contract, which `git fresh-review` embeds for Codex, for
+    # the agents' own reviewer sub-agents.
+    passthru.reviewerPrompt = builtins.readFile ./internal/review/reviewer.md;
+
     # A static Linux build of pr-loop for a sandbox guest, which runs it as a
     # client of `sandbox-relay serve` on the host.
     passthru.linuxClient = agent-tools.overrideAttrs (old: {

@@ -1,6 +1,8 @@
 // Package guard is a PreToolUse hook for a review-loop session in Claude Code
 // or ECA. It denies the ways an agent could write to GitHub or Linear other
-// than through pr-loop, which enforces the loop's policy.
+// than through pr-loop, which enforces the loop's policy. Run with
+// `--only reviewer` in every Claude Code session, it keeps the reviewer agent
+// to reading there too.
 //
 // It inspects commands as the agent typed them, so it catches a forgotten rule
 // but not a command built at run time. In a sandbox without credentials the
@@ -11,6 +13,7 @@ package guard
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -40,8 +43,8 @@ type input struct {
 	Server    string          `json:"server"` // ECA's MCP server name
 	ToolInput json.RawMessage `json:"tool_input"`
 	// Claude Code names the subagent making the call, prefixed with its
-	// plugin's name ("pr-loop:pr-owner"). ECA's sub-agents carry their
-	// role's rules as deny patterns instead.
+	// plugin's name if a plugin defines it ("pr-loop:pr-owner"). ECA's
+	// sub-agents carry their role's rules as deny patterns instead.
 	AgentType string `json:"agent_type"`
 	// The directory the command runs in, which bounds the files the guard
 	// reads. Without it, the guard's own working directory stands in.
@@ -55,23 +58,35 @@ type role int
 const (
 	coordinator role = iota
 	owner            // pr-owner: also denied the steps the coordinator alone takes
-	reviewer         // pr-reviewer: also denied every change to the repository
+	reviewer         // reviewer: also denied every change to the repository or GitHub
 )
 
+// roleNames are the agents with a role of their own, by agent name.
+var roleNames = map[string]role{"pr-owner": owner, "reviewer": reviewer}
+
 func roleOf(agentType string) role {
-	is := func(name string) bool { return agentType == name || strings.HasSuffix(agentType, ":"+name) }
-	switch {
-	case is("pr-reviewer"):
-		return reviewer
-	case is("pr-owner"):
-		return owner
+	for name, r := range roleNames {
+		if agentType == name || strings.HasSuffix(agentType, ":"+name) {
+			return r
+		}
 	}
 	return coordinator
 }
 
 // Main reads one hook event and writes a denial in the caller's format, or
-// nothing to let the call through.
-func Main(stdin io.Reader, stdout io.Writer) int {
+// nothing to let the call through. With args `--only ROLE` it judges only
+// calls by that role's agent and lets every other call through, for a hook
+// that every session runs.
+func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	only, restricted := role(0), false
+	switch {
+	case len(args) == 0:
+	case len(args) == 2 && args[0] == "--only" && roleNames[args[1]] != coordinator:
+		only, restricted = roleNames[args[1]], true
+	default:
+		fmt.Fprintf(stderr, "pr-loop guard: takes no arguments, or --only reviewer or --only pr-owner; got %q\n", args)
+		return 1
+	}
 	var in input
 	if err := json.NewDecoder(stdin).Decode(&in); err != nil {
 		return 0
@@ -79,7 +94,11 @@ func Main(stdin io.Reader, stdout io.Writer) int {
 	if in.Cwd == "" {
 		in.Cwd, _ = os.Getwd()
 	}
-	reason := check(in.ToolName, in.Server, in.ToolInput, roleOf(in.AgentType), in.Cwd)
+	who := roleOf(in.AgentType)
+	if restricted && who != only {
+		return 0
+	}
+	reason := check(in.ToolName, in.Server, in.ToolInput, who, in.Cwd)
 	if reason == "" {
 		return 0
 	}
@@ -108,9 +127,9 @@ func CheckOwner(tool, server string, toolInput json.RawMessage) string {
 	return check(tool, server, toolInput, owner, dir)
 }
 
-// CheckReviewer is CheckOwner for a pr-reviewer, which only reads: it is also
+// CheckReviewer is CheckOwner for a reviewer, which only reads: it is also
 // denied git commands that change the repository and every pr-loop command
-// but the reading ones.
+// but the reading ones, and is told so whichever rule a call breaks.
 func CheckReviewer(tool, server string, toolInput json.RawMessage) string {
 	dir, _ := os.Getwd()
 	return check(tool, server, toolInput, reviewer, dir)
@@ -134,6 +153,9 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 		}
 		json.Unmarshal(toolInput, &args)
 		return command(args.Command, 0, who, dir)
+	case (strings.Contains(strings.ToLower(full), "linear") || strings.Contains(strings.ToLower(full), "github")) &&
+		!readOnlyTool.MatchString(full) && who == reviewer:
+		return reviewerReport
 	case strings.Contains(strings.ToLower(full), "linear") && !readOnlyTool.MatchString(full):
 		return "The review loop does not change Linear. Put the proposed change in the final report for Wesley to approve."
 	case strings.Contains(strings.ToLower(full), "github") && !readOnlyTool.MatchString(full):
@@ -175,9 +197,13 @@ func command(text string, depth int, who role, dir string) string {
 			if depth == 0 && len(commands) == 1 {
 				files = dir
 			}
-			reason = checkGh(words[1:], expanded[n][1:], files)
+			if reason = checkGh(words[1:], expanded[n][1:], files); reason != "" && who == reviewer {
+				reason = reviewerReport
+			}
 		case name == "pr-loop":
 			reason = checkPrLoop(words[1:], who)
+		case name == "git-sign-pass" && who == reviewer:
+			reason = reviewerReport
 		case name == "git-sign-pass":
 			reason = signing
 		}
@@ -201,11 +227,13 @@ const alias = "A git alias can stand for any command, which the guard cannot che
 var coordinatorOnly = map[string]bool{"open": true, "begin": true, "push": true, "reply": true, "resolve": true,
 	"request": true, "worktrees": true, "sign": true, "end": true}
 
-// reviewerReads are the pr-loop commands a reviewer may run.
-var reviewerReads = map[string]bool{"stack": true, "threads": true, "status": true, "ci": true, "logs": true}
+// reviewerReads are the pr-loop commands a reviewer may run, besides
+// `wait ci`.
+var reviewerReads = map[string]bool{"stack": true, "threads": true, "status": true, "ci": true, "logs": true,
+	"setup-command": true}
 
 // reviewerReport is why a reviewer may not make a change.
-const reviewerReport = "A reviewer only reads. Report the finding with its evidence; the PR's owner changes the code and the coordinator runs the loop."
+const reviewerReport = "A reviewer only reads. Report the finding with its evidence; whoever started the review acts on it."
 
 // checkPrLoop keeps the decisions that are Wesley's: waiving a CI failure,
 // and discarding the unsquashed history.
@@ -213,7 +241,8 @@ func checkPrLoop(args []string, who role) string {
 	if len(args) == 0 {
 		return ""
 	}
-	if who == reviewer && !reviewerReads[args[0]] {
+	waitCI := args[0] == "wait" && len(args) > 1 && args[1] == "ci"
+	if who == reviewer && !reviewerReads[args[0]] && !waitCI {
 		return reviewerReport
 	}
 	if who >= owner && coordinatorOnly[args[0]] {
@@ -230,11 +259,12 @@ func checkPrLoop(args []string, who role) string {
 	return ""
 }
 
-// gitWrites are the git commands that change a worktree, the index, refs or
-// stashes, which a reviewer may not run.
+// gitWrites are the git commands that change a worktree, the index, refs,
+// stashes or a remote, which a reviewer may not run.
 var gitWrites = map[string]bool{"commit": true, "rebase": true, "reset": true, "checkout": true, "switch": true,
 	"restore": true, "merge": true, "cherry-pick": true, "revert": true, "am": true, "apply": true, "stash": true,
-	"add": true, "rm": true, "mv": true, "clean": true, "tag": true, "update-ref": true, "notes": true, "worktree": true}
+	"add": true, "rm": true, "mv": true, "clean": true, "tag": true, "update-ref": true, "notes": true, "worktree": true,
+	"push": true, "sign-pass": true}
 
 func checkGit(words []string, who role) string {
 	i := 1
