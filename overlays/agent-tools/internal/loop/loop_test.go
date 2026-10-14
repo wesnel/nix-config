@@ -329,6 +329,79 @@ func TestCheckLocal(t *testing.T) {
 	})
 }
 
+// TestCheckLocalParent covers a branch that contains a branch GitHub has
+// but its base lacks: its pull request would carry the parent's commits.
+func TestCheckLocalParent(t *testing.T) {
+	repo := &Repo{Slug: "o/r", Default: "trunk"}
+	// pushed publishes branches to a bare repository that origin pushes to,
+	// which leaves origin/<branch> in the checkout as a fetch would.
+	pushed := func(t *testing.T, s *localStack, branches ...string) {
+		t.Helper()
+		bare := t.TempDir()
+		gitIn(t, bare, "init", "-q", "--bare")
+		gitIn(t, s.dir, "config", "remote.origin.pushurl", bare)
+		gitIn(t, s.dir, append([]string{"push", "-q", "origin"}, branches...)...)
+	}
+	grandchild := func(t *testing.T, s *localStack) {
+		t.Helper()
+		gitIn(t, s.dir, "switch", "-qc", "grandchild", "child")
+		gitIn(t, s.dir, "commit", "-q", "--allow-empty", "-m", "grandchild")
+	}
+
+	t.Run("default base refused, naming the parent", func(t *testing.T) {
+		s := newLocalStack(t)
+		pushed(t, s, "parent")
+		_, _, err := checkLocal(repo, "child", "trunk", s.trunk)
+		if _, ok := err.(Refusal); !ok || !refusal.SaysInstead(err.Error()) || !strings.Contains(fmt.Sprint(err), "--base parent") {
+			t.Errorf("default base over a pushed parent: %v", err)
+		}
+	})
+
+	t.Run("nearest parent when several", func(t *testing.T) {
+		s := newLocalStack(t)
+		grandchild(t, s)
+		pushed(t, s, "parent", "child")
+		_, _, err := checkLocal(repo, "grandchild", "trunk", s.trunk)
+		if _, ok := err.(Refusal); !ok || !strings.Contains(fmt.Sprint(err), "--base child") {
+			t.Errorf("nearest parent: %v", err)
+		}
+	})
+
+	t.Run("explicit base that is the parent passes", func(t *testing.T) {
+		s := newLocalStack(t)
+		pushed(t, s, "parent")
+		if _, _, err := checkLocal(repo, "child", "parent", s.parent); err != nil {
+			t.Errorf("explicit parent base: %v", err)
+		}
+	})
+
+	t.Run("explicit base above the nearest parent refused", func(t *testing.T) {
+		s := newLocalStack(t)
+		grandchild(t, s)
+		pushed(t, s, "parent", "child")
+		_, _, err := checkLocal(repo, "grandchild", "parent", s.parent)
+		if _, ok := err.(Refusal); !ok || !strings.Contains(fmt.Sprint(err), "--base child") {
+			t.Errorf("base below the nearest parent: %v", err)
+		}
+	})
+
+	t.Run("parent already in the base passes", func(t *testing.T) {
+		s := newLocalStack(t)
+		pushed(t, s, "parent")
+		if _, _, err := checkLocal(repo, "child", "trunk", s.parent); err != nil {
+			t.Errorf("merged parent: %v", err)
+		}
+	})
+
+	t.Run("unrelated remote branch passes", func(t *testing.T) {
+		s := newLocalStack(t)
+		pushed(t, s, "aside")
+		if _, _, err := checkLocal(repo, "child", "trunk", s.trunk); err != nil {
+			t.Errorf("unrelated remote branch: %v", err)
+		}
+	})
+}
+
 // gitIn runs git in dir with a fixed identity and signing off.
 func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
