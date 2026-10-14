@@ -13,7 +13,8 @@ AGENTS.md or memory.
 ## Read first
 
 - The plan: `agent-plan status PLAN` and its log, for `blocked` and
-  `abandoned` events, steps done more than once, and findings settled `fix`.
+  `abandoned` events, steps done more than once, stale steps, commits no
+  step records, and findings settled `fix`.
 - The session's transcript, where the harness keeps one (Claude Code's
   `~/.claude/projects/<project>/<session>.jsonl`, Codex's
   `~/.codex/sessions/<date>/rollout-*.jsonl`): refusals, retries and
