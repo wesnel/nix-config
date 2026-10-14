@@ -1,17 +1,15 @@
 package loop
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"os/exec"
-	"sort"
 	"strings"
 
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/repos"
 )
 
 // Setup is the command that prepares a fresh checkout of a repository, such
@@ -22,51 +20,14 @@ type Setup struct {
 }
 
 // SetupCommand looks up the setup command for the repository containing the
-// current directory, by the GitHub repositories its remotes fetch from. It
-// comes from the "setup" map in the user's config.json, keyed by owner/name,
-// and never from the repository, which must not be able to choose what runs.
+// current directory in the user's per-repository settings (package repos).
 // Command is empty when none is configured.
 func SetupCommand() (*Setup, error) {
-	data, err := os.ReadFile(configPath())
-	if errors.Is(err, fs.ErrNotExist) {
-		return &Setup{}, nil
+	s, err := repos.Lookup()
+	if err != nil || s.Setup == "" {
+		return &Setup{}, err
 	}
-	if err != nil {
-		return nil, err
-	}
-	var config struct {
-		Setup map[string]string `json:"setup"`
-	}
-	if err := json.Unmarshal(data, &config); err != nil {
-		return nil, err
-	}
-	remotes, err := githubRemotes()
-	if err != nil {
-		return nil, err
-	}
-	found := map[string]*Setup{}
-	for _, slug := range remotes {
-		for repo, command := range config.Setup {
-			if strings.EqualFold(repo, slug) && command != "" {
-				found[command] = &Setup{Repo: repo, Command: command}
-			}
-		}
-	}
-	switch len(found) {
-	case 0:
-		return &Setup{}, nil
-	case 1:
-		for _, s := range found {
-			return s, nil
-		}
-	}
-	repos := []string{}
-	for _, s := range found {
-		repos = append(repos, s.Repo)
-	}
-	sort.Strings(repos)
-	return nil, refuse("this checkout's remotes match the setup commands of %v, and only one may apply; "+
-		"ask Wesley to keep one of them in pr-loop/config.json", repos)
+	return &Setup{Repo: s.Repo, Command: s.Setup}, nil
 }
 
 // SetupRun is one run of a setup command in a worktree.

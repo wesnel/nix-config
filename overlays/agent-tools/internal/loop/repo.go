@@ -10,26 +10,11 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/repos"
 )
 
 // githubRemotes maps each remote whose fetch URL is on GitHub to owner/name.
-func githubRemotes() (map[string]string, error) {
-	out, err := git.Run("remote", "-v")
-	if err != nil {
-		return nil, err
-	}
-	remotes := map[string]string{}
-	for _, line := range strings.Split(out, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) != 3 || fields[2] != "(fetch)" {
-			continue
-		}
-		if slug := gh.Slug(fields[1]); slug != "" {
-			remotes[fields[0]] = slug
-		}
-	}
-	return remotes, nil
-}
+func githubRemotes() (map[string]string, error) { return repos.Remotes() }
 
 // Repo is the GitHub repository a checkout belongs to.
 type Repo struct {

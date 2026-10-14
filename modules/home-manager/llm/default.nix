@@ -40,6 +40,72 @@ in {
       '';
     };
 
+    repos = mkOption {
+      type = types.attrsOf (types.submodule {
+        options = {
+          setup = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+
+            description = ''
+              A command that prepares a fresh checkout, such as generating
+              files the repository does not commit. `pr-loop worktrees` runs
+              it with `sh` in each worktree whose HEAD moved since its last
+              setup, and `pr-loop setup [PATH]` in any worktree. It runs
+              where `pr-loop` was called, inside a sandboxed session's
+              sandbox; through the relay, only the lookup happens on this
+              machine.
+            '';
+          };
+
+          test = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+            description = "The test command `git red-check` runs, with `sh` at the top of a checkout.";
+          };
+
+          build = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+
+            description = ''
+              A command that builds the tests without running them, which
+              tells `git red-check` a test that fails to build without a
+              change from one that fails as asserted. Without it, no
+              commit's check exits 0.
+            '';
+          };
+
+          testFiles = mkOption {
+            type = types.listOf types.str;
+            default = [];
+            description = "Git pathspec globs (`:(glob)` magic) that match the test files.";
+          };
+        };
+      });
+
+      default = {};
+      example = {
+        "owner/name" = {
+          setup = "go tool buf generate";
+          test = "go test ./...";
+          build = "go vet ./...";
+          testFiles = ["**/*_test.go"];
+        };
+      };
+
+      description = ''
+        How agents' tools prepare, build and test each GitHub repository, by
+        `owner/name`, written to `agent-tools/config.json` under the XDG
+        config directory. The commands run wherever the tool is called,
+        inside a sandboxed session's sandbox, so a sandbox that runs them
+        must let them read that file.
+
+        They come only from here, never from the repository: a repository
+        that could name them would make agents run its commands.
+      '';
+    };
+
     prLoop = {
       enable = mkEnableOption ''
         the `pr-loop` command and `review-loop` skill, through which an
@@ -89,25 +155,6 @@ in {
         };
       };
 
-      setup = mkOption {
-        type = types.attrsOf types.str;
-        default = {};
-        example = {"owner/name" = "go tool buf generate";};
-
-        description = ''
-          A command per GitHub repository, by `owner/name`, that prepares a
-          fresh checkout of it, such as generating files the repository does
-          not commit. `pr-loop worktrees` runs it with `sh` in each worktree
-          whose HEAD moved since its last setup, and `pr-loop setup [PATH]`
-          in any worktree. It runs where `pr-loop` was called, inside a
-          sandboxed session's sandbox; through the relay, only the lookup
-          happens on this machine.
-
-          Setup comes only from here, never from the repository: a repository
-          that could name it would make the loop run its code.
-        '';
-      };
-
       allowedDomains = mkOption {
         type = types.listOf types.str;
 
@@ -128,52 +175,6 @@ in {
           "index.crates.io"
           "static.crates.io"
         ];
-      };
-
-      redCheck = mkOption {
-        type = types.attrsOf (types.submodule {
-          options = {
-            test = mkOption {
-              type = types.str;
-              description = "The test command, run with `sh` at the top of a checkout.";
-            };
-
-            build = mkOption {
-              type = types.nullOr types.str;
-              default = null;
-
-              description = ''
-                A command that builds the tests without running them, which
-                tells a test that fails to build without a change from one
-                that fails as asserted. Without it, no commit's check
-                exits 0.
-              '';
-            };
-
-            testFiles = mkOption {
-              type = types.listOf types.str;
-              description = "Git pathspec globs (`:(glob)` magic) that match the test files.";
-            };
-          };
-        });
-
-        default = {};
-        example = {
-          "owner/name" = {
-            test = "go test ./...";
-            build = "go vet ./...";
-            testFiles = ["**/*_test.go"];
-          };
-        };
-
-        description = ''
-          How `git red-check` tests each GitHub repository, by `owner/name`,
-          where its flags do not say. It runs these wherever it is called,
-          inside a sandboxed session's sandbox.
-
-          They come only from here, never from the repository: a repository
-          that could name them would make agents run its commands.
-        '';
       };
 
       deniedReads = mkOption {
@@ -361,12 +362,15 @@ in {
   };
 
   config = mkIf cfg.enable {
-    # Read by `pr-loop` where it runs (a client with a relay asks the relay,
-    # which reads it on the host), and by `git red-check` wherever it runs,
-    # so a sandbox that runs it must let it read this.
+    # Read by `pr-loop` where it runs; a client with a relay asks the relay,
+    # which reads it on the host.
     xdg.configFile."pr-loop/config.json" = mkIf cfg.prLoop.enable {
-      text = builtins.toJSON {inherit (cfg.prLoop) bots setup redCheck;};
+      text = builtins.toJSON {inherit (cfg.prLoop) bots;};
     };
+
+    # Read by `pr-loop setup` and `worktrees` as pr-loop's config is, and by
+    # `git red-check` wherever it runs.
+    xdg.configFile."agent-tools/config.json".text = builtins.toJSON {inherit (cfg) repos;};
 
     home.packages = with pkgs;
       [

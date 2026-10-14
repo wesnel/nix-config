@@ -92,8 +92,9 @@ a header. Every thread is checked before anything is posted; threads already
 resolved are skipped and reported.
 
 A setup command prepares a fresh checkout, e.g. generating files the
-repository does not commit. It is taken from "setup" in the user's
-pr-loop/config.json, keyed by owner/name, and never from the repository. It
+repository does not commit. It is taken from "setup" under "repos" in the
+user's agent-tools/config.json, keyed by owner/name, and never from the
+repository. It
 runs with sh in this process, printed on stderr before it runs and followed
 by its exit status; a failed setup makes the command exit 1.
 
