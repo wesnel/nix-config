@@ -2,7 +2,6 @@ package prreview
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -64,7 +63,7 @@ func withCodex(t *testing.T, reply string) string {
 func runReview(t *testing.T, stdin string, args ...string) (int, *Record, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := Main(context.Background(), args, false, strings.NewReader(stdin), &stdout, &stderr)
+	code := Main(t.Context(), args, false, strings.NewReader(stdin), &stdout, &stderr)
 	var record *Record
 	if strings.HasPrefix(strings.TrimSpace(stdout.String()), "{") {
 		record = &Record{}
@@ -92,7 +91,15 @@ func reply() string {
 	return string(data)
 }
 
-func TestReviewWithCodex(t *testing.T) {
+func TestReview(t *testing.T) {
+	t.Run("with Codex", testReviewWithCodex)
+	t.Run("Codex missing", testReviewCodexMissing)
+	t.Run("subagent", testReviewSubagent)
+	t.Run("rounds kept", testReviewRoundsKept)
+	t.Run("relayed target", testReviewRelayedTarget)
+}
+
+func testReviewWithCodex(t *testing.T) {
 	r := newRemote(t, nil)
 	f := setUp(t, r)
 	f.threads = []map[string]any{{"id": "PRRT_1", "isResolved": false, "path": "r.go", "line": 3,
@@ -146,8 +153,8 @@ func TestReviewWithCodex(t *testing.T) {
 	}
 }
 
-// TestCodexMissing exits 4 and names the sub-agent route.
-func TestCodexMissing(t *testing.T) {
+// testReviewCodexMissing exits 4 and names the sub-agent route.
+func testReviewCodexMissing(t *testing.T) {
 	r := newRemote(t, nil)
 	setUp(t, r)
 	bin := t.TempDir()
@@ -161,66 +168,122 @@ func TestCodexMissing(t *testing.T) {
 	}
 }
 
-func TestSubagentCheckAndSettle(t *testing.T) {
+// subagentPrompt has the review of o/r#7 handed to a sub-agent, and returns
+// the remote, the fake GitHub, and the prompt for the sub-agent.
+func subagentPrompt(t *testing.T) (*remote, *fakeGitHub, string) {
+	t.Helper()
 	r := newRemote(t, nil)
 	f := setUp(t, r)
 	code, record, prompt, stderr := runReview(t, "", "--reviewer", "subagent", "o/r#7")
 	if code != 0 || record != nil {
 		t.Fatalf("exit %d\n%s\n%s", code, prompt, stderr)
 	}
-	dir := filepath.Join(os.Getenv("XDG_CACHE_HOME"), "pr-review", "o", "r", "7", r.head[:12])
-	repo := filepath.Join(dir, "repo.git")
-	if !strings.Contains(prompt, "--git-dir "+repo+" diff "+r.base+" "+r.head) {
-		t.Errorf("the prompt does not say where to read the change:\n%s", prompt)
-	}
-	// The reviewer may read nothing outside the review directory.
-	if _, err := os.Stat(filepath.Join(repo, "objects", "info", "alternates")); err == nil {
-		t.Error("the reviewer's copy borrows objects from outside the review directory")
-	}
-	if got := gitT(t, repo, "rev-parse", "refs/pr-review/head"); got != r.head {
-		t.Errorf("the reviewer's copy has head %s", got)
-	}
+	return r, f, prompt
+}
 
-	code, record, _, stderr = runReview(t, "My review:\n```json\n"+reply()+"\n```\n", "--check", "o/r#7")
+// subagentChecked has the review of o/r#7 handed to a sub-agent, and its
+// reply, two findings, checked.
+func subagentChecked(t *testing.T) *fakeGitHub {
+	t.Helper()
+	_, f, _ := subagentPrompt(t)
+	code, record, _, stderr := runReview(t, "My review:\n```json\n"+reply()+"\n```\n", "--check", "o/r#7")
 	if code != 3 || record == nil || record.Reviewer != "subagent" || len(record.Findings) != 2 {
 		t.Fatalf("check: exit %d, %+v\n%s", code, record, stderr)
 	}
-
-	for _, bad := range []string{
-		`{"outcomes": [{"id": "1.F9", "outcome": "propose"}]}`,
-		`{"outcomes": [{"id": "F1", "outcome": "propose"}]}`,
-		`{"outcomes": [{"id": "2.F1", "outcome": "propose"}]}`,
-		`{"outcomes": [{"id": "1.F1", "outcome": "fix"}]}`,
-		`{"outcomes": [{"id": "1.F1", "outcome": "duplicate-of", "of": "1.F1"}]}`,
-		`{"outcomes": [{"id": "1.F1", "outcome": "duplicate-of"}]}`,
-		`{"outcomes": [{"id": "1.F1", "outcome": "propose", "of": "1.F2"}]}`,
-		`{"outcomes": [{"id": "1.F1", "outcome": "propose"}, {"id": "1.F1", "outcome": "rebut"}]}`,
-		`{"outcomes": [{"id": "1.F1", "outcome": "propose", "reply": "posted"}]}`,
-		`not json`,
-	} {
-		if code, _, _, stderr := runReview(t, bad, "settle", "o/r#7"); code != 2 {
-			t.Errorf("%s: exit %d\n%s", bad, code, stderr)
-		}
-	}
-	code, record, _, stderr = runReview(t, `{"outcomes": [{"id": "1.F1", "outcome": "propose", "body": "Should A return 2?\u001b[0m"},
-		{"id": "1.F2", "outcome": "duplicate-of", "of": "1.F1"}]}`, "settle", "o/r#7")
-	if code != 3 || record == nil {
-		t.Fatalf("settle: exit %d\n%s", code, stderr)
-	}
-	if o := record.Findings[0].Outcome; o == nil || *o != "propose" || record.Findings[0].Body != "Should A return 2?[0m" {
-		t.Errorf("F1: %+v", record.Findings[0])
-	}
-	if d := record.Findings[1].DuplicateOf; d == nil || *d != "1.F1" {
-		t.Errorf("F2: %+v", record.Findings[1])
-	}
-	if f.mutations != 0 {
-		t.Errorf("%d writes reached GitHub", f.mutations)
-	}
+	return f
 }
 
-// TestRoundsKept: every round of a head's review stays in the record,
+func testReviewSubagent(t *testing.T) {
+	t.Run("prompt", func(t *testing.T) {
+		r, _, prompt := subagentPrompt(t)
+		dir := filepath.Join(os.Getenv("XDG_CACHE_HOME"), "pr-review", "o", "r", "7", r.head[:12])
+		repo := filepath.Join(dir, "repo.git")
+		if !strings.Contains(prompt, "--git-dir "+repo+" diff "+r.base+" "+r.head) {
+			t.Errorf("the prompt does not say where to read the change:\n%s", prompt)
+		}
+		// The reviewer may read nothing outside the review directory.
+		if _, err := os.Stat(filepath.Join(repo, "objects", "info", "alternates")); err == nil {
+			t.Error("the reviewer's copy borrows objects from outside the review directory")
+		}
+		if got := gitT(t, repo, "rev-parse", "refs/pr-review/head"); got != r.head {
+			t.Errorf("the reviewer's copy has head %s", got)
+		}
+	})
+
+	t.Run("check", func(t *testing.T) {
+		subagentChecked(t)
+	})
+
+	refused := map[string]string{
+		"unknown finding":         `{"outcomes": [{"id": "1.F9", "outcome": "propose"}]}`,
+		"finding without a round": `{"outcomes": [{"id": "F1", "outcome": "propose"}]}`,
+		"unknown round":           `{"outcomes": [{"id": "2.F1", "outcome": "propose"}]}`,
+		"unknown outcome":         `{"outcomes": [{"id": "1.F1", "outcome": "fix"}]}`,
+		"duplicate of itself":     `{"outcomes": [{"id": "1.F1", "outcome": "duplicate-of", "of": "1.F1"}]}`,
+		"duplicate of nothing":    `{"outcomes": [{"id": "1.F1", "outcome": "duplicate-of"}]}`,
+		"of without duplicate-of": `{"outcomes": [{"id": "1.F1", "outcome": "propose", "of": "1.F2"}]}`,
+		"two outcomes for one":    `{"outcomes": [{"id": "1.F1", "outcome": "propose"}, {"id": "1.F1", "outcome": "rebut"}]}`,
+		"a reply already posted":  `{"outcomes": [{"id": "1.F1", "outcome": "propose", "reply": "posted"}]}`,
+		"not JSON":                `not json`,
+	}
+	for name, bad := range refused {
+		t.Run("settle refused/"+name, func(t *testing.T) {
+			subagentChecked(t)
+			if code, _, _, stderr := runReview(t, bad, "settle", "o/r#7"); code != 2 {
+				t.Errorf("%s: exit %d\n%s", bad, code, stderr)
+			}
+		})
+	}
+
+	// settle settles the checked review's two findings and checks the
+	// record it leaves.
+	settle := func(t *testing.T, f *fakeGitHub) {
+		t.Helper()
+		code, record, _, stderr := runReview(t, `{"outcomes": [{"id": "1.F1", "outcome": "propose", "body": "Should A return 2?\u001b[0m"},
+		{"id": "1.F2", "outcome": "duplicate-of", "of": "1.F1"}]}`, "settle", "o/r#7")
+		if code != 3 || record == nil {
+			t.Fatalf("settle: exit %d\n%s", code, stderr)
+		}
+		if o := record.Findings[0].Outcome; o == nil || *o != "propose" || record.Findings[0].Body != "Should A return 2?[0m" {
+			t.Errorf("F1: %+v", record.Findings[0])
+		}
+		if d := record.Findings[1].DuplicateOf; d == nil || *d != "1.F1" {
+			t.Errorf("F2: %+v", record.Findings[1])
+		}
+		if f.mutations != 0 {
+			t.Errorf("%d writes reached GitHub", f.mutations)
+		}
+	}
+
+	t.Run("settle", func(t *testing.T) {
+		settle(t, subagentChecked(t))
+	})
+
+	// A refused settle records nothing, so a later one settles the record
+	// as the check left it.
+	t.Run("settle after refused settles", func(t *testing.T) {
+		f := subagentChecked(t)
+		for _, bad := range refused {
+			if code, _, _, stderr := runReview(t, bad, "settle", "o/r#7"); code != 2 {
+				t.Errorf("%s: exit %d\n%s", bad, code, stderr)
+			}
+		}
+		record, err := loadRecord(must(latest(t.Context(), "o/r", 7)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, finding := range record.Findings {
+			if finding.Outcome != nil || finding.DuplicateOf != nil {
+				t.Errorf("a refused settle recorded %+v", finding)
+			}
+		}
+		settle(t, f)
+	})
+}
+
+// testReviewRoundsKept: every round of a head's review stays in the record,
 // numbered, with its reviewer, and settle addresses any round's findings.
-func TestRoundsKept(t *testing.T) {
+func testReviewRoundsKept(t *testing.T) {
 	r := newRemote(t, nil)
 	setUp(t, r)
 	withCodex(t, reply())
@@ -265,7 +328,7 @@ func TestRoundsKept(t *testing.T) {
 	if code, _, _, stderr := runReview(t, "", "o/r#7"); code != 3 {
 		t.Fatalf("round 3: exit %d\n%s", code, stderr)
 	}
-	pr := must(latest(context.Background(), "o/r", 7))
+	pr := must(latest(t.Context(), "o/r", 7))
 	var exported Record
 	if err := json.Unmarshal(must(os.ReadFile(filepath.Join(pr.Dir, "findings.json"))), &exported); err != nil {
 		t.Fatal(err)
@@ -276,40 +339,69 @@ func TestRoundsKept(t *testing.T) {
 	}
 }
 
-// TestRelayedTarget: a session behind the relay reviews only the pull
+// testReviewRelayedTarget: a session behind the relay reviews only the pull
 // request whose review directory it runs in, and only from that directory:
 // above it, the session could write the record and the clone.
-func TestRelayedTarget(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	dir := filepath.Join(Root(), "o", "r", "7", "0123456789ab")
-	for _, d := range []string{
-		filepath.Join(dir, "repo.git"), filepath.Join(Root(), "o", "r", "7", "0123456789AB"),
-		filepath.Join(Root(), "o", "r", "7", "clone"),
-	} {
-		os.MkdirAll(d, 0o755)
-	}
-	for _, d := range []string{
-		filepath.Dir(dir), filepath.Join(dir, "repo.git"), filepath.Join(Root(), "o", "r", "7", "0123456789AB"),
-		filepath.Join(Root(), "o", "r", "7", "clone"), filepath.Join(Root(), "o", "r"), Root(),
-	} {
-		t.Chdir(d)
-		if _, _, err := target("7", true); err == nil {
-			t.Errorf("a relayed review from %s was accepted", d)
+func testReviewRelayedTarget(t *testing.T) {
+	// reviewDirs makes the review directory of o/r#7 at 0123456789ab, with
+	// its repo.git, beside directories that only look like one, and returns
+	// the root of the reviews and that directory.
+	reviewDirs := func(t *testing.T) (root, dir string) {
+		t.Helper()
+		t.Setenv("XDG_CACHE_HOME", t.TempDir())
+		root = Root()
+		dir = filepath.Join(root, "o", "r", "7", "0123456789ab")
+		for _, d := range []string{
+			filepath.Join(dir, "repo.git"), filepath.Join(root, "o", "r", "7", "0123456789AB"),
+			filepath.Join(root, "o", "r", "7", "clone"),
+		} {
+			os.MkdirAll(d, 0o755)
 		}
+		return root, dir
 	}
-	t.Chdir(dir)
-	if slug, n, err := target("7", true); err != nil || slug != "o/r" || n != 7 {
-		t.Errorf("its own: %s#%d, %v", slug, n, err)
+
+	for name, where := range map[string]func(root, dir string) string{
+		"the pull request's directory": func(_, dir string) string { return filepath.Dir(dir) },
+		"repo.git":                     func(_, dir string) string { return filepath.Join(dir, "repo.git") },
+		"a head in capitals":           func(root, _ string) string { return filepath.Join(root, "o", "r", "7", "0123456789AB") },
+		"the clone":                    func(root, _ string) string { return filepath.Join(root, "o", "r", "7", "clone") },
+		"the repository's directory":   func(root, _ string) string { return filepath.Join(root, "o", "r") },
+		"the root":                     func(root, _ string) string { return root },
+	} {
+		t.Run("refused from/"+name, func(t *testing.T) {
+			d := where(reviewDirs(t))
+			t.Chdir(d)
+			if _, _, err := target("7", true); err == nil {
+				t.Errorf("a relayed review from %s was accepted", d)
+			}
+		})
 	}
+
+	t.Run("its own", func(t *testing.T) {
+		_, dir := reviewDirs(t)
+		t.Chdir(dir)
+		if slug, n, err := target("7", true); err != nil || slug != "o/r" || n != 7 {
+			t.Errorf("its own: %s#%d, %v", slug, n, err)
+		}
+	})
+
 	for _, arg := range []string{"8", "x/y#7", "o/r#7"} {
-		if _, _, err := target(arg, true); err == nil {
-			t.Errorf("%s was accepted", arg)
+		t.Run("refused/"+arg, func(t *testing.T) {
+			_, dir := reviewDirs(t)
+			t.Chdir(dir)
+			if _, _, err := target(arg, true); err == nil {
+				t.Errorf("%s was accepted", arg)
+			}
+		})
+	}
+
+	t.Run("outside a review directory", func(t *testing.T) {
+		reviewDirs(t)
+		t.Chdir(t.TempDir())
+		if _, _, err := target("7", true); err == nil {
+			t.Error("a relayed review outside a review directory was accepted")
 		}
-	}
-	t.Chdir(t.TempDir())
-	if _, _, err := target("7", true); err == nil {
-		t.Error("a relayed review outside a review directory was accepted")
-	}
+	})
 }
 
 func must[T any](v T, err error) T {

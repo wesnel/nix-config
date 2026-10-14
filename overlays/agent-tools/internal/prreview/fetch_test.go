@@ -1,87 +1,103 @@
 package prreview
 
 import (
-	"context"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 )
 
 func TestFetch(t *testing.T) {
-	r := newRemote(t, nil)
-	f := setUp(t, r)
-	pr, err := Fetch(context.Background(), "o/r", 7)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if pr.Head != r.head || pr.Base != r.base || pr.BaseRef != "main" || pr.Title != "Make A two" {
-		t.Errorf("fetched %+v, want head %s and base %s", pr, r.head, r.base)
-	}
-	cache := os.Getenv("XDG_CACHE_HOME")
-	if pr.Clone != filepath.Join(cache, "pr-review", "o", "r", "7", "clone") ||
-		pr.Dir != filepath.Join(cache, "pr-review", "o", "r", "7", r.head[:12]) {
-		t.Errorf("clone %s, review %s", pr.Clone, pr.Dir)
-	}
-	if info, err := os.Stat(pr.Dir); err != nil || !info.IsDir() {
-		t.Errorf("no review directory: %v", err)
-	}
-	if bare := gitT(t, pr.Clone, "rev-parse", "--is-bare-repository"); bare != "true" {
-		t.Errorf("the clone has a work tree, which a checkout on this side could fill")
-	}
-	if len(pr.Issues) != 1 || pr.Issues[0].Number != 3 {
-		t.Errorf("issues: %+v", pr.Issues)
-	}
+	t.Run("first round", func(t *testing.T) {
+		r := newRemote(t, nil)
+		f := setUp(t, r)
+		pr, err := Fetch(t.Context(), "o/r", 7)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if pr.Head != r.head || pr.Base != r.base || pr.BaseRef != "main" || pr.Title != "Make A two" {
+			t.Errorf("fetched %+v, want head %s and base %s", pr, r.head, r.base)
+		}
+		cache := os.Getenv("XDG_CACHE_HOME")
+		if pr.Clone != filepath.Join(cache, "pr-review", "o", "r", "7", "clone") ||
+			pr.Dir != filepath.Join(cache, "pr-review", "o", "r", "7", r.head[:12]) {
+			t.Errorf("clone %s, review %s", pr.Clone, pr.Dir)
+		}
+		if info, err := os.Stat(pr.Dir); err != nil || !info.IsDir() {
+			t.Errorf("no review directory: %v", err)
+		}
+		if bare := gitT(t, pr.Clone, "rev-parse", "--is-bare-repository"); bare != "true" {
+			t.Errorf("the clone has a work tree, which a checkout on this side could fill")
+		}
+		if len(pr.Issues) != 1 || pr.Issues[0].Number != 3 {
+			t.Errorf("issues: %+v", pr.Issues)
+		}
+		if f.mutations != 0 {
+			t.Errorf("%d writes reached GitHub", f.mutations)
+		}
+	})
 
 	// The next round fetches into the same clone.
-	r.push(t)
-	f.pr["headRefOid"] = r.head
-	pr, err = Fetch(context.Background(), "o/r", 7)
-	if err != nil || pr.Head != r.head {
-		t.Fatalf("second round: %+v, %v", pr, err)
-	}
-	if f.mutations != 0 {
-		t.Errorf("%d writes reached GitHub", f.mutations)
-	}
-}
+	t.Run("next round", func(t *testing.T) {
+		r := newRemote(t, nil)
+		f := setUp(t, r)
+		if _, err := Fetch(t.Context(), "o/r", 7); err != nil {
+			t.Fatal(err)
+		}
+		r.push(t)
+		f.pr["headRefOid"] = r.head
+		pr, err := Fetch(t.Context(), "o/r", 7)
+		if err != nil || pr.Head != r.head {
+			t.Fatalf("second round: %+v, %v", pr, err)
+		}
+		if f.mutations != 0 {
+			t.Errorf("%d writes reached GitHub", f.mutations)
+		}
+	})
 
-// TestFetchPinsTheHead refuses a head other than the one GitHub reports,
-// such as one pushed between the query and the fetch.
-func TestFetchPinsTheHead(t *testing.T) {
-	r := newRemote(t, nil)
-	f := setUp(t, r)
-	f.pr["headRefOid"] = r.base
-	_, err := Fetch(context.Background(), "o/r", 7)
-	if err == nil || !strings.Contains(err.Error(), r.base) {
-		t.Fatalf("a head that moved was accepted: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(os.Getenv("XDG_CACHE_HOME"), "pr-review", "o", "r", "7", r.head[:12])); err == nil {
-		t.Error("a review directory was made for an unpinned head")
-	}
-}
+	// A head other than the one GitHub reports, such as one pushed between
+	// the query and the fetch, is refused.
+	t.Run("pins the head", func(t *testing.T) {
+		r := newRemote(t, nil)
+		f := setUp(t, r)
+		f.pr["headRefOid"] = r.base
+		_, err := Fetch(t.Context(), "o/r", 7)
+		if err == nil || !strings.Contains(err.Error(), r.base) {
+			t.Fatalf("a head that moved was accepted: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(os.Getenv("XDG_CACHE_HOME"), "pr-review", "o", "r", "7", r.head[:12])); err == nil {
+			t.Error("a review directory was made for an unpinned head")
+		}
+	})
 
-func TestFetchRefusesBadNames(t *testing.T) {
-	r := newRemote(t, nil)
-	setUp(t, r)
 	for _, c := range []struct {
 		slug   string
 		number int
 	}{{"o/..", 7}, {"../r", 7}, {"o/r/x", 7}, {"o", 7}, {"o/r", 0}, {"o/r", -1}, {".git/r", 7}} {
-		if _, err := Fetch(context.Background(), c.slug, c.number); err == nil {
-			t.Errorf("%s#%d was fetched", c.slug, c.number)
-		}
+		t.Run("refuses/"+c.slug+"#"+strconv.Itoa(c.number), func(t *testing.T) {
+			r := newRemote(t, nil)
+			setUp(t, r)
+			if _, err := Fetch(t.Context(), c.slug, c.number); err == nil {
+				t.Errorf("%s#%d was fetched", c.slug, c.number)
+			}
+		})
 	}
+
+	t.Run("hooks do not run", testFetchHooksDoNotRun)
+	t.Run("LFS stays inert", testFetchLFSStaysInert)
+	t.Run("symlinks check out as files", testFetchSymlinksCheckOutAsFiles)
 }
 
-// TestHooksDoNotRun holds every git command on the clone and its checkouts
-// to running no hook, wherever one is planted.
-func TestHooksDoNotRun(t *testing.T) {
+// testFetchHooksDoNotRun holds every git command on the clone and its
+// checkouts to running no hook, wherever one is planted.
+func testFetchHooksDoNotRun(t *testing.T) {
 	r := newRemote(t, nil)
 	f := setUp(t, r)
-	pr, err := Fetch(context.Background(), "o/r", 7)
+	pr, err := Fetch(t.Context(), "o/r", 7)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,11 +108,11 @@ func TestHooksDoNotRun(t *testing.T) {
 	}
 	r.push(t)
 	f.pr["headRefOid"] = r.head
-	if pr, err = Fetch(context.Background(), "o/r", 7); err != nil {
+	if pr, err = Fetch(t.Context(), "o/r", 7); err != nil {
 		t.Fatal(err)
 	}
 	tree := filepath.Join(t.TempDir(), "tree")
-	if err := Checkout(context.Background(), pr.Clone, tree, pr.Head); err != nil {
+	if err := Checkout(t.Context(), pr.Clone, tree, pr.Head); err != nil {
 		t.Fatal(err)
 	}
 	RemoveCheckout(pr.Clone, tree)
@@ -110,15 +126,15 @@ func TestHooksDoNotRun(t *testing.T) {
 	}
 }
 
-// TestLFSStaysInert: a pull request that marks its files for Git LFS and
-// points LFS at a server of its choosing gets neither the user's LFS filter
-// run on this side nor that server contacted.
-func TestLFSStaysInert(t *testing.T) {
+// testFetchLFSStaysInert: a pull request that marks its files for Git LFS
+// and points LFS at a server of its choosing gets neither the user's LFS
+// filter run on this side nor that server contacted.
+func testFetchLFSStaysInert(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer listener.Close()
+	t.Cleanup(func() { listener.Close() })
 	var contacted atomic.Int32
 	go func() {
 		for {
@@ -153,12 +169,12 @@ func TestLFSStaysInert(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "")
 
-	pr, err := Fetch(context.Background(), "o/r", 7)
+	pr, err := Fetch(t.Context(), "o/r", 7)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tree := filepath.Join(t.TempDir(), "tree")
-	if err := Checkout(context.Background(), pr.Clone, tree, pr.Head); err != nil {
+	if err := Checkout(t.Context(), pr.Clone, tree, pr.Head); err != nil {
 		t.Fatal(err)
 	}
 	if data, _ := os.ReadFile(filepath.Join(tree, "big.bin")); string(data) != pointer {
@@ -185,9 +201,9 @@ func TestLFSStaysInert(t *testing.T) {
 	}
 }
 
-// TestSymlinksCheckOutAsFiles: a link in the pull request cannot point a
-// reader of the checkout at a file outside it.
-func TestSymlinksCheckOutAsFiles(t *testing.T) {
+// testFetchSymlinksCheckOutAsFiles: a link in the pull request cannot point
+// a reader of the checkout at a file outside it.
+func testFetchSymlinksCheckOutAsFiles(t *testing.T) {
 	secret := filepath.Join(t.TempDir(), "secret")
 	write(t, secret, "token\n")
 	r := newRemote(t, func(work string) {
@@ -196,15 +212,15 @@ func TestSymlinksCheckOutAsFiles(t *testing.T) {
 		}
 	})
 	setUp(t, r)
-	pr, err := Fetch(context.Background(), "o/r", 7)
+	pr, err := Fetch(t.Context(), "o/r", 7)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tree := filepath.Join(t.TempDir(), "tree")
-	if err := Checkout(context.Background(), pr.Clone, tree, pr.Head); err != nil {
+	if err := Checkout(t.Context(), pr.Clone, tree, pr.Head); err != nil {
 		t.Fatal(err)
 	}
-	defer RemoveCheckout(pr.Clone, tree)
+	t.Cleanup(func() { RemoveCheckout(pr.Clone, tree) })
 	info, err := os.Lstat(filepath.Join(tree, "link"))
 	if err != nil {
 		t.Fatal(err)
