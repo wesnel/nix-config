@@ -72,6 +72,41 @@ as `origin/main` or the parent branch in a stack.
 5. Stop after a round with no findings, or after three rounds. A finding
    still standing goes in the hand-back.
 
+## Someone else's pull request
+
+The source is `pr-loop review`, not `git fresh-review`: it fetches the pull
+request into a clone of its own, vets it, runs its tests only in a VM and
+reviews it with the same contract. Run it in the background: a run takes
+minutes. On the host, `pr-loop review OWNER/NAME#N` makes the review's
+directory, `~/.cache/pr-review/OWNER/NAME/N/HEAD12/`; a `claude-pr-loop`
+session started there reads only that review and reaches GitHub only
+through `pr-loop review N`.
+
+1. The plan's goal is ours, never the pull request's text: "review
+   OWNER/NAME#N at HEAD12 for Wesley; propose comments only". The command
+   writes the reviewer's goal statement itself.
+2. Run `pr-loop review N` (OWNER/NAME#N outside a review directory). It
+   exits 0 with no findings, 3 with findings, 4 when Codex cannot review
+   (then `pr-loop review --reviewer subagent N` prints the prompt for a new
+   `reviewer` sub-agent, and its reply goes to `pr-loop review --check N` on
+   stdin), and 5 when the vet's red flags left the tests unrun. On 5, the
+   review still stands; put the red flags and `pr-loop review --run
+   OWNER/NAME#N` in the hand-back, for Wesley alone to decide.
+3. Triage only proposes. Each finding's outcome is `propose`, `rebut`,
+   `duplicate-of` (with `of`) or `needs-wesley`: never fix, push, reply or
+   resolve on someone else's pull request. Edit a proposed finding's `body`
+   into the comment as Wesley would post it.
+4. Record the outcomes with `pr-loop review settle N`, reading
+   `{"outcomes": [{"id": "1.F1", "outcome": "propose", "body": "..."}]}` on
+   stdin, each finding named ROUND.ID. `N/HEAD12.json`, beside the clone and
+   outside the session's reach, is the one record of them, every round's,
+   which Wesley imports into review-guide; `HEAD12/findings.json` is the
+   session's copy to read. The plan's log gets only the round and the
+   counts: `agent-plan log PLAN --item ID --kind reviewed --summary 'round 1:
+   5 findings, 3 proposed' --evidence <path>/findings.json`.
+5. Each review or `--check` of a head is its next round, kept beside the
+   earlier ones; a new head is a new review.
+
 ## Harness choice
 
 - Codex, through `git fresh-review`, by default: a model family other than
@@ -84,6 +119,8 @@ as `origin/main` or the parent branch in a stack.
   and only read.
 - Never Codex in a review-loop session: there `git fresh-review` exits 4 and
   the reviewer is a sub-agent, so `pr-loop` stays the session's only way out.
+  `pr-loop review` is that way out: it runs Codex on the host with a prompt
+  it builds only from GitHub and the clone.
 - A Codex author reviews with a Codex sub-agent: from inside Codex,
   `git fresh-review` exits 4 by itself.
 
@@ -126,6 +163,9 @@ judging it.
 - **fix**: real and inside the goal statement. A fixup of the commit that
   owns the code. Reply with what changed, and resolve once the fix is
   pushed.
+- **propose**: what would be fix, on someone else's pull request. Nothing
+  is changed or posted: the finding's `body` is the comment as Wesley
+  would post it.
 - **rebut**: the reviewer is wrong. Show it from the code or a test, not by
   assertion. Reply with the evidence, and resolve.
 - **duplicate-of `<item>`**: the same problem raised elsewhere, fixed once.
