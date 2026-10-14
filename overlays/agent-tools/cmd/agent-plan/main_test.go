@@ -226,6 +226,10 @@ func TestCommands(t *testing.T) {
 		if code != 0 || !strings.Contains(out, "- Follow-ups open: F1\n") {
 			t.Errorf("status: %d\n%s", code, out)
 		}
+		code, out, _ = agentPlan(t, "", "brief", plan)
+		if code != 0 || !strings.HasPrefix(out, "Brief of plan "+plan) || !strings.Contains(out, "Follow-ups open: 1\n") {
+			t.Errorf("brief: %d\n%s", code, out)
+		}
 	})
 
 	t.Run("postpone", func(t *testing.T) {
@@ -331,6 +335,7 @@ func TestRelayed(t *testing.T) {
 		{"status", "PLAN"},
 		{"questions", "PLAN"},
 		{"decisions", "PLAN"},
+		{"brief", "PLAN"},
 		{"find", "--branch", "loop"},
 	} {
 		t.Run("allowed/"+strings.Join(args, " "), func(t *testing.T) {

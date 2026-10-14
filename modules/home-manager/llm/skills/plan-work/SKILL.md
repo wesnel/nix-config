@@ -136,6 +136,10 @@ else, then read it, load the skills its `SKILLS` names, and run
   one given instead.
 - A sub-agent's task names its plan and part.
 
+After a compaction the hooks also add the plan's brief: its goal,
+decisions, ready steps and parts, questions for Wesley, steps done but not
+verified, and open follow-ups. `agent-plan brief PLAN` prints it any time.
+
 Only this host's plans, the files named for it, are yours to change; another
 host's beside them are read-only here, and `agent-plan` refuses to write
 them.

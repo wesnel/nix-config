@@ -49,6 +49,10 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      --waiting those that wait for an AFTER item: a question
                      until settled, a part or step until logged done,
                      verified or abandoned
+  brief PLAN         what an agent needs to go on after a compaction: the goal,
+                     the decisions, the steps and parts ready, the questions
+                     Wesley can answer now, the steps done but not verified,
+                     and the open follow-ups; the hooks add it after one
   decisions PLAN [--all] [--json]
                      the questions settled as DECIDED, with their answers;
                      --all adds the parts'
@@ -109,14 +113,14 @@ ROLE: ` + strings.Join(plans.Roles, ", ") + `
 OUTCOME: ` + strings.Join(plans.Outcomes, ", ") + `
 
 With ` + relay.URLEnv + ` set, every command but the hooks is sent to that
-sandbox-relay, which serves only log, goal, status, find, questions and
-decisions.
+sandbox-relay, which serves only log, goal, status, find, questions,
+decisions and brief.
 `
 
 // relayed are the commands a sandbox may run through the relay: reading
 // plans, appending to their logs, and the keywords log writes.
 var relayed = map[string]bool{"log": true, "goal": true, "status": true, "find": true, "questions": true,
-	"decisions": true}
+	"decisions": true, "brief": true}
 
 // clientSide reports whether args run in this process even with a relay:
 // the hooks, which Claude Code runs on the host.
@@ -141,7 +145,7 @@ func clientSide(args []string) bool {
 func relayRefusal(args []string) string {
 	if len(args) == 0 || !relayed[args[0]] || clientSide(args) {
 		name := strings.Join(args[:min(len(args), 2)], " ")
-		return fmt.Sprintf("%q is not served through the relay. A sandbox runs `agent-plan log`, `goal`, `status`, `find`, `questions` and `decisions`; put anything else in your report for Wesley", name)
+		return fmt.Sprintf("%q is not served through the relay. A sandbox runs `agent-plan log`, `goal`, `status`, `find`, `questions`, `decisions` and `brief`; put anything else in your report for Wesley", name)
 	}
 	return ""
 }
@@ -405,6 +409,17 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		default:
 			io.WriteString(stdout, plans.QuestionsOrg(qs))
 		}
+		return 0
+	case "brief":
+		p, ok := wantPlan()
+		if !ok {
+			return 2
+		}
+		brief, err := p.Brief(time.Now())
+		if err != nil {
+			return report(nil, err)
+		}
+		io.WriteString(stdout, brief)
 		return 0
 	case "decisions":
 		p, ok := wantPlan()
