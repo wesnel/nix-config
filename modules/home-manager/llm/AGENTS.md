@@ -36,7 +36,8 @@ create, amend or rewrite commits.
 - Answer review comments in their threads, never as new top-level comments,
   and resolve each thread you have answered, including ones answered without
   a change. Leave one open only when it still needs a decision, and say so in
-  the reply.
+  the reply. On Wesley's own pull requests, `pr-loop threads`, `reply` and
+  `resolve` do this; see `pr-loop --help`.
 
 ## Know which branch you are on
 

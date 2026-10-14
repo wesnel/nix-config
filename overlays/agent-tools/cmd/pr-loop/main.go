@@ -23,12 +23,13 @@ import (
 
 const usage = `pr-loop: the review loop's only way to write to GitHub.
 
-Policy: only branches registered with begin are touched, each the head of an
-open PR, draft or ready, by the authenticated user in the same repository and
-not the default branch; this is re-checked before every write. Everything the
-loop commits must be a fixup of the PR's own commits. The exception is open,
-which publishes a branch GitHub does not have, never a default branch, as a
-draft PR based on the default branch or on the head of another open PR by the
+Policy: apart from reply and resolve outside a loop (see below), only branches
+registered with begin are touched, each the head of an open PR, draft or
+ready, by the authenticated user in the same repository and not the default
+branch; this is re-checked before every write. Everything the loop commits
+must be a fixup of the PR's own commits. The other exception is open, which
+publishes a branch GitHub does not have, never a default branch, as a draft
+PR based on the default branch or on the head of another open PR by the
 authenticated user in the same repository.
 
   open --title T --body-file F [--base BASE] [--dry-run] [BRANCH]
@@ -39,8 +40,8 @@ authenticated user in the same repository.
   worktrees [--remove]        a worktree per PR under .pr-loop/, where commits are unsigned
   push [--dry-run] [BRANCH...]  push through the GitHub API, atomically
   threads [--all] PR          unresolved review threads, labelled by bot
-  reply THREAD --body-file F  reply inside a bot's thread (- reads stdin)
-  resolve THREAD              resolve a bot's thread whose last comment is yours
+  reply THREAD --body-file F  reply inside a review thread (- reads stdin)
+  resolve THREAD              resolve a review thread whose last comment is yours
   request [--bot B] [--accept-failure CHECK] [PR...]
                               ask each bot to review the head, once CI allows
   status [PR...]              CI, each bot's review, open threads, diff growth
@@ -52,6 +53,11 @@ authenticated user in the same repository.
                               push the stack over SSH (outside a loop, use git sign-pass)
   end [--prune]               delete trigger comments and loop state
   guard                       PreToolUse hook for Claude Code and ECA (reads stdin)
+
+reply and resolve take a thread on an open PR by the authenticated user in
+this repository, people's threads included, and need no begin. In a loop
+session (relayed, or with PR_LOOP_SESSION=1), and on a PR registered with
+begin, they take only threads a review bot started on the loop's PRs.
 
 With ` + relay.URLEnv + ` set, every command except guard is sent to that
 sandbox-relay, where sign and end are refused: run those outside the session.

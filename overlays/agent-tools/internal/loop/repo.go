@@ -69,7 +69,7 @@ func repository() (*Repo, error) {
 			DefaultBranchRef struct{ Name string }
 		}
 	}
-	err = gh.GraphQL(`query($owner: String!, $name: String!) {
+	err = graphQL(`query($owner: String!, $name: String!) {
 		viewer { login }
 		repository(owner: $owner, name: $name) { id nameWithOwner defaultBranchRef { name } }
 	}`, map[string]any{"owner": owner, "name": name}, &data)
