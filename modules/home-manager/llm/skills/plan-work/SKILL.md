@@ -86,6 +86,11 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
 
 - Log `started`, `done` and `verified` for every step. `verified` names
   evidence you observed, never one you expect.
+- A hook after each shell call logs `committed` for every commit and
+  `pushed` for every push, and adds new worktrees, branches and pull
+  requests to the plan's properties, in the plan of the session or of the
+  worktree it ran in; log neither yourself. Which step a commit completes
+  stays yours to log.
 - `--commit` takes the commit's subject: the signing pass changes every SHA.
 - An event about the whole plan names the plan's ID; about a part, the
   part's.
