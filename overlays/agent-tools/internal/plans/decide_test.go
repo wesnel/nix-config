@@ -1,7 +1,9 @@
 package plans
 
 import (
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -114,6 +116,28 @@ func TestStatusLine(t *testing.T) {
 			}
 		})
 	}
+
+	// Emacs's mode line sends only the directory of the buffer's file.
+	t.Run("a worktree's plan, given only a directory in it", func(t *testing.T) {
+		c := testConfig(t)
+		top, _ := filepath.EvalSymlinks(t.TempDir())
+		gitIn(t, top, "init", "-q", "-b", "main")
+		sub := filepath.Join(top, "lisp")
+		os.MkdirAll(sub, 0o755)
+		made, err := c.New(NewOptions{Title: "T", Slug: "x", Worktrees: []string{top}}, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		insertUnder(t, made.File, "** Open questions", question("Q1", "Keep it?", ""))
+		in, _ := json.Marshal(map[string]string{"cwd": sub})
+		if got := c.StatusLine(in); got != "1 open question · /questions" {
+			t.Errorf("status line %q", got)
+		}
+		elsewhere, _ := json.Marshal(map[string]string{"cwd": t.TempDir()})
+		if got := c.StatusLine(elsewhere); got != "" {
+			t.Errorf("status line outside the worktree %q", got)
+		}
+	})
 
 	t.Run("after", testStatusLineAfter)
 }
