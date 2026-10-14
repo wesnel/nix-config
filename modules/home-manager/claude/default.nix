@@ -43,6 +43,18 @@ with lib; let
 
   darwin = pkgs.stdenv.hostPlatform.isDarwin;
   mcpProxy = config.wgn.home.mcp-proxy;
+  plans = config.wgn.home.llm.plans;
+  agentPlan = getExe' pkgs.agent-tools "agent-plan";
+
+  # A permission rule's path: Claude Code reads `~/` as the home directory,
+  # and a lone `/` as relative to the settings file, so `//` starts an
+  # absolute one.
+  rulePath = path: let
+    home = "${config.home.homeDirectory}/";
+  in
+    if hasPrefix home path
+    then "~/${removePrefix home path}"
+    else "/${path}";
 
   # Lets a tool through only when its name has a reading verb and no writing
   # one as a whole `_`-separated word; any other name is denied.
@@ -224,16 +236,21 @@ in {
         # Credentials stay out of every session. The guard denies shell
         # commands naming these files; Read is not hooked, so it is denied
         # here. Keep the two lists alike (internal/guard/baseline.go).
-        permissions.deny = map (p: "Read(${p})") [
-          "~/.ssh/id_*"
-          "~/.gnupg/private-keys*/**"
-          "~/.codex/auth.json"
-          "~/.claude/.credentials.json"
-          "/${mcpProxy.tokenFile}"
-          "/${mcpProxy.oauthDir}/**"
-          "~/.config/sops/age/**"
-          "~/.config/ngrok/**"
-        ];
+        permissions.deny =
+          map (p: "Read(${p})") [
+            "~/.ssh/id_*"
+            "~/.gnupg/private-keys*/**"
+            "~/.codex/auth.json"
+            "~/.claude/.credentials.json"
+            "/${mcpProxy.tokenFile}"
+            "/${mcpProxy.oauthDir}/**"
+            "~/.config/sops/age/**"
+            "~/.config/ngrok/**"
+          ]
+          # A plan's log is appended to by `agent-plan log` alone; the guard
+          # denies the same files to every file tool and shell write. An Edit
+          # rule covers Write too.
+          ++ map (p: "Edit(${rulePath plans.dir}/**/${p})") ["log.org" "log.org.lock"];
 
         # Applies wherever a project turns the sandbox on, and merges into
         # claude-pr-loop's sandbox, which denies what it must not have.
@@ -251,6 +268,35 @@ in {
             # This opens the trust service alone, not the keychain.
             enableWeakerNetworkIsolation = true;
           };
+
+        # A plan approved in plan mode is recorded in the session's plan.
+        # The response's `plan` and `filePath` are ExitPlanMode's output
+        # schema; agent-plan falls back to the input's `plan`.
+        hooks.PostToolUse = [
+          {
+            matcher = "ExitPlanMode";
+            hooks = [
+              {
+                type = "command";
+                command = "${agentPlan} import-claude";
+              }
+            ];
+          }
+        ];
+
+        # Names the session's plans when it resumes or compacts, matched by
+        # its session_id, which both keep, or by its worktree.
+        hooks.SessionStart = [
+          {
+            matcher = "compact|resume";
+            hooks = [
+              {
+                type = "command";
+                command = "${agentPlan} find --hook";
+              }
+            ];
+          }
+        ];
 
         # The ngrok account server's write scopes reach production, and its
         # tools are not published, so it is filtered by name, failing closed.
