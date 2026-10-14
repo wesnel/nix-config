@@ -99,6 +99,11 @@ with lib; let
       allowUnsandboxedCommands = false;
       failIfUnavailable = true;
 
+      # The user settings open trustd, which runs outside the sandbox and
+      # fetches revocation and issuer data named by the certificates it is
+      # handed, past the allowlist below.
+      enableWeakerNetworkIsolation = false;
+
       network =
         {
           allowedDomains = config.wgn.home.llm.prLoop.allowedDomains;
@@ -216,7 +221,16 @@ in {
 
         # Applies wherever a project turns the sandbox on, and merges into
         # claude-pr-loop's sandbox, which denies what it must not have.
-        sandbox.filesystem.allowWrite = [sessionCacheDir];
+        sandbox =
+          {
+            filesystem.allowWrite = [sessionCacheDir];
+          }
+          // optionalAttrs darwin {
+            # Go programs, gh and the go command among them, verify TLS
+            # through trustd on macOS, which they fail to reach otherwise.
+            # This opens the trust service alone, not the keychain.
+            enableWeakerNetworkIsolation = true;
+          };
 
         # The ngrok account server's write scopes reach production, and its
         # tools are not published, so it is filtered by name, failing closed.
