@@ -1040,6 +1040,9 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 		return sharedStash
 	case sub == "stash" && untaggedStash(rest):
 		return untagged
+	case (sub == "switch" || sub == "checkout") && has("--ignore-other-worktrees"):
+		return "A branch checked out in another worktree belongs to whoever works there, and checking it out here too moves it under them. " +
+			"Work on a branch of your own in a worktree of your own (`git worktree add -b NEW ../PATH BRANCH`), or ask Wesley."
 	case sub == "reset" && has("--hard"),
 		sub == "checkout" && (has("-f", "--force") || everything()),
 		sub == "restore" && everything() && (!has("--staged", "-S") || has("--worktree", "-W")),
