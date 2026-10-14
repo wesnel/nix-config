@@ -8,10 +8,12 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/wesnel/agent-tools/internal/prreview"
 	"github.com/wesnel/agent-tools/internal/review"
 )
 
 func main() {
+	review.RedCheckInVM = prreview.LocalRedCheck
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	code := review.Main(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
 	stop()

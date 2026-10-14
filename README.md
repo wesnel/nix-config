@@ -199,9 +199,10 @@ review-loop session, where `pr-loop` must stay the only way out. Then
 `--print-prompt` gives the same prompt for a fresh `reviewer` sub-agent, and
 `--check FILE` validates its reply the same way. See `git fresh-review -h`.
 
-It never runs `git red-check`, which runs the commits' code: that runs only
-in the review sandbox. Where the repository has test settings, it says on
-stderr that the review has no red-check results.
+It never runs `git red-check` here, since that runs the commits' code. Where
+the repository has test settings, red-check and the test command run in the
+VM `pr-loop review` runs pull requests in (below), and their output goes in
+the prompt; where no VM can run them, stderr says why.
 
 ### someone else's pull request: `pr-loop review`
 

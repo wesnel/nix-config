@@ -41,9 +41,10 @@ may read only that worktree, the parts of the git directory git needs, the
 Nix store and the system files they need to run; they may not write or
 reach the network, and no MCP server, plugin, web search or image viewer
 loads. Codex's sandbox cannot start inside another macOS sandbox, so run
-this outside one. git red-check runs the commits' code, so it runs only in
-the review sandbox, never here; where the repository has test settings,
-stderr says the review has no red-check results.
+this outside one. Where the repository has test settings, git red-check
+BASE..TIP and the test command at TIP run in the VM pr-loop review runs
+pull requests in, never here, as they run the commits' code; their output
+goes in the prompt, and where the VM cannot run them stderr says why.
 
 Where Codex cannot review, review with a fresh sub-agent instead: give it
 the prompt --print-prompt prints, save its reply, and check that with
@@ -160,7 +161,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			return noCodex(why)
 		}
 	}
-	noteRedCheck(r, stderr)
+	in.redCheck = redCheck(ctx, r, stderr)
 	if *printPrompt {
 		in.where = fmt.Sprintf("Read the change in the repository at %s: `git diff %s %s`, `git log -p %s..%s`, "+
 			"and `git show %s:PATH` for a file as it is at TIP. That checkout's own files may hold work that is not "+
@@ -253,16 +254,32 @@ func unavailable(auto bool) string {
 	return ""
 }
 
-// noteRedCheck says on log that git red-check is left out where the
-// repository has test settings. red-check runs the commits' code, which may be
-// anyone's, so it never runs here, only in the review sandbox.
-func noteRedCheck(r *span, log io.Writer) {
+// RedCheckInVM runs git red-check on base..tip of the repository at top in
+// the review sandbox's VM, and returns its results for the prompt; nil where
+// no VM can. git-fresh-review sets it.
+var RedCheckInVM func(ctx context.Context, top, base, tip string, log io.Writer) (string, error)
+
+// redCheck is git red-check's results for the prompt, where the repository
+// has test settings, from RedCheckInVM. red-check runs the commits' code,
+// which may be anyone's, so it never runs here; where the VM cannot run it,
+// log says so and the review has no red-check results.
+func redCheck(ctx context.Context, r *span, log io.Writer) string {
 	git.Dir = r.top
 	settings, err := repos.Lookup()
 	git.Dir = ""
-	if err == nil && settings.Test != "" && len(settings.TestFiles) > 0 {
-		fmt.Fprintf(log, "%s: git red-check runs only in the review sandbox, so this review has no red-check results\n", name)
+	if err != nil || settings.Test == "" || len(settings.TestFiles) == 0 {
+		return ""
 	}
+	why := "no VM is available here"
+	if RedCheckInVM != nil {
+		text, err := RedCheckInVM(ctx, r.top, r.base, r.tip, log)
+		if err == nil {
+			return text
+		}
+		why = err.Error()
+	}
+	fmt.Fprintf(log, "%s: git red-check runs only in the review sandbox, so this review has no red-check results: %s\n", name, why)
+	return ""
 }
 
 type inputs struct {

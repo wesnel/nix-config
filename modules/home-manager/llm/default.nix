@@ -116,8 +116,9 @@ in {
 
             description = ''
               The test command `git red-check` runs, with `sh` at the top of
-              a checkout. `git fresh-review` never runs it: it runs the
-              reviewed commits' code, so only the review sandbox does.
+              a checkout. `git fresh-review` and `pr-loop review` run it, and
+              `git red-check` with it, only in the review VM, since it runs
+              the reviewed commits' code.
             '';
           };
 

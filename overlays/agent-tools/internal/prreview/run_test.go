@@ -224,6 +224,39 @@ func TestEscape(t *testing.T) {
 	}
 }
 
+// TestLocalRedCheck: a local range's red-check runs in the VM from a copy
+// that holds the range's objects itself and is gone afterwards.
+func TestLocalRedCheck(t *testing.T) {
+	r := goModulesRemote(t, "module example.com/r\n\ngo 1.20\n\nrequire example.com/dep v1.0.0\n")
+	setUp(t, r)
+	withProxy(t)
+	log := withRun(t)
+	gitT(t, r.work, "remote", "add", "origin", "https://github.com/o/r.git")
+	var stderr bytes.Buffer
+	text, err := LocalRedCheck(context.Background(), r.work, r.base, r.head, &stderr)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, stderr.String())
+	}
+	if !strings.Contains(text, "no-test-files") || !strings.Contains(text, "--- FAIL: TestA") {
+		t.Errorf("the results:\n%s", text)
+	}
+	argv := strings.Split(strings.TrimSpace(string(must(os.ReadFile(filepath.Join(log, "argv"))))), "\n")
+	workspace := argv[slices.Index(argv, "--workspace")+1]
+	if !strings.HasPrefix(workspace, must(Root())+"/local-") {
+		t.Errorf("the run copy %s", workspace)
+	}
+	if left, _ := filepath.Glob(filepath.Join(must(Root()), "local-*")); len(left) != 0 {
+		t.Errorf("left behind: %v", left)
+	}
+
+	// Without a backend it says why, and runs nothing.
+	prLoopConfig(t, nil)
+	if _, err := LocalRedCheck(context.Background(), r.work, r.base, r.head, &stderr); err == nil ||
+		!strings.Contains(err.Error(), "no sandbox backend") {
+		t.Errorf("without a backend: %v", err)
+	}
+}
+
 func TestSections(t *testing.T) {
 	got := sections("noise\nabc tests 1 aGk=\nabc redcheck x aGk=\nother tests 0 aGk=\nabc tests 2 \n", "abc")
 	if len(got) != 1 || got["tests"].Exit != 2 || got["tests"].Output != "" {

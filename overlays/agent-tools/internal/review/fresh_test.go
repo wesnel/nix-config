@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -454,6 +456,45 @@ func TestNoRedCheckOnTheHost(t *testing.T) {
 				t.Errorf("stderr does not say red-check was skipped: %q", stderr.String())
 			}
 		})
+	}
+}
+
+// TestRedCheckInVM: where a VM can run red-check, its results go in the
+// prompt, for the range under review; where it cannot, stderr says why.
+func TestRedCheckInVM(t *testing.T) {
+	f := setUp(t, false)
+	config := filepath.Join(t.TempDir(), "config.json")
+	os.WriteFile(config, []byte(`{"repos": {"o/r": {"test": "true", "testFiles": ["*_test.txt"]}}}`), 0o644)
+	t.Setenv("AGENT_TOOLS_CONFIG", config)
+	run(t, f.repo, "git", "remote", "add", "origin", "https://github.com/o/r.git")
+	var got []string
+	old := RedCheckInVM
+	t.Cleanup(func() { RedCheckInVM = old })
+	RedCheckInVM = func(ctx context.Context, top, base, tip string, log io.Writer) (string, error) {
+		got = []string{top, base, tip}
+		return "red-check from the VM: fails-as-asserted", nil
+	}
+	var stdout, stderr bytes.Buffer
+	if code := Main(context.Background(), []string{"--print-prompt", "--goal", ".git/goal.md", f.base + "..HEAD"}, nil,
+		&stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr.String())
+	}
+	top := run(t, f.repo, "git", "rev-parse", "--show-toplevel")
+	if !slices.Equal(got, []string{top, f.base, f.tip}) {
+		t.Errorf("red-check ran for %q", got)
+	}
+	if !strings.Contains(stdout.String(), "## git red-check "+f.base+".."+f.tip+"\n\nred-check from the VM: fails-as-asserted") {
+		t.Errorf("the prompt lacks the VM's red-check:\n%s", stdout.String())
+	}
+
+	RedCheckInVM = func(context.Context, string, string, string, io.Writer) (string, error) {
+		return "", errors.New("no VM here")
+	}
+	stdout.Reset()
+	stderr.Reset()
+	Main(context.Background(), []string{"--print-prompt", "--goal", ".git/goal.md", f.base + "..HEAD"}, nil, &stdout, &stderr)
+	if !strings.Contains(stderr.String(), "no VM here") || strings.Contains(strings.TrimPrefix(stdout.String(), Contract), "red-check") {
+		t.Errorf("a failed VM run: %s\n%s", stderr.String(), stdout.String())
 	}
 }
 
