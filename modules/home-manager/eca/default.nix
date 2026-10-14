@@ -125,7 +125,7 @@ in {
       # ~/.config/agents/skills that Amp reads, so this is its own directory
       # rather than a share.
       xdg.configFile =
-        (llm.mkSkillFiles "eca/skills" config.wgn.home.llm.skills)
+        (llm.mkSkillFiles pkgs "eca/skills" config.wgn.home.llm.skills)
         // {
           # Which skills the wrapper may carry into the guest. It is a list
           # beside the skills rather than a mark inside each one, because a
