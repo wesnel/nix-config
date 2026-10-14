@@ -12,52 +12,57 @@ import (
 )
 
 func TestFold(t *testing.T) {
-	for message, want := range map[string]struct {
-		kind   Kind
-		target string
+	for _, c := range []struct {
+		name, message string
+		kind          Kind
+		target        string
 	}{
-		"A first":                        {Kept, ""},
-		"fixup!A first":                  {Kept, ""},
-		"fixup! A first\n\nbody":         {Fixup, "A first"},
-		"amend! A first\n\nA new":        {Amend, "A first"},
-		"squash! A first":                {Squash, "A first"},
-		"fixup! fixup! A first":          {Fixup, "A first"},
-		"fixup! amend! A first\n\nbody":  {Fixup, "A first"},
-		"squash! fixup! A first":         {Squash, "A first"},
-		"amend! squash! fixup! A first":  {Amend, "A first"},
-		"A first mentions fixup! itself": {Kept, ""},
+		{"plain subject", "A first", Kept, ""},
+		{"prefix without a space", "fixup!A first", Kept, ""},
+		{"fixup", "fixup! A first\n\nbody", Fixup, "A first"},
+		{"amend", "amend! A first\n\nA new", Amend, "A first"},
+		{"squash", "squash! A first", Squash, "A first"},
+		{"fixup of a fixup", "fixup! fixup! A first", Fixup, "A first"},
+		{"fixup of an amend", "fixup! amend! A first\n\nbody", Fixup, "A first"},
+		{"squash of a fixup", "squash! fixup! A first", Squash, "A first"},
+		{"amend of a squash of a fixup", "amend! squash! fixup! A first", Amend, "A first"},
+		{"prefix inside the subject", "A first mentions fixup! itself", Kept, ""},
 	} {
-		if kind, target := Fold(message); kind != want.kind || target != want.target {
-			t.Errorf("Fold(%q) = %v %q, want %v %q", message, kind, target, want.kind, want.target)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			if kind, target := Fold(c.message); kind != c.kind || target != c.target {
+				t.Errorf("Fold(%q) = %v %q, want %v %q", c.message, kind, target, c.kind, c.target)
+			}
+		})
 	}
 }
 
 func TestLintMessage(t *testing.T) {
 	long := strings.Repeat("x", 73)
-	for _, c := range []struct{ message, want string }{
-		{"Add the run loop", ""},
-		{"Add the run loop\n\nIt runs.", ""},
-		{strings.Repeat("é", 72), ""},
-		{long, "subject is 73 characters, over 72"},
-		{"feat(loop): " + strings.Repeat("x", 61), "subject is 73 characters, over 72"},
-		{"Add the run loop.", "subject ends with a period"},
-		{"Add x\n\nWhy.\n\nCo-Authored-By: C <c@e>", `"Co-Authored-By: C <c@e>" is attribution`},
-		{"Add x\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)", "is attribution"},
-		{"Add x\n\nhttps://claude.ai/code/session_01ab", "is attribution"},
-		{"Add x\n\nhttps://chatgpt.com/codex/tasks/task_e_1", "is attribution"},
-		{"Add x\n\nSigned-off-by: T <t@e>", ""},
-		{"Add x\n\nThe table is generated with go generate.", ""},
-		{"fixup! " + long, ""},
-		{"fixup! A\n\nReview-Thread: x\nReview-Finding: y", ""},
-		{"fixup! A\n\nReview-Thread: x\nSigned-off-by: T <t@e>", `trailer "Signed-off-by" is not a Review-* trailer`},
-		{"fixup! A\n\nCo-authored-by: C <c@e>", "is attribution"},
-		{"amend! A\n\n" + long, ""},
+	for _, c := range []struct{ name, message, want string }{
+		{"subject only", "Add the run loop", ""},
+		{"subject and body", "Add the run loop\n\nIt runs.", ""},
+		{"72 characters of two bytes each", strings.Repeat("é", 72), ""},
+		{"73 characters", long, "subject is 73 characters, over 72"},
+		{"73 characters with a type prefix", "feat(loop): " + strings.Repeat("x", 61), "subject is 73 characters, over 72"},
+		{"trailing period", "Add the run loop.", "subject ends with a period"},
+		{"Co-Authored-By trailer", "Add x\n\nWhy.\n\nCo-Authored-By: C <c@e>", `"Co-Authored-By: C <c@e>" is attribution`},
+		{"generated-with line", "Add x\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)", "is attribution"},
+		{"Claude session link", "Add x\n\nhttps://claude.ai/code/session_01ab", "is attribution"},
+		{"Codex task link", "Add x\n\nhttps://chatgpt.com/codex/tasks/task_e_1", "is attribution"},
+		{"Signed-off-by trailer", "Add x\n\nSigned-off-by: T <t@e>", ""},
+		{"generated in prose", "Add x\n\nThe table is generated with go generate.", ""},
+		{"long fixup subject", "fixup! " + long, ""},
+		{"fixup with Review trailers", "fixup! A\n\nReview-Thread: x\nReview-Finding: y", ""},
+		{"fixup with another trailer", "fixup! A\n\nReview-Thread: x\nSigned-off-by: T <t@e>", `trailer "Signed-off-by" is not a Review-* trailer`},
+		{"fixup with attribution", "fixup! A\n\nCo-authored-by: C <c@e>", "is attribution"},
+		{"long amend body", "amend! A\n\n" + long, ""},
 	} {
-		got := strings.Join(LintMessage(c.message), "; ")
-		if c.want == "" && got != "" || !strings.Contains(got, c.want) {
-			t.Errorf("LintMessage(%q) = %q, want %q", c.message, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			got := strings.Join(LintMessage(c.message), "; ")
+			if c.want == "" && got != "" || !strings.Contains(got, c.want) {
+				t.Errorf("LintMessage(%q) = %q, want %q", c.message, got, c.want)
+			}
+		})
 	}
 }
 
@@ -118,7 +123,7 @@ func TestSquashed(t *testing.T) {
 			}
 			run(NoEditor, "rebase", "-q", "-i", "--autosquash", "--force-rebase", "main")
 			git.Dir = dir
-			defer func() { git.Dir = "" }()
+			t.Cleanup(func() { git.Dir = "" })
 			got, err := Between("main", "HEAD")
 			if err != nil {
 				t.Fatal(err)
