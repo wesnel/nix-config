@@ -55,8 +55,10 @@ directory and host come from "plans" in the user's agent-tools/config.json.
   decide PLAN QID --answer TEXT
                      move open question QID to Decisions as the next decision,
                      with Wesley's answer, and log it as decided
-  statusline         Claude Code's status line (reads stdin): the session's
-                     open questions, or nothing; never touches the network
+  statusline         Claude Code's status line and Emacs's mode line (reads
+                     stdin): the open questions of the session's plan, else of
+                     the plan of the worktree "cwd" is in, or nothing; never
+                     touches the network
   own PLAN --worktree DIR --agent ID
                      record agent ID, the harness's ID for a sub-agent or
                      "main" for the session's main thread, as the one agent

@@ -162,24 +162,35 @@ func moveQuestion(text, qid, did, answer string) (string, error) {
 	return strings.Join(out, "\n"), nil
 }
 
-// StatusLine is Claude Code's status line for the session its status-line
-// input names: how many open questions of the session's plan Wesley can
-// answer now, or nothing. It reads only this host's plan files, never the
-// network, and says nothing on any error.
+// StatusLine is the status line for the session its input names, else for
+// the worktree its cwd is in, as Emacs's mode line sends: how many open
+// questions of that plan Wesley can answer now, or nothing. It reads only
+// this host's plan files and git, never the network, and says nothing on
+// any error.
 func (c Config) StatusLine(input []byte) string {
 	var in struct {
 		SessionID string `json:"session_id"`
+		Cwd       string `json:"cwd"`
 	}
-	if json.Unmarshal(input, &in) != nil || in.SessionID == "" {
+	if json.Unmarshal(input, &in) != nil {
 		return ""
 	}
-	found, err := c.Find(FindOptions{Session: "claude:" + in.SessionID})
-	if err != nil || len(found) == 0 {
-		return ""
+	var p Plan
+	found := false
+	if in.SessionID != "" {
+		if f, err := c.Find(FindOptions{Session: "claude:" + in.SessionID}); err == nil && len(f) > 0 {
+			p, err = c.Open(f[0].Plan)
+			found = err == nil
+		}
 	}
-	p, err := c.Open(found[0].Plan)
-	if err != nil {
-		return ""
+	if !found {
+		top, _ := checkout(in.Cwd)
+		if top == "" {
+			return ""
+		}
+		if p, _, found = c.Locate("", top); !found {
+			return ""
+		}
 	}
 	qs, err := p.Questions(true)
 	qs = Askable(qs)
