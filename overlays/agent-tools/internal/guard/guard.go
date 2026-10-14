@@ -200,6 +200,8 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 			return checkWebSocket(args.WS.URL)
 		}
 		return command(args.Command, 0, who, dir)
+	case tool == "ExitWorktree":
+		return checkExitWorktree(toolInput, dir)
 	case tool == "Edit" || tool == "Write" || tool == "MultiEdit" || tool == "NotebookEdit" || tool == "apply_patch",
 		server == "eca" && (tool == "write_file" || tool == "edit_file" || tool == "move_file"):
 		return checkFileTool(tool, toolInput, dir)
