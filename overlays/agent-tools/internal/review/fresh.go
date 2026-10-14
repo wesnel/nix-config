@@ -292,6 +292,26 @@ func prompt(in inputs) string {
 	return b.String()
 }
 
+// Inputs are a review's prompt for a caller that resolves the range itself.
+// Commits is `git log --reverse --format='%H %s' BASE..TIP`; Where says where
+// the reviewer reads the change.
+type Inputs struct {
+	Given, Base, Tip, Commits           string
+	Goal, Items, Prior, RedCheck, Where string
+}
+
+// Prompt is the prompt a review with in gives its reviewer.
+func Prompt(in Inputs) string {
+	return prompt(inputs{r: &span{given: in.Given, base: in.Base, tip: in.Tip, commits: in.Commits},
+		goal: in.Goal, items: in.Items, prior: in.Prior, redCheck: in.RedCheck, where: in.Where})
+}
+
+// Validate is validate for a caller that resolves the range itself: blob
+// returns a file as it is at TIP, or an error where there is none.
+func Validate(reply, given, tip string, blob func(path string) ([]byte, error), wt string) (*Output, error) {
+	return validateWith(reply, given, tip, blob, wt)
+}
+
 // codexReview runs Codex read-only in a throwaway worktree of TIP, which it
 // removes however the review ends.
 func codexReview(ctx context.Context, in inputs, model string, timeout time.Duration, log io.Writer) (*Output, error) {
@@ -342,6 +362,9 @@ type Codex struct {
 	Timeout time.Duration
 	// Log receives Codex's output.
 	Log io.Writer
+	// Git runs git in the checkout; nil for the git package's Run, with
+	// the user's config.
+	Git func(args ...string) (string, error)
 }
 
 // CodexReply is what Codex replied, and the model that replied.
@@ -358,15 +381,19 @@ func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 	if err := os.WriteFile(schema, c.Schema, 0o644); err != nil {
 		return nil, err
 	}
-	head, err := git.Run("-C", c.Checkout, "rev-parse", "--verify", "HEAD")
+	run := c.Git
+	if run == nil {
+		run = func(args ...string) (string, error) { return git.Run(append([]string{"-C", c.Checkout}, args...)...) }
+	}
+	head, err := run("rev-parse", "--verify", "HEAD")
 	if err != nil {
 		return nil, err
 	}
-	admin, err := git.Run("-C", c.Checkout, "rev-parse", "--path-format=absolute", "--git-dir")
+	admin, err := run("rev-parse", "--path-format=absolute", "--git-dir")
 	if err != nil {
 		return nil, err
 	}
-	common, err := git.Run("-C", c.Checkout, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	common, err := run("rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return nil, err
 	}
@@ -615,6 +642,13 @@ var kinds = map[string]bool{"goal-unmet": true, "bug": true, "regression": true,
 // that exists at TIP. A path inside wt, the checkout the reviewer read, is
 // made relative to it.
 func validate(reply string, r *span, wt string) (*Output, error) {
+	blob := func(path string) ([]byte, error) {
+		return git.Bytes(nil, "-C", r.top, "cat-file", "blob", r.tip+":"+path)
+	}
+	return validateWith(reply, r.given, r.tip, blob, wt)
+}
+
+func validateWith(reply, given, tip string, blob func(path string) ([]byte, error), wt string) (*Output, error) {
 	text := strings.TrimSpace(reply)
 	start, end := strings.Index(text, "{"), strings.LastIndex(text, "}")
 	if start < 0 || end < start {
@@ -627,14 +661,14 @@ func validate(reply string, r *span, wt string) (*Output, error) {
 	if err := json.Unmarshal([]byte(text[start:end+1]), &parsed); err != nil || parsed.Findings == nil {
 		return nil, fmt.Errorf("the reply is not the JSON the contract describes (%v); ask the reviewer again", err)
 	}
-	out := &Output{Range: r.given, Tip: r.tip, Findings: []*Finding{}, Dropped: []Dropped{}, Unverified: []string{}}
+	out := &Output{Range: given, Tip: tip, Findings: []*Finding{}, Dropped: []Dropped{}, Unverified: []string{}}
 	if parsed.Unverified != nil {
 		out.Unverified = parsed.Unverified
 	}
 	seen := map[string]bool{}
 	lines := map[string]int{}
 	for _, raw := range *parsed.Findings {
-		f, why := normalise(raw, r, wt, lines)
+		f, why := normalise(raw, blob, wt, lines)
 		if why == "" && seen[f.ID] {
 			why = "another finding has the id " + f.ID
 		}
@@ -650,7 +684,7 @@ func validate(reply string, r *span, wt string) (*Output, error) {
 
 // normalise checks one finding, returning it cleaned up or why it is
 // dropped. lines caches each file's line count at TIP, -1 for no such file.
-func normalise(raw json.RawMessage, r *span, wt string, lines map[string]int) (*Finding, string) {
+func normalise(raw json.RawMessage, blob func(path string) ([]byte, error), wt string, lines map[string]int) (*Finding, string) {
 	var f Finding
 	if err := json.Unmarshal(raw, &f); err != nil {
 		return nil, "does not fit the schema: " + err.Error()
@@ -675,9 +709,9 @@ func normalise(raw json.RawMessage, r *span, wt string, lines map[string]int) (*
 	n, ok := lines[path]
 	if !ok {
 		n = -1
-		if blob, err := git.Bytes(nil, "-C", r.top, "cat-file", "blob", r.tip+":"+path); err == nil {
-			n = bytes.Count(blob, []byte("\n"))
-			if len(blob) > 0 && blob[len(blob)-1] != '\n' {
+		if data, err := blob(path); err == nil {
+			n = bytes.Count(data, []byte("\n"))
+			if len(data) > 0 && data[len(data)-1] != '\n' {
 				n++
 			}
 		}

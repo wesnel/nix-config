@@ -203,6 +203,28 @@ It never runs `git red-check`, which runs the commits' code: that runs only
 in the review sandbox. Where the repository has test settings, it says on
 stderr that the review has no red-check results.
 
+### someone else's pull request: `pr-loop review`
+
+``` sh
+pr-loop review wesnel/emacs-config#2                # Codex reviews it
+pr-loop review --reviewer subagent 2                # prints the prompt for a reviewer sub-agent
+pr-loop review --check 2 < reply.md                 # checks that sub-agent's reply
+pr-loop review settle 2 < outcomes.json             # records how triage settled each finding
+```
+
+It fetches the pull request over HTTPS into a bare clone of its own under
+`~/.cache/pr-review/OWNER/NAME/N/`, pinned to the head GitHub reports, and
+reviews it with the same contract as `git fresh-review`. The goal is ours:
+review it for Wesley and propose comments only; the title, description,
+linked issues and review threads go in as the author's claims. Every git
+command on the clone runs without your git config, hooks, links or
+submodules, so a pull request's `.gitattributes` and `.lfsconfig` run no
+filter and reach no server, and Codex runs confined in a checkout beside the
+clone. The record, `HEAD12/findings.json`, is what review-guide imports for
+you to edit and post; nothing is written to GitHub. A `claude-pr-loop`
+started in `HEAD12/` reads only that review, and may run `pr-loop review`
+for its own pull request alone. See `pr-loop --help`.
+
 ### `git red-check`
 
 Checks that the tests a commit adds or changes test it, rather than taking
