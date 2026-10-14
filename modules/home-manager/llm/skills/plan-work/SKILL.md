@@ -38,7 +38,10 @@ agent-plan new --parent PLAN --part P1 --title 'Add the run loop flag' --branch 
   `PIPELINE` (`full` or `opted-out:<reason>`). Lists are separated by spaces.
 - `** Goal`: the goal and what is not this change's job, and nothing of how
   the work went. It is the fresh review's goal statement, word for word:
-  `agent-plan goal PLAN [--part P1]` prints it.
+  `agent-plan goal PLAN [--part P1]` prints it. It ends with a
+  `Likely next changes:` line: one or two concrete changes expected after
+  this one, not speculation, which the design review of the plan checks
+  would each be a local edit.
 - `** Decisions`: a heading per decision, with `:ID: D1`, `D2`…
 - `** Steps`: `*** TODO <step>` headings with `:ID: S1`, `S2`…; a part's
   are `P1.S1`, `P1.S2`…
