@@ -34,7 +34,8 @@ Each finding has one kind:
   line cited, or a reviewer rereading its thread would still have something
   to say.
 - `bug`: the change does the wrong thing: a wrong result, a crash, a lost
-  write, an unhandled error path.
+  write, an unhandled error path. Temporary debugging output left in, such
+  as a line marked `DEBUG-` and four hex digits, is one.
 - `regression`: something that worked before breaks: callers, error paths,
   other platforms or configurations, and the tests that cover them. Run
   those tests where the change could fail them.

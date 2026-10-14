@@ -633,6 +633,10 @@ in {
             sandbox = true;
           };
           coordinate-subagents = ./skills/coordinate-subagents/SKILL.md;
+          diagnose-failure = {
+            source = ./skills/diagnose-failure/SKILL.md;
+            sandbox = true;
+          };
 
           # Linked as published, with the repository's MIT licence beside
           # it: the licence requires its notice in every copy.
