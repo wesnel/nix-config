@@ -385,6 +385,10 @@ in {
             source = ./skills/review-change/SKILL.md;
             sandbox = true;
           };
+          plan-work = {
+            source = ./skills/plan-work/SKILL.md;
+            sandbox = true;
+          };
           coordinate-subagents = ./skills/coordinate-subagents/SKILL.md;
         }
         // optionalAttrs cfg.prLoop.enable {
