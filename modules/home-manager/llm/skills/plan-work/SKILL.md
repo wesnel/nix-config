@@ -50,7 +50,10 @@ agent-plan new --parent PLAN --part P1 --title 'Add the run loop flag' --branch 
   which its `verified` evidence then shows. Steps that must run in order
   go under a heading with `:ORDERED: t`, and a step that waits on another
   item lists it in `:AFTER:`; `agent-plan status` lists the steps ready
-  now.
+  now. A step or part that cannot go on until a time, such as a quota
+  window's reset, is postponed with
+  `agent-plan postpone PLAN S1 --until '2026-10-20 18:30'`, which keeps it
+  out of the ready lists and the agenda until then; `--clear` undoes it.
 - `** Distribution`, in a plan split among sub-agents: a `*** TODO <part>`
   heading per part with `:ID: P1`…, its branch, base and worktree, a link
   to its file, and its steps.
