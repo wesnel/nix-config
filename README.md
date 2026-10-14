@@ -199,8 +199,9 @@ review-loop session, where `pr-loop` must stay the only way out.
 `--print-prompt` prints the prompt instead of running the review. See
 `git fresh-review -h`.
 
-Where the repository has test settings, `git red-check` on the range runs
-first and its result goes in the prompt.
+It never runs `git red-check`, which runs the commits' code: the session
+runs it, as it runs any test. Where the repository has test settings, it
+says on stderr that the review has no red-check results.
 
 ### `git red-check`
 

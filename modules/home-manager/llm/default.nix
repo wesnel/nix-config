@@ -115,8 +115,8 @@ in {
 
             description = ''
               The test command `git red-check` runs, with `sh` at the top of
-              a checkout. With it and {option}`testFiles`, `git fresh-review`
-              runs `git red-check` on the range it reviews.
+              a checkout. `git fresh-review` never runs it, since it runs
+              the reviewed commits' code; the session does.
             '';
           };
 
