@@ -2,8 +2,10 @@
 package history
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/refusal"
@@ -21,7 +23,12 @@ var CouldNotApply = regexp.MustCompile(`could not apply ([0-9a-f]+)\.\.\. (.*)`)
 
 // Between lists base..tip oldest first.
 func Between(base, tip string) ([]Commit, error) {
-	out, err := git.Run("log", "--reverse", "--format=%B%x00%an <%ae>%x01", base+".."+tip)
+	return Log(base + ".." + tip)
+}
+
+// Log lists the commits git log selects with revs, oldest first.
+func Log(revs ...string) ([]Commit, error) {
+	out, err := git.Run(append([]string{"log", "--reverse", "--format=%B%x00%an <%ae>%x01"}, revs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +126,51 @@ func Squashed(commits []Commit) []Commit {
 		}
 	}
 	return kept
+}
+
+// MaxSubject is the longest subject a message may have, in characters,
+// counting any `type(scope):` prefix.
+const MaxSubject = 72
+
+var (
+	// attribution matches a line that credits a tool or links its session.
+	attribution = regexp.MustCompile(`(?i)^\s*co-authored-by:|generated (with|by) \[?(claude|codex|eca|chatgpt)|https?://(claude\.ai/code|chatgpt\.com/codex)`)
+	trailer     = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9-]*):\s`)
+)
+
+// LintMessage lists what is wrong with a commit message, each as a phrase
+// naming the problem; nil when nothing is. A kept commit's subject is at most
+// MaxSubject characters, without a trailing period. No line credits a tool
+// or links a session. A fixup! carries only Review-* trailers. A fold's
+// subject is not a subject the history keeps, so a caller that can lints
+// the messages Squashed leaves.
+func LintMessage(message string) []string {
+	var problems []string
+	subject := Subject(message)
+	kind, _ := Fold(message)
+	if kind == Kept {
+		if n := utf8.RuneCountInString(subject); n > MaxSubject {
+			problems = append(problems, fmt.Sprintf("its subject is %d characters, over %d", n, MaxSubject))
+		}
+		if strings.HasSuffix(subject, ".") {
+			problems = append(problems, "its subject ends with a period")
+		}
+	}
+	body := strings.TrimSpace(strings.TrimPrefix(message, subject))
+	for _, line := range strings.Split(body, "\n") {
+		if attribution.MatchString(line) {
+			problems = append(problems, fmt.Sprintf("the line %q is attribution", strings.TrimSpace(line)))
+		}
+	}
+	if kind == Fixup {
+		paragraphs := strings.Split(body, "\n\n")
+		for _, line := range strings.Split(paragraphs[len(paragraphs)-1], "\n") {
+			if m := trailer.FindStringSubmatch(line); m != nil && !strings.HasPrefix(m[1], "Review-") && !attribution.MatchString(line) {
+				problems = append(problems, fmt.Sprintf("the trailer %q is not a Review-* trailer", m[1]))
+			}
+		}
+	}
+	return problems
 }
 
 // NoEditor keeps a rebase from opening an editor: for the todo list, and for

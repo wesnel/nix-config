@@ -556,6 +556,9 @@ func prepare(branch, base string) (p *pending, early any, err error) {
 	if merges, _ := git.Run("rev-list", "--merges", start+".."+tip); merges != "" {
 		return nil, nil, refuse("the commits to sign include merges, which re-signing would flatten; sign them by hand")
 	}
+	if err := lintMessages(branch, start, tip); err != nil {
+		return nil, nil, err
+	}
 	before, err := localBranches()
 	if err != nil {
 		return nil, nil, err
@@ -602,6 +605,23 @@ func keptCommits(from, tip string) ([]history.Commit, error) {
 		return nil, err
 	}
 	return history.Squashed(all), nil
+}
+
+// lintMessages refuses unless every message from..tip leaves, once its
+// folds are squashed in, passes history.LintMessage.
+func lintMessages(branch, from, tip string) error {
+	kept, err := keptCommits(from, tip)
+	if err != nil {
+		return err
+	}
+	for _, c := range kept {
+		if problems := history.LintMessage(c.Message); len(problems) > 0 {
+			return refuse("%s's commit %q would be signed with a message where %s. Reword it with an amend! commit, "+
+				"`git -c commit.gpgsign=false commit --allow-empty -m 'amend! SUBJECT' -m 'NEW MESSAGE'`, and run the pass again",
+				branch, history.Subject(c.Message), strings.Join(problems, ", and "))
+		}
+	}
+	return nil
 }
 
 // sign detaches the worktrees the pass moves, records it, and rebases with the
