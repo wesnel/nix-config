@@ -1,7 +1,6 @@
 package plans
 
 import (
-	"os"
 	"slices"
 	"strings"
 	"time"
@@ -52,11 +51,11 @@ func (p Plan) AddToProperty(part, name, value string) (bool, error) {
 		return false, err
 	}
 	added := false
-	err := editPlanProperty(p.file(part), name, func(values []string) []string {
-		if slices.Contains(values, value) {
+	err := p.editPlanProperty(p.file(part), name, func(values []string) []string {
+		added = !slices.Contains(values, value)
+		if !added {
 			return values
 		}
-		added = true
 		return append(values, value)
 	})
 	return added, err
@@ -64,42 +63,39 @@ func (p Plan) AddToProperty(part, name, value string) (bool, error) {
 
 // editPlanProperty sets the list property name of file's `* Plan` heading
 // to what edit makes of its values, adding the property at the end of the
-// drawer if it has none.
-func editPlanProperty(file, name string, edit func(values []string) []string) error {
-	data, err := os.ReadFile(file)
-	if err != nil {
-		return err
-	}
-	lines := strings.Split(string(data), "\n")
-	start := slices.Index(lines, "* Plan")
-	if start < 0 {
-		return refusal.New("%s has no `* Plan` heading. Restore it as the plan-work skill describes, then try again", file)
-	}
-	at, end := -1, -1
-	var values []string
-	for i := start + 1; i < len(lines) && end < 0; i++ {
-		switch {
-		case lines[i] == ":END:":
-			end = i
-		case strings.HasPrefix(lines[i], ":"+name+":"):
-			at = i
-			values = strings.Fields(strings.TrimPrefix(lines[i], ":"+name+":"))
-		}
-	}
-	if end < 0 {
-		return refusal.New("%s's `* Plan` heading has no property drawer. Restore it as the plan-work skill describes, then try again", file)
-	}
-	line := ":" + name + ":"
-	if values = edit(values); len(values) > 0 {
-		line += " " + strings.Join(values, " ")
-	}
-	if at >= 0 {
-		if lines[at] == line {
-			return nil
-		}
-		lines[at] = line
-	} else {
-		lines = append(lines[:end], append([]string{line}, lines[end:]...)...)
-	}
-	return replaceFile(file, strings.Join(lines, "\n"))
+// drawer if it has none. edit may run more than once, each time on the
+// values the file then holds.
+func (p Plan) editPlanProperty(file, name string, edit func(values []string) []string) error {
+	return p.withLock(func(l *lockedPlan) error {
+		return l.edit(file, func(lines []string) ([]string, error) {
+			lines = slices.Clone(lines)
+			start := slices.Index(lines, "* Plan")
+			if start < 0 {
+				return nil, refusal.New("%s has no `* Plan` heading. Restore it as the plan-work skill describes, then try again", file)
+			}
+			at, end := -1, -1
+			var values []string
+			for i := start + 1; i < len(lines) && end < 0; i++ {
+				switch {
+				case lines[i] == ":END:":
+					end = i
+				case strings.HasPrefix(lines[i], ":"+name+":"):
+					at = i
+					values = strings.Fields(strings.TrimPrefix(lines[i], ":"+name+":"))
+				}
+			}
+			if end < 0 {
+				return nil, refusal.New("%s's `* Plan` heading has no property drawer. Restore it as the plan-work skill describes, then try again", file)
+			}
+			line := ":" + name + ":"
+			if values = edit(values); len(values) > 0 {
+				line += " " + strings.Join(values, " ")
+			}
+			if at >= 0 {
+				lines[at] = line
+				return lines, nil
+			}
+			return slices.Insert(lines, end, line), nil
+		})
+	})
 }
