@@ -37,6 +37,9 @@ create, amend or rewrite commits.
   way: no history of how it got there, no list of review follow-ups, and no
   line numbers, line counts or commit counts, all of which go stale. Stack
   position and links to other pull requests are fine.
+- Explain the approach and what it rests on, not each file in turn; the diff
+  already gives that tour. A validation section names only what a reviewer
+  cannot see from CI, never a lint, format, typecheck or codegen run.
 - Answer review comments in their threads, never as new top-level comments,
   and resolve each thread you have answered, including ones answered without
   a change. Leave one open only when it still needs a decision, and say so in
