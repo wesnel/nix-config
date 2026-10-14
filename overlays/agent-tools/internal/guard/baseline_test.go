@@ -453,6 +453,43 @@ func TestShellEdits(t *testing.T) {
 	}
 }
 
+// TestTrash covers deleting files where trash is on PATH, which moves them
+// to the Trash instead.
+func TestTrash(t *testing.T) {
+	trashOnPath = func() bool { return true }
+	t.Cleanup(func() { trashOnPath = func() bool { return false } })
+	for _, c := range []struct {
+		deny    bool
+		command string
+	}{
+		{true, "rm x"},
+		{true, "rm -rf build"},
+		{true, "/bin/rm -f x"},
+		{true, "unlink x"},
+		{true, "find . -name '*.tmp' -delete"},
+		{true, `find . -name '*.tmp' -exec rm {} \;`},
+		{true, "git ls-files -z | xargs -0 rm -f"},
+		{true, "bash -c 'rm x'"},
+		{false, "trash x"},
+		{false, "git rm x"},
+		{false, "rmdir d"},
+		{false, "find . -name '*.tmp' -print"},
+		{false, "grep -rn rm ."},
+	} {
+		reason := judge(t, "/", c.command)
+		if (reason != "") != c.deny {
+			t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
+		}
+		if reason != "" && !saysInstead(reason) {
+			t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+		}
+	}
+	trashOnPath = func() bool { return false }
+	if reason := judge(t, "/", "rm x"); reason != "" {
+		t.Errorf("rm without trash on PATH: %q", reason)
+	}
+}
+
 // TestKill covers kill by process ID, which the guard looks up with ps.
 func TestKill(t *testing.T) {
 	// The protected process is a copy of this test binary named mcp-proxy,
