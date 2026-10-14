@@ -32,8 +32,16 @@ shape.
 
 - Before splitting, write the plan's Distribution, as the `plan-work`
   skill says: a part ID (`P1`, `P2`…) per part, with its branch, base,
-  worktree and steps.
+  worktree and steps. A part that needs another's work first names that
+  part in its `:AFTER:`.
 - One part is one branch, one worktree and one sub-agent.
+- A refactor the change needs goes first: the bottom branch of the stack,
+  or the first commit of a single branch, with no test changed.
+- A change to an interface with many callers goes expand–contract: add the
+  new form beside the old, move the callers over in batches that each pass
+  on their own, and remove the old form last.
+- Each branch of a stack builds and passes its tests on its own base, so it
+  can merge before the branches above it.
 - Parts that edit the same file or the same code are never parallel
   branches: that only produces conflicts. Give them to one sub-agent as one
   stacked chain, or run them one after another.
@@ -91,12 +99,17 @@ and adds only what they do not say. Put in it:
   `review-change` skill's Answering gives.
 - The report below.
 
+When several parts need the same exploration, start one sub-agent that only
+reads to do it first and write what it found to a notes file in your
+scratchpad, and name that file in the rules.
+
 ## Each task
 
 The task names the rules file; the plan and the part's ID; the repository,
 branch, base and worktree; the part's goal and what is not its job; the
 decisions already made, as final; and, where you know it, the commit each
-correction folds into. A sub-agent that finds a fact contradicting a
+correction folds into. It says what the part must do, not how, as
+acceptance criteria each checkable on its own. A sub-agent that finds a fact contradicting a
 decision, or a base it was given, stops that item and reports it instead of
 following or reopening it.
 
@@ -106,6 +119,8 @@ gives, with no narrative:
 - branch, worktree, and `git log --format='%h %G? %s' <base>..<branch>`
 - what it changed, by plan item ID
 - the exact commands it ran to verify, and their results
+- for each fact it states, where it was observed: a command, a
+  `file:line` or a URL
 - what it could not verify, and what needs a decision
 
 ## Phases
@@ -175,7 +190,8 @@ file and the plan, rather than pasting them, and gives the report a length.
 
 ## Running them
 
-Start independent sub-agents together, in the background.
+Start independent sub-agents together, in the background, and each part as
+soon as `agent-plan status PLAN` lists it ready to start.
 
 - **Claude Code:** the Agent tool with `run_in_background`. `SendMessage`
   continues an agent with its context.
@@ -203,8 +219,9 @@ Before relaying a report, confirm it:
 - The specific tests it cites pass when you run them; whole suites are left
   to CI and the part's own `git red-check` run.
 
-Relay only what you confirmed, and say what you did not. Questions it
-raises go in the plan, as the `plan-work` skill's "Questions for Wesley"
+Once a report passes, log `done` for its part's ID, which readies the parts
+that wait for it. Relay only what you confirmed, and say what you did not.
+Questions it raises go in the plan, as the `plan-work` skill's "Questions for Wesley"
 says, not in your message.
 
 ## Review each branch
