@@ -6,44 +6,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
-// handOff is what the rest of a reason, after the sentence saying why, must
-// contain: a command in backticks, or the step handed to Wesley or the report.
-var handOff = regexp.MustCompile("`|Wesley|(?i:report)")
-
-// saysInstead reports whether a denial's reason goes on, after the sentence
-// saying why, to say what to do instead.
-func saysInstead(reason string) bool {
-	quoted := false
-	for i := 0; i+1 < len(reason); i++ {
-		switch {
-		case reason[i] == '`':
-			quoted = !quoted
-		case !quoted && (reason[i] == '.' || reason[i] == ';') && reason[i+1] == ' ':
-			return handOff.MatchString(reason[i+2:])
-		}
-	}
-	return false
-}
-
-func TestSaysInstead(t *testing.T) {
-	for reason, want := range map[string]bool{
-		"Pushing goes through `pr-loop push`.":                       false,
-		"No. Try something else.":                                    false,
-		"Pushing is checked. Use `pr-loop push`.":                    true,
-		"Pruning is Wesley's call; leave it to him.":                 false,
-		"Pruning is a decision. Leave `pr-loop end --prune` to him.": true,
-		"`git x. y` is an alias; ask Wesley.":                        true,
-	} {
-		if got := saysInstead(reason); got != want {
-			t.Errorf("saysInstead(%q) = %v", reason, got)
-		}
-	}
-}
+var saysInstead = refusal.SaysInstead
 
 // TestAliasDenial covers the alias already in the git config, which the
 // guard looks up at run time.

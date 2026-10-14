@@ -98,5 +98,12 @@
     "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?(commit|rebase|reset|checkout|switch|restore|merge|cherry-pick|revert|am|apply|stash|add|rm|mv|clean|tag|update-ref|notes|worktree\\s+(?!list\\b))\\b.*",
     "deny": ["git commit --fixup=abc", "git -C .pr-loop/12 rebase --onto a b c", "git checkout main", "git stash push -u", "git worktree add ../x"],
     "allow": ["git log --oneline main..HEAD", "git -C .pr-loop/12 show abc --stat", "git diff a b", "git worktree list", "git range-diff a...b"]
+  },
+  {
+    "why": "A reviewer does not start a review of its own; whoever started it decides on another round.",
+    "reviewerOnly": true,
+    "pattern": ".*\\bgit(\\s+(-C\\s+\\S+\\s+)?|-)fresh-review\\b.*",
+    "deny": ["git fresh-review --goal g.md main..HEAD", "git -C .pr-loop/12 fresh-review --print-prompt --goal g.md a..b", "git-fresh-review --check r.json a..b"],
+    "allow": ["git log --oneline main..HEAD", "grep -nE 'git\\s+fresh-review' SKILL.md"]
   }
 ]

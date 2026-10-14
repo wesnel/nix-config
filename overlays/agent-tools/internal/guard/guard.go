@@ -202,6 +202,8 @@ func command(text string, depth int, who role, dir string) string {
 			}
 		case name == "pr-loop":
 			reason = checkPrLoop(words[1:], who)
+		case name == "git-fresh-review" && who == reviewer:
+			reason = nestedReview
 		case name == "git-sign-pass" && who == reviewer:
 			reason = reviewerReport
 		case name == "git-sign-pass":
@@ -234,6 +236,9 @@ var reviewerReads = map[string]bool{"stack": true, "threads": true, "status": tr
 
 // reviewerReport is why a reviewer may not make a change.
 const reviewerReport = "A reviewer only reads. Report the finding with its evidence; whoever started the review acts on it."
+
+// nestedReview is why a reviewer may not start a review.
+const nestedReview = "A reviewer does not start a review of its own. Report your findings; whoever started you decides on another round."
 
 // checkPrLoop keeps the decisions that are Wesley's: waiving a CI failure,
 // and discarding the unsquashed history.
@@ -285,6 +290,9 @@ func checkGit(words []string, who role) string {
 		return ""
 	}
 	sub, rest := words[i], words[i+1:]
+	if who == reviewer && sub == "fresh-review" {
+		return nestedReview
+	}
 	if who == reviewer && gitWrites[sub] && !(sub == "worktree" && len(rest) > 0 && rest[0] == "list") {
 		return reviewerReport
 	}
