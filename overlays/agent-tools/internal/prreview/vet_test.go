@@ -29,7 +29,15 @@ func flagged(v *Vet) []string {
 	return paths
 }
 
-func TestVetClean(t *testing.T) {
+func TestVet(t *testing.T) {
+	t.Run("clean", testVetClean)
+	t.Run("flags host files", testVetFlagsHostFiles)
+	t.Run("Codex says don't run", testVetCodexSaysDontRun)
+	t.Run("without Codex", testVetWithoutCodex)
+	t.Run("project Codex config ignored", testVetProjectCodexConfigIgnored)
+}
+
+func testVetClean(t *testing.T) {
 	r := newRemote(t, func(work string) {
 		write(t, filepath.Join(work, "go.mod"), "module example.com/r\n\ngo 1.22\n\ntoolchain go1.99.0\n\n"+
 			"replace example.com/x => ../x\n")
@@ -60,9 +68,9 @@ func TestVetClean(t *testing.T) {
 	}
 }
 
-// TestVetFlagsHostFiles: what would run on this machine or in an agent,
+// testVetFlagsHostFiles: what would run on this machine or in an agent,
 // which no VM contains, is flagged whatever Codex says.
-func TestVetFlagsHostFiles(t *testing.T) {
+func testVetFlagsHostFiles(t *testing.T) {
 	r := newRemote(t, func(work string) {
 		write(t, filepath.Join(work, ".envrc"), "use flake\n")
 		write(t, filepath.Join(work, "sub", ".dir-locals.el"), "((nil . ((eval . (shell-command \"x\")))))\n")
@@ -100,7 +108,7 @@ func TestVetFlagsHostFiles(t *testing.T) {
 	}
 }
 
-func TestVetCodexSaysDontRun(t *testing.T) {
+func testVetCodexSaysDontRun(t *testing.T) {
 	r := newRemote(t, nil)
 	setUp(t, r)
 	withCodex(t, reply())
@@ -119,8 +127,8 @@ func TestVetCodexSaysDontRun(t *testing.T) {
 	}
 }
 
-// TestVetWithoutCodex: a vet Codex cannot make is a red flag, not a pass.
-func TestVetWithoutCodex(t *testing.T) {
+// testVetWithoutCodex: a vet Codex cannot make is a red flag, not a pass.
+func testVetWithoutCodex(t *testing.T) {
 	r := newRemote(t, nil)
 	setUp(t, r)
 	bin := t.TempDir()
@@ -139,10 +147,10 @@ func TestVetWithoutCodex(t *testing.T) {
 	}
 }
 
-// TestProjectCodexConfigIgnored: a pull request's .codex/config.toml, which
-// can name programs Codex runs, is neither loaded by the vetting and
+// testVetProjectCodexConfigIgnored: a pull request's .codex/config.toml,
+// which can name programs Codex runs, is neither loaded by the vetting and
 // reviewing Codex nor let through the vet.
-func TestProjectCodexConfigIgnored(t *testing.T) {
+func testVetProjectCodexConfigIgnored(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "codex-config-ran")
 	r := newRemote(t, func(work string) {
 		write(t, filepath.Join(work, ".codex", "config.toml"), "# fake-codex-run: touch "+marker+"\n"+
