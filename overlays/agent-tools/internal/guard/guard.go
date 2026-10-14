@@ -295,6 +295,9 @@ func program(c call, who role, files, dir string) string {
 	if reason := checkEnv(c.env); reason != "" {
 		return reason
 	}
+	if reason := checkNgrokEnv(c); reason != "" {
+		return reason
+	}
 	if len(c.words) == 0 {
 		return ""
 	}
