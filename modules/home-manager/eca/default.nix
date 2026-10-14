@@ -61,19 +61,21 @@ with lib; let
   # ECA's git tool runs any git or gh command line and takes no argument
   # patterns, so it is hidden and the shell, which does, is used instead.
   # ECA anchors each entry as a regex against a built-in tool's bare name
-  # and against any tool's `server__tool`.
+  # and against any tool's `server__tool`. Each is a YAML single-quoted
+  # string, in which a quote is written twice.
+  yamlQuote = s: "'${replaceStrings ["'"] ["''"] s}'";
   loopFrontmatter = disabled: denied:
     concatStringsSep "\n" ([
         "disabledTools:"
         "  - git"
         "  - '(?i).*linear.*__(?!(get|list|search|fetch|read|query)).*'"
       ]
-      ++ map (t: "  - '${t}'") disabled
+      ++ map (t: "  - ${yamlQuote t}") disabled
       ++ [
         "tools:"
         "  deny:"
       ]
-      ++ map (p: "    - 'eca__shell_command(${p})'") denied);
+      ++ map (p: "    - ${yamlQuote "eca__shell_command(${p})"}") denied);
 in {
   options.wgn.home.eca = {
     enable = mkEnableOption "Configure my Editor Code Assistant skills and agents";
