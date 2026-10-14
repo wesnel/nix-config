@@ -42,8 +42,12 @@ var home, _ = os.UserHomeDir()
 // secretName is an environment variable that likely holds a credential.
 var secretName = regexp.MustCompile(`(?i)token|key|secret|password|credential`)
 
-// guardFile reports whether path holds the hooks that run the guard.
+// guardFile reports whether path holds the hooks that run the guard, or
+// its settings.
 func guardFile(path string) bool {
+	if agentToolsConfig(path) {
+		return true
+	}
 	for _, p := range []string{".codex/config.toml", ".codex/hooks.json", ".config/eca/config.json"} {
 		if path == filepath.Join(home, p) {
 			return true
@@ -88,6 +92,9 @@ func checkSession(c call, dir string) string {
 		}
 		if planLog(expandPath(target, dir)) {
 			return appendOnly
+		}
+		if agentToolsState(expandPath(target, dir)) {
+			return stateWrite
 		}
 	}
 	if reason := checkPlanLogWrite(name, args, dir); reason != "" {
@@ -523,6 +530,9 @@ func checkSecretPath(word, dir string) string {
 
 const appendOnly = "This is a plan's event log, which is append-only and written by agent-plan alone. Record the event with `agent-plan log PLAN --item ID --kind KIND`, and change the plan itself in its plan file."
 
+const stateWrite = "This is agent-tools' state (review receipts, usage readings, branch hints), which agent-plan and pr-loop write themselves. " +
+	"Run the agent-plan, pr-loop or git fresh-review command that records what you mean, or ask Wesley to change it."
+
 // planLog reports whether path is a plan's log, or the lock file that
 // records its state, in the plans directory agent-plan's config names. A
 // relative path counts, since where it is cannot be told.
@@ -546,7 +556,7 @@ func planLog(path string) bool {
 }
 
 // checkPlanLogWrite denies a command that writes, moves or removes a plan's
-// log.
+// log or agent-tools' state.
 func checkPlanLogWrite(name string, args []string, dir string) string {
 	var positional, targets []string
 	for _, a := range args {
@@ -575,6 +585,9 @@ func checkPlanLogWrite(name string, args []string, dir string) string {
 	for _, t := range targets {
 		if planLog(expandPath(t, dir)) {
 			return appendOnly
+		}
+		if agentToolsState(expandPath(t, dir)) {
+			return stateWrite
 		}
 	}
 	return ""
@@ -716,10 +729,13 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 		if planLog(path) {
 			return appendOnly
 		}
+		if agentToolsState(path) {
+			return stateWrite
+		}
 		switch {
 		case filepath.Base(path) == "config" && filepath.Base(filepath.Dir(path)) == ".git":
 			return sharedConfig
-		case strings.HasSuffix(path, ".codex/hooks.json") && guardFile(path):
+		case strings.HasSuffix(path, ".codex/hooks.json") && guardFile(path), agentToolsConfig(path):
 			return guardOff
 		case guardFile(path):
 			existing, _ := os.ReadFile(path)
