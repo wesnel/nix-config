@@ -397,7 +397,7 @@ in {
       # and ~/.claude/settings.json. Only the files it reads without writing
       # are kept here.
       home.file =
-        llm.mkSkillFiles ".claude/skills" config.wgn.home.llm.skills
+        llm.mkSkillFiles pkgs ".claude/skills" config.wgn.home.llm.skills
         // {
           ".claude/CLAUDE.md".source = config.wgn.home.llm.instructions;
 

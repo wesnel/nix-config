@@ -27,19 +27,29 @@
   # discover skills the same way, as <dir>/<name>/SKILL.md, and they read
   # that directory without writing to it, which is what makes it the one
   # part of their configuration worth keeping here.
-  mkSkillFiles = dir: skills:
+  #
+  # Every skill is linked as a directory, never as a bare SKILL.md symlink:
+  # Codex skips a SKILL.md that is itself a symlink. A single-file skill is
+  # therefore wrapped in a store directory holding a real copy of its file.
+  mkSkillFiles = pkgs: dir: skills:
     lib.mapAttrs' (
       name: given: let
         skill = normalise given;
+        wrapped =
+          if skill.source != null
+          then
+            pkgs.runCommand "skill-${name}" {} ''
+              mkdir $out
+              cp ${skill.source} $out/SKILL.md
+            ''
+          else pkgs.writeTextDir "SKILL.md" skill.text;
       in
-        if skill.source != null && isDirectory skill.source
-        then lib.nameValuePair "${dir}/${name}" {source = skill.source;}
-        else
-          lib.nameValuePair "${dir}/${name}/SKILL.md" (
-            if skill.source != null
-            then {source = skill.source;}
-            else {text = skill.text;}
-          )
+        lib.nameValuePair "${dir}/${name}" {
+          source =
+            if skill.source != null && isDirectory skill.source
+            then skill.source
+            else wrapped;
+        }
     )
     skills;
 }
