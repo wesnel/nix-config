@@ -52,7 +52,8 @@ type input struct {
 	// reads. Without it, the guard's own working directory stands in.
 	Cwd string `json:"cwd"`
 	// Set by Codex alone, whose hooks cannot ask the user.
-	TurnID string `json:"turn_id"`
+	TurnID    string `json:"turn_id"`
+	SessionID string `json:"session_id"`
 }
 
 // role is who makes a call. Each role is denied everything the one before it
@@ -106,6 +107,13 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	who := roleOf(in.AgentType+in.Agent, fallback)
 	reason := check(in.ToolName, in.Server, in.ToolInput, who, in.Cwd)
 	if reason == "" {
+		edit := in.ToolName == "Edit" || in.ToolName == "Write" || in.ToolName == "MultiEdit"
+		if fallback == baseline && edit && in.HookType == "" {
+			if context := branchHint(in.SessionID, in.ToolInput, in.Cwd); context != "" {
+				json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{
+					"hookEventName": "PreToolUse", "additionalContext": context}})
+			}
+		}
 		return 0
 	}
 	var out any
