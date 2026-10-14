@@ -303,6 +303,20 @@ in {
           }
         ];
 
+        # When Claude Code waits for Wesley, an OSC 777 notification, which
+        # Ghostty shows on the machine displaying the terminal, over ssh too.
+        # Not on Stop, which would notify after every turn.
+        hooks.Notification = [
+          {
+            hooks = [
+              {
+                type = "command";
+                command = ''printf '\033]777;notify;Claude Code;%s\a' "$(${getExe pkgs.jq} -r '.message // "Waiting for input"')"'';
+              }
+            ];
+          }
+        ];
+
         # How many open questions the session's plan has, from its files
         # alone, which the `questions` skill asks Wesley.
         statusLine = {
