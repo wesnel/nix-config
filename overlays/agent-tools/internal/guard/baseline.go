@@ -455,6 +455,9 @@ func checkSession(c call, dir string) string {
 			}
 		}
 	}
+	if (name == "rm" || name == "unlink" || name == "find" && has("-delete")) && trashOnPath() {
+		return useTrash
+	}
 	return ""
 }
 
@@ -778,6 +781,15 @@ func realPath(path string) string {
 	}
 	return real
 }
+
+// trashOnPath reports whether trash is on the hook's PATH.
+var trashOnPath = func() bool {
+	_, err := exec.LookPath("trash")
+	return err == nil
+}
+
+const useTrash = "`trash` is on PATH here, and moves files to the Trash, where they can be got back. " +
+	"Use `trash PATH...` in place of rm, unlink or find -delete (`find ... -print0 | xargs -0 trash`)."
 
 // scratchRoots are the directories a shell command may write files in,
 // tracked or not: the session's temporary directories.
