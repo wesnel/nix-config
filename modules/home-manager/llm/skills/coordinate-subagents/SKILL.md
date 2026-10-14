@@ -215,12 +215,13 @@ Before relaying a report, confirm it:
   subjects in shape, on the base you named. Read the commits that matter
   with `git show`.
 - `agent-plan status PLAN` shows each of the part's steps done and
-  verified, and each done step's commit subject is in that log.
+  verified, none of them under keyword drift, and each done step's commit
+  subject is in that log.
 - The specific tests it cites pass when you run them; whole suites are left
   to CI and the part's own `git red-check` run.
 
-Once a report passes, log `done` for its part's ID, which readies the parts
-that wait for it. Relay only what you confirmed, and say what you did not.
+Once a report passes, log `done` for its part's ID, which marks its
+heading `DONE` and readies the parts that wait for it. Relay only what you confirmed, and say what you did not.
 Questions it raises go in the plan, as the `plan-work` skill's "Questions for Wesley"
 says, not in your message.
 

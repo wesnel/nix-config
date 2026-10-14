@@ -1,6 +1,7 @@
 package plans
 
 import (
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -131,6 +132,46 @@ func addTag(lines []string, at int, tag string) []string {
 	case !slices.Contains(strings.Split(strings.Trim(m[1], ":"), ":"), tag):
 		out[at] += tag + ":"
 	}
+	return out
+}
+
+var (
+	fractionCookie = regexp.MustCompile(`\[[0-9]*/[0-9]*\]`)
+	percentCookie  = regexp.MustCompile(`\[[0-9]*%\]`)
+)
+
+// updateCookie updates the statistics cookie of the parent of the heading
+// at lines[at], as Org does: its direct children with a keyword, and of
+// those the done ones.
+func updateCookie(lines []string, at int, ks keywordSet) []string {
+	n := level(lines[at])
+	parent := at - 1
+	for parent >= 0 && (level(lines[parent]) == 0 || level(lines[parent]) >= n) {
+		parent--
+	}
+	if parent < 0 || !(fractionCookie.MatchString(lines[parent]) || percentCookie.MatchString(lines[parent])) {
+		return lines
+	}
+	closed, total := 0, 0
+	for i := parent + 1; i < subtreeEnd(lines, parent); i++ {
+		if level(lines[i]) != level(lines[parent])+1 {
+			continue
+		}
+		h := headingOf(level(lines[i]), strings.SplitN(lines[i], " ", 2)[1], ks)
+		if h.Keyword != "" {
+			total++
+			if h.Done {
+				closed++
+			}
+		}
+	}
+	out := slices.Clone(lines)
+	out[parent] = fractionCookie.ReplaceAllString(out[parent], fmt.Sprintf("[%d/%d]", closed, total))
+	percent := 0
+	if total > 0 {
+		percent = 100 * closed / total
+	}
+	out[parent] = percentCookie.ReplaceAllString(out[parent], fmt.Sprintf("[%d%%]", percent))
 	return out
 }
 

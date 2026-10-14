@@ -32,6 +32,9 @@ type Event struct {
 	Evidence string `json:"evidence,omitempty"`
 	Review   string `json:"review,omitempty"`
 	Outcome  string `json:"outcome,omitempty"`
+	// Note is what the caller should know about the event, such as a
+	// heading keyword Log could not write; the log does not hold it.
+	Note string `json:"note,omitempty"`
 }
 
 var (
@@ -88,17 +91,61 @@ func (p Plan) check(e Event) error {
 }
 
 // Log appends e to the plan's log, with a new event ID and now's time, and
-// returns it as written.
+// returns it as written. A step's or part's heading keyword then follows
+// the log: the log is the record, and the keyword its projection for
+// Emacs. A keyword it cannot write leaves the event logged, says so in the
+// returned event's Note, and shows in status as drift.
 func (p Plan) Log(e Event, now time.Time) (Event, error) {
 	if err := p.checkOwn(); err != nil {
 		return Event{}, err
 	}
 	err := p.withLock(func(l *lockedPlan) error {
 		var err error
-		e, err = l.log(e, now)
-		return err
+		if e, err = l.log(e, now); err != nil {
+			return err
+		}
+		if err := l.project(e.Item, now); err != nil {
+			e.Note = fmt.Sprintf("the event is logged, but not %s's heading keyword: %v", e.Item, err)
+		}
+		return nil
 	})
 	return e, err
+}
+
+// projected reports whether id's heading keyword is the log's projection.
+func projected(id string) bool {
+	return stepPattern.MatchString(id) || partPattern.MatchString(id)
+}
+
+// project writes the keyword the log gives id into its heading, unless it
+// is there, and updates the parent heading's statistics cookie as Org
+// does.
+func (l *lockedPlan) project(id string, now time.Time) error {
+	if !projected(id) {
+		return nil
+	}
+	events, err := l.p.Events()
+	if err != nil {
+		return err
+	}
+	items, err := l.p.items()
+	if err != nil {
+		return err
+	}
+	it, ok := items[id]
+	if !ok || it.Keyword == stepState(events, id) {
+		return nil
+	}
+	state := stepState(events, id)
+	return l.edit(it.File, func(lines []string) ([]string, error) {
+		at := headingWithID(lines, id)
+		ks := fileKeywords(strings.Join(lines, "\n"))
+		if at < 0 || !ks.all[state] {
+			return lines, nil
+		}
+		lines = setKeyword(lines, at, state, ks, now)
+		return updateCookie(lines, at, ks), nil
+	})
 }
 
 // log is Log under the lock.

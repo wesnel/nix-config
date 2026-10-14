@@ -48,9 +48,9 @@ agent-plan new --parent PLAN --part P1 --title 'Add the run loop flag' --branch 
 - `** Steps`: `*** TODO <step>` headings with `:ID: S1`, `S2`…; a part's
   are `P1.S1`, `P1.S2`… Each says what observable result marks it done,
   which its `verified` evidence then shows.
-- `** Distribution`, in a plan split among sub-agents: a heading per part
-  with `:ID: P1`…, its branch, base and worktree, a link to its file, and
-  its steps.
+- `** Distribution`, in a plan split among sub-agents: a `*** TODO <part>`
+  heading per part with `:ID: P1`…, its branch, base and worktree, a link
+  to its file, and its steps.
 - `** Questions`: every question for Wesley and every decision, each with
   `:ID: Q1`, `Q2`… (`P1.Q1` in a part's file), written by `agent-plan ask`
   as "Questions for Wesley" says, never by hand. An open one is `ASK`; a
@@ -94,6 +94,11 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
 
 - Log `started`, `done` and `verified` for every step. `verified` names
   evidence you observed, never one you expect.
+- `log` writes a step's or part's heading keyword from its log
+  (`STARTED`, `DONE`, `VERIFIED`, `ABANDONED`, with `CLOSED` as Org
+  writes it); never change those keywords by hand. When it cannot, the
+  event is still logged, its output says why, and `agent-plan status`
+  lists the item under keyword drift.
 - A hook after each shell call logs `committed` for every commit and
   `pushed` for every push, and adds new worktrees, branches and pull
   requests to the plan's properties, in the plan of the session or of the
