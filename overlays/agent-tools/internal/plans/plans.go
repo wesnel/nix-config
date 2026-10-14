@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -171,7 +172,7 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 			try = fmt.Sprintf("%s-%d", base, i)
 		}
 		candidate := Plan{Dir: c.Dir, Name: try + "." + c.Host, Host: c.Host, Own: true}
-		switch err := writeNew(candidate.file(""), planText(o, candidate.Name, map[string]string{"HOST": c.Host}, true)); {
+		switch err := writeNew(candidate.file(""), planText(o, candidate.Name, c.Host, map[string]string{"HOST": c.Host}, true)); {
 		case err == nil:
 			p = candidate
 		case !errors.Is(err, fs.ErrExist):
@@ -206,7 +207,7 @@ func (c Config) newPart(o NewOptions) (Created, error) {
 	if item, ok := items[o.Part]; !ok || item.File != p.file("") {
 		return Created{}, refusal.New("%s is not in %s's Distribution. Ask whoever coordinates the plan to add it, or use a part ID `agent-plan status %s` lists", o.Part, p.Name, p.file(""))
 	}
-	text := planText(o, o.Part, map[string]string{"PARENT": "[[file:" + filepath.Base(p.file("")) + "]]"}, false)
+	text := planText(o, o.Part, c.Host, map[string]string{"PARENT": "[[file:" + filepath.Base(p.file("")) + "]]"}, false)
 	file := p.file(o.Part)
 	if err := writeNew(file, text); errors.Is(err, fs.ErrExist) {
 		return Created{}, refusal.New("%s already has its plan file, %s. Edit that file instead; `agent-plan goal %s --part %s` prints its goal", o.Part, file, p.file(""), o.Part)
@@ -216,11 +217,28 @@ func (c Config) newPart(o NewOptions) (Created, error) {
 	return Created{Plan: p.file(""), File: file, ID: o.Part, Log: p.log()}, nil
 }
 
-// planText is a new plan file: the parent's sections, and Distribution for
-// a parent alone.
-func planText(o NewOptions, id string, extra map[string]string, parent bool) string {
+var nonTag = regexp.MustCompile(`[^A-Za-z0-9_@#%]`)
+
+// fileTags are the Org tags of a plan made on host for repos: each
+// repository's name and the host, each character Org does not allow in a
+// tag made a _, so the agenda can filter plans by either.
+func fileTags(repos []string, host string) string {
+	var tags []string
+	for _, name := range append(slices.Clone(repos), host) {
+		name = strings.TrimSuffix(name[strings.LastIndex(name, "/")+1:], ".git")
+		if tag := nonTag.ReplaceAllString(name, "_"); tag != "" && !slices.Contains(tags, tag) {
+			tags = append(tags, tag)
+		}
+	}
+	return ":" + strings.Join(tags, ":") + ":"
+}
+
+// planText is a new plan file of host's: the parent's sections, and
+// Distribution for a parent alone.
+func planText(o NewOptions, id, host string, extra map[string]string, parent bool) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "#+title: %s\n%s\n* Plan\n:PROPERTIES:\n:ID: %s\n", o.Title, todoLines(), id)
+	fmt.Fprintf(&b, "#+title: %s\n%s#+FILETAGS: %s\n\n* Plan\n:PROPERTIES:\n:ID: %s\n", o.Title, todoLines(),
+		fileTags(o.Repos, host), id)
 	property := func(name, value string) {
 		if value == "" {
 			fmt.Fprintf(&b, ":%s:\n", name)
