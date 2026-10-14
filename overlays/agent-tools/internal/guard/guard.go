@@ -200,6 +200,40 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 		}
 		json.Unmarshal(toolInput, &args)
 		return command(args.Command, 0, who, dir, true)
+	case tool == "local_shell":
+		// Codex's local_shell runs an argv, which the guard reads as the
+		// command line that would run it.
+		var args struct {
+			Command          json.RawMessage `json:"command"`
+			WorkingDirectory string          `json:"working_directory"`
+		}
+		json.Unmarshal(toolInput, &args)
+		if filepath.IsAbs(args.WorkingDirectory) {
+			dir = args.WorkingDirectory
+		}
+		var argv []string
+		if json.Unmarshal(args.Command, &argv) != nil {
+			var line string
+			json.Unmarshal(args.Command, &line)
+			return command(line, 0, who, dir, false)
+		}
+		quoted := make([]string, len(argv))
+		for i, a := range argv {
+			quoted[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+		}
+		return command(strings.Join(quoted, " "), 0, who, dir, false)
+	case tool == "write_stdin":
+		// Codex's write_stdin types chars into a session exec_command
+		// started, which may be a shell; the session runs on its own, so a
+		// sleep there holds nothing.
+		var args struct {
+			Chars string `json:"chars"`
+		}
+		json.Unmarshal(toolInput, &args)
+		if reason := command(args.Chars, 0, who, dir, true); reason != "" {
+			return typed + reason
+		}
+		return ""
 	case tool == "ExitWorktree":
 		return checkExitWorktree(toolInput, dir)
 	case tool == "Edit" || tool == "Write" || tool == "MultiEdit" || tool == "NotebookEdit" || tool == "apply_patch",
@@ -217,6 +251,10 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 	}
 	return checkConnector(full)
 }
+
+// typed prefixes the reason a command line typed into a running session is
+// denied for.
+const typed = "This text goes to a running session, which may be a shell, so the guard reads it as a command line. "
 
 // maxDepth is how many shells, evals and watches deep the guard reads a
 // command.
