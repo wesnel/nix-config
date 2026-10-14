@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -16,19 +18,34 @@ import (
 )
 
 // fakeCodex stands in for `codex`: it accepts only the flags the real
-// `codex exec --help` lists that fresh-review is meant to pass, records
-// where it ran, and replies as $FAKE_CODEX says.
+// `codex exec --help` and `codex sandbox --help` list that fresh-review is
+// meant to pass, records them one to a line and where it ran, and replies as
+// $FAKE_CODEX says.
 const fakeCodex = `#!/bin/sh
 if [ "$1" = login ] && [ "$2" = status ]; then
   if [ "$FAKE_CODEX" = unauthenticated ]; then echo "Not logged in"; exit 1; fi
   echo "Logged in"; exit 0
+fi
+if [ "$1" = sandbox ]; then
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -c|-P|--disable) printf '%s\n%s\n' "$1" "$2" >> "$FAKE_CODEX_LOG/sandbox-args"; shift 2 ;;
+      -C) printf '%s\n%s\n' "$1" "$2" >> "$FAKE_CODEX_LOG/sandbox-args"; cd "$2" || exit 1; shift 2 ;;
+      --) shift; break ;;
+      *) echo "fake codex: unknown sandbox flag $1" >&2; exit 64 ;;
+    esac
+  done
+  if [ "$FAKE_CODEX" = nosandbox ]; then echo "sandbox-exec: sandbox_apply: Operation not permitted" >&2; exit 71; fi
+  exec "$@"
 fi
 if [ "$1" != exec ]; then echo "fake codex: unexpected $*" >&2; exit 64; fi
 shift
 wt= schema= out= stdin=
 while [ $# -gt 0 ]; do
   case "$1" in
-    -s) if [ "$2" != read-only ]; then echo "fake codex: sandbox $2" >&2; exit 64; fi; shift 2 ;;
+    -c|--disable) printf '%s\n%s\n' "$1" "$2" >> "$FAKE_CODEX_LOG/exec-args"; shift 2 ;;
+    --ignore-user-config|--ignore-rules) echo "$1" >> "$FAKE_CODEX_LOG/exec-args"; shift ;;
     --ephemeral) shift ;;
     -C) wt=$2; shift 2 ;;
     --output-schema) schema=$2; shift 2 ;;
@@ -45,6 +62,7 @@ printf 'OpenAI Codex v0\n--------\nworkdir: %s\nmodel: fake-model\nsandbox: read
 cat > "$FAKE_CODEX_LOG/prompt"
 echo "$wt" > "$FAKE_CODEX_LOG/worktree"
 printf '%s' "$GIT_DIR$GIT_WORK_TREE" > "$FAKE_CODEX_LOG/location"
+printf '%s' "$PATH" > "$FAKE_CODEX_LOG/path"
 git -C "$wt" rev-parse HEAD > "$FAKE_CODEX_LOG/head"
 ls -A "$wt" > "$FAKE_CODEX_LOG/files"
 case "$FAKE_CODEX" in
@@ -160,7 +178,7 @@ func (f *fixture) checkCleanedUp(t *testing.T) {
 
 func TestCodexReview(t *testing.T) {
 	f := setUp(t, true)
-	code, out, stderr := freshReview(t, "--reviewer", "codex", "--goal", ".git/goal.md", f.base+"..HEAD")
+	code, out, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+"..HEAD")
 	if code != 3 {
 		t.Fatalf("exit %d, want 3 for findings\n%s", code, stderr)
 	}
@@ -209,7 +227,7 @@ func TestRepositoryTheEnvironmentNames(t *testing.T) {
 	f := setUp(t, true)
 	t.Setenv("FAKE_CODEX", "none")
 	t.Setenv("GIT_DIR", filepath.Join(f.repo, ".git"))
-	if code, _, stderr := freshReview(t, "--reviewer", "codex", "--goal", ".git/goal.md", f.base+"..HEAD"); code != 0 {
+	if code, _, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+"..HEAD"); code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
 	if location, _ := os.ReadFile(filepath.Join(f.log, "location")); len(location) != 0 {
@@ -227,10 +245,105 @@ func TestRepositoryTheEnvironmentNames(t *testing.T) {
 func TestNoFindings(t *testing.T) {
 	f := setUp(t, true)
 	t.Setenv("FAKE_CODEX", "none")
-	if code, out, stderr := freshReview(t, "--reviewer", "codex", "--goal", ".git/goal.md", f.base+".."+f.tip); code != 0 || len(out.Findings) != 0 {
+	if code, out, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+".."+f.tip); code != 0 || len(out.Findings) != 0 {
 		t.Errorf("exit %d, findings %v\n%s", code, out.Findings, stderr)
 	}
 	f.checkCleanedUp(t)
+}
+
+// TestConfinement holds Codex to reading the worktree under review and the
+// parts of the repository's git directory git needs to show the change,
+// with nothing of the user's Codex configuration, and checks that its
+// sandbox starts before it reviews.
+func TestConfinement(t *testing.T) {
+	f := setUp(t, true)
+	t.Setenv("FAKE_CODEX", "none")
+	tools := t.TempDir()
+	link := filepath.Join(t.TempDir(), "tools")
+	if err := os.Symlink(tools, link); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", os.Getenv("PATH")+string(os.PathListSeparator)+link)
+	if code, _, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+"..HEAD"); code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	path := filepath.SplitList(string(must(os.ReadFile(filepath.Join(f.log, "path")))))
+	if slices.Contains(path, link) || !slices.Contains(path, must(filepath.EvalSymlinks(tools))) {
+		t.Errorf("Codex's PATH names a directory by a symbolic link the sandbox cannot follow: %q", path)
+	}
+	read := func(name string) []string {
+		data, err := os.ReadFile(filepath.Join(f.log, name))
+		if err != nil {
+			t.Fatalf("codex was not run with the arguments in %s: %v", name, err)
+		}
+		return strings.Split(strings.TrimSpace(string(data)), "\n")
+	}
+	execArgs, sandboxArgs := read("exec-args"), read("sandbox-args")
+	has := func(args []string, want ...string) bool {
+		for i := range args {
+			if i+len(want) <= len(args) && slices.Equal(args[i:i+len(want)], want) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, want := range [][]string{
+		{"--ignore-user-config"}, {"--ignore-rules"},
+		{"-c", `default_permissions="fresh-review"`},
+		{"-c", `web_search="disabled"`},
+		{"-c", `shell_environment_policy.inherit="core"`},
+		{"--disable", "plugins"}, {"--disable", "apps"}, {"--disable", "hooks"},
+		{"--disable", "view_image"}, {"--disable", "multi_agent"}, {"--disable", "browser_use"},
+	} {
+		if !has(execArgs, want...) {
+			t.Errorf("codex exec was not passed %q: %q", want, execArgs)
+		}
+	}
+
+	var filesystem string
+	for _, arg := range execArgs {
+		if s, ok := strings.CutPrefix(arg, "permissions.fresh-review.filesystem="); ok {
+			filesystem = s
+		}
+	}
+	if filesystem == "" {
+		t.Fatalf("no filesystem permissions in %q", execArgs)
+	}
+	wt := strings.TrimSpace(string(must(os.ReadFile(filepath.Join(f.log, "worktree")))))
+	if !has(sandboxArgs, "-c", "permissions.fresh-review.filesystem="+filesystem) ||
+		!has(sandboxArgs, "-P", "fresh-review") || !has(sandboxArgs, "-C", wt) {
+		t.Errorf("the sandbox was not tried with the review's permissions in %s: %q", wt, sandboxArgs)
+	}
+	common := run(t, f.repo, "git", "rev-parse", "--path-format=absolute", "--git-common-dir")
+	codex := must(filepath.EvalSymlinks(must(exec.LookPath("codex"))))
+	entries := regexp.MustCompile(`"([^"]+)"=("[a-z]+"|\{[^}]*\})`).FindAllStringSubmatch(filesystem, -1)
+	readable := map[string]bool{}
+	for _, e := range entries {
+		path, access := e[1], e[2]
+		switch {
+		case access == `"deny"`:
+		case path == ":workspace_roots" && access == `{"."="read"}`:
+		case access == `"read"` && (path == ":minimal" || path == "/nix/store" || path == codex || strings.HasPrefix(path, common+"/")):
+			readable[strings.TrimPrefix(path, common+"/")] = true
+		default:
+			t.Errorf("Codex may reach %s as %s: %s", path, access, filesystem)
+		}
+	}
+	for _, want := range []string{":minimal", codex, "objects", "refs", "HEAD", "config"} {
+		if !readable[want] {
+			t.Errorf("Codex may not read %s: %s", want, filesystem)
+		}
+	}
+	if !strings.Contains(filesystem, `":workspace_roots"={"."="read"}`) {
+		t.Errorf("Codex may not read the worktree: %s", filesystem)
+	}
+}
+
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
 }
 
 func TestCodexFailures(t *testing.T) {
@@ -244,7 +357,7 @@ func TestCodexFailures(t *testing.T) {
 		t.Run(c.mode, func(t *testing.T) {
 			f := setUp(t, true)
 			t.Setenv("FAKE_CODEX", c.mode)
-			args := append(append([]string{"--reviewer", "codex", "--goal", ".git/goal.md"}, c.args...), f.base+"..HEAD")
+			args := append(append([]string{"--goal", ".git/goal.md"}, c.args...), f.base+"..HEAD")
 			if code, _, stderr := freshReview(t, args...); code != 1 {
 				t.Errorf("exit %d, want 1\n%s", code, stderr)
 			}
@@ -263,9 +376,9 @@ func TestUnavailable(t *testing.T) {
 		args      []string
 		want      int
 	}{
-		{"by default", true, map[string]string{"FAKE_CODEX": "none"}, nil, 4},
-		{"missing", false, nil, []string{"--reviewer", "codex"}, 4},
-		{"unauthenticated", true, map[string]string{"FAKE_CODEX": "unauthenticated"}, []string{"--reviewer", "codex"}, 4},
+		{"Codex's sandbox cannot start", true, map[string]string{"FAKE_CODEX": "nosandbox"}, nil, 4},
+		{"missing", false, nil, nil, 4},
+		{"unauthenticated", true, map[string]string{"FAKE_CODEX": "unauthenticated"}, nil, 4},
 		{"in a loop session", true, map[string]string{"PR_LOOP_SESSION": "1"}, nil, 4},
 		{"behind the relay", true, map[string]string{"SANDBOX_RELAYED": "1"}, nil, 4},
 		{"loop session, Codex asked for", true, map[string]string{"PR_LOOP_SESSION": "1"}, []string{"--reviewer", "codex"}, 4},
@@ -290,6 +403,7 @@ func TestUnavailable(t *testing.T) {
 				if _, err := os.Stat(filepath.Join(f.log, "worktree")); err == nil {
 					t.Error("Codex ran")
 				}
+				f.checkCleanedUp(t)
 			}
 		})
 	}
