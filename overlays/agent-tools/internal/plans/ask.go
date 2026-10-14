@@ -61,68 +61,70 @@ func (p Plan) Ask(o AskOptions, now time.Time) (Asked, error) {
 	if o.Part != "" && !partPattern.MatchString(o.Part) {
 		return Asked{}, refusal.New("%q is not a part ID. Pass one such as `--part P1`", o.Part)
 	}
-	list, err := p.itemList()
-	if err != nil {
-		return Asked{}, err
-	}
-	known := map[string]bool{}
-	for _, it := range list {
-		known[it.ID] = true
-		if q := it.Props["QUESTION"]; q != "" {
-			known[q] = true
-		}
-	}
-	for _, id := range o.After {
-		if !known[id] {
-			return Asked{}, refusal.New("%q is not an item of %s, so the question would wait for it forever. Pass IDs `agent-plan status %s` lists", id, p.Name, p.file(""))
-		}
-	}
-	prefix := ""
-	if o.Part != "" {
-		prefix = o.Part + "."
-	}
-	next := 1
-	question := regexp.MustCompile(`^` + regexp.QuoteMeta(prefix) + `Q([0-9]+)$`)
-	for id := range known {
-		if m := question.FindStringSubmatch(id); m != nil {
-			if n, _ := strconv.Atoi(m[1]); n >= next {
-				next = n + 1
-			}
-		}
-	}
-	qid := fmt.Sprintf("%sQ%d", prefix, next)
 	file := p.file(o.Part)
-	data, err := os.ReadFile(file)
-	if errors.Is(err, fs.ErrNotExist) {
+	if _, err := os.Stat(file); errors.Is(err, fs.ErrNotExist) {
 		return Asked{}, refusal.New("%s has no plan file for part %s. The part's sub-agent creates it with `agent-plan new --parent %s --part %s`", p.Name, o.Part, p.file(""), o.Part)
 	}
-	if err != nil {
-		return Asked{}, err
-	}
-	block := []string{"*** " + o.Question, ":PROPERTIES:", ":ID: " + qid, ":RECOMMENDATION: " + o.Recommendation}
-	if len(o.After) > 0 {
-		block = append(block, ":AFTER: "+strings.Join(o.After, " "))
-	}
-	block = append(block, ":END:")
-	if o.Context != "" {
-		block = append(block, o.Context)
-	}
-	for _, a := range o.Alternatives {
-		block = append(block, "- "+strings.TrimSpace(a))
-	}
-	lines := strings.Split(string(data), "\n")
-	_, end, ok := section(lines, "Open questions")
-	if !ok {
-		return Asked{}, refusal.New("%s has no `** Open questions` heading. Restore it as the plan-work skill describes, then ask again", file)
-	}
-	// A section ending the file ends at its final empty line.
-	if end == len(lines) && lines[end-1] == "" {
-		end--
-	}
-	out := append(append(append([]string{}, lines[:end]...), block...), lines[end:]...)
-	if err := replaceFile(file, strings.Join(out, "\n")); err != nil {
-		return Asked{}, err
-	}
-	e, err := p.Log(Event{Kind: "asked", Item: qid, Summary: o.Question}, now)
-	return Asked{ID: qid, File: file, Event: e}, err
+	var asked Asked
+	err := p.withLock(func(l *lockedPlan) error {
+		list, err := p.itemList()
+		if err != nil {
+			return err
+		}
+		known := map[string]bool{}
+		for _, it := range list {
+			known[it.ID] = true
+			if q := it.Props["QUESTION"]; q != "" {
+				known[q] = true
+			}
+		}
+		for _, id := range o.After {
+			if !known[id] {
+				return refusal.New("%q is not an item of %s, so the question would wait for it forever. Pass IDs `agent-plan status %s` lists", id, p.Name, p.file(""))
+			}
+		}
+		prefix := ""
+		if o.Part != "" {
+			prefix = o.Part + "."
+		}
+		next := 1
+		question := regexp.MustCompile(`^` + regexp.QuoteMeta(prefix) + `Q([0-9]+)$`)
+		for id := range known {
+			if m := question.FindStringSubmatch(id); m != nil {
+				if n, _ := strconv.Atoi(m[1]); n >= next {
+					next = n + 1
+				}
+			}
+		}
+		qid := fmt.Sprintf("%sQ%d", prefix, next)
+		block := []string{"*** " + o.Question, ":PROPERTIES:", ":ID: " + qid, ":RECOMMENDATION: " + o.Recommendation}
+		if len(o.After) > 0 {
+			block = append(block, ":AFTER: "+strings.Join(o.After, " "))
+		}
+		block = append(block, ":END:")
+		if o.Context != "" {
+			block = append(block, o.Context)
+		}
+		for _, a := range o.Alternatives {
+			block = append(block, "- "+strings.TrimSpace(a))
+		}
+		err = l.edit(file, func(lines []string) ([]string, error) {
+			_, end, ok := section(lines, "Open questions")
+			if !ok {
+				return nil, refusal.New("%s has no `** Open questions` heading. Restore it as the plan-work skill describes, then ask again", file)
+			}
+			// A section ending the file ends at its final empty line.
+			if end == len(lines) && lines[end-1] == "" {
+				end--
+			}
+			return append(append(append([]string{}, lines[:end]...), block...), lines[end:]...), nil
+		})
+		if err != nil {
+			return err
+		}
+		e, err := l.log(Event{Kind: "asked", Item: qid, Summary: o.Question}, now)
+		asked = Asked{ID: qid, File: file, Event: e}
+		return err
+	})
+	return asked, err
 }

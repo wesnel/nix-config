@@ -183,7 +183,8 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 	if p.Name == "" {
 		return Created{}, fmt.Errorf("no free name for %s.%s under %s", base, c.Host, c.Dir)
 	}
-	if err := p.append("#+title: Log of " + p.Name + "\n"); err != nil {
+	err := p.withLock(func(l *lockedPlan) error { return l.append("#+title: Log of " + p.Name + "\n") })
+	if err != nil {
 		return Created{}, err
 	}
 	return Created{Plan: p.file(""), File: p.file(""), ID: p.Name, Log: p.log()}, nil

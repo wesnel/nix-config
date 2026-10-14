@@ -3,8 +3,6 @@ package plans
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -105,7 +103,7 @@ func (c Config) ImportClaude(hook []byte, now time.Time) ([]byte, error) {
 		b.WriteString(":SOURCE: " + source + "\n")
 	}
 	b.WriteString(":END:\n#+begin_src markdown\n" + escapeOrg(strings.TrimRight(markdown, "\n")) + "\n#+end_src\n")
-	if err := appendFile(file, b.String()); err != nil {
+	if err := c.appendFile(file, b.String()); err != nil {
 		return nil, err
 	}
 	return hookOutput("PostToolUse", fmt.Sprintf("The approved plan is recorded verbatim in %s, under \"Approved plan\". "+
@@ -113,29 +111,22 @@ func (c Config) ImportClaude(hook []byte, now time.Time) ([]byte, error) {
 		"and log each step's progress with `agent-plan log`.", file))
 }
 
-// appendFile adds text at the end of a file, after a line break if the
-// file lacks one.
-func appendFile(path, text string) error {
-	existing, err := os.ReadFile(path)
+// appendFile adds text at the end of a plan's file, after a line break if
+// the file lacks one.
+func (c Config) appendFile(path, text string) error {
+	p, err := c.Open(path)
 	if err != nil {
 		return err
 	}
-	if len(existing) > 0 && !strings.HasSuffix(string(existing), "\n") {
-		text = "\n" + text
-	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
-	if err != nil {
-		return err
-	}
-	if _, err := f.WriteString(text); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	touch(filepath.Dir(path))
-	return nil
+	return p.withLock(func(l *lockedPlan) error {
+		return l.edit(path, func(lines []string) ([]string, error) {
+			existing := strings.Join(lines, "\n")
+			if existing != "" && !strings.HasSuffix(existing, "\n") {
+				existing += "\n"
+			}
+			return strings.Split(existing+text, "\n"), nil
+		})
+	})
 }
 
 // planTitle is a Markdown plan's first heading, or its first line.

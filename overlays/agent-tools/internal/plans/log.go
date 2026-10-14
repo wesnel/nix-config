@@ -1,12 +1,15 @@
 package plans
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -101,11 +104,21 @@ func (p Plan) Log(e Event, now time.Time) (Event, error) {
 	if err := p.checkOwn(); err != nil {
 		return Event{}, err
 	}
-	if err := p.check(e); err != nil {
+	err := p.withLock(func(l *lockedPlan) error {
+		var err error
+		e, err = l.log(e, now)
+		return err
+	})
+	return e, err
+}
+
+// log is Log under the lock.
+func (l *lockedPlan) log(e Event, now time.Time) (Event, error) {
+	if err := l.p.check(e); err != nil {
 		return Event{}, err
 	}
 	e.ID, e.Time = newUUID(), now.Format("[2006-01-02 Mon 15:04]")
-	return e, p.append(eventText(e))
+	return e, l.append(eventText(e))
 }
 
 // Reseal accepts a log changed other than through Log: it appends a
@@ -117,12 +130,14 @@ func (p Plan) Reseal(now time.Time) (Event, error) {
 	}
 	e := Event{ID: newUUID(), Time: now.Format("[2006-01-02 Mon 15:04]"), Kind: "resealed", Item: p.Name,
 		Summary: "log edited outside agent-plan"}
-	return e, p.appendWith(func(current []byte, recorded string) (string, error) {
-		if recorded == "" || recorded == digest(current) {
-			return "", refusal.New("%s is as agent-plan last left it, so there is nothing to reseal. Check it with `agent-plan status %s`", p.log(), p.file(""))
-		}
-		e.Evidence = "recorded " + recorded + "; found " + digest(current)
-		return eventText(e), nil
+	return e, p.withLock(func(l *lockedPlan) error {
+		return l.appendWith(func(current []byte, recorded string) (string, error) {
+			if recorded == "" || recorded == digest(current) {
+				return "", refusal.New("%s is as agent-plan last left it, so there is nothing to reseal. Check it with `agent-plan status %s`", l.p.log(), l.p.file(""))
+			}
+			e.Evidence = "recorded " + recorded + "; found " + digest(current)
+			return eventText(e), nil
+		})
 	})
 }
 
@@ -160,22 +175,19 @@ func newUUID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
-// append adds text to the log in one write, under an exclusive lock on
-// the log's lock file, and syncs it. The lock file records the log's size
-// and digest after each append; a log that no longer matches them was
-// changed some other way, and is refused.
-func (p Plan) append(text string) error {
-	return p.appendWith(func(current []byte, recorded string) (string, error) {
-		if recorded != "" && recorded != digest(current) {
-			return "", refusal.New("%s has changed since agent-plan last appended to it, and the log is append-only. Leave it as it is, and tell Wesley which plan's log changed; `agent-plan reseal` is his to run", p.log())
-		}
-		return text, nil
-	})
+// lockedPlan is a plan whose log's lock this process holds: every change
+// to the plan's files goes through one, so that agent-plan calls running
+// at once neither lose a write nor reuse an ID.
+type lockedPlan struct {
+	p    Plan
+	lock *os.File
 }
 
-// appendWith appends what build returns, given the log and the digest
-// recorded for it, as append does, and records the log's new digest.
-func (p Plan) appendWith(build func(current []byte, recorded string) (string, error)) error {
+// withLock runs fn holding an exclusive flock on the log's lock file. It
+// is the only way to change a plan's files, and never nests: a flock
+// belongs to an open file description, so a nested withLock waits for
+// itself.
+func (p Plan) withLock(fn func(l *lockedPlan) error) error {
 	lock, err := os.OpenFile(p.log()+".lock", os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return err
@@ -191,11 +203,30 @@ func (p Plan) appendWith(build func(current []byte, recorded string) (string, er
 		return err
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-	recorded, err := io.ReadAll(lock)
-	if err != nil {
+	return fn(&lockedPlan{p: p, lock: lock})
+}
+
+// append adds text to the log in one write and syncs it. The lock file
+// records the log's size and digest after each append; a log that no
+// longer matches them was changed some other way, and is refused.
+func (l *lockedPlan) append(text string) error {
+	return l.appendWith(func(current []byte, recorded string) (string, error) {
+		if recorded != "" && recorded != digest(current) {
+			return "", refusal.New("%s has changed since agent-plan last appended to it, and the log is append-only. Leave it as it is, and tell Wesley which plan's log changed; `agent-plan reseal` is his to run", l.p.log())
+		}
+		return text, nil
+	})
+}
+
+// appendWith appends what build returns, given the log and the digest
+// recorded for it, as append does, and records the log's new digest.
+func (l *lockedPlan) appendWith(build func(current []byte, recorded string) (string, error)) error {
+	recorded := make([]byte, 256)
+	n, err := l.lock.ReadAt(recorded, 0)
+	if err != nil && !errors.Is(err, io.EOF) {
 		return err
 	}
-	log, err := os.OpenFile(p.log(), os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644)
+	log, err := os.OpenFile(l.p.log(), os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644)
 	if err != nil {
 		return err
 	}
@@ -204,7 +235,7 @@ func (p Plan) appendWith(build func(current []byte, recorded string) (string, er
 	if err != nil {
 		return err
 	}
-	text, err := build(current, strings.TrimSpace(string(recorded)))
+	text, err := build(current, strings.TrimSpace(string(recorded[:n])))
 	if err != nil {
 		return err
 	}
@@ -212,22 +243,91 @@ func (p Plan) appendWith(build func(current []byte, recorded string) (string, er
 		text = "\n" + text
 	}
 	if n, err := log.Write([]byte(text)); err != nil || n != len(text) {
-		return fmt.Errorf("appending to %s: wrote %d of %d bytes: %v", p.log(), n, len(text), err)
+		return fmt.Errorf("appending to %s: wrote %d of %d bytes: %v", l.p.log(), n, len(text), err)
 	}
 	if err := log.Sync(); err != nil {
 		return err
 	}
-	if err := lock.Truncate(0); err != nil {
+	if err := l.lock.Truncate(0); err != nil {
 		return err
 	}
-	if _, err := lock.WriteAt([]byte(digest(append(current, text...))+"\n"), 0); err != nil {
+	if _, err := l.lock.WriteAt([]byte(digest(append(current, text...))+"\n"), 0); err != nil {
 		return err
 	}
-	if err := lock.Sync(); err != nil {
+	if err := l.lock.Sync(); err != nil {
 		return err
 	}
-	touch(p.Dir)
+	touch(l.p.Dir)
 	return nil
+}
+
+// editTries is how many times edit reads a file that changes under it
+// before refusing.
+const editTries = 3
+
+// edit is the one rewrite of a plan file: it applies fn, which must be
+// pure over the lines, and renames the result over the file. A result
+// equal to the file is not written. The lock excludes other agent-plan
+// processes but not Emacs, so edit refuses a file whose buffer has unsaved
+// changes, and applies fn again to a file that changed between its read
+// and the rename. The window between that last check and the rename stays
+// open.
+func (l *lockedPlan) edit(file string, fn func(lines []string) ([]string, error)) error {
+	emacsLock := filepath.Join(filepath.Dir(file), ".#"+filepath.Base(file))
+	if info, err := os.Lstat(emacsLock); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+		return refusal.New("%s has unsaved changes in an Emacs buffer (%s exists), which would overwrite this change when saved. Ask Wesley to save or revert that buffer, then run the command again", file, emacsLock)
+	}
+	for range editTries {
+		before, err := os.ReadFile(file)
+		if err != nil {
+			return err
+		}
+		lines, err := fn(strings.Split(string(before), "\n"))
+		if err != nil {
+			return err
+		}
+		text := strings.Join(lines, "\n")
+		if text == string(before) {
+			return nil
+		}
+		err = replaceFile(file, text, func() bool {
+			now, err := os.ReadFile(file)
+			return err == nil && bytes.Equal(now, before)
+		})
+		if !errors.Is(err, errChanged) {
+			return err
+		}
+	}
+	return refusal.New("%s kept changing while agent-plan edited it. Ask Wesley what else is writing it, then run the command again", file)
+}
+
+// errChanged is replaceFile's error for a file that changed before the
+// rename.
+var errChanged = errors.New("changed before the rename")
+
+// replaceFile writes text to path by renaming a new file over it, if
+// unchanged, asked just before the rename, reports path as it was read.
+func replaceFile(path, text string, unchanged func() bool) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".edit-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.WriteString(text); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Chmod(0o644); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if !unchanged() {
+		return errChanged
+	}
+	return os.Rename(f.Name(), path)
 }
 
 // touch changes the directory's entries and leaves them as they were, so

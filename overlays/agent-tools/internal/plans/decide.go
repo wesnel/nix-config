@@ -3,8 +3,6 @@ package plans
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -64,50 +62,51 @@ func (p Plan) Decide(qid, answer string, now time.Time) (Decided, error) {
 	if err := checkLine("answer", answer); err != nil {
 		return Decided{}, err
 	}
-	qs, err := p.Questions(true)
-	if err != nil {
-		return Decided{}, err
-	}
-	var q *Question
-	for i := range qs {
-		if qs[i].ID == qid {
-			q = &qs[i]
+	var d Decided
+	err := p.withLock(func(l *lockedPlan) error {
+		qs, err := p.Questions(true)
+		if err != nil {
+			return err
 		}
-	}
-	if q == nil {
-		return Decided{}, refusal.New("%q is not an open question of %s. Use an ID `agent-plan questions %s --all` lists", qid, p.Name, p.file(""))
-	}
-	prefix := ""
-	if q.Part != "" {
-		prefix = q.Part + "."
-	}
-	items, err := p.itemList()
-	if err != nil {
-		return Decided{}, err
-	}
-	next := 1
-	decision := regexp.MustCompile(`^` + regexp.QuoteMeta(prefix) + `D([0-9]+)$`)
-	for _, it := range items {
-		if m := decision.FindStringSubmatch(it.ID); m != nil {
-			if n, _ := strconv.Atoi(m[1]); n >= next {
-				next = n + 1
+		var q *Question
+		for i := range qs {
+			if qs[i].ID == qid {
+				q = &qs[i]
 			}
 		}
-	}
-	did := fmt.Sprintf("%sD%d", prefix, next)
-	data, err := os.ReadFile(q.File)
-	if err != nil {
-		return Decided{}, err
-	}
-	text, err := moveQuestion(string(data), qid, did, answer)
-	if err != nil {
-		return Decided{}, err
-	}
-	if err := replaceFile(q.File, text); err != nil {
-		return Decided{}, err
-	}
-	e, err := p.Log(Event{Kind: "decided", Item: did, Summary: qid + ": " + answer}, now)
-	return Decided{Question: qid, Decision: did, File: q.File, Event: e}, err
+		if q == nil {
+			return refusal.New("%q is not an open question of %s. Use an ID `agent-plan questions %s --all` lists", qid, p.Name, p.file(""))
+		}
+		prefix := ""
+		if q.Part != "" {
+			prefix = q.Part + "."
+		}
+		items, err := p.itemList()
+		if err != nil {
+			return err
+		}
+		next := 1
+		decision := regexp.MustCompile(`^` + regexp.QuoteMeta(prefix) + `D([0-9]+)$`)
+		for _, it := range items {
+			if m := decision.FindStringSubmatch(it.ID); m != nil {
+				if n, _ := strconv.Atoi(m[1]); n >= next {
+					next = n + 1
+				}
+			}
+		}
+		did := fmt.Sprintf("%sD%d", prefix, next)
+		err = l.edit(q.File, func(lines []string) ([]string, error) {
+			text, err := moveQuestion(strings.Join(lines, "\n"), qid, did, answer)
+			return strings.Split(text, "\n"), err
+		})
+		if err != nil {
+			return err
+		}
+		e, err := l.log(Event{Kind: "decided", Item: did, Summary: qid + ": " + answer}, now)
+		d = Decided{Question: qid, Decision: did, File: q.File, Event: e}
+		return err
+	})
+	return d, err
 }
 
 // moveQuestion is text with question qid's subtree moved to the end of
@@ -161,27 +160,6 @@ func moveQuestion(text, qid, did, answer string) (string, error) {
 	}
 	out := append(append(append([]string{}, lines[:end]...), moved...), lines[end:]...)
 	return strings.Join(out, "\n"), nil
-}
-
-// replaceFile writes text to path by renaming a new file over it.
-func replaceFile(path, text string) error {
-	f, err := os.CreateTemp(filepath.Dir(path), ".decide-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	if _, err := f.WriteString(text); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Chmod(0o644); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(f.Name(), path)
 }
 
 // StatusLine is Claude Code's status line for the session its status-line
