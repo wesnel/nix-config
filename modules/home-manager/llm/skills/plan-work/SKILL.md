@@ -34,8 +34,9 @@ agent-plan new --parent PLAN --part P1 --title 'Add the run loop flag' --branch 
 - `* Plan`, whose properties say where the work is: `ID`, `HOST`,
   `REPOSITORIES`, `BRANCHES` (`base..branch`), `WORKTREES`, `SESSIONS`
   (`harness:id`), `HARNESS`, `STATUS` (`planning`, `reviewing-plan`,
-  `working`, `reviewing`, `handed-back` or `halted`), `PULL_REQUESTS` and
-  `PIPELINE` (`full` or `opted-out:<reason>`). Lists are separated by spaces.
+  `working`, `reviewing`, `handed-back` or `halted`), `PULL_REQUESTS`,
+  `PIPELINE` (`full` or `opted-out:<reason>`) and, once `agent-plan own`
+  sets one, `OWNERS` (`worktree=agent`). Lists are separated by spaces.
 - `** Goal`: the goal and what is not this change's job, and nothing of how
   the work went. It is the fresh review's goal statement, word for word:
   `agent-plan goal PLAN [--part P1]` prints it. It ends with a

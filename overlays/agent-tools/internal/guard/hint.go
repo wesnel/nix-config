@@ -25,20 +25,8 @@ func branchHint(session string, toolInput json.RawMessage, cwd string) string {
 	if !sessionID.MatchString(session) || in.FilePath == "" {
 		return ""
 	}
-	dir := filepath.Dir(expandPath(in.FilePath, cwd))
-	for {
-		if info, err := os.Stat(dir); err == nil && info.IsDir() {
-			break
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return ""
-		}
-		dir = parent
-	}
-	g := gitState{dir: dir}
-	top, ok := g.run("rev-parse", "--show-toplevel")
-	if !ok {
+	top, g := worktreeOf(expandPath(in.FilePath, cwd))
+	if top == "" {
 		return ""
 	}
 	branch, _ := g.run("branch", "--show-current")

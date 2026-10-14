@@ -536,7 +536,23 @@ const shellEdit = "`%s` is a tracked file, and editing it from the shell bypasse
 // checkShellEdit denies a command that writes a tracked file with a
 // redirection, tee, ed, or sed or perl in place, run in dir.
 func checkShellEdit(name string, args, redirected []string, dir string) string {
-	targets := redirected
+	for _, t := range editTargets(name, args, redirected) {
+		if trackedFile(expandPath(t, dir)) {
+			return fmt.Sprintf(shellEdit, t)
+		}
+	}
+	return ""
+}
+
+// editTargets are the files a command edits, as it names them: its output
+// redirections, and the files of tee, ed, and sed or perl in place.
+func editTargets(name string, args, redirected []string) []string {
+	var targets []string
+	for _, t := range redirected {
+		if !strings.HasPrefix(t, "&") {
+			targets = append(targets, t)
+		}
+	}
 	if name == "tee" || name == "ed" || (name == "sed" || name == "perl") && inPlace(name, args) {
 		for _, a := range args {
 			if !strings.HasPrefix(a, "-") {
@@ -544,12 +560,7 @@ func checkShellEdit(name string, args, redirected []string, dir string) string {
 			}
 		}
 	}
-	for _, t := range targets {
-		if !strings.HasPrefix(t, "&") && trackedFile(expandPath(t, dir)) {
-			return fmt.Sprintf(shellEdit, t)
-		}
-	}
-	return ""
+	return targets
 }
 
 // trackedFile reports whether path is a file git tracks, outside the
@@ -631,6 +642,37 @@ func redirections(words []string) []string {
 // Write, MultiEdit and NotebookEdit, Codex's apply_patch, and ECA's
 // write_file, edit_file and move_file.
 func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
+	for _, c := range fileChanges(tool, toolInput) {
+		path := expandPath(c.path, dir)
+		if reason := checkSecretPath(path, dir); reason != "" {
+			return reason
+		}
+		if planLog(path) {
+			return appendOnly
+		}
+		switch {
+		case filepath.Base(path) == "config" && filepath.Base(filepath.Dir(path)) == ".git":
+			return sharedConfig
+		case strings.HasSuffix(path, ".codex/hooks.json") && guardFile(path):
+			return guardOff
+		case guardFile(path):
+			existing, _ := os.ReadFile(path)
+			for _, text := range []string{c.text, string(existing)} {
+				if strings.Contains(text, "hooks") || strings.Contains(text, "disableAllHooks") {
+					return guardOff
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// change is a file a file-editing tool writes, as the call names it, and
+// the text the call puts in or takes out.
+type change struct{ path, text string }
+
+// fileChanges are the files a call to a file-editing tool writes.
+func fileChanges(tool string, toolInput json.RawMessage) []change {
 	var in struct {
 		FilePath     string `json:"file_path"`
 		NotebookPath string `json:"notebook_path"`
@@ -650,7 +692,6 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 		} `json:"edits"`
 	}
 	json.Unmarshal(toolInput, &in)
-	type change struct{ path, text string }
 	var changes []change
 	if tool == "apply_patch" {
 		var path string
@@ -684,29 +725,7 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 			}
 		}
 	}
-	for _, c := range changes {
-		path := expandPath(c.path, dir)
-		if reason := checkSecretPath(path, dir); reason != "" {
-			return reason
-		}
-		if planLog(path) {
-			return appendOnly
-		}
-		switch {
-		case filepath.Base(path) == "config" && filepath.Base(filepath.Dir(path)) == ".git":
-			return sharedConfig
-		case strings.HasSuffix(path, ".codex/hooks.json") && guardFile(path):
-			return guardOff
-		case guardFile(path):
-			existing, _ := os.ReadFile(path)
-			for _, text := range []string{c.text, string(existing)} {
-				if strings.Contains(text, "hooks") || strings.Contains(text, "disableAllHooks") {
-					return guardOff
-				}
-			}
-		}
-	}
-	return ""
+	return changes
 }
 
 // connectorTool matches the claude.ai connectors that act as Wesley.
