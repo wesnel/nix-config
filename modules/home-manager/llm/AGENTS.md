@@ -59,14 +59,22 @@ the wrong branch of a stack are expensive to unpick.
 Use the file-editing tools, not `sed`, `perl`, `python`, or shell redirection.
 Editing several files, or making the same change many times, is not an exception.
 
-## The shell and root
+## The shell
 
-- The shell is fish, which does not split unquoted variables into words:
-  `set b "x y"; git push origin $b` passes one argument, `x y`. Write argument
-  lists out literally, or run `bash -c '...'` when bash's behaviour is wanted.
-- Never run `sudo`. System paths here are managed declaratively, and anything
-  needing root is Wesley's to run: give the command, and say plainly that
-  whatever it would have shown is unverified.
+The shell is fish, which does not split unquoted variables into words:
+`set b "x y"; git push origin $b` passes one argument, `x y`. Write argument
+lists out literally, or run `bash -c '...'` when bash's behaviour is wanted.
+
+## Protections
+
+Hooks, guards, sandboxes, permission prompts, confirmation steps and a tool's
+refusal are boundaries Wesley set, not obstacles. Never route around one: not
+through another tool, an environment override, an alias or wrapper, `bash -c`,
+an answer piped into a prompt, or a flag that skips the check. A path these
+instructions give, such as committing unsigned, is not a way around. When one
+blocks the task, stop and give Wesley the exact command to run himself, and say
+plainly that whatever it would have shown is unverified. Root is one of these:
+never run `sudo`, since system paths here are managed declaratively.
 
 ## Commands Wesley runs
 
