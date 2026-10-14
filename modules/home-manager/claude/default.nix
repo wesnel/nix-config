@@ -33,7 +33,7 @@ with lib; let
           hooks = [
             {
               type = "command";
-              command = "${lib.getExe' pkgs.agent-tools "pr-loop"} guard";
+              command = "${lib.getExe' config.wgn.home.llm.agentTools "pr-loop"} guard";
             }
           ];
         }
@@ -44,7 +44,7 @@ with lib; let
   darwin = pkgs.stdenv.hostPlatform.isDarwin;
   mcpProxy = config.wgn.home.mcp-proxy;
   plans = config.wgn.home.llm.plans;
-  agentPlan = getExe' pkgs.agent-tools "agent-plan";
+  agentPlan = getExe' config.wgn.home.llm.agentTools "agent-plan";
 
   # A permission rule's path: Claude Code reads `~/` as the home directory,
   # and a lone `/` as relative to the settings file, so `//` starts an
@@ -200,7 +200,7 @@ with lib; let
       # The session's commands cannot read the user's git config; the relay
       # and pr-loop on this side keep it.
       ${config.wgn.home.llm.prLoop.gitIdentity}
-      exec ${lib.getExe' pkgs.agent-tools "sandbox-relay"} session --program pr-loop --program agent-plan -- \
+      exec ${lib.getExe' config.wgn.home.llm.agentTools "sandbox-relay"} session --program pr-loop --program agent-plan -- \
         env GIT_CONFIG_GLOBAL=${config.wgn.home.llm.prLoop.gitConfig} claude \
         --plugin-dir ${prLoopPlugin} \
         --settings "$settings" \
@@ -248,19 +248,12 @@ in {
         env = sessionCacheEnv;
 
         # Credentials stay out of every session. The guard denies shell
-        # commands naming these files; Read is not hooked, so it is denied
-        # here. Keep the two lists alike (internal/guard/baseline.go).
+        # commands and file tools naming them; Read is not hooked, so it is
+        # denied here. Each is a path prefix, so a rule matches a file
+        # whose name it starts, and another anything under a directory
+        # whose name it starts.
         permissions.deny =
-          map (p: "Read(${p})") [
-            "~/.ssh/id_*"
-            "~/.gnupg/private-keys*/**"
-            "~/.codex/auth.json"
-            "~/.claude/.credentials.json"
-            "/${mcpProxy.tokenFile}"
-            "/${mcpProxy.oauthDir}/**"
-            "~/.config/sops/age/**"
-            "~/.config/ngrok/**"
-          ]
+          concatMap (p: ["Read(${rulePath p}*)" "Read(${rulePath p}*/**)"]) config.wgn.home.llm.guard.credentialPaths
           # A plan's log is appended to by `agent-plan log` alone; the guard
           # denies the same files to every file tool and shell write. An Edit
           # rule covers Write too.
@@ -308,7 +301,7 @@ in {
             hooks = [
               {
                 type = "command";
-                command = "${getExe' pkgs.agent-tools "pr-loop"} guard --post";
+                command = "${getExe' config.wgn.home.llm.agentTools "pr-loop"} guard --post";
               }
             ];
           }
@@ -423,7 +416,7 @@ in {
             hooks = [
               {
                 type = "command";
-                command = "${getExe' pkgs.agent-tools "pr-loop"} guard --baseline";
+                command = "${getExe' config.wgn.home.llm.agentTools "pr-loop"} guard --baseline";
               }
             ];
           }

@@ -15,6 +15,10 @@ func TestMain(m *testing.M) {
 	// Whether trash is on PATH differs between hosts and the Nix build;
 	// TestTrash sets it.
 	trashOnPath = func() bool { return false }
+	// The credentials the cases name, standing in for the list the Nix
+	// build gives the guard; TestCredentialPaths sets its own.
+	builtCredentialPaths = []string{"~/.ssh/id_", "~/.gnupg/private-keys", "~/.codex/auth.json",
+		"~/.claude/.credentials.json", "~/.local/state/mcp-proxy/token", "~/.config/sops/age", "~/.config/ngrok"}
 	// Plans, and the worktree owners they record, come from a directory of
 	// the tests' own unless a test names another. Every test shares it, and
 	// none writes there: a test that makes plans names a directory of its

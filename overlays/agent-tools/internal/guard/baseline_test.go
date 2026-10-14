@@ -805,6 +805,53 @@ func TestConnectors(t *testing.T) {
 	}
 }
 
+// TestCredentialPaths covers the credentials the guard's config lists,
+// which replace the list the package was built with, and that list, which
+// stands in for a missing one.
+func TestCredentialPaths(t *testing.T) {
+	built := []string{"~/.vault/token", "/var/secret/token"}
+	for _, c := range []struct {
+		name    string
+		listed  []string // the config's guard.credentialPaths, under HOME
+		built   []string // builtCredentialPaths
+		command string   // run in HOME/work
+		deny    bool
+	}{
+		{"a listed file", []string{"HOME/.vault/token"}, built, "cat ~/.vault/token", true},
+		{"a file under a listed prefix", []string{"HOME/.config/acme"}, built, "cat ~/.config/acme/creds.json", true},
+		{"a listed file by a relative path", []string{"HOME/.vault/token"}, built, "cat ../.vault/token", true},
+		{"a listed file as a copy's target", []string{"HOME/.vault/token"}, built, "cp x ~/.vault/token", true},
+		{"a file the list leaves out", []string{"HOME/.vault/token"}, built, "cat ~/.ssh/id_ed25519", false},
+		{"a file outside the list", []string{"HOME/.vault/token"}, built, "cat ~/.vault/README", false},
+		{"a built-in file under home without a list", nil, built, "cat ~/.vault/token", true},
+		{"a built-in absolute file without a list", nil, built, "cat /var/secret/token", true},
+		{"a file outside the built-in list", nil, built, "cat ~/.ssh/id_ed25519", false},
+		{"a file under home with no list at all", nil, nil, "cat ~/notes.txt", true},
+	} {
+		t.Run(caseName(c.deny, c.name), func(t *testing.T) {
+			h := fakeHome(t)
+			old := builtCredentialPaths
+			builtCredentialPaths = c.built
+			t.Cleanup(func() { builtCredentialPaths = old })
+			var listed []string
+			for _, p := range c.listed {
+				listed = append(listed, strings.Replace(p, "HOME", h, 1))
+			}
+			config := filepath.Join(t.TempDir(), "config.json")
+			data, _ := json.Marshal(map[string]any{"guard": map[string]any{"credentialPaths": listed}})
+			os.WriteFile(config, data, 0o600)
+			t.Setenv("AGENT_TOOLS_CONFIG", config)
+			reason := judge(t, filepath.Join(h, "work"), c.command)
+			if (reason != "") != c.deny {
+				t.Errorf("%q with %q listed: deny=%v, reason %q", c.command, listed, !c.deny, reason)
+			}
+			if reason != "" && !saysInstead(reason) {
+				t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+			}
+		})
+	}
+}
+
 // TestSleep covers long sleeps in the foreground, which hold the session,
 // and the advice each agent gets for waiting instead.
 func TestSleep(t *testing.T) {
