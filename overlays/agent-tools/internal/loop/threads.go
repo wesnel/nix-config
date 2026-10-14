@@ -197,22 +197,23 @@ func (p *threadPolicy) check(id string) (*threadCheck, error) {
 		return nil, err
 	}
 	if data.Node == nil || len(data.Node.First.Nodes) == 0 {
-		return nil, refuse("%s is not a review thread", id)
+		return nil, refuse("%s is not a review thread; take thread IDs from `pr-loop threads PR`", id)
 	}
 	pr := data.Node.PullRequest
 	switch {
 	case pr.Repository.NameWithOwner != p.repo.Slug:
-		return nil, refuse("%s is in %s, not %s", id, pr.Repository.NameWithOwner, p.repo.Slug)
+		return nil, refuse("%s is in %s, not %s; take thread IDs from `pr-loop threads PR`", id, pr.Repository.NameWithOwner, p.repo.Slug)
 	case pr.State != "OPEN" || pr.Author.Login != p.repo.Viewer:
-		return nil, refuse("#%d is not an open pull request by %s", pr.Number, p.repo.Viewer)
+		return nil, refuse("#%d is not an open pull request by %s, which pr-loop never writes to; leave it to Wesley", pr.Number, p.repo.Viewer)
 	}
 	registered := p.state != nil && p.state.Repo == p.repo.Slug && p.state.Branches[pr.HeadRefName] != nil
 	if p.session || registered {
 		switch {
 		case p.state.Repo != p.repo.Slug:
-			return nil, refuse("this checkout is %s, but the loop was started for %s", p.repo.Slug, p.state.Repo)
+			return nil, refuse("this checkout is %s, but the loop was started for %s; run pr-loop from a checkout of %s",
+				p.repo.Slug, p.state.Repo, p.state.Repo)
 		case !registered:
-			return nil, refuse("#%d is not part of this loop", pr.Number)
+			return nil, refuse(notInLoop, pr.Number)
 		}
 		if !p.loaded {
 			p.loaded = true
@@ -226,7 +227,8 @@ func (p *threadPolicy) check(id string) (*threadCheck, error) {
 			starter = a.Login
 		}
 		if botNamed(p.bots, starter) == nil {
-			return nil, refuse("%s on #%d was started by %s, not a review bot; in a review loop those are left to Wesley", id, pr.Number, starter)
+			return nil, refuse("%s on #%d was started by %s, not a review bot, and in a review loop those are Wesley's to answer; "+
+				"put what you would reply in the report", id, pr.Number, starter)
 		}
 	}
 	last := ""
@@ -254,7 +256,7 @@ func resolveThread(id string) error {
 // Reply posts body inside a review thread the policy allows.
 func Reply(id, body string) (any, error) {
 	if strings.TrimSpace(body) == "" {
-		return nil, refuse("the reply is empty")
+		return nil, refuse("the reply is empty; pass its text with `--body-file FILE`, or on stdin with `--body-file -`")
 	}
 	policy, err := newThreadPolicy()
 	if err != nil {
@@ -282,7 +284,8 @@ func Resolve(id string) (any, error) {
 		return nil, err
 	}
 	if check.lastAuthor != policy.repo.Viewer {
-		return nil, refuse("the last comment in %s is from %s; reply before resolving", id, check.lastAuthor)
+		return nil, refuse("the last comment in %s is from %s, so it has no answer yet; reply with `pr-loop reply %s` before resolving",
+			id, check.lastAuthor, id)
 	}
 	if err := resolveThread(id); err != nil {
 		return nil, err

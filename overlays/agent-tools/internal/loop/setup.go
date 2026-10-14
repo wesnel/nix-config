@@ -65,7 +65,8 @@ func SetupCommand() (*Setup, error) {
 		repos = append(repos, s.Repo)
 	}
 	sort.Strings(repos)
-	return nil, refuse("this checkout's remotes match the setup commands of %v; keep one", repos)
+	return nil, refuse("this checkout's remotes match the setup commands of %v, and only one may apply; "+
+		"ask Wesley to keep one of them in pr-loop/config.json", repos)
 }
 
 // SetupRun is one run of a setup command in a worktree.

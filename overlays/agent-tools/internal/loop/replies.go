@@ -94,7 +94,7 @@ type ReplyResult struct {
 // is posted, so one bad section leaves nothing half done.
 func ReplyAll(plan []PlannedReply) ([]ReplyResult, error) {
 	if len(plan) == 0 {
-		return nil, refuse("the reply file names no threads")
+		return nil, refuse("the reply file names no threads; start each reply with a line `=== thread THREAD`")
 	}
 	policy, err := newThreadPolicy()
 	if err != nil {
@@ -114,7 +114,8 @@ func ReplyAll(plan []PlannedReply) ([]ReplyResult, error) {
 	}
 	if len(problems) > 0 {
 		if allRefused {
-			return nil, refuse("nothing was posted:\n  %s", strings.Join(problems, "\n  "))
+			return nil, refuse("nothing was posted, since these threads cannot be answered; drop them from the file, "+
+				"put them in the report, and run `pr-loop reply --from` again:\n  %s", strings.Join(problems, "\n  "))
 		}
 		return nil, fmt.Errorf("nothing was posted:\n  %s", strings.Join(problems, "\n  "))
 	}
