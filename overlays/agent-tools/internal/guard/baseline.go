@@ -150,8 +150,12 @@ func envSearch(text string, calls []call) bool {
 	return true
 }
 
-// guardFile reports whether path holds the hooks that run the guard.
+// guardFile reports whether path holds the hooks that run the guard, or
+// its settings.
 func guardFile(path string) bool {
+	if agentToolsConfig(path) {
+		return true
+	}
 	for _, p := range []string{".codex/config.toml", ".codex/hooks.json", ".config/eca/config.json"} {
 		if path == filepath.Join(home, p) {
 			return true
@@ -915,7 +919,7 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 		switch {
 		case filepath.Base(path) == "config" && filepath.Base(filepath.Dir(path)) == ".git":
 			return sharedConfig
-		case strings.HasSuffix(path, ".codex/hooks.json") && guardFile(path):
+		case strings.HasSuffix(path, ".codex/hooks.json") && guardFile(path), agentToolsConfig(path):
 			return guardOff
 		case guardFile(path):
 			existing, _ := os.ReadFile(path)

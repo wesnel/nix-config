@@ -3,6 +3,7 @@ package guard
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/wesnel/agent-tools/internal/repos"
@@ -42,6 +43,18 @@ func credentialPaths() []string {
 		expanded[i] = p
 	}
 	return expanded
+}
+
+// agentToolsConfig reports whether path is agent-tools' config, which holds
+// the guard's settings: the file AGENT_TOOLS_CONFIG names, or anything in
+// agent-tools' directory under the XDG config directory.
+func agentToolsConfig(path string) bool {
+	base := os.Getenv("XDG_CONFIG_HOME")
+	if base == "" {
+		base = filepath.Join(home, ".config")
+	}
+	dir := filepath.Join(base, "agent-tools")
+	return path == filepath.Clean(repos.Path()) || path == dir || strings.HasPrefix(path, dir+"/")
 }
 
 // loadSettings reads the guard's settings; a config that is missing or

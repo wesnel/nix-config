@@ -854,6 +854,48 @@ func TestFileTools(t *testing.T) {
 	}
 }
 
+// TestGuardConfig covers agent-tools' config, which holds the guard's
+// credential list: its directory under the XDG config directory, and the
+// file AGENT_TOOLS_CONFIG names.
+func TestGuardConfig(t *testing.T) {
+	for _, c := range []struct {
+		name, tool string
+		input      any // with HOME for the guard's ~ and NAMED for AGENT_TOOLS_CONFIG
+		deny       bool
+	}{
+		{"the config, written", "Write", map[string]string{"file_path": "HOME/.config/agent-tools/config.json", "content": "{}"}, true},
+		{"the config, edited", "Edit", map[string]string{"file_path": "HOME/.config/agent-tools/config.json", "old_string": "a", "new_string": "b"}, true},
+		{"a file beside it", "Write", map[string]string{"file_path": "HOME/.config/agent-tools/notes-ssh-config", "content": "x"}, true},
+		{"the named config", "Write", map[string]string{"file_path": "NAMED", "content": "{}"}, true},
+		{"the config, patched", "apply_patch", map[string]string{"command": "*** Begin Patch\n*** Update File: HOME/.config/agent-tools/config.json\n@@\n-a\n+b\n*** End Patch\n"}, true},
+		{"the config, overwritten", "Bash", map[string]string{"command": "echo '{}' > ~/.config/agent-tools/config.json"}, true},
+		{"the config, edited in place", "Bash", map[string]string{"command": "sed -i '' s/a/b/ ~/.config/agent-tools/config.json"}, true},
+		{"the directory, removed", "Bash", map[string]string{"command": "rm -rf ~/.config/agent-tools"}, true},
+		{"the directory, moved", "Bash", map[string]string{"command": "mv ~/.config/agent-tools /tmp/x"}, true},
+		{"the named config, overwritten", "Bash", map[string]string{"command": "tee NAMED < x"}, true},
+		{"the config, read", "Bash", map[string]string{"command": "jq . ~/.config/agent-tools/config.json"}, false},
+		{"another tool's config", "Write", map[string]string{"file_path": "HOME/.config/other/config.json", "content": "{}"}, false},
+	} {
+		t.Run(caseName(c.deny, c.tool+" "+c.name), func(t *testing.T) {
+			h := fakeHome(t)
+			t.Setenv("XDG_CONFIG_HOME", "")
+			named := filepath.Join(t.TempDir(), "named.json")
+			os.WriteFile(named, []byte("{}"), 0o600)
+			t.Setenv("AGENT_TOOLS_CONFIG", named)
+			work := filepath.Join(h, "work")
+			data, _ := json.Marshal(c.input)
+			input := []byte(strings.NewReplacer("HOME", h, "NAMED", named).Replace(string(data)))
+			reason := check(c.tool, "", input, baseline, work)
+			if (reason != "") != c.deny {
+				t.Errorf("%s %s: deny=%v, reason %q", c.tool, input, !c.deny, reason)
+			}
+			if reason != "" && !saysInstead(reason) {
+				t.Errorf("%s: reason %q does not say what to do instead", c.tool, reason)
+			}
+		})
+	}
+}
+
 // TestConnectors covers the claude.ai connectors' writes: Claude Code asks,
 // and Codex, which cannot ask, denies, as does a loop.
 func TestConnectors(t *testing.T) {
