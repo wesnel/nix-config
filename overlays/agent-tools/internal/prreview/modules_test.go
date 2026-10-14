@@ -100,7 +100,7 @@ func goModulesRemote(t *testing.T, goMod string) *remote {
 func withProxy(t *testing.T) {
 	old, oldSum := goProxy, goSumDB
 	goProxy, goSumDB = "file://"+proxyFixture(t), "off"
-	root := Root()
+	root := must(Root())
 	t.Cleanup(func() {
 		goProxy, goSumDB = old, oldSum
 		filepath.Walk(root, func(p string, info os.FileInfo, err error) error {
@@ -201,11 +201,13 @@ func TestToolchainOutsideReviews(t *testing.T) {
 		t.Skip("no go here")
 	}
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	write(t, filepath.Join(Root(), "toolchains", "go1.99.0.linux-"+runtime.GOARCH, "bin", "go"), "#!/bin/sh\n")
+	prLoopConfig(t, nil)
+	root := must(Root())
+	write(t, filepath.Join(root, "toolchains", "go1.99.0.linux-"+runtime.GOARCH, "bin", "go"), "#!/bin/sh\n")
 	old, oldSum := goProxy, goSumDB
 	goProxy, goSumDB = "file://"+t.TempDir(), "off"
 	t.Cleanup(func() { goProxy, goSumDB = old, oldSum })
-	if dir, err := prepareToolchain(context.Background(), "go1.99.0"); err == nil || strings.HasPrefix(dir, Root()) {
+	if dir, err := prepareToolchain(context.Background(), "go1.99.0"); err == nil || strings.HasPrefix(dir, root) {
 		t.Errorf("the review directory's toolchain was used: %s, %v", dir, err)
 	}
 }

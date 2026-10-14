@@ -42,7 +42,9 @@ type botConfig struct {
 	Repos              []string          `json:"repos"`
 }
 
-func configPath() string {
+// ConfigPath is pr-loop's config: $PR_LOOP_CONFIG, or pr-loop/config.json
+// under the XDG config directory.
+func ConfigPath() string {
 	if p := os.Getenv("PR_LOOP_CONFIG"); p != "" {
 		return p
 	}
@@ -56,7 +58,7 @@ func configPath() string {
 
 // botsFor returns the configured bots that apply to a repository, by name.
 func botsFor(slug string) ([]*Bot, error) {
-	p := configPath()
+	p := ConfigPath()
 	data, err := os.ReadFile(p)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, refuse("no review bots are configured, which takes %s; ask Wesley to configure them", p)

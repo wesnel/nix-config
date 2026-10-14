@@ -297,16 +297,18 @@ func TestRoundsKept(t *testing.T) {
 // above it, the session could write the record and the clone.
 func TestRelayedTarget(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	dir := filepath.Join(Root(), "o", "r", "7", "0123456789ab")
+	prLoopConfig(t, nil)
+	root := must(Root())
+	dir := filepath.Join(root, "o", "r", "7", "0123456789ab")
 	for _, d := range []string{
-		filepath.Join(dir, "repo.git"), filepath.Join(Root(), "o", "r", "7", "0123456789AB"),
-		filepath.Join(Root(), "o", "r", "7", "clone"),
+		filepath.Join(dir, "repo.git"), filepath.Join(root, "o", "r", "7", "0123456789AB"),
+		filepath.Join(root, "o", "r", "7", "clone"),
 	} {
 		os.MkdirAll(d, 0o755)
 	}
 	for _, d := range []string{
-		filepath.Dir(dir), filepath.Join(dir, "repo.git"), filepath.Join(Root(), "o", "r", "7", "0123456789AB"),
-		filepath.Join(Root(), "o", "r", "7", "clone"), filepath.Join(Root(), "o", "r"), Root(),
+		filepath.Dir(dir), filepath.Join(dir, "repo.git"), filepath.Join(root, "o", "r", "7", "0123456789AB"),
+		filepath.Join(root, "o", "r", "7", "clone"), filepath.Join(root, "o", "r"), root,
 	} {
 		t.Chdir(d)
 		if _, _, err := target("7", true); err == nil {

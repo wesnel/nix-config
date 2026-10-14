@@ -645,7 +645,21 @@ in {
     # Read by `pr-loop` where it runs; a client with a relay asks the relay,
     # which reads it on the host.
     xdg.configFile."pr-loop/config.json" = mkIf cfg.prLoop.enable {
-      text = builtins.toJSON {inherit (cfg.prLoop) bots;};
+      text = builtins.toJSON {
+        inherit (cfg.prLoop) bots;
+        # Where `pr-loop review` runs a pull request's tests: the ECA
+        # sandbox's backend, never the eca-sandbox wrapper, which brings
+        # this machine's maps, secrets and state, and the guest's tools;
+        # and where it keeps reviews, which it reads from here alone.
+        review = {
+          backend =
+            if pkgs.stdenv.hostPlatform.isDarwin
+            then getExe' pkgs.eca-gondolin "eca-gondolin"
+            else getExe' pkgs.eca-bwrap "eca-bwrap";
+          guestTools = "${cfg.prLoop.client}/bin";
+          dir = cfg.prLoop.reviewDir;
+        };
+      };
     };
 
     # Read by `pr-loop setup` and `worktrees` as pr-loop's config is, by

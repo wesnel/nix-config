@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/wesnel/agent-tools/internal/gh"
+	"github.com/wesnel/agent-tools/internal/loop"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
@@ -70,16 +71,20 @@ func checkSlug(slug string) (owner, repo string, err error) {
 	return owner, repo, nil
 }
 
-// Root is where reviews are kept: pr-review under $XDG_CACHE_HOME, or under
-// ~/.cache. Emacs treats it as untrusted, and loop sessions started in a
-// review's directory read only that review.
-func Root() string {
-	base := os.Getenv("XDG_CACHE_HOME")
-	if !filepath.IsAbs(base) {
-		home, _ := os.UserHomeDir()
-		base = filepath.Join(home, ".cache")
+// Root is where reviews are kept: "dir" under "review" in pr-loop's config,
+// which home-manager writes from wgn.home.llm.prLoop.reviewDir, the path the
+// loop launchers and Emacs also hold. Emacs treats it as untrusted, and loop
+// sessions started in a review's directory read only that review.
+func Root() (string, error) {
+	config, err := loadRunConfig()
+	if err != nil {
+		return "", err
 	}
-	return filepath.Join(base, "pr-review")
+	if !filepath.IsAbs(config.Dir) {
+		return "", refusal.New("no review directory is set as an absolute \"dir\" under \"review\" in %s; "+
+			"set wgn.home.llm.prLoop in home-manager, which writes it", loop.ConfigPath())
+	}
+	return filepath.Clean(config.Dir), nil
 }
 
 // Fetch fetches pull request number of slug into its clone, pinned to the
@@ -125,7 +130,11 @@ func Fetch(ctx context.Context, slug string, number int) (*PR, error) {
 	if pr.Issues == nil {
 		pr.Issues = []Issue{}
 	}
-	top := filepath.Join(Root(), owner, repo, strconv.Itoa(number))
+	root, err := Root()
+	if err != nil {
+		return nil, err
+	}
+	top := filepath.Join(root, owner, repo, strconv.Itoa(number))
 	pr.Clone = filepath.Join(top, "clone")
 	if _, err := os.Stat(pr.Clone); err != nil {
 		if err := os.MkdirAll(top, 0o755); err != nil {

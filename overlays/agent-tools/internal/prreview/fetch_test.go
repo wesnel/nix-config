@@ -11,6 +11,28 @@ import (
 	"testing"
 )
 
+// TestRoot: reviews are kept where pr-loop's config says, and nowhere
+// without an absolute directory there.
+func TestRoot(t *testing.T) {
+	dir := t.TempDir()
+	config := filepath.Join(t.TempDir(), "pr-loop.json")
+	t.Setenv("PR_LOOP_CONFIG", config)
+	for _, c := range []struct{ text, want string }{
+		{`{"review": {"dir": "` + dir + `/"}}`, dir},
+		{`{"review": {"dir": "pr-review"}}`, ""},
+		{`{"review": {}}`, ""},
+	} {
+		write(t, config, c.text)
+		if got, err := Root(); got != c.want || (err == nil) != (c.want != "") {
+			t.Errorf("%s: %q, %v", c.text, got, err)
+		}
+	}
+	t.Setenv("PR_LOOP_CONFIG", filepath.Join(t.TempDir(), "none.json"))
+	if got, err := Root(); err == nil {
+		t.Errorf("without a config: %q", got)
+	}
+}
+
 func TestFetch(t *testing.T) {
 	r := newRemote(t, nil)
 	f := setUp(t, r)

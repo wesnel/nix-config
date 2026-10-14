@@ -79,8 +79,8 @@ func TestVetFlagsHostFiles(t *testing.T) {
 	withCodex(t, reply())
 	t.Setenv("FAKE_CODEX", "none")
 	code, record, _, stderr := runReview(t, "", "o/r#7")
-	if code != 0 {
-		t.Fatalf("exit %d\n%s", code, stderr)
+	if code != 5 {
+		t.Fatalf("exit %d, want 5 for red flags\n%s", code, stderr)
 	}
 	v := vetOf(t, record)
 	got := flagged(v)
@@ -152,8 +152,8 @@ func TestProjectCodexConfigIgnored(t *testing.T) {
 	setUp(t, r)
 	withCodex(t, reply())
 	code, record, _, stderr := runReview(t, "", "o/r#7")
-	if code != 3 {
-		t.Fatalf("exit %d\n%s", code, stderr)
+	if code != 5 {
+		t.Fatalf("exit %d, want 5 for a red flag\n%s", code, stderr)
 	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Error("Codex loaded the pull request's .codex/config.toml")

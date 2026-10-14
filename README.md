@@ -223,8 +223,16 @@ filter and reach no server, and Codex runs confined in a checkout beside the
 clone. Before the review, a vet flags what would run on this machine or in
 an agent rather than in a VM (`.envrc`, `.dir-locals.el`, agents' project
 settings, a `shellHook`, a `pull_request_target` workflow) and has a
-read-only Codex list what the test command would run. The record, `HEAD12/findings.json`, is what review-guide imports for
-you to edit and post; nothing is written to GitHub. A `claude-pr-loop`
+read-only Codex list what the test command would run. With no red flag,
+`git red-check` and the test command from `wgn.home.llm.repos` run in a VM
+with no network (Gondolin on macOS, bubblewrap on Linux): the modules are
+downloaded here from `go.mod` and `go.sum` alone, the Go release is the
+checksum-verified `golang.org/toolchain` module, and everything is mounted
+read-only; what the guest prints, capped, goes to the reviewer as evidence.
+A red flag leaves the run to you: `pr-loop review --run`, which a session
+cannot pass. The record, `N/HEAD12.json` beside the clone, is what
+review-guide imports for you to edit and post; `HEAD12/findings.json` is
+the session's copy, which it can change. Nothing is written to GitHub. A `claude-pr-loop`
 started in `HEAD12/` reads only that review, and may run `pr-loop review`
 for its own pull request alone. See `pr-loop --help`.
 

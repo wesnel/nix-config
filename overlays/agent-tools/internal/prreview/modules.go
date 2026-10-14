@@ -194,8 +194,12 @@ func fetchModules(ctx context.Context, pr *PR) (*Modules, error) {
 // It is reused unchecked, so it stays outside the review directory, where a
 // review session may write.
 func prepareToolchain(ctx context.Context, release string) (string, error) {
+	root, err := Root()
+	if err != nil {
+		return "", err
+	}
 	name := release + ".linux-" + runtime.GOARCH
-	dir := filepath.Join(filepath.Dir(Root()), "pr-review-toolchains", name)
+	dir := filepath.Join(filepath.Dir(root), "pr-review-toolchains", name)
 	if _, err := os.Stat(filepath.Join(dir, "bin", "go")); err == nil {
 		return dir, nil
 	}

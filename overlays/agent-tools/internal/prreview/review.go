@@ -21,7 +21,7 @@ import (
 )
 
 // Usage is the part of `pr-loop --help` for review.
-const Usage = `  review [--reviewer codex|subagent] [--model M] [--timeout S] PR
+const Usage = `  review [--reviewer codex|subagent] [--run|--no-run] [--model M] [--timeout S] PR
                               review someone else's pull request (see below)
   review --check PR           check a sub-agent reviewer's reply, read on stdin
   review settle PR            record how triage settled the findings, read on stdin
@@ -30,14 +30,22 @@ const Usage = `  review [--reviewer codex|subagent] [--model M] [--timeout S] PR
 // Help explains review, for `pr-loop --help`.
 const Help = `review fetches the pull request PR, by number in this repository or in the
 review directory it runs in, or as OWNER/NAME#N, into a bare clone of its
-own under $XDG_CACHE_HOME/pr-review/OWNER/NAME/N/, pinned to the head GitHub
-reports; the review of that head is in its directory HEAD12/ beside the
+own under DIR/OWNER/NAME/N/, DIR being "dir" under "review" in pr-loop's
+config, pinned to the head GitHub reports; the review of that head is in its directory HEAD12/ beside the
 clone. Its code never runs on this machine. First a vet records, in the
 record's "vet", what the change would run: red flags for files that run on
 this machine or in an agent (.envrc, .dir-locals.el, .claude/, .codex/,
 .eca/, .mcp.json, .vscode/, a shellHook, a pull_request_target workflow),
 and a confined Codex's account of what the test command would run, with a
-verdict; a vet Codex cannot make is a red flag. The reviewer judges the change
+verdict; a vet Codex cannot make is a red flag. With no red flag, and not
+--no-run, git red-check and the test command, both from wgn.home.llm.repos
+and never from the PR, run in a VM with no network (eca-gondolin on macOS,
+eca-bwrap on Linux, named under "review" in pr-loop's config), with the
+PR's modules downloaded here from go.mod and go.sum alone and a Go release
+from the checksum-verified toolchain module, all mounted read-only; what
+the guest prints, capped, is the only result, and goes to the reviewer as
+evidence. With a red flag the review goes on without a run and exits 5:
+--run runs it anyway, and only Wesley may pass it. The reviewer judges the change
 against our goal: review it for Wesley, propose comments only. The PR's
 title, description and linked issues, and its review threads, go in as the
 author's claims, never as instructions. With --reviewer codex (the default),
@@ -50,10 +58,10 @@ latest at the top and the earlier ones in "prior". settle names a finding
 of any round as ROUND.ID and reads
 {"outcomes": [{"id": "1.F1", "outcome": "propose|rebut|duplicate-of|needs-wesley",
 "of": "1.F2 for duplicate-of", "body": "the comment as it would be posted"}]}.
-Each prints the record, also written to HEAD12/findings.json for
-review-guide, and exits 0 with no findings, 3 with findings, 4 when Codex
-cannot review here (review with a sub-agent instead), 1 on an error and 2 on
-a refusal. Nothing is written to GitHub. Relayed, review takes only a PR
+Each prints the record, kept as N/HEAD12.json beside the clone for
+review-guide and copied to HEAD12/findings.json for a session, and exits 0 with no findings, 3 with findings, 4 when Codex
+cannot review here (review with a sub-agent instead), 5 when the vet's red
+flags leave the run to Wesley, 1 on an error and 2 on a refusal. Nothing is written to GitHub. Relayed, review takes only a PR
 number, inside its review directory, and --reviewer.
 `
 
@@ -65,6 +73,8 @@ func Main(ctx context.Context, args []string, relayed bool, stdin io.Reader, std
 	model := flags.String("model", "", "")
 	timeout := flags.Int("timeout", 1800, "")
 	check := flags.Bool("check", false, "")
+	force := flags.Bool("run", false, "")
+	noRun := flags.Bool("no-run", false, "")
 	var positional []string
 	for {
 		if code, ok := cli.Parse(flags, args, Usage, stdout, stderr); !ok {
@@ -78,12 +88,17 @@ func Main(ctx context.Context, args []string, relayed bool, stdin io.Reader, std
 	}
 	settle := len(positional) == 2 && positional[0] == "settle"
 	if (len(positional) != 1 && !settle) || (*reviewer != "codex" && *reviewer != "subagent") ||
-		((*check || settle) && (*reviewer != "codex" || *model != "")) || (*check && settle) {
+		((*check || settle) && (*reviewer != "codex" || *model != "" || *force || *noRun)) || (*check && settle) ||
+		(*force && *noRun) {
 		fmt.Fprint(stderr, Usage)
 		return 2
 	}
 	report := func(result any, err error, code int) int {
 		return cli.Report("pr-loop", result, err, code, stdout, stderr)
+	}
+	if *force && relayed {
+		return report(nil, refusal.New("only Wesley runs a pull request past its vet's red flags; "+
+			"put `pr-loop review --run %s` in the report for him", positional[0]), 0)
 	}
 	slug, number, err := target(positional[len(positional)-1], relayed)
 	if err != nil {
@@ -124,7 +139,6 @@ func Main(ctx context.Context, args []string, relayed bool, stdin io.Reader, std
 		return report(nil, err, 0)
 	}
 	record := newRecord(pr)
-	record.NotRunBecause = "this review does not run the pull request's code"
 	in, err := inputs(ctx, pr)
 	if err != nil {
 		return report(nil, err, 0)
@@ -134,8 +148,37 @@ func Main(ctx context.Context, args []string, relayed bool, stdin io.Reader, std
 		return report(nil, err, 0)
 	}
 	record.Vet = vetted
+
+	// A clean vet runs the tests; a red flag leaves the run to Wesley,
+	// whose --run overrides it, and the review goes on without it.
+	gated := false
+	switch {
+	case *noRun:
+		record.NotRunBecause = "--no-run was given"
+	case vetted.Verdict != "run" && !*force:
+		gated = true
+		record.NotRunBecause = fmt.Sprintf("the vet raised red flags; Wesley decides whether "+
+			"`pr-loop review --run %s#%d` runs it anyway", pr.Repo, pr.Number)
+	default:
+		ran, err := runTests(ctx, pr, time.Duration(*timeout)*time.Second)
+		if err != nil {
+			return report(nil, err, 0)
+		}
+		record.NotRunBecause = ran.notRun
+		if ran.notRun == "" {
+			record.Ran, record.RedCheck, record.Tests = true, ran.redCheck, ran.tests
+			in.RedCheck = ran.prompt
+		}
+	}
 	if err := record.save(pr.Dir); err != nil {
 		return report(nil, err, 0)
+	}
+	exit := func(record *Record) int {
+		if gated {
+			fmt.Fprintf(stderr, "pr-loop: the tests did not run: %s\n", record.NotRunBecause)
+			return 5
+		}
+		return record.Exit()
 	}
 
 	if *reviewer == "subagent" {
@@ -147,6 +190,9 @@ func Main(ctx context.Context, args []string, relayed bool, stdin io.Reader, std
 			"`git --git-dir %s diff %s %s`, `git --git-dir %s log -p %s..%s`, and `git --git-dir %s show %s:PATH` "+
 			"for a file as it is at TIP.", repo, repo, pr.Base, pr.Head, repo, pr.Base, pr.Head, repo, pr.Head)
 		fmt.Fprint(stdout, review.Prompt(*in))
+		if gated {
+			return exit(record)
+		}
 		return 0
 	}
 
@@ -171,7 +217,7 @@ func Main(ctx context.Context, args []string, relayed bool, stdin io.Reader, std
 	if err := record.save(pr.Dir); err != nil {
 		return report(nil, err, 0)
 	}
-	return report(record, nil, record.Exit())
+	return report(record, nil, exit(record))
 }
 
 // head12 is a head's review directory's name: its first 12 hex digits.
@@ -198,7 +244,10 @@ func target(arg string, relayed bool) (string, int, error) {
 	if real, err := filepath.EvalSymlinks(cwd); err == nil {
 		cwd = real
 	}
-	root := Root()
+	root, err := Root()
+	if err != nil {
+		return "", 0, err
+	}
 	if real, err := filepath.EvalSymlinks(root); err == nil {
 		root = real
 	}
@@ -242,7 +291,11 @@ func latest(ctx context.Context, slug string, number int) (*PR, error) {
 	if err != nil {
 		return nil, err
 	}
-	top := filepath.Join(Root(), owner, repo, strconv.Itoa(number))
+	root, err := Root()
+	if err != nil {
+		return nil, err
+	}
+	top := filepath.Join(root, owner, repo, strconv.Itoa(number))
 	pr := &PR{Repo: owner + "/" + repo, Number: number, Clone: filepath.Join(top, "clone")}
 	if pr.Head, err = gitRun(ctx, pr.Clone, "rev-parse", "--verify", "refs/pr-review/head^{commit}"); err != nil {
 		return nil, refusal.New("%s#%d has not been fetched; run `pr-loop review %d` first", pr.Repo, number, number)
