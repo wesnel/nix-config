@@ -358,6 +358,10 @@ in {
             source = ./skills/signing-pass/SKILL.md;
             sandbox = true;
           };
+          write-tests = {
+            source = ./skills/write-tests/SKILL.md;
+            sandbox = true;
+          };
           restack-branches = {
             source = ./skills/restack-branches/SKILL.md;
             sandbox = true;

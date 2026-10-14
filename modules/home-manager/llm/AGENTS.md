@@ -104,6 +104,22 @@ real, and confirm the fix works, before reporting either. A reviewer being wrong
 worth demonstrating politely; a reviewer being right about something subtle is
 worth acting on even when the exploit does not reproduce.
 
+## Tests
+
+Load the `write-tests` skill before writing, changing or reviewing tests. The
+core of it:
+
+- A test earns its place only if it can fail. Name the one-line change to the
+  code that would turn it red; if you cannot, it checks nothing.
+- Assert what a caller can observe, not internals, and never compare a value
+  with a copy of itself.
+- One case per distinct behaviour or boundary, not one per input.
+- Fake only where data enters (the store, the network, the clock), and never
+  assert that a fake received what the test handed it.
+- A bug fix comes with a test that fails before the fix and checks the symptom.
+- Never wait with a sleep, and never depend on the order tests run in.
+- Before finishing, check each new test against what it would catch.
+
 ## Prefer git to gh
 
 When a question can be answered with `git` — does a ref exist, what changed, which
