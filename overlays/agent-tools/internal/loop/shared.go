@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/history"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
@@ -20,4 +21,6 @@ var (
 	matches        = history.Match
 	couldNotApply  = history.CouldNotApply
 	noEditor       = history.NoEditor
+	// graphQL is replaced by tests that fake GitHub.
+	graphQL = gh.GraphQL
 )
