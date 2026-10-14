@@ -29,7 +29,8 @@ The task gives you:
 
 Each finding has one kind:
 
-- `goal-unmet`: the change does not do what the goal statement says.
+- `goal-unmet`: the change does not do what the goal statement says. Its
+  evidence quotes the words of the goal statement it rests on.
 - `unresolved`: an item is not settled everywhere it applies, only at the
   line cited, or a reviewer rereading its thread would still have something
   to say.
@@ -40,7 +41,8 @@ Each finding has one kind:
   other platforms or configurations, and the tests that cover them. Run
   those tests where the change could fail them.
 - `out-of-scope`: the change does something the goal statement does not
-  need, or that it says is not this change's job.
+  need, or that it says is not this change's job. Its evidence quotes the
+  words of the goal statement it rests on.
 - `untested`: a change in behaviour with no test that can fail. A test
   cannot fail when no plausible one-line change to the code turns it red,
   when it compares a value with a copy of itself, asserts that a fake
