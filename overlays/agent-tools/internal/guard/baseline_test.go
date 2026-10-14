@@ -301,6 +301,10 @@ func TestGitState(t *testing.T) {
 		{true, linked, "git switch --ignore-other-worktrees main"},
 		{true, linked, "git checkout --ignore-other-worktrees main"},
 		{false, linked, "git switch pushed"},
+		{true, linked, "git worktree add -f ../x main"},
+		{true, linked, "git worktree add --force ../x"},
+		{true, main, "git worktree add -ff ../x feature"},
+		{false, linked, "git worktree add -b y ../y pushed"},
 	}
 	for _, c := range cases {
 		reason := judge(t, c.dir, c.command)
