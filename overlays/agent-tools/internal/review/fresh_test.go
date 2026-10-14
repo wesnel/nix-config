@@ -2,7 +2,6 @@ package review
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -151,7 +150,7 @@ type output struct {
 func freshReview(t *testing.T, args ...string) (int, output, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := Main(context.Background(), args, strings.NewReader(""), &stdout, &stderr)
+	code := Main(t.Context(), args, strings.NewReader(""), &stdout, &stderr)
 	var out output
 	if stdout.Len() > 0 {
 		if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
@@ -177,7 +176,16 @@ func (f *fixture) checkCleanedUp(t *testing.T) {
 	}
 }
 
-func TestCodexReview(t *testing.T) {
+func TestCodex(t *testing.T) {
+	t.Run("review", testCodexReview)
+	t.Run("GIT_DIR naming the repository under review", testCodexGitDirUnderReview)
+	t.Run("GIT_DIR naming another repository", testCodexGitDirElsewhere)
+	t.Run("no findings", testCodexNoFindings)
+	t.Run("confinement", testCodexConfinement)
+	t.Run("failure", testCodexFailures)
+}
+
+func testCodexReview(t *testing.T) {
 	f := setUp(t, true)
 	code, out, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+"..HEAD")
 	if code != 3 {
@@ -222,9 +230,8 @@ func TestCodexReview(t *testing.T) {
 }
 
 // GIT_DIR naming the repository under review, as git sets it for a hook,
-// reaches neither the review's worktree nor Codex; naming another, it is
-// refused.
-func TestRepositoryTheEnvironmentNames(t *testing.T) {
+// reaches neither the review's worktree nor Codex.
+func testCodexGitDirUnderReview(t *testing.T) {
 	f := setUp(t, true)
 	t.Setenv("FAKE_CODEX", "none")
 	t.Setenv("GIT_DIR", filepath.Join(f.repo, ".git"))
@@ -235,7 +242,12 @@ func TestRepositoryTheEnvironmentNames(t *testing.T) {
 		t.Errorf("Codex inherited %s", location)
 	}
 	f.checkCleanedUp(t)
+}
 
+// GIT_DIR naming another repository is refused.
+func testCodexGitDirElsewhere(t *testing.T) {
+	f := setUp(t, true)
+	t.Setenv("FAKE_CODEX", "none")
 	gitenvtest.Decoy(t)
 	os.Unsetenv("GIT_WORK_TREE")
 	if code, _, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+"..HEAD"); code != 2 || !strings.Contains(stderr, "GIT_DIR") {
@@ -243,7 +255,7 @@ func TestRepositoryTheEnvironmentNames(t *testing.T) {
 	}
 }
 
-func TestNoFindings(t *testing.T) {
+func testCodexNoFindings(t *testing.T) {
 	f := setUp(t, true)
 	t.Setenv("FAKE_CODEX", "none")
 	if code, out, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+".."+f.tip); code != 0 || len(out.Findings) != 0 {
@@ -252,11 +264,11 @@ func TestNoFindings(t *testing.T) {
 	f.checkCleanedUp(t)
 }
 
-// TestConfinement holds Codex to reading the worktree under review and the
-// parts of the repository's git directory git needs to show the change,
+// testCodexConfinement holds Codex to reading the worktree under review and
+// the parts of the repository's git directory git needs to show the change,
 // with nothing of the user's Codex configuration, and checks that its
 // sandbox starts before it reviews.
-func TestConfinement(t *testing.T) {
+func testCodexConfinement(t *testing.T) {
 	f := setUp(t, true)
 	t.Setenv("FAKE_CODEX", "none")
 	tools := t.TempDir()
@@ -273,6 +285,7 @@ func TestConfinement(t *testing.T) {
 		t.Errorf("Codex's PATH names a directory by a symbolic link the sandbox cannot follow: %q", path)
 	}
 	read := func(name string) []string {
+		t.Helper()
 		data, err := os.ReadFile(filepath.Join(f.log, name))
 		if err != nil {
 			t.Fatalf("codex was not run with the arguments in %s: %v", name, err)
@@ -347,7 +360,7 @@ func must[T any](v T, err error) T {
 	return v
 }
 
-func TestCodexFailures(t *testing.T) {
+func testCodexFailures(t *testing.T) {
 	for _, c := range []struct {
 		mode string
 		args []string
@@ -410,10 +423,14 @@ func TestUnavailable(t *testing.T) {
 	}
 }
 
-// TestNoRedCheckOnTheHost holds fresh-review to never running the
+func TestRedCheck(t *testing.T) {
+	t.Run("never on the host", testRedCheckNotOnHost)
+}
+
+// testRedCheckNotOnHost holds fresh-review to never running the
 // repository's test command where it runs, whatever the settings say: the
 // commits under review may be anyone's, and red-check runs them.
-func TestNoRedCheckOnTheHost(t *testing.T) {
+func testRedCheckNotOnHost(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		args []string
@@ -437,7 +454,7 @@ func TestNoRedCheckOnTheHost(t *testing.T) {
 
 			var stdout, stderr bytes.Buffer
 			args := append(append([]string{}, c.args...), "--goal", ".git/goal.md", f.base+"..HEAD")
-			if code := Main(context.Background(), args, nil, &stdout, &stderr); code != 0 {
+			if code := Main(t.Context(), args, nil, &stdout, &stderr); code != 0 {
 				t.Fatalf("exit %d\n%s", code, stderr.String())
 			}
 			if _, err := os.Stat(marker); err == nil {
@@ -464,7 +481,7 @@ func TestPrintPrompt(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	args := []string{"--print-prompt", "--goal", ".git/goal.md", "--items", ".git/items.md", "--prior", ".git/prior.json", f.base + "..HEAD"}
-	if code := Main(context.Background(), args, nil, &stdout, &stderr); code != 0 {
+	if code := Main(t.Context(), args, nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr.String())
 	}
 	prompt := stdout.String()
@@ -480,20 +497,27 @@ func TestPrintPrompt(t *testing.T) {
 }
 
 func TestRefusals(t *testing.T) {
-	f := setUp(t, true)
-	os.WriteFile(filepath.Join(f.repo, ".git", "empty.md"), []byte("\n"), 0o644)
-	for _, args := range [][]string{
-		{f.base + "..HEAD"},
-		{"--goal", ".git/empty.md", f.base + "..HEAD"},
-		{"--goal", ".git/goal.md", "HEAD"},
-		{"--goal", ".git/goal.md", "HEAD..HEAD"},
-		{"--goal", ".git/goal.md", "HEAD...HEAD~1"},
+	for _, c := range []struct {
+		name string
+		// args returns the arguments, given the base of the change.
+		args func(base string) []string
+	}{
+		{"no goal", func(base string) []string { return []string{base + "..HEAD"} }},
+		{"empty goal", func(base string) []string { return []string{"--goal", ".git/empty.md", base + "..HEAD"} }},
+		{"no range", func(string) []string { return []string{"--goal", ".git/goal.md", "HEAD"} }},
+		{"empty range", func(string) []string { return []string{"--goal", ".git/goal.md", "HEAD..HEAD"} }},
+		{"symmetric difference", func(string) []string { return []string{"--goal", ".git/goal.md", "HEAD...HEAD~1"} }},
 	} {
-		code, _, stderr := freshReview(t, args...)
-		reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-fresh-review: refused: ")
-		if code != 2 || !refusal.SaysInstead(reason) {
-			t.Errorf("%v: exit %d, %q", args, code, stderr)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			f := setUp(t, true)
+			os.WriteFile(filepath.Join(f.repo, ".git", "empty.md"), []byte("\n"), 0o644)
+			args := c.args(f.base)
+			code, _, stderr := freshReview(t, args...)
+			reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-fresh-review: refused: ")
+			if code != 2 || !refusal.SaysInstead(reason) {
+				t.Errorf("%v: exit %d, %q", args, code, stderr)
+			}
+			f.checkCleanedUp(t)
+		})
 	}
-	f.checkCleanedUp(t)
 }
