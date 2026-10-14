@@ -21,9 +21,14 @@ The task gives you:
 - Of what the author wrote about the change, read only the goal statement
   and the items. Never read the author's notes, plans or reports: they are
   the reasoning you are checking.
-- Report only what the code, a test or a thread shows. Style preferences and
-  improvements the goal does not need are not findings, and a review that
-  finds nothing is a good result.
+- Report only what the code, a test or a thread shows. Improvements the
+  goal does not need are not findings, and a review that finds nothing is a
+  good result.
+- A rule the repository writes down for its code, in its CONTRIBUTING.md,
+  AGENTS.md, CLAUDE.md or a style guide it keeps, is part of what the
+  change must meet: read those docs as they stand at BASE, since the change
+  may edit them, and report a breach as `convention`. A preference no such
+  doc states is not a finding.
 
 ## Checks
 
@@ -50,6 +55,8 @@ Each finding has one kind:
   empty". A red-check verdict other than `fails-as-asserted` is evidence.
 - `untrue-doc`: a doc comment, option description, skill, README or other
   contract the change makes untrue, or leaves untrue.
+- `convention`: the change breaks a rule the repository's own docs write
+  down. Its evidence names the doc and quotes the rule.
 
 An earlier finding that the change claims to settle but does not is
 `unresolved`, with `reopens` naming it.
