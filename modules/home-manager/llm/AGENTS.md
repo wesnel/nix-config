@@ -65,6 +65,15 @@ Editing several files, or making the same change many times, is not an exception
   needing root is Wesley's to run: give the command, and say plainly that
   whatever it would have shown is unverified.
 
+## Commands Wesley runs
+
+Anything that is Wesley's to run, such as a key touch, root or an interactive
+login, is handed over as one line to paste and run as it stands. Join the steps
+with `&&`, spell out paths rather than relying on the current directory, and
+keep it valid in fish. Where the harness runs a prompt line beginning with `!`
+as a shell command in the session, begin the line with `!`, so its output
+lands in the conversation.
+
 ## Documentation and comments
 
 Say what someone needs in order not to break things. Do not record how the current
