@@ -57,6 +57,12 @@ Every session that commits a change runs the review pipeline in the
 `review-change` skill, unless Wesley opts out for the task. The skill is
 also the one place that says how to settle and answer review feedback.
 
+## Designing for change
+
+Extend an existing seam before adding a new one, abstract on the second real
+use, not the first, and keep one source of truth per rule, which everything
+else reads. The `review-change` skill's design review checks this.
+
 ## Work in several parts
 
 When a task has parts that could proceed in parallel — several pull requests,
