@@ -377,6 +377,82 @@ func TestSigning(t *testing.T) {
 	}
 }
 
+// TestShellEdits covers shell commands that write a tracked file, which go
+// through the file-editing tools instead, and the scratch, ignored and
+// untracked files they may write.
+func TestShellEdits(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	work := filepath.Join(root, "work")
+	scratch := filepath.Join(root, "scratch")
+	outside := filepath.Join(root, "outside")
+	scratchRepo := filepath.Join(scratch, "repo")
+	for _, d := range []string{filepath.Join(work, "sub"), filepath.Join(work, "build"), outside, scratchRepo} {
+		os.MkdirAll(d, 0o755)
+	}
+	files := map[string]string{"a.go": "a\n", "sub/b.go": "b\n", ".gitignore": "build/\nvendored.txt\n", "vendored.txt": "v\n",
+		"new.txt": "n\n", "build/out.log": "o\n"}
+	for name, content := range files {
+		os.WriteFile(filepath.Join(work, name), []byte(content), 0o644)
+	}
+	os.WriteFile(filepath.Join(outside, "f"), []byte("f\n"), 0o644)
+	os.WriteFile(filepath.Join(scratchRepo, "a"), []byte("a\n"), 0o644)
+	gitIn(t, work, "init", "-q", "-b", "main")
+	gitIn(t, work, "add", "a.go", "sub/b.go", ".gitignore")
+	gitIn(t, work, "add", "-f", "vendored.txt")
+	gitIn(t, work, "commit", "-q", "-m", "base")
+	gitIn(t, scratchRepo, "init", "-q", "-b", "main")
+	gitIn(t, scratchRepo, "add", "a")
+	gitIn(t, scratchRepo, "commit", "-q", "-m", "base")
+	old := scratchRoots
+	scratchRoots = func() []string { return []string{scratch} }
+	t.Cleanup(func() { scratchRoots = old })
+
+	cases := []struct {
+		deny    bool
+		command string
+	}{
+		{true, "echo x > a.go"},
+		{true, "echo x >> a.go"},
+		{true, "printf x >a.go"},
+		{true, "go run gen.go 2> a.go"},
+		{true, "cat > a.go <<'EOF'\npackage a\nEOF"},
+		{true, "sed -i '' s/a/b/ a.go"},
+		{true, "sed -i.bak -e s/a/b/ a.go"},
+		{true, "sed --in-place s/a/b/ sub/b.go"},
+		{true, "perl -pi -e 's/a/b/' a.go"},
+		{true, "tee a.go < x"},
+		{true, "echo x | tee -a sub/b.go"},
+		{true, "ed -s a.go < cmds"},
+		{true, "cd sub && echo x > b.go"},
+		{true, "cd " + outside + " && echo x > " + work + "/a.go"},
+		{false, "echo x > new.txt"},
+		{false, "echo x > build/out.log"},
+		{false, "echo x > vendored.txt"},
+		{false, "go test ./... > " + scratch + "/out.txt"},
+		{false, "agent-plan goal PLAN > " + scratch + "/goal.md"},
+		{false, "echo x > " + scratchRepo + "/a"},
+		{false, "echo x > /dev/null"},
+		{false, "echo x >&2"},
+		{false, "echo x > $F"},
+		{false, "sed -n 1p a.go"},
+		{false, "sed -i '' s/a/b/ " + outside + "/f"},
+		{false, "sed s/a/b/ a.go > " + scratch + "/a.go"},
+		{false, "perl -ne 'print' a.go"},
+		{false, "cat a.go | tee " + scratch + "/copy"},
+		{false, "echo x > " + outside + "/f"},
+		{false, "cd $SOMEWHERE && echo x > a.go"},
+	}
+	for _, c := range cases {
+		reason := judge(t, work, c.command)
+		if (reason != "") != c.deny {
+			t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
+		}
+		if reason != "" && !saysInstead(reason) {
+			t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+		}
+	}
+}
+
 // TestKill covers kill by process ID, which the guard looks up with ps.
 func TestKill(t *testing.T) {
 	// The protected process is a copy of this test binary named mcp-proxy,
