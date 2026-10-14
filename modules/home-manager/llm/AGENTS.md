@@ -102,6 +102,13 @@ state came about.
   function, the workflow step. Collected lists of gotchas drift out of sync and
   duplicate what is already written at the point of use. A central document should
   hold only what has no such home.
+- **Keep contracts true.** A change that makes a doc comment, an option
+  description, a skill or a README untrue corrects it in the same commit. A
+  stale contract misleads more than a missing one.
+- **Write plainly.** One term per concept, reused exactly; code is named by its
+  exact identifier. No filler or hype: leverage, robust, seamless, powerful,
+  simply, just, easily. Prefer the active voice, and state the condition before
+  the action: "if the cache is stale, rebuild it".
 
 ## Verify before asserting
 
