@@ -29,7 +29,7 @@ with lib; let
     cp ${pkgs.writeText "hooks.json" (builtins.toJSON {
       hooks.PreToolUse = [
         {
-          matcher = "Bash|mcp__.*";
+          matcher = "Bash|Monitor|mcp__.*";
           hooks = [
             {
               type = "command";
@@ -367,9 +367,11 @@ in {
             ];
           }
           # Holds every session to the baseline: what is Wesley's to do,
-          # and the `reviewer` and `pr-owner` agents to their roles.
+          # and the `reviewer` and `pr-owner` agents to their roles. Every
+          # tool that runs a command or writes a file belongs here: Monitor
+          # runs a shell command as Bash does.
           {
-            matcher = "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*";
+            matcher = "Bash|Monitor|Edit|Write|MultiEdit|NotebookEdit|mcp__.*";
             hooks = [
               {
                 type = "command";

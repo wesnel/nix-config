@@ -813,3 +813,34 @@ func TestConnectors(t *testing.T) {
 		})
 	}
 }
+
+// TestMonitor covers Claude Code's Monitor, whose command runs in the shell
+// as Bash's does.
+func TestMonitor(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		input string
+		deny  bool
+	}{
+		{"a push", `{"command":"git push origin x","description":"d"}`, true},
+		{"a merge in a shell", `{"command":"bash -c 'gh pr merge 1'","description":"d"}`, true},
+		{"a credential", `{"command":"tail -f ~/.ssh/id_ed25519","description":"d"}`, true},
+		{"a log", `{"command":"tail -f build.log | grep --line-buffered ERROR","description":"d"}`, false},
+	} {
+		t.Run(caseName(c.deny, c.name), func(t *testing.T) {
+			event := `{"tool_name":"Monitor","cwd":"/","tool_input":` + c.input + `}`
+			var out bytes.Buffer
+			Main([]string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
+			if denied := strings.Contains(out.String(), `"permissionDecision":"deny"`); denied != c.deny {
+				t.Errorf("%s: deny=%v, printed %s", event, denied, out.String())
+			}
+			var decision struct {
+				HookSpecificOutput struct{ PermissionDecisionReason string }
+			}
+			json.Unmarshal(out.Bytes(), &decision)
+			if reason := decision.HookSpecificOutput.PermissionDecisionReason; reason != "" && !saysInstead(reason) {
+				t.Errorf("%s: reason %q does not say what to do instead", event, reason)
+			}
+		})
+	}
+}

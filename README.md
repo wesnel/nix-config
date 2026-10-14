@@ -430,8 +430,8 @@ with your credentials, but has the guard in every session.
 `pr-loop guard --baseline` runs before every tool call of every session:
 
 - Claude Code: a `PreToolUse` hook in `~/.claude/settings.json` for the shell,
-  the file tools and MCP tools. `Read` is denied the credential files through
-  `permissions.deny` instead.
+  Monitor, the file tools and MCP tools. `Read` is denied the credential files
+  through `permissions.deny` instead.
 - Codex: `~/.codex/hooks.json`, for every tool. Codex skips a hook until it
   is trusted, so trust it with `/hooks` once after the first switch.
 - ECA: a `preToolCall` hook, `guard-baseline`, merged into

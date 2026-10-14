@@ -186,6 +186,13 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 		}
 		json.Unmarshal(toolInput, &args)
 		return command(args.Command, 0, who, dir)
+	case tool == "Monitor":
+		// Claude Code's Monitor runs a command as Bash does.
+		var args struct {
+			Command string `json:"command"`
+		}
+		json.Unmarshal(toolInput, &args)
+		return command(args.Command, 0, who, dir)
 	case tool == "Edit" || tool == "Write" || tool == "MultiEdit" || tool == "NotebookEdit" || tool == "apply_patch",
 		server == "eca" && (tool == "write_file" || tool == "edit_file" || tool == "move_file"):
 		return checkFileTool(tool, toolInput, dir)
