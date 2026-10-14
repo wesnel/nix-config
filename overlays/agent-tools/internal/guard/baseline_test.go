@@ -882,6 +882,68 @@ func TestConnectors(t *testing.T) {
 	}
 }
 
+// TestSleep covers long sleeps in the foreground, which hold the session,
+// and the advice each agent gets for waiting instead.
+func TestSleep(t *testing.T) {
+	// Each agent's hook event for a shell command, %s its tool_input's
+	// fields.
+	const (
+		claude = `{"tool_name":"Bash","tool_input":{%s}}`
+		codex  = `{"tool_name":"exec_command","turn_id":"t","tool_input":{%s}}`
+		eca    = `{"hook_type":"preToolCall","agent":"code","tool_name":"shell_command","tool_input":{%s}}`
+	)
+	cmd := func(command string) string {
+		data, _ := json.Marshal(command)
+		return `"command":` + string(data)
+	}
+	for _, c := range []struct {
+		name, event, input string
+		advice             string // a phrase the denial must have, "" to allow
+	}{
+		{"half a minute", claude, cmd("sleep 30"), "run_in_background"},
+		{"a minute by suffix", claude, cmd("sleep 1m"), "run_in_background"},
+		{"a fraction of a minute", claude, cmd("sleep 0.5m"), "run_in_background"},
+		{"arguments that add up", claude, cmd("sleep 20 10"), "run_in_background"},
+		{"forever", claude, cmd("sleep infinity"), "run_in_background"},
+		{"in a chain", claude, cmd("make && sleep 60 && make check"), "run_in_background"},
+		{"inside bash -c", claude, cmd("bash -c 'sleep 45; ls'"), "run_in_background"},
+		{"under timeout", claude, cmd("timeout 100 sleep 90"), "run_in_background"},
+		{"in a loop", claude, cmd("for i in 1 2; do sleep 30; done"), "run_in_background"},
+		{"from Codex", codex, cmd("sleep 60"), "until"},
+		{"from ECA", eca, cmd("sleep 60"), "until"},
+		{"under half a minute", claude, cmd("sleep 29"), ""},
+		{"a short poll", claude, cmd("until test -f done; do sleep 5; done"), ""},
+		{"backgrounded", claude, cmd("sleep 60 &"), ""},
+		{"backgrounded with its output redirected", claude, cmd("nohup sleep 60 > /dev/null 2>&1 &"), ""},
+		{"a backgrounded subshell", claude, cmd("(sleep 60; touch done) &"), ""},
+		{"a backgrounded shell", claude, cmd("bash -c 'sleep 60' &"), ""},
+		{"a length the shell picks", claude, cmd("sleep $N"), ""},
+		{"run in the background", claude, cmd("sleep 60") + `,"run_in_background":true`, ""},
+		{"an ECA background job", eca, cmd("sleep 60") + `,"background":"waiter"`, ""},
+		{"a Monitor", `{"tool_name":"Monitor","tool_input":{%s}}`, cmd("while true; do date; sleep 60; done"), ""},
+	} {
+		t.Run(caseName(c.advice != "", c.name), func(t *testing.T) {
+			event := strings.Replace(c.event, "%s", c.input, 1)
+			var out bytes.Buffer
+			Main([]string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
+			var decision struct {
+				HookSpecificOutput struct{ PermissionDecisionReason string }
+				AdditionalContext  string
+			}
+			json.Unmarshal(out.Bytes(), &decision)
+			reason := decision.HookSpecificOutput.PermissionDecisionReason + decision.AdditionalContext
+			switch {
+			case c.advice == "" && out.Len() != 0:
+				t.Errorf("%s: printed %s", event, out.String())
+			case c.advice != "" && !strings.Contains(reason, c.advice):
+				t.Errorf("%s: reason %q does not have %q", event, reason, c.advice)
+			case reason != "" && !saysInstead(reason):
+				t.Errorf("%s: reason %q does not say what to do instead", event, reason)
+			}
+		})
+	}
+}
+
 // TestMonitor covers Claude Code's Monitor, whose command runs in the shell
 // as Bash's does.
 func TestMonitor(t *testing.T) {

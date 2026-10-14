@@ -597,6 +597,45 @@ func checkNgrokEnv(c call) string {
 	return ""
 }
 
+const (
+	// sleeping is for Codex and ECA, which can only wait in the
+	// foreground.
+	sleeping = "A sleep of 30 seconds or more in the foreground holds the session while nothing happens. " +
+		"Wait with a command that polls for the condition and exits when it holds, such as `until CHECK; do sleep 5; done`."
+	// sleepingClaude is sleeping for Claude Code, which runs a command in
+	// the background and tells the session when it ends.
+	sleepingClaude = "A sleep of 30 seconds or more in the foreground holds the session while nothing happens. " +
+		"Run the wait with `run_in_background` and a command that exits when the condition holds, such as `until CHECK; do sleep 5; done`, or watch for it with Monitor."
+)
+
+// longSleep reports whether a call is a sleep of 30 seconds or more, by
+// the arguments GNU sleep adds up: numbers with an optional s, m, h or d,
+// and infinity. One the shell expands, or sleep would refuse, counts as
+// shorter.
+func longSleep(c call) bool {
+	if len(c.words) < 2 || base(c.words[0]) != "sleep" {
+		return false
+	}
+	units := map[string]float64{"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
+	total := 0.0
+	for i, a := range c.words[1:] {
+		if c.expands[i+1] {
+			return false
+		}
+		if strings.EqualFold(a, "infinity") || strings.EqualFold(a, "inf") {
+			return true
+		}
+		number := strings.TrimRight(a, "smhd")
+		n, err := strconv.ParseFloat(number, 64)
+		unit, known := units[a[len(number):]]
+		if err != nil || !known {
+			return false
+		}
+		total += n * unit
+	}
+	return total >= 30
+}
+
 // nixEnvWrite is nix-env's short options that change a profile.
 var nixEnvWrite = regexp.MustCompile(`^-[ieuG]`)
 
