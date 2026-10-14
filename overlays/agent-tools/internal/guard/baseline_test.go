@@ -852,6 +852,45 @@ func TestCredentialPaths(t *testing.T) {
 	}
 }
 
+// TestCodexShellTools covers Codex's other ways to run a command:
+// local_shell, which takes the command's argv, and write_stdin, which types
+// into a session exec_command started.
+func TestCodexShellTools(t *testing.T) {
+	for _, c := range []struct {
+		name, tool, input string
+		deny              bool
+	}{
+		{"local_shell running a merge through a shell", "local_shell", `{"command":["bash","-lc","gh pr merge 1"]}`, true},
+		{"local_shell pushing", "local_shell", `{"command":["git","push","origin","x"],"working_directory":"/tmp"}`, true},
+		{"local_shell listing", "local_shell", `{"command":["ls","-la"]}`, false},
+		{"local_shell with an argument holding quotes", "local_shell", `{"command":["echo","it's \"fine\""]}`, false},
+		{"write_stdin typing a push", "write_stdin", `{"session_id":59084,"chars":"git push origin x\n"}`, true},
+		{"write_stdin typing a credential read", "write_stdin", `{"session_id":1,"chars":"cat ~/.ssh/id_ed25519\n"}`, true},
+		{"write_stdin typing text", "write_stdin", `{"session_id":1,"chars":"hello from stdin\n"}`, false},
+		{"write_stdin polling", "write_stdin", `{"session_id":1,"chars":""}`, false},
+	} {
+		t.Run(caseName(c.deny, c.name), func(t *testing.T) {
+			event := `{"tool_name":"` + c.tool + `","turn_id":"t","cwd":"/","tool_input":` + c.input + `}`
+			var out bytes.Buffer
+			Main([]string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
+			if denied := strings.Contains(out.String(), `"permissionDecision":"deny"`); denied != c.deny {
+				t.Errorf("%s: deny=%v, printed %s", event, denied, out.String())
+			}
+			var decision struct {
+				HookSpecificOutput struct{ PermissionDecisionReason string }
+			}
+			json.Unmarshal(out.Bytes(), &decision)
+			reason := decision.HookSpecificOutput.PermissionDecisionReason
+			if reason != "" && !saysInstead(reason) {
+				t.Errorf("%s: reason %q does not say what to do instead", event, reason)
+			}
+			if c.deny && c.tool == "write_stdin" && !strings.Contains(reason, "running session") {
+				t.Errorf("%s: reason %q does not say the text goes to a running session", event, reason)
+			}
+		})
+	}
+}
+
 // TestSleep covers long sleeps in the foreground, which hold the session,
 // and the advice each agent gets for waiting instead.
 func TestSleep(t *testing.T) {
