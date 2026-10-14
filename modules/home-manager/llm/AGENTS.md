@@ -122,6 +122,11 @@ real, and confirm the fix works, before reporting either. A reviewer being wrong
 worth demonstrating politely; a reviewer being right about something subtle is
 worth acting on even when the exploit does not reproduce.
 
+A failure is no different. Reproduce it before fixing it, and show it gone
+afterwards with the same reproduction; for an intermittent one, show how often
+it fails before and after. A retry, a skip or a loosened assertion that hides a
+failure is not a fix unless Wesley asked for one.
+
 ## Tests
 
 Load the `write-tests` skill before writing, changing or reviewing tests. The
