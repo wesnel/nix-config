@@ -196,8 +196,10 @@ in {
           # path that changes with every rebuild. Codex adds these to any
           # other layer's hooks, codex-pr-loop's included.
           ".codex/hooks.json".text = builtins.toJSON {
-            # After a push to GitHub, names the `pr-loop wait ci` to start.
-            # Codex names every shell call Bash.
+            # Records commits, pushes, worktrees, branches and PRs in the
+            # plan and asks which step a commit completes; after a push to
+            # GitHub, names the `pr-loop wait ci` to start. Codex names every
+            # shell call Bash.
             hooks.PostToolUse = [
               {
                 matcher = "Bash";
@@ -205,6 +207,31 @@ in {
                   {
                     type = "command";
                     command = "pr-loop guard --post";
+                  }
+                ];
+              }
+              # wait_agent hands the coordinator a sub-agent's result: asks
+              # it to check the report and log the part. SubagentStop's
+              # output reaches only the sub-agent.
+              {
+                matcher = "wait_agent";
+                hooks = [
+                  {
+                    type = "command";
+                    command = "agent-plan remind";
+                  }
+                ];
+              }
+            ];
+            # PreCompact can add no context, so after a compaction
+            # (source "compact", which agent-plan checks) asks for the plan
+            # to be brought up to date.
+            hooks.SessionStart = [
+              {
+                hooks = [
+                  {
+                    type = "command";
+                    command = "agent-plan remind";
                   }
                 ];
               }
