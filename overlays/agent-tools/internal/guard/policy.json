@@ -86,14 +86,14 @@
     "allow": ["pr-loop threads 12", "pr-loop status", "grep -nE 'pr-loop\\s+push' SKILL.md"]
   },
   {
-    "why": "A reviewer only reads; the owner fixes and the coordinator runs the loop.",
+    "why": "A reviewer only reads; whoever started it acts on its findings.",
     "reviewerOnly": true,
-    "pattern": ".*\\bpr-loop\\s+(?!(stack|threads|status|ci|logs)\\b)\\S+.*",
-    "deny": ["pr-loop wait reviews", "pr-loop push", "pr-loop reply T --body-file -"],
-    "allow": ["pr-loop threads 12", "pr-loop logs 12 test", "pr-loop status"]
+    "pattern": ".*\\bpr-loop\\s+(?!(stack|threads|status|ci|logs|setup-command|wait\\s+ci)\\b)\\S+.*",
+    "deny": ["pr-loop wait reviews", "pr-loop push", "pr-loop reply T --body-file -", "pr-loop setup .pr-loop/12"],
+    "allow": ["pr-loop threads 12", "pr-loop logs 12 test", "pr-loop status", "pr-loop wait ci --timeout 3600", "pr-loop setup-command"]
   },
   {
-    "why": "A reviewer only reads; the owner fixes and commits.",
+    "why": "A reviewer only reads; whoever started it changes the code.",
     "reviewerOnly": true,
     "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?(commit|rebase|reset|checkout|switch|restore|merge|cherry-pick|revert|am|apply|stash|add|rm|mv|clean|tag|update-ref|notes|worktree\\s+(?!list\\b))\\b.*",
     "deny": ["git commit --fixup=abc", "git -C .pr-loop/12 rebase --onto a b c", "git checkout main", "git stash push -u", "git worktree add ../x"],

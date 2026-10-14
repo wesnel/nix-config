@@ -86,7 +86,7 @@ Anything an owner asks you, or that you need to ask an owner, goes in the
 task you give next. Ask the owner rather than reading its code yourself
 when you need to know where something belongs.
 
-A `pr-reviewer` sub-agent reviews a PR's fixups before they are pushed. Start
+A `reviewer` sub-agent reviews a PR's fixups before they are pushed. Start
 a new one for every review, never continue one, and give it nothing of the
 owner's report: its use is that it did not write the fix. It only reads, and
 keeps no notes.
@@ -146,8 +146,9 @@ old parent tips.
    review item or CI failure, run the relevant tests and linters, and report
    commit SHAs and a draft reply per thread.
 6. **Review**, once per round. For each PR with new fixups, start a
-   `pr-reviewer` naming the PR, branch, worktree, round, the fixups' SHAs and
-   the notes file. Give each finding to the PR's owner, which fixes it in a
+   `reviewer` with the range from the branch's tip at round start to the
+   branch, the worktree to read it in, the scope statement as its goal
+   statement, and the threads and checks the fixups answer as its items. Give each finding to the PR's owner, which fixes it in a
    further fixup for the same review item or rebuts it with evidence. Judge a
    rebuttal as you would a decline. The owner's answers are not reviewed
    again this round; a finding still standing goes out with the push and into

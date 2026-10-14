@@ -60,7 +60,8 @@ authenticated user in the same repository.
   sign [--resume] [--no-push] squash the loop's fixups, sign with the hardware key, and
                               push the stack over SSH (outside a loop, use git sign-pass)
   end [--prune]               delete trigger comments and loop state
-  guard                       PreToolUse hook for Claude Code and ECA (reads stdin)
+  guard [--only ROLE]         PreToolUse hook for Claude Code and ECA (reads stdin); with
+                              --only reviewer or pr-owner, judges only that agent's calls
 
 reply and resolve take a thread on an open PR by the authenticated user in
 this repository, people's threads included, and need no begin. In a loop
@@ -227,7 +228,7 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 	flags.Var(&bots, "bot", "")
 	flags.Var(&accepted, "accept-failure", "")
 	if command == "guard" {
-		return guard.Main(stdin, stdout)
+		return guard.Main(args, stdin, stdout, stderr)
 	}
 	if code, ok := cli.Parse(flags, interleave(args), usage, stdout, stderr); !ok {
 		return code

@@ -1,0 +1,34 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["findings", "unverified"],
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "path", "line", "endLine", "kind", "claim", "evidence", "about", "reopens"],
+        "properties": {
+          "id": {"type": "string", "description": "Unique within this review."},
+          "path": {"type": "string", "description": "A file in the tree at TIP, relative to the top of the repository."},
+          "line": {"type": "integer", "description": "A line of that file at TIP, from 1."},
+          "endLine": {"type": ["integer", "null"], "description": "The last line of a span, or null."},
+          "kind": {
+            "type": "string",
+            "enum": ["goal-unmet", "bug", "regression", "unresolved", "out-of-scope", "untested", "untrue-doc"]
+          },
+          "claim": {"type": "string", "description": "The problem, in one sentence."},
+          "evidence": {"type": "string", "description": "What shows it: a failing test and its output, a call site, a thread."},
+          "about": {"type": ["string", "null"], "description": "The ID of the item the finding concerns, or null."},
+          "reopens": {"type": ["string", "null"], "description": "The ID of the earlier finding it reopens, or null."}
+        }
+      }
+    },
+    "unverified": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Each check that could not be made, and why."
+    }
+  }
+}

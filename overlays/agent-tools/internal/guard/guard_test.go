@@ -3,6 +3,7 @@ package guard
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -200,7 +201,7 @@ func TestGraphQLQuerySources(t *testing.T) {
 		event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "cwd": workspace,
 			"tool_input": map[string]string{"command": "gh api graphql -F query=@" + file}})
 		var out bytes.Buffer
-		Main(bytes.NewReader(event), &out)
+		Main(nil, bytes.NewReader(event), &out, io.Discard)
 		if (out.Len() != 0) != deny {
 			t.Errorf("%s from the event's cwd: deny=%v, output %s", file, !deny, out.String())
 		}
@@ -268,45 +269,70 @@ func TestPolicy(t *testing.T) {
 	}
 }
 
+// TestOnlyReviewer covers the hook every ordinary session runs, which acts
+// only on the reviewer agent.
+func TestOnlyReviewer(t *testing.T) {
+	for _, c := range []struct {
+		deny      bool
+		agentType string
+		command   string
+	}{
+		{true, "reviewer", "git commit -m x"},
+		{true, "some-plugin:reviewer", "git stash"},
+		{true, "reviewer", "gh pr comment 1 -b hi"},
+		{true, "reviewer", "pr-loop setup"},
+		{false, "reviewer", "git log --oneline"},
+		{false, "reviewer", "pr-loop wait ci --timeout 3600"},
+		{false, "reviewer", "pr-loop setup-command"},
+		{false, "", "git push origin x"},
+		{false, "pr-loop:pr-owner", "pr-loop push"},
+		{false, "Explore", "git commit -m x"},
+	} {
+		event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "agent_type": c.agentType,
+			"tool_input": map[string]string{"command": c.command}})
+		var out, errs bytes.Buffer
+		if code := Main([]string{"--only", "reviewer"}, bytes.NewReader(event), &out, &errs); code != 0 {
+			t.Errorf("%s %q: exit %d: %s", c.agentType, c.command, code, errs.String())
+		}
+		if denied := strings.Contains(out.String(), `"permissionDecision":"deny"`); denied != c.deny {
+			t.Errorf("%s %q: deny=%v, output %s", c.agentType, c.command, denied, out.String())
+		}
+	}
+	var out, errs bytes.Buffer
+	if code := Main([]string{"--only", "nobody"}, strings.NewReader(`{"tool_name":"Bash"}`), &out, &errs); code == 0 {
+		t.Errorf("an unknown role was accepted: %s", out.String())
+	}
+}
+
+// TestReviewerReasons holds every denial a reviewer meets to the one thing
+// it should do instead, wherever the rule it broke comes from.
+func TestReviewerReasons(t *testing.T) {
+	for _, command := range []string{"git push origin x", "git commit -m x", "gh pr comment 1 -b hi",
+		"git sign-pass", "pr-loop reply T --body-file -"} {
+		input, _ := json.Marshal(map[string]string{"command": command})
+		if reason := CheckReviewer("Bash", "", input); !strings.HasPrefix(reason, "A reviewer only reads.") || !saysInstead(reason) {
+			t.Errorf("%q: %q", command, reason)
+		}
+	}
+}
+
 func TestFormats(t *testing.T) {
-	var out bytes.Buffer
-	Main(strings.NewReader(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push"}}`), &out)
-	if !strings.Contains(out.String(), `"permissionDecision":"deny"`) {
-		t.Errorf("Claude Code format: %s", out.String())
-	}
-	out.Reset()
-	Main(strings.NewReader(`{"hook_type":"preToolCall","server":"eca","tool_name":"shell_command","tool_input":{"command":"git push"}}`), &out)
-	if !strings.Contains(out.String(), `"approval":"deny"`) {
-		t.Errorf("ECA format: %s", out.String())
-	}
-	out.Reset()
-	Main(strings.NewReader(`{"hook_type":"preToolCall","server":"linear","tool_name":"save_issue","tool_input":{}}`), &out)
-	if !strings.Contains(out.String(), `"approval":"deny"`) {
-		t.Errorf("ECA MCP tool: %s", out.String())
-	}
-	out.Reset()
-	Main(strings.NewReader(`{"tool_name":"Bash","agent_type":"pr-loop:pr-owner","tool_input":{"command":"pr-loop push"}}`), &out)
-	if !strings.Contains(out.String(), `"permissionDecision":"deny"`) {
-		t.Errorf("Claude Code owner: %s", out.String())
-	}
-	out.Reset()
-	Main(strings.NewReader(`{"tool_name":"Bash","agent_type":"pr-loop:pr-reviewer","tool_input":{"command":"git commit --fixup=abc"}}`), &out)
-	if !strings.Contains(out.String(), `"permissionDecision":"deny"`) {
-		t.Errorf("Claude Code reviewer: %s", out.String())
-	}
-	out.Reset()
-	Main(strings.NewReader(`{"tool_name":"Bash","agent_type":"pr-loop:pr-owner","tool_input":{"command":"git commit --fixup=abc"}}`), &out)
-	if out.Len() != 0 {
-		t.Errorf("owner's fixup printed %s", out.String())
-	}
-	out.Reset()
-	Main(strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"pr-loop push"}}`), &out)
-	if out.Len() != 0 {
-		t.Errorf("coordinator's push printed %s", out.String())
-	}
-	out.Reset()
-	Main(strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"ls"}}`), &out)
-	if out.Len() != 0 {
-		t.Errorf("allowed call printed %s", out.String())
+	for _, c := range []struct {
+		event, want string
+	}{
+		{`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
+		{`{"hook_type":"preToolCall","server":"eca","tool_name":"shell_command","tool_input":{"command":"git push"}}`, `"approval":"deny"`},
+		{`{"hook_type":"preToolCall","server":"linear","tool_name":"save_issue","tool_input":{}}`, `"approval":"deny"`},
+		{`{"tool_name":"Bash","agent_type":"pr-loop:pr-owner","tool_input":{"command":"pr-loop push"}}`, `"permissionDecision":"deny"`},
+		{`{"tool_name":"Bash","agent_type":"reviewer","tool_input":{"command":"git commit --fixup=abc"}}`, `"permissionDecision":"deny"`},
+		{`{"tool_name":"Bash","agent_type":"pr-loop:pr-owner","tool_input":{"command":"git commit --fixup=abc"}}`, ""},
+		{`{"tool_name":"Bash","tool_input":{"command":"pr-loop push"}}`, ""},
+		{`{"tool_name":"Bash","tool_input":{"command":"ls"}}`, ""},
+	} {
+		var out bytes.Buffer
+		Main(nil, strings.NewReader(c.event), &out, io.Discard)
+		if (c.want == "" && out.Len() != 0) || !strings.Contains(out.String(), c.want) {
+			t.Errorf("%s: printed %s", c.event, out.String())
+		}
 	}
 }

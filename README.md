@@ -112,7 +112,7 @@ next switch.
 
 | File | Keys set on every switch |
 | --- | --- |
-| `~/.claude/settings.json` | `wgn.home.claude.settings`: attribution off, and the ngrok hook (a hook list here replaces the file's own) |
+| `~/.claude/settings.json` | `wgn.home.claude.settings`: attribution off, and the ngrok and reviewer hooks (a hook list here replaces the file's own) |
 | `~/.claude.json` | `mcpServers` entries for the MCP proxy |
 | `~/.codex/config.toml` | `[mcp_servers.*]` tables for the MCP proxy |
 | `~/.config/eca/config.json` | `mcpServers` entries for the MCP proxy |
@@ -297,7 +297,9 @@ Linear, which the report proposes instead.
   not go on to say what to do instead.
 
 An ordinary session of any agent runs with none of this, and with your
-credentials.
+credentials, except that the `reviewer` agent is held to the reviewer's
+rules everywhere: in Claude Code by `pr-loop guard --only reviewer` in
+`~/.claude/settings.json`, and in ECA by its deny patterns.
 
 ## MCP servers
 
