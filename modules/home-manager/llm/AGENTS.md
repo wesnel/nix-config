@@ -47,6 +47,13 @@ create, amend or rewrite commits.
   `resolve` do this for review bots' threads, and `pr-loop reply --from FILE`
   answers many threads at once; `pr-loop --help` has the file format.
 
+## Work in several parts
+
+When a task has parts that could proceed in parallel — several pull requests,
+a stack, review threads across PRs, a list of feedback items — coordinate
+sub-agents as the `coordinate-subagents` skill says: one part per sub-agent,
+each on its own branch in its own worktree, with you checking every report.
+
 ## Know which branch you are on
 
 Confirm the checked-out branch immediately before starting an edit, not once at
