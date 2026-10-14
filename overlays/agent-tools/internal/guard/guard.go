@@ -1,8 +1,9 @@
-// Package guard is a PreToolUse hook for a review-loop session in Claude Code
-// or ECA. It denies the ways an agent could write to GitHub or Linear other
-// than through pr-loop, which enforces the loop's policy. Run with
-// `--only reviewer` in every Claude Code session, it keeps the reviewer agent
-// to reading there too.
+// Package guard is a PreToolUse hook for Claude Code, Codex and ECA. With
+// `--baseline`, in every session, it denies what is Wesley's to do: publishing,
+// merging, GitHub's settings and credentials. In a review-loop session it
+// also denies the ways an agent could write to GitHub or Linear other than
+// through pr-loop, which enforces the loop's policy, and keeps the loop's
+// pr-owner and reviewer agents to their roles.
 //
 // It inspects commands as the agent typed them, so it catches a forgotten rule
 // but not a command built at run time. In a sandbox without credentials the
@@ -19,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -54,35 +56,41 @@ type input struct {
 type role int
 
 const (
-	coordinator role = iota
-	owner            // pr-owner: also denied the steps the coordinator alone takes
-	reviewer         // reviewer: also denied every change to the repository or GitHub
+	baseline    role = iota // every session: denied what is Wesley's to do
+	coordinator             // a review loop's coordinator: also kept to pr-loop
+	owner                   // pr-owner: also denied the steps the coordinator alone takes
+	reviewer                // reviewer: also denied every change to the repository or GitHub
 )
 
 // roleNames are the agents with a role of their own, by agent name.
 var roleNames = map[string]role{"pr-owner": owner, "reviewer": reviewer}
 
-func roleOf(agentType string) role {
+// roleOf is the role of the agent named agentType, or fallback for an agent
+// without a role of its own.
+func roleOf(agentType string, fallback role) role {
 	for name, r := range roleNames {
 		if agentType == name || strings.HasSuffix(agentType, ":"+name) {
 			return r
 		}
 	}
-	return coordinator
+	return fallback
 }
 
 // Main reads one hook event and writes a denial in the caller's format, or
-// nothing to let the call through. With args `--only ROLE` it judges only
-// calls by that role's agent and lets every other call through, for a hook
-// that every session runs.
+// nothing to let the call through. Without args, an agent without a role of
+// its own is a loop's coordinator; with `--baseline`, for the hook every
+// session runs, it is an ordinary session. With `--only ROLE` it judges only
+// calls by that role's agent and lets every other call through.
 func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	only, restricted := role(0), false
+	fallback, only, restricted := coordinator, role(0), false
 	switch {
 	case len(args) == 0:
-	case len(args) == 2 && args[0] == "--only" && roleNames[args[1]] != coordinator:
+	case len(args) == 1 && args[0] == "--baseline":
+		fallback = baseline
+	case len(args) == 2 && args[0] == "--only" && roleNames[args[1]] > coordinator:
 		only, restricted = roleNames[args[1]], true
 	default:
-		fmt.Fprintf(stderr, "pr-loop guard: takes no arguments, or --only reviewer or --only pr-owner; got %q\n", args)
+		fmt.Fprintf(stderr, "pr-loop guard: takes no arguments, --baseline, or --only reviewer or --only pr-owner; got %q\n", args)
 		return 1
 	}
 	var in input
@@ -92,7 +100,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if in.Cwd == "" {
 		in.Cwd, _ = os.Getwd()
 	}
-	who := roleOf(in.AgentType)
+	who := roleOf(in.AgentType, fallback)
 	if restricted && who != only {
 		return 0
 	}
@@ -109,6 +117,12 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	json.NewEncoder(stdout).Encode(out)
 	return 0
+}
+
+// CheckBaseline is Check for an ordinary session.
+func CheckBaseline(tool, server string, toolInput json.RawMessage) string {
+	dir, _ := os.Getwd()
+	return check(tool, server, toolInput, baseline, dir)
 }
 
 // Check returns why a tool call by the coordinator, run in the current
@@ -151,6 +165,7 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 		}
 		json.Unmarshal(toolInput, &args)
 		return command(args.Command, 0, who, dir)
+	case who == baseline:
 	case (strings.Contains(strings.ToLower(full), "linear") || strings.Contains(strings.ToLower(full), "github")) &&
 		!readOnlyTool.MatchString(full) && who == reviewer:
 		return reviewerReport
@@ -226,7 +241,7 @@ func program(c call, who role, files string) string {
 	case name == "git":
 		return checkGit(words, who)
 	case name == "gh":
-		if reason := checkGh(words[1:], c.expands[1:], files); reason != "" && who == reviewer {
+		if reason := checkGh(words[1:], c.expands[1:], files, who); reason != "" && who == reviewer {
 			return reviewerReport
 		} else {
 			return reason
@@ -237,11 +252,95 @@ func program(c call, who role, files string) string {
 		return nestedReview
 	case name == "git-sign-pass" && who == reviewer:
 		return reviewerReport
-	case name == "git-sign-pass":
+	case name == "git-sign-pass" && who >= coordinator:
 		return signing
+	case name == "curl" || name == "wget" || name == "http" || name == "https" || name == "xh" || name == "xhs":
+		if githubAPIWrite(name, words[1:]) {
+			return githubAPI
+		}
 	}
 	return ""
 }
+
+const githubAPI = "Writes to GitHub's API go through gh or pr-loop, which the guard can check. Use `pr-loop` or a `gh` command, or put the call in your report for Wesley."
+
+// githubAPIWrite reports whether an HTTP client's arguments send something
+// to GitHub's API or upload host.
+func githubAPIWrite(name string, args []string) bool {
+	github := false
+	for _, a := range args {
+		github = github || strings.Contains(a, "api.github.com") || strings.Contains(a, "uploads.github.com")
+	}
+	if !github {
+		return false
+	}
+	read := func(method string) bool {
+		method = strings.ToUpper(method)
+		return method == "GET" || method == "HEAD" || method == "OPTIONS"
+	}
+	switch name {
+	case "curl":
+		for i, a := range args {
+			switch {
+			case a == "-X" || a == "--request":
+				if i+1 < len(args) && !read(args[i+1]) {
+					return true
+				}
+			case strings.HasPrefix(a, "--request="):
+				if !read(strings.TrimPrefix(a, "--request=")) {
+					return true
+				}
+			case strings.HasPrefix(a, "-X"):
+				if !read(a[2:]) {
+					return true
+				}
+			case strings.HasPrefix(a, "--data"), strings.HasPrefix(a, "--form"), strings.HasPrefix(a, "--json"),
+				strings.HasPrefix(a, "--upload-file"), strings.HasPrefix(a, "-d"), strings.HasPrefix(a, "-F"),
+				strings.HasPrefix(a, "-T"):
+				return true
+			}
+		}
+	case "wget":
+		for i, a := range args {
+			switch {
+			case strings.HasPrefix(a, "--post-"), strings.HasPrefix(a, "--body-"):
+				return true
+			case a == "--method":
+				if i+1 < len(args) && !read(args[i+1]) {
+					return true
+				}
+			case strings.HasPrefix(a, "--method="):
+				if !read(strings.TrimPrefix(a, "--method=")) {
+					return true
+				}
+			}
+		}
+	default: // httpie and xh: [METHOD] URL [ITEM...]
+		positional := 0
+		for _, a := range args {
+			if strings.HasPrefix(a, "-") {
+				continue
+			}
+			positional++
+			if positional == 1 && httpMethod.MatchString(a) {
+				if !read(a) {
+					return true
+				}
+				continue
+			}
+			// A data or file item; `==` is a query parameter.
+			if dataItem.MatchString(a) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+var (
+	httpMethod = regexp.MustCompile(`^[A-Za-z]+$`)
+	dataItem   = regexp.MustCompile(`^[^=:@/]+(:=@?|=@?|@)([^=]|$)`)
+)
 
 // configKey matches each key in GIT_CONFIG_PARAMETERS, whose entries are
 // 'key=value' or 'key'='value'.
@@ -263,13 +362,21 @@ func checkEnv(env []string) string {
 			if reason := checkConfigKey(value); reason != "" {
 				return reason
 			}
+		case name == "GIT_SSH" || name == "GIT_SSH_COMMAND" || name == "GIT_ASKPASS":
+			return transport
 		}
 	}
 	return ""
 }
 
+// transportKeys are the git config keys that choose credentials or where
+// and how git connects.
+var transportKeys = regexp.MustCompile(`^(credential(\..*)?|http\..*extraheader|url\..*\.(push)?insteadof|core\.sshcommand)$`)
+
+const transport = "Credentials and the transport git uses are Wesley's configuration. Leave them as they are, and put the change you need in your report for Wesley."
+
 // checkConfigKey checks a key set for one git command, by `-c`,
-// `--config-env` or the environment.
+// `--config-env` or the environment, or written with `git config`.
 func checkConfigKey(key string) string {
 	key = strings.ToLower(key)
 	switch {
@@ -277,6 +384,8 @@ func checkConfigKey(key string) string {
 		return alias
 	case strings.HasPrefix(key, "push-guard."):
 		return pushGuard
+	case transportKeys.MatchString(key):
+		return transport
 	}
 	return ""
 }
@@ -376,12 +485,16 @@ func checkGit(words []string, who role) string {
 		}
 		return false
 	}
-	switch sub {
-	case "sign-pass":
+	switch {
+	case sub == "sign-pass" && who >= coordinator:
 		return signing
-	case "push":
+	case sub == "push" && who >= coordinator:
 		return "A review-loop session pushes only with `pr-loop push`, or `pr-loop open` for a new branch, which check the branch policy and need no key touch. The signed push at the end is `pr-loop sign`."
-	case "commit":
+	case sub == "push":
+		return "Publishing a branch is Wesley's step, signed with his key. Open a new branch as a draft PR with `pr-loop open`, or end your report with `git sign-pass --push` for Wesley to run."
+	case sub == "remote" && len(rest) > 0 && (rest[0] == "add" || rest[0] == "set-url"):
+		return remotes
+	case sub == "commit" && who >= coordinator:
 		switch {
 		case has("--no-verify", "-n"):
 			return "Repository hooks stay on in the review loop. Fix what they report and commit again with `git commit --fixup=<commit>`."
@@ -390,18 +503,17 @@ func checkGit(words []string, who role) string {
 		case !has("--fixup"):
 			return "Every commit in the review loop is a fixup the signing pass can squash in. Commit with `git commit --fixup=<commit>` against the PR commit it belongs to, with the review details as --trailer lines."
 		}
-	case "config":
-		reading := has("--get", "--get-all", "--get-regexp", "-l", "--list")
+	case sub == "config" && !configRead(rest):
 		for _, w := range rest {
 			key := strings.ToLower(w)
 			switch {
-			case reading:
 			case strings.HasPrefix(key, "pr-loop."):
 				return "pr-loop.* settings are Wesley's to change. Read them with `git config --get`, and put the `git config` command you propose in the report for Wesley."
-			case strings.HasPrefix(key, "push-guard."):
-				return pushGuard
-			case strings.HasPrefix(key, "alias."):
-				return alias
+			case remoteURL.MatchString(key):
+				return remotes
+			}
+			if reason := checkConfigKey(key); reason != "" {
+				return reason
 			}
 		}
 	}
@@ -417,10 +529,40 @@ func checkGit(words []string, who role) string {
 	return ""
 }
 
-// checkGh checks gh's arguments, with which of them the shell expands. It
-// reads files a GraphQL call names only inside workspace, and none when
-// workspace is "".
-func checkGh(args []string, expanded []bool, workspace string) string {
+const remotes = "Where a repository's remotes point is Wesley's configuration. Use the remotes as they are, and put the change you need in your report for Wesley."
+
+var remoteURL = regexp.MustCompile(`^remote\..*\.(push)?url$`)
+
+// configRead reports whether `git config`'s arguments only read.
+func configRead(args []string) bool {
+	if len(args) > 0 && (args[0] == "get" || args[0] == "list") {
+		return true
+	}
+	for _, a := range args {
+		switch {
+		case a == "--get" || a == "--get-all" || a == "--get-regexp" || a == "--get-urlmatch" || a == "-l" || a == "--list",
+			strings.HasPrefix(a, "--get-color"):
+			return true
+		}
+	}
+	return false
+}
+
+// checkGh checks gh's arguments, with which of them the shell expands, for
+// who: a loop's roles are kept to reading and pr-loop, and every session to
+// what is not Wesley's call. It reads files a GraphQL call names only inside
+// workspace, and none when workspace is "".
+func checkGh(args []string, expanded []bool, workspace string, who role) string {
+	if who >= coordinator {
+		if reason := checkLoopGh(args, expanded, workspace); reason != "" {
+			return reason
+		}
+	}
+	return checkBaselineGh(args, expanded, workspace)
+}
+
+// checkLoopGh keeps a loop's roles to reading GitHub.
+func checkLoopGh(args []string, expanded []bool, workspace string) string {
 	if len(args) >= 2 && ghReadOnly[args[0]+" "+args[1]] {
 		return ""
 	}
@@ -428,31 +570,164 @@ func checkGh(args []string, expanded []bool, workspace string) string {
 		return "The review loop does not read GitHub credentials, which pr-loop holds. Read GitHub with `pr-loop status`, `ci`, `logs` or `threads`."
 	}
 	if len(args) >= 1 && args[0] == "api" {
-		rest := args[1:]
-		endpoint := ""
-		for i := 0; i < len(rest); i++ {
-			if ghAPIValueFlags[rest[i]] {
-				i++
-			} else if !strings.HasPrefix(rest[i], "-") {
-				endpoint = rest[i]
-				break
-			}
-		}
-		if endpoint == "graphql" {
-			return checkGraphQL(rest, expanded[1:], workspace)
-		}
-		method, explicit, fields := apiMethod(rest)
-		if method != "GET" || (fields && !explicit) {
-			return "Only read-only `gh api` calls are allowed in the review loop. " + prLoopWrites
-		}
-		return ""
+		return checkAPI(args[1:], expanded[1:], workspace, "Only read-only `gh api` calls are allowed in the review loop. "+prLoopWrites)
 	}
 	what := strings.Join(args[:min(2, len(args))], " ")
 	return "`gh " + what + "` can change GitHub. In the review loop use pr-loop (status, ci, logs, threads, reply, resolve, request). " +
 		"Top-level PR comments, reviews, merges, PR edits and marking a PR ready are left to Wesley."
 }
 
-const graphQLMutation = "GraphQL mutations in the review loop go through pr-loop. " + prLoopWrites
+// checkAPI denies a `gh api` call that writes, with write as the reason
+// for a REST call.
+func checkAPI(args []string, expanded []bool, workspace, write string) string {
+	endpoint := ""
+	for i := 0; i < len(args); i++ {
+		if ghAPIValueFlags[args[i]] {
+			i++
+		} else if !strings.HasPrefix(args[i], "-") {
+			endpoint = args[i]
+			break
+		}
+	}
+	if endpoint == "graphql" {
+		return checkGraphQL(args, expanded, workspace)
+	}
+	method, explicit, fields := apiMethod(args)
+	if method != "GET" || (fields && !explicit) {
+		return write
+	}
+	return ""
+}
+
+// ghReads are the gh commands every session may run, by command group;
+// an empty verb stands for every command in the group, and the group alone
+// for gh's help.
+var ghReads = map[string]map[string]bool{
+	"":           set(""),
+	"pr":         set("", "view", "list", "diff", "checks", "status", "checkout"),
+	"issue":      set("", "view", "list", "status"),
+	"repo":       set("", "view", "list", "clone", "set-default"),
+	"run":        set("", "view", "list", "watch", "download"),
+	"release":    set("", "view", "list", "download"),
+	"workflow":   set("", "view", "list"),
+	"gist":       set("", "view", "list"),
+	"label":      set("", "list"),
+	"secret":     set("", "list"),
+	"variable":   set("", "list", "get"),
+	"cache":      set("", "list"),
+	"ruleset":    set("", "list", "view", "check"),
+	"extension":  set("", "list", "search", "browse"),
+	"alias":      set("", "list"),
+	"config":     set("", "get", "list"),
+	"org":        set("", "list"),
+	"auth":       set("", "status"),
+	"search":     nil,
+	"browse":     nil,
+	"status":     nil,
+	"version":    nil,
+	"help":       nil,
+	"completion": nil,
+}
+
+const (
+	ghWesleysCall = "Merging, closing, reopening or marking a PR ready is Wesley's call. Say in your report that the PR is ready for it."
+	ghComments    = "Reviews, top-level comments and issues are Wesley's to write. Reply inside a review thread with `pr-loop reply`, and put anything else in your report for Wesley."
+	ghDraft       = "A PR opens as a draft; marking it ready is Wesley's call. Open it with `pr-loop open`, or with `gh pr create --draft`."
+	ghEdit        = "Only a PR's base, title and body may change here. Use `gh pr edit` with `--base`, `--title`, `--body` or `--body-file`, and leave labels, reviewers and the rest to Wesley."
+	ghAuth        = "GitHub credentials stay with gh and pr-loop. Use `gh` or `pr-loop` commands, which hold the login, and leave gh's login to Wesley."
+	ghAPIWrite    = "Only read-only `gh api` calls are allowed. Reply in a review thread with `pr-loop reply` or `resolve`, and put any other write in your report for Wesley."
+)
+
+// ghEditFlags are the `gh pr edit` flags every session may use, with
+// whether each takes the next word as its value.
+var ghEditFlags = map[string]bool{"--base": true, "-B": true, "--title": true, "-t": true, "--body": true, "-b": true,
+	"--body-file": true, "-F": true, "--repo": true, "-R": true}
+
+// checkBaselineGh keeps every session from the GitHub changes that are
+// Wesley's to make.
+func checkBaselineGh(args []string, expanded []bool, workspace string) string {
+	var words []string
+	for i := 0; i < len(args) && len(words) < 2; i++ {
+		switch a := args[i]; {
+		case a == "-R" || a == "--repo" || a == "--hostname":
+			i++
+		case strings.HasPrefix(a, "-"):
+		default:
+			words = append(words, a)
+		}
+	}
+	group, verb := "", ""
+	if len(words) > 0 {
+		group = words[0]
+	}
+	if len(words) > 1 {
+		verb = words[1]
+	}
+	has := func(flags ...string) bool {
+		for _, a := range args {
+			for _, f := range flags {
+				if a == f || strings.HasPrefix(a, f+"=") {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	switch {
+	case group == "api":
+		at := slices.Index(args, "api")
+		return checkAPI(args[at+1:], expanded[at+1:], workspace, ghAPIWrite)
+	case group == "auth" && verb == "status" && has("-t", "--show-token"):
+		return ghAuth
+	case group == "auth" && !ghReads[group][verb]:
+		return ghAuth
+	case group == "pr" && verb == "create":
+		if has("--draft", "-d") {
+			return ""
+		}
+		return ghDraft
+	case group == "pr" && verb == "edit":
+		after := false
+		for i := 0; i < len(args); i++ {
+			a := args[i]
+			if !after {
+				after = a == "edit"
+				continue
+			}
+			if !strings.HasPrefix(a, "-") {
+				continue
+			}
+			name, _, attached := strings.Cut(a, "=")
+			value, known := ghEditFlags[name]
+			if !known {
+				return ghEdit
+			}
+			if value && !attached {
+				i++
+			}
+		}
+		return ""
+	case group == "pr" && verb == "ready":
+		if has("--undo") {
+			return ""
+		}
+		return ghWesleysCall
+	case group == "pr" && (verb == "merge" || verb == "close" || verb == "reopen"):
+		return ghWesleysCall
+	case group == "pr" && (verb == "review" || verb == "comment"), group == "issue" && !ghReads[group][verb]:
+		return ghComments
+	}
+	verbs, known := ghReads[group]
+	switch {
+	case !known:
+		return "The guard does not know `gh " + group + "`, so it cannot tell a read from a write. Use a gh command it knows, such as `gh pr view` or a GET with `gh api`, or put the command in your report for Wesley."
+	case verbs == nil || verbs[verb]:
+		return ""
+	}
+	return "`gh " + group + " " + verb + "` changes GitHub in a way that is Wesley's call. Put the command in your report for Wesley."
+}
+
+const graphQLMutation = "GraphQL mutations go through pr-loop. " + prLoopWrites
 
 const unreadableQuery = "The guard cannot read this GraphQL query, so it cannot tell a read from a mutation. " +
 	"Pass the query inline with `gh api graphql -f query='...'`, or name a file in the workspace with `-F query=@FILE` in a command of its own; " +
