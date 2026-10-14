@@ -134,7 +134,15 @@ each branch:
 - what the plan leaves undecided, against this bar: someone could build it
   without asking a question;
 - designing for change:
+  - built as we would build it from scratch, knowing what the change now
+    knows, rather than added onto the old shape;
   - one source of truth per fact or rule, which everything else reads;
+  - for each value, where it comes from and what can change it, answerable
+    in thirty seconds of reading;
+  - a wrapper with one caller, or an adapter with one implementation,
+    folded into what it wraps;
+  - a second boolean kept in step with a first, which is a state machine:
+    one type with a value per state;
   - seams named and narrow, with their contract written at the seam: the
     types, invariants, ordering, errors, configuration and cost a caller
     relies on;
