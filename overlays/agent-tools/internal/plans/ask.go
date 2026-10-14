@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -88,7 +87,7 @@ func (p Plan) Ask(o AskOptions, now time.Time) (Asked, error) {
 			prefix = o.Part + "."
 		}
 		next := 1
-		question := regexp.MustCompile(`^` + regexp.QuoteMeta(prefix) + `Q([0-9]+)$`)
+		question := idOf(prefix, "Q")
 		for id := range known {
 			if m := question.FindStringSubmatch(id); m != nil {
 				if n, _ := strconv.Atoi(m[1]); n >= next {

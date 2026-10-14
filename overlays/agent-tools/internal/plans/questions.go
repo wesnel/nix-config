@@ -27,10 +27,7 @@ type Question struct {
 	Waiting []string `json:"waiting,omitempty"`
 }
 
-var (
-	questionID = regexp.MustCompile(`^(P[0-9]+\.)?Q[0-9]+$`)
-	listItem   = regexp.MustCompile(`^[-+] (.*)$`)
-)
+var listItem = regexp.MustCompile(`^[-+] (.*)$`)
 
 // Questions are the plan's open questions, and with all its parts' too, in
 // file order, each with what it still waits for.
