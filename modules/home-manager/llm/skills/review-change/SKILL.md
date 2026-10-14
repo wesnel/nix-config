@@ -23,7 +23,8 @@ among sub-agents: a coordinator runs the same pipeline, and the
 6. **Hand back**: what the work's own instructions ask for, and
    - each finding, its outcome and its plan item ID, round by round;
    - findings still standing, with the reviewer's evidence;
-   - the design reviews' decisions for Wesley, as one list;
+   - the design reviews' open questions for Wesley and the decisions you
+     made yourself, as one list;
    - for each finding settled `fix`, what the `retro` skill proposes would
      have prevented it, written into the plan as its questions.
 
@@ -176,13 +177,13 @@ under a different constraint (the smallest interface; the commonest call
 made trivial; the most callers served; the dependency behind a port), each
 returning the interface with its contract, a call site and what it hides.
 Compare them by how much each hides and how local each likely next change
-stays, and bring the choice to Wesley with your recommendation.
+stays, and choose as the `plan-work` skill's "Questions for Wesley" says.
 
 It reports in the fresh review's vocabulary where that fits. Settle what
-the goal statement already decides by Triage. The rest are Wesley's
-decisions: bring them to him as one list, each with its options and your
-recommendation, those that change the plan before the work starts and the
-others in the hand-back.
+the goal statement already decides by Triage. Take the rest through the
+`plan-work` skill's "Questions for Wesley", which says which are his to
+answer and which are yours to decide; those that change the plan are
+settled before the work starts.
 
 ## Triage
 
