@@ -67,6 +67,14 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      pipeline has no review since the last commit; ECA gets
                      the reason on stderr with exit 2, once per chat, kept in
                      $XDG_STATE_HOME/agent-tools/stop; never touches the network
+  remind             a hook (reads stdin) that asks, in a session with a plan,
+                     for the coordinator to check a finished sub-agent's report
+                     and log its part (Claude Code's UserPromptSubmit and
+                     PostToolUse on Agent, Codex's PostToolUse on wait_agent,
+                     ECA's postToolCall on spawn_agent), and for a compaction
+                     to keep what the plan lacks (Claude Code's PreCompact) or
+                     the plan to be brought up to date after one (Codex's
+                     SessionStart, ECA's postCompact); never blocks
   tokens [--format org|json]
                      every plan's tokens by event kind, model and effort
   import-claude      Claude Code's PostToolUse hook on ExitPlanMode (reads stdin):
@@ -104,7 +112,7 @@ func clientSide(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	if args[0] == "import-claude" || args[0] == "statusline" || args[0] == "stop-check" {
+	if args[0] == "import-claude" || args[0] == "statusline" || args[0] == "stop-check" || args[0] == "remind" {
 		return true
 	}
 	if args[0] == "find" {
@@ -149,6 +157,15 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if c, err := plans.Load(); err == nil {
 			if line := c.StatusLine(readAll(stdin)); line != "" {
 				fmt.Fprintln(stdout, line)
+			}
+		}
+		return 0
+	}
+	if args[0] == "remind" {
+		// A failure asks for nothing, quietly.
+		if c, err := plans.Load(); err == nil {
+			if out := c.Remind(readAll(stdin)); len(out) > 0 {
+				stdout.Write(append(out, '\n'))
 			}
 		}
 		return 0

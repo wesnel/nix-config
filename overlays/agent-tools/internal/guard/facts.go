@@ -2,6 +2,7 @@ package guard
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -200,12 +201,13 @@ func session(chatID, sessionID string) string {
 }
 
 // recordFacts records in the matching plan what the shell call command,
-// run in cwd by session, did, by its output texts. Every failure leaves the
-// plan as it was.
-func recordFacts(session, cwd, command string, texts []string, now time.Time) {
+// run in cwd by session, did, by its output texts, and returns a line of
+// context for each commit recorded, asking which step it completes, which
+// is the agent's judgement. Every failure leaves the plan as it was.
+func recordFacts(session, cwd, command string, texts []string, now time.Time) (context []string) {
 	c, err := plans.Load()
 	if err != nil {
-		return
+		return nil
 	}
 	at := func(dir string) (plans.Plan, string, bool) {
 		top := ""
@@ -229,7 +231,10 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) {
 				if strings.ContainsAny(branch, " \t") {
 					branch = ""
 				}
-				p.Record(part, plans.Event{Kind: "committed", Branch: branch, Commit: m[3], Summary: m[3]}, now)
+				if _, err := p.Record(part, plans.Event{Kind: "committed", Branch: branch, Commit: m[3], Summary: m[3]}, now); err == nil {
+					context = append(context, fmt.Sprintf("The commit %q is logged in %s. If it completes a step, which step? "+
+						"Log `done` for it with `--commit %s`; if none, carry on.", m[3], p.File(), shellQuote(m[3])))
+				}
 			}
 			continue
 		}
@@ -286,7 +291,11 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) {
 	if branches := pushedTo(texts); len(branches) > 0 {
 		p.Record(part, plans.Event{Kind: "pushed", Summary: "pushed " + strings.Join(branches, " ")}, now)
 	}
+	return context
 }
+
+// shellQuote is s as one shell word.
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 // responseTexts are the strings of a tool's output: Claude Code's
 // {"stdout": ...}, or every string of any other JSON.

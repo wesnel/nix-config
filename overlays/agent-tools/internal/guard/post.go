@@ -40,16 +40,15 @@ func post(stdin io.Reader, stdout io.Writer) int {
 		in.Cwd, _ = os.Getwd()
 	}
 	texts := responseTexts(in.ToolResponse)
-	recordFacts(session(in.ChatID, in.SessionID), in.Cwd, args.Command, texts, time.Now())
-	if !pushes(args.Command, 0) {
+	lines := recordFacts(session(in.ChatID, in.SessionID), in.Cwd, args.Command, texts, time.Now())
+	if targets := pushedTo(texts); len(targets) > 0 && pushes(args.Command, 0) {
+		lines = append(lines, fmt.Sprintf("You just pushed to GitHub. Start `pr-loop wait ci %s` in the background now, "+
+			"and act on its result as the signing-pass skill's \"After a push\" says.", strings.Join(targets, " ")))
+	}
+	if len(lines) == 0 {
 		return 0
 	}
-	targets := pushedTo(texts)
-	if len(targets) == 0 {
-		return 0
-	}
-	context := fmt.Sprintf("You just pushed to GitHub. Start `pr-loop wait ci %s` in the background now, "+
-		"and act on its result as the signing-pass skill's \"After a push\" says.", strings.Join(targets, " "))
+	context := strings.Join(lines, "\n")
 	var out any = map[string]any{"hookSpecificOutput": map[string]string{"hookEventName": "PostToolUse", "additionalContext": context}}
 	if in.HookType != "" {
 		out = map[string]string{"additionalContext": context}
