@@ -54,6 +54,11 @@ agent-plan new --parent PLAN --part P1 --title 'Add the run loop flag' --branch 
   other answers as `- ` items. A settled one becomes a decision.
 - `** Verification`: how the change is shown to work.
 
+A question or a part that cannot start before others are settled lists
+their IDs in `:AFTER:`, separated by spaces: a question is settled once
+decided, a part or step once `done` is logged for it. Until then the
+question is not put to Wesley and the part is not ready.
+
 An ID is never reused or renumbered; a step dropped from the work keeps its
 ID and gets an `abandoned` event. Edit only your own plan file, and change
 it in the same step as what it describes: a new step, a decision, a moved
@@ -82,7 +87,8 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
 - The review pipeline's events are the `review-change` skill's.
 
 `agent-plan status PLAN` lists the steps without `done` and those done but
-not `verified`.
+not `verified`, the parts ready to start, and what still waits on an
+`:AFTER:` item.
 
 ## Finding it again
 
@@ -105,11 +111,13 @@ Every question for Wesley lives in the plan's Open questions, with your
 recommendation, and nowhere else. Never restate open questions in a
 message: when a sub-agent reports, say only what changed, add its new
 questions to the plan, and at most give their number. When Wesley asks,
-print `agent-plan questions PLAN --all` or point him to the plan. When he
-answers, record each answer with `agent-plan decide PLAN Q1 --answer
-'ANSWER'`, which moves the question under Decisions as the next `D` ID and
-logs `decided`. In Claude Code, Wesley answers them through `/questions`;
-elsewhere, print them and take his answers in the chat.
+print `agent-plan questions PLAN --all`, the questions he can answer now,
+or point him to the plan. When he answers, record each answer with
+`agent-plan decide PLAN Q1 --answer 'ANSWER'`, which moves the question
+under Decisions as the next `D` ID and logs `decided`; a decision can make
+waiting questions askable, so list them again until none are left. In
+Claude Code, Wesley answers them through `/questions`; elsewhere, print
+them and take his answers in the chat.
 
 ## Other hosts
 

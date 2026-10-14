@@ -38,10 +38,13 @@ directory and host come from "plans" in the user's agent-tools/config.json.
   goal PLAN [--part P1]
                      the goal statement, the text under "** Goal"
   status PLAN [--format org|json]
-                     steps without done, and done without verified
-  questions PLAN [--all] [--json | --count]
-                     the open questions with their recommendations; --all adds
-                     the parts'
+                     steps without done, done without verified, parts ready
+                     to start, and what still waits
+  questions PLAN [--all] [--waiting] [--json | --count]
+                     the open questions Wesley can answer now, with their
+                     recommendations; --all adds the parts', --waiting those
+                     that wait for an AFTER item: a question until decided,
+                     a part or step until logged done
   decide PLAN QID --answer TEXT
                      move open question QID to Decisions as the next decision,
                      with Wesley's answer, and log it as decided
@@ -211,6 +214,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		all      = flags.Bool("all", false, "")
 		asJSON   = flags.Bool("json", false, "")
 		count    = flags.Bool("count", false, "")
+		waiting  = flags.Bool("waiting", false, "")
 		answer   = flags.String("answer", "", "")
 		settle   = flags.Duration("settle", 0, "")
 		// Repeatable for new; log and find take one each.
@@ -328,6 +332,9 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return 2
 		}
 		qs, err := p.Questions(*all)
+		if !*waiting {
+			qs = plans.Askable(qs)
+		}
 		switch {
 		case err != nil || *asJSON:
 			return report(qs, err)
