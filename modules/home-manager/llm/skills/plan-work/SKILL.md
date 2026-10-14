@@ -94,6 +94,15 @@ Only this host's plans, the files named for it, are yours to change; another
 host's beside them are read-only here, and `agent-plan` refuses to write
 them.
 
+## Other hosts
+
+Plans reach every host through the notes repository around the plans
+directory: a watcher outside the session commits and pushes this host's
+files a few seconds after one changes, and `find`, `status` and `new` pull
+first. Never commit, push or pull there yourself; `agent-plan sync` is the
+watcher's and `agent-plan reseal` is Wesley's, and the guard denies both. A
+log refused as changed stays as it is: name it in your report.
+
 ## Claude Code's plan mode
 
 A plan approved in plan mode is written into the session's plan's Goal,
