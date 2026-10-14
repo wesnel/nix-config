@@ -47,7 +47,10 @@ agent-plan new --parent PLAN --part P1 --title 'Add the run loop flag' --branch 
   would each be a local edit.
 - `** Steps`: `*** TODO <step>` headings with `:ID: S1`, `S2`…; a part's
   are `P1.S1`, `P1.S2`… Each says what observable result marks it done,
-  which its `verified` evidence then shows.
+  which its `verified` evidence then shows. Steps that must run in order
+  go under a heading with `:ORDERED: t`, and a step that waits on another
+  item lists it in `:AFTER:`; `agent-plan status` lists the steps ready
+  now.
 - `** Distribution`, in a plan split among sub-agents: a `*** TODO <part>`
   heading per part with `:ID: P1`…, its branch, base and worktree, a link
   to its file, and its steps.
@@ -113,8 +116,8 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
 - The review pipeline's events are the `review-change` skill's.
 
 `agent-plan status PLAN` lists the steps without `done` and those done but
-not `verified`, the parts ready to start, and what still waits on an
-`:AFTER:` item.
+not `verified`, the parts ready to start, the steps ready now, what still
+waits on an `:AFTER:` item, and keyword drift.
 
 ## Finding it again
 

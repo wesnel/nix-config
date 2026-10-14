@@ -191,7 +191,10 @@ file and the plan, rather than pasting them, and gives the report a length.
 ## Running them
 
 Start independent sub-agents together, in the background, and each part as
-soon as `agent-plan status PLAN` lists it ready to start.
+soon as `agent-plan status PLAN` lists it ready to start. Steps you run
+yourself follow the same list: "Steps ready" holds the open steps that
+wait on no `:AFTER:` item, follow every earlier sibling under an
+`:ORDERED: t` parent, and are not scheduled for later.
 
 - **Claude Code:** the Agent tool with `run_in_background`. `SendMessage`
   continues an agent with its context.
