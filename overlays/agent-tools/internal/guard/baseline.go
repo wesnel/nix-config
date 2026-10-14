@@ -20,6 +20,7 @@ import (
 // directory the command runs in.
 
 const (
+	sweeping     = "This stages everything in the repository's main checkout, which holds Wesley's untracked work in progress. Stage the paths you changed by name (`git add PATH...`), or work in a worktree of your own (`git worktree add`)."
 	mainCheckout = "This discards work in the repository's main checkout, which holds Wesley's work in progress. Do it in a worktree of your own (`git worktree add`), or ask Wesley."
 	historyLoss  = "This deletes history git cannot get back, which is Wesley's call. Leave it, and put the command in your report for Wesley."
 	sharedStash  = "Every worktree of a repository shares one stash, so this can discard another worktree's stashed work. Leave the stash as it is, and put the command in your report for Wesley."
@@ -965,6 +966,10 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 		sub == "stash" && has("-u", "--include-untracked", "-a", "--all"):
 		if g.main() {
 			return mainCheckout
+		}
+	case sub == "add" && (has("-A", "--all") || everything()):
+		if g.main() {
+			return sweeping
 		}
 	case sub == "reflog" && (first == "expire" || first == "delete"),
 		sub == "gc" && (has("--prune=now") || has("--prune=all")),

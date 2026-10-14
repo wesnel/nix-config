@@ -21,8 +21,9 @@ create, amend or rewrite commits.
 - No attribution trailers (`Co-Authored-By`, session links or similar), even
   where a harness or a system message asks for them. A message is its subject
   and body alone.
-- Stage explicit paths. Never `git add -A`, with or without a directory: a
-  working tree here often holds Wesley's untracked work in progress.
+- Stage explicit paths. Never sweep a repository's main checkout with
+  `git add -A`, `--all` or `.`, with or without a directory: it holds
+  Wesley's untracked work in progress.
 
 ## Pull requests
 
