@@ -37,8 +37,9 @@
   },
   {
     "why": "GitHub writes go through pr-loop; reading is fine.",
-    "pattern": ".*\\bgh\\s+api\\b.*(\\s-X\\s|--method|\\s-f\\s|\\s-F\\s|--field|--raw-field|--input|mutation).*",
-    "deny": ["gh api -X POST repos/o/r/issues/1/comments -f body=x", "gh api repos/o/r/issues/1/comments -f body=x"],
+    "pattern": ".*\\bgh\\s+api\\b.*(\\s-[XfF]|--method|--field|--raw-field|--input|mutation).*",
+    "deny": ["gh api -X POST repos/o/r/issues/1/comments -f body=x", "gh api repos/o/r/issues/1/comments -f body=x",
+      "gh api graphql -F query=@- < q.graphql", "gh api graphql -Fquery=@q.graphql","gh api graphql --input -", "gh api graphql -f query=\"$QUERY\""],
     "allow": ["gh api repos/o/r/pulls/1/reviews --paginate"]
   },
   {

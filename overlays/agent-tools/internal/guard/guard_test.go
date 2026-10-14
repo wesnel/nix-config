@@ -126,6 +126,87 @@ func TestCheck(t *testing.T) {
 	}
 }
 
+// TestGraphQLQuerySources covers a query that is not on the command line: the
+// guard reads a plain file of the workspace, and denies what it cannot read.
+func TestGraphQLQuerySources(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	files := map[string]string{
+		"workspace/read.graphql":  "query { viewer { login } }",
+		"workspace/write.graphql": "mutation { resolveReviewThread(input: {threadId: \"T\"}) { clientMutationId } }",
+		"workspace/read.json":     `{"query": "query { viewer { login } }"}`,
+		"workspace/write.json":    `{"query": "mutation { resolveReviewThread(input: {threadId: \"T\"}) { clientMutationId } }"}`,
+		"outside.graphql":         "query { viewer { login } }",
+	}
+	for name, content := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(root, "outside.graphql"), filepath.Join(workspace, "link.graphql")); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(workspace)
+	cases := []struct {
+		deny    bool
+		command string
+	}{
+		{true, "gh api graphql -F query=@write.graphql"},
+		{true, "gh api graphql --field query=@write.graphql"},
+		{true, "gh api graphql --field=query=@write.graphql"},
+		{true, "gh api graphql -Fquery=@write.graphql"},
+		{true, "gh api graphql -f query=@write.graphql"},
+		{true, "gh api graphql --raw-field query=@write.graphql"},
+		{true, "gh api graphql --input write.json"},
+		{true, "gh api graphql --input=write.json"},
+		{true, "gh api graphql --input -"},
+		{true, "cat read.json | gh api graphql --input -"},
+		{true, "gh api graphql -F query=@- <<'EOF'\nquery { viewer { login } }\nEOF"},
+		{true, `gh api graphql -f query="$QUERY"`},
+		{true, "gh api graphql -f query=$QUERY"},
+		{true, `gh api graphql -f query="$(cat read.graphql)"`},
+		{true, "gh api graphql -F query=@missing.graphql"},
+		{true, "gh api graphql -F query=@../outside.graphql"},
+		{true, "gh api graphql -F query=@" + filepath.Join(root, "outside.graphql")},
+		{true, "gh api graphql -F query=@link.graphql"},
+		{true, "cp write.graphql read.graphql && gh api graphql -F query=@read.graphql"},
+		{true, "bash -c 'gh api graphql -F query=@read.graphql'"},
+		{true, "gh api -X GET graphql -f query='mutation { resolveReviewThread }'"},
+		{false, "gh api graphql -F query=@read.graphql"},
+		{false, "gh api graphql -F query=@" + filepath.Join(workspace, "read.graphql")},
+		{false, "gh api graphql --input read.json"},
+		{false, "gh api graphql -f query='query($n: Int!) { viewer { login } }' -F n=1"},
+		{false, "gh api graphql -F query=@read.graphql -F owner=@missing.txt"},
+		{false, "gh api -H 'Accept: application/json' graphql -f query='{ viewer { login } }'"},
+	}
+	for _, c := range cases {
+		input, _ := json.Marshal(map[string]string{"command": c.command})
+		reason := Check("Bash", "", input)
+		if (reason != "") != c.deny {
+			t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
+		}
+		if reason != "" && !saysInstead(reason) {
+			t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+		}
+	}
+
+	// The hook event's cwd, not the guard's, is where a relative file is.
+	t.Chdir(root)
+	for file, deny := range map[string]bool{"write.graphql": true, "read.graphql": false} {
+		event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "cwd": workspace,
+			"tool_input": map[string]string{"command": "gh api graphql -F query=@" + file}})
+		var out bytes.Buffer
+		Main(bytes.NewReader(event), &out)
+		if (out.Len() != 0) != deny {
+			t.Errorf("%s from the event's cwd: deny=%v, output %s", file, !deny, out.String())
+		}
+	}
+}
+
 // TestPolicy holds the guard to the examples in policy.json, which ECA's deny
 // patterns are built from and checked against at package build time, so the
 // two cannot drift apart. Owner-only rules hold only for an owner. Each

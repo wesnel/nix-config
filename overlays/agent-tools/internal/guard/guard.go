@@ -10,8 +10,11 @@ package guard
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -24,6 +27,11 @@ var (
 	ghReadOnly   = map[string]bool{"pr view": true, "pr diff": true, "pr list": true, "pr checks": true, "pr status": true,
 		"issue view": true, "issue list": true, "repo view": true, "run view": true, "run list": true, "auth status": true}
 	gitValueFlags = map[string]bool{"-c": true, "-C": true, "--git-dir": true, "--work-tree": true, "--namespace": true}
+	// ghAPIValueFlags are the `gh api` flags whose value is the next word,
+	// which is therefore not the endpoint.
+	ghAPIValueFlags = map[string]bool{"-X": true, "--method": true, "-H": true, "--header": true,
+		"-f": true, "--raw-field": true, "-F": true, "--field": true, "--input": true, "-q": true, "--jq": true,
+		"-t": true, "--template": true, "--hostname": true, "-p": true, "--preview": true, "--cache": true}
 )
 
 type input struct {
@@ -35,6 +43,9 @@ type input struct {
 	// plugin's name ("pr-loop:pr-owner"). ECA's owner carries the owner-only
 	// rules as deny patterns instead.
 	AgentType string `json:"agent_type"`
+	// The directory the command runs in, which bounds the files the guard
+	// reads. Without it, the guard's own working directory stands in.
+	Cwd string `json:"cwd"`
 }
 
 // Main reads one hook event and writes a denial in the caller's format, or
@@ -45,7 +56,10 @@ func Main(stdin io.Reader, stdout io.Writer) int {
 		return 0
 	}
 	owner := in.AgentType == "pr-owner" || strings.HasSuffix(in.AgentType, ":pr-owner")
-	reason := check(in.ToolName, in.Server, in.ToolInput, owner)
+	if in.Cwd == "" {
+		in.Cwd, _ = os.Getwd()
+	}
+	reason := check(in.ToolName, in.Server, in.ToolInput, owner, in.Cwd)
 	if reason == "" {
 		return 0
 	}
@@ -60,16 +74,18 @@ func Main(stdin io.Reader, stdout io.Writer) int {
 	return 0
 }
 
-// Check returns why a tool call by the coordinator is denied, or "" to allow
-// it.
+// Check returns why a tool call by the coordinator, run in the current
+// directory, is denied, or "" to allow it.
 func Check(tool, server string, toolInput json.RawMessage) string {
-	return check(tool, server, toolInput, false)
+	dir, _ := os.Getwd()
+	return check(tool, server, toolInput, false, dir)
 }
 
 // CheckOwner is Check for a pr-owner, which is also denied the steps the
 // coordinator alone takes.
 func CheckOwner(tool, server string, toolInput json.RawMessage) string {
-	return check(tool, server, toolInput, true)
+	dir, _ := os.Getwd()
+	return check(tool, server, toolInput, true, dir)
 }
 
 // check returns a denial's reason, which reaches the agent verbatim: a first
@@ -77,7 +93,7 @@ func CheckOwner(tool, server string, toolInput json.RawMessage) string {
 // backticks or handing the step to Wesley. A reason that only says no sends
 // the agent looking for another way through. TestCheck and TestPolicy hold
 // every reason to this.
-func check(tool, server string, toolInput json.RawMessage, owner bool) string {
+func check(tool, server string, toolInput json.RawMessage, owner bool, dir string) string {
 	full := tool
 	if server != "" {
 		full = server + "__" + tool
@@ -89,7 +105,7 @@ func check(tool, server string, toolInput json.RawMessage, owner bool) string {
 			Command string `json:"command"`
 		}
 		json.Unmarshal(toolInput, &args)
-		return command(args.Command, 0, owner)
+		return command(args.Command, 0, owner, dir)
 	case strings.Contains(strings.ToLower(full), "linear") && !readOnlyTool.MatchString(full):
 		return "The review loop does not change Linear. Put the proposed change in the final report for Wesley to approve."
 	case strings.Contains(strings.ToLower(full), "github") && !readOnlyTool.MatchString(full):
@@ -98,28 +114,40 @@ func check(tool, server string, toolInput json.RawMessage, owner bool) string {
 	return ""
 }
 
-func command(text string, depth int, owner bool) string {
+func command(text string, depth int, owner bool, dir string) string {
+	var commands [][]string
+	var expanded [][]bool
 	for _, segment := range segments(text) {
-		words := strip(tokens(segment))
-		if len(words) == 0 {
-			continue
+		all, expands := split(segment)
+		words := strip(all)
+		if len(words) > 0 {
+			commands = append(commands, words)
+			expanded = append(expanded, expands[len(all)-len(words):])
 		}
+	}
+	for n, words := range commands {
 		name := words[0][strings.LastIndex(words[0], "/")+1:]
 		var reason string
 		switch {
 		case shells[name] && depth < 3:
 			for i, w := range words {
 				if w == "-c" && i+1 < len(words) {
-					reason = command(words[i+1], depth+1, owner)
+					reason = command(words[i+1], depth+1, owner, dir)
 					break
 				}
 			}
 		case name == "eval" && depth < 3:
-			reason = command(strings.Join(words[1:], " "), depth+1, owner)
+			reason = command(strings.Join(words[1:], " "), depth+1, owner, dir)
 		case name == "git":
 			reason = checkGit(words)
 		case name == "gh":
-			reason = checkGh(words[1:])
+			// A file the call reads is what the guard sees only when nothing
+			// else on the command line can have written it first.
+			files := ""
+			if depth == 0 && len(commands) == 1 {
+				files = dir
+			}
+			reason = checkGh(words[1:], expanded[n][1:], files)
 		case name == "pr-loop":
 			reason = checkPrLoop(words[1:], owner)
 		case name == "git-sign-pass":
@@ -235,7 +263,10 @@ func checkGit(words []string) string {
 	return ""
 }
 
-func checkGh(args []string) string {
+// checkGh checks gh's arguments, with which of them the shell expands. It
+// reads files a GraphQL call names only inside workspace, and none when
+// workspace is "".
+func checkGh(args []string, expanded []bool, workspace string) string {
 	if len(args) >= 2 && ghReadOnly[args[0]+" "+args[1]] {
 		return ""
 	}
@@ -245,17 +276,16 @@ func checkGh(args []string) string {
 	if len(args) >= 1 && args[0] == "api" {
 		rest := args[1:]
 		endpoint := ""
-		for _, a := range rest {
-			if !strings.HasPrefix(a, "-") {
-				endpoint = a
+		for i := 0; i < len(rest); i++ {
+			if ghAPIValueFlags[rest[i]] {
+				i++
+			} else if !strings.HasPrefix(rest[i], "-") {
+				endpoint = rest[i]
 				break
 			}
 		}
 		if endpoint == "graphql" {
-			if strings.Contains(strings.Join(rest, " "), "mutation") {
-				return "GraphQL mutations in the review loop go through pr-loop. " + prLoopWrites
-			}
-			return ""
+			return checkGraphQL(rest, expanded[1:], workspace)
 		}
 		method, explicit, fields := "GET", false, false
 		for i, a := range rest {
@@ -276,6 +306,94 @@ func checkGh(args []string) string {
 	what := strings.Join(args[:min(2, len(args))], " ")
 	return "`gh " + what + "` can change GitHub. In the review loop use pr-loop (status, ci, logs, threads, reply, resolve, request). " +
 		"Top-level PR comments, reviews, merges, PR edits and marking a PR ready are left to Wesley."
+}
+
+const graphQLMutation = "GraphQL mutations in the review loop go through pr-loop. " + prLoopWrites
+
+const unreadableQuery = "The guard cannot read this GraphQL query, so it cannot tell a read from a mutation. " +
+	"Pass the query inline with `gh api graphql -f query='...'`, or name a file in the workspace with `-F query=@FILE` in a command of its own; " +
+	"a write goes through `pr-loop push`, `reply`, `resolve` or `request`."
+
+// checkGraphQL denies a mutation, and a query or request body the guard
+// cannot read: one from stdin, one the shell expands, or a file that
+// readQuery refuses. Other fields are GraphQL variables, which cannot make a
+// read a write.
+func checkGraphQL(args []string, expanded []bool, workspace string) string {
+	if strings.Contains(strings.Join(args, " "), "mutation") {
+		return graphQLMutation
+	}
+	for i := 0; i < len(args); i++ {
+		flag, value, at := args[i], "", i
+		switch {
+		case strings.HasPrefix(flag, "--") && strings.Contains(flag, "="):
+			flag, value, _ = strings.Cut(flag, "=")
+		case len(flag) > 2 && (flag[:2] == "-f" || flag[:2] == "-F"):
+			flag, value = flag[:2], flag[2:]
+		case ghAPIValueFlags[flag] && i+1 < len(args):
+			i++
+			value, at = args[i], i
+		}
+		var file string
+		switch flag {
+		case "-f", "-F", "--field", "--raw-field":
+			key, v, _ := strings.Cut(value, "=")
+			if expanded[at] && (key == "query" || strings.ContainsAny(key, "$`")) {
+				return unreadableQuery
+			}
+			// Only -F and --field read the file; checking it for -f too
+			// denies nothing a read needs.
+			if key != "query" || !strings.HasPrefix(v, "@") {
+				continue
+			}
+			file = v[1:]
+		case "--input":
+			if expanded[at] {
+				return unreadableQuery
+			}
+			file = value
+		default:
+			continue
+		}
+		query, err := readQuery(workspace, file)
+		if err != nil {
+			return unreadableQuery
+		}
+		if strings.Contains(string(query), "mutation") {
+			return graphQLMutation
+		}
+	}
+	return ""
+}
+
+// readQuery reads a regular file of at most a mebibyte that resolves, through
+// any symlinks, to a path inside workspace. A relative path is relative to
+// workspace.
+func readQuery(workspace, path string) ([]byte, error) {
+	if workspace == "" || path == "" || path == "-" {
+		return nil, errors.New("no file the guard can read")
+	}
+	root, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		return nil, err
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(workspace, path)
+	}
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, err
+	}
+	if rel, err := filepath.Rel(root, real); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, errors.New("outside the workspace")
+	}
+	info, err := os.Stat(real)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > 1<<20 {
+		return nil, errors.New("not a small regular file")
+	}
+	return os.ReadFile(real)
 }
 
 // strip drops leading environment assignments and wrapper commands.
@@ -328,11 +446,17 @@ func segments(text string) []string {
 	return out
 }
 
-// tokens splits one segment into words the way a shell would, removing quotes.
-func tokens(segment string) []string {
-	var out []string
+// split splits one segment into words the way a shell would, removing quotes,
+// and reports for each word whether the shell expands part of it: a $ or a
+// backquote outside single quotes and not escaped.
+func split(segment string) (words []string, expands []bool) {
 	var cur strings.Builder
-	in, quote := false, byte(0)
+	in, quote, expand := false, byte(0), false
+	end := func() {
+		words, expands = append(words, cur.String()), append(expands, expand)
+		cur.Reset()
+		in, expand = false, false
+	}
 	for i := 0; i < len(segment); i++ {
 		c := segment[i]
 		switch {
@@ -343,6 +467,7 @@ func tokens(segment string) []string {
 				i++
 				cur.WriteByte(segment[i])
 			} else {
+				expand = expand || quote == '"' && (c == '$' || c == '`')
 				cur.WriteByte(c)
 			}
 		case c == '\'' || c == '"':
@@ -353,19 +478,18 @@ func tokens(segment string) []string {
 			in = true
 		case c == ' ' || c == '\t':
 			if in {
-				out = append(out, cur.String())
-				cur.Reset()
-				in = false
+				end()
 			}
 		case c == '#' && !in:
-			return out
+			return words, expands
 		default:
+			expand = expand || c == '$' || c == '`'
 			cur.WriteByte(c)
 			in = true
 		}
 	}
 	if in {
-		out = append(out, cur.String())
+		end()
 	}
-	return out
+	return words, expands
 }
