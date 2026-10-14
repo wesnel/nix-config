@@ -15,8 +15,8 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/git"
-	"github.com/wesnel/agent-tools/internal/loop"
 	"github.com/wesnel/agent-tools/internal/redcheck"
+	"github.com/wesnel/agent-tools/internal/repos"
 )
 
 const usage = `usage: git red-check [--test CMD] [--build CMD] [--test-files GLOB]... [--lines N] [REV]
@@ -38,8 +38,8 @@ checks each non-merge commit in it against its own parent.
   --fixups           check only the range's fixup!, amend! and squash! commits
   --lines N          lines kept from the end of each run's output (default 40)
 
-Settings not given as flags come from "redCheck" in the user's
-pr-loop/config.json, keyed by GitHub owner/name, and never from the
+Settings not given as flags come from "repos" in the user's
+agent-tools/config.json, keyed by GitHub owner/name, and never from the
 repository. The test command runs the commit's code: run it in a sandbox
 when the commit is not trusted. Nothing is committed, signed or pushed, and
 no ref or file of the caller's worktrees changes; the throwaway worktree,
@@ -113,7 +113,7 @@ func main() {
 	}
 	// The configuration only fills in what the flags leave out, so a caller
 	// who gives both required settings does not need it to load.
-	config, err := loop.RedCheckConfig()
+	config, err := repos.Lookup()
 	if err != nil && (opts.Test == "" || len(opts.TestFiles) == 0) {
 		os.Exit(cli.Report("git-red-check", nil, err, 0, os.Stdout, os.Stderr))
 	}

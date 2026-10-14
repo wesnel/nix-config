@@ -178,8 +178,8 @@ or with no build command to say whether they built. So a repository needs a
 build command for any commit to exit 0. See `git red-check -h` (git turns
 `--help` into a manual-page lookup).
 
-Settings missing from the flags come from `wgn.home.llm.prLoop.redCheck`,
-keyed by `owner/name`, never from the repository. The test command runs the
+Settings missing from the flags come from `test`, `build` and `testFiles` in
+`wgn.home.llm.repos`, keyed by `owner/name`, never from the repository. The test command runs the
 commit's code, so run it in a sandbox when the commit is not trusted.
 
 ## pushing: private history stays private
@@ -246,7 +246,7 @@ It stops when the bots are satisfied or the loop needs a decision, and
 writes `.git/pr-loop/report.md`.
 
 A repository whose fresh checkouts need preparing, such as generating files
-it does not commit, gets a command in `wgn.home.llm.prLoop.setup`, keyed by
+it does not commit, gets a `setup` command in `wgn.home.llm.repos`, keyed by
 `owner/name`. `pr-loop worktrees` runs it in the sandbox in each worktree
 whose HEAD moved since its last setup, printing the command and its exit
 status, and `pr-loop setup [PATH]` runs it in any worktree, such as one an
