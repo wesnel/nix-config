@@ -31,6 +31,8 @@ red, and the failure points at what broke. Everything below follows from that.
   contract. Otherwise assert the parts that matter.
 - Assert enough to tell a right answer from a wrong one. A test that checks
   only "no error" or "not empty" passes for most broken code.
+- Assert an absence (no output, no warning, a field left out) together with
+  its presence on another input, so the test shows the check would see it.
 
 ## Choosing cases
 
