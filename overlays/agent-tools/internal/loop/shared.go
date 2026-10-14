@@ -16,7 +16,8 @@ func refuse(format string, args ...any) error { return refusal.New(format, args.
 var (
 	commitsBetween = history.Between
 	subject        = history.Subject
-	fixupTarget    = history.FixupTarget
+	fold           = history.Fold
 	matches        = history.Match
 	couldNotApply  = history.CouldNotApply
+	noEditor       = history.NoEditor
 )

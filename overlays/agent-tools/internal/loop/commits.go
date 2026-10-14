@@ -3,11 +3,14 @@ package loop
 import (
 	"fmt"
 	"strings"
+
+	"github.com/wesnel/agent-tools/internal/history"
 )
 
-// checkFixups enforces that everything the loop added to a branch is a fixup
+// checkFixups enforces that everything the loop added to a branch is a fixup!
 // of one of the PR's own commits, so the signing pass can squash the branch
-// back to exactly those commits.
+// back to exactly those commits. amend! and squash! are refused because they
+// rewrite the PR's commit messages, which the signing pass then refuses.
 func checkFixups(branch string, original, now []Commit) error {
 	subjects := map[string]bool{}
 	for _, c := range original {
@@ -16,10 +19,12 @@ func checkFixups(branch string, original, now []Commit) error {
 	var kept []Commit
 	var stray []string
 	for _, c := range now {
-		target := fixupTarget(c.Message)
+		kind, target := fold(c.Message)
 		switch {
-		case target == "":
+		case kind == history.Kept:
 			kept = append(kept, c)
+		case kind != history.Fixup:
+			stray = append(stray, fmt.Sprintf("%q would rewrite a commit message; use `git commit --fixup=<commit>`", subject(c.Message)))
 		case !subjects[target]:
 			stray = append(stray, fmt.Sprintf("%q fixes up a commit that is not one of %s's", subject(c.Message), branch))
 		}

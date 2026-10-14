@@ -216,8 +216,8 @@ func exists(path string) bool {
 }
 
 // rangeStart is the parent of the oldest commit the pass has to rewrite: the
-// oldest unsigned commit, or an older one that a fixup folds into. It also
-// reports whether there are fixups to squash.
+// oldest unsigned commit, or an older one that a fixup!, amend! or squash!
+// folds into. It also reports whether there is anything to fold.
 func rangeStart(base, tip string) (string, bool, error) {
 	out, err := git.Run("log", "--reverse", "--format=%H%x00%G?%x00%s", base+".."+tip)
 	if err != nil {
@@ -235,14 +235,14 @@ func rangeStart(base, tip string) (string, bool, error) {
 		if c.mark == "N" && i < oldest {
 			oldest = i
 		}
-		target := history.FixupTarget(c.subject)
-		if target == "" {
+		kind, target := history.Fold(c.subject)
+		if kind == history.Kept {
 			continue
 		}
 		fixups = true
 		found := -1
 		for j := i - 1; j >= 0; j-- {
-			if history.FixupTarget(commits[j].subject) == "" && commits[j].subject == target {
+			if k, _ := history.Fold(commits[j].subject); k == history.Kept && commits[j].subject == target {
 				found = j
 				break
 			}
@@ -301,7 +301,7 @@ func rehearse(what, fix, tip string, args ...string) (string, error) {
 		git.Run("-C", scratch, "rebase", "--abort")
 		git.Run("worktree", "remove", "--force", scratch)
 	}()
-	if _, err := git.Run(append([]string{"-C", scratch, "-c", "commit.gpgsign=false", "-c", "sequence.editor=:",
+	if _, err := git.RunEnv(history.NoEditor, append([]string{"-C", scratch, "-c", "commit.gpgsign=false",
 		"-c", "rebase.updateRefs=false", "rebase"}, args...)...); err != nil {
 		if m := history.CouldNotApply.FindStringSubmatch(err.Error()); m != nil {
 			return "", refuse("%s conflicts at %s %q: %s", what, m[1], m[2], fix)
@@ -438,13 +438,13 @@ func defaultBase(branch string) (string, error) {
 
 // Run re-signs every commit from the oldest unsigned one on the current
 // branch to its tip, with the hardware key, leaving each commit's files,
-// author and message exactly as they were. Branches stacked inside that range
-// move with it, and so does any other worktree they are checked out in, which
-// must be clean. With push, every branch that moved and has an upstream is
-// pushed over SSH to its own name, guarded by the commit its remote-tracking
-// ref names, after checking every destination before the first touch; with
-// setUpstream as well, so is every branch that moved and has none (see
-// pushMoved).
+// author and message exactly as they were, except for the messages an amend!
+// or squash! rewrites. Branches stacked inside that range move with it, and so
+// does any other worktree they are checked out in, which must be clean. With
+// push, every branch that moved and has an upstream is pushed over SSH to its
+// own name, guarded by the commit its remote-tracking ref names, after
+// checking every destination before the first touch; with setUpstream as well,
+// so is every branch that moved and has none (see pushMoved).
 //
 // The signing state lasts until every commit is verified; a push that fails
 // after that leaves only the list of branches to push, which --resume retries.
@@ -594,19 +594,14 @@ func stackedIn(before map[string]string, branch, from, tip string) []string {
 	return stacked
 }
 
-// keptCommits are the commits in from..tip that are not fixups.
+// keptCommits are the commits from..tip leaves once its fixup!, amend! and
+// squash! commits fold in, with the messages they leave.
 func keptCommits(from, tip string) ([]history.Commit, error) {
 	all, err := history.Between(from, tip)
 	if err != nil {
 		return nil, err
 	}
-	var kept []history.Commit
-	for _, c := range all {
-		if history.FixupTarget(c.Message) == "" {
-			kept = append(kept, c)
-		}
-	}
-	return kept, nil
+	return history.Squashed(all), nil
 }
 
 // sign detaches the worktrees the pass moves, records it, and rebases with the
@@ -636,7 +631,7 @@ func sign(p *pending, path string) error {
 	if p.Fixups {
 		args = append(args, "-i", "--autosquash")
 	}
-	if git.Attached([]string{"GIT_SEQUENCE_EDITOR=:"}, append(append(args, upstream...), p.Branch)...) != 0 {
+	if git.Attached(history.NoEditor, append(append(args, upstream...), p.Branch)...) != 0 {
 		detached := ""
 		if len(p.Worktrees) > 0 {
 			detached = "; --resume also switches the worktrees detached for the pass back to their branches"

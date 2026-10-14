@@ -66,7 +66,7 @@ func Sign(resume, noPush bool) (any, error) {
 			return nil, err
 		}
 		fmt.Fprintln(os.Stderr, "squashing and signing; touch the key for each commit when it blinks")
-		code := git.Attached([]string{"GIT_SEQUENCE_EDITOR=:"}, "rebase", "-i", "--autosquash", "--force-rebase",
+		code := git.Attached(noEditor, "rebase", "-i", "--autosquash", "--force-rebase",
 			"--gpg-sign", "--update-refs", upstream, top)
 		if code != 0 {
 			return nil, fmt.Errorf("the rebase stopped, usually at a missed key touch. Run `git rebase --continue` " +
@@ -199,7 +199,7 @@ func rehearse(state *State, signing *Signing) error {
 		git.Run("-C", scratch, "rebase", "--abort")
 		git.Run("worktree", "remove", "--force", scratch)
 	}()
-	_, err = git.Run("-C", scratch, "-c", "commit.gpgsign=false", "-c", "sequence.editor=:",
+	_, err = git.RunEnv(noEditor, "-C", scratch, "-c", "commit.gpgsign=false",
 		"rebase", "-i", "--autosquash", "--force-rebase", signing.Upstream)
 	if err != nil {
 		if m := couldNotApply.FindStringSubmatch(err.Error()); m != nil {

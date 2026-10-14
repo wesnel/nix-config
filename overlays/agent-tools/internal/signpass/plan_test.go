@@ -160,6 +160,76 @@ func TestPlan(t *testing.T) {
 	})
 }
 
+// TestPlanFoldKinds signs a fork whose parent gained an amend! after one child
+// forked from it, and whose other child folds in a squash! of its own during
+// its replay. Editors that fail stand in for ones that would wait for input:
+// neither rebase may open one.
+func TestPlanFoldKinds(t *testing.T) {
+	dir := t.TempDir()
+	global := signingConfig(t, dir)
+	repo := filepath.Join(dir, "repo")
+	os.Mkdir(repo, 0o755)
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+	write := func(name, content string) {
+		t.Helper()
+		os.WriteFile(filepath.Join(repo, name), []byte(content), 0o644)
+		gitIn(t, repo, "add", name)
+	}
+	gitIn(t, repo, "switch", "-qc", "P")
+	write("p", "p\n")
+	gitIn(t, repo, "commit", "-q", "-m", "P1")
+	write("p2", "p2\n")
+	gitIn(t, repo, "commit", "-q", "-m", "P2")
+	gitIn(t, repo, "switch", "-qc", "C2")
+	write("c2", "c2\n")
+	gitIn(t, repo, "commit", "-q", "-m", "C2a")
+	write("c2", "c2 more\n")
+	gitIn(t, repo, "commit", "-q", "-m", "squash! C2a", "-m", "More about C2.")
+	gitIn(t, repo, "switch", "-q", "P")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "amend! P1", "-m", "P1 renamed", "-m", "Why.")
+	gitIn(t, repo, "switch", "-qc", "C1")
+	write("c1", "c1\n")
+	gitIn(t, repo, "commit", "-q", "-m", "C1a")
+	gitIn(t, repo, "switch", "-q", "main")
+	trees := map[string]string{}
+	for _, b := range []string{"C1", "C2"} {
+		trees[b] = gitIn(t, repo, "rev-parse", b+"^{tree}")
+	}
+
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	t.Setenv("GIT_EDITOR", "false")
+	t.Setenv("GIT_SEQUENCE_EDITOR", "false")
+	git.Dir = repo
+	defer func() { git.Dir = "" }()
+	result, err := Plan("", []string{"C1", "C2"}, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan := fmt.Sprint(result.(map[string]any)["branches"].(map[string]any)["plan"]); !strings.Contains(plan, "C1: sign 3 commit(s)") ||
+		!strings.Contains(plan, "C2: replay its 1 commit(s)") {
+		t.Errorf("plan: %s", plan)
+	}
+	for b, want := range map[string]string{
+		"P":  "P2\nG\nP1 renamed\n\nWhy.\nG",
+		"C1": "C1a\nG\nP2\nG\nP1 renamed\n\nWhy.\nG",
+		"C2": "C2a\n\nMore about C2.\nG\nP2\nG\nP1 renamed\n\nWhy.\nG",
+	} {
+		if log, _ := git.Run("log", "--format=%B%G?", "main.."+b); log != want {
+			t.Errorf("%s:\n%q\nwant\n%q", b, log, want)
+		}
+	}
+	for b, tree := range trees {
+		if got, _ := git.Run("rev-parse", b+"^{tree}"); got != tree {
+			t.Errorf("%s's files changed", b)
+		}
+	}
+	p, _ := git.Run("rev-parse", "P")
+	if parent, _ := git.Run("rev-parse", "C2~1"); parent != p {
+		t.Error("C2 is not on the signed P")
+	}
+}
+
 // TestPlanForkConflict refuses, before any touch, a fork child whose replay
 // onto its parent's signed copy would conflict with a fixup the parent gained.
 func TestPlanForkConflict(t *testing.T) {

@@ -112,6 +112,33 @@ func TestRun(t *testing.T) {
 		t.Error("no backup of the unsigned branch")
 	}
 
+	// An amend! from --fixup=reword: replaces A1's whole message, subject
+	// included, a squash! appends to B1's, and a fixup! alongside them
+	// folds as before. Editors that fail stand in for ones that would wait
+	// for input: the pass must open neither.
+	t.Setenv("GIT_EDITOR", `printf 'amend! A1\n\nA renamed\n\nWhy.\n' >`)
+	gitIn(t, repo, "commit", "-q", "--fixup=reword:lower")
+	os.WriteFile(filepath.Join(repo, "b"), []byte("b squashed\n"), 0o644)
+	gitIn(t, repo, "commit", "-q", "-a", "--squash=upper~1", "-m", "More about B.")
+	os.WriteFile(filepath.Join(repo, "b"), []byte("b fixed\n"), 0o644)
+	gitIn(t, repo, "commit", "-q", "-a", "--fixup=upper~2")
+	wantTree = gitIn(t, repo, "rev-parse", "upper^{tree}")
+	t.Setenv("GIT_EDITOR", "false")
+	t.Setenv("GIT_SEQUENCE_EDITOR", "false")
+	result, err = Run("", false, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := result.(map[string]any); got["squashed"] != true || got["signed"] != 2 {
+		t.Errorf("amend and squash result: %v", got)
+	}
+	if messages, _ := git.Run("log", "--format=%B%G?", "main..upper"); messages != "B1\n\nMore about B.\nG\nA renamed\n\nWhy.\nG" {
+		t.Errorf("after amend and squash: %q", messages)
+	}
+	if got, _ := git.Run("rev-parse", "upper^{tree}"); got != wantTree {
+		t.Error("amend and squash changed the files")
+	}
+
 	// On the default branch with no remote, the base is not guessed.
 	gitIn(t, repo, "switch", "-q", "main")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "on main")

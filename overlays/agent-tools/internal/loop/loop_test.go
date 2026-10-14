@@ -62,6 +62,14 @@ func TestCheckFixups(t *testing.T) {
 	if err := checkFixups("br", []Commit{a, b}, []Commit{c("A reworded"), b}); err == nil {
 		t.Error("a rewritten original was accepted")
 	}
+	if err := checkFixups("br", []Commit{a, b}, []Commit{a, b, c("fixup! amend! A first\n\nignored")}); err != nil {
+		t.Errorf("a fixup! of an amend! refused: %v", err)
+	}
+	for _, rewrite := range []string{"amend! A first\n\nA renamed", "squash! B second\n\nmore", "amend! fixup! A first\n\nA renamed"} {
+		if err := checkFixups("br", []Commit{a, b}, []Commit{a, b, c(rewrite)}); err == nil || !strings.Contains(err.Error(), "--fixup=<commit>") {
+			t.Errorf("%q: %v", rewrite, err)
+		}
+	}
 }
 
 func TestCommitBody(t *testing.T) {

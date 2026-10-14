@@ -17,10 +17,11 @@ const usage = `usage: git sign-pass [--base REF] [--push | --set-upstream] [BRAN
        git sign-pass --resume [--push | --set-upstream] [BRANCH]
 
 Re-signs the current branch from its oldest unsigned commit (or the oldest
-commit a fixup folds into) to its tip, squashing fixups first. Every commit
-keeps its files, author and message; branches stacked inside the range move
-with it, and so does any other worktree one is checked out in, which must be
-clean (ignored files aside). The unsigned tip is kept under ` + signpass.BackupRef + `BRANCH.
+commit a fixup!, amend! or squash! folds into) to its tip, folding those in
+first. Every commit keeps its files and author, and its message unless an
+amend! or squash! rewrites it; branches stacked inside the range move with it,
+and so does any other worktree one is checked out in, which must be clean
+(ignored files aside). The unsigned tip is kept under ` + signpass.BackupRef + `BRANCH.
 
 Given BRANCHes, it signs each one's stack instead, from wherever the branch is
 checked out (or a throwaway worktree), so a handover of several stacks is one
