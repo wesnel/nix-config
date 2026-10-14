@@ -41,17 +41,9 @@ decision for Wesley, so stop rather than route around it. On a PR that is
 ready for review, every push, reply and review request also notifies its
 reviewers and code owners.
 
-Every commit the loop makes is also a fixup of one of the PR's own commits,
-one per review item, carrying the review's details as trailers:
-
-```sh
-git commit --fixup=<the PR commit this belongs in> \
-  --trailer "Review-Thread: <thread URL>" \
-  --trailer "Review-Bot: <bot>" \
-  --trailer "Review-Round: <round>"
-```
-
-Until the signing pass, `git log` on a branch is the record of what each
+Every commit the loop makes is a fixup of one of the PR's own commits, one
+per review item, with the trailers the `review-change` skill's Answering
+gives. Until the signing pass, `git log` on a branch is the record of what each
 review item changed. `pr-loop push` refuses anything else, and the signing
 pass squashes the fixups into the commits they name, leaving each PR with
 exactly the commits it began with.
@@ -86,11 +78,6 @@ Anything an owner asks you, or that you need to ask an owner, goes in the
 task you give next. Ask the owner rather than reading its code yourself
 when you need to know where something belongs.
 
-A `reviewer` sub-agent reviews a PR's fixups before they are pushed. Start
-a new one for every review, never continue one, and give it nothing of the
-owner's report: its use is that it did not write the fix. It only reads, and
-keeps no notes.
-
 ## Setup
 
 1. `pr-loop stack` from the branch you were pointed at. If `linear` is false,
@@ -110,8 +97,10 @@ keeps no notes.
 
 ## Each round
 
-Record every branch's tip at the start of the round; the restack needs the
-old parent tips.
+At the start of the round, record every branch's tip, where the Review
+step's range starts, and each child's fork point,
+`git merge-base <child> <parent>`, which the restack needs once the parent
+has changed.
 
 1. **CI.** `pr-loop wait ci` (repeat while it exits 3), then `pr-loop ci`.
    If it exits 4 (`noChecks`), CI never reported on a head, and `pr-loop
@@ -129,48 +118,33 @@ old parent tips.
 3. **Status.** `pr-loop status`. Check the stop conditions below.
 4. **Triage.** Have every owner triage its PR's unresolved bot threads
    (`pr-loop threads <number>`) without changing code. Then decide each
-   thread:
-   - **Fix** in the PR whose diff introduced the code. When a comment on one
-     PR is about code another PR introduced, confirm with that PR's owner
-     first.
-   - **Duplicate**: the same problem raised on several PRs or by several bots
-     is fixed once; the other threads point at that fix.
-   - **Decline**: the bot is wrong. The owner must demonstrate it from the
-     code or a test, not assert it.
-   - **Defer**: real, but outside the scope statement.
-   - **Needs Wesley**: a product or design call, or anything touching another
-     team's code.
-
-   Threads started by people are always "needs Wesley". Do not reply to them.
+   thread's outcome as the `review-change` skill's Triage says, confirming a
+   `belongs-in` with the owner of the PR that introduced the code. Threads
+   started by people are always needs-wesley, and the loop does not reply to
+   them: `pr-loop reply` refuses.
 5. **Fix.** Owners fix and commit in their own worktrees, one fixup per
    review item or CI failure, run the relevant tests and linters, and report
-   commit SHAs and a draft reply per thread.
-6. **Review**, once per round. For each PR with new fixups, start a
-   `reviewer` with the range from the branch's tip at round start to the
-   branch, the worktree to read it in, the scope statement as its goal
-   statement, and the threads and checks the fixups answer as its items. Give each finding to the PR's owner, which fixes it in a
-   further fixup for the same review item or rebuts it with evidence. Judge a
-   rebuttal as you would a decline. The owner's answers are not reviewed
-   again this round; a finding still standing goes out with the push and into
-   the report. Record every finding and its outcome (fixed in which commit,
-   rebutted with what evidence, or standing) in the PR's notes file under the
+   each fixup and a draft reply per thread.
+6. **Review**, once per round: for each PR with new fixups, one round of the
+   `review-change` skill's fresh review loop. The range runs from the
+   branch's tip at round start to the branch, in the PR's worktree; the goal
+   statement is the PR's scope statement, and the items are the threads and
+   checks the fixups answer. In a loop session `git fresh-review` exits 4, so
+   the reviewer is a `reviewer` sub-agent. Give each finding to the PR's
+   owner to settle. The owner's answers are not reviewed again this round; a
+   finding still standing goes out with the push and into the report.
+   Record every finding and its outcome in the PR's notes file under the
    round. Without sub-agents, skip this step and say so in the report.
 7. **Restack**, bottom-up. Each child's owner runs
-   `git rebase --onto <parent-branch> <parent's tip at round start> <branch>`
+   `git rebase --onto <parent-branch> <child's recorded fork point> <branch>`
    in its worktree, resolves conflicts (the `restack-branches` skill covers
    them) and reruns its tests.
 8. **Push.** `pr-loop push` pushes every changed branch at once and records
    the round under `refs/pr-loop/rounds/<n>/<branch>`. If GitHub moved
    underneath it, stop.
-9. **Reply and resolve**, after the push so replies can cite pushed commits.
-   `pr-loop reply <thread> --body-file <file>` on every fixed, duplicate,
-   declined and deferred thread: what changed and in which commit, or why
-   not, in two or three sentences. Then `pr-loop resolve <thread>` for
-   declines with demonstrated evidence, and for fixes and duplicates whose
-   fix landed, except on a bot whose `resolvesOwnThreads` is true (Qodo):
-   it resolves its own threads when it re-reviews, so leave those to it.
-   Deferred threads stay open. `pr-loop reply --from <file>` does a round's
-   replies and resolves in one go; `pr-loop --help` gives its format.
+9. **Reply and resolve**, after the push so replies can cite pushed commits:
+   `pr-loop reply --from <file>` for each PR's drafted replies, which
+   answer and resolve threads as their outcomes say.
 
 Then start the next round.
 
@@ -199,7 +173,7 @@ Stop and hand back when any of these holds:
    - each bot's verdict
    - CI state and any accepted failures
    - commits added, and changed lines then and now
-   - threads fixed, declined, deferred and needing Wesley, with links
+   - threads by outcome, with links
    - local review findings per round: fixed, rebutted, and any left standing
 
    Also list the Linear changes and follow-up tickets you propose but did
