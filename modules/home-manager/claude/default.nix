@@ -64,11 +64,27 @@ with lib; let
     '';
   };
 
+  # Build caches for every session's commands, which the sandbox lets them
+  # write. Builds outside Claude Code do not read them: a cache entry written
+  # by an agent would otherwise be compiled into a later build on the host.
+  sessionCacheDir = "${config.xdg.cacheHome}/claude-code";
+  sessionCacheEnv = {
+    GOCACHE = "${sessionCacheDir}/go-build";
+    # Holds the module cache, and the checksum database state that `go get`
+    # writes. `go install` installs here too, off PATH.
+    GOPATH = "${sessionCacheDir}/go";
+    GOLANGCI_LINT_CACHE = "${sessionCacheDir}/golangci-lint";
+  };
+
   # The session's commands run in Claude Code's sandbox with no credentials and
   # no route to GitHub; `sandbox-relay session` serves `pr-loop` on a private
   # socket, whose path replaces {socket}. Hooks, MCP servers and WebFetch run outside
   # the sandbox, which is why WebFetch to GitHub is denied as well.
   prLoopSettings = builtins.toJSON {
+    # The user settings' `env` would otherwise replace the launcher's exports
+    # with the ordinary sessions' caches.
+    env = config.wgn.home.llm.prLoop.cacheEnv;
+
     permissions = {
       # Without this the auto-mode classifier may stop the force-updates that
       # `pr-loop push` makes, which is the one write the loop exists to do.
@@ -99,8 +115,13 @@ with lib; let
       filesystem.denyRead = config.wgn.home.llm.prLoop.deniedReads;
 
       # Relative paths here are not resolved against the workspace, so
-      # `sandbox-relay session` fills in its real path.
-      filesystem.denyWrite = map (p: "{workspace}/${p}") config.wgn.home.llm.prLoop.protectedPaths;
+      # `sandbox-relay session` fills in its real path. The user settings'
+      # write grants merge into this session's, so the ordinary sessions'
+      # caches, which commands outside this sandbox build from, are taken
+      # back.
+      filesystem.denyWrite =
+        map (p: "{workspace}/${p}") config.wgn.home.llm.prLoop.protectedPaths
+        ++ [sessionCacheDir];
 
       # The launcher points the build caches here.
       filesystem.allowWrite = [config.wgn.home.llm.prLoop.cacheDir];
@@ -189,6 +210,14 @@ in {
           sessionUrl = false;
         };
 
+        # These reach every subprocess, sandboxed or not. claude-pr-loop sets
+        # its own.
+        env = sessionCacheEnv;
+
+        # Applies wherever a project turns the sandbox on, and merges into
+        # claude-pr-loop's sandbox, which denies what it must not have.
+        sandbox.filesystem.allowWrite = [sessionCacheDir];
+
         # The ngrok account server's write scopes reach production, and its
         # tools are not published, so it is filtered by name, failing closed.
         # A hook list set here replaces the file's own on every switch.
@@ -219,6 +248,11 @@ in {
         // {
           ".claude/CLAUDE.md".source = config.wgn.home.llm.instructions;
         };
+
+      # The Linux sandbox skips a write grant whose path does not exist.
+      home.activation.claudeSessionCaches = lib.hm.dag.entryAfter ["writeBoundary"] ''
+        run mkdir -p ${escapeShellArg sessionCacheDir}
+      '';
 
       # Merged rather than linked: a read-only settings.json would make every
       # change made from inside Claude Code last only for that session.
