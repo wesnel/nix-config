@@ -79,9 +79,9 @@ func withQuestions(t *testing.T) string {
 	t.Helper()
 	plan := sessionPlan(t)
 	data, _ := os.ReadFile(plan)
-	os.WriteFile(plan, []byte(strings.Replace(string(data), "** Open questions\n",
-		"** Open questions\n*** Rename it?\n:PROPERTIES:\n:ID: Q1\n:RECOMMENDATION: no\n:END:\n- yes\n"+
-			"*** Rename its flag too?\n:PROPERTIES:\n:ID: Q2\n:RECOMMENDATION: no\n:AFTER: Q1\n:END:\n", 1)), 0o644)
+	os.WriteFile(plan, []byte(strings.Replace(string(data), "** Questions\n",
+		"** Questions\n*** ASK Rename it?\n:PROPERTIES:\n:ID: Q1\n:RECOMMENDATION: no\n:END:\n- yes\n"+
+			"*** ASK Rename its flag too?\n:PROPERTIES:\n:ID: Q2\n:RECOMMENDATION: no\n:AFTER: Q1\n:END:\n", 1)), 0o644)
 	return plan
 }
 
@@ -171,15 +171,20 @@ func TestCommands(t *testing.T) {
 			t.Errorf("statusline: %d %q", code, out)
 		}
 		code, out, errs := agentPlan(t, "", "decide", plan, "Q1", "--answer", "yes")
-		if code != 0 || !strings.Contains(out, `"decision": "D1"`) {
+		if code != 0 || !strings.Contains(out, `"state": "DECIDED"`) {
 			t.Errorf("decide: %d %s %s", code, out, errs)
 		}
 		code, out, _ = agentPlan(t, "", "questions", plan)
 		if code != 0 || !strings.HasPrefix(out, "- Q2 ::") {
 			t.Errorf("questions once Q1 is decided: %d %q", code, out)
 		}
-		if code, _, errs = agentPlan(t, "", "decide", plan, "Q2", "--answer", "no"); code != 0 {
-			t.Errorf("decide Q2: %d %s", code, errs)
+		if code, out, errs = agentPlan(t, "", "decide", plan, "Q2", "--drop", "--answer", "moot"); code != 0 ||
+			!strings.Contains(out, `"state": "DROPPED"`) {
+			t.Errorf("drop Q2: %d %s %s", code, out, errs)
+		}
+		code, out, _ = agentPlan(t, "", "decisions", plan)
+		if code != 0 || out != "- Q1 :: Rename it? yes\n" {
+			t.Errorf("decisions: %d %q", code, out)
 		}
 		for _, stdin := range []string{`{"session_id":"s-1"}`, `{`, ``} {
 			code, out, errs = agentPlan(t, stdin, "statusline")
@@ -188,16 +193,29 @@ func TestCommands(t *testing.T) {
 			}
 		}
 		code, out, errs = agentPlan(t, "", "ask", plan, "--question", "Keep the alias?", "--recommendation", "yes",
-			"--alternative", "drop it", "--alternative", "rename it", "--after", "Q1", "--context", "Two scripts call it.")
+			"--alternative", "drop it", "--alternative", "rename it", "--after", "Q1", "--context", "Two scripts call it.",
+			"--priority", "A")
 		if code != 0 || !strings.Contains(out, `"id": "Q3"`) {
 			t.Errorf("ask: %d %s %s", code, out, errs)
 		}
 		code, out, _ = agentPlan(t, "", "questions", plan)
-		if code != 0 || out != "- Q3 :: Keep the alias? Recommended: yes. Or: drop it; rename it.\n" {
+		if code != 0 || out != "- Q3 [#A] :: Keep the alias? Recommended: yes. Or: drop it; rename it.\n" {
 			t.Errorf("questions after ask: %d %q", code, out)
 		}
 		if code, _, errs = agentPlan(t, "", "ask", plan, "--question", "Why?"); code != 2 {
 			t.Errorf("ask without a recommendation: %d %s", code, errs)
+		}
+		code, out, errs = agentPlan(t, "", "ask", plan, "--question", "Keep tests offline?", "--recommendation", "yes",
+			"--answer", "yes: CI has no network", "--role", "single")
+		if code != 0 || !strings.Contains(out, `"id": "Q4"`) {
+			t.Errorf("ask --answer: %d %s %s", code, out, errs)
+		}
+		code, out, _ = agentPlan(t, "", "decisions", plan, "--json")
+		if code != 0 || !strings.Contains(out, `"decidedBy": "agent"`) || !strings.Contains(out, `"id": "Q4"`) {
+			t.Errorf("decisions after ask --answer: %d %s", code, out)
+		}
+		if code, out, errs = agentPlan(t, "", "decide", plan, "Q5", "--answer", "x", "--supersedes", "Q4"); code != 2 {
+			t.Errorf("decide an unknown question: %d %s %s", code, out, errs)
 		}
 	})
 
@@ -273,6 +291,7 @@ func TestRelayed(t *testing.T) {
 		{"log", "PLAN", "--item", "S1", "--kind", "started"},
 		{"status", "PLAN"},
 		{"questions", "PLAN"},
+		{"decisions", "PLAN"},
 		{"find", "--branch", "loop"},
 	} {
 		t.Run("allowed/"+strings.Join(args, " "), func(t *testing.T) {

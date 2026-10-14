@@ -23,7 +23,7 @@ func insertUnder(t *testing.T, file, under, text string) {
 }
 
 func question(id, title, after string) string {
-	text := "*** " + title + "\n:PROPERTIES:\n:ID: " + id + "\n:RECOMMENDATION: yes\n"
+	text := "*** ASK " + title + "\n:PROPERTIES:\n:ID: " + id + "\n:RECOMMENDATION: yes\n"
 	if after != "" {
 		text += ":AFTER: " + after + "\n"
 	}
@@ -49,8 +49,9 @@ func waits(qs []Question) map[string]string {
 }
 
 // testQuestionsAfter: a question waits until every ID in its AFTER is
-// settled: a question once decided, a part or step once logged done. An ID
-// the plan does not settle keeps it waiting.
+// settled: a question once its keyword is a done one, a part or step once
+// logged done, verified or abandoned. An ID the plan does not settle keeps
+// it waiting.
 func testQuestionsAfter(t *testing.T) {
 	// waiting makes a plan with a part P1, a step S1, and questions: Q1;
 	// Q2 after Q1; Q3 after P1 and S1; Q4 after Q9, which the plan does not
@@ -61,7 +62,7 @@ func testQuestionsAfter(t *testing.T) {
 		plan := p.file("")
 		addItems(t, plan, "** Distribution", "P1")
 		addItems(t, plan, "** Steps", "S1")
-		insertUnder(t, plan, "** Open questions", question("Q1", "Keep the flag?", "")+
+		insertUnder(t, plan, "** Questions", question("Q1", "Keep the flag?", "")+
 			question("Q2", "Name the flag --wait?", "Q1")+
 			question("Q3", "Stack the part on main?", "P1 S1")+
 			question("Q4", "Rename it?", "Q9"))
@@ -70,7 +71,7 @@ func testQuestionsAfter(t *testing.T) {
 	// settle decides Q1, logs P1 done and S1 started, and S1 done if s1.
 	settle := func(t *testing.T, p Plan, s1 bool) {
 		t.Helper()
-		if _, err := p.Decide("Q1", "yes", day); err != nil {
+		if _, err := p.Decide("Q1", DecideOptions{Answer: "yes"}, day); err != nil {
 			t.Fatal(err)
 		}
 		events := []Event{{Kind: "done", Item: "P1"}, {Kind: "started", Item: "S1"}}
@@ -124,10 +125,28 @@ func testQuestionsAfter(t *testing.T) {
 		}
 	})
 
+	// Abandoning a step settles it, as Org's blocker reads ABANDONED, and
+	// dropping a question settles it.
+	t.Run("S1 abandoned and Q1 dropped", func(t *testing.T) {
+		p := waiting(t)
+		if _, err := p.Decide("Q1", DecideOptions{Answer: "moot", Drop: true}, day); err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range []Event{{Kind: "done", Item: "P1"}, {Kind: "abandoned", Item: "S1"}} {
+			if _, err := p.Log(e, day); err != nil {
+				t.Fatal(err)
+			}
+		}
+		all, _ := p.Questions(true)
+		if got := ids(Askable(all)); got != "Q2 Q3" {
+			t.Errorf("after S1 abandoned and Q1 dropped: askable %q", got)
+		}
+	})
+
 	// A waiting question can still be decided.
 	t.Run("deciding a waiting question", func(t *testing.T) {
 		p := waiting(t)
-		if _, err := p.Decide("Q4", "no", day); err != nil {
+		if _, err := p.Decide("Q4", DecideOptions{Answer: "no"}, day); err != nil {
 			t.Errorf("deciding a waiting question: %v", err)
 		}
 	})
@@ -141,7 +160,7 @@ func testStatusLineAfter(t *testing.T) {
 		t.Helper()
 		c := testConfig(t)
 		p := newPlan(t, c, "x")
-		insertUnder(t, p.file(""), "** Open questions", question("Q1", "Keep it?", "")+question("Q2", "Rename it?", "Q1"))
+		insertUnder(t, p.file(""), "** Questions", question("Q1", "Keep it?", "")+question("Q2", "Rename it?", "Q1"))
 		return c, p
 	}
 
@@ -154,8 +173,8 @@ func testStatusLineAfter(t *testing.T) {
 
 	t.Run("after Q1 decided", func(t *testing.T) {
 		c, p := waiting(t)
-		insertUnder(t, p.file(""), "** Open questions", question("Q3", "Move it?", "Q2"))
-		if _, err := p.Decide("Q1", "yes", day); err != nil {
+		insertUnder(t, p.file(""), "** Questions", question("Q3", "Move it?", "Q2"))
+		if _, err := p.Decide("Q1", DecideOptions{Answer: "yes"}, day); err != nil {
 			t.Fatal(err)
 		}
 		if got := c.StatusLine([]byte(`{"session_id":"abc"}`)); got != "1 open question · /questions" {
@@ -177,7 +196,7 @@ func testStatusReadyParts(t *testing.T) {
 			"*** Part two\n:PROPERTIES:\n:ID: P2\n:AFTER: P1\n:END:\n"+
 			"**** TODO Its first step\n:PROPERTIES:\n:ID: P2.S1\n:END:\n"+
 			"*** Part three\n:PROPERTIES:\n:ID: P3\n:AFTER: Q1\n:END:\n")
-		insertUnder(t, plan, "** Open questions", question("Q1", "Keep it?", "")+question("Q2", "Rename it?", "Q1"))
+		insertUnder(t, plan, "** Questions", question("Q1", "Keep it?", "")+question("Q2", "Rename it?", "Q1"))
 		return p
 	}
 	logAll := func(t *testing.T, p Plan, events ...Event) {
@@ -192,7 +211,7 @@ func testStatusReadyParts(t *testing.T) {
 	settle := func(t *testing.T, p Plan) {
 		t.Helper()
 		logAll(t, p, Event{Kind: "started", Item: "P1"}, Event{Kind: "done", Item: "P1"})
-		if _, err := p.Decide("Q1", "yes", day); err != nil {
+		if _, err := p.Decide("Q1", DecideOptions{Answer: "yes"}, day); err != nil {
 			t.Fatal(err)
 		}
 	}

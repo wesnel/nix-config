@@ -45,27 +45,35 @@ agent-plan new --parent PLAN --part P1 --title 'Add the run loop flag' --branch 
   `Likely next changes:` line: one or two concrete changes expected after
   this one, not speculation, which the design review of the plan checks
   would each be a local edit.
-- `** Decisions`: a heading per decision, with `:ID: D1`, `D2`… A
-  suggestion rejected for a reason that will still hold, such as a
-  constraint rather than a lack of time, is a decision too, with that
-  reason, so a later design review finds it instead of proposing it again.
 - `** Steps`: `*** TODO <step>` headings with `:ID: S1`, `S2`…; a part's
   are `P1.S1`, `P1.S2`… Each says what observable result marks it done,
   which its `verified` evidence then shows.
 - `** Distribution`, in a plan split among sub-agents: a heading per part
   with `:ID: P1`…, its branch, base and worktree, a link to its file, and
   its steps.
-- `** Open questions`: the questions for Wesley, each written by
-  `agent-plan ask` as "Questions for Wesley" says, never by hand. A settled
-  one becomes a decision.
+- `** Questions`: every question for Wesley and every decision, each with
+  `:ID: Q1`, `Q2`… (`P1.Q1` in a part's file), written by `agent-plan ask`
+  as "Questions for Wesley" says, never by hand. An open one is `ASK`; a
+  settled one stays where it is, `DECIDED` with its `:ANSWER:`, or
+  `DROPPED`, or `SUPERSEDED` by the decision whose `:SUPERSEDES:` names
+  it. `agent-plan decisions PLAN --all` lists the decisions. A suggestion
+  rejected for a reason that will still hold, such as a constraint rather
+  than a lack of time, is a decision too, with that reason, so a later
+  design review finds it instead of proposing it again.
 - `** Verification`: how the change is shown to work: each seam the tests
   cross, and what each cannot catch.
 
+The `#+TODO:` lines `agent-plan new` writes define the keywords; Emacs and
+`agent-plan` both read them, so leave them as they are. The ID patterns
+(`S`, `P`, `Q`, with an optional `P<n>.` prefix) are what Emacs's plan
+views select entries by.
+
 A question or a part that cannot start before others are settled lists
 their IDs in `:AFTER:`, separated by spaces (a question's through
-`agent-plan ask --after`): a question is settled once
-decided, a part or step once `done` is logged for it. Until then the
-question is not put to Wesley and the part is not ready.
+`agent-plan ask --after`): a question is settled once its keyword is a
+done one, a part or step once `done`, `verified` or `abandoned` is logged
+for it. Until then the question is not put to Wesley and the part is not
+ready.
 
 An ID is never reused or renumbered; a step dropped from the work keeps its
 ID and gets an `abandoned` event. Edit only your own plan file, and change
@@ -123,26 +131,29 @@ them.
 
 ## Questions for Wesley
 
-Every question for Wesley lives in the plan's Open questions, with your
+Every question for Wesley lives in the plan's Questions, with your
 recommendation, and nowhere else. Write each with `agent-plan ask`, which
 gives it the next ID and the form `agent-plan questions` reads; a question
 written by hand in another form never reaches Wesley:
 
 ```sh
 agent-plan ask PLAN --question 'Keep the old flag?' --recommendation 'no, drop it' \
-  --context 'Nothing reads it.' --alternative 'keep it' --after Q1
+  --context 'Nothing reads it.' --alternative 'keep it' --after Q1 --priority A
 ```
 
-`--part P1` puts it in that part's file. Never restate open questions in a
-message: when a sub-agent reports, say only what changed, add its new
-questions to the plan, and at most give their number. When Wesley asks,
-print `agent-plan questions PLAN --all`, the questions he can answer now,
-or point him to the plan. When he answers, record each answer with
-`agent-plan decide PLAN Q1 --answer 'ANSWER'`, which moves the question
-under Decisions as the next `D` ID and logs `decided`; a decision can make
-waiting questions askable, so list them again until none are left. In
-Claude Code, Wesley answers them through `/questions`; elsewhere, print
-them and take his answers in the chat.
+`--part P1` puts it in that part's file; `--priority A` puts it before the
+others, `C` after. Never restate open questions in a message: when a
+sub-agent reports, say only what changed, add its new questions to the
+plan, and at most give their number. When Wesley asks, print
+`agent-plan questions PLAN --all`, the questions he can answer now, or
+point him to the plan. When he answers, record each answer with
+`agent-plan decide PLAN Q1 --answer 'ANSWER'`, which settles the question
+in place and logs `decided`; `--drop --answer 'why'` drops it, and
+`--supersedes Q2` marks the earlier decision this one replaces. A decision
+can make waiting questions askable, so list them again until none are
+left. In Claude Code, Wesley answers them through `/questions`; elsewhere,
+print them and take his answers in the chat. He may also settle one in
+Emacs, with a note that `agent-plan decisions` reads as the answer.
 
 An open question is a decision only Wesley can make, and only his answer
 settles it: never decide one yourself. A fact that a
@@ -150,6 +161,11 @@ command, a file, the docs or a sub-agent's lookup can establish is yours to
 find; write what you found into the question it informs. Each question
 holds one idea, worded so that "yes" accepts your recommendation, and the
 most important comes first.
+
+The one decision of your own a plan records is one a fact or constraint
+that already holds forces, never a choice: write it with
+`agent-plan ask PLAN --question ... --recommendation ... --answer 'ANSWER: the constraint' --role R`,
+which writes it already decided, so every decision is in one place.
 
 ## Other hosts
 
@@ -173,7 +189,7 @@ not carried into it.
 
 A plan approved in plan mode is recorded word for word in the session's plan
 under `* Approved plan`. Before the first edit, structure it into Goal,
-Steps and Decisions with IDs.
+Steps and Questions with IDs.
 
 ## Plan and halt
 

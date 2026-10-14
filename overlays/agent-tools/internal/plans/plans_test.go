@@ -95,11 +95,16 @@ func TestNew(t *testing.T) {
 			t.Errorf("made %+v", made)
 		}
 		data, _ := os.ReadFile(made.File)
-		for _, s := range []string{"#+title: Add the loop\n", "#+TODO: TODO NEXT | DONE\n", "* Plan\n:PROPERTIES:\n",
+		if header := "#+title: Add the loop\n#+TODO: TODO STARTED | DONE VERIFIED ABANDONED\n#+TODO: ASK | DECIDED(@) DROPPED(@) SUPERSEDED\n"; !strings.HasPrefix(string(data), header) {
+			t.Errorf("the plan does not start with %q:\n%s", header, data)
+		}
+		if !strings.HasSuffix(string(data), ":END:\n** Goal\n** Steps\n** Distribution\n** Questions\n** Verification\n") {
+			t.Errorf("the plan's sections:\n%s", data)
+		}
+		for _, s := range []string{"* Plan\n:PROPERTIES:\n",
 			":ID: 2026-10-14-add-loop.box\n", ":HOST: box\n", ":REPOSITORIES: o/r\n", ":BRANCHES: main..loop\n",
 			":WORKTREES: /w/loop\n", ":SESSIONS: claude:abc\n", ":HARNESS: claude\n", ":STATUS: planning\n",
-			":PIPELINE: full\n", "** Goal\n", "** Decisions\n", "** Steps\n", "** Distribution\n",
-			"** Open questions\n", "** Verification\n"} {
+			":PIPELINE: full\n"} {
 			if !strings.Contains(string(data), s) {
 				t.Errorf("the plan lacks %q:\n%s", s, data)
 			}

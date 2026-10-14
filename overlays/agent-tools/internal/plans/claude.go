@@ -107,7 +107,7 @@ func (c Config) ImportClaude(hook []byte, now time.Time) ([]byte, error) {
 		return nil, err
 	}
 	return hookOutput("PostToolUse", fmt.Sprintf("The approved plan is recorded verbatim in %s, under \"Approved plan\". "+
-		"Before the first edit, structure it into that file's Goal, Steps (with IDs) and Decisions, as the plan-work skill says, "+
+		"Before the first edit, structure it into that file's Goal, Steps and Questions, as the plan-work skill says, "+
 		"and log each step's progress with `agent-plan log`.", file))
 }
 

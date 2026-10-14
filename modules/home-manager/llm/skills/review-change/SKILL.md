@@ -40,8 +40,9 @@ Each stage is an event in the plan's log (the `plan-work` skill's
 `agent-plan log`), against the item it concerns: the plan's ID, a part's,
 or a step's.
 
-- Design review of the plan: `plan-reviewed`; each decision it brings goes
-  under Decisions with a `D` ID and is logged `decided` once settled.
+- Design review of the plan: `plan-reviewed`; each decision it brings is
+  a question written with `agent-plan ask` and settled with
+  `agent-plan decide`, which logs `decided`.
 - Each fresh review round: `reviewed`, with the number of findings in the
   summary.
 - Each finding settled: `finding-settled` against the item it concerns, with

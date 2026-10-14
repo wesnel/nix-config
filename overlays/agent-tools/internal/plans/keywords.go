@@ -9,11 +9,62 @@ import (
 // emacs-config's plan views select entries by them. Change one only
 // together with those, and with the plan-work skill, which documents them.
 var (
-	partPattern     = regexp.MustCompile(`^P[0-9]+$`)
-	stepPattern     = regexp.MustCompile(`^(P[0-9]+\.)?S[0-9]+$`)
-	questionID      = regexp.MustCompile(`^(P[0-9]+\.)?Q[0-9]+$`)
-	decisionPattern = regexp.MustCompile(`^(P[0-9]+\.)?D[0-9]+$`)
+	partPattern = regexp.MustCompile(`^P[0-9]+$`)
+	stepPattern = regexp.MustCompile(`^(P[0-9]+\.)?S[0-9]+$`)
+	questionID  = regexp.MustCompile(`^(P[0-9]+\.)?Q[0-9]+$`)
 )
+
+// The keywords agent-plan writes. Steps and parts take the first
+// sequence, questions the second; `(@)` makes Org ask for a note when
+// Wesley settles a question in Emacs.
+const (
+	kwTodo       = "TODO"
+	kwStarted    = "STARTED"
+	kwDone       = "DONE"
+	kwVerified   = "VERIFIED"
+	kwAbandoned  = "ABANDONED"
+	kwAsk        = "ASK"
+	kwDecided    = "DECIDED"
+	kwDropped    = "DROPPED"
+	kwSuperseded = "SUPERSEDED"
+
+	stepSequence     = kwTodo + " " + kwStarted + " | " + kwDone + " " + kwVerified + " " + kwAbandoned
+	questionSequence = kwAsk + " | " + kwDecided + "(@) " + kwDropped + "(@) " + kwSuperseded
+)
+
+// todoLines are the #+TODO lines of every plan file.
+func todoLines() string {
+	return "#+TODO: " + stepSequence + "\n#+TODO: " + questionSequence + "\n"
+}
+
+// planKeywords are the keywords todoLines defines.
+var planKeywords = fileKeywords(todoLines())
+
+// archiveTag is the tag Org folds an entry's body under, which a settled
+// question takes.
+const archiveTag = "ARCHIVE"
+
+// stepState is the keyword the log gives a step, part or follow-up: the
+// state of its newest event that changes one.
+func stepState(events []Event, id string) string {
+	state := kwTodo
+	for _, e := range events {
+		if e.Item != id {
+			continue
+		}
+		switch e.Kind {
+		case "started":
+			state = kwStarted
+		case "done":
+			state = kwDone
+		case "verified":
+			state = kwVerified
+		case "abandoned":
+			state = kwAbandoned
+		}
+	}
+	return state
+}
 
 // idOf matches the IDs with prefix, such as "P1." or "", and letter, such
 // as "Q", capturing the number.
