@@ -128,9 +128,13 @@ an agent runs `pr-loop open`, which pushes the unsigned commits through the
 GitHub API with your `gh` login and opens a draft. It refuses a default
 branch, a branch GitHub already has, and any base but the default branch or
 the head of another open pull request of yours in the same repository, runs
-`git-push-guard`'s check, and points the branch's upstream at its copy on
-GitHub. When the work is done, see what will be signed and sign it, in a
-terminal of your own:
+`git-push-guard`'s check, points the branch's upstream at its copy on
+GitHub, and puts a pull request based on another into that one's GitHub
+stack.
+`pr-loop link BOTTOM ... TOP` stacks pull requests whose bases already
+chain, such as those opened after a signed push, and `pr-loop stack PR`
+shows GitHub's stack beside the chain of bases. When the work is done, see
+what will be signed and sign it, in a terminal of your own:
 
 ``` sh
 git log --format='%h %G? %s' origin/main..HEAD   # N marks an unsigned commit

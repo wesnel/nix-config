@@ -248,7 +248,11 @@ them fit together:
 If you are still running once Wesley has pushed:
 
 - Open a draft pull request for each new branch, based on its parent branch
-  in a stack.
+  in a stack, then make each stack one GitHub stack, which GitHub shows on
+  every pull request in it and merges from the bottom:
+  `pr-loop link <bottom> ... <top>`, by number or branch. It refuses bases
+  that do not chain, and leaves a stack already linked as it is.
+  `pr-loop stack <pr>` shows GitHub's stack under `github`.
 - Run the **Publish** phase: the drafted replies, and every description
   brought up to the change as it stands.
 - Watch every pull request's CI as the `signing-pass` skill's "After a push"

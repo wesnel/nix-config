@@ -421,11 +421,11 @@ const signing = "Signing needs Wesley's hardware key. Leave the commits unsigned
 
 const pushGuard = "Publishing private history in a public repository is Wesley's decision. Leave push-guard.* alone, and name the repository and the commits in the report for Wesley."
 
-const prLoopWrites = "Use `pr-loop push`, `reply`, `resolve` or `request`; any other write goes in the report for Wesley."
+const prLoopWrites = "Use `pr-loop push`, `reply`, `resolve`, `request` or `link`; any other write goes in the report for Wesley."
 
 // coordinatorOnly are the pr-loop steps an owner leaves to the coordinator,
 // which keeps the stack consistent across PRs.
-var coordinatorOnly = map[string]bool{"open": true, "begin": true, "push": true, "reply": true, "resolve": true,
+var coordinatorOnly = map[string]bool{"open": true, "link": true, "begin": true, "push": true, "reply": true, "resolve": true,
 	"request": true, "worktrees": true, "sign": true, "end": true}
 
 // reviewerReads are the pr-loop commands a reviewer may run, besides
