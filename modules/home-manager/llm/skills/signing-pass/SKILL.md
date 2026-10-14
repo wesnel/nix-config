@@ -41,11 +41,16 @@ When the work is done, show Wesley what the pass will sign, for each branch
 you committed to:
 
 ```sh
-git log --format='%h %G? %s' main..HEAD
+git log --format='%h %G? %s' origin/main..HEAD
 ```
 
-`N` marks an unsigned commit. Then tell Wesley to run, in that branch, in a
-terminal of their own:
+`N` marks an unsigned commit. The pass starts from the same place: where the
+branch left the remote's default branch (`origin/HEAD`, then `origin/main` or
+`origin/master`, then local `main` or `master`), so a stale local `main` does
+not matter. For a branch that starts from somewhere else, put that ref in the
+range, hand over `--base REF`, and sign that branch in a pass of its own.
+
+Then tell Wesley to run, in that branch, in a terminal of their own:
 
 ```sh
 git sign-pass                  # sign; nothing is pushed
@@ -57,6 +62,18 @@ Suggest `--set-upstream` when a branch has never been pushed: it publishes the
 branch in the same push, and refuses one the remote already has. Both refuse,
 before any touch, a branch whose upstream is a branch of another name, and any
 push to the remote's default branch.
+
+The refusal says how to fix the upstream, but it costs Wesley a round trip, so
+check each branch the pass moves before handing over `--push`:
+
+```sh
+git rev-parse --abbrev-ref <branch>@{upstream}   # origin/<branch>, or no upstream
+```
+
+A branch made with `git switch -c <branch> origin/main` tracks `origin/main`.
+Point it at its own with `git branch --set-upstream-to=origin/<branch> <branch>`,
+or, if the remote has no such branch yet, `git branch --unset-upstream <branch>`
+and hand over `--set-upstream`.
 
 For more than one branch, hand over one command that names the top of every
 stack, run from any worktree of the repository:
@@ -83,8 +100,7 @@ any of the three kinds is squashed, it refuses when the remaining commits or the
 files at the tip would differ from that, and it reports any branch lower in the stack that
 gained a fix. It needs one touch per remaining commit, plus one for each push. If it
 stops at a missed touch, it says how to resume, and the unsigned branch is kept
-under `refs/sign-pass/backup/`. Pass `--base REF` when the branch does not start
-from `main`.
+under `refs/sign-pass/backup/`.
 
 So a correction to an earlier commit is a fixup, not a commit of its own:
 
