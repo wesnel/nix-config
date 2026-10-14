@@ -150,7 +150,8 @@ old parent tips.
    declines with demonstrated evidence, and for fixes and duplicates whose
    fix landed, except on a bot whose `resolvesOwnThreads` is true (Qodo):
    it resolves its own threads when it re-reviews, so leave those to it.
-   Deferred threads stay open.
+   Deferred threads stay open. `pr-loop reply --from <file>` does a round's
+   replies and resolves in one go; `pr-loop --help` gives its format.
 
 Then start the next round.
 
