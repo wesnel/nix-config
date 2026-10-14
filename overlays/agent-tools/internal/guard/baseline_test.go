@@ -382,6 +382,23 @@ func TestGitState(t *testing.T) {
 		{true, linked, "git worktree add --force ../x"},
 		{true, main, "git worktree add -ff ../x feature"},
 		{false, linked, "git worktree add -b y ../y pushed"},
+		{true, main, "git switch pushed"},
+		{true, main, "git switch -c x"},
+		{true, main, "git switch -"},
+		{true, main, "git switch --detach pushed"},
+		{true, main, "git checkout pushed"},
+		{true, main, "git checkout -b x"},
+		{true, main, "git checkout -"},
+		{true, main, "git checkout HEAD~0"},
+		{true, linked, "git -C ../main checkout pushed"},
+		{false, main, "git switch --detach"},
+		{false, main, "git checkout -- a.go"},
+		{false, main, "git checkout pushed -- a.go"},
+		{false, main, "git checkout HEAD a.go b.go"},
+		{false, main, "git checkout a.go"},
+		{false, main, "git switch -h"},
+		{false, linked, "git checkout -b y"},
+		{false, linked, "git checkout pushed"},
 	}
 	for _, c := range cases {
 		reason := judge(t, c.dir, c.command)
