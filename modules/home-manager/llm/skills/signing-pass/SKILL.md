@@ -129,3 +129,27 @@ During a bot review loop (the `review-loop` skill), the commits are also
 fixups, and that loop's signing pass squashes them as well as signing them.
 That loop accepts only `--fixup=<commit>`, never `amend!` or `squash!`, since
 it must not change the PR's commit messages.
+
+## After a push
+
+After every push to a pull request that you make or are told about,
+including `pr-loop open` and Wesley's `git sign-pass --push`, watch its CI if
+you are still running. From the pushed branch (or naming the pull request's
+number or branch), run this in the background, with the Bash tool's
+`run_in_background` or your harness's equivalent, and act when it exits:
+
+```sh
+pr-loop wait ci --timeout 3600
+```
+
+It waits for the pushed commit to become the pull request's head, so it
+never reports the previous head's checks, and prints a `result`: `passed`,
+`failed`, `failedOnBase` or `timedOut` (exit 3). Each failed check names the
+`pr-loop logs` command for its log and says whether it fails on the base
+too (`onBase`).
+
+- A failure the pull request caused: fix it as a fixup, as above, and hand
+  over again.
+- A failure that is not its doing (failing on the base, a flaky test, an
+  infrastructure fault): report it to Wesley with the evidence from the log.
+  Never rerun CI or push again in the hope that it passes.
