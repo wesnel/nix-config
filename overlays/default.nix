@@ -26,6 +26,8 @@
 
   tbxark-mcp-proxy = final.callPackage ./tbxark-mcp-proxy {};
 
+  ring-mcp = final.callPackage ./ring-mcp {};
+
   # FIXME: This is blocked by CrowdStrike on my work laptop :(
   # https://github.com/Mozilla-Ocho/llamafile/issues/14
   llava = final.stdenv.mkDerivation rec {
