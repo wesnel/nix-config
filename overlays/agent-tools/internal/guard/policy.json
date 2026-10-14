@@ -136,6 +136,98 @@
     "allow": ["curl -X POST https://example.com -d x"]
   },
   {
+    "why": "Credentials stay out of the session.",
+    "scope": "baseline",
+    "pattern": ".*\\b(security\\s+(find-(generic|internet)-password\\b.*\\s-[a-z]*[wg]|dump-keychain)|git\\s+credential\\s+fill|git(-|\\s+)credential-osxkeychain\\s+get|sops\\s+(.*\\s)?(-d|--decrypt|decrypt|exec-env|exec-file)|op\\s+(read|inject|item\\s+get)|pass\\s+show)\\b.*",
+    "deny": ["security find-generic-password -s x -w", "security dump-keychain", "git credential fill", "git credential-osxkeychain get",
+      "sops -d secrets/x.yaml", "op read op://v/i/f", "pass show work/x"],
+    "allow": ["security find-generic-password -s x", "sops -e x.yaml", "pass ls"]
+  },
+  {
+    "why": "Credential files stay out of the session.",
+    "scope": "baseline",
+    "pattern": ".*(\\.ssh/id_(?![^\\s'\"]*\\.pub\\b)|\\.gnupg/private-keys|\\.codex/auth\\.json|\\.claude/\\.credentials\\.json|mcp-proxy/token|\\.config/sops/age|\\.config/ngrok).*",
+    "deny": ["cat ~/.ssh/id_ed25519", "cat ~/.claude/.credentials.json", "cat ~/.codex/auth.json", "cat ~/.config/sops/age/keys.txt",
+      "cat ~/.local/state/mcp-proxy/token"],
+    "allow": ["cat ~/.ssh/id_ed25519.pub", "ls ~/.ssh"]
+  },
+  {
+    "why": "The environment holds credentials; print a variable by name.",
+    "scope": "baseline",
+    "pattern": "(.*[;&|\\n(]\\s*)?(env|printenv|set|export(\\s+-p)?|declare\\s+-p)\\s*([;&|\\n)].*)?|.*\\bprintenv\\s+\\S*(?i:token|key|secret|password|credential)\\S*.*",
+    "deny": ["env", "printenv", "export -p", "set", "true; env", "printenv NGROK_AUTHTOKEN_PROD"],
+    "allow": ["printenv PATH", "env FOO=1 go test ./...", "set -euo pipefail", "export FOO=1"]
+  },
+  {
+    "why": "Settings every worktree shares are Wesley's.",
+    "scope": "baseline",
+    "pattern": "(?i).*\\bgit\\b.*\\bconfig\\b(?!.*--worktree)(?!.*(--get|--list|\\s-l\\b|\\sget\\s|\\slist\\b)).*\\s(core\\.(bare|worktree|hookspath|fsmonitor|sshcommand|pager|editor)|include|filter\\.|diff\\.\\S+\\.textconv)\\S*.*",
+    "deny": ["git config core.bare true", "git config --local core.hooksPath /tmp/h", "git config include.path ../x", "git config filter.x.clean cat",
+      "git config diff.x.textconv cat"],
+    "allow": ["git config --get core.bare", "git config --worktree core.bare false", "git config user.name T"]
+  },
+  {
+    "why": "ngrok API writes reach production.",
+    "scope": "baseline",
+    "pattern": ".*\\bngrok\\s+api\\b.*\\s(create|update|delete|remove|start|stop|restart|set|put|patch|post|add|replace|rotate|enable|disable|revoke|write|manage|submit|send|run|exec|execute|invoke|import|upload|attach|detach)\\b.*",
+    "deny": ["ngrok api endpoints create --url x", "ngrok api reserved-domains delete rd_1"],
+    "allow": ["ngrok api endpoints list"]
+  },
+  {
+    "why": "Activating a system or a profile is Wesley's step; building is not.",
+    "scope": "baseline",
+    "pattern": ".*(\\b(darwin-rebuild\\s+(.*\\s)?(switch|activate|rollback|--rollback)|home-manager\\s+(.*\\s)?(switch|activate|remove-generations|expire-generations|uninstall)|nixos-rebuild\\s+(.*\\s)?(switch|boot|test|--rollback)|nix\\s+profile\\s+(install|add|remove|upgrade|rollback|wipe-history)|nix-env\\s+(.*\\s)?(-[ieuG]\\w*|--install|--uninstall|--upgrade|--set|--rollback|--switch-generation|--delete-generations)|nix-collect-garbage\\s+(.*\\s)?(-d|--delete-old|--delete-older-than)|nix\\s+copy\\s+(.*\\s)?--to[=\\s]+\\S+://|cachix\\s+push)\\b|\\S*/activate(\\s|$)).*",
+    "deny": ["darwin-rebuild switch --flake .", "home-manager switch --flake .#devbox", "nixos-rebuild boot", "./result/activate",
+      "nix profile install nixpkgs#hello", "nix-env -iA nixpkgs.hello", "nix-collect-garbage -d", "nix copy --to ssh://devbox ./result", "cachix push wgn ./result"],
+    "allow": ["darwin-rebuild build --flake .", "nix build .#x", "nix flake check", "home-manager build", "nix-env -q"]
+  },
+  {
+    "why": "History git cannot get back is Wesley's to discard.",
+    "scope": "baseline",
+    "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?(reflog\\s+(expire|delete)|gc\\b.*--prune=(now|all)|prune\\b|filter-branch|filter-repo|update-ref\\s+(.*\\s)?-d\\s+(.*\\s)?refs/heads/|worktree\\s+prune).*",
+    "deny": ["git reflog expire --expire=now --all", "git gc --prune=now", "git prune", "git filter-branch --tree-filter x HEAD",
+      "git filter-repo --path x", "git update-ref -d refs/heads/x", "git worktree prune"],
+    "allow": ["git gc", "git fetch --prune", "git remote prune origin", "git update-ref refs/heads/x HEAD"]
+  },
+  {
+    "why": "The hooks that run the guard stay on.",
+    "scope": "baseline",
+    "pattern": ".*((^|\\s)(>>?|tee|cp|mv|ln|install|-i)\\s+(.*\\s)?\\S*(\\.claude/settings[^/\\s]*\\.json|\\.codex/(config\\.toml|hooks\\.json)|\\.config/eca/config\\.json)|\\bclaude\\b.*(--(allow-)?dangerously-skip-permissions|bypassPermissions)|\\bcodex\\b.*--dangerously-bypass).*",
+    "deny": ["echo '{}' > ~/.claude/settings.json", "sed -i '' s/x/y/ ~/.codex/hooks.json", "cp x.json .claude/settings.local.json",
+      "claude --dangerously-skip-permissions", "codex --dangerously-bypass-approvals-and-sandbox exec x"],
+    "allow": ["cat ~/.claude/settings.json", "claude -p hello"]
+  },
+  {
+    "why": "Anything needing root is Wesley's to run.",
+    "scope": "baseline",
+    "pattern": "(?i)(.*[\\s;&|(])?(sudo|doas|su|pkexec|run0)(\\s.*)?|.*\\bosascript\\b.*with administrator privileges.*",
+    "deny": ["sudo darwin-rebuild switch", "doas true", "su -", "pkexec ls", "osascript -e 'do shell script \"x\" with administrator privileges'"],
+    "allow": ["echo issue", "git status"]
+  },
+  {
+    "why": "Publishing a package is Wesley's step.",
+    "scope": "baseline",
+    "pattern": ".*\\b((npm|pnpm|yarn|bun)\\s+(.*\\s)?publish|cargo\\s+publish|twine\\s+upload|gem\\s+push|(docker|podman)\\s+(image\\s+)?push|goreleaser(?!\\s+(check|build|healthcheck|init|jsonschema|completion|help)\\b)|vsce\\s+publish)\\b.*",
+    "deny": ["npm publish", "yarn npm publish", "cargo publish", "twine upload dist/x", "gem push x.gem", "docker push img", "podman image push img",
+      "goreleaser release --clean", "goreleaser", "vsce publish", "npx @vscode/vsce publish"],
+    "allow": ["npm test", "cargo build", "docker build .", "goreleaser check"]
+  },
+  {
+    "why": "Wesley's session depends on these processes.",
+    "scope": "baseline",
+    "pattern": "(?i).*\\b((pkill|killall)\\b.*(emacs|gpg-agent|ssh|nix-daemon|mcp-proxy)|gpgconf\\s+(.*\\s)?--kill|ssh\\s+(.*\\s)?-O\\s*(exit|stop)|launchctl\\s+(bootout|unload|remove|kickstart\\s+(.*\\s)?-k)|emacsclient\\b.*kill-emacs).*",
+    "deny": ["pkill emacs", "killall -9 gpg-agent", "pkill -f 'emacs --daemon'", "gpgconf --kill gpg-agent", "ssh -O exit devbox",
+      "launchctl bootout gui/501/org.x", "launchctl kickstart -k gui/501/org.x", "emacsclient -e '(kill-emacs)'"],
+    "allow": ["pkill -f my-test-server", "launchctl list", "emacsclient -e '(+ 1 2)'"]
+  },
+  {
+    "why": "The home directory, the root, the Nix store and Wesley's keys are not the agent's to destroy.",
+    "scope": "baseline",
+    "pattern": ".*\\b(rm\\s+(.*\\s)?-[a-zA-Z]*[rR]\\S*|chmod\\s+(.*\\s)?-R|chown\\s+(.*\\s)?-R|trash)\\s+(.*\\s)?(\"?(~|\\$HOME|\\$\\{HOME\\})\"?/?\\*?|/\\*?|/nix\\S*|\"?(~|\\$HOME)\"?/\\.(ssh|gnupg)\\S*)(\\s.*)?",
+    "deny": ["rm -rf ~", "rm -rf $HOME/", "rm -rf /", "rm -r /nix", "chmod -R 777 ~/.ssh", "trash ~/.gnupg", "rm -rf ~/*"],
+    "allow": ["rm -rf ./build", "rm -rf ~/src/x/build", "chmod -R u+w result"]
+  },
+  {
     "why": "Signing needs the hardware key.",
     "scope": "coordinator",
     "pattern": ".*\\bgit\\b.*\\bsign-pass\\b.*",
