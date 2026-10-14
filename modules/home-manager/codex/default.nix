@@ -41,6 +41,32 @@ with lib; let
             f.write(tomlkit.dumps(doc))
   '';
 
+  # Adds a path to the writable roots of Codex's workspace-write sandbox,
+  # keeping the rest of the file and any roots set from inside Codex.
+  addWritableRoot = pkgs.writers.writePython3 "codex-writable-root" {libraries = [pkgs.python3Packages.tomlkit];} ''
+    import os
+    import sys
+
+    import tomlkit
+
+    path, root = sys.argv[1], sys.argv[2]
+
+    doc = tomlkit.document()
+    if os.path.exists(path):
+        with open(path) as f:
+            doc = tomlkit.parse(f.read())
+
+    table = doc.setdefault("sandbox_workspace_write", tomlkit.table())
+    roots = table.setdefault("writable_roots", tomlkit.array())
+    if root not in [str(r) for r in roots]:
+        roots.append(root)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(tomlkit.dumps(doc))
+  '';
+
+  plans = config.wgn.home.llm.plans;
+
   toml = value:
     if isAttrs value
     then "{${concatStringsSep ", " (mapAttrsToList (k: v: "${builtins.toJSON k}=${toml v}") value)}}"
@@ -84,11 +110,13 @@ with lib; let
         map (p: ''\"${p}\"=\"deny\"'') config.wgn.home.llm.prLoop.deniedReads
         ++ map (p: ''\"{workspace}/${p}\"=\"read\"'') config.wgn.home.llm.prLoop.protectedPaths
         ++ [''\"${config.wgn.home.llm.prLoop.cacheDir}\"=\"write\"'']
+        # Reached through `agent-plan` on the relay.
+        ++ [''\"${plans.dir}\"=\"read\"'']
       )}"
       ${config.wgn.home.llm.prLoop.sandboxCaches}
       # The review-loop skill starts only where this is set.
       export PR_LOOP_SESSION=1
-      exec ${lib.getExe' pkgs.agent-tools "sandbox-relay"} session -- codex \
+      exec ${lib.getExe' pkgs.agent-tools "sandbox-relay"} session --program pr-loop --program agent-plan -- codex \
         ${concatStringsSep " \\\n  " (mapAttrsToList (k: v: "-c ${escapeShellArg "${k}=${toml v}"}") overrides)} \
         -c "permissions.pr_loop.filesystem={$filesystem}" \
         "$@"
@@ -150,6 +178,18 @@ in {
       wgn.home.llm.prLoop.enable = true;
       home.packages = [prLoopLauncher];
     })
+
+    # This host's plans are written with `agent-plan` and the file tools,
+    # from inside the workspace-write sandbox too. Merged into the
+    # config.toml Codex writes, as the MCP servers are.
+    {
+      home.activation.codexPlansRoot = lib.hm.dag.entryAfter ["writeBoundary"] ''
+        if [ -z "''${DRY_RUN:-}" ]; then
+          ${addWritableRoot} "$HOME/.codex/config.toml" ${escapeShellArg "${plans.dir}/${plans.host}"} \
+            || warnEcho "The plans directory was not made writable in Codex's sandbox."
+        fi
+      '';
+    }
 
     # Merged into the config.toml Codex writes, keeping its formatting and
     # everything else in it. Each named entry is replaced whole.

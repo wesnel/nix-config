@@ -9,6 +9,11 @@
 with lib; let
   cfg = config.wgn.home.llm;
 
+  agentToolsConfig = pkgs.writeText "agent-tools-config.json" (builtins.toJSON {
+    inherit (cfg) repos;
+    plans = {inherit (cfg.plans) dir host;};
+  });
+
   # d2 renders a PNG through a Chromium it downloads at run time, after asking
   # on the terminal, which an agent cannot answer and a sandbox cannot
   # download. So a PNG is rendered as SVG, which needs no browser, and
@@ -427,10 +432,16 @@ in {
     # Read by `pr-loop setup` and `worktrees` as pr-loop's config is, by
     # `git red-check` wherever it runs, and by `agent-plan` and the guard,
     # which keeps each plan's log.org append-only.
-    xdg.configFile."agent-tools/config.json".text = builtins.toJSON {
-      inherit (cfg) repos;
-      plans = {inherit (cfg.plans) dir host;};
-    };
+    xdg.configFile."agent-tools/config.json".source = agentToolsConfig;
+
+    # A sandboxed session may write this host's plans directory and nothing
+    # around it, and Linux's sandbox skips a grant whose path does not
+    # exist, so the directory and the exclude that keeps plans out of the
+    # repository around them are made here, outside any sandbox.
+    home.activation.agentPlans = hm.dag.entryAfter ["writeBoundary"] ''
+      run --quiet env AGENT_TOOLS_CONFIG=${agentToolsConfig} ${getExe' pkgs.agent-tools "agent-plan"} init \
+        || warnEcho "agent-plan init failed, so sandboxed sessions may not be able to make plans."
+    '';
 
     home.packages = with pkgs;
       [

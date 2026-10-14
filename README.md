@@ -289,7 +289,9 @@ Then, in the repository, start one of:
 - `M-x wgn/eca-pr-loop`, then choose the `pr-coordinator` agent.
 
 Each runs the agent's commands in a sandbox without credentials, beside a
-`sandbox-relay` that runs `pr-loop` on this machine with your `gh` login. The
+`sandbox-relay` that runs `pr-loop` on this machine with your `gh` login, and
+`claude-pr-loop` and `codex-pr-loop` also `agent-plan`'s reading commands and
+`log`, the session's only way to its plan. The
 `review-loop` skill refuses to start anywhere else. On Linux, Claude Code's
 sandbox needs `bubblewrap` and `socat` on `PATH`.
 
