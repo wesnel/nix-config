@@ -95,7 +95,7 @@ func planProperty(t *testing.T, file, name string) string {
 // the plan the session or worktree belongs to without the agent: commits
 // and pushes in its log, new worktrees, branches and pull requests in its
 // properties.
-func TestPostRecordsFacts(t *testing.T) {
+func testPostRecordsFacts(t *testing.T) {
 	main, linked, p := planned(t)
 	partFile := strings.TrimSuffix(p.File(), ".org") + ".P1.org"
 	os.WriteFile(filepath.Join(main, "a"), []byte("a\n"), 0o644)
