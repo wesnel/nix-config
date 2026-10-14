@@ -156,13 +156,50 @@ when it flashes, then `git sign-pass --resume`. Pass `--base REF` when the
 branch does not start from `origin`'s default branch or the local `main` or
 `master`.
 
-## testing: the tests fail without the change
+## reviews: fresh eyes and tests that fail
 
-`git red-check` checks that the tests a commit adds or changes test it,
-rather than taking an agent's word that they failed first. In a throwaway
-worktree under `.git/red-check/`, removed afterwards, it runs the test
-command at the commit's parent plus only the commit's test files, which must
-fail, then at the commit, which must pass:
+Every agent session that commits a change runs the `review-change` skill's
+pipeline unless you opt out for the task: a plan, a design review of it, the
+work, a fresh review loop of up to three rounds, and a design review of the
+result. Two commands give the reviews evidence an agent cannot talk its way
+around.
+
+### `git fresh-review`
+
+Reviews a range with a reviewer that did not write it and sees only the
+commits and the files it is handed: a goal statement (the goal, and what is
+not the change's job), optionally the items the change answers and earlier
+rounds' findings:
+
+``` sh
+git fresh-review --goal goal.md origin/main..HEAD
+git fresh-review --goal goal.md --items threads.md --prior round1.json origin/main..HEAD
+```
+
+The reviewer is Codex, a model family other than the author's, run as
+`codex exec -s read-only --ephemeral` in a throwaway worktree of the range's
+tip under `.git/fresh-review/`, removed however the review ends. Codex's
+sandbox cannot start inside another macOS sandbox. Its contract is
+`overlays/agent-tools/internal/review/reviewer.md`, the same text the
+`reviewer` agent of Claude Code and ECA loads, and its reply must fit
+`findings.schema.json` beside it. Findings that point at no line at the tip
+are dropped with the reason. It prints JSON and exits 0 with no findings, 3
+with findings, and 4 when Codex cannot review: not installed, not signed in,
+called from inside Codex, or in a review-loop session, where `pr-loop` must
+stay the only way out. Then `--print-prompt` gives the same prompt for a
+fresh `reviewer` sub-agent, and `--check FILE` validates its reply the same
+way. See `git fresh-review -h`.
+
+Where the repository has test settings, `git red-check` on the range runs
+first and its result goes in the prompt.
+
+### `git red-check`
+
+Checks that the tests a commit adds or changes test it, rather than taking
+an agent's word that they failed first. In a throwaway worktree under
+`.git/red-check/`, removed afterwards, it runs the test command at the
+commit's parent plus only the commit's test files, which must fail, then at
+the commit, which must pass:
 
 ``` sh
 git red-check                                  # HEAD
@@ -180,8 +217,9 @@ build command for any commit to exit 0. See `git red-check -h` (git turns
 `--help` into a manual-page lookup).
 
 Settings missing from the flags come from `test`, `build` and `testFiles` in
-`wgn.home.llm.repos`, keyed by `owner/name`, never from the repository. The test command runs the
-commit's code, so run it in a sandbox when the commit is not trusted.
+`wgn.home.llm.repos`, keyed by `owner/name`, never from the repository. The
+test command runs the commit's code, so run it in a sandbox when the commit
+is not trusted.
 
 ## pushing: private history stays private
 
@@ -241,8 +279,10 @@ The coordinator gives each PR to an owner sub-agent, which works in its own
 worktree under `.pr-loop/<number>`, where signing is off. Each round waits
 for CI, requests reviews from the bots in `wgn.home.llm.prLoop.bots`
 (Copilot and Qodo by default), triages their threads, fixes in fixups, has
-a fresh reviewer sub-agent check those fixups before they go out, restacks,
-pushes the stack through the GitHub API, then replies and resolves.
+one fresh review check those fixups before they go out (see
+[reviews](#reviews-fresh-eyes-and-tests-that-fail); in a loop the reviewer
+is always a sub-agent), restacks, pushes the stack through the GitHub API,
+then replies and resolves.
 It stops when the bots are satisfied or the loop needs a decision, and
 writes `.git/pr-loop/report.md`.
 
