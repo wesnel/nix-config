@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/repos"
 )
@@ -95,7 +94,7 @@ func openPRs(repo *Repo) (map[string]*PR, error) {
 	var data struct {
 		Search struct{ Nodes []*PR }
 	}
-	err := gh.GraphQL(`query($q: String!) {
+	err := graphQL(`query($q: String!) {
 		search(query: $q, type: ISSUE, first: 100) {
 			nodes { ... on PullRequest { `+prFields+` } }
 		}
