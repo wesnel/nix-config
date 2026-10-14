@@ -18,15 +18,14 @@ import (
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
-	"github.com/wesnel/agent-tools/internal/redcheck"
 	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/repos"
 )
 
 // Usage is `git fresh-review -h`.
 const Usage = `usage: git fresh-review --goal FILE [--items FILE] [--prior FILE] [--reviewer auto|codex]
-                        [--model M] [--timeout S] [--no-red-check] BASE..TIP
-       git fresh-review --print-prompt --goal FILE [--items FILE] [--prior FILE] [--no-red-check] BASE..TIP
+                        [--model M] [--timeout S] BASE..TIP
+       git fresh-review --print-prompt --goal FILE [--items FILE] [--prior FILE] BASE..TIP
        git fresh-review --check FILE BASE..TIP
 
 Reviews the commits in BASE..TIP with a reviewer that did not write them and
@@ -42,8 +41,9 @@ may read only that worktree, the parts of the git directory git needs, the
 Nix store and the system files they need to run; they may not write or
 reach the network, and no MCP server, plugin, web search or image viewer
 loads. Codex's sandbox cannot start inside another macOS sandbox, so run
-this outside one. Where the repository has test settings, git red-check
-BASE..TIP runs first and its JSON goes in the prompt.
+this outside one. git red-check runs the commits' code, so it runs only in
+the review sandbox, never here; where the repository has test settings,
+stderr says the review has no red-check results.
 
 Where Codex cannot review, review with a fresh sub-agent instead: give it
 the prompt --print-prompt prints, save its reply, and check that with
@@ -57,7 +57,6 @@ the prompt --print-prompt prints, save its reply, and check that with
                     even then
   --model M         the Codex model (default: Codex's own)
   --timeout S       seconds before the review is stopped (default 1800)
-  --no-red-check    leave git red-check out of the prompt
 
 Writes JSON on stdout: reviewer, model, range, tip, findings (each with
 id, path, line, kind, claim and evidence, and endLine, about and reopens
@@ -84,7 +83,6 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	reviewer := flags.String("reviewer", "auto", "")
 	model := flags.String("model", "", "")
 	timeout := flags.Int("timeout", 1800, "")
-	noRedCheck := flags.Bool("no-red-check", false, "")
 	printPrompt := flags.Bool("print-prompt", false, "")
 	check := flags.String("check", "", "")
 
@@ -162,9 +160,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			return noCodex(why)
 		}
 	}
-	if !*noRedCheck {
-		in.redCheck = redCheckFor(ctx, r, stderr)
-	}
+	noteRedCheck(r, stderr)
 	if *printPrompt {
 		in.where = fmt.Sprintf("Read the change in the repository at %s: `git diff %s %s`, `git log -p %s..%s`, "+
 			"and `git show %s:PATH` for a file as it is at TIP. That checkout's own files may hold work that is not "+
@@ -253,26 +249,16 @@ func unavailable(auto bool) string {
 	return ""
 }
 
-// redCheckFor runs git red-check on the range where the repository has test
-// settings, and returns its JSON or why it did not run; "" when there are no
-// settings.
-func redCheckFor(ctx context.Context, r *span, log io.Writer) string {
+// noteRedCheck says on log that git red-check is left out where the
+// repository has test settings. red-check runs the commits' code, which may be
+// anyone's, so it never runs here, only in the review sandbox.
+func noteRedCheck(r *span, log io.Writer) {
 	git.Dir = r.top
 	settings, err := repos.Lookup()
 	git.Dir = ""
-	switch {
-	case err != nil:
-		return "git red-check did not run: " + err.Error()
-	case settings.Test == "" || len(settings.TestFiles) == 0:
-		return ""
+	if err == nil && settings.Test != "" && len(settings.TestFiles) > 0 {
+		fmt.Fprintf(log, "%s: git red-check runs only in the review sandbox, so this review has no red-check results\n", name)
 	}
-	result, err := redcheck.Do(ctx, r.base+".."+r.tip, redcheck.Options{
-		Dir: r.top, Test: settings.Test, Build: settings.Build, TestFiles: settings.TestFiles, Log: log})
-	if err != nil {
-		return "git red-check did not run: " + err.Error()
-	}
-	data, _ := json.MarshalIndent(result, "", "  ")
-	return "```json\n" + string(data) + "\n```"
 }
 
 type inputs struct {

@@ -8,8 +8,8 @@ The task gives you:
 - the goal statement: what the change is for, and what is not its job;
 - optionally, the items the change answers (review threads, CI checks,
   earlier findings) and how each was settled;
-- optionally, `git red-check` JSON for the range: whether each commit's
-  tests fail without its change and pass with it.
+- where a sandboxed run made it, `git red-check` JSON for the range:
+  whether each commit's tests fail without its change and pass with it.
 
 ## Rules
 

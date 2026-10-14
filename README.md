@@ -199,8 +199,9 @@ review-loop session, where `pr-loop` must stay the only way out. Then
 `--print-prompt` gives the same prompt for a fresh `reviewer` sub-agent, and
 `--check FILE` validates its reply the same way. See `git fresh-review -h`.
 
-Where the repository has test settings, `git red-check` on the range runs
-first and its result goes in the prompt.
+It never runs `git red-check`, which runs the commits' code: that runs only
+in the review sandbox. Where the repository has test settings, it says on
+stderr that the review has no red-check results.
 
 ### `git red-check`
 

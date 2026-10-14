@@ -409,12 +409,55 @@ func TestUnavailable(t *testing.T) {
 	}
 }
 
+// TestNoRedCheckOnTheHost holds fresh-review to never running the
+// repository's test command where it runs, whatever the settings say: the
+// commits under review may be anyone's, and red-check runs them.
+func TestNoRedCheckOnTheHost(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		args []string
+	}{
+		{"print-prompt", []string{"--print-prompt"}},
+		{"codex", nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := setUp(t, true)
+			t.Setenv("FAKE_CODEX", "none")
+			marker := filepath.Join(t.TempDir(), "ran")
+			config := filepath.Join(t.TempDir(), "config.json")
+			os.WriteFile(config, []byte(`{"repos": {"o/r": {"test": "touch `+marker+`; false", "build": "touch `+marker+`", `+
+				`"testFiles": ["*_test.txt"]}}}`), 0o644)
+			t.Setenv("AGENT_TOOLS_CONFIG", config)
+			run(t, f.repo, "git", "remote", "add", "origin", "https://github.com/o/r.git")
+			os.WriteFile(filepath.Join(f.repo, "code.txt"), []byte("a\nb\nc\nd\n"), 0o644)
+			os.WriteFile(filepath.Join(f.repo, "code_test.txt"), []byte("d\n"), 0o644)
+			run(t, f.repo, "git", "add", "code.txt", "code_test.txt")
+			run(t, f.repo, "git", "commit", "-q", "-m", "Test the code")
+
+			var stdout, stderr bytes.Buffer
+			args := append(append([]string{}, c.args...), "--goal", ".git/goal.md", f.base+"..HEAD")
+			if code := Main(context.Background(), args, nil, &stdout, &stderr); code != 0 {
+				t.Fatalf("exit %d\n%s", code, stderr.String())
+			}
+			if _, err := os.Stat(marker); err == nil {
+				t.Error("the repository's test command ran on the host")
+			}
+			prompt := stdout.String()
+			if c.args == nil {
+				prompt = string(must(os.ReadFile(filepath.Join(f.log, "prompt"))))
+			}
+			if strings.Contains(strings.TrimPrefix(prompt, Contract), "red-check") {
+				t.Errorf("the prompt has a red-check section:\n%s", prompt)
+			}
+			if !strings.Contains(stderr.String(), "red-check runs only in the review sandbox") {
+				t.Errorf("stderr does not say red-check was skipped: %q", stderr.String())
+			}
+		})
+	}
+}
+
 func TestPrintPrompt(t *testing.T) {
 	f := setUp(t, false)
-	config := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(config, []byte(`{"repos": {"o/r": {"test": "true", "testFiles": ["*_test.txt"]}}}`), 0o644)
-	t.Setenv("AGENT_TOOLS_CONFIG", config)
-	run(t, f.repo, "git", "remote", "add", "origin", "https://github.com/o/r.git")
 	os.WriteFile(filepath.Join(f.repo, ".git", "items.md"), []byte("Thread T1: make it three lines\n"), 0o644)
 	os.WriteFile(filepath.Join(f.repo, ".git", "prior.json"), []byte(`{"findings": [{"id": "7"}]}`), 0o644)
 
@@ -425,19 +468,13 @@ func TestPrintPrompt(t *testing.T) {
 	}
 	prompt := stdout.String()
 	for _, want := range []string{"Grow the code to three lines.", "Thread T1: make it three lines", `"id": "7"`,
-		f.base, f.tip, "Grow the code", "no-test-files", "git show " + f.tip + ":"} {
+		f.base, f.tip, "Grow the code", "git show " + f.tip + ":"} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("the prompt lacks %q:\n%s", want, prompt)
 		}
 	}
 	if !strings.HasPrefix(prompt, Contract) {
 		t.Error("the prompt does not start with the reviewer's contract")
-	}
-
-	stdout.Reset()
-	args = []string{"--print-prompt", "--no-red-check", "--goal", ".git/goal.md", f.base + "..HEAD"}
-	if code := Main(context.Background(), args, nil, &stdout, &stderr); code != 0 || strings.Contains(stdout.String(), "no-test-files") {
-		t.Errorf("--no-red-check: exit %d\n%s", code, stdout.String())
 	}
 }
 
