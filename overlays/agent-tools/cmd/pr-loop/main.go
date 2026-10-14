@@ -124,9 +124,10 @@ func relayRefusal(argv []string) string {
 			name = argv[0]
 		}
 		if name == "setup" {
-			return "setup runs its command in the caller's sandbox, never through the relay"
+			return "setup runs its command in the caller's sandbox, never through the relay; " +
+				"run `pr-loop setup` in the sandbox, which asks the relay only for the command"
 		}
-		return fmt.Sprintf("%q is only run on the host", name)
+		return fmt.Sprintf("%q is only run on the host, outside the sandbox; put the exact pr-loop command in the report for Wesley", name)
 	}
 	// The client sends a --body-file or --from itself; a path here would name a
 	// file on the host, which the sandbox must not be able to read out through
@@ -135,7 +136,7 @@ func relayRefusal(argv []string) string {
 		for _, f := range fileFlags {
 			if (a == "--"+f && (i+1 >= len(argv) || argv[i+1] != "-")) ||
 				(strings.HasPrefix(a, "--"+f+"=") && a != "--"+f+"=-") || a == "-"+f || strings.HasPrefix(a, "-"+f+"=") {
-				return "a relayed command takes its body on stdin"
+				return "a relayed command takes its body on stdin; pass `--" + f + " FILE` as a separate argument, or `--" + f + " -`"
 			}
 		}
 	}

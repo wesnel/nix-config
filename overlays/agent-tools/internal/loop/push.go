@@ -30,11 +30,11 @@ func Push(branches []string, dryRun bool) (any, error) {
 	for _, b := range branches {
 		pr, ok := prs[b]
 		if !ok {
-			return nil, refuse("%s was not registered with `pr-loop begin`", b)
+			return nil, refuse("%s was not registered with `pr-loop begin`; push only the loop's branches, which `pr-loop status` lists", b)
 		}
 		entry := state.Branches[b]
 		if pr.HeadRefOid != entry.RemoteOid {
-			return nil, refuse("%s on GitHub moved to %.12s since the loop last pushed %.12s; someone else pushed, so stop and ask",
+			return nil, refuse("%s on GitHub moved to %.12s since the loop last pushed %.12s, so someone else pushed; stop and ask Wesley",
 				b, pr.HeadRefOid, entry.RemoteOid)
 		}
 		parent, err := state.parentRef(repo, b)
@@ -220,7 +220,7 @@ func (u *uploader) post(kind string, body any) (string, error) {
 
 func (u *uploader) expect(kind, want, got string) error {
 	if want != got {
-		return refuse("GitHub created %s %s for local %s; nothing was pushed", kind, got, want)
+		return refuse("GitHub created %s %s for local %s, so nothing was pushed; hand this push to Wesley", kind, got, want)
 	}
 	u.done[want] = true
 	return nil
@@ -233,7 +233,7 @@ func (u *uploader) blob(sha string) error {
 	}
 	// The API stores the pointer but never uploads what it points at.
 	if bytes.HasPrefix(content, []byte("version https://git-lfs.github.com/spec/")) {
-		return refuse("blob %s is a Git LFS pointer, whose object the GitHub API cannot upload; push that change by hand", sha)
+		return refuse("blob %s is a Git LFS pointer, whose object the GitHub API cannot upload; hand this push to Wesley", sha)
 	}
 	got, err := u.post("blobs", map[string]string{"content": base64.StdEncoding.EncodeToString(content), "encoding": "base64"})
 	if err != nil {
@@ -263,7 +263,7 @@ func (u *uploader) tree(sha string) error {
 		entries = append(entries, map[string]string{"path": string(name), "mode": mode, "type": kind, "sha": child})
 	}
 	if len(entries) == 0 {
-		return refuse("tree %s is empty, which the API cannot create", sha)
+		return refuse("tree %s is empty, which the API cannot create; hand this push to Wesley", sha)
 	}
 	got, err := u.post("trees", map[string]any{"tree": entries})
 	if err != nil {
@@ -289,7 +289,7 @@ func commitBody(sha string, raw []byte) (map[string]any, error) {
 		key, value, _ := strings.Cut(line, " ")
 		current = key
 		if !commitHeaders[key] {
-			return nil, refuse("commit %s has a %s header, which the API cannot reproduce", sha, key)
+			return nil, refuse("commit %s has a %s header, which the API cannot reproduce; hand this push to Wesley", sha, key)
 		}
 		switch key {
 		case "parent":
@@ -301,7 +301,7 @@ func commitBody(sha string, raw []byte) (map[string]any, error) {
 		}
 	}
 	if !utf8.Valid(message) {
-		return nil, refuse("commit %s has a message that is not UTF-8", sha)
+		return nil, refuse("commit %s has a message that is not UTF-8, which the API cannot reproduce; hand this push to Wesley", sha)
 	}
 	author, err := identity(fields["author"])
 	if err != nil {

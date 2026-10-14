@@ -244,7 +244,7 @@ func WaitCI(args []string, sha string, timeout, interval, grace time.Duration) (
 	want := ""
 	if sha != "" {
 		if len(numbers) != 1 {
-			return nil, false, refuse("--sha takes exactly one PR")
+			return nil, false, refuse("--sha names one head, so it takes exactly one PR; run `pr-loop wait ci --sha REV PR` for each")
 		}
 		if want, err = fullOid(sha); err != nil {
 			return nil, false, err
@@ -308,7 +308,7 @@ func fullOid(rev string) (string, error) {
 	if oid, err := git.Run("rev-parse", "--verify", "-q", rev+"^{commit}"); err == nil {
 		return oid, nil
 	}
-	return "", refuse("%s is not a commit here; pass the full commit ID", rev)
+	return "", refuse("%s is not a commit here; pass the full 40-character commit ID as `--sha`", rev)
 }
 
 var escapes = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[@-_]`)
@@ -329,7 +329,7 @@ func Logs(pr string, check string, lines int) (string, error) {
 			continue
 		}
 		if c.Job == 0 {
-			return "", refuse("%s is not a GitHub Actions job; its log is at %s", check, c.URL)
+			return "", refuse("%s is not a GitHub Actions job, so pr-loop cannot fetch its log; name %s in the report for Wesley", check, c.URL)
 		}
 		raw, err := gh.Raw(fmt.Sprintf("repos/%s/actions/jobs/%d/logs", slug, c.Job))
 		if err != nil {
@@ -342,9 +342,10 @@ func Logs(pr string, check string, lines int) (string, error) {
 		return strings.Join(all, "\n"), nil
 	}
 	if ci.State == "awaitingHead" {
-		return "", refuse("#%d's head is not yet %s on GitHub; wait for CI first", number, ci.ExpectedOid)
+		return "", refuse("#%d's head is not yet %s on GitHub, so its checks are not in; run `pr-loop wait ci %d` first",
+			number, ci.ExpectedOid, number)
 	}
-	return "", refuse("no failed check named %q on #%d", check, number)
+	return "", refuse("no failed check named %q on #%d; `pr-loop ci %d` lists its checks", check, number, number)
 }
 
 // loopNumbers resolves which PRs a read-only command looks at: the ones given
@@ -434,7 +435,7 @@ func loopTargets(args []string) (string, []int, error) {
 				return "", nil, err
 			}
 			if state == nil || state.Branches[a] == nil {
-				return "", nil, refuse("%q is neither a PR number nor a branch of this loop", a)
+				return "", nil, refuse("%q is neither a PR number nor a branch of this loop; `pr-loop status` lists the loop's pull requests", a)
 			}
 			n = state.Branches[a].PR
 		}
@@ -467,7 +468,8 @@ func checkPR(repo *Repo, number int) error {
 		repository(owner: $owner, name: $name) { pullRequest(number: $number) { `+prHeadFields+` } }
 	}`, map[string]any{"owner": owner, "name": name, "number": number}, &data)
 	if err == nil && !data.Repository.PullRequest.byViewer(repo) {
-		err = refuse("#%d is not an open pull request by %s in %s", number, repo.Viewer, repo.Slug)
+		err = refuse("#%d is not an open pull request by %s in %s, and pr-loop reads CI only on those; "+
+			"name one that is, or leave this one to Wesley", number, repo.Viewer, repo.Slug)
 	}
 	return err
 }
@@ -504,5 +506,6 @@ func branchPR(repo *Repo, local string) (int, error) {
 			return pr.Number, nil
 		}
 	}
-	return 0, refuse("%s is not the head of an open pull request by %s in %s", head, repo.Viewer, repo.Slug)
+	return 0, refuse("%s is not the head of an open pull request by %s in %s; name the pull request by number, "+
+		"or open one with `pr-loop open`", head, repo.Viewer, repo.Slug)
 }
