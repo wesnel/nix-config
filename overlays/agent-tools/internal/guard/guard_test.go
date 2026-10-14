@@ -209,43 +209,58 @@ func TestGraphQLQuerySources(t *testing.T) {
 
 // TestPolicy holds the guard to the examples in policy.json, which ECA's deny
 // patterns are built from and checked against at package build time, so the
-// two cannot drift apart. Owner-only rules hold only for an owner. Each
-// denial's reason, which is what the agent sees, must say what to do instead;
-// a rule's `why` is for whoever maintains it and reaches no agent.
+// two cannot drift apart. An owner-only rule holds for an owner and a
+// reviewer, and a reviewer-only rule for a reviewer alone. Each denial's
+// reason, which is what the agent sees, must say what to do instead; a rule's
+// `why` is for whoever maintains it and reaches no agent.
 func TestPolicy(t *testing.T) {
 	data, err := os.ReadFile("policy.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var rules []struct {
-		Pattern   string   `json:"pattern"`
-		OwnerOnly bool     `json:"ownerOnly"`
-		Deny      []string `json:"deny"`
-		Allow     []string `json:"allow"`
+		Pattern      string   `json:"pattern"`
+		OwnerOnly    bool     `json:"ownerOnly"`
+		ReviewerOnly bool     `json:"reviewerOnly"`
+		Deny         []string `json:"deny"`
+		Allow        []string `json:"allow"`
 	}
 	if err := json.Unmarshal(data, &rules); err != nil {
 		t.Fatal(err)
 	}
+	checks := map[role]func(string, string, json.RawMessage) string{
+		coordinator: Check, owner: CheckOwner, reviewer: CheckReviewer}
+	names := map[role]string{coordinator: "coordinator", owner: "owner", reviewer: "reviewer"}
 	for _, r := range rules {
 		if len(r.Deny) == 0 || len(r.Allow) == 0 {
 			t.Errorf("%s: needs examples both ways", r.Pattern)
 		}
-		for want, commands := range map[bool][]string{true: r.Deny, false: r.Allow} {
+		scope := coordinator
+		switch {
+		case r.ReviewerOnly:
+			scope = reviewer
+		case r.OwnerOnly:
+			scope = owner
+		}
+		for denied, commands := range map[bool][]string{true: r.Deny, false: r.Allow} {
 			for _, command := range commands {
 				input, _ := json.Marshal(map[string]string{"command": command})
-				// Another rule's allow example can be a step the coordinator
-				// alone takes, so an owner is held only to denials and to the
-				// owner-only rules' examples.
-				owner, coordinator := CheckOwner("Bash", "", input), Check("Bash", "", input)
-				if got := owner != ""; got != want && (want || r.OwnerOnly) {
-					t.Errorf("%s: guard deny=%v for an owner's %q", r.Pattern, got, command)
-				}
-				if got := coordinator != ""; got != (want && !r.OwnerOnly) {
-					t.Errorf("%s: guard deny=%v for the coordinator's %q", r.Pattern, got, command)
-				}
-				for _, reason := range []string{owner, coordinator} {
+				for who, check := range checks {
+					// A denial holds for the rule's role and every stricter
+					// one, and a narrower rule's denials are steps the
+					// coordinator takes. An allow example holds only for the
+					// rule's own role: another rule can deny it to a
+					// stricter one.
+					want, held := denied && who >= scope, who == scope
+					if denied {
+						held = who >= scope || who == coordinator
+					}
+					reason := check("Bash", "", input)
+					if got := reason != ""; held && got != want {
+						t.Errorf("%s: guard deny=%v for the %s's %q", r.Pattern, got, names[who], command)
+					}
 					if reason != "" && !saysInstead(reason) {
-						t.Errorf("%s: reason %q for %q does not say what to do instead", r.Pattern, reason, command)
+						t.Errorf("%s: reason %q for the %s's %q does not say what to do instead", r.Pattern, reason, names[who], command)
 					}
 				}
 			}
@@ -273,6 +288,16 @@ func TestFormats(t *testing.T) {
 	Main(strings.NewReader(`{"tool_name":"Bash","agent_type":"pr-loop:pr-owner","tool_input":{"command":"pr-loop push"}}`), &out)
 	if !strings.Contains(out.String(), `"permissionDecision":"deny"`) {
 		t.Errorf("Claude Code owner: %s", out.String())
+	}
+	out.Reset()
+	Main(strings.NewReader(`{"tool_name":"Bash","agent_type":"pr-loop:pr-reviewer","tool_input":{"command":"git commit --fixup=abc"}}`), &out)
+	if !strings.Contains(out.String(), `"permissionDecision":"deny"`) {
+		t.Errorf("Claude Code reviewer: %s", out.String())
+	}
+	out.Reset()
+	Main(strings.NewReader(`{"tool_name":"Bash","agent_type":"pr-loop:pr-owner","tool_input":{"command":"git commit --fixup=abc"}}`), &out)
+	if out.Len() != 0 {
+		t.Errorf("owner's fixup printed %s", out.String())
 	}
 	out.Reset()
 	Main(strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"pr-loop push"}}`), &out)

@@ -84,5 +84,19 @@
     "pattern": ".*\\bpr-loop\\s+(open|begin|push|reply|resolve|request|worktrees|sign|end)\\b.*",
     "deny": ["pr-loop push", "pr-loop reply T --body-file -", "pr-loop open --title T --body-file - x"],
     "allow": ["pr-loop threads 12", "pr-loop status", "grep -nE 'pr-loop\\s+push' SKILL.md"]
+  },
+  {
+    "why": "A reviewer only reads; the owner fixes and the coordinator runs the loop.",
+    "reviewerOnly": true,
+    "pattern": ".*\\bpr-loop\\s+(?!(stack|threads|status|ci|logs)\\b)\\S+.*",
+    "deny": ["pr-loop wait reviews", "pr-loop push", "pr-loop reply T --body-file -"],
+    "allow": ["pr-loop threads 12", "pr-loop logs 12 test", "pr-loop status"]
+  },
+  {
+    "why": "A reviewer only reads; the owner fixes and commits.",
+    "reviewerOnly": true,
+    "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?(commit|rebase|reset|checkout|switch|restore|merge|cherry-pick|revert|am|apply|stash|add|rm|mv|clean|tag|update-ref|notes|worktree\\s+(?!list\\b))\\b.*",
+    "deny": ["git commit --fixup=abc", "git -C .pr-loop/12 rebase --onto a b c", "git checkout main", "git stash push -u", "git worktree add ../x"],
+    "allow": ["git log --oneline main..HEAD", "git -C .pr-loop/12 show abc --stat", "git diff a b", "git worktree list", "git range-diff a...b"]
   }
 ]

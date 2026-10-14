@@ -51,8 +51,9 @@
       rules = builtins.fromJSON (builtins.readFile ./internal/guard/policy.json);
       patterns = map (r: "(?s)${r.pattern}");
     in {
-      coordinator = patterns (builtins.filter (r: !(r.ownerOnly or false)) rules);
-      owner = patterns rules;
+      coordinator = patterns (builtins.filter (r: !(r.ownerOnly or false) && !(r.reviewerOnly or false)) rules);
+      owner = patterns (builtins.filter (r: !(r.reviewerOnly or false)) rules);
+      reviewer = patterns rules;
     };
 
     # A static Linux build of pr-loop for a sandbox guest, which runs it as a

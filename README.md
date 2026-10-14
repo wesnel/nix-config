@@ -239,8 +239,9 @@ sandbox needs `bubblewrap` and `socat` on `PATH`.
 The coordinator gives each PR to an owner sub-agent, which works in its own
 worktree under `.pr-loop/<number>`, where signing is off. Each round waits
 for CI, requests reviews from the bots in `wgn.home.llm.prLoop.bots`
-(Copilot and Qodo by default), triages their threads, fixes in fixups,
-restacks, pushes the stack through the GitHub API, then replies and resolves.
+(Copilot and Qodo by default), triages their threads, fixes in fixups, has
+a fresh reviewer sub-agent check those fixups before they go out, restacks,
+pushes the stack through the GitHub API, then replies and resolves.
 It stops when the bots are satisfied or the loop needs a decision, and
 writes `.git/pr-loop/report.md`.
 
@@ -288,7 +289,8 @@ Linear, which the report proposes instead.
   and denies other ways to write to GitHub or Linear, unsigned-workflow
   violations and your decisions. Owner agents are also denied the steps the
   coordinator alone takes (`pr-loop push`, `reply` and the like) in Claude
-  Code and ECA. ECA's agents also carry deny patterns built
+  Code and ECA, and reviewer agents also every git and `pr-loop` command
+  that changes something. ECA's agents also carry deny patterns built
   from `overlays/agent-tools/internal/guard/policy.json`. Add a rule there,
   with commands it must deny and allow: the guard's tests and the package
   build hold both to those examples, and fail on a denial whose reason does
