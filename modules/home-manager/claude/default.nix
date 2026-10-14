@@ -196,12 +196,18 @@ in {
 
         # Applies wherever a project turns the sandbox on, and merges into
         # claude-pr-loop's sandbox, which denies what it must not have.
-        sandbox = optionalAttrs darwin {
-          # Go programs, gh and the go command among them, verify TLS
-          # through trustd on macOS, which they fail to reach otherwise.
-          # This opens the trust service alone, not the keychain.
-          enableWeakerNetworkIsolation = true;
-        };
+        sandbox =
+          {
+            # `trash` moves a file on the home volume into ~/.Trash, which the
+            # trash skill asks for in place of rm.
+            filesystem.allowWrite = optional darwin "${config.home.homeDirectory}/.Trash";
+          }
+          // optionalAttrs darwin {
+            # Go programs, gh and the go command among them, verify TLS
+            # through trustd on macOS, which they fail to reach otherwise.
+            # This opens the trust service alone, not the keychain.
+            enableWeakerNetworkIsolation = true;
+          };
 
         # The ngrok account server's write scopes reach production, and its
         # tools are not published, so it is filtered by name, failing closed.
