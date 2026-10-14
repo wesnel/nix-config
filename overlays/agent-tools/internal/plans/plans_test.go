@@ -98,7 +98,7 @@ func TestNew(t *testing.T) {
 		if header := "#+title: Add the loop\n#+TODO: TODO STARTED | DONE VERIFIED ABANDONED\n#+TODO: ASK | DECIDED(@) DROPPED(@) SUPERSEDED\n"; !strings.HasPrefix(string(data), header) {
 			t.Errorf("the plan does not start with %q:\n%s", header, data)
 		}
-		if !strings.HasSuffix(string(data), ":END:\n** Goal\n** Steps\n** Distribution\n** Questions\n** Verification\n") {
+		if !strings.HasSuffix(string(data), ":END:\n** Goal\n** Steps\n** Distribution\n** Questions\n** Follow-ups\n** Verification\n") {
 			t.Errorf("the plan's sections:\n%s", data)
 		}
 		for _, s := range []string{"* Plan\n:PROPERTIES:\n",

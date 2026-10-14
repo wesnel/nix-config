@@ -9,9 +9,9 @@ func afterIDs(props map[string]string) []string {
 }
 
 // settled reports whether id is settled, by Org's rule: its keyword is one
-// of its file's done keywords. A step's or a part's keyword is the one its
-// log gives it, so an abandoned one settles too, as Org's blocker reads
-// it. An ID the plan does not hold, a typo included, never settles: what
+// of its file's done keywords. A step's, a part's or a follow-up's keyword
+// is the one its log gives it, so an abandoned one settles too, as Org's
+// blocker reads it. An ID the plan does not hold, a typo included, never settles: what
 // waits for it keeps waiting, and status shows that.
 func settled(list []item, events []Event) func(id string) bool {
 	byID := map[string]item{}
@@ -23,7 +23,7 @@ func settled(list []item, events []Event) func(id string) bool {
 		switch {
 		case !ok:
 			return false
-		case stepPattern.MatchString(id) || partPattern.MatchString(id):
+		case projected(id):
 			return planKeywords.done[stepState(events, id)]
 		}
 		return it.Done

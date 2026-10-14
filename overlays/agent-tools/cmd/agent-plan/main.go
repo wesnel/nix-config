@@ -68,6 +68,11 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      or with --drop as dropped, why in --answer; --supersedes
                      marks the settled question it replaces SUPERSEDED; log
                      it as decided
+  followup PLAN --title T --found-in ID [--context T] [--part P1]
+                     record work found while doing item ID, outside its
+                     scope, as a TODO under Follow-ups with the next follow-up
+                     ID, and log it as discovered; its keyword then follows
+                     its log, as a step's does
   postpone PLAN ID (--until 'YYYY-MM-DD[ HH:MM]' | --clear)
                      schedule step or part ID for that day or time, which
                      keeps it out of the ready lists and the agenda until
@@ -302,6 +307,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		drop     = flags.Bool("drop", false, "")
 		replaces = flags.String("supersedes", "", "")
 		until    = flags.String("until", "", "")
+		foundIn  = flags.String("found-in", "", "")
 		unset    = flags.Bool("clear", false, "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
@@ -465,6 +471,13 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		return report(p.Decide(positional[1], plans.DecideOptions{Answer: *answer, Drop: *drop, Supersedes: *replaces,
 			Role: *role}, time.Now()))
+	case "followup":
+		p, ok := wantPlan()
+		if !ok {
+			return 2
+		}
+		return report(p.Followup(plans.FollowupOptions{Title: *title, FoundIn: *foundIn, Context: *context, Part: *part},
+			time.Now()))
 	case "postpone":
 		if len(positional) != 2 || (*until == "") == !*unset {
 			fmt.Fprint(stderr, "agent-plan postpone: takes PLAN ID and --until TIME or --clear\n")

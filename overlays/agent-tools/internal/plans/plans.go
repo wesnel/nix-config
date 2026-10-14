@@ -242,7 +242,7 @@ func planText(o NewOptions, id string, extra map[string]string, parent bool) str
 	property("PULL_REQUESTS", "")
 	property("PIPELINE", "full")
 	b.WriteString(":END:\n")
-	sections := []string{"Goal", "Steps", "Distribution", "Questions", "Verification"}
+	sections := []string{"Goal", "Steps", "Distribution", "Questions", "Follow-ups", "Verification"}
 	for _, s := range sections {
 		if s == "Distribution" && !parent {
 			continue

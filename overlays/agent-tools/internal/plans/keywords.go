@@ -12,9 +12,10 @@ var (
 	partPattern = regexp.MustCompile(`^P[0-9]+$`)
 	stepPattern = regexp.MustCompile(`^(P[0-9]+\.)?S[0-9]+$`)
 	questionID  = regexp.MustCompile(`^(P[0-9]+\.)?Q[0-9]+$`)
+	followupID  = regexp.MustCompile(`^(P[0-9]+\.)?F[0-9]+$`)
 )
 
-// The keywords agent-plan writes. Steps and parts take the first
+// The keywords agent-plan writes. Steps, parts and follow-ups take the first
 // sequence, questions the second; `(@)` makes Org ask for a note when
 // Wesley settles a question in Emacs.
 const (

@@ -47,6 +47,8 @@ type Status struct {
 	// whose ORDERED property is t, and not scheduled for later, as Emacs's
 	// agenda shows them.
 	ReadySteps []string `json:"readySteps"`
+	// Followups are the follow-ups not yet done, verified or abandoned.
+	Followups []string `json:"followups"`
 	// KeywordDrift are the steps and parts whose heading keyword is not the
 	// one their log gives them: changed in Emacs, or not written while
 	// Emacs held unsaved changes to the file.
@@ -143,7 +145,7 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 	}
 	s := Status{Plan: p.file(""), Title: orgTitle(string(data)), Steps: []Step{}, NotDone: []string{},
 		DoneNotVerified: []string{}, TokensByPart: map[string]int64{}, TokensBy: tokenRows(events),
-		Ready: []string{}, Waiting: []Waiting{}, KeywordDrift: []Drift{}}
+		Ready: []string{}, Waiting: []Waiting{}, KeywordDrift: []Drift{}, Followups: []string{}}
 	open, err := p.Questions(true)
 	if err != nil {
 		return Status{}, err
@@ -172,6 +174,9 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 		}
 		if state := stepState(events, it.ID); projected(it.ID) && it.Keyword != state {
 			s.KeywordDrift = append(s.KeywordDrift, Drift{ID: it.ID, File: it.Keyword, Log: state})
+		}
+		if followupID.MatchString(it.ID) && !isSettled(it.ID) {
+			s.Followups = append(s.Followups, it.ID)
 		}
 		if !stepPattern.MatchString(it.ID) {
 			continue
@@ -268,6 +273,7 @@ func (s Status) Org() string {
 		s.State, s.Implemented, list(s.NotDone), list(s.DoneNotVerified))
 	fmt.Fprintf(&b, "- Parts ready to start: %s\n", list(s.Ready))
 	fmt.Fprintf(&b, "- Steps ready: %s\n", list(s.ReadySteps))
+	fmt.Fprintf(&b, "- Follow-ups open: %s\n", list(s.Followups))
 	if len(s.Waiting) > 0 {
 		var waits []string
 		for _, w := range s.Waiting {

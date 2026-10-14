@@ -201,6 +201,11 @@ judging it.
   Wesley's decision; the thread stays open, and the item goes in the
   hand-back with its options.
 
+Each finding settled `defer` or `belongs-in` is also written into the
+plan with `agent-plan followup PLAN --title '...' --found-in <item>`, the
+plan item it was found against, so the work stays in view after the
+thread.
+
 A bot whose `resolvesOwnThreads` is set resolves its own threads when it
 reviews again; leave those to it. A reviewer's finding has no thread: its
 outcome goes against its plan item ID and in the hand-back.
