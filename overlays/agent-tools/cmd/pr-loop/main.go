@@ -36,7 +36,9 @@ authenticated user in the same repository.
   open --title T --body-file F [--base BASE] [--dry-run] [BRANCH]
                               push BRANCH (default HEAD) through the GitHub API and open
                               it as a draft PR against BASE (default: the default branch)
-  stack [BRANCH]              the stack of open PRs containing BRANCH (default HEAD)
+  stack [PR|BRANCH]           the stack of open PRs containing a PR (default HEAD's), as
+                              their bases chain them, and GitHub's stack of that PR as
+                              "github" (null when GitHub has it in none)
   begin [BRANCH...]           register the branches of one stack (default: the current stack)
   worktrees [--remove]        a worktree per PR under .pr-loop/, where commits are unsigned;
                               runs the setup command in each one whose HEAD moved since its last setup
@@ -289,11 +291,15 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 			result, err = loop.Open(branch, *base, *title, text, *dryRun)
 		}
 	case "stack":
-		branch := ""
-		if len(rest) > 0 {
-			branch = rest[0]
+		if len(rest) > 1 {
+			err = errors.New("stack takes at most one PR or branch; see pr-loop --help")
+			break
 		}
-		result, err = loop.Stack(branch)
+		target := ""
+		if len(rest) == 1 {
+			target = rest[0]
+		}
+		result, err = loop.Stack(target)
 	case "begin":
 		result, err = loop.Begin(rest)
 	case "push":
