@@ -111,18 +111,24 @@ func TestCommands(t *testing.T) {
 	}
 	data, _ = os.ReadFile(plan)
 	os.WriteFile(plan, []byte(strings.Replace(string(data), "** Open questions\n",
-		"** Open questions\n*** Rename it?\n:PROPERTIES:\n:ID: Q1\n:RECOMMENDATION: no\n:END:\n- yes\n", 1)), 0o644)
+		"** Open questions\n*** Rename it?\n:PROPERTIES:\n:ID: Q1\n:RECOMMENDATION: no\n:END:\n- yes\n"+
+			"*** Rename its flag too?\n:PROPERTIES:\n:ID: Q2\n:RECOMMENDATION: no\n:AFTER: Q1\n:END:\n", 1)), 0o644)
 	for args, want := range map[string]string{
-		"questions PLAN":          "- Q1 :: Rename it? Recommended: no. Or: yes.\n",
-		"questions PLAN --all":    "- Q1 :: Rename it? Recommended: no. Or: yes.\n",
-		"questions PLAN --count":  "1\n",
-		"questions --json PLAN":   `"recommendation": "no"`,
-		"questions PLAN --format": "",
+		"questions PLAN":                   "- Q1 :: Rename it? Recommended: no. Or: yes.\n",
+		"questions PLAN --all":             "- Q1 :: Rename it? Recommended: no. Or: yes.\n",
+		"questions PLAN --count":           "1\n",
+		"questions --json PLAN":            `"recommendation": "no"`,
+		"questions PLAN --format":          "",
+		"questions PLAN --waiting":         "- Q2 :: Rename its flag too? Recommended: no. Waits for: Q1.\n",
+		"questions PLAN --waiting --count": "2\n",
 	} {
 		words := strings.Fields(strings.Replace(args, "PLAN", plan, 1))
 		code, out, errs = agentPlan(t, "", words...)
 		if (want == "") != (code != 0) || !strings.Contains(out, want) {
 			t.Errorf("%s: %d %q %s", args, code, out, errs)
+		}
+		if !strings.Contains(args, "--waiting") && strings.Contains(out, "Q2") {
+			t.Errorf("%s lists Q2, which waits for Q1: %q", args, out)
 		}
 	}
 	code, out, _ = agentPlan(t, `{"session_id":"s-1","cwd":"/nowhere"}`, "statusline")
@@ -132,6 +138,13 @@ func TestCommands(t *testing.T) {
 	code, out, errs = agentPlan(t, "", "decide", plan, "Q1", "--answer", "yes")
 	if code != 0 || !strings.Contains(out, `"decision": "D1"`) {
 		t.Errorf("decide: %d %s %s", code, out, errs)
+	}
+	code, out, _ = agentPlan(t, "", "questions", plan)
+	if code != 0 || !strings.HasPrefix(out, "- Q2 ::") {
+		t.Errorf("questions once Q1 is decided: %d %q", code, out)
+	}
+	if code, _, errs = agentPlan(t, "", "decide", plan, "Q2", "--answer", "no"); code != 0 {
+		t.Errorf("decide Q2: %d %s", code, errs)
 	}
 	for _, stdin := range []string{`{"session_id":"s-1"}`, `{`, ``} {
 		code, out, errs = agentPlan(t, stdin, "statusline")
