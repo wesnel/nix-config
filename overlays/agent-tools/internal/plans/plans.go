@@ -28,6 +28,16 @@ type Config struct {
 	Dir string `json:"dir"`
 	// Host names this machine in its plans' file names.
 	Host string `json:"host"`
+	// Repo is the git repository the plans directory is in, which sync
+	// commits to; the directory above Dir unless given.
+	Repo string `json:"repo,omitempty"`
+	// Remote is Repo's origin, which init clones where Repo is missing.
+	Remote string `json:"remote,omitempty"`
+	// SSHConfig is the ssh config file git reaches Remote with.
+	SSHConfig string `json:"sshConfig,omitempty"`
+	// Key is the deploy key SSHConfig names; init clones only when it
+	// exists.
+	Key string `json:"key,omitempty"`
 }
 
 var (
@@ -71,14 +81,16 @@ func Load() (Config, error) {
 	if err := json.Unmarshal(data, &file); err != nil {
 		return Config{}, fmt.Errorf("%s: %w", repos.Path(), err)
 	}
-	if file.Plans.Dir != "" {
-		c.Dir = file.Plans.Dir
+	dir, host := c.Dir, c.Host
+	c = file.Plans
+	if c.Dir == "" {
+		c.Dir = dir
 	}
-	if file.Plans.Host != "" {
-		c.Host = file.Plans.Host
+	if c.Host == "" {
+		c.Host = host
 	}
-	if !filepath.IsAbs(c.Dir) || !hostPattern.MatchString(c.Host) {
-		return Config{}, fmt.Errorf("%s: plans.dir must be absolute and plans.host a plain name without dots: %+v", repos.Path(), c)
+	if !filepath.IsAbs(c.Dir) || !hostPattern.MatchString(c.Host) || (c.Repo != "" && !filepath.IsAbs(c.Repo)) {
+		return Config{}, fmt.Errorf("%s: plans.dir and plans.repo must be absolute and plans.host a plain name without dots: %+v", repos.Path(), c)
 	}
 	return c, nil
 }
@@ -254,25 +266,36 @@ func writeNew(path, text string) error {
 
 // Ready is the plans directory, made ready for plans.
 type Ready struct {
-	Dir string `json:"dir"`
+	Dir  string `json:"dir"`
+	Repo string `json:"repo"`
+	// Cloned is whether Init cloned the repository.
+	Cloned bool `json:"cloned"`
+	// Note says why the repository is not there to sync with.
+	Note string `json:"note,omitempty"`
 }
 
-// ignore keeps the logs' lock files, which only this machine's agent-plan
-// reads, out of the repository the plans directory is in.
+// ignore keeps the lock files, which only this machine's agent-plan reads,
+// out of the repository the plans directory is in.
 const ignore = "*.lock\n"
 
-// Init makes the plans directory, with a .gitignore for the lock files if
+// Init clones the notes repository where it is missing and Remote is set,
+// then makes the plans directory, with a .gitignore for the lock files if
 // it has none, as New does, for a session whose sandbox may write only
 // inside it.
 func (c Config) Init() (Ready, error) {
+	r := Ready{Dir: c.Dir, Repo: c.repo()}
+	var err error
+	if r.Cloned, r.Note, err = c.clone(); err != nil {
+		return r, err
+	}
 	if err := os.MkdirAll(c.Dir, 0o755); err != nil {
-		return Ready{}, err
+		return r, err
 	}
-	err := writeNew(filepath.Join(c.Dir, ".gitignore"), ignore)
+	err = writeNew(filepath.Join(c.Dir, ".gitignore"), ignore)
 	if err != nil && !errors.Is(err, fs.ErrExist) {
-		return Ready{}, err
+		return r, err
 	}
-	return Ready{Dir: c.Dir}, nil
+	return r, nil
 }
 
 // Plan is one plan's files in the plans directory.

@@ -94,6 +94,29 @@ func (p Plan) Log(e Event, now time.Time) (Event, error) {
 		return Event{}, err
 	}
 	e.ID, e.Time = newUUID(), now.Format("[2006-01-02 Mon 15:04]")
+	return e, p.append(eventText(e))
+}
+
+// Reseal accepts a log changed other than through Log: it appends a
+// resealed event recording the digest the log had and the one it has, and
+// records the log as it then is. It is Wesley's to run.
+func (p Plan) Reseal(now time.Time) (Event, error) {
+	if err := p.checkOwn(); err != nil {
+		return Event{}, err
+	}
+	e := Event{ID: newUUID(), Time: now.Format("[2006-01-02 Mon 15:04]"), Kind: "resealed", Item: p.Name,
+		Summary: "log edited outside agent-plan"}
+	return e, p.appendWith(func(current []byte, recorded string) (string, error) {
+		if recorded == "" || recorded == digest(current) {
+			return "", refusal.New("%s is as agent-plan last left it, so there is nothing to reseal. Check it with `agent-plan status %s`", p.log(), p.file(""))
+		}
+		e.Evidence = "recorded " + recorded + "; found " + digest(current)
+		return eventText(e), nil
+	})
+}
+
+// eventText is e as the log holds it.
+func eventText(e Event) string {
 	var b strings.Builder
 	b.WriteString("* " + e.Kind + " " + e.Item)
 	if e.Summary != "" {
@@ -110,7 +133,7 @@ func (p Plan) Log(e Event, now time.Time) (Event, error) {
 	// The drawer comes straight after the heading, or Org does not read
 	// it as one.
 	b.WriteString(":END:\n" + e.Time + "\n")
-	return e, p.append(b.String())
+	return b.String()
 }
 
 func newUUID() string {
@@ -121,11 +144,22 @@ func newUUID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
-// append adds text to log.org in one write, under an exclusive lock on
-// log.org.lock, and syncs it. The lock file records the log's size and
-// digest after each append; a log that no longer matches them was changed
-// some other way, and is refused.
+// append adds text to the log in one write, under an exclusive lock on
+// the log's lock file, and syncs it. The lock file records the log's size
+// and digest after each append; a log that no longer matches them was
+// changed some other way, and is refused.
 func (p Plan) append(text string) error {
+	return p.appendWith(func(current []byte, recorded string) (string, error) {
+		if recorded != "" && recorded != digest(current) {
+			return "", refusal.New("%s has changed since agent-plan last appended to it, and the log is append-only. Leave it as it is, and tell Wesley which plan's log changed; `agent-plan reseal` is his to run", p.log())
+		}
+		return text, nil
+	})
+}
+
+// appendWith appends what build returns, given the log and the digest
+// recorded for it, as append does, and records the log's new digest.
+func (p Plan) appendWith(build func(current []byte, recorded string) (string, error)) error {
 	lock, err := os.OpenFile(p.log()+".lock", os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return err
@@ -154,8 +188,9 @@ func (p Plan) append(text string) error {
 	if err != nil {
 		return err
 	}
-	if len(recorded) > 0 && strings.TrimSpace(string(recorded)) != digest(current) {
-		return refusal.New("%s has changed since agent-plan last appended to it, and the log is append-only. Leave it as it is, and tell Wesley which plan's log changed", p.log())
+	text, err := build(current, strings.TrimSpace(string(recorded)))
+	if err != nil {
+		return err
 	}
 	if len(current) > 0 && current[len(current)-1] != '\n' {
 		text = "\n" + text
@@ -172,7 +207,21 @@ func (p Plan) append(text string) error {
 	if _, err := lock.WriteAt([]byte(digest(append(current, text...))+"\n"), 0); err != nil {
 		return err
 	}
-	return lock.Sync()
+	if err := lock.Sync(); err != nil {
+		return err
+	}
+	touch(p.Dir)
+	return nil
+}
+
+// touch changes the directory's entries and leaves them as they were, so
+// that a watcher that sees only a directory's entries change, as launchd's
+// WatchPaths does, sees a file in it written in place.
+func touch(dir string) {
+	if f, err := os.CreateTemp(dir, ".touch-*"); err == nil {
+		f.Close()
+		os.Remove(f.Name())
+	}
 }
 
 func digest(data []byte) string {

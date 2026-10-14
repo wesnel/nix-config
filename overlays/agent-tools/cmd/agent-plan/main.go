@@ -39,11 +39,19 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      the goal statement, the text under "** Goal"
   status PLAN [--format org|json]
                      steps without done, and done without verified
-  init               make the plans directory, with a .gitignore for the logs'
-                     lock files, as new does
+  init               clone the plans' repository where it is missing and
+                     "plans.remote" names it, then make the plans directory,
+                     with a .gitignore for the lock files, as new does
+  sync [--pull] [--settle DURATION]
+                     commit this host's plan files and nothing else, take the
+                     other hosts' from the remote, and push; --pull only takes
+                     the other hosts' plans. The watcher runs it, never an
+                     agent
+  reseal PLAN        accept a log edited outside agent-plan, recording that in
+                     it; Wesley's to run
 
-PLAN is one of a plan's files, or its name, <date>-<slug>.<host>. Values are single lines; list
-values hold no whitespace.
+find, status and new first take the other hosts' plans, quietly, if they can.
+Values are single lines; list values hold no whitespace.
 KIND: ` + strings.Join(plans.Kinds, ", ") + `
 ROLE: ` + strings.Join(plans.Roles, ", ") + `
 OUTCOME: ` + strings.Join(plans.Outcomes, ", ") + `
@@ -174,6 +182,8 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		outcome  = flags.String("outcome", "", "")
 		format   = flags.String("format", "org", "")
 		hook     = flags.Bool("hook", false, "")
+		pull     = flags.Bool("pull", false, "")
+		settle   = flags.Duration("settle", 0, "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
 		branches multi
@@ -217,6 +227,9 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return plans.Plan{}, false
 		}
 		return p, true
+	}
+	if command == "new" || command == "status" || (command == "find" && !*hook) {
+		c.Pull()
 	}
 	switch command {
 	case "new":
@@ -281,7 +294,23 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		io.WriteString(stdout, s.Org())
 		return 0
 	case "init":
-		return report(c.Init())
+		r, err := c.Init()
+		if r.Note != "" {
+			fmt.Fprintf(stderr, "agent-plan: %s\n", r.Note)
+		}
+		return report(r, err)
+	case "sync":
+		if len(positional) != 0 {
+			fmt.Fprint(stderr, usage)
+			return 2
+		}
+		return report(c.Sync(plans.SyncOptions{PullOnly: *pull, Settle: *settle}))
+	case "reseal":
+		p, ok := wantPlan()
+		if !ok {
+			return 2
+		}
+		return report(p.Reseal(time.Now()))
 	}
 	fmt.Fprint(stderr, usage)
 	return 2

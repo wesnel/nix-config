@@ -273,6 +273,10 @@ func program(c call, who role, files, dir string) string {
 		return checkPrLoop(words[1:], who)
 	case name == "git-fresh-review" && who == reviewer:
 		return nestedReview
+	case name == "agent-plan" && len(words) > 1 && words[1] == "sync":
+		return planSync
+	case name == "agent-plan" && len(words) > 1 && words[1] == "reseal":
+		return planReseal
 	case name == "agent-plan" && who == reviewer && (len(words) < 2 || !planReads[words[1]]):
 		return reviewerReport
 	case name == "git-sign-pass" && who == reviewer:
@@ -428,6 +432,14 @@ var coordinatorOnly = map[string]bool{"open": true, "begin": true, "push": true,
 // `wait ci`.
 var reviewerReads = map[string]bool{"stack": true, "threads": true, "status": true, "ci": true, "logs": true,
 	"setup-command": true}
+
+// planSync is why no agent syncs plans: the sync pushes with a deploy key,
+// which is the watcher's, outside every session.
+const planSync = "Plans are synced by a watcher outside every session, which alone pushes them. Leave it to the watcher; if another host's plans look stale, say so in your report for Wesley."
+
+// planReseal is why no agent reseals a log: it accepts the edits made to
+// the log outside agent-plan.
+const planReseal = "Resealing a plan's log accepts edits made to it outside agent-plan, which is Wesley's call. Hand Wesley the command, `agent-plan reseal PLAN`, in your report."
 
 // planReads are the agent-plan commands a reviewer may run.
 var planReads = set("status", "goal", "find", "-h", "--help", "help")
