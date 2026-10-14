@@ -277,7 +277,7 @@ func program(c call, who role, files, dir string) string {
 	words := c.words
 	switch name := base(words[0]); {
 	case name == "git":
-		return checkGit(words, who, dir)
+		return checkGit(words, c.env, who, dir)
 	case name == "gh":
 		if reason := checkGh(words[1:], c.expands[1:], files, who); reason != "" && who == reviewer {
 			return reviewerReport
@@ -501,9 +501,10 @@ var gitWrites = map[string]bool{"commit": true, "rebase": true, "reset": true, "
 	"push": true, "sign-pass": true}
 
 // checkGit checks a git command run in dir, "" when the guard cannot tell
-// where.
-func checkGit(words []string, who role, dir string) string {
+// where, with the assignments env made for it.
+func checkGit(words, env []string, who role, dir string) string {
 	i := 1
+	var config []string // the -c and --config-env options, for gitState.signs
 	for i < len(words) && strings.HasPrefix(words[i], "-") {
 		// Configuration given on the command line, such as an alias, which
 		// can stand for any command.
@@ -511,8 +512,10 @@ func checkGit(words []string, who role, dir string) string {
 		switch w := words[i]; {
 		case (w == "-c" || w == "--config-env") && i+1 < len(words):
 			key, _, _ = strings.Cut(words[i+1], "=")
+			config = append(config, w, words[i+1])
 		case strings.HasPrefix(w, "--config-env="):
 			key, _, _ = strings.Cut(strings.TrimPrefix(w, "--config-env="), "=")
+			config = append(config, w)
 		case w == "-C" && i+1 < len(words):
 			if dir = expandPath(words[i+1], dir); !filepath.IsAbs(dir) {
 				dir = ""
@@ -588,6 +591,9 @@ func checkGit(words []string, who role, dir string) string {
 				return sharedConfig
 			}
 		}
+	}
+	if reason := checkSigning(sub, rest, gitState{dir: dir, config: config, env: env}); reason != "" {
+		return reason
 	}
 	// An existing alias runs whatever it names, which this check cannot see.
 	if aliases, _ := exec.Command("git", "config", "--get-regexp", `^alias\.`).Output(); len(aliases) > 0 {

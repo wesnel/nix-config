@@ -300,6 +300,73 @@ func TestGitState(t *testing.T) {
 	}
 }
 
+// TestSigning covers commands that write commits where the configuration
+// signs them, which would wait for a key touch.
+func TestSigning(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	signing := filepath.Join(root, "signing")
+	loop := filepath.Join(root, "loop")
+	plain := filepath.Join(root, "plain")
+	os.Mkdir(signing, 0o755)
+	os.Mkdir(plain, 0o755)
+	gitIn(t, signing, "init", "-q", "-b", "main")
+	gitIn(t, signing, "commit", "-q", "--allow-empty", "-m", "base")
+	gitIn(t, signing, "config", "commit.gpgsign", "true")
+	gitIn(t, signing, "config", "extensions.worktreeConfig", "true")
+	gitIn(t, signing, "worktree", "add", "-q", "-b", "loop", loop)
+	gitIn(t, loop, "config", "--worktree", "commit.gpgsign", "false")
+	gitIn(t, plain, "init", "-q", "-b", "main")
+
+	cases := []struct {
+		deny         bool
+		dir, command string
+	}{
+		{true, signing, "git commit -m x"},
+		{true, signing, "git commit --fixup=abc"},
+		{true, signing, "git rebase --onto a b c"},
+		{true, signing, "git rebase --continue"},
+		{true, signing, "git rebase --skip"},
+		{true, signing, "git cherry-pick abc"},
+		{true, signing, "git revert HEAD"},
+		{true, signing, "git merge feature"},
+		{true, signing, "git am --continue"},
+		{true, signing, "git pull"},
+		{true, signing, "git -c commit.gpgsign=true commit -m x"},
+		{true, plain, "git -C " + signing + " commit -m x"},
+		{true, plain, "git commit -S -m x"},
+		{true, loop, "git commit --gpg-sign -m x"},
+		{false, signing, "git -c commit.gpgsign=false commit -m x"},
+		{false, signing, "git -c commit.gpgSign=no rebase --continue"},
+		{false, signing, "git commit --no-gpg-sign -m x"},
+		{false, signing, "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=commit.gpgsign GIT_CONFIG_VALUE_0=false git commit -m x"},
+		{false, signing, "git rebase --abort"},
+		{false, signing, "git rebase --quit"},
+		{false, signing, "git rebase --edit-todo"},
+		{false, signing, "git cherry-pick --abort"},
+		{false, signing, "git cherry-pick -n abc"},
+		{false, signing, "git revert --no-commit HEAD"},
+		{false, signing, "git merge --ff-only feature"},
+		{false, signing, "git merge --squash feature"},
+		{false, signing, "git am --show-current-patch"},
+		{false, signing, "git pull --ff-only"},
+		{false, signing, "git commit --dry-run"},
+		{false, signing, "git status"},
+		{false, loop, "git commit -m x"},
+		{false, loop, "git rebase --continue"},
+		{false, plain, "git commit -m x"},
+		{false, signing, "cd $SOMEWHERE && git commit -m x"},
+	}
+	for _, c := range cases {
+		reason := judge(t, c.dir, c.command)
+		if (reason != "") != c.deny {
+			t.Errorf("%s: %q: deny=%v, reason %q", filepath.Base(c.dir), c.command, !c.deny, reason)
+		}
+		if reason != "" && !saysInstead(reason) {
+			t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+		}
+	}
+}
+
 // TestKill covers kill by process ID, which the guard looks up with ps.
 func TestKill(t *testing.T) {
 	// The protected process is a copy of this test binary named mcp-proxy,
