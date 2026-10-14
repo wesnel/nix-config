@@ -270,6 +270,20 @@ in {
             }
           ];
         })}
+        # After a push to GitHub, names the `pr-loop wait ci` to start. ECA
+        # runs a postToolCall hook only after a call that succeeded.
+        post=${escapeShellArg (builtins.toJSON {
+          type = "postToolCall";
+          matcher = ".*";
+          visible = false;
+          description = "pr-loop guard --post: watch CI after a push";
+          actions = [
+            {
+              type = "shell";
+              shell = "pr-loop guard --post";
+            }
+          ];
+        })}
 
         if [ ! -e "$conf" ]; then
           current='{}'
@@ -277,7 +291,7 @@ in {
           current=$(cat "$conf")
         fi
 
-        if merged=$(printf '%s' "$current" | ${pkgs.jq}/bin/jq --argjson hook "$hook" '.hooks."guard-baseline" = $hook'); then
+        if merged=$(printf '%s' "$current" | ${pkgs.jq}/bin/jq --argjson hook "$hook" --argjson post "$post" '.hooks."guard-baseline" = $hook | .hooks."guard-post" = $post'); then
           if [ "$merged" != "$current" ] && [ -z "''${DRY_RUN:-}" ]; then
             mkdir -p "$(dirname "$conf")"
             printf '%s\n' "$merged" > "$conf"

@@ -90,8 +90,10 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case len(args) == 0:
 	case len(args) == 1 && args[0] == "--baseline":
 		fallback = baseline
+	case len(args) == 1 && args[0] == "--post":
+		return post(stdin, stdout)
 	default:
-		fmt.Fprintf(stderr, "pr-loop guard: takes no arguments, or --baseline; got %q\n", args)
+		fmt.Fprintf(stderr, "pr-loop guard: takes no arguments, --baseline or --post; got %q\n", args)
 		return 1
 	}
 	var in input
