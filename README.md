@@ -177,17 +177,23 @@ git fresh-review --goal goal.md --items threads.md --prior round1.json origin/ma
 ```
 
 The reviewer is Codex, a model family other than the author's, run as
-`codex exec -s read-only --ephemeral` in a throwaway worktree of the range's
-tip under `.git/fresh-review/`, removed however the review ends. Codex's
-sandbox cannot start inside another macOS sandbox. Its contract is
-`overlays/agent-tools/internal/review/reviewer.md`, the same text the
-`reviewer` agent of Claude Code and ECA loads, and its reply must fit
-`findings.schema.json` beside it. Findings that point at no line at the tip
-are dropped with the reason. It prints JSON and exits 0 with no findings, 3
-with findings, and 4 when Codex cannot review: not installed, not signed in,
-called from inside Codex, or in a review-loop session, where `pr-loop` must
-stay the only way out. `--print-prompt` prints the prompt instead of
-running the review. See `git fresh-review -h`.
+`codex exec --ignore-user-config --ephemeral` in a throwaway worktree of the
+range's tip under `.git/fresh-review/`, removed however the review ends.
+None of your Codex configuration loads, so no MCP server or plugin; web
+search and the image viewer are off; and a permissions profile lets its
+commands read only the worktree, the parts of the git directory git needs,
+the codex executable, the Nix store and the system files they need, with no
+writes and no network. Codex's sandbox cannot start inside another macOS
+sandbox; `git fresh-review` checks that it starts, confined, before the
+review. Its contract is `overlays/agent-tools/internal/review/reviewer.md`,
+the same text the `reviewer` agent of Claude Code and ECA loads, and its
+reply must fit `findings.schema.json` beside it. Findings that point at no
+line at the tip are dropped with the reason. It prints JSON and exits 0 with
+no findings, 3 with findings, and 4 when Codex cannot review: not installed,
+not signed in, its sandbox cannot start, called from inside Codex, or in a
+review-loop session, where `pr-loop` must stay the only way out.
+`--print-prompt` prints the prompt instead of running the review. See
+`git fresh-review -h`.
 
 Where the repository has test settings, `git red-check` on the range runs
 first and its result goes in the prompt.

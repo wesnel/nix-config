@@ -56,9 +56,9 @@ as `origin/main` or the parent branch in a stack.
 1. Write the goal statement to a file, and the items the change answers
    (threads, CI checks) with how each was settled to another, if any.
 2. Run `git fresh-review --goal GOAL [--items ITEMS] BASE..TIP`. It exits 0
-   with no findings, 3 with findings, and 4 when Codex cannot review here.
-   On 4, or when Codex fails to start its sandbox, say so in the hand-back,
-   with fresh-review's reason.
+   with no findings, 3 with findings, and 4 when Codex cannot review here,
+   its sandbox included. On 4, say so in the hand-back, with fresh-review's
+   reason.
 3. Settle every finding as Triage says. `dropped` lists what pointed at no
    line at TIP or did not fit the schema; read it, but it needs no outcome.
 4. For the next round, add `--prior FILE`: every earlier finding and how it
@@ -70,7 +70,10 @@ as `origin/main` or the parent branch in a stack.
 ## Harness choice
 
 - Codex, through `git fresh-review`, by default: a model family other than
-  the author's.
+  the author's. Its commands can read only the worktree under review, the
+  git objects behind it and the system files they need, with none of
+  Wesley's Codex configuration, no network and no writes, so a change
+  cannot steer it into reading credentials.
 - Never Codex in a review-loop session: there `git fresh-review` exits 4,
   so `pr-loop` stays the session's only way out.
 - Never Codex for a Codex author: from inside Codex, `git fresh-review`
