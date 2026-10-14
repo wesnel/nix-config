@@ -300,7 +300,7 @@
   {
     "why": "A reviewer reads plans; whoever started it logs what it found.",
     "scope": "reviewer",
-    "pattern": ".*\\bagent-plan\\s+(?!(status|goal|find)\\b)\\S+.*",
+    "pattern": ".*\\bagent-plan\\s+(?!(status|goal|find|questions)\\b)\\S+.*",
     "deny": ["agent-plan log /p/2026-10-14-x.box.org --item S1 --kind verified", "agent-plan new --title T --slug t", "agent-plan ask /p/2026-10-14-x.box.org --question q --recommendation r"],
     "allow": ["agent-plan status /p/2026-10-14-x.box.org", "agent-plan goal 2026-10-14-x.box --part P1", "grep -nE 'agent-plan\\s+log' SKILL.md"]
   },

@@ -125,6 +125,7 @@ func TestReviewerPlans(t *testing.T) {
 		"agent-plan status " + plan:                             false,
 		"agent-plan goal " + plan + " --part P1":                false,
 		"agent-plan find --branch x":                            false,
+		"agent-plan questions " + plan + " --all":               false,
 	} {
 		input, _ := json.Marshal(map[string]string{"command": command})
 		reason := check("Bash", "", input, reviewer, "")

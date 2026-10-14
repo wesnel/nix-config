@@ -442,7 +442,7 @@ const planSync = "Plans are synced by a watcher outside every session, which alo
 const planReseal = "Resealing a plan's log accepts edits made to it outside agent-plan, which is Wesley's call. Hand Wesley the command, `agent-plan reseal PLAN`, in your report."
 
 // planReads are the agent-plan commands a reviewer may run.
-var planReads = set("status", "goal", "find", "-h", "--help", "help")
+var planReads = set("status", "goal", "find", "questions", "-h", "--help", "help")
 
 // reviewerReport is why a reviewer may not make a change.
 const reviewerReport = "A reviewer only reads. Report the finding with its evidence; whoever started the review acts on it."
