@@ -86,6 +86,11 @@ Anything an owner asks you, or that you need to ask an owner, goes in the
 task you give next. Ask the owner rather than reading its code yourself
 when you need to know where something belongs.
 
+A `pr-reviewer` sub-agent reviews a PR's fixups before they are pushed. Start
+a new one for every review, never continue one, and give it nothing of the
+owner's report: its use is that it did not write the fix. It only reads, and
+keeps no notes.
+
 ## Setup
 
 1. `pr-loop stack` from the branch you were pointed at. If `linear` is false,
@@ -140,14 +145,23 @@ old parent tips.
 5. **Fix.** Owners fix and commit in their own worktrees, one fixup per
    review item or CI failure, run the relevant tests and linters, and report
    commit SHAs and a draft reply per thread.
-6. **Restack**, bottom-up. Each child's owner runs
+6. **Review**, once per round. For each PR with new fixups, start a
+   `pr-reviewer` naming the PR, branch, worktree, round, the fixups' SHAs and
+   the notes file. Give each finding to the PR's owner, which fixes it in a
+   further fixup for the same review item or rebuts it with evidence. Judge a
+   rebuttal as you would a decline. The owner's answers are not reviewed
+   again this round; a finding still standing goes out with the push and into
+   the report. Record every finding and its outcome (fixed in which commit,
+   rebutted with what evidence, or standing) in the PR's notes file under the
+   round. Without sub-agents, skip this step and say so in the report.
+7. **Restack**, bottom-up. Each child's owner runs
    `git rebase --onto <parent-branch> <parent's tip at round start> <branch>`
    in its worktree, resolves conflicts (the `restack-branches` skill covers
    them) and reruns its tests.
-7. **Push.** `pr-loop push` pushes every changed branch at once and records
+8. **Push.** `pr-loop push` pushes every changed branch at once and records
    the round under `refs/pr-loop/rounds/<n>/<branch>`. If GitHub moved
    underneath it, stop.
-8. **Reply and resolve**, after the push so replies can cite pushed commits.
+9. **Reply and resolve**, after the push so replies can cite pushed commits.
    `pr-loop reply <thread> --body-file <file>` on every fixed, duplicate,
    declined and deferred thread: what changed and in which commit, or why
    not, in two or three sentences. Then `pr-loop resolve <thread>` for
@@ -185,6 +199,7 @@ Stop and hand back when any of these holds:
    - CI state and any accepted failures
    - commits added, and changed lines then and now
    - threads fixed, declined, deferred and needing Wesley, with links
+   - local review findings per round: fixed, rebutted, and any left standing
 
    Also list the Linear changes and follow-up tickets you propose but did
    not make. Point at the round snapshots for reviewing the code:

@@ -20,9 +20,17 @@ with lib; let
       ---
       ${builtins.readFile ../llm/pr-loop/pr-owner.md}
     ''} $out/agents/pr-owner.md
+    cp ${pkgs.writeText "pr-reviewer.md" ''
+      ---
+      name: pr-reviewer
+      description: Reviews one pull request's new fixups in the bot review loop before they are pushed, against the bot threads they answer, for regressions and against the PR's scope. Only reads.
+      tools: Read, Grep, Glob, Bash
+      ---
+      ${builtins.readFile ../llm/pr-loop/pr-reviewer.md}
+    ''} $out/agents/pr-reviewer.md
     cp ${pkgs.writeText "plugin.json" (builtins.toJSON {
       name = "pr-loop";
-      description = "Guards and the PR owner agent for the unattended bot review loop";
+      description = "Guards and the PR owner and reviewer agents for the unattended bot review loop";
     })} $out/.claude-plugin/plugin.json
     cp ${pkgs.writeText "hooks.json" (builtins.toJSON {
       hooks.PreToolUse = [
