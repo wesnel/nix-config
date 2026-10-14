@@ -66,6 +66,10 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      or with --drop as dropped, why in --answer; --supersedes
                      marks the settled question it replaces SUPERSEDED; log
                      it as decided
+  postpone PLAN ID (--until 'YYYY-MM-DD[ HH:MM]' | --clear)
+                     schedule step or part ID for that day or time, which
+                     keeps it out of the ready lists and the agenda until
+                     then, or clear its schedule; log it as postponed
   statusline         Claude Code's status line and Emacs's mode line (reads
                      stdin): the open questions of the session's plan, else of
                      the plan of the worktree "cwd" is in, or nothing; never
@@ -262,6 +266,8 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		priority = flags.String("priority", "", "")
 		drop     = flags.Bool("drop", false, "")
 		replaces = flags.String("supersedes", "", "")
+		until    = flags.String("until", "", "")
+		unset    = flags.Bool("clear", false, "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
 		branches multi
@@ -423,6 +429,16 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		return report(p.Decide(positional[1], plans.DecideOptions{Answer: *answer, Drop: *drop, Supersedes: *replaces,
 			Role: *role}, time.Now()))
+	case "postpone":
+		if len(positional) != 2 || (*until == "") == !*unset {
+			fmt.Fprint(stderr, "agent-plan postpone: takes PLAN ID and --until TIME or --clear\n")
+			return 2
+		}
+		p, err := c.Open(positional[0])
+		if err != nil {
+			return report(nil, err)
+		}
+		return report(p.Postpone(positional[1], *until, time.Now()))
 	case "init":
 		r, err := c.Init()
 		if r.Note != "" {

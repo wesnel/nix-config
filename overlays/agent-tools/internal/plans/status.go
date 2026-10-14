@@ -33,9 +33,10 @@ type Status struct {
 	Verified    int    `json:"verified"`
 	Total       int    `json:"total"`
 	Implemented string `json:"implemented"`
-	// Ready are the parts that wait for nothing and have no started, done
-	// or verified event, for them or their items; Waiting are the parts and
-	// open questions that still wait, with what for.
+	// Ready are the parts that wait for nothing, are not scheduled for
+	// later, and have no started, done or verified event, for them or their
+	// items; Waiting are the parts and open questions that still wait, with
+	// what for.
 	Ready   []string  `json:"ready"`
 	Waiting []Waiting `json:"waiting"`
 	// ReadySteps are the open steps that can be worked on now: none of
@@ -154,7 +155,7 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 		if partPattern.MatchString(it.ID) || isOpen[it.ID] {
 			if on := unsettled(afterIDs(it.Props), isSettled); len(on) > 0 {
 				s.Waiting = append(s.Waiting, Waiting{ID: it.ID, On: on})
-			} else if partPattern.MatchString(it.ID) && !started(it.ID, events) {
+			} else if partPattern.MatchString(it.ID) && !started(it.ID, events) && !scheduledLater(it.heading, now) {
 				s.Ready = append(s.Ready, it.ID)
 			}
 		}

@@ -215,6 +215,37 @@ func TestCommands(t *testing.T) {
 		}
 	})
 
+	t.Run("postpone", func(t *testing.T) {
+		plan := sessionPlan(t)
+		readySteps := func() []string {
+			t.Helper()
+			code, out, _ := agentPlan(t, "", "status", plan, "--format", "json")
+			var s plans.Status
+			if code != 0 || json.Unmarshal([]byte(out), &s) != nil {
+				t.Fatalf("status: %d %s", code, out)
+			}
+			return s.ReadySteps
+		}
+		if code, out, errs := agentPlan(t, "", "postpone", plan, "S1", "--until", "2099-01-01 09:00"); code != 0 ||
+			!strings.Contains(out, `"kind": "postponed"`) {
+			t.Errorf("postpone: %d %s %s", code, out, errs)
+		}
+		if got := strings.Join(readySteps(), " "); got != "S2" {
+			t.Errorf("ready steps once S1 is postponed: %q", got)
+		}
+		if code, _, errs := agentPlan(t, "", "postpone", plan, "S1", "--clear"); code != 0 {
+			t.Errorf("postpone --clear: %d %s", code, errs)
+		}
+		if got := strings.Join(readySteps(), " "); got != "S1 S2" {
+			t.Errorf("ready steps once cleared: %q", got)
+		}
+		for _, args := range [][]string{{"S1"}, {"S1", "--until", "2099-01-01", "--clear"}} {
+			if code, _, _ := agentPlan(t, "", append([]string{"postpone", plan}, args...)...); code != 2 {
+				t.Errorf("postpone %v: %d", args, code)
+			}
+		}
+	})
+
 	t.Run("sync outside a repository", func(t *testing.T) {
 		sessionPlan(t)
 		code, out, errs := agentPlan(t, "", "sync", "--settle", "0s")
