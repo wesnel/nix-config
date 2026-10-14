@@ -28,16 +28,30 @@ if [ "$1" = sandbox ]; then
   exec "$@"
 fi
 shift
+ignore=
 while [ $# -gt 0 ]; do
   case "$1" in
     -C) wt=$2; shift 2 ;;
     -o) out=$2; shift 2 ;;
+    --output-schema) schema=$2; shift 2 ;;
     -) shift ;;
-    --ignore-user-config|--ignore-rules|--ephemeral) shift ;;
+    --ignore-user-config) ignore=1; shift ;;
+    --ignore-rules|--ephemeral) shift ;;
     *) shift 2 ;;
   esac
 done
+# As Codex would, it loads a project's .codex/config.toml, here running
+# each "# fake-codex-run:" line in it, unless told to ignore configuration.
+if [ -z "$ignore" ] && [ -f "$wt/.codex/config.toml" ]; then
+  sed -n 's/^# fake-codex-run: //p' "$wt/.codex/config.toml" | sh
+fi
 printf 'model: fake-model\n' >&2
+if grep -q verdict "$schema"; then
+  cat > "$FAKE_CODEX_LOG/vet-prompt"
+  if [ -n "$FAKE_VET_REPLY" ]; then cat "$FAKE_VET_REPLY" > "$out"
+  else echo '{"verdict": "run", "executes": [{"path": "r.go", "line": null, "what": "the package", "where": "vm"}], "reasons": ["only Go code"]}' > "$out"; fi
+  exit 0
+fi
 cat > "$FAKE_CODEX_LOG/prompt"
 echo "$wt" > "$FAKE_CODEX_LOG/worktree"
 ls -A "$wt" > "$FAKE_CODEX_LOG/files"
@@ -55,6 +69,7 @@ func withCodex(t *testing.T, reply string) string {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("FAKE_CODEX_LOG", log)
 	t.Setenv("FAKE_CODEX", "")
+	t.Setenv("FAKE_VET_REPLY", "")
 	file := filepath.Join(t.TempDir(), "reply.json")
 	write(t, file, reply)
 	t.Setenv("FAKE_CODEX_REPLY", file)
@@ -164,6 +179,7 @@ func TestCodexMissing(t *testing.T) {
 func TestSubagentCheckAndSettle(t *testing.T) {
 	r := newRemote(t, nil)
 	f := setUp(t, r)
+	withCodex(t, reply())
 	code, record, prompt, stderr := runReview(t, "", "--reviewer", "subagent", "o/r#7")
 	if code != 0 || record != nil {
 		t.Fatalf("exit %d\n%s\n%s", code, prompt, stderr)

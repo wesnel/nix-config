@@ -220,7 +220,10 @@ linked issues and review threads go in as the author's claims. Every git
 command on the clone runs without your git config, hooks, links or
 submodules, so a pull request's `.gitattributes` and `.lfsconfig` run no
 filter and reach no server, and Codex runs confined in a checkout beside the
-clone. The record, `HEAD12/findings.json`, is what review-guide imports for
+clone. Before the review, a vet flags what would run on this machine or in
+an agent rather than in a VM (`.envrc`, `.dir-locals.el`, agents' project
+settings, a `shellHook`, a `pull_request_target` workflow) and has a
+read-only Codex list what the test command would run. The record, `HEAD12/findings.json`, is what review-guide imports for
 you to edit and post; nothing is written to GitHub. A `claude-pr-loop`
 started in `HEAD12/` reads only that review, and may run `pr-loop review`
 for its own pull request alone. See `pr-loop --help`.

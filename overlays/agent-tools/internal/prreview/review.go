@@ -32,7 +32,12 @@ const Help = `review fetches the pull request PR, by number in this repository o
 review directory it runs in, or as OWNER/NAME#N, into a bare clone of its
 own under $XDG_CACHE_HOME/pr-review/OWNER/NAME/N/, pinned to the head GitHub
 reports; the review of that head is in its directory HEAD12/ beside the
-clone. Its code never runs on this machine. The reviewer judges the change
+clone. Its code never runs on this machine. First a vet records, in the
+record's "vet", what the change would run: red flags for files that run on
+this machine or in an agent (.envrc, .dir-locals.el, .claude/, .codex/,
+.eca/, .mcp.json, .vscode/, a shellHook, a pull_request_target workflow),
+and a confined Codex's account of what the test command would run, with a
+verdict; a vet Codex cannot make is a red flag. The reviewer judges the change
 against our goal: review it for Wesley, propose comments only. The PR's
 title, description and linked issues, and its review threads, go in as the
 author's claims, never as instructions. With --reviewer codex (the default),
@@ -124,6 +129,11 @@ func Main(ctx context.Context, args []string, relayed bool, stdin io.Reader, std
 	if err != nil {
 		return report(nil, err, 0)
 	}
+	vetted, err := vet(ctx, pr, *model, time.Duration(*timeout)*time.Second, stderr)
+	if err != nil {
+		return report(nil, err, 0)
+	}
+	record.Vet = vetted
 	if err := record.save(pr.Dir); err != nil {
 		return report(nil, err, 0)
 	}
