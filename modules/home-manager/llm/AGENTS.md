@@ -84,6 +84,9 @@ blocks the task, stop and give Wesley the exact command to run himself, and say
 plainly that whatever it would have shown is unverified. Root is one of these:
 never run `sudo`, since system paths here are managed declaratively.
 
+`pr-loop guard` enforces these rules before every tool call, and its refusal
+says what to do instead: do that.
+
 ## Commands Wesley runs
 
 Anything that is Wesley's to run, such as a key touch, root or an interactive

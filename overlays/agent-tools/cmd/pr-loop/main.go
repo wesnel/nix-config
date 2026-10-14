@@ -60,8 +60,8 @@ authenticated user in the same repository.
   sign [--resume] [--no-push] squash the loop's fixups, sign with the hardware key, and
                               push the stack over SSH (outside a loop, use git sign-pass)
   end [--prune]               delete trigger comments and loop state
-  guard [--only ROLE]         PreToolUse hook for Claude Code and ECA (reads stdin); with
-                              --only reviewer or pr-owner, judges only that agent's calls
+  guard [--baseline]          PreToolUse hook for Claude Code, Codex and ECA (reads stdin):
+                              a loop's rules, or with --baseline every session's, by agent
 
 reply and resolve take a thread on an open PR by the authenticated user in
 this repository, people's threads included, and need no begin. In a loop

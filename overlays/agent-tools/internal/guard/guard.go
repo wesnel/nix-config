@@ -43,9 +43,10 @@ type input struct {
 	Server    string          `json:"server"` // ECA's MCP server name
 	ToolInput json.RawMessage `json:"tool_input"`
 	// Claude Code names the subagent making the call, prefixed with its
-	// plugin's name if a plugin defines it ("pr-loop:pr-owner"). ECA's
-	// sub-agents carry their role's rules as deny patterns instead.
+	// plugin's name if a plugin defines it ("pr-loop:pr-owner"); ECA names
+	// the agent in agent. Codex names none.
 	AgentType string `json:"agent_type"`
+	Agent     string `json:"agent"`
 	// The directory the command runs in, which bounds the files the guard
 	// reads. Without it, the guard's own working directory stands in.
 	Cwd string `json:"cwd"`
@@ -65,7 +66,7 @@ const (
 )
 
 // roleNames are the agents with a role of their own, by agent name.
-var roleNames = map[string]role{"pr-owner": owner, "reviewer": reviewer}
+var roleNames = map[string]role{"pr-coordinator": coordinator, "pr-owner": owner, "reviewer": reviewer}
 
 // roleOf is the role of the agent named agentType, or fallback for an agent
 // without a role of its own.
@@ -81,18 +82,15 @@ func roleOf(agentType string, fallback role) role {
 // Main reads one hook event and writes a denial in the caller's format, or
 // nothing to let the call through. Without args, an agent without a role of
 // its own is a loop's coordinator; with `--baseline`, for the hook every
-// session runs, it is an ordinary session. With `--only ROLE` it judges only
-// calls by that role's agent and lets every other call through.
+// session runs, it is an ordinary session.
 func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	fallback, only, restricted := coordinator, role(0), false
+	fallback := coordinator
 	switch {
 	case len(args) == 0:
 	case len(args) == 1 && args[0] == "--baseline":
 		fallback = baseline
-	case len(args) == 2 && args[0] == "--only" && roleNames[args[1]] > coordinator:
-		only, restricted = roleNames[args[1]], true
 	default:
-		fmt.Fprintf(stderr, "pr-loop guard: takes no arguments, --baseline, or --only reviewer or --only pr-owner; got %q\n", args)
+		fmt.Fprintf(stderr, "pr-loop guard: takes no arguments, or --baseline; got %q\n", args)
 		return 1
 	}
 	var in input
@@ -102,10 +100,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if in.Cwd == "" {
 		in.Cwd, _ = os.Getwd()
 	}
-	who := roleOf(in.AgentType, fallback)
-	if restricted && who != only {
-		return 0
-	}
+	who := roleOf(in.AgentType+in.Agent, fallback)
 	reason := check(in.ToolName, in.Server, in.ToolInput, who, in.Cwd)
 	if reason == "" {
 		return 0
