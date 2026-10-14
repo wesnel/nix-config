@@ -404,6 +404,9 @@ func checkSession(c call, dir string) string {
 		if strings.Contains(strings.Join(args, " "), "kill-emacs") {
 			return killing
 		}
+	case "emacs", "Emacs":
+		return "A second Emacs, batch or not, runs apart from Wesley's daemon and can leave files and state behind for it. " +
+			"Use `emacsclient` as the emacsclient skill says, such as `emacsclient -e '(check-parens)'`."
 	case "rm", "trash", "chmod", "chown", "chgrp", "mv":
 		recursive := name == "trash" || name == "mv"
 		for _, a := range args {
