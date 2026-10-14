@@ -34,7 +34,7 @@ type Event struct {
 var (
 	// Kinds are what an event records about its item.
 	Kinds = []string{"planned", "plan-reviewed", "started", "done", "blocked", "abandoned", "verified",
-		"reviewed", "finding-settled", "decided", "handed-back"}
+		"reviewed", "finding-settled", "asked", "decided", "handed-back"}
 	// Roles are who logs an event.
 	Roles = []string{"single", "parent", "subagent", "reviewer", "design-reviewer"}
 	// Outcomes are the review-change skill's triage outcomes.

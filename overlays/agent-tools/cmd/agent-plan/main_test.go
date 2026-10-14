@@ -148,6 +148,18 @@ func TestCommands(t *testing.T) {
 			t.Errorf("statusline with %q: %d %q %q", stdin, code, out, errs)
 		}
 	}
+	code, out, errs = agentPlan(t, "", "ask", plan, "--question", "Keep the alias?", "--recommendation", "yes",
+		"--alternative", "drop it", "--alternative", "rename it", "--after", "Q1", "--context", "Two scripts call it.")
+	if code != 0 || !strings.Contains(out, `"id": "Q3"`) {
+		t.Errorf("ask: %d %s %s", code, out, errs)
+	}
+	code, out, _ = agentPlan(t, "", "questions", plan)
+	if code != 0 || out != "- Q3 :: Keep the alias? Recommended: yes. Or: drop it; rename it.\n" {
+		t.Errorf("questions after ask: %d %q", code, out)
+	}
+	if code, _, errs = agentPlan(t, "", "ask", plan, "--question", "Why?"); code != 2 {
+		t.Errorf("ask without a recommendation: %d %s", code, errs)
+	}
 	code, out, errs = agentPlan(t, "", "sync", "--settle", "0s")
 	if code != 0 || !strings.Contains(out, `"skipped"`) {
 		t.Errorf("sync outside a repository: %d %s %s", code, out, errs)

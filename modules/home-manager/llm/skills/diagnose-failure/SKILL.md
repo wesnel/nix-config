@@ -39,9 +39,10 @@ Log the command as the step's evidence. A secret it needs comes from the
 environment by name, never written into the command, and a report quotes
 only the output lines that show the symptom.
 
-If no such command can be built, stop. Put in the plan's Open questions
-what you tried and what would make one possible: access to an environment,
-a captured log or request, or leave to add temporary logging.
+If no such command can be built, stop. Ask with `agent-plan ask` for what
+would make one possible (access to an environment, a captured log or
+request, or leave to add temporary logging), with what you tried as its
+context.
 
 ## 2. Shrink it
 
