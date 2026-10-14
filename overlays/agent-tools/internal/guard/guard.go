@@ -107,7 +107,10 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		in.Cwd, _ = os.Getwd()
 	}
 	who := roleOf(in.AgentType+in.Agent, fallback)
-	reason := check(in.ToolName, in.Server, in.ToolInput, who, in.Cwd)
+	reason := checkSubagentStash(in)
+	if reason == "" {
+		reason = check(in.ToolName, in.Server, in.ToolInput, who, in.Cwd)
+	}
 	if reason == "" {
 		reason = checkOwner(in)
 	}
