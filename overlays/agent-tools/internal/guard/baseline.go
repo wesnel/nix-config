@@ -39,13 +39,6 @@ const (
 // home is the user's home directory, which ~ and $HOME name.
 var home, _ = os.UserHomeDir()
 
-// secretPaths are credentials, relative to home. Claude Code's Read is
-// denied the same files by permissions.deny in the claude home-manager
-// module; keep the two alike.
-var secretPaths = []string{".ssh/id_", ".gnupg/private-keys", ".codex/auth.json", ".claude/.credentials.json",
-	".local/state/mcp-proxy/token", "Library/Application Support/mcp-proxy", ".config/mcp-proxy",
-	".config/sops/age", ".config/ngrok"}
-
 // secretName is an environment variable that likely holds a credential.
 var secretName = regexp.MustCompile(`(?i)token|key|secret|password|credential`)
 
@@ -727,9 +720,10 @@ func checkSecretPath(word, dir string) string {
 	if _, value, ok := strings.Cut(word, "="); ok {
 		candidates = append(candidates, expandPath(value, dir))
 	}
+	secrets := credentialPaths()
 	for _, path := range candidates {
-		for _, p := range secretPaths {
-			if strings.HasPrefix(path, home+"/"+p) {
+		for _, p := range secrets {
+			if strings.HasPrefix(path, p) {
 				return secretRead
 			}
 		}

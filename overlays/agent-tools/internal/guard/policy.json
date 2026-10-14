@@ -145,14 +145,6 @@
     "allow": ["security find-generic-password -s x", "sops -e x.yaml", "pass ls"]
   },
   {
-    "why": "Credential files stay out of the session.",
-    "scope": "baseline",
-    "pattern": ".*(\\.ssh/id_(?![^\\s'\"]*\\.pub\\b)|\\.gnupg/private-keys|\\.codex/auth\\.json|\\.claude/\\.credentials\\.json|mcp-proxy/token|\\.config/sops/age|\\.config/ngrok).*",
-    "deny": ["cat ~/.ssh/id_ed25519", "cat ~/.claude/.credentials.json", "cat ~/.codex/auth.json", "cat ~/.config/sops/age/keys.txt",
-      "cat ~/.local/state/mcp-proxy/token"],
-    "allow": ["cat ~/.ssh/id_ed25519.pub", "ls ~/.ssh"]
-  },
-  {
     "why": "The environment holds credentials; print a variable by name.",
     "scope": "baseline",
     "pattern": "(.*[;&|\\n(]\\s*)?(env|printenv|set|export(\\s+-p)?|declare\\s+-p)\\s*([;&|\\n)].*)?|.*\\bprintenv\\s+\\S*(?i:token|key|secret|password|credential)\\S*.*",

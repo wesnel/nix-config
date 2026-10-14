@@ -431,7 +431,8 @@ with your credentials, but has the guard in every session.
 
 - Claude Code: a `PreToolUse` hook in `~/.claude/settings.json` for the shell,
   Monitor, ExitWorktree, the file tools and MCP tools. `Read` is denied the credential files
-  through `permissions.deny` instead.
+  through `permissions.deny` instead, made from the same list as the
+  guard's, `wgn.home.llm.guard.credentialPaths`.
 - Codex: `~/.codex/hooks.json`, for every tool. Codex skips a hook until it
   is trusted, so trust it with `/hooks` once after the first switch.
 - ECA: a `preToolCall` hook, `guard-baseline`, merged into

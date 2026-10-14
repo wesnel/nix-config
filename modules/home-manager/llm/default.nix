@@ -19,9 +19,12 @@ with lib; let
       sshConfig = "${config.xdg.configHome}/agent-tools/notes-ssh-config";
       key = notesKey;
     };
+    guard = {
+      inherit (cfg.guard) credentialPaths;
+    };
   });
 
-  agentPlan = getExe' pkgs.agent-tools "agent-plan";
+  agentPlan = getExe' cfg.agentTools "agent-plan";
 
   # The notes repository's deploy key, which only git's ssh reads: every
   # agent is denied it, by the guard and by Claude Code's Read rules for
@@ -219,6 +222,53 @@ in {
           '';
         };
       };
+    };
+
+    guard.credentialPaths = mkOption {
+      type = types.listOf types.str;
+
+      description = ''
+        Absolute path prefixes of credentials, which stay out of every
+        session: the guard denies a shell command or file tool naming a path
+        that starts with one, and Claude Code's `Read` is denied them through
+        `permissions.deny`. A prefix matches a file or directory of any name
+        it starts, as `~/.ssh/id_` does every private key.
+      '';
+
+      default = let
+        home = config.home.homeDirectory;
+        proxy = config.wgn.home.mcp-proxy;
+      in [
+        "${home}/.ssh/id_"
+        "${home}/.gnupg/private-keys"
+        "${home}/.codex/auth.json"
+        "${home}/.claude/.credentials.json"
+        proxy.tokenFile
+        proxy.oauthDir
+        "${home}/.config/sops/age"
+        "${home}/.config/ngrok"
+      ];
+    };
+
+    agentTools = mkOption {
+      type = types.package;
+      readOnly = true;
+
+      description = ''
+        agent-tools built with `guard.credentialPaths`, which its guard
+        falls back on where its config is absent, as in a sandbox guest,
+        whose home differs: a path under home is kept as `~/…`. Use it, not
+        `pkgs.agent-tools`, for every program agents or hooks run.
+      '';
+
+      default = let
+        home = config.home.homeDirectory;
+        homeRelative = p:
+          if hasPrefix "${home}/" p
+          then "~/${removePrefix "${home}/" p}"
+          else p;
+      in
+        pkgs.agent-tools.override {credentialPaths = map homeRelative cfg.guard.credentialPaths;};
     };
 
     prLoop = {
@@ -485,7 +535,7 @@ in {
           `sandbox-relay serve`.
         '';
 
-        default = pkgs.agent-tools.linuxClient;
+        default = cfg.agentTools.linuxClient;
       };
     };
 
@@ -699,6 +749,6 @@ in {
       # Every agent is told to leave signing to `git sign-pass`, which this
       # installs. These run the git and gh on PATH, so the user's signing and
       # SSH settings apply.
-      ++ [agent-tools];
+      ++ [cfg.agentTools];
   };
 }

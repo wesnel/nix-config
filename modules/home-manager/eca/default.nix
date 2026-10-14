@@ -33,10 +33,12 @@ with lib; let
   # trust mode and remembered approvals. An agent's deny list replaces the
   # global one rather than adding to it, so a deny rule added to ECA's own
   # config has to be repeated here to apply to these agents. Add a rule to
-  # the guard's policy.json, with examples, not here.
-  loopDenied = pkgs.agent-tools.ecaDenied.coordinator;
-  ownerDenied = pkgs.agent-tools.ecaDenied.owner;
-  reviewerDenied = pkgs.agent-tools.ecaDenied.reviewer;
+  # the guard's policy.json, with examples, not here. The credentials pattern
+  # comes from the list the guard's config holds.
+  credentialsDenied = pkgs.agent-tools.credentialsPattern config.home.homeDirectory config.wgn.home.llm.guard.credentialPaths;
+  loopDenied = pkgs.agent-tools.ecaDenied.coordinator ++ [credentialsDenied];
+  ownerDenied = pkgs.agent-tools.ecaDenied.owner ++ [credentialsDenied];
+  reviewerDenied = pkgs.agent-tools.ecaDenied.reviewer ++ [credentialsDenied];
 
   # ECA rejects a command matching a deny pattern with no reason of ours,
   # and the patterns match a phrase anywhere in the command, so the agents
