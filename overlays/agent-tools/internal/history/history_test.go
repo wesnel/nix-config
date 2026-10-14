@@ -33,6 +33,34 @@ func TestFold(t *testing.T) {
 	}
 }
 
+func TestLintMessage(t *testing.T) {
+	long := strings.Repeat("x", 73)
+	for _, c := range []struct{ message, want string }{
+		{"Add the run loop", ""},
+		{"Add the run loop\n\nIt runs.", ""},
+		{strings.Repeat("é", 72), ""},
+		{long, "subject is 73 characters, over 72"},
+		{"feat(loop): " + strings.Repeat("x", 61), "subject is 73 characters, over 72"},
+		{"Add the run loop.", "subject ends with a period"},
+		{"Add x\n\nWhy.\n\nCo-Authored-By: C <c@e>", `"Co-Authored-By: C <c@e>" is attribution`},
+		{"Add x\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)", "is attribution"},
+		{"Add x\n\nhttps://claude.ai/code/session_01ab", "is attribution"},
+		{"Add x\n\nhttps://chatgpt.com/codex/tasks/task_e_1", "is attribution"},
+		{"Add x\n\nSigned-off-by: T <t@e>", ""},
+		{"Add x\n\nThe table is generated with go generate.", ""},
+		{"fixup! " + long, ""},
+		{"fixup! A\n\nReview-Thread: x\nReview-Finding: y", ""},
+		{"fixup! A\n\nReview-Thread: x\nSigned-off-by: T <t@e>", `trailer "Signed-off-by" is not a Review-* trailer`},
+		{"fixup! A\n\nCo-authored-by: C <c@e>", "is attribution"},
+		{"amend! A\n\n" + long, ""},
+	} {
+		got := strings.Join(LintMessage(c.message), "; ")
+		if c.want == "" && got != "" || !strings.Contains(got, c.want) {
+			t.Errorf("LintMessage(%q) = %q, want %q", c.message, got, c.want)
+		}
+	}
+}
+
 // TestSquashed runs git's own autosquash over each history and checks
 // Squashed predicts the commits it leaves, messages and authors included.
 func TestSquashed(t *testing.T) {

@@ -1,6 +1,7 @@
 package signpass
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
+	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
 func gitIn(t *testing.T, dir string, args ...string) string {
@@ -153,6 +155,53 @@ func TestRun(t *testing.T) {
 	}
 	if marks, _ := git.Run("log", "-1", "--format=%G?", "main"); marks != "G" {
 		t.Errorf("main's commit: %q", marks)
+	}
+}
+
+// TestLint covers the messages a pass would sign: it refuses one that
+// breaks the message rules before touching anything, judging the message
+// as signed, so an amend! that fixes it lets the pass through.
+func TestLint(t *testing.T) {
+	dir := t.TempDir()
+	global := signingConfig(t, dir)
+	repo := filepath.Join(dir, "repo")
+	os.Mkdir(repo, 0o755)
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+	gitIn(t, repo, "switch", "-qc", "br")
+	os.WriteFile(filepath.Join(repo, "a"), []byte("a\n"), 0o644)
+	gitIn(t, repo, "add", "a")
+	gitIn(t, repo, "commit", "-q", "-m", "Add a.", "-m", "Co-Authored-By: C <c@e>")
+	os.WriteFile(filepath.Join(repo, "b"), []byte("b\n"), 0o644)
+	gitIn(t, repo, "add", "b")
+	gitIn(t, repo, "commit", "-q", "-m", "Add b")
+	tip := gitIn(t, repo, "rev-parse", "br")
+
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	gitenvtest.Decoy(t)
+	git.Dir = repo
+	defer func() { git.Dir = "" }()
+	for name, pass := range map[string]func() (any, error){
+		"Run":  func() (any, error) { return Run("", false, false, false) },
+		"Plan": func() (any, error) { return Plan("", []string{"br"}, false, false) },
+	} {
+		_, err := pass()
+		var r refusal.Refusal
+		if !errors.As(err, &r) || !strings.Contains(err.Error(), `"Add a."`) || !strings.Contains(err.Error(), "period") ||
+			!strings.Contains(err.Error(), "Co-Authored-By") || !refusal.SaysInstead(err.Error()) {
+			t.Errorf("%s: %v", name, err)
+		}
+		if now, _ := git.Run("rev-parse", "br"); now != tip {
+			t.Errorf("%s moved the branch", name)
+		}
+	}
+
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "amend! Add a.", "-m", "Add a")
+	if _, err := Run("", false, false, false); err != nil {
+		t.Fatal(err)
+	}
+	if subjects, _ := git.Run("log", "--format=%s %G?", "main..br"); subjects != "Add b G\nAdd a G" {
+		t.Errorf("after the amend!: %q", subjects)
 	}
 }
 

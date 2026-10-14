@@ -139,6 +139,9 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 		if merges, _ := git.Run("rev-list", "--merges", s.from+".."+s.tip); merges != "" {
 			return nil, refuse("%s's commits to sign include merges, which re-signing would flatten; sign them by hand", t)
 		}
+		if err := lintMessages(t, s.from, s.tip); err != nil {
+			return nil, err
+		}
 		var signs int
 		if s.From < 0 {
 			s.Base = b
