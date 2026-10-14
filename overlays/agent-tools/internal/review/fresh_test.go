@@ -68,6 +68,7 @@ ls -A "$wt" > "$FAKE_CODEX_LOG/files"
 case "$FAKE_CODEX" in
   fail) echo "fake codex: model error" >&2; exit 1 ;;
   hang) exec sleep 60 ;;
+  fork) echo $$ > "$FAKE_CODEX_LOG/group"; i=0; while [ $i -lt 300 ]; do sleep 30 > /dev/null 2>&1 & i=$((i+1)); if [ $i = 20 ]; then echo > "$FAKE_CODEX_LOG/started"; fi; done; wait ;;
   none) echo '{"findings": [], "unverified": []}' > "$out" ;;
   *) cat > "$out" <<EOF
 {"findings": [

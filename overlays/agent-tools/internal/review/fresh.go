@@ -101,7 +101,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	if err := git.CheckConfig(""); err != nil {
 		return report(nil, err, 0)
 	}
-	r, err := resolve(positional[0])
+	r, err := resolve("", positional[0])
 	if err != nil {
 		return report(nil, err, 0)
 	}
@@ -149,7 +149,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	}
 
 	out, err := codexReview(ctx, in, *model, time.Duration(*timeout)*time.Second, stderr)
-	var unconfined errUnconfined
+	var unconfined Unconfined
 	if errors.As(err, &unconfined) {
 		return noCodex(string(unconfined))
 	}
@@ -165,16 +165,20 @@ type span struct {
 	commits                       string
 }
 
-func resolve(given string) (*span, error) {
+// resolve resolves the range given in the repository at dir, or, for "", the
+// one containing the process's directory.
+func resolve(dir, given string) (*span, error) {
 	base, tip, ok := strings.Cut(given, "..")
 	if !ok || strings.HasPrefix(tip, ".") || base == "" || tip == "" {
 		return nil, refusal.New("%q is not a range BASE..TIP; pass the range whose commits make up the change, "+
 			"such as `origin/main..HEAD`", given)
 	}
-	r := &span{given: given}
+	r := &span{given: given, top: dir}
 	var err error
-	if r.top, err = git.Toplevel(); err != nil {
-		return nil, err
+	if r.top == "" {
+		if r.top, err = git.Toplevel(); err != nil {
+			return nil, err
+		}
 	}
 	if r.common, err = git.Run("-C", r.top, "rev-parse", "--path-format=absolute", "--git-common-dir"); err != nil {
 		return nil, err
@@ -288,13 +292,60 @@ func codexReview(ctx context.Context, in inputs, model string, timeout time.Dura
 	if _, err := git.Run("-C", in.r.top, "worktree", "add", "--quiet", "--detach", wt, in.r.tip); err != nil {
 		return nil, err
 	}
-	schema, reply := filepath.Join(dir, "findings.schema.json"), filepath.Join(dir, "reply.json")
-	if err := os.WriteFile(schema, Schema, 0o644); err != nil {
-		return nil, err
-	}
 	in.where = "The working directory is a checkout of TIP holding nothing but the commits; `git diff " +
 		in.r.base + " " + in.r.tip + "` shows the change."
-	admin, err := git.Run("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
+	reply, err := CodexRun(ctx, Codex{Checkout: wt, Prompt: prompt(in), Schema: Schema, Model: model, Timeout: timeout, Log: log})
+	if err != nil {
+		return nil, err
+	}
+	out, err := validate(reply.Text, in.r, wt)
+	if err != nil {
+		return nil, err
+	}
+	out.Reviewer = "codex"
+	if reply.Model != "" {
+		out.Model = &reply.Model
+	}
+	return out, nil
+}
+
+// Codex is one confined, read-only Codex run.
+type Codex struct {
+	// Checkout is a worktree the caller made and removes, whose parent
+	// directory is the caller's own and takes the schema and the reply.
+	Checkout string
+	Prompt   string
+	// Schema is the JSON schema the reply must fit.
+	Schema  []byte
+	Model   string
+	Timeout time.Duration
+	// Log receives Codex's output.
+	Log io.Writer
+}
+
+// CodexReply is what Codex replied, and the model that replied.
+type CodexReply struct {
+	Text, Model string
+}
+
+// CodexRun runs Codex with c's prompt in c's checkout, confined as
+// confinement says. It returns an Unconfined where Codex's sandbox cannot
+// start confined to the checkout.
+func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
+	dir := filepath.Dir(c.Checkout)
+	schema, reply := filepath.Join(dir, "reply.schema.json"), filepath.Join(dir, "reply.json")
+	if err := os.WriteFile(schema, c.Schema, 0o644); err != nil {
+		return nil, err
+	}
+	head, err := git.Run("-C", c.Checkout, "rev-parse", "--verify", "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	admin, err := git.Run("-C", c.Checkout, "rev-parse", "--path-format=absolute", "--git-dir")
+	if err != nil {
+		return nil, err
+	}
+	common, err := git.Run("-C", c.Checkout, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return nil, err
 	}
@@ -307,38 +358,41 @@ func codexReview(ctx context.Context, in inputs, model string, timeout time.Dura
 	if err != nil {
 		return nil, err
 	}
-	confined, err := confinement(in.r.common, admin, codex)
+	confined, err := confinement(common, admin, codex)
 	if err != nil {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(ctx, c.Timeout)
 	defer cancel()
 	// Codex's sandbox does not start inside another macOS sandbox; Codex
-	// must then not review at all, rather than run its commands unconfined.
+	// must then not run at all, rather than run its commands unconfined.
 	env := append(gitenv.Without(os.Environ()), "PATH="+realDirs(os.Getenv("PATH")))
 	probe := exec.CommandContext(ctx, codex, append(append([]string{"sandbox"}, confined...),
-		"-P", profile, "-C", wt, "--", "git", "rev-parse", "--verify", "HEAD")...)
+		"-P", profile, "-C", c.Checkout, "--", "git", "rev-parse", "--verify", "HEAD")...)
 	probe.Env = env
 	var probeErr bytes.Buffer
 	probe.Stderr = &probeErr
-	if out, err := probe.Output(); err != nil || strings.TrimSpace(string(out)) != in.r.tip {
-		return nil, errUnconfined(fmt.Sprintf("Codex's sandbox, confined to the worktree, could not run git there (%v: %s)",
+	if out, err := probe.Output(); err != nil || strings.TrimSpace(string(out)) != head {
+		return nil, Unconfined(fmt.Sprintf("Codex's sandbox, confined to the worktree, could not run git there (%v: %s)",
 			err, strings.TrimSpace(probeErr.String())))
 	}
-	args := append([]string{"exec", "--ignore-user-config", "--ignore-rules", "--ephemeral", "-C", wt,
+	args := append([]string{"exec", "--ignore-user-config", "--ignore-rules", "--ephemeral", "-C", c.Checkout,
 		"--output-schema", schema, "-o", reply}, confined...)
-	if model != "" {
-		args = append(args, "-m", model)
+	if c.Model != "" {
+		args = append(args, "-m", c.Model)
 	}
 	cmd := exec.CommandContext(ctx, codex, append(args, "-")...)
-	cmd.Dir = wt
+	cmd.Dir = c.Checkout
 	cmd.Env = env
-	cmd.Stdin = strings.NewReader(prompt(in))
-	banner := &bannerModel{w: log}
-	cmd.Stdout, cmd.Stderr = log, banner
+	cmd.Stdin = strings.NewReader(c.Prompt)
+	banner := &bannerModel{w: c.Log}
+	cmd.Stdout, cmd.Stderr = c.Log, banner
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.Cancel = func() error {
+		stopGroup(cmd.Process.Pid, 5*time.Second)
+		return nil
+	}
 	cmd.WaitDelay = 5 * time.Second
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
@@ -350,23 +404,27 @@ func codexReview(ctx context.Context, in inputs, model string, timeout time.Dura
 	if err != nil {
 		return nil, fmt.Errorf("codex left no reply: %w", err)
 	}
-	out, err := validate(string(data), in.r, wt)
-	if err != nil {
-		return nil, err
-	}
-	out.Reviewer = "codex"
-	if banner.model != "" {
-		out.Model = &banner.model
-	} else if model != "" {
-		out.Model = &model
+	out := &CodexReply{Text: string(data), Model: banner.model}
+	if out.Model == "" {
+		out.Model = c.Model
 	}
 	return out, nil
 }
 
-// errUnconfined says why Codex cannot review confined.
-type errUnconfined string
+// stopGroup kills the process group pgid until it is empty, or for at most
+// bound. One kill is not enough: a process that forks as the kill lands can
+// leave a child in the group that the kill missed.
+func stopGroup(pgid int, bound time.Duration) {
+	deadline := time.Now().Add(bound)
+	for syscall.Kill(-pgid, syscall.SIGKILL) == nil && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
-func (e errUnconfined) Error() string { return string(e) }
+// Unconfined says why Codex cannot run confined.
+type Unconfined string
+
+func (e Unconfined) Error() string { return string(e) }
 
 // profile names the Codex permissions profile confinement defines.
 const profile = "fresh-review"
