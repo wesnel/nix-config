@@ -45,6 +45,12 @@ red, and the failure points at what broke. Everything below follows from that.
 
 - Fake at the boundary where data enters or leaves: the store, the network,
   the clock, the filesystem, randomness. Run real code everywhere inside it.
+- Where a real stand-in runs locally, use it rather than a fake: a
+  temporary directory, a git repository made by the test, `httptest`, a test
+  Emacs.
+- Give each external operation the code needs its own function, passed in
+  rather than built inside, so its fake returns one shape with no branching
+  on what it was asked.
 - Never assert that a fake received what the test handed it. That checks
   the test's own wiring. Assert what the code did with the fake's answer.
 - Keep a fake faithful where it matters: it fails the way the real thing
@@ -57,6 +63,9 @@ red, and the failure points at what broke. Everything below follows from that.
   and see it fail for the reason you expect: an assertion about the missing
   behaviour, not a compile error or a missing fixture. Then change the code
   until it passes.
+- Work in vertical slices: one test, then the code that passes it, then the
+  next test. Each slice shapes the next, which tests written all at once
+  ahead of the code cannot.
 - Keep both runs as evidence: the failing output, or its key lines, and the
   passing run. Both go in your final report and in what you hand a
   coordinator. A pull request description still names only what a reviewer
@@ -80,6 +89,9 @@ red, and the failure points at what broke. Everything below follows from that.
 - A pure refactor changes no tests: the existing ones pass before and after,
   unchanged. If one has to change, the behaviour changed, and this section
   applies.
+- Tests a refactor made obsolete, such as those of a module it removed, are
+  deleted in a commit of their own, whose body names the tests that now
+  cover that behaviour.
 - Docs, configuration with nothing to test, and exploration that is not
   committed need no test first.
 
@@ -97,6 +109,8 @@ red, and the failure points at what broke. Everything below follows from that.
   change you named, run the test, and see it fail for the reason you
   expected. Then restore the code. A test that passes on its first run has
   not yet shown it can fail.
-- Run the whole suite, not only the new tests.
+- While working, run the fast checks after each step: the build, the
+  vetter or linter, the package's own tests. Run the whole suite at the end,
+  not only the new tests.
 - When reviewing someone else's tests, apply the same checks and name any
   test that cannot fail, with the change it misses.
