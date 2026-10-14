@@ -104,7 +104,6 @@ with lib; let
     "features.network_proxy.enabled" = true;
     "permissions.pr_loop.extends" = ":workspace";
     "permissions.pr_loop.network.enabled" = true;
-    "permissions.pr_loop.network.domains" = genAttrs config.wgn.home.llm.prLoop.allowedDomains (_: "allow");
     "permissions.pr_loop.network.unix_sockets" = {"{socket}" = "allow";};
     # A hook that is new or changed is skipped until trusted with /hooks, so
     # it names `pr-loop` on PATH rather than a store path that changes with
@@ -122,21 +121,40 @@ with lib; let
     ];
   };
 
+  domains = list: escapeShellArg "permissions.pr_loop.network.domains=${toml (genAttrs list (_: "allow"))}";
+
   prLoopLauncher = pkgs.writeShellApplication {
     name = "codex-pr-loop";
     text = ''
+      # The more specific path wins, so the home directory is denied but for
+      # the reads allowed below it. A read rule replaces write access, so
+      # none may name the workspace, the cache directory or the git
+      # directory, which is usually the workspace's own .git, or the
+      # workspace itself.
       filesystem="${concatStringsSep ", " (
-        map (p: ''\"${p}\"=\"deny\"'') config.wgn.home.llm.prLoop.deniedReads
+        [''\"${config.home.homeDirectory}\"=\"deny\"'']
+        ++ map (p: ''\"${p}\"=\"read\"'') (subtractLists ["{workspace}" "{gitdir}" config.wgn.home.llm.prLoop.cacheDir] config.wgn.home.llm.prLoop.allowedReads)
+        ++ map (p: ''\"${p}\"=\"deny\"'') config.wgn.home.llm.prLoop.deniedReads
         ++ map (p: ''\"{workspace}/${p}\"=\"read\"'') config.wgn.home.llm.prLoop.protectedPaths
         ++ [''\"${config.wgn.home.llm.prLoop.cacheDir}\"=\"write\"'']
         # Reached through `agent-plan` on the relay.
         ++ [''\"${plans.dir}\"=\"read\"'']
       )}"
+      domains=${domains config.wgn.home.llm.prLoop.allowedDomains}
+      ${config.wgn.home.llm.prLoop.reviewSession}
+      if [[ -n "$review" ]]; then
+        domains=${domains config.wgn.home.llm.prLoop.reviewAllowedDomains}
+      fi
       ${config.wgn.home.llm.prLoop.sandboxCaches}
       # The review-loop skill starts only where this is set.
       export PR_LOOP_SESSION=1
-      exec ${lib.getExe' pkgs.agent-tools "sandbox-relay"} session --program pr-loop --program agent-plan -- codex \
+      # The session's commands cannot read the user's git config; the relay
+      # and pr-loop on this side keep it.
+      ${config.wgn.home.llm.prLoop.gitIdentity}
+      exec ${lib.getExe' pkgs.agent-tools "sandbox-relay"} session --program pr-loop --program agent-plan -- \
+        env GIT_CONFIG_GLOBAL=${config.wgn.home.llm.prLoop.gitConfig} codex \
         ${concatStringsSep " \\\n  " (mapAttrsToList (k: v: "-c ${escapeShellArg "${k}=${toml v}"}") overrides)} \
+        -c "$domains" \
         -c "permissions.pr_loop.filesystem={$filesystem}" \
         "$@"
     '';

@@ -337,6 +337,123 @@ in {
           ++ optionals proxy.enable [proxy.stateDir proxy.oauthDir];
       };
 
+      allowedReads = mkOption {
+        type = types.listOf types.str;
+        readOnly = true;
+
+        description = ''
+          The only paths under the home directory a sandboxed loop session's
+          commands may read; the rest of it is denied. `{workspace}` and
+          `{gitdir}` are filled in by `sandbox-relay session`: the workspace,
+          and the git directory of a linked worktree, which lies outside it.
+          A read allowed here wins over a denied one, so no entry may contain
+          a path in {option}`deniedReads`. Not `~/.config/git`: git stops
+          when its config includes a file it cannot read, so sessions get
+          {option}`gitConfig` instead.
+        '';
+
+        default = [
+          "{workspace}"
+          "{gitdir}"
+          cfg.prLoop.cacheDir
+          "${config.xdg.configHome}/agent-tools"
+        ];
+      };
+
+      gitConfig = mkOption {
+        type = types.path;
+        readOnly = true;
+
+        description = ''
+          The global git config of a sandboxed loop session's commands, in
+          place of the user's, which includes secrets. It holds no secret and
+          includes nothing; the launcher passes the commit identity in the
+          environment.
+        '';
+
+        default = pkgs.writeText "pr-loop-gitconfig" ''
+          [commit]
+          	gpgsign = false
+          [tag]
+          	gpgsign = false
+          [init]
+          	defaultBranch = main
+        '';
+      };
+
+      gitIdentity = mkOption {
+        type = types.lines;
+        readOnly = true;
+
+        description = ''
+          Shell lines a loop launcher runs, outside the sandbox, to export the
+          user's commit identity from their own git config for the session's
+          commands, which read {option}`gitConfig` instead.
+        '';
+
+        default = ''
+          for role in AUTHOR COMMITTER; do
+            export "GIT_''${role}_NAME=$(${getExe pkgs.git} config --global --get user.name || true)"
+            export "GIT_''${role}_EMAIL=$(${getExe pkgs.git} config --global --get user.email || true)"
+          done
+        '';
+      };
+
+      reviewDir = mkOption {
+        type = types.str;
+        readOnly = true;
+        default = "${config.xdg.cacheHome}/pr-review";
+
+        description = ''
+          Where `pr-loop review` keeps each pull request's clone and review,
+          `<owner>/<name>/<number>/`. A loop session started in a review's
+          directory has that directory as its workspace, so it reads only that
+          review. Emacs's `wgn/untrusted-directories` holds this path too.
+        '';
+      };
+
+      reviewSession = mkOption {
+        type = types.lines;
+        readOnly = true;
+
+        description = ''
+          Shell lines a loop launcher runs before choosing its settings:
+          `review` is set when the session starts in a head's review
+          directory, {option}`reviewDir`/OWNER/NAME/N/HEAD12, and the launcher
+          exits anywhere else under {option}`reviewDir`, where the session's
+          workspace would hold the record and clone that `pr-loop review`
+          trusts.
+        '';
+
+        default = ''
+          review=
+          here="$(pwd -P)"
+          reviews="$(cd ${escapeShellArg cfg.prLoop.reviewDir} 2>/dev/null && pwd -P || printf %s ${escapeShellArg cfg.prLoop.reviewDir})"
+          case "$here/" in
+            "$reviews"/*)
+              if [[ ! "''${here#"$reviews"/}" =~ ^[^/]+/[^/]+/[1-9][0-9]*/[0-9a-f]{12}$ ]]; then
+                printf 'Start a loop session under %s only in a review directory, %s/OWNER/NAME/N/HEAD12.\n' "$reviews" "$reviews" >&2
+                exit 2
+              fi
+              review=1
+              ;;
+          esac
+        '';
+      };
+
+      reviewAllowedDomains = mkOption {
+        type = types.listOf types.str;
+        readOnly = true;
+        default = remove "storage.googleapis.com" cfg.prLoop.allowedDomains;
+
+        description = ''
+          {option}`allowedDomains` for a session started under
+          {option}`reviewDir`. storage.googleapis.com is left out: any
+          bucket there can take data, and a review fetches its modules
+          outside the session.
+        '';
+      };
+
       protectedPaths = mkOption {
         type = types.listOf types.str;
         readOnly = true;

@@ -382,10 +382,15 @@ Linear, which the report proposes instead.
 ### what a loop session enforces
 
 - **Sandbox.** Every launcher takes its rules from `wgn.home.llm.prLoop`:
-  `deniedReads` (credentials, the keychain, the MCP proxy's token),
-  `protectedPaths` (read-only in the workspace: git hooks and config, and
-  agents' project settings), `allowedDomains` (the only network, for
-  dependencies) and `cacheDir` (the only build cache it writes).
+  `deniedReads` (credentials, the keychain, the MCP proxy's token);
+  `allowedReads` (in `claude-pr-loop` and `codex-pr-loop`, the only paths
+  under your home directory its commands may read: the workspace, its git
+  directory, the build cache and agent-tools' config), with `gitConfig` in
+  place of your git config; `protectedPaths` (read-only in the workspace:
+  git hooks and config, and agents' project settings); `allowedDomains` (the
+  only network, for dependencies, without storage.googleapis.com in a
+  session started under `reviewDir`) and `cacheDir` (the only build cache it
+  writes).
 - **Guard.** `pr-loop guard` runs before every tool call in all three agents
   and denies other ways to write to GitHub or Linear, unsigned-workflow
   violations and your decisions. Owner agents are also denied the steps the
