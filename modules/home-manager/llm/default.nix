@@ -372,6 +372,10 @@ in {
             source = ./skills/restack-branches/SKILL.md;
             sandbox = true;
           };
+          review-change = {
+            source = ./skills/review-change/SKILL.md;
+            sandbox = true;
+          };
           coordinate-subagents = ./skills/coordinate-subagents/SKILL.md;
         }
         // optionalAttrs cfg.prLoop.enable {
