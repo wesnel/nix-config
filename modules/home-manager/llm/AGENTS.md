@@ -171,8 +171,10 @@ skill before looking for a failure's cause. When a failure could recur, the
 
 A test earns its place only if it can fail. A change in behaviour (a feature,
 a fix, a changed contract) starts with its test, seen failing for the expected
-reason before the code changes, and the report shows both runs. Load the
-`write-tests` skill before writing, changing or reviewing tests.
+reason before the code changes, and the report shows both runs. Test against
+the real dependency wherever it can run inside the test; a fake is the
+exception, and the test says why. Load the `write-tests` skill before writing,
+changing or reviewing tests.
 
 A new or changed check, such as a lint rule, CI step, hook, guard rule or Nix
 assertion, is shown the same way: failing on a deliberate violation for the
