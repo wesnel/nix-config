@@ -35,24 +35,31 @@ agent-plan new --parent PLAN --part P1 --title 'Add the run loop flag' --branch 
   `REPOSITORIES`, `BRANCHES` (`base..branch`), `WORKTREES`, `SESSIONS`
   (`harness:id`), `HARNESS`, `STATUS` (`planning`, `reviewing-plan`,
   `working`, `reviewing`, `handed-back` or `halted`), `PULL_REQUESTS`,
-  `PIPELINE` (`full` or `opted-out:<reason>`) and, once `agent-plan own`
-  sets one, `OWNERS` (`worktree=agent`). Lists are separated by spaces.
+  `PIPELINE` (`full` or `opted-out:<reason>`), `SKILLS` (the skills the
+  work runs under beyond this one, such as `coordinate-subagents` or
+  `review-loop`, which you add) and, once `agent-plan own` sets one,
+  `OWNERS` (`worktree=agent`). Lists are separated by spaces.
 - `** Goal`: the goal and what is not this change's job, and nothing of how
   the work went. It is the fresh review's goal statement, word for word:
   `agent-plan goal PLAN [--part P1]` prints it. It ends with a
   `Likely next changes:` line: one or two concrete changes expected after
   this one, not speculation, which the design review of the plan checks
   would each be a local edit.
-- `** Decisions`: a heading per decision, with `:ID: D1`, `D2`…
+- `** Decisions`: a heading per decision, with `:ID: D1`, `D2`… A
+  suggestion rejected for a reason that will still hold, such as a
+  constraint rather than a lack of time, is a decision too, with that
+  reason, so a later design review finds it instead of proposing it again.
 - `** Steps`: `*** TODO <step>` headings with `:ID: S1`, `S2`…; a part's
-  are `P1.S1`, `P1.S2`…
+  are `P1.S1`, `P1.S2`… Each says what observable result marks it done,
+  which its `verified` evidence then shows.
 - `** Distribution`, in a plan split among sub-agents: a heading per part
   with `:ID: P1`…, its branch, base and worktree, a link to its file, and
   its steps.
 - `** Open questions`: `*** <the question>` headings with `:ID: Q1`… (a
   part's `P1.Q1`…) and `:RECOMMENDATION:` yours, then any context, and the
   other answers as `- ` items. A settled one becomes a decision.
-- `** Verification`: how the change is shown to work.
+- `** Verification`: how the change is shown to work: each seam the tests
+  cross, and what each cannot catch.
 
 A question or a part that cannot start before others are settled lists
 their IDs in `:AFTER:`, separated by spaces: a question is settled once
@@ -93,7 +100,8 @@ not `verified`, the parts ready to start, and what still waits on an
 ## Finding it again
 
 After a compaction, a resume or a hand-off, find the plan before anything
-else, then read it and `agent-plan status PLAN`:
+else, then read it, load the skills its `SKILLS` names, and run
+`agent-plan status PLAN`:
 
 - Claude Code names it when the session resumes or compacts.
 - Elsewhere, `agent-plan find` lists the plans that match this session,
@@ -119,7 +127,8 @@ waiting questions askable, so list them again until none are left. In
 Claude Code, Wesley answers them through `/questions`; elsewhere, print
 them and take his answers in the chat.
 
-An open question is a decision only Wesley can make. A fact that a
+An open question is a decision only Wesley can make, and only his answer
+settles it: never decide one yourself. A fact that a
 command, a file, the docs or a sub-agent's lookup can establish is yours to
 find; write what you found into the question it informs. Each question
 holds one idea, worded so that "yes" accepts your recommendation, and the
@@ -133,6 +142,15 @@ files a few seconds after one changes, and `find`, `status` and `new` pull
 first. Never commit, push or pull there yourself; `agent-plan sync` is the
 watcher's and `agent-plan reseal` is Wesley's, and the guard denies both. A
 log refused as changed stays as it is: name it in your report.
+
+## Spikes
+
+When running code is the quickest way to answer a design question, write
+the question into Open questions first, then answer it with throwaway code
+on a local branch `spike/<slug>`, never pushed and never merged. Put what
+it showed and the branch's name into the question, for Wesley to decide.
+The real change is then written fresh under the plan; the spike's code is
+not carried into it.
 
 ## Claude Code's plan mode
 
