@@ -102,7 +102,7 @@ Enabling any of those modules enables `wgn.home.llm`, which provides:
   directory. A skill marked `sandbox = true` is also carried into sandboxed
   sessions; the rest drive something on this machine, such as Emacs.
 - **`agent-tools`** on `PATH`: `git sign-pass`, `git red-check`,
-  `git fresh-review`, `pr-loop` and `sandbox-relay`, built from
+  `git fresh-review`, `pr-loop`, `sandbox-relay` and `agent-plan`, built from
   `overlays/agent-tools`. `wgn.home.git` uses
   its `git-push-guard` as well.
 
