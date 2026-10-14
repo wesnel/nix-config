@@ -266,13 +266,52 @@ in {
           };
 
         hooks.PostToolUse = [
-          # After a push to GitHub, names the `pr-loop wait ci` to start.
+          # Records commits, pushes, worktrees, branches and PRs in the plan
+          # and asks which step a commit completes; after a push to GitHub,
+          # names the `pr-loop wait ci` to start.
           {
             matcher = "Bash";
             hooks = [
               {
                 type = "command";
                 command = "${getExe' pkgs.agent-tools "pr-loop"} guard --post";
+              }
+            ];
+          }
+          # A foreground sub-agent's result: asks the coordinator to check
+          # it and log the part. A background one's arrives as a prompt.
+          {
+            matcher = "Agent|Task";
+            hooks = [
+              {
+                type = "command";
+                command = "${agentPlan} remind";
+              }
+            ];
+          }
+        ];
+
+        # A background sub-agent's task-notification reaches the coordinator
+        # as a prompt; SubagentStop's output would reach only the sub-agent.
+        hooks.UserPromptSubmit = [
+          {
+            hooks = [
+              {
+                type = "command";
+                command = "${agentPlan} remind";
+              }
+            ];
+          }
+        ];
+
+        # Its output becomes the compaction's instructions: keep what the
+        # plan does not yet record. Exit 2 would block the compaction.
+        hooks.PreCompact = [
+          {
+            hooks = [
+              {
+                type = "command";
+                command = "${agentPlan} remind";
               }
             ];
           }
