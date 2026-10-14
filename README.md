@@ -128,7 +128,7 @@ signed and sign it, in a terminal of your own:
 ``` sh
 git log --format='%h %G? %s' main..HEAD   # N marks an unsigned commit
 git sign-pass                              # squash fixups and sign; nothing is pushed
-git sign-pass --push                       # then push every branch that moved to its upstream
+git sign-pass --push                       # then push every branch that moved to its own name upstream
 git sign-pass --set-upstream               # and publish moved branches that have none yet
 ```
 

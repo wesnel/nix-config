@@ -49,12 +49,14 @@ terminal of their own:
 
 ```sh
 git sign-pass                  # sign; nothing is pushed
-git sign-pass --push           # sign, then push every branch that moved to its upstream
+git sign-pass --push           # sign, then push every branch that moved to its own name upstream
 git sign-pass --set-upstream   # the same, and publish moved branches that have no upstream yet
 ```
 
 Suggest `--set-upstream` when a branch has never been pushed: it publishes the
-branch in the same push, and refuses one the remote already has.
+branch in the same push, and refuses one the remote already has. Both refuse,
+before any touch, a branch whose upstream is a branch of another name, and any
+push to the remote's default branch.
 
 It re-signs every commit from the oldest unsigned one to the tip, and moves any
 branch stacked inside that range along with it. A stacked branch checked out in

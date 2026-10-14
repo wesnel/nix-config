@@ -357,7 +357,8 @@ func defaultBase(branch string) (string, error) {
 // author and message exactly as they were. Branches stacked inside that range
 // move with it, and so does any other worktree they are checked out in, which
 // must be clean. With push, every branch that moved and has an upstream is
-// pushed over SSH, guarded by the commit its remote-tracking ref names; with
+// pushed over SSH to its own name, guarded by the commit its remote-tracking
+// ref names, after checking every destination before the first touch; with
 // setUpstream as well, so is every branch that moved and has none (see
 // pushMoved).
 func Run(base string, resume, push, setUpstream bool) (any, error) {
@@ -421,6 +422,11 @@ func Run(base string, resume, push, setUpstream bool) (any, error) {
 			}
 		}
 		sort.Strings(p.Stacked)
+		if push || setUpstream {
+			if _, _, err := pushTargets(append([]string{branch}, p.Stacked...), setUpstream); err != nil {
+				return nil, err
+			}
+		}
 		checkouts, err := otherCheckouts()
 		if err != nil {
 			return nil, err
@@ -552,48 +558,94 @@ func Run(base string, resume, push, setUpstream bool) (any, error) {
 	return result, nil
 }
 
+// target is where one branch is pushed: refs/heads/BRANCH on remote, leased
+// on lease, which is empty when the remote must not have the branch yet.
+type target struct {
+	branch, remote, lease string
+	publish               bool
+}
+
+// pushTargets decides where each branch goes, or refuses: a branch whose
+// upstream is another branch (`git switch -c x origin/main` makes one), and
+// any branch that would land on its remote's default branch. Run calls it
+// before the first key touch, and pushMoved again before pushing. Branches
+// without an upstream are listed in skipped unless setUpstream; a branch
+// tracking another branch is refused either way rather than re-pointed.
+func pushTargets(branches []string, setUpstream bool) (map[string][]target, map[string]string, error) {
+	byRemote := map[string][]target{}
+	skipped := map[string]string{}
+	for _, b := range branches {
+		remote, _ := git.Run("config", "--get", "branch."+b+".remote")
+		merge, _ := git.Run("config", "--get", "branch."+b+".merge")
+		t := target{branch: b, remote: remote}
+		switch {
+		case remote == "." && merge != "":
+			return nil, nil, refuse("%s tracks the local branch %s, so --push has nowhere to send it; drop that with "+
+				"`git branch --unset-upstream %s` and use --set-upstream, or set its remote branch with "+
+				"`git branch --set-upstream-to=REMOTE/%s %s`", b, strings.TrimPrefix(merge, "refs/heads/"), b, b, b)
+		case remote != "" && merge != "":
+			if merge != "refs/heads/"+b {
+				fix := fmt.Sprintf("`git branch --unset-upstream %s` and use --set-upstream", b)
+				if git.OK("rev-parse", "--verify", "-q", "refs/remotes/"+remote+"/"+b) {
+					fix = fmt.Sprintf("`git branch --set-upstream-to=%s/%s %s`", remote, b, b)
+				}
+				return nil, nil, refuse("%s tracks %s/%s, a different branch, and --push only pushes a branch to its own "+
+					"name; point it at its own with %s", b, remote, strings.TrimPrefix(merge, "refs/heads/"), fix)
+			}
+			t.lease, _ = git.Run("rev-parse", "--verify", "-q", "refs/remotes/"+remote+"/"+b)
+		case !setUpstream:
+			skipped[b] = "not pushed: no upstream"
+			continue
+		default:
+			var err error
+			if t.remote, err = pushRemote(b); err != nil {
+				return nil, nil, err
+			}
+			if git.OK("rev-parse", "--verify", "-q", "refs/remotes/"+t.remote+"/"+b) {
+				return nil, nil, refuse("%s has no upstream but %s already has a branch %s; if it is this one, run "+
+					"`git branch --set-upstream-to=%s/%s %s` and then `git sign-pass --resume --push`", b, t.remote, b, t.remote, b, b)
+			}
+			// An empty lease pushes only if the remote has no such branch,
+			// whatever this repository last fetched.
+			t.publish = true
+		}
+		if slices.Contains(defaultBranches(t.remote), b) {
+			return nil, nil, refuse("%s is %s's default branch, which git sign-pass never pushes to; sign without "+
+				"--push and push it yourself if that is intended", b, t.remote)
+		}
+		byRemote[t.remote] = append(byRemote[t.remote], t)
+	}
+	return byRemote, skipped, nil
+}
+
+// defaultBranches are the names remote's default branch may have: the one
+// refs/remotes/REMOTE/HEAD points at, or main and master when this repository
+// has not recorded it (`git remote set-head REMOTE --auto` records it).
+func defaultBranches(remote string) []string {
+	if head, err := git.Run("symbolic-ref", "-q", "refs/remotes/"+remote+"/HEAD"); err == nil {
+		if name, ok := strings.CutPrefix(head, "refs/remotes/"+remote+"/"); ok {
+			return []string{name}
+		}
+	}
+	return []string{"main", "master"}
+}
+
 // pushMoved pushes each moved branch that has an upstream, atomically per
 // remote, over whatever transport the remote uses (for GitHub, SSH and the
-// key), each guarded by its remote-tracking ref. With setUpstream, a moved
-// branch without an upstream goes in the same push to its push remote, under
-// its own name and only if the remote has no branch of that name, and that
-// becomes its upstream. Every branch is checked before anything is pushed, so a
-// refusal leaves the pass for --resume.
+// key), to the branch of the same name, guarded by its remote-tracking ref.
+// With setUpstream, a moved branch without an upstream goes in the same push
+// to its push remote, only if the remote has no branch of that name, and that
+// becomes its upstream. Every branch is checked (pushTargets) before anything
+// is pushed, so a refusal leaves the pass for --resume.
 func pushMoved(moved map[string]string, setUpstream bool) (map[string]string, error) {
-	type target struct {
-		branch, merge, lease string
-		publish              bool
-	}
 	branches := make([]string, 0, len(moved))
 	for b := range moved {
 		branches = append(branches, b)
 	}
 	sort.Strings(branches)
-	byRemote := map[string][]target{}
-	pushed := map[string]string{}
-	for _, b := range branches {
-		remote, _ := git.Run("config", "--get", "branch."+b+".remote")
-		merge, _ := git.Run("config", "--get", "branch."+b+".merge")
-		if remote != "" && merge != "" {
-			lease, _ := git.Run("rev-parse", "--verify", "-q", "refs/remotes/"+remote+"/"+strings.TrimPrefix(merge, "refs/heads/"))
-			byRemote[remote] = append(byRemote[remote], target{b, merge, lease, false})
-			continue
-		}
-		if !setUpstream {
-			pushed[b] = "not pushed: no upstream"
-			continue
-		}
-		remote, err := pushRemote(b)
-		if err != nil {
-			return nil, err
-		}
-		if git.OK("rev-parse", "--verify", "-q", "refs/remotes/"+remote+"/"+b) {
-			return nil, refuse("%s has no upstream but %s already has a branch %s; if it is this one, run "+
-				"`git branch --set-upstream-to=%s/%s %s` and then `git sign-pass --resume --push`", b, remote, b, remote, b, b)
-		}
-		// An empty lease pushes only if the remote has no such branch, whatever
-		// this repository last fetched.
-		byRemote[remote] = append(byRemote[remote], target{b, "refs/heads/" + b, "", true})
+	byRemote, pushed, err := pushTargets(branches, setUpstream)
+	if err != nil {
+		return nil, err
 	}
 	remotes := make([]string, 0, len(byRemote))
 	for remote := range byRemote {
@@ -604,25 +656,25 @@ func pushMoved(moved map[string]string, setUpstream bool) (map[string]string, er
 		targets := byRemote[remote]
 		args := []string{"push", "--atomic"}
 		for _, t := range targets {
-			args = append(args, fmt.Sprintf("--force-with-lease=%s:%s", t.merge, t.lease))
+			args = append(args, fmt.Sprintf("--force-with-lease=refs/heads/%s:%s", t.branch, t.lease))
 		}
 		args = append(args, remote)
 		for _, t := range targets {
-			args = append(args, "refs/heads/"+t.branch+":"+t.merge)
+			args = append(args, "refs/heads/"+t.branch+":refs/heads/"+t.branch)
 		}
 		fmt.Fprintf(os.Stderr, "pushing to %s; touch the key if it blinks\n", remote)
 		if git.Attached(nil, args...) != 0 {
 			return nil, fmt.Errorf("the push to %s failed; the branches are signed, so push them again by hand", remote)
 		}
 		for _, t := range targets {
-			pushed[t.branch] = remote + " " + t.merge
+			pushed[t.branch] = remote + " refs/heads/" + t.branch
 			if !t.publish {
 				continue
 			}
 			if _, err := git.Run("config", "branch."+t.branch+".remote", remote); err != nil {
 				return nil, err
 			}
-			if _, err := git.Run("config", "branch."+t.branch+".merge", t.merge); err != nil {
+			if _, err := git.Run("config", "branch."+t.branch+".merge", "refs/heads/"+t.branch); err != nil {
 				return nil, err
 			}
 			pushed[t.branch] += ", now its upstream"

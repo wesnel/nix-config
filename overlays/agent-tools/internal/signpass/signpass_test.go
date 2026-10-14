@@ -316,6 +316,86 @@ func TestPushMoved(t *testing.T) {
 	}
 }
 
+// TestPushDestination holds --push to each branch's own name and away from
+// the remote's default branch, refusing before the pass signs anything.
+func TestPushDestination(t *testing.T) {
+	dir := t.TempDir()
+	global := signingConfig(t, dir)
+	hub := filepath.Join(dir, "hub.git")
+	gitIn(t, dir, "init", "-q", "--bare", hub)
+	repo := filepath.Join(dir, "repo")
+	os.Mkdir(repo, 0o755)
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+	gitIn(t, repo, "remote", "add", "origin", hub)
+	gitIn(t, repo, "push", "-q", "-u", "origin", "main")
+	gitIn(t, repo, "push", "-q", "origin", "main:refs/heads/develop")
+	gitIn(t, repo, "fetch", "-q", "origin")
+	// What `git switch -c feature origin/main` leaves: feature tracks main.
+	gitIn(t, repo, "switch", "-q", "-c", "feature", "--track", "origin/main")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "F1")
+	hubMain := gitIn(t, hub, "rev-parse", "main")
+
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	git.Dir = repo
+	defer func() { git.Dir = "" }()
+	refs := gitIn(t, repo, "for-each-ref")
+	for _, setUpstream := range []bool{false, true} {
+		_, err := Run("", false, true, setUpstream)
+		if err == nil || !strings.Contains(err.Error(), "tracks origin/main") || !strings.Contains(err.Error(), "--unset-upstream feature") {
+			t.Errorf("a branch tracking main (setUpstream %v): %v", setUpstream, err)
+		}
+	}
+	if after := gitIn(t, repo, "for-each-ref"); after != refs {
+		t.Errorf("refs changed before the refusal:\n%s\n%s", refs, after)
+	}
+	if marks := gitIn(t, repo, "log", "-1", "--format=%G?"); marks != "N" {
+		t.Errorf("the refused branch was signed: %q", marks)
+	}
+	if got := gitIn(t, hub, "rev-parse", "main"); got != hubMain {
+		t.Errorf("the remote's main moved to %s", got)
+	}
+
+	// Once the remote has the branch, the fix names it.
+	gitIn(t, repo, "push", "-q", "origin", "feature")
+	gitIn(t, repo, "fetch", "-q", "origin")
+	if _, _, err := pushTargets([]string{"feature"}, false); err == nil || !strings.Contains(err.Error(), "--set-upstream-to=origin/feature feature") {
+		t.Errorf("a branch tracking main, which the remote also has: %v", err)
+	}
+	gitIn(t, repo, "branch", "-q", "--set-upstream-to=origin/feature", "feature")
+	if _, err := Run("", false, true, false); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := gitIn(t, hub, "rev-parse", "feature"), gitIn(t, repo, "rev-parse", "feature"); got != want {
+		t.Errorf("the remote's feature is %s, want %s", got, want)
+	}
+	if got := gitIn(t, hub, "rev-parse", "main"); got != hubMain {
+		t.Errorf("the remote's main moved to %s", got)
+	}
+
+	// The default branch itself is never a destination: main and master while
+	// the remote's HEAD is unknown, and whatever HEAD names once it is.
+	if _, _, err := pushTargets([]string{"main"}, false); err == nil || !strings.Contains(err.Error(), "default branch") {
+		t.Errorf("main with no origin/HEAD: %v", err)
+	}
+	gitIn(t, repo, "branch", "-q", "--track", "develop", "origin/develop")
+	if _, _, err := pushTargets([]string{"develop"}, false); err != nil {
+		t.Errorf("develop with no origin/HEAD: %v", err)
+	}
+	gitIn(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop")
+	if _, _, err := pushTargets([]string{"develop"}, false); err == nil || !strings.Contains(err.Error(), "default branch") {
+		t.Errorf("develop as origin/HEAD: %v", err)
+	}
+	if _, _, err := pushTargets([]string{"main"}, false); err != nil {
+		t.Errorf("main beside origin/HEAD develop: %v", err)
+	}
+	gitIn(t, repo, "branch", "-q", "--unset-upstream", "develop")
+	gitIn(t, repo, "update-ref", "-d", "refs/remotes/origin/develop")
+	if _, _, err := pushTargets([]string{"develop"}, true); err == nil || !strings.Contains(err.Error(), "default branch") {
+		t.Errorf("publishing develop as origin/HEAD: %v", err)
+	}
+}
+
 func TestPushRemote(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
