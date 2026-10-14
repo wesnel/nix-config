@@ -120,14 +120,12 @@ in {
     plans = {
       dir = mkOption {
         type = types.str;
-        default = "${config.home.homeDirectory}/git/org/agents";
+        default = "${config.home.homeDirectory}/git/notes/agents";
 
         description = ''
-          Where `agent-plan` keeps agents' plans, a directory per host. If
-          the directory above it is a git repository's top level, as the
-          ring's ~/git/org is, `agent-plan new` lists this directory in that
-          repository's `.git/info/exclude`, so plans are never committed
-          there. Org agenda files and refile targets must not include it.
+          Where `agent-plan` keeps every host's plans, side by side, each
+          file named for its host. Org agenda files and refile targets must
+          not include it.
         '';
       };
 
@@ -136,8 +134,8 @@ in {
         default = computerName;
 
         description = ''
-          This machine's directory under {option}`dir`. Another machine's
-          plans mirrored here sit beside it, under that machine's name.
+          This machine's name in its plans' file names. It holds no dot,
+          which separates the parts of those names.
         '';
       };
     };
@@ -431,13 +429,13 @@ in {
 
     # Read by `pr-loop setup` and `worktrees` as pr-loop's config is, by
     # `git red-check` wherever it runs, and by `agent-plan` and the guard,
-    # which keeps each plan's log.org append-only.
+    # which keeps each plan's log append-only.
     xdg.configFile."agent-tools/config.json".source = agentToolsConfig;
 
-    # A sandboxed session may write this host's plans directory and nothing
-    # around it, and Linux's sandbox skips a grant whose path does not
-    # exist, so the directory and the exclude that keeps plans out of the
-    # repository around them are made here, outside any sandbox.
+    # A sandboxed session may write the plans directory and nothing around
+    # it, and Linux's sandbox skips a grant whose path does not exist, so
+    # the directory and the .gitignore that keeps the logs' lock files out
+    # of git are made here, outside any sandbox.
     home.activation.agentPlans = hm.dag.entryAfter ["writeBoundary"] ''
       run --quiet env AGENT_TOOLS_CONFIG=${agentToolsConfig} ${getExe' pkgs.agent-tools "agent-plan"} init \
         || warnEcho "agent-plan init failed, so sandboxed sessions may not be able to make plans."

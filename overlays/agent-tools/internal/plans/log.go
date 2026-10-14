@@ -90,7 +90,7 @@ func (p Plan) check(e Event) error {
 		return err
 	}
 	if _, ok := items[e.Item]; !ok {
-		return refusal.New("%q is not an item of %s. Add it to the plan file first, or use an ID `agent-plan status %s` lists", e.Item, p.Name, p.Dir)
+		return refusal.New("%q is not an item of %s. Add it to the plan file first, or use an ID `agent-plan status %s` lists", e.Item, p.Name, p.file(""))
 	}
 	return nil
 }
@@ -98,6 +98,9 @@ func (p Plan) check(e Event) error {
 // Log appends e to the plan's log, with a new event ID and now's time, and
 // returns it as written.
 func (p Plan) Log(e Event, now time.Time) (Event, error) {
+	if err := p.checkOwn(); err != nil {
+		return Event{}, err
+	}
 	if err := p.check(e); err != nil {
 		return Event{}, err
 	}

@@ -229,11 +229,13 @@ is not trusted.
 ## plans: one file per change, one log
 
 Agents keep each change's plan with `agent-plan`, as the `plan-work` skill
-says: a directory under `wgn.home.llm.plans.dir` (`~/git/org/agents`), one
-per host, holding `plan.org`, a file per sub-agent's part, and `log.org`,
-the append-only record of each item's progress, review outcomes and tokens.
-Plans are never committed: `agent-plan new` lists the directory in
-`~/git/org`'s `.git/info/exclude`.
+says, as files side by side in `wgn.home.llm.plans.dir`
+(`~/git/notes/agents`): `<date>-<slug>.<host>.org`, a
+`<date>-<slug>.<host>.<part>.org` per sub-agent's part, and
+`<date>-<slug>.<host>.log.org`, the append-only record of each item's
+progress, review outcomes and tokens. The logs' lock files stay out of git
+through the directory's `.gitignore`, which `agent-plan` writes if it is
+missing.
 
 ``` sh
 agent-plan find --branch BRANCH          # plans for a branch on this host
@@ -385,8 +387,8 @@ shares, discarding the main checkout's work, deleting unpushed history,
 reading credentials or the whole environment, ngrok API writes, switching
 the system, root, publishing packages, killing Emacs, gpg-agent, ssh,
 nix-daemon or mcp-proxy, destroying the home directory, the Nix store or
-your keys, switching its own hooks off, and writing a plan's `log.org` other
-than with `agent-plan log`. A write through a claude.ai
+your keys, switching its own hooks off, and writing a plan's log other than
+with `agent-plan log`. A write through a claude.ai
 connector asks you first in Claude Code, and is denied in Codex. Each
 refusal says what to do instead. An agent with a loop role (`pr-owner`,
 `reviewer`, ECA's `pr-coordinator`) has that role's rules in any session.

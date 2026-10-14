@@ -18,14 +18,14 @@ import (
 
 var usage = `agent-plan: agents' plan files and their append-only event logs.
 
-A plan is a directory <plans>/<host>/<date>-<slug>/ holding plan.org, a
-<part>.org for each sub-agent's part, and log.org, which only "agent-plan
-log" writes. The plans directory and host come from "plans" in the user's
-agent-tools/config.json.
+A plan is files side by side in the plans directory: <date>-<slug>.<host>.org,
+<date>-<slug>.<host>.<part>.org for each sub-agent's part, and
+<date>-<slug>.<host>.log.org, which only "agent-plan log" writes. The plans
+directory and host come from "plans" in the user's agent-tools/config.json.
 
   new --title T --slug S [--repo R]... [--branch BASE..BRANCH]... [--worktree DIR]...
       [--session HARNESS:ID]... [--harness H]
-                     create a plan; prints its directory, file, ID and log
+                     create a plan; prints its file, ID and log
   new --parent PLAN --part P1 --title T [...]
                      create part P1's plan file beside its parent's
   log PLAN --item ID --kind KIND [--summary S] [--role R] [--agent A] [--branch B]
@@ -44,11 +44,10 @@ agent-tools/config.json.
                      every plan's tokens by event kind, model and effort
   import-claude      Claude Code's PostToolUse hook on ExitPlanMode (reads stdin):
                      records the approved plan in the session's plan
-  init               make this host's plans directory, and list the plans
-                     directory in the exclude file of the repository whose top
-                     level holds it, as new does
+  init               make the plans directory, with a .gitignore for the logs'
+                     lock files, as new does
 
-PLAN is a plan's directory, or a file in it. Values are single lines; list
+PLAN is one of a plan's files, or its name, <date>-<slug>.<host>. Values are single lines; list
 values hold no whitespace.
 KIND: ` + strings.Join(plans.Kinds, ", ") + `
 ROLE: ` + strings.Join(plans.Roles, ", ") + `

@@ -5,10 +5,11 @@ description: Keep a plan file and its event log for a change with agent-plan - w
 
 # Plans
 
-Every change has a plan: a directory made by `agent-plan new` under the plans
-directory, holding `plan.org`, a `<part>.org` per sub-agent's part, and
-`log.org`. You and whoever picks the work up after you work from it, so keep
-it true.
+Every change has a plan: files made by `agent-plan new` side by side in the
+plans directory, `<date>-<slug>.<host>.org`, a
+`<date>-<slug>.<host>.<part>.org` per sub-agent's part, and
+`<date>-<slug>.<host>.log.org`. You and whoever picks the work up after you
+work from it, so keep it true.
 
 ## Making one
 
@@ -17,14 +18,12 @@ agent-plan new --title 'Add the run loop' --slug add-run-loop \
   --repo owner/name --branch main..add-run-loop
 ```
 
-It prints the plan's directory (`plan`), its file, its ID and its log. The
-worktree and, in Claude Code, the session are recorded from where it runs;
-pass `--worktree` and `--session HARNESS:ID` otherwise. Plans are never
-committed: they stay out of every repository, the one around the plans
-directory included.
+It prints the plan's file (`plan`, the PLAN every other command takes), its
+ID and its log. The worktree and, in Claude Code, the session are recorded
+from where it runs; pass `--worktree` and `--session HARNESS:ID` otherwise.
 
 A sub-agent given part `P1` of a plan makes its own file beside the parent's
-and logs to the same `log.org`:
+and logs to the same log:
 
 ```sh
 agent-plan new --parent PLAN --part P1 --title 'Add the run loop flag' --branch add-run-loop..run-loop-flag
@@ -44,7 +43,7 @@ agent-plan new --parent PLAN --part P1 --title 'Add the run loop flag' --branch 
 - `** Steps`: `*** TODO <step>` headings with `:ID: S1`, `S2`…; a part's
   are `P1.S1`, `P1.S2`…
 - `** Distribution`, in a plan split among sub-agents: a heading per part
-  with `:ID: P1`…, its branch, base and worktree, a link to `P1.org`, and
+  with `:ID: P1`…, its branch, base and worktree, a link to its file, and
   its steps.
 - `** Open questions`: `:ID: Q1`…, each with your recommendation. A settled
   one becomes a decision.
@@ -57,7 +56,7 @@ base.
 
 ## The log
 
-`log.org` is append-only, and only `agent-plan log` writes it; the guard
+The log is append-only, and only `agent-plan log` writes it; the guard
 denies any other write, and a log changed some other way is refused from
 then on.
 
@@ -93,8 +92,9 @@ else, then read it and `agent-plan status PLAN`:
   one given instead.
 - A sub-agent's task names its plan and part.
 
-Only this host's plans are yours to change. Another host's directory beside
-it is a mirror, overwritten from that host.
+Only this host's plans, the files named for it, are yours to change; another
+host's beside them are read-only here, and `agent-plan` refuses to write
+them.
 
 ## Claude Code's plan mode
 
@@ -105,7 +105,7 @@ Steps and Decisions with IDs.
 ## Plan and halt
 
 If Wesley asks you to plan, write the plan and stop: no edits outside the
-plan's directory, and no commits. Log `planned` for the plan's ID, set
+plan's files, and no commits. Log `planned` for the plan's ID, set
 `STATUS` to `halted`, and report the plan's path with its open questions.
 
 ## The pipeline

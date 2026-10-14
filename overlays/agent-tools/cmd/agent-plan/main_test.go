@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/plans"
@@ -68,7 +69,10 @@ func TestCommands(t *testing.T) {
 	setup(t)
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "s-1")
 	plan := newPlan(t)
-	data, _ := os.ReadFile(filepath.Join(plan, "plan.org"))
+	if filepath.Base(plan) != time.Now().Format("2006-01-02")+"-add-loop.box.org" {
+		t.Errorf("new printed the plan %s", plan)
+	}
+	data, _ := os.ReadFile(plan)
 	if !strings.Contains(string(data), ":SESSIONS: claude:s-1\n") || !strings.Contains(string(data), ":HARNESS: claude\n") {
 		t.Errorf("the session is not recorded:\n%s", data)
 	}
@@ -86,7 +90,7 @@ func TestCommands(t *testing.T) {
 		t.Errorf("status as JSON: %d\n%s", code, out)
 	}
 	code, out, _ = agentPlan(t, "", "find", "--session", "s-1")
-	if code != 0 || !strings.Contains(out, filepath.Join(plan, "plan.org")) {
+	if code != 0 || !strings.Contains(out, plan) {
 		t.Errorf("find: %d\n%s", code, out)
 	}
 	code, out, _ = agentPlan(t, "", "init")
@@ -198,7 +202,7 @@ func TestClaudeHooks(t *testing.T) {
 	if code != 0 || !strings.Contains(out, `"hookEventName":"PostToolUse"`) {
 		t.Fatalf("import-claude: %d %s %s", code, out, errs)
 	}
-	matches, _ := filepath.Glob(filepath.Join(c.Dir, "box", "*-fix-it", "plan.org"))
+	matches, _ := filepath.Glob(filepath.Join(c.Dir, "*-fix-it.box.org"))
 	if len(matches) != 1 {
 		t.Fatalf("no plan made: %v", matches)
 	}

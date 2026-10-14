@@ -56,7 +56,7 @@ func (p Plan) Status() (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	s := Status{Plan: p.Dir, Title: orgTitle(string(data)), Steps: []Step{}, NotDone: []string{},
+	s := Status{Plan: p.file(""), Title: orgTitle(string(data)), Steps: []Step{}, NotDone: []string{},
 		DoneNotVerified: []string{}, TokensByPart: map[string]int64{}, TokensBy: tokenRows(events)}
 	partOf := map[string]string{}
 	index := map[string]int{}
@@ -197,13 +197,13 @@ func TokensOrg(rows []TokenRow) string {
 // Tokens totals the tokens of every plan, every host's, by event kind,
 // model and effort.
 func (c Config) Tokens() ([]TokenRow, error) {
-	logs, err := filepath.Glob(filepath.Join(c.Dir, "*", "*", "log.org"))
+	logs, err := filepath.Glob(filepath.Join(c.Dir, "*.log.org"))
 	if err != nil {
 		return nil, err
 	}
 	var events []Event
 	for _, log := range logs {
-		p, err := c.Open(filepath.Dir(log))
+		p, err := c.Open(log)
 		if err != nil {
 			continue
 		}

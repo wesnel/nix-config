@@ -251,17 +251,17 @@ in {
           # A plan's log is appended to by `agent-plan log` alone; the guard
           # denies the same files to every file tool and shell write. An Edit
           # rule covers Write too.
-          ++ map (p: "Edit(${rulePath plans.dir}/**/${p})") ["log.org" "log.org.lock"];
+          ++ map (p: "Edit(${rulePath plans.dir}/${p})") ["*.log.org" "*.log.org.lock"];
 
         # Applies wherever a project turns the sandbox on, and merges into
         # claude-pr-loop's sandbox, which denies what it must not have.
         sandbox =
           {
             # `trash` moves a file on the home volume into ~/.Trash, which the
-            # trash skill asks for in place of rm. This host's plans are
-            # written with `agent-plan` and the file tools.
+            # trash skill asks for in place of rm. Plans are written with
+            # `agent-plan` and the file tools.
             filesystem.allowWrite =
-              [sessionCacheDir "${plans.dir}/${plans.host}"]
+              [sessionCacheDir plans.dir]
               ++ optional darwin "${config.home.homeDirectory}/.Trash";
           }
           // optionalAttrs darwin {
