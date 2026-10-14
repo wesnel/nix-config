@@ -95,7 +95,8 @@ func TestNew(t *testing.T) {
 			t.Errorf("made %+v", made)
 		}
 		data, _ := os.ReadFile(made.File)
-		if header := "#+title: Add the loop\n#+TODO: TODO STARTED | DONE VERIFIED ABANDONED\n#+TODO: ASK | DECIDED(@) DROPPED(@) SUPERSEDED\n"; !strings.HasPrefix(string(data), header) {
+		if header := "#+title: Add the loop\n#+TODO: TODO STARTED | DONE VERIFIED ABANDONED\n#+TODO: ASK | DECIDED(@) DROPPED(@) SUPERSEDED\n" +
+			"#+FILETAGS: :r:box:\n"; !strings.HasPrefix(string(data), header) {
 			t.Errorf("the plan does not start with %q:\n%s", header, data)
 		}
 		if !strings.HasSuffix(string(data), ":END:\n** Goal\n** Steps\n** Distribution\n** Questions\n** Follow-ups\n** Verification\n") {
@@ -117,6 +118,21 @@ func TestNew(t *testing.T) {
 			if e.IsDir() {
 				t.Errorf("New made a directory: %s", e.Name())
 			}
+		}
+	})
+
+	// Org's tags hold only letters, digits, _, @, # and %.
+	t.Run("tags of repository and host", func(t *testing.T) {
+		c := testConfig(t)
+		c.Host = "ngrok-mac"
+		made, err := c.New(NewOptions{Title: "T", Slug: "x", Repos: []string{"wesnel/nix-config", "wesnel/emacs.config.git",
+			"other/nix-config"}}, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(made.File)
+		if !strings.Contains(string(data), "\n#+FILETAGS: :nix_config:emacs_config:ngrok_mac:\n") {
+			t.Errorf("plan:\n%s", data)
 		}
 	})
 
