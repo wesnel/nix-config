@@ -183,6 +183,13 @@
     "allow": ["git gc", "git fetch --prune", "git remote prune origin", "git update-ref refs/heads/x HEAD"]
   },
   {
+    "why": "Every worktree shares one stash, so dropping from it can discard another worktree's work.",
+    "scope": "baseline",
+    "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?stash\\s+(drop|clear)\\b.*",
+    "deny": ["git stash drop", "git stash drop stash@{1}", "git -C ../x stash clear"],
+    "allow": ["git stash list", "git stash show -p stash@{0}"]
+  },
+  {
     "why": "The hooks that run the guard stay on.",
     "scope": "baseline",
     "pattern": ".*((^|\\s)(>>?|tee|cp|mv|ln|install|-i)\\s+(.*\\s)?\\S*(\\.claude/settings[^/\\s]*\\.json|\\.codex/(config\\.toml|hooks\\.json)|\\.config/eca/config\\.json)|\\bclaude\\b.*(--(allow-)?dangerously-skip-permissions|bypassPermissions)|\\bcodex\\b.*--dangerously-bypass).*",
