@@ -426,6 +426,88 @@ func longSleep(c call) bool {
 	return total >= 30
 }
 
+const readsTerminal = "This reads its input from the terminal, which Codex keeps open for write_stdin, and text typed there reaches no hook. " +
+	"Run the command itself, as `bash -c '...'`, `python3 script.py` or `cat FILE`, or put what you need in your report for Wesley."
+
+// terminalReader reports whether a command line is one command that reads
+// its input from the terminal: a shell or REPL with nothing to run, or a
+// program that reads standard input, with none redirected or piped in.
+func terminalReader(text string) bool {
+	var calls []call
+	for _, segment := range segments(text) {
+		if words, expands := split(segment); len(words) > 0 {
+			calls = append(calls, call{words: words, expands: expands})
+		}
+	}
+	if len(calls) != 1 {
+		return false
+	}
+	for _, w := range calls[0].words {
+		if strings.HasPrefix(w, "<") {
+			return false
+		}
+	}
+	// xargs is a wrapper unwrap looks through, and reads the terminal
+	// whatever it runs.
+	if c := calls[0]; !c.expands[0] && base(c.words[0]) == "xargs" {
+		return !contains(c.words, "-a") && !contains(c.words, "--arg-file")
+	}
+	var found *call
+	unwrap(calls[0], visitor{
+		script: func(string) string { return "" },
+		call:   func(c call) string { found = &c; return "" },
+	})
+	if found == nil || len(found.words) == 0 || found.expands[0] {
+		return false
+	}
+	name, args := base(found.words[0]), found.words[1:]
+	var positional []string
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") {
+			positional = append(positional, a)
+		}
+	}
+	has := func(flags ...string) bool {
+		for _, a := range args {
+			if set(flags...)[strings.SplitN(a, "=", 2)[0]] {
+				return true
+			}
+		}
+		return false
+	}
+	switch {
+	case shells[name], name == "ruby", name == "perl", name == "lua":
+		return len(positional) == 0
+	case strings.HasPrefix(name, "python"), name == "node":
+		return has("-i", "--interactive") || len(positional) == 0
+	case name == "irb", name == "ghci":
+		return true
+	case name == "nix":
+		return len(positional) > 0 && positional[0] == "repl"
+	case name == "sqlite3":
+		return len(positional) <= 1
+	case name == "psql", name == "mysql":
+		return !has("-c", "--command", "-f", "--file", "-e", "--execute")
+	case name == "cat":
+		for _, p := range positional {
+			if p != "-" {
+				return false
+			}
+		}
+		return true
+	case name == "tee":
+		return true
+	case name == "dd":
+		for _, a := range args {
+			if strings.HasPrefix(a, "if=") {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
 // nixEnvWrite is nix-env's short options that change a profile.
 var nixEnvWrite = regexp.MustCompile(`^-[ieuG]`)
 

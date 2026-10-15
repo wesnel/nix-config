@@ -111,6 +111,16 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if reason == "" {
 		reason = check(in.ToolName, in.Server, in.ToolInput, who, in.Cwd)
 	}
+	if reason == "" && in.TurnID != "" && (in.ToolName == "Bash" || in.ToolName == "exec_command") {
+		// Codex alone keeps a command's terminal for write_stdin.
+		var args struct {
+			Command string `json:"command"`
+		}
+		json.Unmarshal(in.ToolInput, &args)
+		if terminalReader(args.Command) {
+			reason = readsTerminal
+		}
+	}
 	if reason == "" {
 		reason = checkOwner(in)
 	}

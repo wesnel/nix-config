@@ -950,6 +950,70 @@ func TestCodexShellTools(t *testing.T) {
 	}
 }
 
+// TestCodexTerminalReaders covers Codex starting a command that reads its
+// input from the terminal, which write_stdin could then drive past every
+// hook.
+func TestCodexTerminalReaders(t *testing.T) {
+	for _, c := range []struct {
+		command string
+		deny    bool
+	}{
+		{"bash", true},
+		{"zsh -l", true},
+		{"bash -i", true},
+		{"/bin/sh", true},
+		{"env FOO=1 bash", true},
+		{"python3", true},
+		{"python3 -i", true},
+		{"node", true},
+		{"irb", true},
+		{"nix repl", true},
+		{"sqlite3 x.db", true},
+		{"cat", true},
+		{"cat -", true},
+		{"tee out.txt", true},
+		{"xargs sh -c 'echo $0'", true},
+		{"bash -c 'ls'", false},
+		{"bash script.sh", false},
+		{"python3 x.py", false},
+		{"python3 -m http.server", false},
+		{"python3 -c 'print(1)'", false},
+		{"node app.js", false},
+		{"nix build", false},
+		{"sqlite3 x.db 'select 1'", false},
+		{"cat a.txt", false},
+		{"echo x | cat", false},
+		{"cat < in.txt", false},
+		{"ls | xargs echo", false},
+		{"xargs -a list echo", false},
+		{"ls", false},
+	} {
+		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
+			input, _ := json.Marshal(map[string]string{"command": c.command})
+			for _, agent := range []struct {
+				name, event string
+				deny        bool
+			}{
+				{"Codex", `{"tool_name":"Bash","turn_id":"t","cwd":"/","tool_input":` + string(input) + `}`, c.deny},
+				{"Claude Code", `{"tool_name":"Bash","cwd":"/","tool_input":` + string(input) + `}`, false},
+			} {
+				var out bytes.Buffer
+				Main([]string{"--baseline"}, strings.NewReader(agent.event), &out, io.Discard)
+				if denied := strings.Contains(out.String(), `"permissionDecision":"deny"`); denied != agent.deny {
+					t.Errorf("%s %q: deny=%v, printed %s", agent.name, c.command, denied, out.String())
+				}
+				var decision struct {
+					HookSpecificOutput struct{ PermissionDecisionReason string }
+				}
+				json.Unmarshal(out.Bytes(), &decision)
+				if reason := decision.HookSpecificOutput.PermissionDecisionReason; reason != "" && !saysInstead(reason) {
+					t.Errorf("%s %q: reason %q does not say what to do instead", agent.name, c.command, reason)
+				}
+			}
+		})
+	}
+}
+
 // TestSleep covers long sleeps in the foreground, which hold the session,
 // and the advice each agent gets for waiting instead.
 func TestSleep(t *testing.T) {

@@ -450,8 +450,10 @@ with your credentials, but has the guard in every session.
   also holds every session to `autoMode.hard_deny` rules that restate the
   guard's hardest lines in prose. A Monitor's WebSocket is denied unless
   `wgn.home.llm.guard.webSockets` names its URL.
-- Codex: `~/.codex/hooks.json`, for every tool. Codex skips a hook until it
-  is trusted, so trust it with `/hooks` once after the first switch.
+- Codex: `~/.codex/hooks.json`, for every tool but `write_stdin`, which
+  runs no hook; so the guard refuses to start a command that only reads
+  the terminal, which `write_stdin` could then drive. Codex skips a hook
+  until it is trusted, so trust it with `/hooks` once after the first switch.
 - ECA: a `preToolCall` hook, `guard-baseline`, merged into
   `~/.config/eca/config.json` on every switch.
 
