@@ -56,6 +56,23 @@
       # url = "github:nixos/nixpkgs/nixos-25.11";
     };
 
+    # x86_64-darwin machines build from these instead: nixpkgs 26.05 is
+    # the last release that supports the platform, and 26.11 refuses to
+    # evaluate for it. Keep all three on matching 26.05 release branches.
+    nixpkgs-x86_64-darwin = {
+      url = "github:nixos/nixpkgs/nixpkgs-26.05-darwin";
+    };
+
+    nix-darwin-x86_64-darwin = {
+      url = "github:lnl7/nix-darwin/nix-darwin-26.05";
+      inputs.nixpkgs.follows = "nixpkgs-x86_64-darwin";
+    };
+
+    home-manager-x86_64-darwin = {
+      url = "github:nix-community/home-manager/release-26.05";
+      inputs.nixpkgs.follows = "nixpkgs-x86_64-darwin";
+    };
+
     nur = {
       url = "github:nix-community/NUR";
     };
@@ -77,6 +94,9 @@
     mac-app-util,
     nixos-hardware,
     nixpkgs,
+    nixpkgs-x86_64-darwin,
+    nix-darwin-x86_64-darwin,
+    home-manager-x86_64-darwin,
     nur,
     sops-nix,
   }: let
@@ -269,8 +289,18 @@
       system,
       extraHomeManagerModules,
       extraDarwinModules,
-    }: darwinModules: homeManagerModules: overlay:
-      nix-darwin.lib.darwinSystem {
+    }: darwinModules: homeManagerModules: overlay: let
+      isX86 = system == "x86_64-darwin";
+      darwin =
+        if isX86
+        then nix-darwin-x86_64-darwin
+        else nix-darwin;
+      hm =
+        if isX86
+        then home-manager-x86_64-darwin
+        else home-manager;
+    in
+      darwin.lib.darwinSystem {
         inherit
           system
           ;
@@ -291,9 +321,26 @@
                 overlay
               ];
             })
+
+            (_: {
+              nixpkgs.config.allowDeprecatedx86_64Darwin = isX86;
+            })
+
+            # mac-app-util is written in Common Lisp, and nixpkgs marks
+            # sbcl broken on x86_64-darwin.
+            ({lib, ...}:
+              lib.mkIf isX86 {
+                services.mac-app-util.enable = false;
+
+                home-manager.sharedModules = [
+                  {
+                    targets.darwin.mac-app-util.enable = false;
+                  }
+                ];
+              })
           ]
           ++ [
-            home-manager.darwinModules.home-manager
+            hm.darwinModules.home-manager
             {
               home-manager = {
                 users = {

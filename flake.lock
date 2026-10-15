@@ -274,6 +274,27 @@
         "type": "github"
       }
     },
+    "home-manager-x86_64-darwin": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs-x86_64-darwin"
+        ]
+      },
+      "locked": {
+        "lastModified": 1791938526,
+        "narHash": "sha256-yNYK2pdk3bCtJrpblrNYA6hZKdybWUeyTtx74+OEJFo=",
+        "owner": "nix-community",
+        "repo": "home-manager",
+        "rev": "32904dfe1cf86039f3c8c9f41f94e1cfd76dbb34",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-community",
+        "ref": "release-26.05",
+        "repo": "home-manager",
+        "type": "github"
+      }
+    },
     "mac-app-util": {
       "inputs": {
         "cl-nix-lite": "cl-nix-lite",
@@ -314,6 +335,27 @@
       "original": {
         "owner": "lnl7",
         "ref": "master",
+        "repo": "nix-darwin",
+        "type": "github"
+      }
+    },
+    "nix-darwin-x86_64-darwin": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs-x86_64-darwin"
+        ]
+      },
+      "locked": {
+        "lastModified": 1783744694,
+        "narHash": "sha256-2cp6N3rrwnGYLTx9l6N+NI+kwrCWxvJUbj5WJhvB29A=",
+        "owner": "lnl7",
+        "repo": "nix-darwin",
+        "rev": "c3e90c89649b07d1a96e4b9dd6cd0d6e44b91a74",
+        "type": "github"
+      },
+      "original": {
+        "owner": "lnl7",
+        "ref": "nix-darwin-26.05",
         "repo": "nix-darwin",
         "type": "github"
       }
@@ -380,6 +422,22 @@
       "original": {
         "owner": "NixOS",
         "ref": "nixos-26.05",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs-x86_64-darwin": {
+      "locked": {
+        "lastModified": 1791970671,
+        "narHash": "sha256-yla7eoYsREf9hmwvgy2wCtUe7cJxiHgfAUvj9wxqk9o=",
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "5b00df4a0973895c8023f2b0227c7942c963d065",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
+        "ref": "nixpkgs-26.05-darwin",
         "repo": "nixpkgs",
         "type": "github"
       }
@@ -503,10 +561,13 @@
         "emacs-skills": "emacs-skills",
         "flake-utils": "flake-utils_2",
         "home-manager": "home-manager",
+        "home-manager-x86_64-darwin": "home-manager-x86_64-darwin",
         "mac-app-util": "mac-app-util",
         "nix-darwin": "nix-darwin",
+        "nix-darwin-x86_64-darwin": "nix-darwin-x86_64-darwin",
         "nixos-hardware": "nixos-hardware",
         "nixpkgs": "nixpkgs_6",
+        "nixpkgs-x86_64-darwin": "nixpkgs-x86_64-darwin",
         "nur": "nur",
         "sops-nix": "sops-nix"
       }
