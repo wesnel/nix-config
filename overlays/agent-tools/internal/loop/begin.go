@@ -2,9 +2,11 @@ package loop
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/history"
+	"github.com/wesnel/agent-tools/internal/plans"
 )
 
 // StackEntry describes one PR of a stack.
@@ -134,6 +136,11 @@ func Begin(branches []string) (any, error) {
 			}
 		}
 	}
+	var registered []string
+	for _, b := range state.Order {
+		registered = append(registered, fmt.Sprintf("%s (#%d)", b, state.Branches[b].PR))
+	}
+	record(state, plans.Event{Kind: "loop-began", Summary: "registered " + strings.Join(registered, ", ")})
 	if err := snapshotRound(state); err != nil {
 		return nil, err
 	}
@@ -141,8 +148,10 @@ func Begin(branches []string) (any, error) {
 }
 
 // snapshotRound records every branch tip under refs/pr-loop/rounds/<n>/, so
-// `git range-diff` (or magit-tbdiff) can show what each round changed.
+// `git range-diff` (or magit-tbdiff) can show what each round changed, and
+// logs the round with its tips.
 func snapshotRound(state *State) error {
+	oids := map[string]string{}
 	for _, b := range state.Order {
 		oid, err := git.Run("rev-parse", "refs/heads/"+b)
 		if err != nil {
@@ -151,7 +160,9 @@ func snapshotRound(state *State) error {
 		if _, err := git.Run("update-ref", fmt.Sprintf("refs/pr-loop/rounds/%d/%s", state.Round, b), oid); err != nil {
 			return err
 		}
+		oids[b] = oid
 	}
+	record(state, plans.Event{Kind: "round", Summary: fmt.Sprintf("round %d: %s", state.Round, branchTips(state, oids))})
 	return nil
 }
 

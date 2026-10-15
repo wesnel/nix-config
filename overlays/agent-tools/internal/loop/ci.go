@@ -10,6 +10,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/plans"
 )
 
 // Check is one CI check on a commit.
@@ -291,6 +292,7 @@ func WaitCI(args []string, sha string, timeout, interval, grace time.Duration) (
 			if !settled {
 				out.Result = "timedOut"
 			}
+			record(nil, plans.Event{Kind: "ci-waited", Summary: out.Result + ": " + prList(numbers)})
 			return out, settled, nil
 		}
 		sleep(min(interval, left))

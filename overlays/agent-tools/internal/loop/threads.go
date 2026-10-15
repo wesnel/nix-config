@@ -1,9 +1,11 @@
 package loop
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
+	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/relay"
 )
 
@@ -238,19 +240,28 @@ func (p *threadPolicy) check(id string) (*threadCheck, error) {
 	return &threadCheck{pr: pr.Number, resolved: data.Node.IsResolved, lastAuthor: last}, nil
 }
 
-func postReply(id, body string) (string, error) {
+// postReply replies in thread id, on PR pr, and logs the reply.
+func postReply(state *State, pr int, id, body string) (string, error) {
 	var data struct {
 		AddPullRequestReviewThreadReply struct{ Comment struct{ URL string } }
 	}
 	err := graphQL(`mutation($input: AddPullRequestReviewThreadReplyInput!) {
 		addPullRequestReviewThreadReply(input: $input) { comment { url } } }`,
 		map[string]any{"input": map[string]any{"pullRequestReviewThreadId": id, "body": body}}, &data)
+	if err == nil {
+		record(state, plans.Event{Kind: "replied", Summary: fmt.Sprintf("in thread %s on #%d", id, pr)})
+	}
 	return data.AddPullRequestReviewThreadReply.Comment.URL, err
 }
 
-func resolveThread(id string) error {
-	return graphQL(`mutation($id: ID!) { resolveReviewThread(input: { threadId: $id }) { thread { isResolved } } }`,
+// resolveThread resolves thread id, on PR pr, and logs it.
+func resolveThread(state *State, pr int, id string) error {
+	err := graphQL(`mutation($id: ID!) { resolveReviewThread(input: { threadId: $id }) { thread { isResolved } } }`,
 		map[string]any{"id": id}, nil)
+	if err == nil {
+		record(state, plans.Event{Kind: "resolved", Summary: fmt.Sprintf("thread %s on #%d", id, pr)})
+	}
+	return err
 }
 
 // Reply posts body inside a review thread the policy allows.
@@ -262,10 +273,11 @@ func Reply(id, body string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := policy.check(id); err != nil {
+	check, err := policy.check(id)
+	if err != nil {
 		return nil, err
 	}
-	url, err := postReply(id, body)
+	url, err := postReply(policy.state, check.pr, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -287,7 +299,7 @@ func Resolve(id string) (any, error) {
 		return nil, refuse("the last comment in %s is from %s, so it has no answer yet; reply with `pr-loop reply %s` before resolving",
 			id, check.lastAuthor, id)
 	}
-	if err := resolveThread(id); err != nil {
+	if err := resolveThread(policy.state, check.pr, id); err != nil {
 		return nil, err
 	}
 	return map[string]string{"resolved": id}, nil

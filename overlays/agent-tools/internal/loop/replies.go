@@ -127,11 +127,11 @@ func ReplyAll(plan []PlannedReply) ([]ReplyResult, error) {
 			results = append(results, result)
 			continue
 		}
-		if result.URL, err = postReply(r.Thread, r.Body); err != nil {
+		if result.URL, err = postReply(policy.state, checks[i].pr, r.Thread, r.Body); err != nil {
 			return nil, partial(results, r.Thread, "replying", err)
 		}
 		if r.Resolve {
-			if err := resolveThread(r.Thread); err != nil {
+			if err := resolveThread(policy.state, checks[i].pr, r.Thread); err != nil {
 				return nil, partial(append(results, result), r.Thread, "resolving", err)
 			}
 			result.Resolved = true

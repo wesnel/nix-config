@@ -280,7 +280,8 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 			p.AddToProperty(part, "BRANCHES", value)
 		}
 	}
-	if !pushes(command, 0) {
+	who := pushers(command, 0)
+	if len(who) == 0 {
 		return
 	}
 	p, part, ok := at(cwd)
@@ -295,7 +296,9 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 			return
 		}
 	}
-	if branches := pushedTo(texts); len(branches) > 0 {
+	// pr-loop push logs its push itself.
+	delete(who, "pr-loop push")
+	if branches := pushedTo(texts); len(branches) > 0 && len(who) > 0 {
 		p.Record(part, plans.Event{Kind: "pushed", Summary: "pushed " + strings.Join(branches, " ")}, now)
 	}
 	return context

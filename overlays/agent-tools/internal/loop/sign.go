@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/plans"
 )
 
 // Sign squashes the loop's fixups into the PR's own commits, signs every
@@ -103,6 +104,7 @@ func Sign(resume, noPush bool) (any, error) {
 	}
 	result := map[string]any{"verified": "every branch has its original commits and the same files, and every commit is signed"}
 	if noPush {
+		record(state, plans.Event{Kind: "loop-signed", Summary: "signed " + strings.Join(branches, " ") + ", not pushed"})
 		return result, nil
 	}
 
@@ -130,6 +132,7 @@ func Sign(resume, noPush bool) (any, error) {
 		}
 		pushed[b] = oid
 	}
+	record(state, plans.Event{Kind: "loop-signed", Summary: "signed and pushed " + branchTips(state, pushed)})
 	state.Signing = nil
 	state.Round++
 	if err := snapshotRound(state); err != nil {
