@@ -14,9 +14,9 @@ import (
 
 // AskOptions are a question for Wesley: the question, its priority, its
 // context, the recommended answer and the others, and the IDs it waits
-// for. With Answer, it is an agent's own decision on a constraint that
-// already holds, settled as it is written; Role is then the decided
-// event's.
+// for. With Answer, it is the agent's "reversible decision of your own"
+// that plan-work describes, settled as it is written; Role is then the
+// decided event's.
 type AskOptions struct {
 	// Part is the part whose file takes the question, or "" for the plan's.
 	Part, Question, Priority, Context, Recommendation, Answer, Role string

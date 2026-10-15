@@ -37,9 +37,8 @@ shape.
 - One part is one branch, one worktree and one sub-agent.
 - A refactor the change needs goes first: the bottom branch of the stack,
   or the first commit of a single branch, with no test changed.
-- A change to an interface with many callers goes expand–contract: add the
-  new form beside the old, move the callers over in batches that each pass
-  on their own, and remove the old form last.
+- An interface change and the move of the callers we control are one part,
+  never split across branches, as AGENTS.md's "Migrate and delete" says.
 - Each branch of a stack builds and passes its tests on its own base, so it
   can merge before the branches above it.
 - Parts that edit the same file or the same code are never parallel

@@ -187,17 +187,22 @@ left. In Claude Code, Wesley answers them through `/questions`; elsewhere,
 print them and take his answers in the chat. He may also settle one in
 Emacs, with a note that `agent-plan decisions` reads as the answer.
 
-An open question is a decision only Wesley can make, and only his answer
-settles it: never decide one yourself. A fact that a
+Ask Wesley only about a one-way door (a force-push, deleted data, a message
+sent outside, a migration, a stored format, a published interface) or about
+product direction; only his answer settles such a question. Decide every
+other matter yourself, and record each such reversible decision of your
+own in one step, already decided, where Wesley can reopen it:
+
+```sh
+agent-plan ask PLAN --question 'Keep the old flag?' --recommendation 'no, drop it' \
+  --answer 'no, drop it: nothing reads it' --role R
+```
+
+List these decisions in the hand-back. A fact that a
 command, a file, the docs or a sub-agent's lookup can establish is yours to
 find; write what you found into the question it informs. Each question
 holds one idea, worded so that "yes" accepts your recommendation, and the
 most important comes first.
-
-The one decision of your own a plan records is one a fact or constraint
-that already holds forces, never a choice: write it with
-`agent-plan ask PLAN --question ... --recommendation ... --answer 'ANSWER: the constraint' --role R`,
-which writes it already decided, so every decision is in one place.
 
 ## Follow-ups
 
@@ -227,7 +232,8 @@ log refused as changed stays as it is: name it in your report.
 When running code is the quickest way to answer a design question, write
 the question with `agent-plan ask` first, then answer it with throwaway code
 on a local branch `spike/<slug>`, never pushed and never merged. Put what
-it showed and the branch's name into the question, for Wesley to decide.
+it showed and the branch's name into the question, and settle it as
+"Questions for Wesley" says.
 The real change is then written fresh under the plan; the spike's code is
 not carried into it.
 

@@ -57,7 +57,7 @@ func TestAsk(t *testing.T) {
 		}
 	})
 
-	// An agent's own decision, on a constraint that already holds, is a
+	// A reversible decision of the agent's own is a
 	// question settled from the start: never put to Wesley, and read back
 	// as a decision.
 	t.Run("already answered", func(t *testing.T) {
