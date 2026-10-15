@@ -1,6 +1,6 @@
 ---
 name: plan-work
-description: Keep a plan file and its event log for a change with agent-plan - where plans live, their format and item IDs, what to log and when, finding a plan again after a compaction, a resume or a hand-off, and planning without acting when Wesley asks only for a plan. Use before starting any change, when picking one up again, and whenever Wesley asks for a plan.
+description: Keep a plan file and its event log for a change with agent-plan - where plans live, their format and item IDs, what to log and when, finding a plan again after a compaction, a resume or a hand-off, and planning without acting when the operator asks only for a plan. Use before starting any change, when picking one up again, and whenever the operator asks for a plan.
 ---
 
 # Plans
@@ -23,7 +23,7 @@ ID and its log. The worktree and, in Claude Code, the session are recorded
 from where it runs; pass `--worktree` and `--session HARNESS:ID` otherwise.
 For work that recurs, `--template NAME` starts the plan with the entries
 of each `**` section of `templates/NAME.org` in the plans' repository;
-Wesley keeps those files.
+the operator keeps those files.
 
 A sub-agent given part `P1` of a plan makes its own file beside the parent's
 and logs to the same log:
@@ -66,9 +66,9 @@ agent-plan new --parent PLAN --part P1 --title 'Add the run loop flag' --branch 
 - `** Distribution`, in a plan split among sub-agents: a `*** TODO <part>`
   heading per part with `:ID: P1`…, its branch, base and worktree, a link
   to its file, and its steps.
-- `** Questions`: every question for Wesley and every decision, each with
+- `** Questions`: every question for the operator and every decision, each with
   `:ID: Q1`, `Q2`… (`P1.Q1` in a part's file), written by `agent-plan ask`
-  as "Questions for Wesley" says, never by hand. An open one is `ASK`; a
+  as "Questions for the operator" says, never by hand. An open one is `ASK`; a
   settled one stays where it is, `DECIDED` with its `:ANSWER:`, or
   `DROPPED`, or `SUPERSEDED` by the decision whose `:SUPERSEDES:` names
   it. `agent-plan decisions PLAN --all` lists the decisions. A suggestion
@@ -78,10 +78,10 @@ agent-plan new --parent PLAN --part P1 --title 'Add the run loop flag' --branch 
 - `** Follow-ups`: work found while doing an item but outside this
   change's job, each with `:ID: F1`, `F2`… and the `:FOUND_IN:` item, as
   "Follow-ups" says.
-- `** References`: each URL Wesley gave the work, one entry each with
+- `** References`: each URL the operator gave the work, one entry each with
   `:URL:`, and a note of what it was used for and which decisions (Q IDs)
-  it fed. In Claude Code, Codex and ECA every URL in his prompts is added
-  with no note; add one he gives otherwise with
+  it fed. In Claude Code, Codex and ECA every URL in their prompts is added
+  with no note; add one they give otherwise with
   `agent-plan reference PLAN URL`. When you
   are done with a reference, write its note:
   `agent-plan reference PLAN URL --note 'The pstack principles; fed Q3, Q4.'`
@@ -97,7 +97,7 @@ A question or a part that cannot start before others are settled lists
 their IDs in `:AFTER:`, separated by spaces (a question's through
 `agent-plan ask --after`): a question is settled once its keyword is a
 done one, a part or step once `done`, `verified` or `abandoned` is logged
-for it. Until then the question is not put to Wesley and the part is not
+for it. Until then the question is not put to the operator and the part is not
 ready.
 
 An ID is never reused or renumbered; a step dropped from the work keeps its
@@ -163,19 +163,19 @@ else, then read it, load the skills its `SKILLS` names, and run
 - A sub-agent's task names its plan and part.
 
 After a compaction the hooks also add the plan's brief: its goal,
-decisions, ready steps and parts, questions for Wesley, steps done but not
+decisions, ready steps and parts, questions for the operator, steps done but not
 verified, and open follow-ups. `agent-plan brief PLAN` prints it any time.
 
 Only this host's plans, the files named for it, are yours to change; another
 host's beside them are read-only here, and `agent-plan` refuses to write
 them.
 
-## Questions for Wesley
+## Questions for the operator
 
-Every question for Wesley lives in the plan's Questions, with your
+Every question for the operator lives in the plan's Questions, with your
 recommendation, and nowhere else. Write each with `agent-plan ask`, which
 gives it the next ID and the form `agent-plan questions` reads; a question
-written by hand in another form never reaches Wesley:
+written by hand in another form never reaches the operator:
 
 ```sh
 agent-plan ask PLAN --question 'Keep the old flag?' --recommendation 'no, drop it' \
@@ -185,22 +185,23 @@ agent-plan ask PLAN --question 'Keep the old flag?' --recommendation 'no, drop i
 `--part P1` puts it in that part's file; `--priority A` puts it before the
 others, `C` after. Never restate open questions in a message: when a
 sub-agent reports, say only what changed, add its new questions to the
-plan, and at most give their number. When Wesley asks, print
-`agent-plan questions PLAN --all`, the questions he can answer now, or
-point him to the plan. When he answers, record each answer with
+plan, and at most give their number. When the operator asks, print
+`agent-plan questions PLAN --all`, the questions they can answer now, or
+point them to the plan. When they answer, record each answer with
 `agent-plan decide PLAN Q1 --answer 'ANSWER'`, which settles the question
 in place and logs `decided`; `--drop --answer 'why'` drops it, and
 `--supersedes Q2` marks the earlier decision this one replaces. A decision
 can make waiting questions askable, so list them again until none are
-left. In Claude Code, Wesley answers them through `/questions`; elsewhere,
-print them and take his answers in the chat. He may also settle one in
+left. In Claude Code, the operator answers them through `/questions`; elsewhere,
+print them and take their answers in the chat. They may also settle one in
 Emacs, with a note that `agent-plan decisions` reads as the answer.
 
-Ask Wesley only about a one-way door (a force-push, deleted data, a message
-sent outside, a migration, a stored format, a published interface) or about
-product direction; only his answer settles such a question. Decide every
-other matter yourself, and record each such reversible decision of your
-own in one step, already decided, where Wesley can reopen it:
+Ask the operator only about a one-way door (a force-push, deleted data, a
+message sent outside, a migration, a stored format, a published interface)
+or about product direction; only their answer settles such a question.
+Decide every other matter yourself, and record each such reversible
+decision of your own in one step, already decided, where the operator can
+reopen it:
 
 ```sh
 agent-plan ask PLAN --question 'Keep the old flag?' --recommendation 'no, drop it' \
@@ -233,8 +234,8 @@ Plans reach every host through the notes repository around the plans
 directory: a watcher outside the session commits and pushes this host's
 files a few seconds after one changes, and `find`, `status` and `new` pull
 first. Never commit, push or pull there yourself; `agent-plan sync` is the
-watcher's and `agent-plan reseal` is Wesley's, and the guard denies both. A
-log refused as changed stays as it is: name it in your report.
+watcher's and `agent-plan reseal` is the operator's, and the guard denies
+both. A log refused as changed stays as it is: name it in your report.
 
 ## Spikes
 
@@ -242,7 +243,7 @@ When running code is the quickest way to answer a design question, write
 the question with `agent-plan ask` first, then answer it with throwaway code
 on a local branch `spike/<slug>`, never pushed and never merged. Put what
 it showed and the branch's name into the question, and settle it as
-"Questions for Wesley" says.
+"Questions for the operator" says.
 The real change is then written fresh under the plan; the spike's code is
 not carried into it.
 
@@ -254,7 +255,7 @@ Steps and Questions with IDs.
 
 ## Plan and halt
 
-If Wesley asks you to plan, write the plan and stop: no edits outside the
+If the operator asks you to plan, write the plan and stop: no edits outside the
 plan's files, and no commits. Log `planned` for the plan's ID, set
 `STATUS` to `halted`, and report the plan's path with its open questions.
 

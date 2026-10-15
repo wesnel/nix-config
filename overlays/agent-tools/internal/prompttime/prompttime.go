@@ -1,6 +1,6 @@
-// Package prompttime tells a session the time on every prompt, and how long
-// it has been since Wesley's previous message, so an agent can tell which
-// of what it knows about the outside world may have moved on.
+// Package prompttime tells a session the time on every prompt, and how
+// long it has been since the operator's previous message, so an agent can
+// tell which of what it knows about the outside world may have moved on.
 package prompttime
 
 import (
@@ -14,7 +14,7 @@ import (
 )
 
 // DefaultDir is where Remind keeps the time of each session's last message
-// from Wesley: agent-tools' state, which the guard keeps agents from
+// from the operator: agent-tools' state, which the guard keeps agents from
 // writing.
 func DefaultDir() string {
 	dir := os.Getenv("XDG_STATE_HOME")
@@ -31,10 +31,10 @@ var sessionName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 // Remind is the line for a prompt of a session's main thread: Claude Code's
 // and Codex's UserPromptSubmit without agent_id, and ECA's preRequest
 // without parent_chat_id. It gives the time now and how long since
-// Wesley's previous message in the session, as dir records it, and records
-// now when the prompt is his own, which a Claude Code task-notification is
-// not. It is "" for any other event, and for a session ID that is no file
-// name.
+// the operator's previous message in the session, as dir records it, and
+// records now when the prompt is the operator's own, which a Claude Code
+// task-notification is not. It is "" for any other event, and for a
+// session ID that is no file name.
 func Remind(dir string, input []byte, now time.Time) string {
 	var in struct {
 		Event        string `json:"hook_event_name"`
@@ -63,10 +63,10 @@ func Remind(dir string, input []byte, now time.Time) string {
 	line := "It is " + now.Format("2006-01-02 Mon 15:04 MST")
 	if data, err := os.ReadFile(file); err == nil {
 		if last, err := time.Parse(time.RFC3339, strings.TrimSpace(string(data))); err == nil {
-			line += ", " + elapsed(now.Sub(last)) + " since Wesley's previous message."
+			line += ", " + elapsed(now.Sub(last)) + " since the operator's previous message."
 		}
 	} else if os.IsNotExist(err) {
-		line += ", at Wesley's first message in this session."
+		line += ", at the operator's first message in this session."
 	}
 	if !strings.HasPrefix(in.Prompt, "<task-notification>") {
 		record(file, now)

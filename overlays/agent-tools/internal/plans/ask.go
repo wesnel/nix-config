@@ -12,7 +12,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
-// AskOptions are a question for Wesley: the question, its priority, its
+// AskOptions are a question for the operator: the question, its priority, its
 // context, the recommended answer and the others, and the IDs it waits
 // for. With Answer, it is the agent's "reversible decision of your own"
 // that plan-work describes, settled as it is written; Role is then the
@@ -21,9 +21,9 @@ type AskOptions struct {
 	// Part is the part whose file takes the question, or "" for the plan's.
 	Part, Question, Priority, Context, Recommendation, Answer, Role string
 	Alternatives, After                                             []string
-	// Wesley marks Answer as Wesley's, recorded as Decide records it,
-	// rather than the agent's own.
-	Wesley bool
+	// Operator marks Answer as the operator's, recorded as Decide records
+	// it, rather than the agent's own.
+	Operator bool
 	// Once makes asking again a no-op: a question of the same text already
 	// in the file is returned as it is, and refused if Answer differs from
 	// its answer.
@@ -152,7 +152,7 @@ func (p Plan) Ask(o AskOptions, now time.Time) (Asked, error) {
 				return lines, nil
 			}
 			decidedBy := "agent"
-			if o.Wesley {
+			if o.Operator {
 				decidedBy = ""
 			}
 			return settle(lines, qid, kwDecided, o.Answer, decidedBy, "", now)

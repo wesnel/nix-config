@@ -56,31 +56,32 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      file, or the part's, to the values, and log it; new,
                      own and the hooks log the changes they make
   questions PLAN [--all] [--waiting] [--json | --count]
-                     the open questions Wesley can answer now, by priority,
-                     with their recommendations; --all adds the parts',
-                     --waiting those that wait for an AFTER item: a question
-                     until settled, a part or step until logged done,
-                     verified or abandoned
+                     the open questions the operator can answer now, by
+                     priority, with their recommendations; --all adds the
+                     parts', --waiting those that wait for an AFTER item: a
+                     question until settled, a part or step until logged
+                     done, verified or abandoned
   brief PLAN         what an agent needs to go on after a compaction: the goal,
                      the decisions, the steps and parts ready, the questions
-                     Wesley can answer now, the steps done but not verified,
-                     and the open follow-ups; the hooks add it after one
+                     the operator can answer now, the steps done but not
+                     verified, and the open follow-ups; the hooks add it
+                     after one
   decisions PLAN [--all] [--json]
                      the questions settled as DECIDED, with their answers;
                      --all adds the parts'
   ask PLAN --question TEXT --recommendation TEXT [--priority A|B|C]
       [--context TEXT] [--alternative TEXT]... [--after ID]... [--part P1]
-                     write a question for Wesley under Questions, in the
-                     plan's file or the part's, as its next question ID, in
-                     the form questions reads, and log it as asked
+                     write a question for the operator under Questions, in
+                     the plan's file or the part's, as its next question ID,
+                     in the form questions reads, and log it as asked
   ask PLAN ... --answer TEXT [--role R]
                      write a reversible decision of your own, settled as
                      written, and log it as asked and decided
   decide PLAN QID --answer TEXT [--drop | --supersedes QID] [--role R]
-                     settle open question QID in place with Wesley's answer,
-                     or with --drop as dropped, why in --answer; --supersedes
-                     marks the settled question it replaces SUPERSEDED; log
-                     it as decided
+                     settle open question QID in place with the operator's
+                     answer, or with --drop as dropped, why in --answer;
+                     --supersedes marks the settled question it replaces
+                     SUPERSEDED; log it as decided
   followup PLAN --title T --found-in ID [--context T] [--part P1]
                      record work found while doing item ID, outside its
                      scope, as a TODO under Follow-ups with the next follow-up
@@ -89,8 +90,8 @@ directory and host come from "plans" in the user's agent-tools/config.json.
   reference PLAN URL [--note TEXT]
                      keep URL under References, or set its note: what it was
                      used for and which decisions (Q IDs) it fed; log it as
-                     referenced. remind adds every URL of Wesley's own
-                     prompts this way, with no note
+                     referenced. remind adds every URL of the operator's
+                     own prompts this way, with no note
   postpone PLAN ID (--until 'YYYY-MM-DD[ HH:MM]' | --clear)
                      schedule step or part ID for that day or time, which
                      keeps it out of the ready lists and the agenda until
@@ -107,15 +108,15 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      to see each provider at 75% or more. Never touches the
                      network
   usage [--json]     this host's last reading of each provider's quota windows,
-                     and Wesley's choice while it lasts
+                     and the operator's choice while it lasts
   usage choose PROVIDER keep|postpone [--plan PLAN] [--answer TEXT]
-                     record Wesley's answer to the quota ask: keep going, or
-                     postpone the task, until the window that prompted it
-                     resets; with a
-                     plan, also as a question he decided, his own words in
-                     --answer, written once: run again, it changes nothing,
-                     and another answer to the same question is refused.
-                     Postpone each step or part with postpone
+                     record the operator's answer to the quota ask: keep
+                     going, or postpone the task, until the window that
+                     prompted it resets; with a plan, also as a question the
+                     operator decided, their own words in --answer, written
+                     once: run again, it changes nothing, and another answer
+                     to the same question is refused. Postpone each step or
+                     part with postpone
   own PLAN --worktree DIR --agent ID
                      record agent ID, the harness's ID for a sub-agent or
                      "main" for the session's main thread, as the one agent
@@ -141,7 +142,7 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      to keep what the plan lacks (Claude Code's PreCompact) or
                      the plan to be brought up to date after one (Codex's
                      SessionStart, ECA's postCompact); keeps the URLs of
-                     Wesley's own prompts as references (Claude Code's and
+                     the operator's own prompts as references (Claude Code's and
                      Codex's UserPromptSubmit, ECA's preRequest); and on those
                      prompts, once per host when a quota window of the
                      session's provider passes 75% and again at 90%, asks
@@ -153,9 +154,10 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      delivered, logging it as sign-delivered, marked stale
                      when over a day old; and on every one of those prompts,
                      with or without a plan, adds the time and how long since
-                     Wesley's previous message in the session; never blocks
+                     the operator's previous message in the session; never
+                     blocks
   sign-id [--session ID] [--branch B]...
-                     log a sign-pass about to be handed to Wesley as
+                     log a sign-pass about to be handed to the operator as
                      sign-requested in the plan of this session (--session,
                      else CLAUDE_CODE_SESSION_ID, CODEX_THREAD_ID or
                      ECA_CHAT_ID) and worktree, and print its ID for
@@ -179,7 +181,7 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      takes the other hosts' plans. The watcher runs it, never
                      an agent
   reseal PLAN        accept a log edited outside agent-plan, recording that in
-                     it; Wesley's to run
+                     it; the operator's to run
 
 find, status and new first take the other hosts' plans, quietly, if they can.
 Values are single lines; list values hold no whitespace.
@@ -222,7 +224,7 @@ func clientSide(args []string) bool {
 func relayRefusal(args []string) string {
 	if len(args) == 0 || !relayed[args[0]] || clientSide(args) {
 		name := strings.Join(args[:min(len(args), 2)], " ")
-		return fmt.Sprintf("%q is not served through the relay. A sandbox runs `agent-plan log`, `goal`, `status`, `find`, `questions`, `decisions` and `brief`; put anything else in your report for Wesley", name)
+		return fmt.Sprintf("%q is not served through the relay. A sandbox runs `agent-plan log`, `goal`, `status`, `find`, `questions`, `decisions` and `brief`; put anything else in your report for the operator", name)
 	}
 	return ""
 }
@@ -739,7 +741,7 @@ func usageCommand(c plans.Config, args []string, planFile, answer string, asJSON
 				answer = q.Answers[choice]
 			}
 			asked, err := p.Ask(plans.AskOptions{Question: q.Text, Recommendation: q.Recommendation, Alternatives: q.Alternatives,
-				Answer: answer, Wesley: true, Once: true}, now)
+				Answer: answer, Operator: true, Once: true}, now)
 			if err != nil {
 				return report(nil, err)
 			}
@@ -761,7 +763,7 @@ func readAll(r io.Reader) []byte {
 	return data
 }
 
-// hookReport writes a hook's output; a failure reaches Wesley on stderr
+// hookReport writes a hook's output; a failure reaches the operator on stderr
 // without blocking the session.
 func hookReport(out []byte, err error, stdout, stderr io.Writer) int {
 	if err != nil {

@@ -153,8 +153,8 @@ func testQuestionsAfter(t *testing.T) {
 	})
 }
 
-// testStatusLineAfter: the status line counts only the questions Wesley can
-// answer now.
+// testStatusLineAfter: the status line counts only the questions the
+// operator can answer now.
 func testStatusLineAfter(t *testing.T) {
 	// waiting makes a plan with Q1, and Q2 after Q1.
 	waiting := func(t *testing.T) (Config, Plan) {

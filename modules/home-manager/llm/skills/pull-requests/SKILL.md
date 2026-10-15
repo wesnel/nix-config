@@ -9,7 +9,7 @@ description: How to open, describe and answer a pull request. Use before `pr-loo
 
 - Open every pull request as a draft, with `pr-loop open`, which needs no
   key touch (the `signing-pass` skill shows how). Marking it ready for review
-  notifies its code owners, and is Wesley's call.
+  notifies its code owners, and is the operator's call.
 - After every push to a pull request, watch its CI as the `signing-pass`
   skill's "After a push" says.
 
@@ -30,7 +30,7 @@ description: How to open, describe and answer a pull request. Use before `pr-loo
 ## Review threads
 
 Answer review comments in their threads, never as new top-level comments.
-On Wesley's own pull requests, `pr-loop threads`, `reply` and `resolve` do
+On the operator's own pull requests, `pr-loop threads`, `reply` and `resolve` do
 this. The `review-change` skill says how to settle each one.
 
 ## People

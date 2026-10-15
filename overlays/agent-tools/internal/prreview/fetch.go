@@ -1,7 +1,7 @@
 // Package prreview reviews someone else's pull request: it fetches the pull
 // request into a clone of its own, vets what its code would run, runs its
 // tests only in a VM with no network, and has a reviewer that did not write
-// it judge it, for Wesley to edit and post. It writes nothing to GitHub.
+// it judge it, for the operator to edit and post. It writes nothing to GitHub.
 package prreview
 
 import (

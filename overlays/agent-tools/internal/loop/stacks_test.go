@@ -364,7 +364,7 @@ func TestStackOpened(t *testing.T) {
 		f, opened := inSession(t)
 		writes := len(f.writes)
 		got := opened(15, "l", "e")
-		if reason, _ := got["unstacked"].(string); !strings.Contains(reason, "Wesley") || len(f.writes) != writes {
+		if reason, _ := got["unstacked"].(string); !strings.Contains(reason, "the operator") || len(f.writes) != writes {
 			t.Errorf("onto a PR outside the session's loop: %v, writes %v", got, f.writes[writes:])
 		}
 	})

@@ -13,7 +13,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
-// A sign-pass handed to Wesley is tied to its session through the plan's
+// A sign-pass handed to the operator is tied to its session through the plan's
 // log: agent-plan sign-id logs a sign-requested event naming the session
 // and mints the ID, git sign-pass --notify ID logs the result, and remind
 // or sign-result logs sign-delivered once the session has it. Only those

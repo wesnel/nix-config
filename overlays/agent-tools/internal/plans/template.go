@@ -29,7 +29,7 @@ func (c Config) template(name string) (map[string][]string, error) {
 	file := filepath.Join(c.repo(), "templates", name+".org")
 	data, err := os.ReadFile(file)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, refusal.New("there is no template %s. Ask Wesley to add it, or pass the base name of a file in %s", file, filepath.Dir(file))
+		return nil, refusal.New("there is no template %s. Ask the operator to add it, or pass the base name of a file in %s", file, filepath.Dir(file))
 	}
 	if err != nil {
 		return nil, err
@@ -38,7 +38,7 @@ func (c Config) template(name string) (map[string][]string, error) {
 	steps := fileKeywords("#+TODO: " + stepSequence)
 	for _, h := range parseOrg(text) {
 		if h.Keyword != "" && !steps.all[h.Keyword] {
-			return nil, refusal.New("%s has a %s heading, a keyword outside a step's `%s`. Ask Wesley to change the template, or pass another with `--template`", file, h.Keyword, stepSequence)
+			return nil, refusal.New("%s has a %s heading, a keyword outside a step's `%s`. Ask the operator to change the template, or pass another with `--template`", file, h.Keyword, stepSequence)
 		}
 	}
 	sections := map[string][]string{}
@@ -46,11 +46,11 @@ func (c Config) template(name string) (map[string][]string, error) {
 	for _, line := range strings.Split(text, "\n") {
 		switch n := level(line); {
 		case n == 1:
-			return nil, refusal.New("%s has a level-1 heading, %q; a template holds only `**` sections of a plan. Ask Wesley to change the template, or pass another with `--template`", file, line)
+			return nil, refusal.New("%s has a level-1 heading, %q; a template holds only `**` sections of a plan. Ask the operator to change the template, or pass another with `--template`", file, line)
 		case n == 2:
 			current = strings.TrimSpace(strings.TrimLeft(line, "*"))
 			if !slices.Contains(planSections, current) {
-				return nil, refusal.New("%s has a section %q, which a plan does not have (%s). Ask Wesley to change the template, or pass another with `--template`", file, current, strings.Join(planSections, ", "))
+				return nil, refusal.New("%s has a section %q, which a plan does not have (%s). Ask the operator to change the template, or pass another with `--template`", file, current, strings.Join(planSections, ", "))
 			}
 		case current != "":
 			sections[current] = append(sections[current], line)

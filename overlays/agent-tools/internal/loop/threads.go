@@ -143,8 +143,9 @@ func inLoopSession() bool {
 
 // threadPolicy decides which review threads may be answered. In a loop
 // session, and on a PR registered with begin, only threads a review bot
-// started on the loop's PRs; people's threads there are Wesley's. Otherwise
-// any thread on an open PR by the authenticated user in this repository.
+// started on the loop's PRs; people's threads there are the operator's.
+// Otherwise any thread on an open PR by the authenticated user in this
+// repository.
 type threadPolicy struct {
 	repo    *Repo
 	state   *State // nil when no loop is registered here
@@ -206,7 +207,7 @@ func (p *threadPolicy) check(id string) (*threadCheck, error) {
 	case pr.Repository.NameWithOwner != p.repo.Slug:
 		return nil, refuse("%s is in %s, not %s; take thread IDs from `pr-loop threads PR`", id, pr.Repository.NameWithOwner, p.repo.Slug)
 	case pr.State != "OPEN" || pr.Author.Login != p.repo.Viewer:
-		return nil, refuse("#%d is not an open pull request by %s, which pr-loop never writes to; leave it to Wesley", pr.Number, p.repo.Viewer)
+		return nil, refuse("#%d is not an open pull request by %s, which pr-loop never writes to; leave it to the operator", pr.Number, p.repo.Viewer)
 	}
 	registered := p.state != nil && p.state.Repo == p.repo.Slug && p.state.Branches[pr.HeadRefName] != nil
 	if p.session || registered {
@@ -229,7 +230,7 @@ func (p *threadPolicy) check(id string) (*threadCheck, error) {
 			starter = a.Login
 		}
 		if botNamed(p.bots, starter) == nil {
-			return nil, refuse("%s on #%d was started by %s, not a review bot, and in a review loop those are Wesley's to answer; "+
+			return nil, refuse("%s on #%d was started by %s, not a review bot, and in a review loop those are the operator's to answer; "+
 				"put what you would reply in the report", id, pr.Number, starter)
 		}
 	}

@@ -71,11 +71,11 @@ func checkOpen(repo *Repo, view *remoteView, branch, base string) (string, error
 	}
 	if pr := view.PRs[branch]; pr != nil {
 		return "", refuse("%s is already the head of #%d, and open only opens new pull requests; "+
-			"its later commits reach GitHub through `git sign-pass --push`, which Wesley runs", branch, pr.Number)
+			"its later commits reach GitHub through `git sign-pass --push`, which the operator runs", branch, pr.Number)
 	}
 	if oid := view.Heads[branch]; oid != "" {
 		return "", refuse("%s already exists on GitHub at %.12s, and open only creates a branch; "+
-			"ask Wesley to open its pull request", branch, oid)
+			"ask the operator to open its pull request", branch, oid)
 	}
 	if base != repo.Default {
 		if _, err := checkBranch(repo, view.PRs, base); err != nil {
@@ -104,7 +104,7 @@ func checkLocal(repo *Repo, branch, base, baseOid string) (string, []string, err
 	}
 	if base != repo.Default {
 		if known == nil {
-			return "", nil, refuse("%s on GitHub is at %.12s, which is not in this repository; ask Wesley to fetch it, "+
+			return "", nil, refuse("%s on GitHub is at %.12s, which is not in this repository; ask the operator to fetch it,"+
 				"then open again", base, baseOid)
 		}
 		if !git.OK("merge-base", "--is-ancestor", baseOid, local) {
@@ -328,7 +328,7 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 		return nil, err
 	}
 	if !pr.IsDraft {
-		return nil, refuse("GitHub opened #%d (%s) ready for review although a draft was asked for; tell Wesley", pr.Number, pr.URL)
+		return nil, refuse("GitHub opened #%d (%s) ready for review although a draft was asked for; tell the operator", pr.Number, pr.URL)
 	}
 	result := map[string]any{"pr": pr.Number, "url": pr.URL, "draft": pr.IsDraft, "branch": branch, "base": base,
 		"head": local, "apiCalls": calls + 2}

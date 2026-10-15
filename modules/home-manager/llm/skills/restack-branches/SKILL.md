@@ -14,19 +14,20 @@ afterwards `git merge-base` no longer finds it.
 ## Procedure
 
 **0. Work in a dedicated worktree.** Any branch operation, including switching
-branches only to read a file, happens in a worktree of its own, never in the main
-clone. The main clone often holds Wesley's untracked work in progress, and a
-checkout or reset there can delete it, even a plain `git switch` once history has
-been rewritten underneath it.
+branches only to read a file, happens in a worktree of its own, never in the
+main clone. The main clone often holds the operator's untracked work in
+progress, and a checkout or reset there can delete it, even a plain
+`git switch` once history has been rewritten underneath it.
 
 ```bash
 git worktree add <scratch>/restack --detach <parent-branch>
 pr-loop setup <scratch>/restack                  # where pr-loop is installed
 ```
 
-`pr-loop setup` runs the setup command Wesley configured for the repository,
-such as generating files it does not commit, and does nothing where none is
-configured. Run it again in the worktree after each checkout or rebase there.
+`pr-loop setup` runs the setup command the operator configured for the
+repository, such as generating files it does not commit, and does nothing
+where none is configured. Run it again in the worktree after each checkout
+or rebase there.
 
 Stage explicit paths there too, never `git add -A`.
 

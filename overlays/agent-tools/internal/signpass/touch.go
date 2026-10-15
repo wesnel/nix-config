@@ -17,9 +17,9 @@ var refusedByKey = regexp.MustCompile(`agent refused operation|signing failed|si
 
 // retryTouch reports whether to retry what the key refused, given the
 // stderr of the command that failed: only when that stderr shows the key's
-// refusal and standard input is a terminal, on which Wesley answers Enter to
-// retry or q to stop. A ctx done before the answer stops: where SIGINT is
-// caught, it is how Ctrl-C at the question still stops the pass.
+// refusal and standard input is a terminal, on which the operator answers
+// Enter to retry or q to stop. A ctx done before the answer stops: where
+// SIGINT is caught, it is how Ctrl-C at the question still stops the pass.
 func retryTouch(ctx context.Context, what, stderr string) bool {
 	if !refusedByKey.MatchString(stderr) || !isTerminal(os.Stdin) {
 		return false

@@ -14,7 +14,7 @@
           "path": {"type": "string", "description": "A file in the tree at TIP, relative to the top of the repository."},
           "line": {"type": ["integer", "null"], "description": "The line that runs, or null for the whole file."},
           "what": {"type": "string", "description": "What runs, and when, in one sentence."},
-          "where": {"type": "string", "enum": ["vm", "host"], "description": "vm: only under the test command; host: on Wesley's machine or in an agent."}
+          "where": {"type": "string", "enum": ["vm", "host"], "description": "vm: only under the test command; host: on the operator's machine or in an agent."}
         }
       }
     },

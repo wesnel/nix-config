@@ -1,28 +1,28 @@
 ---
 name: notify
-description: Push a desktop notification to Wesley via emacsclient. Use when an agent needs attention (task complete, blocked on input, review required).
+description: Push a desktop notification to the operator via emacsclient. Use when an agent needs attention (task complete, blocked on input, review required).
 ---
 
-# Notify Wesley via Emacs
+# Notify the operator via Emacs
 
-Send a desktop notification to Wesley by invoking `emacsclient -e` from
+Send a desktop notification to the operator by invoking `emacsclient -e` from
 the shell. Emacs dispatches through `wgn/notify`, which prefers OSC 777
 escape sequences so the notification is rendered by the client terminal
 (e.g. Ghostty over SSH), and falls back to a native GUI notification
 when Emacs is running locally as a GUI.
 
-Use this to get Wesley's attention when you would otherwise be blocking
+Use this to get the operator's attention when you would otherwise be blocking
 silently — it is a push signal, not a polling one.
 
 ## When to Use
 
-- A long-running task has completed and Wesley should look at the result.
-- The agent is blocked and needs Wesley's input, decision, or credentials.
+- A long-running task has completed and the operator should look at the result.
+- The agent is blocked and needs the operator's input, decision, or credentials.
 - Code, a plan, or a migration is ready for review.
 - An unrecoverable error occurred and the agent is stopping.
 
 Do **not** use for routine progress chatter. Every notification should
-be worth interrupting Wesley for.
+be worth interrupting the operator for.
 
 ## Command
 
@@ -50,7 +50,7 @@ emacsclient -e '(wgn/notify "Deploy failed" "See build 4821 for the stack trace"
 
 - Fire-and-forget: the call returns immediately.
 - If no Emacs server is running, `emacsclient` will error. That usually
-  means Wesley is not actively using Emacs — silently move on rather
+  means the operator is not actively using Emacs — silently move on rather
   than retrying.
-- The notification title/message are the only signal Wesley receives.
+- The notification title/message are the only signal the operator receives.
   Make the title specific enough to act on without opening the chat.

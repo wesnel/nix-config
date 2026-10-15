@@ -379,7 +379,7 @@ func (p Plan) checkOwn() error {
 	if p.Own {
 		return nil
 	}
-	return refusal.New("%s is %s's plan, and only agent-plan on %s writes its files. Run the command on %s, or put it in your report for Wesley", p.Name, p.Host, p.Host, p.Host)
+	return refusal.New("%s is %s's plan, and only agent-plan on %s writes its files. Run the command on %s, or put it in your report for the operator", p.Name, p.Host, p.Host, p.Host)
 }
 
 // Open finds the plan arg names: one of its files under the plans

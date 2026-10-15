@@ -61,7 +61,7 @@ func botsFor(slug string) ([]*Bot, error) {
 	p := ConfigPath()
 	data, err := os.ReadFile(p)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, refuse("no review bots are configured, which takes %s; ask Wesley to configure them", p)
+		return nil, refuse("no review bots are configured, which takes %s; ask the operator to configure them", p)
 	}
 	if err != nil {
 		return nil, err
@@ -85,7 +85,7 @@ func botsFor(slug string) ([]*Bot, error) {
 			return nil, err
 		}
 		if (c.Request.Reviewer == "") == (c.Request.Comment == "") {
-			return nil, refuse("bot %s in %s needs exactly one of request.reviewer and request.comment; ask Wesley to fix it", name, p)
+			return nil, refuse("bot %s in %s needs exactly one of request.reviewer and request.comment; ask the operator to fix it", name, p)
 		}
 		if !matchesAny(slug, c.Repos) {
 			continue

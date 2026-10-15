@@ -55,7 +55,7 @@ var orgArchived = time.Date(2026, 10, 14, 16, 33, 0, 0, time.Local)
 
 func TestDecide(t *testing.T) {
 	// A decided question stays where it is, settled as Org settles it, with
-	// Wesley's answer, and the log records it.
+	// the operator's answer, and the log records it.
 	t.Run("in place", func(t *testing.T) {
 		p := fromFixture(t, "open.org")
 		got, err := p.Decide("Q1", DecideOptions{Answer: "drop it"}, orgArchived)

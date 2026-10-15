@@ -162,9 +162,9 @@ func TestReviewerPlans(t *testing.T) {
 	}
 }
 
-// Syncing and resealing plans are the watcher's and Wesley's, in every
+// Syncing and resealing plans are the watcher's and the operator's, in every
 // session and role; the deploy key the sync pushes with is a credential.
-func TestPlansForWesley(t *testing.T) {
+func TestPlansForTheOperator(t *testing.T) {
 	for command, deny := range map[string]bool{
 		"agent-plan sync":                      true,
 		"agent-plan sync --pull":               true,

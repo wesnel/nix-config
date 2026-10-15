@@ -266,7 +266,7 @@ in {
           type = "preToolCall";
           matcher = ".*";
           visible = false;
-          description = "pr-loop guard: what is Wesley's to do";
+          description = "pr-loop guard: what is the operator's to do";
           actions = [
             {
               type = "shell";
@@ -335,11 +335,11 @@ in {
             }
           ];
         })}
-        # Wesley's prompt: its URLs become plan references. A chat with a
+        # The operator's prompt: its URLs become plan references. A chat with a
         # parent_chat_id is a sub-agent's, which agent-plan skips. Asks once
         # per quota threshold of the model's provider whether to keep going
         # or postpone, from the readings other sessions on this host made.
-        # Carries the time and how long since Wesley's previous message.
+        # Carries the time and how long since the operator's previous message.
         prompt=${escapeShellArg (builtins.toJSON {
           type = "preRequest";
           visible = false;
