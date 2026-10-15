@@ -236,6 +236,14 @@ func TestCommands(t *testing.T) {
 		}
 	})
 
+	t.Run("new from a missing template", func(t *testing.T) {
+		setup(t)
+		code, _, errs := agentPlan(t, "", "new", "--title", "T", "--slug", "t", "--template", "nowhere")
+		if code != 2 || !strings.Contains(errs, "templates") {
+			t.Errorf("new --template nowhere: %d %s", code, errs)
+		}
+	})
+
 	t.Run("postpone", func(t *testing.T) {
 		plan := sessionPlan(t)
 		readySteps := func() []string {

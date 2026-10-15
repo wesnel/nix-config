@@ -25,8 +25,10 @@ A plan is files side by side in the plans directory: <date>-<slug>.<host>.org,
 directory and host come from "plans" in the user's agent-tools/config.json.
 
   new --title T --slug S [--repo R]... [--branch BASE..BRANCH]... [--worktree DIR]...
-      [--session HARNESS:ID]... [--harness H]
-                     create a plan; prints its file, ID and log
+      [--session HARNESS:ID]... [--harness H] [--template NAME]
+                     create a plan; prints its file, ID and log. --template
+                     starts it with the entries of each section of
+                     templates/NAME.org in the plans' repository
   new --parent PLAN --part P1 --title T [...]
                      create part P1's plan file beside its parent's
   log PLAN --item ID --kind KIND [--summary S] [--role R] [--agent A] [--branch B]
@@ -281,6 +283,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		title    = flags.String("title", "", "")
 		slug     = flags.String("slug", "", "")
 		harness  = flags.String("harness", "", "")
+		template = flags.String("template", "", "")
 		parent   = flags.String("parent", "", "")
 		part     = flags.String("part", "", "")
 		item     = flags.String("item", "", "")
@@ -372,7 +375,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return 2
 		}
 		o := plans.NewOptions{Title: *title, Slug: *slug, Repos: repos, Branches: branches, Worktrees: trees,
-			Sessions: sessions, Harness: *harness, Parent: *parent, Part: *part}
+			Sessions: sessions, Harness: *harness, Parent: *parent, Part: *part, Template: *template}
 		if len(o.Sessions) == 0 {
 			if s := claudeSession(); s != "" {
 				o.Sessions = []string{s}
