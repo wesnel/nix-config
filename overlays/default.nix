@@ -1,16 +1,4 @@
 final: prev: {
-  github-copilot-cli = prev.github-copilot-cli.overrideAttrs (_old: {
-    postInstall = ''
-      # FIXME: Workaround for https://github.com/github/copilot-cli/issues/1446
-      mkdir -p $out/libexec
-      mv $out/bin/copilot $out/libexec/copilot
-      makeWrapper $out/libexec/copilot $out/bin/copilot \
-        --argv0 copilot \
-        --prefix PATH : ${prev.bashInteractive}/bin \
-        --add-flags "--no-auto-update"
-    '';
-  });
-
   # FIXME: Its tests load Codex's configuration, which reads macOS managed
   # preferences, and the Darwin build sandbox refuses that.
   codex-acp = prev.codex-acp.overrideAttrs (_old: {
