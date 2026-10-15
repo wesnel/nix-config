@@ -61,7 +61,7 @@ branch left the remote's default branch (`origin/HEAD`, then `origin/main` or
 not matter. For a branch that starts from somewhere else, put that ref in the
 range, hand over `--base REF`, and sign that branch in a pass of its own.
 
-Then tell Wesley to run, in that branch, in a terminal of their own:
+Then tell Wesley to run one of these in that branch:
 
 ```sh
 git sign-pass                  # sign; nothing is pushed

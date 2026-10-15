@@ -36,7 +36,7 @@ func Stack(branch string) (any, error) {
 		}
 	}
 	if prs[branch] == nil {
-		return nil, refuse("%s is not the head of an open pull request by %s", branch, repo.Viewer)
+		return nil, refuse(notHead, branch, repo.Viewer)
 	}
 	order := stackOrder(prs, branch)
 	linear := true
@@ -75,7 +75,7 @@ func Begin(branches []string) (any, error) {
 			return nil, err
 		}
 		if prs[current] == nil {
-			return nil, refuse("%s is not the head of an open pull request by %s", current, repo.Viewer)
+			return nil, refuse(notHead, current, repo.Viewer)
 		}
 		branches = stackOrder(prs, current)
 	} else if prs[branches[0]] != nil {
@@ -87,7 +87,8 @@ func Begin(branches []string) (any, error) {
 		}
 		for _, b := range branches {
 			if !stack[b] {
-				return nil, refuse("%s is not in the same stack as %s; a loop covers one stack", b, branches[0])
+				return nil, refuse("%s is not in the same stack as %s, and a loop covers one stack; leave it out, "+
+					"and name it in the report for a loop of its own", b, branches[0])
 			}
 		}
 	}
@@ -98,14 +99,16 @@ func Begin(branches []string) (any, error) {
 			return nil, err
 		}
 		if !git.OK("rev-parse", "--verify", "-q", "refs/heads/"+b) {
-			return nil, refuse("no local branch %s", b)
+			return nil, refuse("no local branch %s; ask Wesley to fetch and check it out", b)
 		}
 		remote := pr.HeadRefOid
 		if !git.OK("cat-file", "-e", remote+"^{commit}") {
-			return nil, refuse("%s on GitHub is at %.12s, which is not in this repository; fetch first", b, remote)
+			return nil, refuse("%s on GitHub is at %.12s, which is not in this repository; ask Wesley to fetch it, "+
+				"then begin again", b, remote)
 		}
 		if !git.OK("merge-base", "--is-ancestor", remote, "refs/heads/"+b) {
-			return nil, refuse("local %s does not contain %.12s from GitHub; reconcile it first", b, remote)
+			return nil, refuse("local %s does not contain %.12s from GitHub, which has commits it lacks; "+
+				"stop and ask Wesley how to reconcile them", b, remote)
 		}
 		state.Order = append(state.Order, b)
 		state.Branches[b] = &Branch{PR: pr.Number, Base: pr.BaseRefName, RemoteOid: remote}
@@ -124,7 +127,8 @@ func Begin(branches []string) (any, error) {
 		}
 		for _, c := range entry.Commits {
 			if kind, _ := fold(c.Message); kind != history.Kept {
-				return nil, refuse("%s already has fixup!, amend! or squash! commits (%q); squash them before starting the loop", b, subject(c.Message))
+				return nil, refuse("%s already has fixup!, amend! or squash! commits (%q), which the loop would mistake for its own; "+
+					"hand Wesley `git sign-pass` on that branch to squash them, then begin again", b, subject(c.Message))
 			}
 		}
 	}
@@ -160,7 +164,8 @@ func context(numbers []int) (*State, *Repo, map[string]*PR, error) {
 		return nil, nil, nil, err
 	}
 	if repo.Slug != state.Repo {
-		return nil, nil, nil, refuse("this checkout is %s, but the loop was started for %s", repo.Slug, state.Repo)
+		return nil, nil, nil, refuse("this checkout is %s, but the loop was started for %s; run pr-loop from a checkout of %s",
+			repo.Slug, state.Repo, state.Repo)
 	}
 	prs, err := openPRs(repo)
 	if err != nil {
@@ -173,7 +178,7 @@ func context(numbers []int) (*State, *Repo, map[string]*PR, error) {
 		for _, n := range numbers {
 			b, ok := byNumber[n]
 			if !ok {
-				return nil, nil, nil, refuse("#%d is not part of this loop", n)
+				return nil, nil, nil, refuse(notInLoop, n)
 			}
 			branches = append(branches, b)
 		}

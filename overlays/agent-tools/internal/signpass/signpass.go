@@ -770,7 +770,7 @@ func retryPush(branch string, setUpstream bool) (any, error) {
 		return nil, err
 	}
 	if !found {
-		return nil, refuse("no signing pass or push is in progress on %s", branch)
+		return nil, refuse("no signing pass or push is in progress on %s; run `git sign-pass` without --resume to start one", branch)
 	}
 	todo.SetUpstream = todo.SetUpstream || setUpstream
 	pushed, err := pushAll(branch, todo)

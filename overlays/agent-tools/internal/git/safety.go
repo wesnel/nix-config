@@ -58,7 +58,8 @@ func CheckConfig(dir string) error {
 	}
 	if len(found) > 0 {
 		return refusal.New("the repository's config sets %s, which would make git run a program on this "+
-			"machine; remove it (it may have been written from inside a sandbox)", strings.Join(found, ", "))
+			"machine and may have been written from inside a sandbox; stop, and hand Wesley this message "+
+			"to check where it came from and remove it", strings.Join(found, ", "))
 	}
 	return nil
 }

@@ -180,20 +180,37 @@ in {
         '';
       };
 
+      cacheEnv = mkOption {
+        type = types.attrsOf types.str;
+        readOnly = true;
+
+        description = ''
+          Environment pointing the build caches at {option}`cacheDir`.
+        '';
+
+        default = {
+          GOCACHE = "${cfg.prLoop.cacheDir}/go-build";
+          GOMODCACHE = "${cfg.prLoop.cacheDir}/go-mod";
+        };
+      };
+
       sandboxCaches = mkOption {
         type = types.lines;
         readOnly = true;
 
         description = ''
           Shell lines a loop launcher runs before starting its sandboxed
-          session, pointing the build caches at {option}`cacheDir`.
+          session, exporting {option}`cacheEnv` and creating its directories.
         '';
 
-        default = ''
-          export GOCACHE=${escapeShellArg "${cfg.prLoop.cacheDir}/go-build"}
-          export GOMODCACHE=${escapeShellArg "${cfg.prLoop.cacheDir}/go-mod"}
-          mkdir -p "$GOCACHE" "$GOMODCACHE"
-        '';
+        default =
+          concatStrings (mapAttrsToList (name: value: ''
+              export ${name}=${escapeShellArg value}
+            '')
+            cfg.prLoop.cacheEnv)
+          + ''
+            mkdir -p ${escapeShellArgs (attrValues cfg.prLoop.cacheEnv)}
+          '';
       };
 
       client = mkOption {

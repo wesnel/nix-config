@@ -195,7 +195,7 @@ Stop and hand back when any of these holds:
 4. Hand over for the signing pass, showing what it will sign as the
    `signing-pass` skill describes. The loop's pass is `pr-loop sign`, not
    `git sign-pass`. The session's relay refuses `sign` and `end`, so Wesley
-   runs them in a terminal of their own, in the repository. The loop's pass
+   runs them in the repository. The loop's pass
    differs from the plain one:
    - it first squashes the fixups in a throwaway worktree, so a fixup that
      conflicts is named before any key touch;

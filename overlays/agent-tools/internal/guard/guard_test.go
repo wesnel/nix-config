@@ -4,9 +4,60 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
+
+// handOff is what the rest of a reason, after the sentence saying why, must
+// contain: a command in backticks, or the step handed to Wesley or the report.
+var handOff = regexp.MustCompile("`|Wesley|(?i:report)")
+
+// saysInstead reports whether a denial's reason goes on, after the sentence
+// saying why, to say what to do instead.
+func saysInstead(reason string) bool {
+	quoted := false
+	for i := 0; i+1 < len(reason); i++ {
+		switch {
+		case reason[i] == '`':
+			quoted = !quoted
+		case !quoted && (reason[i] == '.' || reason[i] == ';') && reason[i+1] == ' ':
+			return handOff.MatchString(reason[i+2:])
+		}
+	}
+	return false
+}
+
+func TestSaysInstead(t *testing.T) {
+	for reason, want := range map[string]bool{
+		"Pushing goes through `pr-loop push`.":                       false,
+		"No. Try something else.":                                    false,
+		"Pushing is checked. Use `pr-loop push`.":                    true,
+		"Pruning is Wesley's call; leave it to him.":                 false,
+		"Pruning is a decision. Leave `pr-loop end --prune` to him.": true,
+		"`git x. y` is an alias; ask Wesley.":                        true,
+	} {
+		if got := saysInstead(reason); got != want {
+			t.Errorf("saysInstead(%q) = %v", reason, got)
+		}
+	}
+}
+
+// TestAliasDenial covers the alias already in the git config, which the
+// guard looks up at run time.
+func TestAliasDenial(t *testing.T) {
+	config := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(config, []byte("[alias]\n\tpp = push\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", config)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	input, _ := json.Marshal(map[string]string{"command": "git pp origin HEAD"})
+	if reason := Check("Bash", "", input); !saysInstead(reason) {
+		t.Errorf("alias denial %q does not say what to do instead", reason)
+	}
+}
 
 func TestCheck(t *testing.T) {
 	cases := []struct {
@@ -69,12 +120,98 @@ func TestCheck(t *testing.T) {
 		if (reason != "") != c.deny {
 			t.Errorf("%s %q: deny=%v, reason %q", c.tool, c.command, !c.deny, reason)
 		}
+		if reason != "" && !saysInstead(reason) {
+			t.Errorf("%s %q: reason %q does not say what to do instead", c.tool, c.command, reason)
+		}
+	}
+}
+
+// TestGraphQLQuerySources covers a query that is not on the command line: the
+// guard reads a plain file of the workspace, and denies what it cannot read.
+func TestGraphQLQuerySources(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	files := map[string]string{
+		"workspace/read.graphql":  "query { viewer { login } }",
+		"workspace/write.graphql": "mutation { resolveReviewThread(input: {threadId: \"T\"}) { clientMutationId } }",
+		"workspace/read.json":     `{"query": "query { viewer { login } }"}`,
+		"workspace/write.json":    `{"query": "mutation { resolveReviewThread(input: {threadId: \"T\"}) { clientMutationId } }"}`,
+		"outside.graphql":         "query { viewer { login } }",
+	}
+	for name, content := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(root, "outside.graphql"), filepath.Join(workspace, "link.graphql")); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(workspace)
+	cases := []struct {
+		deny    bool
+		command string
+	}{
+		{true, "gh api graphql -F query=@write.graphql"},
+		{true, "gh api graphql --field query=@write.graphql"},
+		{true, "gh api graphql --field=query=@write.graphql"},
+		{true, "gh api graphql -Fquery=@write.graphql"},
+		{true, "gh api graphql -f query=@write.graphql"},
+		{true, "gh api graphql --raw-field query=@write.graphql"},
+		{true, "gh api graphql --input write.json"},
+		{true, "gh api graphql --input=write.json"},
+		{true, "gh api graphql --input -"},
+		{true, "cat read.json | gh api graphql --input -"},
+		{true, "gh api graphql -F query=@- <<'EOF'\nquery { viewer { login } }\nEOF"},
+		{true, `gh api graphql -f query="$QUERY"`},
+		{true, "gh api graphql -f query=$QUERY"},
+		{true, `gh api graphql -f query="$(cat read.graphql)"`},
+		{true, "gh api graphql -F query=@missing.graphql"},
+		{true, "gh api graphql -F query=@../outside.graphql"},
+		{true, "gh api graphql -F query=@" + filepath.Join(root, "outside.graphql")},
+		{true, "gh api graphql -F query=@link.graphql"},
+		{true, "cp write.graphql read.graphql && gh api graphql -F query=@read.graphql"},
+		{true, "bash -c 'gh api graphql -F query=@read.graphql'"},
+		{true, "gh api -X GET graphql -f query='mutation { resolveReviewThread }'"},
+		{false, "gh api graphql -F query=@read.graphql"},
+		{false, "gh api graphql -F query=@" + filepath.Join(workspace, "read.graphql")},
+		{false, "gh api graphql --input read.json"},
+		{false, "gh api graphql -f query='query($n: Int!) { viewer { login } }' -F n=1"},
+		{false, "gh api graphql -F query=@read.graphql -F owner=@missing.txt"},
+		{false, "gh api -H 'Accept: application/json' graphql -f query='{ viewer { login } }'"},
+	}
+	for _, c := range cases {
+		input, _ := json.Marshal(map[string]string{"command": c.command})
+		reason := Check("Bash", "", input)
+		if (reason != "") != c.deny {
+			t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
+		}
+		if reason != "" && !saysInstead(reason) {
+			t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+		}
+	}
+
+	// The hook event's cwd, not the guard's, is where a relative file is.
+	t.Chdir(root)
+	for file, deny := range map[string]bool{"write.graphql": true, "read.graphql": false} {
+		event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "cwd": workspace,
+			"tool_input": map[string]string{"command": "gh api graphql -F query=@" + file}})
+		var out bytes.Buffer
+		Main(bytes.NewReader(event), &out)
+		if (out.Len() != 0) != deny {
+			t.Errorf("%s from the event's cwd: deny=%v, output %s", file, !deny, out.String())
+		}
 	}
 }
 
 // TestPolicy holds the guard to the examples in policy.json, which ECA's deny
 // patterns are built from and checked against at package build time, so the
-// two cannot drift apart. Owner-only rules hold only for an owner.
+// two cannot drift apart. Owner-only rules hold only for an owner. Each
+// denial's reason, which is what the agent sees, must say what to do instead;
+// a rule's `why` is for whoever maintains it and reaches no agent.
 func TestPolicy(t *testing.T) {
 	data, err := os.ReadFile("policy.json")
 	if err != nil {
@@ -99,11 +236,17 @@ func TestPolicy(t *testing.T) {
 				// Another rule's allow example can be a step the coordinator
 				// alone takes, so an owner is held only to denials and to the
 				// owner-only rules' examples.
-				if got := CheckOwner("Bash", "", input) != ""; got != want && (want || r.OwnerOnly) {
+				owner, coordinator := CheckOwner("Bash", "", input), Check("Bash", "", input)
+				if got := owner != ""; got != want && (want || r.OwnerOnly) {
 					t.Errorf("%s: guard deny=%v for an owner's %q", r.Pattern, got, command)
 				}
-				if got := Check("Bash", "", input) != ""; got != (want && !r.OwnerOnly) {
+				if got := coordinator != ""; got != (want && !r.OwnerOnly) {
 					t.Errorf("%s: guard deny=%v for the coordinator's %q", r.Pattern, got, command)
+				}
+				for _, reason := range []string{owner, coordinator} {
+					if reason != "" && !saysInstead(reason) {
+						t.Errorf("%s: reason %q for %q does not say what to do instead", r.Pattern, reason, command)
+					}
 				}
 			}
 		}

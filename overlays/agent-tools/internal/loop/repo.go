@@ -54,7 +54,8 @@ func repository() (*Repo, error) {
 			found = append(found, slug)
 		}
 		sort.Strings(found)
-		return nil, refuse("expected exactly one GitHub repository among this checkout's fetch URLs, found %v", found)
+		return nil, refuse("expected exactly one GitHub repository among this checkout's fetch URLs, found %v; "+
+			"run pr-loop from a checkout of one repository, or ask Wesley to fix the remotes", found)
 	}
 	var slug string
 	for s := range slugs {
@@ -132,14 +133,15 @@ func openPRs(repo *Repo) (map[string]*PR, error) {
 // requests notify its reviewers and code owners.
 func checkBranch(repo *Repo, prs map[string]*PR, branch string) (*PR, error) {
 	if branch == repo.Default || branch == "main" || branch == "master" {
-		return nil, refuse("%s is a default branch; the loop never writes to it", branch)
+		return nil, refuse("%s is a default branch, which the loop never writes to; name a pull request's branch", branch)
 	}
 	pr := prs[branch]
 	if pr == nil {
-		return nil, refuse("%s is not the head of an open pull request by %s", branch, repo.Viewer)
+		return nil, refuse(notHead, branch, repo.Viewer)
 	}
 	if pr.IsCrossRepository || pr.Author.Login != repo.Viewer {
-		return nil, refuse("#%d is not a same-repository pull request by %s", pr.Number, repo.Viewer)
+		return nil, refuse("#%d is not a same-repository pull request by %s, which the loop never writes to; "+
+			"leave it to Wesley", pr.Number, repo.Viewer)
 	}
 	return pr, nil
 }
@@ -198,7 +200,7 @@ func trackingRef(repo *Repo, branch string) (string, error) {
 	if git.OK("rev-parse", "--verify", "-q", "refs/heads/"+branch) {
 		return "refs/heads/" + branch, nil
 	}
-	return "", refuse("no local ref for %s, which a pull request is based on", branch)
+	return "", refuse("no local ref for %s, which a pull request is based on; ask Wesley to fetch it", branch)
 }
 
 func recordTracking(repo *Repo, branch, oid string) error {
