@@ -232,6 +232,21 @@ func TestCommands(t *testing.T) {
 		}
 	})
 
+	t.Run("reference", func(t *testing.T) {
+		plan := sessionPlan(t)
+		code, out, errs := agentPlan(t, "", "reference", plan, "https://example.com/guide", "--note", "Used for the review; fed Q1.")
+		if code != 0 || !strings.Contains(out, `"kind": "referenced"`) {
+			t.Errorf("reference: %d %s %s", code, out, errs)
+		}
+		data, _ := os.ReadFile(plan)
+		if !strings.Contains(string(data), ":URL: https://example.com/guide\n:END:\nUsed for the review; fed Q1.\n") {
+			t.Errorf("plan:\n%s", data)
+		}
+		if code, _, _ := agentPlan(t, "", "reference", plan); code != 2 {
+			t.Errorf("reference without a URL: %d", code)
+		}
+	})
+
 	t.Run("new from a missing template", func(t *testing.T) {
 		setup(t)
 		code, _, errs := agentPlan(t, "", "new", "--title", "T", "--slug", "t", "--template", "nowhere")
@@ -327,6 +342,7 @@ func TestRelayed(t *testing.T) {
 		{"sync", "--pull"},
 		{"reseal", "PLAN"},
 		{"followup", "PLAN", "--title", "T", "--found-in", "S1"},
+		{"reference", "PLAN", "https://example.com"},
 		{"bogus"},
 	} {
 		t.Run("refused/"+strings.Join(args, " "), func(t *testing.T) {

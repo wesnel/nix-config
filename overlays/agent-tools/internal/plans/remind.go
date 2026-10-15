@@ -25,13 +25,20 @@ var notifiedAgent = regexp.MustCompile(`<summary>Agent "(.*)" finished</summary>
 //     the harness cannot add context before it, on Codex's SessionStart
 //     from a compaction and ECA's postCompact, with the plan's brief.
 //
+// On any other UserPromptSubmit of the main thread, and on ECA's
+// preRequest of a chat that is not a sub-agent's, the prompt is Wesley's
+// own: it keeps each http(s) address in it as a reference of the plan,
+// and prints nothing. Codex sends a sub-agent's turns with agent_id.
+//
 // It returns the hook's output, or nothing, on any error too.
 func (c Config) Remind(input []byte) []byte {
 	var in struct {
 		Event        string          `json:"hook_event_name"`
 		Type         string          `json:"hook_type"` // ECA's
 		SessionID    string          `json:"session_id"`
-		ChatID       string          `json:"chat_id"` // ECA's
+		AgentID      string          `json:"agent_id"` // Codex's, for a sub-agent
+		ChatID       string          `json:"chat_id"`  // ECA's
+		ParentChatID string          `json:"parent_chat_id"`
 		Cwd          string          `json:"cwd"`
 		Prompt       string          `json:"prompt"`
 		ToolName     string          `json:"tool_name"`
@@ -84,6 +91,12 @@ func (c Config) Remind(input []byte) []byte {
 			return nil
 		}
 		event, context = in.Event, finished(fmt.Sprintf("%q ", m[1]))
+	case (in.Event == "UserPromptSubmit" && in.AgentID == "") || (in.Type == "preRequest" && in.ParentChatID == ""):
+		// Wesley's own prompt: its addresses are references of the plan.
+		if plan() != "" {
+			recordReferences(found, in.Prompt, time.Now())
+		}
+		return nil
 	case in.Event == "PostToolUse" && (in.ToolName == "Agent" || in.ToolName == "Task"):
 		var response struct {
 			IsAsync bool `json:"isAsync"`

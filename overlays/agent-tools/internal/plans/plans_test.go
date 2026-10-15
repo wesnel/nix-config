@@ -99,7 +99,7 @@ func TestNew(t *testing.T) {
 			"#+FILETAGS: :r:box:\n"; !strings.HasPrefix(string(data), header) {
 			t.Errorf("the plan does not start with %q:\n%s", header, data)
 		}
-		if !strings.HasSuffix(string(data), ":END:\n** Goal\n** Steps\n** Distribution\n** Questions\n** Follow-ups\n** Verification\n") {
+		if !strings.HasSuffix(string(data), ":END:\n** Goal\n** Steps\n** Distribution\n** Questions\n** Follow-ups\n** References\n** Verification\n") {
 			t.Errorf("the plan's sections:\n%s", data)
 		}
 		for _, s := range []string{"* Plan\n:PROPERTIES:\n",
