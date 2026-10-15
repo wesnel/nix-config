@@ -16,18 +16,6 @@ in {
     programs.gpg = {
       enable = true;
 
-      package = pkgs.gnupg.override {
-        pcsclite = pkgs.pcsclite.overrideAttrs (old: {
-          # https://discourse.nixos.org/t/gpg-selecting-card-failed-service-is-not-running/44974/18
-          postPatch =
-            old.postPatch
-            + (lib.optionalString (!(lib.strings.hasInfix ''--replace-fail "libpcsclite_real.so.1"'' old.postPatch)) ''
-              substituteInPlace src/libredirect.c src/spy/libpcscspy.c \
-                --replace-fail "libpcsclite_real.so.1" "$lib/lib/libpcsclite_real.so.1"
-            '');
-        });
-      };
-
       publicKeys = [
         {
           source = ../../../keys/users/F84480B20CA9D6CCC7F52479A776D2AD099E8BC0.asc;
