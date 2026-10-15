@@ -1,10 +1,4 @@
 final: prev: {
-  # FIXME: Its tests load Codex's configuration, which reads macOS managed
-  # preferences, and the Darwin build sandbox refuses that.
-  codex-acp = prev.codex-acp.overrideAttrs (_old: {
-    doCheck = false;
-  });
-
   agent-tools = final.callPackage ./agent-tools {};
 
   tbxark-mcp-proxy = final.callPackage ./tbxark-mcp-proxy {};
