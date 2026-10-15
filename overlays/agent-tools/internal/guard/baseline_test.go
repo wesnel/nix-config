@@ -187,6 +187,30 @@ func TestSessionRules(t *testing.T) {
 		{false, "chmod -R u+w result"},
 		{false, "find . -name '*.tmp' -delete"},
 		{false, "mv a b"},
+		{true, "NGROK_ENV=prod ngrok api endpoints list"},
+		{true, "NGROK_ENV=stage go run ./cmd/x"},
+		{true, "NGROK_ENV='prod' ./deploy.sh"},
+		{true, "NGROK_ENV=PROD ./deploy.sh"},
+		{true, "NGROK_ENV=prod; export NGROK_ENV"},
+		{true, "env NGROK_ENV=production ./deploy.sh"},
+		{true, "env -S 'NGROK_ENV=prod ./deploy.sh'"},
+		{true, "timeout 60 env NGROK_ENV=staging ./deploy.sh"},
+		{true, "export NGROK_ENV=stage && ./deploy.sh"},
+		{true, "declare -x NGROK_ENV=prod"},
+		{true, "set -x NGROK_ENV prod"},
+		{true, "set -gx NGROK_ENV stage"},
+		{true, "set --export NGROK_ENV prod"},
+		{true, "fish -c 'set -gx NGROK_ENV prod; ./deploy.sh'"},
+		{true, "bash -c 'NGROK_ENV=prod ./deploy.sh'"},
+		{true, "make deploy NGROK_ENV=stage"},
+		{true, "docker run -e NGROK_ENV=prod img"},
+		{true, "launchctl setenv NGROK_ENV prod"},
+		{false, "NGROK_ENV=dev ./deploy.sh"},
+		{false, "NGROK_ENV=local go test ./..."},
+		{false, "set -x NGROK_ENV dev"},
+		{false, "NGROK_ENV=$ENV ./deploy.sh"},
+		{false, "echo $NGROK_ENV"},
+		{false, "grep -rn NGROK_ENV ."},
 	}
 	for _, c := range cases {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
@@ -219,7 +243,8 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 
 // gitStateRepos is a repository, main, with a linked worktree on feature,
 // whose commit no remote has, a branch origin has, pushed, and a clean and
-// a dirty detached worktree, all under the returned root. TestGitState's
+// a dirty detached worktree, the dirty one with an empty directory sub, all
+// under the returned root. TestGitState's
 // cases share it, built once, as it takes a dozen git commands to make and
 // the guard only reads it.
 var gitStateRepos = sync.OnceValues(func() (string, error) {
@@ -244,6 +269,9 @@ var gitStateRepos = sync.OnceValues(func() (string, error) {
 		[]string{main, "worktree", "add", "-q", "--detach", filepath.Join(root, "clean")},
 		[]string{main, "worktree", "add", "-q", "--detach", filepath.Join(root, "dirty")},
 	); err != nil {
+		return "", err
+	}
+	if err := os.Mkdir(filepath.Join(root, "dirty", "sub"), 0o755); err != nil {
 		return "", err
 	}
 	return root, os.WriteFile(filepath.Join(root, "dirty", "new"), []byte("x\n"), 0o644)
@@ -356,6 +384,46 @@ func TestGitState(t *testing.T) {
 			}
 			if reason != "" && !saysInstead(reason) {
 				t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+			}
+		})
+	}
+}
+
+// TestExitWorktree covers Claude Code's ExitWorktree, which with
+// discard_changes deletes the session's worktree and its branch whatever
+// they hold.
+func TestExitWorktree(t *testing.T) {
+	root := fixture(t, gitStateRepos)
+	discard := `{"action":"remove","discard_changes":true}`
+	for _, c := range []struct {
+		name, dir, input string
+		deny             bool
+	}{
+		{"commits no remote has", "linked", discard, true},
+		{"uncommitted files", "dirty", discard, true},
+		{"from a subdirectory of uncommitted files", "dirty/sub", discard, true},
+		{"outside a repository", "", discard, true},
+		{"nothing to lose", "clean", discard, false},
+		{"without discarding", "linked", `{"action":"remove"}`, false},
+		{"kept", "linked", `{"action":"keep","discard_changes":true}`, false},
+	} {
+		t.Run(caseName(c.deny, c.name), func(t *testing.T) {
+			dir := t.TempDir()
+			if c.dir != "" {
+				dir = filepath.Join(root, c.dir)
+			}
+			event, _ := json.Marshal(map[string]any{"tool_name": "ExitWorktree", "cwd": dir, "tool_input": json.RawMessage(c.input)})
+			var out bytes.Buffer
+			Main([]string{"--baseline"}, bytes.NewReader(event), &out, io.Discard)
+			if denied := strings.Contains(out.String(), `"permissionDecision":"deny"`); denied != c.deny {
+				t.Errorf("%s: deny=%v, printed %s", event, denied, out.String())
+			}
+			var decision struct {
+				HookSpecificOutput struct{ PermissionDecisionReason string }
+			}
+			json.Unmarshal(out.Bytes(), &decision)
+			if reason := decision.HookSpecificOutput.PermissionDecisionReason; reason != "" && !saysInstead(reason) {
+				t.Errorf("%s: reason %q does not say what to do instead", event, reason)
 			}
 		})
 	}
@@ -534,6 +602,23 @@ func TestShellEdits(t *testing.T) {
 		{false, "cat a.go | tee " + scratch + "/copy"},
 		{false, "echo x > " + outside + "/f"},
 		{false, "cd $SOMEWHERE && echo x > a.go"},
+		{true, `python3 -c "open('a.go','w').write('x')"`},
+		{true, `python3 -c 'open("a.go", "r+").write("x")'`},
+		{true, `timeout 10 python3 -c "open('a.go', mode='a').write('x')"`},
+		{true, `python -c "import pathlib; pathlib.Path('sub/b.go').write_text('x')"`},
+		{true, `node -e "require('fs').writeFileSync('a.go', 'x')"`},
+		{true, `node --eval "fs.appendFileSync('sub/b.go', 'x')"`},
+		{true, `ruby -e "File.write('a.go', 'x')"`},
+		{true, `ruby -e "File.open('a.go', 'w') { |f| f << 'x' }"`},
+		{false, `python3 -c "print(open('a.go').read())"`},
+		{false, `python3 -c "open('a.go', 'r')"`},
+		{false, `python3 -c "import pathlib; print(pathlib.Path('a.go').read_text())"`},
+		{false, `node -e "console.log(require('fs').readFileSync('a.go', 'utf8'))"`},
+		{false, `ruby -e "puts File.read('a.go')"`},
+		{false, `python3 -c "open('new.txt', 'w').write('x')"`},
+		{false, `ruby -e "File.write('build/out.log', 'x')"`},
+		{false, `python3 -c "open('` + scratch + `/out.txt', 'w').write('x')"`},
+		{false, `python3 script.py a.go`},
 	}
 	for _, c := range cases {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
@@ -709,6 +794,48 @@ func TestFileTools(t *testing.T) {
 	}
 }
 
+// TestGuardConfig covers agent-tools' config, which holds the guard's
+// credential list and allowlists: its directory under the XDG config
+// directory, and the file AGENT_TOOLS_CONFIG names.
+func TestGuardConfig(t *testing.T) {
+	for _, c := range []struct {
+		name, tool string
+		input      any // with HOME for the guard's ~ and NAMED for AGENT_TOOLS_CONFIG
+		deny       bool
+	}{
+		{"the config, written", "Write", map[string]string{"file_path": "HOME/.config/agent-tools/config.json", "content": "{}"}, true},
+		{"the config, edited", "Edit", map[string]string{"file_path": "HOME/.config/agent-tools/config.json", "old_string": "a", "new_string": "b"}, true},
+		{"a file beside it", "Write", map[string]string{"file_path": "HOME/.config/agent-tools/notes-ssh-config", "content": "x"}, true},
+		{"the named config", "Write", map[string]string{"file_path": "NAMED", "content": "{}"}, true},
+		{"the config, patched", "apply_patch", map[string]string{"command": "*** Begin Patch\n*** Update File: HOME/.config/agent-tools/config.json\n@@\n-a\n+b\n*** End Patch\n"}, true},
+		{"the config, overwritten", "Bash", map[string]string{"command": "echo '{}' > ~/.config/agent-tools/config.json"}, true},
+		{"the config, edited in place", "Bash", map[string]string{"command": "sed -i '' s/a/b/ ~/.config/agent-tools/config.json"}, true},
+		{"the directory, removed", "Bash", map[string]string{"command": "rm -rf ~/.config/agent-tools"}, true},
+		{"the directory, moved", "Bash", map[string]string{"command": "mv ~/.config/agent-tools /tmp/x"}, true},
+		{"the named config, overwritten", "Bash", map[string]string{"command": "tee NAMED < x"}, true},
+		{"the config, read", "Bash", map[string]string{"command": "jq . ~/.config/agent-tools/config.json"}, false},
+		{"another tool's config", "Write", map[string]string{"file_path": "HOME/.config/other/config.json", "content": "{}"}, false},
+	} {
+		t.Run(caseName(c.deny, c.tool+" "+c.name), func(t *testing.T) {
+			h := fakeHome(t)
+			t.Setenv("XDG_CONFIG_HOME", "")
+			named := filepath.Join(t.TempDir(), "named.json")
+			os.WriteFile(named, []byte("{}"), 0o600)
+			t.Setenv("AGENT_TOOLS_CONFIG", named)
+			work := filepath.Join(h, "work")
+			data, _ := json.Marshal(c.input)
+			input := []byte(strings.NewReplacer("HOME", h, "NAMED", named).Replace(string(data)))
+			reason := check(c.tool, "", input, baseline, work)
+			if (reason != "") != c.deny {
+				t.Errorf("%s %s: deny=%v, reason %q", c.tool, input, !c.deny, reason)
+			}
+			if reason != "" && !saysInstead(reason) {
+				t.Errorf("%s: reason %q does not say what to do instead", c.tool, reason)
+			}
+		})
+	}
+}
+
 // TestConnectors covers the claude.ai connectors' writes: Claude Code asks,
 // and Codex, which cannot ask, denies, as does a loop.
 func TestConnectors(t *testing.T) {
@@ -732,6 +859,258 @@ func TestConnectors(t *testing.T) {
 			Main([]string{"--baseline"}, strings.NewReader(c.event), &out, io.Discard)
 			if (c.want == "" && out.Len() != 0) || !strings.Contains(out.String(), c.want) {
 				t.Errorf("%s: printed %s", c.event, out.String())
+			}
+		})
+	}
+}
+
+// TestCredentialPaths covers the credentials the guard's config lists,
+// which replace the list the package was built with, and that list, which
+// stands in for a missing one.
+func TestCredentialPaths(t *testing.T) {
+	built := []string{"~/.vault/token", "/var/secret/token"}
+	for _, c := range []struct {
+		name    string
+		listed  []string // the config's guard.credentialPaths, under HOME
+		built   []string // builtCredentialPaths
+		command string   // run in HOME/work
+		deny    bool
+	}{
+		{"a listed file", []string{"HOME/.vault/token"}, built, "cat ~/.vault/token", true},
+		{"a file under a listed prefix", []string{"HOME/.config/acme"}, built, "cat ~/.config/acme/creds.json", true},
+		{"a listed file by a relative path", []string{"HOME/.vault/token"}, built, "cat ../.vault/token", true},
+		{"a listed file as a copy's target", []string{"HOME/.vault/token"}, built, "cp x ~/.vault/token", true},
+		{"a file the list leaves out", []string{"HOME/.vault/token"}, built, "cat ~/.ssh/id_ed25519", false},
+		{"a file outside the list", []string{"HOME/.vault/token"}, built, "cat ~/.vault/README", false},
+		{"a built-in file under home without a list", nil, built, "cat ~/.vault/token", true},
+		{"a built-in absolute file without a list", nil, built, "cat /var/secret/token", true},
+		{"a file outside the built-in list", nil, built, "cat ~/.ssh/id_ed25519", false},
+		{"a file under home with no list at all", nil, nil, "cat ~/notes.txt", true},
+	} {
+		t.Run(caseName(c.deny, c.name), func(t *testing.T) {
+			h := fakeHome(t)
+			old := builtCredentialPaths
+			builtCredentialPaths = c.built
+			t.Cleanup(func() { builtCredentialPaths = old })
+			var listed []string
+			for _, p := range c.listed {
+				listed = append(listed, strings.Replace(p, "HOME", h, 1))
+			}
+			config := filepath.Join(t.TempDir(), "config.json")
+			data, _ := json.Marshal(map[string]any{"guard": map[string]any{"credentialPaths": listed}})
+			os.WriteFile(config, data, 0o600)
+			t.Setenv("AGENT_TOOLS_CONFIG", config)
+			reason := judge(t, filepath.Join(h, "work"), c.command)
+			if (reason != "") != c.deny {
+				t.Errorf("%q with %q listed: deny=%v, reason %q", c.command, listed, !c.deny, reason)
+			}
+			if reason != "" && !saysInstead(reason) {
+				t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+			}
+		})
+	}
+}
+
+// TestCodexShellTools covers Codex's other ways to run a command:
+// local_shell, which takes the command's argv, and write_stdin, which types
+// into a session exec_command started.
+func TestCodexShellTools(t *testing.T) {
+	for _, c := range []struct {
+		name, tool, input string
+		deny              bool
+	}{
+		{"local_shell running a merge through a shell", "local_shell", `{"command":["bash","-lc","gh pr merge 1"]}`, true},
+		{"local_shell pushing", "local_shell", `{"command":["git","push","origin","x"],"working_directory":"/tmp"}`, true},
+		{"local_shell listing", "local_shell", `{"command":["ls","-la"]}`, false},
+		{"local_shell with an argument holding quotes", "local_shell", `{"command":["echo","it's \"fine\""]}`, false},
+		{"write_stdin typing a push", "write_stdin", `{"session_id":59084,"chars":"git push origin x\n"}`, true},
+		{"write_stdin typing a credential read", "write_stdin", `{"session_id":1,"chars":"cat ~/.ssh/id_ed25519\n"}`, true},
+		{"write_stdin typing text", "write_stdin", `{"session_id":1,"chars":"hello from stdin\n"}`, false},
+		{"write_stdin polling", "write_stdin", `{"session_id":1,"chars":""}`, false},
+	} {
+		t.Run(caseName(c.deny, c.name), func(t *testing.T) {
+			event := `{"tool_name":"` + c.tool + `","turn_id":"t","cwd":"/","tool_input":` + c.input + `}`
+			var out bytes.Buffer
+			Main([]string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
+			if denied := strings.Contains(out.String(), `"permissionDecision":"deny"`); denied != c.deny {
+				t.Errorf("%s: deny=%v, printed %s", event, denied, out.String())
+			}
+			var decision struct {
+				HookSpecificOutput struct{ PermissionDecisionReason string }
+			}
+			json.Unmarshal(out.Bytes(), &decision)
+			reason := decision.HookSpecificOutput.PermissionDecisionReason
+			if reason != "" && !saysInstead(reason) {
+				t.Errorf("%s: reason %q does not say what to do instead", event, reason)
+			}
+			if c.deny && c.tool == "write_stdin" && !strings.Contains(reason, "running session") {
+				t.Errorf("%s: reason %q does not say the text goes to a running session", event, reason)
+			}
+		})
+	}
+}
+
+// TestCodexTerminalReaders covers Codex starting a command that reads its
+// input from the terminal, which write_stdin could then drive past every
+// hook.
+func TestCodexTerminalReaders(t *testing.T) {
+	for _, c := range []struct {
+		command string
+		deny    bool
+	}{
+		{"bash", true},
+		{"zsh -l", true},
+		{"bash -i", true},
+		{"/bin/sh", true},
+		{"env FOO=1 bash", true},
+		{"python3", true},
+		{"python3 -i", true},
+		{"node", true},
+		{"irb", true},
+		{"nix repl", true},
+		{"sqlite3 x.db", true},
+		{"cat", true},
+		{"cat -", true},
+		{"tee out.txt", true},
+		{"xargs sh -c 'echo $0'", true},
+		{"bash -c 'ls'", false},
+		{"bash script.sh", false},
+		{"python3 x.py", false},
+		{"python3 -m http.server", false},
+		{"python3 -c 'print(1)'", false},
+		{"node app.js", false},
+		{"nix build", false},
+		{"sqlite3 x.db 'select 1'", false},
+		{"cat a.txt", false},
+		{"echo x | cat", false},
+		{"cat < in.txt", false},
+		{"ls | xargs echo", false},
+		{"xargs -a list echo", false},
+		{"ls", false},
+	} {
+		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
+			input, _ := json.Marshal(map[string]string{"command": c.command})
+			for _, agent := range []struct {
+				name, event string
+				deny        bool
+			}{
+				{"Codex", `{"tool_name":"Bash","turn_id":"t","cwd":"/","tool_input":` + string(input) + `}`, c.deny},
+				{"Claude Code", `{"tool_name":"Bash","cwd":"/","tool_input":` + string(input) + `}`, false},
+			} {
+				var out bytes.Buffer
+				Main([]string{"--baseline"}, strings.NewReader(agent.event), &out, io.Discard)
+				if denied := strings.Contains(out.String(), `"permissionDecision":"deny"`); denied != agent.deny {
+					t.Errorf("%s %q: deny=%v, printed %s", agent.name, c.command, denied, out.String())
+				}
+				var decision struct {
+					HookSpecificOutput struct{ PermissionDecisionReason string }
+				}
+				json.Unmarshal(out.Bytes(), &decision)
+				if reason := decision.HookSpecificOutput.PermissionDecisionReason; reason != "" && !saysInstead(reason) {
+					t.Errorf("%s %q: reason %q does not say what to do instead", agent.name, c.command, reason)
+				}
+			}
+		})
+	}
+}
+
+// TestSleep covers long sleeps in the foreground, which hold the session,
+// and the advice each agent gets for waiting instead.
+func TestSleep(t *testing.T) {
+	// Each agent's hook event for a shell command, %s its tool_input's
+	// fields.
+	const (
+		claude = `{"tool_name":"Bash","tool_input":{%s}}`
+		codex  = `{"tool_name":"exec_command","turn_id":"t","tool_input":{%s}}`
+		eca    = `{"hook_type":"preToolCall","agent":"code","tool_name":"shell_command","tool_input":{%s}}`
+	)
+	cmd := func(command string) string {
+		data, _ := json.Marshal(command)
+		return `"command":` + string(data)
+	}
+	for _, c := range []struct {
+		name, event, input string
+		advice             string // a phrase the denial must have, "" to allow
+	}{
+		{"half a minute", claude, cmd("sleep 30"), "run_in_background"},
+		{"a minute by suffix", claude, cmd("sleep 1m"), "run_in_background"},
+		{"a fraction of a minute", claude, cmd("sleep 0.5m"), "run_in_background"},
+		{"arguments that add up", claude, cmd("sleep 20 10"), "run_in_background"},
+		{"forever", claude, cmd("sleep infinity"), "run_in_background"},
+		{"in a chain", claude, cmd("make && sleep 60 && make check"), "run_in_background"},
+		{"inside bash -c", claude, cmd("bash -c 'sleep 45; ls'"), "run_in_background"},
+		{"under timeout", claude, cmd("timeout 100 sleep 90"), "run_in_background"},
+		{"in a loop", claude, cmd("for i in 1 2; do sleep 30; done"), "run_in_background"},
+		{"from Codex", codex, cmd("sleep 60"), "until"},
+		{"from ECA", eca, cmd("sleep 60"), "until"},
+		{"under half a minute", claude, cmd("sleep 29"), ""},
+		{"a short poll", claude, cmd("until test -f done; do sleep 5; done"), ""},
+		{"backgrounded", claude, cmd("sleep 60 &"), ""},
+		{"backgrounded with its output redirected", claude, cmd("nohup sleep 60 > /dev/null 2>&1 &"), ""},
+		{"a backgrounded subshell", claude, cmd("(sleep 60; touch done) &"), ""},
+		{"a backgrounded shell", claude, cmd("bash -c 'sleep 60' &"), ""},
+		{"a length the shell picks", claude, cmd("sleep $N"), ""},
+		{"run in the background", claude, cmd("sleep 60") + `,"run_in_background":true`, ""},
+		{"an ECA background job", eca, cmd("sleep 60") + `,"background":"waiter"`, ""},
+		{"a Monitor", `{"tool_name":"Monitor","tool_input":{%s}}`, cmd("while true; do date; sleep 60; done"), ""},
+	} {
+		t.Run(caseName(c.advice != "", c.name), func(t *testing.T) {
+			event := strings.Replace(c.event, "%s", c.input, 1)
+			var out bytes.Buffer
+			Main([]string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
+			var decision struct {
+				HookSpecificOutput struct{ PermissionDecisionReason string }
+				AdditionalContext  string
+			}
+			json.Unmarshal(out.Bytes(), &decision)
+			reason := decision.HookSpecificOutput.PermissionDecisionReason + decision.AdditionalContext
+			switch {
+			case c.advice == "" && out.Len() != 0:
+				t.Errorf("%s: printed %s", event, out.String())
+			case c.advice != "" && !strings.Contains(reason, c.advice):
+				t.Errorf("%s: reason %q does not have %q", event, reason, c.advice)
+			case reason != "" && !saysInstead(reason):
+				t.Errorf("%s: reason %q does not say what to do instead", event, reason)
+			}
+		})
+	}
+}
+
+// TestMonitor covers Claude Code's Monitor, whose command runs in the shell
+// as Bash's does, and whose WebSocket source connects to a server only the
+// guard's config may name.
+func TestMonitor(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		allowed []string // the config's guard.webSockets
+		input   string
+		deny    bool
+	}{
+		{"a push", nil, `{"command":"git push origin x","description":"d"}`, true},
+		{"a merge in a shell", nil, `{"command":"bash -c 'gh pr merge 1'","description":"d"}`, true},
+		{"a credential", nil, `{"command":"tail -f ~/.ssh/id_ed25519","description":"d"}`, true},
+		{"a log", nil, `{"command":"tail -f build.log | grep --line-buffered ERROR","description":"d"}`, false},
+		{"a WebSocket", nil, `{"ws":{"url":"wss://events.example.com/stream"},"description":"d"}`, true},
+		{"an allowed WebSocket", []string{"wss://events.example.com/"}, `{"ws":{"url":"wss://events.example.com/stream"},"description":"d"}`, false},
+		{"a WebSocket on a lookalike host", []string{"wss://events.example.com/"}, `{"ws":{"url":"wss://events.example.com.evil.test/stream"},"description":"d"}`, true},
+	} {
+		t.Run(caseName(c.deny, c.name), func(t *testing.T) {
+			config := filepath.Join(t.TempDir(), "config.json")
+			data, _ := json.Marshal(map[string]any{"guard": map[string]any{"webSockets": c.allowed}})
+			os.WriteFile(config, data, 0o600)
+			t.Setenv("AGENT_TOOLS_CONFIG", config)
+			event := `{"tool_name":"Monitor","cwd":"/","tool_input":` + c.input + `}`
+			var out bytes.Buffer
+			Main([]string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
+			if denied := strings.Contains(out.String(), `"permissionDecision":"deny"`); denied != c.deny {
+				t.Errorf("%s: deny=%v, printed %s", event, denied, out.String())
+			}
+			var decision struct {
+				HookSpecificOutput struct{ PermissionDecisionReason string }
+			}
+			json.Unmarshal(out.Bytes(), &decision)
+			if reason := decision.HookSpecificOutput.PermissionDecisionReason; reason != "" && !saysInstead(reason) {
+				t.Errorf("%s: reason %q does not say what to do instead", event, reason)
 			}
 		})
 	}

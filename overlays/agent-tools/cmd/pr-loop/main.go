@@ -42,7 +42,9 @@ no attribution lines, and on a fixup only Review-* trailers.
   open --title T --body-file F [--base BASE] [--dry-run] [BRANCH]
                               push BRANCH (default HEAD) through the GitHub API and open
                               it as a draft PR against BASE (default: the default branch),
-                              in BASE's PR's GitHub stack, as link puts it there
+                              in BASE's PR's GitHub stack, as link puts it there; refuses
+                              when BRANCH contains a remote branch BASE lacks, and names
+                              the BASE to pass instead
   stack [PR|BRANCH]           the stack of open PRs containing a PR (default HEAD's), as
                               their bases chain them, and GitHub's stack of that PR as
                               "github" (null when GitHub has it in none)

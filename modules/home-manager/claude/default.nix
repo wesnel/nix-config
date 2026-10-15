@@ -29,11 +29,11 @@ with lib; let
     cp ${pkgs.writeText "hooks.json" (builtins.toJSON {
       hooks.PreToolUse = [
         {
-          matcher = "Bash|mcp__.*";
+          matcher = "Bash|Monitor|mcp__.*";
           hooks = [
             {
               type = "command";
-              command = "${lib.getExe' pkgs.agent-tools "pr-loop"} guard";
+              command = "${lib.getExe' config.wgn.home.llm.agentTools "pr-loop"} guard";
             }
           ];
         }
@@ -44,7 +44,7 @@ with lib; let
   darwin = pkgs.stdenv.hostPlatform.isDarwin;
   mcpProxy = config.wgn.home.mcp-proxy;
   plans = config.wgn.home.llm.plans;
-  agentPlan = getExe' pkgs.agent-tools "agent-plan";
+  agentPlan = getExe' config.wgn.home.llm.agentTools "agent-plan";
 
   # A permission rule's path: Claude Code reads `~/` as the home directory,
   # and a lone `/` as relative to the settings file, so `//` starts an
@@ -200,7 +200,7 @@ with lib; let
       # The session's commands cannot read the user's git config; the relay
       # and pr-loop on this side keep it.
       ${config.wgn.home.llm.prLoop.gitIdentity}
-      exec ${lib.getExe' pkgs.agent-tools "sandbox-relay"} session --program pr-loop --program agent-plan -- \
+      exec ${lib.getExe' config.wgn.home.llm.agentTools "sandbox-relay"} session --program pr-loop --program agent-plan -- \
         env GIT_CONFIG_GLOBAL=${config.wgn.home.llm.prLoop.gitConfig} claude \
         --plugin-dir ${prLoopPlugin} \
         --settings "$settings" \
@@ -248,23 +248,31 @@ in {
         env = sessionCacheEnv;
 
         # Credentials stay out of every session. The guard denies shell
-        # commands naming these files; Read is not hooked, so it is denied
-        # here. Keep the two lists alike (internal/guard/baseline.go).
+        # commands and file tools naming them; Read is not hooked, so it is
+        # denied here. Each is a path prefix, so a rule matches a file
+        # whose name it starts, and another anything under a directory
+        # whose name it starts.
         permissions.deny =
-          map (p: "Read(${p})") [
-            "~/.ssh/id_*"
-            "~/.gnupg/private-keys*/**"
-            "~/.codex/auth.json"
-            "~/.claude/.credentials.json"
-            "/${mcpProxy.tokenFile}"
-            "/${mcpProxy.oauthDir}/**"
-            "~/.config/sops/age/**"
-            "~/.config/ngrok/**"
-          ]
+          concatMap (p: ["Read(${rulePath p}*)" "Read(${rulePath p}*/**)"]) config.wgn.home.llm.guard.credentialPaths
           # A plan's log is appended to by `agent-plan log` alone; the guard
           # denies the same files to every file tool and shell write. An Edit
           # rule covers Write too.
           ++ map (p: "Edit(${rulePath plans.dir}/${p})") ["*.log.org" "*.log.org.lock"];
+
+        # The auto-mode classifier judges intent, so it also stops a rule
+        # broken where the guard cannot see, as through a script; the guard
+        # stays the enforcement. Claude Code adds claude-pr-loop's own
+        # rules to these. "$defaults" is literal: Claude Code splices its
+        # own rules in there.
+        autoMode.hard_deny = [
+          "$defaults"
+          "Reading credentials: SSH or GPG private keys, agents' logins, keychain items, tokens on disk, or the environment's secrets."
+          "Pushing to GitHub, or changing anything there (pull requests, issues, comments, reviews, releases, settings), other than through `pr-loop`."
+          "Running anything as root: sudo, doas, su, or an administrator prompt."
+          "Changing an agent's settings or hooks, or the guard's config: Claude Code's, Codex's or ECA's settings and hooks files, or agent-tools/config.json; or turning hooks or permission checks off."
+          "Publishing a package, container image or release."
+          "Running a command with NGROK_ENV set to prod or stage, however it is set."
+        ];
 
         # Applies wherever a project turns the sandbox on, and merges into
         # claude-pr-loop's sandbox, which denies what it must not have.
@@ -308,7 +316,7 @@ in {
             hooks = [
               {
                 type = "command";
-                command = "${getExe' pkgs.agent-tools "pr-loop"} guard --post";
+                command = "${getExe' config.wgn.home.llm.agentTools "pr-loop"} guard --post";
               }
             ];
           }
@@ -414,13 +422,16 @@ in {
             ];
           }
           # Holds every session to the baseline: what is Wesley's to do,
-          # and the `reviewer` and `pr-owner` agents to their roles.
+          # and the `reviewer` and `pr-owner` agents to their roles. Every
+          # tool that runs a command or writes a file belongs here: Monitor
+          # runs a shell command as Bash does, and ExitWorktree can delete a
+          # worktree and its branch.
           {
-            matcher = "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*";
+            matcher = "Bash|Monitor|ExitWorktree|Edit|Write|MultiEdit|NotebookEdit|mcp__.*";
             hooks = [
               {
                 type = "command";
-                command = "${getExe' pkgs.agent-tools "pr-loop"} guard --baseline";
+                command = "${getExe' config.wgn.home.llm.agentTools "pr-loop"} guard --baseline";
               }
             ];
           }
