@@ -30,12 +30,14 @@ with it. The unsigned tip is kept under ` + signpass.BackupRef + `BRANCH.
 
 func main() {
 	flags := flag.NewFlagSet("git-sign-pass", flag.ContinueOnError)
-	flags.Usage = func() { fmt.Fprint(os.Stderr, usage) }
 	base := flags.String("base", "", "")
 	resume := flags.Bool("resume", false, "")
 	push := flags.Bool("push", false, "")
-	if err := flags.Parse(os.Args[1:]); err != nil || flags.NArg() > 0 {
-		flags.Usage()
+	if code, ok := cli.Parse(flags, os.Args[1:], usage, os.Stdout, os.Stderr); !ok {
+		os.Exit(code)
+	}
+	if flags.NArg() > 0 {
+		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
 	if err := git.CheckConfig(""); err != nil {

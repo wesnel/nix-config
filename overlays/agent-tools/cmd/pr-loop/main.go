@@ -108,9 +108,13 @@ func (m *multi) Set(v string) error { *m = append(*m, v); return nil }
 
 func main() {
 	args := os.Args[1:]
-	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
+	if len(args) == 0 {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
+	}
+	if cli.IsHelp(args[0]) {
+		fmt.Fprint(os.Stdout, usage)
+		os.Exit(0)
 	}
 	command := args[0]
 	if url := os.Getenv(relay.URLEnv); url != "" && command != "guard" {
@@ -127,7 +131,6 @@ func main() {
 
 func run(command string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
-	flags.SetOutput(stderr)
 	var (
 		dryRun   = flags.Bool("dry-run", false, "")
 		all      = flags.Bool("all", false, "")
@@ -147,8 +150,8 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	if command == "guard" {
 		return guard.Main(stdin, stdout)
 	}
-	if err := flags.Parse(interleave(args)); err != nil {
-		return 2
+	if code, ok := cli.Parse(flags, interleave(args), usage, stdout, stderr); !ok {
+		return code
 	}
 	rest := flags.Args()
 	if err := git.CheckConfig(""); err != nil {

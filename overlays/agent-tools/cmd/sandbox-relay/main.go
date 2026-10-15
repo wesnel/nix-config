@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/relay"
 )
 
@@ -28,6 +29,10 @@ func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
+	}
+	if cli.IsHelp(os.Args[1]) {
+		fmt.Fprint(os.Stdout, usage)
+		os.Exit(0)
 	}
 	switch os.Args[1] {
 	case "serve":
