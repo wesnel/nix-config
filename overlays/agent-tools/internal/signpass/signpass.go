@@ -62,7 +62,7 @@ type checkout struct {
 
 // otherCheckouts lists the branches every worktree but this one holds.
 func otherCheckouts() ([]checkout, error) {
-	here, err := git.Run("rev-parse", "--show-toplevel")
+	here, err := git.Toplevel()
 	if err != nil {
 		return nil, err
 	}
@@ -611,7 +611,7 @@ func sign(p *pending, path string) error {
 	if err != nil {
 		return err
 	}
-	if p.Dir, err = git.Run("rev-parse", "--show-toplevel"); err != nil {
+	if p.Dir, err = git.Toplevel(); err != nil {
 		return err
 	}
 	if err := detach(p, checkouts); err != nil {

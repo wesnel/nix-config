@@ -11,6 +11,11 @@ stacked branch, the decisions that span parts, the check of every report,
 and coalescing every branch into one signing pass that Wesley runs. Nothing
 reaches GitHub until he has signed and pushed.
 
+The work as a whole goes through the `review-change` skill's pipeline, as
+any change does. This skill adds what several branches need: the design
+review across all parts (Design review below) and a fresh review of each
+branch (Review each branch).
+
 A bot review loop over a stack has its own skill, `review-loop`, with the same
 shape.
 
@@ -48,33 +53,28 @@ shape.
 
 ## The rules file
 
-Write the working agreements once, to a file in your scratchpad, and start
-every task with "First read <file> and follow it exactly." Do not count on a
-sub-agent having loaded AGENTS.md or the skills you have. Put in it:
+Write the rules once, to a file in your scratchpad, and start every task
+with "First read <file> and follow it exactly." Do not count on a sub-agent
+having loaded AGENTS.md or the skills you have: the file names them to read,
+and adds only what they do not say. Put in it:
 
+- Read and follow the installed working agreements (`~/.claude/CLAUDE.md`
+  for Claude Code, `~/.codex/AGENTS.md` for Codex, `~/.config/eca/AGENTS.md`
+  for ECA) and the `SKILL.md` of the `signing-pass`, `write-tests` and
+  `review-change` skills in the agent's skill directory.
 - Work only in the worktree the task names, never the main checkout or another
   worktree. Run `git branch --show-current` immediately before every edit and
   every commit. Never `git stash`: every worktree shares one stash.
-- The `signing-pass` rules: `-c commit.gpgsign=false` on everything that
-  writes commits, a check that `git rev-parse HEAD` moved, and never a push,
-  tag or signature.
-- The commit rules from AGENTS.md: atomic history, a correction as
-  `--fixup=<commit>` of the commit that owns the code, the subject rules, no
-  trailers, explicit paths only.
-- File-editing tools only, the fish shell, no `sudo`, `trash` instead of
-  `rm`, and no wrapper shell scripts.
-- The documentation rules from AGENTS.md.
+- `trash` instead of `rm`, and no wrapper shell scripts.
 - How to build, test and lint in this repository, which commands need the
   sandbox off, and what a fresh worktree lacks (generated files, for
   example).
 - Before reporting done: a trial autosquash on a throwaway branch, deleted
   afterwards, with the tests and linters run on the squashed result, since a
-  squash can drop a line. For each bug fix, the new test fails without the
-  fix.
-- No writes to GitHub. A thread reply is drafted to
-  `<scratchpad>/replies/pr-<N>.md`, one section per thread: its ID, the reply,
-  and `resolve: yes|no`. A reply names commits by subject, never by SHA,
-  because the signing pass changes every SHA.
+  squash can drop a line.
+- No writes to GitHub. Thread replies are drafted to
+  `<scratchpad>/replies/pr-<N>.md`, in the reply-file format the
+  `review-change` skill's Answering gives.
 - The report below.
 
 ## Each task
@@ -108,9 +108,24 @@ runs in phases.
    decisions written into its task. It ports any experiment from its
    investigation worktree, committing none of the scratch tests as they are.
 4. **Publish**, once Wesley's signing pass has pushed. Re-read each thread,
-   skip one already resolved or answered, re-check each drafted reply against
-   the pushed code, then reply in the thread and resolve it as AGENTS.md says.
-   Update each description to the change as it stands.
+   drop one already resolved or answered from its reply file, re-check each
+   drafted reply against the pushed code, then post each file with
+   `pr-loop reply --from`. Update each description to the change as it
+   stands.
+
+## Design review
+
+Run the `review-change` skill's design review at two points, over every
+part at once:
+
+- before splitting: settle the structure, find the files parts share, and
+  decide which branches stack;
+- before Coalesce, once a batch of sub-agents has finished: cohesion,
+  duplication, contradictions, the same file edited on parallel branches,
+  and tooling that has drifted apart.
+
+Its decisions go to Wesley as one list, merged with the Decide phase's when
+there is one.
 
 A finding by one sub-agent that bears on another part goes to that part's
 sub-agent, in its current task or its next one.
@@ -137,11 +152,20 @@ Before relaying a report, confirm it:
 - `git -C <worktree> branch --show-current` is the branch, and
   `git -C <worktree> status --short` shows nothing but ignored files.
 - `git -C <worktree> log --format='%h %G? %s%n%b' <base>..<branch>` matches
-  the report: every commit `N`, no trailers, subjects in shape, on the base
-  you named. Read the commits that matter with `git show`.
+  the report: every commit `N`, no trailers but a fixup's `Review-*` ones,
+  subjects in shape, on the base you named. Read the commits that matter
+  with `git show`.
 - Its verification commands pass when you run them.
 
 Relay only what you confirmed, and say what you did not.
+
+## Review each branch
+
+Before Coalesce, run the `review-change` skill's fresh review loop on each
+branch by itself, never the whole stack at once: the range `<base>..<branch>`,
+the part's goal and what is not its job as the goal statement, at most three
+rounds. Hand each finding to the branch's sub-agent to settle as Triage
+says, and check its report as any other.
 
 ## Coalesce
 
@@ -187,10 +211,6 @@ If you are still running once Wesley has pushed:
   in a stack.
 - Run the **Publish** phase: the drafted replies, and every description
   brought up to the change as it stands.
-- For every pull request, run `pr-loop wait ci --timeout 3600` from its
-  branch in the background, and act when it exits. A failure the change
-  caused is fixed as a fixup, coalesced and handed back the same way. Any
-  other (failing on the base, a flaky test, an infrastructure fault) is
-  reported to Wesley with the evidence from its log. Never rerun CI or push
-  again in the hope that it passes.
+- Watch every pull request's CI as the `signing-pass` skill's "After a push"
+  says; a fix is coalesced and handed back the same way.
 - When nothing is left to fix, `git worktree remove` each worktree.

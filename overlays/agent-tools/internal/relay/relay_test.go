@@ -36,6 +36,8 @@ func TestHandle(t *testing.T) {
 
 	t.Setenv(URLEnv, "unix:/x")
 	t.Setenv(RelayEnv, "0")
+	t.Setenv("GIT_DIR", "/elsewhere/.git")
+	t.Setenv("GIT_WORK_TREE", "/elsewhere")
 	r := handle(Request{Program: "probe", Cwd: root, Stdin: "body"}, root, root, paths)
 	if r.Code != 0 || r.Stdout != "body" {
 		t.Fatalf("probe: %+v", r)
@@ -47,12 +49,21 @@ func TestHandle(t *testing.T) {
 	if strings.Contains(string(env), URLEnv+"=") {
 		t.Error("a relayed program could relay again")
 	}
+	// It runs in its own directory, not the repository the relay's
+	// environment names.
+	if strings.Contains(string(env), "GIT_DIR=") || strings.Contains(string(env), "GIT_WORK_TREE=") {
+		t.Errorf("a relayed program inherited the relay's repository:\n%s", env)
+	}
 }
 
 func TestSession(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "env")
+	t.Setenv("GIT_DIR", "/elsewhere/.git")
 	code := Session([]string{"--workspace", t.TempDir(), "--program", "sh", "--", "sh", "-c",
 		`printf '%s\n%s\n' "$SANDBOX_RELAY_URL" "$1" > ` + out + ` && test -S "$SANDBOX_RELAY_SOCKET" && ` +
+			// The session runs in the workspace, not the repository the
+			// caller's environment names.
+			`test -z "${GIT_DIR+set}" && ` +
 			// A sandbox compares real paths, so the socket's must be one.
 			`test "$(cd "$(dirname "$SANDBOX_RELAY_SOCKET")" && pwd -P)" = "$(dirname "$SANDBOX_RELAY_SOCKET")"`, "sh", "{socket}"}, os.Stderr)
 	if code != 0 {

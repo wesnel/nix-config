@@ -65,6 +65,9 @@ func main() {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
+	if err := git.CheckLocation(); err != nil {
+		os.Exit(cli.Report("git-sign-pass", nil, err, 0, os.Stdout, os.Stderr))
+	}
 	if err := git.CheckConfig(""); err != nil {
 		os.Exit(cli.Report("git-sign-pass", nil, err, 0, os.Stdout, os.Stderr))
 	}

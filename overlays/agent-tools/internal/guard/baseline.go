@@ -1,0 +1,647 @@
+package guard
+
+import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+
+	"github.com/wesnel/agent-tools/internal/gitenv"
+)
+
+// The rules every session is held to beyond GitHub: what would lose
+// Wesley's work, read a credential, change his machine or switch the guard
+// off. A rule that needs the repository's state asks git, from the
+// directory the command runs in.
+
+const (
+	mainCheckout = "This discards work in the repository's main checkout, which holds Wesley's work in progress. Do it in a worktree of your own (`git worktree add`), or ask Wesley."
+	historyLoss  = "This deletes history git cannot get back, which is Wesley's call. Leave it, and put the command in your report for Wesley."
+	sharedConfig = "This setting is shared by every worktree and changes how git runs for Wesley too. Put the `git config` command in your report for Wesley; a worktree's own setting takes `git config --worktree`."
+	secretRead   = "This reads a credential, which stays out of the session. Use the tool that holds it (`gh`, `pr-loop`, `git`), or ask Wesley for what you need from it."
+	ngrokWrite   = "ngrok API writes reach production. Use a list or get command, or hand Wesley the command."
+	systemSwitch = "Activating a system or profile is Wesley's step. Build it with `nix build` or `darwin-rebuild build`, and hand Wesley the switch command."
+	rootCommand  = "Anything needing root is Wesley's to run. Put the command in your report for Wesley, and say its result is unverified."
+	publishing   = "Publishing a package is Wesley's step. Build and test it here, and hand Wesley the publish command."
+	killing      = "That process is one Wesley's session depends on (Emacs, gpg-agent, ssh, nix-daemon or mcp-proxy). Leave it running, and tell Wesley if it needs a restart."
+	destroying   = "This would destroy the home directory, the root filesystem, the Nix store or Wesley's keys. Name the exact path inside the workspace you mean, or ask Wesley."
+	guardOff     = "The guard and its hooks are Wesley's configuration, and stay on. Put the change you want in your report for Wesley."
+	connector    = "Writing to Slack, Gmail, Linear, GitHub or Notion acts as Wesley. Confirm it with Wesley first, or put the draft in your report."
+)
+
+// home is the user's home directory, which ~ and $HOME name.
+var home, _ = os.UserHomeDir()
+
+// secretPaths are credentials, relative to home. Claude Code's Read is
+// denied the same files by permissions.deny in the claude home-manager
+// module; keep the two alike.
+var secretPaths = []string{".ssh/id_", ".gnupg/private-keys", ".codex/auth.json", ".claude/.credentials.json",
+	".local/state/mcp-proxy/token", "Library/Application Support/mcp-proxy", ".config/mcp-proxy",
+	".config/sops/age", ".config/ngrok"}
+
+// secretName is an environment variable that likely holds a credential.
+var secretName = regexp.MustCompile(`(?i)token|key|secret|password|credential`)
+
+// guardFile reports whether path holds the hooks that run the guard.
+func guardFile(path string) bool {
+	for _, p := range []string{".codex/config.toml", ".codex/hooks.json", ".config/eca/config.json"} {
+		if path == filepath.Join(home, p) {
+			return true
+		}
+	}
+	return claudeSettings.MatchString(path)
+}
+
+var claudeSettings = regexp.MustCompile(`(^|/)\.claude/settings[^/]*\.json$`)
+
+// expandPath is word as the shell would name a file: with ~ and $HOME
+// expanded, and relative to dir.
+func expandPath(word, dir string) string {
+	for _, h := range []string{"${HOME}", "$HOME"} {
+		if word == h || strings.HasPrefix(word, h+"/") {
+			word = home + strings.TrimPrefix(word, h)
+		}
+	}
+	if word == "~" || strings.HasPrefix(word, "~/") {
+		word = home + word[1:]
+	}
+	if !filepath.IsAbs(word) && dir != "" {
+		word = filepath.Join(dir, word)
+	}
+	return filepath.Clean(word)
+}
+
+// checkSession checks a call against the rules for every session that are
+// not about GitHub. dir is where it runs, "" when the guard cannot tell.
+func checkSession(c call, dir string) string {
+	words := c.words
+	name, args := base(words[0]), words[1:]
+	for _, w := range words {
+		if reason := checkSecretPath(w, dir); reason != "" {
+			return reason
+		}
+	}
+	for _, target := range redirections(words) {
+		if guardFile(expandPath(target, dir)) {
+			return guardOff
+		}
+	}
+	has := func(flags ...string) bool {
+		for _, a := range args {
+			for _, f := range flags {
+				if a == f || strings.HasPrefix(a, f+"=") {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	positional := func() []string {
+		var out []string
+		for _, a := range args {
+			if !strings.HasPrefix(a, "-") {
+				out = append(out, a)
+			}
+		}
+		return out
+	}
+	first := func() string {
+		if p := positional(); len(p) > 0 {
+			return p[0]
+		}
+		return ""
+	}
+	switch name {
+	case "sudo", "doas", "su", "pkexec", "run0":
+		return rootCommand
+	case "osascript":
+		if strings.Contains(strings.ToLower(strings.Join(args, " ")), "with administrator privileges") {
+			return rootCommand
+		}
+	case "env", "printenv":
+		names := positional()
+		if len(names) == 0 {
+			return secretRead
+		}
+		for _, n := range names {
+			if name == "printenv" && secretName.MatchString(n) {
+				return secretRead
+			}
+		}
+	case "export", "declare", "typeset":
+		if len(args) == 0 || has("-p") {
+			return secretRead
+		}
+	case "set":
+		if len(args) == 0 {
+			return secretRead
+		}
+	case "security":
+		switch first() {
+		case "dump-keychain", "export":
+			return secretRead
+		case "find-generic-password", "find-internet-password":
+			for _, a := range args {
+				if strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.ContainsAny(a[1:], "wg") {
+					return secretRead
+				}
+			}
+		}
+	case "git-credential-osxkeychain":
+		return secretRead
+	case "sops":
+		if has("-d", "--decrypt") || first() == "decrypt" || first() == "exec-env" || first() == "exec-file" {
+			return secretRead
+		}
+	case "op":
+		p := positional()
+		if len(p) > 0 && (p[0] == "read" || p[0] == "inject" || (p[0] == "item" && len(p) > 1 && p[1] == "get")) {
+			return secretRead
+		}
+	case "pass":
+		switch p := positional(); {
+		case len(p) == 0:
+		case p[0] == "ls" || p[0] == "list" || p[0] == "find" || p[0] == "search" || p[0] == "help" || p[0] == "version":
+		default:
+			return secretRead
+		}
+	case "ngrok":
+		if p := positional(); len(p) > 0 && p[0] == "api" {
+			for _, w := range p[1:] {
+				if ngrokWrites[w] {
+					return ngrokWrite
+				}
+			}
+		}
+	case "darwin-rebuild", "nixos-rebuild", "home-manager", "nh":
+		for _, a := range args {
+			if switchVerbs[name][a] {
+				return systemSwitch
+			}
+		}
+	case "activate", "activate-user":
+		if strings.Contains(words[0], "/") {
+			return systemSwitch
+		}
+	case "nix":
+		p := positional()
+		switch {
+		case len(p) > 1 && p[0] == "profile" && set("install", "add", "remove", "upgrade", "rollback", "wipe-history")[p[1]]:
+			return systemSwitch
+		case len(p) > 0 && p[0] == "copy":
+			for i, a := range args {
+				to := strings.TrimPrefix(a, "--to=")
+				if a == "--to" && i+1 < len(args) {
+					to = args[i+1]
+				} else if to == a {
+					continue
+				}
+				if strings.Contains(to, "://") && !strings.HasPrefix(to, "file://") {
+					return systemSwitch
+				}
+			}
+		}
+	case "nix-env":
+		for _, a := range args {
+			if set("--install", "--uninstall", "--upgrade", "--set", "--rollback", "--switch-generation", "--delete-generations")[a] ||
+				nixEnvWrite.MatchString(a) {
+				return systemSwitch
+			}
+		}
+	case "nix-collect-garbage":
+		if has("-d", "--delete-old", "--delete-older-than") {
+			return systemSwitch
+		}
+	case "cachix":
+		if first() == "push" {
+			return systemSwitch
+		}
+	case "npm", "pnpm", "yarn", "bun":
+		for _, p := range positional() {
+			if p == "publish" {
+				return publishing
+			}
+		}
+	case "cargo", "vsce":
+		if first() == "publish" {
+			return publishing
+		}
+	case "twine":
+		if first() == "upload" {
+			return publishing
+		}
+	case "gem":
+		if first() == "push" {
+			return publishing
+		}
+	case "docker", "podman":
+		for _, p := range positional() {
+			if p == "push" {
+				return publishing
+			}
+		}
+		if has("--push") {
+			return publishing
+		}
+	case "goreleaser":
+		if !set("check", "build", "healthcheck", "init", "jsonschema", "completion", "help", "man")[first()] &&
+			!has("-h", "--help", "-v", "--version") {
+			return publishing
+		}
+	case "pkill", "killall":
+		for _, a := range args {
+			if !strings.HasPrefix(a, "-") && protectedProcess(a) {
+				return killing
+			}
+		}
+	case "kill":
+		return checkKill(args)
+	case "gpgconf":
+		if has("--kill") {
+			return killing
+		}
+	case "ssh":
+		for i, a := range args {
+			if (a == "-O" && i+1 < len(args) && (args[i+1] == "exit" || args[i+1] == "stop")) || a == "-Oexit" || a == "-Ostop" {
+				return killing
+			}
+		}
+	case "launchctl":
+		switch first() {
+		case "bootout", "unload", "remove":
+			return killing
+		case "kickstart":
+			if has("-k") {
+				return killing
+			}
+		}
+	case "emacsclient":
+		if strings.Contains(strings.Join(args, " "), "kill-emacs") {
+			return killing
+		}
+	case "rm", "trash", "chmod", "chown", "chgrp", "mv":
+		recursive := name == "trash" || name == "mv"
+		for _, a := range args {
+			recursive = recursive || a == "--recursive" || (strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.ContainsAny(a, "rR"))
+		}
+		// Only paths named literally, or by ~ or $HOME: the guard does not
+		// resolve a relative path, which would put every build under /nix.
+		for _, a := range positional() {
+			if protectedTree(expandPath(a, ""), recursive) {
+				return destroying
+			}
+		}
+		if name != "chmod" && name != "chown" && name != "chgrp" {
+			for _, a := range positional() {
+				if guardFile(expandPath(a, dir)) {
+					return guardOff
+				}
+			}
+		}
+	case "find":
+		if has("-delete") || strings.Contains(strings.Join(args, " "), "-exec rm") {
+			for _, a := range args {
+				if strings.HasPrefix(a, "-") {
+					break
+				}
+				if protectedTree(expandPath(a, ""), true) {
+					return destroying
+				}
+			}
+		}
+	case "tee", "cp", "ln", "install", "truncate", "dd", "sed", "perl":
+		if (name == "sed" || name == "perl") && !has("--in-place") && !strings.Contains(" "+strings.Join(args, " "), " -i") {
+			break
+		}
+		for _, a := range args {
+			if guardFile(expandPath(strings.TrimPrefix(a, "of="), dir)) {
+				return guardOff
+			}
+		}
+	case "claude":
+		if has("--dangerously-skip-permissions", "--allow-dangerously-skip-permissions") ||
+			strings.Contains(strings.Join(args, " "), "bypassPermissions") {
+			return guardOff
+		}
+	case "codex":
+		for _, a := range args {
+			if strings.HasPrefix(a, "--dangerously-bypass") {
+				return guardOff
+			}
+		}
+	}
+	return ""
+}
+
+// nixEnvWrite is nix-env's short options that change a profile.
+var nixEnvWrite = regexp.MustCompile(`^-[ieuG]`)
+
+// ngrokWrites are the verbs of the ngrok MCP filter's writes.
+var ngrokWrites = set("create", "update", "delete", "remove", "start", "stop", "restart", "set", "put", "patch", "post",
+	"add", "replace", "rotate", "enable", "disable", "revoke", "write", "manage", "submit", "send", "run", "exec",
+	"execute", "invoke", "import", "upload", "attach", "detach")
+
+// switchVerbs are the words that make each system tool activate something.
+var switchVerbs = map[string]map[string]bool{
+	"darwin-rebuild": set("switch", "activate", "rollback", "--rollback", "--switch-generation"),
+	"nixos-rebuild":  set("switch", "boot", "test", "--rollback"),
+	"home-manager":   set("switch", "activate", "remove-generations", "expire-generations", "uninstall"),
+	"nh":             set("switch", "boot", "test"),
+}
+
+// protectedProcess reports whether a process name or pattern names a
+// process Wesley's session depends on.
+func protectedProcess(name string) bool {
+	name = strings.ToLower(name)
+	for _, p := range []string{"emacs", "gpg-agent", "ssh", "nix-daemon", "mcp-proxy"} {
+		if strings.Contains(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkKill denies a kill of every process, a process group, or a process
+// Wesley's session depends on, which it looks up with ps.
+func checkKill(args []string) string {
+	// The signal, if any, comes first; a negative number after it is a
+	// process group.
+	i := 0
+	switch {
+	case len(args) == 0:
+		return ""
+	case args[0] == "-l" || args[0] == "-L":
+		return ""
+	case args[0] == "-s" || args[0] == "-n":
+		i = 2
+	case strings.HasPrefix(args[0], "-") && args[0] != "--":
+		i = 1
+	}
+	if i < len(args) && args[i] == "--" {
+		i++
+	}
+	for _, p := range args[min(i, len(args)):] {
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			continue // a job, or a name the shell expands
+		}
+		if n <= 0 {
+			return killing
+		}
+		cmd := exec.Command("ps", "-o", "comm=", "-p", p)
+		if out, err := cmd.Output(); err == nil && protectedProcess(filepath.Base(strings.TrimSpace(string(out)))) {
+			return killing
+		}
+	}
+	return ""
+}
+
+// protectedTree reports whether path is the home directory, the root, or
+// in the Nix store or Wesley's keys; a glob counts as its directory. The
+// home directory and the root count only for a recursive operation.
+func protectedTree(path string, recursive bool) bool {
+	for strings.HasSuffix(path, "/*") || path != "/" && strings.HasSuffix(path, "*") {
+		path = filepath.Dir(path)
+	}
+	inside := func(root string) bool {
+		return path == root || strings.HasPrefix(path, root+"/")
+	}
+	switch {
+	case inside("/nix"), inside(filepath.Join(home, ".ssh")), inside(filepath.Join(home, ".gnupg")):
+		return true
+	case path == "/" || path == home:
+		return recursive
+	}
+	return false
+}
+
+// checkSecretPath denies a word that names a credential file.
+func checkSecretPath(word, dir string) string {
+	if strings.HasSuffix(word, ".pub") {
+		return ""
+	}
+	candidates := []string{expandPath(word, dir)}
+	if _, value, ok := strings.Cut(word, "="); ok {
+		candidates = append(candidates, expandPath(value, dir))
+	}
+	for _, path := range candidates {
+		for _, p := range secretPaths {
+			if strings.HasPrefix(path, home+"/"+p) {
+				return secretRead
+			}
+		}
+	}
+	return ""
+}
+
+var redirect = regexp.MustCompile(`^[0-9&]?>>?\|?`)
+
+// redirections are the files a command's output redirections write.
+func redirections(words []string) []string {
+	var out []string
+	for i, w := range words {
+		m := redirect.FindString(w)
+		if m == "" {
+			continue
+		}
+		if target := w[len(m):]; target != "" {
+			out = append(out, target)
+		} else if i+1 < len(words) {
+			out = append(out, words[i+1])
+		}
+	}
+	return out
+}
+
+// checkFileTool checks a call to a file-editing tool: Claude Code's Edit,
+// Write, MultiEdit and NotebookEdit, and Codex's apply_patch.
+func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
+	var in struct {
+		FilePath     string `json:"file_path"`
+		NotebookPath string `json:"notebook_path"`
+		Content      string `json:"content"`
+		OldString    string `json:"old_string"`
+		NewString    string `json:"new_string"`
+		NewSource    string `json:"new_source"`
+		Command      string `json:"command"`
+		Edits        []struct {
+			OldString string `json:"old_string"`
+			NewString string `json:"new_string"`
+		} `json:"edits"`
+	}
+	json.Unmarshal(toolInput, &in)
+	type change struct{ path, text string }
+	var changes []change
+	if tool == "apply_patch" {
+		var path string
+		var text strings.Builder
+		flush := func() {
+			if path != "" {
+				changes = append(changes, change{path, text.String()})
+			}
+			text.Reset()
+		}
+		for _, line := range strings.Split(in.Command, "\n") {
+			for _, header := range []string{"*** Update File: ", "*** Add File: ", "*** Delete File: ", "*** Move to: "} {
+				if p, ok := strings.CutPrefix(line, header); ok {
+					flush()
+					path = strings.TrimSpace(p)
+					line = ""
+				}
+			}
+			text.WriteString(line + "\n")
+		}
+		flush()
+	} else {
+		text := in.Content + in.OldString + in.NewString + in.NewSource
+		for _, e := range in.Edits {
+			text += e.OldString + e.NewString
+		}
+		changes = append(changes, change{in.FilePath + in.NotebookPath, text})
+	}
+	for _, c := range changes {
+		path := expandPath(c.path, dir)
+		if reason := checkSecretPath(path, dir); reason != "" {
+			return reason
+		}
+		switch {
+		case filepath.Base(path) == "config" && filepath.Base(filepath.Dir(path)) == ".git":
+			return sharedConfig
+		case strings.HasSuffix(path, ".codex/hooks.json") && guardFile(path):
+			return guardOff
+		case guardFile(path):
+			existing, _ := os.ReadFile(path)
+			for _, text := range []string{c.text, string(existing)} {
+				if strings.Contains(text, "hooks") || strings.Contains(text, "disableAllHooks") {
+					return guardOff
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// connectorTool matches the claude.ai connectors that act as Wesley.
+var connectorTool = regexp.MustCompile(`(?i)^mcp__claude_ai_(slack|gmail|linear|github|notion)__`)
+
+// readWord matches a tool name that names a read.
+var readWord = regexp.MustCompile(`(?i)(^|[_-])(get|list|search|fetch|read|query|view|find|lookup|describe|retrieve)([_-]|$)`)
+
+// checkConnector asks before a claude.ai connector writes.
+func checkConnector(tool string) string {
+	if connectorTool.MatchString(tool) && !readWord.MatchString(connectorTool.ReplaceAllString(tool, "")) {
+		return connector
+	}
+	return ""
+}
+
+// gitState is where a git command acts and what it finds there.
+type gitState struct{ dir string }
+
+func (g gitState) run(args ...string) (string, bool) {
+	if g.dir == "" {
+		return "", false
+	}
+	cmd := exec.Command("git", append([]string{"-C", g.dir}, args...)...)
+	cmd.Env = gitenv.Without(os.Environ())
+	out, err := cmd.Output()
+	return strings.TrimSpace(string(out)), err == nil
+}
+
+// main reports whether dir is a repository's main worktree, or may be:
+// a directory the guard cannot tell counts as one.
+func (g gitState) main() bool {
+	if g.dir == "" {
+		return true
+	}
+	out, ok := g.run("rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir")
+	if !ok {
+		return false
+	}
+	dirs := strings.Split(out, "\n")
+	return len(dirs) == 2 && dirs[0] == dirs[1]
+}
+
+// checkGitSession checks a git command against the rules for every
+// session that need the repository's state: destroying the main checkout's
+// work and losing history.
+func checkGitSession(sub string, rest []string, g gitState) string {
+	has := func(flags ...string) bool {
+		for _, w := range rest {
+			for _, f := range flags {
+				if w == f || strings.HasPrefix(w, f+"=") {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	short := func(letter string) bool {
+		for _, w := range rest {
+			if strings.HasPrefix(w, "-") && !strings.HasPrefix(w, "--") && strings.Contains(w, letter) {
+				return true
+			}
+		}
+		return false
+	}
+	everything := func() bool {
+		for _, w := range rest {
+			if w == "." || w == "./" || w == ":/" || w == "*" || w == ":(top)" {
+				return true
+			}
+		}
+		return false
+	}
+	first := ""
+	if len(rest) > 0 {
+		first = rest[0]
+	}
+	switch {
+	case sub == "reset" && has("--hard"),
+		sub == "checkout" && (has("-f", "--force") || everything()),
+		sub == "restore" && everything() && (!has("--staged", "-S") || has("--worktree", "-W")),
+		sub == "switch" && has("-f", "--force", "--discard-changes"),
+		sub == "clean" && (short("f") || has("--force")),
+		sub == "stash" && (first == "drop" || first == "clear" || has("-u", "--include-untracked", "-a", "--all")):
+		if g.main() {
+			return mainCheckout
+		}
+	case sub == "reflog" && (first == "expire" || first == "delete"),
+		sub == "gc" && (has("--prune=now") || has("--prune=all")),
+		sub == "prune", sub == "filter-branch", sub == "filter-repo",
+		sub == "worktree" && first == "prune":
+		return historyLoss
+	case sub == "update-ref" && has("-d"):
+		for _, w := range rest {
+			if strings.HasPrefix(w, "refs/heads/") {
+				return historyLoss
+			}
+		}
+	case sub == "branch" && (has("-D") || (has("-d", "--delete") && has("-f", "--force")) || short("D")):
+		for _, b := range rest {
+			if strings.HasPrefix(b, "-") {
+				continue
+			}
+			if out, ok := g.run("rev-list", "--max-count=1", "refs/heads/"+b, "--not", "--remotes"); !ok || out != "" {
+				return historyLoss
+			}
+		}
+	case sub == "worktree" && first == "remove" && has("-f", "--force"):
+		for _, p := range rest[1:] {
+			if strings.HasPrefix(p, "-") {
+				continue
+			}
+			target := gitState{dir: expandPath(p, g.dir)}
+			if out, ok := target.run("status", "--porcelain"); !ok || out != "" {
+				return historyLoss
+			}
+		}
+	}
+	return ""
+}
+
+// sharedKeys are the git config keys whose shared value is Wesley's.
+var sharedKeys = regexp.MustCompile(`^(core\.(bare|worktree|hookspath|fsmonitor|sshcommand|pager|editor)|include(if)?\..*|filter\..*|diff\..*\.textconv|alias\..*|remote\..*|url\..*|credential(\..*)?)$`)

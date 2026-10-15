@@ -149,7 +149,7 @@ func signable(state *State) error {
 	if dirty, _ := git.Run("status", "--porcelain", "--untracked-files=no"); dirty != "" {
 		return refuse("this worktree has uncommitted changes")
 	}
-	here, err := git.Run("rev-parse", "--show-toplevel")
+	here, err := git.Toplevel()
 	if err != nil {
 		return err
 	}

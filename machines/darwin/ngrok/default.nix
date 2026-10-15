@@ -26,7 +26,7 @@
         git.enable = true;
         gnupg.enable = true;
         go.enable = true;
-        llm.prLoop.setup."ngrok-private/ngrok-agent" = "go tool buf generate";
+        llm.repos."ngrok-private/ngrok-agent".setup = "go tool buf generate";
         man.enable = true;
         ollama = {
           enable = true;

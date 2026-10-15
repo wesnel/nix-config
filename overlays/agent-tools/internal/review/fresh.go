@@ -1,0 +1,537 @@
+package review
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/wesnel/agent-tools/internal/cli"
+	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/redcheck"
+	"github.com/wesnel/agent-tools/internal/refusal"
+	"github.com/wesnel/agent-tools/internal/repos"
+)
+
+// Usage is `git fresh-review -h`.
+const Usage = `usage: git fresh-review --goal FILE [--items FILE] [--prior FILE] [--reviewer auto|codex]
+                        [--model M] [--timeout S] [--no-red-check] BASE..TIP
+       git fresh-review --print-prompt --goal FILE [--items FILE] [--prior FILE] [--no-red-check] BASE..TIP
+       git fresh-review --check FILE BASE..TIP
+
+Reviews the commits in BASE..TIP with a reviewer that did not write them and
+sees only the commits and what the files name: the goal statement (the goal,
+and what is not this change's job), the items the change answers (threads,
+CI checks, earlier findings and how each was settled), and the earlier
+findings of this review.
+
+By default Codex reviews, as a model family other than the author's:
+codex exec -s read-only --ephemeral, in a throwaway worktree of TIP under
+the git directory's fresh-review/, removed on every exit. Codex's sandbox
+cannot start inside another macOS sandbox, so run this outside one. Where the
+repository has test settings, git red-check BASE..TIP runs first and its JSON
+goes in the prompt.
+
+Where Codex cannot review, review with a fresh sub-agent instead: give it
+the prompt --print-prompt prints, save its reply, and check that with
+--check, which prints and exits as a review does.
+
+  --goal FILE       the goal statement (required)
+  --items FILE      the items the change answers, and how each was settled
+  --prior FILE      earlier rounds' findings and how each was settled
+  --reviewer R      auto (default): Codex, unless called from inside Codex,
+                    where a sub-agent is the fresh reviewer; codex: Codex
+                    even then
+  --model M         the Codex model (default: Codex's own)
+  --timeout S       seconds before the review is stopped (default 1800)
+  --no-red-check    leave git red-check out of the prompt
+
+Writes JSON on stdout: reviewer, model, range, tip, findings (each with
+id, path, line, kind, claim and evidence, and endLine, about and reopens
+where given), dropped (findings whose path:line does not exist at TIP, or
+that do not fit the schema, each with its reason) and unverified. Exit
+status:
+  0  no findings
+  3  findings
+  4  Codex cannot review here: it is not installed or not signed in, this
+     is a review-loop session (PR_LOOP_SESSION or SANDBOX_RELAYED is set),
+     or, with --reviewer auto, the caller is Codex (CODEX_SANDBOX is set)
+  1  the review could not run; 2 a usage error or refusal
+`
+
+const name = "git-fresh-review"
+
+// Main runs `git fresh-review` with args and returns its exit status.
+func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet(name, flag.ContinueOnError)
+	goal := flags.String("goal", "", "")
+	items := flags.String("items", "", "")
+	prior := flags.String("prior", "", "")
+	reviewer := flags.String("reviewer", "auto", "")
+	model := flags.String("model", "", "")
+	timeout := flags.Int("timeout", 1800, "")
+	noRedCheck := flags.Bool("no-red-check", false, "")
+	printPrompt := flags.Bool("print-prompt", false, "")
+	check := flags.String("check", "", "")
+
+	// Flags may follow the range, as with git's own commands.
+	var positional []string
+	for {
+		if code, ok := cli.Parse(flags, args, Usage, stdout, stderr); !ok {
+			return code
+		}
+		if flags.NArg() == 0 {
+			break
+		}
+		positional = append(positional, flags.Arg(0))
+		args = flags.Args()[1:]
+	}
+	if len(positional) != 1 || (*reviewer != "auto" && *reviewer != "codex") || (*check != "" && *printPrompt) {
+		fmt.Fprint(stderr, Usage)
+		return 2
+	}
+	report := func(result any, err error, code int) int {
+		return cli.Report(name, result, err, code, stdout, stderr)
+	}
+	if err := git.CheckConfig(""); err != nil {
+		return report(nil, err, 0)
+	}
+	r, err := resolve(positional[0])
+	if err != nil {
+		return report(nil, err, 0)
+	}
+
+	if *check != "" {
+		reply, err := readFile(*check, stdin)
+		if err != nil {
+			return report(nil, err, 0)
+		}
+		out, err := validate(reply, r, "")
+		if err != nil {
+			return report(nil, err, 0)
+		}
+		out.Reviewer = "subagent"
+		return report(out, nil, out.exit())
+	}
+
+	in := inputs{r: r}
+	if *goal == "" {
+		return report(nil, refusal.New("a review is judged against a goal statement; write the goal, and what is not this change's job, "+
+			"to a file and pass `--goal FILE`"), 0)
+	}
+	if in.goal, err = readFile(*goal, stdin); err != nil {
+		return report(nil, err, 0)
+	}
+	if strings.TrimSpace(in.goal) == "" {
+		return report(nil, refusal.New("the goal statement %s is empty; write the goal, and what is not this change's job, "+
+			"into it and pass `--goal %s` again", *goal, *goal), 0)
+	}
+	for _, f := range []struct {
+		path string
+		into *string
+	}{{*items, &in.items}, {*prior, &in.prior}} {
+		if f.path != "" {
+			if *f.into, err = readFile(f.path, stdin); err != nil {
+				return report(nil, err, 0)
+			}
+		}
+	}
+
+	if !*printPrompt {
+		if why := unavailable(*reviewer == "auto"); why != "" {
+			fmt.Fprintf(stderr, "%s: Codex cannot review here: %s. Review with a fresh `reviewer` sub-agent instead: "+
+				"give it the prompt `git fresh-review --print-prompt` prints for the same files and range, "+
+				"save its reply, and check it with `git fresh-review --check FILE %s`.\n", name, why, r.given)
+			return 4
+		}
+	}
+	if !*noRedCheck {
+		in.redCheck = redCheckFor(ctx, r, stderr)
+	}
+	if *printPrompt {
+		in.where = fmt.Sprintf("Read the change in the repository at %s: `git diff %s %s`, `git log -p %s..%s`, "+
+			"and `git show %s:PATH` for a file as it is at TIP. That checkout's own files may hold work that is not "+
+			"part of the change, so judge only the commits.", r.top, r.base, r.tip, r.base, r.tip, r.tip)
+		fmt.Fprint(stdout, prompt(in))
+		return 0
+	}
+
+	out, err := codexReview(ctx, in, *model, time.Duration(*timeout)*time.Second, stderr)
+	if err != nil {
+		return report(nil, err, 0)
+	}
+	return report(out, nil, out.exit())
+}
+
+// span is the range under review: as given, and resolved.
+type span struct {
+	given, base, tip, top, common string
+	commits                       string
+}
+
+func resolve(given string) (*span, error) {
+	base, tip, ok := strings.Cut(given, "..")
+	if !ok || strings.HasPrefix(tip, ".") || base == "" || tip == "" {
+		return nil, refusal.New("%q is not a range BASE..TIP; pass the range whose commits make up the change, "+
+			"such as `origin/main..HEAD`", given)
+	}
+	r := &span{given: given}
+	var err error
+	if r.top, err = git.Toplevel(); err != nil {
+		return nil, err
+	}
+	if r.common, err = git.Run("-C", r.top, "rev-parse", "--path-format=absolute", "--git-common-dir"); err != nil {
+		return nil, err
+	}
+	for _, p := range []struct {
+		rev  string
+		into *string
+	}{{base, &r.base}, {tip, &r.tip}} {
+		if *p.into, err = git.Run("-C", r.top, "rev-parse", "--verify", "--end-of-options", p.rev+"^{commit}"); err != nil {
+			return nil, err
+		}
+	}
+	if r.commits, err = git.Run("-C", r.top, "log", "--reverse", "--format=%H %s", r.base+".."+r.tip); err != nil {
+		return nil, err
+	}
+	if r.commits == "" {
+		return nil, refusal.New("%s has no commits to review; pass the range whose commits make up the change, "+
+			"such as `origin/main..HEAD`", given)
+	}
+	return r, nil
+}
+
+// readFile reads path, or stdin for "-".
+func readFile(path string, stdin io.Reader) (string, error) {
+	var data []byte
+	var err error
+	if path == "-" {
+		data, err = io.ReadAll(stdin)
+	} else {
+		data, err = os.ReadFile(path)
+	}
+	return string(data), err
+}
+
+// unavailable says why Codex may not or cannot review from here, or "".
+func unavailable(auto bool) string {
+	switch {
+	case os.Getenv("PR_LOOP_SESSION") != "":
+		return "this is a review-loop session (PR_LOOP_SESSION is set), whose only way out is pr-loop"
+	case os.Getenv("SANDBOX_RELAYED") != "":
+		return "this runs behind sandbox-relay (SANDBOX_RELAYED is set)"
+	case auto && os.Getenv("CODEX_SANDBOX") != "":
+		return "the caller is Codex (CODEX_SANDBOX is set), so a sub-agent is already a fresh reviewer"
+	}
+	if _, err := exec.LookPath("codex"); err != nil {
+		return "codex is not on PATH"
+	}
+	if err := exec.Command("codex", "login", "status").Run(); err != nil {
+		return "codex is not signed in (`codex login status` fails)"
+	}
+	return ""
+}
+
+// redCheckFor runs git red-check on the range where the repository has test
+// settings, and returns its JSON or why it did not run; "" when there are no
+// settings.
+func redCheckFor(ctx context.Context, r *span, log io.Writer) string {
+	git.Dir = r.top
+	settings, err := repos.Lookup()
+	git.Dir = ""
+	switch {
+	case err != nil:
+		return "git red-check did not run: " + err.Error()
+	case settings.Test == "" || len(settings.TestFiles) == 0:
+		return ""
+	}
+	result, err := redcheck.Do(ctx, r.base+".."+r.tip, redcheck.Options{
+		Dir: r.top, Test: settings.Test, Build: settings.Build, TestFiles: settings.TestFiles, Log: log})
+	if err != nil {
+		return "git red-check did not run: " + err.Error()
+	}
+	data, _ := json.MarshalIndent(result, "", "  ")
+	return "```json\n" + string(data) + "\n```"
+}
+
+type inputs struct {
+	r                            *span
+	goal, items, prior, redCheck string
+	where                        string
+}
+
+// prompt is the contract, then the range, the goal statement, the items, the
+// earlier findings and red-check's JSON: nothing of the author's beyond them.
+func prompt(in inputs) string {
+	var b strings.Builder
+	b.WriteString(Contract)
+	fmt.Fprintf(&b, "\n# This review\n\n## Range\n\nBASE..TIP is %s..%s (given as `%s`). Its commits, oldest first:\n\n%s\n\n%s\n",
+		in.r.base, in.r.tip, in.r.given, in.r.commits, in.where)
+	fmt.Fprintf(&b, "\n## Goal statement\n\n%s\n", strings.TrimSpace(in.goal))
+	if s := strings.TrimSpace(in.items); s != "" {
+		fmt.Fprintf(&b, "\n## Items\n\n%s\n", s)
+	}
+	if s := strings.TrimSpace(in.prior); s != "" {
+		fmt.Fprintf(&b, "\n## Earlier findings\n\nAn earlier finding still standing is reported again, with `reopens` naming it.\n\n%s\n", s)
+	}
+	if in.redCheck != "" {
+		fmt.Fprintf(&b, "\n## git red-check %s..%s\n\n%s\n", in.r.base, in.r.tip, in.redCheck)
+	}
+	b.WriteString("\nReply with the JSON object the Output section describes, and nothing else.\n")
+	return b.String()
+}
+
+// codexReview runs Codex read-only in a throwaway worktree of TIP, which it
+// removes however the review ends.
+func codexReview(ctx context.Context, in inputs, model string, timeout time.Duration, log io.Writer) (*Output, error) {
+	parent := filepath.Join(in.r.common, "fresh-review")
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return nil, err
+	}
+	dir, err := os.MkdirTemp(parent, in.r.tip[:12]+"-")
+	if err != nil {
+		return nil, err
+	}
+	wt := filepath.Join(dir, "tree")
+	defer func() {
+		removeWorktree(in.r, wt)
+		os.RemoveAll(dir)
+		// Left in place while another review is using it.
+		os.Remove(parent)
+	}()
+	if _, err := git.Run("-C", in.r.top, "worktree", "add", "--quiet", "--detach", wt, in.r.tip); err != nil {
+		return nil, err
+	}
+	schema, reply := filepath.Join(dir, "findings.schema.json"), filepath.Join(dir, "reply.json")
+	if err := os.WriteFile(schema, Schema, 0o644); err != nil {
+		return nil, err
+	}
+	in.where = "The working directory is a checkout of TIP holding nothing but the commits; `git diff " +
+		in.r.base + " " + in.r.tip + "` shows the change."
+
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	args := []string{"exec", "-s", "read-only", "--ephemeral", "-C", wt, "--output-schema", schema, "-o", reply}
+	if model != "" {
+		args = append(args, "-m", model)
+	}
+	cmd := exec.CommandContext(ctx, "codex", append(args, "-")...)
+	cmd.Dir = wt
+	cmd.Env = gitenv.Without(os.Environ())
+	cmd.Stdin = strings.NewReader(prompt(in))
+	banner := &bannerModel{w: log}
+	cmd.Stdout, cmd.Stderr = log, banner
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 5 * time.Second
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("codex stopped: %w", ctx.Err())
+		}
+		return nil, fmt.Errorf("codex: %w", err)
+	}
+	data, err := os.ReadFile(reply)
+	if err != nil {
+		return nil, fmt.Errorf("codex left no reply: %w", err)
+	}
+	out, err := validate(string(data), in.r, wt)
+	if err != nil {
+		return nil, err
+	}
+	out.Reviewer = "codex"
+	if banner.model != "" {
+		out.Model = &banner.model
+	} else if model != "" {
+		out.Model = &model
+	}
+	return out, nil
+}
+
+// bannerModel passes Codex's stderr on and picks out the model it names in
+// the banner it prints before the prompt, the only place `codex exec` says
+// which model its configuration chose.
+type bannerModel struct {
+	w     io.Writer
+	line  []byte
+	done  bool
+	model string
+}
+
+func (b *bannerModel) Write(p []byte) (int, error) {
+	for _, c := range p {
+		if b.done {
+			break
+		}
+		if c != '\n' {
+			b.line = append(b.line, c)
+			continue
+		}
+		line := string(b.line)
+		b.line = b.line[:0]
+		switch {
+		case strings.HasPrefix(line, "model: "):
+			b.model, b.done = strings.TrimSpace(strings.TrimPrefix(line, "model: ")), true
+		case line == "user":
+			b.done = true
+		}
+	}
+	return b.w.Write(p)
+}
+
+// removeWorktree deletes the worktree and git's record of it, by hand if
+// `git worktree remove` refuses.
+func removeWorktree(r *span, wt string) {
+	if _, err := os.Stat(wt); err != nil {
+		git.Run("-C", r.top, "worktree", "prune")
+		return
+	}
+	admin, _ := git.Run("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
+	if _, err := git.Run("-C", r.top, "worktree", "remove", "--force", "--force", wt); err != nil {
+		os.RemoveAll(wt)
+		// Only git's own record of a worktree, never where a damaged
+		// worktree's .git file might point.
+		if admin != "" && filepath.Dir(admin) == filepath.Join(r.common, "worktrees") {
+			os.RemoveAll(admin)
+		}
+	}
+}
+
+// Finding is one problem a reviewer reports.
+type Finding struct {
+	ID       string  `json:"id"`
+	Path     string  `json:"path"`
+	Line     int     `json:"line"`
+	EndLine  *int    `json:"endLine,omitempty"`
+	Kind     string  `json:"kind"`
+	Claim    string  `json:"claim"`
+	Evidence string  `json:"evidence"`
+	About    *string `json:"about,omitempty"`
+	Reopens  *string `json:"reopens,omitempty"`
+}
+
+// Dropped is a finding left out of the result, and why.
+type Dropped struct {
+	Finding json.RawMessage `json:"finding"`
+	Reason  string          `json:"reason"`
+}
+
+// Output is what `git fresh-review` prints.
+type Output struct {
+	Reviewer   string     `json:"reviewer"`
+	Model      *string    `json:"model"`
+	Range      string     `json:"range"`
+	Tip        string     `json:"tip"`
+	Findings   []*Finding `json:"findings"`
+	Dropped    []Dropped  `json:"dropped"`
+	Unverified []string   `json:"unverified"`
+}
+
+func (o *Output) exit() int {
+	if len(o.Findings) > 0 {
+		return 3
+	}
+	return 0
+}
+
+var kinds = map[string]bool{"goal-unmet": true, "bug": true, "regression": true, "unresolved": true,
+	"out-of-scope": true, "untested": true, "untrue-doc": true}
+
+// validate parses a reviewer's reply, which may be wrapped in prose or a
+// code fence, and keeps the findings that fit the schema and point at a line
+// that exists at TIP. A path inside wt, the checkout the reviewer read, is
+// made relative to it.
+func validate(reply string, r *span, wt string) (*Output, error) {
+	text := strings.TrimSpace(reply)
+	start, end := strings.Index(text, "{"), strings.LastIndex(text, "}")
+	if start < 0 || end < start {
+		return nil, errors.New("the reply holds no JSON object; ask the reviewer again for the JSON the contract describes")
+	}
+	var parsed struct {
+		Findings   *[]json.RawMessage `json:"findings"`
+		Unverified []string           `json:"unverified"`
+	}
+	if err := json.Unmarshal([]byte(text[start:end+1]), &parsed); err != nil || parsed.Findings == nil {
+		return nil, fmt.Errorf("the reply is not the JSON the contract describes (%v); ask the reviewer again", err)
+	}
+	out := &Output{Range: r.given, Tip: r.tip, Findings: []*Finding{}, Dropped: []Dropped{}, Unverified: []string{}}
+	if parsed.Unverified != nil {
+		out.Unverified = parsed.Unverified
+	}
+	seen := map[string]bool{}
+	lines := map[string]int{}
+	for _, raw := range *parsed.Findings {
+		f, why := normalise(raw, r, wt, lines)
+		if why == "" && seen[f.ID] {
+			why = "another finding has the id " + f.ID
+		}
+		if why != "" {
+			out.Dropped = append(out.Dropped, Dropped{Finding: raw, Reason: why})
+			continue
+		}
+		seen[f.ID] = true
+		out.Findings = append(out.Findings, f)
+	}
+	return out, nil
+}
+
+// normalise checks one finding, returning it cleaned up or why it is
+// dropped. lines caches each file's line count at TIP, -1 for no such file.
+func normalise(raw json.RawMessage, r *span, wt string, lines map[string]int) (*Finding, string) {
+	var f Finding
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return nil, "does not fit the schema: " + err.Error()
+	}
+	switch {
+	case strings.TrimSpace(f.ID) == "":
+		return nil, "has no id"
+	case !kinds[f.Kind]:
+		return nil, fmt.Sprintf("kind %q is not one the contract defines", f.Kind)
+	case strings.TrimSpace(f.Claim) == "" || strings.TrimSpace(f.Evidence) == "":
+		return nil, "has no claim or no evidence"
+	}
+	path := f.Path
+	if wt != "" && strings.HasPrefix(path, wt+string(filepath.Separator)) {
+		path = strings.TrimPrefix(path, wt+string(filepath.Separator))
+	}
+	path = filepath.ToSlash(filepath.Clean(path))
+	if filepath.IsAbs(path) || path == "." || path == ".." || strings.HasPrefix(path, "../") {
+		return nil, fmt.Sprintf("%s is not a path in the repository", f.Path)
+	}
+	f.Path = path
+	n, ok := lines[path]
+	if !ok {
+		n = -1
+		if blob, err := git.Bytes(nil, "-C", r.top, "cat-file", "blob", r.tip+":"+path); err == nil {
+			n = bytes.Count(blob, []byte("\n"))
+			if len(blob) > 0 && blob[len(blob)-1] != '\n' {
+				n++
+			}
+		}
+		lines[path] = n
+	}
+	switch {
+	case n < 0:
+		return nil, fmt.Sprintf("%s does not exist at TIP", path)
+	case f.Line < 1 || f.Line > n:
+		return nil, fmt.Sprintf("%s has %d lines at TIP, so line %d does not exist", path, n, f.Line)
+	}
+	if f.EndLine != nil && (*f.EndLine < f.Line || *f.EndLine > n) {
+		f.EndLine = nil
+	}
+	for _, p := range []**string{&f.About, &f.Reopens} {
+		if *p != nil && strings.TrimSpace(**p) == "" {
+			*p = nil
+		}
+	}
+	return &f, ""
+}

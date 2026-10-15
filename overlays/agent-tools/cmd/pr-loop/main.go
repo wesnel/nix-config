@@ -60,7 +60,8 @@ authenticated user in the same repository.
   sign [--resume] [--no-push] squash the loop's fixups, sign with the hardware key, and
                               push the stack over SSH (outside a loop, use git sign-pass)
   end [--prune]               delete trigger comments and loop state
-  guard                       PreToolUse hook for Claude Code and ECA (reads stdin)
+  guard [--baseline]          PreToolUse hook for Claude Code, Codex and ECA (reads stdin):
+                              a loop's rules, or with --baseline every session's, by agent
 
 reply and resolve take a thread on an open PR by the authenticated user in
 this repository, people's threads included, and need no begin. In a loop
@@ -92,8 +93,9 @@ a header. Every thread is checked before anything is posted; threads already
 resolved are skipped and reported.
 
 A setup command prepares a fresh checkout, e.g. generating files the
-repository does not commit. It is taken from "setup" in the user's
-pr-loop/config.json, keyed by owner/name, and never from the repository. It
+repository does not commit. It is taken from "setup" under "repos" in the
+user's agent-tools/config.json, keyed by owner/name, and never from the
+repository. It
 runs with sh in this process, printed on stderr before it runs and followed
 by its exit status; a failed setup makes the command exit 1.
 
@@ -226,12 +228,15 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 	flags.Var(&bots, "bot", "")
 	flags.Var(&accepted, "accept-failure", "")
 	if command == "guard" {
-		return guard.Main(stdin, stdout)
+		return guard.Main(args, stdin, stdout, stderr)
 	}
 	if code, ok := cli.Parse(flags, interleave(args), usage, stdout, stderr); !ok {
 		return code
 	}
 	rest := flags.Args()
+	if err := git.CheckLocation(); err != nil {
+		return cli.Report("pr-loop", nil, err, 0, stdout, stderr)
+	}
 	if err := git.CheckConfig(""); err != nil {
 		return cli.Report("pr-loop", nil, err, 0, stdout, stderr)
 	}
@@ -401,7 +406,7 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 			}
 		}
 		var dir string
-		if dir, err = git.Run("rev-parse", "--show-toplevel"); err != nil {
+		if dir, err = git.Toplevel(); err != nil {
 			break
 		}
 		var setup *loop.Setup

@@ -63,6 +63,17 @@ red, and the failure points at what broke. Everything below follows from that.
   cannot see from CI.
 - The failing stage is never committed. The test lands in the same commit as
   the code it covers.
+- Once committed, show the red run again with `git red-check` where it is
+  installed: `git red-check` for HEAD, `git red-check --fixups BASE..HEAD`
+  for a branch's fixups. In a throwaway worktree it runs the tests without
+  the commit's other changes, where they must fail, and with them, where
+  they must pass. Exit 0 is that evidence. Exit 3 means the tests pass
+  without the change or fail with it: fix the tests. Exit 4 means the
+  evidence is missing or weak (no test files changed, only test files
+  changed, or the tests failed without the change only to build, or with no
+  build command to say whether they built): say which in the report rather
+  than claim a red run. Where Wesley has configured no settings for the
+  repository, pass `--test`, `--build` and `--test-files`.
 - For a bug, write the test from the symptom the report describes (the wrong
   output, the crash, the lost write), not from the line that changed. The
   next regression may come from somewhere else.

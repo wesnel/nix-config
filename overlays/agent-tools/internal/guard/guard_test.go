@@ -3,46 +3,16 @@ package guard
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
-// handOff is what the rest of a reason, after the sentence saying why, must
-// contain: a command in backticks, or the step handed to Wesley or the report.
-var handOff = regexp.MustCompile("`|Wesley|(?i:report)")
-
-// saysInstead reports whether a denial's reason goes on, after the sentence
-// saying why, to say what to do instead.
-func saysInstead(reason string) bool {
-	quoted := false
-	for i := 0; i+1 < len(reason); i++ {
-		switch {
-		case reason[i] == '`':
-			quoted = !quoted
-		case !quoted && (reason[i] == '.' || reason[i] == ';') && reason[i+1] == ' ':
-			return handOff.MatchString(reason[i+2:])
-		}
-	}
-	return false
-}
-
-func TestSaysInstead(t *testing.T) {
-	for reason, want := range map[string]bool{
-		"Pushing goes through `pr-loop push`.":                       false,
-		"No. Try something else.":                                    false,
-		"Pushing is checked. Use `pr-loop push`.":                    true,
-		"Pruning is Wesley's call; leave it to him.":                 false,
-		"Pruning is a decision. Leave `pr-loop end --prune` to him.": true,
-		"`git x. y` is an alias; ask Wesley.":                        true,
-	} {
-		if got := saysInstead(reason); got != want {
-			t.Errorf("saysInstead(%q) = %v", reason, got)
-		}
-	}
-}
+var saysInstead = refusal.SaysInstead
 
 // TestAliasDenial covers the alias already in the git config, which the
 // guard looks up at run time.
@@ -126,6 +96,100 @@ func TestCheck(t *testing.T) {
 	}
 }
 
+// TestWrappedCommands covers a command run through another program, a shell
+// keyword or flags the shell combines, which the guard reads as the command
+// it runs, and configuration handed to git through the environment.
+func TestWrappedCommands(t *testing.T) {
+	cases := []struct {
+		deny    bool
+		command string
+	}{
+		{true, "timeout 60 gh pr merge 1"},
+		{true, "timeout -s KILL -k 5 60 git push"},
+		{true, "timeout --signal=KILL 1m git push"},
+		{true, "bash -lc 'gh pr merge 1'"},
+		{true, "bash -ec 'git push'"},
+		{true, "sh -c -- 'git push'"},
+		{true, "bash -o pipefail -c 'git push'"},
+		{true, "fish --command='git push'"},
+		{true, "zsh -l -c 'git push'"},
+		{true, "gh api -XPOST repos/o/r/merges"},
+		{true, "gh api --method=PUT repos/o/r/pulls/1/merge"},
+		{true, "gh api -X=POST repos/o/r/merges"},
+		{true, "gh api repos/o/r/issues/1/comments -fbody=x"},
+		{true, "gh api repos/o/r/issues/1/comments --raw-field=body=x"},
+		{true, "gh api repos/o/r/issues/1/comments --input=body.json"},
+		{true, "nice -n 5 git push"},
+		{true, "nice -5 git push"},
+		{true, "env -i git push"},
+		{true, "env -u HOME PATH=/bin git push"},
+		{true, "env -S 'git push origin x'"},
+		{true, "env -- git push"},
+		{true, "xargs -n 1 gh pr merge"},
+		{true, "xargs -I {} gh pr merge {}"},
+		{true, "command -p git push"},
+		{true, "builtin eval 'git push'"},
+		{true, "exec -a x git push"},
+		{true, "stdbuf -oL git push"},
+		{true, "stdbuf -o L git push"},
+		{true, "caffeinate -i -t 60 git push"},
+		{true, "nohup git push"},
+		{true, "time -p git push"},
+		{true, "nix shell nixpkgs#gh -c gh pr merge 1"},
+		{true, "nix develop --command git push"},
+		{true, "nix develop .#ci -c bash -c 'git push'"},
+		{true, "nix run nixpkgs#gh -- pr merge 1"},
+		{true, "nix run nixpkgs#gh pr merge 1"},
+		{true, "nix-shell -p gh --run 'gh pr merge 1'"},
+		{true, "direnv exec . git push"},
+		{true, `find . -maxdepth 0 -exec git push \;`},
+		{true, "find . -execdir gh pr merge 1 +"},
+		{true, "watch -n 5 git push"},
+		{true, "if true; then git push; fi"},
+		{true, "while true; do git push; done"},
+		{true, "! git push"},
+		{true, "{ git push; }"},
+		{true, "time git push"},
+		{true, `GIT_CONFIG_PARAMETERS="'alias.x=push'" git x`},
+		{true, "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0=push git x"},
+		{true, "env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push-guard.allowPublic GIT_CONFIG_VALUE_0=o/r git status"},
+		{true, "export GIT_CONFIG_PARAMETERS=\"'alias.x=push'\"; git x"},
+		{true, "git --config-env=alias.x=CMD x"},
+		{true, "$g pr merge 1"},
+		{true, `"$GH" pr comment 1 -b hi`},
+		{true, "$(which git) push"},
+		{false, "timeout 60 gh pr view 1"},
+		{false, "bash -lc 'git status'"},
+		{false, "bash -o pipefail -c 'go test ./...'"},
+		{false, "bash script.sh"},
+		{false, "nice -n 5 go test ./..."},
+		{false, "env -u FOO go test ./..."},
+		{false, "env FOO=1 true"},
+		{false, `find . -name '*.go' -exec grep -n push {} \;`},
+		{false, "nix develop -c go test ./..."},
+		{false, "nix run nixpkgs#hello -- --greeting push"},
+		{false, "$EDITOR notes.md"},
+		{false, `"$PAGER" README.md`},
+		{false, "command -v gh"},
+		{false, "gh api -XGET repos/o/r/pulls"},
+		{false, "gh api --method=GET repos/o/r/pulls"},
+		{false, "watch -n 5 gh pr checks 1"},
+		{false, "xargs -n 1 echo"},
+		{false, "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=T git status"},
+		{false, "if git diff --quiet; then echo clean; fi"},
+	}
+	for _, c := range cases {
+		input, _ := json.Marshal(map[string]string{"command": c.command})
+		reason := Check("Bash", "", input)
+		if (reason != "") != c.deny {
+			t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
+		}
+		if reason != "" && !saysInstead(reason) {
+			t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+		}
+	}
+}
+
 // TestGraphQLQuerySources covers a query that is not on the command line: the
 // guard reads a plain file of the workspace, and denies what it cannot read.
 func TestGraphQLQuerySources(t *testing.T) {
@@ -200,7 +264,7 @@ func TestGraphQLQuerySources(t *testing.T) {
 		event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "cwd": workspace,
 			"tool_input": map[string]string{"command": "gh api graphql -F query=@" + file}})
 		var out bytes.Buffer
-		Main(bytes.NewReader(event), &out)
+		Main(nil, bytes.NewReader(event), &out, io.Discard)
 		if (out.Len() != 0) != deny {
 			t.Errorf("%s from the event's cwd: deny=%v, output %s", file, !deny, out.String())
 		}
@@ -209,51 +273,50 @@ func TestGraphQLQuerySources(t *testing.T) {
 
 // TestPolicy holds the guard to the examples in policy.json, which ECA's deny
 // patterns are built from and checked against at package build time, so the
-// two cannot drift apart. An owner-only rule holds for an owner and a
-// reviewer, and a reviewer-only rule for a reviewer alone. Each denial's
-// reason, which is what the agent sees, must say what to do instead; a rule's
-// `why` is for whoever maintains it and reaches no agent.
+// two cannot drift apart. A rule's scope is the least strict role it holds
+// for: baseline (every session), coordinator, owner or reviewer. Each
+// denial's reason, which is what the agent sees, must say what to do
+// instead; a rule's `why` is for whoever maintains it and reaches no agent.
 func TestPolicy(t *testing.T) {
 	data, err := os.ReadFile("policy.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var rules []struct {
-		Pattern      string   `json:"pattern"`
-		OwnerOnly    bool     `json:"ownerOnly"`
-		ReviewerOnly bool     `json:"reviewerOnly"`
-		Deny         []string `json:"deny"`
-		Allow        []string `json:"allow"`
+		Why     string   `json:"why"`
+		Pattern string   `json:"pattern"`
+		Scope   string   `json:"scope"`
+		Deny    []string `json:"deny"`
+		Allow   []string `json:"allow"`
 	}
-	if err := json.Unmarshal(data, &rules); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&rules); err != nil {
 		t.Fatal(err)
 	}
 	checks := map[role]func(string, string, json.RawMessage) string{
-		coordinator: Check, owner: CheckOwner, reviewer: CheckReviewer}
-	names := map[role]string{coordinator: "coordinator", owner: "owner", reviewer: "reviewer"}
+		baseline: CheckBaseline, coordinator: Check, owner: CheckOwner, reviewer: CheckReviewer}
+	names := map[role]string{baseline: "baseline", coordinator: "coordinator", owner: "owner", reviewer: "reviewer"}
+	scopes := map[string]role{"baseline": baseline, "coordinator": coordinator, "owner": owner, "reviewer": reviewer}
 	for _, r := range rules {
 		if len(r.Deny) == 0 || len(r.Allow) == 0 {
 			t.Errorf("%s: needs examples both ways", r.Pattern)
 		}
-		scope := coordinator
-		switch {
-		case r.ReviewerOnly:
-			scope = reviewer
-		case r.OwnerOnly:
-			scope = owner
+		scope, ok := scopes[r.Scope]
+		if !ok {
+			t.Errorf("%s: scope %q is not a role", r.Pattern, r.Scope)
 		}
 		for denied, commands := range map[bool][]string{true: r.Deny, false: r.Allow} {
 			for _, command := range commands {
 				input, _ := json.Marshal(map[string]string{"command": command})
 				for who, check := range checks {
 					// A denial holds for the rule's role and every stricter
-					// one, and a narrower rule's denials are steps the
-					// coordinator takes. An allow example holds only for the
-					// rule's own role: another rule can deny it to a
-					// stricter one.
+					// one, and an owner's denials are steps the coordinator
+					// takes. An allow example holds only for the rule's own
+					// role: another rule can deny it to a stricter one.
 					want, held := denied && who >= scope, who == scope
 					if denied {
-						held = who >= scope || who == coordinator
+						held = who >= scope || (scope == owner && who == coordinator)
 					}
 					reason := check("Bash", "", input)
 					if got := reason != ""; held && got != want {
@@ -268,45 +331,195 @@ func TestPolicy(t *testing.T) {
 	}
 }
 
+// TestBaseline covers the rules for every session that no ECA pattern
+// expresses, and the baseline's allowances that a loop role does not share.
+func TestBaseline(t *testing.T) {
+	cases := []struct {
+		deny    bool
+		command string
+	}{
+		{true, "git push https://github.com/o/r HEAD"},
+		{true, "timeout 60 gh pr merge 1"},
+		{true, "bash -lc 'gh pr merge 1'"},
+		{true, "gh api -XPOST repos/o/r/merges"},
+		{true, "gh -R o/r pr merge 1"},
+		{true, "gh pr -R o/r merge 1"},
+		{true, "gh pr ready 1"},
+		{true, "gh pr create --title t --body b"},
+		{true, "gh pr edit 1 --add-label bug"},
+		{true, "gh pr edit 1 --title t --add-reviewer u"},
+		{true, "gh issue comment 1 -b x"},
+		{true, "gh auth token"},
+		{true, "gh auth status --show-token"},
+		{true, "gh auth status -t"},
+		{true, "gh auth setup-git"},
+		{true, "gh repo deploy-key add k.pub"},
+		{true, "gh secret set X"},
+		{true, "gh run rerun 1"},
+		{true, "gh workflow run ci.yml"},
+		{true, "gh codespace create"},
+		{true, "gh frobnicate"},
+		{true, "gh api graphql -f query='mutation { x }'"},
+		{true, "git -c credential.helper=osxkeychain fetch"},
+		{true, "git -c http.https://github.com/.extraHeader='Authorization: x' fetch"},
+		{true, "git config --global url.git@github.com:.insteadOf https://github.com/"},
+		{true, "git config core.sshCommand 'ssh -i k'"},
+		{true, "git config --global credential.helper store"},
+		{true, "GIT_SSH_COMMAND='ssh -i k' git fetch"},
+		{true, "GIT_ASKPASS=/tmp/p git fetch"},
+		{true, "env GIT_SSH=/tmp/s git fetch"},
+		{true, "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=store git fetch"},
+		{true, `GIT_CONFIG_PARAMETERS="'url.x.insteadof'='https://github.com/'" git fetch`},
+		{true, "git remote add fork https://github.com/me/r"},
+		{true, "git remote set-url origin https://github.com/me/r"},
+		{true, "git config remote.origin.pushurl https://github.com/me/r"},
+		{true, "curl -X POST https://api.github.com/repos/o/r/issues -d '{}'"},
+		{true, "curl --json '{}' https://api.github.com/repos/o/r/issues"},
+		{true, "wget --post-data=x https://api.github.com/repos/o/r/issues"},
+		{true, "http POST https://api.github.com/repos/o/r/issues title=x"},
+		{true, "curl -T f https://uploads.github.com/repos/o/r/releases/1/assets"},
+		{true, "pr-loop request --accept-failure ci 1"},
+		{false, "gh pr view 1"},
+		{false, "gh pr create --draft --title t --body-file b"},
+		{false, "gh pr create -d --title t --body b"},
+		{false, "pr-loop open --title T --body-file - x"},
+		{false, "pr-loop push"},
+		{false, "gh pr edit 1 --title t --body-file b"},
+		{false, "gh pr edit 1 -B main"},
+		{false, "gh pr ready 1 --undo"},
+		{false, "gh pr diff 1"},
+		{false, "gh pr checks 1"},
+		{false, "gh run watch 1"},
+		{false, "gh run download 1"},
+		{false, "gh release download v1"},
+		{false, "gh search prs --author @me"},
+		{false, "gh repo clone o/r"},
+		{false, "gh repo set-default o/r"},
+		{false, "gh browse"},
+		{false, "gh auth status"},
+		{false, "gh status"},
+		{false, "gh"},
+		{false, "gh api repos/o/r/pulls"},
+		{false, "gh api -X GET search/issues -f q=x"},
+		{false, "gh api graphql -f query='{ viewer { login } }'"},
+		{false, "git commit -m 'plain commit'"},
+		{false, "git commit --amend --no-edit"},
+		{false, "git fetch origin"},
+		{false, "git remote -v"},
+		{false, "git config --get credential.helper"},
+		{false, "git config --get remote.origin.url"},
+		{false, "git config user.name T"},
+		{false, "GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 go test ./..."},
+		{false, "curl -s https://api.github.com/repos/o/r"},
+		{false, "curl -X POST https://example.com -d x"},
+		{false, "http GET https://api.github.com/repos/o/r"},
+	}
+	for _, c := range cases {
+		input, _ := json.Marshal(map[string]string{"command": c.command})
+		reason := CheckBaseline("Bash", "", input)
+		if (reason != "") != c.deny {
+			t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
+		}
+		if reason != "" && !saysInstead(reason) {
+			t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+		}
+	}
+}
+
+// TestBaselineRoles covers the hook every ordinary session runs: an agent
+// with a loop role has that role's rules, and every other call the
+// baseline's.
+func TestBaselineRoles(t *testing.T) {
+	for _, c := range []struct {
+		deny      bool
+		agentType string
+		command   string
+	}{
+		{true, "", "git push origin x"},
+		{true, "Explore", "gh pr merge 1"},
+		{false, "", "git commit -m x"},
+		{false, "", "pr-loop push"},
+		{true, "reviewer", "git commit -m x"},
+		{true, "some-plugin:reviewer", "git stash"},
+		{true, "pr-loop:pr-owner", "pr-loop push"},
+		{false, "pr-loop:pr-owner", "git commit --fixup=abc"},
+		{true, "pr-loop:pr-owner", "git commit -m x"},
+	} {
+		event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "agent_type": c.agentType,
+			"tool_input": map[string]string{"command": c.command}})
+		var out, errs bytes.Buffer
+		if code := Main([]string{"--baseline"}, bytes.NewReader(event), &out, &errs); code != 0 {
+			t.Errorf("%s %q: exit %d: %s", c.agentType, c.command, code, errs.String())
+		}
+		if denied := strings.Contains(out.String(), `"permissionDecision":"deny"`); denied != c.deny {
+			t.Errorf("%s %q: deny=%v, output %s", c.agentType, c.command, denied, out.String())
+		}
+	}
+}
+
+// TestBaselineFormats covers the hook every session runs, as each agent
+// calls it: Claude Code with its agent_type, Codex with turn_id and no
+// agent, ECA with its agent's name in agent.
+func TestBaselineFormats(t *testing.T) {
+	for _, c := range []struct {
+		event, want string
+	}{
+		{`{"tool_name":"Bash","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
+		{`{"tool_name":"Bash","agent_type":"reviewer","tool_input":{"command":"git commit -m x"}}`, `"permissionDecision":"deny"`},
+		{`{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}`, ""},
+		{`{"tool_name":"Bash","turn_id":"t","tool_input":{"command":"gh pr merge 1"}}`, `"permissionDecision":"deny"`},
+		{`{"tool_name":"exec_command","turn_id":"t","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
+		{`{"tool_name":"apply_patch","turn_id":"t","tool_input":{"command":"*** Begin Patch\n*** Add File: .claude/settings.local.json\n+{\"disableAllHooks\": true}\n*** End Patch\n"}}`, `"permissionDecision":"deny"`},
+		{`{"tool_name":"apply_patch","turn_id":"t","tool_input":{"command":"*** Begin Patch\n*** Update File: main.go\n@@\n-a\n+b\n*** End Patch\n"}}`, ""},
+		{`{"hook_type":"preToolCall","agent":"code","tool_name":"shell_command","tool_input":{"command":"git push"}}`, `"approval":"deny"`},
+		{`{"hook_type":"preToolCall","agent":"code","tool_name":"shell_command","tool_input":{"command":"git commit -m x"}}`, ""},
+		{`{"hook_type":"preToolCall","agent":"pr-coordinator","tool_name":"shell_command","tool_input":{"command":"git commit -m x"}}`, `"approval":"deny"`},
+		{`{"hook_type":"preToolCall","agent":"pr-owner","tool_name":"shell_command","tool_input":{"command":"pr-loop push"}}`, `"approval":"deny"`},
+		{`{"hook_type":"preToolCall","agent":"reviewer","tool_name":"shell_command","tool_input":{"command":"git stash"}}`, `"approval":"deny"`},
+	} {
+		var out, errs bytes.Buffer
+		if code := Main([]string{"--baseline"}, strings.NewReader(c.event), &out, &errs); code != 0 {
+			t.Errorf("%s: exit %d: %s", c.event, code, errs.String())
+		}
+		if (c.want == "" && out.Len() != 0) || !strings.Contains(out.String(), c.want) {
+			t.Errorf("%s: printed %s", c.event, out.String())
+		}
+	}
+	var out, errs bytes.Buffer
+	if code := Main([]string{"--only", "reviewer"}, strings.NewReader(`{"tool_name":"Bash"}`), &out, &errs); code == 0 {
+		t.Errorf("an unknown flag was accepted: %s", out.String())
+	}
+}
+
+// TestReviewerReasons holds every denial a reviewer meets to the one thing
+// it should do instead, wherever the rule it broke comes from.
+func TestReviewerReasons(t *testing.T) {
+	for _, command := range []string{"git push origin x", "git commit -m x", "gh pr comment 1 -b hi",
+		"git sign-pass", "pr-loop reply T --body-file -"} {
+		input, _ := json.Marshal(map[string]string{"command": command})
+		if reason := CheckReviewer("Bash", "", input); !strings.HasPrefix(reason, "A reviewer only reads.") || !saysInstead(reason) {
+			t.Errorf("%q: %q", command, reason)
+		}
+	}
+}
+
 func TestFormats(t *testing.T) {
-	var out bytes.Buffer
-	Main(strings.NewReader(`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push"}}`), &out)
-	if !strings.Contains(out.String(), `"permissionDecision":"deny"`) {
-		t.Errorf("Claude Code format: %s", out.String())
-	}
-	out.Reset()
-	Main(strings.NewReader(`{"hook_type":"preToolCall","server":"eca","tool_name":"shell_command","tool_input":{"command":"git push"}}`), &out)
-	if !strings.Contains(out.String(), `"approval":"deny"`) {
-		t.Errorf("ECA format: %s", out.String())
-	}
-	out.Reset()
-	Main(strings.NewReader(`{"hook_type":"preToolCall","server":"linear","tool_name":"save_issue","tool_input":{}}`), &out)
-	if !strings.Contains(out.String(), `"approval":"deny"`) {
-		t.Errorf("ECA MCP tool: %s", out.String())
-	}
-	out.Reset()
-	Main(strings.NewReader(`{"tool_name":"Bash","agent_type":"pr-loop:pr-owner","tool_input":{"command":"pr-loop push"}}`), &out)
-	if !strings.Contains(out.String(), `"permissionDecision":"deny"`) {
-		t.Errorf("Claude Code owner: %s", out.String())
-	}
-	out.Reset()
-	Main(strings.NewReader(`{"tool_name":"Bash","agent_type":"pr-loop:pr-reviewer","tool_input":{"command":"git commit --fixup=abc"}}`), &out)
-	if !strings.Contains(out.String(), `"permissionDecision":"deny"`) {
-		t.Errorf("Claude Code reviewer: %s", out.String())
-	}
-	out.Reset()
-	Main(strings.NewReader(`{"tool_name":"Bash","agent_type":"pr-loop:pr-owner","tool_input":{"command":"git commit --fixup=abc"}}`), &out)
-	if out.Len() != 0 {
-		t.Errorf("owner's fixup printed %s", out.String())
-	}
-	out.Reset()
-	Main(strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"pr-loop push"}}`), &out)
-	if out.Len() != 0 {
-		t.Errorf("coordinator's push printed %s", out.String())
-	}
-	out.Reset()
-	Main(strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"ls"}}`), &out)
-	if out.Len() != 0 {
-		t.Errorf("allowed call printed %s", out.String())
+	for _, c := range []struct {
+		event, want string
+	}{
+		{`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
+		{`{"hook_type":"preToolCall","server":"eca","tool_name":"shell_command","tool_input":{"command":"git push"}}`, `"approval":"deny"`},
+		{`{"hook_type":"preToolCall","server":"linear","tool_name":"save_issue","tool_input":{}}`, `"approval":"deny"`},
+		{`{"tool_name":"Bash","agent_type":"pr-loop:pr-owner","tool_input":{"command":"pr-loop push"}}`, `"permissionDecision":"deny"`},
+		{`{"tool_name":"Bash","agent_type":"reviewer","tool_input":{"command":"git commit --fixup=abc"}}`, `"permissionDecision":"deny"`},
+		{`{"tool_name":"Bash","agent_type":"pr-loop:pr-owner","tool_input":{"command":"git commit --fixup=abc"}}`, ""},
+		{`{"tool_name":"Bash","tool_input":{"command":"pr-loop push"}}`, ""},
+		{`{"tool_name":"Bash","tool_input":{"command":"ls"}}`, ""},
+	} {
+		var out bytes.Buffer
+		Main(nil, strings.NewReader(c.event), &out, io.Discard)
+		if (c.want == "" && out.Len() != 0) || !strings.Contains(out.String(), c.want) {
+			t.Errorf("%s: printed %s", c.event, out.String())
+		}
 	}
 }
