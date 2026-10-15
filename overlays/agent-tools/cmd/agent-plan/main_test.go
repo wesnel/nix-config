@@ -36,6 +36,7 @@ func setup(t *testing.T) plans.Config {
 	data, _ := json.Marshal(map[string]any{"plans": c})
 	os.WriteFile(config, data, 0o644)
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	t.Setenv("SANDBOX_RELAY_URL", "")
 	t.Setenv("SANDBOX_RELAYED", "")
@@ -163,6 +164,21 @@ func TestCommands(t *testing.T) {
 			}
 		})
 	}
+
+	// Context and quota come before the questions.
+	t.Run("statusline with usage", func(t *testing.T) {
+		withQuestions(t)
+		input := fmt.Sprintf(`{"session_id":"s-1","cwd":"/nowhere","context_window":{"used_percentage":4},`+
+			`"rate_limits":{"five_hour":{"used_percentage":20,"resets_at":%d}}}`, time.Now().Add(time.Hour).Unix())
+		code, out, _ := agentPlan(t, input, "statusline")
+		if code != 0 || out != "ctx 4% · 5h 20% · 1 open question · /questions\n" {
+			t.Errorf("statusline: %d %q", code, out)
+		}
+		code, out, _ = agentPlan(t, `{"session_id":"s-1","cwd":"/nowhere"}`, "statusline")
+		if code != 0 || out != "5h 20% · 1 open question · /questions\n" {
+			t.Errorf("statusline from the recorded reading: %d %q", code, out)
+		}
+	})
 
 	t.Run("decide and ask", func(t *testing.T) {
 		plan := withQuestions(t)
