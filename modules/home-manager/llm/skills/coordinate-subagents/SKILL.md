@@ -170,8 +170,9 @@ sub-agent, in its current task or its next one.
 
 Start every sub-agent with the model and effort this section gives; it is
 what permits setting them. In Claude Code they are the Agent tool's `model`
-and `effort`. Codex's `spawn_agent` takes a `model`; ECA takes the model
-from the agent's definition.
+and `effort`. Codex's `spawn_agent` takes a `model`. ECA's `spawn_agent`
+takes one too, reserved for an explicit choice: pass it only for a tier
+Wesley chose (Quota, below); otherwise the agent's definition sets it.
 
 - **Haiku 5.5, low effort:** read-only lookups, inventories, running a given
   command and reporting it.
@@ -189,6 +190,26 @@ medium effort before it moves to Sonnet or Haiku. Prompt caches belong to
 one model, so mixing models loses their reuse; judge the cost of a completed
 task, not of a request. When a cheaper sub-agent's report fails Check every
 report, or a review of its work finds real defects, rerun the task on Opus.
+
+### Quota
+
+Before starting sub-agents, run `agent-plan usage`: this host's last
+reading of each provider's 5-hour and weekly windows, and Wesley's choice
+while it lasts.
+
+- **`down`:** start each new sub-agent of that provider one tier below what
+  the list above gives (Opus to Sonnet, Sonnet to Haiku; Haiku stays
+  Haiku). Reviewers keep their tier.
+- **`postpone`:** the steps and parts he agreed to postpone carry a future
+  SCHEDULED and are absent from the ready list until the reset. Start
+  nothing in their place he did not agree to.
+- **`keep`, or no choice:** the usual tiers. A window at 75% or more brings
+  the quota ask through the prompt hook, once per host; put it to him then,
+  and keep the usual tiers until he answers.
+
+The choice is his, never yours: change tiers only on his recorded answer
+(`agent-plan usage choose`), and only for agents not yet started. Never
+restart or switch the model of a running agent or session.
 
 Keep briefs and reports small: a task points at files, such as the rules
 file and the plan, rather than pasting them, and gives the report a length.
