@@ -122,9 +122,10 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      the plan's BRANCHES or origin/<default>, has the patch ID
                      of BASE..HEAD as it stands; the commits as pr-loop guard
                      --post logs them, in a plan it makes for a commit no
-                     plan takes; ECA gets
-                     the reason on stderr with exit 2, once per chat, kept in
-                     $XDG_STATE_HOME/agent-tools/stop; never touches the network
+                     plan takes; ECA gets the reason on stderr with exit 2,
+                     logged as stop-blocked, and the chat's stops pass while
+                     the log holds nothing newer but stops blocked; never
+                     touches the network
   remind             a hook (reads stdin) that asks, in a session with a plan,
                      for the coordinator to check a finished sub-agent's report
                      and log its part (Claude Code's UserPromptSubmit and
@@ -274,7 +275,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				HookType string `json:"hook_type"`
 			}
 			if json.Unmarshal(input, &event) == nil && event.HookType == "postRequest" {
-				if reason := c.StopCheckChat(input, plans.StopStateDir(), time.Now()); reason != "" {
+				if reason := c.StopCheckChat(input, time.Now()); reason != "" {
 					fmt.Fprintln(stderr, reason)
 					return 2
 				}

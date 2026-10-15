@@ -659,7 +659,8 @@ func TestHooks(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := c.RecordCommit("chat-1", repo, plans.Event{Commit: "Add x", Summary: "Add x"}, time.Now()); err != nil {
+		p, _, err := c.RecordCommit("chat-1", repo, plans.Event{Commit: "Add x", Summary: "Add x"}, time.Now())
+		if err != nil {
 			t.Fatal(err)
 		}
 		event, _ := json.Marshal(map[string]any{"hook_type": "postRequest", "chat_id": "chat-1", "cwd": repo})
@@ -670,8 +671,9 @@ func TestHooks(t *testing.T) {
 		if code, out, errs = agentPlan(t, string(event), "stop-check"); code != 0 || out != "" || errs != "" {
 			t.Errorf("second stop: %d %q %q", code, out, errs)
 		}
-		if _, err := os.Stat(plans.StopStateDir()); err != nil {
-			t.Errorf("state dir: %v", err)
+		events, _ := p.Events()
+		if last := events[len(events)-1]; last.Kind != "stop-blocked" || last.Session != "chat-1" {
+			t.Errorf("last event %+v", last)
 		}
 	})
 }

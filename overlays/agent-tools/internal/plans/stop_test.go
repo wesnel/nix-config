@@ -371,22 +371,22 @@ func TestReceipt(t *testing.T) {
 }
 
 // TestStopCheckChat covers ECA's postRequest hook, which has no
-// stop_hook_active: one block per chat, then the stop passes and the chat
-// is checked again at its next stop.
+// stop_hook_active: a chat's stop is blocked once, logged as stop-blocked
+// in its plan, and passes while its plan's log holds nothing newer than
+// the stops it blocked.
 func TestStopCheckChat(t *testing.T) {
-	// stopIn returns a function that runs ECA's hook in repo for a chat,
-	// keeping its state under state.
-	stopIn := func(t *testing.T, c Config, repo, state string) func(chat string) string {
+	// stopIn returns a function that runs ECA's hook in repo for a chat.
+	stopIn := func(t *testing.T, c Config, repo string) func(chat string) string {
 		return func(chat string) string {
 			t.Helper()
 			event, _ := json.Marshal(map[string]any{"hook_type": "postRequest", "hook_name": "x", "chat_id": chat,
 				"cwd": repo, "workspaces": []string{repo}, "follow_up_active": false})
-			return c.StopCheckChat(event, state, time.Now())
+			return c.StopCheckChat(event, time.Now())
 		}
 	}
 
 	t.Run("nothing to sign", func(t *testing.T) {
-		stop := stopIn(t, testConfig(t), stopRepo(t, false), filepath.Join(t.TempDir(), "agent-tools", "stop"))
+		stop := stopIn(t, testConfig(t), stopRepo(t, false))
 		if got := stop("c1"); got != "" {
 			t.Fatalf("nothing to sign: %q", got)
 		}
@@ -394,20 +394,21 @@ func TestStopCheckChat(t *testing.T) {
 
 	t.Run("one block per chat", func(t *testing.T) {
 		const owed = "no review receipt matches"
-		state := filepath.Join(t.TempDir(), "agent-tools", "stop")
 		repo := stopRepo(t, true)
 		c := testConfig(t)
-		stop := stopIn(t, c, repo, state)
-		for _, chat := range []string{"c1", "c2"} {
-			if _, _, err := c.RecordCommit(chat, repo, Event{Commit: "Add x", Summary: "Add x"}, time.Now()); err != nil {
+		stop := stopIn(t, c, repo)
+		commit := func(chat, subject string) Plan {
+			t.Helper()
+			p, _, err := c.RecordCommit(chat, repo, Event{Commit: subject, Summary: subject}, time.Now())
+			if err != nil {
 				t.Fatal(err)
 			}
+			return p
 		}
+		p := commit("c1", "Add x")
+		commit("c2", "Add x")
 		if got := stop("c1"); !strings.Contains(got, owed) {
 			t.Fatalf("first stop: %q", got)
-		}
-		if _, err := os.Stat(filepath.Join(state, "c1")); err != nil {
-			t.Errorf("no state file: %v", err)
 		}
 		if got := stop("c2"); !strings.Contains(got, owed) {
 			t.Errorf("another chat: %q", got)
@@ -415,37 +416,28 @@ func TestStopCheckChat(t *testing.T) {
 		if got := stop("c1"); got != "" {
 			t.Errorf("second stop of the chat: %q", got)
 		}
+		if got := stop("c1"); got != "" {
+			t.Errorf("a stop with nothing new: %q", got)
+		}
+		commit("c1", "Add y")
 		if got := stop("c1"); !strings.Contains(got, owed) {
-			t.Errorf("stop after the pass: %q", got)
+			t.Errorf("a stop after more work: %q", got)
 		}
-	})
-
-	t.Run("chat IDs that are no file names", func(t *testing.T) {
-		state := filepath.Join(t.TempDir(), "agent-tools", "stop")
-		repo := stopRepo(t, true)
-		c := testConfig(t)
-		stop := stopIn(t, c, repo, state)
-		for _, chat := range []string{"c1", "", "../c3", "a/b"} {
-			c.RecordCommit(chat, repo, Event{Commit: "Add x", Summary: "Add x"}, time.Now())
-			stop(chat)
+		events, _ := p.Events()
+		var blocked []string
+		for _, e := range events {
+			if e.Kind == "stop-blocked" {
+				blocked = append(blocked, e.Session)
+			}
 		}
-		for _, dir := range []string{state} {
-			entries, _ := os.ReadDir(dir)
-			if len(entries) == 0 {
-				t.Errorf("no state files in %s", dir)
-			}
-			for _, e := range entries {
-				if strings.ContainsAny(e.Name(), "/\\") || strings.HasPrefix(e.Name(), ".") {
-					t.Errorf("state file %q in %s", e.Name(), dir)
-				}
-			}
+		if strings.Join(blocked, " ") != "c1 c2 c1" {
+			t.Errorf("stop-blocked for %v", blocked)
 		}
 	})
 
 	t.Run("not json", func(t *testing.T) {
 		c := testConfig(t)
-		state := filepath.Join(t.TempDir(), "agent-tools", "stop")
-		if got := c.StopCheckChat([]byte("x"), state, time.Now()); got != "" {
+		if got := c.StopCheckChat([]byte("x"), time.Now()); got != "" {
 			t.Errorf("not json: %q", got)
 		}
 	})

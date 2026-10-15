@@ -78,6 +78,8 @@ var (
 				"Run `git fresh-review` (or `pr-loop review` for someone else's pull request) as the review-change skill says",
 			"committed": "a hook after each shell call logs `committed` for every commit, from what git printed. " +
 				"Log `done` with `--commit SUBJECT` for the step a commit completes",
+			stopBlocked: "the stop-check logs `stop-blocked` for each stop of an ECA chat it blocks. " +
+				"Do what its reason asks, or say in your report why it cannot be done",
 			"pushed": "pr-loop, and a hook after each shell call, log `pushed` for every push, from what they pushed. " +
 				"Watch the push's CI with `pr-loop wait ci` as the signing-pass skill says",
 		}
