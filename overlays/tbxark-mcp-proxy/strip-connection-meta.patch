@@ -1,0 +1,299 @@
+diff --git a/client.go b/client.go
+index ea5bc63..01bba35 100644
+--- a/client.go
++++ b/client.go
+@@ -6,6 +6,7 @@ import (
+ 	"errors"
+ 	"fmt"
+ 	"log/slog"
++	"maps"
+ 	"net/http"
+ 	"net/url"
+ 	"os/exec"
+@@ -437,6 +438,40 @@ func redactURLCredentials(err error) error {
+ 	return &redactedError{msg: message, err: err}
+ }
+ 
++// connectionMetaKeys are the _meta fields that describe a single 2026-07-28
++// connection. On a request the proxy forwards they describe the caller's
++// connection to the proxy, not the proxy's connection to the downstream: on a
++// downstream connection that uses an older version the caller's protocolVersion
++// would contradict the Mcp-Protocol-Version header, which strict servers reject,
++// and on a 2026-07-28 connection mcp-go sets its own values for only some of
++// them.
++var connectionMetaKeys = []string{
++	mcp.MetaKeyProtocolVersion,
++	mcp.MetaKeyClientInfo,
++	mcp.MetaKeyClientCapabilities,
++	mcp.MetaKeyServerInfo,
++	mcp.MetaKeyLogLevel,
++	mcp.MetaKeySubscriptionID,
++}
++
++// downstreamMeta returns a copy of a caller's request _meta without
++// connectionMetaKeys, for forwarding downstream. Every other field, such as
++// progressToken, passes through, and the caller's _meta is left unchanged.
++func downstreamMeta(meta *mcp.Meta) *mcp.Meta {
++	if meta == nil {
++		return nil
++	}
++	stripped := *meta
++	stripped.AdditionalFields = maps.Clone(meta.AdditionalFields)
++	for _, key := range connectionMetaKeys {
++		delete(stripped.AdditionalFields, key)
++	}
++	if stripped.ProgressToken == nil && len(stripped.AdditionalFields) == 0 {
++		return nil
++	}
++	return &stripped
++}
++
+ // callTool forwards a tool call to the downstream, bounded by requestTimeout
+ // when one is configured.
+ //
+@@ -455,6 +490,7 @@ func (c *Client) callTool(ctx context.Context, request mcp.CallToolRequest) (*mc
+ 	}
+ 	callCtx, cancel := c.withRequestTimeout(ctx)
+ 	defer cancel()
++	request.Params.Meta = downstreamMeta(request.Params.Meta)
+ 	result, err := cl.CallTool(callCtx, request)
+ 	return result, redactURLCredentials(err)
+ }
+@@ -749,6 +785,7 @@ func (c *Client) addPromptsToServer(ctx context.Context, mcpServer *server.MCPSe
+ 				}
+ 				callCtx, cancel := c.withRequestTimeout(ctx)
+ 				defer cancel()
++				request.Params.Meta = downstreamMeta(request.Params.Meta)
+ 				result, err := live.GetPrompt(callCtx, request)
+ 				return result, redactURLCredentials(err)
+ 			}})
+@@ -852,6 +889,7 @@ func (c *Client) readResource(ctx context.Context, request mcp.ReadResourceReque
+ 	}
+ 	callCtx, cancel := c.withRequestTimeout(ctx)
+ 	defer cancel()
++	request.Params.Meta = downstreamMeta(request.Params.Meta)
+ 	readResource, err := cl.ReadResource(callCtx, request)
+ 	if err != nil {
+ 		return nil, redactURLCredentials(err)
+diff --git a/client_test.go b/client_test.go
+index ac10b27..7b92c06 100644
+--- a/client_test.go
++++ b/client_test.go
+@@ -615,3 +615,29 @@ func TestNilOptionsClientDoesNotPanicOnConnect(t *testing.T) {
+ 	// process rather than this goroutine.
+ 	time.Sleep(100 * time.Millisecond)
+ }
++
++// The e2e test covers what reaches the downstream; this covers what it cannot
++// see: the caller's _meta is not modified, and no empty _meta is sent.
++func TestDownstreamMetaCopiesAndDropsEmpty(t *testing.T) {
++	t.Parallel()
++
++	caller := &mcp.Meta{AdditionalFields: map[string]any{
++		mcp.MetaKeyProtocolVersion: mcp.ProtocolVersion20260728,
++		"traceparent":              "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
++	}}
++	got := downstreamMeta(caller)
++	if got == nil || len(got.AdditionalFields) != 1 || got.AdditionalFields["traceparent"] == nil {
++		t.Errorf("downstreamMeta = %#v, want only traceparent", got)
++	}
++	if len(caller.AdditionalFields) != 2 {
++		t.Errorf("caller's _meta was modified: %#v", caller.AdditionalFields)
++	}
++
++	connectionOnly := &mcp.Meta{AdditionalFields: map[string]any{mcp.MetaKeyProtocolVersion: mcp.ProtocolVersion20260728}}
++	if got := downstreamMeta(connectionOnly); got != nil {
++		t.Errorf("downstreamMeta of connection fields only = %#v, want nil", got)
++	}
++	if got := downstreamMeta(nil); got != nil {
++		t.Errorf("downstreamMeta(nil) = %#v, want nil", got)
++	}
++}
+diff --git a/test/e2e/connection_meta_test.go b/test/e2e/connection_meta_test.go
+new file mode 100644
+index 0000000..47dbc6b
+--- /dev/null
++++ b/test/e2e/connection_meta_test.go
+@@ -0,0 +1,182 @@
++package e2e
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"fmt"
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"sync"
++	"testing"
++
++	"github.com/mark3labs/mcp-go/mcp"
++	"github.com/mark3labs/mcp-go/server"
++)
++
++// connectionMetaKeys describe one hop of a 2026-07-28 connection. A request
++// the proxy forwards must carry none of the caller's, whatever protocol version
++// the downstream connection uses.
++var connectionMetaKeys = []string{
++	mcp.MetaKeyProtocolVersion,
++	mcp.MetaKeyClientInfo,
++	mcp.MetaKeyClientCapabilities,
++	mcp.MetaKeyServerInfo,
++	mcp.MetaKeyLogLevel,
++	mcp.MetaKeySubscriptionID,
++}
++
++const forwardedMetaKey = "example.com/forwarded"
++
++// strictLegacyDownstream speaks only the pre-2026-07-28 protocol versions and,
++// like hosted servers that check it, rejects a request whose body names a
++// protocol version other than its Mcp-Protocol-Version header. It records the
++// _meta of every forwarded request.
++type strictLegacyDownstream struct {
++	mu    sync.Mutex
++	metas map[string]map[string]any
++}
++
++func (d *strictLegacyDownstream) meta(method string) map[string]any {
++	d.mu.Lock()
++	defer d.mu.Unlock()
++	return d.metas[method]
++}
++
++func startStrictLegacyDownstream(t *testing.T) (string, *strictLegacyDownstream) {
++	t.Helper()
++
++	mcpServer := server.NewMCPServer("downstream", "1.0.0",
++		server.WithToolCapabilities(true),
++		server.WithPromptCapabilities(true),
++		server.WithResourceCapabilities(false, true),
++	)
++	mcpServer.AddTool(mcp.NewTool("echo"), func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
++		return mcp.NewToolResultText("tool"), nil
++	})
++	mcpServer.AddPrompt(mcp.NewPrompt("greet"), func(context.Context, mcp.GetPromptRequest) (*mcp.GetPromptResult, error) {
++		return mcp.NewGetPromptResult("greet", []mcp.PromptMessage{
++			mcp.NewPromptMessage(mcp.RoleUser, mcp.NewTextContent("prompt")),
++		}), nil
++	})
++	mcpServer.AddResource(mcp.NewResource("test://doc", "doc"), func(context.Context, mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
++		return []mcp.ResourceContents{mcp.TextResourceContents{URI: "test://doc", Text: "resource"}}, nil
++	})
++	handler := server.NewStreamableHTTPServer(mcpServer,
++		server.WithStateLess(true),
++		server.WithStreamableHTTPProtocolVersions(mcp.LegacyProtocolVersions()...),
++	)
++
++	downstream := &strictLegacyDownstream{metas: map[string]map[string]any{}}
++	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		body, err := io.ReadAll(r.Body)
++		if err != nil {
++			http.Error(w, err.Error(), http.StatusBadRequest)
++			return
++		}
++		r.Body = io.NopCloser(bytes.NewReader(body))
++
++		var request struct {
++			ID     json.RawMessage `json:"id"`
++			Method string          `json:"method"`
++			Params struct {
++				Meta map[string]any `json:"_meta"`
++			} `json:"params"`
++		}
++		if json.Unmarshal(body, &request) == nil {
++			switch request.Method {
++			case "tools/call", "prompts/get", "resources/read":
++				downstream.mu.Lock()
++				downstream.metas[request.Method] = request.Params.Meta
++				downstream.mu.Unlock()
++			}
++			header := r.Header.Get("Mcp-Protocol-Version")
++			if inBody, ok := request.Params.Meta[mcp.MetaKeyProtocolVersion]; ok && inBody != header {
++				w.Header().Set("Content-Type", "application/json")
++				w.WriteHeader(http.StatusBadRequest)
++				_ = json.NewEncoder(w).Encode(map[string]any{
++					"jsonrpc": "2.0",
++					"id":      request.ID,
++					"error": map[string]any{
++						"code":    -32020,
++						"message": fmt.Sprintf("header mismatch: Mcp-Protocol-Version header %s does not match request %s %v", header, mcp.MetaKeyProtocolVersion, inBody),
++					},
++				})
++				return
++			}
++		}
++		handler.ServeHTTP(w, r)
++	}))
++	t.Cleanup(ts.Close)
++	return ts.URL + "/mcp", downstream
++}
++
++// A 2026-07-28 caller's per-connection _meta must not reach a downstream the
++// proxy talks to on an older protocol version: the body would name the
++// caller's version next to a header naming the downstream's, and strict
++// servers reject that. Every other _meta field still has to pass through.
++func TestCallerConnectionMetaIsNotForwarded(t *testing.T) {
++	skipShort(t)
++	t.Parallel()
++
++	downstreamURL, downstream := startStrictLegacyDownstream(t)
++	configPath, addr := remoteConfig(t, "streamable-http", downstreamURL)
++	proxy := startProxy(t, configPath, addr)
++	mcpClient := proxy.connect(t, "streamable-http", "remote")
++	if got := mcpClient.ProtocolVersion(); got != mcp.ProtocolVersion20260728 {
++		t.Fatalf("caller negotiated %q with the proxy, want %q", got, mcp.ProtocolVersion20260728)
++	}
++
++	// The client adds protocolVersion, clientInfo and clientCapabilities
++	// itself; the other three per-connection keys are set here.
++	callerMeta := func(token string) *mcp.Meta {
++		return &mcp.Meta{ProgressToken: token, AdditionalFields: map[string]any{
++			forwardedMetaKey:          token,
++			mcp.MetaKeyServerInfo:     map[string]any{"name": "proxy", "version": "1"},
++			mcp.MetaKeyLogLevel:       "debug",
++			mcp.MetaKeySubscriptionID: "7",
++		}}
++	}
++	ctx := testContext(t)
++
++	toolRequest := mcp.CallToolRequest{}
++	toolRequest.Params.Name = "echo"
++	toolRequest.Params.Meta = callerMeta("tools/call")
++	if _, err := mcpClient.CallTool(ctx, toolRequest); err != nil {
++		t.Errorf("tools/call: %v", err)
++	}
++
++	promptRequest := mcp.GetPromptRequest{}
++	promptRequest.Params.Name = "greet"
++	promptRequest.Params.Meta = callerMeta("prompts/get")
++	if _, err := mcpClient.GetPrompt(ctx, promptRequest); err != nil {
++		t.Errorf("prompts/get: %v", err)
++	}
++
++	resourceRequest := mcp.ReadResourceRequest{}
++	resourceRequest.Params.URI = "test://doc"
++	resourceRequest.Params.Meta = callerMeta("resources/read")
++	if _, err := mcpClient.ReadResource(ctx, resourceRequest); err != nil {
++		t.Errorf("resources/read: %v", err)
++	}
++
++	for _, method := range []string{"tools/call", "prompts/get", "resources/read"} {
++		meta := downstream.meta(method)
++		if meta == nil {
++			t.Errorf("%s: downstream received no _meta", method)
++			continue
++		}
++		for _, key := range connectionMetaKeys {
++			if value, ok := meta[key]; ok {
++				t.Errorf("%s: caller's %s = %v forwarded downstream", method, key, value)
++			}
++		}
++		if got := meta["progressToken"]; got != method {
++			t.Errorf("%s: downstream progressToken = %v, want %q", method, got, method)
++		}
++		if got := meta[forwardedMetaKey]; got != method {
++			t.Errorf("%s: downstream %s = %v, want %q", method, forwardedMetaKey, got, method)
++		}
++	}
++}

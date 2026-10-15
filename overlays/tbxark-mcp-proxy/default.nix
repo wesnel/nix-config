@@ -14,6 +14,10 @@ buildGoModule rec {
     hash = "sha256-g3up2T63z6sbswtXryfgmO7j3QrjfRICqJmFayQoi7g=";
   };
 
+  # TBXark/mcp-proxy#83: the caller's per-connection _meta must not reach
+  # downstream servers. Carries its own e2e test, run in checkPhase.
+  patches = [./strip-connection-meta.patch];
+
   vendorHash = "sha256-yLJrc9gbnzNEdjYg8XhXwRGKmc+p7xTjX1eZfWMKc2Q=";
   env.CGO_ENABLED = "0";
   ldflags = ["-s" "-w" "-X main.BuildVersion=${version}"];
