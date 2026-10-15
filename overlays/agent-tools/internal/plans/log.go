@@ -35,6 +35,13 @@ type Event struct {
 	// Session is the session whose tool call the event records, as its
 	// hook names it: Claude Code's or Codex's session_id, ECA's chat_id.
 	Session string `json:"session,omitempty"`
+	// Sign is a sign-pass's ID, Exit its exit status, and Delivers the
+	// event ID of the result a sign-delivered event delivered.
+	Sign     string `json:"sign,omitempty"`
+	Exit     string `json:"exit,omitempty"`
+	Delivers string `json:"delivers,omitempty"`
+	// sign marks an event a sign-pass's commands log.
+	sign bool
 	// Note is what the caller should know about the event, such as a
 	// heading keyword Log could not write; the log does not hold it.
 	Note string `json:"note,omitempty"`
@@ -70,7 +77,10 @@ func (p Plan) check(e Event) error {
 		}
 	}
 	switch {
-	case !oneOf(e.Kind, Kinds):
+	case oneOf(e.Kind, signKinds) && !e.sign:
+		return refusal.New("a sign-pass's events are logged by `agent-plan sign-id`, `git sign-pass --notify` and the delivery of its result alone. " +
+			"Hand Wesley the sign-pass as the signing-pass skill says")
+	case !oneOf(e.Kind, Kinds) && !oneOf(e.Kind, signKinds):
 		return refusal.New("%q is not an event kind. Use one of `%s`", e.Kind, strings.Join(Kinds, "`, `"))
 	case e.Role != "" && !oneOf(e.Role, Roles):
 		return refusal.New("%q is not a role. Use one of `%s`", e.Role, strings.Join(Roles, "`, `"))
@@ -191,7 +201,8 @@ func eventText(e Event) string {
 	b.WriteString("\n:PROPERTIES:\n")
 	for _, kv := range [][2]string{{"EVENT", e.ID}, {"AGENT", e.Agent}, {"ROLE", e.Role}, {"ITEM", e.Item},
 		{"KIND", e.Kind}, {"BRANCH", e.Branch}, {"COMMIT", e.Commit}, {"EVIDENCE", e.Evidence},
-		{"REVIEW", e.Review}, {"OUTCOME", e.Outcome}, {"SESSION", e.Session}} {
+		{"REVIEW", e.Review}, {"OUTCOME", e.Outcome}, {"SESSION", e.Session},
+		{"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}} {
 		if kv[1] != "" {
 			b.WriteString(":" + kv[0] + ": " + kv[1] + "\n")
 		}
@@ -393,7 +404,7 @@ func (p Plan) Events() ([]Event, error) {
 		e := Event{ID: h.Props["EVENT"], Kind: h.Props["KIND"], Item: h.Props["ITEM"], Agent: h.Props["AGENT"],
 			Role: h.Props["ROLE"], Branch: h.Props["BRANCH"], Commit: h.Props["COMMIT"],
 			Evidence: h.Props["EVIDENCE"], Review: h.Props["REVIEW"], Outcome: h.Props["OUTCOME"],
-			Session: h.Props["SESSION"]}
+			Session: h.Props["SESSION"], Sign: h.Props["SIGN"], Exit: h.Props["EXIT"], Delivers: h.Props["DELIVERS"]}
 		if _, summary, ok := strings.Cut(h.Title, " — "); ok {
 			e.Summary = summary
 		}

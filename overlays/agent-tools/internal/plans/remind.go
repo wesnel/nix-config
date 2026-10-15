@@ -30,8 +30,21 @@ var notifiedAgent = regexp.MustCompile(`<summary>Agent "(.*)" finished</summary>
 // own: it keeps each http(s) address in it as a reference of the plan,
 // and prints nothing. Codex sends a sub-agent's turns with agent_id.
 //
+// On every prompt of the main thread, task-notifications included, it
+// delivers the results of the session's sign-passes that it has not yet
+// received (see DeliverSigns).
+//
 // It returns the hook's output, or nothing, on any error too.
 func (c Config) Remind(input []byte) []byte {
+	out := c.remind(input)
+	if signs := c.remindSigns(input, time.Now()); signs != "" {
+		return WithContext(out, input, signs)
+	}
+	return out
+}
+
+// remind is Remind but for the sign-passes.
+func (c Config) remind(input []byte) []byte {
 	var in struct {
 		Event        string          `json:"hook_event_name"`
 		Type         string          `json:"hook_type"` // ECA's

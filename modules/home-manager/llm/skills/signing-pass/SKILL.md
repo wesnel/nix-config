@@ -132,6 +132,37 @@ fixups, and that loop's signing pass squashes them as well as signing them.
 That loop accepts only `--fixup=<commit>`, never `amend!` or `squash!`, since
 it must not change the PR's commit messages.
 
+## Hearing how it ended
+
+Wesley runs the pass in his own terminal, possibly hours later, and does not
+tell you when it ends. The pass reports back itself. Before handing it over,
+mint an ID in the worktree you committed in, naming each branch it signs:
+
+```sh
+agent-plan sign-id --branch <branch>
+```
+
+It logs the request in the session's plan and prints the ID; without a plan
+it refuses. Add `--notify <ID>` to every `git sign-pass` command you hand
+over, `--resume` included. When the pass ends, signed, refused or failed, it
+logs the result in the plan, and the session's next prompt carries one line
+for it, such as `sign-pass ID signed: 2 signed; pushed <branch>` or
+`sign-pass ID refused: <reason>`. A refusal or failure is yours to fix and
+hand over again. A line marked stale is for the record: take no follow-up.
+
+- In Claude Code, also start a waiter with the Bash tool's
+  `run_in_background`, so the session wakes when the pass ends rather than at
+  Wesley's next prompt. It waits in an idle shell and gives up after a day:
+
+  ```sh
+  bash -c 'SECONDS=0; until agent-plan sign-result <ID> --check; do [ $SECONDS -lt 86400 ] || exit 1; sleep 5; done'
+  ```
+
+  The result arrives with its notification; `agent-plan sign-result <ID>`
+  prints it again.
+- In Codex and ECA, the result arrives with Wesley's next prompt.
+- Never poll for the result with model turns.
+
 ## After a push
 
 After every push to a pull request that you make or are told about,

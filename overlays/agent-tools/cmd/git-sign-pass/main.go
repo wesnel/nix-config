@@ -7,14 +7,16 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/signpass"
 )
 
-const usage = `usage: git sign-pass [--base REF] [--push | --set-upstream] [BRANCH...]
-       git sign-pass --resume [--push | --set-upstream] [BRANCH]
+const usage = `usage: git sign-pass [--base REF] [--push | --set-upstream] [--notify ID] [BRANCH...]
+       git sign-pass --resume [--push | --set-upstream] [--notify ID] [BRANCH]
 
 Re-signs the current branch from its oldest unsigned commit (or the oldest
 commit a fixup!, amend! or squash! folds into) to its tip, folding those in
@@ -49,6 +51,12 @@ everything that can refuse is checked before the first touch.
                     remote-tracking ref; refused, before any key touch, for a
                     branch whose upstream is another branch and for the
                     remote's default branch (REMOTE/HEAD, or main and master)
+  --notify ID       when the pass ends, signed, refused or failed, log its
+                    outcome, exit status and a one-line summary in the plan
+                    whose log holds sign-pass ID (from ` + "`agent-plan sign-id`" + `),
+                    for the session that handed it over; a failure to log
+                    it is reported on stderr and leaves the exit status as
+                    it was
   --set-upstream    --push, and in the same push publish every branch that
                     moved and has no upstream to its push remote
                     (branch.NAME.pushRemote, remote.pushDefault, the only
@@ -62,6 +70,7 @@ func main() {
 	resume := flags.Bool("resume", false, "")
 	push := flags.Bool("push", false, "")
 	setUpstream := flags.Bool("set-upstream", false, "")
+	notify := flags.String("notify", "", "")
 	if code, ok := cli.Parse(flags, os.Args[1:], usage, os.Stdout, os.Stderr); !ok {
 		os.Exit(code)
 	}
@@ -69,21 +78,35 @@ func main() {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
+	if *notify != "" {
+		if err := plans.CheckSignID(*notify); err != nil {
+			os.Exit(cli.Report("git-sign-pass", nil, err, 0, os.Stdout, os.Stderr))
+		}
+	}
+	result, err := pass(*base, *resume, *push, *setUpstream, flags.Args())
+	code := cli.Report("git-sign-pass", result, err, 0, os.Stdout, os.Stderr)
+	if *notify != "" {
+		if _, nerr := signpass.Notify(*notify, result, err, time.Now()); nerr != nil {
+			fmt.Fprintf(os.Stderr, "git-sign-pass: --notify %s: the result is not logged: %s\n", *notify, nerr)
+		}
+	}
+	os.Exit(code)
+}
+
+// pass runs the pass the arguments ask for.
+func pass(base string, resume, push, setUpstream bool, branches []string) (any, error) {
 	if err := git.CheckLocation(); err != nil {
-		os.Exit(cli.Report("git-sign-pass", nil, err, 0, os.Stdout, os.Stderr))
+		return nil, err
 	}
 	if err := git.CheckConfig(""); err != nil {
-		os.Exit(cli.Report("git-sign-pass", nil, err, 0, os.Stdout, os.Stderr))
+		return nil, err
 	}
-	var result any
-	var err error
 	switch {
-	case *resume && flags.NArg() == 1:
-		result, err = signpass.Resume(flags.Arg(0), *push, *setUpstream)
-	case flags.NArg() > 0:
-		result, err = signpass.Plan(*base, flags.Args(), *push, *setUpstream)
+	case resume && len(branches) == 1:
+		return signpass.Resume(branches[0], push, setUpstream)
+	case len(branches) > 0:
+		return signpass.Plan(base, branches, push, setUpstream)
 	default:
-		result, err = signpass.Run(*base, *resume, *push, *setUpstream)
+		return signpass.Run(base, resume, push, setUpstream)
 	}
-	os.Exit(cli.Report("git-sign-pass", result, err, 0, os.Stdout, os.Stderr))
 }
