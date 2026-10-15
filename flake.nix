@@ -46,10 +46,6 @@
       url = "github:hraban/mac-app-util";
     };
 
-    mujmap = {
-      url = "github:wesnel/mujmap/wesnel/add-darwin-to-flake";
-    };
-
     nixos-hardware = {
       url = "github:nixos/nixos-hardware/master";
     };
@@ -85,7 +81,6 @@
     flake-utils,
     home-manager,
     mac-app-util,
-    mujmap,
     nixos-hardware,
     nixpkgs,
     nur,
@@ -435,16 +430,7 @@
   in
     flake-utils.lib.eachDefaultSystemPassThrough (system: rec {
       overlays = {
-        default = let
-          flakes = {
-            inherit
-              mujmap
-              ;
-          };
-        in
-          import ./overlays {
-            inherit flakes system;
-          };
+        default = import ./overlays;
       };
 
       darwinConfigurations = let

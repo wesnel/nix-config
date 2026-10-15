@@ -1,7 +1,4 @@
-{
-  flakes,
-  system,
-}: final: prev: {
+final: prev: {
   github-copilot-cli = prev.github-copilot-cli.overrideAttrs (_old: {
     postInstall = ''
       # FIXME: Workaround for https://github.com/github/copilot-cli/issues/1446
@@ -19,8 +16,6 @@
   codex-acp = prev.codex-acp.overrideAttrs (_old: {
     doCheck = false;
   });
-
-  mujmap = flakes.mujmap.packages.${system}.mujmap;
 
   agent-tools = final.callPackage ./agent-tools {};
 
