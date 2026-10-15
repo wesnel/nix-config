@@ -88,8 +88,10 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      keeps it out of the ready lists and the agenda until
                      then, or clear its schedule; log it as postponed
   statusline         Claude Code's status line and Emacs's mode line (reads
-                     stdin): the open questions of the session's plan, else of
-                     the plan of the worktree "cwd" is in, or nothing; never
+                     stdin): "review owed" where the session committed since
+                     its plan's last review receipt, and the open questions of
+                     the session's plan, else of the plan of the worktree
+                     "cwd" is in, or nothing; never
                      touches the network
   own PLAN --worktree DIR --agent ID
                      record agent ID, the harness's ID for a sub-agent or
