@@ -126,26 +126,6 @@
         "type": "github"
       }
     },
-    "firefox-overlay": {
-      "inputs": {
-        "nixpkgs": [
-          "nixpkgs"
-        ]
-      },
-      "locked": {
-        "lastModified": 1791776414,
-        "narHash": "sha256-072oxw6/h7Vnu9jhDFrvvLjh3DWg2JeksgugkO/mjSk=",
-        "owner": "bandithedoge",
-        "repo": "nixpkgs-firefox-darwin",
-        "rev": "4f1e6e2a0adc7503701a30f742892cbfbcad3e03",
-        "type": "github"
-      },
-      "original": {
-        "owner": "bandithedoge",
-        "repo": "nixpkgs-firefox-darwin",
-        "type": "github"
-      }
-    },
     "flake-compat": {
       "flake": false,
       "locked": {
@@ -537,7 +517,6 @@
         "deploy-rs": "deploy-rs",
         "emacs-config": "emacs-config",
         "emacs-skills": "emacs-skills",
-        "firefox-overlay": "firefox-overlay",
         "flake-utils": "flake-utils_2",
         "home-manager": "home-manager",
         "mac-app-util": "mac-app-util",
