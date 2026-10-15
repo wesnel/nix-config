@@ -22,11 +22,6 @@
       flake = false;
     };
 
-    firefox-overlay = {
-      url = "github:bandithedoge/nixpkgs-firefox-darwin";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-
     flake-utils = {
       url = "github:numtide/flake-utils";
     };
@@ -77,7 +72,6 @@
     deploy-rs,
     emacs-config,
     emacs-skills,
-    firefox-overlay,
     flake-utils,
     home-manager,
     mac-app-util,
@@ -294,7 +288,6 @@
               nixpkgs.overlays = [
                 nur.overlays.default
                 emacs-config.overlays.default
-                firefox-overlay.overlay
                 overlay
               ];
             })
