@@ -1,4 +1,5 @@
 {
+  computerName,
   config,
   emacs-skills,
   lib,
@@ -7,6 +8,57 @@
 }:
 with lib; let
   cfg = config.wgn.home.llm;
+
+  agentToolsConfig = pkgs.writeText "agent-tools-config.json" (builtins.toJSON {
+    inherit (cfg) repos;
+    plans = {
+      inherit (cfg.plans) dir host peers;
+      inherit (cfg.plans.repository) remote;
+      repo = cfg.plans.repository.path;
+      sshConfig = "${config.xdg.configHome}/agent-tools/notes-ssh-config";
+      key = notesKey;
+    };
+  });
+
+  agentPlan = getExe' pkgs.agent-tools "agent-plan";
+
+  # The notes repository's deploy key, which only git's ssh reads: every
+  # agent is denied it, by the guard and by Claude Code's Read rules for
+  # ~/.ssh/id_*, and loop sandboxes cannot read ~/.ssh at all.
+  notesKey = "${config.home.homeDirectory}/.ssh/id_notes_deploy";
+
+  # sops-nix fails every secret when one it is told of is missing from the
+  # file, so the key is declared only once the file holds it. The file's
+  # top-level keys are not encrypted.
+  hasNotesKey = hasInfix "\nnotes-deploy-key:" ("\n" + builtins.readFile config.sops.defaultSopsFile);
+
+  # Its own config, through `ssh -F`, so that nothing in ~/.ssh/config, a
+  # shared master or an agent's key among them, applies, and a missing key
+  # fails rather than prompts.
+  notesSshConfig = ''
+    Host github-notes
+        HostName github.com
+        User git
+        IdentityFile ${notesKey}
+        IdentitiesOnly yes
+        IdentityAgent none
+        ForwardAgent no
+        ControlMaster no
+        ControlPath none
+        BatchMode yes
+        ConnectTimeout 10
+        StrictHostKeyChecking yes
+        UserKnownHostsFile ${pkgs.writeText "github-known-hosts" ''
+      github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+    ''}
+  '';
+
+  # Where the sync finds git, and ssh: on macOS, the system's, which the
+  # interactive master to a peer was opened with.
+  syncPath =
+    if pkgs.stdenv.hostPlatform.isDarwin
+    then "${pkgs.git}/bin:/usr/bin:/bin"
+    else "${pkgs.git}/bin:${pkgs.openssh}/bin:/usr/bin:/bin";
 
   # d2 renders a PNG through a Chromium it downloads at run time, after asking
   # on the terminal, which an agent cannot answer and a sandbox cannot
@@ -109,6 +161,87 @@ in {
         They come only from here, never from the repository: a repository
         that could name them would make agents run its commands.
       '';
+    };
+
+    plans = {
+      dir = mkOption {
+        type = types.str;
+        default = "${config.home.homeDirectory}/git/notes/agents";
+
+        description = ''
+          Where `agent-plan` keeps every host's plans, side by side, each
+          file named for its host. Org agenda files and refile targets must
+          not include it.
+        '';
+      };
+
+      host = mkOption {
+        type = types.str;
+        default = computerName;
+
+        description = ''
+          This machine's name in its plans' file names. It holds no dot,
+          which separates the parts of those names.
+        '';
+      };
+
+      repository = {
+        path = mkOption {
+          type = types.str;
+          default = dirOf cfg.plans.dir;
+
+          description = ''
+            The git repository {option}`dir` is in, which activation clones
+            when it is missing and the watcher syncs whenever a plan
+            changes: a launchd agent on macOS, a systemd path unit on Linux.
+          '';
+        };
+
+        remote = mkOption {
+          type = types.str;
+          default = "git@github-notes:wesnel/notes.git";
+
+          description = ''
+            The repository's origin. `github-notes` is a host of the ssh
+            config the sync alone uses, with the `notes-deploy-key` secret
+            as its only key.
+          '';
+        };
+
+        key = mkOption {
+          type = types.str;
+          readOnly = true;
+          default = notesKey;
+
+          description = ''
+            Where the deploy key is installed, once secrets/wgn.yaml holds
+            `notes-deploy-key`. Every sandbox that can reach it denies it.
+          '';
+        };
+      };
+
+      peers = mkOption {
+        type = types.listOf (types.submodule {
+          options = {
+            ssh = mkOption {
+              type = types.str;
+              description = "The peer as ssh names it.";
+            };
+            command = mkOption {
+              type = types.str;
+              default = "agent-plan";
+              description = "`agent-plan` on the peer.";
+            };
+          };
+        });
+        default = [];
+
+        description = ''
+          Hosts told to pull whenever this host's sync pushes, only over an
+          ssh master connection to them that already exists, since a new
+          connection could wait for a key touch.
+        '';
+      };
     };
 
     prLoop = {
@@ -376,6 +509,10 @@ in {
             source = ./skills/review-change/SKILL.md;
             sandbox = true;
           };
+          plan-work = {
+            source = ./skills/plan-work/SKILL.md;
+            sandbox = true;
+          };
           coordinate-subagents = ./skills/coordinate-subagents/SKILL.md;
         }
         // optionalAttrs cfg.prLoop.enable {
@@ -394,9 +531,62 @@ in {
       text = builtins.toJSON {inherit (cfg.prLoop) bots;};
     };
 
-    # Read by `pr-loop setup` and `worktrees` as pr-loop's config is, and by
-    # `git red-check` wherever it runs.
-    xdg.configFile."agent-tools/config.json".text = builtins.toJSON {inherit (cfg) repos;};
+    # Read by `pr-loop setup` and `worktrees` as pr-loop's config is, by
+    # `git red-check` wherever it runs, and by `agent-plan` and the guard,
+    # which keeps each plan's log append-only.
+    xdg.configFile."agent-tools/config.json".source = agentToolsConfig;
+
+    xdg.configFile."agent-tools/notes-ssh-config".text = notesSshConfig;
+
+    sops.secrets = mkIf hasNotesKey {
+      notes-deploy-key.path = notesKey;
+    };
+
+    # A sandboxed session may write the plans directory and nothing around
+    # it, and Linux's sandbox skips a grant whose path does not exist, so
+    # the repository is cloned and the directory made here, outside any
+    # sandbox. Neither step fails the switch: init says in one line why it
+    # did not clone, and the sync's failure is a warning. Each is bounded
+    # by agent-plan's own timeouts.
+    home.activation.agentPlans = hm.dag.entryAfter ["writeBoundary"] ''
+      run --quiet env AGENT_TOOLS_CONFIG=${agentToolsConfig} PATH=${syncPath}:"$PATH" ${agentPlan} init \
+        || warnEcho "agent-plan init failed, so sandboxed sessions may not be able to make plans."
+      run --quiet env AGENT_TOOLS_CONFIG=${agentToolsConfig} PATH=${syncPath}:"$PATH" ${agentPlan} sync \
+        || warnEcho "agent-plan sync failed; the watcher tries again on the next change to a plan."
+    '';
+
+    # Syncs plans a few seconds after one changes, outside every session.
+    # launchd watches the directory's entries only, so agent-plan touches
+    # the directory after each write it makes; a plan file edited in place
+    # by anything else is sent with the next change.
+    launchd.agents.agent-plan-sync = mkIf pkgs.stdenv.hostPlatform.isDarwin {
+      enable = true;
+      config = {
+        ProgramArguments = [agentPlan "sync" "--settle" "5s"];
+        WatchPaths = [cfg.plans.dir];
+        ProcessType = "Background";
+        EnvironmentVariables.PATH = syncPath;
+        StandardOutPath = "/tmp/agent-plan-sync.log";
+        StandardErrorPath = "/tmp/agent-plan-sync.log";
+      };
+    };
+
+    systemd.user = mkIf pkgs.stdenv.hostPlatform.isLinux {
+      paths.agent-plan-sync = {
+        Unit.Description = "Sync agents' plans when one changes";
+        Path.PathChanged = cfg.plans.dir;
+        Install.WantedBy = ["default.target"];
+      };
+
+      services.agent-plan-sync = {
+        Unit.Description = "Sync agents' plans with the notes repository";
+        Service = {
+          Type = "oneshot";
+          Environment = ["PATH=${syncPath}"];
+          ExecStart = "${agentPlan} sync --settle 5s";
+        };
+      };
+    };
 
     home.packages = with pkgs;
       [

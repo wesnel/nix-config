@@ -12,9 +12,10 @@ among sub-agents: a coordinator runs the same pipeline, and the
 
 ## The pipeline
 
-1. **Plan.** Before coding, write the plan: the goal, what is not this
-   change's job, and the items the change is made of, each with an ID.
-   Record every review outcome against the plan item ID it concerns.
+1. **Plan.** Before coding, write the plan as the `plan-work` skill says:
+   the goal, what is not this change's job, and the items the change is made
+   of, each with an ID. Record every review outcome against the plan item ID
+   it concerns, as "Recording it in the plan" below says.
 2. **Design review of the plan**, before coding.
 3. **The work**, committed as the `signing-pass` skill says.
 4. **Fresh review loop** over the committed change.
@@ -28,7 +29,24 @@ among sub-agents: a coordinator runs the same pipeline, and the
 
 The reviewer's only view of intent: a file holding the goal and what is not
 this change's job, taken from the plan, with nothing of how the work went.
-When the caller hands you a goal statement, use that file as it stands.
+Write it with `agent-plan goal PLAN [--part P1] > FILE`. When the caller
+hands you a goal statement, use that file as it stands.
+
+## Recording it in the plan
+
+Each stage is an event in the plan's log (the `plan-work` skill's
+`agent-plan log`), against the item it concerns: the plan's ID, a part's,
+or a step's.
+
+- Design review of the plan: `plan-reviewed`; each decision it brings goes
+  under Decisions with a `D` ID and is logged `decided` once settled.
+- Each fresh review round: `reviewed`, with the number of findings in the
+  summary.
+- Each finding settled: `finding-settled` against the item it concerns, with
+  `--review <round>.<id> --outcome <outcome>`, the outcome as Triage below.
+- Design review of the result: `reviewed` with `--role design-reviewer`.
+- Hand-back: `handed-back`, with `STATUS` set to `handed-back`.
+- When Wesley opts the task out, `PIPELINE` becomes `opted-out:<reason>`.
 
 ## Fresh review loop
 
@@ -38,9 +56,8 @@ as `origin/main` or the parent branch in a stack.
 1. Write the goal statement to a file, and the items the change answers
    (threads, CI checks) with how each was settled to another, if any.
 2. Run `git fresh-review --goal GOAL [--items ITEMS] BASE..TIP`. It exits 0
-   with no findings, 3 with findings, and 4 when Codex cannot review here.
-   On 4, or when Codex fails to start its sandbox, review with a sub-agent
-   instead:
+   with no findings, 3 with findings, and 4 when Codex cannot review here,
+   its sandbox included. On 4, review with a sub-agent instead:
    - `git fresh-review --print-prompt` with the same files and range prints
      the prompt;
    - start a new `reviewer` sub-agent, never a continued one, with that
@@ -58,7 +75,10 @@ as `origin/main` or the parent branch in a stack.
 ## Harness choice
 
 - Codex, through `git fresh-review`, by default: a model family other than
-  the author's.
+  the author's. Its commands can read only the worktree under review, the
+  git objects behind it and the system files they need, with none of
+  Wesley's Codex configuration, no network and no writes, so a change
+  cannot steer it into reading credentials.
 - A fresh sub-agent where Codex cannot review: the `reviewer` agent in
   Claude Code and ECA; elsewhere a new sub-agent told to follow the prompt
   and only read.

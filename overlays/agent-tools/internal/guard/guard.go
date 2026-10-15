@@ -167,7 +167,8 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 		}
 		json.Unmarshal(toolInput, &args)
 		return command(args.Command, 0, who, dir)
-	case tool == "Edit" || tool == "Write" || tool == "MultiEdit" || tool == "NotebookEdit" || tool == "apply_patch":
+	case tool == "Edit" || tool == "Write" || tool == "MultiEdit" || tool == "NotebookEdit" || tool == "apply_patch",
+		server == "eca" && (tool == "write_file" || tool == "edit_file" || tool == "move_file"):
 		return checkFileTool(tool, toolInput, dir)
 	case who == baseline:
 		return checkConnector(full)
@@ -287,6 +288,12 @@ func program(c call, who role, files, dir string) string {
 		return checkPrLoop(words[1:], who)
 	case name == "git-fresh-review" && who == reviewer:
 		return nestedReview
+	case name == "agent-plan" && len(words) > 1 && words[1] == "sync":
+		return planSync
+	case name == "agent-plan" && len(words) > 1 && words[1] == "reseal":
+		return planReseal
+	case name == "agent-plan" && who == reviewer && (len(words) < 2 || !planReads[words[1]]):
+		return reviewerReport
 	case name == "git-sign-pass" && who == reviewer:
 		return reviewerReport
 	case name == "git-sign-pass" && who >= coordinator:
@@ -431,19 +438,30 @@ const signing = "Signing needs Wesley's hardware key. Leave the commits unsigned
 
 const pushGuard = "Publishing private history in a public repository is Wesley's decision. Leave push-guard.* alone, and name the repository and the commits in the report for Wesley."
 
-const prLoopWrites = "Use `pr-loop push`, `reply`, `resolve` or `request`; any other write goes in the report for Wesley."
+const prLoopWrites = "Use `pr-loop push`, `reply`, `resolve`, `request` or `link`; any other write goes in the report for Wesley."
 
 const alias = "A git alias can stand for any command, which the guard cannot check. Run the command itself, as `git <command>`."
 
 // coordinatorOnly are the pr-loop steps an owner leaves to the coordinator,
 // which keeps the stack consistent across PRs.
-var coordinatorOnly = map[string]bool{"open": true, "begin": true, "push": true, "reply": true, "resolve": true,
+var coordinatorOnly = map[string]bool{"open": true, "link": true, "begin": true, "push": true, "reply": true, "resolve": true,
 	"request": true, "worktrees": true, "sign": true, "end": true}
 
 // reviewerReads are the pr-loop commands a reviewer may run, besides
 // `wait ci`.
 var reviewerReads = map[string]bool{"stack": true, "threads": true, "status": true, "ci": true, "logs": true,
 	"setup-command": true}
+
+// planSync is why no agent syncs plans: the sync pushes with a deploy key,
+// which is the watcher's, outside every session.
+const planSync = "Plans are synced by a watcher outside every session, which alone pushes them. Leave it to the watcher; if another host's plans look stale, say so in your report for Wesley."
+
+// planReseal is why no agent reseals a log: it accepts the edits made to
+// the log outside agent-plan.
+const planReseal = "Resealing a plan's log accepts edits made to it outside agent-plan, which is Wesley's call. Hand Wesley the command, `agent-plan reseal PLAN`, in your report."
+
+// planReads are the agent-plan commands a reviewer may run.
+var planReads = set("status", "goal", "find", "tokens", "questions", "-h", "--help", "help")
 
 // reviewerReport is why a reviewer may not make a change.
 const reviewerReport = "A reviewer only reads. Report the finding with its evidence; whoever started the review acts on it."

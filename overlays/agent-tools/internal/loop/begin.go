@@ -20,8 +20,10 @@ type StackEntry struct {
 	Children  []string `json:"children"`
 }
 
-// Stack describes the stack of open PRs containing branch (default: HEAD).
-func Stack(branch string) (any, error) {
+// Stack describes the stack of open PRs containing target, a PR or its
+// branch (default: HEAD), as their bases chain them, and GitHub's record of
+// the stack target is in.
+func Stack(target string) (any, error) {
 	repo, err := repository()
 	if err != nil {
 		return nil, err
@@ -30,13 +32,13 @@ func Stack(branch string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if branch == "" {
-		if branch, err = currentBranch(); err != nil {
-			return nil, err
-		}
+	branch, err := prBranch(repo, prs, target)
+	if err != nil {
+		return nil, err
 	}
-	if prs[branch] == nil {
-		return nil, refuse(notHead, branch, repo.Viewer)
+	record, err := githubStack(repo, prs[branch].Number)
+	if err != nil {
+		return nil, err
 	}
 	order := stackOrder(prs, branch)
 	linear := true
@@ -56,7 +58,7 @@ func Stack(branch string) (any, error) {
 		linear = linear && len(entry.Children) <= 1
 		entries = append(entries, entry)
 	}
-	return map[string]any{"repo": repo.Slug, "linear": linear, "stack": entries}, nil
+	return map[string]any{"repo": repo.Slug, "linear": linear, "stack": entries, "github": record}, nil
 }
 
 // Begin registers branches of one stack (default: the stack containing HEAD).

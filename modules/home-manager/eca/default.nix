@@ -198,6 +198,18 @@ in {
           args = concatMap (p: ["--protect" p]) config.wgn.home.llm.prLoop.protectedPaths;
         };
       })
+
+      # An ordinary sandboxed session writes plans itself, at the path they
+      # have here, and its guard hook reads the plans directory from the
+      # same config as here, so the guard keeps the logs append-only in the
+      # guest too. A loop session reaches plans only through the relay, so
+      # the wrapper applies neither with --pr-loop.
+      (optionalAttrs (options ? home.programs.wgn.emacs.eca.sandbox.plansDir) {
+        home.programs.wgn.emacs.eca.sandbox = {
+          plansDir = config.wgn.home.llm.plans.dir;
+          guardConfig = "${config.xdg.configHome}/agent-tools/config.json";
+        };
+      })
     ]))
 
     # ~/.config/eca/agents is read and never written by ECA, so an agent can

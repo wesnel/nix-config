@@ -24,7 +24,7 @@ import (
 
 const usage = `pr-loop: the review loop's only way to write to GitHub.
 
-Policy: apart from reply and resolve outside a loop (see below), only branches
+Policy: apart from reply, resolve and link outside a loop (see below), only branches
 registered with begin are touched, each the head of an open PR, draft or
 ready, by the authenticated user in the same repository and not the default
 branch; this is re-checked before every write. Everything the loop commits
@@ -35,8 +35,13 @@ authenticated user in the same repository.
 
   open --title T --body-file F [--base BASE] [--dry-run] [BRANCH]
                               push BRANCH (default HEAD) through the GitHub API and open
-                              it as a draft PR against BASE (default: the default branch)
-  stack [BRANCH]              the stack of open PRs containing BRANCH (default HEAD)
+                              it as a draft PR against BASE (default: the default branch),
+                              in BASE's PR's GitHub stack, as link puts it there
+  stack [PR|BRANCH]           the stack of open PRs containing a PR (default HEAD's), as
+                              their bases chain them, and GitHub's stack of that PR as
+                              "github" (null when GitHub has it in none)
+  link PR...                  put the PRs, by number or branch, bottom first, each based on
+                              the one before, into one GitHub stack (see below)
   begin [BRANCH...]           register the branches of one stack (default: the current stack)
   worktrees [--remove]        a worktree per PR under .pr-loop/, where commits are unsigned;
                               runs the setup command in each one whose HEAD moved since its last setup
@@ -74,6 +79,14 @@ this repository, by default the current branch's, or the loop's PRs where
 HEAD heads none and a loop is registered here. In a loop session they read
 the PRs named, or the loop's.
 
+link needs no begin. It adds the PRs onto the top of the GitHub stack the
+lowest is in, or the one the PR it is based on tops, or else makes a new
+stack of them; PRs already in it, in order, are left alone. Every open PR in
+a stack it changes must be the authenticated user's. In a loop session it
+takes only the loop's PRs, and open stacks a new PR only on one of them;
+when open cannot stack a PR, the PR stays open and "unstacked" says why and
+which link to run later.
+
 wait ci prints {"result": R, "prs": [...]}, where R is passed, failed (a check
 fails that does not fail on the base), failedOnBase, noChecks or timedOut. It
 exits 0 once CI has finished, 3 on timedOut, and 4 on noChecks: nothing
@@ -109,7 +122,7 @@ setup asks it for the command, then both run the command here, in the sandbox.
 // the hardware key and end discards state, so a person runs those on the host.
 // setup runs a command, which belongs in the sandbox, never on the host.
 var relayed = map[string]bool{
-	"open": true, "stack": true, "begin": true, "push": true, "threads": true, "reply": true, "resolve": true,
+	"open": true, "stack": true, "link": true, "begin": true, "push": true, "threads": true, "reply": true, "resolve": true,
 	"request": true, "status": true, "ci": true, "logs": true, "wait": true, "worktrees": true,
 	"setup-command": true,
 }
@@ -289,11 +302,17 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 			result, err = loop.Open(branch, *base, *title, text, *dryRun)
 		}
 	case "stack":
-		branch := ""
-		if len(rest) > 0 {
-			branch = rest[0]
+		if len(rest) > 1 {
+			err = errors.New("stack takes at most one PR or branch; see pr-loop --help")
+			break
 		}
-		result, err = loop.Stack(branch)
+		target := ""
+		if len(rest) == 1 {
+			target = rest[0]
+		}
+		result, err = loop.Stack(target)
+	case "link":
+		result, err = loop.Link(rest)
 	case "begin":
 		result, err = loop.Begin(rest)
 	case "push":

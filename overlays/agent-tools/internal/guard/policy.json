@@ -190,6 +190,13 @@
     "allow": ["git gc", "git fetch --prune", "git remote prune origin", "git update-ref refs/heads/x HEAD"]
   },
   {
+    "why": "Every worktree shares one stash, so dropping from it can discard another worktree's work.",
+    "scope": "baseline",
+    "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?stash\\s+(drop|clear)\\b.*",
+    "deny": ["git stash drop", "git stash drop stash@{1}", "git -C ../x stash clear"],
+    "allow": ["git stash list", "git stash show -p stash@{0}"]
+  },
+  {
     "why": "The hooks that run the guard stay on.",
     "scope": "baseline",
     "pattern": ".*((^|\\s)(>>?|tee|cp|mv|ln|install|-i)\\s+(.*\\s)?\\S*(\\.claude/settings[^/\\s]*\\.json|\\.codex/(config\\.toml|hooks\\.json)|\\.config/eca/config\\.json)|\\bclaude\\b.*(--(allow-)?dangerously-skip-permissions|bypassPermissions)|\\bcodex\\b.*--dangerously-bypass).*",
@@ -270,18 +277,18 @@
     "allow": ["git config --get user.email", "grep -rn 'push-guard[.]allowPublic' README.md"]
   },
   {
-    "why": "The coordinator alone opens, pushes, replies, resolves and requests reviews.",
+    "why": "The coordinator alone opens, stacks, pushes, replies, resolves and requests reviews.",
     "scope": "owner",
-    "pattern": ".*\\bpr-loop\\s+(open|begin|push|reply|resolve|request|worktrees|sign|end)\\b.*",
-    "deny": ["pr-loop push", "pr-loop reply T --body-file -", "pr-loop open --title T --body-file - x"],
-    "allow": ["pr-loop threads 12", "pr-loop status", "grep -nE 'pr-loop\\s+push' SKILL.md"]
+    "pattern": ".*\\bpr-loop\\s+(open|link|begin|push|reply|resolve|request|worktrees|sign|end)\\b.*",
+    "deny": ["pr-loop push", "pr-loop reply T --body-file -", "pr-loop open --title T --body-file - x", "pr-loop link 12 13"],
+    "allow": ["pr-loop threads 12", "pr-loop status", "pr-loop stack 12", "grep -nE 'pr-loop\\s+push' SKILL.md"]
   },
   {
     "why": "A reviewer only reads; whoever started it acts on its findings.",
     "scope": "reviewer",
     "pattern": ".*\\bpr-loop\\s+(?!(stack|threads|status|ci|logs|setup-command|wait\\s+ci)\\b)\\S+.*",
-    "deny": ["pr-loop wait reviews", "pr-loop push", "pr-loop reply T --body-file -", "pr-loop setup .pr-loop/12"],
-    "allow": ["pr-loop threads 12", "pr-loop logs 12 test", "pr-loop status", "pr-loop wait ci --timeout 3600", "pr-loop setup-command"]
+    "deny": ["pr-loop wait reviews", "pr-loop push", "pr-loop reply T --body-file -", "pr-loop setup .pr-loop/12", "pr-loop link 12 13"],
+    "allow": ["pr-loop threads 12", "pr-loop logs 12 test", "pr-loop status", "pr-loop stack 12", "pr-loop wait ci --timeout 3600", "pr-loop setup-command"]
   },
   {
     "why": "A reviewer only reads; whoever started it changes the code.",
@@ -296,5 +303,19 @@
     "pattern": ".*\\bgit(\\s+(-C\\s+\\S+\\s+)?|-)fresh-review\\b.*",
     "deny": ["git fresh-review --goal g.md main..HEAD", "git -C .pr-loop/12 fresh-review --print-prompt --goal g.md a..b", "git-fresh-review --check r.json a..b"],
     "allow": ["git log --oneline main..HEAD", "grep -nE 'git\\s+fresh-review' SKILL.md"]
+  },
+  {
+    "why": "A reviewer reads plans; whoever started it logs what it found.",
+    "scope": "reviewer",
+    "pattern": ".*\\bagent-plan\\s+(?!(status|goal|find|tokens|questions)\\b)\\S+.*",
+    "deny": ["agent-plan log /p/2026-10-14-x.box.org --item S1 --kind verified", "agent-plan new --title T --slug t", "agent-plan import-claude"],
+    "allow": ["agent-plan status /p/2026-10-14-x.box.org", "agent-plan goal 2026-10-14-x.box --part P1", "grep -nE 'agent-plan\\s+log' SKILL.md"]
+  },
+  {
+    "why": "The watcher syncs plans, and resealing a log is Wesley's call.",
+    "scope": "baseline",
+    "pattern": ".*\\bagent-plan\\s+(sync|reseal)\\b.*",
+    "deny": ["agent-plan sync", "agent-plan sync --pull", "agent-plan reseal /p/2026-10-14-x.box.org"],
+    "allow": ["agent-plan status /p/2026-10-14-x.box.org", "grep -nE 'agent-plan\\s+sync' SKILL.md"]
   }
 ]

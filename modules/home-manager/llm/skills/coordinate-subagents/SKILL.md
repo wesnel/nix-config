@@ -30,6 +30,9 @@ shape.
 
 ## Split the work
 
+- Before splitting, write the plan's Distribution, as the `plan-work`
+  skill says: a part ID (`P1`, `P2`…) per part, with its branch, base,
+  worktree and steps.
 - One part is one branch, one worktree and one sub-agent.
 - Parts that edit the same file or the same code are never parallel
   branches: that only produces conflicts. Give them to one sub-agent as one
@@ -60,8 +63,11 @@ and adds only what they do not say. Put in it:
 
 - Read and follow the installed working agreements (`~/.claude/CLAUDE.md`
   for Claude Code, `~/.codex/AGENTS.md` for Codex, `~/.config/eca/AGENTS.md`
-  for ECA) and the `SKILL.md` of the `signing-pass`, `write-tests` and
-  `review-change` skills in the agent's skill directory.
+  for ECA) and the `SKILL.md` of the `signing-pass`, `write-tests`,
+  `review-change` and `plan-work` skills in the agent's skill directory.
+- The plan's file. Each sub-agent makes its part's file with
+  `agent-plan new --parent PLAN --part <its part ID>` and logs to the
+  plan's log with `--role subagent`.
 - Work only in the worktree the task names, never the main checkout or another
   worktree. Run `git branch --show-current` immediately before every edit and
   every commit. Never `git stash`: every worktree shares one stash.
@@ -79,16 +85,18 @@ and adds only what they do not say. Put in it:
 
 ## Each task
 
-The task names the rules file; the repository, branch, base and worktree; the
-part's goal and what is not its job; the decisions already made, as final;
-and, where you know it, the commit each correction folds into. A sub-agent
-that finds a fact contradicting a decision, or a base it was given, stops
-that item and reports it instead of following or reopening it.
+The task names the rules file; the plan and the part's ID; the repository,
+branch, base and worktree; the part's goal and what is not its job; the
+decisions already made, as final; and, where you know it, the commit each
+correction folds into. A sub-agent that finds a fact contradicting a
+decision, or a base it was given, stops that item and reports it instead of
+following or reopening it.
 
-Each sub-agent reports, as its final message:
+Each sub-agent reports, as its final message and within the length the task
+gives, with no narrative:
 
 - branch, worktree, and `git log --format='%h %G? %s' <base>..<branch>`
-- what it changed, item by item
+- what it changed, by plan item ID
 - the exact commands it ran to verify, and their results
 - what it could not verify, and what needs a decision
 
@@ -130,6 +138,36 @@ there is one.
 A finding by one sub-agent that bears on another part goes to that part's
 sub-agent, in its current task or its next one.
 
+## Model and effort
+
+Start every sub-agent with the model and effort this section gives; it is
+what permits setting them. In Claude Code they are the Agent tool's `model`
+and `effort`. Codex's `spawn_agent` takes a `model`; ECA takes the model
+from the agent's definition.
+
+- **Haiku 5.5, low effort:** read-only lookups, inventories, running a given
+  command and reporting it.
+- **Sonnet 5.5, medium effort:** well-specified changes with tests and
+  little judgement, such as a flag from a precise brief, wording edits, or a
+  restack with few conflicts.
+- **Opus 5.5, the default:** design reviews, adversarial reviews,
+  security-sensitive code (the guard, the relay, `git sign-pass`,
+  `pr-loop`), restacks with many conflicts, and anything ambiguous.
+- Reviewers are never given a cheaper model: the reviewer is Codex by
+  default, as the `review-change` skill's Harness choice says.
+
+Lower the effort before the model: routine work runs on Opus at low or
+medium effort before it moves to Sonnet or Haiku. Prompt caches belong to
+one model, so mixing models loses their reuse; judge the cost of a completed
+task, not of a request. When a cheaper sub-agent's report fails Check every
+report, or a review of its work finds real defects, rerun the task on Opus.
+
+Keep briefs and reports small: a task points at files, such as the rules
+file and the plan, rather than pasting them, and gives the report a length.
+When the harness reports a sub-agent's tokens, log them on its part's event
+with `--tokens N --model M --effort E` (the `plan-work` skill), the rerun's
+too, so `agent-plan tokens` shows which tier did which work.
+
 ## Running them
 
 Start independent sub-agents together, in the background.
@@ -155,9 +193,14 @@ Before relaying a report, confirm it:
   the report: every commit `N`, no trailers but a fixup's `Review-*` ones,
   subjects in shape, on the base you named. Read the commits that matter
   with `git show`.
-- Its verification commands pass when you run them.
+- `agent-plan status PLAN` shows each of the part's steps done and
+  verified, and each done step's commit subject is in that log.
+- The specific tests it cites pass when you run them; whole suites are left
+  to the fresh review and `git red-check`.
 
-Relay only what you confirmed, and say what you did not.
+Relay only what you confirmed, and say what you did not. Questions it
+raises go in the plan, as the `plan-work` skill's "Questions for Wesley"
+says, not in your message.
 
 ## Review each branch
 
@@ -208,7 +251,11 @@ them fit together:
 If you are still running once Wesley has pushed:
 
 - Open a draft pull request for each new branch, based on its parent branch
-  in a stack.
+  in a stack, then make each stack one GitHub stack, which GitHub shows on
+  every pull request in it and merges from the bottom:
+  `pr-loop link <bottom> ... <top>`, by number or branch. It refuses bases
+  that do not chain, and leaves a stack already linked as it is.
+  `pr-loop stack <pr>` shows GitHub's stack under `github`.
 - Run the **Publish** phase: the drafted replies, and every description
   brought up to the change as it stands.
 - Watch every pull request's CI as the `signing-pass` skill's "After a push"

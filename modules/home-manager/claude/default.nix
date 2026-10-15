@@ -43,6 +43,18 @@ with lib; let
 
   darwin = pkgs.stdenv.hostPlatform.isDarwin;
   mcpProxy = config.wgn.home.mcp-proxy;
+  plans = config.wgn.home.llm.plans;
+  agentPlan = getExe' pkgs.agent-tools "agent-plan";
+
+  # A permission rule's path: Claude Code reads `~/` as the home directory,
+  # and a lone `/` as relative to the settings file, so `//` starts an
+  # absolute one.
+  rulePath = path: let
+    home = "${config.home.homeDirectory}/";
+  in
+    if hasPrefix home path
+    then "~/${removePrefix home path}"
+    else "/${path}";
 
   # Lets a tool through only when its name has a reading verb and no writing
   # one as a whole `_`-separated word; any other name is denied.
@@ -79,8 +91,8 @@ with lib; let
   };
 
   # The session's commands run in Claude Code's sandbox with no credentials and
-  # no route to GitHub; `sandbox-relay session` serves `pr-loop` on a private
-  # socket, whose path replaces {socket}. Hooks, MCP servers and WebFetch run outside
+  # no route to GitHub; `sandbox-relay session` serves `pr-loop` and
+  # `agent-plan` on a private socket, whose path replaces {socket}. Hooks, MCP servers and WebFetch run outside
   # the sandbox, which is why WebFetch to GitHub is denied as well.
   prLoopSettings = builtins.toJSON {
     # The user settings' `env` would otherwise replace the launcher's exports
@@ -125,10 +137,11 @@ with lib; let
       # `sandbox-relay session` fills in its real path. The user settings'
       # write grants merge into this session's, so the ordinary sessions'
       # caches, which commands outside this sandbox build from, are taken
-      # back.
+      # back, as are the plans, which this session reaches through
+      # `agent-plan` on the relay.
       filesystem.denyWrite =
         map (p: "{workspace}/${p}") config.wgn.home.llm.prLoop.protectedPaths
-        ++ [sessionCacheDir];
+        ++ [sessionCacheDir plans.dir];
 
       # The launcher points the build caches here.
       filesystem.allowWrite = [config.wgn.home.llm.prLoop.cacheDir];
@@ -175,7 +188,7 @@ with lib; let
       # "$defaults" in the settings is literal: Claude Code splices its own
       # auto-mode rules in there.
       # shellcheck disable=SC2016
-      exec ${lib.getExe' pkgs.agent-tools "sandbox-relay"} session -- claude \
+      exec ${lib.getExe' pkgs.agent-tools "sandbox-relay"} session --program pr-loop --program agent-plan -- claude \
         --plugin-dir ${prLoopPlugin} \
         --settings ${lib.escapeShellArg prLoopSettings} \
         --permission-mode auto \
@@ -224,26 +237,35 @@ in {
         # Credentials stay out of every session. The guard denies shell
         # commands naming these files; Read is not hooked, so it is denied
         # here. Keep the two lists alike (internal/guard/baseline.go).
-        permissions.deny = map (p: "Read(${p})") [
-          "~/.ssh/id_*"
-          "~/.gnupg/private-keys*/**"
-          "~/.codex/auth.json"
-          "~/.claude/.credentials.json"
-          "/${mcpProxy.tokenFile}"
-          "/${mcpProxy.oauthDir}/**"
-          "~/.config/sops/age/**"
-          "~/.config/ngrok/**"
-        ];
+        permissions.deny =
+          map (p: "Read(${p})") [
+            "~/.ssh/id_*"
+            "~/.gnupg/private-keys*/**"
+            "~/.codex/auth.json"
+            "~/.claude/.credentials.json"
+            "/${mcpProxy.tokenFile}"
+            "/${mcpProxy.oauthDir}/**"
+            "~/.config/sops/age/**"
+            "~/.config/ngrok/**"
+          ]
+          # A plan's log is appended to by `agent-plan log` alone; the guard
+          # denies the same files to every file tool and shell write. An Edit
+          # rule covers Write too.
+          ++ map (p: "Edit(${rulePath plans.dir}/${p})") ["*.log.org" "*.log.org.lock"];
 
         # Applies wherever a project turns the sandbox on, and merges into
         # claude-pr-loop's sandbox, which denies what it must not have.
         sandbox =
           {
             # `trash` moves a file on the home volume into ~/.Trash, which the
-            # trash skill asks for in place of rm.
+            # trash skill asks for in place of rm. Plans are written with
+            # `agent-plan` and the file tools.
             filesystem.allowWrite =
-              [sessionCacheDir]
+              [sessionCacheDir plans.dir]
               ++ optional darwin "${config.home.homeDirectory}/.Trash";
+
+            # Only the watcher's sync pushes plans.
+            filesystem.denyRead = [plans.repository.key];
           }
           // optionalAttrs darwin {
             # Go programs, gh and the go command among them, verify TLS
@@ -251,6 +273,56 @@ in {
             # This opens the trust service alone, not the keychain.
             enableWeakerNetworkIsolation = true;
           };
+
+        # A plan approved in plan mode is recorded in the session's plan.
+        # The response's `plan` and `filePath` are ExitPlanMode's output
+        # schema; agent-plan falls back to the input's `plan`.
+        hooks.PostToolUse = [
+          {
+            matcher = "ExitPlanMode";
+            hooks = [
+              {
+                type = "command";
+                command = "${agentPlan} import-claude";
+              }
+            ];
+          }
+        ];
+
+        # Names the session's plans when it resumes or compacts, matched by
+        # its session_id, which both keep, or by its worktree.
+        hooks.SessionStart = [
+          {
+            matcher = "compact|resume";
+            hooks = [
+              {
+                type = "command";
+                command = "${agentPlan} find --hook";
+              }
+            ];
+          }
+        ];
+
+        # When Claude Code waits for Wesley, an OSC 777 notification, which
+        # Ghostty shows on the machine displaying the terminal, over ssh too.
+        # Not on Stop, which would notify after every turn.
+        hooks.Notification = [
+          {
+            hooks = [
+              {
+                type = "command";
+                command = ''printf '\033]777;notify;Claude Code;%s\a' "$(${getExe pkgs.jq} -r '.message // "Waiting for input"')"'';
+              }
+            ];
+          }
+        ];
+
+        # How many open questions the session's plan has, from its files
+        # alone, which the `questions` skill asks Wesley.
+        statusLine = {
+          type = "command";
+          command = "${agentPlan} statusline";
+        };
 
         # The ngrok account server's write scopes reach production, and its
         # tools are not published, so it is filtered by name, failing closed.
@@ -302,6 +374,35 @@ in {
             tools: Read, Grep, Glob, Bash
             ---
             ${pkgs.agent-tools.reviewerPrompt}
+          '';
+
+          # Run only as /questions, so it costs nothing until Wesley asks.
+          # AskUserQuestion takes one to four questions of two to four
+          # options each, and adds "Other" itself.
+          ".claude/skills/questions/SKILL.md".text = ''
+            ---
+            name: questions
+            description: Ask Wesley the open questions of this session's plan, and record his answers as decisions.
+            disable-model-invocation: true
+            ---
+
+            # Questions
+
+            1. Run `agent-plan find`; its first result's `plan` is PLAN. With
+               none, say this session has no plan, and stop.
+            2. Run `agent-plan questions PLAN --all --json`. With none, say so,
+               and stop.
+            3. Ask them with AskUserQuestion, in order, at most four per call.
+               Each question's header is its `id`, its text its `question`,
+               then its `context` if any. Its options: the `recommendation`
+               first, labelled with " (Recommended)" after it, then its
+               `alternatives`, four options at most; with fewer than two, add
+               "Leave it open".
+            4. For each answer but "Leave it open", run
+               `agent-plan decide PLAN ID --answer 'ANSWER'`, the answer on one
+               line, without " (Recommended)".
+            5. Report each decision in one line: its ID, the question, the
+               answer.
           '';
         };
 
