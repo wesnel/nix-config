@@ -135,7 +135,11 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      the plan to be brought up to date after one (Codex's
                      SessionStart, ECA's postCompact); keeps the URLs of
                      Wesley's own prompts as references (Claude Code's and
-                     Codex's UserPromptSubmit, ECA's preRequest); never blocks
+                     Codex's UserPromptSubmit, ECA's preRequest); and on those
+                     prompts, once per host when a quota window of the
+                     session's provider passes 75% and again at 90%, asks
+                     for Wesley's choice of tiers (see usage choose), having
+                     read Codex's quota from its rollout; never blocks
   tokens [--format org|json]
                      every plan's tokens by event kind, model and effort
   import-claude      Claude Code's PostToolUse hook on ExitPlanMode (reads stdin):
@@ -235,10 +239,16 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "remind" {
 		// A failure asks for nothing, quietly.
+		input := readAll(stdin)
+		var out []byte
 		if c, err := plans.Load(); err == nil {
-			if out := c.Remind(readAll(stdin)); len(out) > 0 {
-				stdout.Write(append(out, '\n'))
-			}
+			out = c.Remind(input)
+		}
+		if ask := quota.Remind(quota.DefaultState(), input, time.Now()); ask != "" {
+			out = withContext(out, input, ask)
+		}
+		if len(out) > 0 {
+			stdout.Write(append(out, '\n'))
 		}
 		return 0
 	}
@@ -597,6 +607,36 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	}
 	fmt.Fprint(stderr, usage)
 	return 2
+}
+
+// withContext is the hook output out with text added to its
+// additionalContext, or a new output for input's event carrying text:
+// hookSpecificOutput for Claude Code's and Codex's events, which name
+// hook_event_name, and a bare additionalContext for ECA's.
+func withContext(out, input []byte, text string) []byte {
+	var event struct {
+		Name string `json:"hook_event_name"`
+	}
+	json.Unmarshal(input, &event)
+	var o map[string]any
+	if json.Unmarshal(out, &o) != nil {
+		o = map[string]any{}
+	}
+	target := o
+	if event.Name != "" {
+		specific, _ := o["hookSpecificOutput"].(map[string]any)
+		if specific == nil {
+			specific = map[string]any{"hookEventName": event.Name}
+			o["hookSpecificOutput"] = specific
+		}
+		target = specific
+	}
+	if before, _ := target["additionalContext"].(string); before != "" {
+		text = before + "\n\n" + text
+	}
+	target["additionalContext"] = text
+	data, _ := json.Marshal(o)
+	return data
 }
 
 // usageCommand is `agent-plan usage` and `usage choose`.

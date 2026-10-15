@@ -333,11 +333,13 @@ in {
           ];
         })}
         # Wesley's prompt: its URLs become plan references. A chat with a
-        # parent_chat_id is a sub-agent's, which agent-plan skips.
+        # parent_chat_id is a sub-agent's, which agent-plan skips. Asks once
+        # per quota threshold of the model's provider which tier new
+        # sub-agents get, from the readings other sessions on this host made.
         prompt=${escapeShellArg (builtins.toJSON {
           type = "preRequest";
           visible = false;
-          description = "agent-plan remind: the prompt's references";
+          description = "agent-plan remind: the prompt's references and the quota ask";
           actions = [
             {
               type = "shell";

@@ -238,6 +238,8 @@ in {
             ];
             # Wesley's prompt: its URLs become plan references. A
             # sub-agent's turn carries agent_id, which agent-plan skips.
+            # Reads the quota from the rollout and asks once per threshold
+            # which tier new sub-agents get.
             hooks.UserPromptSubmit = [
               {
                 hooks = [

@@ -336,6 +336,7 @@ in {
         # A background sub-agent's task-notification reaches the coordinator
         # as a prompt; SubagentStop's output would reach only the sub-agent.
         # Any other prompt is Wesley's: its URLs become plan references.
+        # Either asks once per quota threshold which tier new sub-agents get.
         hooks.UserPromptSubmit = [
           {
             hooks = [

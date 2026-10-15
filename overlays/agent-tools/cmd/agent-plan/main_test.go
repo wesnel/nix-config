@@ -594,6 +594,43 @@ func TestHooks(t *testing.T) {
 		}
 	})
 
+	// The quota ask joins whatever else the prompt is reminded of, in the
+	// harness's form.
+	t.Run("the quota ask", func(t *testing.T) {
+		imported(t)
+		reset := time.Now().Add(time.Hour).Unix()
+		agentPlan(t, fmt.Sprintf(`{"session_id":"s-9","rate_limits":{"five_hour":{"used_percentage":80,"resets_at":%d}}}`,
+			reset), "statusline")
+		notification := `{"session_id":"s-9","cwd":"/nowhere","hook_event_name":"UserPromptSubmit","prompt":` +
+			`"<task-notification>\n<summary>Agent \"Add it\" finished</summary>\n</task-notification>"}`
+		var got struct {
+			Specific struct {
+				Event   string `json:"hookEventName"`
+				Context string `json:"additionalContext"`
+			} `json:"hookSpecificOutput"`
+			Context string `json:"additionalContext"`
+		}
+		code, out, errs := agentPlan(t, notification, "remind")
+		if code != 0 || json.Unmarshal([]byte(out), &got) != nil || got.Specific.Event != "UserPromptSubmit" ||
+			!strings.Contains(got.Specific.Context, "Check every report") ||
+			!strings.Contains(got.Specific.Context, "\n\nClaude's 5-hour window is at 80%") {
+			t.Errorf("remind with an ask: %d %q %q", code, out, errs)
+		}
+		code, out, _ = agentPlan(t, notification, "remind")
+		if code != 0 || !strings.Contains(out, "Check every report") || strings.Contains(out, "5-hour") {
+			t.Errorf("remind once asked: %d %q", code, out)
+		}
+
+		// A new threshold, in ECA, which has no plan for the chat.
+		agentPlan(t, fmt.Sprintf(`{"session_id":"s-9","rate_limits":{"five_hour":{"used_percentage":92,"resets_at":%d}}}`,
+			reset), "statusline")
+		got.Context = ""
+		code, out, errs = agentPlan(t, `{"hook_type":"preRequest","chat_id":"c","full_model":"anthropic/claude-opus-5-5","prompt":"go on"}`, "remind")
+		if code != 0 || json.Unmarshal([]byte(out), &got) != nil || !strings.HasPrefix(got.Context, "Claude's 5-hour window is at 92%") {
+			t.Errorf("ECA's ask: %d %q %q", code, out, errs)
+		}
+	})
+
 	// ECA's postRequest hook gets the reason on stderr with exit 2, once per
 	// chat.
 	t.Run("ECA stop-check", func(t *testing.T) {
