@@ -3,10 +3,13 @@ package plans
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wesnel/agent-tools/internal/gitenv"
 )
 
 // setProp sets a property of a plan file's top heading.
@@ -45,9 +48,39 @@ func stopRepo(t *testing.T, unsigned bool) string {
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
 	gitIn(t, repo, "update-ref", "refs/remotes/origin/main", "HEAD")
 	if unsigned {
-		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Add x")
+		commitFile(t, repo, "x", "Add x")
 	}
 	return repo
+}
+
+// commitFile commits a new file name in repo with message.
+func commitFile(t *testing.T, repo, name, message string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(repo, name), []byte(name+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "add", name)
+	gitIn(t, repo, "commit", "-q", "-m", message)
+}
+
+// patchID is git's patch ID of the change origin/main...HEAD in repo, by
+// git's own pipeline.
+func patchID(t *testing.T, repo string) string {
+	t.Helper()
+	return patchIDOf(t, repo, "origin/main")
+}
+
+// patchIDOf is git's patch ID of the change base...HEAD in repo.
+func patchIDOf(t *testing.T, repo, base string) string {
+	t.Helper()
+	cmd := exec.Command("sh", "-c", "git diff "+base+"...HEAD | git patch-id --stable")
+	cmd.Dir, cmd.Env = repo, gitenv.Without(os.Environ())
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _, _ := strings.Cut(strings.TrimSpace(string(out)), " ")
+	return id
 }
 
 // stopIn returns a function that runs Claude Code's Stop hook through c,
@@ -130,6 +163,113 @@ func TestStopCheck(t *testing.T) {
 		expectReason(t, "not a repository", stopIn(t, c)("s1", t.TempDir(), false), "")
 	})
 
+	// A plan made after the session's first commit still owes that
+	// commit's review, though its log holds no commit of the session's.
+	t.Run("committed before the plan", func(t *testing.T) {
+		c := testConfig(t)
+		repo := stopRepo(t, true)
+		gitIn(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+		if err := NoteCommit("s2", repo); err != nil {
+			t.Fatal(err)
+		}
+		made, err := c.New(NewOptions{Title: "Add x", Slug: "x", Worktrees: []string{repo}, Sessions: []string{"claude:s2"},
+			Harness: "claude"}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		setProp(t, made.Plan, "STATUS", "working")
+		expectReason(t, "committed before the plan", stopIn(t, c)("s2", repo, false),
+			"no review receipt matches the change origin/main..HEAD")
+	})
+
+	// The session's commits, and its receipts, go where Locate puts them:
+	// the plan of the worktree, though another plan names the session.
+	t.Run("committed to the worktree's plan, not its own", func(t *testing.T) {
+		c := testConfig(t)
+		repo := stopRepo(t, true)
+		gitIn(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+		own, err := c.New(NewOptions{Title: "Mine", Slug: "mine", Sessions: []string{"claude:s1"}, Harness: "claude"}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		theirs, err := c.New(NewOptions{Title: "Theirs", Slug: "theirs", Worktrees: []string{repo}, Sessions: []string{"claude:s9"},
+			Harness: "claude"}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, file := range []string{own.Plan, theirs.Plan} {
+			setProp(t, file, "STATUS", "working")
+		}
+		p, _, ok := c.Locate("s1", repo)
+		if !ok || p.File() != theirs.Plan {
+			t.Fatalf("Locate found %s, want %s", p.File(), theirs.Plan)
+		}
+		p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add x", Session: "s1"}, time.Now())
+		expectReason(t, "unreviewed", stopIn(t, c)("s1", repo, false), "no review receipt matches the change origin/main..HEAD")
+		// As WriteReceipt logs it, in the plan Locate finds.
+		if _, err := p.Receipt("", Receipt{Range: "origin/main..HEAD", PatchID: patchID(t, repo)}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		expectReason(t, "reviewed", stopIn(t, c)("s1", repo, false), "")
+	})
+
+	// Without a remote default branch, a receipt still has to match.
+	t.Run("no origin", func(t *testing.T) {
+		c := testConfig(t)
+		repo := stopRepo(t, true)
+		gitIn(t, repo, "branch", "base", "origin/main")
+		gitIn(t, repo, "update-ref", "-d", "refs/remotes/origin/main")
+		made, err := c.New(NewOptions{Title: "Add x", Slug: "x", Worktrees: []string{repo}, Sessions: []string{"claude:s2"},
+			Harness: "claude"}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		setProp(t, made.Plan, "STATUS", "working")
+		p, _ := c.Open(made.Plan)
+		p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add x", Session: "s2"}, time.Now())
+		expectReason(t, "unreviewed", stopIn(t, c)("s2", repo, false), "no review receipt matches the change BASE..HEAD")
+		p.Receipt("", Receipt{Range: "base..HEAD", PatchID: patchIDOf(t, repo, "base")}, time.Now())
+		expectReason(t, "reviewed", stopIn(t, c)("s2", repo, false), "")
+	})
+
+	// A receipt counts only for a range from the plan's base for the
+	// branch, or the default branch's remote-tracking ref, or below: one
+	// for part of the change, however its patch ID matches, does not.
+	t.Run("part of the change", func(t *testing.T) {
+		for _, c := range []struct {
+			name, branches, base, want string
+		}{
+			{"the last commit alone", "", "HEAD~1", "no review receipt matches the change origin/main..HEAD"},
+			{"from the default ref", "", "origin/main", ""},
+			{"from below the default ref", "", "origin/main~1", ""},
+			{"from the plan's base", "parent..main", "parent", ""},
+			{"above the plan's base", "parent..main", "HEAD~1", "no review receipt matches the change parent..HEAD"},
+			{"the plan's base for another branch", "parent..other", "parent", "no review receipt matches the change origin/main..HEAD"},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				cfg := testConfig(t)
+				repo := stopRepo(t, false)
+				commitFile(t, repo, "w", "Add w upstream")
+				gitIn(t, repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+				gitIn(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+				commitFile(t, repo, "x", "Add x")
+				gitIn(t, repo, "branch", "parent")
+				commitFile(t, repo, "y", "Add y")
+				commitFile(t, repo, "z", "Add z")
+				made, err := cfg.New(NewOptions{Title: "Add y", Slug: "y", Worktrees: []string{repo}, Sessions: []string{"claude:s2"},
+					Branches: strings.Fields(c.branches), Harness: "claude"}, time.Now())
+				if err != nil {
+					t.Fatal(err)
+				}
+				setProp(t, made.Plan, "STATUS", "working")
+				p, _ := cfg.Open(made.Plan)
+				p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add y", Session: "s2"}, time.Now())
+				p.Receipt("", Receipt{Range: c.base + "..HEAD", PatchID: patchIDOf(t, repo, c.base)}, time.Now())
+				expectReason(t, c.name, stopIn(t, cfg)("s2", repo, false), c.want)
+			})
+		}
+	})
+
 	t.Run("with a plan", testStopCheckWithAPlan)
 }
 
@@ -140,42 +280,66 @@ func TestStopCheck(t *testing.T) {
 func testStopCheckWithAPlan(t *testing.T) {
 	type stage struct {
 		name string
-		// step brings a plan from the stage before to this one.
-		step func(t *testing.T, p Plan)
+		// step brings the plan, and the repository it is for, from the
+		// stage before to this one.
+		step func(t *testing.T, p Plan, repo string)
 		// session and other are the session the hook runs in, and whether it
 		// runs in another repository.
 		session string
 		other   bool
 		want    string
 	}
+	const owed = "no review receipt matches the change origin/main..HEAD"
+	receipt := func(t *testing.T, p Plan, repo string) {
+		t.Helper()
+		if _, err := p.Receipt("", Receipt{Range: "origin/main..HEAD", Tip: strings.TrimSpace(gitIn(t, repo, "rev-parse", "HEAD")),
+			PatchID: patchID(t, repo), Reviewer: "codex"}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
 	stages := []stage{
-		{"planning", func(*testing.T, Plan) {}, "s2", false, ""},
-		{"done, not verified", func(t *testing.T, p Plan) {
+		{"planning", func(*testing.T, Plan, string) {}, "s2", false, ""},
+		{"done, not verified", func(t *testing.T, p Plan, _ string) {
 			setProp(t, p.File(), "STATUS", "working")
 			p.Log(Event{Kind: "done", Item: "S1", Commit: "Add x"}, time.Now())
 		}, "s2", false, "S1"},
-		{"found by session", func(*testing.T, Plan) {}, "s2", true, "S1"},
+		{"found by session", func(*testing.T, Plan, string) {}, "s2", true, "S1"},
 		// The plan is s2's: another session in its worktree answers for
 		// none of it.
-		{"another session in its worktree", func(*testing.T, Plan) {}, "s1", false, ""},
-		{"committed since the review", func(t *testing.T, p Plan) {
+		{"another session in its worktree", func(*testing.T, Plan, string) {}, "s1", false, ""},
+		{"committed, with no receipt", func(t *testing.T, p Plan, _ string) {
 			p.Log(Event{Kind: "verified", Item: "S1", Evidence: "tests pass"}, time.Now())
-			p.Log(Event{Kind: "reviewed", Item: p.Name}, time.Now().Add(-time.Hour))
 			p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add x", Session: "s2"}, time.Now())
-		}, "s2", false, "review-change"},
-		{"another session's commit in its worktree", func(t *testing.T, p Plan) {
+		}, "s2", false, owed},
+		{"another session's commit in its worktree", func(t *testing.T, p Plan, _ string) {
 			p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add z", Session: "s1"}, time.Now())
-		}, "s1", false, "review-change"},
-		{"opted out", func(t *testing.T, p Plan) {
+		}, "s1", false, owed},
+		// What an agent logs itself is no receipt.
+		{"reviewed and handed back by the agent's word", func(t *testing.T, p Plan, _ string) {
+			p.Log(Event{Kind: "reviewed", Item: p.Name, Summary: "round 1: 0 findings"}, time.Now())
+			p.Log(Event{Kind: "handed-back", Item: p.Name}, time.Now())
+		}, "s2", false, owed},
+		{"reviewed", receipt, "s2", false, ""},
+		{"reworded and rebased with the same change", func(t *testing.T, p Plan, repo string) {
+			gitIn(t, repo, "commit", "-q", "--amend", "-m", "Add x, reworded")
+			gitIn(t, repo, "switch", "-q", "-c", "upstream", "origin/main")
+			commitFile(t, repo, "u", "Add u upstream")
+			gitIn(t, repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+			gitIn(t, repo, "switch", "-q", "main")
+			gitIn(t, repo, "rebase", "-q", "origin/main")
+		}, "s2", false, ""},
+		{"changed since the receipt", func(t *testing.T, p Plan, repo string) {
+			commitFile(t, repo, "y", "Add y")
+			p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add y", Session: "s2"}, time.Now())
+		}, "s2", false, owed},
+		{"reviewed again", receipt, "s2", false, ""},
+		{"opted out", func(t *testing.T, p Plan, repo string) {
+			commitFile(t, repo, "z", "Add z")
 			setProp(t, p.File(), "PIPELINE", "opted-out:Wesley")
 		}, "s2", false, ""},
-		{"handed back", func(t *testing.T, p Plan) {
+		{"halted", func(t *testing.T, p Plan, _ string) {
 			setProp(t, p.File(), "PIPELINE", "full")
-			p.Log(Event{Kind: "handed-back", Item: p.Name}, time.Now())
-		}, "s2", false, ""},
-		{"halted", func(t *testing.T, p Plan) {
 			setProp(t, p.File(), "STATUS", "halted")
-			p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add y", Session: "s2"}, time.Now().Add(time.Hour))
 		}, "s2", false, ""},
 	}
 	for i, s := range stages {
@@ -192,7 +356,7 @@ func testStopCheckWithAPlan(t *testing.T) {
 			p, _ := c.Open(made.Plan)
 			addItems(t, p.File(), "** Steps", "S1")
 			for _, before := range stages[:i+1] {
-				before.step(t, p)
+				before.step(t, p, repo)
 			}
 			cwd := repo
 			if s.other {
@@ -201,6 +365,27 @@ func testStopCheckWithAPlan(t *testing.T) {
 			expectReason(t, s.name, stopIn(t, c)(s.session, cwd, false), s.want)
 		})
 	}
+}
+
+// A review receipt is written by the review alone: the log keeps what it
+// says, and an agent cannot log one.
+func TestReceipt(t *testing.T) {
+	p := newPlan(t, testConfig(t), "x")
+	if _, err := p.Receipt("", Receipt{Range: "origin/main..HEAD", Tip: "1234", PatchID: "abcd", Reviewer: "subagent",
+		Findings: 2}, day); err != nil {
+		t.Fatal(err)
+	}
+	events, err := p.Events()
+	if err != nil || len(events) == 0 {
+		t.Fatalf("events %v, %v", events, err)
+	}
+	e := events[len(events)-1]
+	if got := strings.Join([]string{e.Kind, e.Item, e.Range, e.Tip, e.PatchID, e.Agent, e.Summary}, "|"); got !=
+		"review-receipt|"+p.Name+"|origin/main..HEAD|1234|abcd|subagent|origin/main..HEAD: 2 findings" {
+		t.Errorf("receipt %s", got)
+	}
+	_, err = p.Log(Event{Kind: "review-receipt", Item: p.Name, Range: "origin/main..HEAD", PatchID: "abcd"}, day)
+	isRefusal(t, "a receipt an agent logs", err)
 }
 
 // TestStopCheckChat covers ECA's postRequest hook, which has no

@@ -1,6 +1,7 @@
 package prreview
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -15,6 +16,8 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/cli"
+	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/repos"
 	"github.com/wesnel/agent-tools/internal/review"
@@ -62,7 +65,11 @@ Each prints the record, kept as N/HEAD12.json beside the clone for
 review-guide and copied to HEAD12/findings.json for a session, and exits 0 with no findings, 3 with findings, 4 when Codex
 cannot review here (review with a sub-agent instead), 5 when the vet's red
 flags leave the run to Wesley, 1 on an error and 2 on a refusal. Nothing is written to GitHub. Relayed, review takes only a PR
-number, inside its review directory, and --reviewer.
+number, inside its review directory, and --reviewer. A review that ran, by
+Codex or through --check, logs a review receipt (BASE..HEAD, the head and
+the patch ID of the change) in the newest plan that names the directory it
+runs in, else the one that names the Claude Code session running it, as git
+fresh-review does.
 `
 
 // Main runs `pr-loop review` with args and returns the exit status.
@@ -118,9 +125,9 @@ func Main(ctx context.Context, args []string, relayed bool, stdin io.Reader, std
 		if err != nil {
 			return report(nil, err, 0)
 		}
+		var out *review.Output
 		if *check {
-			out, err := review.Validate(string(input), pr.Base+".."+pr.Head, pr.Head, blobAt(pr), "")
-			if err != nil {
+			if out, err = review.Validate(string(input), pr.Base+".."+pr.Head, pr.Head, blobAt(pr), ""); err != nil {
 				return report(nil, err, 0)
 			}
 			out.Reviewer = "subagent"
@@ -130,6 +137,9 @@ func Main(ctx context.Context, args []string, relayed bool, stdin io.Reader, std
 		}
 		if err := record.save(pr.Dir); err != nil {
 			return report(nil, err, 0)
+		}
+		if out != nil {
+			logReceipt(ctx, pr, out, stderr)
 		}
 		return report(record, nil, record.Exit())
 	}
@@ -217,7 +227,39 @@ func Main(ctx context.Context, args []string, relayed bool, stdin io.Reader, std
 	if err := record.save(pr.Dir); err != nil {
 		return report(nil, err, 0)
 	}
+	logReceipt(ctx, pr, out, stderr)
 	return report(record, nil, exit(record))
+}
+
+// logReceipt logs a receipt of the review out of pr in the plan Locate
+// finds for the directory it runs in and the Claude Code session running
+// it, as git fresh-review does; log says where, or why none was logged.
+func logReceipt(ctx context.Context, pr *PR, out *review.Output, log io.Writer) {
+	id, err := git.PatchIDWith(func(stdin []byte, args ...string) ([]byte, error) {
+		cmd := gitCommand(ctx, pr.Clone, nil, args...)
+		if stdin != nil {
+			cmd.Stdin = bytes.NewReader(stdin)
+		}
+		return cmd.Output()
+	}, pr.Base, pr.Head)
+	file := ""
+	if err == nil {
+		model := ""
+		if out.Model != nil {
+			model = *out.Model
+		}
+		cwd, _ := os.Getwd()
+		file, err = plans.WriteReceipt(os.Getenv("CLAUDE_CODE_SESSION_ID"), cwd, plans.Receipt{Range: pr.Base + ".." + pr.Head,
+			Tip: pr.Head, PatchID: id, Reviewer: out.Reviewer, Model: model, Findings: len(out.Findings)}, time.Now())
+	}
+	switch {
+	case err != nil:
+		fmt.Fprintf(log, "pr-loop: no receipt of this review was logged: %v\n", err)
+	case file == "":
+		fmt.Fprintf(log, "pr-loop: no plan names this session or directory, so no receipt of this review was logged\n")
+	default:
+		fmt.Fprintf(log, "pr-loop: logged a receipt of this review of %s#%d in %s\n", pr.Repo, pr.Number, file)
+	}
 }
 
 // head12 is a head's review directory's name: its first 12 hex digits.

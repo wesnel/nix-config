@@ -1,6 +1,7 @@
 package plans
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -29,6 +30,49 @@ func (c Config) Locate(session, worktree string) (p Plan, part string, ok bool) 
 	}
 	p, err = c.Open(pick.Plan)
 	return p, pick.Part, err == nil
+}
+
+// Receipt is what a review that ran leaves in the plan's log, for
+// StopCheck to compare with the change as it then stands.
+type Receipt struct {
+	// Range is the range reviewed as it was given, BASE..TIP, so that
+	// its base is read again at the stop, wherever it has moved.
+	Range string
+	// Tip is the commit TIP named.
+	Tip string
+	// PatchID is git.PatchID of the range's change.
+	PatchID string
+	// Reviewer is codex or subagent, and Model the model, where known.
+	Reviewer, Model string
+	Findings        int
+}
+
+// receiptKind is the kind of the event Receipt logs, which Log refuses
+// from anyone else.
+const receiptKind = "review-receipt"
+
+// Receipt logs r about part, or about the plan itself when part is "".
+func (p Plan) Receipt(part string, r Receipt, now time.Time) (Event, error) {
+	return p.Record(part, Event{Kind: receiptKind, Range: r.Range, Tip: r.Tip, PatchID: r.PatchID, Agent: r.Reviewer,
+		Model: r.Model, Summary: fmt.Sprintf("%s: %d findings", r.Range, r.Findings), receipt: true}, now)
+}
+
+// WriteReceipt logs r in the plan Locate finds for session and the
+// worktree at top, and returns that plan's file, or "" where no plan names
+// either.
+func WriteReceipt(session, top string, r Receipt, now time.Time) (string, error) {
+	c, err := Load()
+	if err != nil {
+		return "", err
+	}
+	p, part, ok := c.Locate(session, top)
+	if !ok {
+		return "", nil
+	}
+	if _, err := p.Receipt(part, r, now); err != nil {
+		return "", err
+	}
+	return p.File(), nil
 }
 
 // Record logs e about part, or about the plan itself when part is "".

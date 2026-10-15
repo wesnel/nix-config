@@ -77,25 +77,87 @@ func (c Config) StopCheck(input []byte, now time.Time) []byte {
 	if err != nil {
 		return nil
 	}
-	var committed, reviewed time.Time
-	for _, e := range events {
-		at, err := time.ParseInLocation("[2006-01-02 Mon 15:04]", e.Time, now.Location())
-		if err != nil {
-			continue
-		}
-		switch {
-		case e.Kind == "committed" && e.Session == session && at.After(committed):
-			committed = at
-		case (e.Kind == "reviewed" || e.Kind == "handed-back") && at.After(reviewed):
-			reviewed = at
-		}
-	}
-	if committed.IsZero() || !reviewed.Before(committed.Truncate(time.Minute)) {
+	// A commit made before the plan was noted outside it.
+	committed := committedUnplanned(session, top) ||
+		slices.ContainsFunc(events, func(e Event) bool { return e.Kind == "committed" && e.Session == session })
+	planBase := branchBase(top, props["BRANCHES"])
+	if !committed || reviewed(top, ref, planBase, events) {
 		return nil
 	}
-	return block(fmt.Sprintf("Plan %s runs the full review pipeline, and nothing is reviewed or handed back since this session's last commit. "+
-		"Run the rest of the pipeline as the review-change skill says, or log why not with `agent-plan log PLAN --item %s --kind handed-back --summary '...'`.",
-		p.File(), p.Name))
+	base := planBase
+	if base == "" {
+		base = ref
+	}
+	if base == "" {
+		base = "BASE"
+	}
+	return block(fmt.Sprintf("Plan %s runs the full review pipeline, this session committed to it, and no review receipt matches the change %s..HEAD as it stands. "+
+		"Review it with `git fresh-review --goal FILE %s..HEAD`, as the review-change skill says, which logs the receipt; or say in your report why it cannot be reviewed.",
+		p.File(), base, base))
+}
+
+// branchBase is the base the plan's BRANCHES give the branch checked out
+// at top, from its `base..branch` entry, or "".
+func branchBase(top, branches string) string {
+	if top == "" {
+		return ""
+	}
+	current, err := git.Run("-C", top, "branch", "--show-current")
+	if err != nil || current == "" {
+		return ""
+	}
+	for _, v := range strings.Fields(branches) {
+		if base, branch, ok := strings.Cut(v, ".."); ok && branch == current && base != "" {
+			return base
+		}
+	}
+	return ""
+}
+
+// reviewed reports whether a review receipt among events covers the
+// change of the worktree at top: whether, for some receipt whose range
+// starts at or below planBase or ref, the patch ID of its range's base to
+// HEAD is the one it recorded. A reworded, re-signed or rebased change
+// keeps it; a review of part of the change does not count. ref is the
+// default branch's remote-tracking ref, and planBase the base the plan
+// gives the branch; either is "" where there is none, and with neither any
+// range counts. With no change ahead of ref there is nothing to review;
+// outside a worktree git cannot tell, and nothing is owed.
+func reviewed(top, ref, planBase string, events []Event) bool {
+	if top == "" {
+		return true
+	}
+	repo := []string{"-C", top}
+	if ref != "" {
+		if id, err := git.PatchID(repo, ref, "HEAD"); err != nil || id == "" {
+			return true
+		}
+	}
+	var bases []string
+	for _, b := range []string{planBase, ref} {
+		if b != "" {
+			bases = append(bases, b)
+		}
+	}
+	covers := func(base string) bool {
+		if len(bases) == 0 {
+			return true
+		}
+		return slices.ContainsFunc(bases, func(b string) bool {
+			return git.OK("-C", top, "merge-base", "--is-ancestor", base, b)
+		})
+	}
+	for i := len(events) - 1; i >= 0; i-- {
+		e := events[i]
+		base, _, ok := strings.Cut(e.Range, "..")
+		if e.Kind != receiptKind || !ok || e.PatchID == "" || !covers(base) {
+			continue
+		}
+		if id, err := git.PatchID(repo, base, "HEAD"); err == nil && id == e.PatchID {
+			return true
+		}
+	}
+	return false
 }
 
 // StopCheckChat is StopCheck for ECA's postRequest hook, whose input names
@@ -201,8 +263,10 @@ func realPath(path string) string {
 }
 
 // sessionPlan is the plan session answers for: of this host's plans that
-// name the session, the first; else, of those that name the worktree at
-// top, the first whose log holds a commit of the session's.
+// name the session or the worktree at top, the first whose log holds a
+// commit of the session's, in Locate's order, since Locate is what put the
+// session's commits and receipts there; else the first that names the
+// session.
 func (c Config) sessionPlan(session, top string) (Plan, bool) {
 	if session == "" {
 		return Plan{}, false
@@ -211,12 +275,10 @@ func (c Config) sessionPlan(session, top string) (Plan, bool) {
 	if err != nil {
 		return Plan{}, false
 	}
-	for _, f := range found {
-		if slices.Contains(f.Matched, "session") {
-			p, err := c.Open(f.Plan)
-			return p, err == nil
-		}
-	}
+	// Locate's order: where the session's commits and receipts went.
+	slices.SortStableFunc(found, func(a, b Found) int {
+		return boolOrder(slices.Contains(b.Matched, "worktree")) - boolOrder(slices.Contains(a.Matched, "worktree"))
+	})
 	for _, f := range found {
 		p, err := c.Open(f.Plan)
 		if err != nil {
@@ -232,7 +294,20 @@ func (c Config) sessionPlan(session, top string) (Plan, bool) {
 			}
 		}
 	}
+	for _, f := range found {
+		if slices.Contains(f.Matched, "session") {
+			p, err := c.Open(f.Plan)
+			return p, err == nil
+		}
+	}
 	return Plan{}, false
+}
+
+func boolOrder(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // unsignedAhead counts the commits of the worktree at top that are not on

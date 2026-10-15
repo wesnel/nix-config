@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/wesnel/agent-tools/internal/plans"
 )
 
 // fakeCodex stands in for `codex`: signed in, its sandbox running the
@@ -111,6 +114,7 @@ func TestReview(t *testing.T) {
 	t.Run("Codex missing", testReviewCodexMissing)
 	t.Run("subagent", testReviewSubagent)
 	t.Run("rounds kept", testReviewRoundsKept)
+	t.Run("receipt", testReviewReceipt)
 	t.Run("relayed target", testReviewRelayedTarget)
 }
 
@@ -165,6 +169,64 @@ func testReviewWithCodex(t *testing.T) {
 	}
 	if f.mutations != 0 {
 		t.Errorf("%d writes reached GitHub", f.mutations)
+	}
+}
+
+// testReviewReceipt has each review that ran, by Codex or checked from a
+// sub-agent, leave a receipt in the plan of the session running it: the
+// pull request's range, its head, and the patch ID of its change.
+func testReviewReceipt(t *testing.T) {
+	for _, c := range []struct {
+		name, reviewer string
+		review         func(t *testing.T)
+	}{
+		{"by Codex", "codex", func(t *testing.T) {
+			if code, _, _, stderr := runReview(t, "", "o/r#7"); code != 3 {
+				t.Fatalf("exit %d\n%s", code, stderr)
+			}
+		}},
+		{"checked from a sub-agent", "subagent", func(t *testing.T) {
+			if code, _, prompt, stderr := runReview(t, "", "--reviewer", "subagent", "o/r#7"); code != 0 {
+				t.Fatalf("exit %d\n%s\n%s", code, prompt, stderr)
+			}
+			if code, _, _, stderr := runReview(t, reply(), "--check", "o/r#7"); code != 3 {
+				t.Fatalf("check: exit %d\n%s", code, stderr)
+			}
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := newRemote(t, nil)
+			setUp(t, r)
+			withCodex(t, reply())
+			pc := plans.Config{Dir: filepath.Join(t.TempDir(), "agents"), Host: "box"}
+			config := filepath.Join(t.TempDir(), "config.json")
+			write(t, config, string(must(json.Marshal(map[string]any{"plans": pc}))))
+			t.Setenv("AGENT_TOOLS_CONFIG", config)
+			made, err := pc.New(plans.NewOptions{Title: "Review o/r#7", Slug: "review", Sessions: []string{"claude:s1"}}, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := must(pc.Open(made.Plan))
+			t.Setenv("CLAUDE_CODE_SESSION_ID", "s1")
+			// git's own pipeline for the change, as a person would type it.
+			out, err := exec.Command("sh", "-c", "git --git-dir '"+r.bare+"' diff "+r.base+"..."+r.head+" | git patch-id --stable").Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			id, _, _ := strings.Cut(strings.TrimSpace(string(out)), " ")
+
+			c.review(t)
+			var got []string
+			for _, e := range must(p.Events()) {
+				if e.Kind == "review-receipt" {
+					got = append(got, strings.Join([]string{e.Range, e.Tip, e.PatchID, e.Agent}, " "))
+				}
+			}
+			want := strings.Join([]string{r.base + ".." + r.head, r.head, id, c.reviewer}, " ")
+			if len(got) != 1 || got[0] != want {
+				t.Errorf("receipts %q, want %q", got, want)
+			}
+		})
 	}
 }
 

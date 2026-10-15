@@ -18,6 +18,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/repos"
 )
@@ -49,9 +50,22 @@ goes in the prompt, and where the VM cannot run them stderr says why.
 Where Codex cannot review, or a sub-agent is asked for, review with a fresh
 sub-agent instead: give it the prompt --print-prompt (or --reviewer
 subagent) prints, save its reply, and check that with --check, which prints
-and exits as a review does.
+and exits as a review does. The prompt asks for the commit it names as TIP
+in the reply, and --check takes TIP from there, refusing a reply without
+it, so a HEAD that moved since the prompt was printed is not counted as
+reviewed.
 
-  --goal FILE       the goal statement (required)
+A review that ran, by Codex or through --check, logs a review receipt in
+the plan its commits are logged in: the newest that names the worktree,
+else the one that names the Claude Code session running it
+(CLAUDE_CODE_SESSION_ID). The receipt holds BASE..TIP as given, TIP's
+commit, and the patch ID
+of the change from BASE to TIP. agent-plan stop-check compares it with the
+change as it stands at the stop, reading BASE again, so pass BASE as a
+name, such as origin/main, that follows a rebase. stderr says where the
+receipt went, or why none was logged.
+
+  --goal FILE      the goal statement (required)
   --items FILE      the items the change answers, and how each was settled
   --prior FILE      earlier rounds' findings and how each was settled
   --reviewer R      auto (default): Codex, unless called from inside Codex,
@@ -124,11 +138,19 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		if err != nil {
 			return report(nil, err, 0)
 		}
+		tip, err := promptTip(reply, r)
+		if err != nil {
+			return report(nil, err, 0)
+		}
+		if tip != "" {
+			r.tip = tip
+		}
 		out, err := validate(reply, r, "")
 		if err != nil {
 			return report(nil, err, 0)
 		}
 		out.Reviewer = "subagent"
+		logReceipt(r, out, stderr)
 		return report(out, nil, out.exit())
 	}
 
@@ -170,7 +192,9 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	if *printPrompt {
 		in.where = fmt.Sprintf("Read the change in the repository at %s: `git diff %s %s`, `git log -p %s..%s`, "+
 			"and `git show %s:PATH` for a file as it is at TIP. That checkout's own files may hold work that is not "+
-			"part of the change, so judge only the commits.", r.top, r.base, r.tip, r.base, r.tip, r.tip)
+			"part of the change, so judge only the commits. Put `\"tip\": \"%s\"` in the JSON object you reply with, "+
+			"beside findings and unverified, so that the check of your reply knows which commit you reviewed.",
+			r.top, r.base, r.tip, r.base, r.tip, r.tip, r.tip)
 		fmt.Fprint(stdout, prompt(in))
 		if subagent {
 			fmt.Fprintf(stderr, "%s: give this prompt to a new `reviewer` sub-agent, save its reply, "+
@@ -187,7 +211,61 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	if err != nil {
 		return report(nil, err, 0)
 	}
+	logReceipt(r, out, stderr)
 	return report(out, nil, out.exit())
+}
+
+// promptTip is the commit a sub-agent's reply says it reviewed: the tip
+// the --print-prompt prompt it was given names, which HEAD may have moved
+// past since. It must be a commit above r's base. A reply that holds no
+// JSON object gives "", for validate to refuse.
+func promptTip(reply string, r *span) (string, error) {
+	text := strings.TrimSpace(reply)
+	var parsed struct {
+		Tip string `json:"tip"`
+	}
+	start, end := strings.Index(text, "{"), strings.LastIndex(text, "}")
+	if start < 0 || end < start || json.Unmarshal([]byte(text[start:end+1]), &parsed) != nil {
+		return "", nil
+	}
+	again := fmt.Sprintf("give the reviewer the prompt `git fresh-review --print-prompt` prints for %s, which names the commit "+
+		"and asks for it in the reply, and check its reply again", r.given)
+	if parsed.Tip == "" {
+		return "", refusal.New("the reply does not say which commit it reviewed; %s", again)
+	}
+	tip, err := git.Run("-C", r.top, "rev-parse", "--verify", "-q", parsed.Tip+"^{commit}")
+	if err != nil || tip == "" {
+		return "", refusal.New("the reply's tip %q is no commit here; %s", parsed.Tip, again)
+	}
+	if tip == r.base || !git.OK("-C", r.top, "merge-base", "--is-ancestor", r.base, tip) {
+		return "", refusal.New("the reply's tip %s is not above the range's base %s; %s", tip, r.base, again)
+	}
+	return tip, nil
+}
+
+// logReceipt logs a receipt of the review out of r in the plan Locate
+// finds for r's worktree and the Claude Code session running it, which the
+// session's Stop hook compares with the change as it then stands; log
+// says where, or why none was logged.
+func logReceipt(r *span, out *Output, log io.Writer) {
+	id, err := git.PatchID([]string{"-C", r.top}, r.base, r.tip)
+	file := ""
+	if err == nil {
+		model := ""
+		if out.Model != nil {
+			model = *out.Model
+		}
+		file, err = plans.WriteReceipt(os.Getenv("CLAUDE_CODE_SESSION_ID"), r.top, plans.Receipt{Range: r.given, Tip: r.tip,
+			PatchID: id, Reviewer: out.Reviewer, Model: model, Findings: len(out.Findings)}, time.Now())
+	}
+	switch {
+	case err != nil:
+		fmt.Fprintf(log, "%s: no receipt of this review was logged: %v\n", name, err)
+	case file == "":
+		fmt.Fprintf(log, "%s: no plan names this session or worktree, so no receipt of this review was logged\n", name)
+	default:
+		fmt.Fprintf(log, "%s: logged a receipt of this review of %s in %s\n", name, r.given, file)
+	}
 }
 
 // span is the range under review: as given, and resolved.

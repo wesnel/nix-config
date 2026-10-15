@@ -45,7 +45,13 @@ or a step's.
   a question written with `agent-plan ask` and settled with
   `agent-plan decide`, which logs `decided`.
 - Each fresh review round: `reviewed`, with the number of findings in the
-  summary.
+  summary. The review itself logs a `review-receipt` beside it: the range
+  as given and the patch ID of its change, which no agent can log. Before
+  a session that committed stops, the Stop hook checks that a receipt's
+  patch ID is the change's as it then stands, for a range starting at or
+  below the branch's base in the plan's `BRANCHES` or `origin/<default>`;
+  a rebase or re-sign that keeps the change needs no new round, and any
+  other change, or a review of part of it, does.
 - Each finding settled: `finding-settled` against the item it concerns, with
   `--review <round>.<id> --outcome <outcome>`, the outcome as Triage below.
 - Design review of the result: `reviewed` with `--role design-reviewer`.
@@ -55,7 +61,8 @@ or a step's.
 ## Fresh review loop
 
 The range is the whole change, `BASE..TIP`, with BASE where it starts, such
-as `origin/main` or the parent branch in a stack.
+as `origin/main` or the parent branch in a stack, named rather than as a
+commit, so that the receipt still matches once the branch is rebased.
 
 1. Write the goal statement to a file, and the items the change answers
    (threads, CI checks) with how each was settled to another, if any.
@@ -67,7 +74,8 @@ as `origin/main` or the parent branch in a stack.
    - start a new `reviewer` sub-agent, never a continued one, with that
      prompt as its whole task, and nothing of your notes or reasoning;
    - save its reply to a file and run `git fresh-review --check FILE
-     BASE..TIP`, which prints and exits as a review does.
+     BASE..TIP`, which prints and exits as a review does. The reply names
+     the commit the prompt was printed for, which the receipt records.
 3. Settle every finding as Triage says. `dropped` lists what pointed at no
    line at TIP or did not fit the schema; read it, but it needs no outcome.
 4. For the next round, add `--prior FILE`: every earlier finding and how it

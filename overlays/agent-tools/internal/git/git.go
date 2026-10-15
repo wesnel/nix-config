@@ -120,6 +120,36 @@ func OK(args ...string) bool {
 	return command(nil, args...).Run() == nil
 }
 
+// PatchID is `git patch-id --stable` of the change from the merge base of
+// base and tip to tip, in the repository repo names as git's leading
+// arguments (`-C DIR` or `--git-dir DIR`), or "" for no change. It is the
+// same however the change's commits are cut, reworded, signed or rebased,
+// and differs for a different change. The diff is spelled out in full
+// (prefixes, renames, binary contents) so that diff settings cannot change
+// it.
+func PatchID(repo []string, base, tip string) (string, error) {
+	return PatchIDWith(func(stdin []byte, args ...string) ([]byte, error) {
+		return Bytes(stdin, append(append([]string{}, repo...), args...)...)
+	}, base, tip)
+}
+
+// PatchIDWith is PatchID with run running git in the repository, given
+// stdin and the arguments, for a repository this package's commands must
+// not run in.
+func PatchIDWith(run func(stdin []byte, args ...string) ([]byte, error), base, tip string) (string, error) {
+	diff, err := run(nil, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--full-index", "--binary",
+		"--src-prefix=a/", "--dst-prefix=b/", "--diff-algorithm=myers", "--end-of-options", base+"..."+tip)
+	if err != nil || len(diff) == 0 {
+		return "", err
+	}
+	out, err := run(diff, "patch-id", "--stable")
+	if err != nil {
+		return "", err
+	}
+	id, _, _ := strings.Cut(strings.TrimSpace(string(out)), " ")
+	return id, nil
+}
+
 // Attached runs git connected to this process's terminal, for commands that
 // ask for a key touch or a passphrase. It returns the exit code.
 func Attached(env []string, args ...string) int {

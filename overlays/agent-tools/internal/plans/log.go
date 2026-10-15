@@ -40,13 +40,21 @@ type Event struct {
 	// Session is the session whose tool call the event records, as its
 	// hook names it: Claude Code's or Codex's session_id, ECA's chat_id.
 	Session string `json:"session,omitempty"`
+	// Range, Tip and PatchID are a review receipt's: the range reviewed,
+	// as given, its tip's commit, and the patch ID of its change.
+	Range   string `json:"range,omitempty"`
+	Tip     string `json:"tip,omitempty"`
+	PatchID string `json:"patchId,omitempty"`
+	// receipt marks an event Receipt logs.
+	receipt bool
 	// Note is what the caller should know about the event, such as a
 	// heading keyword Log could not write; the log does not hold it.
 	Note string `json:"note,omitempty"`
 }
 
 var (
-	// Kinds are what an event records about its item.
+	// Kinds are what an event an agent logs records about its item. A
+	// review receipt (receiptKind) is the reviews' own, beside them.
 	Kinds = []string{"planned", "plan-reviewed", "started", "done", "blocked", "abandoned", "verified",
 		"reviewed", "finding-settled", "asked", "decided", "handed-back", "committed", "pushed", "postponed", "discovered", "referenced"}
 	// Roles are who logs an event.
@@ -71,13 +79,17 @@ func oneOf(value string, allowed []string) bool {
 // check refuses an event the log must not hold.
 func (p Plan) check(e Event) error {
 	for what, v := range map[string]string{"summary": e.Summary, "agent": e.Agent, "branch": e.Branch,
-		"commit": e.Commit, "evidence": e.Evidence, "model": e.Model, "item": e.Item, "kind": e.Kind, "session": e.Session} {
+		"commit": e.Commit, "evidence": e.Evidence, "model": e.Model, "item": e.Item, "kind": e.Kind, "session": e.Session,
+		"range": e.Range, "tip": e.Tip, "patch ID": e.PatchID} {
 		if err := checkLine(what, v); err != nil {
 			return err
 		}
 	}
 	switch {
-	case !oneOf(e.Kind, Kinds):
+	case e.Kind == receiptKind && !e.receipt:
+		return refusal.New("a review receipt is written by the review that ran alone. " +
+			"Run `git fresh-review` (or `pr-loop review` for someone else's pull request) as the review-change skill says")
+	case e.Kind != receiptKind && !oneOf(e.Kind, Kinds):
 		return refusal.New("%q is not an event kind. Use one of `%s`", e.Kind, strings.Join(Kinds, "`, `"))
 	case e.Role != "" && !oneOf(e.Role, Roles):
 		return refusal.New("%q is not a role. Use one of `%s`", e.Role, strings.Join(Roles, "`, `"))
@@ -207,7 +219,7 @@ func eventText(e Event) string {
 	for _, kv := range [][2]string{{"EVENT", e.ID}, {"AGENT", e.Agent}, {"ROLE", e.Role}, {"ITEM", e.Item},
 		{"KIND", e.Kind}, {"BRANCH", e.Branch}, {"COMMIT", e.Commit}, {"EVIDENCE", e.Evidence},
 		{"REVIEW", e.Review}, {"OUTCOME", e.Outcome}, {"TOKENS", tokens}, {"MODEL", e.Model},
-		{"EFFORT", e.Effort}, {"SESSION", e.Session}} {
+		{"EFFORT", e.Effort}, {"SESSION", e.Session}, {"RANGE", e.Range}, {"TIP", e.Tip}, {"PATCH_ID", e.PatchID}} {
 		if kv[1] != "" {
 			b.WriteString(":" + kv[0] + ": " + kv[1] + "\n")
 		}
@@ -409,7 +421,8 @@ func (p Plan) Events() ([]Event, error) {
 		e := Event{ID: h.Props["EVENT"], Kind: h.Props["KIND"], Item: h.Props["ITEM"], Agent: h.Props["AGENT"],
 			Role: h.Props["ROLE"], Branch: h.Props["BRANCH"], Commit: h.Props["COMMIT"],
 			Evidence: h.Props["EVIDENCE"], Review: h.Props["REVIEW"], Outcome: h.Props["OUTCOME"],
-			Model: h.Props["MODEL"], Effort: h.Props["EFFORT"], Session: h.Props["SESSION"]}
+			Model: h.Props["MODEL"], Effort: h.Props["EFFORT"], Session: h.Props["SESSION"], Range: h.Props["RANGE"],
+			Tip: h.Props["TIP"], PatchID: h.Props["PATCH_ID"]}
 		e.Tokens, _ = strconv.ParseInt(h.Props["TOKENS"], 10, 64)
 		if _, summary, ok := strings.Cut(h.Title, " — "); ok {
 			e.Summary = summary

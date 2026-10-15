@@ -199,6 +199,9 @@ review-loop session, where `pr-loop` must stay the only way out. Then, or
 with `--reviewer subagent` when a sub-agent is wanted anyway,
 `--print-prompt` gives the same prompt for a fresh `reviewer` sub-agent, and
 `--check FILE` validates its reply the same way. See `git fresh-review -h`.
+A review that ran logs a receipt in the session's plan: the range and the
+patch ID of its change, which the Stop hook compares with the change as it
+stands before a session that committed stops.
 
 It never runs `git red-check` here, since that runs the commits' code. Where
 the repository has test settings, red-check and the test command run in the
