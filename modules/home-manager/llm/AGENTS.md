@@ -89,6 +89,14 @@ Say what someone needs in order not to break things, as things are now. Load
 the `docs-and-comments` skill before writing or changing a doc, a comment, a
 README or a skill.
 
+## Referring to people
+
+Refer to a person as they/them unless their profile on that platform lists
+pronouns (ignore an obvious joke). Never infer a name from a username, email
+or commit author: use a name only when their profile lists one, else their
+username or role. Address people with the platform's mention syntax (`@login`
+on GitHub), checked against that platform's API and docs.
+
 ## Verify before asserting
 
 For how a tool, platform or API behaves, test it rather than recalling it,
