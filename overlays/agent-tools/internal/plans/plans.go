@@ -102,6 +102,9 @@ type NewOptions struct {
 	Repos, Branches, Worktrees, Sessions []string
 	Harness                              string
 	Parent, Part                         string
+	// Template names <plans repository>/templates/<Template>.org, whose
+	// entries the new plan starts with.
+	Template string
 }
 
 // Created is what New made.
@@ -153,11 +156,21 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 			return Created{}, err
 		}
 	}
+	if (o.Parent != "" || o.Part != "") && o.Template != "" {
+		return Created{}, refusal.New("a template starts a plan, not a part. Make the part without `--template`, and copy what it needs into its file")
+	}
 	if o.Parent != "" || o.Part != "" {
 		return c.newPart(o)
 	}
 	if !slugPattern.MatchString(o.Slug) {
 		return Created{}, refusal.New("slug %q is not lower-case words joined by hyphens. Pass one such as `--slug add-run-loop`", o.Slug)
+	}
+	var sections map[string][]string
+	if o.Template != "" {
+		var err error
+		if sections, err = c.template(o.Template); err != nil {
+			return Created{}, err
+		}
 	}
 	if _, err := c.Init(); err != nil {
 		return Created{}, err
@@ -170,7 +183,8 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 			try = fmt.Sprintf("%s-%d", base, i)
 		}
 		candidate := Plan{Dir: c.Dir, Name: try + "." + c.Host, Host: c.Host, Own: true}
-		switch err := writeNew(candidate.file(""), planText(o, candidate.Name, c.Host, map[string]string{"HOST": c.Host}, true)); {
+		text := withTemplate(planText(o, candidate.Name, c.Host, map[string]string{"HOST": c.Host}, true), sections)
+		switch err := writeNew(candidate.file(""), text); {
 		case err == nil:
 			p = candidate
 		case !errors.Is(err, fs.ErrExist):
@@ -258,8 +272,7 @@ func planText(o NewOptions, id, host string, extra map[string]string, parent boo
 	property("PULL_REQUESTS", "")
 	property("PIPELINE", "full")
 	b.WriteString(":END:\n")
-	sections := []string{"Goal", "Steps", "Distribution", "Questions", "Follow-ups", "Verification"}
-	for _, s := range sections {
+	for _, s := range planSections {
 		if s == "Distribution" && !parent {
 			continue
 		}
