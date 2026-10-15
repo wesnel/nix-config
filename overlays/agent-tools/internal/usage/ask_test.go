@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-// A main thread's prompt asks about tiers once per window and threshold on
-// the host, whichever session sends it.
+// A main thread's prompt asks whether to keep going or postpone once per
+// window and threshold on the host, whichever session sends it.
 func TestRemind(t *testing.T) {
 	now := at.In(pdt)
 	prompt := fixture(t, "claude-user-prompt.json")
@@ -28,12 +28,16 @@ func TestRemind(t *testing.T) {
 		s := state(t, 100, 1792032000)
 		ask := Remind(s, prompt, now)
 		for _, want := range []string{"Claude's 5-hour window is at 100%, resetting 19:40", "Ask Wesley once",
-			"one tier down (Opus to Sonnet, Sonnet to Haiku)", "reviewers keep theirs",
-			"Change no running agent's or session's model", "Until he answers, keep the usual tiers",
-			"`agent-plan usage choose claude keep|down|postpone --plan PLAN`",
+			"(a) keep going", "(b) postpone the task until 19:40", "Until he answers, keep going",
+			"`agent-plan usage choose claude keep|postpone --plan PLAN`",
 			"`agent-plan postpone PLAN ID --until '2026-10-14 19:40'`"} {
 			if !strings.Contains(ask, want) {
 				t.Errorf("ask lacks %q:\n%s", want, ask)
+			}
+		}
+		for _, banned := range []string{"(c)", "tier", "down", "cheaper", "model"} {
+			if strings.Contains(ask, banned) {
+				t.Errorf("ask mentions %q:\n%s", banned, ask)
 			}
 		}
 		// Another session on the host is not asked again.
@@ -75,9 +79,9 @@ func TestRemind(t *testing.T) {
 
 	t.Run("with a choice", func(t *testing.T) {
 		s := state(t, 80, 1792032000)
-		s.Choose("claude", "down", now)
+		s.Choose("claude", "keep", now)
 		s.Record(Reading{Provider: "claude", ObservedAt: now.Unix(), Windows: []Window{{Name: "5h", Used: 92, ResetsAt: 1792032000}}})
-		if ask := Remind(s, prompt, now); !strings.Contains(ask, "His answer so far: down until 19:40.") {
+		if ask := Remind(s, prompt, now); !strings.Contains(ask, "His answer so far: keep until 19:40.") {
 			t.Errorf("ask %q", ask)
 		}
 	})

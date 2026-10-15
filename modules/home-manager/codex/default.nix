@@ -268,7 +268,7 @@ in {
             # Wesley's prompt: its URLs become plan references. A
             # sub-agent's turn carries agent_id, which agent-plan skips.
             # Reads the quota from the rollout and asks once per threshold
-            # which tier new sub-agents get.
+            # whether to keep going or postpone.
             hooks.UserPromptSubmit = [
               {
                 hooks = [
@@ -326,7 +326,8 @@ in {
 
     # Near a rate limit Codex offers to switch the running session to a
     # cheaper model, which is Wesley's call alone; agent-plan remind's quota
-    # ask covers new sub-agents. Merged into the config.toml Codex writes.
+    # ask offers to keep going or postpone instead. Merged into the
+    # config.toml Codex writes.
     {
       home.activation.codexNotices = lib.hm.dag.entryAfter ["writeBoundary"] ''
         if [ -z "''${DRY_RUN:-}" ]; then

@@ -408,24 +408,23 @@ func TestUsage(t *testing.T) {
 		reset := time.Now().Add(time.Hour).Truncate(time.Minute)
 		agentPlan(t, fmt.Sprintf(`{"session_id":"s-1","rate_limits":{"five_hour":{"used_percentage":82,"resets_at":%d}}}`,
 			reset.Unix()), "statusline")
-		code, out, errs := agentPlan(t, "", "usage", "choose", "claude", "down", "--plan", plan)
-		if code != 0 || !strings.Contains(out, `"choice": "down"`) || !strings.Contains(out, `"question": "Q1"`) {
+		code, out, errs := agentPlan(t, "", "usage", "choose", "claude", "postpone", "--plan", plan)
+		if code != 0 || !strings.Contains(out, `"choice": "postpone"`) || !strings.Contains(out, `"question": "Q1"`) {
 			t.Fatalf("choose: %d %s %s", code, out, errs)
 		}
 		code, out, _ = agentPlan(t, "", "decisions", plan)
 		want := "- Q1 :: Claude's 5-hour window is at 82%, resetting " + reset.Format("15:04") +
-			": which model tier do new sub-agents get until then? New sub-agents one tier down until " + reset.Format("15:04") +
-			"; reviewers, running agents and sessions keep theirs\n"
+			": keep going, or postpone the task until then? Postpone the task until " + reset.Format("15:04") + "\n"
 		if code != 0 || out != want {
 			t.Errorf("decisions: %d\n%q\nwant\n%q", code, out, want)
 		}
 		code, out, _ = agentPlan(t, "", "usage")
 		if code != 0 || !strings.HasPrefix(out, "claude: 5h 82% resets "+reset.Format("15:04")) ||
-			!strings.Contains(out, "; choice down until "+reset.Format("15:04")+"\n") || !strings.HasSuffix(out, "codex: unknown\n") {
+			!strings.Contains(out, "; choice postpone until "+reset.Format("15:04")+"\n") || !strings.HasSuffix(out, "codex: unknown\n") {
 			t.Errorf("usage: %d %q", code, out)
 		}
 		code, out, _ = agentPlan(t, "", "usage", "--json")
-		if code != 0 || !strings.Contains(out, `"choice": "down"`) {
+		if code != 0 || !strings.Contains(out, `"choice": "postpone"`) {
 			t.Errorf("usage --json: %d %s", code, out)
 		}
 		// The answer is Wesley's, settled as the question is written.
@@ -437,7 +436,7 @@ func TestUsage(t *testing.T) {
 		log := strings.TrimSuffix(plan, ".org") + ".log.org"
 		before, _ := os.ReadFile(plan)
 		logBefore, _ := os.ReadFile(log)
-		code, out, errs = agentPlan(t, "", "usage", "choose", "claude", "down", "--plan", plan)
+		code, out, errs = agentPlan(t, "", "usage", "choose", "claude", "postpone", "--plan", plan)
 		if code != 0 || !strings.Contains(out, `"question": "Q1"`) {
 			t.Fatalf("choose again: %d %s %s", code, out, errs)
 		}
@@ -451,7 +450,7 @@ func TestUsage(t *testing.T) {
 		if code, _, errs := agentPlan(t, "", "usage", "choose", "claude", "keep", "--plan", plan); code != 2 || !strings.Contains(errs, "--supersedes") {
 			t.Errorf("another answer: %d %s", code, errs)
 		}
-		if code, out, _ := agentPlan(t, "", "usage", "--json"); code != 0 || !strings.Contains(out, `"choice": "down"`) {
+		if code, out, _ := agentPlan(t, "", "usage", "--json"); code != 0 || !strings.Contains(out, `"choice": "postpone"`) {
 			t.Errorf("a refused answer changed the choice: %d %s", code, out)
 		}
 	})
@@ -476,7 +475,7 @@ func TestUsage(t *testing.T) {
 
 	t.Run("refused", func(t *testing.T) {
 		setup(t)
-		for _, args := range [][]string{{"usage", "choose", "claude", "sonnet"}, {"usage", "choose", "claude"},
+		for _, args := range [][]string{{"usage", "choose", "claude", "sonnet"}, {"usage", "choose", "claude", "down"}, {"usage", "choose", "claude"},
 			{"usage", "pick"}} {
 			if code, _, errs := agentPlan(t, "", args...); code == 0 || errs == "" {
 				t.Errorf("%v: %d %q", args, code, errs)
@@ -488,7 +487,7 @@ func TestUsage(t *testing.T) {
 // Hooks run on the host, so a session's relay never takes them.
 func TestClientSide(t *testing.T) {
 	for args, want := range map[string]bool{"import-claude": true, "find --hook": true, "statusline": true, "remind": true,
-		"usage": true, "usage choose claude down": true, "find --session x": false,
+		"usage": true, "usage choose claude postpone": true, "find --session x": false,
 		"log P --item S1": false, "new --title T": false} {
 		t.Run(args, func(t *testing.T) {
 			if got := clientSide(strings.Fields(args)); got != want {

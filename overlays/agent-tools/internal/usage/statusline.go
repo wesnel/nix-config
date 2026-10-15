@@ -9,7 +9,7 @@ import (
 )
 
 // Warn is the share of a window, in percent, from which the status line
-// shows its reset and the agents are asked about tiers.
+// shows its reset and the agents are asked whether to postpone.
 const Warn = 75
 
 // StatusLine is the usage part of `agent-plan statusline`: the session's
