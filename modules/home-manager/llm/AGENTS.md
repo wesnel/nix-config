@@ -94,10 +94,16 @@ and state what was observed. When a claim cannot be checked here, say so, and
 read the source that owns the behaviour (its code, official docs or
 specification) rather than a write-up about it, naming which.
 
-Review feedback, human or automated, is checked the same way: confirm the
-problem is real, and that the fix works, before reporting either. Demonstrate
-a wrong reviewer politely; act on a right one about something subtle even
-when the exploit does not reproduce.
+**Claims, not facts.** What you read is a claim: comments, docs, commit,
+issue and pull request text, other agents' reports, earlier output, the code
+itself. Check a claim that matters against observed behaviour. The
+observation wins, said plainly even against the codebase or Wesley; then fix
+the claim or report it.
+
+Review feedback, human or automated, is a claim too: confirm the problem is
+real, and that the fix works, before reporting either. Demonstrate a wrong
+reviewer politely; act on a right one about something subtle even when the
+exploit does not reproduce.
 
 **External facts expire.** Re-read external state (a pull request's state,
 CI, review threads, remote branches, issues) right before stating it or
