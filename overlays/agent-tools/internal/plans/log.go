@@ -40,8 +40,11 @@ type Event struct {
 	// Session is the session whose tool call the event records, as its
 	// hook names it: Claude Code's or Codex's session_id, ECA's chat_id.
 	Session string `json:"session,omitempty"`
+	// Worktree is the top level of the worktree the event happened in.
+	Worktree string `json:"worktree,omitempty"`
 	// Range, Tip and PatchID are a review receipt's: the range reviewed,
-	// as given, its tip's commit, and the patch ID of its change.
+	// as given, its tip's commit, and the patch ID of its change. A
+	// branch-changed event's Tip is the commit of a detached HEAD.
 	Range   string `json:"range,omitempty"`
 	Tip     string `json:"tip,omitempty"`
 	PatchID string `json:"patchId,omitempty"`
@@ -78,6 +81,8 @@ var (
 				"Run `git fresh-review` (or `pr-loop review` for someone else's pull request) as the review-change skill says",
 			"committed": "a hook after each shell call logs `committed` for every commit, from what git printed. " +
 				"Log `done` with `--commit SUBJECT` for the step a commit completes",
+			branchChanged: "the guard logs `branch-changed` when a session's file edit lands on another branch or worktree than its last. " +
+				"Confirm the branch with `git branch --show-current` before the edit",
 			stopBlocked: "the stop-check logs `stop-blocked` for each stop of an ECA chat it blocks. " +
 				"Do what its reason asks, or say in your report why it cannot be done",
 			"pushed": "pr-loop, and a hook after each shell call, log `pushed` for every push, from what they pushed. " +
@@ -108,7 +113,7 @@ func oneOf(value string, allowed []string) bool {
 func (p Plan) check(e Event) error {
 	for what, v := range map[string]string{"summary": e.Summary, "agent": e.Agent, "branch": e.Branch,
 		"commit": e.Commit, "evidence": e.Evidence, "model": e.Model, "item": e.Item, "kind": e.Kind, "session": e.Session,
-		"range": e.Range, "tip": e.Tip, "patch ID": e.PatchID} {
+		"worktree": e.Worktree, "range": e.Range, "tip": e.Tip, "patch ID": e.PatchID} {
 		if err := checkLine(what, v); err != nil {
 			return err
 		}
@@ -253,7 +258,7 @@ func eventText(e Event) string {
 	for _, kv := range [][2]string{{"EVENT", e.ID}, {"AGENT", e.Agent}, {"ROLE", e.Role}, {"ITEM", e.Item},
 		{"KIND", e.Kind}, {"BRANCH", e.Branch}, {"COMMIT", e.Commit}, {"EVIDENCE", e.Evidence},
 		{"REVIEW", e.Review}, {"OUTCOME", e.Outcome}, {"TOKENS", tokens}, {"MODEL", e.Model},
-		{"EFFORT", e.Effort}, {"SESSION", e.Session}, {"RANGE", e.Range}, {"TIP", e.Tip}, {"PATCH_ID", e.PatchID},
+		{"EFFORT", e.Effort}, {"SESSION", e.Session}, {"WORKTREE", e.Worktree}, {"RANGE", e.Range}, {"TIP", e.Tip}, {"PATCH_ID", e.PatchID},
 		{"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}} {
 		if kv[1] != "" {
 			b.WriteString(":" + kv[0] + ": " + kv[1] + "\n")
@@ -456,8 +461,8 @@ func (p Plan) Events() ([]Event, error) {
 		e := Event{ID: h.Props["EVENT"], Kind: h.Props["KIND"], Item: h.Props["ITEM"], Agent: h.Props["AGENT"],
 			Role: h.Props["ROLE"], Branch: h.Props["BRANCH"], Commit: h.Props["COMMIT"],
 			Evidence: h.Props["EVIDENCE"], Review: h.Props["REVIEW"], Outcome: h.Props["OUTCOME"],
-			Model: h.Props["MODEL"], Effort: h.Props["EFFORT"], Session: h.Props["SESSION"], Range: h.Props["RANGE"],
-			Tip: h.Props["TIP"], PatchID: h.Props["PATCH_ID"], Sign: h.Props["SIGN"], Exit: h.Props["EXIT"],
+			Model: h.Props["MODEL"], Effort: h.Props["EFFORT"], Session: h.Props["SESSION"], Worktree: h.Props["WORKTREE"],
+			Range: h.Props["RANGE"], Tip: h.Props["TIP"], PatchID: h.Props["PATCH_ID"], Sign: h.Props["SIGN"], Exit: h.Props["EXIT"],
 			Delivers: h.Props["DELIVERS"]}
 		e.Tokens, _ = strconv.ParseInt(h.Props["TOKENS"], 10, 64)
 		if _, summary, ok := strings.Cut(h.Title, " — "); ok {

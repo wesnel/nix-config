@@ -60,9 +60,10 @@ func agentToolsConfig(path string) bool {
 }
 
 // agentToolsState reports whether path is in agent-tools' directory under
-// the XDG state directory, which holds what stop-check and the status line
-// trust: review receipts, usage readings, branch hints. agent-plan and
-// pr-loop write it themselves, never through an agent's command.
+// the XDG state directory, which holds what the status line and the quota
+// ask trust: usage readings, Wesley's quota choices and the marks of quota
+// asks made. agent-plan writes it itself, never through an agent's
+// command.
 func agentToolsState(path string) bool {
 	base := os.Getenv("XDG_STATE_HOME")
 	if !filepath.IsAbs(base) {

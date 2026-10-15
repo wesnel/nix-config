@@ -615,8 +615,8 @@ func checkSecretPath(word, dir string) string {
 
 const appendOnly = "This is a plan's event log, which is append-only and written by agent-plan alone. Record the event with `agent-plan log PLAN --item ID --kind KIND`, and change the plan itself in its plan file."
 
-const stateWrite = "This is agent-tools' state (review receipts, usage readings, branch hints), which agent-plan and pr-loop write themselves. " +
-	"Run the agent-plan, pr-loop or git fresh-review command that records what you mean, or ask Wesley to change it."
+const stateWrite = "This is agent-tools' state (usage readings, quota choices and asks), which agent-plan writes itself. " +
+	"Run the agent-plan command that records what you mean, such as `agent-plan usage choose`, or ask Wesley to change it."
 
 // planLog reports whether path is a plan's log, or the lock file that
 // records its state, in the plans directory agent-plan's config names. A

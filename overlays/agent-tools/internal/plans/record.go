@@ -55,6 +55,44 @@ func (c Config) LocateBranches(session, worktree string, branches []string) (p P
 	return Plan{}, "", false
 }
 
+// branchChanged is the kind of the event NoteBranch logs.
+const branchChanged = "branch-changed"
+
+// NoteBranch logs that session works on branch, or on a detached HEAD at
+// tip when branch is "", in worktree, unless its last branch-changed event
+// in the plan says so already, and returns that last one, if any, and
+// whether it logged. Read and append hold the log's lock, so edits running
+// at once log a change once.
+func (p Plan) NoteBranch(session, branch, tip, worktree string, now time.Time) (last Event, had, logged bool, err error) {
+	if err := p.checkOwn(); err != nil {
+		return Event{}, false, false, err
+	}
+	err = p.withLock(func(l *lockedPlan) error {
+		events, err := p.Events()
+		if err != nil {
+			return err
+		}
+		for i := len(events) - 1; i >= 0; i-- {
+			if events[i].Kind == branchChanged && events[i].Session == session {
+				last, had = events[i], true
+				break
+			}
+		}
+		if had && last.Branch == branch && last.Tip == tip && last.Worktree == worktree {
+			return nil
+		}
+		summary := branch
+		if branch == "" {
+			summary = "detached at " + tip
+		}
+		_, err = l.log(Event{Kind: branchChanged, Item: p.Name, Session: session, Branch: branch, Tip: tip,
+			Worktree: worktree, Summary: summary + " in " + worktree}, now)
+		logged = err == nil
+		return err
+	})
+	return last, had, logged, err
+}
+
 // EnvSession is the session of the harness running this process, as its
 // environment names it: Claude Code's, Codex's or ECA's; or "".
 func EnvSession() string {

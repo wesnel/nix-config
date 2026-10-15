@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// agent-tools' state, the review receipts, usage readings and branch hints
-// stop-check and the status line read, is written by agent-plan and pr-loop
+// agent-tools' state, the usage readings, quota choices and the marks of
+// quota asks the status line and the ask read, is written by agent-plan
 // alone: no file tool and no shell write may change it, while reading it
 // and the programs themselves pass.
 func TestAgentToolsState(t *testing.T) {
@@ -29,7 +29,7 @@ func TestAgentToolsState(t *testing.T) {
 		}
 		state := filepath.Join(base, "agent-tools")
 		work := filepath.Join(h, "work")
-		for _, d := range []string{filepath.Join(state, "usage"), filepath.Join(state, "commits"), work} {
+		for _, d := range []string{filepath.Join(state, "usage", "asked"), work} {
 			os.MkdirAll(d, 0o755)
 		}
 		return strings.NewReplacer("STATE", state, "OTHER", filepath.Join(base, "other"), "WORKDIR", work), work
@@ -44,9 +44,9 @@ func TestAgentToolsState(t *testing.T) {
 		input any
 	}{
 		{"a usage reading", true, "Write", map[string]string{"file_path": "STATE/usage/claude.json", "content": "{}"}},
-		{"a receipt", true, "Edit", map[string]string{"file_path": "STATE/commits/s1", "old_string": "a", "new_string": "b"}},
-		{"a branch hint", true, "Write", map[string]string{"file_path": "STATE/branch/s1", "content": "main\t/x"}},
-		{"a receipt", true, "apply_patch", patch("Add File", "STATE/commits/s2")},
+		{"a quota choice", true, "Edit", map[string]string{"file_path": "STATE/usage/choice-claude.json", "old_string": "a", "new_string": "b"}},
+		{"an ask's mark", true, "Write", map[string]string{"file_path": "STATE/usage/asked/claude-5h-1-75", "content": ""}},
+		{"an ask's mark", true, "apply_patch", patch("Add File", "STATE/usage/asked/claude-5h-1-90")},
 		{"a usage reading", true, "write_file", map[string]string{"path": "STATE/usage/codex.json", "content": "{}"}},
 		{"another program's state", false, "Write", map[string]string{"file_path": "OTHER/x", "content": "x"}},
 		{"a file of the work", false, "Write", map[string]string{"file_path": "WORKDIR/usage.json", "content": "x"}},
@@ -77,16 +77,16 @@ func TestAgentToolsState(t *testing.T) {
 		command string // run in WORKDIR
 	}{
 		{true, "echo '{}' > STATE/usage/claude.json"},
-		{true, "printf x >> STATE/commits/s1"},
-		{true, "tee STATE/branch/s1 < /tmp/x"},
-		{true, "cp /tmp/forged STATE/commits/s1"},
+		{true, "printf x >> STATE/usage/choice-claude.json"},
+		{true, "tee STATE/usage/asked/claude-5h-1-75 < /tmp/x"},
+		{true, "cp /tmp/forged STATE/usage/choice-claude.json"},
 		{true, "mv STATE/usage /tmp/old"},
-		{true, "rm -r STATE/commits"},
+		{true, "rm -r STATE/usage/asked"},
 		{true, "truncate -s 0 STATE/usage/claude.json"},
-		{true, "sed -i '' s/a/b/ STATE/commits/s1"},
+		{true, "sed -i '' s/a/b/ STATE/usage/choice-claude.json"},
 		{true, "cd STATE && echo x > usage/claude.json"},
 		{false, "cat STATE/usage/claude.json"},
-		{false, "ls STATE/commits"},
+		{false, "ls STATE/usage/asked"},
 		{false, "cp STATE/usage/claude.json /tmp/copy.json"},
 		{false, "agent-plan usage --json > /tmp/usage.json"},
 		{false, "echo x > OTHER/x"},
