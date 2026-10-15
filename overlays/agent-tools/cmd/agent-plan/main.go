@@ -96,9 +96,12 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      "main" for the session's main thread, as the one agent
                      that edits files in the worktree DIR (OWNERS in the plan)
   stop-check         Claude Code's and Codex's Stop hook, and ECA's postRequest
-                     hook (reads stdin): blocks a stop once when commits have
-                     no plan, steps are done but not verified, or a full
-                     pipeline has no review since the last commit; ECA gets
+                     hook (reads stdin): blocks a stop once when the session's
+                     own commits have no plan, its plan's steps are done but
+                     not verified, or a full pipeline has no review since the
+                     session's last commit, the commits as pr-loop guard
+                     --post records them (outside any plan, in
+                     $XDG_STATE_HOME/agent-tools/commits); ECA gets
                      the reason on stderr with exit 2, once per chat, kept in
                      $XDG_STATE_HOME/agent-tools/stop; never touches the network
   remind             a hook (reads stdin) that asks, in a session with a plan,

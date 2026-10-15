@@ -37,6 +37,9 @@ type Event struct {
 	Tokens   int64  `json:"tokens,omitempty"`
 	Model    string `json:"model,omitempty"`
 	Effort   string `json:"effort,omitempty"`
+	// Session is the session whose tool call the event records, as its
+	// hook names it: Claude Code's or Codex's session_id, ECA's chat_id.
+	Session string `json:"session,omitempty"`
 	// Note is what the caller should know about the event, such as a
 	// heading keyword Log could not write; the log does not hold it.
 	Note string `json:"note,omitempty"`
@@ -68,7 +71,7 @@ func oneOf(value string, allowed []string) bool {
 // check refuses an event the log must not hold.
 func (p Plan) check(e Event) error {
 	for what, v := range map[string]string{"summary": e.Summary, "agent": e.Agent, "branch": e.Branch,
-		"commit": e.Commit, "evidence": e.Evidence, "model": e.Model, "item": e.Item, "kind": e.Kind} {
+		"commit": e.Commit, "evidence": e.Evidence, "model": e.Model, "item": e.Item, "kind": e.Kind, "session": e.Session} {
 		if err := checkLine(what, v); err != nil {
 			return err
 		}
@@ -88,8 +91,8 @@ func (p Plan) check(e Event) error {
 		return refusal.New("%q is not an effort. Use one of `%s`", e.Effort, strings.Join(Efforts, "`, `"))
 	case e.Tokens < 0:
 		return refusal.New("tokens cannot be negative. Pass the total the harness reported, as `--tokens 12345`")
-	case strings.ContainsAny(e.Agent+e.Branch+e.Model, " \t"):
-		return refusal.New("agent, branch and model are single words. Pass them without spaces, as `--model opus`")
+	case strings.ContainsAny(e.Agent+e.Branch+e.Model+e.Session, " \t"):
+		return refusal.New("agent, branch, model and session are single words. Pass them without spaces, as `--model opus`")
 	}
 	items, err := p.items()
 	if err != nil {
@@ -204,7 +207,7 @@ func eventText(e Event) string {
 	for _, kv := range [][2]string{{"EVENT", e.ID}, {"AGENT", e.Agent}, {"ROLE", e.Role}, {"ITEM", e.Item},
 		{"KIND", e.Kind}, {"BRANCH", e.Branch}, {"COMMIT", e.Commit}, {"EVIDENCE", e.Evidence},
 		{"REVIEW", e.Review}, {"OUTCOME", e.Outcome}, {"TOKENS", tokens}, {"MODEL", e.Model},
-		{"EFFORT", e.Effort}} {
+		{"EFFORT", e.Effort}, {"SESSION", e.Session}} {
 		if kv[1] != "" {
 			b.WriteString(":" + kv[0] + ": " + kv[1] + "\n")
 		}
@@ -406,7 +409,7 @@ func (p Plan) Events() ([]Event, error) {
 		e := Event{ID: h.Props["EVENT"], Kind: h.Props["KIND"], Item: h.Props["ITEM"], Agent: h.Props["AGENT"],
 			Role: h.Props["ROLE"], Branch: h.Props["BRANCH"], Commit: h.Props["COMMIT"],
 			Evidence: h.Props["EVIDENCE"], Review: h.Props["REVIEW"], Outcome: h.Props["OUTCOME"],
-			Model: h.Props["MODEL"], Effort: h.Props["EFFORT"]}
+			Model: h.Props["MODEL"], Effort: h.Props["EFFORT"], Session: h.Props["SESSION"]}
 		e.Tokens, _ = strconv.ParseInt(h.Props["TOKENS"], 10, 64)
 		if _, summary, ok := strings.Cut(h.Title, " — "); ok {
 			e.Summary = summary

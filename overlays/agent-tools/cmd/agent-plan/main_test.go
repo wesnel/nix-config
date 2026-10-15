@@ -514,6 +514,9 @@ func TestHooks(t *testing.T) {
 				t.Fatalf("git %v: %v %s", args, err, out)
 			}
 		}
+		if err := plans.NoteCommit("chat-1", repo); err != nil {
+			t.Fatal(err)
+		}
 		event, _ := json.Marshal(map[string]any{"hook_type": "postRequest", "chat_id": "chat-1", "cwd": repo})
 		code, out, errs := agentPlan(t, string(event), "stop-check")
 		if code != 2 || out != "" || !strings.Contains(errs, "agent-plan new") {

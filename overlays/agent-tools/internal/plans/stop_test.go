@@ -29,9 +29,11 @@ func setProp(t *testing.T, file, name, value string) {
 }
 
 // stopRepo makes a repository whose origin/main is its first commit, with
-// an unsigned commit after it if unsigned.
+// an unsigned commit after it if unsigned, and gives the test a state
+// directory of its own.
 func stopRepo(t *testing.T, unsigned bool) string {
 	t.Helper()
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	for _, v := range []string{"GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"} {
 		t.Setenv(v, "T")
 	}
@@ -84,17 +86,37 @@ func TestStopCheck(t *testing.T) {
 		expectReason(t, "nothing to sign", stopIn(t, c)("s1", repo, false), "")
 	})
 
-	t.Run("unsigned, no plan", func(t *testing.T) {
+	// A session that only read or answered a question owes nothing for
+	// the unsigned commits it finds.
+	t.Run("others' unsigned commits, no plan", func(t *testing.T) {
 		c := testConfig(t)
 		repo := stopRepo(t, true)
 		gitIn(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
-		expectReason(t, "unsigned, no plan", stopIn(t, c)("s1", repo, false), "agent-plan new")
+		if err := NoteCommit("s2", repo); err != nil {
+			t.Fatal(err)
+		}
+		expectReason(t, "others' unsigned commits, no plan", stopIn(t, c)("s1", repo, false), "")
+	})
+
+	t.Run("this session's commit, no plan", func(t *testing.T) {
+		c := testConfig(t)
+		other := stopRepo(t, true)
+		repo := stopRepo(t, true)
+		gitIn(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+		if err := NoteCommit("s1", repo); err != nil {
+			t.Fatal(err)
+		}
+		expectReason(t, "this session's commit, no plan", stopIn(t, c)("s1", repo, false), "agent-plan new")
+		expectReason(t, "in another worktree", stopIn(t, c)("s1", other, false), "")
 	})
 
 	t.Run("stop hook active", func(t *testing.T) {
 		c := testConfig(t)
 		repo := stopRepo(t, true)
 		gitIn(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+		if err := NoteCommit("s1", repo); err != nil {
+			t.Fatal(err)
+		}
 		expectReason(t, "stop hook active", stopIn(t, c)("s1", repo, true), "")
 	})
 
@@ -127,27 +149,34 @@ func testStopCheckWithAPlan(t *testing.T) {
 		want    string
 	}
 	stages := []stage{
-		{"planning", func(*testing.T, Plan) {}, "s1", false, ""},
+		{"planning", func(*testing.T, Plan) {}, "s2", false, ""},
 		{"done, not verified", func(t *testing.T, p Plan) {
 			setProp(t, p.File(), "STATUS", "working")
 			p.Log(Event{Kind: "done", Item: "S1", Commit: "Add x"}, time.Now())
-		}, "s1", false, "S1"},
+		}, "s2", false, "S1"},
 		{"found by session", func(*testing.T, Plan) {}, "s2", true, "S1"},
+		// The plan is s2's: another session in its worktree answers for
+		// none of it.
+		{"another session in its worktree", func(*testing.T, Plan) {}, "s1", false, ""},
 		{"committed since the review", func(t *testing.T, p Plan) {
 			p.Log(Event{Kind: "verified", Item: "S1", Evidence: "tests pass"}, time.Now())
 			p.Log(Event{Kind: "reviewed", Item: p.Name}, time.Now().Add(-time.Hour))
+			p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add x", Session: "s2"}, time.Now())
+		}, "s2", false, "review-change"},
+		{"another session's commit in its worktree", func(t *testing.T, p Plan) {
+			p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add z", Session: "s1"}, time.Now())
 		}, "s1", false, "review-change"},
 		{"opted out", func(t *testing.T, p Plan) {
 			setProp(t, p.File(), "PIPELINE", "opted-out:Wesley")
-		}, "s1", false, ""},
+		}, "s2", false, ""},
 		{"handed back", func(t *testing.T, p Plan) {
 			setProp(t, p.File(), "PIPELINE", "full")
 			p.Log(Event{Kind: "handed-back", Item: p.Name}, time.Now())
-		}, "s1", false, ""},
+		}, "s2", false, ""},
 		{"halted", func(t *testing.T, p Plan) {
 			setProp(t, p.File(), "STATUS", "halted")
-			p.Log(Event{Kind: "done", Item: "S1", Commit: "Add y"}, time.Now().Add(time.Hour))
-		}, "s1", false, ""},
+			p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add y", Session: "s2"}, time.Now().Add(time.Hour))
+		}, "s2", false, ""},
 	}
 	for i, s := range stages {
 		t.Run(s.name, func(t *testing.T) {
@@ -198,7 +227,13 @@ func TestStopCheckChat(t *testing.T) {
 
 	t.Run("one block per chat", func(t *testing.T) {
 		state := filepath.Join(t.TempDir(), "agent-tools", "stop")
-		stop := stopIn(t, testConfig(t), stopRepo(t, true), state)
+		repo := stopRepo(t, true)
+		stop := stopIn(t, testConfig(t), repo, state)
+		for _, chat := range []string{"c1", "c2"} {
+			if err := NoteCommit(chat, repo); err != nil {
+				t.Fatal(err)
+			}
+		}
 		if got := stop("c1"); !strings.Contains(got, "agent-plan new") {
 			t.Fatalf("first stop: %q", got)
 		}
@@ -218,14 +253,21 @@ func TestStopCheckChat(t *testing.T) {
 
 	t.Run("chat IDs that are no file names", func(t *testing.T) {
 		state := filepath.Join(t.TempDir(), "agent-tools", "stop")
-		stop := stopIn(t, testConfig(t), stopRepo(t, true), state)
+		repo := stopRepo(t, true)
+		stop := stopIn(t, testConfig(t), repo, state)
 		for _, chat := range []string{"c1", "", "../c3", "a/b"} {
+			NoteCommit(chat, repo)
 			stop(chat)
 		}
-		entries, _ := os.ReadDir(state)
-		for _, e := range entries {
-			if strings.ContainsAny(e.Name(), "/\\") || strings.HasPrefix(e.Name(), ".") {
-				t.Errorf("state file %q", e.Name())
+		for _, dir := range []string{state, filepath.Join(os.Getenv("XDG_STATE_HOME"), "agent-tools", "commits")} {
+			entries, _ := os.ReadDir(dir)
+			if len(entries) == 0 {
+				t.Errorf("no state files in %s", dir)
+			}
+			for _, e := range entries {
+				if strings.ContainsAny(e.Name(), "/\\") || strings.HasPrefix(e.Name(), ".") {
+					t.Errorf("state file %q in %s", e.Name(), dir)
+				}
 			}
 		}
 	})
