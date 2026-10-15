@@ -185,16 +185,16 @@ func TestStatusLine(t *testing.T) {
 		}{
 			{"nothing committed", func() {}, ""},
 			{"committed", func() {
-				p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add x", Session: "abc"}, day)
+				p.Record("", Event{Kind: "committed", Commit: "Add x", Session: "abc"}, day)
 			}, "review owed"},
 			{"reviewed", func() {
 				p.Receipt("", Receipt{Range: "origin/main..HEAD", Tip: "1234", PatchID: "abcd", Reviewer: "codex"}, day)
 			}, ""},
 			{"another session committed", func() {
-				p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add y", Session: "zzz"}, day)
+				p.Record("", Event{Kind: "committed", Commit: "Add y", Session: "zzz"}, day)
 			}, ""},
 			{"committed again", func() {
-				p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add z", Session: "abc"}, day)
+				p.Record("", Event{Kind: "committed", Commit: "Add z", Session: "abc"}, day)
 				insertUnder(t, p.File(), "** Questions", question("Q1", "Keep it?", ""))
 			}, "review owed · 1 open question · /questions"},
 		}

@@ -115,15 +115,14 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      that edits files in the worktree DIR (OWNERS in the plan)
   stop-check         Claude Code's and Codex's Stop hook, and ECA's postRequest
                      hook (reads stdin): blocks a stop once when the session's
-                     own commits have no plan, its plan's steps are done but
-                     not verified, or the session committed to a full
-                     pipeline and no review receipt (which git fresh-review
-                     and pr-loop review log) for a range BASE..HEAD, BASE at
-                     or below the branch's base in the plan's BRANCHES or
-                     origin/<default>, has the patch ID of BASE..HEAD as it
-                     stands; the commits as pr-loop guard
-                     --post records them (outside any plan, in
-                     $XDG_STATE_HOME/agent-tools/commits); ECA gets
+                     plan has steps done but not verified, or the session
+                     committed to a full pipeline and no review receipt
+                     (which git fresh-review and pr-loop review log) for a
+                     range BASE..HEAD, BASE at or below the branch's base in
+                     the plan's BRANCHES or origin/<default>, has the patch ID
+                     of BASE..HEAD as it stands; the commits as pr-loop guard
+                     --post logs them, in a plan it makes for a commit no
+                     plan takes; ECA gets
                      the reason on stderr with exit 2, once per chat, kept in
                      $XDG_STATE_HOME/agent-tools/stop; never touches the network
   remind             a hook (reads stdin) that asks, in a session with a plan,

@@ -30,7 +30,7 @@ func TestMain(m *testing.M) {
 	config := filepath.Join(dir, "config.json")
 	os.WriteFile(config, []byte(`{"plans": {"dir": "`+filepath.Join(dir, "agents")+`", "host": "box"}}`), 0o600)
 	os.Setenv("AGENT_TOOLS_CONFIG", config)
-	// The commits a session made outside any plan are noted there too.
+	// agent-tools' state, which the guard protects, is there too.
 	os.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
 	fixtures = filepath.Join(dir, "fixtures")
 	code := m.Run()

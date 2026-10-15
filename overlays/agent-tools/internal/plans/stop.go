@@ -20,9 +20,10 @@ import (
 // reason, when the work is not in the state the plan-work and review-change
 // skills leave it in. A session answers only for its own plan and its own
 // commits, as `pr-loop guard --post` records them, never for another
-// session's work in the same worktree. It reads local files and git alone,
-// never the network, and returns nothing to let the stop through, on any
-// error too.
+// session's work in the same worktree; a session that committed has a
+// plan, since that records its first commit in a plan made for it where
+// none was. It reads local files and git alone, never the network, and
+// returns nothing to let the stop through, on any error too.
 func (c Config) StopCheck(input []byte, now time.Time) []byte {
 	var in struct {
 		SessionID string `json:"session_id"`
@@ -38,19 +39,13 @@ func (c Config) StopCheck(input []byte, now time.Time) []byte {
 		session = in.ChatID
 	}
 	top, _ := checkout(in.Cwd)
-	unsigned, ref := unsignedAhead(top)
 	block := func(reason string) []byte {
 		out, _ := json.Marshal(map[string]string{"decision": "block", "reason": reason})
 		return out
 	}
 	p, found := c.sessionPlan(session, top)
 	if !found {
-		if unsigned == 0 || !committedUnplanned(session, top) {
-			return nil
-		}
-		return block(fmt.Sprintf("This session committed in this worktree, which has %d unsigned commits ahead of %s, and no plan names this session or worktree. "+
-			"Make one with `agent-plan new` as the plan-work skill says, or add this worktree to the plan the work belongs to, before stopping.",
-			unsigned, ref))
+		return nil
 	}
 	items, err := p.items()
 	if err != nil {
@@ -77,9 +72,8 @@ func (c Config) StopCheck(input []byte, now time.Time) []byte {
 	if err != nil {
 		return nil
 	}
-	// A commit made before the plan was noted outside it.
-	committed := committedUnplanned(session, top) ||
-		slices.ContainsFunc(events, func(e Event) bool { return e.Kind == "committed" && e.Session == session })
+	committed := slices.ContainsFunc(events, func(e Event) bool { return e.Kind == "committed" && e.Session == session })
+	ref := defaultRef(top)
 	planBase := branchBase(top, props["BRANCHES"])
 	if !committed || reviewed(top, ref, planBase, events) {
 		return nil
@@ -216,52 +210,6 @@ func stateDir() string {
 // StopStateDir is where StopCheckChat keeps its files.
 func StopStateDir() string { return filepath.Join(stateDir(), "stop") }
 
-// NoteCommit records that session committed in the worktree at top while
-// no plan named either, for StopCheck to ask that session for a plan. A
-// file per session under the state directory's commits/ lists the
-// worktrees, one to a line.
-func NoteCommit(session, top string) error {
-	if session == "" || top == "" || strings.ContainsAny(top, "\n\r") {
-		return nil
-	}
-	top = realPath(top)
-	if committedUnplanned(session, top) {
-		return nil
-	}
-	dir := filepath.Join(stateDir(), "commits")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(filepath.Join(dir, stateName(session)), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
-	if err != nil {
-		return err
-	}
-	_, err = f.WriteString(top + "\n")
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	return err
-}
-
-// committedUnplanned reports whether NoteCommit recorded a commit of
-// session in the worktree at top.
-func committedUnplanned(session, top string) bool {
-	if session == "" || top == "" {
-		return false
-	}
-	data, err := os.ReadFile(filepath.Join(stateDir(), "commits", stateName(session)))
-	return err == nil && slices.Contains(strings.Split(string(data), "\n"), realPath(top))
-}
-
-// realPath is path with its symbolic links resolved, or path where they
-// cannot be.
-func realPath(path string) string {
-	if real, err := filepath.EvalSymlinks(path); err == nil {
-		return real
-	}
-	return path
-}
-
 // sessionPlan is the plan session answers for: of this host's plans that
 // name the session or the worktree at top, the first whose log holds a
 // commit of the session's, in Locate's order, since Locate is what put the
@@ -310,36 +258,19 @@ func boolOrder(b bool) int {
 	return 0
 }
 
-// unsignedAhead counts the commits of the worktree at top that are not on
-// its default branch's remote-tracking ref and carry no signature, and
-// returns that ref.
-func unsignedAhead(top string) (int, string) {
+// defaultRef is the default branch's remote-tracking ref of the worktree
+// at top, or "".
+func defaultRef(top string) string {
 	if top == "" {
-		return 0, ""
+		return ""
 	}
-	ref, err := git.Run("-C", top, "rev-parse", "--abbrev-ref", "origin/HEAD")
-	if err != nil {
-		ref = ""
-		for _, r := range []string{"origin/main", "origin/master"} {
-			if git.OK("-C", top, "rev-parse", "--verify", "-q", r) {
-				ref = r
-				break
-			}
+	if ref, err := git.Run("-C", top, "rev-parse", "--abbrev-ref", "origin/HEAD"); err == nil {
+		return ref
+	}
+	for _, r := range []string{"origin/main", "origin/master"} {
+		if git.OK("-C", top, "rev-parse", "--verify", "-q", r) {
+			return r
 		}
 	}
-	if ref == "" {
-		return 0, ""
-	}
-	raw, err := git.Run("-C", top, "log", "--format=raw", "--max-count=200", ref+"..HEAD")
-	if err != nil || raw == "" {
-		return 0, ref
-	}
-	unsigned := 0
-	for _, commit := range strings.Split("\n"+raw, "\ncommit ")[1:] {
-		header, _, _ := strings.Cut(commit, "\n\n")
-		if !strings.Contains(header, "\ngpgsig") {
-			unsigned++
-		}
-	}
-	return unsigned, ref
+	return ""
 }

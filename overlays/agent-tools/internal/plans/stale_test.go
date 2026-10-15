@@ -21,7 +21,7 @@ func TestStaleAndUnrecorded(t *testing.T) {
 			events = append(events, Event{Kind: "committed", Item: p.Name, Commit: c, Summary: c})
 		}
 		for _, e := range events {
-			if _, err := p.Log(e, day); err != nil {
+			if _, err := p.Record(e.Item, e, day); err != nil {
 				t.Fatal(err)
 			}
 		}

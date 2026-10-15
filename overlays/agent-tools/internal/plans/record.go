@@ -1,11 +1,17 @@
 package plans
 
 import (
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/gh"
+	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
@@ -47,14 +53,13 @@ type Receipt struct {
 	Findings        int
 }
 
-// receiptKind is the kind of the event Receipt logs, which Log refuses
-// from anyone else.
+// receiptKind is the kind of the event Receipt logs.
 const receiptKind = "review-receipt"
 
 // Receipt logs r about part, or about the plan itself when part is "".
 func (p Plan) Receipt(part string, r Receipt, now time.Time) (Event, error) {
 	return p.Record(part, Event{Kind: receiptKind, Range: r.Range, Tip: r.Tip, PatchID: r.PatchID, Agent: r.Reviewer,
-		Model: r.Model, Summary: fmt.Sprintf("%s: %d findings", r.Range, r.Findings), receipt: true}, now)
+		Model: r.Model, Summary: fmt.Sprintf("%s: %d findings", r.Range, r.Findings)}, now)
 }
 
 // WriteReceipt logs r in the plan Locate finds for session and the
@@ -75,13 +80,95 @@ func WriteReceipt(session, top string, r Receipt, now time.Time) (string, error)
 	return p.File(), nil
 }
 
-// Record logs e about part, or about the plan itself when part is "".
+// RecordCommit logs e as a commit session made in the worktree at top, in
+// the plan Locate finds for them. Where there is none, it first makes one:
+// a plan of the repository's unplanned work, working under the full
+// pipeline, that names the session and the worktree. It returns the plan
+// and whether it made it. Calls running at once make one plan between
+// them.
+func (c Config) RecordCommit(session, top string, e Event, now time.Time) (Plan, bool, error) {
+	e.Kind, e.Session = "committed", session
+	p, part, ok := c.Locate(session, top)
+	created := false
+	if !ok {
+		if top == "" {
+			return Plan{}, false, refusal.New("a commit outside a worktree has no plan to go in. Run the commit inside the repository")
+		}
+		var err error
+		if p, part, created, err = c.unplanned(session, top, now); err != nil {
+			return Plan{}, false, err
+		}
+	}
+	_, err := p.Record(part, e, now)
+	return p, created, err
+}
+
+// unplanned is the plan Locate finds for session and top once this host's
+// plans directory is locked, or else a new one for them, and whether it is
+// new.
+func (c Config) unplanned(session, top string, now time.Time) (Plan, string, bool, error) {
+	if err := os.MkdirAll(c.Dir, 0o755); err != nil {
+		return Plan{}, "", false, err
+	}
+	lock, err := os.OpenFile(filepath.Join(c.Dir, ".new.lock"), os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		return Plan{}, "", false, err
+	}
+	defer lock.Close()
+	for {
+		err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX)
+		if !errors.Is(err, syscall.EINTR) {
+			break
+		}
+	}
+	if err != nil {
+		return Plan{}, "", false, err
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	if p, part, ok := c.Locate(session, top); ok {
+		return p, part, false, nil
+	}
+	name := repoName(top)
+	o := NewOptions{Title: "Unplanned work in " + name, Slug: slug("unplanned " + name), Repos: []string{name},
+		Worktrees: []string{top}, Goal: "Unplanned work in " + name + ".", Status: "working"}
+	if checkWords("session", []string{session}) == nil {
+		o.Sessions = []string{session}
+	}
+	made, err := c.New(o, now)
+	if err != nil {
+		return Plan{}, "", false, err
+	}
+	p, err := c.Open(made.Plan)
+	return p, "", err == nil, err
+}
+
+// repoName is the GitHub owner/name origin of the worktree at top fetches
+// from, else the name of the directory its repository is in.
+func repoName(top string) string {
+	if url, err := git.Run("-C", top, "remote", "get-url", "origin"); err == nil {
+		if s := gh.Slug(url); s != "" {
+			return s
+		}
+	}
+	common, err := git.Run("-C", top, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return filepath.Base(top)
+	}
+	if filepath.Base(common) == ".git" {
+		common = filepath.Dir(common)
+	}
+	return strings.TrimSuffix(filepath.Base(common), ".git")
+}
+
+// Record logs e about part, or about the plan itself when part is "", as
+// one of agent-tools' own commands or hooks: unlike Log, it takes the
+// kinds only they log.
 func (p Plan) Record(part string, e Event, now time.Time) (Event, error) {
 	e.Item = part
 	if part == "" {
 		e.Item = p.Name
 	}
-	return p.Log(e, now)
+	return p.record(e, now)
 }
 
 // AddToProperty adds value to the list property name of the `* Plan`

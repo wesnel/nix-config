@@ -86,8 +86,8 @@ func (c Config) RequestSign(session, worktree string, branches []string, now tim
 	var b [4]byte
 	rand.Read(b[:])
 	id := fmt.Sprintf("%s.%x", p.Name, b)
-	if _, err := p.Log(Event{Kind: signRequested, Item: p.Name, Summary: id, Sign: id, Session: session,
-		Branch: strings.Join(branches, ","), sign: true}, now); err != nil {
+	if _, err := p.record(Event{Kind: signRequested, Item: p.Name, Summary: id, Sign: id, Session: session,
+		Branch: strings.Join(branches, ",")}, now); err != nil {
 		return "", err
 	}
 	return id, nil
@@ -138,7 +138,7 @@ func (c Config) RecordSign(id string, r SignResult, now time.Time) (string, erro
 			kind = "sign-refused"
 		}
 		_, err = l.log(Event{Kind: kind, Item: events[i].Item, Summary: strings.Join(strings.Fields(r.Summary), " "),
-			Sign: id, Session: events[i].Session, Exit: strconv.Itoa(r.Exit), sign: true}, now)
+			Sign: id, Session: events[i].Session, Exit: strconv.Itoa(r.Exit)}, now)
 		return err
 	})
 	return p.File(), err
@@ -227,7 +227,7 @@ func (l *lockedPlan) deliver(match func(Event) bool, now time.Time) ([]SignDeliv
 		d := delivery(l.p, e, delivered[e.ID], now)
 		if !d.Delivered {
 			if _, err := l.log(Event{Kind: signDelivered, Item: e.Item, Summary: e.Sign, Sign: e.Sign, Session: e.Session,
-				Delivers: e.ID, sign: true}, now); err != nil {
+				Delivers: e.ID}, now); err != nil {
 				return out, err
 			}
 		}

@@ -50,19 +50,16 @@ type Event struct {
 	Sign     string `json:"sign,omitempty"`
 	Exit     string `json:"exit,omitempty"`
 	Delivers string `json:"delivers,omitempty"`
-	// receipt marks an event Receipt logs, and sign one a sign-pass's
-	// commands log.
-	receipt, sign bool
 	// Note is what the caller should know about the event, such as a
 	// heading keyword Log could not write; the log does not hold it.
 	Note string `json:"note,omitempty"`
 }
 
 var (
-	// Kinds are what an event an agent logs records about its item. A
-	// review receipt (receiptKind) is the reviews' own, beside them.
+	// Kinds are what an event an agent logs records about its item;
+	// toolKinds are beside them.
 	Kinds = []string{"planned", "plan-reviewed", "started", "done", "blocked", "abandoned", "verified",
-		"reviewed", "finding-settled", "asked", "decided", "handed-back", "committed", "pushed", "postponed", "discovered", "referenced"}
+		"reviewed", "finding-settled", "asked", "decided", "handed-back", "postponed", "discovered", "referenced"}
 	// Roles are who logs an event.
 	Roles = []string{"single", "parent", "subagent", "reviewer", "design-reviewer"}
 	// Outcomes are the review-change skill's triage outcomes.
@@ -71,6 +68,25 @@ var (
 	Efforts = []string{"low", "medium", "high", "xhigh", "max"}
 
 	reviewPattern = regexp.MustCompile(`^[0-9]+\.[A-Za-z0-9_-]+$`)
+
+	// toolKinds are the kinds only agent-tools' own commands and hooks
+	// log, through Record, from what they saw happen; each maps to the
+	// refusal Log gives an agent that logs one.
+	toolKinds = func() map[string]string {
+		kinds := map[string]string{
+			receiptKind: "a review receipt is written by the review that ran alone. " +
+				"Run `git fresh-review` (or `pr-loop review` for someone else's pull request) as the review-change skill says",
+			"committed": "a hook after each shell call logs `committed` for every commit, from what git printed. " +
+				"Log `done` with `--commit SUBJECT` for the step a commit completes",
+			"pushed": "a hook after each shell call logs `pushed` for every push, from what pr-loop and git sign-pass printed. " +
+				"Watch the push's CI with `pr-loop wait ci` as the signing-pass skill says",
+		}
+		for _, k := range signKinds {
+			kinds[k] = "a sign-pass's events are logged by `agent-plan sign-id`, `git sign-pass --notify` and the delivery of its result alone. " +
+				"Hand Wesley the sign-pass as the signing-pass skill says"
+		}
+		return kinds
+	}()
 )
 
 func oneOf(value string, allowed []string) bool {
@@ -92,13 +108,7 @@ func (p Plan) check(e Event) error {
 		}
 	}
 	switch {
-	case e.Kind == receiptKind && !e.receipt:
-		return refusal.New("a review receipt is written by the review that ran alone. " +
-			"Run `git fresh-review` (or `pr-loop review` for someone else's pull request) as the review-change skill says")
-	case oneOf(e.Kind, signKinds) && !e.sign:
-		return refusal.New("a sign-pass's events are logged by `agent-plan sign-id`, `git sign-pass --notify` and the delivery of its result alone. " +
-			"Hand Wesley the sign-pass as the signing-pass skill says")
-	case e.Kind != receiptKind && !oneOf(e.Kind, Kinds) && !oneOf(e.Kind, signKinds):
+	case !oneOf(e.Kind, Kinds) && toolKinds[e.Kind] == "":
 		return refusal.New("%q is not an event kind. Use one of `%s`", e.Kind, strings.Join(Kinds, "`, `"))
 	case e.Role != "" && !oneOf(e.Role, Roles):
 		return refusal.New("%q is not a role. Use one of `%s`", e.Role, strings.Join(Roles, "`, `"))
@@ -125,12 +135,21 @@ func (p Plan) check(e Event) error {
 	return nil
 }
 
-// Log appends e to the plan's log, with a new event ID and now's time, and
-// returns it as written. A step's or part's heading keyword then follows
-// the log: the log is the record, and the keyword its projection for
-// Emacs. A keyword it cannot write leaves the event logged, says so in the
-// returned event's Note, and shows in status as drift.
+// Log appends e, an event an agent logs, to the plan's log, with a new
+// event ID and now's time, and returns it as written; it refuses the kinds
+// only tools log. A step's or part's heading keyword then follows the log:
+// the log is the record, and the keyword its projection for Emacs. A
+// keyword it cannot write leaves the event logged, says so in the returned
+// event's Note, and shows in status as drift.
 func (p Plan) Log(e Event, now time.Time) (Event, error) {
+	if why := toolKinds[e.Kind]; why != "" {
+		return Event{}, refusal.New("%s", why)
+	}
+	return p.record(e, now)
+}
+
+// record is Log for any kind, the tools' too.
+func (p Plan) record(e Event, now time.Time) (Event, error) {
 	if err := p.checkOwn(); err != nil {
 		return Event{}, err
 	}

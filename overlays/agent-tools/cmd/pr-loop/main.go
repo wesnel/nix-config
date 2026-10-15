@@ -79,8 +79,8 @@ no attribution lines, and on a fixup only Review-* trailers.
                               records the shell call's commits, pushes, new worktrees,
                               branches and PRs in the plan of its session or worktree,
                               each commit with the session, asking which step it
-                              completes (a commit no plan takes is noted for
-                              agent-plan stop-check); after a push to
+                              completes (a commit no plan takes makes a plan
+                              naming both); after a push to
                               GitHub, names the pr-loop wait ci to start
 ` + prreview.Usage + `
 reply and resolve take a thread on an open PR by the authenticated user in

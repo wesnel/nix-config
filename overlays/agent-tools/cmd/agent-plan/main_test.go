@@ -643,22 +643,28 @@ func TestHooks(t *testing.T) {
 			t.Setenv(v, "t@e")
 		}
 		repo, _ := filepath.EvalSymlinks(t.TempDir())
+		os.WriteFile(filepath.Join(repo, "x"), []byte("x\n"), 0o644)
 		for _, args := range [][]string{
 			{"init", "-q", "-b", "main"},
 			{"commit", "-q", "--allow-empty", "-m", "base"},
 			{"update-ref", "refs/remotes/origin/main", "HEAD"},
-			{"commit", "-q", "--allow-empty", "-m", "Add x"},
+			{"add", "x"},
+			{"commit", "-q", "-m", "Add x"},
 		} {
 			if out, err := exec.Command("git", append([]string{"-C", repo, "-c", "commit.gpgsign=false"}, args...)...).CombinedOutput(); err != nil {
 				t.Fatalf("git %v: %v %s", args, err, out)
 			}
 		}
-		if err := plans.NoteCommit("chat-1", repo); err != nil {
+		c, err := plans.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := c.RecordCommit("chat-1", repo, plans.Event{Commit: "Add x", Summary: "Add x"}, time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		event, _ := json.Marshal(map[string]any{"hook_type": "postRequest", "chat_id": "chat-1", "cwd": repo})
 		code, out, errs := agentPlan(t, string(event), "stop-check")
-		if code != 2 || out != "" || !strings.Contains(errs, "agent-plan new") {
+		if code != 2 || out != "" || !strings.Contains(errs, "no review receipt matches") {
 			t.Fatalf("first stop: %d %q %q", code, out, errs)
 		}
 		if code, out, errs = agentPlan(t, string(event), "stop-check"); code != 0 || out != "" || errs != "" {
