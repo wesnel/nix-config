@@ -195,7 +195,8 @@ reply must fit `findings.schema.json` beside it. Findings that point at no
 line at the tip are dropped with the reason. It prints JSON and exits 0 with
 no findings, 3 with findings, and 4 when Codex cannot review: not installed,
 not signed in, its sandbox cannot start, called from inside Codex, or in a
-review-loop session, where `pr-loop` must stay the only way out. Then
+review-loop session, where `pr-loop` must stay the only way out. Then, or
+with `--reviewer subagent` when a sub-agent is wanted anyway,
 `--print-prompt` gives the same prompt for a fresh `reviewer` sub-agent, and
 `--check FILE` validates its reply the same way. See `git fresh-review -h`.
 

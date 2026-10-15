@@ -118,9 +118,11 @@ through `pr-loop review N`.
   git objects behind it and the system files they need, with none of
   Wesley's Codex configuration, no network and no writes, so a change
   cannot steer it into reading credentials.
-- A fresh sub-agent where Codex cannot review: the `reviewer` agent in
-  Claude Code and ECA; elsewhere a new sub-agent told to follow the prompt
-  and only read.
+- A fresh sub-agent where Codex cannot review, or when Wesley asks for one:
+  the `reviewer` agent in Claude Code and ECA; elsewhere a new sub-agent
+  told to follow the prompt and only read. `git fresh-review --reviewer
+  subagent` prints its prompt and exits 0; its reply goes to `--check` as
+  on exit 4.
 - Never Codex in a review-loop session: there `git fresh-review` exits 4 and
   the reviewer is a sub-agent, so `pr-loop` stays the session's only way out.
   `pr-loop review` is that way out: it runs Codex on the host with a prompt

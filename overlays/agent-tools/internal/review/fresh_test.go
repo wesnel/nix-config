@@ -551,6 +551,28 @@ func TestPrintPrompt(t *testing.T) {
 	}
 }
 
+// Asked for a sub-agent reviewer, fresh-review prints the prompt for one
+// and leaves Codex alone, even where Codex could review.
+func TestSubagentReviewer(t *testing.T) {
+	f := setUp(t, true)
+	t.Setenv("FAKE_CODEX", "none")
+	var stdout, stderr bytes.Buffer
+	if code := Main(t.Context(), []string{"--reviewer", "subagent", "--goal", ".git/goal.md", f.base + "..HEAD"}, nil,
+		&stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr.String())
+	}
+	if prompt := stdout.String(); !strings.HasPrefix(prompt, Contract) || !strings.Contains(prompt, "git show "+f.tip+":") {
+		t.Errorf("not the prompt for a sub-agent:\n%s", prompt)
+	}
+	if !strings.Contains(stderr.String(), "--check FILE "+f.base+"..HEAD") {
+		t.Errorf("stderr does not say how to check the reply: %q", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(f.log, "worktree")); err == nil {
+		t.Error("Codex ran")
+	}
+	f.checkCleanedUp(t)
+}
+
 func TestCheck(t *testing.T) {
 	// checkReply runs --check over a sub-agent's reply.
 	checkReply := func(t *testing.T, reply string) (int, output, string) {

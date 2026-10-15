@@ -23,7 +23,7 @@ import (
 )
 
 // Usage is `git fresh-review -h`.
-const Usage = `usage: git fresh-review --goal FILE [--items FILE] [--prior FILE] [--reviewer auto|codex]
+const Usage = `usage: git fresh-review --goal FILE [--items FILE] [--prior FILE] [--reviewer auto|codex|subagent]
                         [--model M] [--timeout S] BASE..TIP
        git fresh-review --print-prompt --goal FILE [--items FILE] [--prior FILE] BASE..TIP
        git fresh-review --check FILE BASE..TIP
@@ -46,16 +46,18 @@ BASE..TIP and the test command at TIP run in the VM pr-loop review runs
 pull requests in, never here, as they run the commits' code; their output
 goes in the prompt, and where the VM cannot run them stderr says why.
 
-Where Codex cannot review, review with a fresh sub-agent instead: give it
-the prompt --print-prompt prints, save its reply, and check that with
---check, which prints and exits as a review does.
+Where Codex cannot review, or a sub-agent is asked for, review with a fresh
+sub-agent instead: give it the prompt --print-prompt (or --reviewer
+subagent) prints, save its reply, and check that with --check, which prints
+and exits as a review does.
 
   --goal FILE       the goal statement (required)
   --items FILE      the items the change answers, and how each was settled
   --prior FILE      earlier rounds' findings and how each was settled
   --reviewer R      auto (default): Codex, unless called from inside Codex,
                     where a sub-agent is the fresh reviewer; codex: Codex
-                    even then
+                    even then; subagent: print the prompt for a sub-agent,
+                    as --print-prompt does, and exit 0
   --model M         the Codex model (default: Codex's own)
   --timeout S       seconds before the review is stopped (default 1800)
 
@@ -99,10 +101,13 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		positional = append(positional, flags.Arg(0))
 		args = flags.Args()[1:]
 	}
-	if len(positional) != 1 || (*reviewer != "auto" && *reviewer != "codex") || (*check != "" && *printPrompt) {
+	if len(positional) != 1 || (*reviewer != "auto" && *reviewer != "codex" && *reviewer != "subagent") ||
+		(*check != "" && *printPrompt) {
 		fmt.Fprint(stderr, Usage)
 		return 2
 	}
+	subagent := *reviewer == "subagent" && *check == ""
+	*printPrompt = *printPrompt || subagent
 	report := func(result any, err error, code int) int {
 		return cli.Report(name, result, err, code, stdout, stderr)
 	}
@@ -167,6 +172,10 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			"and `git show %s:PATH` for a file as it is at TIP. That checkout's own files may hold work that is not "+
 			"part of the change, so judge only the commits.", r.top, r.base, r.tip, r.base, r.tip, r.tip)
 		fmt.Fprint(stdout, prompt(in))
+		if subagent {
+			fmt.Fprintf(stderr, "%s: give this prompt to a new `reviewer` sub-agent, save its reply, "+
+				"and check it with `git fresh-review --check FILE %s`.\n", name, r.given)
+		}
 		return 0
 	}
 
