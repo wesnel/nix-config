@@ -25,14 +25,17 @@ A plan is files side by side in the plans directory: <date>-<slug>.<host>.org,
 directory and host come from "plans" in the user's agent-tools/config.json.
 
   new --title T --slug S [--repo R]... [--branch BASE..BRANCH]... [--worktree DIR]...
-      [--session HARNESS:ID]... [--harness H]
-                     create a plan; prints its file, ID and log
+      [--session HARNESS:ID]... [--harness H] [--template NAME]
+                     create a plan; prints its file, ID and log. --template
+                     starts it with the entries of each section of
+                     templates/NAME.org in the plans' repository
   new --parent PLAN --part P1 --title T [...]
                      create part P1's plan file beside its parent's
   log PLAN --item ID --kind KIND [--summary S] [--role R] [--agent A] [--branch B]
       [--commit SUBJECT] [--evidence E] [--review ROUND.ID --outcome O]
       [--tokens N] [--model M] [--effort E]
-                     append an event about item ID to the plan's log
+                     append an event about item ID to the plan's log, and
+                     write a step's or part's heading keyword from its log
   find [--session ID] [--worktree DIR] [--branch B]
                      this host's plan files that match any one given (default:
                      this session, worktree and branch)
@@ -41,22 +44,54 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      the goal statement, the text under "** Goal"
   status PLAN [--format org|json]
                      steps without done, done without verified, parts ready
-                     to start, what still waits, and tokens
+                     to start, steps ready now (no open AFTER item, earlier
+                     ORDERED siblings settled, not scheduled for later),
+                     what still waits, keyword drift, and tokens
   questions PLAN [--all] [--waiting] [--json | --count]
-                     the open questions Wesley can answer now, with their
-                     recommendations; --all adds the parts', --waiting those
-                     that wait for an AFTER item: a question until decided,
-                     a part or step until logged done
-  ask PLAN --question TEXT --recommendation TEXT [--context TEXT]
-      [--alternative TEXT]... [--after ID]... [--part P1]
-                     write a question for Wesley under Open questions, in the
+                     the open questions Wesley can answer now, by priority,
+                     with their recommendations; --all adds the parts',
+                     --waiting those that wait for an AFTER item: a question
+                     until settled, a part or step until logged done,
+                     verified or abandoned
+  brief PLAN         what an agent needs to go on after a compaction: the goal,
+                     the decisions, the steps and parts ready, the questions
+                     Wesley can answer now, the steps done but not verified,
+                     and the open follow-ups; the hooks add it after one
+  decisions PLAN [--all] [--json]
+                     the questions settled as DECIDED, with their answers;
+                     --all adds the parts'
+  ask PLAN --question TEXT --recommendation TEXT [--priority A|B|C]
+      [--context TEXT] [--alternative TEXT]... [--after ID]... [--part P1]
+                     write a question for Wesley under Questions, in the
                      plan's file or the part's, as its next question ID, in
                      the form questions reads, and log it as asked
-  decide PLAN QID --answer TEXT
-                     move open question QID to Decisions as the next decision,
-                     with Wesley's answer, and log it as decided
-  statusline         Claude Code's status line (reads stdin): the session's
-                     open questions, or nothing; never touches the network
+  ask PLAN ... --answer TEXT [--role R]
+                     write an agent's own decision on a constraint that
+                     already holds, settled as written, and log it as asked
+                     and decided
+  decide PLAN QID --answer TEXT [--drop | --supersedes QID] [--role R]
+                     settle open question QID in place with Wesley's answer,
+                     or with --drop as dropped, why in --answer; --supersedes
+                     marks the settled question it replaces SUPERSEDED; log
+                     it as decided
+  followup PLAN --title T --found-in ID [--context T] [--part P1]
+                     record work found while doing item ID, outside its
+                     scope, as a TODO under Follow-ups with the next follow-up
+                     ID, and log it as discovered; its keyword then follows
+                     its log, as a step's does
+  reference PLAN URL [--note TEXT]
+                     keep URL under References, or set its note: what it was
+                     used for and which decisions (Q IDs) it fed; log it as
+                     referenced. remind adds every URL of Wesley's own
+                     prompts this way, with no note
+  postpone PLAN ID (--until 'YYYY-MM-DD[ HH:MM]' | --clear)
+                     schedule step or part ID for that day or time, which
+                     keeps it out of the ready lists and the agenda until
+                     then, or clear its schedule; log it as postponed
+  statusline         Claude Code's status line and Emacs's mode line (reads
+                     stdin): the open questions of the session's plan, else of
+                     the plan of the worktree "cwd" is in, or nothing; never
+                     touches the network
   own PLAN --worktree DIR --agent ID
                      record agent ID, the harness's ID for a sub-agent or
                      "main" for the session's main thread, as the one agent
@@ -74,7 +109,9 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      ECA's postToolCall on spawn_agent), and for a compaction
                      to keep what the plan lacks (Claude Code's PreCompact) or
                      the plan to be brought up to date after one (Codex's
-                     SessionStart, ECA's postCompact); never blocks
+                     SessionStart, ECA's postCompact); keeps the URLs of
+                     Wesley's own prompts as references (Claude Code's and
+                     Codex's UserPromptSubmit, ECA's preRequest); never blocks
   tokens [--format org|json]
                      every plan's tokens by event kind, model and effort
   import-claude      Claude Code's PostToolUse hook on ExitPlanMode (reads stdin):
@@ -99,12 +136,14 @@ OUTCOME: ` + strings.Join(plans.Outcomes, ", ") + `
 EFFORT: ` + strings.Join(plans.Efforts, ", ") + `
 
 With ` + relay.URLEnv + ` set, every command but the hooks is sent to that
-sandbox-relay, which serves only log, goal, status, find and questions.
+sandbox-relay, which serves only log, goal, status, find, questions,
+decisions and brief.
 `
 
 // relayed are the commands a sandbox may run through the relay: reading
-// plans and appending to their logs.
-var relayed = map[string]bool{"log": true, "goal": true, "status": true, "find": true, "questions": true}
+// plans, appending to their logs, and the keywords log writes.
+var relayed = map[string]bool{"log": true, "goal": true, "status": true, "find": true, "questions": true,
+	"decisions": true, "brief": true}
 
 // clientSide reports whether args run in this process even with a relay:
 // the hooks, which Claude Code runs on the host.
@@ -129,7 +168,7 @@ func clientSide(args []string) bool {
 func relayRefusal(args []string) string {
 	if len(args) == 0 || !relayed[args[0]] || clientSide(args) {
 		name := strings.Join(args[:min(len(args), 2)], " ")
-		return fmt.Sprintf("%q is not served through the relay. A sandbox runs `agent-plan log`, `goal`, `status`, `find` and `questions`; put anything else in your report for Wesley", name)
+		return fmt.Sprintf("%q is not served through the relay. A sandbox runs `agent-plan log`, `goal`, `status`, `find`, `questions`, `decisions` and `brief`; put anything else in your report for Wesley", name)
 	}
 	return ""
 }
@@ -251,6 +290,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		title    = flags.String("title", "", "")
 		slug     = flags.String("slug", "", "")
 		harness  = flags.String("harness", "", "")
+		template = flags.String("template", "", "")
 		parent   = flags.String("parent", "", "")
 		part     = flags.String("part", "", "")
 		item     = flags.String("item", "", "")
@@ -277,6 +317,13 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		question = flags.String("question", "", "")
 		context  = flags.String("context", "", "")
 		advice   = flags.String("recommendation", "", "")
+		priority = flags.String("priority", "", "")
+		drop     = flags.Bool("drop", false, "")
+		replaces = flags.String("supersedes", "", "")
+		until    = flags.String("until", "", "")
+		foundIn  = flags.String("found-in", "", "")
+		note     = flags.String("note", "", "")
+		unset    = flags.Bool("clear", false, "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
 		branches multi
@@ -336,7 +383,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return 2
 		}
 		o := plans.NewOptions{Title: *title, Slug: *slug, Repos: repos, Branches: branches, Worktrees: trees,
-			Sessions: sessions, Harness: *harness, Parent: *parent, Part: *part}
+			Sessions: sessions, Harness: *harness, Parent: *parent, Part: *part, Template: *template}
 		if len(o.Sessions) == 0 {
 			if s := claudeSession(); s != "" {
 				o.Sessions = []string{s}
@@ -410,13 +457,35 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			io.WriteString(stdout, plans.QuestionsOrg(qs))
 		}
 		return 0
+	case "brief":
+		p, ok := wantPlan()
+		if !ok {
+			return 2
+		}
+		brief, err := p.Brief(time.Now())
+		if err != nil {
+			return report(nil, err)
+		}
+		io.WriteString(stdout, brief)
+		return 0
+	case "decisions":
+		p, ok := wantPlan()
+		if !ok {
+			return 2
+		}
+		ds, err := p.Decisions(*all)
+		if err != nil || *asJSON {
+			return report(ds, err)
+		}
+		io.WriteString(stdout, plans.DecisionsOrg(ds))
+		return 0
 	case "ask":
 		p, ok := wantPlan()
 		if !ok {
 			return 2
 		}
-		return report(p.Ask(plans.AskOptions{Part: *part, Question: *question, Context: *context,
-			Recommendation: *advice, Alternatives: alternatives, After: after}, time.Now()))
+		return report(p.Ask(plans.AskOptions{Part: *part, Question: *question, Priority: *priority, Context: *context,
+			Recommendation: *advice, Answer: *answer, Role: *role, Alternatives: alternatives, After: after}, time.Now()))
 	case "decide":
 		if len(positional) != 2 {
 			fmt.Fprint(stderr, "agent-plan decide: takes PLAN QID --answer TEXT\n")
@@ -426,7 +495,35 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		if err != nil {
 			return report(nil, err)
 		}
-		return report(p.Decide(positional[1], *answer, time.Now()))
+		return report(p.Decide(positional[1], plans.DecideOptions{Answer: *answer, Drop: *drop, Supersedes: *replaces,
+			Role: *role}, time.Now()))
+	case "followup":
+		p, ok := wantPlan()
+		if !ok {
+			return 2
+		}
+		return report(p.Followup(plans.FollowupOptions{Title: *title, FoundIn: *foundIn, Context: *context, Part: *part},
+			time.Now()))
+	case "reference":
+		if len(positional) != 2 {
+			fmt.Fprint(stderr, "agent-plan reference: takes PLAN URL [--note TEXT]\n")
+			return 2
+		}
+		p, err := c.Open(positional[0])
+		if err != nil {
+			return report(nil, err)
+		}
+		return report(p.Reference(positional[1], *note, time.Now()))
+	case "postpone":
+		if len(positional) != 2 || (*until == "") == !*unset {
+			fmt.Fprint(stderr, "agent-plan postpone: takes PLAN ID and --until TIME or --clear\n")
+			return 2
+		}
+		p, err := c.Open(positional[0])
+		if err != nil {
+			return report(nil, err)
+		}
+		return report(p.Postpone(positional[1], *until, time.Now()))
 	case "init":
 		r, err := c.Init()
 		if r.Note != "" {

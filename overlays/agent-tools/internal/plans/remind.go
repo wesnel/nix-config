@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var (
@@ -25,7 +26,12 @@ var (
 //     on Claude Code's PreCompact, whose output becomes the compaction's
 //     instructions, as text for the summary to keep; and after one, where
 //     the harness cannot add context before it, on Codex's SessionStart
-//     from a compaction and ECA's postCompact.
+//     from a compaction and ECA's postCompact, with the plan's brief.
+//
+// On any other UserPromptSubmit of the main thread, and on ECA's
+// preRequest of a chat that is not a sub-agent's, the prompt is Wesley's
+// own: it keeps each http(s) address in it as a reference of the plan,
+// and prints nothing. Codex sends a sub-agent's turns with agent_id.
 //
 // It returns the hook's output, or nothing, on any error too.
 func (c Config) Remind(input []byte) []byte {
@@ -33,7 +39,9 @@ func (c Config) Remind(input []byte) []byte {
 		Event        string          `json:"hook_event_name"`
 		Type         string          `json:"hook_type"` // ECA's
 		SessionID    string          `json:"session_id"`
-		ChatID       string          `json:"chat_id"` // ECA's
+		AgentID      string          `json:"agent_id"` // Codex's, for a sub-agent
+		ChatID       string          `json:"chat_id"`  // ECA's
+		ParentChatID string          `json:"parent_chat_id"`
 		Cwd          string          `json:"cwd"`
 		Prompt       string          `json:"prompt"`
 		ToolName     string          `json:"tool_name"`
@@ -46,6 +54,7 @@ func (c Config) Remind(input []byte) []byte {
 	}
 	// The plan's file, found once it is needed: most events need none.
 	file, looked := "", false
+	var found Plan
 	plan := func() string {
 		if looked {
 			return file
@@ -57,7 +66,7 @@ func (c Config) Remind(input []byte) []byte {
 		}
 		top, _ := checkout(in.Cwd)
 		if p, _, ok := c.Locate(session, top); ok {
-			file = p.File()
+			found, file = p, p.File()
 		}
 		return file
 	}
@@ -70,8 +79,15 @@ func (c Config) Remind(input []byte) []byte {
 			"before relaying any of it, then log its part's outcome in %s: %s.", what, plan(), log)
 	}
 	compacted := func() string {
-		return fmt.Sprintf("The conversation was compacted. Bring %s up to date before going on: log the steps done or "+
+		context := fmt.Sprintf("The conversation was compacted. Bring %s up to date before going on: log the steps done or "+
 			"verified, the decisions, findings and sub-agent outcomes it does not yet record.", plan())
+		if file == "" {
+			return context
+		}
+		if brief, err := found.Brief(time.Now()); err == nil {
+			context += "\n\n" + brief
+		}
+		return context
 	}
 	var event, context string
 	switch {
@@ -85,6 +101,12 @@ func (c Config) Remind(input []byte) []byte {
 			tokens = t[1]
 		}
 		event, context = in.Event, finished(fmt.Sprintf("%q ", m[1]), tokens)
+	case (in.Event == "UserPromptSubmit" && in.AgentID == "") || (in.Type == "preRequest" && in.ParentChatID == ""):
+		// Wesley's own prompt: its addresses are references of the plan.
+		if plan() != "" {
+			recordReferences(found, in.Prompt, time.Now())
+		}
+		return nil
 	case in.Event == "PostToolUse" && (in.ToolName == "Agent" || in.ToolName == "Task"):
 		var response struct {
 			IsAsync bool `json:"isAsync"`

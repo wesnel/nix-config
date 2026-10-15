@@ -327,6 +327,7 @@ in {
 
         # A background sub-agent's task-notification reaches the coordinator
         # as a prompt; SubagentStop's output would reach only the sub-agent.
+        # Any other prompt is Wesley's: its URLs become plan references.
         hooks.UserPromptSubmit = [
           {
             hooks = [
@@ -468,12 +469,15 @@ in {
             2. Run `agent-plan questions PLAN --all --json`: the questions
                Wesley can answer now. With none, say so, and stop.
             3. Ask them with AskUserQuestion, in order, at most four per call.
-               Each question's header is its `id`, its text its `question`,
-               then its `context` if any. Its options: the `recommendation`
-               first, labelled with " (Recommended)" after it, then its
-               `alternatives`, four options at most; with fewer than two, add
-               "Leave it open".
-            4. For each answer but "Leave it open", run
+               Each question's header is its `id`, then ` [#P]` with its
+               `priority` if it has one; its text its `question`, then its
+               `context` if any. Its options: the `recommendation` first,
+               labelled with " (Recommended)" after it, then its
+               `alternatives`, then "Drop it", four options at most, dropping
+               alternatives from the end to fit.
+            4. For "Drop it", run
+               `agent-plan decide PLAN ID --drop --answer 'dropped by Wesley'`,
+               or with his reason if he gave one. For any other answer, run
                `agent-plan decide PLAN ID --answer 'ANSWER'`, the answer on one
                line, without " (Recommended)".
             5. A decision can make a question that waited for it askable:

@@ -1,11 +1,6 @@
 package plans
 
-import (
-	"regexp"
-	"strings"
-)
-
-var decisionPattern = regexp.MustCompile(`^(P[0-9]+\.)?D[0-9]+$`)
+import "strings"
 
 // afterIDs is the AFTER property of props: the IDs a question or a part
 // waits for.
@@ -13,26 +8,26 @@ func afterIDs(props map[string]string) []string {
 	return strings.Fields(props["AFTER"])
 }
 
-// settled reports whether id is settled, by the plan's items and log: a
-// question once decided, a decision at once, and a part or step once a done
-// event is logged for it. An ID the plan never settles, a typo included,
-// keeps whatever waits for it waiting, and status shows that.
+// settled reports whether id is settled, by Org's rule: its keyword is one
+// of its file's done keywords. A step's, a part's or a follow-up's keyword
+// is the one its log gives it, so an abandoned one settles too, as Org's
+// blocker reads it. An ID the plan does not hold, a typo included, never settles: what
+// waits for it keeps waiting, and status shows that.
 func settled(list []item, events []Event) func(id string) bool {
-	done := map[string]bool{}
+	byID := map[string]item{}
 	for _, it := range list {
-		if q := it.Props["QUESTION"]; q != "" {
-			done[q] = true
-		}
-		if decisionPattern.MatchString(it.ID) {
-			done[it.ID] = true
-		}
+		byID[it.ID] = it
 	}
-	for _, e := range events {
-		if e.Kind == "done" {
-			done[e.Item] = true
+	return func(id string) bool {
+		it, ok := byID[id]
+		switch {
+		case !ok:
+			return false
+		case projected(id):
+			return planKeywords.done[stepState(events, id)]
 		}
+		return it.Done
 	}
-	return func(id string) bool { return done[id] }
 }
 
 // unsettled is the IDs of after that are not settled.

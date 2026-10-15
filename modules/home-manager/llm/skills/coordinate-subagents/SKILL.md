@@ -111,7 +111,9 @@ decisions already made, as final; and, where you know it, the commit each
 correction folds into. It says what the part must do, not how, as
 acceptance criteria each checkable on its own. A sub-agent that finds a fact contradicting a
 decision, or a base it was given, stops that item and reports it instead of
-following or reopening it.
+following or reopening it. Work it finds outside the part's job it records
+with `agent-plan followup PLAN --part P1 --title '...' --found-in <item>`
+and leaves undone.
 
 Each sub-agent reports, as its final message and within the length the task
 gives, with no narrative:
@@ -194,7 +196,10 @@ too, so `agent-plan tokens` shows which tier did which work.
 ## Running them
 
 Start independent sub-agents together, in the background, and each part as
-soon as `agent-plan status PLAN` lists it ready to start.
+soon as `agent-plan status PLAN` lists it ready to start. Steps you run
+yourself follow the same list: "Steps ready" holds the open steps that
+wait on no `:AFTER:` item, follow every earlier sibling under an
+`:ORDERED: t` parent, and are not scheduled for later.
 
 - **Claude Code:** the Agent tool with `run_in_background`. `SendMessage`
   continues an agent with its context.
@@ -218,12 +223,13 @@ Before relaying a report, confirm it:
   subjects in shape, on the base you named. Read the commits that matter
   with `git show`.
 - `agent-plan status PLAN` shows each of the part's steps done and
-  verified, and each done step's commit subject is in that log.
+  verified, none of them under keyword drift, and each done step's commit
+  subject is in that log.
 - The specific tests it cites pass when you run them; whole suites are left
   to CI and the part's own `git red-check` run.
 
-Once a report passes, log `done` for its part's ID, which readies the parts
-that wait for it. Relay only what you confirmed, and say what you did not.
+Once a report passes, log `done` for its part's ID, which marks its
+heading `DONE` and readies the parts that wait for it. Relay only what you confirmed, and say what you did not.
 Questions it raises go in the plan, as the `plan-work` skill's "Questions for Wesley"
 says, not in your message.
 

@@ -3,16 +3,29 @@ package plans
 import (
 	"regexp"
 	"strings"
+	"time"
 )
 
 // heading is one Org heading, with its property drawer and the lines up to
 // the next heading.
 type heading struct {
-	Level   int
-	Keyword string
-	Title   string
-	Props   map[string]string
-	Body    []string
+	Level int
+	// Keyword is a TODO keyword its file defines, and Done whether it is
+	// one of the file's done keywords.
+	Keyword  string
+	Done     bool
+	Priority string
+	Title    string
+	Tags     []string
+	// Scheduled is the SCHEDULED timestamp's day, or its time when it has
+	// one; zero without one.
+	Scheduled        time.Time
+	ScheduledHasTime bool
+	Props            map[string]string
+	// Body is the text outside drawers, and Notes the lines inside drawers
+	// other than the property drawer, such as LOGBOOK.
+	Body  []string
+	Notes []string
 }
 
 var (
@@ -20,7 +33,12 @@ var (
 	propertyLine = regexp.MustCompile(`^\s*:([^:\s]+):(?:\s+(.*?))?\s*$`)
 	planningLine = regexp.MustCompile(`^\s*(SCHEDULED|DEADLINE|CLOSED):`)
 	blockLine    = regexp.MustCompile(`(?i)^\s*#\+(begin|end)_`)
-	keywords     = set("TODO", "NEXT", "DONE")
+	priorityWord = regexp.MustCompile(`^\[#([A-Z0-9])\]$`)
+	tagsSuffix   = regexp.MustCompile(`\s+:((?:[\p{L}\p{N}_@#%]+:)+)$`)
+	drawerStart  = regexp.MustCompile(`^\s*:([A-Za-z0-9_-]+):\s*$`)
+	// scheduledStamp is a SCHEDULED timestamp's date and, if it has one,
+	// time of day.
+	scheduledStamp = regexp.MustCompile(`SCHEDULED:\s*<([0-9]{4}-[0-9]{2}-[0-9]{2})[^>0-9]*(?:([0-9]{1,2}:[0-9]{2})[^>]*)?>`)
 )
 
 func set(words ...string) map[string]bool {
@@ -31,50 +49,85 @@ func set(words ...string) map[string]bool {
 	return m
 }
 
-// parseOrg reads the headings of an Org file. A line inside a block is
-// never a heading.
+// parseOrg reads the headings of an Org file, with the TODO keywords the
+// file defines. A line inside a block is never a heading.
 func parseOrg(text string) []heading {
+	keywords := fileKeywords(text)
 	var out []heading
 	inBlock := false
-	drawer := 0 // 1 while reading a heading's property drawer, 2 after it
+	// Where the current heading's lines are: before its property drawer,
+	// in it, after it, or in another drawer.
+	const (
+		top = iota
+		properties
+		section
+		otherDrawer
+	)
+	at := top
 	for _, line := range strings.Split(text, "\n") {
 		if m := blockLine.FindStringSubmatch(line); m != nil {
 			inBlock = strings.EqualFold(m[1], "begin")
 		}
 		if m := headingLine.FindStringSubmatch(line); m != nil && !inBlock {
-			h := heading{Level: len(m[1]), Title: m[2], Props: map[string]string{}}
-			if word, rest, _ := strings.Cut(h.Title, " "); keywords[word] {
-				h.Keyword, h.Title = word, strings.TrimSpace(rest)
-			} else if keywords[h.Title] {
-				h.Keyword, h.Title = h.Title, ""
-			}
-			out = append(out, h)
-			drawer = 0
+			out = append(out, headingOf(len(m[1]), m[2], keywords))
+			at = top
 			continue
 		}
 		if len(out) == 0 {
 			continue
 		}
 		h := &out[len(out)-1]
+		trimmed := strings.TrimSpace(line)
 		switch {
-		case drawer == 0 && len(h.Body) == 0 && planningLine.MatchString(line):
+		case at == top && len(h.Body) == 0 && planningLine.MatchString(line):
+			if m := scheduledStamp.FindStringSubmatch(line); m != nil {
+				if m[2] == "" {
+					h.Scheduled, _ = time.ParseInLocation("2006-01-02", m[1], time.Local)
+				} else {
+					h.Scheduled, _ = time.ParseInLocation("2006-01-02 15:04", m[1]+" "+m[2], time.Local)
+					h.ScheduledHasTime = true
+				}
+			}
 			continue
-		case drawer == 0 && len(h.Body) == 0 && strings.TrimSpace(line) == ":PROPERTIES:":
-			drawer = 1
+		case at == top && len(h.Body) == 0 && trimmed == ":PROPERTIES:":
+			at = properties
 			continue
-		case drawer == 1 && strings.TrimSpace(line) == ":END:":
-			drawer = 2
+		case (at == properties || at == otherDrawer) && trimmed == ":END:":
+			at = section
 			continue
-		case drawer == 1:
+		case at == properties:
 			if m := propertyLine.FindStringSubmatch(line); m != nil {
 				h.Props[strings.ToUpper(m[1])] = m[2]
 			}
 			continue
+		case at == otherDrawer:
+			h.Notes = append(h.Notes, line)
+			continue
+		case !inBlock && drawerStart.MatchString(line) && trimmed != ":END:":
+			at = otherDrawer
+			continue
 		}
-		drawer = 2
+		at = section
 		h.Body = append(h.Body, line)
 	}
 	return out
+}
+
+// headingOf is the heading of level whose line holds text after its stars.
+func headingOf(level int, text string, keywords keywordSet) heading {
+	h := heading{Level: level, Props: map[string]string{}}
+	if word, rest, _ := strings.Cut(text, " "); keywords.all[word] {
+		h.Keyword, h.Done, text = word, keywords.done[word], strings.TrimSpace(rest)
+	}
+	if word, rest, _ := strings.Cut(text, " "); priorityWord.MatchString(word) {
+		h.Priority, text = priorityWord.FindStringSubmatch(word)[1], strings.TrimSpace(rest)
+	}
+	if m := tagsSuffix.FindStringSubmatch(text); m != nil {
+		h.Tags = strings.Split(strings.Trim(m[1], ":"), ":")
+		text = strings.TrimSpace(text[:len(text)-len(m[0])])
+	}
+	h.Title = text
+	return h
 }
 
 // orgTitle is the #+title of an Org file.

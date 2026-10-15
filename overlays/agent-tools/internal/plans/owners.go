@@ -56,8 +56,9 @@ func (p Plan) SetOwner(worktree, agent string) (map[string]string, error) {
 	if real, err := filepath.EvalSymlinks(worktree); err == nil {
 		worktree = real
 	}
-	owners := map[string]string{}
-	err := editPlanProperty(p.file(""), "OWNERS", func(values []string) []string {
+	var owners map[string]string
+	err := p.editPlanProperty(p.file(""), "OWNERS", func(values []string) []string {
+		owners = map[string]string{}
 		pair := worktree + "=" + agent
 		var pairs []string
 		for _, v := range values {

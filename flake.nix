@@ -562,6 +562,25 @@
     in {
       formatter = pkgs.alejandra;
 
+      # emacs-config's plan views read what agent-plan writes: this runs
+      # their tests, at the emacs-config this flake locks, against the
+      # agent-plan built from this commit. Point it at a checkout with
+      # `--override-input emacs-config path:<checkout>`.
+      checks.agent-plans =
+        pkgs.runCommand "agent-plans-tests" {
+          nativeBuildInputs = [
+            pkgs.emacs-nox
+            pkgs.git
+            (pkgs.callPackage ./overlays/agent-tools {})
+          ];
+        } ''
+          export HOME=$TMPDIR
+          cd ${emacs-config}
+          emacs --batch -Q -l tests/run-agent-plans.el \
+            --eval '(princ (wgn-agent-plans-run-tests))'
+          touch $out
+        '';
+
       devShells = {
         default = pkgs.mkShell {
           buildInputs = [
