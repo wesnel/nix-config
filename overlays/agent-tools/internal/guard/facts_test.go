@@ -134,7 +134,9 @@ func testPostRecordsFacts(t *testing.T) {
 
 	opened := `{"pr": 12, "url": "https://github.com/o/r/pull/12", "draft": true, "branch": "topic", "base": "main"}`
 	postHook(t, claudeEvent("s1", main, "pr-loop open --title T --body-file - topic", opened))
+	// pr-loop push logs its own push.
 	postHook(t, claudeEvent("s1", main, "pr-loop push", `{"pushed": {"topic": "2222", "other": "1111"}, "round": 2}`))
+	postHook(t, claudeEvent("s1", main, "git sign-pass --push", `{"signed": 2, "pushed": {"topic": "3333", "other": "4444"}}`))
 
 	// Nothing that did not happen is recorded.
 	for _, event := range []string{

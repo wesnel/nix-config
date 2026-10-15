@@ -38,6 +38,34 @@ func (c Config) Locate(session, worktree string) (p Plan, part string, ok bool) 
 	return p, pick.Part, err == nil
 }
 
+// LocateBranches is Locate, else the newest of this host's plan files
+// whose BRANCHES name one of branches, the first that one names.
+func (c Config) LocateBranches(session, worktree string, branches []string) (p Plan, part string, ok bool) {
+	if p, part, ok = c.Locate(session, worktree); ok {
+		return p, part, true
+	}
+	for _, b := range branches {
+		found, err := c.Find(FindOptions{Branch: b})
+		if err != nil || len(found) == 0 {
+			continue
+		}
+		p, err = c.Open(found[0].Plan)
+		return p, found[0].Part, err == nil
+	}
+	return Plan{}, "", false
+}
+
+// EnvSession is the session of the harness running this process, as its
+// environment names it: Claude Code's, Codex's or ECA's; or "".
+func EnvSession() string {
+	for _, v := range []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "ECA_CHAT_ID"} {
+		if id := os.Getenv(v); id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
 // RecordCommit logs e as a commit session made in the worktree at top, in
 // the plan Locate finds for them. Where there is none, it first makes one:
 // a plan of the repository's unplanned work, working under the full

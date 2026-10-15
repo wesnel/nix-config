@@ -542,10 +542,8 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			fmt.Fprint(stderr, "agent-plan sign-id: takes [--session ID] [--branch B]...\n")
 			return 2
 		}
-		for _, v := range []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "ECA_CHAT_ID"} {
-			if session == "" {
-				session = os.Getenv(v)
-			}
+		if session == "" {
+			session = plans.EnvSession()
 		}
 		top, current := checkout()
 		if len(branches) == 0 && current != "" {

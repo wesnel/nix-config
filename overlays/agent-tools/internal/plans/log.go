@@ -64,8 +64,12 @@ var (
 		kinds := map[string]string{
 			"committed": "a hook after each shell call logs `committed` for every commit, from what git printed. " +
 				"Log `done` with `--commit SUBJECT` for the step a commit completes",
-			"pushed": "a hook after each shell call logs `pushed` for every push, from what pr-loop and git sign-pass printed. " +
+			"pushed": "pr-loop, and a hook after each shell call, log `pushed` for every push, from what they pushed. " +
 				"Watch the push's CI with `pr-loop wait ci` as the signing-pass skill says",
+		}
+		for _, k := range []string{"loop-began", "round", "replied", "resolved", "ci-waited", "loop-signed"} {
+			kinds[k] = "pr-loop logs what it did, from begin to sign, in the plan of the session that ran it. " +
+				"Run the `pr-loop` command that does it"
 		}
 		for _, k := range signKinds {
 			kinds[k] = "a sign-pass's events are logged by `agent-plan sign-id`, `git sign-pass --notify` and the delivery of its result alone. " +

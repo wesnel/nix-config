@@ -58,16 +58,22 @@ func post(stdin io.Reader, stdout io.Writer) int {
 }
 
 // pushes reports whether a command line runs a command that pushes to
-// GitHub: `pr-loop open` or `push` without --dry-run, or `git sign-pass`
-// with --push or --set-upstream.
-func pushes(text string, depth int) bool {
+// GitHub (pushers).
+func pushes(text string, depth int) bool { return len(pushers(text, depth)) > 0 }
+
+// pushers are the commands a command line runs that push to GitHub, each
+// once: `pr-loop open` or `pr-loop push` without --dry-run, or
+// `git sign-pass` with --push or --set-upstream.
+func pushers(text string, depth int) map[string]bool {
+	found := map[string]bool{}
 	if depth > maxDepth {
-		return false
+		return found
 	}
-	found := false
 	v := visitor{
 		script: func(text string) string {
-			found = found || pushes(text, depth+1)
+			for name := range pushers(text, depth+1) {
+				found[name] = true
+			}
 			return ""
 		},
 		call: func(c call) string {
@@ -87,9 +93,13 @@ func pushes(text string, depth int) bool {
 			}
 			switch name := base(w[0]); {
 			case name == "pr-loop" && len(w) > 1 && (w[1] == "open" || w[1] == "push"):
-				found = found || !flag("--dry-run", "-dry-run")
+				if !flag("--dry-run", "-dry-run") {
+					found["pr-loop "+w[1]] = true
+				}
 			case name == "git-sign-pass", name == "git" && contains(w[1:], "sign-pass"):
-				found = found || flag("--push", "--set-upstream")
+				if flag("--push", "--set-upstream") {
+					found["git sign-pass"] = true
+				}
 			}
 			return ""
 		},
