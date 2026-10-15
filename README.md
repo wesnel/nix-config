@@ -101,8 +101,8 @@ Enabling any of those modules enables `wgn.home.llm`, which provides:
 - **Skills.** `wgn.home.llm.skills` are linked into each agent's skill
   directory. A skill marked `sandbox = true` is also carried into sandboxed
   sessions; the rest drive something on this machine, such as Emacs.
-- **`agent-tools`** on `PATH`: `git sign-pass`, `pr-loop` and
-  `sandbox-relay`, built from `overlays/agent-tools`. `wgn.home.git` uses
+- **`agent-tools`** on `PATH`: `git sign-pass`, `git red-check`, `pr-loop`
+  and `sandbox-relay`, built from `overlays/agent-tools`. `wgn.home.git` uses
   its `git-push-guard` as well.
 
 Agents write the files below themselves, so Nix merges its keys into them on
@@ -154,6 +154,33 @@ If it stops at a missed touch, run `git rebase --continue`, touching the key
 when it flashes, then `git sign-pass --resume`. Pass `--base REF` when the
 branch does not start from `origin`'s default branch or the local `main` or
 `master`.
+
+## testing: the tests fail without the change
+
+`git red-check` checks that the tests a commit adds or changes test it,
+rather than taking an agent's word that they failed first. In a throwaway
+worktree under `.git/red-check/`, removed afterwards, it runs the test
+command at the commit's parent plus only the commit's test files, which must
+fail, then at the commit, which must pass:
+
+``` sh
+git red-check                                  # HEAD
+git red-check --fixups main..HEAD              # each fixup on the branch
+git red-check --test 'go test ./...' --build 'go vet ./...' --test-files '**/*_test.go' HEAD~2
+```
+
+It prints each commit's verdict, why it falls short, and the end of each
+run's output as JSON, and exits 0 when every commit's tests build and fail
+without the change and pass with it, 3 when they pass without it or fail
+with it, and 4 when the evidence is missing or weak: no test files changed,
+only test files changed, or the tests fail without the change only to build,
+or with no build command to say whether they built. So a repository needs a
+build command for any commit to exit 0. See `git red-check -h` (git turns
+`--help` into a manual-page lookup).
+
+Settings missing from the flags come from `wgn.home.llm.prLoop.redCheck`,
+keyed by `owner/name`, never from the repository. The test command runs the
+commit's code, so run it in a sandbox when the commit is not trusted.
 
 ## pushing: private history stays private
 
@@ -212,8 +239,9 @@ sandbox needs `bubblewrap` and `socat` on `PATH`.
 The coordinator gives each PR to an owner sub-agent, which works in its own
 worktree under `.pr-loop/<number>`, where signing is off. Each round waits
 for CI, requests reviews from the bots in `wgn.home.llm.prLoop.bots`
-(Copilot and Qodo by default), triages their threads, fixes in fixups,
-restacks, pushes the stack through the GitHub API, then replies and resolves.
+(Copilot and Qodo by default), triages their threads, fixes in fixups, has
+a fresh reviewer sub-agent check those fixups before they go out, restacks,
+pushes the stack through the GitHub API, then replies and resolves.
 It stops when the bots are satisfied or the loop needs a decision, and
 writes `.git/pr-loop/report.md`.
 
@@ -261,7 +289,8 @@ Linear, which the report proposes instead.
   and denies other ways to write to GitHub or Linear, unsigned-workflow
   violations and your decisions. Owner agents are also denied the steps the
   coordinator alone takes (`pr-loop push`, `reply` and the like) in Claude
-  Code and ECA. ECA's agents also carry deny patterns built
+  Code and ECA, and reviewer agents also every git and `pr-loop` command
+  that changes something. ECA's agents also carry deny patterns built
   from `overlays/agent-tools/internal/guard/policy.json`. Add a rule there,
   with commands it must deny and allow: the guard's tests and the package
   build hold both to those examples, and fail on a denial whose reason does

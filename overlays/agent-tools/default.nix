@@ -51,8 +51,9 @@
       rules = builtins.fromJSON (builtins.readFile ./internal/guard/policy.json);
       patterns = map (r: "(?s)${r.pattern}");
     in {
-      coordinator = patterns (builtins.filter (r: !(r.ownerOnly or false)) rules);
-      owner = patterns rules;
+      coordinator = patterns (builtins.filter (r: !(r.ownerOnly or false) && !(r.reviewerOnly or false)) rules);
+      owner = patterns (builtins.filter (r: !(r.reviewerOnly or false)) rules);
+      reviewer = patterns rules;
     };
 
     # A static Linux build of pr-loop for a sandbox guest, which runs it as a
@@ -75,7 +76,7 @@
       '';
     });
 
-    meta.description = "pr-loop (the review loop), git-sign-pass (the signing pass), git-push-guard (keeps private history out of public repositories) and sandbox-relay (host programs for a sandbox)";
+    meta.description = "pr-loop (the review loop), git-sign-pass (the signing pass), git-red-check (checks a commit's tests fail without its change), git-push-guard (keeps private history out of public repositories) and sandbox-relay (host programs for a sandbox)";
   };
 in
   agent-tools
