@@ -95,6 +95,10 @@
     # patterns.
     passthru.credentialsPattern = credentialsPattern;
 
+    # The MCP tools the guard lets through (reads) or asks the operator
+    # about (confirms), per service, for mcp-proxy's tool filters.
+    passthru.mcpTools = builtins.fromJSON (builtins.readFile ./internal/guard/mcp.json);
+
     # The reviewer's contract, which `git fresh-review` embeds for Codex, for
     # the agents' own reviewer sub-agents.
     passthru.reviewerPrompt = builtins.readFile ./internal/review/reviewer.md;

@@ -488,11 +488,19 @@ git itself does not use the keychain's GitHub login:
 
 | Name | Upstream | Access |
 | --- | --- | --- |
-| `linear` | Linear's `/mcp/readonly` | read tools only, OAuth |
+| `linear` | Linear's `/mcp` | reads; writes you confirm, OAuth |
 | `buildkite` | Buildkite's `/mcp/readonly` | read tools only, OAuth |
+| `notion` (`notion`) | Notion's `/mcp` | reads; writes you confirm, OAuth |
+| `hex` (`hex`) | Hex's `/mcp` | reads; edits and runs you confirm, OAuth |
+| `datadog` (`datadog.enable`, `datadog.site`) | the site's `/v1/mcp`, toolsets `core` and `error-tracking` | read tools only, OAuth |
 | `docs` | the documentation index | search and listing only |
 
-The proxy signs in to Linear and Buildkite itself and refreshes their
+Options in parentheses are off by default. Each remote server serves only
+the tools listed for it in the guard's `mcp.json`, and the guard asks you
+before each listed write, in Claude Code and ECA; Codex and review-loop
+sessions get the reads alone.
+
+The proxy signs in to each remote server itself and refreshes their
 short-lived tokens, so agents hold only the proxy's own token, kept in
 `~/.local/state/mcp-proxy/token`. The servers are registered with Claude
 Code, Codex and ECA on every switch, and each reads the token when it
@@ -507,6 +515,9 @@ mcp-proxy-authorize linear
 mcp-proxy-authorize buildkite
 mcp-proxy-status
 ```
+
+A session started while a server was not authorized reports it as not
+found; reconnect it with `/mcp` in Claude Code, or start a new session.
 
 The browser is sent back to `http://localhost:8090/oauth/callback` on the
 machine running the proxy. On one without a browser, such as the devbox,
