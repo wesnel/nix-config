@@ -28,6 +28,7 @@ const Usage = `usage: git fresh-review --goal FILE [--items FILE] [--prior FILE]
                         [--model M] [--timeout S] BASE..TIP
        git fresh-review --print-prompt --goal FILE [--items FILE] [--prior FILE] BASE..TIP
        git fresh-review --check FILE BASE..TIP
+       git fresh-review ask --question FILE PATH...   (see git fresh-review ask -h)
 
 Reviews the commits in BASE..TIP with a reviewer that did not write them and
 sees only the commits and what the files name: the goal statement (the goal,
@@ -93,6 +94,9 @@ const name = "git-fresh-review"
 
 // Main runs `git fresh-review` with args and returns its exit status.
 func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "ask" {
+		return ask(ctx, args[1:], stdin, stdout, stderr)
+	}
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	goal := flags.String("goal", "", "")
 	items := flags.String("items", "", "")

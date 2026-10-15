@@ -189,6 +189,16 @@ returning the interface with its contract, a call site and what it hides.
 Compare them by how much each hides and how local each likely next change
 stays, and choose as the `plan-work` skill's "Questions for Wesley" says.
 
+Where you and the design review disagree, or the designs leave no clear
+choice, get a second opinion from another model family before it is
+decided: write the question and its options to a file, and run
+`git fresh-review ask --question FILE PATH...`, naming each file in the
+repository the answer rests on (put what it needs from the plan into the
+question file). Codex reads those files and nothing else. On exit 4, ask a
+new sub-agent that only reads instead, as the message says. The answer goes
+beside your recommendation; it informs your own decision, or Wesley's on a
+one-way door, and settles nothing.
+
 It reports in the fresh review's vocabulary where that fits. Settle what
 the goal statement already decides by Triage. Take the rest through the
 `plan-work` skill's "Questions for Wesley", which says which are his to

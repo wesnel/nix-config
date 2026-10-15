@@ -203,6 +203,10 @@ A review that ran logs a receipt in the session's plan: the range and the
 patch ID of its change, which the Stop hook compares with the change as it
 stands before a session that committed stops.
 
+`git fresh-review ask --question FILE PATH...` asks Codex, confined the same
+way, for a second opinion on a design question, from copies of the named
+files alone.
+
 It never runs `git red-check` here, since that runs the commits' code. Where
 the repository has test settings, red-check and the test command run in the
 VM `pr-loop review` runs pull requests in (below), and their output goes in

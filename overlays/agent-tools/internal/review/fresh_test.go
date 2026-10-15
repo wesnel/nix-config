@@ -74,6 +74,7 @@ case "$FAKE_CODEX" in
   hang) exec sleep 60 ;;
   fork) echo $$ > "$FAKE_CODEX_LOG/group"; i=0; while [ $i -lt 300 ]; do sleep 30 > /dev/null 2>&1 & i=$((i+1)); if [ $i = 20 ]; then echo > "$FAKE_CODEX_LOG/started"; fi; done; wait ;;
   none) echo '{"findings": [], "unverified": []}' > "$out" ;;
+  answer) echo '{"answer": "Extend the seam.", "unverified": ["the callers"]}' > "$out" ;;
   *) cat > "$out" <<EOF
 {"findings": [
  {"id": "1", "path": "$wt/code.txt", "line": 2, "endLine": 9, "kind": "bug", "claim": "c", "evidence": "e", "about": null, "reopens": null},
