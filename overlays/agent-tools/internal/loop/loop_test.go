@@ -62,6 +62,14 @@ func TestCheckFixups(t *testing.T) {
 	if err := checkFixups("br", []Commit{a, b}, []Commit{c("A reworded"), b}); err == nil {
 		t.Error("a rewritten original was accepted")
 	}
+	if err := checkFixups("br", []Commit{a, b}, []Commit{a, b, c("fixup! amend! A first\n\nignored")}); err != nil {
+		t.Errorf("a fixup! of an amend! refused: %v", err)
+	}
+	for _, rewrite := range []string{"amend! A first\n\nA renamed", "squash! B second\n\nmore", "amend! fixup! A first\n\nA renamed"} {
+		if err := checkFixups("br", []Commit{a, b}, []Commit{a, b, c(rewrite)}); err == nil || !strings.Contains(err.Error(), "--fixup=<commit>") {
+			t.Errorf("%q: %v", rewrite, err)
+		}
+	}
 }
 
 func TestCommitBody(t *testing.T) {
@@ -136,8 +144,9 @@ func TestWorktrees(t *testing.T) {
 }
 
 // TestRehearse builds a two-branch stack with fixups in both branches and
-// checks the rehearsal accepts it, then that it refuses a stray commit and a
-// fixup that conflicts.
+// checks the rehearsal accepts it without moving a branch, even with
+// rebase.updateRefs on, then that it refuses a stray commit and a fixup that
+// conflicts.
 func TestRehearse(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
@@ -193,11 +202,19 @@ func TestRehearse(t *testing.T) {
 		}
 		return s
 	}
+	// With neither branch checked out, rebase.updateRefs would move both onto
+	// the rehearsal's unsigned commits.
+	gitIn(t, dir, "config", "rebase.updateRefs", "true")
+	gitIn(t, dir, "switch", "-q", "main")
+	branches := gitIn(t, dir, "for-each-ref", "refs/heads/")
 	if err := rehearse(state, signingFor()); err != nil {
 		t.Fatalf("rehearsal refused a clean stack: %v", err)
 	}
 	if got := gitIn(t, dir, "worktree", "list"); strings.Count(got, "\n") != 0 {
 		t.Errorf("rehearsal left a worktree behind:\n%s", got)
+	}
+	if got := gitIn(t, dir, "for-each-ref", "refs/heads/"); got != branches {
+		t.Errorf("rehearsal moved branches:\nbefore:\n%s\nafter:\n%s", branches, got)
 	}
 
 	// A fixup aimed at L1 that touches a line L2 later changed conflicts.

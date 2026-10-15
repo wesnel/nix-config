@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/history"
 )
 
 // StackEntry describes one PR of a stack.
@@ -122,8 +123,8 @@ func Begin(branches []string) (any, error) {
 			return nil, err
 		}
 		for _, c := range entry.Commits {
-			if fixupTarget(c.Message) != "" {
-				return nil, refuse("%s already has fixup commits (%q); squash them before starting the loop", b, subject(c.Message))
+			if kind, _ := fold(c.Message); kind != history.Kept {
+				return nil, refuse("%s already has fixup!, amend! or squash! commits (%q); squash them before starting the loop", b, subject(c.Message))
 			}
 		}
 	}

@@ -66,7 +66,7 @@ func Sign(resume, noPush bool) (any, error) {
 			return nil, err
 		}
 		fmt.Fprintln(os.Stderr, "squashing and signing; touch the key for each commit when it blinks")
-		code := git.Attached([]string{"GIT_SEQUENCE_EDITOR=:"}, "rebase", "-i", "--autosquash", "--force-rebase",
+		code := git.Attached(noEditor, "rebase", "-i", "--autosquash", "--force-rebase",
 			"--gpg-sign", "--update-refs", upstream, top)
 		if code != 0 {
 			return nil, fmt.Errorf("the rebase stopped, usually at a missed key touch. Run `git rebase --continue` " +
@@ -199,7 +199,10 @@ func rehearse(state *State, signing *Signing) error {
 		git.Run("-C", scratch, "rebase", "--abort")
 		git.Run("worktree", "remove", "--force", scratch)
 	}()
-	_, err = git.Run("-C", scratch, "-c", "commit.gpgsign=false", "-c", "sequence.editor=:",
+	// rebase.updateRefs off: a user's rebase.updateRefs=true would move every
+	// branch of the stack not checked out elsewhere onto these unsigned
+	// commits, so the backups and the signed rebase would start from them.
+	_, err = git.RunEnv(noEditor, "-C", scratch, "-c", "commit.gpgsign=false", "-c", "rebase.updateRefs=false",
 		"rebase", "-i", "--autosquash", "--force-rebase", signing.Upstream)
 	if err != nil {
 		if m := couldNotApply.FindStringSubmatch(err.Error()); m != nil {
@@ -207,8 +210,8 @@ func rehearse(state *State, signing *Signing) error {
 		}
 		return refuse("squashing the fixups failed: %v", err)
 	}
-	// Without --update-refs the rehearsal leaves the branches alone, so each
-	// branch's end is found by counting its original commits.
+	// The rehearsal leaves the branches alone, so each branch's end is found
+	// by counting its original commits.
 	list, err := git.Run("-C", scratch, "rev-list", "--reverse", signing.Upstream+"..HEAD")
 	if err != nil {
 		return err

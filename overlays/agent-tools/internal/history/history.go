@@ -43,18 +43,88 @@ func Subject(message string) string {
 	return s
 }
 
-// FixupTarget is the subject a "fixup! ..." commit folds into, or "" for any
-// other commit. Nested fixups fold into the same commit.
-func FixupTarget(message string) string {
-	s := Subject(message)
-	if !strings.HasPrefix(s, "fixup! ") {
-		return ""
+// Kind is what `git rebase --autosquash` does with a commit.
+type Kind int
+
+const (
+	Kept   Kind = iota // stays a commit of its own
+	Fixup              // "fixup! ": its changes fold in and its message is dropped
+	Amend              // "amend! " (--fixup=amend: or reword:): its body replaces the target's message
+	Squash             // "squash! ": its body is appended to the target's message
+)
+
+var foldPrefixes = []struct {
+	prefix string
+	kind   Kind
+}{{"fixup! ", Fixup}, {"amend! ", Amend}, {"squash! ", Squash}}
+
+// Fold is how --autosquash treats a commit, and the subject of the commit it
+// folds into ("" when Kept). git strips nested prefixes of every kind to find
+// the target; the outermost one decides the kind.
+func Fold(message string) (Kind, string) {
+	s, kind := Subject(message), Kept
+	for stripped := true; stripped; {
+		stripped = false
+		for _, p := range foldPrefixes {
+			if rest, ok := strings.CutPrefix(s, p.prefix); ok {
+				if kind == Kept {
+					kind = p.kind
+				}
+				s, stripped = rest, true
+				break
+			}
+		}
 	}
-	for strings.HasPrefix(s, "fixup! ") {
-		s = strings.TrimPrefix(s, "fixup! ")
+	if kind == Kept {
+		return Kept, ""
 	}
-	return s
+	return kind, s
 }
+
+// Squashed predicts the commits that remain after `git rebase -i --autosquash`
+// with GIT_EDITOR=: over commits (oldest first), with the messages git leaves
+// them. A folded commit joins the oldest earlier kept commit with the subject
+// it names, and that commit keeps its author. An amend! replaces the message
+// with its own body unless a squash! has already joined it; a squash!, or an
+// amend! after one, appends its body. Its subject line is dropped either way.
+// A fold with no target stays a commit of its own, as in git.
+func Squashed(commits []Commit) []Commit {
+	var kept []Commit
+	var subjects []string
+	joined := map[int]bool{}
+	for _, c := range commits {
+		kind, target := Fold(c.Message)
+		at := -1
+		if kind != Kept {
+			for i, s := range subjects {
+				if s == target {
+					at = i
+					break
+				}
+			}
+		}
+		body := strings.TrimSpace(strings.TrimPrefix(c.Message, Subject(c.Message)))
+		switch {
+		case at < 0:
+			kept = append(kept, c)
+			subjects = append(subjects, Subject(c.Message))
+		case kind == Fixup:
+		case kind == Amend && !joined[at]:
+			kept[at].Message = body
+		default:
+			joined[at] = joined[at] || kind == Squash
+			if body != "" {
+				kept[at].Message += "\n\n" + body
+			}
+		}
+	}
+	return kept
+}
+
+// NoEditor keeps a rebase from opening an editor: for the todo list, and for
+// the combined message of a squash!, which git then cleans up as Squashed
+// predicts. Both variables override the matching config.
+var NoEditor = []string{"GIT_SEQUENCE_EDITOR=:", "GIT_EDITOR=:"}
 
 // Match refuses unless base..tip holds exactly the wanted commits.
 func Match(want []Commit, base, tip, branch string) error {
