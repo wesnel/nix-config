@@ -1,12 +1,14 @@
 package signpass
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/wesnel/agent-tools/internal/git"
@@ -146,6 +148,9 @@ func TestPush(t *testing.T) {
 	t.Run("destination", testPushDestination)
 	t.Run("remote", testPushRemote)
 	t.Run("each URL", testPushEachURL)
+	t.Run("stack bottom up", testPushStackBottomUp)
+	t.Run("control path too long", testPushControlPathTooLong)
+	t.Run("interrupted", testPushInterrupted)
 }
 
 // The commands a pass prints for resuming name the program that is running,
@@ -892,5 +897,292 @@ func testPushEachURL(t *testing.T) {
 	}
 	if got := gitIn(t, repo, "rev-parse", "origin/one"); got != signed {
 		t.Errorf("origin/one is %s, want %s", got, signed)
+	}
+}
+
+// sharingSSH writes a fake OpenSSH to dir that serves every host from the
+// bare repositories in dir, and shares connections as OpenSSH does: a login
+// authenticates, which is a key touch, unless a master is up on its
+// ControlPath (%C there standing for the host), and one started with
+// ControlMaster=auto and a ControlPersist stays up until `-O exit`. It logs
+// "auth HOST", "open PATH" and "close PATH" to the log it returns. While
+// dir/hang exists, a login writes dir/ready and then hangs until git closes
+// its standard input. It is a
+// fake because a test must not reach a forge or touch a key. The ssh it puts
+// first on PATH only fails, so a push that loses the configured command
+// fails instead of reaching the real one.
+func sharingSSH(t *testing.T, dir string) (program, log string) {
+	t.Helper()
+	program, log = filepath.Join(dir, "sharing-ssh"), filepath.Join(dir, "ssh.log")
+	script := `#!/bin/sh
+path= master= persist= op=
+while [ $# -gt 0 ]; do
+  case $1 in
+  -o) shift
+    case $1 in
+    ControlPath=*) path=${1#ControlPath=} ;;
+    ControlMaster=*) master=${1#ControlMaster=} ;;
+    ControlPersist=*) persist=${1#ControlPersist=} ;;
+    esac ;;
+  -O) shift; op=$1 ;;
+  -p) shift ;;
+  -*) ;;
+  *) break ;;
+  esac
+  shift
+done
+host=$1
+case $path in *%C) path="${path%??}$host" ;; esac
+if [ "$op" = exit ]; then
+  if [ -z "$path" ] || [ ! -e "$path" ]; then
+    echo "Control socket connect($path): No such file or directory" >&2
+    exit 255
+  fi
+  rm "$path"
+  echo "close $path" >> 'LOG'
+  exit 0
+fi
+if [ -z "$path" ] || [ ! -e "$path" ]; then
+  echo "auth $host" >> 'LOG'
+  if [ -n "$path" ] && [ "$master" = auto ] && [ -n "$persist" ] && [ "$persist" != no ]; then
+    : > "$path"
+    echo "open $path" >> 'LOG'
+  fi
+fi
+if [ -e 'DIR/hang' ]; then
+  echo > 'DIR/ready'
+  cat > /dev/null
+  exit 255
+fi
+# A remote's git never sees the client's -c settings.
+unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT
+cd 'DIR' && exec sh -c "$2"
+`
+	script = strings.NewReplacer("LOG", log, "DIR", dir).Replace(script)
+	if err := os.WriteFile(program, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "bin")
+	os.Mkdir(bin, 0o755)
+	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte("#!/bin/sh\necho 'the ssh on PATH ran' >&2\nexit 255\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GIT_SSH_VARIANT", "ssh")
+	return program, log
+}
+
+// sshLog counts each line of the fake ssh's log, and empties it.
+func sshLog(t *testing.T, log string) map[string]int {
+	t.Helper()
+	data, err := os.ReadFile(log)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	os.Remove(log)
+	counts := map[string]int{}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if kind, what, ok := strings.Cut(line, " "); ok {
+			if kind != "auth" {
+				what = "socket"
+			}
+			counts[kind+" "+what]++
+		}
+	}
+	return counts
+}
+
+// receiving makes a bare repository at dir/NAME.git whose post-receive hook
+// logs each push it takes as one line naming the branches it moved.
+func receiving(t *testing.T, dir, name string) (bare, log string) {
+	t.Helper()
+	bare, log = filepath.Join(dir, name+".git"), filepath.Join(dir, name+".pushes")
+	gitIn(t, dir, "init", "-q", "--bare", bare)
+	hook := "#!/bin/sh\ncut -d' ' -f3 | sed 's,^refs/heads/,,' | paste -sd' ' - >> '" + log + "'\n"
+	if err := os.WriteFile(filepath.Join(bare, "hooks", "post-receive"), []byte(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bare, log
+}
+
+// pushesTo is the pushes a repository from receiving has taken since the
+// last call, one line each.
+func pushesTo(t *testing.T, log string) string {
+	t.Helper()
+	data, _ := os.ReadFile(log)
+	os.Remove(log)
+	return strings.TrimSpace(string(data))
+}
+
+// sshStack makes a three-branch stack, parent, child on it and grandchild on
+// that, each unsigned and tracking its own name on origin, which pushes over
+// the fake sharingSSH to two hosts: hub, then mirror. The names sort
+// otherwise than the stack does. While dir/reject exists, the mirror
+// refuses child.
+func sshStack(t *testing.T) (dir, repo, sshLogFile, hubPushes, mirrorPushes string) {
+	t.Helper()
+	dir = t.TempDir()
+	t.Setenv("GIT_CONFIG_GLOBAL", signingConfig(t, dir))
+	program, sshLogFile := sharingSSH(t, dir)
+	t.Setenv("GIT_SSH_COMMAND", program)
+	hub, hubPushes := receiving(t, dir, "hub")
+	mirror, mirrorPushes := receiving(t, dir, "mirror")
+	reject := "#!/bin/sh\nwhile read old new ref; do\n  if [ \"$ref\" = refs/heads/child ] && [ -e '" +
+		filepath.Join(dir, "reject") + "' ]; then echo 'child is refused here' >&2; exit 1; fi\ndone\n"
+	if err := os.WriteFile(filepath.Join(mirror, "hooks", "pre-receive"), []byte(reject), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repo = filepath.Join(dir, "repo")
+	os.Mkdir(repo, 0o755)
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+	gitIn(t, repo, "remote", "add", "origin", "hub:hub.git")
+	gitIn(t, repo, "remote", "set-url", "--add", "--push", "origin", "hub:hub.git")
+	gitIn(t, repo, "remote", "set-url", "--add", "--push", "origin", "mirror:mirror.git")
+	for _, b := range []string{"parent", "child", "grandchild"} {
+		gitIn(t, repo, "switch", "-qc", b)
+		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Add "+b)
+		gitIn(t, repo, "update-ref", "refs/remotes/origin/"+b, b)
+		gitIn(t, repo, "branch", "-q", "--set-upstream-to=origin/"+b, b)
+	}
+	for _, bare := range []string{hub, mirror} {
+		gitIn(t, repo, "push", "-q", bare, "main", "parent", "child", "grandchild")
+	}
+	pushesTo(t, hubPushes)
+	pushesTo(t, mirrorPushes)
+	sshLog(t, sshLogFile)
+	useDir(t, repo)
+	return dir, repo, sshLogFile, hubPushes, mirrorPushes
+}
+
+// testPushStackBottomUp pushes a moved stack one branch per push, bottom
+// up, to each push URL, so each pull request's CI starts once, while the
+// pushes to one URL share a single SSH login, one key touch. A push refused
+// partway is resumed from the first branch that URL lacks.
+func testPushStackBottomUp(t *testing.T) {
+	dir, repo, sshLogFile, hubPushes, mirrorPushes := sshStack(t)
+	before := map[string]string{}
+	for _, b := range []string{"parent", "child", "grandchild"} {
+		before[b] = gitIn(t, repo, "rev-parse", b)
+	}
+	os.WriteFile(filepath.Join(dir, "reject"), nil, 0o644)
+
+	noTerminal(t)
+	_, err := Run("", false, true, false)
+	if err == nil || !strings.Contains(err.Error(), "`"+testBinary(t)+" --resume --push grandchild`") {
+		t.Fatalf("a push the mirror refuses: %v", err)
+	}
+	if got := pushesTo(t, hubPushes); got != "parent\nchild\ngrandchild" {
+		t.Errorf("the hub took these pushes:\n%s", got)
+	}
+	if got := pushesTo(t, mirrorPushes); got != "parent" {
+		t.Errorf("the mirror took these pushes:\n%s", got)
+	}
+	want := map[string]int{"auth hub": 1, "auth mirror": 1, "open socket": 2, "close socket": 2}
+	if got := sshLog(t, sshLogFile); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("SSH logins and shared connections: %v, want %v", got, want)
+	}
+	for b, old := range before {
+		if got := gitIn(t, repo, "rev-parse", "origin/"+b); got != old {
+			t.Errorf("origin/%s moved to %s while the mirror lacks it", b, got)
+		}
+	}
+
+	os.Remove(filepath.Join(dir, "reject"))
+	result, err := Run("", true, false, false)
+	if err != nil {
+		t.Fatalf("resuming the mirror's push: %v", err)
+	}
+	if got := pushesTo(t, hubPushes); got != "" {
+		t.Errorf("the resumed pass pushed to the hub again:\n%s", got)
+	}
+	if got := pushesTo(t, mirrorPushes); got != "child\ngrandchild" {
+		t.Errorf("the resumed pass pushed these to the mirror:\n%s", got)
+	}
+	want = map[string]int{"auth mirror": 1, "open socket": 1, "close socket": 1}
+	if got := sshLog(t, sshLogFile); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("SSH logins and shared connections on resuming: %v, want %v", got, want)
+	}
+	pushed := fmt.Sprint(result.(map[string]any)["pushed"])
+	if want := "map[child:origin refs/heads/child grandchild:origin refs/heads/grandchild parent:origin refs/heads/parent]"; pushed != want {
+		t.Errorf("pushed: %s", pushed)
+	}
+	for _, b := range []string{"parent", "child", "grandchild"} {
+		signed := gitIn(t, repo, "rev-parse", b)
+		if signed == before[b] {
+			t.Errorf("%s did not move", b)
+		}
+		for where, ref := range map[string]string{filepath.Join(dir, "hub.git"): b, filepath.Join(dir, "mirror.git"): b, repo: "origin/" + b} {
+			if got := gitIn(t, where, "rev-parse", ref); got != signed {
+				t.Errorf("%s has %s at %s, want %s", where, ref, got, signed)
+			}
+		}
+	}
+}
+
+// testPushControlPathTooLong refuses, before any key touch, a push whose
+// shared SSH connection would need a socket path longer than a Unix socket
+// takes.
+func testPushControlPathTooLong(t *testing.T) {
+	dir, _, sshLogFile, hubPushes, _ := sshStack(t)
+	long := filepath.Join(dir, strings.Repeat("d", 120))
+	if err := os.Mkdir(long, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", long)
+	for name, pass := range map[string]func() (any, error){
+		"one branch": func() (any, error) { return Run("", false, true, false) },
+		"named":      func() (any, error) { return Plan("", []string{"grandchild"}, true, false) },
+	} {
+		_, err := pass()
+		var r refusal.Refusal
+		if !errors.As(err, &r) || !strings.Contains(err.Error(), "TMPDIR") || !refusal.SaysInstead(err.Error()) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if marks, _ := git.Run("log", "--format=%G?", "main..grandchild"); marks != "N\nN\nN" {
+		t.Errorf("the refused pass signed: %q", marks)
+	}
+	if got := pushesTo(t, hubPushes); got != "" {
+		t.Errorf("the refused pass pushed:\n%s", got)
+	}
+	if got := sshLog(t, sshLogFile); len(got) != 0 {
+		t.Errorf("the refused pass logged in: %v", got)
+	}
+}
+
+// testPushInterrupted stops a pass with SIGTERM while its first push waits
+// on SSH. The pass returns instead of dying, having ended its shared
+// connection and removed the directory of its control sockets.
+func testPushInterrupted(t *testing.T) {
+	dir, _, sshLogFile, _, _ := sshStack(t)
+	ready := filepath.Join(dir, "ready")
+	if err := syscall.Mkfifo(ready, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "hang"), nil, 0o644)
+	go func() {
+		if r, err := os.Open(ready); err == nil {
+			bufio.NewReader(r).ReadString('\n')
+			r.Close()
+			syscall.Kill(os.Getpid(), syscall.SIGTERM)
+		}
+	}()
+	noTerminal(t)
+	if _, err := Run("", false, true, false); err == nil {
+		t.Fatal("the interrupted pass succeeded")
+	}
+	data, _ := os.ReadFile(sshLogFile)
+	var sockets string
+	for _, line := range strings.Split(string(data), "\n") {
+		if path, ok := strings.CutPrefix(line, "open "); ok {
+			sockets = filepath.Dir(path)
+		}
+	}
+	if want := map[string]int{"auth hub": 1, "open socket": 1, "close socket": 1}; fmt.Sprint(sshLog(t, sshLogFile)) != fmt.Sprint(want) {
+		t.Errorf("SSH logins and shared connections: %s, want %v", data, want)
+	}
+	if _, err := os.Stat(sockets); sockets == "" || !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the control sockets' directory %q is left: %v", sockets, err)
 	}
 }

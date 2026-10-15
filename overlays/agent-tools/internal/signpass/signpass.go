@@ -3,20 +3,24 @@
 package signpass
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"maps"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/history"
 	"github.com/wesnel/agent-tools/internal/refusal"
+	"github.com/wesnel/agent-tools/internal/sshmux"
 )
 
 // BackupRef holds each branch's unsigned tip while a pass is in progress.
@@ -378,7 +382,8 @@ type pushes struct {
 	Skipped     map[string]string `json:"skipped,omitempty"`
 }
 
-// urlPush is what one push URL of Remote receives, in one atomic push.
+// urlPush is what one push URL of Remote receives: Refs, one push each, in
+// order. Done is set once the URL has them all.
 type urlPush struct {
 	Remote string    `json:"remote"`
 	URL    string    `json:"url"`
@@ -390,12 +395,13 @@ type urlPush struct {
 // before the pass pushed anywhere, which is the remote-tracking ref as the
 // push was planned, or empty where the URL must not have the branch yet.
 // With Publish, the remote's branch becomes Branch's upstream once every
-// URL has it.
+// URL has it. Done is set once this URL has it.
 type refPush struct {
 	Branch  string `json:"branch"`
 	New     string `json:"new"`
 	Old     string `json:"old"`
 	Publish bool   `json:"publish,omitempty"`
+	Done    bool   `json:"done,omitempty"`
 }
 
 // inProgress refuses when a signing pass that has not finished involves any of
@@ -478,14 +484,16 @@ func defaultBase(branch string) (string, error) {
 // or squash! rewrites. Branches stacked inside that range move with it, and so
 // does any other worktree they are checked out in, which must be clean. With
 // push, every branch that moved and has an upstream is pushed to its own name
-// at each of its remote's push URLs in turn, guarded by the commit its
-// remote-tracking ref names, after checking every destination before the
-// first touch; with setUpstream as well, so is every branch that moved and
-// has none (see planPush). When the key refuses a signature or an SSH login,
-// on a terminal the pass asks whether to retry that step (retryTouch).
+// at each of its remote's push URLs in turn, one branch per push, bottom up,
+// guarded by the commit its remote-tracking ref names, after checking every
+// destination before the first touch; with setUpstream as well, so is every
+// branch that moved and has none (see planPush). When the key refuses a
+// signature or an SSH login, on a terminal the pass asks whether to retry
+// that step (retryTouch).
 //
 // The signing state lasts until every commit is verified; a push that fails
-// after that leaves only the URLs still to push, which --resume retries.
+// after that leaves only the branches each URL still lacks, which --resume
+// pushes.
 func Run(base string, resume, push, setUpstream bool) (any, error) {
 	branch, err := git.Run("rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
@@ -531,6 +539,9 @@ func Run(base string, resume, push, setUpstream bool) (any, error) {
 		p.push, p.setUpstream = push, setUpstream
 		if push || setUpstream {
 			if _, _, err := pushTargets(append([]string{branch}, p.Stacked...), setUpstream, "run the pass again"); err != nil {
+				return nil, err
+			}
+			if err := sshmux.Check("run the pass again"); err != nil {
 				return nil, err
 			}
 		}
@@ -706,21 +717,22 @@ func rebase(p *pending) error {
 		args = append(args, "-i", "--autosquash")
 	}
 	args = append(append(args, upstream...), p.Branch)
-	code, stderr := git.AttachedStderr(history.NoEditor, args...)
+	ctx := context.Background()
+	code, stderr := git.AttachedStderr(ctx, history.NoEditor, args...)
 	aborted := false
 	for code != 0 && refusedByKey.MatchString(stderr) {
 		restart, err := readyRetry()
 		if err != nil {
 			break
 		}
-		if !retryTouch("signing "+p.Branch, stderr) {
+		if !retryTouch(ctx, "signing "+p.Branch, stderr) {
 			aborted = restart
 			break
 		}
 		if restart {
-			code, stderr = git.AttachedStderr(history.NoEditor, args...)
+			code, stderr = git.AttachedStderr(ctx, history.NoEditor, args...)
 		} else {
-			code, stderr = git.AttachedStderr(history.NoEditor, "rebase", "--continue")
+			code, stderr = git.AttachedStderr(ctx, history.NoEditor, "rebase", "--continue")
 		}
 	}
 	if code == 0 {
@@ -867,11 +879,13 @@ func verify(p *pending) ([]string, error) {
 
 // pushAll pushes todo for the pass on branch, planning it first (planPush)
 // unless it is planned, and records it as that pass's push state before the
-// first push and after each URL's, so --resume pushes only the URLs that
-// lack their branches, leased as planned. Once every URL has its branches,
-// it moves their remote-tracking refs and sets the upstreams, as a push to
-// the remote by name would have. pushed is each branch's destination, or why
-// it was not pushed.
+// first push and after each branch's, so --resume pushes each URL only the
+// branches it lacks, leased as planned. The pushes to one URL share one SSH
+// login (sshmux), closed when pushAll returns, which SIGINT or SIGTERM
+// makes it do instead of ending the process. Once every URL has its
+// branches, it moves their remote-tracking refs and sets the upstreams, as a
+// push to the remote by name would have. pushed is each branch's
+// destination, or why it was not pushed.
 func pushAll(branch string, todo pushes) (pushed map[string]string, err error) {
 	path, err := statePath("push", branch)
 	if err != nil {
@@ -886,17 +900,28 @@ func pushAll(branch string, todo pushes) (pushed map[string]string, err error) {
 	if err := writeJSON(path, todo); err != nil {
 		return nil, err
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	mux, err := sshmux.Open(retry)
+	if err != nil {
+		return nil, err
+	}
+	defer mux.Close()
 	for i := range todo.URLs {
-		if todo.URLs[i].Done {
-			continue
+		u := &todo.URLs[i]
+		for j := range u.Refs {
+			if u.Done || u.Refs[j].Done {
+				continue
+			}
+			if err := pushRef(ctx, u.URL, u.Refs[j], mux.Env(i)); err != nil {
+				return nil, fmt.Errorf("%v%s; the branches are signed, so fix the cause and %s", err, pushedTo(todo.URLs), retry)
+			}
+			u.Refs[j].Done = true
+			if err := writeJSON(path, todo); err != nil {
+				return nil, err
+			}
 		}
-		if err := pushURL(todo.URLs[i]); err != nil {
-			return nil, fmt.Errorf("%v%s; the branches are signed, so fix the cause and %s", err, pushedTo(todo.URLs), retry)
-		}
-		todo.URLs[i].Done = true
-		if err := writeJSON(path, todo); err != nil {
-			return nil, err
-		}
+		u.Done = true
 	}
 	pushed = maps.Clone(todo.Skipped)
 	if pushed == nil {
@@ -923,19 +948,20 @@ func pushAll(branch string, todo pushes) (pushed map[string]string, err error) {
 	return pushed, os.Remove(path)
 }
 
-// pushedTo says which URLs already have their branches, for a push that
-// failed partway.
+// pushedTo says which branches each URL already has, for a push that failed
+// partway.
 func pushedTo(urls []urlPush) string {
 	var done []string
 	for _, u := range urls {
-		if !u.Done {
-			continue
-		}
 		var bs []string
 		for _, r := range u.Refs {
-			bs = append(bs, r.Branch)
+			if u.Done || r.Done {
+				bs = append(bs, r.Branch)
+			}
 		}
-		done = append(done, fmt.Sprintf("pushed %s to %s", strings.Join(bs, ", "), u.URL))
+		if len(bs) > 0 {
+			done = append(done, fmt.Sprintf("pushed %s to %s", strings.Join(bs, ", "), u.URL))
+		}
 	}
 	if len(done) == 0 {
 		return ""
@@ -943,12 +969,13 @@ func pushedTo(urls []urlPush) string {
 	return "; " + strings.Join(done, "; ")
 }
 
-// planPush decides where branches go (pushTargets) and splits that into one
-// push per push URL of each remote, each sending the branches' commits as
-// they are now to the branches of the same names, leased on their
-// remote-tracking refs as they are now. A branch published with
-// setUpstream is leased on nothing, so it lands only where the URL has no
-// branch of that name.
+// planPush decides where branches go (pushTargets) and splits that by push
+// URL of each remote, each sending the branches' commits as they are now to
+// the branches of the same names, leased on their remote-tracking refs as
+// they are now. A branch published with setUpstream is leased on nothing,
+// so it lands only where the URL has no branch of that name. Each branch is
+// pushed on its own, bottom up: GitHub starts a pull request's workflows
+// twice when one push moves it and its base together.
 func planPush(branches []string, setUpstream bool, retry string) (pushes, error) {
 	byRemote, skipped, err := pushTargets(branches, setUpstream, retry)
 	if err != nil {
@@ -964,6 +991,7 @@ func planPush(branches []string, setUpstream bool, retry string) (pushes, error)
 			}
 			refs = append(refs, refPush{Branch: t.branch, New: oid, Old: t.lease, Publish: t.publish})
 		}
+		refs = bottomUp(refs)
 		urls, err := git.Run("remote", "get-url", "--push", "--all", remote)
 		if err != nil {
 			return pushes{}, err
@@ -974,36 +1002,51 @@ func planPush(branches []string, setUpstream bool, retry string) (pushes, error)
 					"fix it with `git remote set-url --push`, then %s", remote, url, retry)
 			}
 			if url != "" {
-				todo.URLs = append(todo.URLs, urlPush{Remote: remote, URL: url, Refs: refs})
+				todo.URLs = append(todo.URLs, urlPush{Remote: remote, URL: url, Refs: slices.Clone(refs)})
 			}
 		}
 	}
 	return todo, nil
 }
 
-// pushURL pushes u's branches to u.URL in one atomic push, over whatever
-// transport the URL uses (for GitHub, SSH and the key), without touching the
-// remote-tracking refs. When the key refuses, it asks whether to retry
+// bottomUp orders refs so that each comes before every ref whose commit
+// descends from its own, keeping their order otherwise.
+func bottomUp(refs []refPush) []refPush {
+	left, ordered := slices.Clone(refs), make([]refPush, 0, len(refs))
+	for len(left) > 0 {
+		next := 0
+		for i, r := range left {
+			if !slices.ContainsFunc(left, func(o refPush) bool {
+				return o.New != r.New && git.OK("merge-base", "--is-ancestor", o.New, r.New)
+			}) {
+				next = i
+				break
+			}
+		}
+		ordered = append(ordered, left[next])
+		left = slices.Delete(left, next, next+1)
+	}
+	return ordered
+}
+
+// pushRef pushes r to url, over whatever transport the URL uses (for
+// GitHub, SSH and the key) with env added, without touching the
+// remote-tracking ref. When the key refuses, it asks whether to retry
 // (retryTouch).
-func pushURL(u urlPush) error {
-	args := []string{"push", "--atomic"}
-	var names []string
-	for _, r := range u.Refs {
-		args = append(args, fmt.Sprintf("--force-with-lease=refs/heads/%s:%s", r.Branch, r.Old))
-		names = append(names, r.Branch)
-	}
-	args = append(args, u.URL)
-	for _, r := range u.Refs {
-		args = append(args, r.New+":refs/heads/"+r.Branch)
-	}
-	what := fmt.Sprintf("the push of %s to %s", strings.Join(names, ", "), u.URL)
+func pushRef(ctx context.Context, url string, r refPush, env []string) error {
+	args := []string{"push", fmt.Sprintf("--force-with-lease=refs/heads/%s:%s", r.Branch, r.Old), url,
+		r.New + ":refs/heads/" + r.Branch}
+	what := fmt.Sprintf("the push of %s to %s", r.Branch, url)
 	for {
-		fmt.Fprintf(os.Stderr, "pushing %s to %s; touch the key if it blinks\n", strings.Join(names, ", "), u.URL)
-		code, stderr := git.AttachedStderr(nil, args...)
+		fmt.Fprintf(os.Stderr, "pushing %s to %s; touch the key if it blinks\n", r.Branch, url)
+		code, stderr := git.AttachedStderr(ctx, env, args...)
 		if code == 0 {
 			return nil
 		}
-		if !retryTouch(what, stderr) {
+		if ctx.Err() != nil {
+			return fmt.Errorf("%s was interrupted", what)
+		}
+		if !retryTouch(ctx, what, stderr) {
 			return fmt.Errorf("%s failed", what)
 		}
 	}

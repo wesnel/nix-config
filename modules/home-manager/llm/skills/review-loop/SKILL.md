@@ -141,9 +141,9 @@ has changed.
    `git rebase --onto <parent-branch> <child's recorded fork point> <branch>`
    in its worktree, resolves conflicts (the `restack-branches` skill covers
    them) and reruns its tests.
-8. **Push.** `pr-loop push` pushes every changed branch at once and records
-   the round under `refs/pr-loop/rounds/<n>/<branch>`. If GitHub moved
-   underneath it, stop.
+8. **Push.** `pr-loop push` pushes every changed branch, as the `signing-pass`
+   skill says a stack is pushed, and records the round under
+   `refs/pr-loop/rounds/<n>/<branch>`. If GitHub moved underneath it, stop.
 9. **Reply and resolve**, after the push so replies can cite pushed commits:
    `pr-loop reply --from <file>` for each PR's drafted replies, which
    answer and resolve threads as their outcomes say.

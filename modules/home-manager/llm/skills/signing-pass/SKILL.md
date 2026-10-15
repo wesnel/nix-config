@@ -71,8 +71,12 @@ git sign-pass --push           # sign, then push every branch that moved to its 
 git sign-pass --set-upstream   # the same, and publish moved branches that have no upstream yet
 ```
 
+The pass pushes one branch per `git push`, bottom up, since GitHub runs a pull
+request's CI twice when one push moves it and its base; any push you suggest
+for a stack does the same, one branch per command, bottom up.
+
 Suggest `--set-upstream` when a branch has never been pushed: it publishes the
-branch in the same push, and refuses one the remote already has. Both refuse,
+branch in the same pass, and refuses one the remote already has. Both refuse,
 before any touch, a branch whose upstream is a branch of another name, and any
 push to the remote's default branch.
 
