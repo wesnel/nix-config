@@ -26,8 +26,13 @@ create, amend or rewrite commits.
 
 ## Pull requests
 
-- Open every pull request as a draft. Marking it ready for review notifies
-  its code owners, and is Wesley's call.
+- Open every pull request as a draft, with `pr-loop open`, which needs no
+  key touch (the `signing-pass` skill shows how). Marking it ready for review
+  notifies its code owners, and is Wesley's call.
+- After every push to a pull request, `pr-loop open` included, yours or one
+  you are told about, watch its CI with `pr-loop wait ci` in the background
+  and read failures with `pr-loop logs`. The `signing-pass` skill says how,
+  and what to do with a failure.
 - Describe the change as it stands, as if the diff had always looked this
   way: no history of how it got there, no list of review follow-ups, and no
   line numbers, line counts or commit counts, all of which go stale. Stack
@@ -35,7 +40,9 @@ create, amend or rewrite commits.
 - Answer review comments in their threads, never as new top-level comments,
   and resolve each thread you have answered, including ones answered without
   a change. Leave one open only when it still needs a decision, and say so in
-  the reply.
+  the reply. On Wesley's own pull requests, `pr-loop threads`, `reply` and
+  `resolve` do this, and `pr-loop reply --from FILE` answers many threads at
+  once; `pr-loop --help` has the file format.
 
 ## Know which branch you are on
 

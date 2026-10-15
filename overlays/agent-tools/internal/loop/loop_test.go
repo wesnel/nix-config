@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -90,6 +91,112 @@ func TestCommitBody(t *testing.T) {
 	}
 }
 
+func TestCheckOpen(t *testing.T) {
+	repo := &Repo{Slug: "o/r", Default: "trunk", Viewer: "me"}
+	pr := func(number int, head, author string) *PR {
+		p := &PR{Number: number, HeadRefName: head}
+		p.Author.Login = author
+		return p
+	}
+	view := &remoteView{
+		Heads: map[string]string{"trunk": "t0", "parent": "p0", "theirs": "x0", "pushed": "q0"},
+		PRs:   map[string]*PR{"parent": pr(1, "parent", "me"), "theirs": pr(2, "theirs", "other"), "taken": pr(3, "taken", "me"), "gone": pr(4, "gone", "me")},
+	}
+	refused := map[string][2]string{
+		"default head":       {"trunk", "trunk"},
+		"main head":          {"main", "trunk"},
+		"own base":           {"new", "new"},
+		"head with a PR":     {"taken", "trunk"},
+		"head on GitHub":     {"pushed", "trunk"},
+		"base without a PR":  {"new", "pushed"},
+		"someone else's PR":  {"new", "theirs"},
+		"base not on GitHub": {"new", "gone"},
+	}
+	for name, c := range refused {
+		_, err := checkOpen(repo, view, c[0], c[1])
+		if _, ok := err.(Refusal); !ok {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if oid, err := checkOpen(repo, view, "new", "trunk"); err != nil || oid != "t0" {
+		t.Errorf("on the default branch: %s, %v", oid, err)
+	}
+	if oid, err := checkOpen(repo, view, "new", "parent"); err != nil || oid != "p0" {
+		t.Errorf("stacked: %s, %v", oid, err)
+	}
+}
+
+func TestCheckLocal(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	dir := t.TempDir()
+	write := func(name string) { os.WriteFile(filepath.Join(dir, name), []byte(name+"\n"), 0o644) }
+	gitIn(t, dir, "init", "-q", "-b", "trunk")
+	gitIn(t, dir, "remote", "add", "origin", "https://github.com/o/r.git")
+	gitIn(t, dir, "remote", "add", "another", "git@github.com:o/r.git")
+	gitIn(t, dir, "remote", "add", "fork", "https://github.com/f/r.git")
+	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "base")
+	trunk := gitIn(t, dir, "rev-parse", "HEAD")
+	gitIn(t, dir, "update-ref", "refs/remotes/origin/trunk", trunk)
+	gitIn(t, dir, "switch", "-qc", "parent")
+	write("p")
+	gitIn(t, dir, "add", "p")
+	gitIn(t, dir, "commit", "-qm", "parent")
+	parent := gitIn(t, dir, "rev-parse", "HEAD")
+	gitIn(t, dir, "switch", "-qc", "child")
+	write("c")
+	gitIn(t, dir, "add", "c")
+	gitIn(t, dir, "commit", "-qm", "child")
+	child := gitIn(t, dir, "rev-parse", "HEAD")
+	gitIn(t, dir, "switch", "-qc", "aside", "trunk")
+	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "aside")
+	gitIn(t, dir, "branch", "empty", "trunk")
+	git.Dir = dir
+	defer func() { git.Dir = "" }()
+	repo := &Repo{Slug: "o/r", Default: "trunk"}
+	unfetched := strings.Repeat("1", 40)
+
+	local, known, err := checkLocal(repo, "child", "parent", parent)
+	if err != nil || local != child {
+		t.Fatalf("stacked: %s, %v", local, err)
+	}
+	if got := strings.Join(known, " "); got != parent+" --remotes=origin/* --remotes=another/*" {
+		t.Errorf("known: %s", got)
+	}
+	objects, err := missingObjects([]string{local}, known)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := objects.counts(); got["commit"] != 1 || got["tree"] != 1 || got["blob"] != 1 || len(objects.commits) != 1 {
+		t.Errorf("objects over the parent: %v", got)
+	}
+	// The default branch may have moved on GitHub past what was fetched;
+	// what was fetched is still left out of the upload.
+	if _, known, err := checkLocal(repo, "child", "trunk", unfetched); err != nil || strings.Join(known, " ") != "--remotes=origin/* --remotes=another/*" {
+		t.Errorf("default base not fetched: %v, %v", known, err)
+	}
+	refused := map[string][3]string{
+		"no local branch":    {"gone", "trunk", trunk},
+		"no new commits":     {"empty", "trunk", trunk},
+		"parent not fetched": {"child", "parent", unfetched},
+		"not on its parent":  {"aside", "parent", parent},
+	}
+	for name, c := range refused {
+		_, _, err := checkLocal(repo, c[0], c[1], c[2])
+		if _, ok := err.(Refusal); !ok {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+
+	gitIn(t, dir, "branch", "--set-upstream-to=origin/trunk", "child")
+	if err := setUpstream(repo, "child"); err != nil {
+		t.Fatal(err)
+	}
+	if got := gitIn(t, dir, "config", "branch.child.remote") + " " + gitIn(t, dir, "config", "branch.child.merge"); got != "origin refs/heads/child" {
+		t.Errorf("upstream: %s", got)
+	}
+}
+
 // gitIn runs git in dir with a fixed identity and signing off.
 func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
@@ -140,6 +247,64 @@ func TestWorktrees(t *testing.T) {
 	}
 	if _, err := Worktrees(true); err != nil || exists(path) {
 		t.Errorf("remove: %v, still there: %v", err, exists(path))
+	}
+}
+
+func TestSetup(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	config := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("PR_LOOP_CONFIG", config)
+	dir := t.TempDir()
+	gitIn(t, dir, "init", "-q", "-b", "main")
+	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "base")
+	gitIn(t, dir, "remote", "add", "origin", "https://github.com/O/R.git")
+	git.Dir = dir
+	defer func() { git.Dir = "" }()
+
+	if s, err := SetupCommand(); err != nil || s.Command != "" {
+		t.Errorf("without a config: %+v, %v", s, err)
+	}
+	os.WriteFile(config, []byte(`{"setup": {"o/r": "echo generated > gen", "o/other": "false"}}`), 0o644)
+	s, err := SetupCommand()
+	if err != nil || s.Command != "echo generated > gen" || s.Repo != "o/r" {
+		t.Fatalf("configured: %+v, %v", s, err)
+	}
+	gitIn(t, dir, "remote", "add", "fork", "https://github.com/o/other.git")
+	if _, err := SetupCommand(); err == nil {
+		t.Error("two remotes with different setup commands were accepted")
+	}
+	gitIn(t, dir, "remote", "remove", "fork")
+
+	gitIn(t, dir, "branch", "feature")
+	wt := filepath.Join(t.TempDir(), "wt")
+	gitIn(t, dir, "worktree", "add", "-q", wt, "feature")
+	if !NeedsSetup(wt) {
+		t.Error("a fresh worktree does not need setup")
+	}
+	var log bytes.Buffer
+	runs := RunSetup(s.Command, []string{wt}, &log)
+	if len(runs) != 1 || runs[0].Exit != 0 || !exists(filepath.Join(wt, "gen")) {
+		t.Fatalf("setup did not run in the worktree: %+v\n%s", runs, log.String())
+	}
+	if !strings.Contains(log.String(), "setup in "+wt+": echo generated > gen\n") || !strings.Contains(log.String(), ": exit 0\n") {
+		t.Errorf("the command or its status was not reported:\n%s", log.String())
+	}
+	if NeedsSetup(wt) {
+		t.Error("needs setup again right after it")
+	}
+	if !NeedsSetup(dir) {
+		t.Error("another worktree counts as set up")
+	}
+	if got := gitIn(t, wt, "status", "--porcelain"); got != "?? gen" {
+		t.Errorf("the record of setup shows in the worktree: %q", got)
+	}
+	gitIn(t, wt, "commit", "-q", "--allow-empty", "-m", "moved")
+	if !NeedsSetup(wt) {
+		t.Error("a moved worktree does not need setup")
+	}
+	if runs := RunSetup("exit 3", []string{wt}, &log); runs[0].Exit != 3 || !NeedsSetup(wt) {
+		t.Errorf("a failed setup: %+v, needs setup: %v", runs, NeedsSetup(wt))
 	}
 }
 

@@ -73,5 +73,6 @@ report:
 
 When told to, run `git rebase --onto <parent-branch> <old-parent-tip> <branch>`
 in your worktree. Where a conflict involves content the parent removed or
-moved on purpose, keep the parent's version. Rerun the tests and report the
-new tip.
+moved on purpose, keep the parent's version. Run `pr-loop setup`, which
+regenerates what the repository's configured setup produces, then rerun the
+tests and report the new tip.

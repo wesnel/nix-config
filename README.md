@@ -121,16 +121,22 @@ next switch.
 
 Commits and pushes are signed with a YubiKey that needs a touch, so agents
 commit unsigned, fold corrections into the commit they correct with
-`git commit --fixup`, and never push or tag. The instructions and the
-`signing-pass` skill tell them so. When the work is done, see what will be
-signed and sign it, in a terminal of your own:
+`git commit --fixup`, and never `git push` or tag. The instructions and the
+`signing-pass` skill tell them so. To open a pull request for a new branch,
+an agent runs `pr-loop open`, which pushes the unsigned commits through the
+GitHub API with your `gh` login and opens a draft. It refuses a default
+branch, a branch GitHub already has, and any base but the default branch or
+the head of another open pull request of yours in the same repository, runs
+`git-push-guard`'s check, and points the branch's upstream at its copy on
+GitHub. When the work is done, see what will be signed and sign it, in a
+terminal of your own:
 
 ``` sh
-git log --format='%h %G? %s' main..HEAD   # N marks an unsigned commit
-git sign-pass                              # squash fixups and sign; nothing is pushed
-git sign-pass --push                       # then push every branch that moved to its own name upstream
-git sign-pass --set-upstream               # and publish moved branches that have none yet
-git sign-pass --push TOP1 TOP2 ...         # several stacks, wherever they are checked out
+git log --format='%h %G? %s' origin/main..HEAD   # N marks an unsigned commit
+git sign-pass                                     # squash fixups and sign; nothing is pushed
+git sign-pass --push                              # then push every branch that moved to its own name upstream
+git sign-pass --set-upstream                      # and publish moved branches that have none yet
+git sign-pass --push TOP1 TOP2 ...                # several stacks, wherever they are checked out
 ```
 
 `git sign-pass` re-signs from the oldest unsigned commit, or the oldest one a
@@ -210,6 +216,13 @@ for CI, requests reviews from the bots in `wgn.home.llm.prLoop.bots`
 restacks, pushes the stack through the GitHub API, then replies and resolves.
 It stops when the bots are satisfied or the loop needs a decision, and
 writes `.git/pr-loop/report.md`.
+
+A repository whose fresh checkouts need preparing, such as generating files
+it does not commit, gets a command in `wgn.home.llm.prLoop.setup`, keyed by
+`owner/name`. `pr-loop worktrees` runs it in the sandbox in each worktree
+whose HEAD moved since its last setup, printing the command and its exit
+status, and `pr-loop setup [PATH]` runs it in any worktree, such as one an
+agent made by hand. A repository cannot name a setup command itself.
 
 `pr-loop` touches only the registered branches, each an open PR by you in
 the same repository and not the default branch. It re-checks that before

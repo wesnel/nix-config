@@ -1,9 +1,10 @@
 package loop
 
 import (
+	"os"
 	"strings"
 
-	"github.com/wesnel/agent-tools/internal/gh"
+	"github.com/wesnel/agent-tools/internal/relay"
 )
 
 type login struct {
@@ -85,7 +86,7 @@ func Threads(number int, all bool) (any, error) {
 				}
 			}
 		}
-		err := gh.GraphQL(`query($owner: String!, $name: String!, $number: Int!, $after: String) {
+		err := graphQL(`query($owner: String!, $name: String!, $number: Int!, $after: String) {
 			repository(owner: $owner, name: $name) { pullRequest(number: $number) {
 				reviewThreads(first: 50, after: $after) {
 					pageInfo { hasNextPage endCursor }
@@ -127,15 +128,33 @@ func Threads(number int, all bool) (any, error) {
 	return out, nil
 }
 
-type threadCheck struct {
-	repo       *Repo
-	lastAuthor string
+// sessionEnv is set by every review-loop launcher.
+const sessionEnv = "PR_LOOP_SESSION"
+
+// inLoopSession reports whether an unattended review loop is the caller.
+// Every loop session reaches pr-loop through sandbox-relay, which sets
+// relay.RelayEnv on the host, out of the sandbox's reach. No argument can
+// turn this off: a loop must never answer people's threads.
+func inLoopSession() bool {
+	return os.Getenv(relay.RelayEnv) == "1" || os.Getenv(sessionEnv) == "1"
 }
 
-// checkedThread applies the policy for answering a thread: a bot started it,
-// on an open PR of the user's that this loop registered.
-func checkedThread(id string) (*threadCheck, error) {
-	state, err := loadState(true)
+// threadPolicy decides which review threads may be answered. In a loop
+// session, and on a PR registered with begin, only threads a review bot
+// started on the loop's PRs; people's threads there are Wesley's. Otherwise
+// any thread on an open PR by the authenticated user in this repository.
+type threadPolicy struct {
+	repo    *Repo
+	state   *State // nil when no loop is registered here
+	session bool
+	bots    []*Bot
+	botsErr error
+	loaded  bool
+}
+
+func newThreadPolicy() (*threadPolicy, error) {
+	session := inLoopSession()
+	state, err := loadState(session)
 	if err != nil {
 		return nil, err
 	}
@@ -143,8 +162,20 @@ func checkedThread(id string) (*threadCheck, error) {
 	if err != nil {
 		return nil, err
 	}
+	return &threadPolicy{repo: repo, state: state, session: session}, nil
+}
+
+// threadCheck is a thread the policy lets the caller answer.
+type threadCheck struct {
+	pr         int
+	resolved   bool
+	lastAuthor string
+}
+
+func (p *threadPolicy) check(id string) (*threadCheck, error) {
 	var data struct {
 		Node *struct {
+			IsResolved  bool
 			PullRequest struct {
 				Number      int
 				State       string
@@ -156,7 +187,8 @@ func checkedThread(id string) (*threadCheck, error) {
 			Last  struct{ Nodes []struct{ Author *login } }
 		}
 	}
-	err = gh.GraphQL(`query($id: ID!) { node(id: $id) { ... on PullRequestReviewThread {
+	err := graphQL(`query($id: ID!) { node(id: $id) { ... on PullRequestReviewThread {
+		isResolved
 		pullRequest { number state headRefName author { login } repository { nameWithOwner } }
 		first: comments(first: 1) { nodes { author { login } } }
 		last: comments(last: 1) { nodes { author { login } } }
@@ -169,63 +201,90 @@ func checkedThread(id string) (*threadCheck, error) {
 	}
 	pr := data.Node.PullRequest
 	switch {
-	case pr.Repository.NameWithOwner != state.Repo:
-		return nil, refuse("%s is in %s, not %s", id, pr.Repository.NameWithOwner, state.Repo)
-	case pr.State != "OPEN" || pr.Author.Login != repo.Viewer:
-		return nil, refuse("#%d is not an open pull request by %s", pr.Number, repo.Viewer)
-	case state.Branches[pr.HeadRefName] == nil:
-		return nil, refuse("#%d is not part of this loop", pr.Number)
+	case pr.Repository.NameWithOwner != p.repo.Slug:
+		return nil, refuse("%s is in %s, not %s", id, pr.Repository.NameWithOwner, p.repo.Slug)
+	case pr.State != "OPEN" || pr.Author.Login != p.repo.Viewer:
+		return nil, refuse("#%d is not an open pull request by %s", pr.Number, p.repo.Viewer)
 	}
-	bots, err := botsFor(state.Repo)
-	if err != nil {
-		return nil, err
-	}
-	starter := ""
-	if a := data.Node.First.Nodes[0].Author; a != nil {
-		starter = a.Login
-	}
-	if botNamed(bots, starter) == nil {
-		return nil, refuse("%s was started by %s, not a review bot; those are left to Wesley", id, starter)
+	registered := p.state != nil && p.state.Repo == p.repo.Slug && p.state.Branches[pr.HeadRefName] != nil
+	if p.session || registered {
+		switch {
+		case p.state.Repo != p.repo.Slug:
+			return nil, refuse("this checkout is %s, but the loop was started for %s", p.repo.Slug, p.state.Repo)
+		case !registered:
+			return nil, refuse("#%d is not part of this loop", pr.Number)
+		}
+		if !p.loaded {
+			p.loaded = true
+			p.bots, p.botsErr = botsFor(p.state.Repo)
+		}
+		if p.botsErr != nil {
+			return nil, p.botsErr
+		}
+		starter := ""
+		if a := data.Node.First.Nodes[0].Author; a != nil {
+			starter = a.Login
+		}
+		if botNamed(p.bots, starter) == nil {
+			return nil, refuse("%s on #%d was started by %s, not a review bot; in a review loop those are left to Wesley", id, pr.Number, starter)
+		}
 	}
 	last := ""
 	if n := data.Node.Last.Nodes; len(n) > 0 && n[0].Author != nil {
 		last = n[0].Author.Login
 	}
-	return &threadCheck{repo: repo, lastAuthor: last}, nil
+	return &threadCheck{pr: pr.Number, resolved: data.Node.IsResolved, lastAuthor: last}, nil
 }
 
-// Reply posts body inside a bot's review thread.
+func postReply(id, body string) (string, error) {
+	var data struct {
+		AddPullRequestReviewThreadReply struct{ Comment struct{ URL string } }
+	}
+	err := graphQL(`mutation($input: AddPullRequestReviewThreadReplyInput!) {
+		addPullRequestReviewThreadReply(input: $input) { comment { url } } }`,
+		map[string]any{"input": map[string]any{"pullRequestReviewThreadId": id, "body": body}}, &data)
+	return data.AddPullRequestReviewThreadReply.Comment.URL, err
+}
+
+func resolveThread(id string) error {
+	return graphQL(`mutation($id: ID!) { resolveReviewThread(input: { threadId: $id }) { thread { isResolved } } }`,
+		map[string]any{"id": id}, nil)
+}
+
+// Reply posts body inside a review thread the policy allows.
 func Reply(id, body string) (any, error) {
 	if strings.TrimSpace(body) == "" {
 		return nil, refuse("the reply is empty")
 	}
-	if _, err := checkedThread(id); err != nil {
-		return nil, err
-	}
-	var data struct {
-		AddPullRequestReviewThreadReply struct{ Comment struct{ URL string } }
-	}
-	err := gh.GraphQL(`mutation($input: AddPullRequestReviewThreadReplyInput!) {
-		addPullRequestReviewThreadReply(input: $input) { comment { url } } }`,
-		map[string]any{"input": map[string]any{"pullRequestReviewThreadId": id, "body": body}}, &data)
+	policy, err := newThreadPolicy()
 	if err != nil {
 		return nil, err
 	}
-	return map[string]string{"url": data.AddPullRequestReviewThreadReply.Comment.URL}, nil
+	if _, err := policy.check(id); err != nil {
+		return nil, err
+	}
+	url, err := postReply(id, body)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{"url": url}, nil
 }
 
-// Resolve resolves a bot's thread whose last comment is the user's reply.
+// Resolve resolves a thread the policy allows, once its last comment is the
+// user's reply, so no thread is closed without an answer.
 func Resolve(id string) (any, error) {
-	check, err := checkedThread(id)
+	policy, err := newThreadPolicy()
 	if err != nil {
 		return nil, err
 	}
-	if check.lastAuthor != check.repo.Viewer {
+	check, err := policy.check(id)
+	if err != nil {
+		return nil, err
+	}
+	if check.lastAuthor != policy.repo.Viewer {
 		return nil, refuse("the last comment in %s is from %s; reply before resolving", id, check.lastAuthor)
 	}
-	err = gh.GraphQL(`mutation($id: ID!) { resolveReviewThread(input: { threadId: $id }) { thread { isResolved } } }`,
-		map[string]any{"id": id}, nil)
-	if err != nil {
+	if err := resolveThread(id); err != nil {
 		return nil, err
 	}
 	return map[string]string{"resolved": id}, nil

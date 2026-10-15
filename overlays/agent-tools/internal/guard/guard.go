@@ -133,7 +133,7 @@ const pushGuard = "Publishing private history in a public repository is Wesley's
 
 // coordinatorOnly are the pr-loop steps an owner leaves to the coordinator,
 // which keeps the stack consistent across PRs.
-var coordinatorOnly = map[string]bool{"begin": true, "push": true, "reply": true, "resolve": true,
+var coordinatorOnly = map[string]bool{"open": true, "begin": true, "push": true, "reply": true, "resolve": true,
 	"request": true, "worktrees": true, "sign": true, "end": true}
 
 // checkPrLoop keeps the decisions that are Wesley's: waiving a CI failure,
@@ -189,7 +189,7 @@ func checkGit(words []string) string {
 	case "sign-pass":
 		return signing
 	case "push":
-		return "A review-loop session pushes only with `pr-loop push`, which checks the branch policy and needs no key touch. The signed push at the end is `pr-loop sign`."
+		return "A review-loop session pushes only with `pr-loop push`, or `pr-loop open` for a new branch, which check the branch policy and need no key touch. The signed push at the end is `pr-loop sign`."
 	case "commit":
 		switch {
 		case has("--no-verify", "-n"):
