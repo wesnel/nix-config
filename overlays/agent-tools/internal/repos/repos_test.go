@@ -20,6 +20,21 @@ func gitIn(t *testing.T, dir string, args ...string) {
 	}
 }
 
+func TestFor(t *testing.T) {
+	config := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("AGENT_TOOLS_CONFIG", config)
+	if s, err := For("o/r"); err != nil || s.Repo != "" {
+		t.Errorf("without a config: %+v, %v", s, err)
+	}
+	os.WriteFile(config, []byte(`{"repos": {"o/r": {"test": "go test ./...", "testFiles": ["**/*_test.go"]}}}`), 0o644)
+	if s, err := For("O/R"); err != nil || s.Repo != "o/r" || s.Test != "go test ./..." {
+		t.Errorf("matched without regard to case: %+v, %v", s, err)
+	}
+	if s, err := For("o/other"); err != nil || s.Repo != "" {
+		t.Errorf("another repository: %+v, %v", s, err)
+	}
+}
+
 func TestLookup(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")

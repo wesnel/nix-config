@@ -4,12 +4,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +20,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/guard"
 	"github.com/wesnel/agent-tools/internal/loop"
+	"github.com/wesnel/agent-tools/internal/prreview"
 	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/relay"
 )
@@ -72,7 +75,7 @@ no attribution lines, and on a fixup only Review-* trailers.
                               a loop's rules, or with --baseline every session's, by agent
   guard --post                PostToolUse hook for Claude Code and ECA (reads stdin): after
                               a push to GitHub, names the pr-loop wait ci to start
-
+` + prreview.Usage + `
 reply and resolve take a thread on an open PR by the authenticated user in
 this repository, people's threads included, and need no begin. In a loop
 session (relayed, or with PR_LOOP_SESSION=1), and on a PR registered with
@@ -110,6 +113,7 @@ Markdown reply up to the next such line. Every line starting "=== thread" is
 a header. Every thread is checked before anything is posted; threads already
 resolved are skipped and reported.
 
+` + prreview.Help + `
 A setup command prepares a fresh checkout, e.g. generating files the
 repository does not commit. It is taken from "setup" under "repos" in the
 user's agent-tools/config.json, keyed by owner/name, and never from the
@@ -129,7 +133,45 @@ setup asks it for the command, then both run the command here, in the sandbox.
 var relayed = map[string]bool{
 	"open": true, "stack": true, "link": true, "begin": true, "push": true, "threads": true, "reply": true, "resolve": true,
 	"request": true, "status": true, "ci": true, "logs": true, "wait": true, "worktrees": true,
-	"setup-command": true,
+	"setup-command": true, "review": true,
+}
+
+// reviewRefusal is why a relayed caller may not run `review argv...`, or "".
+// It names its pull request by number alone, the relay's working directory
+// saying which repository, and gives a reply or outcomes on stdin: no path,
+// no other repository, no model, and never a run that overrides a red flag,
+// which is Wesley's alone.
+func reviewRefusal(argv []string) string {
+	const narrow = "a relayed review takes only a pull request number, --reviewer codex|subagent, and --check or " +
+		"settle with their input on stdin; run anything else on the host, or hand Wesley the command"
+	var positional []string
+	check, reviewer := false, false
+	for i := 0; i < len(argv); i++ {
+		switch a := argv[i]; {
+		case a == "--check" || a == "-check":
+			check = true
+		case a == "--reviewer" || a == "-reviewer":
+			if i+1 >= len(argv) || (argv[i+1] != "codex" && argv[i+1] != "subagent") {
+				return narrow
+			}
+			reviewer = true
+			i++
+		case a == "--reviewer=codex" || a == "--reviewer=subagent":
+			reviewer = true
+		case strings.HasPrefix(a, "-"):
+			return narrow
+		default:
+			positional = append(positional, a)
+		}
+	}
+	settle := len(positional) == 2 && positional[0] == "settle"
+	if (len(positional) != 1 && !settle) || ((check || settle) && reviewer) || (check && settle) {
+		return narrow
+	}
+	if _, err := strconv.Atoi(positional[len(positional)-1]); err != nil {
+		return narrow
+	}
+	return ""
 }
 
 // clientSide are the commands that run in this process even with a relay:
@@ -148,6 +190,9 @@ func relayRefusal(argv []string) string {
 				"run `pr-loop setup` in the sandbox, which asks the relay only for the command"
 		}
 		return fmt.Sprintf("%q is only run on the host, outside the sandbox; put the exact pr-loop command in the report for Wesley", name)
+	}
+	if argv[0] == "review" {
+		return reviewRefusal(argv[1:])
 	}
 	// The client sends a --body-file or --from itself; a path here would name a
 	// file on the host, which the sandbox must not be able to read out through
@@ -170,6 +215,15 @@ var fileFlags = []string{"body-file", "from"}
 // where the sandbox can see it, and passing it on stdin.
 func forward(url string, argv []string) int {
 	var stdin []byte
+	// A review's reply or outcomes come on stdin.
+	if argv[0] == "review" && (slices.Contains(argv, "--check") || slices.Contains(argv, "-check") || slices.Contains(argv, "settle")) {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "pr-loop: %s\n", err)
+			return 1
+		}
+		return relay.Client(url, "pr-loop", argv, data)
+	}
 	for i, a := range argv {
 		if (a == "--body-file" || a == "--from") && i+1 < len(argv) {
 			var err error
@@ -247,6 +301,9 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 	flags.Var(&accepted, "accept-failure", "")
 	if command == "guard" {
 		return guard.Main(args, stdin, stdout, stderr)
+	}
+	if command == "review" {
+		return prreview.Main(context.Background(), args, relayed, stdin, stdout, stderr)
 	}
 	if code, ok := cli.Parse(flags, interleave(args), usage, stdout, stderr); !ok {
 		return code

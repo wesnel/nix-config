@@ -204,7 +204,7 @@ Before relaying a report, confirm it:
 - `agent-plan status PLAN` shows each of the part's steps done and
   verified, and each done step's commit subject is in that log.
 - The specific tests it cites pass when you run them; whole suites are left
-  to the fresh review and `git red-check`.
+  to CI and the part's own `git red-check` run.
 
 Relay only what you confirmed, and say what you did not. Questions it
 raises go in the plan, as the `plan-work` skill's "Questions for Wesley"

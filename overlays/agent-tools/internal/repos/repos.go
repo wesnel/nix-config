@@ -72,9 +72,36 @@ func Remotes() (map[string]string, error) {
 // The result is empty when none are configured. Remotes that match different
 // settings are refused, since only one may apply.
 func Lookup() (*Settings, error) {
+	config, err := load()
+	if err != nil || config == nil {
+		return &Settings{}, err
+	}
+	remotes, err := Remotes()
+	if err != nil {
+		return nil, err
+	}
+	var slugs []string
+	for _, slug := range remotes {
+		slugs = append(slugs, slug)
+	}
+	return match(config, slugs)
+}
+
+// For returns the settings for the GitHub repository slug, owner/name,
+// matched without regard to case; empty when none are configured.
+func For(slug string) (*Settings, error) {
+	config, err := load()
+	if err != nil || config == nil {
+		return &Settings{}, err
+	}
+	return match(config, []string{slug})
+}
+
+// load reads the config's repositories; nil when there is no config.
+func load() (map[string]Settings, error) {
 	data, err := os.ReadFile(Path())
 	if errors.Is(err, fs.ErrNotExist) {
-		return &Settings{}, nil
+		return nil, nil
 	}
 	if err != nil {
 		return nil, err
@@ -85,13 +112,13 @@ func Lookup() (*Settings, error) {
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, err
 	}
-	remotes, err := Remotes()
-	if err != nil {
-		return nil, err
-	}
+	return config.Repos, nil
+}
+
+func match(config map[string]Settings, slugs []string) (*Settings, error) {
 	var found []Settings
-	for _, slug := range remotes {
-		for repo, settings := range config.Repos {
+	for _, slug := range slugs {
+		for repo, settings := range config {
 			if !strings.EqualFold(repo, slug) {
 				continue
 			}

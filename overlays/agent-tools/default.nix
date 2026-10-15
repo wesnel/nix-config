@@ -60,11 +60,12 @@
     # the agents' own reviewer sub-agents.
     passthru.reviewerPrompt = builtins.readFile ./internal/review/reviewer.md;
 
-    # Static Linux builds of pr-loop and agent-plan for a sandbox guest, which
-    # runs them as clients of `sandbox-relay serve` on the host.
+    # Static Linux builds for a sandbox guest: pr-loop and agent-plan, which
+    # it runs as clients of `sandbox-relay serve` on the host, and
+    # git-red-check, which `pr-loop review` runs in the VM.
     passthru.linuxClient = agent-tools.overrideAttrs (old: {
       pname = "pr-loop-linux-client";
-      subPackages = ["cmd/pr-loop" "cmd/agent-plan"];
+      subPackages = ["cmd/pr-loop" "cmd/agent-plan" "cmd/git-red-check"];
       env =
         old.env
         // {

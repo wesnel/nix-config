@@ -170,9 +170,10 @@ func start(workspace, guestPath, network, address string, paths map[string]strin
 // Session runs a command beside a relay for the workspace containing the
 // current directory: the relay listens on a Unix socket in a private
 // directory, the command gets SANDBOX_RELAY_URL and SANDBOX_RELAY_SOCKET, and
-// "{socket}" and "{workspace}" in its arguments become the socket's and the
-// workspace's real paths, for a sandbox's settings. The relay stops when the
-// command exits.
+// "{socket}", "{workspace}" and "{gitdir}" in its arguments become the real
+// paths of the socket, the workspace and its repository's git common
+// directory (the workspace where it is none), for a sandbox's settings. The
+// relay stops when the command exits.
 func Session(args []string, stderr io.Writer) int {
 	flags := flag.NewFlagSet("session", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -214,8 +215,9 @@ func Session(args []string, stderr io.Writer) int {
 	}
 	defer listener.Close()
 
+	placeholders := strings.NewReplacer("{socket}", socket, "{workspace}", root, "{gitdir}", gitDir(root))
 	for i, a := range command {
-		command[i] = strings.NewReplacer("{socket}", socket, "{workspace}", root).Replace(a)
+		command[i] = placeholders.Replace(a)
 	}
 	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
@@ -248,6 +250,23 @@ func repositoryRoot() string {
 		return filepath.Dir(common)
 	}
 	return cwd
+}
+
+// gitDir is the real path of the git common directory of the repository at
+// root, which lies outside a linked worktree; root itself where it is no
+// repository.
+func gitDir(root string) string {
+	cmd := exec.Command("git", "-C", root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	cmd.Env = gitenv.Without(os.Environ())
+	out, err := cmd.Output()
+	if err != nil {
+		return root
+	}
+	dir := strings.TrimSpace(string(out))
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		return real
+	}
+	return dir
 }
 
 // hostPath maps the sandbox's working directory onto the host's workspace.

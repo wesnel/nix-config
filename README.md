@@ -199,8 +199,43 @@ review-loop session, where `pr-loop` must stay the only way out. Then
 `--print-prompt` gives the same prompt for a fresh `reviewer` sub-agent, and
 `--check FILE` validates its reply the same way. See `git fresh-review -h`.
 
-Where the repository has test settings, `git red-check` on the range runs
-first and its result goes in the prompt.
+It never runs `git red-check` here, since that runs the commits' code. Where
+the repository has test settings, red-check and the test command run in the
+VM `pr-loop review` runs pull requests in (below), and their output goes in
+the prompt; where no VM can run them, stderr says why.
+
+### someone else's pull request: `pr-loop review`
+
+``` sh
+pr-loop review wesnel/emacs-config#2                # Codex reviews it
+pr-loop review --reviewer subagent 2                # prints the prompt for a reviewer sub-agent
+pr-loop review --check 2 < reply.md                 # checks that sub-agent's reply
+pr-loop review settle 2 < outcomes.json             # records how triage settled each finding
+```
+
+It fetches the pull request over HTTPS into a bare clone of its own under
+`~/.cache/pr-review/OWNER/NAME/N/`, pinned to the head GitHub reports, and
+reviews it with the same contract as `git fresh-review`. The goal is ours:
+review it for Wesley and propose comments only; the title, description,
+linked issues and review threads go in as the author's claims. Every git
+command on the clone runs without your git config, hooks, links or
+submodules, so a pull request's `.gitattributes` and `.lfsconfig` run no
+filter and reach no server, and Codex runs confined in a checkout beside the
+clone. Before the review, a vet flags what would run on this machine or in
+an agent rather than in a VM (`.envrc`, `.dir-locals.el`, agents' project
+settings, a `shellHook`, a `pull_request_target` workflow) and has a
+read-only Codex list what the test command would run. With no red flag,
+`git red-check` and the test command from `wgn.home.llm.repos` run in a VM
+with no network (Gondolin on macOS, bubblewrap on Linux): the modules are
+downloaded here from `go.mod` and `go.sum` alone, the Go release is the
+checksum-verified `golang.org/toolchain` module, and everything is mounted
+read-only; what the guest prints, capped, goes to the reviewer as evidence.
+A red flag leaves the run to you: `pr-loop review --run`, which a session
+cannot pass. The record, `N/HEAD12.json` beside the clone, is what
+review-guide imports for you to edit and post; `HEAD12/findings.json` is
+the session's copy, which it can change. Nothing is written to GitHub. A `claude-pr-loop`
+started in `HEAD12/` reads only that review, and may run `pr-loop review`
+for its own pull request alone. See `pr-loop --help`.
 
 ### `git red-check`
 
@@ -381,10 +416,15 @@ Linear, which the report proposes instead.
 ### what a loop session enforces
 
 - **Sandbox.** Every launcher takes its rules from `wgn.home.llm.prLoop`:
-  `deniedReads` (credentials, the keychain, the MCP proxy's token),
-  `protectedPaths` (read-only in the workspace: git hooks and config, and
-  agents' project settings), `allowedDomains` (the only network, for
-  dependencies) and `cacheDir` (the only build cache it writes).
+  `deniedReads` (credentials, the keychain, the MCP proxy's token);
+  `allowedReads` (in `claude-pr-loop` and `codex-pr-loop`, the only paths
+  under your home directory its commands may read: the workspace, its git
+  directory, the build cache and agent-tools' config), with `gitConfig` in
+  place of your git config; `protectedPaths` (read-only in the workspace:
+  git hooks and config, and agents' project settings); `allowedDomains` (the
+  only network, for dependencies, without storage.googleapis.com in a
+  session started under `reviewDir`) and `cacheDir` (the only build cache it
+  writes).
 - **Guard.** `pr-loop guard` runs before every tool call in all three agents
   and denies other ways to write to GitHub or Linear, unsigned-workflow
   violations and your decisions. Owner agents are also denied the steps the
