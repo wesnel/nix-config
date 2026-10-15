@@ -15,8 +15,9 @@ import (
 // Claude Code or Codex, or ECA's postToolCall. It records the call's facts
 // in the plan of its session or worktree (recordFacts), and after a push to
 // GitHub adds one line of context naming the `pr-loop wait ci` to start,
-// read from the command's JSON output; it prints nothing when the output
-// shows no push.
+// read from the command's JSON output. After a command that opens or edits
+// a pull request, and on a session's first commit, it adds the line that
+// hands over the skill whose rules apply. Otherwise it prints nothing.
 func post(stdin io.Reader, stdout io.Writer) int {
 	var in struct {
 		HookType     string          `json:"hook_type"`
@@ -45,6 +46,9 @@ func post(stdin io.Reader, stdout io.Writer) int {
 		lines = append(lines, fmt.Sprintf("You just pushed to GitHub. Start `pr-loop wait ci %s` in the background now, "+
 			"and act on its result as the signing-pass skill's \"After a push\" says.", strings.Join(targets, " ")))
 	}
+	if writesPullRequest(args.Command, 0) {
+		lines = append(lines, pullRequestRules)
+	}
 	if len(lines) == 0 {
 		return 0
 	}
@@ -55,6 +59,45 @@ func post(stdin io.Reader, stdout io.Writer) int {
 	}
 	json.NewEncoder(stdout).Encode(out)
 	return 0
+}
+
+// pullRequestRules hands over the pull request rules, which AGENTS.md keeps
+// in a skill, at the moment they apply.
+const pullRequestRules = "You just opened or edited a pull request. Load the `pull-requests` skill, if it is not loaded, " +
+	"and bring the pull request's title and description in line with it."
+
+// writesPullRequest reports whether a command line runs `gh pr create`,
+// `gh pr edit` or `pr-loop open`.
+func writesPullRequest(text string, depth int) bool {
+	if depth > maxDepth {
+		return false
+	}
+	found := false
+	v := visitor{
+		script: func(text string) string {
+			found = found || writesPullRequest(text, depth+1)
+			return ""
+		},
+		call: func(c call) string {
+			w := c.words
+			if len(w) < 2 || c.expands[0] {
+				return ""
+			}
+			switch base(w[0]) {
+			case "gh":
+				found = found || len(w) > 2 && w[1] == "pr" && (w[2] == "create" || w[2] == "edit")
+			case "pr-loop":
+				found = found || w[1] == "open"
+			}
+			return ""
+		},
+	}
+	for _, segment := range segments(text) {
+		if words, expands := split(segment); len(words) > 0 {
+			unwrap(call{words: words, expands: expands}, v)
+		}
+	}
+	return found
 }
 
 // pushes reports whether a command line runs a command that pushes to

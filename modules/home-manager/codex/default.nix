@@ -227,7 +227,9 @@ in {
           ".codex/hooks.json".text = builtins.toJSON {
             # Records commits, pushes, worktrees, branches and PRs in the
             # plan and asks which step a commit completes; after a push to
-            # GitHub, names the `pr-loop wait ci` to start. Codex names every
+            # GitHub, names the `pr-loop wait ci` to start; hands over the
+            # pull-requests skill when a PR is opened or edited, and the
+            # commit rules on the session's first commit. Codex names every
             # shell call Bash.
             hooks.PostToolUse = [
               {

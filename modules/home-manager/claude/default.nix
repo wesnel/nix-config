@@ -310,7 +310,9 @@ in {
           }
           # Records commits, pushes, worktrees, branches and PRs in the plan
           # and asks which step a commit completes; after a push to GitHub,
-          # names the `pr-loop wait ci` to start.
+          # names the `pr-loop wait ci` to start; hands over the
+          # pull-requests skill when a PR is opened or edited, and the
+          # commit rules on the session's first commit.
           {
             matcher = "Bash";
             hooks = [
