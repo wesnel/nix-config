@@ -33,7 +33,6 @@ const (
 	killing      = "The operator's session depends on that process (Emacs, gpg-agent, ssh, nix-daemon or mcp-proxy). Leave it running, and tell the operator if it needs a restart."
 	destroying   = "This would destroy the home directory, the root filesystem, the Nix store or the operator's keys. Name the exact path inside the workspace you mean, or ask the operator."
 	guardOff     = "The guard and its hooks are the operator's configuration, and stay on. Put the change you want in your report for the operator."
-	connector    = "Writing to Slack, Gmail, Linear, GitHub or Notion acts as the operator. Confirm it with the operator first, or put the draft in your report."
 )
 
 // home is the user's home directory, which ~ and $HOME name.
@@ -995,20 +994,6 @@ func fileChanges(tool string, toolInput json.RawMessage) []change {
 		}
 	}
 	return changes
-}
-
-// connectorTool matches the claude.ai connectors that act as the operator.
-var connectorTool = regexp.MustCompile(`(?i)^mcp__claude_ai_(slack|gmail|linear|github|notion)__`)
-
-// readWord matches a tool name that names a read.
-var readWord = regexp.MustCompile(`(?i)(^|[_-])(get|list|search|fetch|read|query|view|find|lookup|describe|retrieve)([_-]|$)`)
-
-// checkConnector asks before a claude.ai connector writes.
-func checkConnector(tool string) string {
-	if connectorTool.MatchString(tool) && !readWord.MatchString(connectorTool.ReplaceAllString(tool, "")) {
-		return connector
-	}
-	return ""
 }
 
 // gitState is where a git command acts and what it finds there: its

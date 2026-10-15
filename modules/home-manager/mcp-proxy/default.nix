@@ -34,12 +34,10 @@ with lib; let
       docs = {
         url = "http://127.0.0.1:${toString docs.port}/mcp";
         transportType = "streamable-http";
-        # Allow, never block: anything the server adds stays hidden. fetch_url
-        # and scrape_docs fetch arbitrary URLs, and the rest change the index.
-        # An allow list must not be empty, which exposes every tool.
+        # The guard's reads for it alone, as for the remote servers.
         options.toolFilter = {
           mode = "allow";
-          list = ["search_docs" "list_libraries" "find_version" "list_jobs" "get_job_info"];
+          list = pkgs.agent-tools.mcpTools.docs.reads;
         };
       };
     };
