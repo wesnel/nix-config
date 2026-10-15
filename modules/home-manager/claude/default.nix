@@ -356,9 +356,11 @@ in {
 
         # How many open questions the session's plan has, from its files
         # alone, which the `questions` skill asks Wesley.
+        # Context and quota too; the rerun drops a window once it resets.
         statusLine = {
           type = "command";
           command = "${agentPlan} statusline";
+          refreshInterval = 60;
         };
 
         # The ngrok account server's write scopes reach production, and its
