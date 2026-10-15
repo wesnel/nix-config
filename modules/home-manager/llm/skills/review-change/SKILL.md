@@ -154,7 +154,8 @@ each branch:
 - the same file edited on parallel branches;
 - what the plan leaves undecided, against this bar: someone could build it
   without asking a question;
-- designing for change:
+- designing for change, by the `design` skill's principles (tell the
+  sub-agent to load it) and these checks:
   - built as we would build it from scratch, knowing what the change now
     knows, rather than added onto the old shape;
   - one source of truth per fact or rule, which everything else reads;

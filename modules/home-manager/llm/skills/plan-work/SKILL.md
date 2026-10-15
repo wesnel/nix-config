@@ -52,7 +52,8 @@ agent-plan new --parent PLAN --part P1 --title 'Add the run loop flag' --branch 
   `agent-plan goal PLAN [--part P1]` prints it. It ends with a
   `Likely next changes:` line: one or two concrete changes expected after
   this one, not speculation, which the design review of the plan checks
-  would each be a local edit.
+  would each be a local edit. Load the `design` skill before writing the
+  steps: its principles are what the design review checks them against.
 - `** Steps`: `*** TODO <step>` headings with `:ID: S1`, `S2`…; a part's
   are `P1.S1`, `P1.S2`… Each says what observable result marks it done,
   which its `verified` evidence then shows. Steps that must run in order
