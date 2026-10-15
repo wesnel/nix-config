@@ -1139,23 +1139,21 @@ func TestGuardConfig(t *testing.T) {
 	}
 }
 
-// TestConnectors covers the claude.ai connectors' writes: Claude Code asks,
-// and Codex, which cannot ask, denies, as does a loop.
+// TestConnectors covers the claude.ai connectors mcp.json does not list:
+// for every tool, reads included, Claude Code asks, and Codex, which cannot
+// ask, denies, as does a loop. TestMCPTools covers the listed ones.
 func TestConnectors(t *testing.T) {
 	for _, c := range []struct {
 		name, event, want string
 	}{
-		{"Slack message", `{"tool_name":"mcp__claude_ai_Slack__slack_send_message","tool_input":{}}`, `"permissionDecision":"ask"`},
 		{"Gmail draft", `{"tool_name":"mcp__claude_ai_Gmail__create_draft","tool_input":{}}`, `"permissionDecision":"ask"`},
-		{"Notion pages", `{"tool_name":"mcp__claude_ai_Notion__notion-create-pages","tool_input":{}}`, `"permissionDecision":"ask"`},
-		{"Linear issue", `{"tool_name":"mcp__claude_ai_Linear__save_issue","tool_input":{}}`, `"permissionDecision":"ask"`},
 		{"GitHub review", `{"tool_name":"mcp__claude_ai_Github__create_pull_request_review","tool_input":{}}`, `"permissionDecision":"ask"`},
-		{"Slack message from Codex", `{"tool_name":"mcp__claude_ai_Slack__slack_send_message","turn_id":"t","tool_input":{}}`, `"permissionDecision":"deny"`},
-		{"Slack message from a reviewer", `{"tool_name":"mcp__claude_ai_Slack__slack_send_message","agent_type":"reviewer","tool_input":{}}`, `"permissionDecision":"deny"`},
-		{"Slack search", `{"tool_name":"mcp__claude_ai_Slack__slack_search_public","tool_input":{}}`, ""},
-		{"Notion fetch", `{"tool_name":"mcp__claude_ai_Notion__notion-fetch","tool_input":{}}`, ""},
-		{"Linear read", `{"tool_name":"mcp__claude_ai_Linear__get_issue","tool_input":{}}`, ""},
-		{"another server", `{"tool_name":"mcp__ngrok__list_endpoints","tool_input":{}}`, ""},
+		{"GitHub review from Codex", `{"tool_name":"mcp__claude_ai_Github__create_pull_request_review","turn_id":"t","tool_input":{}}`, `"permissionDecision":"deny"`},
+		{"GitHub review from a reviewer", `{"tool_name":"mcp__claude_ai_Github__create_pull_request_review","agent_type":"reviewer","tool_input":{}}`, `"permissionDecision":"deny"`},
+		{"GitHub read", `{"tool_name":"mcp__claude_ai_Github__get_pull_request","tool_input":{}}`, `"permissionDecision":"ask"`},
+		{"GitHub read from Codex", `{"tool_name":"mcp__claude_ai_Github__get_pull_request","turn_id":"t","tool_input":{}}`, `"permissionDecision":"deny"`},
+		{"Gmail search", `{"tool_name":"mcp__claude_ai_Gmail__search_threads","tool_input":{}}`, `"permissionDecision":"ask"`},
+		{"Gmail search from Codex", `{"tool_name":"mcp__claude_ai_Gmail__search_threads","turn_id":"t","tool_input":{}}`, `"permissionDecision":"deny"`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var out bytes.Buffer
