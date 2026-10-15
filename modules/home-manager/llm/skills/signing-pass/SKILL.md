@@ -111,9 +111,10 @@ unsigned first and refuses before any touch if it would conflict. If nothing is
 squashed, it refuses when a commit's files, author or message would change. If
 any of the three kinds is squashed, it refuses when the remaining commits or the
 files at the tip would differ from that, and it reports any branch lower in the stack that
-gained a fix. It needs one touch per remaining commit, plus one for each push. If it
-stops at a missed touch, it says how to resume, and the unsigned branch is kept
-under `refs/sign-pass/backup/`.
+gained a fix. It needs one touch per remaining commit, plus one for each push
+URL. At a missed touch in a terminal, it asks to retry that step; if it stops
+there, it prints the exact command that resumes, and the unsigned branch is
+kept under `refs/sign-pass/backup/`.
 
 So a correction to an earlier commit is a fixup, not a commit of its own:
 

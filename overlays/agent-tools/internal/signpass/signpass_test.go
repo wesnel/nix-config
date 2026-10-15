@@ -53,17 +53,204 @@ func useDir(t *testing.T, dir string) {
 	t.Cleanup(func() { git.Dir = "" })
 }
 
+// withStdin makes f the pass's standard input for the rest of the test.
+func withStdin(t *testing.T, f *os.File) {
+	t.Helper()
+	old := os.Stdin
+	os.Stdin = f
+	t.Cleanup(func() { os.Stdin = old })
+}
+
+// noTerminal gives the pass a standard input that is not a terminal, though
+// Enter waits on it.
+func noTerminal(t *testing.T) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.WriteString("\n")
+	w.Close()
+	t.Cleanup(func() { r.Close() })
+	withStdin(t, r)
+}
+
+// typed gives the pass a terminal on which answer has already been typed.
+func typed(t *testing.T, answer string) {
+	t.Helper()
+	term, tty := openPTY(t)
+	if _, err := term.WriteString(answer); err != nil {
+		t.Fatal(err)
+	}
+	withStdin(t, tty)
+}
+
+// refusing writes a program to dir that fails as the hardware key does at a
+// missed touch, printing refusal, once armed (see arm), and otherwise runs
+// then with the program's arguments. Only runs for which the shell
+// condition key holds count, as runs that need the key. It is a fake
+// because a missed touch is a failure the real key will not produce on
+// demand.
+func refusing(t *testing.T, dir, name, key, refusal, then string) (program, armed string) {
+	t.Helper()
+	program, armed = filepath.Join(dir, name), filepath.Join(dir, name+".armed")
+	script := fmt.Sprintf(`#!/bin/sh
+if %[4]s && [ -e '%[1]s' ]; then
+  n=$(cat '%[1]s')
+  if [ "${n:-0}" -gt 0 ]; then
+    echo $((n - 1)) > '%[1]s'
+  else
+    mv '%[1]s' '%[1]s.used'
+    printf '%%s\n' %[2]s >&2
+    exit 255
+  fi
+fi
+%[3]s
+`, armed, refusal, then, key)
+	if err := os.WriteFile(program, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return program, armed
+}
+
+// arm makes the program refusing wrote refuse once, after running after
+// times as it would.
+func arm(t *testing.T, armed string, after int) {
+	t.Helper()
+	if err := os.WriteFile(armed, []byte(fmt.Sprint(after)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// testBinary is the path of the running test binary, which every command the
+// pass prints for resuming names, since no git-sign-pass on PATH is it.
+func testBinary(t *testing.T) string {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return exe
+}
+
 func TestRun(t *testing.T) {
 	t.Run("signs and folds a stack", testRunStack)
 	t.Run("lint", testRunLint)
 	t.Run("worktree branch", testRunWorktreeBranch)
 	t.Run("failed push", testRunFailedPush)
+	t.Run("missed touch", testRunMissedTouch)
 }
 
 func TestPush(t *testing.T) {
 	t.Run("moved branches", testPushMoved)
 	t.Run("destination", testPushDestination)
 	t.Run("remote", testPushRemote)
+	t.Run("each URL", testPushEachURL)
+}
+
+// The commands a pass prints for resuming name the program that is running,
+// as `git sign-pass` only where that is what runs it, with the pass's flags.
+func TestResumeCommand(t *testing.T) {
+	exe := testBinary(t)
+	bin := t.TempDir()
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	NotifyID = "loop.0123abcd"
+	t.Cleanup(func() { NotifyID = "" })
+	check := func(prog string) {
+		t.Helper()
+		if got, want := resumeCommand("one", true, false), prog+" --resume --push --notify loop.0123abcd one"; got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+		if got, want := resumeCommand("one", false, true), prog+" --resume --set-upstream --notify loop.0123abcd one"; got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	}
+	check(exe)
+	// Another git-sign-pass on PATH, such as an older install.
+	other := filepath.Join(bin, "git-sign-pass")
+	if err := os.WriteFile(other, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	check(exe)
+	os.Remove(other)
+	if err := os.Symlink(exe, other); err != nil {
+		t.Fatal(err)
+	}
+	check("git sign-pass")
+}
+
+// testRunMissedTouch covers a signature the key refuses, the first or a
+// later one: on a terminal the pass asks and, on Enter, signs that commit
+// again; otherwise it stops, and the commands it names finish the pass.
+func testRunMissedTouch(t *testing.T) {
+	dir := t.TempDir()
+	global := signingConfig(t, dir)
+	// Git runs the program to verify signatures too, which needs no key.
+	program, armed := refusing(t, dir, "sign", `[ "$1 $2" = "-Y sign" ]`,
+		`"Couldn't sign message (signer): agent refused operation"`, `exec ssh-keygen "$@"`)
+	flaky := filepath.Join(dir, "flaky")
+	os.WriteFile(flaky, []byte("[include]\n\tpath = "+global+"\n[gpg \"ssh\"]\n\tprogram = "+program+"\n"), 0o644)
+	repo := filepath.Join(dir, "repo")
+	os.Mkdir(repo, 0o755)
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+	gitIn(t, repo, "switch", "-qc", "one")
+	commit := func(name string) {
+		t.Helper()
+		os.WriteFile(filepath.Join(repo, name), []byte(name+"\n"), 0o644)
+		gitIn(t, repo, "add", name)
+		gitIn(t, repo, "commit", "-q", "-m", name)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", flaky)
+	t.Setenv("GIT_EDITOR", "false")
+	useDir(t, repo)
+
+	resume := "`" + testBinary(t) + " --resume one`"
+	want := ""
+	for i, c := range []struct {
+		name  string
+		stdin func(*testing.T)
+		// signed is how many signatures the key gives before refusing one.
+		signed int
+		// cont is whether the pass stops for `git rebase --continue`.
+		stops, cont bool
+	}{
+		{"first, Enter", func(t *testing.T) { typed(t, "\n") }, 0, false, false},
+		{"later, Enter", func(t *testing.T) { typed(t, "\n") }, 1, false, false},
+		{"first, no terminal", noTerminal, 0, true, false},
+		{"later, no terminal", noTerminal, 1, true, true},
+		{"later, answered q", func(t *testing.T) { typed(t, "q\n") }, 1, true, true},
+	} {
+		commit(fmt.Sprintf("a%d", i))
+		commit(fmt.Sprintf("b%d", i))
+		want = strings.TrimPrefix(want+"\nG\nG", "\n")
+		c.stdin(t)
+		arm(t, armed, c.signed)
+		result, err := Run("", false, false, false)
+		switch {
+		case !c.stops && err != nil:
+			t.Fatalf("%s: %v", c.name, err)
+		case !c.stops:
+			if got := result.(map[string]any)["signed"]; got != 2 {
+				t.Errorf("%s: signed %v commits", c.name, got)
+			}
+		case err == nil || !strings.Contains(err.Error(), resume) ||
+			strings.Contains(err.Error(), "`git rebase --continue`") != c.cont:
+			t.Fatalf("%s: %v", c.name, err)
+		default:
+			if c.cont {
+				if _, err := git.Run("rebase", "--continue"); err != nil {
+					t.Fatalf("%s: continuing as the pass said: %v", c.name, err)
+				}
+			}
+			if _, err := Run("", true, false, false); err != nil {
+				t.Fatalf("%s: resuming as the pass said: %v", c.name, err)
+			}
+		}
+		if marks, _ := git.Run("log", "--format=%G?", "main..one"); marks != want {
+			t.Errorf("%s: signatures %q", c.name, marks)
+		}
+	}
 }
 
 func testRunStack(t *testing.T) {
@@ -369,16 +556,15 @@ func testPushMoved(t *testing.T) {
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "F1")
 	useDir(t, repo)
 	moved := []string{"fresh", "tracked"}
-	none := func([]string) error { return nil }
 
-	pushed, err := pushMoved(moved, false, "retry", none)
+	pushed, err := pushAll("tracked", pushes{Branches: moved})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if pushed["fresh"] != "not pushed: no upstream" || pushed["tracked"] != "origin refs/heads/tracked" {
 		t.Errorf("--push: %v", pushed)
 	}
-	pushed, err = pushMoved(moved, true, "retry", none)
+	pushed, err = pushAll("tracked", pushes{Branches: moved, SetUpstream: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,11 +585,11 @@ func testPushMoved(t *testing.T) {
 	// this repository has fetched it.
 	gitIn(t, repo, "push", "-q", "origin", "main:refs/heads/taken")
 	gitIn(t, repo, "branch", "taken", "fresh")
-	if _, err := pushMoved([]string{"taken"}, true, "retry", none); err == nil || !strings.Contains(err.Error(), "--set-upstream-to=origin/taken") {
+	if _, err := pushAll("taken", pushes{Branches: []string{"taken"}, SetUpstream: true}); err == nil || !strings.Contains(err.Error(), "--set-upstream-to=origin/taken") {
 		t.Errorf("a fetched branch of the same name: %v", err)
 	}
 	gitIn(t, repo, "update-ref", "-d", "refs/remotes/origin/taken")
-	if _, err := pushMoved([]string{"taken"}, true, "retry", none); err == nil {
+	if _, err := pushAll("taken", pushes{Branches: []string{"taken"}, SetUpstream: true}); err == nil {
 		t.Error("an unfetched branch of the same name was pushed over")
 	}
 	if got, base := gitIn(t, hub, "rev-parse", "taken"), gitIn(t, repo, "rev-parse", "main"); got != base {
@@ -538,11 +724,12 @@ func testRunFailedPush(t *testing.T) {
 	gitIn(t, repo, "branch", "two", "main")
 	// The remote's branch moves without this repository seeing it, so the
 	// leased push fails.
+	leased := gitIn(t, hub, "rev-parse", "one")
 	gitIn(t, repo, "push", "-q", "-f", hub, "main:refs/heads/one")
 
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
 	useDir(t, repo)
-	if _, err := Run("", false, true, false); err == nil || !strings.Contains(err.Error(), "`git sign-pass --resume one`") {
+	if _, err := Run("", false, true, false); err == nil || !strings.Contains(err.Error(), "`"+testBinary(t)+" --resume --push one`") {
 		t.Fatalf("a failed push: %v", err)
 	}
 	if marks, _ := git.Run("log", "--format=%G?", "main..one"); marks != "G" {
@@ -569,12 +756,15 @@ func testRunFailedPush(t *testing.T) {
 	}
 	git.Dir = repo
 
-	// --resume retries only the push, until it goes through.
+	// --resume retries only the push, leased on what the remote held before
+	// the pass, until it goes through: a fetch does not lift the lease, and
+	// the remote's branch going back to that does.
 	signed := gitIn(t, repo, "rev-parse", "one")
-	if _, err := Run("", true, false, false); err == nil || !strings.Contains(err.Error(), "push to origin failed") {
+	gitIn(t, repo, "fetch", "-q", "origin")
+	if _, err := Run("", true, false, false); err == nil || !strings.Contains(err.Error(), "the push of one to "+hub+" failed") {
 		t.Errorf("a retry that fails again: %v", err)
 	}
-	gitIn(t, repo, "fetch", "-q", "origin")
+	gitIn(t, repo, "push", "-q", "-f", hub, leased+":refs/heads/one")
 	result, err := Run("", true, false, false)
 	if err != nil {
 		t.Fatal(err)
@@ -601,5 +791,106 @@ func testRunFailedPush(t *testing.T) {
 	}
 	if err := inProgress([]string{"one", "two"}); err != nil {
 		t.Errorf("unrelated branches: %v", err)
+	}
+}
+
+// mirrored makes a repository whose origin pushes to two URLs, as a mirrored
+// one does: the bare repository hub, by path, and mirror.git over SSH through
+// a fake ssh that refuses each time the file armed exists. The fake stands in
+// for a forge reached over SSH with a hardware key, which a test must not
+// contact. Branch one is pushed to both, then gains an unsigned commit.
+func mirrored(t *testing.T) (dir, repo, hub, mirror, armed string) {
+	t.Helper()
+	dir = t.TempDir()
+	hub, mirror = filepath.Join(dir, "hub.git"), filepath.Join(dir, "mirror.git")
+	gitIn(t, dir, "init", "-q", "--bare", hub)
+	gitIn(t, dir, "init", "-q", "--bare", mirror)
+	ssh, armed := refusing(t, dir, "ssh", "true",
+		`'sign_and_send_pubkey: signing failed for ED25519-SK "id_ed25519_sk" from agent: agent refused operation' 'git@fake: Permission denied (publickey).'`,
+		`cd '`+dir+`' && exec sh -c "$2"`)
+	t.Setenv("GIT_SSH_COMMAND", ssh)
+	t.Setenv("GIT_SSH_VARIANT", "simple")
+	repo = filepath.Join(dir, "repo")
+	os.Mkdir(repo, 0o755)
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+	gitIn(t, repo, "remote", "add", "origin", hub)
+	gitIn(t, repo, "remote", "set-url", "--add", "--push", "origin", hub)
+	gitIn(t, repo, "remote", "set-url", "--add", "--push", "origin", "fake:mirror.git")
+	gitIn(t, repo, "push", "-q", "-u", "origin", "main")
+	gitIn(t, repo, "switch", "-qc", "one")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "O1")
+	gitIn(t, repo, "push", "-q", "-u", "origin", "one")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "O2")
+	return dir, repo, hub, mirror, armed
+}
+
+// testPushEachURL pushes to each of a remote's push URLs on its own: a URL
+// whose SSH login the key refuses is retried on Enter at a terminal, and
+// otherwise left for --resume, which pushes only that URL, leased on what it
+// held before the pass, however the remote-tracking ref has moved since.
+func testPushEachURL(t *testing.T) {
+	dir, repo, hub, mirror, armed := mirrored(t)
+	t.Setenv("GIT_CONFIG_GLOBAL", signingConfig(t, dir))
+	useDir(t, repo)
+	before := gitIn(t, repo, "rev-parse", "origin/one")
+
+	noTerminal(t)
+	arm(t, armed, 0)
+	_, err := Run("", false, true, false)
+	if err == nil {
+		t.Fatal("a refused SSH login without a terminal")
+	}
+	for _, want := range []string{"fake:mirror.git", "pushed one to " + hub, "`" + testBinary(t) + " --resume --push one`"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the failure does not say %q: %v", want, err)
+		}
+	}
+	signed := gitIn(t, repo, "rev-parse", "one")
+	if got := gitIn(t, hub, "rev-parse", "one"); got != signed {
+		t.Errorf("the hub has one at %s, want %s", got, signed)
+	}
+	if got := gitIn(t, mirror, "rev-parse", "one"); got != before {
+		t.Errorf("the mirror has one at %s, want %s", got, before)
+	}
+	if got := gitIn(t, repo, "rev-parse", "origin/one"); got != before {
+		t.Errorf("origin/one moved to %s while the mirror lacks it", got)
+	}
+
+	// A fetch moves origin/one to the signed tip, and the hub goes away, so
+	// a push leased on origin/one, or one to the hub, would fail.
+	gitIn(t, repo, "fetch", "-q", "origin")
+	if err := os.Rename(hub, hub+".away"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Run("", true, false, false)
+	if err != nil {
+		t.Fatalf("resuming the mirror's push: %v", err)
+	}
+	os.Rename(hub+".away", hub)
+	if got := fmt.Sprint(result.(map[string]any)["pushed"]); got != "map[one:origin refs/heads/one]" {
+		t.Errorf("pushed: %s", got)
+	}
+	if got := gitIn(t, mirror, "rev-parse", "one"); got != signed {
+		t.Errorf("the mirror has one at %s, want %s", got, signed)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".git", "sign-pass", "push", "one.json")); err == nil {
+		t.Error("the finished push is still recorded")
+	}
+
+	typed(t, "\n")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "O3")
+	arm(t, armed, 0)
+	if _, err := Run("", false, true, false); err != nil {
+		t.Fatalf("a refused SSH login retried on Enter: %v", err)
+	}
+	signed = gitIn(t, repo, "rev-parse", "one")
+	for _, where := range []string{hub, mirror} {
+		if got := gitIn(t, where, "rev-parse", "one"); got != signed {
+			t.Errorf("%s has one at %s, want %s", where, got, signed)
+		}
+	}
+	if got := gitIn(t, repo, "rev-parse", "origin/one"); got != signed {
+		t.Errorf("origin/one is %s, want %s", got, signed)
 	}
 }

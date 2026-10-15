@@ -106,6 +106,32 @@ func TestNotify(t *testing.T) {
 		}
 	})
 
+	// The session hears which URLs have the branch and the exact command
+	// that pushes the rest.
+	t.Run("pushed to one URL of two", func(t *testing.T) {
+		dir, repo, hub, _, armed := mirrored(t)
+		p, id := requested(t, dir)
+		NotifyID = id
+		t.Cleanup(func() { NotifyID = "" })
+
+		t.Setenv("GIT_CONFIG_GLOBAL", signingConfig(t, dir))
+		useDir(t, repo)
+		noTerminal(t)
+		arm(t, armed, 0)
+		result, err := Run("", false, true, false)
+		if err == nil {
+			t.Fatal("a refused SSH login without a terminal")
+		}
+		if _, err := Notify(id, result, err, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		e := last(t, p)
+		if e.Kind != "sign-failed" || e.Exit != "1" || !strings.Contains(e.Summary, "pushed one to "+hub) ||
+			!strings.Contains(e.Summary, "`"+testBinary(t)+" --resume --push --notify "+id+" one`") {
+			t.Errorf("logged %+v", e)
+		}
+	})
+
 	t.Run("several branches", func(t *testing.T) {
 		dir := t.TempDir()
 		global := signingConfig(t, dir)
