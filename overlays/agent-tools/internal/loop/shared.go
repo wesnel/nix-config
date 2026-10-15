@@ -27,6 +27,8 @@ var (
 	matches        = history.Match
 	couldNotApply  = history.CouldNotApply
 	noEditor       = history.NoEditor
-	// graphQL is replaced by tests that fake GitHub.
-	graphQL = gh.GraphQL
+	// graphQL and objectsREST, which creates Git objects, are replaced by
+	// tests that fake GitHub.
+	graphQL     = gh.GraphQL
+	objectsREST = gh.REST
 )

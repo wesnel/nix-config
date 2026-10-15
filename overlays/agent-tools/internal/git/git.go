@@ -4,6 +4,7 @@ package git
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -32,7 +33,12 @@ var hardened = []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=
 // commands find the repository as git does, honouring the environment;
 // Toplevel checks that the two agree.
 func command(env []string, args ...string) *exec.Cmd {
-	cmd := exec.Command("git", append(append([]string{}, hardened...), args...)...)
+	return commandContext(context.Background(), env, args...)
+}
+
+// commandContext is command, killed when ctx is done.
+func commandContext(ctx context.Context, env []string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", append(append([]string{}, hardened...), args...)...)
 	cmd.Dir = Dir
 	base := os.Environ()
 	if Dir != "" || (len(args) > 1 && args[0] == "-C" && args[1] != "") {
@@ -122,9 +128,10 @@ func OK(args ...string) bool {
 }
 
 // Attached runs git connected to this process's terminal, for commands that
-// ask for a key touch or a passphrase. It returns the exit code.
-func Attached(env []string, args ...string) int {
-	cmd := command(env, args...)
+// ask for a key touch or a passphrase, killed when ctx is done. It returns
+// the exit code.
+func Attached(ctx context.Context, env []string, args ...string) int {
+	cmd := commandContext(ctx, env, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
@@ -138,8 +145,8 @@ func Attached(env []string, args ...string) int {
 // AttachedStderr is Attached, also returning what the command wrote to
 // stderr, which reaches this process's stderr as it is written. Git sees a
 // pipe there rather than the terminal, so it prints no progress meters.
-func AttachedStderr(env []string, args ...string) (int, string) {
-	cmd := command(env, args...)
+func AttachedStderr(ctx context.Context, env []string, args ...string) (int, string) {
+	cmd := commandContext(ctx, env, args...)
 	var stderr bytes.Buffer
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, io.MultiWriter(os.Stderr, &stderr)
 	if err := cmd.Run(); err != nil {

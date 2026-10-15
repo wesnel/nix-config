@@ -115,6 +115,7 @@ fixups, re-signs each tip and the branches below it, and pushes every branch
 that moved; a branch never pushed before needs `--set-upstream` in place of
 `--push`. Where forks share a parent, the pass signs the parent once
 and replays the other forks onto the signed copy from their fork points itself.
+Any push you suggest for a stack follows the `signing-pass` skill.
 Once everything is pushed, the backups can go:
 `git for-each-ref --format='%(refname)' refs/backup/ refs/fork-point/ | xargs -n1 git update-ref -d`.
 

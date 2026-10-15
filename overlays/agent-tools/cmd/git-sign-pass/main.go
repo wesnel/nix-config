@@ -53,9 +53,10 @@ program by its path unless it is the git-sign-pass on PATH.
                     progress blocks only passes that would move its branches
   --push            push every branch that moved to the branch of the same
                     name at each push URL of its upstream's remote in turn,
-                    guarded by what its remote-tracking ref named before the
-                    first URL's push, and move that ref once every URL has
-                    it; refused, before any key touch, for a branch whose
+                    one branch per push, bottom up, over one SSH login per
+                    URL, guarded by what its remote-tracking ref named before
+                    the first URL's push, and move that ref once every URL
+                    has it; refused, before any key touch, for a branch whose
                     upstream is another branch and for the remote's default
                     branch (REMOTE/HEAD, or main and master)
   --notify ID       when the pass ends, signed, refused or failed, log its

@@ -2,6 +2,7 @@ package signpass
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,17 +18,28 @@ var refusedByKey = regexp.MustCompile(`agent refused operation|signing failed|si
 // retryTouch reports whether to retry what the key refused, given the
 // stderr of the command that failed: only when that stderr shows the key's
 // refusal and standard input is a terminal, on which Wesley answers Enter to
-// retry or q to stop.
-func retryTouch(what, stderr string) bool {
+// retry or q to stop. A ctx done before the answer stops: where SIGINT is
+// caught, it is how Ctrl-C at the question still stops the pass.
+func retryTouch(ctx context.Context, what, stderr string) bool {
 	if !refusedByKey.MatchString(stderr) || !isTerminal(os.Stdin) {
 		return false
 	}
 	fmt.Fprintf(os.Stderr, "%s: the key refused to sign. Touch missed. Enter to retry, q to stop: ", what)
-	answer, err := bufio.NewReader(os.Stdin).ReadString('\n')
-	if err != nil && answer == "" {
+	answers := make(chan string, 1)
+	go func() {
+		answer, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		if err != nil && answer == "" {
+			answer = "q"
+		}
+		answers <- answer
+	}()
+	select {
+	case answer := <-answers:
+		return strings.TrimSpace(answer) != "q"
+	case <-ctx.Done():
+		fmt.Fprintln(os.Stderr)
 		return false
 	}
-	return strings.TrimSpace(answer) != "q"
 }
 
 // NotifyID is the --notify ID the pass runs with, which every command it

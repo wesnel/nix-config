@@ -11,6 +11,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/history"
+	"github.com/wesnel/agent-tools/internal/sshmux"
 )
 
 // plan is a pass over several branches, run as one step per stack. A step
@@ -63,7 +64,7 @@ type step struct {
 // out, and prints what it will do before the first key touch. Every check that
 // can refuse runs first, including an unsigned rehearsal of every squash and
 // every fork's replay. With push or setUpstream, every branch that moved is
-// pushed at the end, in one push per remote.
+// pushed at the end, as a single-branch pass pushes (pushAll).
 func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 	if base != "" && len(names) > 1 {
 		return nil, refuse("--base applies to one branch; sign branches with different bases separately")
@@ -177,6 +178,9 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 	if push || setUpstream {
 		byRemote, skipped, err := pushTargets(moving, setUpstream, "run the pass again")
 		if err != nil {
+			return nil, err
+		}
+		if err := sshmux.Check("run the pass again"); err != nil {
 			return nil, err
 		}
 		remotes := make([]string, 0, len(byRemote))
