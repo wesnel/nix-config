@@ -45,8 +45,14 @@ type Event struct {
 	Range   string `json:"range,omitempty"`
 	Tip     string `json:"tip,omitempty"`
 	PatchID string `json:"patchId,omitempty"`
-	// receipt marks an event Receipt logs.
-	receipt bool
+	// Sign is a sign-pass's ID, Exit its exit status, and Delivers the
+	// event ID of the result a sign-delivered event delivered.
+	Sign     string `json:"sign,omitempty"`
+	Exit     string `json:"exit,omitempty"`
+	Delivers string `json:"delivers,omitempty"`
+	// receipt marks an event Receipt logs, and sign one a sign-pass's
+	// commands log.
+	receipt, sign bool
 	// Note is what the caller should know about the event, such as a
 	// heading keyword Log could not write; the log does not hold it.
 	Note string `json:"note,omitempty"`
@@ -89,7 +95,10 @@ func (p Plan) check(e Event) error {
 	case e.Kind == receiptKind && !e.receipt:
 		return refusal.New("a review receipt is written by the review that ran alone. " +
 			"Run `git fresh-review` (or `pr-loop review` for someone else's pull request) as the review-change skill says")
-	case e.Kind != receiptKind && !oneOf(e.Kind, Kinds):
+	case oneOf(e.Kind, signKinds) && !e.sign:
+		return refusal.New("a sign-pass's events are logged by `agent-plan sign-id`, `git sign-pass --notify` and the delivery of its result alone. " +
+			"Hand Wesley the sign-pass as the signing-pass skill says")
+	case e.Kind != receiptKind && !oneOf(e.Kind, Kinds) && !oneOf(e.Kind, signKinds):
 		return refusal.New("%q is not an event kind. Use one of `%s`", e.Kind, strings.Join(Kinds, "`, `"))
 	case e.Role != "" && !oneOf(e.Role, Roles):
 		return refusal.New("%q is not a role. Use one of `%s`", e.Role, strings.Join(Roles, "`, `"))
@@ -219,7 +228,8 @@ func eventText(e Event) string {
 	for _, kv := range [][2]string{{"EVENT", e.ID}, {"AGENT", e.Agent}, {"ROLE", e.Role}, {"ITEM", e.Item},
 		{"KIND", e.Kind}, {"BRANCH", e.Branch}, {"COMMIT", e.Commit}, {"EVIDENCE", e.Evidence},
 		{"REVIEW", e.Review}, {"OUTCOME", e.Outcome}, {"TOKENS", tokens}, {"MODEL", e.Model},
-		{"EFFORT", e.Effort}, {"SESSION", e.Session}, {"RANGE", e.Range}, {"TIP", e.Tip}, {"PATCH_ID", e.PatchID}} {
+		{"EFFORT", e.Effort}, {"SESSION", e.Session}, {"RANGE", e.Range}, {"TIP", e.Tip}, {"PATCH_ID", e.PatchID},
+		{"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}} {
 		if kv[1] != "" {
 			b.WriteString(":" + kv[0] + ": " + kv[1] + "\n")
 		}
@@ -422,7 +432,8 @@ func (p Plan) Events() ([]Event, error) {
 			Role: h.Props["ROLE"], Branch: h.Props["BRANCH"], Commit: h.Props["COMMIT"],
 			Evidence: h.Props["EVIDENCE"], Review: h.Props["REVIEW"], Outcome: h.Props["OUTCOME"],
 			Model: h.Props["MODEL"], Effort: h.Props["EFFORT"], Session: h.Props["SESSION"], Range: h.Props["RANGE"],
-			Tip: h.Props["TIP"], PatchID: h.Props["PATCH_ID"]}
+			Tip: h.Props["TIP"], PatchID: h.Props["PATCH_ID"], Sign: h.Props["SIGN"], Exit: h.Props["EXIT"],
+			Delivers: h.Props["DELIVERS"]}
 		e.Tokens, _ = strconv.ParseInt(h.Props["TOKENS"], 10, 64)
 		if _, summary, ok := strings.Cut(h.Title, " — "); ok {
 			e.Summary = summary

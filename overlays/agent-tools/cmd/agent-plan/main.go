@@ -139,7 +139,22 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      prompts, once per host when a quota window of the
                      session's provider passes 75% and again at 90%, asks
                      for Wesley's choice of tiers (see usage choose), having
-                     read Codex's quota from its rollout; never blocks
+                     read Codex's quota from its rollout; and on those
+                     prompts, task-notifications included, adds a line for
+                     each result of the session's sign-passes not yet
+                     delivered, logging it as sign-delivered, marked stale
+                     when over a day old; never blocks
+  sign-id [--session ID] [--branch B]...
+                     log a sign-pass about to be handed to Wesley as
+                     sign-requested in the plan of this session (--session,
+                     else CLAUDE_CODE_SESSION_ID, CODEX_THREAD_ID or
+                     ECA_CHAT_ID) and worktree, and print its ID for
+                     ` + "`git sign-pass --notify ID`" + `; refused without a plan
+  sign-result ID [--check]
+                     print each result of sign-pass ID and log those not yet
+                     delivered as delivered, as remind does; exit 1 while it
+                     has none. --check prints nothing and only exits 0 once
+                     one is logged
   tokens [--format org|json]
                      every plan's tokens by event kind, model and effort
   import-claude      Claude Code's PostToolUse hook on ExitPlanMode (reads stdin):
@@ -245,7 +260,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			out = c.Remind(input)
 		}
 		if ask := quota.Remind(quota.DefaultState(), input, time.Now()); ask != "" {
-			out = withContext(out, input, ask)
+			out = plans.WithContext(out, input, ask)
 		}
 		if len(out) > 0 {
 			stdout.Write(append(out, '\n'))
@@ -368,6 +383,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		note     = flags.String("note", "", "")
 		unset    = flags.Bool("clear", false, "")
 		planFile = flags.String("plan", "", "")
+		check    = flags.Bool("check", false, "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
 		branches multi
@@ -393,7 +409,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		return values[len(values)-1]
 	}
-	if command != "new" && (len(branches) > 1 || len(trees) > 1 || len(sessions) > 1) {
+	if (command != "new" && (len(trees) > 1 || len(sessions) > 1)) || (command != "new" && command != "sign-id" && len(branches) > 1) {
 		fmt.Fprintf(stderr, "agent-plan %s: --branch, --worktree and --session are given once\n", command)
 		return 2
 	}
@@ -604,39 +620,54 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	case "import-claude":
 		out, err := c.ImportClaude(readAll(stdin), time.Now())
 		return hookReport(out, err, stdout, stderr)
+	case "sign-id":
+		if len(positional) != 0 {
+			fmt.Fprint(stderr, "agent-plan sign-id: takes [--session ID] [--branch B]...\n")
+			return 2
+		}
+		for _, v := range []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "ECA_CHAT_ID"} {
+			if session == "" {
+				session = os.Getenv(v)
+			}
+		}
+		top, current := checkout()
+		if len(branches) == 0 && current != "" {
+			branches = multi{current}
+		}
+		id, err := c.RequestSign(session, top, branches, time.Now())
+		if err != nil {
+			return report(nil, err)
+		}
+		fmt.Fprintln(stdout, id)
+		return 0
+	case "sign-result":
+		if len(positional) != 1 {
+			fmt.Fprint(stderr, "agent-plan sign-result: takes ID [--check]\n")
+			return 2
+		}
+		ds, err := c.SignResults(positional[0], !*check, time.Now())
+		if err != nil {
+			return report(nil, err)
+		}
+		if len(ds) == 0 {
+			if !*check {
+				fmt.Fprintf(stderr, "agent-plan sign-result: no result of sign-pass %s is logged yet\n", positional[0])
+			}
+			return 1
+		}
+		if !*check {
+			for _, d := range ds {
+				line := d.Line()
+				if d.Delivered {
+					line += " (already delivered)"
+				}
+				fmt.Fprintln(stdout, line)
+			}
+		}
+		return 0
 	}
 	fmt.Fprint(stderr, usage)
 	return 2
-}
-
-// withContext is the hook output out with text added to its
-// additionalContext, or a new output for input's event carrying text:
-// hookSpecificOutput for Claude Code's and Codex's events, which name
-// hook_event_name, and a bare additionalContext for ECA's.
-func withContext(out, input []byte, text string) []byte {
-	var event struct {
-		Name string `json:"hook_event_name"`
-	}
-	json.Unmarshal(input, &event)
-	var o map[string]any
-	if json.Unmarshal(out, &o) != nil {
-		o = map[string]any{}
-	}
-	target := o
-	if event.Name != "" {
-		specific, _ := o["hookSpecificOutput"].(map[string]any)
-		if specific == nil {
-			specific = map[string]any{"hookEventName": event.Name}
-			o["hookSpecificOutput"] = specific
-		}
-		target = specific
-	}
-	if before, _ := target["additionalContext"].(string); before != "" {
-		text = before + "\n\n" + text
-	}
-	target["additionalContext"] = text
-	data, _ := json.Marshal(o)
-	return data
 }
 
 // usageCommand is `agent-plan usage` and `usage choose`.
