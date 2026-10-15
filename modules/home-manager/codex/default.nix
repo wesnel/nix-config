@@ -84,6 +84,35 @@ with lib; let
         f.write(root + "\n")
   '';
 
+  # Sets keys of config.toml's [notice] table, keeping the rest of the file.
+  setNotices = pkgs.writers.writePython3 "codex-notices" {libraries = [pkgs.python3Packages.tomlkit];} ''
+    import json
+    import os
+    import sys
+
+    import tomlkit
+
+    path = sys.argv[1]
+    notices = json.loads(sys.argv[2])
+
+    doc = tomlkit.document()
+    if os.path.exists(path):
+        with open(path) as f:
+            doc = tomlkit.parse(f.read())
+
+    table = doc.setdefault("notice", tomlkit.table())
+    changed = False
+    for key, value in notices.items():
+        if table.get(key) != value:
+            table[key] = value
+            changed = True
+
+    if changed:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(tomlkit.dumps(doc))
+  '';
+
   plans = config.wgn.home.llm.plans;
 
   toml = value:
@@ -238,6 +267,8 @@ in {
             ];
             # Wesley's prompt: its URLs become plan references. A
             # sub-agent's turn carries agent_id, which agent-plan skips.
+            # Reads the quota from the rollout and asks once per threshold
+            # which tier new sub-agents get.
             hooks.UserPromptSubmit = [
               {
                 hooks = [
@@ -289,6 +320,18 @@ in {
           ${addWritableRoot} "$HOME/.codex/config.toml" ${escapeShellArg plans.dir} \
             ${escapeShellArg "${config.xdg.stateHome}/codex/plans-root"} \
             || warnEcho "The plans directory was not made writable in Codex's sandbox."
+        fi
+      '';
+    }
+
+    # Near a rate limit Codex offers to switch the running session to a
+    # cheaper model, which is Wesley's call alone; agent-plan remind's quota
+    # ask covers new sub-agents. Merged into the config.toml Codex writes.
+    {
+      home.activation.codexNotices = lib.hm.dag.entryAfter ["writeBoundary"] ''
+        if [ -z "''${DRY_RUN:-}" ]; then
+          ${setNotices} "$HOME/.codex/config.toml" ${escapeShellArg (builtins.toJSON {hide_rate_limit_model_nudge = true;})} \
+            || warnEcho "Codex's offer to switch models near a rate limit was not hidden."
         fi
       '';
     }

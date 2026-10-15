@@ -336,6 +336,7 @@ in {
         # A background sub-agent's task-notification reaches the coordinator
         # as a prompt; SubagentStop's output would reach only the sub-agent.
         # Any other prompt is Wesley's: its URLs become plan references.
+        # Either asks once per quota threshold which tier new sub-agents get.
         hooks.UserPromptSubmit = [
           {
             hooks = [
@@ -403,9 +404,11 @@ in {
 
         # How many open questions the session's plan has, from its files
         # alone, which the `questions` skill asks Wesley.
+        # Context and quota too; the rerun drops a window once it resets.
         statusLine = {
           type = "command";
           command = "${agentPlan} statusline";
+          refreshInterval = 60;
         };
 
         # The ngrok account server's write scopes reach production, and its

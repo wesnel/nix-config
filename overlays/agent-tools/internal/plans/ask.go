@@ -21,6 +21,13 @@ type AskOptions struct {
 	// Part is the part whose file takes the question, or "" for the plan's.
 	Part, Question, Priority, Context, Recommendation, Answer, Role string
 	Alternatives, After                                             []string
+	// Wesley marks Answer as Wesley's, recorded as Decide records it,
+	// rather than the agent's own.
+	Wesley bool
+	// Once makes asking again a no-op: a question of the same text already
+	// in the file is returned as it is, and refused if Answer differs from
+	// its answer.
+	Once bool
 }
 
 // Asked is what Ask wrote.
@@ -97,6 +104,17 @@ func (p Plan) Ask(o AskOptions, now time.Time) (Asked, error) {
 		}
 		next := 1
 		question := idOf(prefix, "Q")
+		for _, it := range list {
+			if !o.Once || it.File != file || !question.MatchString(it.ID) || it.Title != o.Question {
+				continue
+			}
+			if it.Props["ANSWER"] != o.Answer {
+				return refusal.New("%s already asks this, answered %q. To change the answer, settle a new question with "+
+					"`agent-plan decide PLAN QID --answer TEXT --supersedes %s`", it.ID, it.Props["ANSWER"], it.ID)
+			}
+			asked = Asked{ID: it.ID, File: file}
+			return nil
+		}
 		for id := range known {
 			if m := question.FindStringSubmatch(id); m != nil {
 				if n, _ := strconv.Atoi(m[1]); n >= next {
@@ -133,7 +151,11 @@ func (p Plan) Ask(o AskOptions, now time.Time) (Asked, error) {
 			if o.Answer == "" {
 				return lines, nil
 			}
-			return settle(lines, qid, kwDecided, o.Answer, "agent", "", now)
+			decidedBy := "agent"
+			if o.Wesley {
+				decidedBy = ""
+			}
+			return settle(lines, qid, kwDecided, o.Answer, decidedBy, "", now)
 		})
 		if err != nil {
 			return err

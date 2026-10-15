@@ -15,6 +15,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/relay"
+	quota "github.com/wesnel/agent-tools/internal/usage"
 )
 
 var usage = `agent-plan: agents' plan files and their append-only event logs.
@@ -88,11 +89,26 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      keeps it out of the ready lists and the agenda until
                      then, or clear its schedule; log it as postponed
   statusline         Claude Code's status line and Emacs's mode line (reads
-                     stdin): "review owed" where the session committed since
-                     its plan's last review receipt, and the open questions of
-                     the session's plan, else of the plan of the worktree
-                     "cwd" is in, or nothing; never
-                     touches the network
+                     stdin): the session's context and its provider's quota
+                     windows as this host last saw them, then "review owed"
+                     where the session committed since its plan's last review
+                     receipt, then the open questions of the session's plan,
+                     else of the plan of the worktree "cwd" is in; or nothing.
+                     Keeps Claude Code's rate_limits in
+                     $XDG_STATE_HOME/agent-tools/usage. Emacs sends {cwd,
+                     provider, context_window{used_percentage}}, or {cwd} alone
+                     to see each provider at 75% or more. Never touches the
+                     network
+  usage [--json]     this host's last reading of each provider's quota windows,
+                     and Wesley's choice while it lasts
+  usage choose PROVIDER keep|down|postpone [--plan PLAN] [--answer TEXT]
+                     record Wesley's answer to the quota ask: keep the usual
+                     tiers, start new sub-agents one tier down, or postpone
+                     work, until the window that prompted it resets; with a
+                     plan, also as a question he decided, his own words in
+                     --answer, written once: run again, it changes nothing,
+                     and another answer to the same question is refused.
+                     Postpone each step or part with postpone
   own PLAN --worktree DIR --agent ID
                      record agent ID, the harness's ID for a sub-agent or
                      "main" for the session's main thread, as the one agent
@@ -119,7 +135,11 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      the plan to be brought up to date after one (Codex's
                      SessionStart, ECA's postCompact); keeps the URLs of
                      Wesley's own prompts as references (Claude Code's and
-                     Codex's UserPromptSubmit, ECA's preRequest); never blocks
+                     Codex's UserPromptSubmit, ECA's preRequest); and on those
+                     prompts, once per host when a quota window of the
+                     session's provider passes 75% and again at 90%, asks
+                     for Wesley's choice of tiers (see usage choose), having
+                     read Codex's quota from its rollout; never blocks
   tokens [--format org|json]
                      every plan's tokens by event kind, model and effort
   import-claude      Claude Code's PostToolUse hook on ExitPlanMode (reads stdin):
@@ -159,7 +179,8 @@ func clientSide(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	if args[0] == "import-claude" || args[0] == "statusline" || args[0] == "stop-check" || args[0] == "remind" {
+	if args[0] == "import-claude" || args[0] == "statusline" || args[0] == "stop-check" || args[0] == "remind" ||
+		args[0] == "usage" {
 		return true
 	}
 	if args[0] == "find" {
@@ -201,19 +222,33 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if args[0] == "statusline" {
 		// Claude Code shows whatever this prints, so a failure prints
 		// nothing.
+		input := readAll(stdin)
+		var parts []string
+		if line := quota.StatusLine(quota.DefaultState(), input, time.Now()); line != "" {
+			parts = append(parts, line)
+		}
 		if c, err := plans.Load(); err == nil {
-			if line := c.StatusLine(readAll(stdin)); line != "" {
-				fmt.Fprintln(stdout, line)
+			if line := c.StatusLine(input); line != "" {
+				parts = append(parts, line)
 			}
+		}
+		if len(parts) > 0 {
+			fmt.Fprintln(stdout, strings.Join(parts, " · "))
 		}
 		return 0
 	}
 	if args[0] == "remind" {
 		// A failure asks for nothing, quietly.
+		input := readAll(stdin)
+		var out []byte
 		if c, err := plans.Load(); err == nil {
-			if out := c.Remind(readAll(stdin)); len(out) > 0 {
-				stdout.Write(append(out, '\n'))
-			}
+			out = c.Remind(input)
+		}
+		if ask := quota.Remind(quota.DefaultState(), input, time.Now()); ask != "" {
+			out = withContext(out, input, ask)
+		}
+		if len(out) > 0 {
+			stdout.Write(append(out, '\n'))
 		}
 		return 0
 	}
@@ -332,6 +367,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		foundIn  = flags.String("found-in", "", "")
 		note     = flags.String("note", "", "")
 		unset    = flags.Bool("clear", false, "")
+		planFile = flags.String("plan", "", "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
 		branches multi
@@ -532,6 +568,8 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return report(nil, err)
 		}
 		return report(p.Postpone(positional[1], *until, time.Now()))
+	case "usage":
+		return usageCommand(c, positional, *planFile, *answer, *asJSON, stdout, stderr)
 	case "init":
 		r, err := c.Init()
 		if r.Note != "" {
@@ -568,6 +606,93 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return hookReport(out, err, stdout, stderr)
 	}
 	fmt.Fprint(stderr, usage)
+	return 2
+}
+
+// withContext is the hook output out with text added to its
+// additionalContext, or a new output for input's event carrying text:
+// hookSpecificOutput for Claude Code's and Codex's events, which name
+// hook_event_name, and a bare additionalContext for ECA's.
+func withContext(out, input []byte, text string) []byte {
+	var event struct {
+		Name string `json:"hook_event_name"`
+	}
+	json.Unmarshal(input, &event)
+	var o map[string]any
+	if json.Unmarshal(out, &o) != nil {
+		o = map[string]any{}
+	}
+	target := o
+	if event.Name != "" {
+		specific, _ := o["hookSpecificOutput"].(map[string]any)
+		if specific == nil {
+			specific = map[string]any{"hookEventName": event.Name}
+			o["hookSpecificOutput"] = specific
+		}
+		target = specific
+	}
+	if before, _ := target["additionalContext"].(string); before != "" {
+		text = before + "\n\n" + text
+	}
+	target["additionalContext"] = text
+	data, _ := json.Marshal(o)
+	return data
+}
+
+// usageCommand is `agent-plan usage` and `usage choose`.
+func usageCommand(c plans.Config, args []string, planFile, answer string, asJSON bool, stdout, stderr io.Writer) int {
+	s, now := quota.DefaultState(), time.Now()
+	report := func(result any, err error) int {
+		return cli.Report("agent-plan", result, err, 0, stdout, stderr)
+	}
+	switch {
+	case len(args) == 0:
+		sums := s.Summary(now)
+		if asJSON {
+			return report(sums, nil)
+		}
+		io.WriteString(stdout, quota.SummaryText(sums, now))
+		return 0
+	case len(args) == 3 && args[0] == "choose":
+		provider, choice := args[1], args[2]
+		var p plans.Plan
+		if planFile != "" {
+			var err error
+			if p, err = c.Open(planFile); err != nil {
+				return report(nil, err)
+			}
+		}
+		if err := quota.CheckChoice(provider, choice); err != nil {
+			return report(nil, err)
+		}
+		reading, known := s.Reading(provider, now)
+		reading.Provider = provider
+		var result struct {
+			Choice   quota.Choice `json:"choice"`
+			Question string       `json:"question,omitempty"`
+		}
+		// The plan first: a question already answered otherwise leaves the
+		// choice as it was.
+		if planFile != "" {
+			q := quota.Question(reading, known, now)
+			if answer == "" {
+				answer = q.Answers[choice]
+			}
+			asked, err := p.Ask(plans.AskOptions{Question: q.Text, Recommendation: q.Recommendation, Alternatives: q.Alternatives,
+				Answer: answer, Wesley: true, Once: true}, now)
+			if err != nil {
+				return report(nil, err)
+			}
+			result.Question = asked.ID
+		}
+		chosen, err := s.Choose(provider, choice, now)
+		if err != nil {
+			return report(nil, err)
+		}
+		result.Choice = chosen
+		return report(result, nil)
+	}
+	fmt.Fprint(stderr, "agent-plan usage: takes nothing, or choose PROVIDER keep|down|postpone [--plan PLAN] [--answer TEXT]\n")
 	return 2
 }
 
