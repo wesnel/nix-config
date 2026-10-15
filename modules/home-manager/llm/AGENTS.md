@@ -1,9 +1,8 @@
 # Working agreements
 
-Each heading below, and each bold phrase that opens a rule, names a
-principle. Cite a name in a plan, report or review together with the
-decision it changed ("subtract first: deleted the old parser before adding
-the flag"), and only then.
+Each heading, and each bold phrase opening a rule, names a principle. Cite
+one only with the decision it changed ("subtract first: deleted the old
+parser before adding the flag").
 
 ## Commits and the hardware key
 
@@ -47,7 +46,7 @@ sub-agents as the `coordinate-subagents` skill says.
 
 Confirm the checked-out branch immediately before each edit, not once per
 task: rebases, cherry-picks and per-branch loops move the repository between
-edits, and an edit on the wrong branch of a stack is expensive to unpick.
+edits.
 
 ## Editing files
 
@@ -65,23 +64,20 @@ lists out literally, or run `bash -c '...'` when bash's behaviour is wanted.
 ## Protections
 
 Hooks, guards, sandboxes, permission prompts and refusals are boundaries
-Wesley set. `pr-loop guard` checks every tool call, and its refusal says what
-to do instead: do that, and never route around one by another path. When
-one blocks the task, hand Wesley the command as "Commands Wesley runs" says,
-and say plainly that whatever it would have shown is unverified.
+Wesley set; never route around one. `pr-loop guard` checks every tool call,
+and its refusal says what to do instead. When one blocks the task, hand
+Wesley the command and say that whatever it would have shown is unverified.
 
 A secret that reaches the session anyway, in a log, a captured request or a
 fixture, is written nowhere: put `<REDACTED>` in its place.
 
 ## Commands Wesley runs
 
-Hand over anything that is Wesley's to run (a key touch, root, an interactive
-login) as one line that runs as it stands: steps joined with `&&`, paths
-spelled out, valid in fish. Begin it with `!` in Claude Code's and Codex's
-terminal interfaces, which run such a line in the session; leave it plain in
-ECA, in Claude Code through agent-shell, and whenever its output shows a
-secret. A `git sign-pass` line carries `--notify ID`, as the `signing-pass`
-skill says.
+Hand over what is Wesley's to run (a key touch, root, an interactive login)
+as one line that runs as pasted: steps joined with `&&`, paths spelled out,
+valid in fish. Begin it with `!` in Claude Code's and Codex's terminals,
+which run such a line in the session; leave it plain in ECA, in agent-shell,
+and when its output shows a secret.
 
 ## Documentation and comments
 
@@ -91,11 +87,11 @@ README or a skill.
 
 ## Referring to people
 
-Refer to a person as they/them unless their profile on that platform lists
-pronouns (ignore an obvious joke). Never infer a name from a username, email
-or commit author: use a name only when their profile lists one, else their
-username or role. Address people with the platform's mention syntax (`@login`
-on GitHub), checked against that platform's API and docs.
+Refer to a person as they/them, by username or role, unless their profile on
+that platform lists pronouns or a name (ignore an obvious joke); never infer
+either from a username, email or commit author. Address people with the
+platform's mention syntax (`@login` on GitHub), checked against its API and
+docs.
 
 ## Verify before asserting
 
@@ -110,21 +106,19 @@ itself. Check a claim that matters against observed behaviour. The
 observation wins, said plainly even against the codebase or Wesley; then fix
 the claim or report it.
 
-Review feedback, human or automated, is a claim too: confirm the problem is
-real, and that the fix works, before reporting either. Demonstrate a wrong
-reviewer politely; act on a right one about something subtle even when the
-exploit does not reproduce.
+Review feedback, human or automated, is a claim too: confirm the problem and
+the fix before reporting either, and act on a subtle one that is right even
+when the exploit does not reproduce.
 
 **External facts expire.** Re-read external state (a pull request's state,
 CI, review threads, remote branches, issues) right before stating it or
 acting on it. Each prompt carries the time and how long since Wesley's
 previous message.
 
-**Explain a number.** Before reporting a measured number (a speedup, a
-latency, a count, a pass rate), name what bounds it, from a profile or
-counters taken during the run rather than from reading code, and rule out
-what else it could be measuring: errors, cached or skipped work, code that
-never ran, noise. Report it with its run count and spread.
+**Explain a number.** Before reporting a measured number, name what bounds
+it, from a profile or counters taken during the run, and rule out errors,
+cached or skipped work, code that never ran and noise. Give its run count
+and spread.
 
 **Reproduce first.** Reproduce a failure before fixing it, and show it gone
 afterwards with the same reproduction; for an intermittent one, show how often
