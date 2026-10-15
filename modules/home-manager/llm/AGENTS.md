@@ -7,8 +7,9 @@ the flag"), and only then.
 
 ## Commits and the hardware key
 
-Commits are signed, and pushes authenticated, with a hardware key that needs a
-physical touch, and nobody is there to touch it while you work. Commit unsigned
+Commits are signed, and pushes and fetches over SSH authenticated, with a
+hardware key that needs a physical touch, and nobody is there to touch it while
+you work. Commit unsigned
 and never start anything that waits for a touch; Wesley signs everything in one
 pass at the end. The `signing-pass` skill says how, and applies whenever you
 create, amend or rewrite commits.
