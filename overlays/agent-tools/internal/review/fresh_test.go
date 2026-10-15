@@ -13,9 +13,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
+	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
@@ -72,6 +74,7 @@ case "$FAKE_CODEX" in
   hang) exec sleep 60 ;;
   fork) echo $$ > "$FAKE_CODEX_LOG/group"; i=0; while [ $i -lt 300 ]; do sleep 30 > /dev/null 2>&1 & i=$((i+1)); if [ $i = 20 ]; then echo > "$FAKE_CODEX_LOG/started"; fi; done; wait ;;
   none) echo '{"findings": [], "unverified": []}' > "$out" ;;
+  answer) echo '{"answer": "Extend the seam.", "unverified": ["the callers"]}' > "$out" ;;
   *) cat > "$out" <<EOF
 {"findings": [
  {"id": "1", "path": "$wt/code.txt", "line": 2, "endLine": 9, "kind": "bug", "claim": "c", "evidence": "e", "about": null, "reopens": null},
@@ -109,6 +112,8 @@ func setUp(t *testing.T, withCodex bool) *fixture {
 		"GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e", "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e",
 		"PR_LOOP_SESSION": "", "SANDBOX_RELAYED": "", "CODEX_SANDBOX": "", "FAKE_CODEX": "",
 		"AGENT_TOOLS_CONFIG": filepath.Join(t.TempDir(), "none.json"),
+		// A review's receipt goes to the plan of the session running it.
+		"CLAUDE_CODE_SESSION_ID": "",
 	} {
 		t.Setenv(k, v)
 	}
@@ -541,7 +546,7 @@ func TestPrintPrompt(t *testing.T) {
 	}
 	prompt := stdout.String()
 	for _, want := range []string{"Grow the code to three lines.", "Thread T1: make it three lines", `"id": "7"`,
-		f.base, f.tip, "Grow the code", "git show " + f.tip + ":"} {
+		f.base, f.tip, "Grow the code", "git show " + f.tip + ":", `"tip": "` + f.tip + `"`} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("the prompt lacks %q:\n%s", want, prompt)
 		}
@@ -551,19 +556,140 @@ func TestPrintPrompt(t *testing.T) {
 	}
 }
 
+// Asked for a sub-agent reviewer, fresh-review prints the prompt for one
+// and leaves Codex alone, even where Codex could review.
+func TestSubagentReviewer(t *testing.T) {
+	f := setUp(t, true)
+	t.Setenv("FAKE_CODEX", "none")
+	var stdout, stderr bytes.Buffer
+	if code := Main(t.Context(), []string{"--reviewer", "subagent", "--goal", ".git/goal.md", f.base + "..HEAD"}, nil,
+		&stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr.String())
+	}
+	if prompt := stdout.String(); !strings.HasPrefix(prompt, Contract) || !strings.Contains(prompt, "git show "+f.tip+":") {
+		t.Errorf("not the prompt for a sub-agent:\n%s", prompt)
+	}
+	if !strings.Contains(stderr.String(), "--check FILE "+f.base+"..HEAD") {
+		t.Errorf("stderr does not say how to check the reply: %q", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(f.log, "worktree")); err == nil {
+		t.Error("Codex ran")
+	}
+	f.checkCleanedUp(t)
+}
+
+// A review that ran, by Codex or checked from a sub-agent, leaves a
+// receipt in the plan of the session or worktree: the range as given, its
+// tip, and the patch ID of its change. A plan of another session and
+// worktree gets none.
+func TestReceipt(t *testing.T) {
+	// planned gives the test a plans directory with a plan of session s1
+	// for the worktree at top, and returns that plan.
+	planned := func(t *testing.T, top string) plans.Plan {
+		t.Helper()
+		c := plans.Config{Dir: filepath.Join(t.TempDir(), "agents"), Host: "box"}
+		config := filepath.Join(t.TempDir(), "config.json")
+		os.WriteFile(config, must(json.Marshal(map[string]any{"plans": c})), 0o644)
+		t.Setenv("AGENT_TOOLS_CONFIG", config)
+		made, err := c.New(plans.NewOptions{Title: "Grow the code", Slug: "grow", Worktrees: []string{top},
+			Sessions: []string{"claude:s1"}}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return must(c.Open(made.Plan))
+	}
+	receipts := func(t *testing.T, p plans.Plan) []string {
+		t.Helper()
+		var out []string
+		for _, e := range must(p.Events()) {
+			if e.Kind == "review-receipt" {
+				out = append(out, strings.Join([]string{e.Range, e.Tip, e.PatchID, e.Agent, e.Model}, " "))
+			}
+		}
+		return out
+	}
+
+	for _, c := range []struct {
+		name, reviewer, model string
+		args                  func(f *fixture) []string
+	}{
+		{"by Codex", "codex", "fake-model", func(f *fixture) []string { return []string{"--goal", ".git/goal.md", f.base + "..HEAD"} }},
+		{"checked from a sub-agent", "subagent", "", func(f *fixture) []string {
+			os.WriteFile(filepath.Join(f.repo, ".git", "reply.md"), []byte(`{"findings": [], "unverified": [], "tip": "`+f.tip+`"}`), 0o644)
+			return []string{"--check", ".git/reply.md", f.base + "..HEAD"}
+		}},
+		// The receipt is for the tip the prompt was printed for, which the
+		// reply carries, not for HEAD as it is when the reply is checked.
+		{"checked after HEAD moved on", "subagent", "", func(f *fixture) []string {
+			os.WriteFile(filepath.Join(f.repo, ".git", "reply.md"), []byte(`{"findings": [], "unverified": [], "tip": "`+f.tip+`"}`), 0o644)
+			os.WriteFile(filepath.Join(f.repo, "later.txt"), []byte("later\n"), 0o644)
+			run(t, f.repo, "git", "add", "later.txt")
+			run(t, f.repo, "git", "commit", "-q", "-m", "Add a later change")
+			return []string{"--check", ".git/reply.md", f.base + "..HEAD"}
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := setUp(t, true)
+			t.Setenv("FAKE_CODEX", "none")
+			top := run(t, f.repo, "git", "rev-parse", "--show-toplevel")
+			p := planned(t, top)
+			// git's own pipeline for the change, as a person would type it.
+			id, _, _ := strings.Cut(run(t, f.repo, "sh", "-c", "git diff "+f.base+"..."+f.tip+" | git patch-id --stable"), " ")
+			if code, _, stderr := freshReview(t, c.args(f)...); code != 0 {
+				t.Fatalf("exit %d\n%s", code, stderr)
+			}
+			want := strings.TrimSpace(strings.Join([]string{f.base + "..HEAD", f.tip, id, c.reviewer, c.model}, " "))
+			if got := receipts(t, p); len(got) != 1 || strings.TrimSpace(got[0]) != want {
+				t.Errorf("receipts %q, want %q", got, want)
+			}
+		})
+	}
+
+	t.Run("no plan of this session or worktree", func(t *testing.T) {
+		f := setUp(t, true)
+		t.Setenv("FAKE_CODEX", "none")
+		p := planned(t, t.TempDir())
+		t.Setenv("CLAUDE_CODE_SESSION_ID", "s2")
+		code, _, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+"..HEAD")
+		if code != 0 {
+			t.Fatalf("exit %d\n%s", code, stderr)
+		}
+		if got := receipts(t, p); len(got) != 0 {
+			t.Errorf("receipts in another's plan: %q", got)
+		}
+		if !strings.Contains(stderr, "no receipt") {
+			t.Errorf("stderr does not say no receipt was written: %q", stderr)
+		}
+	})
+
+	t.Run("in the session's plan, from another worktree", func(t *testing.T) {
+		f := setUp(t, true)
+		t.Setenv("FAKE_CODEX", "none")
+		p := planned(t, t.TempDir())
+		t.Setenv("CLAUDE_CODE_SESSION_ID", "s1")
+		if code, _, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+"..HEAD"); code != 0 {
+			t.Fatalf("exit %d\n%s", code, stderr)
+		}
+		if got := receipts(t, p); len(got) != 1 {
+			t.Errorf("receipts %q", got)
+		}
+	})
+}
+
 func TestCheck(t *testing.T) {
-	// checkReply runs --check over a sub-agent's reply.
+	// checkReply runs --check over a sub-agent's reply, in which TIP and
+	// BASE stand for the tip and base of the range.
 	checkReply := func(t *testing.T, reply string) (int, output, string) {
 		t.Helper()
 		f := setUp(t, false)
 		path := filepath.Join(f.repo, ".git", "reply.md")
-		os.WriteFile(path, []byte(reply), 0o644)
+		os.WriteFile(path, []byte(strings.NewReplacer("TIP", f.tip, "BASE", f.base).Replace(reply)), 0o644)
 		return freshReview(t, "--check", path, f.base+"..HEAD")
 	}
 
 	t.Run("findings", func(t *testing.T) {
 		code, out, stderr := checkReply(t, "Here is my review.\n```json\n"+
-			`{"findings": [{"id": "1", "path": "./code.txt", "line": 3, "kind": "untested", "claim": "c", "evidence": "e"}], "unverified": []}`+
+			`{"findings": [{"id": "1", "path": "./code.txt", "line": 3, "kind": "untested", "claim": "c", "evidence": "e"}], "unverified": [], "tip": "TIP"}`+
 			"\n```\n")
 		if code != 3 || out.Reviewer != "subagent" || len(out.Findings) != 1 || out.Findings[0]["path"] != "code.txt" {
 			t.Errorf("exit %d, %+v\n%s", code, out, stderr)
@@ -571,7 +697,7 @@ func TestCheck(t *testing.T) {
 	})
 
 	t.Run("no findings", func(t *testing.T) {
-		if code, _, stderr := checkReply(t, `{"findings": [], "unverified": []}`); code != 0 {
+		if code, _, stderr := checkReply(t, `{"findings": [], "unverified": [], "tip": "TIP"}`); code != 0 {
 			t.Errorf("no findings: exit %d\n%s", code, stderr)
 		}
 	})
@@ -581,6 +707,21 @@ func TestCheck(t *testing.T) {
 			t.Errorf("a reply that is not JSON: exit %d", code)
 		}
 	})
+
+	// Which commit the reviewer read is in its reply, from the prompt.
+	for name, reply := range map[string]string{
+		"a reply without the prompt's tip": `{"findings": [], "unverified": []}`,
+		"a tip that is no commit":          `{"findings": [], "unverified": [], "tip": "0123456789abcdef"}`,
+		"the range's base as its tip":      `{"findings": [], "unverified": [], "tip": "BASE"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			code, _, stderr := checkReply(t, reply)
+			reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-fresh-review: refused: ")
+			if code != 2 || !strings.Contains(reason, "--print-prompt") || !refusal.SaysInstead(reason) {
+				t.Errorf("exit %d, %q", code, stderr)
+			}
+		})
+	}
 }
 
 func TestRefusals(t *testing.T) {

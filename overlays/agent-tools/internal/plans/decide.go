@@ -118,8 +118,10 @@ func settle(lines []string, id, state, answer, decidedBy, supersedes string, now
 }
 
 // StatusLine is the status line for the session its input names, else for
-// the worktree its cwd is in, as Emacs's mode line sends: how many open
-// questions of that plan Wesley can answer now, or nothing. It reads only
+// the worktree its cwd is in, as Emacs's mode line sends: "review owed"
+// where the session committed since the plan's last review receipt, and
+// how many open questions of that plan Wesley can answer now, or nothing.
+// It reads only
 // this host's plan files and git, never the network, and says nothing on
 // any error.
 func (c Config) StatusLine(input []byte) string {
@@ -147,13 +149,36 @@ func (c Config) StatusLine(input []byte) string {
 			return ""
 		}
 	}
+	owed := ""
+	if reviewOwed(p, in.SessionID) {
+		owed = "review owed · "
+	}
 	qs, err := p.Questions(true)
 	qs = Askable(qs)
 	switch {
 	case err != nil || len(qs) == 0:
-		return ""
+		return strings.TrimSuffix(owed, " · ")
 	case len(qs) == 1:
-		return "1 open question · /questions"
+		return owed + "1 open question · /questions"
 	}
-	return fmt.Sprintf("%d open questions · /questions", len(qs))
+	return owed + fmt.Sprintf("%d open questions · /questions", len(qs))
+}
+
+// reviewOwed reports whether session's last commit in p's log comes after
+// the log's last review receipt. It reads the log alone; StopCheck is
+// the one that compares a receipt with the change.
+func reviewOwed(p Plan, session string) bool {
+	events, err := p.Events()
+	if err != nil || session == "" {
+		return false
+	}
+	for i := len(events) - 1; i >= 0; i-- {
+		switch e := events[i]; {
+		case e.Kind == receiptKind:
+			return false
+		case e.Kind == "committed" && e.Session == session:
+			return true
+		}
+	}
+	return false
 }

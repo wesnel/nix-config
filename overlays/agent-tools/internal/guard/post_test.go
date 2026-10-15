@@ -86,4 +86,5 @@ func TestPost(t *testing.T) {
 	}
 
 	t.Run("records facts", testPostRecordsFacts)
+	t.Run("then the stop", testPostThenStop)
 }

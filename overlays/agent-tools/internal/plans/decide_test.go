@@ -166,8 +166,46 @@ func TestDecide(t *testing.T) {
 	})
 }
 
-// The status line names the session's open questions, and nothing else.
+// The status line names the session's open questions, and a review the
+// session owes, and nothing else.
 func TestStatusLine(t *testing.T) {
+	// A session owes a review from its commit until the next review
+	// receipt; another session's commits are not its debt.
+	t.Run("review owed", func(t *testing.T) {
+		c := testConfig(t)
+		p := newPlan(t, c, "x")
+		line := func() string {
+			t.Helper()
+			return c.StatusLine([]byte(`{"session_id":"abc","cwd":"/nowhere"}`))
+		}
+		steps := []struct {
+			name string
+			step func()
+			want string
+		}{
+			{"nothing committed", func() {}, ""},
+			{"committed", func() {
+				p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add x", Session: "abc"}, day)
+			}, "review owed"},
+			{"reviewed", func() {
+				p.Receipt("", Receipt{Range: "origin/main..HEAD", Tip: "1234", PatchID: "abcd", Reviewer: "codex"}, day)
+			}, ""},
+			{"another session committed", func() {
+				p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add y", Session: "zzz"}, day)
+			}, ""},
+			{"committed again", func() {
+				p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add z", Session: "abc"}, day)
+				insertUnder(t, p.File(), "** Questions", question("Q1", "Keep it?", ""))
+			}, "review owed · 1 open question · /questions"},
+		}
+		for _, s := range steps {
+			s.step()
+			if got := line(); got != s.want {
+				t.Errorf("%s: status line %q, want %q", s.name, got, s.want)
+			}
+		}
+	})
+
 	t.Run("the session's open questions", func(t *testing.T) {
 		c, _ := openQuestions(t)
 		if got := c.StatusLine([]byte(`{"session_id":"abc","cwd":"/nowhere","workspace":{"current_dir":"/nowhere"}}`)); got != "3 open questions · /questions" {

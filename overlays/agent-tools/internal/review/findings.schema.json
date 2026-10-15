@@ -19,7 +19,7 @@
             "enum": ["goal-unmet", "bug", "regression", "unresolved", "out-of-scope", "untested", "untrue-doc", "convention"]
           },
           "claim": {"type": "string", "description": "The problem, in one sentence."},
-          "evidence": {"type": "string", "description": "What shows it: a failing test and its output, a call site, a thread."},
+          "evidence": {"type": "string", "description": "The input or state that triggers it, what goes wrong then, and what shows it: a failing test and its output, a call site, a thread."},
           "about": {"type": ["string", "null"], "description": "The ID of the item the finding concerns, or null."},
           "reopens": {"type": ["string", "null"], "description": "The ID of the earlier finding it reopens, or null."}
         }

@@ -160,14 +160,14 @@ func testPostRecordsFacts(t *testing.T) {
 	}
 	var got []string
 	for _, e := range events {
-		got = append(got, e.Kind+" "+e.Item+" "+e.Branch+" "+e.Commit+" "+e.Summary)
+		got = append(got, e.Kind+" "+e.Item+" "+e.Branch+" "+e.Commit+" "+e.Summary+" "+e.Session)
 	}
 	want := []string{
-		"committed " + p.Name + " main Add the loop Add the loop",
-		"committed " + p.Name + " main Test it Test it",
-		"committed P1 part Add the flag Add the flag",
-		"pushed " + p.Name + " topic  opened https://github.com/o/r/pull/12",
-		"pushed " + p.Name + "   pushed other topic",
+		"committed " + p.Name + " main Add the loop Add the loop s1",
+		"committed " + p.Name + " main Test it Test it s9",
+		"committed P1 part Add the flag Add the flag s1",
+		"pushed " + p.Name + " topic  opened https://github.com/o/r/pull/12 ",
+		"pushed " + p.Name + "   pushed other topic ",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("logged:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -184,5 +184,32 @@ func testPostRecordsFacts(t *testing.T) {
 	}
 	if got := planProperty(t, partFile, "BRANCHES"); got != "main..part" {
 		t.Errorf("the part's BRANCHES: %q", got)
+	}
+}
+
+// A commit no plan takes is still the session's: the Stop hook asks that
+// session, and no other, for a plan.
+func testPostThenStop(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	repo, _ := filepath.EvalSymlinks(t.TempDir())
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+	gitIn(t, repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+	postHook(t, claudeEvent("s2", repo, "git commit --allow-empty -m 'Unplanned'",
+		gitOut(t, repo, "commit", "--allow-empty", "-m", "Unplanned")))
+
+	c, err := plans.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop := func(session string) string {
+		event, _ := json.Marshal(map[string]any{"hook_event_name": "Stop", "session_id": session, "cwd": repo})
+		return string(c.StopCheck(event, time.Now()))
+	}
+	if got := stop("s2"); !strings.Contains(got, "agent-plan new") {
+		t.Errorf("the session that committed: %q", got)
+	}
+	if got := stop("s3"); got != "" {
+		t.Errorf("another session: %q", got)
 	}
 }

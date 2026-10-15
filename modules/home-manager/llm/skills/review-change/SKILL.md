@@ -45,7 +45,13 @@ or a step's.
   a question written with `agent-plan ask` and settled with
   `agent-plan decide`, which logs `decided`.
 - Each fresh review round: `reviewed`, with the number of findings in the
-  summary.
+  summary. The review itself logs a `review-receipt` beside it: the range
+  as given and the patch ID of its change, which no agent can log. Before
+  a session that committed stops, the Stop hook checks that a receipt's
+  patch ID is the change's as it then stands, for a range starting at or
+  below the branch's base in the plan's `BRANCHES` or `origin/<default>`;
+  a rebase or re-sign that keeps the change needs no new round, and any
+  other change, or a review of part of it, does.
 - Each finding settled: `finding-settled` against the item it concerns, with
   `--review <round>.<id> --outcome <outcome>`, the outcome as Triage below.
 - Design review of the result: `reviewed` with `--role design-reviewer`.
@@ -55,7 +61,8 @@ or a step's.
 ## Fresh review loop
 
 The range is the whole change, `BASE..TIP`, with BASE where it starts, such
-as `origin/main` or the parent branch in a stack.
+as `origin/main` or the parent branch in a stack, named rather than as a
+commit, so that the receipt still matches once the branch is rebased.
 
 1. Write the goal statement to a file, and the items the change answers
    (threads, CI checks) with how each was settled to another, if any.
@@ -67,7 +74,8 @@ as `origin/main` or the parent branch in a stack.
    - start a new `reviewer` sub-agent, never a continued one, with that
      prompt as its whole task, and nothing of your notes or reasoning;
    - save its reply to a file and run `git fresh-review --check FILE
-     BASE..TIP`, which prints and exits as a review does.
+     BASE..TIP`, which prints and exits as a review does. The reply names
+     the commit the prompt was printed for, which the receipt records.
 3. Settle every finding as Triage says. `dropped` lists what pointed at no
    line at TIP or did not fit the schema; read it, but it needs no outcome.
 4. For the next round, add `--prior FILE`: every earlier finding and how it
@@ -118,9 +126,11 @@ through `pr-loop review N`.
   git objects behind it and the system files they need, with none of
   Wesley's Codex configuration, no network and no writes, so a change
   cannot steer it into reading credentials.
-- A fresh sub-agent where Codex cannot review: the `reviewer` agent in
-  Claude Code and ECA; elsewhere a new sub-agent told to follow the prompt
-  and only read.
+- A fresh sub-agent where Codex cannot review, or when Wesley asks for one:
+  the `reviewer` agent in Claude Code and ECA; elsewhere a new sub-agent
+  told to follow the prompt and only read. `git fresh-review --reviewer
+  subagent` prints its prompt and exits 0; its reply goes to `--check` as
+  on exit 4.
 - Never Codex in a review-loop session: there `git fresh-review` exits 4 and
   the reviewer is a sub-agent, so `pr-loop` stays the session's only way out.
   `pr-loop review` is that way out: it runs Codex on the host with a prompt
@@ -178,6 +188,16 @@ made trivial; the most callers served; the dependency behind a port), each
 returning the interface with its contract, a call site and what it hides.
 Compare them by how much each hides and how local each likely next change
 stays, and choose as the `plan-work` skill's "Questions for Wesley" says.
+
+Where you and the design review disagree, or the designs leave no clear
+choice, get a second opinion from another model family before it is
+decided: write the question and its options to a file, and run
+`git fresh-review ask --question FILE PATH...`, naming each file in the
+repository the answer rests on (put what it needs from the plan into the
+question file). Codex reads those files and nothing else. On exit 4, ask a
+new sub-agent that only reads instead, as the message says. The answer goes
+beside your recommendation; it informs your own decision, or Wesley's on a
+one-way door, and settles nothing.
 
 It reports in the fresh review's vocabulary where that fits. Settle what
 the goal statement already decides by Triage. Take the rest through the

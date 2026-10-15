@@ -88,17 +88,26 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      keeps it out of the ready lists and the agenda until
                      then, or clear its schedule; log it as postponed
   statusline         Claude Code's status line and Emacs's mode line (reads
-                     stdin): the open questions of the session's plan, else of
-                     the plan of the worktree "cwd" is in, or nothing; never
+                     stdin): "review owed" where the session committed since
+                     its plan's last review receipt, and the open questions of
+                     the session's plan, else of the plan of the worktree
+                     "cwd" is in, or nothing; never
                      touches the network
   own PLAN --worktree DIR --agent ID
                      record agent ID, the harness's ID for a sub-agent or
                      "main" for the session's main thread, as the one agent
                      that edits files in the worktree DIR (OWNERS in the plan)
   stop-check         Claude Code's and Codex's Stop hook, and ECA's postRequest
-                     hook (reads stdin): blocks a stop once when commits have
-                     no plan, steps are done but not verified, or a full
-                     pipeline has no review since the last commit; ECA gets
+                     hook (reads stdin): blocks a stop once when the session's
+                     own commits have no plan, its plan's steps are done but
+                     not verified, or the session committed to a full
+                     pipeline and no review receipt (which git fresh-review
+                     and pr-loop review log) for a range BASE..HEAD, BASE at
+                     or below the branch's base in the plan's BRANCHES or
+                     origin/<default>, has the patch ID of BASE..HEAD as it
+                     stands; the commits as pr-loop guard
+                     --post records them (outside any plan, in
+                     $XDG_STATE_HOME/agent-tools/commits); ECA gets
                      the reason on stderr with exit 2, once per chat, kept in
                      $XDG_STATE_HOME/agent-tools/stop; never touches the network
   remind             a hook (reads stdin) that asks, in a session with a plan,
