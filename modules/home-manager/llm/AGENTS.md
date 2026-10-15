@@ -8,9 +8,8 @@ the flag"), and only then.
 ## Commits and the hardware key
 
 Commits stay unsigned and nothing waits for a touch of Wesley's hardware key:
-he signs everything in one pass at the end. The `signing-pass` skill holds the
-commit rules and the hand-over; load it before creating, amending or
-rewriting a commit.
+he signs everything in one pass at the end. Load the `signing-pass` skill, which
+holds the commit rules, before creating, amending or rewriting a commit.
 
 ## Pull requests
 
@@ -20,12 +19,12 @@ request.
 ## Plans
 
 Every change has a plan, made with `agent-plan new` and kept true as the work
-changes. Log each step's start, completion and verification with
-`agent-plan log`, and never edit a plan's log; a watcher syncs plans between
-hosts, never you. Every question for Wesley, wherever these agreements or a
-skill call for one, goes in the plan through `agent-plan ask`, and is never
-restated in messages. If Wesley asks you to plan,
-write the plan and stop: no edits outside the plan's files, no commits. The `plan-work` skill has the format and the commands.
+changes; log each step's start, completion and verification with
+`agent-plan log`. A watcher syncs plans between hosts, never you. Every
+question for Wesley goes in the plan through `agent-plan ask`, never restated
+in messages. If Wesley asks you to plan, write the plan and stop: no edits
+outside the plan's files, no commits. The `plan-work` skill has the format
+and the commands.
 
 ## Reviews
 
@@ -40,17 +39,15 @@ interface; its principles are what the design review checks.
 
 ## Work in several parts
 
-When a task has parts that could proceed in parallel — several pull requests,
-a stack, review threads across PRs, a list of feedback items — coordinate
-sub-agents as the `coordinate-subagents` skill says: one part per sub-agent,
-each on its own branch in its own worktree, with you checking every report.
+When a task has parts that could proceed in parallel (several pull requests,
+a stack, review threads across PRs, a list of feedback items), coordinate
+sub-agents as the `coordinate-subagents` skill says.
 
 ## Know which branch you are on
 
-Confirm the checked-out branch immediately before starting an edit, not once at
-the beginning of a task. Rebases, cherry-picks and per-branch loops all leave the
-repository somewhere other than where the last edit happened, and edits landing on
-the wrong branch of a stack are expensive to unpick.
+Confirm the checked-out branch immediately before each edit, not once per
+task: rebases, cherry-picks and per-branch loops move the repository between
+edits, and an edit on the wrong branch of a stack is expensive to unpick.
 
 ## Editing files
 
@@ -72,21 +69,17 @@ one blocks the task, hand Wesley the command as "Commands Wesley runs" says,
 and say plainly that whatever it would have shown is unverified.
 
 A secret that reaches the session anyway, in a log, a captured request or a
-fixture, is written nowhere: put `<REDACTED>` in its place in reports, plans,
-pull requests and replies.
+fixture, is written nowhere: put `<REDACTED>` in its place.
 
 ## Commands Wesley runs
 
-Anything that is Wesley's to run, such as a key touch, root or an interactive
-login, is handed over as one line to paste and run as it stands. Join the steps
-with `&&`, spell out paths rather than relying on the current directory, and
-keep it valid in fish. In Claude Code's and Codex's terminal interfaces, which
-run a prompt line beginning with `!` as a shell command in the session, begin
-the line with `!` so its output lands in the conversation; ECA and Claude Code
-through agent-shell do not, so there the line is plain, for `M-!` or a Ghostel
-terminal. A line whose output shows a secret is always plain. A `git sign-pass`
-line carries `--notify ID`, which brings its result back to the session
-however Wesley runs it; the signing-pass skill says how.
+Hand over anything that is Wesley's to run (a key touch, root, an interactive
+login) as one line that runs as it stands: steps joined with `&&`, paths
+spelled out, valid in fish. Begin it with `!` in Claude Code's and Codex's
+terminal interfaces, which run such a line in the session; leave it plain in
+ECA, in Claude Code through agent-shell, and whenever its output shows a
+secret. A `git sign-pass` line carries `--notify ID`, as the `signing-pass`
+skill says.
 
 ## Documentation and comments
 
@@ -96,17 +89,15 @@ README or a skill.
 
 ## Verify before asserting
 
-For how a tool, platform or API actually behaves, test it rather than recalling
-it — especially where the plausible answer and the true one differ. State what was
-observed. When a claim cannot be checked in the current environment, say so
-explicitly instead of implying it was verified, and read the source that owns
-the behaviour (its code, its official docs, its specification) rather than a
-write-up about it, naming which.
+For how a tool, platform or API behaves, test it rather than recalling it,
+and state what was observed. When a claim cannot be checked here, say so, and
+read the source that owns the behaviour (its code, official docs or
+specification) rather than a write-up about it, naming which.
 
-The same applies to review feedback, human or automated: confirm the problem is
-real, and confirm the fix works, before reporting either. A reviewer being wrong is
-worth demonstrating politely; a reviewer being right about something subtle is
-worth acting on even when the exploit does not reproduce.
+Review feedback, human or automated, is checked the same way: confirm the
+problem is real, and that the fix works, before reporting either. Demonstrate
+a wrong reviewer politely; act on a right one about something subtle even
+when the exploit does not reproduce.
 
 **Explain a number.** Before reporting a measured number (a speedup, a
 latency, a count, a pass rate), name what bounds it, from a profile or
@@ -118,30 +109,25 @@ never ran, noise. Report it with its run count and spread.
 afterwards with the same reproduction; for an intermittent one, show how often
 it fails before and after. A retry, a skip or a loosened assertion that hides a
 failure is not a fix unless Wesley asked for one. Load the `diagnose-failure`
-skill before looking for a failure's cause. When a failure could recur, the
-`retro` skill says how to propose what would prevent it.
+skill before looking for a failure's cause.
 
 ## Tests that can fail
 
 A test earns its place only if it can fail. A change in behaviour (a feature,
 a fix, a changed contract) starts with its test, seen failing for the expected
-reason before the code changes, and the report shows both runs. Test against
-the real dependency wherever it can run inside the test; a fake is the
-exception, and the test says why. Load the `write-tests` skill before writing,
-changing or reviewing tests.
-
-A new or changed check, such as a lint rule, CI step, hook, guard rule or Nix
-assertion, is shown the same way: failing on a deliberate violation for the
-expected reason, then passing, with both runs in the report.
+reason before the code changes, and the report shows both runs. A new or
+changed check (a lint rule, CI step, hook, guard rule, Nix assertion) is
+shown the same way, failing on a deliberate violation. Load the `write-tests`
+skill before writing, changing or reviewing tests.
 
 ## Prefer git to gh
 
-When a question can be answered with `git` — does a ref exist, what changed, which
-commit is an ancestor — use `git`. Reach for `gh` only for things that genuinely
-live in the forge: pull requests, reviews, workflow runs, releases.
+When `git` can answer a question (does a ref exist, what changed, which
+commit is an ancestor), use `git`. Use `gh` for what lives only in the forge:
+pull requests, reviews, workflow runs, releases.
 
 ## Stay inside the scope you were given
 
 Do not edit files owned by someone else's in-flight work to make an unrelated
-improvement, even a correct one. Raise it instead. This applies to relocating
-content into another team's document as much as to changing their code.
+improvement, even a correct one, and do not move content into another team's
+document. Raise it instead.

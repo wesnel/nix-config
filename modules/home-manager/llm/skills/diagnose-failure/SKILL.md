@@ -96,3 +96,5 @@ Some failures put one hypothesis first:
   propose with `agent-plan ask` the cheapest signal, always on, that would
   have shown it at first look: an error that names its input, a log line at
   the boundary, a status field.
+- When the failure could recur, the `retro` skill proposes what would
+  prevent it.
