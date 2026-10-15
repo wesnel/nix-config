@@ -89,7 +89,8 @@ done
 
 **6. Hand over for the signing pass**, which also pushes. Run on a fork tip,
 `git sign-pass --push` squashes the fixups, re-signs the tip and the branches
-below it, and pushes every branch that moved. Each fork tip needs its own pass.
+below it, and pushes every branch that moved; a branch never pushed before
+needs `--set-upstream` in place of `--push`. Each fork tip needs its own pass.
 Once everything is pushed, the backups can go:
 `git for-each-ref --format='%(refname)' refs/backup/ | xargs -n1 git update-ref -d`.
 
