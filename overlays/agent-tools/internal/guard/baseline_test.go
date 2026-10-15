@@ -911,6 +911,61 @@ func TestTrash(t *testing.T) {
 	})
 }
 
+// TestNwrap covers ngrok's scripts/nwrap, which runs a command in a
+// worktree mounted at the repository's own path: the command is judged as
+// if it ran without nwrap, and nwrap's own commands are allowed.
+func TestNwrap(t *testing.T) {
+	ssh := filepath.Join(fixture(t, remoteRepos), "ssh")
+	edits := fixture(t, shellEditRepos)
+	work := filepath.Join(edits, "work")
+	old := scratchRoots
+	scratchRoots = func() []string { return []string{filepath.Join(edits, "scratch")} }
+	t.Cleanup(func() { scratchRoots = old })
+	trashOnPath = func() bool { return true }
+	t.Cleanup(func() { trashOnPath = func() bool { return false } })
+
+	prefixes := []string{"nwrap", "./scripts/nwrap", "/src/ngrok/scripts/nwrap", "nwrap --", "nwrap -b main --",
+		"nwrap --branch=main", "nwrap -B feat --no-autocommit --no-copy-files --no-direnv-exec", "nwrap attach -s 3 --",
+		"nwrap -a --session=3", "nwrap --attach --session 3"}
+	for _, c := range []struct{ dir, command string }{
+		{work, "git push origin HEAD"},
+		{ssh, "git fetch origin"},
+		{work, "sed -i '' s/a/b/ a.go"},
+		{work, "rm a.go"},
+	} {
+		alone := judge(t, c.dir, c.command)
+		if alone == "" {
+			t.Fatalf("%q is allowed alone, so it cannot show nwrap judged as it", c.command)
+		}
+		for _, p := range prefixes {
+			t.Run(caseName(true, p+" "+c.command), func(t *testing.T) {
+				if reason := judge(t, c.dir, p+" "+c.command); reason != alone {
+					t.Errorf("%q: reason %q, alone %q", p+" "+c.command, reason, alone)
+				}
+			})
+		}
+	}
+	for _, command := range []string{"nwrap list", "nwrap -l", "nwrap prune --all", "nwrap -b main -- go test ./...",
+		"nwrap", "nwrap -b main", "nwrap --branch=main --session=3 -- go test ./..."} {
+		t.Run(caseName(false, command), func(t *testing.T) {
+			if reason := judge(t, work, command); reason != "" {
+				t.Errorf("%q: %q", command, reason)
+			}
+		})
+	}
+	// An option the guard does not know may take a value, which would then
+	// be judged as the program, so it is refused, naming the known ones.
+	for _, command := range []string{"nwrap --target main git push origin HEAD", "nwrap -x rm a.go",
+		"nwrap --target=main go test ./...", "nwrap -b main --verbose -- go test ./..."} {
+		t.Run(caseName(true, command), func(t *testing.T) {
+			reason := judge(t, work, command)
+			if !strings.Contains(reason, "--create-branch") || !strings.Contains(reason, "--no-direnv-exec") || !saysInstead(reason) {
+				t.Errorf("%q: %q", command, reason)
+			}
+		})
+	}
+}
+
 // TestKill covers kill by process ID, which the guard looks up with ps.
 func TestKill(t *testing.T) {
 	// The protected process is a copy of this test binary named mcp-proxy,
@@ -1197,6 +1252,11 @@ func TestCodexTerminalReaders(t *testing.T) {
 		{"cat -", true},
 		{"tee out.txt", true},
 		{"xargs sh -c 'echo $0'", true},
+		{"nwrap", true},
+		{"./scripts/nwrap -b main --no-autocommit", true},
+		{"nwrap attach -s 3", true},
+		{"nwrap -b main -- go test ./...", false},
+		{"nwrap list", false},
 		{"bash -c 'ls'", false},
 		{"bash script.sh", false},
 		{"python3 x.py", false},
