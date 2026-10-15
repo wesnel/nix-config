@@ -1,6 +1,7 @@
 {
   config,
   lib,
+  pkgs,
   ...
 }:
 with lib; let
@@ -20,7 +21,7 @@ in {
     # and credentials live elsewhere, under ~/.config/amp and
     # ~/.local/share/amp, and are left to Amp.
     home.file =
-      llm.mkSkillFiles ".config/agents/skills" config.wgn.home.llm.skills
+      llm.mkSkillFiles pkgs ".config/agents/skills" config.wgn.home.llm.skills
       // {
         # Amp also reads ~/.config/AGENTS.md; this is the one it calls its own.
         ".config/amp/AGENTS.md".source = config.wgn.home.llm.instructions;

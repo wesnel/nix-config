@@ -652,7 +652,7 @@ func (o *Output) exit() int {
 }
 
 var kinds = map[string]bool{"goal-unmet": true, "bug": true, "regression": true, "unresolved": true,
-	"out-of-scope": true, "untested": true, "untrue-doc": true}
+	"out-of-scope": true, "untested": true, "untrue-doc": true, "convention": true}
 
 // validate parses a reviewer's reply, which may be wrapped in prose or a
 // code fence, and keeps the findings that fit the schema and point at a line

@@ -20,6 +20,11 @@ type Question struct {
 	Recommendation string `json:"recommendation,omitempty"`
 	// Alternatives are the heading's top-level list items.
 	Alternatives []string `json:"alternatives,omitempty"`
+	// After is the AFTER property: the IDs it waits for, and Waiting those
+	// of them not yet settled. Only a question waiting for nothing is put to
+	// Wesley.
+	After   []string `json:"after,omitempty"`
+	Waiting []string `json:"waiting,omitempty"`
 }
 
 var (
@@ -28,7 +33,7 @@ var (
 )
 
 // Questions are the plan's open questions, and with all its parts' too, in
-// file order.
+// file order, each with what it still waits for.
 func (p Plan) Questions(all bool) ([]Question, error) {
 	files := []string{p.file("")}
 	if all {
@@ -37,6 +42,15 @@ func (p Plan) Questions(all bool) ([]Question, error) {
 			return nil, err
 		}
 	}
+	list, err := p.itemList()
+	if err != nil {
+		return nil, err
+	}
+	events, err := p.Events()
+	if err != nil {
+		return nil, err
+	}
+	isSettled := settled(list, events)
 	out := []Question{}
 	for _, f := range files {
 		data, err := os.ReadFile(f)
@@ -53,7 +67,8 @@ func (p Plan) Questions(all bool) ([]Question, error) {
 				continue
 			}
 			q := Question{ID: h.Props["ID"], Part: partOf(f), File: f, Question: h.Title,
-				Recommendation: h.Props["RECOMMENDATION"]}
+				Recommendation: h.Props["RECOMMENDATION"], After: afterIDs(h.Props)}
+			q.Waiting = unsettled(q.After, isSettled)
 			var context []string
 			for _, line := range h.Body {
 				if m := listItem.FindStringSubmatch(line); m != nil {
@@ -82,6 +97,9 @@ func QuestionsOrg(qs []Question) string {
 		}
 		if len(q.Alternatives) > 0 {
 			fmt.Fprintf(&b, " Or: %s.", strings.Join(q.Alternatives, "; "))
+		}
+		if len(q.Waiting) > 0 {
+			fmt.Fprintf(&b, " Waits for: %s.", strings.Join(q.Waiting, ", "))
 		}
 		b.WriteString("\n")
 	}

@@ -125,7 +125,7 @@ in {
       # ~/.config/agents/skills that Amp reads, so this is its own directory
       # rather than a share.
       xdg.configFile =
-        (llm.mkSkillFiles "eca/skills" config.wgn.home.llm.skills)
+        (llm.mkSkillFiles pkgs "eca/skills" config.wgn.home.llm.skills)
         // {
           # Which skills the wrapper may carry into the guest. It is a list
           # beside the skills rather than a mark inside each one, because a
@@ -270,13 +270,15 @@ in {
             }
           ];
         })}
-        # After a push to GitHub, names the `pr-loop wait ci` to start. ECA
-        # runs a postToolCall hook only after a call that succeeded.
+        # Records commits, pushes, worktrees, branches and PRs in the plan
+        # and asks which step a commit completes; after a push to GitHub,
+        # names the `pr-loop wait ci` to start. ECA runs a postToolCall hook
+        # only after a call that succeeded.
         post=${escapeShellArg (builtins.toJSON {
           type = "postToolCall";
           matcher = ".*";
           visible = false;
-          description = "pr-loop guard --post: watch CI after a push";
+          description = "pr-loop guard --post: the plan's facts, and CI after a push";
           actions = [
             {
               type = "shell";
@@ -298,6 +300,34 @@ in {
             }
           ];
         })}
+        # spawn_agent returns a sub-agent's result to the coordinator: asks
+        # it to check the report and log the part. subagentStart and
+        # subagentPostRequest speak only to the sub-agent.
+        subagent=${escapeShellArg (builtins.toJSON {
+          type = "postToolCall";
+          matcher = "eca__spawn_agent";
+          visible = false;
+          description = "agent-plan remind: check a sub-agent's report";
+          actions = [
+            {
+              type = "shell";
+              shell = "agent-plan remind";
+            }
+          ];
+        })}
+        # preCompact can add no context, only block, so after a compaction
+        # asks for the plan to be brought up to date.
+        compact=${escapeShellArg (builtins.toJSON {
+          type = "postCompact";
+          visible = false;
+          description = "agent-plan remind: the plan after a compaction";
+          actions = [
+            {
+              type = "shell";
+              shell = "agent-plan remind";
+            }
+          ];
+        })}
 
         if [ ! -e "$conf" ]; then
           current='{}'
@@ -305,7 +335,7 @@ in {
           current=$(cat "$conf")
         fi
 
-        if merged=$(printf '%s' "$current" | ${pkgs.jq}/bin/jq --argjson hook "$hook" --argjson post "$post" --argjson stop "$stop" '.hooks."guard-baseline" = $hook | .hooks."guard-post" = $post | .hooks."plan-stop" = $stop'); then
+        if merged=$(printf '%s' "$current" | ${pkgs.jq}/bin/jq --argjson hook "$hook" --argjson post "$post" --argjson stop "$stop" --argjson subagent "$subagent" --argjson compact "$compact" '.hooks."guard-baseline" = $hook | .hooks."guard-post" = $post | .hooks."plan-stop" = $stop | .hooks."plan-subagent" = $subagent | .hooks."plan-compact" = $compact'); then
           if [ "$merged" != "$current" ] && [ -z "''${DRY_RUN:-}" ]; then
             mkdir -p "$(dirname "$conf")"
             printf '%s\n' "$merged" > "$conf"
