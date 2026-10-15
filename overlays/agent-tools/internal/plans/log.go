@@ -35,6 +35,10 @@ type Event struct {
 	// Session is the session whose tool call the event records, as its
 	// hook names it: Claude Code's or Codex's session_id, ECA's chat_id.
 	Session string `json:"session,omitempty"`
+	// Worktree is the top level of the worktree the event happened in, and
+	// Tip, on a branch-changed event, the commit of a detached HEAD.
+	Worktree string `json:"worktree,omitempty"`
+	Tip      string `json:"tip,omitempty"`
 	// Sign is a sign-pass's ID, Exit its exit status, and Delivers the
 	// event ID of the result a sign-delivered event delivered.
 	Sign     string `json:"sign,omitempty"`
@@ -64,6 +68,8 @@ var (
 		kinds := map[string]string{
 			"committed": "a hook after each shell call logs `committed` for every commit, from what git printed. " +
 				"Log `done` with `--commit SUBJECT` for the step a commit completes",
+			branchChanged: "the guard logs `branch-changed` when a session's file edit lands on another branch or worktree than its last. " +
+				"Confirm the branch with `git branch --show-current` before the edit",
 			"pushed": "pr-loop, and a hook after each shell call, log `pushed` for every push, from what they pushed. " +
 				"Watch the push's CI with `pr-loop wait ci` as the signing-pass skill says",
 		}
@@ -91,7 +97,8 @@ func oneOf(value string, allowed []string) bool {
 // check refuses an event the log must not hold.
 func (p Plan) check(e Event) error {
 	for what, v := range map[string]string{"summary": e.Summary, "agent": e.Agent, "branch": e.Branch,
-		"commit": e.Commit, "evidence": e.Evidence, "item": e.Item, "kind": e.Kind, "session": e.Session} {
+		"commit": e.Commit, "evidence": e.Evidence, "item": e.Item, "kind": e.Kind, "session": e.Session,
+		"worktree": e.Worktree, "tip": e.Tip} {
 		if err := checkLine(what, v); err != nil {
 			return err
 		}
@@ -227,7 +234,7 @@ func eventText(e Event) string {
 	b.WriteString("\n:PROPERTIES:\n")
 	for _, kv := range [][2]string{{"EVENT", e.ID}, {"AGENT", e.Agent}, {"ROLE", e.Role}, {"ITEM", e.Item},
 		{"KIND", e.Kind}, {"BRANCH", e.Branch}, {"COMMIT", e.Commit}, {"EVIDENCE", e.Evidence},
-		{"REVIEW", e.Review}, {"OUTCOME", e.Outcome}, {"SESSION", e.Session},
+		{"REVIEW", e.Review}, {"OUTCOME", e.Outcome}, {"SESSION", e.Session}, {"WORKTREE", e.Worktree}, {"TIP", e.Tip},
 		{"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}} {
 		if kv[1] != "" {
 			b.WriteString(":" + kv[0] + ": " + kv[1] + "\n")
@@ -430,7 +437,8 @@ func (p Plan) Events() ([]Event, error) {
 		e := Event{ID: h.Props["EVENT"], Kind: h.Props["KIND"], Item: h.Props["ITEM"], Agent: h.Props["AGENT"],
 			Role: h.Props["ROLE"], Branch: h.Props["BRANCH"], Commit: h.Props["COMMIT"],
 			Evidence: h.Props["EVIDENCE"], Review: h.Props["REVIEW"], Outcome: h.Props["OUTCOME"],
-			Session: h.Props["SESSION"], Sign: h.Props["SIGN"], Exit: h.Props["EXIT"], Delivers: h.Props["DELIVERS"]}
+			Session: h.Props["SESSION"], Worktree: h.Props["WORKTREE"], Tip: h.Props["TIP"], Sign: h.Props["SIGN"],
+			Exit: h.Props["EXIT"], Delivers: h.Props["DELIVERS"]}
 		if _, summary, ok := strings.Cut(h.Title, " — "); ok {
 			e.Summary = summary
 		}
