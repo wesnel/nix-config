@@ -339,7 +339,8 @@ in {
         # as a prompt; SubagentStop's output would reach only the sub-agent.
         # Any other prompt is Wesley's: its URLs become plan references.
         # Either asks once per quota threshold whether to keep going or
-        # postpone.
+        # postpone, and carries the time and how long since Wesley's
+        # previous message.
         hooks.UserPromptSubmit = [
           {
             hooks = [

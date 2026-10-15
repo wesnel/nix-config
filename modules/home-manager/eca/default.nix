@@ -339,10 +339,11 @@ in {
         # parent_chat_id is a sub-agent's, which agent-plan skips. Asks once
         # per quota threshold of the model's provider whether to keep going
         # or postpone, from the readings other sessions on this host made.
+        # Carries the time and how long since Wesley's previous message.
         prompt=${escapeShellArg (builtins.toJSON {
           type = "preRequest";
           visible = false;
-          description = "agent-plan remind: the prompt's references and the quota ask";
+          description = "agent-plan remind: the prompt's references, the quota ask and the time";
           actions = [
             {
               type = "shell";

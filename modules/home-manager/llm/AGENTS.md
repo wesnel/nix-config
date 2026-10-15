@@ -99,6 +99,11 @@ problem is real, and that the fix works, before reporting either. Demonstrate
 a wrong reviewer politely; act on a right one about something subtle even
 when the exploit does not reproduce.
 
+**External facts expire.** Re-read external state (a pull request's state,
+CI, review threads, remote branches, issues) right before stating it or
+acting on it. Each prompt carries the time and how long since Wesley's
+previous message.
+
 **Explain a number.** Before reporting a measured number (a speedup, a
 latency, a count, a pass rate), name what bounds it, from a profile or
 counters taken during the run rather than from reading code, and rule out

@@ -14,6 +14,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/plans"
+	"github.com/wesnel/agent-tools/internal/prompttime"
 	"github.com/wesnel/agent-tools/internal/relay"
 	quota "github.com/wesnel/agent-tools/internal/usage"
 )
@@ -150,7 +151,9 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      prompts, task-notifications included, adds a line for
                      each result of the session's sign-passes not yet
                      delivered, logging it as sign-delivered, marked stale
-                     when over a day old; never blocks
+                     when over a day old; and on every one of those prompts,
+                     with or without a plan, adds the time and how long since
+                     Wesley's previous message in the session; never blocks
   sign-id [--session ID] [--branch B]...
                      log a sign-pass about to be handed to Wesley as
                      sign-requested in the plan of this session (--session,
@@ -272,6 +275,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				c.RecordUsageAsk(input, ask, time.Now())
 			}
 			out = plans.WithContext(out, input, ask)
+		}
+		if line := prompttime.Remind(prompttime.DefaultDir(), input, time.Now()); line != "" {
+			out = plans.WithContext(out, input, line)
 		}
 		if len(out) > 0 {
 			stdout.Write(append(out, '\n'))

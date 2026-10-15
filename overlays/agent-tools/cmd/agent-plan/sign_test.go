@@ -57,19 +57,20 @@ func TestSign(t *testing.T) {
 	wg.Wait()
 	delivered := 0
 	want := "sign-pass " + id + " signed: 2 signed; pushed loop"
+	// Every prompt also carries the time, after any result.
 	for _, out := range outs {
-		if out == "" {
-			continue
-		}
-		delivered++
 		var got struct {
 			Specific struct {
 				Event   string `json:"hookEventName"`
 				Context string `json:"additionalContext"`
 			} `json:"hookSpecificOutput"`
 		}
-		if json.Unmarshal([]byte(out), &got) != nil || got.Specific.Event != "UserPromptSubmit" || got.Specific.Context != want {
+		if json.Unmarshal([]byte(out), &got) != nil || got.Specific.Event != "UserPromptSubmit" ||
+			!strings.HasPrefix(got.Specific.Context, "It is ") && !strings.HasPrefix(got.Specific.Context, want+"\n\nIt is ") {
 			t.Errorf("remind printed %q", out)
+		}
+		if strings.Contains(got.Specific.Context, "sign-pass") {
+			delivered++
 		}
 	}
 	if delivered != 1 {
@@ -94,7 +95,7 @@ func TestSignResultFirst(t *testing.T) {
 	if code != 0 || strings.TrimSpace(out) != "sign-pass "+id+" refused: this worktree has uncommitted changes" {
 		t.Errorf("sign-result: %d %q %q", code, out, errs)
 	}
-	if code, out, _ := agentPlan(t, `{"session_id":"s-1","hook_event_name":"UserPromptSubmit","prompt":"go"}`, "remind"); code != 0 || out != "" {
+	if code, out, _ := agentPlan(t, `{"session_id":"s-1","hook_event_name":"UserPromptSubmit","prompt":"go"}`, "remind"); code != 0 || strings.Contains(out, "sign-pass") {
 		t.Errorf("remind after sign-result: %d %q", code, out)
 	}
 }
