@@ -17,6 +17,9 @@ type schema struct {
 					Kind struct {
 						Enum []string `json:"enum"`
 					} `json:"kind"`
+					Evidence struct {
+						Description string `json:"description"`
+					} `json:"evidence"`
 				} `json:"properties"`
 			} `json:"items"`
 		} `json:"findings"`
@@ -69,6 +72,19 @@ func TestContract(t *testing.T) {
 		rules, _, _ = strings.Cut(rules, "## Checks")
 		if !strings.Contains(rules, "`convention`") {
 			t.Errorf("the rules do not say a written rule is a finding:\n%s", rules)
+		}
+	})
+
+	// A finding's evidence names what triggers the problem, as both the
+	// contract's description of the field and the schema's say.
+	t.Run("evidence names the trigger", func(t *testing.T) {
+		const trigger = "the input or state that triggers it"
+		if d := loadSchema(t).Properties.Findings.Items.Properties.Evidence.Description; !strings.Contains(strings.ToLower(d), trigger) {
+			t.Errorf("the schema's evidence is %q, without %q", d, trigger)
+		}
+		_, output, _ := strings.Cut(Contract, "## Output")
+		if !strings.Contains(output, "- `evidence`: "+trigger) {
+			t.Errorf("the contract's Output does not describe evidence as %q:\n%s", trigger, output)
 		}
 	})
 
