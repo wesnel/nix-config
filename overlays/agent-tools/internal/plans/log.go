@@ -53,6 +53,10 @@ type Event struct {
 	Sign     string `json:"sign,omitempty"`
 	Exit     string `json:"exit,omitempty"`
 	Delivers string `json:"delivers,omitempty"`
+	// Property and Value are a property event's: the property of the
+	// item's `* Plan` heading, and its values, separated by spaces.
+	Property string `json:"property,omitempty"`
+	Value    string `json:"value,omitempty"`
 	// Note is what the caller should know about the event, such as a
 	// heading keyword Log could not write; the log does not hold it.
 	Note string `json:"note,omitempty"`
@@ -81,6 +85,8 @@ var (
 				"Run `git fresh-review` (or `pr-loop review` for someone else's pull request) as the review-change skill says",
 			"committed": "a hook after each shell call logs `committed` for every commit, from what git printed. " +
 				"Log `done` with `--commit SUBJECT` for the step a commit completes",
+			propertyKind: "agent-plan logs each change of a plan's WORKTREES, BRANCHES, PULL_REQUESTS and OWNERS that it makes. " +
+				"Change one with `agent-plan set PLAN NAME VALUE...`, or OWNERS with `agent-plan own`",
 			branchChanged: "the guard logs `branch-changed` when a session's file edit lands on another branch or worktree than its last. " +
 				"Confirm the branch with `git branch --show-current` before the edit",
 			stopBlocked: "the stop-check logs `stop-blocked` for each stop of an ECA chat it blocks. " +
@@ -113,7 +119,7 @@ func oneOf(value string, allowed []string) bool {
 func (p Plan) check(e Event) error {
 	for what, v := range map[string]string{"summary": e.Summary, "agent": e.Agent, "branch": e.Branch,
 		"commit": e.Commit, "evidence": e.Evidence, "model": e.Model, "item": e.Item, "kind": e.Kind, "session": e.Session,
-		"worktree": e.Worktree, "range": e.Range, "tip": e.Tip, "patch ID": e.PatchID} {
+		"worktree": e.Worktree, "range": e.Range, "tip": e.Tip, "patch ID": e.PatchID, "property": e.Property, "value": e.Value} {
 		if err := checkLine(what, v); err != nil {
 			return err
 		}
@@ -259,7 +265,7 @@ func eventText(e Event) string {
 		{"KIND", e.Kind}, {"BRANCH", e.Branch}, {"COMMIT", e.Commit}, {"EVIDENCE", e.Evidence},
 		{"REVIEW", e.Review}, {"OUTCOME", e.Outcome}, {"TOKENS", tokens}, {"MODEL", e.Model},
 		{"EFFORT", e.Effort}, {"SESSION", e.Session}, {"WORKTREE", e.Worktree}, {"RANGE", e.Range}, {"TIP", e.Tip}, {"PATCH_ID", e.PatchID},
-		{"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}} {
+		{"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}, {"PROPERTY", e.Property}, {"VALUE", e.Value}} {
 		if kv[1] != "" {
 			b.WriteString(":" + kv[0] + ": " + kv[1] + "\n")
 		}
@@ -463,7 +469,7 @@ func (p Plan) Events() ([]Event, error) {
 			Evidence: h.Props["EVIDENCE"], Review: h.Props["REVIEW"], Outcome: h.Props["OUTCOME"],
 			Model: h.Props["MODEL"], Effort: h.Props["EFFORT"], Session: h.Props["SESSION"], Worktree: h.Props["WORKTREE"],
 			Range: h.Props["RANGE"], Tip: h.Props["TIP"], PatchID: h.Props["PATCH_ID"], Sign: h.Props["SIGN"], Exit: h.Props["EXIT"],
-			Delivers: h.Props["DELIVERS"]}
+			Delivers: h.Props["DELIVERS"], Property: h.Props["PROPERTY"], Value: h.Props["VALUE"]}
 		e.Tokens, _ = strconv.ParseInt(h.Props["TOKENS"], 10, 64)
 		if _, summary, ok := strings.Cut(h.Title, " — "); ok {
 			e.Summary = summary

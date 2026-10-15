@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
@@ -40,9 +41,9 @@ func (c Config) Owners() (map[string]string, error) {
 }
 
 // SetOwner records agent, a harness's agent ID or MainAgent, as the owner
-// of worktree in the plan's OWNERS, replacing its earlier owner there, and
-// returns the plan's owners.
-func (p Plan) SetOwner(worktree, agent string) (map[string]string, error) {
+// of worktree in the plan's OWNERS, replacing its earlier owner there, logs
+// OWNERS as tracked properties are, and returns the plan's owners.
+func (p Plan) SetOwner(worktree, agent string, now time.Time) (map[string]string, error) {
 	if err := p.checkOwn(); err != nil {
 		return nil, err
 	}
@@ -57,26 +58,28 @@ func (p Plan) SetOwner(worktree, agent string) (map[string]string, error) {
 		worktree = real
 	}
 	var owners map[string]string
-	err := p.editPlanProperty(p.file(""), "OWNERS", func(values []string) []string {
-		owners = map[string]string{}
-		pair := worktree + "=" + agent
-		var pairs []string
-		for _, v := range values {
-			wt, a, ok := strings.Cut(v, "=")
-			switch {
-			case !ok:
-				continue
-			case wt == worktree:
-				v, a, pair = pair, agent, ""
+	err := p.withLock(func(l *lockedPlan) error {
+		return l.setPlanProperty("", "OWNERS", func(values []string) []string {
+			owners = map[string]string{}
+			pair := worktree + "=" + agent
+			var pairs []string
+			for _, v := range values {
+				wt, a, ok := strings.Cut(v, "=")
+				switch {
+				case !ok:
+					continue
+				case wt == worktree:
+					v, a, pair = pair, agent, ""
+				}
+				pairs = append(pairs, v)
+				owners[wt] = a
 			}
-			pairs = append(pairs, v)
-			owners[wt] = a
-		}
-		if pair != "" {
-			pairs = append(pairs, pair)
-			owners[worktree] = agent
-		}
-		return pairs
+			if pair != "" {
+				pairs = append(pairs, pair)
+				owners[worktree] = agent
+			}
+			return pairs
+		}, now)
 	})
 	return owners, err
 }

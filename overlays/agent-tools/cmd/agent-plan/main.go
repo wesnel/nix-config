@@ -47,7 +47,13 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      steps without done, done without verified, parts ready
                      to start, steps ready now (no open AFTER item, earlier
                      ORDERED siblings settled, not scheduled for later),
-                     what still waits, keyword drift, and tokens
+                     what still waits, keyword drift, property drift (a
+                     WORKTREES, BRANCHES, PULL_REQUESTS or OWNERS value, or a
+                     References entry, the log does not give), and tokens
+  set PLAN NAME [VALUE...] [--part P1]
+                     set WORKTREES, BRANCHES or PULL_REQUESTS of the plan's
+                     file, or the part's, to the values, and log it; new,
+                     own and the hooks log the changes they make
   questions PLAN [--all] [--waiting] [--json | --count]
                      the open questions Wesley can answer now, by priority,
                      with their recommendations; --all adds the parts',
@@ -603,7 +609,21 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		if !ok {
 			return 2
 		}
-		return report(p.SetOwner(worktree, *agent))
+		return report(p.SetOwner(worktree, *agent, time.Now()))
+	case "set":
+		if len(positional) < 2 {
+			fmt.Fprint(stderr, "agent-plan set: takes PLAN NAME [VALUE...] [--part P1]\n")
+			return 2
+		}
+		p, err := c.Open(positional[0])
+		if err != nil {
+			return report(nil, err)
+		}
+		name, values := positional[1], positional[2:]
+		if err := p.SetProperty(*part, name, values, time.Now()); err != nil {
+			return report(nil, err)
+		}
+		return report(map[string]any{"property": name, "values": values}, nil)
 	case "reseal":
 		p, ok := wantPlan()
 		if !ok {

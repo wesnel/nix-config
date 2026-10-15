@@ -42,6 +42,11 @@ agent-plan new --parent PLAN --part P1 --title 'Add the run loop flag' --branch 
   work runs under beyond this one, such as `coordinate-subagents` or
   `review-loop`, which you add) and, once `agent-plan own` sets one,
   `OWNERS` (`worktree=agent`). Lists are separated by spaces.
+  `WORKTREES`, `BRANCHES`, `PULL_REQUESTS` and `OWNERS` follow the log, as
+  step keywords do: never edit them by hand. Change one with
+  `agent-plan set PLAN BRANCHES main..loop [--part P1]`, which logs the
+  whole new value; `agent-plan status` lists a value the log does not
+  give, and a References entry it does not hold, as property drift.
 - `** Goal`: the goal and what is not this change's job, and nothing of how
   the work went. It is the fresh review's goal statement, word for word:
   `agent-plan goal PLAN [--part P1]` prints it. It ends with a
@@ -97,7 +102,7 @@ ready.
 An ID is never reused or renumbered; a step dropped from the work keeps its
 ID and gets an `abandoned` event. Edit only your own plan file, and change
 it in the same step as what it describes: a new step, a decision, a moved
-base.
+base (through `agent-plan set`).
 
 ## The log
 
@@ -137,7 +142,7 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
 
 `agent-plan status PLAN` lists the steps without `done` and those done but
 not `verified`, the parts ready to start, the steps ready now, what still
-waits on an `:AFTER:` item, keyword drift, steps started with nothing
+waits on an `:AFTER:` item, keyword and property drift, steps started with nothing
 logged for a day, commits no `done` event names (a `fixup!`, `amend!` or
 `squash!` commit counts as the one it names), and tokens by part, kind and
 model; `agent-plan tokens` totals every plan's. Log `done` with the

@@ -71,7 +71,7 @@ func TestDecide(t *testing.T) {
 		if entry := linesAt(t, p.file(""), "Q1", 7); !strings.Contains(entry, ":RECOMMENDATION: no, drop it\n:ANSWER: drop it\n:END:\nNothing reads it.") {
 			t.Errorf("entry:\n%s", entry)
 		}
-		events, _ := p.Events()
+		events := eventsBut(t, p, "property")
 		if len(events) != 1 || events[0].Kind != "decided" || events[0].Item != "Q1" || events[0].Summary != "drop it" {
 			t.Errorf("events %+v", events)
 		}

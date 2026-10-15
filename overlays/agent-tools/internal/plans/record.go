@@ -238,9 +238,9 @@ func (p Plan) Record(part string, e Event, now time.Time) (Event, error) {
 }
 
 // AddToProperty adds value to the list property name of the `* Plan`
-// heading in the plan's file, or the part's, unless it is there, and
-// reports whether it added it.
-func (p Plan) AddToProperty(part, name, value string) (bool, error) {
+// heading in the plan's file, or the part's, unless it is there, logs the
+// property as tracked properties are, and reports whether it added it.
+func (p Plan) AddToProperty(part, name, value string, now time.Time) (bool, error) {
 	if err := p.checkOwn(); err != nil {
 		return false, err
 	}
@@ -248,51 +248,14 @@ func (p Plan) AddToProperty(part, name, value string) (bool, error) {
 		return false, err
 	}
 	added := false
-	err := p.editPlanProperty(p.file(part), name, func(values []string) []string {
-		added = !slices.Contains(values, value)
-		if !added {
-			return values
-		}
-		return append(values, value)
+	err := p.withLock(func(l *lockedPlan) error {
+		return l.setPlanProperty(part, name, func(values []string) []string {
+			added = !slices.Contains(values, value)
+			if !added {
+				return values
+			}
+			return append(values, value)
+		}, now)
 	})
 	return added, err
-}
-
-// editPlanProperty sets the list property name of file's `* Plan` heading
-// to what edit makes of its values, adding the property at the end of the
-// drawer if it has none. edit may run more than once, each time on the
-// values the file then holds.
-func (p Plan) editPlanProperty(file, name string, edit func(values []string) []string) error {
-	return p.withLock(func(l *lockedPlan) error {
-		return l.edit(file, func(lines []string) ([]string, error) {
-			lines = slices.Clone(lines)
-			start := slices.Index(lines, "* Plan")
-			if start < 0 {
-				return nil, refusal.New("%s has no `* Plan` heading. Restore it as the plan-work skill describes, then try again", file)
-			}
-			at, end := -1, -1
-			var values []string
-			for i := start + 1; i < len(lines) && end < 0; i++ {
-				switch {
-				case lines[i] == ":END:":
-					end = i
-				case strings.HasPrefix(lines[i], ":"+name+":"):
-					at = i
-					values = strings.Fields(strings.TrimPrefix(lines[i], ":"+name+":"))
-				}
-			}
-			if end < 0 {
-				return nil, refusal.New("%s's `* Plan` heading has no property drawer. Restore it as the plan-work skill describes, then try again", file)
-			}
-			line := ":" + name + ":"
-			if values = edit(values); len(values) > 0 {
-				line += " " + strings.Join(values, " ")
-			}
-			if at >= 0 {
-				lines[at] = line
-				return lines, nil
-			}
-			return slices.Insert(lines, end, line), nil
-		})
-	})
 }

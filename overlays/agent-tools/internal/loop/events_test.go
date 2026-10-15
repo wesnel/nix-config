@@ -36,7 +36,8 @@ func loopPlan(t *testing.T, worktrees, branches []string) plans.Plan {
 	return p
 }
 
-// loopEvents are the kind and summary of each event in p's log.
+// loopEvents are the kind and summary of each event in p's log but the
+// property events the plan starts with.
 func loopEvents(t *testing.T, p plans.Plan) []string {
 	t.Helper()
 	events, err := p.Events()
@@ -45,7 +46,9 @@ func loopEvents(t *testing.T, p plans.Plan) []string {
 	}
 	var out []string
 	for _, e := range events {
-		out = append(out, e.Kind+": "+e.Summary)
+		if e.Kind != "property" {
+			out = append(out, e.Kind+": "+e.Summary)
+		}
 	}
 	return out
 }

@@ -158,7 +158,9 @@ func testPostRecordsFacts(t *testing.T) {
 	}
 	var got []string
 	for _, e := range events {
-		got = append(got, e.Kind+" "+e.Item+" "+e.Branch+" "+e.Commit+" "+e.Summary+" "+e.Session)
+		if e.Kind != "property" {
+			got = append(got, e.Kind+" "+e.Item+" "+e.Branch+" "+e.Commit+" "+e.Summary+" "+e.Session)
+		}
 	}
 	want := []string{
 		"committed " + p.Name + " main Add the loop Add the loop s1",
@@ -182,6 +184,10 @@ func testPostRecordsFacts(t *testing.T) {
 	}
 	if got := planProperty(t, partFile, "BRANCHES"); got != "main..part" {
 		t.Errorf("the part's BRANCHES: %q", got)
+	}
+	// The properties are what the log gives them.
+	if s, err := p.Status(); err != nil || len(s.PropertyDrift) != 0 {
+		t.Errorf("property drift %+v, %v", s.PropertyDrift, err)
 	}
 }
 

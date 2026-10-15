@@ -95,7 +95,7 @@ func TestStepKeywords(t *testing.T) {
 		if !strings.Contains(e.Note, "Emacs") {
 			t.Errorf("note %q", e.Note)
 		}
-		if events, _ := p.Events(); len(events) != 1 {
+		if events := eventsBut(t, p, "property"); len(events) != 1 {
 			t.Errorf("events %+v", events)
 		}
 		s, err := p.Status()

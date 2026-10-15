@@ -249,7 +249,7 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 		if path := newWorktree(g); path != "" {
 			if real, err := filepath.EvalSymlinks(path); err == nil && toplevel(real) == real {
 				if p, part, ok := at(g.dir); ok {
-					p.AddToProperty(part, "WORKTREES", real)
+					p.AddToProperty(part, "WORKTREES", real, now)
 				}
 			}
 		}
@@ -277,7 +277,7 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 			value = start + ".." + name
 		}
 		if p, part, ok := at(g.dir); ok {
-			p.AddToProperty(part, "BRANCHES", value)
+			p.AddToProperty(part, "BRANCHES", value, now)
 		}
 	}
 	who := pushers(command, 0)
@@ -291,7 +291,7 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 	for _, result := range jsonObjects(texts) {
 		if url, isURL := result["url"].(string); isURL && result["pr"] != nil {
 			branch, _ := result["branch"].(string)
-			p.AddToProperty(part, "PULL_REQUESTS", url)
+			p.AddToProperty(part, "PULL_REQUESTS", url, now)
 			p.Record(part, plans.Event{Kind: "pushed", Branch: branch, Summary: "opened " + url}, now)
 			return
 		}
