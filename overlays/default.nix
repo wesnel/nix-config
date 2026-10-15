@@ -9,11 +9,6 @@ final: prev: {
 
   tbxark-mcp-proxy = final.callPackage ./tbxark-mcp-proxy {};
 
-  notmuch = prev.notmuch.overrideAttrs (old: {
-    # FIXME: These tests seem to just be failing due to an upstream formatting issue.
-    NOTMUCH_SKIP_TESTS = "T310-emacs.62 T315-emacs-tagging.8 T315-emacs-tagging.9";
-  });
-
   zwift-offline-image = let
     imageDigest = "sha256:74d461d0271c1b11520a3d8aa8973dc9254fcecd2ef07c7ed53c618a741279b0";
     sha256 = "0q97352z34mjmximiqhirn2pzrljkiiw07cshp9yvzr69kj2aqa3";
