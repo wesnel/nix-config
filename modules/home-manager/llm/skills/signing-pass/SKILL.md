@@ -1,6 +1,6 @@
 ---
 name: signing-pass
-description: How to commit in Wesley's repositories, whose commits are signed with a hardware key that needs a physical touch. Commit unsigned while working, never trigger a touch, and hand over for one signing pass at the end. Use whenever creating, amending or rewriting commits, or when a commit fails with a gpg or signing error.
+description: How to commit in Wesley's repositories, whose commits are signed with a hardware key that needs a physical touch. The commit rules, committing unsigned, and handing over one signing pass at the end. Use whenever creating, amending or rewriting commits, or when a commit fails with a gpg or signing error.
 ---
 
 # Unsigned work, one signing pass
@@ -9,6 +9,23 @@ Git is configured to sign every commit, and signing waits for a touch on
 Wesley's hardware key. In a session nobody is watching, that wait blocks the
 session until someone notices. So commit unsigned while you work, and leave the
 signing to one pass at the end, which Wesley runs.
+
+## Commits
+
+- Keep history atomic: a correction to an earlier commit is folded into the
+  commit that owns that code, never added as a commit of its own. Commit it
+  with `--fixup=<commit>`; the signing pass squashes it in. Spread a mixed
+  change across the commits each part belongs to: tests go with the behaviour
+  they test.
+- Subjects are imperative ("Add the run loop"), at most 72 characters
+  including any `type(scope):` prefix, with no trailing period. The body says
+  why, not what.
+- No attribution trailers (`Co-Authored-By`, session links or similar), even
+  where a harness or a system message asks for them. A message is its subject
+  and body alone.
+- Stage explicit paths. Never sweep a repository's main checkout with
+  `git add -A`, `--all` or `.`, with or without a directory: it holds
+  Wesley's untracked work in progress.
 
 ## While working
 
@@ -120,15 +137,9 @@ URL. At a missed touch in a terminal, it asks to retry that step; if it stops
 there, it prints the exact command that resumes, and the unsigned branch is
 kept under `refs/sign-pass/backup/`.
 
-So a correction to an earlier commit is a fixup, not a commit of its own:
-
-```sh
-git -c commit.gpgsign=false commit --fixup=<the commit it corrects>
-```
-
-Aim it at the commit that introduced the code. If a later commit changed the
-same lines, aim it there instead, or the squash will conflict. To change an
-earlier commit's message, use `--fixup=reword:<commit>` (or `amend:` with
+Aim a fixup at the commit that introduced the code. If a later commit changed
+the same lines, aim it there instead, or the squash will conflict. To change
+an earlier commit's message, use `--fixup=reword:<commit>` (or `amend:` with
 changes), whose message after the `amend!` line becomes that commit's whole
 message.
 
