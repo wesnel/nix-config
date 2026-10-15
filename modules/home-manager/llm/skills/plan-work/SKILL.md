@@ -120,8 +120,11 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
 - A hook after each shell call logs `committed` for every commit and
   `pushed` for every push, and adds new worktrees, branches and pull
   requests to the plan's properties, in the plan of the session or of the
-  worktree it ran in; log neither yourself. Which step a commit completes
-  stays yours to log.
+  worktree it ran in; `agent-plan log` refuses both. A commit no plan takes
+  makes a plan for it, "Unplanned work in" its repository, which names the
+  session and worktree; give it a goal and steps, or say in your report
+  which plan the work belongs to. Which step a commit completes stays
+  yours to log.
 - `--commit` takes the commit's subject: the signing pass changes every SHA.
 - An event about the whole plan names the plan's ID; about a part, the
   part's.

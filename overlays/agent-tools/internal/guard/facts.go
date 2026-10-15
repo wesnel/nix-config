@@ -203,7 +203,8 @@ func session(chatID, sessionID string) string {
 // recordFacts records in the matching plan what the shell call command,
 // run in cwd by session, did, by its output texts, and returns a line of
 // context for each commit recorded, asking which step it completes, which
-// is the agent's judgement. Every failure leaves the plan as it was.
+// is the agent's judgement. A commit no plan takes makes a plan for it
+// (plans.Config.RecordCommit). Every failure leaves the plan as it was.
 func recordFacts(session, cwd, command string, texts []string, now time.Time) (context []string) {
 	c, err := plans.Load()
 	if err != nil {
@@ -223,10 +224,6 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 				if _, ok := (gitState{dir: g.dir}).run("cat-file", "-e", m[2]+"^{commit}"); !ok {
 					continue
 				}
-				p, part, ok := at(g.dir)
-				if !ok {
-					continue
-				}
 				branch := m[1]
 				if strings.ContainsAny(branch, " \t") {
 					branch = ""
@@ -235,10 +232,16 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 				if strings.ContainsAny(who, " \t\r\n") {
 					who = ""
 				}
-				if _, err := p.Record(part, plans.Event{Kind: "committed", Branch: branch, Commit: m[3], Summary: m[3], Session: who}, now); err == nil {
-					context = append(context, fmt.Sprintf("The commit %q is logged in %s. If it completes a step, which step? "+
-						"Log `done` for it with `--commit %s`; if none, carry on.", m[3], p.File(), shellQuote(m[3])))
+				p, created, err := c.RecordCommit(who, toplevel(g.dir), plans.Event{Branch: branch, Commit: m[3], Summary: m[3]}, now)
+				if err != nil {
+					continue
 				}
+				if created {
+					context = append(context, fmt.Sprintf("No plan named this session or worktree, so %s was made for this commit. "+
+						"Write its goal and steps as the plan-work skill says, or, if the work belongs to another plan, say so in your report.", p.File()))
+				}
+				context = append(context, fmt.Sprintf("The commit %q is logged in %s. If it completes a step, which step? "+
+					"Log `done` for it with `--commit %s`; if none, carry on.", m[3], p.File(), shellQuote(m[3])))
 			}
 			continue
 		}

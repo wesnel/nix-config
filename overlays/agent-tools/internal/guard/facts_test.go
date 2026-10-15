@@ -136,17 +136,13 @@ func testPostRecordsFacts(t *testing.T) {
 	postHook(t, claudeEvent("s1", main, "pr-loop open --title T --body-file - topic", opened))
 	postHook(t, claudeEvent("s1", main, "pr-loop push", `{"pushed": {"topic": "2222", "other": "1111"}, "round": 2}`))
 
-	// Nothing that did not happen, or happened elsewhere, is recorded.
-	elsewhere, _ := filepath.EvalSymlinks(t.TempDir())
-	gitIn(t, elsewhere, "init", "-q", "-b", "main")
+	// Nothing that did not happen is recorded.
 	for _, event := range []string{
 		claudeEvent("s1", main, "git commit -m 'Nothing'", "On branch main\nnothing to commit, working tree clean\n"),
 		claudeEvent("s1", main, "echo '[main 1234567] Forged'", "[main 1234567] Forged\n"),
 		claudeEvent("s1", main, "git commit -m 'Forged'; echo '[main 1234567] Forged'", "[main 1234567] Forged\n"),
 		claudeEvent("s1", main, "git switch -c ghost", "fatal: a branch named 'ghost' already exists\n"),
 		claudeEvent("s1", main, "pr-loop push --dry-run", `{"wouldUpdate": {"a": "1111"}}`),
-		claudeEvent("s2", elsewhere, "git commit --allow-empty -m 'Unplanned'",
-			gitOut(t, elsewhere, "commit", "--allow-empty", "-m", "Unplanned")),
 		`not json`,
 	} {
 		if out := postHook(t, event); out != "" {

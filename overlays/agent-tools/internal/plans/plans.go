@@ -105,6 +105,9 @@ type NewOptions struct {
 	// Template names <plans repository>/templates/<Template>.org, whose
 	// entries the new plan starts with.
 	Template string
+	// Goal is a line the plan's Goal starts with, and Status its STATUS
+	// in place of planning.
+	Goal, Status string
 }
 
 // Created is what New made.
@@ -171,6 +174,15 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 		if sections, err = c.template(o.Template); err != nil {
 			return Created{}, err
 		}
+	}
+	if o.Goal != "" {
+		if err := checkLine("goal", o.Goal); err != nil {
+			return Created{}, err
+		}
+		if sections == nil {
+			sections = map[string][]string{}
+		}
+		sections["Goal"] = append([]string{o.Goal}, sections["Goal"]...)
 	}
 	if _, err := c.Init(); err != nil {
 		return Created{}, err
@@ -268,7 +280,11 @@ func planText(o NewOptions, id, host string, extra map[string]string, parent boo
 	property("WORKTREES", strings.Join(o.Worktrees, " "))
 	property("SESSIONS", strings.Join(o.Sessions, " "))
 	property("HARNESS", o.Harness)
-	property("STATUS", "planning")
+	status := "planning"
+	if o.Status != "" {
+		status = o.Status
+	}
+	property("STATUS", status)
 	property("PULL_REQUESTS", "")
 	property("PIPELINE", "full")
 	b.WriteString(":END:\n")

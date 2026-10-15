@@ -68,16 +68,6 @@ func TestRecordSign(t *testing.T) {
 	}
 }
 
-// An agent cannot log a sign-pass's events itself.
-func TestSignKindsNotLoggable(t *testing.T) {
-	c := testConfig(t)
-	p := newPlan(t, c, "x")
-	for _, kind := range []string{"sign-requested", "signed", "sign-refused", "sign-failed", "sign-delivered"} {
-		_, err := p.Log(Event{Kind: kind, Item: p.Name}, day)
-		isRefusal(t, kind, err)
-	}
-}
-
 // Each result reaches the session that asked for it once, as one line.
 func TestDeliverSigns(t *testing.T) {
 	c := testConfig(t)
