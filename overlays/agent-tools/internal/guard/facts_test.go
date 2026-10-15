@@ -113,16 +113,25 @@ func testPostRecordsFacts(t *testing.T) {
 		!strings.Contains(c, "which step") || !strings.Contains(c, "--commit 'Add the loop'") {
 		t.Errorf("after a commit: %s", out)
 	}
+	// A session's first commit also hands over the commit rules.
+	if !strings.Contains(asked.Specific.Context, "`signing-pass` skill") {
+		t.Errorf("the session's first commit: %s", out)
+	}
 
 	// Codex hands the output over as one string after its own header.
 	codex, _ := json.Marshal(map[string]any{"session_id": "s9", "cwd": main, "hook_event_name": "PostToolUse",
 		"tool_name": "Bash", "turn_id": "t", "tool_input": map[string]string{"command": "git commit --allow-empty -m 'Test it'"},
 		"tool_response": "Exit code: 0\nWall time: 0.1 seconds\nOutput:\n" + gitOut(t, main, "commit", "--allow-empty", "-m", "Test it")})
-	postHook(t, string(codex))
+	if out := postHook(t, string(codex)); !strings.Contains(out, "`signing-pass` skill") {
+		t.Errorf("another session's first commit: %s", out)
+	}
 
 	// In the part's worktree, reached by cd, a commit is the part's.
-	postHook(t, claudeEvent("s1", main, "cd ../linked && git commit --allow-empty -m 'Add the flag'",
+	out = postHook(t, claudeEvent("s1", main, "cd ../linked && git commit --allow-empty -m 'Add the flag'",
 		gitOut(t, linked, "commit", "--allow-empty", "-m", "Add the flag")))
+	if !strings.Contains(out, "which step") || strings.Contains(out, "signing-pass") {
+		t.Errorf("the session's second commit: %s", out)
+	}
 
 	gitOut(t, main, "worktree", "add", "-q", "-b", "feature", "../feature")
 	postHook(t, claudeEvent("s1", main, "git worktree add -b feature ../feature", ""))
