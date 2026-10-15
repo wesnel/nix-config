@@ -45,16 +45,24 @@ func StatusLine(s State, input []byte, now time.Time) string {
 		if r, ok := s.Reading(in.Provider, now); ok {
 			parts = append(parts, windows(r.Windows, now, false)...)
 		}
-		return strings.Join(parts, " · ")
+		return strings.Join(append(parts, s.choiceMark(in.Provider, now)...), " · ")
 	}
 	for _, p := range Providers {
 		if r, ok := s.Reading(p, now); ok {
 			if shown := windows(r.Windows, now, true); len(shown) > 0 {
-				parts = append(parts, p+" "+strings.Join(shown, " · "))
+				parts = append(parts, p+" "+strings.Join(append(shown, s.choiceMark(p, now)...), " · "))
 			}
 		}
 	}
 	return strings.Join(parts, " · ")
+}
+
+// choiceMark is the provider's choice as the status line shows it, if any.
+func (s State) choiceMark(provider string, now time.Time) []string {
+	if c, ok := s.Choice(provider, now); ok && c.mark(now) != "" {
+		return []string{c.mark(now)}
+	}
+	return nil
 }
 
 // windows are ws as the status line shows them; with warnOnly, those at or

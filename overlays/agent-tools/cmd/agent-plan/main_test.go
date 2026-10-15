@@ -400,9 +400,95 @@ func TestRelayed(t *testing.T) {
 	})
 }
 
+// Wesley's answer to the quota ask is kept for the host and, with a plan,
+// as a question he decided.
+func TestUsage(t *testing.T) {
+	t.Run("choose with a plan", func(t *testing.T) {
+		plan := sessionPlan(t)
+		reset := time.Now().Add(time.Hour).Truncate(time.Minute)
+		agentPlan(t, fmt.Sprintf(`{"session_id":"s-1","rate_limits":{"five_hour":{"used_percentage":82,"resets_at":%d}}}`,
+			reset.Unix()), "statusline")
+		code, out, errs := agentPlan(t, "", "usage", "choose", "claude", "down", "--plan", plan)
+		if code != 0 || !strings.Contains(out, `"choice": "down"`) || !strings.Contains(out, `"question": "Q1"`) {
+			t.Fatalf("choose: %d %s %s", code, out, errs)
+		}
+		code, out, _ = agentPlan(t, "", "decisions", plan)
+		want := "- Q1 :: Claude's 5-hour window is at 82%, resetting " + reset.Format("15:04") +
+			": which model tier do new sub-agents get until then? New sub-agents one tier down until " + reset.Format("15:04") +
+			"; reviewers, running agents and sessions keep theirs\n"
+		if code != 0 || out != want {
+			t.Errorf("decisions: %d\n%q\nwant\n%q", code, out, want)
+		}
+		code, out, _ = agentPlan(t, "", "usage")
+		if code != 0 || !strings.HasPrefix(out, "claude: 5h 82% resets "+reset.Format("15:04")) ||
+			!strings.Contains(out, "; choice down until "+reset.Format("15:04")+"\n") || !strings.HasSuffix(out, "codex: unknown\n") {
+			t.Errorf("usage: %d %q", code, out)
+		}
+		code, out, _ = agentPlan(t, "", "usage", "--json")
+		if code != 0 || !strings.Contains(out, `"choice": "down"`) {
+			t.Errorf("usage --json: %d %s", code, out)
+		}
+		// The answer is Wesley's, settled as the question is written.
+		data, _ := os.ReadFile(plan)
+		if strings.Contains(string(data), ":DECIDED_BY:") {
+			t.Errorf("the decision is not recorded as Wesley's:\n%s", data)
+		}
+		// Running it again changes nothing.
+		log := strings.TrimSuffix(plan, ".org") + ".log.org"
+		before, _ := os.ReadFile(plan)
+		logBefore, _ := os.ReadFile(log)
+		code, out, errs = agentPlan(t, "", "usage", "choose", "claude", "down", "--plan", plan)
+		if code != 0 || !strings.Contains(out, `"question": "Q1"`) {
+			t.Fatalf("choose again: %d %s %s", code, out, errs)
+		}
+		after, _ := os.ReadFile(plan)
+		logAfter, _ := os.ReadFile(log)
+		if string(after) != string(before) || string(logAfter) != string(logBefore) {
+			t.Errorf("choosing again changed the plan or its log:\n%s\n%s", after, logAfter)
+		}
+		// Another answer to the same question is refused, and changes
+		// nothing either.
+		if code, _, errs := agentPlan(t, "", "usage", "choose", "claude", "keep", "--plan", plan); code != 2 || !strings.Contains(errs, "--supersedes") {
+			t.Errorf("another answer: %d %s", code, errs)
+		}
+		if code, out, _ := agentPlan(t, "", "usage", "--json"); code != 0 || !strings.Contains(out, `"choice": "down"`) {
+			t.Errorf("a refused answer changed the choice: %d %s", code, out)
+		}
+	})
+
+	t.Run("his own words", func(t *testing.T) {
+		plan := sessionPlan(t)
+		code, out, errs := agentPlan(t, "", "usage", "choose", "codex", "keep", "--plan", plan, "--answer", "keep going, it is nearly done")
+		if code != 0 {
+			t.Fatalf("choose: %d %s %s", code, out, errs)
+		}
+		if _, out, _ = agentPlan(t, "", "decisions", plan); !strings.HasSuffix(out, "? keep going, it is nearly done\n") {
+			t.Errorf("decisions: %q", out)
+		}
+	})
+
+	t.Run("without a plan", func(t *testing.T) {
+		setup(t)
+		if code, out, errs := agentPlan(t, "", "usage", "choose", "claude", "keep"); code != 0 || !strings.Contains(out, `"choice": "keep"`) {
+			t.Errorf("choose: %d %s %s", code, out, errs)
+		}
+	})
+
+	t.Run("refused", func(t *testing.T) {
+		setup(t)
+		for _, args := range [][]string{{"usage", "choose", "claude", "sonnet"}, {"usage", "choose", "claude"},
+			{"usage", "pick"}} {
+			if code, _, errs := agentPlan(t, "", args...); code == 0 || errs == "" {
+				t.Errorf("%v: %d %q", args, code, errs)
+			}
+		}
+	})
+}
+
 // Hooks run on the host, so a session's relay never takes them.
 func TestClientSide(t *testing.T) {
-	for args, want := range map[string]bool{"import-claude": true, "find --hook": true, "statusline": true, "remind": true, "find --session x": false,
+	for args, want := range map[string]bool{"import-claude": true, "find --hook": true, "statusline": true, "remind": true,
+		"usage": true, "usage choose claude down": true, "find --session x": false,
 		"log P --item S1": false, "new --title T": false} {
 		t.Run(args, func(t *testing.T) {
 			if got := clientSide(strings.Fields(args)); got != want {

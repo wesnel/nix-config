@@ -99,6 +99,16 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      provider, context_window{used_percentage}}, or {cwd} alone
                      to see each provider at 75% or more. Never touches the
                      network
+  usage [--json]     this host's last reading of each provider's quota windows,
+                     and Wesley's choice while it lasts
+  usage choose PROVIDER keep|down|postpone [--plan PLAN] [--answer TEXT]
+                     record Wesley's answer to the quota ask: keep the usual
+                     tiers, start new sub-agents one tier down, or postpone
+                     work, until the window that prompted it resets; with a
+                     plan, also as a question he decided, his own words in
+                     --answer, written once: run again, it changes nothing,
+                     and another answer to the same question is refused.
+                     Postpone each step or part with postpone
   own PLAN --worktree DIR --agent ID
                      record agent ID, the harness's ID for a sub-agent or
                      "main" for the session's main thread, as the one agent
@@ -165,7 +175,8 @@ func clientSide(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	if args[0] == "import-claude" || args[0] == "statusline" || args[0] == "stop-check" || args[0] == "remind" {
+	if args[0] == "import-claude" || args[0] == "statusline" || args[0] == "stop-check" || args[0] == "remind" ||
+		args[0] == "usage" {
 		return true
 	}
 	if args[0] == "find" {
@@ -346,6 +357,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		foundIn  = flags.String("found-in", "", "")
 		note     = flags.String("note", "", "")
 		unset    = flags.Bool("clear", false, "")
+		planFile = flags.String("plan", "", "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
 		branches multi
@@ -546,6 +558,8 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return report(nil, err)
 		}
 		return report(p.Postpone(positional[1], *until, time.Now()))
+	case "usage":
+		return usageCommand(c, positional, *planFile, *answer, *asJSON, stdout, stderr)
 	case "init":
 		r, err := c.Init()
 		if r.Note != "" {
@@ -582,6 +596,63 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return hookReport(out, err, stdout, stderr)
 	}
 	fmt.Fprint(stderr, usage)
+	return 2
+}
+
+// usageCommand is `agent-plan usage` and `usage choose`.
+func usageCommand(c plans.Config, args []string, planFile, answer string, asJSON bool, stdout, stderr io.Writer) int {
+	s, now := quota.DefaultState(), time.Now()
+	report := func(result any, err error) int {
+		return cli.Report("agent-plan", result, err, 0, stdout, stderr)
+	}
+	switch {
+	case len(args) == 0:
+		sums := s.Summary(now)
+		if asJSON {
+			return report(sums, nil)
+		}
+		io.WriteString(stdout, quota.SummaryText(sums, now))
+		return 0
+	case len(args) == 3 && args[0] == "choose":
+		provider, choice := args[1], args[2]
+		var p plans.Plan
+		if planFile != "" {
+			var err error
+			if p, err = c.Open(planFile); err != nil {
+				return report(nil, err)
+			}
+		}
+		if err := quota.CheckChoice(provider, choice); err != nil {
+			return report(nil, err)
+		}
+		reading, known := s.Reading(provider, now)
+		reading.Provider = provider
+		var result struct {
+			Choice   quota.Choice `json:"choice"`
+			Question string       `json:"question,omitempty"`
+		}
+		// The plan first: a question already answered otherwise leaves the
+		// choice as it was.
+		if planFile != "" {
+			q := quota.Question(reading, known, now)
+			if answer == "" {
+				answer = q.Answers[choice]
+			}
+			asked, err := p.Ask(plans.AskOptions{Question: q.Text, Recommendation: q.Recommendation, Alternatives: q.Alternatives,
+				Answer: answer, Wesley: true, Once: true}, now)
+			if err != nil {
+				return report(nil, err)
+			}
+			result.Question = asked.ID
+		}
+		chosen, err := s.Choose(provider, choice, now)
+		if err != nil {
+			return report(nil, err)
+		}
+		result.Choice = chosen
+		return report(result, nil)
+	}
+	fmt.Fprint(stderr, "agent-plan usage: takes nothing, or choose PROVIDER keep|down|postpone [--plan PLAN] [--answer TEXT]\n")
 	return 2
 }
 
