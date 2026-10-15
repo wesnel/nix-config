@@ -3,6 +3,7 @@ package guard
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -515,6 +516,209 @@ func TestSigning(t *testing.T) {
 			}
 		})
 	}
+}
+
+// remoteRepos are repositories whose remotes the guard resolves, under the
+// returned root: ssh, with remotes over SSH, HTTPS, an insteadOf alias,
+// an HTTPS fetch URL with an SSH push URL, and groups of them; https, whose
+// only remote is HTTPS; short, whose origin only the global configuration
+// TestKeyTouch sets turns into an SSH URL; and three whose submodules are
+// over SSH, over HTTPS, and relative to an SSH origin. No URL is ever
+// contacted. TestKeyTouch's cases share them, built once, as they take
+// several git commands to make and the guard only reads them.
+var remoteRepos = sync.OnceValues(func() (string, error) {
+	if err := os.MkdirAll(fixtures, 0o755); err != nil {
+		return "", err
+	}
+	root, err := os.MkdirTemp(fixtures, "remotes")
+	if err != nil {
+		return "", err
+	}
+	root, _ = filepath.EvalSymlinks(root)
+	dir := func(name string) string { return filepath.Join(root, name) }
+	for _, name := range []string{"ssh", "https", "short", "sub-ssh", "sub-https", "sub-relative"} {
+		os.Mkdir(dir(name), 0o755)
+	}
+	return root, fixtureGits(
+		[]string{dir("ssh"), "init", "-q", "-b", "main"},
+		[]string{dir("ssh"), "remote", "add", "origin", "git@github.com:o/r.git"},
+		[]string{dir("ssh"), "remote", "add", "web", "https://github.com/o/r.git"},
+		[]string{dir("ssh"), "config", "url.git@github.com:.insteadOf", "gh:"},
+		[]string{dir("ssh"), "remote", "add", "aliased", "gh:o/r"},
+		[]string{dir("ssh"), "remote", "add", "sourcehut", "ssh://git@git.sr.ht/~w/r"},
+		[]string{dir("ssh"), "remote", "add", "pushonly", "https://github.com/o/p.git"},
+		[]string{dir("ssh"), "config", "remote.pushonly.pushurl", "git@github.com:o/p.git"},
+		[]string{dir("ssh"), "config", "remotes.mixed", "web sourcehut"},
+		[]string{dir("ssh"), "config", "remotes.webonly", "web pushonly"},
+		[]string{dir("https"), "init", "-q", "-b", "main"},
+		[]string{dir("https"), "remote", "add", "origin", "https://github.com/o/r.git"},
+		[]string{dir("short"), "init", "-q", "-b", "main"},
+		[]string{dir("short"), "remote", "add", "origin", "https://mirror.invalid/o/r"},
+		[]string{dir("sub-ssh"), "init", "-q", "-b", "main"},
+		[]string{dir("sub-ssh"), "remote", "add", "origin", "https://github.com/o/r.git"},
+		[]string{dir("sub-ssh"), "config", "-f", ".gitmodules", "submodule.m.url", "git@github.com:o/m.git"},
+		[]string{dir("sub-https"), "init", "-q", "-b", "main"},
+		[]string{dir("sub-https"), "config", "-f", ".gitmodules", "submodule.m.url", "https://github.com/o/m.git"},
+		[]string{dir("sub-relative"), "init", "-q", "-b", "main"},
+		[]string{dir("sub-relative"), "remote", "add", "origin", "git@github.com:o/r.git"},
+		[]string{dir("sub-relative"), "config", "-f", ".gitmodules", "submodule.m.url", "../m.git"},
+	)
+})
+
+// TestKeyTouch covers commands that would connect over SSH, which waits for
+// a touch of Wesley's hardware key: git commands that contact a remote whose
+// URL, as git resolves it, is SSH, ssh, scp and sftp to the git hosts, and
+// the signing pass.
+func TestKeyTouch(t *testing.T) {
+	root := fixture(t, remoteRepos)
+	dir := func(name string) string { return filepath.Join(root, name) }
+	sshConfig := filepath.Join(t.TempDir(), "ssh_config")
+	if err := os.WriteFile(sshConfig, []byte("Host gh\n\tHostName github.com\nHost box\n\tHostName 192.0.2.1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ssh, https := dir("ssh"), dir("https")
+
+	cases := []struct {
+		deny         bool
+		dir, command string
+	}{
+		{true, ssh, "git fetch"},
+		{true, ssh, "git fetch origin"},
+		{true, ssh, "git fetch --prune origin main"},
+		{true, ssh, "git fetch --all"},
+		{true, ssh, "git fetch aliased"},
+		{true, ssh, "git fetch sourcehut"},
+		{true, ssh, "git fetch mixed"},
+		{true, ssh, "git fetch --multiple web sourcehut"},
+		{true, ssh, "git pull"},
+		{true, ssh, "git pull --rebase"},
+		{true, ssh, "git pull --rebase origin main"},
+		{true, ssh, "git ls-remote"},
+		{true, ssh, "git ls-remote --heads origin"},
+		{true, ssh, "git remote update"},
+		{true, ssh, "git remote update mixed"},
+		{true, ssh, "git remote show origin"},
+		{true, ssh, "git remote prune origin"},
+		{true, ssh, "git remote set-head origin --auto"},
+		{true, ssh, "git archive --remote=origin HEAD"},
+		{true, ssh, "git archive --remote origin HEAD"},
+		{true, https, "git -C " + ssh + " fetch"},
+		{true, https, "cd " + ssh + " && git pull"},
+		{true, https, "nice git -C " + ssh + " fetch origin"},
+		{true, https, "bash -c 'git -C " + ssh + " ls-remote'"},
+		{true, https, "git -c fetch.prune=true -C " + ssh + " fetch"},
+		{true, https, "git fetch git@github.com:o/r.git"},
+		{true, https, "git fetch ssh://git@github.com/o/r main"},
+		{true, https, "git pull git@git.sr.ht:~w/r main"},
+		{true, https, "git ls-remote git@github.com:o/r.git"},
+		{true, https, "git clone git@github.com:o/r.git"},
+		{true, https, "git clone --depth 1 -b main ssh://git@github.com/o/r x"},
+		{true, https, "git clone --origin up git+ssh://git@github.com/o/r"},
+		{true, https, "git submodule add git@github.com:o/m.git m"},
+		{true, dir("sub-ssh"), "git submodule update --init"},
+		{true, dir("sub-relative"), "git submodule update"},
+		{true, https, "git sign-pass"},
+		{true, https, "git sign-pass --push"},
+		{true, https, "git-sign-pass --resume"},
+		{true, https, "ssh git@github.com"},
+		{true, https, "ssh -T git@github.com"},
+		{true, https, "ssh -p 22 git@git.sr.ht"},
+		{true, https, "ssh ssh://git@github.com"},
+		{true, https, "ssh -F " + sshConfig + " gh"},
+		{true, https, "scp git@github.com:o/r/x ."},
+		{true, https, "sftp git.sr.ht"},
+		{false, ssh, "git fetch web"},
+		{false, ssh, "git fetch pushonly"},
+		{false, ssh, "git fetch webonly"},
+		{false, ssh, "git remote update webonly"},
+		{false, ssh, "git ls-remote web"},
+		{false, ssh, "git ls-remote --get-url origin"},
+		{false, ssh, "git remote show -n origin"},
+		{false, ssh, "git remote -v"},
+		{false, ssh, "git remote get-url origin"},
+		{false, ssh, "git archive HEAD"},
+		{false, ssh, "git log origin/main"},
+		{false, https, "git fetch"},
+		{false, https, "git pull --rebase"},
+		{false, https, "git ls-remote"},
+		{false, https, "git remote update"},
+		{false, https, "git fetch /srv/git/r.git"},
+		{false, https, "git clone https://github.com/o/r.git"},
+		{false, https, "git clone --origin up /srv/git/r.git x"},
+		{false, https, "git submodule add https://github.com/o/m.git m"},
+		{false, dir("sub-https"), "git submodule update --init"},
+		{false, dir("sub-ssh"), "git submodule sync"},
+		{false, dir("sub-ssh"), "git submodule status"},
+		{false, https, "ssh devbox-agent true"},
+		{false, https, "ssh -F " + sshConfig + " box"},
+		{false, https, "ssh -O check devbox"},
+		{false, https, "ssh -G github.com"},
+		{false, https, "ssh -V"},
+		{false, https, "scp notes.txt devbox:/tmp/"},
+		{false, https, "gh pr view 1"},
+	}
+	for _, c := range cases {
+		t.Run(caseName(c.deny, filepath.Base(c.dir)+": "+c.command), func(t *testing.T) {
+			reason := judge(t, c.dir, c.command)
+			if (reason != "") != c.deny {
+				t.Errorf("%s: %q: deny=%v, reason %q", filepath.Base(c.dir), c.command, !c.deny, reason)
+			}
+			if c.deny && !strings.Contains(reason, "hardware key") {
+				t.Errorf("%q: reason %q does not name the key", c.command, reason)
+			}
+			if reason != "" && !saysInstead(reason) {
+				t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+			}
+		})
+	}
+
+	t.Run("an insteadOf in the global configuration", func(t *testing.T) {
+		global := filepath.Join(t.TempDir(), "gitconfig")
+		if err := os.WriteFile(global, []byte("[url \"git@github.com:\"]\n\tinsteadOf = https://mirror.invalid/\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		for _, command := range []string{"git fetch", "git clone https://mirror.invalid/o/r"} {
+			if reason := judge(t, dir("short"), command); reason != "" {
+				t.Errorf("%q without the global insteadOf, denied: %q", command, reason)
+			}
+		}
+		t.Setenv("GIT_CONFIG_GLOBAL", global)
+		for _, command := range []string{"git fetch", "git clone https://mirror.invalid/o/r"} {
+			if reason := judge(t, dir("short"), command); !strings.Contains(reason, "hardware key") {
+				t.Errorf("%q with the global insteadOf: reason %q", command, reason)
+			}
+		}
+	})
+
+	// Each agent is told to hand the command over as its interface runs it:
+	// Claude Code and Codex with a leading `!`, ECA as a plain line.
+	t.Run("formats", func(t *testing.T) {
+		for _, c := range []struct {
+			name, event string
+			bang        bool
+		}{
+			{"Claude Code", `{"tool_name":"Bash","cwd":%q,"tool_input":{"command":"git fetch origin"}}`, true},
+			{"Codex", `{"tool_name":"exec_command","turn_id":"t","cwd":%q,"tool_input":{"command":"git fetch origin"}}`, true},
+			{"ECA", `{"hook_type":"preToolCall","agent":"code","tool_name":"shell_command","cwd":%q,"tool_input":{"command":"git fetch origin"}}`, false},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				var out bytes.Buffer
+				Main([]string{"--baseline"}, strings.NewReader(fmt.Sprintf(c.event, ssh)), &out, io.Discard)
+				var decision struct {
+					HookSpecificOutput struct{ PermissionDecisionReason string }
+					AdditionalContext  string
+				}
+				json.Unmarshal(out.Bytes(), &decision)
+				reason := decision.HookSpecificOutput.PermissionDecisionReason + decision.AdditionalContext
+				if !strings.Contains(reason, "hardware key") {
+					t.Fatalf("not denied for the key: %s", out.String())
+				}
+				if got := strings.Contains(reason, "`!`"); got != c.bang {
+					t.Errorf("reason %q: says to begin with `!` = %v", reason, got)
+				}
+			})
+		}
+	})
 }
 
 // shellEditRepos is a repository, work, with tracked, ignored, force-added

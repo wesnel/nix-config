@@ -137,6 +137,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if reason == sleeping && in.HookType == "" && in.TurnID == "" {
 		reason = sleepingClaude
 	}
+	if reason == keyTouch && in.HookType != "" {
+		reason = keyTouchPlain
+	}
 	var out any
 	decision := "deny"
 	if reason == connector && who == baseline && in.TurnID == "" {
@@ -402,6 +405,8 @@ func program(c call, who role, files, dir string) string {
 		return reviewerReport
 	case name == "git-sign-pass" && who >= coordinator:
 		return signing
+	case name == "git-sign-pass":
+		return keyTouch
 	case name == "curl" || name == "wget" || name == "http" || name == "https" || name == "xh" || name == "xhs":
 		if githubAPIWrite(name, words[1:]) {
 			return githubAPI
@@ -664,10 +669,14 @@ func checkGit(words, env []string, who role, dir string) string {
 		return secretRead
 	case sub == "sign-pass" && who >= coordinator:
 		return signing
+	case sub == "sign-pass":
+		return keyTouch
 	case sub == "push" && who >= coordinator:
 		return "A review-loop session pushes only with `pr-loop push`, or `pr-loop open` for a new branch, which check the branch policy and need no key touch. The signed push at the end is `pr-loop sign`."
 	case sub == "push":
 		return "Publishing a branch is Wesley's step, signed with his key. Open a new branch as a draft PR with `pr-loop open`, or end your report with `git sign-pass --push` for Wesley to run."
+	case overSSH(sub, rest, gitState{dir: dir, config: config, env: env}):
+		return keyTouch
 	case sub == "remote" && len(rest) > 0 && (rest[0] == "add" || rest[0] == "set-url"):
 		return remotes
 	case sub == "commit" && who >= coordinator:
