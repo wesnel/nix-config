@@ -32,3 +32,16 @@ description: How to open, describe and answer a pull request. Use before `pr-loo
 Answer review comments in their threads, never as new top-level comments.
 On Wesley's own pull requests, `pr-loop threads`, `reply` and `resolve` do
 this. The `review-change` skill says how to settle each one.
+
+## People
+
+Before naming or referring to a reviewer, author or code owner, read the
+name and pronouns their GitHub profile lists, which only the GraphQL API
+returns:
+
+```sh
+gh api graphql -f query='query{user(login:"LOGIN"){name pronouns}}'
+```
+
+A null field means none is listed: use their `@LOGIN` and they/them, as
+AGENTS.md's "Referring to people" says.
