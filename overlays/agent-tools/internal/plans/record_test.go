@@ -115,7 +115,7 @@ func TestRecordCommit(t *testing.T) {
 // one of those kinds is refused, saying what logs it.
 func TestToolKindsNotLoggable(t *testing.T) {
 	for _, kind := range []string{"committed", "pushed", "sign-requested", "signed", "sign-refused", "sign-failed", "sign-delivered",
-		"loop-began", "round", "replied", "resolved", "ci-waited", "loop-signed", "branch-changed"} {
+		"loop-began", "round", "replied", "resolved", "ci-waited", "loop-signed", "branch-changed", "property"} {
 		t.Run(kind, func(t *testing.T) {
 			p := newPlan(t, testConfig(t), "x")
 			_, err := p.Log(Event{Kind: kind, Item: p.Name}, day)

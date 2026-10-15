@@ -163,7 +163,7 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 		return Created{}, refusal.New("a template starts a plan, not a part. Make the part without `--template`, and copy what it needs into its file")
 	}
 	if o.Parent != "" || o.Part != "" {
-		return c.newPart(o)
+		return c.newPart(o, now)
 	}
 	if !slugPattern.MatchString(o.Slug) {
 		return Created{}, refusal.New("slug %q is not lower-case words joined by hyphens. Pass one such as `--slug add-run-loop`", o.Slug)
@@ -206,14 +206,19 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 	if p.Name == "" {
 		return Created{}, fmt.Errorf("no free name for %s.%s under %s", base, c.Host, c.Dir)
 	}
-	err := p.withLock(func(l *lockedPlan) error { return l.append("#+title: Log of " + p.Name + "\n") })
+	err := p.withLock(func(l *lockedPlan) error {
+		if err := l.append("#+title: Log of " + p.Name + "\n"); err != nil {
+			return err
+		}
+		return l.logNewProperties("", now)
+	})
 	if err != nil {
 		return Created{}, err
 	}
 	return Created{Plan: p.file(""), File: p.file(""), ID: p.Name, Log: p.log()}, nil
 }
 
-func (c Config) newPart(o NewOptions) (Created, error) {
+func (c Config) newPart(o NewOptions, now time.Time) (Created, error) {
 	if o.Parent == "" || !partPattern.MatchString(o.Part) {
 		return Created{}, refusal.New("a part needs its parent plan and a part ID such as P1. Pass both, as `--parent PLAN --part P1`")
 	}
@@ -238,7 +243,8 @@ func (c Config) newPart(o NewOptions) (Created, error) {
 	} else if err != nil {
 		return Created{}, err
 	}
-	return Created{Plan: p.file(""), File: file, ID: o.Part, Log: p.log()}, nil
+	err = p.withLock(func(l *lockedPlan) error { return l.logNewProperties(o.Part, now) })
+	return Created{Plan: p.file(""), File: file, ID: o.Part, Log: p.log()}, err
 }
 
 var nonTag = regexp.MustCompile(`[^A-Za-z0-9_@#%]`)

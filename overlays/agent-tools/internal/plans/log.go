@@ -44,6 +44,10 @@ type Event struct {
 	Sign     string `json:"sign,omitempty"`
 	Exit     string `json:"exit,omitempty"`
 	Delivers string `json:"delivers,omitempty"`
+	// Property and Value are a property event's: the property of the
+	// item's `* Plan` heading, and its values, separated by spaces.
+	Property string `json:"property,omitempty"`
+	Value    string `json:"value,omitempty"`
 	// Note is what the caller should know about the event, such as a
 	// heading keyword Log could not write; the log does not hold it.
 	Note string `json:"note,omitempty"`
@@ -68,6 +72,8 @@ var (
 		kinds := map[string]string{
 			"committed": "a hook after each shell call logs `committed` for every commit, from what git printed. " +
 				"Log `done` with `--commit SUBJECT` for the step a commit completes",
+			propertyKind: "agent-plan logs each change of a plan's WORKTREES, BRANCHES, PULL_REQUESTS and OWNERS that it makes. " +
+				"Change one with `agent-plan set PLAN NAME VALUE...`, or OWNERS with `agent-plan own`",
 			branchChanged: "the guard logs `branch-changed` when a session's file edit lands on another branch or worktree than its last. " +
 				"Confirm the branch with `git branch --show-current` before the edit",
 			"pushed": "pr-loop, and a hook after each shell call, log `pushed` for every push, from what they pushed. " +
@@ -98,7 +104,7 @@ func oneOf(value string, allowed []string) bool {
 func (p Plan) check(e Event) error {
 	for what, v := range map[string]string{"summary": e.Summary, "agent": e.Agent, "branch": e.Branch,
 		"commit": e.Commit, "evidence": e.Evidence, "item": e.Item, "kind": e.Kind, "session": e.Session,
-		"worktree": e.Worktree, "tip": e.Tip} {
+		"worktree": e.Worktree, "tip": e.Tip, "property": e.Property, "value": e.Value} {
 		if err := checkLine(what, v); err != nil {
 			return err
 		}
@@ -235,7 +241,7 @@ func eventText(e Event) string {
 	for _, kv := range [][2]string{{"EVENT", e.ID}, {"AGENT", e.Agent}, {"ROLE", e.Role}, {"ITEM", e.Item},
 		{"KIND", e.Kind}, {"BRANCH", e.Branch}, {"COMMIT", e.Commit}, {"EVIDENCE", e.Evidence},
 		{"REVIEW", e.Review}, {"OUTCOME", e.Outcome}, {"SESSION", e.Session}, {"WORKTREE", e.Worktree}, {"TIP", e.Tip},
-		{"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}} {
+		{"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}, {"PROPERTY", e.Property}, {"VALUE", e.Value}} {
 		if kv[1] != "" {
 			b.WriteString(":" + kv[0] + ": " + kv[1] + "\n")
 		}
@@ -438,7 +444,7 @@ func (p Plan) Events() ([]Event, error) {
 			Role: h.Props["ROLE"], Branch: h.Props["BRANCH"], Commit: h.Props["COMMIT"],
 			Evidence: h.Props["EVIDENCE"], Review: h.Props["REVIEW"], Outcome: h.Props["OUTCOME"],
 			Session: h.Props["SESSION"], Worktree: h.Props["WORKTREE"], Tip: h.Props["TIP"], Sign: h.Props["SIGN"],
-			Exit: h.Props["EXIT"], Delivers: h.Props["DELIVERS"]}
+			Exit: h.Props["EXIT"], Delivers: h.Props["DELIVERS"], Property: h.Props["PROPERTY"], Value: h.Props["VALUE"]}
 		if _, summary, ok := strings.Cut(h.Title, " — "); ok {
 			e.Summary = summary
 		}
