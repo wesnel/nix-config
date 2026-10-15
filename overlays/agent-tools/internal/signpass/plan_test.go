@@ -93,7 +93,7 @@ func testPlanThreeStacks(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", bad)
 	_, err := Plan("", []string{"C2", "X", "C1"}, false, true)
 	if err == nil || !strings.Contains(err.Error(), "git -C "+wtC1+" rebase --continue") ||
-		!strings.Contains(err.Error(), "git sign-pass --resume C1") {
+		!strings.Contains(err.Error(), "`"+testBinary(t)+" --resume --set-upstream C1`") {
 		t.Fatalf("a failed signature: %v", err)
 	}
 	t.Setenv("GIT_CONFIG_GLOBAL", global)

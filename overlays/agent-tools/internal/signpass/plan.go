@@ -412,7 +412,7 @@ func runPlan(pl *plan) (any, error) {
 	result := map[string]any{"branches": pl.Results}
 	if pl.Push || pl.SetUpstream {
 		sort.Strings(pl.Moved)
-		pushed, err := pushAll(pl.Key, pushes{slices.Compact(pl.Moved), pl.SetUpstream})
+		pushed, err := pushAll(pl.Key, pushes{Branches: slices.Compact(pl.Moved), SetUpstream: pl.SetUpstream})
 		if err != nil {
 			return nil, err
 		}

@@ -5,6 +5,7 @@ package git
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -162,4 +163,20 @@ func Attached(env []string, args ...string) int {
 		return 1
 	}
 	return 0
+}
+
+// AttachedStderr is Attached, also returning what the command wrote to
+// stderr, which reaches this process's stderr as it is written. Git sees a
+// pipe there rather than the terminal, so it prints no progress meters.
+func AttachedStderr(env []string, args ...string) (int, string) {
+	cmd := command(env, args...)
+	var stderr bytes.Buffer
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, io.MultiWriter(os.Stderr, &stderr)
+	if err := cmd.Run(); err != nil {
+		if exit, ok := err.(*exec.ExitError); ok {
+			return exit.ExitCode(), stderr.String()
+		}
+		return 1, stderr.String() + err.Error()
+	}
+	return 0, stderr.String()
 }
