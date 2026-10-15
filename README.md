@@ -447,7 +447,10 @@ with your credentials, but has the guard in every session.
   `~/.config/eca/config.json` on every switch.
 
 It denies what is yours to do: pushing (hand over `git sign-pass --push`,
-or open a draft with `pr-loop open`), merging, closing, marking ready,
+or open a draft with `pr-loop open`), anything else that waits for a key
+touch (`git sign-pass`, a fetch, pull, clone or ls-remote whose URL is SSH
+after `insteadOf`, and ssh, scp or sftp to github.com or git.sr.ht),
+merging, closing, marking ready,
 reviews and top-level comments, GitHub settings, gh's login and token, git
 credential and transport settings, remote rewrites, settings every worktree
 shares, discarding the main checkout's work, dropping or clearing the stash

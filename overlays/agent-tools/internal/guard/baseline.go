@@ -382,11 +382,14 @@ func checkSession(c call, dir string) string {
 		if has("--kill") {
 			return killing
 		}
-	case "ssh":
+	case "ssh", "scp", "sftp":
 		for i, a := range args {
-			if (a == "-O" && i+1 < len(args) && (args[i+1] == "exit" || args[i+1] == "stop")) || a == "-Oexit" || a == "-Ostop" {
+			if name == "ssh" && ((a == "-O" && i+1 < len(args) && (args[i+1] == "exit" || args[i+1] == "stop")) || a == "-Oexit" || a == "-Ostop") {
 				return killing
 			}
+		}
+		if sshTouch(name, args, dir) {
+			return keyTouch
 		}
 	case "launchctl":
 		switch first() {
@@ -1148,13 +1151,319 @@ type gitState struct {
 // signs reports whether a commit written by the command would be signed, by
 // the configuration it would read; false where the guard cannot tell.
 func (g gitState) signs() bool {
+	out, ok := g.query("config", "--bool", "commit.gpgsign")
+	return ok && out == "true"
+}
+
+// query runs git in g.dir with the command's configuration and
+// assignments, as the command itself would read them.
+func (g gitState) query(args ...string) (string, bool) {
 	if g.dir == "" {
-		return false
+		return "", false
 	}
-	cmd := exec.Command("git", append(append([]string{}, g.config...), "-C", g.dir, "config", "--bool", "commit.gpgsign")...)
+	cmd := exec.Command("git", append(append(append([]string{}, g.config...), "-C", g.dir), args...)...)
 	cmd.Env = append(gitenv.Without(os.Environ()), g.env...)
 	out, err := cmd.Output()
-	return err == nil && strings.TrimSpace(string(out)) == "true"
+	return strings.TrimSpace(string(out)), err == nil
+}
+
+// keyTouchText is why a command that waits for a touch of the hardware key
+// is denied, with %s how the agent's interface takes a command Wesley runs,
+// as AGENTS.md's "Commands Wesley runs" says.
+const keyTouchText = "This waits for a touch of Wesley's hardware key, which nobody is here to give. " +
+	"Hand Wesley the command as %s, and meanwhile work from local refs, such as `git log origin/main`, with commits left unsigned; " +
+	"`gh pr view` and `gh api` read GitHub over HTTPS."
+
+var (
+	// keyTouch is keyTouchText for Claude Code and Codex, whose prompt runs
+	// a line beginning with ! in the session.
+	keyTouch = fmt.Sprintf(keyTouchText, "one line beginning with `!`, so its output lands here")
+	// keyTouchPlain is keyTouchText for ECA, whose prompt does not.
+	keyTouchPlain = fmt.Sprintf(keyTouchText, "one plain line for his terminal")
+)
+
+// touchHosts are the hosts an SSH login to waits for a key touch: the git
+// forges. A login elsewhere, such as the devbox's, rides a master
+// connection already open.
+var touchHosts = set("github.com", "ssh.github.com", "git.sr.ht")
+
+// remoteValueFlags are the options of each git command that contacts a
+// remote whose value is the next word, which is therefore not the
+// repository.
+var remoteValueFlags = map[string]map[string]bool{
+	"fetch": set("--depth", "--deepen", "--shallow-since", "--shallow-exclude", "-j", "--jobs", "--upload-pack",
+		"-o", "--server-option", "--negotiation-tip", "--refmap", "--recurse-submodules-default", "--filter"),
+	"pull": set("--depth", "--deepen", "--shallow-since", "--shallow-exclude", "-j", "--jobs", "--upload-pack",
+		"-o", "--server-option", "--negotiation-tip", "-s", "--strategy", "-X", "--strategy-option", "--cleanup"),
+	"ls-remote": set("--upload-pack", "--exec", "--sort", "-o", "--server-option"),
+	"clone": set("-b", "--branch", "-o", "--origin", "--depth", "--reference", "--reference-if-able", "-c", "--config",
+		"-u", "--upload-pack", "--template", "--separate-git-dir", "-j", "--jobs", "--filter", "--shallow-since",
+		"--shallow-exclude", "--bundle-uri", "--ref-format", "--server-option", "--revision"),
+	"remote":    set(),
+	"submodule": set("-b", "--branch", "--name", "--reference", "--depth", "-j", "--jobs", "--filter"),
+}
+
+// positionals are args without their options and the values remoteValueFlags
+// gives sub.
+func positionals(sub string, args []string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		switch a := args[i]; {
+		case a == "--":
+			return append(out, args[i+1:]...)
+		case !strings.HasPrefix(a, "-") || a == "-":
+			out = append(out, a)
+		case remoteValueFlags[sub][a]:
+			i++
+		}
+	}
+	return out
+}
+
+// sshURL reports whether url is one git reaches over SSH: an ssh:// URL,
+// or the scp-like host:path, whose colon comes before any slash.
+func sshURL(url string) bool {
+	lower := strings.ToLower(url)
+	for _, scheme := range []string{"ssh://", "git+ssh://", "ssh+git://"} {
+		if strings.HasPrefix(lower, scheme) {
+			return true
+		}
+	}
+	if strings.Contains(url, "://") {
+		return false
+	}
+	colon := strings.Index(url, ":")
+	return colon > 0 && !strings.Contains(url[:colon], "/")
+}
+
+// remoteURL is the URL git fetches repo from, a remote's name or a URL, as
+// `git ls-remote --get-url` resolves it with url.<base>.insteadOf; repo
+// itself where git cannot say. "" is the default remote.
+func (g gitState) remoteURL(repo string) string {
+	args := []string{"ls-remote", "--get-url"}
+	if repo != "" {
+		args = append(args, repo)
+	}
+	if out, ok := g.query(args...); ok && out != "" {
+		return out
+	}
+	return repo
+}
+
+// remoteNames are the remotes name stands for: the members of the group
+// remotes.<name>, and name itself.
+func (g gitState) remoteNames(name string) []string {
+	members, _ := g.query("config", "--get-all", "remotes."+name)
+	return append(strings.Fields(members), name)
+}
+
+// allRemotes are the repository's remotes.
+func (g gitState) allRemotes() []string {
+	out, _ := g.query("remote")
+	return strings.Fields(out)
+}
+
+// submoduleURLs are the URLs of the repository's submodules, in its config
+// and in .gitmodules; one relative to the superproject is its default
+// remote's.
+func (g gitState) submoduleURLs() []string {
+	var urls []string
+	lists := []string{}
+	if out, ok := g.query("config", "--get-regexp", `^submodule\..*\.url$`); ok {
+		lists = append(lists, out)
+	}
+	if top, ok := g.query("rev-parse", "--show-toplevel"); ok {
+		if out, ok := g.query("config", "-f", filepath.Join(top, ".gitmodules"), "--get-regexp", `^submodule\..*\.url$`); ok {
+			lists = append(lists, out)
+		}
+	}
+	for _, list := range lists {
+		for _, line := range strings.Split(list, "\n") {
+			if _, url, ok := strings.Cut(line, " "); ok {
+				if strings.HasPrefix(url, "./") || strings.HasPrefix(url, "../") {
+					url = g.remoteURL("")
+				}
+				urls = append(urls, url)
+			}
+		}
+	}
+	return urls
+}
+
+// overSSH reports whether `git sub rest...` contacts a remote, and would
+// reach one over SSH: fetch, pull, ls-remote, clone, archive --remote, the
+// remote verbs that read the remote, and submodule update and add.
+func overSSH(sub string, rest []string, g gitState) bool {
+	has := func(flags ...string) bool {
+		for _, w := range rest {
+			if set(flags...)[strings.SplitN(w, "=", 2)[0]] {
+				return true
+			}
+		}
+		return false
+	}
+	if has("-h", "--help") {
+		return false
+	}
+	p := positionals(sub, rest)
+	var repos []string // remotes' names, groups or URLs; "" the default remote
+	switch sub {
+	case "fetch", "pull":
+		switch {
+		case has("--all"):
+			repos = g.allRemotes()
+		case has("--multiple"):
+			repos = p
+		case len(p) == 0:
+			repos = []string{""}
+		default:
+			repos = p[:1]
+		}
+	case "ls-remote":
+		if has("--get-url") {
+			return false
+		}
+		repos = append(p, "")[:1]
+	case "clone":
+		repos = p[:min(1, len(p))]
+	case "archive":
+		for i, w := range rest {
+			if r, ok := strings.CutPrefix(w, "--remote="); ok {
+				repos = append(repos, r)
+			} else if w == "--remote" && i+1 < len(rest) {
+				repos = append(repos, rest[i+1])
+			}
+		}
+	case "remote":
+		if len(p) == 0 {
+			return false
+		}
+		switch names := p[1:]; p[0] {
+		case "update":
+			repos = names
+			if len(repos) == 0 {
+				repos = g.allRemotes()
+			}
+		case "show":
+			if !has("-n") {
+				repos = names
+			}
+		case "prune":
+			repos = names
+		case "set-head":
+			if has("-a", "--auto") {
+				repos = names[:min(1, len(names))]
+			}
+		}
+	case "submodule":
+		switch {
+		case len(p) > 1 && p[0] == "add":
+			repos = p[1:2]
+		case len(p) > 0 && p[0] == "update":
+			repos = g.submoduleURLs()
+		}
+	}
+	for _, repo := range repos {
+		names := []string{repo}
+		if repo != "" && !sshURL(repo) {
+			names = g.remoteNames(repo)
+		}
+		for _, name := range names {
+			if sshURL(g.remoteURL(name)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// sshValueFlags are the options of ssh, scp and sftp whose value is the
+// next word, or the rest of the word.
+var sshValueFlags = map[string]string{"ssh": "BbcDEeFIiJLlmOopQRSWw", "scp": "cDFiJloPSX", "sftp": "BbcDFiJloPRSsX"}
+
+// sshTouch reports whether ssh, scp or sftp with these arguments logs in to
+// one of touchHosts, by the name given or the HostName ssh's config gives
+// it.
+func sshTouch(name string, args []string, dir string) bool {
+	values := sshValueFlags[name]
+	var config []string // -F, for ssh -G
+	var destinations []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			destinations = append(destinations, args[i+1:]...)
+			break
+		}
+		if !strings.HasPrefix(a, "-") || a == "-" {
+			destinations = append(destinations, a)
+			continue
+		}
+		for j := 1; j < len(a); j++ {
+			flag := a[j]
+			if name == "ssh" && (flag == 'G' || flag == 'V' || flag == 'Q') {
+				return false // prints and exits without connecting
+			}
+			if !strings.ContainsRune(values, rune(flag)) {
+				continue
+			}
+			value := a[j+1:]
+			if value == "" && i+1 < len(args) {
+				i++
+				value = args[i]
+			}
+			if flag == 'F' {
+				config = []string{"-F", expandPath(value, dir)}
+			}
+			break
+		}
+	}
+	if name != "scp" && len(destinations) > 1 {
+		destinations = destinations[:1] // the rest is ssh's command
+	}
+	for _, d := range destinations {
+		host, remote := sshHost(name, d)
+		if !remote {
+			continue
+		}
+		if touchHosts[strings.ToLower(host)] {
+			return true
+		}
+		out, err := exec.Command("ssh", append(append([]string{"-G"}, config...), host)...).Output()
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			if resolved, ok := strings.CutPrefix(line, "hostname "); ok && touchHosts[strings.ToLower(resolved)] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// sshHost is the host a destination of ssh, scp or sftp names, and whether
+// it names one: scp's local paths do not.
+func sshHost(name, d string) (string, bool) {
+	rest, scheme := "", false
+	for _, s := range []string{"ssh://", "scp://", "sftp://"} {
+		if r, ok := strings.CutPrefix(d, s); ok {
+			rest, scheme = r, true
+		}
+	}
+	if scheme {
+		rest, _, _ = strings.Cut(rest, "/")
+	} else {
+		colon := strings.Index(d, ":")
+		if name == "scp" && (colon <= 0 || strings.Contains(d[:colon], "/")) {
+			return "", false
+		}
+		rest = d
+	}
+	if at := strings.LastIndex(rest, "@"); at >= 0 {
+		rest = rest[at+1:]
+	}
+	host, _, _ := strings.Cut(rest, ":")
+	return host, host != ""
 }
 
 // commitWriters are the git commands that write commits, with the options
