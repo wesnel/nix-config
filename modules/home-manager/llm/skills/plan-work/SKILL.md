@@ -72,6 +72,13 @@ agent-plan new --parent PLAN --part P1 --title 'Add the run loop flag' --branch 
 - `** Follow-ups`: work found while doing an item but outside this
   change's job, each with `:ID: F1`, `F2`… and the `:FOUND_IN:` item, as
   "Follow-ups" says.
+- `** References`: each URL Wesley gave the work, one entry each with
+  `:URL:`, and a note of what it was used for and which decisions (Q IDs)
+  it fed. In Claude Code, Codex and ECA every URL in his prompts is added
+  with no note; add one he gives otherwise with
+  `agent-plan reference PLAN URL`. When you
+  are done with a reference, write its note:
+  `agent-plan reference PLAN URL --note 'The pstack principles; fed Q3, Q4.'`
 - `** Verification`: how the change is shown to work: each seam the tests
   cross, and what each cannot catch.
 

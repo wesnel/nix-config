@@ -79,6 +79,11 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      scope, as a TODO under Follow-ups with the next follow-up
                      ID, and log it as discovered; its keyword then follows
                      its log, as a step's does
+  reference PLAN URL [--note TEXT]
+                     keep URL under References, or set its note: what it was
+                     used for and which decisions (Q IDs) it fed; log it as
+                     referenced. remind adds every URL of Wesley's own
+                     prompts this way, with no note
   postpone PLAN ID (--until 'YYYY-MM-DD[ HH:MM]' | --clear)
                      schedule step or part ID for that day or time, which
                      keeps it out of the ready lists and the agenda until
@@ -104,7 +109,9 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      ECA's postToolCall on spawn_agent), and for a compaction
                      to keep what the plan lacks (Claude Code's PreCompact) or
                      the plan to be brought up to date after one (Codex's
-                     SessionStart, ECA's postCompact); never blocks
+                     SessionStart, ECA's postCompact); keeps the URLs of
+                     Wesley's own prompts as references (Claude Code's and
+                     Codex's UserPromptSubmit, ECA's preRequest); never blocks
   tokens [--format org|json]
                      every plan's tokens by event kind, model and effort
   import-claude      Claude Code's PostToolUse hook on ExitPlanMode (reads stdin):
@@ -315,6 +322,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		replaces = flags.String("supersedes", "", "")
 		until    = flags.String("until", "", "")
 		foundIn  = flags.String("found-in", "", "")
+		note     = flags.String("note", "", "")
 		unset    = flags.Bool("clear", false, "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
@@ -496,6 +504,16 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		return report(p.Followup(plans.FollowupOptions{Title: *title, FoundIn: *foundIn, Context: *context, Part: *part},
 			time.Now()))
+	case "reference":
+		if len(positional) != 2 {
+			fmt.Fprint(stderr, "agent-plan reference: takes PLAN URL [--note TEXT]\n")
+			return 2
+		}
+		p, err := c.Open(positional[0])
+		if err != nil {
+			return report(nil, err)
+		}
+		return report(p.Reference(positional[1], *note, time.Now()))
 	case "postpone":
 		if len(positional) != 2 || (*until == "") == !*unset {
 			fmt.Fprint(stderr, "agent-plan postpone: takes PLAN ID and --until TIME or --clear\n")

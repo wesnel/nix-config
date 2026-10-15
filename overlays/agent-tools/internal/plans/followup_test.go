@@ -35,7 +35,7 @@ func TestFollowup(t *testing.T) {
 		}
 		data, _ := os.ReadFile(p.file(""))
 		want := "** Follow-ups\n*** TODO Guard accepts --draft=false\n:PROPERTIES:\n:ID: F1\n:FOUND_IN: S1\n:END:\n" +
-			"The guard reads the flag's presence only.\n** Verification\n"
+			"The guard reads the flag's presence only.\n** References\n** Verification\n"
 		if !strings.HasSuffix(string(data), want) {
 			t.Errorf("plan:\n%s", data)
 		}
