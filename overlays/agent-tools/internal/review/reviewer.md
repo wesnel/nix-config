@@ -58,6 +58,10 @@ Each finding has one kind:
   when it compares a value with a copy of itself, asserts that a fake
   received what the test handed it, or checks only "no error" or "not
   empty". A red-check verdict other than `fails-as-asserted` is evidence.
+  A test that is not hermetic is `untested` too: one that reaches the
+  network, writes outside what it set up (the home directory, global
+  configuration, the test binary), or passes only because something is
+  unreachable or absent.
 - `untrue-doc`: a doc comment, option description, skill, README or other
   contract the change makes untrue, or leaves untrue.
 - `convention`: the change breaks a rule the repository's own docs write
