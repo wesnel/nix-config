@@ -269,6 +269,7 @@ in {
             ];
             # Wesley's prompt: its URLs become plan references. A
             # sub-agent's turn carries agent_id, which agent-plan skips.
+            # Carries the time and how long since Wesley's previous message.
             hooks.UserPromptSubmit = [
               {
                 hooks = [

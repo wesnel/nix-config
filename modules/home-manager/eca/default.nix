@@ -321,11 +321,12 @@ in {
           ];
         })}
         # Wesley's prompt: its URLs become plan references. A chat with a
-        # parent_chat_id is a sub-agent's, which agent-plan skips.
+        # parent_chat_id is a sub-agent's, which agent-plan skips. Carries the
+        # time and how long since Wesley's previous message.
         prompt=${escapeShellArg (builtins.toJSON {
           type = "preRequest";
           visible = false;
-          description = "agent-plan remind: the prompt's references";
+          description = "agent-plan remind: the prompt's references and the time";
           actions = [
             {
               type = "shell";
