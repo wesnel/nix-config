@@ -1,9 +1,9 @@
 // Package guard is a PreToolUse hook for Claude Code, Codex and ECA. With
-// `--baseline`, in every session, it denies what is Wesley's to do: publishing,
-// merging, GitHub's settings and credentials. In a review-loop session it
-// also denies the ways an agent could write to GitHub or Linear other than
-// through pr-loop, which enforces the loop's policy, and keeps the loop's
-// pr-owner and reviewer agents to their roles.
+// `--baseline`, in every session, it denies what is the operator's to do:
+// publishing, merging, GitHub's settings and credentials. In a review-loop
+// session it also denies the ways an agent could write to GitHub or Linear
+// other than through pr-loop, which enforces the loop's policy, and keeps
+// the loop's pr-owner and reviewer agents to their roles.
 //
 // It inspects commands as the agent typed them, so it catches a forgotten rule
 // but not a command built at run time. In a sandbox without credentials the
@@ -63,7 +63,7 @@ type input struct {
 type role int
 
 const (
-	baseline    role = iota // every session: denied what is Wesley's to do
+	baseline    role = iota // every session: denied what is the operator's to do
 	coordinator             // a review loop's coordinator: also kept to pr-loop
 	owner                   // pr-owner: also denied the steps the coordinator alone takes
 	reviewer                // reviewer: also denied every change to the repository or GitHub
@@ -143,7 +143,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	var out any
 	decision := "deny"
 	if reason == connector && who == baseline && in.TurnID == "" {
-		// Claude Code asks Wesley; Codex and ECA cannot.
+		// Claude Code asks the operator; Codex and ECA cannot.
 		decision = "ask"
 	}
 	if in.HookType != "" {
@@ -186,9 +186,9 @@ func CheckReviewer(tool, server string, toolInput json.RawMessage) string {
 
 // check returns a denial's reason, which reaches the agent verbatim: a first
 // sentence saying why, then what to do instead, naming the command in
-// backticks or handing the step to Wesley. A reason that only says no sends
-// the agent looking for another way through. TestCheck and TestPolicy hold
-// every reason to this.
+// backticks or handing the step to the operator. A reason that only says no
+// sends the agent looking for another way through. TestCheck and TestPolicy
+// hold every reason to this.
 func check(tool, server string, toolInput json.RawMessage, who role, dir string) string {
 	full := tool
 	if server != "" {
@@ -258,7 +258,7 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 		!readOnlyTool.MatchString(full) && who == reviewer:
 		return reviewerReport
 	case strings.Contains(strings.ToLower(full), "linear") && !readOnlyTool.MatchString(full):
-		return "The review loop does not change Linear. Put the proposed change in the final report for Wesley to approve."
+		return "The review loop does not change Linear. Put the proposed change in the final report for the operator to approve."
 	case strings.Contains(strings.ToLower(full), "github") && !readOnlyTool.MatchString(full):
 		return "GitHub writes in the review loop go through pr-loop. " + prLoopWrites
 	}
@@ -393,7 +393,7 @@ func program(c call, who role, files, dir string) string {
 	return ""
 }
 
-const githubAPI = "Writes to GitHub's API go through gh or pr-loop, which the guard can check. Use `pr-loop` or a `gh` command, or put the call in your report for Wesley."
+const githubAPI = "Writes to GitHub's API go through gh or pr-loop, which the guard can check. Use `pr-loop` or a `gh` command, or put the call in your report for the operator."
 
 // githubAPIWrite reports whether an HTTP client's arguments send something
 // to GitHub's API or upload host.
@@ -504,7 +504,7 @@ func checkEnv(env []string) string {
 // and how git connects.
 var transportKeys = regexp.MustCompile(`^(credential(\..*)?|http\..*extraheader|url\..*\.(push)?insteadof|core\.sshcommand)$`)
 
-const transport = "Credentials and the transport git uses are Wesley's configuration. Leave them as they are, and put the change you need in your report for Wesley."
+const transport = "Credentials and the transport git uses are the operator's configuration. Leave them as they are, and put the change you need in your report for the operator."
 
 // checkConfigKey checks a key set for one git command, by `-c`,
 // `--config-env` or the environment, or written with `git config`.
@@ -519,11 +519,11 @@ func checkConfigKey(key string) string {
 	return ""
 }
 
-const signing = "Signing needs Wesley's hardware key. Leave the commits unsigned and end the report with the command for Wesley to run: `pr-loop sign` for the loop's stack."
+const signing = "Signing needs the operator's hardware key. Leave the commits unsigned and end the report with the command for the operator to run: `pr-loop sign` for the loop's stack."
 
-const pushGuard = "Publishing private history in a public repository is Wesley's decision. Leave push-guard.* alone, and name the repository and the commits in the report for Wesley."
+const pushGuard = "Publishing private history in a public repository is the operator's decision. Leave push-guard.* alone, and name the repository and the commits in the report for the operator."
 
-const prLoopWrites = "Use `pr-loop push`, `reply`, `resolve`, `request` or `link`; any other write goes in the report for Wesley."
+const prLoopWrites = "Use `pr-loop push`, `reply`, `resolve`, `request` or `link`; any other write goes in the report for the operator."
 
 // coordinatorOnly are the pr-loop steps an owner leaves to the coordinator,
 // which keeps the stack consistent across PRs.
@@ -537,11 +537,11 @@ var reviewerReads = map[string]bool{"stack": true, "threads": true, "status": tr
 
 // planSync is why no agent syncs plans: the sync pushes with a deploy key,
 // which is the watcher's, outside every session.
-const planSync = "Plans are synced by a watcher outside every session, which alone pushes them. Leave it to the watcher; if another host's plans look stale, say so in your report for Wesley."
+const planSync = "Plans are synced by a watcher outside every session, which alone pushes them. Leave it to the watcher; if another host's plans look stale, say so in your report for the operator."
 
 // planReseal is why no agent reseals a log: it accepts the edits made to
 // the log outside agent-plan.
-const planReseal = "Resealing a plan's log accepts edits made to it outside agent-plan, which is Wesley's call. Hand Wesley the command, `agent-plan reseal PLAN`, in your report."
+const planReseal = "Resealing a plan's log accepts edits made to it outside agent-plan, which is the operator's call. Hand the operator the command, `agent-plan reseal PLAN`, in your report."
 
 // planReads are the agent-plan commands a reviewer may run.
 var planReads = set("status", "goal", "find", "questions", "-h", "--help", "help")
@@ -552,8 +552,8 @@ const reviewerReport = "A reviewer only reads. Report the finding with its evide
 // nestedReview is why a reviewer may not start a review.
 const nestedReview = "A reviewer does not start a review of its own. Report your findings; whoever started you decides on another round."
 
-// checkPrLoop keeps the decisions that are Wesley's: waiving a CI failure,
-// and discarding the unsquashed history.
+// checkPrLoop keeps the decisions that are the operator's: waiving a CI
+// failure, and discarding the unsquashed history.
 func checkPrLoop(args []string, who role) string {
 	if len(args) == 0 {
 		return ""
@@ -568,9 +568,9 @@ func checkPrLoop(args []string, who role) string {
 	for _, a := range args[1:] {
 		switch {
 		case args[0] == "request" && (a == "--accept-failure" || strings.HasPrefix(a, "--accept-failure=")):
-			return "Whether a CI failure is not this PR's doing is Wesley's call. Put the evidence in the report, with `pr-loop request --accept-failure CHECK PR` for Wesley to run if he agrees."
+			return "Whether a CI failure is not this PR's doing is the operator's call. Put the evidence in the report, with `pr-loop request --accept-failure CHECK PR` for the operator to run if they agree."
 		case args[0] == "end" && a == "--prune":
-			return "Pruning deletes the unsquashed history and round snapshots, which is Wesley's call. Leave `pr-loop end --prune` to him."
+			return "Pruning deletes the unsquashed history and round snapshots, which is the operator's call. Leave `pr-loop end --prune` to them."
 		}
 	}
 	return ""
@@ -647,7 +647,7 @@ func checkGit(words, env []string, who role, dir string) string {
 	case sub == "push" && who >= coordinator:
 		return "A review-loop session pushes only with `pr-loop push`, or `pr-loop open` for a new branch, which check the branch policy and need no key touch. The signed push at the end is `pr-loop sign`."
 	case sub == "push":
-		return "Publishing a branch is Wesley's step, signed with his key. Open a new branch as a draft PR with `pr-loop open`, or end your report with `git sign-pass --push` for Wesley to run."
+		return "Publishing a branch is the operator's step, signed with their key. Open a new branch as a draft PR with `pr-loop open`, or end your report with `git sign-pass --push` for the operator to run."
 	case overSSH(sub, rest, gitState{dir: dir, config: config, env: env}):
 		return keyTouch
 	case sub == "remote" && len(rest) > 0 && (rest[0] == "add" || rest[0] == "set-url"):
@@ -662,15 +662,15 @@ func checkGit(words, env []string, who role, dir string) string {
 			return "Every commit in the review loop is a fixup the signing pass can squash in. Commit with `git commit --fixup=<commit>` against the PR commit it belongs to, with the review details as --trailer lines."
 		}
 	case has("--no-verify") || sub == "commit" && has("-n"):
-		return "Repository hooks check every change, and stay on. Fix what they report and run the command again without `--no-verify`; if a hook itself is broken, say so in your report for Wesley."
+		return "Repository hooks check every change, and stay on. Fix what they report and run the command again without `--no-verify`; if a hook itself is broken, say so in your report for the operator."
 	case sub == "tag" && tagWrites(rest):
-		return "Tags are published history, which is Wesley's to make or remove. List them with `git tag -l`, and put the `git tag` command in your report for Wesley."
+		return "Tags are published history, which is the operator's to make or remove. List them with `git tag -l`, and put the `git tag` command in your report for the operator."
 	case sub == "config" && !configRead(rest):
 		for _, w := range rest {
 			key := strings.ToLower(w)
 			switch {
 			case strings.HasPrefix(key, "pr-loop."):
-				return "pr-loop.* settings are Wesley's to change. Read them with `git config --get`, and put the `git config` command you propose in the report for Wesley."
+				return "pr-loop.* settings are the operator's to change. Read them with `git config --get`, and put the `git config` command you propose in the report for the operator."
 			case remoteURL.MatchString(key):
 				return remotes
 			}
@@ -720,7 +720,7 @@ func tagWrites(args []string) bool {
 	return false
 }
 
-const remotes = "Where a repository's remotes point is Wesley's configuration. Use the remotes as they are, and put the change you need in your report for Wesley."
+const remotes = "Where a repository's remotes point is the operator's configuration. Use the remotes as they are, and put the change you need in your report for the operator."
 
 var remoteURL = regexp.MustCompile(`^remote\..*\.(push)?url$`)
 
@@ -741,8 +741,8 @@ func configRead(args []string) bool {
 
 // checkGh checks gh's arguments, with which of them the shell expands, for
 // who: a loop's roles are kept to reading and pr-loop, and every session to
-// what is not Wesley's call. It reads files a GraphQL call names only inside
-// workspace, and none when workspace is "".
+// what is not the operator's call. It reads files a GraphQL call names only
+// inside workspace, and none when workspace is "".
 func checkGh(args []string, expanded []bool, workspace string, who role) string {
 	if who >= coordinator {
 		if reason := checkLoopGh(args, expanded, workspace); reason != "" {
@@ -765,7 +765,7 @@ func checkLoopGh(args []string, expanded []bool, workspace string) string {
 	}
 	what := strings.Join(args[:min(2, len(args))], " ")
 	return "`gh " + what + "` can change GitHub. In the review loop use pr-loop (status, ci, logs, threads, reply, resolve, request). " +
-		"Top-level PR comments, reviews, merges, PR edits and marking a PR ready are left to Wesley."
+		"Top-level PR comments, reviews, merges, PR edits and marking a PR ready are left to the operator."
 }
 
 // checkAPI denies a `gh api` call that writes, with write as the reason
@@ -821,12 +821,12 @@ var ghReads = map[string]map[string]bool{
 }
 
 const (
-	ghWesleysCall = "Merging, closing, reopening or marking a PR ready is Wesley's call. Say in your report that the PR is ready for it."
-	ghComments    = "Reviews, top-level comments and issues are Wesley's to write. Reply inside a review thread with `pr-loop reply`, and put anything else in your report for Wesley."
-	ghDraft       = "A PR opens as a draft; marking it ready is Wesley's call. Open it with `pr-loop open`, or with `gh pr create --draft`."
-	ghEdit        = "Only a PR's base, title and body may change here. Use `gh pr edit` with `--base`, `--title`, `--body` or `--body-file`, and leave labels, reviewers and the rest to Wesley."
-	ghAuth        = "GitHub credentials stay with gh and pr-loop. Use `gh` or `pr-loop` commands, which hold the login, and leave gh's login to Wesley."
-	ghAPIWrite    = "Only read-only `gh api` calls are allowed. Reply in a review thread with `pr-loop reply` or `resolve`, and put any other write in your report for Wesley."
+	ghOperatorsCall = "Merging, closing, reopening or marking a PR ready is the operator's call. Say in your report that the PR is ready for it."
+	ghComments      = "Reviews, top-level comments and issues are the operator's to write. Reply inside a review thread with `pr-loop reply`, and put anything else in your report for the operator."
+	ghDraft         = "A PR opens as a draft; marking it ready is the operator's call. Open it with `pr-loop open`, or with `gh pr create --draft`."
+	ghEdit          = "Only a PR's base, title and body may change here. Use `gh pr edit` with `--base`, `--title`, `--body` or `--body-file`, and leave labels, reviewers and the rest to the operator."
+	ghAuth          = "GitHub credentials stay with gh and pr-loop. Use `gh` or `pr-loop` commands, which hold the login, and leave gh's login to the operator."
+	ghAPIWrite      = "Only read-only `gh api` calls are allowed. Reply in a review thread with `pr-loop reply` or `resolve`, and put any other write in your report for the operator."
 )
 
 // ghEditFlags are the `gh pr edit` flags every session may use, with
@@ -835,7 +835,7 @@ var ghEditFlags = map[string]bool{"--base": true, "-B": true, "--title": true, "
 	"--body-file": true, "-F": true, "--repo": true, "-R": true}
 
 // checkBaselineGh keeps every session from the GitHub changes that are
-// Wesley's to make.
+// the operator's to make.
 func checkBaselineGh(args []string, expanded []bool, workspace string) string {
 	var words []string
 	for i := 0; i < len(args) && len(words) < 2; i++ {
@@ -914,20 +914,20 @@ func checkBaselineGh(args []string, expanded []bool, workspace string) string {
 		if has("--undo") {
 			return ""
 		}
-		return ghWesleysCall
+		return ghOperatorsCall
 	case group == "pr" && (verb == "merge" || verb == "close" || verb == "reopen"):
-		return ghWesleysCall
+		return ghOperatorsCall
 	case group == "pr" && (verb == "review" || verb == "comment"), group == "issue" && !ghReads[group][verb]:
 		return ghComments
 	}
 	verbs, known := ghReads[group]
 	switch {
 	case !known:
-		return "The guard does not know `gh " + group + "`, so it cannot tell a read from a write. Use a gh command it knows, such as `gh pr view` or a GET with `gh api`, or put the command in your report for Wesley."
+		return "The guard does not know `gh " + group + "`, so it cannot tell a read from a write. Use a gh command it knows, such as `gh pr view` or a GET with `gh api`, or put the command in your report for the operator."
 	case verbs == nil || verbs[verb]:
 		return ""
 	}
-	return "`gh " + group + " " + verb + "` changes GitHub in a way that is Wesley's call. Put the command in your report for Wesley."
+	return "`gh " + group + " " + verb + "` changes GitHub in a way that is the operator's call. Put the command in your report for the operator."
 }
 
 const graphQLMutation = "GraphQL mutations go through pr-loop. " + prLoopWrites

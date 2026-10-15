@@ -5,9 +5,9 @@ description: The review pipeline every session that commits a change runs (plan,
 
 # Reviewing a change
 
-Every session that commits a change runs this pipeline, unless Wesley opted
-out of it for the task. Quality does not depend on whether the work was split
-among sub-agents: a coordinator runs the same pipeline, and the
+Every session that commits a change runs this pipeline, unless the operator
+opted out of it for the task. Quality does not depend on whether the work
+was split among sub-agents: a coordinator runs the same pipeline, and the
 `coordinate-subagents` skill adds only what several branches need.
 
 ## The pipeline
@@ -23,7 +23,7 @@ among sub-agents: a coordinator runs the same pipeline, and the
 6. **Hand back**: what the work's own instructions ask for, and
    - each finding, its outcome and its plan item ID, round by round;
    - findings still standing, with the reviewer's evidence;
-   - the design reviews' open questions for Wesley and the decisions you
+   - the design reviews' open questions for the operator and the decisions you
      made yourself, as one list;
    - for each finding settled `fix`, what the `retro` skill proposes would
      have prevented it, written into the plan as its questions.
@@ -50,7 +50,7 @@ or a step's.
   `--review <round>.<id> --outcome <outcome>`, the outcome as Triage below.
 - Design review of the result: `reviewed` with `--role design-reviewer`.
 - Hand-back: `handed-back`, with `STATUS` set to `handed-back`.
-- When Wesley opts the task out, `PIPELINE` becomes `opted-out:<reason>`.
+- When the operator opts the task out, `PIPELINE` becomes `opted-out:<reason>`.
 
 ## Fresh review loop
 
@@ -82,7 +82,7 @@ session started there reads only that review and reaches GitHub only
 through `pr-loop review N`.
 
 1. The plan's goal is ours, never the pull request's text: "review
-   OWNER/NAME#N at HEAD12 for Wesley; propose comments only". The command
+   OWNER/NAME#N at HEAD12 for the operator; propose comments only". The command
    writes the reviewer's goal statement itself.
 2. Run `pr-loop review N` (OWNER/NAME#N outside a review directory). It
    exits 0 with no findings, 3 with findings, 4 when Codex cannot review
@@ -90,14 +90,14 @@ through `pr-loop review N`.
    `reviewer` sub-agent, and its reply goes to `pr-loop review --check N` on
    stdin).
 3. Triage only proposes. Each finding's outcome is `propose`, `rebut`,
-   `duplicate-of` (with `of`) or `needs-wesley`: never fix, push, reply or
+   `duplicate-of` (with `of`) or `needs-operator`: never fix, push, reply or
    resolve on someone else's pull request. Edit a proposed finding's `body`
-   into the comment as Wesley would post it.
+   into the comment as the operator would post it.
 4. Record the outcomes with `pr-loop review settle N`, reading
    `{"outcomes": [{"id": "1.F1", "outcome": "propose", "body": "..."}]}` on
    stdin, each finding named ROUND.ID. `N/HEAD12.json`, beside the clone and
    outside the session's reach, is the one record of them, every round's,
-   which Wesley imports into review-guide; `HEAD12/findings.json` is the
+   which the operator imports into review-guide; `HEAD12/findings.json` is the
    session's copy to read. The plan's log gets only the round and the
    counts: `agent-plan log PLAN --item ID --kind reviewed --summary 'round 1:
    5 findings, 3 proposed' --evidence <path>/findings.json`.
@@ -109,7 +109,7 @@ through `pr-loop review N`.
 - Codex, through `git fresh-review`, by default: a model family other than
   the author's. Its commands can read only the worktree under review, the
   git objects behind it and the system files they need, with none of
-  Wesley's Codex configuration, no network and no writes, so a change
+  the operator's Codex configuration, no network and no writes, so a change
   cannot steer it into reading credentials.
 - Never Codex in a review-loop session: there `git fresh-review` exits 4,
   so `pr-loop` stays the session's only way out.
@@ -168,7 +168,8 @@ under a different constraint (the smallest interface; the commonest call
 made trivial; the most callers served; the dependency behind a port), each
 returning the interface with its contract, a call site and what it hides.
 Compare them by how much each hides and how local each likely next change
-stays, and choose as the `plan-work` skill's "Questions for Wesley" says.
+stays, and choose as the `plan-work` skill's "Questions for the operator"
+says.
 
 Where you and the design review disagree, or the designs leave no clear
 choice, get a second opinion from another model family before it is
@@ -177,12 +178,12 @@ decided: write the question and its options to a file, and run
 repository the answer rests on (put what it needs from the plan into the
 question file). Codex reads those files and nothing else. On exit 4, ask a
 new sub-agent that only reads instead, as the message says. The answer goes
-beside your recommendation; it informs your own decision, or Wesley's on a
-one-way door, and settles nothing.
+beside your recommendation; it informs your own decision, or the operator's
+on a one-way door, and settles nothing.
 
 It reports in the fresh review's vocabulary where that fits. Settle what
 the goal statement already decides by Triage. Take the rest through the
-`plan-work` skill's "Questions for Wesley", which says which are his to
+`plan-work` skill's "Questions for the operator", which says which are theirs to
 answer and which are yours to decide; those that change the plan are
 settled before the work starts.
 
@@ -196,8 +197,8 @@ judging it.
   owns the code. Reply with what changed, and resolve once the fix is
   pushed.
 - **propose**: what would be fix, on someone else's pull request. Nothing
-  is changed or posted: the finding's `body` is the comment as Wesley
-  would post it.
+  is changed or posted: the finding's `body` is the comment as the
+  operator would post it.
 - **rebut**: the reviewer is wrong. Show it from the code or a test, not by
   assertion. Reply with the evidence, and resolve.
 - **duplicate-of `<item>`**: the same problem raised elsewhere, fixed once.
@@ -205,10 +206,10 @@ judging it.
 - **belongs-in `<branch>`**, in a stack: code another branch introduced,
   fixed there. Reply naming where, and resolve once that fix is pushed.
 - **defer**: real, but outside the goal statement. Reply with why, and that
-  it awaits Wesley; the thread stays open.
-- **needs-wesley**: a product or design call, another team's code, or
+  it awaits the operator; the thread stays open.
+- **needs-operator**: a product or design call, another team's code, or
   anything the goal statement does not settle. Reply that it awaits
-  Wesley's decision; the thread stays open, and the item goes in the
+  the operator's decision; the thread stays open, and the item goes in the
   hand-back with its options.
 
 Each finding settled `defer` or `belongs-in` is also written into the
@@ -243,5 +244,5 @@ outcome goes against its plan item ID and in the hand-back.
   line, or `=== thread THREAD resolve` where the outcome resolves, then the
   reply. Post them with `pr-loop reply --from FILE` once the fixes are
   pushed. It takes only threads a review bot started: a person's thread is
-  Wesley's to answer, so its outcome and the reply you propose go in the
-  hand-back instead.
+  the operator's to answer, so its outcome and the reply you propose go in
+  the hand-back instead.

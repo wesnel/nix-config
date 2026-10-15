@@ -112,7 +112,7 @@ red, and the failure points at what broke. Everything below follows from that.
   evidence is missing or weak (no test files changed, only test files
   changed, or the tests failed without the change only to build, or with no
   build command to say whether they built): say which in the report rather
-  than claim a red run. Where Wesley has configured no settings for the
+  than claim a red run. Where the operator has configured no settings for the
   repository, pass `--test`, `--build` and `--test-files`.
 - For a bug, write the test from the symptom the report describes (the wrong
   output, the crash, the lost write), not from the line that changed. The

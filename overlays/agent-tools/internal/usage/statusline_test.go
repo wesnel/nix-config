@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// pdt is the zone the reset times are shown in: Wesley's.
+// pdt is the zone the reset times are shown in: the operator's.
 var pdt = time.FixedZone("PDT", -7*3600)
 
 // The status line shows the session's context and the account's windows,

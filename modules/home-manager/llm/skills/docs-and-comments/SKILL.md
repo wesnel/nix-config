@@ -51,5 +51,5 @@ comments that break these rules.
   exception is a `TODO` for something plainly missing or broken and left for
   later: `TODO(ABC-123)` with the ticket's ID where the project tracks work in
   a ticket system such as Linear; otherwise a plain `TODO`, and a question in
-  the plan asking Wesley whether to file a ticket.
+  the plan asking the operator whether to file a ticket.
 - Comments follow "Write plainly" above.

@@ -25,7 +25,7 @@ type Question struct {
 	Alternatives []string `json:"alternatives,omitempty"`
 	// After is the AFTER property: the IDs it waits for, and Waiting those
 	// of them not yet settled. Only a question waiting for nothing is put to
-	// Wesley.
+	// the operator.
 	After   []string `json:"after,omitempty"`
 	Waiting []string `json:"waiting,omitempty"`
 }
@@ -37,10 +37,10 @@ type Decision struct {
 	File     string `json:"file"`
 	Question string `json:"question"`
 	// Answer is the ANSWER property, else the newest note in the heading's
-	// LOGBOOK, which Org writes when Wesley settles it in Emacs.
+	// LOGBOOK, which Org writes when the operator settles it in Emacs.
 	Answer string `json:"answer"`
 	// DecidedBy is "agent" for an agent's own decision on a constraint, and
-	// empty for Wesley's.
+	// empty for the operator's.
 	DecidedBy  string `json:"decidedBy,omitempty"`
 	Supersedes string `json:"supersedes,omitempty"`
 }

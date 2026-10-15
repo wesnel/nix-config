@@ -643,9 +643,9 @@ var remoteRepos = sync.OnceValues(func() (string, error) {
 })
 
 // TestKeyTouch covers commands that would connect over SSH, which waits for
-// a touch of Wesley's hardware key: git commands that contact a remote whose
-// URL, as git resolves it, is SSH, ssh, scp and sftp to the git hosts, and
-// the signing pass.
+// a touch of the operator's hardware key: git commands that contact a remote
+// whose URL, as git resolves it, is SSH, ssh, scp and sftp to the git hosts,
+// and the signing pass.
 func TestKeyTouch(t *testing.T) {
 	root := fixture(t, remoteRepos)
 	dir := func(name string) string { return filepath.Join(root, name) }

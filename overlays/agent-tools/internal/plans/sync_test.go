@@ -14,8 +14,8 @@ import (
 func notes(t *testing.T, hosts ...string) (origin string, configs map[string]Config) {
 	t.Helper()
 	root, _ := filepath.EvalSymlinks(t.TempDir())
-	for k, v := range map[string]string{"GIT_AUTHOR_NAME": "Wesley", "GIT_AUTHOR_EMAIL": "w@example.com",
-		"GIT_COMMITTER_NAME": "Wesley", "GIT_COMMITTER_EMAIL": "w@example.com"} {
+	for k, v := range map[string]string{"GIT_AUTHOR_NAME": "Operator", "GIT_AUTHOR_EMAIL": "operator@example.com",
+		"GIT_COMMITTER_NAME": "Operator", "GIT_COMMITTER_EMAIL": "operator@example.com"} {
 		t.Setenv(k, v)
 	}
 	origin = filepath.Join(root, "origin.git")
@@ -92,7 +92,7 @@ func testSyncTwoHosts(t *testing.T) {
 		t.Errorf("mac reading box's plan: %+v, %v", p, err)
 	}
 	log := gitIn(t, origin, "log", "--format=%an %G? %s", "main")
-	if log != "Wesley N Sync plans from box\nWesley N Sync plans from mac\nWesley N Start\n" {
+	if log != "Operator N Sync plans from box\nOperator N Sync plans from mac\nOperator N Start\n" {
 		t.Errorf("origin's history:\n%s", log)
 	}
 	for rev, host := range map[string]string{"main": "box", "main~1": "mac"} {

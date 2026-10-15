@@ -284,7 +284,7 @@ func hostPath(cwd, root, guest string) string {
 func handle(req Request, root, guest string, paths map[string]string) Reply {
 	path, ok := paths[req.Program]
 	if !ok {
-		return Reply{Code: 2, Stderr: fmt.Sprintf("sandbox-relay: refused: %q is not served; hand Wesley the command to run on the host\n", req.Program)}
+		return Reply{Code: 2, Stderr: fmt.Sprintf("sandbox-relay: refused: %q is not served; hand the operator the command to run on the host\n", req.Program)}
 	}
 	cwd := hostPath(req.Cwd, root, guest)
 	if cwd != root && !strings.HasPrefix(cwd, root+string(filepath.Separator)) {

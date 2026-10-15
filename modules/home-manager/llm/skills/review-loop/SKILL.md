@@ -1,6 +1,6 @@
 ---
 name: review-loop
-description: Drive an open pull request, or a stack of them, draft or ready, through CI and automated review bots (Copilot, Qodo and any others configured) without supervision, then hand back to Wesley for a signing pass. Use when asked to address, iterate on or loop over bot review feedback on a PR or a stack.
+description: Drive an open pull request, or a stack of them, draft or ready, through CI and automated review bots (Copilot, Qodo and any others configured) without supervision, then hand back to the operator for a signing pass. Use when asked to address, iterate on or loop over bot review feedback on a PR or a stack.
 ---
 
 # Bot review loop
@@ -24,12 +24,12 @@ current session.
     < /dev/null > "$log.jsonl" 2> "$log.err"
   ```
 
-  Tell Wesley it has started and where the logs are. Leave the repository
+  Tell the operator it has started and where the logs are. Leave the repository
   alone until it exits: the loop detaches the main worktree and works in
   `.pr-loop/`. When it exits, show
   `$(git rev-parse --git-common-dir)/pr-loop/report.md`, or the end of the
   log if there is no report.
-- **Elsewhere:** stop and tell Wesley to start `codex-pr-loop`, or
+- **Elsewhere:** stop and tell the operator to start `codex-pr-loop`, or
   `M-x wgn/eca-pr-loop` with the `pr-coordinator` agent.
 
 Commit as the `signing-pass` skill says: unsigned, never pushing or signing
@@ -37,7 +37,7 @@ yourself, with one signing pass at the end. In the loop's worktrees signing is
 already off, so there the `-c commit.gpgsign=false` it asks for changes
 nothing. Every write to GitHub goes through `pr-loop`, which needs no key
 touch. `pr-loop` refuses anything outside the loop's PRs; a refusal is a
-decision for Wesley, so stop rather than route around it. On a PR that is
+decision for the operator, so stop rather than route around it. On a PR that is
 ready for review, every push, reply and review request also notifies its
 reviewers and code owners.
 
@@ -93,7 +93,7 @@ when you need to know where something belongs.
    not this PR's job.
 6. `pr-loop worktrees` creates a worktree per PR at `.pr-loop/<number>`
    inside the repository, ignored by Git, with commit signing off in those
-   worktrees only. Where Wesley configured a setup command for the
+   worktrees only. Where the operator configured a setup command for the
    repository, it also runs that in each one, such as generating files the
    repository does not commit. If a setup fails, stop and report its output.
 
@@ -110,7 +110,7 @@ has changed.
    failure whose `onBase` is not `failed`, have the owner read
    `pr-loop logs <number> <check>` and either fix it or show it is not the
    PR's doing (a flaky test, an infrastructure fault). Waiving a failure is
-   Wesley's decision: if the owner shows one is not the PR's, stop and put
+   the operator's decision: if the owner shows one is not the PR's, stop and put
    the evidence in the report. While CI has failures of the PR's own, they
    are the round's only work: skip to step 5.
 2. **Request reviews.** `pr-loop request`. It asks each configured bot that
@@ -122,7 +122,7 @@ has changed.
    (`pr-loop threads <number>`) without changing code. Then decide each
    thread's outcome as the `review-change` skill's Triage says, confirming a
    `belongs-in` with the owner of the PR that introduced the code. Threads
-   started by people are always needs-wesley, and the loop does not reply to
+   started by people are always `needs-operator`, and the loop does not reply to
    them: `pr-loop reply` refuses.
 5. **Fix.** Owners fix and commit in their own worktrees, one fixup per
    review item or CI failure, run the relevant tests and linters, and report
@@ -155,11 +155,11 @@ Then start the next round.
 Stop and hand back when any of these holds:
 
 - Every bot has reviewed every head, Copilot's verdict is `approval`, and no
-  bot thread is open except deferred and needs-Wesley ones.
+  bot thread is open except deferred and `needs-operator` ones.
 - Copilot's verdict on a head is `closer-look` with no new comments: it is
   handing over to a person.
 - Every bot reviewed every head without new comments, and the only open
-  threads are deferred or need Wesley.
+  threads are deferred or need the operator.
 - `pr-loop` refused a push, CI keeps failing
   after two rounds spent on it, or an owner showed a CI failure is not the
   PR's doing.
@@ -183,11 +183,11 @@ Stop and hand back when any of these holds:
    `git range-diff refs/pr-loop/rounds/0/<branch>...refs/pr-loop/rounds/<n>/<branch>`
    shows everything the loop changed in a branch, and adjacent rounds show
    one round's work.
-3. Notify Wesley with the `notify` skill if it is available.
+3. Notify the operator with the `notify` skill if it is available.
 4. Hand over for the signing pass, showing what it will sign as the
    `signing-pass` skill describes. The loop's pass is `pr-loop sign`, not
-   `git sign-pass`. The session's relay refuses `sign` and `end`, so Wesley
-   runs them in the repository. The loop's pass
+   `git sign-pass`. The session's relay refuses `sign` and `end`, so the
+   operator runs them in the repository. The loop's pass
    differs from the plain one:
    - it first squashes the fixups in a throwaway worktree, so a fixup that
      conflicts is named before any key touch;

@@ -193,13 +193,13 @@ func TestRemindSignResult(t *testing.T) {
 		event  []byte
 		format string // a hook event name, "eca", or "" for nothing
 	}{
-		{"Wesley's prompt in Claude Code", event(map[string]any{"session_id": "abc", "hook_event_name": "UserPromptSubmit",
+		{"the operator's prompt in Claude Code", event(map[string]any{"session_id": "abc", "hook_event_name": "UserPromptSubmit",
 			"prompt": "Carry on"}), "UserPromptSubmit"},
 		{"the background waiter finishing in Claude Code", event(map[string]any{"session_id": "abc",
 			"hook_event_name": "UserPromptSubmit", "prompt": waiter}), "UserPromptSubmit"},
-		{"Wesley's prompt in Codex", event(map[string]any{"session_id": "abc", "turn_id": "t1",
+		{"the operator's prompt in Codex", event(map[string]any{"session_id": "abc", "turn_id": "t1",
 			"hook_event_name": "UserPromptSubmit", "prompt": "Carry on"}), "UserPromptSubmit"},
-		{"Wesley's prompt in ECA", event(map[string]any{"hook_type": "preRequest", "chat_id": "abc", "prompt": "Carry on"}), "eca"},
+		{"the operator's prompt in ECA", event(map[string]any{"hook_type": "preRequest", "chat_id": "abc", "prompt": "Carry on"}), "eca"},
 		{"a sub-agent's turn in Codex", event(map[string]any{"session_id": "abc", "agent_id": "a1",
 			"hook_event_name": "UserPromptSubmit", "prompt": "go"}), ""},
 		{"a sub-agent's chat in ECA", event(map[string]any{"hook_type": "preRequest", "chat_id": "abc",

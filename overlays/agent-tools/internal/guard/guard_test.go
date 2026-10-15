@@ -59,7 +59,7 @@ func testCheckCommands(t *testing.T) {
 		tool    string
 		command string
 	}{
-		{true, "Bash", "git push origin wesley/x"},
+		{true, "Bash", "git push origin feature/x"},
 		{true, "Bash", "git -C /tmp/r push --force-with-lease"},
 		{true, "Bash", "cd repo && GIT_SSH_COMMAND=ssh git push"},
 		{true, "Bash", `bash -c "git push origin main"`},

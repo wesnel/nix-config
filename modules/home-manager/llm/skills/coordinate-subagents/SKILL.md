@@ -1,6 +1,6 @@
 ---
 name: coordinate-subagents
-description: Split work with several parts across sub-agents, each doing one part on its own branch in its own git worktree, while you coordinate, decide what spans parts, check every report and hand back to Wesley. Use when a task has several parts that could proceed in parallel, such as several pull requests or a stack of them, open review threads across PRs, a list of feedback items, or several independent changes.
+description: Split work with several parts across sub-agents, each doing one part on its own branch in its own git worktree, while you coordinate, decide what spans parts, check every report and hand back to the operator. Use when a task has several parts that could proceed in parallel, such as several pull requests or a stack of them, open review threads across PRs, a list of feedback items, or several independent changes.
 ---
 
 # Coordinating sub-agents
@@ -8,8 +8,8 @@ description: Split work with several parts across sub-agents, each doing one par
 You coordinate. One sub-agent per part does that part's work on its own
 branch, in its own worktree. You own the split, the order and base of every
 stacked branch, the decisions that span parts, the check of every report,
-and coalescing every branch into one signing pass that Wesley runs. Nothing
-reaches GitHub until he has signed and pushed.
+and coalescing every branch into one signing pass that the operator runs.
+Nothing reaches GitHub until they have signed and pushed.
 
 The work as a whole goes through the `review-change` skill's pipeline, as
 any change does. This skill adds what several branches need: the design
@@ -24,9 +24,9 @@ shape.
 - Coordinate from the main checkout, never from a session that has entered a
   worktree (Claude Code's `EnterWorktree`). Its sub-agents inherit that
   worktree as the only place they may write, and cannot write in their own.
-- Leave the main checkout on its branch and its files alone: it holds
-  Wesley's untracked work. Read another branch with `git show <branch>:<path>`
-  or in that branch's worktree.
+- Leave the main checkout on its branch and its files alone: it holds the
+  operator's untracked work. Read another branch with
+  `git show <branch>:<path>` or in that branch's worktree.
 
 ## Split the work
 
@@ -127,23 +127,23 @@ gives, with no narrative:
 
 ## Phases
 
-Work that needs Wesley's decisions, such as review threads or a feedback list,
-runs in phases.
+Work that needs the operator's decisions, such as review threads or a
+feedback list, runs in phases.
 
 1. **Investigate.** Nothing is committed. Each sub-agent checks every item
    against the code and tries to reproduce it, and gives a verdict with its
    evidence: real, not real, partly real, or cannot verify here. It proposes a
    fix and the commit the fix folds into, and may try the fix in its worktree,
    leaving it uncommitted.
-2. **Decide.** Merge the reports into one list for Wesley. Give each decision
-   its options and your recommendation.
-3. **Fix.** One sub-agent per part, or per coupled stack, with Wesley's
+2. **Decide.** Merge the reports into one list for the operator. Give each
+   decision its options and your recommendation.
+3. **Fix.** One sub-agent per part, or per coupled stack, with the operator's
    decisions written into its task. It ports any experiment from its
    investigation worktree, committing none of the scratch tests as they are.
-4. **Publish**, once Wesley's signing pass has pushed. Re-read each thread,
-   drop one already resolved or answered from its reply file, re-check each
-   drafted reply against the pushed code, then post each file with
-   `pr-loop reply --from`. Update each description to the change as it
+4. **Publish**, once the operator's signing pass has pushed. Re-read each
+   thread, drop one already resolved or answered from its reply file,
+   re-check each drafted reply against the pushed code, then post each file
+   with `pr-loop reply --from`. Update each description to the change as it
    stands.
 
 ## Design review
@@ -157,7 +157,7 @@ part at once:
   duplication, contradictions, the same file edited on parallel branches,
   and tooling that has drifted apart.
 
-Settle its questions as the `plan-work` skill's "Questions for Wesley"
+Settle its questions as the `plan-work` skill's "Questions for the operator"
 says: decide the reversible ones yourself, and merge the one-way doors and
 product direction into the Decide phase's list when there is one. A design
 on which sub-agents, or you and the design review, disagree gets a second
@@ -230,9 +230,10 @@ Before relaying a report, confirm it:
   to CI and the part's own `git red-check` run.
 
 Once a report passes, log `done` for its part's ID, which marks its
-heading `DONE` and readies the parts that wait for it. Relay only what you confirmed, and say what you did not.
-Questions it raises go in the plan, as the `plan-work` skill's "Questions for Wesley"
-says, not in your message.
+heading `DONE` and readies the parts that wait for it. Relay only what you
+confirmed, and say what you did not. Questions it raises go in the plan, as
+the `plan-work` skill's "Questions for the operator" says, not in your
+message.
 
 ## Review each branch
 
@@ -244,7 +245,7 @@ says, and check its report as any other.
 
 ## Coalesce
 
-The branches go to Wesley as one piece of work. Before handing back, make
+The branches go to the operator as one piece of work. Before handing back, make
 them fit together:
 
 - Settle the order of every stack and the base of every branch.
@@ -263,25 +264,25 @@ them fit together:
 
 - For every branch, bottom of each stack first,
   `git log --format='%h %G? %s' <base>..<branch>`.
-- Beside it, one `git sign-pass` command per repository, which Wesley types
-  himself, naming the top of every stack, each child of a fork included.
-  Flags come before the branch names: `--set-upstream` when any branch is
-  new, otherwise `--push`, and `--notify` with an ID minted as the
+- Beside it, one `git sign-pass` command per repository, which the operator
+  types themselves, naming the top of every stack, each child of a fork
+  included. Flags come before the branch names: `--set-upstream` when any
+  branch is new, otherwise `--push`, and `--notify` with an ID minted as the
   signing-pass skill says.
 
   ```sh
   git sign-pass --set-upstream --notify <ID> <top of stack 1> <top of stack 2> ...
   ```
 
-  It prints the whole plan before the first touch; that plan is his audit.
-  Never a script that wraps it: he must be able to read what he runs.
+  It prints the whole plan before the first touch; that plan is their audit.
+  Never a script that wraps it: they must be able to read what they run.
 - The worktrees stay until the pass is done. Each must be clean, since the
   pass moves the branches checked out in them.
-- Everything that needs Wesley's decision, and everything unverified.
+- Everything that needs the operator's decision, and everything unverified.
 
 ## After the push
 
-If you are still running once Wesley has pushed:
+If you are still running once the operator has pushed:
 
 - Open a draft pull request for each new branch, based on its parent branch
   in a stack (`pr-loop open --base <parent>`; `open` refuses a branch that

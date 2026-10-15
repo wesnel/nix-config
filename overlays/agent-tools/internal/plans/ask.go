@@ -12,7 +12,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
-// AskOptions are a question for Wesley: the question, its priority, its
+// AskOptions are a question for the operator: the question, its priority, its
 // context, the recommended answer and the others, and the IDs it waits
 // for. With Answer, it is the agent's "reversible decision of your own"
 // that plan-work describes, settled as it is written; Role is then the

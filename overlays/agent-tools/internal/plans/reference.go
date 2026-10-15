@@ -22,7 +22,7 @@ func (p Plan) Reference(address, note string, now time.Time) (Event, error) {
 	note = strings.TrimSpace(note)
 	if u, err := url.Parse(address); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
 		strings.ContainsAny(address, " \t\n\r") {
-		return Event{}, refusal.New("%q is not an http or https URL. Pass the address as Wesley gave it, as `agent-plan reference PLAN https://...`", address)
+		return Event{}, refusal.New("%q is not an http or https URL. Pass the address as the operator gave it, as `agent-plan reference PLAN https://...`", address)
 	}
 	if err := checkLine("note", note); err != nil {
 		return Event{}, err
@@ -108,7 +108,7 @@ func promptReferences(prompt string) []string {
 	return out
 }
 
-// recordReferences keeps each address in Wesley's prompt as a reference
+// recordReferences keeps each address in the operator's prompt as a reference
 // of the plan, with no note for now. Its errors are dropped: a prompt is
 // never held up by its plan.
 func recordReferences(p Plan, prompt string, now time.Time) {

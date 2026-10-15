@@ -9,9 +9,9 @@ import (
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
-// DecideOptions settle a question: Answer is Wesley's answer, or with Drop
-// why the question is dropped. Supersedes names a settled question this
-// decision replaces.
+// DecideOptions settle a question: Answer is the operator's answer, or with
+// Drop why the question is dropped. Supersedes names a settled question
+// this decision replaces.
 type DecideOptions struct {
 	Answer, Supersedes, Role string
 	Drop                     bool
@@ -37,7 +37,7 @@ func (p Plan) Decide(qid string, o DecideOptions, now time.Time) (Decided, error
 	}
 	o.Answer = strings.TrimSpace(o.Answer)
 	if o.Answer == "" {
-		return Decided{}, refusal.New("a decision needs Wesley's answer, or why the question is dropped. Pass it with `--answer 'one line'`")
+		return Decided{}, refusal.New("a decision needs the operator's answer, or why the question is dropped. Pass it with `--answer 'one line'`")
 	}
 	if err := checkLine("answer", o.Answer); err != nil {
 		return Decided{}, err
@@ -95,7 +95,7 @@ func (p Plan) Decide(qid string, o DecideOptions, now time.Time) (Decided, error
 }
 
 // settle is lines with the question whose ID is id settled as state, with
-// its answer, who decided it unless Wesley did, and the decision it
+// its answer, who decided it unless the operator did, and the decision it
 // supersedes.
 func settle(lines []string, id, state, answer, decidedBy, supersedes string, now time.Time) ([]string, error) {
 	at := headingWithID(lines, id)
@@ -119,9 +119,9 @@ func settle(lines []string, id, state, answer, decidedBy, supersedes string, now
 
 // StatusLine is the status line for the session its input names, else for
 // the worktree its cwd is in, as Emacs's mode line sends: how many open
-// questions of that plan Wesley can answer now, or nothing. It reads only
-// this host's plan files and git, never the network, and says nothing on
-// any error.
+// questions of that plan the operator can answer now, or nothing. It reads
+// only this host's plan files and git, never the network, and says nothing
+// on any error.
 func (c Config) StatusLine(input []byte) string {
 	var in struct {
 		SessionID string `json:"session_id"`

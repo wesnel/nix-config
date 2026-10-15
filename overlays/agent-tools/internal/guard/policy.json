@@ -1,9 +1,9 @@
 [
   {
-    "why": "Publishing goes through Wesley's signed push or `pr-loop`, never a plain push.",
+    "why": "Publishing goes through the operator's signed push or `pr-loop`, never a plain push.",
     "scope": "baseline",
     "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?push\\b.*",
-    "deny": ["git push origin wesley/x", "git -C /tmp/r push --force-with-lease", "cd repo && git push", "true\ngit push",
+    "deny": ["git push origin feature/x", "git -C /tmp/r push --force-with-lease", "cd repo && git push", "true\ngit push",
       "nice -n 5 git push", "env -u HOME git push", "if true; then git push; fi", "find . -maxdepth 0 -exec git push \\;",
       "git push https://github.com/o/r HEAD"],
     "allow": ["git status", "git log --oneline -5 && git status", "grep -nE 'git\\s+push' README.md"]
@@ -30,7 +30,7 @@
     "allow": ["git commit --fixup=abc", "grep -rn -e '--no-verif[y]' ."]
   },
   {
-    "why": "Tags are Wesley's to make; listing and verifying them is fine.",
+    "why": "Tags are the operator's to make; listing and verifying them is fine.",
     "scope": "baseline",
     "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?tag\\b(?!\\s*($|[;&|)\\n]))(?!\\s+(-l|--list|-v|--verify|-n\\d*|--contains|--no-contains|--merged|--no-merged|--points-at|--sort|--format|--column)\\b).*",
     "deny": ["git tag v1", "git tag -a v1 -m x", "git tag -d v1", "git -C r tag -s v1", "git tag -l && git tag v2"],
@@ -44,7 +44,7 @@
     "allow": ["gh pr view 123 --json title", "grep -nE 'gh\\s+pr\\s+merge' SKILL.md"]
   },
   {
-    "why": "Merging, closing, reopening, reviewing and top-level comments are Wesley's.",
+    "why": "Merging, closing, reopening, reviewing and top-level comments are the operator's.",
     "scope": "baseline",
     "pattern": ".*\\bgh\\s+pr\\s+(merge|close|reopen|review|comment)\\b.*",
     "deny": ["gh pr merge 123", "gh pr comment 123 -b hi", "timeout 60 gh pr merge 1", "bash -lc 'gh pr merge 1'",
@@ -52,7 +52,7 @@
     "allow": ["gh pr view 1", "gh pr create --draft --title t --body-file b", "grep -nE 'gh\\s+pr\\s+merge' SKILL.md"]
   },
   {
-    "why": "Marking a PR ready notifies its code owners, which is Wesley's call.",
+    "why": "Marking a PR ready notifies its code owners, which is the operator's call.",
     "scope": "baseline",
     "pattern": ".*\\bgh\\s+pr\\s+ready\\b(?!.*--undo).*",
     "deny": ["gh pr ready 123"],
@@ -67,14 +67,14 @@
     "allow": ["gh pr create --draft --title t --body-file b", "gh pr create -d --title t --body b", "gh pr create --draft=true --title t --body b"]
   },
   {
-    "why": "Only a PR's base, title and body may change; labels, reviewers and the rest are Wesley's.",
+    "why": "Only a PR's base, title and body may change; labels, reviewers and the rest are the operator's.",
     "scope": "baseline",
     "pattern": ".*\\bgh\\s+pr\\s+edit\\b.*\\s(--(?!(base|title|body-file|body)(=|\\s|$))|-(?!-|[BtbF](\\s|$)))\\S.*",
     "deny": ["gh pr edit 1 --add-label bug", "gh pr edit 1 --title t --add-reviewer u", "gh pr edit 1 -m v1"],
     "allow": ["gh pr edit 1 --title t --body-file b", "gh pr edit 1 -B main", "gh pr edit 1 --body=x"]
   },
   {
-    "why": "Issues and their comments are Wesley's to write.",
+    "why": "Issues and their comments are the operator's to write.",
     "scope": "baseline",
     "pattern": ".*\\bgh\\s+issue\\s+(?!(view|list|status)\\b)\\S+.*",
     "deny": ["gh issue comment 1 -b x", "gh issue create -t x -b y", "gh issue close 1"],
@@ -88,7 +88,7 @@
     "allow": ["gh auth status"]
   },
   {
-    "why": "Repository settings, releases, secrets, labels, workflow runs, gists and gh's own setup are Wesley's.",
+    "why": "Repository settings, releases, secrets, labels, workflow runs, gists and gh's own setup are the operator's.",
     "scope": "baseline",
     "pattern": ".*\\bgh\\s+(repo\\s+(create|edit|delete|archive|unarchive|rename|fork|sync|deploy-key\\s+(add|delete))|release\\s+(create|edit|delete|upload|delete-asset)|secret\\s+(set|delete|remove)|variable\\s+(set|delete)|label\\s+(create|edit|delete|clone)|ruleset\\s+(create|edit|delete)|cache\\s+delete|workflow\\s+(run|enable|disable)|run\\s+(rerun|cancel|delete)|gist\\s+(create|edit|delete)|extension\\s+(install|exec|upgrade|remove)|alias\\s+(set|import|delete))\\b.*",
     "deny": ["gh repo delete o/r --yes", "gh repo deploy-key add k.pub", "gh release create v1", "gh secret set X",
@@ -106,7 +106,7 @@
     "allow": ["gh api repos/o/r/pulls/1/reviews --paginate"]
   },
   {
-    "why": "Credentials and the transport git uses are Wesley's configuration.",
+    "why": "Credentials and the transport git uses are the operator's configuration.",
     "scope": "baseline",
     "pattern": "(?i).*\\bgit\\b.*(\\bcredential\\.|\\bhttp\\.\\S*extraheader|\\burl\\..*insteadof|\\bcore\\.sshcommand).*",
     "deny": ["git -c credential.helper=osxkeychain fetch", "git -c http.https://github.com/.extraHeader='Authorization: x' fetch",
@@ -114,14 +114,14 @@
     "allow": ["git fetch origin", "git config user.name T"]
   },
   {
-    "why": "Credentials and the transport git uses are Wesley's configuration.",
+    "why": "Credentials and the transport git uses are the operator's configuration.",
     "scope": "baseline",
     "pattern": ".*\\bGIT_(SSH|SSH_COMMAND|ASKPASS)=.*",
     "deny": ["GIT_SSH_COMMAND='ssh -i k' git fetch", "GIT_ASKPASS=/tmp/p git fetch", "env GIT_SSH=/tmp/s git fetch"],
     "allow": ["git fetch", "GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 go test ./..."]
   },
   {
-    "why": "Where a repository's remotes point is Wesley's configuration.",
+    "why": "Where a repository's remotes point is the operator's configuration.",
     "scope": "baseline",
     "pattern": ".*\\bgit\\b.*(\\bremote\\s+(add|set-url)\\b|\\bconfig\\b.*\\bremote\\.\\S+\\.(push)?url\\b).*",
     "deny": ["git remote add fork https://github.com/me/r", "git remote set-url origin https://github.com/me/r",
@@ -152,7 +152,7 @@
     "allow": ["printenv PATH", "env FOO=1 go test ./...", "set -euo pipefail", "export FOO=1"]
   },
   {
-    "why": "Settings every worktree shares are Wesley's.",
+    "why": "Settings every worktree shares are the operator's.",
     "scope": "baseline",
     "pattern": "(?i).*\\bgit\\b.*\\bconfig\\b(?!.*--worktree)(?!.*(--get|--list|\\s-l\\b|\\sget\\s|\\slist\\b)).*\\s(core\\.(bare|worktree|hookspath|fsmonitor|sshcommand|pager|editor)|include|filter\\.|diff\\.\\S+\\.textconv)\\S*.*",
     "deny": ["git config core.bare true", "git config --local core.hooksPath /tmp/h", "git config include.path ../x", "git config filter.x.clean cat",
@@ -175,7 +175,7 @@
     "allow": ["NGROK_ENV=dev ./deploy.sh", "set -x NGROK_ENV dev", "grep -rn NGROK_ENV ."]
   },
   {
-    "why": "Activating a system or a profile is Wesley's step; building is not.",
+    "why": "Activating a system or a profile is the operator's step; building is not.",
     "scope": "baseline",
     "pattern": ".*(\\b(darwin-rebuild\\s+(.*\\s)?(switch|activate|rollback|--rollback)|home-manager\\s+(.*\\s)?(switch|activate|remove-generations|expire-generations|uninstall)|nixos-rebuild\\s+(.*\\s)?(switch|boot|test|--rollback)|nix\\s+profile\\s+(install|add|remove|upgrade|rollback|wipe-history)|nix-env\\s+(.*\\s)?(-[ieuG]\\w*|--install|--uninstall|--upgrade|--set|--rollback|--switch-generation|--delete-generations)|nix-collect-garbage\\s+(.*\\s)?(-d|--delete-old|--delete-older-than)|nix\\s+copy\\s+(.*\\s)?--to[=\\s]+\\S+://|cachix\\s+push)\\b|\\S*/activate(\\s|$)).*",
     "deny": ["darwin-rebuild switch --flake .", "home-manager switch --flake .#devbox", "nixos-rebuild boot", "./result/activate",
@@ -183,7 +183,7 @@
     "allow": ["darwin-rebuild build --flake .", "nix build .#x", "nix flake check", "home-manager build", "nix-env -q"]
   },
   {
-    "why": "History git cannot get back is Wesley's to discard.",
+    "why": "History git cannot get back is the operator's to discard.",
     "scope": "baseline",
     "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?(reflog\\s+(expire|delete)|gc\\b.*--prune=(now|all)|prune\\b|filter-branch|filter-repo|update-ref\\s+(.*\\s)?-d\\s+(.*\\s)?refs/heads/|worktree\\s+prune).*",
     "deny": ["git reflog expire --expire=now --all", "git gc --prune=now", "git prune", "git filter-branch --tree-filter x HEAD",
@@ -214,14 +214,14 @@
     "allow": ["cat ~/.claude/settings.json", "claude -p hello"]
   },
   {
-    "why": "Anything needing root is Wesley's to run.",
+    "why": "Anything needing root is the operator's to run.",
     "scope": "baseline",
     "pattern": "(?i)(.*[\\s;&|(])?(sudo|doas|su|pkexec|run0)(\\s.*)?|.*\\bosascript\\b.*with administrator privileges.*",
     "deny": ["sudo darwin-rebuild switch", "doas true", "su -", "pkexec ls", "osascript -e 'do shell script \"x\" with administrator privileges'"],
     "allow": ["echo issue", "git status"]
   },
   {
-    "why": "Publishing a package is Wesley's step.",
+    "why": "Publishing a package is the operator's step.",
     "scope": "baseline",
     "pattern": ".*\\b((npm|pnpm|yarn|bun)\\s+(.*\\s)?publish|cargo\\s+publish|twine\\s+upload|gem\\s+push|(docker|podman)\\s+(image\\s+)?push|goreleaser(?!\\s+(check|build|healthcheck|init|jsonschema|completion|help)\\b)|vsce\\s+publish)\\b.*",
     "deny": ["npm publish", "yarn npm publish", "cargo publish", "twine upload dist/x", "gem push x.gem", "docker push img", "podman image push img",
@@ -229,7 +229,7 @@
     "allow": ["npm test", "cargo build", "docker build .", "goreleaser check"]
   },
   {
-    "why": "Wesley's session depends on these processes.",
+    "why": "The operator's session depends on these processes.",
     "scope": "baseline",
     "pattern": "(?i).*\\b((pkill|killall)\\b.*(emacs|gpg-agent|ssh|nix-daemon|mcp-proxy)|gpgconf\\s+(.*\\s)?--kill|ssh\\s+(.*\\s)?-O\\s*(exit|stop)|launchctl\\s+(bootout|unload|remove|kickstart\\s+(.*\\s)?-k)|emacsclient\\b.*kill-emacs).*",
     "deny": ["pkill emacs", "killall -9 gpg-agent", "pkill -f 'emacs --daemon'", "gpgconf --kill gpg-agent", "ssh -O exit devbox",
@@ -237,7 +237,7 @@
     "allow": ["pkill -f my-test-server", "launchctl list", "emacsclient -e '(+ 1 2)'"]
   },
   {
-    "why": "The home directory, the root, the Nix store and Wesley's keys are not the agent's to destroy.",
+    "why": "The home directory, the root, the Nix store and the operator's keys are not the agent's to destroy.",
     "scope": "baseline",
     "pattern": ".*\\b(rm\\s+(.*\\s)?-[a-zA-Z]*[rR]\\S*|chmod\\s+(.*\\s)?-R|chown\\s+(.*\\s)?-R|trash)\\s+(.*\\s)?(\"?(~|\\$HOME|\\$\\{HOME\\})\"?/?\\*?|/\\*?|/nix\\S*|\"?(~|\\$HOME)\"?/\\.(ssh|gnupg)\\S*)(\\s.*)?",
     "deny": ["rm -rf ~", "rm -rf $HOME/", "rm -rf /", "rm -r /nix", "chmod -R 777 ~/.ssh", "trash ~/.gnupg", "rm -rf ~/*"],
@@ -259,28 +259,28 @@
       "agent-plan sign-result 2026-10-15-git-sign-pass-notify.box.0a1b2c3d"]
   },
   {
-    "why": "Whether a CI failure is not the PR's doing is Wesley's call.",
+    "why": "Whether a CI failure is not the PR's doing is the operator's call.",
     "scope": "baseline",
     "pattern": ".*\\bpr-loop\\b.*--accept-failure.*",
     "deny": ["pr-loop request --accept-failure windows-tuntap 663", "pr-loop request 663 --accept-failure=ci"],
     "allow": ["pr-loop request 663"]
   },
   {
-    "why": "Pruning the loop's history is Wesley's call.",
+    "why": "Pruning the loop's history is the operator's call.",
     "scope": "baseline",
     "pattern": ".*\\bpr-loop\\s+end\\b.*--prune.*",
     "deny": ["pr-loop end --prune"],
     "allow": ["pr-loop end"]
   },
   {
-    "why": "pr-loop.* settings are Wesley's to change.",
+    "why": "pr-loop.* settings are the operator's to change.",
     "scope": "baseline",
     "pattern": ".*\\bgit\\b.*\\bconfig\\b.*\\bpr-loop\\..*",
     "deny": ["git config pr-loop.x 1", "git config --unset pr-loop.x"],
     "allow": ["git config user.name"]
   },
   {
-    "why": "Publishing private history in a public repository is Wesley's decision.",
+    "why": "Publishing private history in a public repository is the operator's decision.",
     "scope": "baseline",
     "pattern": "(?i).*\\bpush-guard\\.allowpublic\\b.*",
     "deny": ["git config push-guard.allowPublic ngrok/ngrok", "git -c push-guard.allowpublic=o/r push"],
@@ -322,7 +322,7 @@
     "allow": ["agent-plan status /p/2026-10-14-x.box.org", "agent-plan goal 2026-10-14-x.box --part P1", "grep -nE 'agent-plan\\s+log' SKILL.md"]
   },
   {
-    "why": "The watcher syncs plans, and resealing a log is Wesley's call.",
+    "why": "The watcher syncs plans, and resealing a log is the operator's call.",
     "scope": "baseline",
     "pattern": ".*\\bagent-plan\\s+(sync|reseal)\\b.*",
     "deny": ["agent-plan sync", "agent-plan sync --pull", "agent-plan reseal /p/2026-10-14-x.box.org"],

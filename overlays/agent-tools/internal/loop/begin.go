@@ -103,16 +103,16 @@ func Begin(branches []string) (any, error) {
 			return nil, err
 		}
 		if !git.OK("rev-parse", "--verify", "-q", "refs/heads/"+b) {
-			return nil, refuse("no local branch %s; ask Wesley to fetch and check it out", b)
+			return nil, refuse("no local branch %s; ask the operator to fetch and check it out", b)
 		}
 		remote := pr.HeadRefOid
 		if !git.OK("cat-file", "-e", remote+"^{commit}") {
-			return nil, refuse("%s on GitHub is at %.12s, which is not in this repository; ask Wesley to fetch it, "+
+			return nil, refuse("%s on GitHub is at %.12s, which is not in this repository; ask the operator to fetch it,"+
 				"then begin again", b, remote)
 		}
 		if !git.OK("merge-base", "--is-ancestor", remote, "refs/heads/"+b) {
 			return nil, refuse("local %s does not contain %.12s from GitHub, which has commits it lacks; "+
-				"stop and ask Wesley how to reconcile them", b, remote)
+				"stop and ask the operator how to reconcile them", b, remote)
 		}
 		state.Order = append(state.Order, b)
 		state.Branches[b] = &Branch{PR: pr.Number, Base: pr.BaseRefName, RemoteOid: remote}
@@ -132,7 +132,7 @@ func Begin(branches []string) (any, error) {
 		for _, c := range entry.Commits {
 			if kind, _ := fold(c.Message); kind != history.Kept {
 				return nil, refuse("%s already has fixup!, amend! or squash! commits (%q), which the loop would mistake for its own; "+
-					"hand Wesley `git sign-pass` on that branch to squash them, then begin again", b, subject(c.Message))
+					"hand the operator `git sign-pass` on that branch to squash them, then begin again", b, subject(c.Message))
 			}
 		}
 	}

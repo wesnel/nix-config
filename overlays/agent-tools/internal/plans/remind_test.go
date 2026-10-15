@@ -45,7 +45,7 @@ func TestRemind(t *testing.T) {
 
 		{"a session with no plan", event(map[string]any{"session_id": "zzz", "hook_event_name": "UserPromptSubmit",
 			"prompt": notification}), "", nil},
-		{"Wesley's own prompt", event(map[string]any{"session_id": "abc", "hook_event_name": "UserPromptSubmit",
+		{"the operator's own prompt", event(map[string]any{"session_id": "abc", "hook_event_name": "UserPromptSubmit",
 			"prompt": "Carry on"}), "", nil},
 		{"a background shell command's notification", event(map[string]any{"session_id": "abc", "hook_event_name": "UserPromptSubmit",
 			"prompt": "<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n<summary>Background command \"go test\" completed (exit code 0)</summary>\n</task-notification>"}), "", nil},

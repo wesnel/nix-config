@@ -215,8 +215,8 @@ func Request(numbers []int, onlyBots, acceptFailures []string) (any, error) {
 		}
 		if len(own) > 0 {
 			return nil, refuse("CI on #%d fails in %s, which do not fail on its base. Fix that before asking for "+
-				"review. If a failure is shown not to be this PR's, waiving it is Wesley's call: put the evidence in "+
-				"the report, with `pr-loop request --accept-failure NAME %d` for him to run", pr.Number, strings.Join(own, ", "), pr.Number)
+				"review. If a failure is shown not to be this PR's, waiving it is the operator's call: put the evidence in "+
+				"the report, with `pr-loop request --accept-failure NAME %d` for them to run", pr.Number, strings.Join(own, ", "), pr.Number)
 		}
 		if len(acceptFailures) > 0 {
 			for name := range accepted {

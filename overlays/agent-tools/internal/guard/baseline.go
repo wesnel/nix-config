@@ -15,25 +15,25 @@ import (
 )
 
 // The rules every session is held to beyond GitHub: what would lose
-// Wesley's work, read a credential, change his machine or switch the guard
-// off. A rule that needs the repository's state asks git, from the
+// the operator's work, read a credential, change their machine or switch the
+// guard off. A rule that needs the repository's state asks git, from the
 // directory the command runs in.
 
 const (
-	sweeping     = "This stages everything in the repository's main checkout, which holds Wesley's untracked work in progress. Stage the paths you changed by name (`git add PATH...`), or work in a worktree of your own (`git worktree add`)."
-	mainCheckout = "This discards work in the repository's main checkout, which holds Wesley's work in progress. Do it in a worktree of your own (`git worktree add`), or ask Wesley."
-	historyLoss  = "This deletes history git cannot get back, which is Wesley's call. Leave it, and put the command in your report for Wesley."
-	sharedStash  = "Every worktree of a repository shares one stash, so this can discard another worktree's stashed work. Leave the stash as it is, and put the command in your report for Wesley."
-	sharedConfig = "This setting is shared by every worktree and changes how git runs for Wesley too. Put the `git config` command in your report for Wesley; a worktree's own setting takes `git config --worktree`."
-	secretRead   = "This reads a credential, which stays out of the session. Use the tool that holds it (`gh`, `pr-loop`, `git`), or ask Wesley for what you need from it."
-	ngrokWrite   = "ngrok API writes reach production. Use a list or get command, or hand Wesley the command."
-	systemSwitch = "Activating a system or profile is Wesley's step. Build it with `nix build` or `darwin-rebuild build`, and hand Wesley the switch command."
-	rootCommand  = "Anything needing root is Wesley's to run. Put the command in your report for Wesley, and say its result is unverified."
-	publishing   = "Publishing a package is Wesley's step. Build and test it here, and hand Wesley the publish command."
-	killing      = "That process is one Wesley's session depends on (Emacs, gpg-agent, ssh, nix-daemon or mcp-proxy). Leave it running, and tell Wesley if it needs a restart."
-	destroying   = "This would destroy the home directory, the root filesystem, the Nix store or Wesley's keys. Name the exact path inside the workspace you mean, or ask Wesley."
-	guardOff     = "The guard and its hooks are Wesley's configuration, and stay on. Put the change you want in your report for Wesley."
-	connector    = "Writing to Slack, Gmail, Linear, GitHub or Notion acts as Wesley. Confirm it with Wesley first, or put the draft in your report."
+	sweeping     = "This stages everything in the repository's main checkout, which holds the operator's untracked work in progress. Stage the paths you changed by name (`git add PATH...`), or work in a worktree of your own (`git worktree add`)."
+	mainCheckout = "This discards work in the repository's main checkout, which holds the operator's work in progress. Do it in a worktree of your own (`git worktree add`), or ask the operator."
+	historyLoss  = "This deletes history git cannot get back, which is the operator's call. Leave it, and put the command in your report for the operator."
+	sharedStash  = "Every worktree of a repository shares one stash, so this can discard another worktree's stashed work. Leave the stash as it is, and put the command in your report for the operator."
+	sharedConfig = "This setting is shared by every worktree and changes how git runs for the operator too. Put the `git config` command in your report for the operator; a worktree's own setting takes `git config --worktree`."
+	secretRead   = "This reads a credential, which stays out of the session. Use the tool that holds it (`gh`, `pr-loop`, `git`), or ask the operator for what you need from it."
+	ngrokWrite   = "ngrok API writes reach production. Use a list or get command, or hand the operator the command."
+	systemSwitch = "Activating a system or profile is the operator's step. Build it with `nix build` or `darwin-rebuild build`, and hand the operator the switch command."
+	rootCommand  = "Anything needing root is the operator's to run. Put the command in your report for the operator, and say its result is unverified."
+	publishing   = "Publishing a package is the operator's step. Build and test it here, and hand the operator the publish command."
+	killing      = "The operator's session depends on that process (Emacs, gpg-agent, ssh, nix-daemon or mcp-proxy). Leave it running, and tell the operator if it needs a restart."
+	destroying   = "This would destroy the home directory, the root filesystem, the Nix store or the operator's keys. Name the exact path inside the workspace you mean, or ask the operator."
+	guardOff     = "The guard and its hooks are the operator's configuration, and stay on. Put the change you want in your report for the operator."
+	connector    = "Writing to Slack, Gmail, Linear, GitHub or Notion acts as the operator. Confirm it with the operator first, or put the draft in your report."
 )
 
 // home is the user's home directory, which ~ and $HOME name.
@@ -405,7 +405,7 @@ func checkSession(c call, dir string) string {
 			return killing
 		}
 	case "emacs", "Emacs":
-		return "A second Emacs, batch or not, runs apart from Wesley's daemon and can leave files and state behind for it. " +
+		return "A second Emacs, batch or not, runs apart from the operator's daemon and can leave files and state behind for it. " +
 			"Use `emacsclient` as the emacsclient skill says, such as `emacsclient -e '(check-parens)'`."
 	case "rm", "trash", "chmod", "chown", "chgrp", "mv":
 		recursive := name == "trash" || name == "mv"
@@ -586,8 +586,8 @@ func writeTargets(name string, args []string) []string {
 	return args
 }
 
-const realEnvironment = "NGROK_ENV set to prod or stage points ngrok's tooling at a real environment, which is Wesley's to act on. " +
-	"Use a dev or local environment, or put the command in your report for Wesley."
+const realEnvironment = "NGROK_ENV set to prod or stage points ngrok's tooling at a real environment, which is the operator's to act on. " +
+	"Use a dev or local environment, or put the command in your report for the operator."
 
 // realNgrokEnv matches a value of NGROK_ENV that names a real environment.
 var realNgrokEnv = regexp.MustCompile(`(?i)^(prod|production|stage|staging)$`)
@@ -657,7 +657,7 @@ func longSleep(c call) bool {
 }
 
 const readsTerminal = "This reads its input from the terminal, which Codex keeps open for write_stdin, and text typed there reaches no hook. " +
-	"Run the command itself, as `bash -c '...'`, `python3 script.py` or `cat FILE`, or put what you need in your report for Wesley."
+	"Run the command itself, as `bash -c '...'`, `python3 script.py` or `cat FILE`, or put what you need in your report for the operator."
 
 // terminalReader reports whether a command line is one command that reads
 // its input from the terminal: a shell or REPL with nothing to run, or a
@@ -755,7 +755,7 @@ var switchVerbs = map[string]map[string]bool{
 }
 
 // protectedProcess reports whether a process name or pattern names a
-// process Wesley's session depends on.
+// process the operator's session depends on.
 func protectedProcess(name string) bool {
 	name = strings.ToLower(name)
 	for _, p := range []string{"emacs", "gpg-agent", "ssh", "nix-daemon", "mcp-proxy"} {
@@ -767,7 +767,7 @@ func protectedProcess(name string) bool {
 }
 
 // checkKill denies a kill of every process, a process group, or a process
-// Wesley's session depends on, which it looks up with ps.
+// the operator's session depends on, which it looks up with ps.
 func checkKill(args []string) string {
 	// The signal, if any, comes first; a negative number after it is a
 	// process group.
@@ -802,8 +802,8 @@ func checkKill(args []string) string {
 }
 
 // protectedTree reports whether path is the home directory, the root, or
-// in the Nix store or Wesley's keys; a glob counts as its directory. The
-// home directory and the root count only for a recursive operation.
+// in the Nix store or the operator's keys; a glob counts as its directory.
+// The home directory and the root count only for a recursive operation.
 func protectedTree(path string, recursive bool) bool {
 	for strings.HasSuffix(path, "/*") || path != "/" && strings.HasSuffix(path, "*") {
 		path = filepath.Dir(path)
@@ -1163,7 +1163,7 @@ func fileChanges(tool string, toolInput json.RawMessage) []change {
 	return changes
 }
 
-// connectorTool matches the claude.ai connectors that act as Wesley.
+// connectorTool matches the claude.ai connectors that act as the operator.
 var connectorTool = regexp.MustCompile(`(?i)^mcp__claude_ai_(slack|gmail|linear|github|notion)__`)
 
 // readWord matches a tool name that names a read.
@@ -1205,10 +1205,10 @@ func (g gitState) query(args ...string) (string, bool) {
 }
 
 // keyTouchText is why a command that waits for a touch of the hardware key
-// is denied, with %s how the agent's interface takes a command Wesley runs,
-// as AGENTS.md's "Commands Wesley runs" says.
-const keyTouchText = "This waits for a touch of Wesley's hardware key, which nobody is here to give. " +
-	"Hand Wesley the command as %s, and meanwhile work from local refs, such as `git log origin/main`, with commits left unsigned; " +
+// is denied, with %s how the agent's interface takes a command the operator
+// runs, as AGENTS.md's "Commands the operator runs" says.
+const keyTouchText = "This waits for a touch of the operator's hardware key, which nobody is here to give. " +
+	"Hand the operator the command as %s, and meanwhile work from local refs, such as `git log origin/main`, with commits left unsigned; " +
 	"`gh pr view` and `gh api` read GitHub over HTTPS."
 
 var (
@@ -1216,7 +1216,7 @@ var (
 	// a line beginning with ! in the session.
 	keyTouch = fmt.Sprintf(keyTouchText, "one line beginning with `!`, so its output lands here")
 	// keyTouchPlain is keyTouchText for ECA, whose prompt does not.
-	keyTouchPlain = fmt.Sprintf(keyTouchText, "one plain line for his terminal")
+	keyTouchPlain = fmt.Sprintf(keyTouchText, "one plain line for their terminal")
 )
 
 // touchHosts are the hosts an SSH login to waits for a key touch: the git
@@ -1515,8 +1515,8 @@ var commitWriters = map[string]map[string]bool{
 	"pull":        set("--ff-only"),
 }
 
-const signingOn = "Signing needs Wesley's hardware key, which nobody is here to touch, and this `git %s` would sign. " +
-	"Run it as `git -c commit.gpgsign=false %s ...`, without -S or --gpg-sign; Wesley signs everything in one pass at the end."
+const signingOn = "Signing needs the operator's hardware key, which nobody is here to touch, and this `git %s` would sign. " +
+	"Run it as `git -c commit.gpgsign=false %s ...`, without -S or --gpg-sign; the operator signs everything in one pass at the end."
 
 // checkSigning denies a command that would write a signed commit, which
 // waits for a key touch: commit.gpgsign is on where it runs, or it asks for
@@ -1606,10 +1606,10 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 		return untagged
 	case sub == "worktree" && first == "add" && (has("--force") || short("f")):
 		return "--force adds a worktree on a branch another worktree has, or over a path git keeps for one, which can take another session's place. " +
-			"Add a worktree of your own without it (`git worktree add -b NEW ../PATH BRANCH`), or ask Wesley."
+			"Add a worktree of your own without it (`git worktree add -b NEW ../PATH BRANCH`), or ask the operator."
 	case (sub == "switch" || sub == "checkout") && has("--ignore-other-worktrees"):
 		return "A branch checked out in another worktree belongs to whoever works there, and checking it out here too moves it under them. " +
-			"Work on a branch of your own in a worktree of your own (`git worktree add -b NEW ../PATH BRANCH`), or ask Wesley."
+			"Work on a branch of your own in a worktree of your own (`git worktree add -b NEW ../PATH BRANCH`), or ask the operator."
 	case sub == "reset" && has("--hard"),
 		sub == "checkout" && (has("-f", "--force") || everything()),
 		sub == "restore" && everything() && (!has("--staged", "-S") || has("--worktree", "-W")),
@@ -1625,8 +1625,8 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 		}
 	case (sub == "switch" || sub == "checkout") && changesBranch(sub, rest, g):
 		if g.main() {
-			return "Changing branch in the repository's main checkout moves Wesley's working tree under him. " +
-				"Work in a worktree of your own (`git worktree add ../PATH BRANCH`), or ask Wesley."
+			return "Changing branch in the repository's main checkout moves the operator's working tree under them. " +
+				"Work in a worktree of your own (`git worktree add ../PATH BRANCH`), or ask the operator."
 		}
 	case sub == "reflog" && (first == "expire" || first == "delete"),
 		sub == "gc" && (has("--prune=now") || has("--prune=all")),
@@ -1676,7 +1676,7 @@ func (g gitState) dirty() bool {
 }
 
 const discardWorktree = "Removing this worktree with discard_changes deletes uncommitted files or commits no remote has, which git cannot get back. " +
-	"Exit with `keep`, or commit the work and put the removal in your report for Wesley."
+	"Exit with `keep`, or commit the work and put the removal in your report for the operator."
 
 // checkExitWorktree denies Claude Code's ExitWorktree when it would discard
 // the worktree at dir and its branch while they hold work found nowhere
@@ -1698,7 +1698,7 @@ func checkExitWorktree(toolInput json.RawMessage, dir string) string {
 
 const untagged = "Every worktree shares one stash, so an untagged entry, or a pop or apply of whatever is on top, can take another session's work. " +
 	"Use a tagged entry: `git stash push -u -m <unique-tag>`, take its SHA from `git stash list --format='%H %s'`, " +
-	"restore it with `git stash apply <sha>`, and for the drop, which is Wesley's, put `git stash drop stash@{N}` in your report, " +
+	"restore it with `git stash apply <sha>`, and for the drop, which is the operator's, put `git stash drop stash@{N}` in your report, " +
 	"N found again by the tag in `git stash list`."
 
 // untaggedStash reports whether `git stash` with these arguments makes an
@@ -1758,5 +1758,5 @@ func changesBranch(sub string, args []string, g gitState) bool {
 	return commit
 }
 
-// sharedKeys are the git config keys whose shared value is Wesley's.
+// sharedKeys are the git config keys whose shared value is the operator's.
 var sharedKeys = regexp.MustCompile(`^(core\.(bare|worktree|hookspath|fsmonitor|sshcommand|pager|editor)|include(if)?\..*|filter\..*|diff\..*\.textconv|remote\..*|url\..*|credential(\..*)?)$`)

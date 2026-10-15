@@ -267,9 +267,10 @@ in {
                 ];
               }
             ];
-            # Wesley's prompt: its URLs become plan references. A
+            # The operator's prompt: its URLs become plan references. A
             # sub-agent's turn carries agent_id, which agent-plan skips.
-            # Carries the time and how long since Wesley's previous message.
+            # Carries the time and how long since the operator's previous
+            # message.
             hooks.UserPromptSubmit = [
               {
                 hooks = [
@@ -314,7 +315,7 @@ in {
     }
 
     # Near a rate limit Codex offers to switch the running session to a
-    # cheaper model, which is Wesley's call alone. Merged into the
+    # cheaper model, which is the operator's call alone. Merged into the
     # config.toml Codex writes.
     {
       home.activation.codexNotices = lib.hm.dag.entryAfter ["writeBoundary"] ''

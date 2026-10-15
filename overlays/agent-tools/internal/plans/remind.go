@@ -26,7 +26,7 @@ var notifiedAgent = regexp.MustCompile(`<summary>Agent "(.*)" finished</summary>
 //     from a compaction and ECA's postCompact, with the plan's brief.
 //
 // On any other UserPromptSubmit of the main thread, and on ECA's
-// preRequest of a chat that is not a sub-agent's, the prompt is Wesley's
+// preRequest of a chat that is not a sub-agent's, the prompt is the operator's
 // own: it keeps each http(s) address in it as a reference of the plan,
 // and prints nothing. Codex sends a sub-agent's turns with agent_id.
 //
@@ -105,7 +105,7 @@ func (c Config) remind(input []byte) []byte {
 		}
 		event, context = in.Event, finished(fmt.Sprintf("%q ", m[1]))
 	case (in.Event == "UserPromptSubmit" && in.AgentID == "") || (in.Type == "preRequest" && in.ParentChatID == ""):
-		// Wesley's own prompt: its addresses are references of the plan.
+		// The operator's own prompt: its addresses are references of the plan.
 		if plan() != "" {
 			recordReferences(found, in.Prompt, time.Now())
 		}
@@ -135,7 +135,7 @@ func (c Config) remind(input []byte) []byte {
 		if p := plan(); p != "" {
 			return []byte(fmt.Sprintf("Keep in the summary the path of the plan, %s, and everything since it was last brought "+
 				"up to date that it does not yet record: steps done or verified, decisions, findings, sub-agent outcomes and "+
-				"questions for Wesley, so it can be brought up to date first thing after the compaction.", p))
+				"questions for the operator, so it can be brought up to date first thing after the compaction.", p))
 		}
 		return nil
 	case in.Event == "SessionStart" && in.Source == "compact":

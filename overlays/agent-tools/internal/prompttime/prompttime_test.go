@@ -8,8 +8,8 @@ import (
 )
 
 // Every prompt of a session's main thread carries the time and how long
-// it has been since Wesley's previous message, which only his own prompts
-// move; a sub-agent's prompts carry nothing.
+// it has been since the operator's previous message, which only the
+// operator's own prompts move; a sub-agent's prompts carry nothing.
 func TestRemind(t *testing.T) {
 	event := func(fields map[string]any) []byte {
 		data, _ := json.Marshal(fields)
@@ -28,22 +28,22 @@ func TestRemind(t *testing.T) {
 		want  []string
 	}{
 		{"the first prompt", claude("s1", "Start"), 0,
-			[]string{"It is 2026-10-15 Thu 09:00 PDT", "Wesley's first message in this session"}},
+			[]string{"It is 2026-10-15 Thu 09:00 PDT", "the operator's first message in this session"}},
 		{"a reply two hours later", claude("s1", "Carry on"), 2*time.Hour + 5*time.Minute,
-			[]string{"It is 2026-10-15 Thu 11:05 PDT", "2h 5m since Wesley's previous message"}},
+			[]string{"It is 2026-10-15 Thu 11:05 PDT", "2h 5m since the operator's previous message"}},
 		{"a sub-agent's notification", claude("s1", "<task-notification>\n<summary>Agent \"x\" finished</summary>\n</task-notification>"),
-			2*time.Hour + 15*time.Minute, []string{"It is 2026-10-15 Thu 11:15 PDT", "10m since Wesley's previous message"}},
-		{"his next prompt counts from his own", claude("s1", "And then?"), 2*time.Hour + 35*time.Minute,
-			[]string{"30m since Wesley's previous message"}},
-		{"another session", claude("s2", "Hello"), 3 * time.Hour, []string{"Wesley's first message in this session"}},
+			2*time.Hour + 15*time.Minute, []string{"It is 2026-10-15 Thu 11:15 PDT", "10m since the operator's previous message"}},
+		{"the operator's next prompt counts from their own", claude("s1", "And then?"), 2*time.Hour + 35*time.Minute,
+			[]string{"30m since the operator's previous message"}},
+		{"another session", claude("s2", "Hello"), 3 * time.Hour, []string{"the operator's first message in this session"}},
 		{"a Codex prompt", event(map[string]any{"session_id": "s3", "hook_event_name": "UserPromptSubmit", "turn_id": "t",
 			"prompt": "Go"}), 3 * time.Hour, []string{"It is 2026-10-15 Thu 12:00 PDT"}},
 		{"an ECA prompt a day later", event(map[string]any{"hook_type": "preRequest", "chat_id": "c1", "prompt": "Go"}),
 			27 * time.Hour, []string{"It is 2026-10-16 Fri 12:00 PDT", "first message"}},
 		{"the ECA chat's next prompt", event(map[string]any{"hook_type": "preRequest", "chat_id": "c1", "prompt": "Go on"}),
-			27*time.Hour + 45*time.Second, []string{"45s since Wesley's previous message"}},
+			27*time.Hour + 45*time.Second, []string{"45s since the operator's previous message"}},
 		{"the ECA chat two days on", event(map[string]any{"hook_type": "preRequest", "chat_id": "c1", "prompt": "Back"}),
-			75*time.Hour + 45*time.Second + 3*time.Hour, []string{"2d 3h since Wesley's previous message"}},
+			75*time.Hour + 45*time.Second + 3*time.Hour, []string{"2d 3h since the operator's previous message"}},
 		{"a Codex sub-agent", event(map[string]any{"session_id": "s3", "hook_event_name": "UserPromptSubmit", "agent_id": "a1",
 			"prompt": "Go"}), 4 * time.Hour, nil},
 		{"an ECA sub-agent", event(map[string]any{"hook_type": "preRequest", "chat_id": "c2", "parent_chat_id": "c1",
