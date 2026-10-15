@@ -5,16 +5,26 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
-// checkOwner denies a file edit, by a file tool or the shell, inside a
-// worktree a plan of this host gives to another agent (`agent-plan own`).
-// The caller is the event's agent_id, which Claude Code and Codex set for a
-// sub-agent's call alone, or plans.MainAgent; ECA's events name no agent
-// instance, so they pass.
+// checkOwner holds file edits, by a file tool or the shell, to the
+// worktrees the plans of this host give agents (`agent-plan own`). A
+// sub-agent edits only the worktrees it owns, scratch and the plans
+// directory; one that owns none edits only scratch and plans, which closes
+// the window between its spawn and `agent-plan own`. A worktree a plan
+// names is judged by its owner wherever it is, scratch included. The main
+// thread edits anywhere but a worktree another agent owns. Every path is
+// compared with its symlinks resolved. The caller is the event's agent_id,
+// which Claude Code and Codex set for a sub-agent's call alone; ECA's
+// events name no agent instance, so they pass.
+//
+// Shell edits are only those shellEditPaths names: a write through a script
+// it cannot read passes.
 func checkOwner(in input) string {
 	if in.HookType != "" {
 		return ""
@@ -37,27 +47,94 @@ func checkOwner(in input) string {
 	if len(paths) == 0 {
 		return ""
 	}
+	// A sub-agent's edits fail closed: without plans it owns no worktree.
 	c, err := plans.Load()
-	if err != nil {
-		return ""
+	owners := map[string]string{}
+	if err == nil {
+		named, _ := c.Owners()
+		for wt, agent := range named {
+			if real := realPath(wt); real != "" {
+				wt = real
+			}
+			owners[wt] = agent
+		}
 	}
-	owners, err := c.Owners()
-	if err != nil || len(owners) == 0 {
-		return ""
-	}
-	me := in.AgentID
-	if me == "" {
-		me = plans.MainAgent
+	if in.AgentID != "" {
+		return subagentEdits(in.AgentID, paths, owners, c.Dir)
 	}
 	for _, p := range paths {
 		top, _ := worktreeOf(p)
-		if owner := owners[top]; top != "" && owner != "" && owner != me {
+		if owner := owners[top]; top != "" && owner != "" && owner != plans.MainAgent {
 			return fmt.Sprintf("The worktree %s belongs to agent %s, which alone edits files there (OWNERS in its plan). "+
 				"Send the change to that agent, or have whoever coordinates hand the worktree over with `agent-plan own PLAN --worktree %s --agent ID`.",
 				top, owner, top)
 		}
 	}
 	return ""
+}
+
+// subagentEdits returns why agent may not edit one of paths, or "": it
+// edits only the worktrees owners gives it, the scratch roots, the plans
+// directory and devices such as /dev/null. A path in a worktree owners
+// names is the owner's alone, even in scratch.
+func subagentEdits(agent string, paths []string, owners map[string]string, plansDir string) string {
+	var mine []string
+	for wt, a := range owners {
+		if a == agent {
+			mine = append(mine, wt)
+		}
+	}
+	sort.Strings(mine)
+	free := scratchRoots()
+	if plansDir != "" {
+		free = append(free, plansDir)
+	}
+	for _, p := range paths {
+		if within(p, "/dev") {
+			continue
+		}
+		top, _ := worktreeOf(p)
+		if owner, named := owners[top]; top != "" && named {
+			if owner == agent {
+				continue
+			}
+		} else if slices.ContainsFunc(free, func(root string) bool { return within(p, root) }) {
+			continue
+		}
+		if len(mine) == 0 {
+			return fmt.Sprintf("Sub-agent %s owns no worktree, so it edits only scratch ($TMPDIR, /tmp) and the plans directory, and %s is outside them. "+
+				"Have whoever coordinates give it its worktree with `agent-plan own PLAN --worktree WORKTREE --agent %s` before it writes there, "+
+				"or put the change in your report; reads are not limited.", agent, p, agent)
+		}
+		return fmt.Sprintf("Sub-agent %s edits only the worktree it owns, %s (OWNERS in its plan), scratch ($TMPDIR, /tmp) and the plans directory, and %s is outside them. "+
+			"Make the change in %s, or put it in your report for the operator or whoever coordinates; "+
+			"moving the agent to another worktree is `agent-plan own PLAN --worktree WORKTREE --agent %s`, run by whoever coordinates.",
+			agent, strings.Join(mine, ", "), p, strings.Join(mine, ", "), agent)
+	}
+	return ""
+}
+
+// within reports whether path, which need not exist yet, is root or under
+// it, with the symlinks of both resolved: as written, a path in scratch can
+// lead anywhere.
+func within(path, root string) bool {
+	p, r := resolved(path), realPath(root)
+	return p != "" && r != "" && (p == r || strings.HasPrefix(p, strings.TrimSuffix(r, "/")+"/"))
+}
+
+// resolved is path with the symlinks of its nearest existing ancestor
+// resolved, or "" when none can be.
+func resolved(path string) string {
+	rest := ""
+	for dir := filepath.Clean(path); ; dir = filepath.Dir(dir) {
+		if real, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(real, rest)
+		}
+		if filepath.Dir(dir) == dir {
+			return ""
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+	}
 }
 
 const subagentStash = "Every worktree shares one stash, so a sub-agent's entry can be taken by, or take, another session's work. " +
@@ -123,13 +200,16 @@ func stashWrites(text string, depth int) string {
 }
 
 // worktreeOf is the top level of the worktree holding path, which need not
-// exist yet, with its symlinks resolved, and the git state there; "" when
-// none holds it.
+// exist yet and may be a directory, with its symlinks resolved, and the git
+// state there; "" when none holds it.
 func worktreeOf(path string) (string, gitState) {
 	if !filepath.IsAbs(path) {
 		return "", gitState{}
 	}
-	dir := filepath.Dir(path)
+	dir := path
+	if info, err := os.Stat(path); err != nil || !info.IsDir() {
+		dir = filepath.Dir(path)
+	}
 	for {
 		if info, err := os.Stat(dir); err == nil && info.IsDir() {
 			break
@@ -151,8 +231,10 @@ func worktreeOf(path string) (string, gitState) {
 	return top, g
 }
 
-// shellEditPaths are the absolute paths of the files a command line edits,
-// as editTargets names them, following cd as command does.
+// shellEditPaths are the absolute paths of the files a command line
+// writes, moves or removes, as writeTargets names them, and the directory
+// a git command that writes the worktree runs in (gitWrites), following cd
+// as command does.
 func shellEditPaths(text, dir string, depth int) []string {
 	if depth > maxDepth {
 		return nil
@@ -172,10 +254,13 @@ func shellEditPaths(text, dir string, depth int) []string {
 				cwd = cdTarget(c, cwd)
 				return ""
 			}
-			for _, t := range editTargets(base(c.words[0]), c.words[1:], redirections(c.words)) {
+			for _, t := range writeTargets(base(c.words[0]), c.words[1:], redirections(c.words)) {
 				if p := expandPath(t, cwd); filepath.IsAbs(p) {
 					out = append(out, p)
 				}
+			}
+			if dir := gitWriteDir(c, cwd); dir != "" {
+				out = append(out, dir)
 			}
 			return ""
 		},
@@ -186,4 +271,34 @@ func shellEditPaths(text, dir string, depth int) []string {
 		}
 	}
 	return out
+}
+
+// gitWriteDir is the absolute directory a git command, run in cwd, writes,
+// with its -C options applied, when gitWrites names its command and it is
+// not one of their reading forms (stash list or show, worktree list); ""
+// for any other command.
+func gitWriteDir(c call, cwd string) string {
+	if base(c.words[0]) != "git" {
+		return ""
+	}
+	dir, words := cwd, c.words[1:]
+	for len(words) > 0 && strings.HasPrefix(words[0], "-") {
+		switch {
+		case words[0] == "-C" && len(words) > 1:
+			dir = expandPath(words[1], dir)
+			words = words[2:]
+		case gitValueFlags[words[0]]:
+			words = words[min(2, len(words)):]
+		default:
+			words = words[1:]
+		}
+	}
+	if len(words) == 0 || !gitWrites[words[0]] || !filepath.IsAbs(dir) {
+		return ""
+	}
+	if len(words) > 1 && (words[0] == "stash" && (words[1] == "list" || words[1] == "show") ||
+		words[0] == "worktree" && words[1] == "list") {
+		return ""
+	}
+	return dir
 }

@@ -14,12 +14,16 @@ import (
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
-// TestOwners covers worktrees a plan gives an owner: the file tools and
-// shell edits of any other agent there are denied, the owner's pass.
+// TestOwners covers worktrees a plan gives an owner. A sub-agent edits,
+// by a file tool or the shell, only the worktrees it owns, scratch and the
+// plans directory; one that owns none edits only scratch and plans. The
+// main thread is kept out of worktrees other agents own alone.
 func TestOwners(t *testing.T) {
-	// owned makes a repository, main, with a linked worktree that a plan in
-	// a plans directory of the test's own gives to agent a1.
-	owned := func(t *testing.T) (main, linked string) {
+	// owned makes a repository, main, with linked worktrees: linked, which a
+	// plan in a plans directory of the test's own gives to agent a1, and
+	// sibling, which it gives to a3. Scratch is a directory beside them that
+	// stands for the session's temporary directories.
+	owned := func(t *testing.T) *strings.Replacer {
 		t.Helper()
 		root, _ := filepath.EvalSymlinks(t.TempDir())
 		c := plans.Config{Dir: filepath.Join(root, "agents"), Host: "box"}
@@ -27,51 +31,127 @@ func TestOwners(t *testing.T) {
 		data, _ := json.Marshal(map[string]any{"plans": c})
 		os.WriteFile(config, data, 0o644)
 		t.Setenv("AGENT_TOOLS_CONFIG", config)
+		scratch := filepath.Join(root, "scratch")
+		os.Mkdir(scratch, 0o755)
+		old := scratchRoots
+		scratchRoots = func() []string { return []string{scratch} }
+		t.Cleanup(func() { scratchRoots = old })
 
-		main, linked = filepath.Join(root, "main"), filepath.Join(root, "linked")
+		main, linked, sibling := filepath.Join(root, "main"), filepath.Join(root, "linked"), filepath.Join(root, "sibling")
 		os.Mkdir(main, 0o755)
+		os.Mkdir(filepath.Join(root, "loose"), 0o755)
 		gitIn(t, main, "init", "-q", "-b", "main")
 		gitIn(t, main, "commit", "-q", "--allow-empty", "-m", "base")
 		gitIn(t, main, "worktree", "add", "-q", "-b", "feature", linked)
+		gitIn(t, main, "worktree", "add", "-q", "-b", "other", sibling)
+		// parked is a worktree in scratch that a plan gives to a3, and
+		// throwaway a repository in scratch that no plan names.
+		parked, throwaway := filepath.Join(scratch, "parked"), filepath.Join(scratch, "throwaway")
+		gitIn(t, main, "worktree", "add", "-q", "-b", "parked", parked)
+		os.Mkdir(throwaway, 0o755)
+		gitIn(t, throwaway, "init", "-q", "-b", "main")
+		// Links in scratch into the sibling's worktree and the main checkout.
+		os.Symlink(sibling, filepath.Join(scratch, "to-sibling"))
+		os.Symlink(main, filepath.Join(scratch, "to-main"))
 		made, err := c.New(plans.NewOptions{Title: "X", Slug: "x"}, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
 		p, _ := c.Open(made.Plan)
-		if _, err := p.SetOwner(linked, "a1", time.Now()); err != nil {
-			t.Fatal(err)
+		for wt, agent := range map[string]string{linked: "a1", sibling: "a3", parked: "a3"} {
+			if _, err := p.SetOwner(wt, agent, time.Now()); err != nil {
+				t.Fatal(err)
+			}
 		}
-		return main, linked
+		return strings.NewReplacer("MAIN", main, "LINKED", linked, "SIBLING", sibling, "PARKED", parked,
+			"THROWAWAY", throwaway, "SCRATCH", scratch, "PLANS", c.Dir, "LOOSE", filepath.Join(root, "loose"))
 	}
 
-	// MAIN and LINKED in an event stand for the worktrees owned makes.
+	// MAIN, LINKED, SIBLING, SCRATCH, PLANS and LOOSE (a directory in no
+	// repository) in an event or a reason stand for the paths owned makes.
 	for _, e := range []struct {
 		name string
 		deny bool
 		json string
+		says []string // what a denial's reason names
 	}{
-		{"owner's Edit", false, `{"tool_name":"Edit","agent_id":"a1","tool_input":{"file_path":"LINKED/a.go"}}`},
-		{"another agent's Edit", true, `{"tool_name":"Edit","agent_id":"a2","tool_input":{"file_path":"LINKED/a.go"}}`},
-		{"main thread's Write", true, `{"tool_name":"Write","tool_input":{"file_path":"LINKED/sub/new.go"}}`},
-		{"Edit in an unowned worktree", false, `{"tool_name":"Edit","agent_id":"a2","tool_input":{"file_path":"MAIN/a.go"}}`},
-		{"another agent's shell write", true, `{"tool_name":"Bash","agent_id":"a2","cwd":"LINKED","tool_input":{"command":"echo x > new.txt"}}`},
-		{"another agent's shell edit by cd", true, `{"tool_name":"Bash","agent_id":"a2","cwd":"MAIN","tool_input":{"command":"cd ../linked && sed -i '' s/a/b/ a.go"}}`},
-		{"another agent's shell read", false, `{"tool_name":"Bash","agent_id":"a2","cwd":"LINKED","tool_input":{"command":"cat a.go > /dev/null"}}`},
-		{"owner's shell write", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"echo x > new.txt"}}`},
-		{"another agent's patch", true, `{"tool_name":"apply_patch","turn_id":"t","agent_id":"a2","cwd":"LINKED","tool_input":{"command":"*** Begin Patch\n*** Add File: b.go\n+x\n*** End Patch\n"}}`},
-		{"ECA's write", false, `{"hook_type":"preToolCall","server":"eca","agent":"code","tool_name":"write_file","tool_input":{"path":"LINKED/a.go"}}`},
+		{"owner's Edit", false, `{"tool_name":"Edit","agent_id":"a1","tool_input":{"file_path":"LINKED/a.go"}}`, nil},
+		{"owner's shell write", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"echo x > new.txt"}}`, nil},
+		{"owner's Edit in a sibling's worktree", true, `{"tool_name":"Edit","agent_id":"a1","tool_input":{"file_path":"SIBLING/a.go"}}`, []string{"LINKED"}},
+		{"owner's Edit in the main checkout", true, `{"tool_name":"Edit","agent_id":"a1","tool_input":{"file_path":"MAIN/a.go"}}`, []string{"LINKED"}},
+		{"owner's Write outside any repository", true, `{"tool_name":"Write","agent_id":"a1","tool_input":{"file_path":"LOOSE/a.txt"}}`, []string{"LINKED"}},
+		{"owner's shell edit by cd into the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"cd ../main && sed -i '' s/a/b/ a.go"}}`, []string{"LINKED"}},
+		{"owner's Write in scratch", false, `{"tool_name":"Write","agent_id":"a1","tool_input":{"file_path":"SCRATCH/notes.md"}}`, nil},
+		{"owner's shell write in scratch", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"git log > SCRATCH/log.txt"}}`, nil},
+		{"owner's Write in the plans directory", false, `{"tool_name":"Write","agent_id":"a1","tool_input":{"file_path":"PLANS/2026-10-15-x.box.P1.org"}}`, nil},
+		{"owner's shell read in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"cat a.go > /dev/null"}}`, nil},
+		{"unowned agent's Edit in the main checkout", true, `{"tool_name":"Edit","agent_id":"a2","tool_input":{"file_path":"MAIN/a.go"}}`, []string{"a2", "agent-plan own"}},
+		{"unowned agent's Edit in an owned worktree", true, `{"tool_name":"Edit","agent_id":"a2","tool_input":{"file_path":"LINKED/a.go"}}`, []string{"a2", "agent-plan own"}},
+		{"unowned agent's shell write", true, `{"tool_name":"Bash","agent_id":"a2","cwd":"MAIN","tool_input":{"command":"echo x > new.txt"}}`, []string{"a2", "agent-plan own"}},
+		{"unowned agent's patch", true, `{"tool_name":"apply_patch","turn_id":"t","agent_id":"a2","cwd":"LINKED","tool_input":{"command":"*** Begin Patch\n*** Add File: b.go\n+x\n*** End Patch\n"}}`, []string{"a2", "agent-plan own"}},
+		{"unowned agent's shell read", false, `{"tool_name":"Bash","agent_id":"a2","cwd":"LINKED","tool_input":{"command":"cat a.go > /dev/null"}}`, nil},
+		{"unowned agent's Write in scratch", false, `{"tool_name":"Write","agent_id":"a2","tool_input":{"file_path":"SCRATCH/notes.md"}}`, nil},
+		{"main thread's Edit in the main checkout", false, `{"tool_name":"Edit","tool_input":{"file_path":"MAIN/a.go"}}`, nil},
+		{"main thread's shell write in the main checkout", false, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"echo x > new.txt"}}`, nil},
+		{"main thread's Write in an owned worktree", true, `{"tool_name":"Write","tool_input":{"file_path":"LINKED/sub/new.go"}}`, []string{"a1", "agent-plan own"}},
+		{"ECA's write in an owned worktree", false, `{"hook_type":"preToolCall","server":"eca","agent":"code","tool_name":"write_file","tool_input":{"path":"LINKED/a.go"}}`, nil},
+		// A worktree a plan names is judged by its owner wherever it is, and
+		// a path by where its links lead.
+		{"owner's Edit in another's worktree in scratch", true, `{"tool_name":"Edit","agent_id":"a1","tool_input":{"file_path":"PARKED/a.go"}}`, []string{"LINKED"}},
+		{"owner's shell write in another's worktree in scratch", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"PARKED","tool_input":{"command":"echo x > new.txt"}}`, []string{"LINKED"}},
+		{"owner's Write in a repository in scratch no plan names", false, `{"tool_name":"Write","agent_id":"a1","tool_input":{"file_path":"THROWAWAY/a.go"}}`, nil},
+		{"owner's Write through a link into another's worktree", true, `{"tool_name":"Write","agent_id":"a1","tool_input":{"file_path":"SCRATCH/to-sibling/a.go"}}`, []string{"LINKED"}},
+		{"owner's shell write through a link into the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"echo x > SCRATCH/to-main/a.go"}}`, []string{"LINKED"}},
+		{"unowned agent's Write through a link into the main checkout", true, `{"tool_name":"Write","agent_id":"a2","tool_input":{"file_path":"SCRATCH/to-main/a.go"}}`, []string{"a2"}},
+		// Every program that writes, moves or removes a file is read for its
+		// targets, as is a git command that writes where it runs. Another
+		// rule may refuse mv, trash and rm first (trash on PATH, or a path
+		// under /nix, where the build sandbox keeps its temporary files), so
+		// their reasons are not checked.
+		{"owner's cp into the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"cp f MAIN/a.go"}}`, []string{"LINKED"}},
+		{"owner's cp out of the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"cp MAIN/a.go SCRATCH/a.go"}}`, nil},
+		{"owner's mv into the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"mv a.go MAIN/"}}`, nil},
+		{"owner's install into the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"install -m 644 a.go MAIN/a.go"}}`, []string{"LINKED"}},
+		{"owner's rsync into the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"rsync -a ./ MAIN/"}}`, []string{"LINKED"}},
+		{"owner's touch in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"touch MAIN/new.txt"}}`, []string{"LINKED"}},
+		{"owner's trash in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"trash MAIN/a.go"}}`, nil},
+		{"owner's rm in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"rm -f MAIN/a.go"}}`, nil},
+		{"owner's dd into the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"dd if=/dev/zero of=MAIN/a.go count=1"}}`, []string{"LINKED"}},
+		{"owner's tee into the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"echo x | tee MAIN/a.go"}}`, []string{"LINKED"}},
+		{"owner's awk in place in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"gawk -i inplace '{print}' MAIN/a.go"}}`, []string{"LINKED"}},
+		{"owner's git -C commit in another's worktree", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"git -C SIBLING commit -m x"}}`, []string{"LINKED"}},
+		{"owner's relative git -C commit in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"git -C ../main add a.go"}}`, []string{"LINKED"}},
+		{"owner's git commit after cd into the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"cd MAIN && git commit -m x"}}`, []string{"LINKED"}},
+		{"owner's git commit run in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"git commit -m x"}}`, []string{"LINKED"}},
+		{"owner's git commit in its worktree", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"git -C LINKED commit -m x"}}`, nil},
+		{"owner's git -C log in another's worktree", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"git -C SIBLING log -1"}}`, nil},
 	} {
 		t.Run(caseName(e.deny, e.name), func(t *testing.T) {
-			main, linked := owned(t)
-			event := strings.NewReplacer("MAIN", main, "LINKED", linked).Replace(e.json)
+			paths := owned(t)
+			event := paths.Replace(e.json)
 			var out bytes.Buffer
 			Main([]string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
 			denied := strings.Contains(out.String(), `"deny"`)
 			if denied != e.deny {
-				t.Errorf("%s: deny=%v, output %s", event, denied, out.String())
+				t.Fatalf("%s: deny=%v, output %s", event, denied, out.String())
 			}
-			if denied && (!strings.Contains(out.String(), "a1") || !strings.Contains(out.String(), "agent-plan own")) {
-				t.Errorf("%s: the reason does not name the owner and the hand-over: %s", event, out.String())
+			if !denied {
+				return
+			}
+			var printed struct {
+				Hook struct {
+					Reason string `json:"permissionDecisionReason"`
+				} `json:"hookSpecificOutput"`
+			}
+			json.Unmarshal(out.Bytes(), &printed)
+			reason := printed.Hook.Reason
+			for _, s := range e.says {
+				if !strings.Contains(reason, paths.Replace(s)) {
+					t.Errorf("%s: the reason does not name %s: %s", event, paths.Replace(s), reason)
+				}
+			}
+			if !saysInstead(reason) {
+				t.Errorf("%s: the reason does not say what to do instead: %s", event, reason)
 			}
 		})
 	}
