@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
@@ -34,9 +35,7 @@ func judge(t *testing.T, dir, command string) string {
 
 func TestSessionRules(t *testing.T) {
 	// Not under /nix, where the Nix build's own temporary directory is.
-	h, old := "/home-for-the-test", home
-	home = h
-	t.Cleanup(func() { home = old })
+	const h = "/home-for-the-test"
 	cases := []struct {
 		deny    bool
 		command string
@@ -190,13 +189,18 @@ func TestSessionRules(t *testing.T) {
 		{false, "mv a b"},
 	}
 	for _, c := range cases {
-		reason := judge(t, filepath.Join(h, "work"), c.command)
-		if (reason != "") != c.deny {
-			t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
-		}
-		if reason != "" && !saysInstead(reason) {
-			t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
-		}
+		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
+			old := home
+			home = h
+			t.Cleanup(func() { home = old })
+			reason := judge(t, filepath.Join(h, "work"), c.command)
+			if (reason != "") != c.deny {
+				t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
+			}
+			if reason != "" && !saysInstead(reason) {
+				t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+			}
+		})
 	}
 }
 
@@ -213,23 +217,44 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// gitStateRepos is a repository, main, with a linked worktree on feature,
+// whose commit no remote has, a branch origin has, pushed, and a clean and
+// a dirty detached worktree, all under the returned root. TestGitState's
+// cases share it, built once, as it takes a dozen git commands to make and
+// the guard only reads it.
+var gitStateRepos = sync.OnceValues(func() (string, error) {
+	if err := os.MkdirAll(fixtures, 0o755); err != nil {
+		return "", err
+	}
+	root, err := os.MkdirTemp(fixtures, "git-state")
+	if err != nil {
+		return "", err
+	}
+	root, _ = filepath.EvalSymlinks(root)
+	main, linked := filepath.Join(root, "main"), filepath.Join(root, "linked")
+	os.Mkdir(main, 0o755)
+	if err := fixtureGits(
+		[]string{main, "init", "-q", "-b", "main"},
+		[]string{main, "commit", "-q", "--allow-empty", "-m", "base"},
+		[]string{main, "worktree", "add", "-q", "-b", "feature", linked},
+		[]string{main, "branch", "pushed"},
+		[]string{linked, "commit", "-q", "--allow-empty", "-m", "only here"},
+		[]string{main, "branch", "unpushed", "feature"},
+		[]string{main, "update-ref", "refs/remotes/origin/pushed", "pushed"},
+		[]string{main, "worktree", "add", "-q", "--detach", filepath.Join(root, "clean")},
+		[]string{main, "worktree", "add", "-q", "--detach", filepath.Join(root, "dirty")},
+	); err != nil {
+		return "", err
+	}
+	return root, os.WriteFile(filepath.Join(root, "dirty", "new"), []byte("x\n"), 0o644)
+})
+
 // TestGitState covers the rules that depend on where a git command runs
 // and what the repository holds there.
 func TestGitState(t *testing.T) {
-	root, _ := filepath.EvalSymlinks(t.TempDir())
+	root := fixture(t, gitStateRepos)
 	main := filepath.Join(root, "main")
 	linked := filepath.Join(root, "linked")
-	os.Mkdir(main, 0o755)
-	gitIn(t, main, "init", "-q", "-b", "main")
-	gitIn(t, main, "commit", "-q", "--allow-empty", "-m", "base")
-	gitIn(t, main, "worktree", "add", "-q", "-b", "feature", linked)
-	gitIn(t, main, "branch", "pushed")
-	gitIn(t, linked, "commit", "-q", "--allow-empty", "-m", "only here")
-	gitIn(t, main, "branch", "unpushed", "feature")
-	gitIn(t, main, "update-ref", "refs/remotes/origin/pushed", "pushed")
-	gitIn(t, main, "worktree", "add", "-q", "--detach", filepath.Join(root, "clean"))
-	gitIn(t, main, "worktree", "add", "-q", "--detach", filepath.Join(root, "dirty"))
-	os.WriteFile(filepath.Join(root, "dirty", "new"), []byte("x\n"), 0o644)
 
 	cases := []struct {
 		deny         bool
@@ -324,32 +349,53 @@ func TestGitState(t *testing.T) {
 		{false, linked, "git checkout pushed"},
 	}
 	for _, c := range cases {
-		reason := judge(t, c.dir, c.command)
-		if (reason != "") != c.deny {
-			t.Errorf("%s: %q: deny=%v, reason %q", filepath.Base(c.dir), c.command, !c.deny, reason)
-		}
-		if reason != "" && !saysInstead(reason) {
-			t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
-		}
+		t.Run(caseName(c.deny, filepath.Base(c.dir)+": "+c.command), func(t *testing.T) {
+			reason := judge(t, c.dir, c.command)
+			if (reason != "") != c.deny {
+				t.Errorf("%s: %q: deny=%v, reason %q", filepath.Base(c.dir), c.command, !c.deny, reason)
+			}
+			if reason != "" && !saysInstead(reason) {
+				t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+			}
+		})
 	}
 }
+
+// signingRepos is a repository, signing, that signs its commits, a linked
+// worktree of it, loop, that does not, and a repository, plain, with no
+// signing set, all under the returned root. TestSigning's cases share them,
+// built once, as they take several git commands to make and the guard only
+// reads them.
+var signingRepos = sync.OnceValues(func() (string, error) {
+	if err := os.MkdirAll(fixtures, 0o755); err != nil {
+		return "", err
+	}
+	root, err := os.MkdirTemp(fixtures, "signing")
+	if err != nil {
+		return "", err
+	}
+	root, _ = filepath.EvalSymlinks(root)
+	signing, loop, plain := filepath.Join(root, "signing"), filepath.Join(root, "loop"), filepath.Join(root, "plain")
+	os.Mkdir(signing, 0o755)
+	os.Mkdir(plain, 0o755)
+	return root, fixtureGits(
+		[]string{signing, "init", "-q", "-b", "main"},
+		[]string{signing, "commit", "-q", "--allow-empty", "-m", "base"},
+		[]string{signing, "config", "commit.gpgsign", "true"},
+		[]string{signing, "config", "extensions.worktreeConfig", "true"},
+		[]string{signing, "worktree", "add", "-q", "-b", "loop", loop},
+		[]string{loop, "config", "--worktree", "commit.gpgsign", "false"},
+		[]string{plain, "init", "-q", "-b", "main"},
+	)
+})
 
 // TestSigning covers commands that write commits where the configuration
 // signs them, which would wait for a key touch.
 func TestSigning(t *testing.T) {
-	root, _ := filepath.EvalSymlinks(t.TempDir())
+	root := fixture(t, signingRepos)
 	signing := filepath.Join(root, "signing")
 	loop := filepath.Join(root, "loop")
 	plain := filepath.Join(root, "plain")
-	os.Mkdir(signing, 0o755)
-	os.Mkdir(plain, 0o755)
-	gitIn(t, signing, "init", "-q", "-b", "main")
-	gitIn(t, signing, "commit", "-q", "--allow-empty", "-m", "base")
-	gitIn(t, signing, "config", "commit.gpgsign", "true")
-	gitIn(t, signing, "config", "extensions.worktreeConfig", "true")
-	gitIn(t, signing, "worktree", "add", "-q", "-b", "loop", loop)
-	gitIn(t, loop, "config", "--worktree", "commit.gpgsign", "false")
-	gitIn(t, plain, "init", "-q", "-b", "main")
 
 	cases := []struct {
 		deny         bool
@@ -391,25 +437,35 @@ func TestSigning(t *testing.T) {
 		{false, signing, "cd $SOMEWHERE && git commit -m x"},
 	}
 	for _, c := range cases {
-		reason := judge(t, c.dir, c.command)
-		if (reason != "") != c.deny {
-			t.Errorf("%s: %q: deny=%v, reason %q", filepath.Base(c.dir), c.command, !c.deny, reason)
-		}
-		if reason != "" && !saysInstead(reason) {
-			t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
-		}
+		t.Run(caseName(c.deny, filepath.Base(c.dir)+": "+c.command), func(t *testing.T) {
+			reason := judge(t, c.dir, c.command)
+			if (reason != "") != c.deny {
+				t.Errorf("%s: %q: deny=%v, reason %q", filepath.Base(c.dir), c.command, !c.deny, reason)
+			}
+			if reason != "" && !saysInstead(reason) {
+				t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+			}
+		})
 	}
 }
 
-// TestShellEdits covers shell commands that write a tracked file, which go
-// through the file-editing tools instead, and the scratch, ignored and
-// untracked files they may write.
-func TestShellEdits(t *testing.T) {
-	root, _ := filepath.EvalSymlinks(t.TempDir())
+// shellEditRepos is a repository, work, with tracked, ignored, force-added
+// and untracked files; a scratch directory holding a repository of its own;
+// and a directory outside both, all under the returned root. TestShellEdits'
+// cases share them, built once, as they take several git commands to make
+// and the guard only reads them.
+var shellEditRepos = sync.OnceValues(func() (string, error) {
+	if err := os.MkdirAll(fixtures, 0o755); err != nil {
+		return "", err
+	}
+	root, err := os.MkdirTemp(fixtures, "shell-edits")
+	if err != nil {
+		return "", err
+	}
+	root, _ = filepath.EvalSymlinks(root)
 	work := filepath.Join(root, "work")
-	scratch := filepath.Join(root, "scratch")
 	outside := filepath.Join(root, "outside")
-	scratchRepo := filepath.Join(scratch, "repo")
+	scratchRepo := filepath.Join(root, "scratch", "repo")
 	for _, d := range []string{filepath.Join(work, "sub"), filepath.Join(work, "build"), outside, scratchRepo} {
 		os.MkdirAll(d, 0o755)
 	}
@@ -420,16 +476,26 @@ func TestShellEdits(t *testing.T) {
 	}
 	os.WriteFile(filepath.Join(outside, "f"), []byte("f\n"), 0o644)
 	os.WriteFile(filepath.Join(scratchRepo, "a"), []byte("a\n"), 0o644)
-	gitIn(t, work, "init", "-q", "-b", "main")
-	gitIn(t, work, "add", "a.go", "sub/b.go", ".gitignore")
-	gitIn(t, work, "add", "-f", "vendored.txt")
-	gitIn(t, work, "commit", "-q", "-m", "base")
-	gitIn(t, scratchRepo, "init", "-q", "-b", "main")
-	gitIn(t, scratchRepo, "add", "a")
-	gitIn(t, scratchRepo, "commit", "-q", "-m", "base")
-	old := scratchRoots
-	scratchRoots = func() []string { return []string{scratch} }
-	t.Cleanup(func() { scratchRoots = old })
+	return root, fixtureGits(
+		[]string{work, "init", "-q", "-b", "main"},
+		[]string{work, "add", "a.go", "sub/b.go", ".gitignore"},
+		[]string{work, "add", "-f", "vendored.txt"},
+		[]string{work, "commit", "-q", "-m", "base"},
+		[]string{scratchRepo, "init", "-q", "-b", "main"},
+		[]string{scratchRepo, "add", "a"},
+		[]string{scratchRepo, "commit", "-q", "-m", "base"},
+	)
+})
+
+// TestShellEdits covers shell commands that write a tracked file, which go
+// through the file-editing tools instead, and the scratch, ignored and
+// untracked files they may write.
+func TestShellEdits(t *testing.T) {
+	root := fixture(t, shellEditRepos)
+	work := filepath.Join(root, "work")
+	scratch := filepath.Join(root, "scratch")
+	outside := filepath.Join(root, "outside")
+	scratchRepo := filepath.Join(scratch, "repo")
 
 	cases := []struct {
 		deny    bool
@@ -467,21 +533,24 @@ func TestShellEdits(t *testing.T) {
 		{false, "cd $SOMEWHERE && echo x > a.go"},
 	}
 	for _, c := range cases {
-		reason := judge(t, work, c.command)
-		if (reason != "") != c.deny {
-			t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
-		}
-		if reason != "" && !saysInstead(reason) {
-			t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
-		}
+		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
+			old := scratchRoots
+			scratchRoots = func() []string { return []string{scratch} }
+			t.Cleanup(func() { scratchRoots = old })
+			reason := judge(t, work, c.command)
+			if (reason != "") != c.deny {
+				t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
+			}
+			if reason != "" && !saysInstead(reason) {
+				t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+			}
+		})
 	}
 }
 
 // TestTrash covers deleting files where trash is on PATH, which moves them
 // to the Trash instead.
 func TestTrash(t *testing.T) {
-	trashOnPath = func() bool { return true }
-	t.Cleanup(func() { trashOnPath = func() bool { return false } })
 	for _, c := range []struct {
 		deny    bool
 		command string
@@ -500,18 +569,25 @@ func TestTrash(t *testing.T) {
 		{false, "find . -name '*.tmp' -print"},
 		{false, "grep -rn rm ."},
 	} {
-		reason := judge(t, "/", c.command)
-		if (reason != "") != c.deny {
-			t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
-		}
-		if reason != "" && !saysInstead(reason) {
-			t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
-		}
+		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
+			trashOnPath = func() bool { return true }
+			t.Cleanup(func() { trashOnPath = func() bool { return false } })
+			reason := judge(t, "/", c.command)
+			if (reason != "") != c.deny {
+				t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
+			}
+			if reason != "" && !saysInstead(reason) {
+				t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+			}
+		})
 	}
-	trashOnPath = func() bool { return false }
-	if reason := judge(t, "/", "rm x"); reason != "" {
-		t.Errorf("rm without trash on PATH: %q", reason)
-	}
+
+	t.Run("without trash on PATH", func(t *testing.T) {
+		trashOnPath = func() bool { return false }
+		if reason := judge(t, "/", "rm x"); reason != "" {
+			t.Errorf("rm without trash on PATH: %q", reason)
+		}
+	})
 }
 
 // TestKill covers kill by process ID, which the guard looks up with ps.
@@ -539,15 +615,15 @@ func TestKill(t *testing.T) {
 	if err := protected.Start(); err != nil {
 		t.Skipf("cannot run a copy of the test binary: %v", err)
 	}
-	defer func() {
+	t.Cleanup(func() {
 		hold.Close()
 		protected.Wait()
-	}()
+	})
 	other := exec.Command("sleep", "30")
 	if err := other.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer other.Process.Kill()
+	t.Cleanup(func() { other.Process.Kill() })
 	out, _ := exec.Command("ps", "-o", "comm=", "-p", itoa(protected.Process.Pid)).Output()
 	switch name := strings.TrimSpace(string(out)); {
 	case name == "":
@@ -581,39 +657,45 @@ var itoa = strconv.Itoa
 
 // TestFileTools covers Claude Code's file tools and Codex's apply_patch.
 func TestFileTools(t *testing.T) {
-	h := fakeHome(t)
-	work := filepath.Join(h, "work")
-	os.MkdirAll(filepath.Join(h, ".claude"), 0o755)
-	os.WriteFile(filepath.Join(h, ".claude", "settings.json"), []byte(`{"hooks": {}}`), 0o644)
 	patch := func(path, body string) map[string]string {
 		return map[string]string{"command": "*** Begin Patch\n*** Update File: " + path + "\n@@\n" + body + "\n*** End Patch\n"}
 	}
+	// Each case's input names its files under HOME, the guard's ~, and
+	// WORK, a directory there.
 	cases := []struct {
+		name  string
 		deny  bool
 		tool  string
 		input any
 	}{
-		{true, "Edit", map[string]string{"file_path": h + "/.claude/settings.json", "old_string": `"hooks": {}`, "new_string": `"x": 1`}},
-		{true, "Write", map[string]string{"file_path": h + "/.claude/settings.json", "content": "{}"}},
-		{true, "Write", map[string]string{"file_path": work + "/.claude/settings.local.json", "content": `{"disableAllHooks": true}`}},
-		{true, "MultiEdit", map[string]any{"file_path": h + "/.config/eca/config.json", "edits": []map[string]string{{"old_string": "a", "new_string": `"hooks": {}`}}}},
-		{true, "apply_patch", patch(h+"/.codex/hooks.json", "-x\n+y")},
-		{true, "apply_patch", patch(h+"/.codex/config.toml", "-[hooks]\n+")},
-		{true, "Edit", map[string]string{"file_path": work + "/.git/config", "old_string": "a", "new_string": "b"}},
-		{true, "Write", map[string]string{"file_path": h + "/.ssh/id_ed25519", "content": "x"}},
-		{false, "Edit", map[string]string{"file_path": work + "/README.md", "old_string": "hooks", "new_string": "more hooks"}},
-		{false, "Write", map[string]string{"file_path": work + "/.claude/settings.local.json", "content": `{"permissions": {}}`}},
-		{false, "apply_patch", patch("src/main.go", "-a\n+b")},
+		{"Claude Code's settings", true, "Edit", map[string]string{"file_path": "HOME/.claude/settings.json", "old_string": `"hooks": {}`, "new_string": `"x": 1`}},
+		{"Claude Code's settings, whole", true, "Write", map[string]string{"file_path": "HOME/.claude/settings.json", "content": "{}"}},
+		{"a project's hooks off", true, "Write", map[string]string{"file_path": "WORK/.claude/settings.local.json", "content": `{"disableAllHooks": true}`}},
+		{"ECA's hooks", true, "MultiEdit", map[string]any{"file_path": "HOME/.config/eca/config.json", "edits": []map[string]string{{"old_string": "a", "new_string": `"hooks": {}`}}}},
+		{"Codex's hooks", true, "apply_patch", patch("HOME/.codex/hooks.json", "-x\n+y")},
+		{"Codex's config", true, "apply_patch", patch("HOME/.codex/config.toml", "-[hooks]\n+")},
+		{"git config", true, "Edit", map[string]string{"file_path": "WORK/.git/config", "old_string": "a", "new_string": "b"}},
+		{"an SSH key", true, "Write", map[string]string{"file_path": "HOME/.ssh/id_ed25519", "content": "x"}},
+		{"a README", false, "Edit", map[string]string{"file_path": "WORK/README.md", "old_string": "hooks", "new_string": "more hooks"}},
+		{"a project's permissions", false, "Write", map[string]string{"file_path": "WORK/.claude/settings.local.json", "content": `{"permissions": {}}`}},
+		{"code", false, "apply_patch", patch("src/main.go", "-a\n+b")},
 	}
 	for _, c := range cases {
-		input, _ := json.Marshal(c.input)
-		reason := check(c.tool, "", input, baseline, work)
-		if (reason != "") != c.deny {
-			t.Errorf("%s %s: deny=%v, reason %q", c.tool, input, !c.deny, reason)
-		}
-		if reason != "" && !saysInstead(reason) {
-			t.Errorf("%s: reason %q does not say what to do instead", c.tool, reason)
-		}
+		t.Run(caseName(c.deny, c.tool+" "+c.name), func(t *testing.T) {
+			h := fakeHome(t)
+			work := filepath.Join(h, "work")
+			os.MkdirAll(filepath.Join(h, ".claude"), 0o755)
+			os.WriteFile(filepath.Join(h, ".claude", "settings.json"), []byte(`{"hooks": {}}`), 0o644)
+			data, _ := json.Marshal(c.input)
+			input := []byte(strings.NewReplacer("HOME", h, "WORK", work).Replace(string(data)))
+			reason := check(c.tool, "", input, baseline, work)
+			if (reason != "") != c.deny {
+				t.Errorf("%s %s: deny=%v, reason %q", c.tool, input, !c.deny, reason)
+			}
+			if reason != "" && !saysInstead(reason) {
+				t.Errorf("%s: reason %q does not say what to do instead", c.tool, reason)
+			}
+		})
 	}
 }
 
@@ -621,24 +703,26 @@ func TestFileTools(t *testing.T) {
 // and Codex, which cannot ask, denies, as does a loop.
 func TestConnectors(t *testing.T) {
 	for _, c := range []struct {
-		event, want string
+		name, event, want string
 	}{
-		{`{"tool_name":"mcp__claude_ai_Slack__slack_send_message","tool_input":{}}`, `"permissionDecision":"ask"`},
-		{`{"tool_name":"mcp__claude_ai_Gmail__create_draft","tool_input":{}}`, `"permissionDecision":"ask"`},
-		{`{"tool_name":"mcp__claude_ai_Notion__notion-create-pages","tool_input":{}}`, `"permissionDecision":"ask"`},
-		{`{"tool_name":"mcp__claude_ai_Linear__save_issue","tool_input":{}}`, `"permissionDecision":"ask"`},
-		{`{"tool_name":"mcp__claude_ai_Github__create_pull_request_review","tool_input":{}}`, `"permissionDecision":"ask"`},
-		{`{"tool_name":"mcp__claude_ai_Slack__slack_send_message","turn_id":"t","tool_input":{}}`, `"permissionDecision":"deny"`},
-		{`{"tool_name":"mcp__claude_ai_Slack__slack_send_message","agent_type":"reviewer","tool_input":{}}`, `"permissionDecision":"deny"`},
-		{`{"tool_name":"mcp__claude_ai_Slack__slack_search_public","tool_input":{}}`, ""},
-		{`{"tool_name":"mcp__claude_ai_Notion__notion-fetch","tool_input":{}}`, ""},
-		{`{"tool_name":"mcp__claude_ai_Linear__get_issue","tool_input":{}}`, ""},
-		{`{"tool_name":"mcp__ngrok__list_endpoints","tool_input":{}}`, ""},
+		{"Slack message", `{"tool_name":"mcp__claude_ai_Slack__slack_send_message","tool_input":{}}`, `"permissionDecision":"ask"`},
+		{"Gmail draft", `{"tool_name":"mcp__claude_ai_Gmail__create_draft","tool_input":{}}`, `"permissionDecision":"ask"`},
+		{"Notion pages", `{"tool_name":"mcp__claude_ai_Notion__notion-create-pages","tool_input":{}}`, `"permissionDecision":"ask"`},
+		{"Linear issue", `{"tool_name":"mcp__claude_ai_Linear__save_issue","tool_input":{}}`, `"permissionDecision":"ask"`},
+		{"GitHub review", `{"tool_name":"mcp__claude_ai_Github__create_pull_request_review","tool_input":{}}`, `"permissionDecision":"ask"`},
+		{"Slack message from Codex", `{"tool_name":"mcp__claude_ai_Slack__slack_send_message","turn_id":"t","tool_input":{}}`, `"permissionDecision":"deny"`},
+		{"Slack message from a reviewer", `{"tool_name":"mcp__claude_ai_Slack__slack_send_message","agent_type":"reviewer","tool_input":{}}`, `"permissionDecision":"deny"`},
+		{"Slack search", `{"tool_name":"mcp__claude_ai_Slack__slack_search_public","tool_input":{}}`, ""},
+		{"Notion fetch", `{"tool_name":"mcp__claude_ai_Notion__notion-fetch","tool_input":{}}`, ""},
+		{"Linear read", `{"tool_name":"mcp__claude_ai_Linear__get_issue","tool_input":{}}`, ""},
+		{"another server", `{"tool_name":"mcp__ngrok__list_endpoints","tool_input":{}}`, ""},
 	} {
-		var out bytes.Buffer
-		Main([]string{"--baseline"}, strings.NewReader(c.event), &out, io.Discard)
-		if (c.want == "" && out.Len() != 0) || !strings.Contains(out.String(), c.want) {
-			t.Errorf("%s: printed %s", c.event, out.String())
-		}
+		t.Run(c.name, func(t *testing.T) {
+			var out bytes.Buffer
+			Main([]string{"--baseline"}, strings.NewReader(c.event), &out, io.Discard)
+			if (c.want == "" && out.Len() != 0) || !strings.Contains(out.String(), c.want) {
+				t.Errorf("%s: printed %s", c.event, out.String())
+			}
+		})
 	}
 }

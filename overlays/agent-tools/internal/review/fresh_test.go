@@ -153,7 +153,7 @@ type output struct {
 func freshReview(t *testing.T, args ...string) (int, output, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := Main(context.Background(), args, strings.NewReader(""), &stdout, &stderr)
+	code := Main(t.Context(), args, strings.NewReader(""), &stdout, &stderr)
 	var out output
 	if stdout.Len() > 0 {
 		if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
@@ -179,7 +179,16 @@ func (f *fixture) checkCleanedUp(t *testing.T) {
 	}
 }
 
-func TestCodexReview(t *testing.T) {
+func TestCodex(t *testing.T) {
+	t.Run("review", testCodexReview)
+	t.Run("GIT_DIR naming the repository under review", testCodexGitDirUnderReview)
+	t.Run("GIT_DIR naming another repository", testCodexGitDirElsewhere)
+	t.Run("no findings", testCodexNoFindings)
+	t.Run("confinement", testCodexConfinement)
+	t.Run("failure", testCodexFailures)
+}
+
+func testCodexReview(t *testing.T) {
 	f := setUp(t, true)
 	code, out, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+"..HEAD")
 	if code != 3 {
@@ -224,9 +233,8 @@ func TestCodexReview(t *testing.T) {
 }
 
 // GIT_DIR naming the repository under review, as git sets it for a hook,
-// reaches neither the review's worktree nor Codex; naming another, it is
-// refused.
-func TestRepositoryTheEnvironmentNames(t *testing.T) {
+// reaches neither the review's worktree nor Codex.
+func testCodexGitDirUnderReview(t *testing.T) {
 	f := setUp(t, true)
 	t.Setenv("FAKE_CODEX", "none")
 	t.Setenv("GIT_DIR", filepath.Join(f.repo, ".git"))
@@ -237,7 +245,12 @@ func TestRepositoryTheEnvironmentNames(t *testing.T) {
 		t.Errorf("Codex inherited %s", location)
 	}
 	f.checkCleanedUp(t)
+}
 
+// GIT_DIR naming another repository is refused.
+func testCodexGitDirElsewhere(t *testing.T) {
+	f := setUp(t, true)
+	t.Setenv("FAKE_CODEX", "none")
 	gitenvtest.Decoy(t)
 	os.Unsetenv("GIT_WORK_TREE")
 	if code, _, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+"..HEAD"); code != 2 || !strings.Contains(stderr, "GIT_DIR") {
@@ -245,7 +258,7 @@ func TestRepositoryTheEnvironmentNames(t *testing.T) {
 	}
 }
 
-func TestNoFindings(t *testing.T) {
+func testCodexNoFindings(t *testing.T) {
 	f := setUp(t, true)
 	t.Setenv("FAKE_CODEX", "none")
 	if code, out, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+".."+f.tip); code != 0 || len(out.Findings) != 0 {
@@ -254,11 +267,11 @@ func TestNoFindings(t *testing.T) {
 	f.checkCleanedUp(t)
 }
 
-// TestConfinement holds Codex to reading the worktree under review and the
-// parts of the repository's git directory git needs to show the change,
+// testCodexConfinement holds Codex to reading the worktree under review and
+// the parts of the repository's git directory git needs to show the change,
 // with nothing of the user's Codex configuration, and checks that its
 // sandbox starts before it reviews.
-func TestConfinement(t *testing.T) {
+func testCodexConfinement(t *testing.T) {
 	f := setUp(t, true)
 	t.Setenv("FAKE_CODEX", "none")
 	tools := t.TempDir()
@@ -275,6 +288,7 @@ func TestConfinement(t *testing.T) {
 		t.Errorf("Codex's PATH names a directory by a symbolic link the sandbox cannot follow: %q", path)
 	}
 	read := func(name string) []string {
+		t.Helper()
 		data, err := os.ReadFile(filepath.Join(f.log, name))
 		if err != nil {
 			t.Fatalf("codex was not run with the arguments in %s: %v", name, err)
@@ -349,7 +363,7 @@ func must[T any](v T, err error) T {
 	return v
 }
 
-func TestCodexFailures(t *testing.T) {
+func testCodexFailures(t *testing.T) {
 	for _, c := range []struct {
 		mode string
 		args []string
@@ -412,10 +426,16 @@ func TestUnavailable(t *testing.T) {
 	}
 }
 
-// TestNoRedCheckOnTheHost holds fresh-review to never running the
+func TestRedCheck(t *testing.T) {
+	t.Run("never on the host", testRedCheckNotOnHost)
+	t.Run("in a VM", testRedCheckInVM)
+	t.Run("VM failure", testRedCheckVMFailure)
+}
+
+// testRedCheckNotOnHost holds fresh-review to never running the
 // repository's test command where it runs, whatever the settings say: the
 // commits under review may be anyone's, and red-check runs them.
-func TestNoRedCheckOnTheHost(t *testing.T) {
+func testRedCheckNotOnHost(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		args []string
@@ -439,7 +459,7 @@ func TestNoRedCheckOnTheHost(t *testing.T) {
 
 			var stdout, stderr bytes.Buffer
 			args := append(append([]string{}, c.args...), "--goal", ".git/goal.md", f.base+"..HEAD")
-			if code := Main(context.Background(), args, nil, &stdout, &stderr); code != 0 {
+			if code := Main(t.Context(), args, nil, &stdout, &stderr); code != 0 {
 				t.Fatalf("exit %d\n%s", code, stderr.String())
 			}
 			if _, err := os.Stat(marker); err == nil {
@@ -459,23 +479,32 @@ func TestNoRedCheckOnTheHost(t *testing.T) {
 	}
 }
 
-// TestRedCheckInVM: where a VM can run red-check, its results go in the
-// prompt, for the range under review; where it cannot, stderr says why.
-func TestRedCheckInVM(t *testing.T) {
+// configuredForRedCheck makes a repository, as setUp does, whose settings
+// give it a test command, and runs red-check with vm for the rest of the
+// test. vm stands in for the review VM, which the test cannot start.
+func configuredForRedCheck(t *testing.T, vm func(ctx context.Context, top, base, tip string, log io.Writer) (string, error)) *fixture {
+	t.Helper()
 	f := setUp(t, false)
 	config := filepath.Join(t.TempDir(), "config.json")
 	os.WriteFile(config, []byte(`{"repos": {"o/r": {"test": "true", "testFiles": ["*_test.txt"]}}}`), 0o644)
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
 	run(t, f.repo, "git", "remote", "add", "origin", "https://github.com/o/r.git")
-	var got []string
 	old := RedCheckInVM
 	t.Cleanup(func() { RedCheckInVM = old })
-	RedCheckInVM = func(ctx context.Context, top, base, tip string, log io.Writer) (string, error) {
+	RedCheckInVM = vm
+	return f
+}
+
+// Where a VM can run red-check, its results go in the prompt, for the range
+// under review.
+func testRedCheckInVM(t *testing.T) {
+	var got []string
+	f := configuredForRedCheck(t, func(ctx context.Context, top, base, tip string, log io.Writer) (string, error) {
 		got = []string{top, base, tip}
 		return "red-check from the VM: fails-as-asserted", nil
-	}
+	})
 	var stdout, stderr bytes.Buffer
-	if code := Main(context.Background(), []string{"--print-prompt", "--goal", ".git/goal.md", f.base + "..HEAD"}, nil,
+	if code := Main(t.Context(), []string{"--print-prompt", "--goal", ".git/goal.md", f.base + "..HEAD"}, nil,
 		&stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr.String())
 	}
@@ -486,13 +515,15 @@ func TestRedCheckInVM(t *testing.T) {
 	if !strings.Contains(stdout.String(), "## git red-check "+f.base+".."+f.tip+"\n\nred-check from the VM: fails-as-asserted") {
 		t.Errorf("the prompt lacks the VM's red-check:\n%s", stdout.String())
 	}
+}
 
-	RedCheckInVM = func(context.Context, string, string, string, io.Writer) (string, error) {
+// Where a VM cannot run red-check, stderr says why.
+func testRedCheckVMFailure(t *testing.T) {
+	f := configuredForRedCheck(t, func(context.Context, string, string, string, io.Writer) (string, error) {
 		return "", errors.New("no VM here")
-	}
-	stdout.Reset()
-	stderr.Reset()
-	Main(context.Background(), []string{"--print-prompt", "--goal", ".git/goal.md", f.base + "..HEAD"}, nil, &stdout, &stderr)
+	})
+	var stdout, stderr bytes.Buffer
+	Main(t.Context(), []string{"--print-prompt", "--goal", ".git/goal.md", f.base + "..HEAD"}, nil, &stdout, &stderr)
 	if !strings.Contains(stderr.String(), "no VM here") || strings.Contains(strings.TrimPrefix(stdout.String(), Contract), "red-check") {
 		t.Errorf("a failed VM run: %s\n%s", stderr.String(), stdout.String())
 	}
@@ -505,7 +536,7 @@ func TestPrintPrompt(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	args := []string{"--print-prompt", "--goal", ".git/goal.md", "--items", ".git/items.md", "--prior", ".git/prior.json", f.base + "..HEAD"}
-	if code := Main(context.Background(), args, nil, &stdout, &stderr); code != 0 {
+	if code := Main(t.Context(), args, nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr.String())
 	}
 	prompt := stdout.String()
@@ -521,42 +552,59 @@ func TestPrintPrompt(t *testing.T) {
 }
 
 func TestCheck(t *testing.T) {
-	f := setUp(t, false)
-	reply := filepath.Join(f.repo, ".git", "reply.md")
-	os.WriteFile(reply, []byte("Here is my review.\n```json\n"+
-		`{"findings": [{"id": "1", "path": "./code.txt", "line": 3, "kind": "untested", "claim": "c", "evidence": "e"}], "unverified": []}`+
-		"\n```\n"), 0o644)
-	code, out, stderr := freshReview(t, "--check", reply, f.base+"..HEAD")
-	if code != 3 || out.Reviewer != "subagent" || len(out.Findings) != 1 || out.Findings[0]["path"] != "code.txt" {
-		t.Errorf("exit %d, %+v\n%s", code, out, stderr)
+	// checkReply runs --check over a sub-agent's reply.
+	checkReply := func(t *testing.T, reply string) (int, output, string) {
+		t.Helper()
+		f := setUp(t, false)
+		path := filepath.Join(f.repo, ".git", "reply.md")
+		os.WriteFile(path, []byte(reply), 0o644)
+		return freshReview(t, "--check", path, f.base+"..HEAD")
 	}
 
-	os.WriteFile(reply, []byte(`{"findings": [], "unverified": []}`), 0o644)
-	if code, _, stderr := freshReview(t, "--check", reply, f.base+"..HEAD"); code != 0 {
-		t.Errorf("no findings: exit %d\n%s", code, stderr)
-	}
+	t.Run("findings", func(t *testing.T) {
+		code, out, stderr := checkReply(t, "Here is my review.\n```json\n"+
+			`{"findings": [{"id": "1", "path": "./code.txt", "line": 3, "kind": "untested", "claim": "c", "evidence": "e"}], "unverified": []}`+
+			"\n```\n")
+		if code != 3 || out.Reviewer != "subagent" || len(out.Findings) != 1 || out.Findings[0]["path"] != "code.txt" {
+			t.Errorf("exit %d, %+v\n%s", code, out, stderr)
+		}
+	})
 
-	os.WriteFile(reply, []byte("Looks good to me."), 0o644)
-	if code, _, _ := freshReview(t, "--check", reply, f.base+"..HEAD"); code != 1 {
-		t.Errorf("a reply that is not JSON: exit %d", code)
-	}
+	t.Run("no findings", func(t *testing.T) {
+		if code, _, stderr := checkReply(t, `{"findings": [], "unverified": []}`); code != 0 {
+			t.Errorf("no findings: exit %d\n%s", code, stderr)
+		}
+	})
+
+	t.Run("reply that is not JSON", func(t *testing.T) {
+		if code, _, _ := checkReply(t, "Looks good to me."); code != 1 {
+			t.Errorf("a reply that is not JSON: exit %d", code)
+		}
+	})
 }
 
 func TestRefusals(t *testing.T) {
-	f := setUp(t, true)
-	os.WriteFile(filepath.Join(f.repo, ".git", "empty.md"), []byte("\n"), 0o644)
-	for _, args := range [][]string{
-		{f.base + "..HEAD"},
-		{"--goal", ".git/empty.md", f.base + "..HEAD"},
-		{"--goal", ".git/goal.md", "HEAD"},
-		{"--goal", ".git/goal.md", "HEAD..HEAD"},
-		{"--goal", ".git/goal.md", "HEAD...HEAD~1"},
+	for _, c := range []struct {
+		name string
+		// args returns the arguments, given the base of the change.
+		args func(base string) []string
+	}{
+		{"no goal", func(base string) []string { return []string{base + "..HEAD"} }},
+		{"empty goal", func(base string) []string { return []string{"--goal", ".git/empty.md", base + "..HEAD"} }},
+		{"no range", func(string) []string { return []string{"--goal", ".git/goal.md", "HEAD"} }},
+		{"empty range", func(string) []string { return []string{"--goal", ".git/goal.md", "HEAD..HEAD"} }},
+		{"symmetric difference", func(string) []string { return []string{"--goal", ".git/goal.md", "HEAD...HEAD~1"} }},
 	} {
-		code, _, stderr := freshReview(t, args...)
-		reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-fresh-review: refused: ")
-		if code != 2 || !refusal.SaysInstead(reason) {
-			t.Errorf("%v: exit %d, %q", args, code, stderr)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			f := setUp(t, true)
+			os.WriteFile(filepath.Join(f.repo, ".git", "empty.md"), []byte("\n"), 0o644)
+			args := c.args(f.base)
+			code, _, stderr := freshReview(t, args...)
+			reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-fresh-review: refused: ")
+			if code != 2 || !refusal.SaysInstead(reason) {
+				t.Errorf("%v: exit %d, %q", args, code, stderr)
+			}
+			f.checkCleanedUp(t)
+		})
 	}
-	f.checkCleanedUp(t)
 }

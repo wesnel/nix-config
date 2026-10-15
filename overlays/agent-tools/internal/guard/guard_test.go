@@ -14,9 +14,33 @@ import (
 
 var saysInstead = refusal.SaysInstead
 
-// TestAliasDenial covers the alias already in the git config, which the
+// caseName names a subtest after what it checks and whether the guard is to
+// deny it. It keeps no character a shell treats specially: t.TempDir names
+// its directory after the subtest, and a case may put that path in a
+// command.
+func caseName(deny bool, what string) string {
+	what = strings.Map(func(r rune) rune {
+		if 'a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' || strings.ContainsRune(" ./:=@+,-", r) {
+			return r
+		}
+		return -1
+	}, what)
+	if deny {
+		return "deny/" + what
+	}
+	return "allow/" + what
+}
+
+func TestCheck(t *testing.T) {
+	t.Run("commands", testCheckCommands)
+	t.Run("wrapped commands", testCheckWrappedCommands)
+	t.Run("GraphQL query sources", testCheckGraphQLQuerySources)
+	t.Run("alias", testCheckAlias)
+}
+
+// testCheckAlias covers the alias already in the git config, which the
 // guard looks up at run time.
-func TestAliasDenial(t *testing.T) {
+func testCheckAlias(t *testing.T) {
 	config := filepath.Join(t.TempDir(), "gitconfig")
 	if err := os.WriteFile(config, []byte("[alias]\n\tpp = push\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -29,7 +53,7 @@ func TestAliasDenial(t *testing.T) {
 	}
 }
 
-func TestCheck(t *testing.T) {
+func testCheckCommands(t *testing.T) {
 	cases := []struct {
 		deny    bool
 		tool    string
@@ -85,21 +109,23 @@ func TestCheck(t *testing.T) {
 		{false, "Read", ""},
 	}
 	for _, c := range cases {
-		input, _ := json.Marshal(map[string]string{"command": c.command})
-		reason := Check(c.tool, "", input)
-		if (reason != "") != c.deny {
-			t.Errorf("%s %q: deny=%v, reason %q", c.tool, c.command, !c.deny, reason)
-		}
-		if reason != "" && !saysInstead(reason) {
-			t.Errorf("%s %q: reason %q does not say what to do instead", c.tool, c.command, reason)
-		}
+		t.Run(caseName(c.deny, strings.TrimSpace(c.tool+" "+c.command)), func(t *testing.T) {
+			input, _ := json.Marshal(map[string]string{"command": c.command})
+			reason := Check(c.tool, "", input)
+			if (reason != "") != c.deny {
+				t.Errorf("%s %q: deny=%v, reason %q", c.tool, c.command, !c.deny, reason)
+			}
+			if reason != "" && !saysInstead(reason) {
+				t.Errorf("%s %q: reason %q does not say what to do instead", c.tool, c.command, reason)
+			}
+		})
 	}
 }
 
-// TestWrappedCommands covers a command run through another program, a shell
-// keyword or flags the shell combines, which the guard reads as the command
-// it runs, and configuration handed to git through the environment.
-func TestWrappedCommands(t *testing.T) {
+// testCheckWrappedCommands covers a command run through another program, a
+// shell keyword or flags the shell combines, which the guard reads as the
+// command it runs, and configuration handed to git through the environment.
+func testCheckWrappedCommands(t *testing.T) {
 	cases := []struct {
 		deny    bool
 		command string
@@ -179,22 +205,26 @@ func TestWrappedCommands(t *testing.T) {
 		{false, "if git diff --quiet; then echo clean; fi"},
 	}
 	for _, c := range cases {
-		input, _ := json.Marshal(map[string]string{"command": c.command})
-		reason := Check("Bash", "", input)
-		if (reason != "") != c.deny {
-			t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
-		}
-		if reason != "" && !saysInstead(reason) {
-			t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
-		}
+		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
+			input, _ := json.Marshal(map[string]string{"command": c.command})
+			reason := Check("Bash", "", input)
+			if (reason != "") != c.deny {
+				t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
+			}
+			if reason != "" && !saysInstead(reason) {
+				t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+			}
+		})
 	}
 }
 
-// TestGraphQLQuerySources covers a query that is not on the command line: the
-// guard reads a plain file of the workspace, and denies what it cannot read.
-func TestGraphQLQuerySources(t *testing.T) {
-	root := t.TempDir()
-	workspace := filepath.Join(root, "workspace")
+// queryFiles makes a workspace, inside root, holding a query and a mutation
+// as GraphQL and as JSON, a link to a query outside it, and returns root
+// and the workspace.
+func queryFiles(t *testing.T) (root, workspace string) {
+	t.Helper()
+	root = t.TempDir()
+	workspace = filepath.Join(root, "workspace")
 	files := map[string]string{
 		"workspace/read.graphql":  "query { viewer { login } }",
 		"workspace/write.graphql": "mutation { resolveReviewThread(input: {threadId: \"T\"}) { clientMutationId } }",
@@ -214,7 +244,14 @@ func TestGraphQLQuerySources(t *testing.T) {
 	if err := os.Symlink(filepath.Join(root, "outside.graphql"), filepath.Join(workspace, "link.graphql")); err != nil {
 		t.Fatal(err)
 	}
-	t.Chdir(workspace)
+	return root, workspace
+}
+
+// testCheckGraphQLQuerySources covers a query that is not on the command
+// line: the guard reads a plain file of the workspace, and denies what it
+// cannot read. ROOT and WORKSPACE in a command stand for the directories
+// queryFiles makes.
+func testCheckGraphQLQuerySources(t *testing.T) {
 	cases := []struct {
 		deny    bool
 		command string
@@ -235,39 +272,47 @@ func TestGraphQLQuerySources(t *testing.T) {
 		{true, `gh api graphql -f query="$(cat read.graphql)"`},
 		{true, "gh api graphql -F query=@missing.graphql"},
 		{true, "gh api graphql -F query=@../outside.graphql"},
-		{true, "gh api graphql -F query=@" + filepath.Join(root, "outside.graphql")},
+		{true, "gh api graphql -F query=@ROOT/outside.graphql"},
 		{true, "gh api graphql -F query=@link.graphql"},
 		{true, "cp write.graphql read.graphql && gh api graphql -F query=@read.graphql"},
 		{true, "bash -c 'gh api graphql -F query=@read.graphql'"},
 		{true, "gh api -X GET graphql -f query='mutation { resolveReviewThread }'"},
 		{false, "gh api graphql -F query=@read.graphql"},
-		{false, "gh api graphql -F query=@" + filepath.Join(workspace, "read.graphql")},
+		{false, "gh api graphql -F query=@WORKSPACE/read.graphql"},
 		{false, "gh api graphql --input read.json"},
 		{false, "gh api graphql -f query='query($n: Int!) { viewer { login } }' -F n=1"},
 		{false, "gh api graphql -F query=@read.graphql -F owner=@missing.txt"},
 		{false, "gh api -H 'Accept: application/json' graphql -f query='{ viewer { login } }'"},
 	}
 	for _, c := range cases {
-		input, _ := json.Marshal(map[string]string{"command": c.command})
-		reason := Check("Bash", "", input)
-		if (reason != "") != c.deny {
-			t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
-		}
-		if reason != "" && !saysInstead(reason) {
-			t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
-		}
+		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
+			root, workspace := queryFiles(t)
+			t.Chdir(workspace)
+			command := strings.NewReplacer("ROOT", root, "WORKSPACE", workspace).Replace(c.command)
+			input, _ := json.Marshal(map[string]string{"command": command})
+			reason := Check("Bash", "", input)
+			if (reason != "") != c.deny {
+				t.Errorf("%q: deny=%v, reason %q", command, !c.deny, reason)
+			}
+			if reason != "" && !saysInstead(reason) {
+				t.Errorf("%q: reason %q does not say what to do instead", command, reason)
+			}
+		})
 	}
 
 	// The hook event's cwd, not the guard's, is where a relative file is.
-	t.Chdir(root)
 	for file, deny := range map[string]bool{"write.graphql": true, "read.graphql": false} {
-		event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "cwd": workspace,
-			"tool_input": map[string]string{"command": "gh api graphql -F query=@" + file}})
-		var out bytes.Buffer
-		Main(nil, bytes.NewReader(event), &out, io.Discard)
-		if (out.Len() != 0) != deny {
-			t.Errorf("%s from the event's cwd: deny=%v, output %s", file, !deny, out.String())
-		}
+		t.Run(caseName(deny, "from the event's cwd/"+file), func(t *testing.T) {
+			root, workspace := queryFiles(t)
+			t.Chdir(root)
+			event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "cwd": workspace,
+				"tool_input": map[string]string{"command": "gh api graphql -F query=@" + file}})
+			var out bytes.Buffer
+			Main(nil, bytes.NewReader(event), &out, io.Discard)
+			if (out.Len() != 0) != deny {
+				t.Errorf("%s from the event's cwd: deny=%v, output %s", file, !deny, out.String())
+			}
+		})
 	}
 }
 
@@ -299,41 +344,50 @@ func TestPolicy(t *testing.T) {
 	names := map[role]string{baseline: "baseline", coordinator: "coordinator", owner: "owner", reviewer: "reviewer"}
 	scopes := map[string]role{"baseline": baseline, "coordinator": coordinator, "owner": owner, "reviewer": reviewer}
 	for _, r := range rules {
-		if len(r.Deny) == 0 || len(r.Allow) == 0 {
-			t.Errorf("%s: needs examples both ways", r.Pattern)
-		}
-		scope, ok := scopes[r.Scope]
-		if !ok {
-			t.Errorf("%s: scope %q is not a role", r.Pattern, r.Scope)
-		}
-		for denied, commands := range map[bool][]string{true: r.Deny, false: r.Allow} {
-			for _, command := range commands {
-				input, _ := json.Marshal(map[string]string{"command": command})
-				for who, check := range checks {
-					// A denial holds for the rule's role and every stricter
-					// one, and an owner's denials are steps the coordinator
-					// takes. An allow example holds only for the rule's own
-					// role: another rule can deny it to a stricter one.
-					want, held := denied && who >= scope, who == scope
-					if denied {
-						held = who >= scope || (scope == owner && who == coordinator)
-					}
-					reason := check("Bash", "", input)
-					if got := reason != ""; held && got != want {
-						t.Errorf("%s: guard deny=%v for the %s's %q", r.Pattern, got, names[who], command)
-					}
-					if reason != "" && !saysInstead(reason) {
-						t.Errorf("%s: reason %q for the %s's %q does not say what to do instead", r.Pattern, reason, names[who], command)
+		t.Run(r.Pattern, func(t *testing.T) {
+			if len(r.Deny) == 0 || len(r.Allow) == 0 {
+				t.Errorf("%s: needs examples both ways", r.Pattern)
+			}
+			scope, ok := scopes[r.Scope]
+			if !ok {
+				t.Errorf("%s: scope %q is not a role", r.Pattern, r.Scope)
+			}
+			for denied, commands := range map[bool][]string{true: r.Deny, false: r.Allow} {
+				for _, command := range commands {
+					input, _ := json.Marshal(map[string]string{"command": command})
+					for who, check := range checks {
+						// A denial holds for the rule's role and every stricter
+						// one, and an owner's denials are steps the coordinator
+						// takes. An allow example holds only for the rule's own
+						// role: another rule can deny it to a stricter one.
+						want, held := denied && who >= scope, who == scope
+						if denied {
+							held = who >= scope || (scope == owner && who == coordinator)
+						}
+						reason := check("Bash", "", input)
+						if got := reason != ""; held && got != want {
+							t.Errorf("%s: guard deny=%v for the %s's %q", r.Pattern, got, names[who], command)
+						}
+						if reason != "" && !saysInstead(reason) {
+							t.Errorf("%s: reason %q for the %s's %q does not say what to do instead", r.Pattern, reason, names[who], command)
+						}
 					}
 				}
 			}
-		}
+		})
 	}
 }
 
-// TestBaseline covers the rules for every session that no ECA pattern
-// expresses, and the baseline's allowances that a loop role does not share.
 func TestBaseline(t *testing.T) {
+	t.Run("commands", testBaselineCommands)
+	t.Run("roles", testBaselineRoles)
+	t.Run("formats", testBaselineFormats)
+}
+
+// testBaselineCommands covers the rules for every session that no ECA
+// pattern expresses, and the baseline's allowances that a loop role does not
+// share.
+func testBaselineCommands(t *testing.T) {
 	cases := []struct {
 		deny    bool
 		command string
@@ -449,21 +503,23 @@ func TestBaseline(t *testing.T) {
 		{false, "http GET https://api.github.com/repos/o/r"},
 	}
 	for _, c := range cases {
-		input, _ := json.Marshal(map[string]string{"command": c.command})
-		reason := CheckBaseline("Bash", "", input)
-		if (reason != "") != c.deny {
-			t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
-		}
-		if reason != "" && !saysInstead(reason) {
-			t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
-		}
+		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
+			input, _ := json.Marshal(map[string]string{"command": c.command})
+			reason := CheckBaseline("Bash", "", input)
+			if (reason != "") != c.deny {
+				t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
+			}
+			if reason != "" && !saysInstead(reason) {
+				t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+			}
+		})
 	}
 }
 
-// TestBaselineRoles covers the hook every ordinary session runs: an agent
+// testBaselineRoles covers the hook every ordinary session runs: an agent
 // with a loop role has that role's rules, and every other call the
 // baseline's.
-func TestBaselineRoles(t *testing.T) {
+func testBaselineRoles(t *testing.T) {
 	for _, c := range []struct {
 		deny      bool
 		agentType string
@@ -484,50 +540,57 @@ func TestBaselineRoles(t *testing.T) {
 		{false, "pr-loop:pr-owner", "git commit --fixup=abc"},
 		{true, "pr-loop:pr-owner", "git commit -m x"},
 	} {
-		event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "agent_type": c.agentType,
-			"tool_input": map[string]string{"command": c.command}})
-		var out, errs bytes.Buffer
-		if code := Main([]string{"--baseline"}, bytes.NewReader(event), &out, &errs); code != 0 {
-			t.Errorf("%s %q: exit %d: %s", c.agentType, c.command, code, errs.String())
-		}
-		if denied := strings.Contains(out.String(), `"permissionDecision":"deny"`); denied != c.deny {
-			t.Errorf("%s %q: deny=%v, output %s", c.agentType, c.command, denied, out.String())
-		}
+		t.Run(caseName(c.deny, strings.TrimSpace(c.agentType+" "+c.command)), func(t *testing.T) {
+			event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "agent_type": c.agentType,
+				"tool_input": map[string]string{"command": c.command}})
+			var out, errs bytes.Buffer
+			if code := Main([]string{"--baseline"}, bytes.NewReader(event), &out, &errs); code != 0 {
+				t.Errorf("%s %q: exit %d: %s", c.agentType, c.command, code, errs.String())
+			}
+			if denied := strings.Contains(out.String(), `"permissionDecision":"deny"`); denied != c.deny {
+				t.Errorf("%s %q: deny=%v, output %s", c.agentType, c.command, denied, out.String())
+			}
+		})
 	}
 }
 
-// TestBaselineFormats covers the hook every session runs, as each agent
+// testBaselineFormats covers the hook every session runs, as each agent
 // calls it: Claude Code with its agent_type, Codex with turn_id and no
 // agent, ECA with its agent's name in agent.
-func TestBaselineFormats(t *testing.T) {
+func testBaselineFormats(t *testing.T) {
 	for _, c := range []struct {
-		event, want string
+		name, event, want string
 	}{
-		{`{"tool_name":"Bash","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
-		{`{"tool_name":"Bash","agent_type":"reviewer","tool_input":{"command":"git commit -m x"}}`, `"permissionDecision":"deny"`},
-		{`{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}`, ""},
-		{`{"tool_name":"Bash","turn_id":"t","tool_input":{"command":"gh pr merge 1"}}`, `"permissionDecision":"deny"`},
-		{`{"tool_name":"exec_command","turn_id":"t","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
-		{`{"tool_name":"apply_patch","turn_id":"t","tool_input":{"command":"*** Begin Patch\n*** Add File: .claude/settings.local.json\n+{\"disableAllHooks\": true}\n*** End Patch\n"}}`, `"permissionDecision":"deny"`},
-		{`{"tool_name":"apply_patch","turn_id":"t","tool_input":{"command":"*** Begin Patch\n*** Update File: main.go\n@@\n-a\n+b\n*** End Patch\n"}}`, ""},
-		{`{"hook_type":"preToolCall","agent":"code","tool_name":"shell_command","tool_input":{"command":"git push"}}`, `"approval":"deny"`},
-		{`{"hook_type":"preToolCall","agent":"code","tool_name":"shell_command","tool_input":{"command":"git commit -m x"}}`, ""},
-		{`{"hook_type":"preToolCall","agent":"pr-coordinator","tool_name":"shell_command","tool_input":{"command":"git commit -m x"}}`, `"approval":"deny"`},
-		{`{"hook_type":"preToolCall","agent":"pr-owner","tool_name":"shell_command","tool_input":{"command":"pr-loop push"}}`, `"approval":"deny"`},
-		{`{"hook_type":"preToolCall","agent":"reviewer","tool_name":"shell_command","tool_input":{"command":"git stash"}}`, `"approval":"deny"`},
+		{"Claude Code push", `{"tool_name":"Bash","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
+		{"Claude Code reviewer commit", `{"tool_name":"Bash","agent_type":"reviewer","tool_input":{"command":"git commit -m x"}}`, `"permissionDecision":"deny"`},
+		{"Claude Code commit", `{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}`, ""},
+		{"Codex Bash merge", `{"tool_name":"Bash","turn_id":"t","tool_input":{"command":"gh pr merge 1"}}`, `"permissionDecision":"deny"`},
+		{"Codex exec_command push", `{"tool_name":"exec_command","turn_id":"t","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
+		{"Codex patch of settings", `{"tool_name":"apply_patch","turn_id":"t","tool_input":{"command":"*** Begin Patch\n*** Add File: .claude/settings.local.json\n+{\"disableAllHooks\": true}\n*** End Patch\n"}}`, `"permissionDecision":"deny"`},
+		{"Codex patch of code", `{"tool_name":"apply_patch","turn_id":"t","tool_input":{"command":"*** Begin Patch\n*** Update File: main.go\n@@\n-a\n+b\n*** End Patch\n"}}`, ""},
+		{"ECA push", `{"hook_type":"preToolCall","agent":"code","tool_name":"shell_command","tool_input":{"command":"git push"}}`, `"approval":"deny"`},
+		{"ECA commit", `{"hook_type":"preToolCall","agent":"code","tool_name":"shell_command","tool_input":{"command":"git commit -m x"}}`, ""},
+		{"ECA coordinator commit", `{"hook_type":"preToolCall","agent":"pr-coordinator","tool_name":"shell_command","tool_input":{"command":"git commit -m x"}}`, `"approval":"deny"`},
+		{"ECA owner push", `{"hook_type":"preToolCall","agent":"pr-owner","tool_name":"shell_command","tool_input":{"command":"pr-loop push"}}`, `"approval":"deny"`},
+		{"ECA reviewer stash", `{"hook_type":"preToolCall","agent":"reviewer","tool_name":"shell_command","tool_input":{"command":"git stash"}}`, `"approval":"deny"`},
 	} {
+		t.Run(c.name, func(t *testing.T) {
+			var out, errs bytes.Buffer
+			if code := Main([]string{"--baseline"}, strings.NewReader(c.event), &out, &errs); code != 0 {
+				t.Errorf("%s: exit %d: %s", c.event, code, errs.String())
+			}
+			if (c.want == "" && out.Len() != 0) || !strings.Contains(out.String(), c.want) {
+				t.Errorf("%s: printed %s", c.event, out.String())
+			}
+		})
+	}
+
+	t.Run("unknown flag", func(t *testing.T) {
 		var out, errs bytes.Buffer
-		if code := Main([]string{"--baseline"}, strings.NewReader(c.event), &out, &errs); code != 0 {
-			t.Errorf("%s: exit %d: %s", c.event, code, errs.String())
+		if code := Main([]string{"--only", "reviewer"}, strings.NewReader(`{"tool_name":"Bash"}`), &out, &errs); code == 0 {
+			t.Errorf("an unknown flag was accepted: %s", out.String())
 		}
-		if (c.want == "" && out.Len() != 0) || !strings.Contains(out.String(), c.want) {
-			t.Errorf("%s: printed %s", c.event, out.String())
-		}
-	}
-	var out, errs bytes.Buffer
-	if code := Main([]string{"--only", "reviewer"}, strings.NewReader(`{"tool_name":"Bash"}`), &out, &errs); code == 0 {
-		t.Errorf("an unknown flag was accepted: %s", out.String())
-	}
+	})
 }
 
 // TestReviewerReasons holds every denial a reviewer meets to the one thing
@@ -535,30 +598,34 @@ func TestBaselineFormats(t *testing.T) {
 func TestReviewerReasons(t *testing.T) {
 	for _, command := range []string{"git push origin x", "git commit -m x", "gh pr comment 1 -b hi",
 		"git sign-pass", "pr-loop reply T --body-file -"} {
-		input, _ := json.Marshal(map[string]string{"command": command})
-		if reason := CheckReviewer("Bash", "", input); !strings.HasPrefix(reason, "A reviewer only reads.") || !saysInstead(reason) {
-			t.Errorf("%q: %q", command, reason)
-		}
+		t.Run(command, func(t *testing.T) {
+			input, _ := json.Marshal(map[string]string{"command": command})
+			if reason := CheckReviewer("Bash", "", input); !strings.HasPrefix(reason, "A reviewer only reads.") || !saysInstead(reason) {
+				t.Errorf("%q: %q", command, reason)
+			}
+		})
 	}
 }
 
 func TestFormats(t *testing.T) {
 	for _, c := range []struct {
-		event, want string
+		name, event, want string
 	}{
-		{`{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
-		{`{"hook_type":"preToolCall","server":"eca","tool_name":"shell_command","tool_input":{"command":"git push"}}`, `"approval":"deny"`},
-		{`{"hook_type":"preToolCall","server":"linear","tool_name":"save_issue","tool_input":{}}`, `"approval":"deny"`},
-		{`{"tool_name":"Bash","agent_type":"pr-loop:pr-owner","tool_input":{"command":"pr-loop push"}}`, `"permissionDecision":"deny"`},
-		{`{"tool_name":"Bash","agent_type":"reviewer","tool_input":{"command":"git commit --fixup=abc"}}`, `"permissionDecision":"deny"`},
-		{`{"tool_name":"Bash","agent_type":"pr-loop:pr-owner","tool_input":{"command":"git commit --fixup=abc"}}`, ""},
-		{`{"tool_name":"Bash","tool_input":{"command":"pr-loop push"}}`, ""},
-		{`{"tool_name":"Bash","tool_input":{"command":"ls"}}`, ""},
+		{"Claude Code PreToolUse", `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
+		{"ECA shell command", `{"hook_type":"preToolCall","server":"eca","tool_name":"shell_command","tool_input":{"command":"git push"}}`, `"approval":"deny"`},
+		{"ECA connector", `{"hook_type":"preToolCall","server":"linear","tool_name":"save_issue","tool_input":{}}`, `"approval":"deny"`},
+		{"owner push", `{"tool_name":"Bash","agent_type":"pr-loop:pr-owner","tool_input":{"command":"pr-loop push"}}`, `"permissionDecision":"deny"`},
+		{"reviewer fixup", `{"tool_name":"Bash","agent_type":"reviewer","tool_input":{"command":"git commit --fixup=abc"}}`, `"permissionDecision":"deny"`},
+		{"owner fixup", `{"tool_name":"Bash","agent_type":"pr-loop:pr-owner","tool_input":{"command":"git commit --fixup=abc"}}`, ""},
+		{"coordinator push", `{"tool_name":"Bash","tool_input":{"command":"pr-loop push"}}`, ""},
+		{"ls", `{"tool_name":"Bash","tool_input":{"command":"ls"}}`, ""},
 	} {
-		var out bytes.Buffer
-		Main(nil, strings.NewReader(c.event), &out, io.Discard)
-		if (c.want == "" && out.Len() != 0) || !strings.Contains(out.String(), c.want) {
-			t.Errorf("%s: printed %s", c.event, out.String())
-		}
+		t.Run(c.name, func(t *testing.T) {
+			var out bytes.Buffer
+			Main(nil, strings.NewReader(c.event), &out, io.Discard)
+			if (c.want == "" && out.Len() != 0) || !strings.Contains(out.String(), c.want) {
+				t.Errorf("%s: printed %s", c.event, out.String())
+			}
+		})
 	}
 }

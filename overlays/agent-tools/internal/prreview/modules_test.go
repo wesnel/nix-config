@@ -2,7 +2,6 @@ package prreview
 
 import (
 	"archive/zip"
-	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,20 +12,22 @@ import (
 )
 
 func TestGuestGo(t *testing.T) {
-	for _, c := range []struct{ goMod, host, want string }{
-		{"module m\n\ngo 1.22\n", "go1.26.8", "go1.26.8"},
-		{"module m\n\ngo 1.27.1\n", "go1.26.8", "go1.27.1"},
-		{"module m\n\ngo 1.27\n", "go1.26.8", "go1.27.0"},
-		{"module m\n\ngo 1.22\n\ntoolchain go1.27.2\n", "go1.26.8", "go1.27.2"},
-		{"module m\n\ngo 1.22\n\ntoolchain go1.20.1\n", "go1.26.8", "go1.26.8"},
+	for _, c := range []struct{ name, goMod, host, want string }{
+		{"older go line", "module m\n\ngo 1.22\n", "go1.26.8", "go1.26.8"},
+		{"newer go line", "module m\n\ngo 1.27.1\n", "go1.26.8", "go1.27.1"},
+		{"newer go line without a patch", "module m\n\ngo 1.27\n", "go1.26.8", "go1.27.0"},
+		{"newer toolchain", "module m\n\ngo 1.22\n\ntoolchain go1.27.2\n", "go1.26.8", "go1.27.2"},
+		{"older toolchain", "module m\n\ngo 1.22\n\ntoolchain go1.20.1\n", "go1.26.8", "go1.26.8"},
 		// A toolchain line that names no release is ignored.
-		{"module m\n\ngo 1.22\n\ntoolchain go1.27.2-evil\n", "go1.26.8", "go1.26.8"},
-		{"module m\n\ngo 1.22\n\ntoolchain default\n", "go1.26.8", "go1.26.8"},
-		{"module m\n", "go1.26.8", "go1.26.8"},
+		{"toolchain with a suffix", "module m\n\ngo 1.22\n\ntoolchain go1.27.2-evil\n", "go1.26.8", "go1.26.8"},
+		{"default toolchain", "module m\n\ngo 1.22\n\ntoolchain default\n", "go1.26.8", "go1.26.8"},
+		{"no go line", "module m\n", "go1.26.8", "go1.26.8"},
 	} {
-		if got := guestGo(c.goMod, c.host); got != c.want {
-			t.Errorf("%q with %s: %s, want %s", c.goMod, c.host, got, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			if got := guestGo(c.goMod, c.host); got != c.want {
+				t.Errorf("%q with %s: %s, want %s", c.goMod, c.host, got, c.want)
+			}
+		})
 	}
 }
 
@@ -89,6 +90,7 @@ func proxyFixture(t *testing.T) string {
 }
 
 func goModulesRemote(t *testing.T, goMod string) *remote {
+	t.Helper()
 	return newRemote(t, func(work string) {
 		write(t, filepath.Join(work, "go.mod"), goMod)
 		write(t, filepath.Join(work, "r.go"), "package r\n\nimport \"example.com/dep\"\n\nfunc A() int { return dep.B() }\n")
@@ -98,6 +100,7 @@ func goModulesRemote(t *testing.T, goMod string) *remote {
 // withProxy serves modules from proxyFixture, and makes the module caches
 // the test leaves, which go makes read-only, removable.
 func withProxy(t *testing.T) {
+	t.Helper()
 	old, oldSum := goProxy, goSumDB
 	goProxy, goSumDB = "file://"+proxyFixture(t), "off"
 	root := must(Root())
@@ -113,17 +116,24 @@ func withProxy(t *testing.T) {
 }
 
 func TestFetchModules(t *testing.T) {
+	t.Run("from the proxy", testFetchModulesFromTheProxy)
+	t.Run("hostile go.mod", testFetchModulesHostileGoMod)
+	t.Run("private module fails closed", testFetchModulesPrivateFailsClosed)
+	t.Run("not a Go module", testFetchModulesNotAGoModule)
+}
+
+func testFetchModulesFromTheProxy(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("no go here")
 	}
 	r := goModulesRemote(t, "module example.com/r\n\ngo 1.20\n\nrequire example.com/dep v1.0.0\n")
 	setUp(t, r)
 	withProxy(t)
-	pr, err := Fetch(context.Background(), "o/r", 7)
+	pr, err := Fetch(t.Context(), "o/r", 7)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mods, err := fetchModules(context.Background(), pr)
+	mods, err := fetchModules(t.Context(), pr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,10 +148,10 @@ func TestFetchModules(t *testing.T) {
 	}
 }
 
-// TestHostileGoMod: what go.mod names beyond modules from the proxy, a
-// toolchain or a replacement by a path on this machine, never reaches the
-// download.
-func TestHostileGoMod(t *testing.T) {
+// testFetchModulesHostileGoMod: what go.mod names beyond modules from the
+// proxy, a toolchain or a replacement by a path on this machine, never
+// reaches the download.
+func testFetchModulesHostileGoMod(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("no go here")
 	}
@@ -151,8 +161,8 @@ func TestHostileGoMod(t *testing.T) {
 		"replace example.com/dep => "+secret+"\n\nreplace (\n\texample.com/other => ../../other\n)\n")
 	setUp(t, r)
 	withProxy(t)
-	pr := must(Fetch(context.Background(), "o/r", 7))
-	mods, err := fetchModules(context.Background(), pr)
+	pr := must(Fetch(t.Context(), "o/r", 7))
+	mods, err := fetchModules(t.Context(), pr)
 	if err != nil || mods.NotRun != "" {
 		t.Fatalf("%+v, %v", mods, err)
 	}
@@ -165,17 +175,17 @@ func TestHostileGoMod(t *testing.T) {
 	}
 }
 
-// TestPrivateModuleFailsClosed: a module the public proxy does not have
-// stops the run, and says why.
-func TestPrivateModuleFailsClosed(t *testing.T) {
+// testFetchModulesPrivateFailsClosed: a module the public proxy does not
+// have stops the run, and says why.
+func testFetchModulesPrivateFailsClosed(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("no go here")
 	}
 	r := goModulesRemote(t, "module example.com/r\n\ngo 1.20\n\nrequire example.com/private v1.0.0\n")
 	setUp(t, r)
 	withProxy(t)
-	pr := must(Fetch(context.Background(), "o/r", 7))
-	mods, err := fetchModules(context.Background(), pr)
+	pr := must(Fetch(t.Context(), "o/r", 7))
+	mods, err := fetchModules(t.Context(), pr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,19 +194,24 @@ func TestPrivateModuleFailsClosed(t *testing.T) {
 	}
 }
 
-func TestNotAGoModule(t *testing.T) {
+func testFetchModulesNotAGoModule(t *testing.T) {
 	r := newRemote(t, func(work string) { os.Remove(filepath.Join(work, "go.mod")) })
 	setUp(t, r)
-	pr := must(Fetch(context.Background(), "o/r", 7))
-	mods, err := fetchModules(context.Background(), pr)
+	pr := must(Fetch(t.Context(), "o/r", 7))
+	mods, err := fetchModules(t.Context(), pr)
 	if err != nil || !strings.Contains(mods.NotRun, "go.mod") {
 		t.Errorf("%+v, %v", mods, err)
 	}
 }
 
-// TestToolchainOutsideReviews: a toolchain in the review directory, which a
+func TestToolchain(t *testing.T) {
+	t.Run("outside reviews", testToolchainOutsideReviews)
+	t.Run("copy", testToolchainCopy)
+}
+
+// testToolchainOutsideReviews: a toolchain in the review directory, which a
 // review session may have written, is never what a run mounts.
-func TestToolchainOutsideReviews(t *testing.T) {
+func testToolchainOutsideReviews(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("no go here")
 	}
@@ -207,15 +222,15 @@ func TestToolchainOutsideReviews(t *testing.T) {
 	old, oldSum := goProxy, goSumDB
 	goProxy, goSumDB = "file://"+t.TempDir(), "off"
 	t.Cleanup(func() { goProxy, goSumDB = old, oldSum })
-	if dir, err := prepareToolchain(context.Background(), "go1.99.0"); err == nil || strings.HasPrefix(dir, root) {
+	if dir, err := prepareToolchain(t.Context(), "go1.99.0"); err == nil || strings.HasPrefix(dir, root) {
 		t.Errorf("the review directory's toolchain was used: %s, %v", dir, err)
 	}
 }
 
-// TestToolchainCopy: the toolchain module's files are read-only and lose
+// testToolchainCopy: the toolchain module's files are read-only and lose
 // their execute bits; the copy the guest runs has them back on its programs
 // alone.
-func TestToolchainCopy(t *testing.T) {
+func testToolchainCopy(t *testing.T) {
 	from := t.TempDir()
 	for _, p := range []string{"bin/go", "bin/gofmt", "pkg/tool/linux_arm64/compile", "src/fmt/print.go", "VERSION"} {
 		write(t, filepath.Join(from, p), "x")

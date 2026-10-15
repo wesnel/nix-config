@@ -29,28 +29,35 @@ func openQuestions(t *testing.T) (Config, Plan) {
 }
 
 func TestQuestions(t *testing.T) {
-	_, p := openQuestions(t)
-	qs, err := p.Questions(false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(qs) != 2 || qs[0].ID != "Q1" || qs[0].Question != "Which branch is the base?" || qs[0].Recommendation != "main" ||
-		strings.Join(qs[0].Alternatives, "|") != "release|a branch of its own" || qs[0].Context != "The release branch is frozen." ||
-		qs[1].ID != "Q2" || len(qs[1].Alternatives) != 0 {
-		t.Errorf("questions %+v", qs)
-	}
-	all, err := p.Questions(true)
-	if err != nil || len(all) != 3 || all[2].ID != "P1.Q1" || all[2].Part != "P1" {
-		t.Errorf("with the parts: %+v, %v", all, err)
-	}
-	org := QuestionsOrg(qs)
-	for _, s := range []string{"- Q1 :: Which branch is the base? Recommended: main. Or: release; a branch of its own.",
-		"- Q2 :: Rename the command? Recommended: no."} {
-		if !strings.Contains(org, s) {
-			t.Errorf("org lacks %q:\n%s", s, org)
+	t.Run("open", func(t *testing.T) {
+		_, p := openQuestions(t)
+		qs, err := p.Questions(false)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	if QuestionsOrg(nil) != "No open questions.\n" {
-		t.Errorf("none: %q", QuestionsOrg(nil))
-	}
+		if len(qs) != 2 || qs[0].ID != "Q1" || qs[0].Question != "Which branch is the base?" || qs[0].Recommendation != "main" ||
+			strings.Join(qs[0].Alternatives, "|") != "release|a branch of its own" || qs[0].Context != "The release branch is frozen." ||
+			qs[1].ID != "Q2" || len(qs[1].Alternatives) != 0 {
+			t.Errorf("questions %+v", qs)
+		}
+		all, err := p.Questions(true)
+		if err != nil || len(all) != 3 || all[2].ID != "P1.Q1" || all[2].Part != "P1" {
+			t.Errorf("with the parts: %+v, %v", all, err)
+		}
+		org := QuestionsOrg(qs)
+		for _, s := range []string{"- Q1 :: Which branch is the base? Recommended: main. Or: release; a branch of its own.",
+			"- Q2 :: Rename the command? Recommended: no."} {
+			if !strings.Contains(org, s) {
+				t.Errorf("org lacks %q:\n%s", s, org)
+			}
+		}
+	})
+
+	t.Run("none", func(t *testing.T) {
+		if QuestionsOrg(nil) != "No open questions.\n" {
+			t.Errorf("none: %q", QuestionsOrg(nil))
+		}
+	})
+
+	t.Run("after", testQuestionsAfter)
 }

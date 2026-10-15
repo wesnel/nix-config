@@ -52,9 +52,15 @@ func untouched(t *testing.T, c Config) {
 	}
 }
 
+func TestSync(t *testing.T) {
+	t.Run("two hosts", testSyncTwoHosts)
+	t.Run("without a repository", testSyncWithoutRepository)
+	t.Run("peers", testSyncPeers)
+}
+
 // Two hosts sync disjoint plans through one origin, each committing only
 // its own files, and leave every other edit alone.
-func TestSync(t *testing.T) {
+func testSyncTwoHosts(t *testing.T) {
 	origin, hosts := notes(t, "mac", "box")
 	mac, box := hosts["mac"], hosts["box"]
 	mine := newPlan(t, mac, "x")
@@ -108,7 +114,7 @@ func TestSync(t *testing.T) {
 }
 
 // A plans directory outside any repository has nothing to sync with.
-func TestSyncWithoutRepository(t *testing.T) {
+func testSyncWithoutRepository(t *testing.T) {
 	c := testConfig(t)
 	newPlan(t, c, "x")
 	got, err := c.Sync(SyncOptions{})
@@ -138,8 +144,12 @@ func fakeSSH(t *testing.T, master bool) (record string) {
 
 // After a push, a peer is told to pull, but only over a master connection
 // that already exists, and offered no key.
-func TestSyncPeers(t *testing.T) {
-	for _, master := range []bool{true, false} {
+func testSyncPeers(t *testing.T) {
+	// synced makes a host, mac, with one peer, devbox, reached through an
+	// ssh that records its calls, and syncs a new plan of mac's. It returns
+	// the calls ssh recorded, and how to reach the record.
+	synced := func(t *testing.T, master bool) (Config, Synced, []string, string) {
+		t.Helper()
 		_, hosts := notes(t, "mac")
 		mac := hosts["mac"]
 		mac.Peers = []Peer{{SSH: "devbox", Command: "/home/w/.nix-profile/bin/agent-plan"}}
@@ -154,12 +164,11 @@ func TestSyncPeers(t *testing.T) {
 		if calls[0] != "-o BatchMode=yes -O check devbox" {
 			t.Errorf("first ssh call %q", calls[0])
 		}
-		if !master {
-			if len(calls) != 1 || !strings.HasPrefix(got.Peers["devbox"], "skipped") {
-				t.Errorf("without a master: %q, %+v", calls, got.Peers)
-			}
-			continue
-		}
+		return mac, got, calls, record
+	}
+
+	t.Run("with a master", func(t *testing.T) {
+		mac, got, calls, record := synced(t, true)
 		want := "-o ControlMaster=no -o BatchMode=yes -o ConnectTimeout=10 -o IdentityAgent=none -o IdentityFile=none " +
 			"-o ForwardAgent=no -o ClearAllForwardings=yes devbox /home/w/.nix-profile/bin/agent-plan sync --pull"
 		if len(calls) != 2 || calls[1] != want || got.Peers["devbox"] != "pulled" {
@@ -173,7 +182,14 @@ func TestSyncPeers(t *testing.T) {
 		if _, err := os.Stat(record); err == nil {
 			t.Error("a pull ran ssh")
 		}
-	}
+	})
+
+	t.Run("without a master", func(t *testing.T) {
+		_, got, calls, _ := synced(t, false)
+		if len(calls) != 1 || !strings.HasPrefix(got.Peers["devbox"], "skipped") {
+			t.Errorf("without a master: %q, %+v", calls, got.Peers)
+		}
+	})
 }
 
 // Find, status and new pull first, quietly, so another host's plans are
@@ -192,15 +208,21 @@ func TestPull(t *testing.T) {
 	untouched(t, mac)
 }
 
-// Init clones the notes repository where it is missing, with the deploy
-// key, and sets it never to sign; without the key it says so and clones
-// nothing.
-func TestInitClone(t *testing.T) {
+// cloning is a host whose notes repository is missing, to be cloned from
+// origin with a deploy key that does not exist until the test writes it.
+func cloning(t *testing.T) (c Config, root, key string) {
+	t.Helper()
 	origin, _ := notes(t)
-	root, _ := filepath.EvalSymlinks(t.TempDir())
-	key := filepath.Join(root, "key")
-	c := Config{Dir: filepath.Join(root, "notes", "agents"), Host: "mac", Remote: origin, Key: key,
+	root, _ = filepath.EvalSymlinks(t.TempDir())
+	key = filepath.Join(root, "key")
+	c = Config{Dir: filepath.Join(root, "notes", "agents"), Host: "mac", Remote: origin, Key: key,
 		SSHConfig: "/etc/notes-ssh-config"}
+	return c, root, key
+}
+
+// Without the deploy key, Init says so and clones nothing.
+func testInitCloneWithoutKey(t *testing.T) {
+	c, root, key := cloning(t)
 	got, err := c.Init()
 	if err != nil || got.Cloned || !strings.Contains(got.Note, key) {
 		t.Errorf("without the key: %+v, %v", got, err)
@@ -208,10 +230,15 @@ func TestInitClone(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "notes", ".git")); err == nil {
 		t.Error("cloned without the key")
 	}
-	os.RemoveAll(filepath.Join(root, "notes"))
+}
+
+// Init clones the notes repository where it is missing, with the deploy
+// key, and sets it never to sign.
+func testInitCloneWithKey(t *testing.T) {
+	c, root, key := cloning(t)
 	os.WriteFile(key, []byte("private\n"), 0o600)
 	for i := 0; i < 2; i++ {
-		got, err = c.Init()
+		got, err := c.Init()
 		if err != nil || got.Cloned != (i == 0) || got.Repo != filepath.Join(root, "notes") {
 			t.Errorf("Init %d: %+v, %v", i, got, err)
 		}
@@ -229,31 +256,47 @@ func TestInitClone(t *testing.T) {
 
 // Reseal accepts a log edited outside agent-plan, and records that it did.
 func TestReseal(t *testing.T) {
-	c := testConfig(t)
-	p := newPlan(t, c, "x")
-	addItems(t, p.file(""), "** Steps", "S1")
-	_, err := p.Reseal(day)
-	isRefusal(t, "resealing an intact log", err)
-	data, _ := os.ReadFile(p.log())
-	os.WriteFile(p.log(), append(data, "a note by hand\n"...), 0o644)
-	_, err = p.Log(Event{Kind: "started", Item: "S1"}, day)
-	isRefusal(t, "logging to an edited log", err)
-	e, err := p.Reseal(day.Add(time.Minute))
-	if err != nil {
-		t.Fatal(err)
+	withStep := func(t *testing.T) (Config, Plan) {
+		t.Helper()
+		c := testConfig(t)
+		p := newPlan(t, c, "x")
+		addItems(t, p.file(""), "** Steps", "S1")
+		return c, p
 	}
-	if e.Kind != "resealed" || e.Item != p.Name || !strings.Contains(e.Evidence, "recorded ") {
-		t.Errorf("event %+v", e)
-	}
-	if _, err := p.Log(Event{Kind: "started", Item: "S1"}, day); err != nil {
-		t.Errorf("after resealing: %v", err)
-	}
-	after, _ := os.ReadFile(p.log())
-	if !strings.Contains(string(after), "a note by hand\n* resealed "+p.Name+" — ") {
-		t.Errorf("log:\n%s", after)
-	}
-	theirs := newPlan(t, Config{Dir: c.Dir, Host: "other"}, "y")
-	other, _ := c.Open(theirs.file(""))
-	_, err = other.Reseal(day)
-	isRefusal(t, "resealing another host's log", err)
+
+	t.Run("intact log", func(t *testing.T) {
+		_, p := withStep(t)
+		_, err := p.Reseal(day)
+		isRefusal(t, "resealing an intact log", err)
+	})
+
+	t.Run("edited log", func(t *testing.T) {
+		_, p := withStep(t)
+		data, _ := os.ReadFile(p.log())
+		os.WriteFile(p.log(), append(data, "a note by hand\n"...), 0o644)
+		_, err := p.Log(Event{Kind: "started", Item: "S1"}, day)
+		isRefusal(t, "logging to an edited log", err)
+		e, err := p.Reseal(day.Add(time.Minute))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if e.Kind != "resealed" || e.Item != p.Name || !strings.Contains(e.Evidence, "recorded ") {
+			t.Errorf("event %+v", e)
+		}
+		if _, err := p.Log(Event{Kind: "started", Item: "S1"}, day); err != nil {
+			t.Errorf("after resealing: %v", err)
+		}
+		after, _ := os.ReadFile(p.log())
+		if !strings.Contains(string(after), "a note by hand\n* resealed "+p.Name+" — ") {
+			t.Errorf("log:\n%s", after)
+		}
+	})
+
+	t.Run("another host's log", func(t *testing.T) {
+		c, _ := withStep(t)
+		theirs := newPlan(t, Config{Dir: c.Dir, Host: "other"}, "y")
+		other, _ := c.Open(theirs.file(""))
+		_, err := other.Reseal(day)
+		isRefusal(t, "resealing another host's log", err)
+	})
 }

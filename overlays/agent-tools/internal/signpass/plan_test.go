@@ -11,11 +11,19 @@ import (
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
 )
 
-// TestPlan signs three stacks in one pass: a parent P with two children, each
-// of the three in its own worktree, where P gained a fixup after C2 forked
-// from it, and an independent branch X checked out nowhere. Local main is
-// behind origin/main, whose unsigned commit is not the pass's to sign.
 func TestPlan(t *testing.T) {
+	t.Run("three stacks", testPlanThreeStacks)
+	t.Run("fold kinds", testPlanFoldKinds)
+	t.Run("fork conflict", testPlanForkConflict)
+	t.Run("nothing to sign", testPlanNothingToSign)
+}
+
+// testPlanThreeStacks signs three stacks in one pass: a parent P with two
+// children, each of the three in its own worktree, where P gained a fixup
+// after C2 forked from it, and an independent branch X checked out nowhere.
+// Local main is behind origin/main, whose unsigned commit is not the pass's
+// to sign.
+func testPlanThreeStacks(t *testing.T) {
 	dir, _ := filepath.EvalSymlinks(t.TempDir())
 	global := signingConfig(t, dir)
 	hub := filepath.Join(dir, "hub.git")
@@ -63,8 +71,7 @@ func TestPlan(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
 	t.Setenv("GIT_EDITOR", ":")
 	gitenvtest.Decoy(t)
-	git.Dir = repo
-	defer func() { git.Dir = "" }()
+	useDir(t, repo)
 
 	// Everything that can refuse does so before anything moves: here an
 	// untracked file in the worktree of P, which only moves with C1.
@@ -162,11 +169,11 @@ func TestPlan(t *testing.T) {
 	})
 }
 
-// TestPlanFoldKinds signs a fork whose parent gained an amend! after one child
-// forked from it, and whose other child folds in a squash! of its own during
-// its replay. Editors that fail stand in for ones that would wait for input:
-// neither rebase may open one.
-func TestPlanFoldKinds(t *testing.T) {
+// testPlanFoldKinds signs a fork whose parent gained an amend! after one
+// child forked from it, and whose other child folds in a squash! of its own
+// during its replay. Editors that fail stand in for ones that would wait for
+// input: neither rebase may open one.
+func testPlanFoldKinds(t *testing.T) {
 	dir := t.TempDir()
 	global := signingConfig(t, dir)
 	repo := filepath.Join(dir, "repo")
@@ -202,8 +209,7 @@ func TestPlanFoldKinds(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
 	t.Setenv("GIT_EDITOR", "false")
 	t.Setenv("GIT_SEQUENCE_EDITOR", "false")
-	git.Dir = repo
-	defer func() { git.Dir = "" }()
+	useDir(t, repo)
 	result, err := Plan("", []string{"C1", "C2"}, false, false)
 	if err != nil {
 		t.Fatal(err)
@@ -232,9 +238,11 @@ func TestPlanFoldKinds(t *testing.T) {
 	}
 }
 
-// TestPlanForkConflict refuses, before any touch, a fork child whose replay
-// onto its parent's signed copy would conflict with a fixup the parent gained.
-func TestPlanForkConflict(t *testing.T) {
+// forkConflict makes a repository where P gained a fixup that conflicts with
+// C2, which forked from P before it, and points the package's git at it with
+// a signing config.
+func forkConflict(t *testing.T) string {
+	t.Helper()
 	dir := t.TempDir()
 	global := signingConfig(t, dir)
 	repo := filepath.Join(dir, "repo")
@@ -256,8 +264,15 @@ func TestPlanForkConflict(t *testing.T) {
 	gitIn(t, repo, "switch", "-q", "main")
 
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
-	git.Dir = repo
-	defer func() { git.Dir = "" }()
+	useDir(t, repo)
+	return repo
+}
+
+// testPlanForkConflict refuses, before any touch, a fork child whose replay
+// onto its parent's signed copy would conflict with a fixup the parent
+// gained.
+func testPlanForkConflict(t *testing.T) {
+	repo := forkConflict(t)
 	refs := gitIn(t, repo, "for-each-ref")
 	if _, err := Plan("", []string{"C1", "C2"}, false, false); err == nil || !strings.Contains(err.Error(), "replaying C2") {
 		t.Errorf("a conflicting replay: %v", err)
@@ -268,8 +283,11 @@ func TestPlanForkConflict(t *testing.T) {
 	if list := gitIn(t, repo, "worktree", "list"); strings.Count(list, "\n") != 0 {
 		t.Errorf("worktrees left:\n%s", list)
 	}
+}
 
-	// A stack with nothing to sign is reported, not refused.
+// A stack with nothing to sign is reported, not refused.
+func testPlanNothingToSign(t *testing.T) {
+	forkConflict(t)
 	result, err := Plan("main", []string{"main"}, false, false)
 	if err != nil {
 		t.Fatal(err)

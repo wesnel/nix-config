@@ -10,8 +10,6 @@ import (
 // record its part, and a compaction to carry what the plan lacks, in each
 // harness's form, and only in a session with a plan.
 func TestRemind(t *testing.T) {
-	c := testConfig(t)
-	p := newPlan(t, c, "x")
 	// As Claude Code 2.1.300 sent it when a background sub-agent finished.
 	notification := "<task-notification>\n<task-id>ac1a150c85cc1d92f</task-id>\n<tool-use-id>toolu_01</tool-use-id>\n" +
 		"<status>completed</status>\n<summary>Agent \"Run echo hi and report output\" finished</summary>\n" +
@@ -21,7 +19,8 @@ func TestRemind(t *testing.T) {
 		data, _ := json.Marshal(fields)
 		return string(data)
 	}
-	verify := []string{"Run echo hi and report output", "Check every report", p.File(), "--tokens 20253"}
+	// PLAN in a wanted string stands for the session's plan file.
+	verify := []string{"Run echo hi and report output", "Check every report", "PLAN", "--tokens 20253"}
 	for _, c2 := range []struct {
 		name, event, format string
 		want                []string
@@ -31,18 +30,18 @@ func TestRemind(t *testing.T) {
 		{"a foreground sub-agent in Claude Code", event(map[string]any{"session_id": "abc", "hook_event_name": "PostToolUse",
 			"tool_name": "Agent", "tool_input": map[string]string{"description": "Add the flag"},
 			"tool_response": map[string]any{"status": "completed", "content": []any{}}}), "PostToolUse",
-			[]string{"Add the flag", "Check every report", p.File()}},
+			[]string{"Add the flag", "Check every report", "PLAN"}},
 		{"a sub-agent waited for in Codex", event(map[string]any{"session_id": "abc", "hook_event_name": "PostToolUse",
-			"tool_name": "wait_agent", "turn_id": "t", "tool_response": "done"}), "PostToolUse", []string{"Check every report", p.File()}},
+			"tool_name": "wait_agent", "turn_id": "t", "tool_response": "done"}), "PostToolUse", []string{"Check every report", "PLAN"}},
 		{"a sub-agent in ECA", event(map[string]any{"hook_type": "postToolCall", "chat_id": "abc", "server": "eca",
 			"tool_name": "spawn_agent", "tool_input": map[string]string{"task": "Add the flag"}, "tool_response": "done"}), "eca",
-			[]string{"Check every report", p.File()}},
+			[]string{"Check every report", "PLAN"}},
 		{"a compaction in Claude Code", event(map[string]any{"session_id": "abc", "hook_event_name": "PreCompact",
-			"trigger": "auto", "custom_instructions": nil}), "text", []string{p.File(), "not yet record"}},
+			"trigger": "auto", "custom_instructions": nil}), "text", []string{"PLAN", "not yet record"}},
 		{"after a compaction in Codex", event(map[string]any{"session_id": "abc", "hook_event_name": "SessionStart",
-			"source": "compact"}), "SessionStart", []string{p.File(), "up to date"}},
+			"source": "compact"}), "SessionStart", []string{"PLAN", "up to date"}},
 		{"after a compaction in ECA", event(map[string]any{"hook_type": "postCompact", "chat_id": "abc",
-			"triggered": "auto", "compact_summary": "..."}), "eca", []string{p.File(), "up to date"}},
+			"triggered": "auto", "compact_summary": "..."}), "eca", []string{"PLAN", "up to date"}},
 
 		{"a session with no plan", event(map[string]any{"session_id": "zzz", "hook_event_name": "UserPromptSubmit",
 			"prompt": notification}), "", nil},
@@ -56,41 +55,46 @@ func TestRemind(t *testing.T) {
 		{"another tool", event(map[string]any{"session_id": "abc", "hook_event_name": "PostToolUse", "tool_name": "Bash"}), "", nil},
 		{"not JSON", "{", "", nil},
 	} {
-		out := string(c.Remind([]byte(c2.event)))
-		if c2.want == nil {
-			if out != "" {
-				t.Errorf("%s: printed %q", c2.name, out)
+		t.Run(c2.name, func(t *testing.T) {
+			c := testConfig(t)
+			p := newPlan(t, c, "x")
+			out := string(c.Remind([]byte(c2.event)))
+			if c2.want == nil {
+				if out != "" {
+					t.Errorf("%s: printed %q", c2.name, out)
+				}
+				return
 			}
-			continue
-		}
-		var got struct {
-			Specific struct {
-				Event   string `json:"hookEventName"`
+			var got struct {
+				Specific struct {
+					Event   string `json:"hookEventName"`
+					Context string `json:"additionalContext"`
+				} `json:"hookSpecificOutput"`
 				Context string `json:"additionalContext"`
-			} `json:"hookSpecificOutput"`
-			Context string `json:"additionalContext"`
-		}
-		text := out
-		switch c2.format {
-		case "text":
-			if json.Valid([]byte(out)) {
-				t.Errorf("%s: want plain text, got %s", c2.name, out)
 			}
-		case "eca":
-			if json.Unmarshal([]byte(out), &got) != nil || got.Context == "" {
-				t.Errorf("%s: want ECA's additionalContext, got %s", c2.name, out)
+			text := out
+			switch c2.format {
+			case "text":
+				if json.Valid([]byte(out)) {
+					t.Errorf("%s: want plain text, got %s", c2.name, out)
+				}
+			case "eca":
+				if json.Unmarshal([]byte(out), &got) != nil || got.Context == "" {
+					t.Errorf("%s: want ECA's additionalContext, got %s", c2.name, out)
+				}
+				text = got.Context
+			default:
+				if json.Unmarshal([]byte(out), &got) != nil || got.Specific.Event != c2.format {
+					t.Errorf("%s: want hookSpecificOutput for %s, got %s", c2.name, c2.format, out)
+				}
+				text = got.Specific.Context
 			}
-			text = got.Context
-		default:
-			if json.Unmarshal([]byte(out), &got) != nil || got.Specific.Event != c2.format {
-				t.Errorf("%s: want hookSpecificOutput for %s, got %s", c2.name, c2.format, out)
+			for _, w := range c2.want {
+				w = strings.Replace(w, "PLAN", p.File(), 1)
+				if !strings.Contains(text, w) {
+					t.Errorf("%s: %q lacks %q", c2.name, text, w)
+				}
 			}
-			text = got.Specific.Context
-		}
-		for _, w := range c2.want {
-			if !strings.Contains(text, w) {
-				t.Errorf("%s: %q lacks %q", c2.name, text, w)
-			}
-		}
+		})
 	}
 }
