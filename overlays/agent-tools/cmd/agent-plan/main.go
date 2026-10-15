@@ -145,7 +145,8 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      prompts, once per host when a quota window of the
                      session's provider passes 75% and again at 90%, asks
                      for Wesley's choice of tiers (see usage choose), having
-                     read Codex's quota from its rollout; and on those
+                     read Codex's quota from its rollout, and logs the ask as
+                     usage-asked in the session's plan; and on those
                      prompts, task-notifications included, adds a line for
                      each result of the session's sign-passes not yet
                      delivered, logging it as sign-delivered, marked stale
@@ -262,10 +263,14 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		// A failure asks for nothing, quietly.
 		input := readAll(stdin)
 		var out []byte
-		if c, err := plans.Load(); err == nil {
+		c, err := plans.Load()
+		if err == nil {
 			out = c.Remind(input)
 		}
 		if ask := quota.Remind(quota.DefaultState(), input, time.Now()); ask != "" {
+			if err == nil {
+				c.RecordUsageAsk(input, ask, time.Now())
+			}
 			out = plans.WithContext(out, input, ask)
 		}
 		if len(out) > 0 {

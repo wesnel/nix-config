@@ -87,6 +87,8 @@ var (
 				"Log `done` with `--commit SUBJECT` for the step a commit completes",
 			propertyKind: "agent-plan logs each change of a plan's WORKTREES, BRANCHES, PULL_REQUESTS and OWNERS that it makes. " +
 				"Change one with `agent-plan set PLAN NAME VALUE...`, or OWNERS with `agent-plan own`",
+			usageAsked: "the prompt hook logs `usage-asked` for each quota ask it shows a session. " +
+				"Record Wesley's answer with `agent-plan usage choose`",
 			branchChanged: "the guard logs `branch-changed` when a session's file edit lands on another branch or worktree than its last. " +
 				"Confirm the branch with `git branch --show-current` before the edit",
 			stopBlocked: "the stop-check logs `stop-blocked` for each stop of an ECA chat it blocks. " +

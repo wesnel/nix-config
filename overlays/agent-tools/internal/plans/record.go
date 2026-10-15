@@ -1,6 +1,7 @@
 package plans
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -91,6 +92,37 @@ func (p Plan) NoteBranch(session, branch, tip, worktree string, now time.Time) (
 		return err
 	})
 	return last, had, logged, err
+}
+
+// usageAsked is the kind of the event RecordUsageAsk logs.
+const usageAsked = "usage-asked"
+
+// RecordUsageAsk logs ask, the quota ask a prompt hook's input showed its
+// session, as usage-asked in the plan Locate finds for the session and
+// its worktree, its first sentence as the summary; with no plan, nothing.
+// Which session is asked, once per window and threshold on the host, is
+// the usage package's.
+func (c Config) RecordUsageAsk(input []byte, ask string, now time.Time) error {
+	var in struct {
+		SessionID string `json:"session_id"`
+		ChatID    string `json:"chat_id"`
+		Cwd       string `json:"cwd"`
+	}
+	if err := json.Unmarshal(input, &in); err != nil {
+		return err
+	}
+	session := in.SessionID
+	if in.ChatID != "" {
+		session = in.ChatID
+	}
+	top, _ := checkout(in.Cwd)
+	p, part, ok := c.Locate(session, top)
+	if !ok {
+		return nil
+	}
+	summary, _, _ := strings.Cut(ask, ". ")
+	_, err := p.Record(part, Event{Kind: usageAsked, Session: session, Summary: strings.TrimSuffix(summary, ".")}, now)
+	return err
 }
 
 // EnvSession is the session of the harness running this process, as its

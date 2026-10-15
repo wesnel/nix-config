@@ -603,7 +603,7 @@ func TestHooks(t *testing.T) {
 	// The quota ask joins whatever else the prompt is reminded of, in the
 	// harness's form.
 	t.Run("the quota ask", func(t *testing.T) {
-		imported(t)
+		plan := imported(t)
 		reset := time.Now().Add(time.Hour).Unix()
 		agentPlan(t, fmt.Sprintf(`{"session_id":"s-9","rate_limits":{"five_hour":{"used_percentage":80,"resets_at":%d}}}`,
 			reset), "statusline")
@@ -634,6 +634,20 @@ func TestHooks(t *testing.T) {
 		code, out, errs = agentPlan(t, `{"hook_type":"preRequest","chat_id":"c","full_model":"anthropic/claude-opus-5-5","prompt":"go on"}`, "remind")
 		if code != 0 || json.Unmarshal([]byte(out), &got) != nil || !strings.HasPrefix(got.Context, "Claude's 5-hour window is at 92%") {
 			t.Errorf("ECA's ask: %d %q %q", code, out, errs)
+		}
+
+		// The session shown the ask has it in its plan's log, once.
+		c, _ := plans.Load()
+		p, _ := c.Open(plan)
+		events, _ := p.Events()
+		var asked []string
+		for _, e := range events {
+			if e.Kind == "usage-asked" {
+				asked = append(asked, e.Session+": "+e.Summary)
+			}
+		}
+		if len(asked) != 1 || !strings.HasPrefix(asked[0], "s-9: Claude's 5-hour window is at 80%, resetting ") {
+			t.Errorf("asks logged: %q", asked)
 		}
 	})
 
