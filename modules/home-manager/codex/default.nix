@@ -178,6 +178,19 @@ in {
           # path that changes with every rebuild. Codex adds these to any
           # other layer's hooks, codex-pr-loop's included.
           ".codex/hooks.json".text = builtins.toJSON {
+            # After a push to GitHub, names the `pr-loop wait ci` to start.
+            # Codex names every shell call Bash.
+            hooks.PostToolUse = [
+              {
+                matcher = "Bash";
+                hooks = [
+                  {
+                    type = "command";
+                    command = "pr-loop guard --post";
+                  }
+                ];
+              }
+            ];
             hooks.PreToolUse = [
               {
                 matcher = ".*";
@@ -185,6 +198,18 @@ in {
                   {
                     type = "command";
                     command = "pr-loop guard --baseline";
+                  }
+                ];
+              }
+            ];
+            # Blocks a stop once when the work is not as the plan-work and
+            # review-change skills leave it; never while stop_hook_active.
+            hooks.Stop = [
+              {
+                hooks = [
+                  {
+                    type = "command";
+                    command = "agent-plan stop-check";
                   }
                 ];
               }

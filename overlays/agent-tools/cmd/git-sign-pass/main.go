@@ -22,6 +22,10 @@ first. Every commit keeps its files and author, and its message unless an
 amend! or squash! rewrites it; branches stacked inside the range move with it,
 and so does any other worktree one is checked out in, which must be clean
 (ignored files aside). The unsigned tip is kept under ` + signpass.BackupRef + `BRANCH.
+Before any touch it refuses a message it would sign, folds squashed in, with
+a subject over 72 characters or ending in a period, or a line crediting a
+tool or linking its session (Co-Authored-By, "Generated with", a session
+URL); an amend! commit rewords one.
 
 Given BRANCHes, it signs each one's stack instead, from wherever the branch is
 checked out (or a throwaway worktree), so a handover of several stacks is one

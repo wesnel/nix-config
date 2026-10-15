@@ -9,6 +9,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/history"
 	"github.com/wesnel/agent-tools/internal/pushguard"
 )
 
@@ -126,7 +127,35 @@ func checkLocal(repo *Repo, branch, base, baseOid string) (string, []string, err
 		return "", nil, refuse("%s has no commits that GitHub lacks, so there is nothing to open; "+
 			"commit the change first, or say in the report that nothing changed", branch)
 	}
+	if err := lintNew(branch, local, known); err != nil {
+		return "", nil, err
+	}
 	return local, known, nil
+}
+
+// lintNew refuses unless the commits local has and known lacks pass
+// history.LintMessage: each fold as it is, and the rest as the signing
+// pass will leave them.
+func lintNew(branch, local string, known []string) error {
+	commits, err := history.Log(append([]string{local, "--not"}, known...)...)
+	if err != nil {
+		return err
+	}
+	check := history.Squashed(commits)
+	for _, c := range commits {
+		if kind, _ := history.Fold(c.Message); kind != history.Kept {
+			check = append(check, c)
+		}
+	}
+	for _, c := range check {
+		if problems := history.LintMessage(c.Message); len(problems) > 0 {
+			return refuse("%s's commit %q has a message where %s. Fix it before opening: reword a commit with an amend! commit "+
+				"(`git -c commit.gpgsign=false commit --allow-empty -m 'amend! SUBJECT' -m 'NEW MESSAGE'`), "+
+				"or commit a fixup again without what is wrong, then run `pr-loop open` again",
+				branch, history.Subject(c.Message), strings.Join(problems, ", and "))
+		}
+	}
+	return nil
 }
 
 // remotesOf names the remotes that fetch from repo, origin first.

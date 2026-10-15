@@ -270,6 +270,34 @@ in {
             }
           ];
         })}
+        # After a push to GitHub, names the `pr-loop wait ci` to start. ECA
+        # runs a postToolCall hook only after a call that succeeded.
+        post=${escapeShellArg (builtins.toJSON {
+          type = "postToolCall";
+          matcher = ".*";
+          visible = false;
+          description = "pr-loop guard --post: watch CI after a push";
+          actions = [
+            {
+              type = "shell";
+              shell = "pr-loop guard --post";
+            }
+          ];
+        })}
+        # Follows a stop up once per chat, with exit 2, when the work is not
+        # as the plan-work and review-change skills leave it. ECA sends no
+        # stop_hook_active, so agent-plan keeps a file per chat.
+        stop=${escapeShellArg (builtins.toJSON {
+          type = "postRequest";
+          visible = false;
+          description = "agent-plan stop-check: the plan before a stop";
+          actions = [
+            {
+              type = "shell";
+              shell = "agent-plan stop-check";
+            }
+          ];
+        })}
 
         if [ ! -e "$conf" ]; then
           current='{}'
@@ -277,7 +305,7 @@ in {
           current=$(cat "$conf")
         fi
 
-        if merged=$(printf '%s' "$current" | ${pkgs.jq}/bin/jq --argjson hook "$hook" '.hooks."guard-baseline" = $hook'); then
+        if merged=$(printf '%s' "$current" | ${pkgs.jq}/bin/jq --argjson hook "$hook" --argjson post "$post" --argjson stop "$stop" '.hooks."guard-baseline" = $hook | .hooks."guard-post" = $post | .hooks."plan-stop" = $stop'); then
           if [ "$merged" != "$current" ] && [ -z "''${DRY_RUN:-}" ]; then
             mkdir -p "$(dirname "$conf")"
             printf '%s\n' "$merged" > "$conf"

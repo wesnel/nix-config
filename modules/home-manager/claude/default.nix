@@ -287,6 +287,16 @@ in {
               }
             ];
           }
+          # After a push to GitHub, names the `pr-loop wait ci` to start.
+          {
+            matcher = "Bash";
+            hooks = [
+              {
+                type = "command";
+                command = "${getExe' pkgs.agent-tools "pr-loop"} guard --post";
+              }
+            ];
+          }
         ];
 
         # Names the session's plans when it resumes or compacts, matched by
@@ -312,6 +322,19 @@ in {
               {
                 type = "command";
                 command = ''printf '\033]777;notify;Claude Code;%s\a' "$(${getExe pkgs.jq} -r '.message // "Waiting for input"')"'';
+              }
+            ];
+          }
+        ];
+
+        # Blocks a stop once when the work is not as the plan-work and
+        # review-change skills leave it; never while stop_hook_active.
+        hooks.Stop = [
+          {
+            hooks = [
+              {
+                type = "command";
+                command = "${agentPlan} stop-check";
               }
             ];
           }

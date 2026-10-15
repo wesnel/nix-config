@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -48,6 +49,16 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      with Wesley's answer, and log it as decided
   statusline         Claude Code's status line (reads stdin): the session's
                      open questions, or nothing; never touches the network
+  own PLAN --worktree DIR --agent ID
+                     record agent ID, the harness's ID for a sub-agent or
+                     "main" for the session's main thread, as the one agent
+                     that edits files in the worktree DIR (OWNERS in the plan)
+  stop-check         Claude Code's and Codex's Stop hook, and ECA's postRequest
+                     hook (reads stdin): blocks a stop once when commits have
+                     no plan, steps are done but not verified, or a full
+                     pipeline has no review since the last commit; ECA gets
+                     the reason on stderr with exit 2, once per chat, kept in
+                     $XDG_STATE_HOME/agent-tools/stop; never touches the network
   tokens [--format org|json]
                      every plan's tokens by event kind, model and effort
   import-claude      Claude Code's PostToolUse hook on ExitPlanMode (reads stdin):
@@ -85,7 +96,7 @@ func clientSide(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	if args[0] == "import-claude" || args[0] == "statusline" {
+	if args[0] == "import-claude" || args[0] == "statusline" || args[0] == "stop-check" {
 		return true
 	}
 	if args[0] == "find" {
@@ -130,6 +141,24 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if c, err := plans.Load(); err == nil {
 			if line := c.StatusLine(readAll(stdin)); line != "" {
 				fmt.Fprintln(stdout, line)
+			}
+		}
+		return 0
+	}
+	if args[0] == "stop-check" {
+		// A failure lets the stop through, quietly.
+		if c, err := plans.Load(); err == nil {
+			input := readAll(stdin)
+			var event struct {
+				HookType string `json:"hook_type"`
+			}
+			if json.Unmarshal(input, &event) == nil && event.HookType == "postRequest" {
+				if reason := c.StopCheckChat(input, plans.StopStateDir(), time.Now()); reason != "" {
+					fmt.Fprintln(stderr, reason)
+					return 2
+				}
+			} else if out := c.StopCheck(input, time.Now()); len(out) > 0 {
+				stdout.Write(append(out, '\n'))
 			}
 		}
 		return 0
@@ -366,6 +395,12 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return 2
 		}
 		return report(c.Sync(plans.SyncOptions{PullOnly: *pull, Settle: *settle}))
+	case "own":
+		p, ok := wantPlan()
+		if !ok {
+			return 2
+		}
+		return report(p.SetOwner(worktree, *agent))
 	case "reseal":
 		p, ok := wantPlan()
 		if !ok {

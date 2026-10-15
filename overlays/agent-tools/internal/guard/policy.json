@@ -31,10 +31,17 @@
   },
   {
     "why": "Repository hooks stay on.",
-    "scope": "coordinator",
+    "scope": "baseline",
     "pattern": ".*--no-verify.*",
     "deny": ["git commit --no-verify --fixup=abc"],
     "allow": ["git commit --fixup=abc", "grep -rn -e '--no-verif[y]' ."]
+  },
+  {
+    "why": "Tags are Wesley's to make; listing and verifying them is fine.",
+    "scope": "baseline",
+    "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?tag\\b(?!\\s*($|[;&|)\\n]))(?!\\s+(-l|--list|-v|--verify|-n\\d*|--contains|--no-contains|--merged|--no-merged|--points-at|--sort|--format|--column)\\b).*",
+    "deny": ["git tag v1", "git tag -a v1 -m x", "git tag -d v1", "git -C r tag -s v1", "git tag -l && git tag v2"],
+    "allow": ["git tag", "git tag -l", "git tag --list 'v*'", "git tag -v v1", "git tag --sort=-v:refname", "grep -nE 'git\\s+tag' x"]
   },
   {
     "why": "A loop's GitHub writes go through pr-loop; reading is fine.",
@@ -61,9 +68,10 @@
   {
     "why": "Every PR opens as a draft.",
     "scope": "baseline",
-    "pattern": ".*\\bgh\\s+pr\\s+create\\b(?!.*(--draft|\\s-d\\b)).*",
-    "deny": ["gh pr create --title t --body b", "gh pr create --fill"],
-    "allow": ["gh pr create --draft --title t --body-file b", "gh pr create -d --title t --body b"]
+    "pattern": ".*\\bgh\\s+pr\\s+create\\b(?!.*(--draft|\\s-d)(=(true|1|t|T|TRUE|True))?(\\s|$)).*",
+    "deny": ["gh pr create --title t --body b", "gh pr create --fill", "gh pr create --draft=false --title t --body b",
+      "gh pr create -d=false --title t"],
+    "allow": ["gh pr create --draft --title t --body-file b", "gh pr create -d --title t --body b", "gh pr create --draft=true --title t --body b"]
   },
   {
     "why": "Only a PR's base, title and body may change; labels, reviewers and the rest are Wesley's.",
@@ -195,6 +203,14 @@
     "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?stash\\s+(drop|clear)\\b.*",
     "deny": ["git stash drop", "git stash drop stash@{1}", "git -C ../x stash clear"],
     "allow": ["git stash list", "git stash show -p stash@{0}"]
+  },
+  {
+    "why": "Every worktree shares one stash, so an untagged entry, or a pop or apply of the top one, can take another session's work.",
+    "scope": "baseline",
+    "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?stash(\\s*($|[;&|)\\n])|\\s+(?=push\\b|-)(?!.*(?<!\\S)(-[a-z]*m|--message)\\b)|\\s+(pop|apply)(\\s+-\\S+)*\\s*($|[;&|)\\n])).*",
+    "deny": ["git stash", "git stash push -u", "git stash -k", "git stash pop", "git stash apply", "git -C ../x stash pop --index",
+      "git stash && git status"],
+    "allow": ["git stash push -m agent-x-1", "git stash -m agent-x-1", "git stash apply 3f2a9c1", "git stash pop stash@{2}", "git stash list"]
   },
   {
     "why": "The hooks that run the guard stay on.",
