@@ -678,15 +678,53 @@ func checkPlanLogWrite(name string, args []string, dir string) string {
 	return ""
 }
 
-// inPlace reports whether sed's or perl's arguments edit their files in
-// place.
+// inPlace reports whether sed's, perl's or awk's arguments edit their files
+// in place: -i anywhere in a group of sed's or perl's short flags (-i,
+// -Ei, -ni, -i.bak, -pi), --in-place, or gawk's inplace extension (-i
+// inplace, --include=inplace).
 func inPlace(name string, args []string) bool {
-	for _, a := range args {
-		switch {
-		case a == "--in-place" || strings.HasPrefix(a, "--in-place="),
-			name == "sed" && strings.HasPrefix(a, "-i"),
-			name == "perl" && strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.Contains(a, "i"):
+	for i, a := range args {
+		switch name {
+		case "sed", "perl":
+			if a == "--in-place" || strings.HasPrefix(a, "--in-place=") || inFlagGroup(a, 'i', valued[name]) {
+				return true
+			}
+		case "awk", "gawk":
+			var ext string
+			switch {
+			case a == "-i" || a == "--include":
+				if i+1 < len(args) {
+					ext = args[i+1]
+				}
+			case strings.HasPrefix(a, "--include="):
+				ext = strings.TrimPrefix(a, "--include=")
+			case strings.HasPrefix(a, "-i"):
+				ext = strings.TrimPrefix(a, "-i")
+			}
+			if strings.TrimSuffix(ext, ".awk") == "inplace" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// valued are the short flags of sed and perl that take the rest of their
+// group as a value, so a letter after one is not a flag.
+var valued = map[string]string{"sed": "efl", "perl": "eEIMmx"}
+
+// inFlagGroup reports whether a, a group of short flags, holds flag before
+// any flag in valued.
+func inFlagGroup(a string, flag rune, valued string) bool {
+	if !strings.HasPrefix(a, "-") || strings.HasPrefix(a, "--") {
+		return false
+	}
+	for _, c := range a[1:] {
+		if c == flag {
 			return true
+		}
+		if strings.ContainsRune(valued, c) {
+			return false
 		}
 	}
 	return false
@@ -697,21 +735,38 @@ const shellEdit = "`%s` is a tracked file, and editing it from the shell bypasse
 	"For a mechanical sweep over Go code, use `gopls rename`, `gofmt -r 'PATTERN -> REPLACEMENT' -w` or `go fix`, " +
 	"with the exact command in the commit body."
 
-// checkShellEdit denies a command that writes a tracked file with a
-// redirection, tee, ed, sed or perl in place, or an interpreter's
-// one-liner, run in dir.
+const shellEditInPlace = "`%s` exists, and rewriting an existing file from the shell, in place or with `>`, `>>` or tee, " +
+	"bypasses the file-editing tools AGENTS.md requires, scratch and untracked files included. " +
+	"Use the file-editing tools (`Edit`, `Write`, `apply_patch`, ECA's `edit_file`), " +
+	"or write the command's output to a new file. For a mechanical sweep over Go code, use `gopls rename`, " +
+	"`gofmt -r 'PATTERN -> REPLACEMENT' -w` or `go fix`, with the exact command in the commit body."
+
+// checkShellEdit denies a command, run in dir, that writes an existing file
+// (editTargets) wherever it is. Output written to a new file is capturing,
+// not editing.
 func checkShellEdit(name string, args, redirected []string, dir string) string {
 	for _, t := range editTargets(name, args, redirected) {
-		if trackedFile(expandPath(t, dir)) {
+		if path := expandPath(t, dir); trackedFile(path) {
 			return fmt.Sprintf(shellEdit, t)
+		} else if existingFile(path) {
+			return fmt.Sprintf(shellEditInPlace, t)
 		}
 	}
 	return ""
 }
 
+// existingFile reports whether path is absolute and names a regular file.
+func existingFile(path string) bool {
+	if !filepath.IsAbs(path) {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
+}
+
 // editTargets are the files a command edits, as it names them: its output
-// redirections, the files of tee, ed, and sed or perl in place, and those
-// an interpreter's one-liner writes.
+// redirections, the files of tee, ed, and sed, perl or awk in place, and
+// those an interpreter's one-liner writes.
 func editTargets(name string, args, redirected []string) []string {
 	var targets []string
 	for _, t := range redirected {
@@ -719,7 +774,7 @@ func editTargets(name string, args, redirected []string) []string {
 			targets = append(targets, t)
 		}
 	}
-	if name == "tee" || name == "ed" || (name == "sed" || name == "perl") && inPlace(name, args) {
+	if name == "tee" || name == "ed" || inPlace(name, args) {
 		for _, a := range args {
 			if !strings.HasPrefix(a, "-") {
 				targets = append(targets, a)

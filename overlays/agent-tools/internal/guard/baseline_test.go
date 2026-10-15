@@ -759,9 +759,10 @@ var shellEditRepos = sync.OnceValues(func() (string, error) {
 	)
 })
 
-// TestShellEdits covers shell commands that write a tracked file, which go
-// through the file-editing tools instead, and the scratch, ignored and
-// untracked files they may write.
+// TestShellEdits covers shell commands that write a tracked file, or edit
+// any existing file in place, which go through the file-editing tools
+// instead, and the output a command may write to a new file or to a
+// scratch, ignored or untracked one.
 func TestShellEdits(t *testing.T) {
 	root := fixture(t, shellEditRepos)
 	work := filepath.Join(root, "work")
@@ -787,24 +788,43 @@ func TestShellEdits(t *testing.T) {
 		{true, "ed -s a.go < cmds"},
 		{true, "cd sub && echo x > b.go"},
 		{true, "cd " + outside + " && echo x > " + work + "/a.go"},
-		{false, "echo x > new.txt"},
-		{false, "echo x > build/out.log"},
-		{false, "echo x > vendored.txt"},
+		{true, "echo x > new.txt"},
+		{true, "echo x > build/out.log"},
+		{true, "echo x > vendored.txt"},
+		{true, "echo x >> " + outside + "/f"},
+		{true, "echo x | tee " + outside + "/f"},
+		{false, "echo x > fresh.txt"},
+		{false, "echo x >> " + scratch + "/new.log"},
 		{false, "go test ./... > " + scratch + "/out.txt"},
 		{false, "agent-plan goal PLAN > " + scratch + "/goal.md"},
-		{false, "echo x > " + scratchRepo + "/a"},
+		{true, "echo x > " + scratchRepo + "/a"},
+		{true, "sed -Ei s/a/b/ " + outside + "/f"},
+		{true, "sed -ni s/a/b/p new.txt"},
+		{true, "sed -i.bak s/a/b/ new.txt"},
+		{true, "sed --in-place=.bak s/a/b/ new.txt"},
+		{false, "sed -E s/i/x/ a.go"},
+		{false, "sed -es/i/x/ a.go"},
+		{true, "gawk -i inplace '{print}' new.txt"},
+		{true, "awk -i inplace '{print}' " + outside + "/f"},
+		{true, "gawk --include=inplace '{print}' new.txt"},
+		{false, "gawk '{print}' new.txt"},
 		{false, "echo x > /dev/null"},
 		{false, "echo x >&2"},
 		{false, "echo x > $F"},
 		{false, "sed -n 1p a.go"},
-		{false, "sed -i '' s/a/b/ " + outside + "/f"},
+		{true, "sed -i '' s/a/b/ " + outside + "/f"},
+		{true, "sed -i '' s/a/b/ " + scratchRepo + "/a"},
+		{true, "perl -pi -e 's/a/b/' new.txt"},
+		{true, "sed --in-place s/a/b/ build/out.log"},
+		{true, "ed -s " + scratchRepo + "/a < cmds"},
+		{false, "sed -i '' s/a/b/ " + scratch + "/missing.txt"},
 		{false, "sed s/a/b/ a.go > " + scratch + "/a.go"},
 		{false, "perl -ne 'print' a.go"},
 		{false, "gofmt -r 'a -> b' -w a.go"},
 		{false, "gopls rename -w a.go:#0 b"},
 		{false, "go fix ./..."},
 		{false, "cat a.go | tee " + scratch + "/copy"},
-		{false, "echo x > " + outside + "/f"},
+		{true, "echo x > " + outside + "/f"},
 		{false, "cd $SOMEWHERE && echo x > a.go"},
 		{true, `python3 -c "open('a.go','w').write('x')"`},
 		{true, `python3 -c 'open("a.go", "r+").write("x")'`},
@@ -819,9 +839,11 @@ func TestShellEdits(t *testing.T) {
 		{false, `python3 -c "import pathlib; print(pathlib.Path('a.go').read_text())"`},
 		{false, `node -e "console.log(require('fs').readFileSync('a.go', 'utf8'))"`},
 		{false, `ruby -e "puts File.read('a.go')"`},
-		{false, `python3 -c "open('new.txt', 'w').write('x')"`},
-		{false, `ruby -e "File.write('build/out.log', 'x')"`},
+		{true, `python3 -c "open('new.txt', 'w').write('x')"`},
+		{true, `ruby -e "File.write('build/out.log', 'x')"`},
+		{true, `python3 -c "open('` + scratchRepo + `/a', 'a').write('x')"`},
 		{false, `python3 -c "open('` + scratch + `/out.txt', 'w').write('x')"`},
+		{false, `node -e "require('fs').writeFileSync('fresh.txt', 'x')"`},
 		{false, `python3 script.py a.go`},
 	}
 	for _, c := range cases {

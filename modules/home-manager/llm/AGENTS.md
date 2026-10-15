@@ -51,8 +51,10 @@ edits, and an edit on the wrong branch of a stack is expensive to unpick.
 
 ## Editing files
 
-Use the file-editing tools; the guard refuses shell edits, and its refusal
-names the exceptions.
+Use the file-editing tools for every file, scratch files, plans and notes
+included; the guard refuses shell edits, and its refusal names the
+exceptions. Writing a command's output to a new file is capturing, not
+editing.
 
 ## The shell
 

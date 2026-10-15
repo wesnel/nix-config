@@ -118,7 +118,7 @@ func TestPlanLog(t *testing.T) {
 		{false, "WORKDIR", "grep -c '^\\* ' LOGFILE"},
 		{false, "WORKDIR", "echo x > log.org"},
 		{false, "WORKDIR", "echo x >> /tmp/2026-10-14-x.box.log.org"},
-		{false, "WORKDIR", "echo x >> PLANFILE"},
+		{true, "WORKDIR", "echo x >> PLANFILE"},
 	}
 	for _, c := range commands {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
