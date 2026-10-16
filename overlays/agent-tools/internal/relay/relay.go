@@ -20,6 +20,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
 )
@@ -137,6 +138,11 @@ func Serve(args []string, stderr io.Writer) int {
 	select {}
 }
 
+// readTimeout bounds how long a client may take to send a request, so one
+// that stalls cannot hold a connection open. A reply has no timeout: it
+// waits for its command, however long that runs.
+var readTimeout = time.Minute
+
 // start listens on address and serves the programs for workspace in the
 // background.
 func start(workspace, guestPath, network, address string, paths map[string]string) (net.Listener, string, error) {
@@ -163,7 +169,8 @@ func start(workspace, guestPath, network, address string, paths map[string]strin
 		}
 		json.NewEncoder(w).Encode(handle(req, root, guest, paths))
 	})
-	go http.Serve(listener, handler)
+	server := &http.Server{Handler: handler, ReadHeaderTimeout: readTimeout, ReadTimeout: readTimeout}
+	go server.Serve(listener)
 	return listener, root, nil
 }
 

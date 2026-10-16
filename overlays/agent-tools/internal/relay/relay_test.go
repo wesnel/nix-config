@@ -1,11 +1,15 @@
 package relay
 
 import (
+	"errors"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHostPath(t *testing.T) {
@@ -83,6 +87,50 @@ func TestHandle(t *testing.T) {
 			t.Errorf("a relayed program inherited the relay's repository:\n%s", env)
 		}
 	})
+}
+
+// A client that stops partway through a request is cut off, so a sandbox
+// cannot hold the relay's connections open, while a command that runs
+// longer than that still gets its reply.
+func TestTimeouts(t *testing.T) {
+	defer func(d time.Duration) { readTimeout = d }(readTimeout)
+	readTimeout = 100 * time.Millisecond
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	slow := filepath.Join(root, "slow")
+	os.WriteFile(slow, []byte("#!/bin/sh\nsleep 1\necho done\n"), 0o755)
+	listener, _, err := start(root, "", "tcp", "127.0.0.1:0", map[string]string{"slow": slow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	t.Run("slow command", func(t *testing.T) {
+		t.Chdir(root)
+		r, err := Call("http://"+listener.Addr().String(), "slow", nil, nil)
+		if err != nil || r.Code != 0 || r.Stdout != "done\n" {
+			t.Errorf("a command outlasting the read timeout: %+v, %v", r, err)
+		}
+	})
+
+	for name, partial := range map[string]string{
+		"headers": "POST / HTTP/1.1\r\nHost: relay\r\n",
+		"body":    "POST / HTTP/1.1\r\nHost: relay\r\nContent-Length: 100\r\n\r\n{",
+	} {
+		t.Run(name, func(t *testing.T) {
+			conn, err := net.Dial("tcp", listener.Addr().String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			if _, err := conn.Write([]byte(partial)); err != nil {
+				t.Fatal(err)
+			}
+			conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			if _, err := io.ReadAll(conn); errors.Is(err, os.ErrDeadlineExceeded) {
+				t.Errorf("the relay still held the connection after 5s")
+			}
+		})
+	}
 }
 
 func TestSession(t *testing.T) {
