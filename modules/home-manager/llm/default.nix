@@ -143,6 +143,19 @@ in {
             default = [];
             description = "Git pathspec globs (`:(glob)` magic) that match the test files.";
           };
+
+          moduleDir = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+
+            description = ''
+              The directory of the Go module whose modules the review VM is
+              given, relative to the top of the repository; null for the
+              top. It must stay inside the repository, or every lookup of
+              these settings is refused. The commands above still run at
+              the top, so they `cd` into it themselves.
+            '';
+          };
         };
       });
 

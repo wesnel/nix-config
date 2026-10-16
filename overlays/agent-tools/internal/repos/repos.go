@@ -31,6 +31,10 @@ type Settings struct {
 	Build string `json:"build,omitempty"`
 	// TestFiles are git pathspec globs (`:(glob)` magic) for test files.
 	TestFiles []string `json:"testFiles,omitempty"`
+	// ModuleDir is the directory of the Go module the review VM downloads
+	// modules for, relative to the top of a checkout and inside it: "."
+	// for the top. The commands above still run at the top.
+	ModuleDir string `json:"moduleDir,omitempty"`
 }
 
 // Path is the user's config file: $AGENT_TOOLS_CONFIG, or
@@ -111,6 +115,15 @@ func load() (map[string]Settings, error) {
 	}
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, err
+	}
+	for repo, s := range config.Repos {
+		dir := filepath.ToSlash(filepath.Clean(s.ModuleDir))
+		if filepath.IsAbs(s.ModuleDir) || dir == ".." || strings.HasPrefix(dir, "../") {
+			return nil, refusal.New("the moduleDir %q of %s in %s is not inside the checkout; "+
+				"ask the operator to make it relative to the top of the repository", s.ModuleDir, repo, Path())
+		}
+		s.ModuleDir = dir
+		config.Repos[repo] = s
 	}
 	return config.Repos, nil
 }

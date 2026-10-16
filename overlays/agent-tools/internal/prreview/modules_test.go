@@ -133,7 +133,7 @@ func testFetchModulesFromTheProxy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mods, err := fetchModules(t.Context(), pr)
+	mods, err := fetchModules(t.Context(), pr, ".")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func testFetchModulesHostileGoMod(t *testing.T) {
 	setUp(t, r)
 	withProxy(t)
 	pr := must(Fetch(t.Context(), "o/r", 7))
-	mods, err := fetchModules(t.Context(), pr)
+	mods, err := fetchModules(t.Context(), pr, ".")
 	if err != nil || mods.NotRun != "" {
 		t.Fatalf("%+v, %v", mods, err)
 	}
@@ -185,7 +185,7 @@ func testFetchModulesPrivateFailsClosed(t *testing.T) {
 	setUp(t, r)
 	withProxy(t)
 	pr := must(Fetch(t.Context(), "o/r", 7))
-	mods, err := fetchModules(t.Context(), pr)
+	mods, err := fetchModules(t.Context(), pr, ".")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func testFetchModulesNotAGoModule(t *testing.T) {
 	r := newRemote(t, func(work string) { os.Remove(filepath.Join(work, "go.mod")) })
 	setUp(t, r)
 	pr := must(Fetch(t.Context(), "o/r", 7))
-	mods, err := fetchModules(t.Context(), pr)
+	mods, err := fetchModules(t.Context(), pr, ".")
 	if err != nil || !strings.Contains(mods.NotRun, "go.mod") {
 		t.Errorf("%+v, %v", mods, err)
 	}

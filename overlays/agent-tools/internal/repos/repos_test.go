@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/wesnel/agent-tools/internal/git"
@@ -52,6 +53,34 @@ func TestFor(t *testing.T) {
 			t.Errorf("another repository: %+v, %v", s, err)
 		}
 	})
+}
+
+// TestModuleDir: the Go module's directory is relative to the top of the
+// checkout, cleaned, "." by default, and never outside the checkout.
+func TestModuleDir(t *testing.T) {
+	for _, c := range []struct{ name, dir, want string }{
+		{"default", "", "."},
+		{"top", ".", "."},
+		{"cleaned", "overlays/agent-tools/", "overlays/agent-tools"},
+		{"inner dots", "a/./b/../c", "a/c"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			os.WriteFile(useConfig(t), []byte(`{"repos": {"o/r": {"test": "true", "moduleDir": "`+c.dir+`"}}}`), 0o644)
+			if s, err := For("o/r"); err != nil || s.ModuleDir != c.want {
+				t.Errorf("moduleDir %q: %+v, %v; want %q", c.dir, s, err, c.want)
+			}
+		})
+	}
+	// Any repository's, since the config is refused as a whole.
+	for _, dir := range []string{"../x", "a/../../x", "..", "/abs/dir"} {
+		t.Run("refused "+dir, func(t *testing.T) {
+			os.WriteFile(useConfig(t), []byte(`{"repos": {"o/other": {"test": "true", "moduleDir": "`+dir+`"}}}`), 0o644)
+			var r refusal.Refusal
+			if s, err := For("o/r"); !errors.As(err, &r) || !strings.Contains(err.Error(), dir) {
+				t.Errorf("moduleDir %q: %+v, %v", dir, s, err)
+			}
+		})
+	}
 }
 
 func TestLookup(t *testing.T) {

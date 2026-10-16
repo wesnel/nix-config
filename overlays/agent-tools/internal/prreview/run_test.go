@@ -285,6 +285,58 @@ func testRunLocalRedCheck(t *testing.T) {
 		}
 	})
 
+	// inSubdirectory makes a local clone whose only Go module is in sub/,
+	// with no dependencies, configured to run in the fake VM with
+	// moduleDir, and returns the remote and the backend's log.
+	inSubdirectory := func(t *testing.T, moduleDir string) (*remote, string) {
+		t.Helper()
+		r := newRemote(t, func(work string) {
+			os.Remove(filepath.Join(work, "go.mod"))
+			write(t, filepath.Join(work, "sub", "go.mod"), "module example.com/sub\n\ngo 1.20\n")
+			write(t, filepath.Join(work, "sub", "s.go"), "package sub\n\nfunc S() int { return 1 }\n")
+		})
+		setUp(t, r)
+		old, oldSum := goProxy, goSumDB
+		goProxy, goSumDB = "off", "off"
+		t.Cleanup(func() { goProxy, goSumDB = old, oldSum })
+		log := withRun(t)
+		settings := filepath.Join(t.TempDir(), "agent-tools.json")
+		write(t, settings, `{"repos": {"o/r": {"test": "cd sub && go test ./...", "testFiles": ["**/*_test.go"], `+
+			`"moduleDir": "`+moduleDir+`"}}}`)
+		t.Setenv("AGENT_TOOLS_CONFIG", settings)
+		gitT(t, r.work, "remote", "add", "origin", "https://github.com/o/r.git")
+		return r, log
+	}
+
+	// A module below the top runs, from a copy of the whole checkout.
+	t.Run("module in a subdirectory", func(t *testing.T) {
+		r, log := inSubdirectory(t, "sub")
+		var stderr bytes.Buffer
+		text, err := LocalRedCheck(t.Context(), r.work, r.base, r.head, &stderr)
+		if err != nil {
+			t.Fatalf("%v\n%s", err, stderr.String())
+		}
+		if !strings.Contains(text, "no-test-files") {
+			t.Errorf("the results:\n%s", text)
+		}
+		if files := string(must(os.ReadFile(filepath.Join(log, "workspace")))); !strings.Contains(files, "sub") {
+			t.Errorf("the run copy is not the whole checkout: %s", files)
+		}
+	})
+
+	// A moduleDir with no go.mod says which go.mod it looked for.
+	t.Run("moduleDir without a go.mod", func(t *testing.T) {
+		r, log := inSubdirectory(t, "elsewhere")
+		var stderr bytes.Buffer
+		if _, err := LocalRedCheck(t.Context(), r.work, r.base, r.head, &stderr); err == nil ||
+			!strings.Contains(err.Error(), "elsewhere/go.mod") {
+			t.Errorf("without a go.mod in moduleDir: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(log, "argv")); err == nil {
+			t.Error("the VM ran")
+		}
+	})
+
 	// Without a backend it says why, and runs nothing.
 	t.Run("without a backend", func(t *testing.T) {
 		r, _ := local(t)

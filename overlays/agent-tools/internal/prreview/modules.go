@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -112,15 +113,22 @@ func goRun(ctx context.Context, dir string, env []string, args ...string) ([]byt
 	return out, nil
 }
 
-// fetchModules downloads the modules the pull request's go.mod and go.sum
-// name, and nothing else of it: no other file is read, so no code of it or of
-// a module runs here. go.mod's toolchain line and its replacements by a path
-// are dropped first, so the toolchain is ours and every module comes from
-// the proxy, checked against go.sum and the checksum database.
-func fetchModules(ctx context.Context, pr *PR) (*Modules, error) {
-	goMod, err := gitOut(ctx, pr.Clone, nil, "cat-file", "blob", pr.Head+":go.mod")
+// fetchModules downloads the modules the pull request's go.mod and go.sum in
+// moduleDir name, and nothing else of it: no other file is read, so no code
+// of it or of a module runs here. go.mod's toolchain line and its
+// replacements by a path are dropped first, so the toolchain is ours and
+// every module comes from the proxy, checked against go.sum and the checksum
+// database. moduleDir is repos.Settings' ModuleDir, which repos holds inside
+// the checkout.
+func fetchModules(ctx context.Context, pr *PR, moduleDir string) (*Modules, error) {
+	goModPath := path.Join(moduleDir, "go.mod")
+	goMod, err := gitOut(ctx, pr.Clone, nil, "cat-file", "blob", pr.Head+":"+goModPath)
 	if err != nil {
-		return &Modules{NotRun: "the pull request has no go.mod at its top, so there is no Go test to run"}, nil
+		where := "at its top"
+		if goModPath != "go.mod" {
+			where = "at " + goModPath + ", the moduleDir wgn.home.llm.repos names"
+		}
+		return &Modules{NotRun: "the pull request has no go.mod " + where + ", so there is no Go test to run"}, nil
 	}
 	host := hostGo(ctx)
 	if host == "" {
@@ -143,7 +151,7 @@ func fetchModules(ctx context.Context, pr *PR) (*Modules, error) {
 	if err := os.WriteFile(filepath.Join(work, "go.mod"), goMod, 0o644); err != nil {
 		return nil, err
 	}
-	goSum, _ := gitOut(ctx, pr.Clone, nil, "cat-file", "blob", pr.Head+":go.sum")
+	goSum, _ := gitOut(ctx, pr.Clone, nil, "cat-file", "blob", pr.Head+":"+path.Join(moduleDir, "go.sum"))
 	if err := os.WriteFile(filepath.Join(work, "go.sum"), goSum, 0o644); err != nil {
 		return nil, err
 	}

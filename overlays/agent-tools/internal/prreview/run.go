@@ -156,7 +156,7 @@ func runTests(ctx context.Context, pr *PR, timeout time.Duration) (*runResult, e
 	if config.Backend == "" || config.GuestTools == "" {
 		return &runResult{notRun: "no sandbox backend is configured under \"review\" in " + loop.ConfigPath()}, nil
 	}
-	mods, err := fetchModules(ctx, pr)
+	mods, err := fetchModules(ctx, pr, settings.ModuleDir)
 	if err != nil {
 		return nil, err
 	}
