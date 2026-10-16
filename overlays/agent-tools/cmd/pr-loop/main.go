@@ -68,7 +68,8 @@ printed on stderr and fails nothing.
   reply --from F              post the replies in a reply file (- reads stdin)
   resolve THREAD              resolve a bot's thread whose last comment is yours
   request [--bot B] [--accept-failure CHECK] [PR...]
-                              ask each bot to review the head, once CI allows
+                              ask each bot to review the head, once CI allows and
+                              every thread it started has a reply
   status [PR...]              CI, each bot's review, open threads, diff growth
   ci [PR...]                  checks on each head, compared with the base
   logs [--lines N] PR CHECK   the end of a failed GitHub Actions job's log
