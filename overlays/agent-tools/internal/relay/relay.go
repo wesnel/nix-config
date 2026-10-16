@@ -1,7 +1,8 @@
 // Package relay lets a sandbox without credentials run chosen programs on
 // the host: the server holds the login and runs them, and the client inside
 // the sandbox forwards its arguments, working directory and standard input.
-// The relay confines the working directory; each program decides which of
+// The relay confines the working directory to the workspace and its
+// repository; each program decides which of
 // its own commands a relayed caller may run (see RelayEnv).
 package relay
 
@@ -144,10 +145,11 @@ func start(workspace, guestPath, network, address string, paths map[string]strin
 	if err != nil {
 		return nil, "", err
 	}
-	guest := filepath.Clean(guestPath)
+	s := space{root: root, guest: filepath.Clean(guestPath)}
 	if guestPath == "" {
-		guest = root
+		s.guest = root
 	}
+	s.top, s.common, _ = repositoryAt(root)
 	if network == "unix" {
 		os.Remove(address)
 	}
@@ -161,7 +163,7 @@ func start(workspace, guestPath, network, address string, paths map[string]strin
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		json.NewEncoder(w).Encode(handle(req, root, guest, paths))
+		json.NewEncoder(w).Encode(handle(req, s, paths))
 	})
 	go http.Serve(listener, handler)
 	return listener, root, nil
@@ -269,33 +271,122 @@ func gitDir(root string) string {
 	return dir
 }
 
+// space is where a relay's programs may run.
+type space struct {
+	// root is the workspace's real path, and guest where the sandbox sees
+	// it.
+	root, guest string
+	// top and common are the real paths of the worktree containing root
+	// and of its repository's git common directory, or "" where root is in
+	// no worktree.
+	top, common string
+}
+
+// repositoryAt is the real paths of the top of the worktree containing dir
+// and of its repository's git common directory, as git finds them from dir
+// alone, and false where dir is in no worktree. A sandbox can write a .git
+// file or directory anywhere in its workspace, so this runs no program the
+// repository's config names.
+func repositoryAt(dir string) (top, common string, ok bool) {
+	top, _, common, ok = gitDirsAt(dir)
+	return top, common, ok
+}
+
+// gitDirsAt is repositoryAt with the worktree's own git directory, which
+// for a linked worktree lies in the common one.
+func gitDirsAt(dir string) (top, gitDir, common string, ok bool) {
+	cmd := exec.Command("git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-C", dir,
+		"rev-parse", "--path-format=absolute", "--show-toplevel", "--absolute-git-dir", "--git-common-dir")
+	cmd.Env = childEnv()
+	out, err := cmd.Output()
+	if err != nil {
+		return "", "", "", false
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) != 3 {
+		return "", "", "", false
+	}
+	return realPath(lines[0]), realPath(lines[1]), realPath(lines[2]), true
+}
+
+func realPath(path string) string {
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		return real
+	}
+	return path
+}
+
+// within reports whether path is root or below it.
+func within(path, root string) bool {
+	return path == root || strings.HasPrefix(path, root+string(filepath.Separator))
+}
+
+// check is why a program may not run in cwd, a real path, or "", and else
+// the environment that pins its git commands to the repository checked.
+// Every git command a relayed program runs there would otherwise find its
+// repository from cwd, so a .git file the sandbox wrote, naming another
+// repository's git directory, or a repository it made, whose remotes it
+// chose, would have the host act on that repository with the host's
+// credentials. cwd must therefore be in the workspace's own repository, and
+// in a worktree inside the workspace; in a workspace that is no repository,
+// in none or in one held inside it. GIT_DIR, GIT_WORK_TREE and
+// GIT_COMMON_DIR name the directories checked, so a .git swapped once the
+// check is done moves no git command that finds its repository from the
+// environment. A command given `-C DIR`, which internal/git runs without
+// them, finds it from DIR again.
+func (s space) check(cwd string) (pin []string, reason string) {
+	if !within(cwd, s.root) {
+		return nil, fmt.Sprintf("%s is outside %s; run the command from inside the workspace", cwd, s.root)
+	}
+	top, gitDir, common, ok := gitDirsAt(cwd)
+	elsewhere := "; run the command from a worktree of the workspace's repository, and remove the .git file or " +
+		"directory between it and the workspace that sends git elsewhere"
+	switch {
+	case !ok && s.common == "":
+		return nil, ""
+	case !ok:
+		return nil, fmt.Sprintf("git finds no worktree at %s, so not %s's repository%s", cwd, s.root, elsewhere)
+	case s.common != "" && common != s.common:
+		return nil, fmt.Sprintf("%s is in the repository at %s, not the workspace's at %s%s", cwd, common, s.common, elsewhere)
+	case s.common == "" && !within(common, s.root):
+		return nil, fmt.Sprintf("%s is in the repository at %s, outside the workspace %s%s", cwd, common, s.root, elsewhere)
+	case !within(top, s.root) && top != s.top:
+		return nil, fmt.Sprintf("%s is in the worktree at %s, outside the workspace %s%s", cwd, top, s.root, elsewhere)
+	}
+	return []string{"GIT_DIR=" + gitDir, "GIT_WORK_TREE=" + top, "GIT_COMMON_DIR=" + common}, ""
+}
+
+// checked runs between a call's check and its program's start, where a
+// sandbox could swap a .git file; tests set it to do that.
+var checked = func() {}
+
 // hostPath maps the sandbox's working directory onto the host's workspace.
 func hostPath(cwd, root, guest string) string {
 	cwd = filepath.Clean(cwd)
 	if cwd == guest || strings.HasPrefix(cwd, guest+string(filepath.Separator)) {
 		cwd = root + strings.TrimPrefix(cwd, guest)
 	}
-	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
-		return resolved
-	}
-	return cwd
+	return realPath(cwd)
 }
 
-func handle(req Request, root, guest string, paths map[string]string) Reply {
+func handle(req Request, s space, paths map[string]string) Reply {
 	path, ok := paths[req.Program]
 	if !ok {
 		return Reply{Code: 2, Stderr: fmt.Sprintf("sandbox-relay: refused: %q is not served; hand the operator the command to run on the host\n", req.Program)}
 	}
-	cwd := hostPath(req.Cwd, root, guest)
-	if cwd != root && !strings.HasPrefix(cwd, root+string(filepath.Separator)) {
-		return Reply{Code: 2, Stderr: fmt.Sprintf("sandbox-relay: refused: %s is outside %s; run the command from inside the workspace\n", cwd, root)}
+	cwd := hostPath(req.Cwd, s.root, s.guest)
+	pin, reason := s.check(cwd)
+	if reason != "" {
+		return Reply{Code: 2, Stderr: "sandbox-relay: refused: " + reason + "\n"}
 	}
+	checked()
 	cmd := exec.CommandContext(context.Background(), path, req.Argv...)
 	cmd.Dir = cwd
 	cmd.Stdin = strings.NewReader(req.Stdin)
 	cmd.Env = append(childEnv(), RelayEnv+"=1")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	cmd.Env = append(cmd.Env, pin...)
 	code := 0
 	if err := cmd.Run(); err != nil {
 		var exit *exec.ExitError
