@@ -542,6 +542,9 @@ type Found struct {
 	Matched []string `json:"matched"`
 }
 
+// OwnPlans are this host's plans, newest first.
+func (c Config) OwnPlans() ([]Plan, error) { return c.ownPlans() }
+
 // ownPlans are this host's plans, newest first.
 func (c Config) ownPlans() ([]Plan, error) {
 	entries, err := os.ReadDir(c.Dir)
