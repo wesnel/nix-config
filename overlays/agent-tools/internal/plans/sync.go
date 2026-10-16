@@ -97,7 +97,7 @@ func (c Config) inRepo() bool {
 // lockSync takes the lock every sync and pull holds, waiting for it unless
 // try; it returns nil when try finds it held.
 func (c Config) lockSync(try bool) (*os.File, error) {
-	f, err := os.OpenFile(filepath.Join(c.Dir, ".sync.lock"), os.O_RDWR|os.O_CREATE, 0o644)
+	f, err := os.OpenFile(filepath.Join(c.Dir, ".sync.lock"), os.O_RDWR|os.O_CREATE, 0o644) //nolint:gosec // an empty lock file
 	if err != nil {
 		return nil, err
 	}
@@ -341,7 +341,7 @@ func (c Config) clone() (cloned bool, note string, err error) {
 			return false, fmt.Sprintf("the deploy key %s is missing, so %s was not cloned and plans are not synced", c.Key, c.Remote), nil
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(repo), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(repo), 0o755); err != nil { //nolint:gosec // the notes repository's parent, made as git clone would make it
 		return false, "", err
 	}
 	args := []string{"-c", "core.hooksPath=/dev/null"}

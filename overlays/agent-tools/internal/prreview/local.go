@@ -69,7 +69,7 @@ func LocalRedCheck(ctx context.Context, top, base, tip string, log io.Writer) (s
 func removeAll(dir string) {
 	filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
 		if err == nil && info.IsDir() {
-			os.Chmod(p, info.Mode()|0o700)
+			os.Chmod(p, info.Mode()|0o700) //nolint:gosec // dir is a fresh MkdirTemp that only this process's git and go write, and Walk never follows a link
 		}
 		return nil
 	})

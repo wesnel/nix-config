@@ -25,7 +25,7 @@ const (
 	historyLoss  = "This deletes history git cannot get back, which is the operator's call. Leave it, and put the command in your report for the operator."
 	sharedStash  = "Every worktree of a repository shares one stash, so this can discard another worktree's stashed work. Leave the stash as it is, and put the command in your report for the operator."
 	sharedConfig = "This setting is shared by every worktree and changes how git runs for the operator too. Put the `git config` command in your report for the operator; a worktree's own setting takes `git config --worktree`."
-	secretRead   = "This reads a credential, which stays out of the session. Use the tool that holds it (`gh`, `pr-loop`, `git`), or ask the operator for what you need from it."
+	secretRead   = "This reads a credential, which stays out of the session. Use the tool that holds it (`gh`, `pr-loop`, `git`), or ask the operator for what you need from it." //nolint:gosec // a refusal message, not a credential
 	ngrokWrite   = "ngrok API writes reach production. Use a list or get command, or hand the operator the command."
 	systemSwitch = "Activating a system or profile is the operator's step. Build it with `nix build` or `darwin-rebuild build`, and hand the operator the switch command."
 	rootCommand  = "Anything needing root is the operator's to run. Put the command in your report for the operator, and say its result is unverified."
@@ -906,7 +906,11 @@ func redirections(words []string) []string {
 // Write, MultiEdit and NotebookEdit, Codex's apply_patch, and ECA's
 // write_file, edit_file and move_file.
 func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
-	for _, c := range fileChanges(tool, toolInput) {
+	changes, err := fileChanges(tool, toolInput)
+	if err != nil {
+		return unreadable
+	}
+	for _, c := range changes {
 		path := expandPath(c.path, dir)
 		if reason := checkSecretPath(path, dir); reason != "" {
 			return reason
@@ -938,8 +942,9 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 // the text the call puts in or takes out.
 type change struct{ path, text string }
 
-// fileChanges are the files a call to a file-editing tool writes.
-func fileChanges(tool string, toolInput json.RawMessage) []change {
+// fileChanges are the files a call to a file-editing tool writes, or
+// decode's error.
+func fileChanges(tool string, toolInput json.RawMessage) ([]change, error) {
 	var in struct {
 		FilePath     string `json:"file_path"`
 		NotebookPath string `json:"notebook_path"`
@@ -958,7 +963,9 @@ func fileChanges(tool string, toolInput json.RawMessage) []change {
 			NewString string `json:"new_string"`
 		} `json:"edits"`
 	}
-	json.Unmarshal(toolInput, &in)
+	if err := decode(toolInput, &in); err != nil {
+		return nil, err
+	}
 	var changes []change
 	if tool == "apply_patch" {
 		var path string
@@ -992,7 +999,7 @@ func fileChanges(tool string, toolInput json.RawMessage) []change {
 			}
 		}
 	}
-	return changes
+	return changes, nil
 }
 
 // gitState is where a git command acts and what it finds there: its
@@ -1504,7 +1511,9 @@ func checkExitWorktree(toolInput json.RawMessage, dir string) string {
 		Action         string `json:"action"`
 		DiscardChanges bool   `json:"discard_changes"`
 	}
-	json.Unmarshal(toolInput, &in)
+	if decode(toolInput, &in) != nil {
+		return unreadable
+	}
 	if in.Action != "remove" || !in.DiscardChanges {
 		return ""
 	}

@@ -1,11 +1,19 @@
 package relay
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHostPath(t *testing.T) {
@@ -81,6 +89,86 @@ func TestHandle(t *testing.T) {
 		// environment names.
 		if strings.Contains(string(env), "GIT_DIR=") || strings.Contains(string(env), "GIT_WORK_TREE=") {
 			t.Errorf("a relayed program inherited the relay's repository:\n%s", env)
+		}
+	})
+}
+
+// A client that stops partway through a request is cut off, so a sandbox
+// cannot hold the relay's connections open, while a command that runs
+// longer than that still gets its reply.
+func TestTimeouts(t *testing.T) {
+	defer func(d time.Duration) { readTimeout = d }(readTimeout)
+	readTimeout = 100 * time.Millisecond
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	slow := filepath.Join(root, "slow")
+	os.WriteFile(slow, []byte("#!/bin/sh\nsleep 1\necho done\n"), 0o755)
+	listener, _, err := start(root, "", "tcp", "127.0.0.1:0", map[string]string{"slow": slow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	t.Run("slow command", func(t *testing.T) {
+		t.Chdir(root)
+		r, err := Call("http://"+listener.Addr().String(), "slow", nil, nil)
+		if err != nil || r.Code != 0 || r.Stdout != "done\n" {
+			t.Errorf("a command outlasting the read timeout: %+v, %v", r, err)
+		}
+	})
+
+	for name, partial := range map[string]string{
+		"headers": "POST / HTTP/1.1\r\nHost: relay\r\n",
+		"body":    "POST / HTTP/1.1\r\nHost: relay\r\nContent-Length: 100\r\n\r\n{",
+	} {
+		t.Run(name, func(t *testing.T) {
+			conn, err := net.Dial("tcp", listener.Addr().String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			if _, err := conn.Write([]byte(partial)); err != nil {
+				t.Fatal(err)
+			}
+			conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			if _, err := io.ReadAll(conn); errors.Is(err, os.ErrDeadlineExceeded) {
+				t.Errorf("the relay still held the connection after 5s")
+			}
+		})
+	}
+}
+
+// TestRequestSize holds the relay to taking a reply file of sixty-four
+// replies at GitHub's limit of 65,536 characters, each character at its
+// widest in UTF-8, and to refusing a request past maxRequest.
+func TestRequestSize(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	count := filepath.Join(root, "count")
+	os.WriteFile(count, []byte("#!/bin/sh\nwc -c | tr -d ' '\n"), 0o755)
+	listener, _, err := start(root, "", "tcp", "127.0.0.1:0", map[string]string{"count": count})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	url := "http://" + listener.Addr().String()
+	t.Chdir(root)
+
+	t.Run("the largest a client sends", func(t *testing.T) {
+		stdin := strings.Repeat("\U0001F600", 64*65536)
+		r, err := Call(url, "count", nil, []byte(stdin))
+		if err != nil || r.Code != 0 || strings.TrimSpace(r.Stdout) != strconv.Itoa(len(stdin)) {
+			t.Errorf("a request of %d bytes of stdin: %+v, %v", len(stdin), r, err)
+		}
+	})
+
+	t.Run("more", func(t *testing.T) {
+		body, _ := json.Marshal(Request{Program: "count", Cwd: root, Stdin: strings.Repeat("a", 40<<20)})
+		resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusRequestEntityTooLarge {
+			t.Errorf("a request of %d bytes: status %d", len(body), resp.StatusCode)
 		}
 	})
 }

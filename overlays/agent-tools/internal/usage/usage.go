@@ -159,7 +159,7 @@ func (s State) write(name string, v any) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
+	if err := os.MkdirAll(s.Dir, 0o755); err != nil { //nolint:gosec // usage readings and quota choices
 		return err
 	}
 	tmp, err := os.CreateTemp(s.Dir, "."+name+".*")

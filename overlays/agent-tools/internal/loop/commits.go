@@ -42,11 +42,11 @@ func checkFixups(branch string, original, now []Commit) error {
 			"`git commit --fixup=<commit>` of the PR's commits, so the signing pass can squash them", branch)
 	}
 	for i := range kept {
-		if kept[i] != original[i] {
+		if kept[i] != original[i] { //nolint:gosec // kept and original have the same length, checked above
 			return refuse("%s's commit %q no longer matches %q from when the loop began, and the loop never rewrites "+
 				"the PR's own commits; put the branch back as it was (refs/pr-loop/rounds/ holds each round's tips) "+
 				"and commit the change as `git commit --fixup=<commit>`",
-				branch, subject(kept[i].Message), subject(original[i].Message))
+				branch, subject(kept[i].Message), subject(original[i].Message)) //nolint:gosec // as above
 		}
 	}
 	return nil

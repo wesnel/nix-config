@@ -33,7 +33,7 @@ func post(stdin io.Reader, stdout io.Writer) int {
 	var args struct {
 		Command string `json:"command"`
 	}
-	json.Unmarshal(in.ToolInput, &args)
+	json.Unmarshal(in.ToolInput, &args) //nolint:gosec // after the call ran: without a command there is nothing to record
 	if args.Command == "" {
 		return 0
 	}
@@ -57,7 +57,7 @@ func post(stdin io.Reader, stdout io.Writer) int {
 	if in.HookType != "" {
 		out = map[string]string{"additionalContext": context}
 	}
-	json.NewEncoder(stdout).Encode(out)
+	json.NewEncoder(stdout).Encode(out) //nolint:gosec // context after the call ran, which nothing waits on
 	return 0
 }
 

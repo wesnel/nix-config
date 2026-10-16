@@ -3,6 +3,7 @@ package guard
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -635,3 +636,92 @@ func TestFormats(t *testing.T) {
 		})
 	}
 }
+
+// TestUnreadableInput holds the guard to failing closed: an event or a
+// tool input it cannot read the way the harness does is denied, never
+// judged on a guess. Go matches JSON keys without regard to case and keeps
+// the last of a repeated key, so a key repeated or differing only in case
+// could show the guard another command than the harness runs. Keys the
+// guard never reads, such as those of an environment or of HTTP headers,
+// may differ only in case.
+func TestUnreadableInput(t *testing.T) {
+	for _, c := range []struct {
+		name, event string
+		deny        bool
+	}{
+		{"a key differing only in case", `{"tool_name":"Bash","tool_input":{"command":"sudo ls","Command":"ls"}}`, true},
+		{"a merge behind a key differing only in case", `{"tool_name":"Bash","tool_input":{"command":"gh pr merge 1","COMMAND":"ls"}}`, true},
+		{"a repeated key", `{"tool_name":"Bash","tool_input":{"command":"gh pr merge 1","command":"ls"}}`, true},
+		{"a key Go folds to another", `{"tool_name":"write_stdin","turn_id":"t","tool_input":{"session_id":1,"chars":"git push origin x\n","charſ":""}}`, true},
+		{"a key differing only in case in a nested object the guard reads",
+			`{"tool_name":"MultiEdit","tool_input":{"file_path":"/tmp/x","edits":[{"old_string":"a","new_string":"b","New_String":"c"}]}}`, true},
+		{"a key differing only in case in a nested object the guard does not read",
+			`{"tool_name":"Bash","tool_input":{"command":"ls","x":{"a":1,"A":2}}}`, false},
+		{"an environment with both spellings of a proxy variable",
+			`{"tool_name":"local_shell","turn_id":"t","tool_input":{"command":["ls"],"env":{"http_proxy":"http://p","HTTP_PROXY":"http://p"}}}`, false},
+		{"a credential write behind a key differing only in case",
+			`{"tool_name":"Write","tool_input":{"file_path":"~/.ssh/id_ed25519","File_Path":"/tmp/x","content":"k"}}`, true},
+		{"input that is a string", `{"tool_name":"Bash","tool_input":"{\"command\":\"gh pr merge 1\"}"}`, true},
+		{"a command that is not a string", `{"tool_name":"Bash","tool_input":{"command":["gh","pr","merge","1"]}}`, true},
+		{"an argv holding a number", `{"tool_name":"local_shell","turn_id":"t","tool_input":{"command":["gh","pr","merge",1]}}`, true},
+		{"an ExitWorktree flag that is not a bool", `{"tool_name":"ExitWorktree","tool_input":{"action":"remove","discard_changes":"yes"}}`, true},
+		{"an event field of the wrong type", `{"tool_name":"Bash","session_id":5,"tool_input":{"command":"gh pr merge 1"}}`, true},
+		{"an event that is not JSON", `{"tool_name":"Bash","tool_input":{"command":"gh pr merge 1"`, true},
+		{"input with fields the guard does not read", `{"tool_name":"Bash","tool_input":{"command":"ls","description":"list","timeout":1000}}`, false},
+		{"a key differing only in case from one the guard does not read",
+			`{"tool_name":"Bash","tool_input":{"command":"ls","Description":"list"}}`, false},
+		{"an ExitWorktree that keeps", `{"tool_name":"ExitWorktree","tool_input":{"action":"keep"}}`, false},
+		{"a tool the guard does not read", `{"tool_name":"Read","tool_input":{"file_path":"/tmp/x","File_Path":"/tmp/y"}}`, false},
+	} {
+		t.Run(caseName(c.deny, c.name), func(t *testing.T) {
+			var out, errs bytes.Buffer
+			code := Main([]string{"--baseline"}, strings.NewReader(c.event), &out, &errs)
+			var decision struct {
+				HookSpecificOutput struct{ PermissionDecision, PermissionDecisionReason string }
+			}
+			json.Unmarshal(out.Bytes(), &decision)
+			reason := decision.HookSpecificOutput.PermissionDecisionReason
+			denied := decision.HookSpecificOutput.PermissionDecision == "deny"
+			if code == 2 {
+				denied, reason = true, strings.TrimSpace(errs.String())
+			} else if code != 0 {
+				t.Errorf("exit %d", code)
+			}
+			if denied != c.deny {
+				t.Errorf("%s: deny=%v, exit %d, printed %s%s", c.event, denied, code, out.String(), errs.String())
+			}
+			if denied && !saysInstead(reason) {
+				t.Errorf("%s: reason %q does not say what to do instead", c.event, reason)
+			}
+		})
+	}
+
+	// A WebSocket is judged by its URL, whatever its headers' keys, and
+	// never by one of two URLs.
+	for _, c := range []struct {
+		name, input string
+		unreadable  bool
+	}{
+		{"headers differing only in case", `{"ws":{"url":"wss://a.test/","headers":{"Content-Type":"a","content-type":"b"}}}`, false},
+		{"a URL behind a key differing only in case", `{"ws":{"url":"wss://a.test/","URL":"wss://b.test/"}}`, true},
+	} {
+		t.Run("WebSocket/"+c.name, func(t *testing.T) {
+			if reason := CheckBaseline("Monitor", "", json.RawMessage(c.input)); (reason == unreadable) != c.unreadable {
+				t.Errorf("%s: %q", c.input, reason)
+			}
+		})
+	}
+
+	// A denial that cannot be written to stdout goes to stderr with exit 2.
+	t.Run("deny/a denial stdout cannot take", func(t *testing.T) {
+		var errs bytes.Buffer
+		event := `{"tool_name":"Bash","tool_input":{"command":"gh pr merge 1"}}`
+		if code := Main([]string{"--baseline"}, strings.NewReader(event), failingWriter{}, &errs); code != 2 || !saysInstead(strings.TrimSpace(errs.String())) {
+			t.Errorf("exit %d, stderr %q", code, errs.String())
+		}
+	})
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("closed") }

@@ -105,10 +105,10 @@ func (s State) ask(provider string, now time.Time) string {
 // the file is created exclusively, so of sessions racing, one asks.
 func (s State) mark(name string) bool {
 	dir := filepath.Join(s.Dir, "asked")
-	if os.MkdirAll(dir, 0o755) != nil {
+	if os.MkdirAll(dir, 0o755) != nil { //nolint:gosec // the marks of quota asks made
 		return false
 	}
-	f, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644) //nolint:gosec // a mark: an ask was made
 	if err != nil {
 		return false
 	}

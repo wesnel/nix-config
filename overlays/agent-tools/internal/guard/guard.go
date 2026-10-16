@@ -12,6 +12,7 @@
 package guard
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,10 +20,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -85,7 +88,9 @@ func roleOf(agentType string, fallback role) role {
 // Main reads one hook event and writes a denial in the caller's format, or
 // nothing to let the call through. Without args, an agent without a role of
 // its own is a loop's coordinator; with `--baseline`, for the hook every
-// session runs, it is an ordinary session.
+// session runs, it is an ordinary session. An event it cannot read, or a
+// denial it cannot write, goes to stderr with exit 2, Claude Code's status
+// for a blocked call.
 func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fallback := coordinator
 	switch {
@@ -100,7 +105,8 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	var in input
 	if err := json.NewDecoder(stdin).Decode(&in); err != nil {
-		return 0
+		fmt.Fprintln(stderr, unreadable)
+		return 2
 	}
 	if in.Cwd == "" {
 		in.Cwd, _ = os.Getwd()
@@ -115,8 +121,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		var args struct {
 			Command string `json:"command"`
 		}
-		json.Unmarshal(in.ToolInput, &args)
-		if terminalReader(args.Command) {
+		if decode(in.ToolInput, &args) != nil {
+			reason = unreadable
+		} else if terminalReader(args.Command) {
 			reason = readsTerminal
 		}
 	}
@@ -127,7 +134,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		edit := in.ToolName == "Edit" || in.ToolName == "Write" || in.ToolName == "MultiEdit"
 		if fallback == baseline && edit && in.HookType == "" {
 			if context := branchHint(in.SessionID, in.ToolInput, in.Cwd); context != "" {
-				json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{
+				json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{ //nolint:gosec // context for a call that goes ahead either way
 					"hookEventName": "PreToolUse", "additionalContext": context}})
 			}
 		}
@@ -155,8 +162,106 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		out = map[string]any{"hookSpecificOutput": map[string]string{
 			"hookEventName": "PreToolUse", "permissionDecision": decision, "permissionDecisionReason": reason}}
 	}
-	json.NewEncoder(stdout).Encode(out)
+	if err := json.NewEncoder(stdout).Encode(out); err != nil {
+		fmt.Fprintln(stderr, reason)
+		return 2
+	}
 	return 0
+}
+
+// unreadable is why a call is denied whose event or input the guard cannot
+// read as the harness does.
+const unreadable = "The guard cannot read this call's input as the harness does, so it cannot check it. " +
+	"Make the call again with each argument given once, under its documented name and type, " +
+	"or put the command in your report for the operator."
+
+// decode reads a tool call's input into v, a pointer to a struct; its
+// caller denies the call on an error. Go matches a key to a field without
+// regard to case, by Unicode folding, and keeps the last of the keys that
+// match one field, where the harness reads keys exactly, so two keys that
+// fold alike to a field the guard decodes, at any depth, are an error: the
+// guard could read another value than the harness uses. An object decoded
+// into anything but a struct, or not decoded, is the harness's alone, such
+// as an environment or HTTP headers, and its keys may differ only in case.
+// A field decoded later from a json.RawMessage is not covered here.
+func decode(toolInput json.RawMessage, v any) error {
+	if err := distinctKeys(json.NewDecoder(bytes.NewReader(toolInput)), reflect.TypeOf(v)); err != nil {
+		return err
+	}
+	return json.Unmarshal(toolInput, v)
+}
+
+// distinctKeys reads one JSON value from d, decoded into t, or nil where
+// it is not decoded, failing on an object decoded into a struct that holds
+// two keys folding alike to one of its fields.
+func distinctKeys(d *json.Decoder, t reflect.Type) error {
+	for t != nil && t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	tok, err := d.Token()
+	if err != nil {
+		return err
+	}
+	switch tok {
+	case json.Delim('{'):
+		fields := map[string]reflect.Type{}
+		if t != nil && t.Kind() == reflect.Struct {
+			for i := range t.NumField() {
+				f := t.Field(i)
+				name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+				if !f.IsExported() || name == "-" {
+					continue
+				}
+				if name == "" {
+					name = f.Name
+				}
+				fields[fold(name)] = f.Type
+			}
+		}
+		seen := map[string]bool{}
+		for d.More() {
+			k, err := d.Token()
+			if err != nil {
+				return err
+			}
+			key := fold(k.(string))
+			field, read := fields[key]
+			if read && seen[key] {
+				return fmt.Errorf("the input gives %q twice, or another key differing only in case", k)
+			}
+			seen[key] = true
+			if err := distinctKeys(d, field); err != nil {
+				return err
+			}
+		}
+	case json.Delim('['):
+		var elem reflect.Type
+		if t != nil && (t.Kind() == reflect.Slice || t.Kind() == reflect.Array) {
+			elem = t.Elem()
+		}
+		for d.More() {
+			if err := distinctKeys(d, elem); err != nil {
+				return err
+			}
+		}
+	default:
+		return nil
+	}
+	_, err = d.Token()
+	return err
+}
+
+// fold is s with each rune replaced by the least rune it folds to, so two
+// keys fold alike exactly where bytes.EqualFold, and so encoding/json,
+// takes them as one.
+func fold(s string) string {
+	return strings.Map(func(r rune) rune {
+		least := r
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			least = min(least, f)
+		}
+		return least
+	}, s)
 }
 
 // CheckBaseline is Check for an ordinary session.
@@ -206,7 +311,9 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 			RunInBackground bool   `json:"run_in_background"`
 			Background      string `json:"background"`
 		}
-		json.Unmarshal(toolInput, &args)
+		if decode(toolInput, &args) != nil {
+			return unreadable
+		}
 		return command(args.Command, 0, who, dir, args.RunInBackground || args.Background != "")
 	case tool == "Monitor":
 		// Claude Code's Monitor runs a command in the background as Bash
@@ -217,7 +324,9 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 				URL string `json:"url"`
 			} `json:"ws"`
 		}
-		json.Unmarshal(toolInput, &args)
+		if decode(toolInput, &args) != nil {
+			return unreadable
+		}
 		if args.WS != nil {
 			return checkWebSocket(args.WS.URL)
 		}
@@ -229,14 +338,18 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 			Command          json.RawMessage `json:"command"`
 			WorkingDirectory string          `json:"working_directory"`
 		}
-		json.Unmarshal(toolInput, &args)
+		if decode(toolInput, &args) != nil {
+			return unreadable
+		}
 		if filepath.IsAbs(args.WorkingDirectory) {
 			dir = args.WorkingDirectory
 		}
 		var argv []string
 		if json.Unmarshal(args.Command, &argv) != nil {
 			var line string
-			json.Unmarshal(args.Command, &line)
+			if json.Unmarshal(args.Command, &line) != nil {
+				return unreadable
+			}
 			return command(line, 0, who, dir, false)
 		}
 		quoted := make([]string, len(argv))
@@ -251,7 +364,9 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 		var args struct {
 			Chars string `json:"chars"`
 		}
-		json.Unmarshal(toolInput, &args)
+		if decode(toolInput, &args) != nil {
+			return unreadable
+		}
 		if reason := command(args.Chars, 0, who, dir, true); reason != "" {
 			return typed + reason
 		}
@@ -540,7 +655,7 @@ const signing = "Signing needs the operator's hardware key. Leave the commits un
 
 const pushGuard = "Publishing private history in a public repository is the operator's decision. Leave push-guard.* alone, and name the repository and the commits in the report for the operator."
 
-const prLoopWrites = "Use `pr-loop push`, `reply`, `resolve`, `request` or `link`; any other write goes in the report for the operator."
+const prLoopWrites = "Use `pr-loop push`, `reply`, `resolve`, `request` or `link`; any other write goes in the report for the operator." //nolint:gosec // a refusal message, not a credential
 
 const alias = "A git alias can stand for any command, which the guard cannot check. Run the command itself, as `git <command>`."
 

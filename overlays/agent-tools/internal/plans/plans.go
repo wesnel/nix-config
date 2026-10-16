@@ -307,7 +307,7 @@ func planText(o NewOptions, id, host string, extra map[string]string, parent boo
 
 // writeNew writes a file that must not exist yet.
 func writeNew(path, text string) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644) //nolint:gosec // a plan or .gitignore: notes on the work, synced through git
 	if err != nil {
 		return err
 	}
@@ -342,7 +342,7 @@ func (c Config) Init() (Ready, error) {
 	if r.Cloned, r.Note, err = c.clone(); err != nil {
 		return r, err
 	}
-	if err := os.MkdirAll(c.Dir, 0o755); err != nil {
+	if err := os.MkdirAll(c.Dir, 0o755); err != nil { //nolint:gosec // the plans: notes on the work, synced through git
 		return r, err
 	}
 	err = writeNew(filepath.Join(c.Dir, ".gitignore"), ignore)

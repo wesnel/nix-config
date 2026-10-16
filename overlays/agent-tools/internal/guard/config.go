@@ -80,7 +80,7 @@ func loadSettings() settings {
 		Guard settings `json:"guard"`
 	}
 	if data, err := os.ReadFile(repos.Path()); err == nil {
-		json.Unmarshal(data, &file)
+		json.Unmarshal(data, &file) //nolint:gosec // the operator's file, which the guard denies agents' writes to
 	}
 	return file.Guard
 }

@@ -252,7 +252,7 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 		if path := newWorktree(g); path != "" {
 			if real, err := filepath.EvalSymlinks(path); err == nil && toplevel(real) == real {
 				if p, part, ok := at(g.dir); ok {
-					p.AddToProperty(part, "WORKTREES", real, now)
+					p.AddToProperty(part, "WORKTREES", real, now) //nolint:gosec // a best-effort record after the call ran; it decides nothing
 				}
 			}
 		}
@@ -280,7 +280,7 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 			value = start + ".." + name
 		}
 		if p, part, ok := at(g.dir); ok {
-			p.AddToProperty(part, "BRANCHES", value, now)
+			p.AddToProperty(part, "BRANCHES", value, now) //nolint:gosec // a best-effort record after the call ran; it decides nothing
 		}
 	}
 	who := pushers(command, 0)
@@ -294,15 +294,15 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 	for _, result := range jsonObjects(texts) {
 		if url, isURL := result["url"].(string); isURL && result["pr"] != nil {
 			branch, _ := result["branch"].(string)
-			p.AddToProperty(part, "PULL_REQUESTS", url, now)
-			p.Record(part, plans.Event{Kind: "pushed", Branch: branch, Summary: "opened " + url}, now)
+			p.AddToProperty(part, "PULL_REQUESTS", url, now)                                           //nolint:gosec // a best-effort record after the call ran; it decides nothing
+			p.Record(part, plans.Event{Kind: "pushed", Branch: branch, Summary: "opened " + url}, now) //nolint:gosec // as above
 			return
 		}
 	}
 	// pr-loop push logs its push itself.
 	delete(who, "pr-loop push")
 	if branches := pushedTo(texts); len(branches) > 0 && len(who) > 0 {
-		p.Record(part, plans.Event{Kind: "pushed", Summary: "pushed " + strings.Join(branches, " ")}, now)
+		p.Record(part, plans.Event{Kind: "pushed", Summary: "pushed " + strings.Join(branches, " ")}, now) //nolint:gosec // a best-effort record after the call ran; it decides nothing
 	}
 	return context
 }

@@ -81,7 +81,7 @@ func markSetUp(dir string) {
 		return
 	}
 	if marker, err := setupMarker(dir); err == nil {
-		_ = os.WriteFile(marker, []byte(head+"\n"), 0o644)
+		_ = os.WriteFile(marker, []byte(head+"\n"), 0o644) //nolint:gosec // a commit SHA, in the git directory
 	}
 }
 

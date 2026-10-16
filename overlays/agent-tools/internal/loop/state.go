@@ -92,7 +92,7 @@ func (s *State) save() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // the loop's branches and rounds, in the git directory
 		return err
 	}
 	data, err := json.MarshalIndent(s, "", "  ")
