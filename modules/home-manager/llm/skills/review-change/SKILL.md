@@ -96,6 +96,21 @@ commit, so that the receipt still matches once the branch is rebased.
 5. Stop after a round with no findings, or after three rounds. A finding
    still standing goes in the hand-back.
 
+## Focused reviews
+
+Each route the general review printed, or the plan's `REVIEWS` names,
+needs its own review once the general loop has settled: `git fresh-review
+--focus security --goal GOAL BASE..TIP`, the same range and goal. On exit 4,
+`--print-prompt --focus security` prints the prompt, and its reply goes to
+`--check FILE BASE..TIP` as in the loop: the focus comes from the prompt,
+never from the reply. Settle each finding as Triage says, with `--review
+<round>.<id>` from the review's `round` and the finding's `id`, such as
+`security-1`. A fix moves the change, so the general review and each
+route's run again on it, within the same three rounds. A route the change
+does not need is waived, with the reason the operator will read, by
+`agent-plan waive PLAN --route security --why TEXT`; never to get past a
+finding.
+
 ## Someone else's pull request
 
 The source is `pr-loop review`, not `git fresh-review`: it fetches the pull

@@ -3,11 +3,14 @@ package review
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,9 +27,9 @@ import (
 )
 
 // Usage is `git fresh-review -h`.
-const Usage = `usage: git fresh-review --goal FILE [--items FILE] [--prior FILE] [--reviewer auto|codex|subagent]
-                        [--model M] [--timeout S] BASE..TIP
-       git fresh-review --print-prompt --goal FILE [--items FILE] [--prior FILE] BASE..TIP
+const Usage = `usage: git fresh-review [--focus ROUTE] --goal FILE [--items FILE] [--prior FILE]
+                        [--reviewer auto|codex|subagent] [--model M] [--timeout S] BASE..TIP
+       git fresh-review --print-prompt [--focus ROUTE] --goal FILE [--items FILE] [--prior FILE] BASE..TIP
        git fresh-review --check FILE BASE..TIP
        git fresh-review ask --question FILE PATH...   (see git fresh-review ask -h)
 
@@ -66,7 +69,13 @@ subagent) prints, save its reply, and check that with --check, which prints
 and exits as a review does. The prompt asks for the commit it names as TIP
 in the reply, and --check takes TIP from there, refusing a reply without
 it, so a HEAD that moved since the prompt was printed is not counted as
-reviewed.
+reviewed. Where a plan takes the receipt, --print-prompt logs the prompt
+as review-issued with a nonce, its focus, range, tip and patch ID, and asks
+for the nonce in the reply as issued; --check takes the focus from that
+event, never from the reply, and refuses a nonce not issued here, one
+checked already, one issued for another range or tip, and one whose tip
+the range no longer contains or whose change has another patch ID now.
+--print-prompt with --focus is refused where no plan takes the receipt.
 
 A review that ran, by Codex or through --check, logs a review receipt in
 the plan its commits are logged in: the newest that names the worktree,
@@ -88,6 +97,16 @@ the plan's REVIEWS lost a route since the last routing. They are printed
 as routes, each with why and the commits that need it, stderr says how to
 run each, and a routed event logs them beside the receipt.
 
+With --focus ROUTE, the review is that route's focused review: the same
+runner, confinement and rules, with the route's checks and checklist in
+place of the general ones, no red-check and no routing. A security reply
+must name every category of its checklist as checked, or it is not
+counted. Its findings' ids start with the route, as security-1, and it
+logs a route receipt, which only meets that route and never counts as the
+general review, with the IDs of its findings; it prints its round, by
+which a finding-settled event names each finding.
+
+  --focus ROUTE    the focused review to run: security
   --goal FILE      the goal statement (required)
   --items FILE      the items the change answers, and how each was settled
   --prior FILE      earlier rounds' findings and how each was settled
@@ -103,7 +122,8 @@ id, path, line, kind, claim and evidence, and endLine, about, reopens and
 reviewer where given), dropped (findings whose path:line does not exist at
 TIP, or that do not fit the schema, each with its reason), unverified,
 rebutted (red-check's findings left out, each with id, commit, path and
-the rebuttal's reason) and, where the change needs any, routes. Exit
+the rebuttal's reason) and, where the change needs any, routes; a
+focused review adds focus and round. Exit
 status:
   0  no findings
   3  findings
@@ -130,6 +150,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	timeout := flags.Int("timeout", 1800, "")
 	printPrompt := flags.Bool("print-prompt", false, "")
 	check := flags.String("check", "", "")
+	focusName := flags.String("focus", "", "")
 
 	// Flags may follow the range, as with git's own commands.
 	var positional []string
@@ -153,6 +174,18 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	report := func(result any, err error, code int) int {
 		return cli.Report(name, result, err, code, stdout, stderr)
 	}
+	if *check != "" && *focusName != "" {
+		return report(nil, refusal.New("a reply's focus is the one its prompt was printed with, never the check's; "+
+			"run `git fresh-review --check FILE %s` without --focus", positional[0]), 0)
+	}
+	var fc *focus
+	if *focusName != "" {
+		f, err := focusNamed(*focusName)
+		if err != nil {
+			return report(nil, err, 0)
+		}
+		fc = &f
+	}
 	if err := git.CheckConfig(""); err != nil {
 		return report(nil, err, 0)
 	}
@@ -169,6 +202,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		if err != nil {
 			return report(nil, err, 0)
 		}
+		current := r.tip
 		tip, err := promptTip(reply, r)
 		if err != nil {
 			return report(nil, err, 0)
@@ -176,18 +210,29 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		if tip != "" {
 			r.tip = tip
 		}
-		out, err := validate(reply, r, "")
+		issued, err := issuedFor(reply, r, current)
 		if err != nil {
 			return report(nil, err, 0)
 		}
-		testAdequacy(ctx, r, true, stderr).add(out)
+		if issued.Focus != "" {
+			f := focuses[issued.Focus]
+			fc, *focusName = &f, issued.Focus
+		}
+		out, err := validate(reply, r, "", *focusName, fc)
+		if err != nil {
+			return report(nil, err, 0)
+		}
+		if fc == nil {
+			testAdequacy(ctx, r, true, stderr).add(out)
+		}
 		out.Reviewer = "subagent"
-		routeChange(r, out, stderr)
-		logReceipt(r, out, stderr)
-		return report(out, nil, out.exit())
+		return finish(r, out, *focusName, issued.Nonce, report, stderr)
 	}
 
 	in := inputs{r: r}
+	if fc != nil {
+		in.contract = fc.contract()
+	}
 	if *goal == "" {
 		return report(nil, refusal.New("a review is judged against a goal statement; write the goal, and what is not this change's job, "+
 			"to a file and pass `--goal FILE`"), 0)
@@ -210,10 +255,14 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		}
 	}
 
+	focusFlag := ""
+	if fc != nil {
+		focusFlag = "--focus " + *focusName + " "
+	}
 	noCodex := func(why string) int {
 		fmt.Fprintf(stderr, "%s: Codex cannot review here: %s. Review with a fresh `reviewer` sub-agent instead: "+
-			"give it the prompt `git fresh-review --print-prompt` prints for the same files and range, "+
-			"save its reply, and check it with `git fresh-review --check FILE %s`.\n", name, why, r.given)
+			"give it the prompt `git fresh-review %s--print-prompt` prints for the same files and range, "+
+			"save its reply, and check it with `git fresh-review --check FILE %s`.\n", name, why, focusFlag, r.given)
 		return 4
 	}
 	if !*printPrompt {
@@ -221,14 +270,24 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			return noCodex(why)
 		}
 	}
-	tests := testAdequacy(ctx, r, false, stderr)
-	in.redCheck, in.adequacy = tests.text, tests.prompt()+sharedPrompt(r)
+	tests := &adequacy{}
+	if fc == nil {
+		tests = testAdequacy(ctx, r, false, stderr)
+		in.redCheck, in.adequacy = tests.text, tests.prompt()+sharedPrompt(r)
+	}
 	if *printPrompt {
+		nonce, err := issue(r, *focusName)
+		if err != nil {
+			return report(nil, err, 0)
+		}
 		in.where = fmt.Sprintf("Read the change in the repository at %s: `git diff %s %s`, `git log -p %s..%s`, "+
 			"and `git show %s:PATH` for a file as it is at TIP. That checkout's own files may hold work that is not "+
 			"part of the change, so judge only the commits. Put `\"tip\": \"%s\"` in the JSON object you reply with, "+
 			"beside findings and unverified, so that the check of your reply knows which commit you reviewed.",
 			r.top, r.base, r.tip, r.base, r.tip, r.tip, r.tip)
+		if nonce != "" {
+			in.where += fmt.Sprintf(" Put `\"issued\": \"%s\"` beside it too, which names this prompt.", nonce)
+		}
 		fmt.Fprint(stdout, prompt(in))
 		if subagent {
 			fmt.Fprintf(stderr, "%s: give this prompt to a new `reviewer` sub-agent, save its reply, "+
@@ -237,7 +296,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		return 0
 	}
 
-	out, err := codexReview(ctx, in, *model, time.Duration(*timeout)*time.Second, stderr)
+	out, err := codexReview(ctx, in, *focusName, fc, *model, time.Duration(*timeout)*time.Second, stderr)
 	var unconfined Unconfined
 	if errors.As(err, &unconfined) {
 		return noCodex(string(unconfined))
@@ -246,9 +305,95 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		return report(nil, err, 0)
 	}
 	tests.add(out)
-	routeChange(r, out, stderr)
-	logReceipt(r, out, stderr)
+	return finish(r, out, *focusName, "", report, stderr)
+}
+
+// finish routes a general review's change, or numbers a focused review's
+// round, logs the review's receipt, and reports out.
+func finish(r *span, out *Output, focusName, nonce string, report func(any, error, int) int, log io.Writer) int {
+	if focusName == "" {
+		routeChange(r, out, log)
+	} else {
+		out.Focus = focusName
+		out.Round = plans.RouteRound(os.Getenv("CLAUDE_CODE_SESSION_ID"), r.top, focusName, r.given)
+		if len(out.Findings) > 0 {
+			var reviews []string
+			for _, f := range out.Findings {
+				reviews = append(reviews, fmt.Sprintf("`--review %d.%s`", out.Round, f.ID))
+			}
+			fmt.Fprintf(log, "%s: settle each finding as the review-change skill says, as %s; "+
+				"the gates wait for each while its receipt covers the change\n", name, strings.Join(reviews, ", "))
+		}
+	}
+	logReceipt(r, out, focusName, nonce, log)
 	return report(out, nil, out.exit())
+}
+
+// issue logs the prompt about to be printed for r, with focus, in the plan
+// a receipt of its reply would go to, and returns the nonce the reply must
+// carry; "" where no plan takes it. A focused review's receipt is what
+// meets its route, so its prompt is refused where there is no plan.
+func issue(r *span, focusName string) (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	nonce := hex.EncodeToString(b[:])
+	id, err := git.PatchID([]string{"-C", r.top}, r.base, r.tip)
+	if err != nil {
+		return "", err
+	}
+	file, err := plans.WriteIssued(os.Getenv("CLAUDE_CODE_SESSION_ID"), r.top,
+		plans.Issued{Nonce: nonce, Focus: focusName, Range: r.given, Tip: r.tip, PatchID: id}, time.Now())
+	switch {
+	case focusName != "" && err != nil:
+		return "", err
+	case focusName != "" && file == "":
+		return "", refusal.New("a %s review's receipt goes in the plan its commits are logged in, and no plan names this "+
+			"session or worktree. Start one with `agent-plan new`, as the plan-work skill says, then print the prompt again", focusName)
+	case err != nil || file == "":
+		return "", nil
+	}
+	return nonce, nil
+}
+
+// issuedFor is the issued prompt a sub-agent's reply names, checked: the
+// reply must carry the nonce of a prompt printed for the same range and
+// tip, not yet checked, whose tip current, the range's tip now, still
+// contains, and whose change still has the patch ID it was printed with.
+// A reply naming none is a general review's, as replies were before
+// prompts carried nonces.
+func issuedFor(reply string, r *span, current string) (plans.Issued, error) {
+	text := strings.TrimSpace(reply)
+	var parsed struct {
+		Issued string `json:"issued"`
+	}
+	start, end := strings.Index(text, "{"), strings.LastIndex(text, "}")
+	if start < 0 || end < start || json.Unmarshal([]byte(text[start:end+1]), &parsed) != nil || parsed.Issued == "" {
+		return plans.Issued{}, nil
+	}
+	again := fmt.Sprintf("print the prompt again with `git fresh-review --print-prompt` for %s, give it to a new reviewer, "+
+		"and check that reply", r.given)
+	i, checked, found := plans.FindIssued(os.Getenv("CLAUDE_CODE_SESSION_ID"), r.top, parsed.Issued)
+	switch {
+	case !found:
+		return plans.Issued{}, refusal.New("the reply's issued %q names no prompt printed in this session's or worktree's plan; %s",
+			parsed.Issued, again)
+	case checked:
+		return plans.Issued{}, refusal.New("the prompt %s was checked already, and a prompt's reply counts once; %s", i.Nonce, again)
+	case i.Range != r.given || i.Tip != r.tip:
+		return plans.Issued{}, refusal.New("the prompt %s was printed for %s at %s, not %s at %s; check the reply with "+
+			"`git fresh-review --check FILE %s`, or %s", i.Nonce, i.Range, i.Tip, r.given, r.tip, i.Range, again)
+	}
+	id, err := git.PatchID([]string{"-C", r.top}, r.base, i.Tip)
+	if err != nil {
+		return plans.Issued{}, err
+	}
+	if id != i.PatchID || !git.OK("-C", r.top, "merge-base", "--is-ancestor", i.Tip, current) {
+		return plans.Issued{}, refusal.New("the change has moved since the prompt %s was printed, so its reply reviews "+
+			"what is no longer there; %s", i.Nonce, again)
+	}
+	return i, nil
 }
 
 // promptTip is the commit a sub-agent's reply says it reviewed: the tip
@@ -283,7 +428,7 @@ func promptTip(reply string, r *span) (string, error) {
 // finds for r's worktree and the Claude Code session running it, which the
 // session's Stop hook compares with the change as it then stands; log
 // says where, or why none was logged.
-func logReceipt(r *span, out *Output, log io.Writer) {
+func logReceipt(r *span, out *Output, focusName, nonce string, log io.Writer) {
 	id, err := git.PatchID([]string{"-C", r.top}, r.base, r.tip)
 	file := ""
 	if err == nil {
@@ -291,14 +436,20 @@ func logReceipt(r *span, out *Output, log io.Writer) {
 		if out.Model != nil {
 			model = *out.Model
 		}
-		var raised []string
+		var raised, ids []string
 		for _, f := range out.Findings {
+			ids = append(ids, f.ID)
 			if f.Reviewer == "red-check" {
 				raised = append(raised, f.ID)
 			}
 		}
-		file, err = plans.WriteReceipt(os.Getenv("CLAUDE_CODE_SESSION_ID"), r.top, plans.Receipt{Range: r.given, Tip: r.tip,
-			PatchID: id, Reviewer: out.Reviewer, Model: model, Findings: len(out.Findings), Raised: raised}, time.Now())
+		receipt := plans.Receipt{Range: r.given, Tip: r.tip, PatchID: id, Reviewer: out.Reviewer, Model: model,
+			Findings: len(out.Findings), Raised: raised, Nonce: nonce}
+		if focusName != "" {
+			receipt.Focus, receipt.FindingIDs = focusName, ids
+			receipt.Branch, _ = git.Run("-C", r.top, "branch", "--show-current")
+		}
+		file, err = plans.WriteReceipt(os.Getenv("CLAUDE_CODE_SESSION_ID"), r.top, receipt, time.Now())
 	}
 	switch {
 	case err != nil:
@@ -390,6 +541,8 @@ type inputs struct {
 	// red-check's results.
 	adequacy string
 	where    string
+	// contract is a focused review's instructions, in place of Contract.
+	contract string
 }
 
 // prompt is the contract, then the range, the goal statement, the items, the
@@ -397,7 +550,11 @@ type inputs struct {
 // rebutted: nothing of the author's beyond them.
 func prompt(in inputs) string {
 	var b strings.Builder
-	b.WriteString(Contract)
+	if in.contract != "" {
+		b.WriteString(in.contract)
+	} else {
+		b.WriteString(Contract)
+	}
 	fmt.Fprintf(&b, "\n# This review\n\n## Range\n\nBASE..TIP is %s..%s (given as `%s`). Its commits, oldest first:\n\n%s\n\n%s\n",
 		in.r.base, in.r.tip, in.r.given, in.r.commits, in.where)
 	fmt.Fprintf(&b, "\n## Goal statement\n\n%s\n", strings.TrimSpace(in.goal))
@@ -434,12 +591,13 @@ func Prompt(in Inputs) string {
 // Validate is validate for a caller that resolves the range itself: blob
 // returns a file as it is at TIP, or an error where there is none.
 func Validate(reply, given, tip string, blob func(path string) ([]byte, error), wt string) (*Output, error) {
-	return validateWith(reply, given, tip, blob, wt)
+	return validateWith(reply, given, tip, blob, wt, "", nil)
 }
 
 // codexReview runs Codex read-only in a throwaway worktree of TIP, which it
 // removes however the review ends.
-func codexReview(ctx context.Context, in inputs, model string, timeout time.Duration, log io.Writer) (*Output, error) {
+func codexReview(ctx context.Context, in inputs, focusName string, fc *focus, model string, timeout time.Duration,
+	log io.Writer) (*Output, error) {
 	parent := filepath.Join(in.r.common, "fresh-review")
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return nil, err
@@ -460,11 +618,15 @@ func codexReview(ctx context.Context, in inputs, model string, timeout time.Dura
 	}
 	in.where = "The working directory is a checkout of TIP holding nothing but the commits; `git diff " +
 		in.r.base + " " + in.r.tip + "` shows the change."
-	reply, err := CodexRun(ctx, Codex{Checkout: wt, Prompt: prompt(in), Schema: Schema, Model: model, Timeout: timeout, Log: log})
+	schema := Schema
+	if fc != nil {
+		schema = fc.schema()
+	}
+	reply, err := CodexRun(ctx, Codex{Checkout: wt, Prompt: prompt(in), Schema: schema, Model: model, Timeout: timeout, Log: log})
 	if err != nil {
 		return nil, err
 	}
-	out, err := validate(reply.Text, in.r, wt)
+	out, err := validate(reply.Text, in.r, wt, focusName, fc)
 	if err != nil {
 		return nil, err
 	}
@@ -757,6 +919,10 @@ type Output struct {
 	// Routes are the focused reviews the change needs, where a general
 	// review found any.
 	Routes []routes.Route `json:"routes,omitempty"`
+	// Focus is a focused review's route, and Round its round in the
+	// plan: what a finding-settled event names its findings by.
+	Focus string `json:"focus,omitempty"`
+	Round int    `json:"round,omitempty"`
 	// proposed are the routes the reviewer's reply named.
 	proposed []proposedRoute
 }
@@ -781,15 +947,19 @@ var kinds = map[string]bool{"goal-unmet": true, "bug": true, "regression": true,
 // validate parses a reviewer's reply, which may be wrapped in prose or a
 // code fence, and keeps the findings that fit the schema and point at a line
 // that exists at TIP. A path inside wt, the checkout the reviewer read, is
-// made relative to it.
-func validate(reply string, r *span, wt string) (*Output, error) {
+// made relative to it. A focused review's reply, of focus fc named
+// focusName, may hold its kinds too, must name every category of its
+// checklist as checked, and has its findings' IDs prefixed with the
+// focus, so that settling one never names a general review's.
+func validate(reply string, r *span, wt, focusName string, fc *focus) (*Output, error) {
 	blob := func(path string) ([]byte, error) {
 		return git.Bytes(nil, "-C", r.top, "cat-file", "blob", r.tip+":"+path)
 	}
-	return validateWith(reply, r.given, r.tip, blob, wt)
+	return validateWith(reply, r.given, r.tip, blob, wt, focusName, fc)
 }
 
-func validateWith(reply, given, tip string, blob func(path string) ([]byte, error), wt string) (*Output, error) {
+func validateWith(reply, given, tip string, blob func(path string) ([]byte, error), wt, focusName string,
+	fc *focus) (*Output, error) {
 	text := strings.TrimSpace(reply)
 	start, end := strings.Index(text, "{"), strings.LastIndex(text, "}")
 	if start < 0 || end < start {
@@ -799,9 +969,22 @@ func validateWith(reply, given, tip string, blob func(path string) ([]byte, erro
 		Findings   *[]json.RawMessage `json:"findings"`
 		Unverified []string           `json:"unverified"`
 		Routes     []proposedRoute    `json:"routes"`
+		Checked    []string           `json:"checked"`
 	}
 	if err := json.Unmarshal([]byte(text[start:end+1]), &parsed); err != nil || parsed.Findings == nil {
 		return nil, fmt.Errorf("the reply is not the JSON the contract describes (%v); ask the reviewer again", err)
+	}
+	allowed := kinds
+	if fc != nil {
+		if left := fc.unchecked(parsed.Checked); len(left) > 0 {
+			return nil, fmt.Errorf("the reply does not name as checked the categories %s of its checklist; "+
+				"ask a new reviewer to go through every one", strings.Join(left, ", "))
+		}
+		allowed = maps.Clone(kinds)
+		for _, k := range fc.kinds {
+			allowed[k] = true
+		}
+		parsed.Routes = nil
 	}
 	out := &Output{Range: given, Tip: tip, Findings: []*Finding{}, Dropped: []Dropped{}, Unverified: []string{},
 		Rebutted: []Rebutted{}, proposed: parsed.Routes}
@@ -811,7 +994,10 @@ func validateWith(reply, given, tip string, blob func(path string) ([]byte, erro
 	seen := map[string]bool{}
 	lines := map[string]int{}
 	for _, raw := range *parsed.Findings {
-		f, why := normalise(raw, blob, wt, lines)
+		f, why := normalise(raw, blob, wt, lines, allowed)
+		if why == "" && focusName != "" {
+			f.ID = focusName + "-" + f.ID
+		}
 		if why == "" && seen[f.ID] {
 			why = "another finding has the id " + f.ID
 		}
@@ -827,7 +1013,8 @@ func validateWith(reply, given, tip string, blob func(path string) ([]byte, erro
 
 // normalise checks one finding, returning it cleaned up or why it is
 // dropped. lines caches each file's line count at TIP, -1 for no such file.
-func normalise(raw json.RawMessage, blob func(path string) ([]byte, error), wt string, lines map[string]int) (*Finding, string) {
+func normalise(raw json.RawMessage, blob func(path string) ([]byte, error), wt string, lines map[string]int,
+	kinds map[string]bool) (*Finding, string) {
 	var f Finding
 	if err := json.Unmarshal(raw, &f); err != nil {
 		return nil, "does not fit the schema: " + err.Error()

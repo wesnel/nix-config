@@ -86,6 +86,88 @@ func WriteRouted(session, top string, r Routed, now time.Time) (string, error) {
 	return p.File(), nil
 }
 
+// Issued is a review's prompt printed for a reviewer whose reply comes
+// back through a check: the nonce the reply must carry, and the focus,
+// range, tip and patch ID it was printed for, which the check takes from
+// here rather than from the reply.
+type Issued struct {
+	Nonce, Focus, Range, Tip, PatchID string
+}
+
+// WriteIssued logs i in the plan Locate finds for session and the worktree
+// at top, and returns that plan's file, or "" where no plan names either.
+func WriteIssued(session, top string, i Issued, now time.Time) (string, error) {
+	c, err := Load()
+	if err != nil {
+		return "", err
+	}
+	p, part, ok := c.Locate(session, top)
+	if !ok {
+		return "", nil
+	}
+	what := i.Focus
+	if what == "" {
+		what = "general"
+	}
+	if _, err := p.Record(part, Event{Kind: issuedKind, Nonce: i.Nonce, Focus: i.Focus, Range: i.Range, Tip: i.Tip,
+		PatchID: i.PatchID, Summary: what + " review of " + i.Range}, now); err != nil {
+		return "", err
+	}
+	return p.File(), nil
+}
+
+// FindIssued is the prompt issued with nonce in the plan Locate finds for
+// session and the worktree at top, whether a receipt already names it,
+// and whether there is one.
+func FindIssued(session, top, nonce string) (i Issued, checked, found bool) {
+	c, err := Load()
+	if err != nil || nonce == "" {
+		return Issued{}, false, false
+	}
+	p, _, ok := c.Locate(session, top)
+	if !ok {
+		return Issued{}, false, false
+	}
+	events, err := p.Events()
+	if err != nil {
+		return Issued{}, false, false
+	}
+	for _, e := range events {
+		switch {
+		case e.Kind == issuedKind && e.Nonce == nonce && !found:
+			i, found = Issued{Nonce: e.Nonce, Focus: e.Focus, Range: e.Range, Tip: e.Tip, PatchID: e.PatchID}, true
+		case (e.Kind == receiptKind || e.Kind == routeReceiptKind) && e.Nonce == nonce:
+			checked = true
+		}
+	}
+	return i, checked, found
+}
+
+// RouteRound is the round a review of focus of the range given would be in
+// the plan Locate finds for session and the worktree at top: one more than
+// its route receipts of that focus and range.
+func RouteRound(session, top, focus, given string) int {
+	c, err := Load()
+	if err != nil {
+		return 1
+	}
+	p, _, ok := c.Locate(session, top)
+	if !ok {
+		return 1
+	}
+	events, err := p.Events()
+	if err != nil {
+		return 1
+	}
+	round := 1
+	for _, e := range events {
+		if e.Kind == routeReceiptKind && e.Focus == focus && e.Range == given {
+			round++
+		}
+	}
+	return round
+}
+
 // ReviewsRemoved are the routes REVIEWS lost, in the log of the plan Locate
 // finds for session and the worktree at top, since that log's last routed
 // event: a route taken out is a change of what reviews the change, which
