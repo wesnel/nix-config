@@ -2,7 +2,6 @@ package plans
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -20,6 +19,8 @@ type Step struct {
 	Abandoned bool     `json:"abandoned,omitempty"`
 	Commits   []string `json:"commits,omitempty"`
 	Tokens    int64    `json:"tokens,omitempty"`
+	// Keyword is the keyword the log gives the step.
+	Keyword string `json:"keyword"`
 }
 
 // Status is a plan's progress: its steps, which are the items whose IDs are
@@ -106,7 +107,7 @@ func (p Plan) readySteps(isSettled func(string) bool, events []Event, now time.T
 	}
 	out := []string{}
 	for _, f := range files {
-		data, err := os.ReadFile(f)
+		data, err := readPlan(f)
 		if err != nil {
 			return nil, err
 		}
@@ -207,7 +208,7 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	data, err := os.ReadFile(p.file(""))
+	data, err := readPlan(p.file(""))
 	if err != nil {
 		return Status{}, err
 	}
@@ -255,7 +256,7 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 			continue
 		}
 		index[it.ID] = len(s.Steps)
-		s.Steps = append(s.Steps, Step{ID: it.ID, Title: it.Title, Part: it.Part})
+		s.Steps = append(s.Steps, Step{ID: it.ID, Title: it.Title, Part: it.Part, Keyword: stepState(events, it.ID)})
 	}
 	for _, e := range events {
 		part := partOf[e.Item]

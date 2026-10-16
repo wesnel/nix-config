@@ -482,7 +482,7 @@ func digest(data []byte) string {
 
 // Events reads the plan's log, oldest first.
 func (p Plan) Events() ([]Event, error) {
-	data, err := os.ReadFile(p.log())
+	data, err := readPlan(p.log())
 	if err != nil {
 		return nil, err
 	}
