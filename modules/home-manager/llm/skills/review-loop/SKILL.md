@@ -18,19 +18,28 @@ current session.
   branch you were pointed at:
 
   ```sh
-  log="$(git rev-parse --git-common-dir)/pr-loop-session"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/pr-loop-session"
   claude-pr-loop -p "Run the review loop on <branch>." \
     --output-format stream-json --verbose \
     < /dev/null > "$log.jsonl" 2> "$log.err"
   ```
 
-  Tell the operator it has started and where the logs are. Leave the repository
-  alone until it exits: the loop detaches the main worktree and works in
-  `.pr-loop/`. When it exits, show
+  Tell the operator it has started, and give them, with the repository's
+  path filled in:
+  - the logs, `$log.jsonl` and `$log.err`;
+  - `cd <repository> && pr-loop watch`, which follows the session's
+    progress from any terminal (`--from-start` for all of it; an interrupt
+    stops only the watching);
+  - `cd <repository> && pr-loop stop`, which ends the session, cleans up
+    and writes a report of what is left.
+
+  Leave the repository alone until it exits: the loop detaches the main
+  worktree and works in `.pr-loop/`. When it exits, show
   `$(git rev-parse --git-common-dir)/pr-loop/report.md`, or the end of the
   log if there is no report.
 - **Elsewhere:** stop and tell the operator to start `codex-pr-loop`, or
-  `M-x wgn/eca-pr-loop` with the `pr-coordinator` agent.
+  `M-x wgn/eca-pr-loop` with the `pr-coordinator` agent. `pr-loop stop` in
+  the repository also ends a `codex-pr-loop` session.
 
 Commit as the `signing-pass` skill says: unsigned, never pushing or signing
 yourself, with one signing pass at the end. In the loop's worktrees signing is

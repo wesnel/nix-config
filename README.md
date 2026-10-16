@@ -370,6 +370,11 @@ Then, in the repository, start one of:
   switch changes it;
 - `M-x wgn/eca-pr-loop`, then choose the `pr-coordinator` agent.
 
+`pr-loop watch` in the repository follows a headless session's log as it
+grows, and `pr-loop stop` ends a `claude-pr-loop` or `codex-pr-loop`
+session early, cleans up after it and writes `.git/pr-loop/report.md`
+saying what is left.
+
 Each runs the agent's commands in a sandbox without credentials, beside a
 `sandbox-relay` that runs `pr-loop` on this machine with your `gh` login, and
 `claude-pr-loop` and `codex-pr-loop` also `agent-plan`'s reading commands and
