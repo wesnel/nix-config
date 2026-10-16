@@ -91,9 +91,10 @@ func WriteRouted(session, top string, r Routed, now time.Time) (string, error) {
 // Issued is a review's prompt printed for a reviewer whose reply comes
 // back through a check: the nonce the reply must carry, and the focus,
 // range, tip and patch ID it was printed for, which the check takes from
-// here rather than from the reply.
+// here rather than from the reply, and for a claims audit the hash of the
+// claims it was printed for.
 type Issued struct {
-	Nonce, Focus, Range, Tip, PatchID string
+	Nonce, Focus, Range, Tip, PatchID, Claims string
 }
 
 // WriteIssued logs i in the plan LocateCheckout finds for session and the
@@ -112,7 +113,7 @@ func WriteIssued(session, top string, i Issued, now time.Time) (string, error) {
 		what = "general"
 	}
 	if _, err := p.Record(part, Event{Kind: issuedKind, Nonce: i.Nonce, Focus: i.Focus, Range: i.Range, Tip: i.Tip,
-		PatchID: i.PatchID, Summary: what + " review of " + i.Range}, now); err != nil {
+		PatchID: i.PatchID, Claims: i.Claims, Summary: what + " review of " + i.Range}, now); err != nil {
 		return "", err
 	}
 	return p.File(), nil
@@ -137,7 +138,7 @@ func FindIssued(session, top, nonce string) (i Issued, checked, found bool) {
 	for _, e := range events {
 		switch {
 		case e.Kind == issuedKind && e.Nonce == nonce && !found:
-			i, found = Issued{Nonce: e.Nonce, Focus: e.Focus, Range: e.Range, Tip: e.Tip, PatchID: e.PatchID}, true
+			i, found = Issued{Nonce: e.Nonce, Focus: e.Focus, Range: e.Range, Tip: e.Tip, PatchID: e.PatchID, Claims: e.Claims}, true
 		case (e.Kind == receiptKind || e.Kind == routeReceiptKind) && e.Nonce == nonce:
 			checked = true
 		}

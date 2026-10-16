@@ -219,10 +219,12 @@ type Receipt struct {
 	// at after a rewrite.
 	Focus, Branch string
 	// FindingIDs are a route receipt's findings, which the gates want
-	// settled.
+	// settled; a claims audit's are the claims it found unsupported.
 	FindingIDs []string
 	// Nonce is the issued review the reply answered, for a check of one.
 	Nonce string
+	// Claims is a claims audit's claims.Hash.
+	Claims string
 }
 
 // ReceiptKind is the kind of the event Receipt logs for a general review.
@@ -237,7 +239,7 @@ const receiptKind = "review-receipt"
 func (p Plan) Receipt(part string, r Receipt, now time.Time) (Event, error) {
 	e := Event{Kind: receiptKind, Range: r.Range, Tip: r.Tip, PatchID: r.PatchID, Agent: r.Reviewer,
 		Model: r.Model, Summary: fmt.Sprintf("%s: %d findings", r.Range, r.Findings), Raised: strings.Join(r.Raised, " "),
-		Nonce: r.Nonce}
+		Nonce: r.Nonce, Claims: r.Claims}
 	if r.Focus != "" {
 		e.Kind, e.Focus, e.Branch, e.Findings = routeReceiptKind, r.Focus, r.Branch, strings.Join(r.FindingIDs, " ")
 		e.Summary = r.Focus + " " + e.Summary

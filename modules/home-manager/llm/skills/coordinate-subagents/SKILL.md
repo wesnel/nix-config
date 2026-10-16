@@ -257,6 +257,12 @@ Before relaying a report, confirm it:
   subject is in that log.
 - The specific tests it cites pass when you run them; whole suites are left
   to CI and the part's own `git red-check` run.
+- Its commands and their results hold up against this host's evidence log:
+  save that part of the report to a file and run `git fresh-review audit
+  --claims FILE <base>..<branch>` from its worktree. A Claude Code
+  sub-agent's calls are in your session's log; for a harness that gives a
+  sub-agent a session of its own, add `--session ID`. Relay a claim the
+  audit finds unsupported as unverified, never as done.
 
 Once a report passes, log `done` for its part's ID, which marks its
 heading `DONE` and readies the parts that wait for it. Relay only what you

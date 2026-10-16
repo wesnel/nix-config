@@ -1,0 +1,145 @@
+// Package claims reads the verification claims of a pull request's
+// description or a sub-agent's report: what the author says was run and
+// seen, beyond what CI shows. `git fresh-review audit` judges them against
+// the evidence log, and the gates on opening or editing a pull request
+// look for its receipt by their hash.
+package claims
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"regexp"
+	"strings"
+)
+
+// Heading is the heading of a description's verification claims, which
+// the pull-requests skill names.
+const Heading = "Verification beyond CI"
+
+var (
+	heading = regexp.MustCompile(`^(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$`)
+	fence   = regexp.MustCompile("^[ \t]{0,3}(```|~~~)")
+	// item is a top-level list item's marker, with the space after it.
+	item = regexp.MustCompile(`^(?:[-*+]|[0-9]{1,9}[.)])[ \t]+`)
+	// comment is an HTML comment, as a template leaves under a heading.
+	comment = regexp.MustCompile(`(?s)<!--.*?-->`)
+)
+
+// placeholders are what a section says when it has no claims, once
+// emphasis, code marks and a full stop are off and in lower case.
+var placeholders = map[string]bool{"none": true, "n/a": true, "na": true, "nothing": true, "-": true, "—": true}
+
+// Section is the text under text's Heading, of any level and in any case,
+// up to the next heading of its level or above outside a code fence, and
+// whether text has the heading.
+func Section(text string) (string, bool) {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	level, start := 0, -1
+	inFence := false
+	for i, line := range lines {
+		if fence.MatchString(line) {
+			inFence = !inFence
+			continue
+		}
+		m := heading.FindStringSubmatch(line)
+		if inFence || m == nil {
+			continue
+		}
+		switch {
+		case start < 0 && strings.EqualFold(m[2], Heading):
+			level, start = len(m[1]), i+1
+		case start >= 0 && len(m[1]) <= level:
+			return strings.Join(lines[start:i], "\n"), true
+		}
+	}
+	if start < 0 {
+		return "", false
+	}
+	return strings.Join(lines[start:], "\n"), true
+}
+
+// Parse is the claims of text: each top-level list item, with the lines
+// that continue it, less its marker and the indent its content takes, and
+// each other paragraph or fenced block. A heading, an HTML comment and a
+// placeholder such as "None." are none.
+func Parse(text string) []string {
+	var out, cur []string
+	indent := 0 // the content indent of the item being read, 0 outside one
+	inFence, blank := false, false
+	flush := func() {
+		for len(cur) > 0 && strings.TrimSpace(cur[len(cur)-1]) == "" {
+			cur = cur[:len(cur)-1]
+		}
+		if c := strings.Join(cur, "\n"); len(cur) > 0 && !placeholders[strings.ToLower(strings.Trim(c, "_*`. \t"))] {
+			out = append(out, c)
+		}
+		cur, indent = nil, 0
+	}
+	text = comment.ReplaceAllString(strings.ReplaceAll(text, "\r\n", "\n"), "")
+	for _, line := range strings.Split(text, "\n") {
+		lead := len(line) - len(strings.TrimLeft(line, " \t"))
+		switch {
+		case inFence:
+			cur = append(cur, dedent(line, indent))
+			inFence = !fence.MatchString(strings.TrimLeft(line, " \t"))
+			continue
+		case strings.TrimSpace(line) == "":
+			if indent == 0 {
+				flush()
+			} else {
+				cur = append(cur, "")
+			}
+			blank = true
+			continue
+		case lead == 0 && heading.MatchString(line):
+			flush()
+		case lead == 0 && item.MatchString(line):
+			flush()
+			marker := item.FindString(line)
+			cur, indent = []string{line[len(marker):]}, len(marker)
+		case indent > 0 && lead >= indent:
+			cur = append(cur, dedent(line, indent))
+		case indent > 0 && !blank:
+			// A lazy continuation of the item's paragraph.
+			cur = append(cur, strings.TrimLeft(line, " \t"))
+		default:
+			if indent > 0 || blank {
+				flush()
+			}
+			cur = append(cur, line)
+		}
+		inFence = fence.MatchString(strings.TrimLeft(line, " \t")) && !inFence
+		blank = false
+	}
+	flush()
+	return out
+}
+
+// dedent is line less up to n columns of leading spaces.
+func dedent(line string, n int) string {
+	for i := 0; i < n && strings.HasPrefix(line, " "); i++ {
+		line = line[1:]
+	}
+	return line
+}
+
+// Of is the claims an audit of text takes: those of its Heading's section,
+// where it has one, else all of it, as a sub-agent's report gives them.
+func Of(text string) []string {
+	if section, ok := Section(text); ok {
+		return Parse(section)
+	}
+	return Parse(text)
+}
+
+// Hash is the hash of claims, in order, each with its whitespace
+// collapsed, so that rewrapping a description keeps it and changing what a
+// claim says does not.
+func Hash(claims []string) string {
+	h := sha256.New()
+	for _, c := range claims {
+		h.Write([]byte(strings.Join(strings.Fields(c), " ")))
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
