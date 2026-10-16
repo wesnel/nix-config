@@ -61,7 +61,7 @@ printed on stderr and fails nothing.
                               runs the setup command in each one whose HEAD moved since its last setup
   setup [PATH]                run the setup command in the worktree at PATH (default: this one)
   setup-command               the setup command configured for this repository
-  push [--dry-run] [BRANCH...]  push through the GitHub API, atomically
+  push [--dry-run] [BRANCH...]  push through the GitHub API, a branch at a time, bottom up
   threads [--all] PR          unresolved review threads, labelled by bot
   reply THREAD --body-file F  reply inside a review thread (- reads stdin)
   reply --from F              post the replies in a reply file (- reads stdin)

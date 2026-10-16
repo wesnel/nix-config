@@ -38,7 +38,7 @@ func TestRun(t *testing.T) {
 		if _, err := RunEnv([]string{"GIT_AUTHOR_NAME=T"}, "-C", repo, "config", "test.env", "1"); err != nil {
 			t.Fatal(err)
 		}
-		if code := Attached(nil, "-C", repo, "config", "test.attached", "1"); code != 0 {
+		if code := Attached(t.Context(), nil, "-C", repo, "config", "test.attached", "1"); code != 0 {
 			t.Fatalf("attached: exit %d", code)
 		}
 		useDir(t, repo)

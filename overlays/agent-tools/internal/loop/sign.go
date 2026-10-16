@@ -1,19 +1,23 @@
 package loop
 
 import (
+	gocontext "context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/plans"
+	"github.com/wesnel/agent-tools/internal/sshmux"
 )
 
 // Sign squashes the loop's fixups into the PR's own commits, signs every
-// commit with the hardware key, and pushes the stack over SSH. It refuses to
-// push unless every branch ends with exactly its original commits and exactly
-// the files the loop left it with.
+// commit with the hardware key, and pushes the stack over SSH, one branch per
+// push, bottom up. It refuses to push unless every branch ends with exactly
+// its original commits and exactly the files the loop left it with.
 func Sign(resume, noPush bool) (any, error) {
 	state, err := loadState(true)
 	if err != nil {
@@ -36,6 +40,11 @@ func Sign(resume, noPush bool) (any, error) {
 	} else {
 		if err := signable(state); err != nil {
 			return nil, err
+		}
+		if !noPush {
+			if err := sshmux.Check("run `pr-loop sign` again"); err != nil {
+				return nil, err
+			}
 		}
 		parent, err := state.parentRef(repo, branches[0])
 		if err != nil {
@@ -67,7 +76,7 @@ func Sign(resume, noPush bool) (any, error) {
 			return nil, err
 		}
 		fmt.Fprintln(os.Stderr, "squashing and signing; touch the key for each commit when it blinks")
-		code := git.Attached(noEditor, "rebase", "-i", "--autosquash", "--force-rebase",
+		code := git.Attached(gocontext.Background(), noEditor, "rebase", "-i", "--autosquash", "--force-rebase",
 			"--gpg-sign", "--update-refs", upstream, top)
 		if code != 0 {
 			return nil, fmt.Errorf("the rebase stopped, usually at a missed key touch. Run `git rebase --continue` " +
@@ -108,27 +117,39 @@ func Sign(resume, noPush bool) (any, error) {
 		return result, nil
 	}
 
-	args := []string{"push", "--atomic"}
-	for _, b := range branches {
-		args = append(args, fmt.Sprintf("--force-with-lease=refs/heads/%s:%s", b, state.Branches[b].RemoteOid))
+	// One branch per push, bottom up: GitHub starts a pull request's
+	// workflows twice when one push moves it and its base together. The
+	// pushes share one SSH login, and each branch pushed is recorded at once,
+	// so --resume pushes only the rest. SIGINT or SIGTERM stops the push and
+	// returns, so the shared login is closed instead of left to persist.
+	retry := "rerun `pr-loop sign --resume`"
+	ctx, stop := signal.NotifyContext(gocontext.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	mux, err := sshmux.Open(retry)
+	if err != nil {
+		return nil, err
 	}
-	args = append(args, fmt.Sprintf("git@github.com:%s.git", state.Repo))
-	for _, b := range branches {
-		args = append(args, "refs/heads/"+b+":refs/heads/"+b)
-	}
-	fmt.Fprintln(os.Stderr, "pushing over SSH; touch the key when it blinks")
-	if git.Attached(nil, args...) != 0 {
-		return nil, fmt.Errorf("the signed push failed; rerun `pr-loop sign --resume` to retry it")
-	}
+	defer mux.Close()
+	url := fmt.Sprintf("git@github.com:%s.git", state.Repo)
 	pushed := map[string]string{}
 	for _, b := range branches {
 		oid, err := git.Run("rev-parse", "refs/heads/"+b)
 		if err != nil {
 			return nil, err
 		}
-		state.Branches[b].RemoteOid = oid
-		if err := recordTracking(repo, b, oid); err != nil {
-			return nil, err
+		if oid != state.Branches[b].RemoteOid {
+			fmt.Fprintf(os.Stderr, "pushing %s over SSH; touch the key if it blinks\n", b)
+			if git.Attached(ctx, mux.Env(0), "push", fmt.Sprintf("--force-with-lease=refs/heads/%s:%s", b, state.Branches[b].RemoteOid),
+				url, "refs/heads/"+b+":refs/heads/"+b) != 0 {
+				return nil, fmt.Errorf("the signed push of %s failed; %s to retry it and push the branches above it", b, retry)
+			}
+			state.Branches[b].RemoteOid = oid
+			if err := recordTracking(repo, b, oid); err != nil {
+				return nil, err
+			}
+			if err := state.save(); err != nil {
+				return nil, err
+			}
 		}
 		pushed[b] = oid
 	}
