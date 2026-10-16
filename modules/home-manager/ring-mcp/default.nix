@@ -18,14 +18,16 @@ with lib; let
       mcpProxy.endpoints);
   });
 
-  # Buildkite's read-only endpoint still hands out credentials, and an
-  # answer is shown in the phone app's feed.
-  deniedTools = [
-    "mcp__buildkite__access_token"
-    "mcp__buildkite__get_cluster_secret"
-    "mcp__buildkite__list_cluster_secrets"
-    "mcp__buildkite__get_job_env"
-  ];
+  # --restricted skips the guard, so this list is the only gate on what
+  # the proxy serves: the guard's reads for each server, never its
+  # confirmed writes, and nothing from a server mcp.json does not list.
+  allowedTools =
+    ["Read" "Grep" "Glob"]
+    ++ optionals mcpProxy.enable (concatMap (
+      name:
+        map (tool: "mcp__${name}__${tool}")
+        ((pkgs.agent-tools.mcpTools.${name} or {}).reads or [])
+    ) (attrNames mcpProxy.endpoints));
 
   systemPrompt = ''
     The question was spoken into a ring, and your answer is read on a phone
@@ -46,10 +48,9 @@ with lib; let
       "--strict-mcp-config"
       "--mcp-config"
       "${mcpConfig}"
-      "--disallowedTools"
+      "--allowedTools"
     ]
-    ++ deniedTools
-    ++ optionals mcpProxy.enable (["--allowedTools"] ++ map (name: "mcp__${name}") (attrNames mcpProxy.endpoints))
+    ++ allowedTools
     ++ [
       "--permission-mode"
       "dontAsk"
