@@ -207,7 +207,7 @@ func rehearse(state *State, signing *Signing) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // holds checkouts of the repository, in its git directory
 		return err
 	}
 	scratch, err := os.MkdirTemp(dir, "rehearsal-")

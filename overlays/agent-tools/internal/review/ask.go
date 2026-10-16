@@ -210,7 +210,7 @@ func codexAsk(ctx context.Context, top, text string, files []string, model strin
 		return nil, err
 	}
 	parent := filepath.Join(common, "fresh-review")
-	if err := os.MkdirAll(parent, 0o755); err != nil {
+	if err := os.MkdirAll(parent, 0o755); err != nil { //nolint:gosec // holds copies of the repository's files, in its git directory
 		return nil, err
 	}
 	dir, err := os.MkdirTemp(parent, "ask-")
@@ -229,7 +229,7 @@ func codexAsk(ctx context.Context, top, text string, files []string, model strin
 			return nil, err
 		}
 		to := filepath.Join(tree, filepath.FromSlash(f))
-		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil { //nolint:gosec // holds copies of the repository's files, in its git directory
 			return nil, err
 		}
 		if err := os.WriteFile(to, data, 0o644); err != nil { //nolint:gosec // named refuses an f that leaves the repository, so to stays in tree

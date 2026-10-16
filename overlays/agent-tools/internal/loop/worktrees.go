@@ -53,10 +53,10 @@ func Worktrees(remove bool) (any, error) {
 	exclude := filepath.Join(common, "info", "exclude")
 	current, _ := os.ReadFile(exclude)
 	if !strings.Contains(string(current), "/.pr-loop/\n") {
-		if err := os.MkdirAll(filepath.Dir(exclude), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(exclude), 0o755); err != nil { //nolint:gosec // git's own info directory, made as git makes it
 			return nil, err
 		}
-		f, err := os.OpenFile(exclude, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		f, err := os.OpenFile(exclude, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // git's own exclude file, made as git makes it
 		if err != nil {
 			return nil, err
 		}
