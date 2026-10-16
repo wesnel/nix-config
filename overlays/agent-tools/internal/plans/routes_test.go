@@ -514,3 +514,76 @@ func TestRoutesInStatus(t *testing.T) {
 		t.Errorf("org:\n%s", s.Org())
 	}
 }
+
+// A review where no plan names the session or the worktree, as one run
+// through the relay for a review loop, belongs to the plan that names the
+// branch checked out.
+func TestLocateCheckout(t *testing.T) {
+	// planned makes a plan named slug of the branch loop at when, in
+	// repos where any are given.
+	planned := func(t *testing.T, c Config, slug string, when time.Time, repos ...string) string {
+		t.Helper()
+		made, err := c.New(NewOptions{Title: "Add the loop", Slug: slug, Repos: repos, Branches: []string{"main..loop"}}, when)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return made.Plan
+	}
+	located := func(t *testing.T, c Config, repo string) string {
+		t.Helper()
+		p, _, ok := c.LocateCheckout("", repo)
+		if !ok {
+			return ""
+		}
+		return p.File()
+	}
+
+	t.Run("branch checked out", func(t *testing.T) {
+		c := testConfig(t)
+		repo, _ := routeRepo(t)
+		want := planned(t, c, "loop", day)
+		if got := located(t, c, repo); got != want {
+			t.Errorf("found %q, want %s", got, want)
+		}
+		gitIn(t, repo, "checkout", "-q", "--detach")
+		if got := located(t, c, repo); got != "" {
+			t.Errorf("a detached HEAD found %s", got)
+		}
+	})
+
+	// Of plans made the same day, the one made last, whatever its name.
+	t.Run("newest", func(t *testing.T) {
+		c := testConfig(t)
+		repo, _ := routeRepo(t)
+		planned(t, c, "zother", day)
+		want := planned(t, c, "amine", day.Add(time.Hour))
+		if got := located(t, c, repo); got != want {
+			t.Errorf("found %s, want %s", got, want)
+		}
+	})
+
+	// A plan of the same branch name in another repository is never this
+	// one's, and one naming this repository goes before one naming none.
+	t.Run("repositories", func(t *testing.T) {
+		c := testConfig(t)
+		repo, _ := routeRepo(t)
+		gitIn(t, repo, "remote", "add", "origin", "https://github.com/o/here.git")
+		want := planned(t, c, "here", day, "O/Here")
+		planned(t, c, "none", day.Add(time.Hour))
+		planned(t, c, "elsewhere", day.Add(2*time.Hour), "o/elsewhere")
+		if got := located(t, c, repo); got != want {
+			t.Errorf("found %s, want %s", got, want)
+		}
+	})
+
+	// A finished plan takes nothing more.
+	t.Run("finished", func(t *testing.T) {
+		c := testConfig(t)
+		repo, _ := routeRepo(t)
+		want := planned(t, c, "open", day)
+		setProp(t, planned(t, c, "zhalted", day.Add(time.Hour)), "STATUS", "halted")
+		if got := located(t, c, repo); got != want {
+			t.Errorf("found %s, want %s", got, want)
+		}
+	})
+}

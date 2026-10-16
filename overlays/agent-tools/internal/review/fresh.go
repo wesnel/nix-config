@@ -24,6 +24,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/redact"
 	"github.com/wesnel/agent-tools/internal/refusal"
+	"github.com/wesnel/agent-tools/internal/relay"
 	"github.com/wesnel/agent-tools/internal/repos"
 	"github.com/wesnel/agent-tools/internal/routes"
 )
@@ -82,8 +83,8 @@ the range no longer contains or whose change has another patch ID now.
 A review that ran, by Codex or through --check, logs a review receipt in
 the plan its commits are logged in: the newest that names the worktree,
 else the one that names the Claude Code session running it
-(CLAUDE_CODE_SESSION_ID). The receipt holds BASE..TIP as given, TIP's
-commit, and the patch ID
+(CLAUDE_CODE_SESSION_ID), else the newest that names the branch checked
+out. The receipt holds BASE..TIP as given, TIP's commit, and the patch ID
 of the change from BASE to TIP. agent-plan stop-check compares it with the
 change as it stands at the stop, reading BASE again, so pass BASE as a
 name, such as origin/main, that follows a rebase. stderr says where the
@@ -118,6 +119,14 @@ seconds, and 20 listed. Known secret shapes are taken out of the notes,
 the branches' subjects, the items, the earlier findings and red-check's
 output before a reviewer sees them.
 
+With SANDBOX_RELAY_URL set, as in a review-loop sandbox, --print-prompt,
+--reviewer subagent and --check are sent to that sandbox-relay, with the
+files they name read here and sent on stdin, so that the host's plans take
+the prompt issued, the routes and the receipt; a Codex run stays here. The
+relay's side takes only those, never a path, and refuses ask; it reviews
+only a branch the loop registered, from the worktree pr-loop made for it,
+in a range ending at the commit checked out there.
+
   --focus ROUTE    the focused review to run: security
   --goal FILE      the goal statement (required)
   --items FILE      the items the change answers, and how each was settled
@@ -141,7 +150,7 @@ status:
   3  findings
   4  Codex cannot review here: it is not installed or not signed in, its
      sandbox cannot start confined to the worktree, this is a review-loop
-     session (PR_LOOP_SESSION or SANDBOX_RELAYED is set), or, with
+     session (PR_LOOP_SESSION is set), or, with
      --reviewer auto, the caller is Codex (CODEX_SANDBOX is set)
   1  the review could not run; 2 a usage error or refusal
 `
@@ -150,7 +159,12 @@ const name = "git-fresh-review"
 
 // Main runs `git fresh-review` with args and returns its exit status.
 func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	relayed := os.Getenv(relay.RelayEnv) == "1"
 	if len(args) > 0 && args[0] == "ask" {
+		if relayed {
+			return cli.Report(name, nil, refusal.New("ask is not served through the relay; ask a new sub-agent that only "+
+				"reads, in the sandbox, as `git fresh-review ask -h` says"), 0, stdout, stderr)
+		}
 		return ask(ctx, args[1:], stdin, stdout, stderr)
 	}
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
@@ -198,6 +212,43 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		}
 		fc = &f
 	}
+	// In a sandbox with a relay, the host prints the prompt and checks the
+	// reply, so that the plan there takes what they log.
+	if url := os.Getenv(relay.URLEnv); url != "" && !relayed && (*printPrompt || *check != "") {
+		argv := []string{"--print-prompt"}
+		switch {
+		case *check != "":
+			argv = nil
+		case subagent:
+			argv = []string{"--reviewer", "subagent"}
+		}
+		if *focusName != "" {
+			argv = append(argv, "--focus", *focusName)
+		}
+		return forward(url, argv, map[string]string{"check": *check, "goal": *goal, "items": *items, "prior": *prior},
+			positional[0], stdin, stdout, stderr)
+	}
+	var sent relayInputs
+	if relayed {
+		if why := relayedRefusal(flags, *printPrompt, *check); why != "" {
+			return report(nil, refusal.New("%s", why), 0)
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, relayedTimeout)
+		defer cancel()
+		var err error
+		if sent, err = readRelayed(stdin); err != nil {
+			return report(nil, err, 0)
+		}
+	}
+	// input is the file named path, or behind the relay what the client
+	// sent for the flag named.
+	input := func(flag, path string) (string, error) {
+		if relayed {
+			return map[string]string{"check": sent.Reply, "goal": sent.Goal, "items": sent.Items, "prior": sent.Prior}[flag], nil
+		}
+		return readFile(path, stdin)
+	}
 	if err := git.CheckConfig(""); err != nil {
 		return report(nil, err, 0)
 	}
@@ -205,12 +256,17 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	if err != nil {
 		return report(nil, err, 0)
 	}
+	if relayed {
+		if err := loopOwn(r); err != nil {
+			return report(nil, err, 0)
+		}
+	}
 	if err := usableSettings(r); err != nil {
 		return report(nil, err, 0)
 	}
 
 	if *check != "" {
-		reply, err := readFile(*check, stdin)
+		reply, err := input("check", *check)
 		if err != nil {
 			return report(nil, err, 0)
 		}
@@ -260,7 +316,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		return report(nil, refusal.New("a review is judged against a goal statement; write the goal, and what is not this change's job, "+
 			"to a file and pass `--goal FILE`"), 0)
 	}
-	if in.goal, err = readFile(*goal, stdin); err != nil {
+	if in.goal, err = input("goal", *goal); err != nil {
 		return report(nil, err, 0)
 	}
 	if strings.TrimSpace(in.goal) == "" {
@@ -268,11 +324,11 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			"into it and pass `--goal %s` again", *goal, *goal), 0)
 	}
 	for _, f := range []struct {
-		path string
-		into *string
-	}{{*items, &in.items}, {*prior, &in.prior}} {
+		flag, path string
+		into       *string
+	}{{"items", *items, &in.items}, {"prior", *prior, &in.prior}} {
 		if f.path != "" {
-			if *f.into, err = readFile(f.path, stdin); err != nil {
+			if *f.into, err = input(f.flag, f.path); err != nil {
 				return report(nil, err, 0)
 			}
 		}
@@ -303,11 +359,15 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		if err != nil {
 			return report(nil, err, 0)
 		}
+		shown := r.top
+		if sent.Top != "" {
+			shown = sent.Top
+		}
 		in.where = fmt.Sprintf("Read the change in the repository at %s: `git diff %s %s`, `git log -p %s..%s`, "+
 			"and `git show %s:PATH` for a file as it is at TIP. That checkout's own files may hold work that is not "+
 			"part of the change, so judge only the commits. Put `\"tip\": \"%s\"` in the JSON object you reply with, "+
 			"beside findings and unverified, so that the check of your reply knows which commit you reviewed.",
-			r.top, r.base, r.tip, r.base, r.tip, r.tip, r.tip)
+			shown, r.base, r.tip, r.base, r.tip, r.tip, r.tip)
 		if nonce != "" {
 			in.where += fmt.Sprintf(" Put `\"issued\": \"%s\"` beside it too, which names this prompt.", nonce)
 		}
@@ -371,9 +431,13 @@ func issue(r *span, focusName string) (string, error) {
 	switch {
 	case focusName != "" && err != nil:
 		return "", err
+	case focusName != "" && file == "" && inLoop():
+		return "", refusal.New("a %s review's receipt goes in the plan of the branch it reviews, and no plan of this host "+
+			"names this worktree or the branch checked out in it, which a review loop cannot start; stop and hand back to "+
+			"the operator, naming the %s review this change owes", focusName, focusName)
 	case focusName != "" && file == "":
 		return "", refusal.New("a %s review's receipt goes in the plan its commits are logged in, and no plan names this "+
-			"session or worktree. Start one with `agent-plan new`, as the plan-work skill says, then print the prompt again", focusName)
+			"session, worktree or branch. Start one with `agent-plan new`, as the plan-work skill says, then print the prompt again", focusName)
 	case err != nil || file == "":
 		return "", nil
 	}
@@ -478,7 +542,7 @@ func logReceipt(r *span, out *Output, focusName, nonce string, log io.Writer) {
 	case err != nil:
 		fmt.Fprintf(log, "%s: no receipt of this review was logged: %v\n", name, err)
 	case file == "":
-		fmt.Fprintf(log, "%s: no plan names this session or worktree, so no receipt of this review was logged\n", name)
+		fmt.Fprintf(log, "%s: no plan names this session, worktree or branch, so no receipt of this review was logged\n", name)
 	default:
 		fmt.Fprintf(log, "%s: logged a receipt of this review of %s in %s\n", name, r.given, file)
 	}
@@ -543,8 +607,6 @@ func unavailable(auto bool) string {
 	switch {
 	case os.Getenv("PR_LOOP_SESSION") != "":
 		return "this is a review-loop session (PR_LOOP_SESSION is set), whose only way out is pr-loop"
-	case os.Getenv("SANDBOX_RELAYED") != "":
-		return "this runs behind sandbox-relay (SANDBOX_RELAYED is set)"
 	case auto && os.Getenv("CODEX_SANDBOX") != "":
 		return "the caller is Codex (CODEX_SANDBOX is set), so a sub-agent is already a fresh reviewer"
 	}

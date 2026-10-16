@@ -1,7 +1,10 @@
 package loop
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,4 +102,26 @@ func worktreeTop() (string, error) {
 
 func worktreePath(top string, pr int) string {
 	return filepath.Join(top, ".pr-loop", fmt.Sprint(pr))
+}
+
+// Worktree is where Worktrees puts branch's worktree in the repository
+// whose git common directory is common, and false where the loop begun
+// there has not registered branch, or none has begun.
+func Worktree(common, branch string) (string, bool, error) {
+	data, err := os.ReadFile(filepath.Join(common, "pr-loop", "state.json"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	var s State
+	if err := json.Unmarshal(data, &s); err != nil {
+		return "", false, err
+	}
+	b, ok := s.Branches[branch]
+	if !ok || b == nil || filepath.Base(common) != ".git" {
+		return "", false, nil
+	}
+	return worktreePath(filepath.Dir(common), b.PR), true, nil
 }

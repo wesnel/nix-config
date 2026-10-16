@@ -418,7 +418,6 @@ func TestUnavailable(t *testing.T) {
 		{"missing", false, nil, nil, 4},
 		{"unauthenticated", true, map[string]string{"FAKE_CODEX": "unauthenticated"}, nil, 4},
 		{"in a loop session", true, map[string]string{"PR_LOOP_SESSION": "1"}, nil, 4},
-		{"behind the relay", true, map[string]string{"SANDBOX_RELAYED": "1"}, nil, 4},
 		{"loop session, Codex asked for", true, map[string]string{"PR_LOOP_SESSION": "1"}, []string{"--reviewer", "codex"}, 4},
 		{"Codex author", true, map[string]string{"CODEX_SANDBOX": "seatbelt"}, nil, 4},
 		{"Codex author, Codex asked for", true, map[string]string{"CODEX_SANDBOX": "seatbelt", "FAKE_CODEX": "none"}, []string{"--reviewer", "codex"}, 0},

@@ -98,7 +98,7 @@ func routeChange(r *span, out *Output, log io.Writer) {
 	case err != nil:
 		fmt.Fprintf(log, "%s: the routes were not logged: %v\n", name, err)
 	case file == "":
-		fmt.Fprintf(log, "%s: no plan names this session or worktree, so the routes were not logged\n", name)
+		fmt.Fprintf(log, "%s: no plan names this session, worktree or branch, so the routes were not logged\n", name)
 	}
 }
 

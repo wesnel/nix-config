@@ -71,14 +71,14 @@ func (p Plan) Routed(part string, r Routed, now time.Time) (Event, error) {
 		Routes: encodeRoutes(r.Routes), Summary: "routes " + strings.Join(slices.Sorted(maps.Keys(r.Routes)), " ")}, now)
 }
 
-// WriteRouted logs r in the plan Locate finds for session and the worktree
-// at top, and returns that plan's file, or "" where no plan names either.
+// WriteRouted logs r in the plan LocateCheckout finds for session and the
+// worktree at top, and returns that plan's file, or "" where there is none.
 func WriteRouted(session, top string, r Routed, now time.Time) (string, error) {
 	c, err := Load()
 	if err != nil {
 		return "", err
 	}
-	p, part, ok := c.Locate(session, top)
+	p, part, ok := c.LocateCheckout(session, top)
 	if !ok {
 		return "", nil
 	}
@@ -96,14 +96,14 @@ type Issued struct {
 	Nonce, Focus, Range, Tip, PatchID string
 }
 
-// WriteIssued logs i in the plan Locate finds for session and the worktree
-// at top, and returns that plan's file, or "" where no plan names either.
+// WriteIssued logs i in the plan LocateCheckout finds for session and the
+// worktree at top, and returns that plan's file, or "" where there is none.
 func WriteIssued(session, top string, i Issued, now time.Time) (string, error) {
 	c, err := Load()
 	if err != nil {
 		return "", err
 	}
-	p, part, ok := c.Locate(session, top)
+	p, part, ok := c.LocateCheckout(session, top)
 	if !ok {
 		return "", nil
 	}
@@ -118,15 +118,15 @@ func WriteIssued(session, top string, i Issued, now time.Time) (string, error) {
 	return p.File(), nil
 }
 
-// FindIssued is the prompt issued with nonce in the plan Locate finds for
-// session and the worktree at top, whether a receipt already names it,
-// and whether there is one.
+// FindIssued is the prompt issued with nonce in the plan LocateCheckout
+// finds for session and the worktree at top, whether a receipt already
+// names it, and whether there is one.
 func FindIssued(session, top, nonce string) (i Issued, checked, found bool) {
 	c, err := Load()
 	if err != nil || nonce == "" {
 		return Issued{}, false, false
 	}
-	p, _, ok := c.Locate(session, top)
+	p, _, ok := c.LocateCheckout(session, top)
 	if !ok {
 		return Issued{}, false, false
 	}
@@ -146,14 +146,14 @@ func FindIssued(session, top, nonce string) (i Issued, checked, found bool) {
 }
 
 // RouteRound is the round a review of focus of the range given would be in
-// the plan Locate finds for session and the worktree at top: one more than
-// its route receipts of that focus and range.
+// the plan LocateCheckout finds for session and the worktree at top: one
+// more than its route receipts of that focus and range.
 func RouteRound(session, top, focus, given string) int {
 	c, err := Load()
 	if err != nil {
 		return 1
 	}
-	p, _, ok := c.Locate(session, top)
+	p, _, ok := c.LocateCheckout(session, top)
 	if !ok {
 		return 1
 	}
@@ -205,16 +205,16 @@ func HostBranches() []string {
 	return out
 }
 
-// ReviewsRemoved are the routes REVIEWS lost, in the log of the plan Locate
-// finds for session and the worktree at top, since that log's last routed
-// event: a route taken out is a change of what reviews the change, which
-// the next routing sends to a security review.
+// ReviewsRemoved are the routes REVIEWS lost, in the log of the plan
+// LocateCheckout finds for session and the worktree at top, since that
+// log's last routed event: a route taken out is a change of what reviews
+// the change, which the next routing sends to a security review.
 func ReviewsRemoved(session, top string) []string {
 	c, err := Load()
 	if err != nil {
 		return nil
 	}
-	p, _, ok := c.Locate(session, top)
+	p, _, ok := c.LocateCheckout(session, top)
 	if !ok {
 		return nil
 	}

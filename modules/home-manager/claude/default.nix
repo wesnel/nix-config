@@ -69,8 +69,8 @@ with lib; let
   };
 
   # The session's commands run in Claude Code's sandbox with no credentials and
-  # no route to GitHub; `sandbox-relay session` serves `pr-loop` and
-  # `agent-plan` on a private socket, whose path replaces {socket}. Hooks, MCP servers and WebFetch run outside
+  # no route to GitHub; `sandbox-relay session` serves `pr-loop`,
+  # `agent-plan` and `git-fresh-review` on a private socket, whose path replaces {socket}. Hooks, MCP servers and WebFetch run outside
   # the sandbox, which is why WebFetch to GitHub is denied as well.
   prLoopSettings = allowedDomains: builtins.toJSON {
     # The user settings' `env` would otherwise replace the launcher's exports
@@ -178,7 +178,8 @@ with lib; let
       # The session's commands cannot read the user's git config; the relay
       # and pr-loop on this side keep it.
       ${config.wgn.home.llm.prLoop.gitIdentity}
-      exec ${lib.getExe' config.wgn.home.llm.agentTools "sandbox-relay"} session --program pr-loop --program agent-plan -- \
+      exec ${lib.getExe' config.wgn.home.llm.agentTools "sandbox-relay"} session --program pr-loop --program agent-plan \
+        --program git-fresh-review -- \
         env GIT_CONFIG_GLOBAL=${config.wgn.home.llm.prLoop.gitConfig} claude \
         --plugin-dir ${prLoopPlugin} \
         --settings "$settings" \

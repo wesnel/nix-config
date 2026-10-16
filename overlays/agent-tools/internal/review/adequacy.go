@@ -323,7 +323,7 @@ func rebuttals(r *span) (map[string]string, int) {
 	if err != nil {
 		return out, 1
 	}
-	p, _, ok := c.Locate(os.Getenv("CLAUDE_CODE_SESSION_ID"), r.top)
+	p, _, ok := c.LocateCheckout(os.Getenv("CLAUDE_CODE_SESSION_ID"), r.top)
 	if !ok {
 		return out, 1
 	}

@@ -56,6 +56,67 @@ func (c Config) LocateBranches(session, worktree string, branches []string) (p P
 	return Plan{}, "", false
 }
 
+// LocateCheckout is Locate, else, of this host's plans whose BRANCHES name
+// the branch checked out in the worktree at top, less those of other
+// repositories and those finished, as the gates judge them, the one made
+// last, those naming this repository in REPOSITORIES first: where a review
+// loop's work belongs when it reaches this host through the relay, which
+// names no session, in a worktree no plan names.
+func (c Config) LocateCheckout(session, top string) (p Plan, part string, ok bool) {
+	if p, part, ok = c.Locate(session, top); ok || top == "" {
+		return p, part, ok
+	}
+	branch, err := git.Run("-C", top, "branch", "--show-current")
+	if err != nil || branch == "" {
+		return Plan{}, "", false
+	}
+	found, err := c.Find(FindOptions{Branch: branch})
+	if err != nil {
+		return Plan{}, "", false
+	}
+	type candidate struct {
+		plan    Plan
+		part    string
+		named   bool
+		created time.Time
+	}
+	var candidates []candidate
+	for _, f := range found {
+		p, err := c.Open(f.Plan)
+		if err != nil {
+			continue
+		}
+		props, err := planHeading(p.File())
+		if err != nil {
+			continue
+		}
+		events, err := p.Events()
+		if err != nil || otherRepository(top, props["REPOSITORIES"]) || finished(top, props, events) {
+			continue
+		}
+		var created time.Time
+		if len(events) > 0 {
+			created, _ = time.ParseInLocation("[2006-01-02 Mon 15:04]", events[0].Time, time.Local)
+		}
+		candidates = append(candidates, candidate{p, f.Part, props["REPOSITORIES"] != "", created})
+	}
+	if len(candidates) == 0 {
+		return Plan{}, "", false
+	}
+	// Find lists them by file name, newest day first; a plan made later
+	// the same day may sort before or after.
+	slices.SortStableFunc(candidates, func(a, b candidate) int {
+		if a.named != b.named {
+			if a.named {
+				return -1
+			}
+			return 1
+		}
+		return b.created.Compare(a.created)
+	})
+	return candidates[0].plan, candidates[0].part, true
+}
+
 // branchChanged is the kind of the event NoteBranch logs.
 const branchChanged = "branch-changed"
 
@@ -184,15 +245,15 @@ func (p Plan) Receipt(part string, r Receipt, now time.Time) (Event, error) {
 	return p.Record(part, e, now)
 }
 
-// WriteReceipt logs r in the plan Locate finds for session and the
+// WriteReceipt logs r in the plan LocateCheckout finds for session and the
 // worktree at top, and returns that plan's file, or "" where no plan names
-// either.
+// either or the branch checked out there.
 func WriteReceipt(session, top string, r Receipt, now time.Time) (string, error) {
 	c, err := Load()
 	if err != nil {
 		return "", err
 	}
-	p, part, ok := c.Locate(session, top)
+	p, part, ok := c.LocateCheckout(session, top)
 	if !ok {
 		return "", nil
 	}
