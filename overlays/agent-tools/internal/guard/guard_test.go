@@ -328,8 +328,10 @@ func TestPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The examples name no repository, so they run outside one, as in the
-	// Nix build; a checkout's remotes would decide `git fetch origin`.
+	// Nix build; a checkout's remotes would decide `git fetch origin`. The
+	// guard reads a --body-file for verification claims, so b is there.
 	t.Chdir(t.TempDir())
+	os.WriteFile("b", []byte("A description.\n"), 0o644)
 	var rules []struct {
 		Why     string   `json:"why"`
 		Pattern string   `json:"pattern"`
@@ -506,8 +508,10 @@ func testBaselineCommands(t *testing.T) {
 		{false, "http GET https://api.github.com/repos/o/r"},
 	}
 	// Outside any repository, as in the Nix build; a checkout's remotes
-	// would decide `git fetch origin`.
+	// would decide `git fetch origin`. The guard reads a --body-file for
+	// verification claims, so b is there.
 	t.Chdir(t.TempDir())
+	os.WriteFile("b", []byte("A description.\n"), 0o644)
 	for _, c := range cases {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
 			input, _ := json.Marshal(map[string]string{"command": c.command})

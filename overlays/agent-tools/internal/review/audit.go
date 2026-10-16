@@ -58,8 +58,12 @@ unsupported (no evidence), whatever the reply says.
 
 The audit logs a route receipt with focus claims in the plan its commits
 are logged in, as a review does, holding the claims' hash, the patch ID of
-the change and the claims left unsupported. An audit needs that plan, and
-is not served to a review loop: its calls are in no log on this host.
+the change and the claims left unsupported. pr-loop open, and the guard on
+gh pr create and gh pr edit --body-file, let a description with the
+section through only where the latest such receipt for its claims as they
+stand, whose range still has the patch ID it recorded at the branch's tip,
+left none unsupported. An audit needs that plan, and is not served to a
+review loop: its calls are in no log on this host.
 
 Writes JSON on stdout: reviewer, model, range, tip, claimsHash, sessions and
 claims (each with id, claim, verdict, records and why). Exit status: 0
@@ -73,9 +77,9 @@ error or refusal.
 //go:embed claims.md
 var ClaimsContract string
 
-// claimsFocus is the focus of a claims audit's issued prompt and receipt.
-// It is no route: no routed event names it, so none is ever owed.
-const claimsFocus = "claims"
+// claimsFocus is the focus of a claims audit's issued prompt and receipt,
+// which the gates look for.
+const claimsFocus = plans.ClaimsFocus
 
 // auditSchema is the JSON Schema of an auditor's reply, in the strict
 // subset Codex's --output-schema takes.

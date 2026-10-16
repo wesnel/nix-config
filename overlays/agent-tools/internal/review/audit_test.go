@@ -172,9 +172,13 @@ func TestAuditCodex(t *testing.T) {
 		t.Errorf("receipts %+v", receipts)
 	}
 	a.checkCleanedUp(t)
+	if err := claims.Gate(a.repo, a.tip, auditBody, false); err == nil || !strings.Contains(err.Error(), "C2, C3") {
+		t.Errorf("the gate took claims the audit left unsupported: %v", err)
+	}
 
 	t.Run("all supported, with another session", func(t *testing.T) {
-		os.WriteFile(a.body, []byte("- go test passes\n- the other session echoed\n"), 0o644)
+		body := "## Verification beyond CI\n\n- go test passes\n- the other session echoed\n"
+		os.WriteFile(a.body, []byte(body), 0o644)
 		t.Setenv("FAKE_REPLY", string(must(json.Marshal(map[string]any{"claims": []map[string]any{
 			{"id": "C1", "verdict": "supported", "records": []string{a.id(t, a.test)}, "why": "passed"},
 			{"id": "C2", "verdict": "supported", "records": []string{a.id(t, a.elsewhere)}, "why": "echoed"},
@@ -186,6 +190,9 @@ func TestAuditCodex(t *testing.T) {
 		receipts := eventsOf(t, a.plan, "route-receipt")
 		if last := receipts[len(receipts)-1]; last.Findings != "" || last.Claims != out.ClaimsHash {
 			t.Errorf("receipt %+v", last)
+		}
+		if err := claims.Gate(a.repo, a.tip, body, false); err != nil {
+			t.Errorf("the gate refused the audited claims: %v", err)
 		}
 	})
 }

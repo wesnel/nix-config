@@ -10,6 +10,11 @@ import (
 	"encoding/hex"
 	"regexp"
 	"strings"
+
+	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/plans"
+	"github.com/wesnel/agent-tools/internal/refusal"
+	"github.com/wesnel/agent-tools/internal/routes"
 )
 
 // Heading is the heading of a description's verification claims, which
@@ -130,6 +135,50 @@ func Of(text string) []string {
 		return Parse(section)
 	}
 	return Parse(text)
+}
+
+// Gate refuses a pull request description, body, for the change at tip in
+// the repository at top, whose Heading section holds claims that no audit
+// on this host holds for that change with every claim supported
+// (plans.Config.ClaimsAudited); in a review loop, whose calls are in no
+// evidence log here, it refuses the section whatever audits there are. A
+// description without claims under the heading passes.
+func Gate(top, tip, body string, loop bool) error {
+	section, ok := Section(body)
+	if !ok {
+		return nil
+	}
+	list := Parse(section)
+	if len(list) == 0 {
+		return nil
+	}
+	if loop {
+		return refusal.New("the description's `## %s` makes claims an audit must back, and a review loop's commands are in "+
+			"no evidence log on this host. Leave the section out, and put the claims in your report for the operator", Heading)
+	}
+	if err := git.CheckConfig(top); err != nil {
+		return err
+	}
+	c, err := plans.Load()
+	if err != nil {
+		return err
+	}
+	audited, unsupported, err := c.ClaimsAudited(top, tip, Hash(list))
+	if err != nil || audited {
+		return err
+	}
+	base := strings.TrimPrefix(strings.TrimPrefix(routes.DefaultRef(top), "refs/remotes/"), "refs/heads/")
+	if base == "" {
+		base = "BASE"
+	}
+	why := "no audit on this host holds them, as they stand, for the change as it stands"
+	if len(unsupported) > 0 {
+		why = "their audit left " + strings.Join(unsupported, ", ") + " unsupported"
+	}
+	return refusal.New("the description's `## %s` claims are not backed: %s. Run `cd WT && git fresh-review audit "+
+		"--claims FILE %s..HEAD`, WT being the worktree of the pull request's branch and FILE the description, and, where "+
+		"another session's calls back them (one before /clear), `--session ID` for each session, this one too; take out "+
+		"each claim it leaves unsupported, or run what shows it and audit again, then retry", Heading, why, base)
 }
 
 // Hash is the hash of claims, in order, each with its whitespace
