@@ -232,7 +232,8 @@ wait on no `:AFTER:` item, follow every earlier sibling under an
 `:ORDERED: t` parent, and are not scheduled for later.
 
 - **Claude Code:** the Agent tool with `run_in_background`. `SendMessage`
-  continues an agent with its context.
+  continues an agent with its context. A review-loop session runs its
+  sub-agents in the foreground instead, as the `review-loop` skill says.
 - **Codex:** `spawn_agent`. `send_input` continues an agent, and `wait_agent`
   collects results.
 - **ECA:** `spawn_agent`. Each spawn starts a fresh chat, so a follow-up task

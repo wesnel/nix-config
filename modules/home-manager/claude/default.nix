@@ -166,6 +166,11 @@ with lib; let
       ${prLoopCaches}
       # The review-loop skill starts only where this is set.
       export PR_LOOP_SESSION=1
+      # With -p, Claude Code otherwise stops background tasks 10 minutes
+      # after the last turn, killing an owner mid-fix. The skill runs them in
+      # the foreground; this keeps one started in the background alive, with
+      # no limit, so a hung one holds the session until `pr-loop stop`.
+      export CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0
       # "$defaults" in the settings is literal: Claude Code splices its own
       # auto-mode rules in there.
       # shellcheck disable=SC2016

@@ -125,6 +125,42 @@ func startFakeSession(t *testing.T, dir, mode string) []int {
 	return pids
 }
 
+// A loop session may not end while its loop is active and this loop's
+// report.md is unwritten.
+func TestStopReason(t *testing.T) {
+	dir := stopRepo(t)
+	worktree := filepath.Join(dir, ".pr-loop", "7")
+	report := filepath.Join(dir, ".git", "pr-loop", "report.md")
+	for _, cwd := range []string{dir, worktree} {
+		if got := StopReason(cwd); !strings.Contains(got, "report.md") || !strings.Contains(got, "pr-owner") {
+			t.Errorf("no report, from %s: %q", cwd, got)
+		}
+	}
+	if err := os.WriteFile(report, []byte("# An earlier loop\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-2 * time.Hour)
+	os.Chtimes(report, old, old)
+	if got := StopReason(worktree); got == "" {
+		t.Error("an earlier loop's report let the stop through")
+	}
+	now := time.Now()
+	os.Chtimes(report, now, now)
+	if got := StopReason(worktree); got != "" {
+		t.Errorf("this loop's report: %q", got)
+	}
+	os.Remove(report)
+	if _, err := End(false); err != nil {
+		t.Fatal(err)
+	}
+	if got := StopReason(dir); got != "" {
+		t.Errorf("no loop: %q", got)
+	}
+	if got := StopReason(t.TempDir()); got != "" {
+		t.Errorf("no repository: %q", got)
+	}
+}
+
 func TestStop(t *testing.T) {
 	grace := stopGrace
 	stopGrace = 500 * time.Millisecond

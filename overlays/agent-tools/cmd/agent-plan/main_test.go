@@ -650,6 +650,36 @@ func TestHooks(t *testing.T) {
 		}
 	})
 
+	// A loop session's last turn may not end while the loop is active and
+	// its report is unwritten; the hook blocks each stop once.
+	t.Run("loop session stop-check", func(t *testing.T) {
+		setup(t)
+		repo, _ := filepath.EvalSymlinks(t.TempDir())
+		if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
+			t.Fatalf("git init: %v %s", err, out)
+		}
+		os.MkdirAll(filepath.Join(repo, ".git", "pr-loop"), 0o755)
+		os.WriteFile(filepath.Join(repo, ".git", "pr-loop", "state.json"), []byte(`{"repo":"o/r","began":"2026-01-01T00:00:00Z"}`), 0o644)
+		stop := func(active bool) (int, string, string) {
+			event, _ := json.Marshal(map[string]any{"hook_event_name": "Stop", "session_id": "loop", "cwd": repo, "stop_hook_active": active})
+			return agentPlan(t, string(event), "stop-check")
+		}
+
+		t.Setenv("PR_LOOP_SESSION", "1")
+		var got struct{ Decision, Reason string }
+		code, out, _ := stop(false)
+		if code != 0 || json.Unmarshal([]byte(out), &got) != nil || got.Decision != "block" || !strings.Contains(got.Reason, "report.md") {
+			t.Errorf("a stop without the report: %d %q", code, out)
+		}
+		if code, out, _ := stop(true); code != 0 || out != "" {
+			t.Errorf("a stop already blocked once: %d %q", code, out)
+		}
+		t.Setenv("PR_LOOP_SESSION", "")
+		if code, out, _ := stop(false); code != 0 || out != "" {
+			t.Errorf("a session that is not the loop's: %d %q", code, out)
+		}
+	})
+
 	// ECA's postRequest hook gets the reason on stderr with exit 2, once per
 	// chat.
 	t.Run("ECA stop-check", func(t *testing.T) {

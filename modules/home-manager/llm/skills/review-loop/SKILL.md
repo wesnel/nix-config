@@ -74,6 +74,20 @@ sub-agent (Claude Code's `SendMessage`) or only start a new one per task
 If it has no sub-agents at all, do each owner's task yourself, one PR at a
 time, keeping the same notes.
 
+Run every sub-agent in the foreground, whatever the `coordinate-subagents`
+skill says: in Claude Code never with `run_in_background`, and owners
+working in parallel as several Agent calls in one message. Never end a turn
+waiting on a sub-agent: a `claude -p` session stops whatever still runs
+in the background 10 minutes after its last turn ends, killing an owner
+mid-fix with no report. While the loop is active and `report.md` is
+unwritten, the session's Stop hook blocks a stop once.
+
+`claude-pr-loop` lifts that 10-minute limit, so a task left running in
+the background keeps the session alive, with no limit, until it ends or
+the operator runs `pr-loop stop`. That is all it does: it is no reason to
+start a task in the background, and nothing says the session takes
+another turn when such a task ends.
+
 Anything an owner asks you, or that you need to ask an owner, goes in the
 task you give next. Ask the owner rather than reading its code yourself
 when you need to know where something belongs.

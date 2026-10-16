@@ -13,6 +13,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/loop"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/prompttime"
 	"github.com/wesnel/agent-tools/internal/relay"
@@ -133,7 +134,10 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      plan takes; ECA gets the reason on stderr with exit 2,
                      logged as stop-blocked, and the chat's stops pass while
                      the log holds nothing newer but stops blocked; never
-                     touches the network
+                     touches the network. In a Claude Code or Codex loop
+                     session (PR_LOOP_SESSION=1), it first blocks a stop once
+                     while the repository's loop is active and its
+                     report.md is missing or older than the loop
   remind             a hook (reads stdin) that asks, in a session with a plan,
                      for the coordinator to check a finished sub-agent's report
                      and log its part (Claude Code's UserPromptSubmit and
@@ -229,6 +233,30 @@ func relayRefusal(args []string) string {
 	return ""
 }
 
+// loopStopCheck is the Stop hook's block, in Claude Code's and Codex's
+// form, for a loop session whose loop is active with no report yet, or
+// nil. stop_hook_active makes it block each stop once. ECA's postRequest
+// hook has no such flag, and is left to the plan's check.
+func loopStopCheck(input []byte) []byte {
+	if os.Getenv("PR_LOOP_SESSION") != "1" {
+		return nil
+	}
+	var in struct {
+		Cwd      string `json:"cwd"`
+		Active   bool   `json:"stop_hook_active"`
+		HookType string `json:"hook_type"`
+	}
+	if json.Unmarshal(input, &in) != nil || in.Active || in.HookType != "" || in.Cwd == "" {
+		return nil
+	}
+	reason := loop.StopReason(in.Cwd)
+	if reason == "" {
+		return nil
+	}
+	out, _ := json.Marshal(map[string]string{"decision": "block", "reason": reason})
+	return out
+}
+
 type multi []string
 
 func (m *multi) String() string     { return strings.Join(*m, ",") }
@@ -288,8 +316,12 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "stop-check" {
 		// A failure lets the stop through, quietly.
+		input := readAll(stdin)
+		if out := loopStopCheck(input); len(out) > 0 {
+			stdout.Write(append(out, '\n'))
+			return 0
+		}
 		if c, err := plans.Load(); err == nil {
-			input := readAll(stdin)
 			var event struct {
 				HookType string `json:"hook_type"`
 			}

@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -71,6 +72,35 @@ func Stop() (any, error) {
 		return nil, err
 	}
 	return map[string]any{"stopped": how, "left": left, "report": report}, nil
+}
+
+// StopReason is why a loop session working in cwd may not end its last
+// turn yet, or "": the loop is active in cwd's repository and report.md is
+// missing or older than the loop. A coordinator that ends its turn while a
+// sub-agent runs in the background has that sub-agent stopped once
+// `claude -p` gives up waiting, with no report. It reads local files
+// alone.
+func StopReason(cwd string) string {
+	common, err := git.Run("-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(common, "pr-loop", "state.json"))
+	if err != nil {
+		return ""
+	}
+	var state State
+	if json.Unmarshal(data, &state) != nil {
+		return ""
+	}
+	report := filepath.Join(common, "pr-loop", "report.md")
+	if info, err := os.Stat(report); err == nil && !info.ModTime().Before(state.Began) {
+		return ""
+	}
+	return fmt.Sprintf("The review loop is still active here and %s is not written for it. Do not end your turn while a "+
+		"pr-owner or reviewer sub-agent runs: wait for each one's report in this turn, then carry on with the review-loop "+
+		"skill to its Hand-back, which writes the report. If the loop must stop, write the report saying why and what is "+
+		"left, then stop.", report)
 }
 
 // proc is a process that has not exited.
