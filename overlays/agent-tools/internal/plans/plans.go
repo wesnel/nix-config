@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/refusal"
@@ -412,7 +414,7 @@ func (c Config) Open(arg string) (Plan, error) {
 	}
 	p := Plan{Dir: root, Name: m[1], Host: m[2], Own: m[2] == c.Host}
 	for _, f := range []string{p.file(""), p.log()} {
-		if info, err := os.Lstat(f); err != nil || !info.Mode().IsRegular() {
+		if info, err := os.Lstat(f); err != nil || !soleFile(info) {
 			return Plan{}, notPlan()
 		}
 	}
@@ -465,7 +467,7 @@ func (p Plan) itemList() ([]item, error) {
 	var out []item
 	seen := map[string]bool{}
 	for _, f := range files {
-		data, err := os.ReadFile(f)
+		data, err := readPlan(f)
 		if err != nil {
 			return nil, err
 		}
@@ -477,6 +479,33 @@ func (p Plan) itemList() ([]item, error) {
 			}
 			seen[id] = true
 			out = append(out, item{heading: h, ID: id, File: f, Part: part})
+		}
+	}
+	return out, nil
+}
+
+// InSection is the IDs of the plan's items, its parts' too, that stand
+// under a level-2 heading titled section, as itemList picks them.
+func (p Plan) InSection(section string) (map[string]bool, error) {
+	files, err := p.files()
+	if err != nil {
+		return nil, err
+	}
+	out, seen := map[string]bool{}, map[string]bool{}
+	for _, f := range files {
+		data, err := readPlan(f)
+		if err != nil {
+			return nil, err
+		}
+		under := ""
+		for _, h := range parseOrg(string(data)) {
+			if h.Level <= 2 {
+				under = h.Title
+			}
+			if id := h.Props["ID"]; id != "" && !seen[id] {
+				seen[id] = true
+				out[id] = h.Level > 2 && under == section
+			}
 		}
 	}
 	return out, nil
@@ -501,7 +530,7 @@ func (p Plan) Goal(part string) (string, error) {
 		return "", refusal.New("%q is not a part ID. Pass one such as `--part P1`", part)
 	}
 	file := p.file(part)
-	data, err := os.ReadFile(file)
+	data, err := readPlan(file)
 	if errors.Is(err, fs.ErrNotExist) {
 		return "", refusal.New("%s has no plan file for part %s. The part's sub-agent creates it with `agent-plan new --parent %s --part %s`", p.Name, part, p.file(""), part)
 	}
@@ -545,26 +574,65 @@ type Found struct {
 // OwnPlans are this host's plans, newest first.
 func (c Config) OwnPlans() ([]Plan, error) { return c.ownPlans() }
 
+// Plans are every host's plans, newest first, and the names of the plan
+// files Open refused, such as one whose log has not arrived yet. A link in
+// the plans directory is neither, even to a plan there.
+func (c Config) Plans() ([]Plan, []string, error) { return c.plans("") }
+
 // ownPlans are this host's plans, newest first.
 func (c Config) ownPlans() ([]Plan, error) {
+	out, _, err := c.plans(c.Host)
+	return out, err
+}
+
+// plans are host's plans, or every host's for "", newest first, each
+// opened through Open, and the names of those Open refused.
+func (c Config) plans(host string) (out []Plan, failed []string, err error) {
 	entries, err := os.ReadDir(c.Dir)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var out []Plan
 	for i := len(entries) - 1; i >= 0; i-- {
 		m := planFile.FindStringSubmatch(entries[i].Name())
-		if m == nil || m[2] != c.Host || m[3] != "" {
+		if m == nil || host != "" && m[2] != host || m[3] != "" || !entries[i].Type().IsRegular() {
 			continue
 		}
 		if p, err := c.Open(filepath.Join(c.Dir, entries[i].Name())); err == nil {
 			out = append(out, p)
+		} else {
+			failed = append(failed, m[1])
 		}
 	}
-	return out, nil
+	return out, failed, nil
+}
+
+// soleFile reports whether info is a regular file with no other name: a
+// hard link would let a file outside the plans directory pass for a plan.
+func soleFile(info fs.FileInfo) bool {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	return info.Mode().IsRegular() && (!ok || st.Nlink == 1)
+}
+
+// readPlan reads one of a plan's files, checking the file it opened, not
+// the path: one swapped for a link, a file with another name or a FIFO
+// after Open checked it is refused, and a FIFO without blocking.
+func readPlan(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !soleFile(info) {
+		return nil, fmt.Errorf("%s is not a plan's own regular file", path)
+	}
+	return io.ReadAll(f)
 }
 
 // Find lists this host's plan files that match, newest plan first.
@@ -590,7 +658,7 @@ func (c Config) Find(o FindOptions) ([]Found, error) {
 			continue
 		}
 		for _, f := range files {
-			data, err := os.ReadFile(f)
+			data, err := readPlan(f)
 			if err != nil {
 				continue
 			}

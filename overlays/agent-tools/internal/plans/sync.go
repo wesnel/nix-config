@@ -306,6 +306,92 @@ func (c Config) Pull() {
 	c.git(ctx, "merge", "-q", "--ff-only", "--no-autostash", "refs/remotes/origin/"+branch)
 }
 
+// Committed is the committer time, with its zone, of the newest commit on
+// HEAD that touches p's log: for another host's plan, when its last change
+// arrived, since a log's own times carry no zone. It is zero outside a
+// repository or without such a commit.
+func (c Config) Committed(p Plan) (time.Time, error) {
+	if !c.inRepo() {
+		return time.Time{}, nil
+	}
+	ctx := context.Background()
+	if _, err := c.git(ctx, "rev-parse", "-q", "--verify", "HEAD"); err != nil {
+		return time.Time{}, nil
+	}
+	rel, err := filepath.Rel(c.repo(), filepath.Join(c.Dir, p.Name+".log.org"))
+	if err != nil {
+		return time.Time{}, err
+	}
+	at, err := c.git(ctx, "log", "-1", "--format=%cI", "HEAD", "--", rel)
+	if err != nil || at == "" {
+		return time.Time{}, err
+	}
+	return time.Parse(time.RFC3339, at)
+}
+
+// SyncState is how far this host's plans have reached the remote.
+type SyncState struct {
+	// Repo is whether the plans directory is in its repository.
+	Repo bool
+	// Pushed is the committer time of the newest commit of this host's
+	// plan files on the remote-tracking branch, zero without one.
+	Pushed time.Time
+	// Unsynced is whether this host's plan files differ from the
+	// remote-tracking branch's.
+	Unsynced bool
+	// Fetched is when the repository last fetched, zero if never or if
+	// the last fetch failed.
+	Fetched time.Time
+}
+
+// SyncState reads the repository alone, never the remote.
+func (c Config) SyncState() (SyncState, error) {
+	var s SyncState
+	if !c.inRepo() {
+		return s, nil
+	}
+	s.Repo = true
+	ctx := context.Background()
+	if path, err := c.git(ctx, "rev-parse", "--git-path", "FETCH_HEAD"); err == nil {
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(c.repo(), path)
+		}
+		// A failed fetch empties FETCH_HEAD and still touches it.
+		if info, err := os.Stat(path); err == nil && info.Size() > 0 {
+			s.Fetched = info.ModTime()
+		}
+	}
+	files, err := c.ownFiles(ctx)
+	if err != nil || len(files) == 0 {
+		return s, err
+	}
+	branch, err := c.git(ctx, "symbolic-ref", "--short", "HEAD")
+	if err != nil {
+		return s, err
+	}
+	remote := "refs/remotes/origin/" + branch
+	if _, err := c.git(ctx, "rev-parse", "-q", "--verify", remote); err != nil {
+		s.Unsynced = true
+		return s, nil
+	}
+	at, err := c.git(ctx, append([]string{"log", "-1", "--format=%cI", remote, "--"}, files...)...)
+	if err != nil {
+		return s, err
+	}
+	if at != "" {
+		if s.Pushed, err = time.Parse(time.RFC3339, at); err != nil {
+			return s, err
+		}
+	}
+	changed, err := c.git(ctx, append([]string{"diff", "--name-only", remote, "--"}, files...)...)
+	if err != nil {
+		return s, err
+	}
+	untracked, err := c.git(ctx, append([]string{"ls-files", "--others", "--exclude-standard", "--"}, files...)...)
+	s.Unsynced = changed != "" || untracked != ""
+	return s, err
+}
+
 // writableGitDir reports whether this process may write the repository's
 // git directory, which a sandbox's may not.
 func (c Config) writableGitDir() bool {

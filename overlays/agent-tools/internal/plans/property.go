@@ -1,7 +1,6 @@
 package plans
 
 import (
-	"os"
 	"slices"
 	"strings"
 	"time"
@@ -201,7 +200,7 @@ func (p Plan) pipeline(events []Event) string { return loggedPipeline(events, p.
 
 // planHeading is the properties of file's `* Plan` heading.
 func planHeading(file string) (map[string]string, error) {
-	data, err := os.ReadFile(file)
+	data, err := readPlan(file)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +247,7 @@ func (p Plan) propertyDrift(events []Event) ([]PropertyDrift, error) {
 			}
 		}
 	}
-	data, err := os.ReadFile(p.file(""))
+	data, err := readPlan(p.file(""))
 	if err != nil {
 		return nil, err
 	}

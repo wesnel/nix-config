@@ -2,7 +2,6 @@ package plans
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -58,7 +57,7 @@ func (p Plan) questionHeadings(all bool, each func(file string, h heading)) erro
 		}
 	}
 	for _, f := range files {
-		data, err := os.ReadFile(f)
+		data, err := readPlan(f)
 		if err != nil {
 			return err
 		}

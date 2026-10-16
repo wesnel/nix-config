@@ -143,7 +143,7 @@
       '';
     });
 
-    meta.description = "pr-loop (the review loop), git-sign-pass (the signing pass), git-red-check (checks a commit's tests fail without its change), git-fresh-review (reviews a range of commits with fresh eyes), git-push-guard (keeps private history out of public repositories), sandbox-relay (host programs for a sandbox), agent-plan (agents' plan files and event logs) and plan-dash (the operator's status as Org)";
+    meta.description = "pr-loop (the review loop), git-sign-pass (the signing pass), git-red-check (checks a commit's tests fail without its change), git-fresh-review (reviews a range of commits with fresh eyes), git-push-guard (keeps private history out of public repositories), sandbox-relay (host programs for a sandbox), agent-plan (agents' plan files and event logs) and plan-dash (the operator's status as Org, and the Agent plans page's documents)";
   };
 in
   agent-tools
