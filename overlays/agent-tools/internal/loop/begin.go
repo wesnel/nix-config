@@ -3,6 +3,7 @@ package loop
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/history"
@@ -96,7 +97,7 @@ func Begin(branches []string) (any, error) {
 			}
 		}
 	}
-	state := &State{Repo: repo.Slug, Branches: map[string]*Branch{}, Triggers: map[string]*Trigger{}, AcceptedFailures: map[string][]string{}}
+	state := &State{Repo: repo.Slug, Began: time.Now(), Branches: map[string]*Branch{}, Triggers: map[string]*Trigger{}, AcceptedFailures: map[string][]string{}}
 	for _, b := range branches {
 		pr, err := checkBranch(repo, prs, b)
 		if err != nil {

@@ -15,7 +15,11 @@ const usage = `sandbox-relay: run programs on the host for a sandbox without cre
   serve --workspace DIR [--guest-path DIR] [--program NAME...] (--listen HOST:PORT | --socket PATH)
           serve until killed
   session [--workspace DIR] [--program NAME...] -- COMMAND...
-          run COMMAND beside a relay on a private socket; COMMAND gets
+          run COMMAND beside a relay on a private socket, and with
+          PR_LOOP_SESSION=1 record where it runs for pr-loop stop: in a
+          process group of its own, or in this process's where it leads
+          one, as a shell's job does, or is a terminal's foreground group;
+          COMMAND gets
           ` + relay.URLEnv + `, and "{socket}" and "{workspace}" in its
           arguments become their paths
 

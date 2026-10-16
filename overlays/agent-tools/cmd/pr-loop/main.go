@@ -80,6 +80,11 @@ printed on stderr and fails nothing.
   sign [--resume] [--no-push] squash the loop's fixups, sign with the hardware key, and
                               push the stack over SSH (outside a loop, use git sign-pass)
   end [--prune]               delete trigger comments and loop state
+  stop                        stop the loop session claude-pr-loop or codex-pr-loop records
+                              here: TERM to it, everything under it and its process group,
+                              KILL after 10s; then remove the PRs' clean worktrees, put the
+                              main worktree back on the top branch, end as end does, and
+                              write report.md saying what is left
   guard [--baseline]          PreToolUse hook for Claude Code, Codex and ECA (reads stdin):
                               a loop's rules, or with --baseline every session's, by agent
   guard --post                PostToolUse hook for Claude Code, Codex and ECA (reads stdin):
@@ -143,7 +148,8 @@ setup asks it for the command, then both run the command here, in the sandbox.
 `
 
 // relayed are the commands a sandbox may run through the relay. sign needs
-// the hardware key and end discards state, so a person runs those on the host.
+// the hardware key, and end and stop discard state, so a person runs those
+// on the host.
 // setup runs a command, which belongs in the sandbox, never on the host.
 var relayed = map[string]bool{
 	"open": true, "stack": true, "link": true, "begin": true, "push": true, "threads": true, "reply": true, "resolve": true,
@@ -528,6 +534,10 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 		}
 	case "end":
 		result, err = loop.End(*prune)
+	case "stop":
+		if err = need(0); err == nil {
+			result, err = loop.Stop()
+		}
 	default:
 		fmt.Fprint(stderr, usage)
 		return 2

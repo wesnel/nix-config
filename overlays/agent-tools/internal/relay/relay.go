@@ -173,7 +173,8 @@ func start(workspace, guestPath, network, address string, paths map[string]strin
 // "{socket}", "{workspace}" and "{gitdir}" in its arguments become the real
 // paths of the socket, the workspace and its repository's git common
 // directory (the workspace where it is none), for a sandbox's settings. The
-// relay stops when the command exits.
+// relay stops when the command exits. runSession runs it, and in a loop
+// session records it for `pr-loop stop`.
 func Session(args []string, stderr io.Writer) int {
 	flags := flag.NewFlagSet("session", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -225,7 +226,7 @@ func Session(args []string, stderr io.Writer) int {
 	// The terminal's interrupt reaches the command directly; this process
 	// only has to outlive it.
 	signal.Ignore(os.Interrupt)
-	if err := cmd.Run(); err != nil {
+	if err := runSession(cmd, gitDir(root), stderr); err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
 			return exit.ExitCode()

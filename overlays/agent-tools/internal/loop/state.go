@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/wesnel/agent-tools/internal/git"
 )
@@ -43,6 +44,9 @@ type State struct {
 	AcceptedFailures map[string][]string `json:"acceptedFailures"`
 	Round            int                 `json:"round"`
 	Signing          *Signing            `json:"signing,omitempty"`
+	// Began is when begin registered the loop: a report.md older than it is
+	// an earlier loop's.
+	Began time.Time `json:"began,omitzero"`
 }
 
 func stateDir() (string, error) {
