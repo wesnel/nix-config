@@ -95,19 +95,26 @@ type Status struct {
 	Plans  []Plan    `json:"plans"`
 }
 
-// Collect reads GitHub, through cache, a file only Collect writes, and c's
+// Collect reads GitHub, through cache, a file only GitHubAt writes, and c's
 // plans of this host as at now. Its error is what failed; the Status still
 // holds what did not.
 func Collect(ctx context.Context, c plans.Config, cache string, now time.Time) (Status, error) {
 	s := Status{At: now}
 	var ghErr, plansErr error
-	s.GitHub, s.Stale, ghErr = github(ctx, cache, now)
-	if s.GitHub != nil {
-		root, err := prreview.Root()
-		for i := range s.GitHub.Requests {
-			r := &s.GitHub.Requests[i]
+	s.GitHub, s.Stale, ghErr = GitHubAt(ctx, cache, now)
+	s.Plans, plansErr = Plans(c, now)
+	return s, errors.Join(ghErr, plansErr)
+}
+
+// GitHubAt is Collect's GitHub and Stale, each request with its Record.
+func GitHubAt(ctx context.Context, cache string, now time.Time) (*GitHub, bool, error) {
+	g, stale, err := github(ctx, cache, now)
+	if g != nil {
+		root, rootErr := prreview.Root()
+		for i := range g.Requests {
+			r := &g.Requests[i]
 			r.Record = "unknown"
-			if err != nil {
+			if rootErr != nil {
 				continue
 			}
 			if file, err := prreview.RecordFile(root, r.Repo, r.Number, r.Head); err == nil {
@@ -118,8 +125,7 @@ func Collect(ctx context.Context, c plans.Config, cache string, now time.Time) (
 			}
 		}
 	}
-	s.Plans, plansErr = Plans(c, now)
-	return s, errors.Join(ghErr, plansErr)
+	return g, stale, err
 }
 
 // github is the cached result while under cacheFor old, else a fresh one,

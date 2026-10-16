@@ -306,6 +306,29 @@ func (c Config) Pull() {
 	c.git(ctx, "merge", "-q", "--ff-only", "--no-autostash", "refs/remotes/origin/"+branch)
 }
 
+// Committed is the committer time, with its zone, of the newest commit on
+// HEAD that touches p's log: for another host's plan, when its last change
+// arrived, since a log's own times carry no zone. It is zero outside a
+// repository or without such a commit.
+func (c Config) Committed(p Plan) (time.Time, error) {
+	if !c.inRepo() {
+		return time.Time{}, nil
+	}
+	ctx := context.Background()
+	if _, err := c.git(ctx, "rev-parse", "-q", "--verify", "HEAD"); err != nil {
+		return time.Time{}, nil
+	}
+	rel, err := filepath.Rel(c.repo(), filepath.Join(c.Dir, p.Name+".log.org"))
+	if err != nil {
+		return time.Time{}, err
+	}
+	at, err := c.git(ctx, "log", "-1", "--format=%cI", "HEAD", "--", rel)
+	if err != nil || at == "" {
+		return time.Time{}, err
+	}
+	return time.Parse(time.RFC3339, at)
+}
+
 // SyncState is how far this host's plans have reached the remote.
 type SyncState struct {
 	// Repo is whether the plans directory is in its repository.
