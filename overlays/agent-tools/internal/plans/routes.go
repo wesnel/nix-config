@@ -168,6 +168,41 @@ func RouteRound(session, top, focus, given string) int {
 	return round
 }
 
+// HostBranches are the branches this host's plans name in BRANCHES, their
+// own and their parts', newest plan first, each once.
+func HostBranches() []string {
+	c, err := Load()
+	if err != nil {
+		return nil
+	}
+	own, err := c.ownPlans()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, p := range own {
+		files, err := p.files()
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			props, err := planHeading(f)
+			if err != nil {
+				continue
+			}
+			for _, v := range strings.Fields(props["BRANCHES"]) {
+				if _, b, ok := strings.Cut(v, ".."); ok {
+					v = b
+				}
+				if v != "" && !slices.Contains(out, v) {
+					out = append(out, v)
+				}
+			}
+		}
+	}
+	return out
+}
+
 // ReviewsRemoved are the routes REVIEWS lost, in the log of the plan Locate
 // finds for session and the worktree at top, since that log's last routed
 // event: a route taken out is a change of what reviews the change, which

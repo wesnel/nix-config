@@ -22,7 +22,9 @@ import (
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/plans"
+	"github.com/wesnel/agent-tools/internal/redact"
 	"github.com/wesnel/agent-tools/internal/refusal"
+	"github.com/wesnel/agent-tools/internal/repos"
 	"github.com/wesnel/agent-tools/internal/routes"
 )
 
@@ -104,7 +106,17 @@ must name every category of its checklist as checked, or it is not
 counted. Its findings' ids start with the route, as security-1, and it
 logs a route receipt, which only meets that route and never counts as the
 general review, with the IDs of its findings; it prints its round, by
-which a finding-settled event names each finding.
+which a finding-settled event names each finding. Its prompt adds the
+operator's threat notes, threatNotes in the repos settings (the notes, or
+a file outside the repository, refused where the repository holds it),
+and the other open branches that change the same files, as this host
+knows them without fetching: local ones not merged, those this host's
+plans name, and remote ones with an open pull request (gh pr list, kept an
+hour under $XDG_CACHE_HOME/agent-tools), or in a review-loop session with
+a commit in the last 14 days; the newest 200 are checked within 10
+seconds, and 20 listed. Known secret shapes are taken out of the notes,
+the branches' subjects, the items, the earlier findings and red-check's
+output before a reviewer sees them.
 
   --focus ROUTE    the focused review to run: security
   --goal FILE      the goal statement (required)
@@ -232,6 +244,17 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	in := inputs{r: r}
 	if fc != nil {
 		in.contract = fc.contract()
+		git.Dir = r.top
+		settings, err := repos.Lookup()
+		git.Dir = ""
+		if err != nil {
+			return report(nil, err, 0)
+		}
+		notes, err := settings.Notes()
+		if err != nil {
+			return report(nil, err, 0)
+		}
+		in.focused = notesSection(notes) + overlapSection(r)
 	}
 	if *goal == "" {
 		return report(nil, refusal.New("a review is judged against a goal statement; write the goal, and what is not this change's job, "+
@@ -541,8 +564,19 @@ type inputs struct {
 	// red-check's results.
 	adequacy string
 	where    string
-	// contract is a focused review's instructions, in place of Contract.
-	contract string
+	// contract is a focused review's instructions, in place of Contract,
+	// and focused the sections it adds: threat notes and overlapping
+	// branches.
+	contract, focused string
+}
+
+// notesSection is the security prompt's threat notes, the operator's,
+// fenced and redacted, or that there are none.
+func notesSection(notes string) string {
+	if strings.TrimSpace(notes) == "" {
+		return "\n## Threat notes\n\nThe operator keeps no threat notes for this repository: the Checklist alone applies.\n"
+	}
+	return "\n## Threat notes\n\nThe operator's threat notes for this repository:\n\n" + fenced(redact.Secrets(notes))
 }
 
 // prompt is the contract, then the range, the goal statement, the items, the
@@ -558,14 +592,17 @@ func prompt(in inputs) string {
 	fmt.Fprintf(&b, "\n# This review\n\n## Range\n\nBASE..TIP is %s..%s (given as `%s`). Its commits, oldest first:\n\n%s\n\n%s\n",
 		in.r.base, in.r.tip, in.r.given, in.r.commits, in.where)
 	fmt.Fprintf(&b, "\n## Goal statement\n\n%s\n", strings.TrimSpace(in.goal))
+	// Items and earlier findings carry threads and CI logs.
 	if s := strings.TrimSpace(in.items); s != "" {
-		fmt.Fprintf(&b, "\n## Items\n\n%s\n", s)
+		fmt.Fprintf(&b, "\n## Items\n\n%s\n", redact.Secrets(s))
 	}
 	if s := strings.TrimSpace(in.prior); s != "" {
-		fmt.Fprintf(&b, "\n## Earlier findings\n\nAn earlier finding still standing is reported again, with `reopens` naming it.\n\n%s\n", s)
+		fmt.Fprintf(&b, "\n## Earlier findings\n\nAn earlier finding still standing is reported again, with `reopens` naming it.\n\n%s\n",
+			redact.Secrets(s))
 	}
+	b.WriteString(in.focused)
 	if in.redCheck != "" {
-		fmt.Fprintf(&b, "\n## git red-check %s..%s\n\n%s\n", in.r.base, in.r.tip, in.redCheck)
+		fmt.Fprintf(&b, "\n## git red-check %s..%s\n\n%s\n", in.r.base, in.r.tip, redact.Secrets(in.redCheck))
 	}
 	if in.adequacy != "" {
 		fmt.Fprintf(&b, "\n## Test adequacy\n\n%s", in.adequacy)
