@@ -9,7 +9,24 @@
   # wgn.home.llm.guard.credentialPaths, a path under home as ~/…, which the
   # guard falls back on where its config is absent.
   credentialPaths ? [],
+  # The host's XDG config and state directories, which the programs then
+  # take from the build, never from the environment of a command an agent
+  # runs (internal/hostpaths). Without them, they read the environment.
+  configHome ? "",
+  stateHome ? "",
 }: let
+  # -ldflags is split at spaces.
+  hostLdflags = lib.concatLists (lib.mapAttrsToList (
+      var: dir:
+        lib.optionals (dir != "") (
+          assert lib.assertMsg (!lib.hasInfix " " dir) "agent-tools: ${var} ${dir} holds a space, which -ldflags cannot pass";
+            ["-X" "github.com/wesnel/agent-tools/internal/hostpaths.${var}=${dir}"]
+        )
+    ) {
+      builtConfigHome = configHome;
+      builtStateHome = stateHome;
+    });
+
   # ECA's shell deny pattern for credentials, from the path prefixes the
   # guard reads from its config: a prefix under home matches wherever a
   # command names it, as ~/, $HOME/ or any other way, and a space in it
@@ -37,7 +54,7 @@
 
     vendorHash = null;
     env.CGO_ENABLED = "0";
-    ldflags = ["-s" "-w"];
+    ldflags = ["-s" "-w"] ++ hostLdflags;
 
     # Without a list, the guard counts everything under home as a credential
     # where its config is absent.
@@ -105,9 +122,11 @@
 
     # Static Linux builds of pr-loop and agent-plan for a sandbox guest, which
     # runs them as clients of `sandbox-relay serve` on the host.
+    # The host's directories are not the guest's, so none is baked in.
     passthru.linuxClient = agent-tools.overrideAttrs (old: {
       pname = "pr-loop-linux-client";
       subPackages = ["cmd/pr-loop" "cmd/agent-plan"];
+      ldflags = ["-s" "-w"];
       env =
         old.env
         // {

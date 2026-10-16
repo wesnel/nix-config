@@ -19,13 +19,13 @@ import (
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/refusal"
-	"github.com/wesnel/agent-tools/internal/repos"
 )
 
 // Usage is `git fresh-review -h`.
-const Usage = `usage: git fresh-review --goal FILE [--items FILE] [--prior FILE] [--reviewer auto|codex]
-                        [--model M] [--timeout S] BASE..TIP
-       git fresh-review --print-prompt --goal FILE [--items FILE] [--prior FILE] BASE..TIP
+const Usage = `usage: git fresh-review --goal FILE [--items FILE] [--prior FILE] [--red-check FILE]
+                        [--reviewer auto|codex] [--model M] [--timeout S] BASE..TIP
+       git fresh-review --print-prompt --goal FILE [--items FILE] [--prior FILE] [--red-check FILE]
+                        BASE..TIP
        git fresh-review ask --question FILE PATH...   (see git fresh-review ask -h)
 
 Reviews the commits in BASE..TIP with a reviewer that did not write them and
@@ -41,22 +41,31 @@ may read only that worktree, the parts of the git directory git needs, the
 Nix store and the system files they need to run; they may not write or
 reach the network, and no MCP server, plugin, web search or image viewer
 loads. Codex's sandbox cannot start inside another macOS sandbox, so run
-this outside one. git red-check runs the commits' code, so the session runs
-it, never fresh-review; where the repository has test settings, stderr says
-the review has no red-check results.
+this outside one. git red-check runs the commits' code, so the session
+runs it, never fresh-review; where the repository has test settings and
+no --red-check is given, stderr says the review has no red-check results.
+
+Each commit whose tests red-check finds pass without the rest of it
+(passes-without-change), in the JSON given with --red-check FILE (git
+red-check BASE..TIP's, run where the change's tests run), is an untested
+finding of the review's own, with reviewer "red-check" and an id RC-<key>,
+the key made from that commit's test files' diff.
 
   --goal FILE       the goal statement (required)
   --items FILE      the items the change answers, and how each was settled
   --prior FILE      earlier rounds' findings and how each was settled
+  --red-check FILE  git red-check BASE..TIP's JSON; refused unless its
+                    commits are the range's and it ran the repository's
+                    test settings
   --reviewer R      auto (default): Codex; inside Codex, exit 4; codex: Codex
                     even then
   --model M         the Codex model (default: Codex's own)
   --timeout S       seconds before the review is stopped (default 1800)
 
 Writes JSON on stdout: reviewer, model, range, tip, findings (each with
-id, path, line, kind, claim and evidence, and endLine, about and reopens
-where given), dropped (findings whose path:line does not exist at TIP, or
-that do not fit the schema, each with its reason) and unverified. Exit
+id, path, line, kind, claim and evidence, and endLine, about, reopens and
+reviewer where given), dropped (findings whose path:line does not exist at
+TIP, or that do not fit the schema, each with its reason) and unverified. Exit
 status:
   0  no findings
   3  findings
@@ -78,6 +87,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	goal := flags.String("goal", "", "")
 	items := flags.String("items", "", "")
 	prior := flags.String("prior", "", "")
+	redCheckFile := flags.String("red-check", "", "")
 	reviewer := flags.String("reviewer", "auto", "")
 	model := flags.String("model", "", "")
 	timeout := flags.Int("timeout", 1800, "")
@@ -132,6 +142,17 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			}
 		}
 	}
+	var redCheckJSON string
+	if *redCheckFile != "" {
+		if redCheckJSON, err = readFile(*redCheckFile, stdin); err != nil {
+			return report(nil, err, 0)
+		}
+	}
+	tests, err := testAdequacy(r, *redCheckFile, []byte(redCheckJSON), stderr)
+	if err != nil {
+		return report(nil, err, 0)
+	}
+	in.redCheck, in.adequacy = tests.text, tests.prompt()
 
 	noCodex := func(why string) int {
 		fmt.Fprintf(stderr, "%s: Codex cannot review here: %s. Run `git fresh-review` where Codex's sandbox can start "+
@@ -143,7 +164,6 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			return noCodex(why)
 		}
 	}
-	noteRedCheck(r, stderr)
 	if *printPrompt {
 		in.where = fmt.Sprintf("Read the change in the repository at %s: `git diff %s %s`, `git log -p %s..%s`, "+
 			"and `git show %s:PATH` for a file as it is at TIP. That checkout's own files may hold work that is not "+
@@ -160,6 +180,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	if err != nil {
 		return report(nil, err, 0)
 	}
+	tests.add(out)
 	return report(out, nil, out.exit())
 }
 
@@ -236,26 +257,18 @@ func unavailable(auto bool) string {
 	return ""
 }
 
-// noteRedCheck says on log that git red-check is left out where the
-// repository has test settings. red-check runs the commits' code, which may be
-// anyone's, so it never runs here; the session runs it.
-func noteRedCheck(r *span, log io.Writer) {
-	git.Dir = r.top
-	settings, err := repos.Lookup()
-	git.Dir = ""
-	if err == nil && settings.Test != "" && len(settings.TestFiles) > 0 {
-		fmt.Fprintf(log, "%s: git red-check runs in the session, not here, so this review has no red-check results\n", name)
-	}
-}
-
 type inputs struct {
 	r                            *span
 	goal, items, prior, redCheck string
-	where                        string
+	// adequacy is what the reviewer is told of test adequacy, beside
+	// red-check's results.
+	adequacy string
+	where    string
 }
 
 // prompt is the contract, then the range, the goal statement, the items, the
-// earlier findings and red-check's JSON: nothing of the author's beyond them.
+// earlier findings, red-check's JSON and the findings it raised: nothing of
+// the author's beyond them.
 func prompt(in inputs) string {
 	var b strings.Builder
 	b.WriteString(Contract)
@@ -269,7 +282,10 @@ func prompt(in inputs) string {
 		fmt.Fprintf(&b, "\n## Earlier findings\n\nAn earlier finding still standing is reported again, with `reopens` naming it.\n\n%s\n", s)
 	}
 	if in.redCheck != "" {
-		fmt.Fprintf(&b, "\n## git red-check %s..%s\n\n%s\n", in.r.base, in.r.tip, in.redCheck)
+		fmt.Fprintf(&b, "\n## git red-check %s..%s\n\n%s", in.r.base, in.r.tip, in.redCheck)
+	}
+	if in.adequacy != "" {
+		fmt.Fprintf(&b, "\n## Test adequacy\n\n%s", in.adequacy)
 	}
 	b.WriteString("\nReply with the JSON object the Output section describes, and nothing else.\n")
 	return b.String()
@@ -591,6 +607,9 @@ type Finding struct {
 	Evidence string  `json:"evidence"`
 	About    *string `json:"about,omitempty"`
 	Reopens  *string `json:"reopens,omitempty"`
+	// Reviewer is "red-check" for a finding the review raised itself from
+	// red-check's verdicts, and empty for the reviewer's.
+	Reviewer string `json:"reviewer,omitempty"`
 }
 
 // Dropped is a finding left out of the result, and why.
@@ -672,9 +691,12 @@ func normalise(raw json.RawMessage, blob func(path string) ([]byte, error), wt s
 	if err := json.Unmarshal(raw, &f); err != nil {
 		return nil, "does not fit the schema: " + err.Error()
 	}
+	f.Reviewer = ""
 	switch {
 	case strings.TrimSpace(f.ID) == "":
 		return nil, "has no id"
+	case strings.HasPrefix(f.ID, mechanicalPrefix):
+		return nil, "ids starting " + mechanicalPrefix + " are red-check's"
 	case !kinds[f.Kind]:
 		return nil, fmt.Sprintf("kind %q is not one the contract defines", f.Kind)
 	case strings.TrimSpace(f.Claim) == "" || strings.TrimSpace(f.Evidence) == "":
