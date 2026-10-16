@@ -20,6 +20,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/refusal"
+	"github.com/wesnel/agent-tools/internal/routes"
 )
 
 // Usage is `git fresh-review -h`.
@@ -77,6 +78,16 @@ change as it stands at the stop, reading BASE again, so pass BASE as a
 name, such as origin/main, that follows a rebase. stderr says where the
 receipt went, or why none was logged.
 
+A general review also routes the change to the focused reviews it needs,
+each source only adding: a scan of every commit from TIP's merge base with
+the default branch (origin/HEAD, else origin/main or origin/master, else
+main or master), whatever BASE is, by its changed paths and its added and
+removed lines, against built-in rules and those the operator's repos
+settings add as routes; the routes the reviewer names; and security where
+the plan's REVIEWS lost a route since the last routing. They are printed
+as routes, each with why and the commits that need it, stderr says how to
+run each, and a routed event logs them beside the receipt.
+
   --goal FILE      the goal statement (required)
   --items FILE      the items the change answers, and how each was settled
   --prior FILE      earlier rounds' findings and how each was settled
@@ -90,9 +101,9 @@ receipt went, or why none was logged.
 Writes JSON on stdout: reviewer, model, range, tip, findings (each with
 id, path, line, kind, claim and evidence, and endLine, about, reopens and
 reviewer where given), dropped (findings whose path:line does not exist at
-TIP, or that do not fit the schema, each with its reason), unverified and
+TIP, or that do not fit the schema, each with its reason), unverified,
 rebutted (red-check's findings left out, each with id, commit, path and
-the rebuttal's reason). Exit
+the rebuttal's reason) and, where the change needs any, routes. Exit
 status:
   0  no findings
   3  findings
@@ -149,6 +160,9 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	if err != nil {
 		return report(nil, err, 0)
 	}
+	if err := usableSettings(r); err != nil {
+		return report(nil, err, 0)
+	}
 
 	if *check != "" {
 		reply, err := readFile(*check, stdin)
@@ -168,6 +182,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		}
 		testAdequacy(ctx, r, true, stderr).add(out)
 		out.Reviewer = "subagent"
+		routeChange(r, out, stderr)
 		logReceipt(r, out, stderr)
 		return report(out, nil, out.exit())
 	}
@@ -207,7 +222,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		}
 	}
 	tests := testAdequacy(ctx, r, false, stderr)
-	in.redCheck, in.adequacy = tests.text, tests.prompt()
+	in.redCheck, in.adequacy = tests.text, tests.prompt()+sharedPrompt(r)
 	if *printPrompt {
 		in.where = fmt.Sprintf("Read the change in the repository at %s: `git diff %s %s`, `git log -p %s..%s`, "+
 			"and `git show %s:PATH` for a file as it is at TIP. That checkout's own files may hold work that is not "+
@@ -231,6 +246,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		return report(nil, err, 0)
 	}
 	tests.add(out)
+	routeChange(r, out, stderr)
 	logReceipt(r, out, stderr)
 	return report(out, nil, out.exit())
 }
@@ -738,6 +754,18 @@ type Output struct {
 	Dropped    []Dropped  `json:"dropped"`
 	Unverified []string   `json:"unverified"`
 	Rebutted   []Rebutted `json:"rebutted"`
+	// Routes are the focused reviews the change needs, where a general
+	// review found any.
+	Routes []routes.Route `json:"routes,omitempty"`
+	// proposed are the routes the reviewer's reply named.
+	proposed []proposedRoute
+}
+
+// proposedRoute is a route a reviewer's reply names.
+type proposedRoute struct {
+	Route string   `json:"route"`
+	Why   string   `json:"why"`
+	Paths []string `json:"paths"`
 }
 
 func (o *Output) exit() int {
@@ -770,12 +798,13 @@ func validateWith(reply, given, tip string, blob func(path string) ([]byte, erro
 	var parsed struct {
 		Findings   *[]json.RawMessage `json:"findings"`
 		Unverified []string           `json:"unverified"`
+		Routes     []proposedRoute    `json:"routes"`
 	}
 	if err := json.Unmarshal([]byte(text[start:end+1]), &parsed); err != nil || parsed.Findings == nil {
 		return nil, fmt.Errorf("the reply is not the JSON the contract describes (%v); ask the reviewer again", err)
 	}
 	out := &Output{Range: given, Tip: tip, Findings: []*Finding{}, Dropped: []Dropped{}, Unverified: []string{},
-		Rebutted: []Rebutted{}}
+		Rebutted: []Rebutted{}, proposed: parsed.Routes}
 	if parsed.Unverified != nil {
 		out.Unverified = parsed.Unverified
 	}

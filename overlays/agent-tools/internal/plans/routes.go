@@ -86,6 +86,42 @@ func WriteRouted(session, top string, r Routed, now time.Time) (string, error) {
 	return p.File(), nil
 }
 
+// ReviewsRemoved are the routes REVIEWS lost, in the log of the plan Locate
+// finds for session and the worktree at top, since that log's last routed
+// event: a route taken out is a change of what reviews the change, which
+// the next routing sends to a security review.
+func ReviewsRemoved(session, top string) []string {
+	c, err := Load()
+	if err != nil {
+		return nil
+	}
+	p, _, ok := c.Locate(session, top)
+	if !ok {
+		return nil
+	}
+	events, err := p.Events()
+	if err != nil {
+		return nil
+	}
+	last := map[string][]string{}
+	lost := map[string]bool{}
+	for _, e := range events {
+		switch {
+		case e.Kind == routedKind:
+			lost = map[string]bool{}
+		case e.Kind == propertyKind && e.Property == "REVIEWS":
+			now := strings.Fields(e.Value)
+			for _, r := range last[e.Item] {
+				if !slices.Contains(now, r) {
+					lost[r] = true
+				}
+			}
+			last[e.Item] = now
+		}
+	}
+	return slices.Sorted(maps.Keys(lost))
+}
+
 // Waive logs that the plan's change needs no review of route, and why.
 // The waiver stands for the plan's every branch, and the gates and the
 // signing pass show it.

@@ -83,6 +83,22 @@ func TestModuleDir(t *testing.T) {
 	}
 }
 
+// TestRoutes: the operator's route rules come with the settings, and one
+// that cannot route anything is refused with the config as a whole.
+func TestRoutes(t *testing.T) {
+	os.WriteFile(useConfig(t), []byte(`{"repos": {"o/r": {"routes": [
+		{"route": "security", "paths": ["internal/auth/**"], "why": "authentication"}]}}}`), 0o644)
+	s, err := For("o/r")
+	if err != nil || len(s.Routes) != 1 || s.Routes[0].Paths[0] != "internal/auth/**" || s.Routes[0].Why != "authentication" {
+		t.Errorf("routes: %+v, %v", s, err)
+	}
+	os.WriteFile(useConfig(t), []byte(`{"repos": {"o/other": {"routes": [{"route": "style", "paths": ["x"], "why": "x"}]}}}`), 0o644)
+	var r refusal.Refusal
+	if s, err := For("o/r"); !errors.As(err, &r) || !strings.Contains(err.Error(), "o/other") {
+		t.Errorf("an unknown route: %+v, %v", s, err)
+	}
+}
+
 func TestLookup(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")

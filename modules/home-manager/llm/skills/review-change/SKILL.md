@@ -86,7 +86,10 @@ commit, so that the receipt still matches once the branch is rebased.
    `--review` its evidence names: the review then leaves it out until that
    commit's tests change, and shows the reason to the next reviewer, who
    may contest it. Only whoever owns the branch rebuts one; in a review
-   loop, the PR's owner.
+   loop, the PR's owner. `routes` lists the focused reviews the change
+   needs, from a scan of every commit since the default branch, the
+   reviewer, and the plan's `REVIEWS`; the review logs them in the plan,
+   where they stay owed.
 4. For the next round, add `--prior FILE`: every earlier finding and how it
    was settled. A new reviewer reads the change again, its tip moved by the
    fixups.

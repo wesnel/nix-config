@@ -74,6 +74,7 @@ case "$FAKE_CODEX" in
   hang) exec sleep 60 ;;
   fork) echo $$ > "$FAKE_CODEX_LOG/group"; i=0; while [ $i -lt 300 ]; do sleep 30 > /dev/null 2>&1 & i=$((i+1)); if [ $i = 20 ]; then echo > "$FAKE_CODEX_LOG/started"; fi; done; wait ;;
   none) echo '{"findings": [], "unverified": []}' > "$out" ;;
+  routed) echo '{"findings": [], "unverified": [], "routes": [{"route": "security", "why": "it reads a token", "paths": ["code.txt"]}, {"route": "style", "why": "x", "paths": []}]}' > "$out" ;;
   answer) echo '{"answer": "Extend the seam.", "unverified": ["the callers"]}' > "$out" ;;
   *) cat > "$out" <<EOF
 {"findings": [
@@ -111,12 +112,17 @@ func setUp(t *testing.T, withCodex bool) *fixture {
 		"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
 		"GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e", "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e",
 		"PR_LOOP_SESSION": "", "SANDBOX_RELAYED": "", "CODEX_SANDBOX": "", "FAKE_CODEX": "",
-		"AGENT_TOOLS_CONFIG": filepath.Join(t.TempDir(), "none.json"),
 		// A review's receipt goes to the plan of the session running it.
 		"CLAUDE_CODE_SESSION_ID": "",
 	} {
 		t.Setenv(k, v)
 	}
+	// A review reads this host's plans, for its receipt and its routes:
+	// the test's are in a directory of its own, and none.
+	plansDir := t.TempDir()
+	config := filepath.Join(plansDir, "config.json")
+	os.WriteFile(config, []byte(`{"plans": {"dir": "`+filepath.Join(plansDir, "agents")+`", "host": "box"}}`), 0o644)
+	t.Setenv("AGENT_TOOLS_CONFIG", config)
 	f := &fixture{repo: t.TempDir(), log: t.TempDir()}
 	t.Setenv("FAKE_CODEX_LOG", f.log)
 	run(t, f.repo, "git", "init", "-q", "-b", "main")
@@ -154,6 +160,11 @@ type output struct {
 	Dropped    []map[string]any `json:"dropped"`
 	Unverified []string         `json:"unverified"`
 	Rebutted   []map[string]any `json:"rebutted"`
+	Routes     []struct {
+		Route   string   `json:"route"`
+		Why     []string `json:"why"`
+		Commits []string `json:"commits"`
+	} `json:"routes"`
 }
 
 func freshReview(t *testing.T, args ...string) (int, output, string) {
