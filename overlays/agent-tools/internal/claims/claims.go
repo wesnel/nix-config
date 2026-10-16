@@ -34,10 +34,13 @@ var (
 // emphasis, code marks and a full stop are off and in lower case.
 var placeholders = map[string]bool{"none": true, "n/a": true, "na": true, "nothing": true, "-": true, "—": true}
 
-// Section is the text under text's Heading, of any level and in any case,
-// up to the next heading of its level or above outside a code fence, and
-// whether text has the heading.
-func Section(text string) (string, bool) {
+// Section is the text under text's Heading, as SectionNamed finds it.
+func Section(text string) (string, bool) { return SectionNamed(text, Heading) }
+
+// SectionNamed is the text under text's heading named name, of any level
+// and in any case, up to the next heading of its level or above outside a
+// code fence, and whether text has the heading.
+func SectionNamed(text, name string) (string, bool) {
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	level, start := 0, -1
 	inFence := false
@@ -51,7 +54,7 @@ func Section(text string) (string, bool) {
 			continue
 		}
 		switch {
-		case start < 0 && strings.EqualFold(m[2], Heading):
+		case start < 0 && strings.EqualFold(m[2], name):
 			level, start = len(m[1]), i+1
 		case start >= 0 && len(m[1]) <= level:
 			return strings.Join(lines[start:i], "\n"), true

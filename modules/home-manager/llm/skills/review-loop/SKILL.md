@@ -135,7 +135,8 @@ has changed.
    the reviewer is a `reviewer` sub-agent; `--print-prompt` and `--check`
    run on the host through the relay, whose plan for the branch logs the
    receipt and the routes. Each route the review prints gets its focused
-   review the same way (`--focus security`), with its findings settled by
+   review the same way (`--focus ROUTE`; `compat` also takes `--description
+   FILE`, the PR's description as it stands), with its findings settled by
    `agent-plan log`. Give each finding to the PR's owner to settle. The
    owner's answers are not reviewed again this round; a finding still
    standing goes out with the push and into the report. Record every

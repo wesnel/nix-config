@@ -102,16 +102,21 @@ commit, so that the receipt still matches once the branch is rebased.
 
 Each route the general review printed, or the plan's `REVIEWS` names,
 needs its own review once the general loop has settled: `git fresh-review
---focus security --goal GOAL BASE..TIP`, the same range and goal. On exit 4,
-`--print-prompt --focus security` prints the prompt, and its reply goes to
-`--check FILE BASE..TIP` as in the loop: the focus comes from the prompt,
-never from the reply. Settle each finding as Triage says, with `--review
-<round>.<id>` from the review's `round` and the finding's `id`, such as
-`security-1`. A fix moves the change, so the general review and each
-route's run again on it, within the same three rounds. A route the change
-does not need is waived, with the reason the operator will read, by
-`agent-plan waive PLAN --route security --why TEXT`; never to get past a
-finding.
+--focus ROUTE --goal GOAL BASE..TIP`, the same range and goal. `security`
+reviews what the change lets someone do; `compat` reviews what outlives
+the commit (stored state, flags, output others parse, config keys and
+options, what another host or branch reads), and checks the pull request
+description's `## Reverting` section against the code, so it also takes
+`--description FILE`, the description as the `pull-requests` skill has
+you write it. On exit 4, `--print-prompt --focus ROUTE` with the same
+files prints the prompt, and its reply goes to `--check FILE BASE..TIP` as
+in the loop: the focus comes from the prompt, never from the reply. Settle
+each finding as Triage says, with `--review <round>.<id>` from the
+review's `round` and the finding's `id`, such as `security-1`. A fix moves
+the change, so the general review and each route's run again on it,
+within the same three rounds. A route the change does not need is waived, with
+the reason the operator will read, by `agent-plan waive PLAN --route ROUTE
+--why TEXT`; never to get past a finding.
 
 ## Someone else's pull request
 

@@ -110,9 +110,9 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      stdin): the session's context and its provider's quota
                      windows as this host last saw them, then "review owed"
                      where the session committed since its plan's last review
-                     receipt, "security review owed" where the plan's log
-                     routes the change there with no route receipt or waiver
-                     since, then the open questions of the session's plan,
+                     receipt, "ROUTE review owed" (such as "compat review
+                     owed") where the plan's log routes the change there with
+                     no route receipt or waiver since, then the open questions of the session's plan,
                      else of the plan of the worktree "cwd" is in; or nothing.
                      Keeps Claude Code's rate_limits in
                      $XDG_STATE_HOME/agent-tools/usage. Emacs sends {cwd,

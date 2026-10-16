@@ -2,6 +2,7 @@ package claims
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -70,6 +71,18 @@ func TestOf(t *testing.T) {
 	}
 	if got := Of("## Verification beyond CI\r\n\r\n- one\r\n- two\r\n\r\n## Next\r\n\r\n- no\r\n"); !slices.Equal(got, []string{"one", "two"}) {
 		t.Errorf("CRLF lines: %q", got)
+	}
+}
+
+// Any heading's section is found as the claims' is.
+func TestSectionNamed(t *testing.T) {
+	text := "# Title\n\n### reverting\n\nRevert it.\n\n```\n# not a heading\n```\n\n#### A subheading\n\nmore\n\n## Limits\n\nnone\n"
+	got, ok := SectionNamed(text, "Reverting")
+	if !ok || !strings.Contains(got, "Revert it.") || !strings.Contains(got, "more") || strings.Contains(got, "none") {
+		t.Errorf("section %v:\n%s", ok, got)
+	}
+	if _, ok := SectionNamed(text, "Verification beyond CI"); ok {
+		t.Error("a heading the text lacks has a section")
 	}
 }
 

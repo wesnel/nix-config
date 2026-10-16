@@ -90,6 +90,23 @@ func TestRelayedReview(t *testing.T) {
 		}
 	})
 
+	t.Run("compat review", func(t *testing.T) {
+		f, p := relayedFixture(t)
+		inputs := map[string]string{"goal": goal["goal"], "top": goal["top"], "description": reverting}
+		code, prompt, stderr := relayed(t, inputs, "--print-prompt", "--focus", "compat", "--goal", "-", "--description", "-",
+			f.base+"..HEAD")
+		m := nonce.FindStringSubmatch(prompt)
+		if code != 0 || m == nil || !strings.Contains(prompt, "no reader keeps the third line") {
+			t.Fatalf("exit %d\n%s\n%s", code, prompt, stderr)
+		}
+		reply := `{"findings": [], "unverified": [], "checked": ` + checkedOf(t, "compat", "") + `, "tip": "` + f.tip +
+			`", "issued": "` + m[1] + `"}`
+		code, out, stderr := relayed(t, map[string]string{"reply": reply}, "--check", "-", f.base+"..HEAD")
+		if code != 0 || !strings.Contains(out, `"focus": "compat"`) || len(eventsOf(t, p, "route-receipt")) != 1 {
+			t.Fatalf("exit %d\n%s\n%s", code, out, stderr)
+		}
+	})
+
 	t.Run("general review routes", func(t *testing.T) {
 		f, p := relayedFixture(t)
 		os.WriteFile(filepath.Join(f.repo, "run.go"), []byte("package main\n\nimport \"os/exec\"\n\nvar _ = exec.Command\n"), 0o644)
@@ -145,6 +162,8 @@ func TestRelayedReview(t *testing.T) {
 			"a Codex run":  {"--goal", "-", given},
 			"a model":      {"--print-prompt", "--model", "m", "--goal", "-", given},
 			"ask":          {"ask", "--question", "-", "code.txt"},
+			"a description file": {"--print-prompt", "--focus", "compat", "--goal", "-", "--description", ".git/goal.md",
+				given},
 		} {
 			code, _, stderr := relayed(t, goal, args...)
 			refused(t, what, code, stderr)
@@ -238,5 +257,16 @@ func TestRelayClient(t *testing.T) {
 
 	if code := Main(t.Context(), []string{"--goal", ".git/goal.md", given}, nil, &stdout, &stderr); code != 4 || len(got) != 2 {
 		t.Errorf("a Codex run: exit %d, %d calls", code, len(got))
+	}
+
+	os.WriteFile(filepath.Join(f.repo, ".git", "description.md"), []byte(reverting), 0o644)
+	code = Main(t.Context(), []string{"--print-prompt", "--focus", "compat", "--goal", ".git/goal.md", "--description",
+		".git/description.md", given}, nil, &stdout, &stderr)
+	inputs = nil
+	json.Unmarshal([]byte(got[len(got)-1].Stdin), &inputs)
+	if code != 3 || len(got) != 3 ||
+		!slices.Equal(got[2].Argv, []string{"--print-prompt", "--focus", "compat", "--goal", "-", "--description", "-", given}) ||
+		inputs["description"] != reverting {
+		t.Errorf("compat: exit %d, %+v", code, got)
 	}
 }
