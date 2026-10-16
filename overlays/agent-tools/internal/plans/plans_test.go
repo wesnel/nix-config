@@ -227,6 +227,84 @@ func TestOpen(t *testing.T) {
 	}
 }
 
+// Plans are every host's plans, newest first, each its own file once: no
+// part, log, other file, or link, even to a plan in the directory. A plan
+// file that Open refuses, such as one without its log or with another
+// name, is named among those that failed.
+func TestPlans(t *testing.T) {
+	c := testConfig(t)
+	older := newPlan(t, c, "a")
+	addItems(t, older.file(""), "** Distribution", "P1")
+	if _, err := c.New(NewOptions{Title: "Part", Parent: older.file(""), Part: "P1"}, day); err != nil {
+		t.Fatal(err)
+	}
+	theirs := newPlan(t, Config{Dir: c.Dir, Host: "other"}, "b")
+	os.WriteFile(filepath.Join(c.Dir, "notes.org"), nil, 0o644)
+	outside := t.TempDir()
+	for _, name := range []string{"2026-10-14-z.box.org", "2026-10-14-z.box.log.org"} {
+		os.WriteFile(filepath.Join(outside, name), []byte("* Plan\n"), 0o644)
+		os.Symlink(filepath.Join(outside, name), filepath.Join(c.Dir, name))
+	}
+	os.Symlink(older.file(""), filepath.Join(c.Dir, "2026-10-14-c.box.org"))
+	os.Symlink(older.log(), filepath.Join(c.Dir, "2026-10-14-c.box.log.org"))
+	for _, name := range []string{"2026-10-14-h.box.org", "2026-10-14-h.box.log.org"} {
+		os.WriteFile(filepath.Join(outside, name), []byte("* Plan\n"), 0o644)
+		if err := os.Link(filepath.Join(outside, name), filepath.Join(c.Dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	os.WriteFile(filepath.Join(c.Dir, "2026-10-14-m.box.org"), []byte("* Plan\n"), 0o644)
+	got, failed, err := c.Plans()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(failed, ", ") != "2026-10-14-m.box, 2026-10-14-h.box" {
+		t.Errorf("failed %q", failed)
+	}
+	var names []string
+	for _, p := range got {
+		names = append(names, fmt.Sprintf("%s own=%v", p.Name, p.Own))
+	}
+	want := theirs.Name + " own=false, " + older.Name + " own=true"
+	if strings.Join(names, ", ") != want {
+		t.Errorf("Plans = %s, want %s", strings.Join(names, ", "), want)
+	}
+}
+
+// readPlan reads a plan's file only as the one regular file it opened: a
+// link, a file with another name or a FIFO put there after Open checked
+// it is refused, and a FIFO without blocking.
+func TestReadPlan(t *testing.T) {
+	dir := t.TempDir()
+	plain := filepath.Join(dir, "plain.org")
+	os.WriteFile(plain, []byte("* Plan\n"), 0o644)
+	if data, err := readPlan(plain); err != nil || string(data) != "* Plan\n" {
+		t.Errorf("a plain file: %q, %v", data, err)
+	}
+	os.Symlink(plain, filepath.Join(dir, "link.org"))
+	other := filepath.Join(dir, "other.org")
+	os.WriteFile(other, []byte("* Secret\n"), 0o644)
+	os.Link(other, filepath.Join(dir, "hard.org"))
+	if err := exec.Command("mkfifo", filepath.Join(dir, "fifo.org")).Run(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"link.org", "hard.org", "fifo.org"} {
+		done := make(chan error, 1)
+		go func() {
+			_, err := readPlan(filepath.Join(dir, name))
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Errorf("%s was read", name)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("reading %s blocked", name)
+		}
+	}
+}
+
 func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -494,6 +572,7 @@ func testStatusItems(t *testing.T) {
 		{Kind: "done", Item: "S2", Commit: "Add the flag"},
 		{Kind: "done", Item: "P1.S1", Commit: "Add the part"},
 		{Kind: "reviewed", Item: "P1"},
+		{Kind: "started", Item: "S3"},
 	} {
 		if _, err := p.Log(e, day); err != nil {
 			t.Fatal(err)
@@ -507,6 +586,13 @@ func testStatusItems(t *testing.T) {
 		s.Implemented != "1/4" || s.Verified != 1 || s.Total != 4 || s.State != "planning" || s.Title != "Add the loop" ||
 		s.Plan != plan {
 		t.Errorf("status %+v", s)
+	}
+	var keywords []string
+	for _, step := range s.Steps {
+		keywords = append(keywords, step.ID+" "+step.Keyword)
+	}
+	if got := strings.Join(keywords, ", "); got != "S1 VERIFIED, S2 DONE, S3 STARTED, P1.S1 DONE" {
+		t.Errorf("keywords %s", got)
 	}
 	org := s.Org()
 	for _, line := range []string{"| S1 | Step S1 | yes | yes | Add the run loop |", "| P1.S1 | Step P1.S1 | yes | no | Add the part |",
