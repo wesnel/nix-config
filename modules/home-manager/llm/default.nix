@@ -189,6 +189,17 @@ in {
                   '';
                 };
 
+                removed = mkOption {
+                  type = types.bool;
+                  default = false;
+
+                  description = ''
+                    Match `lines` against removed lines only; a line changed
+                    in place counts as removed. Needs `lines`, or every
+                    lookup of these settings refuses.
+                  '';
+                };
+
                 why = mkOption {
                   type = types.str;
                   description = "Why a change it matches needs the review, which the routing reports.";

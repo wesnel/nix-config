@@ -20,11 +20,14 @@ import (
 // over the path from the top of the repository, in which `**/` is any run
 // of directories, `/**` at the end anything below, `*` any run of other
 // characters than `/`, and `?` one of them; Lines are RE2 expressions.
+// With Removed, only a removed line matches Lines, as a line changed in
+// place is removed and added again.
 type Rule struct {
-	Route string   `json:"route"`
-	Paths []string `json:"paths,omitempty"`
-	Lines []string `json:"lines,omitempty"`
-	Why   string   `json:"why"`
+	Route   string   `json:"route"`
+	Paths   []string `json:"paths,omitempty"`
+	Lines   []string `json:"lines,omitempty"`
+	Removed bool     `json:"removed,omitempty"`
+	Why     string   `json:"why"`
 }
 
 // Check refuses a rule that names no known route, matches nothing, or
@@ -37,6 +40,8 @@ func (r Rule) Check() error {
 			strings.Join(Known, ", "), fix)
 	case len(r.Paths) == 0 && len(r.Lines) == 0:
 		return refusal.New("a rule of route %s names no paths and no lines, so it routes nothing; %s", r.Route, fix)
+	case r.Removed && len(r.Lines) == 0:
+		return refusal.New("a rule of route %s takes only removed lines but names none to match; %s", r.Route, fix)
 	case strings.TrimSpace(r.Why) == "":
 		return refusal.New("a rule of route %s gives no reason, which the routing reports; %s", r.Route, fix)
 	}
@@ -74,6 +79,27 @@ var Builtin = []Rule{
 	{Route: "security", Paths: []string{"**/AGENTS.md", "**/CLAUDE.md", "**/.claude/**", "**/.codex/**", "**/.mcp.json",
 		"**/policy.json", "**/mcp.json"},
 		Why: "a change of agent or tooling configuration"},
+	{Route: "compat", Paths: []string{"**/*.go"},
+		Lines: []string{`\b(flag|fs|\w*[Ff]lags?|\w*[Ff]lagSet)\.(Bool|BoolFunc|BoolVar|Duration|DurationVar|Float64|Float64Var|` +
+			`Func|Int|Int64|Int64Var|IntVar|String|StringVar|TextVar|Uint|Uint64|Uint64Var|UintVar|Var)\(`},
+		Why: "Go command-line flags defined"},
+	// A field added beside the others is read by nothing yet, so only a
+	// tag removed, or renamed, routes.
+	{Route: "compat", Paths: []string{"**/*.go"}, Lines: []string{"\\bjson:\""}, Removed: true,
+		Why: "Go JSON field names removed or renamed, which stored data and other programs read"},
+	{Route: "compat", Paths: []string{"**/*.nix"},
+		Lines: []string{`\bmk(Option|EnableOption|PackageOption|RenamedOptionModule|RemovedOptionModule|AliasOptionModule)\b`},
+		Why:   "Nix options declared"},
+	{Route: "compat", Paths: []string{"**/*.el"},
+		Lines: []string{`\((defcustom|define-obsolete-variable-alias|make-obsolete-variable)\s`},
+		Why:   "Emacs customisations declared"},
+	// Plan files outlive agent-tools' versions, and Emacs and other hosts
+	// read them: their kinds, keywords and property names are defined as
+	// quoted words in these files.
+	{Route: "compat", Paths: []string{"**/agent-tools/internal/plans/*.go"},
+		Lines: []string{`\b\w*(Kinds?|Properties)\s*:?=[^=]`, `":[A-Z][A-Z0-9_]*:`, `"[A-Z][A-Z0-9_]{2,}"`,
+			`^\s*"[a-z][a-z0-9-]*"(,\s*"[a-z][a-z0-9-]*")*,?\s*\}?,?\s*$`},
+		Why: "agent-tools' plan files: event kinds, keywords and property names"},
 }
 
 // Route is a route a change needs, why, and the commits that need it,
@@ -98,24 +124,9 @@ func Scan(top, base, tip string, rules []Rule) ([]Route, error) {
 // ScanCommits routes each of commits, in the repository at top, as Scan
 // does.
 func ScanCommits(top string, commits []string, rules []Rule) ([]Route, error) {
-	type compiled struct {
-		Rule
-		paths, lines []*regexp.Regexp
-	}
-	var cs []compiled
-	for _, r := range rules {
-		if err := r.Check(); err != nil {
-			return nil, err
-		}
-		c := compiled{Rule: r}
-		for _, g := range r.Paths {
-			re, _ := globRegexp(g)
-			c.paths = append(c.paths, re)
-		}
-		for _, l := range r.Lines {
-			c.lines = append(c.lines, regexp.MustCompile(l))
-		}
-		cs = append(cs, c)
+	cs, err := compile(rules)
+	if err != nil {
+		return nil, err
 	}
 	found := map[string]*Route{}
 	for _, commit := range commits {
@@ -124,7 +135,7 @@ func ScanCommits(top string, commits []string, rules []Rule) ([]Route, error) {
 			return nil, err
 		}
 		for _, c := range cs {
-			if !matches(files, c.paths, c.lines) {
+			if !matches(files, c) {
 				continue
 			}
 			r := found[c.Route]
@@ -147,18 +158,47 @@ func ScanCommits(top string, commits []string, rules []Rule) ([]Route, error) {
 	return routes, nil
 }
 
+// compiled is a rule with its globs and expressions compiled.
+type compiled struct {
+	Rule
+	paths, lines []*regexp.Regexp
+}
+
+// compile checks and compiles rules.
+func compile(rules []Rule) ([]compiled, error) {
+	var cs []compiled
+	for _, r := range rules {
+		if err := r.Check(); err != nil {
+			return nil, err
+		}
+		c := compiled{Rule: r}
+		for _, g := range r.Paths {
+			re, _ := globRegexp(g)
+			c.paths = append(c.paths, re)
+		}
+		for _, l := range r.Lines {
+			c.lines = append(c.lines, regexp.MustCompile(l))
+		}
+		cs = append(cs, c)
+	}
+	return cs, nil
+}
+
 // matches reports whether a commit changing files, each with the lines it
-// adds and removes, matches a rule of paths and lines.
-func matches(files map[string][]string, paths, lines []*regexp.Regexp) bool {
+// adds and removes as changes gives them, matches rule c.
+func matches(files map[string][]string, c compiled) bool {
 	for file, changed := range files {
-		if len(paths) > 0 && !slices.ContainsFunc(paths, func(re *regexp.Regexp) bool { return re.MatchString(file) }) {
+		if len(c.paths) > 0 && !slices.ContainsFunc(c.paths, func(re *regexp.Regexp) bool { return re.MatchString(file) }) {
 			continue
 		}
-		if len(lines) == 0 {
+		if len(c.lines) == 0 {
 			return true
 		}
 		for _, line := range changed {
-			if slices.ContainsFunc(lines, func(re *regexp.Regexp) bool { return re.MatchString(line) }) {
+			if c.Removed && line[0] != '-' {
+				continue
+			}
+			if slices.ContainsFunc(c.lines, func(re *regexp.Regexp) bool { return re.MatchString(line[1:]) }) {
 				return true
 			}
 		}
@@ -167,7 +207,7 @@ func matches(files map[string][]string, paths, lines []*regexp.Regexp) bool {
 }
 
 // changes maps each path commit changes to the lines it adds or removes
-// there, against its first parent, or against nothing for a root commit.
+// there, each still marked + or -, against its first parent, or against nothing for a root commit.
 // The patch's headers quote some paths, so its sections are matched to
 // the NUL-separated raw list by order instead: one section for each
 // change, two for a change of type.
@@ -207,7 +247,7 @@ func changes(top, commit string) (map[string][]string, error) {
 		case strings.HasPrefix(line, "@@"):
 			header = false
 		case !header && file != "" && (strings.HasPrefix(line, "+") || strings.HasPrefix(line, "-")):
-			files[file] = append(files[file], line[1:])
+			files[file] = append(files[file], line)
 		}
 	}
 	if err := scan.Err(); err != nil {
