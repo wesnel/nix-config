@@ -1,0 +1,36 @@
+name: agent-tools govulncheck
+
+on:
+  push:
+    paths:
+      - overlays/agent-tools/**
+      - flake.nix
+      - flake.lock
+      - .github/workflows/govulncheck.yml
+  pull_request:
+    paths:
+      - overlays/agent-tools/**
+      - flake.nix
+      - flake.lock
+      - .github/workflows/govulncheck.yml
+  # New advisories arrive without a change here.
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  govulncheck:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+      # An app, run outside the Nix build sandbox: govulncheck fetches its
+      # database from vuln.go.dev.
+      - name: Run govulncheck over the agent-tools binaries
+        run: nix run --print-build-logs .#agent-tools-govulncheck

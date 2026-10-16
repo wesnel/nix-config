@@ -591,5 +591,30 @@
           ];
         };
       };
+
+      # govulncheck over each agent-tools binary, as built here, and the
+      # sandbox guest's pr-loop; .github/workflows/govulncheck.yml runs it.
+      # Run it with `nix run .#agent-tools-govulncheck`. It fetches the
+      # vulnerability database from vuln.go.dev, which the Nix build sandbox
+      # cannot reach, so it must stay an app and not become a check.
+      apps.agent-tools-govulncheck = let
+        agent-tools = pkgs.callPackage ./overlays/agent-tools {};
+        program = pkgs.writeShellApplication {
+          name = "agent-tools-govulncheck";
+          runtimeInputs = [pkgs.govulncheck];
+          text = ''
+            status=0
+            for binary in ${agent-tools}/bin/* ${agent-tools.linuxClient}/bin/*; do
+              echo "govulncheck $binary"
+              govulncheck -mode=binary "$binary" || status=1
+            done
+            exit "$status"
+          '';
+        };
+      in {
+        type = "app";
+        program = "${program}/bin/agent-tools-govulncheck";
+        meta.description = "Run govulncheck over the agent-tools binaries";
+      };
     });
 }
