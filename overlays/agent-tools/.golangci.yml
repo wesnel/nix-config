@@ -12,9 +12,6 @@ linters:
   settings:
     gosec:
       excludes:
-        # Unchecked errors are errcheck's concern, not a security finding:
-        # best-effort cleanup ignores them on purpose.
-        - G104
         # These are CLIs that run git, gh and ssh with arguments and on paths
         # their caller names. Where a sandbox is the caller, the relay and
         # pr-loop's relayRefusal decide what it may name.
@@ -28,6 +25,14 @@ linters:
     rules:
       # Tests write to t.TempDir and run what they built themselves.
       - path: _test\.go
+        linters:
+          - gosec
+      # Outside the guard an unchecked error is cleanup, output with nowhere
+      # to report a failure, or a best-effort record, reminder or count. The
+      # guard decides what an agent may run, so there an error denies the
+      # call, or is annotated where it cannot change the decision.
+      - path-except: internal/guard/
+        text: "^G104:"
         linters:
           - gosec
       # File and directory modes in the review VM's code: the guest is

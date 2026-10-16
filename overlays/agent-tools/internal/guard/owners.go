@@ -1,7 +1,6 @@
 package guard
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,10 +34,16 @@ func checkOwner(in input) string {
 		var args struct {
 			Command string `json:"command"`
 		}
-		json.Unmarshal(in.ToolInput, &args)
+		if decode(in.ToolInput, &args) != nil {
+			return unreadable
+		}
 		paths = shellEditPaths(args.Command, in.Cwd, 0)
 	case "Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch":
-		for _, c := range fileChanges(in.ToolName, in.ToolInput) {
+		changes, err := fileChanges(in.ToolName, in.ToolInput)
+		if err != nil {
+			return unreadable
+		}
+		for _, c := range changes {
 			if c.path != "" {
 				paths = append(paths, expandPath(c.path, in.Cwd))
 			}
@@ -157,7 +162,9 @@ func checkSubagentStash(in input) string {
 	var args struct {
 		Command string `json:"command"`
 	}
-	json.Unmarshal(in.ToolInput, &args)
+	if decode(in.ToolInput, &args) != nil {
+		return unreadable
+	}
 	return stashWrites(args.Command, 0)
 }
 

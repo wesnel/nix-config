@@ -18,7 +18,7 @@ func branchHint(session string, toolInput json.RawMessage, cwd string) string {
 	var in struct {
 		FilePath string `json:"file_path"`
 	}
-	json.Unmarshal(toolInput, &in)
+	json.Unmarshal(toolInput, &in) //nolint:gosec // a hint only: without a path there is none, and the call is judged elsewhere
 	if session == "" || in.FilePath == "" {
 		return ""
 	}
