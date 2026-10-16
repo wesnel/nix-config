@@ -143,6 +143,9 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 		if err := lintMessages(t, s.from, s.tip); err != nil {
 			return nil, err
 		}
+		if err := routeGate(t, where[t].path); err != nil {
+			return nil, err
+		}
 		var signs int
 		if s.From < 0 {
 			s.Base = b

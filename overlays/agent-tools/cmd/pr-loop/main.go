@@ -50,7 +50,8 @@ printed on stderr and fails nothing.
                               it as a draft PR against BASE (default: the default branch),
                               in BASE's PR's GitHub stack, as link puts it there; refuses
                               when BRANCH contains a remote branch BASE lacks, and names
-                              the BASE to pass instead
+                              the BASE to pass instead, and while a plan naming BRANCH owes
+                              a review route, as push does
   stack [PR|BRANCH]           the stack of open PRs containing a PR (default HEAD's), as
                               their bases chain them, and GitHub's stack of that PR as
                               "github" (null when GitHub has it in none)
@@ -61,7 +62,11 @@ printed on stderr and fails nothing.
                               runs the setup command in each one whose HEAD moved since its last setup
   setup [PATH]                run the setup command in the worktree at PATH (default: this one)
   setup-command               the setup command configured for this repository
-  push [--dry-run] [BRANCH...]  push through the GitHub API, a branch at a time, bottom up
+  push [--dry-run] [BRANCH...]  push through the GitHub API, a branch at a time, bottom up;
+                              refuses a branch whose plan owes a review route: commits no
+                              route receipt covers, or a route review's findings unsettled;
+                              in a loop session, also commits it adds that the route scan
+                              routes and no route receipt covers
   threads [--all] PR          unresolved review threads, labelled by bot
   reply THREAD --body-file F  reply inside a review thread (- reads stdin)
   reply --from F              post the replies in a reply file (- reads stdin)

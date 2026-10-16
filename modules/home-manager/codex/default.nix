@@ -180,7 +180,8 @@ with lib; let
       # The session's commands cannot read the user's git config; the relay
       # and pr-loop on this side keep it.
       ${config.wgn.home.llm.prLoop.gitIdentity}
-      exec ${lib.getExe' config.wgn.home.llm.agentTools "sandbox-relay"} session --program pr-loop --program agent-plan -- \
+      exec ${lib.getExe' config.wgn.home.llm.agentTools "sandbox-relay"} session --program pr-loop --program agent-plan \
+        --program git-fresh-review -- \
         env GIT_CONFIG_GLOBAL=${config.wgn.home.llm.prLoop.gitConfig} codex \
         ${concatStringsSep " \\\n  " (mapAttrsToList (k: v: "-c ${escapeShellArg "${k}=${toml v}"}") overrides)} \
         -c "$domains" \

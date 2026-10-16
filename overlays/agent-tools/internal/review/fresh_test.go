@@ -64,6 +64,7 @@ if [ -z "$wt" ] || [ ! -s "$schema" ] || [ -z "$out" ] || [ -z "$stdin" ]; then
 fi
 printf 'OpenAI Codex v0\n--------\nworkdir: %s\nmodel: fake-model\nsandbox: read-only\n--------\n' "$wt" >&2
 cat > "$FAKE_CODEX_LOG/prompt"
+cp "$schema" "$FAKE_CODEX_LOG/schema"
 echo "$wt" > "$FAKE_CODEX_LOG/worktree"
 printf '%s' "$GIT_DIR$GIT_WORK_TREE" > "$FAKE_CODEX_LOG/location"
 printf '%s' "$PATH" > "$FAKE_CODEX_LOG/path"
@@ -74,7 +75,9 @@ case "$FAKE_CODEX" in
   hang) exec sleep 60 ;;
   fork) echo $$ > "$FAKE_CODEX_LOG/group"; i=0; while [ $i -lt 300 ]; do sleep 30 > /dev/null 2>&1 & i=$((i+1)); if [ $i = 20 ]; then echo > "$FAKE_CODEX_LOG/started"; fi; done; wait ;;
   none) echo '{"findings": [], "unverified": []}' > "$out" ;;
+  routed) echo '{"findings": [], "unverified": [], "routes": [{"route": "security", "why": "it reads a token", "paths": ["code.txt"]}, {"route": "style", "why": "x", "paths": []}]}' > "$out" ;;
   answer) echo '{"answer": "Extend the seam.", "unverified": ["the callers"]}' > "$out" ;;
+  security) echo '{"findings": [{"id": "1", "path": "code.txt", "line": 2, "endLine": null, "kind": "vulnerability", "claim": "c", "evidence": "e", "about": null, "reopens": null}], "unverified": [], "checked": '"$FAKE_CHECKED"'}' > "$out" ;;
   *) cat > "$out" <<EOF
 {"findings": [
  {"id": "1", "path": "$wt/code.txt", "line": 2, "endLine": 9, "kind": "bug", "claim": "c", "evidence": "e", "about": null, "reopens": null},
@@ -111,12 +114,17 @@ func setUp(t *testing.T, withCodex bool) *fixture {
 		"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
 		"GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e", "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e",
 		"PR_LOOP_SESSION": "", "SANDBOX_RELAYED": "", "CODEX_SANDBOX": "", "FAKE_CODEX": "",
-		"AGENT_TOOLS_CONFIG": filepath.Join(t.TempDir(), "none.json"),
 		// A review's receipt goes to the plan of the session running it.
 		"CLAUDE_CODE_SESSION_ID": "",
 	} {
 		t.Setenv(k, v)
 	}
+	// A review reads this host's plans, for its receipt and its routes:
+	// the test's are in a directory of its own, and none.
+	plansDir := t.TempDir()
+	config := filepath.Join(plansDir, "config.json")
+	os.WriteFile(config, []byte(`{"plans": {"dir": "`+filepath.Join(plansDir, "agents")+`", "host": "box"}}`), 0o644)
+	t.Setenv("AGENT_TOOLS_CONFIG", config)
 	f := &fixture{repo: t.TempDir(), log: t.TempDir()}
 	t.Setenv("FAKE_CODEX_LOG", f.log)
 	run(t, f.repo, "git", "init", "-q", "-b", "main")
@@ -154,6 +162,13 @@ type output struct {
 	Dropped    []map[string]any `json:"dropped"`
 	Unverified []string         `json:"unverified"`
 	Rebutted   []map[string]any `json:"rebutted"`
+	Focus      string           `json:"focus"`
+	Round      int              `json:"round"`
+	Routes     []struct {
+		Route   string   `json:"route"`
+		Why     []string `json:"why"`
+		Commits []string `json:"commits"`
+	} `json:"routes"`
 }
 
 func freshReview(t *testing.T, args ...string) (int, output, string) {
@@ -403,7 +418,6 @@ func TestUnavailable(t *testing.T) {
 		{"missing", false, nil, nil, 4},
 		{"unauthenticated", true, map[string]string{"FAKE_CODEX": "unauthenticated"}, nil, 4},
 		{"in a loop session", true, map[string]string{"PR_LOOP_SESSION": "1"}, nil, 4},
-		{"behind the relay", true, map[string]string{"SANDBOX_RELAYED": "1"}, nil, 4},
 		{"loop session, Codex asked for", true, map[string]string{"PR_LOOP_SESSION": "1"}, []string{"--reviewer", "codex"}, 4},
 		{"Codex author", true, map[string]string{"CODEX_SANDBOX": "seatbelt"}, nil, 4},
 		{"Codex author, Codex asked for", true, map[string]string{"CODEX_SANDBOX": "seatbelt", "FAKE_CODEX": "none"}, []string{"--reviewer", "codex"}, 0},

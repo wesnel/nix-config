@@ -7,18 +7,45 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/refusal"
+	"github.com/wesnel/agent-tools/internal/routes"
 )
 
 // trackedProperties are the list properties of a plan file's `* Plan`
 // heading that are a projection of the log: each change through agent-plan
 // or a hook is logged as a property event holding the whole new value, and
 // status reports a file whose value is not the one its last event gives.
-// An item's properties are compared from its first property event on.
-var trackedProperties = []string{"WORKTREES", "BRANCHES", "PULL_REQUESTS", "OWNERS"}
+// An item's properties are compared from its first property event on,
+// except PIPELINE, whose log gives defaultPipeline until it logs one.
+var trackedProperties = []string{"WORKTREES", "BRANCHES", "PULL_REQUESTS", "OWNERS", "REVIEWS", "PIPELINE"}
 
 // settableProperties are the tracked properties SetProperty sets; OWNERS is
 // SetOwner's.
-var settableProperties = []string{"WORKTREES", "BRANCHES", "PULL_REQUESTS"}
+var settableProperties = []string{"WORKTREES", "BRANCHES", "PULL_REQUESTS", "REVIEWS", "PIPELINE"}
+
+// defaultPipeline is the PIPELINE a plan's log gives it before any
+// PIPELINE event: what a new plan's file starts with.
+const defaultPipeline = "full"
+
+// checkValues refuses values that property name cannot hold: REVIEWS
+// takes routes a focused review exists for, and PIPELINE one value, full
+// or opted-out:<reason>.
+func checkValues(name string, values []string) error {
+	switch name {
+	case "REVIEWS":
+		for _, v := range values {
+			if !routes.IsKnown(v) {
+				return refusal.New("%q is not a review route. Name one of `%s`", v, strings.Join(routes.Known, "`, `"))
+			}
+		}
+	case "PIPELINE":
+		if len(values) != 1 || (values[0] != defaultPipeline && (!strings.HasPrefix(values[0], "opted-out:") ||
+			values[0] == "opted-out:")) {
+			return refusal.New("PIPELINE is one value, `full` or `opted-out:<reason>`. Set it as `agent-plan set PLAN PIPELINE opted-out:operator-asked`, " +
+				"once the operator has opted the task out")
+		}
+	}
+	return nil
+}
 
 // propertyKind is the kind of a property event, whose Property names the
 // property and Value holds its values, separated by spaces.
@@ -38,6 +65,9 @@ func (p Plan) SetProperty(part, name string, values []string, now time.Time) err
 		return refusal.New("%q is not a part ID. Pass one such as `--part P1`", part)
 	}
 	if err := checkWords(strings.ToLower(name), values); err != nil {
+		return err
+	}
+	if err := checkValues(name, values); err != nil {
 		return err
 	}
 	return p.withLock(func(l *lockedPlan) error {
@@ -101,7 +131,10 @@ func (l *lockedPlan) setPlanProperty(part, name string, edit func(values []strin
 		return err
 	}
 	value := strings.Join(after, " ")
-	if logged, ok := loggedProperty(events, l.p.item(part), name); ok && logged == value {
+	if logged, ok := loggedProperty(events, l.p.item(part), name); ok && logged == value && name != "PIPELINE" {
+		return nil
+	}
+	if name == "PIPELINE" && value == loggedPipeline(events, l.p.item(part)) {
 		return nil
 	}
 	return l.logProperty(part, name, value, now)
@@ -124,7 +157,7 @@ func (l *lockedPlan) logNewProperties(part string, now time.Time) error {
 		return err
 	}
 	for _, name := range trackedProperties {
-		if value := strings.Join(strings.Fields(props[name]), " "); value != "" {
+		if value := strings.Join(strings.Fields(props[name]), " "); value != "" && (name != "PIPELINE" || value != defaultPipeline) {
 			if err := l.logProperty(part, name, value, now); err != nil {
 				return err
 			}
@@ -149,6 +182,22 @@ func loggedProperty(events []Event, item, name string) (string, bool) {
 	}
 	return value, any
 }
+
+// loggedPipeline is the PIPELINE the last PIPELINE event of item gives it,
+// else defaultPipeline.
+func loggedPipeline(events []Event, item string) string {
+	value := defaultPipeline
+	for _, e := range events {
+		if e.Kind == propertyKind && e.Item == item && e.Property == "PIPELINE" {
+			value = e.Value
+		}
+	}
+	return value
+}
+
+// pipeline is the plan's PIPELINE as its log gives it: what stop-check and
+// the gates go by, whatever the file says.
+func (p Plan) pipeline(events []Event) string { return loggedPipeline(events, p.Name) }
 
 // planHeading is the properties of file's `* Plan` heading.
 func planHeading(file string) (map[string]string, error) {
@@ -191,6 +240,9 @@ func (p Plan) propertyDrift(events []Event) ([]PropertyDrift, error) {
 		for _, name := range trackedProperties {
 			logged, ok := loggedProperty(events, p.item(part), name)
 			inFile := strings.Join(strings.Fields(props[name]), " ")
+			if name == "PIPELINE" {
+				logged, ok = loggedPipeline(events, p.item(part)), inFile != ""
+			}
 			if ok && inFile != logged {
 				out = append(out, PropertyDrift{ID: p.item(part), Property: name, File: inFile, Log: logged})
 			}

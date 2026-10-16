@@ -2,6 +2,7 @@ package signpass
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -10,10 +11,12 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
+	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
@@ -141,6 +144,63 @@ func TestRun(t *testing.T) {
 	t.Run("worktree branch", testRunWorktreeBranch)
 	t.Run("failed push", testRunFailedPush)
 	t.Run("missed touch", testRunMissedTouch)
+	t.Run("a route owed", testRunRouteOwed)
+}
+
+// testRunRouteOwed: a branch whose plan owes a review route is refused
+// before any touch, by a single-branch pass and a planned one alike, and
+// signed once the route is waived.
+func testRunRouteOwed(t *testing.T) {
+	dir := t.TempDir()
+	global := signingConfig(t, dir)
+	repo := filepath.Join(dir, "repo")
+	os.Mkdir(repo, 0o755)
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+	gitIn(t, repo, "switch", "-qc", "br")
+	os.WriteFile(filepath.Join(repo, "a"), []byte("a\n"), 0o644)
+	gitIn(t, repo, "add", "a")
+	gitIn(t, repo, "commit", "-q", "-m", "Add a")
+	tip := gitIn(t, repo, "rev-parse", "br")
+
+	c := plans.Config{Dir: filepath.Join(dir, "agents"), Host: "box"}
+	config := filepath.Join(dir, "config.json")
+	data, _ := json.Marshal(map[string]any{"plans": c})
+	os.WriteFile(config, data, 0o644)
+	t.Setenv("AGENT_TOOLS_CONFIG", config)
+	made, err := c.New(plans.NewOptions{Title: "Add a", Slug: "a", Branches: []string{"main..br"}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := c.Open(made.Plan)
+	if err := p.SetProperty("", "REVIEWS", []string{"security"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	useDir(t, repo)
+	for name, pass := range map[string]func() (any, error){
+		"Run":  func() (any, error) { return Run("", false, false, false) },
+		"Plan": func() (any, error) { return Plan("", []string{"br"}, false, false) },
+	} {
+		_, err := pass()
+		var r refusal.Refusal
+		if !errors.As(err, &r) || !strings.Contains(err.Error(), "security") || !refusal.SaysInstead(err.Error()) {
+			t.Errorf("%s: %v", name, err)
+		}
+		if now, _ := git.Run("rev-parse", "br"); now != tip {
+			t.Errorf("%s moved the branch", name)
+		}
+	}
+	if _, err := p.Waive("security", "the operator read it", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run("", false, false, false); err != nil {
+		t.Fatal(err)
+	}
+	if marks, _ := git.Run("log", "--format=%G?", "main..br"); marks != "G" {
+		t.Errorf("signatures %q", marks)
+	}
 }
 
 func TestPush(t *testing.T) {

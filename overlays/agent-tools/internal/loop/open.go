@@ -269,6 +269,9 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := routeGate(branch, local, nil); err != nil {
+		return nil, err
+	}
 	// The API bypasses git's pre-push hooks, so the check git-push-guard makes
 	// is made here.
 	absent := strings.Repeat("0", 40)

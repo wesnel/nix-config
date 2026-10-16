@@ -206,6 +206,42 @@ func TestStatusLine(t *testing.T) {
 		}
 	})
 
+	// A route the log names is owed until a route receipt of it follows,
+	// or a waiver; the line reads the log alone.
+	t.Run("route review owed", func(t *testing.T) {
+		c := testConfig(t)
+		p := newPlan(t, c, "x")
+		line := func() string {
+			t.Helper()
+			return c.StatusLine([]byte(`{"session_id":"abc","cwd":"/nowhere"}`))
+		}
+		steps := []struct {
+			name string
+			step func()
+			want string
+		}{
+			{"routed", func() {
+				p.Routed("", Routed{Branch: "loop", Base: "a", Tip: "b", Routes: map[string][]string{"security": {"b"}}}, day)
+			}, "security review owed"},
+			{"a general receipt", func() {
+				p.Receipt("", Receipt{Range: "origin/main..HEAD", Tip: "1234", PatchID: "abcd", Reviewer: "codex"}, day)
+			}, "security review owed"},
+			{"a route receipt", func() {
+				p.Receipt("", Receipt{Range: "origin/main..HEAD", Tip: "1234", PatchID: "abcd", Focus: "security"}, day)
+			}, ""},
+			{"routed again", func() {
+				p.Routed("", Routed{Branch: "loop", Base: "a", Tip: "c", Routes: map[string][]string{"security": {"c"}}}, day)
+			}, "security review owed"},
+			{"waived", func() { p.Waive("security", "comments only", day) }, ""},
+		}
+		for _, s := range steps {
+			s.step()
+			if got := line(); got != s.want {
+				t.Errorf("%s: status line %q, want %q", s.name, got, s.want)
+			}
+		}
+	})
+
 	t.Run("the session's open questions", func(t *testing.T) {
 		c, _ := openQuestions(t)
 		if got := c.StatusLine([]byte(`{"session_id":"abc","cwd":"/nowhere","workspace":{"current_dir":"/nowhere"}}`)); got != "3 open questions · /questions" {

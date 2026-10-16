@@ -12,6 +12,8 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/plans"
+	"github.com/wesnel/agent-tools/internal/repos"
+	"github.com/wesnel/agent-tools/internal/routes"
 )
 
 // Push uploads the local commits through the Git Database API and moves the
@@ -51,6 +53,15 @@ func Push(branches []string, dryRun bool) (any, error) {
 		}
 		local, err := git.Run("rev-parse", "refs/heads/"+b)
 		if err != nil {
+			return nil, err
+		}
+		var scanned map[string][]string
+		if inLoopSession() {
+			if scanned, err = scanNew(local, entry.RemoteOid, parent); err != nil {
+				return nil, err
+			}
+		}
+		if err := routeGate(b, local, scanned); err != nil {
 			return nil, err
 		}
 		if local != entry.RemoteOid {
@@ -133,6 +144,38 @@ func Push(branches []string, dryRun bool) (any, error) {
 		return nil, err
 	}
 	return map[string]any{"pushed": pushed, "round": state.Round, "apiCalls": calls}, state.save()
+}
+
+// scanNew routes the commits a loop's push adds to a branch, those of tip
+// that neither remote, the branch as GitHub has it, nor parent holds, by
+// the built-in rules and the operator's: a loop cannot log the routes a
+// review of them would, so the push finds them itself.
+func scanNew(tip, remote, parent string) (map[string][]string, error) {
+	args := []string{"rev-list", "--reverse", "--no-merges", tip, "--not", parent}
+	if git.OK("cat-file", "-e", remote+"^{commit}") {
+		args = append(args, remote)
+	}
+	out, err := git.Run(args...)
+	if err != nil || out == "" {
+		return nil, err
+	}
+	settings, err := repos.Lookup()
+	if err != nil {
+		return nil, err
+	}
+	top, err := git.Toplevel()
+	if err != nil {
+		return nil, err
+	}
+	found, err := routes.ScanCommits(top, strings.Fields(out), append(slices.Clone(routes.Builtin), settings.Routes...))
+	if err != nil {
+		return nil, err
+	}
+	scanned := map[string][]string{}
+	for _, r := range found {
+		scanned[r.Route] = r.Commits
+	}
+	return scanned, nil
 }
 
 // objectSet is what GitHub needs before a branch can point at a tip: every

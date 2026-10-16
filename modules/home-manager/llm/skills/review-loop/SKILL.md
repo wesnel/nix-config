@@ -132,11 +132,15 @@ has changed.
    branch's tip at round start to the branch, in the PR's worktree; the goal
    statement is the PR's scope statement, and the items are the threads and
    checks the fixups answer. In a loop session `git fresh-review` exits 4, so
-   the reviewer is a `reviewer` sub-agent. Give each finding to the PR's
-   owner to settle. The owner's answers are not reviewed again this round; a
-   finding still standing goes out with the push and into the report.
-   Record every finding and its outcome in the PR's notes file under the
-   round. Without sub-agents, skip this step and say so in the report.
+   the reviewer is a `reviewer` sub-agent; `--print-prompt` and `--check`
+   run on the host through the relay, whose plan for the branch logs the
+   receipt and the routes. Each route the review prints gets its focused
+   review the same way (`--focus security`), with its findings settled by
+   `agent-plan log`. Give each finding to the PR's owner to settle. The
+   owner's answers are not reviewed again this round; a finding still
+   standing goes out with the push and into the report. Record every
+   finding and its outcome in the PR's notes file under the round. Without
+   sub-agents, skip this step and say so in the report.
 7. **Restack**, bottom-up. Each child's owner runs
    `git rebase --onto <parent-branch> <child's recorded fork point> <branch>`
    in its worktree, resolves conflicts (the `restack-branches` skill covers
@@ -162,7 +166,9 @@ Stop and hand back when any of these holds:
   threads are deferred or need the operator.
 - `pr-loop` refused a push, CI keeps failing
   after two rounds spent on it, or an owner showed a CI failure is not the
-  PR's doing.
+  PR's doing. A push refused for a review route owed is first met by that
+  route's review, as the refusal says; one the loop cannot meet goes in
+  the hand-back by name, since a waiver is the operator's.
 - A bot reopens a problem already fixed twice on the same thread.
 - Six rounds have run.
 

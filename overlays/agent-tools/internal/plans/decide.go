@@ -3,6 +3,8 @@ package plans
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -119,9 +121,9 @@ func settle(lines []string, id, state, answer, decidedBy, supersedes string, now
 
 // StatusLine is the status line for the session its input names, else for
 // the worktree its cwd is in, as Emacs's mode line sends: "review owed"
-// where the session committed since the plan's last review receipt, and
-// how many open questions of that plan the operator can answer now, or
-// nothing.
+// where the session committed since the plan's last review receipt,
+// "<route> review owed" for each route routesOwed gives, and how many open
+// questions of that plan the operator can answer now, or nothing.
 // It reads only
 // this host's plan files and git, never the network, and says nothing on
 // any error.
@@ -154,6 +156,9 @@ func (c Config) StatusLine(input []byte) string {
 	if reviewOwed(p, in.SessionID) {
 		owed = "review owed · "
 	}
+	for _, route := range routesOwed(p) {
+		owed += route + " review owed · "
+	}
 	qs, err := p.Questions(true)
 	qs = Askable(qs)
 	switch {
@@ -163,6 +168,36 @@ func (c Config) StatusLine(input []byte) string {
 		return owed + "1 open question · /questions"
 	}
 	return owed + fmt.Sprintf("%d open questions · /questions", len(qs))
+}
+
+// routesOwed are the routes p's log names, by a routed event or REVIEWS,
+// with no route receipt of theirs logged after the last event naming them,
+// and not waived. Like reviewOwed it reads the log alone; whether a
+// receipt covers the change is stop-check's and the gates'.
+func routesOwed(p Plan) []string {
+	events, err := p.Events()
+	if err != nil {
+		return nil
+	}
+	owed := map[string]bool{}
+	for _, e := range events {
+		switch {
+		case e.Kind == routedKind:
+			for r := range decodeRoutes(e.Routes) {
+				owed[r] = true
+			}
+		case e.Kind == propertyKind && e.Property == "REVIEWS":
+			for _, r := range strings.Fields(e.Value) {
+				owed[r] = true
+			}
+		case e.Kind == routeReceiptKind:
+			delete(owed, e.Focus)
+		}
+	}
+	for _, w := range waivers(events) {
+		delete(owed, w.Route)
+	}
+	return slices.Sorted(maps.Keys(owed))
 }
 
 // reviewOwed reports whether session's last commit in p's log comes after

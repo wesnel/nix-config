@@ -54,7 +54,10 @@ the signing to one pass at the end, which the operator runs.
   pull request of the operator's that this one stacks on, whose GitHub stack
   open adds it to; when it cannot, `unstacked` in its output says why and
   which `pr-loop link` stacks it later. It refuses a branch GitHub already
-  has; later commits reach GitHub through the signing pass.
+  has; later commits reach GitHub through the signing pass. It, `pr-loop
+  push` and the signing pass refuse a branch whose plan owes a review route
+  (the `review-change` skill's focused reviews) until each is reviewed and
+  its findings settled, or waived.
 - Never create tags; they are signed as well.
 - If a command fails with `gpg failed to sign the data`, `failed to write
   commit object` or `agent refused operation`, or hangs, the flag was

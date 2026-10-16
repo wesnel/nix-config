@@ -59,6 +59,17 @@ type Event struct {
 	// item's `* Plan` heading, and its values, separated by spaces.
 	Property string `json:"property,omitempty"`
 	Value    string `json:"value,omitempty"`
+	// Focus is the route of a route receipt, a waiver or an issued review,
+	// "" for a general review's. Nonce names the issued review a reply
+	// answers, in the review-issued event and the receipt of its check.
+	Focus string `json:"focus,omitempty"`
+	Nonce string `json:"nonce,omitempty"`
+	// Routes are a routed event's routes, each with the commits that need
+	// it, as Routed.Routes: `route:commit,commit`, separated by spaces.
+	Routes string `json:"routes,omitempty"`
+	// Findings are the IDs of a route receipt's findings, separated by
+	// spaces.
+	Findings string `json:"findings,omitempty"`
 	// Note is what the caller should know about the event, such as a
 	// heading keyword Log could not write; the log does not hold it.
 	Note string `json:"note,omitempty"`
@@ -89,7 +100,7 @@ var (
 				"Run `git fresh-review` (or `pr-loop review` for someone else's pull request) as the review-change skill says",
 			"committed": "a hook after each shell call logs `committed` for every commit, from what git printed. " +
 				"Log `done` with `--commit SUBJECT` for the step a commit completes",
-			propertyKind: "agent-plan logs each change of a plan's WORKTREES, BRANCHES, PULL_REQUESTS and OWNERS that it makes. " +
+			propertyKind: "agent-plan logs each change of a plan's tracked properties that it makes. " +
 				"Change one with `agent-plan set PLAN NAME VALUE...`, or OWNERS with `agent-plan own`",
 			usageAsked: "the prompt hook logs `usage-asked` for each quota ask it shows a session. " +
 				"Record the operator's answer with `agent-plan usage choose`",
@@ -99,6 +110,14 @@ var (
 				"Do what its reason asks, or say in your report why it cannot be done",
 			"pushed": "pr-loop, and a hook after each shell call, log `pushed` for every push, from what they pushed. " +
 				"Watch the push's CI with `pr-loop wait ci` as the signing-pass skill says",
+			routedKind: "git fresh-review logs `routed` for the focused reviews a change needs, from its scan and its reviewer. " +
+				"Ask for one with `agent-plan set PLAN REVIEWS ROUTE...`",
+			routeReceiptKind: "a route receipt is written by the focused review that ran alone. " +
+				"Run `git fresh-review --focus ROUTE` as the review-change skill says",
+			issuedKind: "git fresh-review --print-prompt logs `review-issued` for the prompt it prints. " +
+				"Print the prompt with it, and check the reply with `git fresh-review --check`",
+			waivedKind: "a route is waived with its reason by `agent-plan waive`. " +
+				"Run `agent-plan waive PLAN --route ROUTE --why TEXT`",
 		}
 		for _, k := range []string{"loop-began", "round", "replied", "resolved", "ci-waited", "loop-signed"} {
 			kinds[k] = "pr-loop logs what it did, from begin to sign, in the plan of the session that ran it. " +
@@ -125,7 +144,8 @@ func oneOf(value string, allowed []string) bool {
 func (p Plan) check(e Event) error {
 	for what, v := range map[string]string{"summary": e.Summary, "agent": e.Agent, "branch": e.Branch,
 		"commit": e.Commit, "evidence": e.Evidence, "model": e.Model, "item": e.Item, "kind": e.Kind, "session": e.Session,
-		"worktree": e.Worktree, "range": e.Range, "tip": e.Tip, "patch ID": e.PatchID, "raised": e.Raised, "property": e.Property, "value": e.Value} {
+		"worktree": e.Worktree, "range": e.Range, "tip": e.Tip, "patch ID": e.PatchID, "raised": e.Raised, "property": e.Property, "value": e.Value,
+		"focus": e.Focus, "nonce": e.Nonce, "routes": e.Routes, "findings": e.Findings} {
 		if err := checkLine(what, v); err != nil {
 			return err
 		}
@@ -271,7 +291,8 @@ func eventText(e Event) string {
 		{"KIND", e.Kind}, {"BRANCH", e.Branch}, {"COMMIT", e.Commit}, {"EVIDENCE", e.Evidence},
 		{"REVIEW", e.Review}, {"OUTCOME", e.Outcome}, {"TOKENS", tokens}, {"MODEL", e.Model},
 		{"EFFORT", e.Effort}, {"SESSION", e.Session}, {"WORKTREE", e.Worktree}, {"RANGE", e.Range}, {"TIP", e.Tip}, {"PATCH_ID", e.PatchID},
-		{"RAISED", e.Raised}, {"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}, {"PROPERTY", e.Property}, {"VALUE", e.Value}} {
+		{"RAISED", e.Raised}, {"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}, {"PROPERTY", e.Property}, {"VALUE", e.Value},
+		{"FOCUS", e.Focus}, {"NONCE", e.Nonce}, {"ROUTES", e.Routes}, {"FINDINGS", e.Findings}} {
 		if kv[1] != "" {
 			b.WriteString(":" + kv[0] + ": " + kv[1] + "\n")
 		}
@@ -475,7 +496,8 @@ func (p Plan) Events() ([]Event, error) {
 			Evidence: h.Props["EVIDENCE"], Review: h.Props["REVIEW"], Outcome: h.Props["OUTCOME"],
 			Model: h.Props["MODEL"], Effort: h.Props["EFFORT"], Session: h.Props["SESSION"], Worktree: h.Props["WORKTREE"],
 			Range: h.Props["RANGE"], Tip: h.Props["TIP"], PatchID: h.Props["PATCH_ID"], Raised: h.Props["RAISED"], Sign: h.Props["SIGN"], Exit: h.Props["EXIT"],
-			Delivers: h.Props["DELIVERS"], Property: h.Props["PROPERTY"], Value: h.Props["VALUE"]}
+			Delivers: h.Props["DELIVERS"], Property: h.Props["PROPERTY"], Value: h.Props["VALUE"], Focus: h.Props["FOCUS"],
+			Nonce: h.Props["NONCE"], Routes: h.Props["ROUTES"], Findings: h.Props["FINDINGS"]}
 		e.Tokens, _ = strconv.ParseInt(h.Props["TOKENS"], 10, 64)
 		if _, summary, ok := strings.Cut(h.Title, " — "); ok {
 			e.Summary = summary

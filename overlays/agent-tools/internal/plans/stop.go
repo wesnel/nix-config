@@ -13,7 +13,9 @@ import (
 // StopCheck is the Stop hook of Claude Code and Codex, and of ECA through
 // StopCheckChat: before the agent stops, it blocks the stop once, with the
 // reason, when the work is not in the state the plan-work and review-change
-// skills leave it in. A session answers only for its own plan and its own
+// skills leave it in: steps verified, and a committed change with a review
+// receipt and a route receipt for each route it owes (RouteState). A
+// session answers only for its own plan and its own
 // commits, as `pr-loop guard --post` records them, never for another
 // session's work in the same worktree; a session that committed has a
 // plan, since that records its first commit in a plan made for it where
@@ -48,7 +50,11 @@ func (c Config) stopReason(session, cwd string) (Plan, string) {
 		return p, ""
 	}
 	props := items[p.Name].Props
-	state, pipeline := props["STATUS"], props["PIPELINE"]
+	events, err := p.Events()
+	if err != nil {
+		return p, ""
+	}
+	state, pipeline := props["STATUS"], p.pipeline(events)
 	if state == "halted" || state == "planning" || strings.HasPrefix(pipeline, "opted-out") {
 		return p, ""
 	}
@@ -61,19 +67,12 @@ func (c Config) stopReason(session, cwd string) (Plan, string) {
 			"`agent-plan log PLAN --item ID --kind verified --evidence '...'`, or say in your report why it cannot be.",
 			p.File(), strings.Join(status.DoneNotVerified, ", "))
 	}
-	if pipeline != "full" {
-		return p, ""
-	}
-	events, err := p.Events()
-	if err != nil {
+	if pipeline != defaultPipeline {
 		return p, ""
 	}
 	committed := slices.ContainsFunc(events, func(e Event) bool { return e.Kind == "committed" && e.Session == session })
 	ref := defaultRef(top)
 	planBase := branchBase(top, props["BRANCHES"])
-	if !committed || reviewed(top, ref, planBase, events) {
-		return p, ""
-	}
 	base := planBase
 	if base == "" {
 		base = ref
@@ -81,9 +80,38 @@ func (c Config) stopReason(session, cwd string) (Plan, string) {
 	if base == "" {
 		base = "BASE"
 	}
-	return p, fmt.Sprintf("Plan %s runs the full review pipeline, this session committed to it, and no review receipt matches the change %s..HEAD as it stands. "+
-		"Review it with `git fresh-review --goal FILE %s..HEAD`, as the review-change skill says, which logs the receipt; or say in your report why it cannot be reviewed.",
-		p.File(), base, base)
+	if !committed {
+		return p, ""
+	}
+	if !reviewed(top, ref, planBase, events) {
+		return p, fmt.Sprintf("Plan %s runs the full review pipeline, this session committed to it, and no review receipt matches the change %s..HEAD as it stands. "+
+			"Review it with `git fresh-review --goal FILE %s..HEAD`, as the review-change skill says, which logs the receipt; or say in your report why it cannot be reviewed.",
+			p.File(), base, base)
+	}
+	branch, _ := git.Run("-C", top, "branch", "--show-current")
+	head, err := git.Run("-C", top, "rev-parse", "HEAD")
+	if err != nil {
+		return p, ""
+	}
+	s, err := c.RouteState(p, top, branch, head)
+	if err != nil {
+		return p, ""
+	}
+	var owed, runs, waives []string
+	for _, d := range s.Due {
+		if len(d.Uncovered) > 0 {
+			owed = append(owed, fmt.Sprintf("%s (%d commits, the first %.12s)", d.Route, len(d.Uncovered), d.Uncovered[0]))
+			runs = append(runs, fmt.Sprintf("`git fresh-review --focus %s --goal FILE %s..HEAD`", d.Route, base))
+			waives = append(waives, fmt.Sprintf("`agent-plan waive %s --route %s --why TEXT`", p.File(), d.Route))
+		}
+	}
+	if len(owed) == 0 {
+		return p, ""
+	}
+	return p, fmt.Sprintf("Plan %s routes this change to focused reviews that no route receipt covers: %s. "+
+		"Review it with %s, as the review-change skill says, which logs the receipt; "+
+		"or, where the change does not need one, waive it with %s, which the operator reads before signing.",
+		p.File(), strings.Join(owed, ", "), strings.Join(runs, " and "), strings.Join(waives, " or "))
 }
 
 // branchBase is the base the plan's BRANCHES give the branch checked out

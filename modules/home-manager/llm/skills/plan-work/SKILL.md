@@ -38,15 +38,24 @@ agent-plan new --parent PLAN --part P1 --title 'Add the run loop flag' --branch 
   `REPOSITORIES`, `BRANCHES` (`base..branch`), `WORKTREES`, `SESSIONS`
   (`harness:id`), `HARNESS`, `STATUS` (`planning`, `reviewing-plan`,
   `working`, `reviewing`, `handed-back` or `halted`), `PULL_REQUESTS`,
-  `PIPELINE` (`full` or `opted-out:<reason>`), `SKILLS` (the skills the
+  `PIPELINE` (`full` or `opted-out:<reason>`), `REVIEWS` (the focused
+  reviews the change needs, such as `security`), `SKILLS` (the skills the
   work runs under beyond this one, such as `coordinate-subagents` or
   `review-loop`, which you add) and, once `agent-plan own` sets one,
   `OWNERS` (`worktree=agent`). Lists are separated by spaces.
-  `WORKTREES`, `BRANCHES`, `PULL_REQUESTS` and `OWNERS` follow the log, as
-  step keywords do: never edit them by hand. Change one with
-  `agent-plan set PLAN BRANCHES main..loop [--part P1]`, which logs the
-  whole new value; `agent-plan status` lists a value the log does not
-  give, and a References entry it does not hold, as property drift.
+  `WORKTREES`, `BRANCHES`, `PULL_REQUESTS`, `OWNERS`, `REVIEWS` and
+  `PIPELINE` follow the log, as step keywords do: never edit them by hand.
+  Change one with `agent-plan set PLAN BRANCHES main..loop [--part P1]`,
+  which logs the whole new value; `agent-plan status` lists a value the log
+  does not give, and a References entry it does not hold, as property
+  drift. Stop-check and the gates go by the log, so a `PIPELINE` edited in
+  the file opts nothing out, and a route once in `REVIEWS` stays owed when
+  taken out again; waive one with `agent-plan waive PLAN --route ROUTE
+  --why TEXT`, which the operator sees before signing.
+- Name the routes the change needs when writing the plan: `agent-plan set
+  PLAN REVIEWS security` where it takes untrusted input, touches
+  authentication, secrets, running programs, exposure, customer data,
+  dependencies, or agent or tooling configuration.
 - `** Goal`: the goal and what is not this change's job, and nothing of how
   the work went. It is the fresh review's goal statement, word for word:
   `agent-plan goal PLAN [--part P1]` prints it. It ends with a

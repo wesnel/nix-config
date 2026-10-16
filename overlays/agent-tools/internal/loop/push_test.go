@@ -12,7 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/relay"
 )
 
@@ -194,6 +196,59 @@ func pushStack(t *testing.T) (*fakeRefs, string) {
 // each, bottom up, as separate pushes would, so GitHub starts each pull
 // request's workflows once.
 func TestPush(t *testing.T) {
+	// A branch whose plan owes a review route is not pushed until the
+	// route is reviewed or waived.
+	t.Run("a route owed", func(t *testing.T) {
+		f, dir := pushStack(t)
+		p := loopPlan(t, nil, []string{"lower..upper"})
+		if err := p.SetProperty("", "REVIEWS", []string{"security"}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Push([]string{"upper", "lower"}, false)
+		if !refusedWell(err) || !strings.Contains(err.Error(), "security") || len(f.calls) != 0 {
+			t.Fatalf("pushed with a route owed: %v, calls %v", err, f.calls)
+		}
+		if _, err := p.Waive("security", "the operator read it", time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Push([]string{"upper", "lower"}, false); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := gitIn(t, f.bare, "rev-parse", "upper"), gitIn(t, dir, "rev-parse", "upper"); got != want {
+			t.Errorf("GitHub has upper at %s, want %s", got, want)
+		}
+	})
+
+	// A loop's push scans the commits it adds: one the scan routes is not
+	// pushed until a route receipt covers it, and the refusal tells the
+	// loop how to review it or to hand back, never to waive it.
+	t.Run("a loop's new commit routed", func(t *testing.T) {
+		f, dir := pushStack(t)
+		t.Setenv(relay.RelayEnv, "1")
+		p := loopPlan(t, nil, []string{"lower..upper"})
+		gitIn(t, dir, "switch", "-q", "upper")
+		os.WriteFile(filepath.Join(dir, "run.go"), []byte("package main\n\nimport \"os/exec\"\n\nvar _ = exec.Command\n"), 0o644)
+		gitIn(t, dir, "add", "run.go")
+		gitIn(t, dir, "commit", "-qm", "fixup! Add c")
+		_, err := Push([]string{"lower", "upper"}, false)
+		if !refusedWell(err) || !strings.Contains(err.Error(), "git fresh-review --focus security --print-prompt") ||
+			!strings.Contains(err.Error(), "hand back to the operator") || strings.Contains(err.Error(), "agent-plan waive") ||
+			len(f.calls) != 0 {
+			t.Fatalf("pushed a routed commit: %v, calls %v", err, f.calls)
+		}
+		id, err := git.PatchID([]string{"-C", dir}, "main", "upper")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := p.Receipt("", plans.Receipt{Range: "main..upper", Tip: gitIn(t, dir, "rev-parse", "upper"), PatchID: id,
+			Reviewer: "subagent", Focus: "security", Branch: "upper"}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Push([]string{"lower", "upper"}, false); err != nil {
+			t.Fatal(err)
+		}
+	})
+
 	t.Run("one ref per call, bottom up", func(t *testing.T) {
 		f, dir := pushStack(t)
 		if _, err := Push([]string{"upper", "lower"}, false); err != nil {

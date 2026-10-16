@@ -127,6 +127,24 @@ func TestCommands(t *testing.T) {
 		}
 	})
 
+	t.Run("routes, pipeline and waivers", func(t *testing.T) {
+		plan := sessionPlan(t)
+		for _, args := range [][]string{{"set", plan, "REVIEWS", "security"}, {"set", plan, "PIPELINE", "opted-out:operator-asked"},
+			{"waive", plan, "--route", "security", "--why", "only comments change"}} {
+			if code, _, errs := agentPlan(t, "", args...); code != 0 {
+				t.Fatalf("%v: %d %s", args, code, errs)
+			}
+		}
+		code, out, _ := agentPlan(t, "", "status", plan)
+		if code != 0 || !strings.Contains(out, "- Pipeline: opted-out:operator-asked\n") ||
+			!strings.Contains(out, "- Review routes: security; waived: security (only comments change)\n") {
+			t.Errorf("status: %d\n%s", code, out)
+		}
+		if code, _, errs := agentPlan(t, "", "waive", plan, "--route", "security"); code != 2 {
+			t.Errorf("a waiver without a reason: %d %s", code, errs)
+		}
+	})
+
 	t.Run("empty goal", func(t *testing.T) {
 		plan := sessionPlan(t)
 		code, _, errs := agentPlan(t, "", "goal", plan)
@@ -365,6 +383,8 @@ func TestRelayed(t *testing.T) {
 		{"reseal", "PLAN"},
 		{"followup", "PLAN", "--title", "T", "--found-in", "S1"},
 		{"reference", "PLAN", "https://example.com"},
+		// A waiver is the operator's or a main session's to give.
+		{"waive", "PLAN", "--route", "security", "--why", "a loop would like it"},
 		{"bogus"},
 	} {
 		t.Run("refused/"+strings.Join(args, " "), func(t *testing.T) {

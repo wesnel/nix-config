@@ -51,12 +51,15 @@ or a step's.
   patch ID is the change's as it then stands, for a range starting at or
   below the branch's base in the plan's `BRANCHES` or `origin/<default>`;
   a rebase or re-sign that keeps the change needs no new round, and any
-  other change, or a review of part of it, does.
+  other change, or a review of part of it, does. A focused review logs a
+  `route-receipt` instead, and the hook also wants one covering every
+  commit each route owed is for.
 - Each finding settled: `finding-settled` against the item it concerns, with
   `--review <round>.<id> --outcome <outcome>`, the outcome as Triage below.
 - Design review of the result: `reviewed` with `--role design-reviewer`.
 - Hand-back: `handed-back`, with `STATUS` set to `handed-back`.
-- When the operator opts the task out, `PIPELINE` becomes `opted-out:<reason>`.
+- When the operator opts the task out, set it with `agent-plan set PLAN
+  PIPELINE opted-out:<reason>`; the log's value is the one that counts.
 
 ## Fresh review loop
 
@@ -85,12 +88,30 @@ commit, so that the receipt still matches once the branch is rebased.
    `--review` its evidence names: the review then leaves it out until that
    commit's tests change, and shows the reason to the next reviewer, who
    may contest it. Only whoever owns the branch rebuts one; in a review
-   loop, the PR's owner.
+   loop, the PR's owner. `routes` lists the focused reviews the change
+   needs, from a scan of every commit since the default branch, the
+   reviewer, and the plan's `REVIEWS`; the review logs them in the plan,
+   where they stay owed.
 4. For the next round, add `--prior FILE`: every earlier finding and how it
    was settled. A new reviewer reads the change again, its tip moved by the
    fixups.
 5. Stop after a round with no findings, or after three rounds. A finding
    still standing goes in the hand-back.
+
+## Focused reviews
+
+Each route the general review printed, or the plan's `REVIEWS` names,
+needs its own review once the general loop has settled: `git fresh-review
+--focus security --goal GOAL BASE..TIP`, the same range and goal. On exit 4,
+`--print-prompt --focus security` prints the prompt, and its reply goes to
+`--check FILE BASE..TIP` as in the loop: the focus comes from the prompt,
+never from the reply. Settle each finding as Triage says, with `--review
+<round>.<id>` from the review's `round` and the finding's `id`, such as
+`security-1`. A fix moves the change, so the general review and each
+route's run again on it, within the same three rounds. A route the change
+does not need is waived, with the reason the operator will read, by
+`agent-plan waive PLAN --route security --why TEXT`; never to get past a
+finding.
 
 ## Someone else's pull request
 
@@ -162,6 +183,7 @@ each branch:
 - the same file edited on parallel branches;
 - what the plan leaves undecided, against this bar: someone could build it
   without asking a question;
+- the review routes the change needs, named in the plan's `REVIEWS`;
 - designing for change, by the `design` skill's principles (tell the
   sub-agent to load it) and these checks:
   - built as we would build it from scratch, knowing what the change now
