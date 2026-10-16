@@ -53,21 +53,14 @@ func reviewStatus(slug string, number int, state *State) (*Review, error) {
 						SubmittedAt string
 					}
 				}
-				ReviewThreads struct {
-					Nodes []struct {
-						IsResolved bool
-						Comments   struct{ Nodes []struct{ Author *login } }
-					}
-				}
 			}
 		}
 	}
-	err := gh.GraphQL(`query($owner: String!, $name: String!, $number: Int!) {
+	err := graphQL(`query($owner: String!, $name: String!, $number: Int!) {
 		repository(owner: $owner, name: $name) { pullRequest(number: $number) {
 			isDraft headRefName headRefOid
 			reviewRequests(first: 20) { nodes { requestedReviewer { ... on Bot { login } ... on User { login } } } }
 			reviews(last: 50) { nodes { author { login } commit { oid } body submittedAt } }
-			reviewThreads(first: 100) { nodes { isResolved comments(first: 1) { nodes { author { login } } } } }
 		} }
 	}`, map[string]any{"owner": owner, "name": name, "number": number}, &data)
 	if err != nil {
@@ -84,18 +77,12 @@ func reviewStatus(slug string, number int, state *State) (*Review, error) {
 			requested = append(requested, r.RequestedReviewer.Login)
 		}
 	}
-	openBy := map[string]int{}
-	for _, t := range pr.ReviewThreads.Nodes {
-		if !t.IsResolved && len(t.Comments.Nodes) > 0 && t.Comments.Nodes[0].Author != nil {
-			openBy[t.Comments.Nodes[0].Author.Login]++
-		}
+	open, err := openThreads(slug, number, bots)
+	if err != nil {
+		return nil, err
 	}
-	out := &Review{PR: number, Branch: pr.HeadRefName, Draft: pr.IsDraft, HeadOid: pr.HeadRefOid, Bots: map[string]*BotReview{}}
-	for author, n := range openBy {
-		if botNamed(bots, author) == nil {
-			out.OpenHumanThreads += n
-		}
-	}
+	out := &Review{PR: number, Branch: pr.HeadRefName, Draft: pr.IsDraft, HeadOid: pr.HeadRefOid, Bots: map[string]*BotReview{},
+		OpenHumanThreads: open[""]}
 	for _, bot := range bots {
 		review := &BotReview{ResolvesOwnThreads: bot.ResolvesOwnThreads}
 		var latest *struct {
@@ -131,14 +118,68 @@ func reviewStatus(slug string, number int, state *State) (*Review, error) {
 				review.Pending = latest == nil || latest.SubmittedAt <= t.At
 			}
 		}
-		for author, n := range openBy {
-			if bot.Pattern.MatchString(author) {
-				review.OpenThreads += n
-			}
-		}
+		review.OpenThreads = open[bot.Name]
 		out.Bots[bot.Name] = review
 	}
 	return out, nil
+}
+
+// openThreads counts a PR's unresolved review threads by the bot that
+// started them, as `pr-loop threads` labels them, with people's under "".
+// It reads every page: a request is gated on these counts.
+func openThreads(slug string, number int, bots []*Bot) (map[string]int, error) {
+	owner, name, _ := strings.Cut(slug, "/")
+	open := map[string]int{}
+	var cursor *string
+	for {
+		var data struct {
+			Repository struct {
+				PullRequest struct {
+					ReviewThreads struct {
+						PageInfo struct {
+							HasNextPage bool
+							EndCursor   string
+						}
+						Nodes []struct {
+							IsResolved bool
+							First      struct{ Nodes []struct{ Author *login } }
+						}
+					}
+				}
+			}
+		}
+		err := graphQL(`query($owner: String!, $name: String!, $number: Int!, $after: String) {
+			repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+				reviewThreads(first: 100, after: $after) {
+					pageInfo { hasNextPage endCursor }
+					nodes { isResolved first: comments(first: 1) { nodes { author { login } } } }
+				}
+			} }
+		}`, map[string]any{"owner": owner, "name": name, "number": number, "after": cursor}, &data)
+		if err != nil {
+			return nil, err
+		}
+		threads := data.Repository.PullRequest.ReviewThreads
+		for _, t := range threads.Nodes {
+			if t.IsResolved {
+				continue
+			}
+			starter := ""
+			if n := t.First.Nodes; len(n) > 0 && n[0].Author != nil {
+				starter = n[0].Author.Login
+			}
+			reviewer := ""
+			if bot := botNamed(bots, starter); bot != nil {
+				reviewer = bot.Name
+			}
+			open[reviewer]++
+		}
+		if !threads.PageInfo.HasNextPage {
+			return open, nil
+		}
+		next := threads.PageInfo.EndCursor
+		cursor = &next
+	}
 }
 
 // Status is CI, each bot's review of the head, open threads, and how much the
@@ -237,11 +278,8 @@ func Request(numbers []int, onlyBots, acceptFailures []string) (any, error) {
 				continue
 			}
 			if bot.Request.Reviewer != "" {
-				cmd := exec.Command("gh", "pr", "edit", fmt.Sprint(pr.Number), "--repo", repo.Slug,
-					"--add-reviewer", bot.Request.Reviewer)
-				cmd.Dir = gh.Outside
-				if out, err := cmd.CombinedOutput(); err != nil {
-					return nil, fmt.Errorf("requesting %s on #%d: %w: %s", bot.Name, pr.Number, err, out)
+				if err := requestReviewer(repo.Slug, pr.Number, bot.Request.Reviewer); err != nil {
+					return nil, fmt.Errorf("requesting %s on #%d: %w", bot.Name, pr.Number, err)
 				}
 			} else {
 				triggerKey := fmt.Sprintf("%d:%s", pr.Number, bot.Name)
@@ -266,6 +304,17 @@ func Request(numbers []int, onlyBots, acceptFailures []string) (any, error) {
 		}
 	}
 	return log, state.save()
+}
+
+// requestReviewer asks reviewer to review PR number in slug. Tests that fake
+// GitHub replace it.
+var requestReviewer = func(slug string, number int, reviewer string) error {
+	cmd := exec.Command("gh", "pr", "edit", fmt.Sprint(number), "--repo", slug, "--add-reviewer", reviewer)
+	cmd.Dir = gh.Outside
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%w: %s", err, out)
+	}
+	return nil
 }
 
 // WaitReviews blocks until requested reviews land. It reports settled=false
