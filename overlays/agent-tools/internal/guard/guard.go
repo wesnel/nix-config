@@ -300,10 +300,16 @@ func command(text string, depth int, who role, dir string, background bool) stri
 		}
 	}
 	// A file a gh call reads is what the guard sees only when nothing else
-	// on the command line can have written it first.
-	files := ""
-	if depth == 0 && len(calls) == 1 {
-		files = dir
+	// on the command line can have written it first: the call is the
+	// line's only one but for cds before it, outside any subshell or
+	// substitution, where a cd would not last.
+	single := depth == 0 && len(calls) > 0
+	for _, c := range calls[:max(0, len(calls)-1)] {
+		single = single && !c.expands[0] && (c.words[0] == "cd" || c.words[0] == "pushd") && !strings.ContainsAny(text, "(`")
+	}
+	var written []string
+	if depth == 0 && !single {
+		written = shellEditPaths(text, dir, 0)
 	}
 	// Where each command runs, as cd moves it; "" once the guard cannot
 	// tell.
@@ -319,6 +325,10 @@ func command(text string, depth int, who role, dir string, background bool) stri
 			}
 			if !bg && longSleep(c) {
 				return sleeping
+			}
+			files := ghFiles{dir: cwd, written: written, listed: depth == 0}
+			if single {
+				files.workspace = cwd
 			}
 			return program(c, who, files, cwd)
 		},
@@ -353,7 +363,7 @@ func cdTarget(c call, cwd string) string {
 }
 
 // program judges a call once unwrap has found the program it runs, in dir.
-func program(c call, who role, files, dir string) string {
+func program(c call, who role, files ghFiles, dir string) string {
 	if reason := checkEnv(c.env); reason != "" {
 		return reason
 	}
@@ -803,14 +813,14 @@ func configRead(args []string) bool {
 // checkGh checks gh's arguments, with which of them the shell expands, for
 // who: a loop's roles are kept to reading and pr-loop, and every session to
 // what is not the operator's call. It reads files a GraphQL call names only
-// inside workspace, and none when workspace is "".
-func checkGh(args []string, expanded []bool, workspace string, who role) string {
+// inside files.workspace, and none when that is "".
+func checkGh(args []string, expanded []bool, files ghFiles, who role) string {
 	if who >= coordinator {
-		if reason := checkLoopGh(args, expanded, workspace); reason != "" {
+		if reason := checkLoopGh(args, expanded, files.workspace); reason != "" {
 			return reason
 		}
 	}
-	return checkBaselineGh(args, expanded, workspace)
+	return checkBaselineGh(args, expanded, files)
 }
 
 // checkLoopGh keeps a loop's roles to reading GitHub.
@@ -897,7 +907,7 @@ var ghEditFlags = map[string]bool{"--base": true, "-B": true, "--title": true, "
 
 // checkBaselineGh keeps every session from the GitHub changes that are
 // the operator's to make.
-func checkBaselineGh(args []string, expanded []bool, workspace string) string {
+func checkBaselineGh(args []string, expanded []bool, files ghFiles) string {
 	var words []string
 	for i := 0; i < len(args) && len(words) < 2; i++ {
 		switch a := args[i]; {
@@ -928,7 +938,7 @@ func checkBaselineGh(args []string, expanded []bool, workspace string) string {
 	switch {
 	case group == "api":
 		at := slices.Index(args, "api")
-		return checkAPI(args[at+1:], expanded[at+1:], workspace, ghAPIWrite)
+		return checkAPI(args[at+1:], expanded[at+1:], files.workspace, ghAPIWrite)
 	case group == "auth" && verb == "status" && has("-t", "--show-token"):
 		return ghAuth
 	case group == "auth" && !ghReads[group][verb]:
@@ -946,10 +956,10 @@ func checkBaselineGh(args []string, expanded []bool, workspace string) string {
 				draft, _ = strconv.ParseBool(value)
 			}
 		}
-		if draft {
-			return ""
+		if !draft {
+			return ghDraft
 		}
-		return ghDraft
+		return checkBody(args, expanded, files)
 	case group == "pr" && verb == "edit":
 		after := false
 		for i := 0; i < len(args); i++ {
@@ -970,7 +980,7 @@ func checkBaselineGh(args []string, expanded []bool, workspace string) string {
 				i++
 			}
 		}
-		return ""
+		return checkBody(args, expanded, files)
 	case group == "pr" && verb == "ready":
 		if has("--undo") {
 			return ""

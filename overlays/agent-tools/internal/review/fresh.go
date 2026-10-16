@@ -35,6 +35,7 @@ const Usage = `usage: git fresh-review [--focus ROUTE] --goal FILE [--items FILE
        git fresh-review --print-prompt [--focus ROUTE] --goal FILE [--items FILE] [--prior FILE] BASE..TIP
        git fresh-review --check FILE BASE..TIP
        git fresh-review ask --question FILE PATH...   (see git fresh-review ask -h)
+       git fresh-review audit --claims FILE BASE..TIP (see git fresh-review audit -h)
 
 Reviews the commits in BASE..TIP with a reviewer that did not write them and
 sees only the commits and what the files name: the goal statement (the goal,
@@ -167,6 +168,9 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		}
 		return ask(ctx, args[1:], stdin, stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "audit" {
+		return audit(ctx, args[1:], stdin, stdout, stderr)
+	}
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	goal := flags.String("goal", "", "")
 	items := flags.String("items", "", "")
@@ -282,6 +286,10 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		if err != nil {
 			return report(nil, err, 0)
 		}
+		if issued.Focus == claimsFocus {
+			return report(nil, refusal.New("the prompt %s was printed by a claims audit, whose reply is no review; check it "+
+				"with `git fresh-review audit --check FILE --claims CLAIMS %s`", issued.Nonce, r.given), 0)
+		}
 		if issued.Focus != "" {
 			f := focuses[issued.Focus]
 			fc, *focusName = &f, issued.Focus
@@ -355,7 +363,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		in.redCheck, in.adequacy = tests.text, tests.prompt()+sharedPrompt(r)
 	}
 	if *printPrompt {
-		nonce, err := issue(r, *focusName)
+		nonce, err := issue(r, *focusName, "")
 		if err != nil {
 			return report(nil, err, 0)
 		}
@@ -412,11 +420,12 @@ func finish(r *span, out *Output, focusName, nonce string, report func(any, erro
 	return report(out, nil, out.exit())
 }
 
-// issue logs the prompt about to be printed for r, with focus, in the plan
-// a receipt of its reply would go to, and returns the nonce the reply must
-// carry; "" where no plan takes it. A focused review's receipt is what
-// meets its route, so its prompt is refused where there is no plan.
-func issue(r *span, focusName string) (string, error) {
+// issue logs the prompt about to be printed for r, with focus, and for a
+// claims audit the hash of its claims, in the plan a receipt of its reply
+// would go to, and returns the nonce the reply must carry; "" where no plan
+// takes it. A focused review's receipt is what meets its route, so its
+// prompt is refused where there is no plan.
+func issue(r *span, focusName, claimsHash string) (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", err
@@ -427,7 +436,7 @@ func issue(r *span, focusName string) (string, error) {
 		return "", err
 	}
 	file, err := plans.WriteIssued(os.Getenv("CLAUDE_CODE_SESSION_ID"), r.top,
-		plans.Issued{Nonce: nonce, Focus: focusName, Range: r.given, Tip: r.tip, PatchID: id}, time.Now())
+		plans.Issued{Nonce: nonce, Focus: focusName, Range: r.given, Tip: r.tip, PatchID: id, Claims: claimsHash}, time.Now())
 	switch {
 	case focusName != "" && err != nil:
 		return "", err
@@ -697,43 +706,52 @@ func Validate(reply, given, tip string, blob func(path string) ([]byte, error), 
 // removes however the review ends.
 func codexReview(ctx context.Context, in inputs, focusName string, fc *focus, model string, timeout time.Duration,
 	log io.Writer) (*Output, error) {
-	parent := filepath.Join(in.r.common, "fresh-review")
+	var out *Output
+	err := inCheckout(in.r, func(wt string) error {
+		in.where = "The working directory is a checkout of TIP holding nothing but the commits; `git diff " +
+			in.r.base + " " + in.r.tip + "` shows the change."
+		schema := Schema
+		if fc != nil {
+			schema = fc.schema()
+		}
+		reply, err := CodexRun(ctx, Codex{Checkout: wt, Prompt: prompt(in), Schema: schema, Model: model, Timeout: timeout, Log: log})
+		if err != nil {
+			return err
+		}
+		if out, err = validate(reply.Text, in.r, wt, focusName, fc); err != nil {
+			return err
+		}
+		out.Reviewer = "codex"
+		if reply.Model != "" {
+			out.Model = &reply.Model
+		}
+		return nil
+	})
+	return out, err
+}
+
+// inCheckout runs fn with a throwaway worktree of r's TIP under the git
+// directory's fresh-review/, which it removes however fn ends.
+func inCheckout(r *span, fn func(wt string) error) error {
+	parent := filepath.Join(r.common, "fresh-review")
 	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return nil, err
+		return err
 	}
-	dir, err := os.MkdirTemp(parent, in.r.tip[:12]+"-")
+	dir, err := os.MkdirTemp(parent, r.tip[:12]+"-")
 	if err != nil {
-		return nil, err
+		return err
 	}
 	wt := filepath.Join(dir, "tree")
 	defer func() {
-		removeWorktree(in.r, wt)
+		removeWorktree(r, wt)
 		os.RemoveAll(dir)
 		// Left in place while another review is using it.
 		os.Remove(parent)
 	}()
-	if _, err := git.Run("-C", in.r.top, "worktree", "add", "--quiet", "--detach", wt, in.r.tip); err != nil {
-		return nil, err
+	if _, err := git.Run("-C", r.top, "worktree", "add", "--quiet", "--detach", wt, r.tip); err != nil {
+		return err
 	}
-	in.where = "The working directory is a checkout of TIP holding nothing but the commits; `git diff " +
-		in.r.base + " " + in.r.tip + "` shows the change."
-	schema := Schema
-	if fc != nil {
-		schema = fc.schema()
-	}
-	reply, err := CodexRun(ctx, Codex{Checkout: wt, Prompt: prompt(in), Schema: schema, Model: model, Timeout: timeout, Log: log})
-	if err != nil {
-		return nil, err
-	}
-	out, err := validate(reply.Text, in.r, wt, focusName, fc)
-	if err != nil {
-		return nil, err
-	}
-	out.Reviewer = "codex"
-	if reply.Model != "" {
-		out.Model = &reply.Model
-	}
-	return out, nil
+	return fn(wt)
 }
 
 // Codex is one confined, read-only Codex run.

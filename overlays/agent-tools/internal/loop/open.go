@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/wesnel/agent-tools/internal/claims"
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/history"
@@ -256,6 +257,18 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 	}
 	if base == "" {
 		base = repo.Default
+	}
+	// The description's verification claims must have an audit of the
+	// change GitHub is about to get, before GitHub is asked anything; a
+	// loop's never can. A branch that does not exist is refused below.
+	if tip, err := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+branch); err == nil {
+		top, err := git.Toplevel()
+		if err != nil {
+			return nil, err
+		}
+		if err := claims.Gate(top, tip, body, inLoopSession()); err != nil {
+			return nil, err
+		}
 	}
 	view, err := viewRemote(repo, branch, base)
 	if err != nil {

@@ -50,8 +50,11 @@ printed on stderr and fails nothing.
                               it as a draft PR against BASE (default: the default branch),
                               in BASE's PR's GitHub stack, as link puts it there; refuses
                               when BRANCH contains a remote branch BASE lacks, and names
-                              the BASE to pass instead, and while a plan naming BRANCH owes
-                              a review route, as push does
+                              the BASE to pass instead, while a plan naming BRANCH owes
+                              a review route, as push does, and while F's "## Verification
+                              beyond CI" claims have no git fresh-review audit of BRANCH's
+                              change supporting every one (in a loop session, whenever F
+                              has claims there)
   stack [PR|BRANCH]           the stack of open PRs containing a PR (default HEAD's), as
                               their bases chain them, and GitHub's stack of that PR as
                               "github" (null when GitHub has it in none)
@@ -86,8 +89,15 @@ printed on stderr and fails nothing.
   end [--prune]               delete trigger comments and loop state
   guard [--baseline]          PreToolUse hook for Claude Code, Codex and ECA (reads stdin):
                               a loop's rules, or with --baseline every session's, by agent
-  guard --post                PostToolUse hook for Claude Code, Codex and ECA (reads stdin):
-                              records the shell call's commits, pushes (but push's,
+  guard --post                PostToolUse hook for Claude Code, Codex and ECA, and
+                              PostToolUseFailure for Claude Code (reads stdin): writes
+                              the shell call to its session's evidence log on this host
+                              (command, exit status where the harness gives one, HEAD,
+                              the worktree's tree and the last 40 output lines,
+                              redacted; kept 14 days under
+                              $XDG_STATE_HOME/agent-tools/evidence), which git
+                              fresh-review audit reads; after a failed call, nothing
+                              more. Else records the shell call's commits, pushes (but push's,
                               which push logs), new worktrees,
                               branches and PRs in the plan of its session or worktree,
                               each commit with the session, asking which step it
