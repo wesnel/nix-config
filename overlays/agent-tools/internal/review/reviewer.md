@@ -88,6 +88,16 @@ no problem found. Route `security` where the change:
 - adds or changes dependencies;
 - changes agent or tooling configuration, skills and prompts included.
 
+Route `compat` where the change touches what outlives the commit:
+
+- stored formats: files, logs and caches it writes and reads later, plan
+  fields, kinds and properties included;
+- command-line flags and subcommands, exit statuses, and JSON or other
+  output another program, hook, skill or Emacs parses;
+- skill and hook interfaces;
+- config keys, Nix options and Emacs customisations;
+- what another branch, host or program reads from this one.
+
 ## Output
 
 Reply with one JSON object and nothing else:
