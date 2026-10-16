@@ -324,6 +324,7 @@ trash "$d"
 
 ``` sh
 plan-dash collect                        # writes $XDG_STATE_HOME/plan-dash/status.org
+plan-dash export                         # writes $XDG_STATE_HOME/agent-plans/out/
 ```
 
 `status.org` lists your open pull requests (draft, CI, review decision,
@@ -338,6 +339,25 @@ them, each checked against its shape, and never a title, branch, login or
 comment, so nothing someone else wrote on GitHub can form a headline,
 keyword or link in it. `github.json` holds pull request titles as well, so
 only escaped output may show what it holds.
+
+`plan-dash export` writes the documents the "Agent plans" page keeps in
+its claude.ai database, laid out as an `ArtifactData` read's `out_dir`
+lays them: `plans/<plan>.json` for every host's plans that are not halted,
+`github/status.json` (what `collect` lists of GitHub, with titles, through
+the same cache) and `meta/sync.json` (when this host's plans last reached
+the notes remote, whether they changed since, when the repository last
+fetched). These leave the machine. Each is a fixed struct in
+`internal/export` whose JSON tags are the allowlist, and its sentinel test
+fails on any other key. Plan text comes only from the plans directory: the
+title, the Goal section, the step headings under Steps, the open and
+decided questions with their `RECOMMENDATION`, `ANSWER` or `LOGBOOK` note
+and list items, and `STATUS`; of the log, only event kinds and times. Text
+is stripped of control and formatting characters, has known secret shapes
+redacted and is capped in length, and a plan's lists are capped, so a
+document stays under 600 KiB. Redaction knows shapes, not data, so
+customer data stays out of plans. A plan that cannot be read is named and
+its document kept, and the command exits 1; only a plan gone from the
+directory, or halted, loses its document.
 
 ## pushing: private history stays private
 

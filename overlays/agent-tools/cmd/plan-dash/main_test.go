@@ -76,8 +76,57 @@ func TestCollect(t *testing.T) {
 	}
 }
 
+// export writes the page's documents under the state directory, sharing
+// collect's GitHub cache, and nowhere else.
+func TestExport(t *testing.T) {
+	state := setUp(t)
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"export"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	out := filepath.Join(state, "agent-plans", "out")
+	var got struct {
+		Dir          string `json:"dir"`
+		GitHub       bool   `json:"github"`
+		PullRequests int    `json:"pullRequests"`
+		Plans        int    `json:"plans"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil || got.Dir != out || !got.GitHub || got.PullRequests != 1 || got.Plans != 0 {
+		t.Errorf("printed %s (%v)", stdout.String(), err)
+	}
+	data, err := os.ReadFile(filepath.Join(out, "github", "status.json"))
+	if err != nil || !strings.Contains(string(data), `"repo": "o/r"`) {
+		t.Errorf("github/status.json: %s (%v)", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "meta", "sync.json")); err != nil {
+		t.Error(err)
+	}
+	entries, _ := os.ReadDir(state)
+	for _, e := range entries {
+		if e.Name() != "agent-plans" && e.Name() != "plan-dash" {
+			t.Errorf("wrote %s", e.Name())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(state, "plan-dash", "github.json")); err != nil {
+		t.Errorf("the cache collect reads: %v", err)
+	}
+
+	// Where the fetch fails with nothing cached, the rest is still written,
+	// and the command fails.
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("FAKE_GH_FAIL", "1")
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"export"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "fake gh: down") {
+		t.Errorf("exit %d: %s", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(os.Getenv("XDG_STATE_HOME"), "agent-plans", "out", "meta", "sync.json")); err != nil {
+		t.Error(err)
+	}
+}
+
 func TestUsage(t *testing.T) {
-	for _, args := range [][]string{{}, {"serve"}, {"collect", "--bogus"}} {
+	for _, args := range [][]string{{}, {"serve"}, {"collect", "--bogus"}, {"export", "now"}, {"export", "--out", "x"}} {
 		var stdout, stderr bytes.Buffer
 		if code := run(args, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "collect") {
 			t.Errorf("%q: exit %d: %s", args, code, stderr.String())
