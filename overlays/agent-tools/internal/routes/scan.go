@@ -88,6 +88,16 @@ type Route struct {
 // at top, by rules: by the paths it changes and the lines it adds or
 // removes. Routes come in name order.
 func Scan(top, base, tip string, rules []Rule) ([]Route, error) {
+	out, err := git.Run("-C", top, "rev-list", "--reverse", "--no-merges", base+".."+tip)
+	if err != nil {
+		return nil, err
+	}
+	return ScanCommits(top, strings.Fields(out), rules)
+}
+
+// ScanCommits routes each of commits, in the repository at top, as Scan
+// does.
+func ScanCommits(top string, commits []string, rules []Rule) ([]Route, error) {
 	type compiled struct {
 		Rule
 		paths, lines []*regexp.Regexp
@@ -107,12 +117,8 @@ func Scan(top, base, tip string, rules []Rule) ([]Route, error) {
 		}
 		cs = append(cs, c)
 	}
-	out, err := git.Run("-C", top, "rev-list", "--reverse", "--no-merges", base+".."+tip)
-	if err != nil {
-		return nil, err
-	}
 	found := map[string]*Route{}
-	for _, commit := range strings.Fields(out) {
+	for _, commit := range commits {
 		files, err := changes(top, commit)
 		if err != nil {
 			return nil, err

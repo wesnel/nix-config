@@ -406,14 +406,30 @@ type Gate struct {
 	Notes   []string
 }
 
-// RouteGate is the gate for branch at tip in the repository at top, from
-// the plans of this host that name the branch in BRANCHES, and, where
-// worktree is where it is checked out, those that name that worktree and
-// no other branch, or none, less those of other repositories and those
-// finished: a route any of them owes, with commits no route receipt covers
-// or findings of its covering receipts unsettled, refuses. The Stop hook
-// asks once; this is where an owed route stops the work.
-func (c Config) RouteGate(session, top, worktree, branch, tip string) (Gate, error) {
+// GateFor is what a gate is asked about: Branch at Tip in the repository
+// at Top, checked out at Worktree, or "" where it is not.
+type GateFor struct {
+	Top, Worktree, Branch, Tip string
+	// Scanned are the routes the caller's own scan found, each with the
+	// commits that need it, owed beside the plans' routes unless a plan
+	// waives them, and held up by the unsettled findings of the receipts
+	// covering those commits in the plans gating the branch.
+	Scanned map[string][]string
+	// Loop is a review loop's gate: it may review a route through the
+	// relay, but a waiver, and a route it cannot meet, are the
+	// operator's.
+	Loop bool
+}
+
+// RouteGate is the gate for a branch, from the plans of this host that
+// name the branch in BRANCHES, and, where it is checked out, those that
+// name its worktree and no other branch, or none, less those of other
+// repositories and those finished: a route any of them owes, or the
+// caller's scan found, with commits no route receipt covers or findings of
+// its covering receipts unsettled, refuses. The Stop hook asks once; this
+// is where an owed route stops the work.
+func (c Config) RouteGate(at GateFor) (Gate, error) {
+	top, worktree, branch, tip := at.Top, at.Worktree, at.Branch, at.Tip
 	var found []Found
 	if branch != "" {
 		f, err := c.Find(FindOptions{Branch: branch})
@@ -443,7 +459,8 @@ func (c Config) RouteGate(session, top, worktree, branch, tip string) (Gate, err
 	}
 	var g Gate
 	var owed, routesOwed []string
-	seen := map[string]bool{}
+	var gating []Plan
+	seen, waived, reported := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, f := range found {
 		if seen[f.Plan] {
 			continue
@@ -468,11 +485,14 @@ func (c Config) RouteGate(session, top, worktree, branch, tip string) (Gate, err
 		if err != nil {
 			return Gate{}, err
 		}
+		gating = append(gating, p)
 		if strings.HasPrefix(s.Pipeline, "opted-out") {
 			g.Notes = append(g.Notes, fmt.Sprintf("%s: PIPELINE %s", p.File(), s.Pipeline))
+			at.Scanned = nil
 		}
 		for _, w := range s.Waivers {
 			g.Notes = append(g.Notes, fmt.Sprintf("%s: %s review waived: %s", p.File(), w.Route, w.Why))
+			waived[w.Route] = true
 		}
 		for _, d := range s.Due {
 			var parts []string
@@ -485,6 +505,7 @@ func (c Config) RouteGate(session, top, worktree, branch, tip string) (Gate, err
 			}
 			if len(d.Unsettled) > 0 {
 				parts = append(parts, "findings "+strings.Join(d.Unsettled, ", ")+" are not settled")
+				reported[p.File()+"\x00"+d.Route] = true
 			}
 			owed = append(owed, fmt.Sprintf("%s owes a %s review (%s)", p.File(), d.Route, strings.Join(parts, "; ")))
 			if !slices.Contains(routesOwed, d.Route) {
@@ -492,21 +513,70 @@ func (c Config) RouteGate(session, top, worktree, branch, tip string) (Gate, err
 			}
 		}
 	}
-	if len(owed) > 0 {
-		base := strings.TrimPrefix(strings.TrimPrefix(routes.DefaultRef(top), "refs/remotes/"), "refs/heads/")
-		if base == "" {
-			base = "BASE"
+	for _, route := range slices.Sorted(maps.Keys(at.Scanned)) {
+		need := map[string]bool{}
+		for _, commit := range at.Scanned[route] {
+			need[commit] = true
 		}
-		var runs []string
-		for _, r := range routesOwed {
+		if waived[route] || len(need) == 0 {
+			continue
+		}
+		covered, _ := c.covered(Plan{}, top, route, branch, tip, need)
+		var short []string
+		for _, commit := range at.Scanned[route] {
+			if !covered[commit] {
+				short = append(short, commit[:min(12, len(commit))])
+			}
+		}
+		owes := len(short) > 0
+		if owes {
+			owed = append(owed, fmt.Sprintf("its new commits %s need a %s review and have no route receipt", strings.Join(short, ", "), route))
+		}
+		// The findings of the receipts covering them count where they
+		// would for a route a plan owes: in each plan gating the branch.
+		for _, p := range gating {
+			if reported[p.File()+"\x00"+route] {
+				continue
+			}
+			if _, unsettled := c.covered(p, top, route, branch, tip, need); len(unsettled) > 0 {
+				owed = append(owed, fmt.Sprintf("%s holds the %s review of its new commits, whose findings %s are not settled",
+					p.File(), route, strings.Join(unsettled, ", ")))
+				owes = true
+			}
+		}
+		if owes && !slices.Contains(routesOwed, route) {
+			routesOwed = append(routesOwed, route)
+		}
+	}
+	if len(owed) == 0 {
+		return g, nil
+	}
+	base := strings.TrimPrefix(strings.TrimPrefix(routes.DefaultRef(top), "refs/remotes/"), "refs/heads/")
+	if base == "" {
+		base = "BASE"
+	}
+	var runs []string
+	for _, r := range routesOwed {
+		if at.Loop {
+			runs = append(runs, fmt.Sprintf("`git fresh-review --focus %s --print-prompt --goal FILE %s..%s`", r, base, branch))
+		} else {
 			runs = append(runs, fmt.Sprintf("`git fresh-review --focus %s --goal FILE %s..%s`", r, base, branch))
 		}
-		g.Refusal = fmt.Sprintf("%s's change is not through its focused reviews: %s. Run %s, whose base must lie below every "+
-			"commit listed, settle the findings in the plan named with them as the review-change skill says "+
-			"(`agent-plan log PLAN --kind finding-settled --review ROUND.ID`), or, where the change does not need a route, "+
-			"`agent-plan waive PLAN --route ROUTE --why TEXT`; then run this again",
-			branch, strings.Join(owed, "; "), strings.Join(runs, " and "))
 	}
+	if at.Loop {
+		g.Refusal = fmt.Sprintf("%s's change is not through its focused reviews: %s. Give a new `reviewer` sub-agent the "+
+			"prompt %s prints, whose base must lie below every commit listed, check its reply with `git fresh-review --check "+
+			"FILE %s..%s`, and settle its findings with `agent-plan log PLAN --kind finding-settled --review ROUND.ID`; a "+
+			"waiver is the operator's alone. Where the loop cannot do that, stop and hand back to the operator, naming the %s "+
+			"review %s owes", branch, strings.Join(owed, "; "), strings.Join(runs, " and "), base, branch,
+			strings.Join(routesOwed, " and "), branch)
+		return g, nil
+	}
+	g.Refusal = fmt.Sprintf("%s's change is not through its focused reviews: %s. Run %s, whose base must lie below every "+
+		"commit listed, settle the findings in the plan named with them as the review-change skill says "+
+		"(`agent-plan log PLAN --kind finding-settled --review ROUND.ID`), or, where the change does not need a route, "+
+		"`agent-plan waive PLAN --route ROUTE --why TEXT`; then run this again",
+		branch, strings.Join(owed, "; "), strings.Join(runs, " and "))
 	return g, nil
 }
 

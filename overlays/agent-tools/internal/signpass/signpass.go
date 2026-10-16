@@ -689,7 +689,7 @@ func routeGate(branch, worktree string) error {
 	if err != nil {
 		return err
 	}
-	g, err := c.RouteGate("", top, worktree, branch, tip)
+	g, err := c.RouteGate(plans.GateFor{Top: top, Worktree: worktree, Branch: branch, Tip: tip})
 	if err != nil {
 		return err
 	}

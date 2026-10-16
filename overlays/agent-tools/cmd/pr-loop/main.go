@@ -64,7 +64,9 @@ printed on stderr and fails nothing.
   setup-command               the setup command configured for this repository
   push [--dry-run] [BRANCH...]  push through the GitHub API, a branch at a time, bottom up;
                               refuses a branch whose plan owes a review route: commits no
-                              route receipt covers, or a route review's findings unsettled
+                              route receipt covers, or a route review's findings unsettled;
+                              in a loop session, also commits it adds that the route scan
+                              routes and no route receipt covers
   threads [--all] PR          unresolved review threads, labelled by bot
   reply THREAD --body-file F  reply inside a review thread (- reads stdin)
   reply --from F              post the replies in a reply file (- reads stdin)

@@ -20,9 +20,10 @@ type Commit = history.Commit
 func refuse(format string, args ...any) error { return refusal.New(format, args...) }
 
 // routeGate refuses branch at tip while a plan of this host that names it
-// owes a review route (plans.RouteGate), and says on stderr which waivers
-// and opt-outs let it pass.
-func routeGate(branch, tip string) error {
+// owes a review route, or one of scanned, the routes found for the
+// commits a loop adds, is not reviewed (plans.RouteGate), and says on
+// stderr which waivers and opt-outs let it pass.
+func routeGate(branch, tip string, scanned map[string][]string) error {
 	c, err := plans.Load()
 	if err != nil {
 		return err
@@ -35,7 +36,8 @@ func routeGate(branch, tip string) error {
 	if current, _ := git.Run("branch", "--show-current"); current == branch {
 		worktree = top
 	}
-	g, err := c.RouteGate(plans.EnvSession(), top, worktree, branch, tip)
+	g, err := c.RouteGate(plans.GateFor{Top: top, Worktree: worktree, Branch: branch, Tip: tip, Scanned: scanned,
+		Loop: inLoopSession()})
 	if err != nil {
 		return err
 	}

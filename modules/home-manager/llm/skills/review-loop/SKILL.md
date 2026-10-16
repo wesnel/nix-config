@@ -166,7 +166,9 @@ Stop and hand back when any of these holds:
   threads are deferred or need the operator.
 - `pr-loop` refused a push, CI keeps failing
   after two rounds spent on it, or an owner showed a CI failure is not the
-  PR's doing.
+  PR's doing. A push refused for a review route owed is first met by that
+  route's review, as the refusal says; one the loop cannot meet goes in
+  the hand-back by name, since a waiver is the operator's.
 - A bot reopens a problem already fixed twice on the same thread.
 - Six rounds have run.
 

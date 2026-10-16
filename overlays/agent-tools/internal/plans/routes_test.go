@@ -341,7 +341,7 @@ func TestRouteState(t *testing.T) {
 func TestRouteGate(t *testing.T) {
 	gate := func(t *testing.T, c Config, repo string) Gate {
 		t.Helper()
-		g, err := c.RouteGate("", repo, repo, "loop", head(t, repo))
+		g, err := c.RouteGate(GateFor{Top: repo, Worktree: repo, Branch: "loop", Tip: head(t, repo)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -400,6 +400,31 @@ func TestRouteGate(t *testing.T) {
 		p.SetProperty("", "PIPELINE", []string{"opted-out:spike"}, day)
 		if g := gate(t, c, repo); g.Refusal != "" || len(g.Notes) != 1 || !strings.Contains(g.Notes[0], "opted-out:spike") {
 			t.Errorf("opted out: %+v", g)
+		}
+	})
+
+	// A route a loop's scan found waits for the findings of the receipt
+	// covering it, in the plan naming the branch, as an owed route does.
+	t.Run("scanned, with findings", func(t *testing.T) {
+		c := testConfig(t)
+		repo, commits := routeRepo(t)
+		p := planned(t, c, "main..loop")
+		routeReceipt(t, p, repo, "security", "origin/main", "loop", "loop", "security-1")
+		scanned := func() Gate {
+			t.Helper()
+			g, err := c.RouteGate(GateFor{Top: repo, Worktree: repo, Branch: "loop", Tip: head(t, repo), Loop: true,
+				Scanned: map[string][]string{"security": {commits[1]}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return g
+		}
+		if g := scanned(); !strings.Contains(g.Refusal, "1.security-1") {
+			t.Errorf("unsettled: %+v", g)
+		}
+		p.Log(Event{Kind: "finding-settled", Item: p.Name, Review: "1.security-1", Outcome: "fix"}, day)
+		if g := scanned(); g.Refusal != "" {
+			t.Errorf("settled: %+v", g)
 		}
 	})
 
