@@ -533,6 +533,26 @@ git -c push-guard.allowPublic=OWNER/NAME push ...
 The guard (see [the guard in every session](#the-guard-in-every-session))
 denies an agent setting `push-guard.*`.
 
+## pushing: your commits go out signed
+
+`git-push-guard` also refuses a push that publishes a commit committed under
+the checkout's `user.email` with no signature or a bad one, naming the
+commits; sign them with `git sign-pass` and push again. Only commits the
+remote lacks count: not those the pushed refs already point at, nor those
+reachable from the remote-tracking refs of a remote that fetches from or
+pushes to the URL. Other people's commits never count, and a push to a path
+on this machine publishes nothing. A commit signed in a way this machine
+cannot verify passes; checking the rest needs no key touch, and a check that
+takes over 30 seconds refuses the push. To publish unsigned commits on
+purpose, for one push:
+
+``` sh
+git -c push-guard.allowUnsigned=true push ...
+```
+
+`pr-loop`'s pushes go through the GitHub API, which runs no hook, so its
+unsigned commits are left for the signing pass.
+
 ## the review loop
 
 An agent drives a stack of your open pull requests through CI and review,
