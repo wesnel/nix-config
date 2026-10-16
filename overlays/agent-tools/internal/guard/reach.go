@@ -29,7 +29,7 @@ func physical(path string) string {
 			continue
 		}
 		next := filepath.Join(resolved, c)
-		info, err := os.Lstat(next)
+		info, err := os.Lstat(next) //nolint:gosec // the guard looks at a path it judges, to tell where it leads, and opens nothing
 		if err != nil || info.Mode()&fs.ModeSymlink == 0 {
 			resolved = next
 			continue
@@ -72,7 +72,7 @@ func Reaches(path, target string, under bool) bool {
 // reaches is Reaches, with creating false for a path that is only read.
 func reaches(path, target string, under, creating bool) bool {
 	path, target = physical(path), physical(filepath.Clean(target))
-	targetInfo, err := os.Stat(target)
+	targetInfo, err := os.Stat(target) //nolint:gosec // the guard looks at a path it judges, to tell where it leads, and opens nothing
 	exists := err == nil
 	if exists {
 		for q := path; ; q = filepath.Dir(q) {
@@ -92,7 +92,7 @@ func reaches(path, target string, under, creating bool) bool {
 		return false
 	}
 	parentInfo, err := os.Stat(parent)
-	targetDir, err2 := os.Stat(filepath.Dir(target))
+	targetDir, err2 := os.Stat(filepath.Dir(target)) //nolint:gosec // as above
 	if err != nil || err2 != nil || !os.SameFile(parentInfo, targetDir) {
 		return false
 	}
@@ -159,7 +159,7 @@ func hardLinkUnder(path, dir string) bool {
 		return false
 	}
 	found, seen := false, 0
-	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error { //nolint:gosec // a directory the guard protects, walked only to stat each name
 		if seen++; err != nil || seen > 10000 {
 			return fs.SkipAll
 		}

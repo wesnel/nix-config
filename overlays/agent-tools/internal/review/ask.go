@@ -256,7 +256,7 @@ func askIn(ctx context.Context, top, text string, files []string, reviewer strin
 		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
 			return nil, err
 		}
-		if err := os.WriteFile(to, []byte(redact.Secrets(string(data))), 0o644); err != nil {
+		if err := os.WriteFile(to, []byte(redact.Secrets(string(data))), 0o644); err != nil { //nolint:gosec // named refuses an f that leaves the repository, so to stays in tree
 			return nil, err
 		}
 	}

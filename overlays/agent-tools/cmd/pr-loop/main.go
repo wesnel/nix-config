@@ -242,7 +242,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		case "-":
 			data, err = io.ReadAll(stdin)
 		default:
-			data, err = os.ReadFile(*bodyFile)
+			data, err = os.ReadFile(*bodyFile) //nolint:gosec // the caller's own file; the guard refuses a credential's path, and redact.Outgoing what would leak
 		}
 		if err == nil {
 			err = redact.Outgoing(string(data))
@@ -429,7 +429,7 @@ func replyFrom(path, bodyFile string, rest []string, stdin io.Reader) (any, erro
 	if path == "-" {
 		data, err = io.ReadAll(stdin)
 	} else {
-		data, err = os.ReadFile(path)
+		data, err = os.ReadFile(path) //nolint:gosec // the caller's own file; the guard refuses a credential's path, and redact.Outgoing what would leak
 	}
 	if err != nil {
 		return nil, err
