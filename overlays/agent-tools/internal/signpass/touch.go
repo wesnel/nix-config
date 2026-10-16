@@ -78,7 +78,7 @@ func self() string {
 	}
 	if onPath, err := exec.LookPath("git-sign-pass"); err == nil {
 		a, aerr := os.Stat(onPath)
-		b, berr := os.Stat(exe)
+		b, berr := os.Stat(exe) //nolint:gosec // this program's own path, only compared with another
 		if aerr == nil && berr == nil && os.SameFile(a, b) {
 			return "git sign-pass"
 		}
