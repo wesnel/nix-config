@@ -170,7 +170,8 @@ func Run(ctx context.Context, s Spec) (*Result, error) {
 	r := &Result{Output: out.buf.String(), Cut: out.cut, Log: string(log.buf)}
 	switch {
 	case ctx.Err() != nil:
-		r.Exit, r.TimedOut = -1, true
+		// A run the caller stopped did not time out.
+		r.Exit, r.TimedOut = -1, errors.Is(ctx.Err(), context.DeadlineExceeded)
 	case err != nil:
 		var exit *exec.ExitError
 		if !errors.As(err, &exit) {

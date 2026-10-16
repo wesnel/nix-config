@@ -1,6 +1,8 @@
 package sandboxrun
 
 import (
+	"bufio"
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,15 +16,17 @@ import (
 
 // fakeBackend stands in for eca-gondolin and eca-bwrap, which start a VM:
 // it records its arguments one to a line and its environment, and behaves
-// as $FAKE_BACKEND says. A hanging backend and the child it starts hold
-// $FAKE_LOG/alive open for writing until they exit.
+// as $FAKE_BACKEND says. A hanging backend ignores SIGTERM from its first
+// line, holds $FAKE_LOG/alive open for writing with the child it starts
+// until both exit, and writes $FAKE_LOG/ready once that child is started.
 const fakeBackend = `#!/bin/sh
+[ "$FAKE_BACKEND" = hang ] && trap '' TERM
 printf '%s\n' "$@" > "$FAKE_LOG/argv"
 env > "$FAKE_LOG/env"
 echo $$ > "$FAKE_LOG/pid"
 case "$FAKE_BACKEND" in
   flood) head -c 1048576 /dev/zero | tr '\0' 'x'; exit 0 ;;
-  hang) trap '' TERM; exec 3> "$FAKE_LOG/alive"; sleep 60 & echo $! > "$FAKE_LOG/child"; wait ;;
+  hang) exec 3> "$FAKE_LOG/alive"; sleep 60 & echo $! > "$FAKE_LOG/child"; echo > "$FAKE_LOG/ready"; wait ;;
   fail) echo "guest says no" >&2; exit 7 ;;
   fork) trap '' TERM; (i=0; while [ $i -lt 300 ]; do sleep 30 > /dev/null 2>&1 & i=$((i+1)); if [ $i = 20 ]; then echo > "$FAKE_LOG/started"; fi; done; wait) > /dev/null 2>&1 & wait ;;
   *) echo "hello from the guest" ;;
@@ -122,12 +126,15 @@ func TestRun(t *testing.T) {
 	})
 
 	// A guest that will not stop is killed, with everything the backend
-	// started.
-	t.Run("timeout", func(t *testing.T) {
+	// started. The run is stopped once the backend has started its child,
+	// so no step depends on how fast the machine is.
+	t.Run("stopped", func(t *testing.T) {
 		backend, log := setUp(t, "hang")
-		alive := filepath.Join(log, "alive")
-		if err := syscall.Mkfifo(alive, 0o600); err != nil {
-			t.Fatal(err)
+		alive, ready := filepath.Join(log, "alive"), filepath.Join(log, "ready")
+		for _, fifo := range []string{alive, ready} {
+			if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+				t.Fatal(err)
+			}
 		}
 		// Reading alive ends once every process holding it, the backend and
 		// its child, has exited. The test holds it too, so that the read
@@ -151,24 +158,24 @@ func TestRun(t *testing.T) {
 			reader.Close()
 			exited <- err
 		}()
+		ctx, cancel := context.WithCancel(t.Context())
+		t.Cleanup(cancel)
+		go func() {
+			if r, err := os.Open(ready); err == nil {
+				bufio.NewReader(r).ReadString('\n')
+				r.Close()
+			}
+			cancel()
+		}()
 		s := spec(t, backend)
-		// Long enough for the backend to start its child on a loaded
-		// machine, which the files checked below show it did.
-		s.Timeout = 3 * time.Second
-		s.Grace = time.Second
-		start := time.Now()
-		r, err := Run(t.Context(), s)
+		s.Grace = 100 * time.Millisecond
+		r, err := Run(ctx, s)
 		held.Close()
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !r.TimedOut || time.Since(start) > 10*time.Second {
-			t.Errorf("%+v after %s", r, time.Since(start))
-		}
-		for _, name := range []string{"pid", "child"} {
-			if _, err := os.Stat(filepath.Join(log, name)); err != nil {
-				t.Errorf("the backend did not run, or did not start its child: %v", err)
-			}
+		if r.Exit != -1 || r.TimedOut {
+			t.Errorf("a stopped run gave %+v", r)
 		}
 		select {
 		case err := <-exited:
@@ -189,6 +196,20 @@ func TestRun(t *testing.T) {
 			if !running {
 				t.Error("a process the backend started still holds " + alive)
 			}
+		}
+	})
+
+	t.Run("timeout", func(t *testing.T) {
+		backend, _ := setUp(t, "hang")
+		s := spec(t, backend)
+		s.Timeout = 100 * time.Millisecond
+		s.Grace = 100 * time.Millisecond
+		r, err := Run(t.Context(), s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !r.TimedOut {
+			t.Errorf("a run past its timeout gave %+v", r)
 		}
 	})
 

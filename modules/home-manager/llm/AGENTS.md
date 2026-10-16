@@ -157,7 +157,9 @@ keep it valid in fish. In Claude Code's and Codex's terminal interfaces, which
 run a prompt line beginning with `!` as a shell command in the session, begin
 the line with `!` so its output lands in the conversation; ECA and Claude Code
 through agent-shell do not, so there the line is plain, for `M-!` or a Ghostel
-terminal. A line whose output shows a secret is always plain.
+terminal. A line whose output shows a secret is always plain. A `git sign-pass`
+line carries `--notify ID`, which brings its result back to the session
+however Wesley runs it; the signing-pass skill says how.
 
 ## Documentation and comments
 

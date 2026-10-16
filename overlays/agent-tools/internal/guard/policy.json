@@ -253,16 +253,17 @@
   {
     "why": "Signing needs the hardware key.",
     "scope": "coordinator",
-    "pattern": ".*\\bgit\\b.*\\bsign-pass\\b.*",
-    "deny": ["git sign-pass --push"],
-    "allow": ["git status"]
+    "pattern": "(.*[\\s;&|(`'\"/])?git(\\s+-\\S+(\\s+[^-\\s]\\S*)?)*\\s+sign-pass([\\s;&|)`'\"].*)?",
+    "deny": ["git sign-pass --push", "git -C /w sign-pass --notify x", "cd /w && git sign-pass"],
+    "allow": ["git status", "agent-plan sign-result 2026-10-15-git-sign-pass-notify.box.0a1b2c3d"]
   },
   {
     "why": "Signing needs the hardware key.",
     "scope": "coordinator",
-    "pattern": ".*\\bgit-sign-pass\\b.*",
-    "deny": ["git-sign-pass"],
-    "allow": ["git status", "cat overlays/agent-tools/cmd/git-sign-'pass'/main.go"]
+    "pattern": "(.*[\\s;&|(`'\"/])?git-sign-pass([\\s;&|)`'\"].*)?",
+    "deny": ["git-sign-pass", "/nix/store/x/bin/git-sign-pass --push"],
+    "allow": ["git status", "cat overlays/agent-tools/cmd/git-sign-'pass'/main.go",
+      "agent-plan sign-result 2026-10-15-git-sign-pass-notify.box.0a1b2c3d"]
   },
   {
     "why": "Whether a CI failure is not the PR's doing is Wesley's call.",
