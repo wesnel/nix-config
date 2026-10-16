@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
 // agent-tools' state, the usage readings, quota choices and the marks of
@@ -104,6 +106,25 @@ func TestAgentToolsState(t *testing.T) {
 					t.Errorf("%q: reason %q does not say what to do instead", command, reason)
 				}
 			})
+		}
+	}
+}
+
+// The review VM's results, which git fresh-review --check trusts, are
+// agent-tools' state where the build bakes the state directory in as well
+// as where the guard's environment puts it, and the refusal says what
+// writes them.
+func TestFreshReviewState(t *testing.T) {
+	h := fakeHome(t)
+	t.Setenv("XDG_STATE_HOME", "")
+	baked := filepath.Join(h, "baked-state")
+	hostpaths.Bake(t, filepath.Join(h, "baked-config"), baked)
+	for _, base := range []string{filepath.Join(h, ".local", "state"), baked} {
+		file := filepath.Join(base, "agent-tools", "fresh-review", "0123.json")
+		input, _ := json.Marshal(map[string]string{"file_path": file, "content": "{}"})
+		reason := check("Write", "", input, baseline, h)
+		if reason == "" || !strings.Contains(reason, "git fresh-review") || !saysInstead(reason) {
+			t.Errorf("a write of %s: %q", file, reason)
 		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -209,5 +210,34 @@ func TestPlanLogHook(t *testing.T) {
 				t.Errorf("%s: printed %s", event, out.String())
 			}
 		})
+	}
+}
+
+// A finding red-check raised (RC-…) is rebutted only by whoever owns the
+// branch: the session outside a loop, or a loop's pr-owner, never its
+// coordinator or a reviewer. Other settlements pass as before.
+func TestMechanicalRebuttal(t *testing.T) {
+	const p = "agent-plan log /p/2026-10-14-x.box.org --item S1 --kind finding-settled "
+	cases := []struct {
+		command string
+		denied  []role
+	}{
+		{p + "--review 1.RC-0123456789ab --outcome rebut --evidence 'a characterisation test'", []role{coordinator, reviewer}},
+		{p + "--outcome=rebut --review=2.RC-0123456789ab --evidence x", []role{coordinator, reviewer}},
+		{"cd /tmp && " + p + "--review 1.RC-0123456789ab --outcome rebut --evidence x", []role{coordinator, reviewer}},
+		{p + "--review 1.RC-0123456789ab --outcome fix --evidence 'fixed in a fixup'", []role{reviewer}},
+		{p + "--review 1.F3 --outcome rebut --evidence 'not a bug'", []role{reviewer}},
+	}
+	for _, c := range cases {
+		for _, who := range []role{baseline, coordinator, owner, reviewer} {
+			input, _ := json.Marshal(map[string]string{"command": c.command})
+			reason := check("Bash", "", input, who, t.TempDir())
+			if want := slices.Contains(c.denied, who); (reason != "") != want {
+				t.Errorf("role %d, %q: deny=%v, reason %q", who, c.command, !want, reason)
+			}
+			if reason != "" && !saysInstead(reason) {
+				t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+			}
+		}
 	}
 }

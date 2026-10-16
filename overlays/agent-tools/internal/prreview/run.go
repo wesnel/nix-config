@@ -12,12 +12,14 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/loop"
 	"github.com/wesnel/agent-tools/internal/repos"
+	"github.com/wesnel/agent-tools/internal/review"
 	"github.com/wesnel/agent-tools/internal/sandboxrun"
 )
 
@@ -68,6 +70,10 @@ type Run struct {
 type runResult struct {
 	notRun   string
 	redCheck any
+	// verdicts are red-check's verdicts on each commit, sent apart from
+	// its JSON, which is longer. They are capped too, at about 90
+	// commits; git fresh-review reports the commits they leave out.
+	verdicts []review.Verdict
 	tests    *Run
 	// prompt is the red-check and test results for the reviewer.
 	prompt string
@@ -76,12 +82,45 @@ type runResult struct {
 // quote quotes s for sh.
 func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
+// verdictLines is the guest's command that prints, in order, each
+// `"commit": "…"` and `"verdict": "…"` line of the red-check JSON in the
+// file it is given. Inside a JSON string a quote is escaped, so no
+// subject or test output can add one. It runs on the guest's grep, which
+// may be busybox's.
+var verdictLines = "grep -oE " + quote(`"(commit|verdict)": "[0-9a-z-]*"`)
+
+var verdictLine = regexp.MustCompile(`^"(commit|verdict)": "([0-9a-z-]*)"$`)
+
+// parseVerdicts pairs each verdict line verdictLines printed with the
+// commit line before it.
+func parseVerdicts(lines string) []review.Verdict {
+	var out []review.Verdict
+	commit := ""
+	for _, line := range strings.Split(lines, "\n") {
+		m := verdictLine.FindStringSubmatch(strings.TrimSpace(line))
+		switch {
+		case m == nil:
+		case m[1] == "commit":
+			commit = m[2]
+		case commit != "":
+			out = append(out, review.Verdict{Commit: commit, Verdict: m[2]})
+			commit = ""
+		}
+	}
+	return out
+}
+
 // guestScript copies the read-only run copy into the guest's own /tmp, runs
 // git red-check on the range and the test command at the head there, and
 // prints the end of each output in base64 on a line starting with nonce.
+// The reviewed code runs as the same user and can print such lines too, so
+// the verdicts are printed before the test command runs, sections keeps
+// the first line for each name, and the nonce stays off the guest's command
+// line: sandboxrun hands the script to sh on its standard input, which the
+// script, one compound command, keeps from every command it runs.
 func guestScript(nonce, base, head string, settings *repos.Settings) string {
 	var b strings.Builder
-	b.WriteString("set -u\n")
+	b.WriteString("{\nset -u\n")
 	fmt.Fprintf(&b, "emit() { printf '\\n%s %%s %%s ' \"$1\" \"$2\"; tail -c %d \"$3\" | base64 | tr -d '\\n'; printf '\\n'; }\n",
 		nonce, sectionCap)
 	b.WriteString("mkdir -p /tmp/work /tmp/home /tmp/gocache /tmp/out\n")
@@ -110,13 +149,15 @@ func guestScript(nonce, base, head string, settings *repos.Settings) string {
 		}
 		args = append(args, quote(base+".."+head))
 		fmt.Fprintf(&b, "%s >/tmp/out/redcheck 2>/tmp/out/redcheck.log; emit redcheck $? /tmp/out/redcheck\n", strings.Join(args, " "))
+		fmt.Fprintf(&b, "%s /tmp/out/redcheck >/tmp/out/verdicts; emit verdicts 0 /tmp/out/verdicts\n", verdictLines)
 	}
 	fmt.Fprintf(&b, "sh -c %s >/tmp/out/tests 2>&1 </dev/null; emit tests $? /tmp/out/tests\n", quote(settings.Test))
+	b.WriteString("} </dev/null\n")
 	return b.String()
 }
 
 // sections reads the guest's lines starting with nonce: name to exit and
-// output. A later line for a name replaces an earlier one.
+// output. The first line for a name is kept, and a later one ignored.
 func sections(output, nonce string) map[string]Run {
 	out := map[string]Run{}
 	scanner := bufio.NewScanner(strings.NewReader(output))
@@ -124,6 +165,9 @@ func sections(output, nonce string) map[string]Run {
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
 		if len(fields) < 3 || fields[0] != nonce {
+			continue
+		}
+		if _, seen := out[fields[1]]; seen {
 			continue
 		}
 		exit, err := strconv.Atoi(fields[2])
@@ -232,6 +276,9 @@ func runTests(ctx context.Context, pr *PR, timeout time.Duration) (*runResult, e
 			r.redCheck = rc
 		}
 		fmt.Fprintf(&b, "git red-check %s..%s exited %d:\n\n%s\n\n", pr.Base, pr.Head, rc.Exit, fence(rc.Output))
+	}
+	if v, ok := got["verdicts"]; ok {
+		r.verdicts = parseVerdicts(v.Output)
 	}
 	if t, ok := got["tests"]; ok {
 		t.Command = settings.Test

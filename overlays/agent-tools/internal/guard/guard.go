@@ -58,7 +58,7 @@ type input struct {
 }
 
 // role is who makes a call. Each role is denied everything the one before it
-// is, and more.
+// is, and more, but for ownerRebuts, which the owner is spared.
 type role int
 
 const (
@@ -394,6 +394,8 @@ func program(c call, who role, files, dir string) string {
 		return planReseal
 	case name == "agent-plan" && who == reviewer && (len(words) < 2 || !planReads[words[1]]):
 		return reviewerReport
+	case name == "agent-plan" && who == coordinator && mechanicalRebuttal(words[1:]):
+		return ownerRebuts
 	case name == "git-sign-pass" && who == reviewer:
 		return reviewerReport
 	case name == "git-sign-pass" && who >= coordinator:
@@ -561,6 +563,44 @@ const planSync = "Plans are synced by a watcher outside every session, which alo
 // planReseal is why no agent reseals a log: it accepts the edits made to
 // the log outside agent-plan.
 const planReseal = "Resealing a plan's log accepts edits made to it outside agent-plan, which is the operator's call. Hand the operator the command, `agent-plan reseal PLAN`, in your report."
+
+// ownerRebuts is why a loop's coordinator may not rebut a finding
+// red-check raised, which only whoever owns the branch may. It is the one
+// denial an owner is spared, so policy.json, whose rules hold for their
+// role and every stricter one, cannot hold it, and ECA's patterns do not.
+const ownerRebuts = "A finding red-check raised (RC-…) is rebutted only by whoever owns the branch, which in a loop is the PR's owner. " +
+	"Give the finding to the owner to settle, or put it in your report."
+
+// mechanicalRebuttal reports whether agent-plan's arguments log a rebuttal
+// of a finding red-check raised: `log` with outcome rebut and a review
+// naming an RC- ID.
+func mechanicalRebuttal(args []string) bool {
+	if len(args) == 0 || args[0] != "log" {
+		return false
+	}
+	rebut, mechanical := false, false
+	for i, a := range args {
+		value := ""
+		if i+1 < len(args) {
+			value = args[i+1]
+		}
+		if !strings.HasPrefix(a, "-") {
+			continue
+		}
+		flag, inline, ok := strings.Cut(a, "=")
+		if ok {
+			value = inline
+		}
+		switch strings.TrimLeft(flag, "-") {
+		case "outcome":
+			rebut = rebut || value == "rebut"
+		case "review":
+			_, id, _ := strings.Cut(value, ".")
+			mechanical = mechanical || strings.HasPrefix(id, "RC-")
+		}
+	}
+	return rebut && mechanical
+}
 
 // planReads are the agent-plan commands a reviewer may run.
 var planReads = set("status", "goal", "find", "tokens", "questions", "-h", "--help", "help")

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+
+	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
 // Bot is a review bot the loop requests, waits for and answers.
@@ -42,18 +44,10 @@ type botConfig struct {
 	Repos              []string          `json:"repos"`
 }
 
-// ConfigPath is pr-loop's config: $PR_LOOP_CONFIG, or pr-loop/config.json
-// under the XDG config directory.
+// ConfigPath is pr-loop's config: pr-loop/config.json under the XDG config
+// directory, or $PR_LOOP_CONFIG where hostpaths allows it.
 func ConfigPath() string {
-	if p := os.Getenv("PR_LOOP_CONFIG"); p != "" {
-		return p
-	}
-	base := os.Getenv("XDG_CONFIG_HOME")
-	if base == "" {
-		home, _ := os.UserHomeDir()
-		base = filepath.Join(home, ".config")
-	}
-	return filepath.Join(base, "pr-loop", "config.json")
+	return hostpaths.ConfigFile("PR_LOOP_CONFIG", filepath.Join("pr-loop", "config.json"))
 }
 
 // botsFor returns the configured bots that apply to a repository, by name.

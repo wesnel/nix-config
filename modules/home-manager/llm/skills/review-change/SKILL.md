@@ -78,6 +78,14 @@ commit, so that the receipt still matches once the branch is rebased.
      the commit the prompt was printed for, which the receipt records.
 3. Settle every finding as Triage says. `dropped` lists what pointed at no
    line at TIP or did not fit the schema; read it, but it needs no outcome.
+   A finding with `"reviewer": "red-check"` (id `RC-…`) is a commit whose
+   tests pass without the rest of it. Fix the tests, or, when they are
+   meant to pass without it (a characterisation test, a rename), settle it
+   `rebut` with that reason, on one line, as `--evidence`, and the
+   `--review` its evidence names: the review then leaves it out until that
+   commit's tests change, and shows the reason to the next reviewer, who
+   may contest it. Only whoever owns the branch rebuts one; in a review
+   loop, the PR's owner.
 4. For the next round, add `--prior FILE`: every earlier finding and how it
    was settled. A new reviewer reads the change again, its tip moved by the
    fixups.

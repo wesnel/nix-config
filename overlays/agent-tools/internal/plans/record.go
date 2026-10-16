@@ -149,15 +149,20 @@ type Receipt struct {
 	// Reviewer is codex or subagent, and Model the model, where known.
 	Reviewer, Model string
 	Findings        int
+	// Raised are the IDs of the findings the review raised itself, with
+	// no reviewer's judgement, which a rebuttal must name a round of.
+	Raised []string
 }
 
-// receiptKind is the kind of the event Receipt logs.
+// ReceiptKind is the kind of the event Receipt logs.
+const ReceiptKind = receiptKind
+
 const receiptKind = "review-receipt"
 
 // Receipt logs r about part, or about the plan itself when part is "".
 func (p Plan) Receipt(part string, r Receipt, now time.Time) (Event, error) {
 	return p.Record(part, Event{Kind: receiptKind, Range: r.Range, Tip: r.Tip, PatchID: r.PatchID, Agent: r.Reviewer,
-		Model: r.Model, Summary: fmt.Sprintf("%s: %d findings", r.Range, r.Findings)}, now)
+		Model: r.Model, Summary: fmt.Sprintf("%s: %d findings", r.Range, r.Findings), Raised: strings.Join(r.Raised, " ")}, now)
 }
 
 // WriteReceipt logs r in the plan Locate finds for session and the
