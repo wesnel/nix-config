@@ -14,32 +14,47 @@ with lib; let
   tokenFile = "${cfg.stateDir}/token";
 
   # Remote servers are reached with short-lived OAuth tokens that the proxy
-  # obtains and refreshes itself; nothing here is a credential.
-  oauthServer = url: {
+  # obtains and refreshes itself; nothing here is a credential. Each serves
+  # only the tools the guard's mcp.json lists for its service, reads and
+  # confirmed writes alike: the guard decides which ask, and keeps
+  # review-loop sessions to the reads. A tool missing from the list stays
+  # hidden; an allow list must not be empty, which exposes every tool.
+  oauthServer = id: url: scopes: {
     inherit url;
     transportType = "streamable-http";
-    oauth.scopes = ["read"];
+    oauth.scopes = scopes;
+    options.toolFilter = {
+      mode = "allow";
+      list = pkgs.agent-tools.mcpTools.${id}.reads ++ pkgs.agent-tools.mcpTools.${id}.confirms;
+    };
   };
 
   servers =
     optionalAttrs cfg.linear {
-      # Linear's read-only endpoint exposes only read tools whatever the
-      # token's scope.
-      linear = oauthServer "https://mcp.linear.app/mcp/readonly";
+      linear = oauthServer "linear" "https://mcp.linear.app/mcp" ["read" "write"];
     }
     // optionalAttrs cfg.buildkite {
-      buildkite = oauthServer "https://mcp.buildkite.com/mcp/readonly";
+      buildkite = oauthServer "buildkite" "https://mcp.buildkite.com/mcp/readonly" ["read"];
+    }
+    // optionalAttrs cfg.notion {
+      # Notion's server has one scope, granted without being named.
+      notion = oauthServer "notion" "https://mcp.notion.com/mcp" [];
+    }
+    // optionalAttrs cfg.hex {
+      hex = oauthServer "hex" "https://app.hex.tech/mcp" ["openid" "offline_access"];
+    }
+    // optionalAttrs cfg.datadog.enable {
+      # Without toolsets the server serves `core` alone.
+      datadog = oauthServer "datadog" "https://mcp.${cfg.datadog.site}/v1/mcp?toolsets=core,error-tracking" ["mcp_all"];
     }
     // optionalAttrs docs.enable {
       docs = {
         url = "http://127.0.0.1:${toString docs.port}/mcp";
         transportType = "streamable-http";
-        # Allow, never block: anything the server adds stays hidden. fetch_url
-        # and scrape_docs fetch arbitrary URLs, and the rest change the index.
-        # An allow list must not be empty, which exposes every tool.
+        # The guard's reads for it alone, as for the remote servers.
         options.toolFilter = {
           mode = "allow";
-          list = ["search_docs" "list_libraries" "find_version" "list_jobs" "get_job_info"];
+          list = pkgs.agent-tools.mcpTools.docs.reads;
         };
       };
     };
@@ -89,6 +104,9 @@ with lib; let
       # A route is mounted only when its server connects, so the running
       # proxy has to start again to use the new token.
       ${restart}
+      # A client that found no route when it started reports the server as
+      # not found, and connects again only when told to.
+      echo "Sessions started before now reach $1 after a reconnect: /mcp in Claude Code, or a new session." >&2
     '';
   };
 
@@ -187,6 +205,34 @@ in {
     buildkite = mkOption {
       type = types.bool;
       default = true;
+    };
+
+    notion = mkOption {
+      type = types.bool;
+      default = false;
+    };
+
+    hex = mkOption {
+      type = types.bool;
+      default = false;
+    };
+
+    datadog = {
+      enable = mkOption {
+        type = types.bool;
+        default = false;
+      };
+
+      site = mkOption {
+        type = types.str;
+        default = "datadoghq.com";
+        example = "us5.datadoghq.com";
+
+        description = ''
+          The organization's Datadog site, whose MCP server is
+          https://mcp.SITE/v1/mcp.
+        '';
+      };
     };
   };
 

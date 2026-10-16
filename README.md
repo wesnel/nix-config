@@ -482,8 +482,14 @@ your keys, switching its own hooks off, changing agent-tools' config or
 writing its state under `$XDG_STATE_HOME/agent-tools` other than through
 `agent-plan` and `pr-loop`,
 sleeping 30 seconds or more in the
-foreground, and writing a plan's log other than with `agent-plan log`. A write through a claude.ai
-connector asks you first in Claude Code, and is denied in Codex. Each
+foreground, and writing a plan's log other than with `agent-plan log`.
+MCP tools of the servers in `overlays/agent-tools/internal/guard/mcp.json`
+(Linear, Notion, Hex, Datadog, Buildkite, ngrok, the docs index, and the
+claude.ai Slack connector) are held to its lists: reads
+pass, the listed writes ask you first in Claude Code and ECA and are denied
+in Codex and the review loop, and any other tool is denied until it is
+listed. Every tool of a server it does not list asks you first in Claude
+Code and ECA, and is denied in Codex, the review loop and to reviewers. Each
 refusal says what to do instead. An agent with a loop role (`pr-owner`,
 `reviewer`, ECA's `pr-coordinator`) has that role's rules in any session.
 
@@ -503,11 +509,19 @@ git itself does not use the keychain's GitHub login:
 
 | Name | Upstream | Access |
 | --- | --- | --- |
-| `linear` | Linear's `/mcp/readonly` | read tools only, OAuth |
+| `linear` | Linear's `/mcp` | reads; writes you confirm, OAuth |
 | `buildkite` | Buildkite's `/mcp/readonly` | read tools only, OAuth |
+| `notion` (`notion`) | Notion's `/mcp` | reads; writes you confirm, OAuth |
+| `hex` (`hex`) | Hex's `/mcp` | reads; edits and runs you confirm, OAuth |
+| `datadog` (`datadog.enable`, `datadog.site`) | the site's `/v1/mcp`, toolsets `core` and `error-tracking` | read tools only, OAuth |
 | `docs` | the documentation index | search and listing only |
 
-The proxy signs in to Linear and Buildkite itself and refreshes their
+Options in parentheses are off by default. Each remote server serves only
+the tools listed for it in the guard's `mcp.json`, and the guard asks you
+before each listed write, in Claude Code and ECA; Codex and review-loop
+sessions get the reads alone.
+
+The proxy signs in to each remote server itself and refreshes their
 short-lived tokens, so agents hold only the proxy's own token, kept in
 `~/.local/state/mcp-proxy/token`. The servers are registered with Claude
 Code, Codex and ECA on every switch, and each reads the token when it
@@ -523,6 +537,9 @@ mcp-proxy-authorize buildkite
 mcp-proxy-status
 ```
 
+A session started while a server was not authorized reports it as not
+found; reconnect it with `/mcp` in Claude Code, or start a new session.
+
 The browser is sent back to `http://localhost:8090/oauth/callback` on the
 machine running the proxy. On one without a browser, such as the devbox,
 authorize over SSH with that port forwarded, and open the URL it logs on
@@ -536,7 +553,7 @@ Run `mcp-proxy-authorize` again if a server's token stops being accepted.
 The proxy logs to `~/.local/state/mcp-proxy.log`.
 
 GitHub is read through `gh`. ngrok's account server is registered in Claude
-Code only, signed in from there, and the ngrok hook lets through only tools
+Code only, signed in from there, and the guard lets through only tools
 whose names say they read. Claude's claude.ai connectors belong to the
 account rather than this configuration: disconnect them in claude.ai's
 settings to keep Claude to the proxy.

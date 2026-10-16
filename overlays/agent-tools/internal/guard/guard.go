@@ -26,8 +26,7 @@ import (
 )
 
 var (
-	readOnlyTool = regexp.MustCompile(`(?i)(^|__)(get|list|search|fetch|read|query)[_a-z]*$`)
-	ghReadOnly   = map[string]bool{"pr view": true, "pr diff": true, "pr list": true, "pr checks": true, "pr status": true,
+	ghReadOnly = map[string]bool{"pr view": true, "pr diff": true, "pr list": true, "pr checks": true, "pr status": true,
 		"issue view": true, "issue list": true, "repo view": true, "run view": true, "run list": true, "auth status": true}
 	gitValueFlags = map[string]bool{"-c": true, "-C": true, "--git-dir": true, "--work-tree": true, "--namespace": true,
 		"--config-env": true}
@@ -142,12 +141,16 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	var out any
 	decision := "deny"
-	if reason == connector && who == baseline && in.TurnID == "" {
-		// Claude Code asks the operator; Codex and ECA cannot.
-		decision = "ask"
+	if asks[reason] && who == baseline {
+		// Claude Code and ECA ask the operator; Codex cannot.
+		if in.TurnID != "" {
+			reason = cannotAsk(reason)
+		} else {
+			decision = "ask"
+		}
 	}
 	if in.HookType != "" {
-		out = map[string]string{"approval": "deny", "additionalContext": reason}
+		out = map[string]string{"approval": decision, "additionalContext": reason}
 	} else {
 		out = map[string]any{"hookSpecificOutput": map[string]string{
 			"hookEventName": "PreToolUse", "permissionDecision": decision, "permissionDecisionReason": reason}}
@@ -190,9 +193,8 @@ func CheckReviewer(tool, server string, toolInput json.RawMessage) string {
 // sends the agent looking for another way through. TestCheck and TestPolicy
 // hold every reason to this.
 func check(tool, server string, toolInput json.RawMessage, who role, dir string) string {
-	full := tool
-	if server != "" {
-		full = server + "__" + tool
+	if service, name, mcp := mcpTool(tool, server); mcp {
+		return checkMCP(service, name, who)
 	}
 	switch {
 	case tool == "Bash" || tool == "exec_command" || tool == "shell_command" || tool == "git":
@@ -259,17 +261,8 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 	case tool == "Edit" || tool == "Write" || tool == "MultiEdit" || tool == "NotebookEdit" || tool == "apply_patch",
 		server == "eca" && (tool == "write_file" || tool == "edit_file" || tool == "move_file"):
 		return checkFileTool(tool, toolInput, dir)
-	case who == baseline:
-		return checkConnector(full)
-	case (strings.Contains(strings.ToLower(full), "linear") || strings.Contains(strings.ToLower(full), "github")) &&
-		!readOnlyTool.MatchString(full) && who == reviewer:
-		return reviewerReport
-	case strings.Contains(strings.ToLower(full), "linear") && !readOnlyTool.MatchString(full):
-		return "The review loop does not change Linear. Put the proposed change in the final report for the operator to approve."
-	case strings.Contains(strings.ToLower(full), "github") && !readOnlyTool.MatchString(full):
-		return "GitHub writes in the review loop go through pr-loop. " + prLoopWrites
 	}
-	return checkConnector(full)
+	return ""
 }
 
 // typed prefixes the reason a command line typed into a running session is

@@ -105,7 +105,7 @@ func testCheckCommands(t *testing.T) {
 		{false, "mcp__claude_ai_Linear__get_issue", ""},
 		{false, "mcp__claude_ai_Linear__list_comments", ""},
 		{true, "mcp__claude_ai_Github__create_pull_request_review", ""},
-		{false, "mcp__claude_ai_Github__get_pull_request", ""},
+		{true, "mcp__claude_ai_Github__get_pull_request", ""},
 		{false, "Read", ""},
 	}
 	for _, c := range cases {

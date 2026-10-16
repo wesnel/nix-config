@@ -1,7 +1,10 @@
 package guard
 
 import (
+	"fmt"
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -146,6 +149,8 @@ func unwrap(c call, v visitor) string {
 		return unwrapEnv(c.env, args, expands, v)
 	case name == "direnv" && len(args) > 0 && args[0] == "exec":
 		return unwrap(rest(2), v)
+	case name == "nwrap":
+		return unwrapNwrap(c, v)
 	case shells[name]:
 		if script, ok := shellScript(args, name == "fish"); ok {
 			return v.script(script)
@@ -191,6 +196,62 @@ func unwrap(c call, v visitor) string {
 		return v.call(call{words: c.words, expands: c.expands, env: env})
 	}
 	return v.call(c)
+}
+
+// nwrapValues are the options of ngrok's scripts/nwrap whose value is the
+// next word, or follows = in the same word; nwrapFlags take none. An
+// option nwrap gains goes in one of them, or the guard refuses it.
+var (
+	nwrapValues = set("-b", "--branch", "-B", "--create-branch", "-s", "--session")
+	nwrapFlags  = set("-a", "--attach", "--no-autocommit", "--no-copy-files", "--no-direnv-exec")
+)
+
+// nwrapOwn are nwrap's commands that run nothing inside it.
+var nwrapOwn = set("list", "-l", "--list", "prune", "-h", "--help")
+
+const nwrapUnknown = "`nwrap` was given `%s`, an option the guard does not know, which could take a value the guard " +
+	"would then judge as the command nwrap runs. Use only nwrap's options %s, `attach`, and `--` before the command, " +
+	"or run the command without nwrap."
+
+// unwrapNwrap hands on the command ngrok's scripts/nwrap runs, in a
+// worktree it mounts at the repository's own path, so the command acts on
+// the paths it names as it would without nwrap. With no command nwrap
+// starts the user's shell, handed on as a bare `sh`. An option it does not
+// know is refused.
+func unwrapNwrap(c call, v visitor) string {
+	args, expands := c.words[1:], c.expands[1:]
+	i := 0
+options:
+	for i < len(args) {
+		a := args[i]
+		name, _, _ := strings.Cut(a, "=")
+		switch {
+		case nwrapOwn[a]:
+			return v.call(c)
+		case a == "--":
+			i++
+			break options
+		case nwrapValues[a]:
+			i += 2
+		case a == "attach", nwrapFlags[a], strings.HasPrefix(a, "--") && nwrapValues[name]:
+			i++
+		case strings.HasPrefix(a, "-"):
+			var known []string
+			for _, o := range slices.Sorted(maps.Keys(nwrapValues)) {
+				known = append(known, "`"+o+" VALUE`")
+			}
+			for _, o := range slices.Sorted(maps.Keys(nwrapFlags)) {
+				known = append(known, "`"+o+"`")
+			}
+			return fmt.Sprintf(nwrapUnknown, a, strings.Join(known, ", "))
+		default:
+			break options
+		}
+	}
+	if i >= len(args) {
+		return v.call(call{words: []string{"sh"}, expands: []bool{false}, env: c.env})
+	}
+	return unwrap(call{words: args[i:], expands: expands[i:], env: c.env}, v)
 }
 
 // unwrapEnv reads env's options and assignments, and hands on the command
