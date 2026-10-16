@@ -325,6 +325,7 @@ trash "$d"
 ``` sh
 plan-dash collect                        # writes $XDG_STATE_HOME/plan-dash/status.org
 plan-dash export                         # writes $XDG_STATE_HOME/agent-plans/out/
+plan-dash dispatch                       # queues the reviews the page asked for
 ```
 
 `status.org` lists your open pull requests (draft, CI, review decision,
@@ -358,6 +359,28 @@ document stays under 600 KiB. Redaction knows shapes, not data, so
 customer data stays out of plans. A plan that cannot be read is named and
 its document kept, and the command exits 1; only a plan gone from the
 directory, or halted, loses its document.
+
+`plan-dash dispatch` takes the reviews the page asked for into the review
+queue, `$XDG_STATE_HOME/agent-plans/queue.org`. It reads the page's
+`dispatch/OWNER~NAME~N` documents, which the dashboard session copies
+under `out/` (an `ArtifactData` read names the file `OWNER@NAME@N.json`,
+and dispatch writes back under that name), and queues one whose `state` is `requested` only when the
+last export listed that review request; the head queued is the one the
+export listed, never one from the page. Of a document it reads `state`,
+`triage`, `anyway` and `at` alone, from a regular file of at most 16 KiB,
+in a directory it opens once and never follows through a link; a file
+that names no such document is removed, and a request not listed, or not
+readable, gets a `refused` document back. The page keeps a request's
+document until the session writes the entry's state over it, so a finished
+review is queued again only for a request whose `at` is later than its
+last queueing, and "run anyway" lifts only an entry the quota gate
+postponed, for its next run, when its `at` is later than the
+postponement; no document carries `anyway` back. Each queued review's state is
+written back in its document, with whether the page now lists another
+head ("stale"). `queue.org` holds keys, states, heads, flags, times and
+exit statuses, rewritten whole under `queue.lock`; a queue with a line
+that does not parse is neither acted on nor rewritten. Nothing a document
+holds reaches a command line.
 
 ## pushing: private history stays private
 

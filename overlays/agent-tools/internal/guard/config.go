@@ -68,18 +68,39 @@ func agentToolsConfig(path string) bool {
 // agent-plan and git fresh-review write it themselves, never through an
 // agent's command.
 func agentToolsState(path string) bool {
+	return inState(path, "agent-tools")
+}
+
+// dashboardState reports whether path is in plan-dash's or the Agent plans
+// dashboard's directory under the XDG state directory: the review queue,
+// the review requests it checks, the kill switch, the page's documents,
+// status.org and the GitHub cache. plan-dash writes them itself, and the
+// dashboard session reads the page's database into out/ through
+// ArtifactData, which is no file tool.
+func dashboardState(path string) bool {
+	return inState(path, "agent-plans") || inState(path, "plan-dash")
+}
+
+// inState reports whether path is in name's directory under the XDG state
+// directory, as hostpaths has it or as the guard's environment does.
+func inState(path, name string) bool {
 	base := os.Getenv("XDG_STATE_HOME")
 	if !filepath.IsAbs(base) {
 		base = filepath.Join(home, ".local", "state")
 	}
-	return inAgentTools(path, base, hostpaths.StateHome())
+	return inDir(path, name, base, hostpaths.StateHome())
 }
 
 // inAgentTools reports whether path is in agent-tools' directory under one
 // of bases.
 func inAgentTools(path string, bases ...string) bool {
+	return inDir(path, "agent-tools", bases...)
+}
+
+// inDir reports whether path is in name's directory under one of bases.
+func inDir(path, name string, bases ...string) bool {
 	for _, base := range bases {
-		dir := filepath.Join(base, "agent-tools")
+		dir := filepath.Join(base, name)
 		if path == dir || strings.HasPrefix(path, dir+"/") {
 			return true
 		}

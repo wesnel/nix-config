@@ -23,7 +23,15 @@ if [ -n "$FAKE_GH_FAIL" ]; then echo "fake gh: down" >&2; exit 1; fi
 echo '{"data": {"viewer": {"login": "alice"},
   "mine": {"issueCount": 1, "nodes": [{"number": 7, "isDraft": true, "repository": {"nameWithOwner": "o/r"},
     "commits": {"nodes": []}, "reviewThreads": {"nodes": []}}]},
-  "requested": {"issueCount": 0, "nodes": []}}}'
+  "requested": {"issueCount": 1, "nodes": [{"number": 9, "isDraft": false, "repository": {"nameWithOwner": "o/s"},
+    "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "commits": {"nodes": []}, "reviewRequests": {"nodes": []},
+    "timelineItems": {"nodes": []}}]}}}'
+`
+
+// fakeSystemctl logs its arguments, and whether AGENT_PLANS_SESSION
+// reached it.
+const fakeSystemctl = `#!/bin/sh
+echo "$* session=${AGENT_PLANS_SESSION:-}" >> "$FAKE_LOG"
 `
 
 func setUp(t *testing.T) string {
@@ -31,6 +39,8 @@ func setUp(t *testing.T) string {
 	bin := filepath.Join(t.TempDir(), "bin")
 	os.MkdirAll(bin, 0o755)
 	os.WriteFile(filepath.Join(bin, "gh"), []byte(fakeGh), 0o755)
+	os.WriteFile(filepath.Join(bin, "systemctl"), []byte(fakeSystemctl), 0o755)
+	t.Setenv("FAKE_LOG", filepath.Join(t.TempDir(), "log"))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("FAKE_GH_FAIL", "")
 	config := filepath.Join(t.TempDir(), "config.json")
@@ -125,8 +135,48 @@ func TestExport(t *testing.T) {
 	}
 }
 
+// dispatch queues only what export listed, from the page's documents under
+// the state directory, and starts the queue's unit without the dashboard
+// session's mark.
+func TestDispatch(t *testing.T) {
+	state := setUp(t)
+	t.Setenv("AGENT_PLANS_SESSION", "1")
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"dispatch"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "plan-dash export") {
+		t.Errorf("before an export: exit %d: %s", code, stderr.String())
+	}
+	if code := run([]string{"export"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("export: exit %d: %s", code, stderr.String())
+	}
+	dir := filepath.Join(state, "agent-plans", "out", "dispatch")
+	os.MkdirAll(dir, 0o700)
+	os.WriteFile(filepath.Join(dir, "o~s~9.json"), []byte(`{"state": "requested"}`), 0o600)
+	os.WriteFile(filepath.Join(dir, "o~r~7.json"), []byte(`{"state": "requested"}`), 0o600)
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"dispatch"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	var got struct {
+		Queued  []string `json:"queued"`
+		Refused []string `json:"refused"`
+		Started bool     `json:"started"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil || len(got.Queued) != 1 || got.Queued[0] != "o/s#9" ||
+		len(got.Refused) != 1 || got.Refused[0] != "o~r~7" || !got.Started {
+		t.Errorf("printed %s (%v)", stdout.String(), err)
+	}
+	if log, _ := os.ReadFile(os.Getenv("FAKE_LOG")); string(log) != "--user start --no-block agent-plans-queue.service session=\n" {
+		t.Errorf("systemctl: %q", log)
+	}
+	if data, err := os.ReadFile(filepath.Join(state, "agent-plans", "queue.org")); err != nil || !strings.Contains(string(data), "* QUEUED o/s#9") {
+		t.Errorf("queue.org: %s (%v)", data, err)
+	}
+}
+
 func TestUsage(t *testing.T) {
-	for _, args := range [][]string{{}, {"serve"}, {"collect", "--bogus"}, {"export", "now"}, {"export", "--out", "x"}} {
+	for _, args := range [][]string{{}, {"serve"}, {"collect", "--bogus"}, {"export", "now"}, {"export", "--out", "x"},
+		{"dispatch", "o/s#9"}, {"dispatch", "--out", "x"}} {
 		var stdout, stderr bytes.Buffer
 		if code := run(args, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "collect") {
 			t.Errorf("%q: exit %d: %s", args, code, stderr.String())

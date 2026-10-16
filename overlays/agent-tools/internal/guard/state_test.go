@@ -110,6 +110,56 @@ func TestAgentToolsState(t *testing.T) {
 	}
 }
 
+// The Agent plans dashboard's state, the review queue, the requests the
+// page lists, the kill switch, and plan-dash's status and GitHub cache, is
+// written by plan-dash alone: no file tool and no shell write may change
+// it, while reading it and plan-dash itself pass.
+func TestDashboardState(t *testing.T) {
+	h := fakeHome(t)
+	t.Setenv("XDG_STATE_HOME", "")
+	baked := filepath.Join(h, "baked-state")
+	hostpaths.Bake(t, filepath.Join(h, "baked-config"), baked)
+	work := filepath.Join(h, "work")
+	os.MkdirAll(work, 0o755)
+	for _, base := range []string{filepath.Join(h, ".local", "state"), baked} {
+		plansDir, dashDir := filepath.Join(base, "agent-plans"), filepath.Join(base, "plan-dash")
+		os.MkdirAll(filepath.Join(plansDir, "out", "dispatch"), 0o755)
+		os.MkdirAll(dashDir, 0o755)
+		paths := strings.NewReplacer("PLANS", plansDir, "DASH", dashDir)
+		for _, file := range []string{"PLANS/queue.org", "PLANS/requests.json", "PLANS/off", "PLANS/out/dispatch/o@r@7.json",
+			"DASH/github.json", "DASH/status.org"} {
+			input, _ := json.Marshal(map[string]string{"file_path": paths.Replace(file), "content": "x"})
+			if reason := check("Write", "", input, baseline, work); reason == "" || !strings.Contains(reason, "plan-dash") ||
+				!saysInstead(reason) {
+				t.Errorf("a Write of %s: %q", paths.Replace(file), reason)
+			}
+		}
+		for _, c := range []struct {
+			deny    bool
+			command string
+		}{
+			{true, "printf '* QUEUED o/r#7' > PLANS/queue.org"},
+			{true, "echo '{}' >> PLANS/requests.json"},
+			{true, "rm PLANS/off"},
+			{true, "touch PLANS/off"},
+			{true, "mv /tmp/x PLANS/requests.json"},
+			{true, "cp /tmp/doc.json PLANS/out/dispatch/o@r@7.json"},
+			{true, "rm -r PLANS"},
+			{true, "cd DASH && echo x > github.json"},
+			{false, "cat PLANS/queue.org"},
+			{false, "ls PLANS/out/dispatch"},
+			{false, "plan-dash dispatch"},
+			{false, "cp PLANS/queue.org /tmp/queue.org"},
+		} {
+			command := paths.Replace(c.command)
+			reason := judge(t, work, command)
+			if (reason != "") != c.deny {
+				t.Errorf("%q: deny=%v, reason %q", command, !c.deny, reason)
+			}
+		}
+	}
+}
+
 // The review VM's results, which git fresh-review --check trusts, are
 // agent-tools' state where the build bakes the state directory in as well
 // as where the guard's environment puts it, and the refusal says what
