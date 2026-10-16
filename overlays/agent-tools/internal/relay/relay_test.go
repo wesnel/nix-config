@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/wesnel/agent-tools/internal/plans"
 )
 
 func TestHostPath(t *testing.T) {
@@ -228,6 +230,25 @@ func TestServe(t *testing.T) {
 		url, _ := serve(t, workspace)
 		if r := call(t, url, clone); r.Code != 0 {
 			t.Fatalf("a repository inside the workspace was refused: %+v", r)
+		}
+	})
+
+	// A relayed program finds its plan by the directory it runs in, not by
+	// the session that happened to start the relay.
+	t.Run("session of the relay's caller", func(t *testing.T) {
+		workspace := repository(t)
+		for _, name := range plans.SessionEnv {
+			t.Setenv(name, "launcher")
+		}
+		url, out := serve(t, workspace)
+		if r := call(t, url, workspace); r.Code != 0 {
+			t.Fatalf("probe: %+v", r)
+		}
+		data, _ := os.ReadFile(out)
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasSuffix(line, "=launcher") {
+				t.Errorf("a relayed program inherited the relay's session: %s", line)
+			}
 		}
 	})
 }

@@ -2,7 +2,8 @@
 // the host: the server holds the login and runs them, and the client inside
 // the sandbox forwards its arguments, working directory and standard input.
 // The relay confines the working directory to the workspace and its
-// repository; each program decides which of
+// repository, and keeps the session that started it from relayed programs;
+// each program decides which of
 // its own commands a relayed caller may run (see RelayEnv).
 package relay
 
@@ -20,9 +21,11 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/plans"
 )
 
 // URLEnv names the relay a client inside a sandbox sends commands to.
@@ -383,7 +386,7 @@ func handle(req Request, s space, paths map[string]string) Reply {
 	cmd := exec.CommandContext(context.Background(), path, req.Argv...)
 	cmd.Dir = cwd
 	cmd.Stdin = strings.NewReader(req.Stdin)
-	cmd.Env = append(childEnv(), RelayEnv+"=1")
+	cmd.Env = append(relayedEnv(), RelayEnv+"=1")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	cmd.Env = append(cmd.Env, pin...)
@@ -403,6 +406,20 @@ func handle(req Request, s space, paths map[string]string) Reply {
 // of its own: without the repository this process's environment names.
 func childEnv() []string {
 	return withoutURL(gitenv.Without(os.Environ()))
+}
+
+// relayedEnv is childEnv without the harness session that started the
+// relay, which is not the sandbox's: a relayed program that finds a plan
+// by session would otherwise find that session's.
+func relayedEnv() []string {
+	var out []string
+	for _, kv := range childEnv() {
+		name, _, _ := strings.Cut(kv, "=")
+		if !slices.Contains(plans.SessionEnv, name) {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 // withoutURL keeps a relayed program from relaying again, and drops a

@@ -26,8 +26,9 @@ repository, where git finds none or one held inside the workspace. Where git
 finds one, the program runs with GIT_DIR, GIT_WORK_TREE and GIT_COMMON_DIR
 set to it. --program
 names a program clients may run, found beside sandbox-relay or on PATH
-(default: pr-loop). Each program runs with ` + relay.RelayEnv + `=1 and
-decides which of its commands to accept.
+(default: pr-loop). Each program runs with ` + relay.RelayEnv + `=1, without
+the harness session (CLAUDE_CODE_SESSION_ID, CODEX_THREAD_ID, ECA_CHAT_ID)
+the relay was started in, and decides which of its commands to accept.
 `
 
 func main() {
