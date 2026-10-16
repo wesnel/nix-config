@@ -62,11 +62,12 @@ func agentToolsConfig(path string) bool {
 
 // agentToolsState reports whether path is in agent-tools' directory under
 // the XDG state directory, as hostpaths has it or as the guard's
-// environment does. It holds what the status line, the quota ask and
-// fresh-review's --check trust: usage readings, the operator's quota
-// choices, the marks of quota asks made and the review VM's results.
-// agent-plan and git fresh-review write it themselves, never through an
-// agent's command.
+// environment does. It holds what the status line, the quota ask,
+// fresh-review's --check and its audit trust: usage readings, the
+// operator's quota choices, the marks of quota asks made, the review VM's
+// results and the shell calls' evidence log. agent-plan, git fresh-review
+// and `guard --post` write it themselves, never through an agent's
+// command.
 func agentToolsState(path string) bool {
 	base := os.Getenv("XDG_STATE_HOME")
 	if !filepath.IsAbs(base) {

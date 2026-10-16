@@ -274,17 +274,20 @@ in {
             }
           ];
         })}
-        # Records commits, pushes, worktrees, branches and PRs in the plan
-        # and asks which step a commit completes; after a push to GitHub,
-        # names the `pr-loop wait ci` to start; hands over the pull-requests
-        # skill when a PR is opened or edited, and the commit rules on the
-        # chat's first commit. ECA runs a postToolCall hook only after a
-        # call that succeeded.
+        # Records the call in the host's evidence log; records commits,
+        # pushes, worktrees, branches and PRs in the plan and asks which
+        # step a commit completes; after a push to GitHub, names the
+        # `pr-loop wait ci` to start; hands over the pull-requests skill
+        # when a PR is opened or edited, and the commit rules on the chat's
+        # first commit. ECA skips a postToolCall hook after a failed call
+        # unless runOnError is set; the guard records a failure's exit
+        # status and does nothing else with it.
         post=${escapeShellArg (builtins.toJSON {
           type = "postToolCall";
           matcher = ".*";
           visible = false;
-          description = "pr-loop guard --post: the plan's facts, CI after a push, and the skill an action needs";
+          runOnError = true;
+          description = "pr-loop guard --post: the evidence log, the plan's facts, CI after a push, and the skill an action needs";
           actions = [
             {
               type = "shell";

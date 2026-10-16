@@ -287,11 +287,12 @@ in {
               }
             ];
           }
-          # Records commits, pushes, worktrees, branches and PRs in the plan
-          # and asks which step a commit completes; after a push to GitHub,
-          # names the `pr-loop wait ci` to start; hands over the
-          # pull-requests skill when a PR is opened or edited, and the
-          # commit rules on the session's first commit.
+          # Records the call in the host's evidence log; records commits,
+          # pushes, worktrees, branches and PRs in the plan and asks which
+          # step a commit completes; after a push to GitHub, names the
+          # `pr-loop wait ci` to start; hands over the pull-requests skill
+          # when a PR is opened or edited, and the commit rules on the
+          # session's first commit.
           {
             matcher = "Bash";
             hooks = [
@@ -309,6 +310,20 @@ in {
               {
                 type = "command";
                 command = "${agentPlan} remind";
+              }
+            ];
+          }
+        ];
+
+        # A failed command fires this in place of PostToolUse: the evidence
+        # log takes its exit status from the error's "Exit code N".
+        hooks.PostToolUseFailure = [
+          {
+            matcher = "Bash";
+            hooks = [
+              {
+                type = "command";
+                command = "${getExe' config.wgn.home.llm.agentTools "pr-loop"} guard --post";
               }
             ];
           }

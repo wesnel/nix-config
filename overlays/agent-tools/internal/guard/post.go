@@ -11,34 +11,55 @@ import (
 	"time"
 )
 
+// postInput is what a hook after a shell call is given.
+type postInput struct {
+	HookType     string          `json:"hook_type"`
+	HookEvent    string          `json:"hook_event_name"`
+	ToolInput    json.RawMessage `json:"tool_input"`
+	ToolResponse json.RawMessage `json:"tool_response"`
+	// Error is Claude Code's PostToolUseFailure text, which starts "Exit
+	// code N" and holds the output, or ECA's flag of a failed call.
+	Error     json.RawMessage `json:"error"`
+	Cwd       string          `json:"cwd"`
+	SessionID string          `json:"session_id"`
+	ChatID    string          `json:"chat_id"` // set by ECA
+	TurnID    string          `json:"turn_id"` // set by Codex alone
+	AgentID   string          `json:"agent_id"`
+}
+
+// shellArgs are a shell call's tool_input: Claude Code's Bash backgrounds
+// with run_in_background, and ECA's shell_command with a background name.
+type shellArgs struct {
+	Command         string `json:"command"`
+	RunInBackground bool   `json:"run_in_background"`
+	Background      string `json:"background"`
+}
+
 // post is `pr-loop guard --post`, after a shell call: the PostToolUse of
-// Claude Code or Codex, or ECA's postToolCall. It records the call's facts
-// in the plan of its session or worktree (recordFacts), and after a push to
-// GitHub adds one line of context naming the `pr-loop wait ci` to start,
-// read from the command's JSON output. After a command that opens or edits
-// a pull request, and on a session's first commit, it adds the line that
-// hands over the skill whose rules apply. Otherwise it prints nothing.
+// Claude Code or Codex, Claude Code's PostToolUseFailure, or ECA's
+// postToolCall, which runs after a failed call too. It records the call in
+// its session's evidence log (recordEvidence); after a failed call, that
+// alone. Otherwise it records the call's facts in the plan of its session
+// or worktree (recordFacts), and after a push to GitHub adds one line of
+// context naming the `pr-loop wait ci` to start, read from the command's
+// JSON output. After a command that opens or edits a pull request, and on a
+// session's first commit, it adds the line that hands over the skill whose
+// rules apply. Otherwise it prints nothing.
 func post(stdin io.Reader, stdout io.Writer) int {
-	var in struct {
-		HookType     string          `json:"hook_type"`
-		ToolInput    json.RawMessage `json:"tool_input"`
-		ToolResponse json.RawMessage `json:"tool_response"`
-		Cwd          string          `json:"cwd"`
-		SessionID    string          `json:"session_id"`
-		ChatID       string          `json:"chat_id"` // set by ECA
-	}
+	var in postInput
 	if json.NewDecoder(stdin).Decode(&in) != nil {
 		return 0
 	}
-	var args struct {
-		Command string `json:"command"`
-	}
+	var args shellArgs
 	json.Unmarshal(in.ToolInput, &args)
 	if args.Command == "" {
 		return 0
 	}
 	if in.Cwd == "" {
 		in.Cwd, _ = os.Getwd()
+	}
+	if failed := recordEvidence(in, args, time.Now()); failed {
+		return 0
 	}
 	texts := responseTexts(in.ToolResponse)
 	lines := recordFacts(session(in.ChatID, in.SessionID), in.Cwd, args.Command, texts, time.Now())
