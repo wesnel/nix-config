@@ -482,6 +482,33 @@ func (p Plan) itemList() ([]item, error) {
 	return out, nil
 }
 
+// InSection is the IDs of the plan's items, its parts' too, that stand
+// under a level-2 heading titled section, as itemList picks them.
+func (p Plan) InSection(section string) (map[string]bool, error) {
+	files, err := p.files()
+	if err != nil {
+		return nil, err
+	}
+	out, seen := map[string]bool{}, map[string]bool{}
+	for _, f := range files {
+		data, err := readPlan(f)
+		if err != nil {
+			return nil, err
+		}
+		under := ""
+		for _, h := range parseOrg(string(data)) {
+			if h.Level <= 2 {
+				under = h.Title
+			}
+			if id := h.Props["ID"]; id != "" && !seen[id] {
+				seen[id] = true
+				out[id] = h.Level > 2 && under == section
+			}
+		}
+	}
+	return out, nil
+}
+
 func (p Plan) items() (map[string]item, error) {
 	list, err := p.itemList()
 	if err != nil {

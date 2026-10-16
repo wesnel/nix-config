@@ -22,8 +22,8 @@ type heading struct {
 	Scheduled        time.Time
 	ScheduledHasTime bool
 	Props            map[string]string
-	// Body is the text outside drawers, and Notes the lines inside drawers
-	// other than the property drawer, such as LOGBOOK.
+	// Body is the text outside drawers, and Notes the lines inside the
+	// LOGBOOK drawer, where Org writes notes; other drawers are neither.
 	Body  []string
 	Notes []string
 }
@@ -64,6 +64,7 @@ func parseOrg(text string) []heading {
 		otherDrawer
 	)
 	at := top
+	logbook := false
 	for _, line := range strings.Split(text, "\n") {
 		if m := blockLine.FindStringSubmatch(line); m != nil {
 			inBlock = strings.EqualFold(m[1], "begin")
@@ -101,10 +102,12 @@ func parseOrg(text string) []heading {
 			}
 			continue
 		case at == otherDrawer:
-			h.Notes = append(h.Notes, line)
+			if logbook {
+				h.Notes = append(h.Notes, line)
+			}
 			continue
 		case !inBlock && drawerStart.MatchString(line) && trimmed != ":END:":
-			at = otherDrawer
+			at, logbook = otherDrawer, strings.EqualFold(trimmed, ":LOGBOOK:")
 			continue
 		}
 		at = section

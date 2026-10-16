@@ -82,10 +82,24 @@ func (f *fake) calls(t *testing.T) int {
 	return strings.Count(string(data), "\n")
 }
 
+// reviewRoot puts the reviews' directory, pr-review under
+// $XDG_CACHE_HOME, in a new one.
+func reviewRoot(t *testing.T) string {
+	t.Helper()
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	return filepath.Join(cache, "pr-review")
+}
+
 var now = time.Date(2026, 10, 16, 12, 0, 0, 0, time.Local)
 
 func TestGitHub(t *testing.T) {
 	fakeGitHub(t, reply)
+	root := reviewRoot(t)
+	record := filepath.Join(root, "p", "q", "3", head1[:12]+".json")
+	os.MkdirAll(filepath.Dir(record), 0o755)
+	os.WriteFile(record, []byte("{}"), 0o644)
+
 	g, stale, err := GitHubAt(context.Background(), filepath.Join(t.TempDir(), "github.json"), now)
 	if err != nil {
 		t.Fatal(err)
@@ -101,8 +115,8 @@ func TestGitHub(t *testing.T) {
 		t.Errorf("mine %+v of %d, want %+v of 3", g.Mine, g.MineTotal, wantMine)
 	}
 	wantRequests := []Request{
-		{Repo: "p/q", Number: 3, Title: "Fix the parser", Requested: time.Date(2026, 10, 14, 9, 0, 0, 0, time.UTC), Head: head1, CI: "failure"},
-		{Repo: "p/q", Number: 4, Draft: true, Team: true, Requested: time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC), Head: head2, CI: "none"},
+		{Repo: "p/q", Number: 3, Title: "Fix the parser", Requested: time.Date(2026, 10, 14, 9, 0, 0, 0, time.UTC), Head: head1, CI: "failure", Record: "yes"},
+		{Repo: "p/q", Number: 4, Draft: true, Team: true, Requested: time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC), Head: head2, CI: "none", Record: "no"},
 	}
 	if !reflect.DeepEqual(g.Requests, wantRequests) || g.RequestsTotal != 2 {
 		t.Errorf("requests %+v of %d, want %+v of 2", g.Requests, g.RequestsTotal, wantRequests)
@@ -113,6 +127,7 @@ func TestGitHub(t *testing.T) {
 // fetch falls back on the last good result, stale.
 func TestCache(t *testing.T) {
 	f := fakeGitHub(t, reply)
+	reviewRoot(t)
 	cache := filepath.Join(t.TempDir(), "github.json")
 	if _, _, err := GitHubAt(context.Background(), cache, now); err != nil {
 		t.Fatal(err)
@@ -177,6 +192,7 @@ func TestShapes(t *testing.T) {
   ]}
 }}`
 			fakeGitHub(t, text)
+			reviewRoot(t)
 			g, _, err := GitHubAt(context.Background(), filepath.Join(t.TempDir(), "github.json"), now)
 			if err != nil {
 				t.Fatal(err)
