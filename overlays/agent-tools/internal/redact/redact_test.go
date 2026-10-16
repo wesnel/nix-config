@@ -5,6 +5,9 @@ import (
 	"testing"
 )
 
+// pemLine is a fake line of a PEM key's body.
+var pemLine = strings.Repeat("Fa9+", 16)
+
 // Known secret shapes are replaced before text reaches a reviewer; the
 // words around them stay.
 func TestSecrets(t *testing.T) {
@@ -35,6 +38,30 @@ func TestSecrets(t *testing.T) {
 		{"lowercase name", "aws_secret_access_key = " + aws, "aws_secret_access_key = [REDACTED]"},
 		{"flag with =", "--token=abc123 --verbose", "--token=[REDACTED] --verbose"},
 		{"flag and argument", "--api-key abc123 --verbose", "--api-key [REDACTED] --verbose"},
+		{"netrc line", "machine h login u password FAKEPW", "machine h login u password [REDACTED]"},
+		{"netrc lines", "machine h\n  login u\n  password FAKEPW\n", "machine h\n  login u\n  password [REDACTED]\n"},
+		{"Cookie header", "> Cookie: session=FAKE; theme=dark", "> Cookie: [REDACTED]"},
+		{"Set-Cookie header", "< Set-Cookie: session=FAKE; Path=/", "< Set-Cookie: [REDACTED]"},
+		{"quoted Cookie header", "curl -H 'Cookie: session=FAKE' x", "curl -H 'Cookie: [REDACTED]' x"},
+		{"curl user", "curl -u bob:FAKEPW https://x", "curl -u bob:[REDACTED] https://x"},
+		{"curl --user", "curl --user=bob:FAKEPW https://x", "curl --user=bob:[REDACTED] https://x"},
+		{"mysql password", "mysql -ubob -pFAKEPW db", "mysql -ubob -p[REDACTED] db"},
+		{"mysqldump password", "mysqldump -h x -pFAKEPW db", "mysqldump -h x -p[REDACTED] db"},
+		{"OpenAI project key", "sk-proj-" + strings.Repeat("Fa9_", 10), "[REDACTED OpenAI key]"},
+		{"npm token", "npm_" + strings.Repeat("Fa9", 12), "[REDACTED npm token]"},
+		{"Hugging Face token", "hf_" + strings.Repeat("Fak", 12), "[REDACTED Hugging Face token]"},
+		{"Grafana token", "glsa_" + strings.Repeat("Fa9", 10) + "Fa_0123abcd", "[REDACTED Grafana token]"},
+		{"DigitalOcean token", "dop_v1_" + strings.Repeat("0f", 32), "[REDACTED DigitalOcean token]"},
+		{"credentials variable", "MY_CREDENTIALS=FAKE rest", "MY_CREDENTIALS=[REDACTED] rest"},
+		{"auth variable", "AUTH=FAKE rest", "AUTH=[REDACTED] rest"},
+		{"npm auth", "//registry/:_auth=FAKE", "//registry/:_auth=[REDACTED]"},
+		{"JSON credentials object", `{"credentials":{"value":"FAKE"},"n":1}`, `{"credentials":[REDACTED],"n":1}`},
+		{"PGP private key", "-----BEGIN PGP PRIVATE KEY BLOCK-----\n\nlQOYBF\n=ab12\n-----END PGP PRIVATE KEY BLOCK-----\nafter",
+			"[REDACTED private key]\nafter"},
+		{"PEM cut short", "before\n-----BEGIN RSA PRIVATE KEY-----\nMIIEFAKE\nMIIEFAKE", "before\n[REDACTED private key]"},
+		{"PEM tail from mid-body", strings.Repeat(pemLine+"\n", 3) + "Fa9+/w==\n-----END PRIVATE KEY-----\nafter",
+			strings.Repeat("[REDACTED key line]\n", 4) + "[REDACTED private key]\nafter"},
+		{"PEM body cut at both ends", "out\n" + strings.Repeat(pemLine+"\n", 2), "out\n" + strings.Repeat("[REDACTED key line]\n", 2)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := Secrets(tc.in); got != tc.want {
@@ -44,7 +71,9 @@ func TestSecrets(t *testing.T) {
 	}
 	for _, plain := range []string{"Add the run loop", "the KEY is in the vault", "eyJ alone", "ghp_short",
 		"commit 0123456789abcdef0123456789abcdef01234567", "routeKey := x", "https://github.com/o/r.git",
-		"--key-file path", "the bearer of news"} {
+		"--key-file path", "the bearer of news", "the password is in the vault", "sort -u names", "git push -u origin main",
+		"mysql -p db", "author: Wesley", "credential.helper=store", "sk-ant-short", strings.Repeat("ab12", 20),
+		"go test ./internal/" + strings.Repeat("Ab1", 20) + " ok"} {
 		if got := Secrets(plain); got != plain {
 			t.Errorf("Secrets(%q) = %q, want it unchanged", plain, got)
 		}
