@@ -204,6 +204,24 @@ in {
       '';
     };
 
+    reviewQueue.enable = mkOption {
+      type = types.bool;
+      default = false;
+
+      description = ''
+        Linux only. Runs the reviews queued from the Agent plans page
+        (`plan-dash dispatch`) as systemd user units: agent-plans.slice
+        holds `agent-plans-queue.service`, which `plan-dash dispatch`
+        starts and a timer starts again every quarter hour for entries
+        whose quota window has reset, and every review and triage unit it
+        starts. The kill switch survives switches and reboots: create
+        `agent-plans/off` under {option}`xdg.stateHome`, then
+        `systemctl --user stop agent-plans.slice`; removing the file undoes
+        it. Needs lingering,
+        `gh`, Codex and Claude Code signed in, and {option}`prLoop.enable`.
+      '';
+    };
+
     settings = mkOption {
       type = types.attrs;
 
@@ -511,6 +529,65 @@ in {
       wgn.home.llm.prLoop.enable = true;
       home.packages = [prLoopLauncher];
     })
+
+    (mkIf cfg.reviewQueue.enable (let
+      state = "${config.xdg.stateHome}/agent-plans";
+      # systemd-run is the user manager's own; claude-pr-loop's sandbox
+      # needs bubblewrap and socat, and Claude Code installs itself under
+      # ~/.local/bin.
+      path = concatStringsSep ":" [
+        (dirOf config.systemd.user.systemctlPath)
+        (makeBinPath [config.wgn.home.llm.agentTools prLoopLauncher pkgs.git pkgs.gh pkgs.bubblewrap pkgs.socat pkgs.coreutils])
+        "${config.home.profileDirectory}/bin"
+        "${config.home.homeDirectory}/.local/bin"
+        "/usr/local/bin:/usr/bin:/bin"
+      ];
+    in {
+      assertions = [
+        {
+          assertion = pkgs.stdenv.hostPlatform.isLinux && cfg.prLoop.enable;
+          message = "wgn.home.claude.reviewQueue needs Linux and wgn.home.claude.prLoop.enable.";
+        }
+      ];
+
+      systemd.user = {
+        # Stopping it stops the runner and the review or triage under way.
+        slices.agent-plans.Unit.Description = "The Agent plans page's review queue and its reviews";
+
+        services.agent-plans-queue = {
+          Unit = {
+            Description = "Run the reviews queued from the Agent plans page, one at a time";
+            # The kill switch, which plan-dash queue also checks before
+            # each entry.
+            ConditionPathExists = "!${state}/off";
+          };
+          Service = {
+            # Started again while it runs, it is left to finish: it rereads
+            # the queue after each entry.
+            Type = "oneshot";
+            Slice = "agent-plans.slice";
+            Environment = ["PATH=${path}"];
+            ExecStart = "${getExe' config.wgn.home.llm.agentTools "plan-dash"} queue";
+            # The review and triage units are the transient ones
+            # systemd-run starts, outside this unit's cgroup. plan-dash
+            # queue stops its own on SIGTERM; this stops them when it was
+            # killed before it could.
+            ExecStopPost = "${config.systemd.user.systemctlPath} --user stop 'pr-review-*.service' 'pr-triage-*.service'";
+          };
+        };
+
+        # For an entry postponed until its quota window resets, when nothing
+        # dispatches in the meantime.
+        timers.agent-plans-queue = {
+          Unit.Description = "Look for queued reviews that can run now";
+          Timer = {
+            OnActiveSec = "5min";
+            OnUnitInactiveSec = "15min";
+          };
+          Install.WantedBy = ["timers.target"];
+        };
+      };
+    }))
 
     # User-scoped servers live in ~/.claude.json, which Claude Code rewrites
     # constantly, so these entries are merged in on every switch rather than
