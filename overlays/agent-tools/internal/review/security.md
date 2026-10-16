@@ -17,7 +17,8 @@ Each finding has one kind:
   another party controls reaches a command, a path, a query, a template, a
   deserialiser or a tool call; a secret leaves where it belongs; a check or
   a confinement is bypassed. Its evidence names the source, the path from
-  it, the use, and who can reach the source.
+  it, the use, and who can reach the source, and the ID of the threat
+  note it breaks, where one applies.
 - `bug`, `regression`, `untested`, `untrue-doc` and `convention`, as the
   general review defines them, where they bear on security: a guard with a
   hole in it, a refusal no test can fail, a doc that promises a protection
@@ -50,6 +51,13 @@ whether it gave a finding or not:
 - `workflows`: CI workflows run on another party's pull request
   (`pull_request_target`), `${{ github.event.* }}` expanded inside `run:`,
   the token's permissions, secrets reaching code the workflow did not write.
+- `parallel-branches`: the overlapping branches listed below: whether one
+  removes a check this change relies on, or feeds it input it does not
+  expect.
+
+The threat notes below, where there are any, are the operator's: what they
+say must hold (IDs such as `T3`) is what a `vulnerability` breaks, and
+what they accept, with why, is not a finding.
 
 ## Output
 

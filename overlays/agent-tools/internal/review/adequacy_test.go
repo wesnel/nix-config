@@ -144,6 +144,31 @@ func (f *fixture) refused(t *testing.T, code int, out output, stderr string) {
 func TestTestAdequacy(t *testing.T) {
 	// A commit whose tests pass without the rest of it is untested, said so
 	// by red-check rather than the reviewer, at its test file.
+	// The JSON is redacted before it is cut to fit the prompt: a token the
+	// cut splits would keep its end, which no longer has a token's shape.
+	t.Run("redacted before it is cut", func(t *testing.T) {
+		a := setUpAdequacy(t, redcheck.FailsAsAsserted)
+		token := "ghp_" + strings.Repeat("Z", 36)
+		a.edit = func(checks []*redcheck.Check) []*redcheck.Check {
+			last := checks[len(checks)-1]
+			last.Without = &redcheck.Run{Exit: 1, Output: token}
+			// As the fixture writes it: the cut keeps the last redCheckCap
+			// bytes, which start 20 bytes into the token once the padding
+			// after it is long enough.
+			data := must(json.Marshal(redcheck.Result{Test: "true", TestFiles: []string{"*_test.txt"}, Commits: checks}))
+			pad := strings.Index(string(data), token) + 20 + redCheckCap - len(data)
+			last.Without.Output = token + strings.Repeat(" ", pad)
+			return checks
+		}
+		if code, out, stderr := a.review(t); code != 0 {
+			t.Fatalf("exit %d, %+v\n%s", code, out, stderr)
+		}
+		prompt := string(must(os.ReadFile(filepath.Join(a.log, "prompt"))))
+		if strings.Contains(prompt, strings.Repeat("Z", 16)) {
+			t.Error("the prompt keeps the end of a token the cut split")
+		}
+	})
+
 	t.Run("raised", func(t *testing.T) {
 		a := setUpAdequacy(t, redcheck.PassesWithoutChange)
 		f := a.raised(t)

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/redact"
 	"github.com/wesnel/agent-tools/internal/redcheck"
 	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/repos"
@@ -116,7 +117,9 @@ func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, 
 		return nil, refusal.New("--red-check %s is not git red-check's JSON on %s..%s: %s. Run `git red-check %s..%s` "+
 			"on this range and pass what it writes", file, r.base, r.tip, why, r.base, r.tip)
 	}
-	a.text = fenced("json", cut(data, redCheckCap))
+	// Redacted before the cut, which could split a secret's shape and leave
+	// its end unrecognised.
+	a.text = fenced("json", cut([]byte(redact.Secrets(string(data))), redCheckCap))
 	for _, c := range result.Commits {
 		switch c.Verdict {
 		case redcheck.FailsToBuildWithoutChange:

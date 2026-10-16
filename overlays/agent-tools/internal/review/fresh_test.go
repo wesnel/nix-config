@@ -18,7 +18,8 @@ import (
 
 // fakeCodex stands in for `codex`: it accepts only the flags the real
 // `codex exec --help` and `codex sandbox --help` list that fresh-review is
-// meant to pass, records them one to a line and where it ran, and replies as
+// meant to pass, records them one to a line and where it ran, copies the
+// file $FAKE_CODEX_COPY names in its working directory, and replies as
 // $FAKE_CODEX says.
 const fakeCodex = `#!/bin/sh
 if [ "$1" = login ] && [ "$2" = status ]; then
@@ -65,6 +66,7 @@ printf '%s' "$GIT_DIR$GIT_WORK_TREE" > "$FAKE_CODEX_LOG/location"
 printf '%s' "$PATH" > "$FAKE_CODEX_LOG/path"
 git -C "$wt" rev-parse HEAD > "$FAKE_CODEX_LOG/head"
 ls -A "$wt" > "$FAKE_CODEX_LOG/files"
+if [ -n "$FAKE_CODEX_COPY" ]; then cp "$wt/$FAKE_CODEX_COPY" "$FAKE_CODEX_LOG/copy"; fi
 case "$FAKE_CODEX" in
   fail) echo "fake codex: model error" >&2; exit 1 ;;
   hang) exec sleep 60 ;;
@@ -108,7 +110,7 @@ func setUp(t *testing.T, withCodex bool) *fixture {
 	for k, v := range map[string]string{
 		"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
 		"GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e", "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e",
-		"PR_LOOP_SESSION": "", "SANDBOX_RELAYED": "", "CODEX_SANDBOX": "", "FAKE_CODEX": "",
+		"PR_LOOP_SESSION": "", "SANDBOX_RELAYED": "", "CODEX_SANDBOX": "", "FAKE_CODEX": "", "FAKE_CODEX_COPY": "",
 		"AGENT_TOOLS_CONFIG": filepath.Join(t.TempDir(), "none.json"),
 	} {
 		t.Setenv(k, v)
@@ -507,6 +509,22 @@ func TestPrintPrompt(t *testing.T) {
 	// The repository has no test settings.
 	if !strings.Contains(prompt, "no mechanical test adequacy") {
 		t.Errorf("the prompt does not say that nothing checked the tests:\n%s", prompt)
+	}
+}
+
+// The goal statement reaches Codex with known secret shapes taken out, as
+// the items and earlier findings do.
+func TestGoalRedacted(t *testing.T) {
+	f := setUp(t, true)
+	t.Setenv("FAKE_CODEX", "none")
+	token := "ghp_" + strings.Repeat("d", 36)
+	os.WriteFile(filepath.Join(f.repo, ".git", "goal.md"), []byte("Grow the code; the CI token "+token+" stays out.\n"), 0o644)
+	if code, _, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+"..HEAD"); code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr)
+	}
+	prompt := string(must(os.ReadFile(filepath.Join(f.log, "prompt"))))
+	if strings.Contains(prompt, token) || !strings.Contains(prompt, "the CI token [REDACTED") {
+		t.Errorf("the prompt:\n%s", prompt)
 	}
 }
 
