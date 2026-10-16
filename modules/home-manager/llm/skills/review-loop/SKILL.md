@@ -96,6 +96,10 @@ when you need to know where something belongs.
    worktrees only. Where the operator configured a setup command for the
    repository, it also runs that in each one, such as generating files the
    repository does not commit. If a setup fails, stop and report its output.
+7. `pr-loop status`. Bot threads already on the PRs are answered before
+   any bot is asked again: if any bot shows `unansweredThreads`, the first
+   round runs steps 4 to 9, Triage to Reply and resolve, and the next round
+   starts at step 1.
 
 ## Each round
 
@@ -115,8 +119,10 @@ has changed.
    are the round's only work: skip to step 5.
 2. **Request reviews.** `pr-loop request`. It asks each configured bot that
    has neither reviewed the head nor been asked, and refuses while CI is
-   unfinished or failing. Then `pr-loop wait reviews` (repeat while it exits
-   3); reviews take 5 to 15 minutes.
+   unfinished or failing, or while a bot has the last word in an open
+   thread; answer those through steps 4 to 9 first. Then
+   `pr-loop wait reviews` (repeat while it exits 3); reviews take 5 to 15
+   minutes.
 3. **Status.** `pr-loop status`. Check the stop conditions below.
 4. **Triage.** Have every owner triage its PR's unresolved bot threads
    (`pr-loop threads <number>`) without changing code. Then decide each
