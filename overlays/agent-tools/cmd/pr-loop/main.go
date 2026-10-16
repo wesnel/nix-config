@@ -85,6 +85,13 @@ printed on stderr and fails nothing.
                               KILL after 10s; then remove the PRs' clean worktrees, put the
                               main worktree back on the top branch, end as end does, and
                               write report.md saying what is left
+  watch [--from-start] [LOG]  follow a loop session's log (default: pr-loop-session.jsonl
+                              in the git common directory, where the review-loop skill
+                              writes it), and its .err beside it, from their end: the
+                              agents' text, tool calls, results cut to two lines, refusals
+                              marked !! REFUSED, sub-agents' starts and ends, with known
+                              secret shapes redacted and control characters shown as
+                              text; until interrupted
   guard [--baseline]          PreToolUse hook for Claude Code, Codex and ECA (reads stdin):
                               a loop's rules, or with --baseline every session's, by agent
   guard --post                PostToolUse hook for Claude Code, Codex and ECA (reads stdin):
@@ -314,6 +321,7 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 		resume   = flags.Bool("resume", false, "")
 		noPush   = flags.Bool("no-push", false, "")
 		prune    = flags.Bool("prune", false, "")
+		start    = flags.Bool("from-start", false, "")
 		remove   = flags.Bool("remove", false, "")
 		bots     multi
 		accepted multi
@@ -537,6 +545,10 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 	case "stop":
 		if err = need(0); err == nil {
 			result, err = loop.Stop()
+		}
+	case "watch":
+		if err = watchLog(rest, *start, stdout, stderr); err == nil {
+			return 0
 		}
 	default:
 		fmt.Fprint(stderr, usage)

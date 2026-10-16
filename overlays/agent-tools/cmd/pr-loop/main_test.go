@@ -38,6 +38,7 @@ func TestRelayRefusal(t *testing.T) {
 		{"sign"},
 		{"end"},
 		{"stop"},
+		{"watch"},
 		{"guard"},
 		{"reply", "T", "--body-file", "/etc/passwd"},
 		{"reply", "T", "--body-file=/etc/passwd"},
