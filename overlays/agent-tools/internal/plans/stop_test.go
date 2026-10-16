@@ -5,11 +5,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/routes"
 )
 
 // setProp sets a property of a plan file's top heading.
@@ -160,6 +162,51 @@ func TestStopCheck(t *testing.T) {
 			t.Fatal(err)
 		}
 		expectReason(t, "logged", stopIn(t, c)("s1", repo, false), "")
+	})
+
+	// A routed change owes a route receipt as well as the general one.
+	t.Run("route owed", func(t *testing.T) {
+		c := testConfig(t)
+		repo := stopRepo(t, true)
+		gitIn(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+		p, _, err := c.RecordCommit("s1", repo, Event{Commit: "Add x", Summary: "Add x"}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		head := strings.TrimSpace(gitIn(t, repo, "rev-parse", "HEAD"))
+		p.Receipt("", Receipt{Range: "origin/main..HEAD", PatchID: patchID(t, repo)}, time.Now())
+		p.Routed("", Routed{Branch: "main", Base: strings.TrimSpace(gitIn(t, repo, "rev-parse", "origin/main")), Tip: head,
+			Routes: map[string][]string{"security": {head}}}, time.Now())
+		expectReason(t, "routed", stopIn(t, c)("s1", repo, false), "git fresh-review --focus security")
+		p.Receipt("", Receipt{Range: "origin/main..HEAD", Tip: head, PatchID: patchID(t, repo), Focus: "security", Branch: "main"},
+			time.Now())
+		expectReason(t, "reviewed", stopIn(t, c)("s1", repo, false), "")
+	})
+
+	// The command named is for a route with commits uncovered, not one
+	// whose receipt only has findings to settle.
+	t.Run("the route uncovered", func(t *testing.T) {
+		known := routes.Known
+		routes.Known = append(slices.Clone(known), "compat")
+		t.Cleanup(func() { routes.Known = known })
+		c := testConfig(t)
+		repo := stopRepo(t, true)
+		gitIn(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+		p, _, err := c.RecordCommit("s1", repo, Event{Commit: "Add x", Summary: "Add x"}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		head := strings.TrimSpace(gitIn(t, repo, "rev-parse", "HEAD"))
+		p.Receipt("", Receipt{Range: "origin/main..HEAD", PatchID: patchID(t, repo)}, time.Now())
+		p.Routed("", Routed{Branch: "main", Base: strings.TrimSpace(gitIn(t, repo, "rev-parse", "origin/main")), Tip: head,
+			Routes: map[string][]string{"compat": {head}, "security": {head}}}, time.Now())
+		p.Receipt("", Receipt{Range: "origin/main..HEAD", Tip: head, PatchID: patchID(t, repo), Focus: "compat", Branch: "main",
+			FindingIDs: []string{"compat-1"}, Findings: 1}, time.Now())
+		reason := stopIn(t, c)("s1", repo, false)
+		if !strings.Contains(reason, "--focus security") || !strings.Contains(reason, "--route security") ||
+			strings.Contains(reason, "--focus compat") {
+			t.Errorf("reason %q", reason)
+		}
 	})
 
 	t.Run("stop hook active", func(t *testing.T) {

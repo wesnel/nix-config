@@ -51,7 +51,9 @@ or a step's.
   patch ID is the change's as it then stands, for a range starting at or
   below the branch's base in the plan's `BRANCHES` or `origin/<default>`;
   a rebase or re-sign that keeps the change needs no new round, and any
-  other change, or a review of part of it, does.
+  other change, or a review of part of it, does. A focused review logs a
+  `route-receipt` instead, and the hook also wants one covering every
+  commit each route owed is for.
 - Each finding settled: `finding-settled` against the item it concerns, with
   `--review <round>.<id> --outcome <outcome>`, the outcome as Triage below.
 - Design review of the result: `reviewed` with `--role design-reviewer`.

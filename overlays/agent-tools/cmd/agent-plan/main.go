@@ -110,7 +110,9 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      stdin): the session's context and its provider's quota
                      windows as this host last saw them, then "review owed"
                      where the session committed since its plan's last review
-                     receipt, then the open questions of the session's plan,
+                     receipt, "security review owed" where the plan's log
+                     routes the change there with no route receipt or waiver
+                     since, then the open questions of the session's plan,
                      else of the plan of the worktree "cwd" is in; or nothing.
                      Keeps Claude Code's rate_limits in
                      $XDG_STATE_HOME/agent-tools/usage. Emacs sends {cwd,
@@ -138,7 +140,9 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      (which git fresh-review and pr-loop review log) for a
                      range BASE..HEAD, BASE at or below the branch's base in
                      the plan's BRANCHES or origin/<default>, has the patch ID
-                     of BASE..HEAD as it stands; the commits as pr-loop guard
+                     of BASE..HEAD as it stands, or a route the plan owes (see
+                     set and waive) has commits no route receipt of it covers;
+                     the commits as pr-loop guard
                      --post logs them, in a plan it makes for a commit no
                      plan takes; ECA gets the reason on stderr with exit 2,
                      logged as stop-blocked, and the chat's stops pass while
