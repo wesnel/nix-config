@@ -320,6 +320,25 @@ sops set secrets/wgn.yaml '["notes-deploy-key"]' "$(jq -Rs . < "$d/key")"
 trash "$d"
 ```
 
+## status: what waits on you
+
+``` sh
+plan-dash collect                        # writes $XDG_STATE_HOME/plan-dash/status.org
+```
+
+`status.org` lists your open pull requests (draft, CI, review decision,
+unresolved threads), the reviews asked of you or your teams (since when,
+the head and its CI, whether `pr-loop review` holds a record of it) and
+this host's plans that are not halted (status, steps ready, open questions,
+routes owed). `gh` is asked at most once a minute; the answer is cached
+beside the file as `github.json`, and when a fetch fails the last good
+answer is written, marked stale. The file is rewritten whole, read-only, on
+every run. It holds keys, states, counts, times and the links built from
+them, each checked against its shape, and never a title, branch, login or
+comment, so nothing someone else wrote on GitHub can form a headline,
+keyword or link in it. `github.json` holds pull request titles as well, so
+only escaped output may show what it holds.
+
 ## pushing: private history stays private
 
 `wgn.home.git` runs `git-push-guard` before every push from every

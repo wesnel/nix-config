@@ -170,6 +170,9 @@ func (c Config) StatusLine(input []byte) string {
 	return owed + fmt.Sprintf("%d open questions · /questions", len(qs))
 }
 
+// RoutesOwed is routesOwed of p.
+func (p Plan) RoutesOwed() []string { return routesOwed(p) }
+
 // routesOwed are the routes p's log names, by a routed event or REVIEWS,
 // with no route receipt of theirs logged after the last event naming them,
 // and not waived. Like reviewOwed it reads the log alone; whether a
