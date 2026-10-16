@@ -61,8 +61,8 @@ func agentToolsConfig(path string) bool {
 
 // agentToolsState reports whether path is in agent-tools' directory under
 // the XDG state directory, which holds what the status line and the quota
-// ask trust: usage readings, Wesley's quota choices and the marks of quota
-// asks made. agent-plan writes it itself, never through an agent's
+// ask trust: usage readings, the operator's quota choices and the marks of
+// quota asks made. agent-plan writes it itself, never through an agent's
 // command.
 func agentToolsState(path string) bool {
 	base := os.Getenv("XDG_STATE_HOME")
@@ -86,7 +86,7 @@ func loadSettings() settings {
 }
 
 const webSocket = "A Monitor's WebSocket connects from outside the sandbox to a server the guard cannot check. " +
-	"Watch it with a `command` instead, such as a polling loop with `curl`, or ask Wesley to add the URL to the guard's webSockets."
+	"Watch it with a `command` instead, such as a polling loop with `curl`, or ask the operator to add the URL to the guard's webSockets."
 
 // checkWebSocket denies a WebSocket to a URL no prefix in the guard's
 // settings starts.

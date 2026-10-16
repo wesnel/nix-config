@@ -27,8 +27,8 @@ func TestRemind(t *testing.T) {
 	t.Run("Claude Code, at 100%", func(t *testing.T) {
 		s := state(t, 100, 1792032000)
 		ask := Remind(s, prompt, now)
-		for _, want := range []string{"Claude's 5-hour window is at 100%, resetting 19:40", "Ask Wesley once",
-			"(a) keep going", "(b) postpone the task until 19:40", "Until he answers, keep going",
+		for _, want := range []string{"Claude's 5-hour window is at 100%, resetting 19:40", "Ask the operator once",
+			"(a) keep going", "(b) postpone the task until 19:40", "Until they answer, keep going",
 			"`agent-plan usage choose claude keep|postpone --plan PLAN`",
 			"`agent-plan postpone PLAN ID --until '2026-10-14 19:40'`"} {
 			if !strings.Contains(ask, want) {
@@ -81,7 +81,7 @@ func TestRemind(t *testing.T) {
 		s := state(t, 80, 1792032000)
 		s.Choose("claude", "keep", now)
 		s.Record(Reading{Provider: "claude", ObservedAt: now.Unix(), Windows: []Window{{Name: "5h", Used: 92, ResetsAt: 1792032000}}})
-		if ask := Remind(s, prompt, now); !strings.Contains(ask, "His answer so far: keep until 19:40.") {
+		if ask := Remind(s, prompt, now); !strings.Contains(ask, "The operator's answer so far: keep until 19:40.") {
 			t.Errorf("ask %q", ask)
 		}
 	})

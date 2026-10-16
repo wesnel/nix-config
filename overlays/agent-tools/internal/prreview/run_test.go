@@ -121,7 +121,8 @@ func testRunClean(t *testing.T) {
 	}
 }
 
-// testRunGated: a red flag leaves the run to Wesley, and the review goes on.
+// testRunGated: a red flag leaves the run to the operator, and the review
+// goes on.
 func testRunGated(t *testing.T) {
 	// gated reviews a pull request with a red flag, and returns the fake
 	// backend's log.
@@ -148,7 +149,7 @@ func testRunGated(t *testing.T) {
 		gated(t)
 	})
 
-	// Wesley's --run runs it anyway; a relayed one is refused.
+	// The operator's --run runs it anyway; a relayed one is refused.
 	t.Run("relayed --run", func(t *testing.T) {
 		log := gated(t)
 		var stdout, stderr bytes.Buffer

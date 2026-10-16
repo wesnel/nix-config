@@ -20,10 +20,10 @@ const Urgent = 90
 var modelProviders = map[string]string{"anthropic": "claude", "openai": "codex"}
 
 // Remind is the usage part of `agent-plan remind`: on a main thread's
-// prompt, it asks Wesley whether to keep going or postpone when a window of the
-// session's provider has crossed Warn or Urgent since the last ask on this
-// host, or returns "". Codex's turn records the reading of its rollout
-// first, since Codex has no status line that does.
+// prompt, it asks the operator whether to keep going or postpone when a
+// window of the session's provider has crossed Warn or Urgent since the last
+// ask on this host, or returns "". Codex's turn records the reading of its
+// rollout first, since Codex has no status line that does.
 //
 // The prompts are Claude Code's and Codex's UserPromptSubmit, Codex's with
 // a turn_id and, for a sub-agent's turn, an agent_id; and ECA's
@@ -92,12 +92,12 @@ func (s State) ask(provider string, now time.Time) string {
 	text := fmt.Sprintf("%s's %s window is at %d%%, resetting %s. ", Title(provider), WindowTitle(w.Name),
 		int(math.Floor(w.Used)), reset)
 	if c, ok := s.Choice(provider, now); ok {
-		text += fmt.Sprintf("His answer so far: %s until %s. ", c.Choice, Clock(c.Until, now))
+		text += fmt.Sprintf("The operator's answer so far: %s until %s. ", c.Choice, Clock(c.Until, now))
 	}
-	return text + fmt.Sprintf("Ask Wesley once, in your reply, which he wants until then: (a) keep going; "+
-		"(b) postpone the task until %s. Until he answers, keep going. "+
-		"Record his answer with `agent-plan usage choose %s keep|postpone --plan PLAN`, and for (b), once he "+
-		"approves it, run `agent-plan postpone PLAN ID --until '%s'` for each step or part that waits.",
+	return text + fmt.Sprintf("Ask the operator once, in your reply, which they want until then: (a) keep going; "+
+		"(b) postpone the task until %s. Until they answer, keep going. "+
+		"Record their answer with `agent-plan usage choose %s keep|postpone --plan PLAN`, and for (b), once they "+
+		"approve it, run `agent-plan postpone PLAN ID --until '%s'` for each step or part that waits.",
 		reset, provider, time.Unix(w.ResetsAt, 0).In(now.Location()).Format("2006-01-02 15:04"))
 }
 

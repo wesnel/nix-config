@@ -17,7 +17,7 @@ var (
 
 // The keywords agent-plan writes. Steps, parts and follow-ups take the first
 // sequence, questions the second; `(@)` makes Org ask for a note when
-// Wesley settles a question in Emacs.
+// the operator settles a question in Emacs.
 const (
 	kwTodo       = "TODO"
 	kwStarted    = "STARTED"

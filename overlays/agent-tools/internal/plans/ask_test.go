@@ -58,7 +58,7 @@ func TestAsk(t *testing.T) {
 	})
 
 	// A reversible decision of the agent's own is a
-	// question settled from the start: never put to Wesley, and read back
+	// question settled from the start: never put to the operator, and read back
 	// as a decision.
 	t.Run("already answered", func(t *testing.T) {
 		c, p := openQuestions(t)

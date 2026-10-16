@@ -331,7 +331,7 @@ func Logs(pr string, check string, lines int) (string, error) {
 			continue
 		}
 		if c.Job == 0 {
-			return "", refuse("%s is not a GitHub Actions job, so pr-loop cannot fetch its log; name %s in the report for Wesley", check, c.URL)
+			return "", refuse("%s is not a GitHub Actions job, so pr-loop cannot fetch its log; name %s in the report for the operator", check, c.URL)
 		}
 		raw, err := gh.Raw(fmt.Sprintf("repos/%s/actions/jobs/%d/logs", slug, c.Job))
 		if err != nil {
@@ -471,7 +471,7 @@ func checkPR(repo *Repo, number int) error {
 	}`, map[string]any{"owner": owner, "name": name, "number": number}, &data)
 	if err == nil && !data.Repository.PullRequest.byViewer(repo) {
 		err = refuse("#%d is not an open pull request by %s in %s, and pr-loop reads CI only on those; "+
-			"name one that is, or leave this one to Wesley", number, repo.Viewer, repo.Slug)
+			"name one that is, or leave this one to the operator", number, repo.Viewer, repo.Slug)
 	}
 	return err
 }

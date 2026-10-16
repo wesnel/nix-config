@@ -81,7 +81,7 @@ func TestParseOrg(t *testing.T) {
 		}
 	})
 
-	// A note Wesley adds when he settles a question in Emacs lands in a
+	// A note the operator adds on settling a question in Emacs lands in a
 	// LOGBOOK drawer, which is neither the question's context nor one of
 	// its alternatives.
 	t.Run("a LOGBOOK note", func(t *testing.T) {

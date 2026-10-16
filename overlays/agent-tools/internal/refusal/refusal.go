@@ -17,8 +17,9 @@ func (r Refusal) Error() string { return r.msg }
 func New(format string, args ...any) error { return Refusal{fmt.Sprintf(format, args...)} }
 
 // handOff is what the rest of a reason, after the sentence saying why, must
-// contain: a command in backticks, or the step handed to Wesley or the report.
-var handOff = regexp.MustCompile("`|Wesley|(?i:report)")
+// contain: a command in backticks, or the step handed to the operator or the
+// report.
+var handOff = regexp.MustCompile("`|(?i:operator|report)")
 
 // SaysInstead reports whether a refusal's or denial's reason goes on, after
 // the sentence saying why, to say what to do instead. A reason that only

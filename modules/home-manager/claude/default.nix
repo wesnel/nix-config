@@ -73,7 +73,7 @@ with lib; let
       jq -n --arg tool "$tool" '{hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "deny",
-        permissionDecisionReason: ("ngrok MCP tools are read-only here, since writes reach production, and \($tool) is not named as a read. Use a get, list or describe tool, or hand Wesley what you wanted it to do.")
+        permissionDecisionReason: ("ngrok MCP tools are read-only here, since writes reach production, and \($tool) is not named as a read. Use a get, list or describe tool, or hand the operator what you wanted it to do.")
       }}'
     '';
   };
@@ -310,7 +310,9 @@ in {
           }
           # Records commits, pushes, worktrees, branches and PRs in the plan
           # and asks which step a commit completes; after a push to GitHub,
-          # names the `pr-loop wait ci` to start.
+          # names the `pr-loop wait ci` to start; hands over the
+          # pull-requests skill when a PR is opened or edited, and the
+          # commit rules on the session's first commit.
           {
             matcher = "Bash";
             hooks = [
@@ -335,9 +337,10 @@ in {
 
         # A background sub-agent's task-notification reaches the coordinator
         # as a prompt; SubagentStop's output would reach only the sub-agent.
-        # Any other prompt is Wesley's: its URLs become plan references.
+        # Any other prompt is the operator's: its URLs become plan references.
         # Either asks once per quota threshold whether to keep going or
-        # postpone.
+        # postpone, and carries the time and how long since the operator's
+        # previous message.
         hooks.UserPromptSubmit = [
           {
             hooks = [
@@ -376,9 +379,9 @@ in {
           }
         ];
 
-        # When Claude Code waits for Wesley, an OSC 777 notification, which
-        # Ghostty shows on the machine displaying the terminal, over ssh too.
-        # Not on Stop, which would notify after every turn.
+        # When Claude Code waits for the operator, an OSC 777 notification,
+        # which Ghostty shows on the machine displaying the terminal, over ssh
+        # too. Not on Stop, which would notify after every turn.
         hooks.Notification = [
           {
             hooks = [
@@ -404,7 +407,7 @@ in {
         ];
 
         # How many open questions the session's plan has, from its files
-        # alone, which the `questions` skill asks Wesley.
+        # alone, which the `questions` skill asks the operator.
         # Context and quota too; the rerun drops a window once it resets.
         statusLine = {
           type = "command";
@@ -425,7 +428,7 @@ in {
               }
             ];
           }
-          # Holds every session to the baseline: what is Wesley's to do,
+          # Holds every session to the baseline: what is the operator's to do,
           # and the `reviewer` and `pr-owner` agents to their roles. Every
           # tool that runs a command or writes a file belongs here: Monitor
           # runs a shell command as Bash does, and ExitWorktree can delete a
@@ -467,13 +470,14 @@ in {
             ${pkgs.agent-tools.reviewerPrompt}
           '';
 
-          # Run only as /questions, so it costs nothing until Wesley asks.
+          # Run only as /questions, so it costs nothing until the operator
+          # asks.
           # AskUserQuestion takes one to four questions of two to four
           # options each, and adds "Other" itself.
           ".claude/skills/questions/SKILL.md".text = ''
             ---
             name: questions
-            description: Ask Wesley the open questions of this session's plan, and record his answers as decisions.
+            description: Ask the operator the open questions of this session's plan, and record their answers as decisions.
             disable-model-invocation: true
             ---
 
@@ -482,7 +486,7 @@ in {
             1. Run `agent-plan find`; its first result's `plan` is PLAN. With
                none, say this session has no plan, and stop.
             2. Run `agent-plan questions PLAN --all --json`: the questions
-               Wesley can answer now. With none, say so, and stop.
+               the operator can answer now. With none, say so, and stop.
             3. Ask them with AskUserQuestion, in order, at most four per call.
                Each question's header is its `id`, then ` [#P]` with its
                `priority` if it has one; its text its `question`, then its
@@ -491,8 +495,8 @@ in {
                `alternatives`, then "Drop it", four options at most, dropping
                alternatives from the end to fit.
             4. For "Drop it", run
-               `agent-plan decide PLAN ID --drop --answer 'dropped by Wesley'`,
-               or with his reason if he gave one. For any other answer, run
+               `agent-plan decide PLAN ID --drop --answer 'dropped by the operator'`,
+               or with their reason if they gave one. For any other answer, run
                `agent-plan decide PLAN ID --answer 'ANSWER'`, the answer on one
                line, without " (Recommended)".
             5. A decision can make a question that waited for it askable:

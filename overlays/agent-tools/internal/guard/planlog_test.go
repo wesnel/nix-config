@@ -118,7 +118,7 @@ func TestPlanLog(t *testing.T) {
 		{false, "WORKDIR", "grep -c '^\\* ' LOGFILE"},
 		{false, "WORKDIR", "echo x > log.org"},
 		{false, "WORKDIR", "echo x >> /tmp/2026-10-14-x.box.log.org"},
-		{false, "WORKDIR", "echo x >> PLANFILE"},
+		{true, "WORKDIR", "echo x >> PLANFILE"},
 	}
 	for _, c := range commands {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
@@ -162,9 +162,9 @@ func TestReviewerPlans(t *testing.T) {
 	}
 }
 
-// Syncing and resealing plans are the watcher's and Wesley's, in every
+// Syncing and resealing plans are the watcher's and the operator's, in every
 // session and role; the deploy key the sync pushes with is a credential.
-func TestPlansForWesley(t *testing.T) {
+func TestPlansForTheOperator(t *testing.T) {
 	for command, deny := range map[string]bool{
 		"agent-plan sync":                      true,
 		"agent-plan sync --pull":               true,

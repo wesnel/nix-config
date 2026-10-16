@@ -103,7 +103,7 @@ func TestDecisions(t *testing.T) {
 		}
 	})
 
-	// Wesley settles a question in Emacs with a note, which Org puts in the
+	// The operator settles a question in Emacs with a note, which Org puts in the
 	// LOGBOOK drawer.
 	t.Run("from Emacs's note", func(t *testing.T) {
 		c := testConfig(t)

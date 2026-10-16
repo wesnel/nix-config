@@ -13,8 +13,8 @@ import (
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
-// Choice is Wesley's answer to the quota ask for a provider: "keep" going,
-// or "postpone" the task, until the window that prompted it resets.
+// Choice is the operator's answer to the quota ask for a provider: "keep"
+// going, or "postpone" the task, until the window that prompted it resets.
 type Choice struct {
 	Provider  string `json:"provider"`
 	Choice    string `json:"choice"`
@@ -92,8 +92,8 @@ func (c Choice) mark(now time.Time) string {
 type QuestionText struct {
 	Text, Recommendation string
 	Alternatives         []string
-	// Answers are the recorded answers by choice, when Wesley's own words
-	// are not given.
+	// Answers are the recorded answers by choice, when the operator's own
+	// words are not given.
 	Answers map[string]string
 }
 

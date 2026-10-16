@@ -1,6 +1,9 @@
 package gitenv
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -106,6 +109,38 @@ func TestIsolate(t *testing.T) {
 		}
 		if after := snapshot(); after != before {
 			t.Errorf("the caller's repository changed:\n--- before\n%s\n--- after\n%s", before, after)
+		}
+	})
+}
+
+// After Isolate in TestMain, a request that escapes the test's own servers
+// fails rather than reaching the internet, by HTTP and HTTPS alike, while
+// a server the test starts on localhost still answers.
+func TestIsolateRefusesTheNetwork(t *testing.T) {
+	for _, url := range []string{"http://example.com/", "https://example.com/"} {
+		t.Run(url, func(t *testing.T) {
+			resp, err := http.Get(url)
+			if err == nil {
+				resp.Body.Close()
+				t.Fatalf("GET %s reached the network: %s", url, resp.Status)
+			}
+			if proxy := os.Getenv("HTTPS_PROXY"); !strings.HasPrefix(proxy, "http://127.0.0.1:") {
+				t.Errorf("GET %s failed (%v), but HTTPS_PROXY is %q", url, err, proxy)
+			}
+		})
+	}
+	t.Run("a local server", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			io.WriteString(w, "local")
+		}))
+		defer server.Close()
+		resp, err := http.Get(server.URL)
+		if err != nil {
+			t.Fatalf("GET %s: %v", server.URL, err)
+		}
+		defer resp.Body.Close()
+		if body, _ := io.ReadAll(resp.Body); string(body) != "local" {
+			t.Errorf("GET %s: %q", server.URL, body)
 		}
 	})
 }

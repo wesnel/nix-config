@@ -154,10 +154,10 @@ var relayed = map[string]bool{
 // It names its pull request by number alone, the relay's working directory
 // saying which repository, and gives a reply or outcomes on stdin: no path,
 // no other repository, no model, and never a run that overrides a red flag,
-// which is Wesley's alone.
+// which is the operator's alone.
 func reviewRefusal(argv []string) string {
 	const narrow = "a relayed review takes only a pull request number, --reviewer codex|subagent, and --check or " +
-		"settle with their input on stdin; run anything else on the host, or hand Wesley the command"
+		"settle with their input on stdin; run anything else on the host, or hand the operator the command"
 	var positional []string
 	check, reviewer := false, false
 	for i := 0; i < len(argv); i++ {
@@ -203,7 +203,7 @@ func relayRefusal(argv []string) string {
 			return "setup runs its command in the caller's sandbox, never through the relay; " +
 				"run `pr-loop setup` in the sandbox, which asks the relay only for the command"
 		}
-		return fmt.Sprintf("%q is only run on the host, outside the sandbox; put the exact pr-loop command in the report for Wesley", name)
+		return fmt.Sprintf("%q is only run on the host, outside the sandbox; put the exact pr-loop command in the report for the operator", name)
 	}
 	if argv[0] == "review" {
 		return reviewRefusal(argv[1:])

@@ -140,7 +140,7 @@ func match(config map[string]Settings, slugs []string) (*Settings, error) {
 	}
 	sort.Strings(names)
 	return nil, refusal.New("this checkout's remotes match the settings of %v in %s, and only one may apply; "+
-		"ask Wesley to keep one of them", names, Path())
+		"ask the operator to keep one of them", names, Path())
 }
 
 func contains(found []Settings, s Settings) bool {

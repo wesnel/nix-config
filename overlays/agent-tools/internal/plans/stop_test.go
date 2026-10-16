@@ -317,7 +317,7 @@ func testStopCheckWithAPlan(t *testing.T) {
 		{"reviewed again", receipt, "s2", false, ""},
 		{"opted out", func(t *testing.T, p Plan, repo string) {
 			commitFile(t, repo, "z", "Add z")
-			setProp(t, p.File(), "PIPELINE", "opted-out:Wesley")
+			setProp(t, p.File(), "PIPELINE", "opted-out:spike")
 		}, "s2", false, ""},
 		{"halted", func(t *testing.T, p Plan, _ string) {
 			setProp(t, p.File(), "PIPELINE", "full")

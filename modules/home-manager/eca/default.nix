@@ -266,7 +266,7 @@ in {
           type = "preToolCall";
           matcher = ".*";
           visible = false;
-          description = "pr-loop guard: what is Wesley's to do";
+          description = "pr-loop guard: what is the operator's to do";
           actions = [
             {
               type = "shell";
@@ -276,13 +276,15 @@ in {
         })}
         # Records commits, pushes, worktrees, branches and PRs in the plan
         # and asks which step a commit completes; after a push to GitHub,
-        # names the `pr-loop wait ci` to start. ECA runs a postToolCall hook
-        # only after a call that succeeded.
+        # names the `pr-loop wait ci` to start; hands over the pull-requests
+        # skill when a PR is opened or edited, and the commit rules on the
+        # chat's first commit. ECA runs a postToolCall hook only after a
+        # call that succeeded.
         post=${escapeShellArg (builtins.toJSON {
           type = "postToolCall";
           matcher = ".*";
           visible = false;
-          description = "pr-loop guard --post: the plan's facts, and CI after a push";
+          description = "pr-loop guard --post: the plan's facts, CI after a push, and the skill an action needs";
           actions = [
             {
               type = "shell";
@@ -333,14 +335,15 @@ in {
             }
           ];
         })}
-        # Wesley's prompt: its URLs become plan references. A chat with a
+        # The operator's prompt: its URLs become plan references. A chat with a
         # parent_chat_id is a sub-agent's, which agent-plan skips. Asks once
         # per quota threshold of the model's provider whether to keep going
         # or postpone, from the readings other sessions on this host made.
+        # Carries the time and how long since the operator's previous message.
         prompt=${escapeShellArg (builtins.toJSON {
           type = "preRequest";
           visible = false;
-          description = "agent-plan remind: the prompt's references and the quota ask";
+          description = "agent-plan remind: the prompt's references, the quota ask and the time";
           actions = [
             {
               type = "shell";

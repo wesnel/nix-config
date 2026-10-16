@@ -22,8 +22,8 @@ const AllowKey = "push-guard.allowPublic"
 
 // unchecked ends a refusal from a check that could not run, taking AllowKey
 // and the target.
-const unchecked = "Pushing without the check is Wesley's decision; an agent stops and asks him. " +
-	"He can push with: git -c %s=%s push ..."
+const unchecked = "Pushing without the check is the operator's decision; an agent stops and asks them. " +
+	"They can push with: git -c %s=%s push ..."
 
 // Update is one line of pre-push's standard input.
 type Update struct {
@@ -95,7 +95,7 @@ func Check(url string, updates []Update, public Lookup) error {
 	isPublic, err := public(target)
 	if err != nil {
 		return refusal.New("cannot tell whether %s is public, so the push is refused: %v\n"+
-			"If `gh auth status` shows no login, hand Wesley `gh auth login`.\n"+unchecked,
+			"If `gh auth status` shows no login, hand the operator `gh auth login`.\n"+unchecked,
 			target, err, AllowKey, target)
 	}
 	if !isPublic {
@@ -132,7 +132,7 @@ func Check(url string, updates []Update, public Lookup) error {
 		if !pub {
 			if pub, err = public(slug); err != nil {
 				return refusal.New("cannot tell whether %s (remote %s) is private, so the push to %s is refused: %v\n"+
-					"If `gh auth status` shows no login, hand Wesley `gh auth login`.\n"+unchecked,
+					"If `gh auth status` shows no login, hand the operator `gh auth login`.\n"+unchecked,
 					slug, name, target, err, AllowKey, target)
 			}
 		}
@@ -166,7 +166,7 @@ func Check(url string, updates []Update, public Lookup) error {
 		if len(leaked) > 0 {
 			example, _ := git.Run("log", "-1", "--format=%h %s", leaked[0])
 			return refusal.New("%d of the commits this push sends to public %s are history of private %s (remote %s), such as %s.\n"+
-				"Publishing private history is Wesley's decision; an agent must stop here and ask.\n"+
+				"Publishing private history is the operator's decision; an agent must stop here and ask.\n"+
 				"To publish it anyway: git -c %s=%s push ...",
 				len(leaked), target, slugs[name], name, example, AllowKey, target)
 		}

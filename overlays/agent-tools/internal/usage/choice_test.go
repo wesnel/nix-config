@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Wesley's answer holds until the window that prompted it resets.
+// The operator's answer holds until the window that prompted it resets.
 func TestChoose(t *testing.T) {
 	now := at.In(pdt)
 	claude := func(t *testing.T) State {

@@ -400,8 +400,8 @@ func TestRelayed(t *testing.T) {
 	})
 }
 
-// Wesley's answer to the quota ask is kept for the host and, with a plan,
-// as a question he decided.
+// The operator's answer to the quota ask is kept for the host and, with a
+// plan, as a question they decided.
 func TestUsage(t *testing.T) {
 	t.Run("choose with a plan", func(t *testing.T) {
 		plan := sessionPlan(t)
@@ -427,10 +427,10 @@ func TestUsage(t *testing.T) {
 		if code != 0 || !strings.Contains(out, `"choice": "postpone"`) {
 			t.Errorf("usage --json: %d %s", code, out)
 		}
-		// The answer is Wesley's, settled as the question is written.
+		// The answer is the operator's, settled as the question is written.
 		data, _ := os.ReadFile(plan)
 		if strings.Contains(string(data), ":DECIDED_BY:") {
-			t.Errorf("the decision is not recorded as Wesley's:\n%s", data)
+			t.Errorf("the decision is not recorded as the operator's:\n%s", data)
 		}
 		// Running it again changes nothing.
 		log := strings.TrimSuffix(plan, ".org") + ".log.org"
@@ -455,7 +455,7 @@ func TestUsage(t *testing.T) {
 		}
 	})
 
-	t.Run("his own words", func(t *testing.T) {
+	t.Run("the operator's own words", func(t *testing.T) {
 		plan := sessionPlan(t)
 		code, out, errs := agentPlan(t, "", "usage", "choose", "codex", "keep", "--plan", plan, "--answer", "keep going, it is nearly done")
 		if code != 0 {

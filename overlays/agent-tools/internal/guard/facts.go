@@ -242,6 +242,9 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 				}
 				context = append(context, fmt.Sprintf("The commit %q is logged in %s. If it completes a step, which step? "+
 					"Log `done` for it with `--commit %s`; if none, carry on.", m[3], p.File(), shellQuote(m[3])))
+				if who != "" && commits(p, who) == 1 {
+					context = append(context, commitRules)
+				}
 			}
 			continue
 		}
@@ -302,6 +305,26 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 		p.Record(part, plans.Event{Kind: "pushed", Summary: "pushed " + strings.Join(branches, " ")}, now)
 	}
 	return context
+}
+
+// commitRules hands over the commit rules, which AGENTS.md keeps in the
+// signing-pass skill, on a session's first commit.
+const commitRules = "This is the session's first commit. Load the `signing-pass` skill, if it is not loaded: " +
+	"its commit rules apply to this commit and every later one, so amend this one, unsigned, if it breaks one."
+
+// commits is how many commits p's log records for session.
+func commits(p plans.Plan, session string) int {
+	events, err := p.Events()
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range events {
+		if e.Kind == "committed" && e.Session == session {
+			n++
+		}
+	}
+	return n
 }
 
 // shellQuote is s as one shell word.
