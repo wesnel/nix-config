@@ -89,14 +89,8 @@ func checkSession(c call, dir string) string {
 		if guardFile(expandPath(target, dir)) {
 			return guardOff
 		}
-		if planLog(expandPath(target, dir)) {
-			return appendOnly
-		}
-		if agentToolsState(expandPath(target, dir)) {
-			return stateWrite
-		}
 	}
-	if reason := checkPlanLogWrite(name, args, dir); reason != "" {
+	if reason := checkPlanLogWrite(name, args, redirected, dir); reason != "" {
 		return reason
 	}
 	if reason := checkShellEdit(name, args, redirected, dir); reason != "" {
@@ -641,32 +635,8 @@ func planLog(path string) bool {
 
 // checkPlanLogWrite denies a command that writes, moves or removes a plan's
 // log or agent-tools' state.
-func checkPlanLogWrite(name string, args []string, dir string) string {
-	var positional, targets []string
-	for _, a := range args {
-		if !strings.HasPrefix(a, "-") {
-			positional = append(positional, a)
-		}
-	}
-	switch name {
-	case "tee", "mv", "rm", "unlink", "trash", "truncate", "shred":
-		targets = positional
-	case "cp", "install", "ln":
-		if len(positional) > 0 {
-			targets = positional[len(positional)-1:]
-		}
-	case "dd":
-		for _, a := range args {
-			if of, ok := strings.CutPrefix(a, "of="); ok {
-				targets = append(targets, of)
-			}
-		}
-	case "sed", "perl":
-		if inPlace(name, args) {
-			targets = positional
-		}
-	}
-	for _, t := range targets {
+func checkPlanLogWrite(name string, args, redirected []string, dir string) string {
+	for _, t := range writeTargets(name, args, redirected) {
 		if planLog(expandPath(t, dir)) {
 			return appendOnly
 		}
@@ -675,6 +645,35 @@ func checkPlanLogWrite(name string, args []string, dir string) string {
 		}
 	}
 	return ""
+}
+
+// writeTargets are the files a command writes, moves or removes, as it
+// names them: those editTargets names, and the operands of the programs
+// that create, copy, move or remove files. Every check of where the shell
+// writes (checkPlanLogWrite, checkOwner) reads a command through it.
+func writeTargets(name string, args, redirected []string) []string {
+	targets := editTargets(name, args, redirected)
+	var positional []string
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") {
+			positional = append(positional, a)
+		}
+	}
+	switch name {
+	case "mv", "rm", "unlink", "trash", "truncate", "shred", "touch":
+		targets = append(targets, positional...)
+	case "cp", "install", "ln", "rsync":
+		if len(positional) > 0 {
+			targets = append(targets, positional[len(positional)-1])
+		}
+	case "dd":
+		for _, a := range args {
+			if of, ok := strings.CutPrefix(a, "of="); ok {
+				targets = append(targets, of)
+			}
+		}
+	}
+	return targets
 }
 
 // inPlace reports whether sed's, perl's or awk's arguments edit their files

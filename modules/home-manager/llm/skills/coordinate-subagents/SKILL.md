@@ -70,6 +70,10 @@ shape.
   agent-plan own PLAN --worktree <worktrees>/<repo>/<branch> --agent <agent ID>
   ```
 
+  Run it before the part starts writing: the guard refuses a sub-agent's
+  edits outside the worktrees it owns, scratch and the plans directory, all
+  of them until it owns one.
+
 ## The rules file
 
 Write the rules once, to a file in your scratchpad, and start every task
