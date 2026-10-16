@@ -2,6 +2,7 @@ package plans
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -206,6 +207,91 @@ func TestPull(t *testing.T) {
 		t.Errorf("after a pull: %v", err)
 	}
 	untouched(t, mac)
+}
+
+// SyncState says when this host's plans last reached the remote, whether
+// they have changed since, and when the repository last fetched; another
+// host's commits and the repository's other files count for none of it.
+func TestSyncState(t *testing.T) {
+	origin, hosts := notes(t, "mac", "box")
+	mac, box := hosts["mac"], hosts["box"]
+	state := func(c Config) SyncState {
+		t.Helper()
+		s, err := c.SyncState()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+	if s := state(box); !s.Repo || !s.Pushed.IsZero() || s.Unsynced || !s.Fetched.IsZero() {
+		t.Errorf("before any plan: %+v", s)
+	}
+	mine := newPlan(t, box, "x")
+	if s := state(box); !s.Pushed.IsZero() || !s.Unsynced {
+		t.Errorf("with a new plan: %+v", s)
+	}
+	pushed := time.Date(2026, 10, 15, 9, 30, 0, 0, time.UTC)
+	t.Setenv("GIT_COMMITTER_DATE", pushed.Format(time.RFC3339))
+	if _, err := box.Sync(SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	s := state(box)
+	if !s.Pushed.Equal(pushed) || s.Unsynced || s.Fetched.IsZero() {
+		t.Errorf("after a sync: %+v", s)
+	}
+
+	t.Setenv("GIT_COMMITTER_DATE", pushed.Add(time.Hour).Format(time.RFC3339))
+	newPlan(t, mac, "y")
+	if _, err := mac.Sync(SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	box.Pull()
+	if s := state(box); !s.Pushed.Equal(pushed) || s.Unsynced {
+		t.Errorf("after mac's plan arrived: %+v", s)
+	}
+
+	setGoal(t, mine.file(""), "Changed after the sync.")
+	if s := state(box); !s.Unsynced {
+		t.Errorf("with an edit: %+v", s)
+	}
+	gitIn(t, filepath.Dir(box.Dir), "-c", "commit.gpgsign=false", "commit", "-q", "-am", "Commit everything")
+	if s := state(box); !s.Pushed.Equal(pushed) || !s.Unsynced {
+		t.Errorf("committed, not pushed: %+v", s)
+	}
+	if log := gitIn(t, origin, "log", "-1", "--format=%s", "main"); log != "Sync plans from mac\n" {
+		t.Errorf("origin moved: %q", log)
+	}
+
+	// A fetch that fails empties FETCH_HEAD but touches it, and is no
+	// fetch: an unreachable remote and a missing ref.
+	repo := filepath.Dir(box.Dir)
+	fetchHead := filepath.Join(repo, ".git", "FETCH_HEAD")
+	good := time.Now().Add(-time.Hour).Truncate(time.Second)
+	for name, args := range map[string][]string{
+		"unreachable remote": {"fetch", "-q", filepath.Join(t.TempDir(), "missing.git")},
+		"missing ref":        {"fetch", "-q", "origin", "refs/heads/missing"},
+	} {
+		gitIn(t, repo, "fetch", "-q", "origin")
+		os.Chtimes(fetchHead, good, good)
+		if s := state(box); !s.Fetched.Equal(good) {
+			t.Errorf("%s: after a good fetch: %+v", name, s)
+		}
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		if out, err := cmd.CombinedOutput(); err == nil {
+			t.Fatalf("%s: the fetch succeeded: %s", name, out)
+		}
+		if info, err := os.Stat(fetchHead); err != nil || info.Size() != 0 || !info.ModTime().After(good) {
+			t.Logf("%s: FETCH_HEAD after the failed fetch: %v, %v", name, info, err)
+		}
+		if s := state(box); s.Fetched.After(good) {
+			t.Errorf("%s: a failed fetch counts as one: %+v", name, s)
+		}
+	}
+
+	if s := state(testConfig(t)); s.Repo || s.Unsynced {
+		t.Errorf("outside a repository: %+v", s)
+	}
 }
 
 // cloning is a host whose notes repository is missing, to be cloned from
