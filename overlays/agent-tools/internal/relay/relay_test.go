@@ -1,12 +1,16 @@
 package relay
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -131,6 +135,42 @@ func TestTimeouts(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRequestSize holds the relay to taking a reply file of sixty-four
+// replies at GitHub's limit of 65,536 characters, each character at its
+// widest in UTF-8, and to refusing a request past maxRequest.
+func TestRequestSize(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	count := filepath.Join(root, "count")
+	os.WriteFile(count, []byte("#!/bin/sh\nwc -c | tr -d ' '\n"), 0o755)
+	listener, _, err := start(root, "", "tcp", "127.0.0.1:0", map[string]string{"count": count})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	url := "http://" + listener.Addr().String()
+	t.Chdir(root)
+
+	t.Run("the largest a client sends", func(t *testing.T) {
+		stdin := strings.Repeat("\U0001F600", 64*65536)
+		r, err := Call(url, "count", nil, []byte(stdin))
+		if err != nil || r.Code != 0 || strings.TrimSpace(r.Stdout) != strconv.Itoa(len(stdin)) {
+			t.Errorf("a request of %d bytes of stdin: %+v, %v", len(stdin), r, err)
+		}
+	})
+
+	t.Run("more", func(t *testing.T) {
+		body, _ := json.Marshal(Request{Program: "count", Cwd: root, Stdin: strings.Repeat("a", 40<<20)})
+		resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusRequestEntityTooLarge {
+			t.Errorf("a request of %d bytes: status %d", len(body), resp.StatusCode)
+		}
+	})
 }
 
 func TestSession(t *testing.T) {

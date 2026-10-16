@@ -143,6 +143,15 @@ func Serve(args []string, stderr io.Writer) int {
 // waits for its command, however long that runs.
 var readTimeout = time.Minute
 
+// maxRequest bounds the bytes of a request the relay reads, so a client
+// cannot fill the host's memory. The largest a client sends is a `pr-loop
+// reply --from` file, whose replies GitHub caps at 65,536 characters each;
+// this fits about 85 at that length where each character takes its widest
+// JSON escape, six bytes, or about 73 where the file's escapes are escaped
+// again in the request, at seven. TestRequestSize holds a relayed
+// command's largest input to it.
+const maxRequest = 32 << 20
+
 // start listens on address and serves the programs for workspace in the
 // background.
 func start(workspace, guestPath, network, address string, paths map[string]string) (net.Listener, string, error) {
@@ -163,8 +172,12 @@ func start(workspace, guestPath, network, address string, paths map[string]strin
 	}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req Request
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequest)).Decode(&req); err != nil {
+			status := http.StatusBadRequest
+			if tooLarge := (*http.MaxBytesError)(nil); errors.As(err, &tooLarge) {
+				status = http.StatusRequestEntityTooLarge
+			}
+			http.Error(w, err.Error(), status)
 			return
 		}
 		json.NewEncoder(w).Encode(handle(req, root, guest, paths))
