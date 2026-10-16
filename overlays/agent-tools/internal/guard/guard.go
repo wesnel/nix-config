@@ -310,12 +310,18 @@ func command(text string, depth int, who role, dir string, background bool) stri
 	cwd := dir
 	// Whether the call being judged runs in the background.
 	bg := false
+	// A line that may run pr-loop review runs it only where the guard reads
+	// its words.
+	review := strings.Contains(text, "pr-loop") && strings.Contains(text, "review")
 	v := visitor{
 		script: func(text string) string { return command(text, depth+1, who, cwd, bg) },
 		call: func(c call) string {
 			if len(c.words) > 0 && !c.expands[0] && (c.words[0] == "cd" || c.words[0] == "pushd") {
 				cwd = cdTarget(c, cwd)
 				return ""
+			}
+			if review && opaqueRunner(c) {
+				return reviewIndirect
 			}
 			if !bg && longSleep(c) {
 				return sleeping
@@ -385,7 +391,7 @@ func program(c call, who role, files, dir string) string {
 			return reason
 		}
 	case name == "pr-loop":
-		return checkPrLoop(words[1:], who)
+		return checkPrLoop(words[1:], c.expands[1:], who)
 	case name == "git-fresh-review" && who == reviewer:
 		return nestedReview
 	case name == "agent-plan" && len(words) > 1 && words[1] == "sync":
@@ -611,11 +617,44 @@ const reviewerReport = "A reviewer only reads. Report the finding with its evide
 // nestedReview is why a reviewer may not start a review.
 const nestedReview = "A reviewer does not start a review of its own. Report your findings; whoever started you decides on another round."
 
+// reviewIndirect is why a pr-loop review the guard cannot read word for
+// word is denied: it could pass --run.
+const reviewIndirect = "`pr-loop review --run` is the operator's call, so the guard lets `pr-loop review` run only by name " +
+	"with literal arguments, never through a variable, a substitution, a shell reading its script from a pipe or file, " +
+	"an interpreter or a launcher. Run `pr-loop review` directly, or put the command in the report for the operator."
+
+// interpreters and launchers run a command the guard cannot see in their
+// words.
+var (
+	interpreters = set("python", "python3", "perl", "ruby", "node", "deno", "bun", "php", "lua", "tclsh", "osascript",
+		"awk", "gawk", "expect")
+	launchers = set("systemd-run", "setsid", "sudo", "doas", "su", "flock", "chroot", "unshare", "nsenter", "script",
+		"ssh", "tmux", "screen", "parallel", "at", "batch", "dtach", "abduco", "runuser", "machinectl")
+)
+
+// opaqueRunner reports whether c runs a command the guard cannot read: a
+// shell without -c, which reads its script from stdin or a file, an
+// interpreter, or a launcher.
+func opaqueRunner(c call) bool {
+	if len(c.words) == 0 {
+		return false
+	}
+	name := base(c.words[0])
+	if strings.HasPrefix(name, "python") {
+		name = "python"
+	}
+	return c.expands[0] || shells[name] || interpreters[name] || launchers[name]
+}
+
 // checkPrLoop keeps the decisions that are the operator's: waiving a CI
-// failure, and discarding the unsquashed history.
-func checkPrLoop(args []string, who role) string {
+// failure, discarding the unsquashed history, and running a pull request's
+// code past its vet's red flags.
+func checkPrLoop(args []string, expands []bool, who role) string {
 	if len(args) == 0 {
 		return ""
+	}
+	if args[0] == "review" && slices.Contains(expands, true) {
+		return reviewIndirect
 	}
 	waitCI := args[0] == "wait" && len(args) > 1 && args[1] == "ci"
 	if who == reviewer && !reviewerReads[args[0]] && !waitCI {
@@ -630,6 +669,11 @@ func checkPrLoop(args []string, who role) string {
 			return "Whether a CI failure is not this PR's doing is the operator's call. Put the evidence in the report, with `pr-loop request --accept-failure CHECK PR` for the operator to run if they agree."
 		case args[0] == "end" && a == "--prune":
 			return "Pruning deletes the unsquashed history and round snapshots, which is the operator's call. Leave `pr-loop end --prune` to them."
+		// A second layer under the relay's refusal, for an agent on the host
+		// and for an allowlist's prefix rule, which cannot exclude a
+		// trailing flag.
+		case args[0] == "review" && (a == "--run" || a == "-run" || strings.HasPrefix(a, "--run=") || strings.HasPrefix(a, "-run=")):
+			return "Running a pull request's tests past its vet's red flags is the operator's call. Put `pr-loop review --run` with the pull request in the report for them instead."
 		}
 	}
 	return ""
