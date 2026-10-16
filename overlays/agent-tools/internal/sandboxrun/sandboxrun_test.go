@@ -15,8 +15,9 @@ import (
 )
 
 // fakeBackend stands in for eca-gondolin and eca-bwrap, which start a VM:
-// it records its arguments one to a line and its environment, and behaves
-// as $FAKE_BACKEND says. A hanging backend ignores SIGTERM from its first
+// it records its arguments one to a line, its environment and, by default,
+// its standard input, and behaves as $FAKE_BACKEND says. A hanging backend
+// ignores SIGTERM from its first
 // line, holds $FAKE_LOG/alive open for writing with the child it starts
 // until both exit, and writes $FAKE_LOG/ready once that child is started.
 const fakeBackend = `#!/bin/sh
@@ -29,7 +30,7 @@ case "$FAKE_BACKEND" in
   hang) exec 3> "$FAKE_LOG/alive"; sleep 60 & echo $! > "$FAKE_LOG/child"; echo > "$FAKE_LOG/ready"; wait ;;
   fail) echo "guest says no" >&2; exit 7 ;;
   fork) trap '' TERM; (i=0; while [ $i -lt 300 ]; do sleep 30 > /dev/null 2>&1 & i=$((i+1)); if [ $i = 20 ]; then echo > "$FAKE_LOG/started"; fi; done; wait) > /dev/null 2>&1 & wait ;;
-  *) echo "hello from the guest" ;;
+  *) cat > "$FAKE_LOG/stdin"; echo "hello from the guest" ;;
 esac
 `
 
@@ -75,8 +76,13 @@ func TestRun(t *testing.T) {
 		}
 		argv := strings.Split(strings.TrimSpace(string(must(os.ReadFile(filepath.Join(log, "argv"))))), "\n")
 		dash := slices.Index(argv, "--")
-		if dash < 0 || !slices.Equal(argv[dash+1:], []string{"sh", "-c", "echo hi"}) {
+		// The script goes on standard input, out of the guest's command
+		// line, which its processes can read.
+		if dash < 0 || !slices.Equal(argv[dash+1:], []string{"sh", "-s"}) {
 			t.Fatalf("the guest command: %q", argv)
+		}
+		if stdin := string(must(os.ReadFile(filepath.Join(log, "stdin")))); stdin != "echo hi" {
+			t.Errorf("the script on standard input: %q", stdin)
 		}
 		options := argv[:dash]
 		for _, want := range [][]string{{"--offline"}, {"--state", ""}, {"--config", ""}, {"--workspace", s.Workspace},

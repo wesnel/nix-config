@@ -15,6 +15,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
@@ -31,26 +32,34 @@ type Settings struct {
 	Build string `json:"build,omitempty"`
 	// TestFiles are git pathspec globs (`:(glob)` magic) for test files.
 	TestFiles []string `json:"testFiles,omitempty"`
+	// ModuleDir is the directory of the Go module the review VM downloads
+	// modules for, relative to the top of a checkout and inside it: "."
+	// for the top. The commands above still run at the top.
+	ModuleDir string `json:"moduleDir,omitempty"`
 }
 
-// Path is the user's config file: $AGENT_TOOLS_CONFIG, or
-// agent-tools/config.json under the XDG config directory.
+// Path is the user's config file: agent-tools/config.json under the XDG
+// config directory, or $AGENT_TOOLS_CONFIG where hostpaths allows it.
 func Path() string {
-	if p := os.Getenv("AGENT_TOOLS_CONFIG"); p != "" {
-		return p
-	}
-	base := os.Getenv("XDG_CONFIG_HOME")
-	if base == "" {
-		home, _ := os.UserHomeDir()
-		base = filepath.Join(home, ".config")
-	}
-	return filepath.Join(base, "agent-tools", "config.json")
+	return hostpaths.ConfigFile("AGENT_TOOLS_CONFIG", filepath.Join("agent-tools", "config.json"))
 }
 
 // Remotes maps each remote of the repository containing git.Dir whose fetch
 // URL is on GitHub to its owner/name.
 func Remotes() (map[string]string, error) {
-	out, err := git.Run("remote", "-v")
+	return remotes(nil)
+}
+
+// repositoryConfig has git read only the repository's own configuration:
+// not the user's, the system's, or what `git -c` passes down, any of which
+// could rewrite a remote's URL with url.*.insteadOf.
+var repositoryConfig = []string{
+	"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_SYSTEM=/dev/null",
+	"GIT_CONFIG_COUNT=0", "GIT_CONFIG_PARAMETERS=",
+}
+
+func remotes(env []string) (map[string]string, error) {
+	out, err := git.RunEnv(env, "remote", "-v")
 	if err != nil {
 		return nil, err
 	}
@@ -68,15 +77,16 @@ func Remotes() (map[string]string, error) {
 }
 
 // Lookup returns the settings for the repository containing git.Dir, matched
-// by the GitHub repositories its remotes fetch from, without regard to case.
-// The result is empty when none are configured. Remotes that match different
-// settings are refused, since only one may apply.
+// by the GitHub repositories its remotes fetch from, as the repository's own
+// configuration names them, without regard to case. The result is empty
+// when none are configured. Remotes that match different settings are
+// refused, since only one may apply.
 func Lookup() (*Settings, error) {
 	config, err := load()
 	if err != nil || config == nil {
 		return &Settings{}, err
 	}
-	remotes, err := Remotes()
+	remotes, err := remotes(repositoryConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -111,6 +121,15 @@ func load() (map[string]Settings, error) {
 	}
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, err
+	}
+	for repo, s := range config.Repos {
+		dir := filepath.ToSlash(filepath.Clean(s.ModuleDir))
+		if filepath.IsAbs(s.ModuleDir) || dir == ".." || strings.HasPrefix(dir, "../") {
+			return nil, refusal.New("the moduleDir %q of %s in %s is not inside the checkout; "+
+				"ask the operator to make it relative to the top of the repository", s.ModuleDir, repo, Path())
+		}
+		s.ModuleDir = dir
+		config.Repos[repo] = s
 	}
 	return config.Repos, nil
 }

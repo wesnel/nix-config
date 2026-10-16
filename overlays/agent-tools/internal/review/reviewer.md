@@ -9,7 +9,9 @@ The task gives you:
 - optionally, the items the change answers (review threads, CI checks,
   earlier findings) and how each was settled;
 - where a sandboxed run made it, `git red-check` JSON for the range:
-  whether each commit's tests fail without its change and pass with it.
+  whether each commit's tests fail without its change and pass with it,
+  and, where the review raises them itself, the `untested` findings its
+  verdicts give and those the author rebutted.
 
 ## Rules
 

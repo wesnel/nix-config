@@ -48,6 +48,8 @@ type Event struct {
 	Range   string `json:"range,omitempty"`
 	Tip     string `json:"tip,omitempty"`
 	PatchID string `json:"patchId,omitempty"`
+	// Raised is a review receipt's Receipt.Raised, separated by spaces.
+	Raised string `json:"raised,omitempty"`
 	// Sign is a sign-pass's ID, Exit its exit status, and Delivers the
 	// event ID of the result a sign-delivered event delivered.
 	Sign     string `json:"sign,omitempty"`
@@ -123,7 +125,7 @@ func oneOf(value string, allowed []string) bool {
 func (p Plan) check(e Event) error {
 	for what, v := range map[string]string{"summary": e.Summary, "agent": e.Agent, "branch": e.Branch,
 		"commit": e.Commit, "evidence": e.Evidence, "model": e.Model, "item": e.Item, "kind": e.Kind, "session": e.Session,
-		"worktree": e.Worktree, "range": e.Range, "tip": e.Tip, "patch ID": e.PatchID, "property": e.Property, "value": e.Value} {
+		"worktree": e.Worktree, "range": e.Range, "tip": e.Tip, "patch ID": e.PatchID, "raised": e.Raised, "property": e.Property, "value": e.Value} {
 		if err := checkLine(what, v); err != nil {
 			return err
 		}
@@ -269,7 +271,7 @@ func eventText(e Event) string {
 		{"KIND", e.Kind}, {"BRANCH", e.Branch}, {"COMMIT", e.Commit}, {"EVIDENCE", e.Evidence},
 		{"REVIEW", e.Review}, {"OUTCOME", e.Outcome}, {"TOKENS", tokens}, {"MODEL", e.Model},
 		{"EFFORT", e.Effort}, {"SESSION", e.Session}, {"WORKTREE", e.Worktree}, {"RANGE", e.Range}, {"TIP", e.Tip}, {"PATCH_ID", e.PatchID},
-		{"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}, {"PROPERTY", e.Property}, {"VALUE", e.Value}} {
+		{"RAISED", e.Raised}, {"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}, {"PROPERTY", e.Property}, {"VALUE", e.Value}} {
 		if kv[1] != "" {
 			b.WriteString(":" + kv[0] + ": " + kv[1] + "\n")
 		}
@@ -472,7 +474,7 @@ func (p Plan) Events() ([]Event, error) {
 			Role: h.Props["ROLE"], Branch: h.Props["BRANCH"], Commit: h.Props["COMMIT"],
 			Evidence: h.Props["EVIDENCE"], Review: h.Props["REVIEW"], Outcome: h.Props["OUTCOME"],
 			Model: h.Props["MODEL"], Effort: h.Props["EFFORT"], Session: h.Props["SESSION"], Worktree: h.Props["WORKTREE"],
-			Range: h.Props["RANGE"], Tip: h.Props["TIP"], PatchID: h.Props["PATCH_ID"], Sign: h.Props["SIGN"], Exit: h.Props["EXIT"],
+			Range: h.Props["RANGE"], Tip: h.Props["TIP"], PatchID: h.Props["PATCH_ID"], Raised: h.Props["RAISED"], Sign: h.Props["SIGN"], Exit: h.Props["EXIT"],
 			Delivers: h.Props["DELIVERS"], Property: h.Props["PROPERTY"], Value: h.Props["VALUE"]}
 		e.Tokens, _ = strconv.ParseInt(h.Props["TOKENS"], 10, 64)
 		if _, summary, ok := strings.Cut(h.Title, " — "); ok {

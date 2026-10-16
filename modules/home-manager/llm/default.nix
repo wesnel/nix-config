@@ -143,6 +143,19 @@ in {
             default = [];
             description = "Git pathspec globs (`:(glob)` magic) that match the test files.";
           };
+
+          moduleDir = mkOption {
+            type = types.nullOr types.str;
+            default = null;
+
+            description = ''
+              The directory of the Go module whose modules the review VM is
+              given, relative to the top of the repository; null for the
+              top. It must stay inside the repository, or every lookup of
+              these settings is refused. The commands above still run at
+              the top, so they `cd` into it themselves.
+            '';
+          };
         };
       });
 
@@ -295,7 +308,9 @@ in {
       description = ''
         agent-tools built with `guard.credentialPaths`, which its guard
         falls back on where its config is absent, as in a sandbox guest,
-        whose home differs: a path under home is kept as `~/…`. Use it, not
+        whose home differs: a path under home is kept as `~/…`; and with
+        the XDG config and state directories, which it then takes from the
+        build rather than from a command's environment. Use it, not
         `pkgs.agent-tools`, for every program agents or hooks run.
       '';
 
@@ -306,7 +321,11 @@ in {
           then "~/${removePrefix "${home}/" p}"
           else p;
       in
-        pkgs.agent-tools.override {credentialPaths = map homeRelative cfg.guard.credentialPaths;};
+        pkgs.agent-tools.override {
+          credentialPaths = map homeRelative cfg.guard.credentialPaths;
+          configHome = config.xdg.configHome;
+          stateHome = config.xdg.stateHome;
+        };
     };
 
     prLoop = {
@@ -779,11 +798,13 @@ in {
     # the repository is cloned and the directory made here, outside any
     # sandbox. Neither step fails the switch: init says in one line why it
     # did not clone, and the sync's failure is a warning. Each is bounded
-    # by agent-plan's own timeouts.
-    home.activation.agentPlans = hm.dag.entryAfter ["writeBoundary"] ''
-      run --quiet env AGENT_TOOLS_CONFIG=${agentToolsConfig} PATH=${syncPath}:"$PATH" ${agentPlan} init \
+    # by agent-plan's own timeouts. agent-plan reads its config where the
+    # build bakes it in, under xdg.configHome, which is this generation's
+    # once linkGeneration has run.
+    home.activation.agentPlans = hm.dag.entryAfter ["linkGeneration"] ''
+      run --quiet env PATH=${syncPath}:"$PATH" ${agentPlan} init \
         || warnEcho "agent-plan init failed, so sandboxed sessions may not be able to make plans."
-      run --quiet env AGENT_TOOLS_CONFIG=${agentToolsConfig} PATH=${syncPath}:"$PATH" ${agentPlan} sync \
+      run --quiet env PATH=${syncPath}:"$PATH" ${agentPlan} sync \
         || warnEcho "agent-plan sync failed; the watcher tries again on the next change to a plan."
     '';
 

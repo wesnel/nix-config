@@ -31,7 +31,11 @@ type Spec struct {
 	// path to host directory, read-only where they say.
 	Workspace string
 	Mounts    map[string]string
-	// Script runs with sh in the guest, in GuestWorkspace.
+	// Script runs with sh in the guest, in GuestWorkspace. sh reads it
+	// from its standard input, so that it is not on the guest's command
+	// line, where the guest's own processes could read it; sh may run a
+	// command before it has read the rest, so a script whose commands
+	// must not read it is one compound command with its input redirected.
 	Script string
 	// Memory, such as 4G, and CPUs size the VM; how each backend enforces
 	// them is stated in eca-gondolin and eca-bwrap.
@@ -117,7 +121,7 @@ func args(s Spec) ([]string, error) {
 		}
 		a = append(a, "--ro-mount", host+":"+guest)
 	}
-	return append(a, "--", "sh", "-c", s.Script), nil
+	return append(a, "--", "sh", "-s"), nil
 }
 
 // environment is this process's without the ECA_SANDBOX_* settings, which
@@ -151,7 +155,7 @@ func Run(ctx context.Context, s Spec) (*Result, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, s.Backend, argv...)
 	cmd.Env = environment()
-	cmd.Stdin = nil
+	cmd.Stdin = strings.NewReader(s.Script)
 	out := &capped{n: s.Cap}
 	log := &tail{n: logCap}
 	cmd.Stdout, cmd.Stderr = out, log

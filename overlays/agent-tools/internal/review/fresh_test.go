@@ -153,6 +153,7 @@ type output struct {
 	Findings   []map[string]any `json:"findings"`
 	Dropped    []map[string]any `json:"dropped"`
 	Unverified []string         `json:"unverified"`
+	Rebutted   []map[string]any `json:"rebutted"`
 }
 
 func freshReview(t *testing.T, args ...string) (int, output, string) {
@@ -487,9 +488,10 @@ func testRedCheckNotOnHost(t *testing.T) {
 // configuredForRedCheck makes a repository, as setUp does, whose settings
 // give it a test command, and runs red-check with vm for the rest of the
 // test. vm stands in for the review VM, which the test cannot start.
-func configuredForRedCheck(t *testing.T, vm func(ctx context.Context, top, base, tip string, log io.Writer) (string, error)) *fixture {
+func configuredForRedCheck(t *testing.T, vm func(ctx context.Context, top, base, tip string, log io.Writer) (*VMResult, error)) *fixture {
 	t.Helper()
 	f := setUp(t, false)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	config := filepath.Join(t.TempDir(), "config.json")
 	os.WriteFile(config, []byte(`{"repos": {"o/r": {"test": "true", "testFiles": ["*_test.txt"]}}}`), 0o644)
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
@@ -504,9 +506,9 @@ func configuredForRedCheck(t *testing.T, vm func(ctx context.Context, top, base,
 // under review.
 func testRedCheckInVM(t *testing.T) {
 	var got []string
-	f := configuredForRedCheck(t, func(ctx context.Context, top, base, tip string, log io.Writer) (string, error) {
+	f := configuredForRedCheck(t, func(ctx context.Context, top, base, tip string, log io.Writer) (*VMResult, error) {
 		got = []string{top, base, tip}
-		return "red-check from the VM: fails-as-asserted", nil
+		return &VMResult{Text: "red-check from the VM: fails-as-asserted"}, nil
 	})
 	var stdout, stderr bytes.Buffer
 	if code := Main(t.Context(), []string{"--print-prompt", "--goal", ".git/goal.md", f.base + "..HEAD"}, nil,
@@ -524,8 +526,8 @@ func testRedCheckInVM(t *testing.T) {
 
 // Where a VM cannot run red-check, stderr says why.
 func testRedCheckVMFailure(t *testing.T) {
-	f := configuredForRedCheck(t, func(context.Context, string, string, string, io.Writer) (string, error) {
-		return "", errors.New("no VM here")
+	f := configuredForRedCheck(t, func(context.Context, string, string, string, io.Writer) (*VMResult, error) {
+		return nil, errors.New("no VM here")
 	})
 	var stdout, stderr bytes.Buffer
 	Main(t.Context(), []string{"--print-prompt", "--goal", ".git/goal.md", f.base + "..HEAD"}, nil, &stdout, &stderr)
@@ -553,6 +555,10 @@ func TestPrintPrompt(t *testing.T) {
 	}
 	if !strings.HasPrefix(prompt, Contract) {
 		t.Error("the prompt does not start with the reviewer's contract")
+	}
+	// The repository has no test settings.
+	if !strings.Contains(prompt, "no mechanical test adequacy") {
+		t.Errorf("the prompt does not say that nothing checked the tests:\n%s", prompt)
 	}
 }
 

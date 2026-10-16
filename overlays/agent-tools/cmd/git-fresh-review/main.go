@@ -14,6 +14,7 @@ import (
 
 func main() {
 	review.RedCheckInVM = prreview.LocalRedCheck
+	review.VMTools = prreview.VMTools
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	code := review.Main(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
 	stop()

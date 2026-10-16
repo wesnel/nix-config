@@ -20,7 +20,6 @@ import (
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/refusal"
-	"github.com/wesnel/agent-tools/internal/repos"
 )
 
 // Usage is `git fresh-review -h`.
@@ -47,6 +46,18 @@ this outside one. Where the repository has test settings, git red-check
 BASE..TIP and the test command at TIP run in the VM pr-loop review runs
 pull requests in, never here, as they run the commits' code; their output
 goes in the prompt, and where the VM cannot run them stderr says why.
+
+Each commit whose tests red-check finds pass without the rest of it
+(passes-without-change) is an untested finding of the review's own, with
+reviewer "red-check" and an id RC-<key>, the key made from that commit's
+test files' diff. A finding-settled event with outcome rebut, a reason as
+its evidence and --review <round>.RC-<key>, in the plan the receipt goes
+to, keeps it out of later rounds until the tests change, where it follows
+the receipt of round <round> of the same range as given, which raised it;
+the finding's evidence names the round. It is listed under rebutted, and
+in the prompt with its reason for the reviewer to contest. --check takes the VM's results from the --print-prompt run for
+the same commits in the last week, and runs the VM itself where there is
+none.
 
 Where Codex cannot review, or a sub-agent is asked for, review with a fresh
 sub-agent instead: give it the prompt --print-prompt (or --reviewer
@@ -77,9 +88,11 @@ receipt went, or why none was logged.
   --timeout S       seconds before the review is stopped (default 1800)
 
 Writes JSON on stdout: reviewer, model, range, tip, findings (each with
-id, path, line, kind, claim and evidence, and endLine, about and reopens
-where given), dropped (findings whose path:line does not exist at TIP, or
-that do not fit the schema, each with its reason) and unverified. Exit
+id, path, line, kind, claim and evidence, and endLine, about, reopens and
+reviewer where given), dropped (findings whose path:line does not exist at
+TIP, or that do not fit the schema, each with its reason), unverified and
+rebutted (red-check's findings left out, each with id, commit, path and
+the rebuttal's reason). Exit
 status:
   0  no findings
   3  findings
@@ -153,6 +166,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		if err != nil {
 			return report(nil, err, 0)
 		}
+		testAdequacy(ctx, r, true, stderr).add(out)
 		out.Reviewer = "subagent"
 		logReceipt(r, out, stderr)
 		return report(out, nil, out.exit())
@@ -192,7 +206,8 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			return noCodex(why)
 		}
 	}
-	in.redCheck = redCheck(ctx, r, stderr)
+	tests := testAdequacy(ctx, r, false, stderr)
+	in.redCheck, in.adequacy = tests.text, tests.prompt()
 	if *printPrompt {
 		in.where = fmt.Sprintf("Read the change in the repository at %s: `git diff %s %s`, `git log -p %s..%s`, "+
 			"and `git show %s:PATH` for a file as it is at TIP. That checkout's own files may hold work that is not "+
@@ -215,6 +230,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	if err != nil {
 		return report(nil, err, 0)
 	}
+	tests.add(out)
 	logReceipt(r, out, stderr)
 	return report(out, nil, out.exit())
 }
@@ -259,8 +275,14 @@ func logReceipt(r *span, out *Output, log io.Writer) {
 		if out.Model != nil {
 			model = *out.Model
 		}
+		var raised []string
+		for _, f := range out.Findings {
+			if f.Reviewer == "red-check" {
+				raised = append(raised, f.ID)
+			}
+		}
 		file, err = plans.WriteReceipt(os.Getenv("CLAUDE_CODE_SESSION_ID"), r.top, plans.Receipt{Range: r.given, Tip: r.tip,
-			PatchID: id, Reviewer: out.Reviewer, Model: model, Findings: len(out.Findings)}, time.Now())
+			PatchID: id, Reviewer: out.Reviewer, Model: model, Findings: len(out.Findings), Raised: raised}, time.Now())
 	}
 	switch {
 	case err != nil:
@@ -345,42 +367,18 @@ func unavailable(auto bool) string {
 	return ""
 }
 
-// RedCheckInVM runs git red-check on base..tip of the repository at top in
-// the review sandbox's VM, and returns its results for the prompt; nil where
-// no VM can. git-fresh-review sets it.
-var RedCheckInVM func(ctx context.Context, top, base, tip string, log io.Writer) (string, error)
-
-// redCheck is git red-check's results for the prompt, where the repository
-// has test settings, from RedCheckInVM. red-check runs the commits' code,
-// which may be anyone's, so it never runs here; where the VM cannot run it,
-// log says so and the review has no red-check results.
-func redCheck(ctx context.Context, r *span, log io.Writer) string {
-	git.Dir = r.top
-	settings, err := repos.Lookup()
-	git.Dir = ""
-	if err != nil || settings.Test == "" || len(settings.TestFiles) == 0 {
-		return ""
-	}
-	why := "no VM is available here"
-	if RedCheckInVM != nil {
-		text, err := RedCheckInVM(ctx, r.top, r.base, r.tip, log)
-		if err == nil {
-			return text
-		}
-		why = err.Error()
-	}
-	fmt.Fprintf(log, "%s: git red-check runs only in the review sandbox, so this review has no red-check results: %s\n", name, why)
-	return ""
-}
-
 type inputs struct {
 	r                            *span
 	goal, items, prior, redCheck string
-	where                        string
+	// adequacy is what the reviewer is told of test adequacy, beside
+	// red-check's results.
+	adequacy string
+	where    string
 }
 
 // prompt is the contract, then the range, the goal statement, the items, the
-// earlier findings and red-check's JSON: nothing of the author's beyond them.
+// earlier findings, red-check's JSON and the findings it raised or that were
+// rebutted: nothing of the author's beyond them.
 func prompt(in inputs) string {
 	var b strings.Builder
 	b.WriteString(Contract)
@@ -395,6 +393,9 @@ func prompt(in inputs) string {
 	}
 	if in.redCheck != "" {
 		fmt.Fprintf(&b, "\n## git red-check %s..%s\n\n%s\n", in.r.base, in.r.tip, in.redCheck)
+	}
+	if in.adequacy != "" {
+		fmt.Fprintf(&b, "\n## Test adequacy\n\n%s", in.adequacy)
 	}
 	b.WriteString("\nReply with the JSON object the Output section describes, and nothing else.\n")
 	return b.String()
@@ -716,6 +717,9 @@ type Finding struct {
 	Evidence string  `json:"evidence"`
 	About    *string `json:"about,omitempty"`
 	Reopens  *string `json:"reopens,omitempty"`
+	// Reviewer is "red-check" for a finding the review raised itself from
+	// red-check's verdicts, and empty for the reviewer's.
+	Reviewer string `json:"reviewer,omitempty"`
 }
 
 // Dropped is a finding left out of the result, and why.
@@ -733,6 +737,7 @@ type Output struct {
 	Findings   []*Finding `json:"findings"`
 	Dropped    []Dropped  `json:"dropped"`
 	Unverified []string   `json:"unverified"`
+	Rebutted   []Rebutted `json:"rebutted"`
 }
 
 func (o *Output) exit() int {
@@ -769,7 +774,8 @@ func validateWith(reply, given, tip string, blob func(path string) ([]byte, erro
 	if err := json.Unmarshal([]byte(text[start:end+1]), &parsed); err != nil || parsed.Findings == nil {
 		return nil, fmt.Errorf("the reply is not the JSON the contract describes (%v); ask the reviewer again", err)
 	}
-	out := &Output{Range: given, Tip: tip, Findings: []*Finding{}, Dropped: []Dropped{}, Unverified: []string{}}
+	out := &Output{Range: given, Tip: tip, Findings: []*Finding{}, Dropped: []Dropped{}, Unverified: []string{},
+		Rebutted: []Rebutted{}}
 	if parsed.Unverified != nil {
 		out.Unverified = parsed.Unverified
 	}
@@ -797,9 +803,12 @@ func normalise(raw json.RawMessage, blob func(path string) ([]byte, error), wt s
 	if err := json.Unmarshal(raw, &f); err != nil {
 		return nil, "does not fit the schema: " + err.Error()
 	}
+	f.Reviewer = ""
 	switch {
 	case strings.TrimSpace(f.ID) == "":
 		return nil, "has no id"
+	case strings.HasPrefix(f.ID, mechanicalPrefix):
+		return nil, "ids starting " + mechanicalPrefix + " are red-check's"
 	case !kinds[f.Kind]:
 		return nil, fmt.Sprintf("kind %q is not one the contract defines", f.Kind)
 	case strings.TrimSpace(f.Claim) == "" || strings.TrimSpace(f.Evidence) == "":

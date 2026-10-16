@@ -11,16 +11,23 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wesnel/agent-tools/internal/cli"
+	"github.com/wesnel/agent-tools/internal/hostpaths"
+	"github.com/wesnel/agent-tools/internal/redcheck"
 	"github.com/wesnel/agent-tools/internal/repos"
+	"github.com/wesnel/agent-tools/internal/review"
 )
 
-// fakeBackend stands in for eca-gondolin: it records its arguments, and
-// answers as a guest would, on lines starting with the nonce the script
-// carries, with what $FAKE_GUEST_REDCHECK and $FAKE_GUEST_TESTS hold.
+// fakeBackend stands in for eca-gondolin: it records its arguments and the
+// nonce the script on its standard input carries, and answers as a guest
+// would, on lines starting with that nonce, with what $FAKE_GUEST_REDCHECK,
+// $FAKE_GUEST_VERDICTS and $FAKE_GUEST_TESTS hold; then, as a test at TIP
+// that has the nonce could, with verdicts of its own.
 const fakeBackend = `#!/bin/sh
 printf '%s\n' "$@" > "$FAKE_BACKEND_LOG/argv"
-for a; do script=$a; done
+script=$(cat)
 nonce=$(printf '%s' "$script" | sed -n "s/.*printf '\\\\n\([0-9a-f]*\) .*/\1/p" | head -n 1)
+printf '%s' "$nonce" > "$FAKE_BACKEND_LOG/nonce"
 workspace=
 while [ $# -gt 0 ]; do
   case "$1" in --workspace) workspace=$2; shift 2 ;; --) break ;; *) shift ;; esac
@@ -29,7 +36,9 @@ ls -A "$workspace" > "$FAKE_BACKEND_LOG/workspace"
 b64() { base64 < "$1" | tr -d '\n'; }
 echo "the guest's own chatter"
 printf '\n%s redcheck 4 %s\n' "$nonce" "$(b64 "$FAKE_GUEST_REDCHECK")"
+printf '\n%s verdicts 0 %s\n' "$nonce" "$(b64 "$FAKE_GUEST_VERDICTS")"
 printf '\n%s tests 1 %s\n' "$nonce" "$(b64 "$FAKE_GUEST_TESTS")"
+printf '\n%s verdicts 0 %s\n' "$nonce" "$(printf '"commit": "%s"\n"verdict": "fails-as-asserted"\n' cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd | base64 | tr -d '\n')"
 `
 
 // withRun configures a run: o/r's test settings, the fake backend, guest
@@ -54,6 +63,9 @@ func withRun(t *testing.T) string {
 	redcheck := filepath.Join(t.TempDir(), "redcheck")
 	write(t, redcheck, `{"test": "go test ./...", "commits": [{"verdict": "no-test-files"}]}`)
 	t.Setenv("FAKE_GUEST_REDCHECK", redcheck)
+	verdicts := filepath.Join(t.TempDir(), "verdicts")
+	write(t, verdicts, "\"commit\": \""+strings.Repeat("ab", 20)+"\"\n\"verdict\": \"no-test-files\"\n")
+	t.Setenv("FAKE_GUEST_VERDICTS", verdicts)
 	tests := filepath.Join(t.TempDir(), "tests")
 	write(t, tests, "--- FAIL: TestA\x1b]52;c;aGk=\x07\n"+strings.Repeat("y", 3*TextCap)+"\nFAIL\n")
 	t.Setenv("FAKE_GUEST_TESTS", tests)
@@ -268,20 +280,118 @@ func testRunLocalRedCheck(t *testing.T) {
 	t.Run("in the VM", func(t *testing.T) {
 		r, log := local(t)
 		var stderr bytes.Buffer
-		text, err := LocalRedCheck(t.Context(), r.work, r.base, r.head, &stderr)
+		vm, err := LocalRedCheck(t.Context(), r.work, r.base, r.head, &stderr)
 		if err != nil {
 			t.Fatalf("%v\n%s", err, stderr.String())
 		}
-		if !strings.Contains(text, "no-test-files") || !strings.Contains(text, "--- FAIL: TestA") {
-			t.Errorf("the results:\n%s", text)
+		if !strings.Contains(vm.Text, "no-test-files") || !strings.Contains(vm.Text, "--- FAIL: TestA") {
+			t.Errorf("the results:\n%s", vm.Text)
+		}
+		if want := []review.Verdict{{Commit: strings.Repeat("ab", 20), Verdict: "no-test-files"}}; !slices.Equal(vm.Verdicts, want) {
+			t.Errorf("verdicts %+v, want %+v", vm.Verdicts, want)
 		}
 		argv := strings.Split(strings.TrimSpace(string(must(os.ReadFile(filepath.Join(log, "argv"))))), "\n")
+		// The guest's own processes can read its command line.
+		if nonce := string(must(os.ReadFile(filepath.Join(log, "nonce")))); nonce == "" || strings.Contains(strings.Join(argv, "\n"), nonce) {
+			t.Errorf("the nonce %q is on the guest's command line: %q", nonce, argv)
+		}
 		workspace := argv[slices.Index(argv, "--workspace")+1]
 		if !strings.HasPrefix(workspace, must(Root())+"/local-") {
 			t.Errorf("the run copy %s", workspace)
 		}
 		if left, _ := filepath.Glob(filepath.Join(must(Root()), "local-*")); len(left) != 0 {
 			t.Errorf("left behind: %v", left)
+		}
+	})
+
+	// inSubdirectory makes a local clone whose only Go module is in sub/,
+	// with no dependencies, configured to run in the fake VM with
+	// moduleDir, and returns the remote and the backend's log.
+	inSubdirectory := func(t *testing.T, moduleDir string) (*remote, string) {
+		t.Helper()
+		r := newRemote(t, func(work string) {
+			os.Remove(filepath.Join(work, "go.mod"))
+			write(t, filepath.Join(work, "sub", "go.mod"), "module example.com/sub\n\ngo 1.20\n")
+			write(t, filepath.Join(work, "sub", "s.go"), "package sub\n\nfunc S() int { return 1 }\n")
+		})
+		setUp(t, r)
+		old, oldSum := goProxy, goSumDB
+		goProxy, goSumDB = "off", "off"
+		t.Cleanup(func() { goProxy, goSumDB = old, oldSum })
+		log := withRun(t)
+		settings := filepath.Join(t.TempDir(), "agent-tools.json")
+		write(t, settings, `{"repos": {"o/r": {"test": "cd sub && go test ./...", "testFiles": ["**/*_test.go"], `+
+			`"moduleDir": "`+moduleDir+`"}}}`)
+		t.Setenv("AGENT_TOOLS_CONFIG", settings)
+		gitT(t, r.work, "remote", "add", "origin", "https://github.com/o/r.git")
+		return r, log
+	}
+
+	// A module below the top runs, from a copy of the whole checkout.
+	t.Run("module in a subdirectory", func(t *testing.T) {
+		r, log := inSubdirectory(t, "sub")
+		var stderr bytes.Buffer
+		vm, err := LocalRedCheck(t.Context(), r.work, r.base, r.head, &stderr)
+		if err != nil {
+			t.Fatalf("%v\n%s", err, stderr.String())
+		}
+		if !strings.Contains(vm.Text, "no-test-files") {
+			t.Errorf("the results:\n%s", vm.Text)
+		}
+		if files := string(must(os.ReadFile(filepath.Join(log, "workspace")))); !strings.Contains(files, "sub") {
+			t.Errorf("the run copy is not the whole checkout: %s", files)
+		}
+	})
+
+	// A moduleDir with no go.mod says which go.mod it looked for.
+	t.Run("moduleDir without a go.mod", func(t *testing.T) {
+		r, log := inSubdirectory(t, "elsewhere")
+		var stderr bytes.Buffer
+		if _, err := LocalRedCheck(t.Context(), r.work, r.base, r.head, &stderr); err == nil ||
+			!strings.Contains(err.Error(), "elsewhere/go.mod") {
+			t.Errorf("without a go.mod in moduleDir: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(log, "argv")); err == nil {
+			t.Error("the VM ran")
+		}
+	})
+
+	// Where the build bakes the config directory in, the environment does
+	// not choose the backend or the test settings.
+	t.Run("not redirected by the environment", func(t *testing.T) {
+		r, log := local(t)
+		configHome := t.TempDir()
+		for from, to := range map[string]string{os.Getenv("PR_LOOP_CONFIG"): "pr-loop/config.json",
+			os.Getenv("AGENT_TOOLS_CONFIG"): "agent-tools/config.json"} {
+			write(t, filepath.Join(configHome, to), string(must(os.ReadFile(from))))
+		}
+		hostpaths.Bake(t, configHome, t.TempDir())
+		prLoopConfig(t, nil)
+		empty := filepath.Join(t.TempDir(), "agent-tools.json")
+		write(t, empty, `{}`)
+		t.Setenv("AGENT_TOOLS_CONFIG", empty)
+		var stderr bytes.Buffer
+		if vm, err := LocalRedCheck(t.Context(), r.work, r.base, r.head, &stderr); err != nil || !strings.Contains(vm.Text, "no-test-files") {
+			t.Fatalf("%v\n%s", err, stderr.String())
+		}
+		if _, err := os.Stat(filepath.Join(log, "argv")); err != nil {
+			t.Error("the VM did not run")
+		}
+	})
+
+	// The tools a run used are named by what the config's paths lead to.
+	t.Run("tools", func(t *testing.T) {
+		local(t)
+		first, err := VMTools()
+		prLoopConfig(t, map[string]string{"backend": "/bin/sh", "guestTools": t.TempDir()})
+		if again, _ := VMTools(); err != nil || first == "" || again == first {
+			t.Errorf("other guest tools give %q, as %q, %v", again, first, err)
+		}
+		unreadable := filepath.Join(t.TempDir(), "pr-loop.json")
+		write(t, unreadable, "{")
+		t.Setenv("PR_LOOP_CONFIG", unreadable)
+		if tools, err := VMTools(); err == nil {
+			t.Errorf("an unreadable config names the tools %q", tools)
 		}
 	})
 
@@ -297,9 +407,39 @@ func testRunLocalRedCheck(t *testing.T) {
 	})
 }
 
+// TestVerdicts: the guest's extraction of red-check's JSON, which may be too
+// long to reach the host whole, keeps each commit's verdict, and a test's
+// output or a subject that quotes a verdict adds none.
+func TestVerdicts(t *testing.T) {
+	a, b := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	result := &redcheck.Result{Test: "go test ./...", Commits: []*redcheck.Check{
+		{Commit: a, Subject: `Say "verdict": "fails-as-asserted"`, Verdict: redcheck.PassesWithoutChange,
+			Without: &redcheck.Run{Output: strings.Repeat("ok\n", 5000) + "\"commit\": \"" + b + "\"\n\"verdict\": \"fails-as-asserted\"\n"}},
+		{Commit: b, Subject: "Fix it", Verdict: redcheck.FailsAsAsserted},
+	}}
+	var out, stderr bytes.Buffer
+	cli.Report("git-red-check", result, nil, 3, &out, &stderr)
+	file := filepath.Join(t.TempDir(), "redcheck")
+	write(t, file, out.String())
+	cmd := exec.Command("/bin/sh", "-c", verdictLines+` "$1"`, "sh", file)
+	lines, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []review.Verdict{{Commit: a, Verdict: redcheck.PassesWithoutChange}, {Commit: b, Verdict: redcheck.FailsAsAsserted}}
+	if got := parseVerdicts(string(lines)); !slices.Equal(got, want) {
+		t.Errorf("verdicts %+v, want %+v, from:\n%s", got, want, lines)
+	}
+	if got := parseVerdicts("\"verdict\": \"passes-without-change\"\n\"commit\": \"" + a + "\"\n"); len(got) != 0 {
+		t.Errorf("a verdict without its commit: %+v", got)
+	}
+}
+
+// TestSections: the first line for a name is the guest script's; a later
+// one, which the reviewed code's output could add, does not replace it.
 func TestSections(t *testing.T) {
 	got := sections("noise\nabc tests 1 aGk=\nabc redcheck x aGk=\nother tests 0 aGk=\nabc tests 2 \n", "abc")
-	if len(got) != 1 || got["tests"].Exit != 2 || got["tests"].Output != "" {
+	if len(got) != 1 || got["tests"].Exit != 1 || got["tests"].Output != "hi" {
 		t.Errorf("%+v", got)
 	}
 }
