@@ -18,6 +18,7 @@ type BotReview struct {
 	Verdict            string `json:"verdict,omitempty"`
 	NewComments        *int   `json:"newComments,omitempty"`
 	OpenThreads        int    `json:"openThreads"`
+	UnansweredThreads  int    `json:"unansweredThreads"` // open, with a bot's comment last
 	ResolvesOwnThreads bool   `json:"resolvesOwnThreads"`
 	At                 string `json:"at,omitempty"`
 }
@@ -77,7 +78,7 @@ func reviewStatus(slug string, number int, state *State) (*Review, error) {
 			requested = append(requested, r.RequestedReviewer.Login)
 		}
 	}
-	open, err := openThreads(slug, number, bots)
+	open, unanswered, err := openThreads(slug, number, bots)
 	if err != nil {
 		return nil, err
 	}
@@ -118,18 +119,25 @@ func reviewStatus(slug string, number int, state *State) (*Review, error) {
 				review.Pending = latest == nil || latest.SubmittedAt <= t.At
 			}
 		}
-		review.OpenThreads = open[bot.Name]
+		review.OpenThreads, review.UnansweredThreads = open[bot.Name], unanswered[bot.Name]
 		out.Bots[bot.Name] = review
 	}
 	return out, nil
 }
 
 // openThreads counts a PR's unresolved review threads by the bot that
-// started them, as `pr-loop threads` labels them, with people's under "".
-// It reads every page: a request is gated on these counts.
-func openThreads(slug string, number int, bots []*Bot) (map[string]int, error) {
+// started them, as `pr-loop threads` labels them, with people's under "",
+// and the bots' threads whose last comment is a bot's. It reads every page:
+// a request is gated on these counts.
+func openThreads(slug string, number int, bots []*Bot) (open, unanswered map[string]int, err error) {
 	owner, name, _ := strings.Cut(slug, "/")
-	open := map[string]int{}
+	open, unanswered = map[string]int{}, map[string]int{}
+	author := func(nodes []struct{ Author *login }) string {
+		if len(nodes) > 0 && nodes[0].Author != nil {
+			return nodes[0].Author.Login
+		}
+		return ""
+	}
 	var cursor *string
 	for {
 		var data struct {
@@ -143,6 +151,7 @@ func openThreads(slug string, number int, bots []*Bot) (map[string]int, error) {
 						Nodes []struct {
 							IsResolved bool
 							First      struct{ Nodes []struct{ Author *login } }
+							Last       struct{ Nodes []struct{ Author *login } }
 						}
 					}
 				}
@@ -152,30 +161,31 @@ func openThreads(slug string, number int, bots []*Bot) (map[string]int, error) {
 			repository(owner: $owner, name: $name) { pullRequest(number: $number) {
 				reviewThreads(first: 100, after: $after) {
 					pageInfo { hasNextPage endCursor }
-					nodes { isResolved first: comments(first: 1) { nodes { author { login } } } }
+					nodes { isResolved
+					first: comments(first: 1) { nodes { author { login } } }
+					last: comments(last: 1) { nodes { author { login } } } }
 				}
 			} }
 		}`, map[string]any{"owner": owner, "name": name, "number": number, "after": cursor}, &data)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		threads := data.Repository.PullRequest.ReviewThreads
 		for _, t := range threads.Nodes {
 			if t.IsResolved {
 				continue
 			}
-			starter := ""
-			if n := t.First.Nodes; len(n) > 0 && n[0].Author != nil {
-				starter = n[0].Author.Login
-			}
 			reviewer := ""
-			if bot := botNamed(bots, starter); bot != nil {
+			if bot := botNamed(bots, author(t.First.Nodes)); bot != nil {
 				reviewer = bot.Name
 			}
 			open[reviewer]++
+			if reviewer != "" && botNamed(bots, author(t.Last.Nodes)) != nil {
+				unanswered[reviewer]++
+			}
 		}
 		if !threads.PageInfo.HasNextPage {
-			return open, nil
+			return open, unanswered, nil
 		}
 		next := threads.PageInfo.EndCursor
 		cursor = &next
@@ -216,7 +226,8 @@ func Status(numbers []int) (any, error) {
 }
 
 // Request asks each bot that has neither reviewed the head nor been asked,
-// once CI on the head has finished without failures of the PR's own.
+// once CI on the head has finished without failures of the PR's own and
+// every thread the bot started has an answer.
 func Request(numbers []int, onlyBots, acceptFailures []string) (any, error) {
 	state, repo, prs, err := context(numbers)
 	if err != nil {
@@ -268,15 +279,32 @@ func Request(numbers []int, onlyBots, acceptFailures []string) (any, error) {
 		if err != nil {
 			return nil, err
 		}
+		var ask []*Bot
+		var unanswered []string
 		for _, bot := range bots {
 			if len(onlyBots) > 0 && !contains(onlyBots, bot.Name) {
 				continue
 			}
 			current := review.Bots[bot.Name]
-			if current.ReviewedHead || current.Pending {
+			switch {
+			case current.ReviewedHead || current.Pending:
 				log = append(log, fmt.Sprintf("#%d: %s has already reviewed or been asked to review %.12s", pr.Number, bot.Name, ci.HeadOid))
-				continue
+			case current.UnansweredThreads > 0:
+				unanswered = append(unanswered, fmt.Sprintf("%d from %s", current.UnansweredThreads, bot.Name))
+			default:
+				ask = append(ask, bot)
 			}
+		}
+		// Only threads a bot has the last word in hold it back. People's
+		// threads are the operator's, which the loop cannot answer; and a
+		// thread answered but left open, deferred or left for a bot that
+		// resolves its own, has been triaged.
+		if len(unanswered) > 0 {
+			return nil, refuse("#%d has review threads nobody has answered (%s). Triage them before asking for another "+
+				"review: list them with `pr-loop threads %d`, reply to each, resolving it or fixing it first, "+
+				"then run `pr-loop request` again", pr.Number, strings.Join(unanswered, ", "), pr.Number)
+		}
+		for _, bot := range ask {
 			if bot.Request.Reviewer != "" {
 				if err := requestReviewer(repo.Slug, pr.Number, bot.Request.Reviewer); err != nil {
 					return nil, fmt.Errorf("requesting %s on #%d: %w", bot.Name, pr.Number, err)
