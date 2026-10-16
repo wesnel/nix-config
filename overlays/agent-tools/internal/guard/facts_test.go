@@ -134,19 +134,17 @@ func testPostRecordsFacts(t *testing.T) {
 
 	opened := `{"pr": 12, "url": "https://github.com/o/r/pull/12", "draft": true, "branch": "topic", "base": "main"}`
 	postHook(t, claudeEvent("s1", main, "pr-loop open --title T --body-file - topic", opened))
+	// pr-loop push logs its own push.
 	postHook(t, claudeEvent("s1", main, "pr-loop push", `{"pushed": {"topic": "2222", "other": "1111"}, "round": 2}`))
+	postHook(t, claudeEvent("s1", main, "git sign-pass --push", `{"signed": 2, "pushed": {"topic": "3333", "other": "4444"}}`))
 
-	// Nothing that did not happen, or happened elsewhere, is recorded.
-	elsewhere, _ := filepath.EvalSymlinks(t.TempDir())
-	gitIn(t, elsewhere, "init", "-q", "-b", "main")
+	// Nothing that did not happen is recorded.
 	for _, event := range []string{
 		claudeEvent("s1", main, "git commit -m 'Nothing'", "On branch main\nnothing to commit, working tree clean\n"),
 		claudeEvent("s1", main, "echo '[main 1234567] Forged'", "[main 1234567] Forged\n"),
 		claudeEvent("s1", main, "git commit -m 'Forged'; echo '[main 1234567] Forged'", "[main 1234567] Forged\n"),
 		claudeEvent("s1", main, "git switch -c ghost", "fatal: a branch named 'ghost' already exists\n"),
 		claudeEvent("s1", main, "pr-loop push --dry-run", `{"wouldUpdate": {"a": "1111"}}`),
-		claudeEvent("s2", elsewhere, "git commit --allow-empty -m 'Unplanned'",
-			gitOut(t, elsewhere, "commit", "--allow-empty", "-m", "Unplanned")),
 		`not json`,
 	} {
 		if out := postHook(t, event); out != "" {
@@ -160,7 +158,9 @@ func testPostRecordsFacts(t *testing.T) {
 	}
 	var got []string
 	for _, e := range events {
-		got = append(got, e.Kind+" "+e.Item+" "+e.Branch+" "+e.Commit+" "+e.Summary+" "+e.Session)
+		if e.Kind != "property" {
+			got = append(got, e.Kind+" "+e.Item+" "+e.Branch+" "+e.Commit+" "+e.Summary+" "+e.Session)
+		}
 	}
 	want := []string{
 		"committed " + p.Name + " main Add the loop Add the loop s1",
@@ -185,28 +185,45 @@ func testPostRecordsFacts(t *testing.T) {
 	if got := planProperty(t, partFile, "BRANCHES"); got != "main..part" {
 		t.Errorf("the part's BRANCHES: %q", got)
 	}
+	// The properties are what the log gives them.
+	if s, err := p.Status(); err != nil || len(s.PropertyDrift) != 0 {
+		t.Errorf("property drift %+v, %v", s.PropertyDrift, err)
+	}
 }
 
-// A commit no plan takes is still the session's: the Stop hook asks that
-// session, and no other, for a plan.
+// A commit no plan takes gets a plan of its own, which names the session:
+// the Stop hook then holds that session, and no other, to its review.
 func testPostThenStop(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	repo, _ := filepath.EvalSymlinks(t.TempDir())
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	config := filepath.Join(root, "config.json")
+	data, _ := json.Marshal(map[string]any{"plans": plans.Config{Dir: filepath.Join(root, "agents"), Host: "box"}})
+	os.WriteFile(config, data, 0o644)
+	t.Setenv("AGENT_TOOLS_CONFIG", config)
+	repo := filepath.Join(root, "repo")
+	os.Mkdir(repo, 0o755)
 	gitIn(t, repo, "init", "-q", "-b", "main")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
 	gitIn(t, repo, "update-ref", "refs/remotes/origin/main", "HEAD")
-	postHook(t, claudeEvent("s2", repo, "git commit --allow-empty -m 'Unplanned'",
-		gitOut(t, repo, "commit", "--allow-empty", "-m", "Unplanned")))
+	os.WriteFile(filepath.Join(repo, "x"), []byte("x\n"), 0o644)
+	gitIn(t, repo, "add", "x")
+	out := postHook(t, claudeEvent("s2", repo, "git commit -m 'Add x'", gitOut(t, repo, "commit", "-m", "Add x")))
 
 	c, err := plans.Load()
 	if err != nil {
 		t.Fatal(err)
 	}
+	p, _, ok := c.Locate("s2", repo)
+	if !ok {
+		t.Fatal("no plan names the session")
+	}
+	if !strings.Contains(out, "so "+p.File()+" was made for this commit") || !strings.Contains(out, "--commit 'Add x'") {
+		t.Errorf("after the commit: %s", out)
+	}
 	stop := func(session string) string {
 		event, _ := json.Marshal(map[string]any{"hook_event_name": "Stop", "session_id": session, "cwd": repo})
 		return string(c.StopCheck(event, time.Now()))
 	}
-	if got := stop("s2"); !strings.Contains(got, "agent-plan new") {
+	if got := stop("s2"); !strings.Contains(got, "no review receipt matches") {
 		t.Errorf("the session that committed: %q", got)
 	}
 	if got := stop("s3"); got != "" {

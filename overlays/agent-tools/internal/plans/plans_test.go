@@ -66,6 +66,23 @@ func setGoal(t *testing.T, file, goal string) {
 	os.WriteFile(file, []byte(text), 0o644)
 }
 
+// eventsBut are p's events but those of kind, such as the property events
+// a plan starts with.
+func eventsBut(t *testing.T, p Plan, kind string) []Event {
+	t.Helper()
+	events, err := p.Events()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []Event
+	for _, e := range events {
+		if e.Kind != kind {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // isRefusal checks err is a refusal that says what to do instead.
 func isRefusal(t *testing.T, what string, err error) {
 	t.Helper()
@@ -382,9 +399,9 @@ func TestLog(t *testing.T) {
 		if _, err := p.Log(Event{Kind: "reviewed", Item: "2026-10-14-x.box", Review: "1.F2", Outcome: "fix"}, day); err != nil {
 			t.Errorf("an event about the whole plan: %v", err)
 		}
-		events, err := p.Events()
-		if err != nil || len(events) != 2 || events[0].ID != e.ID || events[0].Tokens != 1200 || events[1].Outcome != "fix" {
-			t.Errorf("events %+v, %v", events, err)
+		events := eventsBut(t, p, "property")
+		if len(events) != 2 || events[0].ID != e.ID || events[0].Tokens != 1200 || events[1].Outcome != "fix" {
+			t.Errorf("events %+v", events)
 		}
 		if after, _ := os.ReadFile(p.log()); len(after) == len(data) {
 			t.Error("the second event was not appended")
@@ -440,10 +457,7 @@ func TestLog(t *testing.T) {
 			}()
 		}
 		wg.Wait()
-		events, err := p.Events()
-		if err != nil {
-			t.Fatal(err)
-		}
+		events := eventsBut(t, p, "property")
 		ids := map[string]bool{}
 		for _, e := range events {
 			if e.Kind != "started" || len(e.Summary) != 3000 {

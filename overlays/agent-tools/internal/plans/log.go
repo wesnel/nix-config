@@ -40,8 +40,11 @@ type Event struct {
 	// Session is the session whose tool call the event records, as its
 	// hook names it: Claude Code's or Codex's session_id, ECA's chat_id.
 	Session string `json:"session,omitempty"`
+	// Worktree is the top level of the worktree the event happened in.
+	Worktree string `json:"worktree,omitempty"`
 	// Range, Tip and PatchID are a review receipt's: the range reviewed,
-	// as given, its tip's commit, and the patch ID of its change.
+	// as given, its tip's commit, and the patch ID of its change. A
+	// branch-changed event's Tip is the commit of a detached HEAD.
 	Range   string `json:"range,omitempty"`
 	Tip     string `json:"tip,omitempty"`
 	PatchID string `json:"patchId,omitempty"`
@@ -50,19 +53,20 @@ type Event struct {
 	Sign     string `json:"sign,omitempty"`
 	Exit     string `json:"exit,omitempty"`
 	Delivers string `json:"delivers,omitempty"`
-	// receipt marks an event Receipt logs, and sign one a sign-pass's
-	// commands log.
-	receipt, sign bool
+	// Property and Value are a property event's: the property of the
+	// item's `* Plan` heading, and its values, separated by spaces.
+	Property string `json:"property,omitempty"`
+	Value    string `json:"value,omitempty"`
 	// Note is what the caller should know about the event, such as a
 	// heading keyword Log could not write; the log does not hold it.
 	Note string `json:"note,omitempty"`
 }
 
 var (
-	// Kinds are what an event an agent logs records about its item. A
-	// review receipt (receiptKind) is the reviews' own, beside them.
+	// Kinds are what an event an agent logs records about its item;
+	// toolKinds are beside them.
 	Kinds = []string{"planned", "plan-reviewed", "started", "done", "blocked", "abandoned", "verified",
-		"reviewed", "finding-settled", "asked", "decided", "handed-back", "committed", "pushed", "postponed", "discovered", "referenced"}
+		"reviewed", "finding-settled", "asked", "decided", "handed-back", "postponed", "discovered", "referenced"}
 	// Roles are who logs an event.
 	Roles = []string{"single", "parent", "subagent", "reviewer", "design-reviewer"}
 	// Outcomes are the review-change skill's triage outcomes.
@@ -71,6 +75,37 @@ var (
 	Efforts = []string{"low", "medium", "high", "xhigh", "max"}
 
 	reviewPattern = regexp.MustCompile(`^[0-9]+\.[A-Za-z0-9_-]+$`)
+
+	// toolKinds are the kinds only agent-tools' own commands and hooks
+	// log, through Record, from what they saw happen; each maps to the
+	// refusal Log gives an agent that logs one.
+	toolKinds = func() map[string]string {
+		kinds := map[string]string{
+			receiptKind: "a review receipt is written by the review that ran alone. " +
+				"Run `git fresh-review` (or `pr-loop review` for someone else's pull request) as the review-change skill says",
+			"committed": "a hook after each shell call logs `committed` for every commit, from what git printed. " +
+				"Log `done` with `--commit SUBJECT` for the step a commit completes",
+			propertyKind: "agent-plan logs each change of a plan's WORKTREES, BRANCHES, PULL_REQUESTS and OWNERS that it makes. " +
+				"Change one with `agent-plan set PLAN NAME VALUE...`, or OWNERS with `agent-plan own`",
+			usageAsked: "the prompt hook logs `usage-asked` for each quota ask it shows a session. " +
+				"Record Wesley's answer with `agent-plan usage choose`",
+			branchChanged: "the guard logs `branch-changed` when a session's file edit lands on another branch or worktree than its last. " +
+				"Confirm the branch with `git branch --show-current` before the edit",
+			stopBlocked: "the stop-check logs `stop-blocked` for each stop of an ECA chat it blocks. " +
+				"Do what its reason asks, or say in your report why it cannot be done",
+			"pushed": "pr-loop, and a hook after each shell call, log `pushed` for every push, from what they pushed. " +
+				"Watch the push's CI with `pr-loop wait ci` as the signing-pass skill says",
+		}
+		for _, k := range []string{"loop-began", "round", "replied", "resolved", "ci-waited", "loop-signed"} {
+			kinds[k] = "pr-loop logs what it did, from begin to sign, in the plan of the session that ran it. " +
+				"Run the `pr-loop` command that does it"
+		}
+		for _, k := range signKinds {
+			kinds[k] = "a sign-pass's events are logged by `agent-plan sign-id`, `git sign-pass --notify` and the delivery of its result alone. " +
+				"Hand Wesley the sign-pass as the signing-pass skill says"
+		}
+		return kinds
+	}()
 )
 
 func oneOf(value string, allowed []string) bool {
@@ -86,19 +121,13 @@ func oneOf(value string, allowed []string) bool {
 func (p Plan) check(e Event) error {
 	for what, v := range map[string]string{"summary": e.Summary, "agent": e.Agent, "branch": e.Branch,
 		"commit": e.Commit, "evidence": e.Evidence, "model": e.Model, "item": e.Item, "kind": e.Kind, "session": e.Session,
-		"range": e.Range, "tip": e.Tip, "patch ID": e.PatchID} {
+		"worktree": e.Worktree, "range": e.Range, "tip": e.Tip, "patch ID": e.PatchID, "property": e.Property, "value": e.Value} {
 		if err := checkLine(what, v); err != nil {
 			return err
 		}
 	}
 	switch {
-	case e.Kind == receiptKind && !e.receipt:
-		return refusal.New("a review receipt is written by the review that ran alone. " +
-			"Run `git fresh-review` (or `pr-loop review` for someone else's pull request) as the review-change skill says")
-	case oneOf(e.Kind, signKinds) && !e.sign:
-		return refusal.New("a sign-pass's events are logged by `agent-plan sign-id`, `git sign-pass --notify` and the delivery of its result alone. " +
-			"Hand Wesley the sign-pass as the signing-pass skill says")
-	case e.Kind != receiptKind && !oneOf(e.Kind, Kinds) && !oneOf(e.Kind, signKinds):
+	case !oneOf(e.Kind, Kinds) && toolKinds[e.Kind] == "":
 		return refusal.New("%q is not an event kind. Use one of `%s`", e.Kind, strings.Join(Kinds, "`, `"))
 	case e.Role != "" && !oneOf(e.Role, Roles):
 		return refusal.New("%q is not a role. Use one of `%s`", e.Role, strings.Join(Roles, "`, `"))
@@ -125,12 +154,21 @@ func (p Plan) check(e Event) error {
 	return nil
 }
 
-// Log appends e to the plan's log, with a new event ID and now's time, and
-// returns it as written. A step's or part's heading keyword then follows
-// the log: the log is the record, and the keyword its projection for
-// Emacs. A keyword it cannot write leaves the event logged, says so in the
-// returned event's Note, and shows in status as drift.
+// Log appends e, an event an agent logs, to the plan's log, with a new
+// event ID and now's time, and returns it as written; it refuses the kinds
+// only tools log. A step's or part's heading keyword then follows the log:
+// the log is the record, and the keyword its projection for Emacs. A
+// keyword it cannot write leaves the event logged, says so in the returned
+// event's Note, and shows in status as drift.
 func (p Plan) Log(e Event, now time.Time) (Event, error) {
+	if why := toolKinds[e.Kind]; why != "" {
+		return Event{}, refusal.New("%s", why)
+	}
+	return p.record(e, now)
+}
+
+// record is Log for any kind, the tools' too.
+func (p Plan) record(e Event, now time.Time) (Event, error) {
 	if err := p.checkOwn(); err != nil {
 		return Event{}, err
 	}
@@ -228,8 +266,8 @@ func eventText(e Event) string {
 	for _, kv := range [][2]string{{"EVENT", e.ID}, {"AGENT", e.Agent}, {"ROLE", e.Role}, {"ITEM", e.Item},
 		{"KIND", e.Kind}, {"BRANCH", e.Branch}, {"COMMIT", e.Commit}, {"EVIDENCE", e.Evidence},
 		{"REVIEW", e.Review}, {"OUTCOME", e.Outcome}, {"TOKENS", tokens}, {"MODEL", e.Model},
-		{"EFFORT", e.Effort}, {"SESSION", e.Session}, {"RANGE", e.Range}, {"TIP", e.Tip}, {"PATCH_ID", e.PatchID},
-		{"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}} {
+		{"EFFORT", e.Effort}, {"SESSION", e.Session}, {"WORKTREE", e.Worktree}, {"RANGE", e.Range}, {"TIP", e.Tip}, {"PATCH_ID", e.PatchID},
+		{"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}, {"PROPERTY", e.Property}, {"VALUE", e.Value}} {
 		if kv[1] != "" {
 			b.WriteString(":" + kv[0] + ": " + kv[1] + "\n")
 		}
@@ -431,9 +469,9 @@ func (p Plan) Events() ([]Event, error) {
 		e := Event{ID: h.Props["EVENT"], Kind: h.Props["KIND"], Item: h.Props["ITEM"], Agent: h.Props["AGENT"],
 			Role: h.Props["ROLE"], Branch: h.Props["BRANCH"], Commit: h.Props["COMMIT"],
 			Evidence: h.Props["EVIDENCE"], Review: h.Props["REVIEW"], Outcome: h.Props["OUTCOME"],
-			Model: h.Props["MODEL"], Effort: h.Props["EFFORT"], Session: h.Props["SESSION"], Range: h.Props["RANGE"],
-			Tip: h.Props["TIP"], PatchID: h.Props["PATCH_ID"], Sign: h.Props["SIGN"], Exit: h.Props["EXIT"],
-			Delivers: h.Props["DELIVERS"]}
+			Model: h.Props["MODEL"], Effort: h.Props["EFFORT"], Session: h.Props["SESSION"], Worktree: h.Props["WORKTREE"],
+			Range: h.Props["RANGE"], Tip: h.Props["TIP"], PatchID: h.Props["PATCH_ID"], Sign: h.Props["SIGN"], Exit: h.Props["EXIT"],
+			Delivers: h.Props["DELIVERS"], Property: h.Props["PROPERTY"], Value: h.Props["VALUE"]}
 		e.Tokens, _ = strconv.ParseInt(h.Props["TOKENS"], 10, 64)
 		if _, summary, ok := strings.Cut(h.Title, " — "); ok {
 			e.Summary = summary

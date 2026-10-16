@@ -11,6 +11,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/plans"
 )
 
 // Push uploads the local commits through the Git Database API and moves the
@@ -116,6 +117,7 @@ func Push(branches []string, dryRun bool) (any, error) {
 		}
 		pushed[u.branch] = u.after
 	}
+	record(state, plans.Event{Kind: "pushed", Summary: "pushed " + branchTips(state, pushed)})
 	state.Round++
 	if err := snapshotRound(state); err != nil {
 		return nil, err

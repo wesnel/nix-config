@@ -290,9 +290,10 @@ in {
             }
           ];
         })}
-        # Follows a stop up once per chat, with exit 2, when the work is not
-        # as the plan-work and review-change skills leave it. ECA sends no
-        # stop_hook_active, so agent-plan keeps a file per chat.
+        # Follows a stop up once, with exit 2, when the work is not as the
+        # plan-work and review-change skills leave it. ECA sends no
+        # stop_hook_active, so agent-plan logs each block in the chat's plan
+        # and lets the chat's stops through until the log holds more.
         stop=${escapeShellArg (builtins.toJSON {
           type = "postRequest";
           visible = false;

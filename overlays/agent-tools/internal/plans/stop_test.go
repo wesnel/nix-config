@@ -121,33 +121,34 @@ func TestStopCheck(t *testing.T) {
 
 	// A session that only read or answered a question owes nothing for
 	// the unsigned commits it finds.
-	t.Run("others' unsigned commits, no plan", func(t *testing.T) {
+	t.Run("others' unsigned commits", func(t *testing.T) {
 		c := testConfig(t)
 		repo := stopRepo(t, true)
 		gitIn(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
-		if err := NoteCommit("s2", repo); err != nil {
+		if _, _, err := c.RecordCommit("s2", repo, Event{Commit: "Add x", Summary: "Add x"}, time.Now()); err != nil {
 			t.Fatal(err)
 		}
-		expectReason(t, "others' unsigned commits, no plan", stopIn(t, c)("s1", repo, false), "")
+		expectReason(t, "others' unsigned commits", stopIn(t, c)("s1", repo, false), "")
 	})
 
-	t.Run("this session's commit, no plan", func(t *testing.T) {
+	// The plan a session's first commit made for it owes that commit's
+	// review.
+	t.Run("this session's commit, no plan before it", func(t *testing.T) {
 		c := testConfig(t)
-		other := stopRepo(t, true)
 		repo := stopRepo(t, true)
 		gitIn(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
-		if err := NoteCommit("s1", repo); err != nil {
+		if _, _, err := c.RecordCommit("s1", repo, Event{Commit: "Add x", Summary: "Add x"}, time.Now()); err != nil {
 			t.Fatal(err)
 		}
-		expectReason(t, "this session's commit, no plan", stopIn(t, c)("s1", repo, false), "agent-plan new")
-		expectReason(t, "in another worktree", stopIn(t, c)("s1", other, false), "")
+		expectReason(t, "this session's commit", stopIn(t, c)("s1", repo, false),
+			"no review receipt matches the change origin/main..HEAD")
 	})
 
 	t.Run("stop hook active", func(t *testing.T) {
 		c := testConfig(t)
 		repo := stopRepo(t, true)
 		gitIn(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
-		if err := NoteCommit("s1", repo); err != nil {
+		if _, _, err := c.RecordCommit("s1", repo, Event{Commit: "Add x", Summary: "Add x"}, time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		expectReason(t, "stop hook active", stopIn(t, c)("s1", repo, true), "")
@@ -161,25 +162,6 @@ func TestStopCheck(t *testing.T) {
 	t.Run("not a repository", func(t *testing.T) {
 		c := testConfig(t)
 		expectReason(t, "not a repository", stopIn(t, c)("s1", t.TempDir(), false), "")
-	})
-
-	// A plan made after the session's first commit still owes that
-	// commit's review, though its log holds no commit of the session's.
-	t.Run("committed before the plan", func(t *testing.T) {
-		c := testConfig(t)
-		repo := stopRepo(t, true)
-		gitIn(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
-		if err := NoteCommit("s2", repo); err != nil {
-			t.Fatal(err)
-		}
-		made, err := c.New(NewOptions{Title: "Add x", Slug: "x", Worktrees: []string{repo}, Sessions: []string{"claude:s2"},
-			Harness: "claude"}, time.Now())
-		if err != nil {
-			t.Fatal(err)
-		}
-		setProp(t, made.Plan, "STATUS", "working")
-		expectReason(t, "committed before the plan", stopIn(t, c)("s2", repo, false),
-			"no review receipt matches the change origin/main..HEAD")
 	})
 
 	// The session's commits, and its receipts, go where Locate puts them:
@@ -204,7 +186,7 @@ func TestStopCheck(t *testing.T) {
 		if !ok || p.File() != theirs.Plan {
 			t.Fatalf("Locate found %s, want %s", p.File(), theirs.Plan)
 		}
-		p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add x", Session: "s1"}, time.Now())
+		p.Record("", Event{Kind: "committed", Commit: "Add x", Session: "s1"}, time.Now())
 		expectReason(t, "unreviewed", stopIn(t, c)("s1", repo, false), "no review receipt matches the change origin/main..HEAD")
 		// As WriteReceipt logs it, in the plan Locate finds.
 		if _, err := p.Receipt("", Receipt{Range: "origin/main..HEAD", PatchID: patchID(t, repo)}, time.Now()); err != nil {
@@ -226,7 +208,7 @@ func TestStopCheck(t *testing.T) {
 		}
 		setProp(t, made.Plan, "STATUS", "working")
 		p, _ := c.Open(made.Plan)
-		p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add x", Session: "s2"}, time.Now())
+		p.Record("", Event{Kind: "committed", Commit: "Add x", Session: "s2"}, time.Now())
 		expectReason(t, "unreviewed", stopIn(t, c)("s2", repo, false), "no review receipt matches the change BASE..HEAD")
 		p.Receipt("", Receipt{Range: "base..HEAD", PatchID: patchIDOf(t, repo, "base")}, time.Now())
 		expectReason(t, "reviewed", stopIn(t, c)("s2", repo, false), "")
@@ -263,7 +245,7 @@ func TestStopCheck(t *testing.T) {
 				}
 				setProp(t, made.Plan, "STATUS", "working")
 				p, _ := cfg.Open(made.Plan)
-				p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add y", Session: "s2"}, time.Now())
+				p.Record("", Event{Kind: "committed", Commit: "Add y", Session: "s2"}, time.Now())
 				p.Receipt("", Receipt{Range: c.base + "..HEAD", PatchID: patchIDOf(t, repo, c.base)}, time.Now())
 				expectReason(t, c.name, stopIn(t, cfg)("s2", repo, false), c.want)
 			})
@@ -309,10 +291,10 @@ func testStopCheckWithAPlan(t *testing.T) {
 		{"another session in its worktree", func(*testing.T, Plan, string) {}, "s1", false, ""},
 		{"committed, with no receipt", func(t *testing.T, p Plan, _ string) {
 			p.Log(Event{Kind: "verified", Item: "S1", Evidence: "tests pass"}, time.Now())
-			p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add x", Session: "s2"}, time.Now())
+			p.Record("", Event{Kind: "committed", Commit: "Add x", Session: "s2"}, time.Now())
 		}, "s2", false, owed},
 		{"another session's commit in its worktree", func(t *testing.T, p Plan, _ string) {
-			p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add z", Session: "s1"}, time.Now())
+			p.Record("", Event{Kind: "committed", Commit: "Add z", Session: "s1"}, time.Now())
 		}, "s1", false, owed},
 		// What an agent logs itself is no receipt.
 		{"reviewed and handed back by the agent's word", func(t *testing.T, p Plan, _ string) {
@@ -330,7 +312,7 @@ func testStopCheckWithAPlan(t *testing.T) {
 		}, "s2", false, ""},
 		{"changed since the receipt", func(t *testing.T, p Plan, repo string) {
 			commitFile(t, repo, "y", "Add y")
-			p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add y", Session: "s2"}, time.Now())
+			p.Record("", Event{Kind: "committed", Commit: "Add y", Session: "s2"}, time.Now())
 		}, "s2", false, owed},
 		{"reviewed again", receipt, "s2", false, ""},
 		{"opted out", func(t *testing.T, p Plan, repo string) {
@@ -389,78 +371,73 @@ func TestReceipt(t *testing.T) {
 }
 
 // TestStopCheckChat covers ECA's postRequest hook, which has no
-// stop_hook_active: one block per chat, then the stop passes and the chat
-// is checked again at its next stop.
+// stop_hook_active: a chat's stop is blocked once, logged as stop-blocked
+// in its plan, and passes while its plan's log holds nothing newer than
+// the stops it blocked.
 func TestStopCheckChat(t *testing.T) {
-	// stopIn returns a function that runs ECA's hook in repo for a chat,
-	// keeping its state under state.
-	stopIn := func(t *testing.T, c Config, repo, state string) func(chat string) string {
+	// stopIn returns a function that runs ECA's hook in repo for a chat.
+	stopIn := func(t *testing.T, c Config, repo string) func(chat string) string {
 		return func(chat string) string {
 			t.Helper()
 			event, _ := json.Marshal(map[string]any{"hook_type": "postRequest", "hook_name": "x", "chat_id": chat,
 				"cwd": repo, "workspaces": []string{repo}, "follow_up_active": false})
-			return c.StopCheckChat(event, state, time.Now())
+			return c.StopCheckChat(event, time.Now())
 		}
 	}
 
 	t.Run("nothing to sign", func(t *testing.T) {
-		stop := stopIn(t, testConfig(t), stopRepo(t, false), filepath.Join(t.TempDir(), "agent-tools", "stop"))
+		stop := stopIn(t, testConfig(t), stopRepo(t, false))
 		if got := stop("c1"); got != "" {
 			t.Fatalf("nothing to sign: %q", got)
 		}
 	})
 
 	t.Run("one block per chat", func(t *testing.T) {
-		state := filepath.Join(t.TempDir(), "agent-tools", "stop")
+		const owed = "no review receipt matches"
 		repo := stopRepo(t, true)
-		stop := stopIn(t, testConfig(t), repo, state)
-		for _, chat := range []string{"c1", "c2"} {
-			if err := NoteCommit(chat, repo); err != nil {
+		c := testConfig(t)
+		stop := stopIn(t, c, repo)
+		commit := func(chat, subject string) Plan {
+			t.Helper()
+			p, _, err := c.RecordCommit(chat, repo, Event{Commit: subject, Summary: subject}, time.Now())
+			if err != nil {
 				t.Fatal(err)
 			}
+			return p
 		}
-		if got := stop("c1"); !strings.Contains(got, "agent-plan new") {
+		p := commit("c1", "Add x")
+		commit("c2", "Add x")
+		if got := stop("c1"); !strings.Contains(got, owed) {
 			t.Fatalf("first stop: %q", got)
 		}
-		if _, err := os.Stat(filepath.Join(state, "c1")); err != nil {
-			t.Errorf("no state file: %v", err)
-		}
-		if got := stop("c2"); !strings.Contains(got, "agent-plan new") {
+		if got := stop("c2"); !strings.Contains(got, owed) {
 			t.Errorf("another chat: %q", got)
 		}
 		if got := stop("c1"); got != "" {
 			t.Errorf("second stop of the chat: %q", got)
 		}
-		if got := stop("c1"); !strings.Contains(got, "agent-plan new") {
-			t.Errorf("stop after the pass: %q", got)
+		if got := stop("c1"); got != "" {
+			t.Errorf("a stop with nothing new: %q", got)
 		}
-	})
-
-	t.Run("chat IDs that are no file names", func(t *testing.T) {
-		state := filepath.Join(t.TempDir(), "agent-tools", "stop")
-		repo := stopRepo(t, true)
-		stop := stopIn(t, testConfig(t), repo, state)
-		for _, chat := range []string{"c1", "", "../c3", "a/b"} {
-			NoteCommit(chat, repo)
-			stop(chat)
+		commit("c1", "Add y")
+		if got := stop("c1"); !strings.Contains(got, owed) {
+			t.Errorf("a stop after more work: %q", got)
 		}
-		for _, dir := range []string{state, filepath.Join(os.Getenv("XDG_STATE_HOME"), "agent-tools", "commits")} {
-			entries, _ := os.ReadDir(dir)
-			if len(entries) == 0 {
-				t.Errorf("no state files in %s", dir)
+		events, _ := p.Events()
+		var blocked []string
+		for _, e := range events {
+			if e.Kind == "stop-blocked" {
+				blocked = append(blocked, e.Session)
 			}
-			for _, e := range entries {
-				if strings.ContainsAny(e.Name(), "/\\") || strings.HasPrefix(e.Name(), ".") {
-					t.Errorf("state file %q in %s", e.Name(), dir)
-				}
-			}
+		}
+		if strings.Join(blocked, " ") != "c1 c2 c1" {
+			t.Errorf("stop-blocked for %v", blocked)
 		}
 	})
 
 	t.Run("not json", func(t *testing.T) {
 		c := testConfig(t)
-		state := filepath.Join(t.TempDir(), "agent-tools", "stop")
-		if got := c.StopCheckChat([]byte("x"), state, time.Now()); got != "" {
+		if got := c.StopCheckChat([]byte("x"), time.Now()); got != "" {
 			t.Errorf("not json: %q", got)
 		}
 	})

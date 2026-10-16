@@ -21,13 +21,13 @@ func TestOwners(t *testing.T) {
 		wt, _ := filepath.EvalSymlinks(t.TempDir())
 		other, _ := filepath.EvalSymlinks(t.TempDir())
 		p := newPlan(t, c, "x")
-		if _, err := p.SetOwner(wt, "a1"); err != nil {
+		if _, err := p.SetOwner(wt, "a1", day); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := p.SetOwner(other, "main"); err != nil {
+		if _, err := p.SetOwner(other, "main", day); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := p.SetOwner(wt, "a2"); err != nil {
+		if _, err := p.SetOwner(wt, "a2", day); err != nil {
 			t.Fatal(err)
 		}
 		owners, err := c.Owners()
@@ -55,7 +55,7 @@ func TestOwners(t *testing.T) {
 			wt, _ := filepath.EvalSymlinks(t.TempDir())
 			p := newPlan(t, testConfig(t), "x")
 			dir := strings.Replace(bad[0], "WT", wt, 1)
-			_, err := p.SetOwner(dir, bad[1])
+			_, err := p.SetOwner(dir, bad[1], day)
 			isRefusal(t, "Own "+dir+" "+bad[1], err)
 		})
 	}
@@ -63,7 +63,7 @@ func TestOwners(t *testing.T) {
 	t.Run("refused/another host's plan", func(t *testing.T) {
 		wt, _ := filepath.EvalSymlinks(t.TempDir())
 		p := newPlan(t, testConfig(t), "x")
-		_, err := otherHosts(t, p).SetOwner(wt, "a3")
+		_, err := otherHosts(t, p).SetOwner(wt, "a3", day)
 		isRefusal(t, "another host's plan", err)
 	})
 }

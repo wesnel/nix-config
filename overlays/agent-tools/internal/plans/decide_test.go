@@ -71,7 +71,7 @@ func TestDecide(t *testing.T) {
 		if entry := linesAt(t, p.file(""), "Q1", 7); !strings.Contains(entry, ":RECOMMENDATION: no, drop it\n:ANSWER: drop it\n:END:\nNothing reads it.") {
 			t.Errorf("entry:\n%s", entry)
 		}
-		events, _ := p.Events()
+		events := eventsBut(t, p, "property")
 		if len(events) != 1 || events[0].Kind != "decided" || events[0].Item != "Q1" || events[0].Summary != "drop it" {
 			t.Errorf("events %+v", events)
 		}
@@ -185,16 +185,16 @@ func TestStatusLine(t *testing.T) {
 		}{
 			{"nothing committed", func() {}, ""},
 			{"committed", func() {
-				p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add x", Session: "abc"}, day)
+				p.Record("", Event{Kind: "committed", Commit: "Add x", Session: "abc"}, day)
 			}, "review owed"},
 			{"reviewed", func() {
 				p.Receipt("", Receipt{Range: "origin/main..HEAD", Tip: "1234", PatchID: "abcd", Reviewer: "codex"}, day)
 			}, ""},
 			{"another session committed", func() {
-				p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add y", Session: "zzz"}, day)
+				p.Record("", Event{Kind: "committed", Commit: "Add y", Session: "zzz"}, day)
 			}, ""},
 			{"committed again", func() {
-				p.Log(Event{Kind: "committed", Item: p.Name, Commit: "Add z", Session: "abc"}, day)
+				p.Record("", Event{Kind: "committed", Commit: "Add z", Session: "abc"}, day)
 				insertUnder(t, p.File(), "** Questions", question("Q1", "Keep it?", ""))
 			}, "review owed · 1 open question · /questions"},
 		}

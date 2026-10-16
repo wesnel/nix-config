@@ -73,7 +73,7 @@ func TestAsk(t *testing.T) {
 		if entry != want {
 			t.Errorf("entry:\n%s\nwant:\n%s", entry, want)
 		}
-		events, _ := p.Events()
+		events := eventsBut(t, p, "property")
 		if len(events) != 2 || events[0].Kind != "asked" || events[1].Kind != "decided" || events[1].Item != "Q4" ||
 			events[1].Role != "single" || events[1].Summary != "yes: the status line must never touch the network" {
 			t.Errorf("events %+v", events)

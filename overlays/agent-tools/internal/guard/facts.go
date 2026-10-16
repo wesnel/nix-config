@@ -203,7 +203,8 @@ func session(chatID, sessionID string) string {
 // recordFacts records in the matching plan what the shell call command,
 // run in cwd by session, did, by its output texts, and returns a line of
 // context for each commit recorded, asking which step it completes, which
-// is the agent's judgement. Every failure leaves the plan as it was.
+// is the agent's judgement. A commit no plan takes makes a plan for it
+// (plans.Config.RecordCommit). Every failure leaves the plan as it was.
 func recordFacts(session, cwd, command string, texts []string, now time.Time) (context []string) {
 	c, err := plans.Load()
 	if err != nil {
@@ -223,11 +224,6 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 				if _, ok := (gitState{dir: g.dir}).run("cat-file", "-e", m[2]+"^{commit}"); !ok {
 					continue
 				}
-				p, part, ok := at(g.dir)
-				if !ok {
-					plans.NoteCommit(session, toplevel(g.dir))
-					continue
-				}
 				branch := m[1]
 				if strings.ContainsAny(branch, " \t") {
 					branch = ""
@@ -236,10 +232,16 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 				if strings.ContainsAny(who, " \t\r\n") {
 					who = ""
 				}
-				if _, err := p.Record(part, plans.Event{Kind: "committed", Branch: branch, Commit: m[3], Summary: m[3], Session: who}, now); err == nil {
-					context = append(context, fmt.Sprintf("The commit %q is logged in %s. If it completes a step, which step? "+
-						"Log `done` for it with `--commit %s`; if none, carry on.", m[3], p.File(), shellQuote(m[3])))
+				p, created, err := c.RecordCommit(who, toplevel(g.dir), plans.Event{Branch: branch, Commit: m[3], Summary: m[3]}, now)
+				if err != nil {
+					continue
 				}
+				if created {
+					context = append(context, fmt.Sprintf("No plan named this session or worktree, so %s was made for this commit. "+
+						"Write its goal and steps as the plan-work skill says, or, if the work belongs to another plan, say so in your report.", p.File()))
+				}
+				context = append(context, fmt.Sprintf("The commit %q is logged in %s. If it completes a step, which step? "+
+					"Log `done` for it with `--commit %s`; if none, carry on.", m[3], p.File(), shellQuote(m[3])))
 			}
 			continue
 		}
@@ -247,7 +249,7 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 		if path := newWorktree(g); path != "" {
 			if real, err := filepath.EvalSymlinks(path); err == nil && toplevel(real) == real {
 				if p, part, ok := at(g.dir); ok {
-					p.AddToProperty(part, "WORKTREES", real)
+					p.AddToProperty(part, "WORKTREES", real, now)
 				}
 			}
 		}
@@ -275,10 +277,11 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 			value = start + ".." + name
 		}
 		if p, part, ok := at(g.dir); ok {
-			p.AddToProperty(part, "BRANCHES", value)
+			p.AddToProperty(part, "BRANCHES", value, now)
 		}
 	}
-	if !pushes(command, 0) {
+	who := pushers(command, 0)
+	if len(who) == 0 {
 		return
 	}
 	p, part, ok := at(cwd)
@@ -288,12 +291,14 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 	for _, result := range jsonObjects(texts) {
 		if url, isURL := result["url"].(string); isURL && result["pr"] != nil {
 			branch, _ := result["branch"].(string)
-			p.AddToProperty(part, "PULL_REQUESTS", url)
+			p.AddToProperty(part, "PULL_REQUESTS", url, now)
 			p.Record(part, plans.Event{Kind: "pushed", Branch: branch, Summary: "opened " + url}, now)
 			return
 		}
 	}
-	if branches := pushedTo(texts); len(branches) > 0 {
+	// pr-loop push logs its push itself.
+	delete(who, "pr-loop push")
+	if branches := pushedTo(texts); len(branches) > 0 && len(who) > 0 {
 		p.Record(part, plans.Event{Kind: "pushed", Summary: "pushed " + strings.Join(branches, " ")}, now)
 	}
 	return context

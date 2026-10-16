@@ -47,7 +47,13 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      steps without done, done without verified, parts ready
                      to start, steps ready now (no open AFTER item, earlier
                      ORDERED siblings settled, not scheduled for later),
-                     what still waits, keyword drift, and tokens
+                     what still waits, keyword drift, property drift (a
+                     WORKTREES, BRANCHES, PULL_REQUESTS or OWNERS value, or a
+                     References entry, the log does not give), and tokens
+  set PLAN NAME [VALUE...] [--part P1]
+                     set WORKTREES, BRANCHES or PULL_REQUESTS of the plan's
+                     file, or the part's, to the values, and log it; new,
+                     own and the hooks log the changes they make
   questions PLAN [--all] [--waiting] [--json | --count]
                      the open questions Wesley can answer now, by priority,
                      with their recommendations; --all adds the parts',
@@ -115,17 +121,17 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      that edits files in the worktree DIR (OWNERS in the plan)
   stop-check         Claude Code's and Codex's Stop hook, and ECA's postRequest
                      hook (reads stdin): blocks a stop once when the session's
-                     own commits have no plan, its plan's steps are done but
-                     not verified, or the session committed to a full
-                     pipeline and no review receipt (which git fresh-review
-                     and pr-loop review log) for a range BASE..HEAD, BASE at
-                     or below the branch's base in the plan's BRANCHES or
-                     origin/<default>, has the patch ID of BASE..HEAD as it
-                     stands; the commits as pr-loop guard
-                     --post records them (outside any plan, in
-                     $XDG_STATE_HOME/agent-tools/commits); ECA gets
-                     the reason on stderr with exit 2, once per chat, kept in
-                     $XDG_STATE_HOME/agent-tools/stop; never touches the network
+                     plan has steps done but not verified, or the session
+                     committed to a full pipeline and no review receipt
+                     (which git fresh-review and pr-loop review log) for a
+                     range BASE..HEAD, BASE at or below the branch's base in
+                     the plan's BRANCHES or origin/<default>, has the patch ID
+                     of BASE..HEAD as it stands; the commits as pr-loop guard
+                     --post logs them, in a plan it makes for a commit no
+                     plan takes; ECA gets the reason on stderr with exit 2,
+                     logged as stop-blocked, and the chat's stops pass while
+                     the log holds nothing newer but stops blocked; never
+                     touches the network
   remind             a hook (reads stdin) that asks, in a session with a plan,
                      for the coordinator to check a finished sub-agent's report
                      and log its part (Claude Code's UserPromptSubmit and
@@ -139,7 +145,8 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      prompts, once per host when a quota window of the
                      session's provider passes 75% and again at 90%, asks
                      for Wesley's choice of tiers (see usage choose), having
-                     read Codex's quota from its rollout; and on those
+                     read Codex's quota from its rollout, and logs the ask as
+                     usage-asked in the session's plan; and on those
                      prompts, task-notifications included, adds a line for
                      each result of the session's sign-passes not yet
                      delivered, logging it as sign-delivered, marked stale
@@ -256,10 +263,14 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		// A failure asks for nothing, quietly.
 		input := readAll(stdin)
 		var out []byte
-		if c, err := plans.Load(); err == nil {
+		c, err := plans.Load()
+		if err == nil {
 			out = c.Remind(input)
 		}
 		if ask := quota.Remind(quota.DefaultState(), input, time.Now()); ask != "" {
+			if err == nil {
+				c.RecordUsageAsk(input, ask, time.Now())
+			}
 			out = plans.WithContext(out, input, ask)
 		}
 		if len(out) > 0 {
@@ -275,7 +286,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				HookType string `json:"hook_type"`
 			}
 			if json.Unmarshal(input, &event) == nil && event.HookType == "postRequest" {
-				if reason := c.StopCheckChat(input, plans.StopStateDir(), time.Now()); reason != "" {
+				if reason := c.StopCheckChat(input, time.Now()); reason != "" {
 					fmt.Fprintln(stderr, reason)
 					return 2
 				}
@@ -603,7 +614,21 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		if !ok {
 			return 2
 		}
-		return report(p.SetOwner(worktree, *agent))
+		return report(p.SetOwner(worktree, *agent, time.Now()))
+	case "set":
+		if len(positional) < 2 {
+			fmt.Fprint(stderr, "agent-plan set: takes PLAN NAME [VALUE...] [--part P1]\n")
+			return 2
+		}
+		p, err := c.Open(positional[0])
+		if err != nil {
+			return report(nil, err)
+		}
+		name, values := positional[1], positional[2:]
+		if err := p.SetProperty(*part, name, values, time.Now()); err != nil {
+			return report(nil, err)
+		}
+		return report(map[string]any{"property": name, "values": values}, nil)
 	case "reseal":
 		p, ok := wantPlan()
 		if !ok {
@@ -625,10 +650,8 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			fmt.Fprint(stderr, "agent-plan sign-id: takes [--session ID] [--branch B]...\n")
 			return 2
 		}
-		for _, v := range []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "ECA_CHAT_ID"} {
-			if session == "" {
-				session = os.Getenv(v)
-			}
+		if session == "" {
+			session = plans.EnvSession()
 		}
 		top, current := checkout()
 		if len(branches) == 0 && current != "" {

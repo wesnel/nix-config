@@ -30,7 +30,7 @@ func TestReference(t *testing.T) {
 		if !strings.HasSuffix(string(data), want) {
 			t.Errorf("plan:\n%s", data)
 		}
-		events, _ := p.Events()
+		events := eventsBut(t, p, "property")
 		if len(events) != 2 || events[1].Kind != "referenced" {
 			t.Errorf("events %+v", events)
 		}
@@ -50,7 +50,7 @@ func TestReference(t *testing.T) {
 		if after, _ := os.ReadFile(p.file("")); string(after) != string(before) {
 			t.Errorf("plan changed:\n%s", after)
 		}
-		if events, _ := p.Events(); len(events) != 1 {
+		if events := eventsBut(t, p, "property"); len(events) != 1 {
 			t.Errorf("events %+v", events)
 		}
 	})

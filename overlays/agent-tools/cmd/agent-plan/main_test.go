@@ -521,7 +521,13 @@ func TestLog(t *testing.T) {
 		wg.Wait()
 		c, _ := plans.Load()
 		p, _ := c.Open(plan)
-		events, err := p.Events()
+		all, err := p.Events()
+		var events []plans.Event
+		for _, e := range all {
+			if e.Kind == "started" {
+				events = append(events, e)
+			}
+		}
 		if err != nil || len(events) != 30 {
 			t.Fatalf("%d events, %v", len(events), err)
 		}
@@ -597,7 +603,7 @@ func TestHooks(t *testing.T) {
 	// The quota ask joins whatever else the prompt is reminded of, in the
 	// harness's form.
 	t.Run("the quota ask", func(t *testing.T) {
-		imported(t)
+		plan := imported(t)
 		reset := time.Now().Add(time.Hour).Unix()
 		agentPlan(t, fmt.Sprintf(`{"session_id":"s-9","rate_limits":{"five_hour":{"used_percentage":80,"resets_at":%d}}}`,
 			reset), "statusline")
@@ -629,6 +635,20 @@ func TestHooks(t *testing.T) {
 		if code != 0 || json.Unmarshal([]byte(out), &got) != nil || !strings.HasPrefix(got.Context, "Claude's 5-hour window is at 92%") {
 			t.Errorf("ECA's ask: %d %q %q", code, out, errs)
 		}
+
+		// The session shown the ask has it in its plan's log, once.
+		c, _ := plans.Load()
+		p, _ := c.Open(plan)
+		events, _ := p.Events()
+		var asked []string
+		for _, e := range events {
+			if e.Kind == "usage-asked" {
+				asked = append(asked, e.Session+": "+e.Summary)
+			}
+		}
+		if len(asked) != 1 || !strings.HasPrefix(asked[0], "s-9: Claude's 5-hour window is at 80%, resetting ") {
+			t.Errorf("asks logged: %q", asked)
+		}
 	})
 
 	// ECA's postRequest hook gets the reason on stderr with exit 2, once per
@@ -643,29 +663,37 @@ func TestHooks(t *testing.T) {
 			t.Setenv(v, "t@e")
 		}
 		repo, _ := filepath.EvalSymlinks(t.TempDir())
+		os.WriteFile(filepath.Join(repo, "x"), []byte("x\n"), 0o644)
 		for _, args := range [][]string{
 			{"init", "-q", "-b", "main"},
 			{"commit", "-q", "--allow-empty", "-m", "base"},
 			{"update-ref", "refs/remotes/origin/main", "HEAD"},
-			{"commit", "-q", "--allow-empty", "-m", "Add x"},
+			{"add", "x"},
+			{"commit", "-q", "-m", "Add x"},
 		} {
 			if out, err := exec.Command("git", append([]string{"-C", repo, "-c", "commit.gpgsign=false"}, args...)...).CombinedOutput(); err != nil {
 				t.Fatalf("git %v: %v %s", args, err, out)
 			}
 		}
-		if err := plans.NoteCommit("chat-1", repo); err != nil {
+		c, err := plans.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, _, err := c.RecordCommit("chat-1", repo, plans.Event{Commit: "Add x", Summary: "Add x"}, time.Now())
+		if err != nil {
 			t.Fatal(err)
 		}
 		event, _ := json.Marshal(map[string]any{"hook_type": "postRequest", "chat_id": "chat-1", "cwd": repo})
 		code, out, errs := agentPlan(t, string(event), "stop-check")
-		if code != 2 || out != "" || !strings.Contains(errs, "agent-plan new") {
+		if code != 2 || out != "" || !strings.Contains(errs, "no review receipt matches") {
 			t.Fatalf("first stop: %d %q %q", code, out, errs)
 		}
 		if code, out, errs = agentPlan(t, string(event), "stop-check"); code != 0 || out != "" || errs != "" {
 			t.Errorf("second stop: %d %q %q", code, out, errs)
 		}
-		if _, err := os.Stat(plans.StopStateDir()); err != nil {
-			t.Errorf("state dir: %v", err)
+		events, _ := p.Events()
+		if last := events[len(events)-1]; last.Kind != "stop-blocked" || last.Session != "chat-1" {
+			t.Errorf("last event %+v", last)
 		}
 	})
 }

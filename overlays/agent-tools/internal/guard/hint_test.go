@@ -8,25 +8,38 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/wesnel/agent-tools/internal/plans"
 )
 
 // TestBranchHint covers the context the baseline hook adds when a file
-// edit lands in another worktree or branch than the session's last one.
-// Each case starts from a fresh repository and session state, and makes
+// edit lands in another worktree or branch than the session's last one,
+// which the session's plan logs as branch-changed. Each case starts from a
+// fresh repository and plan, which names the sessions s1 and s2, and makes
 // the edits that come before the one it checks.
 func TestBranchHint(t *testing.T) {
 	// hinting makes a repository, main, with a linked worktree on feature,
-	// under root, and returns a function that runs the baseline hook on a
-	// file edit and returns the context it adds and its decision.
+	// under root, and the plan, and returns a function that runs the
+	// baseline hook on a file edit and returns the context it adds and its
+	// decision.
 	hinting := func(t *testing.T) (root, main, linked string, edit func(session, tool, path string) (string, string)) {
 		t.Helper()
-		t.Setenv("XDG_STATE_HOME", t.TempDir())
 		root, _ = filepath.EvalSymlinks(t.TempDir())
 		main, linked = filepath.Join(root, "main"), filepath.Join(root, "linked")
 		os.Mkdir(main, 0o755)
 		gitIn(t, main, "init", "-q", "-b", "main")
 		gitIn(t, main, "commit", "-q", "--allow-empty", "-m", "base")
 		gitIn(t, main, "worktree", "add", "-q", "-b", "feature", linked)
+		c := plans.Config{Dir: filepath.Join(root, "agents"), Host: "box"}
+		config := filepath.Join(root, "config.json")
+		data, _ := json.Marshal(map[string]any{"plans": c})
+		os.WriteFile(config, data, 0o644)
+		t.Setenv("AGENT_TOOLS_CONFIG", config)
+		if _, err := c.New(plans.NewOptions{Title: "Add the loop", Slug: "loop", Sessions: []string{"claude:s1", "claude:s2"}},
+			time.Now()); err != nil {
+			t.Fatal(err)
+		}
 
 		edit = func(session, tool, path string) (context, decision string) {
 			t.Helper()
@@ -119,11 +132,34 @@ func TestBranchHint(t *testing.T) {
 		}
 	})
 
-	t.Run("a session ID that is a path", func(t *testing.T) {
+	t.Run("a session without a plan", func(t *testing.T) {
 		_, main, linked, edit := hinting(t)
-		edit("../x", "Edit", filepath.Join(main, "a.go"))
-		if c, _ := edit("../x", "Edit", filepath.Join(linked, "b.go")); c != "" {
-			t.Errorf("a session ID that is a path: %q", c)
+		edit("s9", "Edit", filepath.Join(main, "a.go"))
+		if c, _ := edit("s9", "Edit", filepath.Join(linked, "b.go")); c != "" {
+			t.Errorf("a session without a plan: %q", c)
+		}
+	})
+
+	// The plan's log holds each change of branch, and only those.
+	t.Run("the plan's log", func(t *testing.T) {
+		_, main, linked, edit := hinting(t)
+		edit("s1", "Edit", filepath.Join(main, "a.go"))
+		edit("s1", "Edit", filepath.Join(main, "b.go"))
+		edit("s1", "Edit", filepath.Join(linked, "b.go"))
+		gitIn(t, linked, "switch", "-q", "--detach")
+		edit("s1", "Edit", filepath.Join(linked, "b.go"))
+		edit("s2", "Edit", filepath.Join(linked, "b.go"))
+		c, _ := plans.Load()
+		p, _, _ := c.Locate("s1", "")
+		events, _ := p.Events()
+		var got []string
+		for _, e := range events {
+			got = append(got, e.Kind+" "+e.Session+" "+e.Branch+" "+e.Worktree)
+		}
+		want := []string{"branch-changed s1 main " + main, "branch-changed s1 feature " + linked,
+			"branch-changed s1  " + linked, "branch-changed s2  " + linked}
+		if strings.Join(got, "\n") != strings.Join(want, "\n") {
+			t.Errorf("logged:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 		}
 	})
 }

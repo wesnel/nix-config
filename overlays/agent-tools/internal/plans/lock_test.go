@@ -37,7 +37,7 @@ func TestLock(t *testing.T) {
 		if len(inFile) != 20 || len(fileIDs) != 20 {
 			t.Errorf("the file holds %d questions, %d distinct:\n%s", len(inFile), len(fileIDs), data)
 		}
-		events, _ := p.Events()
+		events := eventsBut(t, p, "property")
 		logIDs := map[string]bool{}
 		for _, e := range events {
 			if e.Kind == "asked" {
@@ -67,7 +67,7 @@ func TestLock(t *testing.T) {
 			}()
 			go func() {
 				defer wg.Done()
-				if _, err := p.AddToProperty("", "BRANCHES", fmt.Sprintf("b%d", i)); err != nil {
+				if _, err := p.AddToProperty("", "BRANCHES", fmt.Sprintf("b%d", i), day); err != nil {
 					t.Error(err)
 				}
 			}()
@@ -96,7 +96,7 @@ func TestLock(t *testing.T) {
 			t.Fatal(err)
 		}
 		before, _ := os.ReadFile(p.file(""))
-		_, err := p.AddToProperty("", "BRANCHES", "other")
+		_, err := p.AddToProperty("", "BRANCHES", "other", day)
 		isRefusal(t, "a file Emacs is editing", err)
 		if after, _ := os.ReadFile(p.file("")); string(after) != string(before) {
 			t.Errorf("the file changed:\n%s", after)

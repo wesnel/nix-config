@@ -3,51 +3,55 @@ package guard
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"regexp"
-	"strings"
-)
+	"time"
 
-// sessionID matches a session ID that is safe as a file name.
-var sessionID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	"github.com/wesnel/agent-tools/internal/plans"
+)
 
 // branchHint is the context for a file edit, by Claude Code's Edit, Write
 // or MultiEdit, that lands in another worktree or on another branch than
-// the session's last edit, which it records under
-// $XDG_STATE_HOME/agent-tools/branch/<session>; "" otherwise. It never
-// denies.
+// the session's last edit; "" otherwise. The session's plan, the one
+// naming the session, else the edit's worktree, logs each change as a
+// branch-changed event, from which the next edit reads the last; a
+// session without a plan gets no hint. It never denies.
 func branchHint(session string, toolInput json.RawMessage, cwd string) string {
 	var in struct {
 		FilePath string `json:"file_path"`
 	}
 	json.Unmarshal(toolInput, &in)
-	if !sessionID.MatchString(session) || in.FilePath == "" {
+	if session == "" || in.FilePath == "" {
 		return ""
 	}
 	top, g := worktreeOf(expandPath(in.FilePath, cwd))
 	if top == "" {
 		return ""
 	}
-	branch, _ := g.run("branch", "--show-current")
-	if branch == "" {
-		head, _ := g.run("rev-parse", "--short", "HEAD")
-		branch = "a detached HEAD at " + head
-	}
-	state := os.Getenv("XDG_STATE_HOME")
-	if state == "" {
-		state = filepath.Join(home, ".local", "state")
-	}
-	file := filepath.Join(state, "agent-tools", "branch", session)
-	now := branch + "\t" + top
-	last, _ := os.ReadFile(file)
-	if string(last) != now {
-		os.MkdirAll(filepath.Dir(file), 0o700)
-		os.WriteFile(file, []byte(now), 0o600)
-	}
-	lastBranch, lastTop, ok := strings.Cut(string(last), "\t")
-	if !ok || string(last) == now {
+	c, err := plans.Load()
+	if err != nil {
 		return ""
 	}
-	return fmt.Sprintf("This edit is on %s in %s; the last one was on %s in %s.", branch, top, lastBranch, lastTop)
+	p, _, ok := c.Locate(session, "")
+	if !ok {
+		if p, _, ok = c.Locate("", top); !ok {
+			return ""
+		}
+	}
+	branch, tip := "", ""
+	if branch, _ = g.run("branch", "--show-current"); branch == "" {
+		tip, _ = g.run("rev-parse", "--short", "HEAD")
+	}
+	last, had, logged, err := p.NoteBranch(session, branch, tip, top, time.Now())
+	if err != nil || !had || !logged {
+		return ""
+	}
+	return fmt.Sprintf("This edit is on %s in %s; the last one was on %s in %s.", describe(branch, tip), top,
+		describe(last.Branch, last.Tip), last.Worktree)
+}
+
+// describe names a branch, or a detached HEAD at tip where branch is "".
+func describe(branch, tip string) string {
+	if branch == "" {
+		return "a detached HEAD at " + tip
+	}
+	return branch
 }
