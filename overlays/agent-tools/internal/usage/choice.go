@@ -13,9 +13,8 @@ import (
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
-// Choice is Wesley's answer to the quota ask for a provider: "keep" the
-// usual tiers, start new sub-agents one tier "down", or "postpone" work,
-// until the window that prompted it resets.
+// Choice is Wesley's answer to the quota ask for a provider: "keep" going,
+// or "postpone" the task, until the window that prompted it resets.
 type Choice struct {
 	Provider  string `json:"provider"`
 	Choice    string `json:"choice"`
@@ -24,7 +23,7 @@ type Choice struct {
 }
 
 // Choices are the answers Choose takes.
-var Choices = []string{"keep", "down", "postpone"}
+var Choices = []string{"keep", "postpone"}
 
 // Binding is the window a choice for r lasts for: the one used most at or
 // over Warn, the later reset breaking a tie; else the one used most.
@@ -45,7 +44,7 @@ func CheckChoice(provider, choice string) error {
 		return refusal.New("%q is not a provider. Pass one of %s", provider, strings.Join(Providers, ", "))
 	}
 	if !slices.Contains(Choices, choice) {
-		return refusal.New("%q is not a choice. Pass one of %s", choice, strings.Join(Choices, ", "))
+		return refusal.New("%q is not a choice. Pass %s", choice, strings.Join(Choices, " or "))
 	}
 	return nil
 }
@@ -74,7 +73,7 @@ func (s State) Choice(provider string, now time.Time) (Choice, bool) {
 		return Choice{}, false
 	}
 	var c Choice
-	if json.Unmarshal(data, &c) != nil || c.Provider != provider || c.Until <= now.Unix() {
+	if json.Unmarshal(data, &c) != nil || c.Provider != provider || !slices.Contains(Choices, c.Choice) || c.Until <= now.Unix() {
 		return Choice{}, false
 	}
 	return c, true
@@ -82,10 +81,7 @@ func (s State) Choice(provider string, now time.Time) (Choice, bool) {
 
 // mark is how the status line shows a choice, or "".
 func (c Choice) mark(now time.Time) string {
-	switch c.Choice {
-	case "down":
-		return "↓tier"
-	case "postpone":
+	if c.Choice == "postpone" {
 		return "wait→" + Clock(c.Until, now)
 	}
 	return ""
@@ -127,22 +123,18 @@ func WindowTitle(name string) string {
 func Question(r Reading, known bool, now time.Time) QuestionText {
 	w, ok := Binding(r)
 	until := "for five hours"
-	text := Title(r.Provider) + "'s quota is unknown on this host: which model tier do new sub-agents get for five hours?"
+	text := Title(r.Provider) + "'s quota is unknown on this host: keep going, or postpone the task for five hours?"
 	if known && ok {
 		until = "until " + Clock(w.ResetsAt, now)
-		text = fmt.Sprintf("%s's %s window is at %d%%, resetting %s: which model tier do new sub-agents get until then?",
+		text = fmt.Sprintf("%s's %s window is at %d%%, resetting %s: keep going, or postpone the task until then?",
 			Title(r.Provider), WindowTitle(w.Name), int(math.Floor(w.Used)), Clock(w.ResetsAt, now))
 	}
+	postpone := "Postpone the task " + until
 	return QuestionText{
 		Text:           text,
-		Recommendation: "Keep the usual tiers",
-		Alternatives: []string{"New sub-agents one tier down, reviewers kept",
-			"Postpone the work that needs the usual tier " + until},
-		Answers: map[string]string{
-			"keep":     "Keep the usual tiers",
-			"down":     "New sub-agents one tier down " + until + "; reviewers, running agents and sessions keep theirs",
-			"postpone": "Postpone the work that needs the usual tier " + until,
-		},
+		Recommendation: "Keep going",
+		Alternatives:   []string{postpone},
+		Answers:        map[string]string{"keep": "Keep going", "postpone": postpone},
 	}
 }
 

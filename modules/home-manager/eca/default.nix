@@ -335,8 +335,8 @@ in {
         })}
         # Wesley's prompt: its URLs become plan references. A chat with a
         # parent_chat_id is a sub-agent's, which agent-plan skips. Asks once
-        # per quota threshold of the model's provider which tier new
-        # sub-agents get, from the readings other sessions on this host made.
+        # per quota threshold of the model's provider whether to keep going
+        # or postpone, from the readings other sessions on this host made.
         prompt=${escapeShellArg (builtins.toJSON {
           type = "preRequest";
           visible = false;

@@ -107,10 +107,10 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      network
   usage [--json]     this host's last reading of each provider's quota windows,
                      and Wesley's choice while it lasts
-  usage choose PROVIDER keep|down|postpone [--plan PLAN] [--answer TEXT]
-                     record Wesley's answer to the quota ask: keep the usual
-                     tiers, start new sub-agents one tier down, or postpone
-                     work, until the window that prompted it resets; with a
+  usage choose PROVIDER keep|postpone [--plan PLAN] [--answer TEXT]
+                     record Wesley's answer to the quota ask: keep going, or
+                     postpone the task, until the window that prompted it
+                     resets; with a
                      plan, also as a question he decided, his own words in
                      --answer, written once: run again, it changes nothing,
                      and another answer to the same question is refused.
@@ -144,7 +144,7 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      Codex's UserPromptSubmit, ECA's preRequest); and on those
                      prompts, once per host when a quota window of the
                      session's provider passes 75% and again at 90%, asks
-                     for Wesley's choice of tiers (see usage choose), having
+                     whether to keep going or postpone (see usage choose), having
                      read Codex's quota from its rollout, and logs the ask as
                      usage-asked in the session's plan; and on those
                      prompts, task-notifications included, adds a line for
@@ -746,7 +746,7 @@ func usageCommand(c plans.Config, args []string, planFile, answer string, asJSON
 		result.Choice = chosen
 		return report(result, nil)
 	}
-	fmt.Fprint(stderr, "agent-plan usage: takes nothing, or choose PROVIDER keep|down|postpone [--plan PLAN] [--answer TEXT]\n")
+	fmt.Fprint(stderr, "agent-plan usage: takes nothing, or choose PROVIDER keep|postpone [--plan PLAN] [--answer TEXT]\n")
 	return 2
 }
 

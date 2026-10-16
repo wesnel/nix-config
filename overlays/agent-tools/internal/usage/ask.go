@@ -19,14 +19,8 @@ const Urgent = 90
 // the provider part of its full_model.
 var modelProviders = map[string]string{"anthropic": "claude", "openai": "codex"}
 
-// tierHints say what one tier down is for each provider's sub-agents.
-var tierHints = map[string]string{
-	"claude": " (Opus to Sonnet, Sonnet to Haiku)",
-	"codex":  " (a smaller model, through spawn_agent's model)",
-}
-
 // Remind is the usage part of `agent-plan remind`: on a main thread's
-// prompt, it asks for Wesley's choice of tiers when a window of the
+// prompt, it asks Wesley whether to keep going or postpone when a window of the
 // session's provider has crossed Warn or Urgent since the last ask on this
 // host, or returns "". Codex's turn records the reading of its rollout
 // first, since Codex has no status line that does.
@@ -100,12 +94,11 @@ func (s State) ask(provider string, now time.Time) string {
 	if c, ok := s.Choice(provider, now); ok {
 		text += fmt.Sprintf("His answer so far: %s until %s. ", c.Choice, Clock(c.Until, now))
 	}
-	return text + fmt.Sprintf("Ask Wesley once, in your reply, which he wants until then: (a) keep the usual model tiers; "+
-		"(b) start new sub-agents one tier down%s, while reviewers keep theirs; (c) postpone the work that needs the "+
-		"usual tier until %s. Change no running agent's or session's model. Until he answers, keep the usual tiers. "+
-		"Record his answer with `agent-plan usage choose %s keep|down|postpone --plan PLAN`, and for (c), once he "+
+	return text + fmt.Sprintf("Ask Wesley once, in your reply, which he wants until then: (a) keep going; "+
+		"(b) postpone the task until %s. Until he answers, keep going. "+
+		"Record his answer with `agent-plan usage choose %s keep|postpone --plan PLAN`, and for (b), once he "+
 		"approves it, run `agent-plan postpone PLAN ID --until '%s'` for each step or part that waits.",
-		tierHints[provider], reset, provider, time.Unix(w.ResetsAt, 0).In(now.Location()).Format("2006-01-02 15:04"))
+		reset, provider, time.Unix(w.ResetsAt, 0).In(now.Location()).Format("2006-01-02 15:04"))
 }
 
 // mark creates the ask's mark name, and reports whether this call made it:
