@@ -71,6 +71,23 @@ Each finding has one kind:
 An earlier finding that the change claims to settle but does not is
 `unresolved`, with `reopens` naming it.
 
+## Routes
+
+Besides its findings, say which focused reviews the change needs. A route
+is not a finding: it asks for a reviewer with a narrower brief, and needs
+no problem found. Route `security` where the change:
+
+- takes input it did not make: from the network, other people's files,
+  pull request, issue or MCP text, or repository content a tool runs;
+- authenticates or authorises anything;
+- handles secrets, credentials or cryptography;
+- runs programs or a shell;
+- exposes anything: listeners, permissions, sandbox or guard rules, file
+  modes;
+- handles customer data, or logs;
+- adds or changes dependencies;
+- changes agent or tooling configuration, skills and prompts included.
+
 ## Output
 
 Reply with one JSON object and nothing else:
@@ -90,7 +107,10 @@ Reply with one JSON object and nothing else:
       "reopens": null
     }
   ],
-  "unverified": ["What you could not check, and why."]
+  "unverified": ["What you could not check, and why."],
+  "routes": [
+    {"route": "security", "why": "It runs the command a config file names.", "paths": ["internal/x/run.go"]}
+  ]
 }
 ```
 
@@ -107,3 +127,5 @@ Reply with one JSON object and nothing else:
 - `reopens`: the ID of the earlier finding it reopens, or null.
 - `unverified`: one entry for each check you could not make, such as a test
   that would not run; empty when there is none.
+- `routes`: each focused review the change needs, as Routes says, with why
+  in one sentence and the paths that need it; empty when there is none.

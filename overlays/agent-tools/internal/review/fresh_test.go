@@ -69,6 +69,7 @@ case "$FAKE_CODEX" in
   hang) exec sleep 60 ;;
   fork) echo $$ > "$FAKE_CODEX_LOG/group"; i=0; while [ $i -lt 300 ]; do sleep 30 > /dev/null 2>&1 & i=$((i+1)); if [ $i = 20 ]; then echo > "$FAKE_CODEX_LOG/started"; fi; done; wait ;;
   none) echo '{"findings": [], "unverified": []}' > "$out" ;;
+  routed) echo '{"findings": [], "unverified": [], "routes": [{"route": "security", "why": "it reads a token", "paths": ["code.txt"]}, {"route": "style", "why": "x", "paths": []}]}' > "$out" ;;
   answer) echo '{"answer": "Extend the seam.", "unverified": ["the callers"]}' > "$out" ;;
   *) cat > "$out" <<EOF
 {"findings": [
@@ -146,6 +147,11 @@ type output struct {
 	Findings   []map[string]any `json:"findings"`
 	Dropped    []map[string]any `json:"dropped"`
 	Unverified []string         `json:"unverified"`
+	Routes     []struct {
+		Route   string   `json:"route"`
+		Why     []string `json:"why"`
+		Commits []string `json:"commits"`
+	} `json:"routes"`
 }
 
 func freshReview(t *testing.T, args ...string) (int, output, string) {

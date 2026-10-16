@@ -16,6 +16,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/redcheck"
 	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/repos"
+	"github.com/wesnel/agent-tools/internal/routes"
 )
 
 // mechanicalPrefix starts the ID of every finding red-check raises, and of
@@ -40,6 +41,16 @@ type adequacy struct {
 	buildOnly []string
 }
 
+// usableSettings refuses repos settings for r's repository that a review
+// cannot use, saying what to fix, where they would otherwise leave out the
+// test settings and route rules beside them.
+func usableSettings(r *span) error {
+	git.Dir = r.top
+	_, err := repos.Lookup()
+	git.Dir = ""
+	return err
+}
+
 // testAdequacy reads data, git red-check's JSON on r from file, the
 // --red-check file ("" where none was given), and turns each commit whose
 // tests pass without the rest of it into an `untested` finding. It refuses
@@ -51,10 +62,15 @@ func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, 
 	git.Dir = r.top
 	settings, err := repos.Lookup()
 	git.Dir = ""
-	if err != nil && file != "" {
-		return nil, err
+	if err != nil {
+		if file != "" {
+			return nil, err
+		}
+		// Main refused unusable settings; they changed since.
+		fmt.Fprintf(log, "%s: test adequacy is left out: %v\n", name, err)
+		return &adequacy{configured: true}, nil
 	}
-	a := &adequacy{configured: err == nil && settings.Test != "" && len(settings.TestFiles) > 0, given: file != ""}
+	a := &adequacy{configured: settings.Test != "" && len(settings.TestFiles) > 0, given: file != ""}
 	switch {
 	case !a.given:
 		if a.configured {
@@ -318,6 +334,23 @@ func (a *adequacy) prompt() string {
 		for _, f := range a.findings {
 			fmt.Fprintf(&b, "- %s at %s:%d\n", f.ID, f.Path, f.Line)
 		}
+	}
+	return b.String()
+}
+
+// sharedPrompt is what the reviewer is told of the files r changes that
+// hold tests beside their code, whose tests red-check cannot run without
+// the rest of them: the verdict shared-file, judged by the reviewer.
+func sharedPrompt(r *span) string {
+	files, err := routes.SharedFiles(r.top, r.base, r.tip)
+	if err != nil || len(files) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nThese changed files hold tests beside the code they test (verdict shared-file), which red-check cannot " +
+		"run apart from it: judge whether their tests test the change, and report an `untested` finding where they do not.\n\n")
+	for _, f := range files {
+		fmt.Fprintf(&b, "- %s\n", f)
 	}
 	return b.String()
 }

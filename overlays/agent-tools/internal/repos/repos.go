@@ -17,6 +17,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/refusal"
+	"github.com/wesnel/agent-tools/internal/routes"
 )
 
 // Settings are how agents prepare, build and test one repository.
@@ -32,6 +33,9 @@ type Settings struct {
 	Build string `json:"build,omitempty"`
 	// TestFiles are git pathspec globs (`:(glob)` magic) for test files.
 	TestFiles []string `json:"testFiles,omitempty"`
+	// Routes are rules that route this repository's changes to focused
+	// reviews beside the built-in ones, which they only add to.
+	Routes []routes.Rule `json:"routes,omitempty"`
 }
 
 // Path is the user's config file: agent-tools/config.json under the XDG
@@ -90,6 +94,13 @@ func Lookup() (*Settings, error) {
 	}
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, err
+	}
+	for repo, s := range config.Repos {
+		for _, r := range s.Routes {
+			if err := r.Check(); err != nil {
+				return nil, refusal.New("%s's routes in %s: %v", repo, Path(), err)
+			}
+		}
 	}
 	remotes, err := remotes(repositoryConfig)
 	if err != nil {

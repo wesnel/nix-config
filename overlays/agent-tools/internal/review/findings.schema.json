@@ -1,7 +1,7 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["findings", "unverified"],
+  "required": ["findings", "unverified", "routes"],
   "properties": {
     "findings": {
       "type": "array",
@@ -29,6 +29,20 @@
       "type": "array",
       "items": {"type": "string"},
       "description": "Each check that could not be made, and why."
+    },
+    "routes": {
+      "type": "array",
+      "description": "Each focused review the change needs.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["route", "why", "paths"],
+        "properties": {
+          "route": {"type": "string", "enum": ["security"]},
+          "why": {"type": "string", "description": "Why the change needs it, in one sentence."},
+          "paths": {"type": "array", "items": {"type": "string"}, "description": "The paths that need it."}
+        }
+      }
     }
   }
 }
