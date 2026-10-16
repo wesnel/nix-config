@@ -77,6 +77,14 @@ as `origin/main` or the parent branch in a stack.
 5. Stop after a round with no findings, or after three rounds. A finding
    still standing goes in the hand-back.
 
+## Focused reviews
+
+Each route the general review printed needs its own review once the
+general loop has settled: `git fresh-review --focus security --goal GOAL
+BASE..TIP`, the same range and goal. Settle each finding as Triage says. A
+fix moves the change, so the general review and each route's run again on
+it, within the same three rounds.
+
 ## Someone else's pull request
 
 The source is `pr-loop review`, not `git fresh-review`: it fetches the pull

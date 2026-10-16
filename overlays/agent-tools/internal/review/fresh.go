@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,10 +24,10 @@ import (
 )
 
 // Usage is `git fresh-review -h`.
-const Usage = `usage: git fresh-review --goal FILE [--items FILE] [--prior FILE] [--red-check FILE]
-                        [--reviewer auto|codex] [--model M] [--timeout S] BASE..TIP
-       git fresh-review --print-prompt --goal FILE [--items FILE] [--prior FILE] [--red-check FILE]
-                        BASE..TIP
+const Usage = `usage: git fresh-review [--focus ROUTE] --goal FILE [--items FILE] [--prior FILE]
+                        [--red-check FILE] [--reviewer auto|codex] [--model M] [--timeout S] BASE..TIP
+       git fresh-review --print-prompt [--focus ROUTE] --goal FILE [--items FILE] [--prior FILE]
+                        [--red-check FILE] BASE..TIP
        git fresh-review ask --question FILE PATH...   (see git fresh-review ask -h)
 
 Reviews the commits in BASE..TIP with a reviewer that did not write them and
@@ -61,6 +62,14 @@ settings add as routes; and the routes the reviewer names. They are
 printed as routes, each with why and the commits that need it, and stderr
 says how to run each.
 
+With --focus ROUTE, the review is that route's focused review: the same
+runner, confinement and rules, with the route's checks and checklist in
+place of the general ones, no red-check, so --red-check is refused, and
+no routing. A security reply must name every category of its checklist
+as checked, or it is not counted. Its findings' ids start with the route,
+as security-1.
+
+  --focus ROUTE     the focused review to run: security
   --goal FILE       the goal statement (required)
   --items FILE      the items the change answers, and how each was settled
   --prior FILE      earlier rounds' findings and how each was settled
@@ -76,8 +85,8 @@ Writes JSON on stdout: reviewer, model, range, tip, findings (each with
 id, path, line, kind, claim and evidence, and endLine, about, reopens and
 reviewer where given), dropped (findings whose path:line does not exist at
 TIP, or that do not fit the schema, each with its reason), unverified
-and, where the change needs any, routes. Exit
-status:
+and, where the change needs any, routes; a focused review adds focus.
+Exit status:
   0  no findings
   3  findings
   4  Codex cannot review here: it is not installed or not signed in, its
@@ -103,6 +112,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	model := flags.String("model", "", "")
 	timeout := flags.Int("timeout", 1800, "")
 	printPrompt := flags.Bool("print-prompt", false, "")
+	focusName := flags.String("focus", "", "")
 
 	// Flags may follow the range, as with git's own commands.
 	var positional []string
@@ -123,6 +133,14 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	report := func(result any, err error, code int) int {
 		return cli.Report(name, result, err, code, stdout, stderr)
 	}
+	var fc *focus
+	if *focusName != "" {
+		f, err := focusNamed(*focusName)
+		if err != nil {
+			return report(nil, err, 0)
+		}
+		fc = &f
+	}
 	if err := git.CheckConfig(""); err != nil {
 		return report(nil, err, 0)
 	}
@@ -135,6 +153,9 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	}
 
 	in := inputs{r: r}
+	if fc != nil {
+		in.contract = fc.contract()
+	}
 	if *goal == "" {
 		return report(nil, refusal.New("a review is judged against a goal statement; write the goal, and what is not this change's job, "+
 			"to a file and pass `--goal FILE`"), 0)
@@ -156,17 +177,23 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			}
 		}
 	}
-	var redCheckJSON string
-	if *redCheckFile != "" {
-		if redCheckJSON, err = readFile(*redCheckFile, stdin); err != nil {
+	tests := &adequacy{}
+	switch {
+	case fc != nil && *redCheckFile != "":
+		return report(nil, refusal.New("a focused review judges no test adequacy, so it takes no red-check results; "+
+			"pass `--red-check %s` to the general review instead", *redCheckFile), 0)
+	case fc == nil:
+		var redCheckJSON string
+		if *redCheckFile != "" {
+			if redCheckJSON, err = readFile(*redCheckFile, stdin); err != nil {
+				return report(nil, err, 0)
+			}
+		}
+		if tests, err = testAdequacy(r, *redCheckFile, []byte(redCheckJSON), stderr); err != nil {
 			return report(nil, err, 0)
 		}
+		in.redCheck, in.adequacy = tests.text, tests.prompt()+sharedPrompt(r)
 	}
-	tests, err := testAdequacy(r, *redCheckFile, []byte(redCheckJSON), stderr)
-	if err != nil {
-		return report(nil, err, 0)
-	}
-	in.redCheck, in.adequacy = tests.text, tests.prompt()+sharedPrompt(r)
 
 	noCodex := func(why string) int {
 		fmt.Fprintf(stderr, "%s: Codex cannot review here: %s. Run `git fresh-review` where Codex's sandbox can start "+
@@ -186,7 +213,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		return 0
 	}
 
-	out, err := codexReview(ctx, in, *model, time.Duration(*timeout)*time.Second, stderr)
+	out, err := codexReview(ctx, in, *focusName, fc, *model, time.Duration(*timeout)*time.Second, stderr)
 	var unconfined Unconfined
 	if errors.As(err, &unconfined) {
 		return noCodex(string(unconfined))
@@ -195,7 +222,17 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		return report(nil, err, 0)
 	}
 	tests.add(out)
-	routeChange(r, out, stderr)
+	return finish(r, out, *focusName, report, stderr)
+}
+
+// finish routes a general review's change, or marks a focused review's
+// output with its focus, and reports out.
+func finish(r *span, out *Output, focusName string, report func(any, error, int) int, log io.Writer) int {
+	if focusName == "" {
+		routeChange(r, out, log)
+	} else {
+		out.Focus = focusName
+	}
 	return report(out, nil, out.exit())
 }
 
@@ -279,6 +316,8 @@ type inputs struct {
 	// red-check's results.
 	adequacy string
 	where    string
+	// contract is a focused review's instructions, in place of Contract.
+	contract string
 }
 
 // prompt is the contract, then the range, the goal statement, the items, the
@@ -286,7 +325,11 @@ type inputs struct {
 // the author's beyond them.
 func prompt(in inputs) string {
 	var b strings.Builder
-	b.WriteString(Contract)
+	if in.contract != "" {
+		b.WriteString(in.contract)
+	} else {
+		b.WriteString(Contract)
+	}
 	fmt.Fprintf(&b, "\n# This review\n\n## Range\n\nBASE..TIP is %s..%s (given as `%s`). Its commits, oldest first:\n\n%s\n\n%s\n",
 		in.r.base, in.r.tip, in.r.given, in.r.commits, in.where)
 	fmt.Fprintf(&b, "\n## Goal statement\n\n%s\n", strings.TrimSpace(in.goal))
@@ -323,12 +366,13 @@ func Prompt(in Inputs) string {
 // Validate is validate for a caller that resolves the range itself: blob
 // returns a file as it is at TIP, or an error where there is none.
 func Validate(reply, given, tip string, blob func(path string) ([]byte, error), wt string) (*Output, error) {
-	return validateWith(reply, given, tip, blob, wt)
+	return validateWith(reply, given, tip, blob, wt, "", nil)
 }
 
 // codexReview runs Codex read-only in a throwaway worktree of TIP, which it
 // removes however the review ends.
-func codexReview(ctx context.Context, in inputs, model string, timeout time.Duration, log io.Writer) (*Output, error) {
+func codexReview(ctx context.Context, in inputs, focusName string, fc *focus, model string, timeout time.Duration,
+	log io.Writer) (*Output, error) {
 	parent := filepath.Join(in.r.common, "fresh-review")
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return nil, err
@@ -349,11 +393,15 @@ func codexReview(ctx context.Context, in inputs, model string, timeout time.Dura
 	}
 	in.where = "The working directory is a checkout of TIP holding nothing but the commits; `git diff " +
 		in.r.base + " " + in.r.tip + "` shows the change."
-	reply, err := CodexRun(ctx, Codex{Checkout: wt, Prompt: prompt(in), Schema: Schema, Model: model, Timeout: timeout, Log: log})
+	schema := Schema
+	if fc != nil {
+		schema = fc.schema()
+	}
+	reply, err := CodexRun(ctx, Codex{Checkout: wt, Prompt: prompt(in), Schema: schema, Model: model, Timeout: timeout, Log: log})
 	if err != nil {
 		return nil, err
 	}
-	out, err := validate(reply.Text, in.r, wt)
+	out, err := validate(reply.Text, in.r, wt, focusName, fc)
 	if err != nil {
 		return nil, err
 	}
@@ -645,6 +693,8 @@ type Output struct {
 	// Routes are the focused reviews the change needs, where a general
 	// review found any.
 	Routes []routes.Route `json:"routes,omitempty"`
+	// Focus is a focused review's route.
+	Focus string `json:"focus,omitempty"`
 	// proposed are the routes the reviewer's reply named.
 	proposed []proposedRoute
 }
@@ -669,15 +719,19 @@ var kinds = map[string]bool{"goal-unmet": true, "bug": true, "regression": true,
 // validate parses a reviewer's reply, which may be wrapped in prose or a
 // code fence, and keeps the findings that fit the schema and point at a line
 // that exists at TIP. A path inside wt, the checkout the reviewer read, is
-// made relative to it.
-func validate(reply string, r *span, wt string) (*Output, error) {
+// made relative to it. A focused review's reply, of focus fc named
+// focusName, may hold its kinds too, must name every category of its
+// checklist as checked, and has its findings' IDs prefixed with the
+// focus, so that settling one never names a general review's.
+func validate(reply string, r *span, wt, focusName string, fc *focus) (*Output, error) {
 	blob := func(path string) ([]byte, error) {
 		return git.Bytes(nil, "-C", r.top, "cat-file", "blob", r.tip+":"+path)
 	}
-	return validateWith(reply, r.given, r.tip, blob, wt)
+	return validateWith(reply, r.given, r.tip, blob, wt, focusName, fc)
 }
 
-func validateWith(reply, given, tip string, blob func(path string) ([]byte, error), wt string) (*Output, error) {
+func validateWith(reply, given, tip string, blob func(path string) ([]byte, error), wt, focusName string,
+	fc *focus) (*Output, error) {
 	text := strings.TrimSpace(reply)
 	start, end := strings.Index(text, "{"), strings.LastIndex(text, "}")
 	if start < 0 || end < start {
@@ -687,9 +741,22 @@ func validateWith(reply, given, tip string, blob func(path string) ([]byte, erro
 		Findings   *[]json.RawMessage `json:"findings"`
 		Unverified []string           `json:"unverified"`
 		Routes     []proposedRoute    `json:"routes"`
+		Checked    []string           `json:"checked"`
 	}
 	if err := json.Unmarshal([]byte(text[start:end+1]), &parsed); err != nil || parsed.Findings == nil {
 		return nil, fmt.Errorf("the reply is not the JSON the contract describes (%v); ask the reviewer again", err)
+	}
+	allowed := kinds
+	if fc != nil {
+		if left := fc.unchecked(parsed.Checked); len(left) > 0 {
+			return nil, fmt.Errorf("the reply does not name as checked the categories %s of its checklist; "+
+				"ask a new reviewer to go through every one", strings.Join(left, ", "))
+		}
+		allowed = maps.Clone(kinds)
+		for _, k := range fc.kinds {
+			allowed[k] = true
+		}
+		parsed.Routes = nil
 	}
 	out := &Output{Range: given, Tip: tip, Findings: []*Finding{}, Dropped: []Dropped{}, Unverified: []string{},
 		proposed: parsed.Routes}
@@ -699,7 +766,10 @@ func validateWith(reply, given, tip string, blob func(path string) ([]byte, erro
 	seen := map[string]bool{}
 	lines := map[string]int{}
 	for _, raw := range *parsed.Findings {
-		f, why := normalise(raw, blob, wt, lines)
+		f, why := normalise(raw, blob, wt, lines, allowed)
+		if why == "" && focusName != "" {
+			f.ID = focusName + "-" + f.ID
+		}
 		if why == "" && seen[f.ID] {
 			why = "another finding has the id " + f.ID
 		}
@@ -715,7 +785,8 @@ func validateWith(reply, given, tip string, blob func(path string) ([]byte, erro
 
 // normalise checks one finding, returning it cleaned up or why it is
 // dropped. lines caches each file's line count at TIP, -1 for no such file.
-func normalise(raw json.RawMessage, blob func(path string) ([]byte, error), wt string, lines map[string]int) (*Finding, string) {
+func normalise(raw json.RawMessage, blob func(path string) ([]byte, error), wt string, lines map[string]int,
+	kinds map[string]bool) (*Finding, string) {
 	var f Finding
 	if err := json.Unmarshal(raw, &f); err != nil {
 		return nil, "does not fit the schema: " + err.Error()

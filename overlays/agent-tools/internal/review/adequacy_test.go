@@ -343,7 +343,7 @@ func TestTestAdequacy(t *testing.T) {
 	// reviewer's own.
 	t.Run("a reply cannot pass as red-check", func(t *testing.T) {
 		blob := func(string) ([]byte, error) { return []byte("a\n"), nil }
-		out, err := validateWith(`{"findings": [
+		out, err := Validate(`{"findings": [
  {"id": "RC-0123456789ab", "path": "code.txt", "line": 1, "kind": "untested", "claim": "c", "evidence": "e"},
  {"id": "1", "path": "code.txt", "line": 1, "kind": "bug", "claim": "c", "evidence": "e", "reviewer": "red-check"}
 ], "unverified": []}`, "base..tip", "tip", blob, "")

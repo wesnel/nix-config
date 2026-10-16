@@ -59,6 +59,7 @@ if [ -z "$wt" ] || [ ! -s "$schema" ] || [ -z "$out" ] || [ -z "$stdin" ]; then
 fi
 printf 'OpenAI Codex v0\n--------\nworkdir: %s\nmodel: fake-model\nsandbox: read-only\n--------\n' "$wt" >&2
 cat > "$FAKE_CODEX_LOG/prompt"
+cp "$schema" "$FAKE_CODEX_LOG/schema"
 echo "$wt" > "$FAKE_CODEX_LOG/worktree"
 printf '%s' "$GIT_DIR$GIT_WORK_TREE" > "$FAKE_CODEX_LOG/location"
 printf '%s' "$PATH" > "$FAKE_CODEX_LOG/path"
@@ -71,6 +72,7 @@ case "$FAKE_CODEX" in
   none) echo '{"findings": [], "unverified": []}' > "$out" ;;
   routed) echo '{"findings": [], "unverified": [], "routes": [{"route": "security", "why": "it reads a token", "paths": ["code.txt"]}, {"route": "style", "why": "x", "paths": []}]}' > "$out" ;;
   answer) echo '{"answer": "Extend the seam.", "unverified": ["the callers"]}' > "$out" ;;
+  security) echo '{"findings": [{"id": "1", "path": "code.txt", "line": 2, "endLine": null, "kind": "vulnerability", "claim": "c", "evidence": "e", "about": null, "reopens": null}], "unverified": [], "checked": '"$FAKE_CHECKED"'}' > "$out" ;;
   *) cat > "$out" <<EOF
 {"findings": [
  {"id": "1", "path": "$wt/code.txt", "line": 2, "endLine": 9, "kind": "bug", "claim": "c", "evidence": "e", "about": null, "reopens": null},
@@ -147,6 +149,7 @@ type output struct {
 	Findings   []map[string]any `json:"findings"`
 	Dropped    []map[string]any `json:"dropped"`
 	Unverified []string         `json:"unverified"`
+	Focus      string           `json:"focus"`
 	Routes     []struct {
 		Route   string   `json:"route"`
 		Why     []string `json:"why"`
