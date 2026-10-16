@@ -225,6 +225,7 @@ items the change answers. It keeps what they found in a review record:
 ``` sh
 git delegate --goal goal.md origin/main..HEAD          # Codex, and each focused review the change needs
 git delegate --reviewer security --goal goal.md origin/main..HEAD
+git delegate --reviewer compat --goal goal.md --description pr.md origin/main..HEAD
 git delegate wesnel/emacs-config#2                     # someone else's pull request
 git delegate show wesnel/emacs-config#2                # the review record, as JSON
 git delegate settle origin/main..HEAD F3 rebut --reason-file why.md
@@ -253,6 +254,14 @@ point at no line at the tip are dropped with the reason. Every review ends
 with the `review-guide` agent's walkthrough: the change's hunks in chunks,
 in the order to read them, each hunk cited at the tip, and every hunk no
 chunk cites listed as dropped.
+
+The compat review (`--reviewer compat`) reviews what outlives the commit:
+stored state, flags, output other programs parse, config keys and options,
+and what another host or branch reads. It checks the pull request
+description's `## Reverting` section against the code, from
+`--description FILE` or a pull request's own, and does not run without one.
+Unlike the other focused reviews, it runs by Codex, as the general review
+does.
 
 Every reviewer gets a worktree of its own under
 `$XDG_CACHE_HOME/pr-review/OWNER/NAME/work/`, made without your git config,

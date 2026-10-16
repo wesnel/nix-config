@@ -21,9 +21,12 @@ import (
 // typeRun is one reviewer type's part of a run: its output, or why it
 // could not run, and the replies dropped on the way.
 type typeRun struct {
-	name     string
-	out      *Output
-	why      string
+	name string
+	out  *Output
+	why  string
+	// refused is whether why is a refusal of its inputs, which no other
+	// host or sub-agent would get past.
+	refused  bool
 	model    string
 	redCheck bool
 	failures []string

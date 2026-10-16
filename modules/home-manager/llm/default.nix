@@ -149,7 +149,7 @@ in {
                 route = mkOption {
                   # The routes a focused review exists for: agent-tools'
                   # routes.Known, which refuses any other at lookup.
-                  type = types.enum ["security"];
+                  type = types.enum ["security" "compat"];
                   description = "The focused review the rule routes to.";
                 };
 

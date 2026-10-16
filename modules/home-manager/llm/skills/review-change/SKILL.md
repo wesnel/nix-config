@@ -104,10 +104,16 @@ as `origin/main` or the parent branch in a stack.
 
 Without `--reviewer`, delegate runs each focused review its scan routes
 the change to. A route only the reviewer named is printed with the command
-that runs it: `git delegate --reviewer security --goal GOAL BASE..TIP`, the
-same range and goal. Settle each finding as Triage says. A fix moves the
-change, so the general review and each route's run again on it, within the
-same three rounds.
+that runs it: `git delegate --reviewer ROUTE --goal GOAL BASE..TIP`, the
+same range and goal. `security` reviews what the change lets someone do;
+`compat` reviews what outlives the commit (stored state, flags, output
+others parse, config keys and options, what another host or branch reads),
+and checks the pull request description's `## Reverting` section against
+the code, so it also takes `--description FILE`, the description as the
+`pull-requests` skill has you write it; for a pull request it reads the
+pull request's own unless `--description` names another. Settle each
+finding as Triage says. A fix moves the change, so the general review and
+each route's run again on it, within the same three rounds.
 
 ## Someone else's pull request
 

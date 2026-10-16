@@ -119,9 +119,12 @@ type inputs struct {
 	adequacy string
 	where    string
 	// contract is a focused review's instructions, in place of Contract,
-	// and focused the sections it adds: threat notes and overlapping
-	// branches.
+	// and focused the sections it adds: threat notes, the Reverting
+	// section and overlapping branches.
 	contract, focused string
+	// description is the pull request description, and descriptionFrom
+	// what it is, for a refusal to name; "" where none was given.
+	description, descriptionFrom string
 }
 
 // notesSection is the security prompt's threat notes, the operator's,

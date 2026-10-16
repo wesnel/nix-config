@@ -20,11 +20,12 @@ import (
 
 // Usage is `git delegate -h`.
 const Usage = `usage: git delegate [--reviewer TYPE]... [--goal FILE] [--items FILE] [--red-check FILE]
-                    [--model M] [--timeout S] SOURCE
+                    [--description FILE] [--model M] [--timeout S] SOURCE
        git delegate ask [--reviewer TYPE] --question FILE PATH...   (see git delegate ask -h)
        git delegate show SOURCE                                      (see git delegate show -h)
        git delegate settle SOURCE FINDING OUTCOME [--target X] [--reason-file F]
-       git delegate --print-prompt [--reviewer TYPE] [--goal FILE] [--items FILE] [--red-check FILE] SOURCE
+       git delegate --print-prompt [--reviewer TYPE] [--goal FILE] [--items FILE] [--red-check FILE]
+                    [--description FILE] SOURCE
 
 Reviews SOURCE with reviewers that did not write it, and keeps what they
 found in its review record, under $XDG_STATE_HOME/agent-tools/reviews/
@@ -61,6 +62,14 @@ TYPEs (--reviewer, repeated):
             the operator's threat notes and the open branches that change the
             same files. Its reply must name every category of its checklist
             as checked.
+  compat    the compatibility review, by Codex, confined as codex is: what
+            outlives the commit (stored state, flags, output others parse,
+            config keys and options, what another host or branch reads).
+            Its prompt adds the open branches that change the same files,
+            and the ## Reverting section of the pull request description,
+            the file --description names or a pull request's own, without
+            which it does not run. Its reply must name every category of its
+            checklist as checked.
   guide     the walkthrough, by Claude Code's review-guide agent, headless
             as security is: the change's hunks in chunks, in the order to
             read them, each hunk cited as file:PATH::LINE@SHA. A citation of
@@ -97,15 +106,19 @@ refused unless its commits are the range's and it ran the repository's
 test settings, and the round records RED_CHECK session, or absent.
 
 Known secret shapes are taken out of the goal, the items, the earlier
-findings, red-check's output and the threat notes before a reviewer sees
-them. For a pull request the earlier findings include those of its newest
-review at another head.
+findings, red-check's output, the threat notes and the Reverting section
+before a reviewer sees them. For a pull request the earlier findings
+include those of its newest review at another head.
 
   --reviewer TYPE   a type to run, as above; repeat for more
   --goal FILE       the goal statement, required for a range: the goal, and
                     what is not this change's job
   --items FILE      the items the change answers, and how each was settled
   --red-check FILE  git red-check BASE..TIP's JSON
+  --description FILE
+                    the pull request description, whose ## Reverting section
+                    the compat review checks; for a pull request, its own
+                    unless this names another
   --model M         the Codex model (default: Codex's own)
   --timeout S       seconds before a reviewer is stopped (default 1800)
   --print-prompt    print the prompt of one type (codex by default) for a
@@ -123,8 +136,9 @@ record's counts. Exit status:
   4  a type could not run: Codex is not installed or signed in, its
      sandbox cannot start, this is a review-loop session (PR_LOOP_SESSION
      is set) or, with no --reviewer, the caller is Codex (CODEX_SANDBOX is
-     set); claude or agent-tools' delegate config is missing; or a reply did
-     not fit twice
+     set); claude or agent-tools' delegate config is missing; a compat
+     review the scan routed has no description with a Reverting section;
+     or a reply did not fit twice
   5  the record fails its structure check
   1  the review could not run; 2 a usage error or refusal
 `
@@ -146,6 +160,7 @@ type reviewerType struct {
 var reviewerTypes = map[string]reviewerType{
 	"codex":    {},
 	"security": {claude: true, agent: "security-reviewer", focus: "security"},
+	"compat":   {focus: "compat"},
 	"guide":    {claude: true, agent: "review-guide", guide: true},
 	"diagram":  {diagram: true},
 }
@@ -192,6 +207,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	goal := flags.String("goal", "", "")
 	items := flags.String("items", "", "")
 	redCheckFile := flags.String("red-check", "", "")
+	description := flags.String("description", "", "")
 	model := flags.String("model", "", "")
 	timeout := flags.Int("timeout", 1800, "")
 	printPrompt := flags.Bool("print-prompt", false, "")
@@ -255,8 +271,23 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			return report(nil, err, 0)
 		}
 	}
+	switch {
+	case *description != "":
+		if base.description, err = readFile(*description, stdin); err != nil {
+			return report(nil, err, 0)
+		}
+		base.descriptionFrom = "the description " + *description
+	case s.number != 0:
+		base.description = s.pr.Body
+		base.descriptionFrom = fmt.Sprintf("the description of %s#%d", s.slug(), s.number)
+	}
 	if s.number != 0 {
 		if err := prInputs(s, &base, stderr); err != nil {
+			return report(nil, err, 0)
+		}
+	}
+	if slices.Contains(reviewers, "compat") {
+		if _, err := base.reverting(); err != nil {
 			return report(nil, err, 0)
 		}
 	}
@@ -318,9 +349,14 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		run := runType(ctx, s, r, base, t, tests, !explicit, *model, time.Duration(*timeout)*time.Second, stderr)
 		if run.out == nil && run.failures == nil {
 			result.NotRun = append(result.NotRun, NotRun{Reviewer: t, Why: run.why})
+			if run.refused {
+				// Its inputs are refused anywhere, --print-prompt too.
+				fmt.Fprintf(stderr, "%s: the %s review could not run: %s\n", name, t, run.why)
+				continue
+			}
 			fmt.Fprintf(stderr, "%s: the %s review could not run here: %s. Run `git delegate` where it can, outside any "+
 				"sandbox and review-loop session, or start a sub-agent that only reads on what `git delegate --print-prompt "+
-				"--reviewer %s %s` prints\n", name, t, run.why, t, s.given)
+				"--reviewer %s %s%s` prints\n", name, t, run.why, t, typeFlags(s, t), s.given)
 			continue
 		}
 		runs = append(runs, run)
@@ -335,8 +371,8 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	}
 	for _, rt := range result.Routes {
 		if !slices.Contains(chosen, rt.Route) {
-			fmt.Fprintf(stderr, "%s: this change needs a %s review (%s): run `git delegate --reviewer %s %s`\n",
-				name, rt.Route, strings.Join(rt.Why, "; "), rt.Route, s.given)
+			fmt.Fprintf(stderr, "%s: this change needs a %s review (%s): run `git delegate --reviewer %s %s%s`\n",
+				name, rt.Route, strings.Join(rt.Why, "; "), rt.Route, typeFlags(s, rt.Route), s.given)
 		}
 	}
 	title := s.given
@@ -376,16 +412,51 @@ func typeInputs(base inputs, t string, tests *adequacy) (inputs, error) {
 	}
 	fc := focuses[ty.focus]
 	in.contract = fc.contract()
-	settings, err := in.r.settings()
-	if err != nil {
-		return in, err
+	if fc.threatNotes {
+		settings, err := in.r.settings()
+		if err != nil {
+			return in, err
+		}
+		notes, err := settings.Notes()
+		if err != nil {
+			return in, err
+		}
+		in.focused += notesSection(notes)
 	}
-	notes, err := settings.Notes()
-	if err != nil {
-		return in, err
+	if fc.reverting {
+		section, err := in.reverting()
+		if err != nil {
+			return in, err
+		}
+		in.focused += section
 	}
-	in.focused = notesSection(notes) + overlapSection(in.r)
+	in.focused += overlapSection(in.r)
 	return in, nil
+}
+
+// typeFlags are the flags, each followed by a space, that a command run
+// for type t of s needs beyond the source, so that a hint runs as given:
+// a range needs its goal, and a compat review of a range the description.
+func typeFlags(s *source, t string) string {
+	if s.number != 0 {
+		return ""
+	}
+	flags := "--goal FILE "
+	if focuses[reviewerTypes[t].focus].reverting {
+		flags += "--description FILE "
+	}
+	return flags
+}
+
+// reverting is the compat prompt's section of in's pull request
+// description, or a refusal where there is none to check.
+func (in inputs) reverting() (string, error) {
+	if in.descriptionFrom == "" {
+		return "", refusal.New("a compat review checks the pull request description's `## %s` section; write the "+
+			"description to a file under the working directory as the pull-requests skill says and pass "+
+			"`--description FILE`", Reverting)
+	}
+	return revertingSection(in.description, in.descriptionFrom)
 }
 
 // runType runs type t once, and once more where its reply does not fit.
@@ -408,7 +479,8 @@ func runType(ctx context.Context, s *source, r *span, base inputs, t string, tes
 	}
 	in, err := typeInputs(base, t, tests)
 	if err != nil {
-		run.why = err.Error()
+		var refused refusal.Refusal
+		run.why, run.refused = err.Error(), errors.As(err, &refused)
 		return run
 	}
 	var fc *focus
