@@ -248,7 +248,7 @@ func copyToolchain(from, to string) error {
 		if slash := filepath.ToSlash(rel); strings.HasPrefix(slash, "bin/") || strings.HasPrefix(slash, "pkg/tool/") {
 			mode = 0o555
 		}
-		in, err := os.Open(p)
+		in, err := os.Open(p) //nolint:gosec // from is in a module cache of this process's own, which nothing else writes
 		if err != nil {
 			return err
 		}
