@@ -22,6 +22,7 @@
     - [the documentation index](#the-documentation-index)
     - [running the sandbox on a remote host](#running-the-sandbox-on-a-remote-host)
     - [the bubblewrap backend](#the-bubblewrap-backend)
+- [the ring](#the-ring)
 - [replacing the devbox](#replacing-the-devbox)
 - [updating systems](#updating-systems)
     - [nixOS](#nixos)
@@ -667,6 +668,33 @@ See `emacs-config` for [remote launch behavior and virtualization requirements](
 
 See the [backend comparison in emacs-config](https://github.com/wesnel/emacs-config#remote-hosts-and-backend-differences)
 for filesystem isolation, proxy enforcement and supported flags.
+
+# the ring
+
+`wgn.home.ring-mcp.enable` serves an MCP server for a Pebble Index ring on
+the devbox, published at an ngrok domain. The phone app picks one of two
+tools from what was said:
+
+- **capture** appends a `TODO` entry to `inbox.org` in `~/git/org` and
+  commits it unsigned, so the repository needs a signing pass before it is
+  pushed anywhere.
+- **ask** answers with `claude -p`, which can read only that repository and
+  call the MCP proxy's read tools.
+
+It needs three keys in `secrets/wgn.yaml`, from a personal ngrok account:
+
+``` sh
+openssl rand -hex 32                     # the value for ring-mcp-token
+nix-shell --run "sops secrets/wgn.yaml"  # add ngrok-authtoken, ring-mcp-domain and ring-mcp-token
+```
+
+`ring-mcp-domain` is a domain reserved on that account, without a scheme.
+In the Pebble app, add a custom MCP server at `https://DOMAIN/mcp` with the
+header value `Bearer TOKEN`.
+
+ngrok refuses requests without the token before they reach the devbox,
+and the server checks it again. The services are `ring-mcp` and
+`ring-mcp-tunnel`, and log to the journal.
 
 # replacing the devbox
 
