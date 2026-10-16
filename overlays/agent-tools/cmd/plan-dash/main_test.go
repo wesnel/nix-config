@@ -174,9 +174,27 @@ func TestDispatch(t *testing.T) {
 	}
 }
 
+// queue stops at the kill switch, and is refused to the dashboard session.
+func TestQueue(t *testing.T) {
+	state := setUp(t)
+	dir := filepath.Join(state, "agent-plans")
+	os.MkdirAll(dir, 0o700)
+	os.WriteFile(filepath.Join(dir, "queue.org"), []byte("* QUEUED o/s#9\n:PROPERTIES:\n:TRIAGE: t\n:END:\n"), 0o600)
+	os.WriteFile(filepath.Join(dir, "off"), nil, 0o600)
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"queue"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), `"off": true`) {
+		t.Errorf("exit %d: %s%s", code, stdout.String(), stderr.String())
+	}
+	t.Setenv("AGENT_PLANS_SESSION", "1")
+	stdout.Reset()
+	if code := run([]string{"queue"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "agent-plans-queue.service") {
+		t.Errorf("in the session: exit %d: %s", code, stderr.String())
+	}
+}
+
 func TestUsage(t *testing.T) {
 	for _, args := range [][]string{{}, {"serve"}, {"collect", "--bogus"}, {"export", "now"}, {"export", "--out", "x"},
-		{"dispatch", "o/s#9"}, {"dispatch", "--out", "x"}} {
+		{"dispatch", "o/s#9"}, {"dispatch", "--out", "x"}, {"queue", "run"}} {
 		var stdout, stderr bytes.Buffer
 		if code := run(args, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "collect") {
 			t.Errorf("%q: exit %d: %s", args, code, stderr.String())
