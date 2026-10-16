@@ -48,7 +48,11 @@ func (c Config) stopReason(session, cwd string) (Plan, string) {
 		return p, ""
 	}
 	props := items[p.Name].Props
-	state, pipeline := props["STATUS"], props["PIPELINE"]
+	events, err := p.Events()
+	if err != nil {
+		return p, ""
+	}
+	state, pipeline := props["STATUS"], p.pipeline(events)
 	if state == "halted" || state == "planning" || strings.HasPrefix(pipeline, "opted-out") {
 		return p, ""
 	}
@@ -61,11 +65,7 @@ func (c Config) stopReason(session, cwd string) (Plan, string) {
 			"`agent-plan log PLAN --item ID --kind verified --evidence '...'`, or say in your report why it cannot be.",
 			p.File(), strings.Join(status.DoneNotVerified, ", "))
 	}
-	if pipeline != "full" {
-		return p, ""
-	}
-	events, err := p.Events()
-	if err != nil {
+	if pipeline != defaultPipeline {
 		return p, ""
 	}
 	committed := slices.ContainsFunc(events, func(e Event) bool { return e.Kind == "committed" && e.Session == session })

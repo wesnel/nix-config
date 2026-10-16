@@ -16,6 +16,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/prompttime"
 	"github.com/wesnel/agent-tools/internal/relay"
+	"github.com/wesnel/agent-tools/internal/routes"
 	quota "github.com/wesnel/agent-tools/internal/usage"
 )
 
@@ -49,12 +50,21 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      to start, steps ready now (no open AFTER item, earlier
                      ORDERED siblings settled, not scheduled for later),
                      what still waits, keyword drift, property drift (a
-                     WORKTREES, BRANCHES, PULL_REQUESTS or OWNERS value, or a
-                     References entry, the log does not give), and tokens
+                     WORKTREES, BRANCHES, PULL_REQUESTS, OWNERS, REVIEWS or
+                     PIPELINE value, or a References entry, the log does not
+                     give), the review routes logged and waived, and tokens
   set PLAN NAME [VALUE...] [--part P1]
-                     set WORKTREES, BRANCHES or PULL_REQUESTS of the plan's
-                     file, or the part's, to the values, and log it; new,
-                     own and the hooks log the changes they make
+                     set WORKTREES, BRANCHES, PULL_REQUESTS, REVIEWS (review
+                     routes the change needs: ` + strings.Join(routes.Known, ", ") + `) or PIPELINE
+                     (full or opted-out:<reason>) of the plan's file, or the
+                     part's, to the values, and log it; new, own and the
+                     hooks log the changes they make. A route REVIEWS ever
+                     named stays owed, and PIPELINE is what its log last
+                     gave, whatever the file says
+  waive PLAN --route ROUTE --why TEXT
+                     log that the plan's change needs no review of ROUTE,
+                     and why; stop-check and the gates stop asking for it,
+                     and git sign-pass shows the waiver before signing
   questions PLAN [--all] [--waiting] [--json | --count]
                      the open questions the operator can answer now, by
                      priority, with their recommendations; --all adds the
@@ -403,6 +413,8 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		unset    = flags.Bool("clear", false, "")
 		planFile = flags.String("plan", "", "")
 		check    = flags.Bool("check", false, "")
+		route    = flags.String("route", "", "")
+		why      = flags.String("why", "", "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
 		branches multi
@@ -637,6 +649,12 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return report(nil, err)
 		}
 		return report(map[string]any{"property": name, "values": values}, nil)
+	case "waive":
+		p, ok := wantPlan()
+		if !ok {
+			return 2
+		}
+		return report(p.Waive(*route, *why, time.Now()))
 	case "reseal":
 		p, ok := wantPlan()
 		if !ok {

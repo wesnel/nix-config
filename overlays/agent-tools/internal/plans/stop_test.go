@@ -144,6 +144,24 @@ func TestStopCheck(t *testing.T) {
 			"no review receipt matches the change origin/main..HEAD")
 	})
 
+	// PIPELINE is what the log gives it: edited in the file alone, it is
+	// drift, and opts nothing out.
+	t.Run("opted out", func(t *testing.T) {
+		c := testConfig(t)
+		repo := stopRepo(t, true)
+		gitIn(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+		p, _, err := c.RecordCommit("s1", repo, Event{Commit: "Add x", Summary: "Add x"}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		setProp(t, p.File(), "PIPELINE", "opted-out:by-hand")
+		expectReason(t, "in the file", stopIn(t, c)("s1", repo, false), "no review receipt matches")
+		if err := p.SetProperty("", "PIPELINE", []string{"opted-out:operator-asked"}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		expectReason(t, "logged", stopIn(t, c)("s1", repo, false), "")
+	})
+
 	t.Run("stop hook active", func(t *testing.T) {
 		c := testConfig(t)
 		repo := stopRepo(t, true)
@@ -317,10 +335,14 @@ func testStopCheckWithAPlan(t *testing.T) {
 		{"reviewed again", receipt, "s2", false, ""},
 		{"opted out", func(t *testing.T, p Plan, repo string) {
 			commitFile(t, repo, "z", "Add z")
-			setProp(t, p.File(), "PIPELINE", "opted-out:spike")
+			if err := p.SetProperty("", "PIPELINE", []string{"opted-out:spike"}, time.Now()); err != nil {
+				t.Fatal(err)
+			}
 		}, "s2", false, ""},
 		{"halted", func(t *testing.T, p Plan, _ string) {
-			setProp(t, p.File(), "PIPELINE", "full")
+			if err := p.SetProperty("", "PIPELINE", []string{"full"}, time.Now()); err != nil {
+				t.Fatal(err)
+			}
 			setProp(t, p.File(), "STATUS", "halted")
 		}, "s2", false, ""},
 	}

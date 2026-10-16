@@ -69,6 +69,13 @@ type Status struct {
 	Tokens       int64            `json:"tokens"`
 	TokensByPart map[string]int64 `json:"tokensByPart"`
 	TokensBy     []TokenRow       `json:"tokensBy"`
+	// Routes are the focused reviews the log routes the change to, or
+	// REVIEWS names, and Waivers those waived; whether one is still owed
+	// is stop-check's and the gates', which read the repository.
+	Routes  []string `json:"routes"`
+	Waivers []Waiver `json:"waivers"`
+	// Pipeline is PIPELINE as the log gives it.
+	Pipeline string `json:"pipeline"`
 }
 
 // Drift is an item whose heading keyword, File, is not Log, the one its
@@ -206,7 +213,8 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 	}
 	s := Status{Plan: p.file(""), Title: orgTitle(string(data)), Steps: []Step{}, NotDone: []string{},
 		DoneNotVerified: []string{}, TokensByPart: map[string]int64{}, TokensBy: tokenRows(events),
-		Ready: []string{}, Waiting: []Waiting{}, KeywordDrift: []Drift{}, Followups: []string{}}
+		Ready: []string{}, Waiting: []Waiting{}, KeywordDrift: []Drift{}, Followups: []string{},
+		Routes: loggedRoutes(events), Waivers: waivers(events), Pipeline: p.pipeline(events)}
 	open, err := p.Questions(true)
 	if err != nil {
 		return Status{}, err
@@ -346,6 +354,16 @@ func (s Status) Org() string {
 	fmt.Fprintf(&b, "- Parts ready to start: %s\n", list(s.Ready))
 	fmt.Fprintf(&b, "- Steps ready: %s\n", list(s.ReadySteps))
 	fmt.Fprintf(&b, "- Follow-ups open: %s\n", list(s.Followups))
+	if s.Pipeline != defaultPipeline {
+		fmt.Fprintf(&b, "- Pipeline: %s\n", s.Pipeline)
+	}
+	if len(s.Routes) > 0 || len(s.Waivers) > 0 {
+		var waived []string
+		for _, w := range s.Waivers {
+			waived = append(waived, fmt.Sprintf("%s (%s)", w.Route, w.Why))
+		}
+		fmt.Fprintf(&b, "- Review routes: %s; waived: %s\n", list(s.Routes), list(waived))
+	}
 	if len(s.Stale) > 0 {
 		fmt.Fprintf(&b, "- Stale, started with nothing logged for a day: %s\n", list(s.Stale))
 	}

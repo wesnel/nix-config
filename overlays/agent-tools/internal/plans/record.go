@@ -152,17 +152,36 @@ type Receipt struct {
 	// Raised are the IDs of the findings the review raised itself, with
 	// no reviewer's judgement, which a rebuttal must name a round of.
 	Raised []string
+	// Focus is a focused review's route, which makes the receipt a route
+	// receipt; "" for the general review. Branch is the branch checked out
+	// where the review ran, which a route receipt's range is read again
+	// at after a rewrite.
+	Focus, Branch string
+	// FindingIDs are a route receipt's findings, which the gates want
+	// settled.
+	FindingIDs []string
+	// Nonce is the issued review the reply answered, for a check of one.
+	Nonce string
 }
 
-// ReceiptKind is the kind of the event Receipt logs.
+// ReceiptKind is the kind of the event Receipt logs for a general review.
 const ReceiptKind = receiptKind
 
 const receiptKind = "review-receipt"
 
-// Receipt logs r about part, or about the plan itself when part is "".
+// Receipt logs r about part, or about the plan itself when part is "": a
+// review receipt, or a route receipt where r has a focus. stop-check's
+// general review counts review receipts alone, so a focused review never
+// stands in for it.
 func (p Plan) Receipt(part string, r Receipt, now time.Time) (Event, error) {
-	return p.Record(part, Event{Kind: receiptKind, Range: r.Range, Tip: r.Tip, PatchID: r.PatchID, Agent: r.Reviewer,
-		Model: r.Model, Summary: fmt.Sprintf("%s: %d findings", r.Range, r.Findings), Raised: strings.Join(r.Raised, " ")}, now)
+	e := Event{Kind: receiptKind, Range: r.Range, Tip: r.Tip, PatchID: r.PatchID, Agent: r.Reviewer,
+		Model: r.Model, Summary: fmt.Sprintf("%s: %d findings", r.Range, r.Findings), Raised: strings.Join(r.Raised, " "),
+		Nonce: r.Nonce}
+	if r.Focus != "" {
+		e.Kind, e.Focus, e.Branch, e.Findings = routeReceiptKind, r.Focus, r.Branch, strings.Join(r.FindingIDs, " ")
+		e.Summary = r.Focus + " " + e.Summary
+	}
+	return p.Record(part, e, now)
 }
 
 // WriteReceipt logs r in the plan Locate finds for session and the

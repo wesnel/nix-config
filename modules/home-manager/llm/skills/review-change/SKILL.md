@@ -56,7 +56,8 @@ or a step's.
   `--review <round>.<id> --outcome <outcome>`, the outcome as Triage below.
 - Design review of the result: `reviewed` with `--role design-reviewer`.
 - Hand-back: `handed-back`, with `STATUS` set to `handed-back`.
-- When the operator opts the task out, `PIPELINE` becomes `opted-out:<reason>`.
+- When the operator opts the task out, set it with `agent-plan set PLAN
+  PIPELINE opted-out:<reason>`; the log's value is the one that counts.
 
 ## Fresh review loop
 
@@ -162,6 +163,7 @@ each branch:
 - the same file edited on parallel branches;
 - what the plan leaves undecided, against this bar: someone could build it
   without asking a question;
+- the review routes the change needs, named in the plan's `REVIEWS`;
 - designing for change, by the `design` skill's principles (tell the
   sub-agent to load it) and these checks:
   - built as we would build it from scratch, knowing what the change now
