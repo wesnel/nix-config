@@ -19,6 +19,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/history"
+	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/sshmux"
 )
@@ -616,6 +617,13 @@ func prepare(branch, base string) (p *pending, early any, err error) {
 	if err := lintMessages(branch, start, tip); err != nil {
 		return nil, nil, err
 	}
+	top, err := git.Toplevel()
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := routeGate(branch, top); err != nil {
+		return nil, nil, err
+	}
 	before, err := localBranches()
 	if err != nil {
 		return nil, nil, err
@@ -662,6 +670,36 @@ func keptCommits(from, tip string) ([]history.Commit, error) {
 		return nil, err
 	}
 	return history.Squashed(all), nil
+}
+
+// routeGate refuses to sign branch, checked out at worktree ("" for
+// nowhere), while a plan of this host that names it owes a review route
+// (plans.RouteGate), and shows on stderr the waivers and opt-outs that let
+// it pass: both before any key touch.
+func routeGate(branch, worktree string) error {
+	c, err := plans.Load()
+	if err != nil {
+		return err
+	}
+	top, err := git.Toplevel()
+	if err != nil {
+		return err
+	}
+	tip, err := git.Run("rev-parse", "--verify", "refs/heads/"+branch)
+	if err != nil {
+		return err
+	}
+	g, err := c.RouteGate("", top, worktree, branch, tip)
+	if err != nil {
+		return err
+	}
+	for _, n := range g.Notes {
+		fmt.Fprintf(os.Stderr, "git sign-pass: %s\n", n)
+	}
+	if g.Refusal != "" {
+		return refuse("%s", g.Refusal)
+	}
+	return nil
 }
 
 // lintMessages refuses unless every message from..tip leaves, once its

@@ -27,7 +27,11 @@ and so does any other worktree one is checked out in, which must be clean
 Before any touch it refuses a message it would sign, folds squashed in, with
 a subject over 72 characters or ending in a period, or a line crediting a
 tool or linking its session (Co-Authored-By, "Generated with", a session
-URL); an amend! commit rewords one.
+URL); an amend! commit rewords one. It also refuses a branch while a plan
+of this host that names it (in BRANCHES, or by the worktree it is checked
+out in) owes a review route, a focused review whose route receipts do not
+cover the change or whose findings are not settled, and prints the routes
+waived and pipelines opted out first, each with its reason.
 
 Given BRANCHes, it signs each one's stack instead, from wherever the branch is
 checked out (or a throwaway worktree), so a handover of several stacks is one

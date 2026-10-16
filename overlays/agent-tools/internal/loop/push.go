@@ -53,6 +53,9 @@ func Push(branches []string, dryRun bool) (any, error) {
 		if err != nil {
 			return nil, err
 		}
+		if err := routeGate(b, local); err != nil {
+			return nil, err
+		}
 		if local != entry.RemoteOid {
 			updates = append(updates, update{b, local, entry.RemoteOid})
 		}

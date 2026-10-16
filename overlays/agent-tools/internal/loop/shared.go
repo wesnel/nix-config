@@ -1,8 +1,13 @@
 package loop
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/wesnel/agent-tools/internal/gh"
+	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/history"
+	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
@@ -13,6 +18,35 @@ type Refusal = refusal.Refusal
 type Commit = history.Commit
 
 func refuse(format string, args ...any) error { return refusal.New(format, args...) }
+
+// routeGate refuses branch at tip while a plan of this host that names it
+// owes a review route (plans.RouteGate), and says on stderr which waivers
+// and opt-outs let it pass.
+func routeGate(branch, tip string) error {
+	c, err := plans.Load()
+	if err != nil {
+		return err
+	}
+	top, err := git.Toplevel()
+	if err != nil {
+		return err
+	}
+	worktree := ""
+	if current, _ := git.Run("branch", "--show-current"); current == branch {
+		worktree = top
+	}
+	g, err := c.RouteGate(plans.EnvSession(), top, worktree, branch, tip)
+	if err != nil {
+		return err
+	}
+	for _, n := range g.Notes {
+		fmt.Fprintf(os.Stderr, "pr-loop: %s\n", n)
+	}
+	if g.Refusal != "" {
+		return refuse("%s", g.Refusal)
+	}
+	return nil
+}
 
 // Refusals shared by several commands, as formats for refuse.
 const (

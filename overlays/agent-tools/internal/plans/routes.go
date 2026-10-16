@@ -1,6 +1,7 @@
 package plans
 
 import (
+	"cmp"
 	"fmt"
 	"maps"
 	"slices"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/routes"
@@ -394,6 +396,199 @@ func (c Config) RouteState(p Plan, top, branch, tip string) (RouteState, error) 
 		}
 	}
 	return s, nil
+}
+
+// Gate is what the gates make of a branch's routes: why it may not be
+// opened, pushed or signed yet, or "", and the waivers and pipeline
+// opt-outs that let it pass, for the operator to see.
+type Gate struct {
+	Refusal string
+	Notes   []string
+}
+
+// RouteGate is the gate for branch at tip in the repository at top, from
+// the plans of this host that name the branch in BRANCHES, and, where
+// worktree is where it is checked out, those that name that worktree and
+// no other branch, or none, less those of other repositories and those
+// finished: a route any of them owes, with commits no route receipt covers
+// or findings of its covering receipts unsettled, refuses. The Stop hook
+// asks once; this is where an owed route stops the work.
+func (c Config) RouteGate(session, top, worktree, branch, tip string) (Gate, error) {
+	var found []Found
+	if branch != "" {
+		f, err := c.Find(FindOptions{Branch: branch})
+		if err != nil {
+			return Gate{}, err
+		}
+		found = append(found, f...)
+	}
+	if worktree != "" {
+		f, err := c.Find(FindOptions{Worktree: worktree})
+		if err != nil {
+			return Gate{}, err
+		}
+		for _, x := range f {
+			props, err := planHeading(x.File)
+			if err != nil {
+				continue
+			}
+			names := strings.Fields(props["BRANCHES"])
+			if len(names) == 0 || slices.ContainsFunc(names, func(v string) bool {
+				_, b, ok := strings.Cut(v, "..")
+				return v == branch || ok && b == branch
+			}) {
+				found = append(found, x)
+			}
+		}
+	}
+	var g Gate
+	var owed, routesOwed []string
+	seen := map[string]bool{}
+	for _, f := range found {
+		if seen[f.Plan] {
+			continue
+		}
+		seen[f.Plan] = true
+		p, err := c.Open(f.Plan)
+		if err != nil {
+			return Gate{}, err
+		}
+		props, err := planHeading(p.File())
+		if err != nil {
+			return Gate{}, err
+		}
+		events, err := p.Events()
+		if err != nil {
+			return Gate{}, err
+		}
+		if otherRepository(top, props["REPOSITORIES"]) || finished(top, props, events) {
+			continue
+		}
+		s, err := c.RouteState(p, top, branch, tip)
+		if err != nil {
+			return Gate{}, err
+		}
+		if strings.HasPrefix(s.Pipeline, "opted-out") {
+			g.Notes = append(g.Notes, fmt.Sprintf("%s: PIPELINE %s", p.File(), s.Pipeline))
+		}
+		for _, w := range s.Waivers {
+			g.Notes = append(g.Notes, fmt.Sprintf("%s: %s review waived: %s", p.File(), w.Route, w.Why))
+		}
+		for _, d := range s.Due {
+			var parts []string
+			if len(d.Uncovered) > 0 {
+				var short []string
+				for _, u := range d.Uncovered {
+					short = append(short, u[:min(12, len(u))])
+				}
+				parts = append(parts, "commits "+strings.Join(short, ", ")+" have no route receipt")
+			}
+			if len(d.Unsettled) > 0 {
+				parts = append(parts, "findings "+strings.Join(d.Unsettled, ", ")+" are not settled")
+			}
+			owed = append(owed, fmt.Sprintf("%s owes a %s review (%s)", p.File(), d.Route, strings.Join(parts, "; ")))
+			if !slices.Contains(routesOwed, d.Route) {
+				routesOwed = append(routesOwed, d.Route)
+			}
+		}
+	}
+	if len(owed) > 0 {
+		base := strings.TrimPrefix(strings.TrimPrefix(routes.DefaultRef(top), "refs/remotes/"), "refs/heads/")
+		if base == "" {
+			base = "BASE"
+		}
+		var runs []string
+		for _, r := range routesOwed {
+			runs = append(runs, fmt.Sprintf("`git fresh-review --focus %s --goal FILE %s..%s`", r, base, branch))
+		}
+		g.Refusal = fmt.Sprintf("%s's change is not through its focused reviews: %s. Run %s, whose base must lie below every "+
+			"commit listed, settle the findings in the plan named with them as the review-change skill says "+
+			"(`agent-plan log PLAN --kind finding-settled --review ROUND.ID`), or, where the change does not need a route, "+
+			"`agent-plan waive PLAN --route ROUTE --why TEXT`; then run this again",
+			branch, strings.Join(owed, "; "), strings.Join(runs, " and "))
+	}
+	return g, nil
+}
+
+// otherRepository reports whether a plan's REPOSITORIES names only other
+// repositories than the one at top, which is known by the GitHub
+// owner/name its remotes fetch from. A plan naming none, or a repository
+// fetching from GitHub through no remote, is never another's.
+func otherRepository(top, repositories string) bool {
+	names := strings.Fields(repositories)
+	if len(names) == 0 {
+		return false
+	}
+	out, err := git.Run("-C", top, "remote", "-v")
+	if err != nil {
+		return false
+	}
+	var slugs []string
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.Fields(line); len(f) == 3 && f[2] == "(fetch)" {
+			if s := gh.Slug(f[1]); s != "" {
+				slugs = append(slugs, s)
+			}
+		}
+	}
+	return len(slugs) > 0 && !slices.ContainsFunc(names, func(n string) bool {
+		return slices.ContainsFunc(slugs, func(s string) bool { return strings.EqualFold(n, s) })
+	})
+}
+
+// finished reports whether a plan's work in the repository at top is
+// over: its STATUS is halted; a signing pass signed it and nothing was
+// committed or pushed in it since; or each branch its BRANCHES names is
+// merged into the default branch or deleted. A review routed after the
+// signing is no new work: a loop's relayed review logs one in the plan
+// naming its branch, whatever that plan's state.
+func finished(top string, props map[string]string, events []Event) bool {
+	if props["STATUS"] == "halted" {
+		return true
+	}
+	for i := len(events) - 1; i >= 0; i-- {
+		switch events[i].Kind {
+		case "signed":
+			return true
+		case "committed", "pushed":
+			return branchesDone(top, props["BRANCHES"], events)
+		}
+	}
+	return branchesDone(top, props["BRANCHES"], events)
+}
+
+// branchesDone reports whether each of branches, a plan's BRANCHES, is
+// merged into the default branch of the repository at top, or deleted. A
+// branch is judged at the commit the plan's events last name for it, where
+// they name one, so that a later branch reusing the name does not keep the
+// plan open; else at its ref.
+func branchesDone(top, branches string, events []Event) bool {
+	names := strings.Fields(branches)
+	if len(names) == 0 {
+		return false
+	}
+	def := routes.DefaultRef(top)
+	for _, v := range names {
+		if _, b, ok := strings.Cut(v, ".."); ok {
+			v = b
+		}
+		at := ""
+		for i := len(events) - 1; i >= 0 && at == ""; i-- {
+			if events[i].Branch == v {
+				at = cmp.Or(events[i].Commit, events[i].Tip)
+			}
+		}
+		if at == "" {
+			if !git.OK("-C", top, "rev-parse", "--verify", "-q", "refs/heads/"+v) {
+				continue
+			}
+			at = "refs/heads/" + v
+		}
+		if def == "" || strings.HasPrefix(at, "-") || !git.OK("-C", top, "merge-base", "--is-ancestor", at, def) {
+			return false
+		}
+	}
+	return true
 }
 
 // covered is the commits the route receipts of route, in this host's

@@ -336,6 +336,162 @@ func TestRouteState(t *testing.T) {
 	})
 }
 
+// The gates refuse a branch whose plans owe a route, or a route review's
+// finding not settled, and show the waivers and opt-outs they let pass.
+func TestRouteGate(t *testing.T) {
+	gate := func(t *testing.T, c Config, repo string) Gate {
+		t.Helper()
+		g, err := c.RouteGate("", repo, repo, "loop", head(t, repo))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return g
+	}
+	planned := func(t *testing.T, c Config, branches ...string) Plan {
+		t.Helper()
+		made, err := c.New(NewOptions{Title: "Add the loop", Slug: "loop", Branches: branches}, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, _ := c.Open(made.Plan)
+		return p
+	}
+
+	t.Run("owed, then reviewed", func(t *testing.T) {
+		c := testConfig(t)
+		repo, commits := routeRepo(t)
+		p := planned(t, c, "main..loop")
+		if g := gate(t, c, repo); g.Refusal != "" {
+			t.Errorf("nothing owed: %+v", g)
+		}
+		p.SetProperty("", "REVIEWS", []string{"security"}, day)
+		g := gate(t, c, repo)
+		if !strings.Contains(g.Refusal, "security") || !strings.Contains(g.Refusal, commits[0][:12]) ||
+			!strings.Contains(g.Refusal, "git fresh-review --focus security --goal FILE origin/HEAD..loop") ||
+			!strings.Contains(g.Refusal, "below every commit listed") || !strings.Contains(g.Refusal, "agent-plan waive") {
+			t.Errorf("owed: %+v", g)
+		}
+		routeReceipt(t, p, repo, "security", "origin/main", "loop", "loop", "security-1")
+		if g := gate(t, c, repo); !strings.Contains(g.Refusal, "1.security-1") {
+			t.Errorf("unsettled: %+v", g)
+		}
+		p.Log(Event{Kind: "finding-settled", Item: p.Name, Review: "1.security-1", Outcome: "fix"}, day)
+		if g := gate(t, c, repo); g.Refusal != "" {
+			t.Errorf("settled: %+v", g)
+		}
+	})
+
+	t.Run("waived", func(t *testing.T) {
+		c := testConfig(t)
+		repo, _ := routeRepo(t)
+		p := planned(t, c, "main..loop")
+		p.SetProperty("", "REVIEWS", []string{"security"}, day)
+		p.Waive("security", "the operator read it", day)
+		if g := gate(t, c, repo); g.Refusal != "" || len(g.Notes) != 1 || !strings.Contains(g.Notes[0], "the operator read it") {
+			t.Errorf("waived: %+v", g)
+		}
+	})
+
+	t.Run("opted out", func(t *testing.T) {
+		c := testConfig(t)
+		repo, _ := routeRepo(t)
+		p := planned(t, c, "main..loop")
+		p.SetProperty("", "REVIEWS", []string{"security"}, day)
+		p.SetProperty("", "PIPELINE", []string{"opted-out:spike"}, day)
+		if g := gate(t, c, repo); g.Refusal != "" || len(g.Notes) != 1 || !strings.Contains(g.Notes[0], "opted-out:spike") {
+			t.Errorf("opted out: %+v", g)
+		}
+	})
+
+	// A plan of another branch owes this one nothing.
+	t.Run("another branch's plan", func(t *testing.T) {
+		c := testConfig(t)
+		repo, _ := routeRepo(t)
+		p := planned(t, c, "main..other")
+		p.SetProperty("", "REVIEWS", []string{"security"}, day)
+		if g := gate(t, c, repo); g.Refusal != "" {
+			t.Errorf("another branch: %+v", g)
+		}
+	})
+
+	// A plan of a branch of the same name in another repository owes this
+	// one nothing; one naming this repository, in any case, does.
+	t.Run("another repository's plan", func(t *testing.T) {
+		c := testConfig(t)
+		repo, _ := routeRepo(t)
+		gitIn(t, repo, "remote", "add", "origin", "https://github.com/o/here.git")
+		for _, repos := range []string{"o/elsewhere", "O/Here"} {
+			made, err := c.New(NewOptions{Title: "Add the loop", Slug: "loop", Repos: []string{repos},
+				Branches: []string{"main..loop"}}, day)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p, _ := c.Open(made.Plan)
+			p.SetProperty("", "REVIEWS", []string{"security"}, day)
+			g := gate(t, c, repo)
+			if owes := strings.Contains(g.Refusal, p.File()); owes != (repos == "O/Here") {
+				t.Errorf("REPOSITORIES %s: %+v", repos, g)
+			}
+		}
+	})
+
+	// A halted plan, or one signed with nothing committed, pushed or routed
+	// since, is over: a branch reusing its name owes it nothing.
+	t.Run("finished plans", func(t *testing.T) {
+		c := testConfig(t)
+		repo, _ := routeRepo(t)
+		p := planned(t, c, "main..loop")
+		p.SetProperty("", "REVIEWS", []string{"security"}, day)
+		setProp(t, p.File(), "STATUS", "halted")
+		if g := gate(t, c, repo); g.Refusal != "" {
+			t.Errorf("halted: %+v", g)
+		}
+		setProp(t, p.File(), "STATUS", "handed-back")
+		if _, err := p.record(Event{Kind: "signed", Item: p.Name, Summary: "signed"}, day); err != nil {
+			t.Fatal(err)
+		}
+		if g := gate(t, c, repo); g.Refusal != "" {
+			t.Errorf("signed: %+v", g)
+		}
+		// A review routed afterwards, as a loop's relayed review logs in
+		// the plan naming its branch, is no new work in it.
+		if _, err := p.Routed("", Routed{Branch: "loop", Base: "a", Tip: "b", Routes: map[string][]string{"security": nil}}, day); err != nil {
+			t.Fatal(err)
+		}
+		if g := gate(t, c, repo); g.Refusal != "" {
+			t.Errorf("routed after signing: %+v", g)
+		}
+		if _, err := p.record(Event{Kind: "committed", Item: p.Name, Summary: "Add more"}, day); err != nil {
+			t.Fatal(err)
+		}
+		if g := gate(t, c, repo); g.Refusal == "" {
+			t.Errorf("committed after signing: %+v", g)
+		}
+	})
+
+	// A plan each of whose branches was merged into the default branch,
+	// as the plan last saw it, or deleted, is over too, signed or not: a
+	// branch reusing a name it holds owes it nothing.
+	t.Run("branches merged or deleted", func(t *testing.T) {
+		c := testConfig(t)
+		repo, commits := routeRepo(t)
+		p := planned(t, c, "main..loop", "main..gone")
+		p.SetProperty("", "REVIEWS", []string{"security"}, day)
+		if _, err := p.record(Event{Kind: "committed", Item: p.Name, Branch: "loop", Commit: commits[1][:7], Summary: "Add risky"}, day); err != nil {
+			t.Fatal(err)
+		}
+		if g := gate(t, c, repo); g.Refusal == "" {
+			t.Errorf("unmerged: %+v", g)
+		}
+		gitIn(t, repo, "update-ref", "refs/remotes/origin/main", "loop")
+		gitIn(t, repo, "checkout", "-q", "-B", "loop", "origin/main")
+		commitFile(t, repo, "b.txt", "Add b")
+		if g := gate(t, c, repo); g.Refusal != "" {
+			t.Errorf("merged, and the name reused: %+v", g)
+		}
+	})
+}
+
 func TestRoutesInStatus(t *testing.T) {
 	c := testConfig(t)
 	_, commits := routeRepo(t)

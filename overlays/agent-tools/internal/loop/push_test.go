@@ -194,6 +194,29 @@ func pushStack(t *testing.T) (*fakeRefs, string) {
 // each, bottom up, as separate pushes would, so GitHub starts each pull
 // request's workflows once.
 func TestPush(t *testing.T) {
+	// A branch whose plan owes a review route is not pushed until the
+	// route is reviewed or waived.
+	t.Run("a route owed", func(t *testing.T) {
+		f, dir := pushStack(t)
+		p := loopPlan(t, nil, []string{"lower..upper"})
+		if err := p.SetProperty("", "REVIEWS", []string{"security"}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		_, err := Push([]string{"upper", "lower"}, false)
+		if !refusedWell(err) || !strings.Contains(err.Error(), "security") || len(f.calls) != 0 {
+			t.Fatalf("pushed with a route owed: %v, calls %v", err, f.calls)
+		}
+		if _, err := p.Waive("security", "the operator read it", time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Push([]string{"upper", "lower"}, false); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := gitIn(t, f.bare, "rev-parse", "upper"), gitIn(t, dir, "rev-parse", "upper"); got != want {
+			t.Errorf("GitHub has upper at %s, want %s", got, want)
+		}
+	})
+
 	t.Run("one ref per call, bottom up", func(t *testing.T) {
 		f, dir := pushStack(t)
 		if _, err := Push([]string{"upper", "lower"}, false); err != nil {
