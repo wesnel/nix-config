@@ -24,6 +24,9 @@ type relayInputs struct {
 	Items string `json:"items,omitempty"`
 	Prior string `json:"prior,omitempty"`
 	Reply string `json:"reply,omitempty"`
+	// Description is the pull request description a compat review's
+	// prompt takes its Reverting section from.
+	Description string `json:"description,omitempty"`
 	// Top is the worktree as the caller sees it, which the prompt names
 	// for the reviewer to read the change in: a sandbox may see it at
 	// another path than the host.
@@ -32,7 +35,11 @@ type relayInputs struct {
 
 // relayedFlags are the flags a relayed review takes: a prompt's printing
 // or a reply's check, with its files on stdin.
-var relayedFlags = []string{"print-prompt", "check", "focus", "goal", "items", "prior", "reviewer"}
+var relayedFlags = []string{"print-prompt", "check", "focus", "goal", "items", "prior", "description", "reviewer"}
+
+// relayedFiles are the flags of relayedFlags that name a file, which the
+// client reads and sends on stdin.
+var relayedFiles = []string{"check", "goal", "items", "prior", "description"}
 
 // relayedRefusal is why the relay's caller may not run the review flags
 // describe, or "": it may print a prompt or check a reply, each file given
@@ -47,7 +54,7 @@ func relayedRefusal(flags *flag.FlagSet, printPrompt bool, check string) string 
 		switch {
 		case !slices.Contains(relayedFlags, f.Name),
 			f.Name == "reviewer" && f.Value.String() != "subagent",
-			slices.Contains([]string{"check", "goal", "items", "prior"}, f.Name) && f.Value.String() != "-":
+			slices.Contains(relayedFiles, f.Name) && f.Value.String() != "-":
 			why = narrow
 		}
 	})
@@ -116,8 +123,9 @@ func readRelayed(stdin io.Reader) (relayInputs, error) {
 func forward(url string, argv []string, files map[string]string, given string, stdin io.Reader, stdout,
 	stderr io.Writer) int {
 	var in relayInputs
-	into := map[string]*string{"goal": &in.Goal, "items": &in.Items, "prior": &in.Prior, "check": &in.Reply}
-	for _, f := range []string{"check", "goal", "items", "prior"} {
+	into := map[string]*string{"goal": &in.Goal, "items": &in.Items, "prior": &in.Prior, "check": &in.Reply,
+		"description": &in.Description}
+	for _, f := range relayedFiles {
 		path := files[f]
 		if path == "" {
 			continue

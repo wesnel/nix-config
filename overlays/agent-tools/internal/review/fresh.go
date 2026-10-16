@@ -31,8 +31,9 @@ import (
 
 // Usage is `git fresh-review -h`.
 const Usage = `usage: git fresh-review [--focus ROUTE] --goal FILE [--items FILE] [--prior FILE]
-                        [--reviewer auto|codex|subagent] [--model M] [--timeout S] BASE..TIP
-       git fresh-review --print-prompt [--focus ROUTE] --goal FILE [--items FILE] [--prior FILE] BASE..TIP
+                        [--description FILE] [--reviewer auto|codex|subagent] [--model M] [--timeout S] BASE..TIP
+       git fresh-review --print-prompt [--focus ROUTE] --goal FILE [--items FILE] [--prior FILE]
+                        [--description FILE] BASE..TIP
        git fresh-review --check FILE BASE..TIP
        git fresh-review ask --question FILE PATH...   (see git fresh-review ask -h)
        git fresh-review audit --claims FILE BASE..TIP (see git fresh-review audit -h)
@@ -103,22 +104,25 @@ run each, and a routed event logs them beside the receipt.
 
 With --focus ROUTE, the review is that route's focused review: the same
 runner, confinement and rules, with the route's checks and checklist in
-place of the general ones, no red-check and no routing. A security reply
+place of the general ones, no red-check and no routing. A focused reply
 must name every category of its checklist as checked, or it is not
 counted. Its findings' ids start with the route, as security-1, and it
 logs a route receipt, which only meets that route and never counts as the
 general review, with the IDs of its findings; it prints its round, by
 which a finding-settled event names each finding. Its prompt adds the
-operator's threat notes, threatNotes in the repos settings (the notes, or
-a file outside the repository, refused where the repository holds it),
-and the other open branches that change the same files, as this host
-knows them without fetching: local ones not merged, those this host's
-plans name, and remote ones with an open pull request (gh pr list, kept an
-hour under $XDG_CACHE_HOME/agent-tools), or in a review-loop session with
-a commit in the last 14 days; the newest 200 are checked within 10
-seconds, and 20 listed. Known secret shapes are taken out of the notes,
-the branches' subjects, the items, the earlier findings and red-check's
-output before a reviewer sees them.
+other open branches that change the same files, as this host knows them
+without fetching: local ones not merged, those this host's plans name, and
+remote ones with an open pull request (gh pr list, kept an hour under
+$XDG_CACHE_HOME/agent-tools), or in a review-loop session with a commit in
+the last 14 days; the newest 200 are checked within 10 seconds, and 20
+listed. A security prompt adds the operator's threat notes, threatNotes in
+the repos settings (the notes, or a file outside the repository, refused
+where the repository holds it). A compat prompt adds the Reverting section
+of the pull request description --description names, and is refused
+without one; no other review takes --description. Known secret shapes are
+taken out of the notes, the Reverting section, the branches' subjects, the
+items, the earlier findings and red-check's output before a reviewer sees
+them.
 
 With SANDBOX_RELAY_URL set, as in a review-loop sandbox, --print-prompt,
 --reviewer subagent and --check are sent to that sandbox-relay, with the
@@ -128,8 +132,10 @@ relay's side takes only those, never a path, and refuses ask; it reviews
 only a branch the loop registered, from the worktree pr-loop made for it,
 in a range ending at the commit checked out there.
 
-  --focus ROUTE    the focused review to run: security
+  --focus ROUTE    the focused review to run: security or compat
   --goal FILE      the goal statement (required)
+  --description FILE
+                    the pull request description, for --focus compat
   --items FILE      the items the change answers, and how each was settled
   --prior FILE      earlier rounds' findings and how each was settled
   --reviewer R      auto (default): Codex, unless called from inside Codex,
@@ -181,6 +187,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	printPrompt := flags.Bool("print-prompt", false, "")
 	check := flags.String("check", "", "")
 	focusName := flags.String("focus", "", "")
+	description := flags.String("description", "", "")
 
 	// Flags may follow the range, as with git's own commands.
 	var positional []string
@@ -216,6 +223,14 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		}
 		fc = &f
 	}
+	switch {
+	case *description != "" && (fc == nil || !fc.reverting):
+		return report(nil, refusal.New("only a compat review reads the pull request description; run it with "+
+			"`--focus compat --description %s`, and this review without --description", *description), 0)
+	case fc != nil && fc.reverting && *description == "":
+		return report(nil, refusal.New("a %s review checks the pull request description's `## %s` section; write the "+
+			"description to a file as the pull-requests skill says and pass `--description FILE`", *focusName, Reverting), 0)
+	}
 	// In a sandbox with a relay, the host prints the prompt and checks the
 	// reply, so that the plan there takes what they log.
 	if url := os.Getenv(relay.URLEnv); url != "" && !relayed && (*printPrompt || *check != "") {
@@ -229,8 +244,8 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		if *focusName != "" {
 			argv = append(argv, "--focus", *focusName)
 		}
-		return forward(url, argv, map[string]string{"check": *check, "goal": *goal, "items": *items, "prior": *prior},
-			positional[0], stdin, stdout, stderr)
+		return forward(url, argv, map[string]string{"check": *check, "goal": *goal, "items": *items, "prior": *prior,
+			"description": *description}, positional[0], stdin, stdout, stderr)
 	}
 	var sent relayInputs
 	if relayed {
@@ -249,7 +264,8 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	// sent for the flag named.
 	input := func(flag, path string) (string, error) {
 		if relayed {
-			return map[string]string{"check": sent.Reply, "goal": sent.Goal, "items": sent.Items, "prior": sent.Prior}[flag], nil
+			return map[string]string{"check": sent.Reply, "goal": sent.Goal, "items": sent.Items, "prior": sent.Prior,
+				"description": sent.Description}[flag], nil
 		}
 		return readFile(path, stdin)
 	}
@@ -308,17 +324,31 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	in := inputs{r: r}
 	if fc != nil {
 		in.contract = fc.contract()
-		git.Dir = r.top
-		settings, err := repos.Lookup()
-		git.Dir = ""
-		if err != nil {
-			return report(nil, err, 0)
+		if fc.threatNotes {
+			git.Dir = r.top
+			settings, err := repos.Lookup()
+			git.Dir = ""
+			if err != nil {
+				return report(nil, err, 0)
+			}
+			notes, err := settings.Notes()
+			if err != nil {
+				return report(nil, err, 0)
+			}
+			in.focused += notesSection(notes)
 		}
-		notes, err := settings.Notes()
-		if err != nil {
-			return report(nil, err, 0)
+		if fc.reverting {
+			text, err := input("description", *description)
+			if err != nil {
+				return report(nil, err, 0)
+			}
+			section, err := revertingSection(text, *description)
+			if err != nil {
+				return report(nil, err, 0)
+			}
+			in.focused += section
 		}
-		in.focused = notesSection(notes) + overlapSection(r)
+		in.focused += overlapSection(r)
 	}
 	if *goal == "" {
 		return report(nil, refusal.New("a review is judged against a goal statement; write the goal, and what is not this change's job, "+

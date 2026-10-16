@@ -163,7 +163,7 @@ in {
                 route = mkOption {
                   # The routes a focused review exists for: agent-tools'
                   # routes.Known, which refuses any other at lookup.
-                  type = types.enum ["security"];
+                  type = types.enum ["security" "compat"];
                   description = "The focused review the rule routes to.";
                 };
 
@@ -186,6 +186,17 @@ in {
                     RE2 expressions matched against each line a commit adds
                     or removes, in the files `paths` matches where it names
                     any.
+                  '';
+                };
+
+                removed = mkOption {
+                  type = types.bool;
+                  default = false;
+
+                  description = ''
+                    Match `lines` against removed lines only; a line changed
+                    in place counts as removed. Needs `lines`, or every
+                    lookup of these settings refuses.
                   '';
                 };
 

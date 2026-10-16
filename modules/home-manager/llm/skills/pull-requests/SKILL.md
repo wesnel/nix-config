@@ -42,9 +42,13 @@ description: How to open, describe and answer a pull request. Use before `pr-loo
   section out and put the claims in your report: no audit can support
   them, since a loop's calls are in no log on this host and Codex's carry
   no exit status.
-- Say whether the change is easy to back out (a two-way door) or not (a
-  one-way door: a migration, a stored format, a published interface), and
-  what it could break if it is wrong.
+- Under `## Reverting`, say whether the change is easy to back out (a
+  two-way door) or not (a one-way door: a migration, a stored format, a
+  published interface), what it could break if it is wrong, and what
+  reverting its commits leaves behind: data written in a new format,
+  settings people made for it, state on other hosts. A compat review
+  (the `review-change` skill's focused reviews) checks this section
+  against the code, and refuses a description without it.
 - Write it as the `docs-and-comments` skill's "Write plainly" says.
 
 ## Review threads

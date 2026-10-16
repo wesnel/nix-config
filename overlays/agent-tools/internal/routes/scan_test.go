@@ -68,6 +68,7 @@ func scanRepo(t *testing.T) (string, map[string]string) {
 	c["agents"] = write(t, repo, "Allow a tool", ".claude/settings.json={}\n")
 	c["docs"] = write(t, repo, "Document secrets", "docs/secret/x.md=x\n")
 	c["comment"] = write(t, repo, "Mention exec in prose", "notes.txt=os/exec is not code here\n")
+	c["flag"] = write(t, repo, "Take a flag", "main.go=package main\n\nvar v = flag.Bool(\"v\", false, \"\")\n")
 	return repo, c
 }
 
@@ -93,11 +94,14 @@ func TestScan(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{c["exec"], c["deps"], c["unlisten"], c["agents"]}
-	if r := routed(t, got); strings.Join(r["security"], " ") != strings.Join(want, " ") || len(r) != 1 {
-		t.Errorf("routes %+v, want security for %v", got, want)
+	if r := routed(t, got); strings.Join(r["security"], " ") != strings.Join(want, " ") ||
+		strings.Join(r["compat"], " ") != c["flag"] || len(r) != 2 {
+		t.Errorf("routes %+v, want security for %v and compat for %s", got, want, c["flag"])
 	}
-	if len(got) == 1 && len(got[0].Why) == 0 {
-		t.Errorf("no reason given: %+v", got)
+	for _, r := range got {
+		if len(r.Why) == 0 {
+			t.Errorf("no reason given: %+v", r)
+		}
 	}
 
 	extra := append(Builtin, Rule{Route: "security", Paths: []string{"docs/secret/**"}, Why: "secrets docs"})
@@ -143,6 +147,7 @@ func TestRuleCheck(t *testing.T) {
 		"bad line":      {Route: "security", Lines: []string{"("}, Why: "x"},
 		"no reason":     {Route: "security", Paths: []string{"x"}},
 		"bad glob":      {Route: "security", Paths: []string{"[x"}, Why: "x"},
+		"removed paths": {Route: "security", Paths: []string{"x"}, Removed: true, Why: "x"},
 	} {
 		var refused refusal.Refusal
 		if err := r.Check(); !errors.As(err, &refused) {
@@ -153,6 +158,104 @@ func TestRuleCheck(t *testing.T) {
 		if err := r.Check(); err != nil {
 			t.Errorf("built-in %+v: %v", r, err)
 		}
+	}
+}
+
+// The built-in compat rules route a commit that adds or removes a line
+// defining what outlives it, and not one that only resembles it.
+func TestCompatRules(t *testing.T) {
+	rules, err := compile(Builtin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const plans = "overlays/agent-tools/internal/plans/log.go"
+	for _, tc := range []struct {
+		path, line string
+		want       bool
+	}{
+		// Go flags.
+		{"cmd/x/main.go", `	verbose := flags.Bool("verbose", false, "")`, true},
+		{"cmd/x/main.go", `	timeout := flags.Duration("timeout", time.Minute, "")`, true},
+		{"cmd/x/main.go", `	flag.StringVar(&name, "name", "", "the name")`, true},
+		{"cmd/x/main.go", `	n := flag.Int("n", 1, "")`, true},
+		{"cmd/x/main.go", `	fs.Var(&list, "path", "")`, true},
+		{"cmd/x/main.go", `	cmdFlags.TextVar(&level, "level", slog.LevelInfo, "")`, true},
+		{"cmd/x/main.go", `	flags.Parse(args)`, false},
+		{"cmd/x/main.go", `	flag.Parse()`, false},
+		{"cmd/x/main.go", `	slog.String("key", value)`, false},
+		{"cmd/x/main.go", `	return b.String()`, false},
+		{"cmd/x/main.go", `	flagName.String("x")`, false},
+		{"README.md", `flags.Bool("verbose", false, "")`, false},
+		// JSON tags.
+		{"internal/x/x.go", "	Name string `json:\"name,omitempty\"`", true},
+		{"internal/x/x.go", "	Name string `yaml:\"name\" json:\"-\"`", true},
+		{"internal/x/x.go", "	Name string `jsonschema:\"required\"`", false},
+		{"internal/x/x.go", "	Name string `yaml:\"name\"`", false},
+		{"internal/x/x.go", `	data, err := json.Marshal(v)`, false},
+		{"docs/x.md", "Name string `json:\"name\"`", false},
+		// Nix options.
+		{"modules/x/default.nix", `    enable = mkEnableOption "x";`, true},
+		{"modules/x/default.nix", `    port = lib.mkOption {`, true},
+		{"modules/x/default.nix", `    package = mkPackageOption pkgs "x" {};`, true},
+		{"modules/x/default.nix", `  imports = [(mkRenamedOptionModule ["a"] ["b"])];`, true},
+		{"modules/x/default.nix", `    port = lib.mkOptionDefault 80;`, false},
+		{"modules/x/default.nix", `    config = mkIf cfg.enable {`, false},
+		{"docs/options.md", "Each `mkOption` takes a type.", false},
+		// Emacs customisations.
+		{"lisp/x.el", `(defcustom x-width 80`, true},
+		{"lisp/x.el", `  (defcustom x-width 80`, true},
+		{"lisp/x.el", `(define-obsolete-variable-alias 'x-old 'x-new "1.2")`, true},
+		{"lisp/x.el", `(defvar x-width 80)`, false},
+		{"lisp/x.el", `(defcustom-x x-width)`, false},
+		{"lisp/x.el", `(setopt x-width 80)`, false},
+		{"README.md", `(defcustom x-width 80`, false},
+		// Agent-tools' plan files.
+		{plans, `	Kinds = []string{"planned", "plan-reviewed"}`, true},
+		{plans, `		"reviewed", "finding-settled", "asked"}`, true},
+		{plans, `	routedKind = "routed"`, true},
+		{plans, `		block := []string{"*** " + title, ":PROPERTIES:", ":FOUND_IN: " + o.FoundIn, ":END:"}`, true},
+		{plans, `var trackedProperties = []string{"WORKTREES", "BRANCHES"}`, true},
+		{plans, `	return refusal.New("%s is not a plan", name)`, false},
+		{plans, `	kind := e.Kind`, false},
+		{plans, `	if e.Kind == receiptKind {`, false},
+		{plans, `	return slices.Contains(trackedProperties, name)`, false},
+		{plans, `	for _, e := range events {`, false},
+		{"internal/guard/x.go", `		block := []string{":PROPERTIES:", ":ID: " + id, ":END:"}`, false},
+		{"internal/guard/x.go", `	routedKind = "routed"`, false},
+	} {
+		// A JSON tag routes only where a line holding it is removed,
+		// which a rename also does; every other rule either way.
+		onlyRemoved := strings.Contains(tc.line, "json:\"")
+		for _, sign := range []string{"-", "+"} {
+			want := tc.want && (sign == "-" || !onlyRemoved)
+			got := false
+			for _, r := range rules {
+				if r.Route == "compat" && matches(map[string][]string{tc.path: {sign + tc.line}}, r) {
+					got = true
+				}
+			}
+			if got != want {
+				t.Errorf("%s: %s%s: routed to compat %v, want %v", tc.path, sign, tc.line, got, want)
+			}
+		}
+	}
+}
+
+// A commit that adds a JSON field is not routed to compat; one that
+// renames or removes a field's tag is.
+func TestScanJSONTags(t *testing.T) {
+	repo, _ := filepath.EvalSymlinks(t.TempDir())
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	base := write(t, repo, "Start", "x.go=package x\n\ntype T struct {\n\tA int `json:\"a\"`\n}\n")
+	write(t, repo, "Add a field", "x.go=package x\n\ntype T struct {\n\tA int `json:\"a\"`\n\tB int `json:\"b\"`\n}\n")
+	renamed := write(t, repo, "Rename a field", "x.go=package x\n\ntype T struct {\n\tA int `json:\"a\"`\n\tB int `json:\"bee\"`\n}\n")
+	removed := write(t, repo, "Drop a field", "x.go=package x\n\ntype T struct {\n\tA int `json:\"a\"`\n}\n")
+	got, err := Scan(repo, base, "HEAD", Builtin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := routed(t, got); strings.Join(r["compat"], " ") != renamed+" "+removed || len(r) != 1 {
+		t.Errorf("routes %+v, want compat for %s %s", got, renamed, removed)
 	}
 }
 
