@@ -1,0 +1,44 @@
+# Read by checks.agent-tools-lint in the flake. A finding that does not apply
+# is annotated where it is found, `//nolint:gosec // <why it does not apply>`;
+# nolintlint refuses an annotation without a reason or a rule.
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - gosec
+    - nolintlint
+
+  settings:
+    gosec:
+      excludes:
+        # Unchecked errors are errcheck's concern, not a security finding:
+        # best-effort cleanup ignores them on purpose.
+        - G104
+        # These are CLIs that run git, gh and ssh with arguments and on paths
+        # their caller names. Where a sandbox is the caller, the relay and
+        # pr-loop's relayRefusal decide what it may name.
+        - G204
+        - G304
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+  exclusions:
+    rules:
+      # Tests write to t.TempDir and run what they built themselves.
+      - path: _test\.go
+        linters:
+          - gosec
+      # File and directory modes in the review VM's code: the guest is
+      # another user, and what it reads must stay readable by others.
+      # Elsewhere each mode is annotated with why others may read it.
+      - path: internal/prreview/
+        text: "^G30[126]:"
+        linters:
+          - gosec
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  uniq-by-line: false
