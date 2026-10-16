@@ -46,6 +46,26 @@ func TestFromClaudeStatus(t *testing.T) {
 	})
 }
 
+// A print session's stream-json output carries the account's windows on
+// each rate_limit_event, utilization as a fraction.
+func TestFromClaudeStream(t *testing.T) {
+	line := strings.TrimSpace(string(fixture(t, "claude-rate-limit-event.json")))
+	want := Reading{Provider: "claude", ObservedAt: at.Unix(), Windows: []Window{
+		{Name: "5h", Used: 100, ResetsAt: 1792032000},
+		{Name: "7d", Used: 31, ResetsAt: 1792602000},
+	}}
+	other := `{"type":"assistant","message":{"content":[{"type":"text","text":"{\"type\":\"rate_limit_event\"}"}]}}`
+	older := strings.Replace(line, `"utilization":0.31`, `"utilization":0.2`, 1)
+	stream := other + "\n" + older + "\n" + line + "\n" + `{"type":"result"}` + "\n"
+	r, ok := FromClaudeStream(strings.NewReader(stream), at)
+	if !ok || !reflect.DeepEqual(r, want) {
+		t.Errorf("got %+v, %v; want %+v", r, ok, want)
+	}
+	if r, ok := FromClaudeStream(strings.NewReader(other+"\n{\n"), at); ok {
+		t.Errorf("reading %+v from a stream without a rate_limit_event", r)
+	}
+}
+
 // Codex's rollout records the account's windows on each token_count.
 func TestFromCodex(t *testing.T) {
 	want := Reading{Provider: "codex", ObservedAt: at.Unix(), Windows: []Window{

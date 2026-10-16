@@ -1,13 +1,16 @@
 // Package usage keeps this host's latest reading of each provider's quota
 // windows, as the agents' own inputs carry them, without credentials or
-// network: Claude Code's status line input and Codex's rollout.
+// network: Claude Code's status line input and print sessions' stream, and
+// Codex's rollout.
 package usage
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -60,6 +63,48 @@ func FromClaudeStatus(input []byte, now time.Time) (Reading, bool) {
 		}
 	}
 	return r, len(r.Windows) > 0
+}
+
+// FromClaudeStream reads the last rate_limit_event of Claude Code's
+// `--output-format stream-json` output, whose utilization is a fraction.
+func FromClaudeStream(stream io.Reader, now time.Time) (Reading, bool) {
+	type window struct {
+		Utilization *float64 `json:"utilization"`
+		ResetsAt    int64    `json:"resetsAt"`
+	}
+	var last Reading
+	found := false
+	lines := bufio.NewReader(stream)
+	for {
+		line, err := lines.ReadBytes('\n')
+		var in struct {
+			Type string `json:"type"`
+			Info struct {
+				Windows struct {
+					FiveHour *window `json:"five_hour"`
+					SevenDay *window `json:"seven_day"`
+				} `json:"unifiedWindows"`
+			} `json:"rate_limit_info"`
+		}
+		if json.Unmarshal(line, &in) == nil && in.Type == "rate_limit_event" {
+			r := Reading{Provider: "claude", ObservedAt: now.Unix()}
+			for _, w := range []struct {
+				name string
+				w    *window
+			}{{"5h", in.Info.Windows.FiveHour}, {"7d", in.Info.Windows.SevenDay}} {
+				if w.w != nil && w.w.Utilization != nil && w.w.ResetsAt > 0 {
+					r.Windows = append(r.Windows, Window{Name: w.name, Used: math.Round(*w.w.Utilization*10000) / 100,
+						ResetsAt: w.w.ResetsAt})
+				}
+			}
+			if len(r.Windows) > 0 {
+				last, found = r, true
+			}
+		}
+		if err != nil {
+			return last, found
+		}
+	}
 }
 
 // FromCodexTokenCount reads one line of a Codex rollout, which carries the
