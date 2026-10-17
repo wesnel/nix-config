@@ -43,6 +43,9 @@ type PR struct {
 	CI         string `json:"ci"`
 	Review     string `json:"review"`
 	Unresolved int    `json:"unresolved"`
+	// Parent is the number of the pull request this one is stacked on, of
+	// those listed with it, or 0.
+	Parent int `json:"parent"`
 }
 
 // Request is an open pull request whose review is asked of the operator.
@@ -62,6 +65,8 @@ type Request struct {
 	// Record is "yes" or "no" for whether pr-loop holds a review of Head,
 	// or "unknown" without a review directory.
 	Record string `json:"-"`
+	// Parent is as PR's.
+	Parent int `json:"parent"`
 }
 
 // GitHub is what one fetch found; a Total counts what the search matched,
@@ -153,13 +158,15 @@ func github(ctx context.Context, cache string, now time.Time) (*GitHub, bool, er
 }
 
 // query asks for keys, states and counts, and of others' text only the
-// title, which only the page shows; never a body, branch or comment.
+// title, which only the page shows; never a body or comment. Branch names
+// only link stacked pull requests in fetch and are never kept.
 const query = `query {
   viewer { login }
   mine: search(query: "is:pr is:open archived:false author:@me sort:updated-desc", type: ISSUE, first: 100) {
     issueCount
     nodes { ... on PullRequest {
       number title isDraft reviewDecision repository { nameWithOwner }
+      baseRefName headRefName headRepository { nameWithOwner }
       commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
       reviewThreads(first: 100) { nodes { isResolved } }
     } }
@@ -168,6 +175,7 @@ const query = `query {
     issueCount
     nodes { ... on PullRequest {
       number title isDraft headRefOid repository { nameWithOwner }
+      baseRefName headRefName headRepository { nameWithOwner }
       commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
       reviewRequests(first: 50) { nodes { requestedReviewer { __typename ... on User { login } } } }
       timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], last: 50) { nodes { ... on ReviewRequestedEvent {
@@ -188,9 +196,15 @@ type searchPR struct {
 	IsDraft        bool    `json:"isDraft"`
 	ReviewDecision *string `json:"reviewDecision"`
 	HeadRefOid     string  `json:"headRefOid"`
+	BaseRefName    string  `json:"baseRefName"`
+	HeadRefName    string  `json:"headRefName"`
 	Repository     struct {
 		NameWithOwner string `json:"nameWithOwner"`
 	} `json:"repository"`
+	// HeadRepository is null where the head's fork is gone.
+	HeadRepository *struct {
+		NameWithOwner string `json:"nameWithOwner"`
+	} `json:"headRepository"`
 	Commits struct {
 		Nodes []struct {
 			Commit struct {
@@ -250,11 +264,13 @@ func fetch(ctx context.Context, now time.Time) (*GitHub, error) {
 	}
 	d := reply.Data
 	g := &GitHub{At: now, Mine: []PR{}, MineTotal: d.Mine.IssueCount, Requests: []Request{}, RequestsTotal: d.Requested.IssueCount}
+	mine := parents(d.Mine.Nodes, func(p searchPR) bool { return isKey(p.Repository.NameWithOwner, p.Number) })
 	for _, p := range d.Mine.Nodes {
 		if !isKey(p.Repository.NameWithOwner, p.Number) {
 			continue
 		}
-		pr := PR{Repo: p.Repository.NameWithOwner, Number: p.Number, Title: p.Title, Draft: p.IsDraft, CI: headCI(p), Review: "none"}
+		pr := PR{Repo: p.Repository.NameWithOwner, Number: p.Number, Title: p.Title, Draft: p.IsDraft, CI: headCI(p), Review: "none",
+			Parent: mine(p)}
 		if p.ReviewDecision != nil {
 			pr.Review = enum(*p.ReviewDecision, "APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED")
 		}
@@ -267,11 +283,16 @@ func fetch(ctx context.Context, now time.Time) (*GitHub, error) {
 	}
 	me := d.Viewer.Login
 	isMe := func(r reviewer) bool { return r.Typename == "User" && me != "" && r.Login == me }
+	listed := func(p searchPR) bool {
+		return isKey(p.Repository.NameWithOwner, p.Number) && fullHead.MatchString(p.HeadRefOid)
+	}
+	requested := parents(d.Requested.Nodes, listed)
 	for _, p := range d.Requested.Nodes {
-		if !isKey(p.Repository.NameWithOwner, p.Number) || !fullHead.MatchString(p.HeadRefOid) {
+		if !listed(p) {
 			continue
 		}
-		r := Request{Repo: p.Repository.NameWithOwner, Number: p.Number, Title: p.Title, Draft: p.IsDraft, Head: p.HeadRefOid, CI: headCI(p), Team: true}
+		r := Request{Repo: p.Repository.NameWithOwner, Number: p.Number, Title: p.Title, Draft: p.IsDraft, Head: p.HeadRefOid, CI: headCI(p), Team: true,
+			Parent: requested(p)}
 		for _, n := range p.ReviewRequests.Nodes {
 			if isMe(n.RequestedReviewer) {
 				r.Team = false
@@ -285,6 +306,27 @@ func fetch(ctx context.Context, now time.Time) (*GitHub, error) {
 		g.Requests = append(g.Requests, r)
 	}
 	return g, nil
+}
+
+// parents is, for a pull request of nodes, the number of the one of nodes
+// kept whose head branch, in the same repository, is its base: the pull
+// request it is stacked on; or 0. A head on a fork never counts, since
+// its branch name says nothing about the repository's own branches.
+func parents(nodes []searchPR, kept func(searchPR) bool) func(searchPR) int {
+	type branch struct{ repo, name string }
+	heads := map[branch]int{}
+	for _, p := range nodes {
+		if kept(p) && p.HeadRefName != "" && p.HeadRepository != nil &&
+			p.HeadRepository.NameWithOwner == p.Repository.NameWithOwner {
+			heads[branch{p.Repository.NameWithOwner, p.HeadRefName}] = p.Number
+		}
+	}
+	return func(p searchPR) int {
+		if n := heads[branch{p.Repository.NameWithOwner, p.BaseRefName}]; n != p.Number && p.BaseRefName != "" {
+			return n
+		}
+		return 0
+	}
 }
 
 // headCI is the check rollup of p's last commit, as PR's CI.

@@ -348,9 +348,11 @@ only escaped output may show what it holds.
 its claude.ai database, laid out as an `ArtifactData` read's `out_dir`
 lays them: `plans/<plan>.json` for every host's plans that are not halted,
 `github/status.json` (what `collect` lists of GitHub, with titles, through
-the same cache) and `meta/sync.json` (when this host's plans last reached
-the notes remote, whether they changed since, when the repository last
-fetched). These leave the machine. Each is a fixed struct in
+the same cache, and which listed pull request each is stacked on: the one
+whose head branch, in the same repository, is its base; branch names
+themselves are never kept) and `meta/sync.json` (when this host's plans
+last reached the notes remote, whether they changed since, when the
+repository last fetched). These leave the machine. Each is a fixed struct in
 `internal/export` whose JSON tags are the allowlist, and its sentinel test
 fails on any other key. Plan text comes only from the plans directory: the
 title, the Goal section, the step headings under Steps, the open and

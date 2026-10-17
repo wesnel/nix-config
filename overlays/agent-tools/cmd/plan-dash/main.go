@@ -40,9 +40,10 @@ const usage = `plan-dash: the operator's status, from GitHub and the plans.
           of every host not halted (title, goal, status, host, updated,
           steps, decisions, open questions and their options),
           github/status.json (collect's pull requests and review requests,
-          with titles) and meta/sync.json (when this host's plans last
-          reached the notes remote, whether they changed since, when the
-          notes repository last fetched); the documents of plans gone or
+          with titles, and the one of each list each is stacked on) and
+          meta/sync.json (when this host's plans last reached the notes
+          remote, whether they changed since, when the notes repository
+          last fetched); the documents of plans gone or
           halted are removed, those of plans that could not be read kept;
           and, outside out, the review requests listed, with their heads,
           and the open questions of this host's plans, with their options

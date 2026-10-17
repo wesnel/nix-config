@@ -29,22 +29,27 @@ const (
 )
 
 // reply is GitHub's answer for alice: two of their three open pull
-// requests, and p/q#3, asked of them and a team, and p/q#4, of a team only.
+// requests, #8 stacked on #7, and p/q#3, asked of them and a team, from a
+// fork whose branch has the name of p/q#4's base, and p/q#4, of a team
+// only.
 const reply = `{"data": {
   "viewer": {"login": "alice"},
   "mine": {"issueCount": 3, "nodes": [
     {"number": 7, "title": "Add the loop", "isDraft": true, "reviewDecision": "CHANGES_REQUESTED",
-     "repository": {"nameWithOwner": "o/r"},
+     "repository": {"nameWithOwner": "o/r"}, "baseRefName": "main", "headRefName": "loop",
+     "headRepository": {"nameWithOwner": "o/r"},
      "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}}}]},
      "reviewThreads": {"nodes": [{"isResolved": false}, {"isResolved": true}, {"isResolved": false}]}},
     {"number": 8, "isDraft": false, "reviewDecision": null,
-     "repository": {"nameWithOwner": "o/r"},
+     "repository": {"nameWithOwner": "o/r"}, "baseRefName": "loop", "headRefName": "loop-tests",
+     "headRepository": {"nameWithOwner": "o/r"},
      "commits": {"nodes": [{"commit": {"statusCheckRollup": null}}]},
      "reviewThreads": {"nodes": []}}
   ]},
   "requested": {"issueCount": 2, "nodes": [
     {"number": 3, "title": "Fix the parser", "isDraft": false, "headRefOid": "` + head1 + `",
-     "repository": {"nameWithOwner": "p/q"},
+     "repository": {"nameWithOwner": "p/q"}, "baseRefName": "main", "headRefName": "main",
+     "headRepository": {"nameWithOwner": "fork/q"},
      "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}}}]},
      "reviewRequests": {"nodes": [
        {"requestedReviewer": {"__typename": "Team"}},
@@ -53,7 +58,7 @@ const reply = `{"data": {
        {"createdAt": "2026-10-14T09:00:00Z", "requestedReviewer": {"__typename": "User", "login": "alice"}},
        {"createdAt": "2026-10-15T09:00:00Z", "requestedReviewer": {"__typename": "Team"}}]}},
     {"number": 4, "isDraft": true, "headRefOid": "` + head2 + `",
-     "repository": {"nameWithOwner": "p/q"},
+     "repository": {"nameWithOwner": "p/q"}, "baseRefName": "main", "headRefName": "four", "headRepository": null,
      "reviewRequests": {"nodes": [{"requestedReviewer": {"__typename": "Team"}}]},
      "timelineItems": {"nodes": [
        {"createdAt": "2026-10-13T09:00:00Z", "requestedReviewer": {"__typename": "Team"}}]}}
@@ -118,7 +123,7 @@ func TestGitHub(t *testing.T) {
 	}
 	wantMine := []PR{
 		{Repo: "o/r", Number: 7, Title: "Add the loop", Draft: true, CI: "failure", Review: "changes-requested", Unresolved: 2},
-		{Repo: "o/r", Number: 8, CI: "none", Review: "none"},
+		{Repo: "o/r", Number: 8, CI: "none", Review: "none", Parent: 7},
 	}
 	if !reflect.DeepEqual(s.GitHub.Mine, wantMine) || s.GitHub.MineTotal != 3 {
 		t.Errorf("mine %+v of %d, want %+v of 3", s.GitHub.Mine, s.GitHub.MineTotal, wantMine)

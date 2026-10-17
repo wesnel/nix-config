@@ -155,6 +155,9 @@ type PR struct {
 	CI         string `json:"ci"`
 	Review     string `json:"review"`
 	Unresolved int    `json:"unresolved"`
+	// Parent is the number of the pull request in Mine this one is stacked
+	// on, or 0.
+	Parent int `json:"parent"`
 }
 
 // Request is status.Request, Requested RFC 3339 or "".
@@ -168,6 +171,9 @@ type Request struct {
 	Head      string `json:"head"`
 	CI        string `json:"ci"`
 	Record    string `json:"record"`
+	// Parent is the number of the request in Requests this one is stacked
+	// on, or 0.
+	Parent int `json:"parent"`
 }
 
 // Export is one export's documents. Failed are the IDs of plans found but
@@ -344,14 +350,14 @@ func GitHubOf(ctx context.Context, cache string, now time.Time) (GitHub, error) 
 	for _, p := range got.Mine {
 		if slug.MatchString(p.Repo) && p.Number > 0 {
 			g.Mine = append(g.Mine, PR{Repo: p.Repo, Number: p.Number, Title: text(p.Title, short), Draft: p.Draft,
-				CI: enum(p.CI), Review: enum(p.Review), Unresolved: p.Unresolved})
+				CI: enum(p.CI), Review: enum(p.Review), Unresolved: p.Unresolved, Parent: max(p.Parent, 0)})
 		}
 	}
 	for _, r := range got.Requests {
 		if slug.MatchString(r.Repo) && r.Number > 0 && fullHead.MatchString(r.Head) {
 			g.Requests = append(g.Requests, Request{Repo: r.Repo, Number: r.Number, Title: text(r.Title, short),
 				Draft: r.Draft, Team: r.Team, Requested: stamp(r.Requested), Head: r.Head, CI: enum(r.CI),
-				Record: enum(r.Record)})
+				Record: enum(r.Record), Parent: max(r.Parent, 0)})
 		}
 	}
 	return g, err
