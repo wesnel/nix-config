@@ -260,11 +260,12 @@ Stop and hand back when any of these holds:
    the like in progress, a HEAD off its branch): settle each with its owner,
    or put it in the report.
 2. Write `$(git rev-parse --git-common-dir)/pr-loop/report.md` and show it.
-   For each PR, include:
-   - each bot's verdict
-   - CI state and any accepted failures
-   - commits added, and changed lines then and now
-   - threads by outcome, with links
+   Start it with `pr-loop report`'s output, pasted unchanged: per PR, the
+   bots' verdicts, CI, changed lines then and now, the fixups added, any
+   rewrite for the operator to review, and every thread with its URL.
+   Never write a thread's link yourself. For each PR, add:
+   - each thread's outcome, by its ID in that table
+   - any accepted CI failures
    - local review findings per round: fixed, rebutted, and any left standing
    - `needs-operator` with each range-diff file `pr-loop status` lists under
      `needsOperator`: review the conflict resolution before signing

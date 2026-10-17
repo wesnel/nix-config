@@ -556,7 +556,7 @@ var coordinatorOnly = map[string]bool{"open": true, "link": true, "begin": true,
 // reviewerReads are the pr-loop commands a reviewer may run, besides
 // `wait ci`.
 var reviewerReads = map[string]bool{"stack": true, "threads": true, "status": true, "ci": true, "logs": true,
-	"setup-command": true}
+	"setup-command": true, "report": true}
 
 // planSync is why no agent syncs plans: the sync pushes with a deploy key,
 // which is the watcher's, outside every session.

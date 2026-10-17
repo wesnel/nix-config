@@ -72,6 +72,7 @@ func TestRelayRefusal(t *testing.T) {
 		})
 	}
 	for _, argv := range [][]string{
+		{"report"},
 		{"reply", "T", "--body-file", "-"},
 		{"reply", "--from", "-"},
 		{"status", "12"},

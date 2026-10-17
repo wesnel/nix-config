@@ -75,6 +75,10 @@ printed on stderr and fails nothing.
                               it is paused, not done after 6 rounds, with changed lines
                               grown over 50%, or with a bot asked to review the head an
                               hour ago that has not (paused, pausedBecause)
+  report [PR...]              Markdown for the loop's report.md, read from GitHub and the
+                              loop's state: per PR, status's verdict, CI, changed lines,
+                              the fixups added, each bot's standing, and every review
+                              thread with its state and URL
   ci [PR...]                  checks on each head, compared with the base; whether it
                               merges with the base (mergeable: MERGEABLE, CONFLICTING or
                               UNKNOWN) and, in a loop, whether the base moved since the
@@ -181,7 +185,7 @@ setup asks it for the command, then both run the command here, in the sandbox.
 var relayed = map[string]bool{
 	"open": true, "stack": true, "link": true, "begin": true, "push": true, "threads": true, "reply": true, "resolve": true,
 	"request": true, "status": true, "ci": true, "logs": true, "wait": true, "worktrees": true,
-	"setup-command": true, "review": true, "fetch-base": true,
+	"setup-command": true, "review": true, "fetch-base": true, "report": true,
 }
 
 // reviewRefusal is why a relayed caller may not run `review argv...`, or "".
@@ -461,6 +465,15 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 		var ns []int
 		if ns, err = numbers(); err == nil {
 			result, err = loop.Status(ns)
+		}
+	case "report":
+		var ns []int
+		if ns, err = numbers(); err == nil {
+			var text string
+			if text, err = loop.Report(ns); err == nil {
+				fmt.Fprint(stdout, text)
+				return 0
+			}
 		}
 	case "ci":
 		result, err = loop.CIStatuses(rest)

@@ -16,6 +16,10 @@ import (
 type fakeReviewThread struct {
 	resolved    bool
 	first, last string // the authors of its first and last comments
+	// Where `pr-loop threads` reads it: its ID, its file and line, and its
+	// first comment's URL.
+	id, path, url string
+	line          int
 }
 
 // fakeReview adds to fakeCI the GraphQL that status and request make: the
@@ -53,7 +57,16 @@ func (f *fakeReview) graphQL(query string, vars map[string]any, out any) error {
 			author := func(login string) any {
 				return map[string]any{"nodes": []any{map[string]any{"author": map[string]any{"login": login}}}}
 			}
-			nodes = append(nodes, map[string]any{"isResolved": t.resolved, "first": author(t.first), "last": author(t.last)})
+			comments := []any{map[string]any{"author": map[string]any{"login": t.first}, "body": "finding", "url": t.url}}
+			if t.last != t.first {
+				comments = append(comments, map[string]any{"author": map[string]any{"login": t.last}, "body": "reply", "url": t.url + "-last"})
+			}
+			var line any
+			if t.line > 0 {
+				line = t.line
+			}
+			nodes = append(nodes, map[string]any{"isResolved": t.resolved, "first": author(t.first), "last": author(t.last),
+				"id": t.id, "path": t.path, "line": line, "comments": map[string]any{"nodes": comments}})
 		}
 		data = map[string]any{"repository": map[string]any{"pullRequest": map[string]any{
 			"reviewThreads": map[string]any{"nodes": nodes,
