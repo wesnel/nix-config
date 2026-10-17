@@ -541,10 +541,12 @@ in {
           load, which a loop session may read but not change: git hooks and
           config, which the next git command run outside would obey, and
           agents' project settings, which can name hooks that run outside any
-          sandbox. Every sandboxing launcher takes its list from here.
+          sandbox; and the loop session's logs, from which `pr-loop watch
+          --events` tells the session's starter of proposals and the
+          hand-back. Every sandboxing launcher takes its list from here.
         '';
 
-        default = [".git/hooks" ".git/config" ".claude" ".codex" ".eca"];
+        default = [".git/hooks" ".git/config" ".claude" ".codex" ".eca" ".git/pr-loop-session.jsonl" ".git/pr-loop-session.err"];
       };
 
       cacheDir = mkOption {

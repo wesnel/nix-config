@@ -125,13 +125,19 @@ printed on stderr and fails nothing.
                               KILL after 10s; then remove the PRs' clean worktrees, put the
                               main worktree back on the top branch, end as end does, and
                               write report.md saying what is left
-  watch [--from-start] [LOG]  follow a loop session's log (default: pr-loop-session.jsonl
+  watch [--from-start] [--events E,...] [LOG]
+                              follow a loop session's log (default: pr-loop-session.jsonl
                               in the git common directory, where the review-loop skill
                               writes it), and its .err beside it, from their end: the
                               agents' text, tool calls, results cut to two lines, refusals
                               marked !! REFUSED, sub-agents' starts and ends, with known
                               secret shapes redacted and control characters shown as
-                              text; until interrupted
+                              text; until interrupted. --events prints only those named,
+                              each line led by its name: proposal, the lines pr-loop
+                              propose printed in a call that ran it alone, with nothing
+                              chained, piped or substituted, and handback, the launcher's
+                              line that the
+                              session exited, after which watch exits
   guard [--baseline]          PreToolUse hook for Claude Code, Codex and ECA (reads stdin):
                               a loop's rules, or with --baseline every session's, by agent
   guard --post                PostToolUse hook for Claude Code, Codex and ECA (reads stdin):
@@ -372,6 +378,7 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 		remove   = flags.Bool("remove", false, "")
 		execute  = flags.String("exec", "", "")
 		summary  = flags.String("summary", "", "")
+		events   = flags.String("events", "", "")
 		size     = flags.Int("size", 0, "")
 		bots     multi
 		accepted multi
@@ -661,7 +668,7 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 			result, err = loop.Stop()
 		}
 	case "watch":
-		if err = watchLog(rest, *start, stdout, stderr); err == nil {
+		if err = watchLog(rest, *start, *events, stdout, stderr); err == nil {
 			return 0
 		}
 	default:
@@ -759,7 +766,8 @@ func interleave(args []string) []string {
 		"-timeout": true, "--timeout": true, "-interval": true, "--interval": true, "-bot": true, "--bot": true,
 		"-accept-failure": true, "--accept-failure": true, "-base": true, "--base": true, "-title": true, "--title": true,
 		"-sha": true, "--sha": true, "-grace": true, "--grace": true, "-exec": true, "--exec": true,
-		"-summary": true, "--summary": true, "-size": true, "--size": true, "-thread": true, "--thread": true, "-fixup": true, "--fixup": true}
+		"-summary": true, "--summary": true, "-size": true, "--size": true, "-thread": true, "--thread": true, "-fixup": true, "--fixup": true,
+		"-events": true, "--events": true}
 	var flags, positional []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]

@@ -10,6 +10,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/history"
+	"github.com/wesnel/agent-tools/internal/watch"
 )
 
 // ProposalKinds are what the loop may propose: a follow-up for a finding
@@ -42,8 +43,7 @@ type Proposal struct {
 var threadID = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // Propose records a proposal of kind on PR pr in the loop's state, for
-// report.md, and writes its marker line to marker, which `pr-loop watch
-// --events proposal` passes on to whoever started the loop. fixups name
+// report.md, and writes its marker line to marker. fixups name
 // loop fixups, by any revision, that the proposal would move.
 func Propose(kind string, pr int, summary string, threads, fixups []string, size int, marker io.Writer) (*Proposal, error) {
 	if !contains(ProposalKinds, kind) {
@@ -112,12 +112,9 @@ func (p *Proposal) Marker() string {
 	if p.Size > 0 {
 		details = append(details, fmt.Sprintf("about %d changed lines", p.Size))
 	}
-	line := fmt.Sprintf("%s %d for #%d: %s: %s", ProposalMarker, p.ID, p.PR, p.Kind, p.Summary)
+	line := fmt.Sprintf("%s%d for #%d: %s: %s", watch.ProposalMarker, p.ID, p.PR, p.Kind, p.Summary)
 	if len(details) > 0 {
 		line += " (" + strings.Join(details, "; ") + ")"
 	}
 	return line
 }
-
-// ProposalMarker starts a proposal's marker line.
-const ProposalMarker = "pr-loop: proposal"

@@ -16,6 +16,7 @@ import (
 	"io/fs"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -31,13 +32,86 @@ type Formatter struct {
 	// tasks describes each task Claude Code runs beside the turn, a
 	// sub-agent or a background command, by its ID, for its end.
 	tasks map[string]task
+	// commands holds each shell call's command by its ID.
+	commands map[string]string
+	// events are the events printed, or nil for everything.
+	events map[string]bool
 }
 
 type task struct{ kind, description string }
 
 // NewFormatter prints to w.
 func NewFormatter(w io.Writer) *Formatter {
-	return &Formatter{w: w, tools: map[string]string{}, tasks: map[string]task{}}
+	return &Formatter{w: w, tools: map[string]string{}, tasks: map[string]task{}, commands: map[string]string{}}
+}
+
+// Events are what FollowEvents can print alone: proposal, each line `pr-loop
+// propose` printed starting ProposalMarker, read only from that command's
+// own result, since anything else the session ran or read could print the
+// same words; and handback, the line a loop launcher writes on stderr once
+// the session has exited.
+var Events = []string{"proposal", "handback"}
+
+// ProposalMarker starts the line `pr-loop propose` prints for a proposal.
+const ProposalMarker = "pr-loop: proposal "
+
+// simple reports whether a shell command line is one command with plain
+// arguments: outside quotes no list, pipe, background, redirection,
+// subshell or line break; nowhere a command substitution; every quote
+// closed. Single quotes take everything literally; double quotes all but
+// `$(`, `${` and backticks, which simple refuses.
+func simple(command string) bool {
+	var quote rune
+	escaped := false
+	runes := []rune(command)
+	for i, r := range runes {
+		next := rune(0)
+		if i+1 < len(runes) {
+			next = runes[i+1]
+		}
+		switch {
+		case escaped:
+			if r == '\n' {
+				return false
+			}
+			escaped = false
+		case quote == '\'':
+			if r == '\'' {
+				quote = 0
+			}
+		case r == '`', r == '$' && (next == '(' || next == '{'):
+			return false
+		case quote == '"':
+			if r == '\\' {
+				escaped = true
+			} else if r == '"' {
+				quote = 0
+			}
+		case r == '\\':
+			escaped = true
+		case r == '\'' || r == '"':
+			quote = r
+		case strings.ContainsRune(";&|<>()\n\r", r):
+			return false
+		}
+	}
+	return quote == 0 && !escaped
+}
+
+// handBack matches the line claude-pr-loop and codex-pr-loop write.
+var handBack = regexp.MustCompile(`^[a-z]+-pr-loop: the loop session exited`)
+
+// proposal prints the proposal lines in the result of a call, by its ID,
+// that ran `pr-loop propose` alone.
+func (f *Formatter) proposal(id string, content json.RawMessage) {
+	if command := strings.TrimSpace(f.commands[id]); !strings.HasPrefix(command, "pr-loop propose ") || !simple(command) {
+		return
+	}
+	for _, l := range strings.Split(secrets(resultText(content)), "\n") {
+		if l = strings.TrimSpace(l); strings.HasPrefix(l, ProposalMarker) {
+			f.println("proposal: " + cut(l))
+		}
+	}
 }
 
 type event struct {
@@ -91,6 +165,10 @@ func (f *Formatter) Event(line []byte) {
 		f.println("?? a line that is not stream-json")
 		return
 	}
+	if f.events != nil {
+		f.filtered(e)
+		return
+	}
 	prefix := ""
 	if e.ParentToolUseID != nil && e.TaskDescription != "" {
 		prefix = "[" + oneLine(e.TaskDescription) + "] "
@@ -123,6 +201,32 @@ func (f *Formatter) Event(line []byte) {
 			head = "!! " + strings.TrimPrefix(head, "== ")
 		}
 		f.lines("", head, "   ", e.Result, 2)
+	}
+}
+
+// filtered prints what of e the events name: only proposals, since the
+// hand-back is on stderr.
+func (f *Formatter) filtered(e event) {
+	if !f.events["proposal"] || (e.Type != "assistant" && e.Type != "user") {
+		return
+	}
+	var m message
+	var blocks []block
+	if json.Unmarshal(e.Message, &m) != nil || json.Unmarshal(m.Content, &blocks) != nil {
+		return
+	}
+	for _, b := range blocks {
+		switch {
+		case e.Type == "assistant" && b.Type == "tool_use":
+			var in struct {
+				Command string `json:"command"`
+			}
+			if json.Unmarshal(b.Input, &in) == nil {
+				f.commands[b.ID] = in.Command
+			}
+		case e.Type == "user" && b.Type == "tool_result" && !b.IsError:
+			f.proposal(b.ToolUseID, b.Content)
+		}
 	}
 }
 
@@ -335,7 +439,24 @@ func cut(s string) string {
 // for, one cut shorter, as a new session's is, is read again from its
 // start, and a line still being written is read once it ends.
 func Follow(ctx context.Context, path string, fromStart bool, w io.Writer, poll time.Duration) error {
+	return FollowEvents(ctx, path, fromStart, nil, w, poll)
+}
+
+// FollowEvents is Follow printing only the events named, of Events, when
+// any are: each then on a line of its own after the event's name, and
+// nothing else. With handback among them it returns once it has printed
+// that event.
+func FollowEvents(ctx context.Context, path string, fromStart bool, events []string, w io.Writer, poll time.Duration) error {
 	f := NewFormatter(w)
+	if len(events) > 0 {
+		f.events = map[string]bool{}
+		for _, e := range events {
+			if !slices.Contains(Events, e) {
+				return fmt.Errorf("%q is not an event watch knows; name one of %s", e, strings.Join(Events, ", "))
+			}
+			f.events[e] = true
+		}
+	}
 	log := &tail{path: path, fromStart: fromStart}
 	var errs *tail
 	if base, ok := strings.CutSuffix(path, ".jsonl"); ok {
@@ -353,8 +474,14 @@ func Follow(ctx context.Context, path string, fromStart bool, w io.Writer, poll 
 				return err
 			}
 			for _, l := range strings.Split(secrets(strings.Join(batch, "")), "\n") {
-				if l = strings.TrimSpace(l); l != "" {
+				l = strings.TrimSpace(l)
+				switch {
+				case l == "":
+				case f.events == nil:
 					f.println("stderr: " + cut(l))
+				case f.events["handback"] && handBack.MatchString(l):
+					f.println("handback: " + cut(l))
+					return nil
 				}
 			}
 		}
