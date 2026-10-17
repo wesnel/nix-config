@@ -21,7 +21,10 @@
       wgn.home = {
         amp.enable = true;
         bash.enable = true;
-        claude.enable = true;
+        claude = {
+          enable = true;
+          agentPlans.enable = true;
+        };
         codex.enable = true;
         eca = {
           enable = true;
