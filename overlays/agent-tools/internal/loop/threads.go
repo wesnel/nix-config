@@ -278,6 +278,13 @@ func Reply(id, body string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	threads, err := prThreads(policy.repo.Slug, check.pr)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkPublic("the reply", body, append(threads, id), "run `pr-loop reply` again"); err != nil {
+		return nil, err
+	}
 	url, err := postReply(policy.state, check.pr, id, body)
 	if err != nil {
 		return nil, err
