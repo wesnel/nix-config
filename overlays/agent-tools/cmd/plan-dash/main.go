@@ -31,10 +31,11 @@ const usage = `plan-dash: the operator's status, from GitHub and the plans.
           draft, CI, review decision and unresolved threads, and the
           reviews asked of the operator, directly or of a team, with since
           when, head and its CI and whether pr-loop holds a review of it,
-          all with titles) and meta/sync.json (when this host's plans last
-          reached the notes remote, whether they changed since, when the
-          notes repository last fetched); the documents of plans gone or
-          halted are removed, those of plans that could not be read kept
+          all with titles, and the one of each list each is stacked on)
+          and meta/sync.json (when this host's plans last reached the
+          notes remote, whether they changed since, when the notes
+          repository last fetched); the documents of plans gone or halted
+          are removed, those of plans that could not be read kept
   watch   for the dashboard session's Monitor: every 30 seconds, export
           this host's and the other hosts' plans and their sync state in
           memory and print "plans changed" where what the page would show

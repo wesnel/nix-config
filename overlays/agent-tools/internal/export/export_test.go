@@ -23,30 +23,47 @@ var day = time.Date(2026, 10, 14, 13, 5, 0, 0, time.Local)
 // fakeToken has a GitHub token's shape, which redaction knows.
 const fakeToken = "ghp_SENTINELaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-const head = "0123456789abcdef0123456789abcdef01234567"
+const (
+	head  = "0123456789abcdef0123456789abcdef01234567"
+	head2 = "89abcdef0123456789abcdef0123456789abcdef"
+)
 
 // theirsCommitted is when mac's plan reached the notes repository, in
 // mac's zone.
 const theirsCommitted = "2026-10-14T20:05:00+02:00"
 
-// reply is GitHub's answer: one pull request of the operator's and one
-// review asked of them, with fields the export must drop.
+// reply is GitHub's answer: two pull requests of the operator's and two
+// reviews asked of them, the second of each stacked on the first, with
+// fields the export must drop, branch names among them.
 const reply = `{"data": {
   "viewer": {"login": "SENTINEL-login"},
-  "mine": {"issueCount": 1, "nodes": [
+  "mine": {"issueCount": 2, "nodes": [
     {"number": 7, "title": "Add the loop ` + fakeToken + `", "isDraft": true, "reviewDecision": "APPROVED",
-     "body": "SENTINEL-body", "headRefName": "SENTINEL-branch", "author": {"login": "SENTINEL-author"},
+     "body": "SENTINEL-body", "headRefName": "SENTINEL-branch", "baseRefName": "SENTINEL-base",
+     "headRepository": {"nameWithOwner": "o/r"}, "author": {"login": "SENTINEL-author"},
      "repository": {"nameWithOwner": "o/r"},
      "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS"}}}]},
-     "reviewThreads": {"nodes": [{"isResolved": false, "comments": {"nodes": [{"body": "SENTINEL-thread"}]}}]}}
+     "reviewThreads": {"nodes": [{"isResolved": false, "comments": {"nodes": [{"body": "SENTINEL-thread"}]}}]}},
+    {"number": 8, "title": "Test the loop", "isDraft": false, "reviewDecision": null,
+     "headRefName": "SENTINEL-branch-2", "baseRefName": "SENTINEL-branch",
+     "headRepository": {"nameWithOwner": "o/r"}, "repository": {"nameWithOwner": "o/r"},
+     "commits": {"nodes": []}, "reviewThreads": {"nodes": []}}
   ]},
-  "requested": {"issueCount": 1, "nodes": [
+  "requested": {"issueCount": 2, "nodes": [
     {"number": 3, "title": "Fix the parser\u202e\u200b", "isDraft": true, "headRefOid": "` + head + `",
      "body": "SENTINEL-request-body", "repository": {"nameWithOwner": "p/q"},
+     "headRefName": "SENTINEL-parser", "baseRefName": "SENTINEL-main", "headRepository": {"nameWithOwner": "p/q"},
      "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}}}]},
      "reviewRequests": {"nodes": [{"requestedReviewer": {"__typename": "Team", "name": "SENTINEL-team"}}]},
      "timelineItems": {"nodes": [
-       {"createdAt": "2026-10-13T09:00:00Z", "requestedReviewer": {"__typename": "Team", "name": "SENTINEL-team"}}]}}
+       {"createdAt": "2026-10-13T09:00:00Z", "requestedReviewer": {"__typename": "Team", "name": "SENTINEL-team"}}]}},
+    {"number": 4, "title": "Test the parser", "isDraft": false, "headRefOid": "` + head2 + `",
+     "repository": {"nameWithOwner": "p/q"},
+     "headRefName": "SENTINEL-parser-tests", "baseRefName": "SENTINEL-parser", "headRepository": {"nameWithOwner": "p/q"},
+     "commits": {"nodes": []},
+     "reviewRequests": {"nodes": [{"requestedReviewer": {"__typename": "Team", "name": "SENTINEL-team"}}]},
+     "timelineItems": {"nodes": [
+       {"createdAt": "2026-10-09T09:00:00Z", "requestedReviewer": {"__typename": "Team", "name": "SENTINEL-team"}}]}}
   ]}
 }}`
 
@@ -222,9 +239,10 @@ var allowed = map[string][]string{
 		"questions[].options[].why", "questions[].options[].recommended"},
 	"github": {"schema", "at", "stale", "mineTotal", "requestsTotal",
 		"mine", "mine[].repo", "mine[].number", "mine[].title", "mine[].draft", "mine[].ci", "mine[].review",
-		"mine[].unresolved",
+		"mine[].unresolved", "mine[].parent",
 		"requests", "requests[].repo", "requests[].number", "requests[].title", "requests[].draft",
-		"requests[].team", "requests[].requested", "requests[].head", "requests[].ci", "requests[].record"},
+		"requests[].team", "requests[].requested", "requests[].head", "requests[].ci", "requests[].record",
+		"requests[].parent"},
 	"meta": {"schema", "updated", "host", "repo", "pushed", "unsynced", "fetched"},
 }
 
@@ -412,11 +430,13 @@ func TestExport(t *testing.T) {
 	}
 	g := e.GitHub
 	wantMine := []PR{{Repo: "o/r", Number: 7, Title: "Add the loop [REDACTED GitHub token]", Draft: true, CI: "success",
-		Review: "approved", Unresolved: 1}}
+		Review: "approved", Unresolved: 1}, {Repo: "o/r", Number: 8, Title: "Test the loop", CI: "none", Review: "none", Parent: 7}}
 	wantRequests := []Request{{Repo: "p/q", Number: 3, Title: "Fix the parser", Draft: true, Team: true,
-		Requested: "2026-10-13T09:00:00Z", Head: head, CI: "failure", Record: "yes"}}
-	if g.At != day.Format(time.RFC3339) || g.Stale || !reflect.DeepEqual(g.Mine, wantMine) ||
-		!reflect.DeepEqual(g.Requests, wantRequests) || g.MineTotal != 1 || g.RequestsTotal != 1 {
+		Requested: "2026-10-13T09:00:00Z", Head: head, CI: "failure", Record: "yes"},
+		{Repo: "p/q", Number: 4, Title: "Test the parser", Team: true, Requested: "2026-10-09T09:00:00Z", Head: head2,
+			CI: "none", Record: "no", Parent: 3}}
+	if g.Schema != 1 || g.At != day.Format(time.RFC3339) || g.Stale || !reflect.DeepEqual(g.Mine, wantMine) ||
+		!reflect.DeepEqual(g.Requests, wantRequests) || g.MineTotal != 2 || g.RequestsTotal != 2 {
 		t.Errorf("github %+v", g)
 	}
 }

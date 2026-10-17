@@ -318,12 +318,15 @@ lays them: `plans/<plan>.json` for every host's plans that are not halted,
 `github/status.json` (your open pull requests, with draft, CI, review
 decision and unresolved threads, and the reviews asked of you or your
 teams, with since when, the head and its CI and whether `pr-loop review`
-holds a record of it, all with titles) and `meta/sync.json` (when this
-host's plans last reached the notes remote, whether they changed since,
-when the repository last fetched). `gh` is asked at most once a minute;
-the answer is cached as `$XDG_STATE_HOME/plan-dash/github.json`, which
-holds pull request titles, and when a fetch fails the last good answer is
-written, marked stale. These leave the machine. Each is a fixed struct in
+holds a record of it, all with titles, and which listed pull request each
+is stacked on: the one whose head branch, in the same repository, is its
+base; branch names themselves are never kept) and `meta/sync.json` (when
+this host's plans last reached the notes remote, whether they changed
+since, when the repository last fetched). `gh` is asked at most once a
+minute; the answer is cached as `$XDG_STATE_HOME/plan-dash/github.json`,
+which holds pull request titles, and when a fetch fails the last good
+answer is written, marked stale. These leave the machine. Each is a fixed
+struct in
 `internal/export` whose JSON tags are the allowlist, and its sentinel test
 fails on any other key. Plan text comes only from the plans directory: the
 title, the Goal section, the step headings under Steps, the open and
