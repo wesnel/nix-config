@@ -243,7 +243,9 @@ func checkArtifact(in map[string]json.RawMessage) string {
 	if err != nil {
 		return dashboardCreated
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		return dashboardCreated
+	}
 	return recordPublish()
 }
 
@@ -253,7 +255,9 @@ func checkArtifact(in map[string]json.RawMessage) string {
 func recordPublish() string {
 	file := agentplans.PublishingFile()
 	tmp := file + ".new"
-	os.Remove(tmp)
+	// A leftover from an earlier failed write; if it can't be removed, the
+	// exclusive open below refuses and the call is denied.
+	_ = os.Remove(tmp)
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return dashboardPublish
@@ -263,7 +267,7 @@ func recordPublish() string {
 		err = cerr
 	}
 	if err != nil || os.Rename(tmp, file) != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp) // the call is denied whether or not this succeeds
 		return dashboardPublish
 	}
 	return ""
