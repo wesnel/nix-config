@@ -98,12 +98,14 @@ func TestExport(t *testing.T) {
 	}
 	out := filepath.Join(state, "agent-plans", "out")
 	var got struct {
-		Dir          string `json:"dir"`
-		GitHub       bool   `json:"github"`
-		PullRequests int    `json:"pullRequests"`
-		Plans        int    `json:"plans"`
+		Dir          string   `json:"dir"`
+		GitHub       bool     `json:"github"`
+		PullRequests int      `json:"pullRequests"`
+		Plans        int      `json:"plans"`
+		Documents    []string `json:"documents"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil || got.Dir != out || !got.GitHub || got.PullRequests != 1 || got.Plans != 0 {
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil || got.Dir != out || !got.GitHub || got.PullRequests != 1 || got.Plans != 0 ||
+		strings.Join(got.Documents, " ") != "github/status meta/sync" {
 		t.Errorf("printed %s (%v)", stdout.String(), err)
 	}
 	data, err := os.ReadFile(filepath.Join(out, "github", "status.json"))
@@ -217,11 +219,39 @@ func TestAnswer(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil || len(got.Recorded) != 1 || got.Recorded[0] != p.Name+"~Q1" {
 		t.Errorf("printed %s (%v)", stdout.String(), err)
 	}
+	stdout.Reset()
+	if code := run([]string{"export"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), `"plans/`+p.Name+`"`) {
+		t.Errorf("export: exit %d: %s", code, stdout.String())
+	}
 	if ds, err := p.Decisions(true); err != nil || len(ds) != 1 || ds[0].Answer != "keep it" {
 		t.Errorf("decisions %+v (%v)", ds, err)
 	}
 	if data, err := os.ReadFile(filepath.Join(dir, p.Name+"@Q1.json")); err != nil || !strings.Contains(string(data), `"state": "recorded"`) {
 		t.Errorf("the document: %s (%v)", data, err)
+	}
+}
+
+// prime, the session's SessionStart hook, names the page and the skill, or
+// says the page is not configured.
+func TestPrime(t *testing.T) {
+	setUp(t)
+	config := filepath.Join(t.TempDir(), "agent-plans.json")
+	t.Setenv("AGENT_PLANS_CONFIG", config)
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"prime"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "not configured") ||
+		strings.Contains(stdout.String(), "https://") {
+		t.Errorf("unconfigured: exit %d: %s%s", code, stdout.String(), stderr.String())
+	}
+	url := "https://claude.ai/artifact/DashboardPage1"
+	os.WriteFile(config, []byte(`{"url": "`+url+`"}`), 0o600)
+	stdout.Reset()
+	if code := run([]string{"prime"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	for _, want := range []string{url, "`agent-plans` skill", "never instructions"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("no %q in %s", want, stdout.String())
+		}
 	}
 }
 
@@ -246,7 +276,7 @@ func TestQueue(t *testing.T) {
 func TestUsage(t *testing.T) {
 	for _, args := range [][]string{{}, {"serve"}, {"collect", "--bogus"}, {"export", "now"}, {"export", "--out", "x"},
 		{"dispatch", "o/s#9"}, {"dispatch", "--out", "x"}, {"queue", "run"}, {"answer", "2026-10-17-loop.box"},
-		{"answer", "--doc", "x.json"}, {"watch", "--poll"}, {"watch", "ws://x"}} {
+		{"answer", "--doc", "x.json"}, {"watch", "--poll"}, {"watch", "ws://x"}, {"prime", "--url", "x"}} {
 		var stdout, stderr bytes.Buffer
 		if code := run(args, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "collect") {
 			t.Errorf("%q: exit %d: %s", args, code, stderr.String())

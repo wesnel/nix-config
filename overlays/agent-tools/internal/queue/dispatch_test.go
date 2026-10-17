@@ -78,10 +78,16 @@ func dispatch(t *testing.T, p Paths, at time.Time) (Result, int) {
 func TestDispatch(t *testing.T) {
 	p := setUp(t)
 	putDoc(t, p, "o~r~7.json", `{"state": "requested", "at": "2026-10-16T11:59:00Z"}`)
+	putDoc(t, p, "o@r@99.json", `{"state": "requested"}`)
 	res, starts := dispatch(t, p, now)
 	if !reflect.DeepEqual(res.Queued, []string{"o/r#7"}) || !res.Started || starts != 1 || res.Off {
 		t.Errorf("result %+v, %d starts", res, starts)
 	}
+	// The documents written back, for the session to put on the page.
+	if !reflect.DeepEqual(res.Written, []string{"o~r~7", "o~r~99"}) {
+		t.Errorf("written %v", res.Written)
+	}
+	os.Remove(filepath.Join(p.Out(), "dispatch", "o@r@99.json"))
 	entries, err := Load(p)
 	want := []Entry{{Key: "o/r#7", State: Queued, Head: headA, Triage: true, Queued: now, Changed: now, Review: NoExit, Triaged: NoExit}}
 	if err != nil || !reflect.DeepEqual(entries, want) {

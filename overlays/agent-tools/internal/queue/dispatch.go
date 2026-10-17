@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -125,9 +127,12 @@ type Result struct {
 	Refused []string `json:"refused"`
 	// Ignored counts the files in the dispatch directory that named no
 	// document Dispatch reads, which it removed.
-	Ignored int  `json:"ignored"`
-	Started bool `json:"started"`
-	Off     bool `json:"off"`
+	Ignored int `json:"ignored"`
+	// Written are the IDs of the documents written back, for the session
+	// to put on the page.
+	Written []string `json:"written"`
+	Started bool     `json:"started"`
+	Off     bool     `json:"off"`
 }
 
 // opened runs once Dispatch has opened the dispatch directory; tests swap
@@ -149,7 +154,7 @@ const (
 // document holds but its three fields is read, and no text from one is
 // written anywhere.
 func Dispatch(p Paths, now time.Time, start func() error) (Result, error) {
-	res := Result{Queued: []string{}, Anyway: []string{}, Refused: []string{}}
+	res := Result{Queued: []string{}, Anyway: []string{}, Refused: []string{}, Written: []string{}}
 	heads, err := listed(p)
 	if err != nil {
 		return res, err
@@ -257,15 +262,20 @@ func Dispatch(p Paths, now time.Time, start func() error) (Result, error) {
 	}
 
 	var errs []error
+	written := map[string]bool{}
 	for id, why := range refused {
 		res.Refused = append(res.Refused, id)
 		errs = append(errs, WriteObject(dir, docFile(id), Doc{State: "refused", At: stamp(now), Reason: why}))
+		written[id] = true
 	}
 	waiting := false
 	for _, e := range entries {
 		waiting = waiting || e.State == Queued || e.State == Running || e.State == Postponed && !now.Before(e.Until)
 		errs = append(errs, WriteObject(dir, docFile(DocID(e.Key)), docOf(e, heads)))
+		written[DocID(e.Key)] = true
 	}
+	res.Written = slices.Sorted(maps.Keys(written))
+	slices.Sort(res.Refused)
 	res.Off = p.IsOff()
 	if waiting && !res.Off {
 		if err := start(); err != nil {

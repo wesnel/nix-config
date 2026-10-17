@@ -453,6 +453,48 @@ itself.
 
 ## the Agent plans session
 
+`wgn.home.claude.agentPlans.enable` (the devbox) runs the session as
+`agent-plans.service`, `claude remote-control --spawn session
+--permission-mode dontAsk` in `$XDG_STATE_HOME/agent-plans/session`, with
+its own Claude Code config, `CLAUDE_CONFIG_DIR` at
+`$XDG_STATE_HOME/agent-plans/claude`. Before the first start the operator
+logs that config in and trusts the folder once: in the folder,
+`CLAUDE_CONFIG_DIR=~/.local/state/agent-plans/claude claude`, `/login`,
+accept the folder, quit. The unit alone sets `AGENT_PLANS_SESSION`,
+restarts it whenever it ends, and sends its output, a status line redrawn
+every second, to null.
+
+The phone reaches the session outside tool calls too: it can run
+`/config key=value`, which writes the user settings, and @-mention a
+file, which Claude Code reads into the conversation without a hook. So
+the session's user settings are a read-only link into the store, where
+`/config` fails, and never the operator's `~/.claude`; and they deny
+reads of credentials, every agent's config and login, the session's own,
+`/run/user` and the notes deploy key, which Read rules hold @-mentions
+to. They hold the fence's hook with `onFailure: block` (Claude Code
+2.1.295 or later), so a hook that cannot run denies; an allow list of
+only the forms its rules state exactly (the three plan-dash commands and
+ToolSearch), the hook allowing the rest by their arguments; and a
+SessionStart hook, `plan-dash prime`, that names the page and the
+`agent-plans` skill after every start, `/clear` and `/compact`. The
+session folder is writable by any process running as the operator, and a
+settings file there could switch the hook off; only managed settings,
+which need root, would be a wall. Any Remote Control session, not only
+this one, takes `/config` and @-mentions from the phone with the
+operator's account. The skill, in the same config, arms a comment watch on the
+page and Monitor on `plan-dash watch`, again on every expiry and wake,
+and runs each update in a foreground sub-agent: export, read the page's
+answers and review requests into `out/`, `plan-dash answer` and `plan-dash
+dispatch`, then write what they wrote back to the page, version-pinned,
+reading the page only into files so no document's text enters the
+conversation. A
+stall or a digest becomes a PushNotification with fixed text. If the
+page's comments do not wake the session,
+`wgn.home.claude.agentPlans.poll` has the watch print a poll line every
+five minutes instead. The kill switch is the review queue's: create
+`$XDG_STATE_HOME/agent-plans/off`, then `systemctl --user stop
+agent-plans.service agent-plans.slice`.
+
 Its page is named in `agent-tools/agent-plans.json` under the XDG config
 directory, `{"url": "https://claude.ai/artifact/ID"}`, which the operator
 writes once on the host; the URL stays out of this repository, and
