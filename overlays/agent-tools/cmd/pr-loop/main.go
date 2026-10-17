@@ -95,6 +95,11 @@ printed on stderr and fails nothing.
                               completes (a commit no plan takes makes a plan
                               naming both); after a push to
                               GitHub, names the pr-loop wait ci to start
+  guard --dashboard           PreToolUse hook on every tool of the Agent plans dashboard
+                              session (reads stdin): allows the agent-plans skill's own
+                              calls, with their arguments, and denies every other; where
+                              AGENT_PLANS_SESSION is set, the other modes hold the calls
+                              they see to the same fence
 ` + prreview.Usage + `
 reply and resolve take a thread on an open PR by the authenticated user in
 this repository, people's threads included, and need no begin. In a loop

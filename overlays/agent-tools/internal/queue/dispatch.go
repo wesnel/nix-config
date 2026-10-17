@@ -1,20 +1,17 @@
 package queue
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -130,9 +127,12 @@ type Result struct {
 	Refused []string `json:"refused"`
 	// Ignored counts the files in the dispatch directory that named no
 	// document Dispatch reads, which it removed.
-	Ignored int  `json:"ignored"`
-	Started bool `json:"started"`
-	Off     bool `json:"off"`
+	Ignored int `json:"ignored"`
+	// Written are the IDs of the documents written back, for the session
+	// to put on the page.
+	Written []string `json:"written"`
+	Started bool     `json:"started"`
+	Off     bool     `json:"off"`
 }
 
 // opened runs once Dispatch has opened the dispatch directory; tests swap
@@ -154,18 +154,18 @@ const (
 // document holds but its three fields is read, and no text from one is
 // written anywhere.
 func Dispatch(p Paths, now time.Time, start func() error) (Result, error) {
-	res := Result{Queued: []string{}, Anyway: []string{}, Refused: []string{}}
+	res := Result{Queued: []string{}, Anyway: []string{}, Refused: []string{}, Written: []string{}}
 	heads, err := listed(p)
 	if err != nil {
 		return res, err
 	}
-	dir, err := openDispatch(p)
+	dir, err := OpenOut(p, "dispatch")
 	if err != nil {
 		return res, err
 	}
 	defer dir.Close()
 	opened()
-	files, err := readNames(dir)
+	files, err := ReadNames(dir)
 	if err != nil {
 		return res, err
 	}
@@ -262,15 +262,20 @@ func Dispatch(p Paths, now time.Time, start func() error) (Result, error) {
 	}
 
 	var errs []error
+	written := map[string]bool{}
 	for id, why := range refused {
 		res.Refused = append(res.Refused, id)
-		errs = append(errs, writeDoc(dir, docFile(id), Doc{State: "refused", At: stamp(now), Reason: why}))
+		errs = append(errs, WriteObject(dir, docFile(id), Doc{State: "refused", At: stamp(now), Reason: why}))
+		written[id] = true
 	}
 	waiting := false
 	for _, e := range entries {
 		waiting = waiting || e.State == Queued || e.State == Running || e.State == Postponed && !now.Before(e.Until)
-		errs = append(errs, writeDoc(dir, docFile(DocID(e.Key)), docOf(e, heads)))
+		errs = append(errs, WriteObject(dir, docFile(DocID(e.Key)), docOf(e, heads)))
+		written[DocID(e.Key)] = true
 	}
+	res.Written = slices.Sorted(maps.Keys(written))
+	slices.Sort(res.Refused)
 	res.Off = p.IsOff()
 	if waiting && !res.Off {
 		if err := start(); err != nil {
@@ -291,70 +296,11 @@ func find(entries []Entry, k string) int {
 	return -1
 }
 
-// openDispatch makes Out and Out/dispatch where they are missing and opens
-// the dispatch directory, refusing either where it is not a directory, a
-// link included. Everything Dispatch does there goes through the handle,
-// so a directory swapped for a link afterwards is never followed.
-func openDispatch(p Paths) (*os.Root, error) {
-	dir := filepath.Join(p.Out(), "dispatch")
-	var info fs.FileInfo
-	for _, d := range []string{p.Out(), dir} {
-		var err error
-		info, err = os.Lstat(d)
-		if errors.Is(err, fs.ErrNotExist) {
-			if err := os.Mkdir(d, 0o700); err != nil {
-				return nil, err
-			}
-			info, err = os.Lstat(d)
-		}
-		switch {
-		case err != nil:
-			return nil, err
-		case !info.IsDir():
-			return nil, fmt.Errorf("%s is not a directory", d)
-		}
-	}
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return nil, err
-	}
-	if opened, err := root.Stat("."); err != nil || !os.SameFile(info, opened) {
-		root.Close()
-		return nil, fmt.Errorf("%s changed while it was opened", dir)
-	}
-	return root, nil
-}
-
-// readNames lists dir's entries, by name.
-func readNames(dir *os.Root) ([]fs.DirEntry, error) {
-	f, err := dir.Open(".")
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	entries, err := f.ReadDir(-1)
-	slices.SortFunc(entries, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
-	return entries, err
-}
-
 // readDoc reads a page's document from a regular file in dir of at most
 // maxDoc.
 func readDoc(dir *os.Root, name string) (pageDoc, bool) {
 	var doc pageDoc
-	f, err := dir.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return doc, false
-	}
-	defer f.Close()
-	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
-		return doc, false
-	}
-	data, err := io.ReadAll(io.LimitReader(f, maxDoc+1))
-	if err != nil || len(data) > maxDoc {
-		return doc, false
-	}
-	data = bytes.TrimSpace(data)
-	if len(data) == 0 || data[0] != '{' || json.Unmarshal(data, &doc) != nil {
+	if !ReadObject(dir, name, maxDoc, &doc) {
 		return pageDoc{}, false
 	}
 	return doc, true
@@ -393,31 +339,6 @@ func reason(e Entry) string {
 		return "the review did not start"
 	}
 	return ""
-}
-
-// writeDoc replaces name in dir with d, by renaming a new file over it.
-func writeDoc(dir *os.Root, name string, d Doc) error {
-	var b bytes.Buffer
-	encoder := json.NewEncoder(&b)
-	encoder.SetEscapeHTML(false)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(d); err != nil {
-		return err
-	}
-	tmp := fmt.Sprintf(".%s.%d.%d", name, os.Getpid(), time.Now().UnixNano())
-	f, err := dir.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	defer dir.Remove(tmp)
-	_, err = f.Write(b.Bytes())
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err != nil {
-		return err
-	}
-	return dir.Rename(tmp, name)
 }
 
 // Unit is the declared unit that runs the queue.

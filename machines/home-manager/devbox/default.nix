@@ -24,6 +24,7 @@
         claude = {
           enable = true;
           reviewQueue.enable = true;
+          agentPlans.enable = true;
         };
         codex.enable = true;
         eca = {

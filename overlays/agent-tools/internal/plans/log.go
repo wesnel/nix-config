@@ -80,8 +80,9 @@ var (
 	// toolKinds are beside them.
 	Kinds = []string{"planned", "plan-reviewed", "started", "done", "blocked", "abandoned", "verified",
 		"reviewed", "finding-settled", "asked", "decided", "handed-back", "postponed", "discovered", "referenced"}
-	// Roles are who logs an event.
-	Roles = []string{"single", "parent", "subagent", "reviewer", "design-reviewer"}
+	// Roles are who logs an event. phone is the operator answering from the
+	// Agent plans page, which any session could also claim.
+	Roles = []string{"single", "parent", "subagent", "reviewer", "design-reviewer", "phone"}
 	// Outcomes are the review-change skill's triage outcomes; needs-operator
 	// is a finding left for the operator to decide. They are stored in plan
 	// logs, so renaming one means rewriting every log that holds it.

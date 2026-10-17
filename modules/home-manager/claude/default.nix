@@ -222,6 +222,45 @@ in {
       '';
     };
 
+    agentPlans = {
+      enable = mkOption {
+        type = types.bool;
+        default = false;
+
+        description = ''
+          Linux only. Runs the Agent plans page's session as
+          `agent-plans.service`: `claude remote-control` in
+          `agent-plans/session` under {option}`xdg.stateHome`, driven from
+          the phone, fenced by `pr-loop guard --dashboard` to the
+          `agent-plans` skill's own calls, with its own Claude Code config
+          in `agent-plans/claude`, whose settings it cannot change. The page
+          is named in `agent-tools/agent-plans.json` under the XDG config
+          directory, which the operator writes on the host. Before the
+          first start, log that config in and trust the session's folder
+          once: in `agent-plans/session`, run
+          `CLAUDE_CONFIG_DIR=~/.local/state/agent-plans/claude claude`,
+          `/login`, accept the folder, and quit. The session folder is
+          writable by any process running as the operator; only managed
+          settings, which need root, would be a wall. The
+          kill switch is {option}`reviewQueue.enable`'s: create
+          `agent-plans/off` under {option}`xdg.stateHome`, then
+          `systemctl --user stop agent-plans.service agent-plans.slice`.
+          Needs {option}`reviewQueue.enable` and Claude Code signed in.
+        '';
+      };
+
+      poll = mkOption {
+        type = types.bool;
+        default = false;
+
+        description = ''
+          Has `plan-dash watch` print a poll line every five minutes, on
+          which the session looks for pending answers and review requests:
+          for when the page's comments do not wake the session.
+        '';
+      };
+    };
+
     settings = mkOption {
       type = types.attrs;
 
@@ -586,6 +625,140 @@ in {
           };
           Install.WantedBy = ["timers.target"];
         };
+      };
+    }))
+
+    (mkIf cfg.agentPlans.enable (let
+      state = "${config.xdg.stateHome}/agent-plans";
+      session = "${state}/session";
+      out = "${state}/out";
+      # The session's own Claude Code config: its login, its trust of the
+      # session folder and its settings. /config from the phone writes the
+      # user settings, which here are a read-only link into the store, so
+      # it changes nothing, and never the operator's ~/.claude.
+      claudeDir = "${state}/claude";
+      home = config.home.homeDirectory;
+      relative = removePrefix "${home}/";
+      agentTools = config.wgn.home.llm.agentTools;
+      # The session's Bash runs plan-dash by name, and plan-dash runs git
+      # and gh; Claude Code installs itself under ~/.local/bin.
+      path = concatStringsSep ":" [
+        (makeBinPath [agentTools pkgs.git pkgs.openssh pkgs.gh pkgs.coreutils])
+        "${config.home.profileDirectory}/bin"
+        "${home}/.local/bin"
+        "/usr/local/bin:/usr/bin:/bin"
+      ];
+      # What a message from the phone could pull into the conversation with
+      # an @-mention, which runs no hook: credentials, every agent's config
+      # and login, this session's own, decrypted secrets and the notes
+      # deploy key. Read rules hold @-mentions; whether a broader
+      # Read(//**) would also stop ArtifactData's file_path uploads from the
+      # out directory is not known, so the trees are named.
+      secretTrees = [
+        "${home}/.config"
+        "${home}/.ssh"
+        "${home}/.gnupg"
+        "${home}/.claude"
+        "${home}/.codex"
+        "${home}/.local/share"
+        "${config.xdg.stateHome}/agent-tools"
+        claudeDir
+        "/run/user"
+      ];
+    in {
+      assertions = [
+        {
+          assertion = pkgs.stdenv.hostPlatform.isLinux && cfg.reviewQueue.enable;
+          message = "wgn.home.claude.agentPlans needs Linux and wgn.home.claude.reviewQueue.enable.";
+        }
+      ];
+
+      # The session's working directory; its settings live in claudeDir.
+      home.activation.agentPlansSession = lib.hm.dag.entryAfter ["writeBoundary"] ''
+        run mkdir -p ${escapeShellArg session}
+      '';
+
+      home.file = {
+        # The session's user settings, read-only. The hook is the fence: it
+        # allows the skill's calls by their arguments and denies the rest,
+        # and with onFailure block a hook that cannot run denies too. The
+        # allow list names only the forms its rules state exactly. Its
+        # SessionStart output becomes the session's context after a start,
+        # /clear or /compact.
+        "${relative claudeDir}/settings.json".text = builtins.toJSON {
+          permissions = {
+            allow = [
+              "Bash(plan-dash export)"
+              "Bash(plan-dash answer)"
+              "Bash(plan-dash dispatch)"
+              "ToolSearch"
+            ];
+            deny =
+              concatMap (p: ["Read(${rulePath p}*)" "Read(${rulePath p}*/**)"]) config.wgn.home.llm.guard.credentialPaths
+              ++ map (p: "Read(${rulePath p}/**)") secretTrees
+              ++ ["Read(${rulePath plans.repository.key})"];
+          };
+          syncClaudeAiSkills = false;
+          syncClaudeAiPlugins = false;
+          hooks = {
+            PreToolUse = [
+              {
+                matcher = "*";
+                hooks = [
+                  {
+                    type = "command";
+                    command = "${getExe' agentTools "pr-loop"} guard --dashboard";
+                    onFailure = "block";
+                  }
+                ];
+              }
+            ];
+            SessionStart = [
+              {
+                matcher = "startup|clear|compact";
+                hooks = [
+                  {
+                    type = "command";
+                    command = "${getExe' agentTools "plan-dash"} prime";
+                  }
+                ];
+              }
+            ];
+          };
+        };
+
+        # In the session's own config alone, so no other session loads it.
+        "${relative claudeDir}/skills/agent-plans/SKILL.md".text =
+          replaceStrings ["@out@"] [out] (builtins.readFile ./agent-plans/SKILL.md);
+      };
+
+      systemd.user.services.agent-plans = {
+        Unit = {
+          Description = "The Agent plans page's Remote Control session";
+          ConditionPathExists = "!${state}/off";
+        };
+        Service = {
+          # --spawn session ends when its session does, with status 0, so
+          # only Restart=always brings it back. Without a terminal it
+          # redraws its status line every second, which would fill the
+          # journal.
+          ExecStart = concatStringsSep " " [
+            "${home}/.local/bin/claude remote-control --spawn session"
+            "--working-directory ${session}"
+            "--permission-mode dontAsk"
+            "--remote-control-session-name-prefix agent-plans"
+          ];
+          WorkingDirectory = session;
+          # The unit alone sets AGENT_PLANS_SESSION, which keys the guard's
+          # fence and lets plan-dash answer and dispatch run.
+          Environment =
+            ["AGENT_PLANS_SESSION=1" "CLAUDE_CONFIG_DIR=${claudeDir}" "PATH=${path}"]
+            ++ optional cfg.agentPlans.poll "AGENT_PLANS_POLL=1";
+          Restart = "always";
+          RestartSec = "30s";
+          StandardOutput = "null";
+        };
+        Install.WantedBy = ["default.target"];
       };
     }))
 

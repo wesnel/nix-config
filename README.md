@@ -325,6 +325,8 @@ trash "$d"
 ``` sh
 plan-dash collect                        # writes $XDG_STATE_HOME/plan-dash/status.org
 plan-dash export                         # writes $XDG_STATE_HOME/agent-plans/out/
+plan-dash watch                          # prints a line when the session has work
+plan-dash answer                         # records the answers the page gave
 plan-dash dispatch                       # queues the reviews the page asked for
 plan-dash queue                          # runs them, as agent-plans-queue.service does
 ```
@@ -360,6 +362,43 @@ document stays under 600 KiB. Redaction knows shapes, not data, so
 customer data stays out of plans. A plan that cannot be read is named and
 its document kept, and the command exits 1; only a plan gone from the
 directory, or halted, loses its document.
+
+`plan-dash watch` is what wakes the dashboard session, through Monitor.
+Every 30 seconds it exports the plans and their sync state in memory and
+prints `plans changed` when that export's hash differs from the one it
+last printed for, at most once every 90 seconds. The hash leaves out what
+changes on every logged event or sync (a plan's `updated`, the times of
+the last push and fetch), so an agent logging its work does not cost the
+session a turn. It also prints `plan sync stalled` once per stall (this
+host's plans unsynced, its last push over 6 hours old), `standup digest
+ready` or `demo digest ready` for a new file under `digests/YYYY/` in the
+notes repository, and, with `AGENT_PLANS_POLL` set, `poll` every 5
+minutes. Every 10 minutes it takes the other hosts' plans with the
+fast-forward-only pull, never the rebasing one. It runs one at a time
+(`already watching` otherwise) and keeps what it printed in
+`watch.json`, so the watch the session starts after Monitor's 30 minutes
+prints only what changed since.
+
+`plan-dash answer` records the answers the page gave to plans' open
+questions. It reads the page's `answers/PLAN~QID` documents, which the
+dashboard session copies under `out/` (a read names the file
+`PLAN@QID.json`, and answer writes back under that name), and takes from
+each only `choice`, an option's key, or `other` with one line of `text`.
+A key is mapped to its option's label through the questions the last
+export listed, kept outside `out/`, never through the option's place in
+the list: a question without a recommendation has no option A. Only a
+question of this host's plan is answered, since only its host writes a
+plan; another host's is refused, as is a question or option not listed,
+or a line of more than 1000 characters or with control or formatting
+characters. Such a line lands in an Org heading of the log, so its `[[`
+and `]]` are split and, where it ends in what Org reads as tags, a period
+follows them. The answer settles the question as `agent-plan decide --role
+phone` does, in process, so no text reaches a command line; a question no
+longer open counts as settled. Each document gets its state back
+(`recorded`, `settled` or `refused` with why), and a document with a
+state is not read again. `--role phone` says where a decision came from,
+not who made it: whoever holds the claude.ai account can make it from the
+page, and any session could claim the role too.
 
 `plan-dash dispatch` takes the reviews the page asked for into the review
 queue, `$XDG_STATE_HOME/agent-plans/queue.org`. It reads the page's
@@ -411,6 +450,72 @@ command. An entry is ready, waits for the operator, failed, or stale. An
 agent cannot write `$XDG_STATE_HOME/agent-plans` or `plan-dash`: the guard
 refuses its file tools and shell writes there, and plan-dash writes them
 itself.
+
+## the Agent plans session
+
+`wgn.home.claude.agentPlans.enable` (the devbox) runs the session as
+`agent-plans.service`, `claude remote-control --spawn session
+--permission-mode dontAsk` in `$XDG_STATE_HOME/agent-plans/session`, with
+its own Claude Code config, `CLAUDE_CONFIG_DIR` at
+`$XDG_STATE_HOME/agent-plans/claude`. Before the first start the operator
+logs that config in and trusts the folder once: in the folder,
+`CLAUDE_CONFIG_DIR=~/.local/state/agent-plans/claude claude`, `/login`,
+accept the folder, quit. The unit alone sets `AGENT_PLANS_SESSION`,
+restarts it whenever it ends, and sends its output, a status line redrawn
+every second, to null.
+
+The phone reaches the session outside tool calls too: it can run
+`/config key=value`, which writes the user settings, and @-mention a
+file, which Claude Code reads into the conversation without a hook. So
+the session's user settings are a read-only link into the store, where
+`/config` fails, and never the operator's `~/.claude`; and they deny
+reads of credentials, every agent's config and login, the session's own,
+`/run/user` and the notes deploy key, which Read rules hold @-mentions
+to. They hold the fence's hook with `onFailure: block` (Claude Code
+2.1.295 or later), so a hook that cannot run denies; an allow list of
+only the forms its rules state exactly (the three plan-dash commands and
+ToolSearch), the hook allowing the rest by their arguments; and a
+SessionStart hook, `plan-dash prime`, that names the page and the
+`agent-plans` skill after every start, `/clear` and `/compact`. The
+session folder is writable by any process running as the operator, and a
+settings file there could switch the hook off; only managed settings,
+which need root, would be a wall. Any Remote Control session, not only
+this one, takes `/config` and @-mentions from the phone with the
+operator's account. The skill, in the same config, arms a comment watch on the
+page and Monitor on `plan-dash watch`, again on every expiry and wake,
+and runs each update in a foreground sub-agent: export, read the page's
+answers and review requests into `out/`, `plan-dash answer` and `plan-dash
+dispatch`, then write what they wrote back to the page, version-pinned,
+reading the page only into files so no document's text enters the
+conversation. A
+stall or a digest becomes a PushNotification with fixed text. If the
+page's comments do not wake the session,
+`wgn.home.claude.agentPlans.poll` has the watch print a poll line every
+five minutes instead. The kill switch is the review queue's: create
+`$XDG_STATE_HOME/agent-plans/off`, then `systemctl --user stop
+agent-plans.service agent-plans.slice`.
+
+Its page is named in `agent-tools/agent-plans.json` under the XDG config
+directory, `{"url": "https://claude.ai/artifact/ID"}`, which the operator
+writes once on the host; the URL stays out of this repository, and
+without it the session reaches no page.
+
+`pr-loop guard --dashboard` fences the session: its hook runs on every
+tool, and the baseline hook applies the same fence wherever
+`AGENT_PLANS_SESSION` is set. It allows only the agent-plans skill's own
+calls: Bash running exactly `plan-dash export`, `plan-dash answer` or
+`plan-dash dispatch`; Monitor running exactly `plan-dash watch`, never a
+WebSocket; ArtifactData on the configured page alone, with every
+`file_path` (each batch entry's too) and `out_dir` in
+`$XDG_STATE_HOME/agent-plans/out` once links are resolved; ArtifactComments
+`watch` on that page, without `replies`, and `resolve` by thread ID;
+Agent without `isolation` or `run_in_background`; Skill `agent-plans`;
+ToolSearch; and PushNotification with one of its fixed notices. Everything
+else, Read included, is denied, never asked, since the
+phone could approve a prompt; the forms it allows it answers with
+`allow`. The variable is a seatbelt: `systemctl --user set-environment`,
+an `environment.d` file or a unit drop-in could set it where the guard
+does not see the command.
 
 ## pushing: private history stays private
 
@@ -575,6 +680,11 @@ writing its state under `$XDG_STATE_HOME/agent-tools` other than through
 `agent-plan` and `pr-loop`,
 sleeping 30 seconds or more in the
 foreground, and writing a plan's log other than with `agent-plan log`.
+Outside the Agent plans dashboard session it also denies `plan-dash
+answer` and `plan-dash dispatch`, which act on what the page asked, and
+any command that sets `AGENT_PLANS_SESSION`, the variable that marks that
+session; inside it, it holds every call it sees to the session's fence
+(below).
 MCP tools of the servers in `overlays/agent-tools/internal/guard/mcp.json`
 (Linear, Notion, Hex, Datadog, Buildkite, ngrok, the docs index, and the
 claude.ai Slack connector) are held to its lists: reads
