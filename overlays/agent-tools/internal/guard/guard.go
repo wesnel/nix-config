@@ -381,9 +381,10 @@ func program(c call, who role, files, dir string) string {
 	case name == "gh":
 		if reason := checkGh(words[1:], c.expands[1:], files, who); reason != "" && who == reviewer {
 			return reviewerReport
-		} else {
+		} else if reason != "" {
 			return reason
 		}
+		return checkPublicGh(words[1:], c.expands[1:], dir)
 	case name == "pr-loop":
 		return checkPrLoop(words[1:], who)
 	case name == "git-fresh-review" && who == reviewer:
