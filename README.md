@@ -310,6 +310,7 @@ trash "$d"
 ``` sh
 plan-dash export                         # writes $XDG_STATE_HOME/agent-plans/out/
 plan-dash watch                          # prints a line when the session has work
+plan-dash page                           # writes the page for the session to publish
 ```
 
 `plan-dash export` writes the documents the "Agent plans" page keeps in
@@ -381,10 +382,11 @@ the session's user settings are a read-only link into the store, where
 reads of credentials and the notes deploy key, which Read rules hold
 @-mentions to. They hold the baseline guard's hook with `onFailure:
 block` (Claude Code 2.1.295 or later), so a hook that cannot run denies,
-and allow the skill's tools: Bash `plan-dash export`, Monitor,
-ArtifactData, Agent, Skill, PushNotification and ToolSearch; and a
-SessionStart hook, `plan-dash prime`, that names the page and the
-`agent-plans` skill after every start, `/clear` and `/compact`. The
+and allow the skill's tools: Bash `plan-dash export`, `plan-dash page`
+and `plan-dash page published`, Artifact, Monitor, ArtifactData, Agent,
+Skill, PushNotification and ToolSearch; and a SessionStart hook,
+`plan-dash prime`, that names the page and the `agent-plans` skill after
+every start, `/clear` and `/compact`. The
 session folder is writable by any process running as the operator, and a
 settings file there could switch the hook off; only managed settings,
 which need root, would be a wall. Any Remote Control session, not only
@@ -401,8 +403,34 @@ agent-plans.service`.
 
 Its page is named in `agent-tools/agent-plans.json` under the XDG config
 directory, `{"url": "https://claude.ai/artifact/ID"}`, which the operator
-writes once on the host; the URL stays out of this repository, and
-without it the session reaches no page.
+writes once on the host; the URL stays out of this repository. Started
+without it, the session publishes the page, pinned, and gives the
+operator its URL to write there before restarting the service.
+
+The page is `overlays/agent-tools/internal/agentplans/page.html`, built
+into agent-tools. `plan-dash page` writes it to
+`$XDG_STATE_HOME/agent-plans/page/agent-plans.html` and says whether it
+differs from the one last published, which `plan-dash page published`
+records; the session republishes it when it starts after a switch that
+changed it.
+Every publish declares the capabilities `plan-dash page` prints, from
+`internal/agentplans`: the page's database, read and written by its owner
+alone, which the session writes. The page reads the documents `export`
+writes and writes nothing: each open question shows its recommendation
+and options as text, to answer with `/questions` in a Claude session, and
+each review request its CI and whether `pr-loop review` holds a record of
+it. It shows how fresh its data is (live; partial, where GitHub could not
+be read or a plan couldn't be exported), when the devbox last pushed and
+fetched the plans, the review requests by state (ready, CI failing,
+draft or reviewed), oldest first with three days or more marked, stacked
+pull requests under the one they build on, the latest demo digest, and each
+plan at `#<plan ID>`. Every status mark has a word as well as a colour,
+and all text from the documents is set as text, never parsed as markup,
+and looked up in the page's tables by own key only, so a STATUS such as
+`constructor` falls back to its own label; its page test holds it to
+that, to the capabilities, to the collections it reads, to making no
+write and to the fields of each document. It uses Mantle's colours in
+the system face and loads no file.
 
 ## pushing: private history stays private
 

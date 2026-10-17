@@ -196,10 +196,11 @@ in {
           `agent-plans/session` under {option}`xdg.stateHome`, published
           from the devbox, held by the baseline guard, with its own Claude
           Code config in `agent-plans/claude`, whose settings it cannot
-          change. The page
-          is named in `agent-tools/agent-plans.json` under the XDG config
-          directory, which the operator writes on the host. Before the
-          first start, log that config in and trust the session's folder
+          change. The page is named in `agent-tools/agent-plans.json`
+          under the XDG config directory, which the operator writes on the
+          host; started without it, the session publishes the page and
+          gives its URL to write there. Before the first start, log that
+          config in and trust the session's folder
           once: in `agent-plans/session`, run
           `CLAUDE_CONFIG_DIR=~/.local/state/agent-plans/claude claude`,
           `/login`, accept the folder, and quit. The session folder is
@@ -528,6 +529,9 @@ in {
           permissions = {
             allow = [
               "Bash(plan-dash export)"
+              "Bash(plan-dash page)"
+              "Bash(plan-dash page published)"
+              "Artifact"
               "ToolSearch"
               "Monitor"
               "ArtifactData"

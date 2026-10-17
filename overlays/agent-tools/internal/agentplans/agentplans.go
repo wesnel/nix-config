@@ -4,6 +4,9 @@
 package agentplans
 
 import (
+	"crypto/sha256"
+	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -25,6 +28,34 @@ func Dir() string { return filepath.Join(hostpaths.StateHome(), "agent-plans") }
 // Out is where plan-dash export writes the page's documents and the session
 // reads the page's database into.
 func Out() string { return filepath.Join(Dir(), "out") }
+
+// Page is the "Agent plans" page: one HTML file, its CSS and script
+// inline, which reads the documents plan-dash export writes from the
+// page's database and writes nothing. Its script renders every document's text as text, never as markup, and
+// its schema block names each field it reads; export's page test holds
+// both to the documents' types.
+//
+//go:embed page.html
+var Page []byte
+
+// PageHash is the hex SHA-256 of a page's bytes.
+func PageHash(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// PageFile is the page's HTML as plan-dash page writes it, the one file the
+// session publishes.
+func PageFile() string { return filepath.Join(Dir(), "page", "agent-plans.html") }
+
+// PublishedFile holds PageHash of the page last published.
+func PublishedFile() string { return filepath.Join(Dir(), "page", "published") }
+
+// Capabilities are the page's runtime capabilities, which every publish of
+// it declares: its database, readable and writable by its owner alone,
+// which the session writes as the owner; the page itself writes nothing. A
+// rule here changes who can read the plans.
+const Capabilities = `{"db":{"rules":[{"path":"","read":"owner","write":"owner"}]}}`
 
 // Session is the session's working directory, which holds its settings.
 func Session() string { return filepath.Join(Dir(), "session") }

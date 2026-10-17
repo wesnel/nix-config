@@ -1,0 +1,782 @@
+<title>Agent plans</title>
+<style>
+/* One reading column: how fresh the data is, then Today, the review
+   requests and the operator's own pull requests, an index of the plans,
+   and each plan in full at #<plan ID>. Mantle's tokens, in the system
+   face. */
+:root {
+  --bg: oklch(98.5% 0 0);
+  --surface: oklch(100% 0 0);
+  --border: oklch(87% 0 0);
+  --border-muted: oklch(92.2% 0 0);
+  --fg-strong: oklch(18.2% 0 0);
+  --fg: oklch(18.2% 0 0 / 0.78);
+  --fg-muted: oklch(18.2% 0 0 / 0.6);
+  --accent: oklch(55% 0.158 241.966);
+  --on-accent: oklch(100% 0 0);
+  --danger: oklch(58.6% 0.253 17.585);
+  --warning: oklch(55.5% 0.163 48.998);
+  --success: oklch(50.8% 0.118 165.612);
+  --important: oklch(55.8% 0.288 302.321);
+  --neutral: oklch(55.6% 0 0);
+  --ring: oklch(68.5% 0.169 237.323 / 0.35);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: clamp(1.4rem, 1.1rem + 0.9vw, 1.75rem);
+  --radius: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: oklch(18.2% 0 0);
+    --surface: oklch(20.5% 0 0);
+    --border: oklch(37.1% 0 0);
+    --border-muted: oklch(26.9% 0 0);
+    --fg-strong: oklch(98.5% 0 0);
+    --fg: oklch(100% 0 0 / 0.74);
+    --fg-muted: oklch(100% 0 0 / 0.55);
+    --accent: oklch(74.6% 0.16 232.661);
+    --on-accent: oklch(18.2% 0 0);
+    --danger: oklch(70.4% 0.191 22.216);
+    --warning: oklch(82.8% 0.189 84.429);
+    --success: oklch(76.5% 0.177 163.223);
+    --important: oklch(71.4% 0.203 305.504);
+    --neutral: oklch(70.8% 0 0);
+    --ring: oklch(74.6% 0.16 232.661 / 0.4);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: oklch(18.2% 0 0);
+  --surface: oklch(20.5% 0 0);
+  --border: oklch(37.1% 0 0);
+  --border-muted: oklch(26.9% 0 0);
+  --fg-strong: oklch(98.5% 0 0);
+  --fg: oklch(100% 0 0 / 0.74);
+  --fg-muted: oklch(100% 0 0 / 0.55);
+  --accent: oklch(74.6% 0.16 232.661);
+  --on-accent: oklch(18.2% 0 0);
+  --danger: oklch(70.4% 0.191 22.216);
+  --warning: oklch(82.8% 0.189 84.429);
+  --success: oklch(76.5% 0.177 163.223);
+  --important: oklch(71.4% 0.203 305.504);
+  --neutral: oklch(70.8% 0 0);
+  --ring: oklch(74.6% 0.16 232.661 / 0.4);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+.page {
+  max-width: 52rem;
+  margin: 0 auto;
+  padding-inline: 16px;
+  padding-block: 20px 64px;
+  display: grid;
+  gap: 32px;
+}
+.stack { display: grid; gap: 32px; min-width: 0; }
+h1, h2, h3 { color: var(--fg-strong); font-weight: 500; letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
+h1 { font-size: var(--text-2xl); line-height: 1.15; }
+h2 { font-size: var(--text-xl); line-height: 1.25; }
+h3 { font-size: var(--text-lg); line-height: 1.3; }
+p { margin: 0; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; box-shadow: 0 0 0 4px var(--ring); }
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 500;
+  color: var(--fg-muted);
+}
+.mono { font-family: var(--font-mono); font-size: 0.8125rem; }
+.muted { color: var(--fg-muted); }
+.small { font-size: var(--text-sm); }
+.prose { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Header */
+.top { display: grid; gap: 12px; }
+.title-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.fresh { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; font-size: var(--text-sm); }
+.fresh .why { color: var(--fg-muted); }
+.syncline { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: var(--text-sm); color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.summary { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Labelled status marks: a shape and a word, never colour alone. */
+.mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklch, var(--tone, var(--neutral)) 40%, transparent);
+  background: color-mix(in oklch, var(--tone, var(--neutral)) 10%, transparent);
+  color: var(--fg-strong);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.mark::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tone, var(--neutral));
+  flex: none;
+}
+.mark.square::before { border-radius: 1px; }
+.mark.ring::before { background: transparent; border: 1.5px solid var(--tone, var(--neutral)); }
+.t-good { --tone: var(--success); }
+.t-warn { --tone: var(--warning); }
+.t-bad { --tone: var(--danger); }
+.t-info { --tone: var(--accent); }
+.t-imp { --tone: var(--important); }
+.t-none { --tone: var(--neutral); }
+
+/* Sections */
+section { display: grid; gap: 14px; min-width: 0; }
+.section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  min-width: 0;
+}
+.empty {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  display: grid;
+  gap: 8px;
+}
+.empty h3 { font-size: var(--text-base); }
+
+/* Today */
+.digest { padding: 14px 16px; display: grid; gap: 8px; }
+.digest + .digest { border-top: 1px solid var(--border-muted); }
+.digest pre {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--fg);
+  max-height: 28rem;
+  overflow: auto;
+}
+
+/* Review requests and pull requests */
+.group { display: grid; gap: 6px; }
+.group > .eyebrow { padding-inline: 2px; }
+.rows { list-style: none; margin: 0; padding: 0; }
+.row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 16px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-muted);
+}
+.row:first-child { border-top: 0; }
+.row.child { padding-left: 40px; position: relative; }
+.row.child::after {
+  content: "";
+  position: absolute;
+  left: 22px;
+  top: 0;
+  bottom: 50%;
+  width: 10px;
+  border-left: 1.5px solid var(--border);
+  border-bottom: 1.5px solid var(--border);
+  border-bottom-left-radius: 4px;
+}
+.row-main { display: grid; gap: 4px; min-width: 0; }
+.row-key { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.row-title { color: var(--fg-strong); overflow-wrap: anywhere; }
+.row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.waiting.late { color: var(--warning); font-weight: 600; }
+
+/* Plan index */
+.index { list-style: none; margin: 0; padding: 0; }
+.index li { border-top: 1px solid var(--border-muted); }
+.index li:first-child { border-top: 0; }
+.index a {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  padding: 12px 16px;
+  color: inherit;
+}
+.index a:hover { text-decoration: none; background: color-mix(in oklch, var(--fg-strong) 4%, transparent); }
+.index .name { color: var(--fg-strong); overflow-wrap: anywhere; }
+.index .facts { display: flex; flex-wrap: wrap; gap: 6px; justify-content: end; align-items: center; }
+
+/* A plan */
+.plan { padding: 20px 16px; display: grid; gap: 18px; scroll-margin-top: 16px; }
+.plan-head { display: grid; gap: 6px; }
+.plan-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: var(--text-sm); color: var(--fg-muted); }
+.plan-part { display: grid; gap: 8px; }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.steps li { display: grid; grid-template-columns: 4.5rem 6.5rem minmax(0, 1fr); gap: 10px; align-items: baseline; font-size: var(--text-sm); }
+.steps .id { color: var(--fg-muted); }
+.steps .title { overflow-wrap: anywhere; color: var(--fg); }
+.steps li.done .title { color: var(--fg-muted); }
+fieldset {
+  margin: 0;
+  border: 1px solid var(--border-muted);
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+legend { padding: 0 6px; margin-left: -6px; }
+.q-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
+.q-text { color: var(--fg-strong); font-weight: 500; overflow-wrap: anywhere; }
+.options { display: grid; gap: 8px; }
+.option { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; align-items: start; }
+.option .label { color: var(--fg-strong); overflow-wrap: anywhere; }
+.option .why { grid-column: 2; font-size: var(--text-sm); color: var(--fg-muted); overflow-wrap: anywhere; }
+details > summary { cursor: pointer; color: var(--fg-strong); font-size: var(--text-sm); font-weight: 500; }
+.decisions { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 10px; }
+.decisions li { display: grid; gap: 2px; font-size: var(--text-sm); }
+.decisions .answer { color: var(--fg-strong); overflow-wrap: anywhere; }
+
+@media (max-width: 560px) {
+  .row { grid-template-columns: minmax(0, 1fr); }
+  .row.child { padding-left: 32px; }
+  .row.child::after { left: 14px; }
+  .index a { grid-template-columns: minmax(0, 1fr); }
+  .index .facts { justify-content: start; }
+  .steps li { grid-template-columns: 3.5rem minmax(0, 1fr); }
+  .steps li .kw { grid-column: 2; grid-row: 2; justify-self: start; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; transition: none !important; }
+}
+</style>
+
+<!-- The fields this page reads of each document, and their JSON types:
+     the host's export writes them, and the session puts them on the page
+     (internal/export and its page test hold this to their Go types). The page keeps only
+     these, each defaulted where it is missing. -->
+<script type="application/json" id="schema">
+{
+  "plans": {
+    "schema": "number", "id": "string", "title": "string", "goal": "string", "status": "string",
+    "host": "string", "updated": "string",
+    "steps": [{"id": "string", "order": "number", "title": "string", "keyword": "string", "ready": "boolean"}],
+    "decisions": [{"id": "string", "question": "string", "answer": "string"}],
+    "questions": [{"id": "string", "text": "string", "priority": "string", "context": "string",
+      "options": [{"key": "string", "label": "string", "why": "string", "recommended": "boolean"}]}]
+  },
+  "github": {
+    "schema": "number", "at": "string", "stale": "boolean", "mineTotal": "number", "requestsTotal": "number",
+    "mine": [{"repo": "string", "number": "number", "title": "string", "draft": "boolean", "ci": "string",
+      "review": "string", "unresolved": "number", "parent": "number"}],
+    "requests": [{"repo": "string", "number": "number", "title": "string", "draft": "boolean", "team": "boolean",
+      "requested": "string", "head": "string", "ci": "string", "record": "string", "parent": "number"}]
+  },
+  "meta": {
+    "schema": "number", "updated": "string", "host": "string", "repo": "boolean", "pushed": "string",
+    "unsynced": "boolean", "fetched": "string", "failed": "number"
+  },
+  "today": {
+    "schema": "number", "date": "string", "digests": [{"kind": "string", "text": "string"}]
+  }
+}
+</script>
+
+<div class="page">
+  <header class="top">
+    <div class="title-row">
+      <div>
+        <p class="eyebrow" id="host-line">Devbox</p>
+        <h1>Agent plans</h1>
+      </div>
+    </div>
+    <div class="fresh" id="fresh"><span class="mark ring t-none">Connecting</span><span class="why">Opening this page's database.</span></div>
+    <div class="syncline" id="syncline"></div>
+    <div class="summary" id="summary"></div>
+  </header>
+  <main id="app" class="stack">
+    <section class="empty" aria-live="polite">
+      <h3>Loading the plans</h3>
+      <p class="small muted">This page shows every plan the devbox's agents keep, the reviews asked of you and the latest demo digest. They arrive from the page's own database in a moment.</p>
+    </section>
+  </main>
+</div>
+
+<script>
+"use strict";
+(() => {
+  const SPEC = JSON.parse(document.getElementById("schema").textContent);
+
+  // The shapes of what the page builds IDs and links from, as the host
+  // checks them.
+  const PLAN_ID = /^[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9]+(?:-[a-z0-9]+)*\.[A-Za-z0-9][A-Za-z0-9_-]*$/;
+  const QID = /^(?:P[0-9]+\.)?Q[0-9]+$/;
+  const SLUG = /^([A-Za-z0-9_][A-Za-z0-9_.-]{0,99})\/([A-Za-z0-9_][A-Za-z0-9_.-]{0,99})$/;
+  const DAY = 86400000;
+
+  const state = {
+    noDb: false,
+    loaded: new Set(),
+    errors: new Map(),
+    plans: new Map(),
+    github: null,
+    meta: null,
+    today: null,
+  };
+
+  // norm keeps of v only what spec names, each of its type or defaulted.
+  function norm(v, spec) {
+    if (Array.isArray(spec)) return Array.isArray(v) ? v.map((x) => norm(x, spec[0])) : [];
+    if (spec === "string") return typeof v === "string" ? v : "";
+    if (spec === "number") return typeof v === "number" && Number.isFinite(v) ? v : 0;
+    if (spec === "boolean") return v === true;
+    const out = {};
+    const o = v && typeof v === "object" && !Array.isArray(v) ? v : {};
+    for (const k of Object.keys(spec)) out[k] = norm(o[k], spec[k]);
+    return out;
+  }
+
+  // h builds an element. Every string child becomes a text node, so no
+  // document text is ever parsed as markup.
+  function h(tag, props, ...kids) {
+    const e = document.createElement(tag);
+    if (props) {
+      for (const [k, v] of Object.entries(props)) {
+        if (v == null || v === false) continue;
+        if (k === "class") e.className = v;
+        else e.setAttribute(k, v === true ? "" : String(v));
+      }
+    }
+    for (const k of kids.flat(Infinity)) {
+      if (k == null || k === false) continue;
+      e.append(typeof k === "string" || typeof k === "number" ? document.createTextNode(String(k)) : k);
+    }
+    return e;
+  }
+
+  function mark(text, tone, shape) {
+    return h("span", { class: "mark " + tone + (shape ? " " + shape : "") }, text);
+  }
+
+  function when(iso) {
+    const t = Date.parse(iso);
+    return Number.isNaN(t) ? null : t;
+  }
+
+  function ago(iso) {
+    const t = when(iso);
+    if (t == null) return "never";
+    const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (s < 60) return "just now";
+    if (s < 3600) return Math.round(s / 60) + " min ago";
+    if (s < DAY / 1000) return Math.round(s / 3600) + " h ago";
+    return Math.round(s / (DAY / 1000)) + " d ago";
+  }
+
+  function clock(iso) {
+    const t = when(iso);
+    if (t == null) return "";
+    return new Date(t).toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
+  }
+
+  function timeEl(iso, text) {
+    return when(iso) == null ? h("span", null, text) : h("time", { datetime: iso, title: clock(iso) }, text);
+  }
+
+  function prLink(repo, number) {
+    const m = SLUG.exec(repo);
+    const label = repo + "#" + number;
+    if (!m || !Number.isInteger(number) || number < 1) return h("span", { class: "mono" }, label);
+    return h("a", { class: "mono", href: "https://github.com/" + m[1] + "/" + m[2] + "/pull/" + number,
+      target: "_blank", rel: "noopener noreferrer" }, label);
+  }
+
+  // own is table's own entry for key, or fallback: a key from a document,
+  // such as "constructor", never reaches an inherited property.
+  function own(table, key, fallback) {
+    return Object.hasOwn(table, key) ? table[key] : fallback;
+  }
+
+  // ---- Freshness ----
+
+  function freshness() {
+    const m = state.meta;
+    const g = state.github;
+    const reasons = [];
+    if (state.noDb) return { label: "No data", tone: "t-bad", shape: "square", why: "This view can't open the page's database. Only the page's owner can read it." };
+    if (!state.loaded.has("meta")) return { label: "Connecting", tone: "t-none", shape: "ring", why: "Opening this page's database." };
+    if (!m) return { label: "Waiting", tone: "t-none", shape: "ring", why: "The devbox session hasn't written to this page yet." };
+    if (!g || !g.at) reasons.push("GitHub hasn't been read yet");
+    else if (g.stale) reasons.push("GitHub couldn't be read; its part is from " + ago(g.at));
+    if (m.failed > 0) reasons.push(m.failed === 1 ? "one plan couldn't be read and shows as last exported" : m.failed + " plans couldn't be read and show as last exported");
+    for (const [name] of state.errors) reasons.push("the " + name + " data stopped updating");
+    const updated = "Updated " + ago(m.updated);
+    if (reasons.length) return { label: "Partial", tone: "t-warn", shape: "", why: updated + "; " + reasons.join("; ") + "." };
+    return { label: "Live", tone: "t-good", shape: "", why: updated + "." };
+  }
+
+  function renderHeader() {
+    const f = freshness();
+    document.getElementById("fresh").replaceChildren(mark(f.label, f.tone, f.shape), h("span", { class: "why" }, f.why));
+    const m = state.meta;
+    const line = document.getElementById("syncline");
+    const host = document.getElementById("host-line");
+    host.textContent = m && m.host ? "From " + m.host : "Devbox";
+    if (!m) { line.replaceChildren(); } else {
+      const parts = [h("span", null, "Exported ", timeEl(m.updated, ago(m.updated)))];
+      if (m.repo) {
+        parts.push(h("span", null, "Plans last pushed ", timeEl(m.pushed, ago(m.pushed))));
+        parts.push(h("span", null, "Other hosts fetched ", timeEl(m.fetched, ago(m.fetched))));
+        const stalled = m.unsynced && when(m.pushed) != null && Date.now() - when(m.pushed) > 6 * 3600000;
+        if (stalled) parts.push(mark("Sync stalled", "t-bad", "square"));
+        else if (m.unsynced) parts.push(mark("Unsynced changes", "t-warn"));
+      } else {
+        parts.push(mark("No notes repository", "t-warn", "square"));
+      }
+      line.replaceChildren(...parts);
+    }
+    const summary = [];
+    let open = 0;
+    for (const p of state.plans.values()) if (m && p.host === m.host) open += p.questions.length;
+    if (open) summary.push(h("a", { href: "#plans" }, mark(open === 1 ? "1 question for you" : open + " questions for you", "t-imp")));
+    const reqs = state.github ? state.github.requests : [];
+    const late = reqs.filter((r) => when(r.requested) != null && Date.now() - when(r.requested) >= 3 * DAY && r.record !== "yes").length;
+    if (late) summary.push(h("a", { href: "#reviews" }, mark(late === 1 ? "1 review waiting 3+ days" : late + " reviews waiting 3+ days", "t-warn", "square")));
+    document.getElementById("summary").replaceChildren(...summary);
+  }
+
+  // ---- Today ----
+
+  function renderToday() {
+    const t = state.today;
+    if (!t || !t.digests.length) return null;
+    const today = new Date();
+    const iso = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0");
+    const heading = t.date === iso ? "Today" : "Latest digest";
+    const date = new Date(t.date + "T12:00:00");
+    const dateText = Number.isNaN(date.getTime()) ? t.date : date.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+    return h("section", { id: "today", "aria-labelledby": "today-h" },
+      h("div", { class: "section-head" }, h("h2", { id: "today-h" }, heading), h("span", { class: "small muted" }, dateText)),
+      h("div", { class: "panel" }, t.digests.map((d) =>
+        h("div", { class: "digest" },
+          h("p", { class: "eyebrow" }, "Demo"),
+          h("pre", null, d.text)))));
+  }
+
+  // ---- Review requests ----
+
+  function requestGroup(r) {
+    if (r.record === "yes") return "reviewed";
+    if (r.ci === "failure" || r.ci === "error") return "blocked";
+    if (r.draft) return "draft";
+    return "ready";
+  }
+
+  function ciMark(ci) {
+    switch (ci) {
+      case "success": return mark("CI passing", "t-good");
+      case "failure": case "error": return mark("CI failing", "t-bad", "square");
+      case "pending": case "expected": return mark("CI running", "t-info", "ring");
+      case "none": return mark("No CI", "t-none", "ring");
+      default: return mark("CI unknown", "t-none", "ring");
+    }
+  }
+
+  // stack orders rows oldest first, each stacked one right after the one
+  // it builds on where both are in the list.
+  function stack(rows, oldest) {
+    const by = new Map(rows.map((r) => [r.repo + "#" + r.number, r]));
+    const kids = new Map();
+    const roots = [];
+    for (const r of rows) {
+      const parent = r.parent > 0 ? by.get(r.repo + "#" + r.parent) : null;
+      if (parent && parent !== r) {
+        const key = parent.repo + "#" + parent.number;
+        if (!kids.has(key)) kids.set(key, []);
+        kids.get(key).push(r);
+      } else roots.push(r);
+    }
+    roots.sort(oldest);
+    const out = [];
+    const seen = new Set();
+    const walk = (r, depth) => {
+      const key = r.repo + "#" + r.number;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ r, depth });
+      for (const k of (kids.get(key) || []).sort(oldest)) walk(k, depth + 1);
+    };
+    for (const r of roots) walk(r, 0);
+    for (const r of rows) walk(r, 0);
+    return out;
+  }
+
+  function requestRow(r, depth) {
+    const waitedMs = when(r.requested) == null ? null : Date.now() - when(r.requested);
+    const late = waitedMs != null && waitedMs >= 3 * DAY;
+    const days = waitedMs == null ? null : Math.floor(waitedMs / DAY);
+    const waiting = waitedMs == null ? "Waiting since unknown"
+      : days >= 1 ? "Waiting " + days + (days === 1 ? " day" : " days") : "Waiting " + ago(r.requested).replace(" ago", "");
+    const meta = [
+      h("span", { class: "waiting" + (late ? " late" : "") }, late ? "▲ " + waiting : waiting),
+      h("span", null, r.team ? "Team request" : "Asked of you"),
+      ciMark(r.ci),
+    ];
+    if (r.draft) meta.push(mark("Draft", "t-none", "ring"));
+    if (r.record === "yes") meta.push(mark("Review on record", "t-good"));
+    if (r.parent > 0) meta.push(h("span", null, "Stacked on #" + r.parent));
+
+    return h("li", { class: "row" + (depth > 0 ? " child" : "") },
+      h("div", { class: "row-main" },
+        h("div", { class: "row-key" }, prLink(r.repo, r.number), h("span", { class: "row-title" }, r.title || "(no title)")),
+        h("div", { class: "row-meta" }, meta)));
+  }
+
+  function renderReviews() {
+    const g = state.github;
+    const head = h("div", { class: "section-head" }, h("h2", { id: "reviews-h" }, "Review requests"),
+      g && g.at ? h("span", { class: "small muted" }, "GitHub read ", timeEl(g.at, ago(g.at))) : null);
+    if (!g || !g.at) {
+      return h("section", { id: "reviews", "aria-labelledby": "reviews-h" }, head,
+        h("div", { class: "empty" }, h("h3", null, "No review requests yet"),
+          h("p", { class: "small muted" }, "The devbox lists the pull requests whose review is asked of you once it has read GitHub.")));
+    }
+    const oldest = (a, b) => (when(a.requested) ?? Infinity) - (when(b.requested) ?? Infinity);
+    const groups = [
+      ["ready", "Ready to review"],
+      ["blocked", "Blocked: CI failing"],
+      ["draft", "Draft"],
+      ["reviewed", "Reviewed"],
+    ];
+    const parts = [];
+    for (const [key, label] of groups) {
+      const rows = g.requests.filter((r) => requestGroup(r) === key);
+      if (!rows.length) continue;
+      parts.push(h("div", { class: "group" },
+        h("p", { class: "eyebrow" }, label + " · " + rows.length),
+        h("ul", { class: "panel rows" }, stack(rows, oldest).map(({ r, depth }) => requestRow(r, depth)))));
+    }
+    if (!parts.length) {
+      parts.push(h("div", { class: "empty" }, h("h3", null, "Nothing asked of you"),
+        h("p", { class: "small muted" }, "No open pull request asks for your review, directly or through a team.")));
+    }
+    if (g.requestsTotal > g.requests.length) parts.push(h("p", { class: "small muted" }, "Showing " + g.requests.length + " of " + g.requestsTotal + "."));
+    return h("section", { id: "reviews", "aria-labelledby": "reviews-h" }, head, parts);
+  }
+
+  function renderMine() {
+    const g = state.github;
+    if (!g || !g.at || !g.mine.length) return null;
+    const newest = (a, b) => b.number - a.number;
+    const rows = stack(g.mine, newest).map(({ r, depth }) => {
+      const meta = [ciMark(r.ci)];
+      if (r.draft) meta.push(mark("Draft", "t-none", "ring"));
+      if (r.review === "approved") meta.push(mark("Approved", "t-good"));
+      else if (r.review === "changes-requested") meta.push(mark("Changes requested", "t-bad", "square"));
+      else if (r.review === "review-required") meta.push(mark("Review required", "t-info", "ring"));
+      if (r.unresolved) meta.push(h("span", null, r.unresolved === 1 ? "1 open thread" : r.unresolved + " open threads"));
+      if (r.parent > 0) meta.push(h("span", null, "Stacked on #" + r.parent));
+      return h("li", { class: "row" + (depth > 0 ? " child" : "") },
+        h("div", { class: "row-main" },
+          h("div", { class: "row-key" }, prLink(r.repo, r.number), h("span", { class: "row-title" }, r.title || "(no title)")),
+          h("div", { class: "row-meta" }, meta)));
+    });
+    return h("section", { id: "mine", "aria-labelledby": "mine-h" },
+      h("div", { class: "section-head" }, h("h2", { id: "mine-h" }, "Your pull requests"),
+        g.mineTotal > g.mine.length ? h("span", { class: "small muted" }, g.mine.length + " of " + g.mineTotal) : null),
+      h("ul", { class: "panel rows" }, rows));
+  }
+
+  // ---- Plans ----
+
+  const PLAN_STATUS = {
+    planning: ["Planning", "t-info", "ring"],
+    "reviewing-plan": ["Plan in review", "t-info", ""],
+    working: ["Working", "t-imp", ""],
+    reviewing: ["In review", "t-info", ""],
+    "handed-back": ["Handed back", "t-good", "square"],
+    unknown: ["Unknown", "t-none", "ring"],
+  };
+  const KEYWORD = {
+    TODO: ["To do", "t-none", "ring"],
+    STARTED: ["Started", "t-imp", ""],
+    DONE: ["Done", "t-good", ""],
+    VERIFIED: ["Verified", "t-good", "square"],
+    ABANDONED: ["Dropped", "t-none", "square"],
+    unknown: ["Unknown", "t-none", "ring"],
+  };
+
+  function statusMark(s) {
+    const [label, tone, shape] = own(PLAN_STATUS, s, [s ? s.charAt(0).toUpperCase() + s.slice(1) : "Unknown", "t-none", "ring"]);
+    return mark(label, tone, shape);
+  }
+
+  function plansSorted() {
+    return [...state.plans.values()].filter((p) => PLAN_ID.test(p.id))
+      .sort((a, b) => (when(b.updated) ?? 0) - (when(a.updated) ?? 0) || a.id.localeCompare(b.id));
+  }
+
+  function renderIndex(list) {
+    const host = state.meta ? state.meta.host : "";
+    return h("section", { id: "plans", "aria-labelledby": "plans-h" },
+      h("div", { class: "section-head" }, h("h2", { id: "plans-h" }, "Plans"), h("span", { class: "small muted" }, list.length === 1 ? "1 plan" : list.length + " plans")),
+      h("ul", { class: "panel index" }, list.map((p) => {
+        const ready = p.steps.filter((s) => s.ready).length;
+        const facts = [statusMark(p.status)];
+        if (p.questions.length) facts.push(mark(p.questions.length === 1 ? "1 question" : p.questions.length + " questions", p.host === host ? "t-imp" : "t-none"));
+        if (ready) facts.push(h("span", { class: "small muted" }, ready + " ready"));
+        return h("li", null, h("a", { href: "#" + p.id },
+          h("span", { class: "row-main" }, h("span", { class: "name" }, p.title || p.id),
+            h("span", { class: "small muted" }, "On " + (p.host || "unknown") + " · updated ", timeEl(p.updated, ago(p.updated)))),
+          h("span", { class: "facts" }, facts)));
+      })));
+  }
+
+  // questionView shows a question with its recommendation and options as
+  // text: the page writes nothing.
+  function questionView(q) {
+    const head = h("div", { class: "q-head" },
+      h("span", { class: "mono muted" }, q.id),
+      q.priority ? mark("Priority " + q.priority, q.priority === "A" ? "t-warn" : "t-none", "square") : null,
+      h("span", { class: "q-text" }, q.text));
+    const parts = [h("legend", null, head)];
+    if (q.context) parts.push(h("p", { class: "small muted prose" }, q.context));
+    parts.push(h("ul", { class: "options", style: "list-style:none;margin:0;padding:0" }, q.options.map((o) =>
+      h("li", { class: "option" }, h("span", { class: "mono muted" }, o.key),
+        h("span", { class: "label" }, o.label, o.recommended ? " " : null, o.recommended ? mark("Recommended", "t-info", "ring") : null),
+        o.why ? h("span", { class: "why" }, o.why) : null))));
+    return h("fieldset", { class: "question" }, parts);
+  }
+
+  function renderPlan(p) {
+    const parts = [
+      h("div", { class: "plan-head" },
+        h("p", { class: "mono muted" }, p.id),
+        h("h2", null, p.title || p.id),
+        h("div", { class: "plan-facts" }, statusMark(p.status), h("span", null, "On " + (p.host || "unknown")),
+          h("span", null, "Updated ", timeEl(p.updated, ago(p.updated))))),
+    ];
+    if (p.goal) parts.push(h("div", { class: "plan-part" }, h("p", { class: "eyebrow" }, "Goal"), h("p", { class: "prose" }, p.goal)));
+    if (p.questions.length) {
+      parts.push(h("div", { class: "plan-part" }, h("p", { class: "eyebrow" }, p.questions.length === 1 ? "Open question" : "Open questions · " + p.questions.length),
+        p.questions.filter((q) => QID.test(q.id)).map(questionView),
+        h("p", { class: "small muted" }, "Answer these with /questions in a Claude session.")));
+    }
+    if (p.steps.length) {
+      const steps = [...p.steps].sort((a, b) => a.order - b.order);
+      const done = steps.filter((s) => s.keyword === "DONE" || s.keyword === "VERIFIED").length;
+      parts.push(h("div", { class: "plan-part" }, h("p", { class: "eyebrow" }, "Steps · " + done + " of " + steps.length + " done"),
+        h("ul", { class: "steps" }, steps.map((s) => {
+          const [label, tone, shape] = own(KEYWORD, s.keyword, ["Unknown", "t-none", "ring"]);
+          return h("li", { class: s.keyword === "DONE" || s.keyword === "VERIFIED" || s.keyword === "ABANDONED" ? "done" : "" },
+            h("span", { class: "mono id" }, s.id), h("span", { class: "kw" }, mark(label, tone, shape)),
+            h("span", { class: "title" }, s.title, s.ready && s.keyword === "TODO" ? " " : null, s.ready && s.keyword === "TODO" ? mark("Ready", "t-info") : null));
+        }))));
+    }
+    if (p.decisions.length) {
+      parts.push(h("details", null, h("summary", null, "Decisions · " + p.decisions.length),
+        h("ul", { class: "decisions" }, [...p.decisions].reverse().map((d) =>
+          h("li", null, h("span", { class: "muted" }, h("span", { class: "mono" }, d.id), " ", d.question), h("span", { class: "answer prose" }, d.answer))))));
+    }
+    return h("article", { class: "panel plan", id: p.id, "aria-label": p.title || p.id }, parts);
+  }
+
+  // ---- Page ----
+
+  let queued = false;
+  function render() {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(() => { queued = false; draw(); });
+  }
+
+  function draw() {
+    renderHeader();
+    const app = document.getElementById("app");
+    if (state.noDb) {
+      app.replaceChildren(h("section", { class: "empty" }, h("h3", null, "This view can't read the plans"),
+        h("p", { class: "small muted" }, "The plans and reviews live in this page's own database, which only the page's owner can open. Open the page signed in as its owner.")));
+      return;
+    }
+    const ready = ["plans", "meta"].every((c) => state.loaded.has(c));
+    if (!ready) return;
+    const list = plansSorted();
+    const parts = [renderToday(), renderReviews(), renderMine()];
+    if (!list.length) {
+      parts.push(h("section", { id: "plans", class: "empty" }, h("h3", null, "No plans yet"),
+        h("p", { class: "small muted" }, state.meta
+          ? "Every plan the agents keep, on any host, shows here unless it is halted. None is open right now."
+          : "The devbox session fills this page from the plans it holds. Once it runs, each plan shows here with its steps and the questions it has for you.")));
+    } else {
+      parts.push(renderIndex(list));
+      for (const p of list) parts.push(renderPlan(p));
+    }
+    const focused = document.activeElement && document.activeElement.id;
+    app.replaceChildren(...parts.filter(Boolean));
+    if (focused) { const f = document.getElementById(focused); if (f) f.focus(); }
+    if (!draw.scrolled && location.hash.length > 1) {
+      draw.scrolled = true;
+      // A malformed anchor is ignored.
+      let target = null;
+      try { target = document.getElementById(decodeURIComponent(location.hash.slice(1))); } catch (e) { target = null; }
+      if (target) target.scrollIntoView();
+    }
+  }
+
+  function subscribed(name) {
+    return [() => { state.errors.delete(name); state.loaded.add(name); render(); },
+      (e) => { state.errors.set(name, e && e.code ? e.code : "unavailable"); state.loaded.add(name); render(); }];
+  }
+
+  function watchCollection(query, name, into) {
+    const [ok, fail] = subscribed(name);
+    query.onSnapshot((snap) => {
+      const m = new Map();
+      for (const d of snap.docs) if (d.exists) m.set(d.id, norm(d.data(), own(SPEC, name, {})));
+      state[into] = m;
+      ok();
+    }, fail);
+  }
+
+  function watchDoc(ref, name) {
+    const [ok, fail] = subscribed(name);
+    ref.onSnapshot((d) => { state[name] = d.exists ? norm(d.data(), own(SPEC, name, {})) : null; ok(); }, fail);
+  }
+
+  async function start() {
+    const claude = window.claude;
+    if (!claude || typeof claude.use !== "function") { state.noDb = true; render(); return; }
+    const db = await claude.use("db");
+    if (!db) { state.noDb = true; render(); return; }
+    watchCollection(db.collection("plans").limit(1000), "plans", "plans");
+    watchDoc(db.doc("github/status"), "github");
+    watchDoc(db.doc("meta/sync"), "meta");
+    watchDoc(db.doc("today/digest"), "today");
+    render();
+  }
+
+  // Relative times age while the page stays open.
+  setInterval(() => { if (!document.hidden) render(); }, 60000);
+  start();
+})();
+</script>
