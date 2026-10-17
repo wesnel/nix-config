@@ -573,6 +573,8 @@ func testBaselineRoles(t *testing.T) {
 		{true, "reviewer", "pr-loop link 3 4"},
 		{false, "reviewer", "pr-loop stack 3"},
 		{false, "reviewer", "pr-loop report 3"},
+		{true, "pr-loop:pr-owner", "pr-loop propose defer 3 --summary x"},
+		{false, "", "pr-loop propose defer 3 --summary x"},
 		{false, "", "pr-loop link 3 4"},
 		{false, "pr-loop:pr-owner", "git commit --fixup=abc"},
 		{true, "pr-loop:pr-owner", "git commit -m x"},

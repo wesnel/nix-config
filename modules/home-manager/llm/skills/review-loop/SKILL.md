@@ -98,6 +98,20 @@ A deferral an owner proposes stands unless the operator overrides it. Never
 overrule an owner towards a larger change; scope grows only by the
 operator's decision.
 
+Put each such decision to the operator with `pr-loop propose`, once:
+
+```sh
+pr-loop propose follow-up <number> --summary "<diagnosis>" --thread <id>...
+pr-loop propose defer <number> --summary "<why>" --thread <id>...
+pr-loop propose split <number> --summary "<what and why>" --fixup <sha>... --size <changed lines>
+```
+
+`follow-up` is for a pre-existing or new-scope finding, `defer` for any
+other deferral, and `split` for fixups grown into work of their own. It
+records the proposal for the report and announces it to whoever started
+the loop. Carry on as if the answer were no: the loop never splits,
+moves or rebuilds anything on a proposal.
+
 ## Sub-agents
 
 Owners keep their memory in a notes file,
@@ -285,7 +299,8 @@ Stop and hand back when any of these holds:
 2. Write `$(git rev-parse --git-common-dir)/pr-loop/report.md` and show it.
    Start it with `pr-loop report`'s output, pasted unchanged: per PR, the
    bots' verdicts, CI, changed lines then and now, the fixups added, any
-   rewrite for the operator to review, and every thread with its URL.
+   rewrite for the operator to review, every thread with its URL, and the
+   proposals awaiting the operator.
    Never write a thread's link yourself. For each PR, add:
    - each thread's outcome, by its ID in that table
    - any accepted CI failures
@@ -294,8 +309,8 @@ Stop and hand back when any of these holds:
    - `needs-operator` with each range-diff file `pr-loop status` lists under
      `needsOperator`: review the conflict resolution before signing
 
-   Also list the Linear changes and follow-up tickets you propose but did
-   not make, each deferred finding with its diagnosis among them. Point at the round snapshots for reviewing the code:
+   Also list the Linear changes you propose but did not make; follow-ups
+   and deferrals are in the proposals table. Point at the round snapshots for reviewing the code:
    `git range-diff refs/pr-loop/rounds/0/<branch>...refs/pr-loop/rounds/<n>/<branch>`
    shows everything the loop changed in a branch, and adjacent rounds show
    one round's work.

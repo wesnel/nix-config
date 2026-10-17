@@ -551,7 +551,7 @@ const alias = "A git alias can stand for any command, which the guard cannot che
 // coordinatorOnly are the pr-loop steps an owner leaves to the coordinator,
 // which keeps the stack consistent across PRs.
 var coordinatorOnly = map[string]bool{"open": true, "link": true, "begin": true, "push": true, "reply": true, "resolve": true,
-	"request": true, "worktrees": true, "sign": true, "end": true, "fetch-base": true}
+	"request": true, "worktrees": true, "sign": true, "end": true, "fetch-base": true, "propose": true}
 
 // reviewerReads are the pr-loop commands a reviewer may run, besides
 // `wait ci`.

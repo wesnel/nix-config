@@ -85,6 +85,15 @@ printed on stderr and fails nothing.
                               it is paused, not done after 6 rounds, with changed lines
                               grown over 50%, or with a bot asked to review the head an
                               hour ago that has not (paused, pausedBecause)
+  propose KIND PR --summary S [--thread ID]... [--fixup REV]... [--size N]
+                              put a decision to the operator: KIND is follow-up (a finding
+                              the PR should not fix), split (fixups that belong in a PR of
+                              their own) or defer (threads left for later); with the
+                              threads, the loop fixups that would move, and roughly how
+                              many changed lines. Records it in the loop's state for
+                              report and prints one line on stderr starting
+                              "pr-loop: proposal", which watch --events proposal passes on.
+                              Nothing is split, moved or deferred by it
   report [PR...]              Markdown for the loop's report.md, read from GitHub and the
                               loop's state: per PR, status's verdict, CI, changed lines,
                               the fixups added, each bot's standing, and every review
@@ -199,7 +208,7 @@ setup asks it for the command, then both run the command here, in the sandbox.
 var relayed = map[string]bool{
 	"open": true, "stack": true, "link": true, "begin": true, "push": true, "threads": true, "reply": true, "resolve": true,
 	"request": true, "status": true, "ci": true, "logs": true, "wait": true, "worktrees": true,
-	"setup-command": true, "review": true, "fetch-base": true, "report": true,
+	"setup-command": true, "review": true, "fetch-base": true, "report": true, "propose": true,
 }
 
 // reviewRefusal is why a relayed caller may not run `review argv...`, or "".
@@ -362,11 +371,17 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 		start    = flags.Bool("from-start", false, "")
 		remove   = flags.Bool("remove", false, "")
 		execute  = flags.String("exec", "", "")
+		summary  = flags.String("summary", "", "")
+		size     = flags.Int("size", 0, "")
 		bots     multi
 		accepted multi
+		threads  multi
+		fixups   multi
 	)
 	flags.Var(&bots, "bot", "")
 	flags.Var(&accepted, "accept-failure", "")
+	flags.Var(&threads, "thread", "")
+	flags.Var(&fixups, "fixup", "")
 	if command == "guard" {
 		return guard.Main(args, stdin, stdout, stderr)
 	}
@@ -480,6 +495,15 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 		var ns []int
 		if ns, err = numbers(); err == nil {
 			result, err = loop.Status(ns)
+		}
+	case "propose":
+		if err = need(2); err == nil {
+			var n int
+			if n, err = strconv.Atoi(strings.TrimPrefix(rest[1], "#")); err != nil {
+				err = fmt.Errorf("%q is not a PR number", rest[1])
+				break
+			}
+			result, err = loop.Propose(rest[0], n, *summary, threads, fixups, *size, stderr)
 		}
 	case "report":
 		var ns []int
@@ -734,7 +758,8 @@ func interleave(args []string) []string {
 	takesValue := map[string]bool{"-body-file": true, "--body-file": true, "-from": true, "--from": true, "-lines": true, "--lines": true,
 		"-timeout": true, "--timeout": true, "-interval": true, "--interval": true, "-bot": true, "--bot": true,
 		"-accept-failure": true, "--accept-failure": true, "-base": true, "--base": true, "-title": true, "--title": true,
-		"-sha": true, "--sha": true, "-grace": true, "--grace": true, "-exec": true, "--exec": true}
+		"-sha": true, "--sha": true, "-grace": true, "--grace": true, "-exec": true, "--exec": true,
+		"-summary": true, "--summary": true, "-size": true, "--size": true, "-thread": true, "--thread": true, "-fixup": true, "--fixup": true}
 	var flags, positional []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]

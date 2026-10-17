@@ -99,9 +99,37 @@ func Report(numbers []int) (string, error) {
 			}
 			fmt.Fprintf(&b, "| %s | %s | %s | %s | %s |\n", cell(t.ID), cell(t.Reviewer), cell(where), threadState(t, bots), cell(link))
 		}
+		if state != nil {
+			writeProposals(&b, state, n)
+		}
 		b.WriteString("\n")
 	}
 	return b.String(), nil
+}
+
+// writeProposals writes the table of the proposals the loop made on PR n,
+// if any, each awaiting the operator's decision.
+func writeProposals(b *strings.Builder, state *State, n int) {
+	header := false
+	for _, p := range state.Proposals {
+		if p.PR != n {
+			continue
+		}
+		if !header {
+			b.WriteString("\nProposals for the operator to decide:\n\n| # | Kind | Summary | Threads | Fixups | Changed lines |\n|---|---|---|---|---|---|\n")
+			header = true
+		}
+		var fixups []string
+		for _, f := range p.Fixups {
+			fixups = append(fixups, f.Oid[:min(12, len(f.Oid))]+" "+f.Subject)
+		}
+		size := ""
+		if p.Size > 0 {
+			size = fmt.Sprint(p.Size)
+		}
+		fmt.Fprintf(b, "| %d | %s | %s | %s | %s | %s |\n", p.ID, p.Kind, cell(p.Summary), cell(strings.Join(p.Threads, " ")),
+			cell(strings.Join(fixups, "; ")), size)
+	}
 }
 
 // threadState says where a thread stands: resolved; open and the

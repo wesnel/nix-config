@@ -122,7 +122,13 @@ with lib; let
       # `agent-plan` on the relay.
       filesystem.denyWrite =
         map (p: "{workspace}/${p}") config.wgn.home.llm.prLoop.protectedPaths
-        ++ [sessionCacheDir plans.dir];
+        ++ [sessionCacheDir plans.dir]
+        # The loop's state, which the relay alone writes and which holds
+        # the proposals. Only on macOS: on Linux the sandbox holds a denied
+        # file that does not exist yet, as this one does before `pr-loop
+        # begin`, with a placeholder it removes after each command, which
+        # could take the state the relay wrote meanwhile with it.
+        ++ optional darwin "{workspace}/.git/pr-loop/state.json";
 
       # The launcher points the build caches here.
       filesystem.allowWrite = [config.wgn.home.llm.prLoop.cacheDir];
