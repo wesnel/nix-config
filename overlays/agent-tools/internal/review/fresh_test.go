@@ -78,6 +78,7 @@ case "$FAKE_CODEX" in
   routed) echo '{"findings": [], "unverified": [], "routes": [{"route": "security", "why": "it reads a token", "paths": ["code.txt"]}, {"route": "style", "why": "x", "paths": []}]}' > "$out" ;;
   answer) echo '{"answer": "Extend the seam.", "unverified": ["the callers"]}' > "$out" ;;
   security) echo '{"findings": [{"id": "1", "path": "code.txt", "line": 2, "endLine": null, "kind": "vulnerability", "claim": "c", "evidence": "e", "about": null, "reopens": null}], "unverified": [], "checked": '"$FAKE_CHECKED"'}' > "$out" ;;
+  reply) printf '%s' "$FAKE_REPLY" > "$out" ;;
   *) cat > "$out" <<EOF
 {"findings": [
  {"id": "1", "path": "$wt/code.txt", "line": 2, "endLine": 9, "kind": "bug", "claim": "c", "evidence": "e", "about": null, "reopens": null},

@@ -35,6 +35,7 @@ const Usage = `usage: git fresh-review [--focus ROUTE] --goal FILE [--items FILE
        git fresh-review --print-prompt [--focus ROUTE] --goal FILE [--items FILE] [--prior FILE] BASE..TIP
        git fresh-review --check FILE BASE..TIP
        git fresh-review ask --question FILE PATH...   (see git fresh-review ask -h)
+       git fresh-review diagram --diagram FILE BASE..TIP   (see git fresh-review diagram -h)
 
 Reviews the commits in BASE..TIP with a reviewer that did not write them and
 sees only the commits and what the files name: the goal statement (the goal,
@@ -167,6 +168,9 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		}
 		return ask(ctx, args[1:], stdin, stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "diagram" {
+		return diagramMain(ctx, args[1:], stdin, stdout, stderr)
+	}
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	goal := flags.String("goal", "", "")
 	items := flags.String("items", "", "")
@@ -281,6 +285,10 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		issued, err := issuedFor(reply, r, current)
 		if err != nil {
 			return report(nil, err, 0)
+		}
+		if issued.Focus == plans.DiagramFocus {
+			return report(nil, refusal.New("the prompt %s was printed for a diagram's critique, which is no review of the change; "+
+				"check its reply with `git fresh-review diagram --check FILE --diagram DIAGRAM %s`", issued.Nonce, r.given), 0)
 		}
 		if issued.Focus != "" {
 			f := focuses[issued.Focus]
@@ -417,11 +425,10 @@ func finish(r *span, out *Output, focusName, nonce string, report func(any, erro
 // carry; "" where no plan takes it. A focused review's receipt is what
 // meets its route, so its prompt is refused where there is no plan.
 func issue(r *span, focusName string) (string, error) {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	nonce, err := newNonce()
+	if err != nil {
 		return "", err
 	}
-	nonce := hex.EncodeToString(b[:])
 	id, err := git.PatchID([]string{"-C", r.top}, r.base, r.tip)
 	if err != nil {
 		return "", err
@@ -442,6 +449,15 @@ func issue(r *span, focusName string) (string, error) {
 		return "", nil
 	}
 	return nonce, nil
+}
+
+// newNonce is a random nonce naming a prompt issued.
+func newNonce() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 // issuedFor is the issued prompt a sub-agent's reply names, checked: the
@@ -555,8 +571,19 @@ type span struct {
 }
 
 // resolve resolves the range given in the repository at dir, or, for "", the
-// one containing the process's directory.
+// one containing the process's directory, refusing a range with no
+// commits.
 func resolve(dir, given string) (*span, error) {
+	r, err := resolveSpan(dir, given)
+	if err == nil && r.commits == "" {
+		return nil, refusal.New("%s has no commits to review; pass the range whose commits make up the change, "+
+			"such as `origin/main..HEAD`", given)
+	}
+	return r, err
+}
+
+// resolveSpan is resolve, taking a range with no commits.
+func resolveSpan(dir, given string) (*span, error) {
 	base, tip, ok := strings.Cut(given, "..")
 	if !ok || strings.HasPrefix(tip, ".") || base == "" || tip == "" {
 		return nil, refusal.New("%q is not a range BASE..TIP; pass the range whose commits make up the change, "+
@@ -582,10 +609,6 @@ func resolve(dir, given string) (*span, error) {
 	}
 	if r.commits, err = git.Run("-C", r.top, "log", "--reverse", "--format=%H %s", r.base+".."+r.tip); err != nil {
 		return nil, err
-	}
-	if r.commits == "" {
-		return nil, refusal.New("%s has no commits to review; pass the range whose commits make up the change, "+
-			"such as `origin/main..HEAD`", given)
 	}
 	return r, nil
 }
@@ -1022,6 +1045,8 @@ type Output struct {
 	// plan: what a finding-settled event names its findings by.
 	Focus string `json:"focus,omitempty"`
 	Round int    `json:"round,omitempty"`
+	// Diagram is the hash of the diagram a critique was of.
+	Diagram string `json:"diagram,omitempty"`
 	// proposed are the routes the reviewer's reply named.
 	proposed []proposedRoute
 }

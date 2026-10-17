@@ -67,9 +67,15 @@ type Event struct {
 	// Routes are a routed event's routes, each with the commits that need
 	// it, as Routed.Routes: `route:commit,commit`, separated by spaces.
 	Routes string `json:"routes,omitempty"`
-	// Findings are the IDs of a route receipt's findings, separated by
-	// spaces.
+	// Findings are the IDs of a route receipt's or a diagram critique's
+	// findings, separated by spaces.
 	Findings string `json:"findings,omitempty"`
+	// Diagram is the hash of a diagram's JSON (diagram.Diagram.Hash) that
+	// a critique, or the prompt issued for one, was of; Drafter and Critic
+	// are the model families that drew and critiqued it.
+	Diagram string `json:"diagram,omitempty"`
+	Drafter string `json:"drafter,omitempty"`
+	Critic  string `json:"critic,omitempty"`
 	// Note is what the caller should know about the event, such as a
 	// heading keyword Log could not write; the log does not hold it.
 	Note string `json:"note,omitempty"`
@@ -111,6 +117,8 @@ var (
 				"Do what its reason asks, or say in your report why it cannot be done",
 			"pushed": "pr-loop, and a hook after each shell call, log `pushed` for every push, from what they pushed. " +
 				"Watch the push's CI with `pr-loop wait ci` as the signing-pass skill says",
+			draftedKind: "agent-plan logs `diagram-drafted`, the harness of the session that first checks or keeps a diagram. " +
+				"Check the diagram with `agent-plan diagram check PLAN FILE` in the session that drew it",
 			routedKind: "git fresh-review logs `routed` for the focused reviews a change needs, from its scan and its reviewer. " +
 				"Ask for one with `agent-plan set PLAN REVIEWS ROUTE...`",
 			routeReceiptKind: "a route receipt is written by the focused review that ran alone. " +
@@ -119,6 +127,8 @@ var (
 				"Print the prompt with it, and check the reply with `git fresh-review --check`",
 			waivedKind: "a route is waived with its reason by `agent-plan waive`. " +
 				"Run `agent-plan waive PLAN --route ROUTE --why TEXT`",
+			critiquedKind: "git fresh-review diagram logs `diagram-critiqued` for the critique that ran. " +
+				"Run `git fresh-review diagram --diagram FILE BASE..TIP` as the review-change skill says",
 		}
 		for _, k := range []string{"loop-began", "round", "replied", "resolved", "ci-waited", "loop-signed"} {
 			kinds[k] = "pr-loop logs what it did, from begin to sign, in the plan of the session that ran it. " +
@@ -146,7 +156,8 @@ func (p Plan) check(e Event) error {
 	for what, v := range map[string]string{"summary": e.Summary, "agent": e.Agent, "branch": e.Branch,
 		"commit": e.Commit, "evidence": e.Evidence, "model": e.Model, "item": e.Item, "kind": e.Kind, "session": e.Session,
 		"worktree": e.Worktree, "range": e.Range, "tip": e.Tip, "patch ID": e.PatchID, "raised": e.Raised, "property": e.Property, "value": e.Value,
-		"focus": e.Focus, "nonce": e.Nonce, "routes": e.Routes, "findings": e.Findings} {
+		"focus": e.Focus, "nonce": e.Nonce, "routes": e.Routes, "findings": e.Findings, "diagram": e.Diagram,
+		"drafter": e.Drafter, "critic": e.Critic} {
 		if err := checkLine(what, v); err != nil {
 			return err
 		}
@@ -293,7 +304,8 @@ func eventText(e Event) string {
 		{"REVIEW", e.Review}, {"OUTCOME", e.Outcome}, {"TOKENS", tokens}, {"MODEL", e.Model},
 		{"EFFORT", e.Effort}, {"SESSION", e.Session}, {"WORKTREE", e.Worktree}, {"RANGE", e.Range}, {"TIP", e.Tip}, {"PATCH_ID", e.PatchID},
 		{"RAISED", e.Raised}, {"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}, {"PROPERTY", e.Property}, {"VALUE", e.Value},
-		{"FOCUS", e.Focus}, {"NONCE", e.Nonce}, {"ROUTES", e.Routes}, {"FINDINGS", e.Findings}} {
+		{"FOCUS", e.Focus}, {"NONCE", e.Nonce}, {"ROUTES", e.Routes}, {"FINDINGS", e.Findings},
+		{"DIAGRAM", e.Diagram}, {"DRAFTER", e.Drafter}, {"CRITIC", e.Critic}} {
 		if kv[1] != "" {
 			b.WriteString(":" + kv[0] + ": " + kv[1] + "\n")
 		}
@@ -498,7 +510,8 @@ func (p Plan) Events() ([]Event, error) {
 			Model: h.Props["MODEL"], Effort: h.Props["EFFORT"], Session: h.Props["SESSION"], Worktree: h.Props["WORKTREE"],
 			Range: h.Props["RANGE"], Tip: h.Props["TIP"], PatchID: h.Props["PATCH_ID"], Raised: h.Props["RAISED"], Sign: h.Props["SIGN"], Exit: h.Props["EXIT"],
 			Delivers: h.Props["DELIVERS"], Property: h.Props["PROPERTY"], Value: h.Props["VALUE"], Focus: h.Props["FOCUS"],
-			Nonce: h.Props["NONCE"], Routes: h.Props["ROUTES"], Findings: h.Props["FINDINGS"]}
+			Nonce: h.Props["NONCE"], Routes: h.Props["ROUTES"], Findings: h.Props["FINDINGS"], Diagram: h.Props["DIAGRAM"],
+			Drafter: h.Props["DRAFTER"], Critic: h.Props["CRITIC"]}
 		e.Tokens, _ = strconv.ParseInt(h.Props["TOKENS"], 10, 64)
 		if _, summary, ok := strings.Cut(h.Title, " — "); ok {
 			e.Summary = summary
