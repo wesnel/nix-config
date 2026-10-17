@@ -32,7 +32,10 @@
         gnupg.enable = true;
         go.enable = true;
         llm = {
-          repos."ngrok-private/ngrok-agent".setup = "go tool buf generate";
+          repos."ngrok-private/ngrok-agent" = {
+            setup = "go tool buf generate";
+            generated = ["**/*.pb.go"];
+          };
 
           # Told to pull over the devbox master below, when one is open.
           plans.peers = [

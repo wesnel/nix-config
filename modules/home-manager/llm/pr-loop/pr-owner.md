@@ -47,11 +47,17 @@ skill says, with the trailers the `review-change` skill's Answering gives.
 When unsure which commit, use the PR's last. Never amend, reword or add a
 commit that is not a fixup.
 
-Run the tests and linters the repository uses for the files you touched, and
-report:
+Run the tests and linters the repository uses for the files you touched.
+Then check the squash with `pr-loop autosquash --exec '<build or vet
+command>'` from your worktree: it squashes your fixups in a scratch
+worktree it removes afterwards, copies in the generated files the
+repository's settings name, runs the command at each squashed commit, and
+exits 1 if the files differ from your branch's or the command fails. Never
+add a worktree of your own for this. Report:
 
 - each fixup's SHA and subject, with the thread or check it addresses
 - test and lint results, including failures
+- the autosquash result
 - a draft reply per thread, in the reply-file format `review-change`'s
   Answering gives: what changed and why, in two or three sentences, naming
   commits by subject

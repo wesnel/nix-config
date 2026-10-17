@@ -60,6 +60,16 @@ printed on stderr and fails nothing.
   worktrees [--remove]        a worktree per PR under .pr-loop/, where commits are unsigned;
                               runs the setup command in each one whose HEAD moved since its last setup
   setup [PATH]                run the setup command in the worktree at PATH (default: this one)
+  autosquash [--exec CMD] [UPSTREAM]
+                              squash HEAD's fixups onto UPSTREAM (default: in a loop, the
+                              branch's parent), unsigned, in a scratch worktree it removes
+                              afterwards, and say whether the files match HEAD's; with
+                              --exec, copy in the ignored files the repository's
+                              "generated" setting names, as HEAD's worktree has them, and
+                              run CMD with sh at each squashed commit, checked out afresh
+                              (exit 1 when the files differ or CMD fails);
+                              like setup, it runs here, in a sandbox too, asking a relay
+                              only for the repository's settings
   setup-command               the setup command configured for this repository
   push [--dry-run] [BRANCH...]  push through the GitHub API, a branch at a time, bottom up
   threads [--all] PR          unresolved review threads, labelled by bot
@@ -228,7 +238,7 @@ func reviewRefusal(argv []string) string {
 
 // clientSide are the commands that run in this process even with a relay:
 // each does its part on the host through the relay itself.
-var clientSide = map[string]bool{"guard": true, "setup": true, "worktrees": true}
+var clientSide = map[string]bool{"guard": true, "setup": true, "worktrees": true, "autosquash": true}
 
 // relayRefusal is why the relay's caller may not run argv, or "".
 func relayRefusal(argv []string) string {
@@ -237,9 +247,9 @@ func relayRefusal(argv []string) string {
 		if len(argv) > 0 {
 			name = argv[0]
 		}
-		if name == "setup" {
-			return "setup runs its command in the caller's sandbox, never through the relay; " +
-				"run `pr-loop setup` in the sandbox, which asks the relay only for the command"
+		if name == "setup" || name == "autosquash" {
+			return name + " runs its command in the caller's sandbox, never through the relay; " +
+				"run `pr-loop " + name + "` in the sandbox, which asks the relay only for the settings"
 		}
 		return fmt.Sprintf("%q is only run on the host, outside the sandbox; put the exact pr-loop command in the report for the operator", name)
 	}
@@ -347,6 +357,7 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 		prune    = flags.Bool("prune", false, "")
 		start    = flags.Bool("from-start", false, "")
 		remove   = flags.Bool("remove", false, "")
+		execute  = flags.String("exec", "", "")
 		bots     multi
 		accepted multi
 	)
@@ -582,6 +593,30 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 		code = setupFailures(runs, stderr)
 	case "setup-command":
 		result, err = loop.SetupCommand()
+	case "autosquash":
+		if len(rest) > 1 {
+			err = errors.New("autosquash takes at most one upstream; see pr-loop --help")
+			break
+		}
+		upstream := ""
+		if len(rest) == 1 {
+			upstream = rest[0]
+		}
+		var generated []string
+		if *execute != "" {
+			var setup *loop.Setup
+			if setup, err = setupCommand(url); err != nil {
+				break
+			}
+			generated = setup.Generated
+		}
+		var squash *loop.AutosquashResult
+		if squash, err = loop.Autosquash(upstream, generated, *execute, stderr); err == nil {
+			result = squash
+			if !squash.OK() {
+				code = 1
+			}
+		}
 	case "sign":
 		var active bool
 		if active, err = loop.Active(); err == nil {
@@ -695,7 +730,7 @@ func interleave(args []string) []string {
 	takesValue := map[string]bool{"-body-file": true, "--body-file": true, "-from": true, "--from": true, "-lines": true, "--lines": true,
 		"-timeout": true, "--timeout": true, "-interval": true, "--interval": true, "-bot": true, "--bot": true,
 		"-accept-failure": true, "--accept-failure": true, "-base": true, "--base": true, "-title": true, "--title": true,
-		"-sha": true, "--sha": true, "-grace": true, "--grace": true}
+		"-sha": true, "--sha": true, "-grace": true, "--grace": true, "-exec": true, "--exec": true}
 	var flags, positional []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]

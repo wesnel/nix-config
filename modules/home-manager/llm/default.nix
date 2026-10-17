@@ -138,6 +138,18 @@ in {
             '';
           };
 
+          generated = mkOption {
+            type = types.listOf types.str;
+            default = [];
+
+            description = ''
+              Git pathspec globs (`:(glob)` magic) for files git ignores that
+              a build needs and a fresh checkout lacks, such as what
+              {option}`setup` generates. `pr-loop autosquash --exec` copies
+              them into its scratch worktree before running its command.
+            '';
+          };
+
           testFiles = mkOption {
             type = types.listOf types.str;
             default = [];
@@ -153,6 +165,7 @@ in {
           test = "go test ./...";
           build = "go vet ./...";
           testFiles = ["**/*_test.go"];
+          generated = ["**/*.pb.go"];
         };
       };
 

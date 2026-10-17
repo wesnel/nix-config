@@ -18,17 +18,20 @@ import (
 type Setup struct {
 	Repo    string `json:"repo"`
 	Command string `json:"command"`
+	// Generated are the ignored files a fresh checkout lacks and a build
+	// needs, as git pathspec globs, which `pr-loop autosquash` copies.
+	Generated []string `json:"generated,omitempty"`
 }
 
-// SetupCommand looks up the setup command for the repository containing the
-// current directory in the user's per-repository settings (package repos).
-// Command is empty when none is configured.
+// SetupCommand looks up the setup command, and the generated files, for the
+// repository containing the current directory in the user's per-repository
+// settings (package repos). Command is empty when none is configured.
 func SetupCommand() (*Setup, error) {
 	s, err := repos.Lookup()
-	if err != nil || s.Setup == "" {
+	if err != nil || (s.Setup == "" && len(s.Generated) == 0) {
 		return &Setup{}, err
 	}
-	return &Setup{Repo: s.Repo, Command: s.Setup}, nil
+	return &Setup{Repo: s.Repo, Command: s.Setup, Generated: s.Generated}, nil
 }
 
 // SetupRun is one run of a setup command in a worktree.
