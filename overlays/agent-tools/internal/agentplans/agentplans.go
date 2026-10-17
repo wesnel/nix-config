@@ -17,6 +17,12 @@ import (
 // SessionEnv marks the dashboard session. Its systemd unit alone sets it.
 const SessionEnv = "AGENT_PLANS_SESSION"
 
+// Schema is the version every document on the page carries as "schema",
+// the host's and the page's alike. Fields are only ever added, each
+// addition raising it, and never renamed or given another meaning: a
+// reader takes any version and uses a field only where it is present.
+const Schema = 1
+
 // Dir is the dashboard's state directory, $XDG_STATE_HOME/agent-plans.
 func Dir() string { return filepath.Join(hostpaths.StateHome(), "agent-plans") }
 

@@ -93,7 +93,7 @@ func TestDispatch(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(entries, want) {
 		t.Errorf("queue %+v (%v)", entries, err)
 	}
-	if d := readDocFile(t, p, "o~r~7"); d != (Doc{State: Queued, Triage: true, At: "2026-10-16T12:00:00Z", Head: headA}) {
+	if d := readDocFile(t, p, "o~r~7"); d != (Doc{Schema: 1, State: Queued, Triage: true, At: "2026-10-16T12:00:00Z", Head: headA}) {
 		t.Errorf("doc %+v", d)
 	}
 

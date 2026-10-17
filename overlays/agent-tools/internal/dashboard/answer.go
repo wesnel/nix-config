@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/wesnel/agent-tools/internal/agentplans"
 	"github.com/wesnel/agent-tools/internal/export"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/queue"
@@ -82,6 +83,7 @@ func readListing(p queue.Paths) (listing, error) {
 // page: the choice it took, the state the answer reached, when, and why a
 // refused one was.
 type AnswerDoc struct {
+	Schema int    `json:"schema"`
 	Choice string `json:"choice"`
 	State  string `json:"state"`
 	At     string `json:"at"`
@@ -197,7 +199,7 @@ func Answer(p queue.Paths, c plans.Config, now time.Time) (AnswerResult, error) 
 		if ok && doc.State != "" {
 			continue
 		}
-		out := AnswerDoc{At: now.UTC().Format(time.RFC3339)}
+		out := AnswerDoc{Schema: agentplans.Schema, At: now.UTC().Format(time.RFC3339)}
 		if key.MatchString(doc.Choice) || doc.Choice == Other {
 			out.Choice = doc.Choice
 		}

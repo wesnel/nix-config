@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/wesnel/agent-tools/internal/agentplans"
 )
 
 // Request is a review request as the export listed it on the page.
@@ -98,6 +100,7 @@ const maxDoc = 16 << 10
 // entry's state, or "refused" with why. Times are RFC 3339, or "". It has
 // no "anyway": that is one click's, never a lasting flag.
 type Doc struct {
+	Schema int    `json:"schema"`
 	State  string `json:"state"`
 	Triage bool   `json:"triage"`
 	At     string `json:"at"`
@@ -265,7 +268,8 @@ func Dispatch(p Paths, now time.Time, start func() error) (Result, error) {
 	written := map[string]bool{}
 	for id, why := range refused {
 		res.Refused = append(res.Refused, id)
-		errs = append(errs, WriteObject(dir, docFile(id), Doc{State: "refused", At: stamp(now), Reason: why}))
+		errs = append(errs, WriteObject(dir, docFile(id), Doc{Schema: agentplans.Schema, State: "refused", At: stamp(now),
+			Reason: why}))
 		written[id] = true
 	}
 	waiting := false
@@ -308,7 +312,7 @@ func readDoc(dir *os.Root, name string) (pageDoc, bool) {
 
 // docOf is e's document, with Stale against heads, the page's listing.
 func docOf(e Entry, heads map[string]string) Doc {
-	d := Doc{State: e.State, Triage: e.Triage, At: stamp(e.Changed), Head: e.Head,
+	d := Doc{Schema: agentplans.Schema, State: e.State, Triage: e.Triage, At: stamp(e.Changed), Head: e.Head,
 		Until: stamp(e.Until), Reason: reason(e)}
 	if h := heads[e.Key]; h != "" && e.Head != "" && h != e.Head {
 		d.Stale = true

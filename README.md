@@ -361,7 +361,10 @@ redacted and is capped in length, and a plan's lists are capped, so a
 document stays under 600 KiB. Redaction knows shapes, not data, so
 customer data stays out of plans. A plan that cannot be read is named and
 its document kept, and the command exits 1; only a plan gone from the
-directory, or halted, loses its document.
+directory, or halted, loses its document. Every document on the page,
+these and those the page and the session write, carries `schema`, the
+version in `internal/agentplans`: fields are only ever added, each
+addition raising it, so a reader uses a field only where it is present.
 
 `plan-dash watch` is what wakes the dashboard session, through Monitor.
 Every 30 seconds it exports the plans and their sync state in memory and

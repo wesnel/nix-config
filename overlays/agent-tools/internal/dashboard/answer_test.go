@@ -162,7 +162,7 @@ func TestAnswer(t *testing.T) {
 		t.Errorf("%d decided events by the phone: %+v", phone, events)
 	}
 	for id, choice := range map[string]string{"Q1": "B", "Q2": "other", "Q3": "B"} {
-		if d := readAnswer(t, p, own.Name+"~"+id); d != (AnswerDoc{Choice: choice, State: "recorded", At: stamp}) {
+		if d := readAnswer(t, p, own.Name+"~"+id); d != (AnswerDoc{Schema: 1, Choice: choice, State: "recorded", At: stamp}) {
 			t.Errorf("%s: doc %+v", id, d)
 		}
 	}

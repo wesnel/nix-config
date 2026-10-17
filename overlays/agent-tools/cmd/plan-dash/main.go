@@ -120,7 +120,8 @@ as github.json, and where one fails, the last good one is written, marked
 stale; export shares collect's default cache. status.org holds only keys,
 states, counts, times and the links built from them, never a title, branch,
 login or comment; github.json holds titles. export's documents leave the
-host: they hold only the fields named above, read from the plans directory
+host: they hold only the fields named above and schema, the documents'
+version, which answer and dispatch also write; read from the plans directory
 alone (of properties, only STATUS, RECOMMENDATION and ANSWER; of the log,
 only event kinds and times), stripped of control and formatting
 characters, with known secret shapes redacted and text and lists capped.
