@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -88,6 +89,45 @@ func TestRelayRefusal(t *testing.T) {
 				t.Errorf("%v was refused: %s", argv, reason)
 			}
 		})
+	}
+}
+
+// A session in a review directory, which runs on someone else's pull
+// request, may relay only review: it could make a repository of its own
+// there, which the relay accepts inside a workspace that is none, and have
+// the loop's commands push or comment from it.
+func TestReviewDirRefusal(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	review := filepath.Join(root, "o", "r", "7", "0123456789ab")
+	planted := filepath.Join(review, "planted")
+	os.MkdirAll(planted, 0o755)
+	elsewhere := t.TempDir()
+	for _, c := range []struct {
+		argv    []string
+		cwd     string
+		refused bool
+	}{
+		{[]string{"push"}, review, true},
+		{[]string{"open", "--title", "T", "--body-file", "-", "x"}, planted, true},
+		{[]string{"reply", "T", "--body-file", "-"}, planted, true},
+		{[]string{"resolve", "T"}, review, true},
+		{[]string{"worktrees"}, review, true},
+		{[]string{"review", "7"}, review, false},
+		{[]string{"review", "settle", "7"}, review, false},
+		{[]string{"push"}, elsewhere, false},
+	} {
+		if got := reviewDirRefusal(c.argv, c.cwd, root); (got != "") != c.refused {
+			t.Errorf("%v in %s: %q", c.argv, c.cwd, got)
+		}
+	}
+	// Through a link to it, the directory is still under the review root.
+	link := filepath.Join(t.TempDir(), "link")
+	os.Symlink(review, link)
+	if reviewDirRefusal([]string{"push"}, link, root) == "" {
+		t.Error("push through a link into a review directory was accepted")
+	}
+	if reviewDirRefusal([]string{"push"}, review, "") != "" {
+		t.Error("refused without a review root")
 	}
 }
 
