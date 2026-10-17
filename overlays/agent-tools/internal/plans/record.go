@@ -125,10 +125,16 @@ func (c Config) RecordUsageAsk(input []byte, ask string, now time.Time) error {
 	return err
 }
 
+// SessionEnv are the variables in which a harness names its session to the
+// programs it starts: Claude Code's, Codex's and ECA's. Code that finds a
+// plan by session reads one of them, and sandbox-relay clears them all for
+// the programs it runs, so a name added for a harness goes here.
+var SessionEnv = []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "ECA_CHAT_ID"}
+
 // EnvSession is the session of the harness running this process, as its
-// environment names it: Claude Code's, Codex's or ECA's; or "".
+// environment names it, or "".
 func EnvSession() string {
-	for _, v := range []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "ECA_CHAT_ID"} {
+	for _, v := range SessionEnv {
 		if id := os.Getenv(v); id != "" {
 			return id
 		}
