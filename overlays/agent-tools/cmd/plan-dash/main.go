@@ -57,6 +57,22 @@ const usage = `plan-dash: the operator's status, from GitHub and the plans.
           documents it wrote; removes files that name no such document. Of
           a document, only state, choice and text are read, and the
           directory is opened once and never followed through a link.
+  watch   for the dashboard session's Monitor: every 30 seconds, export
+          this host's and the other hosts' plans and their sync state in
+          memory and print "plans changed" where what the page would show
+          differs from what the last such line was printed for, at most
+          once every 90 seconds (when a log alone changes, or a push or
+          fetch, it does not); print "plan sync stalled" once a stall
+          begins, this host's plans unsynced and its last push over 6
+          hours old; "standup digest ready" or "demo digest ready" for a
+          digest new under digests/YYYY/ in the notes repository; and,
+          where AGENT_PLANS_POLL is set, "poll" every 5 minutes. Takes the
+          other hosts' plans every 10 minutes, fast-forward only. What it
+          has printed is kept in $XDG_STATE_HOME/agent-plans/watch.json,
+          so a watch started after another prints only what changed since,
+          and the first ever prints nothing for what it finds. Another
+          watch already running makes it print "already watching" and
+          exit.
   dispatch
           queue the reviews the page asked for: reads each document
           OWNER~NAME~N from out/dispatch/OWNER@NAME@N.json, as an
@@ -132,6 +148,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		res, err := dashboard.Answer(queue.Default(), c, time.Now())
 		return cli.Report("plan-dash", res, err, 0, stdout, stderr)
 	}
+	if len(args) == 1 && args[0] == "watch" {
+		return watch(stdout, stderr)
+	}
 	if len(args) == 1 && args[0] == "dispatch" {
 		res, err := queue.Dispatch(queue.Default(), time.Now(), queue.StartUnit)
 		return cli.Report("plan-dash", res, err, 0, stdout, stderr)
@@ -180,6 +199,32 @@ func run(args []string, stdout, stderr io.Writer) int {
 		result.PullRequests, result.ReviewRequests = len(s.GitHub.Mine), len(s.GitHub.Requests)
 	}
 	return cli.Report("plan-dash", result, err, 0, stdout, stderr)
+}
+
+// watch runs watch until it is stopped. It takes no arguments: the
+// dashboard session runs it under Monitor, and nothing it is given can
+// change what it prints.
+func watch(stdout, stderr io.Writer) int {
+	c, err := plans.Load()
+	if err != nil {
+		return cli.Report("plan-dash", nil, err, 0, stdout, stderr)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+	w := dashboard.Watch{Paths: queue.Default(), Config: c, Now: time.Now, Out: stdout,
+		Poll: os.Getenv("AGENT_PLANS_POLL") != "", Sync: c.SyncState, Pull: c.Pull,
+		Wait: func(ctx context.Context, d time.Duration) bool {
+			select {
+			case <-ctx.Done():
+				return false
+			case <-time.After(d):
+				return true
+			}
+		}}
+	if err := w.Run(ctx); err != nil {
+		return cli.Report("plan-dash", nil, err, 0, stdout, stderr)
+	}
+	return 0
 }
 
 // exportDocs runs export. It takes no arguments: the dashboard session may

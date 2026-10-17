@@ -246,14 +246,15 @@ func TestQueue(t *testing.T) {
 func TestUsage(t *testing.T) {
 	for _, args := range [][]string{{}, {"serve"}, {"collect", "--bogus"}, {"export", "now"}, {"export", "--out", "x"},
 		{"dispatch", "o/s#9"}, {"dispatch", "--out", "x"}, {"queue", "run"}, {"answer", "2026-10-17-loop.box"},
-		{"answer", "--doc", "x.json"}} {
+		{"answer", "--doc", "x.json"}, {"watch", "--poll"}, {"watch", "ws://x"}} {
 		var stdout, stderr bytes.Buffer
 		if code := run(args, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "collect") {
 			t.Errorf("%q: exit %d: %s", args, code, stderr.String())
 		}
 	}
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"--help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "collect") {
+	if code := run([]string{"--help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "collect") ||
+		!strings.Contains(stdout.String(), "  watch ") {
 		t.Errorf("--help: exit %d: %s", code, stdout.String())
 	}
 }
