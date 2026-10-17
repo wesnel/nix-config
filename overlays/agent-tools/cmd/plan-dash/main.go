@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/agentplans"
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/dashboard"
 	"github.com/wesnel/agent-tools/internal/export"
@@ -90,7 +91,7 @@ func watch(stdout, stderr io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
-	w := dashboard.Watch{Dir: filepath.Join(hostpaths.StateHome(), "agent-plans"), Config: c, Now: time.Now, Out: stdout,
+	w := dashboard.Watch{Dir: agentplans.Dir(), Config: c, Now: time.Now, Out: stdout,
 		Sync: c.SyncState, Pull: c.Pull,
 		Wait: func(ctx context.Context, d time.Duration) bool {
 			select {

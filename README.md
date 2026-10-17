@@ -351,6 +351,13 @@ time (`already watching` otherwise) and keeps what it printed in
 `watch.json`, so the watch the session starts after Monitor's 30 minutes
 prints only what changed since.
 
+## the Agent plans session
+
+Its page is named in `agent-tools/agent-plans.json` under the XDG config
+directory, `{"url": "https://claude.ai/artifact/ID"}`, which the operator
+writes once on the host; the URL stays out of this repository, and
+without it the session reaches no page.
+
 ## pushing: private history stays private
 
 `wgn.home.git` runs `git-push-guard` before every push from every
