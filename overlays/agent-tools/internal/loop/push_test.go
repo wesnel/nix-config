@@ -57,8 +57,12 @@ func (f *fakeRefs) graphQL(query string, vars map[string]any, out any) error {
 			if err != nil {
 				return err
 			}
+			base, err := f.git("", "rev-parse", "refs/heads/"+f.bases[head])
+			if err != nil {
+				return err
+			}
 			nodes = append(nodes, map[string]any{"id": fmt.Sprint("PR", n), "number": n, "headRefName": head,
-				"headRefOid": oid, "baseRefName": f.bases[head], "author": map[string]any{"login": "me"}})
+				"headRefOid": oid, "baseRefName": f.bases[head], "baseRefOid": base, "author": map[string]any{"login": "me"}})
 		}
 		data = map[string]any{"search": map[string]any{"nodes": nodes}}
 	case strings.Contains(query, "updateRefs"):
@@ -206,6 +210,66 @@ func TestPush(t *testing.T) {
 			if got, want := gitIn(t, f.bare, "rev-parse", b), gitIn(t, dir, "rev-parse", b); got != want {
 				t.Errorf("GitHub has %s at %s, want %s", b, got, want)
 			}
+		}
+	})
+
+	// When the base moves on GitHub, the loop fetches it, the bottom PR is
+	// rebased onto it with its fixups and the rest restacked, and the push
+	// takes the rewritten heads: the PR's own commits are the same ones, on
+	// a new base.
+	t.Run("rebased onto a base that moved", func(t *testing.T) {
+		f, dir := pushStack(t)
+		if _, err := Push(nil, false); err != nil {
+			t.Fatal(err)
+		}
+		// Someone merges to main on GitHub.
+		elsewhere := t.TempDir()
+		gitIn(t, elsewhere, "clone", "-q", f.bare, ".")
+		gitIn(t, elsewhere, "switch", "-q", "main")
+		os.WriteFile(filepath.Join(elsewhere, "g"), []byte("g\n"), 0o644)
+		gitIn(t, elsewhere, "add", "g")
+		gitIn(t, elsewhere, "commit", "-qm", "Add g")
+		gitIn(t, elsewhere, "push", "-q", "origin", "main")
+		moved := gitIn(t, f.bare, "rev-parse", "main")
+
+		oldURL := baseURL
+		baseURL = func(string) string { return f.bare }
+		t.Cleanup(func() { baseURL = oldURL })
+		result, err := FetchBase()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := gitIn(t, dir, "rev-parse", "refs/remotes/origin/main"); got != moved {
+			t.Errorf("origin/main is %s after the fetch, want %s; result %v", got, moved, result)
+		}
+		state, _ := loadState(true)
+		if state.Branches["lower"].BaseOid != moved {
+			t.Errorf("the loop recorded the base at %q, want %s", state.Branches["lower"].BaseOid, moved)
+		}
+
+		fork := gitIn(t, dir, "rev-parse", "lower")
+		gitIn(t, dir, "rebase", "-q", "--onto", "refs/remotes/origin/main", "main", "lower")
+		gitIn(t, dir, "rebase", "-q", "--onto", "lower", fork, "upper")
+		if _, err := Push(nil, false); err != nil {
+			t.Fatalf("pushing the rebased stack: %v", err)
+		}
+		for _, b := range []string{"lower", "upper"} {
+			if got, want := gitIn(t, f.bare, "rev-parse", b), gitIn(t, dir, "rev-parse", b); got != want {
+				t.Errorf("GitHub has %s at %s, want %s", b, got, want)
+			}
+		}
+		if base := gitIn(t, f.bare, "merge-base", "main", "lower"); base != moved {
+			t.Errorf("lower on GitHub is based on %s, not the moved main %s", base, moved)
+		}
+	})
+
+	// A rewrite that loses one of the PR's own commits, as a rebase drops
+	// one the base already has, is not the same PR.
+	t.Run("rewrite that loses a commit", func(t *testing.T) {
+		_, dir := pushStack(t)
+		gitIn(t, dir, "branch", "-f", "lower", "main")
+		if _, err := Push([]string{"lower"}, false); !refused(err) {
+			t.Errorf("a push that lost the PR's commit: %v", err)
 		}
 	})
 

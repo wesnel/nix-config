@@ -116,7 +116,7 @@ func Begin(branches []string) (any, error) {
 				"stop and ask the operator how to reconcile them", b, remote)
 		}
 		state.Order = append(state.Order, b)
-		state.Branches[b] = &Branch{PR: pr.Number, Base: pr.BaseRefName, RemoteOid: remote}
+		state.Branches[b] = &Branch{PR: pr.Number, Base: pr.BaseRefName, RemoteOid: remote, BaseOid: pr.BaseRefOid}
 	}
 	for _, b := range state.Order {
 		parent, err := state.parentRef(repo, b)

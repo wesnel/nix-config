@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -22,6 +23,9 @@ type fakeCIPR struct {
 	cross               bool
 	headOid             string // the PR's head
 	branchOid           string // the head branch's tip on GitHub
+	mergeable           string // MERGEABLE, CONFLICTING or UNKNOWN; "" for MERGEABLE
+	baseOid             string // the base branch's tip on GitHub
+	base                string // the base branch; "" for main
 }
 
 // fakeCI answers the GraphQL that ci, wait ci and logs make, for the viewer
@@ -58,8 +62,13 @@ func (f *fakeCI) graphQL(query string, vars map[string]any, out any) error {
 		if pr == nil {
 			return errors.New("GraphQL: Could not resolve to a PullRequest")
 		}
+		mergeable := pr.mergeable
+		if mergeable == "" {
+			mergeable = "MERGEABLE"
+		}
 		data = map[string]any{"repository": map[string]any{"pullRequest": map[string]any{
 			"headRefName": pr.head, "headRefOid": pr.headOid, "headRef": map[string]any{"target": map[string]any{"oid": pr.branchOid}},
+			"mergeable": mergeable, "baseRefOid": pr.baseOid, "baseRefName": cmp.Or(pr.base, "main"),
 			"baseRef": map[string]any{"target": contexts(f.base)}}}}
 	case strings.Contains(query, "pullRequests(headRefName"):
 		nodes := []any{}
@@ -231,6 +240,106 @@ func TestWaitCI(t *testing.T) {
 	t.Run("times out", testWaitCITimesOut)
 	t.Run("no checks", testWaitCINoChecks)
 	t.Run("compares with the base", testWaitCIComparesWithTheBase)
+	t.Run("conflicts with the base", testWaitCIConflicts)
+}
+
+// A PR that conflicts with its base runs no checks, so waiting for them
+// ends at once with its own result.
+func testWaitCIConflicts(t *testing.T) {
+	t.Run("no checks", func(t *testing.T) {
+		f := ciRepo(t)
+		f.prs[1].mergeable = "CONFLICTING"
+		start := now()
+		result, settled, err := WaitCI(nil, "", time.Hour, time.Minute, 3*time.Minute)
+		if err != nil || !settled || result.Result != "conflicting" || result.PRs[0].Mergeable != "CONFLICTING" {
+			t.Fatalf("a conflicting PR: %+v, settled %v, %v", result, settled, err)
+		}
+		if waited := now().Sub(start); waited != 0 {
+			t.Errorf("waited %s for checks a conflicting PR never runs", waited)
+		}
+	})
+
+	// Checks still running are waited for, as on any PR.
+	t.Run("checks running", func(t *testing.T) {
+		f := ciRepo(t)
+		f.prs[1].mergeable = "CONFLICTING"
+		f.checks["a1"] = []fakeCheck{{name: "build", status: "IN_PROGRESS"}}
+		polls := 0
+		f.tick = func() {
+			if polls++; polls == 2 {
+				f.checks["a1"] = passing
+			}
+		}
+		if result, _, _ := WaitCI(nil, "", time.Hour, time.Minute, 0); result.Result != "passed" || polls != 2 {
+			t.Errorf("checks on a conflicting PR: %+v after %d polls", result, polls)
+		}
+	})
+
+	// The bottom PR conflicts with its base, which fetch-base brings in; a
+	// PR stacked on another of the loop's conflicts with its parent, which
+	// a restack resolves.
+	t.Run("what to do", func(t *testing.T) {
+		f := ciRepo(t)
+		f.prs[1].mergeable = "CONFLICTING"
+		f.prs[5] = &fakeCIPR{author: "me", state: "OPEN", head: "child", headOid: "e1", branchOid: "e1", base: "feat", mergeable: "CONFLICTING"}
+		state := &State{Repo: "o/r", Order: []string{"feat", "child"}, Branches: map[string]*Branch{
+			"feat": {PR: 1, Base: "main"}, "child": {PR: 5, Base: "feat"}}}
+		if err := state.save(); err != nil {
+			t.Fatal(err)
+		}
+		result, _, err := WaitCI([]string{"1", "5"}, "", time.Hour, time.Minute, 0)
+		if err != nil || result.Result != "conflicting" {
+			t.Fatalf("wait: %+v, %v", result, err)
+		}
+		advice := strings.Join(result.Advice(), "\n")
+		for _, want := range []string{"#1 conflicts with its base main", "fetch-base", "#5 conflicts with feat", "restack"} {
+			if !strings.Contains(advice, want) {
+				t.Errorf("the advice lacks %q:\n%s", want, advice)
+			}
+		}
+		if strings.Count(advice, "fetch-base") != 1 {
+			t.Errorf("fetch-base advised for the stacked PR:\n%s", advice)
+		}
+	})
+
+	// GitHub may not have worked the merge out yet.
+	t.Run("not yet known", func(t *testing.T) {
+		f := ciRepo(t)
+		f.prs[1].mergeable = "UNKNOWN"
+		if result, _, _ := WaitCI(nil, "", time.Hour, time.Minute, 3*time.Minute); result.Result != "noChecks" {
+			t.Errorf("an unknown merge state: %+v", result)
+		}
+	})
+}
+
+// ci reports whether each PR merges with its base, and in a loop whether
+// the base moved since the loop recorded it.
+func TestCIMergeState(t *testing.T) {
+	f := ciRepo(t)
+	f.prs[1].mergeable, f.prs[1].baseOid = "CONFLICTING", "b2"
+	f.checks["a1"] = passing
+	got := func() *CI {
+		t.Helper()
+		out, err := CIStatuses([]string{"1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out.([]*CI)[0]
+	}
+	if ci := got(); ci.Mergeable != "CONFLICTING" || ci.BaseOid != "b2" || ci.BaseMoved != nil {
+		t.Errorf("outside a loop: %+v", ci)
+	}
+	state := &State{Repo: "o/r", Order: []string{"feat"}, Branches: map[string]*Branch{"feat": {PR: 1, Base: "main", BaseOid: "b1"}}}
+	if err := state.save(); err != nil {
+		t.Fatal(err)
+	}
+	if ci := got(); ci.BaseMoved == nil || !*ci.BaseMoved {
+		t.Errorf("a base that moved: %+v", ci)
+	}
+	f.prs[1].baseOid = "b1"
+	if ci := got(); ci.BaseMoved == nil || *ci.BaseMoved {
+		t.Errorf("a base where the loop found it: %+v", ci)
+	}
 }
 
 // Right after a push the PR can still show the previous head, whose checks

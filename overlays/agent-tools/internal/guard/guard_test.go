@@ -539,6 +539,8 @@ func testBaselineRoles(t *testing.T) {
 		{true, "some-plugin:reviewer", "git stash"},
 		{true, "pr-loop:pr-owner", "pr-loop push"},
 		{true, "pr-loop:pr-owner", "pr-loop link 3 4"},
+		{true, "pr-loop:pr-owner", "pr-loop fetch-base"},
+		{false, "", "pr-loop fetch-base"},
 		{false, "pr-loop:pr-owner", "pr-loop stack 3"},
 		{true, "reviewer", "pr-loop link 3 4"},
 		{false, "reviewer", "pr-loop stack 3"},

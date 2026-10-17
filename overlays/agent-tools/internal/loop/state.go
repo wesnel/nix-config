@@ -20,6 +20,10 @@ type Branch struct {
 	// The PR's own commits when the loop began. Everything the loop adds must
 	// be a fixup of one of these, and the signing pass squashes back to them.
 	Commits []Commit `json:"commits"`
+	// BaseOid is the tip of the branch the PR is based on, on GitHub, when
+	// the loop began or, for a PR not stacked on another of the loop's,
+	// last fetched it.
+	BaseOid string `json:"baseOid,omitempty"`
 }
 
 // Trigger is a top-level comment the loop posted to start a bot's review.

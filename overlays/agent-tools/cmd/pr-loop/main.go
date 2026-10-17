@@ -70,11 +70,18 @@ printed on stderr and fails nothing.
                               ask each bot to review the head, once CI allows and
                               every thread it started has a reply
   status [PR...]              CI, each bot's review, open threads, diff growth
-  ci [PR...]                  checks on each head, compared with the base
+  ci [PR...]                  checks on each head, compared with the base; whether it
+                              merges with the base (mergeable: MERGEABLE, CONFLICTING or
+                              UNKNOWN) and, in a loop, whether the base moved since the
+                              loop began or last ran fetch-base (baseMoved)
+  fetch-base                  fetch, over HTTPS with the gh login, the branch the stack's
+                              bottom PR is based on into its remote-tracking ref, as
+                              GitHub has it now, and record it as the base the loop knows
   logs [--lines N] PR CHECK   the end of a failed GitHub Actions job's log
   wait ci [--sha REV] [--grace S] [--timeout S] [--interval S] [PR...]
                               block until CI on each head finishes (exit 3 on timeout,
-                              4 when a head has no checks)
+                              4 when a head has no checks, 5 when a PR conflicts with
+                              its base)
   wait reviews [--timeout S] [--interval S] [PR...]
                               block until requested reviews land (exit 3 on timeout)
   sign [--resume] [--no-push] squash the loop's fixups, sign with the hardware key, and
@@ -123,8 +130,11 @@ when open cannot stack a PR, the PR stays open and "unstacked" says why and
 which link to run later.
 
 wait ci prints {"result": R, "prs": [...]}, where R is passed, failed (a check
-fails that does not fail on the base), failedOnBase, noChecks or timedOut. It
-exits 0 once CI has finished, 3 on timedOut, and 4 on noChecks: nothing
+fails that does not fail on the base), failedOnBase, noChecks, conflicting or
+timedOut. It exits 5 on conflicting, at once, when a PR conflicts with its
+base and has no checks, since GitHub runs none on it: rebase it onto its base
+(fetch-base fetches that). It exits 0 once CI has finished, 3 on timedOut,
+and 4 on noChecks: nothing
 failed, but a head still had no checks --grace seconds (default 180) after
 wait ci first saw it as the PR's head, as on a branch no CI runs on. CI that
 takes longer than that to report its first check needs a longer --grace; a
@@ -161,7 +171,7 @@ setup asks it for the command, then both run the command here, in the sandbox.
 var relayed = map[string]bool{
 	"open": true, "stack": true, "link": true, "begin": true, "push": true, "threads": true, "reply": true, "resolve": true,
 	"request": true, "status": true, "ci": true, "logs": true, "wait": true, "worktrees": true,
-	"setup-command": true, "review": true,
+	"setup-command": true, "review": true, "fetch-base": true,
 }
 
 // reviewRefusal is why a relayed caller may not run `review argv...`, or "".
@@ -408,6 +418,10 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 		result, err = loop.Begin(rest)
 	case "push":
 		result, err = loop.Push(rest, *dryRun)
+	case "fetch-base":
+		if err = need(0); err == nil {
+			result, err = loop.FetchBase()
+		}
 	case "threads":
 		if err = need(1); err == nil {
 			var ns []int
@@ -466,6 +480,12 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 			result = w
 			if err == nil && w.Result == "noChecks" {
 				code = 4
+			}
+			if err == nil && w.Result == "conflicting" {
+				code = 5
+				for _, advice := range w.Advice() {
+					fmt.Fprintf(stderr, "pr-loop: %s\n", advice)
+				}
 			}
 		case ciOnly:
 			err = errors.New("--sha and --grace are for wait ci")

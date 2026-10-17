@@ -131,6 +131,27 @@ step's range starts, and each child's fork point,
 `git merge-base <child> <parent>`, which the restack needs once the parent
 has changed.
 
+Then check the merge state: `pr-loop ci` gives each PR's `mergeable` and
+whether its base moved since the loop last fetched it (`baseMoved`). A base
+that moved without a conflict needs nothing. If the bottom PR is
+`CONFLICTING`, or `pr-loop wait ci` exits 5 at any step, GitHub runs no
+checks on it until the conflict is resolved:
+
+- `pr-loop fetch-base` fetches the base as GitHub has it now.
+- The bottom PR's owner runs `git rebase <remote>/<base>` in its worktree,
+  which carries its fixups along, resolves the conflicts and reruns its
+  tests. A conflict whose resolution is not mechanical, one that needs a
+  decision about what either side's code should do, is the operator's:
+  `git rebase --abort`, stop, and name the conflicting files in the report.
+- Restack the children as step 7 does, push as step 8 does, and start the
+  round again: CI and reviews run on the new heads, and the signing pass
+  signs them as they are.
+
+A PR stacked on another of the loop's that is `CONFLICTING` conflicts with
+that parent, not the base, as `pr-loop wait ci` says when it exits 5:
+restack it as step 7 does, without `fetch-base`, then push and start the
+round again.
+
 1. **CI.** `pr-loop wait ci` (repeat while it exits 3), then `pr-loop ci`.
    If it exits 4 (`noChecks`), CI never reported on a head, and `pr-loop
    request` refuses until it does: stop and say so in the report. For every
@@ -193,6 +214,7 @@ Stop and hand back when any of these holds:
   after two rounds spent on it, or an owner showed a CI failure is not the
   PR's doing.
 - A bot reopens a problem already fixed twice on the same thread.
+- A conflict with the base needs more than a mechanical resolution.
 - Six rounds have run.
 
 ## Hand-back
