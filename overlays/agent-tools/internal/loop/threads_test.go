@@ -55,6 +55,15 @@ func commentPageOf(id string, t *fakeThread, start int) any {
 func (f *fakeGitHub) graphQL(query string, vars map[string]any, out any) error {
 	var data any
 	switch {
+	case strings.Contains(query, "reviewThreads(first: 100"):
+		nodes := []any{}
+		for id, t := range f.threads {
+			if t.pr == vars["number"] {
+				nodes = append(nodes, map[string]any{"id": id})
+			}
+		}
+		data = map[string]any{"repository": map[string]any{"pullRequest": map[string]any{"reviewThreads": map[string]any{
+			"pageInfo": map[string]any{"hasNextPage": false}, "nodes": nodes}}}}
 	case strings.Contains(query, "viewer { login }"):
 		data = map[string]any{"viewer": map[string]any{"login": "me"},
 			"repository": map[string]any{"id": "R", "nameWithOwner": "o/r", "defaultBranchRef": map[string]any{"name": "main"}}}

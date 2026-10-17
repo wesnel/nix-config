@@ -47,6 +47,15 @@ func Draft(id, body, outcome string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The draft is posted as written, so it is checked before the record
+	// keeps it.
+	threads, err := prThreads(policy.repo.Slug, thread.pr)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkPublic("the draft", body, append(threads, id), "run `pr-loop draft` again"); err != nil {
+		return nil, err
+	}
 	path, err := prFile(policy.repo, thread.pr)
 	if err != nil {
 		return nil, err
