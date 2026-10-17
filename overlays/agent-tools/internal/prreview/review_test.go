@@ -116,6 +116,31 @@ func TestReview(t *testing.T) {
 	t.Run("rounds kept", testReviewRoundsKept)
 	t.Run("receipt", testReviewReceipt)
 	t.Run("relayed target", testReviewRelayedTarget)
+	t.Run("pinned head", testReviewPinnedHead)
+}
+
+// testReviewPinnedHead has --head refuse, with its own exit status and
+// before anything runs, a pull request whose head has moved past it.
+func testReviewPinnedHead(t *testing.T) {
+	r := newRemote(t, nil)
+	setUp(t, r)
+	log := withCodex(t, reply())
+	listed := r.head
+	r.push(t)
+	setUp(t, r)
+	code, record, _, stderr := runReview(t, "", "--head", listed, "o/r#7")
+	if code != 6 || record != nil || !strings.Contains(stderr, r.head) || !strings.Contains(stderr, listed) {
+		t.Errorf("a moved head: exit %d, record %v\n%s", code, record != nil, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(log, "prompt")); err == nil {
+		t.Error("Codex reviewed the moved head")
+	}
+	if code, _, _, stderr := runReview(t, "", "--head", r.head, "o/r#7"); code != 3 {
+		t.Errorf("the listed head: exit %d\n%s", code, stderr)
+	}
+	if code, _, _, stderr := runReview(t, "", "--head", "abc", "o/r#7"); code != 2 {
+		t.Errorf("a head that is no commit ID: exit %d\n%s", code, stderr)
+	}
 }
 
 func testReviewWithCodex(t *testing.T) {

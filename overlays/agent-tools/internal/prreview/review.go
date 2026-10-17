@@ -24,7 +24,7 @@ import (
 )
 
 // Usage is the part of `pr-loop --help` for review.
-const Usage = `  review [--reviewer codex|subagent] [--run|--no-run] [--model M] [--timeout S] PR
+const Usage = `  review [--reviewer codex|subagent] [--run|--no-run] [--model M] [--timeout S] [--head SHA] PR
                               review someone else's pull request (see below)
   review --check PR           check a sub-agent reviewer's reply, read on stdin
   review settle PR            record how triage settled the findings, read on stdin
@@ -64,7 +64,9 @@ of any round as ROUND.ID and reads
 Each prints the record, kept as N/HEAD12.json beside the clone for
 review-guide and copied to HEAD12/findings.json for a session, and exits 0 with no findings, 3 with findings, 4 when Codex
 cannot review here (review with a sub-agent instead), 5 when the vet's red
-flags leave the run to the operator, 1 on an error and 2 on a refusal. Nothing is written to GitHub. Relayed, review takes only a PR
+flags leave the run to the operator, 6 when --head SHA was given and the
+pull request's head is no longer SHA (nothing is vetted, run or reviewed),
+1 on an error and 2 on a refusal. Nothing is written to GitHub. Relayed, review takes only a PR
 number, inside its review directory, and --reviewer. A review that ran, by
 Codex or through --check, logs a review receipt (BASE..HEAD, the head and
 the patch ID of the change) in the newest plan that names the directory it
@@ -82,6 +84,7 @@ func Main(ctx context.Context, args []string, relayed bool, stdin io.Reader, std
 	check := flags.Bool("check", false, "")
 	force := flags.Bool("run", false, "")
 	noRun := flags.Bool("no-run", false, "")
+	pinned := flags.String("head", "", "")
 	var positional []string
 	for {
 		if code, ok := cli.Parse(flags, args, Usage, stdout, stderr); !ok {
@@ -95,8 +98,8 @@ func Main(ctx context.Context, args []string, relayed bool, stdin io.Reader, std
 	}
 	settle := len(positional) == 2 && positional[0] == "settle"
 	if (len(positional) != 1 && !settle) || (*reviewer != "codex" && *reviewer != "subagent") ||
-		((*check || settle) && (*reviewer != "codex" || *model != "" || *force || *noRun)) || (*check && settle) ||
-		(*force && *noRun) {
+		((*check || settle) && (*reviewer != "codex" || *model != "" || *force || *noRun || *pinned != "")) ||
+		(*check && settle) || (*force && *noRun) || (*pinned != "" && !fullHead.MatchString(*pinned)) {
 		fmt.Fprint(stderr, Usage)
 		return 2
 	}
@@ -147,6 +150,11 @@ func Main(ctx context.Context, args []string, relayed bool, stdin io.Reader, std
 	pr, err := Fetch(ctx, slug, number)
 	if err != nil {
 		return report(nil, err, 0)
+	}
+	if *pinned != "" && pr.Head != *pinned {
+		fmt.Fprintf(stderr, "pr-loop: %s#%d's head is %s, not %s, which --head asked for; nothing was reviewed\n",
+			pr.Repo, pr.Number, pr.Head, *pinned)
+		return 6
 	}
 	record := newRecord(pr)
 	in, err := inputs(ctx, pr)
