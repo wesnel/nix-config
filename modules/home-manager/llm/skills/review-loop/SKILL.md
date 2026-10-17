@@ -72,6 +72,12 @@ refactors, hardening, extra tests and fixes to code the PR did not touch.
 Defer those with a short reason. A deferral costs nothing; scope creep costs
 a reviewable PR.
 
+Fix every valid finding within the PR's scope, however many rounds it
+takes, and keep each fix minimal. A finding whose real fix is new
+functionality or a wider change is not made in the PR: answer its thread
+as deferred, and put it in the report as a proposed follow-up with its
+diagnosis, for the operator to decide.
+
 ## Sub-agents
 
 Owners keep their memory in a notes file,
@@ -167,7 +173,8 @@ round again.
    thread; answer those through steps 4 to 9 first. Then
    `pr-loop wait reviews` (repeat while it exits 3); reviews take 5 to 15
    minutes.
-3. **Status.** `pr-loop status`. Check the stop conditions below.
+3. **Status.** `pr-loop status`. Check the stop conditions below: its
+   `done` and `paused` decide, never one bot's verdict.
 4. **Triage.** Have every owner triage its PR's unresolved bot threads
    (`pr-loop threads <number>`) without changing code. Then decide each
    thread's outcome as the `review-change` skill's Triage says, confirming a
@@ -204,18 +211,22 @@ Then start the next round.
 
 Stop and hand back when any of these holds:
 
-- Every bot has reviewed every head, Copilot's verdict is `approval`, and no
-  bot thread is open except deferred and `needs-operator` ones.
-- Copilot's verdict on a head is `closer-look` with no new comments: it is
-  handing over to a person.
-- Every bot reviewed every head without new comments, and the only open
-  threads are deferred or need the operator.
+- `pr-loop status` shows every PR `done`: every bot has reviewed its head,
+  no bot's thread awaits an answer, CI has no failure of the PR's own, and
+  GitHub says it merges with its base. A thread answered as deferred or
+  `needs-operator` may stay open; one triaged for a fix is fixed, pushed and
+  answered first. One bot's verdict, such as Copilot's `closer-look`, never
+  ends the loop while another bot's threads wait.
+- `pr-loop status` shows a PR `paused`: the loop has not converged, as
+  `pausedBecause` says (six rounds have run, the PR's changed lines grew
+  more than half over the loop's start, or a bot asked to review the head
+  an hour ago has not). Report what is done and what is still open;
+  nothing is discarded.
 - `pr-loop` refused a push, CI keeps failing
   after two rounds spent on it, or an owner showed a CI failure is not the
   PR's doing.
 - A bot reopens a problem already fixed twice on the same thread.
 - A conflict with the base needs more than a mechanical resolution.
-- Six rounds have run.
 
 ## Hand-back
 
@@ -230,7 +241,7 @@ Stop and hand back when any of these holds:
    - local review findings per round: fixed, rebutted, and any left standing
 
    Also list the Linear changes and follow-up tickets you propose but did
-   not make. Point at the round snapshots for reviewing the code:
+   not make, each deferred finding with its diagnosis among them. Point at the round snapshots for reviewing the code:
    `git range-diff refs/pr-loop/rounds/0/<branch>...refs/pr-loop/rounds/<n>/<branch>`
    shows everything the loop changed in a branch, and adjacent rounds show
    one round's work.

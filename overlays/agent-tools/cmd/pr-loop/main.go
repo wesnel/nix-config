@@ -69,7 +69,12 @@ printed on stderr and fails nothing.
   request [--bot B] [--accept-failure CHECK] [PR...]
                               ask each bot to review the head, once CI allows and
                               every thread it started has a reply
-  status [PR...]              CI, each bot's review, open threads, diff growth
+  status [PR...]              CI, each bot's review, open threads, diff growth; whether the
+                              loop is done with each PR, across every bot (done, and
+                              waitingOn what is not), and in a loop the round and whether
+                              it is paused, not done after 6 rounds, with changed lines
+                              grown over 50%, or with a bot asked to review the head an
+                              hour ago that has not (paused, pausedBecause)
   ci [PR...]                  checks on each head, compared with the base; whether it
                               merges with the base (mergeable: MERGEABLE, CONFLICTING or
                               UNKNOWN) and, in a loop, whether the base moved since the

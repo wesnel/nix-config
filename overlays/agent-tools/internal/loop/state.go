@@ -51,6 +51,15 @@ type State struct {
 	// Began is when begin registered the loop: a report.md older than it is
 	// an earlier loop's.
 	Began time.Time `json:"began,omitzero"`
+	// Asked is when request last asked each bot for a review, and of which
+	// head, by "PR:bot": status pauses a loop a bot leaves waiting too long.
+	Asked map[string]*Ask `json:"asked,omitempty"`
+}
+
+// Ask is a review request request made.
+type Ask struct {
+	At      string `json:"at"`
+	HeadOid string `json:"headOid"`
 }
 
 func stateDir() (string, error) {
