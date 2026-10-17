@@ -28,15 +28,15 @@ const DiagramUsage = `usage: git fresh-review diagram --diagram FILE [--prior FI
        git fresh-review diagram --print-prompt --diagram FILE [--prior FILE] BASE..TIP
        git fresh-review diagram --check REPLY --diagram FILE BASE..TIP
 
-Critiques a diagram of the code at TIP with a model family other than the
-one that drew it. The diagram's
+Critiques a diagram of the code at TIP (` + "`agent-plan diagram schema`" + ` is its
+JSON) with a model family other than the one that drew it. The diagram's
 at must be TIP's commit; BASE..TIP is the change it is drawn for, and may
 be empty (TIP..TIP) at a plan's design review, where a planned element
 names an item of the plan of this session, worktree or branch.
 
-First the diagram is held to its schema and to the code at TIP: one that
-fails is refused, naming each element and why, for its drafter to
-redraw, and no critic is asked.
+First the diagram is held to its schema and to the code at TIP, as
+` + "`agent-plan diagram check`" + ` does: one that fails is refused, naming each
+element and why, for its drafter to redraw, and no critic is asked.
 
 Who drew it is what ` + "`agent-plan diagram check`" + ` recorded, by the harness
 of the session that first checked it (diagram-drafted), in the plan of
@@ -54,7 +54,8 @@ element, or null for something the diagram leaves out; their ids start
 diagram-. A critique logs diagram-critiqued (the diagram's hash, the
 findings' IDs, the drafter's and critic's families) in the plan a review's
 receipt would go to; it is never a review receipt and meets no route.
-Not served through a sandbox's relay.
+` + "`agent-plan diagram keep`" + ` keeps only a diagram whose critique found
+nothing, or one kept as disputed. Not served through a sandbox's relay.
 
   --diagram FILE    the diagram's JSON (required)
   --prior FILE      earlier critiques' findings and how each was settled
@@ -117,8 +118,8 @@ func diagramMain(ctx context.Context, args []string, stdin io.Reader, stdout, st
 	}
 	d, err := diagram.Parse([]byte(data))
 	if err != nil {
-		return report(nil, refusal.New("%v. Give this to the diagram's drafter, and critique the redraw with "+
-			"`git fresh-review diagram`", err), 0)
+		return report(nil, refusal.New("%v. Give this to the diagram's drafter, with the schema `agent-plan diagram schema` "+
+			"prints, and critique the redraw", err), 0)
 	}
 	if d.At != r.tip {
 		return report(nil, refusal.New("the diagram cites the code at %s, and %s ends at %s; draw it at TIP, or pass the range "+
@@ -172,7 +173,8 @@ func diagramMain(ctx context.Context, args []string, stdin io.Reader, stdout, st
 		case err != nil:
 			fmt.Fprintf(stderr, "%s: the critique was not logged: %v\n", name, err)
 		case file == "":
-			fmt.Fprintf(stderr, "%s: no plan names this session, worktree or branch, so the critique was not logged\n", name)
+			fmt.Fprintf(stderr, "%s: no plan names this session, worktree or branch, so the critique was not logged, "+
+				"and `agent-plan diagram keep` will not take the diagram\n", name)
 		default:
 			fmt.Fprintf(stderr, "%s: logged the critique of diagram %.12s in %s\n", name, hash, file)
 		}

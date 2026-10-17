@@ -76,6 +76,12 @@ type Event struct {
 	Diagram string `json:"diagram,omitempty"`
 	Drafter string `json:"drafter,omitempty"`
 	Critic  string `json:"critic,omitempty"`
+	// Entry is the diagram entry (G1) a kept, moved or stale event writes,
+	// Status the STATUS it gives it, and Repo the repository its code is
+	// in: the plan file's entry is trusted only as these say.
+	Entry  string `json:"entry,omitempty"`
+	Status string `json:"status,omitempty"`
+	Repo   string `json:"repo,omitempty"`
 	// Note is what the caller should know about the event, such as a
 	// heading keyword Log could not write; the log does not hold it.
 	Note string `json:"note,omitempty"`
@@ -130,6 +136,10 @@ var (
 			critiquedKind: "git fresh-review diagram logs `diagram-critiqued` for the critique that ran. " +
 				"Run `git fresh-review diagram --diagram FILE BASE..TIP` as the review-change skill says",
 		}
+		for _, k := range []string{keptKind, movedKind, staleKind} {
+			kinds[k] = "agent-plan logs each diagram it keeps in a plan, and each it moves or marks stale. " +
+				"Run `agent-plan diagram keep PLAN FILE` or `agent-plan diagram check PLAN`"
+		}
 		for _, k := range []string{"loop-began", "round", "replied", "resolved", "ci-waited", "loop-signed"} {
 			kinds[k] = "pr-loop logs what it did, from begin to sign, in the plan of the session that ran it. " +
 				"Run the `pr-loop` command that does it"
@@ -157,7 +167,7 @@ func (p Plan) check(e Event) error {
 		"commit": e.Commit, "evidence": e.Evidence, "model": e.Model, "item": e.Item, "kind": e.Kind, "session": e.Session,
 		"worktree": e.Worktree, "range": e.Range, "tip": e.Tip, "patch ID": e.PatchID, "raised": e.Raised, "property": e.Property, "value": e.Value,
 		"focus": e.Focus, "nonce": e.Nonce, "routes": e.Routes, "findings": e.Findings, "diagram": e.Diagram,
-		"drafter": e.Drafter, "critic": e.Critic} {
+		"drafter": e.Drafter, "critic": e.Critic, "entry": e.Entry, "status": e.Status, "repo": e.Repo} {
 		if err := checkLine(what, v); err != nil {
 			return err
 		}
@@ -305,7 +315,8 @@ func eventText(e Event) string {
 		{"EFFORT", e.Effort}, {"SESSION", e.Session}, {"WORKTREE", e.Worktree}, {"RANGE", e.Range}, {"TIP", e.Tip}, {"PATCH_ID", e.PatchID},
 		{"RAISED", e.Raised}, {"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}, {"PROPERTY", e.Property}, {"VALUE", e.Value},
 		{"FOCUS", e.Focus}, {"NONCE", e.Nonce}, {"ROUTES", e.Routes}, {"FINDINGS", e.Findings},
-		{"DIAGRAM", e.Diagram}, {"DRAFTER", e.Drafter}, {"CRITIC", e.Critic}} {
+		{"DIAGRAM", e.Diagram}, {"DRAFTER", e.Drafter}, {"CRITIC", e.Critic},
+		{"ENTRY", e.Entry}, {"STATUS", e.Status}, {"REPO", e.Repo}} {
 		if kv[1] != "" {
 			b.WriteString(":" + kv[0] + ": " + kv[1] + "\n")
 		}
@@ -511,7 +522,8 @@ func (p Plan) Events() ([]Event, error) {
 			Range: h.Props["RANGE"], Tip: h.Props["TIP"], PatchID: h.Props["PATCH_ID"], Raised: h.Props["RAISED"], Sign: h.Props["SIGN"], Exit: h.Props["EXIT"],
 			Delivers: h.Props["DELIVERS"], Property: h.Props["PROPERTY"], Value: h.Props["VALUE"], Focus: h.Props["FOCUS"],
 			Nonce: h.Props["NONCE"], Routes: h.Props["ROUTES"], Findings: h.Props["FINDINGS"], Diagram: h.Props["DIAGRAM"],
-			Drafter: h.Props["DRAFTER"], Critic: h.Props["CRITIC"]}
+			Drafter: h.Props["DRAFTER"], Critic: h.Props["CRITIC"], Entry: h.Props["ENTRY"], Status: h.Props["STATUS"],
+			Repo: h.Props["REPO"]}
 		e.Tokens, _ = strconv.ParseInt(h.Props["TOKENS"], 10, 64)
 		if _, summary, ok := strings.Cut(h.Title, " — "); ok {
 			e.Summary = summary

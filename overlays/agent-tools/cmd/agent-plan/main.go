@@ -65,6 +65,33 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      log that the plan's change needs no review of ROUTE,
                      and why; stop-check and the gates stop asking for it,
                      and git sign-pass shows the waiver before signing
+  diagram schema     the JSON Schema a diagram of code is drawn to
+  diagram check PLAN FILE
+                     hold the diagram in FILE to the code at its commit, in
+                     the repository this runs in, and to the plan's items
+                     for its planned elements; print it with its citations'
+                     hashes, and each failure; exit 3 with failures. The
+                     session that first checks it is recorded as its
+                     drafter (diagram-drafted), by its harness's own
+                     environment, Claude Code's or Codex's, whose critic
+                     must be the other; refused where neither is marked
+  diagram check PLAN hold each diagram the plan keeps to HEAD: rewrite one
+                     whose cited lines only moved at HEAD (diagram-moved),
+                     mark one whose cited lines changed stale
+                     (diagram-stale), with the reason where its commit is
+                     not in this repository, leave one of another
+                     repository alone, and name an entry edited by hand or
+                     not as the log keeps it, which is never trusted; exit 3
+                     for a stale or edited one
+  diagram keep PLAN FILE [--replace G1] [--disputed --findings FILE]
+                     check the diagram again and write it to the plan's
+                     Diagrams section, its JSON and the Mermaid generated
+                     from it, as a new entry or in place of G1; refused
+                     unless git fresh-review diagram logged a critique of it
+                     that found nothing, or, --disputed, two that found
+                     something, the last of it, whose output FILE is: the
+                     entry keeps where its findings point, never their text.
+                     Refused with an element planned for an item done
   questions PLAN [--all] [--waiting] [--json | --count]
                      the open questions the operator can answer now, by
                      priority, with their recommendations; --all adds the
@@ -376,6 +403,9 @@ func claudeSession() string {
 }
 
 func run(command string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if command == "diagram" {
+		return diagramCommand(args, stdin, stdout, stderr)
+	}
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	var (
 		title    = flags.String("title", "", "")
