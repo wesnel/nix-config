@@ -92,10 +92,12 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case len(args) == 0:
 	case len(args) == 1 && args[0] == "--baseline":
 		fallback = baseline
+	case len(args) == 1 && args[0] == "--dashboard":
+		return dashboardMain(stdin, stdout)
 	case len(args) == 1 && args[0] == "--post":
 		return post(stdin, stdout)
 	default:
-		fmt.Fprintf(stderr, "pr-loop guard: takes no arguments, --baseline or --post; got %q\n", args)
+		fmt.Fprintf(stderr, "pr-loop guard: takes no arguments, --baseline, --dashboard or --post; got %q\n", args)
 		return 1
 	}
 	var in input
@@ -104,6 +106,13 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if in.Cwd == "" {
 		in.Cwd, _ = os.Getwd()
+	}
+	// In the dashboard session, the calls this hook sees are held to the
+	// session's fence first.
+	if inDashboardSession() {
+		if reason := checkDashboard(in.ToolName, in.ToolInput); reason != "" {
+			return decide(stdout, "deny", reason)
+		}
 	}
 	who := roleOf(in.AgentType+in.Agent, fallback)
 	reason := checkSubagentStash(in)
@@ -366,6 +375,9 @@ func program(c call, who role, files, dir string) string {
 	if reason := checkNgrokEnv(c); reason != "" {
 		return reason
 	}
+	if reason := checkSessionMark(c); reason != "" {
+		return reason
+	}
 	if len(c.words) == 0 {
 		return ""
 	}
@@ -392,6 +404,9 @@ func program(c call, who role, files, dir string) string {
 		}
 	case name == "pr-loop":
 		return checkPrLoop(words[1:], c.expands[1:], who)
+	case name == "plan-dash" && len(words) > 1 && (words[1] == "answer" || words[1] == "dispatch") &&
+		!inDashboardSession():
+		return pageRequests
 	case name == "git-fresh-review" && who == reviewer:
 		return nestedReview
 	case name == "agent-plan" && len(words) > 1 && words[1] == "sync":

@@ -148,7 +148,7 @@ func TestDashboardState(t *testing.T) {
 			{true, "cd DASH && echo x > github.json"},
 			{false, "cat PLANS/queue.org"},
 			{false, "ls PLANS/out/dispatch"},
-			{false, "plan-dash dispatch"},
+			{false, "plan-dash export"},
 			{false, "cp PLANS/queue.org /tmp/queue.org"},
 		} {
 			command := paths.Replace(c.command)

@@ -451,6 +451,30 @@ agent cannot write `$XDG_STATE_HOME/agent-plans` or `plan-dash`: the guard
 refuses its file tools and shell writes there, and plan-dash writes them
 itself.
 
+## the Agent plans session
+
+Its page is named in `agent-tools/agent-plans.json` under the XDG config
+directory, `{"url": "https://claude.ai/artifact/ID"}`, which the operator
+writes once on the host; the URL stays out of this repository, and
+without it the session reaches no page.
+
+`pr-loop guard --dashboard` fences the session: its hook runs on every
+tool, and the baseline hook applies the same fence wherever
+`AGENT_PLANS_SESSION` is set. It allows only the agent-plans skill's own
+calls: Bash running exactly `plan-dash export`, `plan-dash answer` or
+`plan-dash dispatch`; Monitor running exactly `plan-dash watch`, never a
+WebSocket; ArtifactData on the configured page alone, with every
+`file_path` (each batch entry's too) and `out_dir` in
+`$XDG_STATE_HOME/agent-plans/out` once links are resolved; ArtifactComments
+`watch` on that page, without `replies`, and `resolve` by thread ID;
+Agent without `isolation` or `run_in_background`; Skill `agent-plans`;
+ToolSearch; and PushNotification with one of its fixed notices. Everything
+else, Read included, is denied, never asked, since the
+phone could approve a prompt; the forms it allows it answers with
+`allow`. The variable is a seatbelt: `systemctl --user set-environment`,
+an `environment.d` file or a unit drop-in could set it where the guard
+does not see the command.
+
 ## pushing: private history stays private
 
 `wgn.home.git` runs `git-push-guard` before every push from every
@@ -614,6 +638,11 @@ writing its state under `$XDG_STATE_HOME/agent-tools` other than through
 `agent-plan` and `pr-loop`,
 sleeping 30 seconds or more in the
 foreground, and writing a plan's log other than with `agent-plan log`.
+Outside the Agent plans dashboard session it also denies `plan-dash
+answer` and `plan-dash dispatch`, which act on what the page asked, and
+any command that sets `AGENT_PLANS_SESSION`, the variable that marks that
+session; inside it, it holds every call it sees to the session's fence
+(below).
 MCP tools of the servers in `overlays/agent-tools/internal/guard/mcp.json`
 (Linear, Notion, Hex, Datadog, Buildkite, ngrok, the docs index, and the
 claude.ai Slack connector) are held to its lists: reads
