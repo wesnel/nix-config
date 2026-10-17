@@ -132,6 +132,9 @@ type Sync struct {
 	Pushed   string `json:"pushed"`
 	Unsynced bool   `json:"unsynced"`
 	Fetched  string `json:"fetched"`
+	// Failed counts the plans found but not exported for an error, whose
+	// documents the page still shows as last exported.
+	Failed int `json:"failed"`
 }
 
 // GitHub is the document github/status: status.GitHubAt's result, At ""
@@ -196,6 +199,7 @@ func Collect(ctx context.Context, c plans.Config, cache string, now time.Time) (
 	e.Plans, e.Failed, errs[0] = Plans(c, now)
 	e.Listed = e.Plans != nil
 	e.Sync, errs[1] = SyncOf(c, now)
+	e.Sync.Failed = len(e.Failed)
 	e.GitHub, errs[2] = GitHubOf(ctx, cache, now)
 	return e, errors.Join(errs[:]...)
 }

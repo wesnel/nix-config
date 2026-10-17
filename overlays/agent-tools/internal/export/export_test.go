@@ -245,7 +245,7 @@ var allowed = map[string][]string{
 		"requests", "requests[].repo", "requests[].number", "requests[].title", "requests[].draft",
 		"requests[].team", "requests[].requested", "requests[].head", "requests[].ci", "requests[].record",
 		"requests[].parent"},
-	"meta": {"schema", "updated", "host", "repo", "pushed", "unsynced", "fetched"},
+	"meta": {"schema", "updated", "host", "repo", "pushed", "unsynced", "fetched", "failed"},
 }
 
 func join(path, key string) string {
@@ -334,6 +334,12 @@ func TestSentinel(t *testing.T) {
 	if _, err := Collect(context.Background(), c, cache, day); err != nil {
 		t.Fatal(err)
 	}
+	// A plan whose log is gone is counted, never exported.
+	broken, err := c.New(plans.NewOptions{Title: "SENTINEL-broken", Slug: "broken"}, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Rename(strings.TrimSuffix(broken.Plan, ".org")+".log.org", filepath.Join(t.TempDir(), "log.org"))
 	// The fetch fails after the cache's minute, so GitHub's part is stale.
 	t.Setenv("FAKE_GH_FAIL", "1")
 	e, err := Collect(context.Background(), c, cache, day.Add(2*time.Minute))
@@ -484,8 +490,8 @@ func TestFailures(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), kept.Name) || !strings.Contains(err.Error(), long.Name) {
 		t.Errorf("the error does not name the failed plans: %v", err)
 	}
-	if len(e.Plans) != 0 {
-		t.Errorf("exported %+v", e.Plans)
+	if len(e.Plans) != 0 || e.Sync.Failed != 2 {
+		t.Errorf("exported %+v, %d failed", e.Plans, e.Sync.Failed)
 	}
 	if err := Write(out, e); err != nil {
 		t.Fatal(err)
