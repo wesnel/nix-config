@@ -53,6 +53,18 @@ func Bytes(stdin []byte, args ...string) ([]byte, error) {
 	return bytesEnv(nil, stdin, args...)
 }
 
+// BytesContext is Bytes, killed when ctx is done.
+func BytesContext(ctx context.Context, args ...string) ([]byte, error) {
+	cmd := commandContext(ctx, nil, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+	}
+	return out, nil
+}
+
 // RunEnv is Run with env added to this process's environment.
 func RunEnv(env []string, args ...string) (string, error) {
 	out, err := bytesEnv(env, nil, args...)
