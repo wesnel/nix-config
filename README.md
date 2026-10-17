@@ -373,7 +373,8 @@ Then, in the repository, start one of:
 `pr-loop watch` in the repository follows a headless session's log as it
 grows, and `pr-loop stop` ends a `claude-pr-loop` or `codex-pr-loop`
 session early, cleans up after it and writes `.git/pr-loop/report.md`
-saying what is left.
+saying what is left. When either session exits, its launcher notifies you,
+through Emacs's `wgn/notify` or else Notification Center on macOS.
 
 Each runs the agent's commands in a sandbox without credentials, beside a
 `sandbox-relay` that runs `pr-loop` on this machine with your `gh` login, and

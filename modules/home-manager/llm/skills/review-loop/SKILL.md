@@ -34,7 +34,8 @@ current session.
     and writes a report of what is left.
 
   Leave the repository alone until it exits: the loop detaches the main
-  worktree and works in `.pr-loop/`. When it exits, show
+  worktree and works in `.pr-loop/`. When it exits, `claude-pr-loop`
+  notifies the operator itself and ends `$log.err` with the exit; show
   `$(git rev-parse --git-common-dir)/pr-loop/report.md`, or the end of the
   log if there is no report.
 - **Elsewhere:** stop and tell the operator to start `codex-pr-loop`, or
@@ -273,8 +274,7 @@ Stop and hand back when any of these holds:
    `git range-diff refs/pr-loop/rounds/0/<branch>...refs/pr-loop/rounds/<n>/<branch>`
    shows everything the loop changed in a branch, and adjacent rounds show
    one round's work.
-3. Notify the operator with the `notify` skill if it is available.
-4. Hand over for the signing pass, showing what it will sign as the
+3. Hand over for the signing pass, showing what it will sign as the
    `signing-pass` skill describes. The loop's pass is `pr-loop sign`, not
    `git sign-pass`. The session's relay refuses `sign` and `end`, so the
    operator runs them in the repository. The loop's pass
