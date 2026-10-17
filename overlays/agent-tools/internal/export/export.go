@@ -8,7 +8,9 @@
 // under Steps sections, the questions under Questions with their
 // RECOMMENDATION, ANSWER or LOGBOOK note and list items, and STATUS; of
 // the log, only event kinds and times. No other property, section, drawer
-// or log text is read into a document. Free text is stripped of control
+// or log text is read into a document. Outside the plans directory, only
+// the newest digests are read, whole, from digests/ in the notes
+// repository. Free text is stripped of control
 // and formatting characters, has known secret shapes redacted and is
 // capped in runes, and lists are capped, so that a document stays within
 // maxDoc. Redaction knows shapes, not data: what must not reach claude.ai
@@ -21,11 +23,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -179,29 +184,144 @@ type Request struct {
 	Parent int `json:"parent"`
 }
 
+// Today is the document today/digest: the digests of the newest day, in
+// the last week, that has any, standup before demo; Date is that day,
+// YYYY-MM-DD, or "" with no Digests.
+type Today struct {
+	Schema  int      `json:"schema"`
+	Date    string   `json:"date"`
+	Digests []Digest `json:"digests"`
+}
+
+// Digest is one digest's kind, "standup" or "demo", and its Org text.
+type Digest struct {
+	Kind string `json:"kind"`
+	Text string `json:"text"`
+}
+
 // Export is one export's documents. Failed are the IDs of plans found but
 // not exported for an error, whose documents Write keeps; Listed is
 // whether the plans directory was listed, without which Write removes no
-// document.
+// document; TodayFailed is whether the digests could not be read, which
+// keeps the last today/digest written.
 type Export struct {
-	Plans  []Plan
-	Sync   Sync
-	GitHub GitHub
-	Failed []string
-	Listed bool
+	Plans       []Plan
+	Sync        Sync
+	GitHub      GitHub
+	Today       Today
+	Failed      []string
+	Listed      bool
+	TodayFailed bool
 }
 
-// Collect reads c's plans and sync state, and GitHub through cache, as at
-// now. Its error is what failed; the Export still holds what did not.
+// Collect reads c's plans, sync state and digests, and GitHub through
+// cache, as at now. Its error is what failed; the Export still holds what
+// did not.
 func Collect(ctx context.Context, c plans.Config, cache string, now time.Time) (Export, error) {
 	var e Export
-	var errs [3]error
+	var errs [4]error
 	e.Plans, e.Failed, errs[0] = Plans(c, now)
 	e.Listed = e.Plans != nil
 	e.Sync, errs[1] = SyncOf(c, now)
 	e.Sync.Failed = len(e.Failed)
 	e.GitHub, errs[2] = GitHubOf(ctx, cache, now)
+	e.Today, errs[3] = TodayOf(c, now)
+	e.TodayFailed = errs[3] != nil
 	return e, errors.Join(errs[:]...)
+}
+
+// digestFile is a digest's name under digests/YYYY/ in the notes
+// repository.
+var digestFile = regexp.MustCompile(`^([0-9]{2})-([0-9]{2})-(standup|demo)\.org$`)
+
+// maxDigestFile is the most of a digest file read.
+const maxDigestFile = 64 << 10
+
+// digestCap caps a digest's text, in runes.
+const digestCap = 8000
+
+// TodayOf is the digests of the newest day in the week up to now, read
+// from digests/YYYY/MM-DD-KIND.org in the notes repository that holds c's
+// plans: regular files only, never through a link, the directories
+// included.
+func TodayOf(c plans.Config, now time.Time) (Today, error) {
+	t := Today{Schema: agentplans.Schema, Digests: []Digest{}}
+	repo := c.Repo
+	if repo == "" {
+		repo = filepath.Dir(c.Dir)
+	}
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	type found struct {
+		day  time.Time
+		kind string
+		file string
+	}
+	var all []found
+	for _, year := range []int{now.Year() - 1, now.Year()} {
+		dir := filepath.Join(repo, "digests", strconv.Itoa(year))
+		if !realDir(filepath.Join(repo, "digests")) || !realDir(dir) {
+			continue
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return t, err
+		}
+		for _, entry := range entries {
+			m := digestFile.FindStringSubmatch(entry.Name())
+			if m == nil || !entry.Type().IsRegular() {
+				continue
+			}
+			day, err := time.ParseInLocation("2006-01-02", fmt.Sprintf("%d-%s-%s", year, m[1], m[2]), now.Location())
+			if err != nil || day.After(today) || day.Before(today.AddDate(0, 0, -7)) {
+				continue
+			}
+			all = append(all, found{day, m[3], filepath.Join(dir, entry.Name())})
+		}
+	}
+	var newest time.Time
+	for _, f := range all {
+		if f.day.After(newest) {
+			newest = f.day
+		}
+	}
+	var errs []error
+	for _, kind := range []string{"standup", "demo"} {
+		for _, f := range all {
+			if !f.day.Equal(newest) || f.kind != kind {
+				continue
+			}
+			data, err := readRegular(f.file, maxDigestFile)
+			if err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			t.Digests = append(t.Digests, Digest{Kind: kind, Text: text(strings.TrimSpace(string(data)), digestCap)})
+		}
+	}
+	if len(t.Digests) > 0 {
+		t.Date = newest.Format("2006-01-02")
+	}
+	return t, errors.Join(errs...)
+}
+
+// realDir reports whether dir is a directory and not a link to one.
+func realDir(dir string) bool {
+	info, err := os.Lstat(dir)
+	return err == nil && info.IsDir()
+}
+
+// readRegular reads at most limit bytes of file, a regular file opened
+// without following a link.
+func readRegular(file string, limit int64) ([]byte, error) {
+	f, err := os.OpenFile(file, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", file)
+	}
+	return io.ReadAll(io.LimitReader(f, limit))
 }
 
 var (
@@ -408,12 +528,13 @@ func stamp(t time.Time) string {
 }
 
 // collections are the directories Write writes in.
-var collections = []string{"plans", "github", "meta"}
+var collections = []string{"plans", "github", "meta", "today"}
 
 // Write puts e's documents under dir, as an ArtifactData read's out_dir
 // lays them out, <collection>/<doc_id>.json: plans/<ID>.json,
-// github/status.json and meta/sync.json, each replaced by a rename. It
-// refuses a collection directory that is a link. Where e.Listed, it removes
+// github/status.json, meta/sync.json and, unless e.TodayFailed,
+// today/digest.json, each replaced by a rename. It refuses a collection
+// directory that is a link. Where e.Listed, it removes
 // the plan documents of plans neither exported nor failed; nothing else in
 // dir is touched.
 func Write(dir string, e Export) error {
@@ -438,6 +559,9 @@ func Write(dir string, e Export) error {
 	}
 	errs = append(errs, writeJSON(filepath.Join(dir, "github", "status.json"), e.GitHub),
 		writeJSON(filepath.Join(dir, "meta", "sync.json"), e.Sync))
+	if !e.TodayFailed {
+		errs = append(errs, writeJSON(filepath.Join(dir, "today", "digest.json"), e.Today))
+	}
 	if !e.Listed {
 		return errors.Join(errs...)
 	}

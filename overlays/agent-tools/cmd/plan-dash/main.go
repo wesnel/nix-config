@@ -40,14 +40,17 @@ const usage = `plan-dash: the operator's status, from GitHub and the plans.
           of every host not halted (title, goal, status, host, updated,
           steps, decisions, open questions and their options),
           github/status.json (collect's pull requests and review requests,
-          with titles, and the one of each list each is stacked on) and
+          with titles, and the one of each list each is stacked on),
           meta/sync.json (when this host's plans last reached the notes
           remote, whether they changed since, when the notes repository
-          last fetched, how many plans could not be read); the documents
-          of plans gone or halted are removed, those of plans that could
-          not be read kept;
-          and, outside out, the review requests listed, with their heads,
-          and the open questions of this host's plans, with their options
+          last fetched, how many plans could not be read) and
+          today/digest.json (the digests of the newest day of the last
+          week with any, from digests/YYYY/ in the notes repository); the
+          documents of plans gone or halted are removed, those of plans
+          that could not be read kept, and so is today/digest.json where a
+          digest could not be read; and, outside out, the review requests
+          listed, with their heads, and the open questions of this host's
+          plans, with their options
   answer  record the answers the page gave: reads each document PLAN~QID
           from out/answers/PLAN@QID.json, as an ArtifactData read names it
           (or PLAN~QID.json; two files for one document are refused), and
@@ -125,7 +128,7 @@ login or comment; github.json holds titles. export's documents leave the
 host: they hold only the fields named above and schema, the documents'
 version, which answer and dispatch also write; read from the plans directory
 alone (of properties, only STATUS, RECOMMENDATION and ANSWER; of the log,
-only event kinds and times), stripped of control and formatting
+only event kinds and times) but for the digests, stripped of control and formatting
 characters, with known secret shapes redacted and text and lists capped.
 
 Prints JSON: the file or directory, when, whether GitHub's part is stale,
@@ -289,6 +292,9 @@ func exportDocs(stdout, stderr io.Writer) int {
 		Documents []string `json:"documents"`
 	}{Dir: dir, At: now, GitHub: e.GitHub.At != "", Stale: e.GitHub.Stale, PullRequests: len(e.GitHub.Mine),
 		ReviewRequests: len(e.GitHub.Requests), Plans: len(e.Plans), Documents: []string{"github/status", "meta/sync"}}
+	if !e.TodayFailed {
+		result.Documents = append(result.Documents, "today/digest")
+	}
 	for _, p := range e.Plans {
 		result.Documents = append(result.Documents, "plans/"+p.ID)
 	}

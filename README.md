@@ -350,15 +350,19 @@ lays them: `plans/<plan>.json` for every host's plans that are not halted,
 `github/status.json` (what `collect` lists of GitHub, with titles, through
 the same cache, and which listed pull request each is stacked on: the one
 whose head branch, in the same repository, is its base; branch names
-themselves are never kept) and `meta/sync.json` (when this host's plans
-last reached the notes remote, whether they changed since, when the
-repository last fetched, how many plans could not be read). These leave
-the machine. Each is a fixed struct in
-`internal/export` whose JSON tags are the allowlist, and its sentinel test
-fails on any other key. Plan text comes only from the plans directory: the
-title, the Goal section, the step headings under Steps, the open and
-decided questions with their `RECOMMENDATION`, `ANSWER` or `LOGBOOK` note
-and list items, and `STATUS`; of the log, only event kinds and times. Text
+themselves are never kept), `meta/sync.json` (when this host's plans last
+reached the notes remote, whether they changed since, when the repository
+last fetched, how many plans could not be read) and `today/digest.json`
+(the page's Today: the standup and demo digests of the newest day of the
+last week that has any, read whole from `digests/YYYY/MM-DD-KIND.org` in
+the notes repository, never through a link; where one cannot be read,
+the last document written stays). These leave the machine.
+Each is a fixed struct in `internal/export` whose JSON tags are the
+allowlist, and its sentinel test fails on any other key. Plan text comes
+only from the plans directory: the title, the Goal section, the step
+headings under Steps, the open and decided questions with their
+`RECOMMENDATION`, `ANSWER` or `LOGBOOK` note and list items, and
+`STATUS`; of the log, only event kinds and times. Text
 is stripped of control and formatting characters, has known secret shapes
 redacted and is capped in length, and a plan's lists are capped, so a
 document stays under 600 KiB. Redaction knows shapes, not data, so
@@ -494,7 +498,8 @@ answers and review requests into `out/`, `plan-dash answer` and `plan-dash
 dispatch`, then write what they wrote back to the page, version-pinned,
 reading the page only into files so no document's text enters the
 conversation. A
-stall or a digest becomes a PushNotification with fixed text. If the
+stall or a digest becomes a PushNotification with fixed text, and a
+digest also an update, which puts it in the page's Today. If the
 page's comments do not wake the session,
 `wgn.home.claude.agentPlans.poll` has the watch print a poll line every
 five minutes instead. The kill switch is the review queue's: create

@@ -210,6 +210,15 @@ func fixture(t *testing.T) (c plans.Config, own, theirs plans.Plan) {
 		t.Fatal(err)
 	}
 
+	// The newest day's standup is read; its demo is a link, refused, and
+	// older digests and other files are never read.
+	digests := filepath.Join(notes, "digests", "2026")
+	write(t, filepath.Join(digests, "10-14-standup.org"), "* Yesterday\n- Shipped the loop "+fakeToken+".\n")
+	write(t, filepath.Join(outside, "demo.org"), "* SENTINEL-linked-demo\n")
+	os.Symlink(filepath.Join(outside, "demo.org"), filepath.Join(digests, "10-14-demo.org"))
+	write(t, filepath.Join(digests, "10-13-standup.org"), "* SENTINEL-older\n")
+	write(t, filepath.Join(digests, "10-15-standup.org"), "* SENTINEL-tomorrow\n")
+	write(t, filepath.Join(digests, "notes.org"), "* SENTINEL-digest-notes\n")
 	write(t, filepath.Join(c.Dir, "notes.org"), "* SENTINEL-plans-dir-note\n")
 	write(t, filepath.Join(notes, "notes", "meeting.org"), "* SENTINEL-notes\n")
 	for _, name := range []string{"inbox.org", "diary.org", "refile.org"} {
@@ -245,7 +254,8 @@ var allowed = map[string][]string{
 		"requests", "requests[].repo", "requests[].number", "requests[].title", "requests[].draft",
 		"requests[].team", "requests[].requested", "requests[].head", "requests[].ci", "requests[].record",
 		"requests[].parent"},
-	"meta": {"schema", "updated", "host", "repo", "pushed", "unsynced", "fetched", "failed"},
+	"meta":  {"schema", "updated", "host", "repo", "pushed", "unsynced", "fetched", "failed"},
+	"today": {"schema", "date", "digests", "digests[].kind", "digests[].text"},
 }
 
 func join(path, key string) string {
@@ -314,7 +324,7 @@ func tagKeys(t *testing.T, typ reflect.Type, path string, out map[string]bool) {
 // Every document type's JSON keys are the allowlist, each always written.
 func TestDocumentTypes(t *testing.T) {
 	for collection, typ := range map[string]reflect.Type{"plans": reflect.TypeFor[Plan](),
-		"github": reflect.TypeFor[GitHub](), "meta": reflect.TypeFor[Sync]()} {
+		"github": reflect.TypeFor[GitHub](), "meta": reflect.TypeFor[Sync](), "today": reflect.TypeFor[Today]()} {
 		got := map[string]bool{}
 		tagKeys(t, typ, "", got)
 		if want := allowed[collection]; !reflect.DeepEqual(slices.Sorted(maps.Keys(got)), slices.Sorted(slices.Values(want))) {
@@ -392,7 +402,7 @@ func TestSentinel(t *testing.T) {
 			t.Errorf("%s: the fixture never sets %v", collection, zero)
 		}
 	}
-	wantFiles := []string{"github/status.json", "meta/sync.json", "plans/" + own.Name + ".json", "plans/" + theirs.Name + ".json"}
+	wantFiles := []string{"github/status.json", "meta/sync.json", "today/digest.json", "plans/" + own.Name + ".json", "plans/" + theirs.Name + ".json"}
 	slices.Sort(files)
 	slices.Sort(wantFiles)
 	if !slices.Equal(files, wantFiles) {
@@ -446,6 +456,69 @@ func TestExport(t *testing.T) {
 	if g.Schema != 1 || g.At != day.Format(time.RFC3339) || g.Stale || !reflect.DeepEqual(g.Mine, wantMine) ||
 		!reflect.DeepEqual(g.Requests, wantRequests) || g.MineTotal != 2 || g.RequestsTotal != 2 {
 		t.Errorf("github %+v", g)
+	}
+	wantToday := Today{Schema: 1, Date: "2026-10-14",
+		Digests: []Digest{{Kind: "standup", Text: "* Yesterday\n- Shipped the loop [REDACTED GitHub token]."}}}
+	if !reflect.DeepEqual(e.Today, wantToday) {
+		t.Errorf("today %+v, want %+v", e.Today, wantToday)
+	}
+}
+
+// Today holds the newest day's digests of the last week, standup first,
+// and nothing where none is that recent or the directory is a link.
+func TestToday(t *testing.T) {
+	repo := t.TempDir()
+	c := plans.Config{Dir: filepath.Join(repo, "agents"), Host: "box"}
+	digests := filepath.Join(repo, "digests", "2026")
+	for name, body := range map[string]string{"10-09-demo.org": "demo", "10-09-standup.org": "standup",
+		"10-02-standup.org": "too old"} {
+		write(t, filepath.Join(digests, name), body)
+	}
+	got, err := TodayOf(c, day)
+	want := Today{Schema: 1, Date: "2026-10-09", Digests: []Digest{{"standup", "standup"}, {"demo", "demo"}}}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("today %+v (%v), want %+v", got, err, want)
+	}
+	if got, err := TodayOf(c, day.AddDate(0, 0, 8)); err != nil || got.Date != "" || len(got.Digests) != 0 {
+		t.Errorf("a week later: %+v (%v)", got, err)
+	}
+	moved := filepath.Join(t.TempDir(), "digests")
+	os.Rename(filepath.Join(repo, "digests"), moved)
+	os.Symlink(moved, filepath.Join(repo, "digests"))
+	if got, err := TodayOf(c, day); err != nil || len(got.Digests) != 0 {
+		t.Errorf("through a link: %+v (%v)", got, err)
+	}
+}
+
+// A digest that cannot be read is an error, and Write keeps the last good
+// today/digest rather than putting an empty one over it.
+func TestTodayKept(t *testing.T) {
+	fakeGitHub(t)
+	repo := t.TempDir()
+	c := plans.Config{Dir: filepath.Join(repo, "agents"), Host: "box"}
+	digest := filepath.Join(repo, "digests", "2026", "10-14-standup.org")
+	write(t, digest, "* Yesterday\n- Shipped.\n")
+	out := t.TempDir()
+	e, _ := Collect(context.Background(), c, filepath.Join(t.TempDir(), "github.json"), day)
+	if err := Write(out, e); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(out, "today", "digest.json")
+	good, err := os.ReadFile(file)
+	if err != nil || !strings.Contains(string(good), "Shipped") {
+		t.Fatalf("the first digest: %s (%v)", good, err)
+	}
+	os.Chmod(digest, 0)
+	defer os.Chmod(digest, 0o644)
+	e, err = Collect(context.Background(), c, filepath.Join(t.TempDir(), "github.json"), day)
+	if err == nil || !e.TodayFailed {
+		t.Fatalf("an unreadable digest: failed %v, %v", e.TodayFailed, err)
+	}
+	if err := Write(out, e); err != nil {
+		t.Fatal(err)
+	}
+	if kept, _ := os.ReadFile(file); string(kept) != string(good) {
+		t.Errorf("today/digest replaced: %s", kept)
 	}
 }
 

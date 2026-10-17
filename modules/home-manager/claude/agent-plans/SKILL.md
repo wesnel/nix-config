@@ -28,7 +28,8 @@ At the start, after `/clear` or `/compact`, and on every wake:
    - `plan sync stalled`: PushNotification `devbox plan sync stalled`,
      `status` `proactive`.
    - `standup digest ready`: PushNotification `Standup digest ready`,
-     `status` `proactive`; `demo digest ready`: `Demo digest ready`.
+     `status` `proactive`; `demo digest ready`: `Demo digest ready`. Then
+     run the update.
    - `already watching`: another watch runs; nothing to do.
 4. At the start only: run the update.
 
@@ -59,8 +60,8 @@ words "pending only":
 > 4. Pending only: where answer's three lists and dispatch's `queued`,
 >    `anyway` and `refused` are all empty, stop and report "nothing
 >    pending"; otherwise Bash `plan-dash export` and keep its `documents`.
-> 5. ArtifactData `list` of `plans`, `github`, `meta`, `answers` and
->    `dispatch`, each with `out_dir` OUT/page and `query`
+> 5. ArtifactData `list` of `plans`, `github`, `meta`, `today`, `answers`
+>    and `dispatch`, each with `out_dir` OUT/page and `query`
 >    `{"limit": 1000}`: the result names each document and its `version`.
 > 6. ArtifactData `batch`, at most 50 writes a call:
 >    - `set` each of export's `documents`, COLLECTION/ID, with `file_path`
