@@ -133,7 +133,11 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		return 0
 	}
-	if reason == sleeping && in.HookType == "" && in.TurnID == "" {
+	switch {
+	case reason == sleeping && os.Getenv("PR_LOOP_SESSION") == "1":
+		// A loop session's launcher sets this, and its hooks inherit it.
+		reason = sleepingLoop
+	case reason == sleeping && in.HookType == "" && in.TurnID == "":
 		reason = sleepingClaude
 	}
 	if reason == keyTouch && in.HookType != "" {

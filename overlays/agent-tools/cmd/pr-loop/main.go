@@ -84,11 +84,16 @@ printed on stderr and fails nothing.
                               GitHub has it now, and record it as the base the loop knows
   logs [--lines N] PR CHECK   the end of a failed GitHub Actions job's log
   wait ci [--sha REV] [--grace S] [--timeout S] [--interval S] [PR...]
-                              block until CI on each head finishes (exit 3 on timeout,
+                              poll until CI on each head finishes (exit 3 on timeout,
                               4 when a head has no checks, 5 when a PR conflicts with
                               its base)
   wait reviews [--timeout S] [--interval S] [PR...]
-                              block until requested reviews land (exit 3 on timeout)
+                              poll until requested reviews land (exit 3 on timeout, 6
+                              at once when a bot asked to review a head has not within
+                              the hour status pauses after)
+                              Both poll every --interval seconds (default 30) for up to
+                              --timeout (default 540, inside a ten-minute tool call);
+                              one call waits out the step, and exit 3 means call again
   sign [--resume] [--no-push] squash the loop's fixups, sign with the hardware key, and
                               push the stack over SSH (outside a loop, use git sign-pass)
   end [--prune]               delete trigger comments and loop state
@@ -329,7 +334,7 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 		title    = flags.String("title", "", "")
 		from     = flags.String("from", "", "")
 		lines    = flags.Int("lines", 200, "")
-		timeout  = flags.Int("timeout", 240, "")
+		timeout  = flags.Int("timeout", 540, "")
 		interval = flags.Int("interval", 30, "")
 		sha      = flags.String("sha", "", "")
 		grace    = flags.Int("grace", 180, "")
@@ -497,7 +502,15 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 		default:
 			var ns []int
 			if ns, err = numbers(); err == nil {
-				result, settled, err = loop.WaitReviews(ns, wait, every)
+				var overdue []string
+				result, settled, overdue, err = loop.WaitReviews(ns, wait, every)
+				if len(overdue) > 0 {
+					for _, o := range overdue {
+						fmt.Fprintf(stderr, "pr-loop: %s; run `pr-loop status`, which pauses the loop\n", o)
+					}
+					code = 6
+					settled = true
+				}
 			}
 		}
 		if !settled {

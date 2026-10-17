@@ -43,8 +43,12 @@ func post(stdin io.Reader, stdout io.Writer) int {
 	texts := responseTexts(in.ToolResponse)
 	lines := recordFacts(session(in.ChatID, in.SessionID), in.Cwd, args.Command, texts, time.Now())
 	if targets := pushedTo(texts); len(targets) > 0 && pushes(args.Command, 0) {
-		lines = append(lines, fmt.Sprintf("You just pushed to GitHub. Start `pr-loop wait ci %s` in the background now, "+
-			"and act on its result as the signing-pass skill's \"After a push\" says.", strings.Join(targets, " ")))
+		how := "Start `pr-loop wait ci %s` in the background now, and act on its result as the signing-pass skill's \"After a push\" says."
+		// A loop session's launcher sets this, and its hooks inherit it.
+		if os.Getenv("PR_LOOP_SESSION") == "1" {
+			how = "Run `pr-loop wait ci %s` in the foreground, as the review-loop skill's Waiting says."
+		}
+		lines = append(lines, "You just pushed to GitHub. "+fmt.Sprintf(how, strings.Join(targets, " ")))
 	}
 	if writesPullRequest(args.Command, 0) {
 		lines = append(lines, pullRequestRules)

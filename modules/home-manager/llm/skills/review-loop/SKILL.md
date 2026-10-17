@@ -107,6 +107,26 @@ Anything an owner asks you, or that you need to ask an owner, goes in the
 task you give next. Ask the owner rather than reading its code yourself
 when you need to know where something belongs.
 
+## Waiting
+
+Wait one step at a time, each with its own `pr-loop wait` in the
+foreground, giving the call ten minutes where the harness takes a timeout
+(Claude Code's Bash `timeout: 600000`):
+
+```sh
+pr-loop wait ci
+pr-loop wait reviews
+```
+
+Each polls GitHub itself for up to nine minutes and exits with the result.
+On exit 3 (timed out) run the same command again as its own call. `wait
+ci` exits 0 once CI has finished, failed or not: read its `result` before
+the next step, so a CI failure is never hidden behind a wait for reviews.
+`wait reviews` exits 6 when a bot asked an hour ago has not reviewed: run
+`pr-loop status`, which pauses the loop. Act on any other exit as the step
+says. Never chain steps into one command, wrap a wait in a shell loop,
+`sleep`, run it in the background, or watch a task's output with Monitor.
+
 ## Setup
 
 1. `pr-loop stack` from the branch you were pointed at. If `linear` is false,
@@ -158,7 +178,7 @@ that parent, not the base, as `pr-loop wait ci` says when it exits 5:
 restack it as step 7 does, without `fetch-base`, then push and start the
 round again.
 
-1. **CI.** `pr-loop wait ci` (repeat while it exits 3), then `pr-loop ci`.
+1. **CI.** `pr-loop wait ci`, as Waiting says, then `pr-loop ci`.
    If it exits 4 (`noChecks`), CI never reported on a head, and `pr-loop
    request` refuses until it does: stop and say so in the report. For every
    failure whose `onBase` is not `failed`, have the owner read
@@ -171,8 +191,7 @@ round again.
    has neither reviewed the head nor been asked, and refuses while CI is
    unfinished or failing, or while a bot has the last word in an open
    thread; answer those through steps 4 to 9 first. Then
-   `pr-loop wait reviews` (repeat while it exits 3); reviews take 5 to 15
-   minutes.
+   `pr-loop wait reviews`, as Waiting says; reviews take 5 to 15 minutes.
 3. **Status.** `pr-loop status`. Check the stop conditions below: its
    `done` and `paused` decide, never one bot's verdict.
 4. **Triage.** Have every owner triage its PR's unresolved bot threads
