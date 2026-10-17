@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -16,6 +17,12 @@ import (
 type fakeReviewThread struct {
 	resolved    bool
 	first, last string // the authors of its first and last comments
+	// Where `pr-loop threads` reads it: its ID, its file and line on the
+	// head ("RIGHT", by default) or the base ("LEFT"), whether the line is
+	// outdated, and its first comment's URL.
+	id, path, side, url string
+	line                int
+	outdated            bool
 }
 
 // fakeReview adds to fakeCI the GraphQL that status and request make: the
@@ -53,7 +60,17 @@ func (f *fakeReview) graphQL(query string, vars map[string]any, out any) error {
 			author := func(login string) any {
 				return map[string]any{"nodes": []any{map[string]any{"author": map[string]any{"login": login}}}}
 			}
-			nodes = append(nodes, map[string]any{"isResolved": t.resolved, "first": author(t.first), "last": author(t.last)})
+			comments := []any{map[string]any{"author": map[string]any{"login": t.first}, "body": "finding", "url": t.url}}
+			if t.last != t.first {
+				comments = append(comments, map[string]any{"author": map[string]any{"login": t.last}, "body": "reply", "url": t.url + "-last"})
+			}
+			var line any
+			if t.line > 0 {
+				line = t.line
+			}
+			nodes = append(nodes, map[string]any{"isResolved": t.resolved, "first": author(t.first), "last": author(t.last),
+				"id": t.id, "path": t.path, "line": line, "isOutdated": t.outdated, "diffSide": cmp.Or(t.side, "RIGHT"),
+				"comments": map[string]any{"nodes": comments}})
 		}
 		data = map[string]any{"repository": map[string]any{"pullRequest": map[string]any{
 			"reviewThreads": map[string]any{"nodes": nodes,
@@ -351,6 +368,72 @@ func TestRequest(t *testing.T) {
 		state, _ := loadState(true)
 		if a := state.Asked["1:copilot"]; a == nil || a.HeadOid != "a1" || a.At == "" {
 			t.Errorf("the ask recorded: %+v", a)
+		}
+	})
+}
+
+// wait reviews polls on its own until the review lands or its timeout
+// passes, so one call waits out the whole step.
+func TestWaitReviews(t *testing.T) {
+	const config = `{"bots": {"qodo": {"login": "^qodo-code-review", "request": {"comment": "/agentic_review"}}}}`
+	asked := func(t *testing.T) {
+		t.Helper()
+		state := &State{Repo: "o/r", Order: []string{"feat"}, Branches: map[string]*Branch{"feat": {PR: 1, Base: "main"}},
+			Triggers: map[string]*Trigger{"1:qodo": {CommentID: 1, At: "2025-12-31T00:00:00Z", HeadOid: "a1"}}}
+		if err := state.save(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("until the review lands", func(t *testing.T) {
+		f := reviewRepo(t, config)
+		asked(t)
+		polls := 0
+		f.tick = func() {
+			if polls++; polls == 3 {
+				f.reviews = []fakeReviewNode{{qodoLogin, "a1", "Review"}}
+			}
+		}
+		start := now()
+		_, settled, overdue, err := WaitReviews(nil, 90*time.Millisecond, 10*time.Millisecond)
+		if err != nil || !settled || len(overdue) > 0 {
+			t.Fatalf("settled %v, overdue %v, %v", settled, overdue, err)
+		}
+		if waited := now().Sub(start); waited != 30*time.Millisecond {
+			t.Errorf("waited %s, want the three polls' 30ms", waited)
+		}
+	})
+
+	t.Run("until its timeout", func(t *testing.T) {
+		reviewRepo(t, config)
+		asked(t)
+		start := now()
+		_, settled, overdue, err := WaitReviews(nil, 90*time.Millisecond, 40*time.Millisecond)
+		if err != nil || settled || len(overdue) > 0 {
+			t.Fatalf("settled %v, overdue %v, %v", settled, overdue, err)
+		}
+		if waited := now().Sub(start); waited != 90*time.Millisecond {
+			t.Errorf("waited %s, want the whole 90ms", waited)
+		}
+	})
+
+	// A bot asked to review the head longer ago than status's budget ends
+	// the wait at once, so the loop reaches status, which pauses it.
+	t.Run("a bot past its budget", func(t *testing.T) {
+		reviewRepo(t, config)
+		asked(t)
+		state, _ := loadState(true)
+		state.Asked = map[string]*Ask{"1:qodo": {At: now().Add(-reviewBudget - time.Minute).UTC().Format(time.RFC3339), HeadOid: "a1"}}
+		if err := state.save(); err != nil {
+			t.Fatal(err)
+		}
+		start := now()
+		_, settled, overdue, err := WaitReviews(nil, 90*time.Millisecond, 10*time.Millisecond)
+		if err != nil || settled || len(overdue) != 1 || !strings.Contains(overdue[0], "qodo") {
+			t.Fatalf("settled %v, overdue %v, %v", settled, overdue, err)
+		}
+		if waited := now().Sub(start); waited != 0 {
+			t.Errorf("waited %s", waited)
 		}
 	})
 }

@@ -51,6 +51,7 @@ func TestRelayRefusal(t *testing.T) {
 		{"reply", "--from"},
 		{"setup"},
 		{"setup", "/x"},
+		{"autosquash", "--exec", "true"},
 		// A relayed review names only its own pull request, never a path,
 		// another repository, Codex's model or a run of the code.
 		{"review"},
@@ -72,6 +73,8 @@ func TestRelayRefusal(t *testing.T) {
 		})
 	}
 	for _, argv := range [][]string{
+		{"report"},
+		{"propose", "defer", "3", "--summary", "x", "--thread", "T"},
 		{"reply", "T", "--body-file", "-"},
 		{"reply", "--from", "-"},
 		{"status", "12"},

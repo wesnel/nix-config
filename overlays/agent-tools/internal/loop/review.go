@@ -440,35 +440,53 @@ var requestReviewer = func(slug string, number int, reviewer string) error {
 	return nil
 }
 
-// WaitReviews blocks until requested reviews land. It reports settled=false
-// at the deadline rather than failing.
-func WaitReviews(numbers []int, timeout, interval time.Duration) (any, bool, error) {
+// WaitReviews polls until requested reviews land, or the timeout passes. It
+// reports settled=false at the deadline rather than failing. It returns at
+// once, naming each, when a bot asked to review a PR's head has left it
+// unreviewed past reviewBudget, where status pauses the loop.
+func WaitReviews(numbers []int, timeout, interval time.Duration) (any, bool, []string, error) {
 	slug, numbers, _, err := loopNumbers(numbers)
 	if err != nil {
-		return nil, false, err
+		return nil, false, nil, err
 	}
-	deadline := time.Now().Add(timeout)
+	deadline := now().Add(timeout)
 	for {
 		var statuses []any
+		var overdue []string
 		settled := true
 		for _, n := range numbers {
 			state, err := loadState(false)
 			if err != nil {
-				return nil, false, err
+				return nil, false, nil, err
 			}
 			review, err := reviewStatus(slug, n, state)
 			if err != nil {
-				return nil, false, err
+				return nil, false, nil, err
 			}
-			for _, b := range review.Bots {
+			for _, name := range botNames(review) {
+				b := review.Bots[name]
 				settled = settled && !b.Pending
+				if state == nil || b.ReviewedHead {
+					continue
+				}
+				ask := state.Asked[fmt.Sprintf("%d:%s", n, name)]
+				if ask == nil || ask.HeadOid != review.HeadOid {
+					continue
+				}
+				if at, err := time.Parse(time.RFC3339, ask.At); err == nil && now().Sub(at) > reviewBudget {
+					overdue = append(overdue, fmt.Sprintf("%s has not reviewed #%d's head %s after being asked", name, n, reviewBudget))
+				}
 			}
 			statuses = append(statuses, review)
 		}
-		if settled || time.Now().After(deadline) {
-			return statuses, settled, nil
+		left := deadline.Sub(now())
+		if len(overdue) > 0 {
+			return statuses, false, overdue, nil
 		}
-		time.Sleep(interval)
+		if settled || left <= 0 {
+			return statuses, settled, nil, nil
+		}
+		sleep(min(interval, left))
 	}
 }
 

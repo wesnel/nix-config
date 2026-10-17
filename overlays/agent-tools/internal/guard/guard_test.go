@@ -385,6 +385,34 @@ func TestBaseline(t *testing.T) {
 	t.Run("commands", testBaselineCommands)
 	t.Run("roles", testBaselineRoles)
 	t.Run("formats", testBaselineFormats)
+	t.Run("autosquash --exec", testAutosquashExec)
+}
+
+// testAutosquashExec holds `pr-loop autosquash --exec CMD` to the rules
+// `sh -c CMD` is held to, since autosquash runs CMD with sh.
+func testAutosquashExec(t *testing.T) {
+	denied := func(agentType, command string) bool {
+		t.Helper()
+		event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "agent_type": agentType,
+			"tool_input": map[string]string{"command": command}})
+		var out bytes.Buffer
+		Main([]string{"--baseline"}, bytes.NewReader(event), &out, io.Discard)
+		return strings.Contains(out.String(), `"permissionDecision":"deny"`)
+	}
+	for _, agentType := range []string{"", "pr-loop:pr-owner"} {
+		for _, inner := range []string{"git commit -m x", "git worktree add /tmp/x HEAD", "git push origin x",
+			"git update-ref refs/heads/x HEAD", "git branch -f x HEAD", "go vet ./...", "git stash"} {
+			for _, form := range []string{"pr-loop autosquash --exec '%s'", "pr-loop autosquash --exec='%s' main", "pr-loop autosquash -exec '%s'"} {
+				command := strings.Replace(form, "%s", inner, 1)
+				if got, want := denied(agentType, command), denied(agentType, "sh -c '"+inner+"'"); got != want {
+					t.Errorf("%s %q: denied %v, as sh -c %v", agentType, command, got, want)
+				}
+			}
+		}
+	}
+	if !denied("pr-loop:pr-owner", "pr-loop autosquash --exec 'git commit -m x'") {
+		t.Error("an owner's autosquash --exec of git commit -m was allowed")
+	}
 }
 
 // testBaselineCommands covers the rules for every session that no ECA
@@ -544,6 +572,9 @@ func testBaselineRoles(t *testing.T) {
 		{false, "pr-loop:pr-owner", "pr-loop stack 3"},
 		{true, "reviewer", "pr-loop link 3 4"},
 		{false, "reviewer", "pr-loop stack 3"},
+		{false, "reviewer", "pr-loop report 3"},
+		{true, "pr-loop:pr-owner", "pr-loop propose defer 3 --summary x"},
+		{false, "", "pr-loop propose defer 3 --summary x"},
 		{false, "", "pr-loop link 3 4"},
 		{false, "pr-loop:pr-owner", "git commit --fixup=abc"},
 		{true, "pr-loop:pr-owner", "git commit -m x"},

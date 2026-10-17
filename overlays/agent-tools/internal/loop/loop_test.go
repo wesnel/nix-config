@@ -551,6 +551,17 @@ func TestSetup(t *testing.T) {
 		}
 	})
 
+	// A repository may name generated files without a setup command, for
+	// `pr-loop autosquash` to copy.
+	t.Run("generated files alone", func(t *testing.T) {
+		_, config := setupRepo(t)
+		os.WriteFile(config, []byte(`{"repos": {"o/r": {"generated": ["gen/**/*.pb.go"]}}}`), 0o644)
+		s, err := SetupCommand()
+		if err != nil || s.Command != "" || s.Repo != "o/r" || strings.Join(s.Generated, " ") != "gen/**/*.pb.go" {
+			t.Errorf("generated files: %+v, %v", s, err)
+		}
+	})
+
 	t.Run("two remotes with different commands", func(t *testing.T) {
 		dir, config := setupRepo(t)
 		os.WriteFile(config, []byte(configured), 0o644)

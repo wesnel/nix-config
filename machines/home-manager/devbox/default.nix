@@ -31,7 +31,10 @@
         git.enable = true;
         gnupg.enable = true;
         helix.enable = true;
-        llm.repos."ngrok-private/ngrok-agent".setup = "go tool buf generate";
+        llm.repos."ngrok-private/ngrok-agent" = {
+          setup = "go tool buf generate";
+          generated = ["**/*.pb.go"];
+        };
         man.enable = true;
         mcp-proxy.enable = true;
         mosh.enable = true;

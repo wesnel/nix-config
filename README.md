@@ -363,7 +363,9 @@ Then, in the repository, start one of:
 
 - any Claude Code session, and ask it to run the review loop on the branch.
   It starts `claude-pr-loop` headless in the background, logging to
-  `.git/pr-loop-session.jsonl` and `.err`, and shows the report when the loop exits;
+  `.git/pr-loop-session.jsonl` and `.err`, tells you each decision the loop
+  proposes as it goes (a follow-up, a split or a deferral; the loop acts on
+  none), and shows the report when the loop exits;
 - `claude-pr-loop`, and ask it to run the review loop on the branch;
 - `codex-pr-loop`, and ask the same. Codex skips a hook until it is trusted,
   so trust `pr-loop guard` in `/hooks` the first time, and again after a
@@ -373,7 +375,8 @@ Then, in the repository, start one of:
 `pr-loop watch` in the repository follows a headless session's log as it
 grows, and `pr-loop stop` ends a `claude-pr-loop` or `codex-pr-loop`
 session early, cleans up after it and writes `.git/pr-loop/report.md`
-saying what is left.
+saying what is left. When either session exits, its launcher notifies you,
+through Emacs's `wgn/notify` or else Notification Center on macOS.
 
 Each runs the agent's commands in a sandbox without credentials, beside a
 `sandbox-relay` that runs `pr-loop` on this machine with your `gh` login, and

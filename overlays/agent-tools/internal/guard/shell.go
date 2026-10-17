@@ -158,6 +158,24 @@ func unwrap(c call, v visitor) string {
 		return v.call(c)
 	case name == "eval":
 		return v.script(strings.Join(args, " "))
+	case name == "pr-loop" && len(args) > 0 && args[0] == "autosquash":
+		// autosquash runs its --exec value with sh -c.
+		for i, a := range args {
+			for _, flag := range []string{"--exec", "-exec"} {
+				script, given := "", false
+				switch {
+				case a == flag && i+1 < len(args):
+					script, given = args[i+1], true
+				case strings.HasPrefix(a, flag+"="):
+					script, given = strings.TrimPrefix(a, flag+"="), true
+				}
+				if given {
+					if reason := v.script(script); reason != "" {
+						return reason
+					}
+				}
+			}
+		}
 	case name == "nix-shell":
 		for i, a := range args {
 			if (a == "--run" || a == "--command") && i+1 < len(args) {

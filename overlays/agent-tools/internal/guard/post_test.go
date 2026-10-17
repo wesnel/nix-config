@@ -11,6 +11,7 @@ import (
 // TestPost covers the context added after a tool call that pushed to
 // GitHub: Claude Code's PostToolUse event and ECA's postToolCall.
 func TestPost(t *testing.T) {
+	t.Setenv("PR_LOOP_SESSION", "")
 	claude := func(command, stdout string) string {
 		event, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Bash",
 			"tool_input": map[string]string{"command": command}, "tool_response": map[string]any{"stdout": stdout, "stderr": "", "interrupted": false}})
@@ -85,9 +86,39 @@ func TestPost(t *testing.T) {
 		})
 	}
 
+	// A loop session waits in the foreground, as the review-loop skill
+	// says, so its turn never ends while CI runs.
+	t.Run("in a loop session", func(t *testing.T) {
+		t.Setenv("PR_LOOP_SESSION", "1")
+		var out bytes.Buffer
+		Main([]string{"--post"}, strings.NewReader(claude("pr-loop push", pushed)), &out, io.Discard)
+		context := out.String()
+		if !strings.Contains(context, "`pr-loop wait ci a b`") || !strings.Contains(context, "foreground") ||
+			!strings.Contains(context, "review-loop") || strings.Contains(context, "background") {
+			t.Errorf("context %s", context)
+		}
+	})
+
 	t.Run("records facts", testPostRecordsFacts)
 	t.Run("then the stop", testPostThenStop)
 	t.Run("hands over the pull-requests skill", testPostPullRequests)
+}
+
+// A loop session waits as the review-loop skill's Waiting says, so a long
+// sleep's refusal points there, not at the background or Monitor, which
+// Waiting rules out.
+func TestLoopSleep(t *testing.T) {
+	t.Setenv("PR_LOOP_SESSION", "1")
+	event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "tool_input": map[string]string{"command": "sleep 120"}})
+	for _, args := range [][]string{{"--baseline"}, nil} {
+		var out bytes.Buffer
+		Main(args, bytes.NewReader(event), &out, io.Discard)
+		reason := out.String()
+		if !strings.Contains(reason, `"permissionDecision":"deny"`) || !strings.Contains(reason, "pr-loop wait") ||
+			!strings.Contains(reason, "foreground") || strings.Contains(reason, "run_in_background") || strings.Contains(reason, "Monitor") {
+			t.Errorf("guard %v: %s", args, reason)
+		}
+	}
 }
 
 // A command that opens or edits a pull request is followed by the line

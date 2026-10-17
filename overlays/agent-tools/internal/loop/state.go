@@ -72,6 +72,9 @@ type State struct {
 	// RebaseRounds are the rounds whose push only rebased the stack, which
 	// do not count towards pausing the loop.
 	RebaseRounds int `json:"rebaseRounds,omitempty"`
+	// Proposals are what the loop put to the operator with `pr-loop
+	// propose`, in order.
+	Proposals []*Proposal `json:"proposals,omitempty"`
 }
 
 // Ask is a review request request made.

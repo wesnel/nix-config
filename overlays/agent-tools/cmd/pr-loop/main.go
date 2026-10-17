@@ -60,6 +60,16 @@ printed on stderr and fails nothing.
   worktrees [--remove]        a worktree per PR under .pr-loop/, where commits are unsigned;
                               runs the setup command in each one whose HEAD moved since its last setup
   setup [PATH]                run the setup command in the worktree at PATH (default: this one)
+  autosquash [--exec CMD] [UPSTREAM]
+                              squash HEAD's fixups onto UPSTREAM (default: in a loop, the
+                              branch's parent), unsigned, in a scratch worktree it removes
+                              afterwards, and say whether the files match HEAD's; with
+                              --exec, copy in the ignored files the repository's
+                              "generated" setting names, as HEAD's worktree has them, and
+                              run CMD with sh at each squashed commit, checked out afresh
+                              (exit 1 when the files differ or CMD fails);
+                              like setup, it runs here, in a sandbox too, asking a relay
+                              only for the repository's settings
   setup-command               the setup command configured for this repository
   push [--dry-run] [BRANCH...]  push through the GitHub API, a branch at a time, bottom up
   threads [--all] PR          unresolved review threads, labelled by bot
@@ -75,6 +85,19 @@ printed on stderr and fails nothing.
                               it is paused, not done after 6 rounds, with changed lines
                               grown over 50%, or with a bot asked to review the head an
                               hour ago that has not (paused, pausedBecause)
+  propose KIND PR --summary S [--thread ID]... [--fixup REV]... [--size N]
+                              put a decision to the operator: KIND is follow-up (a finding
+                              the PR should not fix), split (fixups that belong in a PR of
+                              their own) or defer (threads left for later); with the
+                              threads, the loop fixups that would move, and roughly how
+                              many changed lines. Records it in the loop's state for
+                              report and prints one line on stderr starting
+                              "pr-loop: proposal", which watch --events proposal passes on.
+                              Nothing is split, moved or deferred by it
+  report [PR...]              Markdown for the loop's report.md, read from GitHub and the
+                              loop's state: per PR, status's verdict, CI, changed lines,
+                              the fixups added, each bot's standing, and every review
+                              thread with its state and URL
   ci [PR...]                  checks on each head, compared with the base; whether it
                               merges with the base (mergeable: MERGEABLE, CONFLICTING or
                               UNKNOWN) and, in a loop, whether the base moved since the
@@ -84,11 +107,16 @@ printed on stderr and fails nothing.
                               GitHub has it now, and record it as the base the loop knows
   logs [--lines N] PR CHECK   the end of a failed GitHub Actions job's log
   wait ci [--sha REV] [--grace S] [--timeout S] [--interval S] [PR...]
-                              block until CI on each head finishes (exit 3 on timeout,
+                              poll until CI on each head finishes (exit 3 on timeout,
                               4 when a head has no checks, 5 when a PR conflicts with
                               its base)
   wait reviews [--timeout S] [--interval S] [PR...]
-                              block until requested reviews land (exit 3 on timeout)
+                              poll until requested reviews land (exit 3 on timeout, 6
+                              at once when a bot asked to review a head has not within
+                              the hour status pauses after)
+                              Both poll every --interval seconds (default 30) for up to
+                              --timeout (default 540, inside a ten-minute tool call);
+                              one call waits out the step, and exit 3 means call again
   sign [--resume] [--no-push] squash the loop's fixups, sign with the hardware key, and
                               push the stack over SSH (outside a loop, use git sign-pass)
   end [--prune]               delete trigger comments and loop state
@@ -97,13 +125,19 @@ printed on stderr and fails nothing.
                               KILL after 10s; then remove the PRs' clean worktrees, put the
                               main worktree back on the top branch, end as end does, and
                               write report.md saying what is left
-  watch [--from-start] [LOG]  follow a loop session's log (default: pr-loop-session.jsonl
+  watch [--from-start] [--events E,...] [LOG]
+                              follow a loop session's log (default: pr-loop-session.jsonl
                               in the git common directory, where the review-loop skill
                               writes it), and its .err beside it, from their end: the
                               agents' text, tool calls, results cut to two lines, refusals
                               marked !! REFUSED, sub-agents' starts and ends, with known
                               secret shapes redacted and control characters shown as
-                              text; until interrupted
+                              text; until interrupted. --events prints only those named,
+                              each line led by its name: proposal, the lines pr-loop
+                              propose printed in a call that ran it alone, with nothing
+                              chained, piped or substituted, and handback, the launcher's
+                              line that the
+                              session exited, after which watch exits
   guard [--baseline]          PreToolUse hook for Claude Code, Codex and ECA (reads stdin):
                               a loop's rules, or with --baseline every session's, by agent
   guard --post                PostToolUse hook for Claude Code, Codex and ECA (reads stdin):
@@ -119,6 +153,10 @@ reply and resolve take a thread on an open PR by the authenticated user in
 this repository, people's threads included, and need no begin. In a loop
 session (relayed, or with PR_LOOP_SESSION=1), and on a PR registered with
 begin, they take only threads a review bot started on the loop's PRs.
+
+In a loop, threads marks each thread onChangedLines when the PR changed
+its line and onLoopFixup when a loop fixup changed it last, by blame at the
+tip the loop last pushed.
 
 ci, wait ci and logs take a PR by number or by branch and need no begin.
 Outside a loop session each must be an open PR by the authenticated user in
@@ -176,7 +214,7 @@ setup asks it for the command, then both run the command here, in the sandbox.
 var relayed = map[string]bool{
 	"open": true, "stack": true, "link": true, "begin": true, "push": true, "threads": true, "reply": true, "resolve": true,
 	"request": true, "status": true, "ci": true, "logs": true, "wait": true, "worktrees": true,
-	"setup-command": true, "review": true, "fetch-base": true,
+	"setup-command": true, "review": true, "fetch-base": true, "report": true, "propose": true,
 }
 
 // reviewRefusal is why a relayed caller may not run `review argv...`, or "".
@@ -219,7 +257,7 @@ func reviewRefusal(argv []string) string {
 
 // clientSide are the commands that run in this process even with a relay:
 // each does its part on the host through the relay itself.
-var clientSide = map[string]bool{"guard": true, "setup": true, "worktrees": true}
+var clientSide = map[string]bool{"guard": true, "setup": true, "worktrees": true, "autosquash": true}
 
 // relayRefusal is why the relay's caller may not run argv, or "".
 func relayRefusal(argv []string) string {
@@ -228,9 +266,9 @@ func relayRefusal(argv []string) string {
 		if len(argv) > 0 {
 			name = argv[0]
 		}
-		if name == "setup" {
-			return "setup runs its command in the caller's sandbox, never through the relay; " +
-				"run `pr-loop setup` in the sandbox, which asks the relay only for the command"
+		if name == "setup" || name == "autosquash" {
+			return name + " runs its command in the caller's sandbox, never through the relay; " +
+				"run `pr-loop " + name + "` in the sandbox, which asks the relay only for the settings"
 		}
 		return fmt.Sprintf("%q is only run on the host, outside the sandbox; put the exact pr-loop command in the report for the operator", name)
 	}
@@ -329,7 +367,7 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 		title    = flags.String("title", "", "")
 		from     = flags.String("from", "", "")
 		lines    = flags.Int("lines", 200, "")
-		timeout  = flags.Int("timeout", 240, "")
+		timeout  = flags.Int("timeout", 540, "")
 		interval = flags.Int("interval", 30, "")
 		sha      = flags.String("sha", "", "")
 		grace    = flags.Int("grace", 180, "")
@@ -338,11 +376,19 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 		prune    = flags.Bool("prune", false, "")
 		start    = flags.Bool("from-start", false, "")
 		remove   = flags.Bool("remove", false, "")
+		execute  = flags.String("exec", "", "")
+		summary  = flags.String("summary", "", "")
+		events   = flags.String("events", "", "")
+		size     = flags.Int("size", 0, "")
 		bots     multi
 		accepted multi
+		threads  multi
+		fixups   multi
 	)
 	flags.Var(&bots, "bot", "")
 	flags.Var(&accepted, "accept-failure", "")
+	flags.Var(&threads, "thread", "")
+	flags.Var(&fixups, "fixup", "")
 	if command == "guard" {
 		return guard.Main(args, stdin, stdout, stderr)
 	}
@@ -457,6 +503,24 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 		if ns, err = numbers(); err == nil {
 			result, err = loop.Status(ns)
 		}
+	case "propose":
+		if err = need(2); err == nil {
+			var n int
+			if n, err = strconv.Atoi(strings.TrimPrefix(rest[1], "#")); err != nil {
+				err = fmt.Errorf("%q is not a PR number", rest[1])
+				break
+			}
+			result, err = loop.Propose(rest[0], n, *summary, threads, fixups, *size, stderr)
+		}
+	case "report":
+		var ns []int
+		if ns, err = numbers(); err == nil {
+			var text string
+			if text, err = loop.Report(ns); err == nil {
+				fmt.Fprint(stdout, text)
+				return 0
+			}
+		}
 	case "ci":
 		result, err = loop.CIStatuses(rest)
 	case "logs":
@@ -497,7 +561,15 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 		default:
 			var ns []int
 			if ns, err = numbers(); err == nil {
-				result, settled, err = loop.WaitReviews(ns, wait, every)
+				var overdue []string
+				result, settled, overdue, err = loop.WaitReviews(ns, wait, every)
+				if len(overdue) > 0 {
+					for _, o := range overdue {
+						fmt.Fprintf(stderr, "pr-loop: %s; run `pr-loop status`, which pauses the loop\n", o)
+					}
+					code = 6
+					settled = true
+				}
 			}
 		}
 		if !settled {
@@ -556,6 +628,30 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 		code = setupFailures(runs, stderr)
 	case "setup-command":
 		result, err = loop.SetupCommand()
+	case "autosquash":
+		if len(rest) > 1 {
+			err = errors.New("autosquash takes at most one upstream; see pr-loop --help")
+			break
+		}
+		upstream := ""
+		if len(rest) == 1 {
+			upstream = rest[0]
+		}
+		var generated []string
+		if *execute != "" {
+			var setup *loop.Setup
+			if setup, err = setupCommand(url); err != nil {
+				break
+			}
+			generated = setup.Generated
+		}
+		var squash *loop.AutosquashResult
+		if squash, err = loop.Autosquash(upstream, generated, *execute, stderr); err == nil {
+			result = squash
+			if !squash.OK() {
+				code = 1
+			}
+		}
 	case "sign":
 		var active bool
 		if active, err = loop.Active(); err == nil {
@@ -572,7 +668,7 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 			result, err = loop.Stop()
 		}
 	case "watch":
-		if err = watchLog(rest, *start, stdout, stderr); err == nil {
+		if err = watchLog(rest, *start, *events, stdout, stderr); err == nil {
 			return 0
 		}
 	default:
@@ -669,7 +765,9 @@ func interleave(args []string) []string {
 	takesValue := map[string]bool{"-body-file": true, "--body-file": true, "-from": true, "--from": true, "-lines": true, "--lines": true,
 		"-timeout": true, "--timeout": true, "-interval": true, "--interval": true, "-bot": true, "--bot": true,
 		"-accept-failure": true, "--accept-failure": true, "-base": true, "--base": true, "-title": true, "--title": true,
-		"-sha": true, "--sha": true, "-grace": true, "--grace": true}
+		"-sha": true, "--sha": true, "-grace": true, "--grace": true, "-exec": true, "--exec": true,
+		"-summary": true, "--summary": true, "-size": true, "--size": true, "-thread": true, "--thread": true, "-fixup": true, "--fixup": true,
+		"-events": true, "--events": true}
 	var flags, positional []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]

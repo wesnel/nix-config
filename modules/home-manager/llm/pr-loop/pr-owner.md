@@ -10,6 +10,8 @@ add what the next task will need, including questions for the coordinator.
 - Work only in your worktree. Confirm `git rev-parse --abbrev-ref HEAD` is your
   branch before every edit. Other owners' worktrees are theirs; ask the
   coordinator for what you need from them.
+- `trash` fails in the loop's sandbox: move a scratch file you made into
+  `$TMPDIR` with `mv` instead, and never `rm` it.
 - Never push, request a review, or post or resolve anything on GitHub. The
   coordinator does all of that through `pr-loop`. Commits in this session are
   unsigned on purpose.
@@ -24,6 +26,11 @@ changing code:
 
 - thread ID, the bot, and `path:line`
 - the problem in one sentence, in your words
+- where it comes from: introduced by this PR (its `onChangedLines` and
+  `onLoopFixup` marks are a start, not the answer), pre-existing, shown on
+  the base with `git show <base>:<path>` or a reproduction there, or new
+  scope, when its real fix is new functionality or a wider change. Only an
+  introduced finding is fixed here; propose deferring the others
 - its outcome, as the `review-change` skill's Triage defines them
   (`belongs-in #<pr>` for code another PR introduced), with the evidence
   for a rebuttal and the reason for a deferral
@@ -47,11 +54,18 @@ skill says, with the trailers the `review-change` skill's Answering gives.
 When unsure which commit, use the PR's last. Never amend, reword or add a
 commit that is not a fixup.
 
-Run the tests and linters the repository uses for the files you touched, and
-report:
+Run the tests and linters the repository uses for the files you touched.
+Then check the squash with `pr-loop autosquash --exec '<build or vet
+command>'` from your worktree: it squashes your fixups in a scratch
+worktree it removes afterwards, copies in the generated files the
+repository's settings name, runs the command at each squashed commit, and
+exits 1 if the files differ from your branch's or the command fails. Never
+add a worktree of your own for this. Report:
 
 - each fixup's SHA and subject, with the thread or check it addresses
 - test and lint results, including failures
+- every test you skipped or could not run, by name, and why
+- the autosquash result
 - a draft reply per thread, in the reply-file format `review-change`'s
   Answering gives: what changed and why, in two or three sentences, naming
   commits by subject

@@ -122,7 +122,13 @@ with lib; let
       # `agent-plan` on the relay.
       filesystem.denyWrite =
         map (p: "{workspace}/${p}") config.wgn.home.llm.prLoop.protectedPaths
-        ++ [sessionCacheDir plans.dir];
+        ++ [sessionCacheDir plans.dir]
+        # The loop's state, which the relay alone writes and which holds
+        # the proposals. Only on macOS: on Linux the sandbox holds a denied
+        # file that does not exist yet, as this one does before `pr-loop
+        # begin`, with a placeholder it removes after each command, which
+        # could take the state the relay wrote meanwhile with it.
+        ++ optional darwin "{workspace}/.git/pr-loop/state.json";
 
       # The launcher points the build caches here.
       filesystem.allowWrite = [config.wgn.home.llm.prLoop.cacheDir];
@@ -183,7 +189,8 @@ with lib; let
       # The session's commands cannot read the user's git config; the relay
       # and pr-loop on this side keep it.
       ${config.wgn.home.llm.prLoop.gitIdentity}
-      exec ${lib.getExe' config.wgn.home.llm.agentTools "sandbox-relay"} session --program pr-loop --program agent-plan -- \
+      ${config.wgn.home.llm.prLoop.handBack}
+      pr_loop_run claude-pr-loop ${lib.getExe' config.wgn.home.llm.agentTools "sandbox-relay"} session --program pr-loop --program agent-plan -- \
         env GIT_CONFIG_GLOBAL=${config.wgn.home.llm.prLoop.gitConfig} claude \
         --plugin-dir ${prLoopPlugin} \
         --settings "$settings" \

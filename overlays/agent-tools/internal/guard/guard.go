@@ -133,7 +133,11 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		return 0
 	}
-	if reason == sleeping && in.HookType == "" && in.TurnID == "" {
+	switch {
+	case reason == sleeping && os.Getenv("PR_LOOP_SESSION") == "1":
+		// A loop session's launcher sets this, and its hooks inherit it.
+		reason = sleepingLoop
+	case reason == sleeping && in.HookType == "" && in.TurnID == "":
 		reason = sleepingClaude
 	}
 	if reason == keyTouch && in.HookType != "" {
@@ -547,12 +551,12 @@ const alias = "A git alias can stand for any command, which the guard cannot che
 // coordinatorOnly are the pr-loop steps an owner leaves to the coordinator,
 // which keeps the stack consistent across PRs.
 var coordinatorOnly = map[string]bool{"open": true, "link": true, "begin": true, "push": true, "reply": true, "resolve": true,
-	"request": true, "worktrees": true, "sign": true, "end": true, "fetch-base": true}
+	"request": true, "worktrees": true, "sign": true, "end": true, "fetch-base": true, "propose": true}
 
 // reviewerReads are the pr-loop commands a reviewer may run, besides
 // `wait ci`.
 var reviewerReads = map[string]bool{"stack": true, "threads": true, "status": true, "ci": true, "logs": true,
-	"setup-command": true}
+	"setup-command": true, "report": true}
 
 // planSync is why no agent syncs plans: the sync pushes with a deploy key,
 // which is the watcher's, outside every session.

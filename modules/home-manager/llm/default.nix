@@ -138,6 +138,18 @@ in {
             '';
           };
 
+          generated = mkOption {
+            type = types.listOf types.str;
+            default = [];
+
+            description = ''
+              Git pathspec globs (`:(glob)` magic) for files git ignores that
+              a build needs and a fresh checkout lacks, such as what
+              {option}`setup` generates. `pr-loop autosquash --exec` copies
+              them into its scratch worktree before running its command.
+            '';
+          };
+
           testFiles = mkOption {
             type = types.listOf types.str;
             default = [];
@@ -153,6 +165,7 @@ in {
           test = "go test ./...";
           build = "go vet ./...";
           testFiles = ["**/*_test.go"];
+          generated = ["**/*.pb.go"];
         };
       };
 
@@ -528,10 +541,12 @@ in {
           load, which a loop session may read but not change: git hooks and
           config, which the next git command run outside would obey, and
           agents' project settings, which can name hooks that run outside any
-          sandbox. Every sandboxing launcher takes its list from here.
+          sandbox; and the loop session's logs, from which `pr-loop watch
+          --events` tells the session's starter of proposals and the
+          hand-back. Every sandboxing launcher takes its list from here.
         '';
 
-        default = [".git/hooks" ".git/config" ".claude" ".codex" ".eca"];
+        default = [".git/hooks" ".git/config" ".claude" ".codex" ".eca" ".git/pr-loop-session.jsonl" ".git/pr-loop-session.err"];
       };
 
       cacheDir = mkOption {
@@ -578,6 +593,83 @@ in {
           + ''
             mkdir -p ${escapeShellArgs (attrValues cfg.prLoop.cacheEnv)}
           '';
+      };
+
+      handBack = mkOption {
+        type = types.lines;
+        readOnly = true;
+
+        description = ''
+          Shell lines defining `pr_loop_run LAUNCHER COMMAND...`, which a
+          loop launcher runs its session with, outside the sandbox: it runs
+          COMMAND, passes TERM, HUP and INT (as TERM, since a command run in
+          the background ignores INT) on to it, and once it has exited,
+          unless `review` is set, runs `pr_loop_hand_back`, then exits with
+          COMMAND's status. The launcher is not COMMAND's process, so
+          `pr-loop stop`, which stops the session and what runs under it,
+          leaves the hand-back to run after it.
+
+          `pr_loop_hand_back LAUNCHER STATUS STARTED` waits up to a minute
+          for a `report.md` written since STARTED (seconds since the epoch),
+          as `pr-loop stop` writes one once the session has exited, then
+          notifies the operator, through Emacs's `wgn/notify` or else, on
+          macOS, Notification Center, naming the report if there is one,
+          and prints the same on stderr after `LAUNCHER: the loop session
+          exited`, the line `pr-loop watch --events handback` waits for. A
+          sandboxed session may reach neither notifier.
+        '';
+
+        default = ''
+          pr_loop_run() {
+            local launcher=$1 started child status=0
+            shift
+            started=$(date +%s)
+            # Without job control a command run with & would read /dev/null.
+            "$@" <&0 &
+            child=$!
+            trap 'kill -TERM "$child" 2>/dev/null || true' TERM INT
+            trap 'kill -HUP "$child" 2>/dev/null || true' HUP
+            # wait returns early when a trapped signal arrives; the last
+            # wait, once the command has gone, gives its status.
+            while :; do
+              wait "$child" && status=0 || status=$?
+              kill -0 "$child" 2>/dev/null || break
+            done
+            trap - TERM INT HUP
+            if [[ -z "''${review:-}" ]]; then
+              pr_loop_hand_back "$launcher" "$status" "$started"
+            fi
+            exit "$status"
+          }
+
+          pr_loop_hand_back() {
+            local launcher=$1 status=$2 started=$3 common report title message tries=0
+            common="$(${getExe pkgs.git} rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+            report="$common/pr-loop/report.md"
+            title="Review loop ended in $(basename "$(${getExe pkgs.git} rev-parse --show-toplevel 2>/dev/null || pwd)")"
+            fresh() {
+              [[ -n "$common" && -f "$report" ]] && (( $(${getExe' pkgs.coreutils "stat"} -c %Y "$report") >= started ))
+            }
+            while ! fresh && (( tries < 30 )); do
+              sleep 2
+              tries=$((tries + 1))
+            done
+            if fresh; then
+              message="exit $status; the report is $report"
+            else
+              message="exit $status, with no report; read the session's log"
+            fi
+            printf '%s: the loop session exited: %s\n' "$launcher" "$message" >&2
+            # Lisp strings end at a double quote and escape with a backslash.
+            if ! { command -v emacsclient >/dev/null &&
+              ${getExe' pkgs.coreutils "timeout"} 10 emacsclient -e "(wgn/notify \"''${title//[\"\\]/}\" \"''${message//[\"\\]/}\")" >/dev/null 2>&1; }; then
+              if [[ -x /usr/bin/osascript ]]; then
+                /usr/bin/osascript -e 'on run argv' -e 'display notification (item 2 of argv) with title (item 1 of argv)' \
+                  -e 'end run' "$title" "$message" >/dev/null 2>&1 || true
+              fi
+            fi
+          }
+        '';
       };
 
       client = mkOption {

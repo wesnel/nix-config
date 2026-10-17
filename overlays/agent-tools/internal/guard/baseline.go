@@ -392,6 +392,10 @@ const (
 	// the background and tells the session when it ends.
 	sleepingClaude = "A sleep of 30 seconds or more in the foreground holds the session while nothing happens. " +
 		"Run the wait with `run_in_background` and a command that exits when the condition holds, such as `until CHECK; do sleep 5; done`, or watch for it with Monitor."
+	// sleepingLoop is sleeping in any harness's loop session, which waits
+	// as the review-loop skill's Waiting says.
+	sleepingLoop = "A sleep holds the loop session while nothing happens. Wait as the review-loop skill's Waiting says: " +
+		"`pr-loop wait ci` or `pr-loop wait reviews` in the foreground, the same command again when it exits 3."
 )
 
 // longSleep reports whether a call is a sleep of 30 seconds or more, by

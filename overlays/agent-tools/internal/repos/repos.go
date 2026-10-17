@@ -29,6 +29,9 @@ type Settings struct {
 	Test string `json:"test,omitempty"`
 	// Build builds the tests without running them.
 	Build string `json:"build,omitempty"`
+	// Generated are git pathspec globs for ignored files a build needs that
+	// a fresh checkout lacks, such as generated code.
+	Generated []string `json:"generated,omitempty"`
 	// TestFiles are git pathspec globs (`:(glob)` magic) for test files.
 	TestFiles []string `json:"testFiles,omitempty"`
 }
