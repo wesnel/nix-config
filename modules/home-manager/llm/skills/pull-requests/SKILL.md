@@ -26,13 +26,18 @@ description: How to open, describe and answer a pull request. Use before `pr-loo
   one-way door: a migration, a stored format, a published interface), and
   what it could break if it is wrong.
 - Write it as the `docs-and-comments` skill's "Write plainly" says.
+- Write for a reader who has never seen the tools that made the change:
+  link a review thread by its URL, a commit by its short SHA and a ticket by
+  its key, and keep plan IDs, loop terms, local paths and session IDs to
+  yourself. `pr-loop`, the guard and the signing pass refuse text naming
+  them, commit messages included.
 
 ## Review threads
 
 Answer review comments in their threads, never as new top-level comments.
 On the operator's own pull requests, `pr-loop threads`, `reply` and `resolve`
 do this for review bots' threads. The `review-change` skill says how to
-settle each one.
+settle each one. A reply is written for the same reader as the description.
 
 ## People
 
