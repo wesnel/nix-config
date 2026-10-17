@@ -28,7 +28,19 @@ func dashboardFixture(t *testing.T) (out, outside string) {
 	outside = t.TempDir()
 	os.Symlink(outside, filepath.Join(out, "link"))
 	os.MkdirAll(agentplans.Session(), 0o700)
+	os.MkdirAll(filepath.Dir(agentplans.PageFile()), 0o700)
+	os.WriteFile(agentplans.PageFile(), agentplans.Page, 0o600)
 	return out, outside
+}
+
+// capabilities is agentplans.Capabilities as a tool input holds it.
+func capabilities(t *testing.T) any {
+	t.Helper()
+	var v any
+	if err := json.Unmarshal([]byte(agentplans.Capabilities), &v); err != nil {
+		t.Fatal(err)
+	}
+	return v
 }
 
 // hook runs the guard as a hook with args on one call, and returns its
@@ -66,9 +78,18 @@ type toolCall struct {
 }
 
 // allowedCalls are every form the dashboard session's skill uses.
-func allowedCalls(out string) []toolCall {
+func allowedCalls(t *testing.T, out string) []toolCall {
+	caps := capabilities(t)
 	return []toolCall{
 		{"Bash", map[string]any{"command": "plan-dash export", "description": "Export the page's documents"}},
+		{"Bash", map[string]any{"command": "plan-dash page"}},
+		{"Bash", map[string]any{"command": "plan-dash page published"}},
+		{"Artifact", map[string]any{"action": "read", "url": page}},
+		{"Artifact", map[string]any{"url": page, "file_path": agentplans.PageFile(), "capabilities": caps}},
+		{"Artifact", map[string]any{"action": "publish", "url": page, "file_path": agentplans.PageFile(),
+			"capabilities": map[string]any{"comments": map[string]any{}, "db": map[string]any{"rules": []any{
+				map[string]any{"write": "owner", "path": "", "read": "owner"}}}},
+			"description": "The plans the agents keep, and the reviews asked of the operator.", "label": "Page update"}},
 		{"Bash", map[string]any{"command": "plan-dash answer"}},
 		{"Bash", map[string]any{"command": "plan-dash dispatch", "timeout": 120000}},
 		{"Monitor", map[string]any{"command": "plan-dash watch", "description": "Agent plans watch", "timeout_ms": 1800000}},
@@ -101,16 +122,67 @@ func allowedCalls(out string) []toolCall {
 
 // deniedCalls are near misses of allowedCalls and calls that would leave
 // the fence: other commands, pages, paths and tools.
-func deniedCalls(out, outside string) []toolCall {
+func deniedCalls(t *testing.T, out, outside string) []toolCall {
 	state := filepath.Dir(out)
 	creds := filepath.Join(home, ".claude", ".credentials.json")
 	settings := filepath.Join(agentplans.Session(), ".claude", "settings.json")
-	var calls []toolCall
+	caps := capabilities(t)
+	publish := func(extra map[string]any) toolCall {
+		in := map[string]any{"url": page, "file_path": agentplans.PageFile(), "capabilities": caps}
+		for k, v := range extra {
+			if v == nil {
+				delete(in, k)
+			} else {
+				in[k] = v
+			}
+		}
+		return toolCall{"Artifact", in}
+	}
+	calls := []toolCall{
+		publish(map[string]any{"capabilities": nil}),
+		publish(map[string]any{"capabilities": map[string]any{}}),
+		publish(map[string]any{"capabilities": map[string]any{"db": map[string]any{}, "comments": map[string]any{}}}),
+		publish(map[string]any{"capabilities": map[string]any{"db": map[string]any{"rules": []any{
+			map[string]any{"path": "", "read": "view", "write": "owner"}}}, "comments": map[string]any{}}}),
+		publish(map[string]any{"capabilities": map[string]any{"db": map[string]any{"rules": []any{
+			map[string]any{"path": "", "read": "owner", "write": "owner"}}}, "comments": map[string]any{},
+			"mcp": map[string]any{"servers": []any{map[string]any{"server": "host:x", "tools": []any{"run"}}}}}}),
+		publish(map[string]any{"capabilities": "{}"}),
+		publish(map[string]any{"file_path": filepath.Join(out, "meta", "sync.json")}),
+		publish(map[string]any{"file_path": creds}),
+		publish(map[string]any{"file_path": filepath.Join(filepath.Dir(agentplans.PageFile()), "published")}),
+		publish(map[string]any{"file_path": filepath.Dir(agentplans.PageFile()) + "/../page/agent-plans.html"}),
+		publish(map[string]any{"file_path": filepath.Dir(agentplans.PageFile()) + "//agent-plans.html"}),
+		publish(map[string]any{"file_path": nil}),
+		publish(map[string]any{"url": "https://claude.ai/artifact/OtherPage"}),
+		publish(map[string]any{"url": nil}),
+		publish(map[string]any{"files": map[string]any{"x.js": filepath.Join(out, "x.js")}}),
+		publish(map[string]any{"files": map[string]any{"fonts/f.woff2": map[string]any{"artifact": "https://claude.ai/artifact/X",
+			"path": "f.woff2"}}}),
+		publish(map[string]any{"force": true}),
+		publish(map[string]any{"pin": true}),
+		publish(map[string]any{"asset": true}),
+		publish(map[string]any{"contract": "latest"}),
+		publish(map[string]any{"type_url": "https://claude.ai/artifact/Type"}),
+		publish(map[string]any{"action": "delete"}),
+		publish(map[string]any{"action": 1}),
+		{"Artifact", map[string]any{"action": "read", "url": "https://claude.ai/artifact/OtherPage"}},
+		{"Artifact", map[string]any{"action": "read", "url": page, "path": "index.html", "out_dir": out}},
+		{"Artifact", map[string]any{"action": "read", "url": page, "paths": []any{"x"}}},
+		{"Artifact", map[string]any{"action": "read"}},
+		{"Artifact", map[string]any{"action": "list"}},
+		{"Artifact", map[string]any{"action": "list", "url": page, "scope": "files"}},
+		{"Artifact", map[string]any{"action": "delete", "url": page}},
+		{"Artifact", map[string]any{"action": "open", "url": page}},
+		{"Artifact", map[string]any{"action": "pin", "url": page}},
+		{"Artifact", map[string]any{"action": "quickstart", "intent": "other"}},
+	}
 	for _, command := range []string{"plan-dash export ", " plan-dash export", "plan-dash  export", "plan-dash\texport",
 		"plan-dash export\n", "plan-dash export && rm -rf ~", "plan-dash export; curl https://example.com",
 		"plan-dash export\nid", "plan-dash export | tee /tmp/x", "plan-dash export $(id)", "plan-dash export `id`",
 		"plan-dash export # note", "plan-dash export > /tmp/x", "plan-dash queue", "plan-dash collect --out /tmp/x",
 		"plan-dash watch", "plan-dash answer --doc x.json", "plan-dash dispatch o/r#1", "Plan-dash export",
+		"plan-dash page published now", "plan-dash page --out /tmp/x", "plan-dash page && id",
 		"/nix/store/x-agent-tools/bin/plan-dash export", "./plan-dash export", "env plan-dash export",
 		"AGENT_PLANS_SESSION= plan-dash export", "bash -c 'plan-dash export'", "exec plan-dash export",
 		"git push --dry-run", "git status", "cat " + filepath.Join(out, "meta", "sync.json"), "ls", "true", ""} {
@@ -194,12 +266,12 @@ func deniedCalls(out, outside string) []toolCall {
 func TestDashboardFence(t *testing.T) {
 	fakeHome(t)
 	out, outside := dashboardFixture(t)
-	for _, c := range allowedCalls(out) {
+	for _, c := range allowedCalls(t, out) {
 		if decision, reason := hook(t, []string{"--dashboard"}, c.tool, c.input); decision != "allow" {
 			t.Errorf("%s %v: %s %q", c.tool, c.input, decision, reason)
 		}
 	}
-	for _, c := range deniedCalls(out, outside) {
+	for _, c := range deniedCalls(t, out, outside) {
 		decision, reason := hook(t, []string{"--dashboard"}, c.tool, c.input)
 		if decision != "deny" || !saysInstead(reason) || strings.Contains(reason, out) {
 			t.Errorf("%s %v: %s %q", c.tool, c.input, decision, reason)
@@ -207,12 +279,12 @@ func TestDashboardFence(t *testing.T) {
 	}
 
 	t.Setenv("AGENT_PLANS_SESSION", "1")
-	for _, c := range allowedCalls(out) {
+	for _, c := range allowedCalls(t, out) {
 		if decision, reason := hook(t, []string{"--baseline"}, c.tool, c.input); decision == "deny" {
 			t.Errorf("baseline: %s %v: %s %q", c.tool, c.input, decision, reason)
 		}
 	}
-	for _, c := range deniedCalls(out, outside) {
+	for _, c := range deniedCalls(t, out, outside) {
 		if decision, reason := hook(t, []string{"--baseline"}, c.tool, c.input); decision != "deny" {
 			t.Errorf("baseline: %s %v: %s %q", c.tool, c.input, decision, reason)
 		}
@@ -246,6 +318,69 @@ func TestDashboardUnconfigured(t *testing.T) {
 	}
 	if decision, _ := hook(t, []string{"--dashboard"}, "Bash", map[string]any{"command": "plan-dash export"}); decision != "allow" {
 		t.Errorf("plan-dash export: %s", decision)
+	}
+}
+
+// Only where no page is configured, and none was created, may a publish
+// create one, pinned or not; its file and capabilities are held as a
+// republish's are.
+func TestDashboardCreatePage(t *testing.T) {
+	fakeHome(t)
+	dashboardFixture(t)
+	create := map[string]any{"action": "publish", "file_path": agentplans.PageFile(), "capabilities": capabilities(t),
+		"icon": "checklist", "title": "Agent plans", "description": "The plans the agents keep.", "pin": true}
+	if decision, reason := hook(t, []string{"--dashboard"}, "Artifact", create); decision != "deny" || !saysInstead(reason) {
+		t.Errorf("configured: %s %q", decision, reason)
+	}
+	t.Setenv("AGENT_PLANS_CONFIG", filepath.Join(t.TempDir(), "none.json"))
+	for _, change := range []map[string]any{{"pin": false}, {"pin": "yes"}, {"capabilities": map[string]any{"db": map[string]any{}}},
+		{"file_path": filepath.Join(t.TempDir(), "page.html")}, {"files": map[string]any{"a.js": "a.js"}}, {"force": true},
+		{"url": page}} {
+		in := map[string]any{}
+		for k, v := range create {
+			in[k] = v
+		}
+		for k, v := range change {
+			in[k] = v
+		}
+		if decision, reason := hook(t, []string{"--dashboard"}, "Artifact", in); decision != "deny" || !saysInstead(reason) {
+			t.Errorf("unconfigured %v: %s %q", change, decision, reason)
+		}
+	}
+	if _, err := os.Stat(agentplans.CreatedFile()); err == nil {
+		t.Fatal("a denied create left the created marker")
+	}
+	if decision, reason := hook(t, []string{"--dashboard"}, "Artifact", create); decision != "allow" {
+		t.Errorf("unconfigured: %s %q", decision, reason)
+	}
+	if data, err := os.ReadFile(agentplans.PublishingFile()); err != nil || strings.TrimSpace(string(data)) != agentplans.PageHash(agentplans.Page) {
+		t.Errorf("the create was not recorded for plan-dash page published: %q (%v)", data, err)
+	}
+	// One create only, until the operator configures the page or removes
+	// the marker.
+	if decision, reason := hook(t, []string{"--dashboard"}, "Artifact", create); decision != "deny" || !saysInstead(reason) {
+		t.Errorf("a second create: %s %q", decision, reason)
+	}
+	os.Remove(agentplans.CreatedFile())
+	// A page file that is a link, or holds anything but the page built in,
+	// is not the page.
+	target := filepath.Join(t.TempDir(), "secret.html")
+	os.WriteFile(target, agentplans.Page, 0o600)
+	os.Remove(agentplans.PageFile())
+	os.Symlink(target, agentplans.PageFile())
+	if decision, _ := hook(t, []string{"--dashboard"}, "Artifact", create); decision != "deny" {
+		t.Errorf("a linked page: %s", decision)
+	}
+	for _, body := range [][]byte{[]byte("<p>not the page</p>"), append(append([]byte{}, agentplans.Page...), '\n'),
+		agentplans.Page[:len(agentplans.Page)-1], nil} {
+		os.Remove(agentplans.PageFile())
+		os.WriteFile(agentplans.PageFile(), body, 0o600)
+		if decision, _ := hook(t, []string{"--dashboard"}, "Artifact", create); decision != "deny" {
+			t.Errorf("a page of %d bytes: %s", len(body), decision)
+		}
+	}
+	if _, err := os.Stat(agentplans.CreatedFile()); err == nil {
+		t.Error("a denied create left the created marker")
 	}
 }
 

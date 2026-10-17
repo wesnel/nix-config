@@ -329,6 +329,7 @@ plan-dash watch                          # prints a line when the session has wo
 plan-dash answer                         # records the answers the page gave
 plan-dash dispatch                       # queues the reviews the page asked for
 plan-dash queue                          # runs them, as agent-plans-queue.service does
+plan-dash page                           # writes the page for the session to publish
 ```
 
 `status.org` lists your open pull requests (draft, CI, review decision,
@@ -483,7 +484,7 @@ reads of credentials, every agent's config and login, the session's own,
 `/run/user` and the notes deploy key, which Read rules hold @-mentions
 to. They hold the fence's hook with `onFailure: block` (Claude Code
 2.1.295 or later), so a hook that cannot run denies; an allow list of
-only the forms its rules state exactly (the three plan-dash commands and
+only the forms its rules state exactly (the plan-dash commands and
 ToolSearch), the hook allowing the rest by their arguments; and a
 SessionStart hook, `plan-dash prime`, that names the page and the
 `agent-plans` skill after every start, `/clear` and `/compact`. The
@@ -509,14 +510,57 @@ agent-plans.service agent-plans.slice`.
 Its page is named in `agent-tools/agent-plans.json` under the XDG config
 directory, `{"url": "https://claude.ai/artifact/ID"}`, which the operator
 writes once on the host; the URL stays out of this repository, and
-without it the session reaches no page.
+without it the session reaches no page but the one it may create. Started
+without it, the session publishes the page, pinned, and gives the
+operator its URL to write there before restarting the service. It creates
+a page once only: the guard leaves `page/created` under
+`$XDG_STATE_HOME/agent-plans` when it lets the create through, and
+refuses another while that is there; where that create failed, remove it.
+
+The page is `overlays/agent-tools/internal/agentplans/page.html`, built
+into agent-tools. `plan-dash page` writes it to
+`$XDG_STATE_HOME/agent-plans/page/agent-plans.html` and says whether it
+differs from the one last published, which `plan-dash page published`
+records, only after the guard has let a publish of that page through; the
+session republishes it when it starts after a switch that changed it. Every publish declares the capabilities `plan-dash page`
+prints, from `internal/agentplans`: the page's database, read and written
+by its owner alone, and comments. The page reads the documents `export`
+writes and the `answers` and `dispatch` documents, and writes only those
+two: an answer to an open question of a plan of the session's host (a
+plan of another host says to answer there), as an option's key or
+`other` with one line, and a review request for a listed pull request
+after one inline confirm, with triage on unless unticked, or "run anyway"
+for one the quota postponed. Each write is followed by a comment sent to
+Claude, `wake`, which the session takes as its Refresh, as is the Refresh
+button; where the wake cannot be sent, the page says the change is saved
+and to press Refresh, since without `poll` nothing else picks it up
+until the plans change. Each wake is a comment thread the session
+resolves; the session cannot delete one, so they gather, resolved, toward
+the artifact's thread limit. A question or review request that changed while the operator was
+answering it says so and waits for a second press. It shows how fresh its
+data is (live; partial, where GitHub could not be read or a plan
+couldn't be exported; paused, where no session takes its wakes), when the
+devbox last pushed and fetched the plans, the review requests by state
+(ready, CI failing, draft, queued or reviewed), oldest first with three
+days or more marked, stacked pull requests under the one they build on,
+the latest digests, and each plan at `#<plan ID>`. Every status mark has
+a word as well as a colour, and all text from the documents is set as
+text, never parsed as markup, and looked up in the page's tables by own
+key only, so a STATUS such as `constructor` falls back to its own label;
+its page test holds it to that, to the capabilities, to the collections
+it reads and writes and to the fields of each document. It uses Mantle's
+colours in the system face and loads no file.
 
 `pr-loop guard --dashboard` fences the session: its hook runs on every
 tool, and the baseline hook applies the same fence wherever
 `AGENT_PLANS_SESSION` is set. It allows only the agent-plans skill's own
-calls: Bash running exactly `plan-dash export`, `plan-dash answer` or
-`plan-dash dispatch`; Monitor running exactly `plan-dash watch`, never a
-WebSocket; ArtifactData on the configured page alone, with every
+calls: Bash running exactly `plan-dash export`, `plan-dash answer`,
+`plan-dash dispatch`, `plan-dash page` or `plan-dash page published`;
+Artifact `read` of the configured page and `publish` to it of the page
+file alone, while it holds exactly the page built in, with exactly the
+page's capabilities, or, with no page configured and none created, the
+one publish that creates it; Monitor running exactly `plan-dash watch`,
+never a WebSocket; ArtifactData on the configured page alone, with every
 `file_path` (each batch entry's too) and `out_dir` in
 `$XDG_STATE_HOME/agent-plans/out` once links are resolved; ArtifactComments
 `watch` on that page, without `replies`, and `resolve` by thread ID;

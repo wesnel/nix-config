@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/agentplans"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
@@ -255,6 +256,49 @@ func TestPrime(t *testing.T) {
 	}
 }
 
+// page writes the page and prints the capabilities to publish it with,
+// and says it needs publishing until published records it.
+func TestPage(t *testing.T) {
+	state := setUp(t)
+	file := filepath.Join(state, "agent-plans", "page", "agent-plans.html")
+	var got struct {
+		File         string          `json:"file"`
+		Changed      bool            `json:"changed"`
+		Capabilities json.RawMessage `json:"capabilities"`
+	}
+	runPage := func(args ...string) {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		if code := run(args, &stdout, &stderr); code != 0 {
+			t.Fatalf("%q: exit %d: %s", args, code, stderr.String())
+		}
+		got.Changed = false
+		if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+			t.Fatalf("%q: %s: %v", args, stdout.String(), err)
+		}
+	}
+	runPage("page")
+	var caps bytes.Buffer
+	json.Compact(&caps, got.Capabilities)
+	if got.File != file || !got.Changed || caps.String() != agentplans.Capabilities {
+		t.Errorf("first: %+v, capabilities %s", got, caps.String())
+	}
+	if data, err := os.ReadFile(file); err != nil || !bytes.Equal(data, agentplans.Page) {
+		t.Errorf("the page: %v", err)
+	}
+	// Recorded only after the guard let a publish of it through.
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"page", "published"}, &stdout, &stderr); code == 0 {
+		t.Error("recorded as published with no publish let through")
+	}
+	os.WriteFile(agentplans.PublishingFile(), []byte(agentplans.PageHash(agentplans.Page)+"\n"), 0o600)
+	runPage("page", "published")
+	runPage("page")
+	if got.Changed {
+		t.Error("published, the page still needs publishing")
+	}
+}
+
 // queue stops at the kill switch, and is refused to the dashboard session.
 func TestQueue(t *testing.T) {
 	state := setUp(t)
@@ -276,7 +320,8 @@ func TestQueue(t *testing.T) {
 func TestUsage(t *testing.T) {
 	for _, args := range [][]string{{}, {"serve"}, {"collect", "--bogus"}, {"export", "now"}, {"export", "--out", "x"},
 		{"dispatch", "o/s#9"}, {"dispatch", "--out", "x"}, {"queue", "run"}, {"answer", "2026-10-17-loop.box"},
-		{"answer", "--doc", "x.json"}, {"watch", "--poll"}, {"watch", "ws://x"}, {"prime", "--url", "x"}} {
+		{"answer", "--doc", "x.json"}, {"watch", "--poll"}, {"watch", "ws://x"}, {"prime", "--url", "x"}, {"page", "now"}, {"page", "published", "x"},
+		{"page", "--out", "x"}} {
 		var stdout, stderr bytes.Buffer
 		if code := run(args, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "collect") {
 			t.Errorf("%q: exit %d: %s", args, code, stderr.String())

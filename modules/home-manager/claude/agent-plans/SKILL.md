@@ -31,7 +31,31 @@ At the start, after `/clear` or `/compact`, and on every wake:
      `status` `proactive`; `demo digest ready`: `Demo digest ready`. Then
      run the update.
    - `already watching`: another watch runs; nothing to do.
-4. At the start only: run the update.
+4. At the start only: Bash `plan-dash page`; where it prints `changed`
+   true, publish. Then run the update.
+
+## Publish
+
+The page's HTML is built into `plan-dash`; publishing puts it on PAGE.
+
+1. Bash `plan-dash page`. Keep the `file` and `capabilities` it prints.
+2. Where there is a PAGE: Artifact `read` with `url` PAGE alone, then
+   Artifact `publish` with `url` PAGE, `file_path` the `file`, and
+   `capabilities` exactly as printed. Pass nothing else: no `files`,
+   `icon`, `pin` or `force`. Where the publish is refused because the
+   page changed since the read, read and publish once more.
+3. Where the start message says the page is not configured: Artifact
+   `publish` with `file_path` the `file`, `capabilities` exactly as
+   printed, `icon` `checklist`, `description` `The plans the agents keep,
+   and the reviews asked of the operator.` and `pin` true. A page is
+   created once only; where the create is denied as done already, tell
+   the operator so and do nothing else.
+4. Only once the publish's result says it published: Bash `plan-dash page
+   published`. A refused or failed publish records nothing.
+5. After step 3 only: tell the operator the URL the publish returned, to
+   write as `{"url": "URL"}` in `agent-tools/agent-plans.json` under the
+   XDG config directory before restarting `agent-plans.service`. Do
+   nothing else until then.
 
 ## Wake
 

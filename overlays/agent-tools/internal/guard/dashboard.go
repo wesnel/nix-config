@@ -1,15 +1,18 @@
 package guard
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/wesnel/agent-tools/internal/agentplans"
 )
@@ -23,6 +26,10 @@ const (
 		"Use that page's URL and the out directory as the `agent-plans` skill does, or tell the operator if the page's URL is not configured."
 	dashboardNotice = "The dashboard session sends only the fixed notices the agent-plans skill names. " +
 		"Send `devbox plan sync stalled`, `Standup digest ready` or `Demo digest ready` as the skill says, or nothing."
+	dashboardPublish = "The dashboard session publishes only its own page, from the file `plan-dash page` writes, unchanged, with exactly the capabilities it prints. " +
+		"Run `plan-dash page` and follow the `agent-plans` skill's Publish section, or tell the operator."
+	dashboardCreated = "The dashboard session has already created its page once, and creates no other. " +
+		"Tell the operator to write that page's URL into the session's config, or, where that create failed, to remove the created marker beside the page file."
 )
 
 const (
@@ -57,7 +64,8 @@ func checkSessionMark(c call) string {
 }
 
 // dashboardCommands are the commands the session runs with Bash, exactly.
-var dashboardCommands = []string{"plan-dash export", "plan-dash answer", "plan-dash dispatch"}
+var dashboardCommands = []string{"plan-dash export", "plan-dash answer", "plan-dash dispatch", "plan-dash page",
+	"plan-dash page published"}
 
 // dashboardNotices are the notices it sends with PushNotification.
 var dashboardNotices = []string{"devbox plan sync stalled", "Standup digest ready", "Demo digest ready"}
@@ -66,10 +74,11 @@ var dashboardNotices = []string{"devbox plan sync stalled", "Standup digest read
 var threadID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,100}$`)
 
 // checkDashboard is why the dashboard session may not make a call, or ""
-// for one of the agent-plans skill's own: plan-dash's export, answer and
-// dispatch, watch under Monitor, the page's database and comments through
-// files in the out directory alone, foreground sub-agents without
-// isolation, the agent-plans skill, ToolSearch and fixed notices. Every
+// for one of the agent-plans skill's own: plan-dash's export, answer,
+// dispatch and page, watch under Monitor, the page's database and comments
+// through files in the out directory alone, the page's own HTML published
+// to it, foreground sub-agents without isolation, the agent-plans skill,
+// ToolSearch and fixed notices. Every
 // other tool, Read included, and every other argument to these, is denied:
 // nothing the page or the host holds is read into the conversation, which
 // is on claude.ai too. What may be uploaded from the out directory the
@@ -105,6 +114,8 @@ func checkDashboard(tool string, toolInput json.RawMessage) string {
 		}
 	case "ArtifactData":
 		return checkArtifactData(in)
+	case "Artifact":
+		return checkArtifact(in)
 	case "ArtifactComments":
 		url, ok := str("url")
 		if !ok || !isPage(url) {
@@ -170,6 +181,116 @@ func checkArtifactData(in map[string]json.RawMessage) string {
 		return dashboardPage
 	}
 	return ""
+}
+
+// checkArtifact allows the page to be read, which the Artifact tool asks
+// before a session's first publish to it, and published from
+// agentplans.PageFile, while it holds the page built in, with
+// agentplans.Capabilities; where no page is configured and none was
+// created, the one publish that creates it, which may pin it. Any other
+// argument, such as files, an asset or force, is denied. A publish it
+// allows is recorded for plan-dash page published.
+func checkArtifact(in map[string]json.RawMessage) string {
+	only := func(keys ...string) bool {
+		for k := range in {
+			if !slices.Contains(keys, k) {
+				return false
+			}
+		}
+		return true
+	}
+	var action, url, file string
+	for name, v := range map[string]*string{"action": &action, "url": &url, "file_path": &file} {
+		if raw, ok := in[name]; ok && json.Unmarshal(raw, v) != nil {
+			return dashboardPage
+		}
+	}
+	_, hasURL := in["url"]
+	switch action {
+	case "read":
+		if hasURL && isPage(url) && only("action", "url", "prompt") {
+			return ""
+		}
+		return dashboardPage
+	case "", "publish":
+	default:
+		return dashboardPage
+	}
+	if file != agentplans.PageFile() || !builtPage(file) || !sameJSON(in["capabilities"], agentplans.Capabilities) {
+		return dashboardPublish
+	}
+	if hasURL {
+		if isPage(url) && only("action", "url", "file_path", "capabilities", "description", "label") {
+			return recordPublish()
+		}
+		return dashboardPage
+	}
+	if _, err := agentplans.URL(); err == nil {
+		return dashboardPage
+	}
+	if raw, ok := in["pin"]; ok && string(raw) != "true" {
+		return dashboardPublish
+	}
+	if !only("action", "file_path", "capabilities", "description", "label", "icon", "title", "pin") {
+		return dashboardPublish
+	}
+	// One create only: the marker is taken before the call runs, so a
+	// create that then fails leaves it, for the operator to remove.
+	if err := os.MkdirAll(filepath.Dir(agentplans.CreatedFile()), 0o700); err != nil {
+		return dashboardCreated
+	}
+	f, err := os.OpenFile(agentplans.CreatedFile(), os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return dashboardCreated
+	}
+	f.Close()
+	return recordPublish()
+}
+
+// recordPublish records the page as the one let through to publish, which
+// plan-dash page published then records as published; a record it cannot
+// write denies the call.
+func recordPublish() string {
+	file := agentplans.PublishingFile()
+	tmp := file + ".new"
+	os.Remove(tmp)
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return dashboardPublish
+	}
+	_, err = f.WriteString(agentplans.PageHash(agentplans.Page) + "\n")
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil || os.Rename(tmp, file) != nil {
+		os.Remove(tmp)
+		return dashboardPublish
+	}
+	return ""
+}
+
+// builtPage reports whether file holds the page built into agent-tools: a
+// regular file, not a link, in a directory that is not a link.
+func builtPage(file string) bool {
+	if dir, err := os.Lstat(filepath.Dir(file)); err != nil || !dir.IsDir() {
+		return false
+	}
+	f, err := os.OpenFile(file, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	data, err := io.ReadAll(io.LimitReader(f, int64(len(agentplans.Page))+1))
+	return err == nil && bytes.Equal(data, agentplans.Page)
+}
+
+// sameJSON reports whether raw and want hold the same JSON value.
+func sameJSON(raw json.RawMessage, want string) bool {
+	var a, b any
+	return raw != nil && json.Unmarshal(raw, &a) == nil && json.Unmarshal([]byte(want), &b) == nil && reflect.DeepEqual(a, b)
 }
 
 // isPage reports whether url is the page the operator's config names; with
