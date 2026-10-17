@@ -235,7 +235,10 @@ Stop and hand back when any of these holds:
 ## Hand-back
 
 1. Once owners report clean trees, `pr-loop worktrees --remove`, and check
-   the top branch out in the main worktree.
+   the top branch out in the main worktree. It keeps, and names, any
+   worktree whose removal would lose work (uncommitted changes, a rebase or
+   the like in progress, a HEAD off its branch): settle each with its owner,
+   or put it in the report.
 2. Write `$(git rev-parse --git-common-dir)/pr-loop/report.md` and show it.
    For each PR, include:
    - each bot's verdict
