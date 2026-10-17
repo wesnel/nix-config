@@ -126,7 +126,10 @@ has changed.
    them: `pr-loop reply` refuses.
 5. **Fix.** Owners fix and commit in their own worktrees, one fixup per
    review item or CI failure, run the relevant tests and linters, and report
-   each fixup and a draft reply per thread.
+   each fixup and a draft reply per thread. A reply is read by people who
+   have never seen the loop: it links other threads by URL and commits by
+   short SHA, as the `pull-requests` skill says, and `pr-loop reply` refuses
+   one naming a thread's ID or key, a plan ID or the loop's own terms.
 6. **Review**, once per round: for each PR with new fixups, one round of the
    `review-change` skill's fresh review loop. The range runs from the
    branch's tip at round start to the branch, in the PR's worktree; the goal
