@@ -325,6 +325,8 @@ trash "$d"
 ``` sh
 plan-dash collect                        # writes $XDG_STATE_HOME/plan-dash/status.org
 plan-dash export                         # writes $XDG_STATE_HOME/agent-plans/out/
+plan-dash dispatch                       # queues the reviews the page asked for
+plan-dash queue                          # runs them, as agent-plans-queue.service does
 ```
 
 `status.org` lists your open pull requests (draft, CI, review decision,
@@ -358,6 +360,57 @@ document stays under 600 KiB. Redaction knows shapes, not data, so
 customer data stays out of plans. A plan that cannot be read is named and
 its document kept, and the command exits 1; only a plan gone from the
 directory, or halted, loses its document.
+
+`plan-dash dispatch` takes the reviews the page asked for into the review
+queue, `$XDG_STATE_HOME/agent-plans/queue.org`. It reads the page's
+`dispatch/OWNER~NAME~N` documents, which the dashboard session copies
+under `out/` (an `ArtifactData` read names the file `OWNER@NAME@N.json`,
+and dispatch writes back under that name), and queues one whose `state` is `requested` only when the
+last export listed that review request; the head queued is the one the
+export listed, never one from the page. Of a document it reads `state`,
+`triage`, `anyway` and `at` alone, from a regular file of at most 16 KiB,
+in a directory it opens once and never follows through a link; a file
+that names no such document is removed, and a request not listed, or not
+readable, gets a `refused` document back. The page keeps a request's
+document until the session writes the entry's state over it, so a finished
+review is queued again only for a request whose `at` is later than its
+last queueing, and "run anyway" lifts only an entry the quota gate
+postponed, for its next run, when its `at` is later than the
+postponement; no document carries `anyway` back. Each queued review's state is
+written back in its document, with whether the page now lists another
+head ("stale"). `queue.org` holds keys, states, heads, flags, times and
+exit statuses, rewritten whole under `queue.lock`; a queue with a line
+that does not parse is neither acted on nor rewritten. Nothing a document
+holds reaches a command line.
+
+`plan-dash queue` works through the queue one review at a time, since each
+starts a VM; a second run returns at once. Before each entry it checks
+the entry against the last export's listing again, and one not listed at
+its head is stale and not run. Then the quota gate: a reading under 24
+hours old with a window at or past 90%, of Codex, or of Claude where
+triage is on, postpones the entry until that window resets, unless the
+page asked to run it anyway, which passes the gate for that run alone.
+Codex's own reviews record no reading (`codex exec --json` reports
+tokens, not rate limits, and `--ephemeral` leaves no rollout), so Codex's
+gate holds only while an interactive Codex session on the devbox has
+recorded one. Then `pr-loop review --head HEAD OWNER/NAME#N` runs in a
+transient `systemd-run` unit in `agent-plans.slice`, with a memory cap and
+a time limit, so the pull request's code runs only in the review VM, and
+only at the head the page listed: one GitHub has moved past makes the
+entry stale. Stopped, the runner stops the review's units, which
+`systemd-run` would leave running; a review it stopped is run again,
+saying so, once those units are inactive, and nothing else starts while
+one is active. With findings, or where Codex
+cannot review, and triage on, a `claude-pr-loop` print session in the
+head's review directory settles the findings, only proposing, with the
+reading tools, sub-agents and the `pr-loop review` forms it needs allowed;
+its quota reading is kept for the gate. `pr-loop review --run` is the
+operator's: the relay refuses it to the session and the guard to every
+agent, and a review the vet stopped waits for the operator with that
+command. An entry is ready, waits for the operator, failed, or stale. An
+agent cannot write `$XDG_STATE_HOME/agent-plans` or `plan-dash`: the guard
+refuses its file tools and shell writes there, and plan-dash writes them
+itself.
 
 ## pushing: private history stays private
 

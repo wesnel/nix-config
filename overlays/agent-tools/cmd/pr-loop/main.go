@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -142,7 +143,8 @@ by its exit status; a failed setup makes the command exit 1.
 
 With ` + relay.URLEnv + ` set, every command except guard, setup and
 worktrees is sent to that sandbox-relay, where sign and end are refused: run
-those outside the session. worktrees has the relay create the worktrees, and
+those outside the session. Relayed from under the review directory, only
+review is run. worktrees has the relay create the worktrees, and
 setup asks it for the command, then both run the command here, in the sandbox.
 `
 
@@ -196,6 +198,28 @@ func reviewRefusal(argv []string) string {
 // clientSide are the commands that run in this process even with a relay:
 // each does its part on the host through the relay itself.
 var clientSide = map[string]bool{"guard": true, "setup": true, "worktrees": true}
+
+// reviewDirRefusal is why a relayed caller in cwd may not run argv, or "":
+// under root, where reviews of others' pull requests are kept, only review.
+// A session there could make a repository of its own, which the relay
+// accepts inside a workspace that is no repository, and push, open or
+// comment from it with the operator's login.
+func reviewDirRefusal(argv []string, cwd, root string) string {
+	if root == "" || (len(argv) > 0 && argv[0] == "review") {
+		return ""
+	}
+	if real, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = real
+	}
+	if real, err := filepath.EvalSymlinks(root); err == nil {
+		root = real
+	}
+	if rel, err := filepath.Rel(root, cwd); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	return "a session in a review directory reviews someone else's pull request and relays only `pr-loop review`; " +
+		"put any other pr-loop command in the report for the operator"
+}
 
 // relayRefusal is why the relay's caller may not run argv, or "".
 func relayRefusal(argv []string) string {
@@ -284,7 +308,18 @@ func main() {
 	}
 	relayed := os.Getenv(relay.RelayEnv) == "1"
 	if relayed {
-		if reason := relayRefusal(args); reason != "" {
+		reason := relayRefusal(args)
+		if reason == "" {
+			// The relay runs this in the caller's directory, which it has
+			// checked lies in the caller's workspace.
+			// Without a review directory configured, no review is kept.
+			cwd, err := os.Getwd()
+			root, _ := prreview.Root()
+			if reason = reviewDirRefusal(args, cwd, root); err != nil {
+				reason = "the directory this runs in is unknown, so nothing is relayed"
+			}
+		}
+		if reason != "" {
 			fmt.Fprintf(os.Stderr, "pr-loop: refused: %s\n", reason)
 			os.Exit(2)
 		}

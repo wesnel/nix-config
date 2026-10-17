@@ -634,8 +634,12 @@ func planLog(path string) bool {
 	return err1 == nil && err2 == nil && parent == realDir
 }
 
+const dashboardWrite = "This is plan-dash's state (the review queue, the review requests the Agent plans page lists, " +
+	"the kill switch, the page's documents, status.org and the GitHub cache), which plan-dash writes itself. " +
+	"Run the plan-dash command that does what you mean, such as `plan-dash dispatch`, or ask the operator to change it."
+
 // checkPlanLogWrite denies a command that writes, moves or removes a plan's
-// log or agent-tools' state.
+// log, agent-tools' state or plan-dash's.
 func checkPlanLogWrite(name string, args, redirected []string, dir string) string {
 	for _, t := range writeTargets(name, args, redirected) {
 		if planLog(expandPath(t, dir)) {
@@ -643,6 +647,9 @@ func checkPlanLogWrite(name string, args, redirected []string, dir string) strin
 		}
 		if agentToolsState(expandPath(t, dir)) {
 			return stateWrite
+		}
+		if dashboardState(expandPath(t, dir)) {
+			return dashboardWrite
 		}
 	}
 	return ""
@@ -917,6 +924,9 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 		}
 		if agentToolsState(path) {
 			return stateWrite
+		}
+		if dashboardState(path) {
+			return dashboardWrite
 		}
 		switch {
 		case filepath.Base(path) == "config" && filepath.Base(filepath.Dir(path)) == ".git":

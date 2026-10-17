@@ -1,6 +1,7 @@
 package prreview
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -146,6 +147,25 @@ func RecordFile(root, slug string, number int, head string) (string, error) {
 		return "", fmt.Errorf("%s#%d at %q is not a pull request's head", slug, number, head)
 	}
 	return filepath.Join(root, owner, repo, strconv.Itoa(number), head[:12]+".json"), nil
+}
+
+// Fetched is the head slug's pull request number was last fetched at, and
+// that head's review directory, where a session reviewing it starts.
+func Fetched(ctx context.Context, slug string, number int) (string, string, error) {
+	owner, repo, err := checkSlug(slug)
+	if err != nil {
+		return "", "", err
+	}
+	root, err := Root()
+	if err != nil {
+		return "", "", err
+	}
+	top := filepath.Join(root, owner, repo, strconv.Itoa(number))
+	head, err := gitRun(ctx, filepath.Join(top, "clone"), "rev-parse", "--verify", "refs/pr-review/head^{commit}")
+	if err != nil || !fullHead.MatchString(head) {
+		return "", "", fmt.Errorf("%s#%d has not been fetched: %v", slug, number, err)
+	}
+	return head, filepath.Join(top, head[:12]), nil
 }
 
 var fullHead = regexp.MustCompile(`^[0-9a-f]{40}$`)

@@ -9,14 +9,19 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/export"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/plans"
+	"github.com/wesnel/agent-tools/internal/queue"
+	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/status"
+	quota "github.com/wesnel/agent-tools/internal/usage"
 )
 
 const usage = `plan-dash: the operator's status, from GitHub and the plans.
@@ -36,7 +41,43 @@ const usage = `plan-dash: the operator's status, from GitHub and the plans.
           with titles) and meta/sync.json (when this host's plans last
           reached the notes remote, whether they changed since, when the
           notes repository last fetched); the documents of plans gone or
-          halted are removed, those of plans that could not be read kept
+          halted are removed, those of plans that could not be read kept;
+          and, outside out, the review requests listed, with their heads
+  dispatch
+          queue the reviews the page asked for: reads each document
+          OWNER~NAME~N from out/dispatch/OWNER@NAME@N.json, as an
+          ArtifactData read names it (or OWNER~NAME~N.json; two files for
+          one document are refused), queues one whose state is
+          "requested" when the last export listed OWNER/NAME#N, at the head
+          it listed, with its triage (on unless false); writes each queued
+          review's state back there, and "refused" for the rest; removes
+          files that name no such document; and starts
+          agent-plans-queue.service unless $XDG_STATE_HOME/agent-plans/off
+          exists. A request asked for again while queued stays as it is; one
+          whose at (RFC 3339) is later than the entry's last change queues a
+          postponed entry past the quota gate once, with anyway, and one
+          later than its last queueing queues a finished entry again. Of a
+          document, only state, triage, anyway and at are read, and the
+          directory is opened once and never followed through a link.
+  queue   work through the queue, as agent-plans-queue.service does: one
+          review at a time, rereading the queue after each, until nothing
+          can run now or the kill switch is on; another run already at work
+          makes this one return at once. An entry the last export does not
+          list at its head is stale and not run. Each entry passes the quota
+          gate first: a reading under 24 hours old of Codex, or of Claude
+          where triage is on, at or past 90% in a window postpones it until
+          that window resets, unless it was queued anyway, which passes the
+          gate for that run alone. Then pr-loop review --head HEAD
+          OWNER/NAME#N runs in a transient unit in agent-plans.slice, and
+          a head GitHub has moved past makes the entry stale; with findings
+          (exit 3), or where Codex cannot review (exit 4), and triage on, a
+          claude-pr-loop session in the head's review directory settles the
+          findings, reviewing with a sub-agent first on 4, and its quota
+          reading is kept. Exit 5 leaves the entry to the operator, as does
+          4 with triage off. Stopped (SIGTERM), it stops the review's
+          units; an entry a stopped run left running runs again, saying so,
+          once its units are inactive, and nothing runs while one is
+          active. Refused in the dashboard session.
 
 GitHub is read with gh, at most once a minute: a fetch is cached beside FILE
 as github.json, and where one fails, the last good one is written, marked
@@ -50,7 +91,11 @@ characters, with known secret shapes redacted and text and lists capped.
 
 Prints JSON: the file or directory, when, whether GitHub's part is stale,
 and counts. Exits 1 when GitHub or a plan could not be read, after writing
-the rest.
+the rest. dispatch prints the keys it queued and queued anyway, the
+document IDs it refused, how many files it removed, whether it started
+the unit and whether the kill switch is on; queue the keys it ran and
+postponed, and whether the kill switch stopped it or another run was at
+work.
 `
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
@@ -62,6 +107,22 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if len(args) == 1 && args[0] == "export" {
 		return exportDocs(stdout, stderr)
+	}
+	if len(args) == 1 && args[0] == "dispatch" {
+		res, err := queue.Dispatch(queue.Default(), time.Now(), queue.StartUnit)
+		return cli.Report("plan-dash", res, err, 0, stdout, stderr)
+	}
+	if len(args) == 1 && args[0] == "queue" {
+		if os.Getenv("AGENT_PLANS_SESSION") != "" {
+			return cli.Report("plan-dash", nil, refusal.New("the queue runs as %s, which plan-dash dispatch starts", queue.Unit),
+				0, stdout, stderr)
+		}
+		// systemd stops the unit with SIGTERM; the runner then stops the
+		// review's own units, which systemd-run leaves running.
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+		defer stop()
+		res, err := queue.Runner{Paths: queue.Default(), Usage: quota.DefaultState(), Now: time.Now, Log: stderr}.Run(ctx)
+		return cli.Report("plan-dash", res, err, 0, stdout, stderr)
 	}
 	if len(args) == 0 || args[0] != "collect" {
 		fmt.Fprint(stderr, usage)
@@ -109,6 +170,13 @@ func exportDocs(stdout, stderr io.Writer) int {
 	now := time.Now()
 	e, err := export.Collect(context.Background(), c, filepath.Join(state, "plan-dash", "github.json"), now)
 	err = errors.Join(err, export.Write(dir, e))
+	if e.GitHub.At != "" {
+		var listed []queue.Request
+		for _, r := range e.GitHub.Requests {
+			listed = append(listed, queue.Request{Repo: r.Repo, Number: r.Number, Head: r.Head})
+		}
+		err = errors.Join(err, queue.WriteListed(queue.Default(), listed))
+	}
 	result := struct {
 		Dir            string    `json:"dir"`
 		At             time.Time `json:"at"`
