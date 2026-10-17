@@ -12,6 +12,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,10 +24,12 @@ import (
 	"github.com/wesnel/agent-tools/internal/export"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/plans"
+	"github.com/wesnel/agent-tools/internal/prreview"
 	"github.com/wesnel/agent-tools/internal/queue"
 	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/status"
 	quota "github.com/wesnel/agent-tools/internal/usage"
+	"github.com/wesnel/agent-tools/internal/usage/spend"
 )
 
 const usage = `plan-dash: the operator's status, from GitHub and the plans.
@@ -129,6 +134,37 @@ const usage = `plan-dash: the operator's status, from GitHub and the plans.
           units; an entry a stopped run left running runs again, saying so,
           once its units are inactive, and nothing runs while one is
           active. Refused in the dashboard session.
+  usage [--since PERIOD] [--by category|plan|repo|role] [--json]
+          print the tokens Claude Code's transcripts record in the last
+          PERIOD (Nd, Nw, or a duration such as 12h; default 7d), by kind
+          (input, cache write 5m and 1h, cache read, output), grouped by
+          the session's category (interactive; print, a claude -p run;
+          loop, a session a pr-loop session log names or one in a loop
+          worktree; review, one in a review directory; dashboard, one of
+          the dashboard session's config directory; or unknown), the plan
+          naming the session, its repository (github.com/OWNER/NAME of the
+          checkout holding its directory), or the role (main, or a
+          sub-agent's from the first word of its description: build, fix,
+          review, design, research, vcs or unclassified). Each group shows
+          its share, its change from the period before, and the share of
+          its cache writes made more than 5 minutes after the agent's
+          previous request; then the 10 sessions with most tokens, and
+          this host's last quota readings. Reads $CLAUDE_CONFIG_DIR
+          (default ~/.claude) and $XDG_STATE_HOME/agent-plans/claude, and
+          of a transcript only its records' usage, IDs, times, stop
+          reasons, directories and entrypoints: it prints numbers and
+          labels alone. A response is counted once, however many records
+          and resumed sessions repeat it; a sub-agent's request recorded
+          only as streaming partials counts at its largest, its output
+          marked as a lower bound (≥). --json prints the report as JSON.
+          Session totals come next, by the same groups but not by role:
+          each session's last cost-state, its sub-agents and every model
+          included, counted in the period kind by kind by the share of
+          the records before it made there, beside how much of each kind
+          those records cover. A session still running has records after
+          its last cost-state, which count on top of it, or none yet, and
+          its records stand in, as they do for one whose cost-state holds
+          less than they do (short). Then the totals by model.
 
 GitHub is read with gh, at most once a minute: a fetch is cached beside FILE
 as github.json, and where one fails, the last good one is written, marked
@@ -197,6 +233,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		res, err := queue.Runner{Paths: queue.Default(), Usage: quota.DefaultState(), Now: time.Now, Log: stderr}.Run(ctx)
 		return cli.Report("plan-dash", res, err, 0, stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "usage" {
+		return tokenUsage(args[1:], stdout, stderr)
+	}
 	if len(args) == 0 || args[0] != "collect" {
 		fmt.Fprint(stderr, usage)
 		return 2
@@ -229,6 +268,86 @@ func run(args []string, stdout, stderr io.Writer) int {
 		result.PullRequests, result.ReviewRequests = len(s.GitHub.Mine), len(s.GitHub.Requests)
 	}
 	return cli.Report("plan-dash", result, err, 0, stdout, stderr)
+}
+
+// tokenUsage runs usage.
+func tokenUsage(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("usage", flag.ContinueOnError)
+	since := flags.String("since", "7d", "")
+	by := flags.String("by", "category", "")
+	asJSON := flags.Bool("json", false, "")
+	if code, ok := cli.Parse(flags, args, usage, stdout, stderr); !ok {
+		return code
+	}
+	if flags.NArg() > 0 {
+		fmt.Fprint(stderr, usage)
+		return 2
+	}
+	period, ok := parsePeriod(*since)
+	if !ok {
+		return cli.Report("plan-dash", nil, refusal.New("--since takes Nd, Nw or a duration such as 12h, not %q", *since),
+			0, stdout, stderr)
+	}
+	if !slices.Contains(spend.Dimensions, *by) {
+		return cli.Report("plan-dash", nil, refusal.New("--by takes one of %s, not %q",
+			strings.Join(spend.Dimensions, ", "), *by), 0, stdout, stderr)
+	}
+
+	now := time.Now()
+	o := spend.Options{Since: now.Add(-period), Until: now}
+	dashboardDir := filepath.Join(hostpaths.StateHome(), "agent-plans", "claude")
+	o.Sources = []spend.Source{{Dir: dashboardDir, Category: "dashboard"}}
+	operatorDir := os.Getenv("CLAUDE_CONFIG_DIR")
+	if !filepath.IsAbs(operatorDir) {
+		home, _ := os.UserHomeDir()
+		operatorDir = filepath.Join(home, ".claude")
+	}
+	if filepath.Clean(operatorDir) != filepath.Clean(dashboardDir) {
+		o.Sources = append(o.Sources, spend.Source{Dir: operatorDir})
+	}
+	if root, err := prreview.Root(); err == nil {
+		o.ReviewRoot = root
+	}
+	c, plansErr := plans.Load()
+	if plansErr == nil {
+		o.Plans, plansErr = c.SessionPlans()
+	}
+
+	r, err := spend.Collect(o, *by)
+	if err != nil {
+		return cli.Report("plan-dash", nil, err, 0, stdout, stderr)
+	}
+	state := quota.DefaultState()
+	for _, p := range quota.Providers {
+		if q, ok := state.Reading(p, now); ok {
+			r.Quota = append(r.Quota, q)
+		}
+	}
+	code := 0
+	if *asJSON {
+		code = cli.Report("plan-dash", r, nil, 0, stdout, stderr)
+	} else {
+		r.Text(stdout)
+	}
+	if plansErr != nil {
+		fmt.Fprintf(stderr, "plan-dash: the plans could not be read, so no session is attributed to one: %s\n", plansErr)
+		return 1
+	}
+	return code
+}
+
+// parsePeriod reads Nd, Nw or a Go duration, which must be positive.
+func parsePeriod(s string) (time.Duration, bool) {
+	units := map[byte]time.Duration{'d': 24 * time.Hour, 'w': 7 * 24 * time.Hour}
+	if n := len(s); n > 1 && units[s[n-1]] != 0 {
+		count, err := strconv.Atoi(s[:n-1])
+		if err != nil || count <= 0 || count > 3660 {
+			return 0, false
+		}
+		return time.Duration(count) * units[s[n-1]], true
+	}
+	d, err := time.ParseDuration(s)
+	return d, err == nil && d > 0
 }
 
 // prime is what the dashboard session is told when it starts, clears or

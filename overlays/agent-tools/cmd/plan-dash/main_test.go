@@ -317,6 +317,71 @@ func TestQueue(t *testing.T) {
 	}
 }
 
+// usage reads the operator's transcripts and the dashboard session's, and
+// prints numbers and labels, never what a transcript says.
+func TestUsageReport(t *testing.T) {
+	state := setUp(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	const secret = "ghp_SyntheticSecret0123456789abcdefABCDEF"
+	at := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)
+	line := func(session, req string) string {
+		return `{"type":"assistant","sessionId":"` + session + `","requestId":"` + req + `","timestamp":"` + at +
+			`","cwd":"/nowhere","entrypoint":"cli","message":{"model":"claude-opus-5-5","content":[{"type":"text","text":"` +
+			secret + `"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"cache_creation_input_tokens":0,` +
+			`"cache_read_input_tokens":100,"output_tokens":10}}}` + "\n"
+	}
+	for dir, l := range map[string]string{
+		filepath.Join(home, ".claude", "projects", "-p", "a.jsonl"):                      line("a", "req_a"),
+		filepath.Join(state, "agent-plans", "claude", "projects", "-session", "b.jsonl"): line("b", "req_b"),
+	} {
+		os.MkdirAll(filepath.Dir(dir), 0o755)
+		os.WriteFile(dir, []byte(l), 0o644)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"usage", "--since", "7d"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{"by category", "interactive", "dashboard"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, secret) || strings.Contains(out, "/nowhere") {
+		t.Errorf("prints transcript text:\n%s", out)
+	}
+
+	stdout.Reset()
+	if code := run([]string{"usage", "--by", "role", "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("--json: exit %d: %s", code, stderr.String())
+	}
+	var got struct {
+		By   string `json:"by"`
+		Rows []struct {
+			Label string `json:"label"`
+			Total int64  `json:"total"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil || got.By != "role" || len(got.Rows) != 1 ||
+		got.Rows[0].Label != "main" || got.Rows[0].Total != 222 {
+		t.Errorf("--json: %s (%v)", stdout.String(), err)
+	}
+	if strings.Contains(stdout.String(), secret) {
+		t.Errorf("--json prints transcript text:\n%s", stdout.String())
+	}
+
+	for _, args := range [][]string{{"usage", "--by", "model"}, {"usage", "--since", "soon"}, {"usage", "--since", "-1d"},
+		{"usage", "now"}} {
+		stderr.Reset()
+		if code := run(args, &stdout, &stderr); code != 2 {
+			t.Errorf("%q: exit %d: %s", args, code, stderr.String())
+		}
+	}
+}
+
 func TestUsage(t *testing.T) {
 	for _, args := range [][]string{{}, {"serve"}, {"collect", "--bogus"}, {"export", "now"}, {"export", "--out", "x"},
 		{"dispatch", "o/s#9"}, {"dispatch", "--out", "x"}, {"queue", "run"}, {"answer", "2026-10-17-loop.box"},
@@ -329,7 +394,7 @@ func TestUsage(t *testing.T) {
 	}
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"--help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "collect") ||
-		!strings.Contains(stdout.String(), "  watch ") {
+		!strings.Contains(stdout.String(), "  watch ") || !strings.Contains(stdout.String(), "  usage ") {
 		t.Errorf("--help: exit %d: %s", code, stdout.String())
 	}
 }

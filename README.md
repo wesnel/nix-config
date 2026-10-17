@@ -330,6 +330,7 @@ plan-dash answer                         # records the answers the page gave
 plan-dash dispatch                       # queues the reviews the page asked for
 plan-dash queue                          # runs them, as agent-plans-queue.service does
 plan-dash page                           # writes the page for the session to publish
+plan-dash usage --since 7d --by category # prints the week's Claude tokens by workflow
 ```
 
 `status.org` lists your open pull requests (draft, CI, review decision,
@@ -461,6 +462,27 @@ command. An entry is ready, waits for the operator, failed, or stale. An
 agent cannot write `$XDG_STATE_HOME/agent-plans` or `plan-dash`: the guard
 refuses its file tools and shell writes there, and plan-dash writes them
 itself.
+
+`plan-dash usage` reports, in tokens by kind, which parts of the workflow
+use most, from Claude Code's transcripts under `~/.claude` and the
+dashboard session's config directory; `--by` groups them by category,
+plan, repository or sub-agent role. The labels are heuristics: the
+session's directory and entrypoint, the pr-loop session logs beside the
+checkout's git directory, the plans' `SESSIONS`, and the first word of a
+sub-agent's description, so a sub-agent's role is exact only where its
+description starts with build, fix, review, design, research or vcs (or a
+listed synonym). It reads, of a transcript, only the fields its numbers
+and labels come from, and prints nothing else: no content, no
+descriptions, no paths. Sub-agent transcripts often hold only streaming
+partials of a response, so their output is a lower bound, marked `≥`.
+The per-message records miss much of a session's tokens (most of its
+output, background calls to smaller models), so the whole totals come from
+the `cost-state` line Claude Code appends to a transcript when a session
+ends or is cleared; the report shows them beside the breakdown, with how
+much of each kind the breakdown covers. A cost-state holds the records
+before it in its transcript, so records after it, as a resumed session
+still running writes, count on top of it; a session with none yet counts
+by its records, as does one whose cost-state holds less than they do.
 
 ## the Agent plans session
 
