@@ -50,17 +50,21 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      to start, steps ready now (no open AFTER item, earlier
                      ORDERED siblings settled, not scheduled for later),
                      what still waits, keyword drift, property drift (a
-                     WORKTREES, BRANCHES, PULL_REQUESTS, OWNERS, REVIEWS or
-                     PIPELINE value, or a References entry, the log does not
-                     give), the review routes logged and waived, and tokens
+                     WORKTREES, BRANCHES, PULL_REQUESTS, OWNERS, REVIEWS,
+                     PIPELINE or DIAGRAMS value, or a References entry, the
+                     log does not give), the review routes logged and
+                     waived, the diagrams kept, as the last diagram check
+                     left them, and tokens
   set PLAN NAME [VALUE...] [--part P1]
                      set WORKTREES, BRANCHES, PULL_REQUESTS, REVIEWS (review
-                     routes the change needs: ` + strings.Join(routes.Known, ", ") + `) or PIPELINE
-                     (full or opted-out:<reason>) of the plan's file, or the
-                     part's, to the values, and log it; new, own and the
-                     hooks log the changes they make. A route REVIEWS ever
-                     named stays owed, and PIPELINE is what its log last
-                     gave, whatever the file says
+                     routes the change needs: ` + strings.Join(routes.Known, ", ") + `), PIPELINE
+                     (full or opted-out:<reason>) or DIAGRAMS (auto, or none
+                     where the operator wants no diagrams of the change) of
+                     the plan's file, or the part's, to the values, and log
+                     it; new, own and the hooks log the changes they make.
+                     A route REVIEWS ever named stays owed, and PIPELINE and
+                     DIAGRAMS are what the log last gave, whatever the file
+                     says
   waive PLAN --route ROUTE --why TEXT
                      log that the plan's change needs no review of ROUTE,
                      and why; stop-check and the gates stop asking for it,
@@ -139,7 +143,11 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      where the session committed since its plan's last review
                      receipt, "security review owed" where the plan's log
                      routes the change there with no route receipt or waiver
-                     since, then the open questions of the session's plan,
+                     since, "diagram stale" where a diagram the plan keeps
+                     is stale or edited at the HEAD of "cwd"'s worktree, or
+                     "diagram check failed" where git could not say within
+                     2 seconds,
+                     then the open questions of the session's plan,
                      else of the plan of the worktree "cwd" is in; or nothing.
                      Keeps Claude Code's rate_limits in
                      $XDG_STATE_HOME/agent-tools/usage. Emacs sends {cwd,

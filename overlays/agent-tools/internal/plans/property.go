@@ -15,19 +15,19 @@ import (
 // status reports a file whose value is not the one its last event gives.
 // An item's properties are compared from its first property event on,
 // except PIPELINE, whose log gives defaultPipeline until it logs one.
-var trackedProperties = []string{"WORKTREES", "BRANCHES", "PULL_REQUESTS", "OWNERS", "REVIEWS", "PIPELINE"}
+var trackedProperties = []string{"WORKTREES", "BRANCHES", "PULL_REQUESTS", "OWNERS", "REVIEWS", "PIPELINE", "DIAGRAMS"}
 
 // settableProperties are the tracked properties SetProperty sets; OWNERS is
 // SetOwner's.
-var settableProperties = []string{"WORKTREES", "BRANCHES", "PULL_REQUESTS", "REVIEWS", "PIPELINE"}
+var settableProperties = []string{"WORKTREES", "BRANCHES", "PULL_REQUESTS", "REVIEWS", "PIPELINE", "DIAGRAMS"}
 
 // defaultPipeline is the PIPELINE a plan's log gives it before any
 // PIPELINE event: what a new plan's file starts with.
 const defaultPipeline = "full"
 
 // checkValues refuses values that property name cannot hold: REVIEWS
-// takes routes a focused review exists for, and PIPELINE one value, full
-// or opted-out:<reason>.
+// takes routes a focused review exists for, PIPELINE one value, full or
+// opted-out:<reason>, and DIAGRAMS one value, auto or none.
 func checkValues(name string, values []string) error {
 	switch name {
 	case "REVIEWS":
@@ -41,6 +41,11 @@ func checkValues(name string, values []string) error {
 			values[0] == "opted-out:")) {
 			return refusal.New("PIPELINE is one value, `full` or `opted-out:<reason>`. Set it as `agent-plan set PLAN PIPELINE opted-out:operator-asked`, " +
 				"once the operator has opted the task out")
+		}
+	case "DIAGRAMS":
+		if len(values) != 1 || (values[0] != "auto" && values[0] != "none") {
+			return refusal.New("DIAGRAMS is one value, `auto` or `none`. Set it as `agent-plan set PLAN DIAGRAMS none` " +
+				"once the operator has said the plan needs no diagrams")
 		}
 	}
 	return nil

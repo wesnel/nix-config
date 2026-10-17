@@ -412,6 +412,64 @@ func TestRefreshDiagrams(t *testing.T) {
 	}
 }
 
+// Status lists the kept diagrams, and the status line says when one is
+// stale at the worktree's HEAD; DIAGRAMS none is the plan's opt-out.
+func TestDiagramStatus(t *testing.T) {
+	for k, v := range map[string]string{"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
+		"GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@example.com", "GIT_COMMITTER_NAME": "T",
+		"GIT_COMMITTER_EMAIL": "t@example.com"} {
+		t.Setenv(k, v)
+	}
+	repo, _ := filepath.EvalSymlinks(t.TempDir())
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	os.WriteFile(filepath.Join(repo, "queue.go"), []byte(statesGo), 0o644)
+	gitIn(t, repo, "add", "queue.go")
+	gitIn(t, repo, "commit", "-q", "-m", "c")
+	at := strings.TrimSpace(gitIn(t, repo, "rev-parse", "HEAD"))
+	c := testConfig(t)
+	made, err := c.New(NewOptions{Title: "Add the queue", Slug: "queue", Worktrees: []string{repo}}, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := c.Open(made.Plan)
+	line := func() string { return c.StatusLine([]byte(`{"cwd": "` + repo + `"}`)) }
+	if got := line(); strings.Contains(got, "diagram") {
+		t.Errorf("status line with no diagram: %q", got)
+	}
+	d := checkedDiagram(t, at, "Entry states", "Queued")
+	critiqued(t, p, d, "")
+	if _, err := p.KeepDiagram(d, KeepOptions{}, day); err != nil {
+		t.Fatal(err)
+	}
+	if got := line(); strings.Contains(got, "diagram") {
+		t.Errorf("status line with a current diagram: %q", got)
+	}
+	s, err := p.Status()
+	if err != nil || len(s.Diagrams) != 1 || !strings.Contains(s.Org(), "- Diagrams: G1 Entry states (checked)\n") {
+		t.Errorf("%+v %v\n%s", s.Diagrams, err, s.Org())
+	}
+
+	os.WriteFile(filepath.Join(repo, "queue.go"), []byte(strings.Replace(statesGo, `"ready"`, `"done"`, 1)), 0o644)
+	gitIn(t, repo, "commit", "-q", "-am", "c")
+	if got := line(); !strings.Contains(got, "diagram stale") {
+		t.Errorf("status line with a stale diagram: %q", got)
+	}
+	// Where the diagrams cannot be held to HEAD at all, it says so rather
+	// than nothing.
+	gitIn(t, repo, "update-ref", "-d", "refs/heads/main")
+	if got := line(); !strings.Contains(got, "diagram check failed") {
+		t.Errorf("status line with no HEAD: %q", got)
+	}
+
+	isRefusal(t, "DIAGRAMS maybe", p.SetProperty("", "DIAGRAMS", []string{"maybe"}, day))
+	if err := p.SetProperty("", "DIAGRAMS", []string{"none"}, day); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := p.Status(); !s.DiagramsOff || !strings.Contains(s.Org(), "; DIAGRAMS none\n") {
+		t.Errorf("%s", s.Org())
+	}
+}
+
 func readText(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

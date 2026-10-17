@@ -122,8 +122,9 @@ func settle(lines []string, id, state, answer, decidedBy, supersedes string, now
 // StatusLine is the status line for the session its input names, else for
 // the worktree its cwd is in, as Emacs's mode line sends: "review owed"
 // where the session committed since the plan's last review receipt,
-// "<route> review owed" for each route routesOwed gives, and how many open
-// questions of that plan the operator can answer now, or nothing.
+// "<route> review owed" for each route routesOwed gives, what diagramsLine
+// says of its diagrams, and how many open questions of that plan the
+// operator can answer now, or nothing.
 // It reads only
 // this host's plan files and git, never the network, and says nothing on
 // any error.
@@ -158,6 +159,9 @@ func (c Config) StatusLine(input []byte) string {
 	}
 	for _, route := range routesOwed(p) {
 		owed += route + " review owed · "
+	}
+	if line := diagramsLine(p, in.Cwd); line != "" {
+		owed += line + " · "
 	}
 	qs, err := p.Questions(true)
 	qs = Askable(qs)

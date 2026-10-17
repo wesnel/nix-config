@@ -77,6 +77,11 @@ type Status struct {
 	Waivers []Waiver `json:"waivers"`
 	// Pipeline is PIPELINE as the log gives it.
 	Pipeline string `json:"pipeline"`
+	// Diagrams are the diagrams the plan keeps, with the STATUS the last
+	// `agent-plan diagram check` gave them, and DiagramsOff whether the
+	// log sets DIAGRAMS none.
+	Diagrams    []KeptDiagram `json:"diagrams"`
+	DiagramsOff bool          `json:"diagramsOff"`
 }
 
 // Drift is an item whose heading keyword, File, is not Log, the one its
@@ -232,6 +237,11 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 	if s.PropertyDrift, err = p.propertyDrift(events); err != nil {
 		return Status{}, err
 	}
+	if s.Diagrams, err = p.Diagrams(); err != nil {
+		return Status{}, err
+	}
+	value, _ := loggedProperty(events, p.Name, "DIAGRAMS")
+	s.DiagramsOff = value == "none"
 	partOf := map[string]string{}
 	index := map[string]int{}
 	for _, it := range list {
@@ -364,6 +374,21 @@ func (s Status) Org() string {
 			waived = append(waived, fmt.Sprintf("%s (%s)", w.Route, w.Why))
 		}
 		fmt.Fprintf(&b, "- Review routes: %s; waived: %s\n", list(s.Routes), list(waived))
+	}
+	if len(s.Diagrams) > 0 || s.DiagramsOff {
+		var kept []string
+		for _, d := range s.Diagrams {
+			state := d.Status
+			if d.Edited != "" {
+				state = "edited by hand, not trusted: " + d.Edited
+			}
+			kept = append(kept, fmt.Sprintf("%s %s (%s)", d.ID, d.Title, state))
+		}
+		off := ""
+		if s.DiagramsOff {
+			off = "; DIAGRAMS none"
+		}
+		fmt.Fprintf(&b, "- Diagrams: %s%s\n", list(kept), off)
 	}
 	if len(s.Stale) > 0 {
 		fmt.Fprintf(&b, "- Stale, started with nothing logged for a day: %s\n", list(s.Stale))

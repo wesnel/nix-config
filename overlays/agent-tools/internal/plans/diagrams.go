@@ -1,6 +1,7 @@
 package plans
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"slices"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/diagram"
+	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
@@ -524,6 +526,44 @@ func (p Plan) RefreshDiagrams(repo diagram.Repo, now string, at time.Time) ([]Di
 		return err
 	})
 	return out, err
+}
+
+// diagramsTimeout bounds the git calls of the status line's diagram check.
+const diagramsTimeout = 2 * time.Second
+
+// diagramsLine is the status line's word on the diagrams p keeps, at HEAD
+// of the worktree cwd is in: "diagram stale" where one is stale or edited,
+// "diagram check failed" where they could not be held to it, as when HEAD
+// has no commit or git took longer than diagramsTimeout, or "". It reads
+// only git's objects, and a plan that keeps none costs no git call.
+func diagramsLine(p Plan, cwd string) string {
+	kept, err := p.Diagrams()
+	if err != nil {
+		return "diagram check failed"
+	}
+	if len(kept) == 0 {
+		return ""
+	}
+	top, _ := checkout(cwd)
+	if top == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), diagramsTimeout)
+	defer cancel()
+	head, err := git.BytesContext(ctx, "-C", top, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return "diagram check failed"
+	}
+	states, err := p.DiagramStates(diagram.TimedRepo{Dir: top, Ctx: ctx}, strings.TrimSpace(string(head)))
+	if err != nil || ctx.Err() != nil {
+		return "diagram check failed"
+	}
+	for _, s := range states {
+		if s.Status == DiagramStale || s.Edited != "" {
+			return "diagram stale"
+		}
+	}
+	return ""
 }
 
 // diagramStates holds each kept diagram to now, calling write, where
