@@ -41,10 +41,12 @@ agent-plan new --parent PLAN --part P1 --title 'Add the run loop flag' --branch 
   `PIPELINE` (`full` or `opted-out:<reason>`), `REVIEWS` (the focused
   reviews the change needs, such as `security`), `SKILLS` (the skills the
   work runs under beyond this one, such as `coordinate-subagents` or
-  `review-loop`, which you add) and, once `agent-plan own` sets one,
+  `review-loop`, which you add), `DIAGRAMS` (`none` where the operator
+  wants no diagrams of the change) and, once `agent-plan own` sets one,
   `OWNERS` (`worktree=agent`). Lists are separated by spaces.
-  `WORKTREES`, `BRANCHES`, `PULL_REQUESTS`, `OWNERS`, `REVIEWS` and
-  `PIPELINE` follow the log, as step keywords do: never edit them by hand.
+  `WORKTREES`, `BRANCHES`, `PULL_REQUESTS`, `OWNERS`, `REVIEWS`,
+  `PIPELINE` and `DIAGRAMS` follow the log, as step keywords do: never
+  edit them by hand.
   Change one with `agent-plan set PLAN BRANCHES main..loop [--part P1]`,
   which logs the whole new value; `agent-plan status` lists a value the log
   does not give, and a References entry it does not hold, as property
@@ -96,6 +98,11 @@ agent-plan new --parent PLAN --part P1 --title 'Add the run loop flag' --branch 
   `agent-plan reference PLAN URL --note 'The pstack principles; fed Q3, Q4.'`
 - `** Verification`: how the change is shown to work: each seam the tests
   cross, and what each cannot catch.
+- `** Diagrams`: the diagrams of the change's code, `*** G1 <title>`
+  entries, each a JSON source block and the Mermaid generated from it,
+  written only by `agent-plan diagram keep` as the `review-change` skill's
+  "Diagrams" says. Never edit one: an entry changed by hand is reported
+  and never trusted.
 
 The `#+TODO:` lines `agent-plan new` writes define the keywords; Emacs and
 `agent-plan` both read them, so leave them as they are. The ID patterns

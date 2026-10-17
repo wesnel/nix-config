@@ -57,6 +57,8 @@ or a step's.
 - Each finding settled: `finding-settled` against the item it concerns, with
   `--review <round>.<id> --outcome <outcome>`, the outcome as Triage below.
 - Design review of the result: `reviewed` with `--role design-reviewer`.
+- A diagram's critique logs `diagram-critiqued` itself, and keeping it
+  `diagram-kept`; neither is a review receipt, and no gate waits on them.
 - Hand-back: `handed-back`, with `STATUS` set to `handed-back`.
 - When the operator opts the task out, set it with `agent-plan set PLAN
   PIPELINE opted-out:<reason>`; the log's value is the one that counts.
@@ -184,6 +186,9 @@ each branch:
 - what the plan leaves undecided, against this bar: someone could build it
   without asking a question;
 - the review routes the change needs, named in the plan's `REVIEWS`;
+- a diagram, as "Diagrams" says, where the change crosses two or more
+  packages or modules, or adds a state set or a cross-process protocol,
+  unless the plan sets `DIAGRAMS none`;
 - designing for change, by the `design` skill's principles (tell the
   sub-agent to load it) and these checks:
   - built as we would build it from scratch, knowing what the change now
@@ -236,6 +241,43 @@ the goal statement already decides by Triage. Take the rest through the
 `plan-work` skill's "Questions for the operator", which says which are theirs to
 answer and which are yours to decide; those that change the plan are
 settled before the work starts.
+
+## Diagrams
+
+A diagram shows the code a change touches, drawn by one model family and
+critiqued by the other. Draw one where the design review asks for it, or
+the operator does; at most two per change.
+
+1. Draw it as JSON to the schema `agent-plan diagram schema` prints, of the
+   first kind that fits: `state` where constants a field is assigned from
+   are assigned in two or more places (nodes cite the constants, edges the
+   assignments, symbol the target); `sequence` where order matters across
+   a process or host boundary (participants cite entry points, messages
+   the call or send); `callflow` within one process, three or more
+   functions (nodes cite declarations, edges the call sites, symbol the
+   callee); else `component`. Every element cites the lines it stands for
+   at the diagram's commit, `at`. At the design review of the plan, `at`
+   is the base, and what the plan adds is `planned`, naming the plan item
+   that adds it; at the design review of the result, `at` is the tip and
+   nothing is `planned`.
+2. Check it with `agent-plan diagram check PLAN FILE` in the session that
+   drew it, which records that session's harness as its drafter, and
+   redraw until it exits 0.
+3. Critique it with `git fresh-review diagram --diagram FILE BASE..TIP`, the
+   range ending at `at` (`BASE..BASE` before any commit). On exit 4 for a
+   diagram Codex drew, `--print-prompt` from a Claude Code session prints
+   the prompt for a new `reviewer` sub-agent, and its reply goes to
+   `--check REPLY`. A diagram Claude drew is never critiqued by a Claude
+   sub-agent: where Codex cannot run, hand it to the operator.
+4. Redraw for the findings, and check and critique again. After two
+   critiques with findings, keep it with `--disputed --findings FILE`, the
+   last critique's output, and put the findings in the hand-back.
+5. Keep it with `agent-plan diagram keep PLAN FILE`, or `--replace G1` for
+   a redraw of G1. Before `pr-loop open`, `agent-plan diagram check PLAN`
+   holds each kept diagram to HEAD; redraw a stale one the same way.
+
+A diagram is never posted to GitHub: a pull request's description stays
+the operator's.
 
 ## Triage
 
