@@ -322,11 +322,11 @@ holds a record of it, all with titles, and which listed pull request each
 is stacked on: the one whose head branch, in the same repository, is its
 base; branch names themselves are never kept) and `meta/sync.json` (when
 this host's plans last reached the notes remote, whether they changed
-since, when the repository last fetched). `gh` is asked at most once a
-minute; the answer is cached as `$XDG_STATE_HOME/plan-dash/github.json`,
-which holds pull request titles, and when a fetch fails the last good
-answer is written, marked stale. These leave the machine. Each is a fixed
-struct in
+since, when the repository last fetched, how many plans could not be
+read). `gh` is asked at most once a minute; the answer is cached as
+`$XDG_STATE_HOME/plan-dash/github.json`, which holds pull request titles,
+and when a fetch fails the last good answer is written, marked stale.
+These leave the machine. Each is a fixed struct in
 `internal/export` whose JSON tags are the allowlist, and its sentinel test
 fails on any other key. Plan text comes only from the plans directory: the
 title, the Goal section, the step headings under Steps, the open and
