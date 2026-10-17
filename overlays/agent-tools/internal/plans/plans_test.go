@@ -693,6 +693,21 @@ func TestFind(t *testing.T) {
 	}
 }
 
+func TestSessionPlans(t *testing.T) {
+	c := testConfig(t)
+	p := newPlan(t, c, "x")
+	newPlan(t, Config{Dir: c.Dir, Host: "other"}, "y")
+	got, err := c.SessionPlans()
+	if err != nil || len(got) != 1 || got["abc"] != p.Name {
+		t.Errorf("SessionPlans: %v, %v; want abc -> %s alone (another host's plan is not this host's)", got, err, p.Name)
+	}
+
+	empty, err := Config{Dir: filepath.Join(t.TempDir(), "none"), Host: "box"}.SessionPlans()
+	if err != nil || len(empty) != 0 {
+		t.Errorf("no plans directory: %v, %v", empty, err)
+	}
+}
+
 func hookContext(t *testing.T, out []byte, event string) string {
 	t.Helper()
 	var v struct {

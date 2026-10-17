@@ -635,6 +635,43 @@ func readPlan(path string) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
+// SessionPlans maps each session ID this host's plans name, without its
+// harness prefix, to the name of the newest plan naming it.
+func (c Config) SessionPlans() (map[string]string, error) {
+	own, err := c.ownPlans()
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, p := range own {
+		files, err := p.files()
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			data, err := readPlan(f)
+			if err != nil {
+				continue
+			}
+			for _, h := range parseOrg(string(data)) {
+				if h.Level != 1 || h.Title != "Plan" {
+					continue
+				}
+				for _, v := range strings.Fields(h.Props["SESSIONS"]) {
+					if _, id, ok := strings.Cut(v, ":"); ok {
+						v = id
+					}
+					if _, seen := out[v]; !seen && v != "" {
+						out[v] = p.Name
+					}
+				}
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
 // Find lists this host's plan files that match, newest plan first.
 func (c Config) Find(o FindOptions) ([]Found, error) {
 	if o.Session == "" && o.Worktree == "" && o.Branch == "" {
