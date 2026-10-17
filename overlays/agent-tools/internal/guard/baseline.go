@@ -640,7 +640,7 @@ func checkPlanLogWrite(name string, args, redirected []string, dir string) strin
 		if planLog(expandPath(t, dir)) {
 			return appendOnly
 		}
-		if agentToolsState(expandPath(t, dir)) {
+		if p := expandPath(t, dir); agentToolsState(p) || linkedAgentToolsState(p) {
 			return stateWrite
 		}
 	}
@@ -914,7 +914,7 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 		if planLog(path) {
 			return appendOnly
 		}
-		if agentToolsState(path) {
+		if agentToolsState(path) || linkedAgentToolsState(path) {
 			return stateWrite
 		}
 		switch {

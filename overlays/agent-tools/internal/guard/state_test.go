@@ -32,7 +32,12 @@ func TestAgentToolsState(t *testing.T) {
 		for _, d := range []string{filepath.Join(state, "usage", "asked"), work} {
 			os.MkdirAll(d, 0o755)
 		}
-		return strings.NewReplacer("STATE", state, "OTHER", filepath.Join(base, "other"), "WORKDIR", work), work
+		// Links in the work to the state directory and to the directory
+		// holding it, which a session can make where it may write.
+		os.Symlink(state, filepath.Join(work, "to-state"))
+		os.Symlink(base, filepath.Join(work, "to-base"))
+		return strings.NewReplacer("STATE", state, "OTHER", filepath.Join(base, "other"), "WORKDIR", work,
+			"LINKED", filepath.Join(work, "to-state"), "BASELINK", filepath.Join(work, "to-base")), work
 	}
 	patch := func(header, path string) map[string]string {
 		return map[string]string{"command": "*** Begin Patch\n*** " + header + ": " + path + "\n@@\n+x\n*** End Patch\n"}
@@ -48,7 +53,11 @@ func TestAgentToolsState(t *testing.T) {
 		{"an ask's mark", true, "Write", map[string]string{"file_path": "STATE/usage/asked/claude-5h-1-75", "content": ""}},
 		{"an ask's mark", true, "apply_patch", patch("Add File", "STATE/usage/asked/claude-5h-1-90")},
 		{"a usage reading", true, "write_file", map[string]string{"path": "STATE/usage/codex.json", "content": "{}"}},
+		{"a usage reading through a link", true, "Write", map[string]string{"file_path": "LINKED/usage/claude.json", "content": "{}"}},
+		{"a new file through a link", true, "Write", map[string]string{"file_path": "BASELINK/agent-tools/pr-loop-sessions/x.json", "content": "{}"}},
+		{"a new file through a relative link", true, "Write", map[string]string{"file_path": "to-state/new/x.json", "content": "{}"}},
 		{"another program's state", false, "Write", map[string]string{"file_path": "OTHER/x", "content": "x"}},
+		{"another program's state through a link", false, "Write", map[string]string{"file_path": "BASELINK/other/x", "content": "x"}},
 		{"a file of the work", false, "Write", map[string]string{"file_path": "WORKDIR/usage.json", "content": "x"}},
 	}
 	for _, custom := range []bool{false, true} {
@@ -78,6 +87,8 @@ func TestAgentToolsState(t *testing.T) {
 	}{
 		{true, "echo '{}' > STATE/usage/claude.json"},
 		{true, "printf x >> STATE/usage/choice-claude.json"},
+		{true, "echo '{}' > to-state/usage/claude.json"},
+		{true, "cp x BASELINK/agent-tools/pr-loop-sessions/x.json"},
 		{true, "tee STATE/usage/asked/claude-5h-1-75 < /tmp/x"},
 		{true, "cp /tmp/forged STATE/usage/choice-claude.json"},
 		{true, "mv STATE/usage /tmp/old"},
