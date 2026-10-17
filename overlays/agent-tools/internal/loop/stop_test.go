@@ -328,6 +328,24 @@ func TestStop(t *testing.T) {
 		}
 	})
 
+	// A rewrite owed the operator's review outlives the loop in the report.
+	t.Run("a rewrite to review", func(t *testing.T) {
+		dir := stopRepo(t)
+		state, _ := loadState(true)
+		state.Branches["feature"].Rewrites = []Rewrite{{Round: 2, Why: "a commit's changes differ", File: "/x/feature-2.range-diff"}}
+		if err := state.save(); err != nil {
+			t.Fatal(err)
+		}
+		startFakeSession(t, dir, "obey")
+		if _, err := Stop(); err != nil {
+			t.Fatal(err)
+		}
+		report, _ := os.ReadFile(filepath.Join(dir, ".git", "pr-loop", "report.md"))
+		if !strings.Contains(string(report), "/x/feature-2.range-diff") {
+			t.Errorf("the report:\n%s", report)
+		}
+	})
+
 	t.Run("no session recorded", func(t *testing.T) {
 		stopRepo(t)
 		_, err := Stop()

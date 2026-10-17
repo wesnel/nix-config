@@ -26,8 +26,12 @@ func Push(branches []string, dryRun bool) (any, error) {
 	if len(branches) == 0 {
 		branches = state.Order
 	}
-	type update struct{ branch, after, before string }
+	type update struct {
+		branch, after, before string
+		rewrite               *rewrite
+	}
 	var updates []update
+	rebaseOnly := true
 	for _, b := range branches {
 		pr, ok := prs[b]
 		if !ok {
@@ -54,7 +58,16 @@ func Push(branches []string, dryRun bool) (any, error) {
 			return nil, err
 		}
 		if local != entry.RemoteOid {
-			updates = append(updates, update{b, local, entry.RemoteOid})
+			u := update{b, local, entry.RemoteOid, nil}
+			// A rewritten branch is pushed whatever the rewrite; one that is
+			// not a clean rebase is recorded for the operator below.
+			if !git.OK("merge-base", "--is-ancestor", entry.RemoteOid, local) {
+				if u.rewrite, err = checkRewrite(state, b, parent, local); err != nil {
+					return nil, err
+				}
+			}
+			rebaseOnly = rebaseOnly && u.rewrite != nil && u.rewrite.why == "" && u.rewrite.rebaseOnly
+			updates = append(updates, u)
 		}
 	}
 	if len(updates) == 0 {
@@ -108,6 +121,7 @@ func Push(branches []string, dryRun bool) (any, error) {
 		return slices.Index(state.Order, a.branch) - slices.Index(state.Order, b.branch)
 	})
 	pushed := map[string]string{}
+	needsOperator := map[string]string{}
 	for _, u := range updates {
 		err = graphQL(`mutation($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }`,
 			map[string]any{"input": map[string]any{"repositoryId": repo.ID, "refUpdates": []map[string]any{
@@ -122,6 +136,14 @@ func Push(branches []string, dryRun bool) (any, error) {
 		if err := recordTracking(repo, u.branch, u.after); err != nil {
 			return nil, err
 		}
+		if u.rewrite != nil && u.rewrite.why != "" {
+			r, err := recordRewrite(state, u.branch, u.rewrite, u.before, u.after)
+			if err != nil {
+				return nil, err
+			}
+			needsOperator[u.branch] = fmt.Sprintf("rewritten other than by a clean rebase (%s): review the conflict "+
+				"resolution in %s before signing, and name it in the report", r.Why, r.File)
+		}
 		pushed[u.branch] = u.after
 		if err := state.save(); err != nil {
 			return nil, err
@@ -129,10 +151,17 @@ func Push(branches []string, dryRun bool) (any, error) {
 	}
 	record(state, plans.Event{Kind: "pushed", Summary: "pushed " + branchTips(state, pushed)})
 	state.Round++
+	if rebaseOnly {
+		state.RebaseRounds++
+	}
 	if err := snapshotRound(state); err != nil {
 		return nil, err
 	}
-	return map[string]any{"pushed": pushed, "round": state.Round, "apiCalls": calls}, state.save()
+	result := map[string]any{"pushed": pushed, "round": state.Round, "apiCalls": calls}
+	if len(needsOperator) > 0 {
+		result["needsOperator"] = needsOperator
+	}
+	return result, state.save()
 }
 
 // objectSet is what GitHub needs before a branch can point at a tip: every

@@ -279,6 +279,30 @@ func TestStatusPaused(t *testing.T) {
 		}
 	})
 
+	// A push that only rebased the stack, as onto a base that moved, is no
+	// round of fixes; and a rewrite that was not a clean rebase is named
+	// for the operator.
+	t.Run("rebase rounds and rewrites", func(t *testing.T) {
+		reviewRepo(t, config)
+		state := &State{Repo: "o/r", Order: []string{"feat"}, Round: 6, RebaseRounds: 1,
+			Branches: map[string]*Branch{"feat": {PR: 1, Base: "main",
+				Rewrites: []Rewrite{{Round: 3, File: "/x/feat-3.range-diff", Why: "a commit's changes differ"}}}}}
+		if err := state.save(); err != nil {
+			t.Fatal(err)
+		}
+		out, err := Status(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := out.([]map[string]any)[0]
+		if s["paused"] != false {
+			t.Errorf("five rounds of fixes and a rebase paused: %v", s)
+		}
+		if got := fmt.Sprint(s["needsOperator"]); !strings.Contains(got, "/x/feat-3.range-diff") {
+			t.Errorf("needsOperator: %v", got)
+		}
+	})
+
 	// A loop that is done finishes, however long it took.
 	t.Run("done outranks paused", func(t *testing.T) {
 		f := reviewRepo(t, config)

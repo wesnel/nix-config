@@ -211,6 +211,47 @@ func TestPush(t *testing.T) {
 				t.Errorf("GitHub has %s at %s, want %s", b, got, want)
 			}
 		}
+		// upper was restacked onto lower's fixup: a clean rebase, and a
+		// round that brought a fixup.
+		state, _ := loadState(true)
+		if rewrites := state.Branches["upper"].Rewrites; len(rewrites) > 0 || state.RebaseRounds != 0 {
+			t.Errorf("a restack flagged: %+v, rebase rounds %d", rewrites, state.RebaseRounds)
+		}
+	})
+
+	// A PR commit rewritten with a change it did not have, as a conflict
+	// resolution can be, is pushed only with its range-diff recorded and the
+	// PR marked for the operator to review before signing.
+	t.Run("a rewrite that is not a clean rebase", func(t *testing.T) {
+		_, dir := pushStack(t)
+		fixup := gitIn(t, dir, "rev-parse", "lower")
+		gitIn(t, dir, "switch", "-q", "--detach", "main")
+		os.WriteFile(filepath.Join(dir, "a"), []byte("a\n"), 0o644)
+		os.WriteFile(filepath.Join(dir, "unrelated"), []byte("smuggled\n"), 0o644)
+		gitIn(t, dir, "add", "a", "unrelated")
+		gitIn(t, dir, "commit", "-qm", "Add a")
+		gitIn(t, dir, "cherry-pick", fixup)
+		gitIn(t, dir, "branch", "-f", "lower", "HEAD")
+		gitIn(t, dir, "rebase", "-q", "--onto", "lower", "lower@{1}", "upper")
+		result, err := Push(nil, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fmt.Sprint(result); !strings.Contains(got, "needsOperator") || !strings.Contains(got, "lower") {
+			t.Errorf("the push did not flag lower: %v", got)
+		}
+		state, _ := loadState(true)
+		rewrites := state.Branches["lower"].Rewrites
+		if len(rewrites) != 1 {
+			t.Fatalf("lower's rewrites: %+v", rewrites)
+		}
+		diff, _ := os.ReadFile(rewrites[0].File)
+		if !strings.Contains(string(diff), "unrelated") {
+			t.Errorf("the recorded range-diff does not show the change:\n%s", diff)
+		}
+		if len(state.Branches["upper"].Rewrites) > 0 {
+			t.Errorf("upper, restacked cleanly, flagged: %+v", state.Branches["upper"].Rewrites)
+		}
 	})
 
 	// When the base moves on GitHub, the loop fetches it, the bottom PR is
@@ -260,6 +301,17 @@ func TestPush(t *testing.T) {
 		}
 		if base := gitIn(t, f.bare, "merge-base", "main", "lower"); base != moved {
 			t.Errorf("lower on GitHub is based on %s, not the moved main %s", base, moved)
+		}
+		// A clean rebase and nothing else: no review owed, and no round of
+		// the loop's budget spent.
+		state, _ = loadState(true)
+		for _, b := range []string{"lower", "upper"} {
+			if rewrites := state.Branches[b].Rewrites; len(rewrites) > 0 {
+				t.Errorf("%s's clean rebase flagged: %+v", b, rewrites)
+			}
+		}
+		if state.RebaseRounds != 1 {
+			t.Errorf("rebase rounds %d, want 1", state.RebaseRounds)
 		}
 	})
 

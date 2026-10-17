@@ -363,6 +363,10 @@ func cleanUp(state *State) ([]string, error) {
 				left = append(left, fmt.Sprintf("%s is kept: %v", rel, err))
 			}
 		}
+		for _, r := range entry.Rewrites {
+			left = append(left, fmt.Sprintf("%s (#%d) was rewritten in round %d other than by a clean rebase (%s): "+
+				"review the conflict resolution in `%s` before signing.", b, entry.PR, r.Round, r.Why, r.File))
+		}
 		if entry.RemoteOid == "" {
 			continue
 		}

@@ -230,10 +230,19 @@ func Status(numbers []int) (any, error) {
 		if state != nil {
 			entry["round"] = state.Round
 			var because []string
-			if state.Round >= maxRounds {
-				because = append(because, fmt.Sprintf("%d rounds have run", state.Round))
+			// A push that only rebased the stack fixed nothing.
+			if spent := state.Round - state.RebaseRounds; spent >= maxRounds {
+				because = append(because, fmt.Sprintf("%d rounds of fixes have run", spent))
 			}
 			if b, ok := state.prBranches()[n]; ok {
+				var rewrites []string
+				for _, r := range state.Branches[b].Rewrites {
+					rewrites = append(rewrites, fmt.Sprintf("round %d rewrote %s other than by a clean rebase (%s): review "+
+						"the conflict resolution in %s before signing", r.Round, b, r.Why, r.File))
+				}
+				if len(rewrites) > 0 {
+					entry["needsOperator"] = rewrites
+				}
 				if parent, err := state.parentRef(&Repo{Slug: state.Repo}, b); err == nil {
 					if lines, err := diffLines(parent, b); err == nil {
 						baseline := state.Branches[b].BaselineLines

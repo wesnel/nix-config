@@ -201,6 +201,9 @@ round again.
 8. **Push.** `pr-loop push` pushes every changed branch, as the `signing-pass`
    skill says a stack is pushed, and records the round under
    `refs/pr-loop/rounds/<n>/<branch>`. If GitHub moved underneath it, stop.
+   A branch whose PR commits were rewritten other than by a clean rebase,
+   as by resolving a conflict, is pushed and named under `needsOperator`
+   with the range-diff it recorded: the operator reviews it before signing.
 9. **Reply and resolve**, after the push so replies can cite pushed commits:
    `pr-loop reply --from <file>` for each PR's drafted replies, which
    answer and resolve threads as their outcomes say.
@@ -218,7 +221,8 @@ Stop and hand back when any of these holds:
   answered first. One bot's verdict, such as Copilot's `closer-look`, never
   ends the loop while another bot's threads wait.
 - `pr-loop status` shows a PR `paused`: the loop has not converged, as
-  `pausedBecause` says (six rounds have run, the PR's changed lines grew
+  `pausedBecause` says (six rounds of fixes have run, a push that only
+  rebased the stack counting as none, the PR's changed lines grew
   more than half over the loop's start, or a bot asked to review the head
   an hour ago has not). Report what is done and what is still open;
   nothing is discarded.
@@ -239,6 +243,8 @@ Stop and hand back when any of these holds:
    - commits added, and changed lines then and now
    - threads by outcome, with links
    - local review findings per round: fixed, rebutted, and any left standing
+   - `needs-operator` with each range-diff file `pr-loop status` lists under
+     `needsOperator`: review the conflict resolution before signing
 
    Also list the Linear changes and follow-up tickets you propose but did
    not make, each deferred finding with its diagnosis among them. Point at the round snapshots for reviewing the code:
