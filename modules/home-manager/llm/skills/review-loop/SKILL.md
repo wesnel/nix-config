@@ -51,6 +51,10 @@ decision for the operator, so stop rather than route around it. On a PR that is
 ready for review, every push, reply and review request also notifies its
 reviewers and code owners.
 
+The loop's sandbox cannot reach the Trash, so `trash` fails there. To
+delete a scratch file in a loop session, move it into `$TMPDIR` with `mv`;
+never `rm` it.
+
 Every commit the loop makes is a fixup of one of the PR's own commits, one
 per review item, with the trailers the `review-change` skill's Answering
 gives. Until the signing pass, `git log` on a branch is the record of what each

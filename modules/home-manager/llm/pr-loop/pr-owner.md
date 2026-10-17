@@ -10,6 +10,8 @@ add what the next task will need, including questions for the coordinator.
 - Work only in your worktree. Confirm `git rev-parse --abbrev-ref HEAD` is your
   branch before every edit. Other owners' worktrees are theirs; ask the
   coordinator for what you need from them.
+- `trash` fails in the loop's sandbox: move a scratch file you made into
+  `$TMPDIR` with `mv` instead, and never `rm` it.
 - Never push, request a review, or post or resolve anything on GitHub. The
   coordinator does all of that through `pr-loop`. Commits in this session are
   unsigned on purpose.
