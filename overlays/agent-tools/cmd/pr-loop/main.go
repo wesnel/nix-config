@@ -139,6 +139,10 @@ this repository, people's threads included, and need no begin. In a loop
 session (relayed, or with PR_LOOP_SESSION=1), and on a PR registered with
 begin, they take only threads a review bot started on the loop's PRs.
 
+In a loop, threads marks each thread onChangedLines when the PR changed
+its line and onLoopFixup when a loop fixup changed it last, by blame at the
+tip the loop last pushed.
+
 ci, wait ci and logs take a PR by number or by branch and need no begin.
 Outside a loop session each must be an open PR by the authenticated user in
 this repository, by default the current branch's, or the loop's PRs where

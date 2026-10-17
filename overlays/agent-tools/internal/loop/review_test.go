@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -16,10 +17,12 @@ import (
 type fakeReviewThread struct {
 	resolved    bool
 	first, last string // the authors of its first and last comments
-	// Where `pr-loop threads` reads it: its ID, its file and line, and its
-	// first comment's URL.
-	id, path, url string
-	line          int
+	// Where `pr-loop threads` reads it: its ID, its file and line on the
+	// head ("RIGHT", by default) or the base ("LEFT"), whether the line is
+	// outdated, and its first comment's URL.
+	id, path, side, url string
+	line                int
+	outdated            bool
 }
 
 // fakeReview adds to fakeCI the GraphQL that status and request make: the
@@ -66,7 +69,8 @@ func (f *fakeReview) graphQL(query string, vars map[string]any, out any) error {
 				line = t.line
 			}
 			nodes = append(nodes, map[string]any{"isResolved": t.resolved, "first": author(t.first), "last": author(t.last),
-				"id": t.id, "path": t.path, "line": line, "comments": map[string]any{"nodes": comments}})
+				"id": t.id, "path": t.path, "line": line, "isOutdated": t.outdated, "diffSide": cmp.Or(t.side, "RIGHT"),
+				"comments": map[string]any{"nodes": comments}})
 		}
 		data = map[string]any{"repository": map[string]any{"pullRequest": map[string]any{
 			"reviewThreads": map[string]any{"nodes": nodes,

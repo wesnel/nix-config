@@ -26,6 +26,11 @@ changing code:
 
 - thread ID, the bot, and `path:line`
 - the problem in one sentence, in your words
+- where it comes from: introduced by this PR (its `onChangedLines` and
+  `onLoopFixup` marks are a start, not the answer), pre-existing, shown on
+  the base with `git show <base>:<path>` or a reproduction there, or new
+  scope, when its real fix is new functionality or a wider change. Only an
+  introduced finding is fixed here; propose deferring the others
 - its outcome, as the `review-change` skill's Triage defines them
   (`belongs-in #<pr>` for code another PR introduced), with the evidence
   for a rebuttal and the reason for a deferral

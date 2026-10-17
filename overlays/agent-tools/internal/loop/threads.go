@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/history"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/relay"
 )
@@ -23,13 +25,22 @@ type ThreadComment struct {
 
 // Thread is a review thread, labelled with the bot that started it.
 type Thread struct {
-	ID       string          `json:"id"`
-	Path     string          `json:"path"`
-	Line     *int            `json:"line"`
-	Outdated bool            `json:"outdated"`
-	Resolved bool            `json:"resolved"`
-	Reviewer string          `json:"reviewer"`
-	Comments []ThreadComment `json:"comments"`
+	ID       string `json:"id"`
+	Path     string `json:"path"`
+	Line     *int   `json:"line"`
+	Outdated bool   `json:"outdated"`
+	Resolved bool   `json:"resolved"`
+	Reviewer string `json:"reviewer"`
+	// In a loop, OnChangedLines says whether the thread sits on a line the
+	// PR changed, as the loop last pushed it, and OnLoopFixup whether a
+	// fixup changed that line last. Either is absent where it cannot be
+	// told, as on an outdated thread.
+	OnChangedLines *bool           `json:"onChangedLines,omitempty"`
+	OnLoopFixup    *bool           `json:"onLoopFixup,omitempty"`
+	Comments       []ThreadComment `json:"comments"`
+	// side is the diff's side the line is on: RIGHT, the head, or LEFT,
+	// the base.
+	side string
 }
 
 func slugOf(state *State) (string, error) {
@@ -75,6 +86,7 @@ func Threads(number int, all bool) (any, error) {
 							IsOutdated bool
 							Path       string
 							Line       *int
+							DiffSide   string
 							Comments   struct {
 								Nodes []struct {
 									Author    *login
@@ -92,7 +104,7 @@ func Threads(number int, all bool) (any, error) {
 			repository(owner: $owner, name: $name) { pullRequest(number: $number) {
 				reviewThreads(first: 50, after: $after) {
 					pageInfo { hasNextPage endCursor }
-					nodes { id isResolved isOutdated path line
+					nodes { id isResolved isOutdated path line diffSide
 						comments(first: 100) { nodes { author { login } body url createdAt } } }
 				}
 			} }
@@ -106,7 +118,7 @@ func Threads(number int, all bool) (any, error) {
 				continue
 			}
 			thread := Thread{ID: t.ID, Path: t.Path, Line: t.Line, Outdated: t.IsOutdated, Resolved: t.IsResolved,
-				Reviewer: "human", Comments: []ThreadComment{}}
+				Reviewer: "human", Comments: []ThreadComment{}, side: t.DiffSide}
 			for _, c := range t.Comments.Nodes {
 				author := ""
 				if c.Author != nil {
@@ -127,7 +139,73 @@ func Threads(number int, all bool) (any, error) {
 		next := threads.PageInfo.EndCursor
 		cursor = &next
 	}
+	if state != nil && state.Repo == slug {
+		markThreads(state, number, out)
+	}
 	return out, nil
+}
+
+// markThreads sets each thread's OnChangedLines and OnLoopFixup from blame
+// over the PR's commits, up to the tip the loop last pushed of PR number's
+// branch: a line is the PR's when the commit that last changed it is one
+// of the PR's, and a loop fixup's when that commit is a fixup! the branch
+// did not have when the loop began. A thread on the base's side of the
+// diff is on a line the PR removed. Whatever git cannot answer is left
+// unmarked.
+func markThreads(state *State, number int, threads []Thread) {
+	branch, ok := state.prBranches()[number]
+	if !ok || state.Branches[branch].RemoteOid == "" {
+		return
+	}
+	tip := state.Branches[branch].RemoteOid
+	parent, err := state.parentRef(&Repo{Slug: state.Repo}, branch)
+	if err != nil {
+		return
+	}
+	base, err := git.Run("merge-base", parent, tip)
+	if err != nil {
+		return
+	}
+	list, err := git.Run("rev-list", base+".."+tip)
+	if err != nil {
+		return
+	}
+	own := map[string]bool{}
+	for _, oid := range strings.Fields(list) {
+		own[oid] = true
+	}
+	began := map[Commit]bool{}
+	for _, c := range state.Branches[branch].Commits {
+		began[c] = true
+	}
+	yes, no := true, false
+	for i := range threads {
+		t := &threads[i]
+		if t.Outdated || t.Line == nil || t.Path == "" {
+			continue
+		}
+		if t.side == "LEFT" {
+			t.OnChangedLines = &yes
+			continue
+		}
+		// Blamed over base..tip, a line older than the PR goes to the
+		// boundary, base, without walking the base's history.
+		blame, err := git.Run("blame", "--porcelain", "-L", fmt.Sprintf("%d,%d", *t.Line, *t.Line), base+".."+tip, "--", t.Path)
+		if err != nil {
+			continue
+		}
+		oid, _, _ := strings.Cut(blame, " ")
+		if !own[oid] {
+			t.OnChangedLines, t.OnLoopFixup = &no, &no
+			continue
+		}
+		t.OnChangedLines, t.OnLoopFixup = &yes, &no
+		if commits, err := history.Log("-1", oid); err == nil && len(commits) == 1 {
+			if kind, _ := fold(commits[0].Message); kind == history.Fixup && !began[commits[0]] {
+				t.OnLoopFixup = &yes
+			}
+		}
+	}
 }
 
 // sessionEnv is set by every review-loop launcher.

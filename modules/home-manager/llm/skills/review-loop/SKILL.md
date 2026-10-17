@@ -83,6 +83,21 @@ functionality or a wider change is not made in the PR: answer its thread
 as deferred, and put it in the report as a proposed follow-up with its
 diagnosis, for the operator to decide.
 
+Triage sorts every valid finding into one of three:
+
+- **Introduced** by this PR, its own commits or the loop's fixups: fix it,
+  minimally. `pr-loop threads` marks a thread `onChangedLines` when the PR
+  changed its line, and `onLoopFixup` when a loop fixup changed it last.
+- **Pre-existing**: the problem is on the base too, shown with
+  `git show <base>:<path>` or a reproduction there, whatever line the bot
+  put it on. Reply that it predates the PR, and propose a follow-up.
+- **New scope**: its real fix is new functionality or a wider change, as
+  above.
+
+A deferral an owner proposes stands unless the operator overrides it. Never
+overrule an owner towards a larger change; scope grows only by the
+operator's decision.
+
 ## Sub-agents
 
 Owners keep their memory in a notes file,
