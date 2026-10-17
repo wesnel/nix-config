@@ -92,14 +92,16 @@ func TestExport(t *testing.T) {
 }
 
 func TestUsage(t *testing.T) {
-	for _, args := range [][]string{{}, {"serve"}, {"export", "now"}, {"export", "--out", "x"}} {
+	for _, args := range [][]string{{}, {"serve"}, {"export", "now"}, {"export", "--out", "x"},
+		{"watch", "--poll"}, {"watch", "ws://x"}} {
 		var stdout, stderr bytes.Buffer
 		if code := run(args, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "export") {
 			t.Errorf("%q: exit %d: %s", args, code, stderr.String())
 		}
 	}
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"--help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "export") {
+	if code := run([]string{"--help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "export") ||
+		!strings.Contains(stdout.String(), "  watch ") {
 		t.Errorf("--help: exit %d: %s", code, stdout.String())
 	}
 }

@@ -309,6 +309,7 @@ trash "$d"
 
 ``` sh
 plan-dash export                         # writes $XDG_STATE_HOME/agent-plans/out/
+plan-dash watch                          # prints a line when the session has work
 ```
 
 `plan-dash export` writes the documents the "Agent plans" page keeps in
@@ -334,6 +335,21 @@ document stays under 600 KiB. Redaction knows shapes, not data, so
 customer data stays out of plans. A plan that cannot be read is named and
 its document kept, and the command exits 1; only a plan gone from the
 directory, or halted, loses its document.
+
+`plan-dash watch` is what wakes the dashboard session, through Monitor.
+Every 30 seconds it exports the plans and their sync state in memory and
+prints `plans changed` when that export's hash differs from the one it
+last printed for, at most once every 90 seconds. The hash leaves out what
+changes on every logged event or sync (a plan's `updated`, the times of
+the last push and fetch), so an agent logging its work does not cost the
+session a turn. It also prints `plan sync stalled` once per stall (this
+host's plans unsynced, its last push over 6 hours old), and `demo digest
+ready` for a new demo digest under `digests/YYYY/` in the notes
+repository. Every 2 minutes it takes the other hosts' plans
+with the fast-forward-only pull, never the rebasing one. It runs one at a
+time (`already watching` otherwise) and keeps what it printed in
+`watch.json`, so the watch the session starts after Monitor's 30 minutes
+prints only what changed since.
 
 ## pushing: private history stays private
 

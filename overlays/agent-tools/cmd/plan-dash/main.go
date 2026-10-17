@@ -8,10 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/cli"
+	"github.com/wesnel/agent-tools/internal/dashboard"
 	"github.com/wesnel/agent-tools/internal/export"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/plans"
@@ -31,6 +34,21 @@ const usage = `plan-dash: the operator's status, from GitHub and the plans.
           reached the notes remote, whether they changed since, when the
           notes repository last fetched); the documents of plans gone or
           halted are removed, those of plans that could not be read kept
+  watch   for the dashboard session's Monitor: every 30 seconds, export
+          this host's and the other hosts' plans and their sync state in
+          memory and print "plans changed" where what the page would show
+          differs from what the last such line was printed for, at most
+          once every 90 seconds (when a log alone changes, or a push or
+          fetch, it does not); print "plan sync stalled" once a stall
+          begins, this host's plans unsynced and its last push over 6
+          hours old; and "demo digest ready" for a demo digest new under
+          digests/YYYY/ in the notes repository. Takes the other hosts'
+          plans every 2 minutes, fast-forward only. What it has printed
+          is kept in $XDG_STATE_HOME/agent-plans/watch.json,
+          so a watch started after another prints only what changed since,
+          and the first ever prints nothing for what it finds. Another
+          watch already running makes it print "already watching" and
+          exit.
 
 GitHub is read with gh, at most once a minute: a fetch is cached as
 $XDG_STATE_HOME/plan-dash/github.json, which holds titles, and where one
@@ -55,8 +73,37 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 1 && args[0] == "export" {
 		return exportDocs(stdout, stderr)
 	}
+	if len(args) == 1 && args[0] == "watch" {
+		return watch(stdout, stderr)
+	}
 	fmt.Fprint(stderr, usage)
 	return 2
+}
+
+// watch runs watch until it is stopped. It takes no arguments: the
+// dashboard session runs it under Monitor, and nothing it is given can
+// change what it prints.
+func watch(stdout, stderr io.Writer) int {
+	c, err := plans.Load()
+	if err != nil {
+		return cli.Report("plan-dash", nil, err, 0, stdout, stderr)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	defer stop()
+	w := dashboard.Watch{Dir: filepath.Join(hostpaths.StateHome(), "agent-plans"), Config: c, Now: time.Now, Out: stdout,
+		Sync: c.SyncState, Pull: c.Pull,
+		Wait: func(ctx context.Context, d time.Duration) bool {
+			select {
+			case <-ctx.Done():
+				return false
+			case <-time.After(d):
+				return true
+			}
+		}}
+	if err := w.Run(ctx); err != nil {
+		return cli.Report("plan-dash", nil, err, 0, stdout, stderr)
+	}
+	return 0
 }
 
 // exportDocs runs export. It takes no arguments: the dashboard session may
