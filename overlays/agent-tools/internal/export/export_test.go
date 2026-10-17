@@ -214,18 +214,18 @@ func fixture(t *testing.T) (c plans.Config, own, theirs plans.Plan) {
 
 // The keys each document may hold, an array's elements' as "name[].key".
 var allowed = map[string][]string{
-	"plans": {"id", "title", "goal", "status", "host", "updated",
+	"plans": {"schema", "id", "title", "goal", "status", "host", "updated",
 		"steps", "steps[].id", "steps[].order", "steps[].title", "steps[].keyword", "steps[].ready",
 		"decisions", "decisions[].id", "decisions[].question", "decisions[].answer",
 		"questions", "questions[].id", "questions[].text", "questions[].priority", "questions[].context",
 		"questions[].options", "questions[].options[].key", "questions[].options[].label",
 		"questions[].options[].why", "questions[].options[].recommended"},
-	"github": {"at", "stale", "mineTotal", "requestsTotal",
+	"github": {"schema", "at", "stale", "mineTotal", "requestsTotal",
 		"mine", "mine[].repo", "mine[].number", "mine[].title", "mine[].draft", "mine[].ci", "mine[].review",
 		"mine[].unresolved",
 		"requests", "requests[].repo", "requests[].number", "requests[].title", "requests[].draft",
 		"requests[].team", "requests[].requested", "requests[].head", "requests[].ci", "requests[].record"},
-	"meta": {"updated", "host", "repo", "pushed", "unsynced", "fetched"},
+	"meta": {"schema", "updated", "host", "repo", "pushed", "unsynced", "fetched"},
 }
 
 func join(path, key string) string {
@@ -389,7 +389,7 @@ func TestExport(t *testing.T) {
 		t.Fatalf("plans %+v", e.Plans)
 	}
 	got := e.Plans[1]
-	want := Plan{ID: own.Name, Title: "Rotate [REDACTED GitHub token]", Goal: "Run the loop. password=[REDACTED]",
+	want := Plan{Schema: 1, ID: own.Name, Title: "Rotate [REDACTED GitHub token]", Goal: "Run the loop. password=[REDACTED]",
 		Status: "planning", Host: "box", Updated: day.Format(time.RFC3339),
 		Steps: []Step{{ID: "S1", Order: 0, Title: "Write the loop", Keyword: "STARTED", Ready: true},
 			{ID: "S2", Order: 1, Title: "Test the loop", Keyword: "TODO"},

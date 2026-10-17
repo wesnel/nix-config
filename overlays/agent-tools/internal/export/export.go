@@ -29,6 +29,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/wesnel/agent-tools/internal/agentplans"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/redact"
 	"github.com/wesnel/agent-tools/internal/status"
@@ -62,9 +63,11 @@ const maxID = 200
 
 // Plan is the document plans/<ID>: a plan that is not halted.
 type Plan struct {
-	ID    string `json:"id"`
-	Title string `json:"title"`
-	Goal  string `json:"goal"`
+	// Schema, in every document, is agentplans.Schema.
+	Schema int    `json:"schema"`
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Goal   string `json:"goal"`
 	// Status is STATUS, or "unknown" where it is not a lower-case word.
 	Status string `json:"status"`
 	// Host alone writes the plan.
@@ -122,6 +125,7 @@ type Option struct {
 // Host's plans have reached the notes repository's remote, as
 // plans.SyncState reads it; times are RFC 3339, or "".
 type Sync struct {
+	Schema   int    `json:"schema"`
 	Updated  string `json:"updated"`
 	Host     string `json:"host"`
 	Repo     bool   `json:"repo"`
@@ -133,6 +137,7 @@ type Sync struct {
 // GitHub is the document github/status: status.GitHubAt's result, At ""
 // where no fetch ever succeeded.
 type GitHub struct {
+	Schema        int       `json:"schema"`
 	At            string    `json:"at"`
 	Stale         bool      `json:"stale"`
 	Mine          []PR      `json:"mine"`
@@ -233,7 +238,7 @@ func planOf(c plans.Config, p plans.Plan, now time.Time) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	plan := Plan{ID: p.Name, Title: text(st.Title, short), Status: st.State, Host: p.Host,
+	plan := Plan{Schema: agentplans.Schema, ID: p.Name, Title: text(st.Title, short), Status: st.State, Host: p.Host,
 		Steps: []Step{}, Decisions: []Decision{}, Questions: []Question{}}
 	if !state.MatchString(plan.Status) {
 		plan.Status = "unknown"
@@ -317,7 +322,7 @@ func updated(c plans.Config, p plans.Plan) (string, error) {
 // SyncOf is c's sync state as at now.
 func SyncOf(c plans.Config, now time.Time) (Sync, error) {
 	s, err := c.SyncState()
-	return Sync{Updated: stamp(now), Host: c.Host, Repo: s.Repo, Pushed: stamp(s.Pushed), Unsynced: s.Unsynced,
+	return Sync{Schema: agentplans.Schema, Updated: stamp(now), Host: c.Host, Repo: s.Repo, Pushed: stamp(s.Pushed), Unsynced: s.Unsynced,
 		Fetched: stamp(s.Fetched)}, err
 }
 
@@ -330,7 +335,7 @@ var (
 // GitHubOf is status.GitHubAt's result through cache, as at now, keeping
 // only the pull requests whose keys and heads have their shapes.
 func GitHubOf(ctx context.Context, cache string, now time.Time) (GitHub, error) {
-	g := GitHub{Mine: []PR{}, Requests: []Request{}}
+	g := GitHub{Schema: agentplans.Schema, Mine: []PR{}, Requests: []Request{}}
 	got, stale, err := status.GitHubAt(ctx, cache, now)
 	if got == nil {
 		return g, err

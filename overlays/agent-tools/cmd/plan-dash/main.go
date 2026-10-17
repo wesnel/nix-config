@@ -59,9 +59,10 @@ const usage = `plan-dash: the operator's status, from GitHub and the plans.
 GitHub is read with gh, at most once a minute: a fetch is cached as
 $XDG_STATE_HOME/plan-dash/github.json, which holds titles, and where one
 fails, the last good one is written, marked stale. export's documents leave
-the host: they hold only the fields named above, read from the plans
-directory alone (of properties, only STATUS, RECOMMENDATION and ANSWER; of
-the log, only event kinds and times), stripped of control and formatting
+the host: they hold only the fields named above and schema, the documents'
+version; read from the plans directory alone (of properties, only STATUS,
+RECOMMENDATION and ANSWER; of the log, only event kinds and times),
+stripped of control and formatting
 characters, with known secret shapes redacted and text and lists capped.
 
 Prints JSON: the directory, when, whether GitHub's part is stale, counts,
