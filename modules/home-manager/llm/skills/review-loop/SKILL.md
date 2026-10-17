@@ -199,10 +199,14 @@ round again.
    `pr-loop wait reviews`, as Waiting says; reviews take 5 to 15 minutes.
 3. **Status.** `pr-loop status`. Check the stop conditions below: its
    `done` and `paused` decide, never one bot's verdict.
-4. **Triage.** Have every owner triage its PR's unresolved bot threads
-   (`pr-loop threads <number>`) without changing code. Then decide each
-   thread's outcome as the `review-change` skill's Triage says, confirming a
-   `belongs-in` with the owner of the PR that introduced the code. Threads
+4. **Triage.** Owners triage their own threads, also in a stack of one PR.
+   Send each owner its PR's number and the IDs of the threads to triage,
+   not the threads themselves; it reads them with `pr-loop threads
+   <number>` and, without changing code, returns one entry per thread as
+   its Triage says. Do not read the threads' bodies to judge them yourself.
+   Then decide each thread's outcome from those entries, as the
+   `review-change` skill's Triage says, confirming a `belongs-in` with the
+   owner of the PR that introduced the code. Threads
    started by people are always `needs-operator`, and the loop does not reply to
    them: `pr-loop reply` refuses.
 5. **Fix.** Owners fix and commit in their own worktrees, one fixup per
