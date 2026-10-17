@@ -61,7 +61,7 @@ func TestExport(t *testing.T) {
 		Documents    []string `json:"documents"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil || got.Dir != out || !got.GitHub || got.PullRequests != 1 || got.Plans != 0 ||
-		strings.Join(got.Documents, " ") != "github/status meta/sync" {
+		strings.Join(got.Documents, " ") != "github/status meta/sync today/digest" {
 		t.Errorf("printed %s (%v)", stdout.String(), err)
 	}
 	data, err := os.ReadFile(filepath.Join(out, "github", "status.json"))

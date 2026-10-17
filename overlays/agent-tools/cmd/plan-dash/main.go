@@ -31,12 +31,15 @@ const usage = `plan-dash: the operator's status, from GitHub and the plans.
           draft, CI, review decision and unresolved threads, and the
           reviews asked of the operator, directly or of a team, with since
           when, head and its CI and whether pr-loop holds a review of it,
-          all with titles, and the one of each list each is stacked on)
-          and meta/sync.json (when this host's plans last reached the
-          notes remote, whether they changed since, when the notes
-          repository last fetched, how many plans could not be read); the
+          all with titles, and the one of each list each is stacked on),
+          meta/sync.json (when this host's plans last reached the notes
+          remote, whether they changed since, when the notes repository
+          last fetched, how many plans could not be read) and
+          today/digest.json (the demo digest of the newest day of the
+          last week with one, from digests/YYYY/ in the notes repository); the
           documents of plans gone or halted are removed, those of plans
-          that could not be read kept
+          that could not be read kept, and so is today/digest.json where a
+          digest could not be read
   watch   for the dashboard session's Monitor: every 30 seconds, export
           this host's and the other hosts' plans and their sync state in
           memory and print "plans changed" where what the page would show
@@ -63,8 +66,8 @@ $XDG_STATE_HOME/plan-dash/github.json, which holds titles, and where one
 fails, the last good one is written, marked stale. export's documents leave
 the host: they hold only the fields named above and schema, the documents'
 version; read from the plans directory alone (of properties, only STATUS,
-RECOMMENDATION and ANSWER; of the log, only event kinds and times),
-stripped of control and formatting
+RECOMMENDATION and ANSWER; of the log, only event kinds and times) but for
+the digests, stripped of control and formatting
 characters, with known secret shapes redacted and text and lists capped.
 
 Prints JSON: the directory, when, whether GitHub's part is stale, counts,
@@ -156,6 +159,9 @@ func exportDocs(stdout, stderr io.Writer) int {
 		Documents []string `json:"documents"`
 	}{Dir: dir, At: now, GitHub: e.GitHub.At != "", Stale: e.GitHub.Stale, PullRequests: len(e.GitHub.Mine),
 		ReviewRequests: len(e.GitHub.Requests), Plans: len(e.Plans), Documents: []string{"github/status", "meta/sync"}}
+	if !e.TodayFailed {
+		result.Documents = append(result.Documents, "today/digest")
+	}
 	for _, p := range e.Plans {
 		result.Documents = append(result.Documents, "plans/"+p.ID)
 	}

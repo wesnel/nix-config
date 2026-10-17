@@ -23,7 +23,7 @@ At the start, after `/clear` or `/compact`:
    - `plan sync stalled`: PushNotification `devbox plan sync stalled`,
      `status` `proactive`.
    - `demo digest ready`: PushNotification `Demo digest ready`, `status`
-     `proactive`.
+     `proactive`. Then run the update.
    - `already watching`: another watch runs; nothing to do.
 3. At the start only: run the update.
 
@@ -39,9 +39,9 @@ runs. Its prompt, with PAGE and OUT filled in:
 > document IDs.
 >
 > 1. Bash `plan-dash export`; keep its `documents`.
-> 2. ArtifactData `list` of `plans`, `github` and `meta`, each with
->    `out_dir` OUT/page and `query` `{"limit": 1000}`: the result names
->    each document and its `version`.
+> 2. ArtifactData `list` of `plans`, `github`, `meta` and `today`, each
+>    with `out_dir` OUT/page and `query` `{"limit": 1000}`: the result
+>    names each document and its `version`.
 > 3. ArtifactData `batch`, at most 50 writes a call:
 >    - `set` each of export's `documents`, COLLECTION/ID, with `file_path`
 >      OUT/COLLECTION/ID.json;
