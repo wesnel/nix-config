@@ -57,6 +57,7 @@ add a worktree of your own for this. Report:
 
 - each fixup's SHA and subject, with the thread or check it addresses
 - test and lint results, including failures
+- every test you skipped or could not run, by name, and why
 - the autosquash result
 - a draft reply per thread, in the reply-file format `review-change`'s
   Answering gives: what changed and why, in two or three sentences, naming

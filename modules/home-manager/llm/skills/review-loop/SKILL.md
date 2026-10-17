@@ -266,6 +266,7 @@ Stop and hand back when any of these holds:
    Never write a thread's link yourself. For each PR, add:
    - each thread's outcome, by its ID in that table
    - any accepted CI failures
+   - every test an owner skipped or could not run, and why
    - local review findings per round: fixed, rebutted, and any left standing
    - `needs-operator` with each range-diff file `pr-loop status` lists under
      `needsOperator`: review the conflict resolution before signing
