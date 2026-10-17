@@ -3,11 +3,14 @@ package history
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/publictext"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
@@ -141,9 +144,10 @@ var (
 // LintMessage lists what is wrong with a commit message, each as a phrase
 // naming the problem; nil when nothing is. A kept commit's subject is at most
 // MaxSubject characters, without a trailing period. No line credits a tool
-// or links a session. A fixup! carries only Review-* trailers. A fold's
-// subject is not a subject the history keeps, so a caller that can lints
-// the messages Squashed leaves.
+// or links a session. A fixup! carries only Review-* trailers. Nothing else
+// names what publictext finds, since GitHub shows every message pushed. A
+// fold's subject is not a subject the history keeps, so a caller that can
+// lints the messages Squashed leaves.
 func LintMessage(message string) []string {
 	var problems []string
 	subject := Subject(message)
@@ -162,15 +166,43 @@ func LintMessage(message string) []string {
 			problems = append(problems, fmt.Sprintf("the line %q is attribution", strings.TrimSpace(line)))
 		}
 	}
+	public := message
 	if kind == Fixup {
 		paragraphs := strings.Split(body, "\n\n")
+		var kept []string
 		for _, line := range strings.Split(paragraphs[len(paragraphs)-1], "\n") {
-			if m := trailer.FindStringSubmatch(line); m != nil && !strings.HasPrefix(m[1], "Review-") && !attribution.MatchString(line) {
+			m := trailer.FindStringSubmatch(line)
+			if m != nil && !strings.HasPrefix(m[1], "Review-") && !attribution.MatchString(line) {
 				problems = append(problems, fmt.Sprintf("the trailer %q is not a Review-* trailer", m[1]))
 			}
+			if m == nil || !strings.HasPrefix(m[1], "Review-") {
+				kept = append(kept, line)
+			}
 		}
+		// The Review-* trailers record the loop's own bookkeeping, and the
+		// signing pass drops them with the fixup's message.
+		paragraphs[len(paragraphs)-1] = strings.Join(kept, "\n")
+		public = subject + "\n\n" + strings.Join(paragraphs, "\n\n")
+	}
+	if problem := publictext.Problem(publictext.Check(public, publicContext())); problem != "" {
+		problems = append(problems, problem)
 	}
 	return problems
+}
+
+var contexts sync.Map
+
+// publicContext is publictext.In for the repository git runs in, once per
+// directory.
+func publicContext() publictext.Context {
+	cwd, _ := os.Getwd()
+	key := git.Dir + "\x00" + cwd
+	if ctx, ok := contexts.Load(key); ok {
+		return ctx.(publictext.Context)
+	}
+	ctx := publictext.In(git.Dir)
+	contexts.Store(key, ctx)
+	return ctx
 }
 
 // NoEditor keeps a rebase from opening an editor: for the todo list, and for

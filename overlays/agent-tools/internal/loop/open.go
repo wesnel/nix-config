@@ -245,6 +245,9 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 	if strings.TrimSpace(title) == "" {
 		return nil, errors.New("open needs --title")
 	}
+	if err := checkPublic("the pull request's title and description", title+"\n\n"+body, nil, "run `pr-loop open` again"); err != nil {
+		return nil, err
+	}
 	repo, err := repository()
 	if err != nil {
 		return nil, err
