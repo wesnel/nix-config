@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/cli"
+	"github.com/wesnel/agent-tools/internal/dashboard"
 	"github.com/wesnel/agent-tools/internal/export"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/plans"
@@ -42,7 +43,20 @@ const usage = `plan-dash: the operator's status, from GitHub and the plans.
           reached the notes remote, whether they changed since, when the
           notes repository last fetched); the documents of plans gone or
           halted are removed, those of plans that could not be read kept;
-          and, outside out, the review requests listed, with their heads
+          and, outside out, the review requests listed, with their heads,
+          and the open questions of this host's plans, with their options
+  answer  record the answers the page gave: reads each document PLAN~QID
+          from out/answers/PLAN@QID.json, as an ArtifactData read names it
+          (or PLAN~QID.json; two files for one document are refused), and
+          where its choice is the key of an option the last export listed
+          for an open question of this host's plan, or "other" with one
+          line of text, settles the question with that option's label or
+          that line, as agent-plan decide --role phone does; writes each
+          document's state back there (recorded; settled, where the
+          question is no longer open; or refused, with why); skips
+          documents it wrote; removes files that name no such document. Of
+          a document, only state, choice and text are read, and the
+          directory is opened once and never followed through a link.
   dispatch
           queue the reviews the page asked for: reads each document
           OWNER~NAME~N from out/dispatch/OWNER@NAME@N.json, as an
@@ -91,7 +105,9 @@ characters, with known secret shapes redacted and text and lists capped.
 
 Prints JSON: the file or directory, when, whether GitHub's part is stale,
 and counts. Exits 1 when GitHub or a plan could not be read, after writing
-the rest. dispatch prints the keys it queued and queued anyway, the
+the rest. answer prints the document IDs it recorded, found settled and
+refused, and how many entries named no document. dispatch prints the keys
+it queued and queued anyway, the
 document IDs it refused, how many files it removed, whether it started
 the unit and whether the kill switch is on; queue the keys it ran and
 postponed, and whether the kill switch stopped it or another run was at
@@ -107,6 +123,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	if len(args) == 1 && args[0] == "export" {
 		return exportDocs(stdout, stderr)
+	}
+	if len(args) == 1 && args[0] == "answer" {
+		c, err := plans.Load()
+		if err != nil {
+			return cli.Report("plan-dash", nil, err, 0, stdout, stderr)
+		}
+		res, err := dashboard.Answer(queue.Default(), c, time.Now())
+		return cli.Report("plan-dash", res, err, 0, stdout, stderr)
 	}
 	if len(args) == 1 && args[0] == "dispatch" {
 		res, err := queue.Dispatch(queue.Default(), time.Now(), queue.StartUnit)
@@ -170,6 +194,9 @@ func exportDocs(stdout, stderr io.Writer) int {
 	now := time.Now()
 	e, err := export.Collect(context.Background(), c, filepath.Join(state, "plan-dash", "github.json"), now)
 	err = errors.Join(err, export.Write(dir, e))
+	if e.Listed {
+		err = errors.Join(err, dashboard.WriteQuestions(queue.Default(), c.Host, e.Plans))
+	}
 	if e.GitHub.At != "" {
 		var listed []queue.Request
 		for _, r := range e.GitHub.Requests {

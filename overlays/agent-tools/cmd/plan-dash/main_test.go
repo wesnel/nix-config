@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/plans"
 )
 
 func TestMain(m *testing.M) {
@@ -174,6 +176,55 @@ func TestDispatch(t *testing.T) {
 	}
 }
 
+// answer records what the page answered to a question export listed, by
+// the option's key, as the phone's decision, and writes its state back.
+func TestAnswer(t *testing.T) {
+	state := setUp(t)
+	c, err := plans.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	made, err := c.New(plans.NewOptions{Title: "Loop", Slug: "loop", Goal: "Run it."}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := c.Open(made.Plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Ask(plans.AskOptions{Question: "Keep the flag?", Recommendation: "drop it",
+		Alternatives: []string{"keep it :: costs a flag"}}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"answer"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "plan-dash export") {
+		t.Errorf("before an export: exit %d: %s", code, stderr.String())
+	}
+	if code := run([]string{"export"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("export: exit %d: %s", code, stderr.String())
+	}
+	dir := filepath.Join(state, "agent-plans", "out", "answers")
+	os.MkdirAll(dir, 0o700)
+	os.WriteFile(filepath.Join(dir, p.Name+"@Q1.json"), []byte(`{"choice": "B", "at": "2026-10-17T09:00:00Z"}`), 0o600)
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"answer"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	var got struct {
+		Recorded []string `json:"recorded"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil || len(got.Recorded) != 1 || got.Recorded[0] != p.Name+"~Q1" {
+		t.Errorf("printed %s (%v)", stdout.String(), err)
+	}
+	if ds, err := p.Decisions(true); err != nil || len(ds) != 1 || ds[0].Answer != "keep it" {
+		t.Errorf("decisions %+v (%v)", ds, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, p.Name+"@Q1.json")); err != nil || !strings.Contains(string(data), `"state": "recorded"`) {
+		t.Errorf("the document: %s (%v)", data, err)
+	}
+}
+
 // queue stops at the kill switch, and is refused to the dashboard session.
 func TestQueue(t *testing.T) {
 	state := setUp(t)
@@ -194,7 +245,8 @@ func TestQueue(t *testing.T) {
 
 func TestUsage(t *testing.T) {
 	for _, args := range [][]string{{}, {"serve"}, {"collect", "--bogus"}, {"export", "now"}, {"export", "--out", "x"},
-		{"dispatch", "o/s#9"}, {"dispatch", "--out", "x"}, {"queue", "run"}} {
+		{"dispatch", "o/s#9"}, {"dispatch", "--out", "x"}, {"queue", "run"}, {"answer", "2026-10-17-loop.box"},
+		{"answer", "--doc", "x.json"}} {
 		var stdout, stderr bytes.Buffer
 		if code := run(args, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "collect") {
 			t.Errorf("%q: exit %d: %s", args, code, stderr.String())

@@ -325,6 +325,7 @@ trash "$d"
 ``` sh
 plan-dash collect                        # writes $XDG_STATE_HOME/plan-dash/status.org
 plan-dash export                         # writes $XDG_STATE_HOME/agent-plans/out/
+plan-dash answer                         # records the answers the page gave
 plan-dash dispatch                       # queues the reviews the page asked for
 plan-dash queue                          # runs them, as agent-plans-queue.service does
 ```
@@ -360,6 +361,27 @@ document stays under 600 KiB. Redaction knows shapes, not data, so
 customer data stays out of plans. A plan that cannot be read is named and
 its document kept, and the command exits 1; only a plan gone from the
 directory, or halted, loses its document.
+
+`plan-dash answer` records the answers the page gave to plans' open
+questions. It reads the page's `answers/PLAN~QID` documents, which the
+dashboard session copies under `out/` (a read names the file
+`PLAN@QID.json`, and answer writes back under that name), and takes from
+each only `choice`, an option's key, or `other` with one line of `text`.
+A key is mapped to its option's label through the questions the last
+export listed, kept outside `out/`, never through the option's place in
+the list: a question without a recommendation has no option A. Only a
+question of this host's plan is answered, since only its host writes a
+plan; another host's is refused, as is a question or option not listed,
+or a line of more than 1000 characters or with control or formatting
+characters. Such a line lands in an Org heading of the log, so its `[[`
+and `]]` are split and, where it ends in what Org reads as tags, a period
+follows them. The answer settles the question as `agent-plan decide --role
+phone` does, in process, so no text reaches a command line; a question no
+longer open counts as settled. Each document gets its state back
+(`recorded`, `settled` or `refused` with why), and a document with a
+state is not read again. `--role phone` says where a decision came from,
+not who made it: whoever holds the claude.ai account can make it from the
+page, and any session could claim the role too.
 
 `plan-dash dispatch` takes the reviews the page asked for into the review
 queue, `$XDG_STATE_HOME/agent-plans/queue.org`. It reads the page's
