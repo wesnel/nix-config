@@ -40,6 +40,17 @@ type CI struct {
 	State       string   `json:"state"` // awaitingHead, none, pending, failed or passed
 	Pending     []string `json:"pending"`
 	Failed      []Check  `json:"failed"`
+	// Mergeable is GitHub's word on merging the head into the base:
+	// MERGEABLE, CONFLICTING, or UNKNOWN while GitHub works it out. A
+	// conflicting PR runs no pull_request workflows.
+	Mergeable string `json:"mergeable"`
+	// BaseOid is the base branch's tip on GitHub, and BaseMoved, in a loop,
+	// whether it moved since the loop began or last ran `pr-loop
+	// fetch-base`.
+	BaseOid   string `json:"baseOid"`
+	BaseMoved *bool  `json:"baseMoved,omitempty"`
+	// Base is the branch the PR is based on.
+	Base string `json:"base"`
 }
 
 // finished reports whether CI has reached a result on the expected head.
@@ -106,6 +117,9 @@ func ciStatus(slug string, number int, want string) (*CI, error) {
 			PullRequest struct {
 				HeadRefName string
 				HeadRefOid  string
+				Mergeable   string
+				BaseRefOid  string
+				BaseRefName string
 				HeadRef     *struct {
 					Target struct{ Oid string }
 				}
@@ -117,7 +131,7 @@ func ciStatus(slug string, number int, want string) (*CI, error) {
 	}
 	err := graphQL(fmt.Sprintf(`query($owner: String!, $name: String!, $number: Int!) {
 		repository(owner: $owner, name: $name) { pullRequest(number: $number) {
-			headRefName headRefOid headRef { target { oid } }
+			headRefName headRefOid headRef { target { oid } } mergeable baseRefOid baseRefName
 			baseRef { target { ... on Commit { statusCheckRollup { contexts(first: 100) { nodes { %s } } } } } }
 		} }
 	}`, contextFields), vars, &data)
@@ -125,7 +139,18 @@ func ciStatus(slug string, number int, want string) (*CI, error) {
 		return nil, err
 	}
 	pr := data.Repository.PullRequest
-	ci := &CI{PR: number, Branch: pr.HeadRefName, HeadOid: pr.HeadRefOid, ExpectedOid: want, Pending: []string{}, Failed: []Check{}}
+	ci := &CI{PR: number, Branch: pr.HeadRefName, HeadOid: pr.HeadRefOid, ExpectedOid: want, Pending: []string{}, Failed: []Check{},
+		Mergeable: pr.Mergeable, BaseOid: pr.BaseRefOid, Base: pr.BaseRefName}
+	if state, err := loadState(false); err == nil && state != nil && state.Repo == slug {
+		// A stacked PR's base is the loop's own PR below it, which moves
+		// with every push.
+		if b, ok := state.prBranches()[number]; ok && state.Branches[b].BaseOid != "" {
+			if _, stacked := state.Branches[state.Branches[b].Base]; !stacked {
+				moved := state.Branches[b].BaseOid != pr.BaseRefOid
+				ci.BaseMoved = &moved
+			}
+		}
+	}
 	if want == "" && pr.HeadRef != nil && pr.HeadRef.Target.Oid != pr.HeadRefOid {
 		ci.ExpectedOid = pr.HeadRef.Target.Oid
 	}
@@ -220,10 +245,34 @@ type CIWait struct {
 	// Result is passed; failed, when a check fails that does not fail on the
 	// base; failedOnBase, when every failing check fails on the base too;
 	// noChecks, when nothing failed but some PR's head still had no checks a
-	// grace period after it became the expected head; or timedOut, when some
+	// grace period after it became the expected head; conflicting, which
+	// outranks the rest, when some PR conflicts with its base and has no
+	// checks, which GitHub does not run on it; or timedOut, when some
 	// PR's state is still awaitingHead, pending, or none within its grace.
 	Result string `json:"result"`
 	PRs    []*CI  `json:"prs"`
+}
+
+// Advice says, for each PR that conflicts and has no checks, what resolves
+// it: a PR based on another of the loop's PRs conflicts with that parent,
+// which a restack resolves; any other conflicts with its base, which
+// `pr-loop fetch-base` brings in for a rebase.
+func (w *CIWait) Advice() []string {
+	state, _ := loadState(false)
+	var out []string
+	for _, c := range w.PRs {
+		if c.Mergeable != "CONFLICTING" || c.State != "none" {
+			continue
+		}
+		if state != nil && state.Branches[c.Base] != nil {
+			out = append(out, fmt.Sprintf("#%d conflicts with %s, the loop's PR below it, and GitHub runs no checks on it "+
+				"until it does not: restack it onto %s as the review-loop skill's Restack step says", c.PR, c.Base, c.Base))
+			continue
+		}
+		out = append(out, fmt.Sprintf("#%d conflicts with its base %s, and GitHub runs no checks on it until it does not: "+
+			"`pr-loop fetch-base`, then rebase it onto %s as the review-loop skill says", c.PR, c.Base, c.Base))
+	}
+	return out
 }
 
 var (
@@ -259,7 +308,7 @@ func WaitCI(args []string, sha string, timeout, interval, grace time.Duration) (
 	deadline := now().Add(timeout)
 	for {
 		out := &CIWait{Result: "passed", PRs: []*CI{}}
-		settled, noChecks := true, false
+		settled, noChecks, conflicts := true, false, false
 		for _, n := range numbers {
 			ci, err := ciStatus(slug, n, want)
 			if err != nil {
@@ -267,7 +316,9 @@ func WaitCI(args []string, sha string, timeout, interval, grace time.Duration) (
 			}
 			out.PRs = append(out.PRs, ci)
 			finished := ci.finished()
-			if ci.State != "awaitingHead" {
+			if ci.State == "none" && ci.Mergeable == "CONFLICTING" {
+				finished, conflicts = true, true
+			} else if ci.State != "awaitingHead" {
 				if s, ok := seen[n]; !ok || s.oid != ci.HeadOid {
 					seen[n] = sighting{ci.HeadOid, now()}
 				}
@@ -286,6 +337,9 @@ func WaitCI(args []string, sha string, timeout, interval, grace time.Duration) (
 		}
 		if noChecks && out.Result == "passed" {
 			out.Result = "noChecks"
+		}
+		if conflicts {
+			out.Result = "conflicting"
 		}
 		left := deadline.Sub(now())
 		if settled || left <= 0 {

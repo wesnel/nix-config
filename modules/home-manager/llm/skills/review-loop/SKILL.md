@@ -18,19 +18,28 @@ current session.
   branch you were pointed at:
 
   ```sh
-  log="$(git rev-parse --git-common-dir)/pr-loop-session"
+  log="$(git rev-parse --path-format=absolute --git-common-dir)/pr-loop-session"
   claude-pr-loop -p "Run the review loop on <branch>." \
     --output-format stream-json --verbose \
     < /dev/null > "$log.jsonl" 2> "$log.err"
   ```
 
-  Tell the operator it has started and where the logs are. Leave the repository
-  alone until it exits: the loop detaches the main worktree and works in
-  `.pr-loop/`. When it exits, show
+  Tell the operator it has started, and give them, with the repository's
+  path filled in:
+  - the logs, `$log.jsonl` and `$log.err`;
+  - `cd <repository> && pr-loop watch`, which follows the session's
+    progress from any terminal (`--from-start` for all of it; an interrupt
+    stops only the watching);
+  - `cd <repository> && pr-loop stop`, which ends the session, cleans up
+    and writes a report of what is left.
+
+  Leave the repository alone until it exits: the loop detaches the main
+  worktree and works in `.pr-loop/`. When it exits, show
   `$(git rev-parse --git-common-dir)/pr-loop/report.md`, or the end of the
   log if there is no report.
 - **Elsewhere:** stop and tell the operator to start `codex-pr-loop`, or
-  `M-x wgn/eca-pr-loop` with the `pr-coordinator` agent.
+  `M-x wgn/eca-pr-loop` with the `pr-coordinator` agent. `pr-loop stop` in
+  the repository also ends a `codex-pr-loop` session.
 
 Commit as the `signing-pass` skill says: unsigned, never pushing or signing
 yourself, with one signing pass at the end. In the loop's worktrees signing is
@@ -63,6 +72,12 @@ refactors, hardening, extra tests and fixes to code the PR did not touch.
 Defer those with a short reason. A deferral costs nothing; scope creep costs
 a reviewable PR.
 
+Fix every valid finding within the PR's scope, however many rounds it
+takes, and keep each fix minimal. A finding whose real fix is new
+functionality or a wider change is not made in the PR: answer its thread
+as deferred, and put it in the report as a proposed follow-up with its
+diagnosis, for the operator to decide.
+
 ## Sub-agents
 
 Owners keep their memory in a notes file,
@@ -73,6 +88,20 @@ sub-agent (Claude Code's `SendMessage`) or only start a new one per task
 (ECA's `spawn_agent`). Start owners in parallel where the harness allows.
 If it has no sub-agents at all, do each owner's task yourself, one PR at a
 time, keeping the same notes.
+
+Run every sub-agent in the foreground, whatever the `coordinate-subagents`
+skill says: in Claude Code never with `run_in_background`, and owners
+working in parallel as several Agent calls in one message. Never end a turn
+waiting on a sub-agent: a `claude -p` session stops whatever still runs
+in the background 10 minutes after its last turn ends, killing an owner
+mid-fix with no report. While the loop is active and `report.md` is
+unwritten, the session's Stop hook blocks a stop once.
+
+`claude-pr-loop` lifts that 10-minute limit, so a task left running in
+the background keeps the session alive, with no limit, until it ends or
+the operator runs `pr-loop stop`. That is all it does: it is no reason to
+start a task in the background, and nothing says the session takes
+another turn when such a task ends.
 
 Anything an owner asks you, or that you need to ask an owner, goes in the
 task you give next. Ask the owner rather than reading its code yourself
@@ -108,6 +137,27 @@ step's range starts, and each child's fork point,
 `git merge-base <child> <parent>`, which the restack needs once the parent
 has changed.
 
+Then check the merge state: `pr-loop ci` gives each PR's `mergeable` and
+whether its base moved since the loop last fetched it (`baseMoved`). A base
+that moved without a conflict needs nothing. If the bottom PR is
+`CONFLICTING`, or `pr-loop wait ci` exits 5 at any step, GitHub runs no
+checks on it until the conflict is resolved:
+
+- `pr-loop fetch-base` fetches the base as GitHub has it now.
+- The bottom PR's owner runs `git rebase <remote>/<base>` in its worktree,
+  which carries its fixups along, resolves the conflicts and reruns its
+  tests. A conflict whose resolution is not mechanical, one that needs a
+  decision about what either side's code should do, is the operator's:
+  `git rebase --abort`, stop, and name the conflicting files in the report.
+- Restack the children as step 7 does, push as step 8 does, and start the
+  round again: CI and reviews run on the new heads, and the signing pass
+  signs them as they are.
+
+A PR stacked on another of the loop's that is `CONFLICTING` conflicts with
+that parent, not the base, as `pr-loop wait ci` says when it exits 5:
+restack it as step 7 does, without `fetch-base`, then push and start the
+round again.
+
 1. **CI.** `pr-loop wait ci` (repeat while it exits 3), then `pr-loop ci`.
    If it exits 4 (`noChecks`), CI never reported on a head, and `pr-loop
    request` refuses until it does: stop and say so in the report. For every
@@ -123,7 +173,8 @@ has changed.
    thread; answer those through steps 4 to 9 first. Then
    `pr-loop wait reviews` (repeat while it exits 3); reviews take 5 to 15
    minutes.
-3. **Status.** `pr-loop status`. Check the stop conditions below.
+3. **Status.** `pr-loop status`. Check the stop conditions below: its
+   `done` and `paused` decide, never one bot's verdict.
 4. **Triage.** Have every owner triage its PR's unresolved bot threads
    (`pr-loop threads <number>`) without changing code. Then decide each
    thread's outcome as the `review-change` skill's Triage says, confirming a
@@ -150,6 +201,9 @@ has changed.
 8. **Push.** `pr-loop push` pushes every changed branch, as the `signing-pass`
    skill says a stack is pushed, and records the round under
    `refs/pr-loop/rounds/<n>/<branch>`. If GitHub moved underneath it, stop.
+   A branch whose PR commits were rewritten other than by a clean rebase,
+   as by resolving a conflict, is pushed and named under `needsOperator`
+   with the range-diff it recorded: the operator reviews it before signing.
 9. **Reply and resolve**, after the push so replies can cite pushed commits:
    `pr-loop reply --from <file>` for each PR's drafted replies, which
    answer and resolve threads as their outcomes say.
@@ -160,22 +214,31 @@ Then start the next round.
 
 Stop and hand back when any of these holds:
 
-- Every bot has reviewed every head, Copilot's verdict is `approval`, and no
-  bot thread is open except deferred and `needs-operator` ones.
-- Copilot's verdict on a head is `closer-look` with no new comments: it is
-  handing over to a person.
-- Every bot reviewed every head without new comments, and the only open
-  threads are deferred or need the operator.
+- `pr-loop status` shows every PR `done`: every bot has reviewed its head,
+  no bot's thread awaits an answer, CI has no failure of the PR's own, and
+  GitHub says it merges with its base. A thread answered as deferred or
+  `needs-operator` may stay open; one triaged for a fix is fixed, pushed and
+  answered first. One bot's verdict, such as Copilot's `closer-look`, never
+  ends the loop while another bot's threads wait.
+- `pr-loop status` shows a PR `paused`: the loop has not converged, as
+  `pausedBecause` says (six rounds of fixes have run, a push that only
+  rebased the stack counting as none, the PR's changed lines grew
+  more than half over the loop's start, or a bot asked to review the head
+  an hour ago has not). Report what is done and what is still open;
+  nothing is discarded.
 - `pr-loop` refused a push, CI keeps failing
   after two rounds spent on it, or an owner showed a CI failure is not the
   PR's doing.
 - A bot reopens a problem already fixed twice on the same thread.
-- Six rounds have run.
+- A conflict with the base needs more than a mechanical resolution.
 
 ## Hand-back
 
 1. Once owners report clean trees, `pr-loop worktrees --remove`, and check
-   the top branch out in the main worktree.
+   the top branch out in the main worktree. It keeps, and names, any
+   worktree whose removal would lose work (uncommitted changes, a rebase or
+   the like in progress, a HEAD off its branch): settle each with its owner,
+   or put it in the report.
 2. Write `$(git rev-parse --git-common-dir)/pr-loop/report.md` and show it.
    For each PR, include:
    - each bot's verdict
@@ -183,9 +246,11 @@ Stop and hand back when any of these holds:
    - commits added, and changed lines then and now
    - threads by outcome, with links
    - local review findings per round: fixed, rebutted, and any left standing
+   - `needs-operator` with each range-diff file `pr-loop status` lists under
+     `needsOperator`: review the conflict resolution before signing
 
    Also list the Linear changes and follow-up tickets you propose but did
-   not make. Point at the round snapshots for reviewing the code:
+   not make, each deferred finding with its diagnosis among them. Point at the round snapshots for reviewing the code:
    `git range-diff refs/pr-loop/rounds/0/<branch>...refs/pr-loop/rounds/<n>/<branch>`
    shows everything the loop changed in a branch, and adjacent rounds show
    one round's work.

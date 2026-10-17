@@ -83,11 +83,12 @@ type PR struct {
 	HeadRefName string `json:"headRefName"`
 	HeadRefOid  string `json:"headRefOid"`
 	BaseRefName string `json:"baseRefName"`
+	BaseRefOid  string `json:"baseRefOid"`
 }
 
 // prFields are the GraphQL fields a PR is decoded from.
 const prFields = `id number isDraft url title isCrossRepository author { login }
-				headRefName headRefOid baseRefName`
+				headRefName headRefOid baseRefName baseRefOid`
 
 // openPRs maps head branch to PR, for the user's open PRs in repo.
 func openPRs(repo *Repo) (map[string]*PR, error) {

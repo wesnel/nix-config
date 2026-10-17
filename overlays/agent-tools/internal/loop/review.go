@@ -192,8 +192,22 @@ func openThreads(slug string, number int, bots []*Bot) (open, unanswered map[str
 	}
 }
 
+// maxRounds, maxGrowth and reviewBudget are where a loop that has not
+// converged pauses for the operator: after this many rounds, once a PR's
+// changed lines exceed its baseline by more than this fraction, or once a
+// bot asked to review a head has left it unreviewed this long, which no
+// push would count as a round. Reviews take 5 to 15 minutes.
+const (
+	maxRounds    = 6
+	maxGrowth    = 0.5
+	reviewBudget = time.Hour
+)
+
 // Status is CI, each bot's review of the head, open threads, and how much the
-// PR's diff has grown since the loop began.
+// PR's diff has grown since the loop began, and the loop's outcome on the
+// PR: done, with nothing left to wait on (waitingOn says what is, else);
+// paused, when it is not done and has not converged (pausedBecause says
+// how); else neither, and the loop carries on.
 func Status(numbers []int) (any, error) {
 	slug, numbers, state, err := loopNumbers(numbers)
 	if err != nil {
@@ -209,20 +223,97 @@ func Status(numbers []int) (any, error) {
 		if err != nil {
 			return nil, err
 		}
+		waiting := waitingOn(review, ci)
 		entry := map[string]any{"pr": n, "branch": review.Branch, "draft": review.Draft, "headOid": review.HeadOid,
-			"bots": review.Bots, "openHumanThreads": review.OpenHumanThreads, "ci": ci}
+			"bots": review.Bots, "openHumanThreads": review.OpenHumanThreads, "ci": ci,
+			"done": len(waiting) == 0, "waitingOn": waiting, "paused": false}
 		if state != nil {
+			entry["round"] = state.Round
+			var because []string
+			// A push that only rebased the stack fixed nothing.
+			if spent := state.Round - state.RebaseRounds; spent >= maxRounds {
+				because = append(because, fmt.Sprintf("%d rounds of fixes have run", spent))
+			}
 			if b, ok := state.prBranches()[n]; ok {
+				var rewrites []string
+				for _, r := range state.Branches[b].Rewrites {
+					rewrites = append(rewrites, fmt.Sprintf("round %d rewrote %s other than by a clean rebase (%s): review "+
+						"the conflict resolution in %s before signing", r.Round, b, r.Why, r.File))
+				}
+				if len(rewrites) > 0 {
+					entry["needsOperator"] = rewrites
+				}
 				if parent, err := state.parentRef(&Repo{Slug: state.Repo}, b); err == nil {
 					if lines, err := diffLines(parent, b); err == nil {
-						entry["changedLines"] = map[string]int{"baseline": state.Branches[b].BaselineLines, "now": lines}
+						baseline := state.Branches[b].BaselineLines
+						entry["changedLines"] = map[string]int{"baseline": baseline, "now": lines}
+						if baseline > 0 && float64(lines) > float64(baseline)*(1+maxGrowth) {
+							because = append(because, fmt.Sprintf("changed lines grew from %d to %d, more than %d%%",
+								baseline, lines, int(maxGrowth*100)))
+						}
 					}
 				}
+			}
+			for _, name := range botNames(review) {
+				ask := state.Asked[fmt.Sprintf("%d:%s", n, name)]
+				if review.Bots[name].ReviewedHead || ask == nil || ask.HeadOid != review.HeadOid {
+					continue
+				}
+				if at, err := time.Parse(time.RFC3339, ask.At); err == nil && now().Sub(at) > reviewBudget {
+					because = append(because, fmt.Sprintf("%s has not reviewed the head %s after being asked", name, reviewBudget))
+				}
+			}
+			if len(waiting) > 0 && len(because) > 0 {
+				entry["paused"], entry["pausedBecause"] = true, strings.Join(because, "; ")
 			}
 		}
 		out = append(out, entry)
 	}
 	return out, nil
+}
+
+// botNames are the review's bots by name, sorted.
+func botNames(review *Review) []string {
+	names := make([]string, 0, len(review.Bots))
+	for name := range review.Bots {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// waitingOn is what a PR still waits on before the loop is done with it,
+// across every configured bot, never one bot's verdict alone: each bot's
+// review of the head, the answers its threads await, CI on the head with
+// no failure of the PR's own, and a merge with the base.
+func waitingOn(review *Review, ci *CI) []string {
+	waiting := []string{}
+	for _, name := range botNames(review) {
+		b := review.Bots[name]
+		switch {
+		case b.Pending:
+			waiting = append(waiting, name+": a review is requested")
+		case !b.ReviewedHead:
+			waiting = append(waiting, name+": has not reviewed the head")
+		}
+		if b.UnansweredThreads > 0 {
+			waiting = append(waiting, fmt.Sprintf("%s: %d threads await an answer", name, b.UnansweredThreads))
+		}
+	}
+	own := false
+	for _, c := range ci.Failed {
+		own = own || c.OnBase != "failed"
+	}
+	if (ci.State != "passed" && ci.State != "failed") || own {
+		waiting = append(waiting, "ci: "+ci.State)
+	}
+	switch ci.Mergeable {
+	case "CONFLICTING":
+		waiting = append(waiting, "base: the PR conflicts with it")
+	case "UNKNOWN":
+		waiting = append(waiting, "base: GitHub has not yet worked out whether the PR merges with it")
+	}
+	return waiting
 }
 
 // Request asks each bot that has neither reviewed the head nor been asked,
@@ -325,6 +416,10 @@ func Request(numbers []int, onlyBots, acceptFailures []string) (any, error) {
 				}
 				state.Triggers[triggerKey] = &Trigger{CommentID: comment.ID, At: comment.CreatedAt, HeadOid: ci.HeadOid}
 			}
+			if state.Asked == nil {
+				state.Asked = map[string]*Ask{}
+			}
+			state.Asked[fmt.Sprintf("%d:%s", pr.Number, bot.Name)] = &Ask{At: now().UTC().Format(time.RFC3339), HeadOid: ci.HeadOid}
 			if err := state.save(); err != nil {
 				return nil, err
 			}

@@ -12,7 +12,9 @@ import (
 // Worktrees creates a worktree per registered PR under <top>/.pr-loop/<n>,
 // inside the workspace so a sandbox that mounts only the workspace sees them.
 // Commits there are unsigned through each worktree's own config, so nothing
-// else in the session stops signing. With remove, it removes clean ones.
+// else in the session stops signing. With remove, it removes them, but
+// keeps and names each one whose removal would lose work (unsafeToRemove),
+// as `pr-loop stop` does.
 //
 // It never runs the repository's setup command: through the relay it runs
 // on the host, and setup belongs in the sandbox. The caller runs it there
@@ -38,9 +40,10 @@ func Worktrees(remove bool) (any, error) {
 			if err := git.CheckConfig(path); err != nil {
 				return nil, err
 			}
-			if dirty, _ := git.Run("-C", path, "status", "--porcelain"); dirty != "" {
-				return nil, refuse("%s has uncommitted changes; commit them with `git commit --fixup=<commit>`, "+
-					"or ask the operator whether to drop them", path)
+			if why := unsafeToRemove(path, b); why != "" {
+				out[b] = fmt.Sprintf("kept %s: %s; finish or commit the work there with `git commit --fixup=<commit>`, "+
+					"or ask the operator whether to drop it", path, why)
+				continue
 			}
 			if _, err := git.Run("worktree", "remove", path); err != nil {
 				return nil, err

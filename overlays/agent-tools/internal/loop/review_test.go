@@ -2,11 +2,15 @@ package loop
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/wesnel/agent-tools/internal/git"
 )
 
 type fakeReviewThread struct {
@@ -20,7 +24,11 @@ type fakeReview struct {
 	*fakeCI
 	threads   []fakeReviewThread
 	requested []string
+	reviews   []fakeReviewNode
 }
+
+// fakeReviewNode is a review a bot submitted on a commit.
+type fakeReviewNode struct{ login, oid, body string }
 
 func (f *fakeReview) graphQL(query string, vars map[string]any, out any) error {
 	var data any
@@ -52,8 +60,13 @@ func (f *fakeReview) graphQL(query string, vars map[string]any, out any) error {
 				"pageInfo": map[string]any{"hasNextPage": end < len(f.threads), "endCursor": strconv.Itoa(end)}}}}}
 	case strings.Contains(query, "reviewRequests"):
 		pr := f.prs[vars["number"].(int)]
+		reviews := []any{}
+		for i, r := range f.reviews {
+			reviews = append(reviews, map[string]any{"author": map[string]any{"login": r.login},
+				"commit": map[string]any{"oid": r.oid}, "body": r.body, "submittedAt": "2026-01-01T00:00:0" + strconv.Itoa(i) + "Z"})
+		}
 		data = map[string]any{"repository": map[string]any{"pullRequest": map[string]any{
-			"isDraft": true, "headRefName": pr.head, "headRefOid": pr.headOid}}}
+			"isDraft": true, "headRefName": pr.head, "headRefOid": pr.headOid, "reviews": map[string]any{"nodes": reviews}}}}
 	default:
 		return f.fakeCI.graphQL(query, vars, out)
 	}
@@ -117,6 +130,189 @@ func TestReviewStatusThreads(t *testing.T) {
 	}
 }
 
+// The loop is done with a PR only when every bot has reviewed its head and
+// no bot's thread awaits an answer, whatever one bot's verdict says.
+func TestStatusDone(t *testing.T) {
+	const config = `{"bots": {
+		"copilot": {"login": "^copilot", "request": {"reviewer": "@copilot"},
+			"verdicts": {"approval": "Approval recommended", "closer-look": "closer look"}},
+		"qodo": {"login": "^qodo-code-review", "request": {"comment": "/agentic_review"}}}}`
+	done := func(t *testing.T) (bool, string) {
+		t.Helper()
+		registerLoop(t)
+		out, err := Status(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entry := out.([]map[string]any)[0]
+		ok, _ := entry["done"].(bool)
+		waiting, _ := json.Marshal(entry["waitingOn"])
+		return ok, string(waiting)
+	}
+	reviewed := []fakeReviewNode{{copilotLogin, "a1", "Copilot wants a closer look"}, {qodoLogin, "a1", "Review"}}
+
+	t.Run("one bot clean, another's threads open", func(t *testing.T) {
+		f := reviewRepo(t, config, fakeReviewThread{first: qodoLogin, last: qodoLogin})
+		f.reviews = reviewed
+		if ok, waiting := done(t); ok || !strings.Contains(waiting, "qodo") || strings.Contains(waiting, "copilot") {
+			t.Errorf("done %v, waiting on %s", ok, waiting)
+		}
+	})
+
+	t.Run("a bot has not reviewed the head", func(t *testing.T) {
+		f := reviewRepo(t, config)
+		f.reviews = []fakeReviewNode{{copilotLogin, "a1", "Approval recommended"}, {qodoLogin, "a0", "Review"}}
+		if ok, waiting := done(t); ok || !strings.Contains(waiting, "qodo") {
+			t.Errorf("done %v, waiting on %s", ok, waiting)
+		}
+	})
+
+	t.Run("every bot reviewed, every thread answered", func(t *testing.T) {
+		f := reviewRepo(t, config,
+			fakeReviewThread{first: qodoLogin, last: "me"},
+			fakeReviewThread{first: copilotLogin, last: "me"},
+			fakeReviewThread{first: "josh", last: "josh"})
+		f.reviews = reviewed
+		if ok, waiting := done(t); !ok || waiting != "[]" {
+			t.Errorf("done %v, waiting on %s", ok, waiting)
+		}
+	})
+
+	t.Run("CI failing on the head", func(t *testing.T) {
+		f := reviewRepo(t, config)
+		f.reviews = reviewed
+		f.checks["a1"] = []fakeCheck{{name: "build", status: "COMPLETED", conclusion: "FAILURE", job: 1}}
+		if ok, waiting := done(t); ok || !strings.Contains(waiting, "ci") {
+			t.Errorf("done %v, waiting on %s", ok, waiting)
+		}
+	})
+
+	// GitHub has not worked out whether the PR merges: not done yet.
+	t.Run("merge state unknown", func(t *testing.T) {
+		f := reviewRepo(t, config)
+		f.reviews = reviewed
+		f.prs[1].mergeable = "UNKNOWN"
+		if ok, waiting := done(t); ok || !strings.Contains(waiting, "base") {
+			t.Errorf("done %v, waiting on %s", ok, waiting)
+		}
+	})
+}
+
+// A loop that does not converge pauses: after six rounds, or once a PR's
+// changed lines have grown more than half again over the loop's start.
+func TestStatusPaused(t *testing.T) {
+	const config = `{"bots": {"copilot": {"login": "^copilot", "request": {"reviewer": "@copilot"}}}}`
+	status := func(t *testing.T, round, baseline int) map[string]any {
+		t.Helper()
+		state := &State{Repo: "o/r", Order: []string{"feat"}, Round: round,
+			Branches: map[string]*Branch{"feat": {PR: 1, Base: "main", BaselineLines: baseline}}}
+		if err := state.save(); err != nil {
+			t.Fatal(err)
+		}
+		out, err := Status(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out.([]map[string]any)[0]
+	}
+	// grow adds ten changed lines to feat.
+	grow := func(t *testing.T) {
+		t.Helper()
+		os.WriteFile(filepath.Join(git.Dir, "ten"), []byte(strings.Repeat("line\n", 10)), 0o644)
+		gitIn(t, git.Dir, "add", "ten")
+		gitIn(t, git.Dir, "commit", "-qm", "Add ten lines")
+	}
+
+	t.Run("still converging", func(t *testing.T) {
+		reviewRepo(t, config, fakeReviewThread{first: copilotLogin, last: copilotLogin})
+		grow(t)
+		if s := status(t, 5, 7); s["paused"] != false || s["round"] != 5 {
+			t.Errorf("round 5, 10 lines from 7: %v", s)
+		}
+	})
+
+	t.Run("six rounds", func(t *testing.T) {
+		reviewRepo(t, config, fakeReviewThread{first: copilotLogin, last: copilotLogin})
+		if s := status(t, 6, 0); s["paused"] != true || !strings.Contains(fmt.Sprint(s["pausedBecause"]), "6 rounds") {
+			t.Errorf("after six rounds: %v", s)
+		}
+	})
+
+	t.Run("growth over half", func(t *testing.T) {
+		reviewRepo(t, config, fakeReviewThread{first: copilotLogin, last: copilotLogin})
+		grow(t)
+		if s := status(t, 1, 6); s["paused"] != true || !strings.Contains(fmt.Sprint(s["pausedBecause"]), "6 to 10") {
+			t.Errorf("10 lines from 6: %v", s)
+		}
+	})
+
+	// A bot asked for a review of the head that has not given one within
+	// the budget holds the loop up without a push to count as a round.
+	t.Run("a bot that does not review", func(t *testing.T) {
+		reviewRepo(t, config)
+		ask := func(ago time.Duration, head string) {
+			state := &State{Repo: "o/r", Order: []string{"feat"}, Round: 1,
+				Branches: map[string]*Branch{"feat": {PR: 1, Base: "main"}},
+				Asked:    map[string]*Ask{"1:copilot": {At: now().Add(-ago).Format(time.RFC3339), HeadOid: head}}}
+			if err := state.save(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		get := func() map[string]any {
+			out, err := Status(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return out.([]map[string]any)[0]
+		}
+		ask(2*time.Hour, "a1")
+		if s := get(); s["paused"] != true || !strings.Contains(fmt.Sprint(s["pausedBecause"]), "copilot") {
+			t.Errorf("asked two hours ago: %v", s)
+		}
+		ask(10*time.Minute, "a1")
+		if s := get(); s["paused"] != false {
+			t.Errorf("asked ten minutes ago: %v", s)
+		}
+		ask(2*time.Hour, "a0")
+		if s := get(); s["paused"] != false {
+			t.Errorf("asked about an earlier head: %v", s)
+		}
+	})
+
+	// A push that only rebased the stack, as onto a base that moved, is no
+	// round of fixes; and a rewrite that was not a clean rebase is named
+	// for the operator.
+	t.Run("rebase rounds and rewrites", func(t *testing.T) {
+		reviewRepo(t, config)
+		state := &State{Repo: "o/r", Order: []string{"feat"}, Round: 6, RebaseRounds: 1,
+			Branches: map[string]*Branch{"feat": {PR: 1, Base: "main",
+				Rewrites: []Rewrite{{Round: 3, File: "/x/feat-3.range-diff", Why: "a commit's changes differ"}}}}}
+		if err := state.save(); err != nil {
+			t.Fatal(err)
+		}
+		out, err := Status(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := out.([]map[string]any)[0]
+		if s["paused"] != false {
+			t.Errorf("five rounds of fixes and a rebase paused: %v", s)
+		}
+		if got := fmt.Sprint(s["needsOperator"]); !strings.Contains(got, "/x/feat-3.range-diff") {
+			t.Errorf("needsOperator: %v", got)
+		}
+	})
+
+	// A loop that is done finishes, however long it took.
+	t.Run("done outranks paused", func(t *testing.T) {
+		f := reviewRepo(t, config)
+		f.reviews = []fakeReviewNode{{copilotLogin, "a1", "Review"}}
+		if s := status(t, 9, 0); s["done"] != true || s["paused"] != false {
+			t.Errorf("done after nine rounds: %v", s)
+		}
+	})
+}
+
 func TestRequest(t *testing.T) {
 	const config = `{"bots": {"copilot": {"login": "^copilot", "request": {"reviewer": "@copilot"}}}}`
 
@@ -150,6 +346,11 @@ func TestRequest(t *testing.T) {
 		}
 		if len(f.requested) != 1 || f.requested[0] != "@copilot" {
 			t.Errorf("requested %v, want [@copilot]", f.requested)
+		}
+		// The ask is recorded with the head it was for, which status times.
+		state, _ := loadState(true)
+		if a := state.Asked["1:copilot"]; a == nil || a.HeadOid != "a1" || a.At == "" {
+			t.Errorf("the ask recorded: %+v", a)
 		}
 	})
 }

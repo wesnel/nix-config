@@ -9,6 +9,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if mode := os.Getenv(fakeSessionEnv); mode != "" {
+		fakeSession(mode)
+	}
 	gitenv.Isolate()
 	// pr-loop logs its actions in the plan of the session running it: the
 	// tests' plans are in a directory of their own, and no harness's

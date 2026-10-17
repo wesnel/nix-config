@@ -3,6 +3,7 @@ package loop
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/history"
@@ -96,7 +97,7 @@ func Begin(branches []string) (any, error) {
 			}
 		}
 	}
-	state := &State{Repo: repo.Slug, Branches: map[string]*Branch{}, Triggers: map[string]*Trigger{}, AcceptedFailures: map[string][]string{}}
+	state := &State{Repo: repo.Slug, Began: time.Now(), Branches: map[string]*Branch{}, Triggers: map[string]*Trigger{}, AcceptedFailures: map[string][]string{}}
 	for _, b := range branches {
 		pr, err := checkBranch(repo, prs, b)
 		if err != nil {
@@ -115,7 +116,7 @@ func Begin(branches []string) (any, error) {
 				"stop and ask the operator how to reconcile them", b, remote)
 		}
 		state.Order = append(state.Order, b)
-		state.Branches[b] = &Branch{PR: pr.Number, Base: pr.BaseRefName, RemoteOid: remote}
+		state.Branches[b] = &Branch{PR: pr.Number, Base: pr.BaseRefName, RemoteOid: remote, BaseOid: pr.BaseRefOid}
 	}
 	for _, b := range state.Order {
 		parent, err := state.parentRef(repo, b)

@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/wesnel/agent-tools/internal/git"
 )
@@ -19,6 +20,25 @@ type Branch struct {
 	// The PR's own commits when the loop began. Everything the loop adds must
 	// be a fixup of one of these, and the signing pass squashes back to them.
 	Commits []Commit `json:"commits"`
+	// BaseOid is the tip of the branch the PR is based on, on GitHub, when
+	// the loop began or, for a PR not stacked on another of the loop's,
+	// last fetched it.
+	BaseOid string `json:"baseOid,omitempty"`
+	// Rewrites are the pushes that rewrote the branch other than by a clean
+	// rebase, each for the operator to review before signing.
+	Rewrites []Rewrite `json:"rewrites,omitempty"`
+}
+
+// Rewrite is a push of a branch whose commits were rewritten other than by
+// a clean rebase, as a conflict resolution rewrites them.
+type Rewrite struct {
+	Round int `json:"round"`
+	// From and To are the branch's tips on GitHub before and after.
+	From string `json:"from"`
+	To   string `json:"to"`
+	Why  string `json:"why"`
+	// File holds `git range-diff` of the old commits against the new.
+	File string `json:"file"`
 }
 
 // Trigger is a top-level comment the loop posted to start a bot's review.
@@ -43,6 +63,21 @@ type State struct {
 	AcceptedFailures map[string][]string `json:"acceptedFailures"`
 	Round            int                 `json:"round"`
 	Signing          *Signing            `json:"signing,omitempty"`
+	// Began is when begin registered the loop: a report.md older than it is
+	// an earlier loop's.
+	Began time.Time `json:"began,omitzero"`
+	// Asked is when request last asked each bot for a review, and of which
+	// head, by "PR:bot": status pauses a loop a bot leaves waiting too long.
+	Asked map[string]*Ask `json:"asked,omitempty"`
+	// RebaseRounds are the rounds whose push only rebased the stack, which
+	// do not count towards pausing the loop.
+	RebaseRounds int `json:"rebaseRounds,omitempty"`
+}
+
+// Ask is a review request request made.
+type Ask struct {
+	At      string `json:"at"`
+	HeadOid string `json:"headOid"`
 }
 
 func stateDir() (string, error) {

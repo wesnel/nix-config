@@ -5,6 +5,7 @@
   jq,
   lib,
   openssh,
+  procps,
   stdenv,
   # wgn.home.llm.guard.credentialPaths, a path under home as ~/…, which the
   # guard falls back on where its config is absent.
@@ -52,8 +53,9 @@
     '';
 
     # The rehearsal and signing tests build stacks with the real git, and sign
-    # them with a throwaway SSH key.
-    nativeCheckInputs = [git gnugrep jq openssh];
+    # them with a throwaway SSH key. pr-loop stop finds a session's
+    # processes with ps.
+    nativeCheckInputs = [git gnugrep jq openssh procps];
 
     # The guard's own test holds it to policy.json's examples. This holds
     # ECA's patterns to the same examples, and the credentials pattern to

@@ -457,6 +457,65 @@ func TestWorktrees(t *testing.T) {
 	}
 }
 
+// Removing the loop's worktrees keeps, and names, each one whose removal
+// would lose work, as stop does, and removes the rest.
+func TestWorktreesRemoveKeeps(t *testing.T) {
+	for name, setUp := range map[string]func(t *testing.T, wt string){
+		"uncommitted changes": func(t *testing.T, wt string) {
+			os.WriteFile(filepath.Join(wt, "draft"), []byte("x\n"), 0o600)
+		},
+		"a rebase in progress": func(t *testing.T, wt string) {
+			cmd := exec.Command("git", "-c", "user.name=T", "-c", "user.email=t@e", "-c", "commit.gpgsign=false",
+				"-C", wt, "rebase", "--exec", "false", "main")
+			cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+			if cmd.Run() == nil {
+				t.Fatal("the rebase did not stop")
+			}
+		},
+		"a HEAD off its branch": func(t *testing.T, wt string) {
+			gitIn(t, wt, "switch", "-q", "--detach")
+			gitIn(t, wt, "commit", "-q", "--allow-empty", "-m", "fixup! Add the feature")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+			t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+			dir := t.TempDir()
+			gitIn(t, dir, "init", "-q", "-b", "main")
+			gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "Start")
+			gitIn(t, dir, "switch", "-q", "-c", "feature")
+			gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "Add the feature")
+			gitIn(t, dir, "branch", "other")
+			gitIn(t, dir, "switch", "-q", "main")
+			gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "Move main")
+			useDir(t, dir)
+			state := &State{Repo: "o/r", Order: []string{"feature", "other"},
+				Branches: map[string]*Branch{"feature": {PR: 7, Base: "main"}, "other": {PR: 8, Base: "feature"}}}
+			if err := state.save(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Worktrees(false); err != nil {
+				t.Fatal(err)
+			}
+			kept, gone := filepath.Join(dir, ".pr-loop", "7"), filepath.Join(dir, ".pr-loop", "8")
+			setUp(t, kept)
+			result, err := Worktrees(true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !exists(kept) {
+				t.Error("a worktree whose removal would lose work was removed")
+			}
+			if exists(gone) {
+				t.Error("the clean worktree beside it was kept")
+			}
+			if got := fmt.Sprint(result); !strings.Contains(got, "kept") {
+				t.Errorf("the result does not name the kept worktree: %v", got)
+			}
+		})
+	}
+}
+
 func TestSetup(t *testing.T) {
 	// setupRepo makes a checkout of O/R, points the package's git at it, and
 	// returns it with the config file the test may write.
