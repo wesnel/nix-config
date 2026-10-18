@@ -118,24 +118,27 @@ It re-signs every commit from the oldest unsigned one to the tip, and moves any
 branch stacked inside that range along with it. A stacked branch checked out in
 another worktree moves too, and that worktree's files with it, so the worktree
 must have no uncommitted or untracked files (ignored ones may stay); otherwise
-the pass refuses before any touch. `fixup!`, `amend!` and `squash!` commits are
-squashed into the commits they name as part of the same pass; an `amend!`
-replaces its target's whole message with its own body, and a `squash!` appends
-its body, without opening an editor. It tries the squash
-unsigned first and refuses before any touch if it would conflict. If nothing is
-squashed, it refuses when a commit's files, author or message would change. If
-any of the three kinds is squashed, it refuses when the remaining commits or the
-files at the tip would differ from that, and it reports any branch lower in the stack that
-gained a fix. It needs one touch per commit in the range, folds included,
-since git signs each step of a squash, plus one for each push URL. At a
-missed touch in a terminal, it asks to retry that step. With no
-terminal (an agent's run, or a `!` run) it retries once by itself, after a
-wait and under a timeout, because one missed touch locks the key and the next
-request then waits on pinentry without end. If it stops, it prints the exact
-commands that carry on, which `--resume` only reports, never changing a
-rebase in progress, and the unsigned branch is kept under
-`refs/sign-pass/backup/`. After a stop that mentions pinentry, the operator
-unlocks the key before the resume.
+the pass refuses before any touch. A stacked branch lands on the signed copy
+of the last of its commits that squashing keeps: one whose tip is a fixup
+lands on the nearest commit below the tip that remains. `fixup!`, `amend!`
+and `squash!` commits are squashed into the commits they name as part of the
+same pass; an `amend!` replaces its target's whole message with its own body,
+and a `squash!` appends its body, without opening an editor. It tries the
+squash unsigned first and refuses before any touch if it would conflict. If
+nothing is squashed, it refuses when a commit's files, author or message
+would change. If any of the three kinds is squashed, it refuses when the
+remaining commits or the files at the tip would differ from that. Before the
+first touch it names any branch lower in the stack that gains a fix from
+commits it does not contain, and it reports each again once signed. It needs
+one touch per commit in the range, folds included, since git signs each step
+of a squash, plus one for each push URL. At a missed touch in a terminal, it
+asks to retry that step. With no terminal (an agent's run, or a `!` run) it
+retries once by itself, after a wait and under a timeout, because one missed
+touch locks the key and the next request then waits on pinentry without end.
+If it stops, it prints the exact commands that carry on and the touches they
+need, which `--resume` only reports, never changing a rebase in progress, and
+the unsigned branch is kept under `refs/sign-pass/backup/`. After a stop that
+mentions pinentry, the operator unlocks the key before the resume.
 
 Run in a session or with `!`, where standard output is not a terminal, it
 prints brief output: one line of what it will sign, a line to touch the key,

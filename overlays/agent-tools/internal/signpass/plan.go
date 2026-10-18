@@ -106,7 +106,7 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 	}
 
 	pl := &plan{Key: named[0], Push: push, SetUpstream: setUpstream, Results: map[string]any{}}
-	var lines, moving []string
+	var lines, moving, allGains []string
 	touches, commits, pushBranches, pushURLs := 0, 0, 0, 0
 	for _, t := range tips {
 		s := step{Branch: t, From: -1, tip: before[t]}
@@ -169,10 +169,23 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 				}
 			}
 		}
+		lands, err := landings(before, stacked, s.from)
+		if err != nil {
+			return nil, err
+		}
+		gains, err := gaining(lands, before, s.from, s.rehearsedFrom, s.rehearsedTip)
+		if err != nil {
+			return nil, err
+		}
+		// Only a fork's later child may end with other files at its tip.
+		if mustTree(s.rehearsedTip) != mustTree(s.tip) {
+			gains = append(gains, t)
+		}
+		allGains = append(allGains, gains...)
 		touches += signatures(s.from, s.tip)
 		commits += signs
 		moving = append(append(moving, t), stacked...)
-		lines = append(lines, describe(s, pl.Steps, signs, stacked))
+		lines = append(lines, describe(s, pl.Steps, signs, stacked, gains))
 		pl.Steps = append(pl.Steps, s)
 	}
 
@@ -207,6 +220,8 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 	}
 	lines = append(lines, fmt.Sprintf("key touches: up to %d", touches))
 	if Brief {
+		sort.Strings(allGains)
+		announceGains(allGains)
 		announce(commits, len(moving), pushBranches, pushURLs, touches)
 	} else {
 		fmt.Fprintf(os.Stderr, "git sign-pass plan:\n  %s\n", strings.Join(lines, "\n  "))
@@ -347,7 +362,7 @@ func checkClean(c checkout, own bool) error {
 		"(unsigned), stash them or remove them there, then run the pass again", c.branch, c.path)
 }
 
-func describe(s step, steps []step, signs int, stacked []string) string {
+func describe(s step, steps []step, signs int, stacked, gains []string) string {
 	where := "in " + s.Dir
 	if s.Dir == "" {
 		where = "in a throwaway worktree"
@@ -360,6 +375,9 @@ func describe(s step, steps []step, signs int, stacked []string) string {
 	line := fmt.Sprintf("%s: %s, %s", s.Branch, what, where)
 	if len(stacked) > 0 {
 		line += "; moves " + strings.Join(stacked, ", ")
+	}
+	if len(gains) > 0 {
+		line += "; " + gainsPhrase(gains)
 	}
 	return line
 }
@@ -403,7 +421,13 @@ func runPlan(pl *plan) (any, error) {
 			}
 			tip := "refs/heads/" + s.Branch
 			p = &pending{Branch: s.Branch, Start: onto, Onto: onto, Fork: s.Fork, Fixups: s.Fixups, Shape: s.Shape,
-				Before: before, Stacked: stackedIn(before, s.Branch, s.Fork, tip)}
+				Before: before, Stacked: stackedIn(before, s.Branch, s.Fork, tip), Trees: map[string]string{}}
+			if p.Lands, err = landings(before, p.Stacked, s.Fork); err != nil {
+				return nil, err
+			}
+			for _, b := range append([]string{s.Branch}, p.Stacked...) {
+				p.Trees[b] = mustTree(before[b])
+			}
 			s.NewFrom = onto
 		}
 		p.Plan = pl

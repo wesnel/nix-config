@@ -35,13 +35,18 @@ type pending struct {
 	Start  string            `json:"start"` // parent of the oldest commit re-signed
 	Shape  []string          `json:"shape"` // tree, author and message per commit, when nothing is squashed
 	Before map[string]string `json:"before"`
-	// When fixups are squashed: the commits that remain, and each branch's
-	// files, which squashing must not change.
+	// When fixups are squashed: the commits that remain. Trees are the files
+	// of the branches in the range, which the pass changes only by folding
+	// into a branch's commits fixups it does not contain: on a branch below
+	// the tip, or on any branch of a fork's later child.
 	Squash bool              `json:"squash,omitempty"`
 	Kept   []history.Commit  `json:"kept,omitempty"`
 	Trees  map[string]string `json:"trees,omitempty"`
 	// Stacked are the other branches inside the range, which must all move.
 	Stacked []string `json:"stacked,omitempty"`
+	// Lands is where each stacked branch belongs once the pass is done: the
+	// Lands[b]-th commit after Start (see landings).
+	Lands map[string]int `json:"lands,omitempty"`
 	// Worktrees are where stacked branches are checked out, by branch. Each is
 	// detached for the rebase, since --update-refs skips a branch checked out
 	// anywhere, and switched back to its branch afterwards.
@@ -63,6 +68,9 @@ type pending struct {
 	// The push flags this run of a single-branch pass has, which the command
 	// it prints for resuming repeats.
 	push, setUpstream bool
+	// gains are the stacked branches the unsigned rehearsal found gaining
+	// fixups they do not contain (see gaining).
+	gains []string
 }
 
 // resume is the command that resumes p.
@@ -554,6 +562,7 @@ func Run(base string, resume, push, setUpstream bool) (any, error) {
 			}
 			pushBranches, urls = pushShare(byRemote)
 		}
+		announceGains(p.gains)
 		if Brief {
 			commits := len(p.Shape)
 			if p.Squash {
@@ -641,6 +650,9 @@ func prepare(branch, base string) (p *pending, early any, err error) {
 	if err := inProgress(append([]string{branch}, p.Stacked...)); err != nil {
 		return nil, nil, err
 	}
+	if p.Lands, err = landings(before, p.Stacked, start); err != nil {
+		return nil, nil, err
+	}
 	if !squash {
 		p.Shape, err = fullShape(start, tip)
 		return p, nil, err
@@ -654,8 +666,88 @@ func prepare(branch, base string) (p *pending, early any, err error) {
 			p.Trees[b] = mustTree(oid)
 		}
 	}
-	_, err = rehearseSquash(start, tip, p.Kept)
+	head, err := rehearseSquash(start, tip, p.Kept)
+	if err != nil {
+		return nil, nil, err
+	}
+	p.gains, err = gaining(p.Lands, before, start, start, head)
 	return p, nil, err
+}
+
+// landings counts, for each stacked branch, the commits from..its tip leaves
+// once its fixup!, amend! and squash! commits fold in. A rebase of from..tip
+// that keeps those commits leaves the branch on the last of them: for a
+// branch whose tip is a fixup, the nearest commit below the tip that remains.
+func landings(before map[string]string, stacked []string, from string) (map[string]int, error) {
+	lands := map[string]int{}
+	for _, b := range stacked {
+		kept, err := keptCommits(from, before[b])
+		if err != nil {
+			return nil, err
+		}
+		lands[b] = len(kept)
+	}
+	return lands, nil
+}
+
+// landing is the k-th commit of from..tip, oldest first, or from when k is 0.
+func landing(from, tip string, k int) (string, error) {
+	if k == 0 {
+		return git.Run("rev-parse", from)
+	}
+	return nth(from, tip, k)
+}
+
+// gaining lists the branches of lands that a rewrite of from..their tips in
+// before, as newFrom..newTip, leaves on a landing that differs from what
+// their own commits fold to (gained). What differs is folds the branch does
+// not contain: from above it in its own stack, or, for a fork's later child,
+// from the earlier child whose rewrite gave the fork point's copy.
+func gaining(lands map[string]int, before map[string]string, from, newFrom, newTip string) ([]string, error) {
+	var gains []string
+	for b, k := range lands {
+		at, err := landing(newFrom, newTip, k)
+		if err != nil {
+			return nil, err
+		}
+		if g, err := gained(from, before[b], newFrom, at); err != nil {
+			return nil, err
+		} else if g {
+			gains = append(gains, b)
+		}
+	}
+	sort.Strings(gains)
+	return gains, nil
+}
+
+// gained reports whether newFrom..at, a rewrite of from..old, has other
+// files than old, or other commits or messages than from..old folds to,
+// which an amend! or squash! it does not contain can give it.
+func gained(from, old, newFrom, at string) (bool, error) {
+	if mustTree(at) != mustTree(old) {
+		return true, nil
+	}
+	own, err := keptCommits(from, old)
+	if err != nil {
+		return false, err
+	}
+	return history.Match(own, newFrom, at, "") != nil, nil
+}
+
+// gainsPhrase says which branches gain folds they do not contain.
+func gainsPhrase(gains []string) string {
+	if len(gains) == 1 {
+		return gains[0] + " gains fixups from commits it does not contain"
+	}
+	return strings.Join(gains, ", ") + " gain fixups from commits they do not contain"
+}
+
+// announceGains names, before the first touch, the branches the pass will
+// give folds they do not contain, in a brief pass as in a full one.
+func announceGains(gains []string) {
+	if len(gains) > 0 {
+		fmt.Fprintf(os.Stderr, "%s\n", gainsPhrase(gains))
+	}
 }
 
 // stackedIn lists the branches other than branch whose tips lie in from..tip.
@@ -1203,24 +1295,12 @@ func finish(p *pending, path string) (result map[string]any, moved map[string]st
 }
 
 // verify refuses unless the pass left its commits as recorded, all signed,
-// with every stacked branch moved. It lists the branches below the tip that
-// gained fixups.
+// with every stacked branch moved to where it belongs (Lands). It lists the
+// branches below the tip that gained fixups.
 func verify(p *pending) ([]string, error) {
-	// A branch below the tip gains whatever fixups above it fold into its
-	// commits, which is the point of folding; only the tip must keep its files.
-	var gained []string
 	if p.Squash {
 		if err := history.Match(p.Kept, p.Start, "refs/heads/"+p.Branch, p.Branch); err != nil {
 			return nil, err
-		}
-		for b, tree := range p.Trees {
-			switch {
-			case mustTree("refs/heads/"+b) == tree:
-			case b == p.Branch:
-				return nil, refuse("squashing changed the files on %s; its unsigned version is %s%s", b, BackupRef, b)
-			default:
-				gained = append(gained, b)
-			}
 		}
 	} else {
 		shape, err := fullShape(p.Start, "refs/heads/"+p.Branch)
@@ -1252,7 +1332,51 @@ func verify(p *pending) ([]string, error) {
 			"(`git branch -f BRANCH COMMIT`, or `git reset --keep COMMIT` where it is checked out), then run "+
 			"`%s`", strings.Join(stale, ", "), p.Branch, p.resume())
 	}
-	return gained, nil
+	var misplaced []string
+	for _, b := range p.Stacked {
+		k, ok := p.Lands[b]
+		if !ok {
+			continue
+		}
+		want, err := landing(p.Start, "refs/heads/"+p.Branch, k)
+		if err != nil {
+			return nil, err
+		}
+		if oid, _ := git.Run("rev-parse", "-q", "--verify", "refs/heads/"+b); oid != want {
+			misplaced = append(misplaced, b+" belongs at "+want)
+		}
+	}
+	if len(misplaced) > 0 {
+		return nil, refuse("these branches are not on the signed copy of the last commit they keep: %s; point each there "+
+			"(`git branch -f BRANCH COMMIT`, or `git reset --keep COMMIT` where it is checked out), then run `%s`",
+			strings.Join(misplaced, ", "), p.resume())
+	}
+	// A branch below the tip gains whatever folds it does not contain fold
+	// into its commits, which is the point of folding; only the tip of a
+	// single stack must keep its files. A fork's later child gains, tip
+	// and all, what its fork point's copy gained.
+	from := p.Start
+	if p.Fork != "" {
+		from = p.Fork
+	}
+	var gains []string
+	for b, tree := range p.Trees {
+		g := mustTree("refs/heads/"+b) != tree
+		if !g && b != p.Branch {
+			var err error
+			if g, err = gained(from, p.Before[b], p.Start, "refs/heads/"+b); err != nil {
+				return nil, err
+			}
+		}
+		switch {
+		case !g:
+		case b == p.Branch && p.Onto == "":
+			return nil, refuse("squashing changed the files on %s; its unsigned version is %s%s", b, BackupRef, b)
+		default:
+			gains = append(gains, b)
+		}
+	}
+	return gains, nil
 }
 
 // pushAll pushes todo for the pass on branch, planning it first (planPush)
