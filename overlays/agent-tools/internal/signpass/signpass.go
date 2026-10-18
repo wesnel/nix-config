@@ -48,6 +48,9 @@ type pending struct {
 	Worktrees map[string]string `json:"worktrees,omitempty"`
 	// Dir is the worktree the rebase runs in.
 	Dir string `json:"dir"`
+	// GitPID is the process ID of the last git the pass started there
+	// (marking).
+	GitPID int `json:"gitPid,omitempty"`
 	// For a fork's later child (see plan): the rebase replays Fork..Branch onto
 	// Onto, the signed copy of Fork, autosquashing when Fixups, and Shape is
 	// what the unsigned rehearsal of that produced. Start is then Onto.
@@ -499,8 +502,8 @@ func Run(base string, resume, push, setUpstream bool) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if rm, _ := git.Run("rev-parse", "--git-path", "rebase-merge"); resume && exists(rm) {
-		return nil, refuse("the rebase is still in progress; touch the key and run `git rebase --continue`")
+	if rm := rebaseMerge(); resume && exists(rm) {
+		return nil, stoppedRebase(rm, push, setUpstream)
 	}
 	if branch == "HEAD" {
 		return nil, refuse("HEAD is detached; switch to the branch to sign")
@@ -701,11 +704,22 @@ func sign(p *pending, path string) error {
 	return rebase(p)
 }
 
+// signatures is how many the rebase of from..tip asks the key for: one per
+// commit, fixups included, since git signs every step of an autosquash, not
+// only the commit a fold ends in.
+func signatures(from, tip string) int {
+	n, _ := git.Run("rev-list", "--count", from+".."+tip)
+	var count int
+	fmt.Sscan(n, &count)
+	return count
+}
+
 // rebase runs the pass's rebase with the key, from the start. When the key
 // refuses a signature, on a terminal it asks whether to retry (retryTouch),
 // and does so from where the rebase stopped (readyRetry); otherwise it
 // returns an error that says how to carry on.
 func rebase(p *pending) error {
+	defer marking(p)()
 	upstream := []string{p.Start}
 	if p.Onto != "" {
 		upstream = []string{"--onto", p.Onto, p.Fork}
@@ -717,46 +731,384 @@ func rebase(p *pending) error {
 		args = append(args, "-i", "--autosquash")
 	}
 	args = append(append(args, upstream...), p.Branch)
+	// The first attempt must not be bounded: the operator may take any time
+	// to reach the key, and a key waiting on its PIN is theirs to answer.
 	ctx := context.Background()
 	code, stderr := git.AttachedStderr(ctx, history.NoEditor, args...)
 	aborted := false
+	retry := &retrier{}
+	folded := false
 	for code != 0 && refusedByKey.MatchString(stderr) {
-		restart, err := readyRetry()
+		restart, step, err := readyRetry()
 		if err != nil {
 			break
 		}
-		if !retryTouch(ctx, "signing "+p.Branch, stderr) {
+		// A refusal in a fold undoes the rebase (readyRetry), and signing it
+		// all again is for the operator to choose, on a terminal.
+		if folded = restart && step != ""; folded && !isTerminal(os.Stdin) {
+			aborted = true
+			break
+		}
+		what := "signing " + p.Branch
+		if folded {
+			what = fmt.Sprintf("signing %s again from the start, up to %s, as a refusal in a fold of fixup!, "+
+				"amend! or squash! commits is not retried in place", p.Branch, touches(rangeSignatures(p)))
+		}
+		rctx, done, again := retry.next(ctx, what, step, stderr)
+		if !again {
 			aborted = restart
 			break
 		}
+		if args, rctx, err = oneStep(args, rctx, restart); err != nil {
+			done()
+			return err
+		}
 		if restart {
-			code, stderr = git.AttachedStderr(ctx, history.NoEditor, args...)
+			code, stderr = git.AttachedStderr(rctx, history.NoEditor, args...)
 		} else {
-			code, stderr = git.AttachedStderr(ctx, history.NoEditor, "rebase", "--continue")
+			code, stderr = git.AttachedStderr(rctx, history.NoEditor, "rebase", "--continue")
+		}
+		done()
+		if code, stderr, err = settle(p, retry, code, stderr); err != nil {
+			return err
 		}
 	}
 	if code == 0 {
 		return nil
 	}
-	detached := ""
-	if len(p.Worktrees) > 0 {
-		detached = "; --resume also switches the worktrees detached for the pass back to their branches"
-	}
-	if p.Plan != nil {
-		detached += ", and then carries on with the rest of the branches"
-	}
+	unlock := retry.locked()
+	cont, also := carryOn(p)
 	if aborted {
-		return fmt.Errorf("the key refused the first signature, usually at a missed touch, so nothing is signed yet. "+
-			"Run `%s`, touching the key when it blinks, to sign from the start%s. The unsigned branch is kept as %s%s",
-			p.resume(), detached, BackupRef, p.Branch)
+		what := "the key refused the first signature, usually at a missed touch, so nothing is signed yet"
+		if folded {
+			what = "the key refused a signature in a fold of fixup!, amend! or squash! commits, which the pass " +
+				"does not retry in place, so it undid the rebase: nothing on " + p.Branch + " is signed yet"
+		}
+		return fmt.Errorf("%s. Run `%s`, touching the key when it blinks (up to %s), to sign from the start%s. "+
+			"The unsigned branch is kept as %s%s%s", what, p.resume(), touches(rangeSignatures(p)), also, BackupRef,
+			p.Branch, unlock)
 	}
-	cont := "git rebase --continue"
+	return fmt.Errorf("the rebase stopped, usually at a missed key touch. Run `%s` "+
+		"(touching the key when it blinks, up to %s), then `%s`%s. The unsigned branch is kept as "+
+		"%s%s%s", cont, touches(todoSignatures()), p.resume(), also, BackupRef, p.Branch, unlock)
+}
+
+func touches(n int) string {
+	if n == 1 {
+		return "1 touch"
+	}
+	return fmt.Sprintf("%d touches", n)
+}
+
+// carryOn is how the operator carries on with p's stopped rebase, and what
+// --resume does besides finishing it, with the touches that needs.
+func carryOn(p *pending) (cont, also string) {
+	cont = "git rebase --continue"
 	if p.Plan != nil {
 		cont = "git -C " + quote(p.Dir) + " rebase --continue"
 	}
-	return fmt.Errorf("the rebase stopped, usually at a missed key touch. Run `%s` "+
-		"(touching the key when it blinks), then `%s`%s. The unsigned branch is kept as "+
-		"%s%s", cont, p.resume(), detached, BackupRef, p.Branch)
+	var does []string
+	if len(p.Worktrees) > 0 {
+		does = append(does, "switches the worktrees detached for the pass back to their branches")
+	}
+	if p.Plan != nil && p.Plan.Next < len(p.Plan.Steps) {
+		does = append(does, "signs the plan's other branches after it, up to "+touches(planSignatures(p.Plan))+" more")
+	}
+	if len(does) > 0 {
+		also = "; --resume also " + strings.Join(does, ", and ")
+	}
+	return cont, also
+}
+
+// planSignatures is how many signatures the steps of pl after the running
+// one ask for.
+func planSignatures(pl *plan) int {
+	n := 0
+	for _, s := range pl.Steps[pl.Next:] {
+		tip := "refs/heads/" + s.Branch
+		if s.From >= 0 {
+			n += signatures(s.Fork, tip)
+			continue
+		}
+		base := s.Base
+		if base == "" {
+			base, _ = defaultBase(s.Branch)
+		}
+		if start, _, err := rangeStart(base, tip); err == nil && start != "" {
+			n += signatures(start, tip)
+		}
+	}
+	return n
+}
+
+// rangeSignatures is how many signatures p's rebase asks for from its start.
+func rangeSignatures(p *pending) int {
+	from := p.Start
+	if p.Onto != "" {
+		from = p.Fork
+	}
+	return signatures(from, "refs/heads/"+p.Branch)
+}
+
+// todoSignatures is how many signatures the stopped rebase still asks for:
+// one per step left that makes a commit.
+func todoSignatures() int {
+	n := 0
+	for _, line := range todoLines(rebaseMerge()) {
+		if f := strings.Fields(line); len(f) > 0 &&
+			slices.Contains([]string{"pick", "p", "reword", "r", "edit", "e", "fixup", "f", "squash", "s"}, f[0]) {
+			n++
+		}
+	}
+	return n
+}
+
+func rebaseMerge() string {
+	rm, _ := git.Run("rev-parse", "--path-format=absolute", "--git-path", "rebase-merge")
+	return rm
+}
+
+// stopAfterFirst is a sequence editor that puts a break after the first step.
+const stopAfterFirst = `f() { awk 'NR==1{print;print "break";next}1' "$1" >"$1.sign-pass" && mv "$1.sign-pass" "$1"; }; f`
+
+// oneStep makes a retry run only the step it retries: a --continue stops at
+// a break oneStep puts after the step git put back, and a restart, made
+// interactive, at the break stopAfterFirst puts after the first. A retry
+// runs where an interrupt from the terminal cannot reach it (retrier.next),
+// so the steps after it must run as the first attempt did (settle).
+func oneStep(args []string, ctx context.Context, restart bool) ([]string, context.Context, error) {
+	if !restart {
+		rm := rebaseMerge()
+		return args, ctx, writeTodo(rm, slices.Insert(todoLines(rm), 1, "break"))
+	}
+	if !slices.Contains(args, "-i") {
+		args = slices.Insert(slices.Clone(args), 1, "-i")
+	}
+	return args, git.WithEnv(ctx, "GIT_SEQUENCE_EDITOR="+stopAfterFirst), nil
+}
+
+// settle finishes a retry. One that was killed (retrier.killed) before git
+// exited at its break left git mid-step: settle readies the rebase for `git
+// rebase --continue` or undoes it (recoverKilled), and returns an error that
+// says how to carry on. One that stopped at the break after its step
+// carries on without a bound, in the foreground, as the first attempt did;
+// one that failed before the break loses the break, so the rebase carries on
+// past it later.
+func settle(p *pending, r *retrier, code int, stderr string) (int, string, error) {
+	if r.killed != "" && code != 0 {
+		return code, stderr, recoverKilled(p, r)
+	}
+	rm := rebaseMerge()
+	if !exists(rm) {
+		return code, stderr, nil
+	}
+	if code != 0 {
+		return code, stderr, dropBreak(rm)
+	}
+	code, stderr = git.AttachedStderr(context.Background(), history.NoEditor, "rebase", "--continue")
+	return code, stderr, nil
+}
+
+// recoverKilled readies a rebase whose retry r killed mid-step. A pick there
+// is put back at the head of the todo list, its staged changes dropped, as
+// git does itself when the key refuses (readyRetry), so the signatures before
+// it stand. Anything else is undone: a step of a fold leaves state behind
+// that putting it back would fold twice, and while nothing is rewritten a
+// --continue would not sign the first commit (readyRetry).
+func recoverKilled(p *pending, r *retrier) error {
+	what := "the retried signature " + r.killed
+	unlock := r.locked()
+	cont, also := carryOn(p)
+	rm := rebaseMerge()
+	if !exists(rm) {
+		return fmt.Errorf("%s; run `%s`%s", what, p.resume(), unlock)
+	}
+	if back, err := putBack(rm); err != nil {
+		return err
+	} else if back {
+		return fmt.Errorf("%s, so the pass stopped it, and git and the programs it started in their process group "+
+			"with it, and put that step back; the commits before it stay signed%s. Run `%s` (touching the key when "+
+			"it blinks, up to %s), then `%s`%s. The unsigned branch is kept as %s%s", what, unlock, cont,
+			touches(todoSignatures()), p.resume(), also, BackupRef, p.Branch)
+	}
+	if _, err := git.Run("rebase", "--abort"); err != nil {
+		return fmt.Errorf("%s, and undoing the rebase failed (%v); run `git rebase --abort`, then `%s`%s",
+			what, err, p.resume(), unlock)
+	}
+	return fmt.Errorf("%s, so the pass stopped it, and git and the programs it started in their process group "+
+		"with it, and undid the rebase: nothing on %s is signed yet%s. Run `%s`, touching the key when it blinks "+
+		"(up to %s), to sign from the start%s. The unsigned branch is kept as %s%s", what, p.Branch, unlock,
+		p.resume(), touches(rangeSignatures(p)), also, BackupRef, p.Branch)
+}
+
+// markerFile is the file in a rebase's state (rebase-merge) that marks it as
+// a signing pass's, naming the unsigned tip the pass started from
+// (marking). Git removes it with the rest of that state when the rebase
+// ends or is aborted.
+const markerFile = "sign-pass"
+
+// marking records, until the function it returns is called, the process ID
+// of each git started for p in p's saved state, and marks the rebase that
+// git leaves stopped as p's. The mark is written only once git has ended:
+// written while git ends a rebase, it would keep git from removing the
+// rebase's state.
+func marking(p *pending) func() {
+	rm := rebaseMerge()
+	path, err := statePath("pending", p.Branch)
+	git.Started = func(pid int) {
+		if p.GitPID = pid; err == nil {
+			writeJSON(path, p)
+		}
+	}
+	git.Ended = func(int) {
+		if exists(rm) {
+			os.WriteFile(filepath.Join(rm, markerFile), []byte(p.Before[p.Branch]+"\n"), 0o600)
+		}
+	}
+	return func() { git.Started, git.Ended = nil, nil }
+}
+
+// stoppedRebase is the refusal --resume makes on finding the rebase rm holds
+// in progress. It changes nothing there, since only the pass that started a
+// rebase knows its state (recoverKilled): it refuses outright while a git the
+// saved pass started still runs, and otherwise says whether the rebase is
+// that pass's, by the mark it left (marking), and how to carry on from it.
+func stoppedRebase(rm string, push, setUpstream bool) error {
+	headName, _ := os.ReadFile(filepath.Join(rm, "head-name"))
+	branch, ok := strings.CutPrefix(strings.TrimSpace(string(headName)), "refs/heads/")
+	p := &pending{}
+	found := false
+	if ok {
+		path, err := statePath("pending", branch)
+		if err != nil {
+			return err
+		}
+		if found, err = readJSON(path, p); err != nil {
+			return err
+		}
+	}
+	p.push, p.setUpstream = push, setUpstream
+	if found && p.GitPID > 0 && syscall.Kill(p.GitPID, 0) == nil {
+		return refuse("a git the pass started may still be running on %s's rebase: pid %d. Wait for it to end, or "+
+			"end it, then run `%s`", p.Branch, p.GitPID, p.resume())
+	}
+	if lock, _ := git.Run("rev-parse", "--path-format=absolute", "--git-path", "index.lock"); exists(lock) {
+		return refuse("another git may still be at work on the rebase in progress here: %s exists. Wait for it to "+
+			"end; if no git is running there, remove that file. Then run `%s`", lock, resumeCommand(branch, push, setUpstream))
+	}
+	if !found {
+		return refuse("the rebase in progress here is not one a signing pass left stopped; finish it with `git "+
+			"rebase --continue` or undo it with `git rebase --abort`, then run `%s`", resumeCommand(branch, push, setUpstream))
+	}
+	cont, also := carryOn(p)
+	abort := strings.Replace(cont, "--continue", "--abort", 1)
+	if mark, _ := os.ReadFile(filepath.Join(rm, markerFile)); strings.TrimSpace(string(mark)) != p.Before[p.Branch] {
+		return refuse("the rebase in progress on %s is not one this signing pass left stopped: if it is your own, "+
+			"finish it with `%s` or undo it with `%s`; if a git the pass started outlived the pass and left it, undo "+
+			"it with `%s`. Then run `%s`, which signs from the start if nothing is signed (up to %s)%s", p.Branch,
+			cont, abort, abort, p.resume(), touches(rangeSignatures(p)), also)
+	}
+	done, _ := os.ReadFile(filepath.Join(rm, "done"))
+	lines := strings.Split(strings.TrimSpace(string(done)), "\n")
+	last, todo := lines[len(lines)-1], todoLines(rm)
+	staged := !git.OK("diff", "--cached", "--quiet")
+	switch {
+	case last == "break" && !staged, last == todo[0] && !staged && !slices.Contains(todo[1:min(2, len(todo))], "break"):
+		return refuse("the pass's rebase is still in progress; run `%s` (touching the key when it blinks, up to %s), "+
+			"then `%s`%s", cont, touches(todoSignatures()), p.resume(), also)
+	case last == todo[0] && !staged:
+		return refuse("the pass's rebase is still in progress, with a break the pass put after its next step; run "+
+			"`%s` twice, as it stops at that break (touching the key when it blinks, up to %s), then `%s`%s",
+			cont, touches(todoSignatures()), p.resume(), also)
+	}
+	return refuse("the pass's rebase was stopped mid-step, where it cannot carry on; undo it with `%s`, then run "+
+		"`%s`, which signs from the start (touching the key when it blinks, up to %s)%s", abort, p.resume(),
+		touches(rangeSignatures(p)), also)
+}
+
+// putBack readies a rebase whose git was killed mid-step, which leaves that
+// step done but not rescheduled, for `git rebase --continue`, and reports
+// whether it did: it takes out a retry's break (oneStep) and, where the step
+// is a pick outside a fold and something is rewritten already, puts the step
+// back at the head of the todo list, unless git has or had already made
+// the step's commit, and drops its staged changes, as readyRetry does
+// after git puts back a step the key refused.
+func putBack(rm string) (bool, error) {
+	if err := dropBreak(rm); err != nil {
+		return false, err
+	}
+	done, _ := os.ReadFile(filepath.Join(rm, "done"))
+	lines := strings.Split(strings.TrimSpace(string(done)), "\n")
+	last, todo := lines[len(lines)-1], todoLines(rm)
+	onto, _ := os.ReadFile(filepath.Join(rm, "onto"))
+	head, _ := git.Run("rev-parse", "HEAD")
+	f := strings.Fields(last)
+	rescheduled := last == todo[0]
+	if rescheduled {
+		todo = todo[1:]
+	}
+	if len(f) == 0 || f[0] != "pick" && f[0] != "p" || inFold(last, todo) || head == strings.TrimSpace(string(onto)) {
+		return false, nil
+	}
+	if !rescheduled && !made(f[1], head) {
+		if err := writeTodo(rm, append([]string{last}, todo...)); err != nil {
+			return false, err
+		}
+	}
+	_, err := git.Run("reset", "-q", "--hard")
+	return err == nil, err
+}
+
+// made reports whether head is the commit a pick of commit makes: the same
+// message and the same change.
+func made(commit, head string) bool {
+	msg := func(c string) string { m, _ := git.Run("log", "-1", "--format=%B", c); return m }
+	if msg(commit) != msg(head) {
+		return false
+	}
+	a, err := patchID(commit+"^", commit)
+	if err != nil {
+		return false
+	}
+	b, err := patchID(head+"^", head)
+	return err == nil && a == b
+}
+
+// inFold reports whether step, with next the steps after it, is part of a
+// fold: a fixup, amend or squash step (fixup -C is an amend), or the pick of
+// the commit the steps after it fold into.
+func inFold(step string, next []string) bool {
+	folds := func(line string) bool {
+		f := strings.Fields(line)
+		return len(f) > 0 && slices.Contains([]string{"fixup", "f", "squash", "s"}, f[0])
+	}
+	if folds(step) {
+		return true
+	}
+	f := strings.Fields(step)
+	return len(f) > 0 && (f[0] == "pick" || f[0] == "p") && len(next) > 0 && folds(next[0])
+}
+
+func todoLines(rm string) []string {
+	todo, _ := os.ReadFile(filepath.Join(rm, "git-rebase-todo"))
+	return strings.Split(strings.TrimRight(string(todo), "\n"), "\n")
+}
+
+func writeTodo(rm string, lines []string) error {
+	return os.WriteFile(filepath.Join(rm, "git-rebase-todo"), []byte(strings.Join(lines, "\n")+"\n"), 0o600) //nolint:gosec // rm is the rebase state git names in its own git directory
+
+}
+
+// dropBreak takes out the break a retry put among the first two steps
+// (oneStep) when git has not reached it.
+func dropBreak(rm string) error {
+	lines := todoLines(rm)
+	for i := 0; i < len(lines) && i < 2; i++ {
+		if strings.TrimSpace(lines[i]) == "break" {
+			return writeTodo(rm, slices.Delete(lines, i, i+1))
+		}
+	}
+	return nil
 }
 
 // readyRetry readies a rebase stopped by a signature the key refused for a
@@ -766,27 +1118,38 @@ func rebase(p *pending) error {
 // Otherwise git has put the step it could not sign back at the head of the
 // todo list, with its changes staged, where they would stop --continue; the
 // worktree was clean when the pass began, so they are the only changes
-// there, and readyRetry drops them. It refuses unless the last step done is
-// the next to do, so it never drops a step git will not redo.
-func readyRetry() (restart bool, err error) {
+// there, and readyRetry drops them. A refusal anywhere in a fold (inFold)
+// is undone too, with step naming where: git keeps the fold's message so
+// far outside the todo list, so a step put back folds a message in twice,
+// and the commit that ends a fold with an edited message git makes in a git
+// commit of its own, whose refusal it does not reschedule. It refuses any
+// other stop, so it never drops a step git will not redo. Otherwise step
+// names the step to retry, the same however often git stops at it, and is
+// empty on a restart.
+func readyRetry() (restart bool, step string, err error) {
 	rm, err := git.Run("rev-parse", "--path-format=absolute", "--git-path", "rebase-merge")
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	onto, _ := os.ReadFile(filepath.Join(rm, "onto"))
 	if head, _ := git.Run("rev-parse", "HEAD"); head != "" && head == strings.TrimSpace(string(onto)) {
 		_, err := git.Run("rebase", "--abort")
-		return true, err
+		return true, "", err
 	}
 	done, _ := os.ReadFile(filepath.Join(rm, "done"))
-	todo, _ := os.ReadFile(filepath.Join(rm, "git-rebase-todo"))
 	lines := strings.Split(strings.TrimSpace(string(done)), "\n")
-	next, _, _ := strings.Cut(string(todo), "\n")
-	if last := lines[len(lines)-1]; last == "" || last != next {
-		return false, fmt.Errorf("the rebase did not reschedule the step it could not sign")
+	todo := todoLines(rm)
+	last := lines[len(lines)-1]
+	rescheduled := last != "" && last == todo[0]
+	if rescheduled && inFold(last, todo[1:]) || !rescheduled && inFold(last, todo) {
+		_, err := git.Run("rebase", "--abort")
+		return true, last, err
+	}
+	if !rescheduled {
+		return false, "", fmt.Errorf("the rebase did not reschedule the step it could not sign")
 	}
 	_, err = git.Run("reset", "-q", "--hard")
-	return false, err
+	return false, last, err
 }
 
 // finish verifies a pass whose rebase has ended, switches detached worktrees
@@ -1037,18 +1400,25 @@ func pushRef(ctx context.Context, url string, r refPush, env []string) error {
 	args := []string{"push", fmt.Sprintf("--force-with-lease=refs/heads/%s:%s", r.Branch, r.Old), url,
 		r.New + ":refs/heads/" + r.Branch}
 	what := fmt.Sprintf("the push of %s to %s", r.Branch, url)
+	retry := &retrier{}
+	// The first attempt must not be bounded: the operator may take any time
+	// to reach the key, and a key waiting on its PIN is theirs to answer.
+	run := ctx
 	for {
 		fmt.Fprintf(os.Stderr, "pushing %s to %s; touch the key if it blinks\n", r.Branch, url)
-		code, stderr := git.AttachedStderr(ctx, env, args...)
+		code, stderr := git.AttachedStderr(run, env, args...)
 		if code == 0 {
 			return nil
 		}
 		if ctx.Err() != nil {
 			return fmt.Errorf("%s was interrupted", what)
 		}
-		if !retryTouch(ctx, what, stderr) {
-			return fmt.Errorf("%s failed", what)
+		var done context.CancelFunc
+		var again bool
+		if run, done, again = retry.next(ctx, what, "", stderr); !again {
+			return fmt.Errorf("%s failed%s", what, retry.locked())
 		}
+		defer done()
 	}
 }
 
