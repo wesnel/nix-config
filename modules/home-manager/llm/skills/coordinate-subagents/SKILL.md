@@ -242,6 +242,18 @@ wait on no `:AFTER:` item, follow every earlier sibling under an
 Never edit a sub-agent's worktree while it runs. To learn where something
 belongs in its part, ask it.
 
+Every turn of yours re-sends your whole context, so spend turns on
+decisions:
+
+- Brief each sub-agent to report once, at the end, and to wait in the
+  foreground for its own builds and tests, so it stops only when its work
+  is done.
+- Answer a notification only to decide something or to tell an agent
+  something. Check reports that arrive together in one pass.
+- Run a fix round by continuing the agent that did the work (`SendMessage`,
+  `send_input`), whose context already holds it.
+- Over the plan's usage limits, wait longer between checks, in fewer turns.
+
 ## Check every report
 
 Before relaying a report, confirm it:
@@ -269,8 +281,9 @@ message.
 Before Coalesce, run the `review-change` skill's fresh review loop on each
 branch by itself, never the whole stack at once: the range `<base>..<branch>`,
 the part's goal and what is not its job as the goal statement, at most three
-rounds. Hand each finding to the branch's sub-agent to settle as Triage
-says, and check its report as any other.
+rounds. Review a branch once its sub-agent has finished it, then hand all
+of that round's findings to the sub-agent as one fix round, to settle as
+Triage says; check its report as any other.
 
 ## Coalesce
 
