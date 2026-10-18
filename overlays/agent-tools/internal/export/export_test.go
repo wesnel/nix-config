@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/diagram"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
@@ -197,6 +198,17 @@ func fixture(t *testing.T) (c plans.Config, own, theirs plans.Plan) {
 	if _, err := own.Log(plans.Event{Kind: "started", Item: "S1", Summary: "SENTINEL-log-summary"}, day); err != nil {
 		t.Fatal(err)
 	}
+	// G1 is exported, redacted; G2 is disputed; G3's Mermaid block and G4's
+	// JSON are edited, so the log no longer trusts them; G5's transition,
+	// redacted and cut to a label's length, ends with a colon, which a
+	// state diagram cannot parse.
+	keep(t, own, loopStates, false)
+	keep(t, own, drawn(t, "component", "SENTINEL-disputed", 2, 1, ""), true)
+	keep(t, own, drawn(t, "state", "Mermaid edit", 2, 1, ""), false)
+	keep(t, own, drawn(t, "component", "Key edit", 2, 1, ""), false)
+	keep(t, own, cutToColon(t), false)
+	under(t, file, `    state "Mermaid edit 1" as N1`, "    %% SENTINEL-mermaid\n")
+	under(t, file, `"label": "Key edit 1",`, `      "SENTINEL_key": "SENTINEL-json-key",`+"\n")
 
 	mac := plans.Config{Dir: c.Dir, Host: "mac"}
 	made, err = mac.New(plans.NewOptions{Title: "Their plan", Slug: "theirs", Goal: "Their goal."}, day)
@@ -240,6 +252,83 @@ func fixture(t *testing.T) (c plans.Config, own, theirs plans.Plan) {
 	return c, own, theirs
 }
 
+// loopStates is a state diagram whose title, first node's label and
+// second node's path hold a secret, and whose edge is planned.
+var loopStates = func() *diagram.Diagram {
+	d, err := diagram.Parse([]byte(`{"kind": "state", "title": "Loop states ` + fakeToken + `", "at": "` + head + `",
+	  "nodes": [{"id": "N1", "label": "Rotate ` + fakeToken + `", "cite": {"path": "loop/run.go", "line": 3, "endLine": 5,
+	    "symbol": "Running"}, "planned": null},
+	   {"id": "N2", "label": "Done", "cite": {"path": "keys/` + fakeToken + `.go", "line": 9, "endLine": null, "symbol": "Done"},
+	    "planned": null}],
+	  "edges": [{"id": "E1", "from": "N1", "to": "N2", "label": "finish", "cite": null, "planned": "S2"}]}`))
+	if err != nil {
+		panic(err)
+	}
+	return d
+}()
+
+// drawn is a diagram of kind titled title, of nodes nodes labelled "title
+// n" and edges edges from each node to the next, citing paths of path or,
+// where it is "", x.go, each line its element's number.
+func drawn(t *testing.T, kind, title string, nodes, edges int, path string) *diagram.Diagram {
+	t.Helper()
+	if path == "" {
+		path = "x.go"
+	}
+	cite := func(line int) map[string]any {
+		return map[string]any{"path": path, "line": line, "endLine": nil, "symbol": "X"}
+	}
+	d := map[string]any{"kind": kind, "title": title, "at": head, "nodes": []any{}, "edges": []any{}}
+	for i := 1; i <= nodes; i++ {
+		d["nodes"] = append(d["nodes"].([]any), map[string]any{"id": fmt.Sprintf("N%d", i),
+			"label": fmt.Sprintf("%s %d", title, i), "cite": cite(i), "planned": nil})
+	}
+	for i := 1; i <= edges; i++ {
+		d["edges"] = append(d["edges"].([]any), map[string]any{"id": fmt.Sprintf("E%d", i), "from": fmt.Sprintf("N%d", (i-1)%nodes+1),
+			"to": fmt.Sprintf("N%d", i%nodes+1), "label": fmt.Sprintf("%s %d", title, i), "cite": cite(i), "planned": nil})
+	}
+	data, _ := json.Marshal(d)
+	out, err := diagram.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// cutToColon is a state diagram whose transition's label is valid, but
+// redacted grows past a label's length and is cut right after a colon.
+func cutToColon(t *testing.T) *diagram.Diagram {
+	t.Helper()
+	d := drawn(t, "state", "SENTINEL-cut", 2, 1, "")
+	d.Edges[0].Label = "password=abc " + strings.Repeat("x", 41) + ": y"
+	if _, err := diagram.Parse(d.JSON()); err != nil {
+		t.Fatal(err)
+	}
+	if l := label(d.Edges[0].Label); !strings.HasSuffix(l, ":") {
+		t.Fatalf("redacted and cut, %q", l)
+	}
+	return d
+}
+
+// keep keeps d in p's Diagrams section after a critique that found
+// nothing or, where disputed, two that found something.
+func keep(t *testing.T, p plans.Plan, d *diagram.Diagram, disputed bool) {
+	t.Helper()
+	findings := ""
+	if disputed {
+		findings = "diagram-1"
+	}
+	for range 2 {
+		if _, err := p.Record("", plans.Event{Kind: "diagram-critiqued", Diagram: d.Hash(), Drafter: "claude", Critic: "codex",
+			Findings: findings}, day); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := p.KeepDiagram(d, plans.KeepOptions{Disputed: disputed}, day); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // The keys each document may hold, an array's elements' as "name[].key".
 var allowed = map[string][]string{
 	"plans": {"schema", "id", "title", "goal", "status", "host", "updated",
@@ -247,7 +336,10 @@ var allowed = map[string][]string{
 		"decisions", "decisions[].id", "decisions[].question", "decisions[].answer",
 		"questions", "questions[].id", "questions[].text", "questions[].priority", "questions[].context",
 		"questions[].options", "questions[].options[].key", "questions[].options[].label",
-		"questions[].options[].why", "questions[].options[].recommended"},
+		"questions[].options[].why", "questions[].options[].recommended",
+		"diagrams", "diagrams[].id", "diagrams[].title", "diagrams[].kind", "diagrams[].status", "diagrams[].at",
+		"diagrams[].source", "diagrams[].elements", "diagrams[].elements[].id", "diagrams[].elements[].label",
+		"diagrams[].elements[].path", "diagrams[].elements[].line"},
 	"github": {"schema", "at", "stale", "mineTotal", "requestsTotal",
 		"mine", "mine[].repo", "mine[].number", "mine[].title", "mine[].draft", "mine[].ci", "mine[].review",
 		"mine[].unresolved", "mine[].parent",
@@ -434,12 +526,20 @@ func TestExport(t *testing.T) {
 			{ID: "Q2", Question: "Which name?", Answer: "loop, as recommended"}},
 		Questions: []Question{{ID: "Q1", Text: "Keep the flag?", Priority: "A", Context: "Nothing reads it.",
 			Options: []Option{{Key: "A", Label: "no, drop it", Recommended: true}, {Key: "B", Label: "keep it", Why: "costs a flag"},
-				{Key: "C", Label: "rename it"}}}}}
+				{Key: "C", Label: "rename it"}}}},
+		Diagrams: []Diagram{{ID: "G1", Title: "Loop states REDACTED GitHub token", Kind: "state", Status: "checked", At: head[:12],
+			Source: "stateDiagram-v2\n    state \"Rotate REDACTED GitHub token\" as N1\n    state \"Done\" as N2\n" +
+				"    N1 --> N2: finish\n",
+			Elements: []Element{{ID: "N1", Label: "Rotate REDACTED GitHub token", Path: "loop/run.go", Line: 3},
+				{ID: "N2", Label: "Done", Path: "keys/[REDACTED GitHub token].go", Line: 9}, {ID: "E1", Label: "finish"}}}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("own plan\n%+v, want\n%+v", got, want)
 	}
+	if !diagram.ValidSource(got.Diagrams[0].Source) {
+		t.Errorf("the source exported is not in the page's grammar:\n%s", got.Diagrams[0].Source)
+	}
 	if p := e.Plans[0]; p.Host != "mac" || p.Title != "Their plan" || p.Goal != "Their goal." || len(p.Steps) != 0 ||
-		p.Updated != theirsCommitted {
+		p.Updated != theirsCommitted || p.Diagrams == nil || len(p.Diagrams) != 0 {
 		t.Errorf("their plan %+v", p)
 	}
 	if s := e.Sync; s.Host != "box" || !s.Repo || !s.Unsynced || s.Pushed == "" || s.Fetched == "" ||
@@ -461,6 +561,39 @@ func TestExport(t *testing.T) {
 		Digests: []Digest{{Kind: "standup", Text: "* Yesterday\n- Shipped the loop [REDACTED GitHub token]."}}}
 	if !reflect.DeepEqual(e.Today, wantToday) {
 		t.Errorf("today %+v, want %+v", e.Today, wantToday)
+	}
+}
+
+// A diagram the code has moved past is exported, as stale.
+func TestExportStale(t *testing.T) {
+	c := plans.Config{Dir: filepath.Join(t.TempDir(), "agents"), Host: "box"}
+	made, err := c.New(plans.NewOptions{Title: "Stale", Slug: "stale"}, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := c.Open(made.Plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keep(t, p, loopStates, false)
+	// A repository that lacks the diagram's commit: it no longer says what
+	// the code does.
+	code := t.TempDir()
+	env := []string{"GIT_AUTHOR_NAME=Operator", "GIT_AUTHOR_EMAIL=operator@example.com", "GIT_COMMITTER_NAME=Operator",
+		"GIT_COMMITTER_EMAIL=operator@example.com"}
+	git(t, code, env, "init", "-q")
+	git(t, code, env, "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "Start")
+	now, err := exec.Command("git", "-C", code, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	states, err := p.RefreshDiagrams(diagram.GitRepo(code), strings.TrimSpace(string(now)), day)
+	if err != nil || len(states) != 1 || states[0].Status != plans.DiagramStale {
+		t.Fatalf("refreshed %+v, %v", states, err)
+	}
+	got, _, err := Plans(c, day)
+	if err != nil || len(got) != 1 || len(got[0].Diagrams) != 1 || got[0].Diagrams[0].Status != "stale" {
+		t.Fatalf("%+v, %v", got, err)
 	}
 }
 
@@ -628,11 +761,53 @@ func TestCaps(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Diagrams of the widest labels and longest paths fill diagramBudget:
+	// the largest Parse takes, then a second left out for the budget, then
+	// the largest that fit what is left, in the slots left, and one more
+	// left out past maxDiagrams.
+	longPath := strings.Repeat("a/", 99) + "aa"
+	wide60 := func(i int) string { return fmt.Sprintf("%02d", i) + strings.Repeat("ab", 25) }
+	largest := drawn(t, "component", wide60(0), diagram.MaxNodes, diagram.MaxEdges, longPath)
+	sizeOf := func(d *diagram.Diagram) int {
+		e, ok := diagramOf(plans.KeptDiagram{ID: "G1", Status: plans.DiagramChecked, Diagram: d})
+		if !ok {
+			t.Fatal("not exported")
+		}
+		return e.size()
+	}
+	keep(t, p, largest, false)
+	keep(t, p, drawn(t, "component", wide60(1), diagram.MaxNodes, diagram.MaxEdges, longPath), false)
+	used := sizeOf(largest)
+	for slot := 1; slot < maxDiagrams; slot++ {
+		share := (diagramBudget - used) / (maxDiagrams - slot)
+		var fill *diagram.Diagram
+		for n := 1; n <= diagram.MaxNodes; n++ {
+			if d := drawn(t, "component", wide60(slot+1), n, n, longPath); sizeOf(d) <= share {
+				fill = d
+			}
+		}
+		used += sizeOf(fill)
+		keep(t, p, fill, false)
+	}
+	keep(t, p, drawn(t, "callflow", "Small", 2, 1, ""), false)
 	got, _, err := Plans(c, day)
 	if err != nil || len(got) != 1 {
 		t.Fatalf("%+v, %v", got, err)
 	}
 	plan := got[0]
+	var ids []string
+	exported := 0
+	for _, d := range plan.Diagrams {
+		ids = append(ids, d.ID)
+		exported += d.size()
+	}
+	if !slices.Equal(ids, []string{"G1", "G3", "G4", "G5", "G6"}) {
+		t.Errorf("diagrams %v, want the largest G1 and then those that fit to maxDiagrams", ids)
+	}
+	if exported > diagramBudget || exported < diagramBudget-2<<10 {
+		t.Errorf("the diagrams take %d bytes, want the most of %d that fit", exported, diagramBudget)
+	}
+	t.Logf("diagrams %d bytes", exported)
 	q := plan.Questions[0]
 	runes := func(s string) int { return len([]rune(s)) }
 	if runes(plan.Title) != 200 || runes(plan.Goal) != 2000 || runes(plan.Steps[0].Title) != 200 ||
@@ -655,6 +830,7 @@ func TestCaps(t *testing.T) {
 	if err != nil || info.Size() > maxDoc {
 		t.Errorf("document of %v bytes, over %d (%v)", info.Size(), maxDoc, err)
 	}
+	t.Logf("document %d bytes of %d", info.Size(), maxDoc)
 }
 
 // Write replaces the plans it wrote before with the ones exported now, and

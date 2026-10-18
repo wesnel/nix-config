@@ -4,6 +4,7 @@
   gnugrep,
   jq,
   lib,
+  nodejs,
   openssh,
   stdenv,
   # wgn.home.llm.guard.credentialPaths, a path under home as ~/…, which the
@@ -69,8 +70,9 @@
     '';
 
     # The rehearsal and signing tests build stacks with the real git, and sign
-    # them with a throwaway SSH key.
-    nativeCheckInputs = [git gnugrep jq openssh];
+    # them with a throwaway SSH key. The page tests run the Agent plans
+    # page's own grammar check with node; without it they skip that one.
+    nativeCheckInputs = [git gnugrep jq nodejs openssh];
 
     # The guard's own test holds it to policy.json's examples. This holds
     # ECA's patterns to the same examples, and the credentials pattern to

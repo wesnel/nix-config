@@ -314,6 +314,37 @@ details > summary { cursor: pointer; color: var(--fg-strong); font-size: var(--t
 .decisions li { display: grid; gap: 2px; font-size: var(--text-sm); }
 .decisions .answer { color: var(--fg-strong); overflow-wrap: anywhere; }
 
+/* Diagrams: each closed until opened, when Mermaid draws it. */
+.diagrams { display: grid; gap: 8px; }
+details.diagram { border: 1px solid var(--border-muted); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+details.diagram > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.diagram-body { display: grid; gap: 12px; margin-top: 12px; min-width: 0; }
+.diagram-figure { overflow-x: auto; min-width: 0; }
+.diagram-img { display: block; max-width: 100%; height: auto; }
+/* The renderer frame lays out text, so it is rendered, out of sight. */
+iframe.renderer {
+  position: fixed;
+  left: -10000px;
+  top: 0;
+  width: 1200px;
+  height: 800px;
+  border: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.diagram-source {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: pre;
+  overflow-x: auto;
+  color: var(--fg);
+}
+.elements { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: var(--text-sm); }
+.elements li { display: grid; grid-template-columns: 2.75rem minmax(0, 1fr) auto; gap: 8px; align-items: baseline; }
+.elements .label { color: var(--fg-strong); overflow-wrap: anywhere; }
+.elements .where { color: var(--fg-muted); font-family: var(--font-mono); font-size: var(--text-xs); }
+
 @media (max-width: 560px) {
   .row { grid-template-columns: minmax(0, 1fr); }
   .row-side { justify-items: start; }
@@ -323,6 +354,8 @@ details > summary { cursor: pointer; color: var(--fg-strong); font-size: var(--t
   .index .facts { justify-content: start; }
   .steps li { grid-template-columns: 3.5rem minmax(0, 1fr); }
   .steps li .kw { grid-column: 2; grid-row: 2; justify-self: start; }
+  .elements li { grid-template-columns: 2.75rem minmax(0, 1fr); }
+  .elements .where { grid-column: 2; }
 }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; transition: none !important; }
@@ -341,7 +374,9 @@ details > summary { cursor: pointer; color: var(--fg-strong); font-size: var(--t
     "steps": [{"id": "string", "order": "number", "title": "string", "keyword": "string", "ready": "boolean"}],
     "decisions": [{"id": "string", "question": "string", "answer": "string"}],
     "questions": [{"id": "string", "text": "string", "priority": "string", "context": "string",
-      "options": [{"key": "string", "label": "string", "why": "string", "recommended": "boolean"}]}]
+      "options": [{"key": "string", "label": "string", "why": "string", "recommended": "boolean"}]}],
+    "diagrams": [{"id": "string", "title": "string", "kind": "string", "status": "string", "at": "string",
+      "source": "string", "elements": [{"id": "string", "label": "string", "path": "string", "line": "number"}]}]
   },
   "github": {
     "schema": "number", "at": "string", "stale": "boolean", "mineTotal": "number", "requestsTotal": "number",
@@ -365,6 +400,109 @@ details > summary { cursor: pointer; color: var(--fg-strong); font-size: var(--t
     "head": "string", "stale": "boolean", "until": "string", "reason": "string"
   }
 }
+</script>
+
+<!-- The one grammar of Mermaid the page renders, as internal/diagram
+     writes it: by header, the kind it draws and the pattern of a node's
+     line and an edge's, whose group 1 is the label; then the labels
+     Mermaid 11.17.2 would draw as other than they read, or fail to parse:
+     what its lexers read as another statement, what Markdown changes in a
+     state diagram, and a transition's label ending in a colon. A source
+     with a line outside it is shown as text. Export's page tests hold this
+     and validSource to diagram.ValidSource. -->
+<script type="application/json" id="grammar">
+{
+  "headers": {
+    "flowchart LR": {"kind": "component",
+      "node": "^    N[1-9][0-9]{0,2}\\[\"([A-Za-z0-9_.,:/()+=-](?:[A-Za-z0-9 _.,:/()+=-]{0,58}[A-Za-z0-9_.,:/()+=-])?)\"\\]$",
+      "edge": "^    N[1-9][0-9]{0,2} -->\\|\"([A-Za-z0-9_.,:/()+=-](?:[A-Za-z0-9 _.,:/()+=-]{0,58}[A-Za-z0-9_.,:/()+=-])?)\"\\| N[1-9][0-9]{0,2}$"},
+    "sequenceDiagram": {"kind": "sequence",
+      "node": "^    participant N[1-9][0-9]{0,2} as ([A-Za-z0-9_.,:/()+=-](?:[A-Za-z0-9 _.,:/()+=-]{0,58}[A-Za-z0-9_.,:/()+=-])?)$",
+      "edge": "^    N[1-9][0-9]{0,2}->>N[1-9][0-9]{0,2}: ([A-Za-z0-9_.,:/()+=-](?:[A-Za-z0-9 _.,:/()+=-]{0,58}[A-Za-z0-9_.,:/()+=-])?)$"},
+    "stateDiagram-v2": {"kind": "state",
+      "node": "^    state \"([A-Za-z0-9_.,:/()+=-](?:[A-Za-z0-9 _.,:/()+=-]{0,58}[A-Za-z0-9_.,:/()+=-])?)\" as N[1-9][0-9]{0,2}$",
+      "edge": "^    N[1-9][0-9]{0,2} --> N[1-9][0-9]{0,2}: ([A-Za-z0-9_.,:/()+=-](?:[A-Za-z0-9 _.,:/()+=-]{0,58}[A-Za-z0-9_.,:/()+=-])?)$"}
+  },
+  "misread": [
+    {"pattern": "direction\\s+(tb|td|bt|rl|lr)", "flags": "i", "kinds": ["component", "sequence", "state"], "on": ["node", "edge"]},
+    {"pattern": "::", "flags": "", "kinds": ["state"], "on": ["node", "edge"]},
+    {"pattern": "[,:]", "flags": "", "kinds": ["sequence"], "on": ["node"]},
+    {"pattern": "^:?(no)?wrap:", "flags": "i", "kinds": ["sequence"], "on": ["edge"]},
+    {"pattern": "(^|[^A-Za-z0-9_])_|_($|[^A-Za-z0-9_])", "flags": "", "kinds": ["state"], "on": ["node", "edge"]},
+    {"pattern": "www\\.|https?://|ftp://", "flags": "i", "kinds": ["state"], "on": ["node", "edge"]},
+    {"pattern": ":$", "flags": "", "kinds": ["state"], "on": ["edge"]}
+  ]
+}
+</script>
+
+<!-- The renderer: the script of the sandboxed frame that runs Mermaid,
+     never run in this page. It answers only this page's window, draws one
+     source at a time with its own settings, which no message changes but
+     for colors and a face it checks, and sends back the SVG as a string. -->
+<script type="text/plain" id="renderer">
+"use strict";
+(() => {
+  const MAX_SOURCE = 20000;
+  const HEX = /^#[0-9a-f]{6}$/;
+  const FACE = /^[A-Za-z0-9 ,"'-]{1,200}$/;
+  const say = (m) => parent.postMessage(m, "*");
+  let queue = Promise.resolve();
+
+  function config(t) {
+    const c = (v) => (typeof v === "string" && HEX.test(v) ? v : "#808080");
+    return {
+      startOnLoad: false,
+      securityLevel: "strict",
+      maxTextSize: MAX_SOURCE,
+      maxEdges: 100,
+      htmlLabels: false,
+      flowchart: { htmlLabels: false },
+      theme: "base",
+      themeVariables: {
+        darkMode: t.dark === true, background: c(t.bg), fontSize: "14px",
+        fontFamily: typeof t.font === "string" && FACE.test(t.font) ? t.font : "sans-serif",
+        primaryColor: c(t.surface), primaryBorderColor: c(t.border), primaryTextColor: c(t.strong), secondaryColor: c(t.surface),
+        tertiaryColor: c(t.bg), lineColor: c(t.muted), textColor: c(t.strong), edgeLabelBackground: c(t.bg),
+        actorBkg: c(t.surface), actorBorder: c(t.border), actorTextColor: c(t.strong), actorLineColor: c(t.muted),
+        signalColor: c(t.strong), signalTextColor: c(t.strong), labelBoxBkgColor: c(t.surface), labelTextColor: c(t.strong),
+      },
+    };
+  }
+
+  async function draw(m) {
+    const target = document.getElementById("d");
+    try {
+      target.replaceChildren();
+      target.removeAttribute("data-processed");
+      target.textContent = m.source;
+      mermaid.initialize(config(m.theme && typeof m.theme === "object" ? m.theme : {}));
+      await mermaid.run({ nodes: [target] });
+      const svg = target.querySelector("svg");
+      const box = svg && svg.viewBox && svg.viewBox.baseVal;
+      if (!box || !(box.width > 0) || !(box.height > 0)) throw new Error("Mermaid drew nothing");
+      // As an image, the SVG is as large as its view box.
+      svg.removeAttribute("style");
+      svg.setAttribute("width", String(box.width));
+      svg.setAttribute("height", String(box.height));
+      say({ type: "drawn", id: m.id, svg: new XMLSerializer().serializeToString(svg), width: box.width, height: box.height });
+    } catch (e) {
+      say({ type: "failed", id: m.id, reason: String((e && e.message) || "Mermaid failed").slice(0, 200) });
+    } finally {
+      target.replaceChildren();
+    }
+  }
+
+  window.addEventListener("message", (ev) => {
+    const m = ev.data;
+    if (ev.source !== parent || !m || typeof m !== "object" || m.type !== "draw" || !Number.isInteger(m.id)) return;
+    if (typeof m.source !== "string" || m.source.length > MAX_SOURCE) {
+      say({ type: "failed", id: m.id, reason: "the source is not text of at most " + MAX_SOURCE + " characters" });
+      return;
+    }
+    queue = queue.then(() => draw(m));
+  });
+  say({ type: "ready", mermaid: typeof mermaid === "object" && mermaid !== null && typeof mermaid.run === "function" });
+})();
 </script>
 
 <div class="page">
@@ -405,6 +543,32 @@ details > summary { cursor: pointer; color: var(--fg-strong); font-size: var(--t
   const SLUG = /^([A-Za-z0-9_][A-Za-z0-9_.-]{0,99})\/([A-Za-z0-9_][A-Za-z0-9_.-]{0,99})$/;
   const HEAD = /^[0-9a-f]{40}$/;
   const DAY = 86400000;
+  const DIAGRAM_ID = /^G[1-9][0-9]{0,3}$/;
+  const ELEMENT_ID = /^[NE][1-9][0-9]{0,2}$/;
+  const SHORT_AT = /^[0-9a-f]{12}$/;
+  const CODE_PATH = /^[A-Za-z0-9._/@+-]{1,200}$/;
+
+  // Mermaid, fetched only once a diagram is opened, from this one file,
+  // which the browser refuses unless its bytes have this hash. Changing
+  // the version changes both, and the grammar block is held to that
+  // version's lexers. It runs only in the renderer frame: a sandbox with
+  // scripts and an opaque origin, so it reaches neither this page, its
+  // database nor its comments. The frame's document is the renderer block
+  // and Mermaid, nothing from a document.
+  const MERMAID_SRC = "https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.min.js";
+  const MERMAID_SRI = "sha384-EOXBFmc3gx5mb+vn0vPvvGqACToJD24hhacX5Yx+8NUUQrHIle/Qi5Bg9o3zKwW2";
+  const FRAME_DOC = '<!doctype html><meta charset="utf-8"><body><div id="d"></div>' +
+    '<scr' + 'ipt src="' + MERMAID_SRC + '" integrity="' + MERMAID_SRI + '" crossorigin="anonymous"></scr' + 'ipt>' +
+    '<scr' + 'ipt>' + document.getElementById("renderer").textContent + '</scr' + 'ipt>';
+  // The most a drawing may take, and the most bytes of SVG the page takes
+  // back from the frame.
+  const RENDER_TIMEOUT = 20000;
+  const MAX_SVG = 2000000;
+
+  const GRAMMAR_SPEC = JSON.parse(document.getElementById("grammar").textContent);
+  const GRAMMAR = new Map(Object.entries(GRAMMAR_SPEC.headers).map(([header, g]) =>
+    [header, { kind: g.kind, lines: [{ re: new RegExp(g.node), on: "node" }, { re: new RegExp(g.edge), on: "edge" }] }]));
+  const MISREAD = GRAMMAR_SPEC.misread.map((m) => ({ re: new RegExp(m.pattern, m.flags), kinds: m.kinds, on: m.on }));
 
   const state = {
     db: null,
@@ -422,6 +586,9 @@ details > summary { cursor: pointer; color: var(--fg-strong); font-size: var(--t
     confirm: null,
     notes: new Map(),
     forms: new Map(),
+    // The diagrams opened, by plan ID~diagram ID, and what each shows.
+    diagramsOpen: new Set(),
+    drawn: new Map(),
   };
 
   // norm keeps of v only what spec names, each of its type or defaulted.
@@ -1066,7 +1233,213 @@ details > summary { cursor: pointer; color: var(--fg-strong); font-size: var(--t
         h("ul", { class: "decisions" }, [...p.decisions].reverse().map((d) =>
           h("li", null, h("span", { class: "muted" }, h("span", { class: "mono" }, d.id), " ", d.question), h("span", { class: "answer prose" }, d.answer))))));
     }
+    const diagrams = p.diagrams.filter((d) => DIAGRAM_ID.test(d.id) && own(DIAGRAM_STATUS, d.status, null)).slice(0, 5);
+    if (diagrams.length) {
+      parts.push(h("div", { class: "plan-part" }, h("p", { class: "eyebrow" }, diagrams.length === 1 ? "Diagram" : "Diagrams · " + diagrams.length),
+        h("div", { class: "diagrams" }, diagrams.map((d) => diagramPart(p, d)))));
+    }
     return h("article", { class: "panel plan", id: p.id, "aria-label": p.title || p.id }, parts);
+  }
+
+  // ---- Diagrams ----
+
+  const DIAGRAM_KIND = {
+    state: "States",
+    sequence: "Sequence",
+    callflow: "Call flow",
+    component: "Components",
+  };
+  const DIAGRAM_STATUS = {
+    checked: ["Checked", "t-good", ""],
+    stale: ["Stale: the code changed", "t-warn", "ring"],
+  };
+
+  // validSource reports whether src is in the grammar block's grammar: a
+  // header, then only lines of a node or an edge whose label no lexer of
+  // that kind misreads. Nothing else reaches Mermaid.
+  function validSource(src) {
+    const lines = src.replace(/\n$/, "").split("\n");
+    const g = GRAMMAR.get(lines[0]);
+    if (!g || lines.length < 2) return false;
+    return lines.slice(1).every((line) => g.lines.some(({ re, on }) => {
+      const m = re.exec(line);
+      return !!m && !MISREAD.some((x) => x.kinds.includes(g.kind) && x.on.includes(on) && x.re.test(m[1]));
+    }));
+  }
+
+  // The renderer frame, made when a diagram is first opened. It lives
+  // outside #app, which every draw replaces: a frame moved in the page
+  // loads again from scratch. A frame that does not start or answer in
+  // time is dropped with every drawing it owes, and the next drawing makes
+  // a new one; such a failure is a passing one (see drawDiagram).
+  let renderer = null;
+
+  function passing(why) {
+    const e = new Error(why);
+    e.passing = true;
+    return e;
+  }
+
+  function rendererFrame() {
+    if (renderer) return renderer;
+    const frame = h("iframe", { sandbox: "allow-scripts", class: "renderer", title: "Diagram renderer", "aria-hidden": "true",
+      tabindex: "-1", referrerpolicy: "no-referrer" });
+    frame.srcdoc = FRAME_DOC;
+    const r = { frame, pending: new Map(), next: 0, dead: false };
+    let started = null;
+    r.ready = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => r.gone("the renderer did not start"), RENDER_TIMEOUT);
+      started = (ok, why) => {
+        clearTimeout(timer);
+        if (ok) resolve();
+        else reject(passing(why));
+      };
+    });
+    // Only the frame's own messages count: its origin is opaque, so it is
+    // known by its window alone. They do no more than start the renderer
+    // and settle a drawing it owes.
+    const heard = (ev) => {
+      if (ev.source !== frame.contentWindow || ev.origin !== "null") return;
+      const m = ev.data;
+      if (!m || typeof m !== "object") return;
+      if (m.type === "ready") {
+        if (m.mermaid === true) started(true);
+        else r.gone("Mermaid could not be loaded");
+        return;
+      }
+      const p = Number.isInteger(m.id) ? r.pending.get(m.id) : undefined;
+      if (!p) return;
+      r.pending.delete(m.id);
+      clearTimeout(p.timer);
+      const fits = (n) => Number.isFinite(n) && n > 0 && n <= 20000;
+      if (m.type === "drawn" && typeof m.svg === "string" && m.svg.length <= MAX_SVG && m.svg.startsWith("<svg") &&
+        fits(m.width) && fits(m.height)) p.resolve({ svg: m.svg, width: Math.ceil(m.width), height: Math.ceil(m.height) });
+      else p.reject(new Error(m.type === "failed" && typeof m.reason === "string" ? m.reason.slice(0, 200) : "the renderer's reply was not a drawing"));
+    };
+    r.gone = (why) => {
+      if (r.dead) return;
+      r.dead = true;
+      if (renderer === r) renderer = null;
+      window.removeEventListener("message", heard);
+      frame.remove();
+      started(false, why);
+      for (const p of r.pending.values()) { clearTimeout(p.timer); p.reject(passing(why)); }
+      r.pending.clear();
+    };
+    window.addEventListener("message", heard);
+    document.body.append(frame);
+    renderer = r;
+    return r;
+  }
+
+  // renderSVG is Mermaid's SVG of source, drawn in the renderer frame in
+  // the colors of theme. A drawing that takes too long drops the frame.
+  async function renderSVG(source, theme) {
+    const r = rendererFrame();
+    await r.ready;
+    if (r.dead) throw passing("the renderer stopped");
+    const id = ++r.next;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => r.gone("the drawing took too long"), RENDER_TIMEOUT);
+      r.pending.set(id, { resolve, reject, timer });
+      r.frame.contentWindow.postMessage({ type: "draw", id, source, theme }, "*");
+    });
+  }
+
+  function dark() {
+    const t = document.documentElement.getAttribute("data-theme");
+    return t === "dark" || (t !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  }
+
+  // rgb is a color token as the page paints it over --bg, in the #rrggbb
+  // Mermaid's color functions read.
+  function rgb(ctx, token) {
+    const css = getComputedStyle(document.documentElement);
+    ctx.clearRect(0, 0, 1, 1);
+    for (const t of ["--bg", token]) {
+      ctx.fillStyle = "#808080";
+      ctx.fillStyle = css.getPropertyValue(t).trim();
+      ctx.fillRect(0, 0, 1, 1);
+    }
+    const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+    return "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
+  }
+
+  // theme is the page's palette as the renderer takes it: the color
+  // tokens it draws with, whether the scheme is dark, and the face.
+  function theme() {
+    const canvas = h("canvas", { width: 1, height: 1 });
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    const c = (t) => rgb(ctx, t);
+    return { dark: dark(), bg: c("--bg"), surface: c("--surface"), strong: c("--fg-strong"), muted: c("--fg-muted"),
+      border: c("--border"), font: getComputedStyle(document.body).fontFamily };
+  }
+
+  function sourceText(src, why) {
+    return h("div", { class: "diagram-body" }, h("p", { class: "note warn" }, why), h("pre", { class: "diagram-source" }, src));
+  }
+
+  // drawDiagram shows d's drawing in figure: the one already made for its
+  // source in this scheme, or a new one from the renderer. The SVG comes
+  // back as a string, and the page shows it only as an image, in which
+  // nothing runs or loads. A passing failure is shown until the diagram
+  // is next opened, which tries again.
+  function drawDiagram(key, d, figure) {
+    const sig = (dark() ? "dark\n" : "light\n") + d.source;
+    const had = state.drawn.get(key);
+    if (had && had.sig === sig) { figure.replaceChildren(had.node); return; }
+    if (!validSource(d.source)) {
+      state.drawn.set(key, { sig, node: sourceText(d.source, "Not rendered: this source is not in the one form the page draws.") });
+      figure.replaceChildren(state.drawn.get(key).node);
+      return;
+    }
+    const node = h("div", null, h("p", { class: "small muted" }, "Drawing…"));
+    const entry = { sig, node };
+    state.drawn.set(key, entry);
+    figure.replaceChildren(node);
+    renderSVG(d.source, theme()).then(({ svg, width, height }) => {
+      if (state.drawn.get(key) !== entry) return;
+      node.replaceChildren(h("img", { class: "diagram-img", src: "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg),
+        width, height, alt: "Diagram: " + (d.title || d.id) + ". Its parts are listed below." }));
+    }).catch((e) => {
+      if (state.drawn.get(key) !== entry) return;
+      entry.retry = !!(e && e.passing);
+      node.replaceChildren(sourceText(d.source, "Not rendered: " + (e && e.message ? e.message : "Mermaid failed") + "." +
+        (entry.retry ? " Close and open it to try again." : "")));
+    });
+  }
+
+  function elementWhere(e) {
+    if (!e.path) return "planned";
+    if (!CODE_PATH.test(e.path) || !Number.isInteger(e.line) || e.line < 1) return "";
+    const parts = e.path.split("/");
+    return (parts.length > 1 ? "…/" : "") + parts[parts.length - 1] + ":" + e.line;
+  }
+
+  function diagramPart(p, d) {
+    const key = p.id + "~" + d.id;
+    const [label, tone, shape] = own(DIAGRAM_STATUS, d.status, ["Unknown", "t-none", "ring"]);
+    const figure = h("div", { class: "diagram-figure" });
+    const elements = h("ul", { class: "elements", "aria-label": "What each part cites" }, d.elements.filter((e) => ELEMENT_ID.test(e.id)).map((e) =>
+      h("li", null, h("span", { class: "mono muted" }, e.id), h("span", { class: "label" }, e.label),
+        h("span", { class: "where", title: e.path ? e.path + ":" + e.line : null }, elementWhere(e)))));
+    const details = h("details", { class: "diagram", open: state.diagramsOpen.has(key) },
+      h("summary", null, h("span", { class: "mono muted" }, d.id), h("span", null, d.title || "Diagram"),
+        h("span", { class: "small muted" }, own(DIAGRAM_KIND, d.kind, "Diagram")), mark(label, tone, shape),
+        SHORT_AT.test(d.at) ? h("span", { class: "mono small muted" }, "at " + d.at) : null),
+      h("div", { class: "diagram-body" }, figure, elements));
+    details.addEventListener("toggle", () => {
+      if (details.open) {
+        // Opened by the viewer, not drawn again with the page: a passing
+        // failure is tried again.
+        const had = state.drawn.get(key);
+        if (!state.diagramsOpen.has(key) && had && had.retry) state.drawn.delete(key);
+        state.diagramsOpen.add(key);
+        drawDiagram(key, d, figure);
+      } else state.diagramsOpen.delete(key);
+    });
+    if (details.open) drawDiagram(key, d, figure);
+    return details;
   }
 
   // ---- Page ----
@@ -1103,6 +1476,10 @@ details > summary { cursor: pointer; color: var(--fg-strong); font-size: var(--t
     const shown = new Set();
     for (const p of list) for (const q of p.questions) shown.add(p.id + "~" + q.id);
     for (const k of [...state.forms.keys()]) if (!shown.has(k)) state.forms.delete(k);
+    // So are drawings of diagrams no longer there.
+    const kept = new Set();
+    for (const p of list) for (const d of p.diagrams) kept.add(p.id + "~" + d.id);
+    for (const k of [...state.drawn.keys()]) if (!kept.has(k)) state.drawn.delete(k);
     const focused = document.activeElement && document.activeElement.id;
     app.replaceChildren(...parts.filter(Boolean));
     if (focused) { const f = document.getElementById(focused); if (f) f.focus(); }
@@ -1170,6 +1547,10 @@ details > summary { cursor: pointer; color: var(--fg-strong); font-size: var(--t
     watchCollection(db.collection("dispatch").limit(1000), "dispatch", "dispatch");
     render();
   }
+
+  // An open diagram is drawn again in the scheme the viewer switches to.
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => render());
+  new MutationObserver(() => render()).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
   // Relative times age while the page stays open.
   setInterval(() => { if (!document.hidden && !document.querySelector("form :focus, .confirm :focus")) render(); }, 60000);

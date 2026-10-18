@@ -39,7 +39,10 @@ func Out() string { return filepath.Join(Dir(), "out") }
 // page's database and writes only answers and dispatch documents there.
 // Its script renders every document's text as text, never as markup, and
 // its schema block names each field it reads; export's page test holds
-// both to the documents' types.
+// both to the documents' types. A diagram's source is also given, where it
+// is in the grammar the page's grammar block gives, to Mermaid, loaded by
+// its hash in a sandboxed frame with no access to the page, whose SVG the
+// page shows only as an image; where it is not drawn, it is shown as text.
 //
 //go:embed page.html
 var Page []byte

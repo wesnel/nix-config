@@ -6,9 +6,11 @@
 // directory, through plans.Config.Open, which refuses a file outside it or
 // with another name: the title, the Goal section, the headings with IDs
 // under Steps sections, the questions under Questions with their
-// RECOMMENDATION, ANSWER or LOGBOOK note and list items, and STATUS; of
-// the log, only event kinds and times. No other property, section, drawer
-// or log text is read into a document. Outside the plans directory, only
+// RECOMMENDATION, ANSWER or LOGBOOK note and list items, STATUS, and the
+// checked or stale diagrams of the Diagrams section that the log trusts,
+// from their JSON blocks alone; of the log, only event kinds and times. No
+// other property, section, drawer, block or log text is read into a
+// document. Outside the plans directory, only
 // the newest digests are read, whole, from digests/ in the notes
 // repository. Free text is stripped of control
 // and formatting characters, has known secret shapes redacted and is
@@ -35,6 +37,7 @@ import (
 	"unicode"
 
 	"github.com/wesnel/agent-tools/internal/agentplans"
+	"github.com/wesnel/agent-tools/internal/diagram"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/redact"
 	"github.com/wesnel/agent-tools/internal/status"
@@ -50,13 +53,21 @@ const (
 
 // The caps on a plan's lists. With the text caps, and at most four bytes
 // a rune in JSON once text is stripped, they bound a plan's document at
-// 134,200 runes of text, 536,800 bytes, plus its keys and IDs.
+// 134,200 runes of text, 536,800 bytes, plus its keys and IDs, and
+// diagramBudget.
 const (
 	maxSteps     = 100
 	maxDecisions = 30
 	maxQuestions = 10
 	maxOptions   = 6
+	maxDiagrams  = 5
 )
+
+// diagramBudget is the most bytes of JSON a plan's diagrams take in all,
+// enough for one of the largest diagram.Parse takes; a diagram that would
+// go past it is left out. Raising it can take a document past maxDoc:
+// TestCaps holds the sum.
+const diagramBudget = 64 << 10
 
 // maxDoc is the most a document written may hold: under half of the
 // 1 MiB an ArtifactData batch body takes, so a batch can carry any one
@@ -85,6 +96,37 @@ type Plan struct {
 	Decisions []Decision `json:"decisions"`
 	// Questions are those the operator can answer now.
 	Questions []Question `json:"questions"`
+	// Diagrams are the diagrams of its Diagrams section the page draws.
+	Diagrams []Diagram `json:"diagrams"`
+}
+
+// Diagram is a diagram of the code the plan keeps, checked or stale, as
+// its JSON block gives it and its log trusts it, the first maxDiagrams in
+// file order that fit diagramBudget. Of each element only its ID, label
+// and where it cites go: a citation's hash and symbol, the critic and any
+// finding stay on the host.
+type Diagram struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Kind   string `json:"kind"`
+	Status string `json:"status"`
+	// At is the first 12 hex digits of the commit it was drawn at.
+	At string `json:"at"`
+	// Source is the Mermaid that diagram.Mermaid renders from the JSON,
+	// with labels redacted, and in the grammar diagram.ValidSource takes;
+	// the plan's Mermaid block is never read.
+	Source   string    `json:"source"`
+	Elements []Element `json:"elements"`
+}
+
+// Element is a node or an edge of a Diagram, nodes first: its label as
+// Source holds it, and the line of the repository it cites, or "" and 0
+// for one planned and not yet in the code.
+type Element struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Path  string `json:"path"`
+	Line  int    `json:"line"`
 }
 
 // Step is a heading with a step's ID under a Steps section of the plan or
@@ -369,7 +411,7 @@ func planOf(c plans.Config, p plans.Plan, now time.Time) (Plan, error) {
 		return Plan{}, err
 	}
 	plan := Plan{Schema: agentplans.Schema, ID: p.Name, Title: text(st.Title, short), Status: st.State, Host: p.Host,
-		Steps: []Step{}, Decisions: []Decision{}, Questions: []Question{}}
+		Steps: []Step{}, Decisions: []Decision{}, Questions: []Question{}, Diagrams: []Diagram{}}
 	if !state.MatchString(plan.Status) {
 		plan.Status = "unknown"
 	}
@@ -426,7 +468,84 @@ func planOf(c plans.Config, p plans.Plan, now time.Time) (Plan, error) {
 		}
 		plan.Questions = append(plan.Questions, question)
 	}
+	if plan.Diagrams, err = diagramsOf(p); err != nil {
+		return Plan{}, err
+	}
 	return plan, nil
+}
+
+// diagramsOf is p's Diagrams: the entries of its Diagrams section that
+// agent-plan wrote as the log last kept, moved or marked them, checked or
+// stale, never disputed.
+func diagramsOf(p plans.Plan) ([]Diagram, error) {
+	kept, err := p.Diagrams()
+	if err != nil {
+		return nil, err
+	}
+	out := []Diagram{}
+	used := 0
+	for _, k := range kept {
+		if len(out) == maxDiagrams {
+			break
+		}
+		if k.Diagram == nil || k.Edited != "" || (k.Status != plans.DiagramChecked && k.Status != plans.DiagramStale) {
+			continue
+		}
+		d, ok := diagramOf(k)
+		if !ok {
+			continue
+		}
+		if size := d.size(); used+size <= diagramBudget {
+			used += size
+			out = append(out, d)
+		}
+	}
+	return out, nil
+}
+
+// size is the bytes d takes in a plan's document, as writeJSON lays it
+// out in the plan's list.
+func (d Diagram) size() int {
+	data, err := json.MarshalIndent(d, "    ", "  ")
+	if err != nil {
+		return diagramBudget + 1
+	}
+	return len(data)
+}
+
+// diagramOf is k as exported, or false where its labels, redacted, no
+// longer make a source of the grammar the page renders.
+func diagramOf(k plans.KeptDiagram) (Diagram, bool) {
+	d := k.Diagram.Clone()
+	d.Title = label(d.Title)
+	out := Diagram{ID: k.ID, Title: d.Title, Kind: d.Kind, Status: k.Status, At: d.At[:12], Elements: []Element{}}
+	element := func(id string, l *string, c *diagram.Cite) {
+		*l = label(*l)
+		e := Element{ID: id, Label: *l}
+		if c != nil {
+			e.Path, e.Line = text(c.Path, short), c.Line
+		}
+		out.Elements = append(out.Elements, e)
+	}
+	for i := range d.Nodes {
+		element(d.Nodes[i].ID, &d.Nodes[i].Label, d.Nodes[i].Cite)
+	}
+	for i := range d.Edges {
+		element(d.Edges[i].ID, &d.Edges[i].Label, d.Edges[i].Cite)
+	}
+	out.Source = d.Mermaid()
+	return out, diagram.ValidSource(out.Source)
+}
+
+// label is a diagram's label with known secret shapes redacted, then
+// cleaned again, since a redaction's brackets are outside a label's
+// characters, and cut to diagram.MaxLabel runes.
+func label(s string) string {
+	s = diagram.CleanLabel(text(s, short))
+	if r := []rune(s); len(r) > diagram.MaxLabel {
+		s = strings.TrimSpace(string(r[:diagram.MaxLabel]))
+	}
+	return s
 }
 
 // updated is Plan.Updated of p: a log's times carry no zone, so only this
