@@ -104,7 +104,8 @@ commit, so that the receipt still matches once the branch is rebased.
 Each route the general review printed, or the plan's `REVIEWS` names,
 needs its own review once the general loop has settled: `git fresh-review
 --focus security --goal GOAL BASE..TIP`, the same range and goal. On exit 4,
-`--print-prompt --focus security` prints the prompt, and its reply goes to
+`--print-prompt --focus security` prints the prompt for a new sub-agent (in
+Claude Code, `security-reviewer`), and its reply goes to
 `--check FILE BASE..TIP` as in the loop: the focus comes from the prompt,
 never from the reply. Settle each finding as Triage says, with `--review
 <round>.<id>` from the review's `round` and the finding's `id`, such as
@@ -171,8 +172,9 @@ through `pr-loop review N`.
 ## Design review
 
 Twice in the pipeline: of the plan before coding, and of the result before
-hand-back. Start a new sub-agent that only reads (Claude Code's `Plan` agent;
-in ECA the `explorer` agent; elsewhere one told to only read), and give it
+hand-back. Start a new sub-agent that only reads (Claude Code's
+`design-reviewer` agent; in ECA the `explorer` agent; elsewhere one told
+to only read), and give it
 the plan, the goal statements and, for the result, every branch with its
 range. It reviews the work as a whole, where the fresh review loop reviews
 each branch:
