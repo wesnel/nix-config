@@ -64,6 +64,45 @@ func TestUsageHook(t *testing.T) {
 	}
 }
 
+// usage labels a session by its tag in the run ledger.
+func TestUsageReportTagged(t *testing.T) {
+	setUp(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	at := time.Now().Add(-time.Hour)
+	transcript := filepath.Join(home, ".claude", "projects", "-p", hookSession+".jsonl")
+	os.MkdirAll(filepath.Dir(transcript), 0o755)
+	os.WriteFile(transcript, []byte(`{"type":"assistant","sessionId":"`+hookSession+`","requestId":"req_a","timestamp":"`+
+		at.UTC().Format(time.RFC3339Nano)+`","cwd":"/nowhere","entrypoint":"sdk-cli","message":{"stop_reason":"end_turn",`+
+		`"usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":100,"output_tokens":10}}}`+"\n"), 0o644)
+	if err := runs.Default().Append(runs.Record{V: runs.Version, RunID: "claude:" + hookSession, Provider: "claude",
+		SessionID: hookSession, Category: runs.Triage, Labels: runs.Labels{Repo: "acme/widget", PR: 12}, Started: at}, at); err != nil {
+		t.Fatal(err)
+	}
+
+	for by, want := range map[string]string{"category": "triage", "repo": "acme/widget"} {
+		var stdout, stderr bytes.Buffer
+		if code := run([]string{"usage", "--by", by}, &stdout, &stderr); code != 0 {
+			t.Fatalf("exit %d: %s", code, stderr.String())
+		}
+		// The first table, after the title: the per-message breakdown.
+		tables := strings.Split(stdout.String(), "\n\n")
+		if len(tables) < 2 {
+			t.Fatalf("by %s: no table:\n%s", by, stdout.String())
+		}
+		labels := map[string]bool{}
+		for _, line := range strings.Split(tables[1], "\n") {
+			if f := strings.Fields(line); len(f) > 0 {
+				labels[f[0]] = true
+			}
+		}
+		if !labels[want] || labels["print"] || labels["unknown"] {
+			t.Errorf("by %s lacks %q:\n%s", by, want, stdout.String())
+		}
+	}
+}
+
 // The help names every category and kind a tag may hold.
 func TestUsageHookHelp(t *testing.T) {
 	_, hook, _ := strings.Cut(usage, "  usage hook\n")

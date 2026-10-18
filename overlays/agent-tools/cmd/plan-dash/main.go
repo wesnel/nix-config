@@ -165,6 +165,9 @@ const usage = `plan-dash: the operator's status, from GitHub and the plans.
           its last cost-state, which count on top of it, or none yet, and
           its records stand in, as they do for one whose cost-state holds
           less than they do (short). Then the totals by model.
+          A session the run ledger records (usage hook) takes its
+          category, repository and, where no plan names it, plan from
+          its tag, and its sub-agents with it, before any heuristic.
   usage hook
           for Claude Code's SessionStart hook: where $AGENT_RUN_TAG tags
           the session (category=C;repo=OWNER/NAME;pr=N;kind=K;plan=P,
@@ -347,6 +350,8 @@ func tokenUsage(args []string, stdout, stderr io.Writer) int {
 	if plansErr == nil {
 		o.Plans, plansErr = c.SessionPlans()
 	}
+	var ledgerErr error
+	o.Runs, ledgerErr = ledgerRuns(o.Since.Add(-period), stderr)
 
 	r, err := spend.Collect(o, *by)
 	if err != nil {
@@ -366,6 +371,11 @@ func tokenUsage(args []string, stdout, stderr io.Writer) int {
 	}
 	if plansErr != nil {
 		fmt.Fprintf(stderr, "plan-dash: the plans could not be read, so no session is attributed to one: %s\n", plansErr)
+		return 1
+	}
+	if ledgerErr != nil {
+		fmt.Fprintf(stderr, "plan-dash: the run ledger could not be read, so sessions are labelled by heuristics alone: %s\n",
+			ledgerErr)
 		return 1
 	}
 	return code

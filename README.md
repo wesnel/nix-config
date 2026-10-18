@@ -496,8 +496,10 @@ sessions itself, whatever its caller set: `loop`, or `review` with the pull
 request in a review directory, or `triage` there where the review queue
 asks for it with `AGENT_RUN_CATEGORY`. The queue tags its reviews
 (`review`, kind `dispatched`) with their pull requests, and the Agent
-plans session's unit tags it `dashboard`. The ledger holds labels, IDs,
-times and token counts, never a session's text.
+plans session's unit tags it `dashboard`. The
+ledger holds labels, IDs, times and token counts, never a session's text.
+`plan-dash usage` labels a session the ledger records by its tag before
+any heuristic, its sub-agents with it.
 
 ## the Agent plans session
 

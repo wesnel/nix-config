@@ -189,6 +189,22 @@ func usageRun(args []string, stdout, stderr io.Writer) int {
 	return code
 }
 
+// ledgerRuns is the run ledger's Claude Code runs since since, by session
+// ID, saying on stderr how many of its lines were skipped.
+func ledgerRuns(since time.Time, stderr io.Writer) (map[string]runs.Record, error) {
+	recorded, unreadable, err := runs.Default().Read(since)
+	if unreadable > 0 {
+		fmt.Fprintf(stderr, "plan-dash: %d lines of the run ledger are not valid records and were skipped\n", unreadable)
+	}
+	bySession := map[string]runs.Record{}
+	for _, r := range recorded {
+		if r.SessionID != "" {
+			bySession[r.SessionID] = r
+		}
+	}
+	return bySession, err
+}
+
 // reviewDir is a review's directory under the review root,
 // OWNER/NAME/N/HEAD12, as pr-loop review makes it.
 // OWNER and NAME are as prreview.ValidName takes them.

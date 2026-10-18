@@ -28,6 +28,7 @@ import (
 	"time"
 
 	quota "github.com/wesnel/agent-tools/internal/usage"
+	"github.com/wesnel/agent-tools/internal/usage/runs"
 )
 
 // Tokens are a request's tokens by kind. A cache write a transcript does not
@@ -78,6 +79,10 @@ type Options struct {
 	ReviewRoot string
 	// Plans maps session IDs to the plans that name them.
 	Plans map[string]string
+	// Runs maps session IDs to the run ledger's records of them, whose
+	// tags label a session, its sub-agents with it, before any
+	// heuristic; a plan in Plans, and a Source's category, still win.
+	Runs map[string]runs.Record
 	// Since and Until bound the period reported; the one of the same
 	// length before it is the previous period.
 	Since, Until time.Time
@@ -554,10 +559,23 @@ func (a *attributor) underReviews(dir string) (string, bool) {
 	return Unknown, true
 }
 
+// run is the ledger's record of a session, where its tag is valid.
+func (a *attributor) run(session string) (runs.Record, bool) {
+	r, ok := a.o.Runs[session]
+	if !ok {
+		return runs.Record{}, false
+	}
+	l := r.Labels
+	return r, runs.Tag{Category: r.Category, Repo: l.Repo, PR: l.PR, Kind: l.Kind, Plan: l.Plan}.Validate() == nil
+}
+
 func (a *attributor) category(q *request) string {
+	r, tagged := a.run(q.session)
 	switch {
 	case q.category != "":
 		return q.category
+	case tagged:
+		return r.Category
 	case a.loop[q.session]:
 		return "loop"
 	}
@@ -589,7 +607,10 @@ func githubRepo(path string) string {
 	return ""
 }
 
-func (a *attributor) repo(cwd string) string {
+func (a *attributor) repo(session, cwd string) string {
+	if r, ok := a.run(session); ok && r.Labels.Repo != "" {
+		return r.Labels.Repo
+	}
 	if repo, ok := a.underReviews(cwd); ok {
 		return repo
 	}
@@ -614,6 +635,9 @@ func (a *attributor) repo(cwd string) string {
 func (a *attributor) plan(session string) string {
 	if p, ok := a.o.Plans[session]; ok && labelPart.MatchString(p) {
 		return p
+	}
+	if r, ok := a.run(session); ok && r.Labels.Plan != "" {
+		return r.Labels.Plan
 	}
 	return Unknown
 }
@@ -653,7 +677,7 @@ func Collect(o Options, by string) (Report, error) {
 			q.session = Unknown
 		}
 		reqs = append(reqs, labelled{q, map[string]string{
-			"category": a.category(q), "repo": a.repo(q.cwd), "plan": a.plan(q.session), "role": q.role}})
+			"category": a.category(q), "repo": a.repo(q.session, q.cwd), "plan": a.plan(q.session), "role": q.role}})
 	}
 	markIdle(reqs)
 
