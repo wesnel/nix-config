@@ -63,6 +63,30 @@ func TestParseOrg(t *testing.T) {
 		}
 	})
 
+	// Org 9.8 reads `*<TAB>text` as text, as org-map-entries in `emacs -Q`
+	// shows.
+	t.Run("stars then a tab", func(t *testing.T) {
+		hs := parseOrg("* Plan\n*\tNot a heading\n** Goal\n")
+		if len(hs) != 2 || hs[0].Title != "Plan" || strings.Join(hs[0].Body, "\n") != "*\tNot a heading" || hs[1].Title != "Goal" {
+			t.Errorf("headings %+v", hs)
+		}
+		if level("*\tNot a heading") != 0 || level("** Goal") != 2 {
+			t.Errorf("level")
+		}
+	})
+
+	// Org 9.8 in `emacs -Q` reads a #+begin_ line that no #+end_ line of
+	// its own name closes as text, and the headings after it as headings.
+	// It reads a heading line inside a closed block as a heading too,
+	// where parseOrg does not; the structure check reports that line.
+	t.Run("blocks", func(t *testing.T) {
+		hs := parseOrg("* Plan\n#+begin_src org\n* In a block\n#+end_src\n#+begin_quote\n#+begin_src sh\n#+end_example\n" +
+			"** After a block with no end\n:PROPERTIES:\n:ID: S1\n:END:\n")
+		if len(hs) != 2 || hs[1].Title != "After a block with no end" || hs[1].Props["ID"] != "S1" {
+			t.Errorf("headings %+v", hs)
+		}
+	})
+
 	t.Run("a sequence without a bar", func(t *testing.T) {
 		hs := parseOrg("#+SEQ_TODO: OPEN(o) SHUT(s!)\n* OPEN a\n* SHUT b\n")
 		if hs[0].Keyword != "OPEN" || hs[0].Done || hs[1].Keyword != "SHUT" || !hs[1].Done {

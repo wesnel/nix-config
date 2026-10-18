@@ -497,14 +497,12 @@ func (p Plan) InSection(section string) (map[string]bool, error) {
 		if err != nil {
 			return nil, err
 		}
-		under := ""
-		for _, h := range parseOrg(string(data)) {
-			if h.Level <= 2 {
-				under = h.Title
-			}
+		hs := parseOrg(string(data))
+		under := sectionsOf(hs)
+		for i, h := range hs {
 			if id := h.Props["ID"]; id != "" && !seen[id] {
 				seen[id] = true
-				out[id] = h.Level > 2 && under == section
+				out[id] = h.Level > 2 && under[i] == section
 			}
 		}
 	}
@@ -537,8 +535,10 @@ func (p Plan) Goal(part string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for _, h := range parseOrg(string(data)) {
-		if h.Level != 2 || h.Title != "Goal" {
+	hs := parseOrg(string(data))
+	sections := sectionsOf(hs)
+	for i, h := range hs {
+		if h.Level != 2 || sections[i] != "Goal" {
 			continue
 		}
 		body := strings.Trim(strings.Join(h.Body, "\n"), "\n")
@@ -654,7 +654,7 @@ func (c Config) SessionPlans() (map[string]string, error) {
 				continue
 			}
 			for _, h := range parseOrg(string(data)) {
-				if h.Level != 1 || h.Title != "Plan" {
+				if h.Level != 1 || sectionTitle(h) != "Plan" {
 					continue
 				}
 				for _, v := range strings.Fields(h.Props["SESSIONS"]) {
@@ -701,7 +701,7 @@ func (c Config) Find(o FindOptions) ([]Found, error) {
 			}
 			var top heading
 			for _, h := range parseOrg(string(data)) {
-				if h.Level == 1 && h.Title == "Plan" {
+				if h.Level == 1 && sectionTitle(h) == "Plan" {
 					top = h
 					break
 				}

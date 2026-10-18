@@ -61,13 +61,10 @@ func (p Plan) questionHeadings(all bool, each func(file string, h heading)) erro
 		if err != nil {
 			return err
 		}
-		section := ""
-		for _, h := range parseOrg(string(data)) {
-			if h.Level <= 2 {
-				section = h.Title
-				continue
-			}
-			if section == "Questions" && h.Level == 3 && h.Keyword != "" && questionID.MatchString(h.Props["ID"]) {
+		hs := parseOrg(string(data))
+		sections := sectionsOf(hs)
+		for i, h := range hs {
+			if sections[i] == "Questions" && h.Level == 3 && h.Keyword != "" && questionID.MatchString(h.Props["ID"]) {
 				each(f, h)
 			}
 		}
