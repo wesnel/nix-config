@@ -169,7 +169,7 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 				}
 			}
 		}
-		touches += signs
+		touches += signatures(s.from, s.tip)
 		commits += signs
 		moving = append(append(moving, t), stacked...)
 		lines = append(lines, describe(s, pl.Steps, signs, stacked))

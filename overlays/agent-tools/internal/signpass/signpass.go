@@ -559,7 +559,7 @@ func Run(base string, resume, push, setUpstream bool) (any, error) {
 			if p.Squash {
 				commits = len(p.Kept)
 			}
-			announce(commits, 1+len(p.Stacked), pushBranches, urls, commits+urls)
+			announce(commits, 1+len(p.Stacked), pushBranches, urls, signatures(p.Start, "refs/heads/"+branch)+urls)
 		}
 		if err := sign(p, path); err != nil {
 			return nil, err

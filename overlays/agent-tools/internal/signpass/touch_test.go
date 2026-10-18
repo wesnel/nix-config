@@ -659,6 +659,41 @@ func TestRetryBoundsOnlyItsSignature(t *testing.T) {
 	}
 }
 
+// The touches a pass announces are the signatures it asks for, which with
+// fixups are more than the commits that remain: git signs every step of an
+// autosquash.
+func TestTouchCount(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		brief bool
+		pass  func() (any, error)
+		want  string
+	}{
+		{"brief", true, func() (any, error) { return Run("", false, false, false) }, "up to 4 key touches"},
+		{"plan", false, func() (any, error) { return Plan("", []string{"one"}, false, false) }, "key touches: up to 4"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			Brief = c.brief
+			t.Cleanup(func() { Brief = false })
+			repo, plan := flakyRepo(t)
+			gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "fixup! a")
+			gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "fixup! b")
+			stderr := captureStderr(t)
+			script(t, plan, strings.Split(strings.Repeat("ok ", 10), " ")[:10]...)
+			if _, err := c.pass(); err != nil {
+				t.Fatalf("%v\n%s", err, stderr())
+			}
+			left, _ := os.ReadFile(plan)
+			if asked := 10 - len(strings.Fields(string(left))); asked != 4 {
+				t.Errorf("the pass asked for %d signatures", asked)
+			}
+			if !strings.Contains(stderr(), c.want) {
+				t.Errorf("no %q in\n%s", c.want, stderr())
+			}
+		})
+	}
+}
+
 // A pass that is told not to retry stops at the first miss, as it does when
 // it cannot wait.
 func TestMissedTouchWithoutRetries(t *testing.T) {

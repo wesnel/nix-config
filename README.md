@@ -135,7 +135,8 @@ git sign-pass --push TOP1 TOP2 ...                # several stacks, wherever the
 
 `git sign-pass` re-signs from the oldest unsigned commit, or the oldest one a
 `fixup!`, `amend!` or `squash!` commit folds into, to the tip, one touch per
-commit. Branches stacked inside that range move with it. It squashes unsigned
+commit in that range, folds included, since git signs each step of a squash.
+Branches stacked inside that range move with it. It squashes unsigned
 in a scratch worktree first, so a conflicting fixup is named before any
 touch, and it refuses if a commit's files, author or message would change, or,
 when squashing, if the files at the tip would or the remaining commits would

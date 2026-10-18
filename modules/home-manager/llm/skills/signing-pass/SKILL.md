@@ -126,8 +126,9 @@ unsigned first and refuses before any touch if it would conflict. If nothing is
 squashed, it refuses when a commit's files, author or message would change. If
 any of the three kinds is squashed, it refuses when the remaining commits or the
 files at the tip would differ from that, and it reports any branch lower in the stack that
-gained a fix. It needs one touch per remaining commit, plus one for each push
-URL. At a missed touch in a terminal, it asks to retry that step. With no
+gained a fix. It needs one touch per commit in the range, folds included,
+since git signs each step of a squash, plus one for each push URL. At a
+missed touch in a terminal, it asks to retry that step. With no
 terminal (an agent's run, or a `!` run) it retries once by itself, after a
 wait and under a timeout, because one missed touch locks the key and the next
 request then waits on pinentry without end. If it stops, it prints the exact
