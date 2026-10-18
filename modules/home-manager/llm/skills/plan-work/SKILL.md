@@ -161,11 +161,11 @@ does.
 
 ## Finding it again
 
-After a compaction, a resume or a hand-off, find the plan before anything
-else, then read it, load the skills its `SKILLS` names, and run
+After a compaction, a /clear, a resume or a hand-off, find the plan before
+anything else, then read it, load the skills its `SKILLS` names, and run
 `agent-plan status PLAN`:
 
-- Claude Code names it when the session resumes or compacts.
+- Claude Code names it when the session resumes, compacts or is cleared.
 - Elsewhere, `agent-plan find` lists the plans that match this session,
   worktree or branch; `--session`, `--worktree` or `--branch` matches the
   one given instead.
@@ -174,6 +174,9 @@ else, then read it, load the skills its `SKILLS` names, and run
 After a compaction the hooks also add the plan's brief: its goal,
 decisions, ready steps and parts, questions for the operator, steps done but not
 verified, and open follow-ups. `agent-plan brief PLAN` prints it any time.
+Claude Code adds `agent-plan brief PLAN --resume` after a compaction or
+/clear instead: it spells out only the decisions since the last hand-back or
+sign-pass and names the rest by ID, so the plan file holds the detail.
 
 Only this host's plans, the files named for it, are yours to change; another
 host's beside them are read-only here, and `agent-plan` refuses to write

@@ -268,6 +268,10 @@ func TestCommands(t *testing.T) {
 		if code != 0 || !strings.HasPrefix(out, "Brief of plan "+plan) || !strings.Contains(out, "Follow-ups open: 1\n") {
 			t.Errorf("brief: %d\n%s", code, out)
 		}
+		code, out, _ = agentPlan(t, "", "brief", plan, "--resume")
+		if code != 0 || !strings.HasPrefix(out, "Resume brief of plan "+plan) || !strings.Contains(out, "Follow-ups open: 1\n") {
+			t.Errorf("brief --resume: %d\n%s", code, out)
+		}
 	})
 
 	t.Run("reference", func(t *testing.T) {
@@ -590,6 +594,19 @@ func TestHooks(t *testing.T) {
 		code, out, _ := agentPlan(t, `{"session_id":"s-9","source":"compact","cwd":"/nowhere"}`, "find", "--hook")
 		if code != 0 || !strings.Contains(out, plan) || !strings.Contains(out, `"hookEventName":"SessionStart"`) {
 			t.Errorf("find --hook: %d %s", code, out)
+		}
+	})
+
+	t.Run("Claude Code hands the plan over across /clear", func(t *testing.T) {
+		t.Setenv("XDG_STATE_HOME", t.TempDir())
+		plan := imported(t)
+		code, out, _ := agentPlan(t, `{"session_id":"s-9","hook_event_name":"SessionEnd","reason":"clear","cwd":"/nowhere"}`, "find", "--hook")
+		if code != 0 || out != "" {
+			t.Errorf("find --hook on SessionEnd: %d %q", code, out)
+		}
+		code, out, _ = agentPlan(t, `{"session_id":"s-10","hook_event_name":"SessionStart","source":"clear","cwd":"/nowhere"}`, "find", "--hook")
+		if code != 0 || !strings.Contains(out, "Resume brief of plan "+plan) {
+			t.Errorf("find --hook after /clear: %d %s", code, out)
 		}
 	})
 

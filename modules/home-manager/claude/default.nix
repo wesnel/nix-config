@@ -403,11 +403,28 @@ in {
           }
         ];
 
-        # Names the session's plans when it resumes or compacts, matched by
-        # its session_id, which both keep, or by its worktree.
+        # Names the session's plans when it resumes, compacts or is
+        # cleared, matched by its session_id, which all three keep, or by
+        # its worktree; after /clear or a compaction, with
+        # `agent-plan brief --resume` of the first, which stays within the
+        # 10,000 characters Claude Code passes whole.
         hooks.SessionStart = [
           {
-            matcher = "compact|resume";
+            matcher = "clear|compact|resume";
+            hooks = [
+              {
+                type = "command";
+                command = "${agentPlan} find --hook";
+              }
+            ];
+          }
+        ];
+
+        # /clear starts a session with a new session_id: this hands the
+        # ending session's plan to the one it starts in the same directory.
+        hooks.SessionEnd = [
+          {
+            matcher = "clear";
             hooks = [
               {
                 type = "command";
