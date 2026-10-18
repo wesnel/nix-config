@@ -119,7 +119,7 @@ func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	if why := unavailable(true); why != "" {
 		fmt.Fprintf(stderr, "%s: Codex cannot answer here: %s. Ask a new sub-agent that only reads instead "+
-			"(Claude Code's `Plan` agent, ECA's `explorer`), giving it %s and the same files, and nothing of your own reasoning.\n",
+			"(Claude Code's `design-reviewer` agent, ECA's `explorer`), giving it %s and the same files, and nothing of your own reasoning.\n",
 			name, why, *question)
 		return 4
 	}

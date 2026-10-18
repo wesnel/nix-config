@@ -74,34 +74,51 @@ shape.
   edits outside the worktrees it owns, scratch and the plans directory, all
   of them until it owns one.
 
+## Agent types
+
+In Claude Code, start each sub-agent as the type for its role, the Agent
+tool's `subagent_type`. Each definition carries its role's method, report,
+tools and model, and the rules every sub-agent follows; a task adds only
+what is this work's.
+
+- **`builder`:** a part's branch, from its task to a verified branch ready
+  for review; its fix rounds too, continued with `SendMessage`; and a
+  part's Investigate phase (Phases below), which commits nothing.
+- **`adversarial-reviewer`:** tries to break a finished branch, every
+  finding reproduced or marked as not, with what held. For a part that is
+  security-sensitive, subtle, or that a fresh review passed too easily.
+- **`design-reviewer`:** the design reviews (Design review below).
+- **`security-reviewer`:** a security route's review, from the prompt
+  `git fresh-review --print-prompt --focus security` prints, and a
+  security review of a part's range outside the fresh review loop.
+- **`reviewer`:** the fresh review loop's sub-agent, as the `review-change`
+  skill says.
+- **`Explore`:** read-only lookups and inventories.
+
+The reviewers have no editing tools. The guard lets them run git's
+reading commands, and any git command in a repository of their own under
+scratch, and refuses the writes it can see outside scratch; git's
+configuration can still make a read run a program, and a script or a
+program the guard does not know still writes, so a reviewer's task never
+asks for either.
+
+Codex and ECA have no such
+types (ECA has `reviewer` alone): there the rules file also names the
+installed working agreements to read (`~/.codex/AGENTS.md`,
+`~/.config/eca/AGENTS.md`) and carries the role's rules, from its
+definition in `~/.claude/agents` where Claude Code is installed.
+
 ## The rules file
 
-Write the rules once, to a file in your scratchpad, and start every task
-with "First read <file> and follow it exactly." Do not count on a sub-agent
-having loaded AGENTS.md or the skills you have: the file names them to read,
-and adds only what they do not say. Put in it:
+Write what every part of this work shares once, to a file in your
+scratchpad, and start every task with "First read <file> and follow it
+exactly." Put in it:
 
-- Read and follow the installed working agreements (`~/.claude/CLAUDE.md`
-  for Claude Code, `~/.codex/AGENTS.md` for Codex, `~/.config/eca/AGENTS.md`
-  for ECA) and the `SKILL.md` of the `signing-pass`, `write-tests`,
-  `review-change` and `plan-work` skills in the agent's skill directory.
-- The plan's file. Each sub-agent makes its part's file with
-  `agent-plan new --parent PLAN --part <its part ID>` and logs to the
-  plan's log with `--role subagent`.
-- Work only in the worktree the task names, never the main checkout or another
-  worktree. Run `git branch --show-current` immediately before every edit and
-  every commit. Never `git stash`: every worktree shares one stash.
-- `trash` instead of `rm`, and no wrapper shell scripts.
 - How to build, test and lint in this repository, which commands need the
   sandbox off, and what a fresh worktree lacks (generated files, for
   example).
-- Before reporting done: a trial autosquash on a throwaway branch, deleted
-  afterwards, with the tests and linters run on the squashed result, since a
-  squash can drop a line.
-- No writes to GitHub. Thread replies are drafted to
-  `<scratchpad>/replies/pr-<N>.md`, in the reply-file format the
-  `review-change` skill's Answering gives.
-- The report below.
+- Where thread replies are drafted: `<scratchpad>/replies/pr-<N>.md`.
+- No wrapper shell scripts.
 
 When several parts need the same exploration, start one sub-agent that only
 reads to do it first and write what it found to a notes file in your
@@ -113,21 +130,8 @@ The task names the rules file; the plan and the part's ID; the repository,
 branch, base and worktree; the part's goal and what is not its job; the
 decisions already made, as final; and, where you know it, the commit each
 correction folds into. It says what the part must do, not how, as
-acceptance criteria each checkable on its own. A sub-agent that finds a fact contradicting a
-decision, or a base it was given, stops that item and reports it instead of
-following or reopening it. Work it finds outside the part's job it records
-with `agent-plan followup PLAN --part P1 --title '...' --found-in <item>`
-and leaves undone.
-
-Each sub-agent reports, as its final message and within the length the task
-gives, with no narrative:
-
-- branch, worktree, and `git log --format='%h %G? %s' <base>..<branch>`
-- what it changed, by plan item ID
-- the exact commands it ran to verify, and their results
-- for each fact it states, where it was observed: a command, a
-  `file:line` or a URL
-- what it could not verify, and what needs a decision
+acceptance criteria each checkable on its own, and gives the report a
+length.
 
 ## Phases
 
@@ -176,8 +180,10 @@ sub-agent, in its current task or its next one.
 
 Start every sub-agent with the model and effort this section gives; it is
 what permits setting them. In Claude Code they are the Agent tool's `model`
-and `effort`. Codex's `spawn_agent` takes a `model`; ECA takes the model
-from the agent's definition.
+and `effort`, which override the agent type's own: Opus at high effort for
+every type above but `reviewer` and `Explore`. Cheaper work is the same
+type at the model and effort the list below gives. Codex's `spawn_agent`
+takes a `model`; ECA takes the model from the agent's definition.
 
 - **Haiku 5.5, low effort:** read-only lookups, inventories, running a given
   command and reporting it.
@@ -221,9 +227,9 @@ belongs in its part, ask it.
 Every turn of yours re-sends your whole context, so spend turns on
 decisions:
 
-- Brief each sub-agent to report once, at the end, and to wait in the
-  foreground for its own builds and tests, so it stops only when its work
-  is done.
+- Each sub-agent reports once, at the end, and waits in the foreground for
+  its own builds and tests, so it stops only when its work is done: the
+  role agents' definitions say so, and elsewhere the rules file does.
 - Answer a notification only to decide something or to tell an agent
   something. Check reports that arrive together in one pass.
 - Run a fix round by continuing the agent that did the work (`SendMessage`,
