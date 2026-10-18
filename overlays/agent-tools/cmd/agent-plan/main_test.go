@@ -101,11 +101,26 @@ func TestCommands(t *testing.T) {
 	t.Run("log and report", func(t *testing.T) {
 		plan := sessionPlan(t)
 		if code, _, errs := agentPlan(t, "", "log", plan, "--item", "S1", "--kind", "done", "--summary", "Add the loop",
-			"--commit", "Add the loop", "--tokens", "1500", "--model", "opus", "--effort", "low"); code != 0 {
+			"--commit", "Add the loop"); code != 0 {
 			t.Fatalf("log: %d %s", code, errs)
 		}
+		for _, name := range []string{"tokens", "model", "effort"} {
+			for _, given := range [][]string{{"--" + name, "1"}, {"--" + name + "=1"}, {"--" + name}} {
+				args := append([]string{"log", plan, "--item", "S1", "--kind", "verified"}, given...)
+				code, out, errs := agentPlan(t, "", args...)
+				if code != 2 || out != "" || !strings.HasPrefix(errs, "agent-plan log: --"+name+" is not logged.") ||
+					!strings.Contains(errs, "`plan-dash usage` reports Claude Code sessions'") {
+					t.Errorf("log %v: %d %q %q", given, code, out, errs)
+				}
+			}
+		}
+		// Only log refuses them by name; to any other command they are unknown.
+		if code, _, errs := agentPlan(t, "", "status", plan, "--effort", "low"); code != 2 ||
+			strings.Contains(errs, "is not logged") || !strings.Contains(errs, "flag provided but not defined: -effort") {
+			t.Errorf("status --effort: %d %q", code, errs)
+		}
 		code, out, _ := agentPlan(t, "", "status", plan)
-		if code != 0 || !strings.Contains(out, "| S1 | Add the loop | yes | no | Add the loop |") || !strings.Contains(out, "- Tokens: 1500") {
+		if code != 0 || !strings.Contains(out, "| S1 | Add the loop | yes | no | Add the loop |") || strings.Contains(out, "Tokens") {
 			t.Errorf("status: %d\n%s", code, out)
 		}
 		code, out, _ = agentPlan(t, "", "status", plan, "--format", "json")
@@ -120,10 +135,6 @@ func TestCommands(t *testing.T) {
 		code, out, _ = agentPlan(t, "", "init")
 		if code != 0 || !strings.Contains(out, `"dir"`) {
 			t.Errorf("init: %d\n%s", code, out)
-		}
-		code, out, _ = agentPlan(t, "", "tokens")
-		if code != 0 || !strings.Contains(out, "| done | opus | low | 1 | 1500 |") {
-			t.Errorf("tokens: %d\n%s", code, out)
 		}
 	})
 
@@ -376,7 +387,6 @@ func TestRelayed(t *testing.T) {
 		{"new", "--title", "T", "--slug", "t"},
 		{"init"},
 		{"import-claude"},
-		{"tokens"},
 		{"find", "--hook"},
 		{"sync"},
 		{"sync", "--pull"},

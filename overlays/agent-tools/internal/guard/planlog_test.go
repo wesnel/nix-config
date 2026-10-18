@@ -145,7 +145,6 @@ func TestReviewerPlans(t *testing.T) {
 		"agent-plan status PLANFILE":                        false,
 		"agent-plan goal PLANFILE --part P1":                false,
 		"agent-plan find --branch x":                        false,
-		"agent-plan tokens":                                 false,
 		"agent-plan questions PLANFILE --all":               false,
 	} {
 		t.Run(caseName(deny, command), func(t *testing.T) {

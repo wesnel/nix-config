@@ -36,7 +36,6 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      create part P1's plan file beside its parent's
   log PLAN --item ID --kind KIND [--summary S] [--role R] [--agent A] [--branch B]
       [--commit SUBJECT] [--evidence E] [--review ROUND.ID --outcome O]
-      [--tokens N] [--model M] [--effort E]
                      append an event about item ID to the plan's log, and
                      write a step's or part's heading keyword from its log
   find [--session ID] [--worktree DIR] [--branch B]
@@ -52,7 +51,7 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      what still waits, keyword drift, property drift (a
                      WORKTREES, BRANCHES, PULL_REQUESTS, OWNERS, REVIEWS or
                      PIPELINE value, or a References entry, the log does not
-                     give), the review routes logged and waived, and tokens
+                     give), and the review routes logged and waived
   set PLAN NAME [VALUE...] [--part P1]
                      set WORKTREES, BRANCHES, PULL_REQUESTS, REVIEWS (review
                      routes the change needs: ` + strings.Join(routes.Known, ", ") + `) or PIPELINE
@@ -181,8 +180,6 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      delivered as delivered, as remind does; exit 1 while it
                      has none. --check prints nothing and only exits 0 once
                      one is logged
-  tokens [--format org|json]
-                     every plan's tokens by event kind, model and effort
   import-claude      Claude Code's PostToolUse hook on ExitPlanMode (reads stdin):
                      records the approved plan in the session's plan
   init               clone the plans' repository where it is missing and
@@ -202,7 +199,6 @@ Values are single lines; list values hold no whitespace.
 KIND: ` + strings.Join(plans.Kinds, ", ") + `
 ROLE: ` + strings.Join(plans.Roles, ", ") + `
 OUTCOME: ` + strings.Join(plans.Outcomes, ", ") + `
-EFFORT: ` + strings.Join(plans.Efforts, ", ") + `
 
 With ` + relay.URLEnv + ` set, every command but the hooks is sent to that
 sandbox-relay, which serves only log, goal, status, find, questions,
@@ -247,6 +243,15 @@ type multi []string
 
 func (m *multi) String() string     { return strings.Join(*m, ",") }
 func (m *multi) Set(v string) error { *m = append(*m, v); return nil }
+
+// refused is a flag taken only to be refused. It parses as a boolean, so
+// it is refused with or without a value: `--tokens` and `--tokens=5` set
+// it, and in `--tokens 5` the 5 is left as an argument.
+type refused struct{}
+
+func (refused) String() string   { return "" }
+func (refused) Set(string) error { return nil }
+func (refused) IsBoolFlag() bool { return true }
 
 func main() { os.Exit(Main(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
@@ -393,9 +398,6 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		evidence = flags.String("evidence", "", "")
 		review   = flags.String("review", "", "")
 		outcome  = flags.String("outcome", "", "")
-		tokens   = flags.Int64("tokens", 0, "")
-		model    = flags.String("model", "", "")
-		effort   = flags.String("effort", "", "")
 		format   = flags.String("format", "org", "")
 		hook     = flags.Bool("hook", false, "")
 		pull     = flags.Bool("pull", false, "")
@@ -434,9 +436,28 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	flags.Var(&branches, "branch", "")
 	flags.Var(&trees, "worktree", "")
 	flags.Var(&sessions, "session", "")
+	// Usage is the harness's own count, not an agent's: log takes these only
+	// to refuse them with where usage is reported. Elsewhere they are
+	// unknown flags.
+	selfReported := []string{"tokens", "model", "effort"}
+	if command == "log" {
+		for _, name := range selfReported {
+			flags.Var(refused{}, name, "")
+		}
+	}
 	positional, code, ok := parse(flags, args, stdout, stderr)
 	if !ok {
 		return code
+	}
+	given := map[string]bool{}
+	flags.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	for _, name := range selfReported {
+		if given[name] {
+			fmt.Fprintf(stderr, "agent-plan log: --%s is not logged. The harness counts usage itself: `plan-dash usage` "+
+				"reports Claude Code sessions' and sub-agents', from their transcripts and the run ledger, and no "+
+				"other harness's\n", name)
+			return 2
+		}
 	}
 	one := func(values multi) string {
 		if len(values) == 0 {
@@ -499,8 +520,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return 2
 		}
 		return report(p.Log(plans.Event{Kind: *kind, Item: *item, Summary: *summary, Role: *role, Agent: *agent,
-			Branch: branch, Commit: *commit, Evidence: *evidence, Review: *review, Outcome: *outcome,
-			Tokens: *tokens, Model: *model, Effort: *effort}, time.Now()))
+			Branch: branch, Commit: *commit, Evidence: *evidence, Review: *review, Outcome: *outcome}, time.Now()))
 	case "find":
 		if *hook {
 			out, err := c.SessionHook(readAll(stdin))
@@ -665,13 +685,6 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return 2
 		}
 		return report(p.Reseal(time.Now()))
-	case "tokens":
-		rows, err := c.Tokens()
-		if err != nil || *format == "json" {
-			return report(rows, err)
-		}
-		io.WriteString(stdout, plans.TokensOrg(rows))
-		return 0
 	case "import-claude":
 		out, err := c.ImportClaude(readAll(stdin), time.Now())
 		return hookReport(out, err, stdout, stderr)

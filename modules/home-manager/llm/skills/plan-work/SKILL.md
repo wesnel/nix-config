@@ -145,17 +145,13 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
 - An event about the whole plan names the plan's ID; about a part, the
   part's.
 - `--role` is yours: `single`, `parent` or `subagent`.
-- When the harness reports a sub-agent's tokens, log them on the event for
-  its task: `--tokens N --model M --effort E`. Which model and effort to
-  start it with is the `coordinate-subagents` skill's "Model and effort".
 - The review pipeline's events are the `review-change` skill's.
 
 `agent-plan status PLAN` lists the steps without `done` and those done but
 not `verified`, the parts ready to start, the steps ready now, what still
 waits on an `:AFTER:` item, keyword and property drift, steps started with nothing
 logged for a day, commits no `done` event names (a `fixup!`, `amend!` or
-`squash!` commit counts as the one it names), and tokens by part, kind and
-model; `agent-plan tokens` totals every plan's. Log `done` with the
+`squash!` commit counts as the one it names). Log `done` with the
 `--commit` of each listed commit that completes a step, or say why none
 does.
 

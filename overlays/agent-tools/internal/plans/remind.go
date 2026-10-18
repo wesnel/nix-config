@@ -8,10 +8,7 @@ import (
 	"time"
 )
 
-var (
-	notifiedAgent  = regexp.MustCompile(`<summary>Agent "(.*)" finished</summary>`)
-	notifiedTokens = regexp.MustCompile(`<subagent_tokens>([0-9]+)</subagent_tokens>`)
-)
+var notifiedAgent = regexp.MustCompile(`<summary>Agent "(.*)" finished</summary>`)
 
 // Remind is `agent-plan remind`, a hook that asks for the judgement the
 // plan needs at two moments, in the session's plan alone:
@@ -83,13 +80,10 @@ func (c Config) remind(input []byte) []byte {
 		}
 		return file
 	}
-	finished := func(what, tokens string) string {
-		log := "`done` once it passes, or `blocked` or `abandoned`"
-		if tokens != "" {
-			log += ", with `--tokens " + tokens + "`"
-		}
+	finished := func(what string) string {
 		return fmt.Sprintf("Sub-agent %sfinished. Check its report as the coordinate-subagents skill's \"Check every report\" says "+
-			"before relaying any of it, then log its part's outcome in %s: %s.", what, plan(), log)
+			"before relaying any of it, then log its part's outcome in %s: `done` once it passes, or `blocked` or `abandoned`.",
+			what, plan())
 	}
 	compacted := func() string {
 		context := fmt.Sprintf("The conversation was compacted. Bring %s up to date before going on: log the steps done or "+
@@ -109,11 +103,7 @@ func (c Config) remind(input []byte) []byte {
 		if m == nil {
 			return nil
 		}
-		tokens := ""
-		if t := notifiedTokens.FindStringSubmatch(in.Prompt); t != nil {
-			tokens = t[1]
-		}
-		event, context = in.Event, finished(fmt.Sprintf("%q ", m[1]), tokens)
+		event, context = in.Event, finished(fmt.Sprintf("%q ", m[1]))
 	case (in.Event == "UserPromptSubmit" && in.AgentID == "") || (in.Type == "preRequest" && in.ParentChatID == ""):
 		// The operator's own prompt: its addresses are references of the plan.
 		if plan() != "" {
@@ -136,11 +126,11 @@ func (c Config) remind(input []byte) []byte {
 		if call.Description != "" {
 			what = fmt.Sprintf("%q ", call.Description)
 		}
-		event, context = in.Event, finished(what, "")
+		event, context = in.Event, finished(what)
 	case in.Event == "PostToolUse" && in.ToolName == "wait_agent":
-		event, context = in.Event, finished("", "")
+		event, context = in.Event, finished("")
 	case in.Type == "postToolCall" && in.ToolName == "spawn_agent":
-		context = finished("", "")
+		context = finished("")
 	case in.Event == "PreCompact":
 		if p := plan(); p != "" {
 			return []byte(fmt.Sprintf("Keep in the summary the path of the plan, %s, and everything since it was last brought "+

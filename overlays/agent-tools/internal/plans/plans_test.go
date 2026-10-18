@@ -1,6 +1,7 @@
 package plans
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -462,15 +463,14 @@ func TestLog(t *testing.T) {
 	t.Run("appends events", func(t *testing.T) {
 		p := withSteps(t)
 		e, err := p.Log(Event{Kind: "done", Item: "S1", Summary: "Add the run loop", Role: "single", Agent: "claude:abc",
-			Branch: "loop", Commit: "Add the run loop", Evidence: "go test ./... passes", Tokens: 1200,
-			Model: "opus", Effort: "medium"}, day)
+			Branch: "loop", Commit: "Add the run loop", Evidence: "go test ./... passes"}, day)
 		if err != nil {
 			t.Fatal(err)
 		}
 		data, _ := os.ReadFile(p.log())
 		entry := "* done S1 — Add the run loop\n:PROPERTIES:\n:EVENT: " + e.ID + "\n:AGENT: claude:abc\n:ROLE: single\n" +
 			":ITEM: S1\n:KIND: done\n:BRANCH: loop\n:COMMIT: Add the run loop\n:EVIDENCE: go test ./... passes\n" +
-			":TOKENS: 1200\n:MODEL: opus\n:EFFORT: medium\n:END:\n[2026-10-14 Wed 13:05]\n"
+			":END:\n[2026-10-14 Wed 13:05]\n"
 		if !strings.HasSuffix(string(data), entry) {
 			t.Errorf("log:\n%s\nwant it to end with:\n%s", data, entry)
 		}
@@ -478,11 +478,53 @@ func TestLog(t *testing.T) {
 			t.Errorf("an event about the whole plan: %v", err)
 		}
 		events := eventsBut(t, p, "property")
-		if len(events) != 2 || events[0].ID != e.ID || events[0].Tokens != 1200 || events[1].Outcome != "fix" {
+		if len(events) != 2 || events[0].ID != e.ID || events[0].Commit != "Add the run loop" || events[1].Outcome != "fix" {
 			t.Errorf("events %+v", events)
 		}
 		if after, _ := os.ReadFile(p.log()); len(after) == len(data) {
 			t.Error("the second event was not appended")
+		}
+	})
+
+	// A log may hold events with TOKENS, MODEL and EFFORT, which agents
+	// reported themselves: they read and count like any other, and
+	// appending leaves their text as it is.
+	t.Run("reads events with self-reported usage", func(t *testing.T) {
+		p := withSteps(t)
+		fixture, err := os.ReadFile("testdata/usage-props.log.org")
+		if err != nil {
+			t.Fatal(err)
+		}
+		current, _ := os.ReadFile(p.log())
+		old := append(current, fixture...)
+		if err := os.WriteFile(p.log(), old, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p.log()+".lock", []byte(digest(old)+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := p.Log(Event{Kind: "verified", Item: "S1"}, day); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := p.Receipt("", Receipt{Range: "main..HEAD", Tip: "1234", PatchID: "abcd", Reviewer: "codex", Model: "gpt-5.5"}, day); err != nil {
+			t.Fatal(err)
+		}
+		events := eventsBut(t, p, "property")
+		if len(events) != 3 || events[0].ID != "0f3c9a52-6d1e-4b7a-9c2e-1a5b8d7e4f60" || events[0].Kind != "done" ||
+			events[0].Commit != "Add the run loop" || events[0].Session != "claude:abc" || events[0].Time != "[2026-10-14 Wed 13:05]" {
+			t.Errorf("events %+v", events)
+		}
+		// The agent's own MODEL is not read; the review's is.
+		if len(events) == 3 && (events[0].Model != "" || events[2].Kind != ReceiptKind || events[2].Model != "gpt-5.5") {
+			t.Errorf("models: %q on the done event, %q on the %s", events[0].Model, events[2].Model, events[2].Kind)
+		}
+		if after, _ := os.ReadFile(p.log()); !bytes.HasPrefix(after, old) || bytes.Count(after, []byte(":TOKENS:")) != 1 {
+			t.Errorf("the old event's text changed:\n%s", after)
+		}
+		s, err := p.Status()
+		if err != nil || len(s.Steps) == 0 || s.Steps[0].ID != "S1" || !s.Steps[0].Done || !s.Steps[0].Verified ||
+			strings.Join(s.Steps[0].Commits, ";") != "Add the run loop" {
+			t.Errorf("status %+v, %v", s, err)
 		}
 	})
 
@@ -494,8 +536,6 @@ func TestLog(t *testing.T) {
 		"an unknown role":        {Kind: "done", Item: "S1", Role: "boss"},
 		"an unknown outcome":     {Kind: "finding-settled", Item: "S1", Review: "1.F1", Outcome: "ignore"},
 		"a malformed review":     {Kind: "finding-settled", Item: "S1", Review: "F1", Outcome: "fix"},
-		"an unknown effort":      {Kind: "done", Item: "S1", Effort: "huge"},
-		"negative tokens":        {Kind: "done", Item: "S1", Tokens: -1},
 	} {
 		t.Run("refused/"+what, func(t *testing.T) {
 			p := withSteps(t)
@@ -553,7 +593,7 @@ func TestLog(t *testing.T) {
 }
 
 func TestStatus(t *testing.T) {
-	t.Run("items and tokens", testStatusItems)
+	t.Run("items", testStatusItems)
 	t.Run("ready parts", testStatusReadyParts)
 	t.Run("ready steps", testStatusReadySteps)
 }
@@ -570,11 +610,11 @@ func testStatusItems(t *testing.T) {
 	}
 	addItems(t, part.File, "** Steps", "P1.S1")
 	for _, e := range []Event{
-		{Kind: "done", Item: "S1", Commit: "Add the run loop", Tokens: 100, Model: "opus", Effort: "low"},
-		{Kind: "verified", Item: "S1", Tokens: 50, Model: "opus", Effort: "low"},
-		{Kind: "done", Item: "S2", Commit: "Add the flag", Tokens: 30, Model: "sonnet", Effort: "medium"},
-		{Kind: "done", Item: "P1.S1", Commit: "Add the part", Tokens: 7, Model: "sonnet", Effort: "medium"},
-		{Kind: "reviewed", Item: "P1", Tokens: 3, Model: "opus", Effort: "high"},
+		{Kind: "done", Item: "S1", Commit: "Add the run loop"},
+		{Kind: "verified", Item: "S1"},
+		{Kind: "done", Item: "S2", Commit: "Add the flag"},
+		{Kind: "done", Item: "P1.S1", Commit: "Add the part"},
+		{Kind: "reviewed", Item: "P1"},
 		{Kind: "started", Item: "S3"},
 	} {
 		if _, err := p.Log(e, day); err != nil {
@@ -597,28 +637,12 @@ func testStatusItems(t *testing.T) {
 	if got := strings.Join(keywords, ", "); got != "S1 VERIFIED, S2 DONE, S3 STARTED, P1.S1 DONE" {
 		t.Errorf("keywords %s", got)
 	}
-	if s.Tokens != 190 || s.TokensByPart[""] != 180 || s.TokensByPart["P1"] != 10 {
-		t.Errorf("tokens %d by part %v", s.Tokens, s.TokensByPart)
-	}
-	found := false
-	for _, r := range s.TokensBy {
-		found = found || (r == TokenRow{Kind: "done", Model: "sonnet", Effort: "medium", Events: 2, Tokens: 37})
-	}
-	if !found {
-		t.Errorf("tokens by kind and model %+v", s.TokensBy)
-	}
 	org := s.Org()
 	for _, line := range []string{"| S1 | Step S1 | yes | yes | Add the run loop |", "| P1.S1 | Step P1.S1 | yes | no | Add the part |",
-		"| S3 | Step S3 | no | no | |", "- Implemented: 1/4 verified", "- Without done: S3", "- Done, not verified: S2, P1.S1",
-		"| P1 | 10 |", "| done | sonnet | medium | 2 | 37 |"} {
+		"| S3 | Step S3 | no | no | |", "- Implemented: 1/4 verified", "- Without done: S3", "- Done, not verified: S2, P1.S1"} {
 		if !strings.Contains(org, line) {
 			t.Errorf("org status lacks %q:\n%s", line, org)
 		}
-	}
-	newPlan(t, Config{Dir: c.Dir, Host: "other"}, "y")
-	all, err := c.Tokens()
-	if err != nil || len(all) == 0 {
-		t.Errorf("tokens over every plan: %v, %v", all, err)
 	}
 }
 

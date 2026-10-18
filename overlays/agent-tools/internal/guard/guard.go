@@ -624,7 +624,7 @@ func mechanicalRebuttal(args []string) bool {
 }
 
 // planReads are the agent-plan commands a reviewer may run.
-var planReads = set("status", "goal", "find", "tokens", "questions", "-h", "--help", "help")
+var planReads = set("status", "goal", "find", "questions", "-h", "--help", "help")
 
 // reviewerReport is why a reviewer may not make a change.
 const reviewerReport = "A reviewer only reads. Report the finding with its evidence; whoever started the review acts on it."

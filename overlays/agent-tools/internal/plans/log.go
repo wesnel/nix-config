@@ -11,8 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -34,9 +32,9 @@ type Event struct {
 	Evidence string `json:"evidence,omitempty"`
 	Review   string `json:"review,omitempty"`
 	Outcome  string `json:"outcome,omitempty"`
-	Tokens   int64  `json:"tokens,omitempty"`
-	Model    string `json:"model,omitempty"`
-	Effort   string `json:"effort,omitempty"`
+	// Model is the model a review or route receipt's reviewer ran on, as
+	// the review reported it; Events reads it from receipts alone.
+	Model string `json:"model,omitempty"`
 	// Session is the session whose tool call the event records, as its
 	// hook names it: Claude Code's or Codex's session_id, ECA's chat_id.
 	Session string `json:"session,omitempty"`
@@ -87,8 +85,6 @@ var (
 	// is a finding left for the operator to decide. They are stored in plan
 	// logs, so renaming one means rewriting every log that holds it.
 	Outcomes = []string{"fix", "rebut", "duplicate-of", "belongs-in", "defer", "needs-operator"}
-	// Efforts are the reasoning efforts a harness takes.
-	Efforts = []string{"low", "medium", "high", "xhigh", "max"}
 
 	reviewPattern = regexp.MustCompile(`^[0-9]+\.[A-Za-z0-9_-]+$`)
 
@@ -162,12 +158,8 @@ func (p Plan) check(e Event) error {
 		return refusal.New("review %q is not <round>.<finding id>. Pass it as `--review 1.F3`", e.Review)
 	case e.Kind == "finding-settled" && (e.Review == "" || e.Outcome == ""):
 		return refusal.New("a settled finding needs the finding and its outcome. Pass `--review <round>.<id> --outcome <outcome>`")
-	case e.Effort != "" && !oneOf(e.Effort, Efforts):
-		return refusal.New("%q is not an effort. Use one of `%s`", e.Effort, strings.Join(Efforts, "`, `"))
-	case e.Tokens < 0:
-		return refusal.New("tokens cannot be negative. Pass the total the harness reported, as `--tokens 12345`")
 	case strings.ContainsAny(e.Agent+e.Branch+e.Model+e.Session, " \t"):
-		return refusal.New("agent, branch, model and session are single words. Pass them without spaces, as `--model opus`")
+		return refusal.New("agent, branch, model and session are single words. Pass them without spaces, as `--branch loop`")
 	}
 	items, err := p.items()
 	if err != nil {
@@ -283,15 +275,11 @@ func eventText(e Event) string {
 	if e.Summary != "" {
 		b.WriteString(" — " + e.Summary)
 	}
-	tokens := ""
-	if e.Tokens > 0 {
-		tokens = strconv.FormatInt(e.Tokens, 10)
-	}
 	b.WriteString("\n:PROPERTIES:\n")
 	for _, kv := range [][2]string{{"EVENT", e.ID}, {"AGENT", e.Agent}, {"ROLE", e.Role}, {"ITEM", e.Item},
 		{"KIND", e.Kind}, {"BRANCH", e.Branch}, {"COMMIT", e.Commit}, {"EVIDENCE", e.Evidence},
-		{"REVIEW", e.Review}, {"OUTCOME", e.Outcome}, {"TOKENS", tokens}, {"MODEL", e.Model},
-		{"EFFORT", e.Effort}, {"SESSION", e.Session}, {"WORKTREE", e.Worktree}, {"RANGE", e.Range}, {"TIP", e.Tip}, {"PATCH_ID", e.PatchID},
+		{"REVIEW", e.Review}, {"OUTCOME", e.Outcome}, {"MODEL", e.Model},
+		{"SESSION", e.Session}, {"WORKTREE", e.Worktree}, {"RANGE", e.Range}, {"TIP", e.Tip}, {"PATCH_ID", e.PatchID},
 		{"RAISED", e.Raised}, {"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}, {"PROPERTY", e.Property}, {"VALUE", e.Value},
 		{"FOCUS", e.Focus}, {"NONCE", e.Nonce}, {"ROUTES", e.Routes}, {"FINDINGS", e.Findings}} {
 		if kv[1] != "" {
@@ -481,7 +469,10 @@ func digest(data []byte) string {
 	return fmt.Sprintf("%d %x", len(data), sha256.Sum256(data))
 }
 
-// Events reads the plan's log, oldest first.
+// Events reads the plan's log, oldest first. Logs hold TOKENS and EFFORT,
+// and MODEL on events other than review and route receipts, that agents
+// reported themselves: none is read, and no new field may take TOKENS or
+// EFFORT.
 func (p Plan) Events() ([]Event, error) {
 	data, err := readPlan(p.log())
 	if err != nil {
@@ -495,11 +486,13 @@ func (p Plan) Events() ([]Event, error) {
 		e := Event{ID: h.Props["EVENT"], Kind: h.Props["KIND"], Item: h.Props["ITEM"], Agent: h.Props["AGENT"],
 			Role: h.Props["ROLE"], Branch: h.Props["BRANCH"], Commit: h.Props["COMMIT"],
 			Evidence: h.Props["EVIDENCE"], Review: h.Props["REVIEW"], Outcome: h.Props["OUTCOME"],
-			Model: h.Props["MODEL"], Effort: h.Props["EFFORT"], Session: h.Props["SESSION"], Worktree: h.Props["WORKTREE"],
+			Session: h.Props["SESSION"], Worktree: h.Props["WORKTREE"],
 			Range: h.Props["RANGE"], Tip: h.Props["TIP"], PatchID: h.Props["PATCH_ID"], Raised: h.Props["RAISED"], Sign: h.Props["SIGN"], Exit: h.Props["EXIT"],
 			Delivers: h.Props["DELIVERS"], Property: h.Props["PROPERTY"], Value: h.Props["VALUE"], Focus: h.Props["FOCUS"],
 			Nonce: h.Props["NONCE"], Routes: h.Props["ROUTES"], Findings: h.Props["FINDINGS"]}
-		e.Tokens, _ = strconv.ParseInt(h.Props["TOKENS"], 10, 64)
+		if e.Kind == receiptKind || e.Kind == routeReceiptKind {
+			e.Model = h.Props["MODEL"]
+		}
 		if _, summary, ok := strings.Cut(h.Title, " — "); ok {
 			e.Summary = summary
 		}
@@ -512,38 +505,4 @@ func (p Plan) Events() ([]Event, error) {
 		out = append(out, e)
 	}
 	return out, nil
-}
-
-// TokenRow totals tokens by event kind, model and effort.
-type TokenRow struct {
-	Kind   string `json:"kind"`
-	Model  string `json:"model"`
-	Effort string `json:"effort"`
-	Events int    `json:"events"`
-	Tokens int64  `json:"tokens"`
-}
-
-// tokenRows totals the events that report tokens.
-func tokenRows(events []Event) []TokenRow {
-	rows := map[[3]string]*TokenRow{}
-	for _, e := range events {
-		if e.Tokens <= 0 {
-			continue
-		}
-		key := [3]string{e.Kind, e.Model, e.Effort}
-		if rows[key] == nil {
-			rows[key] = &TokenRow{Kind: e.Kind, Model: e.Model, Effort: e.Effort}
-		}
-		rows[key].Events++
-		rows[key].Tokens += e.Tokens
-	}
-	out := []TokenRow{}
-	for _, r := range rows {
-		out = append(out, *r)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		a, b := out[i], out[j]
-		return a.Kind+"\x00"+a.Model+"\x00"+a.Effort < b.Kind+"\x00"+b.Model+"\x00"+b.Effort
-	})
-	return out
 }

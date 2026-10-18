@@ -280,7 +280,7 @@ says, as files side by side in `wgn.home.llm.plans.dir`
 (`~/git/notes/agents`): `<date>-<slug>.<host>.org`, a
 `<date>-<slug>.<host>.<part>.org` per sub-agent's part, and
 `<date>-<slug>.<host>.log.org`, the append-only record of each item's
-progress, review outcomes and tokens. The logs' lock files stay out of git
+progress and review outcomes. The logs' lock files stay out of git
 through the directory's `.gitignore`, which `agent-plan` writes if it is
 missing.
 
@@ -288,7 +288,6 @@ missing.
 agent-plan find --branch BRANCH          # plans for a branch on this host
 agent-plan status PLAN                   # what is done, verified and left, as Org
 agent-plan questions PLAN --all          # open questions, each with its recommendation
-agent-plan tokens                        # tokens by event kind, model and effort
 ```
 
 Ask an agent only to plan, and it writes the plan and stops.

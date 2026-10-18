@@ -2,9 +2,7 @@ package plans
 
 import (
 	"fmt"
-	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 )
@@ -18,7 +16,6 @@ type Step struct {
 	Verified  bool     `json:"verified"`
 	Abandoned bool     `json:"abandoned,omitempty"`
 	Commits   []string `json:"commits,omitempty"`
-	Tokens    int64    `json:"tokens,omitempty"`
 	// Keyword is the keyword the log gives the step.
 	Keyword string `json:"keyword"`
 }
@@ -65,11 +62,6 @@ type Status struct {
 	// PropertyDrift are the tracked properties and References whose value
 	// in the file is not the one the log gives them: edited by hand.
 	PropertyDrift []PropertyDrift `json:"propertyDrift"`
-	// Tokens is every event's tokens; TokensByPart keys a part's by its ID,
-	// and the rest by "".
-	Tokens       int64            `json:"tokens"`
-	TokensByPart map[string]int64 `json:"tokensByPart"`
-	TokensBy     []TokenRow       `json:"tokensBy"`
 	// Routes are the focused reviews the log routes the change to, or
 	// REVIEWS names, and Waivers those waived; whether one is still owed
 	// is stop-check's and the gates', which read the repository.
@@ -213,8 +205,7 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 		return Status{}, err
 	}
 	s := Status{Plan: p.file(""), Title: orgTitle(string(data)), Steps: []Step{}, NotDone: []string{},
-		DoneNotVerified: []string{}, TokensByPart: map[string]int64{}, TokensBy: tokenRows(events),
-		Ready: []string{}, Waiting: []Waiting{}, KeywordDrift: []Drift{}, Followups: []string{},
+		DoneNotVerified: []string{}, Ready: []string{}, Waiting: []Waiting{}, KeywordDrift: []Drift{}, Followups: []string{},
 		Routes: loggedRoutes(events), Waivers: waivers(events), Pipeline: p.pipeline(events)}
 	open, err := p.Questions(true)
 	if err != nil {
@@ -232,10 +223,8 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 	if s.PropertyDrift, err = p.propertyDrift(events); err != nil {
 		return Status{}, err
 	}
-	partOf := map[string]string{}
 	index := map[string]int{}
 	for _, it := range list {
-		partOf[it.ID] = it.Part
 		if it.ID == p.Name {
 			s.State = it.Props["STATUS"]
 		}
@@ -259,20 +248,11 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 		s.Steps = append(s.Steps, Step{ID: it.ID, Title: it.Title, Part: it.Part, Keyword: stepState(events, it.ID)})
 	}
 	for _, e := range events {
-		part := partOf[e.Item]
-		if before, _, ok := strings.Cut(e.Item, "."); ok && partPattern.MatchString(before) {
-			part = before
-		} else if partPattern.MatchString(e.Item) {
-			part = e.Item
-		}
-		s.Tokens += e.Tokens
-		s.TokensByPart[part] += e.Tokens
 		i, ok := index[e.Item]
 		if !ok {
 			continue
 		}
 		step := &s.Steps[i]
-		step.Tokens += e.Tokens
 		switch e.Kind {
 		case "done":
 			step.Done, step.Abandoned = true, false
@@ -337,7 +317,7 @@ func list(ids []string) string {
 	return strings.Join(ids, ", ")
 }
 
-// Org is s as Org: a table of steps, what is left, and tables of tokens.
+// Org is s as Org: a table of steps and what is left.
 func (s Status) Org() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "* Status of %s\n", s.Title)
@@ -396,61 +376,5 @@ func (s Status) Org() string {
 		}
 		fmt.Fprintf(&b, "- Property drift: %s\n", strings.Join(drifts, "; "))
 	}
-	fmt.Fprintf(&b, "- Tokens: %d\n", s.Tokens)
-	if len(s.TokensByPart) > 0 {
-		b.WriteString("\n" + row("Part", "Tokens") + "|-\n")
-		var parts []string
-		for part := range s.TokensByPart {
-			parts = append(parts, part)
-		}
-		sort.Strings(parts)
-		for _, part := range parts {
-			name := part
-			if name == "" {
-				name = "plan"
-			}
-			b.WriteString(row(name, fmt.Sprint(s.TokensByPart[part])))
-		}
-	}
-	writeTokenRows(&b, s.TokensBy)
 	return b.String()
-}
-
-func writeTokenRows(b *strings.Builder, rows []TokenRow) {
-	if len(rows) == 0 {
-		return
-	}
-	b.WriteString("\n" + row("Kind", "Model", "Effort", "Events", "Tokens") + "|-\n")
-	for _, r := range rows {
-		b.WriteString(row(r.Kind, r.Model, r.Effort, fmt.Sprint(r.Events), fmt.Sprint(r.Tokens)))
-	}
-}
-
-// TokensOrg is rows as an Org table.
-func TokensOrg(rows []TokenRow) string {
-	var b strings.Builder
-	writeTokenRows(&b, rows)
-	return strings.TrimPrefix(b.String(), "\n")
-}
-
-// Tokens totals the tokens of every plan, every host's, by event kind,
-// model and effort.
-func (c Config) Tokens() ([]TokenRow, error) {
-	logs, err := filepath.Glob(filepath.Join(c.Dir, "*.log.org"))
-	if err != nil {
-		return nil, err
-	}
-	var events []Event
-	for _, log := range logs {
-		p, err := c.Open(log)
-		if err != nil {
-			continue
-		}
-		e, err := p.Events()
-		if err != nil {
-			return nil, err
-		}
-		events = append(events, e...)
-	}
-	return tokenRows(events), nil
 }

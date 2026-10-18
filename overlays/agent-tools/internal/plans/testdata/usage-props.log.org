@@ -1,0 +1,16 @@
+* done S1 — Add the run loop
+:PROPERTIES:
+:EVENT: 0f3c9a52-6d1e-4b7a-9c2e-1a5b8d7e4f60
+:AGENT: claude:abc
+:ROLE: single
+:ITEM: S1
+:KIND: done
+:BRANCH: loop
+:COMMIT: Add the run loop
+:EVIDENCE: go test ./... passes
+:TOKENS: 1200
+:MODEL: opus
+:EFFORT: medium
+:SESSION: claude:abc
+:END:
+[2026-10-14 Wed 13:05]

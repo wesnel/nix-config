@@ -19,8 +19,8 @@ skill, AGENTS.md or memory.
   `~/.claude/projects/<project>/<session>.jsonl`, Codex's
   `~/.codex/sessions/<date>/rollout-*.jsonl`): refusals, retries and
   the operator's corrections.
-- The plan's tokens by part, and `agent-plan tokens`, for work that cost
-  far more than its result.
+- `plan-dash usage --by plan` and `--by role`, for Claude Code work that
+  cost far more than its result.
 
 ## Each slip
 

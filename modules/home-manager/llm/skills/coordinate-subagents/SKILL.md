@@ -219,9 +219,9 @@ model of a running agent or session.
 
 Keep briefs and reports small: a task points at files, such as the rules
 file and the plan, rather than pasting them, and gives the report a length.
-When the harness reports a sub-agent's tokens, log them on its part's event
-with `--tokens N --model M --effort E` (the `plan-work` skill), the rerun's
-too, so `agent-plan tokens` shows which model did which work.
+Usage is the harness's own count, never logged in the plan: `plan-dash
+usage --by role` reports what Claude Code sub-agents used, and covers no
+other harness.
 
 ## Running them
 

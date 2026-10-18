@@ -20,7 +20,7 @@ func TestRemind(t *testing.T) {
 		return string(data)
 	}
 	// PLAN in a wanted string stands for the session's plan file.
-	verify := []string{"Run echo hi and report output", "Check every report", "PLAN", "--tokens 20253"}
+	verify := []string{"Run echo hi and report output", "Check every report", "PLAN"}
 	for _, c2 := range []struct {
 		name, event, format string
 		want                []string
@@ -94,6 +94,10 @@ func TestRemind(t *testing.T) {
 				if !strings.Contains(text, w) {
 					t.Errorf("%s: %q lacks %q", c2.name, text, w)
 				}
+			}
+			// Usage is the harness's count, even where the notification carries it.
+			if strings.Contains(text, "--tokens") || strings.Contains(text, "20253") {
+				t.Errorf("%s: %q asks for tokens to be logged", c2.name, text)
 			}
 		})
 	}
