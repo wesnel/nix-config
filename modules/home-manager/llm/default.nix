@@ -25,6 +25,7 @@ with lib; let
   });
 
   agentPlan = getExe' cfg.agentTools "agent-plan";
+  planDash = getExe' cfg.agentTools "plan-dash";
 
   # The notes repository's deploy key, which only git's ssh reads: every
   # agent is denied it, by the guard and by Claude Code's Read rules for
@@ -323,6 +324,34 @@ in {
           Hosts told to pull whenever this host's sync pushes, only over an
           ssh master connection to them that already exists, since a new
           connection could wait for a key touch.
+        '';
+      };
+    };
+
+    digests = {
+      enable = mkEnableOption ''
+        the operator's standup digest, Linux only: a systemd user timer runs
+        `plan-dash digest standup` each weekday at {option}`standupAt`,
+        which commits the digest to the notes repository and writes it
+        beside the Agent plans page's documents. It runs only while the user
+        manager does, so the user needs lingering to get it while logged
+        out, and `gh` logged in for its pull requests
+      '';
+
+      standupAt = mkOption {
+        type = types.strMatching "([01][0-9]|2[0-3]):[0-5][0-9]";
+        default = "07:30";
+        description = "When the standup is due each weekday, as HH:MM in {option}`timeZone`.";
+      };
+
+      timeZone = mkOption {
+        type = types.strMatching "[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*";
+        default = "America/Los_Angeles";
+
+        description = ''
+          The IANA zone the digests are scheduled in, set on the timer
+          itself and given to the command, which judges weekends and
+          lateness in it, whatever the host's own zone.
         '';
       };
     };
@@ -854,6 +883,13 @@ in {
 
     xdg.configFile."agent-tools/notes-ssh-config".text = notesSshConfig;
 
+    assertions = [
+      {
+        assertion = cfg.digests.enable -> pkgs.stdenv.hostPlatform.isLinux;
+        message = "wgn.home.llm.digests runs as systemd user units, so it needs Linux.";
+      }
+    ];
+
     sops.secrets = mkIf hasNotesKey {
       notes-deploy-key.path = notesKey;
     };
@@ -903,6 +939,34 @@ in {
           Environment = ["PATH=${syncPath}"];
           ExecStart = "${agentPlan} sync --settle 5s";
         };
+      };
+
+      # The digest needs every host's plans, so it is written from plan-dash
+      # export's documents. It commits under the sync lock and pushes with
+      # the deploy key. Where the push cannot run, as at boot before the
+      # network or before the next switch installs the key, the commit
+      # stays for the next sync and the run succeeds, saying so in its
+      # "unpushed" line in the journal. Where GitHub cannot be read, the
+      # digest says so and the unit fails, so the run shows in
+      # `systemctl --user --failed`.
+      services.plan-dash-standup = mkIf cfg.digests.enable {
+        Unit.Description = "Write the operator's standup digest";
+        Service = {
+          Type = "oneshot";
+          Environment = ["PATH=${syncPath}:${pkgs.gh}/bin"];
+          ExecStart = "${planDash} digest standup --at ${cfg.digests.standupAt} --zone ${cfg.digests.timeZone}";
+        };
+      };
+
+      # Persistent catches up at boot on a run missed while the host was
+      # down; the command itself skips one that lands on a weekend or late.
+      timers.plan-dash-standup = mkIf cfg.digests.enable {
+        Unit.Description = "Write the operator's standup digest each weekday";
+        Timer = {
+          OnCalendar = "Mon..Fri *-*-* ${cfg.digests.standupAt}:00 ${cfg.digests.timeZone}";
+          Persistent = true;
+        };
+        Install.WantedBy = ["timers.target"];
       };
     };
 

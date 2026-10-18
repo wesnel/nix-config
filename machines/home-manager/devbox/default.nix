@@ -31,6 +31,7 @@
         git.enable = true;
         gnupg.enable = true;
         helix.enable = true;
+        llm.digests.enable = true;
         llm.repos = {
           "ngrok-private/ngrok-agent".setup = "go tool buf generate";
           "wesnel/nix-config" = {
