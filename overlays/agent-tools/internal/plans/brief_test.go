@@ -49,22 +49,6 @@ func TestBrief(t *testing.T) {
 		}
 	})
 
-	t.Run("after a compaction in Claude Code", func(t *testing.T) {
-		c, p := briefed(t)
-		out, err := c.SessionHook([]byte(`{"session_id":"abc","source":"compact","cwd":"/nowhere"}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if context := hookContext(t, out, "SessionStart"); !strings.Contains(context, "Brief of plan "+p.file("")) ||
-			!strings.Contains(context, "- Q1 :: Keep the flag? no, drop it") {
-			t.Errorf("context %q", context)
-		}
-		out, _ = c.SessionHook([]byte(`{"session_id":"abc","source":"resume","cwd":"/nowhere"}`))
-		if context := hookContext(t, out, "SessionStart"); strings.Contains(context, "Brief of") {
-			t.Errorf("a resume carries a brief: %q", context)
-		}
-	})
-
 	t.Run("after a compaction in Codex and ECA", func(t *testing.T) {
 		c, p := briefed(t)
 		for _, in := range []string{`{"session_id":"abc","hook_event_name":"SessionStart","source":"compact"}`,

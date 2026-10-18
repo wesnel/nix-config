@@ -113,7 +113,7 @@ next switch.
 
 | File | Keys set on every switch |
 | --- | --- |
-| `~/.claude/settings.json` | `wgn.home.claude.settings`: attribution off, the ngrok and reviewer hooks, and the plan hook on session resume or compaction (a hook list here replaces the file's own) |
+| `~/.claude/settings.json` | `wgn.home.claude.settings`: attribution off, the ngrok and reviewer hooks, and the plan hook on session resume, compaction or `/clear` (a hook list here replaces the file's own) |
 | `~/.claude.json` | `mcpServers` entries for the MCP proxy |
 | `~/.codex/config.toml` | `[mcp_servers.*]` tables for the MCP proxy |
 | `~/.config/eca/config.json` | `mcpServers` entries for the MCP proxy |
