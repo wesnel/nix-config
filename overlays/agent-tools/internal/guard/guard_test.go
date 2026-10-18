@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -571,6 +572,12 @@ func testBaselineRoles(t *testing.T) {
 		{false, "", "pr-loop link 3 4"},
 		{false, "pr-loop:pr-owner", "git commit --fixup=abc"},
 		{true, "pr-loop:pr-owner", "git commit -m x"},
+		{true, "adversarial-reviewer", "git commit -m x"},
+		{true, "design-reviewer", "agent-plan log p --kind done"},
+		{false, "design-reviewer", "agent-plan status p"},
+		{true, "security-reviewer", "git stash"},
+		{true, "security-reviewer", "git fresh-review a..b"},
+		{false, "builder", "git commit -m x"},
 	} {
 		t.Run(caseName(c.deny, strings.TrimSpace(c.agentType+" "+c.command)), func(t *testing.T) {
 			event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "agent_type": c.agentType,
@@ -623,6 +630,136 @@ func testBaselineFormats(t *testing.T) {
 			t.Errorf("an unknown flag was accepted: %s", out.String())
 		}
 	})
+}
+
+// TestReviewerGit holds a reviewer to git's reading commands: every other
+// command, or a reading one's writing form, is denied.
+func TestReviewerGit(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, c := range []struct {
+		deny    bool
+		command string
+	}{
+		{false, "git log --oneline a..b"},
+		{false, "git -C /x show abc --stat"},
+		{false, "git diff a b"},
+		{false, "git status --short"},
+		{false, "git grep -n foo"},
+		{false, "git blame a.go"},
+		{false, "git range-diff a...b"},
+		{false, "git merge-tree --write-tree a b"},
+		{false, "git branch"},
+		{false, "git branch -a --contains abc"},
+		{false, "git branch --list 'p*'"},
+		{false, "git tag -l"},
+		{false, "git worktree list"},
+		{false, "git stash list"},
+		{false, "git remote -v"},
+		{false, "git config --get user.name"},
+		{false, "git symbolic-ref HEAD"},
+		{false, "git archive HEAD"},
+		{false, "git apply --check a.diff"},
+		{false, "git --version"},
+		{true, "git checkout-index -f -a"},
+		{true, "git symbolic-ref HEAD refs/heads/x"},
+		{true, "git branch -f other HEAD"},
+		{true, "git branch new"},
+		{true, "git sparse-checkout set x"},
+		{true, "git bisect start"},
+		{true, "git fetch . a:b"},
+		{true, "git remote remove origin"},
+		{true, "git config core.hooksPath x"},
+		{true, "git tag v1"},
+		{true, "git worktree add ../x"},
+		{true, "git apply a.diff"},
+		{true, "git archive -o a.tar HEAD"},
+		{true, "git diff --output=a.diff a b"},
+		{true, "git grep -Ovim foo"},
+		{true, "git format-patch -1"},
+		{true, "git hash-object -w a.go"},
+		{true, "git reflog expire --all"},
+		{true, "git lg"},
+		{true, "git submodule foreach 'git status'"},
+		{true, "git bisect run make"},
+		// Configuration and environment that name a program for a read to run.
+		{true, "git -c diff.external=/tmp/x diff"},
+		{true, "git -c core.fsmonitor=/tmp/x status"},
+		{true, "git -c core.pager=/tmp/x log"},
+		{true, "git -c core.hooksPath=/tmp/h log"},
+		{true, "git -c diff.x.textconv=/tmp/x show"},
+		{true, "git -c filter.x.clean=/tmp/x status"},
+		{true, "git --config-env=core.pager=X log"},
+		{true, "GIT_EXTERNAL_DIFF=/tmp/x git diff"},
+		{true, "env GIT_PAGER=/tmp/x git log"},
+		{true, "export GIT_EXTERNAL_DIFF=/tmp/x; git diff"},
+		{true, "set -x GIT_EXTERNAL_DIFF /tmp/x; git diff"},
+		{true, "HOME=/tmp/h git status"},
+		{true, "XDG_CONFIG_HOME=/tmp/h git log"},
+		{true, "env HOME=/tmp/h git status"},
+		{true, "export HOME=/tmp/h; git status"},
+		{true, "declare -x XDG_CONFIG_HOME=/tmp/h; git log"},
+		{true, "typeset HOME=/tmp/h; git log"},
+		{true, "set -gx HOME /tmp/h; git status"},
+		{false, "HOME=/tmp/h go vet ./..."},
+		{true, "git diff --ext-diff"},
+		{true, "git log -p --textconv"},
+		{false, "git diff --no-ext-diff"},
+		{false, "PAGER=cat git log"},
+	} {
+		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
+			input, _ := json.Marshal(map[string]string{"command": c.command})
+			reason := CheckReviewer("Bash", "", input)
+			if (reason != "") != c.deny {
+				t.Errorf("%q: deny=%v, %q", c.command, reason != "", reason)
+			}
+		})
+	}
+}
+
+// TestAgentRoles holds each agent with a role to it, by a command that role
+// is denied and every less strict one may run: a reviewer may not commit a
+// fixup, which an owner may. agents.json names these agents, and no others.
+func TestAgentRoles(t *testing.T) {
+	want := map[string]string{
+		"reviewer": "reviewer", "adversarial-reviewer": "reviewer", "design-reviewer": "reviewer",
+		"security-reviewer": "reviewer", "pr-owner": "owner", "pr-coordinator": "coordinator",
+	}
+	var file struct {
+		Roles map[string]string `json:"roles"`
+	}
+	if err := json.Unmarshal(agentsJSON, &file); err != nil {
+		t.Fatal(err)
+	}
+	if !maps.Equal(file.Roles, want) {
+		t.Errorf("agents.json's roles are %v, want %v", file.Roles, want)
+	}
+	only := map[string]string{
+		"reviewer":    "git commit --fixup=abc",
+		"owner":       "pr-loop link 3 4",
+		"coordinator": "git commit -m x",
+	}
+	run := func(agent, command string) bool {
+		event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "agent_type": agent,
+			"tool_input": map[string]string{"command": command}})
+		var out bytes.Buffer
+		Main([]string{"--baseline"}, bytes.NewReader(event), &out, io.Discard)
+		return strings.Contains(out.String(), `"deny"`)
+	}
+	less := map[string]string{"reviewer": "pr-loop:pr-owner", "owner": "pr-coordinator", "coordinator": ""}
+	for name, r := range want {
+		t.Run(name, func(t *testing.T) {
+			command, ok := only[r]
+			if !ok {
+				t.Fatalf("%s: no case for role %s", name, r)
+			}
+			if !run(name, command) {
+				t.Errorf("%q from %s was let through", command, name)
+			}
+			if run(less[r], command) {
+				t.Errorf("%q from %q, a less strict role, was denied", command, less[r])
+			}
+		})
+	}
 }
 
 // TestReviewerReasons holds every denial a reviewer meets to the one thing

@@ -1,0 +1,10 @@
+{
+  "roles": {
+    "pr-coordinator": "coordinator",
+    "pr-owner": "owner",
+    "reviewer": "reviewer",
+    "adversarial-reviewer": "reviewer",
+    "design-reviewer": "reviewer",
+    "security-reviewer": "reviewer"
+  }
+}

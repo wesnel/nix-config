@@ -147,6 +147,11 @@ func unwrap(c call, v visitor) string {
 	switch {
 	case name == "env":
 		return unwrapEnv(c.env, args, expands, v)
+	case name == "git":
+		if reason := v.call(c); reason != "" {
+			return reason
+		}
+		return unwrapGit(c.env, args, expands, v)
 	case name == "direnv" && len(args) > 0 && args[0] == "exec":
 		return unwrap(rest(2), v)
 	case name == "nwrap":
@@ -311,10 +316,58 @@ func unwrapNixRun(env, args []string, expands []bool, v visitor) string {
 	program, expanded := "", true
 	if _, attribute, ok := strings.Cut(args[at], "#"); ok && attribute != "" {
 		program, expanded = attribute[strings.LastIndex(attribute, ".")+1:], expands[at]
+		if program == "fmt" {
+			program = "nix-fmt" // a flake's formatter, not coreutils' fmt
+		}
 	}
 	words := append([]string{program}, args[min(i, len(args)):]...)
 	x := append([]bool{expanded}, expands[min(i, len(expands)):]...)
 	return v.call(call{words: words, expands: x, env: env})
+}
+
+// unwrapGit hands on the command a git command runs for itself, once v
+// has judged the git command: `bisect run`'s, `submodule foreach`'s script
+// and `rebase --exec`'s.
+func unwrapGit(env, args []string, expands []bool, v visitor) string {
+	i := 0
+	for i < len(args) && strings.HasPrefix(args[i], "-") {
+		if gitValueFlags[args[i]] {
+			i++
+		}
+		i++
+	}
+	if i >= len(args) {
+		return ""
+	}
+	sub, rest, x := args[i], args[i+1:], expands[i+1:]
+	switch {
+	case sub == "bisect" && len(rest) > 1 && rest[0] == "run":
+		return unwrap(call{words: rest[1:], expands: x[1:], env: env}, v)
+	case sub == "submodule":
+		for j, w := range rest {
+			if w == "foreach" {
+				k := j + 1
+				for k < len(rest) && strings.HasPrefix(rest[k], "-") {
+					k++
+				}
+				return v.script(strings.Join(rest[k:], " "))
+			}
+		}
+	case sub == "rebase":
+		for j, w := range rest {
+			switch {
+			case (w == "-x" || w == "--exec") && j+1 < len(rest):
+				if reason := v.script(rest[j+1]); reason != "" {
+					return reason
+				}
+			case strings.HasPrefix(w, "--exec="):
+				if reason := v.script(strings.TrimPrefix(w, "--exec=")); reason != "" {
+					return reason
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // shellScript is the script a shell's arguments run with -c, or a flag

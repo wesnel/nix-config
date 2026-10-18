@@ -274,9 +274,9 @@ func shellEditPaths(text, dir string, depth int) []string {
 }
 
 // gitWriteDir is the absolute directory a git command, run in cwd, writes,
-// with its -C options applied, when gitWrites names its command and it is
-// not one of their reading forms (stash list or show, worktree list); ""
-// for any other command.
+// with its -C options applied, when gitWrites names its command and gitRead
+// does not pass it as a reading form (stash list, tag -l, apply --check);
+// "" for any other command.
 func gitWriteDir(c call, cwd string) string {
 	if base(c.words[0]) != "git" {
 		return ""
@@ -293,11 +293,7 @@ func gitWriteDir(c call, cwd string) string {
 			words = words[1:]
 		}
 	}
-	if len(words) == 0 || !gitWrites[words[0]] || !filepath.IsAbs(dir) {
-		return ""
-	}
-	if len(words) > 1 && (words[0] == "stash" && (words[1] == "list" || words[1] == "show") ||
-		words[0] == "worktree" && words[1] == "list") {
+	if len(words) == 0 || !gitWrites[words[0]] || gitRead(words[0], words[1:]) || !filepath.IsAbs(dir) {
 		return ""
 	}
 	return dir

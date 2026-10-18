@@ -1,9 +1,10 @@
 // Package guard is a PreToolUse hook for Claude Code, Codex and ECA. With
 // `--baseline`, in every session, it denies what is the operator's to do:
-// publishing, merging, GitHub's settings and credentials. In a review-loop
-// session it also denies the ways an agent could write to GitHub or Linear
-// other than through pr-loop, which enforces the loop's policy, and keeps
-// the loop's pr-owner and reviewer agents to their roles.
+// publishing, merging, GitHub's settings and credentials, and keeps the
+// agents agents.json names to their roles, a reviewer to reading. In a
+// review-loop session it also denies the ways an agent could write to
+// GitHub or Linear other than through pr-loop, which enforces the loop's
+// policy.
 //
 // It inspects commands as the agent typed them, so it catches a forgotten rule
 // but not a command built at run time. In a sandbox without credentials the
@@ -12,6 +13,7 @@
 package guard
 
 import (
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,11 +67,35 @@ const (
 	baseline    role = iota // every session: denied what is the operator's to do
 	coordinator             // a review loop's coordinator: also kept to pr-loop
 	owner                   // pr-owner: also denied the steps the coordinator alone takes
-	reviewer                // reviewer: also denied every change to the repository or GitHub
+	reviewer                // reviewer: also kept to git's reading commands and denied every change to GitHub
 )
 
+// agentsJSON names the agents with a role of their own. The agents' Nix
+// modules read it too: an agent named a reviewer here is defined without
+// editing tools.
+//
+//go:embed agents.json
+var agentsJSON []byte
+
 // roleNames are the agents with a role of their own, by agent name.
-var roleNames = map[string]role{"pr-coordinator": coordinator, "pr-owner": owner, "reviewer": reviewer}
+var roleNames = func() map[string]role {
+	var file struct {
+		Roles map[string]string `json:"roles"`
+	}
+	if err := json.Unmarshal(agentsJSON, &file); err != nil {
+		panic("guard: agents.json: " + err.Error())
+	}
+	byName := map[string]role{"baseline": baseline, "coordinator": coordinator, "owner": owner, "reviewer": reviewer}
+	names := map[string]role{}
+	for agent, name := range file.Roles {
+		r, ok := byName[name]
+		if !ok {
+			panic("guard: agents.json: unknown role " + name)
+		}
+		names[agent] = r
+	}
+	return names
+}()
 
 // roleOf is the role of the agent named agentType, or fallback for an agent
 // without a role of its own.
@@ -372,6 +398,9 @@ func program(c call, who role, files, dir string) string {
 	if reason := checkEnv(c.env); reason != "" {
 		return reason
 	}
+	if who == reviewer && gitEnv(c) {
+		return reviewerConfig
+	}
 	if reason := checkNgrokEnv(c); reason != "" {
 		return reason
 	}
@@ -629,6 +658,46 @@ var planReads = set("status", "goal", "find", "tokens", "questions", "-h", "--he
 // reviewerReport is why a reviewer may not make a change.
 const reviewerReport = "A reviewer only reads. Report the finding with its evidence; whoever started the review acts on it."
 
+// reviewerConfig is why a reviewer may not give git configuration, a GIT_
+// variable or another HOME on the command line, or ask it for an external
+// diff or a textconv: each can name a program for a reading command to run.
+const reviewerConfig = "A reviewer only reads. Its git commands take no configuration (`-c`, `--config-env`), GIT_ " +
+	"variable, `HOME` or `XDG_CONFIG_HOME` from the command line, and no `--ext-diff` or `--textconv`, since each " +
+	"can name a program to run; run the command without them, or report the finding with its evidence."
+
+// gitEnv reports whether a call sets a GIT_ variable, or HOME or
+// XDG_CONFIG_HOME, where git finds its global configuration, for git or the
+// commands after it: an assignment before git or any GIT_ one, export's,
+// declare's and the like, or fish's set.
+func gitEnv(c call) bool {
+	configHome := func(w string) bool {
+		return strings.HasPrefix(w, "HOME=") || strings.HasPrefix(w, "XDG_CONFIG_HOME=")
+	}
+	program := ""
+	if len(c.words) > 0 && !c.expands[0] {
+		program = base(c.words[0])
+	}
+	persists := set("git", "export", "declare", "typeset", "local", "readonly")[program]
+	for _, kv := range c.env {
+		if strings.HasPrefix(kv, "GIT_") || persists && configHome(kv) {
+			return true
+		}
+	}
+	if program == "set" {
+		return slices.ContainsFunc(c.words[1:], func(w string) bool {
+			return strings.HasPrefix(w, "GIT_") || w == "HOME" || w == "XDG_CONFIG_HOME"
+		})
+	}
+	return false
+}
+
+// reviewerGit is why a reviewer may not run a git command gitRead does not
+// pass.
+const reviewerGit = "A reviewer only reads. It runs git's reading commands alone (`log`, `show`, `diff`, `status`, " +
+	"`grep`, `blame`, `rev-parse` and the like, and the list forms of `branch`, `tag`, `worktree`, `stash`, " +
+	"`remote` and `config`), never an alias; report the finding with its evidence, and whoever started the " +
+	"review acts on it."
+
 // nestedReview is why a reviewer may not start a review.
 const nestedReview = "A reviewer does not start a review of its own. Report your findings; whoever started you decides on another round."
 
@@ -702,6 +771,105 @@ var gitWrites = map[string]bool{"commit": true, "rebase": true, "reset": true, "
 	"add": true, "rm": true, "mv": true, "clean": true, "tag": true, "update-ref": true, "notes": true, "worktree": true,
 	"push": true, "sign-pass": true, "pull": true}
 
+// gitReads are the git commands a reviewer may run in any form: they write
+// nothing but their output, and merge-tree only objects nothing refers to.
+// A command not here, an alias or one gitReadForms does not pass is
+// denied to a reviewer.
+var gitReads = set("log", "show", "diff", "status", "rev-parse", "ls-files", "ls-tree", "grep", "blame",
+	"annotate", "cat-file", "merge-base", "for-each-ref", "show-ref", "show-branch", "range-diff", "describe",
+	"shortlog", "rev-list", "name-rev", "diff-tree", "diff-files", "diff-index", "cherry", "whatchanged",
+	"check-ignore", "check-attr", "count-objects", "var", "version", "help", "verify-commit", "verify-tag",
+	"merge-tree")
+
+// gitReadForms are the git commands that read in some forms and write in
+// others, each with whether these arguments only read.
+var gitReadForms = map[string]func(args []string) bool{
+	"branch":   func(a []string) bool { return !branchWrites(a) },
+	"tag":      func(a []string) bool { return !tagWrites(a) },
+	"config":   configRead,
+	"worktree": func(a []string) bool { return len(a) > 0 && a[0] == "list" },
+	"stash":    func(a []string) bool { return len(a) > 0 && (a[0] == "list" || a[0] == "show") },
+	"notes":    func(a []string) bool { return len(a) > 0 && (a[0] == "list" || a[0] == "show") },
+	"submodule": func(a []string) bool {
+		return len(a) > 0 && (a[0] == "status" || a[0] == "summary")
+	},
+	"remote": func(a []string) bool {
+		return len(a) == 0 || a[0] == "-v" || a[0] == "--verbose" || a[0] == "get-url"
+	},
+	"reflog": func(a []string) bool {
+		return len(a) == 0 || a[0] != "expire" && a[0] != "delete" && a[0] != "drop"
+	},
+	"symbolic-ref": func(a []string) bool {
+		positional := 0
+		for _, w := range a {
+			if w == "-d" || w == "--delete" {
+				return false
+			}
+			if !strings.HasPrefix(w, "-") {
+				positional++
+			}
+		}
+		return positional <= 1
+	},
+	"hash-object":  func(a []string) bool { return !contains(a, "-w") },
+	"format-patch": func(a []string) bool { return contains(a, "--stdout") },
+	"archive": func(a []string) bool {
+		for _, w := range a {
+			if w == "-o" || strings.HasPrefix(w, "--remote") {
+				return false
+			}
+		}
+		return true
+	},
+	"apply": func(a []string) bool {
+		return !contains(a, "--apply") &&
+			slices.ContainsFunc(a, func(w string) bool { return set("--check", "--stat", "--numstat", "--summary")[w] })
+	},
+}
+
+// gitRead reports whether git's command sub, with these arguments, only
+// reads: it is in gitReads or passes gitReadForms, and writes no file of
+// its output (--output) or opens files in a program of its choosing (grep
+// -O).
+func gitRead(sub string, args []string) bool {
+	for _, w := range args {
+		if w == "--output" || strings.HasPrefix(w, "--output=") || strings.HasPrefix(w, "--open-files-in-pager") ||
+			sub == "grep" && strings.HasPrefix(w, "-O") {
+			return false
+		}
+	}
+	if form, ok := gitReadForms[sub]; ok {
+		return form(args)
+	}
+	return gitReads[sub]
+}
+
+// branchWrites reports whether `git branch` with these arguments creates,
+// deletes, moves or configures a branch rather than listing them.
+func branchWrites(args []string) bool {
+	list, positional := false, false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		name, _, valued := strings.Cut(a, "=")
+		switch {
+		case set("-d", "-D", "--delete", "-m", "-M", "--move", "-c", "-C", "--copy", "-f", "--force", "-u",
+			"--set-upstream-to", "--unset-upstream", "--edit-description", "-t", "--track", "--no-track",
+			"--create-reflog")[name]:
+			return true
+		case name == "-l" || name == "--list" || name == "--show-current":
+			list = true
+		case !valued && set("--contains", "--no-contains", "--merged", "--no-merged", "--points-at", "--format",
+			"--sort")[name]:
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+			}
+		case !strings.HasPrefix(a, "-"):
+			positional = true
+		}
+	}
+	return positional && !list
+}
+
 // checkGit checks a git command run in dir, "" when the guard cannot tell
 // where, with the assignments env made for it.
 func checkGit(words, env []string, who role, dir string) string {
@@ -740,8 +908,11 @@ func checkGit(words, env []string, who role, dir string) string {
 	if who == reviewer && sub == "fresh-review" {
 		return nestedReview
 	}
-	if who == reviewer && gitWrites[sub] && !(sub == "worktree" && len(rest) > 0 && rest[0] == "list") {
-		return reviewerReport
+	if who == reviewer && (len(config) > 0 || contains(rest, "--ext-diff") || contains(rest, "--textconv")) {
+		return reviewerConfig
+	}
+	if who == reviewer && !gitRead(sub, rest) {
+		return reviewerGit
 	}
 	if reason := checkGitSession(sub, rest, gitState{dir: dir}); reason != "" {
 		return reason
