@@ -274,9 +274,9 @@ func TestByCategory(t *testing.T) {
 	if !in.OutputLowerBound {
 		t.Error("interactive output not marked a lower bound")
 	}
-	// Only req_2 follows a gap longer than the cache's 5 minutes.
-	if in.PostIdleCacheWrite != 4000 {
-		t.Errorf("post-idle cache write %d, want 4000", in.PostIdleCacheWrite)
+	// req_2 follows req_1 by 20 minutes, within req_1's one-hour cache.
+	if in.PostIdleCacheWrite != 0 {
+		t.Errorf("post-idle cache write %d, want 0", in.PostIdleCacheWrite)
 	}
 	if in.Previous != 1000 {
 		t.Errorf("previous %d, want 1000", in.Previous)
@@ -365,12 +365,63 @@ func TestNoContent(t *testing.T) {
 	}
 }
 
+// How many turns a coordinator spends per sub-agent, and how much each
+// role writes to the cache again after its cache expired.
+func TestCoordinationAndIdle(t *testing.T) {
+	f := newFixture(t)
+	const sCoord = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+	p := filepath.Join(f.root, "claude", "projects", "-x-coord")
+	at := func(m int) time.Time { return day(9, m) }
+	main := func(req string, m int, u usage) rec {
+		return assistant(sCoord, f.repo, "cli", req, at(m), u, "end_turn", false)
+	}
+	writeLines(t, filepath.Join(p, sCoord+".jsonl"),
+		main("c1", 0, usage{1, 100, 0, 0, 1}),
+		main("c2", 1, usage{1, 0, 0, 100, 1}),
+		main("c3", 3, usage{1, 0, 0, 100, 1}),
+		// Seven minutes after a five-minute write: written again.
+		main("c4", 10, usage{1, 500, 0, 100, 1}),
+		main("c5", 30, usage{1, 0, 10, 100, 1}),
+		// Fifteen minutes after a one-hour write: still cached.
+		main("c6", 45, usage{1, 0, 20, 100, 1}),
+	)
+	sub := filepath.Join(p, sCoord, "subagents")
+	writeLines(t, filepath.Join(sub, "agent-b1.jsonl"),
+		assistant(sCoord, f.repo, "cli", "b1", at(2), usage{1, 40, 0, 0, 1}, "end_turn", true))
+	write(t, filepath.Join(sub, "agent-b1.meta.json"), `{"agentType":"general-purpose","description":"Build it"}`)
+	writeLines(t, filepath.Join(sub, "agent-b2.jsonl"),
+		assistant(sCoord, f.repo, "cli", "b2", at(20), usage{1, 60, 0, 0, 1}, "end_turn", true))
+	write(t, filepath.Join(sub, "agent-b2.meta.json"), `{"agentType":"general-purpose","description":"Review it"}`)
+
+	r := collect(t, f, "category")
+	// sCoord: c3 to c6 after b1, of two agents; the interactive session:
+	// req_2 and req_3 after a1, of two.
+	want := Coordination{Sessions: 2, MainRequests: 6, Agents: 4, PerAgent: 1.5}
+	if r.Coordination != want {
+		t.Errorf("coordination %+v, want %+v", r.Coordination, want)
+	}
+	roles := map[string]RoleIdle{}
+	for _, x := range r.PostIdleByRole {
+		roles[x.Role] = x
+	}
+	if m := roles["main"]; m.PostIdleCacheWrite != 510 || m.CacheWrite == 0 {
+		t.Errorf("main %+v, want 510 post-idle", m)
+	}
+	if b := roles["build"]; b.PostIdleCacheWrite != 0 || b.CacheWrite != 40 {
+		t.Errorf("build %+v", b)
+	}
+	if len(r.PostIdleByRole) == 0 || r.PostIdleByRole[0].Role != "main" {
+		t.Errorf("roles in order %+v", r.PostIdleByRole)
+	}
+}
+
 func TestText(t *testing.T) {
 	r := collect(t, newFixture(t), "category")
 	var b bytes.Buffer
 	r.Text(&b)
 	out := b.String()
-	for _, want := range []string{"by category", "interactive", "unknown", "≥", "cache write 1h", "more than 5 minutes after",
+	for _, want := range []string{"by category", "interactive", "unknown", "≥", "cache write 1h", "cache had expired",
+		"Coordinator requests per sub-agent: 1.0", "Post-idle cache writes by role: main 0% of",
 		"Session totals", "claude-haiku-5-5", "still running", "scaled to the period", "breakdown covers"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("text lacks %q:\n%s", want, out)

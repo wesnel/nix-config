@@ -151,11 +151,39 @@ type Report struct {
 	Totals    []TotalRow `json:"totals"`
 	TotalsAll TotalRow   `json:"totalsAll"`
 	Models    []ModelRow `json:"models"`
+	// Coordination is how many requests main sessions made per sub-agent.
+	Coordination Coordination `json:"coordination"`
+	// PostIdleByRole is each role's post-idle cache writes, main first,
+	// then Roles, those with no cache writes left out.
+	PostIdleByRole []RoleIdle `json:"postIdleByRole"`
 }
 
-// IdleGap is the prompt cache's shorter lifetime: a request after a longer
-// gap writes its context to the cache again.
-const IdleGap = 5 * time.Minute
+// Coordination is, over the period's sessions with sub-agents, the main
+// session's requests from its first sub-agent's request on, and the
+// sub-agents: a coordinator's requests per agent report.
+type Coordination struct {
+	Sessions     int     `json:"sessions"`
+	MainRequests int     `json:"mainRequests"`
+	Agents       int     `json:"agents"`
+	PerAgent     float64 `json:"perAgent"`
+}
+
+// RoleIdle is a role's cache writes in the period and those made after the
+// agent's cache had expired.
+type RoleIdle struct {
+	Role               string  `json:"role"`
+	CacheWrite         int64   `json:"cacheWrite"`
+	PostIdleCacheWrite int64   `json:"postIdleCacheWrite"`
+	Share              float64 `json:"share"`
+}
+
+// IdleGap is the prompt cache's shorter lifetime, and IdleGap1h its
+// longer: a request after a longer gap than the lifetime its agent last
+// wrote writes its context to the cache again.
+const (
+	IdleGap   = 5 * time.Minute
+	IdleGap1h = time.Hour
+)
 
 // TopSessions is how many sessions Report.Top lists.
 const TopSessions = 10
@@ -697,11 +725,14 @@ func Collect(o Options, by string) (Report, error) {
 		w := whole[r.Top[i].ID]
 		r.Top[i].Recorded, r.Top[i].Live, r.Top[i].Short = w.total, w.live, w.short
 	}
+	r.Coordination = coordination(reqs, o.Since, o.Until)
+	r.PostIdleByRole = postIdleByRole(reqs, o.Since, o.Until)
 	return r, nil
 }
 
-// markIdle marks each request made more than IdleGap after the previous
-// request of the same agent of the same session.
+// markIdle marks each request made after the cache of the previous request
+// of the same agent of the same session expired: more than IdleGap after
+// it, or IdleGap1h where the agent's last cache write was a one-hour one.
 func markIdle(reqs []labelled) {
 	streams := map[string][]*request{}
 	for _, q := range reqs {
@@ -710,10 +741,91 @@ func markIdle(reqs []labelled) {
 	}
 	for _, s := range streams {
 		sort.Slice(s, func(i, j int) bool { return s[i].at.Before(s[j].at) })
-		for i := 1; i < len(s); i++ {
-			s[i].postIdle = s[i].at.Sub(s[i-1].at) > IdleGap
+		lifetime := IdleGap
+		for i := range s {
+			if i > 0 {
+				s[i].postIdle = s[i].at.Sub(s[i-1].at) > lifetime
+			}
+			switch {
+			case s[i].tokens.CacheWrite1h > 0:
+				lifetime = IdleGap1h
+			case s[i].tokens.CacheWrite5m > 0:
+				lifetime = IdleGap
+			}
 		}
 	}
+}
+
+// coordination is Report.Coordination over the period's requests.
+func coordination(reqs []labelled, since, until time.Time) Coordination {
+	type sess struct {
+		firstAgent time.Time
+		agents     map[string]bool
+		main       []time.Time
+	}
+	by := map[string]*sess{}
+	for _, q := range reqs {
+		if q.at.Before(since) || !q.at.Before(until) || q.session == Unknown {
+			continue
+		}
+		s := by[q.session]
+		if s == nil {
+			s = &sess{agents: map[string]bool{}}
+			by[q.session] = s
+		}
+		if q.agent == "" {
+			s.main = append(s.main, q.at)
+		} else {
+			s.agents[q.agent] = true
+			if s.firstAgent.IsZero() || q.at.Before(s.firstAgent) {
+				s.firstAgent = q.at
+			}
+		}
+	}
+	var c Coordination
+	for _, s := range by {
+		if len(s.agents) == 0 {
+			continue
+		}
+		c.Sessions++
+		c.Agents += len(s.agents)
+		for _, at := range s.main {
+			if !at.Before(s.firstAgent) {
+				c.MainRequests++
+			}
+		}
+	}
+	if c.Agents > 0 {
+		c.PerAgent = float64(c.MainRequests) / float64(c.Agents)
+	}
+	return c
+}
+
+// postIdleByRole is Report.PostIdleByRole over the period's requests.
+func postIdleByRole(reqs []labelled, since, until time.Time) []RoleIdle {
+	by := map[string]*RoleIdle{}
+	for _, q := range reqs {
+		if q.at.Before(since) || !q.at.Before(until) {
+			continue
+		}
+		x := by[q.role]
+		if x == nil {
+			x = &RoleIdle{Role: q.role}
+			by[q.role] = x
+		}
+		x.CacheWrite += q.tokens.cacheWrite()
+		if q.postIdle {
+			x.PostIdleCacheWrite += q.tokens.cacheWrite()
+		}
+	}
+	out := []RoleIdle{}
+	for _, role := range append([]string{"main"}, Roles...) {
+		if x := by[role]; x != nil && x.CacheWrite > 0 {
+			x.Share = 100 * float64(x.PostIdleCacheWrite) / float64(x.CacheWrite)
+			out = append(out, *x)
+		}
+	}
+	return out
 }
 
 type acc struct {
@@ -866,8 +978,19 @@ func (r Report) Text(w io.Writer) {
 	if lowerBound {
 		fmt.Fprintln(w, "≥: some requests left only streaming partials, so their output is at least this.")
 	}
-	fmt.Fprintf(w, "post-idle write: the share of cache writes made more than %.0f minutes after the agent's previous request.\n",
-		IdleGap.Minutes())
+	fmt.Fprintf(w, "post-idle write: the share of cache writes made once the agent's cache had expired: more than %.0f minutes "+
+		"after its previous request, or an hour after a one-hour cache write.\n", IdleGap.Minutes())
+	if c := r.Coordination; c.Agents > 0 {
+		fmt.Fprintf(w, "Coordinator requests per sub-agent: %.1f (%d main requests from the first sub-agent's on, %d sub-agents, %d sessions).\n",
+			c.PerAgent, c.MainRequests, c.Agents, c.Sessions)
+	}
+	if len(r.PostIdleByRole) > 0 {
+		var roles []string
+		for _, x := range r.PostIdleByRole {
+			roles = append(roles, fmt.Sprintf("%s %s of %s", x.Role, percent(x.PostIdleCacheWrite, x.CacheWrite), count(x.CacheWrite)))
+		}
+		fmt.Fprintf(w, "Post-idle cache writes by role: %s.\n", strings.Join(roles, ", "))
+	}
 	if r.Unreadable > 0 {
 		fmt.Fprintf(w, "%d files could not be read.\n", r.Unreadable)
 	}

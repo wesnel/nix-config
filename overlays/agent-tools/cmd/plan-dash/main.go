@@ -147,9 +147,13 @@ const usage = `plan-dash: the operator's status, from GitHub and the plans.
           sub-agent's from the first word of its description: build, fix,
           review, design, research, vcs or unclassified). Each group shows
           its share, its change from the period before, and the share of
-          its cache writes made more than 5 minutes after the agent's
-          previous request; then the 10 sessions with most tokens, and
-          this host's last quota readings. Reads $CLAUDE_CONFIG_DIR
+          its cache writes made once the agent's cache had expired (more
+          than 5 minutes after its previous request, or an hour after a
+          one-hour cache write); then the main sessions' requests per
+          sub-agent, counted from each session's first sub-agent request,
+          and the post-idle share of each role's cache writes; then the
+          10 sessions with most tokens, and this host's last quota
+          readings. Reads $CLAUDE_CONFIG_DIR
           (default ~/.claude) and $XDG_STATE_HOME/agent-plans/claude, and
           of a transcript only its records' usage, IDs, times, stop
           reasons, directories and entrypoints: it prints numbers and

@@ -483,6 +483,11 @@ much of each kind the breakdown covers. A cost-state holds the records
 before it in its transcript, so records after it, as a resumed session
 still running writes, count on top of it; a session with none yet counts
 by its records, as does one whose cost-state holds less than they do.
+Two lines track the cost habits: coordinator requests per sub-agent (main
+requests from a session's first sub-agent request on, over its
+sub-agents), and the share of each role's cache writes made after its
+cache expired, the figure that says whether sub-agents would gain from
+`subagentPromptCacheTtl`.
 
 ## the Agent plans session
 
