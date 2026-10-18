@@ -40,6 +40,20 @@ func TestUsageAgentsAreClaudes(t *testing.T) {
 	}
 }
 
+// TestECAAgentsAreClaudes holds ECA's agents to those the Claude agents'
+// definitions, which the ECA module renders, provide.
+func TestECAAgentsAreClaudes(t *testing.T) {
+	claude := Claude()
+	if len(file.ECA) == 0 {
+		t.Fatal("agents.json has no eca")
+	}
+	for _, name := range file.ECA {
+		if !slices.Contains(claude, name) {
+			t.Errorf("eca names %q, which is not in claude %v", name, claude)
+		}
+	}
+}
+
 func TestAccessorsCopy(t *testing.T) {
 	if len(Claude()) == 0 {
 		t.Fatal("agents.json has no claude agents")

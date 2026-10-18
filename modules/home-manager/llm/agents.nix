@@ -17,6 +17,18 @@ with lib; let
         A repository's `.claude/agents` can replace the operator's agents, and
         where `--add-dir` brought it into the session the guard cannot see it'';
     };
+    # The ECA module disables a reviewer's write_file, edit_file and
+    # move_file and leaves it its MCP tools, which the guard holds to the
+    # reads mcp.json lists. An agent inherits `code`, settings included.
+    eca = {
+      editingTools = "You have no file-editing tools, and the guard lets your MCP tools only read.";
+      projectAgents = ''
+        A repository's `.eca/agents`, or an `agent` entry in its
+        `.eca/config.json`, replaces the operator's agent of the same name in a
+        session with that repository among its workspace folders; its
+        `agent.code` entry changes the approvals, tools and model you inherit
+        from `code`; and the guard looks for none of them'';
+    };
   };
 
   # Every key of harnessText.<harness> a body names, and nothing else between

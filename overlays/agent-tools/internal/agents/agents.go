@@ -1,8 +1,9 @@
 // Package agents reads agents.json, which names the operator's agents and
 // what each one is: its guard role, whether it is a user-level Claude Code
-// agent, and the role its usage counts under. The guard and the usage
-// report read it here, and the agents' Nix modules read the file itself,
-// through agent-tools' passthru.agents.
+// agent or one of the ECA agents started by role, and the role its usage
+// counts under. The guard and the usage report read it here, and the
+// agents' Nix modules read the file itself, through agent-tools'
+// passthru.agents.
 package agents
 
 import (
@@ -19,7 +20,12 @@ var agentsJSON []byte
 var file = func() (f struct {
 	Roles  map[string]string `json:"roles"`
 	Claude []string          `json:"claude"`
-	Usage  map[string]string `json:"usage"`
+	// ECA are the agents the ECA module defines for a coordinator to spawn
+	// by role, from the Claude agents' definitions, and it asserts it
+	// defines these and no others. The guard maps an ECA agent to its role
+	// by name through Roles.
+	ECA   []string          `json:"eca"`
+	Usage map[string]string `json:"usage"`
 }) {
 	if err := json.Unmarshal(agentsJSON, &f); err != nil {
 		panic("agents: agents.json: " + err.Error())

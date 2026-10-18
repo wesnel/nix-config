@@ -108,11 +108,26 @@ refuses to start one where the session's project has any; it cannot see
 the directories `--add-dir` gave the session. Never start these types in
 a session given `--add-dir` to a repository you do not trust.
 
-Codex and ECA have no such
-types (ECA has `reviewer` alone): there the rules file also names the
-installed working agreements to read (`~/.codex/AGENTS.md`,
-`~/.config/eca/AGENTS.md`) and carries the role's rules, from its
-definition in `~/.claude/agents` where Claude Code is installed.
+In ECA, `spawn_agent` starts `builder`, `adversarial-reviewer`,
+`security-reviewer` and `reviewer` by name, from the same definitions.
+The reviewers there have no file-editing tools and keep their MCP tools,
+which the guard holds to reads; it holds their shell to git's reading
+commands and refuses the writes it recognises outside scratch and the
+plans directory, with the limits above. ECA's events name no agent instance, so the guard
+cannot hold an ECA `builder` to the worktree it owns: name the worktree
+in its task.
+
+Each of these inherits ECA's `code` agent. A repository's `.eca/agents`,
+or an `agent` entry in its `.eca/config.json`, replaces the one of the
+same name in a session with that repository among its workspace folders,
+its `agent.code` entry changes the approvals, allowed tools and model
+they all inherit, and the guard looks for none of them: check for all
+three before spawning one there.
+
+For a role with no type (every role in Codex; `design-reviewer` in ECA),
+the rules file also names the installed working agreements to read (`~/.codex/AGENTS.md`, `~/.config/eca/AGENTS.md`) and
+carries the role's rules, from its definition in `~/.claude/agents` where
+Claude Code is installed.
 
 ## The rules file
 

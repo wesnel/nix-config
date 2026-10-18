@@ -76,6 +76,64 @@ with lib; let
         "  deny:"
       ]
       ++ map (p: "    - ${yamlQuote "eca__shell_command(${p})"}") denied);
+
+  # Claude Code's role agents builder, adversarial-reviewer and
+  # security-reviewer, beside `reviewer`, for any agent to spawn;
+  # design-reviewer runs as a plain sub-agent with its rules in the task.
+  # Each is denied what the guard denies the role agents.json gives it, and
+  # a reviewer also loses the tools that edit or spawn, while the guard
+  # holds its shell writes to scratch. A child's disabledTools replaces the
+  # one it inherits, so `code`'s preview_file_change is disabled again. ECA
+  # has no frontmatter that loads a skill, so the prompt names an agent's
+  # skills.
+  roleAgents = let
+    agentsJSON = pkgs.agent-tools.agents;
+    agents = import ../llm/agents.nix {
+      inherit lib;
+      agentTools = pkgs.agent-tools;
+    };
+    names = ["builder" "adversarial-reviewer" "security-reviewer"];
+    agent = name: let
+      inherit (agents.definitions.${name}) description skills;
+      role = agentsJSON.roles.${name} or "baseline";
+      reviewer = role == "reviewer";
+      maxSteps =
+        if reviewer
+        then 100
+        else 150;
+      disabled = ["preview_file_change"] ++ optionals reviewer ["write_file" "edit_file" "move_file" "spawn_agent"];
+      quoted = map (s: "`${s}`") skills;
+      loadSkills = optionalString (skills != []) ''
+        Load the ${
+          if length quoted == 1
+          then head quoted
+          else "${concatStringsSep ", " (init quoted)} and ${last quoted}"
+        } skill${optionalString (length skills > 1) "s"} before anything else.
+
+      '';
+    in
+      nameValuePair "eca/agents/${name}.md" {
+        text =
+          ''
+            ---
+            mode: subagent
+            inherit: code
+            description: ${description}
+            maxSteps: ${toString maxSteps}
+            ${loopFrontmatter disabled (pkgs.agent-tools.ecaDenied.${role} ++ [credentialsDenied])}
+            ---
+            ${loadSkills}''
+          + agents.prompt "eca" name
+          + (
+            if reviewer
+            then deniedSearches
+            else deniedPhrases
+          );
+      };
+  in
+    assert assertMsg (naturalSort (names ++ ["reviewer"]) == naturalSort agentsJSON.eca)
+    "eca: the agents defined here and agents.json's eca list differ";
+      listToAttrs (map agent names);
 in {
   options.wgn.home.eca = {
     enable = mkEnableOption "Configure my Editor Code Assistant skills and agents";
@@ -130,6 +188,7 @@ in {
       # rather than a share.
       xdg.configFile =
         (llm.mkSkillFiles pkgs "eca/skills" config.wgn.home.llm.skills)
+        // roleAgents
         // {
           # Which skills the wrapper may carry into the guest. It is a list
           # beside the skills rather than a mark inside each one, because a
