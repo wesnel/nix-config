@@ -285,6 +285,26 @@ func TestRunOutcomes(t *testing.T) {
 	if !strings.Contains(log, `--unit pr-review-o-r\x231 -p MemoryMax=8G -p RuntimeMaxSec=7200 --setenv PATH=`) {
 		t.Errorf("review units:\n%s", log)
 	}
+	// The run ledger's tag, which the review's tools inherit; the triage's
+	// launcher sets its own, which the category it is given makes triage.
+	for unit, want := range map[string]string{
+		`--unit pr-review-o-r\x233 `: " --setenv AGENT_RUN_TAG=category=review;repo=o/r;kind=dispatched;pr=3 ",
+		`--unit pr-triage-o-r\x233 `: " --setenv AGENT_RUN_CATEGORY=triage ",
+	} {
+		seen := false
+		for _, line := range strings.Split(log, "\n") {
+			if !strings.Contains(line, unit) {
+				continue
+			}
+			seen = true
+			if !strings.Contains(line, want) || strings.Contains(want, "CATEGORY") && strings.Contains(line, "AGENT_RUN_TAG") {
+				t.Errorf("%s wants %q:\n%s", unit, want, line)
+			}
+		}
+		if !seen {
+			t.Errorf("no %s:\n%s", unit, log)
+		}
+	}
 	if r, ok := f.usage.Reading("claude", f.now); !ok || r.Windows[0].Used != 50 {
 		t.Errorf("triage's reading %+v, %v", r, ok)
 	}

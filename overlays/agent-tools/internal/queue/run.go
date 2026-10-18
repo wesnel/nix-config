@@ -13,6 +13,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/prreview"
 	"github.com/wesnel/agent-tools/internal/usage"
+	"github.com/wesnel/agent-tools/internal/usage/runs"
 )
 
 // Slice holds the queue's unit and every review it starts, so that stopping
@@ -242,7 +243,8 @@ func (r Runner) gate(e Entry, now time.Time) (time.Time, bool) {
 func (r Runner) review(ctx context.Context, e Entry) Entry {
 	slug, n := Split(e.Key)
 	e.Review, e.Triaged = NoExit, NoExit
-	code, _, err := r.unit(ctx, "pr-review-"+unitName(e.Key), reviewRuntime, "", false, "pr-loop", "review",
+	tag := runs.Env + "=" + runs.Tag{Category: runs.Review, Kind: runs.Dispatched, Repo: slug, PR: n}.String()
+	code, _, err := r.unit(ctx, "pr-review-"+unitName(e.Key), reviewRuntime, "", tag, false, "pr-loop", "review",
 		"--head", e.Head, e.Key)
 	if err != nil {
 		fmt.Fprintf(r.Log, "%s: %v\n", e.Key, err)
@@ -299,7 +301,10 @@ func (r Runner) triage(ctx context.Context, k string, n int, dir string, review 
 		"Bash(pr-loop review settle *)", "Bash(pr-loop review --check *)", "Bash(pr-loop review --reviewer subagent *)",
 		"Bash(git --git-dir " + repo + " diff *)", "Bash(git --git-dir " + repo + " log *)",
 		"Bash(git --git-dir " + repo + " show *)"}
-	return r.unit(ctx, "pr-triage-"+unitName(k), triageRuntime, dir, true, "claude-pr-loop", "-p",
+	// claude-pr-loop tags the session itself, by its review directory and
+	// never by an inherited tag; this asks it for triage over review.
+	category := runs.CategoryEnv + "=" + runs.Triage
+	return r.unit(ctx, "pr-triage-"+unitName(k), triageRuntime, dir, category, true, "claude-pr-loop", "-p",
 		"--permission-mode", "dontAsk", "--tools", "Read,Grep,Glob,Bash,Agent", "--allowedTools", strings.Join(allowed, ","),
 		"--output-format", "stream-json", "--verbose", triagePrompt(k, n, repo, review))
 }
@@ -331,13 +336,15 @@ func triagePrompt(k string, n int, repo string, review bool) string {
 }
 
 // unit runs argv as a transient unit of the user's manager in Slice, named
-// name, with its limits, PATH and, where dir is set, working directory, and
-// waits for it. With pipe, its stdout comes back. Its exit status is
-// systemd-run's, which with --wait is the unit's.
-func (r Runner) unit(ctx context.Context, name string, runtime time.Duration, dir string, pipe bool, argv ...string) (int, []byte, error) {
+// name, with its limits, PATH, the run ledger's variable runEnv
+// (NAME=VALUE) and, where dir is set, working directory, and waits for it.
+// With pipe, its stdout comes back. Its exit status is systemd-run's, which
+// with --wait is the unit's.
+func (r Runner) unit(ctx context.Context, name string, runtime time.Duration, dir, runEnv string, pipe bool,
+	argv ...string) (int, []byte, error) {
 	args := []string{"--user", "--wait", "--collect", "--quiet", "--slice", Slice, "--unit", name,
 		"-p", "MemoryMax=" + memoryMax, "-p", fmt.Sprintf("RuntimeMaxSec=%d", int(runtime.Seconds())),
-		"--setenv", "PATH=" + os.Getenv("PATH")}
+		"--setenv", "PATH=" + os.Getenv("PATH"), "--setenv", runEnv}
 	if dir != "" {
 		args = append(args, "-p", "WorkingDirectory="+dir)
 	}
