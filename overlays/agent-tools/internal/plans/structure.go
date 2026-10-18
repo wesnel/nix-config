@@ -186,6 +186,16 @@ func (p Plan) structureDrift() ([]StructureDrift, error) {
 		for _, d := range structureOf(string(data)) {
 			out = append(out, StructureDrift{File: f, Heading: d.heading, Problem: d.problem})
 		}
+		if partOf(f) == "" {
+			continue
+		}
+		for _, h := range parseOrg(string(data)) {
+			if h.Level == 1 && sectionTitle(h) == "Plan" && strings.TrimSpace(h.Props[buildsProperty]) != "" {
+				out = append(out, StructureDrift{File: f, Heading: "* " + h.Title,
+					Problem: "a BUILDS property, which belongs on the part's Distribution entry, where `agent-plan link` writes it"})
+				break
+			}
+		}
 	}
 	return out, nil
 }

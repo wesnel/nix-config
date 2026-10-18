@@ -200,6 +200,20 @@ func setProperty(lines []string, at int, name, value string) []string {
 	return out
 }
 
+// deleteProperty removes property name from the property drawer of the
+// heading at lines[at].
+func deleteProperty(lines []string, at int, name string) []string {
+	for j := at + 1; j < len(lines) && level(lines[j]) == 0; j++ {
+		switch trimmed := strings.TrimSpace(lines[j]); {
+		case trimmed == ":END:":
+			return slices.Clone(lines)
+		case strings.HasPrefix(trimmed, ":"+name+":"):
+			return slices.Delete(slices.Clone(lines), j, j+1)
+		}
+	}
+	return slices.Clone(lines)
+}
+
 // addTag adds tag to the heading at lines[at] unless it has it, a space
 // after the title, as Org does with org-tags-column 0.
 func addTag(lines []string, at int, tag string) []string {

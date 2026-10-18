@@ -88,7 +88,9 @@ their history afresh: the log records events as they happen.
   out of the ready lists and the agenda until then; `--clear` undoes it.
 - `** Distribution`, in a plan split among sub-agents: a `*** TODO <part>`
   heading per part with `:ID: P1`…, its branch, base and worktree, a link
-  to its file, and its steps.
+  to its file, and its steps. A part or step that builds a follow-up
+  carries `:BUILDS:`, which follows the log as "Follow-ups" says: never
+  edit it by hand.
 - `** Questions`: every question for the operator and every decision, each with
   `:ID: Q1`, `Q2`… (`P1.Q1` in a part's file), written by `agent-plan ask`
   as "Questions for the operator" says, never by hand. An open one is `ASK`; a
@@ -168,7 +170,7 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
 
 `agent-plan status PLAN` lists the steps without `done` and those done but
 not `verified`, the parts ready to start, the steps ready now, what still
-waits on an `:AFTER:` item, keyword, property and structure drift, steps started with nothing
+waits on an `:AFTER:` item, keyword, property, link and structure drift, steps started with nothing
 logged for a day, commits no `done` event names (a `fixup!`, `amend!` or
 `squash!` commit counts as the one it names), and tokens by part, kind and
 model; `agent-plan tokens` totals every plan's. Log `done` with the
@@ -260,6 +262,34 @@ agent-plan followup PLAN --title 'Guard accepts --draft=false' --found-in S1 \
 It becomes a `TODO` under Follow-ups with the next `F` ID (`--part P1`
 for a part's file), and its keyword then follows `agent-plan log` as a
 step's does. `agent-plan status` lists those still open.
+
+A follow-up the operator approves becomes work of its own: a part, or a
+step, that names it. Add the part to Distribution as for any part, and
+make its file with the follow-up it builds; link an entry that already
+exists with `link`:
+
+```sh
+agent-plan new --parent PLAN --part P3 --title 'Split the guard' --from F3
+agent-plan link PLAN S4 P1.F2      # a step or part already in the plan
+agent-plan link PLAN S4 --clear    # it builds none after all
+```
+
+A follow-up in a part's file keeps its part's prefix (`P1.F2`). Each logs
+a `builds` event and writes the entry's `:BUILDS:` from the log; status
+lists a `:BUILDS:` the log does not give as property drift. Only a
+`TODO` or `STARTED` follow-up can be linked. Logging `done` or
+`verified` for the entry logs the same for its follow-up, and linking an
+entry already done or verified closes the follow-up at once, so never
+close a linked follow-up yourself. A done or verified entry changes its
+link only after `link --clear`, so a mistyped ID closes nothing.
+Abandoning the entry releases the link for good, removing its
+`:BUILDS:`, and leaves the follow-up open for another entry to build;
+abandoning the follow-up releases its link too, and nothing its builder
+logs changes it. A follow-up has one builder: `link` refuses a second,
+and `agent-plan status` lists as link drift a link to a follow-up the
+plan does not hold, one two entries build, one abandoned, or one behind
+its done or verified builder; run the same `link` again to close that
+last one, which logs no new link.
 
 ## Other hosts
 

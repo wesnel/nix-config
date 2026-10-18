@@ -222,8 +222,9 @@ type PropertyDrift struct {
 	Log      string `json:"log"`
 }
 
-// propertyDrift is the plan's tracked properties, file by file, and its
-// References, where the file and the log disagree.
+// propertyDrift is the plan's tracked properties, file by file, its
+// entries' BUILDS, and its References, where the file and the log
+// disagree.
 func (p Plan) propertyDrift(events []Event) ([]PropertyDrift, error) {
 	files, err := p.files()
 	if err != nil {
@@ -247,6 +248,11 @@ func (p Plan) propertyDrift(events []Event) ([]PropertyDrift, error) {
 			}
 		}
 	}
+	builds, err := p.buildsDrift(events)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, builds...)
 	data, err := readPlan(p.file(""))
 	if err != nil {
 		return nil, err

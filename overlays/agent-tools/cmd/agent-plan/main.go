@@ -32,13 +32,16 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      create a plan; prints its file, ID and log. --template
                      starts it with the entries of each section of
                      templates/NAME.org in the plans' repository
-  new --parent PLAN --part P1 --title T [...]
-                     create part P1's plan file beside its parent's
+  new --parent PLAN --part P1 --title T [--from FOLLOWUP] [...]
+                     create part P1's plan file beside its parent's; --from
+                     links P1 to the follow-up it builds, as link does
   log PLAN --item ID --kind KIND [--summary S] [--role R] [--agent A] [--branch B]
       [--commit SUBJECT] [--evidence E] [--review ROUND.ID --outcome O]
       [--tokens N] [--model M] [--effort E]
                      append an event about item ID to the plan's log, and
-                     write a step's or part's heading keyword from its log
+                     write a step's or part's heading keyword from its log;
+                     done or verified for a step or part that builds a
+                     follow-up (see link) logs the same for the follow-up
   find [--session ID] [--worktree DIR] [--branch B]
                      this host's plan files that match any one given (default:
                      this session, worktree and branch)
@@ -55,8 +58,12 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      ORDERED siblings settled, not scheduled for later),
                      what still waits, keyword drift, property drift (a
                      WORKTREES, BRANCHES, PULL_REQUESTS, OWNERS, REVIEWS or
-                     PIPELINE value, or a References entry, the log does not
-                     give), structure drift (a top-level heading but one
+                     PIPELINE value, an entry's BUILDS, or a References
+                     entry, the log does not give), link drift (a follow-up
+                     a step or part builds that the plan does not hold, that
+                     two of them build, or that is open though its builder
+                     is done or verified), structure drift (a top-level
+                     heading but one
                      * Plan and * Approved plan; a section not a plan's, or
                      twice; a heading under Goal or Verification; a
                      References entry without a URL; an entry of Steps,
@@ -119,6 +126,18 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      scope, as a TODO under Follow-ups with the next follow-up
                      ID, and log it as discovered; its keyword then follows
                      its log, as a step's does
+  link PLAN ID FOLLOWUP | link PLAN ID --clear
+                     record that step or part ID builds FOLLOWUP (F3, or
+                     P1.F2 in part P1's file), or with --clear none, log it
+                     as builds and write the entry's BUILDS from the log.
+                     FOLLOWUP is TODO or STARTED, and built by no other
+                     entry; a done or verified ID changes its link only
+                     once cleared. Logging done or verified for ID then
+                     logs it for FOLLOWUP too, at once for an ID that is
+                     already. Linking ID to its own link again logs no link
+                     and settles a FOLLOWUP an older agent-plan left behind
+                     ID. Abandoning ID, or FOLLOWUP, releases the link for
+                     good; nothing ID logs changes an abandoned FOLLOWUP
   reference PLAN URL [--note TEXT]
                      keep URL under References, or set its note: what it was
                      used for and which decisions (Q IDs) it fed; log it as
@@ -457,6 +476,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		route    = flags.String("route", "", "")
 		why      = flags.String("why", "", "")
 		resume   = flags.Bool("resume", false, "")
+		from     = flags.String("from", "", "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
 		branches multi
@@ -481,6 +501,10 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return ""
 		}
 		return values[len(values)-1]
+	}
+	if *from != "" && command != "new" || *unset && command != "postpone" && command != "link" {
+		fmt.Fprintf(stderr, "agent-plan %s: --from is new's alone, and --clear postpone's and link's\n", command)
+		return 2
 	}
 	if (command != "new" && (len(trees) > 1 || len(sessions) > 1)) || (command != "new" && command != "sign-id" && len(branches) > 1) {
 		fmt.Fprintf(stderr, "agent-plan %s: --branch, --worktree and --session are given once\n", command)
@@ -517,6 +541,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		o := plans.NewOptions{Title: *title, Slug: *slug, Repos: repos, Branches: branches, Worktrees: trees,
 			Sessions: sessions, Harness: *harness, Parent: *parent, Part: *part, Template: *template}
+		o.From = *from
 		if len(o.Sessions) == 0 {
 			if s := claudeSession(); s != "" {
 				o.Sessions = []string{s}
@@ -647,6 +672,24 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		return report(p.Followup(plans.FollowupOptions{Title: *title, FoundIn: *foundIn, Context: *context, Part: *part},
 			time.Now()))
+	case "link":
+		want := 3
+		if *unset {
+			want = 2
+		}
+		if len(positional) != want {
+			fmt.Fprint(stderr, "agent-plan link: takes PLAN ID FOLLOWUP, or PLAN ID --clear\n")
+			return 2
+		}
+		p, err := c.Open(positional[0])
+		if err != nil {
+			return report(nil, err)
+		}
+		followup := ""
+		if !*unset {
+			followup = positional[2]
+		}
+		return report(p.Link(positional[1], followup, time.Now()))
 	case "reference":
 		if len(positional) != 2 {
 			fmt.Fprint(stderr, "agent-plan reference: takes PLAN URL [--note TEXT]\n")

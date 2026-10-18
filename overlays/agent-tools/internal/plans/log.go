@@ -70,6 +70,12 @@ type Event struct {
 	// Findings are the IDs of a route receipt's findings, separated by
 	// spaces.
 	Findings string `json:"findings,omitempty"`
+	// Builds is a builds event's follow-up: the one its item, a step or a
+	// part, builds, or "" once it builds none.
+	Builds string `json:"builds,omitempty"`
+	// BuiltBy is the step or part whose done or verified event logged this
+	// one for the follow-up it builds.
+	BuiltBy string `json:"builtBy,omitempty"`
 	// Note is what the caller should know about the event, such as a
 	// heading keyword Log could not write; the log does not hold it.
 	Note string `json:"note,omitempty"`
@@ -119,6 +125,8 @@ var (
 				"Print the prompt with it, and check the reply with `git fresh-review --check`",
 			waivedKind: "a route is waived with its reason by `agent-plan waive`. " +
 				"Run `agent-plan waive PLAN --route ROUTE --why TEXT`",
+			buildsKind: "agent-plan logs `builds` for the follow-up a step or part builds, and writes its BUILDS from the log. " +
+				"Run `agent-plan link PLAN ID FOLLOWUP`, or `agent-plan new --parent PLAN --part P1 --from FOLLOWUP`",
 		}
 		for _, k := range []string{"loop-began", "round", "replied", "resolved", "ci-waited", "loop-signed"} {
 			kinds[k] = "pr-loop logs what it did, from begin to sign, in the plan of the session that ran it. " +
@@ -150,6 +158,9 @@ func (p Plan) check(e Event) error {
 		if err := checkLine(what, v); err != nil {
 			return err
 		}
+	}
+	if err := checkLine("builds", e.Builds+e.BuiltBy); err != nil {
+		return err
 	}
 	switch {
 	case !oneOf(e.Kind, Kinds) && toolKinds[e.Kind] == "":
@@ -184,7 +195,9 @@ func (p Plan) check(e Event) error {
 // only tools log. A step's or part's heading keyword then follows the log:
 // the log is the record, and the keyword its projection for Emacs. A
 // keyword it cannot write leaves the event logged, says so in the returned
-// event's Note, and shows in status as drift.
+// event's Note, and shows in status as drift. A done or verified event of
+// a step or part that builds a follow-up closes the follow-up too, and an
+// abandoned one releases it, as followBuilds says.
 func (p Plan) Log(e Event, now time.Time) (Event, error) {
 	if why := toolKinds[e.Kind]; why != "" {
 		return Event{}, refusal.New("%s", why)
@@ -204,6 +217,9 @@ func (p Plan) record(e Event, now time.Time) (Event, error) {
 		}
 		if err := l.project(e.Item, now); err != nil {
 			e.Note = fmt.Sprintf("the event is logged, but not %s's heading keyword: %v", e.Item, err)
+		}
+		if note := l.followBuilds(e, now); note != "" {
+			e.Note = strings.TrimPrefix(e.Note+"; "+note, "; ")
 		}
 		return nil
 	})
@@ -293,7 +309,8 @@ func eventText(e Event) string {
 		{"REVIEW", e.Review}, {"OUTCOME", e.Outcome}, {"TOKENS", tokens}, {"MODEL", e.Model},
 		{"EFFORT", e.Effort}, {"SESSION", e.Session}, {"WORKTREE", e.Worktree}, {"RANGE", e.Range}, {"TIP", e.Tip}, {"PATCH_ID", e.PatchID},
 		{"RAISED", e.Raised}, {"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}, {"PROPERTY", e.Property}, {"VALUE", e.Value},
-		{"FOCUS", e.Focus}, {"NONCE", e.Nonce}, {"ROUTES", e.Routes}, {"FINDINGS", e.Findings}} {
+		{"FOCUS", e.Focus}, {"NONCE", e.Nonce}, {"ROUTES", e.Routes}, {"FINDINGS", e.Findings},
+		{"BUILDS", e.Builds}, {"BUILT_BY", e.BuiltBy}} {
 		if kv[1] != "" {
 			b.WriteString(":" + kv[0] + ": " + kv[1] + "\n")
 		}
@@ -503,6 +520,7 @@ func (p Plan) Events() ([]Event, error) {
 		if _, summary, ok := strings.Cut(h.Title, " — "); ok {
 			e.Summary = summary
 		}
+		e.Builds, e.BuiltBy = h.Props["BUILDS"], h.Props["BUILT_BY"]
 		for _, line := range h.Body {
 			if strings.HasPrefix(line, "[") {
 				e.Time = strings.TrimSpace(line)

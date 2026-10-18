@@ -287,11 +287,27 @@ missing.
 ``` sh
 agent-plan find --branch BRANCH          # plans for a branch on this host
 agent-plan status PLAN                   # what is done, verified and left, and drift, as Org
+agent-plan link PLAN P3 F3               # part (or step) P3 builds follow-up F3
 agent-plan questions PLAN --all          # open questions, each with its recommendation
 agent-plan tokens                        # tokens by event kind, model and effort
 ```
 
 Ask an agent only to plan, and it writes the plan and stops.
+
+An approved follow-up becomes a part, or a step, that names it: `agent-plan
+new --parent PLAN --part P3 --from F3` makes the part's file with the
+link, and `agent-plan link PLAN ID FOLLOWUP` links an entry already in the
+plan (`--clear` unlinks it). A follow-up in a part's file keeps its part's
+prefix, as `P1.F2`. The link is a `builds` event in the log, which writes
+the entry's `:BUILDS:`. Logging `done` or `verified` for the entry, or
+linking one that already is, logs the same for the follow-up; a done or
+verified entry changes its link only once cleared. Abandoning the entry
+releases the link for good and leaves the follow-up open; abandoning the
+follow-up releases it too, and nothing the builder logs changes it.
+`agent-plan status` reports a `:BUILDS:` the log does not give as
+property drift, and a link to a follow-up the plan does not hold, to one
+two entries build, to one abandoned, or to one behind its done or
+verified builder, as link drift; linking again settles the last.
 
 `~/git/notes` is a clone of the private `wesnel/notes`, which activation
 clones where it is missing. A few seconds after a plan changes, a watcher (a

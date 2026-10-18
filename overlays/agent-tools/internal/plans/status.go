@@ -68,6 +68,9 @@ type Status struct {
 	// StructureDrift are the headings of the plan's files that its
 	// structure has no place for, such as a dated section of events.
 	StructureDrift []StructureDrift `json:"structureDrift"`
+	// LinkDrift are the follow-ups the log says live steps or parts build
+	// that the plan holds no follow-up for, or that more than one builds.
+	LinkDrift []LinkDrift `json:"linkDrift"`
 	// Tokens is every event's tokens; TokensByPart keys a part's by its ID,
 	// and the rest by "".
 	Tokens       int64            `json:"tokens"`
@@ -236,6 +239,9 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 		return Status{}, err
 	}
 	if s.StructureDrift, err = p.structureDrift(); err != nil {
+		return Status{}, err
+	}
+	if s.LinkDrift, err = p.linkDrift(events); err != nil {
 		return Status{}, err
 	}
 	partOf := map[string]string{}
@@ -408,6 +414,13 @@ func (s Status) Org() string {
 			drifts = append(drifts, fmt.Sprintf("%s `%s` (%s)", filepath.Base(d.File), clip(d.Heading, headingShown), d.Problem))
 		}
 		fmt.Fprintf(&b, "- Structure drift: %s\n", strings.Join(drifts, "; "))
+	}
+	if len(s.LinkDrift) > 0 {
+		var drifts []string
+		for _, d := range s.LinkDrift {
+			drifts = append(drifts, fmt.Sprintf("%s built by %s (%s)", d.Followup, strings.Join(d.Entries, ", "), d.Problem))
+		}
+		fmt.Fprintf(&b, "- Link drift: %s\n", strings.Join(drifts, "; "))
 	}
 	fmt.Fprintf(&b, "- Tokens: %d\n", s.Tokens)
 	if len(s.TokensByPart) > 0 {

@@ -66,9 +66,23 @@ func (p Plan) Followup(o FollowupOptions, now time.Time) (Recorded, error) {
 		if o.Part != "" {
 			prefix = o.Part + "."
 		}
+		// An ID the log has named is never handed out again, even once its
+		// heading is gone: a link or event naming it would attach to the new
+		// one.
+		events, err := p.Events()
+		if err != nil {
+			return err
+		}
+		seen := []string{}
+		for id := range items {
+			seen = append(seen, id)
+		}
+		for _, e := range events {
+			seen = append(seen, e.Item, e.Builds)
+		}
 		next := 1
 		followup := idOf(prefix, "F")
-		for id := range items {
+		for _, id := range seen {
 			if m := followup.FindStringSubmatch(id); m != nil {
 				if n, _ := strconv.Atoi(m[1]); n >= next {
 					next = n + 1

@@ -112,6 +112,8 @@ type NewOptions struct {
 	// Goal is a line the plan's Goal starts with, and Status its STATUS
 	// in place of planning.
 	Goal, Status string
+	// From is the follow-up a new part builds, linked as Link does.
+	From string
 }
 
 // Created is what New made.
@@ -122,6 +124,10 @@ type Created struct {
 	File string `json:"file"`
 	ID   string `json:"id"`
 	Log  string `json:"log"`
+	// Builds is the follow-up a new part builds, and Note what the caller
+	// should know of the link.
+	Builds string `json:"builds,omitempty"`
+	Note   string `json:"note,omitempty"`
 }
 
 // checkLine refuses a value that would break the Org line it goes on.
@@ -168,6 +174,9 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 	}
 	if o.Parent != "" || o.Part != "" {
 		return c.newPart(o, now)
+	}
+	if o.From != "" {
+		return Created{}, refusal.New("--from names the follow-up a part builds. Pass it with the part, as `--parent PLAN --part P1 --from F3`")
 	}
 	if !slugPattern.MatchString(o.Slug) {
 		return Created{}, refusal.New("slug %q is not lower-case words joined by hyphens. Pass one such as `--slug add-run-loop`", o.Slug)
@@ -242,13 +251,40 @@ func (c Config) newPart(o NewOptions, now time.Time) (Created, error) {
 	}
 	text := planText(o, o.Part, c.Host, map[string]string{"PARENT": "[[file:" + filepath.Base(p.file("")) + "]]"}, false)
 	file := p.file(o.Part)
-	if err := writeNew(file, text); errors.Is(err, fs.ErrExist) {
-		return Created{}, refusal.New("%s already has its plan file, %s. Edit that file instead; `agent-plan goal %s --part %s` prints its goal", o.Part, file, p.file(""), o.Part)
-	} else if err != nil {
+	created, made := Created{Plan: p.file(""), File: file, ID: o.Part, Log: p.log()}, false
+	// The link is checked under the lock before the file is made, so a
+	// link made meanwhile refuses the part whole.
+	err = p.withLock(func(l *lockedPlan) error {
+		if o.From != "" {
+			items, err := p.items()
+			if err != nil {
+				return err
+			}
+			events, err := p.Events()
+			if err != nil {
+				return err
+			}
+			if err := p.checkLink(items, events, o.Part, o.From); err != nil {
+				return err
+			}
+		}
+		if err := writeNew(file, text); errors.Is(err, fs.ErrExist) {
+			return refusal.New("%s already has its plan file, %s. Edit that file instead; `agent-plan goal %s --part %s` prints its goal", o.Part, file, p.file(""), o.Part)
+		} else if err != nil {
+			return err
+		}
+		made = true
+		if err := l.logNewProperties(o.Part, now); err != nil || o.From == "" {
+			return err
+		}
+		e, err := l.link(o.Part, o.From, now)
+		created.Builds, created.Note = e.Builds, e.Note
+		return err
+	})
+	if err != nil && !made {
 		return Created{}, err
 	}
-	err = p.withLock(func(l *lockedPlan) error { return l.logNewProperties(o.Part, now) })
-	return Created{Plan: p.file(""), File: file, ID: o.Part, Log: p.log()}, err
+	return created, err
 }
 
 var nonTag = regexp.MustCompile(`[^A-Za-z0-9_@#%]`)

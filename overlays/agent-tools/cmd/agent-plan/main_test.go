@@ -333,6 +333,47 @@ func TestCommands(t *testing.T) {
 		}
 	})
 
+	t.Run("link", func(t *testing.T) {
+		plan := sessionPlan(t)
+		data, _ := os.ReadFile(plan)
+		os.WriteFile(plan, []byte(strings.Replace(string(data), "** Distribution\n",
+			"** Distribution\n*** TODO Split the guard\n:PROPERTIES:\n:ID: P1\n:END:\n", 1)), 0o644)
+		for _, title := range []string{"Split the guard", "Rename the flag"} {
+			if code, _, errs := agentPlan(t, "", "followup", plan, "--title", title, "--found-in", "S1"); code != 0 {
+				t.Fatalf("followup: %d %s", code, errs)
+			}
+		}
+		code, out, errs := agentPlan(t, "", "new", "--parent", plan, "--part", "P1", "--title", "Split the guard", "--from", "F1")
+		if code != 0 || !strings.Contains(out, `"builds": "F1"`) {
+			t.Errorf("new --from: %d %s %s", code, out, errs)
+		}
+		code, out, errs = agentPlan(t, "", "link", plan, "S2", "F2")
+		if code != 0 || !strings.Contains(out, `"kind": "builds"`) || !strings.Contains(out, `"builds": "F2"`) {
+			t.Errorf("link: %d %s %s", code, out, errs)
+		}
+		code, out, _ = agentPlan(t, "", "log", plan, "--item", "P1", "--kind", "done")
+		if code != 0 || !strings.Contains(out, `"note": "logged done for F1, which P1 builds"`) {
+			t.Errorf("log done: %d %s", code, out)
+		}
+		code, out, _ = agentPlan(t, "", "status", plan)
+		if code != 0 || !strings.Contains(out, "- Follow-ups open: F2\n") {
+			t.Errorf("status: %d\n%s", code, out)
+		}
+		if code, _, errs := agentPlan(t, "", "link", plan, "S2", "--clear"); code != 0 {
+			t.Errorf("link --clear: %d %s", code, errs)
+		}
+		data, _ = os.ReadFile(plan)
+		if !strings.Contains(string(data), ":ID: P1\n:BUILDS: F1\n") || strings.Contains(string(data), ":BUILDS: F2") {
+			t.Errorf("plan:\n%s", data)
+		}
+		for _, args := range [][]string{{"link", plan, "S2"}, {"link", plan, "S2", "F2", "--clear"},
+			{"status", plan, "--from", "F2"}, {"log", plan, "--item", "S1", "--kind", "started", "--clear"}} {
+			if code, _, _ := agentPlan(t, "", args...); code != 2 {
+				t.Errorf("%v: exit %d, want 2", args, code)
+			}
+		}
+	})
+
 	t.Run("reference", func(t *testing.T) {
 		plan := sessionPlan(t)
 		code, out, errs := agentPlan(t, "", "reference", plan, "https://example.com/guide", "--note", "Used for the review; fed Q1.")
