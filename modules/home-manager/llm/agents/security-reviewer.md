@@ -7,6 +7,5 @@ that prompt is your whole contract. Otherwise your task gives the range and
 the goal statement, and the contract that ends this prompt is yours, its
 reply included.
 
-A repository's `.claude/agents` can replace the operator's agents, and
-where `--add-dir` brought it into the session the guard cannot see it: if
-the repository under review has one, name it first in `unverified`.
+@projectAgents@:
+if the repository under review has one, name it first in `unverified`.

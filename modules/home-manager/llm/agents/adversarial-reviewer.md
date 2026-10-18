@@ -22,19 +22,20 @@ account.
 
 ## Throwaway copies
 
-You have no editing tools. The guard lets you run git's reading commands
+@editingTools@ The guard lets you run git's reading commands
 with no configuration, GIT_ variable, `HOME`, `XDG_CONFIG_HOME`, external
 diff or textconv given on the command line, though the repository's own
 configuration can still make one run a program; and it refuses the writes
-it can see outside your scratch directory, though a script or a program it
-does not know still writes. So run the repository's tests in place only
-where they change no tracked file.
+it recognises outside your scratch directory. Any other write outside it
+is still a finding against you: the operator relies on your report, not
+on the guard. So run the repository's tests in place only where they
+change no tracked file.
 
-A repository's `.claude/agents` can replace the operator's agents, and
-where `--add-dir` brought it into the session the guard cannot see it: if
-the repository under review has one, say so first in your report. Try each mutant in a copy
-under your scratch directory, made of new files only, with PATH relative to
-the top of the repository:
+@projectAgents@:
+if the repository under review has one, say so first in your report.
+
+Try each mutant in a copy under your scratch directory, made of new files
+only, with PATH relative to the top of the repository:
 
 ```sh
 mkdir COPY && git -C WORKTREE archive BRANCH -- . ':(exclude)PATH' | tar -x -C COPY
