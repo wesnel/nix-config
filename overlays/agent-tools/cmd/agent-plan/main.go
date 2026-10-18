@@ -130,7 +130,17 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      $XDG_STATE_HOME/agent-tools/usage. Emacs sends {cwd,
                      provider, context_window{used_percentage}}, or {cwd} alone
                      to see each provider at 75% or more. Never touches the
-                     network
+                     network. Ends with "checkpoint · /clear" where that
+                     plan stands at a checkpoint (a hand-back, a sign-pass
+                     handed over or signed, or a decision that left no
+                     question to ask) and the context holds 200K tokens or
+                     more or its cache has gone cold, and keeps each
+                     session's context size and cache warmth beside the
+                     rate_limits for stop-check: a Claude Code stop it lets
+                     through with no background task running, at such a
+                     checkpoint with 200K tokens of context or more, shows
+                     the operator a suggestion to /clear, once per
+                     checkpoint
   usage [--json]     this host's last reading of each provider's quota windows,
                      and the operator's choice while it lasts
   usage choose PROVIDER keep|postpone [--plan PLAN] [--answer TEXT]
@@ -284,6 +294,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			if line := c.StatusLine(input); line != "" {
 				parts = append(parts, line)
 			}
+			if checkpointHint(c, input, time.Now()) != "" {
+				parts = append(parts, "checkpoint · /clear")
+			}
 		}
 		if len(parts) > 0 {
 			fmt.Fprintln(stdout, strings.Join(parts, " · "))
@@ -325,6 +338,8 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 					return 2
 				}
 			} else if out := c.StopCheck(input, time.Now()); len(out) > 0 {
+				stdout.Write(append(out, '\n'))
+			} else if out := checkpointNudge(c, quota.DefaultState(), input); len(out) > 0 {
 				stdout.Write(append(out, '\n'))
 			}
 		}

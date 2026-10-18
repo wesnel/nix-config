@@ -16,7 +16,8 @@ const Warn = 75
 // context and its provider's windows, or "".
 //
 // Claude Code's input names no provider; it carries its own context and,
-// after the first response, the account's windows, which are recorded.
+// after the first response, the account's windows, which are recorded, as
+// is the session's Context.
 // Emacs sends {cwd, provider, context_window{used_percentage}} for an agent
 // buffer, its provider "claude" or "codex", or {cwd} alone elsewhere, which
 // shows each provider with a window at or over Warn, named.
@@ -33,6 +34,9 @@ func StatusLine(s State, input []byte, now time.Time) string {
 	}
 	if r, ok := FromClaudeStatus(input, now); ok {
 		s.Record(r)
+	}
+	if c, ok := FromClaudeContext(input, now); ok {
+		s.RecordContext(c)
 	}
 	if in.Provider == "" && in.SessionID != "" {
 		in.Provider = "claude"

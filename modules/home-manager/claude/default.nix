@@ -458,6 +458,8 @@ in {
 
         # Blocks a stop once when the work is not as the plan-work and
         # review-change skills leave it; never while stop_hook_active.
+        # Otherwise, at a checkpoint of the plan with a large context and
+        # nothing in flight, suggests /clear to the operator once.
         hooks.Stop = [
           {
             hooks = [
@@ -471,7 +473,9 @@ in {
 
         # How many open questions the session's plan has, from its files
         # alone, which the `questions` skill asks the operator.
-        # Context and quota too; the rerun drops a window once it resets.
+        # Context and quota too; the rerun drops a window once it resets,
+        # and shows when a checkpoint's cache has gone cold. It records the
+        # context the Stop hook reads.
         statusLine = {
           type = "command";
           command = "${agentPlan} statusline";
