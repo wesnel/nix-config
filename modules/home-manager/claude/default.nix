@@ -746,6 +746,16 @@ in {
                   }
                 ];
               }
+              # Records the session in the run ledger by the unit's tag.
+              {
+                matcher = "startup|clear";
+                hooks = [
+                  {
+                    type = "command";
+                    command = "${getExe' agentTools "plan-dash"} usage hook";
+                  }
+                ];
+              }
             ];
           };
         };
@@ -775,7 +785,7 @@ in {
           # The unit alone sets AGENT_PLANS_SESSION, which keys the guard's
           # fence and lets plan-dash answer and dispatch run.
           Environment =
-            ["AGENT_PLANS_SESSION=1" "CLAUDE_CONFIG_DIR=${claudeDir}" "PATH=${path}"]
+            ["AGENT_PLANS_SESSION=1" "AGENT_RUN_TAG=category=dashboard" "CLAUDE_CONFIG_DIR=${claudeDir}" "PATH=${path}"]
             ++ optional cfg.agentPlans.poll "AGENT_PLANS_POLL=1";
           Restart = "always";
           RestartSec = "30s";

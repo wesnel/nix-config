@@ -495,8 +495,9 @@ print session's last result reports as it ends. `claude-pr-loop` tags its
 sessions itself, whatever its caller set: `loop`, or `review` with the pull
 request in a review directory, or `triage` there where the review queue
 asks for it with `AGENT_RUN_CATEGORY`. The queue tags its reviews
-(`review`, kind `dispatched`) with their pull requests. The ledger holds
-labels, IDs, times and token counts, never a session's text.
+(`review`, kind `dispatched`) with their pull requests, and the Agent
+plans session's unit tags it `dashboard`. The ledger holds labels, IDs,
+times and token counts, never a session's text.
 
 ## the Agent plans session
 
