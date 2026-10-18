@@ -281,6 +281,14 @@ in {
           sessionUrl = false;
         };
 
+        # The main conversation waits on the operator and on sub-agents for
+        # longer than five minutes, and each return to a cold cache writes
+        # the whole context again; an hour's lifetime costs more per write
+        # but writes far less. Usage over the plan's limits would otherwise
+        # drop requests to five minutes. Sub-agents' requests
+        # (subagentPromptCacheTtl) keep their default: they rarely sit idle.
+        promptCacheTtl = "1h";
+
         # These reach every subprocess, sandboxed or not. claude-pr-loop sets
         # its own.
         env = sessionCacheEnv;
