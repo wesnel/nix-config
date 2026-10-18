@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wesnel/agent-tools/internal/agents"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
@@ -724,14 +725,8 @@ func TestAgentRoles(t *testing.T) {
 		"reviewer": "reviewer", "adversarial-reviewer": "reviewer", "design-reviewer": "reviewer",
 		"security-reviewer": "reviewer", "pr-owner": "owner", "pr-coordinator": "coordinator",
 	}
-	var file struct {
-		Roles map[string]string `json:"roles"`
-	}
-	if err := json.Unmarshal(agentsJSON, &file); err != nil {
-		t.Fatal(err)
-	}
-	if !maps.Equal(file.Roles, want) {
-		t.Errorf("agents.json's roles are %v, want %v", file.Roles, want)
+	if roles := agents.Roles(); !maps.Equal(roles, want) {
+		t.Errorf("agents.json's roles are %v, want %v", roles, want)
 	}
 	only := map[string]string{
 		"reviewer":    "git commit --fixup=abc",

@@ -48,7 +48,7 @@ with lib; let
   # with the rules every one of them shares, then its contract, if any. A
   # description is plain YAML: no colon followed by a space.
   roleAgents = let
-    inherit (pkgs.agent-tools) guardAgents;
+    agentsJSON = pkgs.agent-tools.agents;
     agent = name: {
       description,
       skills ? [],
@@ -62,7 +62,7 @@ with lib; let
           description: ${description}
           model: opus
           effort: high
-          ${optionalString ((guardAgents.roles.${name} or null) == "reviewer") "tools: Read, Grep, Glob, Bash\n"}${optionalString (skills != []) "skills:\n${concatMapStrings (s: "  - ${s}\n") skills}"}---
+          ${optionalString ((agentsJSON.roles.${name} or null) == "reviewer") "tools: Read, Grep, Glob, Bash\n"}${optionalString (skills != []) "skills:\n${concatMapStrings (s: "  - ${s}\n") skills}"}---
           ${body}
           ${builtins.readFile ./agents/subagent.md}
           ${contract}
@@ -91,7 +91,7 @@ with lib; let
       };
     };
   in
-    assert assertMsg (naturalSort (attrNames agents ++ ["reviewer"]) == naturalSort guardAgents.claude)
+    assert assertMsg (naturalSort (attrNames agents ++ ["reviewer"]) == naturalSort agentsJSON.claude)
     "claude: the agents defined here and agents.json's claude list differ";
       mapAttrs' agent agents;
 

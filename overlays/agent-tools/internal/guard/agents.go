@@ -6,19 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/wesnel/agent-tools/internal/agents"
 )
 
 // claudeAgents are the user-level Claude Code agents the operator's
-// configuration defines, agents.json's "claude".
-var claudeAgents = func() map[string]bool {
-	var file struct {
-		Claude []string `json:"claude"`
-	}
-	if err := json.Unmarshal(agentsJSON, &file); err != nil {
-		panic("guard: agents.json: " + err.Error())
-	}
-	return set(file.Claude...)
-}()
+// configuration defines.
+var claudeAgents = set(agents.Claude()...)
 
 const shadowedAgent = "This project has agent definitions of its own, in %s, and Claude Code runs a project's " +
 	"definition in place of the operator's `%s` when one has that name, with that file's prompt and tools. " +

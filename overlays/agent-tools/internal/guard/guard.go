@@ -13,7 +13,6 @@
 package guard
 
 import (
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +24,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/wesnel/agent-tools/internal/agents"
 )
 
 var (
@@ -70,24 +71,13 @@ const (
 	reviewer                // reviewer: also kept to git's reading commands and denied every change to GitHub
 )
 
-// agentsJSON names the agents with a role of their own. The agents' Nix
-// modules read it too: an agent named a reviewer here is defined without
-// editing tools.
-//
-//go:embed agents.json
-var agentsJSON []byte
-
-// roleNames are the agents with a role of their own, by agent name.
+// roleNames are the agents with a role of their own, by agent name, from
+// agents.json. The agents' Nix modules read it too: an agent named a
+// reviewer there is defined without editing tools.
 var roleNames = func() map[string]role {
-	var file struct {
-		Roles map[string]string `json:"roles"`
-	}
-	if err := json.Unmarshal(agentsJSON, &file); err != nil {
-		panic("guard: agents.json: " + err.Error())
-	}
 	byName := map[string]role{"baseline": baseline, "coordinator": coordinator, "owner": owner, "reviewer": reviewer}
 	names := map[string]role{}
-	for agent, name := range file.Roles {
+	for agent, name := range agents.Roles() {
 		r, ok := byName[name]
 		if !ok {
 			panic("guard: agents.json: unknown role " + name)
@@ -100,10 +90,8 @@ var roleNames = func() map[string]role {
 // roleOf is the role of the agent named agentType, or fallback for an agent
 // without a role of its own.
 func roleOf(agentType string, fallback role) role {
-	for name, r := range roleNames {
-		if agentType == name || strings.HasSuffix(agentType, ":"+name) {
-			return r
-		}
+	if r, ok := agents.Lookup(roleNames, agentType); ok {
+		return r
 	}
 	return fallback
 }

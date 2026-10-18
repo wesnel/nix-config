@@ -130,9 +130,10 @@
       assert lib.assertMsg (builtins.length parts == 2) "agent-tools: reviewer.md needs exactly one `## Checks` heading, where the security contract splits it";
         builtins.head parts + "\n" + builtins.readFile ./internal/review/security.md;
 
-    # The agents with a guard role, and the user-level Claude Code agents,
-    # which the guard keeps a project from replacing.
-    passthru.guardAgents = builtins.fromJSON (builtins.readFile ./internal/guard/agents.json);
+    # The operator's agents as internal/agents describes them: those with a
+    # guard role, and the user-level Claude Code agents, which the guard
+    # keeps a project from replacing.
+    passthru.agents = builtins.fromJSON (builtins.readFile ./internal/agents/agents.json);
 
     # Static Linux builds for a sandbox guest: pr-loop and agent-plan, which
     # it runs as clients of `sandbox-relay serve` on the host, and
