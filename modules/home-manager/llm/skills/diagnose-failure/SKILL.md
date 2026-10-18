@@ -6,8 +6,9 @@ description: Find the cause of a failure before changing code - a bug report, a 
 # Diagnosing a failure
 
 The cause comes from a reproduction, never from reading code first. Work
-through the stages in order; skip one only by writing in the plan why it
-does not apply.
+through the stages in order; skip one only by recording why it does not
+apply as a decision of your own, as the `plan-work` skill's "Questions for
+the operator" says.
 
 ## 1. A red command
 
@@ -86,8 +87,9 @@ Some failures put one hypothesis first:
   pattern the cause shows, and fix each place it recurs in the same commit.
 - Its test fails before the fix for the reported reason, at a seam that
   reproduces the real call, as the `write-tests` skill says. Where no seam
-  reaches the failure, that is a finding: record it in the plan and the
-  hand-back instead of testing a shallower seam.
+  reaches the failure, say so in the hand-back instead of testing a
+  shallower seam; building such a seam, when it is outside the change's
+  job, is a follow-up (`agent-plan followup`).
 - After the fix, both the shrunken and the original command pass; for a
   flaky failure, give the rate over the same number of runs.
 - `git grep` on the marker finds nothing, and throwaway files are deleted.

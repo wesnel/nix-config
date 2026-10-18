@@ -109,8 +109,8 @@ func (c Config) ImportClaude(hook []byte, now time.Time) ([]byte, error) {
 		return nil, err
 	}
 	return hookOutput("PostToolUse", fmt.Sprintf("The approved plan is recorded verbatim in %s, under \"Approved plan\". "+
-		"Before the first edit, structure it into that file's Goal, Steps and Questions, as the plan-work skill says, "+
-		"and log each step's progress with `agent-plan log`.", file))
+		"Before the first edit, structure it into that file's Goal and Steps, as the plan-work skill says, "+
+		"each open question and decision through `agent-plan ask`, and log each step's progress with `agent-plan log`.", file))
 }
 
 // appendFile adds text at the end of a plan's file, after a line break if
