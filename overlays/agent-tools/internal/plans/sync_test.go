@@ -1,6 +1,8 @@
 package plans
 
 import (
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -191,6 +193,199 @@ func testSyncPeers(t *testing.T) {
 			t.Errorf("without a master: %q, %+v", calls, got.Peers)
 		}
 	})
+}
+
+// Publish commits the files it is given, by name, and this host's plans,
+// and pushes both; it writes nothing a link leads outside the repository,
+// nor into the plans directory, and leaves every other edit alone.
+func TestPublish(t *testing.T) {
+	origin, hosts := notes(t, "box")
+	box := hosts["box"]
+	repo := filepath.Dir(box.Dir)
+	newPlan(t, box, "x")
+	// Staged by someone else: neither committed nor pushed.
+	os.WriteFile(filepath.Join(repo, "staged.org"), []byte("staged\n"), 0o644)
+	gitIn(t, repo, "add", "staged.org")
+	digest := map[string][]byte{"digests/2026/10-14-standup.box.org": []byte("#+title: Standup\n")}
+	got, err := box.Publish(digest, "Add the standup digest")
+	if err != nil || !got.Wrote || !got.Pushed || len(got.Committed) != 2 {
+		t.Fatalf("publish: %+v, %v", got, err)
+	}
+	if log := gitIn(t, origin, "log", "--format=%G? %s", "main"); log != "N Add the standup digest\nN Sync plans from box\nN Start\n" {
+		t.Errorf("origin's history:\n%s", log)
+	}
+	if files := gitIn(t, origin, "show", "--format=", "--name-only", "main"); files != "digests/2026/10-14-standup.box.org\n" {
+		t.Errorf("the digest's commit holds %q", files)
+	}
+	if files := gitIn(t, origin, "ls-tree", "-r", "--name-only", "main"); strings.Contains(files, "staged.org") {
+		t.Errorf("pushed the staged file:\n%s", files)
+	}
+	if status := gitIn(t, repo, "status", "--porcelain"); !strings.Contains(status, "A  staged.org") {
+		t.Errorf("the staged file is no longer staged:\n%s", status)
+	}
+	untouched(t, box)
+
+	// The same content again: no commit, nothing to push.
+	if got, err := box.Publish(digest, "Add the standup digest"); err != nil || got.Wrote || got.Pushed {
+		t.Errorf("publishing it again: %+v, %v", got, err)
+	}
+
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(repo, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	// Links inside the repository, as another host could commit them.
+	os.Symlink("agents", filepath.Join(repo, "into-plans"))
+	os.Symlink(".git", filepath.Join(repo, "into-git"))
+	for _, name := range []string{"linked/x.org", "into-plans/x.org", "into-git/x.org", ".git/x.org", ".GIT/x.org",
+		"../x.org", "/tmp/x.org", "digests/../x.org", "agents/x.org", ""} {
+		if got, err := box.Publish(map[string][]byte{name: []byte("x\n")}, "Refused"); err == nil || got.Wrote {
+			t.Errorf("%q: %+v, %v", name, got, err)
+		}
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Errorf("wrote through the link: %v", entries)
+	}
+	for _, f := range []string{filepath.Join(box.Dir, "x.org"), filepath.Join(repo, ".git", "x.org")} {
+		if _, err := os.Lstat(f); err == nil {
+			t.Errorf("wrote %s", f)
+		}
+	}
+	if log := gitIn(t, origin, "log", "-1", "--format=%s", "main"); log != "Add the standup digest\n" {
+		t.Errorf("origin moved: %q", log)
+	}
+
+	// A commit that fails, here for its empty message, leaves nothing
+	// staged.
+	if got, err := box.Publish(map[string][]byte{"digests/2026/10-16-standup.box.org": []byte("x\n")}, ""); err == nil || got.Wrote {
+		t.Errorf("a failing commit: %+v, %v", got, err)
+	}
+	if staged := gitIn(t, repo, "diff", "--cached", "--name-only"); staged != "staged.org\n" {
+		t.Errorf("staged after a failed commit: %q", staged)
+	}
+
+	// Without a remote to push to, the commit stays for the next sync.
+	gitIn(t, repo, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "missing.git"))
+	got, err = box.Publish(map[string][]byte{"digests/2026/10-15-standup.box.org": []byte("#+title: Standup\n")}, "Add another")
+	if !errors.Is(err, ErrUnsent) || !got.Wrote || got.Pushed {
+		t.Errorf("publishing unreachable: %+v, %v", got, err)
+	}
+	if log := gitIn(t, repo, "log", "-1", "--format=%s"); log != "Add another\n" {
+		t.Errorf("the commit did not stay: %q", log)
+	}
+
+	if got, err := testConfig(t).Publish(digest, "x"); err != nil || got.Skipped == "" {
+		t.Errorf("outside a repository: %+v, %v", got, err)
+	}
+}
+
+// Publish writes nothing while a sync holds the lock.
+func TestPublishLock(t *testing.T) {
+	_, hosts := notes(t, "box")
+	box := hosts["box"]
+	file := filepath.Join(filepath.Dir(box.Dir), "digests", "d.box.org")
+	lock, err := box.lockSync(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error)
+	go func() {
+		_, err := box.Publish(map[string][]byte{"digests/d.box.org": []byte("x\n")}, "Add")
+		done <- err
+	}()
+	time.Sleep(500 * time.Millisecond)
+	if _, err := os.Stat(file); err == nil {
+		t.Error("wrote while the lock was held")
+	}
+	lock.Close()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(file); err != nil {
+		t.Error(err)
+	}
+}
+
+// Where the remote holds another version of a published file, the rebase
+// fails: Publish drops its own commit, so that later syncs are not stuck
+// behind it, says so, and leaves what else is staged as it was.
+func TestPublishConflict(t *testing.T) {
+	origin, hosts := notes(t, "mac", "box")
+	mac, box := hosts["mac"], hosts["box"]
+	if _, err := mac.Publish(map[string][]byte{"digests/2026/10-14-standup.org": []byte("mac\n")}, "Add mac's"); err != nil {
+		t.Fatal(err)
+	}
+	newPlan(t, box, "x")
+	repo := filepath.Dir(box.Dir)
+	os.WriteFile(filepath.Join(repo, "staged.org"), []byte("staged\n"), 0o644)
+	gitIn(t, repo, "add", "staged.org")
+	got, err := box.Publish(map[string][]byte{"digests/2026/10-14-standup.org": []byte("box\n")}, "Add box's")
+	if !errors.Is(err, errRebase) || errors.Is(err, ErrUnsent) || got.Wrote || got.Pushed || got.Dropped == "" {
+		t.Errorf("box's publish: %+v, %v", got, err)
+	}
+	if log := gitIn(t, repo, "log", "-1", "--format=%s"); log != "Sync plans from box\n" {
+		t.Errorf("box's HEAD: %q", log)
+	}
+	if status := gitIn(t, repo, "status", "--porcelain", "--", "digests"); status != "" {
+		t.Errorf("left behind: %q", status)
+	}
+	if staged := gitIn(t, repo, "diff", "--cached", "--name-status"); staged != "A\tstaged.org\n" {
+		t.Errorf("staged after the drop: %q", staged)
+	}
+	gitIn(t, repo, "reset", "-q", "--", "staged.org")
+	untouched(t, box)
+	newPlan(t, box, "y")
+	if s, err := box.Sync(SyncOptions{}); err != nil || !s.Pushed {
+		t.Errorf("box's next sync: %+v, %v", s, err)
+	}
+	if data := gitIn(t, origin, "show", "main:digests/2026/10-14-standup.org"); data != "mac\n" {
+		t.Errorf("origin's digest: %q", data)
+	}
+}
+
+// A rebase that fails on something else, here the operator's own commit to
+// a note that the remote changed too, keeps the published commit and names
+// the conflict.
+func TestPublishConflictElsewhere(t *testing.T) {
+	_, hosts := notes(t, "mac", "box")
+	mac, box := hosts["mac"], hosts["box"]
+	for _, c := range []Config{mac, box} {
+		repo := filepath.Dir(c.Dir)
+		gitIn(t, repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "Edit on "+c.Host, "--", "todo.org")
+	}
+	if s, err := mac.Sync(SyncOptions{}); err != nil || !s.Pushed {
+		t.Fatalf("mac's sync: %+v, %v", s, err)
+	}
+	got, err := box.Publish(map[string][]byte{"digests/2026/10-14-standup.box.org": []byte("box\n")}, "Add box's")
+	if !errors.Is(err, errRebase) || !strings.Contains(err.Error(), "todo.org") || !got.Wrote || got.Dropped != "" {
+		t.Errorf("box's publish: %+v, %v", got, err)
+	}
+	if log := gitIn(t, filepath.Dir(box.Dir), "log", "-1", "--format=%s"); log != "Add box's\n" {
+		t.Errorf("box's HEAD: %q", log)
+	}
+}
+
+// drop takes out the files' commit only while it is still HEAD.
+func TestDrop(t *testing.T) {
+	_, hosts := notes(t, "box")
+	box := hosts["box"]
+	repo := filepath.Dir(box.Dir)
+	ctx := context.Background()
+	os.WriteFile(filepath.Join(repo, "d.org"), []byte("d\n"), 0o644)
+	gitIn(t, repo, "add", "d.org")
+	gitIn(t, repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "Add d")
+	ours := strings.TrimSpace(gitIn(t, repo, "rev-parse", "HEAD"))
+	gitIn(t, repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "The operator's", "--", "todo.org")
+	if err := box.drop(ctx, ours, []string{"d.org"}); err == nil {
+		t.Error("dropped a commit that is no longer HEAD")
+	}
+	if log := gitIn(t, repo, "log", "-2", "--format=%s"); log != "The operator's\nAdd d\n" {
+		t.Errorf("history: %q", log)
+	}
+	gitIn(t, repo, "checkout", "-q", "--detach", ours)
+	if err := box.drop(ctx, ours, []string{"d.org"}); err == nil {
+		t.Error("dropped a commit on a detached HEAD")
+	}
 }
 
 // Find, status and new pull first, quietly, so another host's plans are

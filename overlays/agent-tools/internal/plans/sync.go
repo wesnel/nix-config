@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -174,12 +175,26 @@ func (c Config) Sync(o SyncOptions) (Synced, error) {
 		return s, err
 	}
 	defer lock.Close()
-	ctx := context.Background()
 	if !o.PullOnly {
-		if s.Committed, err = c.commitOwn(ctx); err != nil {
+		if s.Committed, err = c.commitOwn(context.Background()); err != nil {
 			return s, err
 		}
 	}
+	return c.syncLocked(o, s)
+}
+
+// errRebase is a sync's failure to rebase onto the remote, after which the
+// repository is as it was before the rebase.
+var errRebase = errors.New("rebasing onto the remote failed")
+
+// ErrUnsent is a sync's failure to fetch from the remote or push to it:
+// what it committed stays for the next sync.
+var ErrUnsent = errors.New("the remote was not reached")
+
+// syncLocked is Sync once the sync lock is held, where this host's plans
+// are committed already.
+func (c Config) syncLocked(o SyncOptions, s Synced) (Synced, error) {
+	ctx := context.Background()
 	branch, err := c.git(ctx, "symbolic-ref", "--short", "HEAD")
 	if err != nil {
 		return s, err
@@ -188,14 +203,14 @@ func (c Config) Sync(o SyncOptions) (Synced, error) {
 	timed, cancel := context.WithTimeout(ctx, gitTimeout)
 	defer cancel()
 	if _, err := c.git(timed, "fetch", "-q", "origin"); err != nil {
-		return s, err
+		return s, fmt.Errorf("%w: %w", ErrUnsent, err)
 	}
 	known := true
 	if _, err := c.git(ctx, "rev-parse", "-q", "--verify", remote); err != nil {
 		known = false
 	} else if _, err := c.git(ctx, "rebase", "-q", "--autostash", remote); err != nil {
 		c.git(ctx, "rebase", "--abort")
-		return s, err
+		return s, fmt.Errorf("%w: %w", errRebase, err)
 	}
 	if o.PullOnly {
 		return s, nil
@@ -208,7 +223,7 @@ func (c Config) Sync(o SyncOptions) (Synced, error) {
 	pushing, cancel := context.WithTimeout(ctx, gitTimeout)
 	defer cancel()
 	if _, err := c.git(pushing, "push", "-q", "origin", "HEAD:refs/heads/"+branch); err != nil {
-		return s, err
+		return s, fmt.Errorf("%w: %w", ErrUnsent, err)
 	}
 	s.Pushed = true
 	for _, p := range c.Peers {
@@ -218,6 +233,216 @@ func (c Config) Sync(o SyncOptions) (Synced, error) {
 		s.Peers[p.SSH] = nudge(p)
 	}
 	return s, nil
+}
+
+// Published is what Publish did: the sync, and whether it committed the
+// files.
+type Published struct {
+	Synced
+	// Wrote is whether the files' commit is in the repository: false where
+	// every file already held what it was given, or the commit was dropped.
+	Wrote bool `json:"wrote"`
+	// Dropped says why the files' commit was taken back out.
+	Dropped string `json:"dropped,omitempty"`
+}
+
+// Publish writes files into the notes repository, each named by a path
+// relative to it, commits them by name, unsigned, with message, and then
+// syncs as Sync does, its commit last. It holds the sync lock from the
+// first write to the push, so no sync rebases while a file is half written
+// or staged. A path is refused where it is in the plans directory or the
+// git directory, or any part of it is a link, which another host could
+// commit; each file is replaced by a rename through os.Root. Where the
+// remote is not reached (ErrUnsent), the commit stays, and the next sync
+// sends it. Where the rebase onto the remote fails and the remote changed
+// one of the files too, the commit is dropped, so that it holds back no
+// later sync, and Dropped says so: only while the branch still ends at it,
+// leaving the rest of the index and work tree as they were. A rebase that
+// fails on anything else keeps the commit.
+func (c Config) Publish(files map[string][]byte, message string) (Published, error) {
+	p := Published{Synced: Synced{Repo: c.repo()}}
+	if !c.inRepo() {
+		p.Skipped = fmt.Sprintf("%s is not a git repository's top level; `agent-plan init` clones it", c.repo())
+		return p, nil
+	}
+	plansDir, err := filepath.Rel(c.repo(), c.Dir)
+	if err != nil {
+		return p, err
+	}
+	var names []string
+	for name := range files {
+		if !filepath.IsLocal(name) || filepath.Clean(name) != name {
+			return p, fmt.Errorf("%q is not a clean path inside the notes repository", name)
+		}
+		if under, err := filepath.Rel(plansDir, name); err == nil && filepath.IsLocal(under) {
+			return p, fmt.Errorf("%s is in the plans directory, which only sync commits", name)
+		}
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		return p, errors.New("nothing to publish")
+	}
+	slices.Sort(names)
+	lock, err := c.lockSync(false)
+	if err != nil {
+		return p, err
+	}
+	defer lock.Close()
+	for _, name := range names {
+		if err := c.plainPath(name); err != nil {
+			return p, err
+		}
+	}
+	ctx := context.Background()
+	if p.Committed, err = c.commitOwn(ctx); err != nil {
+		return p, err
+	}
+	root, err := os.OpenRoot(c.repo())
+	if err != nil {
+		return p, err
+	}
+	defer root.Close()
+	for _, name := range names {
+		if err := writeIn(root, name, files[name]); err != nil {
+			return p, err
+		}
+	}
+	if _, err := c.git(ctx, append([]string{"add", "--"}, names...)...); err != nil {
+		return p, err
+	}
+	changed, err := c.git(ctx, append([]string{"diff", "--cached", "--name-only", "--"}, names...)...)
+	if err != nil {
+		return p, err
+	}
+	if changed != "" {
+		args := append([]string{"-c", "commit.gpgsign=false", "commit", "-q", "-m", message, "--"}, names...)
+		if _, err := c.git(ctx, args...); err != nil {
+			c.git(ctx, append([]string{"reset", "-q", "--"}, names...)...)
+			return p, err
+		}
+		p.Wrote = true
+	}
+	ours := ""
+	if p.Wrote {
+		if ours, err = c.git(ctx, "rev-parse", "HEAD"); err != nil {
+			return p, err
+		}
+	}
+	p.Synced, err = c.syncLocked(SyncOptions{}, p.Synced)
+	if p.Wrote && errors.Is(err, errRebase) {
+		both, diffErr := c.changedOnBoth(ctx)
+		if diffErr != nil {
+			return p, errors.Join(err, diffErr)
+		}
+		if !slices.ContainsFunc(names, func(n string) bool { return slices.Contains(both, n) }) {
+			return p, fmt.Errorf("%w; changed both here and on the remote: %s", err, strings.Join(both, ", "))
+		}
+		if dropErr := c.drop(ctx, ours, names); dropErr != nil {
+			return p, errors.Join(err, fmt.Errorf("the published commit %s is stuck before the remote's: %w", ours, dropErr))
+		}
+		p.Wrote, p.Dropped = false, "the remote changed "+strings.Join(names, ", ")+" too"
+	}
+	return p, err
+}
+
+// changedOnBoth are the files that HEAD and the remote-tracking branch
+// each changed since they parted.
+func (c Config) changedOnBoth(ctx context.Context) ([]string, error) {
+	branch, err := c.git(ctx, "symbolic-ref", "--short", "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	remote := "refs/remotes/origin/" + branch
+	theirs, err := c.git(ctx, "diff", "--name-only", "HEAD..."+remote)
+	if err != nil {
+		return nil, err
+	}
+	ours, err := c.git(ctx, "diff", "--name-only", remote+"...HEAD")
+	if err != nil {
+		return nil, err
+	}
+	var both []string
+	for _, f := range strings.Split(ours, "\n") {
+		if f != "" && slices.Contains(strings.Split(theirs, "\n"), f) {
+			both = append(both, f)
+		}
+	}
+	return both, nil
+}
+
+// drop takes the commit ours, of names alone, back out of the branch,
+// only while the branch still points at it, and gives names in the index
+// and the work tree their state before it; the rest of the index and work
+// tree is left as it is.
+func (c Config) drop(ctx context.Context, ours string, names []string) error {
+	branch, err := c.git(ctx, "symbolic-ref", "-q", "HEAD")
+	if err != nil {
+		return errors.New("HEAD is not on a branch")
+	}
+	parent, err := c.git(ctx, "rev-parse", ours+"~1")
+	if err != nil {
+		return err
+	}
+	if _, err := c.git(ctx, "update-ref", "-m", "publish: drop "+ours, branch, parent, ours); err != nil {
+		return fmt.Errorf("%s no longer ends at it: %w", branch, err)
+	}
+	if _, err := c.git(ctx, append([]string{"reset", "-q", parent, "--"}, names...)...); err != nil {
+		return err
+	}
+	for _, name := range names {
+		if _, err := c.git(ctx, "cat-file", "-e", parent+":"+name); err == nil {
+			_, err = c.git(ctx, "checkout", "-q", parent, "--", name)
+			if err != nil {
+				return err
+			}
+		} else if err := os.Remove(filepath.Join(c.repo(), name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
+// plainPath refuses name, relative to the repository, where it is in the
+// git directory or any part of it that exists is a link.
+func (c Config) plainPath(name string) error {
+	parts := strings.Split(name, string(filepath.Separator))
+	if strings.EqualFold(parts[0], ".git") {
+		return fmt.Errorf("%s is in the git directory", name)
+	}
+	for i := range parts {
+		info, err := os.Lstat(filepath.Join(append([]string{c.repo()}, parts[:i+1]...)...))
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("%s is a link, which publishing does not follow", filepath.Join(parts[:i+1]...))
+		}
+	}
+	return nil
+}
+
+// writeIn replaces name under root with data, by a rename.
+func writeIn(root *os.Root, name string, data []byte) error {
+	if err := root.MkdirAll(filepath.Dir(name), 0o755); err != nil {
+		return err
+	}
+	tmp := filepath.Join(filepath.Dir(name), fmt.Sprintf(".%s.%d", filepath.Base(name), os.Getpid()))
+	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	defer root.Remove(tmp)
+	_, err = f.Write(data)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return err
+	}
+	return root.Rename(tmp, name)
 }
 
 // commitOwn commits this host's plan files, by name, unsigned, and returns
