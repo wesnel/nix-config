@@ -585,42 +585,6 @@ in {
             ---
             ${pkgs.agent-tools.reviewerPrompt}
           '';
-
-          # Run only as /questions, so it costs nothing until the operator
-          # asks.
-          # AskUserQuestion takes one to four questions of two to four
-          # options each, and adds "Other" itself.
-          ".claude/skills/questions/SKILL.md".text = ''
-            ---
-            name: questions
-            description: Ask the operator the open questions of this session's plan, and record their answers as decisions.
-            disable-model-invocation: true
-            ---
-
-            # Questions
-
-            1. Run `agent-plan find`; its first result's `plan` is PLAN. With
-               none, say this session has no plan, and stop.
-            2. Run `agent-plan questions PLAN --all --json`: the questions
-               the operator can answer now. With none, say so, and stop.
-            3. Ask them with AskUserQuestion, in order, at most four per call.
-               Each question's header is its `id`, then ` [#P]` with its
-               `priority` if it has one; its text its `question`, then its
-               `context` if any. Its options: the `recommendation` first,
-               labelled with " (Recommended)" after it, then its
-               `alternatives`, then "Drop it", four options at most, dropping
-               alternatives from the end to fit.
-            4. For "Drop it", run
-               `agent-plan decide PLAN ID --drop --answer 'dropped by the operator'`,
-               or with their reason if they gave one. For any other answer, run
-               `agent-plan decide PLAN ID --answer 'ANSWER'`, the answer on one
-               line, without " (Recommended)".
-            5. A decision can make a question that waited for it askable:
-               run step 2 again, and ask from step 3 the questions it lists
-               that were not asked yet, until it lists no new one.
-            6. Report each decision in one line: its ID, the question, the
-               answer.
-          '';
         };
 
       # The Linux sandbox skips a write grant whose path does not exist.

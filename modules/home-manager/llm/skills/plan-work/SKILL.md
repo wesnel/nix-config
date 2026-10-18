@@ -223,17 +223,32 @@ sub-agent reports, say only what changed, add its new questions with
 `agent-plan ask`, and at most give their number. When the operator asks for
 them, take `agent-plan questions PLAN --all --json`, the questions they can
 answer now, and ask them through the harness's own question tool where it
-has one: in Claude Code, AskUserQuestion, at most four per call, each
-question's recommendation first, then its alternatives, then "Drop it", as
-`/questions` asks them. Print `agent-plan questions PLAN --all` only in a
-harness with no such tool. When they answer, record each answer with
+has one, each question's ID as its header, its recommendation first with
+" (Recommended)" after it, then its alternatives, then "Drop it", trimmed
+from the end to the tool's limit:
+
+- **Claude Code:** AskUserQuestion, at most four questions per call, two to
+  four options each, a header of at most 12 characters.
+- **Codex:** `request_user_input`, in Plan mode only, at most three
+  questions per call, two or three options each, a header of at most 12
+  characters. Plan mode forbids changing anything: give the operator the
+  `agent-plan decide` commands for their answers, and run them once they
+  leave it. In Default mode, ask one question per message in plain text.
+- **ECA** and **Copilot CLI:** `ask_user`, one question per call; ECA's
+  takes two to four options and has no header, so the ID starts the text.
+
+Elsewhere, or for a question with fewer than two options, print
+`agent-plan questions PLAN --all` and take the answers from the chat.
+Record only an answer the operator gave, and "Drop it" only when they chose
+it: a question cancelled, declined, left empty or refused by the harness
+stays open. Record each answer with
 `agent-plan decide PLAN Q1 --answer 'ANSWER'`, which settles the question
 in place and logs `decided`; `--drop --answer 'why'` drops it, and
 `--supersedes Q2` marks the earlier decision this one replaces. A decision
 can make waiting questions askable, so list them again until none are
-left. The operator may also run `/questions` in Claude Code themselves, or
-settle one in Emacs, with a note that `agent-plan decisions` reads as the
-answer.
+left. The operator can run these same steps themselves with `/questions`
+(`$questions` in Codex) where it is installed, or settle one in Emacs, with
+a note that `agent-plan decisions` reads as the answer.
 
 Ask the operator only about a one-way door (a force-push, deleted data, a
 message sent outside, a migration, a stored format, a published interface)

@@ -805,6 +805,9 @@ in {
             source = ./skills/grill;
             sandbox = true;
           };
+          # A directory for agents/openai.yaml, as grill. Kept out of
+          # sandboxes: the relay serves no `agent-plan decide`.
+          questions = ./skills/questions;
 
           # Linked as published, with the repository's MIT licence beside
           # it: the licence requires its notice in every copy.
