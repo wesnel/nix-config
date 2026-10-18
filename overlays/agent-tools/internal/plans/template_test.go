@@ -50,6 +50,9 @@ func TestTemplate(t *testing.T) {
 	for what, c := range map[string][2]string{
 		"an unknown section":        {"release", release + "** Rollout\n- slowly\n"},
 		"a keyword outside steps'":  {"release", "#+TODO: TODO NEXT | DONE\n** Steps\n*** NEXT Bump it\n"},
+		"a step without its ID":     {"release", release + "** Follow-ups\n*** TODO Announce it\n"},
+		"a question":                {"release", release + "** Questions\n*** Ship it?\n:PROPERTIES:\n:ID: Q1\n:END:\n"},
+		"a heading under Goal":      {"release", release + "** Goal\n*** Why\n"},
 		"a missing template":        {"other", release},
 		"a name that is not a name": {"../release", release},
 	} {

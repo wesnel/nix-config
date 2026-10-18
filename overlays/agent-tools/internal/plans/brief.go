@@ -9,7 +9,7 @@ import (
 // Brief is what an agent needs from the plan to go on after its
 // conversation was compacted: the goal, the decisions, what is ready, the
 // questions the operator can answer now, the steps done but not verified,
-// and how many follow-ups are open.
+// how many follow-ups are open, and any structure drift.
 func (p Plan) Brief(now time.Time) (string, error) {
 	s, err := p.StatusAt(now)
 	if err != nil {
@@ -40,5 +40,8 @@ func (p Plan) Brief(now time.Time) (string, error) {
 	}
 	fmt.Fprintf(&b, "Steps ready: %s\nParts ready to start: %s\nQuestions for the operator: %s\nDone, not verified: %s\nFollow-ups open: %d\n",
 		list(s.ReadySteps), list(s.Ready), list(askable), list(s.DoneNotVerified), len(s.Followups))
+	if line := s.structureLine(); line != "" {
+		b.WriteString(line + "\n")
+	}
 	return b.String(), nil
 }

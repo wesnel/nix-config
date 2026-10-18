@@ -20,8 +20,9 @@ var planSections = []string{"Goal", "Steps", "Distribution", "Questions", "Follo
 
 // template reads <plans repository>/templates/<name>.org: the lines under
 // each of its level-2 headings, by heading. It refuses a section a plan
-// does not have, and a heading keyword that is not a step's, since only
-// log writes the others.
+// does not have, a heading keyword that is not a step's, since only log
+// writes the others, and anything else that would start the plan with
+// structure drift, such as an entry without its ID.
 func (c Config) template(name string) (map[string][]string, error) {
 	if !templateName.MatchString(name) {
 		return nil, refusal.New("%q is not a template name. Pass the base name of a file in %s, as `--template release`", name, filepath.Join(c.repo(), "templates"))
@@ -43,18 +44,24 @@ func (c Config) template(name string) (map[string][]string, error) {
 	}
 	sections := map[string][]string{}
 	current := ""
+	keywords := fileKeywords(text)
 	for _, line := range strings.Split(text, "\n") {
 		switch n := level(line); {
 		case n == 1:
 			return nil, refusal.New("%s has a level-1 heading, %q; a template holds only `**` sections of a plan. Ask the operator to change the template, or pass another with `--template`", file, line)
 		case n == 2:
-			current = strings.TrimSpace(strings.TrimLeft(line, "*"))
+			current = lineTitle(line, keywords)
 			if !slices.Contains(planSections, current) {
 				return nil, refusal.New("%s has a section %q, which a plan does not have (%s). Ask the operator to change the template, or pass another with `--template`", file, current, strings.Join(planSections, ", "))
 			}
 		case current != "":
 			sections[current] = append(sections[current], line)
 		}
+	}
+	if drift := structureOf(withTemplate(planText(NewOptions{Title: name}, name, c.Host, nil, true), sections)); len(drift) > 0 {
+		return nil, refusal.New("%s would start a plan with structure drift: `%s`, %s. Each entry needs its ID, and a question is asked "+
+			"with `agent-plan ask` once the plan exists. Ask the operator to change the template, or pass another with `--template`",
+			file, drift[0].heading, drift[0].problem)
 	}
 	return sections, nil
 }
