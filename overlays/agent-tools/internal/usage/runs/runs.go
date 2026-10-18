@@ -36,6 +36,11 @@ import (
 // processes it starts inherit, Claude Code's hooks among them.
 const Env = "AGENT_RUN_TAG"
 
+// CategoryEnv is the variable the review queue sets for claude-pr-loop's
+// triage session, which `plan-dash usage run --pr-loop` reads where it
+// ignores an inherited Env: Triage, where the session would be a Review.
+const CategoryEnv = "AGENT_RUN_CATEGORY"
+
 // The categories a tag may name.
 const (
 	Loop        = "loop"

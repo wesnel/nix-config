@@ -45,6 +45,7 @@ with lib; let
   mcpProxy = config.wgn.home.mcp-proxy;
   plans = config.wgn.home.llm.plans;
   agentPlan = getExe' config.wgn.home.llm.agentTools "agent-plan";
+  planDash = getExe' config.wgn.home.llm.agentTools "plan-dash";
 
   # A permission rule's path: Claude Code reads `~/` as the home directory,
   # and a lone `/` as relative to the settings file, so `//` starts an
@@ -178,7 +179,12 @@ with lib; let
       # The session's commands cannot read the user's git config; the relay
       # and pr-loop on this side keep it.
       ${config.wgn.home.llm.prLoop.gitIdentity}
-      exec ${lib.getExe' config.wgn.home.llm.agentTools "sandbox-relay"} session --program pr-loop --program agent-plan \
+      # Tags the session for the run ledger as this launcher's own, never
+      # with a caller's tag (loop, or review or triage of the pull request
+      # in a review directory), and records the tokens of a print
+      # session's last result as it ends.
+      exec ${planDash} usage run --pr-loop -- \
+        ${lib.getExe' config.wgn.home.llm.agentTools "sandbox-relay"} session --program pr-loop --program agent-plan \
         --program git-fresh-review -- \
         env GIT_CONFIG_GLOBAL=${config.wgn.home.llm.prLoop.gitConfig} claude \
         --plugin-dir ${prLoopPlugin} \
@@ -406,6 +412,19 @@ in {
         # Names the session's plans when it resumes or compacts, matched by
         # its session_id, which both keep, or by its worktree.
         hooks.SessionStart = [
+          # Records a session a launcher tagged with AGENT_RUN_TAG in the
+          # run ledger as it starts or is cleared, a new session_id either
+          # way; it prints nothing. Sub-agents fire no SessionStart: their
+          # requests carry their session's session_id.
+          {
+            matcher = "startup|clear";
+            hooks = [
+              {
+                type = "command";
+                command = "${planDash} usage hook";
+              }
+            ];
+          }
           {
             matcher = "compact|resume";
             hooks = [

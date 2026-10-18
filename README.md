@@ -484,6 +484,18 @@ before it in its transcript, so records after it, as a resumed session
 still running writes, count on top of it; a session with none yet counts
 by its records, as does one whose cost-state holds less than they do.
 
+Launchers tag the sessions they start with `AGENT_RUN_TAG`
+(`category=loop;repo=OWNER/NAME;pr=N`, each key and value from a fixed set
+or of a fixed shape; `plan-dash --help` lists them), and this host's run
+ledger, `$XDG_STATE_HOME/agent-tools/usage/runs-YYYY-MM.jsonl`, kept for
+90 days after each month, records them: Claude Code's SessionStart hook
+(`plan-dash usage hook`) as a tagged session starts or is cleared, and
+`plan-dash usage run`, wrapping a launcher's command, with the tokens its
+print session's last result reports as it ends. `claude-pr-loop` tags its
+sessions itself, whatever its caller set: `loop`, or `review` with the pull
+request in a review directory. The ledger holds labels, IDs, times and
+token counts, never a session's text.
+
 ## the Agent plans session
 
 `wgn.home.claude.agentPlans.enable` (the devbox) runs the session as

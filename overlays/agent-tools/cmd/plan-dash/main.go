@@ -165,6 +165,35 @@ const usage = `plan-dash: the operator's status, from GitHub and the plans.
           its last cost-state, which count on top of it, or none yet, and
           its records stand in, as they do for one whose cost-state holds
           less than they do (short). Then the totals by model.
+  usage hook
+          for Claude Code's SessionStart hook: where $AGENT_RUN_TAG tags
+          the session (category=C;repo=OWNER/NAME;pr=N;kind=K;plan=P,
+          category alone required: loop, review, triage, fresh-review,
+          dashboard, digest or diagram; kind dispatched, security,
+          compat, claims, general, standup or demo; plan a plan's file
+          name), record it in this host's run ledger,
+          $XDG_STATE_HOME/agent-tools/usage/runs-YYYY-MM.jsonl, as it
+          starts or is cleared. Prints nothing.
+  usage run [--pr-loop] -- COMMAND [ARG...]
+          run COMMAND as given, and where $AGENT_RUN_TAG tags it and its
+          output is not a terminal, record the tokens the last result of
+          its stream-json output reports for the session its first init
+          event names (the process's totals, its sub-agents' included)
+          in the run ledger as it ends. The output passes through whole,
+          read for at most 10 seconds after COMMAND exits; past that, what
+          COMMAND left running holds the rest, which goes unread and the
+          run unrecorded, saying so. Exits with COMMAND's status, 128 and
+          the signal when one killed it, 126 when it cannot run and 127
+          when it is not found. SIGINT (but from a terminal, which sends
+          it itself), SIGTERM and SIGHUP are passed on to COMMAND; with
+          --pr-loop and no terminal on its standard streams, to the
+          process group it leads. On Linux COMMAND gets SIGTERM if this
+          process dies. --pr-loop, for claude-pr-loop, ignores
+          $AGENT_RUN_TAG and gives COMMAND its own in place of it: in a
+          review's directory under pr-loop's review root
+          (OWNER/NAME/N/HEAD12), review of that pull request, or triage
+          where $AGENT_RUN_CATEGORY, which COMMAND does not get, is triage;
+          anywhere else, loop.
 
 GitHub is read with gh, at most once a minute: a fetch is cached beside FILE
 as github.json, and where one fails, the last good one is written, marked
@@ -272,6 +301,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 // tokenUsage runs usage.
 func tokenUsage(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "hook" {
+		return usageHook(args[1:], stderr)
+	}
+	if len(args) > 0 && args[0] == "run" {
+		return usageRun(args[1:], stdout, stderr)
+	}
 	flags := flag.NewFlagSet("usage", flag.ContinueOnError)
 	since := flags.String("since", "7d", "")
 	by := flags.String("by", "category", "")
