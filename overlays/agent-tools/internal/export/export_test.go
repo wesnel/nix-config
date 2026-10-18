@@ -230,6 +230,10 @@ var allowed = map[string][]string{
 	"meta": {"updated", "host", "repo", "pushed", "unsynced", "fetched"},
 }
 
+// todayAllowed are the keys of digests/today, which the digest command
+// writes, not Write.
+var todayAllowed = []string{"kind", "date", "at", "file", "text"}
+
 func join(path, key string) string {
 	if path == "" {
 		return key
@@ -302,6 +306,39 @@ func TestDocumentTypes(t *testing.T) {
 		if want := allowed[collection]; !reflect.DeepEqual(slices.Sorted(maps.Keys(got)), slices.Sorted(slices.Values(want))) {
 			t.Errorf("%s: keys %v, want %v", collection, slices.Sorted(maps.Keys(got)), want)
 		}
+	}
+	got := map[string]bool{}
+	tagKeys(t, reflect.TypeFor[Today](), "", got)
+	if !reflect.DeepEqual(slices.Sorted(maps.Keys(got)), slices.Sorted(slices.Values(todayAllowed))) {
+		t.Errorf("digests: keys %v, want %v", slices.Sorted(maps.Keys(got)), todayAllowed)
+	}
+}
+
+// WriteToday writes digests/today.json alone, and nothing through a link.
+func TestWriteToday(t *testing.T) {
+	out := t.TempDir()
+	write(t, filepath.Join(out, "plans", "p.json"), "{}")
+	today := Today{Kind: "standup", Date: "2026-10-14", At: "2026-10-14T07:30:00-07:00",
+		File: "digests/2026/10-14-standup.org", Text: "#+title: Standup\n"}
+	if err := WriteToday(out, today); err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	data, _ := os.ReadFile(filepath.Join(out, "digests", "today.json"))
+	if err := json.Unmarshal(data, &doc); err != nil || doc["text"] != "#+title: Standup\n" || len(doc) != len(todayAllowed) {
+		t.Errorf("document %s: %v", data, err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "plans", "p.json")); err != nil {
+		t.Error(err)
+	}
+
+	linked, elsewhere := t.TempDir(), t.TempDir()
+	os.Symlink(elsewhere, filepath.Join(linked, "digests"))
+	if err := WriteToday(linked, today); err == nil {
+		t.Error("wrote through digests, a link")
+	}
+	if entries, _ := os.ReadDir(elsewhere); len(entries) > 0 {
+		t.Errorf("wrote %d files through digests, a link", len(entries))
 	}
 }
 

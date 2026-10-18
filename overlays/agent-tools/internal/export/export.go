@@ -403,11 +403,7 @@ var collections = []string{"plans", "github", "meta"}
 // dir is touched.
 func Write(dir string, e Export) error {
 	for _, collection := range collections {
-		info, err := os.Lstat(filepath.Join(dir, collection))
-		switch {
-		case err == nil && !info.IsDir():
-			return fmt.Errorf("%s is not a directory, which export writes in", filepath.Join(dir, collection))
-		case err != nil && !errors.Is(err, fs.ErrNotExist):
+		if err := checkCollection(dir, collection); err != nil {
 			return err
 		}
 	}
@@ -434,6 +430,43 @@ func Write(dir string, e Export) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// checkCollection refuses dir's collection directory where it is anything
+// but a directory or missing: a link would lead the write elsewhere.
+func checkCollection(dir, collection string) error {
+	info, err := os.Lstat(filepath.Join(dir, collection))
+	switch {
+	case err == nil && !info.IsDir():
+		return fmt.Errorf("%s is not a directory, which export writes in", filepath.Join(dir, collection))
+	case err != nil && !errors.Is(err, fs.ErrNotExist):
+		return err
+	}
+	return nil
+}
+
+// Today is the document digests/today: the newest digest, which the page
+// shows. Its Text is package digest's, built from an Export's documents and
+// this host's quota readings alone, so it carries nothing else.
+type Today struct {
+	// Kind is the digest's, such as "standup".
+	Kind string `json:"kind"`
+	// Date is the digest's day, YYYY-MM-DD, and At when it was written,
+	// RFC 3339.
+	Date string `json:"date"`
+	At   string `json:"at"`
+	// File is the digest's path in the notes repository.
+	File string `json:"file"`
+	Text string `json:"text"`
+}
+
+// WriteToday puts t under dir as digests/today.json, replaced by a rename;
+// it refuses a digests directory that is a link.
+func WriteToday(dir string, t Today) error {
+	if err := checkCollection(dir, "digests"); err != nil {
+		return err
+	}
+	return writeJSON(filepath.Join(dir, "digests", "today.json"), t)
 }
 
 // writeJSON writes v to file, unescaped for HTML, which the page never
