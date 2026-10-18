@@ -762,6 +762,69 @@ func TestAgentRoles(t *testing.T) {
 	}
 }
 
+// TestAgentShadow denies starting one of the operator's agents where the
+// session's project has any agent definition, which Claude Code could run
+// in its place: a .md file under a .claude/agents from the working
+// directory up to the repository's top, through links too, but not the
+// home directory's own.
+func TestAgentShadow(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	write := func(path string) {
+		os.MkdirAll(filepath.Dir(path), 0o755)
+		os.WriteFile(path, []byte("---\nname : x\n---\n"), 0o644)
+	}
+	// repo has a definition, under a subdirectory, below the top; linked
+	// one through a linked directory; plain only a README; and above
+	// them, outside every repository, the test's home directory and a
+	// definition above the repositories.
+	repo, linked, plain := filepath.Join(root, "repo"), filepath.Join(root, "linked"), filepath.Join(root, "plain")
+	for _, r := range []string{repo, linked, plain} {
+		os.MkdirAll(filepath.Join(r, ".git"), 0o755)
+	}
+	write(filepath.Join(repo, "a", ".claude", "agents", "nested", "Mine.MD"))
+	os.MkdirAll(filepath.Join(repo, "a", "b"), 0o755)
+	write(filepath.Join(root, "elsewhere", "x.md"))
+	os.MkdirAll(filepath.Join(linked, ".claude"), 0o755)
+	os.Symlink(filepath.Join(root, "elsewhere"), filepath.Join(linked, ".claude", "agents"))
+	os.MkdirAll(filepath.Join(plain, ".claude", "agents"), 0o755)
+	os.WriteFile(filepath.Join(plain, ".claude", "agents", "README.txt"), nil, 0o644)
+	write(filepath.Join(root, ".claude", "agents", "d.md"))
+	old := home
+	home = filepath.Join(root, "home")
+	t.Cleanup(func() { home = old })
+	write(filepath.Join(home, ".claude", "agents", "reviewer.md"))
+	os.MkdirAll(filepath.Join(home, "notes"), 0o755)
+	for _, c := range []struct {
+		deny      bool
+		tool      string
+		agentType string
+		cwd       string
+		says      string
+	}{
+		{true, "Agent", "reviewer", filepath.Join(repo, "a", "b"), filepath.Join(repo, "a", ".claude", "agents")},
+		{true, "Task", "builder", filepath.Join(repo, "a"), filepath.Join(repo, "a", ".claude", "agents")},
+		{true, "Agent", "security-reviewer", linked, filepath.Join(linked, ".claude", "agents")},
+		{false, "Agent", "reviewer", repo, ""},
+		{false, "Agent", "general-purpose", filepath.Join(repo, "a"), ""},
+		{false, "Agent", "reviewer", plain, ""},
+		{false, "Agent", "reviewer", filepath.Join(home, "notes"), ""},
+		{false, "Agent", "reviewer", home, ""},
+	} {
+		t.Run(caseName(c.deny, c.tool+" "+c.agentType+" in "+strings.TrimPrefix(c.cwd, root)), func(t *testing.T) {
+			event, _ := json.Marshal(map[string]any{"tool_name": c.tool, "cwd": c.cwd,
+				"tool_input": map[string]string{"subagent_type": c.agentType, "prompt": "p"}})
+			var out bytes.Buffer
+			Main([]string{"--baseline"}, bytes.NewReader(event), &out, io.Discard)
+			if denied := strings.Contains(out.String(), `"deny"`); denied != c.deny {
+				t.Fatalf("deny=%v: %s", denied, out.String())
+			}
+			if c.deny && (!strings.Contains(out.String(), c.says+",") || !saysInstead(out.String())) {
+				t.Errorf("the reason does not name %s or say what to do instead: %s", c.says, out.String())
+			}
+		})
+	}
+}
+
 // TestReviewerReasons holds every denial a reviewer meets to the one thing
 // it should do instead, wherever the rule it broke comes from.
 func TestReviewerReasons(t *testing.T) {

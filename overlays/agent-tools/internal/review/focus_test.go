@@ -13,6 +13,22 @@ import (
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
+// TestSecurityContract holds the security contract to where the package's
+// Nix passthru.securityReviewerPrompt builds it for the security-reviewer
+// agent: the general contract split at its one "## Checks" line, then the
+// security checks.
+func TestSecurityContract(t *testing.T) {
+	const heading = "\n## Checks\n"
+	if n := strings.Count(Contract, heading); n != 1 {
+		t.Fatalf("reviewer.md has %d %q lines; the Nix split needs one", n, strings.TrimSpace(heading))
+	}
+	want := Contract[:strings.Index(Contract, heading)+1] + securityChecks
+	if got := focuses["security"].contract(); got != want {
+		t.Errorf("focus.contract() is not the general contract up to %q and then security.md, as the Nix split builds it",
+			strings.TrimSpace(heading))
+	}
+}
+
 // focusFixture is setUp's repository with a plan, of no session, that
 // names its worktree.
 func focusFixture(t *testing.T) (*fixture, plans.Plan) {

@@ -293,6 +293,8 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 		return ""
 	case tool == "ExitWorktree":
 		return checkExitWorktree(toolInput, dir)
+	case tool == "Agent" || tool == "Task":
+		return checkAgentShadow(toolInput, dir)
 	case tool == "Edit" || tool == "Write" || tool == "MultiEdit" || tool == "NotebookEdit" || tool == "apply_patch",
 		server == "eca" && (tool == "write_file" || tool == "edit_file" || tool == "move_file"):
 		return checkFileTool(tool, toolInput, dir)

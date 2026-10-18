@@ -120,6 +120,20 @@
     # the agents' own reviewer sub-agents.
     passthru.reviewerPrompt = builtins.readFile ./internal/review/reviewer.md;
 
+    # The security review's contract as `git fresh-review --focus security`
+    # builds it (focus.contract in internal/review): the general contract up
+    # to its Checks heading, then the security checks. TestSecurityContract
+    # holds the Go side to the same heading.
+    passthru.securityReviewerPrompt = let
+      parts = lib.splitString "\n## Checks\n" (builtins.readFile ./internal/review/reviewer.md);
+    in
+      assert lib.assertMsg (builtins.length parts == 2) "agent-tools: reviewer.md needs exactly one `## Checks` heading, where the security contract splits it";
+        builtins.head parts + "\n" + builtins.readFile ./internal/review/security.md;
+
+    # The agents with a guard role, and the user-level Claude Code agents,
+    # which the guard keeps a project from replacing.
+    passthru.guardAgents = builtins.fromJSON (builtins.readFile ./internal/guard/agents.json);
+
     # Static Linux builds for a sandbox guest: pr-loop and agent-plan, which
     # it runs as clients of `sandbox-relay serve` on the host, and
     # git-red-check, which `pr-loop review` runs in the VM. The host's
