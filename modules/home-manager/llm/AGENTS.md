@@ -13,7 +13,8 @@ parser before adding the flag").
 Commits stay unsigned and nothing waits for a touch of the operator's
 hardware key: they sign everything in one pass at the end. Load the
 `signing-pass` skill, which holds the commit rules, before creating,
-amending or rewriting a commit.
+amending or rewriting a commit in any repository, a test's fixture
+included.
 
 ## Pull requests
 
@@ -56,6 +57,13 @@ between edits.
 Use the file-editing tools for every file, scratch files, plans and notes
 included; the guard's refusal of a shell edit names the exceptions. Writing
 a command's output to a new file is capturing, not editing.
+
+## The operator's state
+
+What you run to test or try something leaves the operator's configuration
+and state alone. A test Emacs starts with both `-Q` and its own
+`--init-directory`, plus the `-L` and `-l` it needs, and is reached by its
+full socket path, never through the operator's own server.
 
 ## The shell
 

@@ -40,6 +40,9 @@ the signing to one pass at the end, which the operator runs.
 
   A rebase re-signs every commit it replays unless told not to, so it needs
   the flag as much as a commit does.
+- A repository you create, a test's fixture or a throwaway clone, inherits
+  the same config: its commits take the flag too, in test code as well, or
+  its own config sets `commit.gpgsign` to false.
 - Never `git push`. A push to GitHub authenticates with the same key over SSH
   and waits for a touch too. Leave it to the signing pass.
 - To open a pull request for a branch GitHub does not have yet, publish it
