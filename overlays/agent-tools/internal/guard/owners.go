@@ -240,10 +240,13 @@ func shellEditPaths(text, dir string, depth int) []string {
 		return nil
 	}
 	var out []string
-	cwd := dir
+	w := cwds{here: []string{dir}}
+	end := ""
 	v := visitor{
 		script: func(text string) string {
-			out = append(out, shellEditPaths(text, cwd, depth+1)...)
+			for _, cwd := range w.here {
+				out = append(out, shellEditPaths(text, cwd, depth+1)...)
+			}
 			return ""
 		},
 		call: func(c call) string {
@@ -251,32 +254,39 @@ func shellEditPaths(text, dir string, depth int) []string {
 				return ""
 			}
 			if c.words[0] == "cd" || c.words[0] == "pushd" {
-				cwd = cdTarget(c, cwd)
+				w.cd(c, end)
 				return ""
 			}
-			for _, t := range changedFiles(base(c.words[0]), c.words[1:], redirections(c.words)) {
-				if p := expandPath(t, cwd); filepath.IsAbs(p) {
-					out = append(out, p)
+			for _, cwd := range w.here {
+				for _, t := range changedFiles(base(c.words[0]), c.words[1:], redirections(c.words)) {
+					if p := expandPath(t, cwd); filepath.IsAbs(p) {
+						out = append(out, p)
+					}
 				}
-			}
-			if dir := gitWriteDir(c, cwd); dir != "" {
-				out = append(out, dir)
+				if dir := gitWriteDir(c, cwd); dir != "" {
+					out = append(out, dir)
+				}
 			}
 			return ""
 		},
 	}
-	for _, segment := range segments(text) {
+	texts, _, ends := backgroundSegments(text)
+	for i, segment := range texts {
 		if words, expands := split(segment); len(words) > 0 {
-			unwrap(call{words: words, expands: expands}, v)
+			end = ends[i]
+			c := call{words: words, expands: expands}
+			w.begin(c)
+			unwrap(c, v)
+			w.next(end)
 		}
 	}
 	return out
 }
 
 // gitWriteDir is the absolute directory a git command, run in cwd, writes,
-// with its -C options applied, when gitWrites names its command and it is
-// not one of their reading forms (stash list or show, worktree list); ""
-// for any other command.
+// with its -C options applied, when gitWrites names its command and gitRead
+// does not pass it as a reading form (stash list, tag -l, apply --check);
+// "" for any other command.
 func gitWriteDir(c call, cwd string) string {
 	if base(c.words[0]) != "git" {
 		return ""
@@ -293,11 +303,7 @@ func gitWriteDir(c call, cwd string) string {
 			words = words[1:]
 		}
 	}
-	if len(words) == 0 || !gitWrites[words[0]] || !filepath.IsAbs(dir) {
-		return ""
-	}
-	if len(words) > 1 && (words[0] == "stash" && (words[1] == "list" || words[1] == "show") ||
-		words[0] == "worktree" && words[1] == "list") {
+	if len(words) == 0 || !gitWrites[words[0]] || gitRead(words[0], words[1:]) || !filepath.IsAbs(dir) {
 		return ""
 	}
 	return dir

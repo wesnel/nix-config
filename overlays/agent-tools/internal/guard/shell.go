@@ -147,6 +147,11 @@ func unwrap(c call, v visitor) string {
 	switch {
 	case name == "env":
 		return unwrapEnv(c.env, args, expands, v)
+	case name == "git":
+		if reason := v.call(c); reason != "" {
+			return reason
+		}
+		return unwrapGit(c.env, args, expands, v)
 	case name == "direnv" && len(args) > 0 && args[0] == "exec":
 		return unwrap(rest(2), v)
 	case name == "nwrap":
@@ -193,7 +198,11 @@ func unwrap(c call, v visitor) string {
 				env = append(env, a)
 			}
 		}
-		return v.call(call{words: c.words, expands: c.expands, env: env})
+		if reason := v.call(call{words: c.words, expands: c.expands, env: env}); reason != "" {
+			return reason
+		}
+		// An exported alias reaches every later git.
+		return envAliases(env, v)
 	}
 	return v.call(c)
 }
@@ -311,10 +320,87 @@ func unwrapNixRun(env, args []string, expands []bool, v visitor) string {
 	program, expanded := "", true
 	if _, attribute, ok := strings.Cut(args[at], "#"); ok && attribute != "" {
 		program, expanded = attribute[strings.LastIndex(attribute, ".")+1:], expands[at]
+		if program == "fmt" {
+			program = "nix-fmt" // a flake's formatter, not coreutils' fmt
+		}
 	}
 	words := append([]string{program}, args[min(i, len(args)):]...)
 	x := append([]bool{expanded}, expands[min(i, len(expands)):]...)
 	return v.call(call{words: words, expands: x, env: env})
+}
+
+// unwrapGit hands on the command a git command runs for itself, once v
+// has judged the git command: a shell alias given for this command alone
+// (envAlias), `bisect run`'s, `submodule foreach`'s script and
+// `rebase --exec`'s.
+func unwrapGit(env, args []string, expands []bool, v visitor) string {
+	if reason := envAliases(env, v); reason != "" {
+		return reason
+	}
+	i := 0
+	for i < len(args) && strings.HasPrefix(args[i], "-") {
+		var entry string // KEY=VALUE, as -c or --config-env gives it
+		expanded := false
+		switch a := args[i]; {
+		case a == "-c" && i+1 < len(args):
+			entry, expanded = args[i+1], i+1 < len(expands) && expands[i+1]
+		case a == "--config-env" && i+1 < len(args), strings.HasPrefix(a, "--config-env="):
+			spec := strings.TrimPrefix(a, "--config-env=")
+			if a == "--config-env" {
+				spec = args[i+1]
+			}
+			key, variable, _ := strings.Cut(spec, "=")
+			value, ok := envValue(env, variable)
+			if !ok && aliasKey(key) {
+				return aliasUnknown
+			}
+			entry = key + "=" + value
+		}
+		if key, _, _ := strings.Cut(entry, "="); strings.ContainsAny(key, "$`") {
+			return aliasUnknown // a key from a variable may be an alias's
+		}
+		if key, value, ok := strings.Cut(entry, "="); ok {
+			if reason := aliasScript(key, value, expanded, v); reason != "" {
+				return reason
+			}
+		}
+		if gitValueFlags[args[i]] {
+			i++
+		}
+		i++
+	}
+	if i >= len(args) {
+		return ""
+	}
+	sub, rest, x := args[i], args[i+1:], expands[i+1:]
+	switch {
+	case sub == "bisect" && len(rest) > 1 && rest[0] == "run":
+		return unwrap(call{words: rest[1:], expands: x[1:], env: env}, v)
+	case sub == "submodule":
+		for j, w := range rest {
+			if w == "foreach" {
+				k := j + 1
+				for k < len(rest) && strings.HasPrefix(rest[k], "-") {
+					k++
+				}
+				return v.script(strings.Join(rest[k:], " "))
+			}
+		}
+	case sub == "rebase":
+		for j, w := range rest {
+			switch {
+			case (w == "-x" || w == "--exec") && j+1 < len(rest):
+				if reason := v.script(rest[j+1]); reason != "" {
+					return reason
+				}
+			case strings.HasPrefix(w, "--exec="):
+				if reason := v.script(strings.TrimPrefix(w, "--exec=")); reason != "" {
+					return reason
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // shellScript is the script a shell's arguments run with -c, or a flag
@@ -367,13 +453,16 @@ func contains(words []string, w string) bool {
 // out of double quotes, is a command of its own, and stands in the command
 // around it as `$_`, a word the shell expands.
 func segments(text string) []string {
-	out, _ := backgroundSegments(text)
+	out, _, _ := backgroundSegments(text)
 	return out
 }
 
 // backgroundSegments is segments, with whether each runs in the
-// background: it, or the subshell it is in, ends with a lone &.
-func backgroundSegments(text string) ([]string, []bool) {
+// background (it, or the subshell it is in, ends with a lone &) and what
+// ends each: "&&", "||", ";", "|", "&", a newline, "(" or ")" where a
+// subshell opens or closes, "$" where a command substitution ends, or ""
+// at the end of the line.
+func backgroundSegments(text string) (out []string, background []bool, ends []string) {
 	type frame struct {
 		cur      strings.Builder
 		quote    byte  // the quote this frame is inside, if any
@@ -383,14 +472,13 @@ func backgroundSegments(text string) ([]string, []bool) {
 		groups   []int // where each subshell open in the frame starts in out
 		closed   int   // where the subshell that just closed started, or -1
 	}
-	var out []string
-	var background []bool
 	stack := []*frame{{closed: -1}}
 	top := func() *frame { return stack[len(stack)-1] }
-	flush := func() {
+	flush := func(end string) {
 		f := top()
 		out = append(out, f.cur.String())
 		background = append(background, false)
+		ends = append(ends, end)
 		f.cur.Reset()
 	}
 	open := func(backtick bool) {
@@ -398,7 +486,7 @@ func backgroundSegments(text string) ([]string, []bool) {
 		stack = append(stack, &frame{backtick: backtick, sub: true, closed: -1})
 	}
 	closeSub := func() {
-		flush()
+		flush("$")
 		stack = stack[:len(stack)-1]
 	}
 	for i := 0; i < len(text); i++ {
@@ -435,11 +523,11 @@ func backgroundSegments(text string) ([]string, []bool) {
 			closeSub()
 		case c == '(':
 			f.parens++
-			flush()
+			flush("(")
 			f.groups = append(f.groups, len(out))
 		case c == ')':
 			f.parens = max(0, f.parens-1)
-			flush()
+			flush(")")
 			if n := len(f.groups); n > 0 {
 				f.closed, f.groups = f.groups[n-1], f.groups[:n-1]
 			}
@@ -449,7 +537,7 @@ func backgroundSegments(text string) ([]string, []bool) {
 			f.cur.WriteByte(c)
 		case c == '&' && (i == 0 || text[i-1] != '&' && text[i-1] != '|') && (i+1 == len(text) || text[i+1] != '&'):
 			whole := strings.TrimSpace(f.cur.String()) == "" && f.closed >= 0
-			flush()
+			flush("&")
 			from := len(out) - 1
 			if whole {
 				from = f.closed
@@ -459,7 +547,11 @@ func backgroundSegments(text string) ([]string, []bool) {
 			}
 			f.closed = -1
 		case c == ';' || c == '\n' || c == '|' || c == '&':
-			flush()
+			end := string(c)
+			if (c == '&' || c == '|') && i+1 < len(text) && text[i+1] == c {
+				end += end // the second of the pair ends an empty segment
+			}
+			flush(end)
 		default:
 			f.cur.WriteByte(c)
 		}
@@ -467,8 +559,191 @@ func backgroundSegments(text string) ([]string, []bool) {
 	for len(stack) > 1 {
 		closeSub()
 	}
-	flush()
-	return out, background
+	flush("")
+	return out, background, ends
+}
+
+// aliasUnknown is why an alias whose name or value the guard cannot read
+// is refused.
+const aliasUnknown = "This git alias's name or value comes from a variable or an expansion, so the guard cannot read what it runs. " +
+	"Give the alias literally (`-c alias.NAME='!CMD'`), or run the command it stands for."
+
+// aliasKey reports whether a git config key defines an alias.
+func aliasKey(key string) bool { return strings.HasPrefix(strings.ToLower(key), "alias.") }
+
+// aliasScript hands an alias entry given for one git command (KEY=VALUE)
+// to v as the shell command it runs when its value starts with !. A value
+// the shell expands, which could become one, is refused.
+func aliasScript(key, value string, expanded bool, v visitor) string {
+	if !aliasKey(key) {
+		return ""
+	}
+	if script, ok := strings.CutPrefix(strings.TrimLeft(value, " \t"), "!"); ok {
+		return v.script(script)
+	}
+	if expanded && strings.ContainsAny(value, "$`") {
+		return aliasUnknown
+	}
+	return ""
+}
+
+// envValue is the value env assigns to name.
+func envValue(env []string, name string) (string, bool) {
+	for i := len(env) - 1; i >= 0; i-- {
+		if n, value, _ := strings.Cut(env[i], "="); n == name {
+			return value, true
+		}
+	}
+	return "", false
+}
+
+// envAliases hands to v each shell alias the assignments in env give git:
+// GIT_CONFIG_PARAMETERS's entries, each GIT_CONFIG_KEY_n with its
+// GIT_CONFIG_VALUE_n, and the aliases of the file GIT_CONFIG_GLOBAL,
+// GIT_CONFIG_SYSTEM or GIT_CONFIG names. An alias key whose value env does
+// not give, or gives through an expansion, a key that comes from one, and
+// such a file the guard cannot read or that includes another, are refused.
+func envAliases(env []string, v visitor) string {
+	for _, kv := range env {
+		name, value, _ := strings.Cut(kv, "=")
+		switch {
+		case name == "GIT_CONFIG_GLOBAL" || name == "GIT_CONFIG_SYSTEM" || name == "GIT_CONFIG":
+			if value == "/dev/null" {
+				continue
+			}
+			entries, reason := configFileEntries(shellPath(value, true))
+			if reason != "" {
+				return reason
+			}
+			for _, e := range entries {
+				if reason := aliasScript(e[0], e[1], false, v); reason != "" {
+					return reason
+				}
+			}
+		case name == "GIT_CONFIG_PARAMETERS":
+			words, expands := split(value)
+			for j, w := range words {
+				key, val, _ := strings.Cut(w, "=")
+				if strings.ContainsAny(key, "$`") {
+					return aliasUnknown
+				}
+				if reason := aliasScript(key, val, expands[j], v); reason != "" {
+					return reason
+				}
+			}
+		case strings.HasPrefix(name, "GIT_CONFIG_KEY_") && strings.ContainsAny(value, "$`"):
+			return aliasUnknown
+		case strings.HasPrefix(name, "GIT_CONFIG_KEY_") && aliasKey(value):
+			val, ok := envValue(env, "GIT_CONFIG_VALUE_"+strings.TrimPrefix(name, "GIT_CONFIG_KEY_"))
+			if !ok {
+				return aliasUnknown
+			}
+			if reason := aliasScript(value, val, true, v); reason != "" {
+				return reason
+			}
+		}
+	}
+	return ""
+}
+
+// cwds follows where the commands of one command line may run as cd moves
+// them: here, the directories the next command may run in ("" for one the
+// guard cannot tell), and before, where the line may be instead if a cd
+// in the && chain under way fails. A cd holds for certain only over the
+// commands joined to it by &&. Past any other end, the shell may be where
+// the cd went or, the cd having failed or run in a subshell or pipeline,
+// where it was. A cd that is an if's or a while's condition holds over the
+// branch it guards, and one that && joins to a { } group over the group.
+type cwds struct {
+	here, before []string
+	// The call under way is the condition of an if, while or until, and a
+	// cd.
+	condition bool
+	// The if, while, until and { } blocks open, each with where the line
+	// is if the cd guarding it failed; nil for a block no cd guards.
+	blocks []*[]string
+}
+
+// begin moves w for the shell keyword a call c starts with, before c is
+// judged: it opens or closes a block, or enters an else branch, which runs
+// where the guarding cd's failure left the line.
+func (w *cwds) begin(c call) {
+	w.condition = false
+	if len(c.words) == 0 || c.expands[0] {
+		return
+	}
+	switch c.words[0] {
+	case "if", "while", "until":
+		w.blocks = append(w.blocks, nil)
+		cd := len(c.words) > 2 && !c.expands[1] && (c.words[1] == "cd" || c.words[1] == "pushd")
+		// until's body runs while the cd fails, and while's runs the cd
+		// again from where the body left it, the same place only for an
+		// absolute path.
+		w.condition = cd && (c.words[0] == "if" ||
+			c.words[0] == "while" && strings.HasPrefix(shellPath(c.words[2], c.expands[2]), "/"))
+	case "{":
+		var outside *[]string
+		if len(w.before) > 0 { // a cd's && chain runs into the group
+			before := w.before
+			outside, w.before = &before, nil
+		}
+		w.blocks = append(w.blocks, outside)
+	case "else", "elif":
+		if n := len(w.blocks); n > 0 && w.blocks[n-1] != nil {
+			w.here = slices.Clone(*w.blocks[n-1])
+		}
+	case "fi", "done", "}":
+		if n := len(w.blocks); n > 0 {
+			if outside := w.blocks[n-1]; outside != nil {
+				for _, d := range *outside {
+					w.here = addDir(w.here, d)
+				}
+			}
+			w.blocks = w.blocks[:n-1]
+		}
+	}
+}
+
+// cd moves w for a cd or pushd call c that end ends.
+func (w *cwds) cd(c call, end string) {
+	var to []string
+	for _, d := range w.here {
+		to = addDir(to, cdTarget(c, d))
+	}
+	if n := len(w.blocks); w.condition && n > 0 && (end == ";" || end == "\n") {
+		outside := w.here
+		w.blocks[n-1], w.here = &outside, to
+		return
+	}
+	if end == "&&" {
+		for _, d := range w.here {
+			w.before = addDir(w.before, d)
+		}
+		w.here = to
+		return
+	}
+	for _, d := range to {
+		w.here = addDir(w.here, d)
+	}
+}
+
+// next moves w past the end of a call.
+func (w *cwds) next(end string) {
+	if end == "&&" {
+		return
+	}
+	for _, d := range w.before {
+		w.here = addDir(w.here, d)
+	}
+	w.before = nil
+}
+
+// addDir is dirs with d, once.
+func addDir(dirs []string, d string) []string {
+	if slices.Contains(dirs, d) {
+		return dirs
+	}
+	return append(dirs, d)
 }
 
 // split splits one segment into words the way a shell would, removing quotes,

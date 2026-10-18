@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
@@ -182,7 +184,8 @@ func testCheckWrappedCommands(t *testing.T) {
 		{false, "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0=push git x"},
 		{true, "env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=push-guard.allowPublic GIT_CONFIG_VALUE_0=o/r git status"},
 		{false, "export GIT_CONFIG_PARAMETERS=\"'alias.x=push'\"; git x"},
-		{false, "git --config-env=alias.x=CMD x"},
+		{true, "git --config-env=alias.x=CMD x"}, // CMD's value is not on the line
+		{false, "CMD=status git --config-env=alias.x=CMD x"},
 		{false, "$g pr merge 1"},
 		{false, `"$GH" pr comment 1 -b hi`},
 		{false, "$(which git) push"},
@@ -548,6 +551,12 @@ func testBaselineRoles(t *testing.T) {
 		{false, "", "pr-loop link 3 4"},
 		{false, "pr-loop:pr-owner", "git commit --fixup=abc"},
 		{true, "pr-loop:pr-owner", "git commit -m x"},
+		{true, "adversarial-reviewer", "git commit -m x"},
+		{true, "design-reviewer", "agent-plan log p --kind done"},
+		{false, "design-reviewer", "agent-plan status p"},
+		{true, "security-reviewer", "git stash"},
+		{true, "security-reviewer", "git fresh-review a..b"},
+		{false, "builder", "git commit -m x"},
 	} {
 		t.Run(caseName(c.deny, strings.TrimSpace(c.agentType+" "+c.command)), func(t *testing.T) {
 			event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "agent_type": c.agentType,
@@ -600,6 +609,385 @@ func testBaselineFormats(t *testing.T) {
 			t.Errorf("an unknown flag was accepted: %s", out.String())
 		}
 	})
+}
+
+// TestReviewerGit holds a reviewer to git's reading commands in the
+// checkout: every other command, or a reading one's writing form, is
+// denied.
+func TestReviewerGit(t *testing.T) {
+	t.Chdir(t.TempDir())
+	for _, c := range []struct {
+		deny    bool
+		command string
+	}{
+		{false, "git log --oneline a..b"},
+		{false, "git -C /x show abc --stat"},
+		{false, "git diff a b"},
+		{false, "git status --short"},
+		{false, "git grep -n foo"},
+		{false, "git blame a.go"},
+		{false, "git range-diff a...b"},
+		{false, "git merge-tree --write-tree a b"},
+		{false, "git branch"},
+		{false, "git branch -a --contains abc"},
+		{false, "git branch --list 'p*'"},
+		{false, "git tag -l"},
+		{false, "git worktree list"},
+		{false, "git stash list"},
+		{false, "git remote -v"},
+		{false, "git config --get user.name"},
+		{false, "git symbolic-ref HEAD"},
+		{false, "git archive HEAD"},
+		{false, "git apply --check a.diff"},
+		{false, "git --version"},
+		{true, "git checkout-index -f -a"},
+		{true, "git symbolic-ref HEAD refs/heads/x"},
+		{true, "git branch -f other HEAD"},
+		{true, "git branch new"},
+		{true, "git sparse-checkout set x"},
+		{true, "git bisect start"},
+		{true, "git fetch . a:b"},
+		{true, "git remote remove origin"},
+		{true, "git config core.hooksPath x"},
+		{true, "git tag v1"},
+		{true, "git worktree add ../x"},
+		{true, "git apply a.diff"},
+		{true, "git archive -o a.tar HEAD"},
+		{true, "git archive -oREADME.md HEAD"},
+		{true, "git format-patch --stdout -oout -1"},
+		{true, "git reflog write refs/heads/main a b msg"},
+		{true, "git diff --output=a.diff a b"},
+		{true, "git grep -Ovim foo"},
+		{true, "git format-patch -1"},
+		{true, "git hash-object -w a.go"},
+		{true, "git reflog expire --all"},
+		{true, "git lg"},
+		{true, "git submodule foreach 'git status'"},
+		{true, "git bisect run make"},
+		// A reading command's configuration and environment are its own.
+		{false, "GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git log"},
+		{false, "git -c core.pager=cat log"},
+		{false, "git log -p --textconv"},
+		{false, "git diff --no-ext-diff"},
+		{false, "PAGER=cat git log"},
+		{false, "HOME=/tmp/h go vet ./..."},
+		// Searching the checkout, with git or without it.
+		{false, "rg foo"},
+		{false, "rg -n foo ."},
+		{false, "git grep -n foo -- ."},
+	} {
+		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
+			input, _ := json.Marshal(map[string]string{"command": c.command})
+			reason := CheckReviewer("Bash", "", input)
+			if (reason != "") != c.deny {
+				t.Errorf("%q: deny=%v, %q", c.command, reason != "", reason)
+			}
+		})
+	}
+}
+
+// TestReviewerScratchRepo lets a reviewer run any git command but push in
+// a repository of its own under scratch, and holds it to reading wherever
+// the command could reach the checkout under review or its repository:
+// through a copy of the worktree's .git file, a link, core.worktree, or a
+// file it writes.
+func TestReviewerScratchRepo(t *testing.T) {
+	// The checkout is a linked worktree of a repository outside scratch.
+	repo, checkout, scratch := filepath.Join(t.TempDir(), "repo"), filepath.Join(t.TempDir(), "w"), t.TempDir()
+	gitIn(t, filepath.Dir(repo), "init", "-q", "-b", "main", repo)
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+	gitIn(t, repo, "worktree", "add", "-q", "-b", "feat", checkout)
+	if err := os.Mkdir(filepath.Join(checkout, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", scratch)
+	dir := func(name string) string {
+		d := filepath.Join(scratch, name)
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	x := dir("x")
+	own := dir("own") // a repository of the reviewer's own
+	gitIn(t, own, "init", "-q")
+	gitIn(t, own, "commit", "-q", "--allow-empty", "-m", "own")
+	// `cp -R CHECKOUT copy` copies the worktree's .git file, which leads
+	// back to the reviewed repository.
+	copied := dir("copy")
+	gitfile, err := os.ReadFile(filepath.Join(checkout, ".git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(copied, ".git"), gitfile, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A link from scratch into the checkout.
+	linked := dir("linked")
+	if err := os.Symlink(filepath.Join(checkout, "sub"), filepath.Join(linked, "link")); err != nil {
+		t.Fatal(err)
+	}
+	// A repository in scratch whose work tree is the checkout.
+	elsewhere := dir("elsewhere")
+	gitIn(t, elsewhere, "init", "-q")
+	gitIn(t, elsewhere, "config", "core.worktree", checkout)
+	inner := dir("repo") // a checkout inside scratch
+	for _, c := range []struct {
+		deny    bool
+		cwd     string
+		command string
+	}{
+		{false, checkout, "git -C " + x + " init"},
+		{false, checkout, "git -C " + x + " -c commit.gpgsign=false commit -m x"},
+		{false, checkout, "cd " + x + " && git add f && git commit -m x"},
+		{false, checkout, "git -C " + own + " commit --allow-empty -m mutant"},
+		{false, checkout, "git -C " + own + " branch -f other HEAD"},
+		{false, checkout, "git -C $TMPDIR/x init"},
+		{false, checkout, `git -C "${TMPDIR}/x" init`},
+		{false, checkout, "git init " + scratch + "/new"},
+		{false, checkout, "git clone -q . " + scratch + "/clone"},
+		{false, checkout, "git -C " + own + " archive -o " + scratch + "/a.tar HEAD"},
+		{false, checkout, "cd $TMPDIR/own && git commit --allow-empty -m mutant"},
+		{false, checkout, `cd "${TMPDIR}/own" && git branch -f other HEAD`},
+		{true, checkout, "git commit -m x"},
+		{true, checkout, "git -C '$TMPDIR/x' init"},
+		{true, checkout, "cd '$TMPDIR/own' && git commit --allow-empty -m mutant"},
+		{true, checkout, "cd $ELSEWHERE/own && git commit --allow-empty -m mutant"},
+		// A cd holds only over what && joins to it: past any other
+		// separator the commit may run in the checkout.
+		{false, checkout, "cd $TMPDIR/own && git add f && git commit --allow-empty -m mutant"},
+		{false, checkout, "(cd $TMPDIR/own && git commit --allow-empty -m mutant)"},
+		{true, checkout, "cd $TMPDIR/nope; git commit --allow-empty -m mutant"},
+		{true, checkout, "cd $TMPDIR/own; git commit --allow-empty -m mutant"},
+		{true, checkout, "cd $TMPDIR/own || git commit --allow-empty -m mutant"},
+		{true, checkout, "cd $TMPDIR/own | git commit --allow-empty -m mutant"},
+		{true, checkout, "cd $TMPDIR/own & git commit --allow-empty -m mutant"},
+		{true, checkout, "(cd $TMPDIR/own) && git commit --allow-empty -m mutant"},
+		{true, checkout, "cd $TMPDIR/own && git log; git commit --allow-empty -m mutant"},
+		// A cd that is the condition holds over the branch it guards, and
+		// only there.
+		{false, checkout, "if cd $TMPDIR/own; then git commit --allow-empty -m mutant; fi"},
+		{false, checkout, "if cd $TMPDIR/own; then git branch -f other HEAD; git commit --allow-empty -m mutant; fi"},
+		{false, checkout, "while cd $TMPDIR/own; do git commit --allow-empty -m mutant; break; done"},
+		{false, checkout, "cd $TMPDIR/own && { git branch -f other HEAD; git commit --allow-empty -m mutant; }"},
+		{true, checkout, "if cd $TMPDIR/own; then true; fi; git commit --allow-empty -m mutant"},
+		{true, checkout, "if cd $TMPDIR/own; then true; else git commit --allow-empty -m mutant; fi"},
+		{true, checkout, "cd $TMPDIR/own && { true; }; git commit --allow-empty -m mutant"},
+		{true, checkout, "if true; cd $TMPDIR/own; then git commit --allow-empty -m mutant; fi"},
+		{true, checkout, "{ cd $TMPDIR/own; git commit --allow-empty -m mutant; }"},
+		{true, checkout, "git clone -q ."},
+		{true, checkout, "git -C " + x + " push " + checkout + " HEAD:main"},
+		{true, checkout, "git -C " + own + " send-pack " + checkout + " HEAD:refs/heads/x"},
+		{true, checkout, "git -C " + x + " --git-dir=" + checkout + "/.git commit"},
+		{true, checkout, "git --git-dir=" + checkout + "/.git -C " + x + " commit"},
+		{true, checkout, "GIT_DIR=" + checkout + "/.git git -C " + x + " commit"},
+		{true, checkout, "GIT_WORK_TREE=" + checkout + " git -C " + x + " add ."},
+		{true, x, "git commit -m x"},
+		{true, inner, "git -C " + scratch + " init"},
+		{true, inner, "git -C " + inner + "/sub init"},
+		// The copied worktree's git directory is the reviewed repository's.
+		{true, checkout, "git -C " + copied + " commit --allow-empty -m mutant"},
+		{true, checkout, "git -C " + copied + " branch -f feat HEAD"},
+		{true, checkout, "cd " + copied + " && git reset --hard"},
+		// Each -C is a chdir through the link, so .. lands in the checkout.
+		{true, checkout, "git -C " + linked + "/link -C .. update-ref refs/heads/x HEAD"},
+		{true, checkout, "git -C " + linked + "/link/.. update-ref refs/heads/x HEAD"},
+		{true, checkout, "git -C " + elsewhere + " add ."},
+		// Files written into the checkout from a repository of its own.
+		{true, checkout, "git -C " + own + " archive -o " + checkout + "/a.tar HEAD"},
+		{true, checkout, "git -C " + own + " format-patch -o" + checkout + "/p -1"},
+		{true, checkout, "git -C " + own + " worktree add " + checkout + "/w2"},
+		{true, checkout, "git -C " + own + " diff --output=" + checkout + "/d HEAD"},
+		{true, checkout, "git -C " + x + " init " + checkout + "/sub2"},
+	} {
+		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
+			t.Chdir(c.cwd)
+			input, _ := json.Marshal(map[string]string{"command": c.command})
+			reason := CheckReviewer("Bash", "", input)
+			if (reason != "") != c.deny || c.deny && reason != reviewerGit {
+				t.Errorf("%q in %s: %q", c.command, c.cwd, reason)
+			}
+		})
+	}
+}
+
+// TestGitShellAlias reads a shell alias given for one git command, on its
+// command line or in the environment, as the shell command it is, for
+// every session: what the guard denies typed alone, it denies there. An
+// alias it cannot read, or an included file of settings, is refused.
+func TestGitShellAlias(t *testing.T) {
+	scratch := t.TempDir()
+	t.Setenv("TMPDIR", scratch)
+	// Configuration files a command may name as git's global or system one.
+	for name, text := range map[string]string{
+		"alias":   "[alias]\n\tp = !git push\n",
+		"include": "[include]\n\tpath = elsewhere\n",
+		"plain":   "[user]\n\tname = x\n[alias]\n\tst = status\n\ts = !git status\n",
+	} {
+		if err := os.WriteFile(filepath.Join(scratch, name), []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	checkout := t.TempDir()
+	t.Chdir(checkout)
+	for _, c := range []struct {
+		deny    bool
+		check   func(string, string, json.RawMessage) string
+		command string
+	}{
+		{true, CheckBaseline, "git -c alias.p='!git push origin HEAD' p"},
+		{true, CheckBaseline, "git -c ALIAS.P='!git push' p"},
+		{true, CheckBaseline, `git -c "alias.s=!sleep 60" s`},
+		{false, CheckBaseline, "git -c alias.s='!git status' s"},
+		{false, CheckBaseline, "git -c alias.st=status st"},
+		{true, CheckBaseline, "git -c alias.p=' !git push' p"},
+		{true, CheckBaseline, `git -c "alias.x=$CMD" x`},
+		{true, CheckBaseline, "V='!git push' git --config-env=alias.p=V p"},
+		{true, CheckBaseline, "git --config-env alias.p=V p"},
+		{true, CheckBaseline, "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0='!git push' git p"},
+		{true, CheckBaseline, "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p git p"},
+		{true, CheckBaseline, `GIT_CONFIG_PARAMETERS="'alias.p=!git push'" git p`},
+		{true, CheckBaseline, `GIT_CONFIG_PARAMETERS="'alias.p'='!git push'" git p`},
+		{true, CheckBaseline, `export GIT_CONFIG_PARAMETERS="'alias.p=!git push'"; git p`},
+		{true, CheckBaseline, "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0='!git push'; git p"},
+		{true, CheckBaseline, "export GIT_CONFIG_KEY_0=alias.p; git p"},
+		{false, CheckBaseline, `GIT_CONFIG_PARAMETERS="'alias.s=!git status'" git s`},
+		{false, CheckBaseline, "V='!git status' git --config-env=alias.s=V s"},
+		{true, CheckBaseline, "git -c include.path=" + scratch + "/inc status"},
+		{true, CheckBaseline, "git -c includeIf.onbranch:main.path=" + scratch + "/inc status"},
+		{true, CheckBaseline, "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=include.path GIT_CONFIG_VALUE_0=" + scratch + "/inc git status"},
+		{true, CheckBaseline, `GIT_CONFIG_PARAMETERS="'include.path=` + scratch + `/inc'" git status`},
+		// A key that comes from a variable could be an alias's.
+		{true, CheckBaseline, "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=$K GIT_CONFIG_VALUE_0='!git push' git p"},
+		{true, CheckBaseline, "git -c $K='!git push' p"},
+		{true, CheckBaseline, `git -c "$E" p`},
+		{true, CheckBaseline, "V='!git push' git --config-env=$K=V p"},
+		{true, CheckBaseline, `GIT_CONFIG_PARAMETERS="'$K=!git push'" git p`},
+		{false, CheckBaseline, `git -c user.name="$NAME" status`},
+		// A global or system configuration file is read as an include is.
+		{true, CheckBaseline, "GIT_CONFIG_GLOBAL=" + scratch + "/alias git p"},
+		{true, CheckBaseline, "GIT_CONFIG_SYSTEM=" + scratch + "/alias git p"},
+		{true, CheckBaseline, "export GIT_CONFIG_GLOBAL=" + scratch + "/alias; git p"},
+		{true, CheckBaseline, "GIT_CONFIG_GLOBAL=" + scratch + "/include git status"},
+		{true, CheckBaseline, "GIT_CONFIG_GLOBAL=" + scratch + "/missing git status"},
+		{true, CheckBaseline, "GIT_CONFIG_GLOBAL=$CFG git status"},
+		{false, CheckBaseline, "GIT_CONFIG_GLOBAL=" + scratch + "/plain GIT_CONFIG_NOSYSTEM=1 git s"},
+		{false, CheckBaseline, "GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git status"},
+		{false, CheckBaseline, "GIT_CONFIG_GLOBAL=$TMPDIR/plain git status"},
+		{true, CheckReviewer, "git -C " + scratch + " -c alias.zz='!git -C " + checkout + " commit -m x' zz"},
+		{true, CheckReviewer, "V='!git -C " + checkout + " commit -m x' git -C " + scratch + " --config-env=alias.zz=V zz"},
+	} {
+		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
+			input, _ := json.Marshal(map[string]string{"command": c.command})
+			if reason := c.check("Bash", "", input); (reason != "") != c.deny {
+				t.Errorf("%q: deny=%v, %q", c.command, reason != "", reason)
+			}
+		})
+	}
+	// A reviewer sub-agent's alias writing into the checkout, as the same
+	// redirection typed alone is.
+	for _, command := range []string{
+		"echo x > " + checkout + "/zz",
+		"git -C " + scratch + " -c alias.zz='!echo x > " + checkout + "/zz' zz",
+		"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.zz GIT_CONFIG_VALUE_0='!echo x > " + checkout + "/zz' git -C " + scratch + " zz",
+		// A cd that may fail leaves the write in the checkout.
+		"cd $TMPDIR/nope; echo x > zz",
+	} {
+		t.Run(caseName(true, command), func(t *testing.T) {
+			event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "agent_type": "adversarial-reviewer",
+				"agent_id": "a1", "cwd": checkout, "tool_input": map[string]string{"command": command}})
+			var out bytes.Buffer
+			Main([]string{"--baseline"}, bytes.NewReader(event), &out, io.Discard)
+			if !strings.Contains(out.String(), `"deny"`) {
+				t.Errorf("%q: %s", command, out.String())
+			}
+		})
+	}
+}
+
+// TestOpenedRepo holds the scratch rule's look at a repository to git's own
+// answer, refusing when git errs or hangs there.
+func TestOpenedRepo(t *testing.T) {
+	scratch := t.TempDir()
+	own := filepath.Join(scratch, "own")
+	gitIn(t, scratch, "init", "-q", own)
+	empty := filepath.Join(scratch, "empty")
+	if err := os.Mkdir(empty, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if paths, ok := openedRepo(own); !ok || len(paths) != 3 {
+		t.Errorf("a repository of its own: %q, %v", paths, ok)
+	}
+	for _, dir := range []string{empty, filepath.Join(scratch, "missing")} {
+		if paths, ok := openedRepo(dir); !ok || len(paths) != 0 {
+			t.Errorf("no repository yet in %s: %q, %v", dir, paths, ok)
+		}
+	}
+	// A git that fails otherwise, or does not answer in time, is a refusal.
+	fake := t.TempDir()
+	for name, script := range map[string]string{
+		"fails": "#!/bin/sh\necho 'fatal: detected dubious ownership' >&2\nexit 128\n",
+		"hangs": "#!/bin/sh\nexec sleep 30\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := os.WriteFile(filepath.Join(fake, "git"), []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", fake)
+			old := repoTimeout
+			repoTimeout = 200 * time.Millisecond
+			t.Cleanup(func() { repoTimeout = old })
+			if paths, ok := openedRepo(own); ok {
+				t.Errorf("git %s: %q passed", name, paths)
+			}
+		})
+	}
+}
+
+// TestAgentRoles holds each agent with a role to it, by a command that role
+// is denied and every less strict one may run: a reviewer may not commit a
+// fixup, which an owner may. agents.json names these agents, and no others.
+func TestAgentRoles(t *testing.T) {
+	want := map[string]string{
+		"reviewer": "reviewer", "adversarial-reviewer": "reviewer", "design-reviewer": "reviewer",
+		"security-reviewer": "reviewer", "pr-owner": "owner", "pr-coordinator": "coordinator",
+	}
+	var file struct {
+		Roles map[string]string `json:"roles"`
+	}
+	if err := json.Unmarshal(agentsJSON, &file); err != nil {
+		t.Fatal(err)
+	}
+	if !maps.Equal(file.Roles, want) {
+		t.Errorf("agents.json's roles are %v, want %v", file.Roles, want)
+	}
+	only := map[string]string{
+		"reviewer":    "git commit --fixup=abc",
+		"owner":       "pr-loop link 3 4",
+		"coordinator": "git commit -m x",
+	}
+	run := func(agent, command string) bool {
+		event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "agent_type": agent,
+			"tool_input": map[string]string{"command": command}})
+		var out bytes.Buffer
+		Main([]string{"--baseline"}, bytes.NewReader(event), &out, io.Discard)
+		return strings.Contains(out.String(), `"deny"`)
+	}
+	less := map[string]string{"reviewer": "pr-loop:pr-owner", "owner": "pr-coordinator", "coordinator": ""}
+	for name, r := range want {
+		t.Run(name, func(t *testing.T) {
+			command, ok := only[r]
+			if !ok {
+				t.Fatalf("%s: no case for role %s", name, r)
+			}
+			if !run(name, command) {
+				t.Errorf("%q from %s was let through", command, name)
+			}
+			if run(less[r], command) {
+				t.Errorf("%q from %q, a less strict role, was denied", command, less[r])
+			}
+		})
+	}
 }
 
 // TestReviewerReasons holds every denial a reviewer meets to the one thing

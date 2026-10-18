@@ -1,9 +1,10 @@
 // Package guard is a PreToolUse hook for Claude Code, Codex and ECA. With
 // `--baseline`, in every session, it denies what is the operator's to do:
-// publishing, merging, GitHub's settings and credentials. In a review-loop
-// session it also denies the ways an agent could write to GitHub or Linear
-// other than through pr-loop, which enforces the loop's policy, and keeps
-// the loop's pr-owner and reviewer agents to their roles.
+// publishing, merging, GitHub's settings and credentials, and keeps the
+// agents agents.json names to their roles, a reviewer to reading. In a
+// review-loop session it also denies the ways an agent could write to
+// GitHub or Linear other than through pr-loop, which enforces the loop's
+// policy.
 //
 // It inspects commands as the agent typed them, so it catches a forgotten rule
 // but not a command built at run time. In a sandbox without credentials the
@@ -12,10 +13,14 @@
 package guard
 
 import (
+	"bytes"
+	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +28,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/wesnel/agent-tools/internal/gitenv"
 )
 
 var (
@@ -65,11 +73,35 @@ const (
 	baseline    role = iota // every session: denied what is the operator's to do
 	coordinator             // a review loop's coordinator: also kept to pr-loop
 	owner                   // pr-owner: also denied the steps the coordinator alone takes
-	reviewer                // reviewer: also denied every change to the repository or GitHub
+	reviewer                // reviewer: also kept to git's reading commands and denied every change to GitHub
 )
 
+// agentsJSON names the agents with a role of their own. The agents' Nix
+// modules read it too: an agent named a reviewer here is defined without
+// editing tools.
+//
+//go:embed agents.json
+var agentsJSON []byte
+
 // roleNames are the agents with a role of their own, by agent name.
-var roleNames = map[string]role{"pr-coordinator": coordinator, "pr-owner": owner, "reviewer": reviewer}
+var roleNames = func() map[string]role {
+	var file struct {
+		Roles map[string]string `json:"roles"`
+	}
+	if err := json.Unmarshal(agentsJSON, &file); err != nil {
+		panic("guard: agents.json: " + err.Error())
+	}
+	byName := map[string]role{"baseline": baseline, "coordinator": coordinator, "owner": owner, "reviewer": reviewer}
+	names := map[string]role{}
+	for agent, name := range file.Roles {
+		r, ok := byName[name]
+		if !ok {
+			panic("guard: agents.json: unknown role " + name)
+		}
+		names[agent] = r
+	}
+	return names
+}()
 
 // roleOf is the role of the agent named agentType, or fallback for an agent
 // without a role of its own.
@@ -196,6 +228,7 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 	if service, name, mcp := mcpTool(tool, server); mcp {
 		return checkMCP(service, name, who)
 	}
+	checkout := dir // the hook's directory, wherever a command then runs
 	switch {
 	case tool == "Bash" || tool == "exec_command" || tool == "shell_command" || tool == "git":
 		// ECA's git tool takes a whole git or gh command line, like the shell.
@@ -207,14 +240,14 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 			Background      string `json:"background"`
 		}
 		json.Unmarshal(toolInput, &args)
-		return command(args.Command, 0, who, dir, args.RunInBackground || args.Background != "")
+		return command(args.Command, 0, who, dir, checkout, args.RunInBackground || args.Background != "")
 	case tool == "Monitor":
 		// Claude Code's Monitor runs a command as Bash does.
 		var args struct {
 			Command string `json:"command"`
 		}
 		json.Unmarshal(toolInput, &args)
-		return command(args.Command, 0, who, dir, true)
+		return command(args.Command, 0, who, dir, checkout, true)
 	case tool == "local_shell":
 		// Codex's local_shell runs an argv, which the guard reads as the
 		// command line that would run it.
@@ -230,13 +263,13 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 		if json.Unmarshal(args.Command, &argv) != nil {
 			var line string
 			json.Unmarshal(args.Command, &line)
-			return command(line, 0, who, dir, false)
+			return command(line, 0, who, dir, checkout, false)
 		}
 		quoted := make([]string, len(argv))
 		for i, a := range argv {
 			quoted[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
 		}
-		return command(strings.Join(quoted, " "), 0, who, dir, false)
+		return command(strings.Join(quoted, " "), 0, who, dir, checkout, false)
 	case tool == "write_stdin":
 		// Codex's write_stdin types chars into a session exec_command
 		// started, which may be a shell; the session runs on its own, so a
@@ -245,7 +278,7 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 			Chars string `json:"chars"`
 		}
 		json.Unmarshal(toolInput, &args)
-		if reason := command(args.Chars, 0, who, dir, true); reason != "" {
+		if reason := command(args.Chars, 0, who, dir, checkout, true); reason != "" {
 			return typed + reason
 		}
 		return ""
@@ -266,24 +299,26 @@ const typed = "This text goes to a running session, which may be a shell, so the
 // command.
 const maxDepth = 3
 
-// command judges a command line run in dir, in the background when
-// background is set.
-func command(text string, depth int, who role, dir string, background bool) string {
+// command judges a command line run in dir, from a call made in checkout,
+// in the background when background is set.
+func command(text string, depth int, who role, dir, checkout string, background bool) string {
 	if depth > maxDepth {
 		return ""
 	}
 	var calls []call
 	var backgrounds []bool
-	texts, inBackground := backgroundSegments(text)
+	var ends []string
+	texts, inBackground, segmentEnds := backgroundSegments(text)
 	for i, segment := range texts {
 		if words, expands := split(segment); len(words) > 0 {
 			calls = append(calls, call{words: words, expands: expands})
 			backgrounds = append(backgrounds, background || inBackground[i])
+			ends = append(ends, segmentEnds[i])
 		}
 	}
 	// The dump in `env | grep PATTERN` is checked with its search.
 	if envSearch(text, calls) {
-		calls, backgrounds = calls[1:], backgrounds[1:]
+		calls, backgrounds, ends = calls[1:], backgrounds[1:], ends[1:]
 	}
 	// A file a gh call reads is what the guard sees only when nothing else
 	// on the command line can have written it first.
@@ -291,55 +326,79 @@ func command(text string, depth int, who role, dir string, background bool) stri
 	if depth == 0 && len(calls) == 1 {
 		files = dir
 	}
-	// Where each command runs, as cd moves it; "" once the guard cannot
-	// tell.
-	cwd := dir
-	// Whether the call being judged runs in the background.
-	bg := false
+	// Where each command may run, as cd moves it; a command is judged in
+	// each of those directories.
+	w := cwds{here: []string{dir}}
+	// Whether the call being judged runs in the background, and what ends
+	// it.
+	bg, end := false, ""
 	v := visitor{
-		script: func(text string) string { return command(text, depth+1, who, cwd, bg) },
+		script: func(text string) string {
+			for _, cwd := range w.here {
+				if reason := command(text, depth+1, who, cwd, checkout, bg); reason != "" {
+					return reason
+				}
+			}
+			return ""
+		},
 		call: func(c call) string {
 			if len(c.words) > 0 && !c.expands[0] && (c.words[0] == "cd" || c.words[0] == "pushd") {
-				cwd = cdTarget(c, cwd)
+				w.cd(c, end)
 				return ""
 			}
 			if !bg && longSleep(c) {
 				return sleeping
 			}
-			return program(c, who, files, cwd)
+			for _, cwd := range w.here {
+				if reason := program(c, who, files, cwd, checkout); reason != "" {
+					return reason
+				}
+			}
+			return ""
 		},
 	}
 	for i, c := range calls {
-		bg = backgrounds[i]
+		bg, end = backgrounds[i], ends[i]
+		w.begin(c)
 		if reason := unwrap(c, v); reason != "" {
 			return reason
 		}
+		w.next(end)
 	}
 	return ""
 }
 
 // cdTarget is where cd moves from cwd: "" when the shell decides, or cwd
-// is unknown and the target relative.
+// is unknown and the target relative. Of what the shell expands, the guard
+// takes $TMPDIR and $HOME, which it knows, and leaves the rest to the
+// shell.
 func cdTarget(c call, cwd string) string {
 	args, expands := c.words[1:], c.expands[1:]
 	for len(args) > 0 && strings.HasPrefix(args[0], "-") && args[0] != "-" {
 		args, expands = args[1:], expands[1:]
 	}
-	switch {
-	case len(args) == 0:
+	if len(args) == 0 {
 		return home
-	case expands[0] || args[0] == "-":
+	}
+	word := args[0]
+	if expands[0] {
+		if word = shellPath(word, true); strings.ContainsAny(word, "$`") {
+			return ""
+		}
+	}
+	if word == "-" {
 		return ""
 	}
-	path := expandPath(args[0], cwd)
+	path := expandPath(word, cwd)
 	if !filepath.IsAbs(path) {
 		return ""
 	}
 	return path
 }
 
-// program judges a call once unwrap has found the program it runs, in dir.
-func program(c call, who role, files, dir string) string {
+// program judges a call once unwrap has found the program it runs, in dir,
+// from a call made in checkout.
+func program(c call, who role, files, dir, checkout string) string {
 	if reason := checkEnv(c.env); reason != "" {
 		return reason
 	}
@@ -355,7 +414,7 @@ func program(c call, who role, files, dir string) string {
 	words := c.words
 	switch name := base(words[0]); {
 	case name == "git":
-		return checkGit(words, c.env, who, dir)
+		return checkGit(words, c.expands, c.env, who, dir, checkout)
 	case name == "gh":
 		if reason := checkGh(words[1:], c.expands[1:], files, who); reason != "" && who == reviewer {
 			return reviewerReport
@@ -478,12 +537,12 @@ func checkEnv(env []string) string {
 		switch {
 		case name == "GIT_CONFIG_PARAMETERS":
 			for _, m := range configKey.FindAllStringSubmatch(value, -1) {
-				if reason := checkConfigKey(m[1]); reason != "" {
+				if reason := checkOneCommandKey(m[1]); reason != "" {
 					return reason
 				}
 			}
 		case strings.HasPrefix(name, "GIT_CONFIG_KEY_"):
-			if reason := checkConfigKey(value); reason != "" {
+			if reason := checkOneCommandKey(value); reason != "" {
 				return reason
 			}
 		case name == "GIT_SSH" || name == "GIT_SSH_COMMAND" || name == "GIT_ASKPASS":
@@ -511,6 +570,19 @@ func checkConfigKey(key string) string {
 	}
 	return ""
 }
+
+// checkOneCommandKey is checkConfigKey for a key set for one git command,
+// by -c, --config-env or the environment, where an include names a file
+// of settings, such as a shell alias, that the guard does not read.
+func checkOneCommandKey(key string) string {
+	if k := strings.ToLower(key); strings.HasPrefix(k, "include.") || strings.HasPrefix(k, "includeif.") {
+		return configInclude
+	}
+	return checkConfigKey(key)
+}
+
+const configInclude = "A configuration file included for one git command can define anything, such as an alias that runs shell, " +
+	"and the guard does not read it. Give the settings themselves with `-c KEY=VALUE`, or leave them out."
 
 const signing = "Signing needs the operator's hardware key. Leave the commits unsigned and end the report with the command for the operator to run: `pr-loop sign` for the loop's stack."
 
@@ -541,6 +613,13 @@ var planReads = set("status", "goal", "find", "questions", "-h", "--help", "help
 
 // reviewerReport is why a reviewer may not make a change.
 const reviewerReport = "A reviewer only reads. Report the finding with its evidence; whoever started the review acts on it."
+
+// reviewerGit is why a reviewer may not run a git command gitRead does not
+// pass, outside a repository scratchRepo passes.
+const reviewerGit = "A reviewer only reads. It runs git's reading commands (`log`, `show`, `diff`, `status`, " +
+	"`grep`, `blame`, `rev-parse` and the like, and the list forms of `branch`, `tag`, `worktree`, `stash`, " +
+	"`remote` and `config`), never an alias, and any command in a repository of its own under `$TMPDIR` or " +
+	"/tmp; report the finding with its evidence, and whoever started the review acts on it."
 
 // nestedReview is why a reviewer may not start a review.
 const nestedReview = "A reviewer does not start a review of its own. Report your findings; whoever started you decides on another round."
@@ -577,11 +656,115 @@ var gitWrites = map[string]bool{"commit": true, "rebase": true, "reset": true, "
 	"add": true, "rm": true, "mv": true, "clean": true, "tag": true, "update-ref": true, "notes": true, "worktree": true,
 	"push": true, "sign-pass": true, "pull": true}
 
+// gitReads are the git commands a reviewer may run in any form: they write
+// nothing but their output, and merge-tree only objects nothing refers to.
+// A command not here, an alias or one gitReadForms does not pass is
+// denied to a reviewer.
+var gitReads = set("log", "show", "diff", "status", "rev-parse", "ls-files", "ls-tree", "grep", "blame",
+	"annotate", "cat-file", "merge-base", "for-each-ref", "show-ref", "show-branch", "range-diff", "describe",
+	"shortlog", "rev-list", "name-rev", "diff-tree", "diff-files", "diff-index", "cherry", "whatchanged",
+	"check-ignore", "check-attr", "count-objects", "var", "version", "help", "verify-commit", "verify-tag",
+	"merge-tree")
+
+// gitReadForms are the git commands that read in some forms and write in
+// others, each with whether these arguments only read.
+var gitReadForms = map[string]func(args []string) bool{
+	"branch":   func(a []string) bool { return !branchWrites(a) },
+	"tag":      func(a []string) bool { return !tagWrites(a) },
+	"config":   configRead,
+	"worktree": func(a []string) bool { return len(a) > 0 && a[0] == "list" },
+	"stash":    func(a []string) bool { return len(a) > 0 && (a[0] == "list" || a[0] == "show") },
+	"notes":    func(a []string) bool { return len(a) > 0 && (a[0] == "list" || a[0] == "show") },
+	"submodule": func(a []string) bool {
+		return len(a) > 0 && (a[0] == "status" || a[0] == "summary")
+	},
+	"remote": func(a []string) bool {
+		return len(a) == 0 || a[0] == "-v" || a[0] == "--verbose" || a[0] == "get-url"
+	},
+	"reflog": func(a []string) bool {
+		return len(a) == 0 || a[0] != "expire" && a[0] != "delete" && a[0] != "drop" && a[0] != "write"
+	},
+	"symbolic-ref": func(a []string) bool {
+		positional := 0
+		for _, w := range a {
+			if w == "-d" || w == "--delete" {
+				return false
+			}
+			if !strings.HasPrefix(w, "-") {
+				positional++
+			}
+		}
+		return positional <= 1
+	},
+	"hash-object":  func(a []string) bool { return !contains(a, "-w") },
+	"format-patch": func(a []string) bool { return contains(a, "--stdout") && !shortOption(a, "-o") },
+	"archive": func(a []string) bool {
+		return !shortOption(a, "-o") && !slices.ContainsFunc(a, func(w string) bool { return strings.HasPrefix(w, "--remote") })
+	},
+	"apply": func(a []string) bool {
+		return !contains(a, "--apply") &&
+			slices.ContainsFunc(a, func(w string) bool { return set("--check", "--stat", "--numstat", "--summary")[w] })
+	},
+}
+
+// gitRead reports whether git's command sub, with these arguments, only
+// reads: it is in gitReads or passes gitReadForms, and writes no file of
+// its output (--output) or opens files in a program of its choosing (grep
+// -O).
+func gitRead(sub string, args []string) bool {
+	for _, w := range args {
+		if w == "--output" || strings.HasPrefix(w, "--output=") || strings.HasPrefix(w, "--open-files-in-pager") ||
+			sub == "grep" && strings.HasPrefix(w, "-O") {
+			return false
+		}
+	}
+	if form, ok := gitReadForms[sub]; ok {
+		return form(args)
+	}
+	return gitReads[sub]
+}
+
+// shortOption reports whether args give the short option flag, alone (-o
+// FILE) or with its value attached (-oFILE).
+func shortOption(args []string, flag string) bool {
+	return slices.ContainsFunc(args, func(a string) bool { return strings.HasPrefix(a, flag) && !strings.HasPrefix(a, "--") })
+}
+
+// branchWrites reports whether `git branch` with these arguments creates,
+// deletes, moves or configures a branch rather than listing them.
+func branchWrites(args []string) bool {
+	list, positional := false, false
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		name, _, valued := strings.Cut(a, "=")
+		switch {
+		case set("-d", "-D", "--delete", "-m", "-M", "--move", "-c", "-C", "--copy", "-f", "--force", "-u",
+			"--set-upstream-to", "--unset-upstream", "--edit-description", "-t", "--track", "--no-track",
+			"--create-reflog")[name]:
+			return true
+		case name == "-l" || name == "--list" || name == "--show-current":
+			list = true
+		case !valued && set("--contains", "--no-contains", "--merged", "--no-merged", "--points-at", "--format",
+			"--sort")[name]:
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+			}
+		case !strings.HasPrefix(a, "-"):
+			positional = true
+		}
+	}
+	return positional && !list
+}
+
 // checkGit checks a git command run in dir, "" when the guard cannot tell
-// where, with the assignments env made for it.
-func checkGit(words, env []string, who role, dir string) string {
+// where, with the assignments env made for it, in a call made in checkout,
+// the hook's directory. expands says which words the shell expands.
+func checkGit(words []string, expands []bool, env []string, who role, dir, checkout string) string {
 	i := 1
 	var config []string // the -c and --config-env options, for gitState.signs
+	located := false    // --git-dir or --work-tree names the repository
+	// Where git runs, as it reaches it: each -C a chdir, through links.
+	physical := dir
 	for i < len(words) && strings.HasPrefix(words[i], "-") {
 		// Configuration given on the command line.
 		key := ""
@@ -596,10 +779,12 @@ func checkGit(words, env []string, who role, dir string) string {
 			if dir = expandPath(words[i+1], dir); !filepath.IsAbs(dir) {
 				dir = ""
 			}
+			physical = physicalPath(physical, shellPath(words[i+1], i+1 < len(expands) && expands[i+1]))
 		case w == "--git-dir" || w == "--work-tree" || strings.HasPrefix(w, "--git-dir=") || strings.HasPrefix(w, "--work-tree="):
 			dir = ""
+			located = true
 		}
-		if reason := checkConfigKey(key); reason != "" {
+		if reason := checkOneCommandKey(key); reason != "" {
 			return reason
 		}
 		if gitValueFlags[words[i]] {
@@ -614,8 +799,14 @@ func checkGit(words, env []string, who role, dir string) string {
 	if who == reviewer && sub == "fresh-review" {
 		return nestedReview
 	}
-	if who == reviewer && gitWrites[sub] && !(sub == "worktree" && len(rest) > 0 && rest[0] == "list") {
-		return reviewerReport
+	if who == reviewer && !gitRead(sub, rest) {
+		repo, ok := scratchRepo(sub, rest, expands[min(i+1, len(expands)):], physical, checkout, env)
+		if located || !ok {
+			return reviewerGit
+		}
+		// In its own repository a reviewer is held to what every session
+		// is, such as never signing, and not to the loop's commit rules.
+		who, dir = baseline, repo
 	}
 	if reason := checkGitSession(sub, rest, gitState{dir: dir}); reason != "" {
 		return reason
@@ -689,6 +880,268 @@ func checkGit(words, env []string, who role, dir string) string {
 		}
 	}
 	return ""
+}
+
+// scratchRepo reports whether a reviewer's git command sub, with these
+// arguments (expands saying which the shell expands) and the assignments
+// env made for it, run in dir as git reaches it, works only in a
+// repository the reviewer made for itself, and returns that repository's
+// directory: the one init or clone makes, else dir. That directory, each
+// file the command writes outside it, and the git directory, common
+// directory and work tree git opens there must all lie under one of
+// scratchRoots and apart from checkout and from the repository it belongs
+// to. A copy of a worktree, whose .git file leads back to the reviewed
+// repository, or a link into the checkout, therefore never passes. No push or pack sent to another repository
+// passes, nor a variable naming another repository's directories.
+func scratchRepo(sub string, rest []string, expands []bool, dir, checkout string, env []string) (string, bool) {
+	if dir == "" || checkout == "" || set("push", "send-pack", "receive-pack")[sub] {
+		return "", false
+	}
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if set("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR")[name] {
+			return "", false
+		}
+	}
+	// The checkout, and the repository it belongs to, wherever that is.
+	reviewed := []string{checkout}
+	if common, ok := (gitState{dir: checkout}).run("rev-parse", "--path-format=absolute", "--git-common-dir"); ok {
+		reviewed = append(reviewed, common)
+	}
+	free := func(path string) bool {
+		return path != "" &&
+			!slices.ContainsFunc(reviewed, func(r string) bool { return within(path, r) || within(r, path) }) &&
+			slices.ContainsFunc(scratchRoots(), func(root string) bool { return within(path, root) })
+	}
+	repo, outputs := gitTargets(sub, rest, expands, dir)
+	if !free(repo) || slices.ContainsFunc(outputs, func(path string) bool { return !free(path) }) {
+		return "", false
+	}
+	opened, ok := openedRepo(repo)
+	if !ok || slices.ContainsFunc(opened, func(path string) bool { return !free(path) }) {
+		return "", false
+	}
+	return repo, true
+}
+
+// repoTimeout bounds each git the guard runs to find a scratch command's
+// repository; a git that takes longer is a refusal.
+var repoTimeout = 5 * time.Second
+
+// openedRepo is the git directory, common directory and work tree git
+// opens in dir, as git itself finds them: through a .git file and its
+// commondir, and core.worktree. It is none, and ok, where dir does not
+// exist or holds no repository yet, which init or clone makes. ok is false
+// when git fails there for any other reason, or takes longer than
+// repoTimeout.
+func openedRepo(dir string) (paths []string, ok bool) {
+	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
+		return nil, true
+	} else if err != nil {
+		return nil, false
+	}
+	run := func(args ...string) (string, string, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), repoTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(gitenv.Without(os.Environ()), "LC_ALL=C")
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
+		return strings.TrimSpace(string(out)), stderr.String(), err
+	}
+	out, stderr, err := run("rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir")
+	switch {
+	case err == nil:
+		paths = strings.Split(out, "\n")
+	case strings.Contains(stderr, "not a git repository"):
+		return nil, true
+	default:
+		return nil, false
+	}
+	switch top, stderr, err := run("rev-parse", "--show-toplevel"); {
+	case err == nil:
+		paths = append(paths, top)
+	case strings.Contains(stderr, "must be run in a work tree"): // a bare repository
+	default:
+		return nil, false
+	}
+	return paths, true
+}
+
+// configUnread is why a git configuration file named for a command is
+// refused when the guard cannot read it.
+const configUnread = "Git's configuration is named here as a file the guard cannot read: it does not exist yet, or its path " +
+	"comes from a variable. Name an existing file by its full path, or /dev/null."
+
+// configFileEntries are the KEY, VALUE entries of the git configuration
+// file at path, as git reads them, within repoTimeout. A file that is
+// missing, named by a relative or expanded path, or unreadable, and one
+// that includes another, is refused with the reason.
+func configFileEntries(path string) (entries [][2]string, reason string) {
+	if !filepath.IsAbs(path) || strings.ContainsAny(path, "$`") {
+		return nil, configUnread
+	}
+	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+		return nil, configUnread
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), repoTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "config", "--file", path, "--null", "--list")
+	cmd.Env = append(gitenv.Without(os.Environ()), "LC_ALL=C")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, configUnread
+	}
+	for _, entry := range strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00") {
+		key, value, _ := strings.Cut(entry, "\n")
+		if k := strings.ToLower(key); strings.HasPrefix(k, "include.") || strings.HasPrefix(k, "includeif.") {
+			return nil, configInclude
+		}
+		if key != "" {
+			entries = append(entries, [2]string{key, value})
+		}
+	}
+	return entries, ""
+}
+
+// gitTargets are the repository a git command sub, run in dir, works in
+// (the one init or clone makes, else dir) and the files and directories it
+// writes outside it, as git reaches each from dir.
+func gitTargets(sub string, args []string, expands []bool, dir string) (repo string, outputs []string) {
+	path := func(j int) string { return physicalPath(dir, shellPath(args[j], j < len(expands) && expands[j])) }
+	// The path an option at j gives, as `-o X`, `-oX`, `--long X` or
+	// `--long=X`; short may be "".
+	valueOf := func(j int, short, long string) (string, bool) {
+		a := args[j]
+		switch {
+		case (short != "" && a == short || a == long) && j+1 < len(args):
+			return path(j + 1), true
+		case strings.HasPrefix(a, long+"="):
+			return physicalPath(dir, shellPath(strings.TrimPrefix(a, long+"="), j < len(expands) && expands[j])), true
+		case short != "" && len(a) > len(short) && strings.HasPrefix(a, short) && !strings.HasPrefix(a, "--"):
+			return physicalPath(dir, shellPath(a[len(short):], j < len(expands) && expands[j])), true
+		}
+		return "", false
+	}
+	type option struct{ short, long string }
+	writes := []option{{"", "--output"}}
+	switch sub {
+	case "archive":
+		writes = append(writes, option{"-o", "--output"})
+	case "format-patch":
+		writes = append(writes, option{"-o", "--output-directory"})
+	case "checkout-index":
+		writes = append(writes, option{"", "--prefix"})
+	case "init", "clone":
+		writes = append(writes, option{"", "--separate-git-dir"})
+	}
+	for j := range args {
+		for _, o := range writes {
+			if p, ok := valueOf(j, o.short, o.long); ok {
+				outputs = append(outputs, p)
+			}
+		}
+	}
+	positional := gitPositionals(sub, args)
+	repo = dir
+	switch {
+	case sub == "init" && len(positional) > 0:
+		repo = path(positional[0])
+	case sub == "clone" && len(positional) > 1:
+		repo = path(positional[1])
+	case sub == "clone" && len(positional) == 1:
+		source := strings.TrimSuffix(strings.TrimSuffix(args[positional[0]], "/"), "/.git")
+		if !strings.Contains(source, "://") && !strings.Contains(source, ":") {
+			source = path(positional[0])
+		}
+		name := strings.TrimSuffix(filepath.Base(strings.ReplaceAll(source, ":", "/")), ".git")
+		repo = filepath.Join(dir, name)
+	case (sub == "worktree" || sub == "bundle") && len(positional) > 1 &&
+		(args[positional[0]] == "add" || args[positional[0]] == "create"):
+		outputs = append(outputs, path(positional[1]))
+	}
+	return repo, outputs
+}
+
+// gitPositionals are the indexes of the arguments of git's command sub
+// that are neither options nor the values of the options that take one.
+func gitPositionals(sub string, args []string) []int {
+	valued := map[string]map[string]bool{
+		"init": set("--template", "--separate-git-dir", "-b", "--initial-branch", "--object-format", "--ref-format"),
+		"clone": set("-o", "--origin", "-b", "--branch", "-u", "--upload-pack", "--template", "-c", "--config",
+			"--depth", "--shallow-since", "--shallow-exclude", "--reference", "--reference-if-able",
+			"--separate-git-dir", "-j", "--jobs", "--filter", "--server-option", "--bundle-uri", "--revision"),
+		"worktree": set("-b", "-B", "--reason", "--orphan"),
+	}[sub]
+	var out []int
+	for j := 0; j < len(args); j++ {
+		switch a := args[j]; {
+		case a == "--":
+			for k := j + 1; k < len(args); k++ {
+				out = append(out, k)
+			}
+			return out
+		case valued[a]:
+			j++
+		case !strings.HasPrefix(a, "-"):
+			out = append(out, j)
+		}
+	}
+	return out
+}
+
+// physicalPath is where a chdir to p from base lands: each step taken
+// through the links it meets, as the kernel takes it, so that ".." after a
+// link leaves the link's target, not the link. "" when base is "" and p is
+// relative.
+func physicalPath(base, p string) string {
+	cur := base
+	switch {
+	case filepath.IsAbs(p):
+		cur = "/"
+	case base == "":
+		return ""
+	}
+	if real := realPath(cur); real != "" {
+		cur = real
+	}
+	for _, step := range strings.Split(p, "/") {
+		switch step {
+		case "", ".":
+		case "..":
+			cur = filepath.Dir(cur)
+		default:
+			cur = filepath.Join(cur, step)
+			if real := realPath(cur); real != "" {
+				cur = real
+			}
+		}
+	}
+	return cur
+}
+
+// shellPath is word, a path as a command line gives it, with $HOME and ~
+// in their place, as expandPath has them, and $TMPDIR where the shell
+// expands the word.
+func shellPath(word string, expanded bool) string {
+	if tmp := os.Getenv("TMPDIR"); expanded && tmp != "" {
+		for _, v := range []string{"${TMPDIR}", "$TMPDIR"} {
+			if word == v || strings.HasPrefix(word, v+"/") {
+				word = strings.TrimSuffix(tmp, "/") + strings.TrimPrefix(word, v)
+				break
+			}
+		}
+	}
+	for _, h := range []string{"${HOME}", "$HOME"} {
+		if word == h || strings.HasPrefix(word, h+"/") {
+			word = home + strings.TrimPrefix(word, h)
+		}
+	}
+	if word == "~" || strings.HasPrefix(word, "~/") {
+		word = home + word[1:]
+	}
+	return word
 }
 
 // tagLists are the `git tag` options that make it list or verify tags.
