@@ -41,6 +41,60 @@ with lib; let
     })} $out/hooks/hooks.json
   '';
 
+  # The agents the coordinate-subagents skill starts by role, beside
+  # `reviewer`: the user-level agents agents.json lists. One agents.json
+  # names a reviewer has no editing tools, and the guard holds its shell to
+  # reading. Each body ends
+  # with the rules every one of them shares, then its contract, if any. A
+  # description is plain YAML: no colon followed by a space.
+  roleAgents = let
+    inherit (pkgs.agent-tools) guardAgents;
+    agent = name: {
+      description,
+      skills ? [],
+      body,
+      contract ? "",
+    }:
+      nameValuePair ".claude/agents/${name}.md" {
+        text = ''
+          ---
+          name: ${name}
+          description: ${description}
+          model: opus
+          effort: high
+          ${optionalString ((guardAgents.roles.${name} or null) == "reviewer") "tools: Read, Grep, Glob, Bash\n"}${optionalString (skills != []) "skills:\n${concatMapStrings (s: "  - ${s}\n") skills}"}---
+          ${body}
+          ${builtins.readFile ./agents/subagent.md}
+          ${contract}
+        '';
+      };
+    agents = {
+      builder = {
+        description = "Builds one part of a plan, one branch in the worktree its task names, committed unsigned and verified.";
+        skills = ["signing-pass" "write-tests" "review-change" "plan-work"];
+        body = builtins.readFile ./agents/builder.md;
+      };
+      adversarial-reviewer = {
+        description = "Tries to break one branch before it is signed, reproducing each finding and rating it CONFIRMED or PLAUSIBLE. Only reads, and changes only throwaway copies.";
+        skills = ["write-tests"];
+        body = builtins.readFile ./agents/adversarial-reviewer.md;
+      };
+      design-reviewer = {
+        description = "Reviews a plan before it is built, or the work across a plan's branches once built, against the design skill. Only reads.";
+        skills = ["design" "review-change"];
+        body = builtins.readFile ./agents/design-reviewer.md;
+      };
+      security-reviewer = {
+        description = "Reviews a change for security (untrusted input, secrets, confinement, injection), and answers git fresh-review --focus security prompts. Only reads.";
+        body = builtins.readFile ./agents/security-reviewer.md;
+        contract = pkgs.agent-tools.securityReviewerPrompt;
+      };
+    };
+  in
+    assert assertMsg (naturalSort (attrNames agents ++ ["reviewer"]) == naturalSort guardAgents.claude)
+    "claude: the agents defined here and agents.json's claude list differ";
+      mapAttrs' agent agents;
+
   darwin = pkgs.stdenv.hostPlatform.isDarwin;
   mcpProxy = config.wgn.home.mcp-proxy;
   plans = config.wgn.home.llm.plans;
@@ -394,13 +448,13 @@ in {
         # A hook list set here replaces the file's own on every switch.
         hooks.PreToolUse = [
           # Holds every session to the baseline: what is the operator's to do,
-          # and the `reviewer` and `pr-owner` agents to their roles. Every
-          # tool that runs a command or writes a file belongs here: Monitor
-          # runs a shell command as Bash does, and ExitWorktree can delete a
-          # worktree and its branch. MCP tools are held to the guard's
-          # mcp.json: on a server it lists, reads pass, listed writes ask and
-          # the rest are refused; every tool on a server it does not list
-          # asks, and is refused to the `reviewer` and `pr-owner` agents.
+          # and the agents agents.json names to their roles. Every tool that
+          # runs a command or writes a file belongs here: Monitor runs a shell
+          # command as Bash does, and ExitWorktree can delete a worktree and
+          # its branch. MCP tools are held to the guard's mcp.json: on a
+          # server it lists, reads pass, listed writes ask and the rest are
+          # refused; every tool on a server it does not list asks, and is
+          # refused to an agent with a role.
           {
             matcher = "Bash|Monitor|ExitWorktree|Edit|Write|MultiEdit|NotebookEdit|mcp__.*";
             hooks = [
@@ -424,6 +478,7 @@ in {
       # are kept here.
       home.file =
         llm.mkSkillFiles pkgs ".claude/skills" config.wgn.home.llm.skills
+        // roleAgents
         // {
           ".claude/CLAUDE.md".source = config.wgn.home.llm.instructions;
 

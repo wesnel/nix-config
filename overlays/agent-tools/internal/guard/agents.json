@@ -6,5 +6,12 @@
     "adversarial-reviewer": "reviewer",
     "design-reviewer": "reviewer",
     "security-reviewer": "reviewer"
-  }
+  },
+  "claude": [
+    "builder",
+    "reviewer",
+    "adversarial-reviewer",
+    "design-reviewer",
+    "security-reviewer"
+  ]
 }
