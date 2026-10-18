@@ -581,6 +581,25 @@
           touch $out
         '';
 
+      # Org parses no plan text in a digest: internal/digest's TestInert
+      # writes the digest of its corpus, built from this commit, and
+      # inert.el parses it with Org.
+      checks.digest-inert = let
+        src = pkgs.lib.fileset.toSource {
+          root = ./overlays/agent-tools;
+          fileset = pkgs.lib.fileset.unions [./overlays/agent-tools/go.mod ./overlays/agent-tools/cmd ./overlays/agent-tools/internal];
+        };
+      in
+        pkgs.runCommand "digest-inert" {
+          nativeBuildInputs = [pkgs.emacs-nox pkgs.go];
+        } ''
+          export HOME=$TMPDIR GOCACHE=$TMPDIR/go-cache GOPATH=$TMPDIR/go GOPROXY=off GOTOOLCHAIN=local CGO_ENABLED=0
+          cd ${src}
+          DIGEST_INERT_OUT=$TMPDIR/inert.org go test -count=1 -run '^TestInert$' ./internal/digest/
+          emacs --batch -Q -l internal/digest/testdata/inert.el $TMPDIR/inert.org
+          touch $out
+        '';
+
       devShells = {
         default = pkgs.mkShell {
           buildInputs = [
