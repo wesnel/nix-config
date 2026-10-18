@@ -20,13 +20,16 @@ import (
 // names is judged by its owner wherever it is, scratch included. The main
 // thread edits anywhere but a worktree another agent owns. Every path is
 // compared with its symlinks resolved. The caller is the event's agent_id,
-// which Claude Code and Codex set for a sub-agent's call alone; ECA's
-// events name no agent instance, so they pass.
+// which Claude Code and Codex set for a sub-agent's call alone. ECA's
+// events name no agent instance, only the agent, which every instance of
+// it shares: one whose role is reviewer is held as a sub-agent that owns
+// no worktree, even one a plan gives its name, and the rest pass.
 //
 // Shell edits are only those shellEditPaths names: a write through a script
 // it cannot read passes.
 func checkOwner(in input) string {
-	if in.HookType != "" {
+	ecaReviewer := in.HookType != "" && roleOf(in.Agent, baseline) == reviewer
+	if in.HookType != "" && !ecaReviewer {
 		return ""
 	}
 	var paths []string
@@ -37,7 +40,8 @@ func checkOwner(in input) string {
 		}
 		json.Unmarshal(in.ToolInput, &args)
 		paths = shellEditPaths(args.Command, in.Cwd, 0)
-	case "Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch":
+	// ECA's file tools are write_file, edit_file and move_file.
+	case "Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch", "write_file", "edit_file", "move_file":
 		for _, c := range fileChanges(in.ToolName, in.ToolInput) {
 			if c.path != "" {
 				paths = append(paths, expandPath(c.path, in.Cwd))
@@ -59,8 +63,18 @@ func checkOwner(in input) string {
 			owners[wt] = agent
 		}
 	}
+	if ecaReviewer {
+		// Still named, so a worktree in scratch stays its owner's, but
+		// never this agent's.
+		for wt, agent := range owners {
+			if agent == in.Agent {
+				owners[wt] = ""
+			}
+		}
+		return subagentEdits(in.Agent, false, paths, owners, c.Dir)
+	}
 	if in.AgentID != "" {
-		return subagentEdits(in.AgentID, paths, owners, c.Dir)
+		return subagentEdits(in.AgentID, true, paths, owners, c.Dir)
 	}
 	for _, p := range paths {
 		top, _ := worktreeOf(p)
@@ -76,8 +90,9 @@ func checkOwner(in input) string {
 // subagentEdits returns why agent may not edit one of paths, or "": it
 // edits only the worktrees owners gives it, the scratch roots, the plans
 // directory and devices such as /dev/null. A path in a worktree owners
-// names is the owner's alone, even in scratch.
-func subagentEdits(agent string, paths []string, owners map[string]string, plansDir string) string {
+// names is the owner's alone, even in scratch. An agent that cannot own
+// one is told to work on copies rather than to be given one.
+func subagentEdits(agent string, canOwn bool, paths []string, owners map[string]string, plansDir string) string {
 	var mine []string
 	for wt, a := range owners {
 		if a == agent {
@@ -100,6 +115,10 @@ func subagentEdits(agent string, paths []string, owners map[string]string, plans
 			}
 		} else if slices.ContainsFunc(free, func(root string) bool { return within(p, root) }) {
 			continue
+		}
+		if !canOwn {
+			return fmt.Sprintf("Agent %s is a reviewer, which owns no worktree, so it edits only scratch ($TMPDIR, /tmp) outside any worktree a plan gives an owner, and the plans directory, and %s is not there. "+
+				"Change a throwaway copy in scratch, or put the change in your report; reads are not limited.", agent, p)
 		}
 		if len(mine) == 0 {
 			return fmt.Sprintf("Sub-agent %s owns no worktree, so it edits only scratch ($TMPDIR, /tmp) and the plans directory, and %s is outside them. "+

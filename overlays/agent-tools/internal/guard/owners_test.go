@@ -44,6 +44,9 @@ func TestOwners(t *testing.T) {
 		gitIn(t, main, "commit", "-q", "--allow-empty", "-m", "base")
 		gitIn(t, main, "worktree", "add", "-q", "-b", "feature", linked)
 		gitIn(t, main, "worktree", "add", "-q", "-b", "other", sibling)
+		// lent is a worktree a plan gives to the name of an ECA reviewer.
+		lent := filepath.Join(root, "lent")
+		gitIn(t, main, "worktree", "add", "-q", "-b", "lent", lent)
 		// parked is a worktree in scratch that a plan gives to a3, and
 		// throwaway a repository in scratch that no plan names.
 		parked, throwaway := filepath.Join(scratch, "parked"), filepath.Join(scratch, "throwaway")
@@ -58,13 +61,19 @@ func TestOwners(t *testing.T) {
 			t.Fatal(err)
 		}
 		p, _ := c.Open(made.Plan)
-		for wt, agent := range map[string]string{linked: "a1", sibling: "a3", parked: "a3"} {
+		for wt, agent := range map[string]string{linked: "a1", sibling: "a3", parked: "a3", lent: "security-reviewer"} {
 			if _, err := p.SetOwner(wt, agent, time.Now()); err != nil {
 				t.Fatal(err)
 			}
 		}
-		return strings.NewReplacer("MAIN", main, "LINKED", linked, "SIBLING", sibling, "PARKED", parked,
+		return strings.NewReplacer("MAIN", main, "LINKED", linked, "SIBLING", sibling, "PARKED", parked, "LENT", lent,
 			"THROWAWAY", throwaway, "SCRATCH", scratch, "PLANS", c.Dir, "LOOSE", filepath.Join(root, "loose"))
+	}
+
+	// The reviewer's own reason: it names the agent, sends it to copies,
+	// and never offers it a worktree.
+	ecaFence := func(agent string) []string {
+		return []string{agent, "is a reviewer", "throwaway copy", "!agent-plan own"}
 	}
 
 	// MAIN, LINKED, SIBLING, SCRATCH, PLANS and LOOSE (a directory in no
@@ -73,7 +82,7 @@ func TestOwners(t *testing.T) {
 		name string
 		deny bool
 		json string
-		says []string // what a denial's reason names
+		says []string // what a denial's reason names, or with a leading ! must not
 	}{
 		{"owner's Edit", false, `{"tool_name":"Edit","agent_id":"a1","tool_input":{"file_path":"LINKED/a.go"}}`, nil},
 		{"owner's shell write", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"echo x > new.txt"}}`, nil},
@@ -91,6 +100,26 @@ func TestOwners(t *testing.T) {
 		{"unowned agent's patch", true, `{"tool_name":"apply_patch","turn_id":"t","agent_id":"a2","cwd":"LINKED","tool_input":{"command":"*** Begin Patch\n*** Add File: b.go\n+x\n*** End Patch\n"}}`, []string{"a2", "agent-plan own"}},
 		{"unowned agent's shell read", false, `{"tool_name":"Bash","agent_id":"a2","cwd":"LINKED","tool_input":{"command":"cat a.go > /dev/null"}}`, nil},
 		{"unowned agent's Write in scratch", false, `{"tool_name":"Write","agent_id":"a2","tool_input":{"file_path":"SCRATCH/notes.md"}}`, nil},
+		{"ECA builder's shell write in the main checkout", false, `{"hook_type":"preToolCall","server":"eca","agent":"builder","tool_name":"shell_command","cwd":"MAIN","tool_input":{"command":"echo x > new.txt"}}`, nil},
+		// An ECA agent with the reviewer role owns no worktree, even one a
+		// plan gives its name, which every instance of it shares.
+		{"ECA reviewer's redirection in the main checkout", true, `{"hook_type":"preToolCall","server":"eca","agent":"adversarial-reviewer","tool_name":"shell_command","cwd":"MAIN","tool_input":{"command":"echo x > new.txt"}}`, ecaFence("adversarial-reviewer")},
+		{"ECA reviewer's redirection outside any repository", true, `{"hook_type":"preToolCall","server":"eca","agent":"security-reviewer","tool_name":"shell_command","cwd":"MAIN","tool_input":{"command":"echo x > LOOSE/a.txt"}}`, ecaFence("security-reviewer")},
+		{"ECA reviewer's redirection in a worktree a plan gives its name", true, `{"hook_type":"preToolCall","server":"eca","agent":"security-reviewer","tool_name":"shell_command","cwd":"LENT","tool_input":{"command":"echo x > new.txt"}}`, ecaFence("security-reviewer")},
+		{"ECA reviewer's cp into an owned worktree", true, `{"hook_type":"preToolCall","server":"eca","agent":"reviewer","tool_name":"shell_command","cwd":"SCRATCH","tool_input":{"command":"cp a.go LINKED/a.go"}}`, ecaFence("reviewer")},
+		{"ECA reviewer's tee into the main checkout", true, `{"hook_type":"preToolCall","server":"eca","agent":"adversarial-reviewer","tool_name":"shell_command","cwd":"SCRATCH","tool_input":{"command":"echo x | tee MAIN/a.go"}}`, ecaFence("adversarial-reviewer")},
+		{"ECA reviewer's patch in the main checkout", true, `{"hook_type":"preToolCall","server":"eca","agent":"adversarial-reviewer","tool_name":"shell_command","cwd":"SCRATCH","tool_input":{"command":"patch -d MAIN -p1 < a.diff"}}`, ecaFence("adversarial-reviewer")},
+		{"ECA reviewer's sed -i in the main checkout", true, `{"hook_type":"preToolCall","server":"eca","agent":"design-reviewer","tool_name":"shell_command","cwd":"MAIN","tool_input":{"command":"sed -i '' s/a/b/ a.go"}}`, ecaFence("design-reviewer")},
+		{"ECA reviewer's mv into the main checkout", true, `{"hook_type":"preToolCall","server":"eca","agent":"adversarial-reviewer","tool_name":"shell_command","cwd":"SCRATCH","tool_input":{"command":"mv a.go MAIN/"}}`, nil},
+		{"ECA reviewer's git apply in the main checkout", true, `{"hook_type":"preToolCall","server":"eca","agent":"adversarial-reviewer","tool_name":"shell_command","cwd":"MAIN","tool_input":{"command":"git apply SCRATCH/a.diff"}}`, nil}, // the reviewer's git rule answers first
+		{"ECA reviewer's write_file in an owned worktree", true, `{"hook_type":"preToolCall","server":"eca","agent":"adversarial-reviewer","tool_name":"write_file","tool_input":{"path":"LINKED/a.go","content":"x"}}`, ecaFence("adversarial-reviewer")},
+		{"ECA reviewer's edit_file in the main checkout", true, `{"hook_type":"preToolCall","server":"eca","agent":"security-reviewer","tool_name":"edit_file","tool_input":{"path":"MAIN/a.go","original_content":"a","new_content":"b"}}`, ecaFence("security-reviewer")},
+		{"ECA reviewer's move_file into the main checkout", true, `{"hook_type":"preToolCall","server":"eca","agent":"adversarial-reviewer","tool_name":"move_file","tool_input":{"source":"SCRATCH/a.go","destination":"MAIN/a.go"}}`, ecaFence("adversarial-reviewer")},
+		{"ECA reviewer's write in another's worktree in scratch", true, `{"hook_type":"preToolCall","server":"eca","agent":"adversarial-reviewer","tool_name":"shell_command","cwd":"PARKED","tool_input":{"command":"echo x > new.txt"}}`, ecaFence("adversarial-reviewer")},
+		{"ECA reviewer's mutant copy in scratch", false, `{"hook_type":"preToolCall","server":"eca","agent":"adversarial-reviewer","tool_name":"shell_command","cwd":"SCRATCH","tool_input":{"command":"git -C MAIN archive HEAD | tar -x -C SCRATCH/copy && echo x > SCRATCH/copy/a.go"}}`, nil},
+		{"ECA reviewer's write_file in scratch", false, `{"hook_type":"preToolCall","server":"eca","agent":"adversarial-reviewer","tool_name":"write_file","tool_input":{"path":"SCRATCH/notes.md","content":"x"}}`, nil},
+		{"ECA reviewer's shell read", false, `{"hook_type":"preToolCall","server":"eca","agent":"adversarial-reviewer","tool_name":"shell_command","cwd":"MAIN","tool_input":{"command":"cat a.go > /dev/null; git -C LINKED log -1"}}`, nil},
+		{"ECA reviewer's read_file", false, `{"hook_type":"preToolCall","server":"eca","agent":"adversarial-reviewer","tool_name":"read_file","tool_input":{"path":"MAIN/a.go"}}`, nil},
 		{"main thread's Edit in the main checkout", false, `{"tool_name":"Edit","tool_input":{"file_path":"MAIN/a.go"}}`, nil},
 		{"main thread's shell write in the main checkout", false, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"echo x > new.txt"}}`, nil},
 		{"main thread's Write in an owned worktree", true, `{"tool_name":"Write","tool_input":{"file_path":"LINKED/sub/new.go"}}`, []string{"a1", "agent-plan own"}},
@@ -197,14 +226,22 @@ func TestOwners(t *testing.T) {
 			if !denied {
 				return
 			}
+			// Claude Code's and Codex's form, or ECA's.
 			var printed struct {
 				Hook struct {
 					Reason string `json:"permissionDecisionReason"`
 				} `json:"hookSpecificOutput"`
+				Context string `json:"additionalContext"`
 			}
 			json.Unmarshal(out.Bytes(), &printed)
-			reason := printed.Hook.Reason
+			reason := printed.Hook.Reason + printed.Context
 			for _, s := range e.says {
+				if not, ok := strings.CutPrefix(s, "!"); ok {
+					if strings.Contains(reason, paths.Replace(not)) {
+						t.Errorf("%s: the reason names %s: %s", event, paths.Replace(not), reason)
+					}
+					continue
+				}
 				if !strings.Contains(reason, paths.Replace(s)) {
 					t.Errorf("%s: the reason does not name %s: %s", event, paths.Replace(s), reason)
 				}
