@@ -468,10 +468,11 @@ use most, from Claude Code's transcripts under `~/.claude` and the
 dashboard session's config directory; `--by` groups them by category,
 plan, repository or sub-agent role. The labels are heuristics: the
 session's directory and entrypoint, the pr-loop session logs beside the
-checkout's git directory, the plans' `SESSIONS`, and the first word of a
-sub-agent's description, so a sub-agent's role is exact only where its
-description starts with build, fix, review, design, research or vcs (or a
-listed synonym). It reads, of a transcript, only the fields its numbers
+checkout's git directory, the plans' `SESSIONS`, and a sub-agent's type
+or the first word of its description. A type `agents.json` lists under
+`usage` (in `internal/agents`) decides its role first; otherwise the role
+is exact only where its description starts with build, fix, review,
+design, research or vcs (or a listed synonym). It reads, of a transcript, only the fields its numbers
 and labels come from, and prints nothing else: no content, no
 descriptions, no paths. Sub-agent transcripts often hold only streaming
 partials of a response, so their output is a lower bound, marked `≥`.

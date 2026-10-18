@@ -13,5 +13,12 @@
     "adversarial-reviewer",
     "design-reviewer",
     "security-reviewer"
-  ]
+  ],
+  "usage": {
+    "builder": "build",
+    "reviewer": "review",
+    "adversarial-reviewer": "review",
+    "design-reviewer": "design",
+    "security-reviewer": "review"
+  }
 }

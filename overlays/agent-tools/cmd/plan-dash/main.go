@@ -144,8 +144,9 @@ const usage = `plan-dash: the operator's status, from GitHub and the plans.
           the dashboard session's config directory; or unknown), the plan
           naming the session, its repository (github.com/OWNER/NAME of the
           checkout holding its directory), or the role (main, or a
-          sub-agent's from the first word of its description: build, fix,
-          review, design, research, vcs or unclassified). Each group shows
+          sub-agent's: build, fix, review, design, research, vcs or
+          unclassified, from its type where the operator's agents name it,
+          else from the first word of its description). Each group shows
           its share, its change from the period before, and the share of
           its cache writes made once the agent's cache had expired (more
           than 5 minutes after its previous request, or an hour after a

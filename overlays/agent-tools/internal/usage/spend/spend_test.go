@@ -3,6 +3,7 @@ package spend
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -431,6 +432,37 @@ func TestText(t *testing.T) {
 	for name, s := range map[string]string{"text": out, "json": string(data)} {
 		if strings.Contains(s, "$") || strings.Contains(s, "USD") || strings.Contains(s, "987") {
 			t.Errorf("%s holds a dollar figure:\n%s", name, s)
+		}
+	}
+}
+
+// TestMetaRole holds a sub-agent's role to its type where agents.json
+// names it, plugin-prefixed or not, over its description's first word, and
+// to the description over Claude Code's own types.
+func TestMetaRole(t *testing.T) {
+	dir := t.TempDir()
+	for i, c := range []struct{ agentType, description, want string }{
+		{"builder", "Review the diff", "build"},
+		{"builder", "", "build"},
+		{"reviewer", "Build a mutant", "review"},
+		{"adversarial-reviewer", "Fix nothing", "review"},
+		{"security-reviewer", "Design notes", "review"},
+		{"design-reviewer", "Review the plan", "design"},
+		{"plugin:builder", "Review it", "build"},
+		{"plugin:design-reviewer", "", "design"},
+		{"general-purpose", "Review it", "review"},
+		{"general-purpose", "Something", "unclassified"},
+		{"Explore", "Find the callers", "research"},
+		{"Explore", "Review the callers", "review"},
+		{"Plan", "", "design"},
+		{"plugin:Explore", "", "unclassified"},
+		{"not-builder", "", "unclassified"},
+	} {
+		path := filepath.Join(dir, fmt.Sprintf("agent-%d.meta.json", i))
+		data, _ := json.Marshal(map[string]string{"agentType": c.agentType, "description": c.description})
+		write(t, path, string(data))
+		if got, ok := metaRole(path); got != c.want || !ok {
+			t.Errorf("%q, %q: role %q, %v, want %q", c.agentType, c.description, got, ok, c.want)
 		}
 	}
 }

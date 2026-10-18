@@ -7,10 +7,10 @@
 // entrypoint, and the cost-state records' session ID and token counts by
 // model, never their dollar figures; and of a sub-agent's meta file only
 // its type and the first word of its description, which it maps to a role
-// from a fixed set. Nothing else of a
-// transcript is kept, so a report holds numbers and labels alone: labels
-// come from fixed sets, plan names and repository paths that pass
-// labelPart.
+// from a fixed set, agents.json naming the operator's agents' roles.
+// Nothing else of a transcript is kept, so a report holds numbers and
+// labels alone: labels come from fixed sets, plan names and repository
+// paths that pass labelPart.
 package spend
 
 import (
@@ -22,11 +22,13 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/agents"
 	quota "github.com/wesnel/agent-tools/internal/usage"
 )
 
@@ -416,15 +418,28 @@ var roleWords = map[string]string{
 	"vcs": "vcs", "restack": "vcs", "rebase": "vcs", "sign": "vcs", "push": "vcs", "commit": "vcs", "merge": "vcs",
 }
 
-// typeRoles map the agent types whose role their type says.
+// agentRoles are the roles of the operator's agents, agents.json's
+// "usage", by agent type. Each role must be one of Roles.
+var agentRoles = func() map[string]string {
+	usage := agents.Usage()
+	for name, role := range usage {
+		if !slices.Contains(Roles, role) {
+			panic("spend: agents.json: usage of " + name + " is " + role + ", not a role")
+		}
+	}
+	return usage
+}()
+
+// typeRoles map Claude Code's own agent types whose role their type says.
 var typeRoles = map[string]string{"Explore": "research", "Plan": "design"}
 
 // Roles are the roles a sub-agent can have; the parent's is "main".
 var Roles = []string{"build", "fix", "review", "design", "research", "vcs", "unclassified"}
 
-// metaRole is a sub-agent's role, from its meta file: the first word of its
-// description, else its type, else unclassified. It reports false when the
-// file exists and cannot be read.
+// metaRole is a sub-agent's role, from its meta file: the role of its type
+// if agentRoles has one, plugin-prefixed or not, else the first word of
+// its description, else typeRoles' for its type, else unclassified. It
+// reports false when the file exists and cannot be read.
 func metaRole(path string) (string, bool) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -441,6 +456,9 @@ func metaRole(path string) (string, bool) {
 	}
 	if json.Unmarshal(data, &meta) != nil {
 		return "unclassified", false
+	}
+	if role, ok := agents.Lookup(agentRoles, meta.AgentType); ok {
+		return role, true
 	}
 	if words := strings.Fields(meta.Description); len(words) > 0 {
 		if role, ok := roleWords[strings.ToLower(strings.Trim(words[0], ".,:;!?\"'`()[]"))]; ok {

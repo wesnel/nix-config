@@ -1,6 +1,9 @@
 package agents
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestLookup(t *testing.T) {
 	m := map[string]int{"builder": 1, "reviewer": 2}
@@ -24,11 +27,31 @@ func TestLookup(t *testing.T) {
 	}
 }
 
+// TestUsageAgentsAreClaudes holds usage to agents the operator defines.
+func TestUsageAgentsAreClaudes(t *testing.T) {
+	claude := Claude()
+	if len(Usage()) == 0 {
+		t.Fatal("agents.json has no usage")
+	}
+	for name := range Usage() {
+		if !slices.Contains(claude, name) {
+			t.Errorf("usage names %q, which is not in claude %v", name, claude)
+		}
+	}
+}
+
 func TestAccessorsCopy(t *testing.T) {
+	if len(Claude()) == 0 {
+		t.Fatal("agents.json has no claude agents")
+	}
 	Roles()["x"] = "y"
+	Usage()["x"] = "y"
 	Claude()[0] = "x"
 	if _, ok := Roles()["x"]; ok {
 		t.Error("Roles shares its map")
+	}
+	if _, ok := Usage()["x"]; ok {
+		t.Error("Usage shares its map")
 	}
 	if Claude()[0] == "x" {
 		t.Error("Claude shares its slice")

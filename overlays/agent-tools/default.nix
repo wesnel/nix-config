@@ -131,8 +131,9 @@
         builtins.head parts + "\n" + builtins.readFile ./internal/review/security.md;
 
     # The operator's agents as internal/agents describes them: those with a
-    # guard role, and the user-level Claude Code agents, which the guard
-    # keeps a project from replacing.
+    # guard role, the user-level Claude Code agents, which the guard keeps a
+    # project from replacing, and the agent types whose usage counts under a
+    # role of their own.
     passthru.agents = builtins.fromJSON (builtins.readFile ./internal/agents/agents.json);
 
     # Static Linux builds for a sandbox guest: pr-loop and agent-plan, which
