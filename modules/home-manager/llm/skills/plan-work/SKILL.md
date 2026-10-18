@@ -165,6 +165,9 @@ verified, and open follow-ups. `agent-plan brief PLAN` prints it any time.
 Claude Code adds `agent-plan brief PLAN --resume` after a compaction or
 /clear instead: it spells out only the decisions since the last hand-back or
 sign-pass and names the rest by ID, so the plan file holds the detail.
+Log each hand-back and sign-pass when it happens: they are the checkpoints
+the brief counts from, and where the status line suggests /clear to the
+operator when the context is large or its cache cold.
 
 Only this host's plans, the files named for it, are yours to change; another
 host's beside them are read-only here, and `agent-plan` refuses to write

@@ -111,7 +111,12 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      stdin): the session's context and quota windows from
                      Claude Code's input, then the open questions of the
                      session's plan, else of the plan of the worktree "cwd"
-                     is in; or nothing. Never touches the network
+                     is in; or nothing. Never touches the network. Ends with
+                     "checkpoint · /clear" where that plan stands at a
+                     checkpoint (a hand-back, a sign-pass handed over or
+                     signed, or a decision that left no question to ask) and
+                     the context holds 200K tokens or more or its cache has
+                     gone cold
   own PLAN --worktree DIR --agent ID
                      record agent ID, the harness's ID for a sub-agent or
                      "main" for the session's main thread, as the one agent
@@ -227,6 +232,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if c, err := plans.Load(); err == nil {
 			if line := c.StatusLine(input); line != "" {
 				parts = append(parts, line)
+			}
+			if checkpointHint(c, input, time.Now()) != "" {
+				parts = append(parts, "checkpoint · /clear")
 			}
 		}
 		if len(parts) > 0 {

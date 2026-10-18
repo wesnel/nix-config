@@ -172,6 +172,41 @@ func TestCommands(t *testing.T) {
 		}
 	})
 
+	// At a checkpoint, a large context or a cold cache suggests /clear on
+	// the status line while it lasts.
+	t.Run("checkpoint hint", func(t *testing.T) {
+		plan := sessionPlan(t)
+		c, err := plans.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := c.Open(plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		status := func(tokens int, expires time.Time) string {
+			return fmt.Sprintf(`{"session_id":"s-1","cwd":"/nowhere","context_window":{"used_percentage":25,`+
+				`"context_window_size":1000000,"current_usage":{"input_tokens":1,"cache_creation_input_tokens":0,`+
+				`"cache_read_input_tokens":%d}},"prompt_cache":{"warm":true,"expires_at":%d}}`, tokens, expires.Unix())
+		}
+		large, small := status(250000, time.Now().Add(time.Hour)), status(30000, time.Now().Add(time.Hour))
+		if _, out, _ := agentPlan(t, large, "statusline"); strings.Contains(out, "/clear") {
+			t.Errorf("a hint before any checkpoint: %q", out)
+		}
+		if _, err := p.Log(plans.Event{Kind: "handed-back", Item: p.Name}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if _, out, _ := agentPlan(t, small, "statusline"); strings.Contains(out, "/clear") {
+			t.Errorf("a hint for a small warm context: %q", out)
+		}
+		if _, out, _ := agentPlan(t, status(30000, time.Now().Add(-time.Minute)), "statusline"); !strings.HasSuffix(out, "checkpoint · /clear\n") {
+			t.Errorf("no hint for a cold cache: %q", out)
+		}
+		if _, out, _ := agentPlan(t, large, "statusline"); !strings.HasSuffix(out, "checkpoint · /clear\n") {
+			t.Errorf("no hint for a large context: %q", out)
+		}
+	})
+
 	t.Run("decide and ask", func(t *testing.T) {
 		plan := withQuestions(t)
 		code, out, _ := agentPlan(t, `{"session_id":"s-1","cwd":"/nowhere"}`, "statusline")

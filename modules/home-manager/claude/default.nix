@@ -383,7 +383,8 @@ in {
 
         # How many open questions the session's plan has, from its files
         # alone, which the `questions` skill asks the operator.
-        # Context and quota too; the rerun drops a window once it resets.
+        # Context and quota too; the rerun drops a window once it resets,
+        # and shows when a checkpoint's cache has gone cold.
         statusLine = {
           type = "command";
           command = "${agentPlan} statusline";
