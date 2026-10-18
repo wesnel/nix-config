@@ -739,7 +739,9 @@ in {
       default =
         {
           notify = ./skills/notify/SKILL.md;
-
+          # In place of emacs-skills' own, which sends byte-compile and ERT
+          # to the operator's running Emacs.
+          emacsclient = ./skills/emacsclient/SKILL.md;
         }
         # Whole directories: most of these load Emacs Lisp or run a script
         # that sits beside their SKILL.md. d2 and github-activity run only
@@ -748,7 +750,6 @@ in {
           "d2"
           "describe"
           "dired"
-          "emacsclient"
           "file-links"
           "github-activity"
           "highlight"

@@ -63,7 +63,8 @@ a command's output to a new file is capturing, not editing.
 What you run to test or try something leaves the operator's configuration
 and state alone. A test Emacs starts with both `-Q` and its own
 `--init-directory`, plus the `-L` and `-l` it needs, and is reached by its
-full socket path, never through the operator's own server.
+full socket path, never through the operator's own server; the `emacsclient`
+skill gives the commands.
 
 ## The shell
 
