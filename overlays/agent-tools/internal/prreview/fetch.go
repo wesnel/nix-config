@@ -61,6 +61,10 @@ type PR struct {
 
 var name = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
 
+// ValidName reports whether s is what a GitHub owner or repository name
+// must be for a review to be kept under its OWNER/NAME.
+func ValidName(s string) bool { return name.MatchString(s) }
+
 // checkSlug refuses an owner/name that is not one, which would put a review
 // outside the cache directory.
 func checkSlug(slug string) (owner, repo string, err error) {
