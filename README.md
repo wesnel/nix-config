@@ -162,7 +162,13 @@ rebase in progress: it says whether the rebase is one the pass left stopped
 and what to run, and refuses while a git the pass started may still be
 running. If it stops with a rebase in progress, run
 `git rebase --continue`, touching the key when it flashes, then
-`git sign-pass --resume`; unlock the key first if it asks for its PIN. Pass `--base REF` when the
+`git sign-pass --resume`; unlock the key first if it asks for its PIN.
+
+When standard output is not a terminal (an agent's run, or a `!` run) the
+output is brief: one line of what it will sign, one telling you to touch the
+key, a progress line every 25 signatures, one line per push, and the JSON
+summary; git's own output is shown only if a command fails. `--brief` and
+`--no-brief` force either, so a `!` run in the session is fine. Pass `--base REF` when the
 branch does not start from `origin`'s default branch or the local `main` or
 `master`.
 

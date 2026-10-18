@@ -248,3 +248,21 @@ func AttachedStderr(ctx context.Context, env []string, args ...string) (int, str
 	}
 	return 0, stderr.String()
 }
+
+// AttachedQuiet is Attached with standard output discarded and standard
+// error written to stderr alone, for a caller that decides what of it to
+// show. It returns the exit code; a failure to run git at all is written to
+// stderr too. See bound for how the end of ctx ends it.
+func AttachedQuiet(ctx context.Context, env []string, stderr io.Writer, args ...string) int {
+	cmd := commandContext(ctx, env, args...)
+	bound(ctx, cmd)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, io.Discard, stderr
+	if err := run(ctx, cmd); err != nil {
+		if exit, ok := err.(*exec.ExitError); ok {
+			return exit.ExitCode()
+		}
+		io.WriteString(stderr, err.Error())
+		return 1
+	}
+	return 0
+}

@@ -524,6 +524,9 @@ func Run(base string, resume, push, setUpstream bool) (any, error) {
 		p.push, p.setUpstream = push, setUpstream
 		// A pass whose first signature the key refused rewrote nothing.
 		if tip, _ := git.Run("rev-parse", "refs/heads/"+p.Branch); tip == p.Before[p.Branch] {
+			if Brief {
+				announceTouch()
+			}
 			if err := rebase(p); err != nil {
 				return nil, err
 			}
@@ -540,13 +543,23 @@ func Run(base string, resume, push, setUpstream bool) (any, error) {
 			return early, err
 		}
 		p.push, p.setUpstream = push, setUpstream
+		pushBranches, urls := 0, 0
 		if push || setUpstream {
-			if _, _, err := pushTargets(append([]string{branch}, p.Stacked...), setUpstream, "run the pass again"); err != nil {
+			byRemote, _, err := pushTargets(append([]string{branch}, p.Stacked...), setUpstream, "run the pass again")
+			if err != nil {
 				return nil, err
 			}
 			if err := sshmux.Check("run the pass again"); err != nil {
 				return nil, err
 			}
+			pushBranches, urls = pushShare(byRemote)
+		}
+		if Brief {
+			commits := len(p.Shape)
+			if p.Squash {
+				commits = len(p.Kept)
+			}
+			announce(commits, 1+len(p.Stacked), pushBranches, urls, commits+urls)
 		}
 		if err := sign(p, path); err != nil {
 			return nil, err
@@ -724,8 +737,10 @@ func rebase(p *pending) error {
 	if p.Onto != "" {
 		upstream = []string{"--onto", p.Onto, p.Fork}
 	}
-	count, _ := git.Run("rev-list", "--count", upstream[len(upstream)-1]+"..refs/heads/"+p.Branch)
-	fmt.Fprintf(os.Stderr, "signing %s commits on %s, squashing fixups first if any; touch the key for each when it blinks\n", count, p.Branch)
+	if !Brief {
+		count, _ := git.Run("rev-list", "--count", upstream[len(upstream)-1]+"..refs/heads/"+p.Branch)
+		fmt.Fprintf(os.Stderr, "signing %s commits on %s, squashing fixups first if any; touch the key for each when it blinks\n", count, p.Branch)
+	}
 	args := []string{"rebase", "--force-rebase", "--gpg-sign", "--update-refs"}
 	if p.Fixups {
 		args = append(args, "-i", "--autosquash")
@@ -734,7 +749,7 @@ func rebase(p *pending) error {
 	// The first attempt must not be bounded: the operator may take any time
 	// to reach the key, and a key waiting on its PIN is theirs to answer.
 	ctx := context.Background()
-	code, stderr := git.AttachedStderr(ctx, history.NoEditor, args...)
+	code, stderr := runGit(ctx, history.NoEditor, p.Branch, args...)
 	aborted := false
 	retry := &retrier{}
 	folded := false
@@ -764,9 +779,9 @@ func rebase(p *pending) error {
 			return err
 		}
 		if restart {
-			code, stderr = git.AttachedStderr(rctx, history.NoEditor, args...)
+			code, stderr = runGit(rctx, history.NoEditor, p.Branch, args...)
 		} else {
-			code, stderr = git.AttachedStderr(rctx, history.NoEditor, "rebase", "--continue")
+			code, stderr = runGit(rctx, history.NoEditor, p.Branch, "rebase", "--continue")
 		}
 		done()
 		if code, stderr, err = settle(p, retry, code, stderr); err != nil {
@@ -905,7 +920,7 @@ func settle(p *pending, r *retrier, code int, stderr string) (int, string, error
 	if code != 0 {
 		return code, stderr, dropBreak(rm)
 	}
-	code, stderr = git.AttachedStderr(context.Background(), history.NoEditor, "rebase", "--continue")
+	code, stderr = runGit(context.Background(), history.NoEditor, p.Branch, "rebase", "--continue")
 	return code, stderr, nil
 }
 
@@ -1276,7 +1291,7 @@ func pushAll(branch string, todo pushes) (pushed map[string]string, err error) {
 			if u.Done || u.Refs[j].Done {
 				continue
 			}
-			if err := pushRef(ctx, u.URL, u.Refs[j], mux.Env(i)); err != nil {
+			if err := pushRef(ctx, u.Remote, u.URL, u.Refs[j], mux.Env(i)); err != nil {
 				return nil, fmt.Errorf("%v%s; the branches are signed, so fix the cause and %s", err, pushedTo(todo.URLs), retry)
 			}
 			u.Refs[j].Done = true
@@ -1396,18 +1411,26 @@ func bottomUp(refs []refPush) []refPush {
 // GitHub, SSH and the key) with env added, without touching the
 // remote-tracking ref. When the key refuses, it asks whether to retry
 // (retryTouch).
-func pushRef(ctx context.Context, url string, r refPush, env []string) error {
+func pushRef(ctx context.Context, remote, url string, r refPush, env []string) error {
 	args := []string{"push", fmt.Sprintf("--force-with-lease=refs/heads/%s:%s", r.Branch, r.Old), url,
 		r.New + ":refs/heads/" + r.Branch}
+	if Brief {
+		args = slices.Insert(args, 1, "--quiet")
+	}
 	what := fmt.Sprintf("the push of %s to %s", r.Branch, url)
 	retry := &retrier{}
 	// The first attempt must not be bounded: the operator may take any time
 	// to reach the key, and a key waiting on its PIN is theirs to answer.
 	run := ctx
 	for {
-		fmt.Fprintf(os.Stderr, "pushing %s to %s; touch the key if it blinks\n", r.Branch, url)
-		code, stderr := git.AttachedStderr(run, env, args...)
+		if !Brief {
+			fmt.Fprintf(os.Stderr, "pushing %s to %s; touch the key if it blinks\n", r.Branch, url)
+		}
+		code, stderr := runGit(run, env, "", args...)
 		if code == 0 {
+			if Brief {
+				fmt.Fprintf(os.Stderr, "pushed %s -> %s %.7s\n", r.Branch, remote, r.New)
+			}
 			return nil
 		}
 		if ctx.Err() != nil {
@@ -1437,6 +1460,9 @@ func retryPush(branch string, setUpstream bool) (any, error) {
 	}
 	if !found {
 		return nil, refuse("no signing pass or push is in progress on %s; run `%s` without --resume to start one", branch, self())
+	}
+	if Brief {
+		announceTouch()
 	}
 	if setUpstream && !todo.SetUpstream && len(todo.URLs) > 0 && len(todo.Skipped) > 0 {
 		more, err := planPush(slices.Sorted(maps.Keys(todo.Skipped)), true, "run `"+resumeCommand(branch, false, true)+"`")

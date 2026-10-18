@@ -136,6 +136,13 @@ rebase in progress, and the unsigned branch is kept under
 `refs/sign-pass/backup/`. After a stop that mentions pinentry, the operator
 unlocks the key before the resume.
 
+Run in a session or with `!`, where standard output is not a terminal, it
+prints brief output: one line of what it will sign, a line to touch the key,
+a progress line every 25 signatures, one line per push and the JSON summary,
+with git's own output only when a command fails (`--no-brief` brings it
+back). The operator's `!` run in the session is fine: its output will not
+flood the context.
+
 Aim a fixup at the commit that introduced the code. If a later commit changed
 the same lines, aim it there instead, or the squash will conflict. To change
 an earlier commit's message, use `--fixup=reword:<commit>` (or `amend:` with
