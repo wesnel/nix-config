@@ -30,6 +30,7 @@
         fish.enable = true;
         git.enable = true;
         gnupg.enable = true;
+        go.enable = true;
         helix.enable = true;
         man.enable = true;
         mcp-proxy.enable = true;
