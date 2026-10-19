@@ -222,9 +222,10 @@ left. The operator may also run `/questions` in Claude Code themselves.
 Ask the operator only about a one-way door (a force-push, deleted data, a
 message sent outside, a migration, a stored format, a published interface)
 or about product direction; only their answer settles such a question.
-Decide every other matter yourself, and record each such reversible
-decision of your own in one step, already decided, where the operator can
-reopen it:
+The `grill` skill is the exception: once the operator invokes it, every
+open choice goes to them. Otherwise decide every other matter yourself,
+and record each such reversible decision of your own in one step, already
+decided, where the operator can reopen it:
 
 ```sh
 agent-plan ask PLAN --question 'Keep the old flag?' --recommendation 'no, drop it' \

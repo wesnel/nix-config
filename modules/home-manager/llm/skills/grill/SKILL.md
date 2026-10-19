@@ -20,7 +20,9 @@ reach them as the `plan-work` skill's "Questions for the operator" says.
    slow lookups in the background, and write the questions that do not
    depend on them meanwhile.
 4. Write each remaining choice with `agent-plan ask`, passing the IDs of
-   the questions or steps it depends on as `--after`.
+   the questions or steps it depends on as `--after`. Every choice goes to
+   the operator, reversible ones included: invoking this skill is the
+   operator asking to make them all. Decide none yourself.
 5. Tell the operator only how many questions they can answer now
    (`agent-plan questions PLAN --all --count`); in Claude Code,
    `/questions` asks them.
