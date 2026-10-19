@@ -290,8 +290,6 @@ stored state, flags, output other programs parse, config keys and options,
 and what another host or branch reads. It checks the pull request
 description's `## Reverting` section against the code, from
 `--description FILE` or a pull request's own, and does not run without one.
-Unlike the other focused reviews, it runs by Codex, as the general review
-does.
 
 Every reviewer gets a worktree of its own under
 `$XDG_CACHE_HOME/pr-review/OWNER/NAME/work/`, made without your git config,

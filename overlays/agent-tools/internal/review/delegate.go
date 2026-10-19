@@ -62,9 +62,10 @@ TYPEs (--reviewer, repeated):
             the operator's threat notes and the open branches that change the
             same files. Its reply must name every category of its checklist
             as checked.
-  compat    the compatibility review, by Codex, confined as codex is: what
-            outlives the commit (stored state, flags, output others parse,
-            config keys and options, what another host or branch reads).
+  compat    the compatibility review, by Claude Code's compat-reviewer
+            agent, headless as security is: what outlives the commit
+            (stored state, flags, output others parse, config keys and
+            options, what another host or branch reads).
             Its prompt adds the open branches that change the same files,
             and the ## Reverting section of the pull request description,
             the file --description names or a pull request's own, without
@@ -147,7 +148,9 @@ record's counts. Exit status:
 // review, its focus. The guide writes the walkthrough, and finds nothing.
 type reviewerType struct {
 	claude bool
-	// agent is its agent in review-agents.json.
+	// agent is its agent in review-agents.json, and a focused review's is
+	// its route's ROUTE-reviewer, which the Claude Code module builds from
+	// agent-tools' focusPrompts.
 	agent string
 	focus string
 	guide bool
@@ -160,7 +163,7 @@ type reviewerType struct {
 var reviewerTypes = map[string]reviewerType{
 	"codex":    {},
 	"security": {claude: true, agent: "security-reviewer", focus: "security"},
-	"compat":   {focus: "compat"},
+	"compat":   {claude: true, agent: "compat-reviewer", focus: "compat"},
 	"guide":    {claude: true, agent: "review-guide", guide: true},
 	"diagram":  {diagram: true},
 }
@@ -354,9 +357,13 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 				fmt.Fprintf(stderr, "%s: the %s review could not run: %s\n", name, t, run.why)
 				continue
 			}
+			reader := "a sub-agent that only reads"
+			if agent := reviewerTypes[t].agent; agent != "" {
+				reader = "a new `" + agent + "` sub-agent"
+			}
 			fmt.Fprintf(stderr, "%s: the %s review could not run here: %s. Run `git delegate` where it can, outside any "+
-				"sandbox and review-loop session, or start a sub-agent that only reads on what `git delegate --print-prompt "+
-				"--reviewer %s %s%s` prints\n", name, t, run.why, t, typeFlags(s, t), s.given)
+				"sandbox and review-loop session, or start %s on what `git delegate --print-prompt "+
+				"--reviewer %s %s%s` prints\n", name, t, run.why, reader, t, typeFlags(s, t), s.given)
 			continue
 		}
 		runs = append(runs, run)

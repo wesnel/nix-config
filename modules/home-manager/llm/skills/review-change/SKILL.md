@@ -111,9 +111,14 @@ others parse, config keys and options, what another host or branch reads),
 and checks the pull request description's `## Reverting` section against
 the code, so it also takes `--description FILE`, the description as the
 `pull-requests` skill has you write it; for a pull request it reads the
-pull request's own unless `--description` names another. Settle each
-finding as Triage says. A fix moves the change, so the general review and
-each route's run again on it, within the same three rounds.
+pull request's own unless `--description` names another. Each runs
+headless as its route's own agent type, `ROUTE-reviewer`
+(`security-reviewer`, `compat-reviewer`); where delegate cannot run it
+(exit 4), `git delegate --print-prompt --reviewer ROUTE` with the same
+files prints the prompt for a new sub-agent of that type, which stderr
+names. Settle each finding as Triage says. A fix moves the change, so the
+general review and each route's run again on it, within the same three
+rounds.
 
 ## Someone else's pull request
 

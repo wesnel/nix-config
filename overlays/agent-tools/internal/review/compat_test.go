@@ -49,6 +49,15 @@ func compatReply(t *testing.T, checked string) string {
 		"evidence": "e", "about": null, "reopens": null}], "unverified": [], "checked": ` + checked + `}`
 }
 
+// compatSays has the fake claude reply as the compat-reviewer agent with
+// reply, a JSON object.
+func compatSays(t *testing.T, f *fixture, reply string) {
+	t.Helper()
+	var structured map[string]any
+	must(0, json.Unmarshal([]byte(reply), &structured))
+	f.claudeSays(t, "compat-reviewer", claudeResult(structured, "Reviewed."))
+}
+
 // Each known route has a focused review and a reviewer type, and each
 // focused review a known route.
 func TestFocusesKnown(t *testing.T) {
@@ -62,14 +71,13 @@ func TestFocusesKnown(t *testing.T) {
 	}
 }
 
-// A compat review runs the compat checklist with the general rules and
-// the description's Reverting section, and requires every category as
-// checked.
+// A compat review runs headless as the compat-reviewer agent, with the
+// compat checklist, the general rules and the description's Reverting
+// section, and requires every category as checked.
 func TestFocusCompat(t *testing.T) {
 	t.Run("checked", func(t *testing.T) {
 		f := setUp(t, true)
-		t.Setenv("FAKE_CODEX", "reply")
-		t.Setenv("FAKE_REPLY", compatReply(t, checkedOf(t, "compat", "")))
+		compatSays(t, f, compatReply(t, checkedOf(t, "compat", "")))
 		code, run, stderr := runDelegate(t, "--reviewer", "compat", "--goal", ".git/goal.md", "--description",
 			description(t, f, reverting), f.base+"..HEAD")
 		out := run.review("compat")
@@ -77,7 +85,11 @@ func TestFocusCompat(t *testing.T) {
 			out.Findings[0]["kind"] != "incompatible" {
 			t.Fatalf("exit %d, %+v\n%s", code, run, stderr)
 		}
-		prompt := string(must(os.ReadFile(filepath.Join(f.log, "prompt"))))
+		args := claudeArgs(t, f, "compat-reviewer", 1)
+		if !slices.Contains(args, "compat-reviewer") || !slices.Contains(args, "/store/review-agents.json") {
+			t.Errorf("claude was not run as the compat-reviewer agent: %q", args[:len(args)-1])
+		}
+		prompt := args[len(args)-1]
 		if !strings.HasPrefix(prompt, generalRules()) || !strings.Contains(prompt, "This is a compatibility review") {
 			t.Errorf("the prompt is not the rules and the compat checks:\n%s", prompt)
 		}
@@ -96,17 +108,17 @@ func TestFocusCompat(t *testing.T) {
 				t.Errorf("the prompt holds %q:\n%s", not, prompt)
 			}
 		}
-		schema := string(must(os.ReadFile(filepath.Join(f.log, "schema"))))
-		if !strings.Contains(schema, `"incompatible"`) || strings.Contains(schema, `"vulnerability"`) ||
-			!strings.Contains(schema, `"reverting"`) {
-			t.Errorf("schema:\n%s", schema)
+		i := slices.Index(args, "--json-schema")
+		if i < 0 || !strings.Contains(args[i+1], `"incompatible"`) || strings.Contains(args[i+1], `"vulnerability"`) ||
+			!strings.Contains(args[i+1], `"reverting"`) {
+			t.Errorf("schema: %q", args)
 		}
+		f.checkCleanedUp(t)
 	})
 
 	t.Run("a category left out", func(t *testing.T) {
 		f := setUp(t, true)
-		t.Setenv("FAKE_CODEX", "reply")
-		t.Setenv("FAKE_REPLY", compatReply(t, checkedOf(t, "compat", "reverting")))
+		compatSays(t, f, compatReply(t, checkedOf(t, "compat", "reverting")))
 		code, run, stderr := runDelegate(t, "--reviewer", "compat", "--goal", ".git/goal.md", "--description",
 			description(t, f, reverting), f.base+"..HEAD")
 		if code != 4 || len(run.NotRun) != 1 || run.NotRun[0]["reviewer"] != "compat" || !strings.Contains(stderr, "reverting") {
@@ -130,8 +142,7 @@ func TestFocusCompat(t *testing.T) {
 
 	t.Run("refused", func(t *testing.T) {
 		f := setUp(t, true)
-		t.Setenv("FAKE_CODEX", "reply")
-		t.Setenv("FAKE_REPLY", compatReply(t, checkedOf(t, "compat", "")))
+		compatSays(t, f, compatReply(t, checkedOf(t, "compat", "")))
 		given := f.base + "..HEAD"
 		for what, args := range map[string][]string{
 			"no description": {"--reviewer", "compat", "--goal", ".git/goal.md", given},
@@ -147,8 +158,8 @@ func TestFocusCompat(t *testing.T) {
 				t.Errorf("%s: %s", what, stderr)
 			}
 		}
-		if _, err := os.Stat(filepath.Join(f.log, "prompt")); err == nil {
-			t.Error("a refused compat review ran Codex")
+		if _, err := os.Stat(filepath.Join(f.log, "compat-reviewer-runs")); err == nil {
+			t.Error("a refused compat review ran its reviewer")
 		}
 	})
 
@@ -198,6 +209,19 @@ func TestFocusCompat(t *testing.T) {
 		}
 	})
 
+	// Where it cannot run headless, the hint names the agent type and a
+	// command that prints its prompt, the description included.
+	t.Run("the agent type named", func(t *testing.T) {
+		f := setUp(t, true)
+		t.Setenv("AGENT_TOOLS_CONFIG", filepath.Join(t.TempDir(), "none.json"))
+		code, _, stderr := runDelegate(t, "--reviewer", "compat", "--goal", ".git/goal.md", "--description",
+			description(t, f, reverting), f.base+"..HEAD")
+		if code != 4 || !strings.Contains(stderr, "start a new `compat-reviewer` sub-agent on what `git delegate "+
+			"--print-prompt --reviewer compat --goal FILE --description FILE "+f.base+"..HEAD` prints") {
+			t.Errorf("exit %d\n%s", code, stderr)
+		}
+	})
+
 	// A pull request's own description is the one checked, unless
 	// --description names another.
 	t.Run("a pull request", func(t *testing.T) {
@@ -207,8 +231,7 @@ func TestFocusCompat(t *testing.T) {
 		old := refreshThreads
 		refreshThreads = func(string, int) ([]loop.Thread, error) { return nil, nil }
 		t.Cleanup(func() { refreshThreads = old })
-		t.Setenv("FAKE_CODEX", "reply")
-		t.Setenv("FAKE_REPLY", `{"findings": [], "unverified": [], "checked": `+checkedOf(t, "compat", "")+`}`)
+		compatSays(t, f, `{"findings": [], "unverified": [], "checked": `+checkedOf(t, "compat", "")+`}`)
 
 		code, _, stderr := runDelegate(t, "--reviewer", "compat", "o/r#7")
 		refused(t, "a pull request without a Reverting section", code, stderr)
@@ -220,9 +243,8 @@ func TestFocusCompat(t *testing.T) {
 		if code, run, stderr := runDelegate(t, "--reviewer", "compat", "o/r#7"); code != 0 || run.review("compat").Focus != "compat" {
 			t.Fatalf("exit %d, %+v\n%s", code, run, stderr)
 		}
-		if prompt := string(must(os.ReadFile(filepath.Join(f.log, "prompt")))); !strings.Contains(prompt,
-			"no reader keeps the third line") {
-			t.Errorf("the prompt lacks the pull request's Reverting section:\n%s", prompt)
+		if args := claudeArgs(t, f, "compat-reviewer", 1); !strings.Contains(args[len(args)-1], "no reader keeps the third line") {
+			t.Errorf("the prompt lacks the pull request's Reverting section:\n%s", args[len(args)-1])
 		}
 
 		gh.pr["body"] = "No section."
