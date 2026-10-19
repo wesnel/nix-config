@@ -91,10 +91,13 @@ what is this work's.
   `git delegate` cannot run Codex, from the prompt
   `git delegate --print-prompt` prints, replying in the form it gives.
 - **`design-reviewer`:** the design reviews (Design review below).
-- **`security-reviewer`** and **`compat-reviewer`:** that focus's review
-  of a part's range outside the fresh review loop, or from the prompt
+- **`security-reviewer`**, **`compat-reviewer`** and
+  **`upgrade-reviewer`:** that focus's review of a part's range outside
+  the fresh review loop, or from the prompt
   `git delegate --print-prompt --reviewer ROUTE` prints where delegate
-  cannot run it headless (its stderr names the type).
+  cannot run it headless (its stderr names the type). An
+  `upgrade-reviewer` reads only the upstream text its prompt holds: give
+  it that prompt, never a task to look upstream changes up itself.
 - **`Explore`:** read-only lookups and inventories.
 
 The reviewers have no editing tools. The guard lets them run git's

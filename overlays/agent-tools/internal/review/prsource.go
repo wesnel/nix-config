@@ -56,6 +56,10 @@ type PR struct {
 	// this head's review directory.
 	Clone string `json:"clone"`
 	Dir   string `json:"dir"`
+	// Own is whether its author is the user of the gh login: the
+	// operator's own change, for which review.privateModules names the
+	// private repositories an upgrade review may read.
+	Own bool `json:"own"`
 }
 
 // checkSlug refuses an owner/name that is not one, which would put a review
@@ -89,7 +93,9 @@ func Fetch(ctx context.Context, slug string, number int) (*PR, error) {
 	if number <= 0 {
 		return nil, refusal.New("%d is not a pull request number; pass the number GitHub shows, such as 12", number)
 	}
+	type login struct{ Login string }
 	var data struct {
+		Viewer     login
 		Repository struct {
 			PullRequest *struct {
 				URL                     string
@@ -97,13 +103,15 @@ func Fetch(ctx context.Context, slug string, number int) (*PR, error) {
 				Body                    string
 				HeadRefOid              string
 				BaseRefName             string
+				Author                  *login
 				ClosingIssuesReferences struct{ Nodes []Issue }
 			}
 		}
 	}
 	err = graphQL(`query($owner: String!, $name: String!, $number: Int!) {
+		viewer { login }
 		repository(owner: $owner, name: $name) { pullRequest(number: $number) {
-			url title body headRefOid baseRefName
+			url title body headRefOid baseRefName author { login }
 			closingIssuesReferences(first: 10) { nodes { number title body } }
 		} }
 	}`, map[string]any{"owner": owner, "name": repo, "number": number}, &data)
@@ -118,7 +126,8 @@ func Fetch(ctx context.Context, slug string, number int) (*PR, error) {
 		return nil, fmt.Errorf("GitHub gave %q as the head of %s#%d", p.HeadRefOid, slug, number)
 	}
 	pr := &PR{Repo: owner + "/" + repo, Number: number, URL: p.URL, Title: p.Title, Body: p.Body,
-		BaseRef: p.BaseRefName, Issues: p.ClosingIssuesReferences.Nodes, Head: p.HeadRefOid}
+		BaseRef: p.BaseRefName, Issues: p.ClosingIssuesReferences.Nodes, Head: p.HeadRefOid,
+		Own: p.Author != nil && p.Author.Login != "" && strings.EqualFold(p.Author.Login, data.Viewer.Login)}
 	if pr.Issues == nil {
 		pr.Issues = []Issue{}
 	}

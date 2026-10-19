@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/pinscan"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
@@ -28,6 +29,11 @@ type Rule struct {
 	Lines   []string `json:"lines,omitempty"`
 	Removed bool     `json:"removed,omitempty"`
 	Why     string   `json:"why"`
+	// Changed, a builtin rule's, matches a change of a file matching
+	// Paths, from its text at the commit's parent to its text at the
+	// commit, as Lines match a line, where it reports true: for what
+	// only a reading of the whole file decides.
+	Changed func(old, next string) bool `json:"-"`
 }
 
 // Check refuses a rule that names no known route, matches nothing, or
@@ -58,6 +64,12 @@ func (r Rule) Check() error {
 	return nil
 }
 
+// LockFiles are the lock files of the package managers the rules know,
+// whose every change routes to both security and upgrade.
+var LockFiles = []string{"**/go.mod", "**/go.sum", "**/go.work", "**/go.work.sum", "**/flake.lock", "**/nix/sources.json",
+	"**/npins/sources.json", "**/package-lock.json", "**/yarn.lock", "**/pnpm-lock.yaml", "**/Cargo.lock", "**/Gemfile.lock",
+	"**/poetry.lock", "**/uv.lock"}
+
 // Builtin are the rules every repository's changes are routed by; the
 // operator's settings may add to them, never take from them.
 var Builtin = []Rule{
@@ -72,9 +84,7 @@ var Builtin = []Rule{
 	{Route: "security", Paths: []string{"**/*.go"},
 		Lines: []string{`\bos\.(WriteFile|OpenFile|Mkdir|MkdirAll|Chmod|Chown)\(`, `\b0o?[0-7]{3}\b`},
 		Why:   "Go code that sets file permissions"},
-	{Route: "security", Paths: []string{"**/go.mod", "**/go.sum", "**/flake.lock", "**/package-lock.json", "**/yarn.lock",
-		"**/pnpm-lock.yaml", "**/Cargo.lock", "**/Gemfile.lock", "**/poetry.lock", "**/uv.lock"},
-		Why: "a change of dependencies"},
+	{Route: "security", Paths: LockFiles, Why: "a change of dependencies"},
 	{Route: "security", Paths: []string{".github/workflows/**"}, Why: "a change of CI workflows"},
 	{Route: "security", Paths: []string{"**/AGENTS.md", "**/CLAUDE.md", "**/.claude/**", "**/.codex/**", "**/.mcp.json",
 		"**/policy.json", "**/mcp.json"},
@@ -100,6 +110,22 @@ var Builtin = []Rule{
 		Lines: []string{`\b\w*(Kinds?|Properties)\s*:?=[^=]`, `":[A-Z][A-Z0-9_]*:`, `"[A-Z][A-Z0-9_]{2,}"`,
 			`^\s*"[a-z][a-z0-9-]*"(,\s*"[a-z][a-z0-9-]*")*,?\s*\}?,?\s*$`},
 		Why: "agent-tools' plan files: event kinds, keywords and property names"},
+	// What an upgrade moves is read by internal/upgrade, which knows these
+	// files' shapes: a rule added here needs a reader there too, or every
+	// pin it routes is an unread one.
+	{Route: "upgrade", Paths: LockFiles, Why: "locked dependency versions changed"},
+	// Upgrade's Nix scanner pins no changed line beyond those
+	// pinscan.NixPinned takes and those its units' attributes are set on.
+	{Route: "upgrade", Paths: []string{"**/*.nix"},
+		Lines: []string{`(?:^|[\s{;])(version|rev|tag|hash|sha256|sha512|outputHash|vendorHash|cargoHash|npmDepsHash|imageDigest|` +
+			`finalImageTag)\s*=`},
+		Changed: pinscan.NixPinned, Why: "Nix version pins changed"},
+	{Route: "upgrade", Paths: []string{".github/workflows/**", ".github/actions/**", "**/action.yml", "**/action.yaml"},
+		// As upgrade's actionsUnread: any form an action may be named in.
+		Lines: []string{`uses|docker://|[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@`}, Why: "the versions of the actions CI runs changed"},
+	// Any line of a flake.nix may change what its inputs evaluate to, so
+	// every change of one is the upgrade review's, its diff read whole.
+	{Route: "upgrade", Paths: []string{"**/flake.nix"}, Why: "a flake's inputs may have changed"},
 }
 
 // Route is a route a change needs, why, and the commits that need it,
@@ -129,7 +155,7 @@ func Scan(top, base, tip string, rules []Rule) ([]Route, error) {
 			return nil, err
 		}
 		for _, c := range cs {
-			if !matches(files, c) {
+			if !matches(files, c) && !changedMatch(top, commit, files, c) {
 				continue
 			}
 			r := found[c.Route]
@@ -185,7 +211,7 @@ func matches(files map[string][]string, c compiled) bool {
 		if len(c.paths) > 0 && !slices.ContainsFunc(c.paths, func(re *regexp.Regexp) bool { return re.MatchString(file) }) {
 			continue
 		}
-		if len(c.lines) == 0 {
+		if len(c.lines) == 0 && c.Changed == nil {
 			return true
 		}
 		for _, line := range changed {
@@ -195,6 +221,25 @@ func matches(files map[string][]string, c compiled) bool {
 			if slices.ContainsFunc(c.lines, func(re *regexp.Regexp) bool { return re.MatchString(line[1:]) }) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// changedMatch reports whether c's Changed takes the change commit, in the
+// repository at top, makes to one of files that c's paths match.
+func changedMatch(top, commit string, files map[string][]string, c compiled) bool {
+	if c.Changed == nil {
+		return false
+	}
+	for file := range files {
+		if len(c.paths) > 0 && !slices.ContainsFunc(c.paths, func(re *regexp.Regexp) bool { return re.MatchString(file) }) {
+			continue
+		}
+		old, _ := git.Bytes(nil, "-C", top, "cat-file", "blob", commit+"^:"+file)
+		next, _ := git.Bytes(nil, "-C", top, "cat-file", "blob", commit+":"+file)
+		if c.Changed(string(old), string(next)) {
+			return true
 		}
 	}
 	return false

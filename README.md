@@ -291,6 +291,21 @@ and what another host or branch reads. It checks the pull request
 description's `## Reverting` section against the code, from
 `--description FILE` or a pull request's own, and does not run without one.
 
+The upgrade review (`--reviewer upgrade`) reviews a change's version bumps
+(lock files, Nix pins, the actions CI runs) against what changed upstream
+between each pin's two versions. delegate gathers that text on the host
+before the reviewer starts, over HTTPS and never over SSH: from a local
+clone under `~/git/github.com`, the hash-checked source trees, the public
+module proxy and GitHub's API, with private modules
+(`wgn.home.llm.review.privateModules`) read only from a clone or GitHub. A
+GitHub repository is read only where GitHub says it is public, or, for
+your own change (a range of your repository, or a pull request you
+opened), where those patterns name it. Someone else's pull request gets
+public repositories alone, so it cannot point the review at private ones
+your login reaches, those patterns' included. A pin nothing could be gathered for, or
+that the reply does not say it read, is a finding of the review's own,
+`UP-…`, settled like any other.
+
 Every reviewer gets a worktree of its own under
 `$XDG_CACHE_HOME/pr-review/OWNER/NAME/work/`, made without your git config,
 hooks, LFS filter or submodules, and removed after it. A pull request is

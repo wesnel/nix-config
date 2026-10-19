@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -95,8 +96,8 @@ func TestScan(t *testing.T) {
 	}
 	want := []string{c["exec"], c["deps"], c["unlisten"], c["agents"]}
 	if r := routed(t, got); strings.Join(r["security"], " ") != strings.Join(want, " ") ||
-		strings.Join(r["compat"], " ") != c["flag"] || len(r) != 2 {
-		t.Errorf("routes %+v, want security for %v and compat for %s", got, want, c["flag"])
+		strings.Join(r["compat"], " ") != c["flag"] || strings.Join(r["upgrade"], " ") != c["deps"] || len(r) != 3 {
+		t.Errorf("routes %+v, want security for %v, compat for %s and upgrade for %s", got, want, c["flag"], c["deps"])
 	}
 	for _, r := range got {
 		if len(r.Why) == 0 {
@@ -237,6 +238,112 @@ func TestCompatRules(t *testing.T) {
 			if got != want {
 				t.Errorf("%s: %s%s: routed to compat %v, want %v", tc.path, sign, tc.line, got, want)
 			}
+		}
+	}
+}
+
+// The built-in upgrade rules route a commit that changes a lock file, a
+// version pin in a Nix file or the version of a workflow's action, and
+// not one that only resembles one; security keeps every lock file too.
+func TestUpgradeRules(t *testing.T) {
+	rules, err := compile(Builtin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routesOf := func(path, line string) map[string]bool {
+		got := map[string]bool{}
+		for _, r := range rules {
+			if matches(map[string][]string{path: {line}}, r) {
+				got[r.Route] = true
+			}
+		}
+		return got
+	}
+	for _, tc := range []struct {
+		path, line string
+		want       bool
+	}{
+		{"flake.lock", `        "rev": "abc",`, true},
+		{"sub/go.mod", `	golang.org/x/mod v0.21.0`, true},
+		{"go.sum", `golang.org/x/mod v0.21.0 h1:x=`, true},
+		{"web/package-lock.json", `"version": "1.2.3",`, true},
+		{"Cargo.lock", `version = "1.0.0"`, true},
+		{"overlays/x/default.nix", `  version = "1.2.3";`, true},
+		{"overlays/x/default.nix", `    rev = "v${version}";`, true},
+		{"overlays/x/default.nix", `    hash = "sha256-AAAA";`, true},
+		{"overlays/x/default.nix", `  vendorHash = null;`, true},
+		{"overlays/x/default.nix", `  npmDepsHash = "sha256-B";`, true},
+		{"overlays/x/default.nix", `  finalImageTag = "1.2";`, true},
+		{"overlays/x/default.nix", `    imageDigest = "sha256:abc";`, true},
+		{"overlays/x/default.nix", `    tag = "v1";`, true},
+		// A line's pattern cannot tell a string from code: routing too
+		// often costs a review, and missing a pin on one line costs more.
+		{"overlays/x/default.nix", `  description = "the version = 2 of it";`, true},
+		{"overlays/x/default.nix", `  description = "the version 2 of it";`, false},
+		{"overlays/x/default.nix", `  versionCheck = true;`, false},
+		{"overlays/x/default.nix", `  inherit version;`, false},
+		{"README.md", `  version = "1.2.3";`, false},
+		{".github/workflows/ci.yml", `      - uses: actions/checkout@v4`, true},
+		{".github/workflows/ci.yml", `        uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e91967a5f35b # v5.0.2`, true},
+		{".github/workflows/ci.yml", `      - run: make`, false},
+		// Every form that may name an action routes, a local one too.
+		{".github/workflows/ci.yml", `      - uses: ./local-action`, true},
+		{".github/workflows/ci.yml", `      - uses: docker://alpine:3.18`, true},
+		{".github/workflows/ci.yml", `      - "uses": actions/checkout@main`, true},
+		{".github/workflows/ci.yml", `          actions/checkout@main`, true},
+		{".github/workflows/ci.yml", `    steps: [{uses: evil/checkout@main}]`, true},
+		{"docs/ci.md", `      - uses: actions/checkout@v4`, false},
+		{"flake.nix", `    nixpkgs.url = "github:nixos/nixpkgs/nixos-25.11";`, true},
+		{"sub/flake.nix", `      url = "github:o/r";`, true},
+		{"flake.nix", `    inputs.nixpkgs.follows = "nixpkgs";`, true},
+		{"flake.nix", `    owner = "evil";`, true},
+		{"flake.nix", `    ref = "nixos-26.05";`, true},
+		{"modules/x.nix", `    url = "https://example.com";`, false},
+		{"pkgs/x.nix", `  src = fetchFromGitHub { owner = "o"; repo = "r"; rev = "v2.0"; hash = "sha256-B="; };`, true},
+		{"pkgs/y.nix", `    sha512 = "BBB";`, true},
+		{"pkgs/y.nix", `    outputHash = "sha256-B=";`, true},
+		{"pkgs/y.nix", `    myversion = "1";`, false},
+		{"nix/sources.json", `    "rev": "abc",`, true},
+		{"npins/sources.json", `    "revision": "abc",`, true},
+		{".github/actions/x/action.yml", `    uses: actions/checkout@v5`, true},
+		{"action.yml", `    uses: actions/checkout@v5`, true},
+		{"go.work", `go 1.26`, true},
+		{"go.work.sum", `example.com/m v1.0.0 h1:CCCC=`, true},
+	} {
+		for _, sign := range []string{"-", "+"} {
+			if got := routesOf(tc.path, sign+tc.line)["upgrade"]; got != tc.want {
+				t.Errorf("%s: %s%s: routed to upgrade %v, want %v", tc.path, sign, tc.line, got, tc.want)
+			}
+		}
+	}
+	for _, f := range LockFiles {
+		name := "x/" + strings.TrimPrefix(f, "**/")
+		if got := routesOf(name, "+x"); !got["security"] || !got["upgrade"] {
+			t.Errorf("%s routes to %v, want security and upgrade", name, got)
+		}
+	}
+}
+
+// A Nix change is routed to upgrade as its scanner reads the file whole:
+// a line naming what may pin in code is, prose in a string is not.
+func TestScanNixFiles(t *testing.T) {
+	for _, tc := range []struct {
+		old, next string
+		want      bool
+	}{
+		{"{\n  u = \"https://e.example/a\";\n}\n", "{\n  url = \"https://e.example/b\";\n}\n", true},
+		{"{\n  f = builtins.getFlake \"github:o/r/aaaa\";\n}\n", "{\n  f = builtins.getFlake \"github:o/r/bbbb\";\n}\n", true},
+		{"{\n  d = ''\n    Hosts it may reach.\n  '';\n}\n", "{\n  d = ''\n    Hosts it may reach, by a version's URL.\n  '';\n}\n", false},
+		{"{\n  home.stateVersion = \"24.05\";\n}\n", "{\n  home.stateVersion = \"24.11\";\n}\n", false},
+	} {
+		repo, _ := filepath.EvalSymlinks(t.TempDir())
+		gitIn(t, repo, "init", "-q", "-b", "main")
+		base := write(t, repo, "base", "x.nix="+tc.old)
+		tip := write(t, repo, "tip", "x.nix="+tc.next)
+		rs, err := Scan(repo, base, tip, Builtin)
+		got := slices.ContainsFunc(rs, func(r Route) bool { return r.Route == "upgrade" })
+		if err != nil || got != tc.want {
+			t.Errorf("%q: routes %+v (%v), want upgrade %v", tc.next, rs, err, tc.want)
 		}
 	}
 }

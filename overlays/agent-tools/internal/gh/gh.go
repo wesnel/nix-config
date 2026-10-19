@@ -15,7 +15,17 @@ import (
 	"time"
 )
 
-const api = "https://api.github.com"
+// api is where every call goes, with the user's token: GitHub's API, or a
+// test's server, which SetAPI points it at.
+var api = "https://api.github.com"
+
+// SetAPI sends every later call to url, a test's own server, and returns
+// the function that restores GitHub's.
+func SetAPI(url string) (restore func()) {
+	old := api
+	api = strings.TrimSuffix(url, "/")
+	return func() { api = old }
+}
 
 // Outside is where pr-loop runs gh: gh calls git with the repository's own
 // config and hooks when started inside one, and pr-loop names the repository

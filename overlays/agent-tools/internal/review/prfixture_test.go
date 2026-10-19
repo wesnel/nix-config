@@ -77,8 +77,10 @@ func (r *remote) push(t *testing.T) {
 // fakeGitHub answers the GraphQL queries a review makes, and fails and
 // counts any mutation.
 type fakeGitHub struct {
-	pr        map[string]any
-	threads   []map[string]any
+	pr      map[string]any
+	threads []map[string]any
+	// viewer is the login GitHub says the user has.
+	viewer    string
 	queries   int
 	mutations int
 }
@@ -95,7 +97,7 @@ func (f *fakeGitHub) graphQL(query string, vars map[string]any, out any) error {
 		data = map[string]any{"repository": map[string]any{"pullRequest": map[string]any{"reviewThreads": map[string]any{
 			"pageInfo": map[string]any{"hasNextPage": false, "endCursor": ""}, "nodes": f.threads}}}}
 	default:
-		data = map[string]any{"repository": map[string]any{"pullRequest": f.pr}}
+		data = map[string]any{"viewer": map[string]any{"login": f.viewer}, "repository": map[string]any{"pullRequest": f.pr}}
 	}
 	encoded, _ := json.Marshal(data)
 	return json.Unmarshal(encoded, out)

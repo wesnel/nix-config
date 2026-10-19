@@ -38,7 +38,7 @@
         "additionalProperties": false,
         "required": ["route", "why", "paths"],
         "properties": {
-          "route": {"type": "string", "enum": ["security", "compat"]},
+          "route": {"type": "string", "enum": ["security", "compat", "upgrade"]},
           "why": {"type": "string", "description": "Why the change needs it, in one sentence."},
           "paths": {"type": "array", "items": {"type": "string"}, "description": "The paths that need it."}
         }

@@ -33,6 +33,9 @@ type span struct {
 	commits                       string
 	slug                          string
 	pr                            int
+	// own is whether the change is the operator's: a range of this
+	// repository, or a pull request whose author is the gh login's user.
+	own bool
 }
 
 // settings are the repos settings of r's repository: by its remotes, or
@@ -125,6 +128,12 @@ type inputs struct {
 	// description is the pull request description, and descriptionFrom
 	// what it is, for a refusal to name; "" where none was given.
 	description, descriptionFrom string
+	// upgrades are an upgrade review's pins and what was gathered for
+	// them, which raise its unread-upgrade findings.
+	upgrades *upgrades
+	// printed is whether the prompt is printed for a sub-agent, whose
+	// reply delegate never sees.
+	printed bool
 }
 
 // notesSection is the security prompt's threat notes, the operator's,
@@ -411,7 +420,8 @@ type Finding struct {
 	About    *string `json:"about,omitempty"`
 	Reopens  *string `json:"reopens,omitempty"`
 	// Reviewer is "red-check" for a finding the review raised itself from
-	// red-check's verdicts, and empty for the reviewer's.
+	// red-check's verdicts, "upgrade" for one it raised for an unread pin,
+	// and empty for the reviewer's.
 	Reviewer string `json:"reviewer,omitempty"`
 }
 
@@ -441,6 +451,9 @@ type Output struct {
 	// the record keeps.
 	Diagrams []DiagramResult `json:"diagrams,omitempty"`
 	diagrams []record.Diagram
+	// Upgrades are an upgrade review's account of each moved pin, from
+	// its reply.
+	Upgrades []UpgradeRead `json:"upgrades,omitempty"`
 	// proposed are the routes the reviewer's reply named.
 	proposed []proposedRoute
 }
@@ -488,6 +501,7 @@ func validateWith(reply, given, tip string, blob func(path string) ([]byte, erro
 		Unverified []string           `json:"unverified"`
 		Routes     []proposedRoute    `json:"routes"`
 		Checked    []string           `json:"checked"`
+		Upgrades   []UpgradeRead      `json:"upgrades"`
 	}
 	if err := json.Unmarshal([]byte(text[start:end+1]), &parsed); err != nil || parsed.Findings == nil {
 		return nil, fmt.Errorf("the reply is not the JSON the contract describes (%v); ask the reviewer again", err)
@@ -516,6 +530,9 @@ func validateWith(reply, given, tip string, blob func(path string) ([]byte, erro
 		proposed: parsed.Routes}
 	if parsed.Unverified != nil {
 		out.Unverified = parsed.Unverified
+	}
+	if fc != nil && fc.upgrades {
+		out.Upgrades = parsed.Upgrades
 	}
 	seen := map[string]bool{}
 	lines := map[string]int{}
@@ -554,8 +571,8 @@ func normalise(raw json.RawMessage, blob func(path string) ([]byte, error), wt s
 	switch {
 	case strings.TrimSpace(f.ID) == "":
 		return nil, "has no id"
-	case strings.HasPrefix(f.ID, mechanicalPrefix):
-		return nil, "ids starting " + mechanicalPrefix + " are red-check's"
+	case isOwn(f.ID):
+		return nil, "ids starting " + mechanicalPrefix + " or " + unreadPrefix + " are the review's own"
 	case !kinds[f.Kind]:
 		return nil, fmt.Sprintf("kind %q is not one the contract defines", f.Kind)
 	case strings.TrimSpace(f.Claim) == "" || strings.TrimSpace(f.Evidence) == "":

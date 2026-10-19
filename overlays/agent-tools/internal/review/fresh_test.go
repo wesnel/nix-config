@@ -239,6 +239,7 @@ type output struct {
 	Dropped    []map[string]any `json:"dropped"`
 	Unverified []string         `json:"unverified"`
 	Focus      string           `json:"focus"`
+	Upgrades   []map[string]any `json:"upgrades"`
 	Routes     []struct {
 		Route   string   `json:"route"`
 		Why     []string `json:"why"`
