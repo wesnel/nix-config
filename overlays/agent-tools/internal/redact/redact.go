@@ -58,6 +58,7 @@ var shapes = []struct {
 	{regexp.MustCompile(`\bhf_[A-Za-z0-9]{30,}`), "[REDACTED Hugging Face token]"},
 	{regexp.MustCompile(`\bglsa_[A-Za-z0-9]{32}_[0-9a-f]{8}\b`), "[REDACTED Grafana token]"},
 	{regexp.MustCompile(`\bdo[por]_v1_[0-9a-f]{64}\b`), "[REDACTED DigitalOcean token]"},
+	{regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}`), "[REDACTED Google API key]"},
 }
 
 // keyLine is a line of a key's base64 body, and keyEnd one of its padded

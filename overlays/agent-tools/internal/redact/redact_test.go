@@ -52,6 +52,8 @@ func TestSecrets(t *testing.T) {
 		{"Hugging Face token", "hf_" + strings.Repeat("Fak", 12), "[REDACTED Hugging Face token]"},
 		{"Grafana token", "glsa_" + strings.Repeat("Fa9", 10) + "Fa_0123abcd", "[REDACTED Grafana token]"},
 		{"DigitalOcean token", "dop_v1_" + strings.Repeat("0f", 32), "[REDACTED DigitalOcean token]"},
+		{"Google API key", "x AIzaSyA" + strings.Repeat("b-_9", 8) + " y", "x [REDACTED Google API key] y"},
+		{"not a Google API key", "AIzaShort", "AIzaShort"},
 		{"credentials variable", "MY_CREDENTIALS=FAKE rest", "MY_CREDENTIALS=[REDACTED] rest"},
 		{"auth variable", "AUTH=FAKE rest", "AUTH=[REDACTED] rest"},
 		{"npm auth", "//registry/:_auth=FAKE", "//registry/:_auth=[REDACTED]"},
