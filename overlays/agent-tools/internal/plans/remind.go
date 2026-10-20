@@ -16,19 +16,18 @@ var notifiedAgent = regexp.MustCompile(`<summary>Agent "(.*)" finished</summary>
 //   - When a sub-agent has finished, it asks the coordinator to check the
 //     report and log the part's outcome: on Claude Code's UserPromptSubmit
 //     carrying a background sub-agent's task-notification, its PostToolUse
-//     of a foreground Agent call, Codex's PostToolUse of wait_agent, and
-//     ECA's postToolCall of spawn_agent. Claude Code's and Codex's
-//     SubagentStop speak only to the sub-agent, so they are not used.
+//     of a foreground Agent call, and Codex's PostToolUse of wait_agent.
+//     Claude Code's and Codex's SubagentStop speak only to the sub-agent,
+//     so they are not used.
 //   - Around a compaction, it asks for what the plan does not yet record:
 //     on Claude Code's PreCompact, whose output becomes the compaction's
 //     instructions, as text for the summary to keep; and after one, where
 //     the harness cannot add context before it, on Codex's SessionStart
-//     from a compaction and ECA's postCompact, with the plan's brief.
+//     from a compaction, with the plan's brief.
 //
-// On any other UserPromptSubmit of the main thread, and on ECA's
-// preRequest of a chat that is not a sub-agent's, the prompt is the operator's
-// own: it keeps each http(s) address in it as a reference of the plan,
-// and prints nothing. Codex sends a sub-agent's turns with agent_id.
+// On any other UserPromptSubmit of the main thread the prompt is the
+// operator's own: it keeps each http(s) address in it as a reference of the
+// plan, and prints nothing. Codex sends a sub-agent's turns with agent_id.
 //
 // On every prompt of the main thread, task-notifications included, it
 // delivers the results of the session's sign-passes that it has not yet
@@ -47,11 +46,8 @@ func (c Config) Remind(input []byte) []byte {
 func (c Config) remind(input []byte) []byte {
 	var in struct {
 		Event        string          `json:"hook_event_name"`
-		Type         string          `json:"hook_type"` // ECA's
 		SessionID    string          `json:"session_id"`
 		AgentID      string          `json:"agent_id"` // Codex's, for a sub-agent
-		ChatID       string          `json:"chat_id"`  // ECA's
-		ParentChatID string          `json:"parent_chat_id"`
 		Cwd          string          `json:"cwd"`
 		Prompt       string          `json:"prompt"`
 		ToolName     string          `json:"tool_name"`
@@ -70,12 +66,8 @@ func (c Config) remind(input []byte) []byte {
 			return file
 		}
 		looked = true
-		session := in.SessionID
-		if in.ChatID != "" {
-			session = in.ChatID
-		}
 		top, _ := checkout(in.Cwd)
-		if p, _, ok := c.Locate(session, top); ok {
+		if p, _, ok := c.Locate(in.SessionID, top); ok {
 			found, file = p, p.File()
 		}
 		return file
@@ -96,15 +88,15 @@ func (c Config) remind(input []byte) []byte {
 		}
 		return context
 	}
-	var event, context string
+	var context string
 	switch {
 	case in.Event == "UserPromptSubmit" && strings.HasPrefix(in.Prompt, "<task-notification>"):
 		m := notifiedAgent.FindStringSubmatch(in.Prompt)
 		if m == nil {
 			return nil
 		}
-		event, context = in.Event, finished(fmt.Sprintf("%q ", m[1]))
-	case (in.Event == "UserPromptSubmit" && in.AgentID == "") || (in.Type == "preRequest" && in.ParentChatID == ""):
+		context = finished(fmt.Sprintf("%q ", m[1]))
+	case in.Event == "UserPromptSubmit" && in.AgentID == "":
 		// The operator's own prompt: its addresses are references of the plan.
 		if plan() != "" {
 			recordReferences(found, in.Prompt, time.Now())
@@ -126,10 +118,8 @@ func (c Config) remind(input []byte) []byte {
 		if call.Description != "" {
 			what = fmt.Sprintf("%q ", call.Description)
 		}
-		event, context = in.Event, finished(what)
+		context = finished(what)
 	case in.Event == "PostToolUse" && in.ToolName == "wait_agent":
-		event, context = in.Event, finished("")
-	case in.Type == "postToolCall" && in.ToolName == "spawn_agent":
 		context = finished("")
 	case in.Event == "PreCompact":
 		if p := plan(); p != "" {
@@ -139,8 +129,6 @@ func (c Config) remind(input []byte) []byte {
 		}
 		return nil
 	case in.Event == "SessionStart" && in.Source == "compact":
-		event, context = in.Event, compacted()
-	case in.Type == "postCompact":
 		context = compacted()
 	default:
 		return nil
@@ -148,10 +136,6 @@ func (c Config) remind(input []byte) []byte {
 	if plan() == "" {
 		return nil
 	}
-	var out any = map[string]string{"additionalContext": context}
-	if event != "" {
-		out = map[string]any{"hookSpecificOutput": map[string]string{"hookEventName": event, "additionalContext": context}}
-	}
-	data, _ := json.Marshal(out)
+	data, _ := json.Marshal(map[string]any{"hookSpecificOutput": map[string]string{"hookEventName": in.Event, "additionalContext": context}})
 	return data
 }

@@ -102,11 +102,10 @@ configuration can still make a read run a program, and a script or a
 program the guard does not know still writes, so a reviewer's task never
 asks for either.
 
-Codex and ECA have no such
-types (ECA has `reviewer` alone): there the rules file also names the
-installed working agreements to read (`~/.codex/AGENTS.md`,
-`~/.config/eca/AGENTS.md`) and carries the role's rules, from its
-definition in `~/.claude/agents` where Claude Code is installed.
+Codex has no such types: there the rules file also names the installed
+working agreements to read (`~/.codex/AGENTS.md`) and carries the role's
+rules, from its definition in `~/.claude/agents` where Claude Code is
+installed.
 
 ## The rules file
 
@@ -183,7 +182,7 @@ what permits setting them. In Claude Code they are the Agent tool's `model`
 and `effort`, which override the agent type's own: Opus at high effort for
 every type above but `reviewer` and `Explore`. Cheaper work is the same
 type at the model and effort the list below gives. Codex's `spawn_agent`
-takes a `model`; ECA takes the model from the agent's definition.
+takes a `model`.
 
 - **Haiku 5.5, low effort:** read-only lookups, inventories, running a given
   command and reporting it.
@@ -217,8 +216,6 @@ wait on no `:AFTER:` item, follow every earlier sibling under an
   continues an agent with its context.
 - **Codex:** `spawn_agent`. `send_input` continues an agent, and `wait_agent`
   collects results.
-- **ECA:** `spawn_agent`. Each spawn starts a fresh chat, so a follow-up task
-  carries everything the agent needs.
 - **No sub-agents:** do each part yourself, one at a time, in its worktree.
 
 Never edit a sub-agent's worktree while it runs. To learn where something

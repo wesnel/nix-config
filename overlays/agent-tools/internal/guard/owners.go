@@ -20,18 +20,14 @@ import (
 // names is judged by its owner wherever it is, scratch included. The main
 // thread edits anywhere but a worktree another agent owns. Every path is
 // compared with its symlinks resolved. The caller is the event's agent_id,
-// which Claude Code and Codex set for a sub-agent's call alone; ECA's
-// events name no agent instance, so they pass.
+// which Claude Code and Codex set for a sub-agent's call alone.
 //
 // Shell edits are only those shellEditPaths names: a write through a script
 // it cannot read passes.
 func checkOwner(in input) string {
-	if in.HookType != "" {
-		return ""
-	}
 	var paths []string
 	switch in.ToolName {
-	case "Bash", "exec_command", "shell_command":
+	case "Bash", "exec_command":
 		var args struct {
 			Command string `json:"command"`
 		}
@@ -150,7 +146,7 @@ func checkSubagentStash(in input) string {
 		return ""
 	}
 	switch in.ToolName {
-	case "Bash", "exec_command", "shell_command":
+	case "Bash", "exec_command":
 	default:
 		return ""
 	}

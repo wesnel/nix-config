@@ -10,9 +10,8 @@ import (
 // tools of theirs it lets through and the writes the operator confirms.
 // mcp-proxy's tool filters are built from the same file, so a tool added
 // here is served and allowed together. A server it does not list is
-// unreviewed: every tool of its asks in a main session of Claude Code or
-// ECA, and is refused in Codex, which cannot ask, in review loops and to
-// reviewers.
+// unreviewed: every tool of its asks in a main session of Claude Code, and
+// is refused in Codex, which cannot ask, in review loops and to reviewers.
 //
 //go:embed mcp.json
 var mcpJSON []byte
@@ -69,7 +68,7 @@ const (
 		"The operator confirms each call; reviewing the server into mcp.json, its reads and the writes that ask, " +
 		"stops the asking."
 	unlistedServerCodex = "This MCP server is not in the guard's mcp.json, and Codex cannot ask the operator to confirm " +
-		"a call to an unreviewed server, so the guard refuses it. Use it from Claude Code or ECA, which ask, or ask the " +
+		"a call to an unreviewed server, so the guard refuses it. Use it from Claude Code, which asks, or ask the " +
 		"operator to review the server into mcp.json."
 	unlistedServerLoop = "This MCP server is not in the guard's mcp.json, and review loops and reviewers use only " +
 		"reviewed servers. Put what you wanted from it in your report for the operator."
@@ -91,25 +90,19 @@ func cannotAsk(reason string) string {
 	if reason == unlistedServer {
 		return unlistedServerCodex
 	}
-	return "Codex cannot ask the operator to confirm this write, so the guard refuses it. Make it from Claude Code or ECA, which ask, or put the draft in your report for the operator."
+	return "Codex cannot ask the operator to confirm this write, so the guard refuses it. Make it from Claude Code, which asks, or put the draft in your report for the operator."
 }
 
 // mcpTool returns the listed service whose server makes the call and the
 // tool's own name, with mcp false for a tool on no MCP server. Claude Code
-// and Codex name a tool mcp__SERVER__TOOL; ECA names the server apart, and
-// its own tools' server eca.
-func mcpTool(tool, server string) (service *mcpService, name string, mcp bool) {
-	switch server {
-	case "eca":
+// and Codex name a tool mcp__SERVER__TOOL.
+func mcpTool(tool string) (service *mcpService, name string, mcp bool) {
+	rest, ok := strings.CutPrefix(tool, "mcp__")
+	if !ok {
 		return nil, "", false
-	case "":
-		rest, ok := strings.CutPrefix(tool, "mcp__")
-		if !ok {
-			return nil, "", false
-		}
-		server, tool, _ = strings.Cut(rest, "__")
 	}
-	return mcpByServer[strings.ToLower(server)], tool, true
+	server, name, _ := strings.Cut(rest, "__")
+	return mcpByServer[strings.ToLower(server)], name, true
 }
 
 // checkMCP returns why who may not call the MCP tool name on a server of

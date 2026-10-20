@@ -104,7 +104,6 @@ func TestSignResultFirst(t *testing.T) {
 func TestSignIDRefusals(t *testing.T) {
 	setup(t)
 	t.Setenv("CODEX_THREAD_ID", "")
-	t.Setenv("ECA_CHAT_ID", "")
 	if code, _, errs := agentPlan(t, "", "sign-id"); code != 2 || !strings.Contains(errs, "--session") {
 		t.Errorf("no session: %d %q", code, errs)
 	}

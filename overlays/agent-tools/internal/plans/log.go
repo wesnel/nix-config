@@ -33,7 +33,7 @@ type Event struct {
 	Review   string `json:"review,omitempty"`
 	Outcome  string `json:"outcome,omitempty"`
 	// Session is the session whose tool call the event records, as its
-	// hook names it: Claude Code's or Codex's session_id, ECA's chat_id.
+	// hook names it: Claude Code's or Codex's session_id.
 	Session string `json:"session,omitempty"`
 	// Worktree is the top level of the worktree the event happened in, and
 	// Tip, on a branch-changed event, the commit of a detached HEAD.

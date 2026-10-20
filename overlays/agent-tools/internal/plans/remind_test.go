@@ -33,15 +33,10 @@ func TestRemind(t *testing.T) {
 			[]string{"Add the flag", "Check every report", "PLAN"}},
 		{"a sub-agent waited for in Codex", event(map[string]any{"session_id": "abc", "hook_event_name": "PostToolUse",
 			"tool_name": "wait_agent", "turn_id": "t", "tool_response": "done"}), "PostToolUse", []string{"Check every report", "PLAN"}},
-		{"a sub-agent in ECA", event(map[string]any{"hook_type": "postToolCall", "chat_id": "abc", "server": "eca",
-			"tool_name": "spawn_agent", "tool_input": map[string]string{"task": "Add the flag"}, "tool_response": "done"}), "eca",
-			[]string{"Check every report", "PLAN"}},
 		{"a compaction in Claude Code", event(map[string]any{"session_id": "abc", "hook_event_name": "PreCompact",
 			"trigger": "auto", "custom_instructions": nil}), "text", []string{"PLAN", "not yet record"}},
 		{"after a compaction in Codex", event(map[string]any{"session_id": "abc", "hook_event_name": "SessionStart",
 			"source": "compact"}), "SessionStart", []string{"PLAN", "up to date"}},
-		{"after a compaction in ECA", event(map[string]any{"hook_type": "postCompact", "chat_id": "abc",
-			"triggered": "auto", "compact_summary": "..."}), "eca", []string{"PLAN", "up to date"}},
 
 		{"a session with no plan", event(map[string]any{"session_id": "zzz", "hook_event_name": "UserPromptSubmit",
 			"prompt": notification}), "", nil},
@@ -70,7 +65,6 @@ func TestRemind(t *testing.T) {
 					Event   string `json:"hookEventName"`
 					Context string `json:"additionalContext"`
 				} `json:"hookSpecificOutput"`
-				Context string `json:"additionalContext"`
 			}
 			text := out
 			switch c2.format {
@@ -78,11 +72,6 @@ func TestRemind(t *testing.T) {
 				if json.Valid([]byte(out)) {
 					t.Errorf("%s: want plain text, got %s", c2.name, out)
 				}
-			case "eca":
-				if json.Unmarshal([]byte(out), &got) != nil || got.Context == "" {
-					t.Errorf("%s: want ECA's additionalContext, got %s", c2.name, out)
-				}
-				text = got.Context
 			default:
 				if json.Unmarshal([]byte(out), &got) != nil || got.Specific.Event != c2.format {
 					t.Errorf("%s: want hookSpecificOutput for %s, got %s", c2.name, c2.format, out)

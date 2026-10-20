@@ -29,8 +29,7 @@ current session.
   `.pr-loop/`. When it exits, show
   `$(git rev-parse --git-common-dir)/pr-loop/report.md`, or the end of the
   log if there is no report.
-- **Elsewhere:** stop and tell the operator to start `codex-pr-loop`, or
-  `M-x wgn/eca-pr-loop` with the `pr-coordinator` agent.
+- **Elsewhere:** stop and tell the operator to start `codex-pr-loop`.
 
 Commit as the `signing-pass` skill says: unsigned, never pushing or signing
 yourself, with one signing pass at the end. In the loop's worktrees signing is
@@ -69,8 +68,8 @@ Owners keep their memory in a notes file,
 `$(git rev-parse --git-common-dir)/pr-loop/owners/<number>.md`, which they
 read first and update last on every task. That makes each task
 self-contained, so it works the same whether your harness can continue a
-sub-agent (Claude Code's `SendMessage`) or only start a new one per task
-(ECA's `spawn_agent`). Start owners in parallel where the harness allows.
+sub-agent (Claude Code's `SendMessage`) or only start a new one per task.
+Start owners in parallel where the harness allows.
 If it has no sub-agents at all, do each owner's task yourself, one PR at a
 time, keeping the same notes.
 

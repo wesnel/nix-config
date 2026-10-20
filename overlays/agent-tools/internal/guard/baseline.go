@@ -156,7 +156,7 @@ func guardFile(path string) bool {
 	if agentToolsConfig(path) {
 		return true
 	}
-	for _, p := range []string{".codex/config.toml", ".codex/hooks.json", ".config/eca/config.json"} {
+	for _, p := range []string{".codex/config.toml", ".codex/hooks.json"} {
 		if path == filepath.Join(home, p) {
 			return true
 		}
@@ -615,8 +615,7 @@ func checkNgrokEnv(c call) string {
 }
 
 const (
-	// sleeping is for Codex and ECA, which can only wait in the
-	// foreground.
+	// sleeping is for Codex, which can only wait in the foreground.
 	sleeping = "A sleep of 30 seconds or more in the foreground holds the session while nothing happens. " +
 		"Wait with a command that polls for the condition and exits when it holds, such as `until CHECK; do sleep 5; done`."
 	// sleepingClaude is sleeping for Claude Code, which runs a command in
@@ -1126,13 +1125,13 @@ func nixWrites(name string, args []string) []string {
 }
 
 const shellEdit = "`%s` is a tracked file, and editing it from the shell bypasses the file-editing tools AGENTS.md requires. " +
-	"Use the file-editing tools (`Edit`, `Write`, `apply_patch`, ECA's `edit_file`), or write scratch output under `$TMPDIR` or /tmp. " +
+	"Use the file-editing tools (`Edit`, `Write`, `apply_patch`), or write scratch output under `$TMPDIR` or /tmp. " +
 	"For a mechanical sweep over Go code, use `gopls rename`, `gofmt -r 'PATTERN -> REPLACEMENT' -w` or `go fix`, " +
 	"with the exact command in the commit body."
 
 const shellEditInPlace = "`%s` exists, and rewriting an existing file from the shell, in place or with `>`, `>>` or tee, " +
 	"bypasses the file-editing tools AGENTS.md requires, scratch and untracked files included. " +
-	"Use the file-editing tools (`Edit`, `Write`, `apply_patch`, ECA's `edit_file`), " +
+	"Use the file-editing tools (`Edit`, `Write`, `apply_patch`), " +
 	"or write the command's output to a new file. For a mechanical sweep over Go code, use `gopls rename`, " +
 	"`gofmt -r 'PATTERN -> REPLACEMENT' -w` or `go fix`, with the exact command in the commit body."
 
@@ -1300,8 +1299,7 @@ func redirections(words []string) []string {
 }
 
 // checkFileTool checks a call to a file-editing tool: Claude Code's Edit,
-// Write, MultiEdit and NotebookEdit, Codex's apply_patch, and ECA's
-// write_file, edit_file and move_file.
+// Write, MultiEdit and NotebookEdit, and Codex's apply_patch.
 func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 	for _, c := range fileChanges(tool, toolInput) {
 		path := expandPath(c.path, dir)
@@ -1337,14 +1335,9 @@ func fileChanges(tool string, toolInput json.RawMessage) []change {
 	var in struct {
 		FilePath     string `json:"file_path"`
 		NotebookPath string `json:"notebook_path"`
-		Path         string `json:"path"`
-		Source       string `json:"source"`
-		Destination  string `json:"destination"`
 		Content      string `json:"content"`
 		OldString    string `json:"old_string"`
 		NewString    string `json:"new_string"`
-		OldContent   string `json:"original_content"`
-		NewContent   string `json:"new_content"`
 		NewSource    string `json:"new_source"`
 		Command      string `json:"command"`
 		Edits        []struct {
@@ -1375,16 +1368,11 @@ func fileChanges(tool string, toolInput json.RawMessage) []change {
 		}
 		flush()
 	} else {
-		text := in.Content + in.OldString + in.NewString + in.OldContent + in.NewContent + in.NewSource
+		text := in.Content + in.OldString + in.NewString + in.NewSource
 		for _, e := range in.Edits {
 			text += e.OldString + e.NewString
 		}
-		changes = append(changes, change{in.FilePath + in.NotebookPath + in.Path, text})
-		for _, p := range []string{in.Source, in.Destination} {
-			if p != "" {
-				changes = append(changes, change{p, ""})
-			}
-		}
+		changes = append(changes, change{in.FilePath + in.NotebookPath, text})
 	}
 	return changes
 }
@@ -1423,13 +1411,9 @@ const keyTouchText = "This waits for a touch of the operator's hardware key, whi
 	"Hand the operator the command as %s, and meanwhile work from local refs, such as `git log origin/main`, with commits left unsigned; " +
 	"`gh pr view` and `gh api` read GitHub over HTTPS."
 
-var (
-	// keyTouch is keyTouchText for Claude Code and Codex, whose prompt runs
-	// a line beginning with ! in the session.
-	keyTouch = fmt.Sprintf(keyTouchText, "one line beginning with `!`, so its output lands here")
-	// keyTouchPlain is keyTouchText for ECA, whose prompt does not.
-	keyTouchPlain = fmt.Sprintf(keyTouchText, "one plain line for their terminal")
-)
+// keyTouch is keyTouchText for Claude Code and Codex, whose prompt runs a
+// line beginning with ! in the session.
+var keyTouch = fmt.Sprintf(keyTouchText, "one line beginning with `!`, so its output lands here")
 
 // touchHosts are the hosts an SSH login to waits for a key touch: the git
 // forges. A login elsewhere, such as the devbox's, rides a master

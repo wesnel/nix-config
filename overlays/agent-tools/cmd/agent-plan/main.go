@@ -76,7 +76,7 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      the decisions, the steps and parts ready, the questions
                      the operator can answer now, the steps done but not
                      verified, the open follow-ups, and any structure drift;
-                     Codex's and ECA's hooks add it after one
+                     Codex's hook adds it after one
   brief PLAN --resume
                      what a session needs to go on after /clear or a
                      compaction, within 10,000 bytes: the goal, the open
@@ -133,25 +133,24 @@ directory and host come from "plans" in the user's agent-tools/config.json.
   remind             a hook (reads stdin) that asks, in a session with a plan,
                      for the coordinator to check a finished sub-agent's report
                      and log its part (Claude Code's UserPromptSubmit and
-                     PostToolUse on Agent, Codex's PostToolUse on wait_agent,
-                     ECA's postToolCall on spawn_agent), and for a compaction
-                     to keep what the plan lacks (Claude Code's PreCompact) or
-                     the plan to be brought up to date after one (Codex's
-                     SessionStart, ECA's postCompact); keeps the URLs of
-                     the operator's own prompts as references (Claude Code's
-                     and Codex's UserPromptSubmit, ECA's preRequest); and on
-                     those prompts, task-notifications included, adds a line
-                     for each result of the session's sign-passes not yet
-                     delivered, logging it as sign-delivered, marked stale
-                     when over a day old; and on every one of those prompts,
-                     with or without a plan, adds the time and how long since
-                     the operator's previous message in the session; never
-                     blocks
+                     PostToolUse on Agent, Codex's PostToolUse on
+                     wait_agent), and for a compaction to keep what the plan
+                     lacks (Claude Code's PreCompact) or the plan to be
+                     brought up to date after one (Codex's SessionStart);
+                     keeps the URLs of the operator's own prompts as
+                     references (Claude Code's and Codex's
+                     UserPromptSubmit); and on those prompts,
+                     task-notifications included, adds a line for each result
+                     of the session's sign-passes not yet delivered, logging
+                     it as sign-delivered, marked stale when over a day old;
+                     and on every one of those prompts, with or without a
+                     plan, adds the time and how long since the operator's
+                     previous message in the session; never blocks
   sign-id [--session ID] [--branch B]...
                      log a sign-pass about to be handed to the operator as
                      sign-requested in the plan of this session (--session,
-                     else CLAUDE_CODE_SESSION_ID, CODEX_THREAD_ID or
-                     ECA_CHAT_ID) and worktree, and print its ID for
+                     else CLAUDE_CODE_SESSION_ID or CODEX_THREAD_ID) and
+                     worktree, and print its ID for
                      ` + "`git sign-pass --notify ID`" + `; refused without a plan
   sign-result ID [--check]
                      print each result of sign-pass ID and log those not yet

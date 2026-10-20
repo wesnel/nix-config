@@ -181,7 +181,7 @@ hand over again. A line marked stale is for the record: take no follow-up.
 
   The result arrives with its notification; `agent-plan sign-result <ID>`
   prints it again.
-- In Codex and ECA, the result arrives with the operator's next prompt.
+- In Codex, the result arrives with the operator's next prompt.
 - Never poll for the result with model turns.
 
 ## After a push

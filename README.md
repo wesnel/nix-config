@@ -14,14 +14,7 @@
         - [after the loop](#after-the-loop)
         - [what a loop session enforces](#what-a-loop-session-enforces)
     - [MCP servers](#mcp-servers)
-- [the coding assistant](#the-coding-assistant)
-    - [what nix owns](#what-nix-owns)
-    - [the sandbox image](#the-sandbox-image)
-    - [reaching a hosted provider](#reaching-a-hosted-provider)
-    - [running against a model on this machine](#running-against-a-model-on-this-machine)
     - [the documentation index](#the-documentation-index)
-    - [running the sandbox on a remote host](#running-the-sandbox-on-a-remote-host)
-    - [the bubblewrap backend](#the-bubblewrap-backend)
 - [replacing the devbox](#replacing-the-devbox)
 - [updating systems](#updating-systems)
     - [nixOS](#nixos)
@@ -88,9 +81,9 @@ nix-shell --run "sops updatekeys secrets/wgn.yaml"
 
 # coding agents
 
-Claude Code (`wgn.home.claude`), Codex (`wgn.home.codex`) and ECA
-(`wgn.home.eca`) share one setup. Amp and Copilot receive the shared
-instructions and skills and nothing else.
+Claude Code (`wgn.home.claude`) and Codex (`wgn.home.codex`) share one
+setup. Amp and Copilot receive the shared instructions and skills and
+nothing else.
 
 ## what nix sets up
 
@@ -99,8 +92,7 @@ Enabling any of those modules enables `wgn.home.llm`, which provides:
 - **Instructions.** `modules/home-manager/llm/AGENTS.md` is linked to where
   each agent reads its user-level instructions.
 - **Skills.** `wgn.home.llm.skills` are linked into each agent's skill
-  directory. A skill marked `sandbox = true` is also carried into sandboxed
-  sessions; the rest drive something on this machine, such as Emacs.
+  directory.
 - **`agent-tools`** on `PATH`: `git sign-pass`, `git red-check`,
   `git fresh-review`, `pr-loop`, `sandbox-relay` and `agent-plan`, built from
   `overlays/agent-tools`. `wgn.home.git` uses
@@ -116,7 +108,6 @@ next switch.
 | `~/.claude/settings.json` | `wgn.home.claude.settings`: attribution off, the ngrok and reviewer hooks, and the plan hook on session resume, compaction or `/clear` (a hook list here replaces the file's own) |
 | `~/.claude.json` | `mcpServers` entries for the MCP proxy |
 | `~/.codex/config.toml` | `[mcp_servers.*]` tables for the MCP proxy |
-| `~/.config/eca/config.json` | `mcpServers` entries for the MCP proxy |
 
 ## committing: unsigned work, one signing pass
 
@@ -190,7 +181,7 @@ the codex executable, the Nix store and the system files they need, with no
 writes and no network. Codex's sandbox cannot start inside another macOS
 sandbox; `git fresh-review` checks that it starts, confined, before the
 review. Its contract is `overlays/agent-tools/internal/review/reviewer.md`,
-the same text the `reviewer` agent of Claude Code and ECA loads, and its
+the same text Claude Code's `reviewer` agent loads, and its
 reply must fit `findings.schema.json` beside it. Findings that point at no
 line at the tip are dropped with the reason. It prints JSON and exits 0 with
 no findings, 3 with findings, and 4 when Codex cannot review: not installed,
@@ -479,8 +470,7 @@ Then, in the repository, start one of:
 - `claude-pr-loop`, and ask it to run the review loop on the branch;
 - `codex-pr-loop`, and ask the same. Codex skips a hook until it is trusted,
   so trust `pr-loop guard` in `/hooks` the first time, and again after a
-  switch changes it;
-- `M-x wgn/eca-pr-loop`, then choose the `pr-coordinator` agent.
+  switch changes it.
 
 Each runs the agent's commands in a sandbox without credentials, beside a
 `sandbox-relay` that runs `pr-loop` on this machine with your `gh` login, and
@@ -545,16 +535,12 @@ Linear, which the report proposes instead.
   only network, for dependencies, without storage.googleapis.com in a
   session started under `reviewDir`) and `cacheDir` (the only build cache it
   writes).
-- **Guard.** `pr-loop guard` runs before every tool call in all three agents
+- **Guard.** `pr-loop guard` runs before every tool call in both agents
   and denies other ways to write to GitHub or Linear, unsigned-workflow
   violations and your decisions. Owner agents are also denied the steps the
   coordinator alone takes (`pr-loop push`, `reply` and the like) in Claude
-  Code and ECA, and reviewer agents also every git and `pr-loop` command
-  that changes something. ECA's agents also carry deny patterns built
-  from `overlays/agent-tools/internal/guard/policy.json`. Add a rule there,
-  with commands it must deny and allow: the guard's tests and the package
-  build hold both to those examples, and fail on a denial whose reason does
-  not go on to say what to do instead.
+  Code, and reviewer agents also every git and `pr-loop` command that
+  changes something.
 
 An ordinary session has neither the sandbox nor the loop's rules, and runs
 with your credentials, but has the guard in every session.
@@ -573,8 +559,6 @@ with your credentials, but has the guard in every session.
   runs no hook; so the guard refuses to start a command that only reads
   the terminal, which `write_stdin` could then drive. Codex skips a hook
   until it is trusted, so trust it with `/hooks` once after the first switch.
-- ECA: a `preToolCall` hook, `guard-baseline`, merged into
-  `~/.config/eca/config.json` on every switch.
 
 It denies what is yours to do: pushing (hand over `git sign-pass --push`,
 or open a draft with `pr-loop open`), anything else that waits for a key
@@ -595,18 +579,20 @@ foreground, and writing a plan's log other than with `agent-plan log`.
 MCP tools of the servers in `overlays/agent-tools/internal/guard/mcp.json`
 (Linear, Notion, Hex, Datadog, Buildkite, ngrok, and the
 claude.ai Slack connector) are held to its lists: reads
-pass, the listed writes ask you first in Claude Code and ECA and are denied
-in Codex and the review loop, and any other tool is denied until it is
+pass, the listed writes ask you first in Claude Code and are denied in
+Codex and the review loop, and any other tool is denied until it is
 listed. Every tool of a server it does not list asks you first in Claude
-Code and ECA, and is denied in Codex, the review loop and to reviewers. Each
+Code, and is denied in Codex, the review loop and to reviewers. Each
 refusal says what to do instead. An agent with a loop role (`pr-owner`,
-`reviewer`, ECA's `pr-coordinator`) has that role's rules in any session.
+`reviewer`) has that role's rules in any session.
 
 The guard reads commands as typed, through wrappers, shells and `env`, so it
-catches a forgotten rule, not a determined one. The rules ECA can also
-match as patterns are in `overlays/agent-tools/internal/guard/policy.json`,
-each with a `scope` (`baseline`, `coordinator`, `owner` or `reviewer`); the
-rest, which need the repository's state, are in the guard's Go tests.
+catches a forgotten rule, not a determined one. The rules that need no
+repository state are in `overlays/agent-tools/internal/guard/policy.json`,
+each with a `scope` (`baseline`, `coordinator`, `owner` or `reviewer`) and
+commands it must deny and allow, which the guard's tests hold it to, failing
+on a denial whose reason does not go on to say what to do instead; the rest
+are in the guard's Go tests.
 
 git itself does not use the keychain's GitHub login:
 `credential."https://github.com".helper` is empty in `wgn.home.git`.
@@ -627,16 +613,14 @@ git itself does not use the keychain's GitHub login:
 
 Options in parentheses are off by default. Each remote server serves only
 the tools listed for it in the guard's `mcp.json`, and the guard asks you
-before each listed write, in Claude Code and ECA; Codex and review-loop
-sessions get the reads alone.
+before each listed write, in Claude Code; Codex and review-loop sessions
+get the reads alone.
 
 The proxy signs in to each remote server itself and refreshes their
 short-lived tokens, so agents hold only the proxy's own token, kept in
 `~/.local/state/mcp-proxy/token`. The servers are registered with Claude
-Code, Codex and ECA on every switch, and each reads the token when it
-connects. ECA sessions sandboxed by Gondolin reach the proxy at
-`http://mcp-proxy:6290`, and see only a placeholder for the token; those
-sandboxed by bubblewrap cannot reach it.
+Code and Codex on every switch, and each reads the token when it
+connects.
 
 Authorize each server once, in a browser, after the first switch:
 
@@ -667,91 +651,14 @@ whose names say they read. Claude's claude.ai connectors belong to the
 account rather than this configuration: disconnect them in claude.ai's
 settings to keep Claude to the proxy.
 
-# the coding assistant
-
-[ECA](https://eca.dev) is configured here; what follows is only the part that
-is particular to this repository. Providers, authentication, agents and the
-rest are covered by ECA's own documentation.
-
-## what nix owns
-
-`wgn.home.eca.enable` configures shared skills and model agents here.
-The imported `emacs-config` owns the pinned server, sandbox packages and
-Emacs launch settings. Enable them with `home.programs.wgn.emacs.eca.enable`
-and `home.programs.wgn.emacs.eca.sandbox.enable`.
-
-Nix writes only the files ECA reads and never writes -- `skills/`, `agents/`
-and `hooks/` under `~/.config/eca`. `config.json` beside them is yours,
-because ECA writes to it itself; a read-only file there is the one thing that
-stops it working. Only its MCP proxy entries are merged in on every switch.
-
-Sessions are sandboxed when the sandbox is enabled. `M-x wgn/eca-unsandboxed`
-starts one without it, with every skill, including those that drive Emacs;
-see `emacs-config`.
-
-## the sandbox image
-
-Home Manager prepares and caches the Gondolin guest image during activation.
-The first build requires network access; later activations reuse the image
-unless its configuration or the Gondolin version changes. An explicit `--image` selects
-a custom image and skips automatic preparation.
-
-See the imported module's [ECA setup](https://github.com/wesnel/emacs-config#eca-and-sandboxed-local-workspaces)
-and [guest image provisioning](https://github.com/wesnel/emacs-config#gondolin-guest-image).
-
-Sandbox flags, including Gondolin's `--observe`, `--deny-host` and `--log`,
-are documented under [network policy and request logging](https://github.com/wesnel/emacs-config#network-policy-and-request-logging).
-The wrappers have different defaults and supported flags; check the
-[backend comparison](https://github.com/wesnel/emacs-config#remote-hosts-and-backend-differences).
-
-## reaching a hosted provider
-
-See `emacs-config` for [hosted provider authentication](https://github.com/wesnel/emacs-config#hosted-provider-authentication)
-and [network policy](https://github.com/wesnel/emacs-config#network-policy-and-request-logging).
-Gondolin's `--share-login` imports an authenticated host session; the flag
-is not supported by Bubblewrap.
-
-## running against a model on this machine
-
-With a model served locally, the sandbox can be closed entirely: deny every
-host and open one mapping to the server, so reaching a hosted provider is not
-something the agent could do rather than something it is asked not to.
-
-``` nix
-home.programs.wgn.emacs.eca.sandbox.args = [
-  "--http-map" "ollama:11434=127.0.0.1:11434"
-  "--http-map" "docs:6280=127.0.0.1:6280"
-  "--env" "OLLAMA_API_URL=http://ollama:11434"
-];
-```
-
-`OLLAMA_API_URL` overrides the `http://localhost:11434` the server would
-otherwise use, which inside the guest would be the guest itself.
-
-`wgn.home.ollama.enable` runs the server; the model itself is pulled by hand:
-
-``` sh
-ollama pull qwen2.5-coder:7b
-```
-
-`wgn.home.eca.localModel` names it on an agent that inherits `code`, so
-the model is selected by choosing that agent. It declares nothing else: the
-window and cost belong to the provider entry in ECA's `config.json`, and
-without them the window is treated as unbounded and a conversation is
-truncated rather than compacted.
-
-Set `wgn.home.ollama.contextLength` to the same figure as that entry. Left
-unset the server sizes the window from available memory, so it differs
-between machines and a client can be promised more room than it will get.
-
 ## the documentation index
 
 `wgn.home.docs-mcp-server.enable` runs the index as a service rather than
 leaving each client to start its own, so there is one database and one set of
-scraped pages. Clients reach it at `http://127.0.0.1:6280/mcp`; the second
-mapping above is what carries that into the guest.
+scraped pages. Clients reach it at `http://127.0.0.1:6280/mcp`.
 
-Pages are embedded by a model served on this machine, named through the
+Pages are embedded by a model served on this machine
+(`wgn.home.ollama.enable`), named through the
 `openai` provider because that is the API it answers. Pull it before enabling
 the service:
 
@@ -763,19 +670,6 @@ ollama pull nomic-embed-text
 `nomic-embed-text` -- because only OpenAI's own model sizes are known to the
 indexer. Changing either it or `embeddingModel` invalidates the index, since
 vectors from one model cannot be compared with another's.
-
-## running the sandbox on a remote host
-
-The devbox is an EC2 guest without hardware virtualization, so its native
-Emacs sessions use Bubblewrap. TRAMP sessions started by Emacs on another
-machine run the devbox's `eca-sandbox`, and so use Bubblewrap too.
-
-See `emacs-config` for [remote launch behavior and virtualization requirements](https://github.com/wesnel/emacs-config#remote-hosts-and-backend-differences).
-
-## the bubblewrap backend
-
-See the [backend comparison in emacs-config](https://github.com/wesnel/emacs-config#remote-hosts-and-backend-differences)
-for filesystem isolation, proxy enforcement and supported flags.
 
 # replacing the devbox
 

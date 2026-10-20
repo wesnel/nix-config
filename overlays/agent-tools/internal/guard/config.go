@@ -26,8 +26,7 @@ var builtCredentialPaths []string
 
 // credentialPaths are the path prefixes of credentials: the config's, or
 // without them the built-in ones, which stand in where the config is
-// absent, as in an ECA review-loop session's guest or on a host before its
-// first switch. With neither, everything under the home directory is one.
+// absent, as in a sandbox guest or on a host before its first switch. With neither, everything under the home directory is one.
 func credentialPaths() []string {
 	paths := loadSettings().CredentialPaths
 	if len(paths) == 0 {

@@ -62,25 +62,17 @@ func TestPlanLog(t *testing.T) {
 		{"the log", true, "MultiEdit", map[string]any{"file_path": "LOGFILE", "edits": []map[string]string{{"old_string": "a", "new_string": "b"}}}},
 		{"the log", true, "apply_patch", patch("Update File", "LOGFILE")},
 		{"the log, deleted", true, "apply_patch", patch("Delete File", "LOGFILE")},
-		{"the log", true, "edit_file", map[string]string{"path": "LOGFILE", "original_content": "a", "new_content": "b"}},
-		{"the log", true, "write_file", map[string]string{"path": "LOGFILE", "content": "x"}},
-		{"the log", true, "move_file", map[string]string{"source": "LOGFILE", "destination": "/tmp/x"}},
 		{"the plan", false, "Edit", map[string]string{"file_path": "PLANFILE", "old_string": "a", "new_string": "b"}},
 		{"a part", false, "Write", map[string]string{"file_path": "PLANSDIR/2026-10-14-x.box.P1.org", "content": "* Plan\n"}},
 		{"a log's name outside the plans", false, "Write", map[string]string{"file_path": "WORKDIR/2026-10-14-x.box.log.org", "content": "mine\n"}},
 		{"another log.org", false, "Write", map[string]string{"file_path": "WORKDIR/log.org", "content": "mine\n"}},
-		{"the plan", false, "edit_file", map[string]string{"path": "PLANFILE", "original_content": "a", "new_content": "b"}},
 	}
 	for _, c := range files {
 		t.Run(caseName(c.deny, c.tool+" of "+c.name), func(t *testing.T) {
 			paths, work := planLogPaths(t)
 			data, _ := json.Marshal(c.input)
 			input := []byte(paths.Replace(string(data)))
-			server := ""
-			if strings.HasSuffix(c.tool, "_file") {
-				server = "eca"
-			}
-			reason := check(c.tool, server, input, baseline, work)
+			reason := check(c.tool, input, baseline, work)
 			if (reason != "") != c.deny {
 				t.Errorf("%s %s: deny=%v, reason %q", c.tool, input, !c.deny, reason)
 			}
@@ -149,11 +141,11 @@ func TestReviewerPlans(t *testing.T) {
 			paths, _ := planLogPaths(t)
 			command := paths.Replace(command)
 			input, _ := json.Marshal(map[string]string{"command": command})
-			reason := check("Bash", "", input, reviewer, "")
+			reason := check("Bash", input, reviewer, "")
 			if (reason != "") != deny {
 				t.Errorf("reviewer %q: deny=%v, reason %q", command, !deny, reason)
 			}
-			if reason := check("Bash", "", input, owner, ""); reason != "" {
+			if reason := check("Bash", input, owner, ""); reason != "" {
 				t.Errorf("owner %q: denied %q", command, reason)
 			}
 		})
@@ -179,7 +171,7 @@ func TestPlansForTheOperator(t *testing.T) {
 			command := paths.Replace(command)
 			input, _ := json.Marshal(map[string]string{"command": command})
 			for _, who := range []role{baseline, coordinator, owner, reviewer} {
-				reason := check("Bash", "", input, who, "")
+				reason := check("Bash", input, who, "")
 				if (reason != "") != deny {
 					t.Errorf("role %d %q: deny=%v, reason %q", who, command, !deny, reason)
 				}

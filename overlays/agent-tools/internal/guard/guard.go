@@ -1,4 +1,4 @@
-// Package guard is a PreToolUse hook for Claude Code, Codex and ECA. With
+// Package guard is a PreToolUse hook for Claude Code and Codex. With
 // `--baseline`, in every session, it denies what is the operator's to do:
 // publishing, merging, GitHub's settings and credentials, and keeps the
 // agents agents.json names to their roles, a reviewer to reading. In a
@@ -46,15 +46,12 @@ var (
 )
 
 type input struct {
-	HookType  string          `json:"hook_type"` // set by ECA
 	ToolName  string          `json:"tool_name"`
-	Server    string          `json:"server"` // ECA's MCP server name
 	ToolInput json.RawMessage `json:"tool_input"`
 	// Claude Code names the subagent making the call, prefixed with its
-	// plugin's name if a plugin defines it ("pr-loop:pr-owner"); ECA names
-	// the agent in agent. Codex names none.
+	// plugin's name if a plugin defines it ("pr-loop:pr-owner"). Codex names
+	// none.
 	AgentType string `json:"agent_type"`
-	Agent     string `json:"agent"`
 	// The directory the command runs in, which bounds the files the guard
 	// reads. Without it, the guard's own working directory stands in.
 	Cwd string `json:"cwd"`
@@ -137,10 +134,10 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if in.Cwd == "" {
 		in.Cwd, _ = os.Getwd()
 	}
-	who := roleOf(in.AgentType+in.Agent, fallback)
+	who := roleOf(in.AgentType, fallback)
 	reason := checkSubagentStash(in)
 	if reason == "" {
-		reason = check(in.ToolName, in.Server, in.ToolInput, who, in.Cwd)
+		reason = check(in.ToolName, in.ToolInput, who, in.Cwd)
 	}
 	if reason == "" && in.TurnID != "" && (in.ToolName == "Bash" || in.ToolName == "exec_command") {
 		// Codex alone keeps a command's terminal for write_stdin.
@@ -157,7 +154,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if reason == "" {
 		edit := in.ToolName == "Edit" || in.ToolName == "Write" || in.ToolName == "MultiEdit"
-		if fallback == baseline && edit && in.HookType == "" {
+		if fallback == baseline && edit {
 			if context := branchHint(in.SessionID, in.ToolInput, in.Cwd); context != "" {
 				json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{
 					"hookEventName": "PreToolUse", "additionalContext": context}})
@@ -165,58 +162,49 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		return 0
 	}
-	if reason == sleeping && in.HookType == "" && in.TurnID == "" {
+	if reason == sleeping && in.TurnID == "" {
 		reason = sleepingClaude
 	}
-	if reason == keyTouch && in.HookType != "" {
-		reason = keyTouchPlain
-	}
-	var out any
 	decision := "deny"
 	if asks[reason] && who == baseline {
-		// Claude Code and ECA ask the operator; Codex cannot.
+		// Claude Code asks the operator; Codex cannot.
 		if in.TurnID != "" {
 			reason = cannotAsk(reason)
 		} else {
 			decision = "ask"
 		}
 	}
-	if in.HookType != "" {
-		out = map[string]string{"approval": decision, "additionalContext": reason}
-	} else {
-		out = map[string]any{"hookSpecificOutput": map[string]string{
-			"hookEventName": "PreToolUse", "permissionDecision": decision, "permissionDecisionReason": reason}}
-	}
-	json.NewEncoder(stdout).Encode(out)
+	json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{
+		"hookEventName": "PreToolUse", "permissionDecision": decision, "permissionDecisionReason": reason}})
 	return 0
 }
 
 // CheckBaseline is Check for an ordinary session.
-func CheckBaseline(tool, server string, toolInput json.RawMessage) string {
+func CheckBaseline(tool string, toolInput json.RawMessage) string {
 	dir, _ := os.Getwd()
-	return check(tool, server, toolInput, baseline, dir)
+	return check(tool, toolInput, baseline, dir)
 }
 
 // Check returns why a tool call by the coordinator, run in the current
 // directory, is denied, or "" to allow it.
-func Check(tool, server string, toolInput json.RawMessage) string {
+func Check(tool string, toolInput json.RawMessage) string {
 	dir, _ := os.Getwd()
-	return check(tool, server, toolInput, coordinator, dir)
+	return check(tool, toolInput, coordinator, dir)
 }
 
 // CheckOwner is Check for a pr-owner, which is also denied the steps the
 // coordinator alone takes.
-func CheckOwner(tool, server string, toolInput json.RawMessage) string {
+func CheckOwner(tool string, toolInput json.RawMessage) string {
 	dir, _ := os.Getwd()
-	return check(tool, server, toolInput, owner, dir)
+	return check(tool, toolInput, owner, dir)
 }
 
 // CheckReviewer is CheckOwner for a reviewer, which only reads: it is also
 // denied git commands that change the repository and every pr-loop command
 // but the reading ones, and is told so whichever rule a call breaks.
-func CheckReviewer(tool, server string, toolInput json.RawMessage) string {
+func CheckReviewer(tool string, toolInput json.RawMessage) string {
 	dir, _ := os.Getwd()
-	return check(tool, server, toolInput, reviewer, dir)
+	return check(tool, toolInput, reviewer, dir)
 }
 
 // check returns a denial's reason, which reaches the agent verbatim: a first
@@ -224,23 +212,21 @@ func CheckReviewer(tool, server string, toolInput json.RawMessage) string {
 // backticks or handing the step to the operator. A reason that only says no
 // sends the agent looking for another way through. TestCheck and TestPolicy
 // hold every reason to this.
-func check(tool, server string, toolInput json.RawMessage, who role, dir string) string {
-	if service, name, mcp := mcpTool(tool, server); mcp {
+func check(tool string, toolInput json.RawMessage, who role, dir string) string {
+	if service, name, mcp := mcpTool(tool); mcp {
 		return checkMCP(service, name, who)
 	}
 	checkout := dir // the hook's directory, wherever a command then runs
 	switch {
-	case tool == "Bash" || tool == "exec_command" || tool == "shell_command" || tool == "git":
-		// ECA's git tool takes a whole git or gh command line, like the shell.
+	case tool == "Bash" || tool == "exec_command":
 		// Claude Code's Bash runs the command in the background with
-		// run_in_background, and ECA's shell_command with a background name.
+		// run_in_background.
 		var args struct {
 			Command         string `json:"command"`
 			RunInBackground bool   `json:"run_in_background"`
-			Background      string `json:"background"`
 		}
 		json.Unmarshal(toolInput, &args)
-		return command(args.Command, 0, who, dir, checkout, args.RunInBackground || args.Background != "")
+		return command(args.Command, 0, who, dir, checkout, args.RunInBackground)
 	case tool == "Monitor":
 		// Claude Code's Monitor runs a command as Bash does.
 		var args struct {
@@ -284,8 +270,7 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 		return ""
 	case tool == "ExitWorktree":
 		return checkExitWorktree(toolInput, dir)
-	case tool == "Edit" || tool == "Write" || tool == "MultiEdit" || tool == "NotebookEdit" || tool == "apply_patch",
-		server == "eca" && (tool == "write_file" || tool == "edit_file" || tool == "move_file"):
+	case tool == "Edit" || tool == "Write" || tool == "MultiEdit" || tool == "NotebookEdit" || tool == "apply_patch":
 		return checkFileTool(tool, toolInput, dir)
 	}
 	return ""

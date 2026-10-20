@@ -137,8 +137,7 @@ through `pr-loop review N`.
 
 Twice in the pipeline: of the plan before coding, and of the result before
 hand-back. Start a new sub-agent that only reads (Claude Code's
-`design-reviewer` agent; in ECA the `explorer` agent; elsewhere one told
-to only read), and give it
+`design-reviewer` agent; elsewhere one told to only read), and give it
 the plan, the goal statements and, for the result, every branch with its
 range. It reviews the work as a whole, where the fresh review loop reviews
 each branch:

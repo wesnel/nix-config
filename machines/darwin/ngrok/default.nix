@@ -20,10 +20,6 @@
           hex = true;
           datadog.enable = true;
         };
-        eca = {
-          enable = true;
-          localModel = "ollama/qwen2.5-coder:7b";
-        };
         emacs.enable = true;
         fish.enable = true;
         fonts.enable = true;
@@ -43,7 +39,7 @@
         ollama = {
           enable = true;
 
-          # Matches the limit qwen2.5-coder:7b is given in ECA's own config.
+          # The window qwen2.5-coder:7b runs in without rope scaling.
           contextLength = 32768;
         };
         python.enable = true;
@@ -51,20 +47,6 @@
       };
 
       home.programs.wgn.emacs = {
-        eca = {
-          enable = true;
-          sandbox = {
-            enable = true;
-            args = [
-              "--http-map"
-              "ollama:11434=127.0.0.1:11434"
-              "--http-map"
-              "docs:6280=127.0.0.1:6280"
-              "--env"
-              "OLLAMA_API_URL=http://ollama:11434"
-            ];
-          };
-        };
         claude.enable = true;
         codex.enable = true;
       };

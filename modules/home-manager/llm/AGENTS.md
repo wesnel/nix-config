@@ -86,8 +86,8 @@ fixture, is written nowhere: put `<REDACTED>` in its place.
 Hand over what is the operator's to run (a key touch, root, an interactive
 login) as one line that runs as pasted: steps joined with `&&`, paths
 spelled out, valid in fish. Begin it with `!` in Claude Code and Codex,
-which run such a line in the session; leave it plain in ECA, in
-agent-shell, and when its output shows a secret.
+which run such a line in the session; leave it plain in agent-shell, and
+when its output shows a secret.
 
 ## Documentation and comments
 

@@ -79,9 +79,9 @@ printed on stderr and fails nothing.
   sign [--resume] [--no-push] squash the loop's fixups, sign with the hardware key, and
                               push the stack over SSH (outside a loop, use git sign-pass)
   end [--prune]               delete trigger comments and loop state
-  guard [--baseline]          PreToolUse hook for Claude Code, Codex and ECA (reads stdin):
+  guard [--baseline]          PreToolUse hook for Claude Code and Codex (reads stdin):
                               a loop's rules, or with --baseline every session's, by agent
-  guard --post                PostToolUse hook for Claude Code, Codex and ECA (reads stdin):
+  guard --post                PostToolUse hook for Claude Code and Codex (reads stdin):
                               records the shell call's commits, pushes (but push's,
                               which push logs), new worktrees,
                               branches and PRs in the plan of its session or worktree,
