@@ -25,6 +25,8 @@ A plan is files side by side in the plans directory: <date>-<slug>.<host>.org,
 <date>-<slug>.<host>.<part>.org for each sub-agent's part, and
 <date>-<slug>.<host>.log.org, which only "agent-plan log" writes. The plans
 directory and host come from "plans" in the user's agent-tools/config.json.
+A command that would leave a plan file with structure drift it did not
+have (see status) is refused and writes nothing.
 
   new --title T --slug S [--repo R]... [--branch BASE..BRANCH]... [--worktree DIR]...
       [--session HARNESS:ID]... [--harness H] [--template NAME]

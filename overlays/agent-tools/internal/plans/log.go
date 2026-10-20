@@ -354,7 +354,8 @@ const editTries = 3
 
 // edit is the one rewrite of a plan file: it applies fn, which must be
 // pure over the lines, and renames the result over the file. A result
-// equal to the file is not written. The lock excludes other agent-plan
+// equal to the file is not written, and one that adds structure drift is
+// refused before it is, as checkStructure says. The lock excludes other agent-plan
 // processes but not Emacs, so edit refuses a file whose buffer has unsaved
 // changes, and applies fn again to a file that changed between its read
 // and the rename. The window between that last check and the rename stays
@@ -376,6 +377,16 @@ func (l *lockedPlan) edit(file string, fn func(lines []string) ([]string, error)
 		text := strings.Join(lines, "\n")
 		if text == string(before) {
 			return nil
+		}
+		if err := checkStructure(file, string(before), text); err != nil {
+			return err
+		}
+		events, err := l.p.Events()
+		if err != nil {
+			return err
+		}
+		if err := checkKeywords(file, string(before), text, events); err != nil {
+			return err
 		}
 		err = replaceFile(file, text, func() bool {
 			now, err := os.ReadFile(file)

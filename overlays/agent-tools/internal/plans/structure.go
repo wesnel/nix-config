@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
 // StructureDrift is a heading of one of a plan's files, File, that the
@@ -184,6 +186,60 @@ func (p Plan) structureDrift() ([]StructureDrift, error) {
 		}
 	}
 	return out, nil
+}
+
+// keywordsOf are the steps, parts and follow-ups of a plan file's text
+// whose heading keyword is not the one events give them, as status lists
+// keyword drift, each as ID and keyword.
+func keywordsOf(text string, events []Event) map[string]string {
+	out := map[string]string{}
+	for _, h := range parseOrg(text) {
+		if id := h.Props["ID"]; projected(id) && h.Keyword != stepState(events, id) {
+			out[id] = h.Keyword
+		}
+	}
+	return out
+}
+
+// checkKeywords refuses after where it gives an entry a keyword its log
+// does not and before did not.
+func checkKeywords(f, before, after string, events []Event) error {
+	had := keywordsOf(before, events)
+	var added []string
+	for id, kw := range keywordsOf(after, events) {
+		if old, ok := had[id]; !ok || old != kw {
+			added = append(added, fmt.Sprintf("%s %s (its log gives %s)", id, kw, stepState(events, id)))
+		}
+	}
+	if len(added) == 0 {
+		return nil
+	}
+	slices.Sort(added)
+	return refusal.New("this would leave %s with keyword drift, so agent-plan wrote nothing: %s. A step's, part's or follow-up's keyword follows its log; log the event with `agent-plan log PLAN --item ID --kind KIND`",
+		f, strings.Join(added, "; "))
+}
+
+// checkStructure refuses after, the text a write would leave in plan file
+// f, where it drifts in a way before, the file's text now, does not. Drift
+// already in the file is the operator's to settle, so it refuses nothing.
+func checkStructure(f, before, after string) error {
+	had := map[structureProblem]int{}
+	for _, d := range structureOf(before) {
+		had[d]++
+	}
+	var added []string
+	for _, d := range structureOf(after) {
+		if had[d] > 0 {
+			had[d]--
+			continue
+		}
+		added = append(added, fmt.Sprintf("`%s` (%s)", clip(d.heading, headingShown), d.problem))
+	}
+	if len(added) == 0 {
+		return nil
+	}
+	return refusal.New("this would leave %s with structure drift, so agent-plan wrote nothing: %s. Run the command again with values that keep the structure the plan-work skill describes, or put the change in your report for the operator",
+		f, strings.Join(added, "; "))
 }
 
 // headingShown is the most of a drifting heading status and the briefs
