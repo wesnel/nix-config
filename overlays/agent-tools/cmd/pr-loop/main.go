@@ -21,6 +21,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/guard"
 	"github.com/wesnel/agent-tools/internal/loop"
 	"github.com/wesnel/agent-tools/internal/prreview"
+	"github.com/wesnel/agent-tools/internal/redact"
 	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/relay"
 )
@@ -121,6 +122,12 @@ PR's head to become the commit --sha names, or else the head branch's tip on
 GitHub, and never reports an earlier head's checks. Each failed check gives
 its state on the base (onBase) and, for a GitHub Actions job, the logs
 command that prints its log.
+
+pr-loop may run outside the sandbox, with the operator's login. open's
+title and body, each reply and request's trigger comment are refused,
+before anything is posted, while redaction would change them: name a
+secret without its value. A placeholder such as $VAR, ${VAR}, <token> or
+{{ .Values.x }}, or an obvious example value, passes.
 
 A reply file has a section per thread: a line "=== thread THREAD", or
 "=== thread THREAD resolve" to resolve the thread after replying, then the
@@ -355,6 +362,9 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 		default:
 			data, err = os.ReadFile(*bodyFile)
 		}
+		if err == nil {
+			err = redact.Outgoing(string(data))
+		}
 		return string(data), err
 	}
 
@@ -372,6 +382,9 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 			branch = rest[0]
 		}
 		var text string
+		if err = redact.Outgoing(*title); err != nil {
+			break
+		}
 		if text, err = body(); err == nil {
 			result, err = loop.Open(branch, *base, *title, text, *dryRun)
 		}
@@ -551,6 +564,11 @@ func replyFrom(path, bodyFile string, rest []string, stdin io.Reader) (any, erro
 	plan, err := loop.ParseReplies(string(data))
 	if err != nil {
 		return nil, err
+	}
+	for _, r := range plan {
+		if err := redact.Outgoing(r.Body); err != nil {
+			return nil, fmt.Errorf("the reply to %s: %w", r.Thread, err)
+		}
 	}
 	return loop.ReplyAll(plan)
 }

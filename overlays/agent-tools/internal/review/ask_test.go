@@ -193,4 +193,34 @@ func TestAsk(t *testing.T) {
 			f.checkCleanedUp(t)
 		})
 	}
+
+	// A file the question names is judged where its links lead, so neither
+	// `..` nor a link reaches a file beside the repository.
+	for name, place := range map[string]func(t *testing.T, f *fixture) string{
+		"a path up out of the repository": func(t *testing.T, f *fixture) string {
+			os.WriteFile(filepath.Join(filepath.Dir(f.repo), "beside.txt"), []byte("hunter2\n"), 0o600)
+			return "../beside.txt"
+		},
+		"a link in the repository to a file outside": func(t *testing.T, f *fixture) string {
+			outside := filepath.Join(t.TempDir(), "beside.txt")
+			os.WriteFile(outside, []byte("hunter2\n"), 0o600)
+			os.Symlink(outside, filepath.Join(f.repo, "docs", "link.md"))
+			return "docs/link.md"
+		},
+	} {
+		t.Run("refused/"+name, func(t *testing.T) {
+			f := askFixture(t, true)
+			t.Setenv("FAKE_CODEX", "answer")
+			arg := place(t, f)
+			code, _, stderr := askCodex(t, "--question", ".git/question.md", arg)
+			reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-fresh-review: refused: ")
+			if code != 2 || !strings.Contains(reason, "outside the repository") || !refusal.SaysInstead(reason) {
+				t.Errorf("%s: exit %d, %q", arg, code, stderr)
+			}
+			if _, err := os.Stat(filepath.Join(f.log, "prompt")); err == nil {
+				t.Error("Codex ran")
+			}
+			f.checkCleanedUp(t)
+		})
+	}
 }
