@@ -31,8 +31,7 @@ current session.
   log if there is no report.
 - **Elsewhere:** stop and tell the operator to start `claude-pr-loop`.
 
-Commit as the `signing-pass` skill says: unsigned, never pushing or signing
-yourself, with one signing pass at the end. In the loop's worktrees signing is
+Commit as the `signing-pass` skill says. In the loop's worktrees signing is
 already off, so there the `-c commit.gpgsign=false` it asks for changes
 nothing. Every write to GitHub goes through `pr-loop`, which needs no key
 touch. `pr-loop` refuses anything outside the loop's PRs; a refusal is a
@@ -54,13 +53,9 @@ bot's trigger, which `pr-loop request` posts and later deletes.
 
 ## Scope
 
-Each PR exists to deliver its Linear ticket. Measure every proposed change
-against that goal, not against its size: a large change the ticket needs is
-in scope, and a one-line improvement it does not need is not. Be skeptical of
-anything a bot suggests that the ticket did not ask for, including
-refactors, hardening, extra tests and fixes to code the PR did not touch.
-Defer those with a short reason. A deferral costs nothing; scope creep costs
-a reviewable PR.
+Each PR exists to deliver its Linear ticket. Its scope statement (Setup
+below) is its goal statement, against which every proposed change is
+measured as the `review-change` skill's goal statement says.
 
 ## Sub-agents
 
@@ -186,9 +181,8 @@ Stop and hand back when any of these holds:
 4. Run `pr-loop sign-check`. It squashes the fixups unsigned in a
    throwaway worktree and refuses unless each PR would end with exactly its
    original commits and unchanged files; settle what it names before
-   handing over. Then hand over for the signing pass, showing what it will
-   sign as the `signing-pass` skill describes: `git sign-pass --push
-   <top branch>`, which signs and pushes the whole stack. The session's
+   handing over. Then hand over the signing pass as the `signing-pass`
+   skill's Handing over says, naming the stack's top branch. The session's
    relay refuses `end`, so after the push the operator runs `pr-loop end`
    in the repository, which deletes the loop's trigger comments and its
    state, and with `--prune` the snapshots.

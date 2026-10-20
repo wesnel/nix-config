@@ -44,20 +44,9 @@ the signing to one pass at the end, which the operator runs.
   the same config: its commits take the flag too, in test code as well, or
   its own config sets `commit.gpgsign` to false.
 - Never `git push`. A push to GitHub authenticates with the same key over SSH
-  and waits for a touch too. Leave it to the signing pass.
-- To open a pull request for a branch GitHub does not have yet, publish it
-  with `pr-loop open`, which pushes the unsigned commits through the GitHub
-  API, needs no touch, and opens the pull request as a draft:
-
-  ```sh
-  pr-loop open --title "Say what changed" --body-file description.md feature
-  ```
-
-  The base is the default branch, or with `--base` the branch of an open
-  pull request of the operator's that this one stacks on, whose GitHub stack
-  open adds it to; when it cannot, `unstacked` in its output says why and
-  which `pr-loop link` stacks it later. It refuses a branch GitHub already
-  has; later commits reach GitHub through the signing pass.
+  and waits for a touch too. Leave it to the signing pass; a branch GitHub
+  does not have yet gets its draft pull request as the `pull-requests`
+  skill's Opening says, with no touch.
 - Never create tags; they are signed as well.
 - If a command fails with `gpg failed to sign the data`, `failed to write
   commit object` or `agent refused operation`, or hangs, the flag was
@@ -121,7 +110,9 @@ git sign-pass --push <top of stack 1> <top of stack 2> <each child of a fork> ..
 
 It signs each stack from wherever its branch is checked out, replays a fork's
 other children onto the signed parent, and prints the whole plan, with the key
-touches, before the first touch. Do not write a script around it.
+touches, before the first touch, and that plan is the operator's audit. The
+operator types the pass themselves, so do not write a script around it: they
+must be able to read what they run.
 
 It re-signs every commit from the oldest unsigned one to the tip, and moves any
 branch stacked inside that range along with it. A stacked branch checked out in
@@ -147,9 +138,9 @@ changes), whose message after the `amend!` line becomes that commit's whole
 message.
 
 During a bot review loop (the `review-loop` skill), the commits are also
-fixups, and that loop's signing pass squashes them as well as signing them.
-That loop accepts only `--fixup=<commit>`, never `amend!` or `squash!`, since
-it must not change the PR's commit messages.
+fixups, which this pass squashes as well as signing them, once `pr-loop
+sign-check` has passed. That loop accepts only `--fixup=<commit>`, never
+`amend!` or `squash!`, since it must not change the PR's commit messages.
 
 ## Hearing how it ended
 

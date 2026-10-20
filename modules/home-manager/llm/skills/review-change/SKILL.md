@@ -36,6 +36,14 @@ this change's job, taken from the plan, with nothing of how the work went.
 Write it with `agent-plan goal PLAN [--part P1] > FILE`. When the caller
 hands you a goal statement, use that file as it stands.
 
+Measure every proposed change against the goal, not against its size: a
+large change the goal needs is in scope, and a one-line improvement it does
+not need is not. Be skeptical of anything a reviewer or bot suggests that
+the goal did not ask for, including refactors, hardening, extra tests and
+fixes to code the change did not touch, and settle those `defer` with a
+short reason. A deferral costs nothing; scope creep costs a reviewable
+change.
+
 ## Recording it in the log
 
 Each stage is an event in the plan's log (the `plan-work` skill's

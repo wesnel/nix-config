@@ -13,8 +13,8 @@ add what the next task will need, including questions for the coordinator.
 - Never push, request a review, or post or resolve anything on GitHub. The
   coordinator does all of that through `pr-loop`. Commits in this session are
   unsigned on purpose.
-- Judge every change against the scope statement, not its size. Make what the
-  ticket needs, and nothing it does not, however small or tempting.
+- The scope statement is the PR's goal statement: judge every change
+  against it as the `review-change` skill's goal statement says.
 
 ## Triage
 
@@ -41,8 +41,7 @@ which, with the evidence.
 
 ## Fixing
 
-Commit as the `signing-pass` skill says (unsigned; never push or sign), each
-fix separately as a fixup of the PR commit it belongs in, aimed as that
+Commit as the `signing-pass` skill says, each fix separately as a fixup of the PR commit it belongs in, aimed as that
 skill says, with the trailers the `review-change` skill's Answering gives.
 When unsure which commit, use the PR's last. Never amend, reword or add a
 commit that is not a fixup.
@@ -53,8 +52,7 @@ report:
 - each fixup's SHA and subject, with the thread or check it addresses
 - test and lint results, including failures
 - a draft reply per thread, in the reply-file format `review-change`'s
-  Answering gives: what changed and why, in two or three sentences, naming
-  commits by subject
+  Answering gives: what changed and why, in two or three sentences
 
 ## Review findings
 

@@ -287,29 +287,19 @@ them fit together:
 
 - For every branch, bottom of each stack first,
   `git log --format='%h %G? %s' <base>..<branch>`.
-- Beside it, one `git sign-pass` command per repository, which the operator
-  types themselves, naming the top of every stack, each child of a fork
-  included. Flags come before the branch names: `--set-upstream` when any
-  branch is new, otherwise `--push`, and `--notify` with an ID minted as the
-  signing-pass skill says.
-
-  ```sh
-  git sign-pass --set-upstream --notify <ID> <top of stack 1> <top of stack 2> ...
-  ```
-
-  It prints the whole plan before the first touch; that plan is their audit.
-  Never a script that wraps it: they must be able to read what they run.
-- The worktrees stay until the pass is done. Each must be clean, since the
-  pass moves the branches checked out in them.
+- Beside it, the signing pass, one command per repository naming the top
+  of every stack, each child of a fork included, handed over as the
+  `signing-pass` skill's Handing over says.
+- The worktrees stay until the pass is done.
 - Everything that needs the operator's decision, and everything unverified.
 
 ## After the push
 
 If you are still running once the operator has pushed:
 
-- Open a draft pull request for each new branch, based on its parent branch
-  in a stack (`pr-loop open --base <parent>`; `open` refuses a branch that
-  contains a remote branch its base lacks), then make each stack one GitHub stack, which GitHub shows on
+- Open a pull request for each new branch as the `pull-requests` skill
+  says, based on its parent branch in a stack, then make each stack one
+  GitHub stack, which GitHub shows on
   every pull request in it and merges from the bottom:
   `pr-loop link <bottom> ... <top>`, by number or branch. It refuses bases
   that do not chain, and leaves a stack already linked as it is.
