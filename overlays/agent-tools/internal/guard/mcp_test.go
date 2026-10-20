@@ -32,7 +32,7 @@ func TestMCPTools(t *testing.T) {
 		{"Linear connector write asks", []string{"--baseline"}, claude("mcp__claude_ai_Linear__create_comment"), ask, ""},
 		{"Linear write in a review loop", nil, claude("mcp__linear__save_issue"), deny, "review loop"},
 		{"Linear read in a review loop", nil, claude("mcp__linear__list_issues"), "", ""},
-		{"Linear write from a reviewer", []string{"--baseline"}, `{"tool_name":"mcp__linear__save_issue","agent_type":"reviewer","tool_input":{}}`, deny, "reviewer only reads"},
+		{"Linear write from a reviewer", []string{"--baseline"}, `{"tool_name":"mcp__linear__save_issue","agent_type":"adversarial-reviewer","tool_input":{}}`, deny, "reviewer only reads"},
 		{"Linear write from Codex", []string{"--baseline"}, codex("mcp__linear__save_issue"), deny, "Claude Code"},
 		{"Linear read from Codex", []string{"--baseline"}, codex("mcp__linear__get_issue"), "", ""},
 		{"Linear write from a loop agent", []string{"--baseline"}, `{"tool_name":"mcp__linear__save_issue","agent_type":"pr-loop:pr-owner","tool_input":{}}`, deny, "review loop"},
@@ -68,13 +68,13 @@ func TestMCPTools(t *testing.T) {
 		{"GitHub connector read asks", []string{"--baseline"}, claude("mcp__claude_ai_Github__get_pull_request"), ask, "mcp.json"},
 		{"GitHub connector read from Codex", []string{"--baseline"}, codex("mcp__claude_ai_Github__get_pull_request"), deny, "mcp.json"},
 		{"GitHub connector read in a review loop", nil, claude("mcp__claude_ai_Github__get_pull_request"), deny, "mcp.json"},
-		{"GitHub connector read from a reviewer", []string{"--baseline"}, `{"tool_name":"mcp__claude_ai_Github__get_pull_request","agent_type":"reviewer","tool_input":{}}`, deny, "mcp.json"},
+		{"GitHub connector read from a reviewer", []string{"--baseline"}, `{"tool_name":"mcp__claude_ai_Github__get_pull_request","agent_type":"design-reviewer","tool_input":{}}`, deny, "mcp.json"},
 		{"unlisted server asks", []string{"--baseline"}, claude("mcp__somewhere__get_thing"), ask, "mcp.json"},
 		{"unlisted plugin server asks", []string{"--baseline"}, claude("mcp__plugin_x_files__write_file"), ask, "mcp.json"},
 		{"unlisted server from Codex", []string{"--baseline"}, codex("mcp__somewhere__get_thing"), deny, "mcp.json"},
 		{"unlisted server in a review loop", nil, claude("mcp__somewhere__get_thing"), deny, "mcp.json"},
 		{"unlisted server from a loop agent", []string{"--baseline"}, `{"tool_name":"mcp__somewhere__get_thing","agent_type":"pr-loop:pr-owner","tool_input":{}}`, deny, "mcp.json"},
-		{"unlisted server from a reviewer", []string{"--baseline"}, `{"tool_name":"mcp__somewhere__get_thing","agent_type":"reviewer","tool_input":{}}`, deny, "mcp.json"},
+		{"unlisted server from a reviewer", []string{"--baseline"}, `{"tool_name":"mcp__somewhere__get_thing","agent_type":"security-reviewer","tool_input":{}}`, deny, "mcp.json"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var out bytes.Buffer

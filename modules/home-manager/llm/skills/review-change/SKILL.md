@@ -102,8 +102,8 @@ through `pr-loop review N`.
 2. Run `pr-loop review N` (OWNER/NAME#N outside a review directory). It
    exits 0 with no findings, 3 with findings, 4 when Codex cannot review
    (then `pr-loop review --reviewer subagent N` prints the prompt for a new
-   `reviewer` sub-agent, and its reply goes to `pr-loop review --check N` on
-   stdin).
+   `adversarial-reviewer` sub-agent, and its reply goes to
+   `pr-loop review --check N` on stdin).
 3. Triage only proposes. Each finding's outcome is `propose`, `rebut`,
    `duplicate-of` (with `of`) or `needs-operator`: never fix, push, reply or
    resolve on someone else's pull request. Edit a proposed finding's `body`

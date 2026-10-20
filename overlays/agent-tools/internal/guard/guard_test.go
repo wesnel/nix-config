@@ -537,13 +537,14 @@ func testBaselineRoles(t *testing.T) {
 		{true, "Explore", "gh pr merge 1"},
 		{false, "", "git commit -m x"},
 		{false, "", "pr-loop push"},
-		{true, "reviewer", "git commit -m x"},
-		{true, "some-plugin:reviewer", "git stash"},
+		{true, "adversarial-reviewer", "git commit --fixup=abc"},
+		{true, "some-plugin:adversarial-reviewer", "git stash"},
 		{true, "pr-loop:pr-owner", "pr-loop push"},
 		{true, "pr-loop:pr-owner", "pr-loop link 3 4"},
 		{false, "pr-loop:pr-owner", "pr-loop stack 3"},
-		{true, "reviewer", "pr-loop link 3 4"},
-		{false, "reviewer", "pr-loop stack 3"},
+		{true, "adversarial-reviewer", "pr-loop link 3 4"},
+		{false, "adversarial-reviewer", "pr-loop stack 3"},
+		{false, "reviewer", "git commit -m x"},
 		{false, "", "pr-loop link 3 4"},
 		{false, "pr-loop:pr-owner", "git commit --fixup=abc"},
 		{true, "pr-loop:pr-owner", "git commit -m x"},
@@ -576,7 +577,7 @@ func testBaselineFormats(t *testing.T) {
 		name, event, want string
 	}{
 		{"Claude Code push", `{"tool_name":"Bash","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
-		{"Claude Code reviewer commit", `{"tool_name":"Bash","agent_type":"reviewer","tool_input":{"command":"git commit -m x"}}`, `"permissionDecision":"deny"`},
+		{"Claude Code reviewer commit", `{"tool_name":"Bash","agent_type":"adversarial-reviewer","tool_input":{"command":"git commit -m x"}}`, `"permissionDecision":"deny"`},
 		{"Claude Code commit", `{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}`, ""},
 		{"Codex Bash merge", `{"tool_name":"Bash","turn_id":"t","tool_input":{"command":"gh pr merge 1"}}`, `"permissionDecision":"deny"`},
 		{"Codex exec_command push", `{"tool_name":"exec_command","turn_id":"t","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
@@ -940,8 +941,8 @@ func TestOpenedRepo(t *testing.T) {
 // fixup, which an owner may. agents.json names these agents, and no others.
 func TestAgentRoles(t *testing.T) {
 	want := map[string]string{
-		"reviewer": "reviewer", "adversarial-reviewer": "reviewer", "design-reviewer": "reviewer",
-		"security-reviewer": "reviewer", "pr-owner": "owner",
+		"adversarial-reviewer": "reviewer", "design-reviewer": "reviewer", "security-reviewer": "reviewer",
+		"pr-owner": "owner",
 	}
 	var file struct {
 		Roles map[string]string `json:"roles"`
@@ -1000,7 +1001,7 @@ func TestFormats(t *testing.T) {
 	}{
 		{"Claude Code PreToolUse", `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
 		{"owner push", `{"tool_name":"Bash","agent_type":"pr-loop:pr-owner","tool_input":{"command":"pr-loop push"}}`, `"permissionDecision":"deny"`},
-		{"reviewer fixup", `{"tool_name":"Bash","agent_type":"reviewer","tool_input":{"command":"git commit --fixup=abc"}}`, `"permissionDecision":"deny"`},
+		{"reviewer fixup", `{"tool_name":"Bash","agent_type":"adversarial-reviewer","tool_input":{"command":"git commit --fixup=abc"}}`, `"permissionDecision":"deny"`},
 		{"owner fixup", `{"tool_name":"Bash","agent_type":"pr-loop:pr-owner","tool_input":{"command":"git commit --fixup=abc"}}`, ""},
 		{"coordinator push", `{"tool_name":"Bash","tool_input":{"command":"pr-loop push"}}`, ""},
 		{"ls", `{"tool_name":"Bash","tool_input":{"command":"ls"}}`, ""},

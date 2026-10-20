@@ -1216,7 +1216,7 @@ func TestConnectors(t *testing.T) {
 		{"Gmail draft", `{"tool_name":"mcp__claude_ai_Gmail__create_draft","tool_input":{}}`, `"permissionDecision":"ask"`},
 		{"GitHub review", `{"tool_name":"mcp__claude_ai_Github__create_pull_request_review","tool_input":{}}`, `"permissionDecision":"ask"`},
 		{"GitHub review from Codex", `{"tool_name":"mcp__claude_ai_Github__create_pull_request_review","turn_id":"t","tool_input":{}}`, `"permissionDecision":"deny"`},
-		{"GitHub review from a reviewer", `{"tool_name":"mcp__claude_ai_Github__create_pull_request_review","agent_type":"reviewer","tool_input":{}}`, `"permissionDecision":"deny"`},
+		{"GitHub review from a reviewer", `{"tool_name":"mcp__claude_ai_Github__create_pull_request_review","agent_type":"adversarial-reviewer","tool_input":{}}`, `"permissionDecision":"deny"`},
 		{"GitHub read", `{"tool_name":"mcp__claude_ai_Github__get_pull_request","tool_input":{}}`, `"permissionDecision":"ask"`},
 		{"GitHub read from Codex", `{"tool_name":"mcp__claude_ai_Github__get_pull_request","turn_id":"t","tool_input":{}}`, `"permissionDecision":"deny"`},
 		{"Gmail search", `{"tool_name":"mcp__claude_ai_Gmail__search_threads","tool_input":{}}`, `"permissionDecision":"ask"`},

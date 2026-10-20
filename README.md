@@ -180,8 +180,8 @@ the codex executable, the Nix store and the system files they need, with no
 writes and no network. Codex's sandbox cannot start inside another macOS
 sandbox; `git fresh-review` checks that it starts, confined, before the
 review. Its contract is `overlays/agent-tools/internal/review/reviewer.md`,
-the same text Claude Code's `reviewer` agent loads, and its
-reply must fit `findings.schema.json` beside it. Findings that point at no
+the same text the prompt for a sub-agent carries, and its reply must fit
+`findings.schema.json` beside it. Findings that point at no
 line at the tip are dropped with the reason. It prints JSON and exits 0 with
 no findings, 3 with findings, and 4 when Codex cannot review: not installed,
 not signed in, its sandbox cannot start, called from inside Codex, or in a
@@ -204,7 +204,7 @@ given, it says on stderr that the review has no red-check results.
 
 ``` sh
 pr-loop review wesnel/emacs-config#2                # Codex reviews it
-pr-loop review --reviewer subagent 2                # prints the prompt for a reviewer sub-agent
+pr-loop review --reviewer subagent 2                # prints the prompt for an adversarial-reviewer sub-agent
 pr-loop review --check 2 < reply.md                 # checks that sub-agent's reply
 pr-loop review settle 2 < outcomes.json             # records how triage settled each finding
 ```
@@ -578,8 +578,9 @@ pass, the listed writes ask you first in Claude Code and are denied in
 Codex and the review loop, and any other tool is denied until it is
 listed. Every tool of a server it does not list asks you first in Claude
 Code, and is denied in Codex, the review loop and to reviewers. Each
-refusal says what to do instead. An agent with a loop role (`pr-owner`,
-`reviewer`) has that role's rules in any session.
+refusal says what to do instead. An agent with a role in
+`overlays/agent-tools/internal/guard/agents.json` (`pr-owner`, and the
+reviewers, which only read) has that role's rules in any session.
 
 The guard reads commands as typed, through wrappers, shells and `env`, so it
 catches a forgotten rule, not a determined one. The rules that need no

@@ -57,10 +57,6 @@
     # about (confirms), per service, for mcp-proxy's tool filters.
     passthru.mcpTools = builtins.fromJSON (builtins.readFile ./internal/guard/mcp.json);
 
-    # The reviewer's contract, which `git fresh-review` embeds for Codex, for
-    # the agents' own reviewer sub-agents.
-    passthru.reviewerPrompt = builtins.readFile ./internal/review/reviewer.md;
-
     # The security review's contract as `git fresh-review --focus security`
     # builds it (focus.contract in internal/review): the general contract up
     # to its Checks heading, then the security checks. TestSecurityContract

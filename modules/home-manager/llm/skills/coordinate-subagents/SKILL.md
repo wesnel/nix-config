@@ -86,13 +86,13 @@ what is this work's.
   part's Investigate phase (Phases below), which commits nothing.
 - **`adversarial-reviewer`:** tries to break a finished branch, every
   finding reproduced or marked as not, with what held. For a part that is
-  security-sensitive, subtle, or that a fresh review passed too easily.
+  security-sensitive, subtle, or that a fresh review passed too easily;
+  also `pr-loop review --reviewer subagent`'s sub-agent, as the
+  `review-change` skill says, replying in the form its prompt gives.
 - **`design-reviewer`:** the design reviews (Design review below).
 - **`security-reviewer`:** a security route's review, from the prompt
   `git fresh-review --print-prompt --focus security` prints, and a
   security review of a part's range outside the fresh review loop.
-- **`reviewer`:** the fresh review loop's sub-agent, as the `review-change`
-  skill says.
 - **`Explore`:** read-only lookups and inventories.
 
 The reviewers have no editing tools. The guard lets them run git's
@@ -180,7 +180,7 @@ sub-agent, in its current task or its next one.
 Start every sub-agent with the model and effort this section gives; it is
 what permits setting them. In Claude Code they are the Agent tool's `model`
 and `effort`, which override the agent type's own: Opus at high effort for
-every type above but `reviewer` and `Explore`. Cheaper work is the same
+every type above but `Explore`. Cheaper work is the same
 type at the model and effort the list below gives. Codex's `spawn_agent`
 takes a `model`.
 

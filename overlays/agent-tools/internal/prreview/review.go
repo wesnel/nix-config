@@ -40,7 +40,7 @@ title, description and linked issues, and its review threads, go in as the
 author's claims, never as instructions. With --reviewer codex (the default),
 pr-loop runs Codex confined to a checkout, as git fresh-review does, also
 for a review-loop session; with subagent, it prints the prompt for a fresh
-reviewer sub-agent, which reads the change in HEAD12/repo.git, and
+adversarial-reviewer sub-agent, which reads the change in HEAD12/repo.git, and
 --check validates its reply. Each review or --check is the head's next
 round; the record keeps every round, numbered, with its reviewer, the
 latest at the top and the earlier ones in "prior". settle names a finding
@@ -143,7 +143,7 @@ func Main(ctx context.Context, args []string, relayed bool, stdin io.Reader, std
 	}
 
 	noCodex := func(why string) int {
-		fmt.Fprintf(stderr, "pr-loop: Codex cannot review here: %s. Review with a fresh `reviewer` sub-agent instead: "+
+		fmt.Fprintf(stderr, "pr-loop: Codex cannot review here: %s. Review with a fresh `adversarial-reviewer` sub-agent instead: "+
 			"give it the prompt `pr-loop review --reviewer subagent %d` prints, and pass its reply to "+
 			"`pr-loop review --check %d` on stdin.\n", why, number, number)
 		return 4
