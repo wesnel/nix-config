@@ -6,7 +6,6 @@
 }:
 with lib; let
   cfg = config.wgn.home.mcp-proxy;
-  docs = config.wgn.home.docs-mcp-server;
   darwin = pkgs.stdenv.hostPlatform.isDarwin;
 
   proxy = getExe pkgs.tbxark-mcp-proxy;
@@ -46,19 +45,6 @@ with lib; let
     // optionalAttrs cfg.datadog.enable {
       # Without toolsets the server serves `core` alone.
       datadog = oauthServer "datadog" "https://mcp.${cfg.datadog.site}/v1/mcp?toolsets=core,error-tracking" ["mcp_all"];
-    }
-    // optionalAttrs docs.enable {
-      docs = {
-        url = "http://127.0.0.1:${toString docs.port}/mcp";
-        transportType = "streamable-http";
-        # Allow, never block: anything the server adds stays hidden. fetch_url
-        # and scrape_docs fetch arbitrary URLs, and the rest change the index.
-        # An allow list must not be empty, which exposes every tool.
-        options.toolFilter = {
-          mode = "allow";
-          list = ["search_docs" "list_libraries" "find_version" "list_jobs" "get_job_info"];
-        };
-      };
     };
 
   configFile = pkgs.writeText "mcp-proxy.json" (builtins.toJSON {

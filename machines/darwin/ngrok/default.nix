@@ -12,7 +12,6 @@
         aerospace.enable = true;
         claude.enable = true;
         codex.enable = true;
-        docs-mcp-server.enable = true;
         mcp-proxy = {
           enable = true;
           notion = true;
@@ -35,12 +34,6 @@
           };
         };
         man.enable = true;
-        ollama = {
-          enable = true;
-
-          # The window qwen2.5-coder:7b runs in without rope scaling.
-          contextLength = 32768;
-        };
         python.enable = true;
         yubikey.enable = true;
       };

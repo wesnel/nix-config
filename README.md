@@ -14,7 +14,6 @@
         - [after the loop](#after-the-loop)
         - [what a loop session enforces](#what-a-loop-session-enforces)
     - [MCP servers](#mcp-servers)
-    - [the documentation index](#the-documentation-index)
 - [replacing the devbox](#replacing-the-devbox)
 - [updating systems](#updating-systems)
     - [nixOS](#nixos)
@@ -607,7 +606,6 @@ git itself does not use the keychain's GitHub login:
 | `notion` (`notion`) | Notion's `/mcp` | reads; writes you confirm, OAuth |
 | `hex` (`hex`) | Hex's `/mcp` | reads; edits and runs you confirm, OAuth |
 | `datadog` (`datadog.enable`, `datadog.site`) | the site's `/v1/mcp`, toolsets `core` and `error-tracking` | read tools only, OAuth |
-| `docs` | the documentation index | search and listing only |
 
 Options in parentheses are off by default. Each remote server serves only
 the tools listed for it in the guard's `mcp.json`, and the guard asks you
@@ -648,26 +646,6 @@ Code only, signed in from there, and the guard lets through only tools
 whose names say they read. Claude's claude.ai connectors belong to the
 account rather than this configuration: disconnect them in claude.ai's
 settings to keep Claude to the proxy.
-
-## the documentation index
-
-`wgn.home.docs-mcp-server.enable` runs the index as a service rather than
-leaving each client to start its own, so there is one database and one set of
-scraped pages. Clients reach it at `http://127.0.0.1:6280/mcp`.
-
-Pages are embedded by a model served on this machine
-(`wgn.home.ollama.enable`), named through the
-`openai` provider because that is the API it answers. Pull it before enabling
-the service:
-
-``` sh
-ollama pull nomic-embed-text
-```
-
-`vectorDimension` has to match what that model returns -- 768 for
-`nomic-embed-text` -- because only OpenAI's own model sizes are known to the
-indexer. Changing either it or `embeddingModel` invalidates the index, since
-vectors from one model cannot be compared with another's.
 
 # replacing the devbox
 

@@ -132,7 +132,6 @@
       ./modules/home-manager/bash
       ./modules/home-manager/claude
       ./modules/home-manager/codex
-      ./modules/home-manager/docs-mcp-server
       ./modules/home-manager/emacs
       ./modules/home-manager/firefox
       ./modules/home-manager/fish
@@ -153,7 +152,6 @@
       ./modules/home-manager/mcp-proxy
       ./modules/home-manager/mosh
       ./modules/home-manager/music
-      ./modules/home-manager/ollama
       ./modules/home-manager/photos
       ./modules/home-manager/python
       ./modules/home-manager/slack
