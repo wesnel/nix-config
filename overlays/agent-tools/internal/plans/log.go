@@ -52,6 +52,9 @@ type Event struct {
 	// and Dir the directory to run it in; Waiting reads them.
 	Command string `json:"command,omitempty"`
 	Dir     string `json:"dir,omitempty"`
+	// Base is a sign-requested event's base for git sign-pass --base, ""
+	// for main.
+	Base string `json:"base,omitempty"`
 	// Note is what the caller should know about the event, such as a
 	// heading keyword Log could not write; the log does not hold it.
 	Note string `json:"note,omitempty"`
@@ -115,7 +118,7 @@ func (p Plan) check(e Event) error {
 			return err
 		}
 	}
-	for what, v := range map[string]string{"command": e.Command, "dir": e.Dir} {
+	for what, v := range map[string]string{"command": e.Command, "dir": e.Dir, "base": e.Base} {
 		if err := checkLine(what, v); err != nil {
 			return err
 		}
@@ -261,7 +264,7 @@ func eventText(e Event) string {
 		{"KIND", e.Kind}, {"BRANCH", e.Branch}, {"COMMIT", e.Commit}, {"EVIDENCE", e.Evidence},
 		{"REVIEW", e.Review}, {"OUTCOME", e.Outcome}, {"SESSION", e.Session}, {"WORKTREE", e.Worktree}, {"TIP", e.Tip},
 		{"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}, {"PROPERTY", e.Property}, {"VALUE", e.Value},
-		{"COMMAND", e.Command}, {"DIR", e.Dir}} {
+		{"COMMAND", e.Command}, {"DIR", e.Dir}, {"BASE", e.Base}} {
 		if kv[1] != "" {
 			b.WriteString(":" + kv[0] + ": " + kv[1] + "\n")
 		}
@@ -479,7 +482,7 @@ func (p Plan) Events() ([]Event, error) {
 		if _, summary, ok := strings.Cut(h.Title, " — "); ok {
 			e.Summary = summary
 		}
-		e.Command, e.Dir = h.Props["COMMAND"], h.Props["DIR"]
+		e.Command, e.Dir, e.Base = h.Props["COMMAND"], h.Props["DIR"], h.Props["BASE"]
 		for _, line := range h.Body {
 			if strings.HasPrefix(line, "[") {
 				e.Time = strings.TrimSpace(line)

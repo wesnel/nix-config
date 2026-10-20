@@ -183,12 +183,17 @@ have (see status) is refused and writes nothing.
                      and on every one of those prompts, with or without a
                      plan, adds the time and how long since the operator's
                      previous message in the session; never blocks
-  sign-id [--session ID] [--branch B]...
+  sign-id [--session ID] [--branch B]... [--worktree DIR] [--base REF]
                      log a sign-pass about to be handed to the operator as
                      sign-requested in the plan of this session (--session,
                      else CLAUDE_CODE_SESSION_ID or CODEX_THREAD_ID) and
                      worktree, and print its ID for
-                     ` + "`git sign-pass --notify ID`" + `; refused without a plan
+                     ` + "`git sign-pass --notify ID`" + `; refused without a plan.
+                     The event's WORKTREE is where git sign-pass runs (the
+                     worktree given, else the one sign-id runs in), and its
+                     BASE the pass's --base, left out for main (or
+                     origin/main); BRANCH defaults to the branch of that
+                     worktree
   sign-result ID [--check]
                      print each result of sign-pass ID and log those not yet
                      delivered as delivered, as remind does; exit 1 while it
@@ -351,11 +356,16 @@ func checkout() (top, branch string) {
 	if err != nil {
 		return "", ""
 	}
-	top, err = git.Run("-C", cwd, "rev-parse", "--show-toplevel")
+	return checkoutAt(cwd)
+}
+
+// checkoutAt is the top level and branch of the worktree dir is in.
+func checkoutAt(dir string) (top, branch string) {
+	top, err := git.Run("-C", dir, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return "", ""
 	}
-	branch, _ = git.Run("-C", cwd, "branch", "--show-current")
+	branch, _ = git.Run("-C", dir, "branch", "--show-current")
 	return top, branch
 }
 
@@ -409,6 +419,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		text     = flags.String("text", "", "")
 		run      = flags.String("command", "", "")
 		runDir   = flags.String("dir", "", "")
+		signBase = flags.String("base", "", "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
 		branches multi
@@ -440,6 +451,10 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	}
 	given := map[string]bool{}
 	flags.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	if given["base"] && command != "sign-id" {
+		fmt.Fprintf(stderr, "agent-plan %s: --base is sign-id's\n", command)
+		return 2
+	}
 	if given["text"] && command != "step" && command != "part" && command != "edit" && command != "section" {
 		fmt.Fprintf(stderr, "agent-plan %s: --text is step's, part's, edit's and section's\n", command)
 		return 2
@@ -744,17 +759,21 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return report(p.Reseal(time.Now()))
 	case "sign-id":
 		if len(positional) != 0 {
-			fmt.Fprint(stderr, "agent-plan sign-id: takes [--session ID] [--branch B]...\n")
+			fmt.Fprint(stderr, "agent-plan sign-id: takes [--session ID] [--branch B]... [--worktree DIR] [--base REF]\n")
 			return 2
 		}
 		if session == "" {
 			session = plans.EnvSession()
 		}
 		top, current := checkout()
+		if worktree != "" {
+			top = worktree
+			_, current = checkoutAt(worktree)
+		}
 		if len(branches) == 0 && current != "" {
 			branches = multi{current}
 		}
-		id, err := c.RequestSign(session, top, branches, time.Now())
+		id, err := c.RequestSign(session, top, branches, *signBase, time.Now())
 		if err != nil {
 			return report(nil, err)
 		}

@@ -14,14 +14,14 @@ import (
 func TestRequestSign(t *testing.T) {
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
-	id, err := c.RequestSign("abc", "", []string{"loop", "flag"}, day)
+	id, err := c.RequestSign("abc", "", []string{"loop", "flag"}, "", day)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(id, p.Name+".") || !signID.MatchString(id) {
 		t.Errorf("ID %q does not name plan %s", id, p.Name)
 	}
-	again, _ := c.RequestSign("abc", "", nil, day)
+	again, _ := c.RequestSign("abc", "", nil, "", day)
 	if again == id {
 		t.Errorf("two requests share ID %q", id)
 	}
@@ -32,17 +32,51 @@ func TestRequestSign(t *testing.T) {
 		}
 	}
 
-	_, err = c.RequestSign("zzz", "/elsewhere", nil, day)
+	_, err = c.RequestSign("zzz", "/elsewhere", nil, "", day)
 	isRefusal(t, "a session with no plan", err)
-	_, err = c.RequestSign("", "/w/loop", nil, day)
+	_, err = c.RequestSign("", "/w/loop", nil, "", day)
 	isRefusal(t, "no session", err)
+	_, err = c.RequestSign("abc", "w/loop", nil, "", day)
+	isRefusal(t, "a relative worktree", err)
+	_, err = c.RequestSign("abc", "/w/loop", nil, "two words", day)
+	isRefusal(t, "a base with a space", err)
+}
+
+// The request names where git sign-pass runs and, unless it is main, the
+// base it signs from, main by any of its names, for Emacs to show the
+// operator the command.
+func TestRequestSignWhere(t *testing.T) {
+	c := testConfig(t)
+	p := newPlan(t, c, "x")
+	if _, err := c.RequestSign("abc", "/w/loop", []string{"loop"}, "diagrams", day); err != nil {
+		t.Fatal(err)
+	}
+	for _, base := range []string{"main", "origin/main", "refs/heads/main", "refs/remotes/origin/main"} {
+		if _, err := c.RequestSign("abc", "/w/loop", []string{"loop"}, base, day); err != nil {
+			t.Fatal(err)
+		}
+	}
+	events, _ := p.Events()
+	var got []string
+	for _, e := range events {
+		if e.Kind == signRequested {
+			got = append(got, e.Worktree+" "+e.Base)
+		}
+	}
+	if strings.Join(got, "; ") != "/w/loop diagrams; /w/loop ; /w/loop ; /w/loop ; /w/loop " {
+		t.Errorf("requests %q", got)
+	}
+	if log, _ := os.ReadFile(p.log()); !strings.Contains(string(log), ":WORKTREE: /w/loop\n") || !strings.Contains(string(log), ":BASE: diagrams\n") ||
+		strings.Count(string(log), ":BASE:") != 1 {
+		t.Errorf("log:\n%s", log)
+	}
 }
 
 // A result is logged in the plan that holds its request, and only there.
 func TestRecordSign(t *testing.T) {
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
-	id, _ := c.RequestSign("abc", "", []string{"loop"}, day)
+	id, _ := c.RequestSign("abc", "", []string{"loop"}, "", day)
 	file, err := c.RecordSign(id, SignResult{Exit: 2, Summary: "this worktree has uncommitted changes"}, day)
 	if err != nil || file != p.File() {
 		t.Fatalf("record: %q %v", file, err)
@@ -72,7 +106,7 @@ func TestRecordSign(t *testing.T) {
 func TestDeliverSigns(t *testing.T) {
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
-	id, _ := c.RequestSign("abc", "", []string{"loop"}, day)
+	id, _ := c.RequestSign("abc", "", []string{"loop"}, "", day)
 	if got := c.DeliverSigns("abc", "", day); len(got) != 0 {
 		t.Fatalf("delivered before the pass finished: %+v", got)
 	}
@@ -110,7 +144,7 @@ func TestDeliverSigns(t *testing.T) {
 func TestDeliverStale(t *testing.T) {
 	c := testConfig(t)
 	newPlan(t, c, "x")
-	id, _ := c.RequestSign("abc", "", nil, day)
+	id, _ := c.RequestSign("abc", "", nil, "", day)
 	c.RecordSign(id, SignResult{Exit: 0, Summary: "1 signed"}, day)
 	got := c.DeliverSigns("abc", "", day.Add(25*time.Hour))
 	if len(got) != 1 || !got[0].Stale {
@@ -120,7 +154,7 @@ func TestDeliverStale(t *testing.T) {
 	if !strings.Contains(line, "stale") || !strings.Contains(line, "no follow-up") || !strings.Contains(line, "1 signed") {
 		t.Errorf("line %q", line)
 	}
-	id2, _ := c.RequestSign("abc", "", nil, day)
+	id2, _ := c.RequestSign("abc", "", nil, "", day)
 	c.RecordSign(id2, SignResult{Exit: 0, Summary: "1 signed"}, day)
 	if got := c.DeliverSigns("abc", "", day.Add(23*time.Hour)); len(got) != 1 || got[0].Stale {
 		t.Errorf("a result under a day old: %+v", got)
@@ -131,7 +165,7 @@ func TestDeliverStale(t *testing.T) {
 func TestDeliverSignsConcurrently(t *testing.T) {
 	c := testConfig(t)
 	newPlan(t, c, "x")
-	id, _ := c.RequestSign("abc", "", nil, day)
+	id, _ := c.RequestSign("abc", "", nil, "", day)
 	c.RecordSign(id, SignResult{Exit: 0, Summary: "1 signed"}, day)
 	var wg sync.WaitGroup
 	counts := make([]int, 16)
@@ -157,7 +191,7 @@ func TestDeliverSignsConcurrently(t *testing.T) {
 func TestSignResults(t *testing.T) {
 	c := testConfig(t)
 	newPlan(t, c, "x")
-	id, _ := c.RequestSign("abc", "", nil, day)
+	id, _ := c.RequestSign("abc", "", nil, "", day)
 	if got, err := c.SignResults(id, false, day); err != nil || len(got) != 0 {
 		t.Fatalf("before the pass: %+v %v", got, err)
 	}
@@ -205,7 +239,7 @@ func TestRemindSignResult(t *testing.T) {
 		t.Run(c2.name, func(t *testing.T) {
 			c := testConfig(t)
 			newPlan(t, c, "x")
-			id, err := c.RequestSign("abc", "", []string{"loop"}, time.Now())
+			id, err := c.RequestSign("abc", "", []string{"loop"}, "", time.Now())
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -28,7 +28,7 @@ func requested(t *testing.T, dir string) (plans.Plan, string) {
 		t.Fatal(err)
 	}
 	p, _ := c.Open(made.Plan)
-	id, err := c.RequestSign("abc", "", []string{"one"}, time.Now())
+	id, err := c.RequestSign("abc", "", []string{"one"}, "", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
