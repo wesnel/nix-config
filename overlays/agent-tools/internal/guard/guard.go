@@ -793,6 +793,9 @@ func checkGit(words []string, expands []bool, env []string, who role, dir, check
 		// is, such as never signing, and not to the loop's commit rules.
 		who, dir = baseline, repo
 	}
+	if reason := checkPlanCheckout(sub, rest, dir); reason != "" {
+		return reason
+	}
 	if reason := checkGitSession(sub, rest, gitState{dir: dir}); reason != "" {
 		return reason
 	}

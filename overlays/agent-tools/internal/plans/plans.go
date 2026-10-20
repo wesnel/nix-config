@@ -59,6 +59,13 @@ func IsLog(name string) bool {
 	return m != nil && m[3] == "log"
 }
 
+// IsPlan reports whether name is the file name of a plan's file or a
+// part's, which agent-plan alone writes.
+func IsPlan(name string) bool {
+	m := planFile.FindStringSubmatch(name)
+	return m != nil && m[3] != "log"
+}
+
 // Load reads the config, defaulting to ~/git/notes/agents and this
 // machine's short host name.
 func Load() (Config, error) {
