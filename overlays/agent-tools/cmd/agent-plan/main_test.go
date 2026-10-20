@@ -337,6 +337,64 @@ func TestCommands(t *testing.T) {
 		}
 	})
 
+	t.Run("step, part, edit, after and section", func(t *testing.T) {
+		plan := sessionPlan(t)
+		code, out, errs := agentPlan(t, "", "step", plan, "--title", "Tag it", "--text", "Done when the tag is pushed.", "--after", "S1")
+		if code != 0 || !strings.Contains(out, `"id": "S3"`) {
+			t.Fatalf("step: %d %s %s", code, out, errs)
+		}
+		code, out, errs = agentPlan(t, "", "part", plan, "--title", "plan-write-path", "--repo", "nix-config",
+			"--branch", "main..plan-write-path", "--worktree", "/w/p")
+		if code != 0 || !strings.Contains(out, `"id": "P1"`) {
+			t.Fatalf("part: %d %s %s", code, out, errs)
+		}
+		if code, _, errs := agentPlan(t, "", "edit", plan, "S3", "--title", "Tag the release", "--text", ""); code != 0 {
+			t.Errorf("edit: %d %s", code, errs)
+		}
+		if code, _, errs := agentPlan(t, "", "after", plan, "S2", "S1", "P1"); code != 0 {
+			t.Errorf("after: %d %s", code, errs)
+		}
+		if code, _, errs := agentPlan(t, "", "after", plan, "S3", "--clear"); code != 0 {
+			t.Errorf("after --clear: %d %s", code, errs)
+		}
+		if code, _, errs := agentPlan(t, "", "section", plan, "Goal", "--text", "Add the loop.\nNot its flag."); code != 0 {
+			t.Errorf("section: %d %s", code, errs)
+		}
+		if code, _, errs := agentPlan(t, "", "set", plan, "STATUS", "halted"); code != 0 {
+			t.Errorf("set STATUS: %d %s", code, errs)
+		}
+		data, _ := os.ReadFile(plan)
+		for _, want := range []string{
+			"** Goal\nAdd the loop.\nNot its flag.\n** Steps\n",
+			"*** TODO Test it\n:PROPERTIES:\n:ID: S2\n:AFTER: S1 P1\n:END:\n*** TODO Tag the release\n:PROPERTIES:\n:ID: S3\n:END:\n** Distribution\n",
+			"*** TODO plan-write-path\n:PROPERTIES:\n:ID: P1\n:END:\nnix-config: plan-write-path on main, worktree /w/p.\n** Questions\n",
+			":STATUS: halted\n",
+		} {
+			if !strings.Contains(string(data), want) {
+				t.Errorf("plan lacks %q:\n%s", want, data)
+			}
+		}
+		code, out, _ = agentPlan(t, "", "status", plan, "--format", "json")
+		var s plans.Status
+		if code != 0 || json.Unmarshal([]byte(out), &s) != nil || len(s.StructureDrift) != 0 {
+			t.Errorf("status: %d %s", code, out)
+		}
+		for _, args := range [][]string{
+			{"step", plan, "--title", "x", "--repo", "nix-config"},
+			{"part", plan, "--title", "x", "--part", "P1"},
+			{"edit", plan},
+			{"after", plan, "S2"},
+			{"after", plan, "S2", "S1", "--clear"},
+			{"section", plan, "Goal"},
+			{"log", plan, "--item", "S1", "--kind", "started", "--text", "x"},
+			{"step", plan, "--title", "x", "--text", "*** TODO forged"},
+		} {
+			if code, _, errs := agentPlan(t, "", args...); code != 2 {
+				t.Errorf("%v: %d %s", args, code, errs)
+			}
+		}
+	})
+
 	t.Run("sync outside a repository", func(t *testing.T) {
 		sessionPlan(t)
 		code, out, errs := agentPlan(t, "", "sync", "--settle", "0s")
@@ -394,6 +452,11 @@ func TestRelayed(t *testing.T) {
 		{"reseal", "PLAN"},
 		{"followup", "PLAN", "--title", "T", "--found-in", "S1"},
 		{"reference", "PLAN", "https://example.com"},
+		{"step", "PLAN", "--title", "T"},
+		{"part", "PLAN", "--title", "T"},
+		{"edit", "PLAN", "S1", "--title", "T"},
+		{"after", "PLAN", "S2", "S1"},
+		{"section", "PLAN", "Goal", "--text", "T"},
 		{"bogus"},
 	} {
 		t.Run("refused/"+strings.Join(args, " "), func(t *testing.T) {

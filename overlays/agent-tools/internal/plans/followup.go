@@ -83,7 +83,7 @@ func (p Plan) Followup(o FollowupOptions, now time.Time) (Recorded, error) {
 		err = l.edit(file, func(lines []string) ([]string, error) {
 			_, end, ok := section(lines, "Follow-ups")
 			if !ok {
-				return nil, refusal.New("%s has no `** Follow-ups` heading. Restore it as the plan-work skill describes, then run the command again", file)
+				return nil, refusal.New("%s has no `** Follow-ups` heading. Ask the operator to restore it as the plan-work skill describes, then run the command again", file)
 			}
 			// A section ending the file ends at its final empty line.
 			if end == len(lines) && lines[end-1] == "" {

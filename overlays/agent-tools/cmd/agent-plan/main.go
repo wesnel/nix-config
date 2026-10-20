@@ -67,7 +67,10 @@ have (see status) is refused and writes nothing.
   set PLAN NAME [VALUE...] [--part P1]
                      set WORKTREES, BRANCHES or PULL_REQUESTS of the plan's
                      file, or the part's, to the values, and log it; new,
-                     own and the hooks log the changes they make
+                     own and the hooks log the changes they make. STATUS
+                     (planning, reviewing-plan, working, reviewing,
+                     handed-back or halted), SKILLS, REPOSITORIES, SESSIONS
+                     and HARNESS are set the same way, with no log event
   questions PLAN [--all] [--waiting] [--json | --count]
                      the open questions the operator can answer now, by
                      priority, with their recommendations; --all adds the
@@ -109,6 +112,29 @@ have (see status) is refused and writes nothing.
                      scope, as a TODO under Follow-ups with the next follow-up
                      ID, and log it as discovered; its keyword then follows
                      its log, as a step's does
+  step PLAN --title T [--text TEXT] [--after ID]... [--part P1]
+                     add a step at the end of Steps, in the plan's file or
+                     the part's, as its next step ID, and log it as planned
+  part PLAN --title T [--text TEXT] [--after ID]... [--repo R]
+      [--branch BASE..BRANCH] [--worktree DIR]
+                     add a part at the end of Distribution as the next part
+                     ID, its text starting "R: BRANCH on BASE, worktree
+                     DIR." when given them, and log it as planned
+  edit PLAN ID [--title T] [--text TEXT]
+                     change the title or the text of step, part or
+                     follow-up ID in place, keeping its keyword, tags,
+                     drawers and the headings under it; an empty --text
+                     removes the text. Log it as planned
+  after PLAN ID ID... | after PLAN ID --clear
+                     set the AFTER of step, part or question ID to the IDs
+                     it waits for, or with --clear none; log it as planned
+  section PLAN Goal|Verification --text TEXT [--part P1]
+                     write the whole of the plan's, or the part's, Goal or
+                     Verification, the sections that hold text; log it as
+                     planned
+                     TEXT may hold line breaks, but no line Org reads as a
+                     heading, a drawer, a planning line or a #+ keyword
+                     other than a block's
   reference PLAN URL [--note TEXT]
                      keep URL under References, or set its note: what it was
                      used for and which decisions (Q IDs) it fed; log it as
@@ -363,6 +389,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		unset    = flags.Bool("clear", false, "")
 		check    = flags.Bool("check", false, "")
 		resume   = flags.Bool("resume", false, "")
+		text     = flags.String("text", "", "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
 		branches multi
@@ -387,6 +414,16 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return ""
 		}
 		return values[len(values)-1]
+	}
+	if *unset && command != "postpone" && command != "after" {
+		fmt.Fprintf(stderr, "agent-plan %s: --clear is postpone's and after's\n", command)
+		return 2
+	}
+	given := map[string]bool{}
+	flags.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	if given["text"] && command != "step" && command != "part" && command != "edit" && command != "section" {
+		fmt.Fprintf(stderr, "agent-plan %s: --text is step's, part's, edit's and section's\n", command)
+		return 2
 	}
 	if (command != "new" && (len(trees) > 1 || len(sessions) > 1)) || (command != "new" && command != "sign-id" && len(branches) > 1) {
 		fmt.Fprintf(stderr, "agent-plan %s: --branch, --worktree and --session are given once\n", command)
@@ -552,6 +589,61 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		return report(p.Followup(plans.FollowupOptions{Title: *title, FoundIn: *foundIn, Context: *context, Part: *part},
 			time.Now()))
+	case "step", "part":
+		p, ok := wantPlan()
+		if !ok {
+			return 2
+		}
+		o := plans.EntryOptions{Section: "Steps", Part: *part, Title: *title, Text: *text, After: after}
+		if command == "part" {
+			if *part != "" || len(repos) > 1 {
+				fmt.Fprint(stderr, "agent-plan part: takes PLAN --title T and one --repo, and no --part: a part's file has no Distribution\n")
+				return 2
+			}
+			o = plans.EntryOptions{Section: "Distribution", Title: *title, Text: *text, After: after, Repo: one(repos),
+				Branch: branch, Worktree: worktree}
+		} else if len(repos)+len(branches)+len(trees) > 0 {
+			fmt.Fprint(stderr, "agent-plan step: a step takes no --repo, --branch or --worktree; a part does\n")
+			return 2
+		}
+		return report(p.AddEntry(o, time.Now()))
+	case "edit":
+		if len(positional) != 2 {
+			fmt.Fprint(stderr, "agent-plan edit: takes PLAN ID [--title T] [--text TEXT]\n")
+			return 2
+		}
+		p, err := c.Open(positional[0])
+		if err != nil {
+			return report(nil, err)
+		}
+		var o plans.EditOptions
+		if given["title"] {
+			o.Title = title
+		}
+		if given["text"] {
+			o.Text = text
+		}
+		return report(p.EditEntry(positional[1], o, time.Now()))
+	case "after":
+		if len(positional) < 2 || (len(positional) == 2) != *unset {
+			fmt.Fprint(stderr, "agent-plan after: takes PLAN ID ID..., or PLAN ID --clear\n")
+			return 2
+		}
+		p, err := c.Open(positional[0])
+		if err != nil {
+			return report(nil, err)
+		}
+		return report(p.SetAfter(positional[1], positional[2:], time.Now()))
+	case "section":
+		if len(positional) != 2 || !given["text"] {
+			fmt.Fprint(stderr, "agent-plan section: takes PLAN Goal|Verification --text TEXT [--part P1]\n")
+			return 2
+		}
+		p, err := c.Open(positional[0])
+		if err != nil {
+			return report(nil, err)
+		}
+		return report(p.SetSection(*part, positional[1], *text, time.Now()))
 	case "reference":
 		if len(positional) != 2 {
 			fmt.Fprint(stderr, "agent-plan reference: takes PLAN URL [--note TEXT]\n")

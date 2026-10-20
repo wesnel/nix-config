@@ -24,11 +24,13 @@ func (p Plan) Reference(address, note string, now time.Time) (Event, error) {
 		strings.ContainsAny(address, " \t\n\r") {
 		return Event{}, refusal.New("%q is not an http or https URL. Pass the address as the operator gave it, as `agent-plan reference PLAN https://...`", address)
 	}
-	if err := checkLine("note", note); err != nil {
+	noteLines, err := textLines(note)
+	if err != nil {
 		return Event{}, err
 	}
+	note = strings.Join(noteLines, "\n")
 	var e Event
-	err := p.withLock(func(l *lockedPlan) error {
+	err = p.withLock(func(l *lockedPlan) error {
 		changed := false
 		err := l.edit(p.file(""), func(lines []string) ([]string, error) {
 			out, ok, err := setReference(lines, address, note)
@@ -45,19 +47,20 @@ func (p Plan) Reference(address, note string, now time.Time) (Event, error) {
 }
 
 // setReference is lines with address's entry in References, its note set
-// when note is given, and whether that changed anything.
+// when note is given, and whether that changed anything. An entry is the
+// heading whose own property drawer holds :URL: address, so a line of
+// another entry's note never stands for it.
 func setReference(lines []string, address, note string) ([]string, bool, error) {
 	start, end, ok := section(lines, "References")
 	if !ok {
-		return nil, false, refusal.New("the plan has no `** References` heading. Restore it as the plan-work skill describes, then run the command again")
+		return nil, false, refusal.New("the plan has no `** References` heading. Ask the operator to restore it as the plan-work skill describes, then run the command again")
 	}
-	for i := start + 1; i < end; i++ {
-		if strings.TrimSpace(lines[i]) != ":URL: "+address {
+	blocks := blockLines(lines)
+	for at := start + 1; at < end; at++ {
+		if level(lines[at]) == 0 || blocks[at] || !slices.ContainsFunc(drawerOf(lines, at), func(l string) bool {
+			return strings.TrimSpace(l) == ":URL: "+address
+		}) {
 			continue
-		}
-		at := i
-		for level(lines[at]) == 0 {
-			at--
 		}
 		if note == "" {
 			return lines, false, nil

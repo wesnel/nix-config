@@ -104,7 +104,7 @@ func settle(lines []string, id, state, answer, decidedBy, supersedes string, now
 	}
 	ks := fileKeywords(strings.Join(lines, "\n"))
 	if !ks.done[state] {
-		return nil, refusal.New("the plan file of %s does not define %s as a done keyword. Restore its `#+TODO:` lines as `agent-plan new` writes them, then run the command again", id, state)
+		return nil, refusal.New("the plan file of %s does not define %s as a done keyword. Ask the operator to restore its `#+TODO:` lines as `agent-plan new` writes them, then run the command again", id, state)
 	}
 	lines = setKeyword(lines, at, state, ks, now)
 	lines = setProperty(lines, at, "ANSWER", answer)

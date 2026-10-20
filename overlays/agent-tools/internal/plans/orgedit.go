@@ -122,18 +122,39 @@ func section(lines []string, title string) (start, end int, ok bool) {
 }
 
 // headingWithID is the index of the heading whose property drawer holds
-// :ID: id, or -1.
+// :ID: id, or -1. The drawer is the one Org reads as the heading's, right
+// after the heading and its planning line, as parseOrg reads it: an :ID:
+// line in an entry's text names nothing.
 func headingWithID(lines []string, id string) int {
+	blocks := blockLines(lines)
 	for i, l := range lines {
-		if m := idLine.FindStringSubmatch(l); m != nil && m[1] == id {
-			for j := i; j >= 0; j-- {
-				if level(lines[j]) > 0 {
-					return j
-				}
+		if level(l) == 0 || blocks[i] {
+			continue
+		}
+		for _, p := range drawerOf(lines, i) {
+			if m := idLine.FindStringSubmatch(p); m != nil && m[1] == id {
+				return i
 			}
 		}
 	}
 	return -1
+}
+
+// drawerOf is the lines of the property drawer of the heading at
+// lines[at], between :PROPERTIES: and :END:, which Org reads only right
+// after the heading and its planning line.
+func drawerOf(lines []string, at int) []string {
+	j := at + 1
+	if j < len(lines) && planningLine.MatchString(lines[j]) {
+		j++
+	}
+	if j >= len(lines) || strings.TrimSpace(lines[j]) != ":PROPERTIES:" {
+		return nil
+	}
+	start := j + 1
+	for j = start; j < len(lines) && strings.TrimSpace(lines[j]) != ":END:" && level(lines[j]) == 0; j++ {
+	}
+	return lines[start:j]
 }
 
 // closedStamp is a CLOSED: line's timestamp, as Org writes it.
@@ -198,6 +219,20 @@ func setProperty(lines []string, at int, name, value string) []string {
 		}
 	}
 	return out
+}
+
+// deleteProperty removes property name from the property drawer of the
+// heading at lines[at].
+func deleteProperty(lines []string, at int, name string) []string {
+	for j := at + 1; j < len(lines) && level(lines[j]) == 0; j++ {
+		switch trimmed := strings.TrimSpace(lines[j]); {
+		case trimmed == ":END:":
+			return slices.Clone(lines)
+		case strings.HasPrefix(trimmed, ":"+name+":"):
+			return slices.Delete(slices.Clone(lines), j, j+1)
+		}
+	}
+	return slices.Clone(lines)
 }
 
 // addTag adds tag to the heading at lines[at] unless it has it, a space

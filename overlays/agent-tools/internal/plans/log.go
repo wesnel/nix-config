@@ -130,7 +130,7 @@ func (p Plan) check(e Event) error {
 		return err
 	}
 	if _, ok := items[e.Item]; !ok {
-		return refusal.New("%q is not an item of %s. Add it to the plan file first, or use an ID `agent-plan status %s` lists", e.Item, p.Name, p.file(""))
+		return refusal.New("%q is not an item of %s. Add it first with `agent-plan step` or `agent-plan part`, or use an ID `agent-plan status %s` lists", e.Item, p.Name, p.file(""))
 	}
 	return nil
 }

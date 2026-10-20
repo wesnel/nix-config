@@ -241,7 +241,7 @@ func (c Config) newPart(o NewOptions, now time.Time) (Created, error) {
 	text := planText(o, o.Part, c.Host, map[string]string{"PARENT": "[[file:" + filepath.Base(p.file("")) + "]]"}, false)
 	file := p.file(o.Part)
 	if err := writeNew(file, text); errors.Is(err, fs.ErrExist) {
-		return Created{}, refusal.New("%s already has its plan file, %s. Edit that file instead; `agent-plan goal %s --part %s` prints its goal", o.Part, file, p.file(""), o.Part)
+		return Created{}, refusal.New("%s already has its plan file, %s. Change it with `agent-plan section`, `step` or `edit` and `--part %s`; `agent-plan goal %s --part %s` prints its goal", o.Part, file, o.Part, p.file(""), o.Part)
 	} else if err != nil {
 		return Created{}, err
 	}
@@ -545,7 +545,7 @@ func (p Plan) Goal(part string) (string, error) {
 		}
 		return body + "\n", nil
 	}
-	return "", refusal.New("%s has no goal statement under its Goal heading. Write the goal and what is not this change's job there, as the `plan-work` skill says", file)
+	return "", refusal.New("%s has no goal statement under its Goal heading. Write the goal and what is not this change's job with `agent-plan section PLAN Goal --text TEXT [--part P1]`, as the `plan-work` skill says", file)
 }
 
 // FindOptions select plans; a plan matches any one given.

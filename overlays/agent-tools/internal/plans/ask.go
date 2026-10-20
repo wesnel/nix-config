@@ -123,7 +123,7 @@ func (p Plan) Ask(o AskOptions, now time.Time) (Asked, error) {
 		err = l.edit(file, func(lines []string) ([]string, error) {
 			_, end, ok := section(lines, "Questions")
 			if !ok {
-				return nil, refusal.New("%s has no `** Questions` heading. Restore it as the plan-work skill describes, then ask again", file)
+				return nil, refusal.New("%s has no `** Questions` heading. Ask the operator to restore it as the plan-work skill describes, then ask again", file)
 			}
 			// A section ending the file ends at its final empty line.
 			if end == len(lines) && lines[end-1] == "" {
