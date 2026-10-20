@@ -37,8 +37,17 @@ have (see status) is refused and writes nothing.
                      create part P1's plan file beside its parent's
   log PLAN --item ID --kind KIND [--summary S] [--role R] [--agent A] [--branch B]
       [--commit SUBJECT] [--evidence E] [--review ROUND.ID --outcome O]
+      [--command CMD [--dir DIR]]
                      append an event about item ID to the plan's log, and
-                     write a step's or part's heading keyword from its log
+                     write a step's or part's heading keyword from its log.
+                     A handed-back event's --command is what the operator
+                     runs next, in the absolute --dir if given
+  waiting PLAN [--json]
+                     the items whose newest event, but planned, property,
+                     resealed, referenced and postponed events, is a
+                     hand-back with a command, each with its command and
+                     directory: what waits on the operator, which Emacs and
+                     the dashboard show them
   find [--session ID] [--worktree DIR] [--branch B]
                      this host's plan files that match any one given (default:
                      this session, worktree and branch)
@@ -237,6 +246,14 @@ func relayRefusal(args []string) string {
 		name := strings.Join(args[:min(len(args), 2)], " ")
 		return fmt.Sprintf("%q is not served through the relay. A sandbox runs `agent-plan log`, `goal`, `status`, `find`, `questions`, `decisions` and `brief`; put anything else in your report for the operator", name)
 	}
+	// A hand-back's command is shown to the operator, in Emacs and on the
+	// dashboard, for them to run on the host, so a sandbox, which may run
+	// code it was given, never names one.
+	for _, a := range args[1:] {
+		if a == "--command" || a == "-command" || strings.HasPrefix(a, "--command=") || strings.HasPrefix(a, "-command=") {
+			return "a hand-back's --command is shown to the operator to run on the host, and a sandbox does not name one. Log the hand-back without it, and put the command in your report for the operator"
+		}
+	}
 	return ""
 }
 
@@ -390,6 +407,8 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		check    = flags.Bool("check", false, "")
 		resume   = flags.Bool("resume", false, "")
 		text     = flags.String("text", "", "")
+		run      = flags.String("command", "", "")
+		runDir   = flags.String("dir", "", "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
 		branches multi
@@ -480,7 +499,28 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return 2
 		}
 		return report(p.Log(plans.Event{Kind: *kind, Item: *item, Summary: *summary, Role: *role, Agent: *agent,
-			Branch: branch, Commit: *commit, Evidence: *evidence, Review: *review, Outcome: *outcome}, time.Now()))
+			Branch: branch, Commit: *commit, Evidence: *evidence, Review: *review, Outcome: *outcome,
+			Command: *run, Dir: *runDir}, time.Now()))
+	case "waiting":
+		p, ok := wantPlan()
+		if !ok {
+			return 2
+		}
+		ws, err := p.Waiting()
+		if err != nil || *asJSON {
+			return report(ws, err)
+		}
+		for _, w := range ws {
+			line := "- " + w.Item + ": `" + w.Command + "`"
+			if w.Dir != "" {
+				line += " in " + w.Dir
+			}
+			if w.Summary != "" {
+				line += " (" + w.Summary + ")"
+			}
+			fmt.Fprintln(stdout, line)
+		}
+		return 0
 	case "find":
 		if *hook {
 			input := readAll(stdin)

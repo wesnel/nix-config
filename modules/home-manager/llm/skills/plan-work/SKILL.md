@@ -176,6 +176,12 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
 - `--role` is yours: `single`, `parent` or `subagent`.
 - Which model and effort to start a sub-agent with is the
   `coordinate-subagents` skill's "Model and effort".
+- A hand-back that leaves the operator a command to run names it:
+  `agent-plan log PLAN --item P1 --kind handed-back --command 'git
+  sign-pass --push' --dir WORKTREE`. The item waits on them, shown in
+  `agent-plan waiting PLAN`, Emacs's agenda and the dashboard, until an
+  event about its work, not its plan text or schedule, is logged for it. A
+  sandbox cannot name one.
 - The review pipeline's events are the `review-change` skill's.
 
 `agent-plan status PLAN` lists the steps without `done` and those done but

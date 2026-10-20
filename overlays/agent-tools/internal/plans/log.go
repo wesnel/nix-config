@@ -48,6 +48,10 @@ type Event struct {
 	// item's `* Plan` heading, and its values, separated by spaces.
 	Property string `json:"property,omitempty"`
 	Value    string `json:"value,omitempty"`
+	// Command is a handed-back event's command for the operator to run,
+	// and Dir the directory to run it in; Waiting reads them.
+	Command string `json:"command,omitempty"`
+	Dir     string `json:"dir,omitempty"`
 	// Note is what the caller should know about the event, such as a
 	// heading keyword Log could not write; the log does not hold it.
 	Note string `json:"note,omitempty"`
@@ -110,6 +114,19 @@ func (p Plan) check(e Event) error {
 		if err := checkLine(what, v); err != nil {
 			return err
 		}
+	}
+	for what, v := range map[string]string{"command": e.Command, "dir": e.Dir} {
+		if err := checkLine(what, v); err != nil {
+			return err
+		}
+	}
+	switch {
+	case (e.Command != "" || e.Dir != "") && e.Kind != handedBack:
+		return refusal.New("--command and --dir name what the operator runs after a hand-back. Log them with `--kind %s`", handedBack)
+	case e.Dir != "" && e.Command == "":
+		return refusal.New("--dir is where the operator runs --command. Pass the command too, as `--command 'git sign-pass --push' --dir DIR`")
+	case e.Dir != "" && !filepath.IsAbs(e.Dir):
+		return refusal.New("--dir %q is not absolute, and the operator runs it from anywhere. Pass the full path, as `--dir /path/to/worktree`", e.Dir)
 	}
 	switch {
 	case !oneOf(e.Kind, Kinds) && toolKinds[e.Kind] == "":
@@ -243,7 +260,8 @@ func eventText(e Event) string {
 	for _, kv := range [][2]string{{"EVENT", e.ID}, {"AGENT", e.Agent}, {"ROLE", e.Role}, {"ITEM", e.Item},
 		{"KIND", e.Kind}, {"BRANCH", e.Branch}, {"COMMIT", e.Commit}, {"EVIDENCE", e.Evidence},
 		{"REVIEW", e.Review}, {"OUTCOME", e.Outcome}, {"SESSION", e.Session}, {"WORKTREE", e.Worktree}, {"TIP", e.Tip},
-		{"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}, {"PROPERTY", e.Property}, {"VALUE", e.Value}} {
+		{"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}, {"PROPERTY", e.Property}, {"VALUE", e.Value},
+		{"COMMAND", e.Command}, {"DIR", e.Dir}} {
 		if kv[1] != "" {
 			b.WriteString(":" + kv[0] + ": " + kv[1] + "\n")
 		}
@@ -461,6 +479,7 @@ func (p Plan) Events() ([]Event, error) {
 		if _, summary, ok := strings.Cut(h.Title, " — "); ok {
 			e.Summary = summary
 		}
+		e.Command, e.Dir = h.Props["COMMAND"], h.Props["DIR"]
 		for _, line := range h.Body {
 			if strings.HasPrefix(line, "[") {
 				e.Time = strings.TrimSpace(line)

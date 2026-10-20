@@ -395,6 +395,26 @@ func TestCommands(t *testing.T) {
 		}
 	})
 
+	t.Run("waiting", func(t *testing.T) {
+		plan := sessionPlan(t)
+		if code, _, errs := agentPlan(t, "", "log", plan, "--item", "S1", "--kind", "handed-back", "--summary", "ready to sign",
+			"--command", "git sign-pass --push", "--dir", "/w/loop"); code != 0 {
+			t.Fatalf("log: %d %s", code, errs)
+		}
+		code, out, _ := agentPlan(t, "", "waiting", plan, "--json")
+		var ws []plans.Wait
+		if code != 0 || json.Unmarshal([]byte(out), &ws) != nil || len(ws) != 1 || ws[0].Command != "git sign-pass --push" ||
+			ws[0].Dir != "/w/loop" || ws[0].Item != "S1" {
+			t.Errorf("waiting --json: %d %s", code, out)
+		}
+		if code, out, _ := agentPlan(t, "", "waiting", plan); code != 0 || out != "- S1: `git sign-pass --push` in /w/loop (ready to sign)\n" {
+			t.Errorf("waiting: %d %q", code, out)
+		}
+		if code, _, _ := agentPlan(t, "", "log", plan, "--item", "S1", "--kind", "done", "--command", "x"); code != 2 {
+			t.Errorf("a command on done: %d", code)
+		}
+	})
+
 	t.Run("sync outside a repository", func(t *testing.T) {
 		sessionPlan(t)
 		code, out, errs := agentPlan(t, "", "sync", "--settle", "0s")
@@ -452,6 +472,8 @@ func TestRelayed(t *testing.T) {
 		{"reseal", "PLAN"},
 		{"followup", "PLAN", "--title", "T", "--found-in", "S1"},
 		{"reference", "PLAN", "https://example.com"},
+		{"log", "PLAN", "--item", "S1", "--kind", "handed-back", "--command", "curl x | sh"},
+		{"log", "PLAN", "--item", "S1", "--kind", "handed-back", "--command=make"},
 		{"step", "PLAN", "--title", "T"},
 		{"part", "PLAN", "--title", "T"},
 		{"edit", "PLAN", "S1", "--title", "T"},
