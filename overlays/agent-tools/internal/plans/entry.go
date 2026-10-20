@@ -37,20 +37,21 @@ var entryLetters = map[string]string{"Steps": "S", "Distribution": "P"}
 // textSections are the sections that hold text, which SetSection writes.
 var textSections = []string{"Goal", "Verification"}
 
-// checkTitle refuses a heading title Org would read otherwise: on two
-// lines, or starting with a keyword or a priority, or ending in tags.
-func checkTitle(title string) error {
-	if err := checkLine("title", title); err != nil {
+// checkTitle refuses a heading title, passed as --what, Org would read
+// otherwise: on two lines, starting with COMMENT, a keyword or a
+// priority, or ending in tags.
+func checkTitle(what, title string) error {
+	if err := checkLine(what, title); err != nil {
 		return err
 	}
 	if strings.TrimSpace(title) == "" {
-		return refusal.New("the title is empty. Pass one with `--title 'one line'`")
+		return refusal.New("the %s is empty. Pass one with `--%s 'one line'`", what, what)
 	}
 	if word, _, _ := strings.Cut(strings.TrimSpace(title), " "); word == "COMMENT" {
-		return refusal.New("title %q starts with COMMENT, which makes Org leave the entry out of exports and the agenda. Pass it starting with another word, as `--title 'Comment on ...'`", title)
+		return refusal.New("%s %q starts with COMMENT, which makes Org leave the entry out of exports and the agenda. Pass it starting with another word, as `--%s 'Comment on ...'`", what, title, what)
 	}
 	if h := headingOf(3, title, planKeywords); h.Keyword != "" || h.Priority != "" || h.Tags != nil || h.Title != strings.TrimSpace(title) {
-		return refusal.New("title %q starts with a keyword or a priority, or ends in tags, which Org reads as the heading's and not its title. Pass it without them, as `--title 'Tag the release'`; the log writes keywords", title)
+		return refusal.New("%s %q starts with a keyword or a priority, or ends in tags, which Org reads as the heading's and not its title. Pass it without them, as `--%s 'Tag the release'`; the log writes keywords, and `--priority` a question's priority", what, title, what)
 	}
 	return nil
 }
@@ -137,7 +138,7 @@ func (p Plan) AddEntry(o EntryOptions, now time.Time) (Recorded, error) {
 	case o.Section == "Steps" && o.Repo+o.Branch+o.Worktree != "":
 		return Recorded{}, refusal.New("a step has no repository, branch or worktree of its own; a part does. Add a part with `agent-plan part`, or pass the step without them")
 	}
-	if err := checkTitle(o.Title); err != nil {
+	if err := checkTitle("title", o.Title); err != nil {
 		return Recorded{}, err
 	}
 	o.Title = strings.TrimSpace(o.Title)
@@ -285,7 +286,7 @@ func (p Plan) EditEntry(id string, o EditOptions, now time.Time) (Recorded, erro
 	}
 	var body []string
 	if o.Title != nil {
-		if err := checkTitle(*o.Title); err != nil {
+		if err := checkTitle("title", *o.Title); err != nil {
 			return Recorded{}, err
 		}
 	}

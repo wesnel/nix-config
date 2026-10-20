@@ -38,13 +38,18 @@ func (p Plan) Followup(o FollowupOptions, now time.Time) (Recorded, error) {
 	if o.Title == "" || o.FoundIn == "" {
 		return Recorded{}, refusal.New("a follow-up needs its title and the item it was found in. Pass both, as `--title 'one line' --found-in S1`")
 	}
-	for what, v := range map[string]string{"title": o.Title, "context": o.Context, "found-in": o.FoundIn} {
-		if err := checkLine(what, v); err != nil {
-			return Recorded{}, err
-		}
+	if err := checkTitle("title", o.Title); err != nil {
+		return Recorded{}, err
+	}
+	if err := checkLine("found-in", o.FoundIn); err != nil {
+		return Recorded{}, err
 	}
 	if o.Context != "" && strings.ContainsAny(o.Context[:1], "*#-+|:") {
 		return Recorded{}, refusal.New("context %q starts with a character Org reads as structure. Pass it starting with a word, as `--context 'Found while ...'`", o.Context)
+	}
+	context, err := textLines(o.Context)
+	if err != nil {
+		return Recorded{}, err
 	}
 	if o.Part != "" && !partPattern.MatchString(o.Part) {
 		return Recorded{}, refusal.New("%q is not a part ID. Pass one such as `--part P1`", o.Part)
@@ -54,7 +59,7 @@ func (p Plan) Followup(o FollowupOptions, now time.Time) (Recorded, error) {
 		return Recorded{}, refusal.New("%s has no plan file for part %s. The part's sub-agent creates it with `agent-plan new --parent %s --part %s`", p.Name, o.Part, p.file(""), o.Part)
 	}
 	var r Recorded
-	err := p.withLock(func(l *lockedPlan) error {
+	err = p.withLock(func(l *lockedPlan) error {
 		items, err := p.items()
 		if err != nil {
 			return err
@@ -76,10 +81,8 @@ func (p Plan) Followup(o FollowupOptions, now time.Time) (Recorded, error) {
 			}
 		}
 		id := fmt.Sprintf("%sF%d", prefix, next)
-		block := []string{"*** " + kwTodo + " " + o.Title, ":PROPERTIES:", ":ID: " + id, ":FOUND_IN: " + o.FoundIn, ":END:"}
-		if o.Context != "" {
-			block = append(block, o.Context)
-		}
+		block := append([]string{"*** " + kwTodo + " " + o.Title, ":PROPERTIES:", ":ID: " + id, ":FOUND_IN: " + o.FoundIn, ":END:"},
+			context...)
 		err = l.edit(file, func(lines []string) ([]string, error) {
 			_, end, ok := section(lines, "Follow-ups")
 			if !ok {

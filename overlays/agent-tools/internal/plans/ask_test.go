@@ -57,6 +57,26 @@ func TestAsk(t *testing.T) {
 		}
 	})
 
+	// A context of several lines is the question's body, and reads back as
+	// one.
+	t.Run("a context on several lines", func(t *testing.T) {
+		p, _ := asked(t)
+		got, err := p.Ask(AskOptions{Question: "Split it?", Recommendation: "yes", Context: "Two callers.\n\nBoth read it.",
+			Alternatives: []string{"no"}}, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if text := fileText(t, p.file("")); !strings.Contains(text, ":ID: "+got.ID+"\n:RECOMMENDATION: yes\n:END:\nTwo callers.\n\nBoth read it.\n- no\n") {
+			t.Errorf("plan:\n%s", text)
+		}
+		qs, _ := p.Questions(false)
+		for _, q := range qs {
+			if q.ID == got.ID && (q.Context != "Two callers. Both read it." || strings.Join(q.Alternatives, "|") != "no") {
+				t.Errorf("read back %+v", q)
+			}
+		}
+	})
+
 	// A reversible decision of the agent's own is a
 	// question settled from the start: never put to the operator, and read back
 	// as a decision.
@@ -104,6 +124,9 @@ func TestAsk(t *testing.T) {
 		"no question":           {Recommendation: "yes"},
 		"no recommendation":     {Question: "Why?"},
 		"a forged heading":      {Question: "Why?\n* forged", Recommendation: "yes"},
+		"a COMMENT question":    {Question: "COMMENT why?", Recommendation: "yes"},
+		"a question with tags":  {Question: "Why? :ARCHIVE:", Recommendation: "yes"},
+		"a priority and done":   {Question: "[#A] DONE why?", Recommendation: "yes"},
 		"a forged alternative":  {Question: "Why?", Recommendation: "yes", Alternatives: []string{"a\n** Steps"}},
 		"an unknown AFTER ID":   {Question: "Why?", Recommendation: "yes", After: []string{"Q9"}},
 		"an AFTER with a space": {Question: "Why?", Recommendation: "yes", After: []string{"Q1 Q2"}},
@@ -112,6 +135,9 @@ func TestAsk(t *testing.T) {
 		"an unknown priority":   {Question: "Why?", Recommendation: "yes", Priority: "D"},
 		"a forged answer":       {Question: "Why?", Recommendation: "yes", Answer: "yes\n* forged"},
 		"a structural context":  {Question: "Why?", Recommendation: "yes", Context: "- a list item"},
+		"a later list item":     {Question: "Why?", Recommendation: "yes", Context: "Because.\n- not an alternative"},
+		"a later heading":       {Question: "Why?", Recommendation: "yes", Context: "Because.\n** Steps"},
+		"a drawer in context":   {Question: "Why?", Recommendation: "yes", Context: "Because.\n:LOGBOOK:\n:END:"},
 	} {
 		t.Run("refused/"+what, func(t *testing.T) {
 			p, _ := asked(t)

@@ -211,7 +211,8 @@ have (see status) is refused and writes nothing.
                      it; the operator's to run
 
 find, status and new first take the other hosts' plans, quietly, if they can.
-Values are single lines; list values hold no whitespace.
+Values are single lines but --text and --context, which may span lines as
+section says; list values hold no whitespace.
 KIND: ` + strings.Join(plans.Kinds, ", ") + `
 ROLE: ` + strings.Join(plans.Roles, ", ") + `
 OUTCOME: ` + strings.Join(plans.Outcomes, ", ") + `
