@@ -637,14 +637,10 @@ in {
       '';
 
       default =
-        {
-          notify = ./skills/notify/SKILL.md;
-
-        }
         # Whole directories: most of these load Emacs Lisp or run a script
         # that sits beside their SKILL.md. d2 and github-activity run only
         # when invoked by name.
-        // genAttrs [
+        genAttrs [
           "d2"
           "describe"
           "dired"

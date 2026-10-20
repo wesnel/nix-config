@@ -177,8 +177,7 @@ Stop and hand back when any of these holds:
    `git range-diff refs/pr-loop/rounds/0/<branch>...refs/pr-loop/rounds/<n>/<branch>`
    shows everything the loop changed in a branch, and adjacent rounds show
    one round's work.
-3. Notify the operator with the `notify` skill if it is available.
-4. Run `pr-loop sign-check`. It squashes the fixups unsigned in a
+3. Run `pr-loop sign-check`. It squashes the fixups unsigned in a
    throwaway worktree and refuses unless each PR would end with exactly its
    original commits and unchanged files; settle what it names before
    handing over. Then hand over the signing pass as the `signing-pass`
