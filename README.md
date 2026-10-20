@@ -82,8 +82,7 @@ nix-shell --run "sops updatekeys secrets/wgn.yaml"
 # coding agents
 
 Claude Code (`wgn.home.claude`) and Codex (`wgn.home.codex`) share one
-setup. Amp and Copilot receive the shared instructions and skills and
-nothing else.
+setup.
 
 ## what nix sets up
 

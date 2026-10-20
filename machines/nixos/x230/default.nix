@@ -12,7 +12,6 @@
 
     (_: {
       wgn.home = {
-        amp.enable = true;
         claude.enable = true;
         codex.enable = true;
         emacs.enable = true;

@@ -10,7 +10,6 @@
     (_: {
       wgn.home = {
         aerospace.enable = true;
-        amp.enable = true;
         claude.enable = true;
         codex.enable = true;
         docs-mcp-server.enable = true;

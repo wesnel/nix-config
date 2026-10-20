@@ -19,7 +19,6 @@
 
     (_: {
       wgn.home = {
-        amp.enable = true;
         bash.enable = true;
         claude = {
           enable = true;
