@@ -502,13 +502,15 @@ every write, and accepts only fixups of each PR's own commits.
 In a terminal of your own, in the repository:
 
 ``` sh
-pr-loop sign        # squash the fixups, sign, and push the stack over SSH (--no-push to keep it local)
-pr-loop end         # delete the bots' trigger comments and the loop's state
+git sign-pass --push TOP   # squash the fixups, sign, and push the stack, TOP its top branch
+pr-loop end                # delete the bots' trigger comments and the loop's state
 ```
 
-`pr-loop sign` refuses unless every PR ends with exactly the commits it
-started with and the files the loop left. `pr-loop end --prune` also deletes
-the round snapshots and backups. Until then, each round's work is reviewable
+The loop runs `pr-loop sign-check` before it hands over, which squashes the
+fixups unsigned in a throwaway worktree and refuses unless every PR would
+end with exactly the commits it started with and the files the loop left.
+`pr-loop end --prune` also deletes
+the round snapshots. Until then, each round's work is reviewable
 with:
 
 ``` sh

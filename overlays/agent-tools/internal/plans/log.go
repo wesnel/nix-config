@@ -81,8 +81,8 @@ var (
 			"pushed": "pr-loop, and a hook after each shell call, log `pushed` for every push, from what they pushed. " +
 				"Watch the push's CI with `pr-loop wait ci` as the signing-pass skill says",
 		}
-		for _, k := range []string{"loop-began", "round", "replied", "resolved", "ci-waited", "loop-signed"} {
-			kinds[k] = "pr-loop logs what it did, from begin to sign, in the plan of the session that ran it. " +
+		for _, k := range []string{"loop-began", "round", "replied", "resolved", "ci-waited"} {
+			kinds[k] = "pr-loop logs what it did, from begin on, in the plan of the session that ran it. " +
 				"Run the `pr-loop` command that does it"
 		}
 		for _, k := range signKinds {

@@ -11,7 +11,8 @@ import (
 )
 
 // End deletes the loop's trigger comments and its state. With prune it also
-// drops the backup and per-round refs, which hold the unsquashed history.
+// drops every ref under refs/pr-loop/, the per-round snapshots among them,
+// which hold the unsquashed history.
 func End(prune bool) (any, error) {
 	state, err := loadState(false)
 	if err != nil {

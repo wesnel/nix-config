@@ -183,17 +183,12 @@ Stop and hand back when any of these holds:
    shows everything the loop changed in a branch, and adjacent rounds show
    one round's work.
 3. Notify the operator with the `notify` skill if it is available.
-4. Hand over for the signing pass, showing what it will sign as the
-   `signing-pass` skill describes. The loop's pass is `pr-loop sign`, not
-   `git sign-pass`. The session's relay refuses `sign` and `end`, so the
-   operator runs them in the repository. The loop's pass
-   differs from the plain one:
-   - it first squashes the fixups in a throwaway worktree, so a fixup that
-     conflicts is named before any key touch;
-   - it then squashes the fixups into the commits they name as it signs, and
-     refuses unless each PR ends with exactly its original commits and
-     unchanged files;
-   - it pushes the whole stack over SSH unless given `--no-push`.
-
-   Afterwards `pr-loop end` deletes the loop's trigger comments and its
-   state, and `--prune` drops the backups and snapshots.
+4. Run `pr-loop sign-check`. It squashes the fixups unsigned in a
+   throwaway worktree and refuses unless each PR would end with exactly its
+   original commits and unchanged files; settle what it names before
+   handing over. Then hand over for the signing pass, showing what it will
+   sign as the `signing-pass` skill describes: `git sign-pass --push
+   <top branch>`, which signs and pushes the whole stack. The session's
+   relay refuses `end`, so after the push the operator runs `pr-loop end`
+   in the repository, which deletes the loop's trigger comments and its
+   state, and with `--prune` the snapshots.

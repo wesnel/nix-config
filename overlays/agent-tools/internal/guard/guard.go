@@ -569,7 +569,7 @@ func checkOneCommandKey(key string) string {
 const configInclude = "A configuration file included for one git command can define anything, such as an alias that runs shell, " +
 	"and the guard does not read it. Give the settings themselves with `-c KEY=VALUE`, or leave them out."
 
-const signing = "Signing needs the operator's hardware key. Leave the commits unsigned and end the report with the command for the operator to run: `pr-loop sign` for the loop's stack."
+const signing = "Signing needs the operator's hardware key. Leave the commits unsigned and end the report with the command for the operator to run: `git sign-pass --push` for the loop's stack, once `pr-loop sign-check` passes."
 
 const pushGuard = "Publishing private history in a public repository is the operator's decision. Leave push-guard.* alone, and name the repository and the commits in the report for the operator."
 
@@ -578,7 +578,7 @@ const prLoopWrites = "Use `pr-loop push`, `reply`, `resolve`, `request` or `link
 // coordinatorOnly are the pr-loop steps an owner leaves to the coordinator,
 // which keeps the stack consistent across PRs.
 var coordinatorOnly = map[string]bool{"open": true, "link": true, "begin": true, "push": true, "reply": true, "resolve": true,
-	"request": true, "worktrees": true, "sign": true, "end": true}
+	"request": true, "worktrees": true, "end": true}
 
 // reviewerReads are the pr-loop commands a reviewer may run, besides
 // `wait ci`.
@@ -815,7 +815,7 @@ func checkGit(words []string, expands []bool, env []string, who role, dir, check
 	case sub == "sign-pass":
 		return keyTouch
 	case sub == "push" && who >= coordinator:
-		return "A review-loop session pushes only with `pr-loop push`, or `pr-loop open` for a new branch, which check the branch policy and need no key touch. The signed push at the end is `pr-loop sign`."
+		return "A review-loop session pushes only with `pr-loop push`, or `pr-loop open` for a new branch, which check the branch policy and need no key touch. The signed push at the end is the operator's `git sign-pass --push`."
 	case sub == "push":
 		return "Publishing a branch is the operator's step, signed with their key. Open a new branch as a draft PR with `pr-loop open`, or end your report with `git sign-pass --push` for the operator to run."
 	case overSSH(sub, rest, gitState{dir: dir, config: config, env: env}):

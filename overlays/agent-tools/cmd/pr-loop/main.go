@@ -40,7 +40,7 @@ messages to: a subject of at most 72 characters without a trailing period,
 no attribution lines, and on a fixup only Review-* trailers.
 
 begin, each round (its number and every branch's tip), push, reply,
-resolve, wait ci's result and sign are logged in the plan of the session
+resolve and wait ci's result are logged in the plan of the session
 that runs them: the plan naming the harness's session or this worktree,
 else one whose BRANCHES name a branch of the loop. A failure to log is
 printed on stderr and fails nothing.
@@ -76,8 +76,9 @@ printed on stderr and fails nothing.
                               4 when a head has no checks)
   wait reviews [--timeout S] [--interval S] [PR...]
                               block until requested reviews land (exit 3 on timeout)
-  sign [--resume] [--no-push] squash the loop's fixups, sign with the hardware key, and
-                              push the stack over SSH (outside a loop, use git sign-pass)
+  sign-check                  squash the loop's fixups unsigned in a throwaway worktree and
+                              check every branch keeps its own commits and its files, before
+                              the stack is handed to the operator's git sign-pass --push
   end [--prune]               delete trigger comments and loop state
   guard [--baseline]          PreToolUse hook for Claude Code and Codex (reads stdin):
                               a loop's rules, or with --baseline every session's, by agent
@@ -136,18 +137,18 @@ runs with sh in this process, printed on stderr before it runs and followed
 by its exit status; a failed setup makes the command exit 1.
 
 With ` + relay.URLEnv + ` set, every command except guard, setup and
-worktrees is sent to that sandbox-relay, where sign and end are refused: run
-those outside the session. worktrees has the relay create the worktrees, and
+worktrees is sent to that sandbox-relay, where end is refused: run it
+outside the session. worktrees has the relay create the worktrees, and
 setup asks it for the command, then both run the command here, in the sandbox.
 `
 
-// relayed are the commands a sandbox may run through the relay. sign needs
-// the hardware key and end discards state, so a person runs those on the host.
-// setup runs a command, which belongs in the sandbox, never on the host.
+// relayed are the commands a sandbox may run through the relay. end discards
+// state, so a person runs it on the host. setup runs a command, which belongs
+// in the sandbox, never on the host.
 var relayed = map[string]bool{
 	"open": true, "stack": true, "link": true, "begin": true, "push": true, "threads": true, "reply": true, "resolve": true,
 	"request": true, "status": true, "ci": true, "logs": true, "wait": true, "worktrees": true,
-	"setup-command": true, "review": true,
+	"setup-command": true, "review": true, "sign-check": true,
 }
 
 // reviewRefusal is why a relayed caller may not run `review argv...`, or "".
@@ -303,8 +304,6 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 		interval = flags.Int("interval", 30, "")
 		sha      = flags.String("sha", "", "")
 		grace    = flags.Int("grace", 180, "")
-		resume   = flags.Bool("resume", false, "")
-		noPush   = flags.Bool("no-push", false, "")
 		prune    = flags.Bool("prune", false, "")
 		remove   = flags.Bool("remove", false, "")
 		bots     multi
@@ -515,13 +514,13 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 		code = setupFailures(runs, stderr)
 	case "setup-command":
 		result, err = loop.SetupCommand()
-	case "sign":
+	case "sign-check":
 		var active bool
 		if active, err = loop.Active(); err == nil {
 			if active {
-				result, err = loop.Sign(*resume, *noPush)
+				result, err = loop.SignCheck()
 			} else {
-				err = refusal.New("no review loop is running here; sign a branch with `git sign-pass`")
+				err = refusal.New("no review loop is running here; `git sign-pass` checks a branch's squash itself")
 			}
 		}
 	case "end":

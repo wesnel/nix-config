@@ -28,12 +28,6 @@ type Trigger struct {
 	HeadOid   string `json:"headOid"`
 }
 
-// Signing is a signing pass that has started and not yet pushed.
-type Signing struct {
-	Upstream string            `json:"upstream"`
-	Trees    map[string]string `json:"trees"`
-}
-
 // State is the loop's record, shared by every worktree of the repository.
 type State struct {
 	Repo             string              `json:"repo"`
@@ -42,7 +36,6 @@ type State struct {
 	Triggers         map[string]*Trigger `json:"triggers"`
 	AcceptedFailures map[string][]string `json:"acceptedFailures"`
 	Round            int                 `json:"round"`
-	Signing          *Signing            `json:"signing,omitempty"`
 }
 
 func stateDir() (string, error) {
