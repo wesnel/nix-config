@@ -29,7 +29,7 @@ current session.
   `.pr-loop/`. When it exits, show
   `$(git rev-parse --git-common-dir)/pr-loop/report.md`, or the end of the
   log if there is no report.
-- **Elsewhere:** stop and tell the operator to start `codex-pr-loop`.
+- **Elsewhere:** stop and tell the operator to start `claude-pr-loop`.
 
 Commit as the `signing-pass` skill says: unsigned, never pushing or signing
 yourself, with one signing pass at the end. In the loop's worktrees signing is

@@ -466,15 +466,12 @@ Then, in the repository, start one of:
 - any Claude Code session, and ask it to run the review loop on the branch.
   It starts `claude-pr-loop` headless in the background, logging to
   `.git/pr-loop-session.jsonl` and `.err`, and shows the report when the loop exits;
-- `claude-pr-loop`, and ask it to run the review loop on the branch;
-- `codex-pr-loop`, and ask the same. Codex skips a hook until it is trusted,
-  so trust `pr-loop guard` in `/hooks` the first time, and again after a
-  switch changes it.
+- `claude-pr-loop`, and ask it to run the review loop on the branch.
 
 Each runs the agent's commands in a sandbox without credentials, beside a
-`sandbox-relay` that runs `pr-loop` on this machine with your `gh` login, and
-`claude-pr-loop` and `codex-pr-loop` also `agent-plan`'s reading commands and
-`log`, the session's only way to its plan. The
+`sandbox-relay` that runs `pr-loop` on this machine with your `gh` login,
+and `agent-plan`'s reading commands and `log`, the session's only way to its
+plan. The
 `review-loop` skill refuses to start anywhere else. On Linux, Claude Code's
 sandbox needs `bubblewrap` and `socat` on `PATH`.
 
@@ -524,9 +521,9 @@ Linear, which the report proposes instead.
 
 ### what a loop session enforces
 
-- **Sandbox.** Every launcher takes its rules from `wgn.home.llm.prLoop`:
+- **Sandbox.** `claude-pr-loop` takes its rules from `wgn.home.llm.prLoop`:
   `deniedReads` (credentials, the keychain, the MCP proxy's token);
-  `allowedReads` (in `claude-pr-loop` and `codex-pr-loop`, the only paths
+  `allowedReads` (the only paths
   under your home directory its commands may read: the workspace, its git
   directory, the build cache and agent-tools' config), with `gitConfig` in
   place of your git config; `protectedPaths` (read-only in the workspace:
@@ -534,12 +531,11 @@ Linear, which the report proposes instead.
   only network, for dependencies, without storage.googleapis.com in a
   session started under `reviewDir`) and `cacheDir` (the only build cache it
   writes).
-- **Guard.** `pr-loop guard` runs before every tool call in both agents
-  and denies other ways to write to GitHub or Linear, unsigned-workflow
-  violations and your decisions. Owner agents are also denied the steps the
-  coordinator alone takes (`pr-loop push`, `reply` and the like) in Claude
-  Code, and reviewer agents also every git and `pr-loop` command that
-  changes something.
+- **Guard.** `pr-loop guard` runs before every tool call and denies other
+  ways to write to GitHub or Linear, unsigned-workflow violations and your
+  decisions. Owner agents are also denied the steps the coordinator alone
+  takes (`pr-loop push`, `reply` and the like), and reviewer agents also
+  every git and `pr-loop` command that changes something.
 
 An ordinary session has neither the sandbox nor the loop's rules, and runs
 with your credentials, but has the guard in every session.

@@ -114,96 +114,9 @@ with lib; let
   '';
 
   plans = config.wgn.home.llm.plans;
-
-  toml = value:
-    if isAttrs value
-    then "{${concatStringsSep ", " (mapAttrsToList (k: v: "${builtins.toJSON k}=${toml v}") value)}}"
-    else if isList value
-    then "[${concatMapStringsSep ", " toml value}]"
-    else builtins.toJSON value;
-
-  # Passed as -c overrides, because Codex writes ~/.codex/config.toml itself.
-  # A `sandbox_mode` there, or --sandbox, makes Codex ignore permission
-  # profiles, so neither may be used with this launcher. "{socket}" is the
-  # relay's socket, filled in by `sandbox-relay session`, and $HOME is
-  # expanded by the shell.
-  overrides = {
-    default_permissions = "pr_loop";
-    # Domain rules and Unix sockets are only enforced through the proxy.
-    "features.network_proxy.enabled" = true;
-    "permissions.pr_loop.extends" = ":workspace";
-    "permissions.pr_loop.network.enabled" = true;
-    "permissions.pr_loop.network.unix_sockets" = {"{socket}" = "allow";};
-    # A hook that is new or changed is skipped until trusted with /hooks, so
-    # it names `pr-loop` on PATH rather than a store path that changes with
-    # every rebuild.
-    "hooks.PreToolUse" = [
-      {
-        matcher = ".*";
-        hooks = [
-          {
-            type = "command";
-            command = "pr-loop guard";
-          }
-        ];
-      }
-    ];
-  };
-
-  domains = list: escapeShellArg "permissions.pr_loop.network.domains=${toml (genAttrs list (_: "allow"))}";
-
-  prLoopLauncher = pkgs.writeShellApplication {
-    name = "codex-pr-loop";
-    text = ''
-      # The more specific path wins, so the home directory is denied but for
-      # the reads allowed below it. A read rule replaces write access, so
-      # none may name the workspace, the cache directory or the git
-      # directory, which is usually the workspace's own .git, or the
-      # workspace itself.
-      filesystem="${concatStringsSep ", " (
-        [''\"${config.home.homeDirectory}\"=\"deny\"'']
-        ++ map (p: ''\"${p}\"=\"read\"'') (subtractLists ["{workspace}" "{gitdir}" config.wgn.home.llm.prLoop.cacheDir] config.wgn.home.llm.prLoop.allowedReads)
-        ++ map (p: ''\"${p}\"=\"deny\"'') config.wgn.home.llm.prLoop.deniedReads
-        ++ map (p: ''\"{workspace}/${p}\"=\"read\"'') config.wgn.home.llm.prLoop.protectedPaths
-        ++ [''\"${config.wgn.home.llm.prLoop.cacheDir}\"=\"write\"'']
-        # Reached through `agent-plan` on the relay.
-        ++ [''\"${plans.dir}\"=\"read\"'']
-      )}"
-      domains=${domains config.wgn.home.llm.prLoop.allowedDomains}
-      ${config.wgn.home.llm.prLoop.reviewSession}
-      if [[ -n "$review" ]]; then
-        domains=${domains config.wgn.home.llm.prLoop.reviewAllowedDomains}
-      fi
-      ${config.wgn.home.llm.prLoop.sandboxCaches}
-      # The review-loop skill starts only where this is set.
-      export PR_LOOP_SESSION=1
-      # The session's commands cannot read the user's git config; the relay
-      # and pr-loop on this side keep it.
-      ${config.wgn.home.llm.prLoop.gitIdentity}
-      exec ${lib.getExe' config.wgn.home.llm.agentTools "sandbox-relay"} session --program pr-loop --program agent-plan -- \
-        env GIT_CONFIG_GLOBAL=${config.wgn.home.llm.prLoop.gitConfig} codex \
-        ${concatStringsSep " \\\n  " (mapAttrsToList (k: v: "-c ${escapeShellArg "${k}=${toml v}"}") overrides)} \
-        -c "$domains" \
-        -c "permissions.pr_loop.filesystem={$filesystem}" \
-        "$@"
-    '';
-  };
 in {
   options.wgn.home.codex = {
     enable = mkEnableOption "Enables my Codex skills for home-manager";
-
-    prLoop.enable = mkOption {
-      type = types.bool;
-      default = true;
-
-      description = ''
-        Installs `codex-pr-loop`, which starts Codex for the unattended bot
-        review loop: its commands run in Codex's sandbox without GitHub
-        credentials or a route to GitHub, reaching it only through `pr-loop`
-        on a relay, and `pr-loop guard` checks each tool call once trusted with
-        `/hooks`.
-      '';
-    };
   };
 
   config = mkIf cfg.enable (mkMerge [
@@ -223,7 +136,7 @@ in {
           # until it is trusted with /hooks, and trust follows the hook's
           # hash, so the command names `pr-loop` on PATH rather than a store
           # path that changes with every rebuild. Codex adds these to any
-          # other layer's hooks, codex-pr-loop's included.
+          # other layer's hooks.
           ".codex/hooks.json".text = builtins.toJSON {
             # Records commits, pushes, worktrees, branches and PRs in the
             # plan and asks which step a commit completes; after a push to
@@ -295,11 +208,6 @@ in {
           };
         };
     }
-
-    (mkIf cfg.prLoop.enable {
-      wgn.home.llm.prLoop.enable = true;
-      home.packages = [prLoopLauncher];
-    })
 
     # Plans are written with `agent-plan` and the file tools, from inside
     # the workspace-write sandbox too. Merged into the config.toml Codex
