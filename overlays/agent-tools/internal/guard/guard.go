@@ -375,6 +375,11 @@ func cdTarget(c call, cwd string) string {
 		return ""
 	}
 	path := expandPath(word, cwd)
+	// A .. after a link climbs from where the link leads, which cleaning
+	// the spelling would not.
+	if strings.Contains("/"+word+"/", "/../") {
+		path = physical(rawPath(word, cwd))
+	}
 	if !filepath.IsAbs(path) {
 		return ""
 	}

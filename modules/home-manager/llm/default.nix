@@ -295,24 +295,53 @@ in {
       description = ''
         Absolute path prefixes of credentials, which stay out of every
         session: the guard denies a shell command or file tool naming a path
-        that starts with one, and Claude Code's `Read` is denied them through
-        `permissions.deny`. A prefix matches a file or directory of any name
-        it starts, as `~/.ssh/id_` does every private key.
+        that starts with one, in Claude Code and Codex alike; Claude Code's
+        `Read` is denied them through `permissions.deny`; and the host
+        sandbox denies its commands reading them. A prefix matches a file or
+        directory of any name it starts, as `~/.ssh/id_` does every private
+        key, and one ending in `/` only that directory and what it holds.
+        The guard matches one holding a glob against a path and each of its
+        parents. The sandbox takes each as a whole path, so a prefix that
+        names no file, as `~/.ssh/id_`, must lie in a directory
+        {option}`wgn.home.llm.sandbox.deniedReads` hides whole.
       '';
 
       default = let
         home = config.home.homeDirectory;
         proxy = config.wgn.home.mcp-proxy;
-      in [
-        "${home}/.ssh/id_"
-        "${home}/.gnupg/private-keys"
-        "${home}/.codex/auth.json"
-        "${home}/.claude/.credentials.json"
-        proxy.tokenFile
-        proxy.oauthDir
-        "${home}/.config/sops/age"
-        "${home}/.config/ngrok"
-      ];
+      in
+        [
+          "${home}/.ssh/id_"
+          "${home}/.gnupg/private-keys"
+          "${home}/.config/gh/"
+          # Agents' logins: Codex's, and Claude Code's on Linux.
+          "${home}/.codex/auth.json"
+          "${home}/.claude/.credentials.json"
+          proxy.tokenFile
+          proxy.oauthDir
+          "${home}/.config/sops/"
+          "${home}/.config/sops-nix/key.txt"
+          "${home}/.config/ngrok"
+          "${home}/.config/op/"
+          "${home}/.lima/_config"
+          "${home}/.aws/"
+          "${home}/.docker/config.json"
+          "${home}/.netrc"
+          "${home}/.authinfo"
+          "${home}/.authinfo.gpg"
+          "${home}/.npmrc"
+          "${home}/.cargo/credentials"
+          "${home}/.cargo/credentials.toml"
+        ]
+        # sops-nix decrypts into the per-user temporary directory on macOS
+        # and /run/user on Linux; ~/.config/sops-nix/secrets links there.
+        # The sandbox matches the path a link resolves to, and denying the
+        # link's own directory would hide the file git needs below as well.
+        ++ optionals pkgs.stdenv.hostPlatform.isDarwin [
+          "${home}/Library/Application Support/ngrok"
+          "/private/var/folders/*/*/T/secrets.d"
+        ]
+        ++ optional pkgs.stdenv.hostPlatform.isLinux "/run/user/*/secrets.d";
     };
 
     agentTools = mkOption {
@@ -340,6 +369,55 @@ in {
           configHome = config.xdg.configHome;
           stateHome = config.xdg.stateHome;
         };
+    };
+
+    # Every sandbox takes these lists from here: the host sandbox around
+    # every Claude Code session's commands, and each loop session's.
+    sandbox = {
+      deniedReads = mkOption {
+        type = types.listOf types.str;
+        readOnly = true;
+
+        description = ''
+          Absolute paths no sandboxed command may read: credentials, and
+          where agent sockets live.
+        '';
+
+        default = let
+          home = config.home.homeDirectory;
+          proxy = config.wgn.home.mcp-proxy;
+        in
+          ["${home}/.config/gh" "${home}/.gnupg" "${home}/.ssh"]
+          # gh keeps its token in the login keychain, which a sandboxed
+          # command can otherwise read.
+          ++ optional pkgs.stdenv.hostPlatform.isDarwin "${home}/Library/Keychains"
+          ++ optional pkgs.stdenv.hostPlatform.isLinux "/run/user"
+          ++ optionals proxy.enable [proxy.stateDir proxy.oauthDir];
+      };
+
+      allowedDomains = mkOption {
+        type = types.listOf types.str;
+        readOnly = true;
+
+        description = ''
+          Hosts every sandbox's commands may reach, for fetching
+          dependencies when building and testing. GitHub must not be among
+          them: a loop session's only way there is the relay, and the host
+          sandbox names it in a list of its own.
+        '';
+
+        default = [
+          "proxy.golang.org"
+          "sum.golang.org"
+          "storage.googleapis.com"
+          "registry.npmjs.org"
+          "pypi.org"
+          "files.pythonhosted.org"
+          "crates.io"
+          "index.crates.io"
+          "static.crates.io"
+        ];
+      };
     };
 
     prLoop = {
@@ -391,50 +469,6 @@ in {
         };
       };
 
-      allowedDomains = mkOption {
-        type = types.listOf types.str;
-
-        description = ''
-          Hosts a sandboxed loop session's commands may reach, for fetching
-          dependencies when building and testing. GitHub must not be among
-          them: the relay is the loop's only way there.
-        '';
-
-        default = [
-          "proxy.golang.org"
-          "sum.golang.org"
-          "storage.googleapis.com"
-          "registry.npmjs.org"
-          "pypi.org"
-          "files.pythonhosted.org"
-          "crates.io"
-          "index.crates.io"
-          "static.crates.io"
-        ];
-      };
-
-      deniedReads = mkOption {
-        type = types.listOf types.str;
-        readOnly = true;
-
-        description = ''
-          Absolute paths a sandboxed loop session's commands may not read:
-          credentials, and where agent sockets live. Every sandboxing
-          launcher takes its list from here.
-        '';
-
-        default = let
-          home = config.home.homeDirectory;
-          proxy = config.wgn.home.mcp-proxy;
-        in
-          ["${home}/.config/gh" "${home}/.gnupg" "${home}/.ssh"]
-          # gh keeps its token in the login keychain, which a sandboxed
-          # command can otherwise read.
-          ++ optional pkgs.stdenv.hostPlatform.isDarwin "${home}/Library/Keychains"
-          ++ optional pkgs.stdenv.hostPlatform.isLinux "/run/user"
-          ++ optionals proxy.enable [proxy.stateDir proxy.oauthDir];
-      };
-
       allowedReads = mkOption {
         type = types.listOf types.str;
         readOnly = true;
@@ -445,7 +479,7 @@ in {
           `{gitdir}` are filled in by `sandbox-relay session`: the workspace,
           and the git directory of a linked worktree, which lies outside it.
           A read allowed here wins over a denied one, so no entry may contain
-          a path in {option}`deniedReads`. Not `~/.config/git`: git stops
+          a path in {option}`wgn.home.llm.sandbox.deniedReads`. Not `~/.config/git`: git stops
           when its config includes a file it cannot read, so sessions get
           {option}`gitConfig` instead.
         '';
@@ -542,10 +576,10 @@ in {
       reviewAllowedDomains = mkOption {
         type = types.listOf types.str;
         readOnly = true;
-        default = remove "storage.googleapis.com" cfg.prLoop.allowedDomains;
+        default = remove "storage.googleapis.com" cfg.sandbox.allowedDomains;
 
         description = ''
-          {option}`allowedDomains` for a session started under
+          {option}`wgn.home.llm.sandbox.allowedDomains` for a session started under
           {option}`reviewDir`. storage.googleapis.com is left out: any
           bucket there can take data, and a review fetches its modules
           outside the session.

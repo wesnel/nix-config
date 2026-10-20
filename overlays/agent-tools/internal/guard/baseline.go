@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -167,8 +168,15 @@ func guardFile(path string) bool {
 var claudeSettings = regexp.MustCompile(`(^|/)\.claude/settings[^/]*\.json$`)
 
 // expandPath is word as the shell would name a file: with ~ and $HOME
-// expanded, and relative to dir.
+// expanded, and relative to dir, cleaned. Cleaning takes `link/..` away
+// by spelling, where the file system climbs from where the link leads:
+// physical(rawPath(word, dir)) is the path the file system walks.
 func expandPath(word, dir string) string {
+	return filepath.Clean(rawPath(word, dir))
+}
+
+// rawPath is expandPath's path before it is cleaned.
+func rawPath(word, dir string) string {
 	for _, h := range []string{"${HOME}", "$HOME"} {
 		if word == h || strings.HasPrefix(word, h+"/") {
 			word = home + strings.TrimPrefix(word, h)
@@ -178,9 +186,9 @@ func expandPath(word, dir string) string {
 		word = home + word[1:]
 	}
 	if !filepath.IsAbs(word) && dir != "" {
-		word = filepath.Join(dir, word)
+		word = dir + "/" + word
 	}
-	return filepath.Clean(word)
+	return word
 }
 
 // checkSession checks a call against the rules for every session that are
@@ -197,6 +205,11 @@ func checkSession(c call, dir string) string {
 	for _, target := range redirected {
 		if guardFile(expandPath(target, dir)) {
 			return guardOff
+		}
+	}
+	for _, target := range changedFiles(name, args, redirected) {
+		if reason := checkSecretWrite(target, dir); reason != "" {
+			return reason
 		}
 	}
 	if reason := checkPlanLogWrite(name, args, redirected, dir); reason != "" {
@@ -816,24 +829,101 @@ func protectedTree(path string, recursive bool) bool {
 	return false
 }
 
-// checkSecretPath denies a word that names a credential file.
+// checkSecretPath denies a word that names a credential file: one under a
+// credentialPaths entry, or a .env file at any depth. Each path is judged
+// as written and as the file system walks it (physical), so a link to a
+// credential is one and `link/..` climbs from where the link leads; and a
+// credential is matched by file identity too (credentialUnder).
 func checkSecretPath(word, dir string) string {
-	if strings.HasSuffix(word, ".pub") {
-		return ""
+	return secretPath(word, dir, false)
+}
+
+// checkSecretWrite is checkSecretPath for a path a command or tool creates
+// or writes: a redirection's target, a cp, mv or ln destination, a file
+// tool's path. There a name outside ASCII in a credential's own directory
+// is refused too, since the volume may fold it to the credential's
+// (Reaches).
+func checkSecretWrite(word, dir string) string {
+	return secretPath(word, dir, true)
+}
+
+// secretPath is checkSecretPath, or with creating checkSecretWrite.
+func secretPath(word, dir string, creating bool) string {
+	var candidates []string
+	for _, w := range []string{word, afterEquals(word)} {
+		// @FILE is a file's contents to curl (-d @FILE) and gh (-F k=@FILE).
+		for _, v := range []string{w, strings.TrimPrefix(w, "@")} {
+			if v != "" {
+				candidates = append(candidates, expandPath(v, dir), physical(rawPath(v, dir)))
+			}
+		}
 	}
-	candidates := []string{expandPath(word, dir)}
-	if _, value, ok := strings.Cut(word, "="); ok {
-		candidates = append(candidates, expandPath(value, dir))
+	for _, path := range candidates {
+		if b := fold(filepath.Base(path)); b == ".env" || strings.HasPrefix(b, ".env.") {
+			return secretRead
+		}
 	}
 	secrets := credentialPaths()
 	for _, path := range candidates {
 		for _, p := range secrets {
-			if strings.HasPrefix(path, p) {
+			if credentialUnder(path, p, creating) {
 				return secretRead
 			}
 		}
 	}
 	return ""
+}
+
+// afterEquals is what follows a word's first =, as in --body-file=PATH, or
+// "" when it has none.
+func afterEquals(word string) string {
+	_, value, _ := strings.Cut(word, "=")
+	return value
+}
+
+// fold is s as the file system compares names: without regard to case on
+// macOS, whose volumes are case-insensitive unless made otherwise.
+func fold(s string) string {
+	if runtime.GOOS == "darwin" {
+		return strings.ToLower(s)
+	}
+	return s
+}
+
+// credentialUnder reports whether path, absolute and clean, is under the
+// credential prefix p: by spelling, and by what the file system would
+// open (Reaches). A p ending in / is a directory, which it matches as
+// well; a p holding a glob matches path or any of its parents, by
+// spelling alone. A file ending in .pub is a public key, never under a
+// prefix of a name, as `~/.ssh/id_` is. creating is reaches's: path is to
+// be created or written.
+func credentialUnder(path, p string, creating bool) bool {
+	folded, foldedP := fold(path), fold(p)
+	if strings.ContainsAny(p, "*?[") {
+		foldedP = strings.TrimSuffix(foldedP, "/")
+		for q := folded; ; q = filepath.Dir(q) {
+			if ok, _ := filepath.Match(foldedP, q); ok {
+				return true
+			}
+			if q == filepath.Dir(q) {
+				return false
+			}
+		}
+	}
+	if !strings.HasSuffix(folded, ".pub") && strings.HasPrefix(folded, foldedP) || folded+"/" == foldedP {
+		return true
+	}
+	if !filepath.IsAbs(path) {
+		return false
+	}
+	switch _, err := os.Stat(p); {
+	case strings.HasSuffix(p, "/"):
+		return reaches(path, p, true, creating)
+	case err == nil:
+		return reaches(path, p, true, creating)
+	default:
+		return reachesPrefix(path, filepath.Dir(p), filepath.Base(p), creating)
+	}
 }
 
 const appendOnly = "This is a plan's event log, which is append-only and written by agent-plan alone. Record the event with `agent-plan log PLAN --item ID --kind KIND`, and change the plan itself with agent-plan's other commands, as `agent-plan --help` lists them."
@@ -1479,6 +1569,9 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 	for _, c := range fileChanges(tool, toolInput) {
 		path := expandPath(c.path, dir)
 		if reason := checkSecretPath(path, dir); reason != "" {
+			return reason
+		}
+		if reason := checkSecretWrite(path, dir); reason != "" {
 			return reason
 		}
 		if planLog(path) {

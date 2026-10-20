@@ -47,7 +47,8 @@ rewrite the operator's sections to silence it, nor log their history
 afresh: the log records events as they happen.
 
 Change a plan file only through `agent-plan`, never with a file-editing
-tool or the shell: the guard refuses those writes, and every `agent-plan`
+tool or the shell: the guard refuses those writes, Claude Code's sandbox
+denies the shell's writes to the plans directory, and every `agent-plan`
 command refuses a change that would add structure drift and writes
 nothing. Each section below names its command. Text (`--text`) may span
 lines but holds no line Org reads as a heading, a drawer, a planning line
