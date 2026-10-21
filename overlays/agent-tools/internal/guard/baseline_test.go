@@ -201,7 +201,11 @@ func TestSessionRules(t *testing.T) {
 		{false, "cargo build"},
 		{false, "docker build ."},
 		{false, "goreleaser check"},
-		{false, "pkill -f my-test-server"},
+		{true, "pkill -f my-test-server"},
+		{true, "killall sleep"},
+		{true, "emacsclient -s server -e '(kill-emacs)'"},
+		{false, "pkill -l"},
+		{false, "emacsclient -s /tmp/et.ab12/server -e '(kill-emacs)'"},
 		{false, "launchctl list"},
 		{false, "emacsclient -e '(+ 1 2)'"},
 		{false, "kill %1"},
@@ -1082,16 +1086,174 @@ func TestKill(t *testing.T) {
 	case filepath.Base(name) != "mcp-proxy":
 		t.Fatalf("ps names the protected process %q, not mcp-proxy", name)
 	}
-	for command, deny := range map[string]bool{
-		"kill " + itoa(protected.Process.Pid):                                         true,
-		"kill -9 " + itoa(protected.Process.Pid):                                      true,
-		"kill -s TERM " + itoa(other.Process.Pid) + " " + itoa(protected.Process.Pid): true,
-		"kill " + itoa(other.Process.Pid):                                             false,
-		"kill -TERM " + itoa(other.Process.Pid):                                       false,
+	// This test stands in for the session's harness, whose children both
+	// processes are; with no harness, neither is the session's.
+	old := harness
+	t.Cleanup(func() { harness = old })
+	for _, c := range []struct {
+		harness  int
+		commands map[string]string
+	}{
+		{os.Getpid(), map[string]string{
+			"kill " + itoa(protected.Process.Pid):                                         "",
+			"kill -s TERM " + itoa(other.Process.Pid) + " " + itoa(protected.Process.Pid): "",
+			"kill -TERM " + itoa(other.Process.Pid):                                       "",
+			"kill 1":                                                                      killOthers,
+			"kill 0":                                                                      killing,
+			"kill -9 -1":                                                                  killing,
+		}},
+		{0, map[string]string{
+			"kill -9 " + itoa(protected.Process.Pid): killing,
+			"kill " + itoa(other.Process.Pid):        killOthers,
+		}},
 	} {
-		if reason := judge(t, "/", command); (reason != "") != deny {
-			t.Errorf("%q: deny=%v, reason %q", command, !deny, reason)
+		harness = func() int { return c.harness }
+		for command, want := range c.commands {
+			if reason := judge(t, "/", command); reason != want {
+				t.Errorf("harness %d, %q: reason %q, want %q", c.harness, command, reason, want)
+			}
 		}
+	}
+}
+
+// The session's harness is found among the guard's ancestors by command,
+// and a process descends from it through its parents.
+func TestHarness(t *testing.T) {
+	oldParent, oldCommand := parentOf, commandOf
+	t.Cleanup(func() { parentOf, commandOf = oldParent, oldCommand })
+	parents := map[int]int{os.Getppid(): 50, 50: 40, 40: 1, 70: 60, 60: 40, 80: 1}
+	names := map[int]string{os.Getppid(): "sh", 50: "zsh", 40: "claude", 60: "bash", 70: "emacs"}
+	parentOf = func(pid int) int { return parents[pid] }
+	commandOf = func(pid int) string { return names[pid] }
+	if h := harness(); h != 40 {
+		t.Errorf("harness %d, want 40", h)
+	}
+	if !startedHere(70) || startedHere(80) {
+		t.Errorf("70 started here %v, 80 %v", startedHere(70), startedHere(80))
+	}
+}
+
+// A kill whose PIDs the shell or xargs fills in is refused, whatever the
+// session started; a %job is the shell's own.
+func TestKillUnseen(t *testing.T) {
+	old := harness
+	t.Cleanup(func() { harness = old })
+	harness = func() int { return os.Getpid() }
+	for command, want := range map[string]string{
+		"kill $PID":                      killUnseen,
+		"kill -9 $(pgrep -f mcp-proxy)":  killUnseen,
+		"kill `pgrep Emacs`":             killUnseen,
+		"pgrep Emacs | xargs kill":       killUnseen,
+		"pgrep Emacs | xargs kill -9":    killUnseen,
+		"xargs kill < pids":              killUnseen,
+		"kill -s TERM -- $(cat pidfile)": killUnseen,
+		"kill -9 0x1f4":                  killUnseen,
+		"kill %1":                        "",
+		"kill -l":                        "",
+	} {
+		if reason := judge(t, "/", command); reason != want {
+			t.Errorf("%q: reason %q, want %q", command, reason, want)
+		}
+	}
+}
+
+// A test Emacs is stopped by its own absolute socket alone.
+func TestTestEmacsSocket(t *testing.T) {
+	tmp := filepath.Clean(os.TempDir())
+	uid := itoa(os.Getuid())
+	for args, want := range map[string]bool{
+		"-s /tmp/et.ab12/server -e (kill-emacs)":                     true,
+		"--socket-name=/tmp/et.ab12/server --eval (kill-emacs)":      true,
+		"-s " + tmp + "/test/server -e (kill-emacs)":                 true,
+		"-s /tmp/claude-" + uid + "/x/server -e (kill-emacs)":        true,
+		"-s " + tmp + "/emacs" + uid + "/server -e (kill-emacs)":     false,
+		"-s /run/user/" + uid + "/emacs/server -e (kill-emacs)":      false,
+		"-s server -e (kill-emacs)":                                  false,
+		"-e (kill-emacs)":                                            false,
+		"-s /tmp/et.ab12/../emacs" + uid + "/server -e (kill-emacs)": false,
+		"-s /home/x/server -e (kill-emacs)":                          false,
+		"-s /tmp/et./server -e (kill-emacs)":                         false,
+		// emacsclient takes the last socket, by any abbreviation of
+		// --socket-name, its value in the next word, and clustered short
+		// options; every socket must be a test one.
+		"-s /tmp/et.ab12/server --socket=server -e (kill-emacs)":         false,
+		"-s /tmp/et.ab12/server --socket server -e (kill-emacs)":         false,
+		"-s /tmp/et.ab12/server --so=/home/x/server -e (kill-emacs)":     false,
+		"--socket /tmp/et.ab12/server -e (kill-emacs)":                   true,
+		"-ns/tmp/et.ab12/server -e (kill-emacs)":                         true,
+		"-nss /tmp/et.ab12/server -e (kill-emacs)":                       false,
+		"-nw -s /tmp/et.ab12/server -e (kill-emacs)":                     true,
+		"--s /tmp/et.ab12/server -e (kill-emacs)":                        false,
+		"-s /tmp/et.ab12/server -f /home/x/server -e (kill-emacs)":       false,
+		"-s /tmp/et.ab12/server --server-file=server -e (kill-emacs)":    false,
+		"-s /tmp/et.ab12/server --se=server -e (kill-emacs)":             false,
+		"-s " + tmp + "/EMACS" + uid + "/server -e (kill-emacs)":         runtime.GOOS != "darwin",
+		"-s /private" + tmp + "/emacs" + uid + "/server -e (kill-emacs)": false,
+		"-s /tmp/et.ab12/server -x -e (kill-emacs)":                      false,
+		"-s /tmp/et.ab12/server -- -s /home/x/server -e (kill-emacs)":    true,
+		"-e (kill-emacs) -s /tmp/et.ab12/server":                         true,
+		"-e (kill-emacs) -s":                                             false,
+	} {
+		if got := testEmacsSocket(strings.Fields(args)); got != want {
+			t.Errorf("%q: %v, want %v", args, got, want)
+		}
+	}
+}
+
+// Lisp that stops Emacs, or deletes or starts a server, goes only to a
+// test socket, and names no other server there.
+func TestEmacsServerCall(t *testing.T) {
+	for command, deny := range map[string]bool{
+		"emacsclient -e '(server-force-delete)'":                                                   true,
+		"emacsclient --eval '(server-force-delete \"server\")'":                                    true,
+		"emacsclient -e '(server-start)'":                                                          true,
+		"emacsclient -e '(save-buffers-kill-emacs)'":                                               true,
+		"emacsclient -s server -e '(server-force-delete)'":                                         true,
+		"emacsclient -s /tmp/et.ab12/server -e '(server-force-delete \"server\")'":                 true,
+		"emacsclient -s /tmp/et.ab12/server -e '(server-force-delete server-name)'":                true,
+		"emacsclient -s /tmp/et.ab12/server -e '(let ((server-name \"server\")) (server-start))'":  true,
+		"emacsclient -s /tmp/et.ab12/server -e '(setq server-socket-dir \"/x\")' '(server-start)'": true,
+		"emacsclient -s /tmp/et.ab12/server -e '(server-eval-at \"server\" (quote (kill-emacs)))'": true,
+		"emacsclient -s /tmp/et.ab12/server -e '(server-force-delete)'":                            false,
+		"emacsclient -s /tmp/et.ab12/server -e '(server-force-delete \"/tmp/et.ab12/server\")'":    false,
+		"emacsclient -s /tmp/et.ab12/server -e '(server-start nil t)'":                             false,
+		"emacsclient -s /tmp/et.ab12/server -e '(kill-emacs)'":                                     false,
+		"emacsclient -s /tmp/et.ab12/server -e '(+ 1 2)'":                                          false,
+		"emacsclient -e '(restart-emacs)'":                                                         true,
+		"emacsclient -e '(server-mode -1)'":                                                        true,
+		"emacsclient -e '(server-mode)'":                                                           true,
+		"emacsclient -e '(server-stop)'":                                                           true,
+		"emacsclient -e '(delete-process server-process)'":                                         true,
+		"emacsclient -e '(+ 1 2)'":                                                                 false,
+		"emacsclient -s /tmp/et.ab12/server -e '(server-mode -1)'":                                 false,
+		"emacsclient -s /tmp/et.ab12/server -e '(restart-emacs)'":                                  false,
+		"emacsclient-30.2 -e '(kill-emacs)'":                                                       true,
+		"/nix/store/x-emacs/bin/emacsclient30 -e '(server-force-delete)'":                          true,
+		"emacsclient-30.2 -s /tmp/et.ab12/server -e '(kill-emacs)'":                                false,
+	} {
+		if got := judge(t, "/tmp", command) == killEmacs; got != deny {
+			t.Errorf("%q: refused %v, want %v", command, got, deny)
+		}
+	}
+}
+
+// A socket under a test root that links to the operator's is theirs.
+func TestTestEmacsSocketLink(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "et.")
+	if err != nil {
+		t.Skip(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(root) })
+	own := "/usr"
+	link := filepath.Join(root, "server")
+	if err := os.Symlink(own, link); err != nil {
+		t.Fatal(err)
+	}
+	if testEmacsSocket([]string{"-s", link + "/server", "-e", "(kill-emacs)"}) {
+		t.Errorf("a link from %s to %s passes", link, own)
+	}
+	if !testEmacsSocket([]string{"-s", filepath.Join(root, "test", "server"), "-e", "(kill-emacs)"}) {
+		t.Errorf("%s's own socket is refused", root)
 	}
 }
 

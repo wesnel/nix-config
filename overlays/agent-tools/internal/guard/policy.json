@@ -185,7 +185,43 @@
     "scope": "baseline",
     "deny": ["pkill emacs", "killall -9 gpg-agent", "pkill -f 'emacs --daemon'", "gpgconf --kill gpg-agent", "ssh -O exit devbox",
       "launchctl bootout gui/501/org.x", "launchctl kickstart -k gui/501/org.x", "emacsclient -e '(kill-emacs)'"],
-    "allow": ["pkill -f my-test-server", "launchctl list", "emacsclient -e '(+ 1 2)'"]
+    "allow": ["launchctl list", "emacsclient -e '(+ 1 2)'"]
+  },
+  {
+    "why": "A kill by name or pattern can hit processes this session did not start; a kill by PID takes only its own.",
+    "scope": "baseline",
+    "deny": ["pkill -f my-test-server", "killall sleep", "kill 1"],
+    "allow": ["pkill -l", "kill %1"]
+  },
+  {
+    "why": "A PID the shell or xargs fills in is whatever a pattern matched; a kill names its PIDs as numbers.",
+    "scope": "baseline",
+    "deny": ["kill $PID", "kill \"$pid\"", "kill $(pgrep -f my-test-server)", "kill -9 $(pgrep Emacs)", "kill `pgrep sleep`",
+      "pgrep sleep | xargs kill", "pgrep sleep | xargs kill -9", "xargs kill < pids", "kill -9 0x1f4", "kill"],
+    "allow": ["kill -l", "kill %1", "kill -9 %2"]
+  },
+  {
+    "why": "Only a test Emacs this session started is stopped, by its own absolute socket.",
+    "scope": "baseline",
+    "deny": ["emacsclient -s server -e '(kill-emacs)'", "emacsclient --socket-name=server --eval '(kill-emacs)'",
+      "emacsclient -s /tmp/et.ab12/server --socket=server -e '(kill-emacs)'",
+      "emacsclient -s /tmp/et.ab12/server --socket server -e '(kill-emacs)'",
+      "emacsclient -s /tmp/et.ab12/server -f ~/.emacs.d/server/server -e '(kill-emacs)'",
+      "emacsclient --server-file=server -s /tmp/et.ab12/server -e '(kill-emacs)'"],
+    "allow": ["emacsclient -s /tmp/et.ab12/server -e '(kill-emacs)'", "emacsclient -ns/tmp/et.ab12/server -e '(kill-emacs)'",
+      "emacsclient --socket=/tmp/et.ab12/server -e '(kill-emacs)'"]
+  },
+  {
+    "why": "A server is deleted or started only in a test Emacs, by its own socket, and no Lisp sent there names another server.",
+    "scope": "baseline",
+    "deny": ["emacsclient -e '(server-force-delete)'", "emacsclient -e '(server-start)'",
+      "emacsclient -s /tmp/et.ab12/server -e '(server-force-delete \"server\")'",
+      "emacsclient -s /tmp/et.ab12/server -e '(let ((server-name \"server\")) (server-start))'",
+      "emacsclient -s /tmp/et.ab12/server -e '(server-eval-at \"server\" (quote (kill-emacs)))'",
+      "emacsclient -e '(server-mode -1)'", "emacsclient -e '(restart-emacs)'", "emacsclient -e '(server-stop)'"],
+    "allow": ["emacsclient -s /tmp/et.ab12/server -e '(server-force-delete)'",
+      "emacsclient -s /tmp/et.ab12/server -e '(server-start nil t)'",
+      "emacsclient -s /tmp/et.ab12/server -e '(server-mode -1)'"]
   },
   {
     "why": "The home directory, the root, the Nix store and the operator's keys are not the agent's to destroy.",

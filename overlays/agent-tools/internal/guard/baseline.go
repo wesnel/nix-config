@@ -33,8 +33,16 @@ const (
 	rootCommand  = "Anything needing root is the operator's to run. Put the command in your report for the operator, and say its result is unverified."
 	publishing   = "Publishing a package is the operator's step. Build and test it here, and hand the operator the publish command."
 	killing      = "The operator's session depends on that process (Emacs, gpg-agent, ssh, nix-daemon or mcp-proxy). Leave it running, and tell the operator if it needs a restart."
-	destroying   = "This would destroy the home directory, the root filesystem, the Nix store or the operator's keys. Name the exact path inside the workspace you mean, or ask the operator."
-	guardOff     = "The guard and its hooks are the operator's configuration, and stay on. Put the change you want in your report for the operator."
+	// killPattern and killOthers are why a kill of processes this session
+	// did not start is refused: a pattern matches others' processes too.
+	killPattern = "A kill by name or pattern can hit processes this session did not start. Kill the PID you started, as `kill PID`, or ask the operator."
+	killOthers  = "That process is not one this session started. Kill only the PIDs your own commands started, or ask the operator."
+	// killUnseen is why a kill whose PIDs the guard cannot read is refused:
+	// `$(pgrep …)`, `$PID` or xargs fills in whatever a pattern matched.
+	killUnseen = "The guard cannot see which processes a PID filled in by the shell or xargs names. Kill the PID you started, written as a number, as `kill 12345`, or ask the operator."
+	killEmacs  = "Only a test Emacs this session started may be stopped, or its server deleted or restarted, never the operator's daemon, and no Lisp sent to it may name another server. Send it to its own absolute socket under $TMPDIR, /tmp/claude-UID or /tmp/et.*, named by -s alone with no server file, as `emacsclient -s /tmp/et.XXXX/server -e '(kill-emacs)'`."
+	destroying = "This would destroy the home directory, the root filesystem, the Nix store or the operator's keys. Name the exact path inside the workspace you mean, or ask the operator."
+	guardOff   = "The guard and its hooks are the operator's configuration, and stay on. Put the change you want in your report for the operator."
 )
 
 // home is the user's home directory, which ~ and $HOME name.
@@ -196,6 +204,9 @@ func rawPath(word, dir string) string {
 func checkSession(c call, dir string) string {
 	words := c.words
 	name, args := base(words[0]), words[1:]
+	if versionedEmacsclient.MatchString(name) {
+		name = "emacsclient"
+	}
 	for _, w := range words {
 		if reason := checkSecretPath(w, dir); reason != "" {
 			return reason
@@ -382,8 +393,8 @@ func checkSession(c call, dir string) string {
 		}
 	case "pkill", "killall":
 		for _, a := range args {
-			if !strings.HasPrefix(a, "-") && protectedProcess(a) {
-				return killing
+			if !strings.HasPrefix(a, "-") {
+				return killPattern
 			}
 		}
 	case "kill":
@@ -411,8 +422,8 @@ func checkSession(c call, dir string) string {
 			}
 		}
 	case "emacsclient":
-		if strings.Contains(strings.Join(args, " "), "kill-emacs") {
-			return killing
+		if emacsServerCall(args) {
+			return killEmacs
 		}
 	case "emacs", "Emacs":
 		return "A second Emacs, batch or not, runs apart from the operator's daemon and can leave files and state behind for it. " +
@@ -775,15 +786,273 @@ func protectedProcess(name string) bool {
 	return false
 }
 
+// parentOf is pid's parent, by ps, or 0 where ps cannot say; tests replace
+// it.
+var parentOf = func(pid int) int {
+	out, err := exec.Command("ps", "-o", "ppid=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	return n
+}
+
+// commandOf is pid's command name, by ps, or ""; tests replace it.
+var commandOf = func(pid int) string {
+	out, err := exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return ""
+	}
+	return filepath.Base(strings.TrimSpace(string(out)))
+}
+
+// harness is the session's harness process: the nearest ancestor of the
+// guard, which the harness runs as a hook, whose command is claude, codex
+// or node; 0 where there is none.
+var harness = func() int {
+	for pid, n := os.Getppid(), 0; pid > 1 && n < 64; pid, n = parentOf(pid), n+1 {
+		switch commandOf(pid) {
+		case "claude", "codex", "node":
+			return pid
+		}
+	}
+	return 0
+}
+
+// startedHere reports whether pid descends from the session's harness: a
+// process one of this session's commands started.
+func startedHere(pid int) bool {
+	h := harness()
+	if h == 0 {
+		return false
+	}
+	for p, n := parentOf(pid), 0; p > 1 && n < 64; p, n = parentOf(p), n+1 {
+		if p == h {
+			return true
+		}
+	}
+	return false
+}
+
+// emacsclientOptions are emacsclient's long options, each with whether it
+// takes a value, and emacsclientFlags and emacsclientValued its short
+// ones, without and with a value: emacsclient 30's getopt_long table and
+// optstring.
+var (
+	emacsclientOptions = map[string]bool{"no-wait": false, "quiet": false, "suppress-output": false, "eval": false,
+		"help": false, "version": false, "tty": false, "nw": false, "no-window-system": false, "create-frame": false,
+		"reuse-frame": false, "alternate-editor": true, "frame-parameters": true, "timeout": true, "socket-name": true,
+		"server-file": true, "display": true, "parent-id": true, "tramp": true}
+	emacsclientFlags, emacsclientValued = "nqueHVtc", "aFwsfdT"
+)
+
+// emacsclientSockets reads an emacsclient call's options as its
+// getopt_long does, abbreviations, clustered short options and values in
+// the next word included, and returns every socket it names, and whether
+// it names a server file. ok is false where it cannot read an option as
+// emacsclient would.
+func emacsclientSockets(args []string) (sockets []string, serverFile, ok bool) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		next := func() (string, bool) {
+			if i+1 >= len(args) {
+				return "", false
+			}
+			i++
+			return args[i], true
+		}
+		switch {
+		case a == "--":
+			return sockets, serverFile, true
+		case a == "-nw":
+		case strings.HasPrefix(a, "--"):
+			name, value, hasValue := strings.Cut(a[2:], "=")
+			var matches []string
+			for o := range emacsclientOptions {
+				if o == name {
+					matches = []string{o}
+					break
+				}
+				if strings.HasPrefix(o, name) {
+					matches = append(matches, o)
+				}
+			}
+			if len(matches) != 1 {
+				return nil, false, false
+			}
+			o := matches[0]
+			if !emacsclientOptions[o] {
+				continue
+			}
+			if !hasValue {
+				if value, hasValue = next(); !hasValue {
+					return nil, false, false
+				}
+			}
+			switch o {
+			case "socket-name":
+				sockets = append(sockets, value)
+			case "server-file":
+				serverFile = true
+			}
+		case strings.HasPrefix(a, "-") && len(a) > 1:
+			for j := 1; j < len(a); j++ {
+				c := a[j]
+				if strings.IndexByte(emacsclientFlags, c) >= 0 {
+					continue
+				}
+				if strings.IndexByte(emacsclientValued, c) < 0 {
+					return nil, false, false
+				}
+				value := a[j+1:]
+				if value == "" {
+					var has bool
+					if value, has = next(); !has {
+						return nil, false, false
+					}
+				}
+				switch c {
+				case 's':
+					sockets = append(sockets, value)
+				case 'f':
+					serverFile = true
+				}
+				break
+			}
+		}
+	}
+	return sockets, serverFile, true
+}
+
+// testEmacsSocket reports whether an emacsclient call reaches only a test
+// Emacs: every socket it names is absolute and, symlinks resolved and,
+// on darwin, case folded, under $TMPDIR, /tmp/claude-UID or /tmp/et.*,
+// where a test Emacs keeps its own, and not the operator's daemon's; and
+// it names no server file, which reaches a daemon over TCP instead.
+func testEmacsSocket(args []string) bool {
+	sockets, serverFile, ok := emacsclientSockets(args)
+	if !ok || serverFile || len(sockets) == 0 {
+		return false
+	}
+	for _, s := range sockets {
+		if !testSocket(s) {
+			return false
+		}
+	}
+	return true
+}
+
+// versionedEmacsclient is an emacsclient binary named with its version, as
+// emacsclient-30.2.
+var versionedEmacsclient = regexp.MustCompile(`^emacsclient-?[0-9][0-9.]*$`)
+
+// emacsServerCall reports whether an emacsclient call stops Emacs, deletes
+// or starts a server, or sends Lisp that names one, other than a test
+// Emacs's own. Any such form sent anywhere but a test socket reaches the
+// operator's daemon. One that names a server makes even a test Emacs reach
+// theirs: server-eval-at by evaluating there, and the server variables by
+// moving the socket the rest acts on.
+//
+// A lifecycle form sent to a test socket naming no other server acts on
+// that Emacs's own server alone: `(server-mode -1)` there removed the
+// test socket and left the operator's as it was.
+func emacsServerCall(args []string) bool {
+	text := strings.Join(args, " ")
+	if !emacsServerForm.MatchString(text) {
+		return false
+	}
+	return !testEmacsSocket(args) || lispNamesServer(text, false)
+}
+
+// lispNamesServer reports whether Lisp text names a server other than the
+// running Emacs's own: server-eval-at, a server variable, or a
+// server-force-delete whose name is not a test socket's absolute path,
+// as a string. bare says whether a server-force-delete with no name
+// counts, as in a batch Emacs, whose own server is the operator's
+// default one.
+func lispNamesServer(text string, bare bool) bool {
+	if emacsServerNamed.MatchString(text) {
+		return true
+	}
+	for _, m := range emacsForceDelete.FindAllStringSubmatch(text, -1) {
+		if m[1] == "" {
+			if bare {
+				return true
+			}
+			continue
+		}
+		if name, err := strconv.Unquote(m[1]); err != nil || !testSocket(name) {
+			return true
+		}
+	}
+	return false
+}
+
+var (
+	// emacsServerForm is Lisp that stops or restarts Emacs, or deletes,
+	// starts, stops or points at a server.
+	emacsServerForm = regexp.MustCompile(`(kill|restart)-emacs|server-(force-delete|start|stop|shutdown|kill|mode|process|eval-at|name|socket-dir|auth-dir|use-tcp|host|port)\b`)
+	// emacsServerNamed is Lisp that names a server, whatever it does.
+	emacsServerNamed = regexp.MustCompile(`server-(eval-at|name|socket-dir|auth-dir|use-tcp|host|port)\b`)
+	// emacsForceDelete is a server-force-delete, with the name it is given,
+	// if any.
+	emacsForceDelete = regexp.MustCompile(`\(\s*server-force-delete(?:\s+([^\s)][^)]*?))?\s*\)`)
+)
+
+// testSocket reports whether socket is a test Emacs's, as testEmacsSocket
+// says.
+func testSocket(socket string) bool {
+	if !filepath.IsAbs(socket) || socket != filepath.Clean(socket) {
+		return false
+	}
+	fold := func(p string) string {
+		if runtime.GOOS == "darwin" {
+			return strings.ToLower(p)
+		}
+		return p
+	}
+	socket = fold(resolvedPath(socket))
+	below := func(dir string) bool { return strings.HasPrefix(socket, fold(resolvedPath(dir))+"/") }
+	uid := strconv.Itoa(os.Getuid())
+	tmp := filepath.Clean(os.TempDir())
+	for _, own := range []string{filepath.Join(tmp, "emacs"+uid), "/run/user/" + uid + "/emacs"} {
+		if socket == fold(resolvedPath(own)) || below(own) {
+			return false
+		}
+	}
+	if below(tmp) || below("/tmp/claude-"+uid) {
+		return true
+	}
+	rel, ok := strings.CutPrefix(socket, fold(resolvedPath("/tmp"))+"/et.")
+	return ok && strings.Contains(rel, "/") && !strings.HasPrefix(rel, "/")
+}
+
+// resolvedPath is the clean absolute path with the symlinks of its deepest
+// existing directory, or of itself, resolved.
+func resolvedPath(path string) string {
+	rest := ""
+	for p := path; ; p = filepath.Dir(p) {
+		if real, err := filepath.EvalSymlinks(p); err == nil {
+			return filepath.Join(real, rest)
+		}
+		if p == filepath.Dir(p) {
+			return path
+		}
+		rest = filepath.Join(filepath.Base(p), rest)
+	}
+}
+
 // checkKill denies a kill of every process, a process group, or a process
-// the operator's session depends on, which it looks up with ps.
+// this session did not start, which it looks up with ps; and a kill of
+// PIDs it cannot read, any but a literal number or a %job, or none at all
+// as xargs runs it.
 func checkKill(args []string) string {
 	// The signal, if any, comes first; a negative number after it is a
 	// process group.
 	i := 0
 	switch {
 	case len(args) == 0:
-		return ""
+		return killUnseen
 	case args[0] == "-l" || args[0] == "-L":
 		return ""
 	case args[0] == "-s" || args[0] == "-n":
@@ -794,17 +1063,26 @@ func checkKill(args []string) string {
 	if i < len(args) && args[i] == "--" {
 		i++
 	}
-	for _, p := range args[min(i, len(args)):] {
+	pids := args[min(i, len(args)):]
+	if len(pids) == 0 {
+		return killUnseen
+	}
+	for _, p := range pids {
+		if strings.HasPrefix(p, "%") {
+			continue
+		}
 		n, err := strconv.Atoi(p)
 		if err != nil {
-			continue // a job, or a name the shell expands
+			return killUnseen
 		}
 		if n <= 0 {
 			return killing
 		}
-		cmd := exec.Command("ps", "-o", "comm=", "-p", p)
-		if out, err := cmd.Output(); err == nil && protectedProcess(filepath.Base(strings.TrimSpace(string(out)))) {
-			return killing
+		if !startedHere(n) {
+			if protectedProcess(commandOf(n)) {
+				return killing
+			}
+			return killOthers
 		}
 	}
 	return ""
@@ -1566,7 +1844,11 @@ func redirections(words []string) []string {
 // checkFileTool checks a call to a file-editing tool: Claude Code's Edit,
 // Write, MultiEdit and NotebookEdit, and Codex's apply_patch.
 func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
-	for _, c := range fileChanges(tool, toolInput) {
+	changes, err := fileChanges(tool, toolInput)
+	if err != nil {
+		return unreadable
+	}
+	for _, c := range changes {
 		path := expandPath(c.path, dir)
 		if reason := checkSecretPath(path, dir); reason != "" {
 			return reason
@@ -1601,8 +1883,9 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 // the text the call puts in or takes out.
 type change struct{ path, text string }
 
-// fileChanges are the files a call to a file-editing tool writes.
-func fileChanges(tool string, toolInput json.RawMessage) []change {
+// fileChanges are the files a call to a file-editing tool writes, or an
+// error where its input does not decode.
+func fileChanges(tool string, toolInput json.RawMessage) ([]change, error) {
 	var in struct {
 		FilePath     string `json:"file_path"`
 		NotebookPath string `json:"notebook_path"`
@@ -1616,7 +1899,9 @@ func fileChanges(tool string, toolInput json.RawMessage) []change {
 			NewString string `json:"new_string"`
 		} `json:"edits"`
 	}
-	json.Unmarshal(toolInput, &in)
+	if err := json.Unmarshal(toolInput, &in); err != nil {
+		return nil, err
+	}
 	var changes []change
 	if tool == "apply_patch" {
 		var path string
@@ -1645,7 +1930,7 @@ func fileChanges(tool string, toolInput json.RawMessage) []change {
 		}
 		changes = append(changes, change{in.FilePath + in.NotebookPath, text})
 	}
-	return changes
+	return changes, nil
 }
 
 // gitState is where a git command acts and what it finds there: its
@@ -2153,7 +2438,9 @@ func checkExitWorktree(toolInput json.RawMessage, dir string) string {
 		Action         string `json:"action"`
 		DiscardChanges bool   `json:"discard_changes"`
 	}
-	json.Unmarshal(toolInput, &in)
+	if json.Unmarshal(toolInput, &in) != nil {
+		return unreadable
+	}
 	if in.Action != "remove" || !in.DiscardChanges {
 		return ""
 	}

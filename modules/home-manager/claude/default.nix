@@ -79,7 +79,9 @@ with lib; let
   # coordinate-subagents skill starts, linked into ~/.claude/agents, and the
   # headless reviewers git delegate runs from review-agents.json. A
   # reviewer's file names its tools and the hook that keeps it to reading,
-  # `@guard@ guard --reviewer`, @guard@ being pr-loop. Each prompt ends with
+  # `@guard@ guard --reviewer`, @guard@ being pr-loop, with `onFailure:
+  # block`, which Claude Code's frontmatter hooks take as its settings'
+  # hooks do. Each prompt ends with
   # the rules every sub-agent shares, then its contract, if any. A
   # description is plain YAML: no colon followed by a space.
   agentNames = ["builder" "adversarial-reviewer" "design-reviewer" "security-reviewer" "review-guide" "diagrammer"];
@@ -101,7 +103,9 @@ with lib; let
     assert assertMsg (hasPrefix "---\n" text && length pieces > 1) "claude: ./agents/${name}.md has no frontmatter";
     assert assertMsg (field "name" == name) "claude: ./agents/${name}.md is not named ${name}";
     assert assertMsg (field "tools" == null || any (hasSuffix "command: \"${reviewerHook}\"") frontmatter)
-    "claude: ./agents/${name}.md restricts its tools but runs no `guard --reviewer` hook"; {
+    "claude: ./agents/${name}.md restricts its tools but runs no `guard --reviewer` hook";
+    assert assertMsg (field "tools" == null || any (hasSuffix " onFailure: block") frontmatter)
+    "claude: ./agents/${name}.md's `guard --reviewer` hook lacks `onFailure: block`, so a hook that cannot run would let the call through"; {
       inherit field;
       text = text + "\n" + builtins.readFile ./agents/subagent.md + (contracts.${name} or "");
       prompt = concatStringsSep "\n---\n" (tail pieces) + "\n" + builtins.readFile ./agents/subagent.md + (contracts.${name} or "");
@@ -127,6 +131,8 @@ with lib; let
             {
               type = "command";
               command = reviewerHook;
+              # A hook that cannot run denies the call.
+              onFailure = "block";
             }
           ];
         }
@@ -857,13 +863,14 @@ in {
           # worktree and its branch. MCP tools are held to the guard's
           # mcp.json: on a server it lists, reads pass, listed writes ask and
           # the rest are refused; every tool on a server it does not list
-          # asks.
+          # asks. A hook that cannot run, or input it cannot read, denies.
           {
             matcher = "Bash|Monitor|ExitWorktree|Edit|Write|MultiEdit|NotebookEdit|mcp__.*";
             hooks = [
               {
                 type = "command";
                 command = "${getExe' config.wgn.home.llm.agentTools "pr-loop"} guard --baseline";
+                onFailure = "block";
               }
             ];
           }

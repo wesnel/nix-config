@@ -628,7 +628,12 @@ every worktree shares, deleting unpushed history or a worktree's
 uncommitted work, reading credentials or the whole environment, ngrok API writes, running
 with `NGROK_ENV` set to prod or stage however it is set, switching
 the system, root, publishing packages, killing Emacs, gpg-agent, ssh,
-nix-daemon or mcp-proxy, destroying the home directory, the Nix store or
+nix-daemon or mcp-proxy, killing by name or pattern (`pkill`, `killall`)
+or any PID the session's own commands did not start or that is not
+written as a number (`kill $(pgrep …)`, `xargs kill`), stopping or
+restarting an Emacs or deleting, starting or stopping its server other
+than a test one by its own socket, sending a test one Lisp that names
+another server, destroying the home directory, the Nix store or
 your keys, switching its own hooks off, changing agent-tools' config,
 sleeping 30 seconds or more in the
 foreground, and writing a plan's log other than with `agent-plan log`.
@@ -652,7 +657,39 @@ repository state are in `overlays/agent-tools/internal/guard/policy.json`,
 each with a `scope` (`baseline` or `reviewer`) and
 commands it must deny and allow, which the guard's tests hold it to, failing
 on a denial whose reason does not go on to say what to do instead; the rest
-are in the guard's Go tests.
+are in the guard's Go tests. A call whose input the guard cannot read is
+denied, and Claude Code's hooks run with `onFailure: "block"`, so a hook
+that cannot run denies too.
+
+Each rule is held by what each harness has. In Claude Code the sandbox and
+permission rules hold most of them, and the hook catches the spellings they
+cannot see and holds the file tools, which run outside the sandbox; Codex
+has the hook alone:
+
+| Rule | Claude Code | Codex |
+|---|---|---|
+| Credential reads (paths, security, sops -d, op, pass, env dumps) | sandbox denyRead and the hook, one list | hook |
+| sudo, doas, su, pkexec, osascript | hook | hook |
+| darwin-rebuild/nixos-rebuild/home-manager switch, nix profile/copy, nix-env | hook; sandbox (profiles not writable) | hook |
+| Publishing (npm, cargo, twine, gem, docker push, goreleaser) | sandbox egress allowlist, hook, deny rules | hook |
+| NGROK_ENV prod/stage in any form; ngrok API writes | hook (sandbox scrubs the tokens) | hook |
+| Fetch/clone/login over SSH (touch) | sandbox (no SSH_AUTH_SOCK, ~/.ssh, port 22) and hook | hook |
+| Signing commits (touch) | sandbox (~/.gnupg, agent socket) and hook | hook |
+| git push, gh writes, GitHub API/GraphQL writes | sandbox (no credentials), hook, deny rules | hook |
+| git-state rules (main checkout, stash, worktrees, history loss, shared config) | hook | hook |
+| Shell edits of tracked files, rm where trash is | hook | hook |
+| Guard-off writes (settings, hooks, agent-tools config) | hook; sandbox for ~/.claude | hook |
+| Plan logs and files | sandbox denyWrite (Bash), Edit deny rules and hook (file tools) | hook |
+| Destroying home, root, store, keys | sandbox and hook | hook |
+| Kills (protected processes, patterns, others' PIDs) | hook | hook |
+| Long foreground sleeps | hook | hook |
+| Bypass-permissions launches | disableBypassPermissionsMode and hook | hook |
+| ExitWorktree discarding work | hook | (no such tool) |
+| Ownership fence | hook (file tools and shell) | hook |
+| Reviewer read-only | agent tools (Read, Bash, StructuredOutput) and the frontmatter hook | (no role agents) |
+| MCP reads/confirms; unlisted tools refused | hook, permission rules and mcp-proxy's filter | hook and mcp-proxy's filter |
+| Terminal readers | (n/a) | hook |
+| Emacs (forms named as written; Lisp that builds a form's name at run time is not read) | hook | hook |
 
 git itself does not use the keychain's GitHub login:
 `credential."https://github.com".helper` is empty in `wgn.home.git`.

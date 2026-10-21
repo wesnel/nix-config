@@ -67,7 +67,9 @@ const (
 // Main reads one hook event and writes a denial in the caller's format, or
 // nothing to let the call through. `--baseline` is the hook every session
 // runs; `--reviewer` the one a reviewer agent's definition adds beside it,
-// which also keeps the agent to reading.
+// which also keeps the agent to reading. An event it cannot read, or a
+// denial it cannot write, goes to stderr with exit 2, Claude Code's status
+// for a blocked call, and a tool input it cannot read is denied.
 func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	who := baseline
 	switch {
@@ -82,7 +84,8 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	var in input
 	if err := json.NewDecoder(stdin).Decode(&in); err != nil {
-		return 0
+		fmt.Fprintln(stderr, unreadable)
+		return 2
 	}
 	if in.Cwd == "" {
 		in.Cwd, _ = os.Getwd()
@@ -126,10 +129,19 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			decision = "ask"
 		}
 	}
-	json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{
-		"hookEventName": "PreToolUse", "permissionDecision": decision, "permissionDecisionReason": reason}})
+	if err := json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{
+		"hookEventName": "PreToolUse", "permissionDecision": decision, "permissionDecisionReason": reason}}); err != nil {
+		fmt.Fprintln(stderr, reason)
+		return 2
+	}
 	return 0
 }
+
+// unreadable is why a call is denied whose event or tool input the guard
+// cannot decode: it would otherwise judge it as if empty and let it
+// through.
+const unreadable = "The guard cannot read this call's input, so it cannot check it. Make the call again with each " +
+	"argument under its documented name and type, or put the command in your report for the operator."
 
 // CheckBaseline returns why a tool call by an ordinary session, run in the
 // current directory, is denied, or "" to allow it.
@@ -164,14 +176,18 @@ func check(tool string, toolInput json.RawMessage, who role, dir string) string 
 			Command         string `json:"command"`
 			RunInBackground bool   `json:"run_in_background"`
 		}
-		json.Unmarshal(toolInput, &args)
+		if json.Unmarshal(toolInput, &args) != nil {
+			return unreadable
+		}
 		return command(args.Command, 0, who, dir, checkout, args.RunInBackground)
 	case tool == "Monitor":
 		// Claude Code's Monitor runs a command as Bash does.
 		var args struct {
 			Command string `json:"command"`
 		}
-		json.Unmarshal(toolInput, &args)
+		if json.Unmarshal(toolInput, &args) != nil {
+			return unreadable
+		}
 		return command(args.Command, 0, who, dir, checkout, true)
 	case tool == "local_shell":
 		// Codex's local_shell runs an argv, which the guard reads as the
@@ -180,14 +196,18 @@ func check(tool string, toolInput json.RawMessage, who role, dir string) string 
 			Command          json.RawMessage `json:"command"`
 			WorkingDirectory string          `json:"working_directory"`
 		}
-		json.Unmarshal(toolInput, &args)
+		if json.Unmarshal(toolInput, &args) != nil {
+			return unreadable
+		}
 		if filepath.IsAbs(args.WorkingDirectory) {
 			dir = args.WorkingDirectory
 		}
 		var argv []string
 		if json.Unmarshal(args.Command, &argv) != nil {
 			var line string
-			json.Unmarshal(args.Command, &line)
+			if json.Unmarshal(args.Command, &line) != nil {
+				return unreadable
+			}
 			return command(line, 0, who, dir, checkout, false)
 		}
 		quoted := make([]string, len(argv))
@@ -202,7 +222,9 @@ func check(tool string, toolInput json.RawMessage, who role, dir string) string 
 		var args struct {
 			Chars string `json:"chars"`
 		}
-		json.Unmarshal(toolInput, &args)
+		if json.Unmarshal(toolInput, &args) != nil {
+			return unreadable
+		}
 		if reason := command(args.Chars, 0, who, dir, checkout, true); reason != "" {
 			return typed + reason
 		}

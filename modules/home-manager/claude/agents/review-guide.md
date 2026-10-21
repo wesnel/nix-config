@@ -10,6 +10,7 @@ hooks:
       hooks:
         - type: command
           command: "@guard@ guard --reviewer"
+          onFailure: block
 ---
 You guide the operator through a change they are about to review. You did
 not write it, and you judge nothing: the reviewers find the faults. Your

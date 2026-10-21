@@ -646,7 +646,7 @@
       # every server mcp.json lists, each read allowed and each confirm
       # asked, never allowed; no allow rule that a deny rule covers, which
       # deny would override; and the guard's PreToolUse hook matching MCP
-      # tools.
+      # tools, every hook of it blocking when it cannot run.
       checks.claude-settings = let
         ngrok = darwinSystems.ngrok;
         settings = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username}.wgn.home.claude.settings;
@@ -687,6 +687,7 @@
             | select(. as $d | $a | covers($d)) | "allowed but denied: \($a), by \(.)"'
           check 'if (.hooks.PreToolUse | any(.matcher | test("mcp__"))) then empty
             else "no PreToolUse hook matches MCP tools" end'
+          check '.hooks.PreToolUse[].hooks[] | select(.onFailure != "block") | "a PreToolUse hook does not block on failure: \(.command)"'
           [ -z "$failed" ]
           touch $out
         '';
