@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["chunks", "unverified"],
+  "properties": {
+    "chunks": {
+      "type": "array",
+      "description": "The walkthrough, in the order to read it.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "summary", "hunks"],
+        "properties": {
+          "title": {"type": "string", "description": "A few words."},
+          "summary": {"type": "string", "description": "What the chunk does, and why it is there."},
+          "hunks": {
+            "type": "array",
+            "items": {"type": "string", "description": "file:PATH::LINE@SHA, a line of the hunk at TIP, or at BASE for a hunk that only removes lines."}
+          }
+        }
+      }
+    },
+    "unverified": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "What could not be read, and why."
+    }
+  }
+}

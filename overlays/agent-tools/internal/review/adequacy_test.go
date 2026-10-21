@@ -41,7 +41,8 @@ func setUpAdequacy(t *testing.T, verdict string) *adequacyFixture {
 	config := filepath.Join(configHome, "agent-tools", "config.json")
 	os.MkdirAll(filepath.Dir(config), 0o755)
 	os.WriteFile(config, must(json.Marshal(map[string]any{
-		"repos": map[string]any{"o/r": map[string]any{"test": "true", "testFiles": []string{"*_test.txt"}}}})), 0o644)
+		"repos":    map[string]any{"o/r": map[string]any{"test": "true", "testFiles": []string{"*_test.txt"}}},
+		"delegate": map[string]any{"agents": "/store/review-agents.json", "settings": "/store/reviewer-settings.json"}})), 0o644)
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
 	// The test file the last commit adds to, so its tests start at line 2.
 	os.WriteFile(filepath.Join(f.repo, "code_test.txt"), []byte("x\n"), 0o644)

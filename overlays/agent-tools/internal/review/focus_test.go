@@ -64,10 +64,10 @@ func securityPrompt(t *testing.T, prompt string) {
 	}
 }
 
-// claudeArgs are the arguments of the fake claude's nth run.
-func claudeArgs(t *testing.T, f *fixture, n int) []string {
+// claudeArgs are the arguments of the fake claude's nth run as agent.
+func claudeArgs(t *testing.T, f *fixture, agent string, n int) []string {
 	t.Helper()
-	data := string(must(os.ReadFile(filepath.Join(f.log, fmt.Sprintf("claude-args-%d", n)))))
+	data := f.claudeLog(t, agent, fmt.Sprintf("args-%d", n))
 	return strings.Split(strings.TrimSuffix(data, "\x00"), "\x00")
 }
 
@@ -79,14 +79,15 @@ func TestSecurityReviewer(t *testing.T) {
 		"claim": "c", "evidence": "e", "about": nil, "reopens": nil}
 	t.Run("checked", func(t *testing.T) {
 		f := setUp(t, true)
-		f.claudeSays(t, claudeResult(securityReply(finding), "Reviewed."))
+		f.claudeSays(t, "security-reviewer", claudeResult(securityReply(finding), "Reviewed."))
 		code, run, stderr := runDelegate(t, "--reviewer", "security", "--goal", ".git/goal.md", f.base+"..HEAD")
 		out := run.review("security")
 		if code != 3 || out.Focus != "security" || len(out.Findings) != 1 || out.Findings[0]["id"] != "security-1" ||
-			out.Findings[0]["kind"] != "vulnerability" || out.Findings[0]["finding"] != "F1" || len(run.Reviews) != 1 {
+			out.Findings[0]["kind"] != "vulnerability" || out.Findings[0]["finding"] != "F1" || len(run.Reviews) != 2 ||
+			run.Reviews[1].Reviewer != "guide" {
 			t.Fatalf("exit %d, %+v\n%s", code, run, stderr)
 		}
-		args := claudeArgs(t, f, 1)
+		args := claudeArgs(t, f, "security-reviewer", 1)
 		securityPrompt(t, args[len(args)-1])
 		has := func(want ...string) bool {
 			for i := range args {
@@ -109,14 +110,14 @@ func TestSecurityReviewer(t *testing.T) {
 			strings.Contains(args[i+1], `"routes"`) {
 			t.Errorf("schema: %q", args)
 		}
-		env := string(must(os.ReadFile(filepath.Join(f.log, "claude-env-1"))))
+		env := f.claudeLog(t, "security-reviewer", "env-1")
 		if !strings.Contains(env, "\nCLAUDE_CODE_DISABLE_CLAUDE_MDS=1\n") || strings.Contains(env, "\nCLAUDECODE=") {
 			t.Errorf("the reviewer's environment:\n%s", env)
 		}
-		if head := strings.TrimSpace(string(must(os.ReadFile(filepath.Join(f.log, "claude-head"))))); head != f.tip {
+		if head := strings.TrimSpace(f.claudeLog(t, "security-reviewer", "head")); head != f.tip {
 			t.Errorf("the reviewer ran at %s, not TIP %s", head, f.tip)
 		}
-		if files := string(must(os.ReadFile(filepath.Join(f.log, "claude-files")))); strings.Contains(files, "notes.md") {
+		if files := f.claudeLog(t, "security-reviewer", "files"); strings.Contains(files, "notes.md") {
 			t.Errorf("the reviewer could see the uncommitted notes: %s", files)
 		}
 		f.checkCleanedUp(t)
@@ -141,22 +142,22 @@ func TestSecurityReviewer(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := setUp(t, true)
-			f.claudeSays(t, c.outs...)
+			f.claudeSays(t, "security-reviewer", c.outs...)
 			code, run, stderr := runDelegate(t, "--reviewer", "security", "--goal", ".git/goal.md", f.base+"..HEAD")
 			if code != c.code {
 				t.Fatalf("exit %d, want %d\n%s", code, c.code, stderr)
 			}
-			if runs := strings.TrimSpace(string(must(os.ReadFile(filepath.Join(f.log, "claude-runs"))))); runs != c.runs {
+			if runs := strings.TrimSpace(f.claudeLog(t, "security-reviewer", "runs")); runs != c.runs {
 				t.Errorf("claude ran %s times, want %s", runs, c.runs)
 			}
 			if c.runs == "2" {
-				args := claudeArgs(t, f, 2)
+				args := claudeArgs(t, f, "security-reviewer", 2)
 				if !strings.Contains(args[len(args)-1], "Your last reply could not be used") {
 					t.Errorf("the rerun was not told why")
 				}
 			}
 			rec := must(record.ReadRange(run.Record))
-			if c.code == 4 && (len(rec.Rounds) != 1 || len(rec.Rounds[0].Dropped) != 3 || len(rec.Findings) != 0) {
+			if c.code == 4 && (len(rec.Rounds) != 2 || len(rec.Rounds[0].Dropped) != 3 || len(rec.Findings) != 0) {
 				t.Errorf("the dropped replies are not in the record: %+v", rec.Rounds)
 			}
 			f.checkCleanedUp(t)
@@ -168,7 +169,7 @@ func TestSecurityReviewer(t *testing.T) {
 		writeConfig(t, `{}`)
 		t.Setenv("AGENT_TOOLS_CONFIG", filepath.Join(t.TempDir(), "none.json"))
 		code, run, stderr := runDelegate(t, "--reviewer", "security", "--goal", ".git/goal.md", f.base+"..HEAD")
-		if code != 4 || len(run.NotRun) != 1 || !strings.Contains(run.NotRun[0]["why"], "delegate.agents") {
+		if code != 4 || len(run.NotRun) != 2 || !strings.Contains(run.NotRun[0]["why"], "delegate.agents") {
 			t.Errorf("exit %d, %+v\n%s", code, run, stderr)
 		}
 	})

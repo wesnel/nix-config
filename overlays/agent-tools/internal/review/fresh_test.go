@@ -88,19 +88,25 @@ EOF
 esac
 `
 
-// fakeClaude stands in for `claude`: it records each run's arguments,
-// NUL-separated, its environment and where it ran, and prints the result
-// document $FAKE_CLAUDE_LOG/claude-out-N for its Nth run, else claude-out.
+// fakeClaude stands in for `claude`: for the agent --agent names, it
+// records each run's arguments, NUL-separated, its environment, the commit
+// and the files where it ran, and prints the result document
+// $FAKE_CLAUDE_LOG/AGENT-out-N for its Nth run, else AGENT-out.
 const fakeClaude = `#!/bin/sh
 log=$FAKE_CLAUDE_LOG
-n=$(( $(cat "$log/claude-runs" 2>/dev/null || echo 0) + 1 ))
-echo $n > "$log/claude-runs"
-printf '%s\0' "$@" > "$log/claude-args-$n"
-env > "$log/claude-env-$n"
-pwd > "$log/claude-cwd"
-git rev-parse HEAD > "$log/claude-head" 2>/dev/null
-ls -A > "$log/claude-files"
-if [ -f "$log/claude-out-$n" ]; then cat "$log/claude-out-$n"; else cat "$log/claude-out"; fi
+agent=
+prev=
+for a in "$@"; do
+  if [ "$prev" = --agent ]; then agent=$a; fi
+  prev=$a
+done
+n=$(( $(cat "$log/$agent-runs" 2>/dev/null || echo 0) + 1 ))
+echo $n > "$log/$agent-runs"
+printf '%s\0' "$@" > "$log/$agent-args-$n"
+env > "$log/$agent-env-$n"
+git rev-parse HEAD > "$log/$agent-head" 2>/dev/null
+ls -A > "$log/$agent-files"
+if [ -f "$log/$agent-out-$n" ]; then cat "$log/$agent-out-$n"; else cat "$log/$agent-out"; fi
 `
 
 // claudeResult is a result document as `claude -p --output-format json`
@@ -115,14 +121,20 @@ func claudeResult(structured any, result string) string {
 	return string(must(json.Marshal(doc)))
 }
 
-// claudeSays has the fake claude print outs, the Nth for its Nth run and
-// the last for every run after.
-func (f *fixture) claudeSays(t *testing.T, outs ...string) {
+// claudeSays has the fake claude print outs as agent, the Nth for its Nth
+// run and the last for every run after.
+func (f *fixture) claudeSays(t *testing.T, agent string, outs ...string) {
 	t.Helper()
 	for i, out := range outs {
-		os.WriteFile(filepath.Join(f.log, fmt.Sprintf("claude-out-%d", i+1)), []byte(out), 0o644)
+		os.WriteFile(filepath.Join(f.log, fmt.Sprintf("%s-out-%d", agent, i+1)), []byte(out), 0o644)
 	}
-	os.WriteFile(filepath.Join(f.log, "claude-out"), []byte(outs[len(outs)-1]), 0o644)
+	os.WriteFile(filepath.Join(f.log, agent+"-out"), []byte(outs[len(outs)-1]), 0o644)
+}
+
+// claudeLog is the fake claude's file name as agent.
+func (f *fixture) claudeLog(t *testing.T, agent, name string) string {
+	t.Helper()
+	return string(must(os.ReadFile(filepath.Join(f.log, agent+"-"+name))))
 }
 
 // securityReply is a security reply naming every category as checked,
@@ -178,7 +190,8 @@ func setUp(t *testing.T, withCodex bool) *fixture {
 	f := &fixture{repo: t.TempDir(), log: t.TempDir()}
 	t.Setenv("FAKE_CODEX_LOG", f.log)
 	t.Setenv("FAKE_CLAUDE_LOG", f.log)
-	f.claudeSays(t, claudeResult(securityReply(), "Reviewed."))
+	f.claudeSays(t, "security-reviewer", claudeResult(securityReply(), "Reviewed."))
+	f.claudeSays(t, "review-guide", claudeResult(map[string]any{"chunks": []any{}, "unverified": []any{}}, "Walked."))
 	run(t, f.repo, "git", "init", "-q", "-b", "main")
 	run(t, f.repo, "git", "remote", "add", "origin", "https://github.com/o/r.git")
 	os.WriteFile(filepath.Join(f.repo, "code.txt"), []byte("a\n"), 0o644)
@@ -551,10 +564,8 @@ func testRedCheckNotOnHost(t *testing.T) {
 			f := setUp(t, true)
 			t.Setenv("FAKE_CODEX", "none")
 			marker := filepath.Join(t.TempDir(), "ran")
-			config := filepath.Join(t.TempDir(), "config.json")
-			os.WriteFile(config, []byte(`{"repos": {"o/r": {"test": "touch `+marker+`; false", "build": "touch `+marker+`", `+
-				`"testFiles": ["*_test.txt"]}}}`), 0o644)
-			t.Setenv("AGENT_TOOLS_CONFIG", config)
+			writeConfig(t, `{"o/r": {"test": "touch `+marker+`; false", "build": "touch `+marker+`", `+
+				`"testFiles": ["*_test.txt"]}}`)
 			os.WriteFile(filepath.Join(f.repo, "code.txt"), []byte("a\nb\nc\nd\n"), 0o644)
 			os.WriteFile(filepath.Join(f.repo, "code_test.txt"), []byte("d\n"), 0o644)
 			run(t, f.repo, "git", "add", "code.txt", "code_test.txt")

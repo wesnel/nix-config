@@ -74,12 +74,12 @@ func TestAsk(t *testing.T) {
 	// A Claude type answers in the same copies, headless.
 	t.Run("a Claude reviewer", func(t *testing.T) {
 		f := askFixture(t, true)
-		f.claudeSays(t, claudeResult(map[string]any{"answer": "Keep it in the flag set.", "unverified": []string{}}, "done"))
+		f.claudeSays(t, "security-reviewer", claudeResult(map[string]any{"answer": "Keep it in the flag set.", "unverified": []string{}}, "done"))
 		code, out, stderr := askCodex(t, "--reviewer", "security", "--question", ".git/question.md", "code.txt")
 		if code != 0 || out["answer"] != "Keep it in the flag set." || out["reviewer"] != "security" {
 			t.Fatalf("exit %d, %v\n%s", code, out, stderr)
 		}
-		if files := strings.Fields(string(must(os.ReadFile(filepath.Join(f.log, "claude-files"))))); strings.Join(files, " ") != ".git code.txt" {
+		if files := strings.Fields(f.claudeLog(t, "security-reviewer", "files")); strings.Join(files, " ") != ".git code.txt" {
 			t.Errorf("the reviewer saw %v, not the named file alone", files)
 		}
 		f.checkCleanedUp(t)

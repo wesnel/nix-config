@@ -47,7 +47,8 @@ func numbered(prefix string, ids []string) int {
 // writeRuns adds each run to the range's record as a round, with its
 // findings under IDs of the record's own; a red-check finding keeps its
 // RC- ID, and one the record already holds is not added again. It gives
-// each finding in the runs' output its record ID.
+// each finding in the runs' output its record ID. The guide's walkthrough
+// replaces the record's.
 func writeRuns(path string, s *source, r *span, title string, runs []*typeRun, now time.Time) (*record.Range, error) {
 	var kept record.Range
 	err := record.Update(path, func(rec *record.Range) error {
@@ -67,6 +68,9 @@ func writeRuns(path string, s *source, r *span, title string, runs []*typeRun, n
 				round.RedCheck = "session"
 			}
 			if out := run.out; out != nil {
+				if out.Walkthrough != nil {
+					rec.Walkthrough = walkthroughOf(out.Walkthrough)
+				}
 				round.Unverified = out.Unverified
 				for _, d := range out.Dropped {
 					round.Dropped = append(round.Dropped, string(d.Finding)+"\n"+d.Reason)

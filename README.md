@@ -249,7 +249,10 @@ kept out, their agents from the store's `review-agents.json` and their
 sandbox from `reviewer-settings.json`, so no settings, hooks, agents or MCP
 servers of yours or of the reviewed project reach them. Each reply is held
 to its schema, and asked for once more where it does not fit. Findings that
-point at no line at the tip are dropped with the reason.
+point at no line at the tip are dropped with the reason. Every review ends
+with the `review-guide` agent's walkthrough: the change's hunks in chunks,
+in the order to read them, each hunk cited at the tip, and every hunk no
+chunk cites listed as dropped.
 
 Every reviewer gets a worktree of its own under
 `$XDG_CACHE_HOME/pr-review/OWNER/NAME/work/`, made without your git config,

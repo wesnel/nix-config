@@ -431,6 +431,8 @@ type Output struct {
 	Routes []routes.Route `json:"routes,omitempty"`
 	// Focus is a focused review's route.
 	Focus string `json:"focus,omitempty"`
+	// Walkthrough is the guide's, in the order to read the change.
+	Walkthrough []Chunk `json:"walkthrough,omitempty"`
 	// proposed are the routes the reviewer's reply named.
 	proposed []proposedRoute
 }

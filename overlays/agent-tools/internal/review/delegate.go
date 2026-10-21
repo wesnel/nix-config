@@ -61,6 +61,11 @@ TYPEs (--reviewer, repeated):
             the operator's threat notes and the open branches that change the
             same files. Its reply must name every category of its checklist
             as checked.
+  guide     the walkthrough, by Claude Code's review-guide agent, headless
+            as security is: the change's hunks in chunks, in the order to
+            read them, each hunk cited as file:PATH::LINE@SHA. A citation of
+            no hunk, and a hunk no chunk cites, are dropped. It always runs,
+            last, and its walkthrough replaces the record's.
 With no --reviewer, codex runs, with each type its route scan picks; it
 says on stderr what it picked and why.
 
@@ -111,12 +116,13 @@ record's counts. Exit status:
 `
 
 // reviewerType is a TYPE: the engine that runs it and, for a focused
-// review, its focus.
+// review, its focus. The guide writes the walkthrough, and finds nothing.
 type reviewerType struct {
 	claude bool
 	// agent is its agent in review-agents.json.
 	agent string
 	focus string
+	guide bool
 }
 
 // reviewerTypes are the TYPEs, by name. Each route of routes.Known names
@@ -124,6 +130,7 @@ type reviewerType struct {
 var reviewerTypes = map[string]reviewerType{
 	"codex":    {},
 	"security": {claude: true, agent: "security-reviewer", focus: "security"},
+	"guide":    {claude: true, agent: "review-guide", guide: true},
 }
 
 // typeList is a repeated --reviewer.
@@ -279,7 +286,9 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			fmt.Fprintf(stderr, "%s: reviewing for %s too: %s\n", name, rt.Route, strings.Join(rt.Why, "; "))
 		}
 	}
-	chosen = slices.Compact(chosen)
+	// The walkthrough comes with every review, after the reviewers.
+	chosen = slices.DeleteFunc(chosen, func(t string) bool { return t == "guide" })
+	chosen = append(slices.Compact(chosen), "guide")
 
 	result := &RunResult{Source: s.given, Range: r.base + ".." + r.tip, Tip: r.tip, Record: path, Reviews: []*Output{},
 		NotRun: []NotRun{}, Routes: scanned}
@@ -336,6 +345,10 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 func typeInputs(base inputs, t string, tests *adequacy) (inputs, error) {
 	in := base
 	ty := reviewerTypes[t]
+	if ty.guide {
+		in.contract, in.prior = guideContract, ""
+		return in, nil
+	}
 	if ty.focus == "" {
 		in.redCheck, in.adequacy = tests.text, tests.prompt()+sharedPrompt(in.r)
 		return in, nil
@@ -360,7 +373,7 @@ func typeInputs(base inputs, t string, tests *adequacy) (inputs, error) {
 func runType(ctx context.Context, s *source, r *span, base inputs, t string, tests *adequacy, implicit bool, model string,
 	timeout time.Duration, log io.Writer) *typeRun {
 	ty := reviewerTypes[t]
-	run := &typeRun{name: t, redCheck: ty.focus == "" && tests.given}
+	run := &typeRun{name: t, redCheck: ty.focus == "" && !ty.guide && tests.given}
 	if ty.claude {
 		run.why = claudeMissing()
 	} else {
@@ -380,8 +393,11 @@ func runType(ctx context.Context, s *source, r *span, base inputs, t string, tes
 		fc = &f
 	}
 	schema := Schema
-	if fc != nil {
+	switch {
+	case fc != nil:
 		schema = fc.schema()
+	case ty.guide:
+		schema = guideSchema
 	}
 	in.where = "The working directory is a checkout of TIP holding nothing but the commits; `git diff " +
 		r.base + " " + r.tip + "` shows the change."
@@ -412,6 +428,9 @@ func runType(ctx context.Context, s *source, r *span, base inputs, t string, tes
 			remove()
 			run.why = err.Error()
 			return run
+		case ty.guide:
+			run.model = reply.Model
+			out, err = validateGuide(reply.Text, r)
 		default:
 			run.model = reply.Model
 			out, err = validate(reply.Text, r, wt, ty.focus, fc)
@@ -422,7 +441,7 @@ func runType(ctx context.Context, s *source, r *span, base inputs, t string, tes
 			if reply.Model != "" {
 				out.Model = &reply.Model
 			}
-			if ty.focus == "" {
+			if ty.focus == "" && !ty.guide {
 				tests.add(out)
 				out.Routes = routeChange(r, out, log)
 			}
