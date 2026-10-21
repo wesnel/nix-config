@@ -10,7 +10,9 @@
 // the log, only event kinds and times. No other property, section, drawer
 // or log text is read into a document. Outside the plans directory, only
 // the newest digests are read, whole, from digests/ in the notes
-// repository. Free text is stripped of control
+// repository, and for each pull request GitHub's status lists, this host's
+// review records of it, of which only counts and the diagrams' Mermaid
+// leave it (review.go). Free text is stripped of control
 // and formatting characters, has known secret shapes redacted and is
 // capped in runes, and lists are capped, so that a document stays within
 // maxDoc. Redaction knows shapes, not data: what must not reach claude.ai
@@ -166,6 +168,19 @@ type PR struct {
 	// Parent is the number of the pull request in Mine this one is stacked
 	// on, or 0.
 	Parent int `json:"parent"`
+	// RecordExists is whether a review record of it exists on this host,
+	// and the rest what it holds (review.go).
+	RecordExists     bool            `json:"recordExists"`
+	RecordFindings   []FindingCount  `json:"recordFindings"`
+	RecordThreads    int             `json:"recordThreads"`
+	RecordUnanswered int             `json:"recordUnanswered"`
+	RecordDrafted    int             `json:"recordDrafted"`
+	RecordDiagrams   []ReviewDiagram `json:"recordDiagrams"`
+}
+
+func (p *PR) setReview(s reviewSummary) {
+	p.RecordExists, p.RecordFindings, p.RecordThreads, p.RecordUnanswered, p.RecordDrafted, p.RecordDiagrams =
+		s.exists, s.findings, s.threads, s.unanswered, s.drafted, s.diagrams
 }
 
 // Request is status.Request, Requested RFC 3339 or "".
@@ -182,6 +197,18 @@ type Request struct {
 	// Parent is the number of the request in Requests this one is stacked
 	// on, or 0.
 	Parent int `json:"parent"`
+	// The Record* fields are PR's: a review record of any of its heads.
+	RecordExists     bool            `json:"recordExists"`
+	RecordFindings   []FindingCount  `json:"recordFindings"`
+	RecordThreads    int             `json:"recordThreads"`
+	RecordUnanswered int             `json:"recordUnanswered"`
+	RecordDrafted    int             `json:"recordDrafted"`
+	RecordDiagrams   []ReviewDiagram `json:"recordDiagrams"`
+}
+
+func (r *Request) setReview(s reviewSummary) {
+	r.RecordExists, r.RecordFindings, r.RecordThreads, r.RecordUnanswered, r.RecordDrafted, r.RecordDiagrams =
+		s.exists, s.findings, s.threads, s.unanswered, s.drafted, s.diagrams
 }
 
 // Today is the document today/digest: the newest day's demo digest of the
@@ -462,25 +489,31 @@ var (
 )
 
 // GitHubOf is status.GitHubAt's result through cache, as at now, keeping
-// only the pull requests whose keys and heads have their shapes.
+// only the pull requests whose keys and heads have their shapes, each with
+// its review record's summary.
 func GitHubOf(ctx context.Context, cache string, now time.Time) (GitHub, error) {
 	g := GitHub{Schema: agentplans.Schema, Mine: []PR{}, Requests: []Request{}}
 	got, stale, err := status.GitHubAt(ctx, cache, now)
 	if got == nil {
 		return g, err
 	}
+	budget := diagramBudget
 	g.At, g.Stale, g.MineTotal, g.RequestsTotal = stamp(got.At), stale, got.MineTotal, got.RequestsTotal
 	for _, p := range got.Mine {
 		if slug.MatchString(p.Repo) && p.Number > 0 {
-			g.Mine = append(g.Mine, PR{Repo: p.Repo, Number: p.Number, Title: text(p.Title, short), Draft: p.Draft,
-				CI: enum(p.CI), Review: enum(p.Review), Unresolved: p.Unresolved, Parent: max(p.Parent, 0)})
+			pr := PR{Repo: p.Repo, Number: p.Number, Title: text(p.Title, short), Draft: p.Draft,
+				CI: enum(p.CI), Review: enum(p.Review), Unresolved: p.Unresolved, Parent: max(p.Parent, 0)}
+			pr.setReview(reviewOf(p.Repo, p.Number, &budget))
+			g.Mine = append(g.Mine, pr)
 		}
 	}
 	for _, r := range got.Requests {
 		if slug.MatchString(r.Repo) && r.Number > 0 && fullHead.MatchString(r.Head) {
-			g.Requests = append(g.Requests, Request{Repo: r.Repo, Number: r.Number, Title: text(r.Title, short),
+			req := Request{Repo: r.Repo, Number: r.Number, Title: text(r.Title, short),
 				Draft: r.Draft, Team: r.Team, Requested: stamp(r.Requested), Head: r.Head, CI: enum(r.CI),
-				Record: enum(r.Record), Parent: max(r.Parent, 0)})
+				Record: enum(r.Record), Parent: max(r.Parent, 0)}
+			req.setReview(reviewOf(r.Repo, r.Number, &budget))
+			g.Requests = append(g.Requests, req)
 		}
 	}
 	return g, err

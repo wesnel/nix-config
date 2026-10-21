@@ -15,7 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/agentplans"
 	"github.com/wesnel/agent-tools/internal/plans"
+	"github.com/wesnel/agent-tools/internal/record"
 )
 
 var day = time.Date(2026, 10, 14, 13, 5, 0, 0, time.Local)
@@ -68,8 +70,8 @@ const reply = `{"data": {
 }}`
 
 // fakeGitHub puts a gh on PATH that answers `gh api graphql` with reply,
-// or fails where $FAKE_GH_FAIL is set, and puts a review record of p/q#3's
-// head in the records' directory under a new $XDG_STATE_HOME.
+// or fails where $FAKE_GH_FAIL is set, and puts review records of p/q#3
+// and o/r#7 in the records' directory under a new $XDG_STATE_HOME.
 func fakeGitHub(t *testing.T) {
 	t.Helper()
 	bin := t.TempDir()
@@ -80,11 +82,65 @@ func fakeGitHub(t *testing.T) {
 	os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0o755)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("FAKE_GH_FAIL", "")
-	state := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", state)
-	record := filepath.Join(state, "agent-tools", "reviews", "p", "q", strings.Repeat("0", 40)+".."+head+".org")
-	os.MkdirAll(filepath.Dir(record), 0o755)
-	os.WriteFile(record, []byte(`{"note": "SENTINEL-record"}`), 0o644)
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	writeRecords(t)
+}
+
+// reviewDiagram is a diagram's JSON at head, one label holding a token.
+func reviewDiagram() string {
+	cite := `{"path": "x.go", "line": 1, "endLine": null, "symbol": "Load"}`
+	return `{"kind": "component", "title": "SENTINEL-diagram-title", "at": "` + head + `", "nodes": [` +
+		`{"id": "N1", "label": "Load", "cite": ` + cite + `, "planned": null},` +
+		`{"id": "N2", "label": "Use ` + fakeToken + `", "cite": ` + cite + `, "planned": null}], "edges": [` +
+		`{"id": "E1", "from": "N1", "to": "N2", "label": "calls", "cite": ` + cite + `, "planned": null}]}`
+}
+
+// writeRecords writes git delegate's and pr-loop's records of p/q#3, a
+// review request, and o/r#7, one of the operator's, every text in them a
+// sentinel's.
+func writeRecords(t *testing.T) {
+	t.Helper()
+	finding := func(id string, s record.State) record.Finding {
+		return record.Finding{ID: id, State: s, Title: "SENTINEL-finding-title", Reviewer: "codex", Round: 1, Kind: "bug",
+			Evidence: "SENTINEL-evidence"}
+	}
+	for _, r := range []struct {
+		owner, repo string
+		pr          int
+		rec         record.Range
+	}{
+		{"p", "q", 3, record.Range{Title: "SENTINEL-range-title",
+			Walkthrough: []record.Chunk{{ID: "C1", Title: "SENTINEL-chunk", Summary: "SENTINEL-summary"}},
+			// D3's critique did not pass it, so the page leaves it out.
+			Diagrams: []record.Diagram{{ID: "D1", Title: "SENTINEL-diagram", Verdict: "holds", JSON: reviewDiagram()},
+				{ID: "D3", Title: "SENTINEL-diagram", Verdict: "unresolved", JSON: reviewDiagram()}},
+			Findings: []record.Finding{finding("F1", record.Open), finding("F2", record.Rebut)}}},
+		{"o", "r", 7, record.Range{Title: "SENTINEL-mine", Findings: []record.Finding{finding("F1", record.Fix)},
+			Diagrams: []record.Diagram{{ID: "D2", Title: "SENTINEL-diagram", Verdict: "corrected", JSON: reviewDiagram()}}}},
+	} {
+		path, err := record.RangeFile(r.owner, r.repo, strings.Repeat("0", 40), head)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := r.rec
+		rec.Repo, rec.Base, rec.Head, rec.PR, rec.Updated = r.owner+"/"+r.repo, strings.Repeat("0", 40), head, r.pr, day
+		if err := record.Update(path, func(got *record.Range) error { *got = rec; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		if path, err = record.PRFile(r.owner, r.repo, r.pr); err != nil {
+			t.Fatal(err)
+		}
+		comment := []record.Comment{{Author: "alice", Type: "User", Body: "SENTINEL-comment"}}
+		if err := record.Update(path, func(p *record.PR) error {
+			*p = record.PR{Repo: r.owner + "/" + r.repo, Number: r.pr, Updated: day, Threads: []record.Thread{
+				{ID: "T1", Comments: comment},
+				{ID: "T2", Comments: comment, Draft: &record.Draft{Outcome: "fix", Body: "SENTINEL-draft"}},
+			}}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 // under puts text after the line heading in file.
@@ -248,10 +304,16 @@ var allowed = map[string][]string{
 		"questions[].options[].why", "questions[].options[].recommended"},
 	"github": {"schema", "at", "stale", "mineTotal", "requestsTotal",
 		"mine", "mine[].repo", "mine[].number", "mine[].title", "mine[].draft", "mine[].ci", "mine[].review",
-		"mine[].unresolved", "mine[].parent",
+		"mine[].unresolved", "mine[].parent", "mine[].recordExists", "mine[].recordFindings",
+		"mine[].recordFindings[].state", "mine[].recordFindings[].count", "mine[].recordThreads", "mine[].recordUnanswered",
+		"mine[].recordDrafted", "mine[].recordDiagrams", "mine[].recordDiagrams[].id", "mine[].recordDiagrams[].kind",
+		"mine[].recordDiagrams[].source",
 		"requests", "requests[].repo", "requests[].number", "requests[].title", "requests[].draft",
 		"requests[].team", "requests[].requested", "requests[].head", "requests[].ci", "requests[].record",
-		"requests[].parent"},
+		"requests[].parent", "requests[].recordExists", "requests[].recordFindings", "requests[].recordFindings[].state",
+		"requests[].recordFindings[].count", "requests[].recordThreads", "requests[].recordUnanswered",
+		"requests[].recordDrafted", "requests[].recordDiagrams", "requests[].recordDiagrams[].id",
+		"requests[].recordDiagrams[].kind", "requests[].recordDiagrams[].source"},
 	"meta":  {"schema", "updated", "host", "repo", "pushed", "unsynced", "fetched", "failed"},
 	"today": {"schema", "date", "digests", "digests[].kind", "digests[].text"},
 }
@@ -423,7 +485,7 @@ func TestExport(t *testing.T) {
 		t.Fatalf("plans %+v", e.Plans)
 	}
 	got := e.Plans[1]
-	want := Plan{Schema: 1, ID: own.Name, Title: "Rotate [REDACTED GitHub token]", Goal: "Run the loop. password=[REDACTED]",
+	want := Plan{Schema: agentplans.Schema, ID: own.Name, Title: "Rotate [REDACTED GitHub token]", Goal: "Run the loop. password=[REDACTED]",
 		Status: "planning", Host: "box", Updated: day.Format(time.RFC3339),
 		Steps: []Step{{ID: "S1", Order: 0, Title: "Write the loop", Keyword: "STARTED", Ready: true},
 			{ID: "S2", Order: 1, Title: "Test the loop", Keyword: "TODO"},
@@ -445,17 +507,29 @@ func TestExport(t *testing.T) {
 		t.Errorf("sync %+v", s)
 	}
 	g := e.GitHub
+	// A diagram's labels redacted and cleaned, its title left out.
+	source := "flowchart LR\n    N1[\"Load\"]\n    N2[\"Use REDACTED GitHub token\"]\n    N1 -->|\"calls\"| N2\n"
+	none := func(p *PR) { p.RecordFindings, p.RecordDiagrams = []FindingCount{}, []ReviewDiagram{} }
+	noneReq := func(r *Request) { r.RecordFindings, r.RecordDiagrams = []FindingCount{}, []ReviewDiagram{} }
 	wantMine := []PR{{Repo: "o/r", Number: 7, Title: "Add the loop [REDACTED GitHub token]", Draft: true, CI: "success",
-		Review: "approved", Unresolved: 1}, {Repo: "o/r", Number: 8, Title: "Test the loop", CI: "none", Review: "none", Parent: 7}}
+		Review: "approved", Unresolved: 1, RecordExists: true, RecordFindings: []FindingCount{{State: "FIX", Count: 1}},
+		RecordThreads: 2, RecordUnanswered: 1, RecordDrafted: 1,
+		RecordDiagrams: []ReviewDiagram{{ID: "D2", Kind: "component", Source: source}}},
+		{Repo: "o/r", Number: 8, Title: "Test the loop", CI: "none", Review: "none", Parent: 7}}
+	none(&wantMine[1])
 	wantRequests := []Request{{Repo: "p/q", Number: 3, Title: "Fix the parser", Draft: true, Team: true,
-		Requested: "2026-10-13T09:00:00Z", Head: head, CI: "failure", Record: "yes"},
+		Requested: "2026-10-13T09:00:00Z", Head: head, CI: "failure", Record: "yes", RecordExists: true,
+		RecordFindings: []FindingCount{{State: "OPEN", Count: 1}, {State: "REBUT", Count: 1}},
+		RecordThreads:  2, RecordUnanswered: 1, RecordDrafted: 1,
+		RecordDiagrams: []ReviewDiagram{{ID: "D1", Kind: "component", Source: source}}},
 		{Repo: "p/q", Number: 4, Title: "Test the parser", Team: true, Requested: "2026-10-09T09:00:00Z", Head: head2,
 			CI: "none", Record: "no", Parent: 3}}
-	if g.Schema != 1 || g.At != day.Format(time.RFC3339) || g.Stale || !reflect.DeepEqual(g.Mine, wantMine) ||
+	noneReq(&wantRequests[1])
+	if g.Schema != agentplans.Schema || g.At != day.Format(time.RFC3339) || g.Stale || !reflect.DeepEqual(g.Mine, wantMine) ||
 		!reflect.DeepEqual(g.Requests, wantRequests) || g.MineTotal != 2 || g.RequestsTotal != 2 {
 		t.Errorf("github %+v", g)
 	}
-	wantToday := Today{Schema: 1, Date: "2026-10-13",
+	wantToday := Today{Schema: agentplans.Schema, Date: "2026-10-13",
 		Digests: []Digest{{Kind: "demo", Text: "* Yesterday\n- Shipped the loop [REDACTED GitHub token]."}}}
 	if !reflect.DeepEqual(e.Today, wantToday) {
 		t.Errorf("today %+v, want %+v", e.Today, wantToday)
@@ -472,7 +546,7 @@ func TestToday(t *testing.T) {
 		write(t, filepath.Join(digests, name), body)
 	}
 	got, err := TodayOf(c, day)
-	want := Today{Schema: 1, Date: "2026-10-09", Digests: []Digest{{"demo", "demo"}}}
+	want := Today{Schema: agentplans.Schema, Date: "2026-10-09", Digests: []Digest{{"demo", "demo"}}}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Errorf("today %+v (%v), want %+v", got, err, want)
 	}

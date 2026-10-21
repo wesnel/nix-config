@@ -7,7 +7,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -178,44 +177,9 @@ func priorText(path string, s *source) (string, error) {
 }
 
 // newestForPR is the newest range record of s's pull request but the one
-// at except, with its path; nil where there is none. A record of the pull
-// request that fails its structure check fails it with a *DriftError, as
-// its time is unknown; one of another is passed over.
+// at except, with its path, as record.NewestRange finds it.
 func newestForPR(s *source, except string) (*record.Range, string, error) {
-	dir := filepath.Join(record.Dir(), s.owner, s.repo)
-	entries, err := os.ReadDir(dir)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, "", nil
-	}
-	if err != nil {
-		return nil, "", err
-	}
-	var newest *record.Range
-	var newestPath string
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".org") || strings.HasPrefix(e.Name(), "pr-") ||
-			strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		path := filepath.Join(dir, e.Name())
-		if path == except {
-			continue
-		}
-		rec, err := record.ReadRange(path)
-		var drift *record.DriftError
-		if errors.As(err, &drift) {
-			if data, _ := os.ReadFile(path); strings.Contains(string(data), "\n:PR: "+strconv.Itoa(s.number)+"\n") {
-				return nil, "", err
-			}
-		}
-		if err != nil || rec.PR != s.number {
-			continue
-		}
-		if newest == nil || rec.Updated.After(newest.Updated) {
-			newest, newestPath = rec, path
-		}
-	}
-	return newest, newestPath, nil
+	return record.NewestRange(s.owner, s.repo, s.number, except)
 }
 
 // recordOf is the path of the range record a SOURCE names, for show and

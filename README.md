@@ -484,7 +484,12 @@ be read or a plan couldn't be exported), when the devbox last pushed and
 fetched the plans, the review requests by state (ready, CI failing,
 draft or reviewed), oldest first with three days or more marked, stacked
 pull requests under the one they build on, the latest demo digest, and each
-plan at `#<plan ID>`. Every status mark has a word as well as a colour,
+plan at `#<plan ID>`. A pull request the devbox's `git delegate` has
+reviewed shows its review record's counts (findings by outcome, threads,
+drafts to post) and up to five of its diagrams, never its titles or other
+model text; a diagram's labels are redacted, and Mermaid, loaded by its
+hash, draws it in a sandboxed frame with no access to the page, which shows
+the drawing only as an image. Every status mark has a word as well as a colour,
 and all text from the documents is set as text, never parsed as markup,
 and looked up in the page's tables by own key only, so a STATUS such as
 `constructor` falls back to its own label; its page test holds it to

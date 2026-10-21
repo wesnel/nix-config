@@ -2,6 +2,7 @@
   buildGoModule,
   git,
   lib,
+  nodejs,
   openssh,
   # wgn.home.llm.guard.credentialPaths, a path under home as ~/…, which the
   # guard falls back on where its config is absent.
@@ -50,8 +51,9 @@
     '';
 
     # The rehearsal and signing tests build stacks with the real git, and sign
-    # them with a throwaway SSH key.
-    nativeCheckInputs = [git openssh];
+    # them with a throwaway SSH key. The page tests run the Agent plans
+    # page's own grammar check with node; without it they skip that one.
+    nativeCheckInputs = [git nodejs openssh];
 
     # The MCP tools the guard lets through (reads) or asks the operator
     # about (confirms), per service, for mcp-proxy's tool filters.
