@@ -10,8 +10,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
+	"github.com/wesnel/agent-tools/internal/record"
 	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/review"
 )
@@ -19,26 +19,8 @@ import (
 // TextCap is the most of any reviewer text a record keeps.
 const TextCap = 8 << 10
 
-// clean strips control characters but newline and tab, which a terminal or
-// an editor could act on, and cuts text to at most limit bytes.
-func clean(text string, limit int) string {
-	text = strings.ToValidUTF8(text, "�")
-	text = strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\t' || (r >= 0x20 && r != 0x7f && !(r >= 0x80 && r < 0xa0)) {
-			return r
-		}
-		return -1
-	}, text)
-	if len(text) <= limit {
-		return text
-	}
-	const cut = "\n[cut]"
-	end := limit - len(cut)
-	for end > 0 && !utf8.RuneStart(text[end]) {
-		end--
-	}
-	return text[:end] + cut
-}
+// clean is text as a review record keeps it, cut to at most limit bytes.
+func clean(text string, limit int) string { return record.Cap(record.Clean(text), limit) }
 
 // Outcomes a finding is settled with. A finding on someone else's pull
 // request is only ever proposed as a comment, never fixed; needs-operator

@@ -1,0 +1,164 @@
+#+title: review
+#+TODO: OPEN DEFER OPERATOR | FIX PROPOSE REBUT DUPLICATE BELONGS
+* Review
+:PROPERTIES:
+:VERSION: 2
+:REPO: owner/repo
+:BASE: 9f8e7d6c5b4a39281706f5e4d3c2b1a098765432
+:HEAD: 1a2b3c4d5e6f708192a3b4c5d6e7f80912345678
+:PR: 12
+:TITLE: Cache the parsed config
+:UPDATED: [2026-10-20 Tue 14:05]
+:END:
+** Walkthrough
+*** C1
+:PROPERTIES:
+:TITLE: The cache and its key
+:END:
+#+begin_example
+Adds a cache keyed by the config file's path and mtime.
+
+A miss parses the file as before.
+#+end_example
+- [[file:internal/x/cache.go::1@1a2b3c4d5e6f][internal/x/cache.go:1-40]] new 1,40 old 0,0
+- [[file:internal/x/cache_test.go::1@1a2b3c4d5e6f][internal/x/cache_test.go:1-25]] new 1,25 old 0,0
+*** C2
+:PROPERTIES:
+:TITLE: Callers read through the cache
+:END:
+#+begin_example
+Load now asks the cache first.
+#+end_example
+- [[file:cmd/x/main.go::40@1a2b3c4d5e6f][cmd/x/main.go:40-58]] new 40,19 old 38,6
+** Diagrams
+*** D1
+:PROPERTIES:
+:TITLE: Load with the cache
+:DRAWN_BY: claude
+:CRITIQUED_BY: codex
+:VERDICT: holds
+:END:
+#+begin_example
+{"kind": "sequence", "elements": [{"id": "load", "cites": ["cmd/x/main.go:40"]}]}
+#+end_example
+** Findings
+*** OPEN F1
+:PROPERTIES:
+:TITLE: The key ignores the file's size
+:REVIEWER: codex
+:ROUND: 1
+:KIND: bug
+:PATH: internal/x/cache.go
+:LINE: 88
+:END_LINE: 94
+:SIDE: new
+:OUTCOME_TARGET:
+:END:
+[[file:internal/x/cache.go::88@1a2b3c4d5e6f][internal/x/cache.go:88-94]]
+#+begin_example
+Two writes within one mtime tick keep the old entry:
+
+    key := path + mtime.String()
+#+end_example
+*** FIX F2
+:PROPERTIES:
+:TITLE: No test of a miss
+:REVIEWER: codex
+:ROUND: 1
+:KIND: test
+:PATH: internal/x/cache_test.go
+:LINE: 12
+:END_LINE:
+:SIDE: new
+:OUTCOME_TARGET:
+:END:
+[[file:internal/x/cache_test.go::12@1a2b3c4d5e6f][internal/x/cache_test.go:12]]
+#+begin_example
+Every case hits the cache.
+#+end_example
+**** Outcome
+#+begin_example
+Added a test that changes the file between loads.
+#+end_example
+*** DEFER F3
+:PROPERTIES:
+:TITLE: Bound the cache
+:REVIEWER: security
+:ROUND: 2
+:KIND: design
+:PATH:
+:LINE:
+:END_LINE:
+:SIDE:
+:OUTCOME_TARGET:
+:END:
+#+begin_example
+Nothing evicts an entry.
+#+end_example
+**** Outcome
+#+begin_example
+Outside the goal: one config file per process.
+#+end_example
+*** OPERATOR F4
+:PROPERTIES:
+:TITLE: Drop the old loader?
+:REVIEWER: codex
+:ROUND: 1
+:KIND: question
+:PATH: cmd/x/main.go
+:LINE: 38
+:END_LINE: 43
+:SIDE: old
+:OUTCOME_TARGET:
+:END:
+[[file:cmd/x/main.go::38@9f8e7d6c5b4a][cmd/x/main.go:38-43]]
+#+begin_example
+The old loader is still exported.
+#+end_example
+**** Outcome
+#+begin_example
+A product call: other repositories may import it.
+#+end_example
+*** DUPLICATE F5
+:PROPERTIES:
+:TITLE: Same as F1
+:REVIEWER: security
+:ROUND: 2
+:KIND: bug
+:PATH: internal/x/cache.go
+:LINE: 88
+:END_LINE:
+:SIDE: new
+:OUTCOME_TARGET: F1
+:END:
+[[file:internal/x/cache.go::88@1a2b3c4d5e6f][internal/x/cache.go:88]]
+#+begin_example
+The key can collide.
+#+end_example
+**** Outcome
+#+begin_example
+F1 raises it.
+#+end_example
+** Rounds
+*** R1
+:PROPERTIES:
+:REVIEWER: codex
+:MODEL: gpt-5.5
+:AT: [2026-10-20 Tue 14:05]
+:RED_CHECK: session
+:END:
+**** Unverified
+#+begin_example
+Whether mtime has a second's resolution on the CI runner.
+#+end_example
+**** Dropped
+#+begin_example
+A finding at internal/x/gone.go:3, which is not in the tip.
+#+end_example
+*** R2
+:PROPERTIES:
+:REVIEWER: security
+:MODEL: claude-opus-5-5
+:AT: [2026-10-20 Tue 14:15]
+:RED_CHECK: absent
+:END:

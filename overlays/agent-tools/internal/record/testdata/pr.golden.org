@@ -1,0 +1,72 @@
+#+title: review
+#+TODO: OPEN DEFER OPERATOR | FIX PROPOSE REBUT DUPLICATE BELONGS
+* Pull request
+:PROPERTIES:
+:VERSION: 2
+:REPO: owner/repo
+:PR: 12
+:UPDATED: [2026-10-20 Tue 14:05]
+:END:
+** T-PRRT_kwDOAbc001
+:PROPERTIES:
+:AUTHORS: copilot-pull-request-reviewer:Bot
+:RESOLVED: nil
+:PATH: internal/x/cache.go
+:LINE: 88
+:END:
+#+begin_example
+The key can collide when two writes share an mtime.
+#+end_example
+** T-PRRT_kwDOAbc002
+:PROPERTIES:
+:AUTHORS: qodo-code-review:Bot wesnel:User
+:RESOLVED: t
+:PATH: internal/x/cache_test.go
+:LINE: 12
+:END:
+#+begin_example
+Add a test of a miss.
+#+end_example
+#+begin_example
+Added in "Test a cache miss".
+#+end_example
+** T-PRRT_kwDOAbc003
+:PROPERTIES:
+:AUTHORS: alice:User
+:RESOLVED: nil
+:PATH: cmd/x/main.go
+:LINE: 40
+:END:
+#+begin_example
+Why not keep the old loader?
+
+```go
+LoadOld()
+```
+#+end_example
+*** Draft
+:PROPERTIES:
+:OUTCOME: rebut
+:POSTED:
+:END:
+#+begin_example
+Nothing calls it: `git grep LoadOld` finds only its definition.
+#+end_example
+** T-PRRT_kwDOAbc004
+:PROPERTIES:
+:AUTHORS: bob:User
+:RESOLVED: nil
+:PATH: README.md
+:LINE:
+:END:
+#+begin_example
+Say the cache exists.
+#+end_example
+*** Draft
+:PROPERTIES:
+:OUTCOME: fix
+:POSTED: [2026-10-20 Tue 15:05]
+:END:
+#+begin_example
+Done in "Describe the cache".
+#+end_example

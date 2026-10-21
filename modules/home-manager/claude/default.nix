@@ -99,6 +99,10 @@ with lib; let
   plans = config.wgn.home.llm.plans;
   agentPlan = getExe' config.wgn.home.llm.agentTools "agent-plan";
 
+  # Review records, internal/record's Dir(): only the excluded writers,
+  # which compute each path from what they review, change them.
+  records = "${config.xdg.stateHome}/agent-tools/reviews";
+
   # A permission rule's path: Claude Code reads `~/` as the home directory,
   # and a lone `/` as relative to the settings file, so `//` starts an
   # absolute one.
@@ -531,8 +535,9 @@ with lib; let
       # The plans directory holds the plans, their logs and the logs'
       # locks, which only agent-plan's excluded writes change; the notes
       # repository's git directory, so that no git command run in the
-      # repository can reset, switch, clean or merge the plans either.
-      denyWrite = [plans.dir "${plans.repository.path}/.git"];
+      # repository can reset, switch, clean or merge the plans either. The
+      # review records, which the excluded writers alone change.
+      denyWrite = [plans.dir "${plans.repository.path}/.git" records];
     };
   };
 
@@ -724,8 +729,9 @@ in {
           ++ map (p: "Edit(${rulePath plans.dir}/${p})") ["*.log.org" "*.log.org.lock"]
           # Every plan file is agent-plan's to change, which the sandbox
           # holds for shell commands and this for file tools, which run
-          # outside it, where the guard's hook cannot run.
-          ++ ["Edit(${rulePath plans.dir}/**)"];
+          # outside it, where the guard's hook cannot run. Review records
+          # likewise.
+          ++ ["Edit(${rulePath plans.dir}/**)" "Edit(${rulePath records}/**)"];
 
         # Excluded commands go through the permission flow. These run
         # without a prompt or auto mode's classifier: the excluded commands

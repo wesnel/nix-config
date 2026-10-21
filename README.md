@@ -167,8 +167,9 @@ one outside it. Hooks, MCP servers and the file tools run outside it.
   ngrok and API keys) are taken out of every command's environment.
 - **Writes.** The session's working directory and temporary directory, the
   agents' worktrees, Go's and golangci-lint's caches, the Nix and uv caches
-  and, on macOS, the Trash. Never the plans directory or the notes
-  repository's `.git`.
+  and, on macOS, the Trash. Never the plans directory, the notes
+  repository's `.git` or the review records under
+  `~/.local/state/agent-tools/reviews`, which file tools are denied too.
 - **Network.** Only GitHub, the Nix caches, the Go, npm, PyPI and crates
   registries and ngrok's release hosts, and on macOS the Nix daemon's
   socket. Services listening on loopback stay reachable; the comment on
