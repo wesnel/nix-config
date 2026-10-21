@@ -224,6 +224,17 @@
       "emacsclient -s /tmp/et.ab12/server -e '(server-mode -1)'"]
   },
   {
+    "why": "Elisp is checked by a batch Emacs with none of the operator's init; any other Emacs runs their init or a daemon.",
+    "scope": "baseline",
+    "deny": ["emacs", "emacs --batch -l test.el", "emacs -Q -nw", "emacs -Q --daemon=/tmp/et.ab12/server",
+      "emacs -Q --batch -daemon", "emacs -Q --batch --daem", "emacs -Q --batch -fg-daemon", "emacs-30.2 --daemon",
+      "emacs -Q --batch --eval '(server-force-delete)'",
+      "emacs -Q --batch --eval '(server-eval-at \"server\" (quote (kill-emacs)))'",
+      "emacs -Q --batch --eval '(server-start)'", "emacs30 -Q --batch --eval '(server-mode 1)'"],
+    "allow": ["emacs -Q --batch --init-directory=/tmp/et.ab12 -l test.el -f ert-run-tests-batch-and-exit",
+      "emacs --quick --script check.el"]
+  },
+  {
     "why": "The home directory, the root, the Nix store and the operator's keys are not the agent's to destroy.",
     "scope": "baseline",
     "deny": ["rm -rf ~", "rm -rf $HOME/", "rm -rf /", "rm -r /nix", "chmod -R 777 ~/.ssh", "trash ~/.gnupg", "rm -rf ~/*"],

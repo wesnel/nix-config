@@ -535,7 +535,6 @@ in {
           "d2"
           "describe"
           "dired"
-          "emacsclient"
           "file-links"
           "github-activity"
           "highlight"
@@ -546,6 +545,9 @@ in {
           trash = ./skills/trash/SKILL.md;
         }
         // {
+          # emacs-skills' name, so the habit and trigger keep working, for
+          # checks a sandboxed command can run: no daemon is reachable.
+          emacsclient = ./skills/emacsclient/SKILL.md;
           signing-pass = ./skills/signing-pass/SKILL.md;
           write-tests = ./skills/write-tests/SKILL.md;
           pull-requests = ./skills/pull-requests/SKILL.md;

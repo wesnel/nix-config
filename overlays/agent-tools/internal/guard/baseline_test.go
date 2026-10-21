@@ -1237,6 +1237,58 @@ func TestEmacsServerCall(t *testing.T) {
 	}
 }
 
+// A batch Emacs, whose own server is the operator's default one, runs no
+// Lisp that starts or deletes a server by that name or evaluates in
+// another, in its arguments or in a file it loads, unless the same Lisp
+// names a test socket as its server.
+func TestEmacsBatchServer(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "bad.el"), []byte("(require 'server)\n(server-force-delete)\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "good.el"), []byte("(message \"checked\")\n"), 0o644)
+	for command, deny := range map[string]bool{
+		"emacs -Q --batch --eval '(server-force-delete)'":                            true,
+		"emacs -Q --batch --eval '(server-force-delete \"server\")'":                 true,
+		"emacs -Q --batch --eval '(server-eval-at \"server\" (quote (kill-emacs)))'": true,
+		"emacs -Q --batch -l bad.el":                                                 true,
+		"emacs -Q --script " + filepath.Join(dir, "bad.el"):                          true,
+		"emacs -Q --batch --load=bad.el":                                             true,
+		"emacs -Q --batch --eval '(server-force-delete \"/tmp/et.ab12/server\")'":    false,
+		"emacs -Q --batch -l good.el -f ert-run-tests-batch-and-exit":                false,
+		"emacs -Q --batch --eval '(kill-emacs 0)'":                                   false,
+		"emacs -Q --batch --eval '(server-start)'":                                   true,
+		"emacs -Q --batch --eval '(server-mode)'":                                    true,
+		"emacs -Q --batch --eval '(server-mode 1)'":                                  true,
+		"emacs-30.2 -Q --batch --eval '(server-start)'":                              true,
+		"emacs30 -Q --batch --eval '(server-force-delete)'":                          true,
+	} {
+		if got := judge(t, dir, command) == emacsBatchServer; got != deny {
+			t.Errorf("%q: refused %v, want %v", command, got, deny)
+		}
+	}
+	for lisp, deny := range map[string]bool{
+		`(setq server-name "server") (server-start)`:                                  true,
+		`(setq server-name x) (server-start)`:                                         true,
+		`(setq server-name "/tmp/et.ab12/server") (server-start)`:                     false,
+		`(let ((server-name "/tmp/et.ab12/s")) (server-start) (server-force-delete))`: false,
+		// Forms named in a string or a comment are no calls.
+		`(message "server-start is a function")`:             false,
+		"(progn ;; server-start\n (message \"x\"))":          false,
+		`(message "a \"server-start\"") (insert ?")`:         false,
+		`(message "server-start") (server-start)`:            true,
+		"(progn ;; (message \"x\")\n (server-force-delete))": true,
+	} {
+		if got := judge(t, dir, "emacs -Q --batch --eval '"+lisp+"'") == emacsBatchServer; got != deny {
+			t.Errorf("%q: refused %v, want %v", lisp, got, deny)
+		}
+	}
+	// A loaded file is read the same way.
+	os.WriteFile(filepath.Join(dir, "mentions.el"),
+		[]byte(";; server-start is not called here\n(ert-deftest t1 () (should (fboundp 'message)) (message \"server-force-delete\"))\n"), 0o644)
+	if judge(t, dir, "emacs -Q --batch -l mentions.el -f ert-run-tests-batch-and-exit") != "" {
+		t.Error("a test file that names server forms only in a comment and a string is refused")
+	}
+}
+
 // A socket under a test root that links to the operator's is theirs.
 func TestTestEmacsSocketLink(t *testing.T) {
 	root, err := os.MkdirTemp("/tmp", "et.")

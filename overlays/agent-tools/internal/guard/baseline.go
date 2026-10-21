@@ -3,6 +3,7 @@ package guard
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -254,6 +255,9 @@ func checkSession(c call, dir string) string {
 		}
 		return ""
 	}
+	if versionedEmacs.MatchString(name) {
+		name = "emacs"
+	}
 	switch name {
 	case "sudo", "doas", "su", "pkexec", "run0":
 		return rootCommand
@@ -426,8 +430,21 @@ func checkSession(c call, dir string) string {
 			return killEmacs
 		}
 	case "emacs", "Emacs":
-		return "A second Emacs, batch or not, runs apart from the operator's daemon and can leave files and state behind for it. " +
-			"Use `emacsclient` as the emacsclient skill says, such as `emacsclient -e '(check-parens)'`."
+		// A batch Emacs with none of the operator's init is how elisp is
+		// checked: a sandboxed command reaches no Emacs daemon. Anything
+		// else starts an Emacs that runs the operator's init, or a daemon.
+		quick := has("-Q", "--quick")
+		batch := has("--batch", "-batch", "--script", "-script")
+		daemon := slices.ContainsFunc(args, emacsDaemonFlag)
+		if !quick || !batch || daemon {
+			return "Only a batch Emacs with none of the operator's init checks elisp here: no daemon is reachable from " +
+				"the sandbox. Run `emacs -Q --batch --init-directory=DIR ...`, DIR from `mktemp -d`, as the emacsclient " +
+				"skill says."
+		}
+		// A batch Emacs's own server is the default one, the operator's.
+		if emacsBatchServerCall(emacsBatchLisp(args, dir)) {
+			return emacsBatchServer
+		}
 	case "rm", "trash", "chmod", "chown", "chgrp", "mv":
 		recursive := name == "trash" || name == "mv"
 		for _, a := range args {
@@ -833,6 +850,134 @@ func startedHere(pid int) bool {
 	}
 	return false
 }
+
+// emacsDaemonFlag reports whether an Emacs argument starts a daemon, in
+// any spelling Emacs takes: one dash or two, -daemon, -bg-daemon or
+// -fg-daemon, with or without =NAME, and a long option cut short, as
+// Emacs matches one by its prefix. A prefix too short for Emacs to take
+// counts too.
+func emacsDaemonFlag(a string) bool {
+	if !strings.HasPrefix(a, "-") {
+		return false
+	}
+	name, _, _ := strings.Cut(strings.TrimPrefix(strings.TrimPrefix(a, "-"), "-"), "=")
+	for _, d := range []struct {
+		flag string
+		min  int
+	}{{"daemon", 2}, {"bg-daemon", 4}, {"fg-daemon", 4}} {
+		if len(name) >= d.min && strings.HasPrefix(d.flag, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// emacsBatchServer is why a batch Emacs may not run Lisp that names a
+// server, or starts one under the default name: with no server of its
+// own, it acts on the operator's.
+const emacsBatchServer = "A batch Emacs that starts, deletes or evaluates in a server under the default name reaches the operator's daemon. Set `server-name` to a test socket's absolute path, as `(setq server-name \"/tmp/et.XXXX/server\")`, in the same Lisp, or leave the server forms out of the check."
+
+// emacsBatchServerCall reports whether a batch Emacs's Lisp reaches the
+// operator's server. It reads the Lisp's code, not its comments or
+// strings, so a form named in a message or a comment is no call. Where
+// every mention of server-name sets it to a test socket's absolute path,
+// as a string, the Lisp acts on that server, and passes unless it names
+// another; otherwise a server-start or server-mode, or a
+// server-force-delete with no name, acts on the default one, theirs.
+func emacsBatchServerCall(text string) bool {
+	text = lispCode(text)
+	named := emacsServerNameSet.FindAllStringSubmatch(text, -1)
+	testNamed := len(named) > 0 && len(named) == len(emacsServerNameWord.FindAllString(text, -1))
+	for _, m := range named {
+		testNamed = testNamed && testSocket(m[1])
+	}
+	if testNamed {
+		return lispNamesServer(emacsServerNameSet.ReplaceAllString(text, ""), false)
+	}
+	return lispNamesServer(text, true) || emacsServerStart.MatchString(text)
+}
+
+// lispCode is Emacs Lisp text with its comments blanked, and each string's
+// contents blanked but a server name's: the string just after server-name
+// or server-force-delete, which the server check reads.
+func lispCode(text string) string {
+	b := []byte(text)
+	blank := func(from, to int) {
+		for k := from; k < to; k++ {
+			if b[k] != '\n' {
+				b[k] = ' '
+			}
+		}
+	}
+	for i := 0; i < len(b); i++ {
+		switch b[i] {
+		case '?':
+			// A character literal: ?" or ?\" is no string.
+			if i+1 < len(b) && b[i+1] == '\\' {
+				i++
+			}
+			i++
+		case ';':
+			end := i
+			for end < len(b) && b[end] != '\n' {
+				end++
+			}
+			blank(i, end)
+			i = end
+		case '"':
+			end := i + 1
+			for end < len(b) && b[end] != '"' {
+				if b[end] == '\\' {
+					end++
+				}
+				end++
+			}
+			before := strings.TrimRight(string(b[:i]), " \t\n")
+			if !strings.HasSuffix(before, "server-name") && !strings.HasSuffix(before, "server-force-delete") {
+				blank(i+1, min(end, len(b)))
+			}
+			i = end
+		}
+	}
+	return string(b)
+}
+
+var (
+	emacsServerNameWord = regexp.MustCompile(`server-name\b`)
+	emacsServerNameSet  = regexp.MustCompile(`server-name\s+"([^"\\]*)"`)
+	emacsServerStart    = regexp.MustCompile(`\bserver-(start|mode)\b`)
+)
+
+// emacsBatchLisp is the Lisp an Emacs call runs that the guard can read:
+// its arguments, and each file it loads that is there to read, -l, --load
+// or --script, whose contents count up to a megabyte.
+func emacsBatchLisp(args []string, dir string) string {
+	var b strings.Builder
+	b.WriteString(strings.Join(args, " "))
+	for i, a := range args {
+		file := ""
+		switch {
+		case (a == "-l" || a == "--load" || a == "--script" || a == "-script") && i+1 < len(args):
+			file = args[i+1]
+		case strings.HasPrefix(a, "--load=") || strings.HasPrefix(a, "--script="):
+			_, file, _ = strings.Cut(a, "=")
+		}
+		if file == "" {
+			continue
+		}
+		if f, err := os.Open(expandPath(file, dir)); err == nil {
+			data, _ := io.ReadAll(io.LimitReader(f, 1<<20))
+			f.Close()
+			b.WriteString("\n")
+			b.Write(data)
+		}
+	}
+	return b.String()
+}
+
+// versionedEmacs is an Emacs binary named with its version, as emacs-30.2
+// or emacs30.
+var versionedEmacs = regexp.MustCompile(`^[Ee]macs-?[0-9][0-9.]*$`)
 
 // emacsclientOptions are emacsclient's long options, each with whether it
 // takes a value, and emacsclientFlags and emacsclientValued its short

@@ -62,9 +62,9 @@ a command's output to a new file is capturing, not editing.
 ## The operator's state
 
 What you run to test or try something leaves the operator's configuration
-and state alone. A test Emacs starts with both `-Q` and its own
-`--init-directory`, plus the `-L` and `-l` it needs, and is reached by its
-full socket path, never through the operator's own server.
+and state alone. Elisp is checked by a batch Emacs, `emacs -Q --batch`
+with its own `--init-directory`, plus the `-L` and `-l` it needs, as the
+`emacsclient` skill says, never through the operator's own server.
 
 ## The shell
 
