@@ -228,6 +228,23 @@ the goal statement already decides by Triage. Take the rest through the
 answer and which are yours to decide; those that change the plan are
 settled before the work starts.
 
+## Diagrams
+
+A diagram shows the code a change touches, drawn by one model family and
+critiqued by the other. Draw one on request alone: where the operator asks
+for it, or the design review does, for a change that crosses two or more
+packages or modules, or adds a state set or a cross-process protocol.
+
+Add `--reviewer diagram` to the review that needs it, as
+`git delegate --reviewer codex --reviewer diagram --goal GOAL BASE..TIP`.
+Claude Code's `diagrammer` agent draws at most three diagrams, each element
+citing the lines at TIP it stands for; delegate holds every citation to the
+code, Codex critiques each element by element, and one the critic faults is
+redrawn once. Those that hold are kept in the review record, where review-guide
+and `git delegate show` render them; the rest are under the round's Dropped.
+A diagram is never posted to GitHub: a pull request's description stays the
+operator's.
+
 ## Triage
 
 The one definition of review outcomes, for bot threads, people's threads

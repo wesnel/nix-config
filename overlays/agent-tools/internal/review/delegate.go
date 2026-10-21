@@ -66,6 +66,20 @@ TYPEs (--reviewer, repeated):
             read them, each hunk cited as file:PATH::LINE@SHA. A citation of
             no hunk, and a hunk no chunk cites, are dropped. It always runs,
             last, and its walkthrough replaces the record's.
+  diagram   at most three diagrams, run only when named: drawn by Claude
+            Code's diagrammer agent, headless as security is, as JSON each
+            element of which cites the lines at TIP it stands for; each
+            citation held to TIP's blobs, Go parsed and never built; then
+            critiqued element by element by Codex, confined as its review
+            is. A critique that faults nothing and leaves nothing
+            unverified passes. One the critic faults is redrawn once, then
+            checked and critiqued again. A diagram whose critique passes is
+            kept with verdict holds, and a redraw whose critique passes with
+            corrected; otherwise the first drawing is kept as unresolved,
+            the critique's findings as the round's. Each is kept as its JSON
+            alone; show generates its Mermaid. A run that keeps a diagram
+            replaces the record's, one with an earlier one's title keeping
+            its ID.
 With no --reviewer, codex runs, with each type its route scan picks; it
 says on stderr what it picked and why.
 
@@ -123,6 +137,8 @@ type reviewerType struct {
 	agent string
 	focus string
 	guide bool
+	// diagram is drawn by Claude's diagrammer and critiqued by Codex.
+	diagram bool
 }
 
 // reviewerTypes are the TYPEs, by name. Each route of routes.Known names
@@ -131,6 +147,7 @@ var reviewerTypes = map[string]reviewerType{
 	"codex":    {},
 	"security": {claude: true, agent: "security-reviewer", focus: "security"},
 	"guide":    {claude: true, agent: "review-guide", guide: true},
+	"diagram":  {diagram: true},
 }
 
 // typeList is a repeated --reviewer.
@@ -271,6 +288,10 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			return report(nil, err, 0)
 		}
 		in.where = where(r)
+		if reviewerTypes[t].diagram {
+			fmt.Fprint(stdout, drawPrompt(in, ""))
+			return 0
+		}
 		fmt.Fprint(stdout, prompt(in))
 		return 0
 	}
@@ -373,6 +394,9 @@ func typeInputs(base inputs, t string, tests *adequacy) (inputs, error) {
 func runType(ctx context.Context, s *source, r *span, base inputs, t string, tests *adequacy, implicit bool, model string,
 	timeout time.Duration, log io.Writer) *typeRun {
 	ty := reviewerTypes[t]
+	if ty.diagram {
+		return runDiagrams(ctx, s, r, base, model, timeout, log)
+	}
 	run := &typeRun{name: t, redCheck: ty.focus == "" && !ty.guide && tests.given}
 	if ty.claude {
 		run.why = claudeMissing()

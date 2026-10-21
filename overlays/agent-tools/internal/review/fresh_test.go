@@ -68,13 +68,21 @@ printf '%s' "$PATH" > "$FAKE_CODEX_LOG/path"
 git -C "$wt" rev-parse HEAD > "$FAKE_CODEX_LOG/head"
 ls -A "$wt" > "$FAKE_CODEX_LOG/files"
 if [ -n "$FAKE_CODEX_COPY" ]; then cp "$wt/$FAKE_CODEX_COPY" "$FAKE_CODEX_LOG/copy"; fi
-case "$FAKE_CODEX" in
+mode=$FAKE_CODEX
+if [ "$mode" = fault-once ]; then
+  if [ -e "$FAKE_CODEX_LOG/faulted" ]; then mode=critique; else : > "$FAKE_CODEX_LOG/faulted"; mode=fault; fi
+fi
+case "$mode" in
   fail) echo "fake codex: model error" >&2; exit 1 ;;
   hang) exec sleep 60 ;;
   fork) echo $$ > "$FAKE_CODEX_LOG/group"; i=0; while [ $i -lt 300 ]; do sleep 30 > /dev/null 2>&1 & i=$((i+1)); if [ $i = 20 ]; then echo > "$FAKE_CODEX_LOG/started"; fi; done; wait ;;
   none) echo '{"findings": [], "unverified": [], "routes": []}' > "$out" ;;
   routed) echo '{"findings": [], "unverified": [], "routes": [{"route": "security", "why": "it reads a token", "paths": ["code.txt"]}, {"route": "style", "why": "x", "paths": []}]}' > "$out" ;;
   answer) echo '{"answer": "Extend the seam.", "unverified": ["the callers"]}' > "$out" ;;
+  critique) echo '{"findings": [], "unverified": [], "checked": '"$FAKE_CHECKED"'}' > "$out" ;;
+  fault) echo '{"findings": [{"id": "1", "path": "code.txt", "line": 2, "endLine": null, "kind": "untrue-doc", "claim": "c", "evidence": "e", "about": "N1", "reopens": null}], "unverified": [], "checked": '"$FAKE_CHECKED"'}' > "$out" ;;
+  unsure) echo '{"findings": [], "unverified": ["E1: the call could not be traced"], "checked": '"$FAKE_CHECKED"'}' > "$out" ;;
+  misfault) echo '{"findings": [{"id": "1", "path": "code.txt", "line": 2, "endLine": null, "kind": "bug", "claim": "c", "evidence": "e", "about": "N1", "reopens": null}], "unverified": [], "checked": '"$FAKE_CHECKED"'}' > "$out" ;;
   security) echo '{"findings": [{"id": "1", "path": "code.txt", "line": 2, "endLine": null, "kind": "vulnerability", "claim": "c", "evidence": "e", "about": null, "reopens": null}], "unverified": [], "checked": '"$FAKE_CHECKED"'}' > "$out" ;;
   *) cat > "$out" <<EOF
 {"findings": [

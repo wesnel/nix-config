@@ -48,7 +48,7 @@ func numbered(prefix string, ids []string) int {
 // findings under IDs of the record's own; a red-check finding keeps its
 // RC- ID, and one the record already holds is not added again. It gives
 // each finding in the runs' output its record ID. The guide's walkthrough
-// replaces the record's.
+// replaces the record's, and so do a diagram run's diagrams.
 func writeRuns(path string, s *source, r *span, title string, runs []*typeRun, now time.Time) (*record.Range, error) {
 	var kept record.Range
 	err := record.Update(path, func(rec *record.Range) error {
@@ -70,6 +70,9 @@ func writeRuns(path string, s *source, r *span, title string, runs []*typeRun, n
 			if out := run.out; out != nil {
 				if out.Walkthrough != nil {
 					rec.Walkthrough = walkthroughOf(out.Walkthrough)
+				}
+				if len(out.diagrams) > 0 {
+					rec.Diagrams = replaceDiagrams(rec.Diagrams, out.diagrams)
 				}
 				round.Unverified = out.Unverified
 				for _, d := range out.Dropped {
@@ -359,9 +362,10 @@ func stamp(t time.Time) string {
 	return t.Format(time.RFC3339)
 }
 
-// mermaid renders a diagram's stored JSON as Mermaid; nil until a renderer
-// is wired in, when diagrams are shown without it.
-var mermaid func(diagramJSON string) (string, error)
+// mermaid renders a diagram's stored JSON as Mermaid, with the renderer
+// internal/diagram builds from numbered IDs and labels Mermaid can only
+// draw; where it is nil, or fails, a diagram is shown without it.
+var mermaid = diagramMermaid
 
 func showFinding(f record.Finding) ShowFinding {
 	return ShowFinding{Finding: f.ID, State: string(f.State), Title: f.Title, Reviewer: f.Reviewer, Round: f.Round,

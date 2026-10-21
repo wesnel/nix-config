@@ -17,6 +17,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/record"
 	"github.com/wesnel/agent-tools/internal/redact"
 	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/repos"
@@ -433,6 +434,10 @@ type Output struct {
 	Focus string `json:"focus,omitempty"`
 	// Walkthrough is the guide's, in the order to read the change.
 	Walkthrough []Chunk `json:"walkthrough,omitempty"`
+	// Diagrams are the diagrams a diagram review kept, and diagrams those
+	// the record keeps.
+	Diagrams []DiagramResult `json:"diagrams,omitempty"`
+	diagrams []record.Diagram
 	// proposed are the routes the reviewer's reply named.
 	proposed []proposedRoute
 }
