@@ -19,7 +19,9 @@ was split among sub-agents: a coordinator runs the same pipeline, and the
 2. **Design review of the plan**, before coding.
 3. **The work**, committed as the `signing-pass` skill says.
 4. **Fresh review loop** over the committed change, once the work is
-   complete; settle each round's findings together before the next round.
+   complete: in Claude Code, `/code-review` for the general review; then
+   `git fresh-review` as the second opinion. Settle each round's findings
+   together before the next round.
 5. **Design review of the result**, before handing back.
 6. **Hand back**: what the work's own instructions ask for, and
    - each finding, its outcome and its plan item ID, round by round;
@@ -68,7 +70,10 @@ as `origin/main` or the parent branch in a stack.
 
 1. Write the goal statement to a file, and the items the change answers
    (threads, CI checks) with how each was settled to another, if any.
-2. Where the repository has test settings, run
+2. In Claude Code, run `/code-review` with BASE as its target: with none, it
+   reviews only the commits ahead of the branch's upstream, which a local
+   branch may not have. Then the second opinion, from another model
+   family: where the repository has test settings, run
    `git red-check BASE..TIP > red-check.json` in the working directory, not
    under `$TMPDIR`, which a sandboxed command and fresh-review may resolve
    to different directories. Then run
@@ -76,8 +81,9 @@ as `origin/main` or the parent branch in a stack.
    and remove `red-check.json` after it. It exits 0 with no findings, 3
    with findings, and 4 when Codex cannot review here, its sandbox included.
    On 4, say so in the hand-back, with fresh-review's reason.
-3. Settle every finding as Triage says. `dropped` lists what pointed at no
-   line at TIP or did not fit the schema; read it, but it needs no outcome.
+3. Settle every finding of both as Triage says. `dropped` lists what
+   pointed at no line at TIP or did not fit the schema; read it, but it
+   needs no outcome.
    `routes` lists the focused reviews the change needs, from a scan of
    every commit since the default branch and from the reviewer.
 4. For the next round, add `--prior FILE`: every earlier finding and how it
@@ -129,11 +135,12 @@ through `pr-loop review N`.
 
 ## Harness choice
 
-- Codex, through `git fresh-review`, by default: a model family other than
-  the author's. Its commands can read only the worktree under review, the
-  git objects behind it and the system files they need, with none of
-  the operator's Codex configuration, no network and no writes, so a change
-  cannot steer it into reading credentials.
+- Codex, through `git fresh-review`, for the second opinion and the focused
+  reviews: a model family other than the author's. Its commands can read
+  only the worktree under review, the git objects behind it and the system
+  files they need, with none of the operator's Codex configuration, no
+  network and no writes, so a change cannot steer it into reading
+  credentials.
 - Never Codex in a review-loop session: there `git fresh-review` exits 4,
   so `pr-loop` stays the session's only way out.
   `pr-loop review` is that way out: it runs Codex on the host with a prompt

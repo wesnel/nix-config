@@ -86,10 +86,10 @@ what is this work's.
   for review; its fix rounds too, continued with `SendMessage`; and a
   part's Investigate phase (Phases below), which commits nothing.
 - **`adversarial-reviewer`:** tries to break a finished branch, every
-  finding reproduced or marked as not, with what held. For a part that is
-  security-sensitive, subtle, or that a fresh review passed too easily;
-  also `pr-loop review --reviewer subagent`'s sub-agent, as the
-  `review-change` skill says, replying in the form its prompt gives.
+  finding reproduced or marked as not, with what held: your review of each
+  part (Review each branch below); also `pr-loop review --reviewer
+  subagent`'s sub-agent, as the `review-change` skill says, replying in the
+  form its prompt gives.
 - **`design-reviewer`:** the design reviews (Design review below).
 - **`security-reviewer`:** a security route's review, from the prompt
   `git fresh-review --print-prompt --focus security` prints, and a
@@ -263,9 +263,12 @@ skill's "Questions for the operator" says, not into your message.
 Before Coalesce, run the `review-change` skill's fresh review loop on each
 branch by itself, never the whole stack at once: the range `<base>..<branch>`,
 the part's goal and what is not its job as the goal statement, at most three
-rounds. Review a branch once its sub-agent has finished it, then hand all
-of that round's findings to the sub-agent as one fix round, to settle as
-Triage says; check its report as any other.
+rounds. Your general review of a part is an `adversarial-reviewer` sub-agent
+given that range and goal statement, in place of `/code-review`;
+`git fresh-review` stays the second opinion. Review a branch once its
+sub-agent has finished it, then hand all of that round's findings to the
+sub-agent as one fix round, to settle as Triage says; check its report as
+any other.
 
 ## Coalesce
 

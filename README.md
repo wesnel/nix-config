@@ -206,8 +206,11 @@ without a prompt.
 Every agent session that commits a change runs the `review-change` skill's
 pipeline unless you opt out for the task: a plan, a design review of it, the
 work, a fresh review loop of up to three rounds, and a design review of the
-result. Two commands give the reviews evidence an agent cannot talk its way
-around.
+result. The everyday general review is Claude Code's `/code-review`, given
+the range's base; `git fresh-review` is the second opinion, from Codex, and
+runs each focused review the change needs. A coordinator reviews each part
+with an `adversarial-reviewer` sub-agent instead. Two commands give the
+reviews evidence an agent cannot talk its way around.
 
 ### `git fresh-review`
 
