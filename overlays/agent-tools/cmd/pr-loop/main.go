@@ -92,7 +92,9 @@ worktree. A failure to log is printed on stderr and fails nothing.
   end [PR...]                 delete your trigger comments, those holding a bot's
                               request comment
   guard --baseline            PreToolUse hook for Claude Code and Codex (reads stdin):
-                              every session's rules, by agent
+                              every session's rules
+  guard --reviewer            PreToolUse hook a reviewer agent's definition adds beside
+                              --baseline (reads stdin): also keeps the agent to reading
   guard --post                PostToolUse hook for Claude Code and Codex (reads stdin):
                               records the shell call's commits, pushes (but push's,
                               which push logs), new worktrees,

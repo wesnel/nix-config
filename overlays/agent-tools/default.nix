@@ -67,9 +67,6 @@
       assert lib.assertMsg (builtins.length parts == 2) "agent-tools: reviewer.md needs exactly one `## Checks` heading, where the security contract splits it";
         builtins.head parts + "\n" + builtins.readFile ./internal/review/security.md;
 
-    # The agents with a guard role, and the user-level Claude Code agents.
-    passthru.guardAgents = builtins.fromJSON (builtins.readFile ./internal/guard/agents.json);
-
     meta.description = "pr-loop (the review loop), git-sign-pass (the signing pass), git-red-check (checks a commit's tests fail without its change), git-fresh-review (reviews a range of commits with fresh eyes), git-push-guard (keeps private history out of public repositories), agent-plan (agents' plan files and event logs) and plan-dash (the Agent plans page's documents)";
   };
 in

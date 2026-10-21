@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
-	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -524,40 +523,40 @@ func testBaselineCommands(t *testing.T) {
 	}
 }
 
-// testBaselineRoles covers the hook every ordinary session runs: an agent
-// with a role has that role's rules, and every other call the baseline's.
+// testBaselineRoles covers the two hooks: the one every session runs, and
+// the one a reviewer agent's definition adds, which also keeps it to
+// reading. A call's agent type changes neither.
 func testBaselineRoles(t *testing.T) {
 	for _, c := range []struct {
-		deny      bool
-		agentType string
-		command   string
+		deny    bool
+		hook    string
+		command string
 	}{
-		{true, "", "git push origin x"},
-		{true, "Explore", "gh pr merge 1"},
-		{false, "", "git commit -m x"},
-		{false, "", "pr-loop push"},
-		{true, "adversarial-reviewer", "git commit --fixup=abc"},
-		{false, "some-plugin:adversarial-reviewer", "git commit --fixup=abc"},
-		{true, "adversarial-reviewer", "pr-loop link 3 4"},
-		{false, "adversarial-reviewer", "pr-loop stack 3"},
-		{false, "reviewer", "git commit -m x"},
-		{false, "", "pr-loop link 3 4"},
-		{true, "adversarial-reviewer", "git commit -m x"},
-		{true, "design-reviewer", "agent-plan log p --kind done"},
-		{false, "design-reviewer", "agent-plan status p"},
-		{true, "security-reviewer", "git stash"},
-		{true, "security-reviewer", "git fresh-review a..b"},
-		{false, "builder", "git commit -m x"},
+		{true, "--baseline", "git push origin x"},
+		{true, "--baseline", "gh pr merge 1"},
+		{false, "--baseline", "git commit -m x"},
+		{false, "--baseline", "pr-loop push"},
+		{false, "--baseline", "pr-loop link 3 4"},
+		{true, "--reviewer", "git commit --fixup=abc"},
+		{true, "--reviewer", "pr-loop link 3 4"},
+		{false, "--reviewer", "pr-loop stack 3"},
+		{true, "--reviewer", "git commit -m x"},
+		{true, "--reviewer", "agent-plan log p --kind done"},
+		{false, "--reviewer", "agent-plan status p"},
+		{true, "--reviewer", "git stash"},
+		{true, "--reviewer", "git fresh-review a..b"},
+		{true, "--reviewer", "gh pr create --draft --title t --body-file b"},
+		{false, "--reviewer", "gh pr view 1"},
 	} {
-		t.Run(caseName(c.deny, strings.TrimSpace(c.agentType+" "+c.command)), func(t *testing.T) {
-			event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "agent_type": c.agentType,
+		t.Run(caseName(c.deny, c.hook+" "+c.command), func(t *testing.T) {
+			event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "agent_type": "adversarial-reviewer",
 				"tool_input": map[string]string{"command": c.command}})
 			var out, errs bytes.Buffer
-			if code := Main([]string{"--baseline"}, bytes.NewReader(event), &out, &errs); code != 0 {
-				t.Errorf("%s %q: exit %d: %s", c.agentType, c.command, code, errs.String())
+			if code := Main([]string{c.hook}, bytes.NewReader(event), &out, &errs); code != 0 {
+				t.Errorf("%s %q: exit %d: %s", c.hook, c.command, code, errs.String())
 			}
 			if denied := strings.Contains(out.String(), `"permissionDecision":"deny"`); denied != c.deny {
-				t.Errorf("%s %q: deny=%v, output %s", c.agentType, c.command, denied, out.String())
+				t.Errorf("%s %q: deny=%v, output %s", c.hook, c.command, denied, out.String())
 			}
 		})
 	}
@@ -571,7 +570,7 @@ func testBaselineFormats(t *testing.T) {
 		name, event, want string
 	}{
 		{"Claude Code push", `{"tool_name":"Bash","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
-		{"Claude Code reviewer commit", `{"tool_name":"Bash","agent_type":"adversarial-reviewer","tool_input":{"command":"git commit -m x"}}`, `"permissionDecision":"deny"`},
+		{"Claude Code sub-agent commit", `{"tool_name":"Bash","agent_type":"builder","tool_input":{"command":"git commit -m x"}}`, ""},
 		{"Claude Code commit", `{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}`, ""},
 		{"Codex Bash merge", `{"tool_name":"Bash","turn_id":"t","tool_input":{"command":"gh pr merge 1"}}`, `"permissionDecision":"deny"`},
 		{"Codex exec_command push", `{"tool_name":"exec_command","turn_id":"t","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
@@ -930,48 +929,6 @@ func TestOpenedRepo(t *testing.T) {
 	}
 }
 
-// TestAgentRoles holds each agent with a role to it, by a command that role
-// is denied and every less strict one may run: a reviewer may not commit a
-// fixup, which an ordinary session may. agents.json names these agents, and
-// no others.
-func TestAgentRoles(t *testing.T) {
-	want := map[string]string{
-		"adversarial-reviewer": "reviewer", "design-reviewer": "reviewer", "security-reviewer": "reviewer",
-	}
-	var file struct {
-		Roles map[string]string `json:"roles"`
-	}
-	if err := json.Unmarshal(agentsJSON, &file); err != nil {
-		t.Fatal(err)
-	}
-	if !maps.Equal(file.Roles, want) {
-		t.Errorf("agents.json's roles are %v, want %v", file.Roles, want)
-	}
-	only := map[string]string{"reviewer": "git commit --fixup=abc"}
-	run := func(agent, command string) bool {
-		event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "agent_type": agent,
-			"tool_input": map[string]string{"command": command}})
-		var out bytes.Buffer
-		Main([]string{"--baseline"}, bytes.NewReader(event), &out, io.Discard)
-		return strings.Contains(out.String(), `"deny"`)
-	}
-	less := map[string]string{"reviewer": ""}
-	for name, r := range want {
-		t.Run(name, func(t *testing.T) {
-			command, ok := only[r]
-			if !ok {
-				t.Fatalf("%s: no case for role %s", name, r)
-			}
-			if !run(name, command) {
-				t.Errorf("%q from %s was let through", command, name)
-			}
-			if run(less[r], command) {
-				t.Errorf("%q from %q, a less strict role, was denied", command, less[r])
-			}
-		})
-	}
-}
-
 // TestReviewerReasons holds every denial a reviewer meets to the one thing
 // it should do instead, wherever the rule it broke comes from.
 func TestReviewerReasons(t *testing.T) {
@@ -991,7 +948,7 @@ func TestFormats(t *testing.T) {
 		name, event, want string
 	}{
 		{"Claude Code PreToolUse", `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
-		{"reviewer fixup", `{"tool_name":"Bash","agent_type":"adversarial-reviewer","tool_input":{"command":"git commit --fixup=abc"}}`, `"permissionDecision":"deny"`},
+		{"a sub-agent's fixup", `{"tool_name":"Bash","agent_type":"adversarial-reviewer","tool_input":{"command":"git commit --fixup=abc"}}`, ""},
 		{"pr-loop push", `{"tool_name":"Bash","tool_input":{"command":"pr-loop push"}}`, ""},
 		{"ls", `{"tool_name":"Bash","tool_input":{"command":"ls"}}`, ""},
 	} {

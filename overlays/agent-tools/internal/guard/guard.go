@@ -1,7 +1,8 @@
 // Package guard is a PreToolUse hook for Claude Code and Codex. With
 // `--baseline`, in every session, it denies what is the operator's to do:
-// publishing, merging, GitHub's settings and credentials, and keeps the
-// agents agents.json names to their roles, a reviewer to reading.
+// publishing, merging, GitHub's settings and credentials. With
+// `--reviewer`, the hook each reviewer agent's own definition runs, it also
+// keeps that agent to reading.
 //
 // It inspects commands as the agent typed them, so it catches a forgotten rule
 // but not a command built at run time. In a sandbox without credentials the
@@ -12,7 +13,6 @@ package guard
 import (
 	"bytes"
 	"context"
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,8 +45,6 @@ var (
 type input struct {
 	ToolName  string          `json:"tool_name"`
 	ToolInput json.RawMessage `json:"tool_input"`
-	// Claude Code names the subagent making the call. Codex names none.
-	AgentType string `json:"agent_type"`
 	// The directory the command runs in, which bounds the files the guard
 	// reads. Without it, the guard's own working directory stands in.
 	Cwd string `json:"cwd"`
@@ -66,52 +64,20 @@ const (
 	reviewer             // reviewer: also kept to git's reading commands and denied every change to GitHub
 )
 
-// agentsJSON names the agents with a role of their own. The agents' Nix
-// modules read it too: an agent named a reviewer here is defined without
-// editing tools.
-//
-//go:embed agents.json
-var agentsJSON []byte
-
-// roleNames are the agents with a role of their own, by agent name.
-var roleNames = func() map[string]role {
-	var file struct {
-		Roles map[string]string `json:"roles"`
-	}
-	if err := json.Unmarshal(agentsJSON, &file); err != nil {
-		panic("guard: agents.json: " + err.Error())
-	}
-	byName := map[string]role{"baseline": baseline, "reviewer": reviewer}
-	names := map[string]role{}
-	for agent, name := range file.Roles {
-		r, ok := byName[name]
-		if !ok {
-			panic("guard: agents.json: unknown role " + name)
-		}
-		names[agent] = r
-	}
-	return names
-}()
-
-// roleOf is the role of the agent named agentType, or fallback for an agent
-// without a role of its own.
-func roleOf(agentType string, fallback role) role {
-	if r, ok := roleNames[agentType]; ok {
-		return r
-	}
-	return fallback
-}
-
 // Main reads one hook event and writes a denial in the caller's format, or
-// nothing to let the call through. With `--baseline`, the hook every session
-// runs, an agent without a role of its own is held to every session's rules.
+// nothing to let the call through. `--baseline` is the hook every session
+// runs; `--reviewer` the one a reviewer agent's definition adds beside it,
+// which also keeps the agent to reading.
 func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	who := baseline
 	switch {
 	case len(args) == 1 && args[0] == "--baseline":
+	case len(args) == 1 && args[0] == "--reviewer":
+		who = reviewer
 	case len(args) == 1 && args[0] == "--post":
 		return post(stdin, stdout)
 	default:
-		fmt.Fprintf(stderr, "pr-loop guard: takes --baseline or --post; got %q\n", args)
+		fmt.Fprintf(stderr, "pr-loop guard: takes --baseline, --reviewer or --post; got %q\n", args)
 		return 1
 	}
 	var in input
@@ -121,7 +87,6 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if in.Cwd == "" {
 		in.Cwd, _ = os.Getwd()
 	}
-	who := roleOf(in.AgentType, baseline)
 	reason := checkSubagentStash(in)
 	if reason == "" {
 		reason = check(in.ToolName, in.ToolInput, who, in.Cwd)

@@ -613,9 +613,10 @@ pass, the listed writes ask you first in Claude Code and are denied in
 Codex and to reviewers, and any other tool is denied until it is
 listed. Every tool of a server it does not list asks you first in Claude
 Code, and is denied in Codex and to reviewers. Each refusal says what to do
-instead. An agent with a role in
-`overlays/agent-tools/internal/guard/agents.json` (the reviewers, which only
-read) has that role's rules in any session. It also denies starting a
+instead. Each reviewer agent, defined in `modules/home-manager/claude/agents`
+with only Read, Bash and StructuredOutput, also runs `pr-loop guard
+--reviewer` from its own definition, which keeps it to reading in any
+session. The guard also denies starting a
 review loop or setting its variables (`claude-review-loop`,
 `PR_LOOP_SESSION`, `PR_LOOP_MODE`) and `pr-loop post`, which are yours.
 

@@ -75,58 +75,90 @@ with lib; let
       touch $out
     '';
 
-  # The agents the coordinate-subagents skill starts by role: the user-level
-  # agents agents.json lists. One agents.json names a reviewer has no
-  # editing tools, and the guard holds its shell to reading. Each body ends
-  # with the rules every one of them shares, then its contract, if any. A
+  # The role agents, plain agent files in ./agents: the sub-agents the
+  # coordinate-subagents skill starts, linked into ~/.claude/agents, and the
+  # headless reviewers git delegate runs from review-agents.json. A
+  # reviewer's file names its tools and the hook that keeps it to reading,
+  # `@guard@ guard --reviewer`, @guard@ being pr-loop. Each prompt ends with
+  # the rules every sub-agent shares, then its contract, if any. A
   # description is plain YAML: no colon followed by a space.
-  roleAgents = let
-    inherit (pkgs.agent-tools) guardAgents;
-    agent = name: {
-      description,
-      skills ? [],
-      body,
-      contract ? "",
-    }:
-      nameValuePair ".claude/agents/${name}.md" {
-        text = ''
-          ---
-          name: ${name}
-          description: ${description}
-          model: opus
-          effort: high
-          ${optionalString ((guardAgents.roles.${name} or null) == "reviewer") "tools: Read, Grep, Glob, Bash\n"}${optionalString (skills != []) "skills:\n${concatMapStrings (s: "  - ${s}\n") skills}"}---
-          ${body}
-          ${builtins.readFile ./agents/subagent.md}
-          ${contract}
-        '';
-      };
-    agents = {
-      builder = {
-        description = "Builds one part of a plan, one branch in the worktree its task names, committed unsigned and verified.";
-        skills = ["signing-pass" "write-tests" "review-change" "plan-work"];
-        body = builtins.readFile ./agents/builder.md;
-      };
-      adversarial-reviewer = {
-        description = "Tries to break one branch before it is signed, reproducing each finding and rating it CONFIRMED or PLAUSIBLE. Only reads, and changes only throwaway copies.";
-        skills = ["write-tests"];
-        body = builtins.readFile ./agents/adversarial-reviewer.md;
-      };
-      design-reviewer = {
-        description = "Reviews a plan before it is built, or the work across a plan's branches once built, against the design skill. Only reads.";
-        skills = ["design" "review-change"];
-        body = builtins.readFile ./agents/design-reviewer.md;
-      };
-      security-reviewer = {
-        description = "Reviews a change for security (untrusted input, secrets, confinement, injection), and answers git fresh-review --focus security prompts. Only reads.";
-        body = builtins.readFile ./agents/security-reviewer.md;
-        contract = pkgs.agent-tools.securityReviewerPrompt;
-      };
-    };
+  agentNames = ["builder" "adversarial-reviewer" "design-reviewer" "security-reviewer" "review-guide" "diagrammer"];
+  contracts.security-reviewer = pkgs.agent-tools.securityReviewerPrompt;
+  reviewerHook = "${getExe' config.wgn.home.llm.agentTools "pr-loop"} guard --reviewer";
+
+  # An agent file's frontmatter, as lines, and its prompt.
+  agentFile = name: let
+    text = replaceStrings ["@guard@"] [(getExe' config.wgn.home.llm.agentTools "pr-loop")] (builtins.readFile (./agents + "/${name}.md"));
+    pieces = splitString "\n---\n" (removePrefix "---\n" text);
+    frontmatter = splitString "\n" (head pieces);
+    field = key: let
+      lines = filter (hasPrefix "${key}: ") frontmatter;
+    in
+      if lines == []
+      then null
+      else removePrefix "${key}: " (head lines);
   in
-    assert assertMsg (naturalSort (attrNames agents) == naturalSort guardAgents.claude)
-    "claude: the agents defined here and agents.json's claude list differ";
-      mapAttrs' agent agents;
+    assert assertMsg (hasPrefix "---\n" text && length pieces > 1) "claude: ./agents/${name}.md has no frontmatter";
+    assert assertMsg (field "name" == name) "claude: ./agents/${name}.md is not named ${name}";
+    assert assertMsg (field "tools" == null || any (hasSuffix "command: \"${reviewerHook}\"") frontmatter)
+    "claude: ./agents/${name}.md restricts its tools but runs no `guard --reviewer` hook"; {
+      inherit field;
+      text = text + "\n" + builtins.readFile ./agents/subagent.md + (contracts.${name} or "");
+      prompt = concatStringsSep "\n---\n" (tail pieces) + "\n" + builtins.readFile ./agents/subagent.md + (contracts.${name} or "");
+    };
+
+  roleAgents = listToAttrs (map (name: nameValuePair ".claude/agents/${name}.md" {inherit (agentFile name) text;}) agentNames);
+
+  # The reviewers git delegate runs headless, with `--agents` and this file,
+  # which outranks a reviewed project's own agents.
+  reviewAgents = pkgs.runCommand "review-agents.json" {
+    nativeBuildInputs = [pkgs.jq];
+    json = builtins.toJSON (genAttrs ["security-reviewer" "review-guide" "diagrammer"] (name: let
+      a = agentFile name;
+    in {
+      description = a.field "description";
+      inherit (a) prompt;
+      tools = splitString ", " (a.field "tools");
+      model = a.field "model";
+      hooks.PreToolUse = [
+        {
+          matcher = "*";
+          hooks = [
+            {
+              type = "command";
+              command = reviewerHook;
+            }
+          ];
+        }
+      ];
+    }));
+  } ''jq -e . <<<"$json" > $out'';
+
+  # The headless reviewers' only settings, since git delegate passes
+  # `--setting-sources ""`: the host sandbox's credentials, denied reads and
+  # network, a sandbox no project can loosen, and no exclusions, allow rules
+  # or hooks. Each reviewer's hook rides in its agent entry.
+  reviewerSettings = pkgs.runCommand "reviewer-settings.json" {
+    nativeBuildInputs = [pkgs.jq];
+    json = builtins.toJSON {
+      sandbox = {
+        enabled = true;
+        failIfUnavailable = true;
+        allowUnsandboxedCommands = false;
+        filesystem.denyRead = hostSandbox.filesystem.denyRead;
+        network.allowedDomains = hostSandbox.network.allowedDomains;
+      };
+      permissions.deny = credentialReads;
+    };
+  } ''
+    jq -e . <<<"$json" > $out
+    jq -e '.sandbox.excludedCommands == null and .permissions.allow == null and .hooks == null' $out > /dev/null
+  '';
+
+  # Read is not hooked, so credentials are denied it by rule: each path a
+  # prefix, so one rule matches a file whose name it starts, and another
+  # anything under a directory whose name it starts.
+  credentialReads = concatMap (p: ["Read(${rulePath p}*)" "Read(${rulePath p}*/**)"]) config.wgn.home.llm.guard.credentialPaths;
 
   darwin = pkgs.stdenv.hostPlatform.isDarwin;
   mcpProxy = config.wgn.home.mcp-proxy;
@@ -629,12 +661,9 @@ in {
         };
 
         # Credentials stay out of every session. The guard denies shell
-        # commands and file tools naming them; Read is not hooked, so it is
-        # denied here. Each is a path prefix, so a rule matches a file
-        # whose name it starts, and another anything under a directory
-        # whose name it starts.
+        # commands and file tools naming them, and Read is denied them here.
         permissions.deny =
-          concatMap (p: ["Read(${rulePath p}*)" "Read(${rulePath p}*/**)"]) config.wgn.home.llm.guard.credentialPaths
+          credentialReads
           # A plan's log is appended to by `agent-plan log` alone; the guard
           # denies the same files to every file tool and shell write. An Edit
           # rule covers Write too.
@@ -785,14 +814,14 @@ in {
 
         # A hook list set here replaces the file's own on every switch.
         hooks.PreToolUse = [
-          # Holds every session to the baseline: what is the operator's to do,
-          # and the agents agents.json names to their roles. Every tool that
-          # runs a command or writes a file belongs here: Monitor runs a shell
-          # command as Bash does, and ExitWorktree can delete a worktree and
-          # its branch. MCP tools are held to the guard's mcp.json: on a
-          # server it lists, reads pass, listed writes ask and the rest are
-          # refused; every tool on a server it does not list asks, and is
-          # refused to an agent with a role.
+          # Holds every session to the baseline: what is the operator's to do.
+          # A reviewer agent's own hook adds its reading rules. Every tool
+          # that runs a command or writes a file belongs here: Monitor runs a
+          # shell command as Bash does, and ExitWorktree can delete a
+          # worktree and its branch. MCP tools are held to the guard's
+          # mcp.json: on a server it lists, reads pass, listed writes ask and
+          # the rest are refused; every tool on a server it does not list
+          # asks.
           {
             matcher = "Bash|Monitor|ExitWorktree|Edit|Write|MultiEdit|NotebookEdit|mcp__.*";
             hooks = [
@@ -810,6 +839,10 @@ in {
   config = mkIf cfg.enable (mkMerge [
     {
       wgn.home.llm.enable = true;
+      wgn.home.llm.delegate = {
+        agents = "${reviewAgents}";
+        settings = "${reviewerSettings}";
+      };
 
       assertions = [
         {

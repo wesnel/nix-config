@@ -22,6 +22,9 @@ with lib; let
     guard = {
       inherit (cfg.guard) credentialPaths;
     };
+    delegate = {
+      inherit (cfg.delegate) agents settings;
+    };
   });
 
   agentPlan = getExe' cfg.agentTools "agent-plan";
@@ -340,6 +343,25 @@ in {
           "/private/var/folders/*/*/T/secrets.d"
         ]
         ++ optional pkgs.stdenv.hostPlatform.isLinux "/run/user/*/secrets.d";
+    };
+
+    # The headless reviewers' definitions and settings, which the Claude Code
+    # module builds from its agent files and host sandbox, written into
+    # agent-tools' config for git delegate.
+    delegate = {
+      agents = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        internal = true;
+        description = "The store path of the reviewers' `--agents` file, review-agents.json.";
+      };
+
+      settings = mkOption {
+        type = types.nullOr types.str;
+        default = null;
+        internal = true;
+        description = "The store path of the reviewers' only settings file, reviewer-settings.json.";
+      };
     };
 
     agentTools = mkOption {
