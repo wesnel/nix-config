@@ -641,6 +641,56 @@
           touch $out
         '';
 
+      # The Claude Code settings the ngrok Mac's home configuration writes
+      # hold the permission rules beside the guard: bypass mode off; for
+      # every server mcp.json lists, each read allowed and each confirm
+      # asked, never allowed; no allow rule that a deny rule covers, which
+      # deny would override; and the guard's PreToolUse hook matching MCP
+      # tools.
+      checks.claude-settings = let
+        ngrok = darwinSystems.ngrok;
+        settings = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username}.wgn.home.claude.settings;
+      in
+        pkgs.runCommand "claude-settings" {
+          nativeBuildInputs = [pkgs.jq];
+          settings = builtins.toJSON settings;
+          mcp = builtins.readFile ./overlays/agent-tools/internal/guard/mcp.json;
+          passAsFile = ["settings" "mcp"];
+        } ''
+          s=$settingsPath
+          # Each check prints what breaks it, and fails on any.
+          check() {
+            found=$(jq -r "$@" "$s")
+            if [ -n "$found" ]; then
+              printf '%s\n' "$found" >&2
+              failed=1
+            fi
+          }
+          failed=
+          check 'if .permissions.disableBypassPermissionsMode == "disable" then empty
+            else "bypass-permissions mode is not disabled" end'
+          check '.permissions.deny as $d | ["Bash(gh pr merge *)", "Bash(git push *)"][]
+            | select(. as $t | $d | index([$t]) == null) | "not denied: \(.)"'
+          check --slurpfile mcp "$mcpPath" '. as $s | $mcp[0][] | .servers[] as $server
+            | ((.reads // [])[] | "mcp__\($server)__\(.)"
+                | select(. as $t | $s.permissions.allow | index([$t]) == null) | "read not allowed: \(.)"),
+              ((.confirms // [])[] | "mcp__\($server)__\(.)"
+                | (select(. as $t | $s.permissions.ask | index([$t]) == null) | "confirm not asked: \(.)"),
+                  (select(. as $t | $s.permissions.allow | index([$t]) != null) | "confirm allowed: \(.)"))'
+          # A deny rule covers an allow rule its pattern matches, with `*`
+          # any text; one with no parentheses covers its whole tool, or
+          # every tool of its MCP server.
+          check 'def rx: gsub("(?<c>[.+?^$|{}()\\[\\]\\\\])"; "\\\(.c)") | gsub("\\*"; ".*");
+            def covers($d): if ($d | test("\\(")) then test("^" + ($d | rx) + "$")
+              else . == $d or startswith($d + "(") or startswith($d + "__") end;
+            .permissions.deny as $deny | .permissions.allow[] as $a | $deny[]
+            | select(. as $d | $a | covers($d)) | "allowed but denied: \($a), by \(.)"'
+          check 'if (.hooks.PreToolUse | any(.matcher | test("mcp__"))) then empty
+            else "no PreToolUse hook matches MCP tools" end'
+          [ -z "$failed" ]
+          touch $out
+        '';
+
       devShells = {
         default = pkgs.mkShell {
           buildInputs = [

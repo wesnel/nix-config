@@ -160,6 +160,18 @@ with lib; let
   # anything under a directory whose name it starts.
   credentialReads = concatMap (p: ["Read(${rulePath p}*)" "Read(${rulePath p}*/**)"]) config.wgn.home.llm.guard.credentialPaths;
 
+  # The guard's mcp.json as permission rules, for each server of each
+  # service: its reads allowed and its confirmed writes asked, without a
+  # hook round trip. The hook still sees every MCP call (its matcher keeps
+  # `mcp__.*`) and refuses a listed server's other tools.
+  mcpRules = let
+    services = attrValues pkgs.agent-tools.mcpTools;
+    rules = key: concatMap (s: concatMap (server: map (tool: "mcp__${server}__${tool}") s.${key}) s.servers) services;
+  in {
+    allow = rules "reads";
+    ask = rules "confirms";
+  };
+
   darwin = pkgs.stdenv.hostPlatform.isDarwin;
   mcpProxy = config.wgn.home.mcp-proxy;
   plans = config.wgn.home.llm.plans;
@@ -676,7 +688,23 @@ in {
           # holds for shell commands and this for file tools, which run
           # outside it, where the guard's hook cannot run. Review records
           # likewise.
-          ++ ["Edit(${rulePath plans.dir}/**)" "Edit(${rulePath records}/**)"];
+          ++ ["Edit(${rulePath plans.dir}/**)" "Edit(${rulePath records}/**)"]
+          # The usual spellings of the operator's actions, each a policy.json
+          # baseline row, refused even where the hook cannot run. Rules are
+          # not a boundary: the guard reads every other spelling, and the
+          # sandbox holds the credentials these need.
+          ++ map (c: "Bash(${c} *)") ["gh pr merge" "gh pr close" "gh pr reopen" "gh pr review" "gh pr comment"
+            "gh release" "gh repo delete" "git push" "sudo" "darwin-rebuild switch" "nix profile install" "npm publish"
+            "cargo publish"];
+
+        # The guard refuses marking a pull request ready; its --undo, back
+        # to draft, asks.
+        permissions.ask = ["Bash(gh pr ready *)"] ++ mcpRules.ask;
+
+        # A nested session started to skip every prompt. The guard refuses
+        # `claude --dangerously-skip-permissions` too, for a launch that
+        # reads another settings file.
+        permissions.disableBypassPermissionsMode = "disable";
 
         # Excluded commands go through the permission flow. These run
         # without a prompt or auto mode's classifier: the excluded commands
@@ -688,7 +716,8 @@ in {
           # operator-only action must never become one, since this rule
           # allows it.
           ++ ["Bash(git delegate *)" "Bash(git-delegate *)"]
-          ++ map (w: "Bash(${sub "agent-plan" w})") agentPlanWrites;
+          ++ map (w: "Bash(${sub "agent-plan" w})") agentPlanWrites
+          ++ mcpRules.allow;
 
         # The auto-mode classifier judges intent, so it also stops a rule
         # broken where the guard cannot see, as through a script; the guard

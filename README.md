@@ -671,9 +671,11 @@ git itself does not use the keychain's GitHub login:
 | `datadog` (`datadog.enable`, `datadog.site`) | the site's `/v1/mcp`, toolsets `core` and `error-tracking` | read tools only, OAuth |
 
 Options in parentheses are off by default. Each remote server serves only
-the tools listed for it in the guard's `mcp.json`, and the guard asks you
-before each listed write, in Claude Code; Codex and reviewers get the reads
-alone.
+the tools listed for it in the guard's `mcp.json`. In Claude Code those
+lists are also permission rules generated from `mcp.json`: each server's
+reads allowed and its listed writes asked, and the guard still refuses any
+other tool on a listed server. Codex's lists are the guard's alone, and
+Codex and reviewers get the reads alone.
 
 The proxy signs in to each remote server itself and refreshes their
 short-lived tokens, so agents hold only the proxy's own token, kept in
