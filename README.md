@@ -417,7 +417,11 @@ session a turn. It also prints `plan sync stalled` once per stall (this
 host's plans unsynced, its last push over 6 hours old), and `demo digest
 ready` for a new demo digest under `digests/YYYY/` in the notes
 repository. Every 2 minutes it takes the other hosts' plans
-with the fast-forward-only pull, never the rebasing one. It runs one at a
+with the fast-forward-only pull, never the rebasing one. Every 5 minutes it
+reads GitHub through the export's cache, which fetches at most once a
+minute, and prints `reviews changed` where the pull requests the page lists
+changed, and every 30 seconds it looks at their review records, printing
+`review record changed` where one appeared or changed. It runs one at a
 time (`already watching` otherwise) and keeps what it printed in
 `watch.json`, so the watch the session starts after Monitor's 30 minutes
 prints only what changed since.

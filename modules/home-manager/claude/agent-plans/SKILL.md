@@ -24,6 +24,7 @@ At the start, after `/clear` or `/compact`:
      `status` `proactive`.
    - `demo digest ready`: PushNotification `Demo digest ready`, `status`
      `proactive`. Then run the update.
+   - `reviews changed` or `review record changed`: run the update.
    - `already watching`: another watch runs; nothing to do.
 3. At the start only: Bash `plan-dash page`; where it prints `changed`
    true, publish. Then run the update.
