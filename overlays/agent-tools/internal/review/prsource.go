@@ -1,6 +1,7 @@
-// Package prreview fetches a pull request into a clone of its own, for a
-// reviewer that did not write it. It writes nothing to GitHub.
-package prreview
+package review
+
+// A pull request source is fetched into a clone of its own, for reviewers
+// that did not write it. Nothing here writes to GitHub.
 
 import (
 	"context"

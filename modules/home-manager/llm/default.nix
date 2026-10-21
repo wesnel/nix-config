@@ -120,7 +120,7 @@ in {
 
             description = ''
               The test command `git red-check` runs, with `sh` at the top of
-              a checkout. `git fresh-review` never runs it, since it runs
+              a checkout. `git delegate` never runs it, since it runs
               the reviewed commits' code; the session does.
             '';
           };
@@ -197,7 +197,7 @@ in {
             default = null;
 
             description = ''
-              The threat notes `git fresh-review --focus security` gives
+              The threat notes `git delegate --reviewer security` gives
               its reviewer: what must hold (IDs such as `T3`), the untrusted
               inputs and boundaries, and what is accepted and why. The
               notes themselves, or a file outside the repository, named by
@@ -485,17 +485,6 @@ in {
             resolvesOwnThreads = true;
           };
         };
-      };
-
-      reviewDir = mkOption {
-        type = types.str;
-        readOnly = true;
-        default = "${config.xdg.cacheHome}/pr-review";
-
-        description = ''
-          Where `pr-loop review` keeps each pull request's clone and review,
-          `<owner>/<name>/<number>/`.
-        '';
       };
     };
 

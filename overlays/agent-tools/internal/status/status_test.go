@@ -87,13 +87,13 @@ func (f *fake) calls(t *testing.T) int {
 	return strings.Count(string(data), "\n")
 }
 
-// reviewRoot puts the reviews' directory, pr-review under
-// $XDG_CACHE_HOME, in a new one.
+// reviewRoot puts the review records' directory, agent-tools/reviews
+// under $XDG_STATE_HOME, in a new one.
 func reviewRoot(t *testing.T) string {
 	t.Helper()
-	cache := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cache)
-	return filepath.Join(cache, "pr-review")
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	return filepath.Join(state, "agent-tools", "reviews")
 }
 
 var now = time.Date(2026, 10, 16, 12, 0, 0, 0, time.Local)
@@ -101,7 +101,7 @@ var now = time.Date(2026, 10, 16, 12, 0, 0, 0, time.Local)
 func TestGitHub(t *testing.T) {
 	fakeGitHub(t, reply)
 	root := reviewRoot(t)
-	record := filepath.Join(root, "p", "q", "3", head1[:12]+".json")
+	record := filepath.Join(root, "p", "q", strings.Repeat("0", 40)+".."+head1+".org")
 	os.MkdirAll(filepath.Dir(record), 0o755)
 	os.WriteFile(record, []byte("{}"), 0o644)
 

@@ -1,4 +1,4 @@
-package prreview
+package review
 
 import (
 	"encoding/json"
@@ -101,9 +101,9 @@ func (f *fakeGitHub) graphQL(query string, vars map[string]any, out any) error {
 	return json.Unmarshal(encoded, out)
 }
 
-// setUp points reviews at a cache directory of the test's own, the remote
+// setUpPR points reviews at a cache directory of the test's own, the remote
 // and a fake GitHub serving pull request 7 of o/r with the remote's head.
-func setUp(t *testing.T, r *remote) *fakeGitHub {
+func setUpPR(t *testing.T, r *remote) *fakeGitHub {
 	t.Helper()
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	f := &fakeGitHub{pr: map[string]any{

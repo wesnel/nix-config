@@ -68,8 +68,8 @@ const reply = `{"data": {
 }}`
 
 // fakeGitHub puts a gh on PATH that answers `gh api graphql` with reply,
-// or fails where $FAKE_GH_FAIL is set, and puts a review of p/q#3 in the
-// reviews' directory under a new $XDG_CACHE_HOME.
+// or fails where $FAKE_GH_FAIL is set, and puts a review record of p/q#3's
+// head in the records' directory under a new $XDG_STATE_HOME.
 func fakeGitHub(t *testing.T) {
 	t.Helper()
 	bin := t.TempDir()
@@ -80,9 +80,9 @@ func fakeGitHub(t *testing.T) {
 	os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0o755)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("FAKE_GH_FAIL", "")
-	cache := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cache)
-	record := filepath.Join(cache, "pr-review", "p", "q", "3", head[:12]+".json")
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	record := filepath.Join(state, "agent-tools", "reviews", "p", "q", strings.Repeat("0", 40)+".."+head+".org")
 	os.MkdirAll(filepath.Dir(record), 0o755)
 	os.WriteFile(record, []byte(`{"note": "SENTINEL-record"}`), 0o644)
 }

@@ -18,8 +18,11 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/gh"
-	"github.com/wesnel/agent-tools/internal/prreview"
+	"github.com/wesnel/agent-tools/internal/record"
 )
+
+// headPattern is a full commit SHA, which a record's file name holds.
+var headPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 // cacheFor is how long a fetch from GitHub serves before the next: one
 // search query costs a point of GitHub's 5000 an hour.
@@ -57,8 +60,8 @@ type Request struct {
 	Head      string    `json:"head"`
 	// CI is Head's check rollup, as PR's.
 	CI string `json:"ci"`
-	// Record is "yes" or "no" for whether pr-loop holds a review of Head,
-	// or "unknown" without a review directory.
+	// Record is "yes" or "no" for whether a git delegate review record of
+	// Head exists, or "unknown" where Repo or Head cannot name one.
 	Record string `json:"-"`
 	// Parent is as PR's.
 	Parent int `json:"parent"`
@@ -79,13 +82,18 @@ type GitHub struct {
 func GitHubAt(ctx context.Context, cache string, now time.Time) (*GitHub, bool, error) {
 	g, stale, err := github(ctx, cache, now)
 	if g != nil {
-		root := prreview.Root()
 		for i := range g.Requests {
 			r := &g.Requests[i]
 			r.Record = "unknown"
-			if file, err := prreview.RecordFile(root, r.Repo, r.Number, r.Head); err == nil {
+			owner, repo, _ := strings.Cut(r.Repo, "/")
+			if !record.ValidName(owner) || !record.ValidName(repo) || !headPattern.MatchString(r.Head) {
+				continue
+			}
+			// Any range a review took to this head: git delegate's of the
+			// pull request is merge-base..head.
+			if found, err := filepath.Glob(filepath.Join(record.Dir(), owner, repo, "*.."+r.Head+".org")); err == nil {
 				r.Record = "no"
-				if _, err := os.Stat(file); err == nil {
+				if len(found) > 0 {
 					r.Record = "yes"
 				}
 			}

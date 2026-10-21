@@ -109,11 +109,28 @@ func Threads(number int, all bool) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	bots, err := botsFor(repo.Slug)
+	threads, err := RefreshThreads(repo.Slug, number)
 	if err != nil {
 		return nil, err
 	}
-	owner, name, _ := strings.Cut(repo.Slug, "/")
+	out := []Thread{}
+	for _, t := range threads {
+		if all || !t.Resolved {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+// RefreshThreads reads every review thread of pull request number of slug,
+// owner/name, with every comment, and writes them to the PR's review record
+// as Threads does. git delegate refreshes a pull request's record with it.
+func RefreshThreads(slug string, number int) ([]Thread, error) {
+	bots, err := botsFor(slug)
+	if err != nil {
+		return nil, err
+	}
+	owner, name, _ := strings.Cut(slug, "/")
 	var threads []Thread
 	var cursor *string
 	for {
@@ -165,16 +182,10 @@ func Threads(number int, all bool) (any, error) {
 		next := page.PageInfo.EndCursor
 		cursor = &next
 	}
-	if err := writeThreads(repo, number, threads); err != nil {
+	if err := writeThreads(&Repo{Slug: slug}, number, threads); err != nil {
 		return nil, err
 	}
-	out := []Thread{}
-	for _, t := range threads {
-		if all || !t.Resolved {
-			out = append(out, t)
-		}
-	}
-	return out, nil
+	return threads, nil
 }
 
 // unsafeLogin is what a record's AUTHORS cannot hold of a login.

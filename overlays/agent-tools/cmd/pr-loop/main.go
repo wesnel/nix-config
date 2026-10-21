@@ -4,7 +4,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -18,7 +17,6 @@ import (
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/guard"
 	"github.com/wesnel/agent-tools/internal/loop"
-	"github.com/wesnel/agent-tools/internal/prreview"
 	"github.com/wesnel/agent-tools/internal/record"
 	"github.com/wesnel/agent-tools/internal/redact"
 )
@@ -103,7 +101,7 @@ worktree. A failure to log is printed on stderr and fails nothing.
                               completes (a commit no plan takes makes a plan
                               naming both); after a push to GitHub, names the
                               pr-loop wait ci to start
-` + prreview.Usage + `
+
 reply and resolve take only a thread whose every comment is a configured
 bot's (its login pattern, on an account GitHub types Bot) or the
 authenticated user's, on an open PR by the authenticated user in this
@@ -160,7 +158,6 @@ A review record that fails its structure check, which only a hand edit
 makes, refuses threads, draft and post with exit 5; the operator fixes or
 deletes it.
 
-` + prreview.Help + `
 A setup command prepares a fresh checkout, e.g. generating files the
 repository does not commit. It is taken from "setup" under "repos" in the
 user's agent-tools/config.json, keyed by owner/name, and never from the
@@ -212,9 +209,6 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	flags.Var(&leases, "lease", "")
 	if command == "guard" {
 		return guard.Main(args, stdin, stdout, stderr)
-	}
-	if command == "review" {
-		return prreview.Main(context.Background(), args, false, stdin, stdout, stderr)
 	}
 	if code, ok := cli.Parse(flags, interleave(args), usage, stdout, stderr); !ok {
 		return code

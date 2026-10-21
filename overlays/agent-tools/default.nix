@@ -57,7 +57,7 @@
     # about (confirms), per service, for mcp-proxy's tool filters.
     passthru.mcpTools = builtins.fromJSON (builtins.readFile ./internal/guard/mcp.json);
 
-    # The security review's contract as `git fresh-review --focus security`
+    # The security review's contract as `git delegate --reviewer security`
     # builds it (focus.contract in internal/review): the general contract up
     # to its Checks heading, then the security checks. TestSecurityContract
     # holds the Go side to the same heading.
@@ -67,7 +67,7 @@
       assert lib.assertMsg (builtins.length parts == 2) "agent-tools: reviewer.md needs exactly one `## Checks` heading, where the security contract splits it";
         builtins.head parts + "\n" + builtins.readFile ./internal/review/security.md;
 
-    meta.description = "pr-loop (the review loop), git-sign-pass (the signing pass), git-red-check (checks a commit's tests fail without its change), git-fresh-review (reviews a range of commits with fresh eyes), git-push-guard (keeps private history out of public repositories), agent-plan (agents' plan files and event logs) and plan-dash (the Agent plans page's documents)";
+    meta.description = "pr-loop (the review loop), git-sign-pass (the signing pass), git-red-check (checks a commit's tests fail without its change), git-delegate (reviews a range or a pull request with reviewers that did not write it, and keeps their findings), git-push-guard (keeps private history out of public repositories), agent-plan (agents' plan files and event logs) and plan-dash (the Agent plans page's documents)";
   };
 in
   agent-tools

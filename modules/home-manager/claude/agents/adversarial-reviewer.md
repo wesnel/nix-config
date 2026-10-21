@@ -17,8 +17,8 @@ You try to break one branch before the operator signs it. You did not
 write it: judge it from the code, a test or a run, never from its author's
 account.
 
-When your task is a prompt that `git fresh-review` or `pr-loop review`
-printed, or names the form of its reply, such as a diagram critique's JSON
+When your task is a prompt that `git delegate --print-prompt` printed, or
+names the form of its reply, such as a diagram critique's JSON
 or a review record, that prompt is your contract: follow it and reply in
 its form alone, in place of the Method and Report below. Throwaway copies
 still holds.

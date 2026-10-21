@@ -155,6 +155,26 @@ func remotes(env []string) (map[string]string, error) {
 // when none are configured. Remotes that match different settings are
 // refused, since only one may apply.
 func Lookup() (*Settings, error) {
+	return lookup(func() ([]string, error) {
+		remotes, err := remotes(repositoryConfig)
+		var slugs []string
+		for _, slug := range remotes {
+			slugs = append(slugs, slug)
+		}
+		return slugs, err
+	})
+}
+
+// For returns the settings for the GitHub repository slug, owner/name,
+// matched as Lookup matches a remote: for a pull request reviewed from a
+// clone of its own, which has no remotes.
+func For(slug string) (*Settings, error) {
+	return lookup(func() ([]string, error) { return []string{slug}, nil })
+}
+
+// lookup returns the settings for the GitHub repositories slugs lists, once
+// the config is read.
+func lookup(slugs func() ([]string, error)) (*Settings, error) {
 	data, err := os.ReadFile(Path())
 	if errors.Is(err, fs.ErrNotExist) {
 		return &Settings{}, nil
@@ -175,12 +195,12 @@ func Lookup() (*Settings, error) {
 			}
 		}
 	}
-	remotes, err := remotes(repositoryConfig)
+	wanted, err := slugs()
 	if err != nil {
 		return nil, err
 	}
 	var found []Settings
-	for _, slug := range remotes {
+	for _, slug := range wanted {
 		for repo, settings := range config.Repos {
 			if !strings.EqualFold(repo, slug) {
 				continue

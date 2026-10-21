@@ -8,20 +8,16 @@ import (
 	"strings"
 
 	"github.com/wesnel/agent-tools/internal/git"
-	"github.com/wesnel/agent-tools/internal/repos"
 	"github.com/wesnel/agent-tools/internal/routes"
 )
 
-// routeChange routes the change a general review of r reviewed to the
-// focused reviews it needs, into out.Routes: by the content scan of every
-// commit from where the change starts, by the built-in rules and the
-// operator's, and by the routes the reviewer named. It says on log how to
-// run each. Each source only adds.
-func routeChange(r *span, out *Output, log io.Writer) {
+// routeChange routes the change r to the focused reviews it needs: by the
+// content scan of every commit from where the change starts, by the
+// built-in rules and the operator's, and by the routes a general review's
+// reply named, where out is one. Each source only adds.
+func routeChange(r *span, out *Output, log io.Writer) []routes.Route {
 	rules := slices.Clone(routes.Builtin)
-	git.Dir = r.top
-	settings, err := repos.Lookup()
-	git.Dir = ""
+	settings, err := r.settings()
 	if err != nil {
 		fmt.Fprintf(log, "%s: the operator's route rules are left out: %v\n", name, err)
 	} else {
@@ -58,26 +54,25 @@ func routeChange(r *span, out *Output, log io.Writer) {
 			add(rt.Route, why, rt.Commits)
 		}
 	}
-	reviewed, _ := git.Run("-C", r.top, "rev-list", "--reverse", "--no-merges", r.base+".."+r.tip)
-	for _, p := range out.proposed {
-		if !routes.IsKnown(p.Route) {
-			fmt.Fprintf(log, "%s: the reviewer named the route %q, which no focused review exists for; it is left out\n", name, p.Route)
-			continue
+	if out != nil {
+		reviewed, _ := git.Run("-C", r.top, "rev-list", "--reverse", "--no-merges", r.base+".."+r.tip)
+		for _, p := range out.proposed {
+			if !routes.IsKnown(p.Route) {
+				fmt.Fprintf(log, "%s: the reviewer named the route %q, which no focused review exists for; it is left out\n", name, p.Route)
+				continue
+			}
+			add(p.Route, "the reviewer: "+strings.TrimSpace(p.Why), touching(r, reviewed, p.Paths))
 		}
-		add(p.Route, "the reviewer: "+strings.TrimSpace(p.Why), touching(r, reviewed, p.Paths))
 	}
 	all, _ := git.Run("-C", r.top, "rev-list", "--reverse", "--no-merges", base+".."+r.tip)
 	order := strings.Fields(all)
-	out.Routes = nil
+	var list []routes.Route
 	for _, route := range slices.Sorted(maps.Keys(found)) {
 		rt := found[route]
 		slices.SortStableFunc(rt.Commits, func(a, b string) int { return slices.Index(order, a) - slices.Index(order, b) })
-		out.Routes = append(out.Routes, *rt)
+		list = append(list, *rt)
 	}
-	for _, rt := range out.Routes {
-		fmt.Fprintf(log, "%s: this change needs a %s review (%s): run `git fresh-review --focus %s --goal FILE %s` "+
-			"as the review-change skill says\n", name, rt.Route, strings.Join(rt.Why, "; "), rt.Route, r.given)
-	}
+	return list
 }
 
 // touching are the commits of reviewed that change one of paths, or a

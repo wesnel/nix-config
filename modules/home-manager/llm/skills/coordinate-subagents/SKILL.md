@@ -87,13 +87,14 @@ what is this work's.
   part's Investigate phase (Phases below), which commits nothing.
 - **`adversarial-reviewer`:** tries to break a finished branch, every
   finding reproduced or marked as not, with what held: your review of each
-  part (Review each branch below); also `pr-loop review --reviewer
-  subagent`'s sub-agent, as the `review-change` skill says, replying in the
-  form its prompt gives.
+  part (Review each branch below); also the second opinion where
+  `git delegate` cannot run Codex, from the prompt
+  `git delegate --print-prompt` prints, replying in the form it gives.
 - **`design-reviewer`:** the design reviews (Design review below).
-- **`security-reviewer`:** a security route's review, from the prompt
-  `git fresh-review --print-prompt --focus security` prints, and a
-  security review of a part's range outside the fresh review loop.
+- **`security-reviewer`:** a security review of a part's range outside the
+  fresh review loop, or from the prompt
+  `git delegate --print-prompt --reviewer security` prints where delegate
+  cannot run it headless.
 - **`Explore`:** read-only lookups and inventories.
 
 The reviewers have no editing tools. The guard lets them run git's
@@ -170,7 +171,7 @@ Settle its questions as the `plan-work` skill's "Questions for the operator"
 says: decide the reversible ones yourself, and merge the one-way doors and
 product direction into the Decide phase's list when there is one. A design
 on which sub-agents, or you and the design review, disagree gets a second
-opinion with `git fresh-review ask` first, as the `review-change` skill's
+opinion with `git delegate ask` first, as the `review-change` skill's
 design review says.
 
 A finding by one sub-agent that bears on another part goes to that part's
@@ -265,7 +266,7 @@ branch by itself, never the whole stack at once: the range `<base>..<branch>`,
 the part's goal and what is not its job as the goal statement, at most three
 rounds. Your general review of a part is an `adversarial-reviewer` sub-agent
 given that range and goal statement, in place of `/code-review`;
-`git fresh-review` stays the second opinion. Review a branch once its
+`git delegate` stays the second opinion. Review a branch once its
 sub-agent has finished it, then hand all of that round's findings to the
 sub-agent as one fix round, to settle as Triage says; check its report as
 any other.

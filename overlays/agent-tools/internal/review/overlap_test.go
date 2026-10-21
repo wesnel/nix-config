@@ -28,7 +28,6 @@ echo '[{"headRefName": "pr-branch", "number": 7}]'
 func overlapFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := setUp(t, true)
-	run(t, f.repo, "git", "remote", "add", "origin", "https://github.com/o/r.git")
 	run(t, f.repo, "git", "update-ref", "refs/remotes/origin/main", f.base)
 	run(t, f.repo, "git", "update-ref", "refs/heads/merged", f.base)
 	run(t, f.repo, "git", "switch", "-q", "-c", "work")

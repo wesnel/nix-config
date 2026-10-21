@@ -358,7 +358,7 @@ func program(c call, who role, files, dir, checkout string) string {
 		}
 	case name == "pr-loop":
 		return checkPrLoop(words[1:], who)
-	case name == "git-fresh-review" && who == reviewer:
+	case name == "git-delegate" && who == reviewer:
 		return nestedReview
 	case name == "agent-plan" && len(words) > 1 && words[1] == "sync":
 		return planSync
@@ -724,7 +724,7 @@ func checkGit(words []string, expands []bool, env []string, who role, dir, check
 		return ""
 	}
 	sub, rest := words[i], words[i+1:]
-	if who == reviewer && sub == "fresh-review" {
+	if who == reviewer && sub == "delegate" {
 		return nestedReview
 	}
 	if who == reviewer && !gitRead(sub, rest) {

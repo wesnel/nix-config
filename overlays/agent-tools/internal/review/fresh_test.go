@@ -3,6 +3,7 @@ package review
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,7 +18,7 @@ import (
 )
 
 // fakeCodex stands in for `codex`: it accepts only the flags the real
-// `codex exec --help` and `codex sandbox --help` list that fresh-review is
+// `codex exec --help` and `codex sandbox --help` list that delegate is
 // meant to pass, records them one to a line and where it ran, copies the
 // file $FAKE_CODEX_COPY names in its working directory, and replies as
 // $FAKE_CODEX says.
@@ -71,7 +72,7 @@ case "$FAKE_CODEX" in
   fail) echo "fake codex: model error" >&2; exit 1 ;;
   hang) exec sleep 60 ;;
   fork) echo $$ > "$FAKE_CODEX_LOG/group"; i=0; while [ $i -lt 300 ]; do sleep 30 > /dev/null 2>&1 & i=$((i+1)); if [ $i = 20 ]; then echo > "$FAKE_CODEX_LOG/started"; fi; done; wait ;;
-  none) echo '{"findings": [], "unverified": []}' > "$out" ;;
+  none) echo '{"findings": [], "unverified": [], "routes": []}' > "$out" ;;
   routed) echo '{"findings": [], "unverified": [], "routes": [{"route": "security", "why": "it reads a token", "paths": ["code.txt"]}, {"route": "style", "why": "x", "paths": []}]}' > "$out" ;;
   answer) echo '{"answer": "Extend the seam.", "unverified": ["the callers"]}' > "$out" ;;
   security) echo '{"findings": [{"id": "1", "path": "code.txt", "line": 2, "endLine": null, "kind": "vulnerability", "claim": "c", "evidence": "e", "about": null, "reopens": null}], "unverified": [], "checked": '"$FAKE_CHECKED"'}' > "$out" ;;
@@ -81,11 +82,67 @@ case "$FAKE_CODEX" in
  {"id": "2", "path": "gone.txt", "line": 1, "endLine": null, "kind": "bug", "claim": "c", "evidence": "e", "about": null, "reopens": null},
  {"id": "3", "path": "code.txt", "line": 40, "endLine": null, "kind": "regression", "claim": "c", "evidence": "e", "about": "T1", "reopens": null},
  {"id": "4", "path": "code.txt", "line": 1, "endLine": null, "kind": "style", "claim": "c", "evidence": "e", "about": null, "reopens": null}
-], "unverified": ["the tests need a network"]}
+], "unverified": ["the tests need a network"], "routes": []}
 EOF
   ;;
 esac
 `
+
+// fakeClaude stands in for `claude`: it records each run's arguments,
+// NUL-separated, its environment and where it ran, and prints the result
+// document $FAKE_CLAUDE_LOG/claude-out-N for its Nth run, else claude-out.
+const fakeClaude = `#!/bin/sh
+log=$FAKE_CLAUDE_LOG
+n=$(( $(cat "$log/claude-runs" 2>/dev/null || echo 0) + 1 ))
+echo $n > "$log/claude-runs"
+printf '%s\0' "$@" > "$log/claude-args-$n"
+env > "$log/claude-env-$n"
+pwd > "$log/claude-cwd"
+git rev-parse HEAD > "$log/claude-head" 2>/dev/null
+ls -A > "$log/claude-files"
+if [ -f "$log/claude-out-$n" ]; then cat "$log/claude-out-$n"; else cat "$log/claude-out"; fi
+`
+
+// claudeResult is a result document as `claude -p --output-format json`
+// prints it: with structured output, where structured is not nil, and the
+// final text result.
+func claudeResult(structured any, result string) string {
+	doc := map[string]any{"type": "result", "subtype": "success", "is_error": false, "result": result,
+		"modelUsage": map[string]any{"claude-fake": map[string]any{}}}
+	if structured != nil {
+		doc["structured_output"] = structured
+	}
+	return string(must(json.Marshal(doc)))
+}
+
+// claudeSays has the fake claude print outs, the Nth for its Nth run and
+// the last for every run after.
+func (f *fixture) claudeSays(t *testing.T, outs ...string) {
+	t.Helper()
+	for i, out := range outs {
+		os.WriteFile(filepath.Join(f.log, fmt.Sprintf("claude-out-%d", i+1)), []byte(out), 0o644)
+	}
+	os.WriteFile(filepath.Join(f.log, "claude-out"), []byte(outs[len(outs)-1]), 0o644)
+}
+
+// securityReply is a security reply naming every category as checked,
+// with findings.
+func securityReply(findings ...map[string]any) map[string]any {
+	if findings == nil {
+		findings = []map[string]any{}
+	}
+	return map[string]any{"findings": findings, "unverified": []string{}, "checked": Categories}
+}
+
+// writeConfig writes agent-tools' config with repos as its repos settings
+// and the Claude Code module's delegate paths, and points the tools at it.
+func writeConfig(t *testing.T, repos string) {
+	t.Helper()
+	config := filepath.Join(t.TempDir(), "config.json")
+	os.WriteFile(config, []byte(`{"repos": `+repos+`, "delegate": {"agents": "/store/review-agents.json", `+
+		`"settings": "/store/reviewer-settings.json"}}`), 0o644)
+	t.Setenv("AGENT_TOOLS_CONFIG", config)
+}
 
 type fixture struct {
 	repo, log, base, tip string
@@ -103,21 +160,27 @@ func run(t *testing.T, dir string, name string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// setUp makes a repository with a two-commit change, an uncommitted notes
-// file beside it, and a PATH whose only codex is the fake, if withCodex.
+// setUp makes a repository of github.com/o/r with a two-commit change, an
+// uncommitted notes file beside it, records and a cache of the test's own,
+// and a PATH whose only codex and claude are the fakes, if withCodex; the
+// fake claude replies to a security review with no findings.
 func setUp(t *testing.T, withCodex bool) *fixture {
 	t.Helper()
 	for k, v := range map[string]string{
 		"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
 		"GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e", "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e",
-		"PR_LOOP_SESSION": "", "CODEX_SANDBOX": "", "FAKE_CODEX": "", "FAKE_CODEX_COPY": "",
-		"AGENT_TOOLS_CONFIG": filepath.Join(t.TempDir(), "none.json"),
+		"PR_LOOP_SESSION": "", "CODEX_SANDBOX": "", "FAKE_CODEX": "", "FAKE_CODEX_COPY": "", "CLAUDECODE": "1",
+		"XDG_STATE_HOME": t.TempDir(), "XDG_CACHE_HOME": t.TempDir(),
 	} {
 		t.Setenv(k, v)
 	}
+	writeConfig(t, `{}`)
 	f := &fixture{repo: t.TempDir(), log: t.TempDir()}
 	t.Setenv("FAKE_CODEX_LOG", f.log)
+	t.Setenv("FAKE_CLAUDE_LOG", f.log)
+	f.claudeSays(t, claudeResult(securityReply(), "Reviewed."))
 	run(t, f.repo, "git", "init", "-q", "-b", "main")
+	run(t, f.repo, "git", "remote", "add", "origin", "https://github.com/o/r.git")
 	os.WriteFile(filepath.Join(f.repo, "code.txt"), []byte("a\n"), 0o644)
 	run(t, f.repo, "git", "add", "code.txt")
 	run(t, f.repo, "git", "commit", "-q", "-m", "Start")
@@ -131,10 +194,13 @@ func setUp(t *testing.T, withCodex bool) *fixture {
 	bin := t.TempDir()
 	if withCodex {
 		os.WriteFile(filepath.Join(bin, "codex"), []byte(fakeCodex), 0o755)
+		os.WriteFile(filepath.Join(bin, "claude"), []byte(fakeClaude), 0o755)
 	}
 	path := []string{bin}
 	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
-		if _, err := os.Stat(filepath.Join(dir, "codex")); err != nil {
+		_, codex := os.Stat(filepath.Join(dir, "codex"))
+		_, claude := os.Stat(filepath.Join(dir, "claude"))
+		if codex != nil && claude != nil {
 			path = append(path, dir)
 		}
 	}
@@ -159,17 +225,47 @@ type output struct {
 	} `json:"routes"`
 }
 
-func freshReview(t *testing.T, args ...string) (int, output, string) {
+// runOutput is what a review prints.
+type runOutput struct {
+	Source  string              `json:"source"`
+	Range   string              `json:"range"`
+	Tip     string              `json:"tip"`
+	Record  string              `json:"record"`
+	Reviews []output            `json:"reviews"`
+	NotRun  []map[string]string `json:"notRun"`
+	Counts  map[string]int      `json:"counts"`
+}
+
+// review is the part of the review reviewer gave, or an empty one.
+func (r runOutput) review(reviewer string) output {
+	for _, o := range r.Reviews {
+		if o.Reviewer == reviewer {
+			return o
+		}
+	}
+	return output{}
+}
+
+// runDelegate runs `git delegate` with args.
+func runDelegate(t *testing.T, args ...string) (int, runOutput, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
 	code := Main(t.Context(), args, strings.NewReader(""), &stdout, &stderr)
-	var out output
+	var out runOutput
 	if stdout.Len() > 0 {
 		if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
 			t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
 		}
 	}
 	return code, out, stderr.String()
+}
+
+// freshReview runs `git delegate` with args and returns Codex's part of
+// the review.
+func freshReview(t *testing.T, args ...string) (int, output, string) {
+	t.Helper()
+	code, out, stderr := runDelegate(t, args...)
+	return code, out.review("codex"), stderr
 }
 
 // checkCleanedUp holds the run to leaving no worktree behind.
@@ -183,8 +279,10 @@ func (f *fixture) checkCleanedUp(t *testing.T) {
 	if list := run(t, f.repo, "git", "worktree", "list", "--porcelain"); strings.Count(list, "worktree ") != 1 {
 		t.Errorf("worktrees left behind:\n%s", list)
 	}
-	if left, _ := os.ReadDir(filepath.Join(f.repo, ".git", "fresh-review")); len(left) != 0 {
-		t.Errorf("files left under .git/fresh-review: %v", left)
+	for _, dir := range []string{filepath.Join(f.repo, ".git", "delegate"), filepath.Join(Root(), "o", "r", "work")} {
+		if left, _ := os.ReadDir(dir); len(left) != 0 {
+			t.Errorf("files left under %s: %v", dir, left)
+		}
 	}
 }
 
@@ -315,7 +413,7 @@ func testCodexConfinement(t *testing.T) {
 	}
 	for _, want := range [][]string{
 		{"--ignore-user-config"}, {"--ignore-rules"},
-		{"-c", `default_permissions="fresh-review"`},
+		{"-c", `default_permissions="delegate"`},
 		{"-c", `web_search="disabled"`},
 		{"-c", `shell_environment_policy.inherit="core"`},
 		{"--disable", "plugins"}, {"--disable", "apps"}, {"--disable", "hooks"},
@@ -328,7 +426,7 @@ func testCodexConfinement(t *testing.T) {
 
 	var filesystem string
 	for _, arg := range execArgs {
-		if s, ok := strings.CutPrefix(arg, "permissions.fresh-review.filesystem="); ok {
+		if s, ok := strings.CutPrefix(arg, "permissions.delegate.filesystem="); ok {
 			filesystem = s
 		}
 	}
@@ -336,8 +434,8 @@ func testCodexConfinement(t *testing.T) {
 		t.Fatalf("no filesystem permissions in %q", execArgs)
 	}
 	wt := strings.TrimSpace(string(must(os.ReadFile(filepath.Join(f.log, "worktree")))))
-	if !has(sandboxArgs, "-c", "permissions.fresh-review.filesystem="+filesystem) ||
-		!has(sandboxArgs, "-P", "fresh-review") || !has(sandboxArgs, "-C", wt) {
+	if !has(sandboxArgs, "-c", "permissions.delegate.filesystem="+filesystem) ||
+		!has(sandboxArgs, "-P", "delegate") || !has(sandboxArgs, "-C", wt) {
 		t.Errorf("the sandbox was not tried with the review's permissions in %s: %q", wt, sandboxArgs)
 	}
 	common := run(t, f.repo, "git", "rev-parse", "--path-format=absolute", "--git-common-dir")
@@ -384,8 +482,8 @@ func testCodexFailures(t *testing.T) {
 			f := setUp(t, true)
 			t.Setenv("FAKE_CODEX", c.mode)
 			args := append(append([]string{"--goal", ".git/goal.md"}, c.args...), f.base+"..HEAD")
-			if code, _, stderr := freshReview(t, args...); code != 1 {
-				t.Errorf("exit %d, want 1\n%s", code, stderr)
+			if code, _, stderr := freshReview(t, args...); code != 4 {
+				t.Errorf("exit %d, want 4\n%s", code, stderr)
 			}
 			f.checkCleanedUp(t)
 		})
@@ -421,7 +519,7 @@ func TestUnavailable(t *testing.T) {
 				t.Fatalf("exit %d, want %d\n%s", code, c.want, stderr)
 			}
 			if c.want == 4 {
-				reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-fresh-review: ")
+				reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-delegate: ")
 				if !strings.Contains(reason, "--print-prompt") || !refusal.SaysInstead(reason) {
 					t.Errorf("does not say how to review instead: %q", stderr)
 				}
@@ -438,7 +536,7 @@ func TestRedCheck(t *testing.T) {
 	t.Run("never on the host", testRedCheckNotOnHost)
 }
 
-// testRedCheckNotOnHost holds fresh-review to never running the
+// testRedCheckNotOnHost holds delegate to never running the
 // repository's test command where it runs, whatever the settings say: the
 // commits under review may be anyone's, and red-check runs them.
 func testRedCheckNotOnHost(t *testing.T) {
@@ -457,7 +555,6 @@ func testRedCheckNotOnHost(t *testing.T) {
 			os.WriteFile(config, []byte(`{"repos": {"o/r": {"test": "touch `+marker+`; false", "build": "touch `+marker+`", `+
 				`"testFiles": ["*_test.txt"]}}}`), 0o644)
 			t.Setenv("AGENT_TOOLS_CONFIG", config)
-			run(t, f.repo, "git", "remote", "add", "origin", "https://github.com/o/r.git")
 			os.WriteFile(filepath.Join(f.repo, "code.txt"), []byte("a\nb\nc\nd\n"), 0o644)
 			os.WriteFile(filepath.Join(f.repo, "code_test.txt"), []byte("d\n"), 0o644)
 			run(t, f.repo, "git", "add", "code.txt", "code_test.txt")
@@ -488,15 +585,14 @@ func testRedCheckNotOnHost(t *testing.T) {
 func TestPrintPrompt(t *testing.T) {
 	f := setUp(t, false)
 	os.WriteFile(filepath.Join(f.repo, ".git", "items.md"), []byte("Thread T1: make it three lines\n"), 0o644)
-	os.WriteFile(filepath.Join(f.repo, ".git", "prior.json"), []byte(`{"findings": [{"id": "7"}]}`), 0o644)
 
 	var stdout, stderr bytes.Buffer
-	args := []string{"--print-prompt", "--goal", ".git/goal.md", "--items", ".git/items.md", "--prior", ".git/prior.json", f.base + "..HEAD"}
+	args := []string{"--print-prompt", "--goal", ".git/goal.md", "--items", ".git/items.md", f.base + "..HEAD"}
 	if code := Main(t.Context(), args, nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr.String())
 	}
 	prompt := stdout.String()
-	for _, want := range []string{"Grow the code to three lines.", "Thread T1: make it three lines", `"id": "7"`,
+	for _, want := range []string{"Grow the code to three lines.", "Thread T1: make it three lines",
 		f.base, f.tip, "Grow the code", "git show " + f.tip + ":"} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("the prompt lacks %q:\n%s", want, prompt)
@@ -544,7 +640,7 @@ func TestRefusals(t *testing.T) {
 			os.WriteFile(filepath.Join(f.repo, ".git", "empty.md"), []byte("\n"), 0o644)
 			args := c.args(f.base)
 			code, _, stderr := freshReview(t, args...)
-			reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-fresh-review: refused: ")
+			reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-delegate: refused: ")
 			if code != 2 || !refusal.SaysInstead(reason) {
 				t.Errorf("%v: exit %d, %q", args, code, stderr)
 			}

@@ -3,12 +3,9 @@ package review
 import (
 	_ "embed"
 	"encoding/json"
-	"maps"
 	"regexp"
 	"slices"
 	"strings"
-
-	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
 // securityChecks are the security review's checks, checklist and output,
@@ -103,14 +100,4 @@ func (f focus) unchecked(checked []string) []string {
 		}
 	}
 	return out
-}
-
-// focusNamed is the focus name names, or a refusal naming those there are.
-func focusNamed(name string) (focus, error) {
-	f, ok := focuses[name]
-	if !ok {
-		names := slices.Sorted(maps.Keys(focuses))
-		return focus{}, refusal.New("%q is not a focus of review. Pass `--focus %s`", name, strings.Join(names, "` or `--focus "))
-	}
-	return f, nil
 }

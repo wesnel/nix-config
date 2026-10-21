@@ -256,8 +256,8 @@
   {
     "why": "A reviewer does not start a review of its own; whoever started it decides on another round.",
     "scope": "reviewer",
-    "deny": ["git fresh-review --goal g.md main..HEAD", "git -C .pr-loop/12 fresh-review --print-prompt --goal g.md a..b", "git-fresh-review --goal g.md a..b"],
-    "allow": ["git log --oneline main..HEAD", "grep -nE 'git\\s+fresh-review' SKILL.md"]
+    "deny": ["git delegate --goal g.md main..HEAD", "git -C .pr-loop/12 delegate --print-prompt --goal g.md a..b", "git-delegate --goal g.md a..b", "git delegate settle a..b F1 fix", "git delegate o/r#12"],
+    "allow": ["git log --oneline main..HEAD", "grep -nE 'git\\s+delegate' SKILL.md"]
   },
   {
     "why": "A reviewer reads plans; whoever started it logs what it found.",

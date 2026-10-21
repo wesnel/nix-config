@@ -1,4 +1,4 @@
-package prreview
+package review
 
 import (
 	"bytes"

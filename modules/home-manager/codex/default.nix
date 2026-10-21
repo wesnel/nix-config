@@ -281,7 +281,7 @@ in {
     # and the writable roots above, and reach no network; the guard hook
     # holds the rest of what Codex may do. Codex reads `sandbox_mode` and
     # `[sandbox_workspace_write] network_access` from config.toml; git
-    # fresh-review's `codex exec --ignore-user-config` reads neither.
+    # delegate's `codex exec --ignore-user-config` reads neither.
     # Merged into the config.toml Codex writes.
     {
       assertions = [
