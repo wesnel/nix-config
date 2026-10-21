@@ -220,6 +220,14 @@ wait on no `:AFTER:` item, follow every earlier sibling under an
   collects results.
 - **No sub-agents:** do each part yourself, one at a time, in its worktree.
 
+Run at most three sub-agents at once, and one heavy job across all of
+them: a Nix build, a VM, `git red-check`, or a full `go test ./...` of
+agent-tools: more than that exhausts the machine's memory. Before starting
+another, check memory pressure and wait while it is high: on macOS,
+`sysctl kern.memorystatus_vm_pressure_level` above 1 (2 is warn, 4
+critical); on Linux, `some avg10` above 10 in `/proc/pressure/memory`.
+Tell each sub-agent which heavy job it may run, and when.
+
 Never edit a sub-agent's worktree while it runs. To learn where something
 belongs in its part, ask it.
 
