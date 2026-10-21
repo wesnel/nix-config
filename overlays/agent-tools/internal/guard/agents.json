@@ -1,6 +1,5 @@
 {
   "roles": {
-    "pr-owner": "owner",
     "adversarial-reviewer": "reviewer",
     "design-reviewer": "reviewer",
     "security-reviewer": "reviewer"

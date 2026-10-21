@@ -1,7 +1,6 @@
 package loop
 
 import (
-	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -292,7 +291,7 @@ func WaitCI(args []string, sha string, timeout, interval, grace time.Duration) (
 			if !settled {
 				out.Result = "timedOut"
 			}
-			record(nil, plans.Event{Kind: "ci-waited", Summary: out.Result + ": " + prList(numbers)})
+			logEvent(plans.Event{Kind: "ci-waited", Summary: out.Result + ": " + prList(numbers)})
 			return out, settled, nil
 		}
 		sleep(min(interval, left))
@@ -350,101 +349,52 @@ func Logs(pr string, check string, lines int) (string, error) {
 	return "", refuse("no failed check named %q on #%d; `pr-loop ci %d` lists its checks", check, number, number)
 }
 
-// loopNumbers resolves which PRs a read-only command looks at: the ones given
-// (in any repository checkout), or the loop's own.
-func loopNumbers(numbers []int) (string, []int, *State, error) {
-	state, err := loadState(len(numbers) == 0)
-	if err != nil {
-		return "", nil, nil, err
-	}
-	slug, err := slugOf(state)
-	if err != nil {
-		return "", nil, nil, err
-	}
-	if len(numbers) == 0 {
-		for _, b := range state.Order {
-			numbers = append(numbers, state.Branches[b].PR)
-		}
-	}
-	return slug, numbers, state, nil
-}
-
-// ciTargets resolves the PRs that ci, wait ci and logs read, each named by
-// number or by branch. In a loop session (see inLoopSession) they are those
-// named, by number or registered branch, or by default the loop's. Elsewhere
-// each must be an open PR by the authenticated user in this checkout's
-// repository, by default the current branch's; where HEAD heads no such PR
-// and a loop is registered here, the default is the loop's PRs.
+// ciTargets resolves the PRs that ci, wait, logs, status, request and end
+// read, each named by number or by branch: each must be an open PR by the
+// authenticated user in this checkout's repository, by default the current
+// branch's.
 func ciTargets(args []string) (string, []int, error) {
-	if inLoopSession() {
-		return loopTargets(args)
-	}
 	repo, err := repository()
 	if err != nil {
 		return "", nil, err
 	}
+	numbers, err := targetsIn(repo, args)
+	return repo.Slug, numbers, err
+}
+
+// targetsIn is ciTargets in repo.
+func targetsIn(repo *Repo, args []string) ([]int, error) {
 	if len(args) == 0 {
 		branch, err := currentBranch()
-		if err == nil {
-			var n int
-			if n, err = branchPR(repo, branch); err == nil {
-				return repo.Slug, []int{n}, nil
-			}
+		if err != nil {
+			return nil, err
 		}
-		var r Refusal
-		if !errors.As(err, &r) {
-			return "", nil, err
+		n, err := branchPR(repo, branch)
+		if err != nil {
+			return nil, err
 		}
-		active, aerr := Active()
-		switch {
-		case aerr != nil:
-			return "", nil, aerr
-		case active:
-			return loopTargets(nil)
-		}
-		return "", nil, err
+		return []int{n}, nil
 	}
 	var out []int
 	for _, a := range args {
 		n, ok := prNumber(a)
+		var err error
 		if ok {
 			err = checkPR(repo, n)
 		} else {
 			n, err = branchPR(repo, a)
 		}
 		if err != nil {
-			return "", nil, err
+			return nil, err
 		}
 		out = append(out, n)
 	}
-	return repo.Slug, out, nil
+	return out, nil
 }
 
 func prNumber(arg string) (int, bool) {
 	n, err := strconv.Atoi(strings.TrimPrefix(arg, "#"))
 	return n, err == nil && n > 0
-}
-
-// loopTargets is what a loop session reads: the PRs named, by number or by a
-// registered branch, or the loop's.
-func loopTargets(args []string) (string, []int, error) {
-	var numbers []int
-	for _, a := range args {
-		n, ok := prNumber(a)
-		if !ok {
-			state, err := loadState(false)
-			if err != nil {
-				return "", nil, err
-			}
-			if state == nil || state.Branches[a] == nil {
-				return "", nil, refuse("%q is neither a PR number nor a branch of this loop; `pr-loop status` lists the loop's pull requests", a)
-			}
-			n = state.Branches[a].PR
-		}
-		numbers = append(numbers, n)
-	}
-	slug, numbers, _, err := loopNumbers(numbers)
-	return slug, numbers, err
 }
 
 type prHead struct {

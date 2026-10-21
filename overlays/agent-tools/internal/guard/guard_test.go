@@ -50,7 +50,7 @@ func testCheckAlias(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", config)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	input, _ := json.Marshal(map[string]string{"command": "git pp origin HEAD"})
-	if reason := Check("Bash", input); !saysInstead(reason) {
+	if reason := CheckBaseline("Bash", input); !saysInstead(reason) {
 		t.Errorf("alias denial %q does not say what to do instead", reason)
 	}
 }
@@ -68,8 +68,8 @@ func testCheckCommands(t *testing.T) {
 		{true, "Bash", "/usr/bin/git push"},
 		{true, "Bash", "echo $(git push)"},
 		{true, "Bash", "git commit --no-verify --fixup=abc"},
-		{true, "Bash", "git commit -m 'plain commit'"},
-		{true, "Bash", "git commit --amend --no-edit"},
+		{false, "Bash", "git commit -m 'plain commit'"},
+		{false, "Bash", "git commit --amend --no-edit"},
 		{false, "Bash", "git commit --fixup=abc123 --trailer 'Review-Thread: https://x/1'"},
 		{false, "Bash", `git commit -m "mentions; git push in a message" --fixup abc`},
 		{true, "Bash", "git config pr-loop.x 1"},
@@ -96,8 +96,10 @@ func testCheckCommands(t *testing.T) {
 		{true, "Bash", "pr-loop request --accept-failure windows-tuntap 663"},
 		{true, "Bash", "pr-loop request 663 --accept-failure=ci"},
 		{false, "Bash", "pr-loop request 663"},
-		{true, "Bash", "pr-loop end --prune"},
-		{false, "Bash", "pr-loop end"},
+		{true, "Bash", "pr-loop post 12"},
+		{true, "Bash", "claude-review-loop --bots 12"},
+		{true, "Bash", "PR_LOOP_MODE=bots pr-loop reply T --body-file -"},
+		{false, "Bash", "pr-loop end 12"},
 		{true, "Bash", "git sign-pass --push"},
 		{true, "Bash", "git-sign-pass"},
 		{true, "mcp__claude_ai_Linear__save_issue", ""},
@@ -111,7 +113,7 @@ func testCheckCommands(t *testing.T) {
 	for _, c := range cases {
 		t.Run(caseName(c.deny, strings.TrimSpace(c.tool+" "+c.command)), func(t *testing.T) {
 			input, _ := json.Marshal(map[string]string{"command": c.command})
-			reason := Check(c.tool, input)
+			reason := CheckBaseline(c.tool, input)
 			if (reason != "") != c.deny {
 				t.Errorf("%s %q: deny=%v, reason %q", c.tool, c.command, !c.deny, reason)
 			}
@@ -211,7 +213,7 @@ func testCheckWrappedCommands(t *testing.T) {
 	for _, c := range cases {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
 			input, _ := json.Marshal(map[string]string{"command": c.command})
-			reason := Check("Bash", input)
+			reason := CheckBaseline("Bash", input)
 			if (reason != "") != c.deny {
 				t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
 			}
@@ -294,7 +296,7 @@ func testCheckGraphQLQuerySources(t *testing.T) {
 			t.Chdir(workspace)
 			command := strings.NewReplacer("ROOT", root, "WORKSPACE", workspace).Replace(c.command)
 			input, _ := json.Marshal(map[string]string{"command": command})
-			reason := Check("Bash", input)
+			reason := CheckBaseline("Bash", input)
 			if (reason != "") != c.deny {
 				t.Errorf("%q: deny=%v, reason %q", command, !c.deny, reason)
 			}
@@ -312,7 +314,7 @@ func testCheckGraphQLQuerySources(t *testing.T) {
 			event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "cwd": workspace,
 				"tool_input": map[string]string{"command": "gh api graphql -F query=@" + file}})
 			var out bytes.Buffer
-			Main(nil, bytes.NewReader(event), &out, io.Discard)
+			Main([]string{"--baseline"}, bytes.NewReader(event), &out, io.Discard)
 			if (out.Len() != 0) != deny {
 				t.Errorf("%s from the event's cwd: deny=%v, output %s", file, !deny, out.String())
 			}
@@ -321,8 +323,8 @@ func testCheckGraphQLQuerySources(t *testing.T) {
 }
 
 // TestPolicy holds the guard to the examples in policy.json. A rule's scope
-// is the least strict role it holds for: baseline (every session),
-// coordinator, owner or reviewer. Each denial's reason, which is what the
+// is the least strict role it holds for: baseline (every session) or
+// reviewer. Each denial's reason, which is what the
 // agent sees, must say what to do instead; a rule's `why` is for whoever
 // maintains it and reaches no agent.
 func TestPolicy(t *testing.T) {
@@ -344,10 +346,9 @@ func TestPolicy(t *testing.T) {
 	if err := dec.Decode(&rules); err != nil {
 		t.Fatal(err)
 	}
-	checks := map[role]func(string, json.RawMessage) string{
-		baseline: CheckBaseline, coordinator: Check, owner: CheckOwner, reviewer: CheckReviewer}
-	names := map[role]string{baseline: "baseline", coordinator: "coordinator", owner: "owner", reviewer: "reviewer"}
-	scopes := map[string]role{"baseline": baseline, "coordinator": coordinator, "owner": owner, "reviewer": reviewer}
+	checks := map[role]func(string, json.RawMessage) string{baseline: CheckBaseline, reviewer: CheckReviewer}
+	names := map[role]string{baseline: "baseline", reviewer: "reviewer"}
+	scopes := map[string]role{"baseline": baseline, "reviewer": reviewer}
 	for _, r := range rules {
 		t.Run(r.Why, func(t *testing.T) {
 			if len(r.Deny) == 0 || len(r.Allow) == 0 {
@@ -362,12 +363,11 @@ func TestPolicy(t *testing.T) {
 					input, _ := json.Marshal(map[string]string{"command": command})
 					for who, check := range checks {
 						// A denial holds for the rule's role and every stricter
-						// one, and an owner's denials are steps the coordinator
-						// takes. An allow example holds only for the rule's own
+						// one. An allow example holds only for the rule's own
 						// role: another rule can deny it to a stricter one.
 						want, held := denied && who >= scope, who == scope
 						if denied {
-							held = who >= scope || (scope == owner && who == coordinator)
+							held = who >= scope
 						}
 						reason := check("Bash", input)
 						if got := reason != ""; held && got != want {
@@ -525,8 +525,7 @@ func testBaselineCommands(t *testing.T) {
 }
 
 // testBaselineRoles covers the hook every ordinary session runs: an agent
-// with a loop role has that role's rules, and every other call the
-// baseline's.
+// with a role has that role's rules, and every other call the baseline's.
 func testBaselineRoles(t *testing.T) {
 	for _, c := range []struct {
 		deny      bool
@@ -538,16 +537,11 @@ func testBaselineRoles(t *testing.T) {
 		{false, "", "git commit -m x"},
 		{false, "", "pr-loop push"},
 		{true, "adversarial-reviewer", "git commit --fixup=abc"},
-		{true, "some-plugin:adversarial-reviewer", "git stash"},
-		{true, "pr-loop:pr-owner", "pr-loop push"},
-		{true, "pr-loop:pr-owner", "pr-loop link 3 4"},
-		{false, "pr-loop:pr-owner", "pr-loop stack 3"},
+		{false, "some-plugin:adversarial-reviewer", "git commit --fixup=abc"},
 		{true, "adversarial-reviewer", "pr-loop link 3 4"},
 		{false, "adversarial-reviewer", "pr-loop stack 3"},
 		{false, "reviewer", "git commit -m x"},
 		{false, "", "pr-loop link 3 4"},
-		{false, "pr-loop:pr-owner", "git commit --fixup=abc"},
-		{true, "pr-loop:pr-owner", "git commit -m x"},
 		{true, "adversarial-reviewer", "git commit -m x"},
 		{true, "design-reviewer", "agent-plan log p --kind done"},
 		{false, "design-reviewer", "agent-plan status p"},
@@ -938,11 +932,11 @@ func TestOpenedRepo(t *testing.T) {
 
 // TestAgentRoles holds each agent with a role to it, by a command that role
 // is denied and every less strict one may run: a reviewer may not commit a
-// fixup, which an owner may. agents.json names these agents, and no others.
+// fixup, which an ordinary session may. agents.json names these agents, and
+// no others.
 func TestAgentRoles(t *testing.T) {
 	want := map[string]string{
 		"adversarial-reviewer": "reviewer", "design-reviewer": "reviewer", "security-reviewer": "reviewer",
-		"pr-owner": "owner",
 	}
 	var file struct {
 		Roles map[string]string `json:"roles"`
@@ -953,10 +947,7 @@ func TestAgentRoles(t *testing.T) {
 	if !maps.Equal(file.Roles, want) {
 		t.Errorf("agents.json's roles are %v, want %v", file.Roles, want)
 	}
-	only := map[string]string{
-		"reviewer": "git commit --fixup=abc",
-		"owner":    "pr-loop link 3 4",
-	}
+	only := map[string]string{"reviewer": "git commit --fixup=abc"}
 	run := func(agent, command string) bool {
 		event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "agent_type": agent,
 			"tool_input": map[string]string{"command": command}})
@@ -964,7 +955,7 @@ func TestAgentRoles(t *testing.T) {
 		Main([]string{"--baseline"}, bytes.NewReader(event), &out, io.Discard)
 		return strings.Contains(out.String(), `"deny"`)
 	}
-	less := map[string]string{"reviewer": "pr-loop:pr-owner", "owner": ""}
+	less := map[string]string{"reviewer": ""}
 	for name, r := range want {
 		t.Run(name, func(t *testing.T) {
 			command, ok := only[r]
@@ -1000,15 +991,13 @@ func TestFormats(t *testing.T) {
 		name, event, want string
 	}{
 		{"Claude Code PreToolUse", `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
-		{"owner push", `{"tool_name":"Bash","agent_type":"pr-loop:pr-owner","tool_input":{"command":"pr-loop push"}}`, `"permissionDecision":"deny"`},
 		{"reviewer fixup", `{"tool_name":"Bash","agent_type":"adversarial-reviewer","tool_input":{"command":"git commit --fixup=abc"}}`, `"permissionDecision":"deny"`},
-		{"owner fixup", `{"tool_name":"Bash","agent_type":"pr-loop:pr-owner","tool_input":{"command":"git commit --fixup=abc"}}`, ""},
-		{"coordinator push", `{"tool_name":"Bash","tool_input":{"command":"pr-loop push"}}`, ""},
+		{"pr-loop push", `{"tool_name":"Bash","tool_input":{"command":"pr-loop push"}}`, ""},
 		{"ls", `{"tool_name":"Bash","tool_input":{"command":"ls"}}`, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var out bytes.Buffer
-			Main(nil, strings.NewReader(c.event), &out, io.Discard)
+			Main([]string{"--baseline"}, strings.NewReader(c.event), &out, io.Discard)
 			if (c.want == "" && out.Len() != 0) || !strings.Contains(out.String(), c.want) {
 				t.Errorf("%s: printed %s", c.event, out.String())
 			}

@@ -61,11 +61,12 @@ func expectEvents(t *testing.T, p plans.Plan, want ...string) {
 }
 
 // What pr-loop does reaches the plan of the session that ran it as events,
-// whether or not the session has hooks: the replies, resolutions, CI
-// outcomes and rounds.
+// whether or not the session has hooks: the replies, resolutions and CI
+// outcomes.
 func TestLoopEvents(t *testing.T) {
 	t.Run("reply and resolve", func(t *testing.T) {
 		fakeRepo(t)
+		t.Setenv(ModeEnv, "bots")
 		p := loopPlan(t, []string{git.Dir}, nil)
 		if _, err := Reply("bot1", "done"); err != nil {
 			t.Fatal(err)
@@ -77,29 +78,6 @@ func TestLoopEvents(t *testing.T) {
 			t.Fatal("replied to a thread the policy refuses")
 		}
 		expectEvents(t, p, "replied: in thread bot1 on #1", "resolved: thread bot1 on #1")
-	})
-
-	// A relayed loop session names no session and runs in a worktree of
-	// its own: the plan that names the loop's branch takes its events.
-	t.Run("by the loop's branch", func(t *testing.T) {
-		fakeRepo(t)
-		t.Setenv(sessionEnv, "1")
-		registerLoop(t)
-		p := loopPlan(t, nil, []string{"main..feat"})
-		if _, err := ReplyAll([]PlannedReply{{Thread: "bot1", Body: "fixed", Resolve: true}}); err != nil {
-			t.Fatal(err)
-		}
-		expectEvents(t, p, "replied: in thread bot1 on #1", "resolved: thread bot1 on #1")
-	})
-
-	t.Run("a round", func(t *testing.T) {
-		ciRepo(t)
-		p := loopPlan(t, []string{git.Dir}, nil)
-		tip, _ := git.Run("rev-parse", "feat")
-		if err := snapshotRound(&State{Order: []string{"feat"}, Round: 2}); err != nil {
-			t.Fatal(err)
-		}
-		expectEvents(t, p, "round: round 2: feat "+tip)
 	})
 
 	t.Run("CI", func(t *testing.T) {

@@ -415,48 +415,6 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func TestWorktrees(t *testing.T) {
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	dir := t.TempDir()
-	gitIn(t, dir, "init", "-q", "-b", "main")
-	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "base")
-	gitIn(t, dir, "branch", "feature")
-	gitIn(t, dir, "config", "commit.gpgsign", "true")
-	gitenvtest.Decoy(t)
-	useDir(t, dir)
-	state := &State{Repo: "o/r", Order: []string{"feature"}, Branches: map[string]*Branch{"feature": {PR: 7, Base: "main"}}}
-	if err := state.save(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Worktrees(false); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(dir, ".pr-loop", "7")
-	// Read without gitIn, which forces signing off.
-	read := func(where string) string {
-		cmd := exec.Command("git", "-C", where, "config", "commit.gpgsign")
-		cmd.Env = gitenv.Without(os.Environ())
-		out, _ := cmd.Output()
-		return strings.TrimSpace(string(out))
-	}
-	if got := read(path); got != "false" {
-		t.Errorf("worktree signs: %s", got)
-	}
-	if got := read(dir); got != "true" {
-		t.Errorf("main worktree stopped signing: %s", got)
-	}
-	if got := gitIn(t, dir, "status", "--porcelain"); got != "" {
-		t.Errorf(".pr-loop shows in the main worktree: %s", got)
-	}
-	if _, err := Worktrees(false); err != nil {
-		t.Errorf("not idempotent: %v", err)
-	}
-	if _, err := Worktrees(true); err != nil || exists(path) {
-		t.Errorf("remove: %v, still there: %v", err, exists(path))
-	}
-}
-
 func TestSetup(t *testing.T) {
 	// setupRepo makes a checkout of O/R, points the package's git at it, and
 	// returns it with the config file the test may write.
@@ -511,32 +469,22 @@ func TestSetup(t *testing.T) {
 		gitIn(t, dir, "branch", "feature")
 		wt := filepath.Join(t.TempDir(), "wt")
 		gitIn(t, dir, "worktree", "add", "-q", wt, "feature")
-		if !NeedsSetup(wt) {
-			t.Error("a fresh worktree does not need setup")
-		}
 		var log bytes.Buffer
 		runs := RunSetup(s.Command, []string{wt}, &log)
-		if len(runs) != 1 || runs[0].Exit != 0 || !exists(filepath.Join(wt, "gen")) {
+		if len(runs) != 1 || runs[0].Exit != 0 {
 			t.Fatalf("setup did not run in the worktree: %+v\n%s", runs, log.String())
+		}
+		if _, err := os.Stat(filepath.Join(wt, "gen")); err != nil {
+			t.Errorf("setup wrote nothing in the worktree: %v", err)
 		}
 		if !strings.Contains(log.String(), "setup in "+wt+": echo generated > gen\n") || !strings.Contains(log.String(), ": exit 0\n") {
 			t.Errorf("the command or its status was not reported:\n%s", log.String())
 		}
-		if NeedsSetup(wt) {
-			t.Error("needs setup again right after it")
-		}
-		if !NeedsSetup(dir) {
-			t.Error("another worktree counts as set up")
-		}
 		if got := gitIn(t, wt, "status", "--porcelain"); got != "?? gen" {
-			t.Errorf("the record of setup shows in the worktree: %q", got)
+			t.Errorf("setup left more than its output in the worktree: %q", got)
 		}
-		gitIn(t, wt, "commit", "-q", "--allow-empty", "-m", "moved")
-		if !NeedsSetup(wt) {
-			t.Error("a moved worktree does not need setup")
-		}
-		if runs := RunSetup("exit 3", []string{wt}, &log); runs[0].Exit != 3 || !NeedsSetup(wt) {
-			t.Errorf("a failed setup: %+v, needs setup: %v", runs, NeedsSetup(wt))
+		if runs := RunSetup("exit 3", []string{wt}, &log); runs[0].Exit != 3 {
+			t.Errorf("a failed setup: %+v", runs)
 		}
 		// The command's git finds the worktree's repository.
 		RunSetup("git rev-parse --absolute-git-dir > where", []string{wt}, &log)
@@ -548,11 +496,9 @@ func TestSetup(t *testing.T) {
 }
 
 // fixedStack is a two-branch stack, lower and upper, with a fixup in each,
-// rebase.updateRefs on and main checked out, and the state of a loop over
-// it as begin recorded it before the fixups.
+// rebase.updateRefs on and main checked out.
 type fixedStack struct {
-	dir   string
-	state *State
+	dir string
 }
 
 func newFixedStack(t *testing.T) *fixedStack {
@@ -583,18 +529,6 @@ func newFixedStack(t *testing.T) *fixedStack {
 
 	gitenvtest.Decoy(t)
 	useDir(t, dir)
-	original := func(base, tip string) []Commit {
-		t.Helper()
-		c, err := commitsBetween(base, tip)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return c
-	}
-	state := &State{Order: []string{"lower", "upper"}, Branches: map[string]*Branch{
-		"lower": {Base: "main", Commits: original("main", "lower")},
-		"upper": {Base: "lower", Commits: original("lower", "upper")},
-	}}
 
 	oldLower := gitIn(t, dir, "rev-parse", "lower")
 	gitIn(t, dir, "switch", "-q", "lower")
@@ -609,17 +543,26 @@ func newFixedStack(t *testing.T) *fixedStack {
 	// the rehearsal's unsigned commits.
 	gitIn(t, dir, "config", "rebase.updateRefs", "true")
 	gitIn(t, dir, "switch", "-q", "main")
-	return &fixedStack{dir: dir, state: state}
+	return &fixedStack{dir: dir}
 }
 
-// signing is what the rehearsal checks the stack against as it stands.
-func (s *fixedStack) signing(t *testing.T) *Signing {
+// stack is what the rehearsal checks the stack against as it stands: each
+// branch's own commits, L1 and L2, and U1, and its tree.
+func (s *fixedStack) stack(t *testing.T) *signedStack {
 	t.Helper()
-	sg := &Signing{Upstream: gitIn(t, s.dir, "rev-parse", "main"), Trees: map[string]string{}}
-	for _, b := range s.state.Order {
-		sg.Trees[b] = gitIn(t, s.dir, "rev-parse", b+"^{tree}")
+	st := &signedStack{Order: []string{"lower", "upper"}, Upstream: gitIn(t, s.dir, "rev-parse", "main"),
+		Trees: map[string]string{}, Commits: map[string][]Commit{}}
+	below := "main"
+	for _, b := range st.Order {
+		st.Trees[b] = gitIn(t, s.dir, "rev-parse", b+"^{tree}")
+		c, err := commitsBetween(below, b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st.Commits[b] = own(c)
+		below = b
 	}
-	return sg
+	return st
 }
 
 // TestRehearse checks the rehearsal of a pass over a two-branch stack with
@@ -630,7 +573,7 @@ func TestRehearse(t *testing.T) {
 	t.Run("clean stack", func(t *testing.T) {
 		s := newFixedStack(t)
 		branches := gitIn(t, s.dir, "for-each-ref", "refs/heads/")
-		if err := rehearse(s.state, s.signing(t)); err != nil {
+		if err := rehearse(s.stack(t)); err != nil {
 			t.Fatalf("rehearsal refused a clean stack: %v", err)
 		}
 		if got := gitIn(t, s.dir, "worktree", "list"); strings.Count(got, "\n") != 0 {
@@ -649,7 +592,7 @@ func TestRehearse(t *testing.T) {
 		os.WriteFile(filepath.Join(s.dir, "b"), []byte("b again\n"), 0o644)
 		gitIn(t, s.dir, "commit", "-qa", "--fixup=lower~2")
 		gitIn(t, s.dir, "rebase", "-q", "--onto", "lower", before, "upper")
-		err := rehearse(s.state, s.signing(t))
+		err := rehearse(s.stack(t))
 		if _, ok := err.(Refusal); !ok || !strings.Contains(err.Error(), "conflicts") {
 			t.Errorf("conflicting fixup: %v", err)
 		}

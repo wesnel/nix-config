@@ -16,7 +16,7 @@ with lib; let
   # obtains and refreshes itself; nothing here is a credential. Each serves
   # only the tools the guard's mcp.json lists for its service, reads and
   # confirmed writes alike: the guard decides which ask, and keeps
-  # review-loop sessions to the reads. A tool missing from the list stays
+  # reviewers to the reads. A tool missing from the list stays
   # hidden; an allow list must not be empty, which exposes every tool.
   oauthServer = id: url: scopes: {
     inherit url;

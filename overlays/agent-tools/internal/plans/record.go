@@ -38,23 +38,6 @@ func (c Config) Locate(session, worktree string) (p Plan, part string, ok bool) 
 	return p, pick.Part, err == nil
 }
 
-// LocateBranches is Locate, else the newest of this host's plan files
-// whose BRANCHES name one of branches, the first that one names.
-func (c Config) LocateBranches(session, worktree string, branches []string) (p Plan, part string, ok bool) {
-	if p, part, ok = c.Locate(session, worktree); ok {
-		return p, part, true
-	}
-	for _, b := range branches {
-		found, err := c.Find(FindOptions{Branch: b})
-		if err != nil || len(found) == 0 {
-			continue
-		}
-		p, err = c.Open(found[0].Plan)
-		return p, found[0].Part, err == nil
-	}
-	return Plan{}, "", false
-}
-
 // branchChanged is the kind of the event NoteBranch logs.
 const branchChanged = "branch-changed"
 

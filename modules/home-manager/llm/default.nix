@@ -28,7 +28,7 @@ with lib; let
 
   # The notes repository's deploy key, which only git's ssh reads: every
   # agent is denied it, by the guard and by Claude Code's Read rules for
-  # ~/.ssh/id_*, and loop sandboxes cannot read ~/.ssh at all.
+  # ~/.ssh/id_*, and the sandbox cannot read ~/.ssh at all.
   notesKey = "${config.home.homeDirectory}/.ssh/id_notes_deploy";
 
   # sops-nix fails every secret when one it is told of is missing from the
@@ -104,12 +104,10 @@ in {
 
             description = ''
               A command that prepares a fresh checkout, such as generating
-              files the repository does not commit. `pr-loop worktrees` runs
-              it with `sh` in each worktree whose HEAD moved since its last
-              setup, and `pr-loop setup [PATH]` in any worktree. It runs
-              where `pr-loop` was called, inside a sandboxed session's
-              sandbox; through the relay, only the lookup happens on this
-              machine.
+              files the repository does not commit. `pr-loop setup [PATH]`
+              runs it with `sh` in a worktree, where `pr-loop` was called,
+              inside a sandboxed session's sandbox. Nothing runs it on its
+              own.
             '';
           };
 
@@ -371,8 +369,8 @@ in {
         };
     };
 
-    # Every sandbox takes these lists from here: the host sandbox around
-    # every Claude Code session's commands, and each loop session's.
+    # The host sandbox around every Claude Code session's commands takes
+    # these lists from here.
     sandbox = {
       deniedReads = mkOption {
         type = types.listOf types.str;
@@ -401,9 +399,8 @@ in {
 
         description = ''
           Hosts every sandbox's commands may reach, for fetching
-          dependencies when building and testing. GitHub must not be among
-          them: a loop session's only way there is the relay, and the host
-          sandbox names it in a list of its own.
+          dependencies when building and testing. The host sandbox names
+          GitHub in a list of its own.
         '';
 
         default = [
@@ -422,12 +419,11 @@ in {
 
     prLoop = {
       enable = mkEnableOption ''
-        the `pr-loop` command and `review-loop` skill, through which an
-        unattended review loop pushes, replies and requests reviews on
-        GitHub. Run directly, it uses the `gh` login, so its policy guards
-        an agent that forgets a rule but does not stop one that runs `gh`
-        itself. Run through `sandbox-relay` for a sandbox without
-        credentials, it is the only way out
+        the `pr-loop` command's config and the `review-loop` skill, through
+        which a review loop pushes, replies and requests reviews on GitHub.
+        It runs outside the sandbox with the `gh` login, so its policy
+        guards an agent that forgets a rule but does not stop one that runs
+        `gh` itself
       '';
 
       bots = mkOption {
@@ -469,68 +465,6 @@ in {
         };
       };
 
-      allowedReads = mkOption {
-        type = types.listOf types.str;
-        readOnly = true;
-
-        description = ''
-          The only paths under the home directory a sandboxed loop session's
-          commands may read; the rest of it is denied. `{workspace}` and
-          `{gitdir}` are filled in by `sandbox-relay session`: the workspace,
-          and the git directory of a linked worktree, which lies outside it.
-          A read allowed here wins over a denied one, so no entry may contain
-          a path in {option}`wgn.home.llm.sandbox.deniedReads`. Not `~/.config/git`: git stops
-          when its config includes a file it cannot read, so sessions get
-          {option}`gitConfig` instead.
-        '';
-
-        default = [
-          "{workspace}"
-          "{gitdir}"
-          cfg.prLoop.cacheDir
-          "${config.xdg.configHome}/agent-tools"
-        ];
-      };
-
-      gitConfig = mkOption {
-        type = types.path;
-        readOnly = true;
-
-        description = ''
-          The global git config of a sandboxed loop session's commands, in
-          place of the user's, which includes secrets. It holds no secret and
-          includes nothing; the launcher passes the commit identity in the
-          environment.
-        '';
-
-        default = pkgs.writeText "pr-loop-gitconfig" ''
-          [commit]
-          	gpgsign = false
-          [tag]
-          	gpgsign = false
-          [init]
-          	defaultBranch = main
-        '';
-      };
-
-      gitIdentity = mkOption {
-        type = types.lines;
-        readOnly = true;
-
-        description = ''
-          Shell lines a loop launcher runs, outside the sandbox, to export the
-          user's commit identity from their own git config for the session's
-          commands, which read {option}`gitConfig` instead.
-        '';
-
-        default = ''
-          for role in AUTHOR COMMITTER; do
-            export "GIT_''${role}_NAME=$(${getExe pkgs.git} config --global --get user.name || true)"
-            export "GIT_''${role}_EMAIL=$(${getExe pkgs.git} config --global --get user.email || true)"
-          done
-        '';
-      };
-
       reviewDir = mkOption {
         type = types.str;
         readOnly = true;
@@ -538,95 +472,7 @@ in {
 
         description = ''
           Where `pr-loop review` keeps each pull request's clone and review,
-          `<owner>/<name>/<number>/`. A loop session started in a review's
-          directory has that directory as its workspace, so it reads only that
-          review.
-        '';
-      };
-
-      reviewSession = mkOption {
-        type = types.lines;
-        readOnly = true;
-
-        description = ''
-          Shell lines a loop launcher runs before choosing its settings:
-          `review` is set when the session starts in a head's review
-          directory, {option}`reviewDir`/OWNER/NAME/N/HEAD12, and the launcher
-          exits anywhere else under {option}`reviewDir`, where the session's
-          workspace would hold the record and clone that `pr-loop review`
-          trusts.
-        '';
-
-        default = ''
-          review=
-          here="$(pwd -P)"
-          reviews="$(cd ${escapeShellArg cfg.prLoop.reviewDir} 2>/dev/null && pwd -P || printf %s ${escapeShellArg cfg.prLoop.reviewDir})"
-          case "$here/" in
-            "$reviews"/*)
-              if [[ ! "''${here#"$reviews"/}" =~ ^[^/]+/[^/]+/[1-9][0-9]*/[0-9a-f]{12}$ ]]; then
-                printf 'Start a loop session under %s only in a review directory, %s/OWNER/NAME/N/HEAD12.\n' "$reviews" "$reviews" >&2
-                exit 2
-              fi
-              review=1
-              ;;
-          esac
-        '';
-      };
-
-      reviewAllowedDomains = mkOption {
-        type = types.listOf types.str;
-        readOnly = true;
-        default = remove "storage.googleapis.com" cfg.sandbox.allowedDomains;
-
-        description = ''
-          {option}`wgn.home.llm.sandbox.allowedDomains` for a session started under
-          {option}`reviewDir`. storage.googleapis.com is left out: any
-          bucket there can take data, and a review fetches its modules
-          outside the session.
-        '';
-      };
-
-      protectedPaths = mkOption {
-        type = types.listOf types.str;
-        readOnly = true;
-
-        description = ''
-          Paths in the workspace that programs outside the sandbox run or
-          load, which a loop session may read but not change: git hooks and
-          config, which the next git command run outside would obey, and
-          agents' project settings, which can name hooks that run outside any
-          sandbox. Every sandboxing launcher takes its list from here.
-        '';
-
-        default = [".git/hooks" ".git/config" ".claude" ".codex"];
-      };
-
-      cacheDir = mkOption {
-        type = types.str;
-        readOnly = true;
-        default = "${config.xdg.cacheHome}/pr-loop";
-
-        description = ''
-          Build caches for sandboxed loop sessions, which may write here and
-          nowhere that builds outside the sandbox read: a cache entry written
-          by an agent would otherwise be compiled into a later build on the
-          host.
-        '';
-      };
-
-      sandboxCaches = mkOption {
-        type = types.lines;
-        readOnly = true;
-
-        description = ''
-          Shell lines a loop launcher runs before starting its sandboxed
-          session, pointing the build caches at {option}`cacheDir`.
-        '';
-
-        default = ''
-          export GOCACHE=${escapeShellArg "${cfg.prLoop.cacheDir}/go-build"}
-          export GOMODCACHE=${escapeShellArg "${cfg.prLoop.cacheDir}/go-mod"}
-          mkdir -p "$GOCACHE" "$GOMODCACHE"
+          `<owner>/<name>/<number>/`.
         '';
       };
     };
@@ -720,13 +566,12 @@ in {
   };
 
   config = mkIf cfg.enable {
-    # Read by `pr-loop` where it runs; a client with a relay asks the relay,
-    # which reads it on the host.
+    # Read by `pr-loop` where it runs.
     xdg.configFile."pr-loop/config.json" = mkIf cfg.prLoop.enable {
       text = builtins.toJSON {inherit (cfg.prLoop) bots;};
     };
 
-    # Read by `pr-loop setup` and `worktrees` as pr-loop's config is, by
+    # Read by `pr-loop setup` as pr-loop's config is, by
     # `git red-check` wherever it runs, and by `agent-plan` and the guard,
     # which keeps each plan's log append-only.
     xdg.configFile."agent-tools/config.json".source = agentToolsConfig;

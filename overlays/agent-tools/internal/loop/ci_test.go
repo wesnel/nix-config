@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/git"
-	"github.com/wesnel/agent-tools/internal/relay"
 )
 
 type fakeCheck struct {
@@ -88,8 +87,7 @@ func ciRepo(t *testing.T) *fakeCI {
 	t.Helper()
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv(relay.RelayEnv, "")
-	t.Setenv(sessionEnv, "")
+	t.Setenv(ModeEnv, "")
 	dir := t.TempDir()
 	gitIn(t, dir, "init", "-q", "-b", "main")
 	gitIn(t, dir, "remote", "add", "origin", "https://github.com/o/r.git")
@@ -133,11 +131,6 @@ func argsName(args []string) string {
 }
 
 func TestCITargets(t *testing.T) {
-	t.Run("outside a loop", testCITargetsOutsideALoop)
-	t.Run("in a loop", testCITargetsInALoop)
-}
-
-func testCITargetsOutsideALoop(t *testing.T) {
 	for _, args := range [][]string{nil, {"1"}, {"#1"}, {"feat"}} {
 		t.Run(argsName(args), func(t *testing.T) {
 			ciRepo(t)
@@ -189,39 +182,6 @@ func testCITargetsOutsideALoop(t *testing.T) {
 			t.Errorf("a detached HEAD: %v", err)
 		}
 	})
-
-	// Where HEAD heads no PR, a registered loop's PRs are the default.
-	t.Run("detached beside a loop", func(t *testing.T) {
-		ciRepo(t)
-		gitIn(t, git.Dir, "switch", "-q", "--detach")
-		registerLoop(t)
-		if got, err := targets(t); err != nil || !reflect.DeepEqual(got, []int{1}) {
-			t.Errorf("detached beside a loop: %v, %v", got, err)
-		}
-	})
-}
-
-// A loop session reads what it named, or the loop's PRs, as it always has.
-func testCITargetsInALoop(t *testing.T) {
-	for _, env := range []string{relay.RelayEnv, sessionEnv} {
-		t.Run(env, func(t *testing.T) {
-			ciRepo(t)
-			t.Setenv(env, "1")
-			if _, err := targets(t); !refused(err) || !strings.Contains(err.Error(), "begin") {
-				t.Errorf("a session without a loop: %v", err)
-			}
-			registerLoop(t)
-			for args, want := range map[string][]int{"": {1}, "feat": {1}, "2": {2}} {
-				got, err := targets(t, strings.Fields(args)...)
-				if err != nil || !reflect.DeepEqual(got, want) {
-					t.Errorf("%q: %v, %v", args, got, err)
-				}
-			}
-			if _, err := targets(t, "theirs"); !refused(err) {
-				t.Errorf("a branch outside the loop: %v", err)
-			}
-		})
-	}
 }
 
 var passing = []fakeCheck{{name: "build", status: "COMPLETED", conclusion: "SUCCESS", job: 1}}

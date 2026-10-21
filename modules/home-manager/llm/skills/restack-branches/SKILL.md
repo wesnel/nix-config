@@ -83,7 +83,7 @@ from earlier: a tip from before an extra fixup on the parent leaves that fixup
 in the range, and the rebase can replay it onto the new parent as a duplicate.
 
 `--update-refs` silently skips a branch checked out in another worktree, such
-as the ones `pr-loop worktrees` makes during a review loop. When the stack's
+as each PR's worktree during a review loop. When the stack's
 branches are checked out elsewhere, replay them one at a time, bottom-up, each
 in the worktree that has it, onto its own parent from its own recorded fork
 point. Either way, check afterwards that every branch in the stack moved.

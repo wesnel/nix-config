@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -11,73 +12,116 @@ import (
 	"unicode/utf8"
 
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/history"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
-// Push uploads the local commits through the Git Database API and moves the
-// branches with one updateRefs call each, bottom up. Each object GitHub
-// creates is compared with the local SHA before any branch moves, and each
-// branch move is guarded by the commit the loop last saw on GitHub.
-func Push(branches []string, dryRun bool) (any, error) {
-	state, repo, prs, err := context(nil)
+// Push uploads the local commits of branches (default: HEAD's) through the
+// Git Database API and moves them with one updateRefs call each, bottom up.
+// Each branch's expected head on GitHub is its lease, else its remote
+// tracking ref: GitHub's head must still be that commit, and updateRefs
+// moves the branch only from it, so a push made elsewhere is never
+// overwritten. Without a lease the local branch must contain it; a lease
+// is how a rebased branch is pushed. On a ready PR every commit the push
+// adds must be a fixup of the PR's own; a draft takes any commit. Each
+// object GitHub creates is compared with the local SHA before any branch
+// moves.
+func Push(branches []string, leases map[string]string, dryRun bool) (any, error) {
+	if os.Getenv(ModeEnv) == "people" {
+		return nil, refuse("in a people-mode review loop the operator pushes, after reading the fixups, with " +
+			"`git sign-pass --push`. Only the operator starts a loop, with `claude-review-loop --bots|--people`; " +
+			"commit the fixups and say in the report that they wait for that push")
+	}
+	repo, err := repository()
+	if err != nil {
+		return nil, err
+	}
+	prs, err := openPRs(repo)
 	if err != nil {
 		return nil, err
 	}
 	if len(branches) == 0 {
-		branches = state.Order
+		current, err := currentBranch()
+		if err != nil {
+			return nil, err
+		}
+		branches = []string{current}
 	}
+	for b := range leases {
+		if !slices.Contains(branches, b) {
+			return nil, refuse("--lease names %s, which is not pushed here; name the branch too, or drop its lease", b)
+		}
+	}
+	for _, b := range branches {
+		if _, err := checkBranch(repo, prs, b); err != nil {
+			return nil, err
+		}
+	}
+	order := stackOrder(prs, branches[0])
+	for _, b := range branches {
+		if !slices.Contains(order, b) {
+			return nil, refuse("%s is not in the stack of %s, and one push moves one stack, bottom up; push it on its own", b, branches[0])
+		}
+	}
+	slices.SortStableFunc(branches, func(a, b string) int { return slices.Index(order, a) - slices.Index(order, b) })
+
 	type update struct{ branch, after, before string }
 	var updates []update
+	known := []string{}
 	for _, b := range branches {
-		pr, ok := prs[b]
-		if !ok {
-			return nil, refuse("%s was not registered with `pr-loop begin`; push only the loop's branches, which `pr-loop status` lists", b)
+		pr := prs[b]
+		expected, leased := leases[b]
+		if leased {
+			if expected, err = fullOid(expected); err != nil {
+				return nil, err
+			}
+		} else if expected, err = remoteHead(repo, b); err != nil {
+			return nil, err
 		}
-		entry := state.Branches[b]
-		if pr.HeadRefOid != entry.RemoteOid {
-			return nil, refuse("%s on GitHub moved to %.12s since the loop last pushed %.12s, so someone else pushed; stop and ask the operator",
-				b, pr.HeadRefOid, entry.RemoteOid)
+		if pr.HeadRefOid != expected {
+			return nil, refuse("%s on GitHub is at %.12s, not %.12s as expected, so someone else pushed; fetch it, look at what "+
+				"changed, then push again with `--lease %s=%s` if it is still to be replaced", b, pr.HeadRefOid, expected, b, pr.HeadRefOid)
 		}
-		parent, err := state.parentRef(repo, b)
+		local, err := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+b)
+		if err != nil {
+			return nil, refuse("no local branch %s; check it out, or leave it out of the push", b)
+		}
+		if !leased && !git.OK("merge-base", "--is-ancestor", expected, local) {
+			return nil, refuse("local %s does not contain %.12s, its head on GitHub, so pushing would drop commits; if it was "+
+				"rebased on purpose, push it with `--lease %s=%s`", b, expected, b, expected)
+		}
+		remoteParent, localParent, err := parents(repo, prs, pr.BaseRefName)
 		if err != nil {
 			return nil, err
 		}
-		now, err := commitsBetween(parent, "refs/heads/"+b)
-		if err != nil {
-			return nil, err
+		if !pr.IsDraft {
+			before, err := commitsBetween(remoteParent, expected)
+			if err != nil {
+				return nil, err
+			}
+			now, err := commitsBetween(localParent, local)
+			if err != nil {
+				return nil, err
+			}
+			if err := checkFixups(b, own(before), now); err != nil {
+				return nil, err
+			}
+			if err := checkPatches(b, remoteParent, expected, localParent, local); err != nil {
+				return nil, err
+			}
 		}
-		if err := checkFixups(b, entry.Commits, now); err != nil {
-			return nil, err
+		known = append(known, expected)
+		if git.OK("cat-file", "-e", remoteParent+"^{commit}") {
+			known = append(known, remoteParent)
 		}
-		local, err := git.Run("rev-parse", "refs/heads/"+b)
-		if err != nil {
-			return nil, err
-		}
-		if local != entry.RemoteOid {
-			updates = append(updates, update{b, local, entry.RemoteOid})
+		if local != expected {
+			updates = append(updates, update{b, local, expected})
 		}
 	}
 	if len(updates) == 0 {
 		return map[string]any{"pushed": map[string]string{}}, nil
 	}
 
-	known := []string{}
-	for _, e := range state.Branches {
-		known = append(known, e.RemoteOid)
-	}
-	for _, b := range state.Order {
-		if _, stacked := state.Branches[state.Branches[b].Base]; !stacked {
-			parent, err := state.parentRef(repo, b)
-			if err != nil {
-				return nil, err
-			}
-			oid, err := git.Run("rev-parse", parent)
-			if err != nil {
-				return nil, err
-			}
-			known = append(known, oid)
-		}
-	}
 	tips := make([]string, len(updates))
 	for i, u := range updates {
 		tips[i] = u.after
@@ -102,11 +146,8 @@ func Push(branches []string, dryRun bool) (any, error) {
 
 	// One branch per call, bottom up: GitHub starts a pull request's
 	// workflows twice when one push moves it and its base together. Each
-	// branch moved is recorded at once, so a call that fails leaves the next
-	// push to carry on from it.
-	slices.SortStableFunc(updates, func(a, b update) int {
-		return slices.Index(state.Order, a.branch) - slices.Index(state.Order, b.branch)
-	})
+	// branch moved updates its tracking ref at once, so a call that fails
+	// leaves the next push to carry on from it.
 	pushed := map[string]string{}
 	for _, u := range updates {
 		err = graphQL(`mutation($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }`,
@@ -114,25 +155,76 @@ func Push(branches []string, dryRun bool) (any, error) {
 				{"name": "refs/heads/" + u.branch, "afterOid": u.after, "beforeOid": u.before, "force": true}}}}, nil)
 		if err != nil {
 			if len(pushed) > 0 {
-				err = fmt.Errorf("%w; GitHub has %s, so run `pr-loop push` again to push the rest", err, branchTips(state, pushed))
+				err = fmt.Errorf("%w; GitHub has %s, so run `pr-loop push` again to push the rest", err, branchTips(branches, pushed))
 			}
 			return nil, err
 		}
-		state.Branches[u.branch].RemoteOid = u.after
 		if err := recordTracking(repo, u.branch, u.after); err != nil {
 			return nil, err
 		}
 		pushed[u.branch] = u.after
-		if err := state.save(); err != nil {
-			return nil, err
+	}
+	logEvent(plans.Event{Kind: "pushed", Summary: "pushed " + branchTips(branches, pushed)})
+	return map[string]any{"pushed": pushed, "apiCalls": calls}, nil
+}
+
+// remoteHead is branch's head as this checkout last saw it on GitHub: its
+// remote tracking ref, origin's first.
+func remoteHead(repo *Repo, branch string) (string, error) {
+	remotes, err := githubRemotes()
+	if err != nil {
+		return "", err
+	}
+	names := make([]string, 0, len(remotes))
+	for name, slug := range remotes {
+		if slug == repo.Slug {
+			names = append(names, name)
 		}
 	}
-	record(state, plans.Event{Kind: "pushed", Summary: "pushed " + branchTips(state, pushed)})
-	state.Round++
-	if err := snapshotRound(state); err != nil {
-		return nil, err
+	slices.SortFunc(names, func(a, b string) int {
+		switch {
+		case a == b:
+			return 0
+		case a == "origin":
+			return -1
+		case b == "origin":
+			return 1
+		}
+		return strings.Compare(a, b)
+	})
+	for _, remote := range names {
+		if oid, err := git.Run("rev-parse", "--verify", "-q", "refs/remotes/"+remote+"/"+branch); err == nil {
+			return oid, nil
+		}
 	}
-	return map[string]any{"pushed": pushed, "round": state.Round, "apiCalls": calls}, state.save()
+	return "", refuse("no remote tracking ref for %s, so what it replaces on GitHub is unknown; pass the head it "+
+		"replaces, as `pr-loop stack` shows it, with `--lease %s=SHA`", branch, branch)
+}
+
+// parents is what a PR on base is measured against: on GitHub, the head of
+// the PR base heads, else base's tracking ref; and here, that PR's local
+// branch, else the same tracking ref.
+func parents(repo *Repo, prs map[string]*PR, base string) (remote, local string, err error) {
+	if below := prs[base]; below != nil {
+		local = below.HeadRefOid
+		if oid, err := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+base); err == nil {
+			local = oid
+		}
+		return below.HeadRefOid, local, nil
+	}
+	ref, err := trackingRef(repo, base)
+	return ref, ref, err
+}
+
+// own are a branch's own commits among commits, its fixups left out.
+func own(commits []Commit) []Commit {
+	var out []Commit
+	for _, c := range commits {
+		if kind, _ := fold(c.Message); kind == history.Kept {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // objectSet is what GitHub needs before a branch can point at a tip: every

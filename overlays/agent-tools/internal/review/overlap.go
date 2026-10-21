@@ -58,7 +58,7 @@ type candidate struct {
 // text, so the list is fenced and redacted.
 func overlapSection(r *span) string {
 	deadline := overlapNow().Add(overlapBudget)
-	loop := os.Getenv("PR_LOOP_SESSION") != "" || os.Getenv("SANDBOX_RELAYED") != ""
+	loop := os.Getenv("PR_LOOP_SESSION") != ""
 	base := routes.MergeBase(r.top, r.tip)
 	if base == "" {
 		base = r.base

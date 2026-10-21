@@ -137,10 +137,11 @@ an earlier commit's message, use `--fixup=reword:<commit>` (or `amend:` with
 changes), whose message after the `amend!` line becomes that commit's whole
 message.
 
-During a bot review loop (the `review-loop` skill), the commits are also
+During a review loop (the `review-loop` skill), the commits are also
 fixups, which this pass squashes as well as signing them, once `pr-loop
-sign-check` has passed. That loop accepts only `--fixup=<commit>`, never
-`amend!` or `squash!`, since it must not change the PR's commit messages.
+sign-check` has passed. On a ready PR, `pr-loop push` takes only
+`--fixup=<commit>`, never `amend!` or `squash!`, since the loop must not
+change the PR's commit messages.
 
 ## Hearing how it ended
 

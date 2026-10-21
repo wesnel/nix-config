@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/gh"
+	"github.com/wesnel/agent-tools/internal/git"
 )
 
 // stacksVersion is the REST API version GitHub serves stacks under.
@@ -46,38 +47,61 @@ func Link(targets []string) (any, error) {
 		}
 		chain = append(chain, pr)
 	}
-	if err := loopScope(chain, 0); err != nil {
-		return nil, err
-	}
 	return link(repo, prs, chain)
 }
 
-// loopScope keeps a loop session's stacking to the loop's PRs, besides the
-// PR numbered opened, which the session has just opened.
-func loopScope(chain []*PR, opened int) error {
-	if !inLoopSession() {
-		return nil
-	}
-	state, err := loadState(true)
-	if err != nil {
-		return err
-	}
-	registered := state.prBranches()
-	for _, pr := range chain {
-		if _, ok := registered[pr.Number]; !ok && pr.Number != opened {
-			return refuse("#%d is not part of this loop, and a loop session stacks only the loop's pull requests; "+
-				"put `pr-loop link %s` in the report for the operator to run", pr.Number, numbersOf(chain))
-		}
-	}
-	return nil
+// StackEntry describes one PR of a stack.
+type StackEntry struct {
+	Branch    string   `json:"branch"`
+	PR        int      `json:"pr"`
+	Base      string   `json:"base"`
+	Draft     bool     `json:"draft"`
+	Title     string   `json:"title"`
+	URL       string   `json:"url"`
+	RemoteOid string   `json:"remoteOid"`
+	LocalOid  string   `json:"localOid,omitempty"`
+	Children  []string `json:"children"`
 }
 
-func numbersOf(chain []*PR) string {
-	words := make([]string, len(chain))
-	for i, pr := range chain {
-		words[i] = fmt.Sprint(pr.Number)
+// Stack describes the stack of open PRs containing target, a PR or its
+// branch (default: HEAD), as their bases chain them, and GitHub's record of
+// the stack target is in.
+func Stack(target string) (any, error) {
+	repo, err := repository()
+	if err != nil {
+		return nil, err
 	}
-	return strings.Join(words, " ")
+	prs, err := openPRs(repo)
+	if err != nil {
+		return nil, err
+	}
+	branch, err := prBranch(repo, prs, target)
+	if err != nil {
+		return nil, err
+	}
+	record, err := githubStack(repo, prs[branch].Number)
+	if err != nil {
+		return nil, err
+	}
+	order := stackOrder(prs, branch)
+	linear := true
+	var entries []StackEntry
+	for _, b := range order {
+		pr := prs[b]
+		entry := StackEntry{Branch: b, PR: pr.Number, Base: pr.BaseRefName, Draft: pr.IsDraft,
+			Title: pr.Title, URL: pr.URL, RemoteOid: pr.HeadRefOid, Children: []string{}}
+		if oid, err := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+b); err == nil {
+			entry.LocalOid = oid
+		}
+		for _, c := range order {
+			if prs[c].BaseRefName == b {
+				entry.Children = append(entry.Children, c)
+			}
+		}
+		linear = linear && len(entry.Children) <= 1
+		entries = append(entries, entry)
+	}
+	return map[string]any{"repo": repo.Slug, "linear": linear, "stack": entries, "github": record}, nil
 }
 
 // link puts chain, bottom first, into one GitHub stack, as Link describes.
@@ -223,11 +247,7 @@ func stackOpened(repo *Repo, branch, base string, number int) map[string]any {
 	opened.Author.Login = repo.Viewer
 	// Search may not list a PR this new.
 	prs[branch] = opened
-	chain := []*PR{below, opened}
-	if err := loopScope(chain, number); err != nil {
-		return later(err)
-	}
-	stacked, err := link(repo, prs, chain)
+	stacked, err := link(repo, prs, []*PR{below, opened})
 	if err != nil {
 		return later(err)
 	}

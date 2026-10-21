@@ -580,12 +580,11 @@
       # messages name ("`NAME` agent", "`NAME` sub-agent") is one that is
       # defined, and every `pr-loop SUBCOMMAND` they name is in pr-loop's
       # usage, so a rename on one side fails here until the other follows.
-      # Defined are agents.json's Claude agents, the pr-loop plugin's
-      # pr-owner (modules/home-manager/claude) and Claude Code's built-in
+      # Defined are agents.json's Claude agents and Claude Code's built-in
       # types.
       checks.agent-names = let
         agentTools = pkgs.callPackage ./overlays/agent-tools {};
-        defined = agentTools.guardAgents.claude ++ ["pr-owner" "Explore" "general-purpose" "Plan"];
+        defined = agentTools.guardAgents.claude ++ ["Explore" "general-purpose" "Plan"];
         src = pkgs.lib.fileset.toSource {
           root = ./.;
           fileset = pkgs.lib.fileset.unions [

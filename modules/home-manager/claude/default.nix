@@ -9,37 +9,71 @@ with lib; let
 
   llm = import ../llm/lib.nix {inherit lib;};
 
-  # Loaded only by claude-pr-loop, so the loop's guard never applies to an
-  # ordinary session, which has the baseline guard (see settings). The
-  # review-loop skill is shared with the other agents, and the loop's
-  # reviewer is the user-level `adversarial-reviewer` agent.
-  prLoopPlugin = pkgs.runCommand "claude-pr-loop-plugin" {} ''
-    mkdir -p $out/.claude-plugin $out/hooks $out/agents
-    cp ${pkgs.writeText "pr-owner.md" ''
-      ---
-      name: pr-owner
-      description: Owns one pull request of a stack during the bot review loop. Triages its bot threads and CI failures, fixes and restacks it in its own worktree, and answers questions about its code.
-      ---
-      ${builtins.readFile ../llm/pr-loop/pr-owner.md}
-    ''} $out/agents/pr-owner.md
-    cp ${pkgs.writeText "plugin.json" (builtins.toJSON {
-      name = "pr-loop";
-      description = "Guards and the PR owner agent for the unattended bot review loop";
-    })} $out/.claude-plugin/plugin.json
-    cp ${pkgs.writeText "hooks.json" (builtins.toJSON {
-      hooks.PreToolUse = [
-        {
-          matcher = "Bash|Monitor|mcp__.*";
-          hooks = [
-            {
-              type = "command";
-              command = "${lib.getExe' config.wgn.home.llm.agentTools "pr-loop"} guard";
-            }
-          ];
+  # The operator's way into a review loop: an ordinary session, held by the
+  # host sandbox and the baseline guard like any other, with the loop's mode
+  # in its environment, which pr-loop gates its writes on, and pr-loop
+  # allowed without a prompt. The guard refuses this command, and any
+  # assignment of PR_LOOP_SESSION or PR_LOOP_MODE, to agents. "$defaults"
+  # is literal: Claude Code splices its own auto-mode rules in there.
+  mkReviewLoop = {postCheck ? ""}:
+    pkgs.writeShellApplication {
+      name = "claude-review-loop";
+      runtimeInputs = [pkgs.jq];
+      derivationArgs = {inherit postCheck;};
+      text = ''
+        usage() {
+          echo "usage: claude-review-loop --bots|--people PR..." >&2
+          exit 2
         }
-      ];
-    })} $out/hooks/hooks.json
-  '';
+        case "''${1-}" in
+          --bots) mode=bots ;;
+          --people) mode=people ;;
+          *) usage ;;
+        esac
+        shift
+        [[ $# -gt 0 ]] || usage
+        for pr in "$@"; do
+          [[ "$pr" =~ ^#?[1-9][0-9]*$ ]] || usage
+        done
+        # shellcheck disable=SC2016
+        settings=$(jq -c --arg mode "$mode" '.env.PR_LOOP_MODE = $mode' <<<${escapeShellArg (builtins.toJSON {
+          env.PR_LOOP_SESSION = "1";
+          permissions.allow = ["Bash(pr-loop *)"];
+          autoMode.environment = [
+            "$defaults"
+            "This is the operator's review-loop session over the pull requests it was started for. Its GitHub writes go through `pr-loop`, which holds them to the loop's mode, PR_LOOP_MODE."
+          ];
+        })})
+        exec claude --settings "$settings" --permission-mode auto "/review-loop $*"
+      '';
+    };
+
+  reviewLoop = mkReviewLoop {postCheck = ": ${reviewLoopTests}";};
+
+  # The wrapper under test, with a claude that prints what it was given.
+  reviewLoopTests = let
+    fakeClaude = pkgs.writeShellScriptBin "claude" ''
+      printf '%s\n' "$@"
+    '';
+  in
+    pkgs.runCommand "claude-review-loop-tests" {nativeBuildInputs = [pkgs.jq];} ''
+      export PATH=${fakeClaude}/bin:$PATH
+      out_=$(${getExe (mkReviewLoop {})} --people 12 '#13')
+      settings=$(sed -n 2p <<<"$out_")
+      jq -e '.env == {PR_LOOP_SESSION: "1", PR_LOOP_MODE: "people"} and .permissions.allow == ["Bash(pr-loop *)"]
+        and .autoMode.environment[0] == "$defaults"' <<<"$settings"
+      [[ "$(sed -n 1p <<<"$out_")" == --settings && "$(sed -n 3,4p <<<"$out_")" == $'--permission-mode\nauto' ]]
+      [[ "$(sed -n 5p <<<"$out_")" == "/review-loop 12 #13" ]]
+      ${getExe (mkReviewLoop {})} --bots 7 | sed -n 2p | jq -e '.env.PR_LOOP_MODE == "bots"'
+      for bad in "" "--both 1" "--bots" "--bots x"; do
+        # shellcheck disable=SC2086
+        if ${getExe (mkReviewLoop {})} $bad 2>/dev/null; then
+          echo "claude-review-loop accepted '$bad'" >&2
+          exit 1
+        fi
+      done
+      touch $out
+    '';
 
   # The agents the coordinate-subagents skill starts by role: the user-level
   # agents agents.json lists. One agents.json names a reviewer has no
@@ -346,14 +380,17 @@ with lib; let
     "section"
   ];
 
-  # pr-loop's subcommands that need the operator's GitHub login. Never
-  # begin or worktrees, which serve only loop sessions, through the relay,
-  # and worktrees runs a setup command a checkout's tools decide; never
-  # setup, setup-command, sign-check or guard, which work in the sandbox.
-  prLoopGitHub = ["open" "stack" "link" "push" "threads" "reply" "resolve" "request" "status" "ci" "logs" "wait" "review" "end"];
+  # pr-loop's subcommands that need the operator's GitHub login, or write
+  # the review records the sandbox denies (threads, draft and post). Never
+  # setup, which runs a command a checkout's tools decide, or setup-command
+  # and guard, which work in the sandbox. post is the operator's: the guard
+  # refuses it to agents, and it asks on /dev/tty.
+  prLoopGitHub = ["open" "stack" "link" "push" "threads" "reply" "resolve" "draft" "post" "request" "status" "ci" "logs" "wait"
+    "sign-check" "review" "end"];
 
   # The read-only ones, which run without a prompt in an ordinary session;
-  # the writes are left to the permission flow.
+  # threads writes only its PR's review record. The writes are left to the
+  # permission flow.
   prLoopReads = ["stack" "threads" "status" "ci" "logs" "wait"];
 
   # A trailing ` *` also matches the bare command (permissions'
@@ -499,8 +536,8 @@ with lib; let
       # evaluates inside the sandbox, but every build, including one an
       # evaluation imports from, runs in the daemon outside it: on macOS
       # without a sandbox of its own and with the network, so a command that
-      # can define a derivation can reach any host. `claude-pr-loop` gets the
-      # socket too and cannot close it again; no other socket may go here.
+      # can define a derivation can reach any host. No other socket may go
+      # here.
       # Linux cannot allow one socket, so the agent sockets are hidden below.
       // (
         if darwin
@@ -541,134 +578,9 @@ with lib; let
     };
   };
 
-  # The session's commands run in Claude Code's sandbox with no credentials and
-  # no route to GitHub; `sandbox-relay session` serves `pr-loop` and
-  # `agent-plan` on a private socket, whose path replaces {socket}. Hooks, MCP servers and WebFetch run outside
-  # the sandbox, which is why WebFetch to GitHub is denied as well.
-  prLoopSettings = allowedDomains: builtins.toJSON {
-    permissions = {
-      # Without this the auto-mode classifier may stop the force-updates that
-      # `pr-loop push` makes, which is the one write the loop exists to do.
-      allow = ["Bash(pr-loop *)"];
-      deny = ["WebFetch(domain:github.com)" "WebFetch(domain:*.github.com)"];
-    };
-
-    sandbox = {
-      enabled = true;
-      # The model cannot ask to rerun a command outside the sandbox, and the
-      # session refuses to start where no sandbox is available.
-      allowUnsandboxedCommands = false;
-      failIfUnavailable = true;
-
-      # The user settings open trustd, which runs outside the sandbox and
-      # fetches revocation and issuer data named by the certificates it is
-      # handed, past the allowlist below.
-      enableWeakerNetworkIsolation = false;
-
-      network =
-        {
-          inherit allowedDomains;
-          strictAllowlist = true;
-        }
-        # macOS can allow one socket. Linux allows every socket, so the agent
-        # sockets are hidden below instead.
-        // (
-          if darwin
-          then {allowUnixSockets = ["{socket}"];}
-          else {allowAllUnixSockets = true;}
-        );
-
-      # All of the home directory but what the session needs: secrets that
-      # no list names, such as other agents' logins, stay out too.
-      filesystem.denyRead = [config.home.homeDirectory] ++ sandboxLists.deniedReads;
-      filesystem.allowRead = config.wgn.home.llm.prLoop.allowedReads;
-
-      # Relative paths here are not resolved against the workspace, so
-      # `sandbox-relay session` fills in its real path. The user settings'
-      # write grants merge into this session's, so the plans, which this
-      # session reaches through `agent-plan` on the relay, are taken back.
-      filesystem.denyWrite =
-        map (p: "{workspace}/${p}") config.wgn.home.llm.prLoop.protectedPaths
-        ++ [plans.dir];
-
-      # The launcher points the build caches here.
-      filesystem.allowWrite = [config.wgn.home.llm.prLoop.cacheDir];
-
-      credentials = {
-        files = [
-          {
-            path = "~/.config/gh/hosts.yml";
-            mode = "deny";
-          }
-        ];
-        envVars =
-          map (name: {
-            inherit name;
-            mode = "deny";
-          }) ["GH_TOKEN" "GITHUB_TOKEN" "SSH_AUTH_SOCK"];
-      };
-    };
-
-    # A further, judgement-based layer: the classifier is told what this
-    # session is for. It does not replace the sandbox.
-    autoMode = {
-      environment = [
-        "$defaults"
-        "This is an unattended review-loop session over open pull requests. Its only route to GitHub is the `pr-loop` command, which enforces the loop's policy."
-      ];
-      hard_deny = [
-        "$defaults"
-        "Reading credentials: GitHub tokens, keychain items, SSH or GPG keys, or any token in the environment or on disk."
-        "Contacting GitHub, or sending repository content anywhere, other than through `pr-loop`."
-        "Marking a pull request ready for review, merging it, or commenting on it outside a review bot's thread."
-      ];
-    };
-  };
-
-  prLoopCaches = config.wgn.home.llm.prLoop.sandboxCaches;
-
-  prLoopLauncher = pkgs.writeShellApplication {
-    name = "claude-pr-loop";
-    text = ''
-      ${prLoopCaches}
-      # The review-loop skill starts only where this is set.
-      export PR_LOOP_SESSION=1
-      # "$defaults" in the settings is literal: Claude Code splices its own
-      # auto-mode rules in there.
-      # shellcheck disable=SC2016
-      settings=${lib.escapeShellArg (prLoopSettings sandboxLists.allowedDomains)}
-      ${config.wgn.home.llm.prLoop.reviewSession}
-      if [[ -n "$review" ]]; then
-        # shellcheck disable=SC2016
-        settings=${lib.escapeShellArg (prLoopSettings config.wgn.home.llm.prLoop.reviewAllowedDomains)}
-      fi
-      # The session's commands cannot read the user's git config; the relay
-      # and pr-loop on this side keep it.
-      ${config.wgn.home.llm.prLoop.gitIdentity}
-      exec ${lib.getExe' config.wgn.home.llm.agentTools "sandbox-relay"} session --program pr-loop --program agent-plan -- \
-        env GIT_CONFIG_GLOBAL=${config.wgn.home.llm.prLoop.gitConfig} claude \
-        --plugin-dir ${prLoopPlugin} \
-        --settings "$settings" \
-        --permission-mode auto \
-        "$@"
-    '';
-  };
 in {
   options.wgn.home.claude = {
     enable = mkEnableOption "Enables my Claude Code skills and context for home-manager";
-
-    prLoop.enable = mkOption {
-      type = types.bool;
-      default = true;
-
-      description = ''
-        Installs `claude-pr-loop`, which starts Claude Code for the unattended
-        bot review loop: its commands run in Claude Code's sandbox, without
-        credentials, reaching GitHub only through `pr-loop` on a relay, and hooks
-        deny other writes to GitHub and Linear. On Linux the sandbox needs
-        bubblewrap and socat on PATH; without them the session will not start.
-      '';
-    };
 
     agentPlans = {
       enable = mkOption {
@@ -744,9 +656,8 @@ in {
 
         # The auto-mode classifier judges intent, so it also stops a rule
         # broken where the guard cannot see, as through a script; the guard
-        # stays the enforcement. Claude Code adds claude-pr-loop's own
-        # rules to these. "$defaults" is literal: Claude Code splices its
-        # own rules in there.
+        # stays the enforcement. "$defaults" is literal: Claude Code splices
+        # its own rules in there.
         autoMode.hard_deny = [
           "$defaults"
           "Reading credentials: SSH or GPG private keys, agents' logins, keychain items, tokens on disk, or the environment's secrets."
@@ -757,8 +668,7 @@ in {
           "Running a command with NGROK_ENV set to prod or stage, however it is set."
         ];
 
-        # Every session's commands. Claude Code merges these lists into
-        # claude-pr-loop's sandbox as well.
+        # Every session's commands, a review loop's included.
         sandbox = hostSandbox;
 
         hooks.PostToolUse = [
@@ -982,9 +892,11 @@ in {
       '';
     }
 
-    (mkIf cfg.prLoop.enable {
-      wgn.home.llm.prLoop.enable = true;
-      home.packages = [prLoopLauncher];
+    # Claude Code runs the review loop.
+    {wgn.home.llm.prLoop.enable = mkDefault true;}
+
+    (mkIf config.wgn.home.llm.prLoop.enable {
+      home.packages = [reviewLoop];
     })
 
     # Claude Code's Linux sandbox runs commands through these, found on PATH,

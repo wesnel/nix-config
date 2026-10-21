@@ -16,8 +16,8 @@ any change does. This skill adds what several branches need: the design
 review across all parts (Design review below) and a fresh review of each
 branch (Review each branch).
 
-A bot review loop over a stack has its own skill, `review-loop`, with the same
-shape.
+A review loop over a stack, which the operator starts with
+`claude-review-loop`, has its own skill, `review-loop`.
 
 ## Where you run
 
@@ -151,9 +151,9 @@ feedback list, runs in phases.
    investigation worktree, committing none of the scratch tests as they are.
 4. **Publish**, once the operator's signing pass has pushed. Re-read each
    thread, drop one already resolved or answered from its reply file,
-   re-check each drafted reply against the pushed code, then post each file
-   with `pr-loop reply --from`. Update each description to the change as it
-   stands.
+   re-check each drafted reply against the pushed code, then answer each
+   thread as the `review-change` skill's Answering says. Update each
+   description to the change as it stands.
 
 ## Design review
 
@@ -191,7 +191,7 @@ takes a `model`.
   little judgement, such as a flag from a precise brief, wording edits, or a
   restack with few conflicts.
 - **Opus 5.5, the default:** design reviews, adversarial reviews,
-  security-sensitive code (the guard, the relay, `git sign-pass`,
+  security-sensitive code (the guard, the sandbox, `git sign-pass`,
   `pr-loop`), restacks with many conflicts, and anything ambiguous.
 - Reviewers are never given a cheaper model: the reviewer is Codex by
   default, as the `review-change` skill's Harness choice says.

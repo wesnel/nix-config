@@ -103,7 +103,7 @@ Exit status:
   3  findings
   4  Codex cannot review here: it is not installed or not signed in, its
      sandbox cannot start confined to the worktree, this is a review-loop
-     session (PR_LOOP_SESSION or SANDBOX_RELAYED is set), or, with
+     session (PR_LOOP_SESSION is set), or, with
      --reviewer auto, the caller is Codex (CODEX_SANDBOX is set)
   1  the review could not run; 2 a usage error or refusal
 `
@@ -317,9 +317,7 @@ func readFile(path string, stdin io.Reader) (string, error) {
 func unavailable(auto bool) string {
 	switch {
 	case os.Getenv("PR_LOOP_SESSION") != "":
-		return "this is a review-loop session (PR_LOOP_SESSION is set), whose only way out is pr-loop"
-	case os.Getenv("SANDBOX_RELAYED") != "":
-		return "this runs behind sandbox-relay (SANDBOX_RELAYED is set)"
+		return "this is a review-loop session (PR_LOOP_SESSION is set), which reads other people's review text and sends none of it to OpenAI"
 	case auto && os.Getenv("CODEX_SANDBOX") != "":
 		return "the caller is Codex (CODEX_SANDBOX is set), so a review from here would not be a fresh one; exit 4"
 	}

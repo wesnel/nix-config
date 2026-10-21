@@ -274,8 +274,8 @@ func TestReviewerPlans(t *testing.T) {
 			if (reason != "") != deny {
 				t.Errorf("reviewer %q: deny=%v, reason %q", command, !deny, reason)
 			}
-			if reason := check("Bash", input, owner, ""); reason != "" {
-				t.Errorf("owner %q: denied %q", command, reason)
+			if reason := check("Bash", input, baseline, ""); reason != "" {
+				t.Errorf("baseline %q: denied %q", command, reason)
 			}
 		})
 	}
@@ -299,7 +299,7 @@ func TestPlansForTheOperator(t *testing.T) {
 			paths, _ := planLogPaths(t)
 			command := paths.Replace(command)
 			input, _ := json.Marshal(map[string]string{"command": command})
-			for _, who := range []role{baseline, coordinator, owner, reviewer} {
+			for _, who := range []role{baseline, reviewer} {
 				reason := check("Bash", input, who, "")
 				if (reason != "") != deny {
 					t.Errorf("role %d %q: deny=%v, reason %q", who, command, !deny, reason)

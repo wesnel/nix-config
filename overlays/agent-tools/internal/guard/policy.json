@@ -8,18 +8,6 @@
     "allow": ["git status", "git log --oneline -5 && git status", "grep -nE 'git\\s+push' README.md"]
   },
   {
-    "why": "Every commit is a fixup the signing pass can squash.",
-    "scope": "coordinator",
-    "deny": ["git commit -m 'plain commit'"],
-    "allow": ["git commit --fixup=abc123 --trailer 'Review-Thread: https://x/1'", "grep -nE 'git\\s+commit' SKILL.md"]
-  },
-  {
-    "why": "The loop never rewrites the PR's own commits.",
-    "scope": "coordinator",
-    "deny": ["git commit --amend --no-edit"],
-    "allow": ["git commit --fixup=abc"]
-  },
-  {
     "why": "Repository hooks stay on.",
     "scope": "baseline",
     "deny": ["git commit --no-verify --fixup=abc"],
@@ -30,12 +18,6 @@
     "scope": "baseline",
     "deny": ["git tag v1", "git tag -a v1 -m x", "git tag -d v1", "git -C r tag -s v1", "git tag -l && git tag v2"],
     "allow": ["git tag", "git tag -l", "git tag --list 'v*'", "git tag -v v1", "git tag --sort=-v:refname", "grep -nE 'git\\s+tag' x"]
-  },
-  {
-    "why": "A loop's GitHub writes go through pr-loop; reading is fine.",
-    "scope": "coordinator",
-    "deny": ["gh pr create --draft --title t --body-file b", "gh pr edit 1 --title t", "gh repo clone o/r"],
-    "allow": ["gh pr view 123 --json title", "grep -nE 'gh\\s+pr\\s+merge' SKILL.md"]
   },
   {
     "why": "Merging, closing, reopening, reviewing and top-level comments are the operator's.",
@@ -213,13 +195,13 @@
   },
   {
     "why": "Signing needs the hardware key.",
-    "scope": "coordinator",
+    "scope": "baseline",
     "deny": ["git sign-pass --push", "git -C /w sign-pass --notify x", "cd /w && git sign-pass"],
     "allow": ["git status", "agent-plan sign-result 2026-10-15-git-sign-pass-notify.box.0a1b2c3d"]
   },
   {
     "why": "Signing needs the hardware key.",
-    "scope": "coordinator",
+    "scope": "baseline",
     "deny": ["git-sign-pass", "/nix/store/x/bin/git-sign-pass --push"],
     "allow": ["git status", "cat overlays/agent-tools/cmd/git-sign-'pass'/main.go",
       "agent-plan sign-result 2026-10-15-git-sign-pass-notify.box.0a1b2c3d"]
@@ -231,10 +213,21 @@
     "allow": ["pr-loop request 663"]
   },
   {
-    "why": "Pruning the loop's history is the operator's call.",
+    "why": "Only the operator starts a review loop and sets its mode, which pr-loop's writes depend on.",
     "scope": "baseline",
-    "deny": ["pr-loop end --prune"],
-    "allow": ["pr-loop end"]
+    "deny": ["claude-review-loop --bots 12", "/nix/store/x/bin/claude-review-loop --people 12", "PR_LOOP_MODE=people pr-loop draft T --body-file d.md --outcome fix",
+      "export PR_LOOP_SESSION=1", "env PR_LOOP_MODE=bots pr-loop request", "set -x PR_LOOP_MODE bots", "PR_LOOP_SESSION=1",
+      "launchctl setenv PR_LOOP_MODE bots", "declare -x PR_LOOP_MODE=bots",
+      "printf -v PR_LOOP_MODE bots; export PR_LOOP_MODE; pr-loop reply --from f", "printf -vPR_LOOP_MODE %s bots",
+      "read PR_LOOP_MODE <<< bots", "read -r PR_LOOP_SESSION < f", "export PR_LOOP_MODE", "mapfile -t PR_LOOP_MODE < f"],
+    "allow": ["pr-loop request 663", "echo $PR_LOOP_MODE", "grep -n PR_LOOP_MODE README.md", "printenv PR_LOOP_MODE",
+      "printf '%s\\n' PR_LOOP_MODE", "printf -v line %s PR_LOOP_MODE", "read -r line < f"]
+  },
+  {
+    "why": "Posting the answers to people's threads is the operator's, each confirmed on their terminal.",
+    "scope": "baseline",
+    "deny": ["pr-loop post 12", "pr-loop post 12 PRRT_kwDOx", "cd r && pr-loop post 12"],
+    "allow": ["pr-loop draft PRRT_kwDOx --body-file d.md --outcome fix", "grep -n 'pr-loop post' SKILL.md"]
   },
   {
     "why": "pr-loop.* settings are the operator's to change.",
@@ -247,12 +240,6 @@
     "scope": "baseline",
     "deny": ["git config push-guard.allowPublic ngrok/ngrok", "git -c push-guard.allowpublic=o/r push"],
     "allow": ["git config --get user.email", "grep -rn 'push-guard[.]allowPublic' README.md"]
-  },
-  {
-    "why": "The coordinator alone opens, stacks, pushes, replies, resolves and requests reviews.",
-    "scope": "owner",
-    "deny": ["pr-loop push", "pr-loop reply T --body-file -", "pr-loop open --title T --body-file - x", "pr-loop link 12 13"],
-    "allow": ["pr-loop threads 12", "pr-loop status", "pr-loop stack 12", "grep -nE 'pr-loop\\s+push' SKILL.md"]
   },
   {
     "why": "A reviewer only reads; whoever started it acts on its findings.",

@@ -42,9 +42,8 @@ description: How to open, describe and answer a pull request. Use before `pr-loo
 ## Review threads
 
 Answer review comments in their threads, never as new top-level comments.
-On the operator's own pull requests, `pr-loop threads`, `reply` and `resolve`
-do this for review bots' threads. The `review-change` skill says how to
-settle each one.
+On the operator's own pull requests, `pr-loop threads` reads them, and the
+`review-change` skill says how to settle each one and who posts its answer.
 
 ## People
 

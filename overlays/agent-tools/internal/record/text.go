@@ -83,6 +83,10 @@ func freeText(text string, limit int) string {
 	return Cap(neutralise(Clean(text)), limit)
 }
 
+// Text is a comment's or a draft's text as the record keeps it, and as it
+// reads back.
+func Text(text string) string { return freeText(text, TextCap) }
+
 // value is text as a property holds it: one line, no link, at most limit
 // characters.
 func value(text string, limit int) string {

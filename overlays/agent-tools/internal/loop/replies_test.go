@@ -3,8 +3,6 @@ package loop
 import (
 	"strings"
 	"testing"
-
-	"github.com/wesnel/agent-tools/internal/relay"
 )
 
 const replyFile = "\n=== thread bot1 resolve\n\nFixed in abc123:\n\n```go\n=== not a header\nfunc f() {\n\n\treturn\n}\n```\n\n" +
@@ -59,6 +57,7 @@ func TestParseReplies(t *testing.T) {
 func TestReplyAll(t *testing.T) {
 	t.Run("replies and resolves", func(t *testing.T) {
 		f := fakeRepo(t)
+		t.Setenv(ModeEnv, "bots")
 		plan, err := ParseReplies(replyFile)
 		if err != nil {
 			t.Fatal(err)
@@ -85,8 +84,16 @@ func TestReplyAll(t *testing.T) {
 		}
 	})
 
+	t.Run("outside a bots-mode loop", func(t *testing.T) {
+		f := fakeRepo(t)
+		if _, err := ReplyAll([]PlannedReply{{Thread: "bot1", Body: "a"}}); !refused(err) || len(f.replies) != 0 {
+			t.Errorf("replied outside a loop: %v, %v", err, f.replies)
+		}
+	})
+
 	t.Run("checks every thread first", func(t *testing.T) {
 		f := fakeRepo(t)
+		t.Setenv(ModeEnv, "bots")
 		plan := []PlannedReply{{Thread: "bot1", Body: "a"}, {Thread: "theirs", Body: "b"}, {Thread: "bot2", Body: "c"}, {Thread: "closed", Body: "d"}}
 		_, err := ReplyAll(plan)
 		if !refused(err) || !strings.Contains(err.Error(), "#3") || !strings.Contains(err.Error(), "#4") {
@@ -96,20 +103,16 @@ func TestReplyAll(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "missing:") || !strings.Contains(err.Error(), "theirs:") {
 			t.Errorf("an unknown thread should be reported with the rest: %v", err)
 		}
-		if _, err := ReplyAll([]PlannedReply{{Thread: "bot1", Body: "a"}, {Thread: "human2", Body: "b"}}); !refused(err) {
-			t.Errorf("a reply file outside a loop reached a person: %v", err)
-		}
 		if len(f.replies) != 0 || len(f.resolved) != 0 {
 			t.Errorf("posted before checking: %v %v", f.replies, f.resolved)
 		}
 	})
 
-	t.Run("loop's reply file naming a person's thread", func(t *testing.T) {
+	t.Run("a reply file naming a person's thread", func(t *testing.T) {
 		f := fakeRepo(t)
-		t.Setenv(relay.RelayEnv, "1")
-		registerLoop(t)
+		t.Setenv(ModeEnv, "bots")
 		if _, err := ReplyAll([]PlannedReply{{Thread: "bot1", Body: "a"}, {Thread: "human1", Body: "b"}}); !refused(err) {
-			t.Errorf("a loop's reply file reached a person: %v", err)
+			t.Errorf("a reply file reached a person: %v", err)
 		}
 		if len(f.replies) != 0 {
 			t.Errorf("posted: %v", f.replies)
@@ -118,12 +121,13 @@ func TestReplyAll(t *testing.T) {
 
 	t.Run("reports where it stopped", func(t *testing.T) {
 		f := fakeRepo(t)
+		t.Setenv(ModeEnv, "bots")
 		f.failReply = "bot2"
-		_, err := ReplyAll([]PlannedReply{{Thread: "bot1", Body: "a", Resolve: true}, {Thread: "bot2", Body: "b"}, {Thread: "bot3", Body: "c"}})
+		_, err := ReplyAll([]PlannedReply{{Thread: "bot1", Body: "a", Resolve: true}, {Thread: "bot2", Body: "b"}, {Thread: "answered1", Body: "c"}})
 		if err == nil || !strings.Contains(err.Error(), "bot2") || !strings.Contains(err.Error(), `"thread":"bot1"`) {
 			t.Errorf("error should name the failed thread and what was done: %v", err)
 		}
-		if _, ok := f.replies["bot3"]; ok {
+		if _, ok := f.replies["answered1"]; ok {
 			t.Error("carried on after a failure")
 		}
 	})
