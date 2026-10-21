@@ -22,6 +22,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -371,7 +372,7 @@ func program(c call, who role, files, dir, checkout string) string {
 	words := c.words
 	switch name := base(words[0]); {
 	case name == "git":
-		return checkGit(words, c.expands, c.env, who, dir, checkout)
+		return checkGit(words, c.expands, c.env, who, dir, checkout, c.fed)
 	case name == "gh":
 		if reason := checkGh(words[1:], c.expands[1:], files, who); reason != "" && who == reviewer {
 			return reviewerReport
@@ -538,6 +539,147 @@ func checkOneCommandKey(key string) string {
 
 const configInclude = "A configuration file included for one git command can define anything, such as an alias that runs shell, " +
 	"and the guard does not read it. Give the settings themselves with `-c KEY=VALUE`, or leave them out."
+
+// shellAlias is why an agent may not define a git alias that runs a shell
+// command: the guard reads `git NAME` as git, not as the command the
+// alias holds. The operator's own aliases run.
+const shellAlias = "A git alias whose value starts with `!` runs a shell command the guard cannot see when the alias is used. Run the command itself, or put the alias in your report for the operator to add."
+
+// anyRedirect is a word's leading redirection, of input or output.
+var anyRedirect = regexp.MustCompile(`^([0-9&]?>>?\|?|[0-9]?<{1,3})`)
+
+// shellAliasSet reports whether `git config` arguments set an alias, or a
+// key the shell fills in, to a value starting with `!`, or to one the
+// shell fills in: any later word. An alias key with no value after it is
+// a read, unless xargs runs the call (fed) or its input is redirected,
+// either of which may supply the value the guard does not see.
+func shellAliasSet(args []string, expands []bool, fed bool) bool {
+	unsets := slices.ContainsFunc(args, func(a string) bool {
+		return a == "unset" || a == "--unset" || a == "--unset-all" || a == "--remove-section" || a == "--rename-section"
+	})
+	for i, w := range args {
+		alias := strings.HasPrefix(strings.ToLower(w), "alias.")
+		if !alias && !(i < len(expands) && expands[i]) {
+			continue
+		}
+		valued, input := false, false
+		for j := i + 1; j < len(args); j++ {
+			if strings.HasPrefix(strings.TrimSpace(args[j]), "!") || j < len(expands) && expands[j] {
+				return true
+			}
+			// A redirection, and the file a bare one names, is no value.
+			if m := anyRedirect.FindString(args[j]); m != "" {
+				input = input || strings.Contains(m, "<")
+				if m == args[j] {
+					j++
+				}
+				continue
+			}
+			valued = valued || !strings.HasPrefix(args[j], "-")
+		}
+		if alias && !valued && !unsets && (fed || input) {
+			return true
+		}
+	}
+	return false
+}
+
+// includeConfig is why an agent may not add a git config include: it makes
+// git read a file the session can write, and so any alias that file holds.
+const includeConfig = "A git config include makes git read a file this session can write, which may define an alias that runs a shell command. Put the include in your report for the operator to add."
+
+// gitConfigAlias is why a file tool's write to git config, or to a file
+// holding an [alias] section, is refused, or "". A git config file, by its
+// name as written or through its links and, where names fold case, in any
+// case, may gain no `!` and no include, and one already holding a `!`
+// value is not edited: git reads a value as shell after quotes, `""`
+// and backslash-newlines, which no line of the edit need show. Any other
+// file with an [alias] section, in the text written or already there, as
+// an included file may hold, gains no `!`.
+func gitConfigAlias(path, text string) string {
+	existing := ""
+	if f, err := os.Open(path); err == nil {
+		data, _ := io.ReadAll(io.LimitReader(f, 1<<20))
+		f.Close()
+		existing = string(data)
+	}
+	if !gitConfigFile(path) {
+		if (aliasSection.MatchString(text) || aliasSection.MatchString(existing)) && strings.Contains(text, "!") {
+			return shellAlias
+		}
+		return ""
+	}
+	switch {
+	case includeSection.MatchString(text):
+		return includeConfig
+	case strings.Contains(text, "!"), bangValue.MatchString(existing):
+		return shellAlias
+	}
+	return ""
+}
+
+// gitConfigFile reports whether path is a git config file. It is one where
+// it reaches, as Reaches judges by file identity, ~/.gitconfig, git's XDG
+// config, or the config or config.worktree of a .git directory above it:
+// so a case or Unicode variant the volume folds, a link and a hard link
+// all count, and so does a new name outside ASCII in one of their
+// directories. A name holding gitconfig, or config or config.worktree in
+// a .git, git or worktrees directory, counts too, as written or with its
+// links resolved, in any case where names fold it, for files that are not
+// there yet.
+func gitConfigFile(path string) bool {
+	if filepath.IsAbs(path) {
+		config := os.Getenv("XDG_CONFIG_HOME")
+		if !filepath.IsAbs(config) {
+			config = filepath.Join(home, ".config")
+		}
+		known := []string{filepath.Join(home, ".gitconfig"), filepath.Join(config, "git", "config")}
+		for dir := filepath.Dir(physical(path)); ; dir = filepath.Dir(dir) {
+			if info, err := os.Stat(filepath.Join(dir, ".git")); err == nil && info.IsDir() {
+				known = append(known, filepath.Join(dir, ".git", "config"), filepath.Join(dir, ".git", "config.worktree"))
+			}
+			if dir == filepath.Dir(dir) {
+				break
+			}
+		}
+		for _, k := range known {
+			if Reaches(path, k, false) {
+				return true
+			}
+		}
+	}
+	for _, p := range []string{filepath.Clean(path), physical(path)} {
+		if foldsCase {
+			p = strings.ToLower(p)
+		}
+		base, parent := filepath.Base(p), filepath.Base(filepath.Dir(p))
+		if strings.Contains(base, "gitconfig") ||
+			(base == "config" || base == "config.worktree") && (parent == ".git" || parent == "git" ||
+				filepath.Base(filepath.Dir(filepath.Dir(p))) == "worktrees") {
+			return true
+		}
+	}
+	return false
+}
+
+// foldsCase is whether this host's file systems match names without regard
+// to case, as macOS's do by default.
+var foldsCase = runtime.GOOS == "darwin"
+
+// includeKey reports whether a git config key, lowercase, is an include's.
+func includeKey(key string) bool {
+	return key == "include.path" || strings.HasPrefix(key, "includeif.") && strings.HasSuffix(key, ".path")
+}
+
+var (
+	// Each reads a line of a file or of apply_patch's hunks, whose lines
+	// start with +, - or a space.
+	aliasSection   = regexp.MustCompile(`(?im)^[-+ ]?\s*\[\s*alias(\s+"[^"]*")?\s*\]`)
+	includeSection = regexp.MustCompile(`(?im)^[-+ ]?\s*\[\s*include(if)?\b`)
+	// bangValue is a config value starting with `!`, after any quotes,
+	// spaces and backslash-newlines.
+	bangValue = regexp.MustCompile(`=[\s"\\]*!`)
+)
 
 const pushGuard = "Publishing private history in a public repository is the operator's decision. Leave push-guard.* alone, and name the repository and the commits in the report for the operator."
 
@@ -708,8 +850,9 @@ func branchWrites(args []string) bool {
 
 // checkGit checks a git command run in dir, "" when the guard cannot tell
 // where, with the assignments env made for it, in a call made in checkout,
-// the hook's directory. expands says which words the shell expands.
-func checkGit(words []string, expands []bool, env []string, who role, dir, checkout string) string {
+// the hook's directory. expands says which words the shell expands, and
+// fed that xargs adds more.
+func checkGit(words []string, expands []bool, env []string, who role, dir, checkout string, fed bool) string {
 	i := 1
 	var config []string // the -c and --config-env options, for gitState.signs
 	located := false    // --git-dir or --work-tree names the repository
@@ -791,11 +934,16 @@ func checkGit(words []string, expands []bool, env []string, who role, dir, check
 	case sub == "tag" && tagWrites(rest):
 		return "Tags are published history, which is the operator's to make or remove. List them with `git tag -l`, and put the `git tag` command in your report for the operator."
 	case sub == "config" && !configRead(rest):
+		if shellAliasSet(rest, expands[min(i+1, len(expands)):], fed) {
+			return shellAlias
+		}
 		for _, w := range rest {
 			key := strings.ToLower(w)
 			switch {
 			case strings.HasPrefix(key, "pr-loop."):
 				return "pr-loop.* settings are the operator's to change. Read them with `git config --get`, and put the `git config` command you propose in the report for the operator."
+			case includeKey(key):
+				return includeConfig
 			case remoteURL.MatchString(key):
 				return remotes
 			}
@@ -809,15 +957,6 @@ func checkGit(words []string, expands []bool, env []string, who role, dir, check
 	}
 	if reason := checkSigning(sub, rest, gitState{dir: dir, config: config, env: env}); reason != "" {
 		return reason
-	}
-	// An existing alias runs whatever it names, which this check cannot see.
-	if aliases, _ := exec.Command("git", "config", "--get-regexp", `^alias\.`).Output(); len(aliases) > 0 {
-		for _, line := range strings.Split(string(aliases), "\n") {
-			name, _, _ := strings.Cut(line, " ")
-			if strings.TrimPrefix(name, "alias.") == sub {
-				return "`git " + sub + "` is an alias, so the guard cannot see what it runs. Run the command it stands for, which `git config --get alias." + sub + "` shows."
-			}
-		}
 	}
 	return ""
 }

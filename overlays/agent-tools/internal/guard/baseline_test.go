@@ -1343,6 +1343,13 @@ func TestFileTools(t *testing.T) {
 		{"a README", false, "Edit", map[string]string{"file_path": "WORK/README.md", "old_string": "hooks", "new_string": "more hooks"}},
 		{"a project's permissions", false, "Write", map[string]string{"file_path": "WORK/.claude/settings.local.json", "content": `{"permissions": {}}`}},
 		{"code", false, "apply_patch", patch("src/main.go", "-a\n+b")},
+		{"a shell alias in ~/.gitconfig", true, "Edit", map[string]string{"file_path": "HOME/.gitconfig", "old_string": "[alias]\n", "new_string": "[alias]\n\tzz = !echo z\n"}},
+		{"a shell alias in git's XDG config", true, "Write", map[string]string{"file_path": "HOME/.config/git/config", "content": "[alias] zz = \"!echo z\"\n"}},
+		{"a shell alias in an included file", true, "Write", map[string]string{"file_path": "WORK/aliases.inc", "content": "[Alias \"x\"]\n  zz=!sh\n"}},
+		{"a shell alias, patched", true, "apply_patch", patch("HOME/.gitconfig.local", " [alias]\n+\tzz = !echo z")},
+		{"a shell alias in a worktree's config", true, "Edit", map[string]string{"file_path": "WORK/.git/worktrees/w/config.worktree", "old_string": "", "new_string": "[alias]\nzz = !x"}},
+		{"an alias", false, "Edit", map[string]string{"file_path": "HOME/.gitconfig", "old_string": "[alias]\n", "new_string": "[alias]\n\tlg = log --oneline\n"}},
+		{"a Makefile's !", false, "Write", map[string]string{"file_path": "WORK/Makefile", "content": "x = !y\n"}},
 	}
 	for _, c := range cases {
 		t.Run(caseName(c.deny, c.tool+" "+c.name), func(t *testing.T) {
@@ -1360,6 +1367,105 @@ func TestFileTools(t *testing.T) {
 				t.Errorf("%s: reason %q does not say what to do instead", c.tool, reason)
 			}
 		})
+	}
+}
+
+// A file tool defines no shell alias in git config however the value is
+// spelled or the file is reached, adds no include, and leaves alone a git
+// config that already holds a shell value; a file with an [alias] section,
+// as an included one, gains no `!`.
+func TestGitConfigAlias(t *testing.T) {
+	h := fakeHome(t)
+	write := func(name, text string) string {
+		path := filepath.Join(h, name)
+		os.MkdirAll(filepath.Dir(path), 0o755)
+		os.WriteFile(path, []byte(text), 0o644)
+		return path
+	}
+	gitconfig := write(".gitconfig", "[alias]\n\tlg = log --oneline\n")
+	included := write("aliases.inc", "[alias]\n\tx = log\n")
+	shelled := write("work/.gitconfig.local", "[alias]\n\ty = !echo y\n[user]\n\tname = x\n")
+	link := filepath.Join(h, "plain-name")
+	os.Symlink(gitconfig, link)
+	repo := filepath.Dir(filepath.Dir(write("r/.git/config", "[core]\n")))
+	hard := filepath.Join(h, "work", "plain-copy")
+	os.Link(gitconfig, hard)
+	const include = "[include]\n\tpath = /tmp/x.inc\n"
+	edit := func(path, old, new string) map[string]string {
+		return map[string]string{"file_path": path, "old_string": old, "new_string": new}
+	}
+	type aliasCase struct {
+		name, tool string
+		input      map[string]string
+		want       string
+	}
+	cases := []aliasCase{
+		{"a value-only edit", "Edit", edit(gitconfig, "log --oneline", "!sh"), shellAlias},
+		{"a value-only edit of an included file", "Edit", edit(included, "log", "!sh"), shellAlias},
+		{"an edit through a link", "Edit", edit(link, "log --oneline", "!sh"), shellAlias},
+		{"a doubled quote", "Write", map[string]string{"file_path": gitconfig, "content": "[alias]\n\tx = \"\"!echo hi\n"}, shellAlias},
+		{"a backslash-newline", "Write", map[string]string{"file_path": gitconfig, "content": "[alias]\n\tx = \\\n!echo hi\n"}, shellAlias},
+		{"an include", "Edit", edit(gitconfig, "[alias]", "[include]\n\tpath = /tmp/x.inc\n[alias]"), includeConfig},
+		{"an includeIf", "Write", map[string]string{"file_path": gitconfig, "content": "[includeIf \"gitdir:~/w/\"]\n\tpath = x.inc\n"}, includeConfig},
+		{"a config holding a shell value", "Edit", edit(shelled, "name = x", "name = y"), shellAlias},
+		{"an alias", "Edit", edit(gitconfig, "log --oneline", "log --graph"), ""},
+		{"a Makefile", "Write", map[string]string{"file_path": filepath.Join(h, "Makefile"), "content": "x = !y\n"}, ""},
+		// By identity: a Unicode variant the volume folds onto the file, or
+		// a new name outside ASCII beside it, is the config.
+		{"~/.gitconﬁg", "Write", map[string]string{"file_path": filepath.Join(h, ".gitconﬁg"), "content": include}, includeConfig},
+		{"a repository's conﬁg", "Write", map[string]string{"file_path": filepath.Join(repo, ".git", "conﬁg"), "content": include}, includeConfig},
+		{"a new name outside ASCII in .git", "Write", map[string]string{"file_path": filepath.Join(repo, ".git", "cönfig"), "content": include}, includeConfig},
+		{"a hard link to ~/.gitconfig", "Write", map[string]string{"file_path": hard, "content": include}, includeConfig},
+		{"an ASCII file in a repository", "Write", map[string]string{"file_path": filepath.Join(repo, "notes.txt"), "content": include}, ""},
+	}
+	if foldsCase {
+		cases = append(cases,
+			aliasCase{"~/.GITCONFIG", "Write", map[string]string{"file_path": filepath.Join(h, ".GITCONFIG"), "content": "x = !sh\n"}, shellAlias},
+			aliasCase{".GIT/CONFIG", "Write", map[string]string{"file_path": filepath.Join(h, "r", ".GIT", "CONFIG"), "content": "x = !sh\n"}, shellAlias})
+	}
+	for _, c := range cases {
+		data, _ := json.Marshal(c.input)
+		if reason := check(c.tool, data, baseline, h); reason != c.want {
+			t.Errorf("%s: reason %q, want %q", c.name, reason, c.want)
+		}
+	}
+	for command, want := range map[string]string{
+		"git config --global include.path /tmp/x.inc": includeConfig,
+		"git config includeIf.gitdir:~/w/.path x.inc": includeConfig,
+		"git config --global user.name x":             "",
+		"echo '!sh' | xargs git config alias.x":       shellAlias,
+		"xargs git config --global alias.x < cmd":     shellAlias,
+		"git config alias.x":                          "",
+		"git config --global alias.lg":                "",
+		"git config alias.x < cmd":                    shellAlias,
+		"timeout 5 xargs git config alias.x":          shellAlias,
+		"git config --unset alias.x":                  "",
+		"printf '[alias] x = !sh' >> .git/config":     gitConfigShell,
+		"echo x | tee -a ~/.config/git/config":        gitConfigShell,
+		"cp x.inc ~/.gitconfig":                       gitConfigShell,
+		"mv x.inc ~/.config/git/config":               gitConfigShell,
+		"ln -s /tmp/x.inc .git/config.worktree":       gitConfigShell,
+		"install -m 644 x.inc ~/.config/git/config":   gitConfigShell,
+		"rsync x.inc ~/.config/git/config":            gitConfigShell,
+		"dd if=x.inc of=.git/config":                  gitConfigShell,
+		"cat ~/.gitconfig":                            "",
+		"cp ~/.gitconfig /tmp/copy":                   "",
+		"echo x > notes.txt":                          "",
+	} {
+		if reason := judge(t, h, command); reason != want {
+			t.Errorf("%q: reason %q, want %q", command, reason, want)
+		}
+	}
+	// A git config that is there is refused as any existing file is, by
+	// name or through a link, and in place.
+	for _, command := range []string{"echo x >> ~/.gitconfig", "echo x > plain-name", "sed -i s/log/sh/ ~/.gitconfig",
+		"perl -pi -e s/log/sh/ ~/.gitconfig"} {
+		if judge(t, h, command) == "" {
+			t.Errorf("%q passes", command)
+		}
+	}
+	if foldsCase && judge(t, h, "cp x.inc ~/.GITCONFIG.local") != gitConfigShell {
+		t.Error("a case variant of a git config name passes")
 	}
 }
 

@@ -623,8 +623,10 @@ after `insteadOf`, and ssh, scp or sftp to github.com or git.sr.ht),
 merging, closing, marking ready,
 reviews and top-level comments, GitHub settings, gh's login and token, git
 credential and transport settings, remote rewrites, settings every worktree
-shares, discarding the main checkout's work, dropping or clearing the stash
-every worktree shares, deleting unpushed history or a worktree's
+shares, defining a git alias that runs a shell command (`!…`), adding a
+git config include or writing a git config file other than with `git
+config`, discarding the main checkout's work, dropping or
+clearing the stash every worktree shares, deleting unpushed history or a worktree's
 uncommitted work, reading credentials or the whole environment, ngrok API writes, running
 with `NGROK_ENV` set to prod or stage however it is set, switching
 the system, root, publishing packages, killing Emacs, gpg-agent, ssh,
@@ -676,7 +678,7 @@ has the hook alone:
 | Fetch/clone/login over SSH (touch) | sandbox (no SSH_AUTH_SOCK, ~/.ssh, port 22) and hook | hook |
 | Signing commits (touch) | sandbox (~/.gnupg, agent socket) and hook | hook |
 | git push, gh writes, GitHub API/GraphQL writes | sandbox (no credentials), hook, deny rules | hook |
-| git-state rules (main checkout, stash, worktrees, history loss, shared config) | hook | hook |
+| git-state rules (main checkout, stash, worktrees, history loss, shared config, shell aliases) | hook | hook |
 | Shell edits of tracked files, rm where trash is | hook | hook |
 | Guard-off writes (settings, hooks, agent-tools config) | hook; sandbox for ~/.claude | hook |
 | Plan logs and files | sandbox denyWrite (Bash), Edit deny rules and hook (file tools) | hook |

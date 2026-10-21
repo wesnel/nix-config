@@ -94,6 +94,15 @@
     "allow": ["git remote -v", "git fetch origin"]
   },
   {
+    "why": "An alias that runs a shell command hides it from the guard at each use, and so can a file an include reads; the operator's own aliases run.",
+    "scope": "baseline",
+    "deny": ["git config alias.zz '!echo z > zz'", "git config --global alias.yy '!echo y'",
+      "git config --file ~/.gitconfig.local --add alias.ww '!sh'", "git config --global include.path /tmp/x.inc",
+      "git config 'includeIf.gitdir:~/w/.path' x.inc", "echo '!sh' | xargs git config alias.x",
+      "echo '[alias] x = !sh' >> .git/config", "cp aliases.inc .git/config"],
+    "allow": ["git config alias.st status", "git lg", "git config --get alias.zz"]
+  },
+  {
     "why": "GitHub writes go through gh or pr-loop, which the guard can check.",
     "scope": "baseline",
     "deny": ["curl -X POST https://api.github.com/repos/o/r/issues -d '{}'", "wget --post-data=x https://api.github.com/repos/o/r/issues",

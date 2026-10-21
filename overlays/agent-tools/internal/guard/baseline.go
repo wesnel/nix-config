@@ -230,6 +230,9 @@ func checkSession(c call, dir string) string {
 	if reason := checkShellEdit(name, args, redirected, dir); reason != "" {
 		return reason
 	}
+	if gitConfigShellWrite(name, args, redirected, dir) {
+		return gitConfigShell
+	}
 	has := func(flags ...string) bool {
 		for _, a := range args {
 			for _, f := range flags {
@@ -1823,6 +1826,36 @@ const shellEditInPlace = "`%s` exists, and rewriting an existing file from the s
 	"or write the command's output to a new file. For a mechanical sweep over Go code, use `gopls rename`, " +
 	"`gofmt -r 'PATTERN -> REPLACEMENT' -w` or `go fix`, with the exact command in the commit body."
 
+// gitConfigShell is why the shell may not write git config: only `git
+// config`, which the guard reads, changes it.
+const gitConfigShell = "Git config changes go through `git config`, whose keys and values the guard reads; a shell write to a git config file hides them. Run `git config KEY VALUE`, or put the change in your report for the operator."
+
+// gitConfigShellWrite reports whether a command, run in dir, writes a git
+// config file, as gitConfigFile names one: by a redirection, tee, cp, mv,
+// ln, install, rsync, truncate or dd onto it, or sed, perl or awk in
+// place. A source's name inside a destination counts only where the
+// destination is a directory, so copying a git config out passes.
+func gitConfigShellWrite(name string, args, redirected []string, dir string) bool {
+	targets := editTargets(name, args, redirected)
+	if set("tee", "cp", "mv", "ln", "install", "rsync", "truncate", "dd")[name] || inPlace(name, args) {
+		written := writeTargets(name, args)
+		for _, t := range written {
+			if len(written) > 0 && t != written[0] && filepath.Dir(t) == written[0] {
+				if info, err := os.Stat(expandPath(written[0], dir)); err != nil || !info.IsDir() {
+					continue
+				}
+			}
+			targets = append(targets, t)
+		}
+	}
+	for _, t := range targets {
+		if !strings.HasPrefix(t, "&") && !strings.HasPrefix(t, "-") && gitConfigFile(expandPath(t, dir)) {
+			return true
+		}
+	}
+	return false
+}
+
 // checkShellEdit denies a command, run in dir, that writes an existing file
 // (editTargets) wherever it is. Output written to a new file is capturing,
 // not editing.
@@ -2007,6 +2040,9 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 		if planFile(path) {
 			return planWrite
 		}
+		if reason := gitConfigAlias(path, c.text); reason != "" {
+			return reason
+		}
 		switch {
 		case filepath.Base(path) == "config" && filepath.Base(filepath.Dir(path)) == ".git":
 			return sharedConfig
@@ -2069,9 +2105,11 @@ func fileChanges(tool string, toolInput json.RawMessage) ([]change, error) {
 		}
 		flush()
 	} else {
-		text := in.Content + in.OldString + in.NewString + in.NewSource
+		// Each part on lines of its own, so a rule reading lines reads
+		// each as it is.
+		text := strings.Join([]string{in.Content, in.OldString, in.NewString, in.NewSource}, "\n")
 		for _, e := range in.Edits {
-			text += e.OldString + e.NewString
+			text += "\n" + e.OldString + "\n" + e.NewString
 		}
 		changes = append(changes, change{in.FilePath + in.NotebookPath, text})
 	}
