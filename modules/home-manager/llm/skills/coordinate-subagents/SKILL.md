@@ -265,10 +265,11 @@ them fit together:
 - Beside it, one `git sign-pass` command per repository, which Wesley types
   himself, naming the top of every stack, each child of a fork included.
   Flags come before the branch names: `--set-upstream` when any branch is
-  new, otherwise `--push`.
+  new, otherwise `--push`, and `--notify` with an ID minted as the
+  signing-pass skill says.
 
   ```sh
-  git sign-pass --set-upstream <top of stack 1> <top of stack 2> ...
+  git sign-pass --set-upstream --notify <ID> <top of stack 1> <top of stack 2> ...
   ```
 
   It prints the whole plan before the first touch; that plan is his audit.
