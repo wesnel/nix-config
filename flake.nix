@@ -580,12 +580,20 @@
       # messages name ("`NAME` agent", "`NAME` sub-agent") is one that is
       # defined, and every `pr-loop SUBCOMMAND` they name is in pr-loop's
       # usage, so a rename on one side fails here until the other follows.
-      # Defined are agents.json's Claude agents, the pr-loop plugin's
-      # pr-owner (modules/home-manager/claude) and Claude Code's built-in
-      # types.
+      # Defined are the agent files' names (the `name:` line of each in
+      # modules/home-manager/claude/agents) and Claude Code's built-in types.
       checks.agent-names = let
         agentTools = pkgs.callPackage ./overlays/agent-tools {};
-        defined = agentTools.guardAgents.claude ++ ["pr-owner" "Explore" "general-purpose" "Plan"];
+        agentFiles = pkgs.lib.filterAttrs (name: kind: kind == "regular" && pkgs.lib.hasSuffix ".md" name && name != "subagent.md")
+          (builtins.readDir ./modules/home-manager/claude/agents);
+        fileNames = pkgs.lib.mapAttrsToList (file: _: let
+          lines = pkgs.lib.splitString "\n" (builtins.readFile (./modules/home-manager/claude/agents + "/${file}"));
+          named = builtins.filter (pkgs.lib.hasPrefix "name: ") lines;
+        in
+          assert pkgs.lib.assertMsg (named != []) "agent-names: ${file} has no name: line";
+            pkgs.lib.removePrefix "name: " (builtins.head named))
+        agentFiles;
+        defined = fileNames ++ ["Explore" "general-purpose" "Plan"];
         src = pkgs.lib.fileset.toSource {
           root = ./.;
           fileset = pkgs.lib.fileset.unions [

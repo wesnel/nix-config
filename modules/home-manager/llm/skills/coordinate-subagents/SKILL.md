@@ -16,8 +16,8 @@ any change does. This skill adds what several branches need: the design
 review across all parts (Design review below) and a fresh review of each
 branch (Review each branch).
 
-A bot review loop over a stack has its own skill, `review-loop`, with the same
-shape.
+A review loop over a stack, which the operator starts with
+`claude-review-loop`, has its own skill, `review-loop`.
 
 ## Where you run
 
@@ -86,10 +86,10 @@ what is this work's.
   for review; its fix rounds too, continued with `SendMessage`; and a
   part's Investigate phase (Phases below), which commits nothing.
 - **`adversarial-reviewer`:** tries to break a finished branch, every
-  finding reproduced or marked as not, with what held. For a part that is
-  security-sensitive, subtle, or that a fresh review passed too easily;
-  also `pr-loop review --reviewer subagent`'s sub-agent, as the
-  `review-change` skill says, replying in the form its prompt gives.
+  finding reproduced or marked as not, with what held: your review of each
+  part (Review each branch below); also `pr-loop review --reviewer
+  subagent`'s sub-agent, as the `review-change` skill says, replying in the
+  form its prompt gives.
 - **`design-reviewer`:** the design reviews (Design review below).
 - **`security-reviewer`:** a security route's review, from the prompt
   `git fresh-review --print-prompt --focus security` prints, and a
@@ -151,9 +151,9 @@ feedback list, runs in phases.
    investigation worktree, committing none of the scratch tests as they are.
 4. **Publish**, once the operator's signing pass has pushed. Re-read each
    thread, drop one already resolved or answered from its reply file,
-   re-check each drafted reply against the pushed code, then post each file
-   with `pr-loop reply --from`. Update each description to the change as it
-   stands.
+   re-check each drafted reply against the pushed code, then answer each
+   thread as the `review-change` skill's Answering says. Update each
+   description to the change as it stands.
 
 ## Design review
 
@@ -191,7 +191,7 @@ takes a `model`.
   little judgement, such as a flag from a precise brief, wording edits, or a
   restack with few conflicts.
 - **Opus 5.5, the default:** design reviews, adversarial reviews,
-  security-sensitive code (the guard, the relay, `git sign-pass`,
+  security-sensitive code (the guard, the sandbox, `git sign-pass`,
   `pr-loop`), restacks with many conflicts, and anything ambiguous.
 - Reviewers are never given a cheaper model: the reviewer is Codex by
   default, as the `review-change` skill's Harness choice says.
@@ -263,9 +263,12 @@ skill's "Questions for the operator" says, not into your message.
 Before Coalesce, run the `review-change` skill's fresh review loop on each
 branch by itself, never the whole stack at once: the range `<base>..<branch>`,
 the part's goal and what is not its job as the goal statement, at most three
-rounds. Review a branch once its sub-agent has finished it, then hand all
-of that round's findings to the sub-agent as one fix round, to settle as
-Triage says; check its report as any other.
+rounds. Your general review of a part is an `adversarial-reviewer` sub-agent
+given that range and goal statement, in place of `/code-review`;
+`git fresh-review` stays the second opinion. Review a branch once its
+sub-agent has finished it, then hand all of that round's findings to the
+sub-agent as one fix round, to settle as Triage says; check its report as
+any other.
 
 ## Coalesce
 

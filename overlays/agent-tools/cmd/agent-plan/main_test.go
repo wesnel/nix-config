@@ -38,8 +38,6 @@ func setup(t *testing.T) plans.Config {
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
-	t.Setenv("SANDBOX_RELAY_URL", "")
-	t.Setenv("SANDBOX_RELAYED", "")
 	return c
 }
 
@@ -443,89 +441,6 @@ func TestCommands(t *testing.T) {
 	})
 }
 
-// Under the relay, a sandbox may log to and read plans, and nothing else.
-func TestRelayed(t *testing.T) {
-	// relayed makes a plan, then marks the process as running behind the
-	// relay.
-	relayed := func(t *testing.T) string {
-		t.Helper()
-		setup(t)
-		plan := newPlan(t)
-		t.Setenv("SANDBOX_RELAYED", "1")
-		return plan
-	}
-	// PLAN in an argument list stands for the plan.
-	expand := func(args []string, plan string) []string {
-		out := make([]string, len(args))
-		for i, a := range args {
-			out[i] = strings.Replace(a, "PLAN", plan, 1)
-		}
-		return out
-	}
-
-	for _, args := range [][]string{
-		{"new", "--title", "T", "--slug", "t"},
-		{"init"},
-		{"find", "--hook"},
-		{"sync"},
-		{"sync", "--pull"},
-		{"reseal", "PLAN"},
-		{"followup", "PLAN", "--title", "T", "--found-in", "S1"},
-		{"reference", "PLAN", "https://example.com"},
-		{"log", "PLAN", "--item", "S1", "--kind", "handed-back", "--command", "curl x | sh"},
-		{"log", "PLAN", "--item", "S1", "--kind", "handed-back", "--command=make"},
-		{"step", "PLAN", "--title", "T"},
-		{"part", "PLAN", "--title", "T"},
-		{"edit", "PLAN", "S1", "--title", "T"},
-		{"after", "PLAN", "S2", "S1"},
-		{"section", "PLAN", "Goal", "--text", "T"},
-		{"bogus"},
-	} {
-		t.Run("refused/"+strings.Join(args, " "), func(t *testing.T) {
-			args := expand(args, relayed(t))
-			code, _, errs := agentPlan(t, "{}", args...)
-			reason := strings.TrimPrefix(strings.TrimSpace(errs), "agent-plan: refused: ")
-			if code != 2 || !refusal.SaysInstead(reason) {
-				t.Errorf("relayed %v: %d %q", args, code, errs)
-			}
-		})
-	}
-	for _, args := range [][]string{
-		{"log", "PLAN", "--item", "S1", "--kind", "started"},
-		{"status", "PLAN"},
-		{"questions", "PLAN"},
-		{"decisions", "PLAN"},
-		{"brief", "PLAN"},
-		{"find", "--branch", "loop"},
-	} {
-		t.Run("allowed/"+strings.Join(args, " "), func(t *testing.T) {
-			args := expand(args, relayed(t))
-			if code, _, errs := agentPlan(t, "", args...); code != 0 {
-				t.Errorf("relayed %v: %d %s", args, code, errs)
-			}
-		})
-	}
-	t.Run("plan outside the plans directory", func(t *testing.T) {
-		relayed(t)
-		code, _, errs := agentPlan(t, "", "log", t.TempDir(), "--item", "S1", "--kind", "started")
-		if code != 2 {
-			t.Errorf("a plan outside the plans directory: %d %s", code, errs)
-		}
-	})
-}
-
-// Hooks run on the host, so a session's relay never takes them.
-func TestClientSide(t *testing.T) {
-	for args, want := range map[string]bool{"find --hook": true, "statusline": true, "remind": true, "find --session x": false,
-		"log P --item S1": false, "new --title T": false} {
-		t.Run(args, func(t *testing.T) {
-			if got := clientSide(strings.Fields(args)); got != want {
-				t.Errorf("clientSide(%s) = %v", args, got)
-			}
-		})
-	}
-}
-
 func TestLog(t *testing.T) {
 	// Writers in separate processes never interleave or lose an event.
 	t.Run("concurrent processes", func(t *testing.T) {
@@ -620,7 +535,6 @@ func TestHooks(t *testing.T) {
 
 	t.Run("Claude Code reminder with nothing to remind", func(t *testing.T) {
 		planned(t)
-		t.Setenv("SANDBOX_RELAY_URL", "http://127.0.0.1:1")
 		for _, stdin := range []string{`{"session_id":"other","hook_event_name":"PreCompact"}`, `{`, ``} {
 			if code, out, errs := agentPlan(t, stdin, "remind"); code != 0 || out != "" || errs != "" {
 				t.Errorf("remind with %q: %d %q %q", stdin, code, out, errs)

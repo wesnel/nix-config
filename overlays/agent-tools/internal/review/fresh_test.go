@@ -110,7 +110,7 @@ func setUp(t *testing.T, withCodex bool) *fixture {
 	for k, v := range map[string]string{
 		"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
 		"GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e", "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e",
-		"PR_LOOP_SESSION": "", "SANDBOX_RELAYED": "", "CODEX_SANDBOX": "", "FAKE_CODEX": "", "FAKE_CODEX_COPY": "",
+		"PR_LOOP_SESSION": "", "CODEX_SANDBOX": "", "FAKE_CODEX": "", "FAKE_CODEX_COPY": "",
 		"AGENT_TOOLS_CONFIG": filepath.Join(t.TempDir(), "none.json"),
 	} {
 		t.Setenv(k, v)
@@ -406,7 +406,6 @@ func TestUnavailable(t *testing.T) {
 		{"missing", false, nil, nil, 4},
 		{"unauthenticated", true, map[string]string{"FAKE_CODEX": "unauthenticated"}, nil, 4},
 		{"in a loop session", true, map[string]string{"PR_LOOP_SESSION": "1"}, nil, 4},
-		{"behind the relay", true, map[string]string{"SANDBOX_RELAYED": "1"}, nil, 4},
 		{"loop session, Codex asked for", true, map[string]string{"PR_LOOP_SESSION": "1"}, []string{"--reviewer", "codex"}, 4},
 		{"Codex author", true, map[string]string{"CODEX_SANDBOX": "seatbelt"}, nil, 4},
 		{"Codex author, Codex asked for", true, map[string]string{"CODEX_SANDBOX": "seatbelt", "FAKE_CODEX": "none"}, []string{"--reviewer", "codex"}, 0},

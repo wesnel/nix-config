@@ -5,7 +5,6 @@ package loop
 import (
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/wesnel/agent-tools/internal/git"
@@ -200,24 +199,4 @@ func recordTracking(repo *Repo, branch, oid string) error {
 		}
 	}
 	return nil
-}
-
-func diffLines(base, branch string) (int, error) {
-	out, err := git.Run("diff", "--numstat", base+"...refs/heads/"+branch)
-	if err != nil {
-		return 0, err
-	}
-	total := 0
-	for _, line := range strings.Split(out, "\n") {
-		fields := strings.SplitN(line, "\t", 3)
-		if len(fields) < 2 {
-			continue
-		}
-		for _, n := range fields[:2] {
-			if v, err := strconv.Atoi(n); err == nil {
-				total += v
-			}
-		}
-	}
-	return total, nil
 }

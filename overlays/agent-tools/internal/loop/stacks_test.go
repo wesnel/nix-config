@@ -12,7 +12,6 @@ import (
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/refusal"
-	"github.com/wesnel/agent-tools/internal/relay"
 )
 
 type fakeStackPR struct {
@@ -145,8 +144,6 @@ func stacksRepo(t *testing.T) *fakeStacks {
 	t.Helper()
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv(relay.RelayEnv, "")
-	t.Setenv(sessionEnv, "")
 	dir := t.TempDir()
 	gitIn(t, dir, "init", "-q", "-b", "main")
 	gitIn(t, dir, "remote", "add", "origin", "https://github.com/o/r.git")
@@ -172,20 +169,6 @@ func stacksRepo(t *testing.T) *fakeStacks {
 	graphQL, stacksREST, sleep = f.graphQL, f.rest, func(time.Duration) {}
 	t.Cleanup(func() { graphQL, stacksREST, sleep = oldGraphQL, oldREST, oldSleep })
 	return f
-}
-
-// registerPRs records a loop over the PRs numbered, as begin would.
-func registerPRs(t *testing.T, f *fakeStacks, numbers ...int) {
-	t.Helper()
-	state := &State{Repo: "o/r", Branches: map[string]*Branch{}}
-	for _, n := range numbers {
-		pr := f.prs[n]
-		state.Order = append(state.Order, pr.head)
-		state.Branches[pr.head] = &Branch{PR: n, Base: pr.base}
-	}
-	if err := state.save(); err != nil {
-		t.Fatal(err)
-	}
 }
 
 // refusedWell reports whether err is a refusal that says what to do instead.
@@ -270,31 +253,6 @@ func TestLink(t *testing.T) {
 			t.Errorf("two 409s: %v, writes %v", err, f.writes)
 		}
 	})
-
-	t.Run("in a loop", testLinkInALoop)
-}
-
-func testLinkInALoop(t *testing.T) {
-	for _, env := range []string{relay.RelayEnv, sessionEnv} {
-		t.Run(env, func(t *testing.T) {
-			f := stacksRepo(t)
-			t.Setenv(env, "1")
-			if _, err := Link([]string{"5", "7"}); !refusedWell(err) {
-				t.Errorf("a session without a loop linked: %v", err)
-			}
-			registerPRs(t, f, 5)
-			if _, err := Link([]string{"5", "7"}); !refusedWell(err) {
-				t.Errorf("a session linked a PR outside its loop: %v", err)
-			}
-			if len(f.writes) != 0 {
-				t.Errorf("writes: %v", f.writes)
-			}
-			registerPRs(t, f, 5, 7)
-			if _, err := Link([]string{"5", "7"}); err != nil {
-				t.Errorf("the loop's own PRs: %v", err)
-			}
-		})
-	}
 }
 
 // A PR that open has just opened goes into its base's stack, and a failure
@@ -343,36 +301,6 @@ func TestStackOpened(t *testing.T) {
 		reason, _ := got["unstacked"].(string)
 		if !refusal.SaysInstead(reason) || !strings.Contains(reason, "`pr-loop link 1 14`") || len(f.writes) != writes {
 			t.Errorf("onto a PR with another above it: %v, writes %v", got, f.writes[writes:])
-		}
-	})
-
-	// inSession makes 13 (j, on f) stacked on 7, and a loop session over 13
-	// alone.
-	inSession := func(t *testing.T) (*fakeStacks, func(n int, head, base string) map[string]any) {
-		t.Helper()
-		f := stacksRepo(t)
-		opened := openedIn(f)
-		if got := opened(13, "j", "f"); got["stack"] == nil {
-			t.Fatalf("onto an unstacked PR: %v, stacks %v", got, f.stacks)
-		}
-		t.Setenv(sessionEnv, "1")
-		registerPRs(t, f, 13)
-		return f, opened
-	}
-
-	t.Run("onto a PR outside the session's loop", func(t *testing.T) {
-		f, opened := inSession(t)
-		writes := len(f.writes)
-		got := opened(15, "l", "e")
-		if reason, _ := got["unstacked"].(string); !strings.Contains(reason, "the operator") || len(f.writes) != writes {
-			t.Errorf("onto a PR outside the session's loop: %v, writes %v", got, f.writes[writes:])
-		}
-	})
-
-	t.Run("onto the session's own PR", func(t *testing.T) {
-		f, opened := inSession(t)
-		if got := opened(16, "m", "j"); got["stack"] == nil || fmt.Sprint(f.stacks[f.stackOf(16)]) != "[7 13 16]" {
-			t.Errorf("onto the session's own PR: %v, stacks %v", got, f.stacks)
 		}
 	})
 }

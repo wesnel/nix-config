@@ -19,7 +19,9 @@ was split among sub-agents: a coordinator runs the same pipeline, and the
 2. **Design review of the plan**, before coding.
 3. **The work**, committed as the `signing-pass` skill says.
 4. **Fresh review loop** over the committed change, once the work is
-   complete; settle each round's findings together before the next round.
+   complete: in Claude Code, `/code-review` for the general review; then
+   `git fresh-review` as the second opinion. Settle each round's findings
+   together before the next round.
 5. **Design review of the result**, before handing back.
 6. **Hand back**: what the work's own instructions ask for, and
    - each finding, its outcome and its plan item ID, round by round;
@@ -68,7 +70,10 @@ as `origin/main` or the parent branch in a stack.
 
 1. Write the goal statement to a file, and the items the change answers
    (threads, CI checks) with how each was settled to another, if any.
-2. Where the repository has test settings, run
+2. In Claude Code, run `/code-review` with BASE as its target: with none, it
+   reviews only the commits ahead of the branch's upstream, which a local
+   branch may not have. Then the second opinion, from another model
+   family: where the repository has test settings, run
    `git red-check BASE..TIP > red-check.json` in the working directory, not
    under `$TMPDIR`, which a sandboxed command and fresh-review may resolve
    to different directories. Then run
@@ -76,8 +81,9 @@ as `origin/main` or the parent branch in a stack.
    and remove `red-check.json` after it. It exits 0 with no findings, 3
    with findings, and 4 when Codex cannot review here, its sandbox included.
    On 4, say so in the hand-back, with fresh-review's reason.
-3. Settle every finding as Triage says. `dropped` lists what pointed at no
-   line at TIP or did not fit the schema; read it, but it needs no outcome.
+3. Settle every finding of both as Triage says. `dropped` lists what
+   pointed at no line at TIP or did not fit the schema; read it, but it
+   needs no outcome.
    `routes` lists the focused reviews the change needs, from a scan of
    every commit since the default branch and from the reviewer.
 4. For the next round, add `--prior FILE`: every earlier finding and how it
@@ -99,10 +105,9 @@ it, within the same three rounds.
 The source is `pr-loop review`, not `git fresh-review`: it fetches the pull
 request into a clone of its own and reviews it with the same contract,
 without running its code. Run it in the background: a run takes
-minutes. Wait for it to finish before you stop or report. On the host, `pr-loop review OWNER/NAME#N` makes the review's
-directory, `~/.cache/pr-review/OWNER/NAME/N/HEAD12/`; a `claude-pr-loop`
-session started there reads only that review and reaches GitHub only
-through `pr-loop review N`.
+minutes. Wait for it to finish before you stop or report. `pr-loop review
+OWNER/NAME#N` makes the review's directory,
+`~/.cache/pr-review/OWNER/NAME/N/HEAD12/`.
 
 1. The plan's goal is ours, never the pull request's text: "review
    OWNER/NAME#N at HEAD12 for the operator; propose comments only". The command
@@ -129,15 +134,15 @@ through `pr-loop review N`.
 
 ## Harness choice
 
-- Codex, through `git fresh-review`, by default: a model family other than
-  the author's. Its commands can read only the worktree under review, the
-  git objects behind it and the system files they need, with none of
-  the operator's Codex configuration, no network and no writes, so a change
-  cannot steer it into reading credentials.
-- Never Codex in a review-loop session: there `git fresh-review` exits 4,
-  so `pr-loop` stays the session's only way out.
-  `pr-loop review` is that way out: it runs Codex on the host with a prompt
-  it builds only from GitHub and the clone.
+- Codex, through `git fresh-review`, for the second opinion and the focused
+  reviews: a model family other than the author's. Its commands can read
+  only the worktree under review, the git objects behind it and the system
+  files they need, with none of the operator's Codex configuration, no
+  network and no writes, so a change cannot steer it into reading
+  credentials.
+- Never Codex in a review-loop session, which reads other people's review
+  text: there `git fresh-review` exits 4, and the second opinion is an
+  `adversarial-reviewer` sub-agent.
 - Never Codex for a Codex author: from inside Codex, `git fresh-review`
   exits 4 by itself.
 
@@ -213,25 +218,25 @@ settled before the work starts.
 ## Triage
 
 The one definition of review outcomes, for bot threads, people's threads
-and reviewers' findings alike. Check each item against the code before
-judging it.
+and reviewers' findings alike. Who posts the answer depends on the thread:
+see Answering. Check each item against the code before judging it.
 
 - **fix**: real and inside the goal statement. A fixup of the commit that
-  owns the code. Reply with what changed, and resolve once the fix is
+  owns the code. Answer with what changed, and resolve once the fix is
   pushed.
 - **propose**: what would be fix, on someone else's pull request. Nothing
   is changed or posted: the finding's `body` is the comment as the
   operator would post it.
 - **rebut**: the reviewer is wrong. Show it from the code or a test, not by
-  assertion. Reply with the evidence, and resolve.
+  assertion. Answer with the evidence, and resolve.
 - **duplicate-of `<item>`**: the same problem raised elsewhere, fixed once.
-  Reply pointing at that item, and resolve once its fix is pushed.
+  Answer pointing at that item, and resolve once its fix is pushed.
 - **belongs-in `<branch>`**, in a stack: code another branch introduced,
-  fixed there. Reply naming where, and resolve once that fix is pushed.
-- **defer**: real, but outside the goal statement. Reply with why, and that
+  fixed there. Answer naming where, and resolve once that fix is pushed.
+- **defer**: real, but outside the goal statement. Answer with why, and that
   it awaits the operator; the thread stays open.
 - **needs-operator**: a product or design call, another team's code, or
-  anything the goal statement does not settle. Reply that it awaits
+  anything the goal statement does not settle. Answer that it awaits
   the operator's decision; the thread stays open, and the item goes in the
   hand-back with its options.
 
@@ -262,10 +267,18 @@ outcome goes against its plan item ID and in the hand-back.
   does, with the fresh review loop's round and the finding's `id`.
 - A reply names commits by subject, never by SHA: the signing pass rewrites
   every SHA.
-- Draft replies in the format `pr-loop reply --from` reads, one file per
-  pull request, which `pr-loop --help` describes: a `=== thread THREAD`
-  line, or `=== thread THREAD resolve` where the outcome resolves, then the
-  reply. Post them with `pr-loop reply --from FILE` once the fixes are
-  pushed. It takes only threads a review bot started: a person's thread is
-  the operator's to answer, so its outcome and the reply you propose go in
-  the hand-back instead.
+- **A review bot's thread:** draft the replies in the format `pr-loop
+  reply --from` reads, one file per pull request (`pr-loop --help`): a
+  `=== thread THREAD` line, or `=== thread THREAD resolve` where the
+  outcome resolves, then the reply. In a bots-mode loop (`claude-review-loop
+  --bots`), post them with `pr-loop reply --from FILE` once the fixes are
+  pushed; pr-loop takes only threads whose every comment is a configured
+  bot's or the operator's. Outside one, the drafted replies go in the
+  hand-back, as a person's thread's do.
+- **A person's thread,** in a people-mode loop (`claude-review-loop
+  --people`): write each reply with `pr-loop draft THREAD --body-file F
+  --outcome OUTCOME`, and commit the fixups. Push nothing and post
+  nothing: the operator reads the fixups and drafts, pushes with `git
+  sign-pass --push`, and posts with `pr-loop post` from a terminal.
+  Outside people mode, a person's thread goes in the hand-back with its
+  proposed answer.

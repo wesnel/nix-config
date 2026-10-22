@@ -93,6 +93,9 @@ type ReplyResult struct {
 // skipping threads already resolved. Every thread is checked before anything
 // is posted, so one bad section leaves nothing half done.
 func ReplyAll(plan []PlannedReply) ([]ReplyResult, error) {
+	if err := requireMode("reply", "bots"); err != nil {
+		return nil, err
+	}
 	if len(plan) == 0 {
 		return nil, refuse("the reply file names no threads; start each reply with a line `=== thread THREAD`")
 	}
@@ -127,11 +130,11 @@ func ReplyAll(plan []PlannedReply) ([]ReplyResult, error) {
 			results = append(results, result)
 			continue
 		}
-		if result.URL, err = postReply(policy.state, checks[i].pr, r.Thread, r.Body); err != nil {
+		if result.URL, err = postReply(checks[i].pr, r.Thread, r.Body); err != nil {
 			return nil, partial(results, r.Thread, "replying", err)
 		}
 		if r.Resolve {
-			if err := resolveThread(policy.state, checks[i].pr, r.Thread); err != nil {
+			if err := resolveThread(checks[i].pr, r.Thread); err != nil {
 				return nil, partial(append(results, result), r.Thread, "resolving", err)
 			}
 			result.Resolved = true

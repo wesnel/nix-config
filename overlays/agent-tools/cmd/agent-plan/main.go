@@ -15,7 +15,6 @@ import (
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/prompttime"
-	"github.com/wesnel/agent-tools/internal/relay"
 	quota "github.com/wesnel/agent-tools/internal/usage"
 )
 
@@ -216,52 +215,7 @@ section says; list values hold no whitespace.
 KIND: ` + strings.Join(plans.Kinds, ", ") + `
 ROLE: ` + strings.Join(plans.Roles, ", ") + `
 OUTCOME: ` + strings.Join(plans.Outcomes, ", ") + `
-
-With ` + relay.URLEnv + ` set, every command but the hooks is sent to that
-sandbox-relay, which serves only log, goal, status, find, questions,
-decisions and brief.
 `
-
-// relayed are the commands a sandbox may run through the relay: reading
-// plans, appending to their logs, and the keywords log writes.
-var relayed = map[string]bool{"log": true, "goal": true, "status": true, "find": true, "questions": true,
-	"decisions": true, "brief": true}
-
-// clientSide reports whether args run in this process even with a relay:
-// the hooks, which Claude Code runs on the host.
-func clientSide(args []string) bool {
-	if len(args) == 0 {
-		return false
-	}
-	if args[0] == "statusline" || args[0] == "remind" {
-		return true
-	}
-	if args[0] == "find" {
-		for _, a := range args[1:] {
-			if a == "--hook" || a == "-hook" {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// relayRefusal is why the relay's caller may not run args, or "".
-func relayRefusal(args []string) string {
-	if len(args) == 0 || !relayed[args[0]] || clientSide(args) {
-		name := strings.Join(args[:min(len(args), 2)], " ")
-		return fmt.Sprintf("%q is not served through the relay. A sandbox runs `agent-plan log`, `goal`, `status`, `find`, `questions`, `decisions` and `brief`; put anything else in your report for the operator", name)
-	}
-	// A hand-back's command is shown to the operator, in Emacs and on the
-	// dashboard, for them to run on the host, so a sandbox, which may run
-	// code it was given, never names one.
-	for _, a := range args[1:] {
-		if a == "--command" || a == "-command" || strings.HasPrefix(a, "--command=") || strings.HasPrefix(a, "-command=") {
-			return "a hand-back's --command is shown to the operator to run on the host, and a sandbox does not name one. Log the hand-back without it, and put the command in your report for the operator"
-		}
-	}
-	return ""
-}
 
 type multi []string
 
@@ -315,22 +269,6 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			stdout.Write(append(out, '\n'))
 		}
 		return 0
-	}
-	if url := os.Getenv(relay.URLEnv); url != "" && !clientSide(args) {
-		r, err := relay.Call(url, "agent-plan", args, nil)
-		if err != nil {
-			fmt.Fprintf(stderr, "agent-plan: %s\n", err)
-			return 1
-		}
-		io.WriteString(stdout, r.Stdout)
-		io.WriteString(stderr, r.Stderr)
-		return r.Code
-	}
-	if os.Getenv(relay.RelayEnv) == "1" {
-		if reason := relayRefusal(args); reason != "" {
-			fmt.Fprintf(stderr, "agent-plan: refused: %s\n", reason)
-			return 2
-		}
 	}
 	return run(args[0], args[1:], stdin, stdout, stderr)
 }

@@ -61,8 +61,8 @@ var mcpByServer = func() map[string]*mcpService {
 }()
 
 // unlistedServer is why a main session's call to a server mcp.json does not
-// list asks; unlistedServerCodex and unlistedServerLoop why it is refused
-// where the operator cannot be asked or a loop or reviewer makes it.
+// list asks; unlistedServerCodex and unlistedServerReviewer why it is
+// refused where the operator cannot be asked or a reviewer makes it.
 const (
 	unlistedServer = "This MCP server is not in the guard's mcp.json, so none of its tools has been reviewed. " +
 		"The operator confirms each call; reviewing the server into mcp.json, its reads and the writes that ask, " +
@@ -70,8 +70,8 @@ const (
 	unlistedServerCodex = "This MCP server is not in the guard's mcp.json, and Codex cannot ask the operator to confirm " +
 		"a call to an unreviewed server, so the guard refuses it. Use it from Claude Code, which asks, or ask the " +
 		"operator to review the server into mcp.json."
-	unlistedServerLoop = "This MCP server is not in the guard's mcp.json, and review loops and reviewers use only " +
-		"reviewed servers. Put what you wanted from it in your report for the operator."
+	unlistedServerReviewer = "This MCP server is not in the guard's mcp.json, and reviewers use only reviewed " +
+		"servers. Put what you wanted from it in your report for the operator."
 )
 
 // asks are the reasons the guard asks the operator about rather than denies,
@@ -114,7 +114,7 @@ func checkMCP(service *mcpService, name string, who role) string {
 	case who == baseline:
 		return unlistedServer
 	}
-	return unlistedServerLoop
+	return unlistedServerReviewer
 }
 
 func (s *mcpService) confirmReason() string {
@@ -129,8 +129,6 @@ func (s *mcpService) check(name string, who role) string {
 		return ""
 	case confirm && who == reviewer:
 		return reviewerReport
-	case confirm && who >= coordinator:
-		return "The review loop does not change " + s.service + ". Put the proposed change in the final report for the operator to approve."
 	case confirm:
 		return s.confirmReason()
 	}

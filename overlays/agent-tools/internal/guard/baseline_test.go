@@ -1209,23 +1209,24 @@ func TestBakedAgentToolsConfig(t *testing.T) {
 
 // TestConnectors covers the claude.ai connectors mcp.json does not list:
 // for every tool, reads included, Claude Code asks, and Codex, which cannot
-// ask, denies, as does a loop. TestMCPTools covers the listed ones.
+// ask, denies, as does a reviewer's hook. TestMCPTools covers the listed
+// ones.
 func TestConnectors(t *testing.T) {
 	for _, c := range []struct {
-		name, event, want string
+		name, hook, event, want string
 	}{
-		{"Gmail draft", `{"tool_name":"mcp__claude_ai_Gmail__create_draft","tool_input":{}}`, `"permissionDecision":"ask"`},
-		{"GitHub review", `{"tool_name":"mcp__claude_ai_Github__create_pull_request_review","tool_input":{}}`, `"permissionDecision":"ask"`},
-		{"GitHub review from Codex", `{"tool_name":"mcp__claude_ai_Github__create_pull_request_review","turn_id":"t","tool_input":{}}`, `"permissionDecision":"deny"`},
-		{"GitHub review from a reviewer", `{"tool_name":"mcp__claude_ai_Github__create_pull_request_review","agent_type":"adversarial-reviewer","tool_input":{}}`, `"permissionDecision":"deny"`},
-		{"GitHub read", `{"tool_name":"mcp__claude_ai_Github__get_pull_request","tool_input":{}}`, `"permissionDecision":"ask"`},
-		{"GitHub read from Codex", `{"tool_name":"mcp__claude_ai_Github__get_pull_request","turn_id":"t","tool_input":{}}`, `"permissionDecision":"deny"`},
-		{"Gmail search", `{"tool_name":"mcp__claude_ai_Gmail__search_threads","tool_input":{}}`, `"permissionDecision":"ask"`},
-		{"Gmail search from Codex", `{"tool_name":"mcp__claude_ai_Gmail__search_threads","turn_id":"t","tool_input":{}}`, `"permissionDecision":"deny"`},
+		{"Gmail draft", "--baseline", `{"tool_name":"mcp__claude_ai_Gmail__create_draft","tool_input":{}}`, `"permissionDecision":"ask"`},
+		{"GitHub review", "--baseline", `{"tool_name":"mcp__claude_ai_Github__create_pull_request_review","tool_input":{}}`, `"permissionDecision":"ask"`},
+		{"GitHub review from Codex", "--baseline", `{"tool_name":"mcp__claude_ai_Github__create_pull_request_review","turn_id":"t","tool_input":{}}`, `"permissionDecision":"deny"`},
+		{"GitHub review from a reviewer", "--reviewer", `{"tool_name":"mcp__claude_ai_Github__create_pull_request_review","tool_input":{}}`, `"permissionDecision":"deny"`},
+		{"GitHub read", "--baseline", `{"tool_name":"mcp__claude_ai_Github__get_pull_request","tool_input":{}}`, `"permissionDecision":"ask"`},
+		{"GitHub read from Codex", "--baseline", `{"tool_name":"mcp__claude_ai_Github__get_pull_request","turn_id":"t","tool_input":{}}`, `"permissionDecision":"deny"`},
+		{"Gmail search", "--baseline", `{"tool_name":"mcp__claude_ai_Gmail__search_threads","tool_input":{}}`, `"permissionDecision":"ask"`},
+		{"Gmail search from Codex", "--baseline", `{"tool_name":"mcp__claude_ai_Gmail__search_threads","turn_id":"t","tool_input":{}}`, `"permissionDecision":"deny"`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var out bytes.Buffer
-			Main([]string{"--baseline"}, strings.NewReader(c.event), &out, io.Discard)
+			Main([]string{c.hook}, strings.NewReader(c.event), &out, io.Discard)
 			if (c.want == "" && out.Len() != 0) || !strings.Contains(out.String(), c.want) {
 				t.Errorf("%s: printed %s", c.event, out.String())
 			}

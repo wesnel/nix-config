@@ -1,10 +1,8 @@
 // Package guard is a PreToolUse hook for Claude Code and Codex. With
 // `--baseline`, in every session, it denies what is the operator's to do:
-// publishing, merging, GitHub's settings and credentials, and keeps the
-// agents agents.json names to their roles, a reviewer to reading. In a
-// review-loop session it also denies the ways an agent could write to
-// GitHub or Linear other than through pr-loop, which enforces the loop's
-// policy.
+// publishing, merging, GitHub's settings and credentials. With
+// `--reviewer`, the hook each reviewer agent's own definition runs, it also
+// keeps that agent to reading.
 //
 // It inspects commands as the agent typed them, so it catches a forgotten rule
 // but not a command built at run time. In a sandbox without credentials the
@@ -15,7 +13,6 @@ package guard
 import (
 	"bytes"
 	"context"
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,10 +45,6 @@ var (
 type input struct {
 	ToolName  string          `json:"tool_name"`
 	ToolInput json.RawMessage `json:"tool_input"`
-	// Claude Code names the subagent making the call, prefixed with its
-	// plugin's name if a plugin defines it ("pr-loop:pr-owner"). Codex names
-	// none.
-	AgentType string `json:"agent_type"`
 	// The directory the command runs in, which bounds the files the guard
 	// reads. Without it, the guard's own working directory stands in.
 	Cwd string `json:"cwd"`
@@ -67,64 +60,24 @@ type input struct {
 type role int
 
 const (
-	baseline    role = iota // every session: denied what is the operator's to do
-	coordinator             // a review loop's coordinator: also kept to pr-loop
-	owner                   // pr-owner: also denied the steps the coordinator alone takes
-	reviewer                // reviewer: also kept to git's reading commands and denied every change to GitHub
+	baseline role = iota // every session: denied what is the operator's to do
+	reviewer             // reviewer: also kept to git's reading commands and denied every change to GitHub
 )
 
-// agentsJSON names the agents with a role of their own. The agents' Nix
-// modules read it too: an agent named a reviewer here is defined without
-// editing tools.
-//
-//go:embed agents.json
-var agentsJSON []byte
-
-// roleNames are the agents with a role of their own, by agent name.
-var roleNames = func() map[string]role {
-	var file struct {
-		Roles map[string]string `json:"roles"`
-	}
-	if err := json.Unmarshal(agentsJSON, &file); err != nil {
-		panic("guard: agents.json: " + err.Error())
-	}
-	byName := map[string]role{"baseline": baseline, "coordinator": coordinator, "owner": owner, "reviewer": reviewer}
-	names := map[string]role{}
-	for agent, name := range file.Roles {
-		r, ok := byName[name]
-		if !ok {
-			panic("guard: agents.json: unknown role " + name)
-		}
-		names[agent] = r
-	}
-	return names
-}()
-
-// roleOf is the role of the agent named agentType, or fallback for an agent
-// without a role of its own.
-func roleOf(agentType string, fallback role) role {
-	for name, r := range roleNames {
-		if agentType == name || strings.HasSuffix(agentType, ":"+name) {
-			return r
-		}
-	}
-	return fallback
-}
-
 // Main reads one hook event and writes a denial in the caller's format, or
-// nothing to let the call through. Without args, an agent without a role of
-// its own is a loop's coordinator; with `--baseline`, for the hook every
-// session runs, it is an ordinary session.
+// nothing to let the call through. `--baseline` is the hook every session
+// runs; `--reviewer` the one a reviewer agent's definition adds beside it,
+// which also keeps the agent to reading.
 func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	fallback := coordinator
+	who := baseline
 	switch {
-	case len(args) == 0:
 	case len(args) == 1 && args[0] == "--baseline":
-		fallback = baseline
+	case len(args) == 1 && args[0] == "--reviewer":
+		who = reviewer
 	case len(args) == 1 && args[0] == "--post":
 		return post(stdin, stdout)
 	default:
-		fmt.Fprintf(stderr, "pr-loop guard: takes no arguments, --baseline or --post; got %q\n", args)
+		fmt.Fprintf(stderr, "pr-loop guard: takes --baseline, --reviewer or --post; got %q\n", args)
 		return 1
 	}
 	var in input
@@ -134,7 +87,6 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if in.Cwd == "" {
 		in.Cwd, _ = os.Getwd()
 	}
-	who := roleOf(in.AgentType, fallback)
 	reason := checkSubagentStash(in)
 	if reason == "" {
 		reason = check(in.ToolName, in.ToolInput, who, in.Cwd)
@@ -154,7 +106,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if reason == "" {
 		edit := in.ToolName == "Edit" || in.ToolName == "Write" || in.ToolName == "MultiEdit"
-		if fallback == baseline && edit {
+		if edit {
 			if context := branchHint(in.SessionID, in.ToolInput, in.Cwd); context != "" {
 				json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{
 					"hookEventName": "PreToolUse", "additionalContext": context}})
@@ -179,27 +131,14 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// CheckBaseline is Check for an ordinary session.
+// CheckBaseline returns why a tool call by an ordinary session, run in the
+// current directory, is denied, or "" to allow it.
 func CheckBaseline(tool string, toolInput json.RawMessage) string {
 	dir, _ := os.Getwd()
 	return check(tool, toolInput, baseline, dir)
 }
 
-// Check returns why a tool call by the coordinator, run in the current
-// directory, is denied, or "" to allow it.
-func Check(tool string, toolInput json.RawMessage) string {
-	dir, _ := os.Getwd()
-	return check(tool, toolInput, coordinator, dir)
-}
-
-// CheckOwner is Check for a pr-owner, which is also denied the steps the
-// coordinator alone takes.
-func CheckOwner(tool string, toolInput json.RawMessage) string {
-	dir, _ := os.Getwd()
-	return check(tool, toolInput, owner, dir)
-}
-
-// CheckReviewer is CheckOwner for a reviewer, which only reads: it is also
+// CheckReviewer is CheckBaseline for a reviewer, which only reads: it is also
 // denied git commands that change the repository and every pr-loop command
 // but the reading ones, and is told so whichever rule a call breaks.
 func CheckReviewer(tool string, toolInput json.RawMessage) string {
@@ -271,6 +210,9 @@ func check(tool string, toolInput json.RawMessage, who role, dir string) string 
 	case tool == "ExitWorktree":
 		return checkExitWorktree(toolInput, dir)
 	case tool == "Edit" || tool == "Write" || tool == "MultiEdit" || tool == "NotebookEdit" || tool == "apply_patch":
+		if reason := checkLoopSettings(tool, toolInput, dir); reason != "" {
+			return reason
+		}
 		return checkFileTool(tool, toolInput, dir)
 	}
 	return ""
@@ -395,6 +337,9 @@ func program(c call, who role, files, dir, checkout string) string {
 	if reason := checkNgrokEnv(c); reason != "" {
 		return reason
 	}
+	if reason := checkLoopStart(c); reason != "" {
+		return reason
+	}
 	if len(c.words) == 0 || c.expands[0] {
 		return ""
 	}
@@ -423,8 +368,6 @@ func program(c call, who role, files, dir, checkout string) string {
 		return reviewerReport
 	case name == "git-sign-pass" && who == reviewer:
 		return reviewerReport
-	case name == "git-sign-pass" && who >= coordinator:
-		return signing
 	case name == "git-sign-pass":
 		return keyTouch
 	case name == "curl" || name == "wget" || name == "http" || name == "https" || name == "xh" || name == "xhs":
@@ -574,16 +517,7 @@ func checkOneCommandKey(key string) string {
 const configInclude = "A configuration file included for one git command can define anything, such as an alias that runs shell, " +
 	"and the guard does not read it. Give the settings themselves with `-c KEY=VALUE`, or leave them out."
 
-const signing = "Signing needs the operator's hardware key. Leave the commits unsigned and end the report with the command for the operator to run: `git sign-pass --push` for the loop's stack, once `pr-loop sign-check` passes."
-
 const pushGuard = "Publishing private history in a public repository is the operator's decision. Leave push-guard.* alone, and name the repository and the commits in the report for the operator."
-
-const prLoopWrites = "Use `pr-loop push`, `reply`, `resolve`, `request` or `link`; any other write goes in the report for the operator."
-
-// coordinatorOnly are the pr-loop steps an owner leaves to the coordinator,
-// which keeps the stack consistent across PRs.
-var coordinatorOnly = map[string]bool{"open": true, "link": true, "begin": true, "push": true, "reply": true, "resolve": true,
-	"request": true, "worktrees": true, "end": true}
 
 // reviewerReads are the pr-loop commands a reviewer may run, besides
 // `wait ci`.
@@ -614,25 +548,29 @@ const reviewerGit = "A reviewer only reads. It runs git's reading commands (`log
 // nestedReview is why a reviewer may not start a review.
 const nestedReview = "A reviewer does not start a review of its own. Report your findings; whoever started you decides on another round."
 
-// checkPrLoop keeps the decisions that are the operator's: waiving a CI
-// failure, and discarding the unsquashed history.
+// postByOperator is why no agent runs `pr-loop post`, which posts the
+// answers drafted to people's threads.
+const postByOperator = "Posting the answers to people's threads is the operator's, each confirmed on their terminal. " +
+	"Leave the drafts in the review record, and say in the report that they wait for `pr-loop post PR`."
+
+// checkPrLoop keeps the decisions that are the operator's: posting to
+// people's threads, and accepting a CI failure as not the PR's.
 func checkPrLoop(args []string, who role) string {
 	if len(args) == 0 {
 		return ""
+	}
+	// The rule allowing `Bash(pr-loop *)` in a loop session matches post as
+	// well, so this is what keeps it the operator's.
+	if args[0] == "post" {
+		return postByOperator
 	}
 	waitCI := args[0] == "wait" && len(args) > 1 && args[1] == "ci"
 	if who == reviewer && !reviewerReads[args[0]] && !waitCI {
 		return reviewerReport
 	}
-	if who >= owner && coordinatorOnly[args[0]] {
-		return "The coordinator alone runs `pr-loop " + args[0] + "`. Report what you need it to do instead."
-	}
 	for _, a := range args[1:] {
-		switch {
-		case args[0] == "request" && (a == "--accept-failure" || strings.HasPrefix(a, "--accept-failure=")):
+		if args[0] == "request" && (a == "--accept-failure" || strings.HasPrefix(a, "--accept-failure=")) {
 			return "Whether a CI failure is not this PR's doing is the operator's call. Put the evidence in the report, with `pr-loop request --accept-failure CHECK PR` for the operator to run if they agree."
-		case args[0] == "end" && a == "--prune":
-			return "Pruning deletes the unsquashed history and round snapshots, which is the operator's call. Leave `pr-loop end --prune` to them."
 		}
 	}
 	return ""
@@ -795,7 +733,7 @@ func checkGit(words []string, expands []bool, env []string, who role, dir, check
 			return reviewerGit
 		}
 		// In its own repository a reviewer is held to what every session
-		// is, such as never signing, and not to the loop's commit rules.
+		// is, such as never signing.
 		who, dir = baseline, repo
 	}
 	if reason := checkPlanCheckout(sub, rest, dir); reason != "" {
@@ -818,27 +756,14 @@ func checkGit(words []string, expands []bool, env []string, who role, dir, check
 	case sub == "credential" && len(rest) > 0 && rest[0] == "fill",
 		sub == "credential-osxkeychain" && len(rest) > 0 && rest[0] == "get":
 		return secretRead
-	case sub == "sign-pass" && who >= coordinator:
-		return signing
 	case sub == "sign-pass":
 		return keyTouch
-	case sub == "push" && who >= coordinator:
-		return "A review-loop session pushes only with `pr-loop push`, or `pr-loop open` for a new branch, which check the branch policy and need no key touch. The signed push at the end is the operator's `git sign-pass --push`."
 	case sub == "push":
 		return "Publishing a branch is the operator's step, signed with their key. Open a new branch as a draft PR with `pr-loop open`, or end your report with `git sign-pass --push` for the operator to run."
 	case overSSH(sub, rest, gitState{dir: dir, config: config, env: env}):
 		return keyTouch
 	case sub == "remote" && len(rest) > 0 && (rest[0] == "add" || rest[0] == "set-url"):
 		return remotes
-	case sub == "commit" && who >= coordinator:
-		switch {
-		case has("--no-verify", "-n"):
-			return "Repository hooks stay on in the review loop. Fix what they report and commit again with `git commit --fixup=<commit>`."
-		case has("--amend"):
-			return "The review loop never rewrites the PR's commits. Commit the change with `git commit --fixup=<commit>`; the signing pass squashes it in."
-		case !has("--fixup"):
-			return "Every commit in the review loop is a fixup the signing pass can squash in. Commit with `git commit --fixup=<commit>` against the PR commit it belongs to, with the review details as --trailer lines."
-		}
 	case has("--no-verify") || sub == "commit" && has("-n"):
 		return "Repository hooks check every change, and stay on. Fix what they report and run the command again without `--no-verify`; if a hook itself is broken, say so in your report for the operator."
 	case sub == "tag" && tagWrites(rest):
@@ -1180,32 +1105,25 @@ func configRead(args []string) bool {
 }
 
 // checkGh checks gh's arguments, with which of them the shell expands, for
-// who: a loop's roles are kept to reading and pr-loop, and every session to
-// what is not the operator's call. It reads files a GraphQL call names only
-// inside workspace, and none when workspace is "".
+// who: a reviewer is kept to reading GitHub, and every session to what is
+// not the operator's call. It reads files a GraphQL call names only inside
+// workspace, and none when workspace is "".
 func checkGh(args []string, expanded []bool, workspace string, who role) string {
-	if who >= coordinator {
-		if reason := checkLoopGh(args, expanded, workspace); reason != "" {
-			return reason
-		}
+	if who == reviewer && !ghReadsOnly(args, expanded, workspace) {
+		return reviewerReport
 	}
 	return checkBaselineGh(args, expanded, workspace)
 }
 
-// checkLoopGh keeps a loop's roles to reading GitHub.
-func checkLoopGh(args []string, expanded []bool, workspace string) string {
-	if len(args) >= 2 && ghReadOnly[args[0]+" "+args[1]] {
-		return ""
+// ghReadsOnly reports whether a gh call only reads GitHub.
+func ghReadsOnly(args []string, expanded []bool, workspace string) bool {
+	switch {
+	case len(args) >= 2 && ghReadOnly[args[0]+" "+args[1]]:
+		return true
+	case len(args) >= 1 && args[0] == "api":
+		return checkAPI(args[1:], expanded[1:], workspace, "a write") == ""
 	}
-	if len(args) >= 2 && args[0] == "auth" && args[1] == "token" {
-		return "The review loop does not read GitHub credentials, which pr-loop holds. Read GitHub with `pr-loop status`, `ci`, `logs` or `threads`."
-	}
-	if len(args) >= 1 && args[0] == "api" {
-		return checkAPI(args[1:], expanded[1:], workspace, "Only read-only `gh api` calls are allowed in the review loop. "+prLoopWrites)
-	}
-	what := strings.Join(args[:min(2, len(args))], " ")
-	return "`gh " + what + "` can change GitHub. In the review loop use pr-loop (status, ci, logs, threads, reply, resolve, request). " +
-		"Top-level PR comments, reviews, merges, PR edits and marking a PR ready are left to the operator."
+	return false
 }
 
 // checkAPI denies a `gh api` call that writes, with write as the reason
@@ -1370,7 +1288,8 @@ func checkBaselineGh(args []string, expanded []bool, workspace string) string {
 	return "`gh " + group + " " + verb + "` changes GitHub in a way that is the operator's call. Put the command in your report for the operator."
 }
 
-const graphQLMutation = "GraphQL mutations go through pr-loop. " + prLoopWrites
+const graphQLMutation = "GraphQL mutations go through pr-loop. Use `pr-loop push`, `reply`, `resolve`, `request` or `link`; " +
+	"any other write goes in the report for the operator."
 
 const unreadableQuery = "The guard cannot read this GraphQL query, so it cannot tell a read from a mutation. " +
 	"Pass the query inline with `gh api graphql -f query='...'`, or name a file in the workspace with `-F query=@FILE` in a command of its own; " +

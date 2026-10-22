@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/wesnel/agent-tools/internal/gh"
+	"github.com/wesnel/agent-tools/internal/record"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
@@ -56,13 +57,11 @@ type PR struct {
 	Dir   string `json:"dir"`
 }
 
-var name = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
-
 // checkSlug refuses an owner/name that is not one, which would put a review
 // outside the cache directory.
 func checkSlug(slug string) (owner, repo string, err error) {
 	owner, repo, ok := strings.Cut(slug, "/")
-	if !ok || !name.MatchString(owner) || !name.MatchString(repo) || strings.Contains(repo, "/") {
+	if !ok || !record.ValidName(owner) || !record.ValidName(repo) {
 		return "", "", refusal.New("%q is not a GitHub owner/name; name the repository as o/r, such as `wesnel/emacs-config`", slug)
 	}
 	return owner, repo, nil
