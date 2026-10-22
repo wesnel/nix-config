@@ -59,10 +59,14 @@ as `origin/main` or the parent branch in a stack.
 
 1. Write the goal statement to a file, and the items the change answers
    (threads, CI checks) with how each was settled to another, if any.
-2. Run `git fresh-review --goal GOAL [--items ITEMS] BASE..TIP`. It exits 0
-   with no findings, 3 with findings, and 4 when Codex cannot review here,
-   its sandbox included. On 4, say so in the hand-back, with fresh-review's
-   reason.
+2. Where the repository has test settings, run
+   `git red-check BASE..TIP > red-check.json` in the working directory, not
+   under `$TMPDIR`, which a sandboxed command and fresh-review may resolve
+   to different directories. Then run
+   `git fresh-review --goal GOAL [--items ITEMS] [--red-check red-check.json] BASE..TIP`,
+   and remove `red-check.json` after it. It exits 0 with no findings, 3
+   with findings, and 4 when Codex cannot review here, its sandbox included.
+   On 4, say so in the hand-back, with fresh-review's reason.
 3. Settle every finding as Triage says. `dropped` lists what pointed at no
    line at TIP or did not fit the schema; read it, but it needs no outcome.
 4. For the next round, add `--prior FILE`: every earlier finding and how it

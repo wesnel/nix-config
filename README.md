@@ -203,9 +203,12 @@ review-loop session, where `pr-loop` must stay the only way out.
 way, for a second opinion on a design question, from copies of the named
 files alone.
 
-It never runs `git red-check`, which runs the commits' code: the session
-runs it, as it runs any test. Where the repository has test settings, it
-says on stderr that the review has no red-check results.
+It never runs `git red-check`, which runs the commits' code: the session runs
+it, as it runs any test, and passes its JSON with `--red-check FILE`.
+fresh-review refuses JSON whose commits are not the range's, or that ran
+other test settings than the repository's, and raises an `untested`
+finding of its own, `RC-…`, for each commit whose tests pass without it. Where the repository has test settings and no `--red-check` is
+given, it says on stderr that the review has no red-check results.
 
 ### someone else's pull request: `pr-loop review`
 

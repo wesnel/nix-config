@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/repos"
 )
 
@@ -46,15 +47,27 @@ func credentialPaths() []string {
 }
 
 // agentToolsConfig reports whether path is agent-tools' config, which holds
-// the guard's settings: the file AGENT_TOOLS_CONFIG names, or anything in
-// agent-tools' directory under the XDG config directory.
+// the guard's settings: the file repos.Path names, or anything in
+// agent-tools' directory under the XDG config directory, as hostpaths has
+// it or as the guard's environment does.
 func agentToolsConfig(path string) bool {
 	base := os.Getenv("XDG_CONFIG_HOME")
-	if base == "" {
+	if !filepath.IsAbs(base) {
 		base = filepath.Join(home, ".config")
 	}
-	dir := filepath.Join(base, "agent-tools")
-	return path == filepath.Clean(repos.Path()) || path == dir || strings.HasPrefix(path, dir+"/")
+	return path == filepath.Clean(repos.Path()) || inAgentTools(path, base, hostpaths.ConfigHome())
+}
+
+// inAgentTools reports whether path is in agent-tools' directory under one
+// of bases.
+func inAgentTools(path string, bases ...string) bool {
+	for _, base := range bases {
+		dir := filepath.Join(base, "agent-tools")
+		if path == dir || strings.HasPrefix(path, dir+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // loadSettings reads the guard's settings; a config that is missing or

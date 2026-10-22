@@ -496,6 +496,10 @@ func TestPrintPrompt(t *testing.T) {
 	if !strings.HasPrefix(prompt, Contract) {
 		t.Error("the prompt does not start with the reviewer's contract")
 	}
+	// The repository has no test settings.
+	if !strings.Contains(prompt, "no mechanical test adequacy") {
+		t.Errorf("the prompt does not say that nothing checked the tests:\n%s", prompt)
+	}
 }
 
 func TestRefusals(t *testing.T) {

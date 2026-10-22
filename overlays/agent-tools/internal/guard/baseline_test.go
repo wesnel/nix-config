@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
 // fakeHome points the guard's ~ at a directory of the test's own.
@@ -1191,6 +1192,22 @@ func TestGuardConfig(t *testing.T) {
 				t.Errorf("%s: reason %q does not say what to do instead", c.tool, reason)
 			}
 		})
+	}
+}
+
+// TestBakedAgentToolsConfig covers agent-tools' config where the build bakes
+// the config directory in, as well as where the guard's environment puts it.
+func TestBakedAgentToolsConfig(t *testing.T) {
+	h := fakeHome(t)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	baked := filepath.Join(h, "baked-config")
+	hostpaths.Bake(t, baked, filepath.Join(h, "baked-state"))
+	for _, base := range []string{filepath.Join(h, ".config"), baked} {
+		file := filepath.Join(base, "agent-tools", "config.json")
+		input, _ := json.Marshal(map[string]string{"file_path": file, "content": "{}"})
+		if reason := check("Write", "", input, baseline, filepath.Join(h, "work")); reason == "" || !saysInstead(reason) {
+			t.Errorf("a write of %s: %q", file, reason)
+		}
 	}
 }
 
