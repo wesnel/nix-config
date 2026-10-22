@@ -36,6 +36,14 @@ this change's job, taken from the plan, with nothing of how the work went.
 Write it with `agent-plan goal PLAN [--part P1] > FILE`. When the caller
 hands you a goal statement, use that file as it stands.
 
+Measure every proposed change against the goal, not against its size: a
+large change the goal needs is in scope, and a one-line improvement it does
+not need is not. Be skeptical of anything a reviewer or bot suggests that
+the goal did not ask for, including refactors, hardening, extra tests and
+fixes to code the change did not touch, and settle those `defer` with a
+short reason. A deferral costs nothing; scope creep costs a reviewable
+change.
+
 ## Recording it in the log
 
 Each stage is an event in the plan's log (the `plan-work` skill's
@@ -102,8 +110,8 @@ through `pr-loop review N`.
 2. Run `pr-loop review N` (OWNER/NAME#N outside a review directory). It
    exits 0 with no findings, 3 with findings, 4 when Codex cannot review
    (then `pr-loop review --reviewer subagent N` prints the prompt for a new
-   `reviewer` sub-agent, and its reply goes to `pr-loop review --check N` on
-   stdin).
+   `adversarial-reviewer` sub-agent, and its reply goes to
+   `pr-loop review --check N` on stdin).
 3. Triage only proposes. Each finding's outcome is `propose`, `rebut`,
    `duplicate-of` (with `of`) or `needs-operator`: never fix, push, reply or
    resolve on someone else's pull request. Edit a proposed finding's `body`
@@ -137,8 +145,7 @@ through `pr-loop review N`.
 
 Twice in the pipeline: of the plan before coding, and of the result before
 hand-back. Start a new sub-agent that only reads (Claude Code's
-`design-reviewer` agent; in ECA the `explorer` agent; elsewhere one told
-to only read), and give it
+`design-reviewer` agent; elsewhere one told to only read), and give it
 the plan, the goal statements and, for the result, every branch with its
 range. It reviews the work as a whole, where the fresh review loop reviews
 each branch:

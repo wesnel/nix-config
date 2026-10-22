@@ -12,10 +12,8 @@
 
     (_: {
       wgn.home = {
-        amp.enable = true;
         claude.enable = true;
         codex.enable = true;
-        eca.enable = true;
         emacs.enable = true;
         firefox.enable = true;
         fish.enable = true;
@@ -33,9 +31,6 @@
       };
 
       home.programs.wgn.emacs = {
-        eca = {
-          enable = true;
-        };
         claude.enable = true;
         codex.enable = true;
       };

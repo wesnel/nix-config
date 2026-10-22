@@ -29,11 +29,9 @@ current session.
   `.pr-loop/`. When it exits, show
   `$(git rev-parse --git-common-dir)/pr-loop/report.md`, or the end of the
   log if there is no report.
-- **Elsewhere:** stop and tell the operator to start `codex-pr-loop`, or
-  `M-x wgn/eca-pr-loop` with the `pr-coordinator` agent.
+- **Elsewhere:** stop and tell the operator to start `claude-pr-loop`.
 
-Commit as the `signing-pass` skill says: unsigned, never pushing or signing
-yourself, with one signing pass at the end. In the loop's worktrees signing is
+Commit as the `signing-pass` skill says. In the loop's worktrees signing is
 already off, so there the `-c commit.gpgsign=false` it asks for changes
 nothing. Every write to GitHub goes through `pr-loop`, which needs no key
 touch. `pr-loop` refuses anything outside the loop's PRs; a refusal is a
@@ -55,13 +53,9 @@ bot's trigger, which `pr-loop request` posts and later deletes.
 
 ## Scope
 
-Each PR exists to deliver its Linear ticket. Measure every proposed change
-against that goal, not against its size: a large change the ticket needs is
-in scope, and a one-line improvement it does not need is not. Be skeptical of
-anything a bot suggests that the ticket did not ask for, including
-refactors, hardening, extra tests and fixes to code the PR did not touch.
-Defer those with a short reason. A deferral costs nothing; scope creep costs
-a reviewable PR.
+Each PR exists to deliver its Linear ticket. Its scope statement (Setup
+below) is its goal statement, against which every proposed change is
+measured as the `review-change` skill's goal statement says.
 
 ## Sub-agents
 
@@ -69,8 +63,8 @@ Owners keep their memory in a notes file,
 `$(git rev-parse --git-common-dir)/pr-loop/owners/<number>.md`, which they
 read first and update last on every task. That makes each task
 self-contained, so it works the same whether your harness can continue a
-sub-agent (Claude Code's `SendMessage`) or only start a new one per task
-(ECA's `spawn_agent`). Start owners in parallel where the harness allows.
+sub-agent (Claude Code's `SendMessage`) or only start a new one per task.
+Start owners in parallel where the harness allows.
 If it has no sub-agents at all, do each owner's task yourself, one PR at a
 time, keeping the same notes.
 
@@ -132,11 +126,11 @@ has changed.
    branch's tip at round start to the branch, in the PR's worktree; the goal
    statement is the PR's scope statement, and the items are the threads and
    checks the fixups answer. In a loop session `git fresh-review` exits 4, so
-   the reviewer is a `reviewer` sub-agent. Give each finding to the PR's
-   owner to settle. The owner's answers are not reviewed again this round; a
-   finding still standing goes out with the push and into the report.
-   Record every finding and its outcome in the PR's notes file under the
-   round. Without sub-agents, skip this step and say so in the report.
+   the reviewer is an `adversarial-reviewer` sub-agent. Give each finding to
+   the PR's owner to settle. The owner's answers are not reviewed again this
+   round; a finding still standing goes out with the push and into the
+   report. Record every finding and its outcome in the PR's notes file under
+   the round. Without sub-agents, skip this step and say so in the report.
 7. **Restack**, bottom-up. Each child's owner runs
    `git rebase --onto <parent-branch> <child's recorded fork point> <branch>`
    in its worktree, resolves conflicts (the `restack-branches` skill covers
@@ -183,18 +177,11 @@ Stop and hand back when any of these holds:
    `git range-diff refs/pr-loop/rounds/0/<branch>...refs/pr-loop/rounds/<n>/<branch>`
    shows everything the loop changed in a branch, and adjacent rounds show
    one round's work.
-3. Notify the operator with the `notify` skill if it is available.
-4. Hand over for the signing pass, showing what it will sign as the
-   `signing-pass` skill describes. The loop's pass is `pr-loop sign`, not
-   `git sign-pass`. The session's relay refuses `sign` and `end`, so the
-   operator runs them in the repository. The loop's pass
-   differs from the plain one:
-   - it first squashes the fixups in a throwaway worktree, so a fixup that
-     conflicts is named before any key touch;
-   - it then squashes the fixups into the commits they name as it signs, and
-     refuses unless each PR ends with exactly its original commits and
-     unchanged files;
-   - it pushes the whole stack over SSH unless given `--no-push`.
-
-   Afterwards `pr-loop end` deletes the loop's trigger comments and its
-   state, and `--prune` drops the backups and snapshots.
+3. Run `pr-loop sign-check`. It squashes the fixups unsigned in a
+   throwaway worktree and refuses unless each PR would end with exactly its
+   original commits and unchanged files; settle what it names before
+   handing over. Then hand over the signing pass as the `signing-pass`
+   skill's Handing over says, naming the stack's top branch. The session's
+   relay refuses `end`, so after the push the operator runs `pr-loop end`
+   in the repository, which deletes the loop's trigger comments and its
+   state, and with `--prune` the snapshots.

@@ -49,14 +49,12 @@ func TestBrief(t *testing.T) {
 		}
 	})
 
-	t.Run("after a compaction in Codex and ECA", func(t *testing.T) {
+	t.Run("after a compaction in Codex", func(t *testing.T) {
 		c, p := briefed(t)
-		for _, in := range []string{`{"session_id":"abc","hook_event_name":"SessionStart","source":"compact"}`,
-			`{"hook_type":"postCompact","chat_id":"abc"}`} {
-			if out := string(c.Remind([]byte(in))); !strings.Contains(out, "Brief of plan "+p.file("")) ||
-				!strings.Contains(out, "Steps ready: S2") {
-				t.Errorf("%s: %s", in, out)
-			}
+		in := `{"session_id":"abc","hook_event_name":"SessionStart","source":"compact"}`
+		if out := string(c.Remind([]byte(in))); !strings.Contains(out, "Brief of plan "+p.file("")) ||
+			!strings.Contains(out, "Steps ready: S2") {
+			t.Errorf("%s: %s", in, out)
 		}
 	})
 }

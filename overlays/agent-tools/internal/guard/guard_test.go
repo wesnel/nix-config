@@ -50,7 +50,7 @@ func testCheckAlias(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", config)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	input, _ := json.Marshal(map[string]string{"command": "git pp origin HEAD"})
-	if reason := Check("Bash", "", input); !saysInstead(reason) {
+	if reason := Check("Bash", input); !saysInstead(reason) {
 		t.Errorf("alias denial %q does not say what to do instead", reason)
 	}
 }
@@ -100,8 +100,6 @@ func testCheckCommands(t *testing.T) {
 		{false, "Bash", "pr-loop end"},
 		{true, "Bash", "git sign-pass --push"},
 		{true, "Bash", "git-sign-pass"},
-		{true, "git", "git push origin HEAD"},
-		{false, "git", "git status"},
 		{true, "mcp__claude_ai_Linear__save_issue", ""},
 		{true, "mcp__claude_ai_Linear__create_comment", ""},
 		{false, "mcp__claude_ai_Linear__get_issue", ""},
@@ -113,7 +111,7 @@ func testCheckCommands(t *testing.T) {
 	for _, c := range cases {
 		t.Run(caseName(c.deny, strings.TrimSpace(c.tool+" "+c.command)), func(t *testing.T) {
 			input, _ := json.Marshal(map[string]string{"command": c.command})
-			reason := Check(c.tool, "", input)
+			reason := Check(c.tool, input)
 			if (reason != "") != c.deny {
 				t.Errorf("%s %q: deny=%v, reason %q", c.tool, c.command, !c.deny, reason)
 			}
@@ -213,7 +211,7 @@ func testCheckWrappedCommands(t *testing.T) {
 	for _, c := range cases {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
 			input, _ := json.Marshal(map[string]string{"command": c.command})
-			reason := Check("Bash", "", input)
+			reason := Check("Bash", input)
 			if (reason != "") != c.deny {
 				t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
 			}
@@ -296,7 +294,7 @@ func testCheckGraphQLQuerySources(t *testing.T) {
 			t.Chdir(workspace)
 			command := strings.NewReplacer("ROOT", root, "WORKSPACE", workspace).Replace(c.command)
 			input, _ := json.Marshal(map[string]string{"command": command})
-			reason := Check("Bash", "", input)
+			reason := Check("Bash", input)
 			if (reason != "") != c.deny {
 				t.Errorf("%q: deny=%v, reason %q", command, !c.deny, reason)
 			}
@@ -322,12 +320,11 @@ func testCheckGraphQLQuerySources(t *testing.T) {
 	}
 }
 
-// TestPolicy holds the guard to the examples in policy.json, which ECA's deny
-// patterns are built from and checked against at package build time, so the
-// two cannot drift apart. A rule's scope is the least strict role it holds
-// for: baseline (every session), coordinator, owner or reviewer. Each
-// denial's reason, which is what the agent sees, must say what to do
-// instead; a rule's `why` is for whoever maintains it and reaches no agent.
+// TestPolicy holds the guard to the examples in policy.json. A rule's scope
+// is the least strict role it holds for: baseline (every session),
+// coordinator, owner or reviewer. Each denial's reason, which is what the
+// agent sees, must say what to do instead; a rule's `why` is for whoever
+// maintains it and reaches no agent.
 func TestPolicy(t *testing.T) {
 	data, err := os.ReadFile("policy.json")
 	if err != nil {
@@ -337,29 +334,28 @@ func TestPolicy(t *testing.T) {
 	// Nix build; a checkout's remotes would decide `git fetch origin`.
 	t.Chdir(t.TempDir())
 	var rules []struct {
-		Why     string   `json:"why"`
-		Pattern string   `json:"pattern"`
-		Scope   string   `json:"scope"`
-		Deny    []string `json:"deny"`
-		Allow   []string `json:"allow"`
+		Why   string   `json:"why"`
+		Scope string   `json:"scope"`
+		Deny  []string `json:"deny"`
+		Allow []string `json:"allow"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&rules); err != nil {
 		t.Fatal(err)
 	}
-	checks := map[role]func(string, string, json.RawMessage) string{
+	checks := map[role]func(string, json.RawMessage) string{
 		baseline: CheckBaseline, coordinator: Check, owner: CheckOwner, reviewer: CheckReviewer}
 	names := map[role]string{baseline: "baseline", coordinator: "coordinator", owner: "owner", reviewer: "reviewer"}
 	scopes := map[string]role{"baseline": baseline, "coordinator": coordinator, "owner": owner, "reviewer": reviewer}
 	for _, r := range rules {
-		t.Run(r.Pattern, func(t *testing.T) {
+		t.Run(r.Why, func(t *testing.T) {
 			if len(r.Deny) == 0 || len(r.Allow) == 0 {
-				t.Errorf("%s: needs examples both ways", r.Pattern)
+				t.Errorf("%s: needs examples both ways", r.Why)
 			}
 			scope, ok := scopes[r.Scope]
 			if !ok {
-				t.Errorf("%s: scope %q is not a role", r.Pattern, r.Scope)
+				t.Errorf("%s: scope %q is not a role", r.Why, r.Scope)
 			}
 			for denied, commands := range map[bool][]string{true: r.Deny, false: r.Allow} {
 				for _, command := range commands {
@@ -373,12 +369,12 @@ func TestPolicy(t *testing.T) {
 						if denied {
 							held = who >= scope || (scope == owner && who == coordinator)
 						}
-						reason := check("Bash", "", input)
+						reason := check("Bash", input)
 						if got := reason != ""; held && got != want {
-							t.Errorf("%s: guard deny=%v for the %s's %q", r.Pattern, got, names[who], command)
+							t.Errorf("%s: guard deny=%v for the %s's %q", r.Why, got, names[who], command)
 						}
 						if reason != "" && !saysInstead(reason) {
-							t.Errorf("%s: reason %q for the %s's %q does not say what to do instead", r.Pattern, reason, names[who], command)
+							t.Errorf("%s: reason %q for the %s's %q does not say what to do instead", r.Why, reason, names[who], command)
 						}
 					}
 				}
@@ -393,8 +389,8 @@ func TestBaseline(t *testing.T) {
 	t.Run("formats", testBaselineFormats)
 }
 
-// testBaselineCommands covers the rules for every session that no ECA
-// pattern expresses, and the baseline's allowances that a loop role does not
+// testBaselineCommands covers the rules for every session that policy.json's
+// examples do not, and the baseline's allowances that a loop role does not
 // share.
 func testBaselineCommands(t *testing.T) {
 	cases := []struct {
@@ -517,7 +513,7 @@ func testBaselineCommands(t *testing.T) {
 	for _, c := range cases {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
 			input, _ := json.Marshal(map[string]string{"command": c.command})
-			reason := CheckBaseline("Bash", "", input)
+			reason := CheckBaseline("Bash", input)
 			if (reason != "") != c.deny {
 				t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
 			}
@@ -541,13 +537,14 @@ func testBaselineRoles(t *testing.T) {
 		{true, "Explore", "gh pr merge 1"},
 		{false, "", "git commit -m x"},
 		{false, "", "pr-loop push"},
-		{true, "reviewer", "git commit -m x"},
-		{true, "some-plugin:reviewer", "git stash"},
+		{true, "adversarial-reviewer", "git commit --fixup=abc"},
+		{true, "some-plugin:adversarial-reviewer", "git stash"},
 		{true, "pr-loop:pr-owner", "pr-loop push"},
 		{true, "pr-loop:pr-owner", "pr-loop link 3 4"},
 		{false, "pr-loop:pr-owner", "pr-loop stack 3"},
-		{true, "reviewer", "pr-loop link 3 4"},
-		{false, "reviewer", "pr-loop stack 3"},
+		{true, "adversarial-reviewer", "pr-loop link 3 4"},
+		{false, "adversarial-reviewer", "pr-loop stack 3"},
+		{false, "reviewer", "git commit -m x"},
 		{false, "", "pr-loop link 3 4"},
 		{false, "pr-loop:pr-owner", "git commit --fixup=abc"},
 		{true, "pr-loop:pr-owner", "git commit -m x"},
@@ -574,23 +571,18 @@ func testBaselineRoles(t *testing.T) {
 
 // testBaselineFormats covers the hook every session runs, as each agent
 // calls it: Claude Code with its agent_type, Codex with turn_id and no
-// agent, ECA with its agent's name in agent.
+// agent.
 func testBaselineFormats(t *testing.T) {
 	for _, c := range []struct {
 		name, event, want string
 	}{
 		{"Claude Code push", `{"tool_name":"Bash","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
-		{"Claude Code reviewer commit", `{"tool_name":"Bash","agent_type":"reviewer","tool_input":{"command":"git commit -m x"}}`, `"permissionDecision":"deny"`},
+		{"Claude Code reviewer commit", `{"tool_name":"Bash","agent_type":"adversarial-reviewer","tool_input":{"command":"git commit -m x"}}`, `"permissionDecision":"deny"`},
 		{"Claude Code commit", `{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}`, ""},
 		{"Codex Bash merge", `{"tool_name":"Bash","turn_id":"t","tool_input":{"command":"gh pr merge 1"}}`, `"permissionDecision":"deny"`},
 		{"Codex exec_command push", `{"tool_name":"exec_command","turn_id":"t","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
 		{"Codex patch of settings", `{"tool_name":"apply_patch","turn_id":"t","tool_input":{"command":"*** Begin Patch\n*** Add File: .claude/settings.local.json\n+{\"disableAllHooks\": true}\n*** End Patch\n"}}`, `"permissionDecision":"deny"`},
 		{"Codex patch of code", `{"tool_name":"apply_patch","turn_id":"t","tool_input":{"command":"*** Begin Patch\n*** Update File: main.go\n@@\n-a\n+b\n*** End Patch\n"}}`, ""},
-		{"ECA push", `{"hook_type":"preToolCall","agent":"code","tool_name":"shell_command","tool_input":{"command":"git push"}}`, `"approval":"deny"`},
-		{"ECA commit", `{"hook_type":"preToolCall","agent":"code","tool_name":"shell_command","tool_input":{"command":"git commit -m x"}}`, ""},
-		{"ECA coordinator commit", `{"hook_type":"preToolCall","agent":"pr-coordinator","tool_name":"shell_command","tool_input":{"command":"git commit -m x"}}`, `"approval":"deny"`},
-		{"ECA owner push", `{"hook_type":"preToolCall","agent":"pr-owner","tool_name":"shell_command","tool_input":{"command":"pr-loop push"}}`, `"approval":"deny"`},
-		{"ECA reviewer stash", `{"hook_type":"preToolCall","agent":"reviewer","tool_name":"shell_command","tool_input":{"command":"git stash"}}`, `"approval":"deny"`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var out, errs bytes.Buffer
@@ -678,7 +670,7 @@ func TestReviewerGit(t *testing.T) {
 	} {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
 			input, _ := json.Marshal(map[string]string{"command": c.command})
-			reason := CheckReviewer("Bash", "", input)
+			reason := CheckReviewer("Bash", input)
 			if (reason != "") != c.deny {
 				t.Errorf("%q: deny=%v, %q", c.command, reason != "", reason)
 			}
@@ -803,7 +795,7 @@ func TestReviewerScratchRepo(t *testing.T) {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
 			t.Chdir(c.cwd)
 			input, _ := json.Marshal(map[string]string{"command": c.command})
-			reason := CheckReviewer("Bash", "", input)
+			reason := CheckReviewer("Bash", input)
 			if (reason != "") != c.deny || c.deny && reason != reviewerGit {
 				t.Errorf("%q in %s: %q", c.command, c.cwd, reason)
 			}
@@ -832,7 +824,7 @@ func TestGitShellAlias(t *testing.T) {
 	t.Chdir(checkout)
 	for _, c := range []struct {
 		deny    bool
-		check   func(string, string, json.RawMessage) string
+		check   func(string, json.RawMessage) string
 		command string
 	}{
 		{true, CheckBaseline, "git -c alias.p='!git push origin HEAD' p"},
@@ -879,7 +871,7 @@ func TestGitShellAlias(t *testing.T) {
 	} {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
 			input, _ := json.Marshal(map[string]string{"command": c.command})
-			if reason := c.check("Bash", "", input); (reason != "") != c.deny {
+			if reason := c.check("Bash", input); (reason != "") != c.deny {
 				t.Errorf("%q: deny=%v, %q", c.command, reason != "", reason)
 			}
 		})
@@ -949,8 +941,8 @@ func TestOpenedRepo(t *testing.T) {
 // fixup, which an owner may. agents.json names these agents, and no others.
 func TestAgentRoles(t *testing.T) {
 	want := map[string]string{
-		"reviewer": "reviewer", "adversarial-reviewer": "reviewer", "design-reviewer": "reviewer",
-		"security-reviewer": "reviewer", "pr-owner": "owner", "pr-coordinator": "coordinator",
+		"adversarial-reviewer": "reviewer", "design-reviewer": "reviewer", "security-reviewer": "reviewer",
+		"pr-owner": "owner",
 	}
 	var file struct {
 		Roles map[string]string `json:"roles"`
@@ -962,9 +954,8 @@ func TestAgentRoles(t *testing.T) {
 		t.Errorf("agents.json's roles are %v, want %v", file.Roles, want)
 	}
 	only := map[string]string{
-		"reviewer":    "git commit --fixup=abc",
-		"owner":       "pr-loop link 3 4",
-		"coordinator": "git commit -m x",
+		"reviewer": "git commit --fixup=abc",
+		"owner":    "pr-loop link 3 4",
 	}
 	run := func(agent, command string) bool {
 		event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "agent_type": agent,
@@ -973,7 +964,7 @@ func TestAgentRoles(t *testing.T) {
 		Main([]string{"--baseline"}, bytes.NewReader(event), &out, io.Discard)
 		return strings.Contains(out.String(), `"deny"`)
 	}
-	less := map[string]string{"reviewer": "pr-loop:pr-owner", "owner": "pr-coordinator", "coordinator": ""}
+	less := map[string]string{"reviewer": "pr-loop:pr-owner", "owner": ""}
 	for name, r := range want {
 		t.Run(name, func(t *testing.T) {
 			command, ok := only[r]
@@ -997,7 +988,7 @@ func TestReviewerReasons(t *testing.T) {
 		"git sign-pass", "pr-loop reply T --body-file -"} {
 		t.Run(command, func(t *testing.T) {
 			input, _ := json.Marshal(map[string]string{"command": command})
-			if reason := CheckReviewer("Bash", "", input); !strings.HasPrefix(reason, "A reviewer only reads.") || !saysInstead(reason) {
+			if reason := CheckReviewer("Bash", input); !strings.HasPrefix(reason, "A reviewer only reads.") || !saysInstead(reason) {
 				t.Errorf("%q: %q", command, reason)
 			}
 		})
@@ -1009,10 +1000,8 @@ func TestFormats(t *testing.T) {
 		name, event, want string
 	}{
 		{"Claude Code PreToolUse", `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git push"}}`, `"permissionDecision":"deny"`},
-		{"ECA shell command", `{"hook_type":"preToolCall","server":"eca","tool_name":"shell_command","tool_input":{"command":"git push"}}`, `"approval":"deny"`},
-		{"ECA connector", `{"hook_type":"preToolCall","server":"linear","tool_name":"save_issue","tool_input":{}}`, `"approval":"deny"`},
 		{"owner push", `{"tool_name":"Bash","agent_type":"pr-loop:pr-owner","tool_input":{"command":"pr-loop push"}}`, `"permissionDecision":"deny"`},
-		{"reviewer fixup", `{"tool_name":"Bash","agent_type":"reviewer","tool_input":{"command":"git commit --fixup=abc"}}`, `"permissionDecision":"deny"`},
+		{"reviewer fixup", `{"tool_name":"Bash","agent_type":"adversarial-reviewer","tool_input":{"command":"git commit --fixup=abc"}}`, `"permissionDecision":"deny"`},
 		{"owner fixup", `{"tool_name":"Bash","agent_type":"pr-loop:pr-owner","tool_input":{"command":"git commit --fixup=abc"}}`, ""},
 		{"coordinator push", `{"tool_name":"Bash","tool_input":{"command":"pr-loop push"}}`, ""},
 		{"ls", `{"tool_name":"Bash","tool_input":{"command":"ls"}}`, ""},

@@ -12,20 +12,18 @@ import (
 )
 
 // post is `pr-loop guard --post`, after a shell call: the PostToolUse of
-// Claude Code or Codex, or ECA's postToolCall. It records the call's facts
-// in the plan of its session or worktree (recordFacts), and after a push to
-// GitHub adds one line of context naming the `pr-loop wait ci` to start,
-// read from the command's JSON output. After a command that opens or edits
-// a pull request, and on a session's first commit, it adds the line that
-// hands over the skill whose rules apply. Otherwise it prints nothing.
+// Claude Code or Codex. It records the call's facts in the plan of its
+// session or worktree (recordFacts), and after a push to GitHub adds one
+// line of context naming the `pr-loop wait ci` to start, read from the
+// command's JSON output. After a command that opens or edits a pull
+// request, and on a session's first commit, it adds the line that hands
+// over the skill whose rules apply. Otherwise it prints nothing.
 func post(stdin io.Reader, stdout io.Writer) int {
 	var in struct {
-		HookType     string          `json:"hook_type"`
 		ToolInput    json.RawMessage `json:"tool_input"`
 		ToolResponse json.RawMessage `json:"tool_response"`
 		Cwd          string          `json:"cwd"`
 		SessionID    string          `json:"session_id"`
-		ChatID       string          `json:"chat_id"` // set by ECA
 	}
 	if json.NewDecoder(stdin).Decode(&in) != nil {
 		return 0
@@ -41,7 +39,7 @@ func post(stdin io.Reader, stdout io.Writer) int {
 		in.Cwd, _ = os.Getwd()
 	}
 	texts := responseTexts(in.ToolResponse)
-	lines := recordFacts(session(in.ChatID, in.SessionID), in.Cwd, args.Command, texts, time.Now())
+	lines := recordFacts(in.SessionID, in.Cwd, args.Command, texts, time.Now())
 	if targets := pushedTo(texts); len(targets) > 0 && pushes(args.Command, 0) {
 		lines = append(lines, fmt.Sprintf("You just pushed to GitHub. Start `pr-loop wait ci %s` in the background now, "+
 			"and act on its result as the signing-pass skill's \"After a push\" says.", strings.Join(targets, " ")))
@@ -52,12 +50,8 @@ func post(stdin io.Reader, stdout io.Writer) int {
 	if len(lines) == 0 {
 		return 0
 	}
-	context := strings.Join(lines, "\n")
-	var out any = map[string]any{"hookSpecificOutput": map[string]string{"hookEventName": "PostToolUse", "additionalContext": context}}
-	if in.HookType != "" {
-		out = map[string]string{"additionalContext": context}
-	}
-	json.NewEncoder(stdout).Encode(out)
+	json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{
+		"hookEventName": "PostToolUse", "additionalContext": strings.Join(lines, "\n")}})
 	return 0
 }
 

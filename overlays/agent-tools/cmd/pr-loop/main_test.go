@@ -35,7 +35,6 @@ func TestRun(t *testing.T) {
 func TestRelayRefusal(t *testing.T) {
 	for _, argv := range [][]string{
 		{},
-		{"sign"},
 		{"end"},
 		{"guard"},
 		{"reply", "T", "--body-file", "/etc/passwd"},
@@ -82,6 +81,7 @@ func TestRelayRefusal(t *testing.T) {
 		{"review", "--reviewer=codex", "7"},
 		{"review", "--check", "7"},
 		{"review", "settle", "7"},
+		{"sign-check"},
 	} {
 		t.Run("accepted/"+argvName(argv), func(t *testing.T) {
 			if reason := relayRefusal(argv); reason != "" {

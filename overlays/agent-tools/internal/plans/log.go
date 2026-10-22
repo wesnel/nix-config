@@ -33,7 +33,7 @@ type Event struct {
 	Review   string `json:"review,omitempty"`
 	Outcome  string `json:"outcome,omitempty"`
 	// Session is the session whose tool call the event records, as its
-	// hook names it: Claude Code's or Codex's session_id, ECA's chat_id.
+	// hook names it: Claude Code's or Codex's session_id.
 	Session string `json:"session,omitempty"`
 	// Worktree is the top level of the worktree the event happened in, and
 	// Tip, on a branch-changed event, the commit of a detached HEAD.
@@ -81,8 +81,8 @@ var (
 			"pushed": "pr-loop, and a hook after each shell call, log `pushed` for every push, from what they pushed. " +
 				"Watch the push's CI with `pr-loop wait ci` as the signing-pass skill says",
 		}
-		for _, k := range []string{"loop-began", "round", "replied", "resolved", "ci-waited", "loop-signed"} {
-			kinds[k] = "pr-loop logs what it did, from begin to sign, in the plan of the session that ran it. " +
+		for _, k := range []string{"loop-began", "round", "replied", "resolved", "ci-waited"} {
+			kinds[k] = "pr-loop logs what it did, from begin on, in the plan of the session that ran it. " +
 				"Run the `pr-loop` command that does it"
 		}
 		for _, k := range signKinds {

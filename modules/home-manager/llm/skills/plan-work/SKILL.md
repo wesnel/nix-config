@@ -95,7 +95,7 @@ their history afresh: the log records events as they happen.
   "Follow-ups" says.
 - `** References`: each URL the operator gave the work, one entry each with
   `:URL:`, and a note of what it was used for and which decisions (Q IDs)
-  it fed. In Claude Code, Codex and ECA every URL in their prompts is added
+  it fed. In Claude Code and Codex every URL in their prompts is added
   with no note; add one they give otherwise with
   `agent-plan reference PLAN URL`. When you
   are done with a reference, write its note:

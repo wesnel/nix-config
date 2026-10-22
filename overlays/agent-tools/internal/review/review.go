@@ -1,7 +1,6 @@
 // Package review holds the reviewer's contract and the shape of its reply.
-// The contract is what `git fresh-review` gives Codex and what the reviewer
-// agents load (the package's passthru.reviewerPrompt), so a change to it
-// changes every reviewer at once.
+// The contract is what `git fresh-review` gives Codex and prints for a
+// sub-agent, so a change to it changes every reviewer at once.
 package review
 
 import _ "embed"

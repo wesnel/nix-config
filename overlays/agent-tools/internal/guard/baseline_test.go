@@ -32,7 +32,7 @@ func fakeHome(t *testing.T) string {
 func judge(t *testing.T, dir, command string) string {
 	t.Helper()
 	input, _ := json.Marshal(map[string]string{"command": command})
-	return check("Bash", "", input, baseline, dir)
+	return check("Bash", input, baseline, dir)
 }
 
 func TestSessionRules(t *testing.T) {
@@ -113,7 +113,6 @@ func TestSessionRules(t *testing.T) {
 		{true, "sed -ni 's/a/b/p' .claude/settings.json"},
 		{true, "sed -i.bak s/a/b/ .claude/settings.json"},
 		{true, "sed --in-place=.bak s/a/b/ .claude/settings.json"},
-		{true, "tee ~/.config/eca/config.json < x"},
 		{true, "claude --dangerously-skip-permissions"},
 		{true, "claude --permission-mode bypassPermissions -p x"},
 		{true, "codex --dangerously-bypass-approvals-and-sandbox exec x"},
@@ -768,31 +767,28 @@ func TestKeyTouch(t *testing.T) {
 		}
 	})
 
-	// Each agent is told to hand the command over as its interface runs it:
-	// Claude Code and Codex with a leading `!`, ECA as a plain line.
+	// Each agent is told to hand the command over as a line beginning with
+	// `!`, which its prompt runs in the session.
 	t.Run("formats", func(t *testing.T) {
 		for _, c := range []struct {
 			name, event string
-			bang        bool
 		}{
-			{"Claude Code", `{"tool_name":"Bash","cwd":%q,"tool_input":{"command":"git fetch origin"}}`, true},
-			{"Codex", `{"tool_name":"exec_command","turn_id":"t","cwd":%q,"tool_input":{"command":"git fetch origin"}}`, true},
-			{"ECA", `{"hook_type":"preToolCall","agent":"code","tool_name":"shell_command","cwd":%q,"tool_input":{"command":"git fetch origin"}}`, false},
+			{"Claude Code", `{"tool_name":"Bash","cwd":%q,"tool_input":{"command":"git fetch origin"}}`},
+			{"Codex", `{"tool_name":"exec_command","turn_id":"t","cwd":%q,"tool_input":{"command":"git fetch origin"}}`},
 		} {
 			t.Run(c.name, func(t *testing.T) {
 				var out bytes.Buffer
 				Main([]string{"--baseline"}, strings.NewReader(fmt.Sprintf(c.event, ssh)), &out, io.Discard)
 				var decision struct {
 					HookSpecificOutput struct{ PermissionDecisionReason string }
-					AdditionalContext  string
 				}
 				json.Unmarshal(out.Bytes(), &decision)
-				reason := decision.HookSpecificOutput.PermissionDecisionReason + decision.AdditionalContext
+				reason := decision.HookSpecificOutput.PermissionDecisionReason
 				if !strings.Contains(reason, "hardware key") {
 					t.Fatalf("not denied for the key: %s", out.String())
 				}
-				if got := strings.Contains(reason, "`!`"); got != c.bang {
-					t.Errorf("reason %q: says to begin with `!` = %v", reason, got)
+				if !strings.Contains(reason, "`!`") {
+					t.Errorf("reason %q does not say to begin with `!`", reason)
 				}
 			})
 		}
@@ -1125,7 +1121,6 @@ func TestFileTools(t *testing.T) {
 		{"Claude Code's settings", true, "Edit", map[string]string{"file_path": "HOME/.claude/settings.json", "old_string": `"hooks": {}`, "new_string": `"x": 1`}},
 		{"Claude Code's settings, whole", true, "Write", map[string]string{"file_path": "HOME/.claude/settings.json", "content": "{}"}},
 		{"a project's hooks off", true, "Write", map[string]string{"file_path": "WORK/.claude/settings.local.json", "content": `{"disableAllHooks": true}`}},
-		{"ECA's hooks", true, "MultiEdit", map[string]any{"file_path": "HOME/.config/eca/config.json", "edits": []map[string]string{{"old_string": "a", "new_string": `"hooks": {}`}}}},
 		{"Codex's hooks", true, "apply_patch", patch("HOME/.codex/hooks.json", "-x\n+y")},
 		{"Codex's config", true, "apply_patch", patch("HOME/.codex/config.toml", "-[hooks]\n+")},
 		{"git config", true, "Edit", map[string]string{"file_path": "WORK/.git/config", "old_string": "a", "new_string": "b"}},
@@ -1142,7 +1137,7 @@ func TestFileTools(t *testing.T) {
 			os.WriteFile(filepath.Join(h, ".claude", "settings.json"), []byte(`{"hooks": {}}`), 0o644)
 			data, _ := json.Marshal(c.input)
 			input := []byte(strings.NewReplacer("HOME", h, "WORK", work).Replace(string(data)))
-			reason := check(c.tool, "", input, baseline, work)
+			reason := check(c.tool, input, baseline, work)
 			if (reason != "") != c.deny {
 				t.Errorf("%s %s: deny=%v, reason %q", c.tool, input, !c.deny, reason)
 			}
@@ -1184,7 +1179,7 @@ func TestGuardConfig(t *testing.T) {
 			work := filepath.Join(h, "work")
 			data, _ := json.Marshal(c.input)
 			input := []byte(strings.NewReplacer("HOME", h, "NAMED", named).Replace(string(data)))
-			reason := check(c.tool, "", input, baseline, work)
+			reason := check(c.tool, input, baseline, work)
 			if (reason != "") != c.deny {
 				t.Errorf("%s %s: deny=%v, reason %q", c.tool, input, !c.deny, reason)
 			}
@@ -1205,7 +1200,7 @@ func TestBakedAgentToolsConfig(t *testing.T) {
 	for _, base := range []string{filepath.Join(h, ".config"), baked} {
 		file := filepath.Join(base, "agent-tools", "config.json")
 		input, _ := json.Marshal(map[string]string{"file_path": file, "content": "{}"})
-		if reason := check("Write", "", input, baseline, filepath.Join(h, "work")); reason == "" || !saysInstead(reason) {
+		if reason := check("Write", input, baseline, filepath.Join(h, "work")); reason == "" || !saysInstead(reason) {
 			t.Errorf("a write of %s: %q", file, reason)
 		}
 	}
@@ -1221,7 +1216,7 @@ func TestConnectors(t *testing.T) {
 		{"Gmail draft", `{"tool_name":"mcp__claude_ai_Gmail__create_draft","tool_input":{}}`, `"permissionDecision":"ask"`},
 		{"GitHub review", `{"tool_name":"mcp__claude_ai_Github__create_pull_request_review","tool_input":{}}`, `"permissionDecision":"ask"`},
 		{"GitHub review from Codex", `{"tool_name":"mcp__claude_ai_Github__create_pull_request_review","turn_id":"t","tool_input":{}}`, `"permissionDecision":"deny"`},
-		{"GitHub review from a reviewer", `{"tool_name":"mcp__claude_ai_Github__create_pull_request_review","agent_type":"reviewer","tool_input":{}}`, `"permissionDecision":"deny"`},
+		{"GitHub review from a reviewer", `{"tool_name":"mcp__claude_ai_Github__create_pull_request_review","agent_type":"adversarial-reviewer","tool_input":{}}`, `"permissionDecision":"deny"`},
 		{"GitHub read", `{"tool_name":"mcp__claude_ai_Github__get_pull_request","tool_input":{}}`, `"permissionDecision":"ask"`},
 		{"GitHub read from Codex", `{"tool_name":"mcp__claude_ai_Github__get_pull_request","turn_id":"t","tool_input":{}}`, `"permissionDecision":"deny"`},
 		{"Gmail search", `{"tool_name":"mcp__claude_ai_Gmail__search_threads","tool_input":{}}`, `"permissionDecision":"ask"`},
@@ -1400,7 +1395,6 @@ func TestSleep(t *testing.T) {
 	const (
 		claude = `{"tool_name":"Bash","tool_input":{%s}}`
 		codex  = `{"tool_name":"exec_command","turn_id":"t","tool_input":{%s}}`
-		eca    = `{"hook_type":"preToolCall","agent":"code","tool_name":"shell_command","tool_input":{%s}}`
 	)
 	cmd := func(command string) string {
 		data, _ := json.Marshal(command)
@@ -1420,7 +1414,6 @@ func TestSleep(t *testing.T) {
 		{"under timeout", claude, cmd("timeout 100 sleep 90"), "run_in_background"},
 		{"in a loop", claude, cmd("for i in 1 2; do sleep 30; done"), "run_in_background"},
 		{"from Codex", codex, cmd("sleep 60"), "until"},
-		{"from ECA", eca, cmd("sleep 60"), "until"},
 		{"under half a minute", claude, cmd("sleep 29"), ""},
 		{"a short poll", claude, cmd("until test -f done; do sleep 5; done"), ""},
 		{"backgrounded", claude, cmd("sleep 60 &"), ""},
@@ -1429,7 +1422,6 @@ func TestSleep(t *testing.T) {
 		{"a backgrounded shell", claude, cmd("bash -c 'sleep 60' &"), ""},
 		{"a length the shell picks", claude, cmd("sleep $N"), ""},
 		{"run in the background", claude, cmd("sleep 60") + `,"run_in_background":true`, ""},
-		{"an ECA background job", eca, cmd("sleep 60") + `,"background":"waiter"`, ""},
 		{"a Monitor", `{"tool_name":"Monitor","tool_input":{%s}}`, cmd("while true; do date; sleep 60; done"), ""},
 	} {
 		t.Run(caseName(c.advice != "", c.name), func(t *testing.T) {
@@ -1438,10 +1430,9 @@ func TestSleep(t *testing.T) {
 			Main([]string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
 			var decision struct {
 				HookSpecificOutput struct{ PermissionDecisionReason string }
-				AdditionalContext  string
 			}
 			json.Unmarshal(out.Bytes(), &decision)
-			reason := decision.HookSpecificOutput.PermissionDecisionReason + decision.AdditionalContext
+			reason := decision.HookSpecificOutput.PermissionDecisionReason
 			switch {
 			case c.advice == "" && out.Len() != 0:
 				t.Errorf("%s: printed %s", event, out.String())

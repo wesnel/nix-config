@@ -20,7 +20,7 @@ func TestMain(m *testing.M) {
 	config := filepath.Join(dir, "config.json")
 	os.WriteFile(config, []byte(`{"plans": {"dir": "`+filepath.Join(dir, "agents")+`", "host": "box"}}`), 0o600)
 	os.Setenv("AGENT_TOOLS_CONFIG", config)
-	for _, v := range []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "ECA_CHAT_ID"} {
+	for _, v := range []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"} {
 		os.Unsetenv(v)
 	}
 	code := m.Run()

@@ -28,33 +28,22 @@ func DefaultDir() string {
 var sessionName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 // Remind is the line for a prompt of a session's main thread: Claude Code's
-// and Codex's UserPromptSubmit without agent_id, and ECA's preRequest
-// without parent_chat_id. It gives the time now and how long since
-// the operator's previous message in the session, as dir records it, and
-// records now when the prompt is the operator's own, which a Claude Code
-// task-notification is not. It is "" for any other event, and for a
-// session ID that is no file name.
+// and Codex's UserPromptSubmit without agent_id. It gives the time now and
+// how long since the operator's previous message in the session, as dir
+// records it, and records now when the prompt is the operator's own, which
+// a Claude Code task-notification is not. It is "" for any other event, and
+// for a session ID that is no file name.
 func Remind(dir string, input []byte, now time.Time) string {
 	var in struct {
-		Event        string `json:"hook_event_name"`
-		Type         string `json:"hook_type"` // ECA's
-		SessionID    string `json:"session_id"`
-		AgentID      string `json:"agent_id"`
-		ChatID       string `json:"chat_id"` // ECA's
-		ParentChatID string `json:"parent_chat_id"`
-		Prompt       string `json:"prompt"`
+		Event     string `json:"hook_event_name"`
+		SessionID string `json:"session_id"`
+		AgentID   string `json:"agent_id"`
+		Prompt    string `json:"prompt"`
 	}
-	if json.Unmarshal(input, &in) != nil {
+	if json.Unmarshal(input, &in) != nil || in.Event != "UserPromptSubmit" || in.AgentID != "" {
 		return ""
 	}
 	session := in.SessionID
-	switch {
-	case in.Event == "UserPromptSubmit" && in.AgentID == "":
-	case in.Type == "preRequest" && in.ParentChatID == "":
-		session = in.ChatID
-	default:
-		return ""
-	}
 	if !sessionName.MatchString(session) {
 		return ""
 	}

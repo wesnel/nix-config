@@ -11,13 +11,7 @@
   in {
     source = given.source or null;
     text = given.text or null;
-    sandbox = given.sandbox or false;
   };
-
-  # Names of the skills that need nothing but the workspace and the tools the
-  # sandbox itself provides.
-  sandboxSkillNames = skills:
-    lib.attrNames (lib.filterAttrs (_: skill: (normalise skill).sandbox) skills);
 
   # A source that is not itself a SKILL.md is the skill's whole directory:
   # SKILL.md with the scripts and Emacs Lisp it loads from beside itself.

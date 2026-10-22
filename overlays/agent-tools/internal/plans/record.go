@@ -94,9 +94,9 @@ func (p Plan) NoteBranch(session, branch, tip, worktree string, now time.Time) (
 }
 
 // EnvSession is the session of the harness running this process, as its
-// environment names it: Claude Code's, Codex's or ECA's; or "".
+// environment names it: Claude Code's or Codex's; or "".
 func EnvSession() string {
-	for _, v := range []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID", "ECA_CHAT_ID"} {
+	for _, v := range []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"} {
 		if id := os.Getenv(v); id != "" {
 			return id
 		}

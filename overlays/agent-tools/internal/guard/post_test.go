@@ -9,16 +9,11 @@ import (
 )
 
 // TestPost covers the context added after a tool call that pushed to
-// GitHub: Claude Code's PostToolUse event and ECA's postToolCall.
+// GitHub: Claude Code's and Codex's PostToolUse events.
 func TestPost(t *testing.T) {
 	claude := func(command, stdout string) string {
 		event, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Bash",
 			"tool_input": map[string]string{"command": command}, "tool_response": map[string]any{"stdout": stdout, "stderr": "", "interrupted": false}})
-		return string(event)
-	}
-	eca := func(command, output string) string {
-		event, _ := json.Marshal(map[string]any{"hook_type": "postToolCall", "server": "eca", "tool_name": "shell_command",
-			"tool_input": map[string]string{"command": command}, "tool_response": output})
 		return string(event)
 	}
 	// Codex names shell calls Bash, puts the command in tool_input.command
@@ -38,7 +33,6 @@ func TestPost(t *testing.T) {
 		{"Claude Code push after cd", claude("cd /r && pr-loop push", pushed), "`pr-loop wait ci a b`"},
 		{"Claude Code push and more", claude("pr-loop push && echo done", pushed+"\ndone\n"), "`pr-loop wait ci a b`"},
 		{"Claude Code sign-pass --push", claude("git sign-pass --push a", `{"branch": "a", "signed": 1, "pushed": {"a": "3333"}}`), "`pr-loop wait ci a`"},
-		{"ECA push", eca("pr-loop push", pushed), "`pr-loop wait ci a b`"},
 		{"Codex push", codex("pr-loop push", pushed), "`pr-loop wait ci a b`"},
 		{"Codex open after cd", codex("cd /r && pr-loop open --title T feature", "Wall time: 1.2 seconds\nOutput:\n"+opened+"\n"), "`pr-loop wait ci 12`"},
 		{"Codex dry run", codex("pr-loop push --dry-run", `{"wouldUpdate": {"a": "1111"}, "objects": {}}`), ""},
@@ -68,15 +62,13 @@ func TestPost(t *testing.T) {
 					Event   string `json:"hookEventName"`
 					Context string `json:"additionalContext"`
 				} `json:"hookSpecificOutput"`
-				Context string `json:"additionalContext"`
 			}
 			if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 				t.Errorf("%s: %v: %s", c.event, err, out.String())
 				return
 			}
-			context := got.Specific.Context + got.Context
-			if strings.Contains(c.event, "postToolCall") != (got.Context != "") ||
-				!strings.Contains(c.event, "postToolCall") && got.Specific.Event != "PostToolUse" {
+			context := got.Specific.Context
+			if got.Specific.Event != "PostToolUse" {
 				t.Errorf("%s: wrong format: %s", c.event, out.String())
 			}
 			if !strings.Contains(context, c.want) || !strings.Contains(context, "background") {
@@ -90,17 +82,11 @@ func TestPost(t *testing.T) {
 }
 
 // A command that opens or edits a pull request is followed by the line
-// that hands over the pull-requests skill, in each harness's format; any
-// other leaves it out.
+// that hands over the pull-requests skill; any other leaves it out.
 func testPostPullRequests(t *testing.T) {
 	claude := func(command string) string {
 		event, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Bash",
 			"tool_input": map[string]string{"command": command}, "tool_response": map[string]any{"stdout": "", "stderr": ""}})
-		return string(event)
-	}
-	eca := func(command string) string {
-		event, _ := json.Marshal(map[string]any{"hook_type": "postToolCall", "server": "eca", "tool_name": "shell_command",
-			"tool_input": map[string]string{"command": command}, "tool_response": ""})
 		return string(event)
 	}
 	for _, c := range []struct {
@@ -109,7 +95,6 @@ func testPostPullRequests(t *testing.T) {
 		{"gh pr create", claude("gh pr create --draft --title T --body-file b.md"), "hookSpecificOutput"},
 		{"gh pr edit after cd", claude("cd /r && gh pr edit 12 --body-file b.md"), "hookSpecificOutput"},
 		{"pr-loop open", claude("pr-loop open --title T --body-file b.md feature"), "hookSpecificOutput"},
-		{"ECA gh pr create", eca("gh pr create --draft --title T"), `{"additionalContext"`},
 		{"gh pr view", claude("gh pr view 12"), ""},
 		{"pr-loop push", claude("pr-loop push"), ""},
 		{"echo of gh pr create", claude("echo gh pr create"), ""},

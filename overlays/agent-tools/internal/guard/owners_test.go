@@ -94,7 +94,6 @@ func TestOwners(t *testing.T) {
 		{"main thread's Edit in the main checkout", false, `{"tool_name":"Edit","tool_input":{"file_path":"MAIN/a.go"}}`, nil},
 		{"main thread's shell write in the main checkout", false, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"echo x > new.txt"}}`, nil},
 		{"main thread's Write in an owned worktree", true, `{"tool_name":"Write","tool_input":{"file_path":"LINKED/sub/new.go"}}`, []string{"a1", "agent-plan own"}},
-		{"ECA's write in an owned worktree", false, `{"hook_type":"preToolCall","server":"eca","agent":"code","tool_name":"write_file","tool_input":{"path":"LINKED/a.go"}}`, nil},
 		// A worktree a plan names is judged by its owner wherever it is, and
 		// a path by where its links lead.
 		{"owner's Edit in another's worktree in scratch", true, `{"tool_name":"Edit","agent_id":"a1","tool_input":{"file_path":"PARKED/a.go"}}`, []string{"LINKED"}},
@@ -258,11 +257,6 @@ func TestSubagentStash(t *testing.T) {
 			"tool_input": map[string]string{"command": command}})
 		return string(data)
 	}
-	eca := func(command string) string {
-		data, _ := json.Marshal(map[string]any{"hook_type": "preToolCall", "server": "eca", "agent": "code",
-			"tool_name": "shell_command", "cwd": linked, "tool_input": map[string]string{"command": command}})
-		return string(data)
-	}
 	for _, e := range []struct {
 		name string
 		deny bool
@@ -287,7 +281,6 @@ func TestSubagentStash(t *testing.T) {
 		{"git status", false, claude("git status")},
 		{"main thread's git stash push -u -m agent-x-1", false, mainThread("git stash push -u -m agent-x-1")},
 		{"main thread's git stash apply 3f2a9c1", false, mainThread("git stash apply 3f2a9c1")},
-		{"ECA's git stash push -u -m agent-x-1", false, eca("git stash push -u -m agent-x-1")},
 	} {
 		t.Run(caseName(e.deny, e.name), func(t *testing.T) {
 			var out bytes.Buffer

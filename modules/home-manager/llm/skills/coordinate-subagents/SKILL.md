@@ -86,13 +86,13 @@ what is this work's.
   part's Investigate phase (Phases below), which commits nothing.
 - **`adversarial-reviewer`:** tries to break a finished branch, every
   finding reproduced or marked as not, with what held. For a part that is
-  security-sensitive, subtle, or that a fresh review passed too easily.
+  security-sensitive, subtle, or that a fresh review passed too easily;
+  also `pr-loop review --reviewer subagent`'s sub-agent, as the
+  `review-change` skill says, replying in the form its prompt gives.
 - **`design-reviewer`:** the design reviews (Design review below).
 - **`security-reviewer`:** a security route's review, from the prompt
   `git fresh-review --print-prompt --focus security` prints, and a
   security review of a part's range outside the fresh review loop.
-- **`reviewer`:** the fresh review loop's sub-agent, as the `review-change`
-  skill says.
 - **`Explore`:** read-only lookups and inventories.
 
 The reviewers have no editing tools. The guard lets them run git's
@@ -102,11 +102,10 @@ configuration can still make a read run a program, and a script or a
 program the guard does not know still writes, so a reviewer's task never
 asks for either.
 
-Codex and ECA have no such
-types (ECA has `reviewer` alone): there the rules file also names the
-installed working agreements to read (`~/.codex/AGENTS.md`,
-`~/.config/eca/AGENTS.md`) and carries the role's rules, from its
-definition in `~/.claude/agents` where Claude Code is installed.
+Codex has no such types: there the rules file also names the installed
+working agreements to read (`~/.codex/AGENTS.md`) and carries the role's
+rules, from its definition in `~/.claude/agents` where Claude Code is
+installed.
 
 ## The rules file
 
@@ -181,9 +180,9 @@ sub-agent, in its current task or its next one.
 Start every sub-agent with the model and effort this section gives; it is
 what permits setting them. In Claude Code they are the Agent tool's `model`
 and `effort`, which override the agent type's own: Opus at high effort for
-every type above but `reviewer` and `Explore`. Cheaper work is the same
+every type above but `Explore`. Cheaper work is the same
 type at the model and effort the list below gives. Codex's `spawn_agent`
-takes a `model`; ECA takes the model from the agent's definition.
+takes a `model`.
 
 - **Haiku 5.5, low effort:** read-only lookups, inventories, running a given
   command and reporting it.
@@ -217,8 +216,6 @@ wait on no `:AFTER:` item, follow every earlier sibling under an
   continues an agent with its context.
 - **Codex:** `spawn_agent`. `send_input` continues an agent, and `wait_agent`
   collects results.
-- **ECA:** `spawn_agent`. Each spawn starts a fresh chat, so a follow-up task
-  carries everything the agent needs.
 - **No sub-agents:** do each part yourself, one at a time, in its worktree.
 
 Never edit a sub-agent's worktree while it runs. To learn where something
@@ -290,29 +287,19 @@ them fit together:
 
 - For every branch, bottom of each stack first,
   `git log --format='%h %G? %s' <base>..<branch>`.
-- Beside it, one `git sign-pass` command per repository, which the operator
-  types themselves, naming the top of every stack, each child of a fork
-  included. Flags come before the branch names: `--set-upstream` when any
-  branch is new, otherwise `--push`, and `--notify` with an ID minted as the
-  signing-pass skill says.
-
-  ```sh
-  git sign-pass --set-upstream --notify <ID> <top of stack 1> <top of stack 2> ...
-  ```
-
-  It prints the whole plan before the first touch; that plan is their audit.
-  Never a script that wraps it: they must be able to read what they run.
-- The worktrees stay until the pass is done. Each must be clean, since the
-  pass moves the branches checked out in them.
+- Beside it, the signing pass, one command per repository naming the top
+  of every stack, each child of a fork included, handed over as the
+  `signing-pass` skill's Handing over says.
+- The worktrees stay until the pass is done.
 - Everything that needs the operator's decision, and everything unverified.
 
 ## After the push
 
 If you are still running once the operator has pushed:
 
-- Open a draft pull request for each new branch, based on its parent branch
-  in a stack (`pr-loop open --base <parent>`; `open` refuses a branch that
-  contains a remote branch its base lacks), then make each stack one GitHub stack, which GitHub shows on
+- Open a pull request for each new branch as the `pull-requests` skill
+  says, based on its parent branch in a stack, then make each stack one
+  GitHub stack, which GitHub shows on
   every pull request in it and merges from the bottom:
   `pr-loop link <bottom> ... <top>`, by number or branch. It refuses bases
   that do not chain, and leaves a stack already linked as it is.

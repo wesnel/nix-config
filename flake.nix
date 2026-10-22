@@ -129,13 +129,9 @@
       })
 
       ./modules/home-manager/aerospace
-      ./modules/home-manager/amp
       ./modules/home-manager/bash
       ./modules/home-manager/claude
       ./modules/home-manager/codex
-      ./modules/home-manager/copilot
-      ./modules/home-manager/docs-mcp-server
-      ./modules/home-manager/eca
       ./modules/home-manager/emacs
       ./modules/home-manager/firefox
       ./modules/home-manager/fish
@@ -156,7 +152,6 @@
       ./modules/home-manager/mcp-proxy
       ./modules/home-manager/mosh
       ./modules/home-manager/music
-      ./modules/home-manager/ollama
       ./modules/home-manager/photos
       ./modules/home-manager/python
       ./modules/home-manager/slack
@@ -578,6 +573,63 @@
           cd ${emacs-config}
           emacs --batch -Q -l tests/run-agent-plans.el \
             --eval '(princ (wgn-agent-plans-run-tests))'
+          touch $out
+        '';
+
+      # Every sub-agent type the skills, agent bodies, README and agent-tools'
+      # messages name ("`NAME` agent", "`NAME` sub-agent") is one that is
+      # defined, and every `pr-loop SUBCOMMAND` they name is in pr-loop's
+      # usage, so a rename on one side fails here until the other follows.
+      # Defined are agents.json's Claude agents, the pr-loop plugin's
+      # pr-owner (modules/home-manager/claude) and Claude Code's built-in
+      # types.
+      checks.agent-names = let
+        agentTools = pkgs.callPackage ./overlays/agent-tools {};
+        defined = agentTools.guardAgents.claude ++ ["pr-owner" "Explore" "general-purpose" "Plan"];
+        src = pkgs.lib.fileset.toSource {
+          root = ./.;
+          fileset = pkgs.lib.fileset.unions [
+            ./README.md
+            ./modules/home-manager/llm
+            ./overlays/agent-tools/cmd
+            ./overlays/agent-tools/internal
+          ];
+        };
+      in
+        pkgs.runCommand "agent-names" {nativeBuildInputs = [pkgs.gnugrep agentTools];} ''
+          cd ${src}
+          # In Markdown a code block's line names a command too; in Go only
+          # a backticked one does.
+          files() {
+            { grep -rlP "$1" --include='*.md' .; grep -rlP "$2" --include='*.go' --exclude='*_test.go' .; } | tr '\n' ' '
+          }
+          names() {
+            { grep -rhoP "$1" --include='*.md' .; grep -rhoP "$2" --include='*.go' --exclude='*_test.go' .; } | sort -u
+          }
+          failed=
+          defined=" ${pkgs.lib.concatStringsSep " " defined} "
+          agent='`\K[A-Za-z][A-Za-z0-9_:-]*(?=` (sub-?)?agents?\b)'
+          for name in $(names "$agent" "$agent"); do
+            case "$defined" in
+              *" ''${name##*:} "*) ;;
+              *)
+                named="\`$name\` (sub-?)?agents?\b"
+                echo "no sub-agent type $name is defined, but $(files "$named" "$named")name it" >&2
+                failed=1
+                ;;
+            esac
+          done
+          subcommands=" $(pr-loop -h 2>&1 | grep -oP '^  \K[a-z][a-z-]*(?= |$)' | sort -u | tr '\n' ' ') "
+          for sub in $(names '(?:^\s*|`)pr-loop \K[a-z][a-z-]*' '`pr-loop \K[a-z][a-z-]*'); do
+            case "$subcommands" in
+              *" $sub "*) ;;
+              *)
+                echo "pr-loop has no subcommand $sub, but $(files "(?:^\s*|\`)pr-loop $sub(?![\w-])" "\`pr-loop $sub(?![\w-])")name it" >&2
+                failed=1
+                ;;
+            esac
+          done
+          [ -z "$failed" ]
           touch $out
         '';
 

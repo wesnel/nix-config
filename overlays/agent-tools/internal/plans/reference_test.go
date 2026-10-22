@@ -135,25 +135,12 @@ func TestPromptReferences(t *testing.T) {
 		data, _ := json.Marshal(fields)
 		return data
 	}
-	// ECA's preRequest input, as its hooks documentation has it.
-	eca := func(text string, parent bool) []byte {
-		fields := map[string]any{"hook_name": "plan-prompt", "hook_type": "preRequest", "workspaces": []string{"/nowhere"},
-			"cwd": "/nowhere", "session_id": "cache", "chat_id": "abc", "agent": "code", "behavior": "code",
-			"full_model": "anthropic/claude-opus-5-5", "prompt": text}
-		if parent {
-			fields["parent_chat_id"] = "p1"
-		}
-		data, _ := json.Marshal(fields)
-		return data
-	}
 	for name, c2 := range map[string]struct {
 		input []byte
 		want  int
 	}{
 		"the operator's prompt in Codex": {codex("Read https://example.com/x", false), 1},
 		"a Codex sub-agent's turn":       {codex("Read https://example.com/x", true), 0},
-		"the operator's prompt in ECA":   {eca("Read https://example.com/x", false), 1},
-		"an ECA sub-agent's request":     {eca("Read https://example.com/x", true), 0},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := testConfig(t)

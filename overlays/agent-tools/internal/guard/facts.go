@@ -191,15 +191,6 @@ func newWorktree(g gitCall) string {
 	return ""
 }
 
-// session is the session a hook event names: ECA's chat, else the
-// session.
-func session(chatID, sessionID string) string {
-	if chatID != "" {
-		return chatID
-	}
-	return sessionID
-}
-
 // recordFacts records in the matching plan what the shell call command,
 // run in cwd by session, did, by its output texts, and returns a line of
 // context for each commit recorded, asking which step it completes, which

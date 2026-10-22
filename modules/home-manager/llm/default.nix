@@ -564,7 +564,7 @@ in {
           sandbox. Every sandboxing launcher takes its list from here.
         '';
 
-        default = [".git/hooks" ".git/config" ".claude" ".codex" ".eca"];
+        default = [".git/hooks" ".git/config" ".claude" ".codex"];
       };
 
       cacheDir = mkOption {
@@ -594,19 +594,6 @@ in {
           export GOMODCACHE=${escapeShellArg "${cfg.prLoop.cacheDir}/go-mod"}
           mkdir -p "$GOCACHE" "$GOMODCACHE"
         '';
-      };
-
-      client = mkOption {
-        type = types.package;
-        readOnly = true;
-
-        description = ''
-          A static Linux build of `pr-loop` for this machine's architecture,
-          in `bin`, for a sandbox guest to run as a client of
-          `sandbox-relay serve`.
-        '';
-
-        default = cfg.agentTools.linuxClient;
       };
     };
 
@@ -640,22 +627,6 @@ in {
                   {option}`source`.
                 '';
               };
-
-              sandbox = mkOption {
-                type = bool;
-                default = false;
-
-                description = ''
-                  Whether the skill works with nothing but the workspace and
-                  the sandbox's own tools.
-
-                  Off by default, because most of these drive something on
-                  this machine -- an editor, a notifier, a command installed
-                  here -- and none of it exists in the guest. Such a skill is
-                  worse there than missing: it is offered to the agent, which
-                  spends a turn calling it and gets nothing back.
-                '';
-              };
             };
           })
         );
@@ -663,20 +634,13 @@ in {
       description = ''
         Skills offered to every enabled coding agent. A path is linked into
         the agent's skill directory; a string is written there verbatim.
-
-        Give {option}`sandbox` instead of a bare path or string to say the
-        skill may also be carried into a sandboxed session.
       '';
 
       default =
-        {
-          notify = ./skills/notify/SKILL.md;
-
-        }
         # Whole directories: most of these load Emacs Lisp or run a script
         # that sits beside their SKILL.md. d2 and github-activity run only
         # when invoked by name.
-        // genAttrs [
+        genAttrs [
           "d2"
           "describe"
           "dired"
@@ -691,69 +655,32 @@ in {
           trash = ./skills/trash/SKILL.md;
         }
         // {
-          signing-pass = {
-            source = ./skills/signing-pass/SKILL.md;
-            sandbox = true;
-          };
-          write-tests = {
-            source = ./skills/write-tests/SKILL.md;
-            sandbox = true;
-          };
-          pull-requests = {
-            source = ./skills/pull-requests/SKILL.md;
-            sandbox = true;
-          };
-          docs-and-comments = {
-            source = ./skills/docs-and-comments/SKILL.md;
-            sandbox = true;
-          };
-          design = {
-            source = ./skills/design/SKILL.md;
-            sandbox = true;
-          };
-          restack-branches = {
-            source = ./skills/restack-branches/SKILL.md;
-            sandbox = true;
-          };
-          review-change = {
-            source = ./skills/review-change/SKILL.md;
-            sandbox = true;
-          };
-          plan-work = {
-            source = ./skills/plan-work/SKILL.md;
-            sandbox = true;
-          };
+          signing-pass = ./skills/signing-pass/SKILL.md;
+          write-tests = ./skills/write-tests/SKILL.md;
+          pull-requests = ./skills/pull-requests/SKILL.md;
+          docs-and-comments = ./skills/docs-and-comments/SKILL.md;
+          design = ./skills/design/SKILL.md;
+          restack-branches = ./skills/restack-branches/SKILL.md;
+          review-change = ./skills/review-change/SKILL.md;
+          plan-work = ./skills/plan-work/SKILL.md;
           coordinate-subagents = ./skills/coordinate-subagents/SKILL.md;
-          diagnose-failure = {
-            source = ./skills/diagnose-failure/SKILL.md;
-            sandbox = true;
-          };
-          # Reads the session transcripts this machine keeps.
+          diagnose-failure = ./skills/diagnose-failure/SKILL.md;
           retro = ./skills/retro/SKILL.md;
           # A directory for agents/openai.yaml, which keeps Codex from
           # invoking it unasked, as disable-model-invocation does in Claude
           # Code.
-          grill = {
-            source = ./skills/grill;
-            sandbox = true;
-          };
+          grill = ./skills/grill;
 
           # Linked as published, with the repository's MIT licence beside
           # it: the licence requires its notice in every copy.
-          writing-for-agents = {
-            source = pkgs.runCommandLocal "writing-for-agents" {} ''
-              cp -R ${mattpocock-skills}/skills/productivity/writing-for-agents $out
-              chmod u+w $out
-              cp ${mattpocock-skills}/LICENSE $out/LICENSE
-            '';
-            sandbox = true;
-          };
+          writing-for-agents.source = pkgs.runCommandLocal "writing-for-agents" {} ''
+            cp -R ${mattpocock-skills}/skills/productivity/writing-for-agents $out
+            chmod u+w $out
+            cp ${mattpocock-skills}/LICENSE $out/LICENSE
+          '';
         }
         // optionalAttrs cfg.prLoop.enable {
-          review-loop = {
-            source = ./skills/review-loop/SKILL.md;
-            sandbox = true;
-          };
+          review-loop = ./skills/review-loop/SKILL.md;
         };
     };
   };

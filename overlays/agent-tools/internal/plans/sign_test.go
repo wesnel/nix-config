@@ -191,7 +191,7 @@ func TestRemindSignResult(t *testing.T) {
 	for _, c2 := range []struct {
 		name   string
 		event  []byte
-		format string // a hook event name, "eca", or "" for nothing
+		format string // a hook event name, or "" for nothing
 	}{
 		{"the operator's prompt in Claude Code", event(map[string]any{"session_id": "abc", "hook_event_name": "UserPromptSubmit",
 			"prompt": "Carry on"}), "UserPromptSubmit"},
@@ -199,11 +199,8 @@ func TestRemindSignResult(t *testing.T) {
 			"hook_event_name": "UserPromptSubmit", "prompt": waiter}), "UserPromptSubmit"},
 		{"the operator's prompt in Codex", event(map[string]any{"session_id": "abc", "turn_id": "t1",
 			"hook_event_name": "UserPromptSubmit", "prompt": "Carry on"}), "UserPromptSubmit"},
-		{"the operator's prompt in ECA", event(map[string]any{"hook_type": "preRequest", "chat_id": "abc", "prompt": "Carry on"}), "eca"},
 		{"a sub-agent's turn in Codex", event(map[string]any{"session_id": "abc", "agent_id": "a1",
 			"hook_event_name": "UserPromptSubmit", "prompt": "go"}), ""},
-		{"a sub-agent's chat in ECA", event(map[string]any{"hook_type": "preRequest", "chat_id": "abc",
-			"parent_chat_id": "p", "prompt": "go"}), ""},
 	} {
 		t.Run(c2.name, func(t *testing.T) {
 			c := testConfig(t)
@@ -220,7 +217,6 @@ func TestRemindSignResult(t *testing.T) {
 					Event   string `json:"hookEventName"`
 					Context string `json:"additionalContext"`
 				} `json:"hookSpecificOutput"`
-				Context string `json:"additionalContext"`
 			}
 			json.Unmarshal(out, &got)
 			switch c2.format {
@@ -229,10 +225,6 @@ func TestRemindSignResult(t *testing.T) {
 					t.Errorf("printed %s", out)
 				}
 				return
-			case "eca":
-				if got.Context != want {
-					t.Errorf("want ECA's additionalContext %q, got %s", want, out)
-				}
 			default:
 				if got.Specific.Event != c2.format || got.Specific.Context != want {
 					t.Errorf("want %s's additionalContext %q, got %s", c2.format, want, out)

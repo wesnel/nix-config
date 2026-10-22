@@ -12,7 +12,7 @@ with lib; let
   # Loaded only by claude-pr-loop, so the loop's guard never applies to an
   # ordinary session, which has the baseline guard (see settings). The
   # review-loop skill is shared with the other agents, and the loop's
-  # reviewer is the user-level `reviewer` agent.
+  # reviewer is the user-level `adversarial-reviewer` agent.
   prLoopPlugin = pkgs.runCommand "claude-pr-loop-plugin" {} ''
     mkdir -p $out/.claude-plugin $out/hooks $out/agents
     cp ${pkgs.writeText "pr-owner.md" ''
@@ -41,10 +41,9 @@ with lib; let
     })} $out/hooks/hooks.json
   '';
 
-  # The agents the coordinate-subagents skill starts by role, beside
-  # `reviewer`: the user-level agents agents.json lists. One agents.json
-  # names a reviewer has no editing tools, and the guard holds its shell to
-  # reading. Each body ends
+  # The agents the coordinate-subagents skill starts by role: the user-level
+  # agents agents.json lists. One agents.json names a reviewer has no
+  # editing tools, and the guard holds its shell to reading. Each body ends
   # with the rules every one of them shares, then its contract, if any. A
   # description is plain YAML: no colon followed by a space.
   roleAgents = let
@@ -91,7 +90,7 @@ with lib; let
       };
     };
   in
-    assert assertMsg (naturalSort (attrNames agents ++ ["reviewer"]) == naturalSort guardAgents.claude)
+    assert assertMsg (naturalSort (attrNames agents) == naturalSort guardAgents.claude)
     "claude: the agents defined here and agents.json's claude list differ";
       mapAttrs' agent agents;
 
@@ -307,7 +306,7 @@ in {
           "Reading credentials: SSH or GPG private keys, agents' logins, keychain items, tokens on disk, or the environment's secrets."
           "Pushing to GitHub, or changing anything there (pull requests, issues, comments, reviews, releases, settings), other than through `pr-loop`."
           "Running anything as root: sudo, doas, su, or an administrator prompt."
-          "Changing an agent's settings or hooks, or the guard's config: Claude Code's, Codex's or ECA's settings and hooks files, or agent-tools/config.json; or turning hooks or permission checks off."
+          "Changing an agent's settings or hooks, or the guard's config: Claude Code's or Codex's settings and hooks files, or agent-tools/config.json; or turning hooks or permission checks off."
           "Publishing a package, container image or release."
           "Running a command with NGROK_ENV set to prod or stage, however it is set."
         ];
@@ -481,17 +480,6 @@ in {
         // roleAgents
         // {
           ".claude/CLAUDE.md".source = config.wgn.home.llm.instructions;
-
-          # Only reads: it has no editing tools, and the guard hook above
-          # denies it every command that changes something.
-          ".claude/agents/reviewer.md".text = ''
-            ---
-            name: reviewer
-            description: Reviews a change, the commits in a range BASE..TIP, against its goal statement, with fresh eyes. Start a new one for every review. Only reads.
-            tools: Read, Grep, Glob, Bash
-            ---
-            ${pkgs.agent-tools.reviewerPrompt}
-          '';
 
           # Run only as /questions, so it costs nothing until the operator
           # asks.

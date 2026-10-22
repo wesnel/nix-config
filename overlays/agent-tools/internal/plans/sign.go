@@ -276,40 +276,28 @@ func delivery(p Plan, e Event, delivered bool, now time.Time) SignDelivery {
 
 // remindSigns is the line of each sign-pass result the session of a main
 // thread's prompt has not yet received: Claude Code's and Codex's
-// UserPromptSubmit, and ECA's preRequest.
+// UserPromptSubmit.
 func (c Config) remindSigns(input []byte, now time.Time) string {
 	var in struct {
-		Event        string `json:"hook_event_name"`
-		Type         string `json:"hook_type"`
-		SessionID    string `json:"session_id"`
-		AgentID      string `json:"agent_id"`
-		ChatID       string `json:"chat_id"`
-		ParentChatID string `json:"parent_chat_id"`
-		Cwd          string `json:"cwd"`
+		Event     string `json:"hook_event_name"`
+		SessionID string `json:"session_id"`
+		AgentID   string `json:"agent_id"`
+		Cwd       string `json:"cwd"`
 	}
-	if json.Unmarshal(input, &in) != nil {
-		return ""
-	}
-	session := in.SessionID
-	switch {
-	case in.Event == "UserPromptSubmit" && in.AgentID == "":
-	case in.Type == "preRequest" && in.ParentChatID == "":
-		session = in.ChatID
-	default:
+	if json.Unmarshal(input, &in) != nil || in.Event != "UserPromptSubmit" || in.AgentID != "" {
 		return ""
 	}
 	top, _ := checkout(in.Cwd)
 	var lines []string
-	for _, d := range c.DeliverSigns(session, top, now) {
+	for _, d := range c.DeliverSigns(in.SessionID, top, now) {
 		lines = append(lines, d.Line())
 	}
 	return strings.Join(lines, "\n")
 }
 
 // WithContext is the hook output out with text added to its
-// additionalContext, or a new output for input's event carrying text:
-// hookSpecificOutput for Claude Code's and Codex's events, which name
-// hook_event_name, and a bare additionalContext for ECA's.
+// additionalContext, or a new hookSpecificOutput for input's event carrying
+// text.
 func WithContext(out, input []byte, text string) []byte {
 	var event struct {
 		Name string `json:"hook_event_name"`
@@ -319,19 +307,15 @@ func WithContext(out, input []byte, text string) []byte {
 	if json.Unmarshal(out, &o) != nil {
 		o = map[string]any{}
 	}
-	target := o
-	if event.Name != "" {
-		specific, _ := o["hookSpecificOutput"].(map[string]any)
-		if specific == nil {
-			specific = map[string]any{"hookEventName": event.Name}
-			o["hookSpecificOutput"] = specific
-		}
-		target = specific
+	specific, _ := o["hookSpecificOutput"].(map[string]any)
+	if specific == nil {
+		specific = map[string]any{"hookEventName": event.Name}
+		o["hookSpecificOutput"] = specific
 	}
-	if before, _ := target["additionalContext"].(string); before != "" {
+	if before, _ := specific["additionalContext"].(string); before != "" {
 		text = before + "\n\n" + text
 	}
-	target["additionalContext"] = text
+	specific["additionalContext"] = text
 	data, _ := json.Marshal(o)
 	return data
 }
