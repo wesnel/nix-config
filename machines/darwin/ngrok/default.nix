@@ -73,7 +73,7 @@
             # files that are already bound and every forward fails; see
             # "replacing the devbox" in the README.
             content = ''
-              Host devbox devbox-*
+              Host devbox devbox-* !devbox-agent
                   HostName ${config.sops.placeholder.devbox-host}
                   User ${config.sops.placeholder.devbox-user}
                   ForwardAgent yes
@@ -84,10 +84,16 @@
 
               # Used only by the devbox-agent-forward launchd service to
               # maintain RemoteForward sockets independently of Mosh sessions.
+              # It must not share the devbox master, which is excluded above:
+              # ssh keeps the first value it finds for each option. A forward
+              # that cannot bind ends the connection, so the service starts
+              # it again instead of holding one without its forwards.
               Host devbox-agent
                   HostName ${config.sops.placeholder.devbox-host}
                   User ${config.sops.placeholder.devbox-user}
                   ControlMaster no
+                  ControlPath none
+                  ExitOnForwardFailure yes
                   ServerAliveInterval 30
                   ServerAliveCountMax 3
                   RemoteForward /run/user/1000/gnupg/S.gpg-agent ${homeDirectory}/.gnupg/S.gpg-agent.extra

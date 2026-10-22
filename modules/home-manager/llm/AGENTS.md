@@ -42,6 +42,14 @@ create, amend or rewrite commits.
   On Wesley's own pull requests, `pr-loop threads`, `reply` and `resolve` do
   this for review bots' threads.
 
+## Plans
+
+Every change has a plan, made with `agent-plan new` and kept true as the work
+changes. Log each step's start, completion and verification with
+`agent-plan log`, and never edit a plan's log; a watcher syncs plans between
+hosts, never you. If Wesley asks you to plan,
+write the plan and stop: no edits outside the plan's files, no commits. The `plan-work` skill has the format and the commands.
+
 ## Reviews
 
 Every session that commits a change runs the review pipeline in the
@@ -92,9 +100,11 @@ says what to do instead: do that.
 Anything that is Wesley's to run, such as a key touch, root or an interactive
 login, is handed over as one line to paste and run as it stands. Join the steps
 with `&&`, spell out paths rather than relying on the current directory, and
-keep it valid in fish. Where the harness runs a prompt line beginning with `!`
-as a shell command in the session, begin the line with `!`, so its output
-lands in the conversation.
+keep it valid in fish. In Claude Code's and Codex's terminal interfaces, which
+run a prompt line beginning with `!` as a shell command in the session, begin
+the line with `!` so its output lands in the conversation; ECA and Claude Code
+through agent-shell do not, so there the line is plain, for `M-!` or a Ghostel
+terminal.
 
 ## Documentation and comments
 

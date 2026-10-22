@@ -34,8 +34,10 @@ signing to one pass at the end, which Wesley runs.
   ```
 
   The base is the default branch, or with `--base` the branch of an open
-  pull request of Wesley's that this one stacks on. It refuses a branch
-  GitHub already has; later commits reach GitHub through the signing pass.
+  pull request of Wesley's that this one stacks on, whose GitHub stack open
+  adds it to; when it cannot, `unstacked` in its output says why and which
+  `pr-loop link` stacks it later. It refuses a branch GitHub already has;
+  later commits reach GitHub through the signing pass.
 - Never create tags; they are signed as well.
 - If a command fails with `gpg failed to sign the data`, `failed to write
   commit object` or `agent refused operation`, or hangs, the flag was

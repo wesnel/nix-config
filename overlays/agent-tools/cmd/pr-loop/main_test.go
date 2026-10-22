@@ -58,6 +58,8 @@ func TestRelayRefusal(t *testing.T) {
 		{"status", "12"},
 		{"open", "--title", "T", "--body-file", "-", "--base", "parent", "x"},
 		{"setup-command"},
+		{"stack", "12"},
+		{"link", "12", "13"},
 	} {
 		if reason := relayRefusal(argv); reason != "" {
 			t.Errorf("%v was refused: %s", argv, reason)

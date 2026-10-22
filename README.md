@@ -102,7 +102,7 @@ Enabling any of those modules enables `wgn.home.llm`, which provides:
   directory. A skill marked `sandbox = true` is also carried into sandboxed
   sessions; the rest drive something on this machine, such as Emacs.
 - **`agent-tools`** on `PATH`: `git sign-pass`, `git red-check`,
-  `git fresh-review`, `pr-loop` and `sandbox-relay`, built from
+  `git fresh-review`, `pr-loop`, `sandbox-relay` and `agent-plan`, built from
   `overlays/agent-tools`. `wgn.home.git` uses
   its `git-push-guard` as well.
 
@@ -113,7 +113,7 @@ next switch.
 
 | File | Keys set on every switch |
 | --- | --- |
-| `~/.claude/settings.json` | `wgn.home.claude.settings`: attribution off, and the ngrok and reviewer hooks (a hook list here replaces the file's own) |
+| `~/.claude/settings.json` | `wgn.home.claude.settings`: attribution off, the ngrok and reviewer hooks, and the plan hook on session resume or compaction (a hook list here replaces the file's own) |
 | `~/.claude.json` | `mcpServers` entries for the MCP proxy |
 | `~/.codex/config.toml` | `[mcp_servers.*]` tables for the MCP proxy |
 | `~/.config/eca/config.json` | `mcpServers` entries for the MCP proxy |
@@ -128,9 +128,13 @@ an agent runs `pr-loop open`, which pushes the unsigned commits through the
 GitHub API with your `gh` login and opens a draft. It refuses a default
 branch, a branch GitHub already has, and any base but the default branch or
 the head of another open pull request of yours in the same repository, runs
-`git-push-guard`'s check, and points the branch's upstream at its copy on
-GitHub. When the work is done, see what will be signed and sign it, in a
-terminal of your own:
+`git-push-guard`'s check, points the branch's upstream at its copy on
+GitHub, and puts a pull request based on another into that one's GitHub
+stack.
+`pr-loop link BOTTOM ... TOP` stacks pull requests whose bases already
+chain, such as those opened after a signed push, and `pr-loop stack PR`
+shows GitHub's stack beside the chain of bases. When the work is done, see
+what will be signed and sign it, in a terminal of your own:
 
 ``` sh
 git log --format='%h %G? %s' origin/main..HEAD   # N marks an unsigned commit
@@ -177,17 +181,23 @@ git fresh-review --goal goal.md --items threads.md --prior round1.json origin/ma
 ```
 
 The reviewer is Codex, a model family other than the author's, run as
-`codex exec -s read-only --ephemeral` in a throwaway worktree of the range's
-tip under `.git/fresh-review/`, removed however the review ends. Codex's
-sandbox cannot start inside another macOS sandbox. Its contract is
-`overlays/agent-tools/internal/review/reviewer.md`, the same text the
-`reviewer` agent of Claude Code and ECA loads, and its reply must fit
-`findings.schema.json` beside it. Findings that point at no line at the tip
-are dropped with the reason. It prints JSON and exits 0 with no findings, 3
-with findings, and 4 when Codex cannot review: not installed, not signed in,
-called from inside Codex, or in a review-loop session, where `pr-loop` must
-stay the only way out. `--print-prompt` prints the prompt instead of
-running the review. See `git fresh-review -h`.
+`codex exec --ignore-user-config --ephemeral` in a throwaway worktree of the
+range's tip under `.git/fresh-review/`, removed however the review ends.
+None of your Codex configuration loads, so no MCP server or plugin; web
+search and the image viewer are off; and a permissions profile lets its
+commands read only the worktree, the parts of the git directory git needs,
+the codex executable, the Nix store and the system files they need, with no
+writes and no network. Codex's sandbox cannot start inside another macOS
+sandbox; `git fresh-review` checks that it starts, confined, before the
+review. Its contract is `overlays/agent-tools/internal/review/reviewer.md`,
+the same text the `reviewer` agent of Claude Code and ECA loads, and its
+reply must fit `findings.schema.json` beside it. Findings that point at no
+line at the tip are dropped with the reason. It prints JSON and exits 0 with
+no findings, 3 with findings, and 4 when Codex cannot review: not installed,
+not signed in, its sandbox cannot start, called from inside Codex, or in a
+review-loop session, where `pr-loop` must stay the only way out.
+`--print-prompt` prints the prompt instead of running the review. See
+`git fresh-review -h`.
 
 Where the repository has test settings, `git red-check` on the range runs
 first and its result goes in the prompt.
@@ -219,6 +229,51 @@ Settings missing from the flags come from `test`, `build` and `testFiles` in
 `wgn.home.llm.repos`, keyed by `owner/name`, never from the repository. The
 test command runs the commit's code, so run it in a sandbox when the commit
 is not trusted.
+
+## plans: one file per change, one log
+
+Agents keep each change's plan with `agent-plan`, as the `plan-work` skill
+says, as files side by side in `wgn.home.llm.plans.dir`
+(`~/git/notes/agents`): `<date>-<slug>.<host>.org`, a
+`<date>-<slug>.<host>.<part>.org` per sub-agent's part, and
+`<date>-<slug>.<host>.log.org`, the append-only record of each item's
+progress and review outcomes. The logs' lock files stay out of git
+through the directory's `.gitignore`, which `agent-plan` writes if it is
+missing.
+
+``` sh
+agent-plan find --branch BRANCH          # plans for a branch on this host
+agent-plan status PLAN                   # what is done, verified and left, as Org
+agent-plan questions PLAN --all          # open questions, each with its recommendation
+```
+
+Ask an agent only to plan, and it writes the plan and stops.
+
+`~/git/notes` is a clone of the private `wesnel/notes`, which activation
+clones where it is missing. A few seconds after a plan changes, a watcher (a
+launchd agent on macOS, a systemd path unit on Linux) runs `agent-plan
+sync`: it commits this host's plan files by name, unsigned, as "Sync plans
+from HOST", rebases onto the remote with any other edits stashed and put
+back, and pushes. Its log is `/tmp/agent-plan-sync.log` on macOS and
+`journalctl --user -u agent-plan-sync` on Linux. Agents never sync: the
+guard denies `agent-plan sync`, and `agent-plan reseal PLAN`, which accepts
+a log edited by hand.
+
+git reaches the repository as `git@github-notes:wesnel/notes.git` through
+its own ssh config, `~/.config/agent-tools/notes-ssh-config`, whose only key
+is a deploy key installed from the `notes-deploy-key` secret at
+`~/.ssh/id_notes_deploy`. Until `secrets/wgn.yaml` holds that secret, the
+secret is not declared and activation says the key is missing. To set it
+up once:
+
+``` sh
+gh repo create wesnel/notes --private
+d=$(mktemp -d)
+ssh-keygen -q -t ed25519 -N '' -C notes-deploy -f "$d/key"
+gh repo deploy-key add "$d/key.pub" --repo wesnel/notes --title agent-plan-sync --allow-write
+sops set secrets/wgn.yaml '["notes-deploy-key"]' "$(jq -Rs . < "$d/key")"
+trash "$d"
+```
 
 ## pushing: private history stays private
 
@@ -271,7 +326,9 @@ Then, in the repository, start one of:
 - `M-x wgn/eca-pr-loop`, then choose the `pr-coordinator` agent.
 
 Each runs the agent's commands in a sandbox without credentials, beside a
-`sandbox-relay` that runs `pr-loop` on this machine with your `gh` login. The
+`sandbox-relay` that runs `pr-loop` on this machine with your `gh` login, and
+`claude-pr-loop` and `codex-pr-loop` also `agent-plan`'s reading commands and
+`log`, the session's only way to its plan. The
 `review-loop` skill refuses to start anywhere else. On Linux, Claude Code's
 sandbox needs `bubblewrap` and `socat` on `PATH`.
 
@@ -356,11 +413,13 @@ It denies what is yours to do: pushing (hand over `git sign-pass --push`,
 or open a draft with `pr-loop open`), merging, closing, marking ready,
 reviews and top-level comments, GitHub settings, gh's login and token, git
 credential and transport settings, remote rewrites, settings every worktree
-shares, discarding the main checkout's work, deleting unpushed history,
+shares, discarding the main checkout's work, dropping or clearing the stash
+every worktree shares, deleting unpushed history,
 reading credentials or the whole environment, ngrok API writes, switching
 the system, root, publishing packages, killing Emacs, gpg-agent, ssh,
 nix-daemon or mcp-proxy, destroying the home directory, the Nix store or
-your keys, and switching its own hooks off. A write through a claude.ai
+your keys, switching its own hooks off, and writing a plan's log other than
+with `agent-plan log`. A write through a claude.ai
 connector asks you first in Claude Code, and is denied in Codex. Each
 refusal says what to do instead. An agent with a loop role (`pr-owner`,
 `reviewer`, ECA's `pr-coordinator`) has that role's rules in any session.

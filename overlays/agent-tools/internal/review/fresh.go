@@ -35,11 +35,14 @@ CI checks, earlier findings and how each was settled), and the earlier
 findings of this review.
 
 By default Codex reviews, as a model family other than the author's:
-codex exec -s read-only --ephemeral, in a throwaway worktree of TIP under
-the git directory's fresh-review/, removed on every exit. Codex's sandbox
-cannot start inside another macOS sandbox, so run this outside one. Where the
-repository has test settings, git red-check BASE..TIP runs first and its JSON
-goes in the prompt.
+codex exec --ignore-user-config --ephemeral, in a throwaway worktree of TIP
+under the git directory's fresh-review/, removed on every exit. Its commands
+may read only that worktree, the parts of the git directory git needs, the
+Nix store and the system files they need to run; they may not write or
+reach the network, and no MCP server, plugin, web search or image viewer
+loads. Codex's sandbox cannot start inside another macOS sandbox, so run
+this outside one. Where the repository has test settings, git red-check
+BASE..TIP runs first and its JSON goes in the prompt.
 
   --goal FILE       the goal statement (required)
   --items FILE      the items the change answers, and how each was settled
@@ -57,9 +60,10 @@ that do not fit the schema, each with its reason) and unverified. Exit
 status:
   0  no findings
   3  findings
-  4  Codex cannot review here: it is not installed or not signed in, this
-     is a review-loop session (PR_LOOP_SESSION or SANDBOX_RELAYED is set),
-     or, with --reviewer auto, the caller is Codex (CODEX_SANDBOX is set)
+  4  Codex cannot review here: it is not installed or not signed in, its
+     sandbox cannot start confined to the worktree, this is a review-loop
+     session (PR_LOOP_SESSION or SANDBOX_RELAYED is set), or, with
+     --reviewer auto, the caller is Codex (CODEX_SANDBOX is set)
   1  the review could not run; 2 a usage error or refusal
 `
 
@@ -127,11 +131,14 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		}
 	}
 
+	noCodex := func(why string) int {
+		fmt.Fprintf(stderr, "%s: Codex cannot review here: %s. Run `git fresh-review` where Codex's sandbox can start "+
+			"(outside any sandbox and review-loop session); `--print-prompt` prints the contract.\n", name, why)
+		return 4
+	}
 	if !*printPrompt {
 		if why := unavailable(*reviewer == "auto"); why != "" {
-			fmt.Fprintf(stderr, "%s: Codex cannot review here: %s. Run `git fresh-review` where Codex's sandbox can start "+
-				"(outside any sandbox and review-loop session); `--print-prompt` prints the contract.\n", name, why)
-			return 4
+			return noCodex(why)
 		}
 	}
 	if !*noRedCheck {
@@ -146,6 +153,10 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	}
 
 	out, err := codexReview(ctx, in, *model, time.Duration(*timeout)*time.Second, stderr)
+	var unconfined errUnconfined
+	if errors.As(err, &unconfined) {
+		return noCodex(string(unconfined))
+	}
 	if err != nil {
 		return report(nil, err, 0)
 	}
@@ -297,16 +308,46 @@ func codexReview(ctx context.Context, in inputs, model string, timeout time.Dura
 	}
 	in.where = "The working directory is a checkout of TIP holding nothing but the commits; `git diff " +
 		in.r.base + " " + in.r.tip + "` shows the change."
+	admin, err := git.Run("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
+	if err != nil {
+		return nil, err
+	}
+	// Codex runs helpers in its sandbox by executing itself, from the path
+	// it was started by, so start it by a path the sandbox lets it read.
+	codex, err := exec.LookPath("codex")
+	if err == nil {
+		codex, err = filepath.EvalSymlinks(codex)
+	}
+	if err != nil {
+		return nil, err
+	}
+	confined, err := confinement(in.r.common, admin, codex)
+	if err != nil {
+		return nil, err
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	args := []string{"exec", "-s", "read-only", "--ephemeral", "-C", wt, "--output-schema", schema, "-o", reply}
+	// Codex's sandbox does not start inside another macOS sandbox; Codex
+	// must then not review at all, rather than run its commands unconfined.
+	env := append(gitenv.Without(os.Environ()), "PATH="+realDirs(os.Getenv("PATH")))
+	probe := exec.CommandContext(ctx, codex, append(append([]string{"sandbox"}, confined...),
+		"-P", profile, "-C", wt, "--", "git", "rev-parse", "--verify", "HEAD")...)
+	probe.Env = env
+	var probeErr bytes.Buffer
+	probe.Stderr = &probeErr
+	if out, err := probe.Output(); err != nil || strings.TrimSpace(string(out)) != in.r.tip {
+		return nil, errUnconfined(fmt.Sprintf("Codex's sandbox, confined to the worktree, could not run git there (%v: %s)",
+			err, strings.TrimSpace(probeErr.String())))
+	}
+	args := append([]string{"exec", "--ignore-user-config", "--ignore-rules", "--ephemeral", "-C", wt,
+		"--output-schema", schema, "-o", reply}, confined...)
 	if model != "" {
 		args = append(args, "-m", model)
 	}
-	cmd := exec.CommandContext(ctx, "codex", append(args, "-")...)
+	cmd := exec.CommandContext(ctx, codex, append(args, "-")...)
 	cmd.Dir = wt
-	cmd.Env = gitenv.Without(os.Environ())
+	cmd.Env = env
 	cmd.Stdin = strings.NewReader(prompt(in))
 	banner := &bannerModel{w: log}
 	cmd.Stdout, cmd.Stderr = log, banner
@@ -335,6 +376,85 @@ func codexReview(ctx context.Context, in inputs, model string, timeout time.Dura
 	}
 	return out, nil
 }
+
+// errUnconfined says why Codex cannot review confined.
+type errUnconfined string
+
+func (e errUnconfined) Error() string { return string(e) }
+
+// profile names the Codex permissions profile confinement defines.
+const profile = "fresh-review"
+
+// confinement is the Codex configuration a review runs with: commands may
+// read the worktree (Codex's workspace root), what macOS or Linux needs to
+// run them (":minimal"), the Nix store, the codex executable and the parts
+// of the git directory git needs to show the change, and nothing else; they
+// may not write or reach the network. The user's configuration stays out
+// with --ignore-user-config, so no MCP server or plugin of theirs loads, and
+// the tools that read or reach out outside the sandbox are disabled.
+func confinement(common, admin, codex string) ([]string, error) {
+	var fs strings.Builder
+	fs.WriteString(`{":minimal"="read", ":workspace_roots"={"."="read"}`)
+	add := func(path, access string) error {
+		if strings.ContainsFunc(path, func(c rune) bool { return c < 0x20 || c == 0x7f }) {
+			return fmt.Errorf("%q has a control character, which Codex's configuration cannot hold", path)
+		}
+		fmt.Fprintf(&fs, `, "%s"="%s"`, tomlEscape.Replace(path), access)
+		return nil
+	}
+	reads := []string{"/nix/store", codex, admin}
+	for _, p := range []string{"HEAD", "config", "objects", "refs", "packed-refs", "info", "shallow"} {
+		reads = append(reads, filepath.Join(common, p))
+	}
+	// Temporary directories hold other programs' files, which :minimal
+	// would let Codex read and write; a read granted above, inside one,
+	// still holds, as the more specific rule.
+	denies := []string{"/tmp", "/private/tmp", "/private/var/folders", filepath.Clean(os.TempDir())}
+	for _, p := range reads {
+		if err := add(p, "read"); err != nil {
+			return nil, err
+		}
+	}
+	for _, p := range denies {
+		if err := add(p, "deny"); err != nil {
+			return nil, err
+		}
+	}
+	fs.WriteString("}")
+	args := []string{
+		"-c", `default_permissions="` + profile + `"`,
+		"-c", "permissions." + profile + ".filesystem=" + fs.String(),
+		"-c", `shell_environment_policy.inherit="core"`,
+		// Git cannot read the user's configuration in the sandbox, and
+		// stops if told to.
+		"-c", `shell_environment_policy.set={GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1"}`,
+		"-c", `web_search="disabled"`,
+	}
+	// Each must be a feature `codex features list` knows, or Codex refuses
+	// to start.
+	for _, feature := range []string{"apps", "browser_use", "browser_use_external", "computer_use", "hooks",
+		"image_generation", "in_app_browser", "memories", "multi_agent", "plugins", "remote_plugin",
+		"skill_mcp_dependency_install", "tool_suggest", "view_image"} {
+		args = append(args, "--disable", feature)
+	}
+	return args, nil
+}
+
+// realDirs resolves the symbolic links in each directory of a PATH. Codex
+// grants its sandbox the real paths of what it may read, so it cannot follow
+// a link such as nix-darwin's /run, and Codex takes its shell from PATH.
+func realDirs(path string) string {
+	dirs := filepath.SplitList(path)
+	for i, dir := range dirs {
+		if real, err := filepath.EvalSymlinks(dir); err == nil {
+			dirs[i] = real
+		}
+	}
+	return strings.Join(dirs, string(os.PathListSeparator))
+}
+
+// tomlEscape escapes text for the inside of a TOML basic string.
+var tomlEscape = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
 
 // bannerModel passes Codex's stderr on and picks out the model it names in
 // the banner it prints before the prompt, the only place `codex exec` says

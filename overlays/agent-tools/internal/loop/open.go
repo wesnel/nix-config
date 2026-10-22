@@ -257,6 +257,10 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 	if !pr.IsDraft {
 		return nil, refuse("GitHub opened #%d (%s) ready for review although a draft was asked for; tell Wesley", pr.Number, pr.URL)
 	}
-	return map[string]any{"pr": pr.Number, "url": pr.URL, "draft": pr.IsDraft, "branch": branch, "base": base,
-		"head": local, "apiCalls": calls + 2}, nil
+	result := map[string]any{"pr": pr.Number, "url": pr.URL, "draft": pr.IsDraft, "branch": branch, "base": base,
+		"head": local, "apiCalls": calls + 2}
+	for k, v := range stackOpened(repo, branch, base, pr.Number) {
+		result[k] = v
+	}
+	return result, nil
 }

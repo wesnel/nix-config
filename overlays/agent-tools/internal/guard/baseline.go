@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/plans"
 )
 
 // The rules every session is held to beyond GitHub: what would lose
@@ -20,6 +21,7 @@ import (
 const (
 	mainCheckout = "This discards work in the repository's main checkout, which holds Wesley's work in progress. Do it in a worktree of your own (`git worktree add`), or ask Wesley."
 	historyLoss  = "This deletes history git cannot get back, which is Wesley's call. Leave it, and put the command in your report for Wesley."
+	sharedStash  = "Every worktree of a repository shares one stash, so this can discard another worktree's stashed work. Leave the stash as it is, and put the command in your report for Wesley."
 	sharedConfig = "This setting is shared by every worktree and changes how git runs for Wesley too. Put the `git config` command in your report for Wesley; a worktree's own setting takes `git config --worktree`."
 	secretRead   = "This reads a credential, which stays out of the session. Use the tool that holds it (`gh`, `pr-loop`, `git`), or ask Wesley for what you need from it."
 	ngrokWrite   = "ngrok API writes reach production. Use a list or get command, or hand Wesley the command."
@@ -196,6 +198,12 @@ func checkSession(c call, dir string) string {
 		if guardFile(expandPath(target, dir)) {
 			return guardOff
 		}
+		if planLog(expandPath(target, dir)) {
+			return appendOnly
+		}
+	}
+	if reason := checkPlanLogWrite(name, args, dir); reason != "" {
+		return reason
 	}
 	has := func(flags ...string) bool {
 		for _, a := range args {
@@ -647,6 +655,71 @@ func checkSecretPath(word, dir string) string {
 	return ""
 }
 
+const appendOnly = "This is a plan's event log, which is append-only and written by agent-plan alone. Record the event with `agent-plan log PLAN --item ID --kind KIND`, and change the plan itself in its plan file."
+
+// planLog reports whether path is a plan's log, or the lock file that
+// records its state, in the plans directory agent-plan's config names. A
+// relative path counts, since where it is cannot be told.
+func planLog(path string) bool {
+	if !plans.IsLog(filepath.Base(path)) {
+		return false
+	}
+	if !filepath.IsAbs(path) {
+		return true
+	}
+	dir := filepath.Join(home, "git", "notes", "agents")
+	if c, err := plans.Load(); err == nil {
+		dir = c.Dir
+	}
+	if filepath.Dir(path) == filepath.Clean(dir) {
+		return true
+	}
+	realDir, err1 := filepath.EvalSymlinks(dir)
+	parent, err2 := filepath.EvalSymlinks(filepath.Dir(path))
+	return err1 == nil && err2 == nil && parent == realDir
+}
+
+// checkPlanLogWrite denies a command that writes, moves or removes a plan's
+// log.
+func checkPlanLogWrite(name string, args []string, dir string) string {
+	var positional, targets []string
+	inPlace := false
+	for _, a := range args {
+		switch {
+		case !strings.HasPrefix(a, "-"):
+			positional = append(positional, a)
+		case a == "--in-place" || strings.HasPrefix(a, "--in-place="),
+			name == "sed" && strings.HasPrefix(a, "-i"),
+			name == "perl" && !strings.HasPrefix(a, "--") && strings.Contains(a, "i"):
+			inPlace = true
+		}
+	}
+	switch name {
+	case "tee", "mv", "rm", "unlink", "trash", "truncate", "shred":
+		targets = positional
+	case "cp", "install", "ln":
+		if len(positional) > 0 {
+			targets = positional[len(positional)-1:]
+		}
+	case "dd":
+		for _, a := range args {
+			if of, ok := strings.CutPrefix(a, "of="); ok {
+				targets = append(targets, of)
+			}
+		}
+	case "sed", "perl":
+		if inPlace {
+			targets = positional
+		}
+	}
+	for _, t := range targets {
+		if planLog(expandPath(t, dir)) {
+			return appendOnly
+		}
+	}
+	return ""
+}
+
 var redirect = regexp.MustCompile(`^[0-9&]?>>?\|?`)
 
 // redirections are the files a command's output redirections write.
@@ -667,14 +740,20 @@ func redirections(words []string) []string {
 }
 
 // checkFileTool checks a call to a file-editing tool: Claude Code's Edit,
-// Write, MultiEdit and NotebookEdit, and Codex's apply_patch.
+// Write, MultiEdit and NotebookEdit, Codex's apply_patch, and ECA's
+// write_file, edit_file and move_file.
 func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 	var in struct {
 		FilePath     string `json:"file_path"`
 		NotebookPath string `json:"notebook_path"`
+		Path         string `json:"path"`
+		Source       string `json:"source"`
+		Destination  string `json:"destination"`
 		Content      string `json:"content"`
 		OldString    string `json:"old_string"`
 		NewString    string `json:"new_string"`
+		OldContent   string `json:"original_content"`
+		NewContent   string `json:"new_content"`
 		NewSource    string `json:"new_source"`
 		Command      string `json:"command"`
 		Edits        []struct {
@@ -706,16 +785,24 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 		}
 		flush()
 	} else {
-		text := in.Content + in.OldString + in.NewString + in.NewSource
+		text := in.Content + in.OldString + in.NewString + in.OldContent + in.NewContent + in.NewSource
 		for _, e := range in.Edits {
 			text += e.OldString + e.NewString
 		}
-		changes = append(changes, change{in.FilePath + in.NotebookPath, text})
+		changes = append(changes, change{in.FilePath + in.NotebookPath + in.Path, text})
+		for _, p := range []string{in.Source, in.Destination} {
+			if p != "" {
+				changes = append(changes, change{p, ""})
+			}
+		}
 	}
 	for _, c := range changes {
 		path := expandPath(c.path, dir)
 		if reason := checkSecretPath(path, dir); reason != "" {
 			return reason
+		}
+		if planLog(path) {
+			return appendOnly
 		}
 		switch {
 		case filepath.Base(path) == "config" && filepath.Base(filepath.Dir(path)) == ".git":
@@ -810,12 +897,14 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 		first = rest[0]
 	}
 	switch {
+	case sub == "stash" && (first == "drop" || first == "clear"):
+		return sharedStash
 	case sub == "reset" && has("--hard"),
 		sub == "checkout" && (has("-f", "--force") || everything()),
 		sub == "restore" && everything() && (!has("--staged", "-S") || has("--worktree", "-W")),
 		sub == "switch" && has("-f", "--force", "--discard-changes"),
 		sub == "clean" && (short("f") || has("--force")),
-		sub == "stash" && (first == "drop" || first == "clear" || has("-u", "--include-untracked", "-a", "--all")):
+		sub == "stash" && has("-u", "--include-untracked", "-a", "--all"):
 		if g.main() {
 			return mainCheckout
 		}
