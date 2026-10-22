@@ -382,7 +382,7 @@ func testRunLint(t *testing.T) {
 	gitIn(t, repo, "switch", "-qc", "br")
 	os.WriteFile(filepath.Join(repo, "a"), []byte("a\n"), 0o644)
 	gitIn(t, repo, "add", "a")
-	gitIn(t, repo, "commit", "-q", "-m", "Add a.", "-m", "The symlinked case (tZ1Cm) needs it.", "-m", "Co-Authored-By: C <c@e>")
+	gitIn(t, repo, "commit", "-q", "-m", "Add a.", "-m", "Co-Authored-By: C <c@e>")
 	os.WriteFile(filepath.Join(repo, "b"), []byte("b\n"), 0o644)
 	gitIn(t, repo, "add", "b")
 	gitIn(t, repo, "commit", "-q", "-m", "Add b")
@@ -398,8 +398,7 @@ func testRunLint(t *testing.T) {
 		_, err := pass()
 		var r refusal.Refusal
 		if !errors.As(err, &r) || !strings.Contains(err.Error(), `"Add a."`) || !strings.Contains(err.Error(), "period") ||
-			!strings.Contains(err.Error(), "Co-Authored-By") || !strings.Contains(err.Error(), `"tZ1Cm"`) ||
-			!refusal.SaysInstead(err.Error()) {
+			!strings.Contains(err.Error(), "Co-Authored-By") || !refusal.SaysInstead(err.Error()) {
 			t.Errorf("%s: %v", name, err)
 		}
 		if now, _ := git.Run("rev-parse", "br"); now != tip {

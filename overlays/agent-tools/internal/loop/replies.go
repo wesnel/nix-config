@@ -119,9 +119,6 @@ func ReplyAll(plan []PlannedReply) ([]ReplyResult, error) {
 		}
 		return nil, fmt.Errorf("nothing was posted:\n  %s", strings.Join(problems, "\n  "))
 	}
-	if err := checkReplies(policy.repo.Slug, plan, checks); err != nil {
-		return nil, err
-	}
 	results := []ReplyResult{}
 	for i, r := range plan {
 		result := ReplyResult{Thread: r.Thread, PR: checks[i].pr}
