@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/gh"
+	"github.com/wesnel/agent-tools/internal/prreview"
 )
 
 // cacheFor is how long a fetch from GitHub serves before the next: one
@@ -68,10 +69,29 @@ type GitHub struct {
 	RequestsTotal int       `json:"requestsTotal"`
 }
 
-// GitHubAt is the result cached in cache, a file only GitHubAt writes,
-// while under cacheFor old at now, else a fresh one, cached; or, where the
-// fetch fails, the cached one, stale.
+// GitHubAt is github's result through cache, a file only github writes, as
+// at now, each request with its Record.
 func GitHubAt(ctx context.Context, cache string, now time.Time) (*GitHub, bool, error) {
+	g, stale, err := github(ctx, cache, now)
+	if g != nil {
+		root := prreview.Root()
+		for i := range g.Requests {
+			r := &g.Requests[i]
+			r.Record = "unknown"
+			if file, err := prreview.RecordFile(root, r.Repo, r.Number, r.Head); err == nil {
+				r.Record = "no"
+				if _, err := os.Stat(file); err == nil {
+					r.Record = "yes"
+				}
+			}
+		}
+	}
+	return g, stale, err
+}
+
+// github is the cached result while under cacheFor old, else a fresh one,
+// cached; or, where the fetch fails, the cached one, stale.
+func github(ctx context.Context, cache string, now time.Time) (*GitHub, bool, error) {
 	var cached *GitHub
 	if data, err := os.ReadFile(cache); err == nil {
 		var g GitHub
