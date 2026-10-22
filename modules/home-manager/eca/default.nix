@@ -36,6 +36,7 @@ with lib; let
   # the guard's policy.json, with examples, not here.
   loopDenied = pkgs.agent-tools.ecaDenied.coordinator;
   ownerDenied = pkgs.agent-tools.ecaDenied.owner;
+  reviewerDenied = pkgs.agent-tools.ecaDenied.reviewer;
 
   # ECA rejects a command matching a deny pattern with no reason of ours,
   # and the patterns match a phrase anywhere in the command, so the agents
@@ -54,11 +55,16 @@ with lib; let
 
   # ECA's git tool runs any git or gh command line and takes no argument
   # patterns, so it is hidden and the shell, which does, is used instead.
-  loopFrontmatter = denied:
+  # ECA anchors each entry as a regex against a built-in tool's bare name
+  # and against any tool's `server__tool`.
+  loopFrontmatter = disabled: denied:
     concatStringsSep "\n" ([
         "disabledTools:"
         "  - git"
         "  - '(?i).*linear.*__(?!(get|list|search|fetch|read|query)).*'"
+      ]
+      ++ map (t: "  - '${t}'") disabled
+      ++ [
         "tools:"
         "  deny:"
       ]
@@ -73,7 +79,7 @@ in {
 
       description = ''
         Offers the bot review loop: the `pr-coordinator` agent and its
-        `pr-owner` sub-agent, and, where the emacs-config sandbox is in use,
+        `pr-owner` and `pr-reviewer` sub-agents, and, where the emacs-config sandbox is in use,
         `M-x wgn/eca-pr-loop` to start a sandboxed session with
         `sandbox-relay serve` beside it, so the loop reaches GitHub through
         `pr-loop` without the sandbox holding a credential. Ordinary sessions
@@ -142,11 +148,12 @@ in {
             mode: primary
             inherit: code
             description: Runs the bot review loop over a stack of open pull requests, delegating each PR to a pr-owner.
-            ${loopFrontmatter loopDenied}
+            ${loopFrontmatter [] loopDenied}
             ---
             You coordinate the bot review loop. Load the `review-loop` skill
             before doing anything else, and follow it. Spawn one `pr-owner`
-            per pull request for the work on its code.
+            per pull request for the work on its code, and a `pr-reviewer`
+            for each review of its fixups.
 
             ${deniedPhrases}
           '';
@@ -160,9 +167,22 @@ in {
             spawnableBy: pr-coordinator
             description: Owns one pull request of a stack during the bot review loop. Triages its bot threads and CI failures, fixes and restacks it in its own worktree, and answers questions about its code.
             maxSteps: 150
-            ${loopFrontmatter ownerDenied}
+            ${loopFrontmatter [] ownerDenied}
             ---
             ${builtins.readFile ../llm/pr-loop/pr-owner.md}
+            ${deniedPhrases}
+          '';
+
+          "eca/agents/pr-reviewer.md".text = ''
+            ---
+            mode: subagent
+            inherit: code
+            spawnableBy: pr-coordinator
+            description: Reviews one pull request's new fixups in the bot review loop before they are pushed, against the bot threads they answer, for regressions and against the PR's scope. Only reads.
+            maxSteps: 100
+            ${loopFrontmatter ["write_file" "edit_file" "move_file" "spawn_agent"] reviewerDenied}
+            ---
+            ${builtins.readFile ../llm/pr-loop/pr-reviewer.md}
             ${deniedPhrases}
           '';
         };

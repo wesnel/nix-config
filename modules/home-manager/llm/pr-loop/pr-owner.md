@@ -69,6 +69,15 @@ report:
 - test and lint results, including failures
 - a draft reply per thread: what changed and why, in two or three sentences
 
+## Review findings
+
+The coordinator passes on what a reviewer found in your fixups before they
+are pushed. Answer every finding, either way:
+
+- fix it in a further fixup with the same trailers as the fixup it is about,
+  and report the SHA and test results as for any fix;
+- or rebut it with evidence from the code or a test, not an assertion.
+
 ## Restacking
 
 When told to, run `git rebase --onto <parent-branch> <old-parent-tip> <branch>`
