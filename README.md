@@ -92,7 +92,7 @@ Enabling any of those modules enables `wgn.home.llm`, which provides:
 - **Skills.** `wgn.home.llm.skills` are linked into each agent's skill
   directory.
 - **`agent-tools`** on `PATH`: `git sign-pass`, `git red-check`,
-  `git fresh-review`, `pr-loop` and `agent-plan`, built from
+  `git delegate`, `pr-loop` and `agent-plan`, built from
   `overlays/agent-tools`. `wgn.home.git` uses
   its `git-push-guard` as well.
 
@@ -186,10 +186,12 @@ redirection, `cd` or command substitution:
 
 - `gh-read`, a `gh` that runs only pull request, workflow run and
   repository reads, and refuses `--web`, which opens a browser.
-- `git fresh-review`, whose Codex sandbox cannot start inside this one.
+- `git delegate`, whose Codex sandbox cannot start inside this one, which
+  fetches pull requests with your login and writes the review records the
+  sandbox denies. Every one of its subcommands is one an agent may run.
 - `pr-loop`'s GitHub commands (`open`, `stack`, `link`, `push`, `threads`,
-  `reply`, `resolve`, `request`, `status`, `ci`, `logs`, `wait`, `review`,
-  `end`).
+  `reply`, `resolve`, `draft`, `post`, `request`, `status`, `ci`, `logs`,
+  `wait`, `sign-check`, `end`).
 - `agent-plan`'s writes (`new`, `log`, `ask`, `decide`, `followup`,
   `reference`, `postpone`, `set`, `own`, `sign-id`, `sign-result`, `step`,
   `part`, `edit`, `after`, `section`): the sandbox denies the plans
@@ -208,72 +210,87 @@ Every agent session that commits a change runs the `review-change` skill's
 pipeline unless you opt out for the task: a plan, a design review of it, the
 work, a fresh review loop of up to three rounds, and a design review of the
 result. The everyday general review is Claude Code's `/code-review`, given
-the range's base; `git fresh-review` is the second opinion, from Codex, and
+the range's base; `git delegate` is the second opinion, from Codex, and
 runs each focused review the change needs. A coordinator reviews each part
 with an `adversarial-reviewer` sub-agent instead. Two commands give the
 reviews evidence an agent cannot talk its way around.
 
-### `git fresh-review`
+### `git delegate`
 
-Reviews a range with a reviewer that did not write it and sees only the
-commits and the files it is handed: a goal statement (the goal, and what is
-not the change's job), optionally the items the change answers and earlier
-rounds' findings:
+Reviews a range, or someone else's pull request, with reviewers that did
+not write it and see only the commits and what they are handed: a goal
+statement (the goal, and what is not the change's job) and optionally the
+items the change answers. It keeps what they found in a review record:
 
 ``` sh
-git fresh-review --goal goal.md origin/main..HEAD
-git fresh-review --goal goal.md --items threads.md --prior round1.json origin/main..HEAD
+git delegate --goal goal.md origin/main..HEAD          # Codex, and each focused review the change needs
+git delegate --reviewer security --goal goal.md origin/main..HEAD
+git delegate wesnel/emacs-config#2                     # someone else's pull request
+git delegate show wesnel/emacs-config#2                # the review record, as JSON
+git delegate settle origin/main..HEAD F3 rebut --reason-file why.md
 ```
 
-The reviewer is Codex, a model family other than the author's, run as
-`codex exec --ignore-user-config --ephemeral` in a throwaway worktree of the
-range's tip under `.git/fresh-review/`, removed however the review ends.
-None of your Codex configuration loads, so no MCP server or plugin; web
-search and the image viewer are off; and a permissions profile lets its
-commands read only the worktree, the parts of the git directory git needs,
-the codex executable, the Nix store and the system files they need, with no
-writes and no network. Codex's sandbox cannot start inside another macOS
-sandbox; `git fresh-review` checks that it starts, confined, before the
-review. Its contract is `overlays/agent-tools/internal/review/reviewer.md`,
-the same text the prompt for a sub-agent carries, and its reply must fit
-`findings.schema.json` beside it. Findings that point at no
-line at the tip are dropped with the reason. It prints JSON and exits 0 with
-no findings, 3 with findings, and 4 when Codex cannot review: not installed,
-not signed in, its sandbox cannot start, called from inside Codex, or in a
-review-loop session, which reads other people's review text.
-`--print-prompt` prints the prompt instead of running the review. See
-`git fresh-review -h`.
+The general reviewer is Codex, a model family other than the author's, run
+as `codex exec --ignore-user-config --ephemeral` in a throwaway worktree of
+the range's tip. None of your Codex configuration loads, so no MCP server or
+plugin; web search and the image viewer are off; and a permissions profile
+lets its commands read only the worktree, the parts of the git directory git
+needs, the codex executable, the Nix store and the system files they need,
+with no writes and no network. Codex's sandbox cannot start inside another
+macOS sandbox; delegate checks that it starts, confined, before the review.
+Its contract is `overlays/agent-tools/internal/review/reviewer.md`, the same
+text the prompt for a sub-agent carries, and its reply must fit
+`findings.schema.json` beside it.
 
-`git fresh-review ask --question FILE PATH...` asks Codex, confined the same
+The focused reviews (`--reviewer security`; with no `--reviewer`, those the
+change's scan routes it to) are Claude Code's reviewer agents, run headless:
+`claude -p --setting-sources ""` with an empty MCP config, every CLAUDE.md
+kept out, their agents from the store's `review-agents.json` and their
+sandbox from `reviewer-settings.json`, so no settings, hooks, agents or MCP
+servers of yours or of the reviewed project reach them. Each reply is held
+to its schema, and asked for once more where it does not fit. Findings that
+point at no line at the tip are dropped with the reason. Every review ends
+with the `review-guide` agent's walkthrough: the change's hunks in chunks,
+in the order to read them, each hunk cited at the tip, and every hunk no
+chunk cites listed as dropped.
+
+Every reviewer gets a worktree of its own under
+`$XDG_CACHE_HOME/pr-review/OWNER/NAME/work/`, made without your git config,
+hooks, LFS filter or submodules, and removed after it. A pull request is
+fetched over HTTPS into a bare clone of its own under
+`$XDG_CACHE_HOME/pr-review/OWNER/NAME/N/`, pinned to the head GitHub reports,
+and reviewed at `merge-base..head`: the goal is ours, review it for the
+operator and propose comments only, and its title, description, linked
+issues and review threads go in as the author's claims. Nothing is written
+to GitHub.
+
+The record of a range is `$XDG_STATE_HOME/agent-tools/reviews/OWNER/NAME/BASE..HEAD.org`,
+a round per reviewer per run, and a pull request's threads and drafted
+replies are `pr-N.org` beside it, which `pr-loop threads` writes too. Only
+delegate and pr-loop write them: the sandbox denies the directory to every
+command, and Claude Code's file tools are denied it. Emacs's review-guide
+reads them. delegate prints JSON and exits 0 with no open findings, 3 with
+open findings, 4 when a reviewer could not run (Codex not installed or
+signed in, its sandbox cannot start, called from inside Codex, or in a
+review-loop session, which reads other people's review text; claude or its
+config missing; a reply that did not fit twice), and 5 when a record fails
+its structure check, which only a hand edit makes. `--print-prompt` prints a
+reviewer's prompt instead of running it. See `git delegate -h`.
+
+`git delegate ask --question FILE PATH...` asks Codex, confined the same
 way, for a second opinion on a design question, from copies of the named
 files alone.
 
 It never runs `git red-check`, which runs the commits' code: the session runs
-it, as it runs any test, and passes its JSON with `--red-check FILE`.
-fresh-review refuses JSON whose commits are not the range's, or that ran
-other test settings than the repository's, and raises an `untested`
-finding of its own, `RC-…`, for each commit whose tests pass without it. Where the repository has test settings and no `--red-check` is
-given, it says on stderr that the review has no red-check results.
-
-### someone else's pull request: `pr-loop review`
-
-``` sh
-pr-loop review wesnel/emacs-config#2                # Codex reviews it
-pr-loop review --reviewer subagent 2                # prints the prompt for an adversarial-reviewer sub-agent
-pr-loop review --check 2 < reply.md                 # checks that sub-agent's reply
-pr-loop review settle 2 < outcomes.json             # records how triage settled each finding
-```
-
-It fetches the pull request over HTTPS into a bare clone of its own under
-`~/.cache/pr-review/OWNER/NAME/N/`, pinned to the head GitHub reports, and
-reviews it with the same contract as `git fresh-review`. The goal is ours:
-review it for the operator and propose comments only; the title, description,
-linked issues and review threads go in as the author's claims. Every git
-command on the clone runs without your git config, hooks, links or
-submodules, so a pull request's `.gitattributes` and `.lfsconfig` run no
-filter and reach no server, and Codex runs confined in a checkout beside the
-clone. The record, `HEAD12/findings.json`, is what review-guide imports for
-you to edit and post; nothing is written to GitHub. See `pr-loop --help`.
+it, as it runs any test, and passes its JSON with `--red-check FILE`, a
+file under the working directory. delegate refuses JSON whose commits are
+not the range's, or that ran other test settings than the repository's,
+records the round's red-check as the session's, and raises an `untested`
+finding of its own, `RC-…`, for each commit whose tests pass without it.
+Where the repository has test settings and no `--red-check` is given, it
+says on stderr that the review has no red-check results. For someone else's
+pull request, the session fetches it from delegate's clone, a local read,
+and runs red-check on it there.
 
 ### `git red-check`
 
@@ -361,8 +378,8 @@ its claude.ai database, laid out as an `ArtifactData` read's `out_dir`
 lays them: `plans/<plan>.json` for every host's plans that are not halted,
 `github/status.json` (your open pull requests, with draft, CI, review
 decision and unresolved threads, and the reviews asked of you or your
-teams, with since when, the head and its CI and whether `pr-loop review`
-holds a record of it, all with titles, and which listed pull request each
+teams, with since when, the head and its CI and whether `git delegate`
+holds a review record of it, all with titles, and which listed pull request each
 is stacked on: the one whose head branch, in the same repository, is its
 base; branch names themselves are never kept), `meta/sync.json` (when
 this host's plans last reached the notes remote, whether they changed
@@ -400,7 +417,11 @@ session a turn. It also prints `plan sync stalled` once per stall (this
 host's plans unsynced, its last push over 6 hours old), and `demo digest
 ready` for a new demo digest under `digests/YYYY/` in the notes
 repository. Every 2 minutes it takes the other hosts' plans
-with the fast-forward-only pull, never the rebasing one. It runs one at a
+with the fast-forward-only pull, never the rebasing one. Every 5 minutes it
+reads GitHub through the export's cache, which fetches at most once a
+minute, and prints `reviews changed` where the pull requests the page lists
+changed, and every 30 seconds it looks at their review records, printing
+`review record changed` where one appeared or changed. It runs one at a
 time (`already watching` otherwise) and keeps what it printed in
 `watch.json`, so the watch the session starts after Monitor's 30 minutes
 prints only what changed since.
@@ -461,13 +482,18 @@ Every publish declares the capabilities `plan-dash page` prints, from
 alone, which the session writes. The page reads the documents `export`
 writes and writes nothing: each open question shows its recommendation
 and options as text, to answer with `/questions` in a Claude session, and
-each review request its CI and whether `pr-loop review` holds a record of
-it. It shows how fresh its data is (live; partial, where GitHub could not
+each review request its CI and whether `git delegate` holds a review
+record of it. It shows how fresh its data is (live; partial, where GitHub could not
 be read or a plan couldn't be exported), when the devbox last pushed and
 fetched the plans, the review requests by state (ready, CI failing,
 draft or reviewed), oldest first with three days or more marked, stacked
 pull requests under the one they build on, the latest demo digest, and each
-plan at `#<plan ID>`. Every status mark has a word as well as a colour,
+plan at `#<plan ID>`. A pull request the devbox's `git delegate` has
+reviewed shows its review record's counts (findings by outcome, threads,
+drafts to post) and up to five of its diagrams, never its titles or other
+model text; a diagram's labels are redacted, and Mermaid, loaded by its
+hash, draws it in a sandboxed frame with no access to the page, which shows
+the drawing only as an image. Every status mark has a word as well as a colour,
 and all text from the documents is set as text, never parsed as markup,
 and looked up in the page's tables by own key only, so a STATUS such as
 `constructor` falls back to its own label; its page test holds it to

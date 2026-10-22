@@ -1,0 +1,55 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "title", "at", "nodes", "edges"],
+  "properties": {
+    "kind": {"type": "string", "enum": ["state", "sequence", "callflow", "component"]},
+    "title": {"type": "string", "description": "At most 60 characters of letters, digits and ` _.,:/()+=-`; others are dropped. Not `direction` and TB, TD, BT, RL or LR; in a state diagram not `::`, `_` opening or closing a word, `www.`, `http://`, `https://` or `ftp://`, nor a transition ending with `:`; a sequence's participants without `,` or `:`, and its messages not starting `wrap:`, `nowrap:`, `:wrap:` or `:nowrap:`."},
+    "at": {"type": "string", "description": "The full commit ID of the code the citations name."},
+    "nodes": {
+      "type": "array",
+      "description": "At most 40.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "label", "cite", "planned"],
+        "properties": {
+          "id": {"type": "string", "description": "N1, N2, and so on."},
+          "label": {"type": "string", "description": "As the title's."},
+          "cite": {"anyOf": [{"$ref": "#/$defs/cite"}, {"type": "null"}]},
+          "planned": {"type": ["string", "null"], "description": "The plan item that adds it, such as P1.S3, where it is not yet in the code; else null."}
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "description": "At most 60; a sequence's in the order they happen.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "from", "to", "label", "cite", "planned"],
+        "properties": {
+          "id": {"type": "string", "description": "E1, E2, and so on."},
+          "from": {"type": "string", "description": "A node's ID."},
+          "to": {"type": "string", "description": "A node's ID."},
+          "label": {"type": "string", "description": "As the title's."},
+          "cite": {"anyOf": [{"$ref": "#/$defs/cite"}, {"type": "null"}]},
+          "planned": {"type": ["string", "null"], "description": "As a node's."}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "cite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "line", "endLine", "symbol"],
+      "properties": {
+        "path": {"type": "string", "description": "Relative to the top of the repository."},
+        "line": {"type": "integer", "description": "From 1."},
+        "endLine": {"type": ["integer", "null"], "description": "The last line of a span of at most 200, or null."},
+        "symbol": {"type": "string", "description": "A whole word in the lines: a node's declaration, a call edge's callee, a transition's target state."}
+      }
+    }
+  }
+}

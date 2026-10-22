@@ -17,7 +17,6 @@ import (
 func routedFixture(t *testing.T, settings string) (*fixture, string) {
 	t.Helper()
 	f := setUp(t, true)
-	run(t, f.repo, "git", "remote", "add", "origin", "https://github.com/o/r.git")
 	run(t, f.repo, "git", "update-ref", "refs/remotes/origin/main", f.base)
 	os.WriteFile(filepath.Join(f.repo, "run.go"), []byte("package main\n\nimport \"os/exec\"\n\nvar _ = exec.Command\n"), 0o644)
 	run(t, f.repo, "git", "add", "run.go")
@@ -26,21 +25,21 @@ func routedFixture(t *testing.T, settings string) (*fixture, string) {
 	os.WriteFile(filepath.Join(f.repo, "later.txt"), []byte("later\n"), 0o644)
 	run(t, f.repo, "git", "add", "later.txt")
 	run(t, f.repo, "git", "commit", "-q", "-m", "Add a later note")
-	config := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(config, []byte(`{"repos": {"o/r": `+settings+`}}`), 0o644)
-	t.Setenv("AGENT_TOOLS_CONFIG", config)
+	writeConfig(t, `{"o/r": `+settings+`}`)
 	return f, exec
 }
 
 // A general review routes the change by its scan, from where the change
-// starts whatever BASE it is given, and by its reviewer's routes, prints
-// them and says how to run each.
+// starts whatever BASE it is given, and by its reviewer's routes. Without
+// --reviewer, delegate runs the types the scan picks with it, and says how
+// to run one only the reviewer named.
 func TestRouting(t *testing.T) {
 	t.Run("scan and reviewer", func(t *testing.T) {
 		f, exec := routedFixture(t, `{}`)
 		t.Setenv("FAKE_CODEX", "routed")
 		// BASE above the commit that runs a program.
-		code, out, stderr := freshReview(t, "--goal", ".git/goal.md", "HEAD~1..HEAD")
+		code, run_, stderr := runDelegate(t, "--goal", ".git/goal.md", "HEAD~1..HEAD")
+		out := run_.review("codex")
 		if code != 0 {
 			t.Fatalf("exit %d\n%s", code, stderr)
 		}
@@ -49,11 +48,22 @@ func TestRouting(t *testing.T) {
 			!slices.Equal(out.Routes[0].Commits, []string{exec, head}) || len(out.Routes[0].Why) != 2 {
 			t.Errorf("routes %+v, want security for %s (the scan) and %s (the reviewer's paths)", out.Routes, exec, head)
 		}
-		if !strings.Contains(stderr, "git fresh-review --focus security --goal FILE HEAD~1..HEAD") {
-			t.Errorf("stderr does not say how to review it: %s", stderr)
+		if run_.review("security").Reviewer != "security" || !strings.Contains(stderr, "reviewing for security too") {
+			t.Errorf("the routed security review did not run: %+v\n%s", run_, stderr)
 		}
 		if !strings.Contains(stderr, `"style"`) {
 			t.Errorf("stderr does not report the unknown route: %s", stderr)
+		}
+	})
+
+	t.Run("named only by the reviewer", func(t *testing.T) {
+		f, _ := routedFixture(t, `{}`)
+		t.Setenv("FAKE_CODEX", "routed")
+		run(t, f.repo, "git", "update-ref", "refs/remotes/origin/main", "HEAD~1")
+		code, run_, stderr := runDelegate(t, "--goal", ".git/goal.md", "HEAD~1..HEAD")
+		if code != 0 || len(run_.Reviews) != 2 || run_.review("security").Reviewer != "" ||
+			!strings.Contains(stderr, "run `git delegate --reviewer security HEAD~1..HEAD`") {
+			t.Errorf("exit %d, %+v\n%s", code, run_, stderr)
 		}
 	})
 
@@ -72,7 +82,7 @@ func TestRouting(t *testing.T) {
 		t.Setenv("FAKE_CODEX", "none")
 		run(t, f.repo, "git", "update-ref", "refs/remotes/origin/main", "HEAD~1")
 		code, out, stderr := freshReview(t, "--goal", ".git/goal.md", "HEAD~1..HEAD")
-		if code != 0 || len(out.Routes) != 0 || strings.Contains(stderr, "--focus") {
+		if code != 0 || len(out.Routes) != 0 || strings.Contains(stderr, "security") {
 			t.Errorf("exit %d, routes %+v\n%s", code, out.Routes, stderr)
 		}
 	})

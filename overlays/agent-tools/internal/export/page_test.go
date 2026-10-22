@@ -31,12 +31,16 @@ func script(t *testing.T) string {
 // Nothing the page shows is parsed as markup or run as code, and it loads
 // nothing from elsewhere.
 func TestPageRendersText(t *testing.T) {
-	for _, bad := range []string{"innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "srcdoc",
+	for _, bad := range []string{"innerHTML", "outerHTML", "insertAdjacentHTML", "document.write",
 		"DOMParser", "createContextualFragment", "eval(", "Function(", "setTimeout(\"", "javascript:", "<iframe",
-		"<link", "@import", "localStorage", "window.open"} {
+		"<link", "@import", "localStorage", "window.open", "allow-same-origin"} {
 		if strings.Contains(page, bad) {
 			t.Errorf("the page holds %q", bad)
 		}
+	}
+	// The one frame's document is the page's own (TestPageRenderer).
+	if strings.Count(page, "srcdoc") != 1 || !strings.Contains(script(t), "frame.srcdoc = FRAME_DOC;") {
+		t.Error("a frame's document set other than to FRAME_DOC")
 	}
 	if m := regexp.MustCompile(`(?i)<[a-z][^>]*\son[a-z]+\s*=`).FindString(page); m != "" {
 		t.Errorf("an inline event handler: %s", m)
@@ -45,18 +49,20 @@ func TestPageRendersText(t *testing.T) {
 		t.Errorf("a handler set as a property: %s", m)
 	}
 	tags := regexp.MustCompile(`<script[^>]*>`).FindAllString(page, -1)
-	if !slices.Equal(tags, []string{`<script type="application/json" id="schema">`, `<script>`}) {
+	if !slices.Equal(tags, []string{`<script type="application/json" id="schema">`, `<script type="application/json" id="grammar">`,
+		`<script type="text/plain" id="renderer">`, `<script>`}) {
 		t.Errorf("script tags %q", tags)
 	}
 	// The artifact publishes no files, so the page loads none: no font,
-	// no image.
+	// no image. Mermaid is the one script its frame loads
+	// (TestPageRenderer).
 	for _, bad := range []string{"url(", "@font-face"} {
 		if strings.Contains(page, bad) {
 			t.Errorf("the page loads a file: %s", bad)
 		}
 	}
 	for _, s := range regexp.MustCompile(`"https?://[^"]*"`).FindAllString(page, -1) {
-		if s != `"https://github.com/"` {
+		if s != `"https://github.com/"` && s != `"`+mermaidSrc+`"` {
 			t.Errorf("the page links to %s", s)
 		}
 	}

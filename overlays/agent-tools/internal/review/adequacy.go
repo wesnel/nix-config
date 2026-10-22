@@ -46,9 +46,7 @@ type adequacy struct {
 // cannot use, saying what to fix, where they would otherwise leave out the
 // test settings and route rules beside them.
 func usableSettings(r *span) error {
-	git.Dir = r.top
-	_, err := repos.Lookup()
-	git.Dir = ""
+	_, err := r.settings()
 	return err
 }
 
@@ -60,9 +58,7 @@ func usableSettings(r *span) error {
 // are not r's own in order, or that comes for a repository without test
 // settings, whose test files the findings need.
 func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, error) {
-	git.Dir = r.top
-	settings, err := repos.Lookup()
-	git.Dir = ""
+	settings, err := r.settings()
 	if err != nil {
 		if file != "" {
 			return nil, err

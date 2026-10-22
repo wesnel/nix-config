@@ -20,7 +20,7 @@ was split among sub-agents: a coordinator runs the same pipeline, and the
 3. **The work**, committed as the `signing-pass` skill says.
 4. **Fresh review loop** over the committed change, once the work is
    complete: in Claude Code, `/code-review` for the general review; then
-   `git fresh-review` as the second opinion. Settle each round's findings
+   `git delegate` as the second opinion. Settle each round's findings
    together before the next round.
 5. **Design review of the result**, before handing back.
 6. **Hand back**: what the work's own instructions ask for, and
@@ -75,76 +75,89 @@ as `origin/main` or the parent branch in a stack.
    branch may not have. Then the second opinion, from another model
    family: where the repository has test settings, run
    `git red-check BASE..TIP > red-check.json` in the working directory, not
-   under `$TMPDIR`, which a sandboxed command and fresh-review may resolve
-   to different directories. Then run
-   `git fresh-review --goal GOAL [--items ITEMS] [--red-check red-check.json] BASE..TIP`,
-   and remove `red-check.json` after it. It exits 0 with no findings, 3
-   with findings, and 4 when Codex cannot review here, its sandbox included.
-   On 4, say so in the hand-back, with fresh-review's reason.
-3. Settle every finding of both as Triage says. `dropped` lists what
-   pointed at no line at TIP or did not fit the schema; read it, but it
-   needs no outcome.
+   under `$TMPDIR`, which a sandboxed command and git delegate resolve to
+   different directories; every file you pass delegate goes under the
+   working directory the same way. Then run
+   `git delegate --goal GOAL [--items ITEMS] [--red-check red-check.json] BASE..TIP`,
+   and remove `red-check.json` after it. It runs Codex, and each focused
+   review its scan routes the change to, and keeps their findings in the
+   range's review record. It exits 0 with no open findings, 3 with open
+   findings, 4 when a reviewer could not run here, and 5 when the record
+   fails its structure check. On 4 or 5, say so in the hand-back, with
+   delegate's reason.
+3. Settle every finding of both as Triage says. A delegate finding is
+   settled in its record too: `git delegate settle BASE..TIP FINDING
+   OUTCOME [--target X] [--reason-file F]`, by the record ID its output
+   gives (`finding`, such as F3). `dropped` lists what pointed at no line
+   at TIP or did not fit the schema; read it, but it needs no outcome.
    `routes` lists the focused reviews the change needs, from a scan of
    every commit since the default branch and from the reviewer.
-4. For the next round, add `--prior FILE`: every earlier finding and how it
-   was settled. A new reviewer reads the change again, its tip moved by the
-   fixups.
+   `git delegate show BASE..TIP` prints the whole record.
+4. For the next round, run `git delegate` on the range again: the record
+   gives the new reviewers every earlier finding and how it was settled. A
+   new range, its tip moved by the fixups, starts a record of its own; pass
+   the earlier findings that still matter as `--items`.
 5. Stop after a round with no findings, or after three rounds. A finding
    still standing goes in the hand-back.
 
 ## Focused reviews
 
-Each route the general review printed needs its own review once the
-general loop has settled: `git fresh-review --focus security --goal GOAL
-BASE..TIP`, the same range and goal. Settle each finding as Triage says. A
-fix moves the change, so the general review and each route's run again on
-it, within the same three rounds.
+Without `--reviewer`, delegate runs each focused review its scan routes
+the change to. A route only the reviewer named is printed with the command
+that runs it: `git delegate --reviewer security --goal GOAL BASE..TIP`, the
+same range and goal. Settle each finding as Triage says. A fix moves the
+change, so the general review and each route's run again on it, within the
+same three rounds.
 
 ## Someone else's pull request
 
-The source is `pr-loop review`, not `git fresh-review`: it fetches the pull
-request into a clone of its own and reviews it with the same contract,
-without running its code. Run it in the background: a run takes
-minutes. Wait for it to finish before you stop or report. `pr-loop review
-OWNER/NAME#N` makes the review's directory,
-`~/.cache/pr-review/OWNER/NAME/N/HEAD12/`.
+`git delegate OWNER/NAME#N` (or N for origin's) fetches the pull request
+into a clone of its own, under `$XDG_CACHE_HOME/pr-review/OWNER/NAME/N/`,
+and reviews `merge-base..head` with the same reviewers, without running its
+code; it refreshes the pull request's threads too. Run it in the
+background: a run takes minutes. Wait for it to finish before you stop or
+report. Then the operator reads its record in review-guide, and comments
+in pr-review.
 
 1. The plan's goal is ours, never the pull request's text: "review
-   OWNER/NAME#N at HEAD12 for the operator; propose comments only". The command
-   writes the reviewer's goal statement itself.
-2. Run `pr-loop review N` (OWNER/NAME#N outside a review directory). It
-   exits 0 with no findings, 3 with findings, 4 when Codex cannot review
-   (then `pr-loop review --reviewer subagent N` prints the prompt for a new
-   `adversarial-reviewer` sub-agent, and its reply goes to
-   `pr-loop review --check N` on stdin).
+   OWNER/NAME#N at its head for the operator; propose comments only".
+   delegate writes the reviewer's goal statement itself; `--goal` adds ours.
+2. For its tests, fetch the pull request from delegate's clone into this
+   checkout, a local read the sandbox allows, and run red-check there:
+   `git fetch $XDG_CACHE_HOME/pr-review/OWNER/NAME/N/clone refs/pr-review/head
+   refs/pr-review/base`, then `git red-check MERGE_BASE..FETCH_HEAD >
+   red-check.json` in the working directory, and
+   `git delegate --red-check red-check.json OWNER/NAME#N`, which adds a
+   round. delegate refuses red-check JSON of any other range.
 3. Triage only proposes. Each finding's outcome is `propose`, `rebut`,
-   `duplicate-of` (with `of`) or `needs-operator`: never fix, push, reply or
-   resolve on someone else's pull request. Edit a proposed finding's `body`
-   into the comment as the operator would post it.
-4. Record the outcomes with `pr-loop review settle N`, reading
-   `{"outcomes": [{"id": "1.F1", "outcome": "propose", "body": "..."}]}` on
-   stdin, each finding named ROUND.ID. `N/HEAD12.json`, beside the clone and
-   outside the session's reach, is the one record of them, every round's,
-   which the operator imports into review-guide; `HEAD12/findings.json` is the
-   session's copy to read. The plan's log gets only the round and the
-   counts: `agent-plan log PLAN --item ID --kind reviewed --summary 'round 1:
-   5 findings, 3 proposed' --evidence <path>/findings.json`.
-5. Each review or `--check` of a head is its next round, kept beside the
-   earlier ones; a new head is a new review.
+   `duplicate-of` (with `--target`) or `needs-operator`: never fix, push,
+   reply or resolve on someone else's pull request. Write a proposed
+   finding's reason as the comment the operator would post.
+4. Record each outcome with `git delegate settle OWNER/NAME#N FINDING
+   OUTCOME [--target X] [--reason-file F]`. The pull request's review
+   record, under `$XDG_STATE_HOME/agent-tools/reviews/OWNER/NAME/`, is the
+   one record of them, every round's, and `git delegate show
+   OWNER/NAME#N` prints it with the threads. The plan's log gets only the
+   round and the counts: `agent-plan log PLAN --item ID --kind reviewed
+   --summary 'round 1: 5 findings, 3 proposed'`.
+5. A review of the same head adds a round to its record; a new head is a
+   new record, whose reviewers are given the last one's findings.
 
 ## Harness choice
 
-- Codex, through `git fresh-review`, for the second opinion and the focused
-  reviews: a model family other than the author's. Its commands can read
-  only the worktree under review, the git objects behind it and the system
-  files they need, with none of the operator's Codex configuration, no
-  network and no writes, so a change cannot steer it into reading
-  credentials.
+- Codex, through `git delegate`, for the second opinion: a model family
+  other than the author's. Its commands can read only the worktree under
+  review, the git objects behind it and the system files they need, with
+  none of the operator's Codex configuration, no network and no writes, so
+  a change cannot steer it into reading credentials.
+- The focused reviews, through `git delegate --reviewer TYPE`: Claude Code's
+  reviewer agents, run headless with no settings, MCP server or CLAUDE.md
+  of anyone's, in a sandbox of their own.
 - Never Codex in a review-loop session, which reads other people's review
-  text: there `git fresh-review` exits 4, and the second opinion is an
+  text: there delegate's Codex review exits 4, and the second opinion is an
   `adversarial-reviewer` sub-agent.
-- Never Codex for a Codex author: from inside Codex, `git fresh-review`
-  exits 4 by itself.
+- Never Codex for a Codex author: from inside Codex, `git delegate`
+  without `--reviewer` exits 4 by itself.
 
 ## Design review
 
@@ -202,9 +215,9 @@ says.
 Where you and the design review disagree, or the designs leave no clear
 choice, get a second opinion from another model family before it is
 decided: write the question and its options to a file, and run
-`git fresh-review ask --question FILE PATH...`, naming each file in the
+`git delegate ask --question FILE PATH...`, naming each file in the
 repository the answer rests on (put what it needs from the plan into the
-question file). Codex reads those files and nothing else. On exit 4, ask a
+question file, under the working directory). Codex reads those files and nothing else. On exit 4, ask a
 new sub-agent that only reads instead, as the message says. The answer goes
 beside your recommendation; it informs your own decision, or the operator's
 on a one-way door, and settles nothing.
@@ -214,6 +227,23 @@ the goal statement already decides by Triage. Take the rest through the
 `plan-work` skill's "Questions for the operator", which says which are theirs to
 answer and which are yours to decide; those that change the plan are
 settled before the work starts.
+
+## Diagrams
+
+A diagram shows the code a change touches, drawn by one model family and
+critiqued by the other. Draw one on request alone: where the operator asks
+for it, or the design review does, for a change that crosses two or more
+packages or modules, or adds a state set or a cross-process protocol.
+
+Add `--reviewer diagram` to the review that needs it, as
+`git delegate --reviewer codex --reviewer diagram --goal GOAL BASE..TIP`.
+Claude Code's `diagrammer` agent draws at most three diagrams, each element
+citing the lines at TIP it stands for; delegate holds every citation to the
+code, Codex critiques each element by element, and one the critic faults is
+redrawn once. Those that hold are kept in the review record, where review-guide
+and `git delegate show` render them; the rest are under the round's Dropped.
+A diagram is never posted to GitHub: a pull request's description stays the
+operator's.
 
 ## Triage
 

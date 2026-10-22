@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -20,27 +21,27 @@ import (
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
-// AskUsage is `git fresh-review ask -h`.
-const AskUsage = `usage: git fresh-review ask --question FILE [--model M] [--timeout S] PATH...
+// AskUsage is `git delegate ask -h`.
+const AskUsage = `usage: git delegate ask [--reviewer TYPE] --question FILE [--model M] [--timeout S] PATH...
 
-Asks Codex, as a model family other than the author's, for a second opinion
-on a design question: the question in FILE, judged from the files PATH
-names in this repository and nothing else. FILE, where its symlinks lead,
-is in this repository or under $TMPDIR or /tmp, and is no credential the
-guard lists, since Codex is sent it with only known secret shapes taken
-out, as it is sent the files. Codex runs as a review does (git
-fresh-review -h): no configuration of the user's, no network, no writes,
-and its commands may read only a throwaway checkout under the git
-directory's fresh-review/ holding copies of those files, removed on every
-exit.
+Asks a reviewer that did not write the change, Codex by default, as a
+model family other than the author's, for a second opinion on a design
+question: the question in FILE, judged from the files PATH names in this
+repository and nothing else. FILE, where its symlinks lead, is in this
+repository or under $TMPDIR or /tmp, and is no credential the guard
+lists; the reviewer is sent it with only known secret shapes taken out,
+as it is sent the files. It runs as a review of that TYPE does (git
+delegate -h), in a throwaway repository under the git directory's
+delegate/ holding copies of those files, removed on every exit. It
+writes no record.
 
 Writes JSON on stdout: reviewer, model, answer and unverified (what the
 answer rests on that the files do not show). Exit status: 0 answered; 4
-Codex cannot answer here, for the reasons a review exits 4; 1 the question
-could not be asked; 2 a usage error or refusal.
+the reviewer cannot answer here, for the reasons a review exits 4; 1 the
+question could not be asked; 2 a usage error or refusal.
 `
 
-// askContract is what Codex is told before the question.
+// askContract is what the reviewer is told before the question.
 const askContract = `You give a second opinion on one design question, from another model family
 than the author's. The working directory holds copies of the files the
 question names, and nothing else. Only read: never edit a file, run the
@@ -59,7 +60,7 @@ Reply with one JSON object and nothing else:
 const askSchema = `{"type": "object", "additionalProperties": false, "required": ["answer", "unverified"],
  "properties": {"answer": {"type": "string"}, "unverified": {"type": "array", "items": {"type": "string"}}}}`
 
-// Answer is what `git fresh-review ask` prints.
+// Answer is what `git delegate ask` prints.
 type Answer struct {
 	Reviewer   string   `json:"reviewer"`
 	Model      *string  `json:"model"`
@@ -67,9 +68,10 @@ type Answer struct {
 	Unverified []string `json:"unverified"`
 }
 
-// ask runs `git fresh-review ask` with args and returns its exit status.
+// ask runs `git delegate ask` with args and returns its exit status.
 func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet(name+" ask", flag.ContinueOnError)
+	reviewer := flags.String("reviewer", "codex", "")
 	question := flags.String("question", "", "")
 	model := flags.String("model", "", "")
 	timeout := flags.Int("timeout", 900, "")
@@ -87,12 +89,18 @@ func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	report := func(result any, err error, code int) int {
 		return cli.Report(name, result, err, code, stdout, stderr)
 	}
+	ty, ok := reviewerTypes[*reviewer]
+	if !ok {
+		return report(nil, refusal.New("%q is not a reviewer type; pass `--reviewer` with one of %s", *reviewer,
+			strings.Join(slices.Sorted(maps.Keys(reviewerTypes)), ", ")), 0)
+	}
 	if *question == "" {
-		return report(nil, refusal.New("a second opinion answers a question; write it to a file and pass `--question FILE`"), 0)
+		return report(nil, refusal.New("a second opinion answers a question; write it to a file under the working "+
+			"directory and pass `--question FILE`"), 0)
 	}
 	if len(paths) == 0 {
-		return report(nil, refusal.New("Codex reads only the files a question names, and none is named; "+
-			"pass each file the answer rests on, as `git fresh-review ask --question %s PATH...`", *question), 0)
+		return report(nil, refusal.New("the reviewer reads only the files a question names, and none is named; "+
+			"pass each file the answer rests on, as `git delegate ask --question %s PATH...`", *question), 0)
 	}
 	if err := git.CheckConfig(""); err != nil {
 		return report(nil, err, 0)
@@ -120,17 +128,23 @@ func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	if err != nil {
 		return report(nil, err, 0)
 	}
-	if why := unavailable(true); why != "" {
-		fmt.Fprintf(stderr, "%s: Codex cannot answer here: %s. Ask a new sub-agent that only reads instead "+
+	why := ""
+	if ty.claude {
+		why = claudeMissing()
+	} else {
+		why = unavailable(true)
+	}
+	if why != "" {
+		fmt.Fprintf(stderr, "%s: the %s reviewer cannot answer here: %s. Ask a new sub-agent that only reads instead "+
 			"(Claude Code's `design-reviewer` agent), giving it %s and the same files, and nothing of your own reasoning.\n",
-			name, why, *question)
+			name, *reviewer, why, *question)
 		return 4
 	}
-	out, err := codexAsk(ctx, top, text, files, *model, time.Duration(*timeout)*time.Second, stderr)
+	out, err := askIn(ctx, top, text, files, *reviewer, ty, *model, time.Duration(*timeout)*time.Second, stderr)
 	var unconfined Unconfined
 	if errors.As(err, &unconfined) {
 		fmt.Fprintf(stderr, "%s: Codex cannot answer here: %s. Ask a new sub-agent that only reads instead, "+
-			"giving it %s and the same files; or report that `git fresh-review ask` needs running outside this sandbox.\n",
+			"giving it %s and the same files; or report that `git delegate ask` needs running outside this sandbox.\n",
 			name, unconfined, *question)
 		return 4
 	}
@@ -192,16 +206,16 @@ func named(top string, paths []string) ([]string, error) {
 		}
 		abs, err = filepath.EvalSymlinks(abs)
 		if err != nil {
-			return nil, refusal.New("%s is not a file; name each file the answer rests on, as `git fresh-review ask "+
+			return nil, refusal.New("%s is not a file; name each file the answer rests on, as `git delegate ask "+
 				"--question FILE PATH...`", p)
 		}
 		rel, err := filepath.Rel(top, abs)
 		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return nil, refusal.New("%s is outside the repository at %s; put what the question needs from it into the "+
-				"question file, and name only files in the repository, as `git fresh-review ask --question FILE PATH...`", p, top)
+				"question file, and name only files in the repository, as `git delegate ask --question FILE PATH...`", p, top)
 		}
 		if info, err := os.Stat(abs); err != nil || !info.Mode().IsRegular() {
-			return nil, refusal.New("%s is not a file; name each file the answer rests on, as `git fresh-review ask "+
+			return nil, refusal.New("%s is not a file; name each file the answer rests on, as `git delegate ask "+
 				"--question FILE PATH...`", p)
 		}
 		out = append(out, filepath.ToSlash(rel))
@@ -209,17 +223,17 @@ func named(top string, paths []string) ([]string, error) {
 	return out, nil
 }
 
-// codexAsk copies files from top, redacted, into a throwaway repository
-// under the git directory's fresh-review/, has Codex answer text there,
-// redacted too, confined as CodexRun confines a review, and removes the
-// repository however it ends.
-func codexAsk(ctx context.Context, top, text string, files []string, model string, timeout time.Duration,
-	log io.Writer) (*Answer, error) {
+// askIn copies files from top, redacted, into a throwaway repository under
+// the git directory's delegate/, has the reviewer of type ty answer text
+// there, redacted too, confined as a review of that type is, and removes
+// the repository however it ends.
+func askIn(ctx context.Context, top, text string, files []string, reviewer string, ty reviewerType, model string,
+	timeout time.Duration, log io.Writer) (*Answer, error) {
 	common, err := git.Run("-C", top, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return nil, err
 	}
-	parent := filepath.Join(common, "fresh-review")
+	parent := filepath.Join(common, "delegate")
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return nil, err
 	}
@@ -250,7 +264,7 @@ func codexAsk(ctx context.Context, top, text string, files []string, model strin
 	// reaches, so that committing signs nothing and runs no hook.
 	run := func(args ...string) (string, error) {
 		return git.RunEnv([]string{"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1"},
-			append([]string{"-C", tree, "-c", "user.name=fresh-review", "-c", "user.email=fresh-review@localhost",
+			append([]string{"-C", tree, "-c", "user.name=delegate", "-c", "user.email=delegate@localhost",
 				"-c", "commit.gpgsign=false"}, args...)...)
 	}
 	for _, args := range [][]string{{"init", "-q"}, {"add", "-A"}, {"commit", "-q", "-m", "The files the question names"}} {
@@ -265,16 +279,22 @@ func codexAsk(ctx context.Context, top, text string, files []string, model strin
 	for _, f := range files {
 		fmt.Fprintf(&prompt, "- %s\n", f)
 	}
-	reply, err := CodexRun(ctx, Codex{Checkout: tree, Prompt: prompt.String(), Schema: []byte(askSchema), Model: model,
-		Timeout: timeout, Log: log, Git: run})
+	var reply *CodexReply
+	if ty.claude {
+		reply, err = ClaudeRun(ctx, Claude{Checkout: tree, Agent: ty.agent, Prompt: prompt.String(), Schema: []byte(askSchema),
+			Timeout: timeout, Log: log})
+	} else {
+		reply, err = CodexRun(ctx, Codex{Checkout: tree, Prompt: prompt.String(), Schema: []byte(askSchema), Model: model,
+			Timeout: timeout, Log: log, Git: run})
+	}
 	if err != nil {
 		return nil, err
 	}
-	out := &Answer{Reviewer: "codex", Unverified: []string{}}
+	out := &Answer{Unverified: []string{}}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(reply.Text)), out); err != nil || strings.TrimSpace(out.Answer) == "" {
-		return nil, fmt.Errorf("Codex's reply is not the answer asked for (%v): %s", err, reply.Text)
+		return nil, fmt.Errorf("the %s reply is not the answer asked for (%v): %s", reviewer, err, reply.Text)
 	}
-	out.Reviewer = "codex"
+	out.Reviewer = reviewer
 	if out.Unverified == nil {
 		out.Unverified = []string{}
 	}

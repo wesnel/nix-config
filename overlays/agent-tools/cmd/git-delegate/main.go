@@ -1,5 +1,6 @@
-// Command git-fresh-review reviews a range of commits with a reviewer that
-// did not write them. Installed on PATH, it runs as `git fresh-review`.
+// Command git-delegate reviews a range of commits or a pull request with
+// reviewers that did not write it, and keeps their findings in its review
+// record. Installed on PATH, it runs as `git delegate`.
 package main
 
 import (

@@ -50,7 +50,12 @@ const usage = `plan-dash: the operator's status, from GitHub and the plans.
           begins, this host's plans unsynced and its last push over 6
           hours old; and "demo digest ready" for a demo digest new under
           digests/YYYY/ in the notes repository. Takes the other hosts'
-          plans every 2 minutes, fast-forward only. What it has printed
+          plans every 2 minutes, fast-forward only. Reads GitHub, through
+          the export's cache, every 5 minutes, and prints "reviews changed"
+          where the pull requests the page lists, the operator's and the
+          reviews asked of them, differ from the last read, and "review
+          record changed" where a review record of one of them appears or
+          changes, which it looks at every 30 seconds. What it has printed
           is kept in $XDG_STATE_HOME/agent-plans/watch.json,
           so a watch started after another prints only what changed since,
           and the first ever prints nothing for what it finds. Another
@@ -150,8 +155,10 @@ func watch(stdout, stderr io.Writer) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
+	cache := filepath.Join(hostpaths.StateHome(), "plan-dash", "github.json")
 	w := dashboard.Watch{Dir: agentplans.Dir(), Config: c, Now: time.Now, Out: stdout,
 		Sync: c.SyncState, Pull: c.Pull,
+		GitHub: func(now time.Time) (export.GitHub, error) { return export.GitHubOf(ctx, cache, now) },
 		Wait: func(ctx context.Context, d time.Duration) bool {
 			select {
 			case <-ctx.Done():

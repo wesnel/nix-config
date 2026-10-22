@@ -2,11 +2,14 @@ package review
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/wesnel/agent-tools/internal/record"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
@@ -28,7 +31,7 @@ func TestSecurityContract(t *testing.T) {
 
 func refused(t *testing.T, what string, code int, stderr string) {
 	t.Helper()
-	reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-fresh-review: refused: ")
+	reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-delegate: refused: ")
 	if code != 2 || !refusal.SaysInstead(reason) {
 		t.Errorf("%s: exit %d, %q", what, code, stderr)
 	}
@@ -61,52 +64,120 @@ func securityPrompt(t *testing.T, prompt string) {
 	}
 }
 
-// A security review runs the security checklist with the general rules,
-// and requires every category to be named as checked.
-func TestFocusCodex(t *testing.T) {
+// claudeArgs are the arguments of the fake claude's nth run as agent.
+func claudeArgs(t *testing.T, f *fixture, agent string, n int) []string {
+	t.Helper()
+	data := f.claudeLog(t, agent, fmt.Sprintf("args-%d", n))
+	return strings.Split(strings.TrimSuffix(data, "\x00"), "\x00")
+}
+
+// The security review runs headless in Claude Code, with the security
+// checklist and the general rules, and requires every category to be named
+// as checked.
+func TestSecurityReviewer(t *testing.T) {
+	finding := map[string]any{"id": "1", "path": "code.txt", "line": 2, "endLine": nil, "kind": "vulnerability",
+		"claim": "c", "evidence": "e", "about": nil, "reopens": nil}
 	t.Run("checked", func(t *testing.T) {
 		f := setUp(t, true)
-		t.Setenv("FAKE_CODEX", "security")
-		t.Setenv("FAKE_CHECKED", checkedAll(t, ""))
-		code, out, stderr := freshReview(t, "--focus", "security", "--goal", ".git/goal.md", f.base+"..HEAD")
-		if code != 3 || out.Focus != "security" || len(out.Findings) != 1 ||
-			out.Findings[0]["id"] != "security-1" || out.Findings[0]["kind"] != "vulnerability" {
-			t.Fatalf("exit %d, %+v\n%s", code, out, stderr)
+		f.claudeSays(t, "security-reviewer", claudeResult(securityReply(finding), "Reviewed."))
+		code, run, stderr := runDelegate(t, "--reviewer", "security", "--goal", ".git/goal.md", f.base+"..HEAD")
+		out := run.review("security")
+		if code != 3 || out.Focus != "security" || len(out.Findings) != 1 || out.Findings[0]["id"] != "security-1" ||
+			out.Findings[0]["kind"] != "vulnerability" || out.Findings[0]["finding"] != "F1" || len(run.Reviews) != 2 ||
+			run.Reviews[1].Reviewer != "guide" {
+			t.Fatalf("exit %d, %+v\n%s", code, run, stderr)
 		}
-		securityPrompt(t, string(must(os.ReadFile(filepath.Join(f.log, "prompt")))))
-		schema := string(must(os.ReadFile(filepath.Join(f.log, "schema"))))
-		if !strings.Contains(schema, `"checked"`) || !strings.Contains(schema, `"vulnerability"`) || strings.Contains(schema, `"routes"`) {
-			t.Errorf("schema:\n%s", schema)
+		args := claudeArgs(t, f, "security-reviewer", 1)
+		securityPrompt(t, args[len(args)-1])
+		has := func(want ...string) bool {
+			for i := range args {
+				if i+len(want) <= len(args) && slices.Equal(args[i:i+len(want)], want) {
+					return true
+				}
+			}
+			return false
+		}
+		for _, want := range [][]string{{"-p"}, {"--setting-sources", ""}, {"--strict-mcp-config"},
+			{"--mcp-config", `{"mcpServers":{}}`}, {"--agents", "/store/review-agents.json"}, {"--agent", "security-reviewer"},
+			{"--settings", "/store/reviewer-settings.json"}, {"--permission-mode", "dontAsk"}, {"--output-format", "json"},
+			{"--no-session-persistence"}} {
+			if !has(want...) {
+				t.Errorf("claude was not passed %q: %q", want, args[:len(args)-1])
+			}
+		}
+		i := slices.Index(args, "--json-schema")
+		if i < 0 || !strings.Contains(args[i+1], `"checked"`) || !strings.Contains(args[i+1], `"vulnerability"`) ||
+			strings.Contains(args[i+1], `"routes"`) {
+			t.Errorf("schema: %q", args)
+		}
+		env := f.claudeLog(t, "security-reviewer", "env-1")
+		if !strings.Contains(env, "\nCLAUDE_CODE_DISABLE_CLAUDE_MDS=1\n") || strings.Contains(env, "\nCLAUDECODE=") {
+			t.Errorf("the reviewer's environment:\n%s", env)
+		}
+		if head := strings.TrimSpace(f.claudeLog(t, "security-reviewer", "head")); head != f.tip {
+			t.Errorf("the reviewer ran at %s, not TIP %s", head, f.tip)
+		}
+		if files := f.claudeLog(t, "security-reviewer", "files"); strings.Contains(files, "notes.md") {
+			t.Errorf("the reviewer could see the uncommitted notes: %s", files)
+		}
+		f.checkCleanedUp(t)
+	})
+
+	// The reply is taken from the structured output, a fenced json block
+	// of the result, or the result's last JSON object; with none, the type
+	// is asked once more, then dropped.
+	reply := string(must(json.Marshal(securityReply(finding))))
+	for _, c := range []struct {
+		name string
+		outs []string
+		code int
+		runs string
+	}{
+		{"a fenced block", []string{claudeResult(nil, "Findings:\n```json\n{\"draft\": 1}\n```\nand then\n```json\n"+reply+"\n```\n")}, 3, "1"},
+		{"a bare object", []string{claudeResult(nil, `Done. {"a": {"b": 1}} The reply: `+reply+` That is all.`)}, 3, "1"},
+		{"neither, then a reply", []string{claudeResult(nil, "No JSON here."), claudeResult(securityReply(finding), "")}, 3, "2"},
+		{"neither, twice", []string{claudeResult(nil, "No JSON here.")}, 4, "2"},
+		{"a category left out, twice", []string{claudeResult(map[string]any{"findings": []any{}, "unverified": []any{},
+			"checked": Categories[1:]}, "")}, 4, "2"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := setUp(t, true)
+			f.claudeSays(t, "security-reviewer", c.outs...)
+			code, run, stderr := runDelegate(t, "--reviewer", "security", "--goal", ".git/goal.md", f.base+"..HEAD")
+			if code != c.code {
+				t.Fatalf("exit %d, want %d\n%s", code, c.code, stderr)
+			}
+			if runs := strings.TrimSpace(f.claudeLog(t, "security-reviewer", "runs")); runs != c.runs {
+				t.Errorf("claude ran %s times, want %s", runs, c.runs)
+			}
+			if c.runs == "2" {
+				args := claudeArgs(t, f, "security-reviewer", 2)
+				if !strings.Contains(args[len(args)-1], "Your last reply could not be used") {
+					t.Errorf("the rerun was not told why")
+				}
+			}
+			rec := must(record.ReadRange(run.Record))
+			if c.code == 4 && (len(rec.Rounds) != 2 || len(rec.Rounds[0].Dropped) != 3 || len(rec.Findings) != 0) {
+				t.Errorf("the dropped replies are not in the record: %+v", rec.Rounds)
+			}
+			f.checkCleanedUp(t)
+		})
+	}
+
+	t.Run("no delegate config", func(t *testing.T) {
+		f := setUp(t, true)
+		writeConfig(t, `{}`)
+		t.Setenv("AGENT_TOOLS_CONFIG", filepath.Join(t.TempDir(), "none.json"))
+		code, run, stderr := runDelegate(t, "--reviewer", "security", "--goal", ".git/goal.md", f.base+"..HEAD")
+		if code != 4 || len(run.NotRun) != 2 || !strings.Contains(run.NotRun[0]["why"], "delegate.agents") {
+			t.Errorf("exit %d, %+v\n%s", code, run, stderr)
 		}
 	})
 
-	t.Run("a category left out", func(t *testing.T) {
+	t.Run("an unknown type", func(t *testing.T) {
 		f := setUp(t, true)
-		t.Setenv("FAKE_CODEX", "security")
-		t.Setenv("FAKE_CHECKED", checkedAll(t, "secrets"))
-		code, _, stderr := freshReview(t, "--focus", "security", "--goal", ".git/goal.md", f.base+"..HEAD")
-		if code != 1 || !strings.Contains(stderr, "secrets") {
-			t.Errorf("exit %d\n%s", code, stderr)
-		}
-	})
-
-	// A focused review judges no test adequacy, so red-check's results
-	// given to it would be read by nothing.
-	t.Run("red-check results", func(t *testing.T) {
-		f := setUp(t, true)
-		t.Setenv("FAKE_CODEX", "security")
-		t.Setenv("FAKE_CHECKED", checkedAll(t, ""))
-		file := filepath.Join(f.repo, ".git", "red-check.json")
-		os.WriteFile(file, []byte(`{"commits": []}`), 0o644)
-		code, out, stderr := freshReview(t, "--focus", "security", "--red-check", file, "--goal", ".git/goal.md", f.base+"..HEAD")
-		f.refused(t, code, out, stderr)
-	})
-
-	t.Run("an unknown focus", func(t *testing.T) {
-		f := setUp(t, true)
-		if code, _, stderr := freshReview(t, "--focus", "style", "--goal", ".git/goal.md", f.base+"..HEAD"); code != 2 {
-			t.Errorf("exit %d\n%s", code, stderr)
-		}
+		code, _, stderr := runDelegate(t, "--reviewer", "style", "--goal", ".git/goal.md", f.base+"..HEAD")
+		refused(t, "an unknown type", code, stderr)
 	})
 }
 
@@ -117,7 +188,6 @@ func TestThreatNotesPrompt(t *testing.T) {
 	notes := func(t *testing.T, value string) *fixture {
 		t.Helper()
 		f := setUp(t, true)
-		run(t, f.repo, "git", "remote", "add", "origin", "https://github.com/o/r.git")
 		value = strings.ReplaceAll(value, "TOP", run(t, f.repo, "git", "rev-parse", "--show-toplevel"))
 		config := filepath.Join(t.TempDir(), "config.json")
 		os.WriteFile(config, must(json.Marshal(map[string]any{"repos": map[string]any{"o/r": map[string]any{"threatNotes": value}}})), 0o644)
@@ -127,7 +197,7 @@ func TestThreatNotesPrompt(t *testing.T) {
 	printed := func(t *testing.T, f *fixture) (int, string, string) {
 		t.Helper()
 		var stdout, stderr strings.Builder
-		code := Main(t.Context(), []string{"--print-prompt", "--focus", "security", "--goal", ".git/goal.md", f.base + "..HEAD"},
+		code := Main(t.Context(), []string{"--print-prompt", "--reviewer", "security", "--goal", ".git/goal.md", f.base + "..HEAD"},
 			nil, &stdout, &stderr)
 		return code, stdout.String(), stderr.String()
 	}
@@ -173,12 +243,12 @@ func TestRedCheckRedacted(t *testing.T) {
 	}
 }
 
-// --print-prompt --focus security prints the security review's prompt, the
-// contract a security-reviewer agent works to.
+// --print-prompt --reviewer security prints the security review's prompt,
+// the contract a security-reviewer agent works to.
 func TestFocusPrompt(t *testing.T) {
 	f := setUp(t, false)
 	var stdout, stderr strings.Builder
-	if code := Main(t.Context(), []string{"--print-prompt", "--focus", "security", "--goal", ".git/goal.md", f.base + "..HEAD"},
+	if code := Main(t.Context(), []string{"--print-prompt", "--reviewer", "security", "--goal", ".git/goal.md", f.base + "..HEAD"},
 		nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr.String())
 	}

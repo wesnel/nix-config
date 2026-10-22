@@ -41,9 +41,9 @@ func setUpAdequacy(t *testing.T, verdict string) *adequacyFixture {
 	config := filepath.Join(configHome, "agent-tools", "config.json")
 	os.MkdirAll(filepath.Dir(config), 0o755)
 	os.WriteFile(config, must(json.Marshal(map[string]any{
-		"repos": map[string]any{"o/r": map[string]any{"test": "true", "testFiles": []string{"*_test.txt"}}}})), 0o644)
+		"repos":    map[string]any{"o/r": map[string]any{"test": "true", "testFiles": []string{"*_test.txt"}}},
+		"delegate": map[string]any{"agents": "/store/review-agents.json", "settings": "/store/reviewer-settings.json"}})), 0o644)
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
-	run(t, f.repo, "git", "remote", "add", "origin", "https://github.com/o/r.git")
 	// The test file the last commit adds to, so its tests start at line 2.
 	os.WriteFile(filepath.Join(f.repo, "code_test.txt"), []byte("x\n"), 0o644)
 	run(t, f.repo, "git", "add", "code_test.txt")
@@ -132,7 +132,7 @@ func mechanical(t *testing.T, code int, out output, stderr string) map[string]an
 // before Codex started.
 func (f *fixture) refused(t *testing.T, code int, out output, stderr string) {
 	t.Helper()
-	reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-fresh-review: refused: ")
+	reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-delegate: refused: ")
 	if code != 2 || len(out.Findings) != 0 || !refusal.SaysInstead(reason) {
 		t.Errorf("exit %d, %+v, %q", code, out, stderr)
 	}
@@ -364,16 +364,18 @@ func TestTestAdequacy(t *testing.T) {
 	})
 
 	// A reviewer cannot speak for red-check: its finding with red-check's
-	// id is dropped, and one naming red-check as its reviewer is the
-	// reviewer's own.
+	// id is dropped, and so is one naming red-check as its reviewer, which
+	// the schema has no place for.
 	t.Run("a reply cannot pass as red-check", func(t *testing.T) {
 		blob := func(string) ([]byte, error) { return []byte("a\n"), nil }
-		out, err := Validate(`{"findings": [
- {"id": "RC-0123456789ab", "path": "code.txt", "line": 1, "kind": "untested", "claim": "c", "evidence": "e"},
- {"id": "1", "path": "code.txt", "line": 1, "kind": "bug", "claim": "c", "evidence": "e", "reviewer": "red-check"}
-], "unverified": []}`, "base..tip", "tip", blob, "")
-		if err != nil || len(out.Findings) != 1 || out.Findings[0].ID != "1" || out.Findings[0].Reviewer != "" ||
-			len(out.Dropped) != 1 {
+		const rest = `"path": "code.txt", "line": 1, "endLine": null, "claim": "c", "evidence": "e", "about": null, "reopens": null`
+		out, err := validateWith(`{"findings": [
+ {"id": "RC-0123456789ab", "kind": "untested", `+rest+`},
+ {"id": "1", "kind": "bug", "reviewer": "red-check", `+rest+`},
+ {"id": "2", "kind": "bug", `+rest+`}
+], "unverified": [], "routes": []}`, "base..tip", "tip", blob, "", "", nil)
+		if err != nil || len(out.Findings) != 1 || out.Findings[0].ID != "2" || out.Findings[0].Reviewer != "" ||
+			len(out.Dropped) != 2 {
 			t.Errorf("%+v, %v", out, err)
 		}
 	})

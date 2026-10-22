@@ -1,6 +1,7 @@
-// Package review holds the reviewer's contract and the shape of its reply.
-// The contract is what `git fresh-review` gives Codex and prints for a
-// sub-agent, so a change to it changes every reviewer at once.
+// Package review is `git delegate`: its reviewers' contracts and the shape
+// of their replies, the runners that start them, and the review records it
+// keeps. The contract is what delegate gives each reviewer and prints for
+// a sub-agent, so a change to it changes every reviewer at once.
 package review
 
 import _ "embed"

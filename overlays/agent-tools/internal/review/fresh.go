@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"maps"
@@ -16,253 +15,35 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/record"
 	"github.com/wesnel/agent-tools/internal/redact"
 	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/repos"
 	"github.com/wesnel/agent-tools/internal/routes"
 )
 
-// Usage is `git fresh-review -h`.
-const Usage = `usage: git fresh-review [--focus ROUTE] --goal FILE [--items FILE] [--prior FILE]
-                        [--red-check FILE] [--reviewer auto|codex] [--model M] [--timeout S] BASE..TIP
-       git fresh-review --print-prompt [--focus ROUTE] --goal FILE [--items FILE] [--prior FILE]
-                        [--red-check FILE] BASE..TIP
-       git fresh-review ask --question FILE PATH...   (see git fresh-review ask -h)
+const name = "git-delegate"
 
-Reviews the commits in BASE..TIP with a reviewer that did not write them and
-sees only the commits and what the files name: the goal statement (the goal,
-and what is not this change's job), the items the change answers (threads,
-CI checks, earlier findings and how each was settled), and the earlier
-findings of this review.
-
-By default Codex reviews, as a model family other than the author's:
-codex exec --ignore-user-config --ephemeral, in a throwaway worktree of TIP
-under the git directory's fresh-review/, removed on every exit. Its commands
-may read only that worktree, the parts of the git directory git needs, the
-Nix store and the system files they need to run; they may not write or
-reach the network, and no MCP server, plugin, web search or image viewer
-loads. Codex's sandbox cannot start inside another macOS sandbox, so run
-this outside one. git red-check runs the commits' code, so the session
-runs it, never fresh-review; where the repository has test settings and
-no --red-check is given, stderr says the review has no red-check results.
-
-Each commit whose tests red-check finds pass without the rest of it
-(passes-without-change), in the JSON given with --red-check FILE (git
-red-check BASE..TIP's, run where the change's tests run), is an untested
-finding of the review's own, with reviewer "red-check" and an id RC-<key>,
-the key made from that commit's test files' diff.
-
-A general review also routes the change to the focused reviews it needs,
-each source only adding: a scan of every commit from TIP's merge base with
-the default branch (origin/HEAD, else origin/main or origin/master, else
-main or master), whatever BASE is, by its changed paths and its added and
-removed lines, against built-in rules and those the operator's repos
-settings add as routes; and the routes the reviewer names. They are
-printed as routes, each with why and the commits that need it, and stderr
-says how to run each.
-
-With --focus ROUTE, the review is that route's focused review: the same
-runner, confinement and rules, with the route's checks and checklist in
-place of the general ones, no red-check, so --red-check is refused, and
-no routing. A security reply must name every category of its checklist
-as checked, or it is not counted. Its findings' ids start with the route,
-as security-1. Its prompt adds the operator's threat notes, threatNotes
-in the repos settings (the notes, or a file outside the repository,
-refused where the repository holds it), and the other open branches that
-change the same files, as this host knows them without fetching: local
-ones not merged, those this host's plans name, and remote ones with an
-open pull request (gh pr list, kept an hour under
-$XDG_CACHE_HOME/agent-tools), or in a review-loop session with a commit
-in the last 14 days; the newest 200 are checked within 10 seconds, and
-20 listed. Known secret shapes are taken out of the goal statement, the
-notes, the branches' subjects, the items, the earlier findings and
-red-check's output before a reviewer sees them.
-
-  --focus ROUTE     the focused review to run: security
-  --goal FILE       the goal statement (required)
-  --items FILE      the items the change answers, and how each was settled
-  --prior FILE      earlier rounds' findings and how each was settled
-  --red-check FILE  git red-check BASE..TIP's JSON; refused unless its
-                    commits are the range's and it ran the repository's
-                    test settings
-  --reviewer R      auto (default): Codex; inside Codex, exit 4; codex: Codex
-                    even then
-  --model M         the Codex model (default: Codex's own)
-  --timeout S       seconds before the review is stopped (default 1800)
-
-Writes JSON on stdout: reviewer, model, range, tip, findings (each with
-id, path, line, kind, claim and evidence, and endLine, about, reopens and
-reviewer where given), dropped (findings whose path:line does not exist at
-TIP, or that do not fit the schema, each with its reason), unverified
-and, where the change needs any, routes; a focused review adds focus.
-Exit status:
-  0  no findings
-  3  findings
-  4  Codex cannot review here: it is not installed or not signed in, its
-     sandbox cannot start confined to the worktree, this is a review-loop
-     session (PR_LOOP_SESSION is set), or, with
-     --reviewer auto, the caller is Codex (CODEX_SANDBOX is set)
-  1  the review could not run; 2 a usage error or refusal
-`
-
-const name = "git-fresh-review"
-
-// Main runs `git fresh-review` with args and returns its exit status.
-func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	if len(args) > 0 && args[0] == "ask" {
-		return ask(ctx, args[1:], stdin, stdout, stderr)
-	}
-	flags := flag.NewFlagSet(name, flag.ContinueOnError)
-	goal := flags.String("goal", "", "")
-	items := flags.String("items", "", "")
-	prior := flags.String("prior", "", "")
-	redCheckFile := flags.String("red-check", "", "")
-	reviewer := flags.String("reviewer", "auto", "")
-	model := flags.String("model", "", "")
-	timeout := flags.Int("timeout", 1800, "")
-	printPrompt := flags.Bool("print-prompt", false, "")
-	focusName := flags.String("focus", "", "")
-
-	// Flags may follow the range, as with git's own commands.
-	var positional []string
-	for {
-		if code, ok := cli.Parse(flags, args, Usage, stdout, stderr); !ok {
-			return code
-		}
-		if flags.NArg() == 0 {
-			break
-		}
-		positional = append(positional, flags.Arg(0))
-		args = flags.Args()[1:]
-	}
-	if len(positional) != 1 || (*reviewer != "auto" && *reviewer != "codex") {
-		fmt.Fprint(stderr, Usage)
-		return 2
-	}
-	report := func(result any, err error, code int) int {
-		return cli.Report(name, result, err, code, stdout, stderr)
-	}
-	var fc *focus
-	if *focusName != "" {
-		f, err := focusNamed(*focusName)
-		if err != nil {
-			return report(nil, err, 0)
-		}
-		fc = &f
-	}
-	if err := git.CheckConfig(""); err != nil {
-		return report(nil, err, 0)
-	}
-	r, err := resolve("", positional[0])
-	if err != nil {
-		return report(nil, err, 0)
-	}
-	if err := usableSettings(r); err != nil {
-		return report(nil, err, 0)
-	}
-
-	in := inputs{r: r}
-	if fc != nil {
-		in.contract = fc.contract()
-		git.Dir = r.top
-		settings, err := repos.Lookup()
-		git.Dir = ""
-		if err != nil {
-			return report(nil, err, 0)
-		}
-		notes, err := settings.Notes()
-		if err != nil {
-			return report(nil, err, 0)
-		}
-		in.focused = notesSection(notes) + overlapSection(r)
-	}
-	if *goal == "" {
-		return report(nil, refusal.New("a review is judged against a goal statement; write the goal, and what is not this change's job, "+
-			"to a file and pass `--goal FILE`"), 0)
-	}
-	if in.goal, err = readFile(*goal, stdin); err != nil {
-		return report(nil, err, 0)
-	}
-	if strings.TrimSpace(in.goal) == "" {
-		return report(nil, refusal.New("the goal statement %s is empty; write the goal, and what is not this change's job, "+
-			"into it and pass `--goal %s` again", *goal, *goal), 0)
-	}
-	for _, f := range []struct {
-		path string
-		into *string
-	}{{*items, &in.items}, {*prior, &in.prior}} {
-		if f.path != "" {
-			if *f.into, err = readFile(f.path, stdin); err != nil {
-				return report(nil, err, 0)
-			}
-		}
-	}
-	tests := &adequacy{}
-	switch {
-	case fc != nil && *redCheckFile != "":
-		return report(nil, refusal.New("a focused review judges no test adequacy, so it takes no red-check results; "+
-			"pass `--red-check %s` to the general review instead", *redCheckFile), 0)
-	case fc == nil:
-		var redCheckJSON string
-		if *redCheckFile != "" {
-			if redCheckJSON, err = readFile(*redCheckFile, stdin); err != nil {
-				return report(nil, err, 0)
-			}
-		}
-		if tests, err = testAdequacy(r, *redCheckFile, []byte(redCheckJSON), stderr); err != nil {
-			return report(nil, err, 0)
-		}
-		in.redCheck, in.adequacy = tests.text, tests.prompt()+sharedPrompt(r)
-	}
-
-	noCodex := func(why string) int {
-		fmt.Fprintf(stderr, "%s: Codex cannot review here: %s. Run `git fresh-review` where Codex's sandbox can start "+
-			"(outside any sandbox and review-loop session); `--print-prompt` prints the contract.\n", name, why)
-		return 4
-	}
-	if !*printPrompt {
-		if why := unavailable(*reviewer == "auto"); why != "" {
-			return noCodex(why)
-		}
-	}
-	if *printPrompt {
-		in.where = fmt.Sprintf("Read the change in the repository at %s: `git diff %s %s`, `git log -p %s..%s`, "+
-			"and `git show %s:PATH` for a file as it is at TIP. That checkout's own files may hold work that is not "+
-			"part of the change, so judge only the commits.", r.top, r.base, r.tip, r.base, r.tip, r.tip)
-		fmt.Fprint(stdout, prompt(in))
-		return 0
-	}
-
-	out, err := codexReview(ctx, in, *focusName, fc, *model, time.Duration(*timeout)*time.Second, stderr)
-	var unconfined Unconfined
-	if errors.As(err, &unconfined) {
-		return noCodex(string(unconfined))
-	}
-	if err != nil {
-		return report(nil, err, 0)
-	}
-	tests.add(out)
-	return finish(r, out, *focusName, report, stderr)
-}
-
-// finish routes a general review's change, or marks a focused review's
-// output with its focus, and reports out.
-func finish(r *span, out *Output, focusName string, report func(any, error, int) int, log io.Writer) int {
-	if focusName == "" {
-		routeChange(r, out, log)
-	} else {
-		out.Focus = focusName
-	}
-	return report(out, nil, out.exit())
-}
-
-// span is the range under review: as given, and resolved.
+// span is the range under review: as given, and resolved. For a pull
+// request, top is its bare clone, and slug and pr name it.
 type span struct {
 	given, base, tip, top, common string
 	commits                       string
+	slug                          string
+	pr                            int
+}
+
+// settings are the repos settings of r's repository: by its remotes, or
+// for a pull request's clone, which has none, by its slug.
+func (r *span) settings() (*repos.Settings, error) {
+	if r.pr != 0 {
+		return repos.For(r.slug)
+	}
+	git.Dir = r.top
+	defer func() { git.Dir = "" }()
+	return repos.Lookup()
 }
 
 // resolve resolves the range given in the repository at dir, or, for "", the
@@ -382,69 +163,6 @@ func prompt(in inputs) string {
 	}
 	b.WriteString("\nReply with the JSON object the Output section describes, and nothing else.\n")
 	return b.String()
-}
-
-// Inputs are a review's prompt for a caller that resolves the range itself.
-// Commits is `git log --reverse --format='%H %s' BASE..TIP`; Where says where
-// the reviewer reads the change.
-type Inputs struct {
-	Given, Base, Tip, Commits           string
-	Goal, Items, Prior, RedCheck, Where string
-}
-
-// Prompt is the prompt a review with in gives its reviewer.
-func Prompt(in Inputs) string {
-	return prompt(inputs{r: &span{given: in.Given, base: in.Base, tip: in.Tip, commits: in.Commits},
-		goal: in.Goal, items: in.Items, prior: in.Prior, redCheck: in.RedCheck, where: in.Where})
-}
-
-// Validate is validate for a caller that resolves the range itself: blob
-// returns a file as it is at TIP, or an error where there is none.
-func Validate(reply, given, tip string, blob func(path string) ([]byte, error), wt string) (*Output, error) {
-	return validateWith(reply, given, tip, blob, wt, "", nil)
-}
-
-// codexReview runs Codex read-only in a throwaway worktree of TIP, which it
-// removes however the review ends.
-func codexReview(ctx context.Context, in inputs, focusName string, fc *focus, model string, timeout time.Duration,
-	log io.Writer) (*Output, error) {
-	parent := filepath.Join(in.r.common, "fresh-review")
-	if err := os.MkdirAll(parent, 0o755); err != nil {
-		return nil, err
-	}
-	dir, err := os.MkdirTemp(parent, in.r.tip[:12]+"-")
-	if err != nil {
-		return nil, err
-	}
-	wt := filepath.Join(dir, "tree")
-	defer func() {
-		removeWorktree(in.r, wt)
-		os.RemoveAll(dir)
-		// Left in place while another review is using it.
-		os.Remove(parent)
-	}()
-	if _, err := git.Run("-C", in.r.top, "worktree", "add", "--quiet", "--detach", wt, in.r.tip); err != nil {
-		return nil, err
-	}
-	in.where = "The working directory is a checkout of TIP holding nothing but the commits; `git diff " +
-		in.r.base + " " + in.r.tip + "` shows the change."
-	schema := Schema
-	if fc != nil {
-		schema = fc.schema()
-	}
-	reply, err := CodexRun(ctx, Codex{Checkout: wt, Prompt: prompt(in), Schema: schema, Model: model, Timeout: timeout, Log: log})
-	if err != nil {
-		return nil, err
-	}
-	out, err := validate(reply.Text, in.r, wt, focusName, fc)
-	if err != nil {
-		return nil, err
-	}
-	out.Reviewer = "codex"
-	if reply.Model != "" {
-		out.Model = &reply.Model
-	}
-	return out, nil
 }
 
 // Codex is one confined, read-only Codex run.
@@ -572,7 +290,7 @@ type Unconfined string
 func (e Unconfined) Error() string { return string(e) }
 
 // profile names the Codex permissions profile confinement defines.
-const profile = "fresh-review"
+const profile = "delegate"
 
 // confinement is the Codex configuration a review runs with: commands may
 // read the worktree (Codex's workspace root), what macOS or Linux needs to
@@ -676,26 +394,10 @@ func (b *bannerModel) Write(p []byte) (int, error) {
 	return b.w.Write(p)
 }
 
-// removeWorktree deletes the worktree and git's record of it, by hand if
-// `git worktree remove` refuses.
-func removeWorktree(r *span, wt string) {
-	if _, err := os.Stat(wt); err != nil {
-		git.Run("-C", r.top, "worktree", "prune")
-		return
-	}
-	admin, _ := git.Run("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
-	if _, err := git.Run("-C", r.top, "worktree", "remove", "--force", "--force", wt); err != nil {
-		os.RemoveAll(wt)
-		// Only git's own record of a worktree, never where a damaged
-		// worktree's .git file might point.
-		if admin != "" && filepath.Dir(admin) == filepath.Join(r.common, "worktrees") {
-			os.RemoveAll(admin)
-		}
-	}
-}
-
 // Finding is one problem a reviewer reports.
 type Finding struct {
+	// Finding is its ID in the review record, which settle takes.
+	Finding  string  `json:"finding,omitempty"`
 	ID       string  `json:"id"`
 	Path     string  `json:"path"`
 	Line     int     `json:"line"`
@@ -716,7 +418,7 @@ type Dropped struct {
 	Reason  string          `json:"reason"`
 }
 
-// Output is what `git fresh-review` prints.
+// Output is one reviewer type's part of a review.
 type Output struct {
 	Reviewer   string     `json:"reviewer"`
 	Model      *string    `json:"model"`
@@ -730,6 +432,12 @@ type Output struct {
 	Routes []routes.Route `json:"routes,omitempty"`
 	// Focus is a focused review's route.
 	Focus string `json:"focus,omitempty"`
+	// Walkthrough is the guide's, in the order to read the change.
+	Walkthrough []Chunk `json:"walkthrough,omitempty"`
+	// Diagrams are the diagrams a diagram review kept, and diagrams those
+	// the record keeps.
+	Diagrams []DiagramResult `json:"diagrams,omitempty"`
+	diagrams []record.Diagram
 	// proposed are the routes the reviewer's reply named.
 	proposed []proposedRoute
 }
@@ -781,6 +489,14 @@ func validateWith(reply, given, tip string, blob func(path string) ([]byte, erro
 	if err := json.Unmarshal([]byte(text[start:end+1]), &parsed); err != nil || parsed.Findings == nil {
 		return nil, fmt.Errorf("the reply is not the JSON the contract describes (%v); ask the reviewer again", err)
 	}
+	schema := Schema
+	if fc != nil {
+		schema = fc.schema()
+	}
+	item, err := checkReply(schema, []byte(text[start:end+1]))
+	if err != nil {
+		return nil, fmt.Errorf("the reply does not fit its schema: %v", err)
+	}
 	allowed := kinds
 	if fc != nil {
 		if left := fc.unchecked(parsed.Checked); len(left) > 0 {
@@ -802,6 +518,11 @@ func validateWith(reply, given, tip string, blob func(path string) ([]byte, erro
 	lines := map[string]int{}
 	for _, raw := range *parsed.Findings {
 		f, why := normalise(raw, blob, wt, lines, allowed)
+		if why == "" {
+			if err := item(raw); err != nil {
+				why = "does not fit the schema: " + err.Error()
+			}
+		}
 		if why == "" && focusName != "" {
 			f.ID = focusName + "-" + f.ID
 		}
@@ -826,7 +547,7 @@ func normalise(raw json.RawMessage, blob func(path string) ([]byte, error), wt s
 	if err := json.Unmarshal(raw, &f); err != nil {
 		return nil, "does not fit the schema: " + err.Error()
 	}
-	f.Reviewer = ""
+	f.Reviewer, f.Finding = "", ""
 	switch {
 	case strings.TrimSpace(f.ID) == "":
 		return nil, "has no id"

@@ -544,7 +544,7 @@ func testBaselineRoles(t *testing.T) {
 		{true, "--reviewer", "agent-plan log p --kind done"},
 		{false, "--reviewer", "agent-plan status p"},
 		{true, "--reviewer", "git stash"},
-		{true, "--reviewer", "git fresh-review a..b"},
+		{true, "--reviewer", "git delegate a..b"},
 		{true, "--reviewer", "gh pr create --draft --title t --body-file b"},
 		{false, "--reviewer", "gh pr view 1"},
 	} {

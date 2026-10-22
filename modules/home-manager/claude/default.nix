@@ -418,7 +418,7 @@ with lib; let
   # and guard, which work in the sandbox. post is the operator's: the guard
   # refuses it to agents, and it asks on /dev/tty.
   prLoopGitHub = ["open" "stack" "link" "push" "threads" "reply" "resolve" "draft" "post" "request" "status" "ci" "logs" "wait"
-    "sign-check" "review" "end"];
+    "sign-check" "end"];
 
   # The read-only ones, which run without a prompt in an ordinary session;
   # threads writes only its PR's review record. The writes are left to the
@@ -492,16 +492,20 @@ with lib; let
     #   the operator's gh login and prints what it read: pull requests, their
     #   diffs and checks, workflow runs and logs, and repositories, private
     #   ones included, from whichever host its arguments name.
-    # - git fresh-review: Codex's own sandbox cannot start inside this one.
-    #   api.openai.com stays out of the allowed domains, since the command
-    #   runs outside the sandbox anyway.
+    # - git delegate: Codex's own sandbox cannot start inside this one, a
+    #   pull request is fetched with the operator's login, and it writes the
+    #   review records the sandbox denies. api.openai.com stays out of the
+    #   allowed domains, since the command runs outside the sandbox anyway.
+    #   Every delegate subcommand is one an agent may run; an operator-only
+    #   action must never become one, since this exclusion and its allow
+    #   rule below take them all.
     # - pr-loop's GitHub commands and agent-plan's writes: neither takes a
     #   program or a host from its arguments. The guard refuses a file
     #   argument that names a credential (wgn.home.llm.guard.credentialPaths,
     #   which denyRead holds too), and pr-loop refuses to post text holding a
     #   secret's shape.
     excludedCommands =
-      ["gh-read *" "git fresh-review *" "git-fresh-review *"]
+      ["gh-read *" "git delegate *" "git-delegate *"]
       ++ map (sub "pr-loop") prLoopGitHub
       ++ map (sub "agent-plan") agentPlanWrites;
 
@@ -680,7 +684,10 @@ in {
         # only when every command in it matches.
         permissions.allow =
           map (s: "Bash(${sub "pr-loop" s})") prLoopReads
-          ++ ["Bash(git fresh-review *)"]
+          # Every delegate subcommand is one an agent may run; an
+          # operator-only action must never become one, since this rule
+          # allows it.
+          ++ ["Bash(git delegate *)" "Bash(git-delegate *)"]
           ++ map (w: "Bash(${sub "agent-plan" w})") agentPlanWrites;
 
         # The auto-mode classifier judges intent, so it also stops a rule

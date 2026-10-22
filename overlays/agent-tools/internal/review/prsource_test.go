@@ -1,4 +1,4 @@
-package prreview
+package review
 
 import (
 	"net"
@@ -14,7 +14,7 @@ import (
 func TestFetch(t *testing.T) {
 	t.Run("first round", func(t *testing.T) {
 		r := newRemote(t, nil)
-		f := setUp(t, r)
+		f := setUpPR(t, r)
 		pr, err := Fetch(t.Context(), "o/r", 7)
 		if err != nil {
 			t.Fatal(err)
@@ -44,7 +44,7 @@ func TestFetch(t *testing.T) {
 	// The next round fetches into the same clone.
 	t.Run("next round", func(t *testing.T) {
 		r := newRemote(t, nil)
-		f := setUp(t, r)
+		f := setUpPR(t, r)
 		if _, err := Fetch(t.Context(), "o/r", 7); err != nil {
 			t.Fatal(err)
 		}
@@ -63,7 +63,7 @@ func TestFetch(t *testing.T) {
 	// the query and the fetch, is refused.
 	t.Run("pins the head", func(t *testing.T) {
 		r := newRemote(t, nil)
-		f := setUp(t, r)
+		f := setUpPR(t, r)
 		f.pr["headRefOid"] = r.base
 		_, err := Fetch(t.Context(), "o/r", 7)
 		if err == nil || !strings.Contains(err.Error(), r.base) {
@@ -80,7 +80,7 @@ func TestFetch(t *testing.T) {
 	}{{"o/..", 7}, {"../r", 7}, {"o/r/x", 7}, {"o", 7}, {"o/r", 0}, {"o/r", -1}, {".git/r", 7}} {
 		t.Run("refuses/"+c.slug+"#"+strconv.Itoa(c.number), func(t *testing.T) {
 			r := newRemote(t, nil)
-			setUp(t, r)
+			setUpPR(t, r)
 			if _, err := Fetch(t.Context(), c.slug, c.number); err == nil {
 				t.Errorf("%s#%d was fetched", c.slug, c.number)
 			}
@@ -96,7 +96,7 @@ func TestFetch(t *testing.T) {
 // checkouts to running no hook, wherever one is planted.
 func testFetchHooksDoNotRun(t *testing.T) {
 	r := newRemote(t, nil)
-	f := setUp(t, r)
+	f := setUpPR(t, r)
 	pr, err := Fetch(t.Context(), "o/r", 7)
 	if err != nil {
 		t.Fatal(err)
@@ -153,7 +153,7 @@ func testFetchLFSStaysInert(t *testing.T) {
 		write(t, filepath.Join(work, ".lfsconfig"), "[lfs]\n\turl = http://"+listener.Addr().String()+"/\n")
 		write(t, filepath.Join(work, "big.bin"), pointer)
 	})
-	setUp(t, r)
+	setUpPR(t, r)
 
 	// The user's global config defines the LFS filter as required, the way
 	// `git lfs install` does, with a step that leaves a marker.
@@ -211,7 +211,7 @@ func testFetchSymlinksCheckOutAsFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	setUp(t, r)
+	setUpPR(t, r)
 	pr, err := Fetch(t.Context(), "o/r", 7)
 	if err != nil {
 		t.Fatal(err)

@@ -20,7 +20,7 @@ import (
 // Fields are only ever added, each addition raising it, and never renamed
 // or given another meaning: a reader takes any version and uses a field
 // only where it is present.
-const Schema = 1
+const Schema = 2
 
 // Dir is the dashboard's state directory, $XDG_STATE_HOME/agent-plans.
 func Dir() string { return filepath.Join(hostpaths.StateHome(), "agent-plans") }
@@ -33,7 +33,11 @@ func Out() string { return filepath.Join(Dir(), "out") }
 // inline, which reads the documents plan-dash export writes from the
 // page's database and writes nothing. Its script renders every document's text as text, never as markup, and
 // its schema block names each field it reads; export's page test holds
-// both to the documents' types.
+// both to the documents' types. A review record's diagram source is also
+// given, where it is in the grammar the page's grammar block gives, to
+// Mermaid, loaded by its hash in a sandboxed frame with no access to the
+// page, whose SVG the page shows only as an image; where it is not drawn,
+// it is shown as text.
 //
 //go:embed page.html
 var Page []byte
