@@ -128,16 +128,20 @@ signed and sign it, in a terminal of your own:
 ``` sh
 git log --format='%h %G? %s' main..HEAD   # N marks an unsigned commit
 git sign-pass                              # squash fixups and sign; nothing is pushed
-git sign-pass --push                       # then push every branch that moved to its upstream
+git sign-pass --push                       # then push every branch that moved to its own name upstream
 git sign-pass --set-upstream               # and publish moved branches that have none yet
+git sign-pass --push TOP1 TOP2 ...         # several stacks, wherever they are checked out
 ```
 
 `git sign-pass` re-signs from the oldest unsigned commit, or the oldest one a
-fixup folds into, to the tip, one touch per commit. Branches stacked inside
-that range move with it. It squashes the fixups unsigned in a scratch
-worktree first, so a conflicting fixup is named before any touch, and it
-refuses if a commit's files, author or message would change, or, when
-squashing, if the files at the tip would. Merges are refused. The unsigned
+`fixup!`, `amend!` or `squash!` commit folds into, to the tip, one touch per
+commit. Branches stacked inside that range move with it. It squashes unsigned
+in a scratch worktree first, so a conflicting fixup is named before any
+touch, and it refuses if a commit's files, author or message would change, or,
+when squashing, if the files at the tip would or the remaining commits would
+differ from what git's autosquash should leave: an `amend!` (from
+`--fixup=amend:` or `--fixup=reword:`) replaces its target's whole message,
+subject included, and a `squash!` appends its body. No editor opens. Merges are refused. The unsigned
 tip is kept at `refs/sign-pass/backup/<branch>`.
 
 If it stops at a missed touch, run `git rebase --continue`, touching the key

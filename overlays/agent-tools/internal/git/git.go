@@ -28,7 +28,20 @@ func command(args ...string) *exec.Cmd {
 
 // Bytes runs git and returns its stdout.
 func Bytes(stdin []byte, args ...string) ([]byte, error) {
+	return bytesEnv(nil, stdin, args...)
+}
+
+// RunEnv is Run with env added to this process's environment.
+func RunEnv(env []string, args ...string) (string, error) {
+	out, err := bytesEnv(env, nil, args...)
+	return strings.TrimSpace(string(out)), err
+}
+
+func bytesEnv(env []string, stdin []byte, args ...string) ([]byte, error) {
 	cmd := command(args...)
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
