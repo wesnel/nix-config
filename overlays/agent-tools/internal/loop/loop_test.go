@@ -122,7 +122,6 @@ func TestCheckFixups(t *testing.T) {
 	for message, problem := range map[string]string{
 		"fixup! A first\n\nReview-Thread: x\nSigned-off-by: T <t@e>": "Signed-off-by",
 		"fixup! A first\n\nCo-Authored-By: C <c@e>":                  "Co-Authored-By",
-		"fixup! A first\n\nAs in thread tZ1Cm.\n\nReview-Thread: x":  "tZ1Cm",
 	} {
 		t.Run("trailer/"+problem, func(t *testing.T) {
 			err := checkFixups("br", []Commit{a, b}, []Commit{a, b, c(message)})

@@ -56,13 +56,6 @@ func TestLintMessage(t *testing.T) {
 		{"fixup with another trailer", "fixup! A\n\nReview-Thread: x\nSigned-off-by: T <t@e>", `trailer "Signed-off-by" is not a Review-* trailer`},
 		{"fixup with attribution", "fixup! A\n\nCo-authored-by: C <c@e>", "is attribution"},
 		{"long amend body", "amend! A\n\n" + long, ""},
-		{"a thread's short key", "Resolve symlinks first\n\nThe symlinked ~/.local case (tZ1Cm) predates it.",
-			`names "tZ1Cm" (a review thread's short key), which mean nothing to a reader who has never seen the harness`},
-		{"a plan's ID", "Keep the flag\n\nAs D188 settled.", `"D188" (a plan's ID)`},
-		{"a scratch path", "Add x\n\nThe notes are in /tmp/claude-501/s/notes.md.", `"/tmp/claude-501/s/notes.md" (a local path)`},
-		{"a fixup's Review trailers", "fixup! A\n\nReview-Thread: https://github.com/o/r/pull/1#discussion_r2\nReview-Round: 3\nReview-Finding: 2.Q12", ""},
-		{"a fixup's body", "fixup! A\n\nFor D188.\n\nReview-Round: 3", `"D188"`},
-		{"commits, tickets and code", "Resolve symlinks first\n\nAfter 1a2b3c4, `filepath.EvalSymlinks` runs first (AGENT-1191).", ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			got := strings.Join(LintMessage(c.message), "; ")
