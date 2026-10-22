@@ -160,14 +160,14 @@ func testPostRecordsFacts(t *testing.T) {
 	}
 	var got []string
 	for _, e := range events {
-		got = append(got, e.Kind+" "+e.Item+" "+e.Branch+" "+e.Commit+" "+e.Summary)
+		got = append(got, e.Kind+" "+e.Item+" "+e.Branch+" "+e.Commit+" "+e.Summary+" "+e.Session)
 	}
 	want := []string{
-		"committed " + p.Name + " main Add the loop Add the loop",
-		"committed " + p.Name + " main Test it Test it",
-		"committed P1 part Add the flag Add the flag",
-		"pushed " + p.Name + " topic  opened https://github.com/o/r/pull/12",
-		"pushed " + p.Name + "   pushed other topic",
+		"committed " + p.Name + " main Add the loop Add the loop s1",
+		"committed " + p.Name + " main Test it Test it s9",
+		"committed P1 part Add the flag Add the flag s1",
+		"pushed " + p.Name + " topic  opened https://github.com/o/r/pull/12 ",
+		"pushed " + p.Name + "   pushed other topic ",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("logged:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))

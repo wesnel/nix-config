@@ -231,7 +231,11 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 				if strings.ContainsAny(branch, " \t") {
 					branch = ""
 				}
-				if _, err := p.Record(part, plans.Event{Kind: "committed", Branch: branch, Commit: m[3], Summary: m[3]}, now); err == nil {
+				who := session
+				if strings.ContainsAny(who, " \t\r\n") {
+					who = ""
+				}
+				if _, err := p.Record(part, plans.Event{Kind: "committed", Branch: branch, Commit: m[3], Summary: m[3], Session: who}, now); err == nil {
 					context = append(context, fmt.Sprintf("The commit %q is logged in %s. If it completes a step, which step? "+
 						"Log `done` for it with `--commit %s`; if none, carry on.", m[3], p.File(), shellQuote(m[3])))
 				}

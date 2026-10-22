@@ -156,8 +156,12 @@ part at once:
   duplication, contradictions, the same file edited on parallel branches,
   and tooling that has drifted apart.
 
-Its decisions go to Wesley as one list, merged with the Decide phase's when
-there is one.
+Settle its questions as the `plan-work` skill's "Questions for Wesley"
+says: decide the reversible ones yourself, and merge the one-way doors and
+product direction into the Decide phase's list when there is one. A design
+on which sub-agents, or you and the design review, disagree gets a second
+opinion with `git fresh-review ask` first, as the `review-change` skill's
+design review says.
 
 A finding by one sub-agent that bears on another part goes to that part's
 sub-agent, in its current task or its next one.
