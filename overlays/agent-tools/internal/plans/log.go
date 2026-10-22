@@ -48,6 +48,13 @@ type Event struct {
 	// item's `* Plan` heading, and its values, separated by spaces.
 	Property string `json:"property,omitempty"`
 	Value    string `json:"value,omitempty"`
+	// Command is a handed-back event's command for the operator to run,
+	// and Dir the directory to run it in; Waiting reads them.
+	Command string `json:"command,omitempty"`
+	Dir     string `json:"dir,omitempty"`
+	// Base is a sign-requested event's base for git sign-pass --base, ""
+	// for main.
+	Base string `json:"base,omitempty"`
 	// Note is what the caller should know about the event, such as a
 	// heading keyword Log could not write; the log does not hold it.
 	Note string `json:"note,omitempty"`
@@ -111,6 +118,19 @@ func (p Plan) check(e Event) error {
 			return err
 		}
 	}
+	for what, v := range map[string]string{"command": e.Command, "dir": e.Dir, "base": e.Base} {
+		if err := checkLine(what, v); err != nil {
+			return err
+		}
+	}
+	switch {
+	case (e.Command != "" || e.Dir != "") && e.Kind != handedBack:
+		return refusal.New("--command and --dir name what the operator runs after a hand-back. Log them with `--kind %s`", handedBack)
+	case e.Dir != "" && e.Command == "":
+		return refusal.New("--dir is where the operator runs --command. Pass the command too, as `--command 'git sign-pass --push' --dir DIR`")
+	case e.Dir != "" && !filepath.IsAbs(e.Dir):
+		return refusal.New("--dir %q is not absolute, and the operator runs it from anywhere. Pass the full path, as `--dir /path/to/worktree`", e.Dir)
+	}
 	switch {
 	case !oneOf(e.Kind, Kinds) && toolKinds[e.Kind] == "":
 		return refusal.New("%q is not an event kind. Use one of `%s`", e.Kind, strings.Join(Kinds, "`, `"))
@@ -130,7 +150,7 @@ func (p Plan) check(e Event) error {
 		return err
 	}
 	if _, ok := items[e.Item]; !ok {
-		return refusal.New("%q is not an item of %s. Add it to the plan file first, or use an ID `agent-plan status %s` lists", e.Item, p.Name, p.file(""))
+		return refusal.New("%q is not an item of %s. Add it first with `agent-plan step` or `agent-plan part`, or use an ID `agent-plan status %s` lists", e.Item, p.Name, p.file(""))
 	}
 	return nil
 }
@@ -243,7 +263,8 @@ func eventText(e Event) string {
 	for _, kv := range [][2]string{{"EVENT", e.ID}, {"AGENT", e.Agent}, {"ROLE", e.Role}, {"ITEM", e.Item},
 		{"KIND", e.Kind}, {"BRANCH", e.Branch}, {"COMMIT", e.Commit}, {"EVIDENCE", e.Evidence},
 		{"REVIEW", e.Review}, {"OUTCOME", e.Outcome}, {"SESSION", e.Session}, {"WORKTREE", e.Worktree}, {"TIP", e.Tip},
-		{"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}, {"PROPERTY", e.Property}, {"VALUE", e.Value}} {
+		{"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}, {"PROPERTY", e.Property}, {"VALUE", e.Value},
+		{"COMMAND", e.Command}, {"DIR", e.Dir}, {"BASE", e.Base}} {
 		if kv[1] != "" {
 			b.WriteString(":" + kv[0] + ": " + kv[1] + "\n")
 		}
@@ -268,6 +289,14 @@ func newUUID() string {
 type lockedPlan struct {
 	p    Plan
 	lock *os.File
+	// originals are the plan files edit has rewritten, as they were;
+	// created the ones create made; written each file as either last left
+	// it; appended is whether an event reached the log. withLock restores
+	// the originals, and removes the created, when its function fails
+	// before an event records the change.
+	originals, written map[string][]byte
+	created            []string
+	appended           bool
 }
 
 // withLock runs fn holding an exclusive flock on the log's lock file. It
@@ -290,7 +319,38 @@ func (p Plan) withLock(fn func(l *lockedPlan) error) error {
 		return err
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-	return fn(&lockedPlan{p: p, lock: lock})
+	l := &lockedPlan{p: p, lock: lock, originals: map[string][]byte{}, written: map[string][]byte{}}
+	err = fn(l)
+	// A command refused after it rewrote a plan file, and before any event
+	// recorded that, leaves the file as it found it: run again, it would
+	// write the change twice. Once an event is logged, the file stays as
+	// the event describes, and a file someone saved since stays theirs.
+	if err != nil && !l.appended {
+		for file, text := range l.originals {
+			replaceFile(file, string(text), func() bool {
+				now, err := os.ReadFile(file)
+				return err == nil && bytes.Equal(now, l.written[file])
+			})
+		}
+		for _, file := range l.created {
+			if now, err := os.ReadFile(file); err == nil && bytes.Equal(now, l.written[file]) {
+				os.Remove(file)
+			}
+		}
+	}
+	return err
+}
+
+// create writes the plan file file, which must not exist yet, as
+// writeNew does, for withLock to remove again if the command fails
+// before an event records it.
+func (l *lockedPlan) create(file, text string) error {
+	if err := writeNew(file, text); err != nil {
+		return err
+	}
+	l.created = append(l.created, file)
+	l.written[file] = []byte(text)
+	return nil
 }
 
 // append adds text to the log in one write and syncs it. The lock file
@@ -299,10 +359,38 @@ func (p Plan) withLock(fn func(l *lockedPlan) error) error {
 func (l *lockedPlan) append(text string) error {
 	return l.appendWith(func(current []byte, recorded string) (string, error) {
 		if recorded != "" && recorded != digest(current) {
-			return "", refusal.New("%s has changed since agent-plan last appended to it, and the log is append-only. Leave it as it is, and tell the operator which plan's log changed; `agent-plan reseal` is theirs to run", l.p.log())
+			return "", l.sealBroken()
 		}
 		return text, nil
 	})
+}
+
+// sealBroken is append's refusal of a log changed some other way.
+func (l *lockedPlan) sealBroken() error {
+	return refusal.New("%s has changed since agent-plan last appended to it, and the log is append-only. Leave it as it is, and tell the operator which plan's log changed; `agent-plan reseal` is theirs to run", l.p.log())
+}
+
+// checkSeal refuses, as append would, while the log does not match the
+// digest the lock file recorded, so a command whose event append would
+// refuse writes no plan file first.
+func (l *lockedPlan) checkSeal() error {
+	recorded := make([]byte, 256)
+	n, err := l.lock.ReadAt(recorded, 0)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	seal := strings.TrimSpace(string(recorded[:n]))
+	if seal == "" {
+		return nil
+	}
+	current, err := os.ReadFile(l.p.log())
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	if seal != digest(current) {
+		return l.sealBroken()
+	}
+	return nil
 }
 
 // appendWith appends what build returns, given the log and the digest
@@ -329,9 +417,19 @@ func (l *lockedPlan) appendWith(build func(current []byte, recorded string) (str
 	if len(current) > 0 && current[len(current)-1] != '\n' {
 		text = "\n" + text
 	}
+	// An event lands whole or not at all: part of one is a torn heading
+	// that every later append refuses, and the plan change it records is
+	// rolled back as if it had never been written.
 	if n, err := log.Write([]byte(text)); err != nil || n != len(text) {
-		return fmt.Errorf("appending to %s: wrote %d of %d bytes: %v", l.p.log(), n, len(text), err)
+		err = fmt.Errorf("appending to %s: wrote %d of %d bytes: %v", l.p.log(), n, len(text), err)
+		if n > 0 {
+			if terr := log.Truncate(int64(len(current))); terr != nil {
+				return fmt.Errorf("%w; removing the part written: %v", err, terr)
+			}
+		}
+		return err
 	}
+	l.appended = true
 	if err := log.Sync(); err != nil {
 		return err
 	}
@@ -354,7 +452,8 @@ const editTries = 3
 
 // edit is the one rewrite of a plan file: it applies fn, which must be
 // pure over the lines, and renames the result over the file. A result
-// equal to the file is not written. The lock excludes other agent-plan
+// equal to the file is not written, and one that adds structure drift is
+// refused before it is, as checkStructure says. The lock excludes other agent-plan
 // processes but not Emacs, so edit refuses a file whose buffer has unsaved
 // changes, and applies fn again to a file that changed between its read
 // and the rename. The window between that last check and the rename stays
@@ -363,6 +462,9 @@ func (l *lockedPlan) edit(file string, fn func(lines []string) ([]string, error)
 	emacsLock := filepath.Join(filepath.Dir(file), ".#"+filepath.Base(file))
 	if info, err := os.Lstat(emacsLock); err == nil && info.Mode()&fs.ModeSymlink != 0 {
 		return refusal.New("%s has unsaved changes in an Emacs buffer (%s exists), which would overwrite this change when saved. Ask the operator to save or revert that buffer, then run the command again", file, emacsLock)
+	}
+	if err := l.checkSeal(); err != nil {
+		return err
 	}
 	for range editTries {
 		before, err := os.ReadFile(file)
@@ -377,10 +479,26 @@ func (l *lockedPlan) edit(file string, fn func(lines []string) ([]string, error)
 		if text == string(before) {
 			return nil
 		}
+		if err := checkStructure(file, string(before), text); err != nil {
+			return err
+		}
+		events, err := l.p.Events()
+		if err != nil {
+			return err
+		}
+		if err := checkKeywords(file, string(before), text, events); err != nil {
+			return err
+		}
 		err = replaceFile(file, text, func() bool {
 			now, err := os.ReadFile(file)
 			return err == nil && bytes.Equal(now, before)
 		})
+		if err == nil {
+			if _, ok := l.originals[file]; !ok {
+				l.originals[file] = before
+			}
+			l.written[file] = []byte(text)
+		}
 		if !errors.Is(err, errChanged) {
 			return err
 		}
@@ -392,9 +510,24 @@ func (l *lockedPlan) edit(file string, fn func(lines []string) ([]string, error)
 // rename.
 var errChanged = errors.New("changed before the rename")
 
-// replaceFile writes text to path by renaming a new file over it, if
-// unchanged, asked just before the rename, reports path as it was read.
+// staleEdit is how old a temporary file of replaceFile's or writeNew's is
+// before the next replaceFile clears it: older than any write takes, so it
+// is one a killed process left. Every plan in the directory shares the
+// prefix, each under its own lock, so a younger one may be another plan's
+// write under way.
+const staleEdit = 10 * time.Minute
+
+// replaceFile writes text to path by renaming a new file over it, synced
+// first, if unchanged, asked just before the rename, reports path as it
+// was read. It clears the stale temporary files others left.
 func replaceFile(path, text string, unchanged func() bool) error {
+	if old, err := filepath.Glob(filepath.Join(filepath.Dir(path), ".edit-*")); err == nil {
+		for _, o := range old {
+			if info, err := os.Lstat(o); err == nil && info.Mode().IsRegular() && time.Since(info.ModTime()) > staleEdit {
+				os.Remove(o)
+			}
+		}
+	}
 	f, err := os.CreateTemp(filepath.Dir(path), ".edit-*")
 	if err != nil {
 		return err
@@ -405,6 +538,10 @@ func replaceFile(path, text string, unchanged func() bool) error {
 		return err
 	}
 	if err := f.Chmod(0o644); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
 		f.Close()
 		return err
 	}
@@ -450,6 +587,7 @@ func (p Plan) Events() ([]Event, error) {
 		if _, summary, ok := strings.Cut(h.Title, " — "); ok {
 			e.Summary = summary
 		}
+		e.Command, e.Dir, e.Base = h.Props["COMMAND"], h.Props["DIR"], h.Props["BASE"]
 		for _, line := range h.Body {
 			if strings.HasPrefix(line, "[") {
 				e.Time = strings.TrimSpace(line)

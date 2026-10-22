@@ -25,6 +25,8 @@ A plan is files side by side in the plans directory: <date>-<slug>.<host>.org,
 <date>-<slug>.<host>.<part>.org for each sub-agent's part, and
 <date>-<slug>.<host>.log.org, which only "agent-plan log" writes. The plans
 directory and host come from "plans" in the user's agent-tools/config.json.
+A command that would leave a plan file with structure drift it did not
+have (see status) is refused and writes nothing.
 
   new --title T --slug S [--repo R]... [--branch BASE..BRANCH]... [--worktree DIR]...
       [--session HARNESS:ID]... [--harness H] [--template NAME]
@@ -35,8 +37,17 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      create part P1's plan file beside its parent's
   log PLAN --item ID --kind KIND [--summary S] [--role R] [--agent A] [--branch B]
       [--commit SUBJECT] [--evidence E] [--review ROUND.ID --outcome O]
+      [--command CMD [--dir DIR]]
                      append an event about item ID to the plan's log, and
-                     write a step's or part's heading keyword from its log
+                     write a step's or part's heading keyword from its log.
+                     A handed-back event's --command is what the operator
+                     runs next, in the absolute --dir if given
+  waiting PLAN [--json]
+                     the items whose newest event, but planned, property,
+                     resealed, referenced and postponed events, is a
+                     hand-back with a command, each with its command and
+                     directory: what waits on the operator, which Emacs and
+                     the dashboard show them
   find [--session ID] [--worktree DIR] [--branch B]
                      this host's plan files that match any one given (default:
                      this session, worktree and branch)
@@ -65,7 +76,10 @@ directory and host come from "plans" in the user's agent-tools/config.json.
   set PLAN NAME [VALUE...] [--part P1]
                      set WORKTREES, BRANCHES or PULL_REQUESTS of the plan's
                      file, or the part's, to the values, and log it; new,
-                     own and the hooks log the changes they make
+                     own and the hooks log the changes they make. STATUS
+                     (planning, reviewing-plan, working, reviewing,
+                     handed-back or halted), SKILLS, REPOSITORIES, SESSIONS
+                     and HARNESS are set the same way, with no log event
   questions PLAN [--all] [--waiting] [--json | --count]
                      the open questions the operator can answer now, by
                      priority, with their recommendations; --all adds the
@@ -107,6 +121,29 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      scope, as a TODO under Follow-ups with the next follow-up
                      ID, and log it as discovered; its keyword then follows
                      its log, as a step's does
+  step PLAN --title T [--text TEXT] [--after ID]... [--part P1]
+                     add a step at the end of Steps, in the plan's file or
+                     the part's, as its next step ID, and log it as planned
+  part PLAN --title T [--text TEXT] [--after ID]... [--repo R]
+      [--branch BASE..BRANCH] [--worktree DIR]
+                     add a part at the end of Distribution as the next part
+                     ID, its text starting "R: BRANCH on BASE, worktree
+                     DIR." when given them, and log it as planned
+  edit PLAN ID [--title T] [--text TEXT]
+                     change the title or the text of step, part or
+                     follow-up ID in place, keeping its keyword, tags,
+                     drawers and the headings under it; an empty --text
+                     removes the text. Log it as planned
+  after PLAN ID ID... | after PLAN ID --clear
+                     set the AFTER of step, part or question ID to the IDs
+                     it waits for, or with --clear none; log it as planned
+  section PLAN Goal|Verification --text TEXT [--part P1]
+                     write the whole of the plan's, or the part's, Goal or
+                     Verification, the sections that hold text; log it as
+                     planned
+                     TEXT may hold line breaks, but no line Org reads as a
+                     heading, a drawer, a planning line or a #+ keyword
+                     other than a block's
   reference PLAN URL [--note TEXT]
                      keep URL under References, or set its note: what it was
                      used for and which decisions (Q IDs) it fed; log it as
@@ -146,12 +183,17 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      and on every one of those prompts, with or without a
                      plan, adds the time and how long since the operator's
                      previous message in the session; never blocks
-  sign-id [--session ID] [--branch B]...
+  sign-id [--session ID] [--branch B]... [--worktree DIR] [--base REF]
                      log a sign-pass about to be handed to the operator as
                      sign-requested in the plan of this session (--session,
                      else CLAUDE_CODE_SESSION_ID or CODEX_THREAD_ID) and
                      worktree, and print its ID for
-                     ` + "`git sign-pass --notify ID`" + `; refused without a plan
+                     ` + "`git sign-pass --notify ID`" + `; refused without a plan.
+                     The event's WORKTREE is where git sign-pass runs (the
+                     worktree given, else the one sign-id runs in), and its
+                     BASE the pass's --base, left out for main (or
+                     origin/main); BRANCH defaults to the branch of that
+                     worktree
   sign-result ID [--check]
                      print each result of sign-pass ID and log those not yet
                      delivered as delivered, as remind does; exit 1 while it
@@ -169,7 +211,8 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      it; the operator's to run
 
 find, status and new first take the other hosts' plans, quietly, if they can.
-Values are single lines; list values hold no whitespace.
+Values are single lines but --text and --context, which may span lines as
+section says; list values hold no whitespace.
 KIND: ` + strings.Join(plans.Kinds, ", ") + `
 ROLE: ` + strings.Join(plans.Roles, ", ") + `
 OUTCOME: ` + strings.Join(plans.Outcomes, ", ") + `
@@ -208,6 +251,14 @@ func relayRefusal(args []string) string {
 	if len(args) == 0 || !relayed[args[0]] || clientSide(args) {
 		name := strings.Join(args[:min(len(args), 2)], " ")
 		return fmt.Sprintf("%q is not served through the relay. A sandbox runs `agent-plan log`, `goal`, `status`, `find`, `questions`, `decisions` and `brief`; put anything else in your report for the operator", name)
+	}
+	// A hand-back's command is shown to the operator, in Emacs and on the
+	// dashboard, for them to run on the host, so a sandbox, which may run
+	// code it was given, never names one.
+	for _, a := range args[1:] {
+		if a == "--command" || a == "-command" || strings.HasPrefix(a, "--command=") || strings.HasPrefix(a, "-command=") {
+			return "a hand-back's --command is shown to the operator to run on the host, and a sandbox does not name one. Log the hand-back without it, and put the command in your report for the operator"
+		}
 	}
 	return ""
 }
@@ -306,11 +357,16 @@ func checkout() (top, branch string) {
 	if err != nil {
 		return "", ""
 	}
-	top, err = git.Run("-C", cwd, "rev-parse", "--show-toplevel")
+	return checkoutAt(cwd)
+}
+
+// checkoutAt is the top level and branch of the worktree dir is in.
+func checkoutAt(dir string) (top, branch string) {
+	top, err := git.Run("-C", dir, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return "", ""
 	}
-	branch, _ = git.Run("-C", cwd, "branch", "--show-current")
+	branch, _ = git.Run("-C", dir, "branch", "--show-current")
 	return top, branch
 }
 
@@ -361,6 +417,10 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		unset    = flags.Bool("clear", false, "")
 		check    = flags.Bool("check", false, "")
 		resume   = flags.Bool("resume", false, "")
+		text     = flags.String("text", "", "")
+		run      = flags.String("command", "", "")
+		runDir   = flags.String("dir", "", "")
+		signBase = flags.String("base", "", "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
 		branches multi
@@ -385,6 +445,20 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return ""
 		}
 		return values[len(values)-1]
+	}
+	if *unset && command != "postpone" && command != "after" {
+		fmt.Fprintf(stderr, "agent-plan %s: --clear is postpone's and after's\n", command)
+		return 2
+	}
+	given := map[string]bool{}
+	flags.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	if given["base"] && command != "sign-id" {
+		fmt.Fprintf(stderr, "agent-plan %s: --base is sign-id's\n", command)
+		return 2
+	}
+	if given["text"] && command != "step" && command != "part" && command != "edit" && command != "section" {
+		fmt.Fprintf(stderr, "agent-plan %s: --text is step's, part's, edit's and section's\n", command)
+		return 2
 	}
 	if (command != "new" && (len(trees) > 1 || len(sessions) > 1)) || (command != "new" && command != "sign-id" && len(branches) > 1) {
 		fmt.Fprintf(stderr, "agent-plan %s: --branch, --worktree and --session are given once\n", command)
@@ -441,7 +515,28 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return 2
 		}
 		return report(p.Log(plans.Event{Kind: *kind, Item: *item, Summary: *summary, Role: *role, Agent: *agent,
-			Branch: branch, Commit: *commit, Evidence: *evidence, Review: *review, Outcome: *outcome}, time.Now()))
+			Branch: branch, Commit: *commit, Evidence: *evidence, Review: *review, Outcome: *outcome,
+			Command: *run, Dir: *runDir}, time.Now()))
+	case "waiting":
+		p, ok := wantPlan()
+		if !ok {
+			return 2
+		}
+		ws, err := p.Waiting()
+		if err != nil || *asJSON {
+			return report(ws, err)
+		}
+		for _, w := range ws {
+			line := "- " + w.Item + ": `" + w.Command + "`"
+			if w.Dir != "" {
+				line += " in " + w.Dir
+			}
+			if w.Summary != "" {
+				line += " (" + w.Summary + ")"
+			}
+			fmt.Fprintln(stdout, line)
+		}
+		return 0
 	case "find":
 		if *hook {
 			input := readAll(stdin)
@@ -550,6 +645,61 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		return report(p.Followup(plans.FollowupOptions{Title: *title, FoundIn: *foundIn, Context: *context, Part: *part},
 			time.Now()))
+	case "step", "part":
+		p, ok := wantPlan()
+		if !ok {
+			return 2
+		}
+		o := plans.EntryOptions{Section: "Steps", Part: *part, Title: *title, Text: *text, After: after}
+		if command == "part" {
+			if *part != "" || len(repos) > 1 {
+				fmt.Fprint(stderr, "agent-plan part: takes PLAN --title T and one --repo, and no --part: a part's file has no Distribution\n")
+				return 2
+			}
+			o = plans.EntryOptions{Section: "Distribution", Title: *title, Text: *text, After: after, Repo: one(repos),
+				Branch: branch, Worktree: worktree}
+		} else if len(repos)+len(branches)+len(trees) > 0 {
+			fmt.Fprint(stderr, "agent-plan step: a step takes no --repo, --branch or --worktree; a part does\n")
+			return 2
+		}
+		return report(p.AddEntry(o, time.Now()))
+	case "edit":
+		if len(positional) != 2 {
+			fmt.Fprint(stderr, "agent-plan edit: takes PLAN ID [--title T] [--text TEXT]\n")
+			return 2
+		}
+		p, err := c.Open(positional[0])
+		if err != nil {
+			return report(nil, err)
+		}
+		var o plans.EditOptions
+		if given["title"] {
+			o.Title = title
+		}
+		if given["text"] {
+			o.Text = text
+		}
+		return report(p.EditEntry(positional[1], o, time.Now()))
+	case "after":
+		if len(positional) < 2 || (len(positional) == 2) != *unset {
+			fmt.Fprint(stderr, "agent-plan after: takes PLAN ID ID..., or PLAN ID --clear\n")
+			return 2
+		}
+		p, err := c.Open(positional[0])
+		if err != nil {
+			return report(nil, err)
+		}
+		return report(p.SetAfter(positional[1], positional[2:], time.Now()))
+	case "section":
+		if len(positional) != 2 || !given["text"] {
+			fmt.Fprint(stderr, "agent-plan section: takes PLAN Goal|Verification --text TEXT [--part P1]\n")
+			return 2
+		}
+		p, err := c.Open(positional[0])
+		if err != nil {
+			return report(nil, err)
+		}
+		return report(p.SetSection(*part, positional[1], *text, time.Now()))
 	case "reference":
 		if len(positional) != 2 {
 			fmt.Fprint(stderr, "agent-plan reference: takes PLAN URL [--note TEXT]\n")
@@ -610,17 +760,21 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return report(p.Reseal(time.Now()))
 	case "sign-id":
 		if len(positional) != 0 {
-			fmt.Fprint(stderr, "agent-plan sign-id: takes [--session ID] [--branch B]...\n")
+			fmt.Fprint(stderr, "agent-plan sign-id: takes [--session ID] [--branch B]... [--worktree DIR] [--base REF]\n")
 			return 2
 		}
 		if session == "" {
 			session = plans.EnvSession()
 		}
 		top, current := checkout()
+		if worktree != "" {
+			top = worktree
+			_, current = checkoutAt(worktree)
+		}
 		if len(branches) == 0 && current != "" {
 			branches = multi{current}
 		}
-		id, err := c.RequestSign(session, top, branches, time.Now())
+		id, err := c.RequestSign(session, top, branches, *signBase, time.Now())
 		if err != nil {
 			return report(nil, err)
 		}

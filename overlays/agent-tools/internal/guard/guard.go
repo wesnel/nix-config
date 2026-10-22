@@ -375,6 +375,11 @@ func cdTarget(c call, cwd string) string {
 		return ""
 	}
 	path := expandPath(word, cwd)
+	// A .. after a link climbs from where the link leads, which cleaning
+	// the spelling would not.
+	if strings.Contains("/"+word+"/", "/../") {
+		path = physical(rawPath(word, cwd))
+	}
 	if !filepath.IsAbs(path) {
 		return ""
 	}
@@ -792,6 +797,9 @@ func checkGit(words []string, expands []bool, env []string, who role, dir, check
 		// In its own repository a reviewer is held to what every session
 		// is, such as never signing, and not to the loop's commit rules.
 		who, dir = baseline, repo
+	}
+	if reason := checkPlanCheckout(sub, rest, dir); reason != "" {
+		return reason
 	}
 	if reason := checkGitSession(sub, rest, gitState{dir: dir}); reason != "" {
 		return reason

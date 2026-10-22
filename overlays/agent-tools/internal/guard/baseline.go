@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -167,8 +168,15 @@ func guardFile(path string) bool {
 var claudeSettings = regexp.MustCompile(`(^|/)\.claude/settings[^/]*\.json$`)
 
 // expandPath is word as the shell would name a file: with ~ and $HOME
-// expanded, and relative to dir.
+// expanded, and relative to dir, cleaned. Cleaning takes `link/..` away
+// by spelling, where the file system climbs from where the link leads:
+// physical(rawPath(word, dir)) is the path the file system walks.
 func expandPath(word, dir string) string {
+	return filepath.Clean(rawPath(word, dir))
+}
+
+// rawPath is expandPath's path before it is cleaned.
+func rawPath(word, dir string) string {
 	for _, h := range []string{"${HOME}", "$HOME"} {
 		if word == h || strings.HasPrefix(word, h+"/") {
 			word = home + strings.TrimPrefix(word, h)
@@ -178,9 +186,9 @@ func expandPath(word, dir string) string {
 		word = home + word[1:]
 	}
 	if !filepath.IsAbs(word) && dir != "" {
-		word = filepath.Join(dir, word)
+		word = dir + "/" + word
 	}
-	return filepath.Clean(word)
+	return word
 }
 
 // checkSession checks a call against the rules for every session that are
@@ -197,6 +205,11 @@ func checkSession(c call, dir string) string {
 	for _, target := range redirected {
 		if guardFile(expandPath(target, dir)) {
 			return guardOff
+		}
+	}
+	for _, target := range changedFiles(name, args, redirected) {
+		if reason := checkSecretWrite(target, dir); reason != "" {
+			return reason
 		}
 	}
 	if reason := checkPlanLogWrite(name, args, redirected, dir); reason != "" {
@@ -816,19 +829,44 @@ func protectedTree(path string, recursive bool) bool {
 	return false
 }
 
-// checkSecretPath denies a word that names a credential file.
+// checkSecretPath denies a word that names a credential file: one under a
+// credentialPaths entry, or a .env file at any depth. Each path is judged
+// as written and as the file system walks it (physical), so a link to a
+// credential is one and `link/..` climbs from where the link leads; and a
+// credential is matched by file identity too (credentialUnder).
 func checkSecretPath(word, dir string) string {
-	if strings.HasSuffix(word, ".pub") {
-		return ""
+	return secretPath(word, dir, false)
+}
+
+// checkSecretWrite is checkSecretPath for a path a command or tool creates
+// or writes: a redirection's target, a cp, mv or ln destination, a file
+// tool's path. There a name outside ASCII in a credential's own directory
+// is refused too, since the volume may fold it to the credential's
+// (Reaches).
+func checkSecretWrite(word, dir string) string {
+	return secretPath(word, dir, true)
+}
+
+// secretPath is checkSecretPath, or with creating checkSecretWrite.
+func secretPath(word, dir string, creating bool) string {
+	var candidates []string
+	for _, w := range []string{word, afterEquals(word)} {
+		// @FILE is a file's contents to curl (-d @FILE) and gh (-F k=@FILE).
+		for _, v := range []string{w, strings.TrimPrefix(w, "@")} {
+			if v != "" {
+				candidates = append(candidates, expandPath(v, dir), physical(rawPath(v, dir)))
+			}
+		}
 	}
-	candidates := []string{expandPath(word, dir)}
-	if _, value, ok := strings.Cut(word, "="); ok {
-		candidates = append(candidates, expandPath(value, dir))
+	for _, path := range candidates {
+		if b := fold(filepath.Base(path)); b == ".env" || strings.HasPrefix(b, ".env.") {
+			return secretRead
+		}
 	}
 	secrets := credentialPaths()
 	for _, path := range candidates {
 		for _, p := range secrets {
-			if strings.HasPrefix(path, p) {
+			if credentialUnder(path, p, creating) {
 				return secretRead
 			}
 		}
@@ -836,36 +874,263 @@ func checkSecretPath(word, dir string) string {
 	return ""
 }
 
-const appendOnly = "This is a plan's event log, which is append-only and written by agent-plan alone. Record the event with `agent-plan log PLAN --item ID --kind KIND`, and change the plan itself in its plan file."
+// afterEquals is what follows a word's first =, as in --body-file=PATH, or
+// "" when it has none.
+func afterEquals(word string) string {
+	_, value, _ := strings.Cut(word, "=")
+	return value
+}
+
+// fold is s as the file system compares names: without regard to case on
+// macOS, whose volumes are case-insensitive unless made otherwise.
+func fold(s string) string {
+	if runtime.GOOS == "darwin" {
+		return strings.ToLower(s)
+	}
+	return s
+}
+
+// credentialUnder reports whether path, absolute and clean, is under the
+// credential prefix p: by spelling, and by what the file system would
+// open (Reaches). A p ending in / is a directory, which it matches as
+// well; a p holding a glob matches path or any of its parents, by
+// spelling alone. A file ending in .pub is a public key, never under a
+// prefix of a name, as `~/.ssh/id_` is. creating is reaches's: path is to
+// be created or written.
+func credentialUnder(path, p string, creating bool) bool {
+	folded, foldedP := fold(path), fold(p)
+	if strings.ContainsAny(p, "*?[") {
+		foldedP = strings.TrimSuffix(foldedP, "/")
+		for q := folded; ; q = filepath.Dir(q) {
+			if ok, _ := filepath.Match(foldedP, q); ok {
+				return true
+			}
+			if q == filepath.Dir(q) {
+				return false
+			}
+		}
+	}
+	if !strings.HasSuffix(folded, ".pub") && strings.HasPrefix(folded, foldedP) || folded+"/" == foldedP {
+		return true
+	}
+	if !filepath.IsAbs(path) {
+		return false
+	}
+	switch _, err := os.Stat(p); {
+	case strings.HasSuffix(p, "/"):
+		return reaches(path, p, true, creating)
+	case err == nil:
+		return reaches(path, p, true, creating)
+	default:
+		return reachesPrefix(path, filepath.Dir(p), filepath.Base(p), creating)
+	}
+}
+
+const appendOnly = "This is a plan's event log, which is append-only and written by agent-plan alone. Record the event with `agent-plan log PLAN --item ID --kind KIND`, and change the plan itself with agent-plan's other commands, as `agent-plan --help` lists them."
+
+const planWrite = "This is a plan file, which agents change through agent-plan alone, so that every change keeps the structure `agent-plan status` checks. " +
+	"Use the command for the change: `agent-plan step` or `part` to add an entry, `edit` for its title or text, `after` for its AFTER, " +
+	"`section` for Goal or Verification, `set` for a `* Plan` property, `ask` and `decide` for questions, `followup`, `reference` or `postpone`, " +
+	"and `agent-plan new` (or `new --parent PLAN --part P1`) for a new plan file; " +
+	"a change none of them makes goes in your report for the operator."
 
 // planLog reports whether path is a plan's log, or the lock file that
 // records its state, in the plans directory agent-plan's config names. A
 // relative path counts, since where it is cannot be told.
 func planLog(path string) bool {
-	if !plans.IsLog(filepath.Base(path)) {
-		return false
-	}
+	return plans.IsLog(filepath.Base(path)) && inPlans(path)
+}
+
+// planFile reports whether path is a plan's file or a part's in the plans
+// directory, as planLog does for a log.
+func planFile(path string) bool {
+	return plans.IsPlan(filepath.Base(path)) && inPlans(path)
+}
+
+// inPlans reports whether path is in the plans directory agent-plan's
+// config names, or is relative.
+func inPlans(path string) bool {
 	if !filepath.IsAbs(path) {
 		return true
 	}
+	parent := filepath.Dir(path)
+	real, err := filepath.EvalSymlinks(parent)
+	for _, d := range plansDirs() {
+		if parent == d || err == nil && real == d {
+			return true
+		}
+	}
+	return false
+}
+
+// plansDirs are the plans directory agent-plan's config names, as named
+// and as its symlinks resolve.
+func plansDirs() []string {
 	dir := filepath.Join(home, "git", "notes", "agents")
 	if c, err := plans.Load(); err == nil {
 		dir = c.Dir
 	}
-	if filepath.Dir(path) == filepath.Clean(dir) {
-		return true
+	out := []string{filepath.Clean(dir)}
+	if real, err := filepath.EvalSymlinks(dir); err == nil && real != out[0] {
+		out = append(out, real)
 	}
-	realDir, err1 := filepath.EvalSymlinks(dir)
-	parent, err2 := filepath.EvalSymlinks(filepath.Dir(path))
-	return err1 == nil && err2 == nil && parent == realDir
+	return out
+}
+
+// nearPlans reports, for path, absolute, whether it is the plans directory
+// or inside it, and whether it holds it, as named or as its symlinks
+// resolve.
+func nearPlans(path string) (inside, holds bool) {
+	names := []string{filepath.Clean(path)}
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		names = append(names, real)
+	} else if parent, err := filepath.EvalSymlinks(filepath.Dir(path)); err == nil {
+		names = append(names, filepath.Join(parent, filepath.Base(path)))
+	}
+	for _, d := range plansDirs() {
+		for _, p := range names {
+			inside = inside || p == d || strings.HasPrefix(p, d+"/")
+			holds = holds || p == "/" || strings.HasPrefix(d, p+"/")
+		}
+	}
+	return inside, holds
+}
+
+// checkCopyIntoPlans denies a copy, move, install or link into the plans
+// directory of a file under a plan's or a log's name, of a directory's
+// contents, or of a source word the shell expands (a glob, braces, a
+// variable or a command's output), any of which may hold either; and a
+// tar or unzip extracting there, or a ditto copying there. changedFiles
+// names only the directory.
+func checkCopyIntoPlans(name string, args []string, dir string) string {
+	var unpackInto []string
+	switch name {
+	case "tar", "gtar", "bsdtar":
+		if tarExtracts(args) {
+			if unpackInto = optionValues(args, "-C", "--directory"); len(unpackInto) == 0 {
+				unpackInto = []string{"."}
+			}
+		}
+	case "unzip":
+		if !slices.ContainsFunc(args, func(a string) bool { return a == "-l" || a == "-t" || a == "-p" || a == "-v" || a == "-Z" }) {
+			if unpackInto = optionValues(args, "-d", ""); len(unpackInto) == 0 {
+				unpackInto = []string{"."}
+			}
+		}
+	case "ditto":
+		// Its last operand is the destination, whether it copies or
+		// extracts (-x).
+		var positional []string
+		for _, a := range args {
+			if !strings.HasPrefix(a, "-") {
+				positional = append(positional, a)
+			}
+		}
+		if len(positional) > 1 {
+			unpackInto = positional[len(positional)-1:]
+		}
+	}
+	for _, d := range unpackInto {
+		if inside, _ := nearPlans(expandPath(d, dir)); inside {
+			return planWrite
+		}
+	}
+	if !set("cp", "mv", "install", "ln", "rsync")[name] {
+		return ""
+	}
+	if !set("cp", "mv", "install", "ln", "rsync")[name] {
+		return ""
+	}
+	var positional []string
+	recursive := name == "rsync"
+	for _, a := range args {
+		switch {
+		case a == "-r" || a == "-R" || a == "-a" || a == "--recursive" || a == "--archive" ||
+			len(a) > 1 && a[0] == '-' && a[1] != '-' && strings.ContainsAny(a[1:], "rRa"):
+			recursive = true
+		case !strings.HasPrefix(a, "-"):
+			positional = append(positional, a)
+		}
+	}
+	dests, sources := targetDirectories(args), positional
+	if len(dests) == 0 && len(positional) > 1 {
+		dests, sources = positional[len(positional)-1:], positional[:len(positional)-1]
+	}
+	for _, d := range dests {
+		if inside, _ := nearPlans(expandPath(d, dir)); !inside {
+			continue
+		}
+		for _, s := range sources {
+			base := filepath.Base(s)
+			if plans.IsLog(base) {
+				return appendOnly
+			}
+			if plans.IsPlan(base) || recursive || strings.HasSuffix(s, "/") || base == "." || strings.ContainsAny(s, "*?[{$`") {
+				return planWrite
+			}
+			if info, err := os.Stat(expandPath(s, dir)); err == nil && info.IsDir() {
+				return planWrite
+			}
+		}
+	}
+	return ""
+}
+
+// checkPlanCheckout denies a git checkout or restore of a path that is a
+// plan's file or log, a glob in the plans directory, or a directory that is
+// or holds it, all of which git writes from history.
+func checkPlanCheckout(sub string, rest []string, dir string) string {
+	if sub != "checkout" && sub != "restore" || dir == "" {
+		return ""
+	}
+	for i := 0; i < len(rest); i++ {
+		a := rest[i]
+		switch {
+		case set("-s", "--source", "-b", "-B", "--orphan", "--conflict", "--pathspec-from-file")[a]:
+			i++
+			continue
+		case a == "--" || strings.HasPrefix(a, "-"):
+			continue
+		}
+		path := expandPath(a, dir)
+		inside, holds := nearPlans(path)
+		switch {
+		case planLog(path):
+			return appendOnly
+		case planFile(path), holds, isPlansDir(path), inside && strings.ContainsAny(filepath.Base(path), "*?["):
+			return planWrite
+		}
+	}
+	return ""
+}
+
+// isPlansDir reports whether path is the plans directory itself.
+func isPlansDir(path string) bool {
+	real, err := filepath.EvalSymlinks(path)
+	for _, d := range plansDirs() {
+		if filepath.Clean(path) == d || err == nil && real == d {
+			return true
+		}
+	}
+	return false
 }
 
 // checkPlanLogWrite denies a command that writes, moves or removes a plan's
-// log.
+// log or file. It reads a plan file's writes as changedFiles,
+// checkCopyIntoPlans and, for git, checkPlanCheckout name them, and so
+// misses these: emacsclient evaluating Lisp that saves a buffer, an editor
+// run as a filter (ex, vim -c), patch given a plan file inside its diff,
+// and a path the shell builds from variables.
 func checkPlanLogWrite(name string, args, redirected []string, dir string) string {
+	if reason := checkCopyIntoPlans(name, args, dir); reason != "" {
+		return reason
+	}
 	for _, t := range changedFiles(name, args, redirected) {
 		if planLog(expandPath(t, dir)) {
 			return appendOnly
+		}
+		if planFile(expandPath(t, dir)) {
+			return planWrite
 		}
 	}
 	return ""
@@ -1306,8 +1571,14 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 		if reason := checkSecretPath(path, dir); reason != "" {
 			return reason
 		}
+		if reason := checkSecretWrite(path, dir); reason != "" {
+			return reason
+		}
 		if planLog(path) {
 			return appendOnly
+		}
+		if planFile(path) {
+			return planWrite
 		}
 		switch {
 		case filepath.Base(path) == "config" && filepath.Base(filepath.Dir(path)) == ".git":

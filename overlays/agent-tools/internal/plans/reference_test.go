@@ -164,3 +164,61 @@ func TestPromptReferences(t *testing.T) {
 		}
 	})
 }
+
+// A note is text like any other: no line of it is Org structure, and an
+// entry is found by its own drawer's URL, never by a line of a note.
+func TestReferenceNote(t *testing.T) {
+	const d, e = "https://example.com/d", "https://example.com/e"
+	for what, note := range map[string]string{
+		"a keyword line":    "#+TODO: | ASK",
+		"a URL line":        ":URL: " + e,
+		"an ID line":        ":ID: S1",
+		"a drawer":          ":PROPERTIES:",
+		"a heading":         "fine\n*** forged",
+		"a keyword further": "fine\n#+STARTUP: overview",
+	} {
+		t.Run("refused/"+what, func(t *testing.T) {
+			_, p := entryPlan(t)
+			if _, err := p.Reference(d, "", day); err != nil {
+				t.Fatal(err)
+			}
+			before := fileText(t, p.file(""))
+			_, err := p.Reference(d, note, day)
+			isRefusal(t, what, err)
+			if after := fileText(t, p.file("")); after != before {
+				t.Errorf("%s: the plan changed:\n%s", what, after)
+			}
+			if qs, _ := p.Questions(false); len(qs) != 1 {
+				t.Errorf("%s: questions %+v", what, qs)
+			}
+		})
+	}
+
+	t.Run("a URL line in another entry's note", func(t *testing.T) {
+		_, p := entryPlan(t)
+		for _, u := range []string{d, e} {
+			if _, err := p.Reference(u, "", day); err != nil {
+				t.Fatal(err)
+			}
+		}
+		insertUnder(t, p.file(""), ":URL: "+d+"\n:END:", "See also\n:URL: "+e+"\n")
+		if _, err := p.Reference(e, "The e notes.", day); err != nil {
+			t.Fatal(err)
+		}
+		plan := fileText(t, p.file(""))
+		if !strings.Contains(plan, ":URL: "+d+"\n:END:\nSee also\n:URL: "+e+"\n*** "+e+"\n") ||
+			!strings.Contains(plan, "*** "+e+"\n:PROPERTIES:\n:URL: "+e+"\n:END:\nThe e notes.\n") {
+			t.Errorf("plan:\n%s", plan)
+		}
+	})
+
+	t.Run("a note on two lines", func(t *testing.T) {
+		_, p := entryPlan(t)
+		if _, err := p.Reference(d, "The d notes;\nfed Q1.", day); err != nil {
+			t.Fatal(err)
+		}
+		if plan := fileText(t, p.file("")); !strings.Contains(plan, ":URL: "+d+"\n:END:\nThe d notes;\nfed Q1.\n") {
+			t.Errorf("plan:\n%s", plan)
+		}
+	})
+}

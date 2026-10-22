@@ -149,6 +149,58 @@ when it flashes, then `git sign-pass --resume`. Pass `--base REF` when the
 branch does not start from `origin`'s default branch or the local `main` or
 `master`.
 
+## the sandbox in every session
+
+Every Claude Code session runs its shell commands in Claude Code's sandbox
+(`sandbox` in `wgn.home.claude.settings`), and the model cannot ask to rerun
+one outside it. Hooks, MCP servers and the file tools run outside it.
+
+- **Reads.** Everything but the credential stores: `~/.ssh`, `~/.gnupg`,
+  `~/.config/gh`, the login keychain, sops and age keys and sops-nix's
+  decrypted secrets, ngrok's and 1Password's configs, `~/.aws`, Docker's,
+  npm's and Cargo's logins, `~/.netrc`, agents' logins, `.env` files under
+  `~/git` and the agents' worktrees, browser profiles, shell histories and
+  the notes deploy key. The credentials are one list,
+  `wgn.home.llm.guard.credentialPaths`, which the guard refuses to every
+  command and file tool in Claude Code and Codex alike, with any `.env`
+  file by its name. Credential variables (`GH_TOKEN`, `SSH_AUTH_SOCK`, the
+  ngrok and API keys) are taken out of every command's environment.
+- **Writes.** The session's working directory and temporary directory, the
+  agents' worktrees, Go's and golangci-lint's caches, the Nix and uv caches
+  and, on macOS, the Trash. Never the plans directory or the notes
+  repository's `.git`.
+- **Network.** Only GitHub, the Nix caches, the Go, npm, PyPI and crates
+  registries and ngrok's release hosts, and on macOS the Nix daemon's
+  socket. Services listening on loopback stay reachable; the comment on
+  `allowLocalBinding` in `modules/home-manager/claude/default.nix` lists
+  each, and whether a token closes it.
+
+So in a session `git push`, `gh` writes and SSH fail rather than ask. The
+way to GitHub is `pr-loop`: `pr-loop open` for a new pull request, `pr-loop
+push`, `pr-loop reply`.
+
+A few commands run outside the sandbox, as the operator, after the usual
+permission check, and only when the whole call is that one command, with no
+redirection, `cd` or command substitution:
+
+- `gh-read`, a `gh` that runs only pull request, workflow run and
+  repository reads, and refuses `--web`, which opens a browser.
+- `git fresh-review`, whose Codex sandbox cannot start inside this one.
+- `pr-loop`'s GitHub commands (`open`, `stack`, `link`, `push`, `threads`,
+  `reply`, `resolve`, `request`, `status`, `ci`, `logs`, `wait`, `review`,
+  `end`).
+- `agent-plan`'s writes (`new`, `log`, `ask`, `decide`, `followup`,
+  `reference`, `postpone`, `set`, `own`, `sign-id`, `sign-result`, `step`,
+  `part`, `edit`, `after`, `section`): the sandbox denies the plans
+  directory to every other command, so a plan changes only through them.
+  `agent-plan sync`, `init` and `reseal` stay sandboxed.
+
+They are safe to run as the operator because none runs a program its
+arguments name, and `gh-read` only reads. The guard refuses a file argument
+that names a credential, and `pr-loop` refuses to post text that holds a
+secret's shape. The read-only ones and `agent-plan`'s writes are allowed
+without a prompt.
+
 ## reviews: fresh eyes and tests that fail
 
 Every agent session that commits a change runs the `review-change` skill's

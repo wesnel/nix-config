@@ -323,3 +323,100 @@ func TestStructureDrift(t *testing.T) {
 		}
 	})
 }
+
+// Every write agent-plan makes to a plan file keeps its structure: one
+// that would add drift is refused before anything is written, and drift
+// already in the file, which is the operator's to settle, refuses nothing.
+func TestWriteKeepsStructure(t *testing.T) {
+	edit := func(p Plan, file string, fn func(lines []string) ([]string, error)) error {
+		return p.withLock(func(l *lockedPlan) error { return l.edit(file, fn) })
+	}
+	insert := func(under string, add ...string) func(lines []string) ([]string, error) {
+		return func(lines []string) ([]string, error) {
+			_, end, ok := section(lines, under)
+			if !ok {
+				return nil, fmt.Errorf("no %s", under)
+			}
+			if end == len(lines) && lines[end-1] == "" {
+				end--
+			}
+			return append(append(append([]string{}, lines[:end]...), add...), lines[end:]...), nil
+		}
+	}
+	for what, c := range map[string]struct {
+		fn    func(lines []string) ([]string, error)
+		shown string
+	}{
+		"a second section":        {insert("Steps", "** Questions"), "** Questions"},
+		"an entry without its ID": {insert("Steps", "*** TODO Tag it"), "*** Tag it"},
+		"a heading under Goal":    {insert("Goal", "*** Why"), "*** Why"},
+		"a top-level heading":     {insert("Verification", "* Journal"), "* Journal"},
+		"a block with no end":     {insert("Verification", "#+begin_src sh"), "#+begin_src sh"},
+	} {
+		t.Run("refused/"+what, func(t *testing.T) {
+			cfg := testConfig(t)
+			p := newPlan(t, cfg, "x")
+			file := p.file("")
+			before, _ := os.ReadFile(file)
+			log, _ := os.ReadFile(p.log())
+			err := edit(p, file, c.fn)
+			isRefusal(t, what, err)
+			if err != nil && !strings.Contains(err.Error(), c.shown) {
+				t.Errorf("%s: the refusal does not name %q: %v", what, c.shown, err)
+			}
+			if after, _ := os.ReadFile(file); string(after) != string(before) {
+				t.Errorf("%s: the file changed:\n%s", what, after)
+			}
+			if after, _ := os.ReadFile(p.log()); string(after) != string(log) {
+				t.Errorf("%s: the log changed", what)
+			}
+		})
+	}
+
+	t.Run("drift already there", func(t *testing.T) {
+		c := testConfig(t)
+		p := newPlan(t, c, "x")
+		addItems(t, p.file(""), "** Steps", "S1")
+		appendTo(t, p.file(""), "** Hand-off\n* Journal\n")
+		if _, err := p.Followup(FollowupOptions{Title: "Split the guard", FoundIn: "S1"}, day); err != nil {
+			t.Fatalf("a follow-up in a drifting plan: %v", err)
+		}
+		if err := edit(p, p.file(""), insert("Steps", "*** TODO Also this")); err == nil {
+			t.Error("a write adding drift to a drifting plan went through")
+		}
+	})
+
+	// A keyword the log does not give is drift too; the log's own
+	// projection of one is not.
+	t.Run("keyword drift", func(t *testing.T) {
+		c := testConfig(t)
+		p := newPlan(t, c, "x")
+		addItems(t, p.file(""), "** Steps", "S1", "S2")
+		done := func(id string) func(lines []string) ([]string, error) {
+			return func(lines []string) ([]string, error) {
+				return setKeyword(lines, headingWithID(lines, id), kwDone, planKeywords, day), nil
+			}
+		}
+		before := fileText(t, p.file(""))
+		err := edit(p, p.file(""), done("S1"))
+		isRefusal(t, "a keyword the log does not give", err)
+		if err != nil && !strings.Contains(err.Error(), "S1") {
+			t.Errorf("the refusal does not name S1: %v", err)
+		}
+		if after := fileText(t, p.file("")); after != before {
+			t.Errorf("the file changed:\n%s", after)
+		}
+		if _, err := p.Log(Event{Kind: "done", Item: "S2"}, day); err != nil {
+			t.Fatal(err)
+		}
+		if got := linesAt(t, p.file(""), "S2", 0); got != "*** DONE Step S2" {
+			t.Errorf("the log's keyword was not written: %q", got)
+		}
+		// S1 drifting already does not stop a write elsewhere.
+		data := strings.Replace(fileText(t, p.file("")), "*** TODO Step S1", "*** DONE Step S1", 1)
+		os.WriteFile(p.file(""), []byte(data), 0o644)
+		if _, err := p.Followup(FollowupOptions{Title: "Later", FoundIn: "S1"}, day); err != nil {
+			t.Errorf("a follow-up beside drift already there: %v", err)
+		}
+	})
+}

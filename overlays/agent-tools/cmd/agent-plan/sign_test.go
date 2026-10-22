@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -16,7 +17,16 @@ import (
 // is read once through sign-result or the next prompt's remind, whichever
 // comes first, even with prompts in separate processes at once.
 func TestSign(t *testing.T) {
-	sessionPlan(t)
+	plan := sessionPlan(t)
+	plansOf := func(t *testing.T) plans.Plan {
+		t.Helper()
+		c, _ := plans.Load()
+		p, err := c.Open(plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
 	code, out, errs := agentPlan(t, "", "sign-id", "--branch", "loop", "--branch", "flag")
 	id := strings.TrimSpace(out)
 	if code != 0 || id == "" || strings.ContainsAny(id, " \n") {
@@ -24,6 +34,21 @@ func TestSign(t *testing.T) {
 	}
 	if code, out, _ := agentPlan(t, "", "sign-result", id, "--check"); code != 1 || out != "" {
 		t.Errorf("--check before the pass: %d %q", code, out)
+	}
+	// The branch is the given worktree's, not the one sign-id runs in.
+	wt, _ := filepath.EvalSymlinks(t.TempDir())
+	if out, err := exec.Command("git", "-C", wt, "init", "-q", "-b", "run-flag").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	if code, _, errs := agentPlan(t, "", "sign-id", "--worktree", wt, "--base", "diagrams"); code != 0 {
+		t.Errorf("sign-id --worktree --base: %d %s", code, errs)
+	}
+	events, _ := plansOf(t).Events()
+	if last := events[len(events)-1]; last.Worktree != wt || last.Branch != "run-flag" || last.Base != "diagrams" {
+		t.Errorf("sign-requested %+v", last)
+	}
+	if code, _, _ := agentPlan(t, "", "log", t.TempDir(), "--base", "x"); code != 2 {
+		t.Errorf("--base on log: %d", code)
 	}
 	if code, _, errs := agentPlan(t, "", "sign-result", id); code != 1 || !strings.Contains(errs, "no result") {
 		t.Errorf("sign-result before the pass: %d %q", code, errs)

@@ -19,6 +19,31 @@ var trackedProperties = []string{"WORKTREES", "BRANCHES", "PULL_REQUESTS", "OWNE
 // SetOwner's.
 var settableProperties = []string{"WORKTREES", "BRANCHES", "PULL_REQUESTS"}
 
+// plainProperties are the `* Plan` properties SetProperty sets without a
+// log event, since no reader takes them from the log. ID, HOST and PARENT
+// are fixed when the file is made.
+var plainProperties = []string{"STATUS", "SKILLS", "REPOSITORIES", "SESSIONS", "HARNESS"}
+
+// statuses are the values of STATUS; the status page and the export read
+// them.
+var statuses = []string{"planning", "reviewing-plan", "working", "reviewing", "handed-back", "halted"}
+
+// checkValues refuses values that property name cannot hold: STATUS takes
+// one of statuses, and HARNESS one harness.
+func checkValues(name string, values []string) error {
+	switch name {
+	case "STATUS":
+		if len(values) != 1 || !slices.Contains(statuses, values[0]) {
+			return refusal.New("STATUS is one of `%s`. Set it as `agent-plan set PLAN STATUS halted`", strings.Join(statuses, "`, `"))
+		}
+	case "HARNESS":
+		if len(values) > 1 {
+			return refusal.New("HARNESS is one harness. Set it as `agent-plan set PLAN HARNESS claude`")
+		}
+	}
+	return nil
+}
+
 // propertyKind is the kind of a property event, whose Property names the
 // property and Value holds its values, separated by spaces.
 const propertyKind = "property"
@@ -29,14 +54,17 @@ func (p Plan) SetProperty(part, name string, values []string, now time.Time) err
 	if err := p.checkOwn(); err != nil {
 		return err
 	}
-	if !slices.Contains(settableProperties, name) {
-		return refusal.New("%s is not a property set this way. Set one of `%s`; record an owner with `agent-plan own`, and edit any other property in the plan file",
-			name, strings.Join(settableProperties, "`, `"))
+	if !slices.Contains(settableProperties, name) && !slices.Contains(plainProperties, name) {
+		return refusal.New("%s is not a property set this way. Set one of `%s`; record an owner with `agent-plan own`, an item's AFTER with `agent-plan after`",
+			name, strings.Join(slices.Concat(settableProperties, plainProperties), "`, `"))
 	}
 	if part != "" && !partPattern.MatchString(part) {
 		return refusal.New("%q is not a part ID. Pass one such as `--part P1`", part)
 	}
 	if err := checkWords(strings.ToLower(name), values); err != nil {
+		return err
+	}
+	if err := checkValues(name, values); err != nil {
 		return err
 	}
 	return p.withLock(func(l *lockedPlan) error {
@@ -65,7 +93,7 @@ func (l *lockedPlan) setPlanProperty(part, name string, edit func(values []strin
 		lines = slices.Clone(lines)
 		start := planLine(lines)
 		if start < 0 {
-			return nil, refusal.New("%s has no `* Plan` heading. Restore it as the plan-work skill describes, then try again", file)
+			return nil, refusal.New("%s has no `* Plan` heading. Ask the operator to restore it as the plan-work skill describes, then try again", file)
 		}
 		at, end := -1, -1
 		var values []string
@@ -79,7 +107,7 @@ func (l *lockedPlan) setPlanProperty(part, name string, edit func(values []strin
 			}
 		}
 		if end < 0 {
-			return nil, refusal.New("%s's `* Plan` heading has no property drawer. Restore it as the plan-work skill describes, then try again", file)
+			return nil, refusal.New("%s's `* Plan` heading has no property drawer. Ask the operator to restore it as the plan-work skill describes, then try again", file)
 		}
 		after = edit(values)
 		line := ":" + name + ":"

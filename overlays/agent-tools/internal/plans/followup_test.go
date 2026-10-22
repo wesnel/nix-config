@@ -45,6 +45,16 @@ func TestFollowup(t *testing.T) {
 		}
 	})
 
+	t.Run("a context on several lines", func(t *testing.T) {
+		p := plan(t)
+		if _, err := p.Followup(FollowupOptions{Title: "Split it", FoundIn: "S1", Context: "Two callers.\n- one\n- two"}, day); err != nil {
+			t.Fatal(err)
+		}
+		if text := fileText(t, p.file("")); !strings.Contains(text, ":FOUND_IN: S1\n:END:\nTwo callers.\n- one\n- two\n** References\n") {
+			t.Errorf("plan:\n%s", text)
+		}
+	})
+
 	t.Run("a part's, then done", func(t *testing.T) {
 		p := plan(t)
 		if _, err := p.Followup(FollowupOptions{Title: "First", FoundIn: "S1"}, day); err != nil {
@@ -68,10 +78,15 @@ func TestFollowup(t *testing.T) {
 	for what, o := range map[string]FollowupOptions{
 		"no title":             {FoundIn: "S1"},
 		"a forged title":       {Title: "x\n* forged", FoundIn: "S1"},
+		"a COMMENT title":      {Title: "COMMENT later", FoundIn: "S1"},
+		"a title with tags":    {Title: "later :ARCHIVE:", FoundIn: "S1"},
+		"a priority and done":  {Title: "[#A] DONE later", FoundIn: "S1"},
 		"an unknown found-in":  {Title: "x", FoundIn: "S9"},
 		"no found-in":          {Title: "x"},
 		"a part with no file":  {Title: "x", FoundIn: "S1", Part: "P7"},
 		"a structural context": {Title: "x", FoundIn: "S1", Context: "* forged"},
+		"a later heading":      {Title: "x", FoundIn: "S1", Context: "Found here.\n*** TODO forged"},
+		"a keyword line":       {Title: "x", FoundIn: "S1", Context: "Found here.\n#+TODO: A | B"},
 	} {
 		t.Run("refused/"+what, func(t *testing.T) {
 			p := plan(t)

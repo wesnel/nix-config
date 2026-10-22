@@ -109,6 +109,433 @@ with lib; let
     then "~/${removePrefix home path}"
     else "/${path}";
 
+  sandboxLists = config.wgn.home.llm.sandbox;
+
+  # `gh` for the host sandbox's excluded commands, which run with the
+  # operator's login and network: only gh's reads of pull requests,
+  # workflow runs and repositories, and never `--web`, which opens a
+  # browser. A short flag cluster holding `w` is `--web` too, but in `run
+  # list`, whose -w is --workflow. Its arguments may name any host gh takes
+  # (`-R HOST/OWNER/REPO`, a pull request's URL).
+  #
+  # The session can write the working directory's git config, and gh runs
+  # git, so gh never runs where git would find that repository: it runs in
+  # an empty temporary directory, with no system or global git config, no
+  # GIT_* variable of the session's, and GIT_CEILING_DIRECTORIES keeping
+  # git from looking above it. gh gets no GH_* variable of the session's
+  # either (GH_REPO, GH_HOST, GH_CONFIG_DIR, GH_TOKEN), so the operator's
+  # own gh config and login are what it reads with. Where the arguments
+  # name no repository,
+  # gh-read names the working directory's base repository as gh would pick
+  # it, from its remotes' URLs, and where `pr view`, `checks` or `diff`
+  # names no pull request, the branch checked out there: `git config` and
+  # `git symbolic-ref` read them without running anything. Neither may
+  # start with -, which gh would read as a flag.
+  mkGhRead = {
+    gh,
+    postCheck ? "",
+  }:
+    pkgs.writeShellApplication {
+      name = "gh-read";
+      runtimeInputs = [pkgs.coreutils pkgs.git];
+      derivationArgs = {inherit postCheck;};
+      text = ''
+        refuse() {
+          echo "gh-read: refused: $1" >&2
+          exit 2
+        }
+
+        case "''${1-} ''${2-}" in
+          "pr view" | "pr list" | "pr diff" | "pr checks" | "pr status") ;;
+          "run view" | "run list" | "run watch" | "repo view") ;;
+          *) refuse "gh-read runs only gh pr view|list|diff|checks|status, gh run view|list|watch and gh repo view" ;;
+        esac
+
+        # Each subcommand's short flags that take a value, as gh 2.102's
+        # `gh SUBCOMMAND --help` lists them, with -R where gh takes it; and
+        # whether its -w is --web (run list's is --workflow). Every other
+        # short flag is a switch.
+        case "$1 $2" in
+          "pr view") short=Rqt web=1 ;;
+          "pr checks") short=Riqt web=1 ;;
+          "pr diff") short=Re web=1 ;;
+          "pr list") short=RaABHlLSsqt web=1 ;;
+          "pr status") short=Rqt web="" ;;
+          "run view") short=Rajqt web=1 ;;
+          "run list") short=RbceLqstuw web="" ;;
+          "run watch") short=Ri web="" ;;
+          "repo view") short=bqt web=1 ;;
+        esac
+        # The long flags of those subcommands that take a value, given
+        # after = or as the next argument.
+        long=" --repo --jq --json --template --interval --color --exclude --app --assignee --author --base --head --label --limit --search --state --attempt --job --branch --commit --created --event --status --user --workflow "
+
+        # named: the arguments name a repository (-R, a URL, or `repo
+        # view`'s argument). positional: they hold an argument that is no
+        # flag's (a pull request's number, branch or URL). value: the next
+        # argument is a flag's value.
+        named=""
+        positional=""
+        value=""
+        for arg in "''${@:3}"; do
+          if [[ -n "$value" ]]; then
+            value=""
+            continue
+          fi
+          case "$arg" in
+            --)
+              positional=1
+              break
+              ;;
+            --web | --web=*) refuse "--web opens a browser; leave it out and read what gh-read prints" ;;
+            --repo) named=1 value=1 ;;
+            --repo=*) named=1 ;;
+            --*=*) ;;
+            --*)
+              if [[ "$long" == *" $arg "* ]]; then
+                value=1
+              fi
+              ;;
+            -?*)
+              # Short flags as gh reads a cluster of them: each letter a
+              # flag, up to one that takes a value, which takes the rest of
+              # the argument or, where nothing is left, the next one.
+              flags=''${arg#-}
+              while [[ -n "$flags" ]]; do
+                f=''${flags:0:1}
+                flags=''${flags:1}
+                if [[ "$f" == w && -n "$web" ]]; then
+                  refuse "$arg holds -w, which opens a browser; leave it out and read what gh-read prints"
+                fi
+                if [[ "$short" == *"$f"* ]]; then
+                  if [[ "$f" == R ]]; then
+                    named=1
+                  fi
+                  if [[ -z "$flags" ]]; then
+                    value=1
+                  fi
+                  break
+                fi
+              done
+              ;;
+            *://*) named=1 positional=1 ;;
+            *)
+              positional=1
+              if [[ "$1" == repo ]]; then named=1; fi
+              ;;
+          esac
+        done
+
+        for name in "''${!GIT_@}" "''${!GH_@}"; do
+          unset "$name"
+        done
+
+        case "$1 $2" in
+          "pr view" | "pr checks" | "pr diff")
+            if [[ -z "$positional" ]]; then
+              branch=$(git symbolic-ref --short -q HEAD 2>/dev/null) ||
+                refuse "the working directory has no branch checked out to find its pull request by; name the pull request, as a number, branch or URL"
+              if [[ "$branch" == -* ]]; then
+                refuse "the branch checked out, $branch, starts with -, which gh would read as a flag; name the pull request, as a number or URL"
+              fi
+              set -- "$@" "$branch"
+            fi
+            ;;
+        esac
+
+        if [[ -z "$named" ]]; then
+          # The base repository, as gh picks it: the remote `gh repo
+          # set-default` marked (remote.NAME.gh-resolved = base), else
+          # upstream, else origin.
+          remote=origin
+          if git config --get remote.upstream.url >/dev/null; then
+            remote=upstream
+          fi
+          while read -r key resolved; do
+            if [[ "$resolved" == base ]]; then
+              remote=''${key#remote.}
+              remote=''${remote%.gh-resolved}
+            fi
+          done < <(git config --get-regexp '^remote\..*\.gh-resolved$' || true)
+          name='[A-Za-z0-9_.-]+'
+          host='[A-Za-z0-9][A-Za-z0-9.-]*'
+          origin=$(git config --get "remote.$remote.url") ||
+            refuse "the working directory has no remote.$remote.url to name its repository by; name it, as -R OWNER/REPO, or as \`gh-read repo view OWNER/REPO\`"
+          origin=''${origin%/}
+          origin=''${origin%.git}
+          if [[ "$origin" =~ ^[a-z+]+://([^/@]+@)?($host)(:[0-9]+)?/($name)/($name)$ ]]; then
+            repo=''${BASH_REMATCH[2]}/''${BASH_REMATCH[4]}/''${BASH_REMATCH[5]}
+          elif [[ "$origin" =~ ^([^/@:]+@)?($host):($name)/($name)$ ]]; then
+            repo=''${BASH_REMATCH[2]}/''${BASH_REMATCH[3]}/''${BASH_REMATCH[4]}
+          else
+            refuse "remote.$remote.url $origin names no HOST/OWNER/REPO; name the repository, as -R OWNER/REPO"
+          fi
+          if [[ "$1" == repo ]]; then
+            set -- "$@" "$repo"
+          else
+            set -- "$1" "$2" -R "$repo" "''${@:3}"
+          fi
+        fi
+
+        tmp=$(mktemp -d)
+        tmp=$(cd "$tmp" && pwd -P)
+        trap 'rm -rf -- "$tmp"' EXIT
+        cd "$tmp"
+        GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CEILING_DIRECTORIES=$(dirname "$tmp") ${getExe gh} "$@"
+      '';
+    };
+
+  ghRead = mkGhRead {
+    gh = pkgs.gh;
+    postCheck = ": ${ghReadTests}";
+  };
+
+  ghReadTests = let
+    # Prints what gh-read passed on, where it ran, and what the git it
+    # leaves gh finds there.
+    fakeGh = pkgs.writeShellScriptBin "gh" ''
+      printf 'args:'
+      printf ' [%s]' "$@"
+      echo
+      echo "pwd: $PWD"
+      echo "global: ''${GIT_CONFIG_GLOBAL-}"
+      env | while IFS= read -r line; do
+        if [[ "$line" == GH_* ]]; then echo "env: $line"; fi
+      done
+      git status >/dev/null 2>&1 && echo "git status: found a repository"
+      git remote -v 2>/dev/null | while IFS= read -r line; do echo "remote: $line"; done
+      git st >/dev/null 2>&1 && echo "git st: ran"
+      true
+    '';
+    underTest = mkGhRead {gh = fakeGh;};
+    run = pkgs.writeShellApplication {
+      name = "gh-read-tests";
+      runtimeInputs = [pkgs.gnugrep pkgs.coreutils pkgs.git];
+      text = builtins.readFile ./gh-read-tests.sh;
+    };
+  in
+    pkgs.runCommand "gh-read-tests" {} ''
+      ${getExe run} ${getExe underTest}
+      touch $out
+    '';
+
+  # agent-plan's subcommands that write a plan's files, its log or its lock,
+  # run outside the sandbox, which denies the plans directory to every other
+  # command. Never sync, init or reseal: sync pushes and init clones with the
+  # notes deploy key, and reseal is the operator's.
+  agentPlanWrites = [
+    "new"
+    "log"
+    "ask"
+    "decide"
+    "followup"
+    "reference"
+    "postpone"
+    "set"
+    "own"
+    "sign-id"
+    "sign-result"
+    "step"
+    "part"
+    "edit"
+    "after"
+    "section"
+  ];
+
+  # pr-loop's subcommands that need the operator's GitHub login. Never
+  # begin or worktrees, which serve only loop sessions, through the relay,
+  # and worktrees runs a setup command a checkout's tools decide; never
+  # setup, setup-command, sign-check or guard, which work in the sandbox.
+  prLoopGitHub = ["open" "stack" "link" "push" "threads" "reply" "resolve" "request" "status" "ci" "logs" "wait" "review" "end"];
+
+  # The read-only ones, which run without a prompt in an ordinary session;
+  # the writes are left to the permission flow.
+  prLoopReads = ["stack" "threads" "status" "ci" "logs" "wait"];
+
+  # A trailing ` *` also matches the bare command (permissions'
+  # wildcard-patterns), so one entry per subcommand covers it with and
+  # without arguments.
+  sub = command: name: "${command} ${name} *";
+
+  # What the host sandbox denies reading beyond the credentials, which the
+  # guard reads from wgn.home.llm.guard.credentialPaths too: what would let
+  # a command act as the operator elsewhere. The guard refuses a .env file
+  # by its name instead.
+  hostDeniedReads = [
+    "~/git/**/.env"
+    "~/git/**/.env.*"
+    "~/.claude/worktrees/**/.env"
+    "~/.claude/worktrees/**/.env.*"
+    # Browser profiles, 1Password and shell histories.
+    "~/Library/Application Support/Google/Chrome"
+    "~/Library/Application Support/BraveSoftware"
+    "~/Library/Application Support/Firefox"
+    "~/Library/Safari"
+    "~/Library/Containers/com.apple.Safari"
+    "~/.config/google-chrome"
+    "~/.config/chromium"
+    "~/.mozilla"
+    "~/Library/Application Support/1Password"
+    "~/Library/Group Containers/2BUA8C4S2C.com.1password"
+    "~/.config/1Password"
+    "~/.local/share/fish/fish_history"
+    "~/.zsh_history"
+    "~/.zsh_sessions"
+    "~/.bash_history"
+    # Only the watcher's sync pushes plans.
+    plans.repository.key
+  ];
+
+  # The credential list, as the sandbox takes paths: no trailing `/`, and
+  # none that is or is under a directory sandboxLists.deniedReads hides
+  # whole, such as the `~/.ssh/id_` prefix.
+  sandboxCredentials = let
+    hidden = p: any (d: p == d || hasPrefix "${d}/" p) sandboxLists.deniedReads;
+  in
+    filter (p: !hidden p) (map (removeSuffix "/") config.wgn.home.llm.guard.credentialPaths);
+
+  # The sandbox around every session's commands. Paths starting `~/` are
+  # resolved by Claude Code; bare relative ones would resolve against
+  # ~/.claude, not the workspace.
+  hostSandbox = {
+    enabled = true;
+    allowUnsandboxedCommands = false;
+    failIfUnavailable = true;
+
+    # A call made of nothing but these runs unsandboxed, with the operator's
+    # login and network, after the usual permission check; piped or chained
+    # with anything else, redirected, or given a command substitution, it
+    # stays sandboxed and fails. A pattern's `*` matches every argument that
+    # follows, so a pattern is safe only where no argument can make the
+    # command write beyond what it is for or run a program: no `gh` itself
+    # (`gh api` writes, and `gh pr view --web` runs a browser), no nix (any
+    # flake the session can edit, or --override-input, reads any path the
+    # operator can, and the daemon builds with the network on macOS), no
+    # emacsclient (the daemon evaluates whatever it is sent, and a socket
+    # path the session can write may be a link to the operator's), never
+    # `pr-loop *`.
+    #
+    # - `gh-read` runs only gh's reads and refuses `--web`, so it reads with
+    #   the operator's gh login and prints what it read: pull requests, their
+    #   diffs and checks, workflow runs and logs, and repositories, private
+    #   ones included, from whichever host its arguments name.
+    # - git fresh-review: Codex's own sandbox cannot start inside this one.
+    #   api.openai.com stays out of the allowed domains, since the command
+    #   runs outside the sandbox anyway.
+    # - pr-loop's GitHub commands and agent-plan's writes: neither takes a
+    #   program or a host from its arguments. The guard refuses a file
+    #   argument that names a credential (wgn.home.llm.guard.credentialPaths,
+    #   which denyRead holds too), and pr-loop refuses to post text holding a
+    #   secret's shape.
+    excludedCommands =
+      ["gh-read *" "git fresh-review *" "git-fresh-review *"]
+      ++ map (sub "pr-loop") prLoopGitHub
+      ++ map (sub "agent-plan") agentPlanWrites;
+
+    # Commands inherit Claude Code's environment, and only the variables
+    # named here are taken out of it, so every credential a module puts in
+    # the environment belongs here.
+    credentials.envVars =
+      map (name: {
+        inherit name;
+        mode = "deny";
+      }) [
+        "GH_TOKEN"
+        "GITHUB_TOKEN"
+        "SSH_AUTH_SOCK"
+        "KEYID"
+        "NGROK_AUTHTOKEN"
+        "NGROK_AUTHTOKEN_PROD"
+        "NGROK_AI_KEY"
+        "MCP_PROXY_TOKEN"
+        "OPENAI_API_KEY"
+        "ANTHROPIC_API_KEY"
+        "CLAUDE_CODE_MESSAGING_TOKEN"
+      ];
+
+    # Go programs, gh and the go command among them, verify TLS through
+    # trustd on macOS, which they fail to reach otherwise. This opens the
+    # trust service alone, not the keychain.
+    enableWeakerNetworkIsolation = darwin;
+
+    network =
+      {
+        # A command can send whatever it can read to any of these, with any
+        # credential the session holds itself, such as a token in the
+        # workspace or in a command's output: pushing, uploading a release or
+        # creating a gist on github.com under that token's account.
+        allowedDomains =
+          [
+            "github.com"
+            "*.github.com"
+            "*.githubusercontent.com"
+            "git.sr.ht"
+            "cache.nixos.org"
+            "channels.nixos.org"
+            "vuln.go.dev"
+            # ngrok agent releases and packages.
+            "bin.ngrok.com"
+            "apt.ngrok.com"
+            "ngrok-agent.s3.amazonaws.com"
+          ]
+          ++ sandboxLists.allowedDomains;
+        strictAllowlist = true;
+        # Lets the session's commands serve and reach test servers on macOS;
+        # Linux gives each command its own loopback instead. It opens every
+        # service listening on loopback as well, to whatever that service
+        # does for a caller without credentials:
+        #
+        # - mcp-proxy: closed; it needs its token, which the sandbox hides.
+        # - The operator's own applications, outside nix-config: Okta
+        #   Verify, Notion, lima's port forwards, Parallels, and macOS's
+        #   AirPlay receiver among them.
+        allowLocalBinding = true;
+      }
+      # Only the nix daemon's socket, so nix runs in the sandbox. Its client
+      # evaluates inside the sandbox, but every build, including one an
+      # evaluation imports from, runs in the daemon outside it: on macOS
+      # without a sandbox of its own and with the network, so a command that
+      # can define a derivation can reach any host. `claude-pr-loop` gets the
+      # socket too and cannot close it again; no other socket may go here.
+      # Linux cannot allow one socket, so the agent sockets are hidden below.
+      // (
+        if darwin
+        then {allowUnixSockets = ["/nix/var/nix/daemon-socket/socket"];}
+        else {allowAllUnixSockets = true;}
+      );
+
+    filesystem = {
+      denyRead = sandboxLists.deniedReads ++ sandboxCredentials ++ hostDeniedReads;
+
+      # Git reads the user's name and email from this file on every run.
+      allowRead = optional (config.sops.templates ? "git.inc") (
+        if darwin
+        then "/private/var/folders/*/*/T/secrets.d/*/rendered/git.inc"
+        else "/run/user/*/secrets.d/*/rendered/git.inc"
+      );
+
+      # Nothing on PATH (~/go/bin among it) and nothing that a program
+      # outside the sandbox loads code or configuration from. Go's and
+      # golangci-lint's own caches, where they are by default. `trash` moves
+      # a file on the home volume into ~/.Trash, which the trash skill asks
+      # for in place of rm.
+      allowWrite =
+        ["~/go/pkg"]
+        ++ (
+          if darwin
+          then ["~/Library/Caches/go-build" "~/Library/Caches/golangci-lint" "~/.Trash"]
+          else ["~/.cache/go-build" "~/.cache/golangci-lint"]
+        )
+        ++ ["~/.claude/worktrees" "~/.cache/nix" "~/.cache/uv"];
+
+      # The plans directory holds the plans, their logs and the logs'
+      # locks, which only agent-plan's excluded writes change; the notes
+      # repository's git directory, so that no git command run in the
+      # repository can reset, switch, clean or merge the plans either.
+      denyWrite = [plans.dir "${plans.repository.path}/.git"];
+    };
+  };
+
   # The session's commands run in Claude Code's sandbox with no credentials and
   # no route to GitHub; `sandbox-relay session` serves `pr-loop` and
   # `agent-plan` on a private socket, whose path replaces {socket}. Hooks, MCP servers and WebFetch run outside
@@ -148,7 +575,7 @@ with lib; let
 
       # All of the home directory but what the session needs: secrets that
       # no list names, such as other agents' logins, stay out too.
-      filesystem.denyRead = [config.home.homeDirectory] ++ config.wgn.home.llm.prLoop.deniedReads;
+      filesystem.denyRead = [config.home.homeDirectory] ++ sandboxLists.deniedReads;
       filesystem.allowRead = config.wgn.home.llm.prLoop.allowedReads;
 
       # Relative paths here are not resolved against the workspace, so
@@ -204,7 +631,7 @@ with lib; let
       # "$defaults" in the settings is literal: Claude Code splices its own
       # auto-mode rules in there.
       # shellcheck disable=SC2016
-      settings=${lib.escapeShellArg (prLoopSettings config.wgn.home.llm.prLoop.allowedDomains)}
+      settings=${lib.escapeShellArg (prLoopSettings sandboxLists.allowedDomains)}
       ${config.wgn.home.llm.prLoop.reviewSession}
       if [[ -n "$review" ]]; then
         # shellcheck disable=SC2016
@@ -294,7 +721,20 @@ in {
           # A plan's log is appended to by `agent-plan log` alone; the guard
           # denies the same files to every file tool and shell write. An Edit
           # rule covers Write too.
-          ++ map (p: "Edit(${rulePath plans.dir}/${p})") ["*.log.org" "*.log.org.lock"];
+          ++ map (p: "Edit(${rulePath plans.dir}/${p})") ["*.log.org" "*.log.org.lock"]
+          # Every plan file is agent-plan's to change, which the sandbox
+          # holds for shell commands and this for file tools, which run
+          # outside it, where the guard's hook cannot run.
+          ++ ["Edit(${rulePath plans.dir}/**)"];
+
+        # Excluded commands go through the permission flow. These run
+        # without a prompt or auto mode's classifier: the excluded commands
+        # that only read, and every agent-plan write. A rule allows a call
+        # only when every command in it matches.
+        permissions.allow =
+          map (s: "Bash(${sub "pr-loop" s})") prLoopReads
+          ++ ["Bash(git fresh-review *)"]
+          ++ map (w: "Bash(${sub "agent-plan" w})") agentPlanWrites;
 
         # The auto-mode classifier judges intent, so it also stops a rule
         # broken where the guard cannot see, as through a script; the guard
@@ -311,26 +751,9 @@ in {
           "Running a command with NGROK_ENV set to prod or stage, however it is set."
         ];
 
-        # Applies wherever a project turns the sandbox on, and merges into
-        # claude-pr-loop's sandbox, which denies what it must not have.
-        sandbox =
-          {
-            # `trash` moves a file on the home volume into ~/.Trash, which the
-            # trash skill asks for in place of rm. Plans are written with
-            # `agent-plan` and the file tools.
-            filesystem.allowWrite =
-              [plans.dir]
-              ++ optional darwin "${config.home.homeDirectory}/.Trash";
-
-            # Only the watcher's sync pushes plans.
-            filesystem.denyRead = [plans.repository.key];
-          }
-          // optionalAttrs darwin {
-            # Go programs, gh and the go command among them, verify TLS
-            # through trustd on macOS, which they fail to reach otherwise.
-            # This opens the trust service alone, not the keychain.
-            enableWeakerNetworkIsolation = true;
-          };
+        # Every session's commands. Claude Code merges these lists into
+        # claude-pr-loop's sandbox as well.
+        sandbox = hostSandbox;
 
         hooks.PostToolUse = [
           # Records commits, pushes, worktrees, branches and PRs in the plan
@@ -472,6 +895,17 @@ in {
     {
       wgn.home.llm.enable = true;
 
+      assertions = [
+        {
+          assertion = let
+            d = cfg.settings.sandbox.filesystem.denyRead or [];
+            h = config.home.homeDirectory;
+          in
+            all (p: elem p d) ["${h}/.ssh" "${h}/.gnupg" "${h}/.config/gh"];
+          message = "wgn.home.claude: the host sandbox no longer denies ~/.ssh, ~/.gnupg or ~/.config/gh";
+        }
+      ];
+
       # Claude Code is installed and updated by itself, and owns ~/.claude.json
       # and ~/.claude/settings.json. Only the files it reads without writing
       # are kept here.
@@ -545,6 +979,17 @@ in {
     (mkIf cfg.prLoop.enable {
       wgn.home.llm.prLoop.enable = true;
       home.packages = [prLoopLauncher];
+    })
+
+    # Claude Code's Linux sandbox runs commands through these, found on PATH,
+    # and with `failIfUnavailable` a session without them does not start.
+    (mkIf ((cfg.settings.sandbox.enabled or false) && pkgs.stdenv.hostPlatform.isLinux) {
+      home.packages = [pkgs.bubblewrap pkgs.socat];
+    })
+
+    # Matched by name in the sandbox's excluded commands.
+    (mkIf (elem "gh-read *" (cfg.settings.sandbox.excludedCommands or [])) {
+      home.packages = [ghRead];
     })
 
     (mkIf cfg.agentPlans.enable (let

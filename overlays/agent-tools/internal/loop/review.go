@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/gh"
+	"github.com/wesnel/agent-tools/internal/redact"
 )
 
 // BotReview is one bot's standing on a PR's head.
@@ -244,6 +245,9 @@ func Request(numbers []int, onlyBots, acceptFailures []string) (any, error) {
 					return nil, fmt.Errorf("requesting %s on #%d: %w: %s", bot.Name, pr.Number, err, out)
 				}
 			} else {
+				if err := redact.Outgoing(bot.Request.Comment); err != nil {
+					return nil, fmt.Errorf("bot %s's request.comment: %w", bot.Name, err)
+				}
 				triggerKey := fmt.Sprintf("%d:%s", pr.Number, bot.Name)
 				if previous := state.Triggers[triggerKey]; previous != nil {
 					_ = gh.REST("DELETE", fmt.Sprintf("repos/%s/issues/comments/%d", repo.Slug, previous.CommentID), nil, nil)

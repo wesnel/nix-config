@@ -225,6 +225,50 @@ func TestOpen(t *testing.T) {
 			isRefusal(t, "Open "+arg, err)
 		})
 	}
+
+	// agent-plan's writes run outside the sandbox, so PLAN, as Open and
+	// new --parent take it, is never a file outside the plans directory,
+	// however it is reached.
+	for name, place := range map[string]func(t *testing.T, c Config, p Plan, outside string) string{
+		"a link in the directory to a plan outside": func(t *testing.T, c Config, _ Plan, outside string) string {
+			link := filepath.Join(c.Dir, "2026-10-14-z.box.org")
+			os.Symlink(filepath.Join(outside, "2026-10-14-x.box.org"), link)
+			os.WriteFile(filepath.Join(c.Dir, "2026-10-14-z.box.log.org"), nil, 0o644)
+			return link
+		},
+		"a hard-linked plan file": func(t *testing.T, _ Config, p Plan, outside string) string {
+			if err := os.Link(p.file(""), filepath.Join(outside, "copy.org")); err != nil {
+				t.Fatal(err)
+			}
+			return p.file("")
+		},
+		"a plan beside the directory": func(t *testing.T, c Config, _ Plan, _ string) string {
+			up := filepath.Dir(c.Dir)
+			os.WriteFile(filepath.Join(up, "2026-10-14-x.mac.org"), []byte("* Plan\n"), 0o644)
+			os.WriteFile(filepath.Join(up, "2026-10-14-x.mac.log.org"), nil, 0o644)
+			return c.Dir + "/../2026-10-14-x.mac.org"
+		},
+		"a plan outside the directory": func(t *testing.T, _ Config, _ Plan, outside string) string {
+			return filepath.Join(outside, "2026-10-14-x.box.org")
+		},
+	} {
+		for _, as := range []string{"PLAN", "new --parent"} {
+			t.Run("refused/"+as+"/"+name, func(t *testing.T) {
+				c, p := withPart(t)
+				outside := t.TempDir()
+				os.WriteFile(filepath.Join(outside, "2026-10-14-x.box.org"), []byte("* Plan\n** Distribution\n:PROPERTIES:\n:ID: P2\n:END:\n"), 0o644)
+				os.WriteFile(filepath.Join(outside, "2026-10-14-x.box.log.org"), nil, 0o644)
+				arg := place(t, c, p, outside)
+				var err error
+				if as == "PLAN" {
+					_, err = c.Open(arg)
+				} else {
+					_, err = c.New(NewOptions{Title: "Part", Parent: arg, Part: "P2"}, day)
+				}
+				isRefusal(t, as+" "+arg, err)
+			})
+		}
+	}
 }
 
 // Plans are every host's plans, newest first, each its own file once: no

@@ -54,8 +54,9 @@ between edits.
 
 ## Editing files
 
-Use the file-editing tools for every file, scratch files, plans and notes
-included; the guard's refusal of a shell edit names the exceptions. Writing
+Use the file-editing tools for every file, scratch files and notes
+included, but a plan's files, which only `agent-plan` writes; the guard's
+refusal of a shell edit names the exceptions. Writing
 a command's output to a new file is capturing, not editing.
 
 ## The operator's state

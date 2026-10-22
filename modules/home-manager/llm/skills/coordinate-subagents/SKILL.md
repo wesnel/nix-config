@@ -30,10 +30,11 @@ shape.
 
 ## Split the work
 
-- Before splitting, write the plan's Distribution, as the `plan-work`
-  skill says: a part ID (`P1`, `P2`…) per part, with its branch, base,
-  worktree and steps. A part that needs another's work first names that
-  part in its `:AFTER:`.
+- Before splitting, write the plan's Distribution with `agent-plan part`,
+  as the `plan-work` skill says: one part (`P1`, `P2`…) per part, with its
+  repository, branch, base, worktree and what it does. A part that needs
+  another's work first names that part with `--after`, or later with
+  `agent-plan after`.
 - One part is one branch, one worktree and one sub-agent.
 - A refactor the change needs goes first: the bottom branch of the stack,
   or the first commit of a single branch, with no test changed.

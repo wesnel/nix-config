@@ -113,10 +113,61 @@ with lib; let
             f.write(tomlkit.dumps(doc))
   '';
 
+  # Sets config.toml's top-level keys and its tables' keys from a JSON
+  # object, keeping the rest of the file.
+  setKeys = pkgs.writers.writePython3 "codex-set-keys" {libraries = [pkgs.python3Packages.tomlkit];} ''
+    import json
+    import os
+    import sys
+
+    import tomlkit
+
+    path = sys.argv[1]
+    keys = json.loads(sys.argv[2])
+
+    doc = tomlkit.document()
+    if os.path.exists(path):
+        with open(path) as f:
+            doc = tomlkit.parse(f.read())
+
+    changed = False
+    for key, value in keys.items():
+        if isinstance(value, dict):
+            table = doc.setdefault(key, tomlkit.table())
+            for k, v in value.items():
+                if table.get(k) != v:
+                    table[k] = v
+                    changed = True
+        elif doc.get(key) != value:
+            doc[key] = value
+            changed = True
+
+    if changed:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(tomlkit.dumps(doc))
+  '';
+
   plans = config.wgn.home.llm.plans;
 in {
   options.wgn.home.codex = {
     enable = mkEnableOption "Enables my Codex skills for home-manager";
+
+    sandbox = mkOption {
+      type = types.attrs;
+      internal = true;
+      default = {
+        sandbox_mode = "workspace-write";
+        sandbox_workspace_write.network_access = false;
+      };
+
+      description = ''
+        The sandbox every interactive Codex session's commands run in,
+        merged into ~/.codex/config.toml on every switch, so that it never
+        rests on what Codex chooses for a trusted project. An assertion
+        holds it to workspace-write with the network off.
+      '';
+    };
   };
 
   config = mkIf cfg.enable (mkMerge [
@@ -209,8 +260,12 @@ in {
         };
     }
 
-    # Plans are written with `agent-plan` and the file tools, from inside
-    # the workspace-write sandbox too. Merged into the config.toml Codex
+    # Plans are written with `agent-plan`, from inside the workspace-write
+    # sandbox too, so the plans directory stays writable there. Claude
+    # Code's sandbox denies it to every command but agent-plan's writes;
+    # Codex's sandbox cannot tell agent-plan from any other command, so in
+    # Codex the guard's plan-log and plan-file rules alone keep the shell
+    # and the file tools off the plans. Merged into the config.toml Codex
     # writes, as the MCP servers are.
     {
       home.activation.codexPlansRoot = lib.hm.dag.entryAfter ["writeBoundary"] ''
@@ -218,6 +273,32 @@ in {
           ${addWritableRoot} "$HOME/.codex/config.toml" ${escapeShellArg plans.dir} \
             ${escapeShellArg "${config.xdg.stateHome}/codex/plans-root"} \
             || warnEcho "The plans directory was not made writable in Codex's sandbox."
+        fi
+      '';
+    }
+
+    # Pins interactive sessions' sandbox: commands write only the workspace
+    # and the writable roots above, and reach no network; the guard hook
+    # holds the rest of what Codex may do. Codex reads `sandbox_mode` and
+    # `[sandbox_workspace_write] network_access` from config.toml; git
+    # fresh-review's `codex exec --ignore-user-config` reads neither.
+    # Merged into the config.toml Codex writes.
+    {
+      assertions = [
+        {
+          assertion =
+            (cfg.sandbox.sandbox_mode or null)
+            == "workspace-write"
+            && (cfg.sandbox.sandbox_workspace_write.network_access or null) == false
+            && hasInfix (escapeShellArg (builtins.toJSON cfg.sandbox)) config.home.activation.codexSandbox.data;
+          message = "wgn.home.codex: interactive Codex must run in workspace-write with network_access = false, written into config.toml";
+        }
+      ];
+
+      home.activation.codexSandbox = lib.hm.dag.entryAfter ["writeBoundary"] ''
+        if [ -z "''${DRY_RUN:-}" ]; then
+          ${setKeys} "$HOME/.codex/config.toml" ${escapeShellArg (builtins.toJSON cfg.sandbox)} \
+            || warnEcho "Codex's sandbox was not pinned to workspace-write without network."
         fi
       '';
     }

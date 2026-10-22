@@ -140,7 +140,8 @@ has changed.
    `refs/pr-loop/rounds/<n>/<branch>`. If GitHub moved underneath it, stop.
 9. **Reply and resolve**, after the push so replies can cite pushed commits:
    `pr-loop reply --from <file>` for each PR's drafted replies, which
-   answer and resolve threads as their outcomes say.
+   answer and resolve threads as their outcomes say. pr-loop refuses any
+   reply holding a secret's shape.
 
 Then start the next round.
 

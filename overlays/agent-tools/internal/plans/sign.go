@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -74,10 +75,24 @@ func (d SignDelivery) Line() string {
 }
 
 // RequestSign logs a sign-pass about to be handed over in session, in the
-// plan Locate finds for it, and returns the pass's ID.
-func (c Config) RequestSign(session, worktree string, branches []string, now time.Time) (string, error) {
+// plan Locate finds for it, and returns the pass's ID. The event's
+// WORKTREE is where git sign-pass runs and its BASE, omitted for main by
+// any of its names, what it signs from: Emacs and the dashboard show the
+// operator the command from them.
+func (c Config) RequestSign(session, worktree string, branches []string, base string, now time.Time) (string, error) {
 	if session == "" {
 		return "", refusal.New("there is no session to deliver the sign-pass's result to. Pass the harness's session ID with `agent-plan sign-id --session ID`")
+	}
+	if worktree != "" && !filepath.IsAbs(worktree) {
+		return "", refusal.New("worktree %q is not absolute, and the operator runs git sign-pass from anywhere. Run `agent-plan sign-id` in the worktree, or pass its full path with `--worktree`", worktree)
+	}
+	if base != "" {
+		if err := checkWords("base", []string{base}); err != nil {
+			return "", err
+		}
+	}
+	if slices.Contains([]string{"main", "origin/main", "refs/heads/main", "refs/remotes/origin/main"}, base) {
+		base = ""
 	}
 	p, _, ok := c.Locate(session, worktree)
 	if !ok {
@@ -87,7 +102,7 @@ func (c Config) RequestSign(session, worktree string, branches []string, now tim
 	rand.Read(b[:])
 	id := fmt.Sprintf("%s.%x", p.Name, b)
 	if _, err := p.record(Event{Kind: signRequested, Item: p.Name, Summary: id, Sign: id, Session: session,
-		Branch: strings.Join(branches, ",")}, now); err != nil {
+		Branch: strings.Join(branches, ","), Worktree: worktree, Base: base}, now); err != nil {
 		return "", err
 	}
 	return id, nil

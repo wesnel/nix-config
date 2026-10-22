@@ -134,7 +134,7 @@ func TestProperties(t *testing.T) {
 
 	t.Run("refused", func(t *testing.T) {
 		p := newPlan(t, testConfig(t), "x")
-		for name, values := range map[string][]string{"STATUS": {"working"}, "OWNERS": {"/w=a"},
+		for name, values := range map[string][]string{"PARENT": {"x"}, "OWNERS": {"/w=a"},
 			"BRANCHES": {"two words"}} {
 			isRefusal(t, name, p.SetProperty("", name, values, day))
 		}

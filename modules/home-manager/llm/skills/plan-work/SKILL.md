@@ -42,9 +42,18 @@ hand-off section into a plan; `agent-plan brief PLAN` is the hand-off. A
 plan file holds `* Plan` with the sections below; `agent-plan status`
 lists any other heading, an entry
 without its ID and a question without a question's keyword as structure
-drift. Undo drift you wrote. Report any other in your hand-back, and
-never delete or rewrite the operator's sections to silence it, nor log
-their history afresh: the log records events as they happen.
+drift. Report any drift in your hand-back, and never ask to delete or
+rewrite the operator's sections to silence it, nor log their history
+afresh: the log records events as they happen.
+
+Change a plan file only through `agent-plan`, never with a file-editing
+tool or the shell: the guard refuses those writes, Claude Code's sandbox
+denies the shell's writes to the plans directory, and every `agent-plan`
+command refuses a change that would add structure drift and writes
+nothing. Each section below names its command. Text (`--text`) may span
+lines but holds no line Org reads as a heading, a drawer, a planning line
+or a `#+` keyword other than a block's. A change no command makes goes in
+your report for the operator.
 
 - `* Plan`, whose properties say where the work is: `ID`, `HOST`,
   `REPOSITORIES`, `BRANCHES` (`base..branch`), `WORKTREES`, `SESSIONS`
@@ -52,40 +61,53 @@ their history afresh: the log records events as they happen.
   `working`, `reviewing`, `handed-back` or `halted`), `PULL_REQUESTS`,
   `PIPELINE` (`full` or `opted-out:<reason>`), `SKILLS` (the skills the
   work runs under beyond this one, such as `coordinate-subagents` or
-  `review-loop`, which you add) and, once `agent-plan own` sets one,
+  `review-loop`) and, once `agent-plan own` sets one,
   `OWNERS` (`worktree=agent`). Lists are separated by spaces.
+  `agent-plan set PLAN NAME VALUE... [--part P1]` sets each of them but
+  `ID`, `HOST`, `PIPELINE` and `OWNERS`, as `agent-plan set PLAN STATUS
+  working` or `agent-plan set PLAN SKILLS coordinate-subagents`.
   `WORKTREES`, `BRANCHES`, `PULL_REQUESTS` and `OWNERS` follow the log, as
-  step keywords do: never edit them by hand. Change one with
-  `agent-plan set PLAN BRANCHES main..loop [--part P1]`, which logs the
-  whole new value; `agent-plan status` lists a value the log does not
-  give, and a References entry it does not hold, as property drift.
+  step keywords do: `agent-plan set PLAN BRANCHES main..loop [--part P1]`
+  logs the whole new value; `agent-plan status` lists a value the log does
+  not give, and a References entry it does not hold, as property drift.
 - `** Goal`: the goal and what is not this change's job, and nothing of how
   the work went. It is the fresh review's goal statement, word for word:
   `agent-plan goal PLAN [--part P1]` prints it. It ends with a
   `Likely next changes:` line: one or two concrete changes expected after
   this one, not speculation, which the design review of the plan checks
-  would each be a local edit. It holds text, no headings. Load the
+  would each be a local edit. It holds text, no headings. Write it whole
+  with `agent-plan section PLAN Goal --text TEXT [--part P1]`. Load the
   `design` skill before writing the steps: its principles are what the
   design review checks them against.
 - `** Steps`: `*** TODO <step>` headings with `:ID: S1`, `S2`…; a part's
   are `P1.S1`, `P1.S2`… Each says what observable result marks it done,
-  which its `verified` evidence then shows. Steps that must run in order
-  go under a heading with `:ORDERED: t`, which holds those steps and no
-  text of its own, and a step that waits on another
-  item lists it in `:AFTER:`; `agent-plan status` lists the steps ready
+  which its `verified` evidence then shows. Add one with
+  `agent-plan step PLAN --title 'Add the run loop' --text 'Done when ...'
+  [--after S1]... [--part P1]`, which gives it the next ID; change its title
+  or text with `agent-plan edit PLAN S1 [--title T] [--text TEXT]`. A step
+  that waits on another item, including one that must run after an
+  earlier step, lists it in `:AFTER:`: `--after` when adding it, or
+  `agent-plan after PLAN S2 S1` (`--clear` for none) later. A heading with
+  `:ORDERED: t` the operator wrote orders the steps under it too.
+  `agent-plan status` lists the steps ready
   now. A step or part that cannot go on until a time is postponed with
   `agent-plan postpone PLAN S1 --until '2026-10-20 18:30'`, which keeps it
   out of the ready lists and the agenda until then; `--clear` undoes it.
 - `** Distribution`, in a plan split among sub-agents: a `*** TODO <part>`
-  heading per part with `:ID: P1`…, its branch, base and worktree, a link
-  to its file, and its steps.
+  heading per part with `:ID: P1`…, its repository, branch, base and
+  worktree, and what it does. Add one with `agent-plan part PLAN --title T
+  --repo nix-config --branch main..run-loop --worktree DIR --text TEXT
+  [--after P1]...`, which gives it the next ID and starts its text with
+  where it works, and change it with `agent-plan edit` and `after` as a
+  step.
 - `** Questions`: every question for the operator and every decision, each with
   `:ID: Q1`, `Q2`… (`P1.Q1` in a part's file), written by `agent-plan ask`
-  as "Questions for the operator" says, never by hand. An open one is `ASK`; a
+  as "Questions for the operator" says. An open one is `ASK`; a
   settled one stays where it is, `DECIDED` with its `:ANSWER:`, or
   `DROPPED`, or `SUPERSEDED` by the decision whose `:SUPERSEDES:` names
   it. A decision is always such a question, settled in place and never
-  renumbered, moved or given an ID of another kind.
+  renumbered, moved or given an ID of another kind; a question reworded is
+  a new question, the old one dropped with `agent-plan decide --drop`.
   `agent-plan decisions PLAN --all` lists the decisions. A suggestion
   rejected for a reason that will still hold, such as a constraint rather
   than a lack of time, is a decision too, with that reason, so a later
@@ -101,24 +123,26 @@ their history afresh: the log records events as they happen.
   are done with a reference, write its note:
   `agent-plan reference PLAN URL --note 'The pstack principles; fed Q3, Q4.'`
 - `** Verification`: how the change is shown to work: each seam the tests
-  cross, and what each cannot catch. It holds text, no headings.
+  cross, and what each cannot catch. It holds text, no headings: write it
+  with `agent-plan section PLAN Verification --text TEXT [--part P1]`.
 
 The `#+TODO:` lines `agent-plan new` writes define the keywords; Emacs and
-`agent-plan` both read them, so leave them as they are. The ID patterns
+`agent-plan` both read them. The ID patterns
 (`S`, `P`, `Q`, `F`, with an optional `P<n>.` prefix) are what Emacs's
 plan views select entries by.
 
 A question or a part that cannot start before others are settled lists
-their IDs in `:AFTER:`, separated by spaces (a question's through
-`agent-plan ask --after`): a question is settled once its keyword is a
+their IDs in `:AFTER:`, separated by spaces (through `agent-plan ask
+--after`, `step --after` or `part --after`, and `agent-plan after` once
+written): a question is settled once its keyword is a
 done one, a part or step once `done`, `verified` or `abandoned` is logged
 for it. Until then the question is not put to the operator and the part is not
 ready.
 
 An ID is never reused or renumbered; a step dropped from the work keeps its
-ID and gets an `abandoned` event. Edit only your own plan file, and change
-it in the same step as what it describes: a new step, a decision (through
-`agent-plan ask` or `decide`), a moved base (through `agent-plan set`).
+ID and gets an `abandoned` event. Change only your own plan file, in the
+same step as what it describes: a new step (through `agent-plan step`), a
+decision (`agent-plan ask` or `decide`), a moved base (`agent-plan set`).
 
 ## The log
 
@@ -153,6 +177,12 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
 - `--role` is yours: `single`, `parent` or `subagent`.
 - Which model and effort to start a sub-agent with is the
   `coordinate-subagents` skill's "Model and effort".
+- A hand-back that leaves the operator a command to run names it:
+  `agent-plan log PLAN --item P1 --kind handed-back --command 'git
+  sign-pass --push' --dir WORKTREE`. The item waits on them, shown in
+  `agent-plan waiting PLAN`, Emacs's agenda and the dashboard, until an
+  event about its work, not its plan text or schedule, is logged for it. A
+  sandbox cannot name one.
 - The review pipeline's events are the `review-change` skill's.
 
 `agent-plan status PLAN` lists the steps without `done` and those done but
@@ -195,8 +225,7 @@ them.
 
 Every question for the operator lives in the plan's Questions, with your
 recommendation, and nowhere else. Write each with `agent-plan ask`, which
-gives it the next ID and the form `agent-plan questions` reads; a question
-written by hand in another form never reaches the operator:
+gives it the next ID and the form `agent-plan questions` reads:
 
 ```sh
 agent-plan ask PLAN --question 'Keep the old flag?' --recommendation 'no, drop it' \
@@ -222,9 +251,10 @@ left. The operator may also run `/questions` in Claude Code themselves.
 Ask the operator only about a one-way door (a force-push, deleted data, a
 message sent outside, a migration, a stored format, a published interface)
 or about product direction; only their answer settles such a question.
-Decide every other matter yourself, and record each such reversible
-decision of your own in one step, already decided, where the operator can
-reopen it:
+The `grill` skill is the exception: once the operator invokes it, every
+open choice goes to them. Otherwise decide every other matter yourself,
+and record each such reversible decision of your own in one step, already
+decided, where the operator can reopen it:
 
 ```sh
 agent-plan ask PLAN --question 'Keep the old flag?' --recommendation 'no, drop it' \
@@ -273,14 +303,14 @@ not carried into it.
 ## Claude Code's plan mode
 
 A plan approved in plan mode is written into the session's plan's Goal
-and Steps before the first edit, and its questions and decisions through
-`agent-plan ask`.
+and Steps, with `agent-plan section` and `agent-plan step`, before the
+first edit, and its questions and decisions through `agent-plan ask`.
 
 ## Plan and halt
 
 If the operator asks you to plan, write the plan and stop: no edits outside the
-plan's files, and no commits. Log `planned` for the plan's ID, set
-`STATUS` to `halted`, and report the plan's path with its open questions.
+plan's files, and no commits. Log `planned` for the plan's ID, run
+`agent-plan set PLAN STATUS halted`, and report the plan's path with its open questions.
 
 ## The pipeline
 

@@ -59,6 +59,13 @@ func IsLog(name string) bool {
 	return m != nil && m[3] == "log"
 }
 
+// IsPlan reports whether name is the file name of a plan's file or a
+// part's, which agent-plan alone writes.
+func IsPlan(name string) bool {
+	m := planFile.FindStringSubmatch(name)
+	return m != nil && m[3] != "log"
+}
+
 // Load reads the config, defaulting to ~/git/notes/agents and this
 // machine's short host name.
 func Load() (Config, error) {
@@ -240,12 +247,23 @@ func (c Config) newPart(o NewOptions, now time.Time) (Created, error) {
 	}
 	text := planText(o, o.Part, c.Host, map[string]string{"PARENT": "[[file:" + filepath.Base(p.file("")) + "]]"}, false)
 	file := p.file(o.Part)
-	if err := writeNew(file, text); errors.Is(err, fs.ErrExist) {
-		return Created{}, refusal.New("%s already has its plan file, %s. Edit that file instead; `agent-plan goal %s --part %s` prints its goal", o.Part, file, p.file(""), o.Part)
-	} else if err != nil {
+	kept := false
+	err = p.withLock(func(l *lockedPlan) error {
+		if err := l.checkSeal(); err != nil {
+			return err
+		}
+		if err := l.create(file, text); errors.Is(err, fs.ErrExist) {
+			return refusal.New("%s already has its plan file, %s. Change it with `agent-plan section`, `step` or `edit` and `--part %s`; `agent-plan goal %s --part %s` prints its goal", o.Part, file, o.Part, p.file(""), o.Part)
+		} else if err != nil {
+			return err
+		}
+		err := l.logNewProperties(o.Part, now)
+		kept = l.appended
+		return err
+	})
+	if err != nil && !kept {
 		return Created{}, err
 	}
-	err = p.withLock(func(l *lockedPlan) error { return l.logNewProperties(o.Part, now) })
 	return Created{Plan: p.file(""), File: file, ID: o.Part, Log: p.log()}, err
 }
 
@@ -305,17 +323,32 @@ func planText(o NewOptions, id, host string, extra map[string]string, parent boo
 	return b.String()
 }
 
-// writeNew writes a file that must not exist yet.
+// writeNew writes a file that must not exist yet, whole or not at all: a
+// part written would be a file that every retry refuses as existing. It
+// writes a temporary file, and links it to path, which fails with
+// fs.ErrExist rather than replace a file there.
 func writeNew(path, text string) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	f, err := os.CreateTemp(filepath.Dir(path), ".edit-*")
 	if err != nil {
 		return err
 	}
+	defer os.Remove(f.Name())
 	if _, err := f.WriteString(text); err != nil {
 		f.Close()
 		return err
 	}
-	return f.Close()
+	if err := f.Chmod(0o644); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Link(f.Name(), path)
 }
 
 // Ready is the plans directory, made ready for plans.
@@ -545,7 +578,7 @@ func (p Plan) Goal(part string) (string, error) {
 		}
 		return body + "\n", nil
 	}
-	return "", refusal.New("%s has no goal statement under its Goal heading. Write the goal and what is not this change's job there, as the `plan-work` skill says", file)
+	return "", refusal.New("%s has no goal statement under its Goal heading. Write the goal and what is not this change's job with `agent-plan section PLAN Goal --text TEXT [--part P1]`, as the `plan-work` skill says", file)
 }
 
 // FindOptions select plans; a plan matches any one given.

@@ -98,6 +98,9 @@ func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return report(nil, err, 0)
 	}
 	top, err := git.Toplevel()
+	if err == nil {
+		top, err = filepath.EvalSymlinks(top)
+	}
 	if err != nil {
 		return report(nil, err, 0)
 	}
@@ -177,7 +180,9 @@ func questionFile(top, path string) (string, error) {
 
 // named is each path, relative to the process's directory or absolute,
 // as a path relative to top, refusing one that is not a regular file in
-// the repository at top.
+// the repository at top. top has its symlinks resolved, and so has each
+// path before it is checked, so a link leading out of the repository is
+// refused and the path returned, joined to top, is the file checked.
 func named(top string, paths []string) ([]string, error) {
 	var out []string
 	for _, p := range paths {
@@ -185,8 +190,10 @@ func named(top string, paths []string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		if real, err := filepath.EvalSymlinks(abs); err == nil {
-			abs = real
+		abs, err = filepath.EvalSymlinks(abs)
+		if err != nil {
+			return nil, refusal.New("%s is not a file; name each file the answer rests on, as `git fresh-review ask "+
+				"--question FILE PATH...`", p)
 		}
 		rel, err := filepath.Rel(top, abs)
 		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {

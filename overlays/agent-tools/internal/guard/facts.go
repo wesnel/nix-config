@@ -229,7 +229,7 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 				}
 				if created {
 					context = append(context, fmt.Sprintf("No plan named this session or worktree, so %s was made for this commit. "+
-						"Write its goal and steps as the plan-work skill says, or, if the work belongs to another plan, say so in your report.", p.File()))
+						"Write its goal and steps with `agent-plan section` and `agent-plan step` as the plan-work skill says, or, if the work belongs to another plan, say so in your report.", p.File()))
 				}
 				context = append(context, fmt.Sprintf("The commit %q is logged in %s. If it completes a step, which step? "+
 					"Log `done` for it with `--commit %s`; if none, carry on.", m[3], p.File(), shellQuote(m[3])))

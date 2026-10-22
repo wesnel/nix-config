@@ -49,8 +49,10 @@ func (p Plan) Ask(o AskOptions, now time.Time) (Asked, error) {
 	if o.Priority != "" && !oneOf(o.Priority, priorities) {
 		return Asked{}, refusal.New("%q is not a priority. Pass `--priority A`, `B` or `C`", o.Priority)
 	}
-	for what, v := range map[string]string{"question": o.Question, "recommendation": o.Recommendation, "context": o.Context,
-		"answer": o.Answer} {
+	if err := checkTitle("question", o.Question); err != nil {
+		return Asked{}, err
+	}
+	for what, v := range map[string]string{"recommendation": o.Recommendation, "answer": o.Answer} {
 		if err := checkLine(what, v); err != nil {
 			return Asked{}, err
 		}
@@ -66,6 +68,16 @@ func (p Plan) Ask(o AskOptions, now time.Time) (Asked, error) {
 	if o.Context != "" && strings.ContainsAny(o.Context[:1], "*#-+|:") {
 		return Asked{}, refusal.New("context %q starts with a character Org reads as structure. Pass it starting with a word, as `--context 'Because ...'`", o.Context)
 	}
+	context, err := textLines(o.Context)
+	if err != nil {
+		return Asked{}, err
+	}
+	// Questions reads a question's list items as its alternatives.
+	for _, l := range context {
+		if listItem.MatchString(l) {
+			return Asked{}, refusal.New("context line %q is a list item, which a question's reader takes as an alternative. Pass alternatives with `--alternative`, and start the line with a word", l)
+		}
+	}
 	if err := checkWords("after", o.After); err != nil {
 		return Asked{}, err
 	}
@@ -77,7 +89,7 @@ func (p Plan) Ask(o AskOptions, now time.Time) (Asked, error) {
 		return Asked{}, refusal.New("%s has no plan file for part %s. The part's sub-agent creates it with `agent-plan new --parent %s --part %s`", p.Name, o.Part, p.file(""), o.Part)
 	}
 	var asked Asked
-	err := p.withLock(func(l *lockedPlan) error {
+	err = p.withLock(func(l *lockedPlan) error {
 		list, err := p.itemList()
 		if err != nil {
 			return err
@@ -113,17 +125,14 @@ func (p Plan) Ask(o AskOptions, now time.Time) (Asked, error) {
 		if len(o.After) > 0 {
 			block = append(block, ":AFTER: "+strings.Join(o.After, " "))
 		}
-		block = append(block, ":END:")
-		if o.Context != "" {
-			block = append(block, o.Context)
-		}
+		block = append(append(block, ":END:"), context...)
 		for _, a := range o.Alternatives {
 			block = append(block, "- "+strings.TrimSpace(a))
 		}
 		err = l.edit(file, func(lines []string) ([]string, error) {
 			_, end, ok := section(lines, "Questions")
 			if !ok {
-				return nil, refusal.New("%s has no `** Questions` heading. Restore it as the plan-work skill describes, then ask again", file)
+				return nil, refusal.New("%s has no `** Questions` heading. Ask the operator to restore it as the plan-work skill describes, then ask again", file)
 			}
 			// A section ending the file ends at its final empty line.
 			if end == len(lines) && lines[end-1] == "" {
