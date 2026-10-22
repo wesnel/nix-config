@@ -243,7 +243,7 @@ func forward(url string, argv []string) int {
 			if argv[i+1] == "-" {
 				stdin, err = io.ReadAll(os.Stdin)
 			} else {
-				stdin, err = os.ReadFile(argv[i+1])
+				stdin, err = os.ReadFile(argv[i+1]) //nolint:gosec // the caller's own file, read inside its sandbox
 			}
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "pr-loop: %s\n", err)
@@ -354,7 +354,7 @@ func run(command string, args []string, url string, relayed bool, stdin io.Reade
 		case "-":
 			data, err = io.ReadAll(stdin)
 		default:
-			data, err = os.ReadFile(*bodyFile)
+			data, err = os.ReadFile(*bodyFile) //nolint:gosec // the host caller's own file; relayRefusal leaves a relayed caller only -
 		}
 		return string(data), err
 	}
@@ -544,7 +544,7 @@ func replyFrom(path, bodyFile string, rest []string, stdin io.Reader) (any, erro
 	if path == "-" {
 		data, err = io.ReadAll(stdin)
 	} else {
-		data, err = os.ReadFile(path)
+		data, err = os.ReadFile(path) //nolint:gosec // the host caller's own file; relayRefusal leaves a relayed caller only -
 	}
 	if err != nil {
 		return nil, err

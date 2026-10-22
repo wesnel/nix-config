@@ -581,6 +581,35 @@
           touch $out
         '';
 
+      # gosec over agent-tools, with the rules and exclusions in
+      # overlays/agent-tools/.golangci.yml; .github/workflows/agent-tools-lint.yml
+      # runs it. Run it with `nix build .#checks.<system>.agent-tools-lint`.
+      # It is kept out of the package's check phase so that a new gosec rule
+      # fails CI and never a switch. It runs without network, which holds
+      # while agent-tools has no module dependencies.
+      checks.agent-tools-lint =
+        pkgs.runCommand "agent-tools-lint" {
+          nativeBuildInputs = [pkgs.go pkgs.golangci-lint];
+          src = pkgs.lib.fileset.toSource {
+            root = ./overlays/agent-tools;
+            fileset = pkgs.lib.fileset.unions [
+              ./overlays/agent-tools/.golangci.yml
+              ./overlays/agent-tools/go.mod
+              ./overlays/agent-tools/cmd
+              ./overlays/agent-tools/internal
+            ];
+          };
+        } ''
+          export HOME=$TMPDIR GOCACHE=$TMPDIR/go-cache GOMODCACHE=$TMPDIR/go-mod \
+            GOLANGCI_LINT_CACHE=$TMPDIR/lint-cache GOPROXY=off GOFLAGS=-mod=readonly \
+            GOTOOLCHAIN=local CGO_ENABLED=0
+          cp -r $src agent-tools
+          chmod -R u+w agent-tools
+          cd agent-tools
+          golangci-lint run ./...
+          touch $out
+        '';
+
       devShells = {
         default = pkgs.mkShell {
           buildInputs = [

@@ -299,7 +299,7 @@ func Validate(reply, given, tip string, blob func(path string) ([]byte, error), 
 // removes however the review ends.
 func codexReview(ctx context.Context, in inputs, model string, timeout time.Duration, log io.Writer) (*Output, error) {
 	parent := filepath.Join(in.r.common, "fresh-review")
-	if err := os.MkdirAll(parent, 0o755); err != nil {
+	if err := os.MkdirAll(parent, 0o755); err != nil { //nolint:gosec // holds checkouts of the repository, in its git directory
 		return nil, err
 	}
 	dir, err := os.MkdirTemp(parent, in.r.tip[:12]+"-")
@@ -361,7 +361,7 @@ type CodexReply struct {
 func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 	dir := filepath.Dir(c.Checkout)
 	schema, reply := filepath.Join(dir, "reply.schema.json"), filepath.Join(dir, "reply.json")
-	if err := os.WriteFile(schema, c.Schema, 0o644); err != nil {
+	if err := os.WriteFile(schema, c.Schema, 0o644); err != nil { //nolint:gosec // a JSON schema compiled into this program
 		return nil, err
 	}
 	run := c.Git
