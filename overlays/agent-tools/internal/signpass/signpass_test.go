@@ -46,7 +46,27 @@ func signingConfig(t *testing.T, dir string) string {
 	return global
 }
 
+// useDir points the package's git at dir for the rest of the test.
+func useDir(t *testing.T, dir string) {
+	t.Helper()
+	git.Dir = dir
+	t.Cleanup(func() { git.Dir = "" })
+}
+
 func TestRun(t *testing.T) {
+	t.Run("signs and folds a stack", testRunStack)
+	t.Run("lint", testRunLint)
+	t.Run("worktree branch", testRunWorktreeBranch)
+	t.Run("failed push", testRunFailedPush)
+}
+
+func TestPush(t *testing.T) {
+	t.Run("moved branches", testPushMoved)
+	t.Run("destination", testPushDestination)
+	t.Run("remote", testPushRemote)
+}
+
+func testRunStack(t *testing.T) {
 	dir := t.TempDir()
 	global := signingConfig(t, dir)
 
@@ -66,8 +86,7 @@ func TestRun(t *testing.T) {
 
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
 	gitenvtest.Decoy(t)
-	git.Dir = repo
-	defer func() { git.Dir = "" }()
+	useDir(t, repo)
 	result, err := Run("", false, false, false)
 	if err != nil {
 		t.Fatal(err)
@@ -158,10 +177,10 @@ func TestRun(t *testing.T) {
 	}
 }
 
-// TestLint covers the messages a pass would sign: it refuses one that
+// testRunLint covers the messages a pass would sign: it refuses one that
 // breaks the message rules before touching anything, judging the message
 // as signed, so an amend! that fixes it lets the pass through.
-func TestLint(t *testing.T) {
+func testRunLint(t *testing.T) {
 	dir := t.TempDir()
 	global := signingConfig(t, dir)
 	repo := filepath.Join(dir, "repo")
@@ -179,8 +198,7 @@ func TestLint(t *testing.T) {
 
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
 	gitenvtest.Decoy(t)
-	git.Dir = repo
-	defer func() { git.Dir = "" }()
+	useDir(t, repo)
 	for name, pass := range map[string]func() (any, error){
 		"Run":  func() (any, error) { return Run("", false, false, false) },
 		"Plan": func() (any, error) { return Plan("", []string{"br"}, false, false) },
@@ -205,9 +223,9 @@ func TestLint(t *testing.T) {
 	}
 }
 
-// TestWorktreeBranch signs a stack whose lower branch is checked out in a
-// worktree of its own, which --update-refs alone would leave behind.
-func TestWorktreeBranch(t *testing.T) {
+// testRunWorktreeBranch signs a stack whose lower branch is checked out in
+// a worktree of its own, which --update-refs alone would leave behind.
+func testRunWorktreeBranch(t *testing.T) {
 	dir := t.TempDir()
 	global := signingConfig(t, dir)
 	repo := filepath.Join(dir, "repo")
@@ -229,8 +247,7 @@ func TestWorktreeBranch(t *testing.T) {
 
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
 	gitenvtest.Decoy(t)
-	git.Dir = repo
-	defer func() { git.Dir = "" }()
+	useDir(t, repo)
 	check := func(result any, wantA string) {
 		t.Helper()
 		lower, _ := git.Run("rev-parse", "lower")
@@ -329,7 +346,7 @@ func TestWorktreeBranch(t *testing.T) {
 	}
 }
 
-func TestPushMoved(t *testing.T) {
+func testPushMoved(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
@@ -350,8 +367,7 @@ func TestPushMoved(t *testing.T) {
 	gitIn(t, repo, "commit", "-q", "--amend", "--allow-empty", "-m", "T1 again")
 	gitIn(t, repo, "switch", "-qc", "fresh")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "F1")
-	git.Dir = repo
-	defer func() { git.Dir = "" }()
+	useDir(t, repo)
 	moved := []string{"fresh", "tracked"}
 	none := func([]string) error { return nil }
 
@@ -398,9 +414,9 @@ func TestPushMoved(t *testing.T) {
 	}
 }
 
-// TestPushDestination holds --push to each branch's own name and away from
+// testPushDestination holds --push to each branch's own name and away from
 // the remote's default branch, refusing before the pass signs anything.
-func TestPushDestination(t *testing.T) {
+func testPushDestination(t *testing.T) {
 	dir := t.TempDir()
 	global := signingConfig(t, dir)
 	hub := filepath.Join(dir, "hub.git")
@@ -419,8 +435,7 @@ func TestPushDestination(t *testing.T) {
 	hubMain := gitIn(t, hub, "rev-parse", "main")
 
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
-	git.Dir = repo
-	defer func() { git.Dir = "" }()
+	useDir(t, repo)
 	refs := gitIn(t, repo, "for-each-ref")
 	for _, setUpstream := range []bool{false, true} {
 		_, err := Run("", false, true, setUpstream)
@@ -478,13 +493,12 @@ func TestPushDestination(t *testing.T) {
 	}
 }
 
-func TestPushRemote(t *testing.T) {
+func testPushRemote(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	gitIn(t, dir, "init", "-q", "-b", "main")
-	git.Dir = dir
-	defer func() { git.Dir = "" }()
+	useDir(t, dir)
 	check := func(want, wantErr string) {
 		t.Helper()
 		got, err := pushRemote("b", "retry")
@@ -505,9 +519,9 @@ func TestPushRemote(t *testing.T) {
 	check("fork", "")
 }
 
-// TestFailedPush leaves a pass whose push failed with nothing but the push to
-// retry, and blocks no other branch.
-func TestFailedPush(t *testing.T) {
+// testRunFailedPush leaves a pass whose push failed with nothing but the
+// push to retry, and blocks no other branch.
+func testRunFailedPush(t *testing.T) {
 	dir := t.TempDir()
 	global := signingConfig(t, dir)
 	hub := filepath.Join(dir, "hub.git")
@@ -527,8 +541,7 @@ func TestFailedPush(t *testing.T) {
 	gitIn(t, repo, "push", "-q", "-f", hub, "main:refs/heads/one")
 
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
-	git.Dir = repo
-	defer func() { git.Dir = "" }()
+	useDir(t, repo)
 	if _, err := Run("", false, true, false); err == nil || !strings.Contains(err.Error(), "`git sign-pass --resume one`") {
 		t.Fatalf("a failed push: %v", err)
 	}

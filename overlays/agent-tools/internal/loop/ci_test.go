@@ -124,46 +124,85 @@ func targets(t *testing.T, args ...string) ([]int, error) {
 	return numbers, err
 }
 
-func TestCITargetsOutsideALoop(t *testing.T) {
-	ciRepo(t)
+// argsName names a subtest after the arguments it passes.
+func argsName(args []string) string {
+	if len(args) == 0 {
+		return "no arguments"
+	}
+	return strings.Join(args, " ")
+}
+
+func TestCITargets(t *testing.T) {
+	t.Run("outside a loop", testCITargetsOutsideALoop)
+	t.Run("in a loop", testCITargetsInALoop)
+}
+
+func testCITargetsOutsideALoop(t *testing.T) {
 	for _, args := range [][]string{nil, {"1"}, {"#1"}, {"feat"}} {
-		if got, err := targets(t, args...); err != nil || !reflect.DeepEqual(got, []int{1}) {
-			t.Errorf("%v: %v, %v", args, got, err)
-		}
-	}
-	// A local branch is found through its upstream on GitHub.
-	gitIn(t, git.Dir, "branch", "mine")
-	gitIn(t, git.Dir, "config", "branch.mine.remote", "origin")
-	gitIn(t, git.Dir, "config", "branch.mine.merge", "refs/heads/feat")
-	if got, err := targets(t, "mine"); err != nil || !reflect.DeepEqual(got, []int{1}) {
-		t.Errorf("branch with an upstream: %v, %v", got, err)
-	}
-	for _, args := range [][]string{{"2"}, {"3"}, {"theirs"}, {"forked"}, {"done"}, {"1", "2"}} {
-		if got, err := targets(t, args...); !refused(err) {
-			t.Errorf("%v was accepted: %v, %v", args, got, err)
-		}
-	}
-	if _, err := targets(t, "9"); err == nil {
-		t.Error("a PR that does not exist was accepted")
+		t.Run(argsName(args), func(t *testing.T) {
+			ciRepo(t)
+			if got, err := targets(t, args...); err != nil || !reflect.DeepEqual(got, []int{1}) {
+				t.Errorf("%v: %v, %v", args, got, err)
+			}
+		})
 	}
 
-	gitIn(t, git.Dir, "switch", "-qc", "unpublished")
-	if _, err := targets(t); !refused(err) {
-		t.Errorf("a branch without a PR: %v", err)
+	// A local branch is found through its upstream on GitHub.
+	t.Run("branch with an upstream", func(t *testing.T) {
+		ciRepo(t)
+		gitIn(t, git.Dir, "branch", "mine")
+		gitIn(t, git.Dir, "config", "branch.mine.remote", "origin")
+		gitIn(t, git.Dir, "config", "branch.mine.merge", "refs/heads/feat")
+		if got, err := targets(t, "mine"); err != nil || !reflect.DeepEqual(got, []int{1}) {
+			t.Errorf("branch with an upstream: %v, %v", got, err)
+		}
+	})
+
+	for _, args := range [][]string{{"2"}, {"3"}, {"theirs"}, {"forked"}, {"done"}, {"1", "2"}} {
+		t.Run("refused/"+argsName(args), func(t *testing.T) {
+			ciRepo(t)
+			if got, err := targets(t, args...); !refused(err) {
+				t.Errorf("%v was accepted: %v, %v", args, got, err)
+			}
+		})
 	}
-	gitIn(t, git.Dir, "switch", "-q", "--detach")
-	if _, err := targets(t); !refused(err) {
-		t.Errorf("a detached HEAD: %v", err)
-	}
+
+	t.Run("PR that does not exist", func(t *testing.T) {
+		ciRepo(t)
+		if _, err := targets(t, "9"); err == nil {
+			t.Error("a PR that does not exist was accepted")
+		}
+	})
+
+	t.Run("branch without a PR", func(t *testing.T) {
+		ciRepo(t)
+		gitIn(t, git.Dir, "switch", "-qc", "unpublished")
+		if _, err := targets(t); !refused(err) {
+			t.Errorf("a branch without a PR: %v", err)
+		}
+	})
+
+	t.Run("detached HEAD", func(t *testing.T) {
+		ciRepo(t)
+		gitIn(t, git.Dir, "switch", "-q", "--detach")
+		if _, err := targets(t); !refused(err) {
+			t.Errorf("a detached HEAD: %v", err)
+		}
+	})
+
 	// Where HEAD heads no PR, a registered loop's PRs are the default.
-	registerLoop(t)
-	if got, err := targets(t); err != nil || !reflect.DeepEqual(got, []int{1}) {
-		t.Errorf("detached beside a loop: %v, %v", got, err)
-	}
+	t.Run("detached beside a loop", func(t *testing.T) {
+		ciRepo(t)
+		gitIn(t, git.Dir, "switch", "-q", "--detach")
+		registerLoop(t)
+		if got, err := targets(t); err != nil || !reflect.DeepEqual(got, []int{1}) {
+			t.Errorf("detached beside a loop: %v, %v", got, err)
+		}
+	})
 }
 
 // A loop session reads what it named, or the loop's PRs, as it always has.
-func TestCITargetsInALoop(t *testing.T) {
+func testCITargetsInALoop(t *testing.T) {
 	for _, env := range []string{relay.RelayEnv, sessionEnv} {
 		t.Run(env, func(t *testing.T) {
 			ciRepo(t)
@@ -187,9 +226,16 @@ func TestCITargetsInALoop(t *testing.T) {
 
 var passing = []fakeCheck{{name: "build", status: "COMPLETED", conclusion: "SUCCESS", job: 1}}
 
+func TestWaitCI(t *testing.T) {
+	t.Run("keys on the new head", testWaitCIKeysOnTheNewHead)
+	t.Run("times out", testWaitCITimesOut)
+	t.Run("no checks", testWaitCINoChecks)
+	t.Run("compares with the base", testWaitCIComparesWithTheBase)
+}
+
 // Right after a push the PR can still show the previous head, whose checks
 // have finished; they are not the new head's result.
-func TestWaitCIKeysOnTheNewHead(t *testing.T) {
+func testWaitCIKeysOnTheNewHead(t *testing.T) {
 	f := ciRepo(t)
 	f.checks["a1"] = passing
 	f.prs[1].branchOid = "a2"
@@ -221,104 +267,131 @@ func TestWaitCIKeysOnTheNewHead(t *testing.T) {
 
 // --sha waits for a commit GitHub does not show yet, and gives up at the
 // timeout without reporting the old head's checks.
-func TestWaitCITimesOut(t *testing.T) {
-	f := ciRepo(t)
-	f.checks["a1"] = passing
+func testWaitCITimesOut(t *testing.T) {
 	sha := strings.Repeat("f", 40)
-	start := now()
-	result, settled, err := WaitCI([]string{"feat"}, sha, 5*time.Minute, 2*time.Minute, 0)
-	if err != nil || settled || result.Result != "timedOut" {
-		t.Fatalf("wait: %+v, settled %v, %v", result, settled, err)
-	}
-	if c := result.PRs[0]; c.State != "awaitingHead" || c.ExpectedOid != sha || c.HeadOid != "a1" {
-		t.Errorf("timed out on %+v", c)
-	}
-	if waited := now().Sub(start); waited != 5*time.Minute {
-		t.Errorf("waited %s", waited)
-	}
-	if _, _, err := WaitCI([]string{"1", "feat"}, sha, 0, 0, 0); !refused(err) {
-		t.Errorf("--sha with two PRs: %v", err)
-	}
+
+	t.Run("waiting for a commit", func(t *testing.T) {
+		f := ciRepo(t)
+		f.checks["a1"] = passing
+		start := now()
+		result, settled, err := WaitCI([]string{"feat"}, sha, 5*time.Minute, 2*time.Minute, 0)
+		if err != nil || settled || result.Result != "timedOut" {
+			t.Fatalf("wait: %+v, settled %v, %v", result, settled, err)
+		}
+		if c := result.PRs[0]; c.State != "awaitingHead" || c.ExpectedOid != sha || c.HeadOid != "a1" {
+			t.Errorf("timed out on %+v", c)
+		}
+		if waited := now().Sub(start); waited != 5*time.Minute {
+			t.Errorf("waited %s", waited)
+		}
+	})
+
+	t.Run("--sha with two PRs", func(t *testing.T) {
+		f := ciRepo(t)
+		f.checks["a1"] = passing
+		if _, _, err := WaitCI([]string{"1", "feat"}, sha, 0, 0, 0); !refused(err) {
+			t.Errorf("--sha with two PRs: %v", err)
+		}
+	})
 
 	// Within its grace, a head without checks is still waiting for them.
-	f.checks = map[string][]fakeCheck{}
-	result, settled, _ = WaitCI(nil, "", time.Minute, time.Minute, 3*time.Minute)
-	if settled || result.Result != "timedOut" || result.PRs[0].State != "none" {
-		t.Errorf("no checks within the grace: %+v %+v", result, result.PRs[0])
-	}
+	t.Run("no checks within the grace", func(t *testing.T) {
+		ciRepo(t)
+		result, settled, _ := WaitCI(nil, "", time.Minute, time.Minute, 3*time.Minute)
+		if settled || result.Result != "timedOut" || result.PRs[0].State != "none" {
+			t.Errorf("no checks within the grace: %+v %+v", result, result.PRs[0])
+		}
+	})
 }
 
 // A head that still has no checks a grace period after it became the
 // expected head is a result of its own, counted from when it was seen.
-func TestWaitCINoChecks(t *testing.T) {
-	f := ciRepo(t)
-	start := now()
-	result, settled, err := WaitCI(nil, "", time.Hour, time.Minute, 3*time.Minute)
-	if err != nil || !settled || result.Result != "noChecks" || result.PRs[0].State != "none" {
-		t.Fatalf("no checks: %+v, settled %v, %v", result, settled, err)
-	}
-	if waited := now().Sub(start); waited != 3*time.Minute {
-		t.Errorf("waited %s", waited)
-	}
+func testWaitCINoChecks(t *testing.T) {
+	t.Run("on the head", func(t *testing.T) {
+		ciRepo(t)
+		start := now()
+		result, settled, err := WaitCI(nil, "", time.Hour, time.Minute, 3*time.Minute)
+		if err != nil || !settled || result.Result != "noChecks" || result.PRs[0].State != "none" {
+			t.Fatalf("no checks: %+v, settled %v, %v", result, settled, err)
+		}
+		if waited := now().Sub(start); waited != 3*time.Minute {
+			t.Errorf("waited %s", waited)
+		}
+	})
 
 	// The old head's checks are not the new head's, and the grace starts only
 	// once the PR shows the new head.
-	f.checks["a1"] = passing
-	f.prs[1].branchOid = "a2"
-	polls := 0
-	f.tick = func() {
-		if polls++; polls == 2 {
-			f.prs[1].headOid = "a2"
+	t.Run("on a new head", func(t *testing.T) {
+		f := ciRepo(t)
+		f.checks["a1"] = passing
+		f.prs[1].branchOid = "a2"
+		polls := 0
+		f.tick = func() {
+			if polls++; polls == 2 {
+				f.prs[1].headOid = "a2"
+			}
 		}
-	}
-	start = now()
-	result, settled, _ = WaitCI(nil, "", time.Hour, time.Minute, 3*time.Minute)
-	if !settled || result.Result != "noChecks" || result.PRs[0].HeadOid != "a2" {
-		t.Errorf("no checks on the new head: %+v", result)
-	}
-	if waited := now().Sub(start); waited != 5*time.Minute {
-		t.Errorf("waited %s for a head seen after 2m", waited)
-	}
+		start := now()
+		result, settled, _ := WaitCI(nil, "", time.Hour, time.Minute, 3*time.Minute)
+		if !settled || result.Result != "noChecks" || result.PRs[0].HeadOid != "a2" {
+			t.Errorf("no checks on the new head: %+v", result)
+		}
+		if waited := now().Sub(start); waited != 5*time.Minute {
+			t.Errorf("waited %s for a head seen after 2m", waited)
+		}
+	})
 
 	// A push during the grace restarts it for the new head.
-	polls = 0
-	f.tick = func() {
-		if polls++; polls == 2 {
-			f.prs[1].headOid, f.prs[1].branchOid = "a3", "a3"
+	t.Run("push during the grace", func(t *testing.T) {
+		f := ciRepo(t)
+		f.checks["a1"] = passing
+		f.prs[1].headOid, f.prs[1].branchOid = "a2", "a2"
+		polls := 0
+		f.tick = func() {
+			if polls++; polls == 2 {
+				f.prs[1].headOid, f.prs[1].branchOid = "a3", "a3"
+			}
 		}
-	}
-	start = now()
-	if result, _, _ = WaitCI(nil, "", time.Hour, time.Minute, 3*time.Minute); result.Result != "noChecks" {
-		t.Errorf("after a second push: %+v", result)
-	}
-	if waited := now().Sub(start); waited != 5*time.Minute {
-		t.Errorf("waited %s for a head pushed after 2m", waited)
-	}
+		start := now()
+		if result, _, _ := WaitCI(nil, "", time.Hour, time.Minute, 3*time.Minute); result.Result != "noChecks" {
+			t.Errorf("after a second push: %+v", result)
+		}
+		if waited := now().Sub(start); waited != 5*time.Minute {
+			t.Errorf("waited %s for a head pushed after 2m", waited)
+		}
+	})
 
 	// Checks that register within the grace are waited for.
-	polls = 0
-	f.tick = func() {
-		if polls++; polls == 2 {
-			f.checks["a3"] = passing
+	t.Run("checks within the grace", func(t *testing.T) {
+		f := ciRepo(t)
+		f.checks["a1"] = passing
+		f.prs[1].headOid, f.prs[1].branchOid = "a3", "a3"
+		polls := 0
+		f.tick = func() {
+			if polls++; polls == 2 {
+				f.checks["a3"] = passing
+			}
 		}
-	}
-	if result, _, _ = WaitCI(nil, "", time.Hour, time.Minute, 3*time.Minute); result.Result != "passed" {
-		t.Errorf("checks within the grace: %+v", result)
-	}
+		if result, _, _ := WaitCI(nil, "", time.Hour, time.Minute, 3*time.Minute); result.Result != "passed" {
+			t.Errorf("checks within the grace: %+v", result)
+		}
+	})
 
 	// A failure elsewhere outranks a head without checks.
-	f.tick = nil
-	f.prs[1].headOid, f.prs[1].branchOid = "a4", "a4"
-	f.prs[5] = &fakeCIPR{author: "me", state: "OPEN", head: "other", headOid: "e1", branchOid: "e1"}
-	f.checks["e1"] = []fakeCheck{{name: "build", status: "COMPLETED", conclusion: "FAILURE", job: 1}}
-	if result, settled, _ = WaitCI([]string{"1", "5"}, "", time.Hour, time.Minute, 0); !settled || result.Result != "failed" {
-		t.Errorf("a failure beside no checks: %+v", result)
-	}
+	t.Run("failure elsewhere", func(t *testing.T) {
+		f := ciRepo(t)
+		f.checks["a1"] = passing
+		f.prs[1].headOid, f.prs[1].branchOid = "a4", "a4"
+		f.prs[5] = &fakeCIPR{author: "me", state: "OPEN", head: "other", headOid: "e1", branchOid: "e1"}
+		f.checks["e1"] = []fakeCheck{{name: "build", status: "COMPLETED", conclusion: "FAILURE", job: 1}}
+		if result, settled, _ := WaitCI([]string{"1", "5"}, "", time.Hour, time.Minute, 0); !settled || result.Result != "failed" {
+			t.Errorf("a failure beside no checks: %+v", result)
+		}
+	})
 }
 
 // A failure is the PR's own unless the same check fails on the base.
-func TestWaitCIComparesWithTheBase(t *testing.T) {
-	f := ciRepo(t)
+func testWaitCIComparesWithTheBase(t *testing.T) {
 	failing := func(names ...string) []fakeCheck {
 		var out []fakeCheck
 		for i, n := range names {
@@ -326,30 +399,47 @@ func TestWaitCIComparesWithTheBase(t *testing.T) {
 		}
 		return out
 	}
-	f.base = append(failing("lint"), fakeCheck{name: "test (unit)", status: "COMPLETED", conclusion: "SUCCESS"})
-	f.checks["a1"] = append(failing("lint"), passing...)
-	result, settled, err := WaitCI(nil, "", 0, 0, 0)
-	if err != nil || !settled || result.Result != "failedOnBase" || result.PRs[0].Failed[0].OnBase != "failed" {
-		t.Errorf("a failure the base shares: %+v, %v", result, err)
+	// onBase makes a checkout whose base fails lint and passes the unit
+	// tests.
+	onBase := func(t *testing.T) *fakeCI {
+		t.Helper()
+		f := ciRepo(t)
+		f.base = append(failing("lint"), fakeCheck{name: "test (unit)", status: "COMPLETED", conclusion: "SUCCESS"})
+		return f
 	}
-	f.checks["a1"] = failing("lint", "test (unit)", "new")
-	result, _, _ = WaitCI(nil, "", 0, 0, 0)
-	onBase := map[string]string{}
-	for _, c := range result.PRs[0].Failed {
-		onBase[c.Name] = c.OnBase
-	}
-	if result.Result != "failed" || !reflect.DeepEqual(onBase, map[string]string{"lint": "failed", "test (unit)": "passed", "new": "absent"}) {
-		t.Errorf("failures of the PR's own: %s %v", result.Result, onBase)
-	}
-	if logs := result.PRs[0].Failed[1].Logs; logs != "pr-loop logs 1 'test (unit)'" {
-		t.Errorf("logs command: %s", logs)
-	}
+
+	t.Run("failure the base shares", func(t *testing.T) {
+		f := onBase(t)
+		f.checks["a1"] = append(failing("lint"), passing...)
+		result, settled, err := WaitCI(nil, "", 0, 0, 0)
+		if err != nil || !settled || result.Result != "failedOnBase" || result.PRs[0].Failed[0].OnBase != "failed" {
+			t.Errorf("a failure the base shares: %+v, %v", result, err)
+		}
+	})
+
+	t.Run("failures of the PR's own", func(t *testing.T) {
+		f := onBase(t)
+		f.checks["a1"] = failing("lint", "test (unit)", "new")
+		result, _, _ := WaitCI(nil, "", 0, 0, 0)
+		onBase := map[string]string{}
+		for _, c := range result.PRs[0].Failed {
+			onBase[c.Name] = c.OnBase
+		}
+		if result.Result != "failed" || !reflect.DeepEqual(onBase, map[string]string{"lint": "failed", "test (unit)": "passed", "new": "absent"}) {
+			t.Errorf("failures of the PR's own: %s %v", result.Result, onBase)
+		}
+		if logs := result.PRs[0].Failed[1].Logs; logs != "pr-loop logs 1 'test (unit)'" {
+			t.Errorf("logs command: %s", logs)
+		}
+	})
 }
 
 func TestShellQuote(t *testing.T) {
 	for in, want := range map[string]string{"build": "build", "a b": "'a b'", `it's "$x"`: `"it's \"\$x\""`} {
-		if got := shellQuote(in); got != want {
-			t.Errorf("%s: %s", in, got)
-		}
+		t.Run(in, func(t *testing.T) {
+			if got := shellQuote(in); got != want {
+				t.Errorf("%s: %s", in, got)
+			}
+		})
 	}
 }

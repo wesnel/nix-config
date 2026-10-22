@@ -81,41 +81,49 @@ func isRefusal(t *testing.T, what string, err error) {
 // A plan is three kinds of file side by side in the plans directory, named
 // for its date, slug and host.
 func TestNew(t *testing.T) {
-	c := testConfig(t)
-	made, err := c.New(NewOptions{Title: "Add the loop", Slug: "add-loop", Repos: []string{"o/r"},
-		Branches: []string{"main..loop"}, Worktrees: []string{"/w/loop"}, Sessions: []string{"claude:abc"},
-		Harness: "claude"}, day)
-	if err != nil {
-		t.Fatal(err)
-	}
-	file := filepath.Join(c.Dir, "2026-10-14-add-loop.box.org")
-	if made.Plan != file || made.File != file || made.ID != "2026-10-14-add-loop.box" ||
-		made.Log != filepath.Join(c.Dir, "2026-10-14-add-loop.box.log.org") {
-		t.Errorf("made %+v", made)
-	}
-	data, _ := os.ReadFile(made.File)
-	for _, s := range []string{"#+title: Add the loop\n", "#+TODO: TODO NEXT | DONE\n", "* Plan\n:PROPERTIES:\n",
-		":ID: 2026-10-14-add-loop.box\n", ":HOST: box\n", ":REPOSITORIES: o/r\n", ":BRANCHES: main..loop\n",
-		":WORKTREES: /w/loop\n", ":SESSIONS: claude:abc\n", ":HARNESS: claude\n", ":STATUS: planning\n",
-		":PIPELINE: full\n", "** Goal\n", "** Decisions\n", "** Steps\n", "** Distribution\n",
-		"** Open questions\n", "** Verification\n"} {
-		if !strings.Contains(string(data), s) {
-			t.Errorf("the plan lacks %q:\n%s", s, data)
+	t.Run("files", func(t *testing.T) {
+		c := testConfig(t)
+		made, err := c.New(NewOptions{Title: "Add the loop", Slug: "add-loop", Repos: []string{"o/r"},
+			Branches: []string{"main..loop"}, Worktrees: []string{"/w/loop"}, Sessions: []string{"claude:abc"},
+			Harness: "claude"}, day)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	if _, err := os.Stat(made.Log); err != nil {
-		t.Errorf("no log: %v", err)
-	}
-	entries, _ := os.ReadDir(c.Dir)
-	for _, e := range entries {
-		if e.IsDir() {
-			t.Errorf("New made a directory: %s", e.Name())
+		file := filepath.Join(c.Dir, "2026-10-14-add-loop.box.org")
+		if made.Plan != file || made.File != file || made.ID != "2026-10-14-add-loop.box" ||
+			made.Log != filepath.Join(c.Dir, "2026-10-14-add-loop.box.log.org") {
+			t.Errorf("made %+v", made)
 		}
-	}
-	again, err := c.New(NewOptions{Title: "Again", Slug: "add-loop"}, day)
-	if err != nil || again.File != filepath.Join(c.Dir, "2026-10-14-add-loop-2.box.org") {
-		t.Errorf("second plan with the slug: %+v, %v", again, err)
-	}
+		data, _ := os.ReadFile(made.File)
+		for _, s := range []string{"#+title: Add the loop\n", "#+TODO: TODO NEXT | DONE\n", "* Plan\n:PROPERTIES:\n",
+			":ID: 2026-10-14-add-loop.box\n", ":HOST: box\n", ":REPOSITORIES: o/r\n", ":BRANCHES: main..loop\n",
+			":WORKTREES: /w/loop\n", ":SESSIONS: claude:abc\n", ":HARNESS: claude\n", ":STATUS: planning\n",
+			":PIPELINE: full\n", "** Goal\n", "** Decisions\n", "** Steps\n", "** Distribution\n",
+			"** Open questions\n", "** Verification\n"} {
+			if !strings.Contains(string(data), s) {
+				t.Errorf("the plan lacks %q:\n%s", s, data)
+			}
+		}
+		if _, err := os.Stat(made.Log); err != nil {
+			t.Errorf("no log: %v", err)
+		}
+		entries, _ := os.ReadDir(c.Dir)
+		for _, e := range entries {
+			if e.IsDir() {
+				t.Errorf("New made a directory: %s", e.Name())
+			}
+		}
+	})
+
+	t.Run("second plan with the slug", func(t *testing.T) {
+		c := testConfig(t)
+		newPlan(t, c, "add-loop")
+		again, err := c.New(NewOptions{Title: "Again", Slug: "add-loop"}, day)
+		if err != nil || again.File != filepath.Join(c.Dir, "2026-10-14-add-loop-2.box.org") {
+			t.Errorf("second plan with the slug: %+v, %v", again, err)
+		}
+	})
+
 	for what, o := range map[string]NewOptions{
 		"a slug with spaces":    {Title: "T", Slug: "Add loop"},
 		"no title":              {Slug: "x"},
@@ -123,31 +131,61 @@ func TestNew(t *testing.T) {
 		"a worktree with space": {Title: "T", Slug: "x", Worktrees: []string{"/a b"}},
 		"a part without parent": {Title: "T", Part: "P1"},
 	} {
-		_, err := c.New(o, day)
-		isRefusal(t, what, err)
+		t.Run("refused/"+what, func(t *testing.T) {
+			c := testConfig(t)
+			_, err := c.New(o, day)
+			isRefusal(t, what, err)
+		})
 	}
 }
 
 func TestOpen(t *testing.T) {
-	c := testConfig(t)
-	p := newPlan(t, c, "x")
-	addItems(t, p.file(""), "** Distribution", "P1")
-	if _, err := c.New(NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day); err != nil {
-		t.Fatal(err)
-	}
-	for _, arg := range []string{p.file(""), p.file("P1"), p.log(), "2026-10-14-x.box"} {
-		if got, err := c.Open(arg); err != nil || got.Name != "2026-10-14-x.box" || got.file("") != p.file("") {
-			t.Errorf("Open(%s) = %+v, %v", arg, got, err)
+	// withPart makes a plan with a part, P1.
+	withPart := func(t *testing.T) (Config, Plan) {
+		t.Helper()
+		c := testConfig(t)
+		p := newPlan(t, c, "x")
+		addItems(t, p.file(""), "** Distribution", "P1")
+		if _, err := c.New(NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day); err != nil {
+			t.Fatal(err)
 		}
+		return c, p
 	}
-	outside := t.TempDir()
-	os.WriteFile(filepath.Join(outside, "2026-10-14-x.box.org"), []byte("* Plan\n"), 0o644)
-	os.WriteFile(filepath.Join(outside, "2026-10-14-x.box.log.org"), nil, 0o644)
-	os.WriteFile(filepath.Join(c.Dir, "notes.org"), nil, 0o644)
-	for _, arg := range []string{filepath.Join(outside, "2026-10-14-x.box.org"), c.Dir, filepath.Join(c.Dir, "notes.org"),
-		c.Dir + "/../../elsewhere", "2026-10-14-y.box"} {
-		_, err := c.Open(arg)
-		isRefusal(t, "Open "+arg, err)
+
+	for name, arg := range map[string]func(Plan) string{
+		"plan file": func(p Plan) string { return p.file("") },
+		"part file": func(p Plan) string { return p.file("P1") },
+		"log":       func(p Plan) string { return p.log() },
+		"name":      func(Plan) string { return "2026-10-14-x.box" },
+	} {
+		t.Run("by "+name, func(t *testing.T) {
+			c, p := withPart(t)
+			arg := arg(p)
+			if got, err := c.Open(arg); err != nil || got.Name != "2026-10-14-x.box" || got.file("") != p.file("") {
+				t.Errorf("Open(%s) = %+v, %v", arg, got, err)
+			}
+		})
+	}
+
+	// Each case names a plan to open, given the plans directory and a
+	// directory outside it that holds a plan and its log.
+	for name, arg := range map[string]func(dir, outside string) string{
+		"plan outside the directory":    func(_, outside string) string { return filepath.Join(outside, "2026-10-14-x.box.org") },
+		"the directory":                 func(dir, _ string) string { return dir },
+		"another file in the directory": func(dir, _ string) string { return filepath.Join(dir, "notes.org") },
+		"path out of the directory":     func(dir, _ string) string { return dir + "/../../elsewhere" },
+		"unknown name":                  func(string, string) string { return "2026-10-14-y.box" },
+	} {
+		t.Run("refused/"+name, func(t *testing.T) {
+			c, _ := withPart(t)
+			outside := t.TempDir()
+			os.WriteFile(filepath.Join(outside, "2026-10-14-x.box.org"), []byte("* Plan\n"), 0o644)
+			os.WriteFile(filepath.Join(outside, "2026-10-14-x.box.log.org"), nil, 0o644)
+			os.WriteFile(filepath.Join(c.Dir, "notes.org"), nil, 0o644)
+			arg := arg(c.Dir, outside)
+			_, err := c.Open(arg)
+			isRefusal(t, "Open "+arg, err)
+		})
 	}
 }
 
@@ -162,10 +200,16 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 	return string(out)
 }
 
+func TestInit(t *testing.T) {
+	t.Run("in a repository", testInitInRepository)
+	t.Run("clone without the key", testInitCloneWithoutKey)
+	t.Run("clone with the key", testInitCloneWithKey)
+}
+
 // Init readies the plans directory for a session whose sandbox may write
 // only there, keeping the logs' lock files out of the repository around
 // it, and changes nothing else.
-func TestInit(t *testing.T) {
+func testInitInRepository(t *testing.T) {
 	c := testConfig(t)
 	outer := filepath.Dir(filepath.Dir(c.Dir))
 	gitIn(t, outer, "init", "-q", "-b", "main")
@@ -193,80 +237,138 @@ func TestInit(t *testing.T) {
 }
 
 func TestPart(t *testing.T) {
-	c := testConfig(t)
-	p := newPlan(t, c, "x")
-	addItems(t, p.file(""), "** Distribution", "P1")
-	made, err := c.New(NewOptions{Title: "The loop's part", Parent: p.file(""), Part: "P1",
-		Branches: []string{"loop..part"}}, day)
-	if err != nil {
-		t.Fatal(err)
+	// distributing makes a plan that distributes P1.
+	distributing := func(t *testing.T) (Config, Plan) {
+		t.Helper()
+		c := testConfig(t)
+		p := newPlan(t, c, "x")
+		addItems(t, p.file(""), "** Distribution", "P1")
+		return c, p
 	}
-	if made.File != filepath.Join(c.Dir, "2026-10-14-x.box.P1.org") || made.Plan != p.file("") || made.ID != "P1" ||
-		made.Log != p.log() {
-		t.Errorf("made %+v", made)
-	}
-	data, _ := os.ReadFile(made.File)
-	for _, s := range []string{"#+title: The loop's part\n", ":ID: P1\n", ":PARENT: [[file:2026-10-14-x.box.org]]\n",
-		":BRANCHES: loop..part\n", "** Goal\n", "** Steps\n"} {
-		if !strings.Contains(string(data), s) {
-			t.Errorf("the part lacks %q:\n%s", s, data)
+
+	t.Run("made", func(t *testing.T) {
+		c, p := distributing(t)
+		made, err := c.New(NewOptions{Title: "The loop's part", Parent: p.file(""), Part: "P1",
+			Branches: []string{"loop..part"}}, day)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	_, err = c.New(NewOptions{Title: "T", Parent: p.file(""), Part: "P2"}, day)
-	isRefusal(t, "a part the parent does not distribute", err)
-	_, err = c.New(NewOptions{Title: "T", Parent: p.file(""), Part: "P1"}, day)
-	isRefusal(t, "a part made twice", err)
-	_, err = c.New(NewOptions{Title: "T", Parent: p.file(""), Part: "../x"}, day)
-	isRefusal(t, "a part that is no ID", err)
+		if made.File != filepath.Join(c.Dir, "2026-10-14-x.box.P1.org") || made.Plan != p.file("") || made.ID != "P1" ||
+			made.Log != p.log() {
+			t.Errorf("made %+v", made)
+		}
+		data, _ := os.ReadFile(made.File)
+		for _, s := range []string{"#+title: The loop's part\n", ":ID: P1\n", ":PARENT: [[file:2026-10-14-x.box.org]]\n",
+			":BRANCHES: loop..part\n", "** Goal\n", "** Steps\n"} {
+			if !strings.Contains(string(data), s) {
+				t.Errorf("the part lacks %q:\n%s", s, data)
+			}
+		}
+	})
+
+	t.Run("refused/not distributed", func(t *testing.T) {
+		c, p := distributing(t)
+		_, err := c.New(NewOptions{Title: "T", Parent: p.file(""), Part: "P2"}, day)
+		isRefusal(t, "a part the parent does not distribute", err)
+	})
+
+	t.Run("refused/made twice", func(t *testing.T) {
+		c, p := distributing(t)
+		if _, err := c.New(NewOptions{Title: "The loop's part", Parent: p.file(""), Part: "P1"}, day); err != nil {
+			t.Fatal(err)
+		}
+		_, err := c.New(NewOptions{Title: "T", Parent: p.file(""), Part: "P1"}, day)
+		isRefusal(t, "a part made twice", err)
+	})
+
+	t.Run("refused/no ID", func(t *testing.T) {
+		c, p := distributing(t)
+		_, err := c.New(NewOptions{Title: "T", Parent: p.file(""), Part: "../x"}, day)
+		isRefusal(t, "a part that is no ID", err)
+	})
 }
 
 // Another host's plan sits beside this host's and can be read, but only its
 // own host writes it.
 func TestOtherHost(t *testing.T) {
-	c := testConfig(t)
-	theirs := newPlan(t, Config{Dir: c.Dir, Host: "other"}, "x")
-	addItems(t, theirs.file(""), "** Steps", "S1")
-	addItems(t, theirs.file(""), "** Distribution", "P1")
-	p, err := c.Open(theirs.file(""))
-	if err != nil || p.Name != "2026-10-14-x.other" {
-		t.Fatalf("Open: %+v, %v", p, err)
+	// theirs makes a plan of another host, with a step S1 and a part P1, and
+	// opens it as this host.
+	theirs := func(t *testing.T) (Config, Plan) {
+		t.Helper()
+		c := testConfig(t)
+		theirs := newPlan(t, Config{Dir: c.Dir, Host: "other"}, "x")
+		addItems(t, theirs.file(""), "** Steps", "S1")
+		addItems(t, theirs.file(""), "** Distribution", "P1")
+		p, err := c.Open(theirs.file(""))
+		if err != nil || p.Name != "2026-10-14-x.other" {
+			t.Fatalf("Open: %+v, %v", p, err)
+		}
+		return c, p
 	}
-	if _, err := p.Status(); err != nil {
-		t.Errorf("status: %v", err)
-	}
-	before, _ := os.ReadFile(p.log())
-	_, err = p.Log(Event{Kind: "started", Item: "S1"}, day)
-	isRefusal(t, "logging to another host's plan", err)
-	_, err = c.New(NewOptions{Title: "T", Parent: theirs.file(""), Part: "P1"}, day)
-	isRefusal(t, "a part of another host's plan", err)
-	if after, _ := os.ReadFile(p.log()); string(after) != string(before) {
-		t.Errorf("another host's log changed:\n%s", after)
-	}
+
+	t.Run("read", func(t *testing.T) {
+		_, p := theirs(t)
+		if _, err := p.Status(); err != nil {
+			t.Errorf("status: %v", err)
+		}
+	})
+
+	t.Run("refused/log", func(t *testing.T) {
+		_, p := theirs(t)
+		before, _ := os.ReadFile(p.log())
+		_, err := p.Log(Event{Kind: "started", Item: "S1"}, day)
+		isRefusal(t, "logging to another host's plan", err)
+		if after, _ := os.ReadFile(p.log()); string(after) != string(before) {
+			t.Errorf("another host's log changed:\n%s", after)
+		}
+	})
+
+	t.Run("refused/part", func(t *testing.T) {
+		c, p := theirs(t)
+		before, _ := os.ReadFile(p.log())
+		_, err := c.New(NewOptions{Title: "T", Parent: p.file(""), Part: "P1"}, day)
+		isRefusal(t, "a part of another host's plan", err)
+		if after, _ := os.ReadFile(p.log()); string(after) != string(before) {
+			t.Errorf("another host's log changed:\n%s", after)
+		}
+	})
 }
 
 func TestLog(t *testing.T) {
-	c := testConfig(t)
-	p := newPlan(t, c, "x")
-	addItems(t, p.file(""), "** Steps", "S1", "S2")
-	e, err := p.Log(Event{Kind: "done", Item: "S1", Summary: "Add the run loop", Role: "single", Agent: "claude:abc",
-		Branch: "loop", Commit: "Add the run loop", Evidence: "go test ./... passes"}, day)
-	if err != nil {
-		t.Fatal(err)
+	// withSteps makes a plan with steps S1 and S2.
+	withSteps := func(t *testing.T) Plan {
+		t.Helper()
+		p := newPlan(t, testConfig(t), "x")
+		addItems(t, p.file(""), "** Steps", "S1", "S2")
+		return p
 	}
-	data, _ := os.ReadFile(p.log())
-	entry := "* done S1 — Add the run loop\n:PROPERTIES:\n:EVENT: " + e.ID + "\n:AGENT: claude:abc\n:ROLE: single\n" +
-		":ITEM: S1\n:KIND: done\n:BRANCH: loop\n:COMMIT: Add the run loop\n:EVIDENCE: go test ./... passes\n" +
-		":END:\n[2026-10-14 Wed 13:05]\n"
-	if !strings.HasSuffix(string(data), entry) {
-		t.Errorf("log:\n%s\nwant it to end with:\n%s", data, entry)
-	}
-	if _, err := p.Log(Event{Kind: "reviewed", Item: "2026-10-14-x.box", Review: "1.F2", Outcome: "fix"}, day); err != nil {
-		t.Errorf("an event about the whole plan: %v", err)
-	}
-	events, err := p.Events()
-	if err != nil || len(events) != 2 || events[0].ID != e.ID || events[0].Evidence != "go test ./... passes" || events[1].Outcome != "fix" {
-		t.Errorf("events %+v, %v", events, err)
-	}
+
+	t.Run("appends events", func(t *testing.T) {
+		p := withSteps(t)
+		e, err := p.Log(Event{Kind: "done", Item: "S1", Summary: "Add the run loop", Role: "single", Agent: "claude:abc",
+			Branch: "loop", Commit: "Add the run loop", Evidence: "go test ./... passes"}, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(p.log())
+		entry := "* done S1 — Add the run loop\n:PROPERTIES:\n:EVENT: " + e.ID + "\n:AGENT: claude:abc\n:ROLE: single\n" +
+			":ITEM: S1\n:KIND: done\n:BRANCH: loop\n:COMMIT: Add the run loop\n:EVIDENCE: go test ./... passes\n" +
+			":END:\n[2026-10-14 Wed 13:05]\n"
+		if !strings.HasSuffix(string(data), entry) {
+			t.Errorf("log:\n%s\nwant it to end with:\n%s", data, entry)
+		}
+		if _, err := p.Log(Event{Kind: "reviewed", Item: "2026-10-14-x.box", Review: "1.F2", Outcome: "fix"}, day); err != nil {
+			t.Errorf("an event about the whole plan: %v", err)
+		}
+		events, err := p.Events()
+		if err != nil || len(events) != 2 || events[0].ID != e.ID || events[0].Evidence != "go test ./... passes" || events[1].Outcome != "fix" {
+			t.Errorf("events %+v, %v", events, err)
+		}
+		if after, _ := os.ReadFile(p.log()); len(after) == len(data) {
+			t.Error("the second event was not appended")
+		}
+	})
+
 	for what, bad := range map[string]Event{
 		"an unknown item":        {Kind: "done", Item: "S9"},
 		"an unknown kind":        {Kind: "finished", Item: "S1"},
@@ -276,69 +378,70 @@ func TestLog(t *testing.T) {
 		"an unknown outcome":     {Kind: "finding-settled", Item: "S1", Review: "1.F1", Outcome: "ignore"},
 		"a malformed review":     {Kind: "finding-settled", Item: "S1", Review: "F1", Outcome: "fix"},
 	} {
-		_, err := p.Log(bad, day)
-		isRefusal(t, what, err)
+		t.Run("refused/"+what, func(t *testing.T) {
+			p := withSteps(t)
+			_, err := p.Log(bad, day)
+			isRefusal(t, what, err)
+		})
 	}
-	if after, _ := os.ReadFile(p.log()); len(after) == len(data) {
-		t.Error("the second event was not appended")
-	}
-}
 
-// A log changed other than by appending through Log is no longer trusted.
-func TestLogAfterRewrite(t *testing.T) {
-	c := testConfig(t)
-	p := newPlan(t, c, "x")
-	addItems(t, p.file(""), "** Steps", "S1")
-	if _, err := p.Log(Event{Kind: "started", Item: "S1"}, day); err != nil {
-		t.Fatal(err)
-	}
-	data, _ := os.ReadFile(p.log())
-	rewritten := strings.Replace(string(data), "* started S1", "* verified S1", 1)
-	os.WriteFile(p.log(), []byte(rewritten), 0o644)
-	_, err := p.Log(Event{Kind: "done", Item: "S1"}, day)
-	isRefusal(t, "a log rewritten in place", err)
-	if after, _ := os.ReadFile(p.log()); string(after) != rewritten {
-		t.Errorf("the refused event was written:\n%s", after)
-	}
-}
-
-func TestConcurrentLog(t *testing.T) {
-	c := testConfig(t)
-	p := newPlan(t, c, "x")
-	addItems(t, p.file(""), "** Steps", "S1")
-	var wg sync.WaitGroup
-	for w := 0; w < 8; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < 10; i++ {
-				if _, err := p.Log(Event{Kind: "started", Item: "S1", Summary: strings.Repeat("x", 3000)}, day); err != nil {
-					t.Error(err)
-				}
-			}
-		}()
-	}
-	wg.Wait()
-	events, err := p.Events()
-	if err != nil {
-		t.Fatal(err)
-	}
-	ids := map[string]bool{}
-	for _, e := range events {
-		if e.Kind != "started" || len(e.Summary) != 3000 {
-			t.Errorf("garbled event %+v", e)
+	// A log changed other than by appending through Log is no longer trusted.
+	t.Run("after a rewrite in place", func(t *testing.T) {
+		p := withSteps(t)
+		if _, err := p.Log(Event{Kind: "started", Item: "S1"}, day); err != nil {
+			t.Fatal(err)
 		}
-		ids[e.ID] = true
-	}
-	if len(events) != 80 || len(ids) != 80 {
-		t.Errorf("%d events, %d distinct", len(events), len(ids))
-	}
-	if _, err := p.Log(Event{Kind: "done", Item: "S1"}, day); err != nil {
-		t.Errorf("after concurrent writers: %v", err)
-	}
+		data, _ := os.ReadFile(p.log())
+		rewritten := strings.Replace(string(data), "* started S1", "* verified S1", 1)
+		os.WriteFile(p.log(), []byte(rewritten), 0o644)
+		_, err := p.Log(Event{Kind: "done", Item: "S1"}, day)
+		isRefusal(t, "a log rewritten in place", err)
+		if after, _ := os.ReadFile(p.log()); string(after) != rewritten {
+			t.Errorf("the refused event was written:\n%s", after)
+		}
+	})
+
+	t.Run("concurrent writers", func(t *testing.T) {
+		p := withSteps(t)
+		var wg sync.WaitGroup
+		for w := 0; w < 8; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for i := 0; i < 10; i++ {
+					if _, err := p.Log(Event{Kind: "started", Item: "S1", Summary: strings.Repeat("x", 3000)}, day); err != nil {
+						t.Error(err)
+					}
+				}
+			}()
+		}
+		wg.Wait()
+		events, err := p.Events()
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids := map[string]bool{}
+		for _, e := range events {
+			if e.Kind != "started" || len(e.Summary) != 3000 {
+				t.Errorf("garbled event %+v", e)
+			}
+			ids[e.ID] = true
+		}
+		if len(events) != 80 || len(ids) != 80 {
+			t.Errorf("%d events, %d distinct", len(events), len(ids))
+		}
+		if _, err := p.Log(Event{Kind: "done", Item: "S1"}, day); err != nil {
+			t.Errorf("after concurrent writers: %v", err)
+		}
+	})
 }
 
 func TestStatus(t *testing.T) {
+	t.Run("items", testStatusItems)
+	t.Run("ready parts", testStatusReadyParts)
+}
+
+func testStatusItems(t *testing.T) {
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
 	plan := p.file("")
@@ -379,41 +482,73 @@ func TestStatus(t *testing.T) {
 }
 
 func TestGoal(t *testing.T) {
-	c := testConfig(t)
-	p := newPlan(t, c, "x")
-	_, err := p.Goal("")
-	isRefusal(t, "an empty goal", err)
-	setGoal(t, p.file(""), "Add the loop.\n\nNot this change's job: the flag.")
-	if goal, err := p.Goal(""); err != nil || goal != "Add the loop.\n\nNot this change's job: the flag.\n" {
-		t.Errorf("goal %q, %v", goal, err)
-	}
-	addItems(t, p.file(""), "** Distribution", "P1")
-	part, _ := c.New(NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day)
-	setGoal(t, part.File, "The part.")
-	if goal, err := p.Goal("P1"); err != nil || goal != "The part.\n" {
-		t.Errorf("part goal %q, %v", goal, err)
-	}
-	_, err = p.Goal("P7")
-	isRefusal(t, "a part with no file", err)
+	t.Run("empty", func(t *testing.T) {
+		p := newPlan(t, testConfig(t), "x")
+		_, err := p.Goal("")
+		isRefusal(t, "an empty goal", err)
+	})
+
+	t.Run("set", func(t *testing.T) {
+		p := newPlan(t, testConfig(t), "x")
+		setGoal(t, p.file(""), "Add the loop.\n\nNot this change's job: the flag.")
+		if goal, err := p.Goal(""); err != nil || goal != "Add the loop.\n\nNot this change's job: the flag.\n" {
+			t.Errorf("goal %q, %v", goal, err)
+		}
+	})
+
+	t.Run("part", func(t *testing.T) {
+		c := testConfig(t)
+		p := newPlan(t, c, "x")
+		addItems(t, p.file(""), "** Distribution", "P1")
+		part, _ := c.New(NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day)
+		setGoal(t, part.File, "The part.")
+		if goal, err := p.Goal("P1"); err != nil || goal != "The part.\n" {
+			t.Errorf("part goal %q, %v", goal, err)
+		}
+	})
+
+	t.Run("part with no file", func(t *testing.T) {
+		p := newPlan(t, testConfig(t), "x")
+		_, err := p.Goal("P7")
+		isRefusal(t, "a part with no file", err)
+	})
 }
 
 func TestFind(t *testing.T) {
-	c := testConfig(t)
-	p := newPlan(t, c, "x")
-	newPlan(t, Config{Dir: c.Dir, Host: "other"}, "x")
+	// twoHosts makes a plan on this host and one of the same name on
+	// another, and returns this host's.
+	twoHosts := func(t *testing.T) (Config, Plan) {
+		t.Helper()
+		c := testConfig(t)
+		p := newPlan(t, c, "x")
+		newPlan(t, Config{Dir: c.Dir, Host: "other"}, "x")
+		return c, p
+	}
+
 	for what, o := range map[string]FindOptions{
 		"session": {Session: "abc"}, "harness session": {Session: "claude:abc"},
 		"worktree": {Worktree: "/w/loop"}, "branch": {Branch: "loop"},
 	} {
-		found, err := c.Find(o)
-		if err != nil || len(found) != 1 || found[0].Plan != p.file("") || found[0].File != p.file("") {
-			t.Errorf("by %s: %+v, %v", what, found, err)
-		}
+		t.Run("by "+what, func(t *testing.T) {
+			c, p := twoHosts(t)
+			found, err := c.Find(o)
+			if err != nil || len(found) != 1 || found[0].Plan != p.file("") || found[0].File != p.file("") {
+				t.Errorf("by %s: %+v, %v", what, found, err)
+			}
+		})
 	}
-	for _, o := range []FindOptions{{Session: "ab"}, {Worktree: "/w"}, {Branch: "main"}} {
-		if found, err := c.Find(o); err != nil || len(found) != 0 {
-			t.Errorf("%+v found %+v, %v", o, found, err)
-		}
+
+	for what, o := range map[string]FindOptions{
+		"part of a session":  {Session: "ab"},
+		"parent of worktree": {Worktree: "/w"},
+		"another branch":     {Branch: "main"},
+	} {
+		t.Run("none/"+what, func(t *testing.T) {
+			c, _ := twoHosts(t)
+			if found, err := c.Find(o); err != nil || len(found) != 0 {
+				t.Errorf("%+v found %+v, %v", o, found, err)
+			}
+		})
 	}
 }
 
@@ -432,34 +567,59 @@ func hookContext(t *testing.T, out []byte, event string) string {
 }
 
 func TestSessionHook(t *testing.T) {
-	c := testConfig(t)
-	p := newPlan(t, c, "x")
-	out, err := c.SessionHook([]byte(`{"session_id":"abc","source":"compact","cwd":"/nowhere"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if context := hookContext(t, out, "SessionStart"); !strings.Contains(context, p.file("")) {
-		t.Errorf("context %q", context)
-	}
-	if out, err := c.SessionHook([]byte(`{"session_id":"zzz","source":"resume","cwd":"/nowhere"}`)); err != nil || len(out) != 0 {
-		t.Errorf("no plan: %s, %v", out, err)
-	}
+	t.Run("the session's plan", func(t *testing.T) {
+		c := testConfig(t)
+		p := newPlan(t, c, "x")
+		out, err := c.SessionHook([]byte(`{"session_id":"abc","source":"compact","cwd":"/nowhere"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if context := hookContext(t, out, "SessionStart"); !strings.Contains(context, p.file("")) {
+			t.Errorf("context %q", context)
+		}
+	})
+
+	t.Run("no plan", func(t *testing.T) {
+		c := testConfig(t)
+		newPlan(t, c, "x")
+		if out, err := c.SessionHook([]byte(`{"session_id":"zzz","source":"resume","cwd":"/nowhere"}`)); err != nil || len(out) != 0 {
+			t.Errorf("no plan: %s, %v", out, err)
+		}
+	})
 }
 
 func TestLoad(t *testing.T) {
-	config := filepath.Join(t.TempDir(), "config.json")
-	t.Setenv("AGENT_TOOLS_CONFIG", config)
-	home, _ := os.UserHomeDir()
-	if c, err := Load(); err != nil || c.Dir != filepath.Join(home, "git", "notes", "agents") || c.Host == "" {
-		t.Errorf("without a config: %+v, %v", c, err)
+	// useConfig points AGENT_TOOLS_CONFIG at a file of the test's own, with
+	// the content given, or none.
+	useConfig := func(t *testing.T, content string) {
+		t.Helper()
+		config := filepath.Join(t.TempDir(), "config.json")
+		t.Setenv("AGENT_TOOLS_CONFIG", config)
+		if content != "" {
+			os.WriteFile(config, []byte(content), 0o644)
+		}
 	}
-	os.WriteFile(config, []byte(`{"repos": {}, "plans": {"dir": "/p", "host": "ngrok"}}`), 0o644)
-	if c, err := Load(); err != nil || c.Dir != "/p" || c.Host != "ngrok" {
-		t.Errorf("from the config: %+v, %v", c, err)
-	}
+
+	t.Run("without a config", func(t *testing.T) {
+		useConfig(t, "")
+		home, _ := os.UserHomeDir()
+		if c, err := Load(); err != nil || c.Dir != filepath.Join(home, "git", "notes", "agents") || c.Host == "" {
+			t.Errorf("without a config: %+v, %v", c, err)
+		}
+	})
+
+	t.Run("from the config", func(t *testing.T) {
+		useConfig(t, `{"repos": {}, "plans": {"dir": "/p", "host": "ngrok"}}`)
+		if c, err := Load(); err != nil || c.Dir != "/p" || c.Host != "ngrok" {
+			t.Errorf("from the config: %+v, %v", c, err)
+		}
+	})
+
 	// A dot would make a plan's file names ambiguous.
-	os.WriteFile(config, []byte(`{"plans": {"dir": "/p", "host": "a.b"}}`), 0o644)
-	if c, err := Load(); err == nil {
-		t.Errorf("a host with a dot: %+v", c)
-	}
+	t.Run("host with a dot", func(t *testing.T) {
+		useConfig(t, `{"plans": {"dir": "/p", "host": "a.b"}}`)
+		if c, err := Load(); err == nil {
+			t.Errorf("a host with a dot: %+v", c)
+		}
+	})
 }

@@ -32,54 +32,58 @@ func TestPost(t *testing.T) {
 	opened := `{"pr": 12, "url": "https://github.com/o/r/pull/12", "draft": true, "branch": "feature", "base": "main"}`
 	pushed := `{"pushed": {"b": "2222", "a": "1111"}, "round": 2, "apiCalls": 3}`
 	for _, c := range []struct {
-		event, want string
+		name, event, want string
 	}{
-		{claude("pr-loop open --title T --body-file - feature", opened), "`pr-loop wait ci 12`"},
-		{claude("cd /r && pr-loop push", pushed), "`pr-loop wait ci a b`"},
-		{claude("pr-loop push && echo done", pushed+"\ndone\n"), "`pr-loop wait ci a b`"},
-		{claude("git sign-pass --push a", `{"branch": "a", "signed": 1, "pushed": {"a": "3333"}}`), "`pr-loop wait ci a`"},
-		{eca("pr-loop push", pushed), "`pr-loop wait ci a b`"},
-		{codex("pr-loop push", pushed), "`pr-loop wait ci a b`"},
-		{codex("cd /r && pr-loop open --title T feature", "Wall time: 1.2 seconds\nOutput:\n"+opened+"\n"), "`pr-loop wait ci 12`"},
-		{codex("pr-loop push --dry-run", `{"wouldUpdate": {"a": "1111"}, "objects": {}}`), ""},
-		{codex("pr-loop push", ""), ""},
-		{claude("pr-loop push --dry-run", `{"wouldUpdate": {"a": "1111"}, "objects": {}}`), ""},
-		{claude("pr-loop push", `{"pushed": {}}`), ""},
-		{claude("pr-loop push", ""), ""},
-		{claude("pr-loop status", pushed), ""},
-		{claude("git sign-pass", `{"branch": "a", "signed": 1}`), ""},
-		{claude("echo '"+pushed+"'", pushed), ""},
-		{`{"hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"file_path":"/x"}}`, ""},
-		{`not json`, ""},
+		{"Claude Code open", claude("pr-loop open --title T --body-file - feature", opened), "`pr-loop wait ci 12`"},
+		{"Claude Code push after cd", claude("cd /r && pr-loop push", pushed), "`pr-loop wait ci a b`"},
+		{"Claude Code push and more", claude("pr-loop push && echo done", pushed+"\ndone\n"), "`pr-loop wait ci a b`"},
+		{"Claude Code sign-pass --push", claude("git sign-pass --push a", `{"branch": "a", "signed": 1, "pushed": {"a": "3333"}}`), "`pr-loop wait ci a`"},
+		{"ECA push", eca("pr-loop push", pushed), "`pr-loop wait ci a b`"},
+		{"Codex push", codex("pr-loop push", pushed), "`pr-loop wait ci a b`"},
+		{"Codex open after cd", codex("cd /r && pr-loop open --title T feature", "Wall time: 1.2 seconds\nOutput:\n"+opened+"\n"), "`pr-loop wait ci 12`"},
+		{"Codex dry run", codex("pr-loop push --dry-run", `{"wouldUpdate": {"a": "1111"}, "objects": {}}`), ""},
+		{"Codex push without output", codex("pr-loop push", ""), ""},
+		{"Claude Code dry run", claude("pr-loop push --dry-run", `{"wouldUpdate": {"a": "1111"}, "objects": {}}`), ""},
+		{"Claude Code push of nothing", claude("pr-loop push", `{"pushed": {}}`), ""},
+		{"Claude Code push without output", claude("pr-loop push", ""), ""},
+		{"Claude Code status", claude("pr-loop status", pushed), ""},
+		{"Claude Code sign-pass", claude("git sign-pass", `{"branch": "a", "signed": 1}`), ""},
+		{"Claude Code echo of a push", claude("echo '"+pushed+"'", pushed), ""},
+		{"Claude Code Edit", `{"hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"file_path":"/x"}}`, ""},
+		{"not JSON", `not json`, ""},
 	} {
-		var out bytes.Buffer
-		if code := Main([]string{"--post"}, strings.NewReader(c.event), &out, io.Discard); code != 0 {
-			t.Errorf("%s: exit %d", c.event, code)
-		}
-		if c.want == "" {
-			if out.Len() != 0 {
-				t.Errorf("%s: printed %s", c.event, out.String())
+		t.Run(c.name, func(t *testing.T) {
+			var out bytes.Buffer
+			if code := Main([]string{"--post"}, strings.NewReader(c.event), &out, io.Discard); code != 0 {
+				t.Errorf("%s: exit %d", c.event, code)
 			}
-			continue
-		}
-		var got struct {
-			Specific struct {
-				Event   string `json:"hookEventName"`
+			if c.want == "" {
+				if out.Len() != 0 {
+					t.Errorf("%s: printed %s", c.event, out.String())
+				}
+				return
+			}
+			var got struct {
+				Specific struct {
+					Event   string `json:"hookEventName"`
+					Context string `json:"additionalContext"`
+				} `json:"hookSpecificOutput"`
 				Context string `json:"additionalContext"`
-			} `json:"hookSpecificOutput"`
-			Context string `json:"additionalContext"`
-		}
-		if err := json.Unmarshal(out.Bytes(), &got); err != nil {
-			t.Errorf("%s: %v: %s", c.event, err, out.String())
-			continue
-		}
-		context := got.Specific.Context + got.Context
-		if strings.Contains(c.event, "postToolCall") != (got.Context != "") ||
-			!strings.Contains(c.event, "postToolCall") && got.Specific.Event != "PostToolUse" {
-			t.Errorf("%s: wrong format: %s", c.event, out.String())
-		}
-		if !strings.Contains(context, c.want) || !strings.Contains(context, "background") {
-			t.Errorf("%s: context %q, want %s", c.event, context, c.want)
-		}
+			}
+			if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+				t.Errorf("%s: %v: %s", c.event, err, out.String())
+				return
+			}
+			context := got.Specific.Context + got.Context
+			if strings.Contains(c.event, "postToolCall") != (got.Context != "") ||
+				!strings.Contains(c.event, "postToolCall") && got.Specific.Event != "PostToolUse" {
+				t.Errorf("%s: wrong format: %s", c.event, out.String())
+			}
+			if !strings.Contains(context, c.want) || !strings.Contains(context, "background") {
+				t.Errorf("%s: context %q, want %s", c.event, context, c.want)
+			}
+		})
 	}
+
+	t.Run("records facts", testPostRecordsFacts)
 }

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
@@ -393,7 +394,10 @@ func run(ctx context.Context, dir, command string, lines int) (*Run, error) {
 	cmd.Dir = dir
 	cmd.Stdout, cmd.Stderr = &out, &out
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.Cancel = func() error {
+		stopGroup(cmd.Process.Pid, 5*time.Second)
+		return nil
+	}
 	err := cmd.Run()
 	if ctx.Err() != nil {
 		return nil, fmt.Errorf("interrupted: %w", ctx.Err())
@@ -407,6 +411,16 @@ func run(ctx context.Context, dir, command string, lines int) (*Run, error) {
 		return nil, err
 	}
 	return r, nil
+}
+
+// stopGroup kills the process group pgid until it is empty, or for at most
+// bound. One kill is not enough: a process that forks as the kill lands can
+// leave a child in the group that the kill missed.
+func stopGroup(pgid int, bound time.Duration) {
+	deadline := time.Now().Add(bound)
+	for syscall.Kill(-pgid, syscall.SIGKILL) == nil && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // tail is the last n lines of s.

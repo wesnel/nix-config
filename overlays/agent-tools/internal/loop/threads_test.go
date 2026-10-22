@@ -122,47 +122,83 @@ func refused(err error) bool {
 	return errors.As(err, &r)
 }
 
-func TestRepliesOutsideALoop(t *testing.T) {
-	f := fakeRepo(t)
-	for _, id := range []string{"bot1", "bot2"} {
-		if _, err := Reply(id, "done"); err != nil {
-			t.Errorf("reply to %s: %v", id, err)
-		}
-	}
-	for _, id := range []string{"bot1", "bot2"} {
-		if _, err := Resolve(id); err != nil {
-			t.Errorf("resolving %s after a reply: %v", id, err)
-		}
-	}
-	f.threads["bot2"].last = "copilot-pull-request-reviewer"
-	if _, err := Resolve("bot2"); !refused(err) {
-		t.Errorf("resolved a thread whose last comment is not the user's: %v", err)
-	}
-	for _, id := range []string{"human1", "human2", "answered"} {
-		if _, err := Reply(id, "x"); !refused(err) {
-			t.Errorf("reply to %s: %v", id, err)
-		}
-		if _, err := Resolve(id); !refused(err) {
-			t.Errorf("resolve %s: %v", id, err)
-		}
-	}
-	if len(f.replies) != 2 {
-		t.Errorf("replied to people: %v", f.replies)
-	}
-	for _, id := range []string{"theirs", "closed"} {
-		if _, err := Reply(id, "x"); !refused(err) {
-			t.Errorf("reply to %s: %v", id, err)
-		}
-	}
-	if _, err := Reply("missing", "x"); err == nil {
-		t.Error("replied to a thread that does not exist")
-	}
-	if _, err := Reply("human1", " \n"); !refused(err) {
-		t.Errorf("empty reply: %v", err)
-	}
+func TestReply(t *testing.T) {
+	t.Run("outside a loop", testReplyOutsideALoop)
+	t.Run("in a loop", testReplyInALoop)
+	t.Run("registered PR outside a session", testReplyRegisteredPROutsideASession)
 }
 
-func TestRepliesInALoop(t *testing.T) {
+func testReplyOutsideALoop(t *testing.T) {
+	for _, id := range []string{"bot1", "bot2"} {
+		t.Run("reply/"+id, func(t *testing.T) {
+			fakeRepo(t)
+			if _, err := Reply(id, "done"); err != nil {
+				t.Errorf("reply to %s: %v", id, err)
+			}
+		})
+	}
+
+	t.Run("resolve", func(t *testing.T) {
+		f := fakeRepo(t)
+		for _, id := range []string{"bot1", "bot2"} {
+			if _, err := Reply(id, "done"); err != nil {
+				t.Fatalf("reply to %s: %v", id, err)
+			}
+		}
+		for _, id := range []string{"bot1", "bot2"} {
+			if _, err := Resolve(id); err != nil {
+				t.Errorf("resolving %s after a reply: %v", id, err)
+			}
+		}
+		f.threads["bot2"].last = "copilot-pull-request-reviewer"
+		if _, err := Resolve("bot2"); !refused(err) {
+			t.Errorf("resolved a thread whose last comment is not the user's: %v", err)
+		}
+	})
+
+	for _, id := range []string{"human1", "human2", "answered"} {
+		t.Run("refused person/"+id, func(t *testing.T) {
+			f := fakeRepo(t)
+			if _, err := Reply(id, "x"); !refused(err) {
+				t.Errorf("reply to %s: %v", id, err)
+			}
+			if _, err := Resolve(id); !refused(err) {
+				t.Errorf("resolve %s: %v", id, err)
+			}
+			if len(f.replies) != 0 {
+				t.Errorf("replied to people: %v", f.replies)
+			}
+		})
+	}
+
+	for _, id := range []string{"theirs", "closed"} {
+		t.Run("refused/"+id, func(t *testing.T) {
+			fakeRepo(t)
+			if _, err := Reply(id, "x"); !refused(err) {
+				t.Errorf("reply to %s: %v", id, err)
+			}
+		})
+	}
+
+	t.Run("missing thread", func(t *testing.T) {
+		fakeRepo(t)
+		if _, err := Reply("missing", "x"); err == nil {
+			t.Error("replied to a thread that does not exist")
+		}
+	})
+
+	t.Run("empty reply", func(t *testing.T) {
+		f := fakeRepo(t)
+		if _, err := Reply("bot1", " \n"); !refused(err) || !strings.Contains(err.Error(), "empty") {
+			t.Errorf("empty reply: %v", err)
+		}
+		if len(f.replies) != 0 {
+			t.Errorf("posted an empty reply: %v", f.replies)
+		}
+	})
+}
+
+func testReplyInALoop(t *testing.T) {
 	for _, env := range []string{relay.RelayEnv, sessionEnv} {
 		t.Run(env, func(t *testing.T) {
 			f := fakeRepo(t)
@@ -191,7 +227,7 @@ func TestRepliesInALoop(t *testing.T) {
 
 // A PR registered with begin keeps the loop's policy outside the session, and
 // people's threads stay refused on PRs outside the loop too.
-func TestRegisteredPROutsideASession(t *testing.T) {
+func testReplyRegisteredPROutsideASession(t *testing.T) {
 	fakeRepo(t)
 	registerLoop(t)
 	if _, err := Reply("human1", "x"); !refused(err) {

@@ -11,23 +11,25 @@ import (
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
 )
 
-// A command run from a worktree that GIT_DIR, set by a git hook or
-// `rebase --exec` elsewhere, does not name is refused before it reads or
-// writes either repository.
-func TestRepositoryTheEnvironmentNames(t *testing.T) {
-	dir := t.TempDir()
-	cmd := exec.Command("git", "init", "-q", "-b", "main")
-	cmd.Dir, cmd.Env = dir, gitenv.Without(os.Environ())
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v\n%s", err, out)
-	}
-	gitenvtest.Decoy(t)
-	os.Unsetenv("GIT_WORK_TREE")
-	t.Chdir(dir)
-	var stdout, stderr bytes.Buffer
-	if code := run("end", nil, "", false, strings.NewReader(""), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "GIT_DIR") {
-		t.Errorf("exit %d\n%s", code, stderr.String())
-	}
+func TestRun(t *testing.T) {
+	// A command run from a worktree that GIT_DIR, set by a git hook or
+	// `rebase --exec` elsewhere, does not name is refused before it reads or
+	// writes either repository.
+	t.Run("GIT_DIR names another repository", func(t *testing.T) {
+		dir := t.TempDir()
+		cmd := exec.Command("git", "init", "-q", "-b", "main")
+		cmd.Dir, cmd.Env = dir, gitenv.Without(os.Environ())
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git init: %v\n%s", err, out)
+		}
+		gitenvtest.Decoy(t)
+		os.Unsetenv("GIT_WORK_TREE")
+		t.Chdir(dir)
+		var stdout, stderr bytes.Buffer
+		if code := run("end", nil, "", false, strings.NewReader(""), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "GIT_DIR") {
+			t.Errorf("exit %d\n%s", code, stderr.String())
+		}
+	})
 }
 
 func TestRelayRefusal(t *testing.T) {
@@ -61,9 +63,11 @@ func TestRelayRefusal(t *testing.T) {
 		{"review", "settle", "7", "x"},
 		{"review", "--check", "settle", "7"},
 	} {
-		if relayRefusal(argv) == "" {
-			t.Errorf("%v was accepted", argv)
-		}
+		t.Run("refused/"+argvName(argv), func(t *testing.T) {
+			if relayRefusal(argv) == "" {
+				t.Errorf("%v was accepted", argv)
+			}
+		})
 	}
 	for _, argv := range [][]string{
 		{"reply", "T", "--body-file", "-"},
@@ -79,8 +83,18 @@ func TestRelayRefusal(t *testing.T) {
 		{"review", "--check", "7"},
 		{"review", "settle", "7"},
 	} {
-		if reason := relayRefusal(argv); reason != "" {
-			t.Errorf("%v was refused: %s", argv, reason)
-		}
+		t.Run("accepted/"+argvName(argv), func(t *testing.T) {
+			if reason := relayRefusal(argv); reason != "" {
+				t.Errorf("%v was refused: %s", argv, reason)
+			}
+		})
 	}
+}
+
+// argvName names a subtest after the arguments it relays.
+func argvName(argv []string) string {
+	if len(argv) == 0 {
+		return "no command"
+	}
+	return strings.Join(argv, " ")
 }
