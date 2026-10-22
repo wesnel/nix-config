@@ -34,7 +34,10 @@ func checkOwner(in input) string {
 		json.Unmarshal(in.ToolInput, &args)
 		paths = shellEditPaths(args.Command, in.Cwd, 0)
 	case "Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch":
-		for _, c := range fileChanges(in.ToolName, in.ToolInput) {
+		// An input that does not decode is denied before the fence is
+		// asked.
+		changes, _ := fileChanges(in.ToolName, in.ToolInput)
+		for _, c := range changes {
 			if c.path != "" {
 				paths = append(paths, expandPath(c.path, in.Cwd))
 			}

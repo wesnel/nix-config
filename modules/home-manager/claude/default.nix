@@ -79,7 +79,9 @@ with lib; let
   # coordinate-subagents skill starts, linked into ~/.claude/agents, and the
   # headless reviewers git delegate runs from review-agents.json. A
   # reviewer's file names its tools and the hook that keeps it to reading,
-  # `@guard@ guard --reviewer`, @guard@ being pr-loop. Each prompt ends with
+  # `@guard@ guard --reviewer`, @guard@ being pr-loop, with `onFailure:
+  # block`, which Claude Code's frontmatter hooks take as its settings'
+  # hooks do. Each prompt ends with
   # the rules every sub-agent shares, then its contract, if any. A
   # description is plain YAML: no colon followed by a space.
   agentNames = ["builder" "adversarial-reviewer" "design-reviewer" "security-reviewer" "review-guide" "diagrammer"];
@@ -101,7 +103,9 @@ with lib; let
     assert assertMsg (hasPrefix "---\n" text && length pieces > 1) "claude: ./agents/${name}.md has no frontmatter";
     assert assertMsg (field "name" == name) "claude: ./agents/${name}.md is not named ${name}";
     assert assertMsg (field "tools" == null || any (hasSuffix "command: \"${reviewerHook}\"") frontmatter)
-    "claude: ./agents/${name}.md restricts its tools but runs no `guard --reviewer` hook"; {
+    "claude: ./agents/${name}.md restricts its tools but runs no `guard --reviewer` hook";
+    assert assertMsg (field "tools" == null || any (hasSuffix " onFailure: block") frontmatter)
+    "claude: ./agents/${name}.md's `guard --reviewer` hook lacks `onFailure: block`, so a hook that cannot run would let the call through"; {
       inherit field;
       text = text + "\n" + builtins.readFile ./agents/subagent.md + (contracts.${name} or "");
       prompt = concatStringsSep "\n---\n" (tail pieces) + "\n" + builtins.readFile ./agents/subagent.md + (contracts.${name} or "");
@@ -127,6 +131,8 @@ with lib; let
             {
               type = "command";
               command = reviewerHook;
+              # A hook that cannot run denies the call.
+              onFailure = "block";
             }
           ];
         }
@@ -159,6 +165,18 @@ with lib; let
   # prefix, so one rule matches a file whose name it starts, and another
   # anything under a directory whose name it starts.
   credentialReads = concatMap (p: ["Read(${rulePath p}*)" "Read(${rulePath p}*/**)"]) config.wgn.home.llm.guard.credentialPaths;
+
+  # The guard's mcp.json as permission rules, for each server of each
+  # service: its reads allowed and its confirmed writes asked, without a
+  # hook round trip. The hook still sees every MCP call (its matcher keeps
+  # `mcp__.*`) and refuses a listed server's other tools.
+  mcpRules = let
+    services = attrValues pkgs.agent-tools.mcpTools;
+    rules = key: concatMap (s: concatMap (server: map (tool: "mcp__${server}__${tool}") s.${key}) s.servers) services;
+  in {
+    allow = rules "reads";
+    ask = rules "confirms";
+  };
 
   darwin = pkgs.stdenv.hostPlatform.isDarwin;
   mcpProxy = config.wgn.home.mcp-proxy;
@@ -676,7 +694,23 @@ in {
           # holds for shell commands and this for file tools, which run
           # outside it, where the guard's hook cannot run. Review records
           # likewise.
-          ++ ["Edit(${rulePath plans.dir}/**)" "Edit(${rulePath records}/**)"];
+          ++ ["Edit(${rulePath plans.dir}/**)" "Edit(${rulePath records}/**)"]
+          # The usual spellings of the operator's actions, each a policy.json
+          # baseline row, refused even where the hook cannot run. Rules are
+          # not a boundary: the guard reads every other spelling, and the
+          # sandbox holds the credentials these need.
+          ++ map (c: "Bash(${c} *)") ["gh pr merge" "gh pr close" "gh pr reopen" "gh pr review" "gh pr comment"
+            "gh release" "gh repo delete" "git push" "sudo" "darwin-rebuild switch" "nix profile install" "npm publish"
+            "cargo publish"];
+
+        # The guard refuses marking a pull request ready; its --undo, back
+        # to draft, asks.
+        permissions.ask = ["Bash(gh pr ready *)"] ++ mcpRules.ask;
+
+        # A nested session started to skip every prompt. The guard refuses
+        # `claude --dangerously-skip-permissions` too, for a launch that
+        # reads another settings file.
+        permissions.disableBypassPermissionsMode = "disable";
 
         # Excluded commands go through the permission flow. These run
         # without a prompt or auto mode's classifier: the excluded commands
@@ -688,7 +722,8 @@ in {
           # operator-only action must never become one, since this rule
           # allows it.
           ++ ["Bash(git delegate *)" "Bash(git-delegate *)"]
-          ++ map (w: "Bash(${sub "agent-plan" w})") agentPlanWrites;
+          ++ map (w: "Bash(${sub "agent-plan" w})") agentPlanWrites
+          ++ mcpRules.allow;
 
         # The auto-mode classifier judges intent, so it also stops a rule
         # broken where the guard cannot see, as through a script; the guard
@@ -828,13 +863,14 @@ in {
           # worktree and its branch. MCP tools are held to the guard's
           # mcp.json: on a server it lists, reads pass, listed writes ask and
           # the rest are refused; every tool on a server it does not list
-          # asks.
+          # asks. A hook that cannot run, or input it cannot read, denies.
           {
             matcher = "Bash|Monitor|ExitWorktree|Edit|Write|MultiEdit|NotebookEdit|mcp__.*";
             hooks = [
               {
                 type = "command";
                 command = "${getExe' config.wgn.home.llm.agentTools "pr-loop"} guard --baseline";
+                onFailure = "block";
               }
             ];
           }

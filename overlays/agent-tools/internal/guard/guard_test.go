@@ -36,21 +36,47 @@ func TestCheck(t *testing.T) {
 	t.Run("commands", testCheckCommands)
 	t.Run("wrapped commands", testCheckWrappedCommands)
 	t.Run("GraphQL query sources", testCheckGraphQLQuerySources)
-	t.Run("alias", testCheckAlias)
+	t.Run("operator's alias", testCheckOperatorAlias)
+	t.Run("shell alias definitions", testCheckShellAliasSet)
 }
 
-// testCheckAlias covers the alias already in the git config, which the
-// guard looks up at run time.
-func testCheckAlias(t *testing.T) {
+// testCheckShellAliasSet holds the guard to refusing an alias an agent
+// defines to run a shell command, however git config is reached, and to
+// letting other aliases and settings be set.
+func testCheckShellAliasSet(t *testing.T) {
+	for command, deny := range map[string]bool{
+		"git config alias.zz '!echo z'":                     true,
+		"git config --global alias.yy '!echo y'":            true,
+		"git config --local --add alias.ww '!sh -c x'":      true,
+		"git config set alias.vv '!true'":                   true,
+		"git config --file ~/.gitconfig.local alias.u '!x'": true,
+		"git config -f cfg alias.t \"$CMD\"":                true,
+		"git config $KEY '!echo x'":                         true,
+		"git -C /tmp/r config ALIAS.Up '  !echo up'":        true,
+		"git config alias.lg 'log --oneline'":               false,
+		"git config --get alias.zz":                         false,
+		"git config --worktree user.name \"$NAME\"":         false,
+		"git config --worktree pull.rebase true":            false,
+	} {
+		input, _ := json.Marshal(map[string]string{"command": command})
+		if reason := CheckBaseline("Bash", input); (reason == shellAlias) != deny {
+			t.Errorf("%q: reason %q, want shell alias refused %v", command, reason, deny)
+		}
+	}
+}
+
+// testCheckOperatorAlias holds the guard to running an alias the
+// operator's git config defines, as their own shorthand.
+func testCheckOperatorAlias(t *testing.T) {
 	config := filepath.Join(t.TempDir(), "gitconfig")
-	if err := os.WriteFile(config, []byte("[alias]\n\tpp = push\n"), 0o600); err != nil {
+	if err := os.WriteFile(config, []byte("[alias]\n\tlg = log --oneline --graph\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("GIT_CONFIG_GLOBAL", config)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	input, _ := json.Marshal(map[string]string{"command": "git pp origin HEAD"})
-	if reason := CheckBaseline("Bash", input); !saysInstead(reason) {
-		t.Errorf("alias denial %q does not say what to do instead", reason)
+	input, _ := json.Marshal(map[string]string{"command": "git lg"})
+	if reason := CheckBaseline("Bash", input); reason != "" {
+		t.Errorf("`git lg` refused: %q", reason)
 	}
 }
 
@@ -89,7 +115,7 @@ func testCheckCommands(t *testing.T) {
 		{false, "Bash", "git rebase --onto a b c"},
 		{false, "Bash", "# git push in a comment"},
 		{false, "Bash", "git config alias.p push"},
-		{false, "Bash", "git config --global alias.p '!git push'"},
+		{true, "Bash", "git config --global alias.p '!git push'"},
 		{false, "Bash", "git -c alias.x=push x origin HEAD"},
 		{false, "Bash", "git config --get-regexp alias"},
 		{true, "Bash", "pr-loop request --accept-failure windows-tuntap 663"},
@@ -465,6 +491,23 @@ func testBaselineCommands(t *testing.T) {
 		{true, "emacs -Q -nw"},
 		{true, "timeout 60 emacs --batch -f x"},
 		{true, "/Applications/Emacs.app/Contents/MacOS/Emacs --batch"},
+		{true, "emacs -Q --daemon=/tmp/et.ab12/server"},
+		{true, "emacs -Q --batch --bg-daemon"},
+		{true, "emacs -Q --batch -daemon"},
+		{true, "emacs -Q --batch --daem"},
+		{true, "emacs -Q --batch --da=x"},
+		{true, "emacs -Q --batch -bg-daemon"},
+		{true, "emacs -Q --batch -fg-daemon=x"},
+		{true, "emacs -Q --batch --fg-d"},
+		{true, "emacs -Q --batch -daemon=/tmp/et.ab12/server"},
+		{true, "emacs-30.2 --daemon"},
+		{true, "emacs-30.2 -Q --batch --daemon"},
+		{false, "emacs-30.2 -Q --batch -l test.el"},
+		{false, "emacs -Q --batch -d :0 -bg red -l test.el"},
+		{false, "emacs -Q --batch --eval '(message \"x\")' -l test.el"},
+		{false, "emacs -Q --batch --init-directory=/tmp/et.ab12 -l test.el -f ert-run-tests-batch-and-exit"},
+		{false, "timeout 60 emacs --quick --script check.el"},
+		{false, "/Applications/Emacs.app/Contents/MacOS/Emacs -Q -batch -l x.el"},
 		{false, "emacsclient -e '(+ 1 2)'"},
 		{false, "grep -n emacs init.el"},
 		{false, "cd ~/git/github.com/wesnel/emacs-config && git status"},

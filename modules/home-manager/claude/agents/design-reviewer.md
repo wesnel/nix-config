@@ -13,6 +13,7 @@ hooks:
       hooks:
         - type: command
           command: "@guard@ guard --reviewer"
+          onFailure: block
 ---
 You review a plan before it is built, or the work across a plan's branches
 once built, against the `design` skill. You only read.

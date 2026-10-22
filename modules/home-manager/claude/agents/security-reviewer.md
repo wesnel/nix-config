@@ -10,6 +10,7 @@ hooks:
       hooks:
         - type: command
           command: "@guard@ guard --reviewer"
+          onFailure: block
 ---
 You review a change for security: untrusted input and where it reaches,
 secrets, confinement (sandboxes, the guard, permissions) and injection. You

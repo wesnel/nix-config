@@ -12,6 +12,7 @@ hooks:
       hooks:
         - type: command
           command: "@guard@ guard --reviewer"
+          onFailure: block
 ---
 You try to break one branch before the operator signs it. You did not
 write it: judge it from the code, a test or a run, never from its author's

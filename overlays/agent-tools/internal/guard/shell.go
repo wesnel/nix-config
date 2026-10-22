@@ -91,11 +91,13 @@ func options(args []string, values map[string]bool) int {
 
 // call is a simple command once wrappers, keywords and assignments are off:
 // the program's words, which of them the shell expands, and the assignments
-// made for it.
+// made for it. fed says that xargs runs it, adding words the guard does
+// not see.
 type call struct {
 	words   []string
 	expands []bool
 	env     []string
+	fed     bool
 }
 
 // visitor judges one call, or a script that a call runs, and returns a
@@ -131,7 +133,7 @@ func unwrap(c call, v visitor) string {
 	args, expands := c.words[1:], c.expands[1:]
 	rest := func(from int) call {
 		from = min(from, len(args))
-		return call{words: args[from:], expands: expands[from:], env: c.env}
+		return call{words: args[from:], expands: expands[from:], env: c.env, fed: c.fed || name == "xargs"}
 	}
 	if w, ok := wrappers[name]; ok {
 		i := options(args, w.values) + w.operands

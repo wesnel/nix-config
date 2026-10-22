@@ -10,6 +10,7 @@ hooks:
       hooks:
         - type: command
           command: "@guard@ guard --reviewer"
+          onFailure: block
 ---
 You draw diagrams of a change for the operator reviewing it: how its parts
 call each other, the order things happen in, or the states something moves

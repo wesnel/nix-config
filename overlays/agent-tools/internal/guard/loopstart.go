@@ -70,7 +70,11 @@ func checkLoopStart(c call) string {
 // settings file a session takes its environment from, which would start
 // the next session there as a loop.
 func checkLoopSettings(tool string, toolInput json.RawMessage, dir string) string {
-	for _, c := range fileChanges(tool, toolInput) {
+	changes, err := fileChanges(tool, toolInput)
+	if err != nil {
+		return unreadable
+	}
+	for _, c := range changes {
 		if !settingsFile(expandPath(c.path, dir)) {
 			continue
 		}

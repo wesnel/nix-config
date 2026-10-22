@@ -201,7 +201,11 @@ func TestSessionRules(t *testing.T) {
 		{false, "cargo build"},
 		{false, "docker build ."},
 		{false, "goreleaser check"},
-		{false, "pkill -f my-test-server"},
+		{true, "pkill -f my-test-server"},
+		{true, "killall sleep"},
+		{true, "emacsclient -s server -e '(kill-emacs)'"},
+		{false, "pkill -l"},
+		{false, "emacsclient -s /tmp/et.ab12/server -e '(kill-emacs)'"},
 		{false, "launchctl list"},
 		{false, "emacsclient -e '(+ 1 2)'"},
 		{false, "kill %1"},
@@ -1082,16 +1086,226 @@ func TestKill(t *testing.T) {
 	case filepath.Base(name) != "mcp-proxy":
 		t.Fatalf("ps names the protected process %q, not mcp-proxy", name)
 	}
-	for command, deny := range map[string]bool{
-		"kill " + itoa(protected.Process.Pid):                                         true,
-		"kill -9 " + itoa(protected.Process.Pid):                                      true,
-		"kill -s TERM " + itoa(other.Process.Pid) + " " + itoa(protected.Process.Pid): true,
-		"kill " + itoa(other.Process.Pid):                                             false,
-		"kill -TERM " + itoa(other.Process.Pid):                                       false,
+	// This test stands in for the session's harness, whose children both
+	// processes are; with no harness, neither is the session's.
+	old := harness
+	t.Cleanup(func() { harness = old })
+	for _, c := range []struct {
+		harness  int
+		commands map[string]string
+	}{
+		{os.Getpid(), map[string]string{
+			"kill " + itoa(protected.Process.Pid):                                         "",
+			"kill -s TERM " + itoa(other.Process.Pid) + " " + itoa(protected.Process.Pid): "",
+			"kill -TERM " + itoa(other.Process.Pid):                                       "",
+			"kill 1":                                                                      killOthers,
+			"kill 0":                                                                      killing,
+			"kill -9 -1":                                                                  killing,
+		}},
+		{0, map[string]string{
+			"kill -9 " + itoa(protected.Process.Pid): killing,
+			"kill " + itoa(other.Process.Pid):        killOthers,
+		}},
 	} {
-		if reason := judge(t, "/", command); (reason != "") != deny {
-			t.Errorf("%q: deny=%v, reason %q", command, !deny, reason)
+		harness = func() int { return c.harness }
+		for command, want := range c.commands {
+			if reason := judge(t, "/", command); reason != want {
+				t.Errorf("harness %d, %q: reason %q, want %q", c.harness, command, reason, want)
+			}
 		}
+	}
+}
+
+// The session's harness is found among the guard's ancestors by command,
+// and a process descends from it through its parents.
+func TestHarness(t *testing.T) {
+	oldParent, oldCommand := parentOf, commandOf
+	t.Cleanup(func() { parentOf, commandOf = oldParent, oldCommand })
+	parents := map[int]int{os.Getppid(): 50, 50: 40, 40: 1, 70: 60, 60: 40, 80: 1}
+	names := map[int]string{os.Getppid(): "sh", 50: "zsh", 40: "claude", 60: "bash", 70: "emacs"}
+	parentOf = func(pid int) int { return parents[pid] }
+	commandOf = func(pid int) string { return names[pid] }
+	if h := harness(); h != 40 {
+		t.Errorf("harness %d, want 40", h)
+	}
+	if !startedHere(70) || startedHere(80) {
+		t.Errorf("70 started here %v, 80 %v", startedHere(70), startedHere(80))
+	}
+}
+
+// A kill whose PIDs the shell or xargs fills in is refused, whatever the
+// session started; a %job is the shell's own.
+func TestKillUnseen(t *testing.T) {
+	old := harness
+	t.Cleanup(func() { harness = old })
+	harness = func() int { return os.Getpid() }
+	for command, want := range map[string]string{
+		"kill $PID":                      killUnseen,
+		"kill -9 $(pgrep -f mcp-proxy)":  killUnseen,
+		"kill `pgrep Emacs`":             killUnseen,
+		"pgrep Emacs | xargs kill":       killUnseen,
+		"pgrep Emacs | xargs kill -9":    killUnseen,
+		"xargs kill < pids":              killUnseen,
+		"kill -s TERM -- $(cat pidfile)": killUnseen,
+		"kill -9 0x1f4":                  killUnseen,
+		"kill %1":                        "",
+		"kill -l":                        "",
+	} {
+		if reason := judge(t, "/", command); reason != want {
+			t.Errorf("%q: reason %q, want %q", command, reason, want)
+		}
+	}
+}
+
+// A test Emacs is stopped by its own absolute socket alone.
+func TestTestEmacsSocket(t *testing.T) {
+	tmp := filepath.Clean(os.TempDir())
+	uid := itoa(os.Getuid())
+	for args, want := range map[string]bool{
+		"-s /tmp/et.ab12/server -e (kill-emacs)":                     true,
+		"--socket-name=/tmp/et.ab12/server --eval (kill-emacs)":      true,
+		"-s " + tmp + "/test/server -e (kill-emacs)":                 true,
+		"-s /tmp/claude-" + uid + "/x/server -e (kill-emacs)":        true,
+		"-s " + tmp + "/emacs" + uid + "/server -e (kill-emacs)":     false,
+		"-s /run/user/" + uid + "/emacs/server -e (kill-emacs)":      false,
+		"-s server -e (kill-emacs)":                                  false,
+		"-e (kill-emacs)":                                            false,
+		"-s /tmp/et.ab12/../emacs" + uid + "/server -e (kill-emacs)": false,
+		"-s /home/x/server -e (kill-emacs)":                          false,
+		"-s /tmp/et./server -e (kill-emacs)":                         false,
+		// emacsclient takes the last socket, by any abbreviation of
+		// --socket-name, its value in the next word, and clustered short
+		// options; every socket must be a test one.
+		"-s /tmp/et.ab12/server --socket=server -e (kill-emacs)":         false,
+		"-s /tmp/et.ab12/server --socket server -e (kill-emacs)":         false,
+		"-s /tmp/et.ab12/server --so=/home/x/server -e (kill-emacs)":     false,
+		"--socket /tmp/et.ab12/server -e (kill-emacs)":                   true,
+		"-ns/tmp/et.ab12/server -e (kill-emacs)":                         true,
+		"-nss /tmp/et.ab12/server -e (kill-emacs)":                       false,
+		"-nw -s /tmp/et.ab12/server -e (kill-emacs)":                     true,
+		"--s /tmp/et.ab12/server -e (kill-emacs)":                        false,
+		"-s /tmp/et.ab12/server -f /home/x/server -e (kill-emacs)":       false,
+		"-s /tmp/et.ab12/server --server-file=server -e (kill-emacs)":    false,
+		"-s /tmp/et.ab12/server --se=server -e (kill-emacs)":             false,
+		"-s " + tmp + "/EMACS" + uid + "/server -e (kill-emacs)":         runtime.GOOS != "darwin",
+		"-s /private" + tmp + "/emacs" + uid + "/server -e (kill-emacs)": false,
+		"-s /tmp/et.ab12/server -x -e (kill-emacs)":                      false,
+		"-s /tmp/et.ab12/server -- -s /home/x/server -e (kill-emacs)":    true,
+		"-e (kill-emacs) -s /tmp/et.ab12/server":                         true,
+		"-e (kill-emacs) -s":                                             false,
+	} {
+		if got := testEmacsSocket(strings.Fields(args)); got != want {
+			t.Errorf("%q: %v, want %v", args, got, want)
+		}
+	}
+}
+
+// Lisp that stops Emacs, or deletes or starts a server, goes only to a
+// test socket, and names no other server there.
+func TestEmacsServerCall(t *testing.T) {
+	for command, deny := range map[string]bool{
+		"emacsclient -e '(server-force-delete)'":                                                   true,
+		"emacsclient --eval '(server-force-delete \"server\")'":                                    true,
+		"emacsclient -e '(server-start)'":                                                          true,
+		"emacsclient -e '(save-buffers-kill-emacs)'":                                               true,
+		"emacsclient -s server -e '(server-force-delete)'":                                         true,
+		"emacsclient -s /tmp/et.ab12/server -e '(server-force-delete \"server\")'":                 true,
+		"emacsclient -s /tmp/et.ab12/server -e '(server-force-delete server-name)'":                true,
+		"emacsclient -s /tmp/et.ab12/server -e '(let ((server-name \"server\")) (server-start))'":  true,
+		"emacsclient -s /tmp/et.ab12/server -e '(setq server-socket-dir \"/x\")' '(server-start)'": true,
+		"emacsclient -s /tmp/et.ab12/server -e '(server-eval-at \"server\" (quote (kill-emacs)))'": true,
+		"emacsclient -s /tmp/et.ab12/server -e '(server-force-delete)'":                            false,
+		"emacsclient -s /tmp/et.ab12/server -e '(server-force-delete \"/tmp/et.ab12/server\")'":    false,
+		"emacsclient -s /tmp/et.ab12/server -e '(server-start nil t)'":                             false,
+		"emacsclient -s /tmp/et.ab12/server -e '(kill-emacs)'":                                     false,
+		"emacsclient -s /tmp/et.ab12/server -e '(+ 1 2)'":                                          false,
+		"emacsclient -e '(restart-emacs)'":                                                         true,
+		"emacsclient -e '(server-mode -1)'":                                                        true,
+		"emacsclient -e '(server-mode)'":                                                           true,
+		"emacsclient -e '(server-stop)'":                                                           true,
+		"emacsclient -e '(delete-process server-process)'":                                         true,
+		"emacsclient -e '(+ 1 2)'":                                                                 false,
+		"emacsclient -s /tmp/et.ab12/server -e '(server-mode -1)'":                                 false,
+		"emacsclient -s /tmp/et.ab12/server -e '(restart-emacs)'":                                  false,
+		"emacsclient-30.2 -e '(kill-emacs)'":                                                       true,
+		"/nix/store/x-emacs/bin/emacsclient30 -e '(server-force-delete)'":                          true,
+		"emacsclient-30.2 -s /tmp/et.ab12/server -e '(kill-emacs)'":                                false,
+	} {
+		if got := judge(t, "/tmp", command) == killEmacs; got != deny {
+			t.Errorf("%q: refused %v, want %v", command, got, deny)
+		}
+	}
+}
+
+// A batch Emacs, whose own server is the operator's default one, runs no
+// Lisp that starts or deletes a server by that name or evaluates in
+// another, in its arguments or in a file it loads, unless the same Lisp
+// names a test socket as its server.
+func TestEmacsBatchServer(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "bad.el"), []byte("(require 'server)\n(server-force-delete)\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "good.el"), []byte("(message \"checked\")\n"), 0o644)
+	for command, deny := range map[string]bool{
+		"emacs -Q --batch --eval '(server-force-delete)'":                            true,
+		"emacs -Q --batch --eval '(server-force-delete \"server\")'":                 true,
+		"emacs -Q --batch --eval '(server-eval-at \"server\" (quote (kill-emacs)))'": true,
+		"emacs -Q --batch -l bad.el":                                                 true,
+		"emacs -Q --script " + filepath.Join(dir, "bad.el"):                          true,
+		"emacs -Q --batch --load=bad.el":                                             true,
+		"emacs -Q --batch --eval '(server-force-delete \"/tmp/et.ab12/server\")'":    false,
+		"emacs -Q --batch -l good.el -f ert-run-tests-batch-and-exit":                false,
+		"emacs -Q --batch --eval '(kill-emacs 0)'":                                   false,
+		"emacs -Q --batch --eval '(server-start)'":                                   true,
+		"emacs -Q --batch --eval '(server-mode)'":                                    true,
+		"emacs -Q --batch --eval '(server-mode 1)'":                                  true,
+		"emacs-30.2 -Q --batch --eval '(server-start)'":                              true,
+		"emacs30 -Q --batch --eval '(server-force-delete)'":                          true,
+	} {
+		if got := judge(t, dir, command) == emacsBatchServer; got != deny {
+			t.Errorf("%q: refused %v, want %v", command, got, deny)
+		}
+	}
+	for lisp, deny := range map[string]bool{
+		`(setq server-name "server") (server-start)`:                                  true,
+		`(setq server-name x) (server-start)`:                                         true,
+		`(setq server-name "/tmp/et.ab12/server") (server-start)`:                     false,
+		`(let ((server-name "/tmp/et.ab12/s")) (server-start) (server-force-delete))`: false,
+		// Forms named in a string or a comment are no calls.
+		`(message "server-start is a function")`:             false,
+		"(progn ;; server-start\n (message \"x\"))":          false,
+		`(message "a \"server-start\"") (insert ?")`:         false,
+		`(message "server-start") (server-start)`:            true,
+		"(progn ;; (message \"x\")\n (server-force-delete))": true,
+	} {
+		if got := judge(t, dir, "emacs -Q --batch --eval '"+lisp+"'") == emacsBatchServer; got != deny {
+			t.Errorf("%q: refused %v, want %v", lisp, got, deny)
+		}
+	}
+	// A loaded file is read the same way.
+	os.WriteFile(filepath.Join(dir, "mentions.el"),
+		[]byte(";; server-start is not called here\n(ert-deftest t1 () (should (fboundp 'message)) (message \"server-force-delete\"))\n"), 0o644)
+	if judge(t, dir, "emacs -Q --batch -l mentions.el -f ert-run-tests-batch-and-exit") != "" {
+		t.Error("a test file that names server forms only in a comment and a string is refused")
+	}
+}
+
+// A socket under a test root that links to the operator's is theirs.
+func TestTestEmacsSocketLink(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "et.")
+	if err != nil {
+		t.Skip(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(root) })
+	own := "/usr"
+	link := filepath.Join(root, "server")
+	if err := os.Symlink(own, link); err != nil {
+		t.Fatal(err)
+	}
+	if testEmacsSocket([]string{"-s", link + "/server", "-e", "(kill-emacs)"}) {
+		t.Errorf("a link from %s to %s passes", link, own)
+	}
+	if !testEmacsSocket([]string{"-s", filepath.Join(root, "test", "server"), "-e", "(kill-emacs)"}) {
+		t.Errorf("%s's own socket is refused", root)
 	}
 }
 
@@ -1129,6 +1343,13 @@ func TestFileTools(t *testing.T) {
 		{"a README", false, "Edit", map[string]string{"file_path": "WORK/README.md", "old_string": "hooks", "new_string": "more hooks"}},
 		{"a project's permissions", false, "Write", map[string]string{"file_path": "WORK/.claude/settings.local.json", "content": `{"permissions": {}}`}},
 		{"code", false, "apply_patch", patch("src/main.go", "-a\n+b")},
+		{"a shell alias in ~/.gitconfig", true, "Edit", map[string]string{"file_path": "HOME/.gitconfig", "old_string": "[alias]\n", "new_string": "[alias]\n\tzz = !echo z\n"}},
+		{"a shell alias in git's XDG config", true, "Write", map[string]string{"file_path": "HOME/.config/git/config", "content": "[alias] zz = \"!echo z\"\n"}},
+		{"a shell alias in an included file", true, "Write", map[string]string{"file_path": "WORK/aliases.inc", "content": "[Alias \"x\"]\n  zz=!sh\n"}},
+		{"a shell alias, patched", true, "apply_patch", patch("HOME/.gitconfig.local", " [alias]\n+\tzz = !echo z")},
+		{"a shell alias in a worktree's config", true, "Edit", map[string]string{"file_path": "WORK/.git/worktrees/w/config.worktree", "old_string": "", "new_string": "[alias]\nzz = !x"}},
+		{"an alias", false, "Edit", map[string]string{"file_path": "HOME/.gitconfig", "old_string": "[alias]\n", "new_string": "[alias]\n\tlg = log --oneline\n"}},
+		{"a Makefile's !", false, "Write", map[string]string{"file_path": "WORK/Makefile", "content": "x = !y\n"}},
 	}
 	for _, c := range cases {
 		t.Run(caseName(c.deny, c.tool+" "+c.name), func(t *testing.T) {
@@ -1146,6 +1367,105 @@ func TestFileTools(t *testing.T) {
 				t.Errorf("%s: reason %q does not say what to do instead", c.tool, reason)
 			}
 		})
+	}
+}
+
+// A file tool defines no shell alias in git config however the value is
+// spelled or the file is reached, adds no include, and leaves alone a git
+// config that already holds a shell value; a file with an [alias] section,
+// as an included one, gains no `!`.
+func TestGitConfigAlias(t *testing.T) {
+	h := fakeHome(t)
+	write := func(name, text string) string {
+		path := filepath.Join(h, name)
+		os.MkdirAll(filepath.Dir(path), 0o755)
+		os.WriteFile(path, []byte(text), 0o644)
+		return path
+	}
+	gitconfig := write(".gitconfig", "[alias]\n\tlg = log --oneline\n")
+	included := write("aliases.inc", "[alias]\n\tx = log\n")
+	shelled := write("work/.gitconfig.local", "[alias]\n\ty = !echo y\n[user]\n\tname = x\n")
+	link := filepath.Join(h, "plain-name")
+	os.Symlink(gitconfig, link)
+	repo := filepath.Dir(filepath.Dir(write("r/.git/config", "[core]\n")))
+	hard := filepath.Join(h, "work", "plain-copy")
+	os.Link(gitconfig, hard)
+	const include = "[include]\n\tpath = /tmp/x.inc\n"
+	edit := func(path, old, new string) map[string]string {
+		return map[string]string{"file_path": path, "old_string": old, "new_string": new}
+	}
+	type aliasCase struct {
+		name, tool string
+		input      map[string]string
+		want       string
+	}
+	cases := []aliasCase{
+		{"a value-only edit", "Edit", edit(gitconfig, "log --oneline", "!sh"), shellAlias},
+		{"a value-only edit of an included file", "Edit", edit(included, "log", "!sh"), shellAlias},
+		{"an edit through a link", "Edit", edit(link, "log --oneline", "!sh"), shellAlias},
+		{"a doubled quote", "Write", map[string]string{"file_path": gitconfig, "content": "[alias]\n\tx = \"\"!echo hi\n"}, shellAlias},
+		{"a backslash-newline", "Write", map[string]string{"file_path": gitconfig, "content": "[alias]\n\tx = \\\n!echo hi\n"}, shellAlias},
+		{"an include", "Edit", edit(gitconfig, "[alias]", "[include]\n\tpath = /tmp/x.inc\n[alias]"), includeConfig},
+		{"an includeIf", "Write", map[string]string{"file_path": gitconfig, "content": "[includeIf \"gitdir:~/w/\"]\n\tpath = x.inc\n"}, includeConfig},
+		{"a config holding a shell value", "Edit", edit(shelled, "name = x", "name = y"), shellAlias},
+		{"an alias", "Edit", edit(gitconfig, "log --oneline", "log --graph"), ""},
+		{"a Makefile", "Write", map[string]string{"file_path": filepath.Join(h, "Makefile"), "content": "x = !y\n"}, ""},
+		// By identity: a Unicode variant the volume folds onto the file, or
+		// a new name outside ASCII beside it, is the config.
+		{"~/.gitconﬁg", "Write", map[string]string{"file_path": filepath.Join(h, ".gitconﬁg"), "content": include}, includeConfig},
+		{"a repository's conﬁg", "Write", map[string]string{"file_path": filepath.Join(repo, ".git", "conﬁg"), "content": include}, includeConfig},
+		{"a new name outside ASCII in .git", "Write", map[string]string{"file_path": filepath.Join(repo, ".git", "cönfig"), "content": include}, includeConfig},
+		{"a hard link to ~/.gitconfig", "Write", map[string]string{"file_path": hard, "content": include}, includeConfig},
+		{"an ASCII file in a repository", "Write", map[string]string{"file_path": filepath.Join(repo, "notes.txt"), "content": include}, ""},
+	}
+	if foldsCase {
+		cases = append(cases,
+			aliasCase{"~/.GITCONFIG", "Write", map[string]string{"file_path": filepath.Join(h, ".GITCONFIG"), "content": "x = !sh\n"}, shellAlias},
+			aliasCase{".GIT/CONFIG", "Write", map[string]string{"file_path": filepath.Join(h, "r", ".GIT", "CONFIG"), "content": "x = !sh\n"}, shellAlias})
+	}
+	for _, c := range cases {
+		data, _ := json.Marshal(c.input)
+		if reason := check(c.tool, data, baseline, h); reason != c.want {
+			t.Errorf("%s: reason %q, want %q", c.name, reason, c.want)
+		}
+	}
+	for command, want := range map[string]string{
+		"git config --global include.path /tmp/x.inc": includeConfig,
+		"git config includeIf.gitdir:~/w/.path x.inc": includeConfig,
+		"git config --global user.name x":             "",
+		"echo '!sh' | xargs git config alias.x":       shellAlias,
+		"xargs git config --global alias.x < cmd":     shellAlias,
+		"git config alias.x":                          "",
+		"git config --global alias.lg":                "",
+		"git config alias.x < cmd":                    shellAlias,
+		"timeout 5 xargs git config alias.x":          shellAlias,
+		"git config --unset alias.x":                  "",
+		"printf '[alias] x = !sh' >> .git/config":     gitConfigShell,
+		"echo x | tee -a ~/.config/git/config":        gitConfigShell,
+		"cp x.inc ~/.gitconfig":                       gitConfigShell,
+		"mv x.inc ~/.config/git/config":               gitConfigShell,
+		"ln -s /tmp/x.inc .git/config.worktree":       gitConfigShell,
+		"install -m 644 x.inc ~/.config/git/config":   gitConfigShell,
+		"rsync x.inc ~/.config/git/config":            gitConfigShell,
+		"dd if=x.inc of=.git/config":                  gitConfigShell,
+		"cat ~/.gitconfig":                            "",
+		"cp ~/.gitconfig /tmp/copy":                   "",
+		"echo x > notes.txt":                          "",
+	} {
+		if reason := judge(t, h, command); reason != want {
+			t.Errorf("%q: reason %q, want %q", command, reason, want)
+		}
+	}
+	// A git config that is there is refused as any existing file is, by
+	// name or through a link, and in place.
+	for _, command := range []string{"echo x >> ~/.gitconfig", "echo x > plain-name", "sed -i s/log/sh/ ~/.gitconfig",
+		"perl -pi -e s/log/sh/ ~/.gitconfig"} {
+		if judge(t, h, command) == "" {
+			t.Errorf("%q passes", command)
+		}
+	}
+	if foldsCase && judge(t, h, "cp x.inc ~/.GITCONFIG.local") != gitConfigShell {
+		t.Error("a case variant of a git config name passes")
 	}
 }
 
