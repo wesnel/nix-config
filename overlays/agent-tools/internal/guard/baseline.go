@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -872,9 +873,11 @@ func checkPlanLogWrite(name string, args, redirected []string, dir string) strin
 }
 
 // changedFiles are the files a command writes, moves or removes, as it
-// names them: those editTargets names, and the operands of the programs
-// that create, copy, move or remove files. checkPlanLogWrite and checkOwner
-// read a command through it.
+// names them: those editTargets names, the operands of the programs that
+// create, copy, move, remove or change the mode of files, and the
+// directory a program writes into, "." for the one it runs in, where it
+// unpacks, patches, formats, generates or builds there. checkPlanLogWrite
+// and checkOwner read a command through it.
 func changedFiles(name string, args, redirected []string) []string {
 	targets := editTargets(name, args, redirected)
 	var positional []string
@@ -883,11 +886,33 @@ func changedFiles(name string, args, redirected []string) []string {
 			positional = append(positional, a)
 		}
 	}
+	// The directory given by one of these options, or "." without one.
+	dirOr := func(short, long string) []string {
+		if dirs := optionValues(args, short, long); len(dirs) > 0 {
+			return dirs
+		}
+		return []string{"."}
+	}
 	switch name {
-	case "mv", "rm", "unlink", "trash", "truncate", "shred", "touch":
+	case "mv", "rm", "unlink", "trash", "truncate", "shred", "touch", "mkdir", "rmdir":
 		targets = append(targets, positional...)
+	case "chmod", "chown", "chgrp":
+		if len(positional) > 1 {
+			targets = append(targets, positional[1:]...)
+		}
 	case "cp", "install", "ln", "rsync":
-		if len(positional) > 0 {
+		var dirs []string
+		if name != "rsync" { // rsync's -t keeps times
+			dirs = targetDirectories(args)
+		}
+		switch {
+		case len(dirs) > 0:
+			targets = append(targets, dirs...)
+		case name == "install" && contains(args, "-d"):
+			targets = append(targets, positional...)
+		case name == "ln" && len(positional) == 1:
+			targets = append(targets, ".") // the link, named as its target, where ln runs
+		case len(positional) > 0:
 			targets = append(targets, positional[len(positional)-1])
 		}
 	case "dd":
@@ -896,8 +921,208 @@ func changedFiles(name string, args, redirected []string) []string {
 				targets = append(targets, of)
 			}
 		}
+	case "tar", "gtar", "bsdtar":
+		if tarExtracts(args) {
+			targets = append(targets, dirOr("-C", "--directory")...)
+		}
+	case "unzip":
+		if !slices.ContainsFunc(args, func(a string) bool { return a == "-l" || a == "-t" || a == "-p" || a == "-v" || a == "-Z" }) {
+			targets = append(targets, dirOr("-d", "")...)
+		}
+	case "patch":
+		if !contains(args, "--dry-run") {
+			targets = append(targets, optionValues(args, "-o", "--output")...)
+			targets = append(targets, dirOr("-d", "--directory")...)
+		}
+	case "gofmt", "goimports":
+		if contains(args, "-w") {
+			targets = append(targets, positional...)
+		}
+	case "go":
+		targets = append(targets, goWrites(args)...)
+	case "nix", "nix-build":
+		targets = append(targets, nixWrites(name, args)...)
+	case "make", "gmake":
+		if !slices.ContainsFunc(args, func(a string) bool {
+			return set("-n", "--dry-run", "--just-print", "--recon", "-q", "--question")[a]
+		}) {
+			targets = append(targets, dirOr("-C", "--directory")...)
+		}
+	case "treefmt", "alejandra", "nixfmt", "nixpkgs-fmt", "black", "ruff", "rustfmt", "cargo", "prettier",
+		"shfmt", "sops", "gofumpt", "nix-fmt":
+		targets = append(targets, formatWrites(name, args, positional)...)
 	}
 	return targets
+}
+
+// targetDirectories are the directories cp, install or ln are given to
+// copy or link into: `-t DIR`, `-t` ending a group of short flags
+// (`-rt DIR`) or starting its value (`-tDIR`, `-rtDIR`), and
+// `--target-directory`.
+func targetDirectories(args []string) []string {
+	var dirs []string
+	for i, a := range args {
+		switch {
+		case a == "--target-directory" && i+1 < len(args):
+			dirs = append(dirs, args[i+1])
+		case strings.HasPrefix(a, "--target-directory="):
+			dirs = append(dirs, strings.TrimPrefix(a, "--target-directory="))
+		case len(a) > 1 && a[0] == '-' && a[1] != '-':
+			if _, value, ok := strings.Cut(a[1:], "t"); ok {
+				switch {
+				case value != "":
+					dirs = append(dirs, value)
+				case i+1 < len(args):
+					dirs = append(dirs, args[i+1])
+				}
+			}
+		}
+	}
+	return dirs
+}
+
+// formatWrites are the files a formatter rewrites: those it is given, or
+// "." for the tree it runs in; none when it only checks or prints, or, for
+// the formatters that write only when told to, unless told to.
+func formatWrites(name string, args, positional []string) []string {
+	has := func(flags ...string) bool {
+		return slices.ContainsFunc(args, func(a string) bool { return contains(flags, a) })
+	}
+	switch {
+	case has("--check", "--diff", "-l", "--list-different", "--help", "--version"),
+		name == "alejandra" && has("-c"),
+		name == "prettier" && !has("-w", "--write"),
+		name == "shfmt" && !has("-w", "--write"),
+		name == "gofumpt" && !has("-w"),
+		name == "sops" && !has("-i", "--in-place"),
+		name == "cargo" && (len(positional) == 0 || positional[0] != "fmt"),
+		name == "ruff" && (len(positional) == 0 || positional[0] != "format") && !has("--fix"):
+		return nil
+	}
+	if (name == "cargo" || name == "ruff") && len(positional) > 0 {
+		positional = positional[1:] // the subcommand
+	}
+	if len(positional) == 0 {
+		return []string{"."}
+	}
+	return positional
+}
+
+// optionValues are the values an option takes in args: `-t DIR`, `-tDIR`,
+// `--long DIR` and `--long=DIR`; long may be "".
+func optionValues(args []string, short, long string) []string {
+	var values []string
+	for i, a := range args {
+		switch {
+		case (a == short || long != "" && a == long) && i+1 < len(args):
+			values = append(values, args[i+1])
+		case long != "" && strings.HasPrefix(a, long+"="):
+			values = append(values, strings.TrimPrefix(a, long+"="))
+		case len(short) == 2 && strings.HasPrefix(a, short) && len(a) > 2 && !strings.HasPrefix(a, "--"):
+			values = append(values, a[2:])
+		}
+	}
+	return values
+}
+
+// tarExtracts reports whether tar's arguments extract: --extract or --get,
+// x in the first word's bundled letters (`tar xzf`), or x in a group of
+// short flags.
+func tarExtracts(args []string) bool {
+	for i, a := range args {
+		switch {
+		case a == "--extract" || a == "--get":
+			return true
+		case strings.HasPrefix(a, "--"):
+		case strings.HasPrefix(a, "-") || i == 0:
+			if strings.ContainsRune(strings.TrimPrefix(a, "-"), 'x') {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// goWrites are the files and directories a go command writes: its -o
+// output, its test profiles, and "." for the commands that rewrite source
+// or go.mod in the package it runs in.
+func goWrites(args []string) []string {
+	if len(args) == 0 {
+		return nil
+	}
+	var out []string
+	output := false
+	for i, a := range args[1:] {
+		name, value, attached := strings.Cut(strings.TrimLeft(a, "-"), "=")
+		if !strings.HasPrefix(a, "-") || !set("o", "coverprofile", "cpuprofile", "memprofile", "blockprofile",
+			"mutexprofile", "trace", "outputdir")[name] {
+			continue
+		}
+		if !attached && i+2 < len(args) {
+			value = args[i+2]
+		}
+		if value != "" {
+			out = append(out, value)
+			output = output || name == "o"
+		}
+	}
+	switch args[0] {
+	case "generate", "fmt", "fix", "get", "work":
+		out = append(out, ".")
+	case "mod":
+		if len(args) > 1 && (args[1] == "tidy" || args[1] == "edit" || args[1] == "vendor" || args[1] == "init") {
+			out = append(out, ".")
+		}
+	case "build":
+		if !output {
+			out = append(out, ".")
+		}
+	case "test":
+		if contains(args, "-c") && !output {
+			out = append(out, ".")
+		}
+	case "install":
+		out = append(out, goDir("GOBIN", "bin"))
+	case "clean":
+		if slices.ContainsFunc(args, func(a string) bool { return strings.HasSuffix(a, "cache") }) {
+			out = append(out, goDir("GOCACHE", "cache"), goDir("GOMODCACHE", "pkg/mod"))
+		} else {
+			out = append(out, ".")
+		}
+	}
+	return out
+}
+
+// goDir is the directory the environment variable names, or the one under
+// GOPATH (or ~/go) that the go command uses in its place: where go install
+// and go clean write.
+func goDir(variable, under string) string {
+	if dir := os.Getenv(variable); filepath.IsAbs(dir) {
+		return dir
+	}
+	gopath := os.Getenv("GOPATH")
+	if !filepath.IsAbs(gopath) {
+		gopath = filepath.Join(home, "go")
+	}
+	return filepath.Join(gopath, under)
+}
+
+// nixWrites are the links a nix build leaves: ./result, or its --out-link,
+// unless --no-link or --no-out-link; and "." for nix flake update and lock,
+// which write flake.lock.
+func nixWrites(name string, args []string) []string {
+	build := name == "nix-build" || len(args) > 0 && args[0] == "build"
+	if len(args) > 1 && args[0] == "flake" && (args[1] == "update" || args[1] == "lock") ||
+		len(args) > 0 && args[0] == "fmt" {
+		return []string{"."}
+	}
+	if !build || contains(args, "--no-link") || contains(args, "--no-out-link") {
+		return nil
+	}
+	if links := optionValues(args, "-o", "--out-link"); len(links) > 0 {
+		return links
+	}
+	return []string{"result"}
 }
 
 const shellEdit = "`%s` is a tracked file, and editing it from the shell bypasses the file-editing tools AGENTS.md requires. " +
