@@ -56,7 +56,7 @@ func TestRun(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
 	git.Dir = repo
 	defer func() { git.Dir = "" }()
-	result, err := Run("", false, false)
+	result, err := Run("", false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestRun(t *testing.T) {
 	if lower != parent {
 		t.Error("the stacked branch did not move with the signed commits")
 	}
-	if again, err := Run("", false, false); err != nil || again.(map[string]string)["signed"] == "" {
+	if again, err := Run("", false, false, false); err != nil || again.(map[string]string)["signed"] == "" {
 		t.Errorf("a signed branch: %v %v", again, err)
 	}
 
@@ -84,7 +84,7 @@ func TestRun(t *testing.T) {
 	os.WriteFile(filepath.Join(repo, "a"), []byte("a fixed\n"), 0o644)
 	gitIn(t, repo, "commit", "-q", "-a", "--fixup=lower")
 	wantTree := gitIn(t, repo, "rev-parse", "upper^{tree}")
-	result, err = Run("", false, false)
+	result, err = Run("", false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,13 +108,108 @@ func TestRun(t *testing.T) {
 	// On the default branch with no remote, the base is not guessed.
 	gitIn(t, repo, "switch", "-q", "main")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "on main")
-	if _, err := Run("", false, false); err == nil || !strings.Contains(err.Error(), "--base") {
+	if _, err := Run("", false, false, false); err == nil || !strings.Contains(err.Error(), "--base") {
 		t.Errorf("signing main without a base: %v", err)
 	}
-	if _, err := Run("main~1", false, false); err != nil {
+	if _, err := Run("main~1", false, false, false); err != nil {
 		t.Errorf("signing main with a base: %v", err)
 	}
 	if marks, _ := git.Run("log", "-1", "--format=%G?", "main"); marks != "G" {
 		t.Errorf("main's commit: %q", marks)
 	}
+}
+
+func TestPushMoved(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	hub, mirror := filepath.Join(dir, "hub.git"), filepath.Join(dir, "mirror.git")
+	gitIn(t, dir, "init", "-q", "--bare", hub)
+	gitIn(t, dir, "init", "-q", "--bare", mirror)
+	repo := filepath.Join(dir, "repo")
+	os.Mkdir(repo, 0o755)
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+	// One remote that pushes to two places, as a mirrored repository does.
+	gitIn(t, repo, "remote", "add", "origin", hub)
+	gitIn(t, repo, "remote", "set-url", "--add", "--push", "origin", hub)
+	gitIn(t, repo, "remote", "set-url", "--add", "--push", "origin", mirror)
+	gitIn(t, repo, "switch", "-qc", "tracked")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "T1")
+	gitIn(t, repo, "push", "-q", "-u", "origin", "tracked")
+	gitIn(t, repo, "commit", "-q", "--amend", "--allow-empty", "-m", "T1 again")
+	gitIn(t, repo, "switch", "-qc", "fresh")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "F1")
+	git.Dir = repo
+	defer func() { git.Dir = "" }()
+	moved := map[string]string{"tracked": "", "fresh": ""}
+
+	pushed, err := pushMoved(moved, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pushed["fresh"] != "not pushed: no upstream" || pushed["tracked"] != "origin refs/heads/tracked" {
+		t.Errorf("--push: %v", pushed)
+	}
+	pushed, err = pushMoved(moved, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pushed["fresh"] != "origin refs/heads/fresh, now its upstream" {
+		t.Errorf("--set-upstream: %v", pushed)
+	}
+	want := gitIn(t, repo, "rev-parse", "fresh")
+	for _, remote := range []string{hub, mirror} {
+		if got := gitIn(t, remote, "rev-parse", "fresh"); got != want {
+			t.Errorf("%s has fresh at %s, want %s", remote, got, want)
+		}
+	}
+	if upstream := gitIn(t, repo, "rev-parse", "--abbrev-ref", "fresh@{upstream}"); upstream != "origin/fresh" {
+		t.Errorf("fresh's upstream: %q", upstream)
+	}
+
+	// A branch the remote already has is not published over, whether or not
+	// this repository has fetched it.
+	gitIn(t, repo, "push", "-q", "origin", "main:refs/heads/taken")
+	gitIn(t, repo, "branch", "taken", "fresh")
+	if _, err := pushMoved(map[string]string{"taken": ""}, true); err == nil || !strings.Contains(err.Error(), "--set-upstream-to=origin/taken") {
+		t.Errorf("a fetched branch of the same name: %v", err)
+	}
+	gitIn(t, repo, "update-ref", "-d", "refs/remotes/origin/taken")
+	if _, err := pushMoved(map[string]string{"taken": ""}, true); err == nil {
+		t.Error("an unfetched branch of the same name was pushed over")
+	}
+	if got, base := gitIn(t, hub, "rev-parse", "taken"), gitIn(t, repo, "rev-parse", "main"); got != base {
+		t.Errorf("the remote's branch moved to %s", got)
+	}
+	if git.OK("config", "--get", "branch.taken.remote") {
+		t.Error("a refused branch got an upstream")
+	}
+}
+
+func TestPushRemote(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	gitIn(t, dir, "init", "-q", "-b", "main")
+	git.Dir = dir
+	defer func() { git.Dir = "" }()
+	check := func(want, wantErr string) {
+		t.Helper()
+		got, err := pushRemote("b")
+		if got != want || (err == nil) != (wantErr == "") || (err != nil && !strings.Contains(err.Error(), wantErr)) {
+			t.Errorf("got %q, %v; want %q, %q", got, err, want, wantErr)
+		}
+	}
+	check("", "no remote")
+	gitIn(t, dir, "remote", "add", "fork", "/nowhere/fork")
+	check("fork", "")
+	gitIn(t, dir, "remote", "add", "upstream", "/nowhere/upstream")
+	check("", "remote.pushDefault")
+	gitIn(t, dir, "remote", "add", "origin", "/nowhere/origin")
+	check("origin", "")
+	gitIn(t, dir, "config", "remote.pushDefault", "upstream")
+	check("upstream", "")
+	gitIn(t, dir, "config", "branch.b.pushRemote", "fork")
+	check("fork", "")
 }
