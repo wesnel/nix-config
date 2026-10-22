@@ -123,7 +123,7 @@ func link(repo *Repo, prs map[string]*PR, chain []*PR) (map[string]any, error) {
 		if k == len(chain) {
 			return map[string]any{"stack": target.Number, "added": []int{}}, nil
 		}
-		if top := chain[k-1]; at+k != len(target.PRs) { //nolint:gosec // 0 < k <= len(chain) in this branch
+		if top := chain[k-1]; at+k != len(target.PRs) {
 			return nil, refuse(aboveTop, top.Number, target.PRs[at+k].PR, target.Number, top.Number, target.Number)
 		}
 	} else if below := prs[chain[0].BaseRefName]; below != nil {

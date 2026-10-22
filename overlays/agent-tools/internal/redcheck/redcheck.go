@@ -354,7 +354,7 @@ type worktree struct{ path, admin, common string }
 // <common>/red-check.
 func addWorktree(top, common, commit string) (*worktree, error) {
 	parent := filepath.Join(common, "red-check")
-	if err := os.MkdirAll(parent, 0o755); err != nil { //nolint:gosec // holds checkouts of the repository, in its git directory
+	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return nil, err
 	}
 	path, err := os.MkdirTemp(parent, short(commit)+"-")

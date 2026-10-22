@@ -303,7 +303,7 @@ func rehearse(what, fix, tip string, args ...string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // holds checkouts of the repository, in its git directory
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
 	scratch, err := os.MkdirTemp(dir, "rehearsal-")
@@ -343,10 +343,10 @@ func save(p *pending, path, branch string) error {
 
 func writeJSON(path string, v any) error {
 	data, _ := json.MarshalIndent(v, "", "  ")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { //nolint:gosec // the pass's branches and steps, in the git directory
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644) //nolint:gosec // the pass's branches and steps, in the git directory
+	return os.WriteFile(path, data, 0o644)
 }
 
 // readJSON reports false when path does not exist.

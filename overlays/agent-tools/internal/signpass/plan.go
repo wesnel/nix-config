@@ -437,7 +437,7 @@ func (s *step) enter() error {
 		if err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Join(dir, "worktrees"), 0o755); err != nil { //nolint:gosec // holds checkouts of the repository, in its git directory
+		if err := os.MkdirAll(filepath.Join(dir, "worktrees"), 0o755); err != nil {
 			return err
 		}
 		if s.Temp, err = os.MkdirTemp(filepath.Join(dir, "worktrees"), "pass-"); err != nil {
