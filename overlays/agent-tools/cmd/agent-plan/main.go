@@ -14,6 +14,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/relay"
+	quota "github.com/wesnel/agent-tools/internal/usage"
 )
 
 var usage = `agent-plan: agents' plan files and their append-only event logs.
@@ -86,9 +87,10 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      keeps it out of the ready lists and the agenda until
                      then, or clear its schedule; log it as postponed
   statusline         Claude Code's status line and Emacs's mode line (reads
-                     stdin): the open questions of the session's plan, else of
-                     the plan of the worktree "cwd" is in, or nothing; never
-                     touches the network
+                     stdin): the session's context and quota windows from
+                     Claude Code's input, then the open questions of the
+                     session's plan, else of the plan of the worktree "cwd"
+                     is in; or nothing. Never touches the network
   own PLAN --worktree DIR --agent ID
                      record agent ID, the harness's ID for a sub-agent or
                      "main" for the session's main thread, as the one agent
@@ -178,10 +180,18 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if args[0] == "statusline" {
 		// Claude Code shows whatever this prints, so a failure prints
 		// nothing.
+		input := readAll(stdin)
+		var parts []string
+		if line := quota.StatusLine(input, time.Now()); line != "" {
+			parts = append(parts, line)
+		}
 		if c, err := plans.Load(); err == nil {
-			if line := c.StatusLine(readAll(stdin)); line != "" {
-				fmt.Fprintln(stdout, line)
+			if line := c.StatusLine(input); line != "" {
+				parts = append(parts, line)
 			}
+		}
+		if len(parts) > 0 {
+			fmt.Fprintln(stdout, strings.Join(parts, " · "))
 		}
 		return 0
 	}
