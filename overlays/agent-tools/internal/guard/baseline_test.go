@@ -988,6 +988,61 @@ func TestTrash(t *testing.T) {
 	})
 }
 
+// TestNwrap covers ngrok's scripts/nwrap, which runs a command in a
+// worktree mounted at the repository's own path: the command is judged as
+// if it ran without nwrap, and nwrap's own commands are allowed.
+func TestNwrap(t *testing.T) {
+	ssh := filepath.Join(fixture(t, remoteRepos), "ssh")
+	edits := fixture(t, shellEditRepos)
+	work := filepath.Join(edits, "work")
+	old := scratchRoots
+	scratchRoots = func() []string { return []string{filepath.Join(edits, "scratch")} }
+	t.Cleanup(func() { scratchRoots = old })
+	trashOnPath = func() bool { return true }
+	t.Cleanup(func() { trashOnPath = func() bool { return false } })
+
+	prefixes := []string{"nwrap", "./scripts/nwrap", "/src/ngrok/scripts/nwrap", "nwrap --", "nwrap -b main --",
+		"nwrap --branch=main", "nwrap -B feat --no-autocommit --no-copy-files --no-direnv-exec", "nwrap attach -s 3 --",
+		"nwrap -a --session=3", "nwrap --attach --session 3"}
+	for _, c := range []struct{ dir, command string }{
+		{work, "git push origin HEAD"},
+		{ssh, "git fetch origin"},
+		{work, "sed -i '' s/a/b/ a.go"},
+		{work, "rm a.go"},
+	} {
+		alone := judge(t, c.dir, c.command)
+		if alone == "" {
+			t.Fatalf("%q is allowed alone, so it cannot show nwrap judged as it", c.command)
+		}
+		for _, p := range prefixes {
+			t.Run(caseName(true, p+" "+c.command), func(t *testing.T) {
+				if reason := judge(t, c.dir, p+" "+c.command); reason != alone {
+					t.Errorf("%q: reason %q, alone %q", p+" "+c.command, reason, alone)
+				}
+			})
+		}
+	}
+	for _, command := range []string{"nwrap list", "nwrap -l", "nwrap prune --all", "nwrap -b main -- go test ./...",
+		"nwrap", "nwrap -b main", "nwrap --branch=main --session=3 -- go test ./..."} {
+		t.Run(caseName(false, command), func(t *testing.T) {
+			if reason := judge(t, work, command); reason != "" {
+				t.Errorf("%q: %q", command, reason)
+			}
+		})
+	}
+	// An option the guard does not know may take a value, which would then
+	// be judged as the program, so it is refused, naming the known ones.
+	for _, command := range []string{"nwrap --target main git push origin HEAD", "nwrap -x rm a.go",
+		"nwrap --target=main go test ./...", "nwrap -b main --verbose -- go test ./..."} {
+		t.Run(caseName(true, command), func(t *testing.T) {
+			reason := judge(t, work, command)
+			if !strings.Contains(reason, "--create-branch") || !strings.Contains(reason, "--no-direnv-exec") || !saysInstead(reason) {
+				t.Errorf("%q: %q", command, reason)
+			}
+		})
+	}
+}
+
 // TestKill covers kill by process ID, which the guard looks up with ps.
 func TestKill(t *testing.T) {
 	// The protected process is a copy of this test binary named mcp-proxy,
@@ -1139,23 +1194,21 @@ func TestGuardConfig(t *testing.T) {
 	}
 }
 
-// TestConnectors covers the claude.ai connectors' writes: Claude Code asks,
-// and Codex, which cannot ask, denies, as does a loop.
+// TestConnectors covers the claude.ai connectors mcp.json does not list:
+// for every tool, reads included, Claude Code asks, and Codex, which cannot
+// ask, denies, as does a loop. TestMCPTools covers the listed ones.
 func TestConnectors(t *testing.T) {
 	for _, c := range []struct {
 		name, event, want string
 	}{
-		{"Slack message", `{"tool_name":"mcp__claude_ai_Slack__slack_send_message","tool_input":{}}`, `"permissionDecision":"ask"`},
 		{"Gmail draft", `{"tool_name":"mcp__claude_ai_Gmail__create_draft","tool_input":{}}`, `"permissionDecision":"ask"`},
-		{"Notion pages", `{"tool_name":"mcp__claude_ai_Notion__notion-create-pages","tool_input":{}}`, `"permissionDecision":"ask"`},
-		{"Linear issue", `{"tool_name":"mcp__claude_ai_Linear__save_issue","tool_input":{}}`, `"permissionDecision":"ask"`},
 		{"GitHub review", `{"tool_name":"mcp__claude_ai_Github__create_pull_request_review","tool_input":{}}`, `"permissionDecision":"ask"`},
-		{"Slack message from Codex", `{"tool_name":"mcp__claude_ai_Slack__slack_send_message","turn_id":"t","tool_input":{}}`, `"permissionDecision":"deny"`},
-		{"Slack message from a reviewer", `{"tool_name":"mcp__claude_ai_Slack__slack_send_message","agent_type":"reviewer","tool_input":{}}`, `"permissionDecision":"deny"`},
-		{"Slack search", `{"tool_name":"mcp__claude_ai_Slack__slack_search_public","tool_input":{}}`, ""},
-		{"Notion fetch", `{"tool_name":"mcp__claude_ai_Notion__notion-fetch","tool_input":{}}`, ""},
-		{"Linear read", `{"tool_name":"mcp__claude_ai_Linear__get_issue","tool_input":{}}`, ""},
-		{"another server", `{"tool_name":"mcp__ngrok__list_endpoints","tool_input":{}}`, ""},
+		{"GitHub review from Codex", `{"tool_name":"mcp__claude_ai_Github__create_pull_request_review","turn_id":"t","tool_input":{}}`, `"permissionDecision":"deny"`},
+		{"GitHub review from a reviewer", `{"tool_name":"mcp__claude_ai_Github__create_pull_request_review","agent_type":"reviewer","tool_input":{}}`, `"permissionDecision":"deny"`},
+		{"GitHub read", `{"tool_name":"mcp__claude_ai_Github__get_pull_request","tool_input":{}}`, `"permissionDecision":"ask"`},
+		{"GitHub read from Codex", `{"tool_name":"mcp__claude_ai_Github__get_pull_request","turn_id":"t","tool_input":{}}`, `"permissionDecision":"deny"`},
+		{"Gmail search", `{"tool_name":"mcp__claude_ai_Gmail__search_threads","tool_input":{}}`, `"permissionDecision":"ask"`},
+		{"Gmail search from Codex", `{"tool_name":"mcp__claude_ai_Gmail__search_threads","turn_id":"t","tool_input":{}}`, `"permissionDecision":"deny"`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var out bytes.Buffer
@@ -1276,6 +1329,11 @@ func TestCodexTerminalReaders(t *testing.T) {
 		{"cat -", true},
 		{"tee out.txt", true},
 		{"xargs sh -c 'echo $0'", true},
+		{"nwrap", true},
+		{"./scripts/nwrap -b main --no-autocommit", true},
+		{"nwrap attach -s 3", true},
+		{"nwrap -b main -- go test ./...", false},
+		{"nwrap list", false},
 		{"bash -c 'ls'", false},
 		{"bash script.sh", false},
 		{"python3 x.py", false},

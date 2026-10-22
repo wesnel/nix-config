@@ -14,7 +14,12 @@
         claude.enable = true;
         codex.enable = true;
         docs-mcp-server.enable = true;
-        mcp-proxy.enable = true;
+        mcp-proxy = {
+          enable = true;
+          notion = true;
+          hex = true;
+          datadog.enable = true;
+        };
         eca = {
           enable = true;
           localModel = "ollama/qwen2.5-coder:7b";

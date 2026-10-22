@@ -1,0 +1,90 @@
+{
+  "linear": {
+    "service": "Linear",
+    "servers": ["linear", "claude_ai_Linear"],
+    "verify": "reads are the tools/list of https://mcp.linear.app/mcp/readonly; Linear's docs name no tools, so compare confirms with the full endpoint's tools/list",
+    "reads": ["extract_images", "get_agent_skill", "get_attachment", "get_diff", "get_diff_threads", "get_document",
+      "get_initiative", "get_issue", "get_issue_status", "get_milestone", "get_notifications", "get_project", "get_release",
+      "get_release_note", "get_status_updates", "get_team", "get_template", "get_triage_responsibility", "get_user",
+      "get_workspace", "list_agent_skills", "list_comments", "list_custom_views", "list_customer_needs", "list_customers",
+      "list_cycles", "list_diffs", "list_documents", "list_initiative_labels", "list_initiatives", "list_issue_labels",
+      "list_issue_statuses", "list_issues", "list_milestones", "list_project_labels", "list_projects", "list_release_notes",
+      "list_release_pipelines", "list_releases", "list_teams", "list_templates", "list_users", "search_documentation"],
+    "confirms": ["save_issue", "create_comment", "create_issue_label", "save_project", "create_project", "update_project",
+      "create_document", "update_document", "save_milestone", "save_initiative", "save_status_update",
+      "save_customer_need", "save_customer", "create_attachment"]
+  },
+  "notion": {
+    "service": "Notion",
+    "servers": ["notion", "claude_ai_Notion"],
+    "verify": "names from developers.notion.com/guides/mcp/mcp-supported-tools; compare with tools/list",
+    "reads": ["notion-search", "notion-ai-search", "notion-memory-search", "notion-get-tool-access", "notion-get-self",
+      "notion-get-enabled-skills", "notion-fetch", "notion-get-file-download-urls", "notion-list-private-pages",
+      "notion-list-shared-pages", "notion-list-favorite-pages", "notion-list-recent-pages", "notion-list-page-backlinks",
+      "notion-download-skill", "notion-download-attachment", "notion-query-data-sources",
+      "notion-query-multiple-data-sources", "notion-query-meeting-notes", "notion-search-agents", "notion-query-sessions",
+      "notion-search-sessions", "notion-get-session-status", "notion-list-session-events", "notion-read-session-event",
+      "notion-get-comments", "notion-get-teams", "notion-get-groups", "notion-get-users", "notion-get-async-task"],
+    "confirms": ["notion-create-pages", "notion-update-page", "notion-move-pages", "notion-restore-pages",
+      "notion-duplicate-page", "notion-create-database", "notion-create-folder", "notion-update-folder",
+      "notion-update-data-source", "notion-create-view", "notion-update-view", "notion-create-file-upload",
+      "notion-create-attachment", "notion-upload-skill", "notion-update-enabled-skills", "notion-convert-page-to-skill",
+      "notion-create-comment", "notion-update-comment", "notion-set-discussion-resolved", "notion-set-comment-reaction", "notion-spawn-session",
+      "notion-send-message-to-session", "notion-stop-session", "notion-wait-session"]
+  },
+  "hex": {
+    "service": "Hex",
+    "servers": ["hex", "claude_ai_Hex"],
+    "verify": "names from learn.hex.tech/docs/administration/mcp-server; compare with tools/list",
+    "reads": ["search_projects", "get_thread", "get_me", "get_project", "list_cells", "get_cell", "get_run",
+      "get_cell_output", "get_cell_image", "list_data_connections"],
+    "confirms": ["create_thread", "continue_thread", "create_project", "create_cell", "update_cell", "run_cell",
+      "run_notebook"]
+  },
+  "datadog": {
+    "service": "Datadog",
+    "servers": ["datadog", "claude_ai_Datadog", "claude_ai_Datadog_2"],
+    "verify": "names from docs.datadoghq.com/bits_ai/mcp_server/tools, toolsets core and error-tracking; compare with tools/list",
+    "reads": ["search_datadog_events", "get_datadog_incident", "get_datadog_metric", "get_datadog_metric_context",
+      "search_datadog_monitors", "get_datadog_trace", "search_datadog_dashboards", "get_datadog_dashboard",
+      "get_datadog_notebook", "search_datadog_notebooks", "search_datadog_hosts", "search_datadog_incidents",
+      "search_datadog_metrics", "search_datadog_entities", "search_datadog_spans", "aggregate_spans",
+      "analyze_datadog_logs", "search_datadog_logs", "search_datadog_rum_events", "aggregate_rum_events",
+      "search_datadog_error_tracking_issues", "get_datadog_error_tracking_issue",
+      "analyze_datadog_error_tracking_errors", "get_datadog_error_tracking_analytics"],
+    "confirms": []
+  },
+  "buildkite": {
+    "service": "Buildkite",
+    "servers": ["buildkite", "claude_ai_mcp_buildkite_com"],
+    "verify": "the tools/list of https://mcp.buildkite.com/mcp/readonly, without access_token, get_job_env, get_cluster_secret and list_cluster_secrets, which describe credentials",
+    "reads": ["compare_builds", "current_user", "get_agent", "get_artifact", "get_build", "get_build_failure_summary",
+      "get_build_test_engine_runs", "get_cache_registry", "get_cluster", "get_cluster_queue",
+      "get_failed_executions", "get_job", "get_pipeline", "get_pipeline_schedule", "get_repository_connection",
+      "get_step_upload", "get_test", "get_test_run", "list_agents", "list_annotations", "list_artifacts_for_build",
+      "list_artifacts_for_job", "list_builds", "list_cache_registries", "list_cluster_queues",
+      "list_clusters", "list_jobs", "list_pipeline_schedules", "list_pipelines", "list_repository_connections",
+      "list_skills", "list_step_uploads", "list_test_runs", "list_test_suites_for_pipeline", "list_tests",
+      "list_tests_for_build", "load_skill", "read_execution_trace", "read_logs", "search_logs",
+      "slowest_executions_for_build", "tail_logs", "user_token_organization", "validate_pipeline", "wait_for_build"],
+    "confirms": []
+  },
+  "slack": {
+    "service": "Slack",
+    "servers": ["claude_ai_Slack"],
+    "verify": "the claude.ai connector's tools as Claude Code lists them",
+    "reads": ["slack_search_public", "slack_search_public_and_private", "slack_search_channels", "slack_search_users",
+      "slack_search_emojis", "slack_read_channel", "slack_read_thread", "slack_read_canvas", "slack_read_file",
+      "slack_read_list", "slack_read_user_profile", "slack_list_channel_members", "slack_list_user_channels",
+      "slack_get_reactions"],
+    "confirms": []
+  },
+  "ngrok": {
+    "service": "ngrok",
+    "servers": ["ngrok", "claude_ai_mcp_ngrok_com"],
+    "verify": "ngrok publishes no tool list, so a tool is a read when its name has a reading verb and no writing one",
+    "readsByName": true,
+    "reads": [],
+    "confirms": []
+  }
+}

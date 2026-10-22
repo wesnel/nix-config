@@ -56,28 +56,6 @@ with lib; let
     then "~/${removePrefix home path}"
     else "/${path}";
 
-  # Lets a tool through only when its name has a reading verb and no writing
-  # one as a whole `_`-separated word; any other name is denied.
-  ngrokReadOnly = pkgs.writeShellApplication {
-    name = "claude-ngrok-read-only";
-    runtimeInputs = [pkgs.jq];
-    text = ''
-      tool=$(jq -r '.tool_name // empty')
-      name="''${tool##*__}"
-      words="_''${name//-/_}_"
-      reads='_(get|list|search|read|query|describe|show|find|fetch|view)_'
-      writes='_(create|update|delete|remove|start|stop|restart|set|put|patch|post|add|replace|rotate|enable|disable|revoke|write|manage|submit|send|run|exec|execute|invoke|import|upload|attach|detach)_'
-      if [[ "$words" =~ $reads ]] && ! [[ "$words" =~ $writes ]]; then
-        exit 0
-      fi
-      jq -n --arg tool "$tool" '{hookSpecificOutput: {
-        hookEventName: "PreToolUse",
-        permissionDecision: "deny",
-        permissionDecisionReason: ("ngrok MCP tools are read-only here, since writes reach production, and \($tool) is not named as a read. Use a get, list or describe tool, or hand the operator what you wanted it to do.")
-      }}'
-    '';
-  };
-
   # The session's commands run in Claude Code's sandbox with no credentials and
   # no route to GitHub; `sandbox-relay session` serves `pr-loop` and
   # `agent-plan` on a private socket, whose path replaces {socket}. Hooks, MCP servers and WebFetch run outside
@@ -367,24 +345,16 @@ in {
           refreshInterval = 60;
         };
 
-        # The ngrok account server's write scopes reach production, and its
-        # tools are not published, so it is filtered by name, failing closed.
         # A hook list set here replaces the file's own on every switch.
         hooks.PreToolUse = [
-          {
-            matcher = "mcp__ngrok__.*";
-            hooks = [
-              {
-                type = "command";
-                command = getExe ngrokReadOnly;
-              }
-            ];
-          }
           # Holds every session to the baseline: what is the operator's to do,
           # and the `reviewer` and `pr-owner` agents to their roles. Every
           # tool that runs a command or writes a file belongs here: Monitor
           # runs a shell command as Bash does, and ExitWorktree can delete a
-          # worktree and its branch.
+          # worktree and its branch. MCP tools are held to the guard's
+          # mcp.json: on a server it lists, reads pass, listed writes ask and
+          # the rest are refused; every tool on a server it does not list
+          # asks, and is refused to the `reviewer` and `pr-owner` agents.
           {
             matcher = "Bash|Monitor|ExitWorktree|Edit|Write|MultiEdit|NotebookEdit|mcp__.*";
             hooks = [
