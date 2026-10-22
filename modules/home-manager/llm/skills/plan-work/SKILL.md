@@ -206,16 +206,18 @@ agent-plan ask PLAN --question 'Keep the old flag?' --recommendation 'no, drop i
 `--part P1` puts it in that part's file; `--priority A` puts it before the
 others, `C` after. Never restate open questions in a message: when a
 sub-agent reports, say only what changed, add its new questions with
-`agent-plan ask`, and at most give their number. When the operator asks, print
-`agent-plan questions PLAN --all`, the questions they can answer now, or
-point them to the plan. When they answer, record each answer with
-`agent-plan decide PLAN Q1 --answer 'ANSWER'`, which settles the question
+`agent-plan ask`, and at most give their number. When the operator asks for
+them in Claude Code, take `agent-plan questions PLAN --all --json`, the
+questions they can answer now, and ask them through AskUserQuestion as
+`/questions` does: at most four per call, each question's recommendation
+first, then its alternatives, then "Drop it". In any other harness, print
+`agent-plan questions PLAN --all` and tell the operator to answer them with
+`/questions` in a Claude Code session. When they answer, record each answer
+with `agent-plan decide PLAN Q1 --answer 'ANSWER'`, which settles the question
 in place and logs `decided`; `--drop --answer 'why'` drops it, and
 `--supersedes Q2` marks the earlier decision this one replaces. A decision
 can make waiting questions askable, so list them again until none are
-left. In Claude Code, the operator answers them through `/questions`; elsewhere,
-print them and take their answers in the chat. They may also settle one in
-Emacs, with a note that `agent-plan decisions` reads as the answer.
+left. The operator may also run `/questions` in Claude Code themselves.
 
 Ask the operator only about a one-way door (a force-push, deleted data, a
 message sent outside, a migration, a stored format, a published interface)
