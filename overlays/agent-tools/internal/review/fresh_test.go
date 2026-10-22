@@ -64,7 +64,6 @@ printf '%s' "$GIT_DIR$GIT_WORK_TREE" > "$FAKE_CODEX_LOG/location"
 printf '%s' "$PATH" > "$FAKE_CODEX_LOG/path"
 git -C "$wt" rev-parse HEAD > "$FAKE_CODEX_LOG/head"
 ls -A "$wt" > "$FAKE_CODEX_LOG/files"
-cat "$wt/code.txt" > "$FAKE_CODEX_LOG/code.txt" 2>/dev/null
 case "$FAKE_CODEX" in
   fail) echo "fake codex: model error" >&2; exit 1 ;;
   hang) exec sleep 60 ;;

@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/cli"
@@ -100,7 +99,11 @@ func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	if err != nil {
 		return report(nil, err, 0)
 	}
-	text, err := questionText(top, *question, stdin)
+	file, err := questionFile(top, *question)
+	if err != nil {
+		return report(nil, err, 0)
+	}
+	text, err := readFile(file, stdin)
 	if err != nil {
 		return report(nil, err, 0)
 	}
@@ -136,24 +139,21 @@ func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 // be written in.
 var scratchRoots = guard.ScratchRoots
 
-// questionText is the question in the file path names, or on stdin for
-// "-". Codex is sent it as it is, so the file, where its symlinks lead,
-// must be in the repository at top or a scratch root, and not a
-// credential.
-func questionText(top, path string, stdin io.Reader) (string, error) {
+// questionFile is the question file path names, "-" for stdin, with its
+// symlinks resolved. Codex is sent it as it is, so it must be in the
+// repository at top or a scratch root, and not a credential.
+func questionFile(top, path string) (string, error) {
 	if path == "-" {
-		data, err := io.ReadAll(stdin)
-		return string(data), err
+		return path, nil
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
 	}
-	f, real, err := openRegular(abs)
+	real, err := filepath.EvalSymlinks(abs)
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
 	write := "write the question to a file of its own under $TMPDIR or in the repository, and pass that as `--question FILE`"
 	for _, p := range guard.CredentialPaths() {
 		if strings.HasPrefix(abs, p) || strings.HasPrefix(real, p) {
@@ -170,101 +170,47 @@ func questionText(top, path string, stdin io.Reader) (string, error) {
 		return "", refusal.New("%s is outside the repository and the scratch area ($TMPDIR, /tmp), and Codex is sent the question as it is; %s",
 			path, write)
 	}
-	data, err := io.ReadAll(f)
-	return string(data), err
+	return real, nil
 }
 
-// askFile is a file a question names: its path relative to the repository,
-// and what it held when named checked it.
-type askFile struct {
-	rel  string
-	data []byte
-}
-
-// named reads each path, relative to the process's directory or absolute,
-// refusing one that is not a regular file in the repository at top.
-func named(top string, paths []string) ([]askFile, error) {
-	var out []askFile
+// named is each path, relative to the process's directory or absolute,
+// as a path relative to top, refusing one that is not a regular file in
+// the repository at top.
+func named(top string, paths []string) ([]string, error) {
+	var out []string
 	for _, p := range paths {
 		abs, err := filepath.Abs(p)
 		if err != nil {
 			return nil, err
 		}
-		f, real, err := openRegular(abs)
-		var r refusal.Refusal
-		if errors.As(err, &r) {
-			return nil, err
+		if real, err := filepath.EvalSymlinks(abs); err == nil {
+			abs = real
 		}
-		if err != nil {
-			return nil, refusal.New("%s is not a file; name each file the answer rests on, as `git fresh-review ask "+
-				"--question FILE PATH...`", p)
-		}
-		rel, err := filepath.Rel(top, real)
+		rel, err := filepath.Rel(top, abs)
 		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			f.Close()
 			return nil, refusal.New("%s is outside the repository at %s; put what the question needs from it into the "+
 				"question file, and name only files in the repository, as `git fresh-review ask --question FILE PATH...`", p, top)
 		}
-		data, err := io.ReadAll(f)
-		f.Close()
-		if err != nil {
-			return nil, err
+		if info, err := os.Stat(abs); err != nil || !info.Mode().IsRegular() {
+			return nil, refusal.New("%s is not a file; name each file the answer rests on, as `git fresh-review ask "+
+				"--question FILE PATH...`", p)
 		}
-		out = append(out, askFile{filepath.ToSlash(rel), data})
+		out = append(out, filepath.ToSlash(rel))
 	}
 	return out, nil
 }
 
-// openRegular opens path to read, if it is a regular file, and returns it
-// with the path the kernel has for the file opened, symlinks resolved. A
-// check made on that path holds for what is read from the file, which a
-// link put in place after the open cannot change. A FIFO is refused
-// without waiting for a writer. A file with more than one hard link is
-// refused: that path is only one of its names, any of which may be
-// anywhere on its file system.
-func openRegular(path string) (*os.File, string, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, "", err
-	}
-	real, err := openedPath(f)
-	if err == nil {
-		var info os.FileInfo
-		if info, err = f.Stat(); err == nil {
-			err = regularOnly(path, info)
-		}
-	}
-	if err != nil {
-		f.Close()
-		return nil, "", err
-	}
-	return f, real, nil
-}
-
-// regularOnly is why openRegular refuses the file at path, or nil.
-func regularOnly(path string, info os.FileInfo) error {
-	st, ok := info.Sys().(*syscall.Stat_t)
-	switch {
-	case !info.Mode().IsRegular():
-		return fmt.Errorf("%s is not a regular file", path)
-	case !ok || st.Nlink > 1:
-		return refusal.New("%s has other hard links, which may be anywhere, so where it is cannot be told from its "+
-			"name; put what the question needs from it into a file of its own, and pass that to `git fresh-review ask`", path)
-	}
-	return nil
-}
-
-// codexAsk writes files into a throwaway repository under the git
+// codexAsk copies files from top into a throwaway repository under the git
 // directory's fresh-review/, has Codex answer text there, confined as
 // CodexRun confines a review, and removes the repository however it ends.
-func codexAsk(ctx context.Context, top, text string, files []askFile, model string, timeout time.Duration,
+func codexAsk(ctx context.Context, top, text string, files []string, model string, timeout time.Duration,
 	log io.Writer) (*Answer, error) {
 	common, err := git.Run("-C", top, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return nil, err
 	}
 	parent := filepath.Join(common, "fresh-review")
-	if err := os.MkdirAll(parent, 0o755); err != nil { //nolint:gosec // holds copies of the repository's files, in its git directory
+	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return nil, err
 	}
 	dir, err := os.MkdirTemp(parent, "ask-")
@@ -278,11 +224,15 @@ func codexAsk(ctx context.Context, top, text string, files []askFile, model stri
 	}()
 	tree := filepath.Join(dir, "tree")
 	for _, f := range files {
-		to := filepath.Join(tree, filepath.FromSlash(f.rel))
-		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil { //nolint:gosec // holds copies of the repository's files, in its git directory
+		data, err := os.ReadFile(filepath.Join(top, filepath.FromSlash(f)))
+		if err != nil {
 			return nil, err
 		}
-		if err := os.WriteFile(to, f.data, 0o644); err != nil { //nolint:gosec // named refuses an f that leaves the repository, so to stays in tree
+		to := filepath.Join(tree, filepath.FromSlash(f))
+		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(to, data, 0o644); err != nil {
 			return nil, err
 		}
 	}
@@ -303,7 +253,7 @@ func codexAsk(ctx context.Context, top, text string, files []askFile, model stri
 	prompt.WriteString(askContract)
 	fmt.Fprintf(&prompt, "\n# The question\n\n%s\n\n# The files\n\n", strings.TrimSpace(text))
 	for _, f := range files {
-		fmt.Fprintf(&prompt, "- %s\n", f.rel)
+		fmt.Fprintf(&prompt, "- %s\n", f)
 	}
 	reply, err := CodexRun(ctx, Codex{Checkout: tree, Prompt: prompt.String(), Schema: []byte(askSchema), Model: model,
 		Timeout: timeout, Log: log, Git: run})

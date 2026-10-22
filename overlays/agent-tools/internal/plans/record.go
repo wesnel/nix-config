@@ -131,10 +131,10 @@ func (c Config) RecordCommit(session, top string, e Event, now time.Time) (Plan,
 // plans directory is locked, or else a new one for them, and whether it is
 // new.
 func (c Config) unplanned(session, top string, now time.Time) (Plan, string, bool, error) {
-	if err := os.MkdirAll(c.Dir, 0o755); err != nil { //nolint:gosec // the plans: notes on the work, synced through git
+	if err := os.MkdirAll(c.Dir, 0o755); err != nil {
 		return Plan{}, "", false, err
 	}
-	lock, err := os.OpenFile(filepath.Join(c.Dir, ".new.lock"), os.O_RDWR|os.O_CREATE, 0o644) //nolint:gosec // an empty lock file
+	lock, err := os.OpenFile(filepath.Join(c.Dir, ".new.lock"), os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return Plan{}, "", false, err
 	}
