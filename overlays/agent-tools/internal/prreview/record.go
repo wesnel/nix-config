@@ -7,6 +7,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -128,6 +130,21 @@ func (r *Record) retire() {
 func recordPath(pr *PR) string {
 	return filepath.Join(filepath.Dir(pr.Clone), pr.Head[:12]+".json")
 }
+
+// RecordFile is recordPath for head of slug's pull request number under
+// root, the directory Root names.
+func RecordFile(root, slug string, number int, head string) (string, error) {
+	owner, repo, err := checkSlug(slug)
+	if err != nil {
+		return "", err
+	}
+	if number <= 0 || !fullHead.MatchString(head) {
+		return "", fmt.Errorf("%s#%d at %q is not a pull request's head", slug, number, head)
+	}
+	return filepath.Join(root, owner, repo, strconv.Itoa(number), head[:12]+".json"), nil
+}
+
+var fullHead = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 // newRecord starts the record of a new run on pr's head, keeping the rounds
 // an earlier run on the same head recorded, the latest among them, with
