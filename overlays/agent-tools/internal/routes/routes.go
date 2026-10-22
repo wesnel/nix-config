@@ -12,7 +12,7 @@ import (
 // Known are the routes a focused review exists for. A route a rule or a
 // reviewer names must be one of them, so a change is never routed to a
 // review nothing can run; a new focus adds its route here.
-var Known = []string{"security"}
+var Known = []string{"security", "compat"}
 
 // IsKnown reports whether route is one of Known.
 func IsKnown(route string) bool { return slices.Contains(Known, route) }
