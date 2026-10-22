@@ -17,6 +17,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/refusal"
+	"github.com/wesnel/agent-tools/internal/routes"
 )
 
 // Settings are how agents prepare, build and test one repository.
@@ -32,6 +33,82 @@ type Settings struct {
 	Build string `json:"build,omitempty"`
 	// TestFiles are git pathspec globs (`:(glob)` magic) for test files.
 	TestFiles []string `json:"testFiles,omitempty"`
+	// Routes are rules that route this repository's changes to focused
+	// reviews beside the built-in ones, which they only add to.
+	Routes []routes.Rule `json:"routes,omitempty"`
+	// ThreatNotes are the operator's threat notes for the security review:
+	// the notes themselves, or the absolute path, without whitespace, of a
+	// file outside the repository that holds them.
+	ThreatNotes string `json:"threatNotes,omitempty"`
+}
+
+// notesFile reports whether threat notes name a file: an absolute path
+// with no whitespace. Notes holding any are the notes themselves.
+func notesFile(notes string) bool {
+	return strings.HasPrefix(notes, "/") && !strings.ContainsAny(notes, " \t\r\n")
+}
+
+// Notes are the threat notes s gives, read from their file where they
+// name one; "" for none.
+func (s *Settings) Notes() (string, error) {
+	if !notesFile(s.ThreatNotes) {
+		return s.ThreatNotes, nil
+	}
+	data, err := os.ReadFile(s.ThreatNotes)
+	if err != nil {
+		return "", refusal.New("the threat notes of %s in %s name %s, which cannot be read (%v); ask the operator to "+
+			"fix the path, or to put the notes inline", s.Repo, Path(), s.ThreatNotes, err)
+	}
+	return string(data), nil
+}
+
+// checkNotes refuses threat notes in a file the repository containing
+// git.Dir holds: in one of its worktrees or its git directory, followed
+// through symbolic links, where a change under review could write them.
+func checkNotes(s *Settings) error {
+	if !notesFile(s.ThreatNotes) {
+		return nil
+	}
+	file := realPath(s.ThreatNotes, 0)
+	var roots []string
+	if common, err := git.Run("rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil {
+		roots = append(roots, common)
+	}
+	if list, err := git.Run("worktree", "list", "--porcelain"); err == nil {
+		for _, line := range strings.Split(list, "\n") {
+			if wt, ok := strings.CutPrefix(line, "worktree "); ok {
+				roots = append(roots, wt)
+			}
+		}
+	}
+	for _, root := range roots {
+		root = realPath(root, 0)
+		if rel, err := filepath.Rel(root, file); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+			return refusal.New("the threat notes of %s in %s are at %s, inside its repository at %s, where a change under "+
+				"review could write them; ask the operator to keep them outside the repository, or inline", s.Repo, Path(),
+				s.ThreatNotes, root)
+		}
+	}
+	return nil
+}
+
+// realPath is path with its symbolic links followed, those of a file that
+// does not exist yet included, as far as depth allows.
+func realPath(path string, depth int) string {
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		return real
+	}
+	if target, err := os.Readlink(path); err == nil && depth < 40 {
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(path), target)
+		}
+		return realPath(target, depth+1)
+	}
+	dir := filepath.Dir(path)
+	if dir == path {
+		return path
+	}
+	return filepath.Join(realPath(dir, depth+1), filepath.Base(path))
 }
 
 // Path is the user's config file: agent-tools/config.json under the XDG
@@ -91,6 +168,13 @@ func Lookup() (*Settings, error) {
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, err
 	}
+	for repo, s := range config.Repos {
+		for _, r := range s.Routes {
+			if err := r.Check(); err != nil {
+				return nil, refusal.New("%s's routes in %s: %v", repo, Path(), err)
+			}
+		}
+	}
 	remotes, err := remotes(repositoryConfig)
 	if err != nil {
 		return nil, err
@@ -111,6 +195,9 @@ func Lookup() (*Settings, error) {
 	case 0:
 		return &Settings{}, nil
 	case 1:
+		if err := checkNotes(&found[0]); err != nil {
+			return nil, err
+		}
 		return &found[0], nil
 	}
 	names := []string{}

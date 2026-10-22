@@ -141,6 +141,71 @@ in {
             default = [];
             description = "Git pathspec globs (`:(glob)` magic) that match the test files.";
           };
+
+          routes = mkOption {
+            type = types.listOf (types.submodule {
+              options = {
+                route = mkOption {
+                  # The routes a focused review exists for: agent-tools'
+                  # routes.Known, which refuses any other at lookup.
+                  type = types.enum ["security"];
+                  description = "The focused review the rule routes to.";
+                };
+
+                paths = mkOption {
+                  type = types.listOf types.str;
+                  default = [];
+
+                  description = ''
+                    Globs over paths from the top of the repository: `**/`
+                    is any run of directories, `/**` at the end anything
+                    below, `*` and `?` stay within one directory.
+                  '';
+                };
+
+                lines = mkOption {
+                  type = types.listOf types.str;
+                  default = [];
+
+                  description = ''
+                    RE2 expressions matched against each line a commit adds
+                    or removes, in the files `paths` matches where it names
+                    any.
+                  '';
+                };
+
+                why = mkOption {
+                  type = types.str;
+                  description = "Why a change it matches needs the review, which the routing reports.";
+                };
+              };
+            });
+
+            default = [];
+
+            description = ''
+              Rules that route this repository's commits to focused reviews,
+              beside the built-in ones, which they only add to. A rule that
+              names no paths and no lines, or does not compile, makes every
+              lookup of these settings refuse.
+            '';
+          };
+
+          threatNotes = mkOption {
+            type = types.nullOr (types.either types.path types.lines);
+            default = null;
+
+            description = ''
+              The threat notes `git fresh-review --focus security` gives
+              its reviewer: what must hold (IDs such as `T3`), the untrusted
+              inputs and boundaries, and what is accepted and why. The
+              notes themselves, or a file outside the repository, named by
+              an absolute path without whitespace (anything else is read as
+              the notes): a file the repository holds would let a change
+              write its own, and makes every lookup of these settings
+              refuse. Without them the security checklist alone applies.
+            '';
+          };
         };
       });
 

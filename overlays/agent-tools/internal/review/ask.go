@@ -16,6 +16,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/guard"
+	"github.com/wesnel/agent-tools/internal/redact"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
@@ -26,9 +27,10 @@ Asks Codex, as a model family other than the author's, for a second opinion
 on a design question: the question in FILE, judged from the files PATH
 names in this repository and nothing else. FILE, where its symlinks lead,
 is in this repository or under $TMPDIR or /tmp, and is no credential the
-guard lists, since Codex is sent it as it is. Codex runs as a review does
-(git fresh-review -h): no configuration of the user's, no network, no
-writes, and its commands may read only a throwaway checkout under the git
+guard lists, since Codex is sent it with only known secret shapes taken
+out, as it is sent the files. Codex runs as a review does (git
+fresh-review -h): no configuration of the user's, no network, no writes,
+and its commands may read only a throwaway checkout under the git
 directory's fresh-review/ holding copies of those files, removed on every
 exit.
 
@@ -200,9 +202,10 @@ func named(top string, paths []string) ([]string, error) {
 	return out, nil
 }
 
-// codexAsk copies files from top into a throwaway repository under the git
-// directory's fresh-review/, has Codex answer text there, confined as
-// CodexRun confines a review, and removes the repository however it ends.
+// codexAsk copies files from top, redacted, into a throwaway repository
+// under the git directory's fresh-review/, has Codex answer text there,
+// redacted too, confined as CodexRun confines a review, and removes the
+// repository however it ends.
 func codexAsk(ctx context.Context, top, text string, files []string, model string, timeout time.Duration,
 	log io.Writer) (*Answer, error) {
 	common, err := git.Run("-C", top, "rev-parse", "--path-format=absolute", "--git-common-dir")
@@ -232,7 +235,7 @@ func codexAsk(ctx context.Context, top, text string, files []string, model strin
 		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
 			return nil, err
 		}
-		if err := os.WriteFile(to, data, 0o644); err != nil {
+		if err := os.WriteFile(to, []byte(redact.Secrets(string(data))), 0o644); err != nil {
 			return nil, err
 		}
 	}
@@ -251,7 +254,7 @@ func codexAsk(ctx context.Context, top, text string, files []string, model strin
 
 	var prompt strings.Builder
 	prompt.WriteString(askContract)
-	fmt.Fprintf(&prompt, "\n# The question\n\n%s\n\n# The files\n\n", strings.TrimSpace(text))
+	fmt.Fprintf(&prompt, "\n# The question\n\n%s\n\n# The files\n\n", redact.Secrets(strings.TrimSpace(text)))
 	for _, f := range files {
 		fmt.Fprintf(&prompt, "- %s\n", f)
 	}

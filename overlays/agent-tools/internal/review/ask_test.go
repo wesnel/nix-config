@@ -81,9 +81,30 @@ func TestAsk(t *testing.T) {
 		f.checkCleanedUp(t)
 	})
 
-	// The question goes to Codex as it is, so it comes from the repository
-	// or the scratch area, read where its symlinks lead, and never from a
-	// credential.
+	// Known secret shapes are taken out of the question and of each file
+	// copied for Codex.
+	t.Run("redacted", func(t *testing.T) {
+		f := askFixture(t, true)
+		t.Setenv("FAKE_CODEX", "answer")
+		t.Setenv("FAKE_CODEX_COPY", "docs/design.md")
+		token := "ghp_" + strings.Repeat("c", 36)
+		os.WriteFile(filepath.Join(f.repo, ".git", "question.md"), []byte("Is "+token+" safe here?\n"), 0o644)
+		os.WriteFile(filepath.Join(f.repo, "docs", "design.md"), []byte("The token is "+token+".\n"), 0o644)
+		if code, _, stderr := askCodex(t, "--question", ".git/question.md", "docs/design.md"); code != 0 {
+			t.Fatalf("exit %d\n%s", code, stderr)
+		}
+		for _, sent := range []string{"prompt", "copy"} {
+			text := string(must(os.ReadFile(filepath.Join(f.log, sent))))
+			if strings.Contains(text, token) || !strings.Contains(text, "[REDACTED") {
+				t.Errorf("the %s keeps the token:\n%s", sent, text)
+			}
+		}
+		f.checkCleanedUp(t)
+	})
+
+	// The question goes to Codex with only known secret shapes taken out,
+	// so it comes from the repository or the scratch area, read where its
+	// symlinks lead, and never from a credential.
 	t.Run("question files", func(t *testing.T) {
 		for _, c := range []struct {
 			name string

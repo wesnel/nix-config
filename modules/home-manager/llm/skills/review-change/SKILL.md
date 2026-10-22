@@ -69,11 +69,21 @@ as `origin/main` or the parent branch in a stack.
    On 4, say so in the hand-back, with fresh-review's reason.
 3. Settle every finding as Triage says. `dropped` lists what pointed at no
    line at TIP or did not fit the schema; read it, but it needs no outcome.
+   `routes` lists the focused reviews the change needs, from a scan of
+   every commit since the default branch and from the reviewer.
 4. For the next round, add `--prior FILE`: every earlier finding and how it
    was settled. A new reviewer reads the change again, its tip moved by the
    fixups.
 5. Stop after a round with no findings, or after three rounds. A finding
    still standing goes in the hand-back.
+
+## Focused reviews
+
+Each route the general review printed needs its own review once the
+general loop has settled: `git fresh-review --focus security --goal GOAL
+BASE..TIP`, the same range and goal. Settle each finding as Triage says. A
+fix moves the change, so the general review and each route's run again on
+it, within the same three rounds.
 
 ## Someone else's pull request
 

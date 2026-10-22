@@ -562,6 +562,41 @@ func (c Config) ownPlans() ([]Plan, error) {
 	return out, nil
 }
 
+// HostBranches are the branches this host's plans name in BRANCHES, their
+// own and their parts', newest plan first, each once.
+func HostBranches() []string {
+	c, err := Load()
+	if err != nil {
+		return nil
+	}
+	own, err := c.ownPlans()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, p := range own {
+		files, err := p.files()
+		if err != nil {
+			continue
+		}
+		for _, f := range files {
+			props, err := planHeading(f)
+			if err != nil {
+				continue
+			}
+			for _, v := range strings.Fields(props["BRANCHES"]) {
+				if _, b, ok := strings.Cut(v, ".."); ok {
+					v = b
+				}
+				if v != "" && !slices.Contains(out, v) {
+					out = append(out, v)
+				}
+			}
+		}
+	}
+	return out
+}
+
 // Find lists this host's plan files that match, newest plan first.
 func (c Config) Find(o FindOptions) ([]Found, error) {
 	if o.Session == "" && o.Worktree == "" && o.Branch == "" {

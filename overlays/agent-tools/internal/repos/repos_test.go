@@ -1,6 +1,7 @@
 package repos
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -28,6 +29,74 @@ func useConfig(t *testing.T) string {
 	config := filepath.Join(t.TempDir(), "config.json")
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
 	return config
+}
+
+// TestThreatNotes: threat notes are the operator's, inline or in a file
+// outside the repository; a file the repository holds, in any of its
+// worktrees or its git directory, would let a change write its own, and is
+// refused when the settings are looked up for it.
+func TestThreatNotes(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	dir, _ := filepath.EvalSymlinks(t.TempDir())
+	gitIn(t, dir, "init", "-q", "-b", "main")
+	gitIn(t, dir, "remote", "add", "origin", "https://github.com/o/r.git")
+	gitIn(t, dir, "-c", "user.name=T", "-c", "user.email=t@e", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "x")
+	other := filepath.Join(t.TempDir(), "wt")
+	gitIn(t, dir, "worktree", "add", "-q", "-b", "side", other)
+	git.Dir = dir
+	t.Cleanup(func() { git.Dir = "" })
+	outside := filepath.Join(t.TempDir(), "notes.md")
+	os.WriteFile(outside, []byte("T1: the token never leaves the host\n"), 0o644)
+	link := filepath.Join(t.TempDir(), "link.md")
+	os.Symlink(filepath.Join(dir, "THREATS.md"), link)
+	config := useConfig(t)
+
+	for _, c := range []struct{ name, notes, want string }{
+		{"inline", "T1: tokens stay on the host", "T1: tokens stay on the host"},
+		{"inline, starting with a path", "/etc/agent must stay root's", "/etc/agent must stay root's"},
+		{"a file outside", outside, "T1: the token never leaves the host\n"},
+		{"none", "", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			data, _ := json.Marshal(map[string]any{"repos": map[string]any{"o/r": map[string]any{"threatNotes": c.notes}}})
+			os.WriteFile(config, data, 0o644)
+			s, err := Lookup()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, err := s.Notes(); err != nil || got != c.want {
+				t.Errorf("notes %q, %v; want %q", got, err, c.want)
+			}
+		})
+	}
+	for name, path := range map[string]string{"in the worktree": filepath.Join(dir, "THREATS.md"),
+		"in another worktree": filepath.Join(other, "THREATS.md"), "in the git directory": filepath.Join(dir, ".git", "notes"),
+		"through a link": link} {
+		t.Run("refused "+name, func(t *testing.T) {
+			data, _ := json.Marshal(map[string]any{"repos": map[string]any{"o/r": map[string]any{"threatNotes": path}}})
+			os.WriteFile(config, data, 0o644)
+			var r refusal.Refusal
+			if s, err := Lookup(); !errors.As(err, &r) || !refusal.SaysInstead(err.Error()) {
+				t.Errorf("%s: %+v, %v", path, s, err)
+			}
+		})
+	}
+
+	// A notes file that cannot be read refuses, saying what to fix.
+	t.Run("unreadable", func(t *testing.T) {
+		missing := filepath.Join(t.TempDir(), "gone.md")
+		data, _ := json.Marshal(map[string]any{"repos": map[string]any{"o/r": map[string]any{"threatNotes": missing}}})
+		os.WriteFile(config, data, 0o644)
+		s, err := Lookup()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var r refusal.Refusal
+		if _, err := s.Notes(); !errors.As(err, &r) || !refusal.SaysInstead(err.Error()) || !strings.Contains(err.Error(), missing) {
+			t.Errorf("unreadable: %v", err)
+		}
+	})
 }
 
 func TestLookup(t *testing.T) {
@@ -61,6 +130,23 @@ func TestLookup(t *testing.T) {
 		repository(t)
 		if s, err := Lookup(); err != nil || s.Repo != "" || s.Test != "" {
 			t.Errorf("without a config: %+v, %v", s, err)
+		}
+	})
+
+	// The operator's route rules come with the settings, and one that
+	// cannot route anything is refused with the config as a whole.
+	t.Run("routes", func(t *testing.T) {
+		_, config := repository(t)
+		os.WriteFile(config, []byte(`{"repos": {"o/r": {"routes": [
+		{"route": "security", "paths": ["internal/auth/**"], "why": "authentication"}]}}}`), 0o644)
+		s, err := Lookup()
+		if err != nil || len(s.Routes) != 1 || s.Routes[0].Paths[0] != "internal/auth/**" || s.Routes[0].Why != "authentication" {
+			t.Errorf("routes: %+v, %v", s, err)
+		}
+		os.WriteFile(config, []byte(`{"repos": {"o/other": {"routes": [{"route": "style", "paths": ["x"], "why": "x"}]}}}`), 0o644)
+		var r refusal.Refusal
+		if s, err := Lookup(); !errors.As(err, &r) || !strings.Contains(err.Error(), "o/other") {
+			t.Errorf("an unknown route: %+v, %v", s, err)
 		}
 	})
 

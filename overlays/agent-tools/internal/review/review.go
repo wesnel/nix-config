@@ -13,7 +13,8 @@ var Contract string
 
 // Schema is the JSON Schema of a reviewer's reply. Every property is
 // required and optional ones are nullable, since Codex's --output-schema
-// takes OpenAI's strict structured-output subset.
+// takes OpenAI's strict structured-output subset. Its routes' enum is
+// routes.Known.
 //
 //go:embed findings.schema.json
 var Schema []byte
