@@ -63,7 +63,7 @@ func (l *lockedPlan) setPlanProperty(part, name string, edit func(values []strin
 	var after []string
 	err := l.edit(file, func(lines []string) ([]string, error) {
 		lines = slices.Clone(lines)
-		start := slices.Index(lines, "* Plan")
+		start := planLine(lines)
 		if start < 0 {
 			return nil, refusal.New("%s has no `* Plan` heading. Restore it as the plan-work skill describes, then try again", file)
 		}
@@ -156,7 +156,7 @@ func planHeading(file string) (map[string]string, error) {
 		return nil, err
 	}
 	for _, h := range parseOrg(string(data)) {
-		if h.Level == 1 && h.Title == "Plan" {
+		if h.Level == 1 && sectionTitle(h) == "Plan" {
 			return h.Props, nil
 		}
 	}
@@ -200,12 +200,10 @@ func (p Plan) propertyDrift(events []Event) ([]PropertyDrift, error) {
 		return nil, err
 	}
 	var inFile, logged []string
-	section := ""
-	for _, h := range parseOrg(string(data)) {
-		if h.Level <= 2 {
-			section = h.Title
-		}
-		if url := h.Props["URL"]; section == "References" && url != "" && !slices.Contains(inFile, url) {
+	hs := parseOrg(string(data))
+	sections := sectionsOf(hs)
+	for i, h := range hs {
+		if url := h.Props["URL"]; sections[i] == "References" && url != "" && !slices.Contains(inFile, url) {
 			inFile = append(inFile, url)
 		}
 	}

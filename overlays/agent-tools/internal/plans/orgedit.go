@@ -15,7 +15,7 @@ import (
 var (
 	idLine     = regexp.MustCompile(`^\s*:ID:\s*(\S+)\s*$`)
 	closedPart = regexp.MustCompile(`CLOSED:\s*\[[^]]*\]\s*`)
-	starLine   = regexp.MustCompile(`^(\*+)\s`)
+	starLine   = regexp.MustCompile(`^(\*+) `)
 )
 
 // level is the level of a heading line, or 0 for any other line.
@@ -26,17 +26,96 @@ func level(line string) int {
 	return 0
 }
 
-// section is the lines of the level-2 heading titled title: from the
-// heading to the next heading of level 1 or 2.
-func section(lines []string, title string) (start, end int, ok bool) {
+// sectionTitle is the title a plan's section or `* Plan` heading is known
+// by: its title without the statistics cookies Org keeps current in it,
+// as in `** Steps [1/4]`. Every lookup of a section by its title goes
+// through it, so none disagrees with the structure check.
+func sectionTitle(h heading) string {
+	return strings.Join(strings.Fields(percentCookie.ReplaceAllString(fractionCookie.ReplaceAllString(h.Title, ""), "")), " ")
+}
+
+// lineTitle is sectionTitle of the heading on line, read with the
+// keywords ks, or "" for a line that is no heading.
+func lineTitle(line string, ks keywordSet) string {
+	n := level(line)
+	if n == 0 {
+		return ""
+	}
+	return sectionTitle(headingOf(n, strings.TrimSpace(line[n:]), ks))
+}
+
+// sectionsOf is, for each of hs, the section of the plan it is in: the
+// sectionTitle of its level-2 heading under the first `* Plan`, its own
+// for a section; "" outside one. Every reader of a section's entries goes
+// by it, as section does for writers.
+func sectionsOf(hs []heading) []string {
+	out := make([]string, len(hs))
+	inPlan, plans, current := false, 0, ""
+	for i, h := range hs {
+		switch h.Level {
+		case 1:
+			inPlan = sectionTitle(h) == "Plan" && plans == 0
+			if inPlan {
+				plans++
+			}
+			current = ""
+		case 2:
+			current = ""
+			if inPlan {
+				current = sectionTitle(h)
+			}
+		}
+		out[i] = current
+	}
+	return out
+}
+
+// headings are the indexes of lines' heading lines, those inside a block
+// left out as parseOrg leaves them, with their levels and their titles by
+// lineTitle.
+func headings(lines []string) (at, levels []int, titles []string) {
+	ks := fileKeywords(strings.Join(lines, "\n"))
+	blocks := blockLines(lines)
 	for i, l := range lines {
-		if level(l) == 2 && strings.TrimSpace(strings.TrimLeft(l, "*")) == title {
-			for end = i + 1; end < len(lines); end++ {
-				if n := level(lines[end]); n == 1 || n == 2 {
+		if n := level(l); n > 0 && !blocks[i] {
+			at, levels, titles = append(at, i), append(levels, n), append(titles, lineTitle(l, ks))
+		}
+	}
+	return at, levels, titles
+}
+
+// planLine is the index of the first `* Plan` heading of lines, or -1.
+func planLine(lines []string) int {
+	at, levels, titles := headings(lines)
+	for k := range at {
+		if levels[k] == 1 && titles[k] == "Plan" {
+			return at[k]
+		}
+	}
+	return -1
+}
+
+// section is the lines of the section titled title of the first `* Plan`
+// of lines: from its heading to the next heading of level 1 or 2.
+func section(lines []string, title string) (start, end int, ok bool) {
+	at, levels, titles := headings(lines)
+	inPlan, plans := false, 0
+	for k := range at {
+		switch {
+		case levels[k] == 1:
+			inPlan = titles[k] == "Plan" && plans == 0
+			if inPlan {
+				plans++
+			}
+		case levels[k] == 2 && inPlan && titles[k] == title:
+			end = len(lines)
+			for j := k + 1; j < len(at); j++ {
+				if levels[j] <= 2 {
+					end = at[j]
 					break
 				}
 			}
-			return i, end, true
+			return at[k], end, true
 		}
 	}
 	return 0, 0, false

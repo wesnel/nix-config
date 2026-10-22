@@ -29,10 +29,12 @@ type heading struct {
 }
 
 var (
-	headingLine  = regexp.MustCompile(`^(\*+)\s+(.*?)\s*$`)
+	// headingLine is a heading as Org reads one: stars, then a space; a
+	// tab after the stars makes a line of text. starLine agrees with it.
+	headingLine  = regexp.MustCompile(`^(\*+) +(.*?)\s*$`)
 	propertyLine = regexp.MustCompile(`^\s*:([^:\s]+):(?:\s+(.*?))?\s*$`)
 	planningLine = regexp.MustCompile(`^\s*(SCHEDULED|DEADLINE|CLOSED):`)
-	blockLine    = regexp.MustCompile(`(?i)^\s*#\+(begin|end)_`)
+	blockLine    = regexp.MustCompile(`(?i)^\s*#\+(begin|end)_(\S*)`)
 	priorityWord = regexp.MustCompile(`^\[#([A-Z0-9])\]$`)
 	tagsSuffix   = regexp.MustCompile(`\s+:((?:[\p{L}\p{N}_@#%]+:)+)$`)
 	drawerStart  = regexp.MustCompile(`^\s*:([A-Za-z0-9_-]+):\s*$`)
@@ -49,12 +51,38 @@ func set(words ...string) map[string]bool {
 	return m
 }
 
+// blockLines is, for each of lines, whether it is part of a block, its
+// #+begin_ and #+end_ lines included, as Org reads one: a #+begin_NAME
+// line starts a block only where a #+end_NAME line follows it, and is a
+// line of text otherwise.
+func blockLines(lines []string) []bool {
+	in := make([]bool, len(lines))
+	for i := 0; i < len(lines); i++ {
+		begin := blockLine.FindStringSubmatch(lines[i])
+		if begin == nil || !strings.EqualFold(begin[1], "begin") {
+			continue
+		}
+		for j := i + 1; j < len(lines); j++ {
+			if end := blockLine.FindStringSubmatch(lines[j]); end != nil && strings.EqualFold(end[1], "end") &&
+				strings.EqualFold(end[2], begin[2]) {
+				for k := i; k <= j; k++ {
+					in[k] = true
+				}
+				i = j
+				break
+			}
+		}
+	}
+	return in
+}
+
 // parseOrg reads the headings of an Org file, with the TODO keywords the
-// file defines. A line inside a block is never a heading.
+// file defines. A line inside a block, by blockLines, is never a heading.
 func parseOrg(text string) []heading {
 	keywords := fileKeywords(text)
 	var out []heading
-	inBlock := false
+	lines := strings.Split(text, "\n")
+	blocks := blockLines(lines)
 	// Where the current heading's lines are: before its property drawer,
 	// in it, after it, or in another drawer.
 	const (
@@ -65,10 +93,8 @@ func parseOrg(text string) []heading {
 	)
 	at := top
 	logbook := false
-	for _, line := range strings.Split(text, "\n") {
-		if m := blockLine.FindStringSubmatch(line); m != nil {
-			inBlock = strings.EqualFold(m[1], "begin")
-		}
+	for i, line := range lines {
+		inBlock := blocks[i]
 		if m := headingLine.FindStringSubmatch(line); m != nil && !inBlock {
 			out = append(out, headingOf(len(m[1]), m[2], keywords))
 			at = top

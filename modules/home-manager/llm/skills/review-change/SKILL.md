@@ -15,7 +15,7 @@ was split among sub-agents: a coordinator runs the same pipeline, and the
 1. **Plan.** Before coding, write the plan as the `plan-work` skill says:
    the goal, what is not this change's job, and the items the change is made
    of, each with an ID. Record every review outcome against the plan item ID
-   it concerns, as "Recording it in the plan" below says.
+   it concerns, as "Recording it in the log" below says.
 2. **Design review of the plan**, before coding.
 3. **The work**, committed as the `signing-pass` skill says.
 4. **Fresh review loop** over the committed change, once the work is
@@ -27,7 +27,7 @@ was split among sub-agents: a coordinator runs the same pipeline, and the
    - the design reviews' open questions for the operator and the decisions you
      made yourself, as one list;
    - for each finding settled `fix`, what the `retro` skill proposes would
-     have prevented it, written into the plan as its questions.
+     have prevented it, each a question written with `agent-plan ask`.
 
 ## The goal statement
 
@@ -36,7 +36,7 @@ this change's job, taken from the plan, with nothing of how the work went.
 Write it with `agent-plan goal PLAN [--part P1] > FILE`. When the caller
 hands you a goal statement, use that file as it stands.
 
-## Recording it in the plan
+## Recording it in the log
 
 Each stage is an event in the plan's log (the `plan-work` skill's
 `agent-plan log`), against the item it concerns: the plan's ID, a part's,

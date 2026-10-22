@@ -33,9 +33,9 @@ func lastCheckpoint(events []Event) int {
 // ResumeBrief is what a session needs from p to go on after /clear or a
 // compaction, at most limit bytes: the goal, the questions the operator
 // can answer now, the steps under way and ready, what waits on what, the
-// branches and pull requests, the decisions since the last checkpoint
-// spelled out, newest kept first, and the IDs of the rest with the
-// commands that show them. Every section is clipped to its share, so a
+// branches and pull requests, any structure drift, the decisions since
+// the last checkpoint spelled out, newest kept first, and the IDs of the
+// rest with the commands that show them. Every section is clipped to its share, so a
 // plan of any size fits.
 func (p Plan) ResumeBrief(now time.Time, limit int) (string, error) {
 	s, err := p.StatusAt(now)
@@ -125,8 +125,11 @@ func (p Plan) ResumeBrief(now time.Time, limit int) (string, error) {
 		"Branches: " + orNone(props["BRANCHES"]),
 		"Pull requests: " + orNone(props["PULL_REQUESTS"]),
 		fmt.Sprintf("Follow-ups open: %d", len(s.Followups)),
+		s.structureLine(),
 	} {
-		head.WriteString(clip(line, 600) + "\n")
+		if line != "" {
+			head.WriteString(clip(line, 600) + "\n")
+		}
 	}
 
 	// Decisions: those decided after the last checkpoint, by their decided

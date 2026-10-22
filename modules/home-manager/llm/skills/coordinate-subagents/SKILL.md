@@ -139,8 +139,9 @@ feedback list, runs in phases.
    evidence: real, not real, partly real, or cannot verify here. It proposes a
    fix and the commit the fix folds into, and may try the fix in its worktree,
    leaving it uncommitted.
-2. **Decide.** Merge the reports into one list for the operator. Give each
-   decision its options and your recommendation.
+2. **Decide.** Merge the reports into one list for the operator: a question
+   per decision through `agent-plan ask`, with its options and your
+   recommendation.
 3. **Fix.** One sub-agent per part, or per coupled stack, with the operator's
    decisions written into its task. It ports any experiment from its
    investigation worktree, committing none of the scratch tests as they are.
@@ -245,11 +246,13 @@ Before relaying a report, confirm it:
 - The specific tests it cites pass when you run them; whole suites are left
   to CI and the part's own `git red-check` run.
 
-Once a report passes, log `done` for its part's ID, which marks its
-heading `DONE` and readies the parts that wait for it. Relay only what you
-confirmed, and say what you did not. Questions it raises go in the plan, as
-the `plan-work` skill's "Questions for the operator" says, not in your
-message.
+Accepting a report is logging it, never editing the plan's text: once a
+report passes, log `done` for its part's ID, which marks its heading
+`DONE` and readies the parts that wait for it, then `verified` with the
+checks you ran as evidence, and `handed-back` once the operator has the
+branch. Relay only what you confirmed, and say what you did not. Each
+question it raises goes through `agent-plan ask`, as the `plan-work`
+skill's "Questions for the operator" says, not into your message.
 
 ## Review each branch
 

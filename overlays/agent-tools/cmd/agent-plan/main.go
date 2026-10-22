@@ -51,9 +51,17 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      steps without done, done without verified, parts ready
                      to start, steps ready now (no open AFTER item, earlier
                      ORDERED siblings settled, not scheduled for later),
-                     what still waits, keyword drift, and property drift (a
+                     what still waits, keyword drift, property drift (a
                      WORKTREES, BRANCHES, PULL_REQUESTS or OWNERS value, or a
-                     References entry, the log does not give)
+                     References entry, the log does not give), and structure
+                     drift (a top-level heading but one * Plan; a section
+                     not a plan's, or twice; a heading under Goal or
+                     Verification; a References entry without a URL; an
+                     entry of Steps, Distribution, Questions or Follow-ups
+                     without its ID; a question without a question's
+                     keyword; an ORDERED or Archive group with text or no
+                     entries; a heading skipping a level; a heading line
+                     inside a block; a block with no end)
   set PLAN NAME [VALUE...] [--part P1]
                      set WORKTREES, BRANCHES or PULL_REQUESTS of the plan's
                      file, or the part's, to the values, and log it; new,
@@ -67,13 +75,14 @@ directory and host come from "plans" in the user's agent-tools/config.json.
   brief PLAN         what an agent needs to go on after a compaction: the goal,
                      the decisions, the steps and parts ready, the questions
                      the operator can answer now, the steps done but not
-                     verified, and the open follow-ups; Codex's and ECA's
-                     hooks add it after one
+                     verified, the open follow-ups, and any structure drift;
+                     Codex's and ECA's hooks add it after one
   brief PLAN --resume
                      what a session needs to go on after /clear or a
                      compaction, within 10,000 bytes: the goal, the open
                      questions, the steps under way and ready, what waits on
-                     what, branches and pull requests, the decisions since
+                     what, branches and pull requests, any structure drift,
+                     the decisions since
                      the last hand-back or sign-pass, and the IDs and
                      commands for the rest; Claude Code's SessionStart hook
                      adds it after either
