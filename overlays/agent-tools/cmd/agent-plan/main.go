@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -39,7 +40,11 @@ directory and host come from "plans" in the user's agent-tools/config.json.
   find [--session ID] [--worktree DIR] [--branch B]
                      this host's plan files that match any one given (default:
                      this session, worktree and branch)
-  find --hook        the same for a Claude Code SessionStart hook (reads stdin)
+  find --hook        the same for a Claude Code SessionStart hook (reads stdin),
+                     with brief --resume after /clear or a compaction; as its
+                     SessionEnd hook, hands the plan of a session /clear ends
+                     to the session it starts in the same directory, and
+                     prints nothing
   goal PLAN [--part P1]
                      the goal statement, the text under "** Goal"
   status PLAN [--format org|json]
@@ -62,8 +67,16 @@ directory and host come from "plans" in the user's agent-tools/config.json.
   brief PLAN         what an agent needs to go on after a compaction: the goal,
                      the decisions, the steps and parts ready, the questions
                      the operator can answer now, the steps done but not
-                     verified, and the open follow-ups; the hooks add it
-                     after one
+                     verified, and the open follow-ups; Codex's and ECA's
+                     hooks add it after one
+  brief PLAN --resume
+                     what a session needs to go on after /clear or a
+                     compaction, within 10,000 bytes: the goal, the open
+                     questions, the steps under way and ready, what waits on
+                     what, branches and pull requests, the decisions since
+                     the last hand-back or sign-pass, and the IDs and
+                     commands for the rest; Claude Code's SessionStart hook
+                     adds it after either
   decisions PLAN [--all] [--json]
                      the questions settled as DECIDED, with their answers;
                      --all adds the parts'
@@ -98,7 +111,12 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      stdin): the session's context and quota windows from
                      Claude Code's input, then the open questions of the
                      session's plan, else of the plan of the worktree "cwd"
-                     is in; or nothing. Never touches the network
+                     is in; or nothing. Never touches the network. Ends with
+                     "checkpoint · /clear" where that plan stands at a
+                     checkpoint (a hand-back, a sign-pass handed over or
+                     signed, or a decision that left no question to ask) and
+                     the context holds 200K tokens or more or its cache has
+                     gone cold
   own PLAN --worktree DIR --agent ID
                      record agent ID, the harness's ID for a sub-agent or
                      "main" for the session's main thread, as the one agent
@@ -214,6 +232,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if c, err := plans.Load(); err == nil {
 			if line := c.StatusLine(input); line != "" {
 				parts = append(parts, line)
+			}
+			if checkpointHint(c, input, time.Now()) != "" {
+				parts = append(parts, "checkpoint · /clear")
 			}
 		}
 		if len(parts) > 0 {
@@ -331,6 +352,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		note     = flags.String("note", "", "")
 		unset    = flags.Bool("clear", false, "")
 		check    = flags.Bool("check", false, "")
+		resume   = flags.Bool("resume", false, "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
 		branches multi
@@ -414,7 +436,14 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			Branch: branch, Commit: *commit, Evidence: *evidence, Review: *review, Outcome: *outcome}, time.Now()))
 	case "find":
 		if *hook {
-			out, err := c.SessionHook(readAll(stdin))
+			input := readAll(stdin)
+			var event struct {
+				Name string `json:"hook_event_name"`
+			}
+			if json.Unmarshal(input, &event) == nil && event.Name == "SessionEnd" {
+				return hookReport(nil, c.SessionEndHook(input, time.Now()), stdout, stderr)
+			}
+			out, err := c.SessionHook(input)
 			return hookReport(out, err, stdout, stderr)
 		}
 		o := plans.FindOptions{Session: session, Worktree: worktree, Branch: branch}
@@ -469,6 +498,9 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return 2
 		}
 		brief, err := p.Brief(time.Now())
+		if *resume {
+			brief, err = p.ResumeBrief(time.Now(), plans.ResumeLimit)
+		}
 		if err != nil {
 			return report(nil, err)
 		}

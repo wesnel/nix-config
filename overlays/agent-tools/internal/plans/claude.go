@@ -37,9 +37,10 @@ func checkout(dir string) (top, branch string) {
 }
 
 // SessionHook names the plans of the session Claude Code's SessionStart
-// hook describes, matched by session or by the worktree it runs in, as
-// the hook's output, with the first one's brief after a compaction;
-// nothing when there are none.
+// hook describes, matched by session or by the worktree it runs in, the
+// plan a /clear handed over by SessionEndHook first made the session's, as
+// the hook's output, with the first one's resume brief after /clear or a
+// compaction, the whole within ResumeLimit; nothing when there are none.
 func (c Config) SessionHook(hook []byte) ([]byte, error) {
 	var in claudeHook
 	if err := json.Unmarshal(hook, &in); err != nil {
@@ -48,6 +49,9 @@ func (c Config) SessionHook(hook []byte) ([]byte, error) {
 	o := FindOptions{}
 	if in.SessionID != "" {
 		o.Session = "claude:" + in.SessionID
+		if in.Source == "clear" && in.Cwd != "" {
+			c.takeHandover(o.Session, in.Cwd, time.Now())
+		}
 	}
 	o.Worktree, _ = checkout(in.Cwd)
 	if o.Session == "" && o.Worktree == "" {
@@ -61,11 +65,11 @@ func (c Config) SessionHook(hook []byte) ([]byte, error) {
 	for _, f := range found {
 		lines = append(lines, fmt.Sprintf("- %s (%s, status %s, matched by %s)", f.File, f.Title, f.State, strings.Join(f.Matched, " and ")))
 	}
-	context := "Plans for this session:\n" + strings.Join(lines, "\n") +
+	context := "Plans for this session:\n" + clip(strings.Join(lines, "\n"), ResumeLimit/5) +
 		"\nRead yours, and `agent-plan status PLAN` for its progress, before going on; keep it true as the plan-work skill says."
-	if in.Source == "compact" {
+	if in.Source == "compact" || in.Source == "clear" {
 		if p, err := c.Open(found[0].Plan); err == nil {
-			if brief, err := p.Brief(time.Now()); err == nil {
+			if brief, err := p.ResumeBrief(time.Now(), ResumeLimit-len(context)-2); err == nil {
 				context += "\n\n" + brief
 			}
 		}

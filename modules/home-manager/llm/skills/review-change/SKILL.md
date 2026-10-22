@@ -18,7 +18,8 @@ was split among sub-agents: a coordinator runs the same pipeline, and the
    it concerns, as "Recording it in the plan" below says.
 2. **Design review of the plan**, before coding.
 3. **The work**, committed as the `signing-pass` skill says.
-4. **Fresh review loop** over the committed change.
+4. **Fresh review loop** over the committed change, once the work is
+   complete; settle each round's findings together before the next round.
 5. **Design review of the result**, before handing back.
 6. **Hand back**: what the work's own instructions ask for, and
    - each finding, its outcome and its plan item ID, round by round;
@@ -90,7 +91,7 @@ it, within the same three rounds.
 The source is `pr-loop review`, not `git fresh-review`: it fetches the pull
 request into a clone of its own and reviews it with the same contract,
 without running its code. Run it in the background: a run takes
-minutes. On the host, `pr-loop review OWNER/NAME#N` makes the review's
+minutes. Wait for it to finish before you stop or report. On the host, `pr-loop review OWNER/NAME#N` makes the review's
 directory, `~/.cache/pr-review/OWNER/NAME/N/HEAD12/`; a `claude-pr-loop`
 session started there reads only that review and reaches GitHub only
 through `pr-loop review N`.
