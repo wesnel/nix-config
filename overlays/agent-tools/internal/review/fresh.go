@@ -18,15 +18,14 @@ import (
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
-	"github.com/wesnel/agent-tools/internal/redcheck"
 	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/repos"
 )
 
 // Usage is `git fresh-review -h`.
 const Usage = `usage: git fresh-review --goal FILE [--items FILE] [--prior FILE] [--reviewer auto|codex]
-                        [--model M] [--timeout S] [--no-red-check] BASE..TIP
-       git fresh-review --print-prompt --goal FILE [--items FILE] [--prior FILE] [--no-red-check] BASE..TIP
+                        [--model M] [--timeout S] BASE..TIP
+       git fresh-review --print-prompt --goal FILE [--items FILE] [--prior FILE] BASE..TIP
 
 Reviews the commits in BASE..TIP with a reviewer that did not write them and
 sees only the commits and what the files name: the goal statement (the goal,
@@ -41,8 +40,9 @@ may read only that worktree, the parts of the git directory git needs, the
 Nix store and the system files they need to run; they may not write or
 reach the network, and no MCP server, plugin, web search or image viewer
 loads. Codex's sandbox cannot start inside another macOS sandbox, so run
-this outside one. Where the repository has test settings, git red-check
-BASE..TIP runs first and its JSON goes in the prompt.
+this outside one. git red-check runs the commits' code, so the session runs
+it, never fresh-review; where the repository has test settings, stderr says
+the review has no red-check results.
 
   --goal FILE       the goal statement (required)
   --items FILE      the items the change answers, and how each was settled
@@ -51,7 +51,6 @@ BASE..TIP runs first and its JSON goes in the prompt.
                     even then
   --model M         the Codex model (default: Codex's own)
   --timeout S       seconds before the review is stopped (default 1800)
-  --no-red-check    leave git red-check out of the prompt
 
 Writes JSON on stdout: reviewer, model, range, tip, findings (each with
 id, path, line, kind, claim and evidence, and endLine, about and reopens
@@ -78,7 +77,6 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	reviewer := flags.String("reviewer", "auto", "")
 	model := flags.String("model", "", "")
 	timeout := flags.Int("timeout", 1800, "")
-	noRedCheck := flags.Bool("no-red-check", false, "")
 	printPrompt := flags.Bool("print-prompt", false, "")
 
 	// Flags may follow the range, as with git's own commands.
@@ -103,7 +101,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	if err := git.CheckConfig(""); err != nil {
 		return report(nil, err, 0)
 	}
-	r, err := resolve(positional[0])
+	r, err := resolve("", positional[0])
 	if err != nil {
 		return report(nil, err, 0)
 	}
@@ -141,9 +139,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			return noCodex(why)
 		}
 	}
-	if !*noRedCheck {
-		in.redCheck = redCheckFor(ctx, r, stderr)
-	}
+	noteRedCheck(r, stderr)
 	if *printPrompt {
 		in.where = fmt.Sprintf("Read the change in the repository at %s: `git diff %s %s`, `git log -p %s..%s`, "+
 			"and `git show %s:PATH` for a file as it is at TIP. That checkout's own files may hold work that is not "+
@@ -153,7 +149,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	}
 
 	out, err := codexReview(ctx, in, *model, time.Duration(*timeout)*time.Second, stderr)
-	var unconfined errUnconfined
+	var unconfined Unconfined
 	if errors.As(err, &unconfined) {
 		return noCodex(string(unconfined))
 	}
@@ -169,16 +165,20 @@ type span struct {
 	commits                       string
 }
 
-func resolve(given string) (*span, error) {
+// resolve resolves the range given in the repository at dir, or, for "", the
+// one containing the process's directory.
+func resolve(dir, given string) (*span, error) {
 	base, tip, ok := strings.Cut(given, "..")
 	if !ok || strings.HasPrefix(tip, ".") || base == "" || tip == "" {
 		return nil, refusal.New("%q is not a range BASE..TIP; pass the range whose commits make up the change, "+
 			"such as `origin/main..HEAD`", given)
 	}
-	r := &span{given: given}
+	r := &span{given: given, top: dir}
 	var err error
-	if r.top, err = git.Toplevel(); err != nil {
-		return nil, err
+	if r.top == "" {
+		if r.top, err = git.Toplevel(); err != nil {
+			return nil, err
+		}
 	}
 	if r.common, err = git.Run("-C", r.top, "rev-parse", "--path-format=absolute", "--git-common-dir"); err != nil {
 		return nil, err
@@ -232,26 +232,16 @@ func unavailable(auto bool) string {
 	return ""
 }
 
-// redCheckFor runs git red-check on the range where the repository has test
-// settings, and returns its JSON or why it did not run; "" when there are no
-// settings.
-func redCheckFor(ctx context.Context, r *span, log io.Writer) string {
+// noteRedCheck says on log that git red-check is left out where the
+// repository has test settings. red-check runs the commits' code, which may be
+// anyone's, so it never runs here; the session runs it.
+func noteRedCheck(r *span, log io.Writer) {
 	git.Dir = r.top
 	settings, err := repos.Lookup()
 	git.Dir = ""
-	switch {
-	case err != nil:
-		return "git red-check did not run: " + err.Error()
-	case settings.Test == "" || len(settings.TestFiles) == 0:
-		return ""
+	if err == nil && settings.Test != "" && len(settings.TestFiles) > 0 {
+		fmt.Fprintf(log, "%s: git red-check runs in the session, not here, so this review has no red-check results\n", name)
 	}
-	result, err := redcheck.Do(ctx, r.base+".."+r.tip, redcheck.Options{
-		Dir: r.top, Test: settings.Test, Build: settings.Build, TestFiles: settings.TestFiles, Log: log})
-	if err != nil {
-		return "git red-check did not run: " + err.Error()
-	}
-	data, _ := json.MarshalIndent(result, "", "  ")
-	return "```json\n" + string(data) + "\n```"
 }
 
 type inputs struct {
@@ -281,6 +271,26 @@ func prompt(in inputs) string {
 	return b.String()
 }
 
+// Inputs are a review's prompt for a caller that resolves the range itself.
+// Commits is `git log --reverse --format='%H %s' BASE..TIP`; Where says where
+// the reviewer reads the change.
+type Inputs struct {
+	Given, Base, Tip, Commits           string
+	Goal, Items, Prior, RedCheck, Where string
+}
+
+// Prompt is the prompt a review with in gives its reviewer.
+func Prompt(in Inputs) string {
+	return prompt(inputs{r: &span{given: in.Given, base: in.Base, tip: in.Tip, commits: in.Commits},
+		goal: in.Goal, items: in.Items, prior: in.Prior, redCheck: in.RedCheck, where: in.Where})
+}
+
+// Validate is validate for a caller that resolves the range itself: blob
+// returns a file as it is at TIP, or an error where there is none.
+func Validate(reply, given, tip string, blob func(path string) ([]byte, error), wt string) (*Output, error) {
+	return validateWith(reply, given, tip, blob, wt)
+}
+
 // codexReview runs Codex read-only in a throwaway worktree of TIP, which it
 // removes however the review ends.
 func codexReview(ctx context.Context, in inputs, model string, timeout time.Duration, log io.Writer) (*Output, error) {
@@ -302,13 +312,67 @@ func codexReview(ctx context.Context, in inputs, model string, timeout time.Dura
 	if _, err := git.Run("-C", in.r.top, "worktree", "add", "--quiet", "--detach", wt, in.r.tip); err != nil {
 		return nil, err
 	}
-	schema, reply := filepath.Join(dir, "findings.schema.json"), filepath.Join(dir, "reply.json")
-	if err := os.WriteFile(schema, Schema, 0o644); err != nil {
-		return nil, err
-	}
 	in.where = "The working directory is a checkout of TIP holding nothing but the commits; `git diff " +
 		in.r.base + " " + in.r.tip + "` shows the change."
-	admin, err := git.Run("-C", wt, "rev-parse", "--path-format=absolute", "--git-dir")
+	reply, err := CodexRun(ctx, Codex{Checkout: wt, Prompt: prompt(in), Schema: Schema, Model: model, Timeout: timeout, Log: log})
+	if err != nil {
+		return nil, err
+	}
+	out, err := validate(reply.Text, in.r, wt)
+	if err != nil {
+		return nil, err
+	}
+	out.Reviewer = "codex"
+	if reply.Model != "" {
+		out.Model = &reply.Model
+	}
+	return out, nil
+}
+
+// Codex is one confined, read-only Codex run.
+type Codex struct {
+	// Checkout is a worktree the caller made and removes, whose parent
+	// directory is the caller's own and takes the schema and the reply.
+	Checkout string
+	Prompt   string
+	// Schema is the JSON schema the reply must fit.
+	Schema  []byte
+	Model   string
+	Timeout time.Duration
+	// Log receives Codex's output.
+	Log io.Writer
+	// Git runs git in the checkout; nil for the git package's Run, with
+	// the user's config.
+	Git func(args ...string) (string, error)
+}
+
+// CodexReply is what Codex replied, and the model that replied.
+type CodexReply struct {
+	Text, Model string
+}
+
+// CodexRun runs Codex with c's prompt in c's checkout, confined as
+// confinement says. It returns an Unconfined where Codex's sandbox cannot
+// start confined to the checkout.
+func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
+	dir := filepath.Dir(c.Checkout)
+	schema, reply := filepath.Join(dir, "reply.schema.json"), filepath.Join(dir, "reply.json")
+	if err := os.WriteFile(schema, c.Schema, 0o644); err != nil {
+		return nil, err
+	}
+	run := c.Git
+	if run == nil {
+		run = func(args ...string) (string, error) { return git.Run(append([]string{"-C", c.Checkout}, args...)...) }
+	}
+	head, err := run("rev-parse", "--verify", "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	admin, err := run("rev-parse", "--path-format=absolute", "--git-dir")
+	if err != nil {
+		return nil, err
+	}
+	common, err := run("rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return nil, err
 	}
@@ -321,38 +385,41 @@ func codexReview(ctx context.Context, in inputs, model string, timeout time.Dura
 	if err != nil {
 		return nil, err
 	}
-	confined, err := confinement(in.r.common, admin, codex)
+	confined, err := confinement(common, admin, codex)
 	if err != nil {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(ctx, c.Timeout)
 	defer cancel()
 	// Codex's sandbox does not start inside another macOS sandbox; Codex
-	// must then not review at all, rather than run its commands unconfined.
+	// must then not run at all, rather than run its commands unconfined.
 	env := append(gitenv.Without(os.Environ()), "PATH="+realDirs(os.Getenv("PATH")))
 	probe := exec.CommandContext(ctx, codex, append(append([]string{"sandbox"}, confined...),
-		"-P", profile, "-C", wt, "--", "git", "rev-parse", "--verify", "HEAD")...)
+		"-P", profile, "-C", c.Checkout, "--", "git", "rev-parse", "--verify", "HEAD")...)
 	probe.Env = env
 	var probeErr bytes.Buffer
 	probe.Stderr = &probeErr
-	if out, err := probe.Output(); err != nil || strings.TrimSpace(string(out)) != in.r.tip {
-		return nil, errUnconfined(fmt.Sprintf("Codex's sandbox, confined to the worktree, could not run git there (%v: %s)",
+	if out, err := probe.Output(); err != nil || strings.TrimSpace(string(out)) != head {
+		return nil, Unconfined(fmt.Sprintf("Codex's sandbox, confined to the worktree, could not run git there (%v: %s)",
 			err, strings.TrimSpace(probeErr.String())))
 	}
-	args := append([]string{"exec", "--ignore-user-config", "--ignore-rules", "--ephemeral", "-C", wt,
+	args := append([]string{"exec", "--ignore-user-config", "--ignore-rules", "--ephemeral", "-C", c.Checkout,
 		"--output-schema", schema, "-o", reply}, confined...)
-	if model != "" {
-		args = append(args, "-m", model)
+	if c.Model != "" {
+		args = append(args, "-m", c.Model)
 	}
 	cmd := exec.CommandContext(ctx, codex, append(args, "-")...)
-	cmd.Dir = wt
+	cmd.Dir = c.Checkout
 	cmd.Env = env
-	cmd.Stdin = strings.NewReader(prompt(in))
-	banner := &bannerModel{w: log}
-	cmd.Stdout, cmd.Stderr = log, banner
+	cmd.Stdin = strings.NewReader(c.Prompt)
+	banner := &bannerModel{w: c.Log}
+	cmd.Stdout, cmd.Stderr = c.Log, banner
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.Cancel = func() error {
+		stopGroup(cmd.Process.Pid, 5*time.Second)
+		return nil
+	}
 	cmd.WaitDelay = 5 * time.Second
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
@@ -364,23 +431,27 @@ func codexReview(ctx context.Context, in inputs, model string, timeout time.Dura
 	if err != nil {
 		return nil, fmt.Errorf("codex left no reply: %w", err)
 	}
-	out, err := validate(string(data), in.r, wt)
-	if err != nil {
-		return nil, err
-	}
-	out.Reviewer = "codex"
-	if banner.model != "" {
-		out.Model = &banner.model
-	} else if model != "" {
-		out.Model = &model
+	out := &CodexReply{Text: string(data), Model: banner.model}
+	if out.Model == "" {
+		out.Model = c.Model
 	}
 	return out, nil
 }
 
-// errUnconfined says why Codex cannot review confined.
-type errUnconfined string
+// stopGroup kills the process group pgid until it is empty, or for at most
+// bound. One kill is not enough: a process that forks as the kill lands can
+// leave a child in the group that the kill missed.
+func stopGroup(pgid int, bound time.Duration) {
+	deadline := time.Now().Add(bound)
+	for syscall.Kill(-pgid, syscall.SIGKILL) == nil && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
-func (e errUnconfined) Error() string { return string(e) }
+// Unconfined says why Codex cannot run confined.
+type Unconfined string
+
+func (e Unconfined) Error() string { return string(e) }
 
 // profile names the Codex permissions profile confinement defines.
 const profile = "fresh-review"
@@ -550,6 +621,13 @@ var kinds = map[string]bool{"goal-unmet": true, "bug": true, "regression": true,
 // that exists at TIP. A path inside wt, the checkout the reviewer read, is
 // made relative to it.
 func validate(reply string, r *span, wt string) (*Output, error) {
+	blob := func(path string) ([]byte, error) {
+		return git.Bytes(nil, "-C", r.top, "cat-file", "blob", r.tip+":"+path)
+	}
+	return validateWith(reply, r.given, r.tip, blob, wt)
+}
+
+func validateWith(reply, given, tip string, blob func(path string) ([]byte, error), wt string) (*Output, error) {
 	text := strings.TrimSpace(reply)
 	start, end := strings.Index(text, "{"), strings.LastIndex(text, "}")
 	if start < 0 || end < start {
@@ -562,14 +640,14 @@ func validate(reply string, r *span, wt string) (*Output, error) {
 	if err := json.Unmarshal([]byte(text[start:end+1]), &parsed); err != nil || parsed.Findings == nil {
 		return nil, fmt.Errorf("the reply is not the JSON the contract describes (%v); ask the reviewer again", err)
 	}
-	out := &Output{Range: r.given, Tip: r.tip, Findings: []*Finding{}, Dropped: []Dropped{}, Unverified: []string{}}
+	out := &Output{Range: given, Tip: tip, Findings: []*Finding{}, Dropped: []Dropped{}, Unverified: []string{}}
 	if parsed.Unverified != nil {
 		out.Unverified = parsed.Unverified
 	}
 	seen := map[string]bool{}
 	lines := map[string]int{}
 	for _, raw := range *parsed.Findings {
-		f, why := normalise(raw, r, wt, lines)
+		f, why := normalise(raw, blob, wt, lines)
 		if why == "" && seen[f.ID] {
 			why = "another finding has the id " + f.ID
 		}
@@ -585,7 +663,7 @@ func validate(reply string, r *span, wt string) (*Output, error) {
 
 // normalise checks one finding, returning it cleaned up or why it is
 // dropped. lines caches each file's line count at TIP, -1 for no such file.
-func normalise(raw json.RawMessage, r *span, wt string, lines map[string]int) (*Finding, string) {
+func normalise(raw json.RawMessage, blob func(path string) ([]byte, error), wt string, lines map[string]int) (*Finding, string) {
 	var f Finding
 	if err := json.Unmarshal(raw, &f); err != nil {
 		return nil, "does not fit the schema: " + err.Error()
@@ -610,9 +688,9 @@ func normalise(raw json.RawMessage, r *span, wt string, lines map[string]int) (*
 	n, ok := lines[path]
 	if !ok {
 		n = -1
-		if blob, err := git.Bytes(nil, "-C", r.top, "cat-file", "blob", r.tip+":"+path); err == nil {
-			n = bytes.Count(blob, []byte("\n"))
-			if len(blob) > 0 && blob[len(blob)-1] != '\n' {
+		if data, err := blob(path); err == nil {
+			n = bytes.Count(data, []byte("\n"))
+			if len(data) > 0 && data[len(data)-1] != '\n' {
 				n++
 			}
 		}

@@ -82,7 +82,7 @@ with lib; let
   # no route to GitHub; `sandbox-relay session` serves `pr-loop` and
   # `agent-plan` on a private socket, whose path replaces {socket}. Hooks, MCP servers and WebFetch run outside
   # the sandbox, which is why WebFetch to GitHub is denied as well.
-  prLoopSettings = builtins.toJSON {
+  prLoopSettings = allowedDomains: builtins.toJSON {
     permissions = {
       # Without this the auto-mode classifier may stop the force-updates that
       # `pr-loop push` makes, which is the one write the loop exists to do.
@@ -104,7 +104,7 @@ with lib; let
 
       network =
         {
-          allowedDomains = config.wgn.home.llm.prLoop.allowedDomains;
+          inherit allowedDomains;
           strictAllowlist = true;
         }
         # macOS can allow one socket. Linux allows every socket, so the agent
@@ -115,7 +115,10 @@ with lib; let
           else {allowAllUnixSockets = true;}
         );
 
-      filesystem.denyRead = config.wgn.home.llm.prLoop.deniedReads;
+      # All of the home directory but what the session needs: secrets that
+      # no list names, such as other agents' logins, stay out too.
+      filesystem.denyRead = [config.home.homeDirectory] ++ config.wgn.home.llm.prLoop.deniedReads;
+      filesystem.allowRead = config.wgn.home.llm.prLoop.allowedReads;
 
       # Relative paths here are not resolved against the workspace, so
       # `sandbox-relay session` fills in its real path. The user settings'
@@ -170,9 +173,19 @@ with lib; let
       # "$defaults" in the settings is literal: Claude Code splices its own
       # auto-mode rules in there.
       # shellcheck disable=SC2016
-      exec ${lib.getExe' pkgs.agent-tools "sandbox-relay"} session --program pr-loop --program agent-plan -- claude \
+      settings=${lib.escapeShellArg (prLoopSettings config.wgn.home.llm.prLoop.allowedDomains)}
+      ${config.wgn.home.llm.prLoop.reviewSession}
+      if [[ -n "$review" ]]; then
+        # shellcheck disable=SC2016
+        settings=${lib.escapeShellArg (prLoopSettings config.wgn.home.llm.prLoop.reviewAllowedDomains)}
+      fi
+      # The session's commands cannot read the user's git config; the relay
+      # and pr-loop on this side keep it.
+      ${config.wgn.home.llm.prLoop.gitIdentity}
+      exec ${lib.getExe' pkgs.agent-tools "sandbox-relay"} session --program pr-loop --program agent-plan -- \
+        env GIT_CONFIG_GLOBAL=${config.wgn.home.llm.prLoop.gitConfig} claude \
         --plugin-dir ${prLoopPlugin} \
-        --settings ${lib.escapeShellArg prLoopSettings} \
+        --settings "$settings" \
         --permission-mode auto \
         "$@"
     '';
