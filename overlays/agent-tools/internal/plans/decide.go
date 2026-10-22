@@ -185,9 +185,9 @@ func replaceFile(path, text string) error {
 }
 
 // StatusLine is Claude Code's status line for the session its status-line
-// input names: how many open questions the session's plan has, or nothing.
-// It reads only this host's plan files, never the network, and says nothing
-// on any error.
+// input names: how many open questions of the session's plan Wesley can
+// answer now, or nothing. It reads only this host's plan files, never the
+// network, and says nothing on any error.
 func (c Config) StatusLine(input []byte) string {
 	var in struct {
 		SessionID string `json:"session_id"`
@@ -204,6 +204,7 @@ func (c Config) StatusLine(input []byte) string {
 		return ""
 	}
 	qs, err := p.Questions(true)
+	qs = Askable(qs)
 	switch {
 	case err != nil || len(qs) == 0:
 		return ""

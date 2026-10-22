@@ -1,6 +1,7 @@
 {
   config,
   lib,
+  pkgs,
   ...
 }:
 with lib; let
@@ -16,7 +17,7 @@ in {
     wgn.home.llm.enable = true;
 
     home.file =
-      llm.mkSkillFiles ".copilot/skills" config.wgn.home.llm.skills
+      llm.mkSkillFiles pkgs ".copilot/skills" config.wgn.home.llm.skills
       // {
         ".copilot/copilot-instructions.md".source = config.wgn.home.llm.instructions;
       };

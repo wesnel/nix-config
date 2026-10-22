@@ -32,6 +32,11 @@ type Status struct {
 	Verified    int    `json:"verified"`
 	Total       int    `json:"total"`
 	Implemented string `json:"implemented"`
+	// Ready are the parts that wait for nothing and have no started, done
+	// or verified event, for them or their items; Waiting are the parts and
+	// open questions that still wait, with what for.
+	Ready   []string  `json:"ready"`
+	Waiting []Waiting `json:"waiting"`
 }
 
 // Status reads the plan and its log.
@@ -49,11 +54,27 @@ func (p Plan) Status() (Status, error) {
 		return Status{}, err
 	}
 	s := Status{Plan: p.file(""), Title: orgTitle(string(data)), Steps: []Step{}, NotDone: []string{},
-		DoneNotVerified: []string{}}
+		DoneNotVerified: []string{}, Ready: []string{}, Waiting: []Waiting{}}
+	open, err := p.Questions(true)
+	if err != nil {
+		return Status{}, err
+	}
+	isOpen := map[string]bool{}
+	for _, q := range open {
+		isOpen[q.ID] = true
+	}
+	isSettled := settled(list, events)
 	index := map[string]int{}
 	for _, it := range list {
 		if it.ID == p.Name {
 			s.State = it.Props["STATUS"]
+		}
+		if partPattern.MatchString(it.ID) || isOpen[it.ID] {
+			if on := unsettled(afterIDs(it.Props), isSettled); len(on) > 0 {
+				s.Waiting = append(s.Waiting, Waiting{ID: it.ID, On: on})
+			} else if partPattern.MatchString(it.ID) && !started(it.ID, events) {
+				s.Ready = append(s.Ready, it.ID)
+			}
 		}
 		if !stepPattern.MatchString(it.ID) {
 			continue
@@ -139,5 +160,13 @@ func (s Status) Org() string {
 	}
 	fmt.Fprintf(&b, "\n- Status: %s\n- Implemented: %s verified\n- Without done: %s\n- Done, not verified: %s\n",
 		s.State, s.Implemented, list(s.NotDone), list(s.DoneNotVerified))
+	fmt.Fprintf(&b, "- Parts ready to start: %s\n", list(s.Ready))
+	if len(s.Waiting) > 0 {
+		var waits []string
+		for _, w := range s.Waiting {
+			waits = append(waits, w.ID+" for "+strings.Join(w.On, ", "))
+		}
+		fmt.Fprintf(&b, "- Waiting: %s\n", strings.Join(waits, "; "))
+	}
 	return b.String()
 }

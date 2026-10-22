@@ -1,7 +1,6 @@
 package plans
 
 import (
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -57,57 +56,26 @@ func (p Plan) SetOwner(worktree, agent string) (map[string]string, error) {
 	if real, err := filepath.EvalSymlinks(worktree); err == nil {
 		worktree = real
 	}
-	data, err := os.ReadFile(p.file(""))
-	if err != nil {
-		return nil, err
-	}
-	lines := strings.Split(string(data), "\n")
-	start := -1
-	for i, line := range lines {
-		if line == "* Plan" {
-			start = i
-			break
-		}
-	}
-	if start < 0 {
-		return nil, refusal.New("%s has no `* Plan` heading. Restore it as the plan-work skill describes, then set the owner again", p.file(""))
-	}
 	owners := map[string]string{}
-	var pairs []string
-	at, end := -1, -1
-	for i := start + 1; i < len(lines) && end < 0; i++ {
-		switch {
-		case lines[i] == ":END:":
-			end = i
-		case strings.HasPrefix(lines[i], ":OWNERS:"):
-			at = i
-			for _, pair := range strings.Fields(strings.TrimPrefix(lines[i], ":OWNERS:")) {
-				if wt, a, ok := strings.Cut(pair, "="); ok {
-					pairs = append(pairs, pair)
-					owners[wt] = a
-				}
+	err := editPlanProperty(p.file(""), "OWNERS", func(values []string) []string {
+		pair := worktree + "=" + agent
+		var pairs []string
+		for _, v := range values {
+			wt, a, ok := strings.Cut(v, "=")
+			switch {
+			case !ok:
+				continue
+			case wt == worktree:
+				v, a, pair = pair, agent, ""
 			}
+			pairs = append(pairs, v)
+			owners[wt] = a
 		}
-	}
-	if end < 0 {
-		return nil, refusal.New("%s's `* Plan` heading has no property drawer. Restore it as the plan-work skill describes, then set the owner again", p.file(""))
-	}
-	pair := worktree + "=" + agent
-	if _, had := owners[worktree]; had {
-		for i := range pairs {
-			if strings.HasPrefix(pairs[i], worktree+"=") {
-				pairs[i] = pair
-			}
+		if pair != "" {
+			pairs = append(pairs, pair)
+			owners[worktree] = agent
 		}
-	} else {
-		pairs = append(pairs, pair)
-	}
-	owners[worktree] = agent
-	line := ":OWNERS: " + strings.Join(pairs, " ")
-	if at >= 0 {
-		lines[at] = line
-	} else {
-		lines = append(lines[:end], append([]string{line}, lines[end:]...)...)
-	}
-	return owners, os.WriteFile(p.file(""), []byte(strings.Join(lines, "\n")), 0o644)
+		return pairs
+	})
+	return owners, err
 }

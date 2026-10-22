@@ -38,10 +38,18 @@ directory and host come from "plans" in the user's agent-tools/config.json.
   goal PLAN [--part P1]
                      the goal statement, the text under "** Goal"
   status PLAN [--format org|json]
-                     steps without done, and done without verified
-  questions PLAN [--all] [--json | --count]
-                     the open questions with their recommendations; --all adds
-                     the parts'
+                     steps without done, done without verified, parts ready
+                     to start, and what still waits
+  questions PLAN [--all] [--waiting] [--json | --count]
+                     the open questions Wesley can answer now, with their
+                     recommendations; --all adds the parts', --waiting those
+                     that wait for an AFTER item: a question until decided,
+                     a part or step until logged done
+  ask PLAN --question TEXT --recommendation TEXT [--context TEXT]
+      [--alternative TEXT]... [--after ID]... [--part P1]
+                     write a question for Wesley under Open questions, in the
+                     plan's file or the part's, as its next question ID, in
+                     the form questions reads, and log it as asked
   decide PLAN QID --answer TEXT
                      move open question QID to Decisions as the next decision,
                      with Wesley's answer, and log it as decided
@@ -51,6 +59,14 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      record agent ID, the harness's ID for a sub-agent or
                      "main" for the session's main thread, as the one agent
                      that edits files in the worktree DIR (OWNERS in the plan)
+  remind             a hook (reads stdin) that asks, in a session with a plan,
+                     for the coordinator to check a finished sub-agent's report
+                     and log its part (Claude Code's UserPromptSubmit and
+                     PostToolUse on Agent, Codex's PostToolUse on wait_agent,
+                     ECA's postToolCall on spawn_agent), and for a compaction
+                     to keep what the plan lacks (Claude Code's PreCompact) or
+                     the plan to be brought up to date after one (Codex's
+                     SessionStart, ECA's postCompact); never blocks
   init               clone the plans' repository where it is missing and
                      "plans.remote" names it, then make the plans directory,
                      with a .gitignore for the lock files, as new does
@@ -82,7 +98,7 @@ func clientSide(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
-	if args[0] == "statusline" {
+	if args[0] == "statusline" || args[0] == "remind" {
 		return true
 	}
 	if args[0] == "find" {
@@ -127,6 +143,15 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if c, err := plans.Load(); err == nil {
 			if line := c.StatusLine(readAll(stdin)); line != "" {
 				fmt.Fprintln(stdout, line)
+			}
+		}
+		return 0
+	}
+	if args[0] == "remind" {
+		// A failure asks for nothing, quietly.
+		if c, err := plans.Load(); err == nil {
+			if out := c.Remind(readAll(stdin)); len(out) > 0 {
+				stdout.Write(append(out, '\n'))
 			}
 		}
 		return 0
@@ -211,14 +236,23 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		all      = flags.Bool("all", false, "")
 		asJSON   = flags.Bool("json", false, "")
 		count    = flags.Bool("count", false, "")
+		waiting  = flags.Bool("waiting", false, "")
 		answer   = flags.String("answer", "", "")
 		settle   = flags.Duration("settle", 0, "")
+		question = flags.String("question", "", "")
+		context  = flags.String("context", "", "")
+		advice   = flags.String("recommendation", "", "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
 		branches multi
 		trees    multi
 		sessions multi
+		// Repeatable for ask.
+		alternatives multi
+		after        multi
 	)
+	flags.Var(&alternatives, "alternative", "")
+	flags.Var(&after, "after", "")
 	flags.Var(&repos, "repo", "")
 	flags.Var(&branches, "branch", "")
 	flags.Var(&trees, "worktree", "")
@@ -328,6 +362,9 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return 2
 		}
 		qs, err := p.Questions(*all)
+		if !*waiting {
+			qs = plans.Askable(qs)
+		}
 		switch {
 		case err != nil || *asJSON:
 			return report(qs, err)
@@ -337,6 +374,13 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			io.WriteString(stdout, plans.QuestionsOrg(qs))
 		}
 		return 0
+	case "ask":
+		p, ok := wantPlan()
+		if !ok {
+			return 2
+		}
+		return report(p.Ask(plans.AskOptions{Part: *part, Question: *question, Context: *context,
+			Recommendation: *advice, Alternatives: alternatives, After: after}, time.Now()))
 	case "decide":
 		if len(positional) != 2 {
 			fmt.Fprint(stderr, "agent-plan decide: takes PLAN QID --answer TEXT\n")

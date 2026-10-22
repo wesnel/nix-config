@@ -34,16 +34,39 @@ func loadSchema(t *testing.T) schema {
 
 // TestContractDefinesEveryKind holds the reviewer's instructions to the
 // schema its reply is checked against: each kind the schema accepts is one
-// the contract defines.
+// the contract defines and the check keeps.
 func TestContractDefinesEveryKind(t *testing.T) {
-	kinds := loadSchema(t).Properties.Findings.Items.Properties.Kind.Enum
-	if len(kinds) == 0 {
+	schemaKinds := loadSchema(t).Properties.Findings.Items.Properties.Kind.Enum
+	if len(schemaKinds) == 0 {
 		t.Fatal("the schema names no kinds")
 	}
-	for _, kind := range kinds {
+	for _, kind := range schemaKinds {
 		if !strings.Contains(Contract, "\n- `"+kind+"`: ") {
 			t.Errorf("the contract does not define %s", kind)
 		}
+		if !kinds[kind] {
+			t.Errorf("the check drops findings of kind %s", kind)
+		}
+	}
+	if len(kinds) != len(schemaKinds) {
+		t.Errorf("the check keeps %d kinds, the schema has %d", len(kinds), len(schemaKinds))
+	}
+}
+
+// A breach of a rule the repository writes down is a finding of its own
+// kind, which names the doc and the rule.
+func TestConventionKind(t *testing.T) {
+	found := false
+	for _, kind := range loadSchema(t).Properties.Findings.Items.Properties.Kind.Enum {
+		found = found || kind == "convention"
+	}
+	if !found {
+		t.Error("the schema has no convention kind")
+	}
+	_, rules, _ := strings.Cut(Contract, "## Rules")
+	rules, _, _ = strings.Cut(rules, "## Checks")
+	if !strings.Contains(rules, "`convention`") {
+		t.Errorf("the rules do not say a written rule is a finding:\n%s", rules)
 	}
 }
 

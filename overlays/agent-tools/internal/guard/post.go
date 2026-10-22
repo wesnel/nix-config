@@ -4,20 +4,27 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
-// post is `pr-loop guard --post`: after a tool call that pushed to GitHub,
-// the PostToolUse of Claude Code or Codex, or ECA's postToolCall, it adds
-// one line of context naming the `pr-loop wait ci` to start, read from the
-// command's JSON output; it prints nothing when the output shows no push.
+// post is `pr-loop guard --post`, after a shell call: the PostToolUse of
+// Claude Code or Codex, or ECA's postToolCall. It records the call's facts
+// in the plan of its session or worktree (recordFacts), and after a push to
+// GitHub adds one line of context naming the `pr-loop wait ci` to start,
+// read from the command's JSON output; it prints nothing when the output
+// shows no push.
 func post(stdin io.Reader, stdout io.Writer) int {
 	var in struct {
 		HookType     string          `json:"hook_type"`
 		ToolInput    json.RawMessage `json:"tool_input"`
 		ToolResponse json.RawMessage `json:"tool_response"`
+		Cwd          string          `json:"cwd"`
+		SessionID    string          `json:"session_id"`
+		ChatID       string          `json:"chat_id"` // set by ECA
 	}
 	if json.NewDecoder(stdin).Decode(&in) != nil {
 		return 0
@@ -26,15 +33,22 @@ func post(stdin io.Reader, stdout io.Writer) int {
 		Command string `json:"command"`
 	}
 	json.Unmarshal(in.ToolInput, &args)
-	if args.Command == "" || !pushes(args.Command, 0) {
+	if args.Command == "" {
 		return 0
 	}
-	targets := pushedTo(in.ToolResponse)
-	if len(targets) == 0 {
+	if in.Cwd == "" {
+		in.Cwd, _ = os.Getwd()
+	}
+	texts := responseTexts(in.ToolResponse)
+	lines := recordFacts(session(in.ChatID, in.SessionID), in.Cwd, args.Command, texts, time.Now())
+	if targets := pushedTo(texts); len(targets) > 0 && pushes(args.Command, 0) {
+		lines = append(lines, fmt.Sprintf("You just pushed to GitHub. Start `pr-loop wait ci %s` in the background now, "+
+			"and act on its result as the signing-pass skill's \"After a push\" says.", strings.Join(targets, " ")))
+	}
+	if len(lines) == 0 {
 		return 0
 	}
-	context := fmt.Sprintf("You just pushed to GitHub. Start `pr-loop wait ci %s` in the background now, "+
-		"and act on its result as the signing-pass skill's \"After a push\" says.", strings.Join(targets, " "))
+	context := strings.Join(lines, "\n")
 	var out any = map[string]any{"hookSpecificOutput": map[string]string{"hookEventName": "PostToolUse", "additionalContext": context}}
 	if in.HookType != "" {
 		out = map[string]string{"additionalContext": context}
@@ -88,57 +102,21 @@ func pushes(text string, depth int) bool {
 	return found
 }
 
-// pushedTo reads a tool's output for what pr-loop or git sign-pass reports
-// it pushed: the PR `open` opened, or the branches under "pushed". The
-// output is Claude Code's {"stdout": ...}, or any JSON whose strings hold
-// the command's output.
-func pushedTo(response json.RawMessage) []string {
-	var value any
-	if json.Unmarshal(response, &value) != nil {
-		return nil
-	}
-	var texts []string
-	var collect func(any)
-	collect = func(v any) {
-		switch v := v.(type) {
-		case string:
-			texts = append(texts, v)
-		case map[string]any:
-			if s, ok := v["stdout"].(string); ok {
-				texts = append(texts, s)
-				return
-			}
-			for _, x := range v {
-				collect(x)
-			}
-		case []any:
-			for _, x := range v {
-				collect(x)
-			}
+// pushedTo reads a tool's output texts (responseTexts) for what pr-loop or
+// git sign-pass reports it pushed: the PR `open` opened, or the branches
+// under "pushed".
+func pushedTo(texts []string) []string {
+	for _, result := range jsonObjects(texts) {
+		if n, ok := result["pr"].(float64); ok && result["url"] != nil {
+			return []string{strconv.Itoa(int(n))}
 		}
-	}
-	collect(value)
-	for _, text := range texts {
-		for i := strings.Index(text, "{"); i >= 0; {
-			var result map[string]any
-			if json.NewDecoder(strings.NewReader(text[i:])).Decode(&result) == nil {
-				if n, ok := result["pr"].(float64); ok && result["url"] != nil {
-					return []string{strconv.Itoa(int(n))}
-				}
-				if pushed, ok := result["pushed"].(map[string]any); ok {
-					var branches []string
-					for b := range pushed {
-						branches = append(branches, b)
-					}
-					sort.Strings(branches)
-					return branches
-				}
+		if pushed, ok := result["pushed"].(map[string]any); ok {
+			var branches []string
+			for b := range pushed {
+				branches = append(branches, b)
 			}
-			next := strings.Index(text[i+1:], "{")
-			if next < 0 {
-				break
-			}
-			i += 1 + next
+			sort.Strings(branches)
+			return branches
 		}
 	}
 	return nil

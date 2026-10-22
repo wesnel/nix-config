@@ -266,13 +266,52 @@ in {
           };
 
         hooks.PostToolUse = [
-          # After a push to GitHub, names the `pr-loop wait ci` to start.
+          # Records commits, pushes, worktrees, branches and PRs in the plan
+          # and asks which step a commit completes; after a push to GitHub,
+          # names the `pr-loop wait ci` to start.
           {
             matcher = "Bash";
             hooks = [
               {
                 type = "command";
                 command = "${getExe' pkgs.agent-tools "pr-loop"} guard --post";
+              }
+            ];
+          }
+          # A foreground sub-agent's result: asks the coordinator to check
+          # it and log the part. A background one's arrives as a prompt.
+          {
+            matcher = "Agent|Task";
+            hooks = [
+              {
+                type = "command";
+                command = "${agentPlan} remind";
+              }
+            ];
+          }
+        ];
+
+        # A background sub-agent's task-notification reaches the coordinator
+        # as a prompt; SubagentStop's output would reach only the sub-agent.
+        hooks.UserPromptSubmit = [
+          {
+            hooks = [
+              {
+                type = "command";
+                command = "${agentPlan} remind";
+              }
+            ];
+          }
+        ];
+
+        # Its output becomes the compaction's instructions: keep what the
+        # plan does not yet record. Exit 2 would block the compaction.
+        hooks.PreCompact = [
+          {
+            hooks = [
+              {
+                type = "command";
+                command = "${agentPlan} remind";
               }
             ];
           }
@@ -350,7 +389,7 @@ in {
       # and ~/.claude/settings.json. Only the files it reads without writing
       # are kept here.
       home.file =
-        llm.mkSkillFiles ".claude/skills" config.wgn.home.llm.skills
+        llm.mkSkillFiles pkgs ".claude/skills" config.wgn.home.llm.skills
         // {
           ".claude/CLAUDE.md".source = config.wgn.home.llm.instructions;
 
@@ -379,8 +418,8 @@ in {
 
             1. Run `agent-plan find`; its first result's `plan` is PLAN. With
                none, say this session has no plan, and stop.
-            2. Run `agent-plan questions PLAN --all --json`. With none, say so,
-               and stop.
+            2. Run `agent-plan questions PLAN --all --json`: the questions
+               Wesley can answer now. With none, say so, and stop.
             3. Ask them with AskUserQuestion, in order, at most four per call.
                Each question's header is its `id`, its text its `question`,
                then its `context` if any. Its options: the `recommendation`
@@ -390,7 +429,10 @@ in {
             4. For each answer but "Leave it open", run
                `agent-plan decide PLAN ID --answer 'ANSWER'`, the answer on one
                line, without " (Recommended)".
-            5. Report each decision in one line: its ID, the question, the
+            5. A decision can make a question that waited for it askable:
+               run step 2 again, and ask from step 3 the questions it lists
+               that were not asked yet, until it lists no new one.
+            6. Report each decision in one line: its ID, the question, the
                answer.
           '';
         };

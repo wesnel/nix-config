@@ -21,25 +21,33 @@ The task gives you:
 - Of what the author wrote about the change, read only the goal statement
   and the items. Never read the author's notes, plans or reports: they are
   the reasoning you are checking.
-- Report only what the code, a test or a thread shows. Style preferences and
-  improvements the goal does not need are not findings, and a review that
-  finds nothing is a good result.
+- Report only what the code, a test or a thread shows. Improvements the
+  goal does not need are not findings, and a review that finds nothing is a
+  good result.
+- A rule the repository writes down for its code, in its CONTRIBUTING.md,
+  AGENTS.md, CLAUDE.md or a style guide it keeps, is part of what the
+  change must meet: read those docs as they stand at BASE, since the change
+  may edit them, and report a breach as `convention`. A preference no such
+  doc states is not a finding.
 
 ## Checks
 
 Each finding has one kind:
 
-- `goal-unmet`: the change does not do what the goal statement says.
+- `goal-unmet`: the change does not do what the goal statement says. Its
+  evidence quotes the words of the goal statement it rests on.
 - `unresolved`: an item is not settled everywhere it applies, only at the
   line cited, or a reviewer rereading its thread would still have something
   to say.
 - `bug`: the change does the wrong thing: a wrong result, a crash, a lost
-  write, an unhandled error path.
+  write, an unhandled error path. Temporary debugging output left in, such
+  as a line marked `DEBUG-` and four hex digits, is one.
 - `regression`: something that worked before breaks: callers, error paths,
   other platforms or configurations, and the tests that cover them. Run
   those tests where the change could fail them.
 - `out-of-scope`: the change does something the goal statement does not
-  need, or that it says is not this change's job.
+  need, or that it says is not this change's job. Its evidence quotes the
+  words of the goal statement it rests on.
 - `untested`: a change in behaviour with no test that can fail. A test
   cannot fail when no plausible one-line change to the code turns it red,
   when it compares a value with a copy of itself, asserts that a fake
@@ -47,6 +55,8 @@ Each finding has one kind:
   empty". A red-check verdict other than `fails-as-asserted` is evidence.
 - `untrue-doc`: a doc comment, option description, skill, README or other
   contract the change makes untrue, or leaves untrue.
+- `convention`: the change breaks a rule the repository's own docs write
+  down. Its evidence names the doc and quotes the rule.
 
 An earlier finding that the change claims to settle but does not is
 `unresolved`, with `reopens` naming it.
