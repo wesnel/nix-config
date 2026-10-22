@@ -23,30 +23,47 @@ var day = time.Date(2026, 10, 14, 13, 5, 0, 0, time.Local)
 // fakeToken has a GitHub token's shape, which redaction knows.
 const fakeToken = "ghp_SENTINELaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
-const head = "0123456789abcdef0123456789abcdef01234567"
+const (
+	head  = "0123456789abcdef0123456789abcdef01234567"
+	head2 = "89abcdef0123456789abcdef0123456789abcdef"
+)
 
 // theirsCommitted is when mac's plan reached the notes repository, in
 // mac's zone.
 const theirsCommitted = "2026-10-14T20:05:00+02:00"
 
-// reply is GitHub's answer: one pull request of the operator's and one
-// review asked of them, with fields the export must drop.
+// reply is GitHub's answer: two pull requests of the operator's and two
+// reviews asked of them, the second of each stacked on the first, with
+// fields the export must drop, branch names among them.
 const reply = `{"data": {
   "viewer": {"login": "SENTINEL-login"},
-  "mine": {"issueCount": 1, "nodes": [
+  "mine": {"issueCount": 2, "nodes": [
     {"number": 7, "title": "Add the loop ` + fakeToken + `", "isDraft": true, "reviewDecision": "APPROVED",
-     "body": "SENTINEL-body", "headRefName": "SENTINEL-branch", "author": {"login": "SENTINEL-author"},
+     "body": "SENTINEL-body", "headRefName": "SENTINEL-branch", "baseRefName": "SENTINEL-base",
+     "headRepository": {"nameWithOwner": "o/r"}, "author": {"login": "SENTINEL-author"},
      "repository": {"nameWithOwner": "o/r"},
      "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS"}}}]},
-     "reviewThreads": {"nodes": [{"isResolved": false, "comments": {"nodes": [{"body": "SENTINEL-thread"}]}}]}}
+     "reviewThreads": {"nodes": [{"isResolved": false, "comments": {"nodes": [{"body": "SENTINEL-thread"}]}}]}},
+    {"number": 8, "title": "Test the loop", "isDraft": false, "reviewDecision": null,
+     "headRefName": "SENTINEL-branch-2", "baseRefName": "SENTINEL-branch",
+     "headRepository": {"nameWithOwner": "o/r"}, "repository": {"nameWithOwner": "o/r"},
+     "commits": {"nodes": []}, "reviewThreads": {"nodes": []}}
   ]},
-  "requested": {"issueCount": 1, "nodes": [
+  "requested": {"issueCount": 2, "nodes": [
     {"number": 3, "title": "Fix the parser\u202e\u200b", "isDraft": true, "headRefOid": "` + head + `",
      "body": "SENTINEL-request-body", "repository": {"nameWithOwner": "p/q"},
+     "headRefName": "SENTINEL-parser", "baseRefName": "SENTINEL-main", "headRepository": {"nameWithOwner": "p/q"},
      "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "FAILURE"}}}]},
      "reviewRequests": {"nodes": [{"requestedReviewer": {"__typename": "Team", "name": "SENTINEL-team"}}]},
      "timelineItems": {"nodes": [
-       {"createdAt": "2026-10-13T09:00:00Z", "requestedReviewer": {"__typename": "Team", "name": "SENTINEL-team"}}]}}
+       {"createdAt": "2026-10-13T09:00:00Z", "requestedReviewer": {"__typename": "Team", "name": "SENTINEL-team"}}]}},
+    {"number": 4, "title": "Test the parser", "isDraft": false, "headRefOid": "` + head2 + `",
+     "repository": {"nameWithOwner": "p/q"},
+     "headRefName": "SENTINEL-parser-tests", "baseRefName": "SENTINEL-parser", "headRepository": {"nameWithOwner": "p/q"},
+     "commits": {"nodes": []},
+     "reviewRequests": {"nodes": [{"requestedReviewer": {"__typename": "Team", "name": "SENTINEL-team"}}]},
+     "timelineItems": {"nodes": [
+       {"createdAt": "2026-10-09T09:00:00Z", "requestedReviewer": {"__typename": "Team", "name": "SENTINEL-team"}}]}}
   ]}
 }}`
 
@@ -191,6 +208,15 @@ func fixture(t *testing.T) (c plans.Config, own, theirs plans.Plan) {
 		t.Fatal(err)
 	}
 
+	// The newest day's demo digest is read; a newer one that is a link is
+	// refused, and older digests and other files are never read.
+	digests := filepath.Join(notes, "digests", "2026")
+	write(t, filepath.Join(digests, "10-13-demo.org"), "* Yesterday\n- Shipped the loop "+fakeToken+".\n")
+	write(t, filepath.Join(outside, "demo.org"), "* SENTINEL-linked-demo\n")
+	os.Symlink(filepath.Join(outside, "demo.org"), filepath.Join(digests, "10-14-demo.org"))
+	write(t, filepath.Join(digests, "10-12-demo.org"), "* SENTINEL-older\n")
+	write(t, filepath.Join(digests, "10-15-demo.org"), "* SENTINEL-tomorrow\n")
+	write(t, filepath.Join(digests, "notes.org"), "* SENTINEL-digest-notes\n")
 	write(t, filepath.Join(c.Dir, "notes.org"), "* SENTINEL-plans-dir-note\n")
 	write(t, filepath.Join(notes, "notes", "meeting.org"), "* SENTINEL-notes\n")
 	for _, name := range []string{"inbox.org", "diary.org", "refile.org"} {
@@ -214,18 +240,20 @@ func fixture(t *testing.T) (c plans.Config, own, theirs plans.Plan) {
 
 // The keys each document may hold, an array's elements' as "name[].key".
 var allowed = map[string][]string{
-	"plans": {"id", "title", "goal", "status", "host", "updated",
+	"plans": {"schema", "id", "title", "goal", "status", "host", "updated",
 		"steps", "steps[].id", "steps[].order", "steps[].title", "steps[].keyword", "steps[].ready",
 		"decisions", "decisions[].id", "decisions[].question", "decisions[].answer",
 		"questions", "questions[].id", "questions[].text", "questions[].priority", "questions[].context",
 		"questions[].options", "questions[].options[].key", "questions[].options[].label",
 		"questions[].options[].why", "questions[].options[].recommended"},
-	"github": {"at", "stale", "mineTotal", "requestsTotal",
+	"github": {"schema", "at", "stale", "mineTotal", "requestsTotal",
 		"mine", "mine[].repo", "mine[].number", "mine[].title", "mine[].draft", "mine[].ci", "mine[].review",
-		"mine[].unresolved",
+		"mine[].unresolved", "mine[].parent",
 		"requests", "requests[].repo", "requests[].number", "requests[].title", "requests[].draft",
-		"requests[].team", "requests[].requested", "requests[].head", "requests[].ci", "requests[].record"},
-	"meta": {"updated", "host", "repo", "pushed", "unsynced", "fetched"},
+		"requests[].team", "requests[].requested", "requests[].head", "requests[].ci", "requests[].record",
+		"requests[].parent"},
+	"meta":  {"schema", "updated", "host", "repo", "pushed", "unsynced", "fetched", "failed"},
+	"today": {"schema", "date", "digests", "digests[].kind", "digests[].text"},
 }
 
 func join(path, key string) string {
@@ -294,7 +322,7 @@ func tagKeys(t *testing.T, typ reflect.Type, path string, out map[string]bool) {
 // Every document type's JSON keys are the allowlist, each always written.
 func TestDocumentTypes(t *testing.T) {
 	for collection, typ := range map[string]reflect.Type{"plans": reflect.TypeFor[Plan](),
-		"github": reflect.TypeFor[GitHub](), "meta": reflect.TypeFor[Sync]()} {
+		"github": reflect.TypeFor[GitHub](), "meta": reflect.TypeFor[Sync](), "today": reflect.TypeFor[Today]()} {
 		got := map[string]bool{}
 		tagKeys(t, typ, "", got)
 		if want := allowed[collection]; !reflect.DeepEqual(slices.Sorted(maps.Keys(got)), slices.Sorted(slices.Values(want))) {
@@ -314,6 +342,12 @@ func TestSentinel(t *testing.T) {
 	if _, err := Collect(context.Background(), c, cache, day); err != nil {
 		t.Fatal(err)
 	}
+	// A plan whose log is gone is counted, never exported.
+	broken, err := c.New(plans.NewOptions{Title: "SENTINEL-broken", Slug: "broken"}, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Rename(strings.TrimSuffix(broken.Plan, ".org")+".log.org", filepath.Join(t.TempDir(), "log.org"))
 	// The fetch fails after the cache's minute, so GitHub's part is stale.
 	t.Setenv("FAKE_GH_FAIL", "1")
 	e, err := Collect(context.Background(), c, cache, day.Add(2*time.Minute))
@@ -366,7 +400,7 @@ func TestSentinel(t *testing.T) {
 			t.Errorf("%s: the fixture never sets %v", collection, zero)
 		}
 	}
-	wantFiles := []string{"github/status.json", "meta/sync.json", "plans/" + own.Name + ".json", "plans/" + theirs.Name + ".json"}
+	wantFiles := []string{"github/status.json", "meta/sync.json", "today/digest.json", "plans/" + own.Name + ".json", "plans/" + theirs.Name + ".json"}
 	slices.Sort(files)
 	slices.Sort(wantFiles)
 	if !slices.Equal(files, wantFiles) {
@@ -389,7 +423,7 @@ func TestExport(t *testing.T) {
 		t.Fatalf("plans %+v", e.Plans)
 	}
 	got := e.Plans[1]
-	want := Plan{ID: own.Name, Title: "Rotate [REDACTED GitHub token]", Goal: "Run the loop. password=[REDACTED]",
+	want := Plan{Schema: 1, ID: own.Name, Title: "Rotate [REDACTED GitHub token]", Goal: "Run the loop. password=[REDACTED]",
 		Status: "planning", Host: "box", Updated: day.Format(time.RFC3339),
 		Steps: []Step{{ID: "S1", Order: 0, Title: "Write the loop", Keyword: "STARTED", Ready: true},
 			{ID: "S2", Order: 1, Title: "Test the loop", Keyword: "TODO"},
@@ -412,12 +446,76 @@ func TestExport(t *testing.T) {
 	}
 	g := e.GitHub
 	wantMine := []PR{{Repo: "o/r", Number: 7, Title: "Add the loop [REDACTED GitHub token]", Draft: true, CI: "success",
-		Review: "approved", Unresolved: 1}}
+		Review: "approved", Unresolved: 1}, {Repo: "o/r", Number: 8, Title: "Test the loop", CI: "none", Review: "none", Parent: 7}}
 	wantRequests := []Request{{Repo: "p/q", Number: 3, Title: "Fix the parser", Draft: true, Team: true,
-		Requested: "2026-10-13T09:00:00Z", Head: head, CI: "failure", Record: "yes"}}
-	if g.At != day.Format(time.RFC3339) || g.Stale || !reflect.DeepEqual(g.Mine, wantMine) ||
-		!reflect.DeepEqual(g.Requests, wantRequests) || g.MineTotal != 1 || g.RequestsTotal != 1 {
+		Requested: "2026-10-13T09:00:00Z", Head: head, CI: "failure", Record: "yes"},
+		{Repo: "p/q", Number: 4, Title: "Test the parser", Team: true, Requested: "2026-10-09T09:00:00Z", Head: head2,
+			CI: "none", Record: "no", Parent: 3}}
+	if g.Schema != 1 || g.At != day.Format(time.RFC3339) || g.Stale || !reflect.DeepEqual(g.Mine, wantMine) ||
+		!reflect.DeepEqual(g.Requests, wantRequests) || g.MineTotal != 2 || g.RequestsTotal != 2 {
 		t.Errorf("github %+v", g)
+	}
+	wantToday := Today{Schema: 1, Date: "2026-10-13",
+		Digests: []Digest{{Kind: "demo", Text: "* Yesterday\n- Shipped the loop [REDACTED GitHub token]."}}}
+	if !reflect.DeepEqual(e.Today, wantToday) {
+		t.Errorf("today %+v, want %+v", e.Today, wantToday)
+	}
+}
+
+// Today holds the newest day's demo digest of the last week, and nothing
+// where none is that recent or the directory is a link.
+func TestToday(t *testing.T) {
+	repo := t.TempDir()
+	c := plans.Config{Dir: filepath.Join(repo, "agents"), Host: "box"}
+	digests := filepath.Join(repo, "digests", "2026")
+	for name, body := range map[string]string{"10-09-demo.org": "demo", "10-02-demo.org": "too old"} {
+		write(t, filepath.Join(digests, name), body)
+	}
+	got, err := TodayOf(c, day)
+	want := Today{Schema: 1, Date: "2026-10-09", Digests: []Digest{{"demo", "demo"}}}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("today %+v (%v), want %+v", got, err, want)
+	}
+	if got, err := TodayOf(c, day.AddDate(0, 0, 8)); err != nil || got.Date != "" || len(got.Digests) != 0 {
+		t.Errorf("a week later: %+v (%v)", got, err)
+	}
+	moved := filepath.Join(t.TempDir(), "digests")
+	os.Rename(filepath.Join(repo, "digests"), moved)
+	os.Symlink(moved, filepath.Join(repo, "digests"))
+	if got, err := TodayOf(c, day); err != nil || len(got.Digests) != 0 {
+		t.Errorf("through a link: %+v (%v)", got, err)
+	}
+}
+
+// A digest that cannot be read is an error, and Write keeps the last good
+// today/digest rather than putting an empty one over it.
+func TestTodayKept(t *testing.T) {
+	fakeGitHub(t)
+	repo := t.TempDir()
+	c := plans.Config{Dir: filepath.Join(repo, "agents"), Host: "box"}
+	digest := filepath.Join(repo, "digests", "2026", "10-14-demo.org")
+	write(t, digest, "* Yesterday\n- Shipped.\n")
+	out := t.TempDir()
+	e, _ := Collect(context.Background(), c, filepath.Join(t.TempDir(), "github.json"), day)
+	if err := Write(out, e); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(out, "today", "digest.json")
+	good, err := os.ReadFile(file)
+	if err != nil || !strings.Contains(string(good), "Shipped") {
+		t.Fatalf("the first digest: %s (%v)", good, err)
+	}
+	os.Chmod(digest, 0)
+	defer os.Chmod(digest, 0o644)
+	e, err = Collect(context.Background(), c, filepath.Join(t.TempDir(), "github.json"), day)
+	if err == nil || !e.TodayFailed {
+		t.Fatalf("an unreadable digest: failed %v, %v", e.TodayFailed, err)
+	}
+	if err := Write(out, e); err != nil {
+		t.Fatal(err)
+	}
+	if kept, _ := os.ReadFile(file); string(kept) != string(good) {
+		t.Errorf("today/digest replaced: %s", kept)
 	}
 }
 
@@ -462,8 +560,8 @@ func TestFailures(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), kept.Name) || !strings.Contains(err.Error(), long.Name) {
 		t.Errorf("the error does not name the failed plans: %v", err)
 	}
-	if len(e.Plans) != 0 {
-		t.Errorf("exported %+v", e.Plans)
+	if len(e.Plans) != 0 || e.Sync.Failed != 2 {
+		t.Errorf("exported %+v, %d failed", e.Plans, e.Sync.Failed)
 	}
 	if err := Write(out, e); err != nil {
 		t.Fatal(err)

@@ -310,6 +310,7 @@ trash "$d"
 ``` sh
 plan-dash export                         # writes $XDG_STATE_HOME/agent-plans/out/
 plan-dash watch                          # prints a line when the session has work
+plan-dash page                           # writes the page for the session to publish
 ```
 
 `plan-dash export` writes the documents the "Agent plans" page keeps in
@@ -318,23 +319,33 @@ lays them: `plans/<plan>.json` for every host's plans that are not halted,
 `github/status.json` (your open pull requests, with draft, CI, review
 decision and unresolved threads, and the reviews asked of you or your
 teams, with since when, the head and its CI and whether `pr-loop review`
-holds a record of it, all with titles) and `meta/sync.json` (when this
-host's plans last reached the notes remote, whether they changed since,
-when the repository last fetched). `gh` is asked at most once a minute;
-the answer is cached as `$XDG_STATE_HOME/plan-dash/github.json`, which
-holds pull request titles, and when a fetch fails the last good answer is
-written, marked stale. These leave the machine. Each is a fixed struct in
-`internal/export` whose JSON tags are the allowlist, and its sentinel test
-fails on any other key. Plan text comes only from the plans directory: the
-title, the Goal section, the step headings under Steps, the open and
-decided questions with their `RECOMMENDATION`, `ANSWER` or `LOGBOOK` note
-and list items, and `STATUS`; of the log, only event kinds and times. Text
+holds a record of it, all with titles, and which listed pull request each
+is stacked on: the one whose head branch, in the same repository, is its
+base; branch names themselves are never kept), `meta/sync.json` (when
+this host's plans last reached the notes remote, whether they changed
+since, when the repository last fetched, how many plans could not be
+read) and `today/digest.json` (the page's Today: the demo digest of the
+newest day of the last week that has one, read whole from
+`digests/YYYY/MM-DD-demo.org` in the notes repository, never through a
+link; where it cannot be read, the last document written stays). `gh` is
+asked at most once a minute; the answer is cached as
+`$XDG_STATE_HOME/plan-dash/github.json`, which holds pull request titles,
+and when a fetch fails the last good answer is written, marked stale.
+These leave the machine. Each is a fixed struct in `internal/export` whose
+JSON tags are the allowlist, and its sentinel test fails on any other key.
+Plan text comes only from the plans directory: the title, the Goal
+section, the step headings under Steps, the open and decided questions
+with their `RECOMMENDATION`, `ANSWER` or `LOGBOOK` note and list items,
+and `STATUS`; of the log, only event kinds and times. Text
 is stripped of control and formatting characters, has known secret shapes
 redacted and is capped in length, and a plan's lists are capped, so a
 document stays under 600 KiB. Redaction knows shapes, not data, so
 customer data stays out of plans. A plan that cannot be read is named and
 its document kept, and the command exits 1; only a plan gone from the
-directory, or halted, loses its document.
+directory, or halted, loses its document. Every document on the page
+carries `schema`, the version in `internal/agentplans`: fields are only
+ever added, each addition raising it, so a reader uses a field only where
+it is present.
 
 `plan-dash watch` is what wakes the dashboard session, through Monitor.
 Every 30 seconds it exports the plans and their sync state in memory and
@@ -371,10 +382,11 @@ the session's user settings are a read-only link into the store, where
 reads of credentials and the notes deploy key, which Read rules hold
 @-mentions to. They hold the baseline guard's hook with `onFailure:
 block` (Claude Code 2.1.295 or later), so a hook that cannot run denies,
-and allow the skill's tools: Bash `plan-dash export`, Monitor,
-ArtifactData, Agent, Skill, PushNotification and ToolSearch; and a
-SessionStart hook, `plan-dash prime`, that names the page and the
-`agent-plans` skill after every start, `/clear` and `/compact`. The
+and allow the skill's tools: Bash `plan-dash export`, `plan-dash page`
+and `plan-dash page published`, Artifact, Monitor, ArtifactData, Agent,
+Skill, PushNotification and ToolSearch; and a SessionStart hook,
+`plan-dash prime`, that names the page and the `agent-plans` skill after
+every start, `/clear` and `/compact`. The
 session folder is writable by any process running as the operator, and a
 settings file there could switch the hook off; only managed settings,
 which need root, would be a wall. Any Remote Control session, not only
@@ -383,15 +395,42 @@ operator's account. The skill, in the same config, arms Monitor on
 `plan-dash watch`, again on every expiry, and runs each update in a
 foreground sub-agent: export, then write what it wrote to the page,
 version-pinned, reading the page only into files so no document's text
-enters the conversation. A stall or a digest becomes a PushNotification
-with fixed text. The kill switch is its own: create
+enters the conversation. A stall or a demo digest becomes a
+PushNotification with fixed text, and a digest also an update, which puts
+it in the page's Today. The kill switch is its own: create
 `$XDG_STATE_HOME/agent-plans/off`, then `systemctl --user stop
 agent-plans.service`.
 
 Its page is named in `agent-tools/agent-plans.json` under the XDG config
 directory, `{"url": "https://claude.ai/artifact/ID"}`, which the operator
-writes once on the host; the URL stays out of this repository, and
-without it the session reaches no page.
+writes once on the host; the URL stays out of this repository. Started
+without it, the session publishes the page, pinned, and gives the
+operator its URL to write there before restarting the service.
+
+The page is `overlays/agent-tools/internal/agentplans/page.html`, built
+into agent-tools. `plan-dash page` writes it to
+`$XDG_STATE_HOME/agent-plans/page/agent-plans.html` and says whether it
+differs from the one last published, which `plan-dash page published`
+records; the session republishes it when it starts after a switch that
+changed it.
+Every publish declares the capabilities `plan-dash page` prints, from
+`internal/agentplans`: the page's database, read and written by its owner
+alone, which the session writes. The page reads the documents `export`
+writes and writes nothing: each open question shows its recommendation
+and options as text, to answer with `/questions` in a Claude session, and
+each review request its CI and whether `pr-loop review` holds a record of
+it. It shows how fresh its data is (live; partial, where GitHub could not
+be read or a plan couldn't be exported), when the devbox last pushed and
+fetched the plans, the review requests by state (ready, CI failing,
+draft or reviewed), oldest first with three days or more marked, stacked
+pull requests under the one they build on, the latest demo digest, and each
+plan at `#<plan ID>`. Every status mark has a word as well as a colour,
+and all text from the documents is set as text, never parsed as markup,
+and looked up in the page's tables by own key only, so a STATUS such as
+`constructor` falls back to its own label; its page test holds it to
+that, to the capabilities, to the collections it reads, to making no
+write and to the fields of each document. It uses Mantle's colours in
+the system face and loads no file.
 
 ## pushing: private history stays private
 

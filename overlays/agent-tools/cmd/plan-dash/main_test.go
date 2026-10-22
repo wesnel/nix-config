@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/agentplans"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
@@ -61,7 +62,7 @@ func TestExport(t *testing.T) {
 		Documents    []string `json:"documents"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil || got.Dir != out || !got.GitHub || got.PullRequests != 1 || got.Plans != 0 ||
-		strings.Join(got.Documents, " ") != "github/status meta/sync" {
+		strings.Join(got.Documents, " ") != "github/status meta/sync today/digest" {
 		t.Errorf("printed %s (%v)", stdout.String(), err)
 	}
 	data, err := os.ReadFile(filepath.Join(out, "github", "status.json"))
@@ -141,9 +142,47 @@ func TestPrime(t *testing.T) {
 	}
 }
 
+// page writes the page and prints the capabilities to publish it with,
+// and says it needs publishing until published records it.
+func TestPage(t *testing.T) {
+	state := setUp(t)
+	file := filepath.Join(state, "agent-plans", "page", "agent-plans.html")
+	var got struct {
+		File         string          `json:"file"`
+		Changed      bool            `json:"changed"`
+		Capabilities json.RawMessage `json:"capabilities"`
+	}
+	runPage := func(args ...string) {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		if code := run(args, &stdout, &stderr); code != 0 {
+			t.Fatalf("%q: exit %d: %s", args, code, stderr.String())
+		}
+		got.Changed = false
+		if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+			t.Fatalf("%q: %s: %v", args, stdout.String(), err)
+		}
+	}
+	runPage("page")
+	var caps bytes.Buffer
+	json.Compact(&caps, got.Capabilities)
+	if got.File != file || !got.Changed || caps.String() != agentplans.Capabilities {
+		t.Errorf("first: %+v, capabilities %s", got, caps.String())
+	}
+	if data, err := os.ReadFile(file); err != nil || !bytes.Equal(data, agentplans.Page) {
+		t.Errorf("the page: %v", err)
+	}
+	runPage("page", "published")
+	runPage("page")
+	if got.Changed {
+		t.Error("published, the page still needs publishing")
+	}
+}
+
 func TestUsage(t *testing.T) {
 	for _, args := range [][]string{{}, {"serve"}, {"export", "now"}, {"export", "--out", "x"},
-		{"watch", "--poll"}, {"watch", "ws://x"}, {"prime", "--url", "x"}} {
+		{"watch", "--poll"}, {"watch", "ws://x"}, {"prime", "--url", "x"}, {"page", "now"}, {"page", "published", "x"},
+		{"page", "--out", "x"}} {
 		var stdout, stderr bytes.Buffer
 		if code := run(args, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "export") {
 			t.Errorf("%q: exit %d: %s", args, code, stderr.String())
