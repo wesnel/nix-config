@@ -85,6 +85,15 @@ func isExecutable(path string) bool {
 	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
 }
 
+// parseFailure is the exit code after flag.Parse has printed the flags: 0 when
+// they were asked for with -h or --help.
+func parseFailure(err error) int {
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
+	return 2
+}
+
 // Serve parses serve's flags and serves until killed.
 func Serve(args []string, stderr io.Writer) int {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
@@ -96,7 +105,7 @@ func Serve(args []string, stderr io.Writer) int {
 	var names programs
 	flags.Var(&names, "program", "a program clients may run (repeatable; default pr-loop)")
 	if err := flags.Parse(args); err != nil {
-		return 2
+		return parseFailure(err)
 	}
 	if *workspace == "" || (*listen == "") == (*socket == "") {
 		fmt.Fprintln(stderr, "sandbox-relay serve: needs --workspace and exactly one of --listen and --socket")
@@ -169,7 +178,7 @@ func Session(args []string, stderr io.Writer) int {
 	var names programs
 	flags.Var(&names, "program", "a program clients may run (repeatable; default pr-loop)")
 	if err := flags.Parse(args); err != nil {
-		return 2
+		return parseFailure(err)
 	}
 	command := flags.Args()
 	if len(command) == 0 {
