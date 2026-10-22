@@ -330,6 +330,9 @@ func TestPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The examples name no repository, so they run outside one, as in the
+	// Nix build; a checkout's remotes would decide `git fetch origin`.
+	t.Chdir(t.TempDir())
 	var rules []struct {
 		Why     string   `json:"why"`
 		Pattern string   `json:"pattern"`
@@ -505,6 +508,9 @@ func testBaselineCommands(t *testing.T) {
 		{false, "curl -X POST https://example.com -d x"},
 		{false, "http GET https://api.github.com/repos/o/r"},
 	}
+	// Outside any repository, as in the Nix build; a checkout's remotes
+	// would decide `git fetch origin`.
+	t.Chdir(t.TempDir())
 	for _, c := range cases {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
 			input, _ := json.Marshal(map[string]string{"command": c.command})
