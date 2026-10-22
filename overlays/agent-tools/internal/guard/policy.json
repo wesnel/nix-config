@@ -3,7 +3,7 @@
     "why": "Pushing goes through `pr-loop push`.",
     "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?push\\b.*",
     "deny": ["git push origin wesley/x", "git -C /tmp/r push --force-with-lease", "cd repo && git push", "true\ngit push"],
-    "allow": ["git status", "git log --oneline -5 && git status"]
+    "allow": ["git status", "git log --oneline -5 && git status", "grep -nE 'git\\s+push' README.md"]
   },
   {
     "why": "An alias can stand for any command, including a push.",
@@ -15,7 +15,7 @@
     "why": "Every commit is a fixup the signing pass can squash.",
     "pattern": ".*\\bgit\\s+(-C\\s+\\S+\\s+)?commit\\b(?!.*--fixup).*",
     "deny": ["git commit -m 'plain commit'"],
-    "allow": ["git commit --fixup=abc123 --trailer 'Review-Thread: https://x/1'"]
+    "allow": ["git commit --fixup=abc123 --trailer 'Review-Thread: https://x/1'", "grep -nE 'git\\s+commit' SKILL.md"]
   },
   {
     "why": "The loop never rewrites the PR's own commits.",
@@ -27,18 +27,19 @@
     "why": "Repository hooks stay on.",
     "pattern": ".*--no-verify.*",
     "deny": ["git commit --no-verify --fixup=abc"],
-    "allow": ["git commit --fixup=abc"]
+    "allow": ["git commit --fixup=abc", "grep -rn -e '--no-verif[y]' ."]
   },
   {
     "why": "GitHub writes go through pr-loop; reading is fine.",
     "pattern": ".*\\bgh\\s+(pr|issue|release|repo|gist|label|secret|variable|workflow|run)\\s+(?!(view|list|diff|checks|status)\\b)\\S+.*",
     "deny": ["gh pr merge 123", "gh pr comment 123 -b hi", "gh pr ready 123"],
-    "allow": ["gh pr view 123 --json title"]
+    "allow": ["gh pr view 123 --json title", "grep -nE 'gh\\s+pr\\s+merge' SKILL.md"]
   },
   {
     "why": "GitHub writes go through pr-loop; reading is fine.",
-    "pattern": ".*\\bgh\\s+api\\b.*(\\s-X\\s|--method|\\s-f\\s|\\s-F\\s|--field|--raw-field|--input|mutation).*",
-    "deny": ["gh api -X POST repos/o/r/issues/1/comments -f body=x", "gh api repos/o/r/issues/1/comments -f body=x"],
+    "pattern": ".*\\bgh\\s+api\\b.*(\\s-[XfF]|--method|--field|--raw-field|--input|mutation).*",
+    "deny": ["gh api -X POST repos/o/r/issues/1/comments -f body=x", "gh api repos/o/r/issues/1/comments -f body=x",
+      "gh api graphql -F query=@- < q.graphql", "gh api graphql -Fquery=@q.graphql","gh api graphql --input -", "gh api graphql -f query=\"$QUERY\""],
     "allow": ["gh api repos/o/r/pulls/1/reviews --paginate"]
   },
   {
@@ -51,7 +52,7 @@
     "why": "Signing needs the hardware key.",
     "pattern": ".*\\bgit-sign-pass\\b.*",
     "deny": ["git-sign-pass"],
-    "allow": ["git status"]
+    "allow": ["git status", "cat overlays/agent-tools/cmd/git-sign-'pass'/main.go"]
   },
   {
     "why": "Whether a CI failure is not the PR's doing is Wesley's call.",
@@ -75,13 +76,13 @@
     "why": "Publishing private history in a public repository is Wesley's decision.",
     "pattern": "(?i).*\\bpush-guard\\.allowpublic\\b.*",
     "deny": ["git config push-guard.allowPublic ngrok/ngrok", "git -c push-guard.allowpublic=o/r push"],
-    "allow": ["git config --get user.email"]
+    "allow": ["git config --get user.email", "grep -rn 'push-guard[.]allowPublic' README.md"]
   },
   {
     "why": "The coordinator alone opens, pushes, replies, resolves and requests reviews.",
     "ownerOnly": true,
     "pattern": ".*\\bpr-loop\\s+(open|begin|push|reply|resolve|request|worktrees|sign|end)\\b.*",
     "deny": ["pr-loop push", "pr-loop reply T --body-file -", "pr-loop open --title T --body-file - x"],
-    "allow": ["pr-loop threads 12", "pr-loop status"]
+    "allow": ["pr-loop threads 12", "pr-loop status", "grep -nE 'pr-loop\\s+push' SKILL.md"]
   }
 ]

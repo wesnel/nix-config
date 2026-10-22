@@ -39,7 +39,8 @@ func Worktrees(remove bool) (any, error) {
 				return nil, err
 			}
 			if dirty, _ := git.Run("-C", path, "status", "--porcelain"); dirty != "" {
-				return nil, refuse("%s has uncommitted changes; commit them as fixups or ask", path)
+				return nil, refuse("%s has uncommitted changes; commit them with `git commit --fixup=<commit>`, "+
+					"or ask Wesley whether to drop them", path)
 			}
 			if _, err := git.Run("worktree", "remove", path); err != nil {
 				return nil, err
@@ -90,7 +91,8 @@ func worktreeTop() (string, error) {
 		return "", err
 	}
 	if filepath.Base(common) != ".git" {
-		return "", refuse("worktrees need a non-bare repository whose git directory is <top>/.git")
+		return "", refuse("worktrees need a non-bare repository whose git directory is <top>/.git; " +
+			"ask Wesley to run the loop from such a checkout")
 	}
 	return filepath.Dir(common), nil
 }

@@ -37,6 +37,21 @@ with lib; let
   loopDenied = pkgs.agent-tools.ecaDenied.coordinator;
   ownerDenied = pkgs.agent-tools.ecaDenied.owner;
 
+  # ECA rejects a command matching a deny pattern with no reason of ours,
+  # and the patterns match a phrase anywhere in the command, so the agents
+  # are told up front how to mention one. The policy.json examples that
+  # break a phrase up are checked against the patterns at build time.
+  deniedPhrases = ''
+    A shell command containing a phrase the loop denies, such as
+    `git push`, `--no-verify` or `push-guard.allowPublic`, is rejected "by
+    user config" wherever the phrase appears: in a search pattern, a quoted
+    commit message or a path as much as in the command itself. To search
+    for or mention one, break the literal up: `grep -nE 'git\s+push'`,
+    `grep -e '--no-verif[y]'`, `cat cmd/git-sign-'pass'/main.go`. Write a
+    commit message that mentions one to a file and pass it as
+    `-m "$(cat FILE)"`.
+  '';
+
   # ECA's git tool runs any git or gh command line and takes no argument
   # patterns, so it is hidden and the shell, which does, is used instead.
   loopFrontmatter = denied:
@@ -132,6 +147,8 @@ in {
             You coordinate the bot review loop. Load the `review-loop` skill
             before doing anything else, and follow it. Spawn one `pr-owner`
             per pull request for the work on its code.
+
+            ${deniedPhrases}
           '';
 
           # Each spawn starts a fresh chat, so the owner keeps what it learns
@@ -146,6 +163,7 @@ in {
             ${loopFrontmatter ownerDenied}
             ---
             ${builtins.readFile ../llm/pr-loop/pr-owner.md}
+            ${deniedPhrases}
           '';
         };
       }

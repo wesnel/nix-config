@@ -30,7 +30,7 @@ func checkFixups(branch string, original, now []Commit) error {
 		}
 	}
 	if len(stray) > 0 {
-		return refuse("%s", strings.Join(stray, "; "))
+		return refuse("%s; recommit each as `git commit --fixup=<commit>` against a commit of its own branch", strings.Join(stray, "; "))
 	}
 	if len(kept) != len(original) {
 		return refuse("%s has commits that are not fixups: the loop's own commits must be "+
@@ -38,8 +38,9 @@ func checkFixups(branch string, original, now []Commit) error {
 	}
 	for i := range kept {
 		if kept[i] != original[i] {
-			return refuse("%s's commit %q no longer matches %q from when the loop began; "+
-				"the loop only adds fixups and never rewrites the PR's own commits",
+			return refuse("%s's commit %q no longer matches %q from when the loop began, and the loop never rewrites "+
+				"the PR's own commits; put the branch back as it was (refs/pr-loop/rounds/ holds each round's tips) "+
+				"and commit the change as `git commit --fixup=<commit>`",
 				branch, subject(kept[i].Message), subject(original[i].Message))
 		}
 	}

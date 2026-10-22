@@ -200,7 +200,7 @@ func Request(numbers []int, onlyBots, acceptFailures []string) (any, error) {
 			if len(ci.Pending) > 0 {
 				reason = strings.Join(ci.Pending, ", ")
 			}
-			return nil, refuse("CI on #%d has not finished (%s); wait first", pr.Number, reason)
+			return nil, refuse("CI on #%d has not finished (%s); run `pr-loop wait ci %d` first", pr.Number, reason, pr.Number)
 		}
 		key := fmt.Sprintf("%d:%s", pr.Number, ci.HeadOid)
 		accepted := map[string]bool{}
@@ -215,7 +215,8 @@ func Request(numbers []int, onlyBots, acceptFailures []string) (any, error) {
 		}
 		if len(own) > 0 {
 			return nil, refuse("CI on #%d fails in %s, which do not fail on its base. Fix that before asking for "+
-				"review, or, if a failure is shown not to be this PR's, pass --accept-failure NAME", pr.Number, strings.Join(own, ", "))
+				"review. If a failure is shown not to be this PR's, waiving it is Wesley's call: put the evidence in "+
+				"the report, with `pr-loop request --accept-failure NAME %d` for him to run", pr.Number, strings.Join(own, ", "), pr.Number)
 		}
 		if len(acceptFailures) > 0 {
 			for name := range accepted {

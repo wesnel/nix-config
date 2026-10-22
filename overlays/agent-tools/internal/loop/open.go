@@ -63,26 +63,28 @@ func viewRemote(repo *Repo, branch, base string) (*remoteView, error) {
 // tip on GitHub.
 func checkOpen(repo *Repo, view *remoteView, branch, base string) (string, error) {
 	if branch == repo.Default || branch == "main" || branch == "master" {
-		return "", refuse("%s is a default branch; open a pull request from a branch of its own", branch)
+		return "", refuse("%s is a default branch; commit the change to a branch of its own (`git switch -c NAME`) and open that", branch)
 	}
 	if branch == base {
-		return "", refuse("%s cannot be its own base", branch)
+		return "", refuse("%s cannot be its own base; pass the branch it stacks on as `--base`, or leave `--base` out", branch)
 	}
 	if pr := view.PRs[branch]; pr != nil {
-		return "", refuse("%s is already the head of #%d; push to it in a review loop instead", branch, pr.Number)
+		return "", refuse("%s is already the head of #%d, and open only opens new pull requests; "+
+			"its later commits reach GitHub through `git sign-pass --push`, which Wesley runs", branch, pr.Number)
 	}
 	if oid := view.Heads[branch]; oid != "" {
-		return "", refuse("%s already exists on GitHub at %.12s; open only creates a branch", branch, oid)
+		return "", refuse("%s already exists on GitHub at %.12s, and open only creates a branch; "+
+			"ask Wesley to open its pull request", branch, oid)
 	}
 	if base != repo.Default {
 		if _, err := checkBranch(repo, view.PRs, base); err != nil {
-			return "", refuse("the base must be %s or the head of an open pull request by %s in %s: %v",
-				repo.Default, repo.Viewer, repo.Slug, err)
+			return "", refuse("the base must be %s or the head of an open pull request by %s in %s (%v); "+
+				"open the base with `pr-loop open` first, or leave `--base` out", repo.Default, repo.Viewer, repo.Slug, err)
 		}
 	}
 	oid := view.Heads[base]
 	if oid == "" {
-		return "", refuse("%s does not exist on GitHub", base)
+		return "", refuse("%s does not exist on GitHub; open it with `pr-loop open` first, or leave `--base` out", base)
 	}
 	return oid, nil
 }
@@ -93,7 +95,7 @@ func checkOpen(repo *Repo, view *remoteView, branch, base string) (string, error
 func checkLocal(repo *Repo, branch, base, baseOid string) (string, []string, error) {
 	local, err := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+branch)
 	if err != nil {
-		return "", nil, refuse("no local branch %s", branch)
+		return "", nil, refuse("no local branch %s; name a branch that `git branch --list` shows", branch)
 	}
 	var known []string
 	if git.OK("cat-file", "-e", baseOid+"^{commit}") {
@@ -101,10 +103,12 @@ func checkLocal(repo *Repo, branch, base, baseOid string) (string, []string, err
 	}
 	if base != repo.Default {
 		if known == nil {
-			return "", nil, refuse("%s on GitHub is at %.12s, which is not in this repository; fetch first", base, baseOid)
+			return "", nil, refuse("%s on GitHub is at %.12s, which is not in this repository; ask Wesley to fetch it, "+
+				"then open again", base, baseOid)
 		}
 		if !git.OK("merge-base", "--is-ancestor", baseOid, local) {
-			return "", nil, refuse("%s does not contain %.12s, the tip of %s on GitHub; rebase it onto that first", branch, baseOid, base)
+			return "", nil, refuse("%s does not contain %.12s, the tip of %s on GitHub; rebase it onto that commit "+
+				"with `git -c commit.gpgsign=false rebase`, then open again", branch, baseOid, base)
 		}
 	}
 	names, err := remotesOf(repo)
@@ -119,7 +123,8 @@ func checkLocal(repo *Repo, branch, base, baseOid string) (string, []string, err
 		return "", nil, err
 	}
 	if n, _ := strconv.Atoi(count); n == 0 {
-		return "", nil, refuse("%s has no commits that GitHub lacks", branch)
+		return "", nil, refuse("%s has no commits that GitHub lacks, so there is nothing to open; "+
+			"commit the change first, or say in the report that nothing changed", branch)
 	}
 	return local, known, nil
 }

@@ -10,8 +10,11 @@ package guard
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -24,6 +27,11 @@ var (
 	ghReadOnly   = map[string]bool{"pr view": true, "pr diff": true, "pr list": true, "pr checks": true, "pr status": true,
 		"issue view": true, "issue list": true, "repo view": true, "run view": true, "run list": true, "auth status": true}
 	gitValueFlags = map[string]bool{"-c": true, "-C": true, "--git-dir": true, "--work-tree": true, "--namespace": true}
+	// ghAPIValueFlags are the `gh api` flags whose value is the next word,
+	// which is therefore not the endpoint.
+	ghAPIValueFlags = map[string]bool{"-X": true, "--method": true, "-H": true, "--header": true,
+		"-f": true, "--raw-field": true, "-F": true, "--field": true, "--input": true, "-q": true, "--jq": true,
+		"-t": true, "--template": true, "--hostname": true, "-p": true, "--preview": true, "--cache": true}
 )
 
 type input struct {
@@ -35,6 +43,9 @@ type input struct {
 	// plugin's name ("pr-loop:pr-owner"). ECA's owner carries the owner-only
 	// rules as deny patterns instead.
 	AgentType string `json:"agent_type"`
+	// The directory the command runs in, which bounds the files the guard
+	// reads. Without it, the guard's own working directory stands in.
+	Cwd string `json:"cwd"`
 }
 
 // Main reads one hook event and writes a denial in the caller's format, or
@@ -45,7 +56,10 @@ func Main(stdin io.Reader, stdout io.Writer) int {
 		return 0
 	}
 	owner := in.AgentType == "pr-owner" || strings.HasSuffix(in.AgentType, ":pr-owner")
-	reason := check(in.ToolName, in.Server, in.ToolInput, owner)
+	if in.Cwd == "" {
+		in.Cwd, _ = os.Getwd()
+	}
+	reason := check(in.ToolName, in.Server, in.ToolInput, owner, in.Cwd)
 	if reason == "" {
 		return 0
 	}
@@ -60,19 +74,26 @@ func Main(stdin io.Reader, stdout io.Writer) int {
 	return 0
 }
 
-// Check returns why a tool call by the coordinator is denied, or "" to allow
-// it.
+// Check returns why a tool call by the coordinator, run in the current
+// directory, is denied, or "" to allow it.
 func Check(tool, server string, toolInput json.RawMessage) string {
-	return check(tool, server, toolInput, false)
+	dir, _ := os.Getwd()
+	return check(tool, server, toolInput, false, dir)
 }
 
 // CheckOwner is Check for a pr-owner, which is also denied the steps the
 // coordinator alone takes.
 func CheckOwner(tool, server string, toolInput json.RawMessage) string {
-	return check(tool, server, toolInput, true)
+	dir, _ := os.Getwd()
+	return check(tool, server, toolInput, true, dir)
 }
 
-func check(tool, server string, toolInput json.RawMessage, owner bool) string {
+// check returns a denial's reason, which reaches the agent verbatim: a first
+// sentence saying why, then what to do instead, naming the command in
+// backticks or handing the step to Wesley. A reason that only says no sends
+// the agent looking for another way through. TestCheck and TestPolicy hold
+// every reason to this.
+func check(tool, server string, toolInput json.RawMessage, owner bool, dir string) string {
 	full := tool
 	if server != "" {
 		full = server + "__" + tool
@@ -84,37 +105,49 @@ func check(tool, server string, toolInput json.RawMessage, owner bool) string {
 			Command string `json:"command"`
 		}
 		json.Unmarshal(toolInput, &args)
-		return command(args.Command, 0, owner)
+		return command(args.Command, 0, owner, dir)
 	case strings.Contains(strings.ToLower(full), "linear") && !readOnlyTool.MatchString(full):
 		return "The review loop does not change Linear. Put the proposed change in the final report for Wesley to approve."
 	case strings.Contains(strings.ToLower(full), "github") && !readOnlyTool.MatchString(full):
-		return "GitHub writes in the review loop go through pr-loop."
+		return "GitHub writes in the review loop go through pr-loop. " + prLoopWrites
 	}
 	return ""
 }
 
-func command(text string, depth int, owner bool) string {
+func command(text string, depth int, owner bool, dir string) string {
+	var commands [][]string
+	var expanded [][]bool
 	for _, segment := range segments(text) {
-		words := strip(tokens(segment))
-		if len(words) == 0 {
-			continue
+		all, expands := split(segment)
+		words := strip(all)
+		if len(words) > 0 {
+			commands = append(commands, words)
+			expanded = append(expanded, expands[len(all)-len(words):])
 		}
+	}
+	for n, words := range commands {
 		name := words[0][strings.LastIndex(words[0], "/")+1:]
 		var reason string
 		switch {
 		case shells[name] && depth < 3:
 			for i, w := range words {
 				if w == "-c" && i+1 < len(words) {
-					reason = command(words[i+1], depth+1, owner)
+					reason = command(words[i+1], depth+1, owner, dir)
 					break
 				}
 			}
 		case name == "eval" && depth < 3:
-			reason = command(strings.Join(words[1:], " "), depth+1, owner)
+			reason = command(strings.Join(words[1:], " "), depth+1, owner, dir)
 		case name == "git":
 			reason = checkGit(words)
 		case name == "gh":
-			reason = checkGh(words[1:])
+			// A file the call reads is what the guard sees only when nothing
+			// else on the command line can have written it first.
+			files := ""
+			if depth == 0 && len(commands) == 1 {
+				files = dir
+			}
+			reason = checkGh(words[1:], expanded[n][1:], files)
 		case name == "pr-loop":
 			reason = checkPrLoop(words[1:], owner)
 		case name == "git-sign-pass":
@@ -127,9 +160,13 @@ func command(text string, depth int, owner bool) string {
 	return ""
 }
 
-const signing = "Signing needs Wesley's hardware key. Leave the commits unsigned and hand over with the command to run."
+const signing = "Signing needs Wesley's hardware key. Leave the commits unsigned and end the report with the command for Wesley to run: `pr-loop sign` for the loop's stack."
 
-const pushGuard = "Publishing private history in a public repository is Wesley's decision. Stop and ask instead of changing push-guard.* settings."
+const pushGuard = "Publishing private history in a public repository is Wesley's decision. Leave push-guard.* alone, and name the repository and the commits in the report for Wesley."
+
+const prLoopWrites = "Use `pr-loop push`, `reply`, `resolve` or `request`; any other write goes in the report for Wesley."
+
+const alias = "A git alias can stand for any command, which the guard cannot check. Run the command itself, as `git <command>`."
 
 // coordinatorOnly are the pr-loop steps an owner leaves to the coordinator,
 // which keeps the stack consistent across PRs.
@@ -148,9 +185,9 @@ func checkPrLoop(args []string, owner bool) string {
 	for _, a := range args[1:] {
 		switch {
 		case args[0] == "request" && (a == "--accept-failure" || strings.HasPrefix(a, "--accept-failure=")):
-			return "Whether a CI failure is not this PR's doing is Wesley's call. Stop and put the evidence in the report."
+			return "Whether a CI failure is not this PR's doing is Wesley's call. Put the evidence in the report, with `pr-loop request --accept-failure CHECK PR` for Wesley to run if he agrees."
 		case args[0] == "end" && a == "--prune":
-			return "Pruning deletes the unsquashed history and round snapshots; leave that to Wesley."
+			return "Pruning deletes the unsquashed history and round snapshots, which is Wesley's call. Leave `pr-loop end --prune` to him."
 		}
 	}
 	return ""
@@ -162,7 +199,7 @@ func checkGit(words []string) string {
 		if gitValueFlags[words[i]] {
 			// An alias given on the command line can stand for any command.
 			if words[i] == "-c" && i+1 < len(words) && strings.HasPrefix(strings.ToLower(words[i+1]), "alias.") {
-				return "Git aliases are not used in the review loop; run the command itself."
+				return alias
 			}
 			if words[i] == "-c" && i+1 < len(words) && strings.HasPrefix(strings.ToLower(words[i+1]), "push-guard.") {
 				return pushGuard
@@ -193,11 +230,11 @@ func checkGit(words []string) string {
 	case "commit":
 		switch {
 		case has("--no-verify", "-n"):
-			return "Repository hooks stay on in the review loop; fix what they report."
+			return "Repository hooks stay on in the review loop. Fix what they report and commit again with `git commit --fixup=<commit>`."
 		case has("--amend"):
 			return "The review loop never rewrites the PR's commits. Commit the change with `git commit --fixup=<commit>`; the signing pass squashes it in."
 		case !has("--fixup"):
-			return "Every commit in the review loop is `git commit --fixup=<commit>` against the PR commit it belongs to, with the review details as --trailer lines, so the signing pass can squash it in."
+			return "Every commit in the review loop is a fixup the signing pass can squash in. Commit with `git commit --fixup=<commit>` against the PR commit it belongs to, with the review details as --trailer lines."
 		}
 	case "config":
 		reading := has("--get", "--get-all", "--get-regexp", "-l", "--list")
@@ -206,11 +243,11 @@ func checkGit(words []string) string {
 			switch {
 			case reading:
 			case strings.HasPrefix(key, "pr-loop."):
-				return "pr-loop.* settings are Wesley's to change. Stop and ask for a decision instead."
+				return "pr-loop.* settings are Wesley's to change. Read them with `git config --get`, and put the `git config` command you propose in the report for Wesley."
 			case strings.HasPrefix(key, "push-guard."):
 				return pushGuard
 			case strings.HasPrefix(key, "alias."):
-				return "Git aliases are not used in the review loop; run the command itself."
+				return alias
 			}
 		}
 	}
@@ -219,34 +256,36 @@ func checkGit(words []string) string {
 		for _, line := range strings.Split(string(aliases), "\n") {
 			name, _, _ := strings.Cut(line, " ")
 			if strings.TrimPrefix(name, "alias.") == sub {
-				return "`git " + sub + "` is an alias; run the command it stands for, so it can be checked."
+				return "`git " + sub + "` is an alias, so the guard cannot see what it runs. Run the command it stands for, which `git config --get alias." + sub + "` shows."
 			}
 		}
 	}
 	return ""
 }
 
-func checkGh(args []string) string {
+// checkGh checks gh's arguments, with which of them the shell expands. It
+// reads files a GraphQL call names only inside workspace, and none when
+// workspace is "".
+func checkGh(args []string, expanded []bool, workspace string) string {
 	if len(args) >= 2 && ghReadOnly[args[0]+" "+args[1]] {
 		return ""
 	}
 	if len(args) >= 2 && args[0] == "auth" && args[1] == "token" {
-		return "The review loop does not read GitHub credentials; pr-loop holds the login."
+		return "The review loop does not read GitHub credentials, which pr-loop holds. Read GitHub with `pr-loop status`, `ci`, `logs` or `threads`."
 	}
 	if len(args) >= 1 && args[0] == "api" {
 		rest := args[1:]
 		endpoint := ""
-		for _, a := range rest {
-			if !strings.HasPrefix(a, "-") {
-				endpoint = a
+		for i := 0; i < len(rest); i++ {
+			if ghAPIValueFlags[rest[i]] {
+				i++
+			} else if !strings.HasPrefix(rest[i], "-") {
+				endpoint = rest[i]
 				break
 			}
 		}
 		if endpoint == "graphql" {
-			if strings.Contains(strings.Join(rest, " "), "mutation") {
-				return "GraphQL mutations go through pr-loop (reply, resolve, push)."
-			}
-			return ""
+			return checkGraphQL(rest, expanded[1:], workspace)
 		}
 		method, explicit, fields := "GET", false, false
 		for i, a := range rest {
@@ -260,13 +299,101 @@ func checkGh(args []string) string {
 			}
 		}
 		if method != "GET" || (fields && !explicit) {
-			return "Only read-only `gh api` calls are allowed in the review loop; writes go through pr-loop."
+			return "Only read-only `gh api` calls are allowed in the review loop. " + prLoopWrites
 		}
 		return ""
 	}
 	what := strings.Join(args[:min(2, len(args))], " ")
 	return "`gh " + what + "` can change GitHub. In the review loop use pr-loop (status, ci, logs, threads, reply, resolve, request). " +
 		"Top-level PR comments, reviews, merges, PR edits and marking a PR ready are left to Wesley."
+}
+
+const graphQLMutation = "GraphQL mutations in the review loop go through pr-loop. " + prLoopWrites
+
+const unreadableQuery = "The guard cannot read this GraphQL query, so it cannot tell a read from a mutation. " +
+	"Pass the query inline with `gh api graphql -f query='...'`, or name a file in the workspace with `-F query=@FILE` in a command of its own; " +
+	"a write goes through `pr-loop push`, `reply`, `resolve` or `request`."
+
+// checkGraphQL denies a mutation, and a query or request body the guard
+// cannot read: one from stdin, one the shell expands, or a file that
+// readQuery refuses. Other fields are GraphQL variables, which cannot make a
+// read a write.
+func checkGraphQL(args []string, expanded []bool, workspace string) string {
+	if strings.Contains(strings.Join(args, " "), "mutation") {
+		return graphQLMutation
+	}
+	for i := 0; i < len(args); i++ {
+		flag, value, at := args[i], "", i
+		switch {
+		case strings.HasPrefix(flag, "--") && strings.Contains(flag, "="):
+			flag, value, _ = strings.Cut(flag, "=")
+		case len(flag) > 2 && (flag[:2] == "-f" || flag[:2] == "-F"):
+			flag, value = flag[:2], flag[2:]
+		case ghAPIValueFlags[flag] && i+1 < len(args):
+			i++
+			value, at = args[i], i
+		}
+		var file string
+		switch flag {
+		case "-f", "-F", "--field", "--raw-field":
+			key, v, _ := strings.Cut(value, "=")
+			if expanded[at] && (key == "query" || strings.ContainsAny(key, "$`")) {
+				return unreadableQuery
+			}
+			// Only -F and --field read the file; checking it for -f too
+			// denies nothing a read needs.
+			if key != "query" || !strings.HasPrefix(v, "@") {
+				continue
+			}
+			file = v[1:]
+		case "--input":
+			if expanded[at] {
+				return unreadableQuery
+			}
+			file = value
+		default:
+			continue
+		}
+		query, err := readQuery(workspace, file)
+		if err != nil {
+			return unreadableQuery
+		}
+		if strings.Contains(string(query), "mutation") {
+			return graphQLMutation
+		}
+	}
+	return ""
+}
+
+// readQuery reads a regular file of at most a mebibyte that resolves, through
+// any symlinks, to a path inside workspace. A relative path is relative to
+// workspace.
+func readQuery(workspace, path string) ([]byte, error) {
+	if workspace == "" || path == "" || path == "-" {
+		return nil, errors.New("no file the guard can read")
+	}
+	root, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		return nil, err
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(workspace, path)
+	}
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, err
+	}
+	if rel, err := filepath.Rel(root, real); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, errors.New("outside the workspace")
+	}
+	info, err := os.Stat(real)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > 1<<20 {
+		return nil, errors.New("not a small regular file")
+	}
+	return os.ReadFile(real)
 }
 
 // strip drops leading environment assignments and wrapper commands.
@@ -319,11 +446,17 @@ func segments(text string) []string {
 	return out
 }
 
-// tokens splits one segment into words the way a shell would, removing quotes.
-func tokens(segment string) []string {
-	var out []string
+// split splits one segment into words the way a shell would, removing quotes,
+// and reports for each word whether the shell expands part of it: a $ or a
+// backquote outside single quotes and not escaped.
+func split(segment string) (words []string, expands []bool) {
 	var cur strings.Builder
-	in, quote := false, byte(0)
+	in, quote, expand := false, byte(0), false
+	end := func() {
+		words, expands = append(words, cur.String()), append(expands, expand)
+		cur.Reset()
+		in, expand = false, false
+	}
 	for i := 0; i < len(segment); i++ {
 		c := segment[i]
 		switch {
@@ -334,6 +467,7 @@ func tokens(segment string) []string {
 				i++
 				cur.WriteByte(segment[i])
 			} else {
+				expand = expand || quote == '"' && (c == '$' || c == '`')
 				cur.WriteByte(c)
 			}
 		case c == '\'' || c == '"':
@@ -344,19 +478,18 @@ func tokens(segment string) []string {
 			in = true
 		case c == ' ' || c == '\t':
 			if in {
-				out = append(out, cur.String())
-				cur.Reset()
-				in = false
+				end()
 			}
 		case c == '#' && !in:
-			return out
+			return words, expands
 		default:
+			expand = expand || c == '$' || c == '`'
 			cur.WriteByte(c)
 			in = true
 		}
 	}
 	if in {
-		out = append(out, cur.String())
+		end()
 	}
-	return out
+	return words, expands
 }

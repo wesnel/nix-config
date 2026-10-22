@@ -27,7 +27,7 @@ func Sign(resume, noPush bool) (any, error) {
 
 	if resume {
 		if state.Signing == nil {
-			return nil, refuse("no signing pass is in progress")
+			return nil, refuse("no signing pass is in progress; run `pr-loop sign` without --resume to start one")
 		}
 		if path, _ := git.Run("rev-parse", "--git-path", "rebase-merge"); exists(path) {
 			return nil, refuse("the rebase is still in progress; touch the key and run `git rebase --continue`")
