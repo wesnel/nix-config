@@ -4,20 +4,20 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
-	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
 // Push uploads the local commits through the Git Database API and moves the
-// branches with one atomic updateRefs call. Each object GitHub creates is
-// compared with the local SHA before any branch moves, and each branch move is
-// guarded by the commit the loop last saw on GitHub.
+// branches with one updateRefs call each, bottom up. Each object GitHub
+// creates is compared with the local SHA before any branch moves, and each
+// branch move is guarded by the commit the loop last saw on GitHub.
 func Push(branches []string, dryRun bool) (any, error) {
 	state, repo, prs, err := context(nil)
 	if err != nil {
@@ -100,22 +100,32 @@ func Push(branches []string, dryRun bool) (any, error) {
 		return nil, err
 	}
 
-	refUpdates := make([]map[string]any, len(updates))
-	for i, u := range updates {
-		refUpdates[i] = map[string]any{"name": "refs/heads/" + u.branch, "afterOid": u.after, "beforeOid": u.before, "force": true}
-	}
-	err = gh.GraphQL(`mutation($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }`,
-		map[string]any{"input": map[string]any{"repositoryId": repo.ID, "refUpdates": refUpdates}}, nil)
-	if err != nil {
-		return nil, err
-	}
+	// One branch per call, bottom up: GitHub starts a pull request's
+	// workflows twice when one push moves it and its base together. Each
+	// branch moved is recorded at once, so a call that fails leaves the next
+	// push to carry on from it.
+	slices.SortStableFunc(updates, func(a, b update) int {
+		return slices.Index(state.Order, a.branch) - slices.Index(state.Order, b.branch)
+	})
 	pushed := map[string]string{}
 	for _, u := range updates {
+		err = graphQL(`mutation($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }`,
+			map[string]any{"input": map[string]any{"repositoryId": repo.ID, "refUpdates": []map[string]any{
+				{"name": "refs/heads/" + u.branch, "afterOid": u.after, "beforeOid": u.before, "force": true}}}}, nil)
+		if err != nil {
+			if len(pushed) > 0 {
+				err = fmt.Errorf("%w; GitHub has %s, so run `pr-loop push` again to push the rest", err, branchTips(state, pushed))
+			}
+			return nil, err
+		}
 		state.Branches[u.branch].RemoteOid = u.after
 		if err := recordTracking(repo, u.branch, u.after); err != nil {
 			return nil, err
 		}
 		pushed[u.branch] = u.after
+		if err := state.save(); err != nil {
+			return nil, err
+		}
 	}
 	record(state, plans.Event{Kind: "pushed", Summary: "pushed " + branchTips(state, pushed)})
 	state.Round++
@@ -214,7 +224,7 @@ type uploader struct {
 func (u *uploader) post(kind string, body any) (string, error) {
 	u.calls++
 	var reply struct{ SHA string }
-	if err := gh.REST("POST", fmt.Sprintf("repos/%s/git/%s", u.slug, kind), body, &reply); err != nil {
+	if err := objectsREST("POST", fmt.Sprintf("repos/%s/git/%s", u.slug, kind), body, &reply); err != nil {
 		return "", err
 	}
 	return reply.SHA, nil

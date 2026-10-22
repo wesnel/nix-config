@@ -38,19 +38,27 @@ fork point onto the signed copy and signed in the same rebase. It prints the
 plan (branches, commits, replays, pushes and key touches) and then runs it;
 everything that can refuse is checked before the first touch.
 
+When the key refuses a signature or an SSH login, as it does at a missed
+touch, and standard input is a terminal, it asks to retry that step: Enter
+retries, q stops. Stopped, it prints the commands that carry on, naming this
+program by its path unless it is the git-sign-pass on PATH.
+
   --base REF        where the branch starts (default: where it left origin's
                     default branch, or the local main or master); with
                     BRANCHes, only for one
   --resume          verify and finish the pass on BRANCH (default: the current
                     branch) after ` + "`git rebase --continue`" + ` and carry on
-                    with the rest of its BRANCHes, or retry its push once it is
-                    signed; a pass in progress blocks only passes that would
-                    move its branches
+                    with the rest of its BRANCHes, or retry its push to the
+                    push URLs that lack it once it is signed; a pass in
+                    progress blocks only passes that would move its branches
   --push            push every branch that moved to the branch of the same
-                    name on its upstream's remote, guarded by its
-                    remote-tracking ref; refused, before any key touch, for a
-                    branch whose upstream is another branch and for the
-                    remote's default branch (REMOTE/HEAD, or main and master)
+                    name at each push URL of its upstream's remote in turn,
+                    one branch per push, bottom up, over one SSH login per
+                    URL, guarded by what its remote-tracking ref named before
+                    the first URL's push, and move that ref once every URL
+                    has it; refused, before any key touch, for a branch whose
+                    upstream is another branch and for the remote's default
+                    branch (REMOTE/HEAD, or main and master)
   --notify ID       when the pass ends, signed, refused or failed, log its
                     outcome, exit status and a one-line summary in the plan
                     whose log holds sign-pass ID (from ` + "`agent-plan sign-id`" + `),
@@ -82,6 +90,7 @@ func main() {
 		if err := plans.CheckSignID(*notify); err != nil {
 			os.Exit(cli.Report("git-sign-pass", nil, err, 0, os.Stdout, os.Stderr))
 		}
+		signpass.NotifyID = *notify
 	}
 	result, err := pass(*base, *resume, *push, *setUpstream, flags.Args())
 	code := cli.Report("git-sign-pass", result, err, 0, os.Stdout, os.Stderr)

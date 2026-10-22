@@ -71,8 +71,12 @@ git sign-pass --push           # sign, then push every branch that moved to its 
 git sign-pass --set-upstream   # the same, and publish moved branches that have no upstream yet
 ```
 
+The pass pushes one branch per `git push`, bottom up, since GitHub runs a pull
+request's CI twice when one push moves it and its base; any push you suggest
+for a stack does the same, one branch per command, bottom up.
+
 Suggest `--set-upstream` when a branch has never been pushed: it publishes the
-branch in the same push, and refuses one the remote already has. Both refuse,
+branch in the same pass, and refuses one the remote already has. Both refuse,
 before any touch, a branch whose upstream is a branch of another name, and any
 push to the remote's default branch.
 
@@ -111,9 +115,10 @@ unsigned first and refuses before any touch if it would conflict. If nothing is
 squashed, it refuses when a commit's files, author or message would change. If
 any of the three kinds is squashed, it refuses when the remaining commits or the
 files at the tip would differ from that, and it reports any branch lower in the stack that
-gained a fix. It needs one touch per remaining commit, plus one for each push. If it
-stops at a missed touch, it says how to resume, and the unsigned branch is kept
-under `refs/sign-pass/backup/`.
+gained a fix. It needs one touch per remaining commit, plus one for each push
+URL. At a missed touch in a terminal, it asks to retry that step; if it stops
+there, it prints the exact command that resumes, and the unsigned branch is
+kept under `refs/sign-pass/backup/`.
 
 So a correction to an earlier commit is a fixup, not a commit of its own:
 
