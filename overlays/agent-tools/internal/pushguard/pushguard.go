@@ -1,7 +1,6 @@
 // Package pushguard refuses a push that would publish a private GitHub
-// repository's history in a public one (Check), or the operator's unsigned
-// commits (CheckUnsigned). Check sees only history: private code copied
-// into a public repository as new commits passes.
+// repository's history in a public one. It sees only history: private code
+// copied into a public repository as new commits passes.
 package pushguard
 
 import (

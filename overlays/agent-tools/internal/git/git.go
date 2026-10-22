@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/refusal"
@@ -60,20 +59,8 @@ func RunEnv(env []string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-// BytesContext is Bytes, killed when ctx is done. A program the command
-// started that outlives it, such as a signature verifier, gets a second
-// more to let go of the command's output.
-func BytesContext(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
-	cmd := commandContext(ctx, nil, args...)
-	cmd.WaitDelay = time.Second
-	return output(cmd, stdin, args)
-}
-
 func bytesEnv(env []string, stdin []byte, args ...string) ([]byte, error) {
-	return output(command(env, args...), stdin, args)
-}
-
-func output(cmd *exec.Cmd, stdin []byte, args []string) ([]byte, error) {
+	cmd := command(env, args...)
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
