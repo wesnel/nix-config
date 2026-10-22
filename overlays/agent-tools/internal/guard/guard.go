@@ -570,11 +570,12 @@ func checkPrLoop(args []string, who role) string {
 }
 
 // gitWrites are the git commands that change a worktree, the index, refs,
-// stashes or a remote, which a reviewer may not run.
+// stashes or a remote, which a reviewer may not run, and which a sub-agent
+// runs only where it may edit (checkOwner).
 var gitWrites = map[string]bool{"commit": true, "rebase": true, "reset": true, "checkout": true, "switch": true,
 	"restore": true, "merge": true, "cherry-pick": true, "revert": true, "am": true, "apply": true, "stash": true,
 	"add": true, "rm": true, "mv": true, "clean": true, "tag": true, "update-ref": true, "notes": true, "worktree": true,
-	"push": true, "sign-pass": true}
+	"push": true, "sign-pass": true, "pull": true}
 
 // checkGit checks a git command run in dir, "" when the guard cannot tell
 // where, with the assignments env made for it.
