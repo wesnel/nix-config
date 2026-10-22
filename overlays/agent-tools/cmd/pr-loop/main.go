@@ -39,6 +39,12 @@ push a loop fixup, whose message breaks the rules git sign-pass holds
 messages to: a subject of at most 72 characters without a trailing period,
 no attribution lines, and on a fixup only Review-* trailers.
 
+begin, each round (its number and every branch's tip), push, reply,
+resolve, wait ci's result and sign are logged in the plan of the session
+that runs them: the plan naming the harness's session or this worktree,
+else one whose BRANCHES name a branch of the loop. A failure to log is
+printed on stderr and fails nothing.
+
   open --title T --body-file F [--base BASE] [--dry-run] [BRANCH]
                               push BRANCH (default HEAD) through the GitHub API and open
                               it as a draft PR against BASE (default: the default branch),
@@ -76,10 +82,12 @@ no attribution lines, and on a fixup only Review-* trailers.
   guard [--baseline]          PreToolUse hook for Claude Code, Codex and ECA (reads stdin):
                               a loop's rules, or with --baseline every session's, by agent
   guard --post                PostToolUse hook for Claude Code, Codex and ECA (reads stdin):
-                              records the shell call's commits, pushes, new worktrees,
+                              records the shell call's commits, pushes (but push's,
+                              which push logs), new worktrees,
                               branches and PRs in the plan of its session or worktree,
                               each commit with the session, asking which step it
-                              completes; after a push to GitHub, names the
+                              completes (a commit no plan takes makes a plan
+                              naming both); after a push to GitHub, names the
                               pr-loop wait ci to start
 ` + prreview.Usage + `
 reply and resolve take a thread a review bot started on an open PR by the

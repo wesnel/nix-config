@@ -38,7 +38,7 @@ func TestOwners(t *testing.T) {
 			t.Fatal(err)
 		}
 		p, _ := c.Open(made.Plan)
-		if _, err := p.SetOwner(linked, "a1"); err != nil {
+		if _, err := p.SetOwner(linked, "a1", time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		return main, linked

@@ -58,6 +58,9 @@ type Status struct {
 	// one their log gives them: changed in Emacs, or not written while
 	// Emacs held unsaved changes to the file.
 	KeywordDrift []Drift `json:"keywordDrift"`
+	// PropertyDrift are the tracked properties and References whose value
+	// in the file is not the one the log gives them: edited by hand.
+	PropertyDrift []PropertyDrift `json:"propertyDrift"`
 }
 
 // Drift is an item whose heading keyword, File, is not Log, the one its
@@ -208,6 +211,9 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 		return Status{}, err
 	}
 	s.Stale, s.Unrecorded = stale(list, events, now), unrecorded(events)
+	if s.PropertyDrift, err = p.propertyDrift(events); err != nil {
+		return Status{}, err
+	}
 	index := map[string]int{}
 	for _, it := range list {
 		if it.ID == p.Name {
@@ -288,6 +294,13 @@ func yes(b bool) string {
 	return "no"
 }
 
+func orNone(s string) string {
+	if s == "" {
+		return "none"
+	}
+	return s
+}
+
 func list(ids []string) string {
 	if len(ids) == 0 {
 		return "none"
@@ -336,6 +349,13 @@ func (s Status) Org() string {
 			drifts = append(drifts, fmt.Sprintf("%s (file %s, log %s)", d.ID, file, d.Log))
 		}
 		fmt.Fprintf(&b, "- Keyword drift: %s\n", strings.Join(drifts, "; "))
+	}
+	if len(s.PropertyDrift) > 0 {
+		var drifts []string
+		for _, d := range s.PropertyDrift {
+			drifts = append(drifts, fmt.Sprintf("%s %s (file %s, log %s)", d.ID, d.Property, orNone(d.File), orNone(d.Log)))
+		}
+		fmt.Fprintf(&b, "- Property drift: %s\n", strings.Join(drifts, "; "))
 	}
 	return b.String()
 }

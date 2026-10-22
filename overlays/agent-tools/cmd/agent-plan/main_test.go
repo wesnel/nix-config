@@ -425,7 +425,13 @@ func TestLog(t *testing.T) {
 		wg.Wait()
 		c, _ := plans.Load()
 		p, _ := c.Open(plan)
-		events, err := p.Events()
+		all, err := p.Events()
+		var events []plans.Event
+		for _, e := range all {
+			if e.Kind == "started" {
+				events = append(events, e)
+			}
+		}
 		if err != nil || len(events) != 30 {
 			t.Fatalf("%d events, %v", len(events), err)
 		}

@@ -42,6 +42,11 @@ agent-plan new --parent PLAN --part P1 --title 'Add the run loop flag' --branch 
   work runs under beyond this one, such as `coordinate-subagents` or
   `review-loop`, which you add) and, once `agent-plan own` sets one,
   `OWNERS` (`worktree=agent`). Lists are separated by spaces.
+  `WORKTREES`, `BRANCHES`, `PULL_REQUESTS` and `OWNERS` follow the log, as
+  step keywords do: never edit them by hand. Change one with
+  `agent-plan set PLAN BRANCHES main..loop [--part P1]`, which logs the
+  whole new value; `agent-plan status` lists a value the log does not
+  give, and a References entry it does not hold, as property drift.
 - `** Goal`: the goal and what is not this change's job, and nothing of how
   the work went. It is the fresh review's goal statement, word for word:
   `agent-plan goal PLAN [--part P1]` prints it. It ends with a
@@ -96,7 +101,7 @@ ready.
 An ID is never reused or renumbered; a step dropped from the work keeps its
 ID and gets an `abandoned` event. Edit only your own plan file, and change
 it in the same step as what it describes: a new step, a decision, a moved
-base.
+base (through `agent-plan set`).
 
 ## The log
 
@@ -120,8 +125,11 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
 - A hook after each shell call logs `committed` for every commit and
   `pushed` for every push, and adds new worktrees, branches and pull
   requests to the plan's properties, in the plan of the session or of the
-  worktree it ran in; log neither yourself. Which step a commit completes
-  stays yours to log.
+  worktree it ran in; `agent-plan log` refuses both. A commit no plan takes
+  makes a plan for it, "Unplanned work in" its repository, which names the
+  session and worktree; give it a goal and steps, or say in your report
+  which plan the work belongs to. Which step a commit completes stays
+  yours to log.
 - `--commit` takes the commit's subject: the signing pass changes every SHA.
 - An event about the whole plan names the plan's ID; about a part, the
   part's.
@@ -132,11 +140,11 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
 
 `agent-plan status PLAN` lists the steps without `done` and those done but
 not `verified`, the parts ready to start, the steps ready now, what still
-waits on an `:AFTER:` item, keyword drift, steps started with nothing
-logged for a day, and commits no `done` event names (a `fixup!`, `amend!`
-or `squash!` commit counts as the one it names). Log `done` with the
-`--commit` of each listed commit that completes a step, or say why none
-does.
+waits on an `:AFTER:` item, keyword and property drift, steps started
+with nothing logged for a day, and commits no `done` event names (a
+`fixup!`, `amend!` or `squash!` commit counts as the one it names). Log
+`done` with the `--commit` of each listed commit that completes a step, or
+say why none does.
 
 ## Finding it again
 
