@@ -31,6 +31,7 @@
         git.enable = true;
         gnupg.enable = true;
         helix.enable = true;
+        llm.prLoop.setup."ngrok-private/ngrok-agent" = "go tool buf generate";
         man.enable = true;
         mcp-proxy.enable = true;
         mosh.enable = true;

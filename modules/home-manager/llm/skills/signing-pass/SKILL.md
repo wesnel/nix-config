@@ -23,8 +23,19 @@ signing to one pass at the end, which Wesley runs.
 
   A rebase re-signs every commit it replays unless told not to, so it needs
   the flag as much as a commit does.
-- Never push. A push to GitHub authenticates with the same key over SSH and
-  waits for a touch too. Leave it to the signing pass.
+- Never `git push`. A push to GitHub authenticates with the same key over SSH
+  and waits for a touch too. Leave it to the signing pass.
+- To open a pull request for a branch GitHub does not have yet, publish it
+  with `pr-loop open`, which pushes the unsigned commits through the GitHub
+  API, needs no touch, and opens the pull request as a draft:
+
+  ```sh
+  pr-loop open --title "Say what changed" --body-file description.md feature
+  ```
+
+  The base is the default branch, or with `--base` the branch of an open
+  pull request of Wesley's that this one stacks on. It refuses a branch
+  GitHub already has; later commits reach GitHub through the signing pass.
 - Never create tags; they are signed as well.
 - If a command fails with `gpg failed to sign the data`, `failed to write
   commit object` or `agent refused operation`, or hangs, the flag was
@@ -41,11 +52,16 @@ When the work is done, show Wesley what the pass will sign, for each branch
 you committed to:
 
 ```sh
-git log --format='%h %G? %s' main..HEAD
+git log --format='%h %G? %s' origin/main..HEAD
 ```
 
-`N` marks an unsigned commit. Then tell Wesley to run, in that branch, in a
-terminal of their own:
+`N` marks an unsigned commit. The pass starts from the same place: where the
+branch left the remote's default branch (`origin/HEAD`, then `origin/main` or
+`origin/master`, then local `main` or `master`), so a stale local `main` does
+not matter. For a branch that starts from somewhere else, put that ref in the
+range, hand over `--base REF`, and sign that branch in a pass of its own.
+
+Then tell Wesley to run, in that branch, in a terminal of their own:
 
 ```sh
 git sign-pass                  # sign; nothing is pushed
@@ -57,6 +73,18 @@ Suggest `--set-upstream` when a branch has never been pushed: it publishes the
 branch in the same push, and refuses one the remote already has. Both refuse,
 before any touch, a branch whose upstream is a branch of another name, and any
 push to the remote's default branch.
+
+The refusal says how to fix the upstream, but it costs Wesley a round trip, so
+check each branch the pass moves before handing over `--push`:
+
+```sh
+git rev-parse --abbrev-ref <branch>@{upstream}   # origin/<branch>, or no upstream
+```
+
+A branch made with `git switch -c <branch> origin/main` tracks `origin/main`.
+Point it at its own with `git branch --set-upstream-to=origin/<branch> <branch>`,
+or, if the remote has no such branch yet, `git branch --unset-upstream <branch>`
+and hand over `--set-upstream`.
 
 For more than one branch, hand over one command that names the top of every
 stack, run from any worktree of the repository:
@@ -83,8 +111,7 @@ any of the three kinds is squashed, it refuses when the remaining commits or the
 files at the tip would differ from that, and it reports any branch lower in the stack that
 gained a fix. It needs one touch per remaining commit, plus one for each push. If it
 stops at a missed touch, it says how to resume, and the unsigned branch is kept
-under `refs/sign-pass/backup/`. Pass `--base REF` when the branch does not start
-from `main`.
+under `refs/sign-pass/backup/`.
 
 So a correction to an earlier commit is a fixup, not a commit of its own:
 
@@ -102,3 +129,29 @@ During a bot review loop (the `review-loop` skill), the commits are also
 fixups, and that loop's signing pass squashes them as well as signing them.
 That loop accepts only `--fixup=<commit>`, never `amend!` or `squash!`, since
 it must not change the PR's commit messages.
+
+## After a push
+
+After every push to a pull request that you make or are told about,
+including `pr-loop open` and Wesley's `git sign-pass --push`, watch its CI if
+you are still running. From the pushed branch (or naming the pull request's
+number or branch), run this in the background, with the Bash tool's
+`run_in_background` or your harness's equivalent, and act when it exits:
+
+```sh
+pr-loop wait ci --timeout 3600
+```
+
+It waits for the pushed commit to become the pull request's head, so it
+never reports the previous head's checks, and prints a `result`: `passed`,
+`failed`, `failedOnBase`, `noChecks` (exit 4) or `timedOut` (exit 3). Each
+failed check names the `pr-loop logs` command for its log and says whether
+it fails on the base too (`onBase`).
+
+- A failure the pull request caused: fix it as a fixup, as above, and hand
+  over again.
+- A failure that is not its doing (failing on the base, a flaky test, an
+  infrastructure fault): report it to Wesley with the evidence from the log.
+  Never rerun CI or push again in the hope that it passes.
+- `noChecks`: no check reported on the head within `--grace` (default three
+  minutes). Tell Wesley that CI did not run; it is not a pass.

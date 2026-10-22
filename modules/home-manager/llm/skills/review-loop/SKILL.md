@@ -99,7 +99,9 @@ when you need to know where something belongs.
    not this PR's job.
 5. `pr-loop worktrees` creates a worktree per PR at `.pr-loop/<number>`
    inside the repository, ignored by Git, with commit signing off in those
-   worktrees only.
+   worktrees only. Where Wesley configured a setup command for the
+   repository, it also runs that in each one, such as generating files the
+   repository does not commit. If a setup fails, stop and report its output.
 
 ## Each round
 
@@ -107,7 +109,9 @@ Record every branch's tip at the start of the round; the restack needs the
 old parent tips.
 
 1. **CI.** `pr-loop wait ci` (repeat while it exits 3), then `pr-loop ci`.
-   For every failure whose `onBase` is not `failed`, have the owner read
+   If it exits 4 (`noChecks`), CI never reported on a head, and `pr-loop
+   request` refuses until it does: stop and say so in the report. For every
+   failure whose `onBase` is not `failed`, have the owner read
    `pr-loop logs <number> <check>` and either fix it or show it is not the
    PR's doing (a flaky test, an infrastructure fault). Waiving a failure is
    Wesley's decision: if the owner shows one is not the PR's, stop and put
@@ -150,7 +154,8 @@ old parent tips.
    declines with demonstrated evidence, and for fixes and duplicates whose
    fix landed, except on a bot whose `resolvesOwnThreads` is true (Qodo):
    it resolves its own threads when it re-reviews, so leave those to it.
-   Deferred threads stay open.
+   Deferred threads stay open. `pr-loop reply --from <file>` does a round's
+   replies and resolves in one go; `pr-loop --help` gives its format.
 
 Then start the next round.
 

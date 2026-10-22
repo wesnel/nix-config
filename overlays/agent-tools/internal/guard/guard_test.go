@@ -39,6 +39,7 @@ func TestCheck(t *testing.T) {
 		{false, "Bash", "gh pr view 123 --json title"},
 		{false, "Bash", "git log --oneline -5 && git status"},
 		{false, "Bash", "pr-loop push"},
+		{false, "Bash", "pr-loop open --title T --body-file - x"},
 		{false, "Bash", "git rebase --onto a b c"},
 		{false, "Bash", "# git push in a comment"},
 		{true, "Bash", "git config alias.p push"},

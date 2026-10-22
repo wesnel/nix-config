@@ -299,10 +299,9 @@ func withoutURL(env []string) []string {
 	return out
 }
 
-// Client sends program's argv, the working directory and stdin to the relay
-// at url (http://HOST[:PORT] or unix:PATH), relays the output, and returns the
-// exit code.
-func Client(url, program string, argv []string, stdin []byte) int {
+// Call sends program's argv, the working directory and stdin to the relay at
+// url (http://HOST[:PORT] or unix:PATH) and returns the command's result.
+func Call(url, program string, argv []string, stdin []byte) (Reply, error) {
 	cwd, _ := os.Getwd()
 	body, _ := json.Marshal(Request{Program: program, Argv: argv, Cwd: cwd, Stdin: string(stdin)})
 
@@ -316,13 +315,22 @@ func Client(url, program string, argv []string, stdin []byte) int {
 	}
 	resp, err := client.Post(target, "application/json", bytes.NewReader(body))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: cannot reach the relay at %s: %s\n", program, url, err)
-		return 1
+		return Reply{}, fmt.Errorf("cannot reach the relay at %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 	var r Reply
 	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
-		fmt.Fprintf(os.Stderr, "%s: bad reply from %s: %s\n", program, url, err)
+		return Reply{}, fmt.Errorf("bad reply from %s: %w", url, err)
+	}
+	return r, nil
+}
+
+// Client runs program through the relay at url as Call does, relays the
+// output, and returns the exit code.
+func Client(url, program string, argv []string, stdin []byte) int {
+	r, err := Call(url, program, argv, stdin)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %s\n", program, err)
 		return 1
 	}
 	os.Stdout.WriteString(r.Stdout)
