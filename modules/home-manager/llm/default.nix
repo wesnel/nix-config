@@ -22,6 +22,9 @@ with lib; let
     guard = {
       inherit (cfg.guard) credentialPaths;
     };
+    publicText = {
+      inherit (cfg) harnessRepos;
+    };
   });
 
   agentPlan = getExe' cfg.agentTools "agent-plan";
@@ -92,6 +95,18 @@ in {
       description = ''
         Working agreements every enabled coding agent loads into each session,
         linked to wherever that agent reads its user-level instructions.
+      '';
+    };
+
+    harnessRepos = mkOption {
+      type = types.listOf types.str;
+      default = ["wesnel/nix-config" "wesnel/emacs-config"];
+
+      description = ''
+        The GitHub repositories, by `owner/name`, that the agents' harness
+        itself lives in, matched against a checkout's remotes. Text bound for
+        GitHub from one of them may name the harness's tools and state
+        directories; from any other repository, it is checked in full.
       '';
     };
 
