@@ -9,7 +9,7 @@ import (
 )
 
 // These edit an Org file's lines as Org does, so that a file agent-plan
-// wrote reads the same as one Wesley changed in Emacs. Each takes the
+// wrote reads the same as one the operator changed in Emacs. Each takes the
 // lines and returns new ones, leaving its argument as it was.
 
 var (

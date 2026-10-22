@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// References Wesley gives a session stay in its plan, with what each was
+// References the operator gives a session stay in its plan, with what each was
 // used for.
 func TestReference(t *testing.T) {
 	const guide = "https://github.com/cursor/plugins/blob/main/pstack/docs/guide/08-principles.md"
@@ -74,9 +74,9 @@ func TestReference(t *testing.T) {
 	})
 }
 
-// Every http(s) URL in Wesley's own prompt is kept as a reference of the
-// session's plan, quietly; a prompt that carries tool or agent output is
-// not his.
+// Every http(s) URL in the operator's own prompt is kept as a reference of
+// the session's plan, quietly; a prompt that carries tool or agent output
+// is not theirs.
 func TestPromptReferences(t *testing.T) {
 	prompt := func(text string) []byte {
 		data, _ := json.Marshal(map[string]any{"session_id": "abc", "transcript_path": "/h/.claude/projects/p/abc.jsonl",
@@ -95,7 +95,7 @@ func TestPromptReferences(t *testing.T) {
 		return out
 	}
 
-	t.Run("Wesley's prompt", func(t *testing.T) {
+	t.Run("the operator's prompt", func(t *testing.T) {
 		c := testConfig(t)
 		p := newPlan(t, c, "x")
 		out := c.Remind(prompt("Read https://github.com/cursor/plugins/blob/main/pstack/docs/guide/08-principles.md " +
@@ -124,7 +124,7 @@ func TestPromptReferences(t *testing.T) {
 	})
 
 	// Codex's UserPromptSubmit input, as its schema has it; a sub-agent's
-	// turn carries agent_id and is not Wesley's.
+	// turn carries agent_id and is not the operator's.
 	codex := func(text string, agent bool) []byte {
 		fields := map[string]any{"session_id": "abc", "transcript_path": "/h/.codex/sessions/2026/10/14/rollout-abc.jsonl",
 			"cwd": "/nowhere", "model": "gpt-5.5", "permission_mode": "default", "hook_event_name": "UserPromptSubmit",
@@ -150,10 +150,10 @@ func TestPromptReferences(t *testing.T) {
 		input []byte
 		want  int
 	}{
-		"Wesley's prompt in Codex":   {codex("Read https://example.com/x", false), 1},
-		"a Codex sub-agent's turn":   {codex("Read https://example.com/x", true), 0},
-		"Wesley's prompt in ECA":     {eca("Read https://example.com/x", false), 1},
-		"an ECA sub-agent's request": {eca("Read https://example.com/x", true), 0},
+		"the operator's prompt in Codex": {codex("Read https://example.com/x", false), 1},
+		"a Codex sub-agent's turn":       {codex("Read https://example.com/x", true), 0},
+		"the operator's prompt in ECA":   {eca("Read https://example.com/x", false), 1},
+		"an ECA sub-agent's request":     {eca("Read https://example.com/x", true), 0},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := testConfig(t)

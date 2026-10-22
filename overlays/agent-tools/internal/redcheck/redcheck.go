@@ -146,11 +146,11 @@ func (r *Result) Exit() int {
 func Do(ctx context.Context, rev string, opts Options) (*Result, error) {
 	if opts.Test == "" {
 		return nil, refusal.New("no test command is configured for this repository; pass `--test CMD`, " +
-			"or ask Wesley to configure one")
+			"or ask the operator to configure one")
 	}
 	if len(opts.TestFiles) == 0 {
 		return nil, refusal.New("no test file globs are configured for this repository; pass `--test-files GLOB`, " +
-			"or ask Wesley to configure them")
+			"or ask the operator to configure them")
 	}
 	if opts.Log == nil {
 		opts.Log = io.Discard

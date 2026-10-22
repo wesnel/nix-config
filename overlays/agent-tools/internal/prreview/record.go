@@ -39,12 +39,14 @@ func clean(text string, limit int) string {
 }
 
 // Outcomes a finding is settled with. A finding on someone else's pull
-// request is only ever proposed as a comment, never fixed.
-var outcomes = map[string]bool{"propose": true, "rebut": true, "duplicate-of": true, "needs-wesley": true}
+// request is only ever proposed as a comment, never fixed; needs-operator
+// leaves it for the operator to decide. Records keep these values, so
+// renaming one means rewriting every record that holds it.
+var outcomes = map[string]bool{"propose": true, "rebut": true, "duplicate-of": true, "needs-operator": true}
 
-// Finding is a reviewer's finding as the record keeps it, for Wesley to edit
-// and post: severity from its kind, body its claim then its evidence, and
-// the outcome triage settles it with.
+// Finding is a reviewer's finding as the record keeps it, for the operator
+// to edit and post: severity from its kind, body its claim then its
+// evidence, and the outcome triage settles it with.
 type Finding struct {
 	review.Finding
 	// Round is the review round that found it; settle names it as
@@ -244,7 +246,7 @@ func (r *Record) settle(input []byte) error {
 		case seen[s.ID]:
 			return refusal.New("%s is settled twice; give each finding one outcome", s.ID)
 		case !outcomes[s.Outcome]:
-			return refusal.New("%q is not an outcome; use propose, rebut, duplicate-of or needs-wesley", s.Outcome)
+			return refusal.New("%q is not an outcome; use propose, rebut, duplicate-of or needs-operator", s.Outcome)
 		case s.Outcome == "duplicate-of" && (byID[s.Of] == nil || s.Of == s.ID):
 			return refusal.New("%s is a duplicate of %q, which is not another finding; name the finding it repeats in `of`", s.ID, s.Of)
 		case s.Outcome != "duplicate-of" && s.Of != "":

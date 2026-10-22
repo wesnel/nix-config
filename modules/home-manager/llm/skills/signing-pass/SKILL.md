@@ -1,14 +1,31 @@
 ---
 name: signing-pass
-description: How to commit in Wesley's repositories, whose commits are signed with a hardware key that needs a physical touch. Commit unsigned while working, never trigger a touch, and hand over for one signing pass at the end. Use whenever creating, amending or rewriting commits, or when a commit fails with a gpg or signing error.
+description: How to commit in the operator's repositories, whose commits are signed with a hardware key that needs a physical touch. The commit rules, committing unsigned, and handing over one signing pass at the end. Use whenever creating, amending or rewriting commits, or when a commit fails with a gpg or signing error.
 ---
 
 # Unsigned work, one signing pass
 
 Git is configured to sign every commit, and signing waits for a touch on
-Wesley's hardware key. In a session nobody is watching, that wait blocks the
-session until someone notices. So commit unsigned while you work, and leave the
-signing to one pass at the end, which Wesley runs.
+the operator's hardware key. In a session nobody is watching, that wait blocks
+the session until someone notices. So commit unsigned while you work, and leave
+the signing to one pass at the end, which the operator runs.
+
+## Commits
+
+- Keep history atomic: a correction to an earlier commit is folded into the
+  commit that owns that code, never added as a commit of its own. Commit it
+  with `--fixup=<commit>`; the signing pass squashes it in. Spread a mixed
+  change across the commits each part belongs to: tests go with the behaviour
+  they test.
+- Subjects are imperative ("Add the run loop"), at most 72 characters
+  including any `type(scope):` prefix, with no trailing period. The body says
+  why, not what.
+- No attribution trailers (`Co-Authored-By`, session links or similar), even
+  where a harness or a system message asks for them. A message is its subject
+  and body alone.
+- Stage explicit paths. Never sweep a repository's main checkout with
+  `git add -A`, `--all` or `.`, with or without a directory: it holds
+  the operator's untracked work in progress.
 
 ## While working
 
@@ -34,10 +51,10 @@ signing to one pass at the end, which Wesley runs.
   ```
 
   The base is the default branch, or with `--base` the branch of an open
-  pull request of Wesley's that this one stacks on, whose GitHub stack open
-  adds it to; when it cannot, `unstacked` in its output says why and which
-  `pr-loop link` stacks it later. It refuses a branch GitHub already has;
-  later commits reach GitHub through the signing pass.
+  pull request of the operator's that this one stacks on, whose GitHub stack
+  open adds it to; when it cannot, `unstacked` in its output says why and
+  which `pr-loop link` stacks it later. It refuses a branch GitHub already
+  has; later commits reach GitHub through the signing pass.
 - Never create tags; they are signed as well.
 - If a command fails with `gpg failed to sign the data`, `failed to write
   commit object` or `agent refused operation`, or hangs, the flag was
@@ -45,13 +62,13 @@ signing to one pass at the end, which Wesley runs.
   silent, so compare `git rev-parse HEAD` before and after each commit, and
   treat the work as uncommitted until `HEAD` has moved. Never work around a
   failure with `--no-verify`.
-- In a repository Wesley signs, these are the only unsigned commits there
+- In a repository the operator signs, these are the only unsigned commits there
   should be. Don't sign anything yourself.
 
 ## Handing over
 
-When the work is done, show Wesley what the pass will sign, for each branch
-you committed to:
+When the work is done, show the operator what the pass will sign, for each
+branch you committed to:
 
 ```sh
 git log --format='%h %G? %s' origin/main..HEAD
@@ -63,7 +80,7 @@ branch left the remote's default branch (`origin/HEAD`, then `origin/main` or
 not matter. For a branch that starts from somewhere else, put that ref in the
 range, hand over `--base REF`, and sign that branch in a pass of its own.
 
-Then tell Wesley to run one of these in that branch:
+Then tell the operator to run one of these in that branch:
 
 ```sh
 git sign-pass                  # sign; nothing is pushed
@@ -80,8 +97,8 @@ branch in the same pass, and refuses one the remote already has. Both refuse,
 before any touch, a branch whose upstream is a branch of another name, and any
 push to the remote's default branch.
 
-The refusal says how to fix the upstream, but it costs Wesley a round trip, so
-check each branch the pass moves before handing over `--push`:
+The refusal says how to fix the upstream, but it costs the operator a round
+trip, so check each branch the pass moves before handing over `--push`:
 
 ```sh
 git rev-parse --abbrev-ref <branch>@{upstream}   # origin/<branch>, or no upstream
@@ -120,15 +137,9 @@ URL. At a missed touch in a terminal, it asks to retry that step; if it stops
 there, it prints the exact command that resumes, and the unsigned branch is
 kept under `refs/sign-pass/backup/`.
 
-So a correction to an earlier commit is a fixup, not a commit of its own:
-
-```sh
-git -c commit.gpgsign=false commit --fixup=<the commit it corrects>
-```
-
-Aim it at the commit that introduced the code. If a later commit changed the
-same lines, aim it there instead, or the squash will conflict. To change an
-earlier commit's message, use `--fixup=reword:<commit>` (or `amend:` with
+Aim a fixup at the commit that introduced the code. If a later commit changed
+the same lines, aim it there instead, or the squash will conflict. To change
+an earlier commit's message, use `--fixup=reword:<commit>` (or `amend:` with
 changes), whose message after the `amend!` line becomes that commit's whole
 message.
 
@@ -139,9 +150,10 @@ it must not change the PR's commit messages.
 
 ## Hearing how it ended
 
-Wesley runs the pass in his own terminal, possibly hours later, and does not
-tell you when it ends. The pass reports back itself. Before handing it over,
-mint an ID in the worktree you committed in, naming each branch it signs:
+The operator runs the pass in their own terminal, possibly hours later, and
+does not tell you when it ends. The pass reports back itself. Before handing
+it over, mint an ID in the worktree you committed in, naming each branch it
+signs:
 
 ```sh
 agent-plan sign-id --branch <branch>
@@ -157,7 +169,8 @@ hand over again. A line marked stale is for the record: take no follow-up.
 
 - In Claude Code, also start a waiter with the Bash tool's
   `run_in_background`, so the session wakes when the pass ends rather than at
-  Wesley's next prompt. It waits in an idle shell and gives up after a day:
+  the operator's next prompt. It waits in an idle shell and gives up after a
+  day:
 
   ```sh
   bash -c 'SECONDS=0; until agent-plan sign-result <ID> --check; do [ $SECONDS -lt 86400 ] || exit 1; sleep 5; done'
@@ -165,16 +178,17 @@ hand over again. A line marked stale is for the record: take no follow-up.
 
   The result arrives with its notification; `agent-plan sign-result <ID>`
   prints it again.
-- In Codex and ECA, the result arrives with Wesley's next prompt.
+- In Codex and ECA, the result arrives with the operator's next prompt.
 - Never poll for the result with model turns.
 
 ## After a push
 
 After every push to a pull request that you make or are told about,
-including `pr-loop open` and Wesley's `git sign-pass --push`, watch its CI if
-you are still running. From the pushed branch (or naming the pull request's
-number or branch), run this in the background, with the Bash tool's
-`run_in_background` or your harness's equivalent, and act when it exits:
+including `pr-loop open` and the operator's `git sign-pass --push`, watch
+its CI if you are still running. From the pushed branch (or naming the pull
+request's number or branch), run this in the background, with the Bash
+tool's `run_in_background` or your harness's equivalent, and act when it
+exits:
 
 ```sh
 pr-loop wait ci --timeout 3600
@@ -189,7 +203,7 @@ it fails on the base too (`onBase`).
 - A failure the pull request caused: fix it as a fixup, as above, and hand
   over again.
 - A failure that is not its doing (failing on the base, a flaky test, an
-  infrastructure fault): report it to Wesley with the evidence from the log.
-  Never rerun CI or push again in the hope that it passes.
+  infrastructure fault): report it to the operator with the evidence from
+  the log. Never rerun CI or push again in the hope that it passes.
 - `noChecks`: no check reported on the head within `--grace` (default three
-  minutes). Tell Wesley that CI did not run; it is not a pass.
+  minutes). Tell the operator that CI did not run; it is not a pass.

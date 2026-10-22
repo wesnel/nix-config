@@ -60,8 +60,10 @@ var (
 		"reviewed", "finding-settled", "asked", "decided", "handed-back", "postponed", "discovered", "referenced"}
 	// Roles are who logs an event.
 	Roles = []string{"single", "parent", "subagent", "reviewer", "design-reviewer"}
-	// Outcomes are the review-change skill's triage outcomes.
-	Outcomes = []string{"fix", "rebut", "duplicate-of", "belongs-in", "defer", "needs-wesley"}
+	// Outcomes are the review-change skill's triage outcomes; needs-operator
+	// is a finding left for the operator to decide. They are stored in plan
+	// logs, so renaming one means rewriting every log that holds it.
+	Outcomes = []string{"fix", "rebut", "duplicate-of", "belongs-in", "defer", "needs-operator"}
 
 	reviewPattern = regexp.MustCompile(`^[0-9]+\.[A-Za-z0-9_-]+$`)
 
@@ -85,7 +87,7 @@ var (
 		}
 		for _, k := range signKinds {
 			kinds[k] = "a sign-pass's events are logged by `agent-plan sign-id`, `git sign-pass --notify` and the delivery of its result alone. " +
-				"Hand Wesley the sign-pass as the signing-pass skill says"
+				"Hand the operator the sign-pass as the signing-pass skill says"
 		}
 		return kinds
 	}()
@@ -212,7 +214,7 @@ func (l *lockedPlan) log(e Event, now time.Time) (Event, error) {
 
 // Reseal accepts a log changed other than through Log: it appends a
 // resealed event recording the digest the log had and the one it has, and
-// records the log as it then is. It is Wesley's to run.
+// records the log as it then is. It is the operator's to run.
 func (p Plan) Reseal(now time.Time) (Event, error) {
 	if err := p.checkOwn(); err != nil {
 		return Event{}, err
@@ -297,7 +299,7 @@ func (p Plan) withLock(fn func(l *lockedPlan) error) error {
 func (l *lockedPlan) append(text string) error {
 	return l.appendWith(func(current []byte, recorded string) (string, error) {
 		if recorded != "" && recorded != digest(current) {
-			return "", refusal.New("%s has changed since agent-plan last appended to it, and the log is append-only. Leave it as it is, and tell Wesley which plan's log changed; `agent-plan reseal` is his to run", l.p.log())
+			return "", refusal.New("%s has changed since agent-plan last appended to it, and the log is append-only. Leave it as it is, and tell the operator which plan's log changed; `agent-plan reseal` is theirs to run", l.p.log())
 		}
 		return text, nil
 	})
@@ -360,7 +362,7 @@ const editTries = 3
 func (l *lockedPlan) edit(file string, fn func(lines []string) ([]string, error)) error {
 	emacsLock := filepath.Join(filepath.Dir(file), ".#"+filepath.Base(file))
 	if info, err := os.Lstat(emacsLock); err == nil && info.Mode()&fs.ModeSymlink != 0 {
-		return refusal.New("%s has unsaved changes in an Emacs buffer (%s exists), which would overwrite this change when saved. Ask Wesley to save or revert that buffer, then run the command again", file, emacsLock)
+		return refusal.New("%s has unsaved changes in an Emacs buffer (%s exists), which would overwrite this change when saved. Ask the operator to save or revert that buffer, then run the command again", file, emacsLock)
 	}
 	for range editTries {
 		before, err := os.ReadFile(file)
@@ -383,7 +385,7 @@ func (l *lockedPlan) edit(file string, fn func(lines []string) ([]string, error)
 			return err
 		}
 	}
-	return refusal.New("%s kept changing while agent-plan edited it. Ask Wesley what else is writing it, then run the command again", file)
+	return refusal.New("%s kept changing while agent-plan edited it. Ask the operator what else is writing it, then run the command again", file)
 }
 
 // errChanged is replaceFile's error for a file that changed before the

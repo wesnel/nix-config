@@ -68,6 +68,25 @@ red, and the failure points at what broke. Everything below follows from that.
 - Never assert that a fake received what the test handed it. That checks
   the test's own wiring. Assert what the code did with the answer.
 
+## Hermetic
+
+- A test touches nothing outside what it set up: only its own temporary
+  directories, never the home directory, global or system configuration,
+  or the test binary itself. Point every path the code reads from the
+  environment (`HOME`, `XDG_*`, a config path) into the test's directory.
+- No internet. A network dependency gets a local stand-in the test starts,
+  such as an `httptest` server, with its address injected into the code.
+- Never rely on something being unreachable or absent: a closed port, a
+  missing binary, a host with no route. Start the refusing server, or
+  inject the missing one, so the test controls it.
+- Fail closed: the test binary's setup points `HTTP_PROXY` and
+  `HTTPS_PROXY` at a server of its own that refuses every connection, with
+  `NO_PROXY` naming localhost, so a request that escapes the stand-ins fails
+  instead of reaching the internet. In Go this is `TestMain`.
+- When reviewing, a test that reaches the network, writes outside what it
+  set up, or passes only because something is unreachable or absent is a
+  finding.
+
 ## Test first
 
 - Every change in behaviour (a feature, a fix, a changed contract) starts
@@ -93,7 +112,7 @@ red, and the failure points at what broke. Everything below follows from that.
   evidence is missing or weak (no test files changed, only test files
   changed, or the tests failed without the change only to build, or with no
   build command to say whether they built): say which in the report rather
-  than claim a red run. Where Wesley has configured no settings for the
+  than claim a red run. Where the operator has configured no settings for the
   repository, pass `--test`, `--build` and `--test-files`.
 - For a bug, write the test from the symptom the report describes (the wrong
   output, the crash, the lost write), not from the line that changed. The

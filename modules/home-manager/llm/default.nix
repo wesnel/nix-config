@@ -628,6 +628,18 @@ in {
             source = ./skills/write-tests/SKILL.md;
             sandbox = true;
           };
+          pull-requests = {
+            source = ./skills/pull-requests/SKILL.md;
+            sandbox = true;
+          };
+          docs-and-comments = {
+            source = ./skills/docs-and-comments/SKILL.md;
+            sandbox = true;
+          };
+          design = {
+            source = ./skills/design/SKILL.md;
+            sandbox = true;
+          };
           restack-branches = {
             source = ./skills/restack-branches/SKILL.md;
             sandbox = true;

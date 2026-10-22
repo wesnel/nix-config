@@ -41,7 +41,7 @@ func TestBrief(t *testing.T) {
 			"Decided:\n- Q1 :: Keep the flag? no, drop it\n" +
 			"Steps ready: S2\n" +
 			"Parts ready to start: none\n" +
-			"Questions for Wesley: Q2\n" +
+			"Questions for the operator: Q2\n" +
 			"Done, not verified: S1\n" +
 			"Follow-ups open: 1\n"
 		if got != want {

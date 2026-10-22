@@ -86,4 +86,41 @@ func TestPost(t *testing.T) {
 	}
 
 	t.Run("records facts", testPostRecordsFacts)
+	t.Run("hands over the pull-requests skill", testPostPullRequests)
+}
+
+// A command that opens or edits a pull request is followed by the line
+// that hands over the pull-requests skill, in each harness's format; any
+// other leaves it out.
+func testPostPullRequests(t *testing.T) {
+	claude := func(command string) string {
+		event, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Bash",
+			"tool_input": map[string]string{"command": command}, "tool_response": map[string]any{"stdout": "", "stderr": ""}})
+		return string(event)
+	}
+	eca := func(command string) string {
+		event, _ := json.Marshal(map[string]any{"hook_type": "postToolCall", "server": "eca", "tool_name": "shell_command",
+			"tool_input": map[string]string{"command": command}, "tool_response": ""})
+		return string(event)
+	}
+	for _, c := range []struct {
+		name, event, format string
+	}{
+		{"gh pr create", claude("gh pr create --draft --title T --body-file b.md"), "hookSpecificOutput"},
+		{"gh pr edit after cd", claude("cd /r && gh pr edit 12 --body-file b.md"), "hookSpecificOutput"},
+		{"pr-loop open", claude("pr-loop open --title T --body-file b.md feature"), "hookSpecificOutput"},
+		{"ECA gh pr create", eca("gh pr create --draft --title T"), `{"additionalContext"`},
+		{"gh pr view", claude("gh pr view 12"), ""},
+		{"pr-loop push", claude("pr-loop push"), ""},
+		{"echo of gh pr create", claude("echo gh pr create"), ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var out bytes.Buffer
+			Main([]string{"--post"}, strings.NewReader(c.event), &out, io.Discard)
+			got := strings.Contains(out.String(), "`pull-requests` skill")
+			if got != (c.format != "") || !strings.Contains(out.String(), c.format) {
+				t.Errorf("%s: printed %s", c.event, out.String())
+			}
+		})
+	}
 }

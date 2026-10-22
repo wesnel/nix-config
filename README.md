@@ -219,7 +219,7 @@ pr-loop review settle 2 < outcomes.json             # records how triage settled
 It fetches the pull request over HTTPS into a bare clone of its own under
 `~/.cache/pr-review/OWNER/NAME/N/`, pinned to the head GitHub reports, and
 reviews it with the same contract as `git fresh-review`. The goal is ours:
-review it for Wesley and propose comments only; the title, description,
+review it for the operator and propose comments only; the title, description,
 linked issues and review threads go in as the author's claims. Every git
 command on the clone runs without your git config, hooks, links or
 submodules, so a pull request's `.gitattributes` and `.lfsconfig` run no

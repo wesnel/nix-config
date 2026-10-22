@@ -66,7 +66,7 @@ func loopScope(chain []*PR, opened int) error {
 	for _, pr := range chain {
 		if _, ok := registered[pr.Number]; !ok && pr.Number != opened {
 			return refuse("#%d is not part of this loop, and a loop session stacks only the loop's pull requests; "+
-				"put `pr-loop link %s` in the report for Wesley to run", pr.Number, numbersOf(chain))
+				"put `pr-loop link %s` in the report for the operator to run", pr.Number, numbersOf(chain))
 		}
 	}
 	return nil
@@ -106,7 +106,7 @@ func link(repo *Repo, prs map[string]*PR, chain []*PR) (map[string]any, error) {
 	for i := k; i < len(chain); i++ {
 		if stacks[i] != nil {
 			return nil, refuse("#%d is in GitHub stack #%d, but #%d below it is in none, and a stack is a single line; "+
-				"`pr-loop stack %d` shows it, and unstacking is Wesley's call", chain[i].Number, stacks[i].Number,
+				"`pr-loop stack %d` shows it, and unstacking is the operator's call", chain[i].Number, stacks[i].Number,
 				chain[k].Number, chain[i].Number)
 		}
 	}
@@ -117,7 +117,7 @@ func link(repo *Repo, prs map[string]*PR, chain []*PR) (map[string]any, error) {
 		for i := 1; i < k; i++ {
 			if stacks[i].Number != target.Number || at+i >= len(target.PRs) || target.PRs[at+i].PR != chain[i].Number {
 				return nil, refuse("#%d and #%d are not next to each other in one GitHub stack; `pr-loop stack %d` shows "+
-					"GitHub's stacks, and unstacking is Wesley's call", chain[i-1].Number, chain[i].Number, chain[i].Number)
+					"GitHub's stacks, and unstacking is the operator's call", chain[i-1].Number, chain[i].Number, chain[i].Number)
 			}
 		}
 		if k == len(chain) {
@@ -159,7 +159,7 @@ func link(repo *Repo, prs map[string]*PR, chain []*PR) (map[string]any, error) {
 	for _, m := range target.PRs {
 		if pr := prs[m.Branch]; m.State == "OPEN" && (pr == nil || pr.Number != m.PR) {
 			return nil, refuse("GitHub stack #%d holds #%d, which is not an open pull request by %s, so pr-loop leaves "+
-				"the stack alone; name the stack in the report for Wesley", target.Number, m.PR, repo.Viewer)
+				"the stack alone; name the stack in the report for the operator", target.Number, m.PR, repo.Viewer)
 		}
 	}
 	if err := stackWrite("POST", fmt.Sprintf("repos/%s/stacks/%d/add", repo.Slug, target.Number), body, nil); err != nil {
@@ -170,7 +170,7 @@ func link(repo *Repo, prs map[string]*PR, chain []*PR) (map[string]any, error) {
 
 // aboveTop is the refusal to stack onto a PR that is not its stack's top.
 const aboveTop = "#%d has #%d above it in GitHub stack #%d, and a stack is a single line; base the pull request on " +
-	"the top of that stack instead of #%d, or name the stack (#%d) in the report for Wesley"
+	"the top of that stack instead of #%d, or name the stack (#%d) in the report for the operator"
 
 // position is where number is in s, or -1.
 func position(s *GitHubStack, number int) int {
