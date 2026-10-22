@@ -314,6 +314,19 @@ in {
             }
           ];
         })}
+        # Wesley's prompt: its URLs become plan references. A chat with a
+        # parent_chat_id is a sub-agent's, which agent-plan skips.
+        prompt=${escapeShellArg (builtins.toJSON {
+          type = "preRequest";
+          visible = false;
+          description = "agent-plan remind: the prompt's references";
+          actions = [
+            {
+              type = "shell";
+              shell = "agent-plan remind";
+            }
+          ];
+        })}
 
         if [ ! -e "$conf" ]; then
           current='{}'
@@ -321,7 +334,7 @@ in {
           current=$(cat "$conf")
         fi
 
-        if merged=$(printf '%s' "$current" | ${pkgs.jq}/bin/jq --argjson hook "$hook" --argjson post "$post" --argjson subagent "$subagent" --argjson compact "$compact" '.hooks."guard-baseline" = $hook | .hooks."guard-post" = $post | .hooks."plan-subagent" = $subagent | .hooks."plan-compact" = $compact'); then
+        if merged=$(printf '%s' "$current" | ${pkgs.jq}/bin/jq --argjson hook "$hook" --argjson post "$post" --argjson subagent "$subagent" --argjson compact "$compact" --argjson prompt "$prompt" '.hooks."guard-baseline" = $hook | .hooks."guard-post" = $post | .hooks."plan-subagent" = $subagent | .hooks."plan-compact" = $compact | .hooks."plan-prompt" = $prompt'); then
           if [ "$merged" != "$current" ] && [ -z "''${DRY_RUN:-}" ]; then
             mkdir -p "$(dirname "$conf")"
             printf '%s\n' "$merged" > "$conf"

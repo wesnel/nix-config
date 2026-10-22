@@ -10,10 +10,11 @@ Settle every choice a plan leaves open before the work starts, by putting
 the choices to Wesley in rounds. The questions live in the plan and reach
 him as the `plan-work` skill's "Questions for Wesley" says.
 
-1. Find the plan with `agent-plan find` and read it, Goal and Decisions
-   first. With none, make one as the `plan-work` skill says.
+1. Find the plan with `agent-plan find` and read it, Goal and decided
+   questions (`agent-plan decisions PLAN --all`) first. With none, make one
+   as the `plan-work` skill says.
 2. Map the decision tree: every choice the Goal, Steps or Distribution
-   depends on that Decisions does not settle, and for each, the choices
+   depends on that no decided question settles, and for each, the choices
    that only make sense once it is settled.
 3. Look up every fact the tree needs, as "Questions for Wesley" says. Run
    slow lookups in the background, and write the questions that do not
@@ -27,4 +28,4 @@ him as the `plan-work` skill's "Questions for Wesley" says.
    questions an answer changes, and add those it raises. One it makes moot
    stays Wesley's to close: recommend dropping it, naming the decision.
 7. Done when `agent-plan questions PLAN --all --waiting` lists nothing and
-   every choice in the tree is under Decisions.
+   every choice in the tree is a decided question.

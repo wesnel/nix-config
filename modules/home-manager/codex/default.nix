@@ -236,6 +236,18 @@ in {
                 ];
               }
             ];
+            # Wesley's prompt: its URLs become plan references. A
+            # sub-agent's turn carries agent_id, which agent-plan skips.
+            hooks.UserPromptSubmit = [
+              {
+                hooks = [
+                  {
+                    type = "command";
+                    command = "agent-plan remind";
+                  }
+                ];
+              }
+            ];
             hooks.PreToolUse = [
               {
                 matcher = ".*";

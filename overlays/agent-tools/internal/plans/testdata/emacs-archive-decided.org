@@ -1,0 +1,49 @@
+#+title: Add the run loop
+#+TODO: TODO STARTED | DONE VERIFIED ABANDONED
+#+TODO: ASK | DECIDED(@) DROPPED(@) SUPERSEDED
+
+* Plan
+:PROPERTIES:
+:ID: 2026-10-14-x.box
+:END:
+** Goal
+Add the run loop.
+** Steps [0/4]
+*** TODO Add the flag
+SCHEDULED: <2026-10-20 Tue>
+:PROPERTIES:
+:ID: S1
+:END:
+*** TODO Wire it in
+:PROPERTIES:
+:ID: S2
+:END:
+*** STARTED Drop the old flag
+:PROPERTIES:
+:ID: S3
+:END:
+*** TODO Leave it
+:PROPERTIES:
+:ID: S4
+:END:
+** Distribution
+*** TODO Part one
+:PROPERTIES:
+:ID: P1
+:END:
+** Questions
+*** DECIDED [#A] Keep the old flag? :ARCHIVE:
+CLOSED: [2026-10-14 Wed 16:33]
+:PROPERTIES:
+:ID: Q1
+:RECOMMENDATION: no, drop it
+:END:
+Nothing reads it.
+- keep it
+** Follow-ups
+*** TODO Guard accepts --draft=false
+:PROPERTIES:
+:ID: F1
+:FOUND_IN: S1
+:END:
+** Verification

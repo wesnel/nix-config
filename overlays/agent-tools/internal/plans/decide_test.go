@@ -1,9 +1,12 @@
 package plans
 
 import (
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // otherHosts opens, as this host, a plan of another host's beside p.
@@ -14,81 +17,151 @@ func otherHosts(t *testing.T, p Plan) Plan {
 	return other
 }
 
+// fromFixture makes a plan whose file is the fixture name, which is
+// testdata/open.org or Org's output from it, both of plan 2026-10-14-x.box.
+func fromFixture(t *testing.T, name string) Plan {
+	t.Helper()
+	p := newPlan(t, testConfig(t), "x")
+	data, err := os.ReadFile("testdata/" + name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p.file(""), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// lines is the file's lines from the heading with ID id: the heading and
+// the n lines after it.
+func linesAt(t *testing.T, file, id string, n int) string {
+	t.Helper()
+	data, _ := os.ReadFile(file)
+	lines := strings.Split(string(data), "\n")
+	for i, l := range lines {
+		if l == ":ID: "+id {
+			for i >= 0 && level(lines[i]) == 0 {
+				i--
+			}
+			return strings.Join(lines[i:min(i+1+n, len(lines))], "\n")
+		}
+	}
+	t.Fatalf("no %s in %s", id, file)
+	return ""
+}
+
+// The time at which Org wrote the emacs-archive fixtures.
+var orgArchived = time.Date(2026, 10, 14, 16, 33, 0, 0, time.Local)
+
 func TestDecide(t *testing.T) {
-	// A decided question leaves Open questions for Decisions, as the next
-	// decision, with its answer, and the log records it.
-	t.Run("question", func(t *testing.T) {
-		_, p := openQuestions(t)
-		got, err := p.Decide("Q1", "release", day)
+	// A decided question stays where it is, settled as Org settles it, with
+	// Wesley's answer, and the log records it.
+	t.Run("in place", func(t *testing.T) {
+		p := fromFixture(t, "open.org")
+		got, err := p.Decide("Q1", DecideOptions{Answer: "drop it"}, orgArchived)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Decision != "D2" || got.Question != "Q1" {
+		if got.Question != "Q1" || got.State != "DECIDED" || got.File != p.file("") {
 			t.Errorf("decided %+v", got)
 		}
-		data, _ := os.ReadFile(p.file(""))
-		text := string(data)
-		decisions := text[strings.Index(text, "** Decisions\n"):strings.Index(text, "** Steps\n")]
-		open := text[strings.Index(text, "** Open questions\n"):]
-		want := "*** Which branch is the base?\n:PROPERTIES:\n:ID: D2\n:QUESTION: Q1\n:RECOMMENDATION: main\n:ANSWER: release\n:END:\n" +
-			"The release branch is frozen.\n- release\n- a branch of its own\n"
-		if !strings.Contains(decisions, "*** Keep the flag\n") || !strings.HasSuffix(decisions, want) {
-			t.Errorf("Decisions:\n%s", decisions)
+		if got, want := linesAt(t, p.file(""), "Q1", 1), linesAt(t, "testdata/emacs-archive-decided.org", "Q1", 1); got != want {
+			t.Errorf("heading:\n%s\nwant Org's:\n%s", got, want)
 		}
-		if strings.Contains(open, "Q1") || !strings.Contains(open, ":ID: Q2\n") {
-			t.Errorf("Open questions:\n%s", open)
+		if entry := linesAt(t, p.file(""), "Q1", 7); !strings.Contains(entry, ":RECOMMENDATION: no, drop it\n:ANSWER: drop it\n:END:\nNothing reads it.") {
+			t.Errorf("entry:\n%s", entry)
 		}
 		events, _ := p.Events()
-		if len(events) != 1 || events[0].Kind != "decided" || events[0].Item != "D2" || events[0].Summary != "Q1: release" {
+		if len(events) != 1 || events[0].Kind != "decided" || events[0].Item != "Q1" || events[0].Summary != "drop it" {
 			t.Errorf("events %+v", events)
+		}
+		if qs, _ := p.Questions(true); len(qs) != 0 {
+			t.Errorf("still open: %+v", qs)
 		}
 	})
 
 	t.Run("part's question", func(t *testing.T) {
 		_, p := openQuestions(t)
-		part, err := p.Decide("P1.Q1", "yes", day)
-		if err != nil || part.Decision != "P1.D1" {
-			t.Errorf("a part's question: %+v, %v", part, err)
+		got, err := p.Decide("P1.Q1", DecideOptions{Answer: "yes"}, day)
+		if err != nil || got.File != p.file("P1") {
+			t.Errorf("a part's question: %+v, %v", got, err)
+		}
+		if qs, _ := p.Questions(true); ids(qs) != "Q1 Q2" {
+			t.Errorf("left open: %s", ids(qs))
 		}
 	})
 
-	t.Run("left open", func(t *testing.T) {
+	t.Run("dropped", func(t *testing.T) {
 		_, p := openQuestions(t)
-		for _, id := range []string{"Q1", "P1.Q1"} {
-			if _, err := p.Decide(id, "yes", day); err != nil {
-				t.Fatal(err)
-			}
+		got, err := p.Decide("Q2", DecideOptions{Answer: "moot after Q1", Drop: true}, day)
+		if err != nil || got.State != "DROPPED" {
+			t.Fatalf("dropped %+v, %v", got, err)
 		}
-		if qs, _ := p.Questions(true); len(qs) != 1 || qs[0].ID != "Q2" {
-			t.Errorf("left open: %+v", qs)
+		if entry := linesAt(t, p.file(""), "Q2", 1); entry != "*** DROPPED Rename the command? :ARCHIVE:\nCLOSED: [2026-10-14 Wed 13:05]" {
+			t.Errorf("entry:\n%s", entry)
+		}
+		if qs, _ := p.Questions(false); ids(qs) != "Q1" {
+			t.Errorf("left open: %s", ids(qs))
+		}
+	})
+
+	// A new decision replaces a settled one, which Org then shows as
+	// SUPERSEDED, keeping when it was closed.
+	t.Run("superseding", func(t *testing.T) {
+		p := fromFixture(t, "open.org")
+		if _, err := p.Decide("Q1", DecideOptions{Answer: "drop it"}, orgArchived); err != nil {
+			t.Fatal(err)
+		}
+		asked, err := p.Ask(AskOptions{Question: "Keep the old flag after all?", Recommendation: "yes"}, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := p.Decide(asked.ID, DecideOptions{Answer: "yes", Supersedes: "Q1"}, day); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := linesAt(t, p.file(""), "Q1", 1), linesAt(t, "testdata/emacs-archive.org", "Q1", 1); got != want {
+			t.Errorf("superseded:\n%s\nwant Org's:\n%s", got, want)
+		}
+		if entry := linesAt(t, p.file(""), asked.ID, 7); !strings.Contains(entry, ":ANSWER: yes\n:SUPERSEDES: Q1\n:END:") {
+			t.Errorf("the new decision:\n%s", entry)
+		}
+		if ds, _ := p.Decisions(true); decisionIDs(ds) != asked.ID {
+			t.Errorf("decisions %s", decisionIDs(ds))
+		}
+	})
+
+	t.Run("refused/superseding an open question", func(t *testing.T) {
+		_, p := openQuestions(t)
+		before, _ := os.ReadFile(p.file(""))
+		_, err := p.Decide("Q1", DecideOptions{Answer: "x", Supersedes: "Q2"}, day)
+		isRefusal(t, "superseding an open question", err)
+		if after, _ := os.ReadFile(p.file("")); string(after) != string(before) {
+			t.Errorf("the plan changed:\n%s", after)
 		}
 	})
 
 	for _, c := range []struct {
-		what, id, answer string
-		// decidedQ1 is whether Q1 is decided first.
-		decidedQ1 bool
+		what, id string
+		o        DecideOptions
 	}{
-		{"an unknown question", "Q9", "x", false},
-		{"a decided one", "Q1", "x", true},
-		{"an answer with newlines", "Q2", "x\n* forged", false},
-		{"an empty answer", "Q2", " ", false},
+		{"an unknown question", "Q9", DecideOptions{Answer: "x"}},
+		{"a decided one", "Q3", DecideOptions{Answer: "x"}},
+		{"a step", "P1", DecideOptions{Answer: "x"}},
+		{"an answer with newlines", "Q2", DecideOptions{Answer: "x\n* forged"}},
+		{"an empty answer", "Q2", DecideOptions{Answer: " "}},
+		{"superseding an unknown question", "Q2", DecideOptions{Answer: "x", Supersedes: "Q9"}},
+		{"dropping and superseding", "Q2", DecideOptions{Answer: "x", Drop: true, Supersedes: "Q3"}},
 	} {
 		t.Run("refused/"+c.what, func(t *testing.T) {
 			_, p := openQuestions(t)
-			if c.decidedQ1 {
-				if _, err := p.Decide("Q1", "release", day); err != nil {
-					t.Fatal(err)
-				}
-			}
-			_, err := p.Decide(c.id, c.answer, day)
+			_, err := p.Decide(c.id, c.o, day)
 			isRefusal(t, c.what, err)
 		})
 	}
 
 	t.Run("refused/another host's plan", func(t *testing.T) {
 		_, p := openQuestions(t)
-		_, err := otherHosts(t, p).Decide("Q1", "x", day)
+		_, err := otherHosts(t, p).Decide("Q1", DecideOptions{Answer: "x"}, day)
 		isRefusal(t, "another host's plan", err)
 	})
 }
@@ -114,6 +187,28 @@ func TestStatusLine(t *testing.T) {
 			}
 		})
 	}
+
+	// Emacs's mode line sends only the directory of the buffer's file.
+	t.Run("a worktree's plan, given only a directory in it", func(t *testing.T) {
+		c := testConfig(t)
+		top, _ := filepath.EvalSymlinks(t.TempDir())
+		gitIn(t, top, "init", "-q", "-b", "main")
+		sub := filepath.Join(top, "lisp")
+		os.MkdirAll(sub, 0o755)
+		made, err := c.New(NewOptions{Title: "T", Slug: "x", Worktrees: []string{top}}, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		insertUnder(t, made.File, "** Questions", question("Q1", "Keep it?", ""))
+		in, _ := json.Marshal(map[string]string{"cwd": sub})
+		if got := c.StatusLine(in); got != "1 open question · /questions" {
+			t.Errorf("status line %q", got)
+		}
+		elsewhere, _ := json.Marshal(map[string]string{"cwd": t.TempDir()})
+		if got := c.StatusLine(elsewhere); got != "" {
+			t.Errorf("status line outside the worktree %q", got)
+		}
+	})
 
 	t.Run("after", testStatusLineAfter)
 }

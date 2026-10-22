@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,8 +45,6 @@ var (
 	// A host is part of every file name, between dots, so it holds none.
 	hostPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 	slugPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
-	partPattern = regexp.MustCompile(`^P[0-9]+$`)
-	stepPattern = regexp.MustCompile(`^(P[0-9]+\.)?S[0-9]+$`)
 	// planFile is a plan's file name: the plan's name, which is its date and
 	// slug, then its host, and then a part's ID or "log" for those files.
 	planFile = regexp.MustCompile(`^([0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9]+(?:-[a-z0-9]+)*\.([A-Za-z0-9][A-Za-z0-9_-]*))(?:\.(P[0-9]+|log))?\.org$`)
@@ -103,6 +102,9 @@ type NewOptions struct {
 	Repos, Branches, Worktrees, Sessions []string
 	Harness                              string
 	Parent, Part                         string
+	// Template names <plans repository>/templates/<Template>.org, whose
+	// entries the new plan starts with.
+	Template string
 }
 
 // Created is what New made.
@@ -154,11 +156,21 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 			return Created{}, err
 		}
 	}
+	if (o.Parent != "" || o.Part != "") && o.Template != "" {
+		return Created{}, refusal.New("a template starts a plan, not a part. Make the part without `--template`, and copy what it needs into its file")
+	}
 	if o.Parent != "" || o.Part != "" {
 		return c.newPart(o)
 	}
 	if !slugPattern.MatchString(o.Slug) {
 		return Created{}, refusal.New("slug %q is not lower-case words joined by hyphens. Pass one such as `--slug add-run-loop`", o.Slug)
+	}
+	var sections map[string][]string
+	if o.Template != "" {
+		var err error
+		if sections, err = c.template(o.Template); err != nil {
+			return Created{}, err
+		}
 	}
 	if _, err := c.Init(); err != nil {
 		return Created{}, err
@@ -171,7 +183,8 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 			try = fmt.Sprintf("%s-%d", base, i)
 		}
 		candidate := Plan{Dir: c.Dir, Name: try + "." + c.Host, Host: c.Host, Own: true}
-		switch err := writeNew(candidate.file(""), planText(o, candidate.Name, map[string]string{"HOST": c.Host}, true)); {
+		text := withTemplate(planText(o, candidate.Name, c.Host, map[string]string{"HOST": c.Host}, true), sections)
+		switch err := writeNew(candidate.file(""), text); {
 		case err == nil:
 			p = candidate
 		case !errors.Is(err, fs.ErrExist):
@@ -181,7 +194,8 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 	if p.Name == "" {
 		return Created{}, fmt.Errorf("no free name for %s.%s under %s", base, c.Host, c.Dir)
 	}
-	if err := p.append("#+title: Log of " + p.Name + "\n"); err != nil {
+	err := p.withLock(func(l *lockedPlan) error { return l.append("#+title: Log of " + p.Name + "\n") })
+	if err != nil {
 		return Created{}, err
 	}
 	return Created{Plan: p.file(""), File: p.file(""), ID: p.Name, Log: p.log()}, nil
@@ -205,7 +219,7 @@ func (c Config) newPart(o NewOptions) (Created, error) {
 	if item, ok := items[o.Part]; !ok || item.File != p.file("") {
 		return Created{}, refusal.New("%s is not in %s's Distribution. Ask whoever coordinates the plan to add it, or use a part ID `agent-plan status %s` lists", o.Part, p.Name, p.file(""))
 	}
-	text := planText(o, o.Part, map[string]string{"PARENT": "[[file:" + filepath.Base(p.file("")) + "]]"}, false)
+	text := planText(o, o.Part, c.Host, map[string]string{"PARENT": "[[file:" + filepath.Base(p.file("")) + "]]"}, false)
 	file := p.file(o.Part)
 	if err := writeNew(file, text); errors.Is(err, fs.ErrExist) {
 		return Created{}, refusal.New("%s already has its plan file, %s. Edit that file instead; `agent-plan goal %s --part %s` prints its goal", o.Part, file, p.file(""), o.Part)
@@ -215,11 +229,28 @@ func (c Config) newPart(o NewOptions) (Created, error) {
 	return Created{Plan: p.file(""), File: file, ID: o.Part, Log: p.log()}, nil
 }
 
-// planText is a new plan file: the parent's sections, and Distribution for
-// a parent alone.
-func planText(o NewOptions, id string, extra map[string]string, parent bool) string {
+var nonTag = regexp.MustCompile(`[^A-Za-z0-9_@#%]`)
+
+// fileTags are the Org tags of a plan made on host for repos: each
+// repository's name and the host, each character Org does not allow in a
+// tag made a _, so the agenda can filter plans by either.
+func fileTags(repos []string, host string) string {
+	var tags []string
+	for _, name := range append(slices.Clone(repos), host) {
+		name = strings.TrimSuffix(name[strings.LastIndex(name, "/")+1:], ".git")
+		if tag := nonTag.ReplaceAllString(name, "_"); tag != "" && !slices.Contains(tags, tag) {
+			tags = append(tags, tag)
+		}
+	}
+	return ":" + strings.Join(tags, ":") + ":"
+}
+
+// planText is a new plan file of host's: the parent's sections, and
+// Distribution for a parent alone.
+func planText(o NewOptions, id, host string, extra map[string]string, parent bool) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "#+title: %s\n#+TODO: TODO NEXT | DONE\n\n* Plan\n:PROPERTIES:\n:ID: %s\n", o.Title, id)
+	fmt.Fprintf(&b, "#+title: %s\n%s#+FILETAGS: %s\n\n* Plan\n:PROPERTIES:\n:ID: %s\n", o.Title, todoLines(),
+		fileTags(o.Repos, host), id)
 	property := func(name, value string) {
 		if value == "" {
 			fmt.Fprintf(&b, ":%s:\n", name)
@@ -241,8 +272,7 @@ func planText(o NewOptions, id string, extra map[string]string, parent bool) str
 	property("PULL_REQUESTS", "")
 	property("PIPELINE", "full")
 	b.WriteString(":END:\n")
-	sections := []string{"Goal", "Decisions", "Steps", "Distribution", "Open questions", "Verification"}
-	for _, s := range sections {
+	for _, s := range planSections {
 		if s == "Distribution" && !parent {
 			continue
 		}
@@ -367,8 +397,8 @@ func (c Config) Open(arg string) (Plan, error) {
 
 // item is a heading with an ID in one of a plan's files.
 type item struct {
-	ID, Title, File, Part string
-	Props                 map[string]string
+	heading
+	ID, File, Part string
 }
 
 // files are the plan's own files: the plan's, then each part's in order.
@@ -422,7 +452,7 @@ func (p Plan) itemList() ([]item, error) {
 				continue
 			}
 			seen[id] = true
-			out = append(out, item{ID: id, Title: h.Title, File: f, Part: part, Props: h.Props})
+			out = append(out, item{heading: h, ID: id, File: f, Part: part})
 		}
 	}
 	return out, nil
