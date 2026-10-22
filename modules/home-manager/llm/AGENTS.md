@@ -1,5 +1,10 @@
 # Working agreements
 
+Each heading below, and each bold phrase that opens a rule, names a
+principle. Cite a name in a plan, report or review together with the
+decision it changed ("subtract first: deleted the old parser before adding
+the flag"), and only then.
+
 ## Commits and the hardware key
 
 Commits are signed, and pushes authenticated, with a hardware key that needs a
@@ -64,9 +69,37 @@ also the one place that says how to settle and answer review feedback.
 
 ## Designing for change
 
-Extend an existing seam before adding a new one, abstract on the second real
-use, not the first, and keep one source of truth per rule, which everything
-else reads. The `review-change` skill's design review checks this.
+The `review-change` skill's design review checks these.
+
+- **One source of truth.** Keep each rule in one place, which everything
+  else reads.
+- **Extend a seam.** Extend an existing seam before adding a new one, and
+  abstract on the second real use, not the first.
+- **From scratch.** Fold a new requirement in as if the design had started
+  from it: work out what you would build knowing it, then carry that through
+  every type, doc, example and skill it touches.
+- **Subtract first.** Delete what the change makes obsolete before building
+  on what is left.
+- **Smallest diff.** Make the smallest change that solves the problem.
+  Internal tooling with no users beyond this repository changes in place,
+  with no shim, dual path or transitional state.
+- **Migrate and delete.** When an interface changes, move every caller and
+  delete the old form in the same pass. Callers outside our control, such as
+  a published API or data already stored, get expand–contract instead: the
+  new form beside the old, callers moved over in batches that each pass on
+  their own, the old form removed last.
+- **Idempotent.** An operation that changes state ends in the same state
+  however often it runs. Ask what happens if it runs twice, and if the last
+  run stopped at any point; where the answer depends on what was left
+  behind, it first reconciles with that.
+- **Separate before serializing.** When concurrent actors would write the
+  same file, key, branch or state, give each its own and merge where they
+  are read. Serialize with a lock, a single writer or ordered phases only
+  where one shared target is a real invariant; a written convention does not
+  serialize anything.
+- **Validate at the boundary.** Check input where it enters (flags, config,
+  files, the network, another program's output) and parse it into types
+  that make illegal states unrepresentable; code inside trusts those types.
 
 ## Work in several parts
 
@@ -86,6 +119,9 @@ the wrong branch of a stack are expensive to unpick.
 
 Use the file-editing tools, not `sed`, `perl`, `python`, or shell redirection.
 Editing several files, or making the same change many times, is not an exception.
+A purely mechanical sweep over Go code may instead use `gopls rename`,
+`gofmt -r` or `go fix`, with the exact command in the commit body so a
+reviewer can rerun it.
 
 ## The shell
 
@@ -127,8 +163,8 @@ terminal. A line whose output shows a secret is always plain.
 Say what someone needs in order not to break things. Do not record how the current
 state came about.
 
-- No decision narratives and no version archaeology: describe things as they
-  are, never what they used to be.
+- **Describe what is.** Describe things as they are, never what they used
+  to be: no decision narratives and no version archaeology.
 - **Do not document an absence.** Explaining why a section, option or abstraction
   is *not* there is noise; the reader is not looking for it.
 - **Temporal state does not belong in the repository.** "Not yet wired up",
@@ -184,14 +220,20 @@ real, and confirm the fix works, before reporting either. A reviewer being wrong
 worth demonstrating politely; a reviewer being right about something subtle is
 worth acting on even when the exploit does not reproduce.
 
-A failure is no different. Reproduce it before fixing it, and show it gone
+**Explain a number.** Before reporting a measured number (a speedup, a
+latency, a count, a pass rate), name what bounds it, from a profile or
+counters taken during the run rather than from reading code, and rule out
+what else it could be measuring: errors, cached or skipped work, code that
+never ran, noise. Report it with its run count and spread.
+
+**Reproduce first.** Reproduce a failure before fixing it, and show it gone
 afterwards with the same reproduction; for an intermittent one, show how often
 it fails before and after. A retry, a skip or a loosened assertion that hides a
 failure is not a fix unless Wesley asked for one. Load the `diagnose-failure`
 skill before looking for a failure's cause. When a failure could recur, the
 `retro` skill says how to propose what would prevent it.
 
-## Tests
+## Tests that can fail
 
 A test earns its place only if it can fail. A change in behaviour (a feature,
 a fix, a changed contract) starts with its test, seen failing for the expected

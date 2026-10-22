@@ -58,6 +58,15 @@ plan, most likely first. Each predicts something the command can show: "if
 X is the cause, changing Y makes it pass", or "makes it fail more often". A
 hypothesis that predicts nothing is dropped.
 
+Some failures put one hypothesis first:
+
+- A failure that appears only after a restart: saved state, such as a
+  cache, a lock file, a database or a stored session.
+- A check that fails while the system looks right: the observation, meaning
+  the check itself, its fixture or its environment.
+- After two fixes have failed: the premise both assumed. Write it down as a
+  hypothesis and test it before a third fix.
+
 ## 4. Probes
 
 - Each probe tests one prediction and changes one thing. Record its result
@@ -71,6 +80,10 @@ hypothesis that predicts nothing is dropped.
 
 ## 5. The fix
 
+- It changes the cause. A guard where the symptom shows, such as a nil
+  check or a fallback value, leaves the cause to fail somewhere else.
+- It covers every instance: search (`git grep`, `gopls references`) for the
+  pattern the cause shows, and fix each place it recurs in the same commit.
 - Its test fails before the fix for the reported reason, at a seam that
   reproduces the real call, as the `write-tests` skill says. Where no seam
   reaches the failure, that is a finding: record it in the plan and the
@@ -79,3 +92,7 @@ hypothesis that predicts nothing is dropped.
   flaky failure, give the rate over the same number of runs.
 - `git grep` on the marker finds nothing, and throwaway files are deleted.
 - The commit body names the cause: the hypothesis that held.
+- If the cause took more than the red command and a few probes to find,
+  propose with `agent-plan ask` the cheapest signal, always on, that would
+  have shown it at first look: an error that names its input, a log line at
+  the boundary, a status field.
