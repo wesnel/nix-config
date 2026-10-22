@@ -430,10 +430,15 @@ with your credentials, but has the guard in every session.
 `pr-loop guard --baseline` runs before every tool call of every session:
 
 - Claude Code: a `PreToolUse` hook in `~/.claude/settings.json` for the shell,
-  the file tools and MCP tools. `Read` is denied the credential files through
-  `permissions.deny` instead.
-- Codex: `~/.codex/hooks.json`, for every tool. Codex skips a hook until it
-  is trusted, so trust it with `/hooks` once after the first switch.
+  Monitor, ExitWorktree, the file tools and MCP tools. `Read` is denied the credential files
+  through `permissions.deny` instead, made from the same list as the
+  guard's, `wgn.home.llm.guard.credentialPaths`. In auto mode the classifier
+  also holds every session to `autoMode.hard_deny` rules that restate the
+  guard's hardest lines in prose.
+- Codex: `~/.codex/hooks.json`, for every tool but `write_stdin`, which
+  runs no hook; so the guard refuses to start a command that only reads
+  the terminal, which `write_stdin` could then drive. Codex skips a hook
+  until it is trusted, so trust it with `/hooks` once after the first switch.
 - ECA: a `preToolCall` hook, `guard-baseline`, merged into
   `~/.config/eca/config.json` on every switch.
 
@@ -442,12 +447,14 @@ or open a draft with `pr-loop open`), merging, closing, marking ready,
 reviews and top-level comments, GitHub settings, gh's login and token, git
 credential and transport settings, remote rewrites, settings every worktree
 shares, discarding the main checkout's work, dropping or clearing the stash
-every worktree shares, deleting unpushed history,
-reading credentials or the whole environment, ngrok API writes, switching
+every worktree shares, deleting unpushed history or a worktree's
+uncommitted work, reading credentials or the whole environment, ngrok API writes, running
+with `NGROK_ENV` set to prod or stage however it is set, switching
 the system, root, publishing packages, killing Emacs, gpg-agent, ssh,
 nix-daemon or mcp-proxy, destroying the home directory, the Nix store or
-your keys, switching its own hooks off, and writing a plan's log other than
-with `agent-plan log`. A write through a claude.ai
+your keys, switching its own hooks off, changing agent-tools' config,
+sleeping 30 seconds or more in the
+foreground, and writing a plan's log other than with `agent-plan log`. A write through a claude.ai
 connector asks you first in Claude Code, and is denied in Codex. Each
 refusal says what to do instead. An agent with a loop role (`pr-owner`,
 `reviewer`, ECA's `pr-coordinator`) has that role's rules in any session.

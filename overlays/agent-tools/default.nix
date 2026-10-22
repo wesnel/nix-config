@@ -6,7 +6,26 @@
   lib,
   openssh,
   stdenv,
+  # wgn.home.llm.guard.credentialPaths, a path under home as ~/…, which the
+  # guard falls back on where its config is absent.
+  credentialPaths ? [],
 }: let
+  # ECA's shell deny pattern for credentials, from the path prefixes the
+  # guard reads from its config: a prefix under home matches wherever a
+  # command names it, as ~/, $HOME/ or any other way, and a space in it
+  # matches escaped too. A public key, ending .pub, is let through.
+  credentialsPattern = home: paths: let
+    relative = p: lib.removePrefix "${home}/" p;
+    escape = p: lib.replaceStrings [" "] ["\\\\? "] (lib.escapeRegex (relative p));
+  in "(?s).*(${lib.concatMapStringsSep "|" escape paths})(?![^\\s'\"]*\\.pub\\b).*";
+
+  # credentialsPattern for a sample list, held to examples by postCheck.
+  credentialsExample = {
+    p = credentialsPattern "/home/u" ["/home/u/.ssh/id_" "/home/u/.codex/auth.json" "/home/u/Library/Application Support/mcp-proxy" "/var/secret/token"];
+    deny = ["cat ~/.ssh/id_ed25519" "cat $HOME/.codex/auth.json" "cat ~/Library/Application\\ Support/mcp-proxy/c.json" "cat '/home/u/Library/Application Support/mcp-proxy/c.json'" "cat /var/secret/token"];
+    allow = ["cat ~/.ssh/id_ed25519.pub" "ls ~/.ssh" "cat ~/.codex/config.toml"];
+  };
+
   agent-tools = buildGoModule {
     pname = "agent-tools";
     version = "0.1.0";
@@ -20,15 +39,31 @@
     env.CGO_ENABLED = "0";
     ldflags = ["-s" "-w"];
 
+    # Without a list, the guard counts everything under home as a credential
+    # where its config is absent.
+    preBuild = lib.optionalString (credentialPaths != []) ''
+      cat > internal/guard/credentials_built.go <<'EOF'
+      package guard
+
+      func init() {
+        builtCredentialPaths = []string{${lib.concatMapStringsSep ", " builtins.toJSON credentialPaths}}
+      }
+      EOF
+    '';
+
     # The rehearsal and signing tests build stacks with the real git, and sign
     # them with a throwaway SSH key.
     nativeCheckInputs = [git gnugrep jq openssh];
 
     # The guard's own test holds it to policy.json's examples. This holds
-    # ECA's patterns to the same examples, with PCRE standing in for Java:
-    # whole-input matches, as ECA makes them, over input that may span lines.
+    # ECA's patterns to the same examples, and the credentials pattern to
+    # its own, with PCRE standing in for Java: whole-input matches, as ECA
+    # makes them, over input that may span lines.
     postCheck = ''
-      jq -c '.[] | {p: ("(?s)" + .pattern), deny, allow}' internal/guard/policy.json |
+      {
+        jq -c '.[] | {p: ("(?s)" + .pattern), deny, allow}' internal/guard/policy.json
+        printf '%s\n' ${lib.escapeShellArg (builtins.toJSON credentialsExample)}
+      } |
         while IFS= read -r rule; do
           pattern=$(jq -r .p <<<"$rule")
           for kind in deny allow; do
@@ -55,6 +90,10 @@
       upTo = role: map (r: "(?s)${r.pattern}") (builtins.filter (r: rank r.scope <= rank role) rules);
     in
       lib.genAttrs roles upTo;
+
+    # credentialsPattern, for ECA's agents, which add it to every role's
+    # patterns.
+    passthru.credentialsPattern = credentialsPattern;
 
     # The reviewer's contract, which `git fresh-review` embeds for Codex, for
     # the agents' own reviewer sub-agents.

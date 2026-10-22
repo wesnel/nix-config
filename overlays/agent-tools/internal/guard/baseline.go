@@ -39,13 +39,6 @@ const (
 // home is the user's home directory, which ~ and $HOME name.
 var home, _ = os.UserHomeDir()
 
-// secretPaths are credentials, relative to home. Claude Code's Read is
-// denied the same files by permissions.deny in the claude home-manager
-// module; keep the two alike.
-var secretPaths = []string{".ssh/id_", ".gnupg/private-keys", ".codex/auth.json", ".claude/.credentials.json",
-	".local/state/mcp-proxy/token", "Library/Application Support/mcp-proxy", ".config/mcp-proxy",
-	".config/sops/age", ".config/ngrok"}
-
 // secretName is an environment variable that likely holds a credential.
 var secretName = regexp.MustCompile(`(?i)token|key|secret|password|credential`)
 
@@ -157,8 +150,12 @@ func envSearch(text string, calls []call) bool {
 	return true
 }
 
-// guardFile reports whether path holds the hooks that run the guard.
+// guardFile reports whether path holds the hooks that run the guard, or
+// its settings.
 func guardFile(path string) bool {
+	if agentToolsConfig(path) {
+		return true
+	}
 	for _, p := range []string{".codex/config.toml", ".codex/hooks.json", ".config/eca/config.json"} {
 		if path == filepath.Join(home, p) {
 			return true
@@ -566,6 +563,158 @@ func writeTargets(name string, args []string) []string {
 	return args
 }
 
+const realEnvironment = "NGROK_ENV set to prod or stage points ngrok's tooling at a real environment, which is Wesley's to act on. " +
+	"Use a dev or local environment, or put the command in your report for Wesley."
+
+// realNgrokEnv matches a value of NGROK_ENV that names a real environment.
+var realNgrokEnv = regexp.MustCompile(`(?i)^(prod|production|stage|staging)$`)
+
+// checkNgrokEnv denies a call that sets NGROK_ENV to a real environment:
+// by an assignment the shell, env or export makes, or by arguments that
+// pass it on, as `make X NGROK_ENV=prod`, `docker run -e NGROK_ENV=prod`,
+// fish's `set -gx NGROK_ENV prod` and `launchctl setenv NGROK_ENV prod` do.
+func checkNgrokEnv(c call) string {
+	for _, kv := range c.env {
+		if name, value, _ := strings.Cut(kv, "="); name == "NGROK_ENV" && realNgrokEnv.MatchString(value) {
+			return realEnvironment
+		}
+	}
+	for i, w := range c.words {
+		if c.expands[i] {
+			continue
+		}
+		value, ok := strings.CutPrefix(w, "NGROK_ENV=")
+		if !ok && w == "NGROK_ENV" && i+1 < len(c.words) && !c.expands[i+1] {
+			value, ok = c.words[i+1], true
+		}
+		if ok && realNgrokEnv.MatchString(value) {
+			return realEnvironment
+		}
+	}
+	return ""
+}
+
+const (
+	// sleeping is for Codex and ECA, which can only wait in the
+	// foreground.
+	sleeping = "A sleep of 30 seconds or more in the foreground holds the session while nothing happens. " +
+		"Wait with a command that polls for the condition and exits when it holds, such as `until CHECK; do sleep 5; done`."
+	// sleepingClaude is sleeping for Claude Code, which runs a command in
+	// the background and tells the session when it ends.
+	sleepingClaude = "A sleep of 30 seconds or more in the foreground holds the session while nothing happens. " +
+		"Run the wait with `run_in_background` and a command that exits when the condition holds, such as `until CHECK; do sleep 5; done`, or watch for it with Monitor."
+)
+
+// longSleep reports whether a call is a sleep of 30 seconds or more, by
+// the arguments GNU sleep adds up: numbers with an optional s, m, h or d,
+// and infinity. One the shell expands, or sleep would refuse, counts as
+// shorter.
+func longSleep(c call) bool {
+	if len(c.words) < 2 || base(c.words[0]) != "sleep" {
+		return false
+	}
+	units := map[string]float64{"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
+	total := 0.0
+	for i, a := range c.words[1:] {
+		if c.expands[i+1] {
+			return false
+		}
+		if strings.EqualFold(a, "infinity") || strings.EqualFold(a, "inf") {
+			return true
+		}
+		number := strings.TrimRight(a, "smhd")
+		n, err := strconv.ParseFloat(number, 64)
+		unit, known := units[a[len(number):]]
+		if err != nil || !known {
+			return false
+		}
+		total += n * unit
+	}
+	return total >= 30
+}
+
+const readsTerminal = "This reads its input from the terminal, which Codex keeps open for write_stdin, and text typed there reaches no hook. " +
+	"Run the command itself, as `bash -c '...'`, `python3 script.py` or `cat FILE`, or put what you need in your report for Wesley."
+
+// terminalReader reports whether a command line is one command that reads
+// its input from the terminal: a shell or REPL with nothing to run, or a
+// program that reads standard input, with none redirected or piped in.
+func terminalReader(text string) bool {
+	var calls []call
+	for _, segment := range segments(text) {
+		if words, expands := split(segment); len(words) > 0 {
+			calls = append(calls, call{words: words, expands: expands})
+		}
+	}
+	if len(calls) != 1 {
+		return false
+	}
+	for _, w := range calls[0].words {
+		if strings.HasPrefix(w, "<") {
+			return false
+		}
+	}
+	// xargs is a wrapper unwrap looks through, and reads the terminal
+	// whatever it runs.
+	if c := calls[0]; !c.expands[0] && base(c.words[0]) == "xargs" {
+		return !contains(c.words, "-a") && !contains(c.words, "--arg-file")
+	}
+	var found *call
+	unwrap(calls[0], visitor{
+		script: func(string) string { return "" },
+		call:   func(c call) string { found = &c; return "" },
+	})
+	if found == nil || len(found.words) == 0 || found.expands[0] {
+		return false
+	}
+	name, args := base(found.words[0]), found.words[1:]
+	var positional []string
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") {
+			positional = append(positional, a)
+		}
+	}
+	has := func(flags ...string) bool {
+		for _, a := range args {
+			if set(flags...)[strings.SplitN(a, "=", 2)[0]] {
+				return true
+			}
+		}
+		return false
+	}
+	switch {
+	case shells[name], name == "ruby", name == "perl", name == "lua":
+		return len(positional) == 0
+	case strings.HasPrefix(name, "python"), name == "node":
+		return has("-i", "--interactive") || len(positional) == 0
+	case name == "irb", name == "ghci":
+		return true
+	case name == "nix":
+		return len(positional) > 0 && positional[0] == "repl"
+	case name == "sqlite3":
+		return len(positional) <= 1
+	case name == "psql", name == "mysql":
+		return !has("-c", "--command", "-f", "--file", "-e", "--execute")
+	case name == "cat":
+		for _, p := range positional {
+			if p != "-" {
+				return false
+			}
+		}
+		return true
+	case name == "tee":
+		return true
+	case name == "dd":
+		for _, a := range args {
+			if strings.HasPrefix(a, "if=") {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
 // nixEnvWrite is nix-env's short options that change a profile.
 var nixEnvWrite = regexp.MustCompile(`^-[ieuG]`)
 
@@ -657,9 +806,10 @@ func checkSecretPath(word, dir string) string {
 	if _, value, ok := strings.Cut(word, "="); ok {
 		candidates = append(candidates, expandPath(value, dir))
 	}
+	secrets := credentialPaths()
 	for _, path := range candidates {
-		for _, p := range secretPaths {
-			if strings.HasPrefix(path, home+"/"+p) {
+		for _, p := range secrets {
+			if strings.HasPrefix(path, p) {
 				return secretRead
 			}
 		}
@@ -732,7 +882,8 @@ const shellEdit = "`%s` is a tracked file, and editing it from the shell bypasse
 	"with the exact command in the commit body."
 
 // checkShellEdit denies a command that writes a tracked file with a
-// redirection, tee, ed, or sed or perl in place, run in dir.
+// redirection, tee, ed, sed or perl in place, or an interpreter's
+// one-liner, run in dir.
 func checkShellEdit(name string, args, redirected []string, dir string) string {
 	for _, t := range editTargets(name, args, redirected) {
 		if trackedFile(expandPath(t, dir)) {
@@ -743,7 +894,8 @@ func checkShellEdit(name string, args, redirected []string, dir string) string {
 }
 
 // editTargets are the files a command edits, as it names them: its output
-// redirections, and the files of tee, ed, and sed or perl in place.
+// redirections, the files of tee, ed, and sed or perl in place, and those
+// an interpreter's one-liner writes.
 func editTargets(name string, args, redirected []string) []string {
 	var targets []string
 	for _, t := range redirected {
@@ -756,6 +908,51 @@ func editTargets(name string, args, redirected []string) []string {
 			if !strings.HasPrefix(a, "-") {
 				targets = append(targets, a)
 			}
+		}
+	}
+	return append(targets, oneLinerWrites(name, args)...)
+}
+
+var (
+	interpreter = regexp.MustCompile(`^(python[0-9.]*|node|ruby)$`)
+	// openForWriting is Python's or Ruby's open of a literal path with a
+	// literal mode, which writes when the mode has w, a, x or +.
+	openForWriting = regexp.MustCompile(`\bopen\(\s*['"]([^'"]+)['"]\s*,\s*(?:mode\s*=\s*)?['"]([^'"]*)['"]`)
+	// writeCall is a call that writes the literal path it is given.
+	writeCall = regexp.MustCompile(`\bPath\(\s*['"]([^'"]+)['"]\s*\)\s*\.\s*write_(?:text|bytes)\(|` +
+		`\b(?:writeFileSync|writeFile|appendFileSync|appendFile|createWriteStream)\(\s*['"` + "`" + `]([^'"` + "`" + `]+)['"` + "`" + `]|` +
+		`\bFile\.(?:write|binwrite)\(\s*['"]([^'"]+)['"]`)
+)
+
+// oneLinerWrites are the files a Python, Node or Ruby one-liner (-c, -e,
+// --eval) writes, as it names them in string literals: a narrow reading of
+// the usual calls, not of every way code can write.
+func oneLinerWrites(name string, args []string) []string {
+	if !interpreter.MatchString(name) {
+		return nil
+	}
+	flags := set("-e", "--eval", "-p", "--print")
+	if strings.HasPrefix(name, "python") {
+		flags = set("-c")
+	}
+	var targets []string
+	for i, a := range args {
+		code, ok := "", false
+		if flag, value, attached := strings.Cut(a, "="); attached && flags[flag] && strings.HasPrefix(flag, "--") {
+			code, ok = value, true
+		} else if flags[a] && i+1 < len(args) {
+			code, ok = args[i+1], true
+		}
+		if !ok {
+			continue
+		}
+		for _, m := range openForWriting.FindAllStringSubmatch(code, -1) {
+			if strings.ContainsAny(m[2], "wax+") {
+				targets = append(targets, m[1])
+			}
+		}
+		for _, m := range writeCall.FindAllStringSubmatch(code, -1) {
+			targets = append(targets, m[1]+m[2]+m[3])
 		}
 	}
 	return targets
@@ -851,7 +1048,7 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 		switch {
 		case filepath.Base(path) == "config" && filepath.Base(filepath.Dir(path)) == ".git":
 			return sharedConfig
-		case strings.HasSuffix(path, ".codex/hooks.json") && guardFile(path):
+		case strings.HasSuffix(path, ".codex/hooks.json") && guardFile(path), agentToolsConfig(path):
 			return guardOff
 		case guardFile(path):
 			existing, _ := os.ReadFile(path)
@@ -1101,7 +1298,7 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 			if strings.HasPrefix(b, "-") {
 				continue
 			}
-			if out, ok := g.run("rev-list", "--max-count=1", "refs/heads/"+b, "--not", "--remotes"); !ok || out != "" {
+			if g.unpushed("refs/heads/" + b) {
 				return historyLoss
 			}
 		}
@@ -1110,11 +1307,45 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 			if strings.HasPrefix(p, "-") {
 				continue
 			}
-			target := gitState{dir: expandPath(p, g.dir)}
-			if out, ok := target.run("status", "--porcelain"); !ok || out != "" {
+			if (gitState{dir: expandPath(p, g.dir)}).dirty() {
 				return historyLoss
 			}
 		}
+	}
+	return ""
+}
+
+// unpushed reports whether ref has commits no remote-tracking branch has,
+// or may have: a ref git cannot read counts.
+func (g gitState) unpushed(ref string) bool {
+	out, ok := g.run("rev-list", "--max-count=1", ref, "--not", "--remotes")
+	return !ok || out != ""
+}
+
+// dirty reports whether the worktree at g.dir has changes or untracked
+// files, or may have: a directory git cannot read counts.
+func (g gitState) dirty() bool {
+	out, ok := g.run("status", "--porcelain")
+	return !ok || out != ""
+}
+
+const discardWorktree = "Removing this worktree with discard_changes deletes uncommitted files or commits no remote has, which git cannot get back. " +
+	"Exit with `keep`, or commit the work and put the removal in your report for Wesley."
+
+// checkExitWorktree denies Claude Code's ExitWorktree when it would discard
+// the worktree at dir and its branch while they hold work found nowhere
+// else.
+func checkExitWorktree(toolInput json.RawMessage, dir string) string {
+	var in struct {
+		Action         string `json:"action"`
+		DiscardChanges bool   `json:"discard_changes"`
+	}
+	json.Unmarshal(toolInput, &in)
+	if in.Action != "remove" || !in.DiscardChanges {
+		return ""
+	}
+	if g := (gitState{dir: dir}); g.dirty() || g.unpushed("HEAD") {
+		return discardWorktree
 	}
 	return ""
 }

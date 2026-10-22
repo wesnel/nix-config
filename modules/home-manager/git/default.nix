@@ -81,7 +81,7 @@ in {
         # older git ahead of this one on PATH skips it without a word.
         hook.push-guard = {
           event = "pre-push";
-          command = getExe' pkgs.agent-tools "git-push-guard";
+          command = getExe' config.wgn.home.llm.agentTools "git-push-guard";
         };
 
         init = {

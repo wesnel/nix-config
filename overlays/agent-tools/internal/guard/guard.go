@@ -111,6 +111,16 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if reason == "" {
 		reason = check(in.ToolName, in.Server, in.ToolInput, who, in.Cwd)
 	}
+	if reason == "" && in.TurnID != "" && (in.ToolName == "Bash" || in.ToolName == "exec_command") {
+		// Codex alone keeps a command's terminal for write_stdin.
+		var args struct {
+			Command string `json:"command"`
+		}
+		json.Unmarshal(in.ToolInput, &args)
+		if terminalReader(args.Command) {
+			reason = readsTerminal
+		}
+	}
 	if reason == "" {
 		reason = checkOwner(in)
 	}
@@ -123,6 +133,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			}
 		}
 		return 0
+	}
+	if reason == sleeping && in.HookType == "" && in.TurnID == "" {
+		reason = sleepingClaude
 	}
 	var out any
 	decision := "deny"
@@ -181,11 +194,58 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 	switch {
 	case tool == "Bash" || tool == "exec_command" || tool == "shell_command" || tool == "git":
 		// ECA's git tool takes a whole git or gh command line, like the shell.
+		// Claude Code's Bash runs the command in the background with
+		// run_in_background, and ECA's shell_command with a background name.
+		var args struct {
+			Command         string `json:"command"`
+			RunInBackground bool   `json:"run_in_background"`
+			Background      string `json:"background"`
+		}
+		json.Unmarshal(toolInput, &args)
+		return command(args.Command, 0, who, dir, args.RunInBackground || args.Background != "")
+	case tool == "Monitor":
+		// Claude Code's Monitor runs a command as Bash does.
 		var args struct {
 			Command string `json:"command"`
 		}
 		json.Unmarshal(toolInput, &args)
-		return command(args.Command, 0, who, dir)
+		return command(args.Command, 0, who, dir, true)
+	case tool == "local_shell":
+		// Codex's local_shell runs an argv, which the guard reads as the
+		// command line that would run it.
+		var args struct {
+			Command          json.RawMessage `json:"command"`
+			WorkingDirectory string          `json:"working_directory"`
+		}
+		json.Unmarshal(toolInput, &args)
+		if filepath.IsAbs(args.WorkingDirectory) {
+			dir = args.WorkingDirectory
+		}
+		var argv []string
+		if json.Unmarshal(args.Command, &argv) != nil {
+			var line string
+			json.Unmarshal(args.Command, &line)
+			return command(line, 0, who, dir, false)
+		}
+		quoted := make([]string, len(argv))
+		for i, a := range argv {
+			quoted[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+		}
+		return command(strings.Join(quoted, " "), 0, who, dir, false)
+	case tool == "write_stdin":
+		// Codex's write_stdin types chars into a session exec_command
+		// started, which may be a shell; the session runs on its own, so a
+		// sleep there holds nothing.
+		var args struct {
+			Chars string `json:"chars"`
+		}
+		json.Unmarshal(toolInput, &args)
+		if reason := command(args.Chars, 0, who, dir, true); reason != "" {
+			return typed + reason
+		}
+		return ""
+	case tool == "ExitWorktree":
+		return checkExitWorktree(toolInput, dir)
 	case tool == "Edit" || tool == "Write" || tool == "MultiEdit" || tool == "NotebookEdit" || tool == "apply_patch",
 		server == "eca" && (tool == "write_file" || tool == "edit_file" || tool == "move_file"):
 		return checkFileTool(tool, toolInput, dir)
@@ -202,23 +262,32 @@ func check(tool, server string, toolInput json.RawMessage, who role, dir string)
 	return checkConnector(full)
 }
 
+// typed prefixes the reason a command line typed into a running session is
+// denied for.
+const typed = "This text goes to a running session, which may be a shell, so the guard reads it as a command line. "
+
 // maxDepth is how many shells, evals and watches deep the guard reads a
 // command.
 const maxDepth = 3
 
-func command(text string, depth int, who role, dir string) string {
+// command judges a command line run in dir, in the background when
+// background is set.
+func command(text string, depth int, who role, dir string, background bool) string {
 	if depth > maxDepth {
 		return ""
 	}
 	var calls []call
-	for _, segment := range segments(text) {
+	var backgrounds []bool
+	texts, inBackground := backgroundSegments(text)
+	for i, segment := range texts {
 		if words, expands := split(segment); len(words) > 0 {
 			calls = append(calls, call{words: words, expands: expands})
+			backgrounds = append(backgrounds, background || inBackground[i])
 		}
 	}
 	// The dump in `env | grep PATTERN` is checked with its search.
 	if envSearch(text, calls) {
-		calls = calls[1:]
+		calls, backgrounds = calls[1:], backgrounds[1:]
 	}
 	// A file a gh call reads is what the guard sees only when nothing else
 	// on the command line can have written it first.
@@ -229,17 +298,23 @@ func command(text string, depth int, who role, dir string) string {
 	// Where each command runs, as cd moves it; "" once the guard cannot
 	// tell.
 	cwd := dir
+	// Whether the call being judged runs in the background.
+	bg := false
 	v := visitor{
-		script: func(text string) string { return command(text, depth+1, who, cwd) },
+		script: func(text string) string { return command(text, depth+1, who, cwd, bg) },
 		call: func(c call) string {
 			if len(c.words) > 0 && !c.expands[0] && (c.words[0] == "cd" || c.words[0] == "pushd") {
 				cwd = cdTarget(c, cwd)
 				return ""
 			}
+			if !bg && longSleep(c) {
+				return sleeping
+			}
 			return program(c, who, files, cwd)
 		},
 	}
-	for _, c := range calls {
+	for i, c := range calls {
+		bg = backgrounds[i]
 		if reason := unwrap(c, v); reason != "" {
 			return reason
 		}
@@ -270,6 +345,9 @@ func cdTarget(c call, cwd string) string {
 // program judges a call once unwrap has found the program it runs, in dir.
 func program(c call, who role, files, dir string) string {
 	if reason := checkEnv(c.env); reason != "" {
+		return reason
+	}
+	if reason := checkNgrokEnv(c); reason != "" {
 		return reason
 	}
 	if len(c.words) == 0 || c.expands[0] {
