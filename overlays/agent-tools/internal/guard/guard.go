@@ -515,7 +515,7 @@ func checkConfigKey(key string) string {
 
 const signing = "Signing needs the operator's hardware key. Leave the commits unsigned and end the report with the command for the operator to run: `pr-loop sign` for the loop's stack."
 
-const pushGuard = "Publishing private history in a public repository is the operator's decision. Leave push-guard.* alone, and name the repository and the commits in the report for the operator."
+const pushGuard = "Publishing unsigned commits, or private history in a public repository, is the operator's decision. Leave push-guard.* alone, and name the repository and the commits in the report for the operator."
 
 const prLoopWrites = "Use `pr-loop push`, `reply`, `resolve`, `request` or `link`; any other write goes in the report for the operator." //nolint:gosec // a refusal message, not a credential
 
