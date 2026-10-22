@@ -9,8 +9,10 @@ with lib; let
 
   llm = import ../llm/lib.nix {inherit lib;};
 
-  # Loaded only by claude-pr-loop, so the guard hooks never apply to an
-  # ordinary session. The review-loop skill is shared with the other agents.
+  # Loaded only by claude-pr-loop, so the loop's guard never applies to an
+  # ordinary session, which has the baseline guard (see settings). The
+  # review-loop skill is shared with the other agents, and the loop's
+  # reviewer is the user-level `reviewer` agent.
   prLoopPlugin = pkgs.runCommand "claude-pr-loop-plugin" {} ''
     mkdir -p $out/.claude-plugin $out/hooks $out/agents
     cp ${pkgs.writeText "pr-owner.md" ''
@@ -20,17 +22,9 @@ with lib; let
       ---
       ${builtins.readFile ../llm/pr-loop/pr-owner.md}
     ''} $out/agents/pr-owner.md
-    cp ${pkgs.writeText "pr-reviewer.md" ''
-      ---
-      name: pr-reviewer
-      description: Reviews one pull request's new fixups in the bot review loop before they are pushed, against the bot threads they answer, for regressions and against the PR's scope. Only reads.
-      tools: Read, Grep, Glob, Bash
-      ---
-      ${builtins.readFile ../llm/pr-loop/pr-reviewer.md}
-    ''} $out/agents/pr-reviewer.md
     cp ${pkgs.writeText "plugin.json" (builtins.toJSON {
       name = "pr-loop";
-      description = "Guards and the PR owner and reviewer agents for the unattended bot review loop";
+      description = "Guards and the PR owner agent for the unattended bot review loop";
     })} $out/.claude-plugin/plugin.json
     cp ${pkgs.writeText "hooks.json" (builtins.toJSON {
       hooks.PreToolUse = [
@@ -202,6 +196,20 @@ in {
           sessionUrl = false;
         };
 
+        # Credentials stay out of every session. The guard denies shell
+        # commands naming these files; Read is not hooked, so it is denied
+        # here. Keep the two lists alike (internal/guard/baseline.go).
+        permissions.deny = map (p: "Read(${p})") [
+          "~/.ssh/id_*"
+          "~/.gnupg/private-keys*/**"
+          "~/.codex/auth.json"
+          "~/.claude/.credentials.json"
+          "/${mcpProxy.tokenFile}"
+          "/${mcpProxy.oauthDir}/**"
+          "~/.config/sops/age/**"
+          "~/.config/ngrok/**"
+        ];
+
         # Applies wherever a project turns the sandbox on, and merges into
         # claude-pr-loop's sandbox, which denies what it must not have.
         sandbox =
@@ -230,6 +238,17 @@ in {
               }
             ];
           }
+          # Holds every session to the baseline: what is Wesley's to do,
+          # and the `reviewer` and `pr-owner` agents to their roles.
+          {
+            matcher = "Bash|Edit|Write|MultiEdit|NotebookEdit|mcp__.*";
+            hooks = [
+              {
+                type = "command";
+                command = "${getExe' pkgs.agent-tools "pr-loop"} guard --baseline";
+              }
+            ];
+          }
         ];
       };
     };
@@ -246,6 +265,17 @@ in {
         llm.mkSkillFiles ".claude/skills" config.wgn.home.llm.skills
         // {
           ".claude/CLAUDE.md".source = config.wgn.home.llm.instructions;
+
+          # Only reads: it has no editing tools, and the guard hook above
+          # denies it every command that changes something.
+          ".claude/agents/reviewer.md".text = ''
+            ---
+            name: reviewer
+            description: Reviews a change, the commits in a range BASE..TIP, against its goal statement, with fresh eyes. Start a new one for every review. Only reads.
+            tools: Read, Grep, Glob, Bash
+            ---
+            ${pkgs.agent-tools.reviewerPrompt}
+          '';
         };
 
       # Merged rather than linked: a read-only settings.json would make every

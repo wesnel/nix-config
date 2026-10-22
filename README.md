@@ -101,8 +101,9 @@ Enabling any of those modules enables `wgn.home.llm`, which provides:
 - **Skills.** `wgn.home.llm.skills` are linked into each agent's skill
   directory. A skill marked `sandbox = true` is also carried into sandboxed
   sessions; the rest drive something on this machine, such as Emacs.
-- **`agent-tools`** on `PATH`: `git sign-pass`, `git red-check`, `pr-loop`
-  and `sandbox-relay`, built from `overlays/agent-tools`. `wgn.home.git` uses
+- **`agent-tools`** on `PATH`: `git sign-pass`, `git red-check`,
+  `git fresh-review`, `pr-loop` and `sandbox-relay`, built from
+  `overlays/agent-tools`. `wgn.home.git` uses
   its `git-push-guard` as well.
 
 Agents write the files below themselves, so Nix merges its keys into them on
@@ -112,7 +113,7 @@ next switch.
 
 | File | Keys set on every switch |
 | --- | --- |
-| `~/.claude/settings.json` | `wgn.home.claude.settings`: attribution off, and the ngrok hook (a hook list here replaces the file's own) |
+| `~/.claude/settings.json` | `wgn.home.claude.settings`: attribution off, and the ngrok and reviewer hooks (a hook list here replaces the file's own) |
 | `~/.claude.json` | `mcpServers` entries for the MCP proxy |
 | `~/.codex/config.toml` | `[mcp_servers.*]` tables for the MCP proxy |
 | `~/.config/eca/config.json` | `mcpServers` entries for the MCP proxy |
@@ -155,13 +156,49 @@ when it flashes, then `git sign-pass --resume`. Pass `--base REF` when the
 branch does not start from `origin`'s default branch or the local `main` or
 `master`.
 
-## testing: the tests fail without the change
+## reviews: fresh eyes and tests that fail
 
-`git red-check` checks that the tests a commit adds or changes test it,
-rather than taking an agent's word that they failed first. In a throwaway
-worktree under `.git/red-check/`, removed afterwards, it runs the test
-command at the commit's parent plus only the commit's test files, which must
-fail, then at the commit, which must pass:
+Every agent session that commits a change runs the `review-change` skill's
+pipeline unless you opt out for the task: a plan, a design review of it, the
+work, a fresh review loop of up to three rounds, and a design review of the
+result. Two commands give the reviews evidence an agent cannot talk its way
+around.
+
+### `git fresh-review`
+
+Reviews a range with a reviewer that did not write it and sees only the
+commits and the files it is handed: a goal statement (the goal, and what is
+not the change's job), optionally the items the change answers and earlier
+rounds' findings:
+
+``` sh
+git fresh-review --goal goal.md origin/main..HEAD
+git fresh-review --goal goal.md --items threads.md --prior round1.json origin/main..HEAD
+```
+
+The reviewer is Codex, a model family other than the author's, run as
+`codex exec -s read-only --ephemeral` in a throwaway worktree of the range's
+tip under `.git/fresh-review/`, removed however the review ends. Codex's
+sandbox cannot start inside another macOS sandbox. Its contract is
+`overlays/agent-tools/internal/review/reviewer.md`, the same text the
+`reviewer` agent of Claude Code and ECA loads, and its reply must fit
+`findings.schema.json` beside it. Findings that point at no line at the tip
+are dropped with the reason. It prints JSON and exits 0 with no findings, 3
+with findings, and 4 when Codex cannot review: not installed, not signed in,
+called from inside Codex, or in a review-loop session, where `pr-loop` must
+stay the only way out. `--print-prompt` prints the prompt instead of
+running the review. See `git fresh-review -h`.
+
+Where the repository has test settings, `git red-check` on the range runs
+first and its result goes in the prompt.
+
+### `git red-check`
+
+Checks that the tests a commit adds or changes test it, rather than taking
+an agent's word that they failed first. In a throwaway worktree under
+`.git/red-check/`, removed afterwards, it runs the test command at the
+commit's parent plus only the commit's test files, which must fail, then at
+the commit, which must pass:
 
 ``` sh
 git red-check                                  # HEAD
@@ -178,9 +215,10 @@ or with no build command to say whether they built. So a repository needs a
 build command for any commit to exit 0. See `git red-check -h` (git turns
 `--help` into a manual-page lookup).
 
-Settings missing from the flags come from `wgn.home.llm.prLoop.redCheck`,
-keyed by `owner/name`, never from the repository. The test command runs the
-commit's code, so run it in a sandbox when the commit is not trusted.
+Settings missing from the flags come from `test`, `build` and `testFiles` in
+`wgn.home.llm.repos`, keyed by `owner/name`, never from the repository. The
+test command runs the commit's code, so run it in a sandbox when the commit
+is not trusted.
 
 ## pushing: private history stays private
 
@@ -202,7 +240,8 @@ that fails. To publish private history in one public repository on purpose:
 git -c push-guard.allowPublic=OWNER/NAME push ...
 ```
 
-In a review-loop session the guard denies setting `push-guard.*`.
+The guard (see [the guard in every session](#the-guard-in-every-session))
+denies an agent setting `push-guard.*`.
 
 ## the bot review loop
 
@@ -240,13 +279,15 @@ The coordinator gives each PR to an owner sub-agent, which works in its own
 worktree under `.pr-loop/<number>`, where signing is off. Each round waits
 for CI, requests reviews from the bots in `wgn.home.llm.prLoop.bots`
 (Copilot and Qodo by default), triages their threads, fixes in fixups, has
-a fresh reviewer sub-agent check those fixups before they go out, restacks,
-pushes the stack through the GitHub API, then replies and resolves.
+one fresh review check those fixups before they go out (see
+[reviews](#reviews-fresh-eyes-and-tests-that-fail); in a loop the reviewer
+is always a sub-agent), restacks, pushes the stack through the GitHub API,
+then replies and resolves.
 It stops when the bots are satisfied or the loop needs a decision, and
 writes `.git/pr-loop/report.md`.
 
 A repository whose fresh checkouts need preparing, such as generating files
-it does not commit, gets a command in `wgn.home.llm.prLoop.setup`, keyed by
+it does not commit, gets a `setup` command in `wgn.home.llm.repos`, keyed by
 `owner/name`. `pr-loop worktrees` runs it in the sandbox in each worktree
 whose HEAD moved since its last setup, printing the command and its exit
 status, and `pr-loop setup [PATH]` runs it in any worktree, such as one an
@@ -296,8 +337,42 @@ Linear, which the report proposes instead.
   build hold both to those examples, and fail on a denial whose reason does
   not go on to say what to do instead.
 
-An ordinary session of any agent runs with none of this, and with your
-credentials.
+An ordinary session has neither the sandbox nor the loop's rules, and runs
+with your credentials, but has the guard in every session.
+
+## the guard in every session
+
+`pr-loop guard --baseline` runs before every tool call of every session:
+
+- Claude Code: a `PreToolUse` hook in `~/.claude/settings.json` for the shell,
+  the file tools and MCP tools. `Read` is denied the credential files through
+  `permissions.deny` instead.
+- Codex: `~/.codex/hooks.json`, for every tool. Codex skips a hook until it
+  is trusted, so trust it with `/hooks` once after the first switch.
+- ECA: a `preToolCall` hook, `guard-baseline`, merged into
+  `~/.config/eca/config.json` on every switch.
+
+It denies what is yours to do: pushing (hand over `git sign-pass --push`,
+or open a draft with `pr-loop open`), merging, closing, marking ready,
+reviews and top-level comments, GitHub settings, gh's login and token, git
+credential and transport settings, remote rewrites, settings every worktree
+shares, discarding the main checkout's work, deleting unpushed history,
+reading credentials or the whole environment, ngrok API writes, switching
+the system, root, publishing packages, killing Emacs, gpg-agent, ssh,
+nix-daemon or mcp-proxy, destroying the home directory, the Nix store or
+your keys, and switching its own hooks off. A write through a claude.ai
+connector asks you first in Claude Code, and is denied in Codex. Each
+refusal says what to do instead. An agent with a loop role (`pr-owner`,
+`reviewer`, ECA's `pr-coordinator`) has that role's rules in any session.
+
+The guard reads commands as typed, through wrappers, shells and `env`, so it
+catches a forgotten rule, not a determined one. The rules ECA can also
+match as patterns are in `overlays/agent-tools/internal/guard/policy.json`,
+each with a `scope` (`baseline`, `coordinator`, `owner` or `reviewer`); the
+rest, which need the repository's state, are in the guard's Go tests.
+
+git itself does not use the keychain's GitHub login:
+`credential."https://github.com".helper` is empty in `wgn.home.git`.
 
 ## MCP servers
 

@@ -44,17 +44,21 @@
         done
     '';
 
-    # ECA's shell deny patterns for the review loop's agents, from the policy
-    # the guard is tested against. `(?s)' lets `.' cross a newline, without
-    # which a second line of a command escapes ECA's whole-string match.
+    # ECA's shell deny patterns for each role, from the policy the guard is
+    # tested against: a rule holds for its scope and every stricter role.
+    # `(?s)' lets `.' cross a newline, without which a second line of a
+    # command escapes ECA's whole-string match.
     passthru.ecaDenied = let
       rules = builtins.fromJSON (builtins.readFile ./internal/guard/policy.json);
-      patterns = map (r: "(?s)${r.pattern}");
-    in {
-      coordinator = patterns (builtins.filter (r: !(r.ownerOnly or false) && !(r.reviewerOnly or false)) rules);
-      owner = patterns (builtins.filter (r: !(r.reviewerOnly or false)) rules);
-      reviewer = patterns rules;
-    };
+      roles = ["baseline" "coordinator" "owner" "reviewer"];
+      rank = role: lib.lists.findFirstIndex (r: r == role) (throw "policy.json: unknown scope ${role}") roles;
+      upTo = role: map (r: "(?s)${r.pattern}") (builtins.filter (r: rank r.scope <= rank role) rules);
+    in
+      lib.genAttrs roles upTo;
+
+    # The reviewer's contract, which `git fresh-review` embeds for Codex, for
+    # the agents' own reviewer sub-agents.
+    passthru.reviewerPrompt = builtins.readFile ./internal/review/reviewer.md;
 
     # A static Linux build of pr-loop for a sandbox guest, which runs it as a
     # client of `sandbox-relay serve` on the host.
@@ -76,7 +80,7 @@
       '';
     });
 
-    meta.description = "pr-loop (the review loop), git-sign-pass (the signing pass), git-red-check (checks a commit's tests fail without its change), git-push-guard (keeps private history out of public repositories) and sandbox-relay (host programs for a sandbox)";
+    meta.description = "pr-loop (the review loop), git-sign-pass (the signing pass), git-red-check (checks a commit's tests fail without its change), git-fresh-review (reviews a range of commits with fresh eyes), git-push-guard (keeps private history out of public repositories) and sandbox-relay (host programs for a sandbox)";
   };
 in
   agent-tools

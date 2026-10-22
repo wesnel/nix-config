@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
 )
 
 func TestIdentity(t *testing.T) {
@@ -202,7 +204,7 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-c", "user.name=T", "-c", "user.email=t@e", "-c", "commit.gpgsign=false"}, args...)...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	cmd.Env = append(gitenv.Without(os.Environ()), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -218,6 +220,7 @@ func TestWorktrees(t *testing.T) {
 	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "base")
 	gitIn(t, dir, "branch", "feature")
 	gitIn(t, dir, "config", "commit.gpgsign", "true")
+	gitenvtest.Decoy(t)
 	git.Dir = dir
 	defer func() { git.Dir = "" }()
 	state := &State{Repo: "o/r", Order: []string{"feature"}, Branches: map[string]*Branch{"feature": {PR: 7, Base: "main"}}}
@@ -230,7 +233,9 @@ func TestWorktrees(t *testing.T) {
 	path := filepath.Join(dir, ".pr-loop", "7")
 	// Read without gitIn, which forces signing off.
 	read := func(where string) string {
-		out, _ := exec.Command("git", "-C", where, "config", "commit.gpgsign").Output()
+		cmd := exec.Command("git", "-C", where, "config", "commit.gpgsign")
+		cmd.Env = gitenv.Without(os.Environ())
+		out, _ := cmd.Output()
 		return strings.TrimSpace(string(out))
 	}
 	if got := read(path); got != "false" {
@@ -254,18 +259,19 @@ func TestSetup(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	config := filepath.Join(t.TempDir(), "config.json")
-	t.Setenv("PR_LOOP_CONFIG", config)
+	t.Setenv("AGENT_TOOLS_CONFIG", config)
 	dir := t.TempDir()
 	gitIn(t, dir, "init", "-q", "-b", "main")
 	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "base")
 	gitIn(t, dir, "remote", "add", "origin", "https://github.com/O/R.git")
+	gitenvtest.Decoy(t)
 	git.Dir = dir
 	defer func() { git.Dir = "" }()
 
 	if s, err := SetupCommand(); err != nil || s.Command != "" {
 		t.Errorf("without a config: %+v, %v", s, err)
 	}
-	os.WriteFile(config, []byte(`{"setup": {"o/r": "echo generated > gen", "o/other": "false"}}`), 0o644)
+	os.WriteFile(config, []byte(`{"repos": {"o/r": {"setup": "echo generated > gen"}, "o/other": {"setup": "false"}}}`), 0o644)
 	s, err := SetupCommand()
 	if err != nil || s.Command != "echo generated > gen" || s.Repo != "o/r" {
 		t.Fatalf("configured: %+v, %v", s, err)
@@ -306,6 +312,12 @@ func TestSetup(t *testing.T) {
 	if runs := RunSetup("exit 3", []string{wt}, &log); runs[0].Exit != 3 || !NeedsSetup(wt) {
 		t.Errorf("a failed setup: %+v, needs setup: %v", runs, NeedsSetup(wt))
 	}
+	// The command's git finds the worktree's repository.
+	RunSetup("git rev-parse --absolute-git-dir > where", []string{wt}, &log)
+	where, _ := os.ReadFile(filepath.Join(wt, "where"))
+	if got, want := strings.TrimSpace(string(where)), gitIn(t, wt, "rev-parse", "--absolute-git-dir"); got != want {
+		t.Errorf("the setup command's git found %q, not %q", got, want)
+	}
 }
 
 // TestRehearse builds a two-branch stack with fixups in both branches and
@@ -337,6 +349,7 @@ func TestRehearse(t *testing.T) {
 	gitIn(t, dir, "add", "c")
 	gitIn(t, dir, "commit", "-qm", "U1 add c")
 
+	gitenvtest.Decoy(t)
 	git.Dir = dir
 	defer func() { git.Dir = "" }()
 	original := func(base, tip string) []Commit {
@@ -391,32 +404,5 @@ func TestRehearse(t *testing.T) {
 	err := rehearse(state, signingFor())
 	if _, ok := err.(Refusal); !ok || !strings.Contains(err.Error(), "conflicts") {
 		t.Errorf("conflicting fixup: %v", err)
-	}
-}
-
-func TestRedCheckConfig(t *testing.T) {
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	config := filepath.Join(t.TempDir(), "config.json")
-	t.Setenv("PR_LOOP_CONFIG", config)
-	dir := t.TempDir()
-	gitIn(t, dir, "init", "-q", "-b", "main")
-	gitIn(t, dir, "remote", "add", "origin", "https://github.com/O/R.git")
-	git.Dir = dir
-	defer func() { git.Dir = "" }()
-
-	if c, err := RedCheckConfig(); err != nil || c.Test != "" {
-		t.Errorf("without a config: %+v, %v", c, err)
-	}
-	os.WriteFile(config, []byte(`{"redCheck": {
-		"o/r": {"test": "go test ./...", "build": "go vet ./...", "testFiles": ["**/*_test.go"]},
-		"o/other": {"test": "make check", "testFiles": ["t/**"]}}}`), 0o644)
-	c, err := RedCheckConfig()
-	if err != nil || c.Repo != "o/r" || c.Test != "go test ./..." || c.Build != "go vet ./..." || len(c.TestFiles) != 1 {
-		t.Fatalf("configured: %+v, %v", c, err)
-	}
-	gitIn(t, dir, "remote", "add", "fork", "https://github.com/o/other.git")
-	if _, err := RedCheckConfig(); err == nil {
-		t.Error("two remotes with different settings were accepted")
 	}
 }

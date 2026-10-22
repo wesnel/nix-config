@@ -124,6 +124,25 @@ in {
         // {
           # Codex skips this when an AGENTS.override.md beside it is non-empty.
           ".codex/AGENTS.md".source = config.wgn.home.llm.instructions;
+
+          # Holds every session to the baseline guard. Codex skips a hook
+          # until it is trusted with /hooks, and trust follows the hook's
+          # hash, so the command names `pr-loop` on PATH rather than a store
+          # path that changes with every rebuild. Codex adds these to any
+          # other layer's hooks, codex-pr-loop's included.
+          ".codex/hooks.json".text = builtins.toJSON {
+            hooks.PreToolUse = [
+              {
+                matcher = ".*";
+                hooks = [
+                  {
+                    type = "command";
+                    command = "pr-loop guard --baseline";
+                  }
+                ];
+              }
+            ];
+          };
         };
     }
 

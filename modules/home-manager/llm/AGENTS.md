@@ -29,10 +29,8 @@ create, amend or rewrite commits.
 - Open every pull request as a draft, with `pr-loop open`, which needs no
   key touch (the `signing-pass` skill shows how). Marking it ready for review
   notifies its code owners, and is Wesley's call.
-- After every push to a pull request, `pr-loop open` included, yours or one
-  you are told about, watch its CI with `pr-loop wait ci` in the background
-  and read failures with `pr-loop logs`. The `signing-pass` skill says how,
-  and what to do with a failure.
+- After every push to a pull request, watch its CI as the `signing-pass`
+  skill's "After a push" says.
 - Describe the change as it stands, as if the diff had always looked this
   way: no history of how it got there, no list of review follow-ups, and no
   line numbers, line counts or commit counts, all of which go stale. Stack
@@ -40,12 +38,15 @@ create, amend or rewrite commits.
 - Explain the approach and what it rests on, not each file in turn; the diff
   already gives that tour. A validation section names only what a reviewer
   cannot see from CI, never a lint, format, typecheck or codegen run.
-- Answer review comments in their threads, never as new top-level comments,
-  and resolve each thread you have answered, including ones answered without
-  a change. Leave one open only when it still needs a decision, and say so in
-  the reply. On Wesley's own pull requests, `pr-loop threads`, `reply` and
-  `resolve` do this for review bots' threads, and `pr-loop reply --from FILE`
-  answers many threads at once; `pr-loop --help` has the file format.
+- Answer review comments in their threads, never as new top-level comments.
+  On Wesley's own pull requests, `pr-loop threads`, `reply` and `resolve` do
+  this for review bots' threads.
+
+## Reviews
+
+Every session that commits a change runs the review pipeline in the
+`review-change` skill, unless Wesley opts out for the task. The skill is
+also the one place that says how to settle and answer review feedback.
 
 ## Work in several parts
 
@@ -82,6 +83,9 @@ instructions give, such as committing unsigned, is not a way around. When one
 blocks the task, stop and give Wesley the exact command to run himself, and say
 plainly that whatever it would have shown is unverified. Root is one of these:
 never run `sudo`, since system paths here are managed declaratively.
+
+`pr-loop guard` enforces these rules before every tool call, and its refusal
+says what to do instead: do that.
 
 ## Commands Wesley runs
 
@@ -136,24 +140,10 @@ failure is not a fix unless Wesley asked for one.
 
 ## Tests
 
-Load the `write-tests` skill before writing, changing or reviewing tests. The
-core of it:
-
-- A test earns its place only if it can fail. Name the one-line change to the
-  code that would turn it red; if you cannot, it checks nothing.
-- Assert what a caller can observe, not internals, and never compare a value
-  with a copy of itself.
-- One case per distinct behaviour or boundary, not one per input.
-- Fake only where data enters (the store, the network, the clock), and never
-  assert that a fake received what the test handed it.
-- A change in behaviour (a feature, a fix, a changed contract) starts with its
-  test: write or change it, see it fail for the expected reason, then make it
-  pass, and report both runs. A fix's test checks the symptom. The failing
-  stage is never committed. A pure refactor keeps the existing tests unchanged
-  and passing; docs, configuration with nothing to test and uncommitted
-  exploration need no new test.
-- Never wait with a sleep, and never depend on the order tests run in.
-- Before finishing, check each new test against what it would catch.
+A test earns its place only if it can fail. A change in behaviour (a feature,
+a fix, a changed contract) starts with its test, seen failing for the expected
+reason before the code changes, and the report shows both runs. Load the
+`write-tests` skill before writing, changing or reviewing tests.
 
 ## Prefer git to gh
 

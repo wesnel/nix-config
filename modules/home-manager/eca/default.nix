@@ -42,14 +42,17 @@ with lib; let
   # and the patterns match a phrase anywhere in the command, so the agents
   # are told up front how to mention one. The policy.json examples that
   # break a phrase up are checked against the patterns at build time.
+  deniedSearches = ''
+    A shell command containing a denied phrase, such as `git push`,
+    `--no-verify` or `push-guard.allowPublic`, is rejected "by user config"
+    wherever the phrase appears: in a search pattern, a quoted string or a
+    path as much as in the command itself. To search for or mention one,
+    break the literal up: `grep -nE 'git\s+push'`, `grep -e '--no-verif[y]'`,
+    `cat cmd/git-sign-'pass'/main.go`.
+  '';
   deniedPhrases = ''
-    A shell command containing a phrase the loop denies, such as
-    `git push`, `--no-verify` or `push-guard.allowPublic`, is rejected "by
-    user config" wherever the phrase appears: in a search pattern, a quoted
-    commit message or a path as much as in the command itself. To search
-    for or mention one, break the literal up: `grep -nE 'git\s+push'`,
-    `grep -e '--no-verif[y]'`, `cat cmd/git-sign-'pass'/main.go`. Write a
-    commit message that mentions one to a file and pass it as
+    ${deniedSearches}
+    Write a commit message that mentions one to a file and pass it as
     `-m "$(cat FILE)"`.
   '';
 
@@ -79,7 +82,7 @@ in {
 
       description = ''
         Offers the bot review loop: the `pr-coordinator` agent and its
-        `pr-owner` and `pr-reviewer` sub-agents, and, where the emacs-config sandbox is in use,
+        `pr-owner` sub-agent, and, where the emacs-config sandbox is in use,
         `M-x wgn/eca-pr-loop` to start a sandboxed session with
         `sandbox-relay serve` beside it, so the loop reaches GitHub through
         `pr-loop` without the sandbox holding a credential. Ordinary sessions
@@ -135,6 +138,19 @@ in {
 
           # Carried into the sandbox with the rest of the config.
           "eca/AGENTS.md".source = config.wgn.home.llm.instructions;
+
+          # Any agent may spawn it, the loop's coordinator included.
+          "eca/agents/reviewer.md".text = ''
+            ---
+            mode: subagent
+            inherit: code
+            description: Reviews a change, the commits in a range BASE..TIP, against its goal statement, with fresh eyes. Spawn a new one for every review. Only reads.
+            maxSteps: 100
+            ${loopFrontmatter ["write_file" "edit_file" "move_file" "spawn_agent"] reviewerDenied}
+            ---
+            ${pkgs.agent-tools.reviewerPrompt}
+            ${deniedSearches}
+          '';
         };
     }
 
@@ -152,7 +168,7 @@ in {
             ---
             You coordinate the bot review loop. Load the `review-loop` skill
             before doing anything else, and follow it. Spawn one `pr-owner`
-            per pull request for the work on its code, and a `pr-reviewer`
+            per pull request for the work on its code, and a `reviewer`
             for each review of its fixups.
 
             ${deniedPhrases}
@@ -170,19 +186,6 @@ in {
             ${loopFrontmatter [] ownerDenied}
             ---
             ${builtins.readFile ../llm/pr-loop/pr-owner.md}
-            ${deniedPhrases}
-          '';
-
-          "eca/agents/pr-reviewer.md".text = ''
-            ---
-            mode: subagent
-            inherit: code
-            spawnableBy: pr-coordinator
-            description: Reviews one pull request's new fixups in the bot review loop before they are pushed, against the bot threads they answer, for regressions and against the PR's scope. Only reads.
-            maxSteps: 100
-            ${loopFrontmatter ["write_file" "edit_file" "move_file" "spawn_agent"] reviewerDenied}
-            ---
-            ${builtins.readFile ../llm/pr-loop/pr-reviewer.md}
             ${deniedPhrases}
           '';
         };
@@ -234,6 +237,44 @@ in {
         fi
       '';
     })
+
+    # config.json is ECA's own file, so the hook that holds every session to
+    # the baseline guard is merged into it on every switch rather than owned.
+    # The guard reads each call's agent, so the loop's agents get their
+    # roles' rules here too. It names `pr-loop` on PATH, which a sandboxed
+    # session reaches only where the sandbox serves it.
+    {
+      home.activation.ecaGuard = hm.dag.entryAfter ["writeBoundary"] ''
+        conf="${config.xdg.configHome}/eca/config.json"
+        hook=${escapeShellArg (builtins.toJSON {
+          type = "preToolCall";
+          matcher = ".*";
+          visible = false;
+          description = "pr-loop guard: what is Wesley's to do";
+          actions = [
+            {
+              type = "shell";
+              shell = "pr-loop guard --baseline";
+            }
+          ];
+        })}
+
+        if [ ! -e "$conf" ]; then
+          current='{}'
+        else
+          current=$(cat "$conf")
+        fi
+
+        if merged=$(printf '%s' "$current" | ${pkgs.jq}/bin/jq --argjson hook "$hook" '.hooks."guard-baseline" = $hook'); then
+          if [ "$merged" != "$current" ] && [ -z "''${DRY_RUN:-}" ]; then
+            mkdir -p "$(dirname "$conf")"
+            printf '%s\n' "$merged" > "$conf"
+          fi
+        else
+          warnEcho "$conf is not plain JSON, so the guard was not registered with ECA."
+        fi
+      '';
+    }
 
     # Only Gondolin can map a host service and inject a secret into the guest.
     (optionalAttrs (options ? home.programs.wgn.emacs.eca.sandbox.secretFiles) (mkIf (mcpProxy.enable && gondolin) {
