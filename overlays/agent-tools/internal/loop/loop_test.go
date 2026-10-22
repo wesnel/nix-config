@@ -2,6 +2,7 @@ package loop
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
+	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
 func TestIdentity(t *testing.T) {
@@ -71,6 +73,16 @@ func TestCheckFixups(t *testing.T) {
 	for _, rewrite := range []string{"amend! A first\n\nA renamed", "squash! B second\n\nmore", "amend! fixup! A first\n\nA renamed"} {
 		if err := checkFixups("br", []Commit{a, b}, []Commit{a, b, c(rewrite)}); err == nil || !strings.Contains(err.Error(), "--fixup=<commit>") {
 			t.Errorf("%q: %v", rewrite, err)
+		}
+	}
+	for message, problem := range map[string]string{
+		"fixup! A first\n\nReview-Thread: x\nSigned-off-by: T <t@e>": "Signed-off-by",
+		"fixup! A first\n\nCo-Authored-By: C <c@e>":                  "Co-Authored-By",
+	} {
+		err := checkFixups("br", []Commit{a, b}, []Commit{a, b, c(message)})
+		if _, ok := err.(Refusal); !ok || !strings.Contains(err.Error(), problem) || !strings.Contains(err.Error(), `"fixup! A first"`) ||
+			!refusal.SaysInstead(err.Error()) {
+			t.Errorf("%q: %v", message, err)
 		}
 	}
 }
@@ -153,6 +165,13 @@ func TestCheckLocal(t *testing.T) {
 	gitIn(t, dir, "switch", "-qc", "aside", "trunk")
 	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "aside")
 	gitIn(t, dir, "branch", "empty", "trunk")
+	gitIn(t, dir, "switch", "-qc", "period", "trunk")
+	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "Add x.")
+	gitIn(t, dir, "switch", "-qc", "reworded")
+	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "amend! Add x.", "-m", "Add x")
+	gitIn(t, dir, "switch", "-qc", "attributed", "trunk")
+	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "Add y")
+	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "fixup! Add y", "-m", "Co-Authored-By: C <c@e>")
 	git.Dir = dir
 	defer func() { git.Dir = "" }()
 	repo := &Repo{Slug: "o/r", Default: "trunk"}
@@ -182,12 +201,20 @@ func TestCheckLocal(t *testing.T) {
 		"no new commits":     {"empty", "trunk", trunk},
 		"parent not fetched": {"child", "parent", unfetched},
 		"not on its parent":  {"aside", "parent", parent},
+		"Add x.":             {"period", "trunk", trunk},
+		"Co-Authored-By":     {"attributed", "trunk", trunk},
 	}
 	for name, c := range refused {
 		_, _, err := checkLocal(repo, c[0], c[1], c[2])
-		if _, ok := err.(Refusal); !ok {
+		if _, ok := err.(Refusal); !ok || !refusal.SaysInstead(err.Error()) {
 			t.Errorf("%s: %v", name, err)
 		}
+		if (name == "Add x." || name == "Co-Authored-By") && !strings.Contains(fmt.Sprint(err), name) {
+			t.Errorf("%s: %v does not name it", name, err)
+		}
+	}
+	if _, _, err := checkLocal(repo, "reworded", "trunk", trunk); err != nil {
+		t.Errorf("a message an amend! rewords: %v", err)
 	}
 
 	gitIn(t, dir, "branch", "--set-upstream-to=origin/trunk", "child")

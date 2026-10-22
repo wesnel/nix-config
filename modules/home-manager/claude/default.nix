@@ -252,6 +252,19 @@ in {
             enableWeakerNetworkIsolation = true;
           };
 
+        hooks.PostToolUse = [
+          # After a push to GitHub, names the `pr-loop wait ci` to start.
+          {
+            matcher = "Bash";
+            hooks = [
+              {
+                type = "command";
+                command = "${getExe' pkgs.agent-tools "pr-loop"} guard --post";
+              }
+            ];
+          }
+        ];
+
         # Names the session's plans when it resumes or compacts, matched by
         # its session_id, which both keep, or by its worktree.
         hooks.SessionStart = [

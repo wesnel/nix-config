@@ -1,0 +1,85 @@
+package guard
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"strings"
+	"testing"
+)
+
+// TestPost covers the context added after a tool call that pushed to
+// GitHub: Claude Code's PostToolUse event and ECA's postToolCall.
+func TestPost(t *testing.T) {
+	claude := func(command, stdout string) string {
+		event, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Bash",
+			"tool_input": map[string]string{"command": command}, "tool_response": map[string]any{"stdout": stdout, "stderr": "", "interrupted": false}})
+		return string(event)
+	}
+	eca := func(command, output string) string {
+		event, _ := json.Marshal(map[string]any{"hook_type": "postToolCall", "server": "eca", "tool_name": "shell_command",
+			"tool_input": map[string]string{"command": command}, "tool_response": output})
+		return string(event)
+	}
+	// Codex names shell calls Bash, puts the command in tool_input.command
+	// and the output in tool_response as one string.
+	codex := func(command, output string) string {
+		event, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Bash", "turn_id": "t",
+			"tool_use_id": "call_1", "permission_mode": "default", "agent_id": "main",
+			"tool_input": map[string]string{"command": command}, "tool_response": output})
+		return string(event)
+	}
+	opened := `{"pr": 12, "url": "https://github.com/o/r/pull/12", "draft": true, "branch": "feature", "base": "main"}`
+	pushed := `{"pushed": {"b": "2222", "a": "1111"}, "round": 2, "apiCalls": 3}`
+	for _, c := range []struct {
+		event, want string
+	}{
+		{claude("pr-loop open --title T --body-file - feature", opened), "`pr-loop wait ci 12`"},
+		{claude("cd /r && pr-loop push", pushed), "`pr-loop wait ci a b`"},
+		{claude("pr-loop push && echo done", pushed+"\ndone\n"), "`pr-loop wait ci a b`"},
+		{claude("git sign-pass --push a", `{"branch": "a", "signed": 1, "pushed": {"a": "3333"}}`), "`pr-loop wait ci a`"},
+		{eca("pr-loop push", pushed), "`pr-loop wait ci a b`"},
+		{codex("pr-loop push", pushed), "`pr-loop wait ci a b`"},
+		{codex("cd /r && pr-loop open --title T feature", "Wall time: 1.2 seconds\nOutput:\n"+opened+"\n"), "`pr-loop wait ci 12`"},
+		{codex("pr-loop push --dry-run", `{"wouldUpdate": {"a": "1111"}, "objects": {}}`), ""},
+		{codex("pr-loop push", ""), ""},
+		{claude("pr-loop push --dry-run", `{"wouldUpdate": {"a": "1111"}, "objects": {}}`), ""},
+		{claude("pr-loop push", `{"pushed": {}}`), ""},
+		{claude("pr-loop push", ""), ""},
+		{claude("pr-loop status", pushed), ""},
+		{claude("git sign-pass", `{"branch": "a", "signed": 1}`), ""},
+		{claude("echo '"+pushed+"'", pushed), ""},
+		{`{"hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"file_path":"/x"}}`, ""},
+		{`not json`, ""},
+	} {
+		var out bytes.Buffer
+		if code := Main([]string{"--post"}, strings.NewReader(c.event), &out, io.Discard); code != 0 {
+			t.Errorf("%s: exit %d", c.event, code)
+		}
+		if c.want == "" {
+			if out.Len() != 0 {
+				t.Errorf("%s: printed %s", c.event, out.String())
+			}
+			continue
+		}
+		var got struct {
+			Specific struct {
+				Event   string `json:"hookEventName"`
+				Context string `json:"additionalContext"`
+			} `json:"hookSpecificOutput"`
+			Context string `json:"additionalContext"`
+		}
+		if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+			t.Errorf("%s: %v: %s", c.event, err, out.String())
+			continue
+		}
+		context := got.Specific.Context + got.Context
+		if strings.Contains(c.event, "postToolCall") != (got.Context != "") ||
+			!strings.Contains(c.event, "postToolCall") && got.Specific.Event != "PostToolUse" {
+			t.Errorf("%s: wrong format: %s", c.event, out.String())
+		}
+		if !strings.Contains(context, c.want) || !strings.Contains(context, "background") {
+			t.Errorf("%s: context %q, want %s", c.event, context, c.want)
+		}
+	}
+}

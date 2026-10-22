@@ -31,7 +31,10 @@ branch; this is re-checked before every write. Everything the loop commits
 must be a fixup of the PR's own commits. The other exception is open, which
 publishes a branch GitHub does not have, never a default branch, as a draft
 PR based on the default branch or on the head of another open PR by the
-authenticated user in the same repository.
+authenticated user in the same repository. open refuses a new commit, and
+push a loop fixup, whose message breaks the rules git sign-pass holds
+messages to: a subject of at most 72 characters without a trailing period,
+no attribution lines, and on a fixup only Review-* trailers.
 
   open --title T --body-file F [--base BASE] [--dry-run] [BRANCH]
                               push BRANCH (default HEAD) through the GitHub API and open
@@ -67,6 +70,8 @@ authenticated user in the same repository.
   end [--prune]               delete trigger comments and loop state
   guard [--baseline]          PreToolUse hook for Claude Code, Codex and ECA (reads stdin):
                               a loop's rules, or with --baseline every session's, by agent
+  guard --post                PostToolUse hook for Claude Code and ECA (reads stdin): after
+                              a push to GitHub, names the pr-loop wait ci to start
 
 reply and resolve take a thread a review bot started on an open PR by the
 authenticated user in this repository, and need no begin. In a loop session

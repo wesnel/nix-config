@@ -47,6 +47,10 @@ directory and host come from "plans" in the user's agent-tools/config.json.
                      with Wesley's answer, and log it as decided
   statusline         Claude Code's status line (reads stdin): the session's
                      open questions, or nothing; never touches the network
+  own PLAN --worktree DIR --agent ID
+                     record agent ID, the harness's ID for a sub-agent or
+                     "main" for the session's main thread, as the one agent
+                     that edits files in the worktree DIR (OWNERS in the plan)
   init               clone the plans' repository where it is missing and
                      "plans.remote" names it, then make the plans directory,
                      with a .gitignore for the lock files, as new does
@@ -355,6 +359,12 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return 2
 		}
 		return report(c.Sync(plans.SyncOptions{PullOnly: *pull, Settle: *settle}))
+	case "own":
+		p, ok := wantPlan()
+		if !ok {
+			return 2
+		}
+		return report(p.SetOwner(worktree, *agent))
 	case "reseal":
 		p, ok := wantPlan()
 		if !ok {

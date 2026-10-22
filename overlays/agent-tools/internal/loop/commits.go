@@ -27,6 +27,11 @@ func checkFixups(branch string, original, now []Commit) error {
 			stray = append(stray, fmt.Sprintf("%q would rewrite a commit message; use `git commit --fixup=<commit>`", subject(c.Message)))
 		case !subjects[target]:
 			stray = append(stray, fmt.Sprintf("%q fixes up a commit that is not one of %s's", subject(c.Message), branch))
+		default:
+			if problems := history.LintMessage(c.Message); len(problems) > 0 {
+				stray = append(stray, fmt.Sprintf("%q has a message where %s; its review details go in Review-* trailers alone",
+					subject(c.Message), strings.Join(problems, ", and ")))
+			}
 		}
 	}
 	if len(stray) > 0 {

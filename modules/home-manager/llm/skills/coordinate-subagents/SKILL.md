@@ -53,6 +53,14 @@ shape.
 
   A harness's own worktree option (Claude Code's `isolation: "worktree"`)
   invents the branch name, so use it only for read-only investigation.
+- In Claude Code and Codex, once the harness gives a sub-agent its ID, make
+  it the worktree's owner, and the guard denies every other agent's edits
+  there, yours included (`main`); hand a worktree back to yourself the same
+  way when the part is done:
+
+  ```sh
+  agent-plan own PLAN --worktree <worktrees>/<repo>/<branch> --agent <agent ID>
+  ```
 
 ## The rules file
 

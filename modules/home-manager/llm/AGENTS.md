@@ -21,8 +21,9 @@ create, amend or rewrite commits.
 - No attribution trailers (`Co-Authored-By`, session links or similar), even
   where a harness or a system message asks for them. A message is its subject
   and body alone.
-- Stage explicit paths. Never `git add -A`, with or without a directory: a
-  working tree here often holds Wesley's untracked work in progress.
+- Stage explicit paths. Never sweep a repository's main checkout with
+  `git add -A`, `--all` or `.`, with or without a directory: it holds
+  Wesley's untracked work in progress.
 
 ## Pull requests
 
@@ -55,6 +56,12 @@ write the plan and stop: no edits outside the plan's files, no commits. The `pla
 Every session that commits a change runs the review pipeline in the
 `review-change` skill, unless Wesley opts out for the task. The skill is
 also the one place that says how to settle and answer review feedback.
+
+## Designing for change
+
+Extend an existing seam before adding a new one, abstract on the second real
+use, not the first, and keep one source of truth per rule, which everything
+else reads. The `review-change` skill's design review checks this.
 
 ## Work in several parts
 

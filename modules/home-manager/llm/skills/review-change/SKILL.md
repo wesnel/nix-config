@@ -92,7 +92,16 @@ each branch:
 - duplication of, or contradiction with, what already exists, documentation
   and tooling included;
 - the same file edited on parallel branches;
-- what the plan leaves undecided.
+- what the plan leaves undecided;
+- designing for change:
+  - one source of truth per fact or rule, which everything else reads;
+  - seams named and narrow, with their contract written at the seam;
+  - nothing speculative: no option, layer or interface without a current
+    second user;
+  - each of the goal's likely next changes a local edit.
+
+It may read earlier plans in the same area (`agent-plan find`, or the
+plans directory) to see what kept changing there.
 
 It reports in the fresh review's vocabulary where that fits. Settle what
 the goal statement already decides by Triage. The rest are Wesley's

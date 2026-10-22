@@ -335,7 +335,35 @@ func TestGitState(t *testing.T) {
 		{false, linked, "git clean -fdx"},
 		{false, main, "git restore --staged ."},
 		{false, main, "git reset --soft HEAD~1"},
-		{false, main, "git stash"},
+		{true, main, "git stash"},
+		{true, linked, "git stash"},
+		{true, linked, "git stash push"},
+		{true, linked, "git stash push -u -- src"},
+		{true, linked, "git stash -k"},
+		{true, linked, "git stash save"},
+		{true, linked, "git stash pop"},
+		{true, linked, "git stash pop --index"},
+		{true, linked, "git stash apply -q"},
+		{false, linked, "git stash push -u -m agent-x-1"},
+		{false, linked, "git stash push --message=agent-x-1"},
+		{false, linked, "git stash -um agent-x-1"},
+		{false, linked, "git stash save agent-x-1"},
+		{false, linked, "git stash apply 3f2a9c1"},
+		{false, linked, "git stash pop --index stash@{2}"},
+		{false, linked, "git stash show -p 3f2a9c1"},
+		{false, linked, "git stash branch b 3f2a9c1"},
+		{true, main, "git add -A"},
+		{true, main, "git add --all src"},
+		{true, main, "git add ."},
+		{true, main, "git add :/"},
+		{true, main, "git add '*'"},
+		{true, linked, "git -C ../main add -A"},
+		{false, main, "git add src/x.go README.md"},
+		{false, main, "git add -p src/x.go"},
+		{false, linked, "git add -A"},
+		{false, linked, "git add ."},
+		{true, main, "git stash push -u -m agent-x-1"},
+		{false, main, "git stash push -m agent-x-1"},
 		{false, main, "git clean -n"},
 		{false, root, "git reset --hard"},
 		{true, main, "git branch -D unpushed"},
@@ -347,6 +375,30 @@ func TestGitState(t *testing.T) {
 		{true, main, "git worktree remove --force ../dirty"},
 		{false, main, "git worktree remove --force ../clean"},
 		{false, main, "git worktree remove ../dirty"},
+		{true, linked, "git switch --ignore-other-worktrees main"},
+		{true, linked, "git checkout --ignore-other-worktrees main"},
+		{false, linked, "git switch pushed"},
+		{true, linked, "git worktree add -f ../x main"},
+		{true, linked, "git worktree add --force ../x"},
+		{true, main, "git worktree add -ff ../x feature"},
+		{false, linked, "git worktree add -b y ../y pushed"},
+		{true, main, "git switch pushed"},
+		{true, main, "git switch -c x"},
+		{true, main, "git switch -"},
+		{true, main, "git switch --detach pushed"},
+		{true, main, "git checkout pushed"},
+		{true, main, "git checkout -b x"},
+		{true, main, "git checkout -"},
+		{true, main, "git checkout HEAD~0"},
+		{true, linked, "git -C ../main checkout pushed"},
+		{false, main, "git switch --detach"},
+		{false, main, "git checkout -- a.go"},
+		{false, main, "git checkout pushed -- a.go"},
+		{false, main, "git checkout HEAD a.go b.go"},
+		{false, main, "git checkout a.go"},
+		{false, main, "git switch -h"},
+		{false, linked, "git checkout -b y"},
+		{false, linked, "git checkout pushed"},
 	}
 	for _, c := range cases {
 		reason := judge(t, c.dir, c.command)
@@ -356,6 +408,186 @@ func TestGitState(t *testing.T) {
 		if reason != "" && !saysInstead(reason) {
 			t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
 		}
+	}
+}
+
+// TestSigning covers commands that write commits where the configuration
+// signs them, which would wait for a key touch.
+func TestSigning(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	signing := filepath.Join(root, "signing")
+	loop := filepath.Join(root, "loop")
+	plain := filepath.Join(root, "plain")
+	os.Mkdir(signing, 0o755)
+	os.Mkdir(plain, 0o755)
+	gitIn(t, signing, "init", "-q", "-b", "main")
+	gitIn(t, signing, "commit", "-q", "--allow-empty", "-m", "base")
+	gitIn(t, signing, "config", "commit.gpgsign", "true")
+	gitIn(t, signing, "config", "extensions.worktreeConfig", "true")
+	gitIn(t, signing, "worktree", "add", "-q", "-b", "loop", loop)
+	gitIn(t, loop, "config", "--worktree", "commit.gpgsign", "false")
+	gitIn(t, plain, "init", "-q", "-b", "main")
+
+	cases := []struct {
+		deny         bool
+		dir, command string
+	}{
+		{true, signing, "git commit -m x"},
+		{true, signing, "git commit --fixup=abc"},
+		{true, signing, "git rebase --onto a b c"},
+		{true, signing, "git rebase --continue"},
+		{true, signing, "git rebase --skip"},
+		{true, signing, "git cherry-pick abc"},
+		{true, signing, "git revert HEAD"},
+		{true, signing, "git merge feature"},
+		{true, signing, "git am --continue"},
+		{true, signing, "git pull"},
+		{true, signing, "git -c commit.gpgsign=true commit -m x"},
+		{true, plain, "git -C " + signing + " commit -m x"},
+		{true, plain, "git commit -S -m x"},
+		{true, loop, "git commit --gpg-sign -m x"},
+		{false, signing, "git -c commit.gpgsign=false commit -m x"},
+		{false, signing, "git -c commit.gpgSign=no rebase --continue"},
+		{false, signing, "git commit --no-gpg-sign -m x"},
+		{false, signing, "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=commit.gpgsign GIT_CONFIG_VALUE_0=false git commit -m x"},
+		{false, signing, "git rebase --abort"},
+		{false, signing, "git rebase --quit"},
+		{false, signing, "git rebase --edit-todo"},
+		{false, signing, "git cherry-pick --abort"},
+		{false, signing, "git cherry-pick -n abc"},
+		{false, signing, "git revert --no-commit HEAD"},
+		{false, signing, "git merge --ff-only feature"},
+		{false, signing, "git merge --squash feature"},
+		{false, signing, "git am --show-current-patch"},
+		{false, signing, "git pull --ff-only"},
+		{false, signing, "git commit --dry-run"},
+		{false, signing, "git status"},
+		{false, loop, "git commit -m x"},
+		{false, loop, "git rebase --continue"},
+		{false, plain, "git commit -m x"},
+		{false, signing, "cd $SOMEWHERE && git commit -m x"},
+	}
+	for _, c := range cases {
+		reason := judge(t, c.dir, c.command)
+		if (reason != "") != c.deny {
+			t.Errorf("%s: %q: deny=%v, reason %q", filepath.Base(c.dir), c.command, !c.deny, reason)
+		}
+		if reason != "" && !saysInstead(reason) {
+			t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+		}
+	}
+}
+
+// TestShellEdits covers shell commands that write a tracked file, which go
+// through the file-editing tools instead, and the scratch, ignored and
+// untracked files they may write.
+func TestShellEdits(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	work := filepath.Join(root, "work")
+	scratch := filepath.Join(root, "scratch")
+	outside := filepath.Join(root, "outside")
+	scratchRepo := filepath.Join(scratch, "repo")
+	for _, d := range []string{filepath.Join(work, "sub"), filepath.Join(work, "build"), outside, scratchRepo} {
+		os.MkdirAll(d, 0o755)
+	}
+	files := map[string]string{"a.go": "a\n", "sub/b.go": "b\n", ".gitignore": "build/\nvendored.txt\n", "vendored.txt": "v\n",
+		"new.txt": "n\n", "build/out.log": "o\n"}
+	for name, content := range files {
+		os.WriteFile(filepath.Join(work, name), []byte(content), 0o644)
+	}
+	os.WriteFile(filepath.Join(outside, "f"), []byte("f\n"), 0o644)
+	os.WriteFile(filepath.Join(scratchRepo, "a"), []byte("a\n"), 0o644)
+	gitIn(t, work, "init", "-q", "-b", "main")
+	gitIn(t, work, "add", "a.go", "sub/b.go", ".gitignore")
+	gitIn(t, work, "add", "-f", "vendored.txt")
+	gitIn(t, work, "commit", "-q", "-m", "base")
+	gitIn(t, scratchRepo, "init", "-q", "-b", "main")
+	gitIn(t, scratchRepo, "add", "a")
+	gitIn(t, scratchRepo, "commit", "-q", "-m", "base")
+	old := scratchRoots
+	scratchRoots = func() []string { return []string{scratch} }
+	t.Cleanup(func() { scratchRoots = old })
+
+	cases := []struct {
+		deny    bool
+		command string
+	}{
+		{true, "echo x > a.go"},
+		{true, "echo x >> a.go"},
+		{true, "printf x >a.go"},
+		{true, "go run gen.go 2> a.go"},
+		{true, "cat > a.go <<'EOF'\npackage a\nEOF"},
+		{true, "sed -i '' s/a/b/ a.go"},
+		{true, "sed -i.bak -e s/a/b/ a.go"},
+		{true, "sed --in-place s/a/b/ sub/b.go"},
+		{true, "perl -pi -e 's/a/b/' a.go"},
+		{true, "tee a.go < x"},
+		{true, "echo x | tee -a sub/b.go"},
+		{true, "ed -s a.go < cmds"},
+		{true, "cd sub && echo x > b.go"},
+		{true, "cd " + outside + " && echo x > " + work + "/a.go"},
+		{false, "echo x > new.txt"},
+		{false, "echo x > build/out.log"},
+		{false, "echo x > vendored.txt"},
+		{false, "go test ./... > " + scratch + "/out.txt"},
+		{false, "agent-plan goal PLAN > " + scratch + "/goal.md"},
+		{false, "echo x > " + scratchRepo + "/a"},
+		{false, "echo x > /dev/null"},
+		{false, "echo x >&2"},
+		{false, "echo x > $F"},
+		{false, "sed -n 1p a.go"},
+		{false, "sed -i '' s/a/b/ " + outside + "/f"},
+		{false, "sed s/a/b/ a.go > " + scratch + "/a.go"},
+		{false, "perl -ne 'print' a.go"},
+		{false, "cat a.go | tee " + scratch + "/copy"},
+		{false, "echo x > " + outside + "/f"},
+		{false, "cd $SOMEWHERE && echo x > a.go"},
+	}
+	for _, c := range cases {
+		reason := judge(t, work, c.command)
+		if (reason != "") != c.deny {
+			t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
+		}
+		if reason != "" && !saysInstead(reason) {
+			t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+		}
+	}
+}
+
+// TestTrash covers deleting files where trash is on PATH, which moves them
+// to the Trash instead.
+func TestTrash(t *testing.T) {
+	trashOnPath = func() bool { return true }
+	t.Cleanup(func() { trashOnPath = func() bool { return false } })
+	for _, c := range []struct {
+		deny    bool
+		command string
+	}{
+		{true, "rm x"},
+		{true, "rm -rf build"},
+		{true, "/bin/rm -f x"},
+		{true, "unlink x"},
+		{true, "find . -name '*.tmp' -delete"},
+		{true, `find . -name '*.tmp' -exec rm {} \;`},
+		{true, "git ls-files -z | xargs -0 rm -f"},
+		{true, "bash -c 'rm x'"},
+		{false, "trash x"},
+		{false, "git rm x"},
+		{false, "rmdir d"},
+		{false, "find . -name '*.tmp' -print"},
+		{false, "grep -rn rm ."},
+	} {
+		reason := judge(t, "/", c.command)
+		if (reason != "") != c.deny {
+			t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
+		}
+		if reason != "" && !saysInstead(reason) {
+			t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+		}
+	}
+	trashOnPath = func() bool { return false }
+	if reason := judge(t, "/", "rm x"); reason != "" {
+		t.Errorf("rm without trash on PATH: %q", reason)
 	}
 }
 

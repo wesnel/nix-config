@@ -2,6 +2,7 @@ package guard
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 // directory the command runs in.
 
 const (
+	sweeping     = "This stages everything in the repository's main checkout, which holds Wesley's untracked work in progress. Stage the paths you changed by name (`git add PATH...`), or work in a worktree of your own (`git worktree add`)."
 	mainCheckout = "This discards work in the repository's main checkout, which holds Wesley's work in progress. Do it in a worktree of your own (`git worktree add`), or ask Wesley."
 	historyLoss  = "This deletes history git cannot get back, which is Wesley's call. Leave it, and put the command in your report for Wesley."
 	sharedStash  = "Every worktree of a repository shares one stash, so this can discard another worktree's stashed work. Leave the stash as it is, and put the command in your report for Wesley."
@@ -194,7 +196,8 @@ func checkSession(c call, dir string) string {
 			return reason
 		}
 	}
-	for _, target := range redirections(words) {
+	redirected := redirections(words)
+	for _, target := range redirected {
 		if guardFile(expandPath(target, dir)) {
 			return guardOff
 		}
@@ -203,6 +206,9 @@ func checkSession(c call, dir string) string {
 		}
 	}
 	if reason := checkPlanLogWrite(name, args, dir); reason != "" {
+		return reason
+	}
+	if reason := checkShellEdit(name, args, redirected, dir); reason != "" {
 		return reason
 	}
 	has := func(flags ...string) bool {
@@ -398,6 +404,9 @@ func checkSession(c call, dir string) string {
 		if strings.Contains(strings.Join(args, " "), "kill-emacs") {
 			return killing
 		}
+	case "emacs", "Emacs":
+		return "A second Emacs, batch or not, runs apart from Wesley's daemon and can leave files and state behind for it. " +
+			"Use `emacsclient` as the emacsclient skill says, such as `emacsclient -e '(check-parens)'`."
 	case "rm", "trash", "chmod", "chown", "chgrp", "mv":
 		recursive := name == "trash" || name == "mv"
 		for _, a := range args {
@@ -448,6 +457,9 @@ func checkSession(c call, dir string) string {
 				return guardOff
 			}
 		}
+	}
+	if (name == "rm" || name == "unlink" || name == "find" && has("-delete")) && trashOnPath() {
+		return useTrash
 	}
 	return ""
 }
@@ -683,15 +695,9 @@ func planLog(path string) bool {
 // log.
 func checkPlanLogWrite(name string, args []string, dir string) string {
 	var positional, targets []string
-	inPlace := false
 	for _, a := range args {
-		switch {
-		case !strings.HasPrefix(a, "-"):
+		if !strings.HasPrefix(a, "-") {
 			positional = append(positional, a)
-		case a == "--in-place" || strings.HasPrefix(a, "--in-place="),
-			name == "sed" && strings.HasPrefix(a, "-i"),
-			name == "perl" && !strings.HasPrefix(a, "--") && strings.Contains(a, "i"):
-			inPlace = true
 		}
 	}
 	switch name {
@@ -708,7 +714,7 @@ func checkPlanLogWrite(name string, args []string, dir string) string {
 			}
 		}
 	case "sed", "perl":
-		if inPlace {
+		if inPlace(name, args) {
 			targets = positional
 		}
 	}
@@ -718,6 +724,95 @@ func checkPlanLogWrite(name string, args []string, dir string) string {
 		}
 	}
 	return ""
+}
+
+const shellEdit = "`%s` is a tracked file, and editing it from the shell bypasses the file-editing tools AGENTS.md requires. " +
+	"Use the file-editing tools (`Edit`, `Write`, `apply_patch`, ECA's `edit_file`), or write scratch output under `$TMPDIR` or /tmp."
+
+// checkShellEdit denies a command that writes a tracked file with a
+// redirection, tee, ed, or sed or perl in place, run in dir.
+func checkShellEdit(name string, args, redirected []string, dir string) string {
+	for _, t := range editTargets(name, args, redirected) {
+		if trackedFile(expandPath(t, dir)) {
+			return fmt.Sprintf(shellEdit, t)
+		}
+	}
+	return ""
+}
+
+// editTargets are the files a command edits, as it names them: its output
+// redirections, and the files of tee, ed, and sed or perl in place.
+func editTargets(name string, args, redirected []string) []string {
+	var targets []string
+	for _, t := range redirected {
+		if !strings.HasPrefix(t, "&") {
+			targets = append(targets, t)
+		}
+	}
+	if name == "tee" || name == "ed" || (name == "sed" || name == "perl") && inPlace(name, args) {
+		for _, a := range args {
+			if !strings.HasPrefix(a, "-") {
+				targets = append(targets, a)
+			}
+		}
+	}
+	return targets
+}
+
+// trackedFile reports whether path is a file git tracks, outside the
+// scratch roots, that the repository's ignore rules do not name.
+func trackedFile(path string) bool {
+	if !filepath.IsAbs(path) {
+		return false
+	}
+	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	for _, root := range scratchRoots() {
+		for _, r := range []string{root, realPath(root)} {
+			if r != "" && (real == r || strings.HasPrefix(real, strings.TrimSuffix(r, "/")+"/")) {
+				return false
+			}
+		}
+	}
+	g, name := gitState{dir: filepath.Dir(real)}, filepath.Base(real)
+	if _, ok := g.run("ls-files", "--error-unmatch", "--", name); !ok {
+		return false
+	}
+	_, ignored := g.run("check-ignore", "-q", "--no-index", "--", name)
+	return !ignored
+}
+
+// realPath is path with its symlinks resolved, or "" when it cannot be.
+func realPath(path string) string {
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return ""
+	}
+	return real
+}
+
+// trashOnPath reports whether trash is on the hook's PATH.
+var trashOnPath = func() bool {
+	_, err := exec.LookPath("trash")
+	return err == nil
+}
+
+const useTrash = "`trash` is on PATH here, and moves files to the Trash, where they can be got back. " +
+	"Use `trash PATH...` in place of rm, unlink or find -delete (`find ... -print0 | xargs -0 trash`)."
+
+// scratchRoots are the directories a shell command may write files in,
+// tracked or not: the session's temporary directories.
+var scratchRoots = func() []string {
+	roots := []string{"/tmp", "/private/tmp"}
+	if dir := os.Getenv("TMPDIR"); dir != "" {
+		roots = append(roots, dir)
+	}
+	return roots
 }
 
 var redirect = regexp.MustCompile(`^[0-9&]?>>?\|?`)
@@ -743,6 +838,37 @@ func redirections(words []string) []string {
 // Write, MultiEdit and NotebookEdit, Codex's apply_patch, and ECA's
 // write_file, edit_file and move_file.
 func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
+	for _, c := range fileChanges(tool, toolInput) {
+		path := expandPath(c.path, dir)
+		if reason := checkSecretPath(path, dir); reason != "" {
+			return reason
+		}
+		if planLog(path) {
+			return appendOnly
+		}
+		switch {
+		case filepath.Base(path) == "config" && filepath.Base(filepath.Dir(path)) == ".git":
+			return sharedConfig
+		case strings.HasSuffix(path, ".codex/hooks.json") && guardFile(path):
+			return guardOff
+		case guardFile(path):
+			existing, _ := os.ReadFile(path)
+			for _, text := range []string{c.text, string(existing)} {
+				if strings.Contains(text, "hooks") || strings.Contains(text, "disableAllHooks") {
+					return guardOff
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// change is a file a file-editing tool writes, as the call names it, and
+// the text the call puts in or takes out.
+type change struct{ path, text string }
+
+// fileChanges are the files a call to a file-editing tool writes.
+func fileChanges(tool string, toolInput json.RawMessage) []change {
 	var in struct {
 		FilePath     string `json:"file_path"`
 		NotebookPath string `json:"notebook_path"`
@@ -762,7 +888,6 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 		} `json:"edits"`
 	}
 	json.Unmarshal(toolInput, &in)
-	type change struct{ path, text string }
 	var changes []change
 	if tool == "apply_patch" {
 		var path string
@@ -796,29 +921,7 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 			}
 		}
 	}
-	for _, c := range changes {
-		path := expandPath(c.path, dir)
-		if reason := checkSecretPath(path, dir); reason != "" {
-			return reason
-		}
-		if planLog(path) {
-			return appendOnly
-		}
-		switch {
-		case filepath.Base(path) == "config" && filepath.Base(filepath.Dir(path)) == ".git":
-			return sharedConfig
-		case strings.HasSuffix(path, ".codex/hooks.json") && guardFile(path):
-			return guardOff
-		case guardFile(path):
-			existing, _ := os.ReadFile(path)
-			for _, text := range []string{c.text, string(existing)} {
-				if strings.Contains(text, "hooks") || strings.Contains(text, "disableAllHooks") {
-					return guardOff
-				}
-			}
-		}
-	}
-	return ""
+	return changes
 }
 
 // connectorTool matches the claude.ai connectors that act as Wesley.
@@ -835,8 +938,63 @@ func checkConnector(tool string) string {
 	return ""
 }
 
-// gitState is where a git command acts and what it finds there.
-type gitState struct{ dir string }
+// gitState is where a git command acts and what it finds there: its
+// directory, and for signs the -c and --config-env options and the
+// assignments it runs with.
+type gitState struct {
+	dir         string
+	config, env []string
+}
+
+// signs reports whether a commit written by the command would be signed, by
+// the configuration it would read; false where the guard cannot tell.
+func (g gitState) signs() bool {
+	if g.dir == "" {
+		return false
+	}
+	cmd := exec.Command("git", append(append([]string{}, g.config...), "-C", g.dir, "config", "--bool", "commit.gpgsign")...)
+	cmd.Env = append(gitenv.Without(os.Environ()), g.env...)
+	out, err := cmd.Output()
+	return err == nil && strings.TrimSpace(string(out)) == "true"
+}
+
+// commitWriters are the git commands that write commits, with the options
+// that make each write none.
+var commitWriters = map[string]map[string]bool{
+	"commit":      set("--dry-run"),
+	"rebase":      set("--abort", "--quit", "--edit-todo", "--show-current-patch"),
+	"cherry-pick": set("--abort", "--quit", "--no-commit", "-n"),
+	"revert":      set("--abort", "--quit", "--no-commit", "-n"),
+	"merge":       set("--abort", "--quit", "--no-commit", "--squash", "--ff-only"),
+	"am":          set("--abort", "--quit", "--show-current-patch"),
+	"pull":        set("--ff-only"),
+}
+
+const signingOn = "Signing needs Wesley's hardware key, which nobody is here to touch, and this `git %s` would sign. " +
+	"Run it as `git -c commit.gpgsign=false %s ...`, without -S or --gpg-sign; Wesley signs everything in one pass at the end."
+
+// checkSigning denies a command that would write a signed commit, which
+// waits for a key touch: commit.gpgsign is on where it runs, or it asks for
+// a signature.
+func checkSigning(sub string, rest []string, g gitState) string {
+	none, writes := commitWriters[sub]
+	if !writes {
+		return ""
+	}
+	asked := false
+	for _, w := range rest {
+		switch {
+		case w == "--no-gpg-sign", none[w], w == "-h", w == "--help":
+			return ""
+		case w == "--gpg-sign", strings.HasPrefix(w, "--gpg-sign="), strings.HasPrefix(w, "-S"):
+			asked = true
+		}
+	}
+	if !asked && !g.signs() {
+		return ""
+	}
+	return fmt.Sprintf(signingOn, sub, sub)
+}
 
 func (g gitState) run(args ...string) (string, bool) {
 	if g.dir == "" {
@@ -899,6 +1057,14 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 	switch {
 	case sub == "stash" && (first == "drop" || first == "clear"):
 		return sharedStash
+	case sub == "stash" && untaggedStash(rest):
+		return untagged
+	case sub == "worktree" && first == "add" && (has("--force") || short("f")):
+		return "--force adds a worktree on a branch another worktree has, or over a path git keeps for one, which can take another session's place. " +
+			"Add a worktree of your own without it (`git worktree add -b NEW ../PATH BRANCH`), or ask Wesley."
+	case (sub == "switch" || sub == "checkout") && has("--ignore-other-worktrees"):
+		return "A branch checked out in another worktree belongs to whoever works there, and checking it out here too moves it under them. " +
+			"Work on a branch of your own in a worktree of your own (`git worktree add -b NEW ../PATH BRANCH`), or ask Wesley."
 	case sub == "reset" && has("--hard"),
 		sub == "checkout" && (has("-f", "--force") || everything()),
 		sub == "restore" && everything() && (!has("--staged", "-S") || has("--worktree", "-W")),
@@ -907,6 +1073,15 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 		sub == "stash" && has("-u", "--include-untracked", "-a", "--all"):
 		if g.main() {
 			return mainCheckout
+		}
+	case sub == "add" && (has("-A", "--all") || everything()):
+		if g.main() {
+			return sweeping
+		}
+	case (sub == "switch" || sub == "checkout") && changesBranch(sub, rest, g):
+		if g.main() {
+			return "Changing branch in the repository's main checkout moves Wesley's working tree under him. " +
+				"Work in a worktree of your own (`git worktree add ../PATH BRANCH`), or ask Wesley."
 		}
 	case sub == "reflog" && (first == "expire" || first == "delete"),
 		sub == "gc" && (has("--prune=now") || has("--prune=all")),
@@ -940,6 +1115,68 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 		}
 	}
 	return ""
+}
+
+const untagged = "Every worktree shares one stash, so an untagged entry, or a pop or apply of whatever is on top, can take another session's work. " +
+	"Use a tagged entry: `git stash push -u -m <unique-tag>`, take its SHA from `git stash list --format='%H %s'`, " +
+	"restore it with `git stash apply <sha>`, and for the drop, which is Wesley's, put `git stash drop stash@{N}` in your report, " +
+	"N found again by the tag in `git stash list`."
+
+// untaggedStash reports whether `git stash` with these arguments makes an
+// entry without a message, or pops or applies one without naming it.
+func untaggedStash(args []string) bool {
+	verb := ""
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		verb, args = args[0], args[1:]
+	}
+	named := false
+	for _, a := range args {
+		named = named || !strings.HasPrefix(a, "-")
+	}
+	switch verb {
+	case "", "push":
+		for _, a := range args {
+			if a == "--" {
+				break
+			}
+			if a == "--message" || strings.HasPrefix(a, "--message=") ||
+				strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.Contains(a, "m") {
+				return false
+			}
+		}
+		return true
+	case "save", "pop", "apply":
+		return !named
+	}
+	return false
+}
+
+// changesBranch reports whether `git switch` or `git checkout` with these
+// arguments moves the worktree to another branch or commit, rather than
+// detaching where it is or checking out files.
+func changesBranch(sub string, args []string, g gitState) bool {
+	var positional []string
+	for _, a := range args {
+		switch {
+		case a == "-h" || a == "--help" || a == "--":
+			return false
+		case a == "-" || !strings.HasPrefix(a, "-"):
+			positional = append(positional, a)
+		case set("-c", "-C", "--create", "--force-create", "-b", "-B", "--orphan")[strings.SplitN(a, "=", 2)[0]]:
+			return true
+		}
+	}
+	if sub == "switch" {
+		return len(positional) > 0
+	}
+	if len(positional) != 1 {
+		return false
+	}
+	if positional[0] == "-" {
+		return true
+	}
+	_, commit := g.run("rev-parse", "--verify", "-q", positional[0]+"^{commit}")
+	return commit
 }
 
 // sharedKeys are the git config keys whose shared value is Wesley's.

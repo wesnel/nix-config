@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -51,7 +52,10 @@ type input struct {
 	// reads. Without it, the guard's own working directory stands in.
 	Cwd string `json:"cwd"`
 	// Set by Codex alone, whose hooks cannot ask the user.
-	TurnID string `json:"turn_id"`
+	TurnID    string `json:"turn_id"`
+	SessionID string `json:"session_id"`
+	// Set by Claude Code and Codex for a sub-agent's call alone.
+	AgentID string `json:"agent_id"`
 }
 
 // role is who makes a call. Each role is denied everything the one before it
@@ -89,8 +93,10 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case len(args) == 0:
 	case len(args) == 1 && args[0] == "--baseline":
 		fallback = baseline
+	case len(args) == 1 && args[0] == "--post":
+		return post(stdin, stdout)
 	default:
-		fmt.Fprintf(stderr, "pr-loop guard: takes no arguments, or --baseline; got %q\n", args)
+		fmt.Fprintf(stderr, "pr-loop guard: takes no arguments, --baseline or --post; got %q\n", args)
 		return 1
 	}
 	var in input
@@ -101,8 +107,21 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		in.Cwd, _ = os.Getwd()
 	}
 	who := roleOf(in.AgentType+in.Agent, fallback)
-	reason := check(in.ToolName, in.Server, in.ToolInput, who, in.Cwd)
+	reason := checkSubagentStash(in)
 	if reason == "" {
+		reason = check(in.ToolName, in.Server, in.ToolInput, who, in.Cwd)
+	}
+	if reason == "" {
+		reason = checkOwner(in)
+	}
+	if reason == "" {
+		edit := in.ToolName == "Edit" || in.ToolName == "Write" || in.ToolName == "MultiEdit"
+		if fallback == baseline && edit && in.HookType == "" {
+			if context := branchHint(in.SessionID, in.ToolInput, in.Cwd); context != "" {
+				json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{
+					"hookEventName": "PreToolUse", "additionalContext": context}})
+			}
+		}
 		return 0
 	}
 	var out any
@@ -262,7 +281,7 @@ func program(c call, who role, files, dir string) string {
 	words := c.words
 	switch name := base(words[0]); {
 	case name == "git":
-		return checkGit(words, who, dir)
+		return checkGit(words, c.env, who, dir)
 	case name == "gh":
 		if reason := checkGh(words[1:], c.expands[1:], files, who); reason != "" && who == reviewer {
 			return reviewerReport
@@ -482,17 +501,20 @@ var gitWrites = map[string]bool{"commit": true, "rebase": true, "reset": true, "
 	"push": true, "sign-pass": true}
 
 // checkGit checks a git command run in dir, "" when the guard cannot tell
-// where.
-func checkGit(words []string, who role, dir string) string {
+// where, with the assignments env made for it.
+func checkGit(words, env []string, who role, dir string) string {
 	i := 1
+	var config []string // the -c and --config-env options, for gitState.signs
 	for i < len(words) && strings.HasPrefix(words[i], "-") {
 		// Configuration given on the command line.
 		key := ""
 		switch w := words[i]; {
 		case (w == "-c" || w == "--config-env") && i+1 < len(words):
 			key, _, _ = strings.Cut(words[i+1], "=")
+			config = append(config, w, words[i+1])
 		case strings.HasPrefix(w, "--config-env="):
 			key, _, _ = strings.Cut(strings.TrimPrefix(w, "--config-env="), "=")
+			config = append(config, w)
 		case w == "-C" && i+1 < len(words):
 			if dir = expandPath(words[i+1], dir); !filepath.IsAbs(dir) {
 				dir = ""
@@ -552,6 +574,10 @@ func checkGit(words []string, who role, dir string) string {
 		case !has("--fixup"):
 			return "Every commit in the review loop is a fixup the signing pass can squash in. Commit with `git commit --fixup=<commit>` against the PR commit it belongs to, with the review details as --trailer lines."
 		}
+	case has("--no-verify") || sub == "commit" && has("-n"):
+		return "Repository hooks check every change, and stay on. Fix what they report and run the command again without `--no-verify`; if a hook itself is broken, say so in your report for Wesley."
+	case sub == "tag" && tagWrites(rest):
+		return "Tags are published history, which is Wesley's to make or remove. List them with `git tag -l`, and put the `git tag` command in your report for Wesley."
 	case sub == "config" && !configRead(rest):
 		for _, w := range rest {
 			key := strings.ToLower(w)
@@ -569,6 +595,9 @@ func checkGit(words []string, who role, dir string) string {
 			}
 		}
 	}
+	if reason := checkSigning(sub, rest, gitState{dir: dir, config: config, env: env}); reason != "" {
+		return reason
+	}
 	// An existing alias runs whatever it names, which this check cannot see.
 	if aliases, _ := exec.Command("git", "config", "--get-regexp", `^alias\.`).Output(); len(aliases) > 0 {
 		for _, line := range strings.Split(string(aliases), "\n") {
@@ -579,6 +608,29 @@ func checkGit(words []string, who role, dir string) string {
 		}
 	}
 	return ""
+}
+
+// tagLists are the `git tag` options that make it list or verify tags.
+var tagLists = set("-l", "--list", "-v", "--verify", "--contains", "--no-contains", "--merged", "--no-merged", "--points-at")
+
+// tagWrites reports whether `git tag` with these arguments creates,
+// deletes or moves a tag rather than listing or verifying them.
+func tagWrites(args []string) bool {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		name, _, _ := strings.Cut(a, "=")
+		switch {
+		case tagLists[name], strings.HasPrefix(a, "-n") && !strings.HasPrefix(a, "--"):
+			return false
+		case a == "--sort" || a == "--format" || a == "--color" || a == "--column":
+			i++
+		case !strings.HasPrefix(a, "-"),
+			set("-a", "-s", "-u", "-f", "-d", "-m", "-F", "-e", "--annotate", "--sign", "--local-user", "--force",
+				"--delete", "--message", "--file", "--edit")[name]:
+			return true
+		}
+	}
+	return false
 }
 
 const remotes = "Where a repository's remotes point is Wesley's configuration. Use the remotes as they are, and put the change you need in your report for Wesley."
@@ -734,7 +786,19 @@ func checkBaselineGh(args []string, expanded []bool, workspace string) string {
 	case group == "auth" && !ghReads[group][verb]:
 		return ghAuth
 	case group == "pr" && verb == "create":
-		if has("--draft", "-d") {
+		// The last --draft or -d decides, and a value must parse as true.
+		draft := false
+		for _, a := range args {
+			name, value, valued := strings.Cut(a, "=")
+			if name != "--draft" && name != "-d" {
+				continue
+			}
+			draft = true
+			if valued {
+				draft, _ = strconv.ParseBool(value)
+			}
+		}
+		if draft {
 			return ""
 		}
 		return ghDraft
