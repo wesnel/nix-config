@@ -185,6 +185,33 @@ in {
       '';
     };
 
+    agentPlans = {
+      enable = mkOption {
+        type = types.bool;
+        default = false;
+
+        description = ''
+          Linux only. Runs the Agent plans page's session as
+          `agent-plans.service`: `claude remote-control` in
+          `agent-plans/session` under {option}`xdg.stateHome`, published
+          from the devbox, held by the baseline guard, with its own Claude
+          Code config in `agent-plans/claude`, whose settings it cannot
+          change. The page
+          is named in `agent-tools/agent-plans.json` under the XDG config
+          directory, which the operator writes on the host. Before the
+          first start, log that config in and trust the session's folder
+          once: in `agent-plans/session`, run
+          `CLAUDE_CONFIG_DIR=~/.local/state/agent-plans/claude claude`,
+          `/login`, accept the folder, and quit. The session folder is
+          writable by any process running as the operator; only managed
+          settings, which need root, would be a wall. The kill switch is
+          its own: create `agent-plans/off` under {option}`xdg.stateHome`,
+          then `systemctl --user stop agent-plans.service`. Needs Claude
+          Code signed in.
+        '';
+      };
+    };
+
     settings = mkOption {
       type = types.attrs;
 
@@ -457,6 +484,120 @@ in {
       wgn.home.llm.prLoop.enable = true;
       home.packages = [prLoopLauncher];
     })
+
+    (mkIf cfg.agentPlans.enable (let
+      state = "${config.xdg.stateHome}/agent-plans";
+      session = "${state}/session";
+      out = "${state}/out";
+      # The session's own Claude Code config: its login, its trust of the
+      # session folder and its settings. /config from the phone writes the
+      # user settings, which here are a read-only link into the store, so
+      # it changes nothing, and never the operator's ~/.claude.
+      claudeDir = "${state}/claude";
+      home = config.home.homeDirectory;
+      relative = removePrefix "${home}/";
+      agentTools = config.wgn.home.llm.agentTools;
+      # The session's Bash runs plan-dash by name, and plan-dash runs git
+      # and gh; Claude Code installs itself under ~/.local/bin.
+      path = concatStringsSep ":" [
+        (makeBinPath [agentTools pkgs.git pkgs.openssh pkgs.gh pkgs.coreutils])
+        "${config.home.profileDirectory}/bin"
+        "${home}/.local/bin"
+        "/usr/local/bin:/usr/bin:/bin"
+      ];
+    in {
+      assertions = [
+        {
+          assertion = pkgs.stdenv.hostPlatform.isLinux;
+          message = "wgn.home.claude.agentPlans needs Linux.";
+        }
+      ];
+
+      # The session's working directory; its settings live in claudeDir.
+      home.activation.agentPlansSession = lib.hm.dag.entryAfter ["writeBoundary"] ''
+        run mkdir -p ${escapeShellArg session}
+      '';
+
+      home.file = {
+        # The session's user settings, read-only. dontAsk denies whatever
+        # they do not allow. The allow list names the skill's tools, and the
+        # baseline hook holds their commands; with onFailure block a hook
+        # that cannot run denies. Its SessionStart output becomes the
+        # session's context after a start, /clear or /compact.
+        "${relative claudeDir}/settings.json".text = builtins.toJSON {
+          permissions = {
+            allow = [
+              "Bash(plan-dash export)"
+              "ToolSearch"
+              "Monitor"
+              "ArtifactData"
+              "Agent"
+              "Skill"
+              "PushNotification"
+            ];
+            deny =
+              concatMap (p: ["Read(${rulePath p}*)" "Read(${rulePath p}*/**)"]) config.wgn.home.llm.guard.credentialPaths
+              ++ ["Read(${rulePath plans.repository.key})"];
+          };
+          syncClaudeAiSkills = false;
+          syncClaudeAiPlugins = false;
+          hooks = {
+            PreToolUse = [
+              {
+                matcher = "Bash|Monitor|ExitWorktree|Edit|Write|MultiEdit|NotebookEdit|mcp__.*";
+                hooks = [
+                  {
+                    type = "command";
+                    command = "${getExe' agentTools "pr-loop"} guard --baseline";
+                    onFailure = "block";
+                  }
+                ];
+              }
+            ];
+            SessionStart = [
+              {
+                matcher = "startup|clear|compact";
+                hooks = [
+                  {
+                    type = "command";
+                    command = "${getExe' agentTools "plan-dash"} prime";
+                  }
+                ];
+              }
+            ];
+          };
+        };
+
+        # In the session's own config alone, so no other session loads it.
+        "${relative claudeDir}/skills/agent-plans/SKILL.md".text =
+          replaceStrings ["@out@"] [out] (builtins.readFile ./agent-plans/SKILL.md);
+      };
+
+      systemd.user.services.agent-plans = {
+        Unit = {
+          Description = "The Agent plans page's Remote Control session";
+          ConditionPathExists = "!${state}/off";
+        };
+        Service = {
+          # --spawn session ends when its session does, with status 0, so
+          # only Restart=always brings it back. Without a terminal it
+          # redraws its status line every second, which would fill the
+          # journal.
+          ExecStart = concatStringsSep " " [
+            "${home}/.local/bin/claude remote-control --spawn session"
+            "--working-directory ${session}"
+            "--permission-mode dontAsk"
+            "--remote-control-session-name-prefix agent-plans"
+          ];
+          WorkingDirectory = session;
+          Environment = ["CLAUDE_CONFIG_DIR=${claudeDir}" "PATH=${path}"];
+          Restart = "always";
+          RestartSec = "30s";
+          StandardOutput = "null";
+        };
+        Install.WantedBy = ["default.target"];
+      };
+    }))
 
     # User-scoped servers live in ~/.claude.json, which Claude Code rewrites
     # constantly, so these entries are merged in on every switch rather than

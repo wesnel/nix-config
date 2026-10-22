@@ -309,6 +309,7 @@ trash "$d"
 
 ``` sh
 plan-dash export                         # writes $XDG_STATE_HOME/agent-plans/out/
+plan-dash watch                          # prints a line when the session has work
 ```
 
 `plan-dash export` writes the documents the "Agent plans" page keeps in
@@ -334,6 +335,63 @@ document stays under 600 KiB. Redaction knows shapes, not data, so
 customer data stays out of plans. A plan that cannot be read is named and
 its document kept, and the command exits 1; only a plan gone from the
 directory, or halted, loses its document.
+
+`plan-dash watch` is what wakes the dashboard session, through Monitor.
+Every 30 seconds it exports the plans and their sync state in memory and
+prints `plans changed` when that export's hash differs from the one it
+last printed for, at most once every 90 seconds. The hash leaves out what
+changes on every logged event or sync (a plan's `updated`, the times of
+the last push and fetch), so an agent logging its work does not cost the
+session a turn. It also prints `plan sync stalled` once per stall (this
+host's plans unsynced, its last push over 6 hours old), and `demo digest
+ready` for a new demo digest under `digests/YYYY/` in the notes
+repository. Every 2 minutes it takes the other hosts' plans
+with the fast-forward-only pull, never the rebasing one. It runs one at a
+time (`already watching` otherwise) and keeps what it printed in
+`watch.json`, so the watch the session starts after Monitor's 30 minutes
+prints only what changed since.
+
+## the Agent plans session
+
+`wgn.home.claude.agentPlans.enable` (the devbox) runs the session as
+`agent-plans.service`, `claude remote-control --spawn session
+--permission-mode dontAsk` in `$XDG_STATE_HOME/agent-plans/session`, with
+its own Claude Code config, `CLAUDE_CONFIG_DIR` at
+`$XDG_STATE_HOME/agent-plans/claude`. Before the first start the operator
+logs that config in and trusts the folder once: in the folder,
+`CLAUDE_CONFIG_DIR=~/.local/state/agent-plans/claude claude`, `/login`,
+accept the folder, quit. The unit restarts it whenever it ends, and
+sends its output, a status line redrawn every second, to null.
+
+The phone reaches the session outside tool calls too: it can run
+`/config key=value`, which writes the user settings, and @-mention a
+file, which Claude Code reads into the conversation without a hook. So
+the session's user settings are a read-only link into the store, where
+`/config` fails, and never the operator's `~/.claude`; and they deny
+reads of credentials and the notes deploy key, which Read rules hold
+@-mentions to. They hold the baseline guard's hook with `onFailure:
+block` (Claude Code 2.1.295 or later), so a hook that cannot run denies,
+and allow the skill's tools: Bash `plan-dash export`, Monitor,
+ArtifactData, Agent, Skill, PushNotification and ToolSearch; and a
+SessionStart hook, `plan-dash prime`, that names the page and the
+`agent-plans` skill after every start, `/clear` and `/compact`. The
+session folder is writable by any process running as the operator, and a
+settings file there could switch the hook off; only managed settings,
+which need root, would be a wall. Any Remote Control session, not only
+this one, takes `/config` and @-mentions from the phone with the
+operator's account. The skill, in the same config, arms Monitor on
+`plan-dash watch`, again on every expiry, and runs each update in a
+foreground sub-agent: export, then write what it wrote to the page,
+version-pinned, reading the page only into files so no document's text
+enters the conversation. A stall or a digest becomes a PushNotification
+with fixed text. The kill switch is its own: create
+`$XDG_STATE_HOME/agent-plans/off`, then `systemctl --user stop
+agent-plans.service`.
+
+Its page is named in `agent-tools/agent-plans.json` under the XDG config
+directory, `{"url": "https://claude.ai/artifact/ID"}`, which the operator
+writes once on the host; the URL stays out of this repository, and
+without it the session reaches no page.
 
 ## pushing: private history stays private
 

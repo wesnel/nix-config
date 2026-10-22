@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/plans"
 )
 
 func TestMain(m *testing.M) {
@@ -52,12 +54,14 @@ func TestExport(t *testing.T) {
 	}
 	out := filepath.Join(state, "agent-plans", "out")
 	var got struct {
-		Dir          string `json:"dir"`
-		GitHub       bool   `json:"github"`
-		PullRequests int    `json:"pullRequests"`
-		Plans        int    `json:"plans"`
+		Dir          string   `json:"dir"`
+		GitHub       bool     `json:"github"`
+		PullRequests int      `json:"pullRequests"`
+		Plans        int      `json:"plans"`
+		Documents    []string `json:"documents"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil || got.Dir != out || !got.GitHub || got.PullRequests != 1 || got.Plans != 0 {
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil || got.Dir != out || !got.GitHub || got.PullRequests != 1 || got.Plans != 0 ||
+		strings.Join(got.Documents, " ") != "github/status meta/sync" {
 		t.Errorf("printed %s (%v)", stdout.String(), err)
 	}
 	data, err := os.ReadFile(filepath.Join(out, "github", "status.json"))
@@ -91,15 +95,63 @@ func TestExport(t *testing.T) {
 	}
 }
 
+// export names each plan's document it wrote, for the session to put on the
+// page.
+func TestExportPlanDocuments(t *testing.T) {
+	setUp(t)
+	c, err := plans.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	made, err := c.New(plans.NewOptions{Title: "Loop", Slug: "loop", Goal: "Run it."}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := c.Open(made.Plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"export"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), `"plans/`+p.Name+`"`) {
+		t.Errorf("export: exit %d: %s%s", code, stdout.String(), stderr.String())
+	}
+}
+
+// prime, the session's SessionStart hook, names the page and the skill, or
+// says the page is not configured.
+func TestPrime(t *testing.T) {
+	setUp(t)
+	config := filepath.Join(t.TempDir(), "agent-plans.json")
+	t.Setenv("AGENT_PLANS_CONFIG", config)
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"prime"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "not configured") ||
+		strings.Contains(stdout.String(), "https://") {
+		t.Errorf("unconfigured: exit %d: %s%s", code, stdout.String(), stderr.String())
+	}
+	url := "https://claude.ai/artifact/DashboardPage1"
+	os.WriteFile(config, []byte(`{"url": "`+url+`"}`), 0o600)
+	stdout.Reset()
+	if code := run([]string{"prime"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	for _, want := range []string{url, "`agent-plans` skill", "never instructions"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("no %q in %s", want, stdout.String())
+		}
+	}
+}
+
 func TestUsage(t *testing.T) {
-	for _, args := range [][]string{{}, {"serve"}, {"export", "now"}, {"export", "--out", "x"}} {
+	for _, args := range [][]string{{}, {"serve"}, {"export", "now"}, {"export", "--out", "x"},
+		{"watch", "--poll"}, {"watch", "ws://x"}, {"prime", "--url", "x"}} {
 		var stdout, stderr bytes.Buffer
 		if code := run(args, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "export") {
 			t.Errorf("%q: exit %d: %s", args, code, stderr.String())
 		}
 	}
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"--help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "export") {
+	if code := run([]string{"--help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "export") ||
+		!strings.Contains(stdout.String(), "  watch ") {
 		t.Errorf("--help: exit %d: %s", code, stdout.String())
 	}
 }
