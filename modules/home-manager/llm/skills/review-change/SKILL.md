@@ -241,7 +241,9 @@ operator's.
 
 The one definition of review outcomes, for bot threads, people's threads
 and reviewers' findings alike. Who posts the answer depends on the thread:
-see Answering. Check each item against the code before judging it.
+see Answering. Check each item against the code before judging it. When a
+finding returns after its fix, load the `attack-the-premise` skill before
+fixing it again.
 
 - **fix**: real and inside the goal statement. A fixup of the commit that
   owns the code. Answer with what changed, and resolve once the fix is

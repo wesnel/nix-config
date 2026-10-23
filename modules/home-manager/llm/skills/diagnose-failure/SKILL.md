@@ -12,9 +12,9 @@ the operator" says.
 
 ## 1. A red command
 
-Before forming any theory, build one command that fails on the symptom as
-reported: the same wrong value, error or crash, not a similar one. It is
-ready when:
+Load the `reproduce-first` skill. Before forming any theory, build one
+command that fails on the symptom as reported: the same wrong value, error
+or crash, not a similar one. It is ready when:
 
 - one command, rerun as it stands, shows the symptom, and its exit status
   says pass or fail;
@@ -65,8 +65,8 @@ Some failures put one hypothesis first:
   cache, a lock file, a database or a stored session.
 - A check that fails while the system looks right: the observation, meaning
   the check itself, its fixture or its environment.
-- After two fixes have failed: the premise both assumed. Write it down as a
-  hypothesis and test it before a third fix.
+- After two fixes have failed: the premise both assumed, as the
+  `attack-the-premise` skill says. Load it before a third fix.
 
 ## 4. Probes
 
