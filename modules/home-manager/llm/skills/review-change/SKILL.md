@@ -193,9 +193,6 @@ each branch:
   without asking a question;
 - designing for change, by the `design` skill's principles (tell the
   sub-agent to load it) and these checks:
-  - built as we would build it from scratch, knowing what the change now
-    knows, rather than added onto the old shape;
-  - one source of truth per fact or rule, which everything else reads;
   - for each value, where it comes from and what can change it, answerable
     in thirty seconds of reading;
   - a wrapper with one caller, or an adapter with one implementation,
@@ -205,8 +202,6 @@ each branch:
   - seams named and narrow, with their contract written at the seam: the
     types, invariants, ordering, errors, configuration and cost a caller
     relies on;
-  - nothing speculative: no option, layer or interface without a current
-    second user;
   - each of the goal's likely next changes a local edit;
   - each new module worth keeping: deleting it would spread its complexity
     across its callers rather than move it, its interface is much smaller

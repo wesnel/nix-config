@@ -39,8 +39,7 @@ A review loop over a stack, which the operator starts with
 - A refactor the change needs goes first: the bottom branch of the stack,
   or the first commit of a single branch, with no test changed.
 - An interface change and the move of the callers we control are one part,
-  never split across branches, as the `design` skill's "Migrate and delete"
-  says.
+  never split across branches, as the `migrate-and-delete` skill says.
 - Each branch of a stack builds and passes its tests on its own base, so it
   can merge before the branches above it.
 - Parts that edit the same file or the same code are never parallel
