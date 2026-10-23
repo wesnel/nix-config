@@ -23,8 +23,8 @@ Done when Verification holds the command and it runs as it stands.
 :ID: S3
 :AFTER: S2
 :END:
-The harness, run enough times to give the spread, as AGENTS.md's "Explain
-a number" says.
+The harness, run enough times to give the spread, as the
+=explain-a-number= skill says.
 Done when the numbers, run count and spread are logged as this step's
 evidence.
 *** TODO Attempts

@@ -20,11 +20,11 @@ agent-plan set PLAN SKILLS diagnose-failure write-tests review-change
 | --- | --- | --- |
 | A question to answer, changing nothing | `investigation` | none |
 | A bug: a wrong output, a crash, a failing or flaky test | `bug-fix` | `diagnose-failure write-tests review-change` |
-| A regression in speed or resources | `slowdown` | `diagnose-failure review-change` |
+| A regression in speed or resources | `slowdown` | `diagnose-failure explain-a-number review-change` |
 | New behaviour | `feature` | `design write-tests review-change` |
-| A change of structure that keeps behaviour | `refactor` | `design write-tests review-change` |
+| A change of structure that keeps behaviour | `refactor` | `subtract-first migrate-and-delete write-tests review-change` |
 | A design question running code answers fastest | `prototype` | none |
-| A number to move, by attempts measured against a fixed harness | `measured-improvement` | `review-change` |
+| A number to move, by attempts measured against a fixed harness | `measured-improvement` | `explain-a-number review-change` |
 
 A task of none of these kinds starts without `--template`. One of two
 kinds, such as a feature that needs a refactor first, is two plans, the
