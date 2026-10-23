@@ -309,9 +309,14 @@ that the reply does not say it read, is a finding of the review's own,
 Every reviewer gets a worktree of its own under
 `$XDG_CACHE_HOME/pr-review/OWNER/NAME/work/`, made without your git config,
 hooks, LFS filter or submodules, and removed after it. A pull request is
-fetched over HTTPS into a bare clone of its own under
-`$XDG_CACHE_HOME/pr-review/OWNER/NAME/N/`, pinned to the head GitHub reports,
-and reviewed at `merge-base..head`: the goal is ours, review it for the
+fetched over HTTPS, pinned to the head GitHub reports. Reviewed from your
+clone of its repository, it is fetched into that clone as
+`refs/pr-review/N/head` and `base` and read through a worktree with nothing
+checked out under `$XDG_CACHE_HOME/pr-review/OWNER/NAME/N/`, so the clone's
+agent settings apply; the worktree goes when the review ends, and the refs
+stay until you delete them. From anywhere else, or from a clone whose config
+names a program, it goes into a bare clone of its own there, with no agent
+settings. Either way it is reviewed at `merge-base..head`: the goal is ours, review it for the
 operator and propose comments only, and its title, description, linked
 issues and review threads go in as the author's claims. Nothing is written
 to GitHub.

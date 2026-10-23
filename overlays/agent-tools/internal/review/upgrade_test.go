@@ -346,7 +346,7 @@ func TestUpgradeOwnChange(t *testing.T) {
 			r := newRemote(t, nil)
 			fake := setUpPR(t, r)
 			fake.viewer, fake.pr["author"] = "me", c.author
-			if pr, err := Fetch(t.Context(), "o/r", 7); err != nil || pr.Own != c.own {
+			if pr, err := Fetch(t.Context(), "o/r", 7, ""); err != nil || pr.Own != c.own {
 				t.Errorf("%s: own %v, %v", c.name, pr != nil && pr.Own, err)
 			}
 		}
@@ -372,7 +372,7 @@ func TestUpgradeOwnChange(t *testing.T) {
 				t.Errorf("own %v: the named private repository read %v: %+v", own, read, ups.gathered[0])
 			}
 		}
-		if r := must(resolveSource(t.Context(), must(parseSource(u.given)), true)); !r.own {
+		if r := must(resolveSource(t.Context(), must(parseSource(u.given)), true, os.Stderr)); !r.own {
 			t.Error("a range of this repository is not the operator's own")
 		}
 	})

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
@@ -87,11 +88,23 @@ func Checkout(ctx context.Context, clone, dir, rev string) error {
 }
 
 // RemoveCheckout removes a checkout Checkout made, and the clone's record
-// of it.
+// of it. Where git cannot, it removes the two itself, the record found
+// through the checkout's .git file, and prunes nothing else: the clone may
+// be the operator's, whose other worktrees' records are not the review's
+// to drop.
 func RemoveCheckout(clone, dir string) {
 	ctx := context.Background()
-	if _, err := gitRun(ctx, clone, "worktree", "remove", "--force", "--force", dir); err != nil {
-		os.RemoveAll(dir)
-		gitRun(ctx, clone, "worktree", "prune")
+	if _, err := gitRun(ctx, clone, "worktree", "remove", "--force", "--force", dir); err == nil {
+		return
+	}
+	admin := ""
+	if data, err := os.ReadFile(filepath.Join(dir, ".git")); err == nil {
+		line, _, _ := strings.Cut(string(data), "\n")
+		admin, _ = strings.CutPrefix(strings.TrimSpace(line), "gitdir: ")
+	}
+	os.RemoveAll(dir)
+	if common, err := gitRun(ctx, clone, "rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil &&
+		filepath.IsAbs(admin) && filepath.Dir(filepath.Clean(admin)) == filepath.Join(common, "worktrees") {
+		os.RemoveAll(admin) //nolint:gosec // only a directory directly under the clone's own worktrees/, checked above
 	}
 }

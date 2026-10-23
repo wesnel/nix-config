@@ -32,10 +32,16 @@ found in its review record, under $XDG_STATE_HOME/agent-tools/reviews/
 OWNER/NAME/, which git delegate show prints and settle changes. SOURCE is
 a range BASE..TIP of this repository, its record named by origin's GitHub
 repository, or a pull request: OWNER/NAME#N, or N for origin's. A pull
-request is fetched into a bare clone of its own under
-$XDG_CACHE_HOME/pr-review/OWNER/NAME/N/, pinned to the head GitHub
-reports, with neither the user's nor the system's git configuration, no
-hook, no LFS filter and no submodule; its range is merge-base(base,
+request is fetched, pinned to the head GitHub reports, with neither the
+user's nor the system's git configuration, no hook, no LFS filter and no
+submodule. Run from a clone of OWNER/NAME whose config names no program,
+it is fetched into that clone as refs/pr-review/N/head and base, and
+reviewed in a worktree of the clone with nothing checked out, under
+$XDG_CACHE_HOME/pr-review/OWNER/NAME/N/, so the clone's agent settings
+apply; the worktree is removed when the review ends, and the refs stay for
+the next round (git update-ref -d removes them). Anywhere else it is
+fetched into a bare clone of its own there, which has no agent settings,
+as stderr says. Its range is merge-base(base,
 head)..head, its author's title, description and closing issues go in as
 claims, and its threads, written to its pr-N.org record as pr-loop threads
 writes them, as items. Every reviewer reads a checkout of TIP of its own,
@@ -306,10 +312,11 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			return report(nil, err, 0)
 		}
 	}
-	r, err := resolveSource(ctx, s, true)
+	r, err := resolveSource(ctx, s, true, stderr)
 	if err != nil {
 		return report(nil, err, 0)
 	}
+	defer r.release()
 	if err := usableSettings(r); err != nil {
 		return report(nil, err, 0)
 	}
