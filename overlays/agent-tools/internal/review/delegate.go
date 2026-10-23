@@ -110,7 +110,9 @@ the JSON --red-check gives (git red-check BASE..TIP's, which the session
 runs where the change's tests run, written under its working directory),
 is an untested finding of the review's own, with ID RC-<key>; the JSON is
 refused unless its commits are the range's and it ran the repository's
-test settings, and the round records RED_CHECK session, or absent.
+test settings, and the round records RED_CHECK session, or absent. A
+printed prompt, whose reply delegate never sees, lists those findings
+instead, for the reviewer to report itself.
 
 An upgrade prompt adds the pins BASE..TIP sets, moves or drops in lock
 files (flake.lock nodes, by each node's locked and original objects
@@ -473,7 +475,7 @@ func typeInputs(ctx context.Context, base inputs, t string, tests *adequacy, log
 		return in, nil
 	}
 	if ty.focus == "" {
-		in.redCheck, in.adequacy = tests.text, tests.prompt()+sharedPrompt(in.r)
+		in.redCheck, in.adequacy = tests.text, tests.prompt(in.printed)+sharedPrompt(in.r)
 		return in, nil
 	}
 	fc := focuses[ty.focus]
