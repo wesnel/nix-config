@@ -101,9 +101,6 @@ func testPlanThreeStacks(t *testing.T) {
 	if _, err := Plan("", []string{"P"}, false, false); err == nil || !strings.Contains(err.Error(), "in progress") {
 		t.Errorf("a branch of the stopped pass: %v", err)
 	}
-	if _, err := git.Run("-C", wtC1, "reset", "-q", "--hard"); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := git.Run("-C", wtC1, "rebase", "--continue"); err != nil {
 		t.Fatal(err)
 	}

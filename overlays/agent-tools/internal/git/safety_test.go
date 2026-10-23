@@ -5,10 +5,45 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
 )
+
+// A repository whose config git cannot read in time is refused, not
+// passed: git 2.56 reads the alternates file to list the config, and
+// either git reads the config file itself, either of which a FIFO nothing
+// writes stalls.
+func TestCheckConfigTimeout(t *testing.T) {
+	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	dir := t.TempDir()
+	gitIn(t, dir, "init", "-q", "-b", "main")
+	config := filepath.Join(dir, ".git", "config")
+	if err := os.Remove(config); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(config, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := ConfigTimeout
+	ConfigTimeout = time.Second
+	t.Cleanup(func() { ConfigTimeout = old })
+	done := make(chan error, 1)
+	go func() { done <- CheckConfig(dir) }()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), dir) {
+			t.Errorf("CheckConfig: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		f, _ := os.OpenFile(config, os.O_WRONLY, 0)
+		f.Close()
+		t.Fatal("CheckConfig hangs on a FIFO")
+	}
+}
 
 func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()

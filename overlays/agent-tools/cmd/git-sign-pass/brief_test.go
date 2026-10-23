@@ -146,7 +146,8 @@ func TestBriefKeepsErrors(t *testing.T) {
 	}
 	repo, global := pushedRepo(t, 3)
 	hub := gitIn(t, repo, "remote", "get-url", "origin")
-	gitIn(t, repo, "push", "-q", "-f", hub, "main:refs/heads/one")
+	// The hub's branch moves without this repository seeing it.
+	gitIn(t, hub, "update-ref", "refs/heads/one", gitIn(t, repo, "rev-parse", "main"))
 	code, _, stderr := runOutput(t, repo, global, exe, "--push")
 	if code == 0 || !strings.Contains(stderr, "stale info") && !strings.Contains(stderr, "rejected") {
 		t.Errorf("a push that fails: exit %d\n%s", code, stderr)

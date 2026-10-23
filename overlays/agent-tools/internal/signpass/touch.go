@@ -21,6 +21,10 @@ import (
 // key refuses to sign, as it does when its touch is missed.
 var refusedByKey = regexp.MustCompile(`agent refused operation|signing failed|sign_and_send_pubkey|failed to sign the data`)
 
+// unwritten matches what git prints when it cannot write a commit, as when
+// its signature fails for any reason.
+var unwritten = regexp.MustCompile(`failed to write commit object`)
+
 // With no terminal to ask, a step the key refused is retried Retries times,
 // each after RetryWait, and the retried signature, with everything git
 // started for it, is killed after RetryTimeout. One missed touch locks the

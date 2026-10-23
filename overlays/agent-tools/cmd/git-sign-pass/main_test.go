@@ -79,9 +79,10 @@ func TestPrintedResume(t *testing.T) {
 	gitIn(t, repo, "switch", "-qc", "one")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "O1")
 	gitIn(t, repo, "push", "-q", "-u", "origin", "one")
-	// The hub's branch moves away from what the push leases on, and back.
+	// The hub's branch moves away from what the push leases on, and back,
+	// without this repository seeing it.
 	leased := gitIn(t, hub, "rev-parse", "one")
-	gitIn(t, repo, "push", "-q", "-f", hub, "main:refs/heads/one")
+	gitIn(t, hub, "update-ref", "refs/heads/one", gitIn(t, repo, "rev-parse", "main"))
 
 	exe, err := os.Executable()
 	if err != nil {
@@ -92,7 +93,7 @@ func TestPrintedResume(t *testing.T) {
 	if code == 0 || m == nil {
 		t.Fatalf("a failed push: exit %d\n%s", code, stderr)
 	}
-	gitIn(t, repo, "push", "-q", "-f", hub, leased+":refs/heads/one")
+	gitIn(t, hub, "update-ref", "refs/heads/one", leased)
 	if code, stderr := run(t, repo, global, strings.Fields(m[1])...); code != 0 {
 		t.Fatalf("%s: exit %d\n%s", m[1], code, stderr)
 	}

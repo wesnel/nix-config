@@ -883,6 +883,13 @@ func rebase(p *pending) error {
 	if code == 0 {
 		return nil
 	}
+	// Whatever kept git from writing a commit, the `git rebase --continue`
+	// this prints makes it again.
+	if rm := rebaseMerge(); !aborted && unwritten.MatchString(stderr) && exists(rm) {
+		if _, err := putBackPick(rm); err != nil {
+			return err
+		}
+	}
 	unlock := retry.locked()
 	cont, also := carryOn(p)
 	if aborted {
@@ -1018,7 +1025,7 @@ func settle(p *pending, r *retrier, code int, stderr string) (int, string, error
 
 // recoverKilled readies a rebase whose retry r killed mid-step. A pick there
 // is put back at the head of the todo list, its staged changes dropped, as
-// git does itself when the key refuses (readyRetry), so the signatures before
+// readyRetry does when the key refuses, so the signatures before
 // it stand. Anything else is undone: a step of a fold leaves state behind
 // that putting it back would fold twice, and while nothing is rewritten a
 // --continue would not sign the first commit (readyRetry).
@@ -1138,8 +1145,8 @@ func stoppedRebase(rm string, push, setUpstream bool) error {
 // whether it did: it takes out a retry's break (oneStep) and, where the step
 // is a pick outside a fold and something is rewritten already, puts the step
 // back at the head of the todo list, unless git has or had already made
-// the step's commit, and drops its staged changes, as readyRetry does
-// after git puts back a step the key refused.
+// the step's commit, and drops its staged changes, as readyRetry does for a
+// step the key refused.
 func putBack(rm string) (bool, error) {
 	if err := dropBreak(rm); err != nil {
 		return false, err
@@ -1222,17 +1229,14 @@ func dropBreak(rm string) error {
 // retry, and reports whether it did so by aborting the rebase, which it does
 // while the rebase has rewritten nothing: `git rebase --continue` does not
 // keep --force-rebase, so it would fast-forward over commits it should sign.
-// Otherwise git has put the step it could not sign back at the head of the
-// todo list, with its changes staged, where they would stop --continue; the
-// worktree was clean when the pass began, so they are the only changes
-// there, and readyRetry drops them. A refusal anywhere in a fold (inFold)
-// is undone too, with step naming where: git keeps the fold's message so
-// far outside the todo list, so a step put back folds a message in twice,
-// and the commit that ends a fold with an edited message git makes in a git
-// commit of its own, whose refusal it does not reschedule. It refuses any
-// other stop, so it never drops a step git will not redo. Otherwise step
-// names the step to retry, the same however often git stops at it, and is
-// empty on a restart.
+// Otherwise it puts the step back (putBackPick). A refusal anywhere in a
+// fold (inFold) is undone too, with step naming where: git keeps the fold's
+// message so far outside the todo list, so a step put back folds a message
+// in twice, and the commit that ends a fold with an edited message git makes
+// in a git commit of its own, whose refusal it does not reschedule. It
+// refuses any other stop, so it never drops a step that will not be redone.
+// Otherwise step names the step to retry, the same however often git stops
+// at it, and is empty on a restart.
 func readyRetry() (restart bool, step string, err error) {
 	rm, err := git.Run("rev-parse", "--path-format=absolute", "--git-path", "rebase-merge")
 	if err != nil {
@@ -1243,20 +1247,51 @@ func readyRetry() (restart bool, step string, err error) {
 		_, err := git.Run("rebase", "--abort")
 		return true, "", err
 	}
-	done, _ := os.ReadFile(filepath.Join(rm, "done"))
-	lines := strings.Split(strings.TrimSpace(string(done)), "\n")
-	todo := todoLines(rm)
-	last := lines[len(lines)-1]
-	rescheduled := last != "" && last == todo[0]
-	if rescheduled && inFold(last, todo[1:]) || !rescheduled && inFold(last, todo) {
+	last, todo, _ := stoppedAt(rm)
+	if inFold(last, todo) {
 		_, err := git.Run("rebase", "--abort")
 		return true, last, err
 	}
-	if !rescheduled {
-		return false, "", fmt.Errorf("the rebase did not reschedule the step it could not sign")
+	back, err := putBackPick(rm)
+	if err == nil && !back {
+		err = fmt.Errorf("the rebase stopped at a step it could not sign that is not a pick: %q", last)
 	}
-	_, err = git.Run("reset", "-q", "--hard")
 	return false, last, err
+}
+
+// stoppedAt is the step the rebase rm holds stopped at, the todo list after
+// it, and whether git put the step back at the head of the todo list.
+func stoppedAt(rm string) (step string, next []string, rescheduled bool) {
+	done, _ := os.ReadFile(filepath.Join(rm, "done"))
+	lines := strings.Split(strings.TrimSpace(string(done)), "\n")
+	step, next = lines[len(lines)-1], todoLines(rm)
+	if rescheduled = step != "" && step == next[0]; rescheduled {
+		next = next[1:]
+	}
+	return step, next, rescheduled
+}
+
+// putBackPick readies the rebase rm holds, stopped at a pick whose commit
+// git could not write, for `git rebase --continue` to make that commit
+// again, and reports whether it did. Git leaves the pick's changes staged,
+// where they would stop --continue: before 2.56 it puts the pick back at
+// the head of the todo list itself, and from 2.56 it stops after the pick as
+// at a conflict, so putBackPick puts it back. The worktree was clean when
+// the pass began, so the staged changes are the pick's alone, and
+// putBackPick drops them. A pick is the first step of any fold it is in, so
+// no fold has begun.
+func putBackPick(rm string) (bool, error) {
+	step, next, rescheduled := stoppedAt(rm)
+	if f := strings.Fields(step); len(f) == 0 || f[0] != "pick" && f[0] != "p" {
+		return false, nil
+	}
+	if !rescheduled {
+		if err := writeTodo(rm, append([]string{step}, next...)); err != nil {
+			return false, err
+		}
+	}
+	_, err := git.Run("reset", "-q", "--hard")
+	return err == nil, err
 }
 
 // finish verifies a pass whose rebase has ended, switches detached worktrees
@@ -1531,15 +1566,41 @@ func bottomUp(refs []refPush) []refPush {
 	return ordered
 }
 
+// pushName is the remote pushRef configures for each push, with url as its
+// only setting; it is matched as a regular expression, so it holds no
+// metacharacters. Git updates no remote-tracking ref for a push to a remote
+// without a fetch refspec, where from 2.56 a push to a bare URL moves the
+// remote-tracking ref of the one configured remote whose push URLs include
+// it; pushAll moves those once every URL has the branches.
+const pushName = "git-sign-pass"
+
+// pushNameFree refuses when this repository configures pushName, whose
+// settings would join the URL pushRef gives it, ending with retry.
+func pushNameFree(retry string) error {
+	set, _ := git.Run("config", "--name-only", "--get-regexp", `^remote\.`+pushName+`\.`)
+	if set == "" {
+		return nil
+	}
+	if retry != "" {
+		retry = ", then " + retry
+	}
+	return refuse("git sign-pass pushes through a remote named %s that it sets up for each push, but this "+
+		"repository already configures one (%s); rename it with `git remote rename %s NAME`%s",
+		pushName, strings.ReplaceAll(set, "\n", ", "), pushName, retry)
+}
+
 // pushRef pushes r to url, over whatever transport the URL uses (for
-// GitHub, SSH and the key) with env added, without touching the
-// remote-tracking ref. When the key refuses, it asks whether to retry
-// (retryTouch).
+// GitHub, SSH and the key) with env added, without touching any
+// remote-tracking ref (pushName). When the key refuses, it asks whether to
+// retry (retryTouch).
 func pushRef(ctx context.Context, remote, url string, r refPush, env []string) error {
-	args := []string{"push", fmt.Sprintf("--force-with-lease=refs/heads/%s:%s", r.Branch, r.Old), url,
-		r.New + ":refs/heads/" + r.Branch}
+	if err := pushNameFree(""); err != nil {
+		return err
+	}
+	args := []string{"-c", "remote." + pushName + ".url=" + url, "push",
+		fmt.Sprintf("--force-with-lease=refs/heads/%s:%s", r.Branch, r.Old), pushName, r.New + ":refs/heads/" + r.Branch}
 	if Brief {
-		args = slices.Insert(args, 1, "--quiet")
+		args = slices.Insert(args, 3, "--quiet")
 	}
 	what := fmt.Sprintf("the push of %s to %s", r.Branch, url)
 	retry := &retrier{}
@@ -1619,6 +1680,9 @@ type target struct {
 // refusal ends by saying to retry, how depending on whether keys have been
 // touched yet.
 func pushTargets(branches []string, setUpstream bool, retry string) (map[string][]target, map[string]string, error) {
+	if err := pushNameFree(retry); err != nil {
+		return nil, nil, err
+	}
 	byRemote := map[string][]target{}
 	skipped := map[string]string{}
 	for _, b := range branches {

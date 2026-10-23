@@ -519,10 +519,6 @@ func testRunWorktreeBranch(t *testing.T) {
 	}
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
 	t.Setenv("GIT_EDITOR", ":")
-	// Git reschedules the pick it could not sign, leaving its changes staged.
-	if _, err := git.Run("reset", "-q", "--hard"); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := git.Run("rebase", "--continue"); err != nil {
 		t.Fatal(err)
 	}
@@ -912,6 +908,13 @@ func testPushDestination(t *testing.T) {
 	if _, _, err := pushTargets([]string{"develop"}, true, "retry"); err == nil || !strings.Contains(err.Error(), "default branch") {
 		t.Errorf("publishing develop as origin/HEAD: %v", err)
 	}
+
+	// A remote of the name each push sets up would add its settings to it.
+	gitIn(t, repo, "config", "remote."+pushName+".pushurl", filepath.Join(dir, "elsewhere.git"))
+	if _, _, err := pushTargets([]string{"feature"}, false, "retry"); err == nil ||
+		!strings.Contains(err.Error(), "`git remote rename "+pushName+" NAME`, then retry") {
+		t.Errorf("a remote named %s: %v", pushName, err)
+	}
 }
 
 func testPushRemote(t *testing.T) {
@@ -960,7 +963,7 @@ func testRunFailedPush(t *testing.T) {
 	// The remote's branch moves without this repository seeing it, so the
 	// leased push fails.
 	leased := gitIn(t, hub, "rev-parse", "one")
-	gitIn(t, repo, "push", "-q", "-f", hub, "main:refs/heads/one")
+	gitIn(t, hub, "update-ref", "refs/heads/one", gitIn(t, repo, "rev-parse", "main"))
 
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
 	useDir(t, repo)
@@ -999,7 +1002,7 @@ func testRunFailedPush(t *testing.T) {
 	if _, err := Run("", true, false, false); err == nil || !strings.Contains(err.Error(), "the push of one to "+hub+" failed") {
 		t.Errorf("a retry that fails again: %v", err)
 	}
-	gitIn(t, repo, "push", "-q", "-f", hub, leased+":refs/heads/one")
+	gitIn(t, hub, "update-ref", "refs/heads/one", leased)
 	result, err := Run("", true, false, false)
 	if err != nil {
 		t.Fatal(err)

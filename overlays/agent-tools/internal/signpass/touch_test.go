@@ -531,6 +531,47 @@ func TestPutBackAfterCommit(t *testing.T) {
 	}
 }
 
+// Git 2.56 and later stop after a pick whose commit the key refused, with
+// its changes staged, where earlier versions put the pick back at the head
+// of the todo list: readyRetry readies either stop for a retry of that pick.
+func TestReadyRetryUnrescheduled(t *testing.T) {
+	repo, plan := flakyRepo(t)
+	os.WriteFile(filepath.Join(repo, "c"), []byte("c\n"), 0o644)
+	gitIn(t, repo, "add", "c")
+	gitIn(t, repo, "commit", "-q", "-m", "c")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "d")
+	script(t, plan, "ok", "ok", "miss")
+	if _, err := git.RunEnv(history.NoEditor, "rebase", "--force-rebase", "--gpg-sign", "main"); err == nil {
+		t.Fatal("the rebase went on past a refused signature")
+	}
+	rm := filepath.Join(repo, ".git", "rebase-merge")
+	done := todoLinesIn(filepath.Join(rm, "done"))
+	step := done[len(done)-1]
+	// Whichever git this is, leave the stop as 2.56 does.
+	if todo := todoLines(rm); todo[0] == step {
+		writeTodo(rm, todo[1:])
+	}
+	restart, got, err := readyRetry()
+	if err != nil || restart || got != step {
+		t.Fatalf("readyRetry: %v %q %v, want the step %q", restart, got, err, step)
+	}
+	if todo := todoLines(rm); todo[0] != step {
+		t.Errorf("the todo list does not start with the step: %q", todo)
+	}
+	if !git.OK("diff", "--cached", "--quiet") {
+		t.Error("the step's changes are still staged")
+	}
+	if _, err := git.RunEnv(history.NoEditor, "rebase", "--continue"); err != nil {
+		t.Fatal(err)
+	}
+	if log, _ := git.Run("log", "--format=%s %G?", "main..one"); log != "d G\nc G\nb G\na G" {
+		t.Errorf("the commits: %q", log)
+	}
+	if files, _ := git.Run("ls-files"); files != "c" {
+		t.Errorf("the files: %q", files)
+	}
+}
+
 func todoLinesIn(path string) []string {
 	data, _ := os.ReadFile(path)
 	return strings.Split(strings.TrimRight(string(data), "\n"), "\n")
