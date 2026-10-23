@@ -42,7 +42,7 @@ type adequacy struct {
 	buildOnly []string
 }
 
-// usableSettings refuses repos settings for r's repository that a review
+// usableSettings refuses agent settings for r's clone that a review
 // cannot use, saying what to fix, where they would otherwise leave out the
 // test settings and route rules beside them.
 func usableSettings(r *span) error {
@@ -76,9 +76,9 @@ func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, 
 		}
 		return a, nil
 	case !a.configured:
-		return nil, refusal.New("--red-check %s needs the repository's test settings, test and testFiles, which name the "+
-			"test files its findings are placed at, and this repository has none; review without `--red-check`, or ask "+
-			"the operator to configure them", file)
+		return nil, refusal.New("--red-check %s needs the clone's test settings, test and testFiles, which name the "+
+			"test files its findings are placed at, and this clone has none; review without `--red-check`, or ask "+
+			"the operator to set them in the clone's agent settings, %s", file, settings.File())
 	}
 	var result redcheck.Result
 	if err := json.Unmarshal(data, &result); err != nil {

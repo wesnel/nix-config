@@ -15,7 +15,7 @@ func TestFetch(t *testing.T) {
 	t.Run("first round", func(t *testing.T) {
 		r := newRemote(t, nil)
 		f := setUpPR(t, r)
-		pr, err := Fetch(t.Context(), "o/r", 7)
+		pr, err := Fetch(t.Context(), "o/r", 7, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -45,12 +45,12 @@ func TestFetch(t *testing.T) {
 	t.Run("next round", func(t *testing.T) {
 		r := newRemote(t, nil)
 		f := setUpPR(t, r)
-		if _, err := Fetch(t.Context(), "o/r", 7); err != nil {
+		if _, err := Fetch(t.Context(), "o/r", 7, ""); err != nil {
 			t.Fatal(err)
 		}
 		r.push(t)
 		f.pr["headRefOid"] = r.head
-		pr, err := Fetch(t.Context(), "o/r", 7)
+		pr, err := Fetch(t.Context(), "o/r", 7, "")
 		if err != nil || pr.Head != r.head {
 			t.Fatalf("second round: %+v, %v", pr, err)
 		}
@@ -65,7 +65,7 @@ func TestFetch(t *testing.T) {
 		r := newRemote(t, nil)
 		f := setUpPR(t, r)
 		f.pr["headRefOid"] = r.base
-		_, err := Fetch(t.Context(), "o/r", 7)
+		_, err := Fetch(t.Context(), "o/r", 7, "")
 		if err == nil || !strings.Contains(err.Error(), r.base) {
 			t.Fatalf("a head that moved was accepted: %v", err)
 		}
@@ -81,7 +81,7 @@ func TestFetch(t *testing.T) {
 		t.Run("refuses/"+c.slug+"#"+strconv.Itoa(c.number), func(t *testing.T) {
 			r := newRemote(t, nil)
 			setUpPR(t, r)
-			if _, err := Fetch(t.Context(), c.slug, c.number); err == nil {
+			if _, err := Fetch(t.Context(), c.slug, c.number, ""); err == nil {
 				t.Errorf("%s#%d was fetched", c.slug, c.number)
 			}
 		})
@@ -97,7 +97,7 @@ func TestFetch(t *testing.T) {
 func testFetchHooksDoNotRun(t *testing.T) {
 	r := newRemote(t, nil)
 	f := setUpPR(t, r)
-	pr, err := Fetch(t.Context(), "o/r", 7)
+	pr, err := Fetch(t.Context(), "o/r", 7, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func testFetchHooksDoNotRun(t *testing.T) {
 	}
 	r.push(t)
 	f.pr["headRefOid"] = r.head
-	if pr, err = Fetch(t.Context(), "o/r", 7); err != nil {
+	if pr, err = Fetch(t.Context(), "o/r", 7, ""); err != nil {
 		t.Fatal(err)
 	}
 	tree := filepath.Join(t.TempDir(), "tree")
@@ -169,7 +169,7 @@ func testFetchLFSStaysInert(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "")
 
-	pr, err := Fetch(t.Context(), "o/r", 7)
+	pr, err := Fetch(t.Context(), "o/r", 7, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func testFetchSymlinksCheckOutAsFiles(t *testing.T) {
 		}
 	})
 	setUpPR(t, r)
-	pr, err := Fetch(t.Context(), "o/r", 7)
+	pr, err := Fetch(t.Context(), "o/r", 7, "")
 	if err != nil {
 		t.Fatal(err)
 	}

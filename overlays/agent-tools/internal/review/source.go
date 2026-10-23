@@ -93,11 +93,15 @@ func (s *source) fromOrigin() error {
 }
 
 // resolveSource resolves s into the range it reviews. A range is resolved
-// in the current repository. A pull request is fetched into its clone when
-// fetch is set, and read from the clone as last fetched otherwise; its
-// clone holds only what its author pushed, so git reads it with neither the
-// user's configuration nor the system's from here on.
-func resolveSource(ctx context.Context, s *source, fetch bool) (*span, error) {
+// in the current repository. A pull request is fetched when fetch is set,
+// and read as last fetched otherwise: in the operator's clone of its
+// repository the process runs in (homeClone), through a worktree of it
+// with nothing checked out, under Root, so that the clone's agent
+// settings apply; or else in its own bare clone, which has none, as log
+// is told. Either holds what its author pushed, so git reads it with
+// neither the user's configuration nor the system's from here on. The
+// span's release removes the worktree; the refs stay for the next round.
+func resolveSource(ctx context.Context, s *source, fetch bool, log io.Writer) (*span, error) {
 	if s.number == 0 {
 		r, err := resolve("", s.given)
 		if err == nil {
@@ -107,11 +111,16 @@ func resolveSource(ctx context.Context, s *source, fetch bool) (*span, error) {
 	}
 	os.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	home, why := homeClone(s.slug())
+	if home == "" {
+		fmt.Fprintf(log, "%s: %s, so the review fetches into a bare clone of its own under %s, which has no agent "+
+			"settings: no route rules, threat notes or test settings of a clone apply\n", name, why, Root())
+	}
 	var err error
 	if fetch {
-		s.pr, err = Fetch(ctx, s.slug(), s.number)
+		s.pr, err = Fetch(ctx, s.slug(), s.number, home)
 	} else {
-		s.pr, err = latest(ctx, s.slug(), s.number)
+		s.pr, err = latest(ctx, s.slug(), s.number, home)
 	}
 	if err != nil {
 		return nil, err
@@ -124,22 +133,77 @@ func resolveSource(ctx context.Context, s *source, fetch bool) (*span, error) {
 		return nil, refusal.New("%s#%d has no commits beyond its base %s; there is nothing to review", s.slug(), s.number,
 			s.pr.BaseRef)
 	}
-	return &span{given: s.given, base: s.pr.Base, tip: s.pr.Head, top: s.pr.Clone, common: s.pr.Clone,
-		commits: record.Cap(record.Clean(commits), 32<<10), slug: s.slug(), pr: s.number, own: s.pr.Own}, nil
+	r := &span{given: s.given, base: s.pr.Base, tip: s.pr.Head, top: s.pr.Clone, common: s.pr.Clone,
+		commits: record.Cap(record.Clean(commits), 32<<10), slug: s.slug(), pr: s.number, own: s.pr.Own}
+	if home != "" {
+		if r.common, err = gitRun(ctx, home, "rev-parse", "--path-format=absolute", "--git-common-dir"); err != nil {
+			return nil, err
+		}
+		parent := filepath.Join(Root(), s.owner, s.repo, strconv.Itoa(s.number))
+		if err := os.MkdirAll(parent, 0o755); err != nil {
+			return nil, err
+		}
+		dir, err := os.MkdirTemp(parent, "worktree-"+r.tip[:12]+"-")
+		if err != nil {
+			return nil, err
+		}
+		r.top, r.home = filepath.Join(dir, "tree"), true
+		r.cleanup = func() {
+			RemoveCheckout(home, r.top)
+			os.RemoveAll(dir)
+		}
+		if _, err := gitRun(ctx, home, "worktree", "add", "--quiet", "--detach", "--no-checkout", r.top,
+			r.tip+"^{commit}"); err != nil {
+			r.release()
+			return nil, err
+		}
+	}
+	return r, nil
 }
 
-// latest is the pull request as last fetched, from its clone alone.
-func latest(ctx context.Context, slug string, number int) (*PR, error) {
+// homeClone is the operator's clone of slug that the process runs in: the
+// worktree it is in, one of whose GitHub remotes, as its own config names
+// them, is slug, without regard to case. Where there is none, or its
+// config names a program (git.CheckConfig), which git would run on the
+// pull request's files, it is "", with why.
+func homeClone(slug string) (top, why string) {
+	top, err := git.Toplevel()
+	if err != nil {
+		return "", fmt.Sprintf("no clone of %s is here (%v)", slug, err)
+	}
+	git.Dir = top
+	remotes, err := repos.Remotes()
+	git.Dir = ""
+	if err != nil {
+		return "", fmt.Sprintf("no clone of %s is here: the remotes of %s cannot be read (%v)", slug, top, err)
+	}
+	for _, s := range remotes {
+		if strings.EqualFold(s, slug) {
+			if err := git.CheckConfig(top); err != nil {
+				return "", fmt.Sprintf("the clone of %s at %s is not used: %v", slug, top, err)
+			}
+			return top, ""
+		}
+	}
+	return "", fmt.Sprintf("no clone of %s is here: no remote of %s fetches from it", slug, top)
+}
+
+// latest is the pull request as last fetched, into home where it is not
+// "", else into its own clone, from there alone.
+func latest(ctx context.Context, slug string, number int, home string) (*PR, error) {
 	owner, repo, err := checkSlug(slug)
 	if err != nil {
 		return nil, err
 	}
 	top := filepath.Join(Root(), owner, repo, strconv.Itoa(number))
-	pr := &PR{Repo: slug, Number: number, Clone: filepath.Join(top, "clone")}
-	if pr.Head, err = gitRun(ctx, pr.Clone, "rev-parse", "--verify", "refs/pr-review/head^{commit}"); err != nil {
+	pr := &PR{Repo: slug, Number: number, Clone: filepath.Join(top, "clone"), Refs: "refs/pr-review"}
+	if home != "" {
+		pr.Clone, pr.Refs, pr.Home = home, fmt.Sprintf("refs/pr-review/%d", number), true
+	}
+	if pr.Head, err = gitRun(ctx, pr.Clone, "rev-parse", "--verify", pr.Refs+"/head^{commit}"); err != nil {
 		return nil, refusal.New("%s#%d has not been fetched; run `git delegate %s#%d` first", slug, number, slug, number)
 	}
-	if pr.Base, err = gitRun(ctx, pr.Clone, "merge-base", "refs/pr-review/base", pr.Head); err != nil {
+	if pr.Base, err = gitRun(ctx, pr.Clone, "merge-base", pr.Refs+"/base", pr.Head); err != nil {
 		return nil, err
 	}
 	return pr, nil
@@ -237,6 +301,11 @@ func worktreeGit(ctx context.Context, wt string) func(args ...string) (string, e
 
 // where tells a reviewer started by the caller where to read r.
 func where(r *span) string {
+	if r.home {
+		return fmt.Sprintf("Read the change in the worktree at %s, which has nothing checked out: `git -C %s diff %s %s`, "+
+			"`git -C %s log -p %s..%s`, and `git -C %s show %s:PATH` for a file as it is at TIP.",
+			r.top, r.top, r.base, r.tip, r.top, r.base, r.tip, r.top, r.tip)
+	}
 	if r.pr != 0 {
 		return fmt.Sprintf("Read the change in the pull request's bare clone at %s, which holds nothing else: "+
 			"`git --git-dir %s diff %s %s`, `git --git-dir %s log -p %s..%s`, and `git --git-dir %s show %s:PATH` "+

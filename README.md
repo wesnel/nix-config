@@ -309,9 +309,14 @@ that the reply does not say it read, is a finding of the review's own,
 Every reviewer gets a worktree of its own under
 `$XDG_CACHE_HOME/pr-review/OWNER/NAME/work/`, made without your git config,
 hooks, LFS filter or submodules, and removed after it. A pull request is
-fetched over HTTPS into a bare clone of its own under
-`$XDG_CACHE_HOME/pr-review/OWNER/NAME/N/`, pinned to the head GitHub reports,
-and reviewed at `merge-base..head`: the goal is ours, review it for the
+fetched over HTTPS, pinned to the head GitHub reports. Reviewed from your
+clone of its repository, it is fetched into that clone as
+`refs/pr-review/N/head` and `base` and read through a worktree with nothing
+checked out under `$XDG_CACHE_HOME/pr-review/OWNER/NAME/N/`, so the clone's
+agent settings apply; the worktree goes when the review ends, and the refs
+stay until you delete them. From anywhere else, or from a clone whose config
+names a program, it goes into a bare clone of its own there, with no agent
+settings. Either way it is reviewed at `merge-base..head`: the goal is ours, review it for the
 operator and propose comments only, and its title, description, linked
 issues and review threads go in as the author's claims. Nothing is written
 to GitHub.
@@ -368,9 +373,15 @@ build command for any commit to exit 0. See `git red-check -h` (git turns
 `--help` into a manual-page lookup).
 
 Settings missing from the flags come from `test`, `build` and `testFiles` in
-`wgn.home.llm.repos`, keyed by `owner/name`, never from the repository. The
-test command runs the commit's code, so run it in a sandbox when the commit
-is not trusted.
+the clone's agent settings, never from the repository. Those are a JSON
+object in `.git/info/agents.json` under the clone's common git directory
+(`git rev-parse --git-common-dir`), shared by all its worktrees and never
+tracked, with the keys `setup`, `test`, `build`, `testFiles`, `routes` and
+`threatNotes` that `internal/repos` describes. The operator writes it; the
+guard refuses every agent's write, and a clone without it has no settings,
+so `git red-check` there runs nothing until given flags. The test command
+runs the commit's code, so run it in a sandbox when the commit is not
+trusted.
 
 ## plans: one file per change, one log
 
@@ -630,8 +641,9 @@ the GitHub API, then replies and resolves. It stops when the bots are
 satisfied or the loop needs a decision, and hands back.
 
 A repository whose fresh checkouts need preparing, such as generating files
-it does not commit, gets a `setup` command in `wgn.home.llm.repos`, keyed by
-`owner/name`. `pr-loop setup [PATH]` runs it in the sandbox in a worktree,
+it does not commit, gets a `setup` command in each clone's agent settings
+(see [reviews](#reviews-fresh-eyes-and-tests-that-fail)). `pr-loop setup
+[PATH]` runs it in the sandbox in a worktree,
 printing the command and its exit status; the loop runs it in each worktree
 it makes, and nothing runs it on its own. A repository cannot name a setup
 command itself.

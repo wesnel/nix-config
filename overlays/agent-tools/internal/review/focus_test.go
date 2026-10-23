@@ -186,7 +186,6 @@ func TestSecurityReviewer(t *testing.T) {
 
 	t.Run("no delegate config", func(t *testing.T) {
 		f := setUp(t, true)
-		writeConfig(t, `{}`)
 		t.Setenv("AGENT_TOOLS_CONFIG", filepath.Join(t.TempDir(), "none.json"))
 		code, run, stderr := runDelegate(t, "--reviewer", "security", "--goal", ".git/goal.md", f.base+"..HEAD")
 		if code != 4 || len(run.NotRun) != 2 || !strings.Contains(run.NotRun[0]["why"], "delegate.agents") {
@@ -209,9 +208,7 @@ func TestThreatNotesPrompt(t *testing.T) {
 		t.Helper()
 		f := setUp(t, true)
 		value = strings.ReplaceAll(value, "TOP", run(t, f.repo, "git", "rev-parse", "--show-toplevel"))
-		config := filepath.Join(t.TempDir(), "config.json")
-		os.WriteFile(config, must(json.Marshal(map[string]any{"repos": map[string]any{"o/r": map[string]any{"threatNotes": value}}})), 0o644)
-		t.Setenv("AGENT_TOOLS_CONFIG", config)
+		writeSettings(t, f, string(must(json.Marshal(map[string]any{"threatNotes": value}))))
 		return f
 	}
 	printed := func(t *testing.T, f *fixture) (int, string, string) {

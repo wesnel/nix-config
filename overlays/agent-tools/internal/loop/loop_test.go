@@ -417,52 +417,42 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 }
 
 func TestSetup(t *testing.T) {
-	// setupRepo makes a checkout of O/R, points the package's git at it, and
-	// returns it with the config file the test may write.
-	setupRepo := func(t *testing.T) (dir, config string) {
+	// setupRepo makes a clone, points the package's git at it, and returns
+	// it with its agent settings file, which the test may write.
+	setupRepo := func(t *testing.T) (dir, settings string) {
 		t.Helper()
 		t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 		t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-		config = filepath.Join(t.TempDir(), "config.json")
-		t.Setenv("AGENT_TOOLS_CONFIG", config)
-		dir = t.TempDir()
+		dir, _ = filepath.EvalSymlinks(t.TempDir())
 		gitIn(t, dir, "init", "-q", "-b", "main")
 		gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "base")
-		gitIn(t, dir, "remote", "add", "origin", "https://github.com/O/R.git")
 		gitenvtest.Decoy(t)
 		useDir(t, dir)
-		return dir, config
+		settings = filepath.Join(dir, ".git", "info", "agents.json")
+		os.MkdirAll(filepath.Dir(settings), 0o755)
+		return dir, settings
 	}
-	const configured = `{"repos": {"o/r": {"setup": "echo generated > gen"}, "o/other": {"setup": "false"}}}`
+	const configured = `{"setup": "echo generated > gen"}`
 
-	t.Run("command without a config", func(t *testing.T) {
+	t.Run("command without settings", func(t *testing.T) {
 		setupRepo(t)
 		if s, err := SetupCommand(); err != nil || s.Command != "" {
-			t.Errorf("without a config: %+v, %v", s, err)
+			t.Errorf("without settings: %+v, %v", s, err)
 		}
 	})
 
 	t.Run("configured command", func(t *testing.T) {
-		_, config := setupRepo(t)
-		os.WriteFile(config, []byte(configured), 0o644)
+		_, settings := setupRepo(t)
+		os.WriteFile(settings, []byte(configured), 0o644)
 		s, err := SetupCommand()
-		if err != nil || s.Command != "echo generated > gen" || s.Repo != "o/r" {
+		if err != nil || s.Command != "echo generated > gen" || s.Settings != settings {
 			t.Fatalf("configured: %+v, %v", s, err)
 		}
 	})
 
-	t.Run("two remotes with different commands", func(t *testing.T) {
-		dir, config := setupRepo(t)
-		os.WriteFile(config, []byte(configured), 0o644)
-		gitIn(t, dir, "remote", "add", "fork", "https://github.com/o/other.git")
-		if _, err := SetupCommand(); err == nil {
-			t.Error("two remotes with different setup commands were accepted")
-		}
-	})
-
 	t.Run("runs in a worktree", func(t *testing.T) {
-		dir, config := setupRepo(t)
-		os.WriteFile(config, []byte(configured), 0o644)
+		dir, settings := setupRepo(t)
+		os.WriteFile(settings, []byte(configured), 0o644)
 		s, err := SetupCommand()
 		if err != nil {
 			t.Fatal(err)

@@ -205,6 +205,9 @@ with lib; let
   };
 
   darwin = pkgs.stdenv.hostPlatform.isDarwin;
+  # A clone's agent settings, in its common git directory, wherever the
+  # clone is (internal/repos).
+  agentSettingsWrites = "/**/.git/info/agents.json";
   mcpProxy = config.wgn.home.mcp-proxy;
   plans = config.wgn.home.llm.plans;
   agentPlan = getExe' config.wgn.home.llm.agentTools "agent-plan";
@@ -654,7 +657,12 @@ with lib; let
       # repository's git directory, so that no git command run in the
       # repository can reset, switch, clean or merge the plans either. The
       # review records, which the excluded writers alone change.
-      denyWrite = [plans.dir "${plans.repository.path}/.git" records];
+      denyWrite =
+        [plans.dir "${plans.repository.path}/.git" records]
+        # Every clone's agent settings, which the operator alone writes. Only
+        # macOS's sandbox takes a wildcard in a write list; Linux's skips the
+        # entry, which leaves the guard to refuse the write there.
+        ++ optional darwin agentSettingsWrites;
     };
   };
 
@@ -721,6 +729,9 @@ in {
           # outside it, where the guard's hook cannot run. Review records
           # likewise.
           ++ ["Edit(${rulePath plans.dir}/**)" "Edit(${rulePath records}/**)"]
+          # Every clone's agent settings, for the file tools, wherever the
+          # clone is. The guard refuses the same writes.
+          ++ ["Edit(${rulePath agentSettingsWrites})"]
           # The usual spellings of the operator's actions, each a policy.json
           # baseline row, refused even where the hook cannot run. Rules are
           # not a boundary: the guard reads every other spelling, and the

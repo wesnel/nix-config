@@ -38,9 +38,10 @@ checks each non-merge commit in it against its own parent.
   --fixups           check only the range's fixup!, amend! and squash! commits
   --lines N          lines kept from the end of each run's output (default 40)
 
-Settings not given as flags come from "repos" in the user's
-agent-tools/config.json, keyed by GitHub owner/name, and never from the
-repository. The test command runs the commit's code: run it in a sandbox
+Settings not given as flags come from the clone's agent settings,
+.git/info/agents.json in its common git directory, which the operator
+writes, and never from the repository; without a test command or test
+file globs from either, nothing runs. The test command runs the commit's code: run it in a sandbox
 when the commit is not trusted. Nothing is committed, signed or pushed, and
 no ref or file of the caller's worktrees changes; the throwaway worktree,
 under the git directory's red-check/, is removed afterwards.

@@ -1,7 +1,8 @@
 package review
 
-// A pull request source is fetched into a clone of its own, for reviewers
-// that did not write it. Nothing here writes to GitHub.
+// A pull request source is fetched into the operator's clone of its
+// repository or a clone of its own, for reviewers that did not write it.
+// Nothing here writes to GitHub.
 
 import (
 	"context"
@@ -52,10 +53,15 @@ type PR struct {
 	// Head is the pinned head; Base is its merge base with BaseRef.
 	Head string `json:"head"`
 	Base string `json:"base"`
-	// Clone is the pull request's bare clone, kept across rounds; Dir is
-	// this head's review directory.
+	// Clone is where the pull request is fetched, kept across rounds: the
+	// operator's clone of its repository the review runs from, or else a
+	// bare clone of its own. Refs is where its head and base are there,
+	// Refs/head and Refs/base. Dir is this head's review directory.
 	Clone string `json:"clone"`
+	Refs  string `json:"refs"`
 	Dir   string `json:"dir"`
+	// Home is whether Clone is the operator's clone.
+	Home bool `json:"home"`
 	// Own is whether its author is the user of the gh login: the
 	// operator's own change, for which review.privateModules names the
 	// private repositories an upgrade review may read.
@@ -83,9 +89,12 @@ func Root() string {
 	return filepath.Join(base, "pr-review")
 }
 
-// Fetch fetches pull request number of slug into its clone, pinned to the
-// head GitHub reports, and makes that head's review directory.
-func Fetch(ctx context.Context, slug string, number int) (*PR, error) {
+// Fetch fetches pull request number of slug, pinned to the head GitHub
+// reports, and makes that head's review directory. It fetches into home,
+// the operator's clone of slug, as refs/pr-review/NUMBER/head and base,
+// where home is not ""; else into a bare clone of its own under Root, as
+// refs/pr-review/head and base. Neither is checked out.
+func Fetch(ctx context.Context, slug string, number int, home string) (*PR, error) {
 	owner, repo, err := checkSlug(slug)
 	if err != nil {
 		return nil, err
@@ -132,8 +141,10 @@ func Fetch(ctx context.Context, slug string, number int) (*PR, error) {
 		pr.Issues = []Issue{}
 	}
 	top := filepath.Join(Root(), owner, repo, strconv.Itoa(number))
-	pr.Clone = filepath.Join(top, "clone")
-	if _, err := os.Stat(pr.Clone); err != nil {
+	pr.Clone, pr.Refs = filepath.Join(top, "clone"), "refs/pr-review"
+	if home != "" {
+		pr.Clone, pr.Refs, pr.Home = home, fmt.Sprintf("refs/pr-review/%d", number), true
+	} else if _, err := os.Stat(pr.Clone); err != nil {
 		if err := os.MkdirAll(top, 0o755); err != nil {
 			return nil, err
 		}
@@ -148,12 +159,12 @@ func Fetch(ctx context.Context, slug string, number int) (*PR, error) {
 	}
 	_, err = gitOut(ctx, pr.Clone, credentialHelper, "fetch", "--quiet", "--no-tags", "--no-recurse-submodules",
 		"--no-write-fetch-head", remoteURL(pr.Repo),
-		fmt.Sprintf("+refs/pull/%d/head:refs/pr-review/head", number),
-		"+refs/heads/"+pr.BaseRef+":refs/pr-review/base")
+		fmt.Sprintf("+refs/pull/%d/head:%s/head", number, pr.Refs),
+		"+refs/heads/"+pr.BaseRef+":"+pr.Refs+"/base")
 	if err != nil {
 		return nil, err
 	}
-	fetched, err := gitRun(ctx, pr.Clone, "rev-parse", "--verify", "refs/pr-review/head^{commit}")
+	fetched, err := gitRun(ctx, pr.Clone, "rev-parse", "--verify", pr.Refs+"/head^{commit}")
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +172,7 @@ func Fetch(ctx context.Context, slug string, number int) (*PR, error) {
 		return nil, fmt.Errorf("GitHub reports %s as the head of %s#%d, but the fetch got %s, so it moved; "+
 			"run the review again", pr.Head, slug, number, fetched)
 	}
-	if pr.Base, err = gitRun(ctx, pr.Clone, "merge-base", "refs/pr-review/base", pr.Head); err != nil {
+	if pr.Base, err = gitRun(ctx, pr.Clone, "merge-base", pr.Refs+"/base", pr.Head); err != nil {
 		return nil, err
 	}
 	pr.Dir = filepath.Join(top, pr.Head[:12])

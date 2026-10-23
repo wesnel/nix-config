@@ -11,7 +11,6 @@ with lib; let
   cfg = config.wgn.home.llm;
 
   agentToolsConfig = pkgs.writeText "agent-tools-config.json" (builtins.toJSON {
-    inherit (cfg) repos;
     plans = {
       inherit (cfg.plans) dir host;
       inherit (cfg.plans.repository) remote;
@@ -116,151 +115,6 @@ in {
         itself lives in, matched against a checkout's remotes. Text bound for
         GitHub from one of them may name the harness's tools and state
         directories; from any other repository, it is checked in full.
-      '';
-    };
-
-    repos = mkOption {
-      type = types.attrsOf (types.submodule {
-        options = {
-          setup = mkOption {
-            type = types.nullOr types.str;
-            default = null;
-
-            description = ''
-              A command that prepares a fresh checkout, such as generating
-              files the repository does not commit. `pr-loop setup [PATH]`
-              runs it with `sh` in a worktree, where `pr-loop` was called,
-              inside a sandboxed session's sandbox. Nothing runs it on its
-              own.
-            '';
-          };
-
-          test = mkOption {
-            type = types.nullOr types.str;
-            default = null;
-
-            description = ''
-              The test command `git red-check` runs, with `sh` at the top of
-              a checkout. `git delegate` never runs it, since it runs
-              the reviewed commits' code; the session does.
-            '';
-          };
-
-          build = mkOption {
-            type = types.nullOr types.str;
-            default = null;
-
-            description = ''
-              A command that builds the tests without running them, which
-              tells `git red-check` a test that fails to build without a
-              change from one that fails as asserted. Without it, no
-              commit's check exits 0.
-            '';
-          };
-
-          testFiles = mkOption {
-            type = types.listOf types.str;
-            default = [];
-            description = "Git pathspec globs (`:(glob)` magic) that match the test files.";
-          };
-
-          routes = mkOption {
-            type = types.listOf (types.submodule {
-              options = {
-                route = mkOption {
-                  # The routes a focused review exists for: agent-tools'
-                  # routes.Known, which refuses any other at lookup.
-                  type = types.enum ["security" "compat" "upgrade"];
-                  description = "The focused review the rule routes to.";
-                };
-
-                paths = mkOption {
-                  type = types.listOf types.str;
-                  default = [];
-
-                  description = ''
-                    Globs over paths from the top of the repository: `**/`
-                    is any run of directories, `/**` at the end anything
-                    below, `*` and `?` stay within one directory.
-                  '';
-                };
-
-                lines = mkOption {
-                  type = types.listOf types.str;
-                  default = [];
-
-                  description = ''
-                    RE2 expressions matched against each line a commit adds
-                    or removes, in the files `paths` matches where it names
-                    any.
-                  '';
-                };
-
-                removed = mkOption {
-                  type = types.bool;
-                  default = false;
-
-                  description = ''
-                    Match `lines` against removed lines only; a line changed
-                    in place counts as removed. Needs `lines`, or every
-                    lookup of these settings refuses.
-                  '';
-                };
-
-                why = mkOption {
-                  type = types.str;
-                  description = "Why a change it matches needs the review, which the routing reports.";
-                };
-              };
-            });
-
-            default = [];
-
-            description = ''
-              Rules that route this repository's commits to focused reviews,
-              beside the built-in ones, which they only add to. A rule that
-              names no paths and no lines, or does not compile, makes every
-              lookup of these settings refuse.
-            '';
-          };
-
-          threatNotes = mkOption {
-            type = types.nullOr (types.either types.path types.lines);
-            default = null;
-
-            description = ''
-              The threat notes `git delegate --reviewer security` gives
-              its reviewer: what must hold (IDs such as `T3`), the untrusted
-              inputs and boundaries, and what is accepted and why. The
-              notes themselves, or a file outside the repository, named by
-              an absolute path without whitespace (anything else is read as
-              the notes): a file the repository holds would let a change
-              write its own, and makes every lookup of these settings
-              refuse. Without them the security checklist alone applies.
-            '';
-          };
-        };
-      });
-
-      default = {};
-      example = {
-        "owner/name" = {
-          setup = "go tool buf generate";
-          test = "go test ./...";
-          build = "go vet ./...";
-          testFiles = ["**/*_test.go"];
-        };
-      };
-
-      description = ''
-        How agents' tools prepare, build and test each GitHub repository, by
-        `owner/name`, written to `agent-tools/config.json` under the XDG
-        config directory. The commands run wherever the tool is called,
-        inside a sandboxed session's sandbox, so a sandbox that runs them
-        must let them read that file.
-
-        They come only from here, never from the repository: a repository
-        that could name them would make agents run its commands.
       '';
     };
 
@@ -640,9 +494,8 @@ in {
       text = builtins.toJSON {inherit (cfg.prLoop) bots;};
     };
 
-    # Read by `pr-loop setup` as pr-loop's config is, by
-    # `git red-check` wherever it runs, and by `agent-plan` and the guard,
-    # which keeps each plan's log append-only.
+    # Read by `agent-plan`, `git delegate`, pr-loop's public-text check and
+    # the guard, which keeps each plan's log append-only.
     xdg.configFile."agent-tools/config.json".source = agentToolsConfig;
 
     xdg.configFile."agent-tools/notes-ssh-config".text = notesSshConfig;

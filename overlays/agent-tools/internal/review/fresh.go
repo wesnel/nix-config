@@ -27,23 +27,32 @@ import (
 const name = "git-delegate"
 
 // span is the range under review: as given, and resolved. For a pull
-// request, top is its bare clone, and slug and pr name it.
+// request, slug and pr name it, and top is where it was fetched: a
+// worktree, with nothing checked out, of the operator's clone (home), or
+// its bare clone under Root.
 type span struct {
 	given, base, tip, top, common string
 	commits                       string
 	slug                          string
 	pr                            int
+	home                          bool
 	// own is whether the change is the operator's: a range of this
 	// repository, or a pull request whose author is the gh login's user.
 	own bool
+	// cleanup, where set, removes what resolving r made.
+	cleanup func()
 }
 
-// settings are the repos settings of r's repository: by its remotes, or
-// for a pull request's clone, which has none, by its slug.
-func (r *span) settings() (*repos.Settings, error) {
-	if r.pr != 0 {
-		return repos.For(r.slug)
+// release removes what resolving r made, once the review is done with it.
+func (r *span) release() {
+	if r.cleanup != nil {
+		r.cleanup()
 	}
+}
+
+// settings are the agent settings of the clone r is in: for a pull
+// request, the operator's clone's, or none in its own bare clone.
+func (r *span) settings() (*repos.Settings, error) {
 	git.Dir = r.top
 	defer func() { git.Dir = "" }()
 	return repos.Lookup()

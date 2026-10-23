@@ -159,9 +159,9 @@ makes, refuses threads, draft and post with exit 5; the operator fixes or
 deletes it.
 
 A setup command prepares a fresh checkout, e.g. generating files the
-repository does not commit. It is taken from "setup" under "repos" in the
-user's agent-tools/config.json, keyed by owner/name, and never from the
-repository. setup runs it with sh in this process, in the sandbox, printed on
+repository does not commit. It is taken from "setup" in the clone's agent
+settings, .git/info/agents.json in its common git directory, which the
+operator writes, and never from the repository. setup runs it with sh in this process, in the sandbox, printed on
 stderr before it runs and followed by its exit status; a failed setup makes
 the command exit 1. Nothing runs it on its own: run it in each new worktree.
 `
@@ -398,7 +398,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		if setup.Command != "" {
 			runs = loop.RunSetup(setup.Command, []string{dir}, stderr)
 		}
-		result = map[string]any{"repo": setup.Repo, "command": setup.Command, "runs": runs}
+		result = map[string]any{"settings": setup.Settings, "command": setup.Command, "runs": runs}
 		code = setupFailures(runs, stderr)
 	case "setup-command":
 		result, err = loop.SetupCommand()
