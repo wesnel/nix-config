@@ -29,6 +29,7 @@
         fish.enable = true;
         git.enable = true;
         gnupg.enable = true;
+        go.enable = true;
         helix.enable = true;
         llm.repos = {
           "ngrok-private/ngrok-agent".setup = "go tool buf generate";
