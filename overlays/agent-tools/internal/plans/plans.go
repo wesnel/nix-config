@@ -34,6 +34,9 @@ type Config struct {
 	// Repo is the git repository the plans directory is in, which sync
 	// commits to; the directory above Dir unless given.
 	Repo string `json:"repo,omitempty"`
+	// Templates is the directory of built-in plan templates, which a
+	// template of the same name in Repo's templates directory overrides.
+	Templates string `json:"templates,omitempty"`
 	// Remote is Repo's origin, which init clones where Repo is missing.
 	Remote string `json:"remote,omitempty"`
 	// SSHConfig is the ssh config file git reaches Remote with.
@@ -97,8 +100,9 @@ func Load() (Config, error) {
 	if c.Host == "" {
 		c.Host = host
 	}
-	if !filepath.IsAbs(c.Dir) || !hostPattern.MatchString(c.Host) || (c.Repo != "" && !filepath.IsAbs(c.Repo)) {
-		return Config{}, fmt.Errorf("%s: plans.dir and plans.repo must be absolute and plans.host a plain name without dots: %+v", repos.Path(), c)
+	if !filepath.IsAbs(c.Dir) || !hostPattern.MatchString(c.Host) || (c.Repo != "" && !filepath.IsAbs(c.Repo)) ||
+		(c.Templates != "" && !filepath.IsAbs(c.Templates)) {
+		return Config{}, fmt.Errorf("%s: plans.dir, plans.repo and plans.templates must be absolute and plans.host a plain name without dots: %+v", repos.Path(), c)
 	}
 	return c, nil
 }
@@ -111,8 +115,8 @@ type NewOptions struct {
 	Repos, Branches, Worktrees, Sessions []string
 	Harness                              string
 	Parent, Part                         string
-	// Template names <plans repository>/templates/<Template>.org, whose
-	// entries the new plan starts with.
+	// Template names <Template>.org in <plans repository>/templates or else
+	// Config.Templates, whose entries the new plan starts with.
 	Template string
 	// Goal is a line the plan's Goal starts with, and Status its STATUS
 	// in place of planning.
