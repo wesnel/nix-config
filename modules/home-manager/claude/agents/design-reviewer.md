@@ -7,6 +7,15 @@ tools: Read, Bash, StructuredOutput
 skills:
   - design
   - review-change
+  - subtract-first
+  - smallest-diff
+  - from-scratch
+  - one-source-of-truth
+  - extend-a-seam
+  - migrate-and-delete
+  - model-the-domain
+  - minimize-reader-load
+  - validate-at-the-boundary
 hooks:
   PreToolUse:
     - matcher: "*"

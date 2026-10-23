@@ -6,6 +6,9 @@ effort: high
 tools: Read, Bash, StructuredOutput
 skills:
   - write-tests
+  - claims-not-facts
+  - idempotent
+  - separate-before-serializing
 hooks:
   PreToolUse:
     - matcher: "*"
