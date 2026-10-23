@@ -96,7 +96,8 @@ red, and the failure points at what broke. Everything below follows from that.
   until it passes.
 - Work in vertical slices: one test, then the code that passes it, then the
   next test. Each slice shapes the next, which tests written all at once
-  ahead of the code cannot.
+  ahead of the code cannot. Each is a unit as the `verifiable-steps` skill
+  says.
 - Keep both runs as evidence: the failing output, or its key lines, and the
   passing run. Both go in your final report and in what you hand a
   coordinator. A pull request description still names only what a reviewer

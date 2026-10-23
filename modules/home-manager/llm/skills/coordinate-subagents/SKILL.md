@@ -36,8 +36,12 @@ A review loop over a stack, which the operator starts with
   another's work first names that part with `--after`, or later with
   `agent-plan after`.
 - One part is one branch, one worktree and one sub-agent.
-- A refactor the change needs goes first: the bottom branch of the stack,
-  or the first commit of a single branch, with no test changed.
+- Order the parts, and the commits within each, as the `verifiable-steps`
+  skill says.
+- Before giving parts state to write that another part also writes, load
+  the `separate-before-serializing` skill.
+- Before giving several parts the same kind of work, load the
+  `build-the-lever` skill.
 - An interface change and the move of the callers we control are one part,
   never split across branches, as the `migrate-and-delete` skill says.
 - Each branch of a stack builds and passes its tests on its own base, so it
