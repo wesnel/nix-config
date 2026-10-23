@@ -22,7 +22,8 @@ Load the `pull-requests` skill before opening, describing or answering one.
 
 ## Plans
 
-Every change has a plan (`agent-plan new`), kept true as the work changes,
+Every change has a plan (`agent-plan new`), started from the template the
+`playbooks` skill gives for its kind and kept true as the work changes,
 with each step's start, completion and verification logged
 (`agent-plan log`). Every question for the operator goes in the plan through
 `agent-plan ask`, never restated in messages. Asked to plan, write the plan
