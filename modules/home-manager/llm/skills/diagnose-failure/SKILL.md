@@ -81,17 +81,14 @@ Some failures put one hypothesis first:
 
 ## 5. The fix
 
-- It changes the cause. A guard where the symptom shows, such as a nil
-  check or a fallback value, leaves the cause to fail somewhere else.
-- It covers every instance: search (`git grep`, `gopls references`) for the
-  pattern the cause shows, and fix each place it recurs in the same commit.
+- It is a fix as the `reproduce-first` skill says: it changes the cause and
+  covers every instance.
 - Its test fails before the fix for the reported reason, at a seam that
   reproduces the real call, as the `write-tests` skill says. Where no seam
   reaches the failure, say so in the hand-back instead of testing a
   shallower seam; building such a seam, when it is outside the change's
   job, is a follow-up (`agent-plan followup`).
-- After the fix, both the shrunken and the original command pass; for a
-  flaky failure, give the rate over the same number of runs.
+- After the fix, both the shrunken and the original command pass.
 - `git grep` on the marker finds nothing, and throwaway files are deleted.
 - The commit body names the cause: the hypothesis that held.
 - If the cause took more than the red command and a few probes to find,
