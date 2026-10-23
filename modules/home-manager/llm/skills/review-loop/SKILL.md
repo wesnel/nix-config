@@ -96,7 +96,11 @@ next one starts at step 1.
    bots alone.
 5. **Fix.** One fixup per review item or CI failure, in the PR's worktree,
    with the relevant tests and linters run, and a drafted reply per thread
-   in the format `pr-loop reply --from` reads.
+   in the format `pr-loop reply --from` reads. A reply is read by people
+   who have never seen the loop: it links other threads by URL and commits
+   by short SHA, as the `pull-requests` skill says, and `pr-loop reply`
+   refuses one naming a thread's ID or key, a plan ID or the loop's own
+   terms.
 6. **Review**, once per round: for each PR with new fixups, one round of
    the `review-change` skill's fresh review loop over the range from the
    branch's tip at round start to the branch. The goal statement is the
