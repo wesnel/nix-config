@@ -139,6 +139,9 @@ func TestRun(t *testing.T) {
 	t.Run("signs and folds a stack", testRunStack)
 	t.Run("lint", testRunLint)
 	t.Run("worktree branch", testRunWorktreeBranch)
+	t.Run("gains", testRunGains)
+	t.Run("fork gains", testRunForkGains)
+	t.Run("message gains", testRunMessageGains)
 	t.Run("failed push", testRunFailedPush)
 	t.Run("missed touch", testRunMissedTouch)
 }
@@ -536,6 +539,232 @@ func testRunWorktreeBranch(t *testing.T) {
 	check(result, "a fixed\n")
 	if got := fmt.Sprint(result.(map[string]any)["gainedFixups"]); got != "[lower]" {
 		t.Errorf("gainedFixups: %s", got)
+	}
+}
+
+// commitFile writes content to file in repo and commits it with message.
+func commitFile(t *testing.T, repo, file, content string, message ...string) {
+	t.Helper()
+	os.WriteFile(filepath.Join(repo, file), []byte(content), 0o644)
+	gitIn(t, repo, "add", file)
+	args := []string{"commit", "-q"}
+	for _, m := range message {
+		args = append(args, "-m", m)
+	}
+	gitIn(t, repo, args...)
+}
+
+// testRunGains signs a stack whose lower branch, checked out in a worktree of
+// its own, ends in a fixup, while fixups above it fold into its commits: the
+// pass names lower as gaining them before the first touch, whether or not it
+// prints its whole plan, and refuses afterwards a stacked branch on any
+// commit but the signed copy of the last one it keeps.
+func testRunGains(t *testing.T) {
+	dir := t.TempDir()
+	global := signingConfig(t, dir)
+	repo := filepath.Join(dir, "repo")
+	os.Mkdir(repo, 0o755)
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+	gitIn(t, repo, "switch", "-qc", "lower")
+	commitFile(t, repo, "x1", "x1\n", "Add x1")
+	commitFile(t, repo, "x2", "x2\n", "Add x2")
+	commitFile(t, repo, "x1", "x1 fixed\n", "fixup! Add x1")
+	gitIn(t, repo, "switch", "-qc", "upper")
+	commitFile(t, repo, "y", "y\n", "Add y")
+	commitFile(t, repo, "x2", "x2 fixed\n", "fixup! Add x2")
+	wt := filepath.Join(dir, "lower-wt")
+	gitIn(t, repo, "worktree", "add", "-q", wt, "lower")
+
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	gitenvtest.Decoy(t)
+	useDir(t, repo)
+	const named = "lower gains fixups from commits it does not contain\n"
+	stderr := captureStderr(t)
+	if _, err := Run("", false, false, false); err != nil {
+		t.Fatal(err)
+	}
+	out := stderr()
+	if at := strings.Index(out, named); at < 0 || at > strings.Index(out, "touch the key") {
+		t.Errorf("a single-branch pass did not name lower before the touches:\n%s", out)
+	}
+
+	// A brief pass over named branches prints no plan, but names it still.
+	Brief = true
+	t.Cleanup(func() { Brief = false })
+	commitFile(t, repo, "x2", "x2 fixed again\n", "fixup! Add x2")
+	skip := len(stderr())
+	if _, err := Plan("", []string{"upper"}, false, false); err != nil {
+		t.Fatal(err)
+	}
+	out = stderr()[skip:]
+	if at := strings.Index(out, named); at < 0 || at > strings.Index(out, "touch the key") {
+		t.Errorf("a brief pass did not name lower before the touches:\n%s", out)
+	}
+	Brief = false
+
+	commitFile(t, repo, "x1", "x1 fixed again\n", "fixup! Add x1")
+	res, err := Plan("", []string{"upper"}, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	branches := res.(map[string]any)["branches"].(map[string]any)
+	if lines := fmt.Sprint(branches["plan"]); !strings.Contains(lines, "moves lower; lower gains fixups from commits it does not contain") {
+		t.Errorf("plan: %s", lines)
+	}
+
+	// A branch the rebase left on any other signed commit is refused, naming
+	// where it belongs.
+	lower := gitIn(t, repo, "rev-parse", "lower")
+	unsigned := gitIn(t, repo, "rev-parse", BackupRef+"upper~1")
+	shape, err := fullShape("main", "upper")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &pending{Branch: "upper", Start: "main", Shape: shape, Stacked: []string{"lower"},
+		Before: map[string]string{"lower": unsigned}, Lands: map[string]int{"lower": 2}}
+	gitIn(t, wt, "reset", "-q", "--keep", "upper~2")
+	if _, err := verify(p); err == nil || !strings.Contains(err.Error(), "lower belongs at "+lower) {
+		t.Errorf("a misplaced branch: %v", err)
+	}
+	gitIn(t, wt, "reset", "-q", "--keep", lower)
+	if _, err := verify(p); err != nil {
+		t.Errorf("a branch where it belongs: %v", err)
+	}
+}
+
+// testRunMessageGains signs a stack whose upper branch rewords a commit of
+// the lower one with an amend! that changes no files: lower gains it, which
+// the pass says before the first touch and reports once signed.
+func testRunMessageGains(t *testing.T) {
+	dir := t.TempDir()
+	global := signingConfig(t, dir)
+	repo := filepath.Join(dir, "repo")
+	os.Mkdir(repo, 0o755)
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+	gitIn(t, repo, "switch", "-qc", "lower")
+	commitFile(t, repo, "x1", "x1\n", "Add x1")
+	commitFile(t, repo, "x2", "x2\n", "Add x2")
+	gitIn(t, repo, "switch", "-qc", "upper")
+	commitFile(t, repo, "y", "y\n", "Add y")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "amend! Add x1", "-m", "Add the first x")
+
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	gitenvtest.Decoy(t)
+	useDir(t, repo)
+	stderr := captureStderr(t)
+	result, err := Run("", false, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := stderr(); !strings.Contains(out, "lower gains fixups from commits it does not contain") {
+		t.Errorf("lower was not named before the touches:\n%s", out)
+	}
+	if got := fmt.Sprint(result.(map[string]any)["gainedFixups"]); got != "[lower]" {
+		t.Errorf("gainedFixups: %s", got)
+	}
+	if subjects, _ := git.Run("log", "--format=%s", "main..lower"); subjects != "Add x2\nAdd the first x" {
+		t.Errorf("lower's commits: %q", subjects)
+	}
+}
+
+// testRunForkGains signs a fork whose earlier child folds a fixup into the
+// fork point: the later child's branches, its tip included, gain it, from
+// commits they do not contain, which the plan says before the first touch
+// and the result reports once signed.
+func testRunForkGains(t *testing.T) {
+	dir := t.TempDir()
+	global := signingConfig(t, dir)
+	repo := filepath.Join(dir, "repo")
+	os.Mkdir(repo, 0o755)
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+	gitIn(t, repo, "switch", "-qc", "lower")
+	commitFile(t, repo, "x1", "x1\n", "Add x1")
+	commitFile(t, repo, "x2", "x2\n", "Add x2")
+	gitIn(t, repo, "switch", "-qc", "c1")
+	commitFile(t, repo, "b", "b\n", "Add b")
+	commitFile(t, repo, "x2", "x2 fixed\n", "fixup! Add x2")
+	gitIn(t, repo, "switch", "-qc", "c2", "lower")
+	commitFile(t, repo, "d", "d\n", "Add d")
+	gitIn(t, repo, "switch", "-qc", "c2top")
+	commitFile(t, repo, "e", "e\n", "Add e")
+	gitIn(t, repo, "switch", "-q", "c1")
+
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	gitenvtest.Decoy(t)
+	useDir(t, repo)
+	res, err := Plan("", []string{"c1", "c2top"}, false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	branches := res.(map[string]any)["branches"].(map[string]any)
+	if lines := fmt.Sprint(branches["plan"]); !strings.Contains(lines, "moves c2; c2, c2top gain fixups from commits they do not contain") {
+		t.Errorf("plan: %s", lines)
+	}
+	if got := fmt.Sprint(branches["c2top"].(map[string]any)["gainedFixups"]); got != "[c2 c2top]" {
+		t.Errorf("c2top's gainedFixups: %s", got)
+	}
+	if x2, _ := git.Run("show", "c2:x2"); x2 != "x2 fixed" {
+		t.Errorf("c2 did not gain the fix: %q", x2)
+	}
+}
+
+// Where landings puts each kind of branch tip, and which gaining finds
+// gaining fixups: a fixup, a fixup of a fixup, a squash! and an empty amend!
+// each leave a branch on the last commit it keeps.
+func TestLandings(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GIT_CONFIG_GLOBAL", signingConfig(t, dir))
+	repo := filepath.Join(dir, "repo")
+	os.Mkdir(repo, 0o755)
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+	base := gitIn(t, repo, "rev-parse", "HEAD")
+	gitIn(t, repo, "switch", "-qc", "top")
+	commitFile(t, repo, "x1", "x1\n", "Add x1")
+	commitFile(t, repo, "x1", "x1 f\n", "fixup! Add x1")
+	gitIn(t, repo, "branch", "fix")
+	commitFile(t, repo, "x2", "x2\n", "Add x2")
+	gitIn(t, repo, "branch", "kept")
+	commitFile(t, repo, "x1", "x1 ff\n", "fixup! fixup! Add x1")
+	gitIn(t, repo, "branch", "chain")
+	commitFile(t, repo, "x2", "x2 s\n", "squash! Add x2", "More about x2.")
+	gitIn(t, repo, "branch", "squash")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "amend! Add x1", "-m", "Add the first x")
+	gitIn(t, repo, "branch", "amend")
+	commitFile(t, repo, "y", "y\n", "Add y")
+	stacked := []string{"amend", "chain", "fix", "kept", "squash"}
+
+	useDir(t, repo)
+	before, err := localBranches()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lands, err := landings(before, stacked, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(lands); got != "map[amend:2 chain:2 fix:1 kept:2 squash:2]" {
+		t.Errorf("landings: %s", got)
+	}
+	kept, err := keptCommits(base, "top")
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := rehearseSquash(base, "top", kept)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gains, err := gaining(lands, before, base, base, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// squash has every change to files that folds into its commits, but not
+	// the amend! above it, which rewords Add x1; amend has both.
+	if got := fmt.Sprint(gains); got != "[chain fix kept squash]" {
+		t.Errorf("gaining: %s", got)
 	}
 }
 

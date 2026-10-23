@@ -136,14 +136,20 @@ git sign-pass --push TOP1 TOP2 ...                # several stacks, wherever the
 `git sign-pass` re-signs from the oldest unsigned commit, or the oldest one a
 `fixup!`, `amend!` or `squash!` commit folds into, to the tip, one touch per
 commit in that range, folds included, since git signs each step of a squash.
-Branches stacked inside that range move with it. It squashes unsigned
-in a scratch worktree first, so a conflicting fixup is named before any
-touch, and it refuses if a commit's files, author or message would change, or,
-when squashing, if the files at the tip would or the remaining commits would
-differ from what git's autosquash should leave: an `amend!` (from
-`--fixup=amend:` or `--fixup=reword:`) replaces its target's whole message,
-subject included, and a `squash!` appends its body. No editor opens. Merges are refused. The unsigned
-tip is kept at `refs/sign-pass/backup/<branch>`.
+Branches stacked inside that range move with it, including one checked out in
+another worktree, which must be clean: the pass detaches that worktree and
+switches it back afterwards. Each lands on the signed copy of the last of its
+commits that squashing keeps, so a branch whose tip is a fixup lands on the
+nearest commit below the tip that remains, and the pass names before any
+touch each one that gains fixups from commits it does not contain. It
+squashes unsigned in a scratch worktree first, so a conflicting fixup is
+named before any touch, and it refuses if a commit's files, author or message
+would change, or, when squashing, if the files at the tip would or the
+remaining commits would differ from what git's autosquash should leave: an
+`amend!` (from `--fixup=amend:` or `--fixup=reword:`) replaces its target's
+whole message, subject included, and a `squash!` appends its body. No editor
+opens. Merges are refused. The unsigned tip is kept at
+`refs/sign-pass/backup/<branch>`.
 
 At a missed touch in a terminal it asks: Enter retries, `q` stops. Without
 one (an agent, or a `!` run) it retries that step once by itself after
