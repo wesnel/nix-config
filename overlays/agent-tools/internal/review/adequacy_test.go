@@ -187,6 +187,36 @@ func TestTestAdequacy(t *testing.T) {
 		}
 	})
 
+	// A printed prompt's reply never comes back, so the prompt has its
+	// reviewer report red-check's findings itself; delegate's own run
+	// raises them and tells its reviewer not to.
+	t.Run("printed", func(t *testing.T) {
+		a := setUpAdequacy(t, redcheck.PassesWithoutChange)
+		f := a.raised(t)
+		id := f["id"].(string)
+		headless := string(must(os.ReadFile(filepath.Join(a.log, "prompt"))))
+		if !strings.Contains(headless, "by this review itself; do not report those again") ||
+			strings.Contains(headless, "report each finding below yourself") {
+			t.Errorf("a headless run's prompt has the reviewer raise red-check's findings:\n%s", headless)
+		}
+		code, stdout, stderr := delegateCmd(t, "--print-prompt", "--goal", ".git/goal.md", "--red-check", a.redCheck(t),
+			a.base+"..HEAD")
+		if code != 0 {
+			t.Fatalf("exit %d\n%s", code, stderr)
+		}
+		for _, want := range []string{"git delegate never sees, so nothing raises them for you",
+			"report each finding below yourself, as a finding of kind `untested` with the `id`, `path` and `line` given",
+			"- `" + id + "`: path `code_test.txt`, line 2; claim: " + f["claim"].(string) + " Evidence: " +
+				f["evidence"].(string)} {
+			if !strings.Contains(stdout, want) {
+				t.Errorf("the printed prompt lacks %q:\n%s", want, stdout)
+			}
+		}
+		if strings.Contains(stdout, "do not report those again") {
+			t.Errorf("the printed prompt tells its reviewer not to report red-check's findings:\n%s", stdout)
+		}
+	})
+
 	// The key is the commit's test diff, so a rebase or a change of the code
 	// keeps it.
 	t.Run("same key for the same tests", func(t *testing.T) {

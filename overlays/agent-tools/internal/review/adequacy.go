@@ -310,8 +310,11 @@ func firstChanged(r *span, commit, file string) int {
 	return 0
 }
 
-// prompt is what the reviewer is told of test adequacy.
-func (a *adequacy) prompt() string {
+// prompt is what the reviewer is told of test adequacy. printed is whether
+// the prompt is printed for a reviewer whose reply delegate never sees and
+// so raises no finding from: that reviewer reports red-check's findings
+// itself.
+func (a *adequacy) prompt(printed bool) string {
 	switch {
 	case !a.configured:
 		return "This repository has no test settings, so there is no mechanical test adequacy for it: " +
@@ -321,14 +324,28 @@ func (a *adequacy) prompt() string {
 			"no mechanical test adequacy for it: judge `untested` from the tests themselves.\n"
 	}
 	var b strings.Builder
-	b.WriteString("Each commit whose tests pass without the rest of it is reported as an `untested` finding " +
-		"with an ID starting " + mechanicalPrefix + ", by this review itself; do not report those again.\n")
+	if printed {
+		b.WriteString("Each commit whose tests pass without the rest of it is an `untested` finding with an ID " +
+			"starting " + mechanicalPrefix + ". This prompt was printed for a reviewer whose reply git delegate never " +
+			"sees, so nothing raises them for you: report each finding below yourself, as a finding of kind " +
+			"`untested` with the `id`, `path` and `line` given, and its claim and evidence.\n")
+	} else {
+		b.WriteString("Each commit whose tests pass without the rest of it is reported as an `untested` finding " +
+			"with an ID starting " + mechanicalPrefix + ", by this review itself; do not report those again.\n")
+	}
 	if len(a.buildOnly) > 0 {
 		fmt.Fprintf(&b, "\nThe tests of %s only fail to build without the rest of their commits "+
 			"(fails-to-build-without-change), which shows they need the change, not that they test it: judge whether "+
 			"they do, and report an `untested` finding where they do not.\n", shortList(a.buildOnly))
 	}
-	if len(a.findings) > 0 {
+	switch {
+	case len(a.findings) > 0 && printed:
+		b.WriteString("\nTo report:\n\n")
+		for _, f := range a.findings {
+			fmt.Fprintf(&b, "- `%s`: path `%s`, line %d; claim: %s Evidence: %s\n", f.ID, f.Path, f.Line, f.Claim,
+				f.Evidence)
+		}
+	case len(a.findings) > 0:
 		b.WriteString("\nReported this round:\n\n")
 		for _, f := range a.findings {
 			fmt.Fprintf(&b, "- %s at %s:%d\n", f.ID, f.Path, f.Line)
