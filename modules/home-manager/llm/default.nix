@@ -121,7 +121,7 @@ in {
     plans = {
       dir = mkOption {
         type = types.str;
-        default = "${config.home.homeDirectory}/git/notes/agents";
+        default = "${cfg.plans.repository.path}/agents/plans";
 
         description = ''
           Where `agent-plan` keeps every host's plans, side by side, each
@@ -143,7 +143,7 @@ in {
       repository = {
         path = mkOption {
           type = types.str;
-          default = dirOf cfg.plans.dir;
+          default = "${config.home.homeDirectory}/git/github.com/wesnel/notes";
 
           description = ''
             The git repository {option}`dir` is in, which activation clones

@@ -387,7 +387,7 @@ trusted.
 
 Agents keep each change's plan with `agent-plan`, as the `plan-work` skill
 says, as files side by side in `wgn.home.llm.plans.dir`
-(`~/git/notes/agents`): `<date>-<slug>.<host>.org`, a
+(`~/git/github.com/wesnel/notes/agents/plans`): `<date>-<slug>.<host>.org`, a
 `<date>-<slug>.<host>.<part>.org` per sub-agent's part, and
 `<date>-<slug>.<host>.log.org`, the append-only record of each item's
 progress and review outcomes. The logs' lock files stay out of git
@@ -402,8 +402,11 @@ agent-plan questions PLAN --all          # open questions, each with its recomme
 
 Ask an agent only to plan, and it writes the plan and stops.
 
-`~/git/notes` is a clone of the private `wesnel/notes`, which activation
-clones where it is missing. A few seconds after a plan changes, a watcher (a
+`~/git/github.com/wesnel/notes` is a clone of the private `wesnel/notes`,
+which activation clones where it is missing. Its `agents/plans/` directory
+holds the plans, which only `agent-plan` writes; the rest of `agents/` holds
+notes agents write with the file tools, beside the operator's own org-roam
+notes. A few seconds after a plan changes, a watcher (a
 launchd agent on macOS, a systemd path unit on Linux) runs `agent-plan
 sync`: it commits this host's plan files by name, unsigned, as "Sync plans
 from HOST", rebases onto the remote with any other edits stashed and put
