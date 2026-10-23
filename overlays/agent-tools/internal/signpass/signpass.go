@@ -1566,15 +1566,41 @@ func bottomUp(refs []refPush) []refPush {
 	return ordered
 }
 
+// pushName is the remote pushRef configures for each push, with url as its
+// only setting; it is matched as a regular expression, so it holds no
+// metacharacters. Git updates no remote-tracking ref for a push to a remote
+// without a fetch refspec, where from 2.56 a push to a bare URL moves the
+// remote-tracking ref of the one configured remote whose push URLs include
+// it; pushAll moves those once every URL has the branches.
+const pushName = "git-sign-pass"
+
+// pushNameFree refuses when this repository configures pushName, whose
+// settings would join the URL pushRef gives it, ending with retry.
+func pushNameFree(retry string) error {
+	set, _ := git.Run("config", "--name-only", "--get-regexp", `^remote\.`+pushName+`\.`)
+	if set == "" {
+		return nil
+	}
+	if retry != "" {
+		retry = ", then " + retry
+	}
+	return refuse("git sign-pass pushes through a remote named %s that it sets up for each push, but this "+
+		"repository already configures one (%s); rename it with `git remote rename %s NAME`%s",
+		pushName, strings.ReplaceAll(set, "\n", ", "), pushName, retry)
+}
+
 // pushRef pushes r to url, over whatever transport the URL uses (for
-// GitHub, SSH and the key) with env added, without touching the
-// remote-tracking ref. When the key refuses, it asks whether to retry
-// (retryTouch).
+// GitHub, SSH and the key) with env added, without touching any
+// remote-tracking ref (pushName). When the key refuses, it asks whether to
+// retry (retryTouch).
 func pushRef(ctx context.Context, remote, url string, r refPush, env []string) error {
-	args := []string{"push", fmt.Sprintf("--force-with-lease=refs/heads/%s:%s", r.Branch, r.Old), url,
-		r.New + ":refs/heads/" + r.Branch}
+	if err := pushNameFree(""); err != nil {
+		return err
+	}
+	args := []string{"-c", "remote." + pushName + ".url=" + url, "push",
+		fmt.Sprintf("--force-with-lease=refs/heads/%s:%s", r.Branch, r.Old), pushName, r.New + ":refs/heads/" + r.Branch}
 	if Brief {
-		args = slices.Insert(args, 1, "--quiet")
+		args = slices.Insert(args, 3, "--quiet")
 	}
 	what := fmt.Sprintf("the push of %s to %s", r.Branch, url)
 	retry := &retrier{}
@@ -1654,6 +1680,9 @@ type target struct {
 // refusal ends by saying to retry, how depending on whether keys have been
 // touched yet.
 func pushTargets(branches []string, setUpstream bool, retry string) (map[string][]target, map[string]string, error) {
+	if err := pushNameFree(retry); err != nil {
+		return nil, nil, err
+	}
 	byRemote := map[string][]target{}
 	skipped := map[string]string{}
 	for _, b := range branches {
