@@ -26,6 +26,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
@@ -596,15 +597,16 @@ const includeConfig = "A git config include makes git read a file this session c
 // value is not edited: git reads a value as shell after quotes, `""`
 // and backslash-newlines, which no line of the edit need show. Any other
 // file with an [alias] section, in the text written or already there, as
-// an included file may hold, gains no `!`.
-func gitConfigAlias(path, text string) string {
+// an included file may hold, gains no `!`. dir is the session's, as
+// gitConfigFile takes it.
+func gitConfigAlias(path, dir, text string) string {
 	existing := ""
 	if f, err := os.Open(path); err == nil {
 		data, _ := io.ReadAll(io.LimitReader(f, 1<<20))
 		f.Close()
 		existing = string(data)
 	}
-	if !gitConfigFile(path) {
+	if !gitConfigFile(path, dir) {
 		if (aliasSection.MatchString(text) || aliasSection.MatchString(existing)) && strings.Contains(text, "!") {
 			return shellAlias
 		}
@@ -619,29 +621,25 @@ func gitConfigAlias(path, text string) string {
 	return ""
 }
 
-// gitConfigFile reports whether path is a git config file. It is one where
-// it reaches, as Reaches judges by file identity, ~/.gitconfig, git's XDG
-// config, or the config or config.worktree of a .git directory above it:
-// so a case or Unicode variant the volume folds, a link and a hard link
-// all count, and so does a new name outside ASCII in one of their
-// directories. A name holding gitconfig, or config or config.worktree in
-// a .git, git or worktrees directory, counts too, as written or with its
-// links resolved, in any case where names fold it, for files that are not
-// there yet.
-func gitConfigFile(path string) bool {
+// gitConfigFile reports whether path, written from a session in dir, is a
+// git config file. It is one where it reaches, as Reaches judges by file
+// identity, ~/.gitconfig, git's XDG config, or a config file (gitDirConfigs)
+// of a git directory gitDirsFor finds: so a case or Unicode variant the
+// volume folds, in the file's name or a directory's, a link and a hard
+// link all count, and so does a new name outside ASCII in one of their
+// directories. A name holding gitconfig, or config, config.worktree or
+// any name outside ASCII in a .git, git or worktrees directory, counts
+// too, as written or with its links resolved, in any case where names fold
+// it, for files and directories that are not there yet.
+func gitConfigFile(path, dir string) bool {
 	if filepath.IsAbs(path) {
 		config := os.Getenv("XDG_CONFIG_HOME")
 		if !filepath.IsAbs(config) {
 			config = filepath.Join(home, ".config")
 		}
 		known := []string{filepath.Join(home, ".gitconfig"), filepath.Join(config, "git", "config")}
-		for dir := filepath.Dir(physical(path)); ; dir = filepath.Dir(dir) {
-			if info, err := os.Stat(filepath.Join(dir, ".git")); err == nil && info.IsDir() {
-				known = append(known, filepath.Join(dir, ".git", "config"), filepath.Join(dir, ".git", "config.worktree"))
-			}
-			if dir == filepath.Dir(dir) {
-				break
-			}
+		for _, g := range gitDirsFor(path, dir) {
+			known = append(known, gitDirConfigs(g)...)
 		}
 		for _, k := range known {
 			if Reaches(path, k, false) {
@@ -655,12 +653,55 @@ func gitConfigFile(path string) bool {
 		}
 		base, parent := filepath.Base(p), filepath.Base(filepath.Dir(p))
 		if strings.Contains(base, "gitconfig") ||
-			(base == "config" || base == "config.worktree") && (parent == ".git" || parent == "git" ||
+			(base == "config" || base == "config.worktree" || !ascii(base)) && (parent == ".git" || parent == "git" ||
 				filepath.Base(filepath.Dir(filepath.Dir(p))) == "worktrees") {
 			return true
 		}
 	}
 	return false
+}
+
+// gitDirsFor are the git directories whose config files path, absolute and
+// written from a session in dir, may be: the .git directory of each
+// directory above it, with its links resolved, and, where path is a hard
+// link, which may stand anywhere, the git directory and common directory
+// of dir's repository.
+func gitDirsFor(path, dir string) []string {
+	var dirs []string
+	for d := filepath.Dir(physical(path)); ; d = filepath.Dir(d) {
+		if info, err := os.Stat(filepath.Join(d, ".git")); err == nil && info.IsDir() {
+			dirs = append(dirs, filepath.Join(d, ".git"))
+		}
+		if d == filepath.Dir(d) {
+			break
+		}
+	}
+	if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
+		if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Nlink > 1 {
+			if out, ok := (gitState{dir: dir}).run("rev-parse", "--path-format=absolute", "--git-dir",
+				"--git-common-dir"); ok {
+				dirs = append(dirs, strings.Split(out, "\n")...)
+			}
+		}
+	}
+	return dirs
+}
+
+// gitDirConfigs are the config files git reads in the git directory
+// gitDir: its config and config.worktree, and the config.worktree of each
+// linked worktree, at most 1000 of them.
+func gitDirConfigs(gitDir string) []string {
+	configs := []string{filepath.Join(gitDir, "config"), filepath.Join(gitDir, "config.worktree")}
+	entries, _ := os.ReadDir(filepath.Join(gitDir, "worktrees"))
+	for i, e := range entries {
+		if i == 1000 {
+			break
+		}
+		if e.IsDir() {
+			configs = append(configs, filepath.Join(gitDir, "worktrees", e.Name(), "config.worktree"))
+		}
+	}
+	return configs
 }
 
 // foldsCase is whether this host's file systems match names without regard

@@ -1849,7 +1849,7 @@ func gitConfigShellWrite(name string, args, redirected []string, dir string) boo
 		}
 	}
 	for _, t := range targets {
-		if !strings.HasPrefix(t, "&") && !strings.HasPrefix(t, "-") && gitConfigFile(expandPath(t, dir)) {
+		if !strings.HasPrefix(t, "&") && !strings.HasPrefix(t, "-") && gitConfigFile(expandPath(t, dir), dir) {
 			return true
 		}
 	}
@@ -2040,7 +2040,7 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 		if planFile(path) {
 			return planWrite
 		}
-		if reason := gitConfigAlias(path, c.text); reason != "" {
+		if reason := gitConfigAlias(path, dir, c.text); reason != "" {
 			return reason
 		}
 		switch {

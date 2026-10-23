@@ -1390,6 +1390,11 @@ func TestGitConfigAlias(t *testing.T) {
 	repo := filepath.Dir(filepath.Dir(write("r/.git/config", "[core]\n")))
 	hard := filepath.Join(h, "work", "plain-copy")
 	os.Link(gitconfig, hard)
+	// git's XDG config is ~/.config/git/config, a directory not there yet.
+	t.Setenv("XDG_CONFIG_HOME", "")
+	write("r/.git/worktrees/w/config.worktree", "[core]\n")
+	repoLink := filepath.Join(h, "work", "repo-link")
+	os.Symlink(filepath.Join(repo, ".git", "config"), repoLink)
 	const include = "[include]\n\tpath = /tmp/x.inc\n"
 	edit := func(path, old, new string) map[string]string {
 		return map[string]string{"file_path": path, "old_string": old, "new_string": new}
@@ -1417,16 +1422,45 @@ func TestGitConfigAlias(t *testing.T) {
 		{"a new name outside ASCII in .git", "Write", map[string]string{"file_path": filepath.Join(repo, ".git", "cönfig"), "content": include}, includeConfig},
 		{"a hard link to ~/.gitconfig", "Write", map[string]string{"file_path": hard, "content": include}, includeConfig},
 		{"an ASCII file in a repository", "Write", map[string]string{"file_path": filepath.Join(repo, "notes.txt"), "content": include}, ""},
+		// By name, for a directory not there yet: a name outside ASCII
+		// where git's own name would count.
+		{"git's XDG conﬁg", "Write", map[string]string{"file_path": filepath.Join(h, ".config", "git", "conﬁg"), "content": include}, includeConfig},
+		{"a worktree's conﬁg.worktree", "Write", map[string]string{"file_path": filepath.Join(repo, ".git", "worktrees", "w", "conﬁg.worktree"), "content": include}, includeConfig},
+		{"a worktree's new conﬁg.worktree", "Write", map[string]string{"file_path": filepath.Join(repo, ".git", "worktrees", "new", "conﬁg.worktree"), "content": include}, includeConfig},
+		{"a symlink to a repository's config", "Write", map[string]string{"file_path": repoLink, "content": include}, includeConfig},
 	}
 	if foldsCase {
 		cases = append(cases,
 			aliasCase{"~/.GITCONFIG", "Write", map[string]string{"file_path": filepath.Join(h, ".GITCONFIG"), "content": "x = !sh\n"}, shellAlias},
-			aliasCase{".GIT/CONFIG", "Write", map[string]string{"file_path": filepath.Join(h, "r", ".GIT", "CONFIG"), "content": "x = !sh\n"}, shellAlias})
+			aliasCase{".GIT/CONFIG", "Write", map[string]string{"file_path": filepath.Join(h, "r", ".GIT", "CONFIG"), "content": "x = !sh\n"}, shellAlias},
+			// Folds the volume makes beyond ASCII case, in a directory's
+			// name as in the file's: K (U+212A) is k, ſ (U+017F) is s.
+			aliasCase{"~/.config/GIT/conﬁg", "Write", map[string]string{"file_path": filepath.Join(h, ".config", "GIT", "conﬁg"), "content": include}, includeConfig},
+			aliasCase{"config.worKtree", "Write", map[string]string{"file_path": filepath.Join(repo, ".git", "config.worKtree"), "content": include}, includeConfig},
+			aliasCase{"worktreeſ/w/config.worktree", "Write", map[string]string{"file_path": filepath.Join(repo, ".git", "worktreeſ", "w", "config.worktree"), "content": include}, includeConfig},
+			aliasCase{"worKtrees/w/conﬁg.worktree", "Write", map[string]string{"file_path": filepath.Join(repo, ".GIT", "worKtrees", "w", "conﬁg.worktree"), "content": include}, includeConfig})
 	}
 	for _, c := range cases {
 		data, _ := json.Marshal(c.input)
 		if reason := check(c.tool, data, baseline, h); reason != c.want {
 			t.Errorf("%s: reason %q, want %q", c.name, reason, c.want)
+		}
+	}
+	// A hard link outside the repository, written from a session in one of
+	// its linked worktrees, is the config it links to.
+	real := filepath.Join(h, "real")
+	gitIn(t, h, "init", "-q", "-b", "main", real)
+	gitIn(t, real, "commit", "-q", "--allow-empty", "-m", "x")
+	linked := filepath.Join(h, "linked")
+	gitIn(t, real, "worktree", "add", "-q", linked)
+	worktreeConfig := filepath.Join(real, ".git", "worktrees", "linked", "config.worktree")
+	os.WriteFile(worktreeConfig, []byte("[core]\n"), 0o644)
+	for _, target := range []string{filepath.Join(real, ".git", "config"), worktreeConfig} {
+		copied := filepath.Join(h, "work", "copy-of-"+filepath.Base(target))
+		os.Link(target, copied)
+		data, _ := json.Marshal(map[string]string{"file_path": copied, "content": include})
+		if reason := check("Write", data, baseline, linked); reason != includeConfig {
+			t.Errorf("a hard link to %s: reason %q", target, reason)
 		}
 	}
 	for command, want := range map[string]string{
@@ -1448,6 +1482,8 @@ func TestGitConfigAlias(t *testing.T) {
 		"install -m 644 x.inc ~/.config/git/config":   gitConfigShell,
 		"rsync x.inc ~/.config/git/config":            gitConfigShell,
 		"dd if=x.inc of=.git/config":                  gitConfigShell,
+		"cp x.inc ~/.config/git/conﬁg":                gitConfigShell,
+		"cp x.inc r/.git/worktrees/w/conﬁg.worktree":  gitConfigShell,
 		"cat ~/.gitconfig":                            "",
 		"cp ~/.gitconfig /tmp/copy":                   "",
 		"echo x > notes.txt":                          "",
