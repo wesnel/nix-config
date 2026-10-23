@@ -667,6 +667,116 @@
           touch $out
         '';
 
+      # Every skill the skills, agent files, AGENTS.md files and README name
+      # ("the `NAME` skill", "the `A` and `B` skills"), and every one an
+      # agent file's `skills:` lists, is one the ngrok Mac installs: Claude
+      # Code skips a missing preload with only a debug-log warning. Each
+      # principle skill, a directory under
+      # modules/home-manager/llm/skills/principles, has one home: another
+      # skill, an agent file or AGENTS.md names it, and no sentence or clause
+      # of eight or more words of it appears in another skill under
+      # modules/home-manager/llm or in its AGENTS.md.
+      checks.skill-names = let
+        ngrok = darwinSystems.ngrok;
+        skills = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username}.wgn.home.llm.skills;
+        src = pkgs.lib.fileset.toSource {
+          root = ./.;
+          fileset = pkgs.lib.fileset.unions [
+            ./AGENTS.md
+            ./README.md
+            ./modules/home-manager/llm
+            ./modules/home-manager/claude/agents
+            ./modules/home-manager/claude/agent-plans
+          ];
+        };
+      in
+        pkgs.runCommand "skill-names" {
+          nativeBuildInputs = [pkgs.perl];
+          # claude/default.nix writes questions and agent-plans itself.
+          defined = toString (builtins.attrNames skills ++ ["questions" "agent-plans"]);
+          principles = toString (builtins.attrNames (import ./modules/home-manager/llm/principles.nix));
+        } ''
+          cd ${src}
+          perl - <<'PERL'
+          use strict;
+          use warnings;
+          use File::Find;
+
+          my %defined = map { $_ => 1 } split ' ', $ENV{defined};
+          my @principles = split ' ', $ENV{principles};
+          my $dir = 'modules/home-manager/llm/skills/principles';
+          my %text;
+          find({no_chdir => 1, wanted => sub {
+            return unless /\.md\z/;
+            open my $fh, '<', $_ or die "$_: $!";
+            local $/;
+            (my $f = $_) =~ s{^\./}{};
+            $text{$f} = <$fh>;
+          }}, '.');
+
+          my $n = qr/[A-Za-z][A-Za-z0-9_:-]*/;
+          my $sep = qr/,\s+(?:and\s+|or\s+)?|\s+(?:and|or)\s+/;
+          my (%named, %listed);
+          for my $f (sort keys %text) {
+            my $t = $text{$f};
+            while ($t =~ /((?:`$n`$sep)*`$n`)\s+skills?\b/g) {
+              $named{$_}{$f} = 1 for $1 =~ /`($n)`/g;
+            }
+            if ($f =~ m{^modules/home-manager/claude/agents/} && $t =~ /\A---\n(.*?)\n---\n/s) {
+              my $front = $1;
+              if ($front =~ /^skills:\n((?:  - .*(?:\n|\z))*)/m) {
+                $listed{$_}{$f} = 1 for $1 =~ /^  - (\S+)/mg;
+              }
+            }
+          }
+
+          my $failed = 0;
+          sub fail { print STDERR @_, "\n"; $failed = 1 }
+          sub files { join ' ', sort keys %{$_[0]} }
+
+          for my $name (sort keys %named) {
+            fail "no skill $name is defined, but ", files($named{$name}), " name it"
+              unless $defined{$name};
+          }
+          for my $name (sort keys %listed) {
+            fail "no skill $name is defined, but the skills: list of ", files($listed{$name}), " names it"
+              unless $defined{$name};
+          }
+
+          for my $p (@principles) {
+            my $own = "$dir/$p/SKILL.md";
+            my @by = grep { $_ ne $own } (keys %{$named{$p} // {}}, keys %{$listed{$p} // {}});
+            fail "the principle $p is named by no skill, agent file or AGENTS.md" unless @by;
+          }
+
+          # Whitespace and bold markers aside; each list item and heading
+          # starts a sentence of its own.
+          sub body { my $t = shift; $t =~ s/\A---\n.*?\n---\n//s; $t }
+          sub flat { my $t = shift; $t =~ s/\*\*//g; $t =~ s/\s+/ /g; $t }
+          my %homes = map { $_ => flat(body($text{$_})) }
+            grep { m{^modules/home-manager/llm/skills/.*SKILL\.md\z} || $_ eq 'modules/home-manager/llm/AGENTS.md' }
+            keys %text;
+          for my $p (@principles) {
+            my $own = "$dir/$p/SKILL.md";
+            my $body = body($text{$own});
+            $body =~ s/^#.*$//mg;
+            $body =~ s/^\s*(?:[-*]|\d+\.)\s+/\n\n/mg;
+            for my $para (split /\n\s*\n/, $body) {
+              for my $s (split /(?<=[.!?;:])\s+/, flat($para)) {
+                $s =~ s/^\s+|[\s.!?;:]+\z//g;
+                next if (() = $s =~ /\S+/g) < 8;
+                for my $f (sort keys %homes) {
+                  fail "$own and $f both hold: $s"
+                    if $f ne $own && index($homes{$f}, $s) >= 0;
+                }
+              }
+            }
+          }
+          exit $failed;
+          PERL
+          touch $out
+        '';
+
       # The Claude Code settings the ngrok Mac's home configuration writes
       # hold the permission rules beside the guard: bypass mode off; for
       # every server mcp.json lists, each read allowed and each confirm
