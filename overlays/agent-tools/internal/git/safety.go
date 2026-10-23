@@ -1,8 +1,10 @@
 package git
 
 import (
+	"context"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
@@ -34,14 +36,31 @@ var programKeys = regexp.MustCompile(`^(` + strings.Join([]string{
 	`protocol\..*`,
 }, "|") + `)$`)
 
+// ConfigTimeout bounds CheckConfig's git, which a FIFO in the repository
+// can keep waiting: git reads the config files, and from 2.56 the
+// alternates file, to list the config.
+var ConfigTimeout = 10 * time.Second
+
 // CheckConfig refuses to run git in dir (the process's directory when empty)
-// if the repository's own or the worktree's config names a program.
+// if the repository's own or the worktree's config names a program, or if
+// git cannot list that config within ConfigTimeout.
 func CheckConfig(dir string) error {
 	args := []string{"config", "--list", "--show-scope", "--name-only"}
+	where := dir
 	if dir != "" {
 		args = append([]string{"-C", dir}, args...)
+	} else if where = Dir; where == "" {
+		where = "the current directory"
 	}
-	out, err := Run(args...)
+	ctx, cancel := context.WithTimeout(context.Background(), ConfigTimeout)
+	defer cancel()
+	raw, err := BytesContext(ctx, nil, args...)
+	if ctx.Err() != nil {
+		return refusal.New("git took over %v to list the config of the repository at %s, so it is refused unchecked: "+
+			"something there, such as a FIFO in its .git, keeps git waiting; stop, and hand the operator this message",
+			ConfigTimeout, where)
+	}
+	out := strings.TrimSpace(string(raw))
 	if err != nil {
 		// Outside a repository there is nothing to check.
 		return nil
