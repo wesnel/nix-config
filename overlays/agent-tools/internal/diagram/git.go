@@ -29,7 +29,7 @@ type TimedRepo struct {
 }
 
 func (g TimedRepo) git(args ...string) ([]byte, error) {
-	return git.BytesContext(g.Ctx, append([]string{"-C", g.Dir}, args...)...)
+	return git.BytesContext(g.Ctx, nil, append([]string{"-C", g.Dir}, args...)...)
 }
 
 // Blob is path's content at rev, refused past MaxBlob before it is read.

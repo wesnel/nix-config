@@ -292,9 +292,9 @@
     "allow": ["git config user.name"]
   },
   {
-    "why": "Publishing private history in a public repository is the operator's decision.",
+    "why": "Publishing unsigned commits, or private history in a public repository, is the operator's decision.",
     "scope": "baseline",
-    "deny": ["git config push-guard.allowPublic ngrok/ngrok", "git -c push-guard.allowpublic=o/r push"],
+    "deny": ["git config push-guard.allowPublic ngrok/ngrok", "git -c push-guard.allowpublic=o/r push", "git -c push-guard.allowUnsigned=true push"],
     "allow": ["git config --get user.email", "grep -rn 'push-guard[.]allowPublic' README.md"]
   },
   {

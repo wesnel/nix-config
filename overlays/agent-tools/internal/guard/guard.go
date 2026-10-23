@@ -682,7 +682,7 @@ var (
 	bangValue = regexp.MustCompile(`=[\s"\\]*!`)
 )
 
-const pushGuard = "Publishing private history in a public repository is the operator's decision. Leave push-guard.* alone, and name the repository and the commits in the report for the operator."
+const pushGuard = "Publishing unsigned commits, or private history in a public repository, is the operator's decision. Leave push-guard.* alone, and name the repository and the commits in the report for the operator."
 
 // reviewerReads are the pr-loop commands a reviewer may run, besides
 // `wait ci`.
