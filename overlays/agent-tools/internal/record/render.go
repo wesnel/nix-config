@@ -35,10 +35,10 @@ func (w *writer) line(s string) { w.lines = append(w.lines, s) }
 func (w *writer) props(pairs ...string) {
 	w.line(":PROPERTIES:")
 	for i := 0; i < len(pairs); i += 2 {
-		if pairs[i+1] == "" {
+		if pairs[i+1] == "" { //nolint:gosec // every caller, all in this file, passes keys and values in pairs
 			w.line(":" + pairs[i] + ":")
 		} else {
-			w.line(":" + pairs[i] + ": " + pairs[i+1])
+			w.line(":" + pairs[i] + ": " + pairs[i+1]) //nolint:gosec // as above
 		}
 	}
 	w.line(":END:")

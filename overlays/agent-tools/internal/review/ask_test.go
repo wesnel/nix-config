@@ -3,10 +3,12 @@ package review
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
@@ -85,6 +87,31 @@ func TestAsk(t *testing.T) {
 		f.checkCleanedUp(t)
 	})
 
+	// Codex is sent a named file as it was when named checked it: one
+	// swapped afterwards for a link to a file elsewhere sends nothing from
+	// elsewhere.
+	t.Run("a file swapped for a link after the check", func(t *testing.T) {
+		f := askFixture(t, true)
+		t.Setenv("FAKE_CODEX", "answer")
+		t.Setenv("FAKE_CODEX_COPY", "code.txt")
+		top := run(t, f.repo, "git", "rev-parse", "--show-toplevel")
+		files, err := named(top, []string{"code.txt"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		secret := filepath.Join(t.TempDir(), "secret")
+		os.WriteFile(secret, []byte("hunter2\n"), 0o600)
+		os.Remove(filepath.Join(f.repo, "code.txt"))
+		if err := os.Symlink(secret, filepath.Join(f.repo, "code.txt")); err != nil {
+			t.Fatal(err)
+		}
+		askIn(t.Context(), top, "Which way?", files, "codex", reviewerTypes["codex"], "", time.Minute, io.Discard)
+		if sent, _ := os.ReadFile(filepath.Join(f.log, "copy")); strings.Contains(string(sent), "hunter2") {
+			t.Errorf("Codex was sent the file the link leads to: %q", sent)
+		}
+		f.checkCleanedUp(t)
+	})
+
 	t.Run("Codex unavailable", func(t *testing.T) {
 		f := askFixture(t, false)
 		code, _, stderr := askCodex(t, "--question", ".git/question.md", "code.txt")
@@ -156,6 +183,23 @@ func TestAsk(t *testing.T) {
 				os.Symlink(filepath.Join(secrets, "token"), filepath.Join(scratch, "q.md"))
 				return filepath.Join(scratch, "q.md")
 			}, false},
+			// A hard link is a name of the file's own, so the path
+			// the kernel gives for it is the link's.
+			{"a hard link in the repository to a file elsewhere", func(t *testing.T, f *fixture, _, _ string) string {
+				q := filepath.Join(t.TempDir(), "q.md")
+				os.WriteFile(q, []byte("Which way?\n"), 0o644)
+				if err := os.Link(q, filepath.Join(f.repo, ".git", "link.md")); err != nil {
+					t.Fatal(err)
+				}
+				return ".git/link.md"
+			}, false},
+			{"a hard link in the scratch area to a credential", func(t *testing.T, _ *fixture, scratch, secrets string) string {
+				os.WriteFile(filepath.Join(secrets, "token"), []byte("hunter2\n"), 0o600)
+				if err := os.Link(filepath.Join(secrets, "token"), filepath.Join(scratch, "q.md")); err != nil {
+					t.Fatal(err)
+				}
+				return filepath.Join(scratch, "q.md")
+			}, false},
 		} {
 			t.Run(c.name, func(t *testing.T) {
 				f := askFixture(t, true)
@@ -184,6 +228,25 @@ func TestAsk(t *testing.T) {
 				f.checkCleanedUp(t)
 			})
 		}
+	})
+
+	t.Run("refused/a hard link to a file elsewhere", func(t *testing.T) {
+		f := askFixture(t, true)
+		t.Setenv("FAKE_CODEX", "answer")
+		secret := filepath.Join(t.TempDir(), "secret")
+		os.WriteFile(secret, []byte("hunter2\n"), 0o600)
+		if err := os.Link(secret, filepath.Join(f.repo, "linked.txt")); err != nil {
+			t.Fatal(err)
+		}
+		code, _, stderr := askCodex(t, "--question", ".git/question.md", "linked.txt")
+		reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-delegate:refused: ")
+		if code != 2 || !refusal.SaysInstead(reason) {
+			t.Errorf("exit %d, %q", code, stderr)
+		}
+		if _, err := os.Stat(filepath.Join(f.log, "prompt")); err == nil {
+			t.Error("Codex ran")
+		}
+		f.checkCleanedUp(t)
 	})
 
 	for name, args := range map[string][]string{

@@ -375,7 +375,7 @@ func (c Config) Init() (Ready, error) {
 	if r.Cloned, r.Note, err = c.clone(); err != nil {
 		return r, err
 	}
-	if err := os.MkdirAll(c.Dir, 0o755); err != nil {
+	if err := os.MkdirAll(c.Dir, 0o755); err != nil { //nolint:gosec // the plans: notes on the work, synced through git
 		return r, err
 	}
 	err = writeNew(filepath.Join(c.Dir, ".gitignore"), ignore)

@@ -28,7 +28,7 @@ const (
 	historyLoss  = "This deletes history git cannot get back, which is the operator's call. Leave it, and put the command in your report for the operator."
 	sharedStash  = "Every worktree of a repository shares one stash, so this can discard another worktree's stashed work. Leave the stash as it is, and put the command in your report for the operator."
 	sharedConfig = "This setting is shared by every worktree and changes how git runs for the operator too. Put the `git config` command in your report for the operator; a worktree's own setting takes `git config --worktree`."
-	secretRead   = "This reads a credential, which stays out of the session. Use the tool that holds it (`gh`, `pr-loop`, `git`), or ask the operator for what you need from it."
+	secretRead   = "This reads a credential, which stays out of the session. Use the tool that holds it (`gh`, `pr-loop`, `git`), or ask the operator for what you need from it." //nolint:gosec // a refusal message, not a credential
 	ngrokWrite   = "ngrok API writes reach production. Use a list or get command, or hand the operator the command."
 	systemSwitch = "Activating a system or profile is the operator's step. Build it with `nix build` or `darwin-rebuild build`, and hand the operator the switch command."
 	rootCommand  = "Anything needing root is the operator's to run. Put the command in your report for the operator, and say its result is unverified."

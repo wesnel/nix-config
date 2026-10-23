@@ -45,10 +45,10 @@ func checkFixups(branch string, original, now []Commit) error {
 			"needs a commit of its own", branch)
 	}
 	for i := range kept {
-		if kept[i] != original[i] {
+		if kept[i] != original[i] { //nolint:gosec // kept and original have the same length, checked above
 			return refuse("%s's commit %q no longer matches %q on GitHub, and a push never rewrites a ready PR's own "+
 				"commits; put the branch back as GitHub has it and commit the change as `git commit --fixup=<commit>`",
-				branch, subject(kept[i].Message), subject(original[i].Message))
+				branch, subject(kept[i].Message), subject(original[i].Message)) //nolint:gosec // as above
 		}
 	}
 	return nil

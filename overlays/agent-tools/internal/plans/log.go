@@ -304,7 +304,7 @@ type lockedPlan struct {
 // belongs to an open file description, so a nested withLock waits for
 // itself.
 func (p Plan) withLock(fn func(l *lockedPlan) error) error {
-	lock, err := os.OpenFile(p.log()+".lock", os.O_RDWR|os.O_CREATE, 0o644)
+	lock, err := os.OpenFile(p.log()+".lock", os.O_RDWR|os.O_CREATE, 0o644) //nolint:gosec // an empty lock file
 	if err != nil {
 		return err
 	}
@@ -401,7 +401,7 @@ func (l *lockedPlan) appendWith(build func(current []byte, recorded string) (str
 	if err != nil && !errors.Is(err, io.EOF) {
 		return err
 	}
-	log, err := os.OpenFile(l.p.log(), os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644)
+	log, err := os.OpenFile(l.p.log(), os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644) //nolint:gosec // a plan: notes on the work, synced through git
 	if err != nil {
 		return err
 	}

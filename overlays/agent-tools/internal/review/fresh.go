@@ -196,7 +196,7 @@ type CodexReply struct {
 func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 	dir := filepath.Dir(c.Checkout)
 	schema, reply := filepath.Join(dir, "reply.schema.json"), filepath.Join(dir, "reply.json")
-	if err := os.WriteFile(schema, c.Schema, 0o644); err != nil {
+	if err := os.WriteFile(schema, c.Schema, 0o644); err != nil { //nolint:gosec // a JSON schema compiled into this program
 		return nil, err
 	}
 	run := c.Git

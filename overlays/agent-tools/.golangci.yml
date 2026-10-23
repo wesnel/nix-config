@@ -1,0 +1,48 @@
+# Read by checks.agent-tools-lint in the flake. A finding that does not apply
+# is annotated where it is found, `//nolint:gosec // <why it does not apply>`;
+# nolintlint refuses an annotation without a reason or a rule.
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - gosec
+    - nolintlint
+
+  settings:
+    gosec:
+      excludes:
+        # Unchecked errors are errcheck's concern, not a security finding:
+        # best-effort cleanup ignores them on purpose.
+        - G104
+        # These are CLIs that run git, gh and ssh with arguments their caller
+        # names. Where an agent is the caller, the guard decides what it may
+        # name.
+        - G204
+        # A file read here is one the caller names, read with the caller's
+        # own rights, or one these tools keep. Where a file must be confined,
+        # as git delegate ask confines its files to the repository, the check
+        # is made on the file opened, never on a name opened again later.
+        - G304
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+  exclusions:
+    rules:
+      # Tests write to t.TempDir and run what they built themselves.
+      - path: _test\.go
+        linters:
+          - gosec
+      # Modes of the PR fetch's directories and files under pr-review's
+      # cache, which whatever reads the review must be able to read.
+      # Elsewhere each mode is annotated with why others may read it.
+      - path: internal/review/(prsource|source)\.go
+        text: "^G30[126]:"
+        linters:
+          - gosec
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  uniq-by-line: false
