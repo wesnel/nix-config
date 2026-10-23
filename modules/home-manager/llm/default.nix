@@ -18,6 +18,9 @@ with lib; let
       repo = cfg.plans.repository.path;
       sshConfig = "${config.xdg.configHome}/agent-tools/notes-ssh-config";
       key = notesKey;
+      # The playbooks skill's, which a file of the same name in the
+      # repository's templates overrides.
+      templates = "${./skills/playbooks/templates}";
     };
     guard = {
       inherit (cfg.guard) credentialPaths;
@@ -608,6 +611,9 @@ in {
           coordinate-subagents = ./skills/coordinate-subagents/SKILL.md;
           diagnose-failure = ./skills/diagnose-failure/SKILL.md;
           retro = ./skills/retro/SKILL.md;
+          # A directory, so the agent reading it can read the templates
+          # plans.templates gives agent-plan.
+          playbooks = ./skills/playbooks;
           # A directory for agents/openai.yaml, which keeps Codex from
           # invoking it unasked, as disable-model-invocation does in Claude
           # Code.
