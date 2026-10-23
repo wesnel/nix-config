@@ -4,6 +4,8 @@ description: Walks the operator through a change to review, as chunks in the ord
 model: opus
 effort: high
 tools: Read, Bash, StructuredOutput
+skills:
+  - minimize-reader-load
 hooks:
   PreToolUse:
     - matcher: "*"

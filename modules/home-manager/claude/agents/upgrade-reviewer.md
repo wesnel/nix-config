@@ -4,6 +4,8 @@ description: Reviews a change's dependency bumps against the upstream changes ga
 model: opus
 effort: high
 tools: Read, Bash, StructuredOutput
+skills:
+  - claims-not-facts
 hooks:
   PreToolUse:
     - matcher: "*"
