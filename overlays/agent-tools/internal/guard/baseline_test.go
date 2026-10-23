@@ -1505,6 +1505,45 @@ func TestGitConfigAlias(t *testing.T) {
 	}
 }
 
+// A file tool leaves a repository's shared config to the operator however
+// the file is reached: by a name the volume folds onto it, a link, or a
+// hard link, from a session in a linked worktree. A worktree's own
+// config.worktree stays the session's.
+func TestSharedConfigFile(t *testing.T) {
+	h := fakeHome(t)
+	repo := filepath.Join(h, "repo")
+	gitIn(t, h, "init", "-q", "-b", "main", repo)
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "x")
+	linked := filepath.Join(h, "linked")
+	gitIn(t, repo, "worktree", "add", "-q", linked)
+	config := filepath.Join(repo, ".git", "config")
+	link := filepath.Join(h, "link")
+	os.Symlink(config, link)
+	hard := filepath.Join(h, "copy")
+	os.Link(config, hard)
+	cases := map[string]string{
+		"the config":           config,
+		"a name outside ASCII": filepath.Join(repo, ".git", "conﬁg"),
+		"a symlink":            link,
+		"a hard link":          hard,
+	}
+	if foldsCase {
+		cases["CONFIG"] = filepath.Join(repo, ".git", "CONFIG")
+		cases[".GIT/config"] = filepath.Join(repo, ".GIT", "config")
+	}
+	for name, path := range cases {
+		data, _ := json.Marshal(map[string]string{"file_path": path, "content": "[core]\n\thooksPath = /tmp/h\n"})
+		if reason := check("Write", data, baseline, linked); reason != sharedConfig {
+			t.Errorf("%s: reason %q", name, reason)
+		}
+	}
+	own := filepath.Join(repo, ".git", "worktrees", "linked", "config.worktree")
+	data, _ := json.Marshal(map[string]string{"file_path": own, "content": "[core]\n\thooksPath = /tmp/h\n"})
+	if reason := check("Write", data, baseline, linked); reason != "" {
+		t.Errorf("the worktree's own config.worktree: reason %q", reason)
+	}
+}
+
 // TestGuardConfig covers agent-tools' config, which holds the guard's
 // credential list: its directory under the XDG config directory, and the
 // file AGENT_TOOLS_CONFIG names.

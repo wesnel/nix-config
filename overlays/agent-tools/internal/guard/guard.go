@@ -661,6 +661,31 @@ func gitConfigFile(path, dir string) bool {
 	return false
 }
 
+// sharedConfigFile reports whether path, written from a session in dir, is
+// a repository's config, which every worktree shares: the config of a git
+// directory gitDirsFor finds, as Reaches judges it by file identity, or,
+// for a file not there yet, config or a name outside ASCII in a .git
+// directory, as written or with its links resolved, in any case where
+// names fold it.
+func sharedConfigFile(path, dir string) bool {
+	if filepath.IsAbs(path) {
+		for _, g := range gitDirsFor(path, dir) {
+			if Reaches(path, filepath.Join(g, "config"), false) {
+				return true
+			}
+		}
+	}
+	for _, p := range []string{filepath.Clean(path), physical(path)} {
+		if foldsCase {
+			p = strings.ToLower(p)
+		}
+		if base := filepath.Base(p); (base == "config" || !ascii(base)) && filepath.Base(filepath.Dir(p)) == ".git" {
+			return true
+		}
+	}
+	return false
+}
+
 // gitDirsFor are the git directories whose config files path, absolute and
 // written from a session in dir, may be: the .git directory of each
 // directory above it, with its links resolved, and, where path is a hard
