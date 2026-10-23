@@ -1849,7 +1849,7 @@ func gitConfigShellWrite(name string, args, redirected []string, dir string) boo
 		}
 	}
 	for _, t := range targets {
-		if !strings.HasPrefix(t, "&") && !strings.HasPrefix(t, "-") && gitConfigFile(expandPath(t, dir)) {
+		if !strings.HasPrefix(t, "&") && !strings.HasPrefix(t, "-") && gitConfigFile(expandPath(t, dir), dir) {
 			return true
 		}
 	}
@@ -2040,11 +2040,11 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 		if planFile(path) {
 			return planWrite
 		}
-		if reason := gitConfigAlias(path, c.text); reason != "" {
+		if reason := gitConfigAlias(path, dir, c.text); reason != "" {
 			return reason
 		}
 		switch {
-		case filepath.Base(path) == "config" && filepath.Base(filepath.Dir(path)) == ".git":
+		case sharedConfigFile(path, dir):
 			return sharedConfig
 		case strings.HasSuffix(path, ".codex/hooks.json") && guardFile(path), agentToolsConfig(path):
 			return guardOff
