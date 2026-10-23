@@ -126,10 +126,23 @@ unsigned first and refuses before any touch if it would conflict. If nothing is
 squashed, it refuses when a commit's files, author or message would change. If
 any of the three kinds is squashed, it refuses when the remaining commits or the
 files at the tip would differ from that, and it reports any branch lower in the stack that
-gained a fix. It needs one touch per remaining commit, plus one for each push
-URL. At a missed touch in a terminal, it asks to retry that step; if it stops
-there, it prints the exact command that resumes, and the unsigned branch is
-kept under `refs/sign-pass/backup/`.
+gained a fix. It needs one touch per commit in the range, folds included,
+since git signs each step of a squash, plus one for each push URL. At a
+missed touch in a terminal, it asks to retry that step. With no
+terminal (an agent's run, or a `!` run) it retries once by itself, after a
+wait and under a timeout, because one missed touch locks the key and the next
+request then waits on pinentry without end. If it stops, it prints the exact
+commands that carry on, which `--resume` only reports, never changing a
+rebase in progress, and the unsigned branch is kept under
+`refs/sign-pass/backup/`. After a stop that mentions pinentry, the operator
+unlocks the key before the resume.
+
+Run in a session or with `!`, where standard output is not a terminal, it
+prints brief output: one line of what it will sign, a line to touch the key,
+a progress line every 25 signatures, one line per push and the JSON summary,
+with git's own output only when a command fails (`--no-brief` brings it
+back). The operator's `!` run in the session is fine: its output will not
+flood the context.
 
 Aim a fixup at the commit that introduced the code. If a later commit changed
 the same lines, aim it there instead, or the squash will conflict. To change

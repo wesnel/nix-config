@@ -107,7 +107,7 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 
 	pl := &plan{Key: named[0], Push: push, SetUpstream: setUpstream, Results: map[string]any{}}
 	var lines, moving []string
-	touches := 0
+	touches, commits, pushBranches, pushURLs := 0, 0, 0, 0
 	for _, t := range tips {
 		s := step{Branch: t, From: -1, tip: before[t]}
 		b := base
@@ -169,7 +169,8 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 				}
 			}
 		}
-		touches += signs
+		touches += signatures(s.from, s.tip)
+		commits += signs
 		moving = append(append(moving, t), stacked...)
 		lines = append(lines, describe(s, pl.Steps, signs, stacked))
 		pl.Steps = append(pl.Steps, s)
@@ -183,6 +184,7 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 		if err := sshmux.Check("run the pass again"); err != nil {
 			return nil, err
 		}
+		pushBranches, pushURLs = pushShare(byRemote)
 		remotes := make([]string, 0, len(byRemote))
 		for r := range byRemote {
 			remotes = append(remotes, r)
@@ -204,7 +206,11 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 		}
 	}
 	lines = append(lines, fmt.Sprintf("key touches: up to %d", touches))
-	fmt.Fprintf(os.Stderr, "git sign-pass plan:\n  %s\n", strings.Join(lines, "\n  "))
+	if Brief {
+		announce(commits, len(moving), pushBranches, pushURLs, touches)
+	} else {
+		fmt.Fprintf(os.Stderr, "git sign-pass plan:\n  %s\n", strings.Join(lines, "\n  "))
+	}
 	pl.Results["plan"] = lines
 	return runPlan(pl)
 }

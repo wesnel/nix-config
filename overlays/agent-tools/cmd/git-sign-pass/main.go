@@ -40,8 +40,22 @@ everything that can refuse is checked before the first touch.
 
 When the key refuses a signature or an SSH login, as it does at a missed
 touch, and standard input is a terminal, it asks to retry that step: Enter
-retries, q stops. Stopped, it prints the commands that carry on, naming this
-program by its path unless it is the git-sign-pass on PATH.
+retries, q stops. With no terminal to ask (an agent, or a ` + "`!`" + ` run), it
+retries that step once by itself, after --retry-wait, in a process group of
+its own, and kills that group, git and the programs git started in it, after
+--retry-timeout, at an interrupt or a hangup, or when the pass itself is
+killed: one missed touch can lock the key, and the next request then waits
+on pinentry for its PIN without end. A killed commit is put back for
+` + "`git rebase --continue`" + `, keeping the signatures before it, unless it
+is the first. A refusal in a fold of fixup!, amend! or squash! commits, or
+a killed first commit, undoes the rebase instead, and --resume signs from
+the start; on a terminal, Enter there signs from the start at once. If the
+retry misses or is killed, it stops, and says the key may need unlocking.
+Stopped, it prints the commands that carry on, with the touches they need,
+naming this program by its path unless it is the git-sign-pass on PATH.
+--resume never changes a rebase in progress: it says whether that rebase is
+one the pass left stopped and what to run, and refuses while a git the pass
+started there may still be running.
 
   --base REF        where the branch starts (default: where it left origin's
                     default branch, or the local main or master); with
@@ -59,6 +73,17 @@ program by its path unless it is the git-sign-pass on PATH.
                     has it; refused, before any key touch, for a branch whose
                     upstream is another branch and for the remote's default
                     branch (REMOTE/HEAD, or main and master)
+  --brief           print only what it will sign, a progress line every 25
+                    signatures, one line per push and the final JSON; git's
+                    own account of the rebase and the pushes is left out
+                    unless a command fails, and then it is shown in full.
+                    The default when standard output is not a terminal, as
+                    for an agent or a ` + "`!`" + ` run
+  --no-brief        git's own output and the plan in full, as on a terminal
+  --retry-wait D   how long to wait before the automatic retry of a missed
+                    touch, so there is time to reach the key (default 10s)
+  --retry-timeout D how long the retried step may take before it is killed
+                    (default 1m)
   --notify ID       when the pass ends, signed, refused or failed, log its
                     outcome, exit status and a one-line summary in the plan
                     whose log holds sign-pass ID (from ` + "`agent-plan sign-id`" + `),
@@ -79,13 +104,18 @@ func main() {
 	push := flags.Bool("push", false, "")
 	setUpstream := flags.Bool("set-upstream", false, "")
 	notify := flags.String("notify", "", "")
+	brief := flags.Bool("brief", false, "")
+	noBrief := flags.Bool("no-brief", false, "")
+	flags.DurationVar(&signpass.RetryWait, "retry-wait", signpass.RetryWait, "")
+	flags.DurationVar(&signpass.RetryTimeout, "retry-timeout", signpass.RetryTimeout, "")
 	if code, ok := cli.Parse(flags, os.Args[1:], usage, os.Stdout, os.Stderr); !ok {
 		os.Exit(code)
 	}
-	if *resume && flags.NArg() > 1 {
+	if *resume && flags.NArg() > 1 || *brief && *noBrief {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
+	signpass.Brief = *brief || !*noBrief && !signpass.StdoutIsTerminal()
 	if *notify != "" {
 		if err := plans.CheckSignID(*notify); err != nil {
 			os.Exit(cli.Report("git-sign-pass", nil, err, 0, os.Stdout, os.Stderr))

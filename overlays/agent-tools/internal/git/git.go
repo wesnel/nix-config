@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
@@ -37,7 +38,8 @@ func command(env []string, args ...string) *exec.Cmd {
 	return commandContext(context.Background(), env, args...)
 }
 
-// commandContext is command, killed when ctx is done.
+// commandContext is command, killed when ctx is done, with the environment
+// WithEnv gave ctx added last.
 func commandContext(ctx context.Context, env []string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "git", append(append([]string{}, hardened...), args...)...)
 	cmd.Dir = Dir
@@ -45,8 +47,18 @@ func commandContext(ctx context.Context, env []string, args ...string) *exec.Cmd
 	if Dir != "" || (len(args) > 1 && args[0] == "-C" && args[1] != "") {
 		base = gitenv.Without(base)
 	}
-	cmd.Env = append(base, env...)
+	extra, _ := ctx.Value(envKey{}).([]string)
+	cmd.Env = append(append(base, env...), extra...)
 	return cmd
+}
+
+type envKey struct{}
+
+// WithEnv makes every command run under ctx get env after the caller's
+// own, so env overrides what the caller passes.
+func WithEnv(ctx context.Context, env ...string) context.Context {
+	extra, _ := ctx.Value(envKey{}).([]string)
+	return context.WithValue(ctx, envKey{}, append(append([]string{}, extra...), env...))
 }
 
 // Bytes runs git and returns its stdout.
@@ -155,18 +167,102 @@ func Attached(ctx context.Context, env []string, args ...string) int {
 	return 0
 }
 
+type treeKey struct{}
+
+// KillingTree marks ctx so that a command AttachedStderr or AttachedQuiet
+// runs under it runs in a process group of its own, which the end of ctx
+// kills whole: git and whatever git started, such as a signer waiting on a
+// locked key, which killing git alone leaves running. Use it only for a
+// command run without a terminal: the group is not the terminal's
+// foreground group, so a program in it that reads the terminal is stopped.
+func KillingTree(ctx context.Context) context.Context {
+	return context.WithValue(ctx, treeKey{}, true)
+}
+
+// bound readies cmd for the end of ctx: with a deadline or KillingTree, a
+// program git started that outlives git, holding its pipes, does not keep
+// the caller waiting; with KillingTree, the end kills that program too.
+func bound(ctx context.Context, cmd *exec.Cmd) {
+	tree := ctx.Value(treeKey{}) != nil
+	if _, ok := ctx.Deadline(); ok || tree {
+		cmd.WaitDelay = 2 * time.Second
+	}
+	if tree {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	}
+}
+
+// Started and Ended, when set, are called with the process ID of each
+// command AttachedStderr and AttachedQuiet run, once it has started and
+// once it has ended.
+var Started, Ended func(pid int)
+
+// run runs cmd, readied by bound. A command in a process group of its own
+// gets a watchdog in that group, which kills the group once this process's
+// end of a pipe closes: when cmd ends, and when this process dies, however
+// it dies, SIGKILL included, which no handler here sees.
+func run(ctx context.Context, cmd *exec.Cmd) error {
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	if Started != nil {
+		Started(cmd.Process.Pid)
+	}
+	if Ended != nil {
+		defer Ended(cmd.Process.Pid)
+	}
+	if ctx.Value(treeKey{}) == nil {
+		return cmd.Wait()
+	}
+	r, w, err := os.Pipe()
+	if err == nil {
+		dog := exec.Command("sh", "-c", "read -r line; kill -KILL 0")
+		dog.Stdin = r
+		dog.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: cmd.Process.Pid}
+		// A git that has already ended takes its group with it, and the
+		// watchdog cannot join; there is nothing left for it to kill.
+		if dog.Start() == nil {
+			defer dog.Wait()
+		}
+		r.Close()
+		defer w.Close()
+	}
+	return cmd.Wait()
+}
+
 // AttachedStderr is Attached, also returning what the command wrote to
 // stderr, which reaches this process's stderr as it is written. Git sees a
-// pipe there rather than the terminal, so it prints no progress meters.
+// pipe there rather than the terminal, so it prints no progress meters. See
+// bound for how the end of ctx ends it.
 func AttachedStderr(ctx context.Context, env []string, args ...string) (int, string) {
 	cmd := commandContext(ctx, env, args...)
+	bound(ctx, cmd)
 	var stderr bytes.Buffer
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, io.MultiWriter(os.Stderr, &stderr)
-	if err := cmd.Run(); err != nil {
+	if err := run(ctx, cmd); err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
 			return exit.ExitCode(), stderr.String()
 		}
 		return 1, stderr.String() + err.Error()
 	}
 	return 0, stderr.String()
+}
+
+// AttachedQuiet is Attached with standard output discarded and standard
+// error written to stderr alone, for a caller that decides what of it to
+// show. It returns the exit code; a failure to run git at all is written to
+// stderr too. See bound for how the end of ctx ends it.
+func AttachedQuiet(ctx context.Context, env []string, stderr io.Writer, args ...string) int {
+	cmd := commandContext(ctx, env, args...)
+	bound(ctx, cmd)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, io.Discard, stderr
+	if err := run(ctx, cmd); err != nil {
+		if exit, ok := err.(*exec.ExitError); ok {
+			return exit.ExitCode()
+		}
+		io.WriteString(stderr, err.Error())
+		return 1
+	}
+	return 0
 }

@@ -135,7 +135,8 @@ git sign-pass --push TOP1 TOP2 ...                # several stacks, wherever the
 
 `git sign-pass` re-signs from the oldest unsigned commit, or the oldest one a
 `fixup!`, `amend!` or `squash!` commit folds into, to the tip, one touch per
-commit. Branches stacked inside that range move with it. It squashes unsigned
+commit in that range, folds included, since git signs each step of a squash.
+Branches stacked inside that range move with it. It squashes unsigned
 in a scratch worktree first, so a conflicting fixup is named before any
 touch, and it refuses if a commit's files, author or message would change, or,
 when squashing, if the files at the tip would or the remaining commits would
@@ -144,8 +145,31 @@ differ from what git's autosquash should leave: an `amend!` (from
 subject included, and a `squash!` appends its body. No editor opens. Merges are refused. The unsigned
 tip is kept at `refs/sign-pass/backup/<branch>`.
 
-If it stops at a missed touch, run `git rebase --continue`, touching the key
-when it flashes, then `git sign-pass --resume`. Pass `--base REF` when the
+At a missed touch in a terminal it asks: Enter retries, `q` stops. Without
+one (an agent, or a `!` run) it retries that step once by itself after
+`--retry-wait`, in a process group of its own, and kills that group, git and
+the programs git started in it, after `--retry-timeout`, at an interrupt or
+a hangup, or when the pass itself is killed, since one missed touch locks
+the key and the next request then waits on pinentry without end. A killed
+commit is put back, keeping the signatures before it, unless it is the
+first. A refusal in a fold of `fixup!`, `amend!` or `squash!` commits, or a
+killed first commit, undoes the rebase instead, and `git sign-pass --resume`
+signs from the start. Either way it says how many touches carrying on
+needs. The automatic retry runs outside the terminal's foreground group, so
+a signer that asks for a PIN on the terminal (pinentry-tty or -curses) when
+standard input is not one cannot get it there: unlock the key first, or run
+the pass with standard input on the terminal. `--resume` never changes a
+rebase in progress: it says whether the rebase is one the pass left stopped
+and what to run, and refuses while a git the pass started may still be
+running. If it stops with a rebase in progress, run
+`git rebase --continue`, touching the key when it flashes, then
+`git sign-pass --resume`; unlock the key first if it asks for its PIN.
+
+When standard output is not a terminal (an agent's run, or a `!` run) the
+output is brief: one line of what it will sign, one telling you to touch the
+key, a progress line every 25 signatures, one line per push, and the JSON
+summary; git's own output is shown only if a command fails. `--brief` and
+`--no-brief` force either, so a `!` run in the session is fine. Pass `--base REF` when the
 branch does not start from `origin`'s default branch or the local `main` or
 `master`.
 

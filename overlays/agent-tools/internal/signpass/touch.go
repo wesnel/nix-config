@@ -3,17 +3,110 @@ package signpass
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
+	"time"
+
+	"github.com/wesnel/agent-tools/internal/git"
 )
 
 // refusedByKey matches what ssh, ssh-keygen and gpg print when the hardware
 // key refuses to sign, as it does when its touch is missed.
 var refusedByKey = regexp.MustCompile(`agent refused operation|signing failed|sign_and_send_pubkey|failed to sign the data`)
+
+// With no terminal to ask, a step the key refused is retried Retries times,
+// each after RetryWait, and the retried signature, with everything git
+// started for it, is killed after RetryTimeout. One missed touch locks the
+// key, and the next request then waits on pinentry without end, so a retry
+// must never run unbounded, and one is all a locked key allows.
+var (
+	Retries      = 1
+	RetryWait    = 10 * time.Second
+	RetryTimeout = 60 * time.Second
+)
+
+// retrier decides how a step that git ran again after the key refused it is
+// retried, counting the automatic retries of each step on its own.
+type retrier struct {
+	step    string
+	n       int
+	retried bool
+	// killed says why the last automatic retry was killed, once the function
+	// next returned with it has run, or is empty.
+	killed string
+}
+
+// next reports whether to run step again, and under which context: on a
+// terminal the operator decides (retryTouch); otherwise the retry comes
+// after RetryWait, and its context kills the command's process group at
+// RetryTimeout or when the pass is interrupted or hung up on. That group is
+// not the terminal's foreground group, so the command must stop after the
+// one step it retries. step must name the same work however often git reschedules
+// it.
+func (r *retrier) next(ctx context.Context, what, step, stderr string) (context.Context, context.CancelFunc, bool) {
+	none := func() {}
+	if !refusedByKey.MatchString(stderr) {
+		return ctx, none, false
+	}
+	if isTerminal(os.Stdin) {
+		return ctx, none, retryTouch(ctx, what, stderr)
+	}
+	if step != r.step {
+		r.step, r.n = step, 0
+	}
+	if r.n >= Retries {
+		return ctx, none, false
+	}
+	r.n++
+	r.retried = true
+	fmt.Fprintf(os.Stderr, "%s: touch the key now (retry %d of %d)\n", what, r.n, Retries)
+	select {
+	case <-time.After(RetryWait):
+	case <-ctx.Done():
+		return ctx, none, false
+	}
+	// An interrupt reaches only the terminal's foreground group, which the
+	// retry is not in, so the pass catches it and kills the retry itself; one
+	// the pass was started ignoring, as nohup ignores a hangup, it ignores.
+	var sigs []os.Signal
+	for _, s := range []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP} {
+		if !signal.Ignored(s) {
+			sigs = append(sigs, s)
+		}
+	}
+	interrupt, stop := ctx, context.CancelFunc(func() {})
+	if len(sigs) > 0 { // with none, NotifyContext would catch every signal
+		interrupt, stop = signal.NotifyContext(ctx, sigs...)
+	}
+	retry, cancel := context.WithTimeout(interrupt, RetryTimeout)
+	r.killed = ""
+	return git.KillingTree(retry), func() {
+		switch {
+		case errors.Is(retry.Err(), context.DeadlineExceeded):
+			r.killed = "did not finish within " + RetryTimeout.String()
+		case interrupt.Err() != nil:
+			r.killed = "was interrupted"
+		}
+		cancel()
+		stop()
+	}, true
+}
+
+// locked is what to add to the error of a step that failed after an automatic
+// retry.
+func (r *retrier) locked() string {
+	if !r.retried {
+		return ""
+	}
+	return "; a missed touch can lock the key, which then waits on pinentry for its PIN, so unlock it there before resuming"
+}
 
 // retryTouch reports whether to retry what the key refused, given the
 // stderr of the command that failed: only when that stderr shows the key's
