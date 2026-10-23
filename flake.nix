@@ -711,8 +711,9 @@
           touch $out
         '';
 
-      # Every skill the skills, agent files, AGENTS.md files and README name
-      # ("the `NAME` skill", "the `A` and `B` skills"), and every one an
+      # Every skill the skills, the playbooks skill's plan templates, agent
+      # files, AGENTS.md files and README name ("the `NAME` skill", "the `A`
+      # and `B` skills", "the =NAME= skill" in a template), and every one an
       # agent file's `skills:` lists, is one the ngrok Mac installs: Claude
       # Code skips a missing preload with only a debug-log warning. Each
       # principle skill, a directory under
@@ -751,7 +752,7 @@
           my $dir = 'modules/home-manager/llm/skills/principles';
           my %text;
           find({no_chdir => 1, wanted => sub {
-            return unless /\.md\z/;
+            return unless /\.md\z/ || m{/skills/playbooks/templates/[^/]+\.org\z};
             open my $fh, '<', $_ or die "$_: $!";
             local $/;
             (my $f = $_) =~ s{^\./}{};
@@ -763,8 +764,9 @@
           my (%named, %listed);
           for my $f (sort keys %text) {
             my $t = $text{$f};
-            while ($t =~ /((?:`$n`$sep)*`$n`)\s+skills?\b/g) {
-              $named{$_}{$f} = 1 for $1 =~ /`($n)`/g;
+            my $q = $f =~ /\.org\z/ ? '=' : '`';
+            while ($t =~ /((?:$q$n$q$sep)*$q$n$q)\s+skills?\b/g) {
+              $named{$_}{$f} = 1 for $1 =~ /$q($n)$q/g;
             }
             if ($f =~ m{^modules/home-manager/claude/agents/} && $t =~ /\A---\n(.*?)\n---\n/s) {
               my $front = $1;

@@ -17,7 +17,7 @@ logged as this step's evidence.
 :AFTER: S1
 :END:
 Find what bounds the number, with a profile or counters from the run, as
-AGENTS.md's "Explain a number" says, then =diagnose-failure= stages 3 and 4.
+the =explain-a-number= skill says, then =diagnose-failure= stages 3 and 4.
 Done when the profile names the code the time or memory goes to, and one
 hypothesis about why is confirmed by a probe.
 *** TODO The change

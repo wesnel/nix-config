@@ -15,7 +15,7 @@ Done when the named tests pass before any change.
 :AFTER: S1
 :END:
 Delete what the new structure makes unneeded before adding any of it, as
-the =design= skill's "Subtract first" says.
+the =subtract-first= skill says.
 Done when the deletions are committed and the named tests pass unchanged.
 *** TODO Move the callers
 :PROPERTIES:
@@ -23,7 +23,7 @@ Done when the deletions are committed and the named tests pass unchanged.
 :AFTER: S2
 :END:
 Move every caller to the new structure and delete the old one, as the
-=design= skill's "Migrate and delete" says.
+=migrate-and-delete= skill says.
 Done when =git grep= finds no caller of the old structure and the named
 tests pass unchanged.
 *** TODO Review and hand back
