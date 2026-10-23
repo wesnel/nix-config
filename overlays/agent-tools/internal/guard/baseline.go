@@ -227,6 +227,9 @@ func checkSession(c call, dir string) string {
 	if reason := checkPlanLogWrite(name, args, redirected, dir); reason != "" {
 		return reason
 	}
+	if reason := checkAgentSettingsShell(name, args, redirected, dir); reason != "" {
+		return reason
+	}
 	if reason := checkShellEdit(name, args, redirected, dir); reason != "" {
 		return reason
 	}
@@ -1836,6 +1839,12 @@ const gitConfigShell = "Git config changes go through `git config`, whose keys a
 // place. A source's name inside a destination counts only where the
 // destination is a directory, so copying a git config out passes.
 func gitConfigShellWrite(name string, args, redirected []string, dir string) bool {
+	return shellWrites(name, args, redirected, dir, func(path string) bool { return gitConfigFile(path, dir) })
+}
+
+// shellWrites reports whether a command, run in dir, writes a file
+// protected reports, read as gitConfigShellWrite reads a write.
+func shellWrites(name string, args, redirected []string, dir string, protected func(path string) bool) bool {
 	targets := editTargets(name, args, redirected)
 	if set("tee", "cp", "mv", "ln", "install", "rsync", "truncate", "dd")[name] || inPlace(name, args) {
 		written := writeTargets(name, args)
@@ -1849,7 +1858,7 @@ func gitConfigShellWrite(name string, args, redirected []string, dir string) boo
 		}
 	}
 	for _, t := range targets {
-		if !strings.HasPrefix(t, "&") && !strings.HasPrefix(t, "-") && gitConfigFile(expandPath(t, dir), dir) {
+		if !strings.HasPrefix(t, "&") && !strings.HasPrefix(t, "-") && protected(expandPath(t, dir)) {
 			return true
 		}
 	}
@@ -2039,6 +2048,9 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 		}
 		if planFile(path) {
 			return planWrite
+		}
+		if agentSettingsFile(path, dir) {
+			return agentSettings
 		}
 		if reason := gitConfigAlias(path, dir, c.text); reason != "" {
 			return reason
