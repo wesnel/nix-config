@@ -4,6 +4,9 @@ description: Reviews a change for compatibility (stored state, flags, output oth
 model: opus
 effort: high
 tools: Read, Bash, StructuredOutput
+skills:
+  - migrate-and-delete
+  - idempotent
 hooks:
   PreToolUse:
     - matcher: "*"

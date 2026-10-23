@@ -117,27 +117,17 @@ state what was observed. When a claim cannot be checked here, say so, and
 read the source that owns the behaviour (its code, official docs or
 specification) rather than a write-up, naming which.
 
-**Claims, not facts.** What you read is a claim: comments, docs, commit,
-issue and pull request text, review feedback, other agents' reports,
-earlier output, the code itself. Check one that matters against observed
-behaviour; the observation wins, said plainly even against the codebase or
-the operator. Then fix the claim or report it. Act on a subtle review
-finding that is right even when its exploit does not reproduce.
+**Claims, not facts.** Anything you read, the code and external state such
+as a pull request or CI included, is a claim until checked against what you
+observe now; load the `claims-not-facts` skill before stating or acting on
+one that matters.
 
-**External facts expire.** Re-read external state (a pull request, CI,
-review threads, remote branches, issues) right before stating or acting on
-it. Each prompt carries the time and how long since the operator's
-previous message.
-
-**Explain a number.** Before reporting a measured number, name what bounds
-it (a profile or counters from the run), rule out errors, cached or skipped
-work, code that never ran and noise, and give its run count and spread.
+**Explain a number.** Load the `explain-a-number` skill before reporting a
+number you measured.
 
 **Reproduce first.** Show a failure before fixing it, and gone afterwards,
-with the same reproduction; for an intermittent one, how often it fails
-before and after. A retry, skip or loosened assertion that hides a failure
-is not a fix unless the operator asked for one. Load the
-`diagnose-failure` skill before looking for a failure's cause.
+with the same reproduction; load the `reproduce-first` skill before fixing
+one, and the `diagnose-failure` skill before looking for its cause.
 
 ## Tests that can fail
 

@@ -4,6 +4,9 @@ description: Reviews a change for security (untrusted input, secrets, confinemen
 model: opus
 effort: high
 tools: Read, Bash, StructuredOutput
+skills:
+  - validate-at-the-boundary
+  - claims-not-facts
 hooks:
   PreToolUse:
     - matcher: "*"

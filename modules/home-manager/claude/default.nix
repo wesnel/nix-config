@@ -93,7 +93,8 @@ with lib; let
 
   # An agent file's frontmatter, as lines, and its prompt.
   agentFile = name: let
-    text = replaceStrings ["@guard@"] [(getExe' config.wgn.home.llm.agentTools "pr-loop")] (builtins.readFile (./agents + "/${name}.md"));
+    raw = builtins.readFile (./agents + "/${name}.md");
+    text = replaceStrings ["@guard@"] [(getExe' config.wgn.home.llm.agentTools "pr-loop")] raw;
     pieces = splitString "\n---\n" (removePrefix "---\n" text);
     frontmatter = splitString "\n" (head pieces);
     field = key: let
@@ -102,6 +103,18 @@ with lib; let
       if lines == []
       then null
       else removePrefix "${key}: " (head lines);
+    # The `skills:` list, one `  - NAME` line per skill, read from the file
+    # as written: a name taken from `text` carries pr-loop's store path,
+    # which an attribute name cannot.
+    skills = let
+      lines = splitString "\n" (head (splitString "\n---\n" (removePrefix "---\n" raw)));
+      start = lists.findFirstIndex (line: line == "skills:") null lines;
+      after =
+        if start == null
+        then []
+        else drop (start + 1) lines;
+    in
+      map (removePrefix "  - ") (take (lists.findFirstIndex (line: !hasPrefix "  - " line) (length after) after) after);
   in
     assert assertMsg (hasPrefix "---\n" text && length pieces > 1) "claude: ./agents/${name}.md has no frontmatter";
     assert assertMsg (field "name" == name) "claude: ./agents/${name}.md is not named ${name}";
@@ -109,22 +122,32 @@ with lib; let
     "claude: ./agents/${name}.md restricts its tools but runs no `guard --reviewer` hook";
     assert assertMsg (field "tools" == null || any (hasSuffix " onFailure: block") frontmatter)
     "claude: ./agents/${name}.md's `guard --reviewer` hook lacks `onFailure: block`, so a hook that cannot run would let the call through"; {
-      inherit field;
+      inherit field skills;
       text = text + "\n" + builtins.readFile ./agents/subagent.md + (contracts.${name} or "");
       prompt = concatStringsSep "\n---\n" (tail pieces) + "\n" + builtins.readFile ./agents/subagent.md + (contracts.${name} or "");
     };
 
   roleAgents = listToAttrs (map (name: nameValuePair ".claude/agents/${name}.md" {inherit (agentFile name) text;}) agentNames);
 
+  principles = import ../llm/principles.nix;
+  # A principle skill's text without its frontmatter.
+  principleBody = name: concatStringsSep "\n---\n" (tail (splitString "\n---\n" (removePrefix "---\n" (builtins.readFile principles.${name}))));
+
   # The reviewers git delegate runs headless, with `--agents` and this file,
-  # which outranks a reviewed project's own agents.
+  # which outranks a reviewed project's own agents. Each prompt ends with
+  # the text of the principles its agent file's `skills:` lists, so a
+  # reviewer run with `--setting-sources ""` has them whether or not it
+  # finds skills by name; the agent file installed for sub-agents keeps
+  # them as `skills:`.
   reviewAgents = pkgs.runCommand "review-agents.json" {
     nativeBuildInputs = [pkgs.jq];
     json = builtins.toJSON (genAttrs (focusReviewers ++ ["review-guide" "diagrammer"]) (name: let
       a = agentFile name;
     in {
       description = a.field "description";
-      inherit (a) prompt;
+      prompt = assert assertMsg (all (skill: principles ? ${skill}) a.skills)
+      "claude: ./agents/${name}.md lists a skill that is not a principle, which its headless prompt would leave out";
+        a.prompt + concatMapStrings (skill: "\n" + principleBody skill) a.skills;
       tools = splitString ", " (a.field "tools");
       model = a.field "model";
       hooks.PreToolUse = [

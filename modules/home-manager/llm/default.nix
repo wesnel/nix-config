@@ -623,7 +623,8 @@ in {
         }
         // optionalAttrs cfg.prLoop.enable {
           review-loop = ./skills/review-loop/SKILL.md;
-        };
+        }
+        // import ./principles.nix;
     };
   };
 
