@@ -178,7 +178,7 @@ func TestFocusCompat(t *testing.T) {
 	// run names --description too.
 	t.Run("routed without a description", func(t *testing.T) {
 		f := setUp(t, true)
-		writeConfig(t, `{"o/r": {"routes": [{"route": "compat", "paths": ["code.txt"], "why": "it is read"}]}}`)
+		writeSettings(t, f, `{"routes": [{"route": "compat", "paths": ["code.txt"], "why": "it is read"}]}`)
 		t.Setenv("FAKE_CODEX", "none")
 		// The change is a branch's, from where main stands.
 		run(t, f.repo, "git", "checkout", "-q", "-b", "feat")

@@ -154,14 +154,26 @@ func securityReply(findings ...map[string]any) map[string]any {
 	return map[string]any{"findings": findings, "unverified": []string{}, "checked": Categories}
 }
 
-// writeConfig writes agent-tools' config with repos as its repos settings
-// and the Claude Code module's delegate paths, and points the tools at it.
-func writeConfig(t *testing.T, repos string) {
+// writeConfig writes agent-tools' config with the Claude Code module's
+// delegate paths, and points the tools at it.
+func writeConfig(t *testing.T) {
 	t.Helper()
 	config := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(config, []byte(`{"repos": `+repos+`, "delegate": {"agents": "/store/review-agents.json", `+
+	os.WriteFile(config, []byte(`{"delegate": {"agents": "/store/review-agents.json", `+
 		`"settings": "/store/reviewer-settings.json"}}`), 0o644)
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
+}
+
+// writeSettings writes settings as the agent settings of f's clone.
+func writeSettings(t *testing.T, f *fixture, settings string) {
+	t.Helper()
+	file := filepath.Join(f.repo, ".git", "info", "agents.json")
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte(settings), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 type fixture struct {
@@ -194,7 +206,7 @@ func setUp(t *testing.T, withCodex bool) *fixture {
 	} {
 		t.Setenv(k, v)
 	}
-	writeConfig(t, `{}`)
+	writeConfig(t)
 	f := &fixture{repo: t.TempDir(), log: t.TempDir()}
 	t.Setenv("FAKE_CODEX_LOG", f.log)
 	t.Setenv("FAKE_CLAUDE_LOG", f.log)
@@ -573,8 +585,8 @@ func testRedCheckNotOnHost(t *testing.T) {
 			f := setUp(t, true)
 			t.Setenv("FAKE_CODEX", "none")
 			marker := filepath.Join(t.TempDir(), "ran")
-			writeConfig(t, `{"o/r": {"test": "touch `+marker+`; false", "build": "touch `+marker+`", `+
-				`"testFiles": ["*_test.txt"]}}`)
+			writeSettings(t, f, `{"test": "touch `+marker+`; false", "build": "touch `+marker+`", `+
+				`"testFiles": ["*_test.txt"]}`)
 			os.WriteFile(filepath.Join(f.repo, "code.txt"), []byte("a\nb\nc\nd\n"), 0o644)
 			os.WriteFile(filepath.Join(f.repo, "code_test.txt"), []byte("d\n"), 0o644)
 			run(t, f.repo, "git", "add", "code.txt", "code_test.txt")

@@ -1,17 +1,23 @@
-// Package repos looks up the user's settings for the GitHub repository a
-// checkout belongs to. They come from the user's agent-tools/config.json,
-// and never from the repository, which must not be able to choose what runs.
+// Package repos looks up the operator's settings for the clone a checkout
+// belongs to, which must not come from the repository: a repository that
+// could choose them would choose what runs. They are info/agents.json in
+// the clone's common git directory, which every worktree of the clone
+// shares and git never tracks, and which the guard refuses every agent's
+// write to. The operator writes the file; a clone without it has none.
+//
+// It also names the user's agent-tools config file.
 package repos
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"reflect"
-	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/git"
@@ -20,27 +26,41 @@ import (
 	"github.com/wesnel/agent-tools/internal/routes"
 )
 
-// Settings are how agents prepare, build and test one repository.
+// Settings are how agents prepare, build and test one clone, as its
+// settings file holds them: a JSON object of these keys and no others.
 type Settings struct {
-	// Repo is the owner/name the settings are keyed by; empty when none apply.
-	Repo string `json:"repo,omitempty"`
 	// Setup prepares a fresh checkout, such as generating files the
-	// repository does not commit.
+	// repository does not commit. `pr-loop setup [PATH]` runs it with sh in
+	// a worktree, inside a sandboxed session's sandbox; nothing runs it on
+	// its own.
 	Setup string `json:"setup,omitempty"`
-	// Test is the test command, run with sh at the top of a checkout.
+	// Test is the test command git red-check runs, with sh at the top of a
+	// checkout. git delegate never runs it, since it runs the reviewed
+	// commits' code.
 	Test string `json:"test,omitempty"`
-	// Build builds the tests without running them.
+	// Build builds the tests without running them, which tells red-check a
+	// test that fails to build without a change from one that fails as
+	// asserted. Without it, no commit's check exits 0.
 	Build string `json:"build,omitempty"`
 	// TestFiles are git pathspec globs (`:(glob)` magic) for test files.
 	TestFiles []string `json:"testFiles,omitempty"`
 	// Routes are rules that route this repository's changes to focused
-	// reviews beside the built-in ones, which they only add to.
+	// reviews beside the built-in ones, which they only add to. One that
+	// fails routes.Rule.Check makes the lookup refuse.
 	Routes []routes.Rule `json:"routes,omitempty"`
 	// ThreatNotes are the operator's threat notes for the security review:
-	// the notes themselves, or the absolute path, without whitespace, of a
-	// file outside the repository that holds them.
+	// what must hold, the untrusted inputs and boundaries, and what is
+	// accepted and why. They are the notes themselves, or the absolute
+	// path, without whitespace, of a file outside the repository that holds
+	// them; a file the repository holds makes the lookup refuse. Without
+	// them the security checklist alone applies.
 	ThreatNotes string `json:"threatNotes,omitempty"`
+
+	file string
 }
+
+// File is the settings file s was read from, or would be read from.
+func (s *Settings) File() string { return s.file }
 
 // notesFile reports whether threat notes name a file: an absolute path
 // with no whitespace. Notes holding any are the notes themselves.
@@ -56,8 +76,8 @@ func (s *Settings) Notes() (string, error) {
 	}
 	data, err := os.ReadFile(s.ThreatNotes)
 	if err != nil {
-		return "", refusal.New("the threat notes of %s in %s name %s, which cannot be read (%v); ask the operator to "+
-			"fix the path, or to put the notes inline", s.Repo, Path(), s.ThreatNotes, err)
+		return "", refusal.New("the threat notes in %s name %s, which cannot be read (%v); ask the operator to "+
+			"fix the path, or to put the notes inline", s.file, s.ThreatNotes, err)
 	}
 	return string(data), nil
 }
@@ -84,8 +104,8 @@ func checkNotes(s *Settings) error {
 	for _, root := range roots {
 		root = realPath(root, 0)
 		if rel, err := filepath.Rel(root, file); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
-			return refusal.New("the threat notes of %s in %s are at %s, inside its repository at %s, where a change under "+
-				"review could write them; ask the operator to keep them outside the repository, or inline", s.Repo, Path(),
+			return refusal.New("the threat notes in %s are at %s, inside its repository at %s, where a change under "+
+				"review could write them; ask the operator to keep them outside the repository, or inline", s.file,
 				s.ThreatNotes, root)
 		}
 	}
@@ -120,19 +140,7 @@ func Path() string {
 // Remotes maps each remote of the repository containing git.Dir whose fetch
 // URL is on GitHub to its owner/name.
 func Remotes() (map[string]string, error) {
-	return remotes(nil)
-}
-
-// repositoryConfig has git read only the repository's own configuration:
-// not the user's, the system's, or what `git -c` passes down, any of which
-// could rewrite a remote's URL with url.*.insteadOf.
-var repositoryConfig = []string{
-	"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_SYSTEM=/dev/null",
-	"GIT_CONFIG_COUNT=0", "GIT_CONFIG_PARAMETERS=",
-}
-
-func remotes(env []string) (map[string]string, error) {
-	out, err := git.RunEnv(env, "remote", "-v")
+	out, err := git.Run("remote", "-v")
 	if err != nil {
 		return nil, err
 	}
@@ -149,91 +157,89 @@ func remotes(env []string) (map[string]string, error) {
 	return remotes, nil
 }
 
-// Lookup returns the settings for the repository containing git.Dir, matched
-// by the GitHub repositories its remotes fetch from, as the repository's own
-// configuration names them, without regard to case. The result is empty
-// when none are configured. Remotes that match different settings are
-// refused, since only one may apply.
+// SettingsFile is the settings file of the clone containing git.Dir, or
+// the process's directory where git.Dir is "": info/agents.json in its
+// common git directory, as git finds it there with gitenv.Location, which
+// GIT_DIR and GIT_COMMON_DIR are among, unset. Without git.Dir, the
+// environment must agree with the worktree on its git directory
+// (git.Toplevel).
+func SettingsFile() (string, error) {
+	dir := git.Dir
+	if dir == "" {
+		top, err := git.Toplevel()
+		if err != nil {
+			return "", err
+		}
+		dir = top
+	}
+	common, err := git.Run("-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(common, "info", "agents.json"), nil
+}
+
+// Lookup returns the settings of the clone containing git.Dir, from the
+// file SettingsFile names: empty where it does not exist. A file that is
+// a symbolic link, not a regular file, writable by anyone but its owner,
+// or not a JSON object of Settings' keys alone is refused, as is one whose
+// route rules or threat notes cannot be used.
 func Lookup() (*Settings, error) {
-	return lookup(func() ([]string, error) {
-		remotes, err := remotes(repositoryConfig)
-		var slugs []string
-		for _, slug := range remotes {
-			slugs = append(slugs, slug)
-		}
-		return slugs, err
-	})
-}
-
-// For returns the settings for the GitHub repository slug, owner/name,
-// matched as Lookup matches a remote: for a pull request reviewed from a
-// clone of its own, which has no remotes.
-func For(slug string) (*Settings, error) {
-	return lookup(func() ([]string, error) { return []string{slug}, nil })
-}
-
-// lookup returns the settings for the GitHub repositories slugs lists, once
-// the config is read.
-func lookup(slugs func() ([]string, error)) (*Settings, error) {
-	data, err := os.ReadFile(Path())
+	file, err := SettingsFile()
+	if err != nil {
+		return nil, err
+	}
+	s := &Settings{file: file}
+	data, err := readSettings(file)
 	if errors.Is(err, fs.ErrNotExist) {
-		return &Settings{}, nil
+		return s, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	var config struct {
-		Repos map[string]Settings `json:"repos"`
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(s); err != nil {
+		return nil, refusal.New("the agent settings %s do not read as a JSON object of setup, test, build, testFiles, "+
+			"routes and threatNotes (%v); ask the operator to fix them", file, err)
 	}
-	if err := json.Unmarshal(data, &config); err != nil {
+	for _, r := range s.Routes {
+		if err := r.Check(); err != nil {
+			return nil, refusal.New("the routes in %s: %v", file, err)
+		}
+	}
+	if err := checkNotes(s); err != nil {
 		return nil, err
 	}
-	for repo, s := range config.Repos {
-		for _, r := range s.Routes {
-			if err := r.Check(); err != nil {
-				return nil, refusal.New("%s's routes in %s: %v", repo, Path(), err)
-			}
-		}
-	}
-	wanted, err := slugs()
-	if err != nil {
-		return nil, err
-	}
-	var found []Settings
-	for _, slug := range wanted {
-		for repo, settings := range config.Repos {
-			if !strings.EqualFold(repo, slug) {
-				continue
-			}
-			settings.Repo = repo
-			if !contains(found, settings) {
-				found = append(found, settings)
-			}
-		}
-	}
-	switch len(found) {
-	case 0:
-		return &Settings{}, nil
-	case 1:
-		if err := checkNotes(&found[0]); err != nil {
-			return nil, err
-		}
-		return &found[0], nil
-	}
-	names := []string{}
-	for _, s := range found {
-		names = append(names, s.Repo)
-	}
-	sort.Strings(names)
-	return nil, refusal.New("this checkout's remotes match the settings of %v in %s, and only one may apply; "+
-		"ask the operator to keep one of them", names, Path())
+	return s, nil
 }
 
-func contains(found []Settings, s Settings) bool {
-	for _, f := range found {
-		if reflect.DeepEqual(f, s) {
-			return true
-		}
+// readSettings reads the settings file, opened without following a link,
+// refusing one that is not a regular file or that anyone but its owner may
+// write. An error wrapping fs.ErrNotExist means there is none.
+func readSettings(file string) ([]byte, error) {
+	f, err := os.OpenFile(file, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, err
+	case errors.Is(err, syscall.ELOOP):
+		return nil, refusal.New("the agent settings %s are a symbolic link, which may lead anywhere; ask the operator to "+
+			"put the file itself there", file)
+	case err != nil:
+		return nil, err
 	}
-	return false
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, refusal.New("the agent settings %s are not a regular file; ask the operator to put the file "+
+			"itself there", file)
+	}
+	if info.Mode().Perm()&0o022 != 0 {
+		return nil, refusal.New("the agent settings %s may be written by others than their owner (mode %04o); ask the "+
+			"operator to run `chmod go-w %s`", file, info.Mode().Perm(), file)
+	}
+	return io.ReadAll(io.LimitReader(f, 1<<20))
 }

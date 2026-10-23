@@ -368,9 +368,15 @@ build command for any commit to exit 0. See `git red-check -h` (git turns
 `--help` into a manual-page lookup).
 
 Settings missing from the flags come from `test`, `build` and `testFiles` in
-`wgn.home.llm.repos`, keyed by `owner/name`, never from the repository. The
-test command runs the commit's code, so run it in a sandbox when the commit
-is not trusted.
+the clone's agent settings, never from the repository. Those are a JSON
+object in `.git/info/agents.json` under the clone's common git directory
+(`git rev-parse --git-common-dir`), shared by all its worktrees and never
+tracked, with the keys `setup`, `test`, `build`, `testFiles`, `routes` and
+`threatNotes` that `internal/repos` describes. The operator writes it; the
+guard refuses every agent's write, and a clone without it has no settings,
+so `git red-check` there runs nothing until given flags. The test command
+runs the commit's code, so run it in a sandbox when the commit is not
+trusted.
 
 ## plans: one file per change, one log
 
@@ -630,8 +636,9 @@ the GitHub API, then replies and resolves. It stops when the bots are
 satisfied or the loop needs a decision, and hands back.
 
 A repository whose fresh checkouts need preparing, such as generating files
-it does not commit, gets a `setup` command in `wgn.home.llm.repos`, keyed by
-`owner/name`. `pr-loop setup [PATH]` runs it in the sandbox in a worktree,
+it does not commit, gets a `setup` command in each clone's agent settings
+(see [reviews](#reviews-fresh-eyes-and-tests-that-fail)). `pr-loop setup
+[PATH]` runs it in the sandbox in a worktree,
 printing the command and its exit status; the loop runs it in each worktree
 it makes, and nothing runs it on its own. A repository cannot name a setup
 command itself.

@@ -41,9 +41,9 @@ func setUpAdequacy(t *testing.T, verdict string) *adequacyFixture {
 	config := filepath.Join(configHome, "agent-tools", "config.json")
 	os.MkdirAll(filepath.Dir(config), 0o755)
 	os.WriteFile(config, must(json.Marshal(map[string]any{
-		"repos":    map[string]any{"o/r": map[string]any{"test": "true", "testFiles": []string{"*_test.txt"}}},
 		"delegate": map[string]any{"agents": "/store/review-agents.json", "settings": "/store/reviewer-settings.json"}})), 0o644)
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
+	writeSettings(t, f, `{"test": "true", "testFiles": ["*_test.txt"]}`)
 	// The test file the last commit adds to, so its tests start at line 2.
 	os.WriteFile(filepath.Join(f.repo, "code_test.txt"), []byte("x\n"), 0o644)
 	run(t, f.repo, "git", "add", "code_test.txt")
@@ -380,12 +380,12 @@ func TestTestAdequacy(t *testing.T) {
 	})
 
 	// Nothing in the environment the review runs in points it at settings
-	// of the caller's own: where the build bakes the config directory in, a
-	// config without the repository's test settings is not used.
+	// of the caller's own: a config of its own does not stand in for the
+	// clone's settings.
 	t.Run("not redirected by the environment", func(t *testing.T) {
 		a := setUpAdequacy(t, redcheck.PassesWithoutChange)
 		config := filepath.Join(t.TempDir(), "config.json")
-		os.WriteFile(config, must(json.Marshal(map[string]any{"repos": map[string]any{}})), 0o644)
+		os.WriteFile(config, must(json.Marshal(map[string]any{})), 0o644)
 		t.Setenv("AGENT_TOOLS_CONFIG", config)
 		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 		if f := a.raised(t); f["reviewer"] != "red-check" {

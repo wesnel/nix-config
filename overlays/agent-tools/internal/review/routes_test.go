@@ -13,7 +13,7 @@ import (
 
 // routedFixture is setUp's repository with origin/main at its first
 // commit, as github.com/o/r, a commit running a program above the change,
-// which it returns, and a config whose repos settings are settings.
+// which it returns, and settings as its agent settings.
 func routedFixture(t *testing.T, settings string) (*fixture, string) {
 	t.Helper()
 	f := setUp(t, true)
@@ -25,7 +25,7 @@ func routedFixture(t *testing.T, settings string) (*fixture, string) {
 	os.WriteFile(filepath.Join(f.repo, "later.txt"), []byte("later\n"), 0o644)
 	run(t, f.repo, "git", "add", "later.txt")
 	run(t, f.repo, "git", "commit", "-q", "-m", "Add a later note")
-	writeConfig(t, `{"o/r": `+settings+`}`)
+	writeSettings(t, f, settings)
 	return f, exec
 }
 

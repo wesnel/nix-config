@@ -38,12 +38,9 @@ type span struct {
 	own bool
 }
 
-// settings are the repos settings of r's repository: by its remotes, or
-// for a pull request's clone, which has none, by its slug.
+// settings are the agent settings of the clone r is in: for a pull
+// request, its own bare clone's.
 func (r *span) settings() (*repos.Settings, error) {
-	if r.pr != 0 {
-		return repos.For(r.slug)
-	}
 	git.Dir = r.top
 	defer func() { git.Dir = "" }()
 	return repos.Lookup()

@@ -145,12 +145,12 @@ func (r *Result) Exit() int {
 // cancelled. No ref, index or file of the caller's worktrees is touched.
 func Do(ctx context.Context, rev string, opts Options) (*Result, error) {
 	if opts.Test == "" {
-		return nil, refusal.New("no test command is configured for this repository; pass `--test CMD`, " +
-			"or ask the operator to configure one")
+		return nil, refusal.New("no test command is configured for this clone, so no test ran; pass `--test CMD`, " +
+			"or ask the operator to set \"test\" in the clone's agent settings, .git/info/agents.json")
 	}
 	if len(opts.TestFiles) == 0 {
-		return nil, refusal.New("no test file globs are configured for this repository; pass `--test-files GLOB`, " +
-			"or ask the operator to configure them")
+		return nil, refusal.New("no test file globs are configured for this clone, so no test ran; pass `--test-files GLOB`, " +
+			"or ask the operator to set \"testFiles\" in the clone's agent settings, .git/info/agents.json")
 	}
 	if opts.Log == nil {
 		opts.Log = io.Discard

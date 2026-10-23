@@ -14,19 +14,20 @@ import (
 // Setup is the command that prepares a fresh checkout of a repository, such
 // as generating files the repository does not commit.
 type Setup struct {
-	Repo    string `json:"repo"`
-	Command string `json:"command"`
+	// Settings is the clone's settings file it is taken from.
+	Settings string `json:"settings"`
+	Command  string `json:"command"`
 }
 
-// SetupCommand looks up the setup command for the repository containing the
-// current directory in the user's per-repository settings (package repos).
-// Command is empty when none is configured.
+// SetupCommand looks up the setup command for the clone containing the
+// current directory in its agent settings (package repos). Command is
+// empty when none is configured.
 func SetupCommand() (*Setup, error) {
 	s, err := repos.Lookup()
-	if err != nil || s.Setup == "" {
+	if err != nil {
 		return &Setup{}, err
 	}
-	return &Setup{Repo: s.Repo, Command: s.Setup}, nil
+	return &Setup{Settings: s.File(), Command: s.Setup}, nil
 }
 
 // SetupRun is one run of a setup command in a worktree.
