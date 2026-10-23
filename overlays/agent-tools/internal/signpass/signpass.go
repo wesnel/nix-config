@@ -883,6 +883,13 @@ func rebase(p *pending) error {
 	if code == 0 {
 		return nil
 	}
+	// Whatever kept git from writing a commit, the `git rebase --continue`
+	// this prints makes it again.
+	if rm := rebaseMerge(); !aborted && unwritten.MatchString(stderr) && exists(rm) {
+		if _, err := putBackPick(rm); err != nil {
+			return err
+		}
+	}
 	unlock := retry.locked()
 	cont, also := carryOn(p)
 	if aborted {
@@ -1018,7 +1025,7 @@ func settle(p *pending, r *retrier, code int, stderr string) (int, string, error
 
 // recoverKilled readies a rebase whose retry r killed mid-step. A pick there
 // is put back at the head of the todo list, its staged changes dropped, as
-// git does itself when the key refuses (readyRetry), so the signatures before
+// readyRetry does when the key refuses, so the signatures before
 // it stand. Anything else is undone: a step of a fold leaves state behind
 // that putting it back would fold twice, and while nothing is rewritten a
 // --continue would not sign the first commit (readyRetry).
@@ -1138,8 +1145,8 @@ func stoppedRebase(rm string, push, setUpstream bool) error {
 // whether it did: it takes out a retry's break (oneStep) and, where the step
 // is a pick outside a fold and something is rewritten already, puts the step
 // back at the head of the todo list, unless git has or had already made
-// the step's commit, and drops its staged changes, as readyRetry does
-// after git puts back a step the key refused.
+// the step's commit, and drops its staged changes, as readyRetry does for a
+// step the key refused.
 func putBack(rm string) (bool, error) {
 	if err := dropBreak(rm); err != nil {
 		return false, err
@@ -1222,17 +1229,14 @@ func dropBreak(rm string) error {
 // retry, and reports whether it did so by aborting the rebase, which it does
 // while the rebase has rewritten nothing: `git rebase --continue` does not
 // keep --force-rebase, so it would fast-forward over commits it should sign.
-// Otherwise git has put the step it could not sign back at the head of the
-// todo list, with its changes staged, where they would stop --continue; the
-// worktree was clean when the pass began, so they are the only changes
-// there, and readyRetry drops them. A refusal anywhere in a fold (inFold)
-// is undone too, with step naming where: git keeps the fold's message so
-// far outside the todo list, so a step put back folds a message in twice,
-// and the commit that ends a fold with an edited message git makes in a git
-// commit of its own, whose refusal it does not reschedule. It refuses any
-// other stop, so it never drops a step git will not redo. Otherwise step
-// names the step to retry, the same however often git stops at it, and is
-// empty on a restart.
+// Otherwise it puts the step back (putBackPick). A refusal anywhere in a
+// fold (inFold) is undone too, with step naming where: git keeps the fold's
+// message so far outside the todo list, so a step put back folds a message
+// in twice, and the commit that ends a fold with an edited message git makes
+// in a git commit of its own, whose refusal it does not reschedule. It
+// refuses any other stop, so it never drops a step that will not be redone.
+// Otherwise step names the step to retry, the same however often git stops
+// at it, and is empty on a restart.
 func readyRetry() (restart bool, step string, err error) {
 	rm, err := git.Run("rev-parse", "--path-format=absolute", "--git-path", "rebase-merge")
 	if err != nil {
@@ -1243,20 +1247,51 @@ func readyRetry() (restart bool, step string, err error) {
 		_, err := git.Run("rebase", "--abort")
 		return true, "", err
 	}
-	done, _ := os.ReadFile(filepath.Join(rm, "done"))
-	lines := strings.Split(strings.TrimSpace(string(done)), "\n")
-	todo := todoLines(rm)
-	last := lines[len(lines)-1]
-	rescheduled := last != "" && last == todo[0]
-	if rescheduled && inFold(last, todo[1:]) || !rescheduled && inFold(last, todo) {
+	last, todo, _ := stoppedAt(rm)
+	if inFold(last, todo) {
 		_, err := git.Run("rebase", "--abort")
 		return true, last, err
 	}
-	if !rescheduled {
-		return false, "", fmt.Errorf("the rebase did not reschedule the step it could not sign")
+	back, err := putBackPick(rm)
+	if err == nil && !back {
+		err = fmt.Errorf("the rebase stopped at a step it could not sign that is not a pick: %q", last)
 	}
-	_, err = git.Run("reset", "-q", "--hard")
 	return false, last, err
+}
+
+// stoppedAt is the step the rebase rm holds stopped at, the todo list after
+// it, and whether git put the step back at the head of the todo list.
+func stoppedAt(rm string) (step string, next []string, rescheduled bool) {
+	done, _ := os.ReadFile(filepath.Join(rm, "done"))
+	lines := strings.Split(strings.TrimSpace(string(done)), "\n")
+	step, next = lines[len(lines)-1], todoLines(rm)
+	if rescheduled = step != "" && step == next[0]; rescheduled {
+		next = next[1:]
+	}
+	return step, next, rescheduled
+}
+
+// putBackPick readies the rebase rm holds, stopped at a pick whose commit
+// git could not write, for `git rebase --continue` to make that commit
+// again, and reports whether it did. Git leaves the pick's changes staged,
+// where they would stop --continue: before 2.56 it puts the pick back at
+// the head of the todo list itself, and from 2.56 it stops after the pick as
+// at a conflict, so putBackPick puts it back. The worktree was clean when
+// the pass began, so the staged changes are the pick's alone, and
+// putBackPick drops them. A pick is the first step of any fold it is in, so
+// no fold has begun.
+func putBackPick(rm string) (bool, error) {
+	step, next, rescheduled := stoppedAt(rm)
+	if f := strings.Fields(step); len(f) == 0 || f[0] != "pick" && f[0] != "p" {
+		return false, nil
+	}
+	if !rescheduled {
+		if err := writeTodo(rm, append([]string{step}, next...)); err != nil {
+			return false, err
+		}
+	}
+	_, err := git.Run("reset", "-q", "--hard")
+	return err == nil, err
 }
 
 // finish verifies a pass whose rebase has ended, switches detached worktrees

@@ -519,10 +519,6 @@ func testRunWorktreeBranch(t *testing.T) {
 	}
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
 	t.Setenv("GIT_EDITOR", ":")
-	// Git reschedules the pick it could not sign, leaving its changes staged.
-	if _, err := git.Run("reset", "-q", "--hard"); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := git.Run("rebase", "--continue"); err != nil {
 		t.Fatal(err)
 	}
