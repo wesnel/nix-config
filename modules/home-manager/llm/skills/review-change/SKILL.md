@@ -191,22 +191,9 @@ each branch:
 - the same file edited on parallel branches;
 - what the plan leaves undecided, against this bar: someone could build it
   without asking a question;
-- designing for change, by the `design` skill's principles (tell the
-  sub-agent to load it) and these checks:
-  - for each value, where it comes from and what can change it, answerable
-    in thirty seconds of reading;
-  - a wrapper with one caller, or an adapter with one implementation,
-    folded into what it wraps;
-  - a second boolean kept in step with a first, which is a state machine:
-    one type with a value per state;
-  - seams named and narrow, with their contract written at the seam: the
-    types, invariants, ordering, errors, configuration and cost a caller
-    relies on;
-  - each of the goal's likely next changes a local edit;
-  - each new module worth keeping: deleting it would spread its complexity
-    across its callers rather than move it, its interface is much smaller
-    than what it hides, and following one concept does not mean hopping
-    through many small modules;
+- designing for change, by each principle the `design` skill lists (tell
+  the sub-agent to load them), and each of the goal's likely next changes
+  a local edit;
 - as judgement calls, never as rules: data clumps, primitive obsession, a
   middle man, the same switch in several places, feature envy, and one
   module changed for unrelated reasons.
@@ -214,14 +201,8 @@ each branch:
 It may read earlier plans in the same area (`agent-plan find`, or the
 plans directory) to see what kept changing there.
 
-While the plan leaves an interface undecided, design it at least three
-times before choosing: one sub-agent that only reads per design, each
-under a different constraint (the smallest interface; the commonest call
-made trivial; the most callers served; the dependency behind a port), each
-returning the interface with its contract, a call site and what it hides.
-Compare them by how much each hides and how local each likely next change
-stays, and choose as the `plan-work` skill's "Questions for the operator"
-says.
+While the plan leaves an interface undecided, load the
+`design-it-several-times` skill before choosing one.
 
 Where you and the design review disagree, or the designs leave no clear
 choice, get a second opinion from another model family before it is

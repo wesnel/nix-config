@@ -17,4 +17,8 @@ against them:
 - the `migrate-and-delete` skill;
 - the `idempotent` skill;
 - the `separate-before-serializing` skill;
-- the `validate-at-the-boundary` skill.
+- the `validate-at-the-boundary` skill;
+- the `model-the-domain` skill;
+- the `minimize-reader-load` skill;
+- the `design-it-several-times` skill, while the plan leaves an interface
+  undecided.

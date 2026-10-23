@@ -7,7 +7,9 @@ description: Use before adding an interface, a layer, an option, a hook or an ab
 
 Extend an existing seam before adding a new one, and abstract on the second
 real use, not the first. Nothing speculative: no option, layer or interface
-without a current second user.
+without a current second user. Seams are named and narrow, with their
+contract written at the seam: the types, invariants, ordering, errors,
+configuration and cost a caller relies on.
 
 **The test:** each new seam has a second caller or implementation in this
 change, and no existing seam could have carried the change.
