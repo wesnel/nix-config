@@ -602,6 +602,49 @@
           touch $out
         '';
 
+      # Every playbook template, as agent-plan's built-in templates, starts a
+      # plan: `agent-plan new --template` accepts it, its first step is ready,
+      # the plan has no structure drift, and each `:AFTER:` names a step of
+      # the same template, which agent-plan itself does not check. A failure
+      # names the template.
+      checks.plan-templates = let
+        templates = ./modules/home-manager/llm/skills/playbooks/templates;
+      in
+        pkgs.runCommand "plan-templates" {
+          nativeBuildInputs = [pkgs.gnugrep pkgs.jq (pkgs.callPackage ./overlays/agent-tools {})];
+        } ''
+          export HOME=$TMPDIR AGENT_TOOLS_CONFIG=$TMPDIR/config.json
+          jq -n --arg dir "$TMPDIR/notes/agents" --arg templates ${templates} \
+            '{plans: {dir: $dir, host: "check", templates: $templates}}' > "$AGENT_TOOLS_CONFIG"
+          failed=
+          fail() {
+            echo "plan-templates: $1: $2" >&2
+            failed=1
+          }
+          for file in ${templates}/*.org; do
+            name=$(basename "$file" .org)
+            if ! made=$(agent-plan new --title "$name" --slug "$name" --template "$name" 2>&1); then
+              fail "$name" "$made"
+              continue
+            fi
+            status=$(agent-plan status "$(jq -r .plan <<<"$made")" --format json)
+            first=$(grep -m1 -oP '^:ID: \K\S+' "$file")
+            jq -e --arg first "$first" '.readySteps | index($first)' <<<"$status" >/dev/null ||
+              fail "$name" "its first step, $first, is not ready"
+            drift=$(jq -r '.structureDrift[] | tostring' <<<"$status")
+            [ -z "$drift" ] || fail "$name" "structure drift: $drift"
+            ids=" $(grep -oP '^:ID: \K\S+' "$file" | tr '\n' ' ') "
+            for after in $(grep -oP '^:AFTER:\s*\K.*' "$file"); do
+              case "$ids" in
+                *" $after "*) ;;
+                *) fail "$name" ":AFTER: $after is not a step of it" ;;
+              esac
+            done
+          done
+          [ -z "$failed" ]
+          touch $out
+        '';
+
       # Every sub-agent type the skills, agent bodies, README and agent-tools'
       # messages name ("`NAME` agent", "`NAME` sub-agent") is one that is
       # defined, and every `pr-loop SUBCOMMAND` they name is in pr-loop's
