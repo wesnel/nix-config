@@ -19,6 +19,13 @@ skill, AGENTS.md or memory.
   `~/.claude/projects/<project>/<session>.jsonl`, Codex's
   `~/.codex/sessions/<date>/rollout-*.jsonl`): refusals, retries and
   the operator's corrections.
+- The harnesses' memory files: Claude Code's
+  `~/.claude/projects/<project>/memory/` (`MEMORY.md` and the files it
+  indexes) and, where its `memories` feature is on, Codex's
+  `~/.codex/memories/` (`MEMORY.md`, `memory_summary.md`). A lasting
+  lesson there belongs in the config at the place it constrains (a skill,
+  AGENTS.md, a check): propose that move for each, and deleting the memory
+  once the move lands.
 
 ## Each slip
 
@@ -37,6 +44,9 @@ classify it:
   either can find in a diff.
 - **Missing fact**, one the agent could not look up: propose where it
   belongs, next to what it constrains.
+
+A new rule lands with its existing violations fixed, or with a check that
+keeps them from coming back: propose one or the other with it.
 
 A repository that runs no check where one was needed, such as no tests or
 lint in CI, is itself a finding.
