@@ -47,6 +47,45 @@ func TestTemplate(t *testing.T) {
 		}
 	})
 
+	// builtIn gives c a built-in templates directory holding template
+	// release with text.
+	builtIn := func(t *testing.T, c Config, text string) Config {
+		t.Helper()
+		c.Templates = t.TempDir()
+		if err := os.WriteFile(filepath.Join(c.Templates, "release.org"), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+
+	t.Run("built in", func(t *testing.T) {
+		c := builtIn(t, testConfig(t), release)
+		made, err := c.New(NewOptions{Title: "Release 1.2", Slug: "release", Template: "release"}, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if data, _ := os.ReadFile(made.File); !strings.Contains(string(data), "*** TODO Bump the version\n") {
+			t.Errorf("plan:\n%s", data)
+		}
+	})
+
+	t.Run("the plans repository's before the built-in one", func(t *testing.T) {
+		c := builtIn(t, withTemplate(t, release), strings.ReplaceAll(release, "Bump the version", "Built in"))
+		made, err := c.New(NewOptions{Title: "Release 1.2", Slug: "release", Template: "release"}, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if data, _ := os.ReadFile(made.File); !strings.Contains(string(data), "*** TODO Bump the version\n") {
+			t.Errorf("plan:\n%s", data)
+		}
+	})
+
+	t.Run("refused/a built-in template with drift", func(t *testing.T) {
+		c := builtIn(t, testConfig(t), release+"** Follow-ups\n*** TODO Announce it\n")
+		_, err := c.New(NewOptions{Title: "T", Slug: "x", Template: "release"}, day)
+		isRefusal(t, "a built-in template with drift", err)
+	})
+
 	for what, c := range map[string][2]string{
 		"an unknown section":        {"release", release + "** Rollout\n- slowly\n"},
 		"a keyword outside steps'":  {"release", "#+TODO: TODO NEXT | DONE\n** Steps\n*** NEXT Bump it\n"},

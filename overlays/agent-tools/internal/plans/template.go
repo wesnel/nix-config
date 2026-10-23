@@ -18,22 +18,43 @@ var templateName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 // template may fill.
 var planSections = []string{"Goal", "Steps", "Distribution", "Questions", "Follow-ups", "References", "Verification"}
 
-// template reads <plans repository>/templates/<name>.org: the lines under
-// each of its level-2 headings, by heading. It refuses a section a plan
-// does not have, a heading keyword that is not a step's, since only log
-// writes the others, and anything else that would start the plan with
-// structure drift, such as an entry without its ID.
+// templateDirs are the directories a template is looked for in, first
+// found first: the plans repository's, then the built-in one.
+func (c Config) templateDirs() []string {
+	dirs := []string{filepath.Join(c.repo(), "templates")}
+	if c.Templates != "" {
+		dirs = append(dirs, c.Templates)
+	}
+	return dirs
+}
+
+// template reads <name>.org from the first of templateDirs that has it: the
+// lines under each of its level-2 headings, by heading. It refuses a
+// section a plan does not have, a heading keyword that is not a step's,
+// since only log writes the others, and anything else that would start the
+// plan with structure drift, such as an entry without its ID.
 func (c Config) template(name string) (map[string][]string, error) {
+	dirs := strings.Join(c.templateDirs(), " or ")
 	if !templateName.MatchString(name) {
-		return nil, refusal.New("%q is not a template name. Pass the base name of a file in %s, as `--template release`", name, filepath.Join(c.repo(), "templates"))
+		return nil, refusal.New("%q is not a template name. Pass the base name of a file in %s, as `--template release`", name, dirs)
 	}
-	file := filepath.Join(c.repo(), "templates", name+".org")
-	data, err := os.ReadFile(file)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, refusal.New("there is no template %s. Ask the operator to add it, or pass the base name of a file in %s", file, filepath.Dir(file))
+	var file string
+	var data []byte
+	found := false
+	for _, dir := range c.templateDirs() {
+		var err error
+		file = filepath.Join(dir, name+".org")
+		data, err = os.ReadFile(file)
+		if err == nil {
+			found = true
+			break
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return nil, err
+		}
 	}
-	if err != nil {
-		return nil, err
+	if !found {
+		return nil, refusal.New("there is no template %s.org in %s. Ask the operator to add it, or pass the base name of a file there", name, dirs)
 	}
 	text := strings.TrimRight(string(data), "\n")
 	steps := fileKeywords("#+TODO: " + stepSequence)

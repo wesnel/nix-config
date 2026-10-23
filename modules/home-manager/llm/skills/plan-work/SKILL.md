@@ -21,9 +21,10 @@ agent-plan new --title 'Add the run loop' --slug add-run-loop \
 It prints the plan's file (`plan`, the PLAN every other command takes), its
 ID and its log. The worktree and, in Claude Code, the session are recorded
 from where it runs; pass `--worktree` and `--session HARNESS:ID` otherwise.
-For work that recurs, `--template NAME` starts the plan with the entries
-of each `**` section of `templates/NAME.org` in the plans' repository;
-the operator keeps those files.
+`--template NAME` starts the plan with the entries of each `**` section
+of template `NAME`: the `playbooks` skill says which to pick. A file
+`templates/NAME.org` the operator keeps in the plans' repository
+overrides the built-in template of that name.
 
 A sub-agent given part `P1` of a plan makes its own file beside the parent's
 and logs to the same log:

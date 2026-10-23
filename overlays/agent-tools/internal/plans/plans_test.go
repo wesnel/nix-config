@@ -781,6 +781,20 @@ func TestLoad(t *testing.T) {
 		}
 	})
 
+	t.Run("templates from the config", func(t *testing.T) {
+		useConfig(t, `{"plans": {"dir": "/p", "host": "ngrok", "templates": "/t"}}`)
+		if c, err := Load(); err != nil || c.Templates != "/t" {
+			t.Errorf("templates from the config: %+v, %v", c, err)
+		}
+	})
+
+	t.Run("relative templates", func(t *testing.T) {
+		useConfig(t, `{"plans": {"dir": "/p", "host": "ngrok", "templates": "t"}}`)
+		if c, err := Load(); err == nil {
+			t.Errorf("relative templates: %+v", c)
+		}
+	})
+
 	// A dot would make a plan's file names ambiguous.
 	t.Run("host with a dot", func(t *testing.T) {
 		useConfig(t, `{"plans": {"dir": "/p", "host": "a.b"}}`)

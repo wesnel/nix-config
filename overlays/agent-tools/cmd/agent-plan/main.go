@@ -31,7 +31,8 @@ have (see status) is refused and writes nothing.
       [--session HARNESS:ID]... [--harness H] [--template NAME]
                      create a plan; prints its file, ID and log. --template
                      starts it with the entries of each section of
-                     templates/NAME.org in the plans' repository
+                     templates/NAME.org in the plans' repository, or
+                     else NAME.org in plans.templates, the built-in ones
   new --parent PLAN --part P1 --title T [...]
                      create part P1's plan file beside its parent's
   log PLAN --item ID --kind KIND [--summary S] [--role R] [--agent A] [--branch B]
