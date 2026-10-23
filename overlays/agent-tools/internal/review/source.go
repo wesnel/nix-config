@@ -101,7 +101,7 @@ func resolveSource(ctx context.Context, s *source, fetch bool) (*span, error) {
 	if s.number == 0 {
 		r, err := resolve("", s.given)
 		if err == nil {
-			r.slug = s.slug()
+			r.slug, r.own = s.slug(), true
 		}
 		return r, err
 	}
@@ -125,7 +125,7 @@ func resolveSource(ctx context.Context, s *source, fetch bool) (*span, error) {
 			s.pr.BaseRef)
 	}
 	return &span{given: s.given, base: s.pr.Base, tip: s.pr.Head, top: s.pr.Clone, common: s.pr.Clone,
-		commits: record.Cap(record.Clean(commits), 32<<10), slug: s.slug(), pr: s.number}, nil
+		commits: record.Cap(record.Clean(commits), 32<<10), slug: s.slug(), pr: s.number, own: s.pr.Own}, nil
 }
 
 // latest is the pull request as last fetched, from its clone alone.

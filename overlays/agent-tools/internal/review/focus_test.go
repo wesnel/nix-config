@@ -13,19 +13,39 @@ import (
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
-// TestSecurityContract holds the security contract to where the package's
-// Nix passthru.securityReviewerPrompt builds it for the security-reviewer
-// agent: the general contract split at its one "## Checks" line, then the
-// security checks.
-func TestSecurityContract(t *testing.T) {
+// TestFocusContracts holds each focus's contract to where the package's
+// Nix passthru.focusPrompts.ROUTE builds it for the ROUTE-reviewer agent:
+// the general contract split at its one "## Checks" line, then ROUTE.md;
+// and each focus's reviewer type to that agent.
+func TestFocusContracts(t *testing.T) {
 	const heading = "\n## Checks\n"
 	if n := strings.Count(Contract, heading); n != 1 {
 		t.Fatalf("reviewer.md has %d %q lines; the Nix split needs one", n, strings.TrimSpace(heading))
 	}
-	want := Contract[:strings.Index(Contract, heading)+1] + securityChecks
-	if got := focuses["security"].contract(); got != want {
-		t.Errorf("focus.contract() is not the general contract up to %q and then security.md, as the Nix split builds it",
-			strings.TrimSpace(heading))
+	for route, f := range focuses {
+		checks, err := os.ReadFile(route + ".md")
+		if err != nil {
+			t.Fatalf("the %s focus has no %s.md, which the Nix split reads: %v", route, route, err)
+		}
+		if got, want := f.contract(), Contract[:strings.Index(Contract, heading)+1]+string(checks); got != want {
+			t.Errorf("the %s focus's contract is not the general contract up to %q and then %s.md, as the Nix split builds it",
+				route, strings.TrimSpace(heading), route)
+		}
+		if ty := reviewerTypes[route]; !ty.claude || ty.agent != route+"-reviewer" {
+			t.Errorf("the %s type runs %+v, not Claude Code's %s-reviewer agent", route, ty, route)
+		}
+	}
+}
+
+// Where a focused review cannot run headless, delegate names the agent
+// type to start on the prompt it prints.
+func TestFocusAgentNamed(t *testing.T) {
+	f := setUp(t, true)
+	t.Setenv("AGENT_TOOLS_CONFIG", filepath.Join(t.TempDir(), "none.json"))
+	code, _, stderr := runDelegate(t, "--reviewer", "security", "--goal", ".git/goal.md", f.base+"..HEAD")
+	if code != 4 || !strings.Contains(stderr, "start a new `security-reviewer` sub-agent on what `git delegate --print-prompt "+
+		"--reviewer security") {
+		t.Errorf("exit %d\n%s", code, stderr)
 	}
 }
 

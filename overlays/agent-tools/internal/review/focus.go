@@ -41,6 +41,10 @@ type focus struct {
 	// description, without which the review does not run: the file
 	// --description names, else a pull request source's own.
 	reverting bool
+	// upgrades adds the pins the change moves and their upstream text,
+	// gathered here, asks the reply for its account of each, and raises
+	// an unread-upgrade finding for each pin not read.
+	upgrades bool
 }
 
 // focuses are the focused reviews, by route; each route of routes.Known
@@ -48,6 +52,7 @@ type focus struct {
 var focuses = map[string]focus{
 	"security": newFocus(securityChecks, focus{kinds: []string{"vulnerability"}, threatNotes: true}),
 	"compat":   newFocus(compatChecks, focus{kinds: []string{"incompatible"}, reverting: true}),
+	"upgrade":  newFocus(upgradeChecks, focus{kinds: []string{"upgrade-break"}, upgrades: true}),
 }
 
 // Reverting is the heading of a pull request description's section on
@@ -117,6 +122,14 @@ func (f focus) schema() []byte {
 	props["checked"] = map[string]any{"type": "array", "description": "Each category of the Checklist gone through.",
 		"items": map[string]any{"type": "string", "enum": f.categories}}
 	s["required"] = []string{"findings", "unverified", "checked"}
+	if f.upgrades {
+		str := map[string]any{"type": "string"}
+		props["upgrades"] = map[string]any{"type": "array", "description": "Each moved pin, and whether its upstream text was read.",
+			"items": map[string]any{"type": "object", "additionalProperties": false,
+				"required":   []string{"pin", "old", "new", "source", "read"},
+				"properties": map[string]any{"pin": str, "old": str, "new": str, "source": str, "read": map[string]any{"type": "boolean"}}}}
+		s["required"] = append(s["required"].([]string), "upgrades")
+	}
 	out, err := json.Marshal(s)
 	if err != nil {
 		panic(err)

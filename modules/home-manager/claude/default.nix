@@ -83,9 +83,12 @@ with lib; let
   # block`, which Claude Code's frontmatter hooks take as its settings'
   # hooks do. Each prompt ends with
   # the rules every sub-agent shares, then its contract, if any. A
-  # description is plain YAML: no colon followed by a space.
-  agentNames = ["builder" "adversarial-reviewer" "design-reviewer" "security-reviewer" "review-guide" "diagrammer"];
-  contracts.security-reviewer = pkgs.agent-tools.securityReviewerPrompt;
+  # description is plain YAML: no colon followed by a space. Each focused
+  # review, a route of agent-tools' routes.Known, has a reviewer of its
+  # own, ROUTE-reviewer, whose contract is that focus's.
+  focusReviewers = map (route: "${route}-reviewer") (attrNames pkgs.agent-tools.focusPrompts);
+  agentNames = ["builder" "adversarial-reviewer" "design-reviewer" "review-guide" "diagrammer"] ++ focusReviewers;
+  contracts = mapAttrs' (route: nameValuePair "${route}-reviewer") pkgs.agent-tools.focusPrompts;
   reviewerHook = "${getExe' config.wgn.home.llm.agentTools "pr-loop"} guard --reviewer";
 
   # An agent file's frontmatter, as lines, and its prompt.
@@ -117,7 +120,7 @@ with lib; let
   # which outranks a reviewed project's own agents.
   reviewAgents = pkgs.runCommand "review-agents.json" {
     nativeBuildInputs = [pkgs.jq];
-    json = builtins.toJSON (genAttrs ["security-reviewer" "review-guide" "diagrammer"] (name: let
+    json = builtins.toJSON (genAttrs (focusReviewers ++ ["review-guide" "diagrammer"]) (name: let
       a = agentFile name;
     in {
       description = a.field "description";

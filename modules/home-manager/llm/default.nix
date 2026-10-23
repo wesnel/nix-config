@@ -28,6 +28,9 @@ with lib; let
     publicText = {
       inherit (cfg) harnessRepos;
     };
+    review = {
+      inherit (cfg.review) privateModules;
+    };
   });
 
   agentPlan = getExe' cfg.agentTools "agent-plan";
@@ -164,7 +167,7 @@ in {
                 route = mkOption {
                   # The routes a focused review exists for: agent-tools'
                   # routes.Known, which refuses any other at lookup.
-                  type = types.enum ["security" "compat"];
+                  type = types.enum ["security" "compat" "upgrade"];
                   description = "The focused review the rule routes to.";
                 };
 
@@ -314,6 +317,26 @@ in {
           '';
         };
       };
+    };
+
+    review.privateModules = mkOption {
+      type = types.listOf types.str;
+      default = ["github.com/ngrok/*" "github.com/ngrok-private/*" "go.ngrok.com/*"];
+
+      description = ''
+        Go module path patterns, as GOPRIVATE's, that the upgrade review
+        (`git delegate --reviewer upgrade`) never asks the public module
+        proxy for, beside those GOPRIVATE, GONOPROXY and GONOSUMDB name. It
+        reads them from a local clone or through the gh login's GitHub API
+        alone, and raises a pin it cannot read as unread. Setting GOPRIVATE
+        for these instead would have go fetch them over SSH, which waits on
+        the hardware key. Matched as github.com/OWNER/REPO, they also name
+        the private GitHub repositories it may read, for the operator's own
+        change alone (a range, or a pull request whose author is the gh
+        login's user): any other repository, and for anyone else's pull
+        request every repository, is read only where GitHub says it is
+        public.
+      '';
     };
 
     guard.credentialPaths = mkOption {

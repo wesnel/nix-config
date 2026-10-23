@@ -98,6 +98,15 @@ Route `compat` where the change touches what outlives the commit:
 - config keys, Nix options and Emacs customisations;
 - what another branch, host or program reads from this one.
 
+Route `upgrade` where the change moves a dependency's version:
+
+- a lock file: flake.lock, go.mod and go.sum, or another package
+  manager's;
+- a version, rev, tag or hash a Nix file pins, such as a fetcher's or a
+  vendor hash;
+- the version a CI workflow runs an action at;
+- a toolchain or language version, or a pinned container image.
+
 ## Output
 
 Reply with one JSON object and nothing else:

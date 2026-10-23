@@ -4,15 +4,27 @@
 package routes
 
 import (
+	_ "embed"
+	"encoding/json"
 	"slices"
 
 	"github.com/wesnel/agent-tools/internal/git"
 )
 
-// Known are the routes a focused review exists for. A route a rule or a
+//go:embed known.json
+var knownJSON []byte
+
+// Known are the routes a focused review exists for, from known.json, which
+// the package's Nix passthru.focusPrompts also reads. A route a rule or a
 // reviewer names must be one of them, so a change is never routed to a
-// review nothing can run; a new focus adds its route here.
-var Known = []string{"security", "compat"}
+// review nothing can run; a new focus adds its route there.
+var Known = func() []string {
+	var known []string
+	if err := json.Unmarshal(knownJSON, &known); err != nil || len(known) == 0 {
+		panic("routes: known.json holds no routes")
+	}
+	return known
+}()
 
 // IsKnown reports whether route is one of Known.
 func IsKnown(route string) bool { return slices.Contains(Known, route) }

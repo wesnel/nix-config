@@ -62,14 +62,21 @@ TYPEs (--reviewer, repeated):
             the operator's threat notes and the open branches that change the
             same files. Its reply must name every category of its checklist
             as checked.
-  compat    the compatibility review, by Codex, confined as codex is: what
-            outlives the commit (stored state, flags, output others parse,
-            config keys and options, what another host or branch reads).
+  compat    the compatibility review, by Claude Code's compat-reviewer
+            agent, headless as security is: what outlives the commit
+            (stored state, flags, output others parse, config keys and
+            options, what another host or branch reads).
             Its prompt adds the open branches that change the same files,
             and the ## Reverting section of the pull request description,
             the file --description names or a pull request's own, without
             which it does not run. Its reply must name every category of its
             checklist as checked.
+  upgrade   the upgrade review, by Claude Code's upgrade-reviewer agent,
+            headless as security is: what the change's version bumps change
+            here, against the upstream text gathered for them on this host,
+            as below. Its prompt adds the open branches that change the same
+            files. Its reply must name every category of its checklist as
+            checked, and say of each moved pin whether it read its text.
   guide     the walkthrough, by Claude Code's review-guide agent, headless
             as security is: the change's hunks in chunks, in the order to
             read them, each hunk cited as file:PATH::LINE@SHA. A citation of
@@ -105,10 +112,59 @@ is an untested finding of the review's own, with ID RC-<key>; the JSON is
 refused unless its commits are the range's and it ran the repository's
 test settings, and the round records RED_CHECK session, or absent.
 
+An upgrade prompt adds the pins BASE..TIP sets, moves or drops in lock
+files (flake.lock nodes, by each node's locked and original objects
+whole, and its input paths, as hm/nixpkgs, that resolve to another node;
+go.mod's and go.work's requirements, replacements, and go and toolchain
+lines, as golang.org/x/mod reads them; go.sum hashes that moved under one
+version; niv's and npins' sources; other lock files whole), any change to
+a flake.nix as one pin of the file, whose diff the reviewer reads
+(nothing evaluates it here), each Nix derivation or fetcher set's
+version, rev, tag and hash attributes, and each occurrence of an action a
+workflow or composite action runs. The Nix and workflow scanners fail
+closed: a changed line naming what may pin a version that no pin covers
+makes one more pin of its file (nix-unread, actions-unread). Those two
+and flake-nix have no upstream: reading the diff settles them, as the
+reply's read says. A flake node renamed from the same source, and a Go
+module's next major version, are one pin moved, one repository moved
+between the same versions in several places is one pin standing for all
+of them, and keys that collide take an index. For each moved pin it adds
+what changed upstream, gathered here and never by the reviewer: from a
+local clone under ~/git/github.com/OWNER/REPO that has both commits, is
+not shallow, and whose config names no program, read with no replace
+refs or grafts; from the changelog files of both versions' source trees,
+which nix flake prefetch fetches from GitHub over HTTPS and which must
+have the NAR hash the pin names, or which go mod download fetches from
+the public module proxy into a module cache it removes after, never
+through a symbolic link in the tree; and from GitHub's releases and
+comparison over HTTPS with the gh login, at most 2 calls a pin. Nothing
+goes over SSH; a flake node of another type than github is requested
+from nowhere, and a private module, one GOPRIVATE, GONOPROXY or GONOSUMDB
+matches (in the environment or go env) or review.privateModules of the
+config (github.com/ngrok/*, github.com/ngrok-private/* and
+go.ngrok.com/* where it names none, all matched ignoring case), is
+gathered only from a local clone or GitHub's API. A GitHub repository,
+which the gh login, a local clone and nix's tokens could reach where it
+is private, is read only where GitHub says it is public, or, for the
+operator's own change (a range, or a pull request whose author is the
+gh login's user), where those patterns name it, as github.com/OWNER/REPO;
+any other's pin is left unread, and its finding says why. At most 30
+pins are gathered, each text cut at 16 KiB and all of them at 120 KiB, kept by
+source and versions under $XDG_CACHE_HOME/agent-tools/upgrade, a
+directory of the user's with mode 0700 or none (stderr says where it is
+refused), so that a pin gathered again is not fetched again. Each moved
+pin nothing was gathered for (only its hash moved, say), or whose text
+the reply's upgrades does not say it read at its two versions, and each
+pin added or dropped with no pair, is an unread-upgrade finding of the
+review's own, with reviewer "upgrade" and ID UP-<key>, the key made from
+the pin and its two versions, settled as any finding is. A printed
+upgrade prompt, whose reply delegate never sees, lists those pins
+instead, for the reviewer to report as such findings itself.
+
 Known secret shapes are taken out of the goal, the items, the earlier
-findings, red-check's output, the threat notes and the Reverting section
-before a reviewer sees them. For a pull request the earlier findings
-include those of its newest review at another head.
+findings, red-check's output, the threat notes, the Reverting section and
+the upstream text before a reviewer sees them. For a pull request the
+earlier findings include those of its newest review at another head.
 
   --reviewer TYPE   a type to run, as above; repeat for more
   --goal FILE       the goal statement, required for a range: the goal, and
@@ -129,8 +185,8 @@ directory, never $TMPDIR, which differs inside and outside the sandbox.
 
 Writes JSON on stdout: source, range, tip, the record's path, each type's
 review (reviewer, model, findings with their record IDs, dropped and
-unverified), those that could not run and why, the routes, and the
-record's counts. Exit status:
+unverified, and an upgrade review's upgrades), those that could not run
+and why, the routes, and the record's counts. Exit status:
   0  no open findings
   3  open findings
   4  a type could not run: Codex is not installed or signed in, its
@@ -138,7 +194,8 @@ record's counts. Exit status:
      is set) or, with no --reviewer, the caller is Codex (CODEX_SANDBOX is
      set); claude or agent-tools' delegate config is missing; a compat
      review the scan routed has no description with a Reverting section;
-     or a reply did not fit twice
+     an upgrade review cannot read the change's pins; or a reply did not
+     fit twice
   5  the record fails its structure check
   1  the review could not run; 2 a usage error or refusal
 `
@@ -147,7 +204,9 @@ record's counts. Exit status:
 // review, its focus. The guide writes the walkthrough, and finds nothing.
 type reviewerType struct {
 	claude bool
-	// agent is its agent in review-agents.json.
+	// agent is its agent in review-agents.json, and a focused review's is
+	// its route's ROUTE-reviewer, which the Claude Code module builds from
+	// agent-tools' focusPrompts.
 	agent string
 	focus string
 	guide bool
@@ -160,7 +219,8 @@ type reviewerType struct {
 var reviewerTypes = map[string]reviewerType{
 	"codex":    {},
 	"security": {claude: true, agent: "security-reviewer", focus: "security"},
-	"compat":   {focus: "compat"},
+	"compat":   {claude: true, agent: "compat-reviewer", focus: "compat"},
+	"upgrade":  {claude: true, agent: "upgrade-reviewer", focus: "upgrade"},
 	"guide":    {claude: true, agent: "review-guide", guide: true},
 	"diagram":  {diagram: true},
 }
@@ -314,7 +374,8 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		if len(reviewers) == 1 {
 			t = reviewers[0]
 		}
-		in, err := typeInputs(base, t, tests)
+		base.printed = true
+		in, err := typeInputs(ctx, base, t, tests, stderr)
 		if err != nil {
 			return report(nil, err, 0)
 		}
@@ -354,9 +415,13 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 				fmt.Fprintf(stderr, "%s: the %s review could not run: %s\n", name, t, run.why)
 				continue
 			}
+			reader := "a sub-agent that only reads"
+			if agent := reviewerTypes[t].agent; agent != "" {
+				reader = "a new `" + agent + "` sub-agent"
+			}
 			fmt.Fprintf(stderr, "%s: the %s review could not run here: %s. Run `git delegate` where it can, outside any "+
-				"sandbox and review-loop session, or start a sub-agent that only reads on what `git delegate --print-prompt "+
-				"--reviewer %s %s%s` prints\n", name, t, run.why, t, typeFlags(s, t), s.given)
+				"sandbox and review-loop session, or start %s on what `git delegate --print-prompt "+
+				"--reviewer %s %s%s` prints\n", name, t, run.why, reader, t, typeFlags(s, t), s.given)
 			continue
 		}
 		runs = append(runs, run)
@@ -398,8 +463,9 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 
 // typeInputs are base's inputs as type t's reviewer is given them: a
 // focused review's contract and sections, and the general review's test
-// adequacy.
-func typeInputs(base inputs, t string, tests *adequacy) (inputs, error) {
+// adequacy. An upgrade review's pins are gathered here, over the network,
+// once its reviewer is sure to read them.
+func typeInputs(ctx context.Context, base inputs, t string, tests *adequacy, log io.Writer) (inputs, error) {
 	in := base
 	ty := reviewerTypes[t]
 	if ty.guide {
@@ -429,6 +495,17 @@ func typeInputs(base inputs, t string, tests *adequacy) (inputs, error) {
 			return in, err
 		}
 		in.focused += section
+	}
+	if fc.upgrades {
+		ups, err := gatherUpgrades(ctx, in.r, log)
+		if err != nil {
+			return in, err
+		}
+		in.upgrades = ups
+		in.focused += ups.section()
+		if in.printed {
+			in.focused += ups.printedSection(in.r)
+		}
 	}
 	in.focused += overlapSection(in.r)
 	return in, nil
@@ -477,7 +554,7 @@ func runType(ctx context.Context, s *source, r *span, base inputs, t string, tes
 	if run.why != "" {
 		return run
 	}
-	in, err := typeInputs(base, t, tests)
+	in, err := typeInputs(ctx, base, t, tests, log)
 	if err != nil {
 		var refused refusal.Refusal
 		run.why, run.refused = err.Error(), errors.As(err, &refused)
@@ -540,6 +617,9 @@ func runType(ctx context.Context, s *source, r *span, base inputs, t string, tes
 			if ty.focus == "" && !ty.guide {
 				tests.add(out)
 				out.Routes = routeChange(r, out, log)
+			}
+			if in.upgrades != nil {
+				in.upgrades.add(r, out)
 			}
 			run.out = out
 			return run

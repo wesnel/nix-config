@@ -47,8 +47,9 @@ func numbered(prefix string, ids []string) int {
 }
 
 // writeRuns adds each run to the range's record as a round, with its
-// findings under IDs of the record's own; a red-check finding keeps its
-// RC- ID, and one the record already holds is not added again. It gives
+// findings under IDs of the record's own; a finding of the review's own
+// keeps its RC- or UP- ID, and one the record already holds is not added
+// again. It gives
 // each finding in the runs' output its record ID. The guide's walkthrough
 // replaces the record's, and so do a diagram run's diagrams.
 func writeRuns(path string, s *source, r *span, title string, runs []*typeRun, now time.Time) (*record.Range, error) {
@@ -82,7 +83,7 @@ func writeRuns(path string, s *source, r *span, title string, runs []*typeRun, n
 				}
 				for _, f := range out.Findings {
 					id := f.ID
-					if !strings.HasPrefix(id, mechanicalPrefix) {
+					if !isOwn(id) {
 						id = "F" + strconv.Itoa(numbered("F", findings))
 					} else if contains(findings, id) {
 						f.Finding = id
