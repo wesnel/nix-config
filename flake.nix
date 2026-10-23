@@ -667,6 +667,7 @@
           root = ./.;
           fileset = pkgs.lib.fileset.unions [
             ./README.md
+            ./modules/home-manager/claude/agents
             ./modules/home-manager/llm
             ./overlays/agent-tools/cmd
             ./overlays/agent-tools/internal
