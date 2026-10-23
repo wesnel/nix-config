@@ -2049,8 +2049,8 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 		if planFile(path) {
 			return planWrite
 		}
-		if agentSettingsFile(path, dir) {
-			return agentSettings
+		if reason := checkFileAgentSettings(path, dir); reason != "" {
+			return reason
 		}
 		if reason := gitConfigAlias(path, dir, c.text); reason != "" {
 			return reason

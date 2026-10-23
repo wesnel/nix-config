@@ -107,3 +107,88 @@ func TestAgentSettings(t *testing.T) {
 		}
 	}
 }
+
+// TestGitLinkFiles covers the files that tell git which repository a
+// worktree belongs to, and so which agent settings apply there: a
+// worktree's .git file, and a git directory's commondir and gitdir. No
+// agent writes, moves or removes them by any route the agent settings'
+// rule covers; any agent reads them, and git's own worktree commands
+// change them.
+func TestGitLinkFiles(t *testing.T) {
+	h := fakeHome(t)
+	work := filepath.Join(h, "work")
+	main := filepath.Join(work, "repo")
+	os.MkdirAll(main, 0o755)
+	gitIn(t, main, "init", "-q", "-b", "main")
+	gitIn(t, main, "commit", "-q", "--allow-empty", "-m", "x")
+	wt := filepath.Join(work, "wt")
+	gitIn(t, main, "worktree", "add", "-q", "-b", "side", wt)
+	dotGit := filepath.Join(wt, ".git")
+	admin := filepath.Join(main, ".git", "worktrees", "wt")
+	commondir, gitdir := filepath.Join(admin, "commondir"), filepath.Join(admin, "gitdir")
+	os.MkdirAll(filepath.Join(wt, "sub"), 0o755)
+	link := filepath.Join(work, "dotgit-link")
+	os.Symlink(dotGit, link)
+	hard := filepath.Join(work, "plain")
+	if err := os.Link(commondir, hard); err != nil {
+		t.Fatal(err)
+	}
+	scratch := filepath.Join(work, "scratch")
+	os.MkdirAll(scratch, 0o755)
+	gitIn(t, scratch, "init", "-q")
+	os.WriteFile(filepath.Join(work, "x"), []byte("gitdir: /tmp/x\n"), 0o644)
+
+	write := func(path string) map[string]string {
+		return map[string]string{"file_path": path, "content": "gitdir: /tmp/elsewhere\n"}
+	}
+	bash := func(command string) map[string]string { return map[string]string{"command": command} }
+	for _, c := range []struct {
+		name, tool string
+		input      map[string]string
+		dir        string
+		deny       bool
+	}{
+		{"a worktree's .git file, written", "Write", write(dotGit), wt, true},
+		{"a worktree's .git file, edited", "Edit", map[string]string{"file_path": dotGit, "old_string": "gitdir", "new_string": "gitdir"}, wt, true},
+		{"a worktree's .git file, patched", "apply_patch", map[string]string{"command": "*** Begin Patch\n*** Update File: " + dotGit +
+			"\n@@\n-a\n+b\n*** End Patch\n"}, wt, true},
+		{"a new .git file", "Write", write(filepath.Join(wt, "sub", ".git")), wt, true},
+		{"a .git file through a link", "Write", write(link), work, true},
+		{"commondir, written", "Write", write(commondir), wt, true},
+		{"gitdir, written", "Write", write(gitdir), main, true},
+		{"commondir through a hard link", "Write", write(hard), wt, true},
+		{"a .git file, redirected", "Bash", bash("echo 'gitdir: /tmp/x' > .git"), wt, true},
+		{"a new .git file, redirected", "Bash", bash("echo 'gitdir: /tmp/x' > sub/.git"), wt, true},
+		{"a .git file, teed", "Bash", bash("echo 'gitdir: /tmp/x' | tee " + dotGit), main, true},
+		{"a .git file, copied", "Bash", bash("cp ../x .git"), wt, true},
+		{"a .git file, moved over", "Bash", bash("mv ../x " + dotGit), main, true},
+		{"a .git file, moved away", "Bash", bash("mv .git /tmp/x"), wt, true},
+		{"a .git file, removed", "Bash", bash("rm .git"), wt, true},
+		{"a .git file, linked", "Bash", bash("ln -sf /tmp/x .git"), wt, true},
+		{"a .git file, installed", "Bash", bash("install ../x sub/.git"), wt, true},
+		{"commondir, redirected", "Bash", bash("echo /tmp/x > ../repo/.git/worktrees/wt/commondir"), wt, true},
+		{"gitdir, removed", "Bash", bash("rm " + gitdir), wt, true},
+		{"commondir through git -C", "Bash", bash("git -C ../repo/.git/worktrees/wt diff --output=commondir"), wt, true},
+		{"a .git file by git config -f under git -C", "Bash", bash("git -C sub config -f .git a.b c"), wt, true},
+		{"a .git file, read", "Bash", bash("cat .git"), wt, false},
+		{"commondir, read", "Bash", bash("cat " + commondir), wt, false},
+		{"git's worktree commands", "Bash", bash("git worktree list"), wt, false},
+		{"a file named like one", "Write", write(filepath.Join(wt, "sub", "x.git")), wt, false},
+		// Relative, as in TestAgentSettings.
+		{"a scratch repository's .git directory, removed", "Bash", bash("rm -rf scratch/.git"), work, false},
+	} {
+		t.Run(caseName(c.deny, c.tool+" "+c.name), func(t *testing.T) {
+			input, _ := json.Marshal(c.input)
+			reason := check(c.tool, input, baseline, c.dir)
+			switch {
+			case c.deny && reason != gitLink:
+				t.Errorf("%s %s in %s: reason %q, want the git link files'", c.tool, input, c.dir, reason)
+			case !c.deny && reason != "":
+				t.Errorf("%s %s in %s: denied, %q", c.tool, input, c.dir, reason)
+			}
+		})
+	}
+	if !saysInstead(gitLink) {
+		t.Errorf("%q does not say what to do instead", gitLink)
+	}
+}
