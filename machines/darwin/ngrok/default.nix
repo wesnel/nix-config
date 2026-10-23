@@ -25,14 +25,6 @@
         git.enable = true;
         gnupg.enable = true;
         go.enable = true;
-        llm.repos = {
-          "ngrok-private/ngrok-agent".setup = "go tool buf generate";
-          "wesnel/nix-config" = {
-            test = "cd overlays/agent-tools && go test -count=1 ./...";
-            build = "cd overlays/agent-tools && go vet ./...";
-            testFiles = ["overlays/agent-tools/**/*_test.go" "overlays/agent-tools/**/testdata/**"];
-          };
-        };
         man.enable = true;
         python.enable = true;
         yubikey.enable = true;
