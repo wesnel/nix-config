@@ -130,6 +130,33 @@ func TestCommands(t *testing.T) {
 		}
 	})
 
+	// A link to a related plan is an org-roam link to its file-level ID,
+	// with the plan's title and why it is related, under Related.
+	t.Run("link", func(t *testing.T) {
+		plan := sessionPlan(t)
+		code, out, errs := agentPlan(t, "", "new", "--title", "Other plan", "--slug", "other")
+		if code != 0 {
+			t.Fatalf("new: %d %s", code, errs)
+		}
+		var other plans.Created
+		json.Unmarshal([]byte(out), &other)
+		// The file-level ID org-roam knows the plan by, set here so the
+		// link written can be spelled out.
+		const id = "0f1e2d3c-4b5a-4968-8776-655443322110"
+		data, _ := os.ReadFile(other.File)
+		text := regexp.MustCompile(`\A:PROPERTIES:\n:ID: \S+\n:END:\n`).ReplaceAllString(string(data), "")
+		os.WriteFile(other.File, []byte(":PROPERTIES:\n:ID: "+id+"\n:END:\n"+text), 0o644)
+
+		code, _, errs = agentPlan(t, "", "link", plan, other.Plan, "--why", "It splits work out of this one")
+		if code != 0 {
+			t.Fatalf("link: %d %s", code, errs)
+		}
+		data, _ = os.ReadFile(plan)
+		if want := "** Related\n- [[id:" + id + "][Other plan]]: It splits work out of this one\n"; !strings.Contains(string(data), want) {
+			t.Errorf("the plan lacks %q:\n%s", want, data)
+		}
+	})
+
 	t.Run("summary with a newline", func(t *testing.T) {
 		plan := sessionPlan(t)
 		code, _, errs := agentPlan(t, "", "log", plan, "--item", "S1", "--kind", "done", "--summary", "x\n* forged")

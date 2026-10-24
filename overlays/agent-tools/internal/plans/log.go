@@ -87,6 +87,8 @@ var (
 				"Confirm the branch with `git branch --show-current` before the edit",
 			"pushed": "pr-loop, and a hook after each shell call, log `pushed` for every push, from what they pushed. " +
 				"Watch the push's CI with `pr-loop wait ci` as the signing-pass skill says",
+			linkedKind: "agent-plan link logs `linked` for each link it writes under Related. " +
+				"Link a plan with `agent-plan link PLAN OTHER --why TEXT`",
 		}
 		for _, k := range []string{"loop-began", "round", "replied", "resolved", "ci-waited"} {
 			kinds[k] = "pr-loop logs what it did, from begin on, in the plan of the session that ran it. " +

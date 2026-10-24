@@ -58,7 +58,7 @@ or a `#+` keyword other than a block's. A change no command makes goes in
 your report for the operator.
 
 - Before `#+title`, a plan's own file holds a property drawer with its
-  `ID`, a UUID: the file is an org-roam node. A
+  `ID`, a UUID: the file is an org-roam node, which Related links name. A
   part's file has none. Every item ID below, the plan's own included, is
   a `CUSTOM_ID`; plans with item IDs in `ID` are read alike.
 - `* Plan`, whose properties say where the work is: `CUSTOM_ID` (the
@@ -129,6 +129,16 @@ your report for the operator.
   `agent-plan reference PLAN URL`. When you
   are done with a reference, write its note:
   `agent-plan reference PLAN URL --note 'The pstack principles; fed Q3, Q4.'`
+- `** Related`: an org-roam link to each related plan, one line each with
+  why it is related, so the operator's org-roam graph shows how the work
+  connects. Link every plan related to this one, even loosely by topic:
+  when the plan starts, search the titles and goals of the plans
+  directory's plan files for the work's topics, repositories and
+  branches, and link what you find, and any plan you come across later:
+  `agent-plan link PLAN OTHER --why 'It splits the sync work out of this one.'`
+  One direction is enough; org-roam shows the backlink. A plan in the old
+  form has no file-level `ID` and cannot be linked to. `agent-plan status`
+  lists a link that names no file in the plans' repository.
 - `** Verification`: how the change is shown to work: each seam the tests
   cross, and what each cannot catch. It holds text, no headings: write it
   with `agent-plan section PLAN Verification --text TEXT [--part P1]`.

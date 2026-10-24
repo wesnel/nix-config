@@ -16,7 +16,7 @@ var templateName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 
 // planSections are the level-2 sections a plan's file has, which a
 // template may fill.
-var planSections = []string{"Goal", "Steps", "Distribution", "Questions", "Follow-ups", "References", "Verification"}
+var planSections = []string{"Goal", "Steps", "Distribution", "Questions", "Follow-ups", "References", "Related", "Verification"}
 
 // templateDirs are the directories a template is looked for in, first
 // found first: the plans repository's, then the built-in one.

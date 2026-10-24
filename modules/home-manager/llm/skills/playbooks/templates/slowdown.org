@@ -6,6 +6,8 @@
 :PROPERTIES:
 :CUSTOM_ID: S1
 :END:
+First link the plans related to this one with =agent-plan link=, as the
+=plan-work= skill's Related says.
 Load the =diagnose-failure= skill and measure before anything else, as its
 stage 1 says for a slowdown: =go test -bench= at =-count=10= with
 =benchstat=, or =hyperfine=.

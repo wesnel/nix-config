@@ -436,6 +436,9 @@ type Plan struct {
 	Host string `json:"host"`
 	// Own is whether the plan is this host's, which alone writes it.
 	Own bool `json:"own"`
+	// Repo is the plans' repository, whose Org files' file-level IDs are
+	// what the plan's Related links may name; Open sets it.
+	Repo string `json:"-"`
 }
 
 func (p Plan) file(part string) string {
@@ -487,7 +490,7 @@ func (c Config) Open(arg string) (Plan, error) {
 	if m == nil {
 		return Plan{}, notPlan()
 	}
-	p := Plan{Dir: root, Name: m[1], Host: m[2], Own: m[2] == c.Host}
+	p := Plan{Dir: root, Name: m[1], Host: m[2], Own: m[2] == c.Host, Repo: c.repo()}
 	for _, f := range []string{p.file(""), p.log()} {
 		if info, err := os.Lstat(f); err != nil || !soleFile(info) {
 			return Plan{}, notPlan()

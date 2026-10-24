@@ -53,7 +53,7 @@ type structureProblem struct{ heading, problem string }
 // the plan-work skill puts it:
 //   - a top-level heading but one `* Plan`;
 //   - a section of `* Plan` not in planSections, or one it has twice;
-//   - a heading under Goal or Verification, which hold text;
+//   - a heading under Goal, Related or Verification, which hold text;
 //   - a References entry without a URL;
 //   - an entry of Steps, Distribution, Questions or Follow-ups without its
 //     ID, and a question without a question's keyword;
@@ -132,7 +132,7 @@ func structureOf(text string) []structureProblem {
 				me.skip = true
 			}
 			sections[title] = true
-		case me.section == "Goal" || me.section == "Verification":
+		case me.section == "Goal" || me.section == "Verification" || me.section == "Related":
 			add(h, "a heading under %s, which holds text", me.section)
 			me.skip = true
 		case me.section == "References":

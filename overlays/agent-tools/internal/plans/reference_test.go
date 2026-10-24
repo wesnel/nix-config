@@ -26,7 +26,7 @@ func TestReference(t *testing.T) {
 		}
 		data, _ := os.ReadFile(p.file(""))
 		want := "** References\n*** " + guide + "\n:PROPERTIES:\n:URL: " + guide + "\n:END:\n" +
-			"Principles for the design review; fed Q3 and Q4.\n** Verification\n"
+			"Principles for the design review; fed Q3 and Q4.\n** Related\n** Verification\n"
 		if !strings.HasSuffix(string(data), want) {
 			t.Errorf("plan:\n%s", data)
 		}

@@ -227,24 +227,44 @@ func (p Plan) propertyDrift(events []Event) ([]PropertyDrift, error) {
 	if err != nil {
 		return nil, err
 	}
-	var inFile, logged []string
+	var urls []string
 	hs := parseOrg(string(data))
 	sections := sectionsOf(hs)
 	for i, h := range hs {
-		if url := h.Props["URL"]; sections[i] == "References" && url != "" && !slices.Contains(inFile, url) {
-			inFile = append(inFile, url)
+		if url := h.Props["URL"]; sections[i] == "References" && url != "" && !slices.Contains(urls, url) {
+			urls = append(urls, url)
 		}
 	}
+	var links []string
+	for _, id := range relatedIDs(strings.Split(string(data), "\n")) {
+		links = append(links, "id:"+id)
+	}
+	for _, d := range []PropertyDrift{
+		listDrift(p.Name, "References", urls, "referenced", events),
+		listDrift(p.Name, "Related", links, linkedKind, events),
+	} {
+		if d.Property != "" {
+			out = append(out, d)
+		}
+	}
+	return out, nil
+}
+
+// listDrift is the drift of section, whose entries are inFile, from the
+// summaries of the events of kind, which each add one; or no drift, with
+// no Property, where both hold the same.
+func listDrift(item, section string, inFile []string, kind string, events []Event) PropertyDrift {
+	var logged []string
 	for _, e := range events {
-		if e.Kind == "referenced" && !slices.Contains(logged, e.Summary) {
+		if e.Kind == kind && !slices.Contains(logged, e.Summary) {
 			logged = append(logged, e.Summary)
 		}
 	}
+	inFile = slices.Clone(inFile)
 	slices.Sort(inFile)
 	slices.Sort(logged)
-	if !slices.Equal(inFile, logged) {
-		out = append(out, PropertyDrift{ID: p.Name, Property: "References", File: strings.Join(inFile, " "),
-			Log: strings.Join(logged, " ")})
+	if slices.Equal(inFile, logged) {
+		return PropertyDrift{}
 	}
-	return out, nil
+	return PropertyDrift{ID: item, Property: section, File: strings.Join(inFile, " "), Log: strings.Join(logged, " ")}
 }

@@ -60,9 +60,13 @@ type Status struct {
 	// one their log gives them: changed in Emacs, or not written while
 	// Emacs held unsaved changes to the file.
 	KeywordDrift []Drift `json:"keywordDrift"`
-	// PropertyDrift are the tracked properties and References whose value
-	// in the file is not the one the log gives them: edited by hand.
+	// PropertyDrift are the tracked properties, References and Related
+	// whose value in the file is not the one the log gives them: edited by
+	// hand.
 	PropertyDrift []PropertyDrift `json:"propertyDrift"`
+	// DanglingLinks are the id: links under Related, as id:ID, whose ID is
+	// the file-level ID of no Org file in the plans' repository.
+	DanglingLinks []string `json:"danglingLinks"`
 	// StructureDrift are the headings of the plan's files that its
 	// structure has no place for, such as a dated section of events.
 	StructureDrift []StructureDrift `json:"structureDrift"`
@@ -222,6 +226,9 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 	if s.StructureDrift, err = p.structureDrift(); err != nil {
 		return Status{}, err
 	}
+	if s.DanglingLinks, err = p.danglingLinks(); err != nil {
+		return Status{}, err
+	}
 	index := map[string]int{}
 	for _, it := range list {
 		if it.ID == p.Name {
@@ -364,6 +371,9 @@ func (s Status) Org() string {
 			drifts = append(drifts, fmt.Sprintf("%s %s (file %s, log %s)", d.ID, d.Property, orNone(d.File), orNone(d.Log)))
 		}
 		fmt.Fprintf(&b, "- Property drift: %s\n", strings.Join(drifts, "; "))
+	}
+	if len(s.DanglingLinks) > 0 {
+		fmt.Fprintf(&b, "- Related links to nothing: %s\n", strings.Join(s.DanglingLinks, ", "))
 	}
 	if len(s.StructureDrift) > 0 {
 		var drifts []string

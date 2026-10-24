@@ -861,6 +861,10 @@
           failed=
           check 'if .permissions.disableBypassPermissionsMode == "disable" then empty
             else "bypass-permissions mode is not disabled" end'
+          check 'if (.sandbox.excludedCommands | index("agent-plan link *")) != null then empty
+            else "agent-plan link is not excluded from the sandbox" end'
+          check 'if (.permissions.allow | index("Bash(agent-plan link *)")) != null then empty
+            else "agent-plan link is not allowed" end'
           check '.permissions.deny as $d | ["Bash(gh pr merge *)", "Bash(git push *)"][]
             | select(. as $t | $d | index([$t]) == null) | "not denied: \(.)"'
           check --slurpfile mcp "$mcpPath" '. as $s | $mcp[0][] | .servers[] as $server

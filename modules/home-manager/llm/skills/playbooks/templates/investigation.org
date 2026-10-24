@@ -6,6 +6,8 @@
 :PROPERTIES:
 :CUSTOM_ID: S1
 :END:
+First link the plans related to this one with =agent-plan link=, as the
+=plan-work= skill's Related says.
 Write the Goal with =agent-plan section PLAN Goal=: the question, what
 would answer it, and that this plan changes nothing.
 Done when =agent-plan goal PLAN= prints the question.

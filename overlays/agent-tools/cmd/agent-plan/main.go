@@ -66,9 +66,11 @@ have (see status) is refused and writes nothing.
                      ORDERED siblings settled, not scheduled for later),
                      what still waits, keyword drift, property drift (a
                      WORKTREES, BRANCHES, PULL_REQUESTS or OWNERS value, or a
-                     References entry, the log does not give), and structure
+                     References entry or Related link, the log does not
+                     give), Related links to no file-level ID of an Org file
+                     in the plans' repository, and structure
                      drift (a top-level heading but one * Plan; a section
-                     not a plan's, or twice; a heading under Goal or
+                     not a plan's, or twice; a heading under Goal, Related or
                      Verification; a References entry without a URL; an
                      entry of Steps, Distribution, Questions or Follow-ups
                      without its ID; a question without a question's
@@ -154,6 +156,12 @@ have (see status) is refused and writes nothing.
                      used for and which decisions (Q IDs) it fed; log it as
                      referenced. remind adds every URL of the operator's
                      own prompts this way, with no note
+  link PLAN OTHER --why TEXT
+                     write "- [[id:ID][TITLE]]: TEXT" under Related in PLAN, ID
+                     and TITLE being OTHER's file-level ID and title, and log
+                     it as linked; nothing when PLAN already links OTHER.
+                     Refused for PLAN itself, a part's file, and a plan in
+                     the old form, which has no file-level ID
   postpone PLAN ID (--until 'YYYY-MM-DD[ HH:MM]' | --clear)
                      schedule step or part ID for that day or time, which
                      keeps it out of the ready lists and the agenda until
@@ -389,6 +397,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		until    = flags.String("until", "", "")
 		foundIn  = flags.String("found-in", "", "")
 		note     = flags.String("note", "", "")
+		why      = flags.String("why", "", "")
 		unset    = flags.Bool("clear", false, "")
 		check    = flags.Bool("check", false, "")
 		wait     = flags.Bool("wait", false, "")
@@ -687,6 +696,12 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return report(nil, err)
 		}
 		return report(p.Reference(positional[1], *note, time.Now()))
+	case "link":
+		if len(positional) != 2 {
+			fmt.Fprint(stderr, "agent-plan link: takes PLAN OTHER --why TEXT\n")
+			return 2
+		}
+		return report(c.Link(positional[0], positional[1], *why, time.Now()))
 	case "postpone":
 		if len(positional) != 2 || (*until == "") == !*unset {
 			fmt.Fprint(stderr, "agent-plan postpone: takes PLAN ID and --until TIME or --clear\n")

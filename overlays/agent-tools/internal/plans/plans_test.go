@@ -127,7 +127,7 @@ func TestNew(t *testing.T) {
 			"#+FILETAGS: :r:box:\n"; !strings.Contains(string(data), ":END:\n"+header) {
 			t.Errorf("the plan's file-level drawer is not followed by %q:\n%s", header, data)
 		}
-		if !strings.HasSuffix(string(data), ":END:\n** Goal\n** Steps\n** Distribution\n** Questions\n** Follow-ups\n** References\n** Verification\n") {
+		if !strings.HasSuffix(string(data), ":END:\n** Goal\n** Steps\n** Distribution\n** Questions\n** Follow-ups\n** References\n** Related\n** Verification\n") {
 			t.Errorf("the plan's sections:\n%s", data)
 		}
 		for _, s := range []string{"* Plan\n:PROPERTIES:\n",

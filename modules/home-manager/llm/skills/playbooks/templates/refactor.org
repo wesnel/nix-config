@@ -6,6 +6,8 @@
 :PROPERTIES:
 :CUSTOM_ID: S1
 :END:
+First link the plans related to this one with =agent-plan link=, as the
+=plan-work= skill's Related says.
 Name the tests that cover the code to be moved, and run them. A pure
 refactor changes no tests, as the =write-tests= skill says.
 Done when the named tests pass before any change.

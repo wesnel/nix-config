@@ -6,6 +6,8 @@
 :PROPERTIES:
 :CUSTOM_ID: S1
 :END:
+First link the plans related to this one with =agent-plan link=, as the
+=plan-work= skill's Related says.
 The design question, written with =agent-plan ask= before any code, as
 the =plan-work= skill's "Spikes" says.
 Done when the question is in the plan's Questions.
