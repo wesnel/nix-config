@@ -819,6 +819,12 @@ mcp-proxy-status
 
 A session started while a server was not authorized reports it as not
 found; reconnect it with `/mcp` in Claude Code, or start a new session.
+The proxy serves only the servers it connected, so a server whose token
+was refused is not found either. `pr-loop mcp-status` names each server
+that is not connected and the command that connects it; each Claude Code
+session runs it as it starts, so the session can ask you rather than add
+the vendor's server itself. If one does add it, the guard's reason for a
+server named after a reviewed service names the reviewed server.
 
 The browser is sent back to `http://localhost:8090/oauth/callback` on the
 machine running the proxy. On one without a browser, such as the devbox,

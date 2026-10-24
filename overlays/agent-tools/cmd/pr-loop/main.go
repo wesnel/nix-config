@@ -101,6 +101,10 @@ worktree. A failure to log is printed on stderr and fails nothing.
                               completes (a commit no plan takes makes a plan
                               naming both); after a push to GitHub, names the
                               pr-loop wait ci to start
+  mcp-status [--hook]         which of this host's mcp-proxy servers are not connected,
+                              each with the command that connects it, probing each route
+                              without credentials; nothing when all are; --hook prints it
+                              as context for Claude Code's SessionStart hook
 
 reply and resolve take only a thread whose every comment is a configured
 bot's (its login pattern, on an account GitHub types Bot) or the
@@ -209,6 +213,9 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	flags.Var(&leases, "lease", "")
 	if command == "guard" {
 		return guard.Main(args, stdin, stdout, stderr)
+	}
+	if command == "mcp-status" {
+		return mcpStatus(args, stdout, stderr)
 	}
 	if code, ok := cli.Parse(flags, interleave(args), usage, stdout, stderr); !ok {
 		return code
