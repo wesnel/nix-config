@@ -162,7 +162,10 @@ have (see status) is refused and writes nothing.
                      checkpoint (a hand-back, a sign-pass handed over or
                      signed, or a decision that left no question to ask) and
                      the context holds 200K tokens or more or its cache has
-                     gone cold
+                     gone cold. Records the quota windows in
+                     $XDG_STATE_HOME/agent-plan/usage.json for quota-stop,
+                     an equal or higher reading of a window replacing a
+                     lower one until the window resets
   own PLAN --worktree DIR --agent ID
                      record agent ID, the harness's ID for a sub-agent or
                      "main" for the session's main thread, as the one agent
@@ -241,6 +244,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		// Claude Code shows whatever this prints, so a failure prints
 		// nothing.
 		input := readAll(stdin)
+		if ws, ok := quota.FromClaudeStatus(input, time.Now()); ok {
+			_ = quota.Record(quota.File(), ws) // a reading not recorded waits for the next refresh
+		}
 		var parts []string
 		if line := quota.StatusLine(input, time.Now()); line != "" {
 			parts = append(parts, line)
