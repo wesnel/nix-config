@@ -2072,6 +2072,8 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 			return reason
 		}
 		switch {
+		case unscanned(path, dir):
+			return configUnscanned
 		case sharedConfigFile(path, dir):
 			return sharedConfig
 		case strings.HasSuffix(path, ".codex/hooks.json") && guardFile(path), agentToolsConfig(path):

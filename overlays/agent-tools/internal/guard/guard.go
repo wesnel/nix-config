@@ -633,9 +633,10 @@ func gitConfigAlias(path, dir, text string) string {
 // volume folds, in the file's name or a directory's, a link and a hard
 // link all count, and so does a new name outside ASCII in one of their
 // directories. A name holding gitconfig, or config, config.worktree or
-// any name outside ASCII in a .git, git or worktrees directory, counts
-// too, as written or with its links resolved, in any case where names fold
-// it, for files and directories that are not there yet.
+// any name outside ASCII in a .git, git or worktrees directory, or in a
+// submodule's git directory (inModules), counts too, as written or with
+// its links resolved, in any case where names fold it, for files and
+// directories that are not there yet.
 func gitConfigFile(path, dir string) bool {
 	if filepath.IsAbs(path) {
 		config := os.Getenv("XDG_CONFIG_HOME")
@@ -643,7 +644,11 @@ func gitConfigFile(path, dir string) bool {
 			config = filepath.Join(home, ".config")
 		}
 		known := []string{filepath.Join(home, ".gitconfig"), filepath.Join(config, "git", "config")}
-		for _, g := range gitDirsFor(path, dir) {
+		dirs, complete := gitDirsFor(path, dir)
+		if !complete {
+			return true // a git directory the guard did not look at may hold it
+		}
+		for _, g := range dirs {
 			known = append(known, gitDirConfigs(g)...)
 		}
 		for _, k := range known {
@@ -659,7 +664,7 @@ func gitConfigFile(path, dir string) bool {
 		base, parent := filepath.Base(p), filepath.Base(filepath.Dir(p))
 		if strings.Contains(base, "gitconfig") ||
 			(base == "config" || base == "config.worktree" || !ascii(base)) && (parent == ".git" || parent == "git" ||
-				filepath.Base(filepath.Dir(filepath.Dir(p))) == "worktrees") {
+				filepath.Base(filepath.Dir(filepath.Dir(p))) == "worktrees" || inModules(filepath.Dir(p))) {
 			return true
 		}
 	}
@@ -670,11 +675,15 @@ func gitConfigFile(path, dir string) bool {
 // a repository's config, which every worktree shares: the config of a git
 // directory gitDirsFor finds, as Reaches judges it by file identity, or,
 // for a file not there yet, config or a name outside ASCII in a .git
-// directory, as written or with its links resolved, in any case where
-// names fold it.
+// directory or a submodule's git directory (inModules), as written or
+// with its links resolved, in any case where names fold it.
 func sharedConfigFile(path, dir string) bool {
 	if filepath.IsAbs(path) {
-		for _, g := range gitDirsFor(path, dir) {
+		dirs, complete := gitDirsFor(path, dir)
+		if !complete {
+			return true // a git directory the guard did not look at may hold it
+		}
+		for _, g := range dirs {
 			if Reaches(path, filepath.Join(g, "config"), false) {
 				return true
 			}
@@ -684,8 +693,35 @@ func sharedConfigFile(path, dir string) bool {
 		if foldsCase {
 			p = strings.ToLower(p)
 		}
-		if base := filepath.Base(p); (base == "config" || !ascii(base)) && filepath.Base(filepath.Dir(p)) == ".git" {
+		if base := filepath.Base(p); (base == "config" || !ascii(base)) &&
+			(filepath.Base(filepath.Dir(p)) == ".git" || inModules(filepath.Dir(p))) {
 			return true
+		}
+	}
+	return false
+}
+
+// inModules reports whether dir lies under a modules directory inside a
+// .git directory, where git keeps submodules' git directories: under the
+// repository's .git/modules or a linked worktree's
+// .git/worktrees/ID/modules, at any depth, since a submodule's name may
+// hold slashes and its own submodules nest under its modules. Where names
+// fold, they match as the volume matches them, Unicode's folds included
+// (moduleſ is modules).
+func inModules(dir string) bool {
+	is := func(name, want string) bool {
+		if foldsCase {
+			return strings.EqualFold(name, want)
+		}
+		return name == want
+	}
+	modules := false
+	for d := filepath.Dir(dir); d != filepath.Dir(d); d = filepath.Dir(d) {
+		switch name := filepath.Base(d); {
+		case is(name, "modules"):
+			modules = true
+		case is(name, ".git"):
+			return modules
 		}
 	}
 	return false
@@ -693,14 +729,20 @@ func sharedConfigFile(path, dir string) bool {
 
 // gitDirsFor are the git directories whose config files path, absolute and
 // written from a session in dir, may be: the .git directory of each
-// directory above it, with its links resolved, and, where path is a hard
-// link, which may stand anywhere, the git directory and common directory
-// of dir's repository.
-func gitDirsFor(path, dir string) []string {
-	var dirs []string
+// directory above it and each submodule's git directory it is in
+// (inModules, holding HEAD), with their links resolved, and, where path is
+// a hard link, which may stand anywhere, the git directory and common
+// directory of dir's repository and every submodule's git directory under
+// them (submoduleGitDirs). complete is false when there were more of those
+// than the guard looks at.
+func gitDirsFor(path, dir string) (dirs []string, complete bool) {
+	complete = true
 	for d := filepath.Dir(physical(path)); ; d = filepath.Dir(d) {
 		if info, err := os.Stat(filepath.Join(d, ".git")); err == nil && info.IsDir() {
 			dirs = append(dirs, filepath.Join(d, ".git"))
+		}
+		if info, err := os.Stat(filepath.Join(d, "HEAD")); err == nil && info.Mode().IsRegular() && inModules(d) {
+			dirs = append(dirs, d)
 		}
 		if d == filepath.Dir(d) {
 			break
@@ -710,12 +752,75 @@ func gitDirsFor(path, dir string) []string {
 		if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Nlink > 1 {
 			if out, ok := (gitState{dir: dir}).run("rev-parse", "--path-format=absolute", "--git-dir",
 				"--git-common-dir"); ok {
-				dirs = append(dirs, strings.Split(out, "\n")...)
+				for _, g := range strings.Split(out, "\n") {
+					subs, all := submoduleGitDirs(g)
+					dirs, complete = append(append(dirs, g), subs...), complete && all
+				}
 			}
 		}
 	}
-	return dirs
+	return dirs, complete
 }
+
+// submoduleGitDirs are the submodules' git directories under gitDir: in
+// its modules directory and each linked worktree's, at any depth, since a
+// submodule's name may hold slashes, and their own submodules' in turn.
+// A directory holding HEAD is a git directory. It looks at no more than
+// submoduleScanLimit directories; complete is false when there were more.
+func submoduleGitDirs(gitDir string) (found []string, complete bool) {
+	complete = true
+	budget := submoduleScanLimit
+	var walk func(d string)
+	walk = func(d string) {
+		entries, _ := os.ReadDir(d)
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			if budget == 0 {
+				complete = false
+				return
+			}
+			budget--
+			p := filepath.Join(d, e.Name())
+			if info, err := os.Stat(filepath.Join(p, "HEAD")); err == nil && info.Mode().IsRegular() {
+				found = append(found, p)
+				walk(filepath.Join(p, "modules"))
+			} else {
+				walk(p)
+			}
+		}
+	}
+	walk(filepath.Join(gitDir, "modules"))
+	worktrees, _ := os.ReadDir(filepath.Join(gitDir, "worktrees"))
+	for _, w := range worktrees {
+		if w.IsDir() {
+			walk(filepath.Join(gitDir, "worktrees", w.Name(), "modules"))
+		}
+	}
+	return found, complete
+}
+
+// submoduleScanLimit is how many directories submoduleGitDirs looks at.
+var submoduleScanLimit = 1000
+
+// unscanned reports whether path, written from a session in dir, is a hard
+// link the guard cannot rule out being a git config, since there are more
+// submodule git directories than it looks at (gitDirsFor).
+func unscanned(path, dir string) bool {
+	if !filepath.IsAbs(path) {
+		return false
+	}
+	_, complete := gitDirsFor(path, dir)
+	return !complete
+}
+
+// configUnscanned is why a hard link is not written where the guard could
+// not look at every submodule's git directory to rule out that it is one's
+// config.
+const configUnscanned = "This file has other hard links, and the repository has more submodule git directories than " +
+	"the guard looks at, so it cannot rule out that this is the git config of one of them. Write a new file with " +
+	"a single link instead, or put the change in your report for the operator."
 
 // gitDirConfigs are the config files git reads in the git directory
 // gitDir: its config and config.worktree, and the config.worktree of each
