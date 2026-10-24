@@ -69,8 +69,19 @@ func IsPlan(name string) bool {
 	return m != nil && m[3] != "log"
 }
 
-// Load reads the config, defaulting to ~/git/notes/agents and this
-// machine's short host name.
+// notesRepo is the operator's notes repository under home, the plans'
+// repository when the config names no plans directory.
+func notesRepo(home string) string {
+	return filepath.Join(home, "git", "github.com", "wesnel", "notes")
+}
+
+// DefaultDir is the plans directory under home when the config names
+// none: agents/plans in the operator's notes repository.
+func DefaultDir(home string) string { return filepath.Join(notesRepo(home), "agents", "plans") }
+
+// Load reads the config, defaulting to this machine's short host name and
+// to DefaultDir, in the notes repository, which is then the plans'
+// repository too.
 func Load() (Config, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -78,7 +89,7 @@ func Load() (Config, error) {
 	}
 	host, _ := os.Hostname()
 	host, _, _ = strings.Cut(host, ".")
-	c := Config{Dir: filepath.Join(home, "git", "notes", "agents"), Host: host}
+	c := Config{Dir: DefaultDir(home), Repo: notesRepo(home), Host: host}
 	data, err := os.ReadFile(repos.Path())
 	if errors.Is(err, fs.ErrNotExist) {
 		return c, nil
@@ -92,10 +103,13 @@ func Load() (Config, error) {
 	if err := json.Unmarshal(data, &file); err != nil {
 		return Config{}, fmt.Errorf("%s: %w", repos.Path(), err)
 	}
-	dir, host := c.Dir, c.Host
+	dir, repo, host := c.Dir, c.Repo, c.Host
 	c = file.Plans
 	if c.Dir == "" {
 		c.Dir = dir
+		if c.Repo == "" {
+			c.Repo = repo
+		}
 	}
 	if c.Host == "" {
 		c.Host = host

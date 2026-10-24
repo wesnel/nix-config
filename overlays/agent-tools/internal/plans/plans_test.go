@@ -767,18 +767,36 @@ func TestLoad(t *testing.T) {
 		}
 	}
 
+	// Unconfigured, plans live in the operator's notes repository, whose
+	// root, not the directory above the plans, is the repository sync
+	// commits to.
 	t.Run("without a config", func(t *testing.T) {
 		useConfig(t, "")
 		home, _ := os.UserHomeDir()
-		if c, err := Load(); err != nil || c.Dir != filepath.Join(home, "git", "notes", "agents") || c.Host == "" {
+		c, err := Load()
+		if err != nil || c.Dir != filepath.Join(home, "git", "github.com", "wesnel", "notes", "agents", "plans") || c.Host == "" {
 			t.Errorf("without a config: %+v, %v", c, err)
+		}
+		if repo := c.repo(); repo != filepath.Join(home, "git", "github.com", "wesnel", "notes") {
+			t.Errorf("without a config, the plans repository is %s", repo)
 		}
 	})
 
+	// A plans directory the config names is in the repository above it
+	// unless plans.repo says otherwise.
 	t.Run("from the config", func(t *testing.T) {
-		useConfig(t, `{"repos": {}, "plans": {"dir": "/p", "host": "ngrok"}}`)
-		if c, err := Load(); err != nil || c.Dir != "/p" || c.Host != "ngrok" {
+		useConfig(t, `{"repos": {}, "plans": {"dir": "/p/plans", "host": "ngrok"}}`)
+		if c, err := Load(); err != nil || c.Dir != "/p/plans" || c.Host != "ngrok" || c.repo() != "/p" {
 			t.Errorf("from the config: %+v, %v", c, err)
+		}
+	})
+
+	t.Run("a config without a directory", func(t *testing.T) {
+		useConfig(t, `{"plans": {"host": "ngrok"}}`)
+		home, _ := os.UserHomeDir()
+		notes := filepath.Join(home, "git", "github.com", "wesnel", "notes")
+		if c, err := Load(); err != nil || c.Dir != filepath.Join(notes, "agents", "plans") || c.repo() != notes || c.Host != "ngrok" {
+			t.Errorf("a config without a directory: %+v, %v", c, err)
 		}
 	})
 

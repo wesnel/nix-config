@@ -42,6 +42,18 @@ func planLogPaths(t *testing.T) (*strings.Replacer, string) {
 		"LOGFILE", filepath.Join(plans, "2026-10-14-x.box.log.org"), "WORKDIR", work), work
 }
 
+// With a config agent-plan cannot read, the guard still protects the
+// plans directory agent-plan defaults to.
+func TestPlansDirs(t *testing.T) {
+	h := fakeHome(t)
+	config := filepath.Join(h, "config.json")
+	os.WriteFile(config, []byte("not JSON"), 0o644)
+	t.Setenv("AGENT_TOOLS_CONFIG", config)
+	if dirs := plansDirs(); len(dirs) == 0 || dirs[0] != filepath.Join(h, "git", "github.com", "wesnel", "notes", "agents", "plans") {
+		t.Errorf("plans directories %v", dirs)
+	}
+}
+
 // A plan's log is appended to by agent-plan alone: no file tool and no
 // shell write may change it, while agent-plan itself passes.
 func TestPlanLog(t *testing.T) {

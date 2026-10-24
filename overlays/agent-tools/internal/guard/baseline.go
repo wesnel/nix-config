@@ -1408,10 +1408,11 @@ func inPlans(path string) bool {
 	return false
 }
 
-// plansDirs are the plans directory agent-plan's config names, as named
-// and as its symlinks resolve.
+// plansDirs are the plans directory agent-plan's config names, or its
+// default when the config cannot be read, as named and as its symlinks
+// resolve.
 func plansDirs() []string {
-	dir := filepath.Join(home, "git", "notes", "agents")
+	dir := plans.DefaultDir(home)
 	if c, err := plans.Load(); err == nil {
 		dir = c.Dir
 	}
