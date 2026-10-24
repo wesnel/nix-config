@@ -2,8 +2,10 @@ package guard
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1162,32 +1164,44 @@ func testSocket(socket string) bool {
 		}
 		return p
 	}
-	socket = fold(resolvedPath(socket))
-	below := func(dir string) bool { return strings.HasPrefix(socket, fold(resolvedPath(dir))+"/") }
+	resolved, ok := resolvedPath(socket)
+	if !ok {
+		return false
+	}
+	socket = fold(resolved)
+	// A directory the guard cannot resolve is compared as written.
+	dirPath := func(dir string) string {
+		resolved, _ := resolvedPath(dir)
+		return fold(resolved)
+	}
+	below := func(dir string) bool { return strings.HasPrefix(socket, dirPath(dir)+"/") }
 	uid := strconv.Itoa(os.Getuid())
 	tmp := filepath.Clean(os.TempDir())
 	for _, own := range []string{filepath.Join(tmp, "emacs"+uid), "/run/user/" + uid + "/emacs"} {
-		if socket == fold(resolvedPath(own)) || below(own) {
+		if socket == dirPath(own) || below(own) {
 			return false
 		}
 	}
 	if below(tmp) || below("/tmp/claude-"+uid) {
 		return true
 	}
-	rel, ok := strings.CutPrefix(socket, fold(resolvedPath("/tmp"))+"/et.")
+	rel, ok := strings.CutPrefix(socket, dirPath("/tmp")+"/et.")
 	return ok && strings.Contains(rel, "/") && !strings.HasPrefix(rel, "/")
 }
 
 // resolvedPath is the clean absolute path with the symlinks of its deepest
-// existing directory, or of itself, resolved.
-func resolvedPath(path string) string {
+// existing directory, or of itself, resolved. Only names that do not exist
+// are kept as written: where one that exists cannot be resolved, as a link
+// to nothing or one in a directory the guard may not read, ok is false and
+// path comes back as it is.
+func resolvedPath(path string) (string, bool) {
 	rest := ""
 	for p := path; ; p = filepath.Dir(p) {
 		if real, err := filepath.EvalSymlinks(p); err == nil {
-			return filepath.Join(real, rest)
+			return filepath.Join(real, rest), true
 		}
-		if p == filepath.Dir(p) {
-			return path
+		if _, err := os.Lstat(p); !errors.Is(err, fs.ErrNotExist) || p == filepath.Dir(p) {
+			return path, false
 		}
 		rest = filepath.Join(filepath.Base(p), rest)
 	}

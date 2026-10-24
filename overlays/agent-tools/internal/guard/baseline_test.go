@@ -1289,23 +1289,45 @@ func TestEmacsBatchServer(t *testing.T) {
 	}
 }
 
-// A socket under a test root that links to the operator's is theirs.
+// A socket under a test root that links to the operator's is theirs, and
+// so is one under a link the guard cannot follow, such as one to a
+// directory that is not there.
 func TestTestEmacsSocketLink(t *testing.T) {
-	root, err := os.MkdirTemp("/tmp", "et.")
-	if err != nil {
-		t.Skip(err)
+	roots := map[string]func(t *testing.T) string{
+		"tmpdir": func(t *testing.T) string { return t.TempDir() },
+		"et": func(t *testing.T) string {
+			root, err := os.MkdirTemp("/tmp", "et.")
+			if err != nil {
+				t.Skip(err)
+			}
+			t.Cleanup(func() { os.RemoveAll(root) })
+			return root
+		},
 	}
-	t.Cleanup(func() { os.RemoveAll(root) })
-	own := "/usr"
-	link := filepath.Join(root, "server")
-	if err := os.Symlink(own, link); err != nil {
-		t.Fatal(err)
-	}
-	if testEmacsSocket([]string{"-s", link + "/server", "-e", "(kill-emacs)"}) {
-		t.Errorf("a link from %s to %s passes", link, own)
-	}
-	if !testEmacsSocket([]string{"-s", filepath.Join(root, "test", "server"), "-e", "(kill-emacs)"}) {
-		t.Errorf("%s's own socket is refused", root)
+	for rootName, mkRoot := range roots {
+		t.Run(rootName, func(t *testing.T) {
+			root := mkRoot(t)
+			for name, own := range map[string]string{
+				"existing": "/usr",
+				// A child of a device, which no system lets exist.
+				"not a directory": "/dev/null/emacs",
+				// Names in a directory of the test's own, which it never
+				// makes.
+				"missing":          filepath.Join(t.TempDir(), "gone"),
+				"missing relative": "gone",
+			} {
+				link := filepath.Join(root, name)
+				if err := os.Symlink(own, link); err != nil {
+					t.Fatal(err)
+				}
+				if testEmacsSocket([]string{"-s", link + "/server", "-e", "(kill-emacs)"}) {
+					t.Errorf("a link from %s to %s passes", link, own)
+				}
+			}
+			if !testEmacsSocket([]string{"-s", filepath.Join(root, "test", "server"), "-e", "(kill-emacs)"}) {
+				t.Errorf("%s's own socket is refused", root)
+			}
+		})
 	}
 }
 
