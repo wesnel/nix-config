@@ -17,6 +17,17 @@ func TestPaths(t *testing.T) {
 			t.Errorf("%q", got)
 		}
 	})
+	// An empty or relative override names no file, as an empty or
+	// relative XDG_CONFIG_HOME names no directory; the plan views in
+	// emacs-config follow the same rule.
+	for what, value := range map[string]string{"an empty override": "", "a relative override": "agent-tools.json"} {
+		t.Run(what, func(t *testing.T) {
+			t.Setenv("AGENT_TOOLS_CONFIG", value)
+			if got := ConfigFile("AGENT_TOOLS_CONFIG", "agent-tools/config.json"); got != "/env/config/agent-tools/config.json" {
+				t.Errorf("%q", got)
+			}
+		})
+	}
 	t.Run("baked in", func(t *testing.T) {
 		Bake(t, "/baked/config", "/baked/state")
 		if got := []string{ConfigHome(), StateHome(), ConfigFile("AGENT_TOOLS_CONFIG", "agent-tools/config.json")}; strings.Join(got, " ") !=
