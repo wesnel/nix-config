@@ -94,6 +94,31 @@ func TestIsolate(t *testing.T) {
 		}
 	})
 
+	// `git -c` hands its pairs down in these variables; left in place they
+	// would override the isolated configuration.
+	t.Run("drops the caller's git -c pairs", func(t *testing.T) {
+		pairs := map[string]string{
+			"GIT_CONFIG_PARAMETERS": "'core.pager'='x'",
+			"GIT_CONFIG_COUNT":      "1",
+			"GIT_CONFIG_KEY_0":      "include.path",
+			"GIT_CONFIG_VALUE_0":    "/secret",
+		}
+		for name, value := range pairs {
+			t.Setenv(name, value)
+		}
+		t.Setenv("GIT_CONFIGURED", "kept")
+		SetNoConfig()
+
+		for name := range pairs {
+			if value, ok := os.LookupEnv(name); ok {
+				t.Errorf("%s survived SetNoConfig: %q", name, value)
+			}
+		}
+		if got := os.Getenv("GIT_CONFIGURED"); got != "kept" {
+			t.Errorf("GIT_CONFIGURED = %q, want it kept", got)
+		}
+	})
+
 	// Packages must be isolated by their own TestMain, not by setup helpers
 	// that remember to be careful.
 	t.Run("in each package's TestMain", func(t *testing.T) {
@@ -149,5 +174,18 @@ func TestWithout(t *testing.T) {
 	env := []string{"GIT_DIR=/r/.git", "PATH=/bin", "GIT_WORK_TREE=/r", "GIT_DIRECTORY=x", "GIT_CONFIG_GLOBAL=/dev/null"}
 	if got := strings.Join(Without(env), " "); got != "PATH=/bin GIT_DIRECTORY=x GIT_CONFIG_GLOBAL=/dev/null" {
 		t.Errorf("Without: %s", got)
+	}
+}
+
+// TestWithoutConfig covers the environment of git that reads no
+// configuration but the repository's: the caller's own global file, its
+// `git -c` pairs and its location are gone, and nothing else is.
+func TestWithoutConfig(t *testing.T) {
+	env := []string{"GIT_DIR=/r/.git", "PATH=/bin", "GIT_CONFIG_GLOBAL=/home/u/.gitconfig", "GIT_CONFIG=/c",
+		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=include.path", "GIT_CONFIG_VALUE_0=/secret",
+		"GIT_CONFIG_PARAMETERS='core.pager'='x'", "GIT_CONFIGURED=kept", "GIT_ATTR_NOSYSTEM=1"}
+	got := strings.Join(WithoutConfig(env), " ")
+	if got != "PATH=/bin GIT_CONFIGURED=kept GIT_ATTR_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1" {
+		t.Errorf("WithoutConfig: %s", got)
 	}
 }

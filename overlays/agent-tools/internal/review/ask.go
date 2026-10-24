@@ -17,6 +17,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/guard"
 	"github.com/wesnel/agent-tools/internal/redact"
 	"github.com/wesnel/agent-tools/internal/refusal"
@@ -312,7 +313,7 @@ func askIn(ctx context.Context, top, text string, files []askFile, reviewer stri
 	// A repository of its own, which none of the user's configuration
 	// reaches, so that committing signs nothing and runs no hook.
 	run := func(args ...string) (string, error) {
-		return git.RunEnv([]string{"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1"},
+		return git.RunEnv(gitenv.NoConfig,
 			append([]string{"-C", tree, "-c", "user.name=delegate", "-c", "user.email=delegate@localhost",
 				"-c", "commit.gpgsign=false"}, args...)...)
 	}
