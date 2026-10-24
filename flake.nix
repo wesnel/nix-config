@@ -585,6 +585,12 @@
     in {
       formatter = pkgs.alejandra;
 
+      # agent-tools built, which runs its tests. The devbox deploys it built
+      # with its own settings (homeConfigurations.devbox's
+      # wgn.home.llm.agentTools), on x86_64-linux, which no machine here
+      # can build; .github/workflows/agent-tools-lint.yml builds that one.
+      checks.agent-tools = agentTools;
+
       # emacs-config's plan views read what agent-plan writes: this runs
       # their tests, at the emacs-config this flake locks, against the
       # agent-plan built from this commit. Point it at a checkout with

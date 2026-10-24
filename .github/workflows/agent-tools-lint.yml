@@ -4,12 +4,16 @@ on:
   push:
     paths:
       - overlays/agent-tools/**
+      - modules/home-manager/**
+      - machines/home-manager/**
       - flake.nix
       - flake.lock
       - .github/workflows/agent-tools-lint.yml
   pull_request:
     paths:
       - overlays/agent-tools/**
+      - modules/home-manager/**
+      - machines/home-manager/**
       - flake.nix
       - flake.lock
       - .github/workflows/agent-tools-lint.yml
@@ -21,7 +25,7 @@ permissions:
 jobs:
   gosec:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -29,3 +33,8 @@ jobs:
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
       - name: Run gosec over agent-tools
         run: nix build --print-build-logs .#checks.x86_64-linux.agent-tools-lint
+      # The agent-tools the devbox deploys, built with the devbox's settings,
+      # which runs its tests on Linux; the devbox's switch would otherwise
+      # be the first to run them.
+      - name: Build the devbox's agent-tools and run its tests
+        run: nix build --print-build-logs .#homeConfigurations.devbox.config.wgn.home.llm.agentTools

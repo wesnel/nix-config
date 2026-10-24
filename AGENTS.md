@@ -16,6 +16,7 @@ commands in the README's "updating systems".
 | Changed | Run |
 | --- | --- |
 | `overlays/agent-tools` | in that directory: `gofmt -l .` (prints nothing), `go build ./...`, `go vet ./...`, `go test -count=1 ./...`; then `nix build --no-link .#checks.aarch64-darwin.agent-tools-lint` (gosec, which CI also runs) |
+| `overlays/agent-tools`, for its tests in the Nix sandbox | `nix build --no-link .#checks.aarch64-darwin.agent-tools`: the package built with its tests; CI builds the one the devbox deploys, `.#homeConfigurations.devbox.config.wgn.home.llm.agentTools`, which needs a Linux builder this Mac lacks |
 | skills or `AGENTS.md` under `modules/home-manager/llm`, agent files under `modules/home-manager/claude/agents`, `README.md`, or `pr-loop`'s subcommands and agent-tools' messages | `nix build --no-link .#checks.aarch64-darwin.agent-names`: every sub-agent type and `pr-loop` subcommand they name exists |
 | skills or `AGENTS.md` under `modules/home-manager/llm`, agent files under `modules/home-manager/claude/agents`, this file or `README.md` | `nix build --no-link .#checks.aarch64-darwin.skill-names`: every skill they name or preload exists, and each principle skill is named somewhere and holds the only copy of its text |
 | `modules/home-manager/claude`, `modules/home-manager/llm`, or `overlays/agent-tools/internal/guard/mcp.json` | `nix build --no-link .#checks.aarch64-darwin.claude-settings`: the permission rules and hooks in the ngrok Mac's Claude Code settings |
