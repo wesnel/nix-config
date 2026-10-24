@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -29,7 +31,10 @@ func TestMCPTools(t *testing.T) {
 		{"Linear read", []string{"--baseline"}, claude("mcp__linear__get_issue"), "", ""},
 		{"Linear write asks", []string{"--baseline"}, claude("mcp__linear__save_issue"), ask, "Linear"},
 		{"Linear tool not reviewed", []string{"--baseline"}, claude("mcp__linear__delete_workspace"), deny, "delete_workspace"},
-		{"Linear connector write asks", []string{"--baseline"}, claude("mcp__claude_ai_Linear__create_comment"), ask, ""},
+		{"Linear connector write asks", []string{"--baseline"}, claude("mcp__claude_ai_Linear__save_comment"), ask, ""},
+		{"Linear document write asks", []string{"--baseline"}, claude("mcp__linear__save_document"), ask, "Linear"},
+		{"Linear comment deletion", []string{"--baseline"}, claude("mcp__claude_ai_Linear__delete_comment"), deny, "delete_comment"},
+		{"Linear diff merge", []string{"--baseline"}, claude("mcp__linear__merge_diff"), deny, "merge_diff"},
 		{"Linear write from a reviewer", []string{"--reviewer"}, claude("mcp__linear__save_issue"), deny, "reviewer only reads"},
 		{"Linear read from a reviewer", []string{"--reviewer"}, claude("mcp__linear__list_issues"), "", ""},
 		{"Linear write from Codex", []string{"--baseline"}, codex("mcp__linear__save_issue"), deny, "Claude Code"},
@@ -96,16 +101,123 @@ func TestMCPTools(t *testing.T) {
 	}
 }
 
-// TestMCPListsDisjoint holds every listed server to tools that are either
-// reads or confirmed writes, never both, and to lists mcp-proxy can use: an
-// empty allow list there exposes every tool.
-func TestMCPListsDisjoint(t *testing.T) {
-	for id, s := range mcpServices {
-		for name := range s.confirms {
-			if s.reads[name] {
-				t.Errorf("%s: %s is both a read and a confirmed write", id, name)
+// TestMCPListsMatchServer holds each service with a recorded tools/list in
+// testdata/tools (SERVICE.json, by its key in mcp.json) to that list: every
+// tool the server offers is a read, a confirmed write or a refused tool,
+// and every tool mcp.json names is one the server offers. A tool the server
+// adds fails here until it is reviewed into one of the three lists.
+func TestMCPListsMatchServer(t *testing.T) {
+	lists := mcpLists(t)
+	files, err := filepath.Glob(filepath.Join("testdata", "tools", "*.json"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no recorded tools/list under testdata/tools: %v", err)
+	}
+	for _, file := range files {
+		id := strings.TrimSuffix(filepath.Base(file), ".json")
+		t.Run(id, func(t *testing.T) {
+			l, ok := lists[id]
+			if !ok {
+				t.Fatalf("%s: mcp.json has no service %s", file, id)
+			}
+			data, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var recorded struct {
+				Tools []struct{ Name string }
+			}
+			if err := json.Unmarshal(data, &recorded); err != nil {
+				t.Fatalf("%s: %v", file, err)
+			}
+			offered := map[string]bool{}
+			for _, tool := range recorded.Tools {
+				offered[tool.Name] = true
+			}
+			listed := map[string]bool{}
+			for _, names := range [][]string{l.Reads, l.Confirms, l.Refuses} {
+				for _, name := range names {
+					listed[name] = true
+					if !offered[name] {
+						t.Errorf("%s names %s, which the server does not offer", id, name)
+					}
+				}
+			}
+			for _, tool := range recorded.Tools {
+				if !listed[tool.Name] {
+					t.Errorf("the %s server offers %s, which is in none of reads, confirms and refuses", id, tool.Name)
+				}
+			}
+		})
+	}
+}
+
+// mcpLists is each service's three lists as mcp.json writes them, refuses
+// included, which the guard does not read: a refused tool is refused as
+// any tool in neither of the others is.
+func mcpLists(t *testing.T) map[string]struct{ Reads, Confirms, Refuses []string } {
+	t.Helper()
+	var lists map[string]struct{ Reads, Confirms, Refuses []string }
+	if err := json.Unmarshal(mcpJSON, &lists); err != nil {
+		t.Fatal(err)
+	}
+	return lists
+}
+
+// TestLinearRefuses holds Linear's destructive tools, every delete_* and
+// merge_diff it offers, to refuses alone, and each refused tool to a denial
+// on both of Linear's servers.
+func TestLinearRefuses(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "tools", "linear.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var recorded struct {
+		Tools []struct{ Name string }
+	}
+	if err := json.Unmarshal(data, &recorded); err != nil {
+		t.Fatal(err)
+	}
+	l := mcpLists(t)["linear"]
+	refused, elsewhere := set(l.Refuses...), set(append(l.Reads, l.Confirms...)...)
+	destructive := 0
+	for _, tool := range recorded.Tools {
+		if strings.HasPrefix(tool.Name, "delete_") || tool.Name == "merge_diff" {
+			destructive++
+			if !refused[tool.Name] || elsewhere[tool.Name] {
+				t.Errorf("%s: in refuses %v, in reads or confirms %v; want refuses alone", tool.Name, refused[tool.Name], elsewhere[tool.Name])
 			}
 		}
+	}
+	if destructive == 0 {
+		t.Fatal("the recording offers no delete_* or merge_diff tool")
+	}
+	for _, name := range l.Refuses {
+		for _, server := range []string{"linear", "claude_ai_Linear"} {
+			var out bytes.Buffer
+			Main([]string{"--baseline"}, strings.NewReader(`{"tool_name":"mcp__`+server+`__`+name+`","tool_input":{}}`), &out, io.Discard)
+			if !strings.Contains(out.String(), `"permissionDecision":"deny"`) || !strings.Contains(out.String(), name) {
+				t.Errorf("mcp__%s__%s: printed %s, want a denial naming it", server, name, out.String())
+			}
+		}
+	}
+}
+
+// TestMCPListsDisjoint holds every listed server to tools that are in at
+// most one of reads, confirms and refuses, and to lists mcp-proxy can use:
+// an empty allow list there exposes every tool.
+func TestMCPListsDisjoint(t *testing.T) {
+	for id, l := range mcpLists(t) {
+		in := map[string]string{}
+		for list, names := range map[string][]string{"reads": l.Reads, "confirms": l.Confirms, "refuses": l.Refuses} {
+			for _, name := range names {
+				if other, ok := in[name]; ok {
+					t.Errorf("%s: %s is in both %s and %s", id, name, other, list)
+				}
+				in[name] = list
+			}
+		}
+	}
+	for id, s := range mcpServices {
 		if !s.readsByName && len(s.reads) == 0 {
 			t.Errorf("%s: lists no reads", id)
 		}
