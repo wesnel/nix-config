@@ -52,12 +52,35 @@ func (c Config) repo() string {
 // git runs git in the notes repository, with the repository unable to run
 // programs of its own, and the remote reached through SSHConfig's ssh.
 func (c Config) git(ctx context.Context, args ...string) (string, error) {
+	return c.gitAs(ctx, nil, args...)
+}
+
+// syncName is the name sync commits under.
+const syncName = "agent-plan sync"
+
+// syncEmail is the address sync commits under on this host: not the
+// operator's user.email, so git-push-guard, which refuses only the unsigned
+// commits committed under user.email, lets sync's unsigned commits through.
+// .invalid is reserved, so the address is nobody's mailbox.
+func (c Config) syncEmail() string { return "agent-plan@" + c.Host + ".invalid" }
+
+// asSync is the environment that makes a commit, or a commit a rebase
+// replays, sync's as author and committer. It goes in the environment, not
+// `-c user.email`, which git hands to a push's pre-push hook and would change
+// whose commits git-push-guard checks.
+func (c Config) asSync() []string {
+	return []string{"GIT_AUTHOR_NAME=" + syncName, "GIT_AUTHOR_EMAIL=" + c.syncEmail(),
+		"GIT_COMMITTER_NAME=" + syncName, "GIT_COMMITTER_EMAIL=" + c.syncEmail()}
+}
+
+// gitAs is git with env added to its environment.
+func (c Config) gitAs(ctx context.Context, env []string, args ...string) (string, error) {
 	pre := []string{"-C", c.repo(), "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"}
 	if c.SSHConfig != "" {
 		pre = append(pre, "-c", "core.sshCommand="+c.sshCommand())
 	}
 	cmd := exec.CommandContext(ctx, "git", append(pre, args...)...)
-	cmd.Env = append(gitenv.Without(os.Environ()), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(append(gitenv.Without(os.Environ()), "GIT_TERMINAL_PROMPT=0"), env...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -180,7 +203,7 @@ func (c Config) Sync(o SyncOptions) (Synced, error) {
 	known := true
 	if _, err := c.git(ctx, "rev-parse", "-q", "--verify", remote); err != nil {
 		known = false
-	} else if _, err := c.git(ctx, "rebase", "-q", "--autostash", remote); err != nil {
+	} else if _, err := c.gitAs(ctx, c.asSync(), "rebase", "-q", "--autostash", remote); err != nil {
 		c.git(ctx, "rebase", "--abort")
 		return s, err
 	}
@@ -201,8 +224,8 @@ func (c Config) Sync(o SyncOptions) (Synced, error) {
 	return s, nil
 }
 
-// commitOwn commits this host's plan files, by name, unsigned, and returns
-// those it committed.
+// commitOwn commits this host's plan files, by name, unsigned and as sync,
+// and returns those it committed.
 func (c Config) commitOwn(ctx context.Context) ([]string, error) {
 	files, err := c.ownFiles(ctx)
 	if err != nil || len(files) == 0 {
@@ -231,7 +254,7 @@ func (c Config) commitOwn(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	args := append([]string{"-c", "commit.gpgsign=false", "commit", "-q", "-m", "Sync plans from " + c.Host, "--"}, files...)
-	if _, err := c.git(ctx, args...); err != nil {
+	if _, err := c.gitAs(ctx, c.asSync(), args...); err != nil {
 		return nil, err
 	}
 	return strings.Split(changed, "\n"), nil

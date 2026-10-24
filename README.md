@@ -410,8 +410,10 @@ notes. A few seconds after a plan changes, a watcher (a
 launchd agent on macOS, a systemd path unit on Linux) runs `agent-plan
 sync`: it commits this host's plan files by name, unsigned, as "Sync plans
 from HOST", rebases onto the remote with any other edits stashed and put
-back, and pushes. Its log is `/tmp/agent-plan-sync.log` on macOS and
-`journalctl --user -u agent-plan-sync` on Linux. Agents never sync: the
+back, and pushes. Sync authors and commits as `agent-plan sync
+<agent-plan@HOST.invalid>`, not as `user.email`, so `git-push-guard` lets
+its unsigned commits through. Sync's log is `/tmp/agent-plan-sync.log` on
+macOS and `journalctl --user -u agent-plan-sync` on Linux. Agents never sync: the
 guard denies `agent-plan sync`, and `agent-plan reseal PLAN`, which accepts
 a log edited by hand.
 

@@ -203,10 +203,10 @@ have (see status) is refused and writes nothing.
                      "plans.remote" names it, then make the plans directory,
                      with a .gitignore for the lock files, as new does
   sync [--pull] [--settle DURATION]
-                     commit this host's plan files and nothing else, take the
-                     other hosts' from the remote, and push; --pull only takes
-                     the other hosts' plans. The watcher runs it, never an
-                     agent
+                     commit this host's plan files and nothing else, as
+                     agent-plan sync <agent-plan@HOST.invalid>, take the other
+                     hosts' from the remote, and push; --pull only takes the
+                     other hosts' plans. The watcher runs it, never an agent
   reseal PLAN        accept a log edited outside agent-plan, recording that in
                      it; the operator's to run
 

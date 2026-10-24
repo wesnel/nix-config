@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wesnel/agent-tools/internal/gitenv"
 )
 
 // notes makes a bare origin holding a notes repository with an agents
@@ -55,7 +57,87 @@ func untouched(t *testing.T, c Config) {
 
 func TestSync(t *testing.T) {
 	t.Run("two hosts", testSyncTwoHosts)
+	t.Run("through git-push-guard", testSyncThroughPushGuard)
 	t.Run("without a repository", testSyncWithoutRepository)
+}
+
+// guarded is notes whose hosts reach origin as a host reaches the notes
+// repository, at git@github-notes:wesnel/notes.git over ssh, under a global
+// config that, as home-manager's does, names the operator in user.email and
+// runs git-push-guard, built from this module, before every push. The
+// operator's identity comes from that config alone, as on a host. The ssh is
+// a fake that runs git's command against the bare origin on this machine: it
+// stands in for GitHub, which a test must not contact.
+func guarded(t *testing.T, hosts ...string) (url string, configs map[string]Config) {
+	t.Helper()
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("no go here to build git-push-guard")
+	}
+	origin, configs := notes(t, hosts...)
+	for _, k := range []string{"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"} {
+		os.Unsetenv(k)
+	}
+	dir, _ := filepath.EvalSymlinks(t.TempDir())
+	guard := filepath.Join(dir, "git-push-guard")
+	if out, err := exec.Command("go", "build", "-o", guard, "github.com/wesnel/agent-tools/cmd/git-push-guard").CombinedOutput(); err != nil {
+		t.Fatalf("building git-push-guard: %v\n%s", err, out)
+	}
+	os.MkdirAll(filepath.Join(dir, "wesnel"), 0o755)
+	if err := os.Symlink(origin, filepath.Join(dir, "wesnel", "notes.git")); err != nil {
+		t.Fatal(err)
+	}
+	ssh := filepath.Join(dir, "ssh")
+	if err := os.WriteFile(ssh, []byte("#!/bin/sh\ncd '"+dir+"' && exec sh -c \"$2\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_SSH_COMMAND", ssh)
+	t.Setenv("GIT_SSH_VARIANT", "simple")
+	global := filepath.Join(dir, "gitconfig")
+	config := "[user]\n\tname = Operator\n\temail = operator@example.com\n" +
+		"[hook \"push-guard\"]\n\tevent = pre-push\n\tcommand = " + guard + "\n"
+	if err := os.WriteFile(global, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	url = "git@github-notes:wesnel/notes.git"
+	for _, c := range configs {
+		gitIn(t, filepath.Dir(c.Dir), "remote", "set-url", "origin", url)
+	}
+	return url, configs
+}
+
+// Sync's pushes pass git-push-guard, which refuses the operator's own
+// unsigned commits, with no bypass: box's first sync, and mac's, whose
+// commit is rebased onto box's before it is pushed.
+func testSyncThroughPushGuard(t *testing.T) {
+	url, hosts := guarded(t, "mac", "box")
+	mac, box := hosts["mac"], hosts["box"]
+	// The guard is running: it refuses the operator's own unsigned commit.
+	control := filepath.Join(t.TempDir(), "control")
+	gitIn(t, filepath.Dir(control), "clone", "-q", url, control)
+	gitIn(t, control, "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "Unsigned")
+	push := exec.Command("git", "push", "-q", "origin", "HEAD:refs/heads/control")
+	push.Dir, push.Env = control, gitenv.Without(os.Environ())
+	if out, err := push.CombinedOutput(); err == nil || !strings.Contains(string(out), "are not signed") {
+		t.Fatalf("git-push-guard did not refuse the operator's unsigned commit: %v\n%s", err, out)
+	}
+
+	newPlan(t, box, "y")
+	if got, err := box.Sync(SyncOptions{}); err != nil || !got.Pushed {
+		t.Fatalf("box's sync: %+v, %v", got, err)
+	}
+	newPlan(t, mac, "x")
+	if got, err := mac.Sync(SyncOptions{}); err != nil || !got.Pushed {
+		t.Fatalf("mac's sync, rebased onto box's: %+v, %v", got, err)
+	}
+	untouched(t, mac)
+	log := gitIn(t, filepath.Dir(mac.Dir), "log", "--format=%an <%ae> %cn <%ce> %s", "origin/main")
+	want := "agent-plan sync <agent-plan@mac.invalid> agent-plan sync <agent-plan@mac.invalid> Sync plans from mac\n" +
+		"agent-plan sync <agent-plan@box.invalid> agent-plan sync <agent-plan@box.invalid> Sync plans from box\n" +
+		"Operator <operator@example.com> Operator <operator@example.com> Start\n"
+	if log != want {
+		t.Errorf("origin's history:\n%s\nnot\n%s", log, want)
+	}
 }
 
 // Two hosts sync disjoint plans through one origin, each committing only
@@ -93,7 +175,7 @@ func testSyncTwoHosts(t *testing.T) {
 		t.Errorf("mac reading box's plan: %+v, %v", p, err)
 	}
 	log := gitIn(t, origin, "log", "--format=%an %G? %s", "main")
-	if log != "Operator N Sync plans from box\nOperator N Sync plans from mac\nOperator N Start\n" {
+	if log != "agent-plan sync N Sync plans from box\nagent-plan sync N Sync plans from mac\nOperator N Start\n" {
 		t.Errorf("origin's history:\n%s", log)
 	}
 	for rev, host := range map[string]string{"main": "box", "main~1": "mac"} {
