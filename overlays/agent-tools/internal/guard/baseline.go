@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/plans"
@@ -2163,10 +2165,8 @@ func (g gitState) query(args ...string) (string, bool) {
 	if g.dir == "" {
 		return "", false
 	}
-	cmd := exec.Command("git", append(append(append([]string{}, g.config...), "-C", g.dir), args...)...)
-	cmd.Env = append(gitenv.Without(os.Environ()), g.env...)
-	out, err := cmd.Output()
-	return strings.TrimSpace(string(out)), err == nil
+	return timedGit(append(gitenv.Without(os.Environ()), g.env...),
+		append(append(append([]string{}, g.config...), "-C", g.dir), args...)...)
 }
 
 // keyTouchText is why a command that waits for a touch of the hardware key
@@ -2502,14 +2502,58 @@ func checkSigning(sub string, rest []string, g gitState) string {
 	return fmt.Sprintf(signingOn, sub, sub)
 }
 
+// run runs git in g.dir without the command's configuration, as the guard
+// itself reads the repository.
 func (g gitState) run(args ...string) (string, bool) {
 	if g.dir == "" {
 		return "", false
 	}
-	cmd := exec.Command("git", append([]string{"-C", g.dir}, args...)...)
-	cmd.Env = gitenv.Without(os.Environ())
+	return timedGit(gitenv.Without(os.Environ()), append([]string{"-C", g.dir}, args...)...)
+}
+
+// gitStalled records that a git the guard ran did not answer within
+// repoTimeout, as one reading a FIFO at .git/config does not. The call is
+// then refused (judged), and every later git of the same hook fails at
+// once, so the hook ends within Claude Code's own timeout however many
+// gits its rules would run.
+var gitStalled atomic.Bool
+
+// stalledGit is why a call is refused when a git the guard ran there
+// stalled.
+const stalledGit = "Git did not answer within the guard's deadline in this repository, as when something under .git, " +
+	"such as .git/config, is a FIFO or on a hung file system, so the guard cannot check this call. " +
+	"Look at what is there with `ls -la .git`, or put the command in your report for the operator."
+
+// timedGit runs git with env and args, its output trimmed and whether it
+// succeeded, within repoTimeout; a git that does not finish in time is
+// killed, and it or a child that keeps its output open after it marks
+// gitStalled.
+func timedGit(env []string, args ...string) (string, bool) {
+	if gitStalled.Load() {
+		return "", false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), repoTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = env
+	cmd.WaitDelay = repoTimeout
 	out, err := cmd.Output()
+	if ctx.Err() != nil || errors.Is(err, exec.ErrWaitDelay) {
+		gitStalled.Store(true)
+		return "", false
+	}
 	return strings.TrimSpace(string(out)), err == nil
+}
+
+// judged is what judge says of a call, with gitStalled cleared first: a
+// call it allows is refused all the same when a git it ran stalled.
+func judged(judge func() string) string {
+	gitStalled.Store(false)
+	reason := judge()
+	if reason == "" && gitStalled.Load() {
+		return stalledGit
+	}
+	return reason
 }
 
 // main reports whether dir is a repository's main worktree, or may be:

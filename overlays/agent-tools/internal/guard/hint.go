@@ -36,9 +36,16 @@ func branchHint(session string, toolInput json.RawMessage, cwd string) string {
 			return ""
 		}
 	}
-	branch, tip := "", ""
-	if branch, _ = g.run("branch", "--show-current"); branch == "" {
-		tip, _ = g.run("rev-parse", "--short", "HEAD")
+	// A branch or tip git did not give, as when it stalled, is not noted.
+	branch, ok := g.run("branch", "--show-current")
+	if !ok {
+		return ""
+	}
+	tip := ""
+	if branch == "" {
+		if tip, ok = g.run("rev-parse", "--short", "HEAD"); !ok {
+			return ""
+		}
 	}
 	last, had, logged, err := p.NoteBranch(session, branch, tip, top, time.Now())
 	if err != nil || !had || !logged {

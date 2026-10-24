@@ -92,30 +92,35 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if in.Cwd == "" {
 		in.Cwd, _ = os.Getwd()
 	}
-	reason := checkSubagentStash(in)
-	if reason == "" {
-		reason = check(in.ToolName, in.ToolInput, who, in.Cwd)
-	}
-	if reason == "" && in.TurnID != "" && (in.ToolName == "Bash" || in.ToolName == "exec_command") {
-		// Codex alone keeps a command's terminal for write_stdin.
-		var args struct {
-			Command string `json:"command"`
+	hint := ""
+	reason := judged(func() string {
+		reason := checkSubagentStash(in)
+		if reason == "" {
+			reason = check(in.ToolName, in.ToolInput, who, in.Cwd)
 		}
-		json.Unmarshal(in.ToolInput, &args)
-		if terminalReader(args.Command) {
-			reason = readsTerminal
-		}
-	}
-	if reason == "" {
-		reason = checkOwner(in)
-	}
-	if reason == "" {
-		edit := in.ToolName == "Edit" || in.ToolName == "Write" || in.ToolName == "MultiEdit"
-		if edit {
-			if context := branchHint(in.SessionID, in.ToolInput, in.Cwd); context != "" {
-				json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{
-					"hookEventName": "PreToolUse", "additionalContext": context}})
+		if reason == "" && in.TurnID != "" && (in.ToolName == "Bash" || in.ToolName == "exec_command") {
+			// Codex alone keeps a command's terminal for write_stdin.
+			var args struct {
+				Command string `json:"command"`
 			}
+			json.Unmarshal(in.ToolInput, &args)
+			if terminalReader(args.Command) {
+				reason = readsTerminal
+			}
+		}
+		if reason == "" {
+			reason = checkOwner(in)
+		}
+		// The hint runs git too, so it is judged with the rest.
+		if reason == "" && (in.ToolName == "Edit" || in.ToolName == "Write" || in.ToolName == "MultiEdit") {
+			hint = branchHint(in.SessionID, in.ToolInput, in.Cwd)
+		}
+		return reason
+	})
+	if reason == "" {
+		if hint != "" {
+			json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{
+				"hookEventName": "PreToolUse", "additionalContext": hint}})
 		}
 		return 0
 	}
@@ -149,7 +154,7 @@ const unreadable = "The guard cannot read this call's input, so it cannot check 
 // current directory, is denied, or "" to allow it.
 func CheckBaseline(tool string, toolInput json.RawMessage) string {
 	dir, _ := os.Getwd()
-	return check(tool, toolInput, baseline, dir)
+	return judged(func() string { return check(tool, toolInput, baseline, dir) })
 }
 
 // CheckReviewer is CheckBaseline for a reviewer, which only reads: it is also
@@ -157,7 +162,7 @@ func CheckBaseline(tool string, toolInput json.RawMessage) string {
 // but the reading ones, and is told so whichever rule a call breaks.
 func CheckReviewer(tool string, toolInput json.RawMessage) string {
 	dir, _ := os.Getwd()
-	return check(tool, toolInput, reviewer, dir)
+	return judged(func() string { return check(tool, toolInput, reviewer, dir) })
 }
 
 // check returns a denial's reason, which reaches the agent verbatim: a first
@@ -1073,8 +1078,8 @@ func scratchRepo(sub string, rest []string, expands []bool, dir, checkout string
 	return repo, true
 }
 
-// repoTimeout bounds each git the guard runs to find a scratch command's
-// repository; a git that takes longer is a refusal.
+// repoTimeout bounds each git the guard runs; a git that takes longer is
+// a refusal.
 var repoTimeout = 5 * time.Second
 
 // openedRepo is the git directory, common directory and work tree git
