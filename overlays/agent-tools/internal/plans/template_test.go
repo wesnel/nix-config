@@ -25,7 +25,7 @@ func TestTemplate(t *testing.T) {
 		return c
 	}
 	release := "#+title: Release\n#+TODO: TODO STARTED | DONE VERIFIED ABANDONED\n\n" +
-		"** Steps\n*** TODO Bump the version\n:PROPERTIES:\n:ID: S1\n:END:\n*** TODO Tag it\n:PROPERTIES:\n:ID: S2\n:AFTER: S1\n:END:\n" +
+		"** Steps\n*** TODO Bump the version\n:PROPERTIES:\n:CUSTOM_ID: S1\n:END:\n*** TODO Tag it\n:PROPERTIES:\n:CUSTOM_ID: S2\n:AFTER: S1\n:END:\n" +
 		"** Verification\n- CI passes on the tag.\n"
 
 	t.Run("copied", func(t *testing.T) {
@@ -36,7 +36,7 @@ func TestTemplate(t *testing.T) {
 		}
 		data, _ := os.ReadFile(made.File)
 		text := string(data)
-		if !strings.Contains(text, "** Steps\n*** TODO Bump the version\n:PROPERTIES:\n:ID: S1\n:END:\n*** TODO Tag it\n") ||
+		if !strings.Contains(text, "** Steps\n*** TODO Bump the version\n:PROPERTIES:\n:CUSTOM_ID: S1\n:END:\n*** TODO Tag it\n") ||
 			!strings.HasSuffix(text, "** Verification\n- CI passes on the tag.\n") ||
 			!strings.Contains(text, "#+title: Release 1.2\n") {
 			t.Errorf("plan:\n%s", text)
@@ -90,7 +90,8 @@ func TestTemplate(t *testing.T) {
 		"an unknown section":        {"release", release + "** Rollout\n- slowly\n"},
 		"a keyword outside steps'":  {"release", "#+TODO: TODO NEXT | DONE\n** Steps\n*** NEXT Bump it\n"},
 		"a step without its ID":     {"release", release + "** Follow-ups\n*** TODO Announce it\n"},
-		"a question":                {"release", release + "** Questions\n*** Ship it?\n:PROPERTIES:\n:ID: Q1\n:END:\n"},
+		"a question":                {"release", release + "** Questions\n*** Ship it?\n:PROPERTIES:\n:CUSTOM_ID: Q1\n:END:\n"},
+		"a step in the old form":    {"release", strings.Replace(release, ":CUSTOM_ID: S1", ":ID: S1", 1)},
 		"a heading under Goal":      {"release", release + "** Goal\n*** Why\n"},
 		"a missing template":        {"other", release},
 		"a name that is not a name": {"../release", release},

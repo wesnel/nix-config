@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -39,8 +40,16 @@ func newPlan(t *testing.T, c Config, slug string) Plan {
 	return p
 }
 
-// addItems puts headings with IDs under a plan file's heading.
+// addItems puts headings with IDs under a plan file's heading, each in
+// CUSTOM_ID as agent-plan writes it.
 func addItems(t *testing.T, file, under string, ids ...string) {
+	t.Helper()
+	addItemsIn(t, "CUSTOM_ID", file, under, ids...)
+}
+
+// addItemsIn is addItems with each ID in property, such as ID for a plan
+// in the old form.
+func addItemsIn(t *testing.T, property, file, under string, ids ...string) {
 	t.Helper()
 	data, err := os.ReadFile(file)
 	if err != nil {
@@ -48,7 +57,7 @@ func addItems(t *testing.T, file, under string, ids ...string) {
 	}
 	var b strings.Builder
 	for _, id := range ids {
-		fmt.Fprintf(&b, "*** TODO Step %s\n:PROPERTIES:\n:ID: %s\n:END:\n", id, id)
+		fmt.Fprintf(&b, "*** TODO Step %s\n:PROPERTIES:\n:%s: %s\n:END:\n", id, property, id)
 	}
 	text := strings.Replace(string(data), under+"\n", under+"\n"+b.String(), 1)
 	if text == string(data) {
@@ -115,14 +124,14 @@ func TestNew(t *testing.T) {
 		}
 		data, _ := os.ReadFile(made.File)
 		if header := "#+title: Add the loop\n#+TODO: TODO STARTED | DONE VERIFIED ABANDONED\n#+TODO: ASK | DECIDED(@) DROPPED(@) SUPERSEDED\n" +
-			"#+FILETAGS: :r:box:\n"; !strings.HasPrefix(string(data), header) {
-			t.Errorf("the plan does not start with %q:\n%s", header, data)
+			"#+FILETAGS: :r:box:\n"; !strings.Contains(string(data), ":END:\n"+header) {
+			t.Errorf("the plan's file-level drawer is not followed by %q:\n%s", header, data)
 		}
 		if !strings.HasSuffix(string(data), ":END:\n** Goal\n** Steps\n** Distribution\n** Questions\n** Follow-ups\n** References\n** Verification\n") {
 			t.Errorf("the plan's sections:\n%s", data)
 		}
 		for _, s := range []string{"* Plan\n:PROPERTIES:\n",
-			":ID: 20261014130500-add-loop.box\n", ":HOST: box\n", ":REPOSITORIES: o/r\n", ":BRANCHES: main..loop\n",
+			":CUSTOM_ID: 20261014130500-add-loop.box\n", ":HOST: box\n", ":REPOSITORIES: o/r\n", ":BRANCHES: main..loop\n",
 			":WORKTREES: /w/loop\n", ":SESSIONS: claude:abc\n", ":HARNESS: claude\n", ":STATUS: planning\n",
 			":PIPELINE: full\n"} {
 			if !strings.Contains(string(data), s) {
@@ -152,6 +161,35 @@ func TestNew(t *testing.T) {
 		data, _ := os.ReadFile(made.File)
 		if !strings.Contains(string(data), "\n#+FILETAGS: :nix_config:emacs_config:ngrok_mac:\n") {
 			t.Errorf("plan:\n%s", data)
+		}
+	})
+
+	// A plan's file is one org-roam node, at a file-level ID; its items'
+	// IDs, the same in every plan, are in CUSTOM_ID, which org-id and
+	// org-roam leave alone.
+	t.Run("an org-roam node", func(t *testing.T) {
+		c := testConfig(t)
+		made, err := c.New(NewOptions{Title: "Add the loop", Slug: "add-loop"}, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(made.File)
+		uuid := regexp.MustCompile(`\A:PROPERTIES:\n:ID: ([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\n:END:\n#\+title: Add the loop\n`)
+		if !uuid.Match(data) {
+			t.Errorf("the plan does not start with a file-level UUID ID before its title:\n%s", data)
+		}
+		if !strings.Contains(string(data), "* Plan\n:PROPERTIES:\n:CUSTOM_ID: "+made.ID+"\n") ||
+			strings.Contains(string(data), "\n:ID: "+made.ID+"\n") {
+			t.Errorf("the plan's ID is not its * Plan heading's CUSTOM_ID alone:\n%s", data)
+		}
+		other, err := c.New(NewOptions{Title: "Another", Slug: "another"}, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		again, _ := os.ReadFile(other.File)
+		if m, n := uuid.FindSubmatch(data), regexp.MustCompile(`\A:PROPERTIES:\n:ID: (\S+)\n`).FindSubmatch(again); m != nil && n != nil &&
+			string(m[1]) == string(n[1]) {
+			t.Errorf("two plans share the file-level ID %s", m[1])
 		}
 	})
 
@@ -446,7 +484,7 @@ func TestPart(t *testing.T) {
 			t.Errorf("made %+v", made)
 		}
 		data, _ := os.ReadFile(made.File)
-		for _, s := range []string{"#+title: The loop's part\n", ":ID: P1\n", ":PARENT: [[file:20261014130500-x.box.org]]\n",
+		for _, s := range []string{"#+title: The loop's part\n", ":CUSTOM_ID: P1\n", ":PARENT: [[file:20261014130500-x.box.org]]\n",
 			":BRANCHES: loop..part\n", "** Goal\n", "** Steps\n"} {
 			if !strings.Contains(string(data), s) {
 				t.Errorf("the part lacks %q:\n%s", s, data)

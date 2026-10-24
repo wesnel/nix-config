@@ -121,7 +121,7 @@ func (p Plan) Ask(o AskOptions, now time.Time) (Asked, error) {
 		if o.Priority != "" {
 			line += "[#" + o.Priority + "] "
 		}
-		block := []string{line + o.Question, ":PROPERTIES:", ":ID: " + qid, ":RECOMMENDATION: " + o.Recommendation}
+		block := []string{line + o.Question, ":PROPERTIES:", ":CUSTOM_ID: " + qid, ":RECOMMENDATION: " + o.Recommendation}
 		if len(o.After) > 0 {
 			block = append(block, ":AFTER: "+strings.Join(o.After, " "))
 		}

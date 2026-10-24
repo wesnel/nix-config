@@ -81,7 +81,7 @@ func (p Plan) Followup(o FollowupOptions, now time.Time) (Recorded, error) {
 			}
 		}
 		id := fmt.Sprintf("%sF%d", prefix, next)
-		block := append([]string{"*** " + kwTodo + " " + o.Title, ":PROPERTIES:", ":ID: " + id, ":FOUND_IN: " + o.FoundIn, ":END:"},
+		block := append([]string{"*** " + kwTodo + " " + o.Title, ":PROPERTIES:", ":CUSTOM_ID: " + id, ":FOUND_IN: " + o.FoundIn, ":END:"},
 			context...)
 		err = l.edit(file, func(lines []string) ([]string, error) {
 			_, end, ok := section(lines, "Follow-ups")

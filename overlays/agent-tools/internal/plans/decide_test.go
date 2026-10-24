@@ -18,7 +18,8 @@ func otherHosts(t *testing.T, p Plan) Plan {
 }
 
 // fromFixture makes a plan whose file is the fixture name, which is
-// testdata/open.org or Org's output from it, both of plan 2026-10-14-x.box.
+// testdata/open.org or Org's output from it, both of a plan in the old
+// form, 2026-10-14-x.box.
 func fromFixture(t *testing.T, name string) Plan {
 	t.Helper()
 	p := newPlan(t, testConfig(t), "x")
@@ -39,7 +40,7 @@ func linesAt(t *testing.T, file, id string, n int) string {
 	data, _ := os.ReadFile(file)
 	lines := strings.Split(string(data), "\n")
 	for i, l := range lines {
-		if l == ":ID: "+id {
+		if l == ":CUSTOM_ID: "+id || l == ":ID: "+id {
 			for i >= 0 && level(lines[i]) == 0 {
 				i--
 			}

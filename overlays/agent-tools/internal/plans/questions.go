@@ -64,7 +64,7 @@ func (p Plan) questionHeadings(all bool, each func(file string, h heading)) erro
 		hs := parseOrg(string(data))
 		sections := sectionsOf(hs)
 		for i, h := range hs {
-			if sections[i] == "Questions" && h.Level == 3 && h.Keyword != "" && questionID.MatchString(h.Props["ID"]) {
+			if sections[i] == "Questions" && h.Level == 3 && h.Keyword != "" && questionID.MatchString(itemID(h)) {
 				each(f, h)
 			}
 		}
@@ -98,7 +98,7 @@ func (p Plan) Questions(all bool) ([]Question, error) {
 		if h.Done {
 			return
 		}
-		q := Question{ID: h.Props["ID"], Part: partOf(f), File: f, Question: h.Title, Priority: h.Priority,
+		q := Question{ID: itemID(h), Part: partOf(f), File: f, Question: h.Title, Priority: h.Priority,
 			Recommendation: h.Props["RECOMMENDATION"], After: afterIDs(h.Props)}
 		q.Waiting = unsettled(q.After, isSettled)
 		var context []string
@@ -128,7 +128,7 @@ func (p Plan) Decisions(all bool) ([]Decision, error) {
 		if answer == "" {
 			answer = newestNote(h.Notes)
 		}
-		out = append(out, Decision{ID: h.Props["ID"], Part: partOf(f), File: f, Question: h.Title, Answer: answer,
+		out = append(out, Decision{ID: itemID(h), Part: partOf(f), File: f, Question: h.Title, Answer: answer,
 			DecidedBy: h.Props["DECIDED_BY"], Supersedes: h.Props["SUPERSEDES"]})
 	})
 	return out, err

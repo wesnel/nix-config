@@ -4,7 +4,7 @@
 ** Steps
 *** TODO A baseline
 :PROPERTIES:
-:ID: S1
+:CUSTOM_ID: S1
 :END:
 Load the =diagnose-failure= skill and measure before anything else, as its
 stage 1 says for a slowdown: =go test -bench= at =-count=10= with
@@ -13,7 +13,7 @@ Done when the command and its numbers, with run count and spread, are
 logged as this step's evidence.
 *** TODO Profile it
 :PROPERTIES:
-:ID: S2
+:CUSTOM_ID: S2
 :AFTER: S1
 :END:
 Find what bounds the number, with a profile or counters from the run, as
@@ -22,14 +22,14 @@ Done when the profile names the code the time or memory goes to, and one
 hypothesis about why is confirmed by a probe.
 *** TODO The change
 :PROPERTIES:
-:ID: S3
+:CUSTOM_ID: S3
 :AFTER: S2
 :END:
 Change the cause the profile showed.
 Done when the change is committed and the tests pass.
 *** TODO Re-measure
 :PROPERTIES:
-:ID: S4
+:CUSTOM_ID: S4
 :AFTER: S3
 :END:
 The baseline's command again, at the same run count, compared with
@@ -38,7 +38,7 @@ Done when the before and after numbers, with their spread, are logged as
 this step's evidence and the difference is outside the noise.
 *** TODO Review and hand back
 :PROPERTIES:
-:ID: S5
+:CUSTOM_ID: S5
 :AFTER: S4
 :END:
 The =review-change= skill's pipeline over the change: the fresh review

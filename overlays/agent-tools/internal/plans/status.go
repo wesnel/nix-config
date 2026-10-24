@@ -102,7 +102,7 @@ func (p Plan) readySteps(isSettled func(string) bool, events []Event, now time.T
 		}
 		hs := parseOrg(string(data))
 		for i, h := range hs {
-			id := h.Props["ID"]
+			id := itemID(h)
 			if !stepPattern.MatchString(id) || planKeywords.done[stepState(events, id)] ||
 				len(unsettled(afterIDs(h.Props), isSettled)) > 0 || scheduledLater(h, now) || !earlierSettled(hs, i, isSettled) {
 				continue
@@ -127,7 +127,7 @@ func earlierSettled(hs []heading, i int, isSettled func(string) bool) bool {
 		if hs[j].Level != hs[i].Level {
 			continue
 		}
-		if id := hs[j].Props["ID"]; id != "" && !isSettled(id) || id == "" && hs[j].Keyword != "" && !hs[j].Done {
+		if id := itemID(hs[j]); id != "" && !isSettled(id) || id == "" && hs[j].Keyword != "" && !hs[j].Done {
 			return false
 		}
 	}

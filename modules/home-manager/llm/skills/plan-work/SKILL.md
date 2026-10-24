@@ -57,7 +57,12 @@ lines but holds no line Org reads as a heading, a drawer, a planning line
 or a `#+` keyword other than a block's. A change no command makes goes in
 your report for the operator.
 
-- `* Plan`, whose properties say where the work is: `ID`, `HOST`,
+- Before `#+title`, a plan's own file holds a property drawer with its
+  `ID`, a UUID: the file is an org-roam node. A
+  part's file has none. Every item ID below, the plan's own included, is
+  a `CUSTOM_ID`; plans with item IDs in `ID` are read alike.
+- `* Plan`, whose properties say where the work is: `CUSTOM_ID` (the
+  plan's ID), `HOST`,
   `REPOSITORIES`, `BRANCHES` (`base..branch`), `WORKTREES`, `SESSIONS`
   (`harness:id`), `HARNESS`, `STATUS` (`planning`, `reviewing-plan`,
   `working`, `reviewing`, `handed-back` or `halted`), `PULL_REQUESTS`,
@@ -66,7 +71,7 @@ your report for the operator.
   `review-loop`) and, once `agent-plan own` sets one,
   `OWNERS` (`worktree=agent`). Lists are separated by spaces.
   `agent-plan set PLAN NAME VALUE... [--part P1]` sets each of them but
-  `ID`, `HOST`, `PIPELINE` and `OWNERS`, as `agent-plan set PLAN STATUS
+  `CUSTOM_ID`, `HOST`, `PIPELINE` and `OWNERS`, as `agent-plan set PLAN STATUS
   working` or `agent-plan set PLAN SKILLS coordinate-subagents`.
   `WORKTREES`, `BRANCHES`, `PULL_REQUESTS` and `OWNERS` follow the log, as
   step keywords do: `agent-plan set PLAN BRANCHES main..loop [--part P1]`
@@ -81,7 +86,7 @@ your report for the operator.
   with `agent-plan section PLAN Goal --text TEXT [--part P1]`. Load the
   `design` skill before writing the steps: its principles are what the
   design review checks them against.
-- `** Steps`: `*** TODO <step>` headings with `:ID: S1`, `S2`…; a part's
+- `** Steps`: `*** TODO <step>` headings with `:CUSTOM_ID: S1`, `S2`…; a part's
   are `P1.S1`, `P1.S2`… Each says what observable result marks it done,
   which its `verified` evidence then shows. Add one with
   `agent-plan step PLAN --title 'Add the run loop' --text 'Done when ...'
@@ -96,14 +101,14 @@ your report for the operator.
   `agent-plan postpone PLAN S1 --until '2026-10-20 18:30'`, which keeps it
   out of the ready lists and the agenda until then; `--clear` undoes it.
 - `** Distribution`, in a plan split among sub-agents: a `*** TODO <part>`
-  heading per part with `:ID: P1`…, its repository, branch, base and
+  heading per part with `:CUSTOM_ID: P1`…, its repository, branch, base and
   worktree, and what it does. Add one with `agent-plan part PLAN --title T
   --repo nix-config --branch main..run-loop --worktree DIR --text TEXT
   [--after P1]...`, which gives it the next ID and starts its text with
   where it works, and change it with `agent-plan edit` and `after` as a
   step.
 - `** Questions`: every question for the operator and every decision, each with
-  `:ID: Q1`, `Q2`… (`P1.Q1` in a part's file), written by `agent-plan ask`
+  `:CUSTOM_ID: Q1`, `Q2`… (`P1.Q1` in a part's file), written by `agent-plan ask`
   as "Questions for the operator" says. An open one is `ASK`; a
   settled one stays where it is, `DECIDED` with its `:ANSWER:`, or
   `DROPPED`, or `SUPERSEDED` by the decision whose `:SUPERSEDES:` names
@@ -115,7 +120,7 @@ your report for the operator.
   than a lack of time, is a decision too, with that reason, so a later
   design review finds it instead of proposing it again.
 - `** Follow-ups`: work found while doing an item but outside this
-  change's job, each with `:ID: F1`, `F2`… and the `:FOUND_IN:` item, as
+  change's job, each with `:CUSTOM_ID: F1`, `F2`… and the `:FOUND_IN:` item, as
   "Follow-ups" says.
 - `** References`: each URL the operator gave the work, one entry each with
   `:URL:`, and a note of what it was used for and which decisions (Q IDs)

@@ -4,14 +4,14 @@
 ** Steps
 *** TODO Goal and stop predicate
 :PROPERTIES:
-:ID: S1
+:CUSTOM_ID: S1
 :END:
 Write the Goal with =agent-plan section PLAN Goal=: the number to move,
 and when to stop, both a target for it and the most attempts to make.
 Done when =agent-plan goal PLAN= prints the target and the attempt limit.
 *** TODO Freeze the harness
 :PROPERTIES:
-:ID: S2
+:CUSTOM_ID: S2
 :AFTER: S1
 :END:
 One command that prints the number, written into Verification with
@@ -20,7 +20,7 @@ step: a changed harness is a new plan.
 Done when Verification holds the command and it runs as it stands.
 *** TODO A baseline
 :PROPERTIES:
-:ID: S3
+:CUSTOM_ID: S3
 :AFTER: S2
 :END:
 The harness, run enough times to give the spread, as the
@@ -29,7 +29,7 @@ Done when the numbers, run count and spread are logged as this step's
 evidence.
 *** TODO Attempts
 :PROPERTIES:
-:ID: S4
+:CUSTOM_ID: S4
 :AFTER: S3
 :END:
 Add each attempt with =agent-plan step PLAN --after S3=, its hypothesis in
@@ -39,7 +39,7 @@ it =abandoned= with its numbers.
 Done when the Goal's stop predicate holds.
 *** TODO Review and hand back
 :PROPERTIES:
-:ID: S5
+:CUSTOM_ID: S5
 :AFTER: S4
 :END:
 The =review-change= skill's pipeline over the attempts kept: the fresh

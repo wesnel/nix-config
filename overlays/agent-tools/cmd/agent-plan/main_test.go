@@ -60,7 +60,7 @@ func newPlan(t *testing.T) string {
 	json.Unmarshal([]byte(out), &made)
 	data, _ := os.ReadFile(made.File)
 	text := strings.Replace(string(data), "** Steps\n",
-		"** Steps\n*** TODO Add the loop\n:PROPERTIES:\n:ID: S1\n:END:\n*** TODO Test it\n:PROPERTIES:\n:ID: S2\n:END:\n", 1)
+		"** Steps\n*** TODO Add the loop\n:PROPERTIES:\n:CUSTOM_ID: S1\n:END:\n*** TODO Test it\n:PROPERTIES:\n:CUSTOM_ID: S2\n:END:\n", 1)
 	os.WriteFile(made.File, []byte(text), 0o644)
 	return made.Plan
 }
@@ -80,8 +80,8 @@ func withQuestions(t *testing.T) string {
 	plan := sessionPlan(t)
 	data, _ := os.ReadFile(plan)
 	os.WriteFile(plan, []byte(strings.Replace(string(data), "** Questions\n",
-		"** Questions\n*** ASK Rename it?\n:PROPERTIES:\n:ID: Q1\n:RECOMMENDATION: no\n:END:\n- yes\n"+
-			"*** ASK Rename its flag too?\n:PROPERTIES:\n:ID: Q2\n:RECOMMENDATION: no\n:AFTER: Q1\n:END:\n", 1)), 0o644)
+		"** Questions\n*** ASK Rename it?\n:PROPERTIES:\n:CUSTOM_ID: Q1\n:RECOMMENDATION: no\n:END:\n- yes\n"+
+			"*** ASK Rename its flag too?\n:PROPERTIES:\n:CUSTOM_ID: Q2\n:RECOMMENDATION: no\n:AFTER: Q1\n:END:\n", 1)), 0o644)
 	return plan
 }
 
@@ -365,8 +365,8 @@ func TestCommands(t *testing.T) {
 		data, _ := os.ReadFile(plan)
 		for _, want := range []string{
 			"** Goal\nAdd the loop.\nNot its flag.\n** Steps\n",
-			"*** TODO Test it\n:PROPERTIES:\n:ID: S2\n:AFTER: S1 P1\n:END:\n*** TODO Tag the release\n:PROPERTIES:\n:ID: S3\n:END:\n** Distribution\n",
-			"*** TODO plan-write-path\n:PROPERTIES:\n:ID: P1\n:END:\nnix-config: plan-write-path on main, worktree /w/p.\n** Questions\n",
+			"*** TODO Test it\n:PROPERTIES:\n:CUSTOM_ID: S2\n:AFTER: S1 P1\n:END:\n*** TODO Tag the release\n:PROPERTIES:\n:CUSTOM_ID: S3\n:END:\n** Distribution\n",
+			"*** TODO plan-write-path\n:PROPERTIES:\n:CUSTOM_ID: P1\n:END:\nnix-config: plan-write-path on main, worktree /w/p.\n** Questions\n",
 			":STATUS: halted\n",
 		} {
 			if !strings.Contains(string(data), want) {

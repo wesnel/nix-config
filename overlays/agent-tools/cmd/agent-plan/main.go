@@ -74,7 +74,10 @@ have (see status) is refused and writes nothing.
                      without its ID; a question without a question's
                      keyword; an ORDERED or Archive group with text or no
                      entries; a heading skipping a level; a heading line
-                     inside a block; a block with no end)
+                     inside a block; a block with no end; once per file,
+                     the old form, item IDs in ID rather than CUSTOM_ID or
+                     a plan's file without a file-level ID, which stays
+                     readable and refuses no write)
   set PLAN NAME [VALUE...] [--part P1]
                      set WORKTREES, BRANCHES or PULL_REQUESTS of the plan's
                      file, or the part's, to the values, and log it; new,

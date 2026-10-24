@@ -79,8 +79,8 @@ func (c Config) template(name string) (map[string][]string, error) {
 			sections[current] = append(sections[current], line)
 		}
 	}
-	if drift := structureOf(withTemplate(planText(NewOptions{Title: name}, name, c.Host, nil, true), sections)); len(drift) > 0 {
-		return nil, refusal.New("%s would start a plan with structure drift: `%s`, %s. Each entry needs its ID, and a question is asked "+
+	if drift := fileDrift(withTemplate(planText(NewOptions{Title: name}, name, c.Host, nil, true), sections), false); len(drift) > 0 {
+		return nil, refusal.New("%s would start a plan with structure drift: `%s`, %s. Each entry needs its ID in CUSTOM_ID, and a question is asked "+
 			"with `agent-plan ask` once the plan exists. Ask the operator to change the template, or pass another with `--template`",
 			file, drift[0].heading, drift[0].problem)
 	}

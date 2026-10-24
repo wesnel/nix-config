@@ -639,12 +639,12 @@
               continue
             fi
             status=$(agent-plan status "$(jq -r .plan <<<"$made")" --format json)
-            first=$(grep -m1 -oP '^:ID: \K\S+' "$file")
+            first=$(grep -m1 -oP '^:CUSTOM_ID: \K\S+' "$file")
             jq -e --arg first "$first" '.readySteps | index($first)' <<<"$status" >/dev/null ||
               fail "$name" "its first step, $first, is not ready"
             drift=$(jq -r '.structureDrift[] | tostring' <<<"$status")
             [ -z "$drift" ] || fail "$name" "structure drift: $drift"
-            ids=" $(grep -oP '^:ID: \K\S+' "$file" | tr '\n' ' ') "
+            ids=" $(grep -oP '^:CUSTOM_ID: \K\S+' "$file" | tr '\n' ' ') "
             for after in $(grep -oP '^:AFTER:\s*\K.*' "$file"); do
               case "$ids" in
                 *" $after "*) ;;

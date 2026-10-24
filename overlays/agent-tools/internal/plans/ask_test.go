@@ -48,7 +48,7 @@ func TestAsk(t *testing.T) {
 		data, _ := os.ReadFile(p.file(""))
 		text := string(data)
 		if section := text[strings.Index(text, "** Questions\n"):strings.Index(text, "** Follow-ups\n")]; !strings.HasSuffix(section,
-			"*** ASK [#A] Keep the old flag?\n:PROPERTIES:\n:ID: Q4\n:RECOMMENDATION: no, drop it\n:AFTER: Q1\n:END:\nNothing reads it.\n- keep it\n- deprecate it\n") {
+			"*** ASK [#A] Keep the old flag?\n:PROPERTIES:\n:CUSTOM_ID: Q4\n:RECOMMENDATION: no, drop it\n:AFTER: Q1\n:END:\nNothing reads it.\n- keep it\n- deprecate it\n") {
 			t.Errorf("Questions:\n%s", section)
 		}
 		events, _ := p.Events()
@@ -66,7 +66,7 @@ func TestAsk(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if text := fileText(t, p.file("")); !strings.Contains(text, ":ID: "+got.ID+"\n:RECOMMENDATION: yes\n:END:\nTwo callers.\n\nBoth read it.\n- no\n") {
+		if text := fileText(t, p.file("")); !strings.Contains(text, ":CUSTOM_ID: "+got.ID+"\n:RECOMMENDATION: yes\n:END:\nTwo callers.\n\nBoth read it.\n- no\n") {
 			t.Errorf("plan:\n%s", text)
 		}
 		qs, _ := p.Questions(false)
@@ -88,7 +88,7 @@ func TestAsk(t *testing.T) {
 			t.Fatal(err)
 		}
 		entry := linesAt(t, p.file(""), got.ID, 7)
-		want := "*** DECIDED Keep tests off the network? :ARCHIVE:\nCLOSED: [2026-10-14 Wed 13:05]\n:PROPERTIES:\n:ID: Q4\n" +
+		want := "*** DECIDED Keep tests off the network? :ARCHIVE:\nCLOSED: [2026-10-14 Wed 13:05]\n:PROPERTIES:\n:CUSTOM_ID: Q4\n" +
 			":RECOMMENDATION: yes\n:ANSWER: yes: the status line must never touch the network\n:DECIDED_BY: agent\n:END:"
 		if entry != want {
 			t.Errorf("entry:\n%s\nwant:\n%s", entry, want)

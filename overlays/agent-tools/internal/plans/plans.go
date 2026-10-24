@@ -321,11 +321,17 @@ func fileTags(repos []string, host string) string {
 	return ":" + strings.Join(tags, ":") + ":"
 }
 
-// planText is a new plan file of host's: the parent's sections, and
-// Distribution for a parent alone.
+// planText is a new plan file of host's, with id as its `* Plan`
+// heading's CUSTOM_ID: the parent's sections, and Distribution for a
+// parent alone. A parent's file starts with a property drawer holding a
+// fresh UUID as its ID, the one org-roam node of the plan; a part's file
+// is no node and has none.
 func planText(o NewOptions, id, host string, extra map[string]string, parent bool) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "#+title: %s\n%s#+FILETAGS: %s\n\n* Plan\n:PROPERTIES:\n:ID: %s\n", o.Title, todoLines(),
+	if parent {
+		fmt.Fprintf(&b, ":PROPERTIES:\n:ID: %s\n:END:\n", newUUID())
+	}
+	fmt.Fprintf(&b, "#+title: %s\n%s#+FILETAGS: %s\n\n* Plan\n:PROPERTIES:\n:CUSTOM_ID: %s\n", o.Title, todoLines(),
 		fileTags(o.Repos, host), id)
 	property := func(name, value string) {
 		if value == "" {
@@ -542,7 +548,7 @@ func (p Plan) itemList() ([]item, error) {
 		}
 		part := partOf(f)
 		for _, h := range parseOrg(string(data)) {
-			id := h.Props["ID"]
+			id := itemID(h)
 			if id == "" || seen[id] {
 				continue
 			}
@@ -569,7 +575,7 @@ func (p Plan) InSection(section string) (map[string]bool, error) {
 		hs := parseOrg(string(data))
 		under := sectionsOf(hs)
 		for i, h := range hs {
-			if id := h.Props["ID"]; id != "" && !seen[id] {
+			if id := itemID(h); id != "" && !seen[id] {
 				seen[id] = true
 				out[id] = h.Level > 2 && under[i] == section
 			}

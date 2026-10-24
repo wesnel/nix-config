@@ -174,7 +174,7 @@ func (p Plan) AddEntry(o EntryOptions, now time.Time) (Recorded, error) {
 		if err := p.knownAfter(id, o.After, items); err != nil {
 			return err
 		}
-		block := []string{"*** " + kwTodo + " " + o.Title, ":PROPERTIES:", ":ID: " + id}
+		block := []string{"*** " + kwTodo + " " + o.Title, ":PROPERTIES:", ":CUSTOM_ID: " + id}
 		if len(o.After) > 0 {
 			block = append(block, ":AFTER: "+strings.Join(o.After, " "))
 		}

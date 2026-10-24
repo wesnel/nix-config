@@ -46,7 +46,7 @@ func TestAddEntry(t *testing.T) {
 			got.Event.Summary != "Tag it" {
 			t.Errorf("added %+v", got)
 		}
-		want := "*** TODO Step S2\n:PROPERTIES:\n:ID: S2\n:END:\n*** TODO Tag it\n:PROPERTIES:\n:ID: S3\n:AFTER: S1 Q1\n:END:\n" +
+		want := "*** TODO Step S2\n:PROPERTIES:\n:CUSTOM_ID: S2\n:END:\n*** TODO Tag it\n:PROPERTIES:\n:CUSTOM_ID: S3\n:AFTER: S1 Q1\n:END:\n" +
 			"Done when the tag is pushed.\nCI passes on it.\n** Distribution\n"
 		if text := fileText(t, p.file("")); !strings.Contains(text, want) {
 			t.Errorf("plan:\n%s", text)
@@ -64,7 +64,7 @@ func TestAddEntry(t *testing.T) {
 			t.Fatal(err)
 		}
 		text := fileText(t, p.file(""))
-		os.WriteFile(p.file(""), []byte(strings.Replace(text, "*** ABANDONED Step S7\nCLOSED: [2026-10-14 Wed 13:05]\n:PROPERTIES:\n:ID: S7\n:END:\n", "", 1)), 0o644)
+		os.WriteFile(p.file(""), []byte(strings.Replace(text, "*** ABANDONED Step S7\nCLOSED: [2026-10-14 Wed 13:05]\n:PROPERTIES:\n:CUSTOM_ID: S7\n:END:\n", "", 1)), 0o644)
 		got, err := p.AddEntry(EntryOptions{Section: "Steps", Title: "Tag it"}, day)
 		if err != nil || got.ID != "S8" {
 			t.Errorf("added %+v, %v", got, err)
@@ -77,7 +77,7 @@ func TestAddEntry(t *testing.T) {
 		if err != nil || got.ID != "P1.S1" || got.File != p.file("P1") {
 			t.Fatalf("added %+v, %v", got, err)
 		}
-		if text := fileText(t, p.file("P1")); !strings.Contains(text, "** Steps\n*** TODO Add the flag\n:PROPERTIES:\n:ID: P1.S1\n:END:\n** Questions\n") {
+		if text := fileText(t, p.file("P1")); !strings.Contains(text, "** Steps\n*** TODO Add the flag\n:PROPERTIES:\n:CUSTOM_ID: P1.S1\n:END:\n** Questions\n") {
 			t.Errorf("part:\n%s", text)
 		}
 	})
@@ -92,7 +92,7 @@ func TestAddEntry(t *testing.T) {
 		if got.ID != "P2" || got.Event.Kind != "planned" {
 			t.Errorf("added %+v", got)
 		}
-		want := "*** TODO plan-write-path\n:PROPERTIES:\n:ID: P2\n:AFTER: P1\n:END:\n" +
+		want := "*** TODO plan-write-path\n:PROPERTIES:\n:CUSTOM_ID: P2\n:AFTER: P1\n:END:\n" +
 			"nix-config: plan-write-path on main, worktree /w/plan-write-path.\nCommands for every edit.\n** Questions\n"
 		if text := fileText(t, p.file("")); !strings.Contains(text, want) {
 			t.Errorf("plan:\n%s", text)
@@ -120,7 +120,8 @@ func TestAddEntry(t *testing.T) {
 		"a heading in the text":       {Section: "Steps", Title: "x", Text: "fine\n*** TODO forged"},
 		"a drawer in the text":        {Section: "Steps", Title: "x", Text: ":LOGBOOK:\nx\n:END:"},
 		"a keyword line in the text":  {Section: "Steps", Title: "x", Text: "#+TODO: A | B"},
-		"an ID line in the text":      {Section: "Steps", Title: "x", Text: "fine\n:ID: S1"},
+		"an ID line in the text":      {Section: "Steps", Title: "x", Text: "fine\n:CUSTOM_ID: S1"},
+		"an old ID line in the text":  {Section: "Steps", Title: "x", Text: "fine\n:ID: S1"},
 		"a property line in the text": {Section: "Steps", Title: "x", Text: "fine\n  :AFTER: S1"},
 		"a COMMENT title":             {Section: "Steps", Title: "COMMENT later"},
 		"an AFTER twice":              {Section: "Steps", Title: "x", After: []string{"S1", "S1"}},
@@ -151,18 +152,18 @@ func TestAddEntry(t *testing.T) {
 	})
 }
 
-// An :ID: line in an entry's text, as the operator may write one, names no
+// An ID line in an entry's text, as the operator may write one, names no
 // heading: a command finds an entry by the drawer Org reads as its own.
 func TestIDInText(t *testing.T) {
 	text := func(s string) *string { return &s }
 	t.Run("edit", func(t *testing.T) {
 		_, p := entryPlan(t)
-		insertUnder(t, p.file(""), ":ID: S1\n:END:", "Before S2:\n:ID: S2\n")
+		insertUnder(t, p.file(""), ":CUSTOM_ID: S1\n:END:", "Before S2:\n:CUSTOM_ID: S2\n")
 		if _, err := p.EditEntry("S2", EditOptions{Title: text("The second")}, day); err != nil {
 			t.Fatal(err)
 		}
 		plan := fileText(t, p.file(""))
-		if !strings.Contains(plan, "*** TODO Step S1\n") || !strings.Contains(plan, "*** TODO The second\n:PROPERTIES:\n:ID: S2\n") {
+		if !strings.Contains(plan, "*** TODO Step S1\n") || !strings.Contains(plan, "*** TODO The second\n:PROPERTIES:\n:CUSTOM_ID: S2\n") {
 			t.Errorf("plan:\n%s", plan)
 		}
 	})
@@ -171,7 +172,7 @@ func TestIDInText(t *testing.T) {
 		if _, err := p.Ask(AskOptions{Question: "Keep that too?", Recommendation: "no"}, day); err != nil {
 			t.Fatal(err)
 		}
-		insertUnder(t, p.file(""), ":RECOMMENDATION: yes\n:END:", "See\n:ID: Q2\n")
+		insertUnder(t, p.file(""), ":RECOMMENDATION: yes\n:END:", "See\n:CUSTOM_ID: Q2\n")
 		if _, err := p.Decide("Q2", DecideOptions{Answer: "no"}, day); err != nil {
 			t.Fatal(err)
 		}
@@ -191,7 +192,7 @@ func TestEditEntry(t *testing.T) {
 		if _, err := p.Log(Event{Kind: "done", Item: "S1"}, day); err != nil {
 			t.Fatal(err)
 		}
-		insertUnder(t, p.file(""), ":ID: S1\n:END:", "Old text.\n:LOGBOOK:\n- Note taken\n:END:\nMore old text.\n**** A child\nkept\n")
+		insertUnder(t, p.file(""), ":CUSTOM_ID: S1\n:END:", "Old text.\n:LOGBOOK:\n- Note taken\n:END:\nMore old text.\n**** A child\nkept\n")
 		data := strings.Replace(fileText(t, p.file("")), "*** DONE Step S1\n", "*** DONE Step S1 :later:\n", 1)
 		os.WriteFile(p.file(""), []byte(data), 0o644)
 		got, err := p.EditEntry("S1", EditOptions{Title: text("Add the run loop"), Text: text("Done when it runs.")}, day)
@@ -201,7 +202,7 @@ func TestEditEntry(t *testing.T) {
 		if got.Event.Kind != "planned" || got.Event.Item != "S1" || got.Event.Summary != "title and text edited" {
 			t.Errorf("event %+v", got.Event)
 		}
-		want := "*** DONE Add the run loop :later:\nCLOSED: [2026-10-14 Wed 13:05]\n:PROPERTIES:\n:ID: S1\n:END:\n" +
+		want := "*** DONE Add the run loop :later:\nCLOSED: [2026-10-14 Wed 13:05]\n:PROPERTIES:\n:CUSTOM_ID: S1\n:END:\n" +
 			"Done when it runs.\n:LOGBOOK:\n- Note taken\n:END:\n**** A child\nkept\n*** TODO Step S2\n"
 		if text := fileText(t, p.file("")); !strings.Contains(text, want) {
 			t.Errorf("plan:\n%s", text)
@@ -210,11 +211,11 @@ func TestEditEntry(t *testing.T) {
 
 	t.Run("text cleared, title kept", func(t *testing.T) {
 		_, p := entryPlan(t)
-		insertUnder(t, p.file(""), ":ID: P1\n:END:", "nix-config: loop on main.\n")
+		insertUnder(t, p.file(""), ":CUSTOM_ID: P1\n:END:", "nix-config: loop on main.\n")
 		if _, err := p.EditEntry("P1", EditOptions{Text: text("")}, day); err != nil {
 			t.Fatal(err)
 		}
-		if text := fileText(t, p.file("")); !strings.Contains(text, "*** TODO Step P1\n:PROPERTIES:\n:ID: P1\n:END:\n** Questions\n") {
+		if text := fileText(t, p.file("")); !strings.Contains(text, "*** TODO Step P1\n:PROPERTIES:\n:CUSTOM_ID: P1\n:END:\n** Questions\n") {
 			t.Errorf("plan:\n%s", text)
 		}
 	})
@@ -263,7 +264,7 @@ func TestSetAfter(t *testing.T) {
 	if _, err := p.SetAfter("S2", []string{"S1"}, day); err != nil {
 		t.Fatal(err)
 	}
-	if got := linesAt(t, p.file(""), "S2", 3); got != "*** TODO Step S2\n:PROPERTIES:\n:ID: S2\n:AFTER: S1" {
+	if got := linesAt(t, p.file(""), "S2", 3); got != "*** TODO Step S2\n:PROPERTIES:\n:CUSTOM_ID: S2\n:AFTER: S1" {
 		t.Errorf("after set:\n%s", got)
 	}
 	if s, _ := p.Status(); strings.Join(s.ReadySteps, " ") != "S1" {
@@ -280,7 +281,7 @@ func TestSetAfter(t *testing.T) {
 	if err != nil || e.Summary != "AFTER cleared" {
 		t.Errorf("cleared: %+v, %v", e, err)
 	}
-	if got := linesAt(t, p.file(""), "S2", 3); got != "*** TODO Step S2\n:PROPERTIES:\n:ID: S2\n:END:" {
+	if got := linesAt(t, p.file(""), "S2", 3); got != "*** TODO Step S2\n:PROPERTIES:\n:CUSTOM_ID: S2\n:END:" {
 		t.Errorf("after cleared:\n%s", got)
 	}
 

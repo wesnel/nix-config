@@ -13,7 +13,6 @@ import (
 // lines and returns new ones, leaving its argument as it was.
 
 var (
-	idLine     = regexp.MustCompile(`^\s*:ID:\s*(\S+)\s*$`)
 	closedPart = regexp.MustCompile(`CLOSED:\s*\[[^]]*\]\s*`)
 	starLine   = regexp.MustCompile(`^(\*+) `)
 )
@@ -121,20 +120,18 @@ func section(lines []string, title string) (start, end int, ok bool) {
 	return 0, 0, false
 }
 
-// headingWithID is the index of the heading whose property drawer holds
-// :ID: id, or -1. The drawer is the one Org reads as the heading's, right
-// after the heading and its planning line, as parseOrg reads it: an :ID:
-// line in an entry's text names nothing.
+// headingWithID is the index of the heading whose property drawer gives it
+// the ID id, as itemID reads one, or -1. The drawer is the one Org reads
+// as the heading's, right after the heading and its planning line, as
+// parseOrg reads it: an ID line in an entry's text names nothing.
 func headingWithID(lines []string, id string) int {
+	if id == "" {
+		return -1
+	}
 	blocks := blockLines(lines)
 	for i, l := range lines {
-		if level(l) == 0 || blocks[i] {
-			continue
-		}
-		for _, p := range drawerOf(lines, i) {
-			if m := idLine.FindStringSubmatch(p); m != nil && m[1] == id {
-				return i
-			}
+		if level(l) > 0 && !blocks[i] && propsID(drawerProps(drawerOf(lines, i))) == id {
+			return i
 		}
 	}
 	return -1

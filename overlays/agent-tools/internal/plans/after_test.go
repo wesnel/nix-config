@@ -24,7 +24,7 @@ func insertUnder(t *testing.T, file, under, text string) {
 }
 
 func question(id, title, after string) string {
-	text := "*** ASK " + title + "\n:PROPERTIES:\n:ID: " + id + "\n:RECOMMENDATION: yes\n"
+	text := "*** ASK " + title + "\n:PROPERTIES:\n:CUSTOM_ID: " + id + "\n:RECOMMENDATION: yes\n"
 	if after != "" {
 		text += ":AFTER: " + after + "\n"
 	}

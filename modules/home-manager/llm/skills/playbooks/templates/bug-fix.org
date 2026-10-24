@@ -4,14 +4,14 @@
 ** Steps
 *** TODO A red command
 :PROPERTIES:
-:ID: S1
+:CUSTOM_ID: S1
 :END:
 Load the =diagnose-failure= skill and build its stage 1 red command.
 Done when one command fails on the symptom as reported, every run or at a
 measured rate, and is logged as this step's evidence.
 *** TODO Shrink it
 :PROPERTIES:
-:ID: S2
+:CUSTOM_ID: S2
 :AFTER: S1
 :END:
 =diagnose-failure= stage 2.
@@ -19,7 +19,7 @@ Done when every input, caller, setting and step left is needed for the
 command to fail the same way.
 *** TODO Hypotheses and probes
 :PROPERTIES:
-:ID: S3
+:CUSTOM_ID: S3
 :AFTER: S2
 :END:
 =diagnose-failure= stages 3 and 4.
@@ -27,7 +27,7 @@ Done when one hypothesis is confirmed by a probe and the others are
 refuted or dropped.
 *** TODO The fix
 :PROPERTIES:
-:ID: S4
+:CUSTOM_ID: S4
 :AFTER: S3
 :END:
 =diagnose-failure= stage 5, with its test written first as the
@@ -36,7 +36,7 @@ Done when =git red-check= on the fix exits 0, and the shrunken and the
 original commands pass.
 *** TODO Review and hand back
 :PROPERTIES:
-:ID: S5
+:CUSTOM_ID: S5
 :AFTER: S4
 :END:
 The =review-change= skill's pipeline over the fix: the fresh review loop,
