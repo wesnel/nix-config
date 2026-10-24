@@ -6,10 +6,11 @@ description: Keep a plan file and its event log for a change with agent-plan - w
 # Plans
 
 Every change has a plan: files made by `agent-plan new` side by side in the
-plans directory, `<date>-<slug>.<host>.org`, a
-`<date>-<slug>.<host>.<part>.org` per sub-agent's part, and
-`<date>-<slug>.<host>.log.org`. You and whoever picks the work up after you
-work from it, so keep it true.
+plans directory, `<time>-<slug>.<host>.org`, a
+`<time>-<slug>.<host>.<part>.org` per sub-agent's part, and
+`<time>-<slug>.<host>.log.org`, `<time>` being when it was made, as
+`YYYYMMDDHHMMSS`; plans named `YYYY-MM-DD-<slug>` are read alike. You and
+whoever picks the work up after you work from it, so keep it true.
 
 ## Making one
 

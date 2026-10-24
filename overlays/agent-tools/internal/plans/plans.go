@@ -1,7 +1,9 @@
 // Package plans keeps agents' plan files and their append-only event logs,
-// side by side in one plans directory: a plan <date>-<slug>.<host>.org, a
-// <date>-<slug>.<host>.<part>.org per sub-agent, and the log
-// <date>-<slug>.<host>.log.org, which only Log writes to.
+// side by side in one plans directory: a plan <name>.<host>.org, a
+// <name>.<host>.<part>.org per sub-agent, and the log
+// <name>.<host>.log.org, which only Log writes to. New names a plan
+// <time>-<slug>, its time YYYYMMDDHHMMSS as org-roam names notes; a plan
+// named YYYY-MM-DD-<slug> is read alike.
 package plans
 
 import (
@@ -50,10 +52,27 @@ var (
 	// A host is part of every file name, between dots, so it holds none.
 	hostPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 	slugPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
-	// planFile is a plan's file name: the plan's name, which is its date and
-	// slug, then its host, and then a part's ID or "log" for those files.
-	planFile = regexp.MustCompile(`^([0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9]+(?:-[a-z0-9]+)*\.([A-Za-z0-9][A-Za-z0-9_-]*))(?:\.(P[0-9]+|log))?\.org$`)
+	// planFile is a plan's file name: the plan's name, which is its time,
+	// YYYYMMDDHHMMSS, or for an older plan its date, YYYY-MM-DD, and its
+	// slug; then its host, and then a part's ID or "log" for those files.
+	// emacs-config's wgn/agent-plans--file-regexp and the Agent plans page's
+	// PLAN_ID (internal/agentplans/page.html) read the same names.
+	planFile = regexp.MustCompile(`^((?:[0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{14})-[a-z0-9]+(?:-[a-z0-9]+)*\.([A-Za-z0-9][A-Za-z0-9_-]*))(?:\.(P[0-9]+|log))?\.org$`)
+	// oldDate is the date an older plan's name starts with.
+	oldDate = regexp.MustCompile(`^([0-9]{4})-([0-9]{2})-([0-9]{2})-`)
 )
+
+// nameTimeLayout is the time a new plan's name starts with, as org-roam
+// starts a note's.
+const nameTimeLayout = "20060102150405"
+
+// newerName reports whether the plan named a sorts before the plan named
+// b, the newer first: by their names with an older plan's YYYY-MM-DD read
+// as YYYYMMDD, as wgn/agent-plans--newer-p in emacs-config orders them.
+func newerName(a, b string) bool {
+	key := func(name string) string { return oldDate.ReplaceAllString(name, "$1$2$3-") }
+	return key(a) > key(b)
+}
 
 // IsLog reports whether name is the file name of a plan's log, or of the
 // lock file that records the log's state.
@@ -166,8 +185,9 @@ func checkWords(what string, values []string) error {
 }
 
 // New creates a plan, or with Parent and Part, a part's plan file beside
-// its parent's. A new plan's name is <date>-<slug>, with -2, -3 and so on
-// for a slug this host already used that day.
+// its parent's. A new plan's name is <time>-<slug>, its time now as
+// YYYYMMDDHHMMSS, with -2, -3 and so on for a slug this host already used
+// that second.
 func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 	if strings.TrimSpace(o.Title) == "" {
 		return Created{}, refusal.New("a plan needs a title. Pass one with `--title`")
@@ -214,7 +234,7 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 	if _, err := c.Init(); err != nil {
 		return Created{}, err
 	}
-	base := now.Format("2006-01-02") + "-" + o.Slug
+	base := now.Format(nameTimeLayout) + "-" + o.Slug
 	var p Plan
 	for i := 1; p.Name == "" && i < 1000; i++ {
 		try := base
@@ -641,12 +661,21 @@ func (c Config) plans(host string) (out []Plan, failed []string, err error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	for i := len(entries) - 1; i >= 0; i-- {
-		m := planFile.FindStringSubmatch(entries[i].Name())
-		if m == nil || host != "" && m[2] != host || m[3] != "" || !entries[i].Type().IsRegular() {
+	slices.SortFunc(entries, func(a, b fs.DirEntry) int {
+		switch {
+		case newerName(a.Name(), b.Name()):
+			return -1
+		case newerName(b.Name(), a.Name()):
+			return 1
+		}
+		return 0
+	})
+	for _, e := range entries {
+		m := planFile.FindStringSubmatch(e.Name())
+		if m == nil || host != "" && m[2] != host || m[3] != "" || !e.Type().IsRegular() {
 			continue
 		}
-		if p, err := c.Open(filepath.Join(c.Dir, entries[i].Name())); err == nil {
+		if p, err := c.Open(filepath.Join(c.Dir, e.Name())); err == nil {
 			out = append(out, p)
 		} else {
 			failed = append(failed, m[1])

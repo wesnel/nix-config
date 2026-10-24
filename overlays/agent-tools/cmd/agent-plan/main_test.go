@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -87,7 +88,7 @@ func withQuestions(t *testing.T) string {
 func TestCommands(t *testing.T) {
 	t.Run("new", func(t *testing.T) {
 		plan := sessionPlan(t)
-		if filepath.Base(plan) != time.Now().Format("2006-01-02")+"-add-loop.box.org" {
+		if !regexp.MustCompile(`^` + time.Now().Format("20060102") + `[0-9]{6}-add-loop\.box\.org$`).MatchString(filepath.Base(plan)) {
 			t.Errorf("new printed the plan %s", plan)
 		}
 		data, _ := os.ReadFile(plan)

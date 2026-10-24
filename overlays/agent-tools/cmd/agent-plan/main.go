@@ -20,9 +20,11 @@ import (
 
 var usage = `agent-plan: agents' plan files and their append-only event logs.
 
-A plan is files side by side in the plans directory: <date>-<slug>.<host>.org,
-<date>-<slug>.<host>.<part>.org for each sub-agent's part, and
-<date>-<slug>.<host>.log.org, which only "agent-plan log" writes. The plans
+A plan is files side by side in the plans directory: <time>-<slug>.<host>.org,
+<time>-<slug>.<host>.<part>.org for each sub-agent's part, and
+<time>-<slug>.<host>.log.org, which only "agent-plan log" writes, <time>
+being when new made it, as YYYYMMDDHHMMSS; plans named YYYY-MM-DD-<slug>
+are read alike. The plans
 directory and host come from "plans" in the user's agent-tools/config.json.
 A command that would leave a plan file with structure drift it did not
 have (see status) is refused and writes nothing.

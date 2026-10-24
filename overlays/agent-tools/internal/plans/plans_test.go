@@ -106,9 +106,11 @@ func TestNew(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		file := filepath.Join(c.Dir, "2026-10-14-add-loop.box.org")
-		if made.Plan != file || made.File != file || made.ID != "2026-10-14-add-loop.box" ||
-			made.Log != filepath.Join(c.Dir, "2026-10-14-add-loop.box.log.org") {
+		// Named the org-roam way, a plan sorts by when it was made beside
+		// the operator's notes.
+		file := filepath.Join(c.Dir, "20261014130500-add-loop.box.org")
+		if made.Plan != file || made.File != file || made.ID != "20261014130500-add-loop.box" ||
+			made.Log != filepath.Join(c.Dir, "20261014130500-add-loop.box.log.org") {
 			t.Errorf("made %+v", made)
 		}
 		data, _ := os.ReadFile(made.File)
@@ -120,7 +122,7 @@ func TestNew(t *testing.T) {
 			t.Errorf("the plan's sections:\n%s", data)
 		}
 		for _, s := range []string{"* Plan\n:PROPERTIES:\n",
-			":ID: 2026-10-14-add-loop.box\n", ":HOST: box\n", ":REPOSITORIES: o/r\n", ":BRANCHES: main..loop\n",
+			":ID: 20261014130500-add-loop.box\n", ":HOST: box\n", ":REPOSITORIES: o/r\n", ":BRANCHES: main..loop\n",
 			":WORKTREES: /w/loop\n", ":SESSIONS: claude:abc\n", ":HARNESS: claude\n", ":STATUS: planning\n",
 			":PIPELINE: full\n"} {
 			if !strings.Contains(string(data), s) {
@@ -157,7 +159,7 @@ func TestNew(t *testing.T) {
 		c := testConfig(t)
 		newPlan(t, c, "add-loop")
 		again, err := c.New(NewOptions{Title: "Again", Slug: "add-loop"}, day)
-		if err != nil || again.File != filepath.Join(c.Dir, "2026-10-14-add-loop-2.box.org") {
+		if err != nil || again.File != filepath.Join(c.Dir, "20261014130500-add-loop-2.box.org") {
 			t.Errorf("second plan with the slug: %+v, %v", again, err)
 		}
 	})
@@ -194,12 +196,12 @@ func TestOpen(t *testing.T) {
 		"plan file": func(p Plan) string { return p.file("") },
 		"part file": func(p Plan) string { return p.file("P1") },
 		"log":       func(p Plan) string { return p.log() },
-		"name":      func(Plan) string { return "2026-10-14-x.box" },
+		"name":      func(Plan) string { return "20261014130500-x.box" },
 	} {
 		t.Run("by "+name, func(t *testing.T) {
 			c, p := withPart(t)
 			arg := arg(p)
-			if got, err := c.Open(arg); err != nil || got.Name != "2026-10-14-x.box" || got.file("") != p.file("") {
+			if got, err := c.Open(arg); err != nil || got.Name != "20261014130500-x.box" || got.file("") != p.file("") {
 				t.Errorf("Open(%s) = %+v, %v", arg, got, err)
 			}
 		})
@@ -315,6 +317,31 @@ func TestPlans(t *testing.T) {
 	}
 }
 
+// Plans named either way are newest first by their dates, a YYYY-MM-DD
+// name read as YYYYMMDD and so before any plan named the org-roam way
+// that day, as the plan views in emacs-config order them.
+func TestPlansOrder(t *testing.T) {
+	c := testConfig(t)
+	os.MkdirAll(c.Dir, 0o755)
+	names := []string{"2025-12-31-a.box", "20260101000000-b.box", "2026-10-17-c.box", "20261017000001-d.box",
+		"2026-10-23-e.box", "20261023143000-f.box"}
+	for _, name := range names {
+		os.WriteFile(filepath.Join(c.Dir, name+".org"), []byte("* Plan\n"), 0o644)
+		os.WriteFile(filepath.Join(c.Dir, name+".log.org"), nil, 0o644)
+	}
+	got, failed, err := c.Plans()
+	if err != nil || len(failed) != 0 {
+		t.Fatal(failed, err)
+	}
+	var order []string
+	for _, p := range got {
+		order = append(order, p.Name)
+	}
+	if want := "20261023143000-f.box 2026-10-23-e.box 20261017000001-d.box 2026-10-17-c.box 20260101000000-b.box 2025-12-31-a.box"; strings.Join(order, " ") != want {
+		t.Errorf("Plans = %s, want %s", strings.Join(order, " "), want)
+	}
+}
+
 // readPlan reads a plan's file only as the one regular file it opened: a
 // link, a file with another name or a FIFO put there after Open checked
 // it is refused, and a FIFO without blocking.
@@ -414,12 +441,12 @@ func TestPart(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if made.File != filepath.Join(c.Dir, "2026-10-14-x.box.P1.org") || made.Plan != p.file("") || made.ID != "P1" ||
+		if made.File != filepath.Join(c.Dir, "20261014130500-x.box.P1.org") || made.Plan != p.file("") || made.ID != "P1" ||
 			made.Log != p.log() {
 			t.Errorf("made %+v", made)
 		}
 		data, _ := os.ReadFile(made.File)
-		for _, s := range []string{"#+title: The loop's part\n", ":ID: P1\n", ":PARENT: [[file:2026-10-14-x.box.org]]\n",
+		for _, s := range []string{"#+title: The loop's part\n", ":ID: P1\n", ":PARENT: [[file:20261014130500-x.box.org]]\n",
 			":BRANCHES: loop..part\n", "** Goal\n", "** Steps\n"} {
 			if !strings.Contains(string(data), s) {
 				t.Errorf("the part lacks %q:\n%s", s, data)
@@ -461,7 +488,7 @@ func TestOtherHost(t *testing.T) {
 		addItems(t, theirs.file(""), "** Steps", "S1")
 		addItems(t, theirs.file(""), "** Distribution", "P1")
 		p, err := c.Open(theirs.file(""))
-		if err != nil || p.Name != "2026-10-14-x.other" {
+		if err != nil || p.Name != "20261014130500-x.other" {
 			t.Fatalf("Open: %+v, %v", p, err)
 		}
 		return c, p
@@ -518,7 +545,7 @@ func TestLog(t *testing.T) {
 		if !strings.HasSuffix(string(data), entry) {
 			t.Errorf("log:\n%s\nwant it to end with:\n%s", data, entry)
 		}
-		if _, err := p.Log(Event{Kind: "reviewed", Item: "2026-10-14-x.box", Review: "1.F2", Outcome: "fix"}, day); err != nil {
+		if _, err := p.Log(Event{Kind: "reviewed", Item: "20261014130500-x.box", Review: "1.F2", Outcome: "fix"}, day); err != nil {
 			t.Errorf("an event about the whole plan: %v", err)
 		}
 		events := eventsBut(t, p, "property")

@@ -805,7 +805,7 @@ func testSyncTwoHosts(t *testing.T) {
 	}
 	atOrigin(t, box)
 	untouched(t, box)
-	if _, err := os.Stat(filepath.Join(box.Dir, "2026-10-14-x.mac.org")); err != nil {
+	if _, err := os.Stat(filepath.Join(box.Dir, "20261014130500-x.mac.org")); err != nil {
 		t.Errorf("box did not get mac's plan: %v", err)
 	}
 	if got, err := mac.Sync(SyncOptions{PullOnly: true}); err != nil || got.Pushed || len(got.Committed) != 0 {
