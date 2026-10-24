@@ -86,6 +86,22 @@ func Load(file string) []Window {
 	return ws
 }
 
+// Fresh is how long a recorded window counts after it was observed: five
+// of the status line's one-minute refreshes. With no session refreshing,
+// the record stops counting rather than hold on an old reading.
+const Fresh = 5 * time.Minute
+
+// Over is the first window of ws at or above threshold percent that
+// counts at now: its reset still ahead and observed within Fresh.
+func Over(ws []Window, threshold float64, now time.Time) (Window, bool) {
+	for _, w := range ws {
+		if w.ResetsAt > now.Unix() && now.Unix()-w.ObservedAt <= int64(Fresh/time.Second) && w.Used >= threshold {
+			return w, true
+		}
+	}
+	return Window{}, false
+}
+
 // Record writes the windows seen into file, over what it holds. Every open
 // session's status line records once a minute, an idle one repeating its
 // latest response's reading, which may be lower or of a window that has

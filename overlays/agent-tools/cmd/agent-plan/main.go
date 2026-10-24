@@ -166,6 +166,15 @@ have (see status) is refused and writes nothing.
                      $XDG_STATE_HOME/agent-plan/usage.json for quota-stop,
                      an equal or higher reading of a window replacing a
                      lower one until the window resets
+  quota-stop --threshold N
+                     Claude Code's PreToolUse hook (reads stdin): while a
+                     window statusline recorded is at or above N percent,
+                     its reset ahead and seen in the last 5 minutes, denies
+                     every call but Read, Grep, Glob, ToolSearch, Skill,
+                     AskUserQuestion, TaskStop, SubagentHandback and
+                     agent-plan alone on a Bash line, naming the window, its
+                     share and its reset; with no record it can read, denies
+                     nothing
   own PLAN --worktree DIR --agent ID
                      record agent ID, the harness's ID for a sub-agent or
                      "main" for the session's main thread, as the one agent
@@ -239,6 +248,10 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if cli.IsHelp(args[0]) {
 		fmt.Fprint(stdout, usage)
 		return 0
+	}
+	if args[0] == "quota-stop" {
+		// Before plans.Load: it runs before every tool call.
+		return quotaStop(args[1:], stdin, stdout, stderr)
 	}
 	if args[0] == "statusline" {
 		// Claude Code shows whatever this prints, so a failure prints

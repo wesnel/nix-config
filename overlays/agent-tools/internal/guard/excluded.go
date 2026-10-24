@@ -32,7 +32,7 @@ func checkExcludedAlone(text string) string {
 		return ""
 	}
 	named := firstCall(text, 0, func(c call) []string { return excludedCall(c, patterns) })
-	if named == nil || excludedAlone(text, named) {
+	if named == nil || ExcludedAlone(text, named) {
 		return ""
 	}
 	return fmt.Sprintf(excludedNotAlone, strings.Join(named, " "))
@@ -168,11 +168,12 @@ func excludedCall(c call, patterns [][]string) []string {
 	return nil
 }
 
-// excludedAlone reports whether text is pattern's command alone, as
+// ExcludedAlone reports whether text is pattern's command alone, as
 // Claude Code matches an exclusion against the line's text: one command,
 // the line's text starting with the pattern's words, unquoted and one
-// space apart, with no redirection.
-func excludedAlone(text string, pattern []string) bool {
+// space apart, with no redirection. agent-plan's quota stop lets such an
+// agent-plan line through.
+func ExcludedAlone(text string, pattern []string) bool {
 	texts, _, ends := backgroundSegments(text)
 	var only string
 	commands := 0
