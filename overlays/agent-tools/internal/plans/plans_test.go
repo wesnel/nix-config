@@ -364,6 +364,7 @@ func TestInit(t *testing.T) {
 	t.Run("in a repository", testInitInRepository)
 	t.Run("clone without the key", testInitCloneWithoutKey)
 	t.Run("clone with the key", testInitCloneWithKey)
+	t.Run("converges a clone", testInitConverges)
 }
 
 // Init readies the plans directory for a session whose sandbox may write

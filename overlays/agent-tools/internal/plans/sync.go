@@ -595,9 +595,9 @@ func (c Config) writableGitDir() bool {
 	return true
 }
 
-// clone makes the notes repository where it is missing, and sets it to
-// commit unsigned and reach its remote through SSHConfig. It returns why it
-// did not clone, if it did not.
+// clone makes the notes repository where it is missing, through SSHConfig's
+// ssh, and configures it, or an existing one. It returns why it did not
+// clone, if it did not.
 func (c Config) clone() (cloned bool, note string, err error) {
 	repo := c.repo()
 	if c.inRepo() {
@@ -632,16 +632,32 @@ func (c Config) clone() (cloned bool, note string, err error) {
 }
 
 // configure sets the notes repository's own config: unsigned commits, and
-// the remote's ssh.
+// origin at Remote when there is one. Activation runs it on every switch, so
+// a host's clone follows Remote. It sets no core.sshCommand, with which git
+// sign-pass refuses the repository, since sync and clone pass SSHConfig's
+// ssh on each command; it takes out the one an earlier configure wrote for
+// this SSHConfig, and leaves any other.
 func (c Config) configure() error {
 	ctx := context.Background()
 	if _, err := c.git(ctx, "config", "--local", "commit.gpgsign", "false"); err != nil {
 		return err
 	}
 	if c.SSHConfig != "" {
-		if _, err := c.git(ctx, "config", "--local", "core.sshCommand", c.sshCommand()); err != nil {
-			return err
+		if ssh, _ := c.git(ctx, "config", "--local", "--get", "core.sshCommand"); ssh == c.sshCommand() {
+			if _, err := c.git(ctx, "config", "--local", "--unset", "core.sshCommand"); err != nil {
+				return err
+			}
 		}
 	}
-	return nil
+	if c.Remote == "" {
+		return nil
+	}
+	url, err := c.git(ctx, "config", "--local", "--get", "remote.origin.url")
+	switch {
+	case err != nil:
+		_, err = c.git(ctx, "remote", "add", "origin", c.Remote)
+	case url != c.Remote:
+		_, err = c.git(ctx, "remote", "set-url", "origin", c.Remote)
+	}
+	return err
 }

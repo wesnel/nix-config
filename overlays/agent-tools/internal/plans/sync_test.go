@@ -767,7 +767,8 @@ func testInitCloneWithoutKey(t *testing.T) {
 }
 
 // Init clones the notes repository where it is missing, with the deploy
-// key, and sets it never to sign.
+// key, and sets it never to sign. It sets no core.sshCommand, which would
+// make git sign-pass refuse the repository: sync passes one per command.
 func testInitCloneWithKey(t *testing.T) {
 	c, root, key := cloning(t)
 	os.WriteFile(key, []byte("private\n"), 0o600)
@@ -778,13 +779,85 @@ func testInitCloneWithKey(t *testing.T) {
 		}
 	}
 	repo := filepath.Join(root, "notes")
-	for key, want := range map[string]string{"commit.gpgsign": "false", "core.sshCommand": "ssh -F /etc/notes-ssh-config"} {
-		if got := strings.TrimSpace(gitIn(t, repo, "config", "--local", key)); got != want {
-			t.Errorf("%s = %q", key, got)
-		}
+	if got := localConfig(t, repo); got["commit.gpgsign"] != "false" || got["core.sshcommand"] != "" {
+		t.Errorf("the clone's config: %v", got)
 	}
 	if _, err := os.Stat(filepath.Join(repo, "todo.org")); err != nil {
 		t.Errorf("not a clone of origin: %v", err)
+	}
+}
+
+// localConfig is a repository's own config, keyed as git config --list
+// prints keys.
+func localConfig(t *testing.T, repo string) map[string]string {
+	t.Helper()
+	got := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(gitIn(t, repo, "config", "--local", "--list")), "\n") {
+		k, v, _ := strings.Cut(line, "=")
+		got[k] = v
+	}
+	return got
+}
+
+// Init, which activation runs on every switch, brings an existing clone to
+// plans.remote and takes out the core.sshCommand an earlier Init wrote,
+// leaving what else the clone's config holds, and a second Init changes
+// nothing.
+func testInitConverges(t *testing.T) {
+	const elsewhere = "git@elsewhere:x.git"
+	cases := []struct {
+		name string
+		// set are the git commands that ready the clone after the first Init.
+		set [][]string
+		// noRemote empties plans.remote.
+		noRemote bool
+		// origin is the origin wanted when it is not plans.remote, and ssh
+		// the core.sshCommand wanted.
+		origin, ssh string
+	}{
+		{name: "moves origin and drops init's core.sshCommand",
+			set: [][]string{{"remote", "set-url", "origin", elsewhere}, {"config", "core.sshCommand", "ssh -F /etc/notes-ssh-config"}}},
+		{name: "adds a missing origin", set: [][]string{{"remote", "remove", "origin"}}},
+		{name: "keeps another core.sshCommand", set: [][]string{{"config", "core.sshCommand", "ssh -i mine"}}, ssh: "ssh -i mine"},
+		{name: "keeps origin without plans.remote", set: [][]string{{"remote", "set-url", "origin", elsewhere}},
+			noRemote: true, origin: elsewhere},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c, root, key := cloning(t)
+			os.WriteFile(key, []byte("private\n"), 0o600)
+			if _, err := c.Init(); err != nil {
+				t.Fatal(err)
+			}
+			repo := filepath.Join(root, "notes")
+			for _, args := range tc.set {
+				gitIn(t, repo, args...)
+			}
+			want := c.Remote
+			if tc.noRemote {
+				c.Remote = ""
+			}
+			if tc.origin != "" {
+				want = tc.origin
+			}
+			configFile := filepath.Join(repo, ".git", "config")
+			var first []byte
+			for i := 0; i < 2; i++ {
+				if got, err := c.Init(); err != nil || got.Cloned {
+					t.Fatalf("Init %d: %+v, %v", i, got, err)
+				}
+				data, _ := os.ReadFile(configFile)
+				if i == 0 {
+					first = data
+				} else if string(data) != string(first) {
+					t.Errorf("the second Init changed the config:\n%s\nnot\n%s", data, first)
+				}
+			}
+			got := localConfig(t, repo)
+			if got["remote.origin.url"] != want || got["core.sshcommand"] != tc.ssh || got["commit.gpgsign"] != "false" {
+				t.Errorf("the clone's config: %v; want origin %q, core.sshCommand %q", got, want, tc.ssh)
+			}
+		})
 	}
 }
 

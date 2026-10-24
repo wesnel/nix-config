@@ -200,8 +200,9 @@ have (see status) is refused and writes nothing.
                      has none. --check prints nothing and only exits 0 once
                      one is logged
   init               clone the plans' repository where it is missing and
-                     "plans.remote" names it, then make the plans directory,
-                     with a .gitignore for the lock files, as new does
+                     "plans.remote" names it, and point its origin at
+                     "plans.remote"; then make the plans directory, with a
+                     .gitignore for the lock files, as new does
   sync [--pull] [--settle DURATION]
                      take the other hosts' plans by fast-forwarding the
                      checked-out branch; then, if HEAD holds the remote's

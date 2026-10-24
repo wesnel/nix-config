@@ -403,7 +403,10 @@ agent-plan questions PLAN --all          # open questions, each with its recomme
 Ask an agent only to plan, and it writes the plan and stops.
 
 `~/git/github.com/wesnel/notes` is a clone of the private `wesnel/notes`,
-which activation clones where it is missing. Its `agents/plans/` directory
+which activation (`agent-plan init`) clones where it is missing. On every
+switch, init also points the clone's `origin` at `plans.remote` and sets it
+never to sign; it sets no `core.sshCommand`, with which `git sign-pass`
+refuses a repository. Its `agents/plans/` directory
 holds the plans, which only `agent-plan` writes; the rest of `agents/` holds
 notes agents write with the file tools, beside the operator's own org-roam
 notes. A few seconds after a plan changes, a watcher (a
@@ -433,7 +436,9 @@ a log edited by hand.
 git reaches the repository as `git@github-notes:wesnel/notes.git` through
 its own ssh config, `~/.config/agent-tools/notes-ssh-config`, whose only key
 is a deploy key installed from the `notes-deploy-key` secret at
-`~/.ssh/id_notes_deploy`. Until `secrets/wgn.yaml` holds that secret, the
+`~/.ssh/id_notes_deploy`. Sync passes that config to each command; on a
+host with `programs.ssh` enabled, `~/.ssh/config` includes it, so a plain
+`git push` in the clone reaches `github-notes` too. Until `secrets/wgn.yaml` holds that secret, the
 secret is not declared and activation says the key is missing. To set it
 up once:
 
