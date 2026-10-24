@@ -194,11 +194,13 @@ have (see status) is refused and writes nothing.
                      BASE the pass's --base, left out for main (or
                      origin/main); BRANCH defaults to the branch of that
                      worktree
-  sign-result ID [--check]
+  sign-result ID [--check] [--wait [--timeout DURATION]]
                      print each result of sign-pass ID and log those not yet
                      delivered as delivered, as remind does; exit 1 while it
                      has none. --check prints nothing and only exits 0 once
-                     one is logged
+                     one is logged. --wait first waits for one, for at most
+                     --timeout (default 24h), and exits 1 if none comes:
+                     a session's waiter, run in the background
   init               clone the plans' repository where it is missing and
                      "plans.remote" names it, then make the plans directory,
                      with a .gitignore for the lock files, as new does
@@ -355,6 +357,8 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		note     = flags.String("note", "", "")
 		unset    = flags.Bool("clear", false, "")
 		check    = flags.Bool("check", false, "")
+		wait     = flags.Bool("wait", false, "")
+		timeout  = flags.Duration("timeout", 24*time.Hour, "")
 		resume   = flags.Bool("resume", false, "")
 		text     = flags.String("text", "", "")
 		run      = flags.String("command", "", "")
@@ -721,8 +725,22 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return 0
 	case "sign-result":
 		if len(positional) != 1 {
-			fmt.Fprint(stderr, "agent-plan sign-result: takes ID [--check]\n")
+			fmt.Fprint(stderr, "agent-plan sign-result: takes ID [--check] [--wait [--timeout DURATION]]\n")
 			return 2
+		}
+		if *wait {
+			deadline := time.Now().Add(*timeout)
+			for {
+				ds, err := c.SignResults(positional[0], false, time.Now())
+				if err != nil {
+					return report(nil, err)
+				}
+				left := time.Until(deadline)
+				if len(ds) > 0 || left <= 0 {
+					break
+				}
+				time.Sleep(min(signPoll, left))
+			}
 		}
 		ds, err := c.SignResults(positional[0], !*check, time.Now())
 		if err != nil {
@@ -748,6 +766,9 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	fmt.Fprint(stderr, usage)
 	return 2
 }
+
+// signPoll is how often sign-result --wait reads the log for a result.
+const signPoll = time.Second
 
 func readAll(r io.Reader) []byte {
 	data, _ := io.ReadAll(r)

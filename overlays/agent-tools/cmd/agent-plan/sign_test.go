@@ -109,6 +109,40 @@ func TestSign(t *testing.T) {
 	}
 }
 
+// sign-result --wait blocks until the pass's result is logged, and gives
+// up at --timeout, so a session's waiter is one command of its own.
+func TestSignResultWait(t *testing.T) {
+	sessionPlan(t)
+	_, out, _ := agentPlan(t, "", "sign-id")
+	id := strings.TrimSpace(out)
+	start := time.Now()
+	code, out, errs := agentPlan(t, "", "sign-result", id, "--wait", "--timeout", "300ms")
+	if took := time.Since(start); code != 1 || out != "" || !strings.Contains(errs, "no result") || took < 300*time.Millisecond {
+		t.Errorf("--wait with no result: %d %q %q after %v", code, out, errs, took)
+	}
+	type result struct {
+		code      int
+		out, errs string
+	}
+	done := make(chan result, 1)
+	go func() {
+		code, out, errs := agentPlan(t, "", "sign-result", id, "--wait")
+		done <- result{code, out, errs}
+	}()
+	c, _ := plans.Load()
+	if _, err := c.RecordSign(id, plans.SignResult{Exit: 0, Summary: "1 signed"}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case r := <-done:
+		if r.code != 0 || strings.TrimSpace(r.out) != "sign-pass "+id+" signed: 1 signed" {
+			t.Errorf("--wait once the result is logged: %d %q %q", r.code, r.out, r.errs)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("--wait did not return once the result was logged")
+	}
+}
+
 // sign-result consumes what remind would otherwise deliver.
 func TestSignResultFirst(t *testing.T) {
 	sessionPlan(t)
