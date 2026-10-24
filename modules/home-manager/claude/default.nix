@@ -525,9 +525,11 @@ with lib; let
     # A call made of nothing but these runs unsandboxed, with the operator's
     # login and network, after the usual permission check; piped or chained
     # with anything else, redirected, or given a command substitution, it
-    # stays sandboxed and fails. A pattern's `*` matches every argument that
-    # follows, so a pattern is safe only where no argument can make the
-    # command write beyond what it is for or run a program: no `gh` itself
+    # may stay sandboxed and fail, so the guard refuses such a line
+    # (wgn.home.llm.guard.excludedCommands). A pattern's `*` matches every
+    # argument that follows, so a pattern is safe only where no argument can
+    # make the command write beyond what it is for or run a program: no `gh`
+    # itself
     # (`gh api` writes, and `gh pr view --web` runs a browser), no nix (any
     # flake the session can edit, or --override-input, reads any path the
     # operator can, and the daemon builds with the network on macOS), no
@@ -923,6 +925,8 @@ in {
         agents = "${reviewAgents}";
         settings = "${reviewerSettings}";
       };
+      # The guard refuses a line naming one of these anywhere but alone.
+      wgn.home.llm.guard.excludedCommands = cfg.settings.sandbox.excludedCommands or [];
 
       assertions = [
         {

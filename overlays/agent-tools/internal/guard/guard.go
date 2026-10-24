@@ -95,8 +95,22 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	hint := ""
 	reason := judged(func() string {
 		reason := checkSubagentStash(in)
+		// Claude Code's shell, where its sandbox's exclusions apply; Codex
+		// sets TurnID, and has none, nor has a headless reviewer, whose
+		// hook is --reviewer.
+		claudeShell := in.ToolName == "Bash" && in.TurnID == "" && who == baseline
+		var shell struct {
+			Command string `json:"command"`
+		}
+		json.Unmarshal(in.ToolInput, &shell)
+		if reason == "" && claudeShell {
+			reason = checkExcludedAlone(shell.Command)
+		}
 		if reason == "" {
 			reason = check(in.ToolName, in.ToolInput, who, in.Cwd)
+		}
+		if reason == "" && claudeShell {
+			reason = checkPlainGh(shell.Command)
 		}
 		if reason == "" && in.TurnID != "" && (in.ToolName == "Bash" || in.ToolName == "exec_command") {
 			// Codex alone keeps a command's terminal for write_stdin.
