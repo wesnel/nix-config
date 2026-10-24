@@ -580,6 +580,8 @@
       pkgs = import nixpkgs {
         inherit system;
       };
+      # agent-tools as the overlay builds it, with no host's settings.
+      agentTools = pkgs.callPackage ./overlays/agent-tools {};
     in {
       formatter = pkgs.alejandra;
 
@@ -592,7 +594,7 @@
           nativeBuildInputs = [
             pkgs.emacs-nox
             pkgs.git
-            (pkgs.callPackage ./overlays/agent-tools {})
+            agentTools
           ];
         } ''
           export HOME=$TMPDIR
@@ -611,7 +613,7 @@
         templates = ./modules/home-manager/llm/skills/playbooks/templates;
       in
         pkgs.runCommand "plan-templates" {
-          nativeBuildInputs = [pkgs.gnugrep pkgs.jq (pkgs.callPackage ./overlays/agent-tools {})];
+          nativeBuildInputs = [pkgs.gnugrep pkgs.jq agentTools];
         } ''
           export HOME=$TMPDIR AGENT_TOOLS_CONFIG=$TMPDIR/config.json
           jq -n --arg dir "$TMPDIR/notes/agents" --arg templates ${templates} \
@@ -652,7 +654,6 @@
       # Defined are the agent files' names (the `name:` line of each in
       # modules/home-manager/claude/agents) and Claude Code's built-in types.
       checks.agent-names = let
-        agentTools = pkgs.callPackage ./overlays/agent-tools {};
         agentFiles = pkgs.lib.filterAttrs (name: kind: kind == "regular" && pkgs.lib.hasSuffix ".md" name && name != "subagent.md")
           (builtins.readDir ./modules/home-manager/claude/agents);
         fileNames = pkgs.lib.mapAttrsToList (file: _: let
@@ -893,7 +894,7 @@
               ./overlays/agent-tools/internal
             ];
           };
-          vendor = (pkgs.callPackage ./overlays/agent-tools {}).goModules;
+          vendor = agentTools.goModules;
         } ''
           export HOME=$TMPDIR GOCACHE=$TMPDIR/go-cache GOMODCACHE=$TMPDIR/go-mod \
             GOLANGCI_LINT_CACHE=$TMPDIR/lint-cache GOPROXY=off GOFLAGS=-mod=vendor \
