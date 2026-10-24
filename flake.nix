@@ -597,18 +597,24 @@
       # emacs-config's plan views read what agent-plan writes: this runs
       # their tests, at the emacs-config this flake locks, against the
       # agent-plan built from this commit. Point it at a checkout with
-      # `--override-input emacs-config path:<checkout>`.
-      checks.agent-plans =
+      # `--override-input emacs-config path:<checkout>`. The agent-plan is
+      # built without a baked config home, so it reads the scratch config
+      # the tests name in AGENT_TOOLS_CONFIG. Emacs has org-roam, which the
+      # tests of plans as org-roam nodes skip without, and fails at once
+      # where it cannot load it.
+      checks.agent-plans = let
+        emacs = pkgs.emacs-nox.pkgs.withPackages (epkgs: [epkgs.org-roam]);
+      in
         pkgs.runCommand "agent-plans-tests" {
           nativeBuildInputs = [
-            pkgs.emacs-nox
+            emacs
             pkgs.git
             agentTools
           ];
         } ''
           export HOME=$TMPDIR
           cd ${emacs-config}
-          emacs --batch -Q -l tests/run-agent-plans.el \
+          emacs --batch -Q --eval '(require (quote org-roam))' -l tests/run-agent-plans.el \
             --eval '(princ (wgn-agent-plans-run-tests))'
           touch $out
         '';
