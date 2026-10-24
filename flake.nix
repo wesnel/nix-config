@@ -985,6 +985,41 @@
           touch $out
         '';
 
+      # The agent-tools config.json the ngrok Mac's home configuration writes
+      # holds what agent-plan and emacs-config's plan views read from it:
+      # plans.dir and plans.repo, absolute, the directory inside the
+      # repository, and plans.host. Then agent-plan, unbaked, makes a plan
+      # with it, its home moved under the build's directory so that nothing
+      # outside it is read or written.
+      checks.agent-tools-config = let
+        ngrok = darwinSystems.ngrok;
+        home = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username};
+      in
+        pkgs.runCommand "agent-tools-config" {
+          nativeBuildInputs = [pkgs.jq (pkgs.callPackage ./overlays/agent-tools {})];
+          config = home.xdg.configFile."agent-tools/config.json".source;
+          inherit (home.home) homeDirectory;
+        } ''
+          jq -e '.plans | . as $p | ($p.dir | type == "string" and startswith("/"))
+            and ($p.repo | type == "string" and startswith("/"))
+            and ($p.dir | startswith($p.repo + "/")) and ($p.host | type == "string" and length > 0)' \
+            "$config" >/dev/null || {
+            echo "agent-tools-config: plans lacks an absolute dir inside an absolute repo, or a host:" >&2
+            jq .plans "$config" >&2
+            exit 1
+          }
+          export HOME=$TMPDIR/home AGENT_TOOLS_CONFIG=$TMPDIR/config.json
+          jq --arg from "$homeDirectory" --arg to "$HOME" \
+            'walk(if type == "string" and startswith($from) then $to + .[($from | length):] else . end)' \
+            "$config" > "$AGENT_TOOLS_CONFIG"
+          made=$(agent-plan new --title check --slug check)
+          case "$(jq -r .plan <<<"$made")" in
+            "$(jq -r .plans.dir "$AGENT_TOOLS_CONFIG")"/*) ;;
+            *) echo "agent-tools-config: agent-plan made $made outside plans.dir" >&2; exit 1 ;;
+          esac
+          touch $out
+        '';
+
       # gosec over agent-tools, with the rules and exclusions in
       # overlays/agent-tools/.golangci.yml; .github/workflows/agent-tools-lint.yml
       # runs it. Run it with `nix build .#checks.<system>.agent-tools-lint`.
