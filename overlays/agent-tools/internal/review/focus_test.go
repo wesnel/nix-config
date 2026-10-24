@@ -184,6 +184,31 @@ func TestSecurityReviewer(t *testing.T) {
 		})
 	}
 
+	// The operator's global git configuration includes a file the
+	// reviewer's sandbox denies, which stopped every git command the
+	// reviewer ran on a local range.
+	t.Run("git diff of a local range despite a denied global config", func(t *testing.T) {
+		f := setUp(t, true)
+		dir := t.TempDir()
+		global, included := filepath.Join(dir, "gitconfig"), filepath.Join(dir, "included")
+		os.WriteFile(included, nil, 0o600)
+		run(t, dir, "git", "config", "--file", global, "include.path", included)
+		t.Setenv("GIT_CONFIG_GLOBAL", global)
+		t.Setenv("GIT_CONFIG_NOSYSTEM", "")
+		t.Setenv("FAKE_CLAUDE_DENY", included)
+		t.Setenv("FAKE_CLAUDE_RANGE", f.base+".."+f.tip)
+		code, run, stderr := runDelegate(t, "--reviewer", "security", "--goal", ".git/goal.md", f.base+"..HEAD")
+		if code != 0 || run.review("security").Focus != "security" {
+			t.Fatalf("exit %d, %+v\n%s", code, run, stderr)
+		}
+		for _, agent := range []string{"security-reviewer", "review-guide"} {
+			diff := f.claudeLog(t, agent, "diff")
+			if !strings.Contains(diff, " code.txt | 2 ++\n") || !strings.HasSuffix(diff, "exit 0\n") {
+				t.Errorf("%s's git diff %s..%s:\n%s", agent, f.base, f.tip, diff)
+			}
+		}
+	})
+
 	t.Run("no delegate config", func(t *testing.T) {
 		f := setUp(t, true)
 		t.Setenv("AGENT_TOOLS_CONFIG", filepath.Join(t.TempDir(), "none.json"))

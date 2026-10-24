@@ -147,13 +147,15 @@ func ClaudeRun(ctx context.Context, c Claude) (*CodexReply, error) {
 }
 
 // claudeEnv is the reviewer's environment: the caller's, without what
-// points git at a repository, without the mark of a Claude Code session,
-// which a session started from one would take as nested, and with every
-// CLAUDE.md kept out of context, the reviewed project's and the
-// operator's alike.
+// points git at a repository or gives it configuration, with git reading
+// neither the user's configuration nor the system's (the user's includes
+// a file the reviewer's sandbox denies, which stops every git command),
+// without the mark of a Claude Code session, which a session started from
+// one would take as nested, and with every CLAUDE.md kept out of context,
+// the reviewed project's and the operator's alike.
 func claudeEnv(env []string) []string {
 	var out []string
-	for _, kv := range gitenv.Without(env) {
+	for _, kv := range gitenv.WithoutConfig(env) {
 		name, _, _ := strings.Cut(kv, "=")
 		if name == "CLAUDECODE" || name == "CLAUDE_CODE_DISABLE_CLAUDE_MDS" {
 			continue

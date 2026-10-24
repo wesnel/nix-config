@@ -99,7 +99,11 @@ esac
 // fakeClaude stands in for `claude`: for the agent --agent names, it
 // records each run's arguments, NUL-separated, its environment, the commit
 // and the files where it ran, and prints the result document
-// $FAKE_CLAUDE_LOG/AGENT-out-N for its Nth run, else AGENT-out.
+// $FAKE_CLAUDE_LOG/AGENT-out-N for its Nth run, else AGENT-out. Where
+// $FAKE_CLAUDE_RANGE is set, it records git diff --stat of that range, and
+// git's exit status, as AGENT-diff; while it runs, the file
+// $FAKE_CLAUDE_DENY, where set, cannot be read, as the reviewer's sandbox
+// denies a file.
 const fakeClaude = `#!/bin/sh
 log=$FAKE_CLAUDE_LOG
 agent=
@@ -108,11 +112,17 @@ for a in "$@"; do
   if [ "$prev" = --agent ]; then agent=$a; fi
   prev=$a
 done
+[ -z "$FAKE_CLAUDE_DENY" ] || chmod 000 "$FAKE_CLAUDE_DENY"
 n=$(( $(cat "$log/$agent-runs" 2>/dev/null || echo 0) + 1 ))
 echo $n > "$log/$agent-runs"
 printf '%s\0' "$@" > "$log/$agent-args-$n"
 env > "$log/$agent-env-$n"
 git rev-parse HEAD > "$log/$agent-head" 2>/dev/null
+if [ -n "$FAKE_CLAUDE_RANGE" ]; then
+  git diff --stat "$FAKE_CLAUDE_RANGE" > "$log/$agent-diff" 2>&1
+  echo "exit $?" >> "$log/$agent-diff"
+fi
+[ -z "$FAKE_CLAUDE_DENY" ] || chmod 600 "$FAKE_CLAUDE_DENY"
 ls -A > "$log/$agent-files"
 if [ -f "$log/$agent-out-$n" ]; then cat "$log/$agent-out-$n"; else cat "$log/$agent-out"; fi
 `
