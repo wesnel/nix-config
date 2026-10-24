@@ -196,13 +196,13 @@ hand over again. A line marked stale is for the record: take no follow-up.
 
 After every push to a pull request that you make or are told about,
 including `pr-loop open` and the operator's `git sign-pass --push`, watch
-its CI if you are still running. From the pushed branch (or naming the pull
-request's number or branch), run this in the background, with the Bash
-tool's `run_in_background` or your harness's equivalent, and act when it
-exits:
+its CI if you are still running. Run this in the background, naming the
+pull request's number or branch, as a command of its own with no `cd`
+before it, with the Bash tool's `run_in_background` or your harness's
+equivalent, and act when it exits:
 
 ```sh
-pr-loop wait ci --timeout 3600
+pr-loop wait ci --timeout 3600 PR
 ```
 
 It waits for the pushed commit to become the pull request's head, so it
