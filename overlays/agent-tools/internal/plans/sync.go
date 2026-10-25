@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -87,6 +88,17 @@ func (c Config) asSync(ctx context.Context) []string {
 
 // gitAs is git with env added to its environment.
 func (c Config) gitAs(ctx context.Context, env []string, args ...string) (string, error) {
+	out, err := c.gitRawAs(ctx, env, args...)
+	return strings.TrimSpace(out), err
+}
+
+// gitRaw is git with its output as git wrote it, for output whose spaces
+// matter, such as file names.
+func (c Config) gitRaw(ctx context.Context, args ...string) (string, error) {
+	return c.gitRawAs(ctx, nil, args...)
+}
+
+func (c Config) gitRawAs(ctx context.Context, env []string, args ...string) (string, error) {
 	pre := []string{"-C", c.repo(), "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"}
 	if c.SSHConfig != "" {
 		pre = append(pre, "-c", "core.sshCommand="+c.sshCommand())
@@ -99,7 +111,7 @@ func (c Config) gitAs(ctx context.Context, env []string, args ...string) (string
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
-	return strings.TrimSpace(string(out)), nil
+	return string(out), nil
 }
 
 func (c Config) sshCommand() string { return "ssh -F " + c.SSHConfig }
@@ -154,7 +166,7 @@ func (c Config) ownFiles(ctx context.Context, trees ...string) ([]string, error)
 	seen := map[string]bool{}
 	var out []string
 	add := func(name string) {
-		if m := planFile.FindStringSubmatch(name); m != nil && m[2] == c.Host && !seen[name] {
+		if c.ownName(name) && !seen[name] {
 			seen[name] = true
 			out = append(out, filepath.Join(rel, name))
 		}
@@ -180,6 +192,13 @@ func (c Config) ownFiles(ctx context.Context, trees ...string) ([]string, error)
 		}
 	}
 	return out, nil
+}
+
+// ownName reports whether a file named name in the plans directory is one
+// of this host's plan files.
+func (c Config) ownName(name string) bool {
+	m := planFile.FindStringSubmatch(name)
+	return m != nil && m[2] == c.Host
 }
 
 // treeBlobs maps each of files that tree holds to its blob.
@@ -245,10 +264,11 @@ func (c Config) target(ctx context.Context) (string, error) {
 
 // Sync sends this host's plan files, and nothing else, as a commit of its
 // own on top of origin's branch, and takes the other hosts' plans by
-// bringing the checked-out branch forward. It never rebases, resets or
-// commits on the operator's branch, so no commit of the operator's is ever
-// sent or re-committed, whatever they do in the repository meanwhile. With
-// PullOnly it only takes the other hosts' plans.
+// bringing the checked-out branch forward, or catching it up as catchUp
+// says. It never rebases or commits on the operator's branch, so no commit
+// of the operator's is ever sent or re-committed, whatever they do in the
+// repository meanwhile. With PullOnly it only takes the other hosts' plans,
+// and never catches up.
 func (c Config) Sync(o SyncOptions) (Synced, error) {
 	time.Sleep(o.Settle)
 	s := Synced{Repo: c.repo()}
@@ -276,7 +296,11 @@ func (c Config) Sync(o SyncOptions) (Synced, error) {
 		s.Skipped = fmt.Sprintf("origin has no branch %s to sync with", branch)
 		return s, nil
 	}
-	if s.Behind, err = c.bringForward(ctx, branch, tip); err != nil || o.PullOnly {
+	if o.PullOnly {
+		s.Behind, err = c.bringForward(ctx, branch, tip)
+		return s, err
+	}
+	if s.Behind, err = c.forward(ctx, branch, tip); err != nil {
 		return s, err
 	}
 	// Only a checkout that holds origin's latest has this host's latest plan
@@ -301,8 +325,156 @@ func (c Config) Sync(o SyncOptions) (Synced, error) {
 		return s, err
 	}
 	s.Committed, s.Pushed = changed, true
-	s.Behind, err = c.bringForward(ctx, branch, sent)
+	s.Behind, err = c.forward(ctx, branch, sent)
 	return s, err
+}
+
+// forward is bringForward, followed by catchUp when git refuses the
+// fast-forward, so that a plan file written after sync sent it cannot keep
+// the branch behind for good.
+func (c Config) forward(ctx context.Context, branch, tip string) (string, error) {
+	behind, err := c.bringForward(ctx, branch, tip)
+	if err != nil || behind == "" {
+		return behind, err
+	}
+	if caught, err := c.catchUp(ctx, branch, tip); err != nil || caught {
+		return "", err
+	}
+	return behind, nil
+}
+
+// catchUp moves branch and the index to tip, and leaves the working tree as
+// it is, when branch is checked out, tip holds it, the commits tip adds
+// change nothing but this host's plan files, nothing is staged, and no
+// merge, rebase, cherry-pick, revert or bisect is in progress. Those
+// commits are sync's own, so the working tree holds the same version of
+// each of those files or a newer one, which sync sends next: what git does
+// for `git reset tip` with nothing staged. It reports whether it moved
+// branch.
+//
+// It holds the index's lock, as git does to write the index, from before
+// it reads HEAD until it has written the new index, so the operator's git
+// commands that write the index wait out or fail on it; it builds that
+// index from the one the lock froze, with only the changed plan files taken
+// from tip; and it moves branch only if branch still holds the commit HEAD
+// held under the lock. Anything that changes the branch or the index
+// meanwhile makes it change nothing.
+//
+// SIGTERM and SIGINT wait while it runs: dying with the lock held would
+// block every git command that writes the index, and dying between moving
+// branch and writing the index would leave this host's plans staged back
+// to older versions. One that comes before it moves branch stops it there,
+// and one that comes later once the index is written; either way the
+// process then dies of it, with the lock gone.
+func (c Config) catchUp(ctx context.Context, branch, tip string) (bool, error) {
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
+	defer func() {
+		signal.Stop(stop)
+		select {
+		case s := <-stop:
+			// Nothing relays it now, so it takes its default action.
+			if s, ok := s.(syscall.Signal); ok {
+				_ = syscall.Kill(os.Getpid(), s)
+			}
+		default:
+		}
+	}()
+	index, err := c.git(ctx, "rev-parse", "--git-path", "index")
+	if err != nil {
+		return false, err
+	}
+	if !filepath.IsAbs(index) {
+		index = filepath.Join(c.repo(), index)
+	}
+	lock := index + ".lock"
+	f, err := os.OpenFile(lock, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644) //nolint:gosec // git's own lock on the index
+	if errors.Is(err, fs.ErrExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	// Removed unless renamed over the index: after that the name is
+	// anyone's to take again.
+	held := true
+	defer func() {
+		if held {
+			os.Remove(lock)
+		}
+	}()
+	data, err := os.ReadFile(index)
+	if err == nil {
+		_, err = f.Write(data)
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return false, err
+	}
+	if head, err := c.git(ctx, "symbolic-ref", "-q", "--short", "HEAD"); err != nil || head != branch {
+		return false, nil
+	}
+	at, err := c.git(ctx, "rev-parse", "-q", "--verify", "HEAD^{commit}")
+	if err != nil || at == tip {
+		return false, nil
+	}
+	if _, err := c.git(ctx, "merge-base", "--is-ancestor", at, tip); err != nil {
+		return false, nil
+	}
+	if op, err := c.inProgress(ctx); err != nil || op != "" {
+		return false, err
+	}
+	rel, err := filepath.Rel(c.repo(), c.Dir)
+	if err != nil {
+		return false, err
+	}
+	// Each merge against each of its parents, whatever log.diffMerges
+	// says, so that no change a merge brings goes unlisted.
+	incoming, err := c.gitRaw(ctx, "log", "--format=", "--name-only", "--no-renames", "--diff-merges=separate", "-z", at+".."+tip)
+	if err != nil {
+		return false, err
+	}
+	for _, f := range strings.Split(incoming, "\x00") {
+		if f != "" && (filepath.Dir(f) != rel || !c.ownName(filepath.Base(f))) {
+			return false, nil
+		}
+	}
+	env := []string{"GIT_INDEX_FILE=" + lock, "GIT_LITERAL_PATHSPECS=1"}
+	if _, err := c.gitAs(ctx, env, "diff-index", "--cached", "--quiet", at, "--"); err != nil {
+		return false, nil
+	}
+	differ, err := c.gitRaw(ctx, "diff", "--name-only", "--no-renames", "-z", at, tip)
+	if err != nil {
+		return false, err
+	}
+	if files := strings.FieldsFunc(differ, func(r rune) bool { return r == 0 }); len(files) > 0 {
+		if _, err := c.gitAs(ctx, env, append([]string{"reset", "-q", tip, "--"}, files...)...); err != nil {
+			return false, err
+		}
+	}
+	select {
+	case s := <-stop:
+		stop <- s
+		return false, nil
+	default:
+	}
+	if _, err := c.git(ctx, "update-ref", "-m", "agent-plan sync: catch up with origin", "refs/heads/"+branch, tip, at); err != nil {
+		// A signal to sync's process group can stop update-ref once it
+		// has moved branch, which the index must then follow.
+		if now, _ := c.git(ctx, "rev-parse", "-q", "--verify", "refs/heads/"+branch); now != tip {
+			return false, nil
+		}
+	}
+	if err := os.Rename(lock, index); err != nil {
+		if _, uerr := c.git(ctx, "update-ref", "-m", "agent-plan sync: undo the catch-up", "refs/heads/"+branch, at, tip); uerr != nil {
+			err = errors.Join(err, uerr)
+		}
+		return false, err
+	}
+	held = false
+	return true, nil
 }
 
 // commitOnto makes a commit, as sync, whose parent is base and whose tree is

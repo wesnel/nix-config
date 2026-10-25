@@ -422,7 +422,7 @@ links it to the operator's account, and falls back to
 `user.email`. It commits as `agent-plan sync <agent-plan@HOST.invalid>`, not
 as `user.email`, so `git-push-guard`, which judges the committer, lets its
 unsigned commits through. It
-never rebases, resets or commits on the checked-out branch, so no commit of
+never rebases or commits on the checked-out branch, so no commit of
 the operator's is sent or re-committed. It stages only this host's plan
 files that the working tree already holds as the remote does, so that git
 fast-forwards over them, and only while nothing at a plan path is staged
@@ -431,7 +431,14 @@ the branch cannot fast-forward (it holds commits the remote lacks, another
 branch or an older commit is checked out, or the index or uncommitted
 edits are in the way), it stays where it is, sync says why, and sync sends
 nothing while HEAD lacks the remote's branch, whose plan files may be older
-than the remote's. Bringing the branch level with the remote is the
+than the remote's. The exception is a plan file written after sync pushed
+it, which git will not fast-forward over: if the commits the branch lacks
+change nothing but this host's plan files, nothing is staged, the branch
+holds no commit the remote lacks and nothing is in progress, sync moves the
+branch and the index to the remote's, as `git reset` does, leaves the
+working tree, whose plan files are then as sent or newer, and sends them.
+It holds the index's lock meanwhile, and changes nothing if the branch
+moved. Otherwise bringing the branch level with the remote is the
 operator's. Sync's log is `/tmp/agent-plan-sync.log` on macOS and
 `journalctl --user -u agent-plan-sync` on Linux. Agents never sync: the
 guard denies `agent-plan sync`, and `agent-plan reseal PLAN`, which accepts
