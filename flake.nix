@@ -46,6 +46,12 @@
       flake = false;
     };
 
+    nix-flatpak = {
+      # A release tag: its main branch is unstable. The tag is named in
+      # full, since a branch of the same name would win over it.
+      url = "github:gmodena/nix-flatpak?ref=refs/tags/v0.8.0";
+    };
+
     nixos-hardware = {
       url = "github:nixos/nixos-hardware/master";
     };
@@ -94,6 +100,7 @@
     home-manager,
     mac-app-util,
     mattpocock-skills,
+    nix-flatpak,
     nixos-hardware,
     nixpkgs,
     nixpkgs-x86_64-darwin,
@@ -122,6 +129,9 @@
       sops
 
       mac-app-util.homeManagerModules.default
+
+      # Inert unless the system enables Flatpak.
+      nix-flatpak.homeManagerModules.nix-flatpak
 
       (_: {
         _module.args = {
@@ -164,6 +174,7 @@
       ./modules/home-manager/virtualisation
       ./modules/home-manager/yubikey
       ./modules/home-manager/zellij
+      ./modules/home-manager/zen
       ./modules/home-manager/zoom
       ./modules/home-manager/zwift
     ];

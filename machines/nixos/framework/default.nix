@@ -26,6 +26,7 @@
         video.enable = true;
         virtualisation.enable = true;
         yubikey.enable = true;
+        zen.enable = true;
         zwift.enable = true;
       };
     })

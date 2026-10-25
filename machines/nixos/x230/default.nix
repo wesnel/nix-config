@@ -27,6 +27,7 @@
         python.enable = true;
         sway.enable = true;
         yubikey.enable = true;
+        zen.enable = true;
       };
 
       home.programs.wgn.emacs = {
