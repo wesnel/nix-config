@@ -9,7 +9,11 @@ import (
 // mcpJSON lists, per service, the MCP servers the guard has reviewed, the
 // tools of theirs it lets through and the writes the operator confirms.
 // mcp-proxy's tool filters are built from the same file, so a tool added
-// here is served and allowed together. A server it does not list is
+// here is served and allowed together, and one missing from both lists is
+// hidden by the proxy as well as refused. `refuses` names the tools
+// reviewed and refused; the guard does not read it, since it refuses every
+// unlisted tool, but where testdata/tools records a server's tools/list
+// the tests hold the three lists to it. A server it does not list is
 // unreviewed: every tool of its asks in a main session of Claude Code, and
 // is refused in Codex, which cannot ask, in review loops and to reviewers.
 //
