@@ -78,10 +78,6 @@
       inputs.nixpkgs.follows = "nixpkgs-x86_64-darwin";
     };
 
-    nur = {
-      url = "github:nix-community/NUR";
-    };
-
     sops-nix = {
       url = "github:Mic92/sops-nix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -103,7 +99,6 @@
     nixpkgs-x86_64-darwin,
     nix-darwin-x86_64-darwin,
     home-manager-x86_64-darwin,
-    nur,
     sops-nix,
   }: let
     key = "0xA776D2AD099E8BC0";
@@ -234,7 +229,6 @@
 
             (_: {
               nixpkgs.overlays = [
-                nur.overlays.default
                 emacs-config.overlays.default
                 overlay
               ];
@@ -316,7 +310,6 @@
 
             (_: {
               nixpkgs.overlays = [
-                nur.overlays.default
                 emacs-config.overlays.default
                 overlay
               ];
@@ -381,7 +374,6 @@
           inherit system;
 
           overlays = [
-            nur.overlays.default
             emacs-config.overlays.default
             overlay
           ];
