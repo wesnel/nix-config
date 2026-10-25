@@ -174,6 +174,7 @@
 
       ./modules/nixos/emacs
       ./modules/nixos/fish
+      ./modules/nixos/flatpak
       ./modules/nixos/fonts
       ./modules/nixos/hyprland
       ./modules/nixos/interception-tools

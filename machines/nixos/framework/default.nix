@@ -39,6 +39,7 @@
       wgn.nixos = {
         emacs.enable = true;
         fish.enable = true;
+        flatpak.enable = true;
         fonts.enable = true;
         hyprland.enable = true;
         interception-tools.enable = true;
