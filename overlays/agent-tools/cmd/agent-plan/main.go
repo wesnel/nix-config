@@ -214,13 +214,18 @@ have (see status) is refused and writes nothing.
                      --timeout (default 24h), and exits 1 if none comes:
                      a session's waiter, run in the background
   init               clone the plans' repository where it is missing and
-                     "plans.remote" names it, then make the plans directory,
-                     with a .gitignore for the lock files, as new does
+                     "plans.remote" names it, and point its origin at
+                     "plans.remote"; then make the plans directory, with a
+                     .gitignore for the lock files, as new does
   sync [--pull] [--settle DURATION]
-                     commit this host's plan files and nothing else, take the
-                     other hosts' from the remote, and push; --pull only takes
-                     the other hosts' plans. The watcher runs it, never an
-                     agent
+                     take the other hosts' plans by fast-forwarding the
+                     checked-out branch; then, if HEAD holds the remote's
+                     branch, commit this host's plan files and nothing else
+                     onto it, as agent-plan sync <agent-plan@HOST.invalid>,
+                     and push that commit; --pull only takes them. It never
+                     rebases or commits on the checked-out branch, and leaves
+                     it where it is when it cannot fast-forward. The watcher
+                     runs it, never an agent
   reseal PLAN        accept a log edited outside agent-plan, recording that in
                      it; the operator's to run
 

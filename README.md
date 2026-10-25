@@ -403,14 +403,32 @@ agent-plan questions PLAN --all          # open questions, each with its recomme
 Ask an agent only to plan, and it writes the plan and stops.
 
 `~/git/github.com/wesnel/notes` is a clone of the private `wesnel/notes`,
-which activation clones where it is missing. Its `agents/plans/` directory
+which activation (`agent-plan init`) clones where it is missing. On every
+switch, init also points the clone's `origin` at `plans.remote` and sets it
+never to sign; it sets no `core.sshCommand`, with which `git sign-pass`
+refuses a repository. Its `agents/plans/` directory
 holds the plans, which only `agent-plan` writes; the rest of `agents/` holds
 notes agents write with the file tools, beside the operator's own org-roam
 notes. A few seconds after a plan changes, a watcher (a
 launchd agent on macOS, a systemd path unit on Linux) runs `agent-plan
-sync`: it commits this host's plan files by name, unsigned, as "Sync plans
-from HOST", rebases onto the remote with any other edits stashed and put
-back, and pushes. Its log is `/tmp/agent-plan-sync.log` on macOS and
+sync`: it first takes the other hosts' plans by fast-forwarding the
+checked-out branch to the remote's. Then, only if HEAD holds the remote's
+branch, it commits this host's plan files, unsigned, as "Sync plans from
+HOST", on top of the remote's branch, building the commit in an index of
+its own, pushes that commit, and fast-forwards again. Sync authors and
+commits as `agent-plan sync <agent-plan@HOST.invalid>`, not as
+`user.email`, so `git-push-guard` lets its unsigned commits through. It
+never rebases, resets or commits on the checked-out branch, so no commit of
+the operator's is sent or re-committed. It stages only this host's plan
+files that the working tree already holds as the remote does, so that git
+fast-forwards over them, and only while nothing at a plan path is staged
+and no merge, rebase, cherry-pick, revert or bisect is in progress. Where
+the branch cannot fast-forward (it holds commits the remote lacks, another
+branch or an older commit is checked out, or the index or uncommitted
+edits are in the way), it stays where it is, sync says why, and sync sends
+nothing while HEAD lacks the remote's branch, whose plan files may be older
+than the remote's. Bringing the branch level with the remote is the
+operator's. Sync's log is `/tmp/agent-plan-sync.log` on macOS and
 `journalctl --user -u agent-plan-sync` on Linux. Agents never sync: the
 guard denies `agent-plan sync`, and `agent-plan reseal PLAN`, which accepts
 a log edited by hand.
@@ -418,7 +436,9 @@ a log edited by hand.
 git reaches the repository as `git@github-notes:wesnel/notes.git` through
 its own ssh config, `~/.config/agent-tools/notes-ssh-config`, whose only key
 is a deploy key installed from the `notes-deploy-key` secret at
-`~/.ssh/id_notes_deploy`. Until `secrets/wgn.yaml` holds that secret, the
+`~/.ssh/id_notes_deploy`. Sync passes that config to each command; on a
+host with `programs.ssh` enabled, `~/.ssh/config` includes it, so a plain
+`git push` in the clone reaches `github-notes` too. Until `secrets/wgn.yaml` holds that secret, the
 secret is not declared and activation says the key is missing. To set it
 up once:
 

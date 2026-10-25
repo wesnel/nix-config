@@ -15,7 +15,7 @@ with lib; let
       inherit (cfg.plans) dir host;
       inherit (cfg.plans.repository) remote;
       repo = cfg.plans.repository.path;
-      sshConfig = "${config.xdg.configHome}/agent-tools/notes-ssh-config";
+      sshConfig = "${config.xdg.configHome}/${notesSshConfigFile}";
       key = notesKey;
       # The playbooks skill's, which a file of the same name in the
       # repository's templates overrides.
@@ -49,7 +49,9 @@ with lib; let
 
   # Its own config, through `ssh -F`, so that nothing in ~/.ssh/config, a
   # shared master or an agent's key among them, applies, and a missing key
-  # fails rather than prompts.
+  # fails rather than prompts. ~/.ssh/config includes it too, so the
+  # operator's own git in the clone reaches github-notes.
+  notesSshConfigFile = "agent-tools/notes-ssh-config";
   notesSshConfig = ''
     Host github-notes
         HostName github.com
@@ -511,7 +513,11 @@ in {
     # the guard, which keeps each plan's log append-only.
     xdg.configFile."agent-tools/config.json".source = agentToolsConfig;
 
-    xdg.configFile."agent-tools/notes-ssh-config".text = notesSshConfig;
+    xdg.configFile.${notesSshConfigFile}.text = notesSshConfig;
+
+    # Takes effect only where programs.ssh is enabled, as it writes
+    # ~/.ssh/config.
+    programs.ssh.includes = ["${config.xdg.configHome}/${notesSshConfigFile}"];
 
     sops.secrets = mkIf hasNotesKey {
       notes-deploy-key.path = notesKey;

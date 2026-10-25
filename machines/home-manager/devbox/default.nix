@@ -41,6 +41,13 @@
         claude.enable = true;
         codex.enable = true;
       };
+
+      # Writes ~/.ssh/config, which holds the Include of the notes ssh
+      # config, so a git push in the plans clone reaches github-notes.
+      programs.ssh = {
+        enable = true;
+        enableDefaultConfig = false;
+      };
     })
 
     ({

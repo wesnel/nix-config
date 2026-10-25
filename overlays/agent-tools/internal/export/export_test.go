@@ -280,12 +280,14 @@ func fixture(t *testing.T) (c plans.Config, own, theirs plans.Plan) {
 		write(t, filepath.Join(root, "org", name), "* TODO SENTINEL-org-"+name+"\n")
 	}
 
-	// mac's sync, then box's, then a change of box's not yet synced.
+	// mac's sync, on origin, then box's, then a change of box's not yet
+	// synced.
 	rel := func(p plans.Plan) []string {
 		return []string{filepath.Join("agents", filepath.Base(p.File())), filepath.Join("agents", p.Name+".log.org")}
 	}
 	git(t, notes, nil, append([]string{"add", "--"}, rel(theirs)...)...)
 	git(t, notes, []string{"GIT_COMMITTER_DATE=" + theirsCommitted}, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "Sync plans from mac")
+	git(t, notes, nil, "push", "-q", "origin", "main")
 	if _, err := c.Sync(plans.SyncOptions{}); err != nil {
 		t.Fatal(err)
 	}
