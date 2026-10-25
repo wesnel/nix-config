@@ -2,8 +2,11 @@ package review
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
@@ -51,7 +55,7 @@ while [ $# -gt 0 ]; do
     -C) wt=$2; shift 2 ;;
     --output-schema) schema=$2; shift 2 ;;
     -o) out=$2; shift 2 ;;
-    -m) shift 2 ;;
+    -m) printf '%s\n%s\n' "$1" "$2" >> "$FAKE_CODEX_LOG/exec-args"; shift 2 ;;
     -) stdin=1; shift ;;
     *) echo "fake codex: unknown flag $1" >&2; exit 64 ;;
   esac
@@ -171,6 +175,36 @@ func writeConfig(t *testing.T) {
 	config := filepath.Join(t.TempDir(), "config.json")
 	os.WriteFile(config, []byte(`{"delegate": {"agents": "/store/review-agents.json", `+
 		`"settings": "/store/reviewer-settings.json"}}`), 0o644)
+	t.Setenv("AGENT_TOOLS_CONFIG", config)
+}
+
+// writeGatewayConfig writes agent-tools' config as writeConfig does, and
+// names a model provider for Codex, as the llm module does on a machine
+// whose agents go through an AI gateway, with the provider's id.
+func writeGatewayConfig(t *testing.T, id string) {
+	t.Helper()
+	data, err := json.Marshal(map[string]any{"delegate": map[string]any{
+		"agents":   "/store/review-agents.json",
+		"settings": "/store/reviewer-settings.json",
+		"codex": map[string]any{
+			"model":         "gateway-model",
+			"contextWindow": 200000,
+			"provider": map[string]any{
+				"id":          id,
+				"name":        "ngrok.ai",
+				"baseURL":     "https://gateway.example/v1",
+				"authCommand": "/bin/cat",
+				"authArgs":    []string{"/keys/ngrok-ai-key"},
+			},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(config, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
 }
 
@@ -535,25 +569,35 @@ func testCodexFailures(t *testing.T) {
 }
 
 // TestUnavailable covers each case where Codex must not or cannot review,
-// which exits 4 and says where to run the review instead.
+// which exits 4 and says where to run the review instead, and the cases
+// beside them where it may. gateway is the id of the model provider
+// agent-tools' config names, if any.
 func TestUnavailable(t *testing.T) {
 	for _, c := range []struct {
 		name      string
 		withCodex bool
+		gateway   string
 		env       map[string]string
 		args      []string
 		want      int
 	}{
-		{"Codex's sandbox cannot start", true, map[string]string{"FAKE_CODEX": "nosandbox"}, nil, 4},
-		{"missing", false, nil, nil, 4},
-		{"unauthenticated", true, map[string]string{"FAKE_CODEX": "unauthenticated"}, nil, 4},
-		{"in a loop session", true, map[string]string{"PR_LOOP_SESSION": "1"}, nil, 4},
-		{"loop session, Codex asked for", true, map[string]string{"PR_LOOP_SESSION": "1"}, []string{"--reviewer", "codex"}, 4},
-		{"Codex author", true, map[string]string{"CODEX_SANDBOX": "seatbelt"}, nil, 4},
-		{"Codex author, Codex asked for", true, map[string]string{"CODEX_SANDBOX": "seatbelt", "FAKE_CODEX": "none"}, []string{"--reviewer", "codex"}, 0},
+		{"Codex's sandbox cannot start", true, "", map[string]string{"FAKE_CODEX": "nosandbox"}, nil, 4},
+		{"missing", false, "", nil, nil, 4},
+		{"unauthenticated", true, "", map[string]string{"FAKE_CODEX": "unauthenticated"}, nil, 4},
+		// A provider's own auth command stands in for Codex's login.
+		{"unauthenticated, through a gateway", true, "ngrok-ai", map[string]string{"FAKE_CODEX": "unauthenticated"}, nil, 3},
+		{"gateway whose id is not a TOML key", true, `ngrok"ai`, nil, nil, 4},
+		{"in a loop session", true, "", map[string]string{"PR_LOOP_SESSION": "1"}, nil, 4},
+		{"in a loop session, through a gateway", true, "ngrok-ai", map[string]string{"PR_LOOP_SESSION": "1"}, nil, 4},
+		{"loop session, Codex asked for", true, "", map[string]string{"PR_LOOP_SESSION": "1"}, []string{"--reviewer", "codex"}, 4},
+		{"Codex author", true, "", map[string]string{"CODEX_SANDBOX": "seatbelt"}, nil, 4},
+		{"Codex author, Codex asked for", true, "", map[string]string{"CODEX_SANDBOX": "seatbelt", "FAKE_CODEX": "none"}, []string{"--reviewer", "codex"}, 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := setUp(t, c.withCodex)
+			if c.gateway != "" {
+				writeGatewayConfig(t, c.gateway)
+			}
 			for k, v := range c.env {
 				t.Setenv(k, v)
 			}
@@ -573,6 +617,153 @@ func TestUnavailable(t *testing.T) {
 				f.checkCleanedUp(t)
 			}
 		})
+	}
+}
+
+// TestGateway holds Codex's run to the model provider agent-tools' config
+// names, which the user's Codex configuration, ignored, cannot supply: its
+// table and its model on the command line, --model over the config's.
+func TestGateway(t *testing.T) {
+	const (
+		selects  = `model_provider="ngrok-ai"`
+		provider = `model_providers.ngrok-ai={name="ngrok.ai", base_url="https://gateway.example/v1", ` +
+			`wire_api="responses", auth={command="/bin/cat", args=["/keys/ngrok-ai-key"]}}`
+	)
+	review := func(t *testing.T, gateway bool, args ...string) []string {
+		t.Helper()
+		f := setUp(t, true)
+		if gateway {
+			writeGatewayConfig(t, "ngrok-ai")
+		}
+		t.Setenv("FAKE_CODEX", "none")
+		code, out, stderr := freshReview(t, append(append([]string{"--goal", ".git/goal.md"}, args...), f.base+"..HEAD")...)
+		if code != 0 {
+			t.Fatalf("exit %d, want 0\n%s", code, stderr)
+		}
+		if out.Model == nil || *out.Model != "fake-model" {
+			t.Errorf("model %v, want the one Codex reported", out.Model)
+		}
+		data, err := os.ReadFile(filepath.Join(f.log, "exec-args"))
+		if err != nil {
+			t.Fatalf("codex exec was not run: %v", err)
+		}
+		return strings.Split(strings.TrimSpace(string(data)), "\n")
+	}
+	has := func(args []string, want ...string) bool {
+		for i := range args {
+			if i+len(want) <= len(args) && slices.Equal(args[i:i+len(want)], want) {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("provider and its model", func(t *testing.T) {
+		args := review(t, true)
+		for _, want := range [][]string{{"-c", selects}, {"-c", provider}, {"-m", "gateway-model"},
+			{"-c", "model_context_window=200000"}, {"-c", "analytics.enabled=false"}} {
+			if !has(args, want...) {
+				t.Errorf("codex exec was not passed %q: %q", want, args)
+			}
+		}
+	})
+	t.Run("--model over the provider's", func(t *testing.T) {
+		args := review(t, true, "--model", "other-model")
+		if !has(args, "-m", "other-model") || has(args, "-m", "gateway-model") {
+			t.Errorf("codex exec was not passed --model's model alone: %q", args)
+		}
+		if !has(args, "-c", provider) {
+			t.Errorf("codex exec was not passed the provider: %q", args)
+		}
+	})
+	t.Run("none named", func(t *testing.T) {
+		args := review(t, false)
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "model_provider") || strings.HasPrefix(arg, "model_context_window") || arg == "-m" {
+				t.Errorf("codex exec was passed a provider, window or model no config named: %q", args)
+			}
+		}
+	})
+	// A name or path holding `"` or `\` stays one TOML string.
+	t.Run("quotes and backslashes", func(t *testing.T) {
+		config := &codexConfig{Provider: codexProvider{ID: "ngrok-ai", Name: `ngrok "ai" \ x`,
+			BaseURL: "https://gateway.example/v1", AuthCommand: `/bin/c\at`, AuthArgs: []string{`/keys/a"b\c`}}}
+		args, err := config.args()
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := `model_providers.ngrok-ai={name="ngrok \"ai\" \\ x", base_url="https://gateway.example/v1", ` +
+			`wire_api="responses", auth={command="/bin/c\\at", args=["/keys/a\"b\\c"]}}`
+		if !has(args, "-c", want) {
+			t.Errorf("the provider's table is not %s: %q", want, args)
+		}
+	})
+	t.Run("real Codex", testGatewayRealCodex)
+}
+
+// testGatewayRealCodex runs the codex on PATH with the provider's
+// arguments against a local stand-in for the gateway, which must see the
+// auth command's output as the bearer token, on the Responses path, for
+// the model given. It needs the real codex, so it runs only with
+// AGENT_TOOLS_REAL_CODEX=1.
+func testGatewayRealCodex(t *testing.T) {
+	if os.Getenv("AGENT_TOOLS_REAL_CODEX") != "1" {
+		t.Skip("set AGENT_TOOLS_REAL_CODEX=1 to run the codex on PATH against a local stand-in for the gateway")
+	}
+	codex, err := exec.LookPath("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type request struct{ path, authorization, model string }
+	got := make(chan request, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			var body struct {
+				Model string `json:"model"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			select {
+			case got <- request{r.URL.Path, r.Header.Get("Authorization"), body.Model}:
+			default:
+			}
+		}
+		http.Error(w, `{"error": {"message": "stand-in"}}`, http.StatusUnauthorized)
+	}))
+	t.Cleanup(server.Close)
+	key := filepath.Join(t.TempDir(), "key")
+	if err := os.WriteFile(key, []byte("stand-in-token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cat, err := exec.LookPath("cat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := &codexConfig{Provider: codexProvider{ID: "ngrok-ai", Name: "ngrok.ai", BaseURL: server.URL + "/v1",
+		AuthCommand: cat, AuthArgs: []string{key}}}
+	provider, err := config.args()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, codex, append(append([]string{"exec", "--ignore-user-config", "--ephemeral",
+		"--skip-git-repo-check"}, provider...), "-m", "stand-in-model", "hi")...)
+	cmd.Dir = t.TempDir()
+	cmd.Env = append(os.Environ(), "CODEX_HOME="+t.TempDir())
+	var output bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &output, &output
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cancel(); cmd.Wait() })
+	select {
+	case r := <-got:
+		if r.path != "/v1/responses" || r.authorization != "Bearer stand-in-token" || r.model != "stand-in-model" {
+			t.Errorf("the gateway saw %+v, want a Responses request for stand-in-model with the key file's token", r)
+		}
+	case <-ctx.Done():
+		cmd.Wait()
+		t.Fatalf("codex sent the gateway no request:\n%s", output.String())
 	}
 }
 

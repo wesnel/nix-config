@@ -21,6 +21,7 @@
         git.enable = true;
         gnupg.enable = true;
         go.enable = true;
+        llm.gateway = "ngrok-ai";
         man.enable = true;
         music.enable = true;
         photos.enable = true;
