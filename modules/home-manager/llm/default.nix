@@ -24,9 +24,18 @@ with lib; let
     guard = {
       inherit (cfg.guard) credentialPaths excludedCommands;
     };
-    delegate = {
-      inherit (cfg.delegate) agents settings;
-    };
+    delegate =
+      {
+        inherit (cfg.delegate) agents settings;
+      }
+      # The provider git delegate's Codex reviews reach their model
+      # through, whose auth command stands in for Codex's login.
+      // optionalAttrs ngrokAi {
+        codex = {
+          model = cfg.ngrokAi.models.review;
+          inherit (cfg.ngrokAi) contextWindow provider;
+        };
+      };
     publicText = {
       inherit (cfg) harnessRepos;
     };
@@ -53,6 +62,12 @@ with lib; let
   # file, so the key is declared only once the file holds it. The file's
   # top-level keys are not encrypted.
   hasNotesKey = hasInfix "\nnotes-deploy-key:" ("\n" + builtins.readFile config.sops.defaultSopsFile);
+
+  ngrokAi = cfg.gateway == "ngrok-ai";
+  # A file of the personal machines' own: .sops.yaml leaves the work Mac
+  # out of its recipients, which every other file under secrets/ has.
+  ngrokAiSopsFile = ../../../secrets/personal.yaml;
+  hasNgrokAiKey = hasInfix "\nngrok-ai-key:" ("\n" + builtins.readFile ngrokAiSopsFile);
 
   # Its own config, through `ssh -F`, so that nothing in ~/.ssh/config, a
   # shared master or an agent's key among them, applies, and a missing key
@@ -113,6 +128,105 @@ in {
         Working agreements every enabled coding agent loads into each session,
         linked to wherever that agent reads its user-level instructions.
       '';
+    };
+
+    gateway = mkOption {
+      type = types.enum ["none" "ngrok-ai"];
+      default = "none";
+
+      description = ''
+        Where every enabled coding agent reaches its models: `none`, through
+        each agent's own login; `ngrok-ai`, through the ngrok.ai AI gateway
+        on the models in {option}`wgn.home.llm.ngrokAi.models`, for Claude
+        Code, its sub-agents and headless reviewers, Codex, and git
+        delegate's Codex reviews. The gateway's access key is the sops
+        secret `ngrok-ai-key` in secrets/personal.yaml, which this machine
+        must be a recipient of; an assertion fails while the file lacks it.
+        Each agent runs a command that reads the key, so it is in no
+        settings file and no environment.
+
+        Claude Code's and Codex's settings are merged into files they own,
+        so setting this back to `none` leaves the gateway's keys there:
+        remove `apiKeyHelper` and `env`'s `ANTHROPIC_*`,
+        `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and `DISABLE_TELEMETRY` from
+        ~/.claude/settings.json, and `model_provider`, `model`,
+        `review_model`, `model_context_window`, `[model_providers.ngrok-ai]`
+        and `[features] memories` from ~/.codex/config.toml.
+      '';
+    };
+
+    ngrokAi = {
+      models = {
+        primary = mkOption {
+          type = types.str;
+          default = "deepseek-v4-pro";
+          description = "The ngrok.ai model behind Claude Code's `opus`, `sonnet` and `fable` aliases, and interactive Codex's model.";
+        };
+
+        fast = mkOption {
+          type = types.str;
+          default = "deepseek-v4-flash";
+          description = "The ngrok.ai model behind Claude Code's `haiku` alias, which also runs its background work.";
+        };
+
+        review = mkOption {
+          type = types.str;
+          default = "xiaomi/mimo-v2.6-pro";
+          description = ''
+            The ngrok.ai model of the second opinion, of a model family other
+            than {option}`primary`'s: git delegate's Codex review, Codex's
+            `/review`, and the adversarial-reviewer sub-agent.
+          '';
+        };
+      };
+
+      contextWindow = mkOption {
+        type = types.ints.between 100000 1000000;
+        default = 200000;
+        description = ''
+          The context window, in tokens, Claude Code and Codex assume for the
+          gateway's models, which they do not recognize: a session compacts
+          as it nears it. The models take more; a smaller window spends less
+          per request.
+        '';
+      };
+
+      baseURL = mkOption {
+        type = types.str;
+        readOnly = true;
+        internal = true;
+        default = "https://gateway.ngrok.ai";
+        description = "The gateway's address, under which `/v1` serves the Anthropic Messages and OpenAI Responses APIs.";
+      };
+
+      keyCommand = mkOption {
+        type = types.listOf types.str;
+        readOnly = true;
+        internal = true;
+        default = ["${pkgs.coreutils}/bin/cat" config.sops.secrets.ngrok-ai-key.path];
+        defaultText = literalExpression ''["''${pkgs.coreutils}/bin/cat" config.sops.secrets.ngrok-ai-key.path]'';
+        description = "The command, and its arguments, that prints the gateway's access key and nothing else.";
+      };
+
+      provider = mkOption {
+        type = types.attrs;
+        readOnly = true;
+        internal = true;
+        default = {
+          id = "ngrok-ai";
+          name = "ngrok.ai";
+          baseURL = "${cfg.ngrokAi.baseURL}/v1";
+          authCommand = head cfg.ngrokAi.keyCommand;
+          authArgs = tail cfg.ngrokAi.keyCommand;
+        };
+        defaultText = literalExpression ''{ id = "ngrok-ai"; name = "ngrok.ai"; baseURL = "''${baseURL}/v1"; authCommand = head keyCommand; authArgs = tail keyCommand; }'';
+        description = ''
+          The gateway as an OpenAI Responses provider, for Codex: its id in
+          `model_providers`, its name, its base URL, and the command, with
+          its arguments, that prints the key as the bearer token. Codex's
+          config.toml and git delegate's Codex runs both take it from here.
+        '';
+      };
     };
 
     harnessRepos = mkOption {
@@ -262,6 +376,8 @@ in {
           "${home}/.cargo/credentials"
           "${home}/.cargo/credentials.toml"
         ]
+        # The secret's link, besides where it resolves to below.
+        ++ optional ngrokAi config.sops.secrets.ngrok-ai-key.path
         # sops-nix decrypts into the per-user temporary directory on macOS
         # and /run/user on Linux; ~/.config/sops-nix/secrets links there.
         # The sandbox matches the path a link resolves to, and denying the
@@ -526,9 +642,22 @@ in {
     # ~/.ssh/config.
     programs.ssh.includes = ["${config.xdg.configHome}/${notesSshConfigFile}"];
 
-    sops.secrets = mkIf hasNotesKey {
-      notes-deploy-key.path = notesKey;
-    };
+    sops.secrets = mkMerge [
+      (mkIf hasNotesKey {
+        notes-deploy-key.path = notesKey;
+      })
+      # Read by the agents' key command, wgn.home.llm.ngrokAi.keyCommand.
+      (mkIf ngrokAi {
+        ngrok-ai-key.sopsFile = ngrokAiSopsFile;
+      })
+    ];
+
+    assertions = [
+      {
+        assertion = ngrokAi -> hasNgrokAiKey;
+        message = "wgn.home.llm.gateway is ngrok-ai, but secrets/personal.yaml holds no ngrok-ai-key, which sops-nix would fail every secret for.";
+      }
+    ];
 
     # A sandboxed session may write the plans directory and nothing around
     # it, and Linux's sandbox skips a grant whose path does not exist, so

@@ -127,7 +127,42 @@ with lib; let
       prompt = concatStringsSep "\n---\n" (tail pieces) + "\n" + builtins.readFile ./agents/subagent.md + (contracts.${name} or "");
     };
 
-  roleAgents = listToAttrs (map (name: nameValuePair ".claude/agents/${name}.md" {inherit (agentFile name) text;}) agentNames);
+  # Through a gateway, the adversarial reviewer, the second opinion when git
+  # delegate cannot run Codex, runs on the gateway's review model, of
+  # another family than the author's.
+  agentText = name: let
+    text = (agentFile name).text;
+    opus = "\nmodel: opus\n";
+  in
+    if name == "adversarial-reviewer" && gateway.gateway == "ngrok-ai"
+    then
+      assert assertMsg (hasInfix opus text) "claude: ./agents/${name}.md no longer says `model: opus`, which the gateway's review model replaces";
+        replaceStrings [opus] ["\nmodel: ${gateway.ngrokAi.models.review}\n"] text
+    else text;
+
+  roleAgents = listToAttrs (map (name: nameValuePair ".claude/agents/${name}.md" {text = agentText name;}) agentNames);
+
+  gateway = config.wgn.home.llm;
+
+  # What points Claude Code, and the headless reviewers through
+  # reviewer-settings.json, at the gateway: its address, a command that
+  # prints its key (sent as both x-api-key and Bearer), the model aliases,
+  # and a context window for model IDs Claude Code does not recognize.
+  # Never ANTHROPIC_API_KEY, which agent-shell sets empty.
+  gatewaySettings = optionalAttrs (gateway.gateway == "ngrok-ai") (let
+    inherit (gateway.ngrokAi) models;
+  in {
+    apiKeyHelper = escapeShellArgs gateway.ngrokAi.keyCommand;
+    env = {
+      ANTHROPIC_BASE_URL = gateway.ngrokAi.baseURL;
+      ANTHROPIC_DEFAULT_OPUS_MODEL = models.primary;
+      ANTHROPIC_DEFAULT_SONNET_MODEL = models.primary;
+      ANTHROPIC_DEFAULT_FABLE_MODEL = models.primary;
+      ANTHROPIC_DEFAULT_HAIKU_MODEL = models.fast;
+      CLAUDE_CODE_MAX_CONTEXT_TOKENS = toString gateway.ngrokAi.contextWindow;
+      DISABLE_TELEMETRY = "1";
+    };
+  });
 
   principles = import ../llm/principles.nix;
   # A principle skill's text without its frontmatter.
@@ -169,23 +204,26 @@ with lib; let
   # The headless reviewers' only settings, since git delegate passes
   # `--setting-sources ""`: the host sandbox's credentials, denied reads and
   # network, a sandbox no project can loosen, and no exclusions, allow rules
-  # or hooks. Each reviewer's hook rides in its agent entry.
-  reviewerSettings = pkgs.runCommand "reviewer-settings.json" {
-    nativeBuildInputs = [pkgs.jq];
-    json = builtins.toJSON {
-      sandbox = {
-        enabled = true;
-        failIfUnavailable = true;
-        allowUnsandboxedCommands = false;
-        filesystem.denyRead = hostSandbox.filesystem.denyRead;
-        network.allowedDomains = hostSandbox.network.allowedDomains;
-      };
-      permissions.deny = credentialReads;
-    };
-  } ''
-    jq -e . <<<"$json" > $out
-    jq -e '.sandbox.excludedCommands == null and .permissions.allow == null and .hooks == null' $out > /dev/null
-  '';
+  # or hooks; through a gateway, its settings too. Each reviewer's hook
+  # rides in its agent entry.
+  reviewerSettings =
+    pkgs.runCommand "reviewer-settings.json" {
+      nativeBuildInputs = [pkgs.jq];
+      json = builtins.toJSON ({
+          sandbox = {
+            enabled = true;
+            failIfUnavailable = true;
+            allowUnsandboxedCommands = false;
+            filesystem.denyRead = hostSandbox.filesystem.denyRead;
+            network.allowedDomains = hostSandbox.network.allowedDomains;
+          };
+          permissions.deny = credentialReads;
+        }
+        // gatewaySettings);
+    } ''
+      jq -e . <<<"$json" > $out
+      jq -e '.sandbox.excludedCommands == null and .permissions.allow == null and .hooks == null' $out > /dev/null
+    '';
 
   # Read is not hooked, so credentials are denied it by rule: each path a
   # prefix, so one rule matches a file whose name it starts, and another
@@ -719,7 +757,12 @@ in {
 
     quotaStop = mkOption {
       type = types.nullOr (types.ints.between 1 100);
-      default = 90;
+      # A gateway sends no quota windows for the status line to record.
+      default =
+        if config.wgn.home.llm.gateway == "none"
+        then 90
+        else null;
+      defaultText = literalExpression ''if config.wgn.home.llm.gateway == "none" then 90 else null'';
 
       description = ''
         The share of a Claude quota window, in percent, at which every Claude
@@ -730,7 +773,8 @@ in {
         operator, stopping sub-agents, handing back and `agent-plan` alone
         on its line. Nothing in a session lifts the stop; null turns it off
         at the next switch. Codex sessions spend another quota and are not
-        stopped.
+        stopped. Off by default through a gateway
+        ({option}`wgn.home.llm.gateway`), which reports no quota windows.
       '';
     };
 
@@ -965,6 +1009,10 @@ in {
           ]
           ++ quotaStopHooks;
       };
+
+      # Through a gateway, its settings join whatever these are, its `env`
+      # beside the machine's own.
+      apply = settings: recursiveUpdate settings gatewaySettings;
     };
   };
 
@@ -1102,6 +1150,10 @@ in {
         {
           assertion = pkgs.stdenv.hostPlatform.isLinux;
           message = "wgn.home.claude.agentPlans needs Linux.";
+        }
+        {
+          assertion = config.wgn.home.llm.gateway == "none";
+          message = "wgn.home.claude.agentPlans runs claude remote-control, which Claude Code disables while it reaches its models through a gateway (wgn.home.llm.gateway).";
         }
       ];
 

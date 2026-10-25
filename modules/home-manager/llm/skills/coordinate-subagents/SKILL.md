@@ -190,7 +190,9 @@ what permits setting them. In Claude Code they are the Agent tool's `model`
 and `effort`, which override the agent type's own: Opus at high effort for
 every type above but `Explore`. Cheaper work is the same
 type at the model and effort the list below gives. Codex's `spawn_agent`
-takes a `model`.
+takes a `model`. Start an `adversarial-reviewer` with `effort` and no
+`model`: its definition names its model, which through a gateway is of
+another family than the author's.
 
 - **Haiku 5.5, low effort:** read-only lookups, inventories, running a given
   command and reporting it.
