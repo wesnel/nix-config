@@ -142,7 +142,6 @@
       ./modules/home-manager/claude
       ./modules/home-manager/codex
       ./modules/home-manager/emacs
-      ./modules/home-manager/firefox
       ./modules/home-manager/fish
       ./modules/home-manager/fonts
       ./modules/home-manager/foot
