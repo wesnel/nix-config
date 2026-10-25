@@ -221,8 +221,10 @@ have (see status) is refused and writes nothing.
                      take the other hosts' plans by fast-forwarding the
                      checked-out branch; then, if HEAD holds the remote's
                      branch, commit this host's plan files and nothing else
-                     onto it, as agent-plan sync <agent-plan@HOST.invalid>,
-                     and push that commit; --pull only takes them. It never
+                     onto it, authored by the git user.name and user.email
+                     (agent-plan sync <agent-plan@HOST.invalid> where there
+                     is no user.email) and committed by agent-plan sync
+                     <agent-plan@HOST.invalid>, and push that commit; --pull only takes them. It never
                      rebases or commits on the checked-out branch, and leaves
                      it where it is when it cannot fast-forward. The watcher
                      runs it, never an agent
