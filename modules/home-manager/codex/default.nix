@@ -315,6 +315,40 @@ in {
       '';
     }
 
+    # Through the ngrok.ai gateway (wgn.home.llm.gateway), interactive Codex
+    # and codex-acp use it as their model provider, whose auth command reads
+    # the key, so no login and no environment holds it. Memories are off:
+    # they run on a built-in OpenAI model the gateway does not serve. So
+    # are Codex's analytics, which go to OpenAI, not the gateway.
+    # Merged into the config.toml Codex writes.
+    (mkIf (config.wgn.home.llm.gateway == "ngrok-ai") (let
+      inherit (config.wgn.home.llm) ngrokAi;
+      inherit (ngrokAi) provider;
+    in {
+      home.activation.codexGateway = lib.hm.dag.entryAfter ["writeBoundary"] ''
+        if [ -z "''${DRY_RUN:-}" ]; then
+          ${setKeys} "$HOME/.codex/config.toml" ${escapeShellArg (builtins.toJSON {
+          model_provider = provider.id;
+          model = ngrokAi.models.primary;
+          review_model = ngrokAi.models.review;
+          model_context_window = ngrokAi.contextWindow;
+          model_providers.${provider.id} = {
+            inherit (provider) name;
+            base_url = provider.baseURL;
+            wire_api = "responses";
+            auth = {
+              command = provider.authCommand;
+              args = provider.authArgs;
+            };
+          };
+          features.memories = false;
+          analytics.enabled = false;
+        })} \
+            || warnEcho "Codex was not pointed at the ngrok.ai gateway."
+        fi
+      '';
+    }))
+
     # Merged into the config.toml Codex writes, keeping its formatting and
     # everything else in it. Each named entry is replaced whole.
     # http_headers_helper reads the token when Codex connects.

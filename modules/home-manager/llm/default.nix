@@ -150,8 +150,9 @@ in {
         remove `apiKeyHelper` and `env`'s `ANTHROPIC_*`,
         `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and `DISABLE_TELEMETRY` from
         ~/.claude/settings.json, and `model_provider`, `model`,
-        `review_model`, `model_context_window`, `[model_providers.ngrok-ai]`
-        and `[features] memories` from ~/.codex/config.toml.
+        `review_model`, `model_context_window`, `[model_providers.ngrok-ai]`,
+        `[features] memories` and `[analytics] enabled` from
+        ~/.codex/config.toml.
       '';
     };
 
