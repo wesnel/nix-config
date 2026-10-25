@@ -580,8 +580,16 @@
       pkgs = import nixpkgs {
         inherit system;
       };
+      # agent-tools as the overlay builds it, with no host's settings.
+      agentTools = pkgs.callPackage ./overlays/agent-tools {};
     in {
       formatter = pkgs.alejandra;
+
+      # agent-tools built, which runs its tests. The devbox deploys it built
+      # with its own settings (homeConfigurations.devbox's
+      # wgn.home.llm.agentTools), on x86_64-linux, which no machine here
+      # can build; .github/workflows/agent-tools-lint.yml builds that one.
+      checks.agent-tools = agentTools;
 
       # emacs-config's plan views read what agent-plan writes: this runs
       # their tests, at the emacs-config this flake locks, against the
@@ -592,7 +600,7 @@
           nativeBuildInputs = [
             pkgs.emacs-nox
             pkgs.git
-            (pkgs.callPackage ./overlays/agent-tools {})
+            agentTools
           ];
         } ''
           export HOME=$TMPDIR
@@ -611,7 +619,7 @@
         templates = ./modules/home-manager/llm/skills/playbooks/templates;
       in
         pkgs.runCommand "plan-templates" {
-          nativeBuildInputs = [pkgs.gnugrep pkgs.jq (pkgs.callPackage ./overlays/agent-tools {})];
+          nativeBuildInputs = [pkgs.gnugrep pkgs.jq agentTools];
         } ''
           export HOME=$TMPDIR AGENT_TOOLS_CONFIG=$TMPDIR/config.json
           jq -n --arg dir "$TMPDIR/notes/agents" --arg templates ${templates} \
@@ -652,7 +660,6 @@
       # Defined are the agent files' names (the `name:` line of each in
       # modules/home-manager/claude/agents) and Claude Code's built-in types.
       checks.agent-names = let
-        agentTools = pkgs.callPackage ./overlays/agent-tools {};
         agentFiles = pkgs.lib.filterAttrs (name: kind: kind == "regular" && pkgs.lib.hasSuffix ".md" name && name != "subagent.md")
           (builtins.readDir ./modules/home-manager/claude/agents);
         fileNames = pkgs.lib.mapAttrsToList (file: _: let
@@ -874,6 +881,103 @@
           touch $out
         '';
 
+      # Every line of a shell code block in the skills and the AGENTS.md
+      # files, judged by the guard as a Claude Code Bash call with the ngrok
+      # Mac's excluded commands: none is refused for naming an excluded
+      # command anywhere but alone, or for running a read of gh's that
+      # gh-read runs, so no instruction hands an agent a line its sandbox
+      # fails. A <PLACEHOLDER> is read as a word, not a redirection.
+      checks.skill-commands = let
+        ngrok = darwinSystems.ngrok;
+        excluded = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username}.wgn.home.llm.guard.excludedCommands;
+        docs = pkgs.lib.fileset.toSource {
+          root = ./.;
+          fileset = pkgs.lib.fileset.unions [
+            ./modules/home-manager/llm/skills
+            ./modules/home-manager/llm/AGENTS.md
+            ./AGENTS.md
+          ];
+        };
+      in
+        pkgs.runCommand "skill-commands" {
+          nativeBuildInputs = [pkgs.findutils pkgs.gawk pkgs.jq agentTools];
+          config = builtins.toJSON {guard.excludedCommands = excluded;};
+          passAsFile = ["config"];
+        } ''
+          export HOME=$TMPDIR AGENT_TOOLS_CONFIG=$configPath
+          cd ${docs}
+          # FILE:LINE, a tab, and each command line of an sh, bash, shell,
+          # fish, console or unlabelled code block, fenced with ``` or ~~~,
+          # continuations joined.
+          lines() {
+            awk '
+              function emit(line, file, at) {
+                if (line == "" || line ~ /^#/) return
+                gsub(/<[A-Za-z][A-Za-z0-9_ .\/-]*>/, "PLACEHOLDER", line)
+                printf "%s:%d\t%s\n", file, at, line
+              }
+              # A continuation still open where its block ends is a line
+              # of its own.
+              function flush() {
+                if (pending != "") emit(pending, pendfile, start)
+                pending = ""
+              }
+              FNR == 1 { flush(); fence = ""; kind = "" }
+              # A fence closes only on a run of its own character at least
+              # as long as the one that opened it, with nothing after.
+              /^[ \t]*(```|~~~)/ {
+                mark = $0; sub(/^[ \t]*/, "", mark)
+                ch = substr(mark, 1, 1); run = mark; sub("[^" ch "].*", "", run)
+                if (fence != "") {
+                  if (substr(fence, 1, 1) == ch && length(run) >= length(fence) && mark ~ ("^" run "[ \t]*$")) {
+                    flush(); fence = ""; kind = ""
+                  }
+                  next
+                }
+                # Only the first word of the info string counts, as in `bash title=x`.
+                fence = run
+                info = mark; sub("^" run "[ \t]*", "", info); sub(/[ \t{].*/, "", info)
+                kind = (info ~ /^(|sh|bash|shell|fish)$/) ? "shell" : (info == "console") ? "console" : "other"
+                next
+              }
+              # In a console block, the commands are the lines after a $
+              # prompt, each joined with the > lines that continue it.
+              kind == "console" {
+                line = $0; sub(/^[ \t]+/, "", line)
+                if (line ~ /^\$ /) {
+                  flush(); sub(/^\$ /, "", line)
+                  start = FNR; pendfile = FILENAME; pending = line
+                } else if (line ~ /^> / && pending != "") {
+                  sub(/^> /, "", line); sub(/\\$/, "", pending)
+                  pending = pending " " line
+                } else {
+                  flush()
+                }
+                next
+              }
+              kind == "shell" {
+                line = $0; sub(/^[ \t]+/, "", line)
+                if (pending == "") { start = FNR; pendfile = FILENAME } else { line = pending " " line; pending = "" }
+                if (line ~ /\\$/) { sub(/\\$/, "", line); pending = line; next }
+                emit(line, FILENAME, start)
+              }
+              END { flush() }' "$@"
+          }
+          failed=
+          while IFS=$'\t' read -r where line; do
+            reason=$(jq -cn --arg c "$line" '{tool_name: "Bash", cwd: "/", tool_input: {command: $c}}' |
+              pr-loop guard --baseline | jq -r '.hookSpecificOutput.permissionDecisionReason // empty')
+            case "$reason" in
+              *"only as a command line of its own"* | '`gh` runs in the sandbox'*)
+                printf '%s: %s\n  %s\n' "$where" "$line" "$reason" >&2
+                failed=1
+                ;;
+            esac
+          done < <(lines $(find modules/home-manager/llm/skills -name '*.md' | sort) modules/home-manager/llm/AGENTS.md AGENTS.md)
+          [ -z "$failed" ]
+          touch $out
+        '';
+
       # gosec over agent-tools, with the rules and exclusions in
       # overlays/agent-tools/.golangci.yml; .github/workflows/agent-tools-lint.yml
       # runs it. Run it with `nix build .#checks.<system>.agent-tools-lint`.
@@ -893,7 +997,7 @@
               ./overlays/agent-tools/internal
             ];
           };
-          vendor = (pkgs.callPackage ./overlays/agent-tools {}).goModules;
+          vendor = agentTools.goModules;
         } ''
           export HOME=$TMPDIR GOCACHE=$TMPDIR/go-cache GOMODCACHE=$TMPDIR/go-mod \
             GOLANGCI_LINT_CACHE=$TMPDIR/lint-cache GOPROXY=off GOFLAGS=-mod=vendor \

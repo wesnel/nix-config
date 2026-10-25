@@ -1289,23 +1289,45 @@ func TestEmacsBatchServer(t *testing.T) {
 	}
 }
 
-// A socket under a test root that links to the operator's is theirs.
+// A socket under a test root that links to the operator's is theirs, and
+// so is one under a link the guard cannot follow, such as one to a
+// directory that is not there.
 func TestTestEmacsSocketLink(t *testing.T) {
-	root, err := os.MkdirTemp("/tmp", "et.")
-	if err != nil {
-		t.Skip(err)
+	roots := map[string]func(t *testing.T) string{
+		"tmpdir": func(t *testing.T) string { return t.TempDir() },
+		"et": func(t *testing.T) string {
+			root, err := os.MkdirTemp("/tmp", "et.")
+			if err != nil {
+				t.Skip(err)
+			}
+			t.Cleanup(func() { os.RemoveAll(root) })
+			return root
+		},
 	}
-	t.Cleanup(func() { os.RemoveAll(root) })
-	own := "/usr"
-	link := filepath.Join(root, "server")
-	if err := os.Symlink(own, link); err != nil {
-		t.Fatal(err)
-	}
-	if testEmacsSocket([]string{"-s", link + "/server", "-e", "(kill-emacs)"}) {
-		t.Errorf("a link from %s to %s passes", link, own)
-	}
-	if !testEmacsSocket([]string{"-s", filepath.Join(root, "test", "server"), "-e", "(kill-emacs)"}) {
-		t.Errorf("%s's own socket is refused", root)
+	for rootName, mkRoot := range roots {
+		t.Run(rootName, func(t *testing.T) {
+			root := mkRoot(t)
+			for name, own := range map[string]string{
+				"existing": "/usr",
+				// A child of a device, which no system lets exist.
+				"not a directory": "/dev/null/emacs",
+				// Names in a directory of the test's own, which it never
+				// makes.
+				"missing":          filepath.Join(t.TempDir(), "gone"),
+				"missing relative": "gone",
+			} {
+				link := filepath.Join(root, name)
+				if err := os.Symlink(own, link); err != nil {
+					t.Fatal(err)
+				}
+				if testEmacsSocket([]string{"-s", link + "/server", "-e", "(kill-emacs)"}) {
+					t.Errorf("a link from %s to %s passes", link, own)
+				}
+			}
+			if !testEmacsSocket([]string{"-s", filepath.Join(root, "test", "server"), "-e", "(kill-emacs)"}) {
+				t.Errorf("%s's own socket is refused", root)
+			}
+		})
 	}
 }
 
@@ -1521,26 +1543,148 @@ func TestSharedConfigFile(t *testing.T) {
 	os.Symlink(config, link)
 	hard := filepath.Join(h, "copy")
 	os.Link(config, hard)
+	// A submodule's git directory, under the modules directory of the git
+	// directory of the worktree it is checked out in, holds a config git
+	// reads in the submodule's checkout.
+	gitIn(t, h, "init", "-q", "--bare", filepath.Join(repo, ".git", "modules", "sub"))
+	inLinked := filepath.Join(repo, ".git", "worktrees", "linked", "modules", "lib", "sub")
+	gitIn(t, h, "init", "-q", "--bare", inLinked)
+	// A name git does not read, which only its identity makes the
+	// submodule's config.
+	subHard := filepath.Join(repo, ".git", "modules", "sub", "notes")
+	os.Link(filepath.Join(repo, ".git", "modules", "sub", "config"), subHard)
+	// The same, outside every git directory, as the repository's own
+	// config's hard link is.
+	subOutside := filepath.Join(h, "sub-copy")
+	os.Link(filepath.Join(repo, ".git", "modules", "sub", "config"), subOutside)
+	linkedOutside := filepath.Join(h, "linked-sub-copy")
+	os.Link(filepath.Join(inLinked, "config"), linkedOutside)
 	cases := map[string]string{
-		"the config":           config,
-		"a name outside ASCII": filepath.Join(repo, ".git", "conﬁg"),
-		"a symlink":            link,
-		"a hard link":          hard,
+		"a hard link to a submodule's config":                    subHard,
+		"a hard link outside to a submodule's config":            subOutside,
+		"a hard link outside to a linked worktree's submodule's": linkedOutside,
+		"a linked worktree's submodule's config":                 filepath.Join(inLinked, "config"),
+		"a linked worktree's new submodule's config":             filepath.Join(repo, ".git", "worktrees", "linked", "modules", "new", "config"),
+		"the config":                   config,
+		"a name outside ASCII":         filepath.Join(repo, ".git", "conﬁg"),
+		"a symlink":                    link,
+		"a hard link":                  hard,
+		"a submodule's config":         filepath.Join(repo, ".git", "modules", "sub", "config"),
+		"a new submodule's config":     filepath.Join(repo, ".git", "modules", "new", "config"),
+		"a nested submodule's config":  filepath.Join(repo, ".git", "modules", "sub", "modules", "inner", "config"),
+		"a submodule named with a dir": filepath.Join(repo, ".git", "modules", "lib", "sub", "config"),
 	}
 	if foldsCase {
 		cases["CONFIG"] = filepath.Join(repo, ".git", "CONFIG")
 		cases[".GIT/config"] = filepath.Join(repo, ".GIT", "config")
+		// Folds the volume makes beyond ASCII case: ſ (U+017F) is s.
+		cases["moduleſ/sub/config"] = filepath.Join(repo, ".git", "moduleſ", "sub", "config")
+		cases["moduleſ/new/config"] = filepath.Join(repo, ".git", "moduleſ", "new", "config")
 	}
 	for name, path := range cases {
-		data, _ := json.Marshal(map[string]string{"file_path": path, "content": "[core]\n\thooksPath = /tmp/h\n"})
-		if reason := check("Write", data, baseline, linked); reason != sharedConfig {
-			t.Errorf("%s: reason %q", name, reason)
+		for _, content := range []string{"[core]\n\thooksPath = /tmp/h\n", "[core]\n\tsshCommand = ssh -i k\n"} {
+			data, _ := json.Marshal(map[string]string{"file_path": path, "content": content})
+			if reason := check("Write", data, baseline, linked); reason != sharedConfig {
+				t.Errorf("%s, %q: reason %q", name, content, reason)
+			}
 		}
+	}
+	// A hard link is found by identity however the session reaches it: a
+	// linked worktree's submodule from the main worktree, a submodule's own
+	// submodule, and, from a session in no repository at all, one inside a
+	// submodule's git directory.
+	nested := filepath.Join(repo, ".git", "modules", "sub", "modules", "deep")
+	gitIn(t, h, "init", "-q", "--bare", nested)
+	nestedOutside := filepath.Join(h, "nested-copy")
+	os.Link(filepath.Join(nested, "config"), nestedOutside)
+	other := filepath.Join(repo, ".git", "modules", "b")
+	gitIn(t, h, "init", "-q", "--bare", other)
+	otherInside := filepath.Join(other, "notes")
+	os.Link(filepath.Join(other, "config"), otherInside)
+	nowhere := t.TempDir()
+	for _, c := range []struct{ name, path, session string }{
+		{"a linked worktree's submodule's, from the main worktree", linkedOutside, repo},
+		{"a nested submodule's", nestedOutside, linked},
+		{"one inside a submodule's git directory, from no repository", otherInside, nowhere},
+	} {
+		t.Run(caseName(true, "hard link to "+c.name), func(t *testing.T) {
+			data, _ := json.Marshal(map[string]string{"file_path": c.path, "content": "[core]\n\tsshCommand = ssh -i k\n"})
+			if reason := check("Write", data, baseline, c.session); reason != sharedConfig {
+				t.Errorf("reason %q", reason)
+			}
+		})
+	}
+	// The shell writes no git config, a submodule's included.
+	shell := map[string]string{
+		"onto a submodule's config":                 "mv x.inc " + filepath.Join(repo, ".git", "modules", "sub", "config"),
+		"to a new submodule's config":               "cp x.inc " + filepath.Join(repo, ".git", "modules", "new", "config"),
+		"to a linked worktree's submodule's config": "cp x.inc " + filepath.Join(inLinked, "config"),
+	}
+	if foldsCase {
+		shell["onto a submodule's config, folded"] = "mv x.inc " + filepath.Join(repo, ".git", "moduleſ", "sub", "config")
+		shell["to a new submodule's config, folded"] = "cp x.inc " + filepath.Join(repo, ".git", "moduleſ", "new", "config")
+	}
+	for name, command := range shell {
+		t.Run(caseName(true, "shell "+name), func(t *testing.T) {
+			if reason := judge(t, linked, command); reason != gitConfigShell {
+				t.Errorf("%q: reason %q, want %q", command, reason, gitConfigShell)
+			}
+		})
 	}
 	own := filepath.Join(repo, ".git", "worktrees", "linked", "config.worktree")
 	data, _ := json.Marshal(map[string]string{"file_path": own, "content": "[core]\n\thooksPath = /tmp/h\n"})
 	if reason := check("Write", data, baseline, linked); reason != "" {
 		t.Errorf("the worktree's own config.worktree: reason %q", reason)
+	}
+}
+
+// A hard link, which may be any file of the repository's, is refused where
+// the guard cannot look at every submodule's git directory: one past the
+// scan's limit may be the config it links to.
+func TestSubmoduleScanLimit(t *testing.T) {
+	h := fakeHome(t)
+	repo := filepath.Join(h, "repo")
+	gitIn(t, h, "init", "-q", "-b", "main", repo)
+	for _, name := range []string{"a", "b", "c", "z"} {
+		gitIn(t, h, "init", "-q", "--bare", filepath.Join(repo, ".git", "modules", name))
+	}
+	toConfig := filepath.Join(h, "z-config")
+	if err := os.Link(filepath.Join(repo, ".git", "modules", "z", "config"), toConfig); err != nil {
+		t.Fatal(err)
+	}
+	notes := filepath.Join(h, "notes.txt")
+	os.WriteFile(notes, []byte("x"), 0o644)
+	toNotes := filepath.Join(h, "notes-link")
+	if err := os.Link(notes, toNotes); err != nil {
+		t.Fatal(err)
+	}
+	write := func(path string) string {
+		data, _ := json.Marshal(map[string]string{"file_path": path, "content": "[core]\n\tsshCommand = ssh -i k\n"})
+		return check("Write", data, baseline, repo)
+	}
+	for _, c := range []struct {
+		name          string
+		limit         int
+		config, other string // the reason each link's write is refused with
+		shell         string // the reason the shell's move onto the config's link is
+	}{
+		{"within the limit", 1000, sharedConfig, "", gitConfigShell},
+		{"past the limit", 3, configUnscanned, configUnscanned, gitConfigShell},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			old := submoduleScanLimit
+			submoduleScanLimit = c.limit
+			t.Cleanup(func() { submoduleScanLimit = old })
+			if reason := write(toConfig); reason != c.config {
+				t.Errorf("a hard link to the last submodule's config: %q, want %q", reason, c.config)
+			}
+			if reason := write(toNotes); reason != c.other {
+				t.Errorf("a hard link to another file: %q, want %q", reason, c.other)
+			}
+			if reason := judge(t, repo, "mv x.inc "+toConfig); reason != c.shell {
+				t.Errorf("a move onto it: %q, want %q", reason, c.shell)
+			}
+		})
 	}
 }
 

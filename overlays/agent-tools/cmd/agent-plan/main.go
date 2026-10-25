@@ -162,7 +162,19 @@ have (see status) is refused and writes nothing.
                      checkpoint (a hand-back, a sign-pass handed over or
                      signed, or a decision that left no question to ask) and
                      the context holds 200K tokens or more or its cache has
-                     gone cold
+                     gone cold. Records the quota windows in
+                     $XDG_STATE_HOME/agent-plan/usage.json for quota-stop,
+                     an equal or higher reading of a window replacing a
+                     lower one until the window resets
+  quota-stop --threshold N
+                     Claude Code's PreToolUse hook (reads stdin): while a
+                     window statusline recorded is at or above N percent,
+                     its reset ahead and seen in the last 5 minutes, denies
+                     every call but Read, Grep, Glob, ToolSearch, Skill,
+                     AskUserQuestion, TaskStop, SubagentHandback and
+                     agent-plan alone on a Bash line, naming the window, its
+                     share and its reset; with no record it can read, denies
+                     nothing
   own PLAN --worktree DIR --agent ID
                      record agent ID, the harness's ID for a sub-agent or
                      "main" for the session's main thread, as the one agent
@@ -194,11 +206,13 @@ have (see status) is refused and writes nothing.
                      BASE the pass's --base, left out for main (or
                      origin/main); BRANCH defaults to the branch of that
                      worktree
-  sign-result ID [--check]
+  sign-result ID [--check] [--wait [--timeout DURATION]]
                      print each result of sign-pass ID and log those not yet
                      delivered as delivered, as remind does; exit 1 while it
                      has none. --check prints nothing and only exits 0 once
-                     one is logged
+                     one is logged. --wait first waits for one, for at most
+                     --timeout (default 24h), and exits 1 if none comes:
+                     a session's waiter, run in the background
   init               clone the plans' repository where it is missing and
                      "plans.remote" names it, then make the plans directory,
                      with a .gitignore for the lock files, as new does
@@ -235,10 +249,17 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprint(stdout, usage)
 		return 0
 	}
+	if args[0] == "quota-stop" {
+		// Before plans.Load: it runs before every tool call.
+		return quotaStop(args[1:], stdin, stdout, stderr)
+	}
 	if args[0] == "statusline" {
 		// Claude Code shows whatever this prints, so a failure prints
 		// nothing.
 		input := readAll(stdin)
+		if ws, ok := quota.FromClaudeStatus(input, time.Now()); ok {
+			_ = quota.Record(quota.File(), ws) // a reading not recorded waits for the next refresh
+		}
 		var parts []string
 		if line := quota.StatusLine(input, time.Now()); line != "" {
 			parts = append(parts, line)
@@ -355,6 +376,8 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		note     = flags.String("note", "", "")
 		unset    = flags.Bool("clear", false, "")
 		check    = flags.Bool("check", false, "")
+		wait     = flags.Bool("wait", false, "")
+		timeout  = flags.Duration("timeout", 24*time.Hour, "")
 		resume   = flags.Bool("resume", false, "")
 		text     = flags.String("text", "", "")
 		run      = flags.String("command", "", "")
@@ -721,8 +744,22 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return 0
 	case "sign-result":
 		if len(positional) != 1 {
-			fmt.Fprint(stderr, "agent-plan sign-result: takes ID [--check]\n")
+			fmt.Fprint(stderr, "agent-plan sign-result: takes ID [--check] [--wait [--timeout DURATION]]\n")
 			return 2
+		}
+		if *wait {
+			deadline := time.Now().Add(*timeout)
+			for {
+				ds, err := c.SignResults(positional[0], false, time.Now())
+				if err != nil {
+					return report(nil, err)
+				}
+				left := time.Until(deadline)
+				if len(ds) > 0 || left <= 0 {
+					break
+				}
+				time.Sleep(min(signPoll, left))
+			}
 		}
 		ds, err := c.SignResults(positional[0], !*check, time.Now())
 		if err != nil {
@@ -748,6 +785,9 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	fmt.Fprint(stderr, usage)
 	return 2
 }
+
+// signPoll is how often sign-result --wait reads the log for a result.
+const signPoll = time.Second
 
 func readAll(r io.Reader) []byte {
 	data, _ := io.ReadAll(r)

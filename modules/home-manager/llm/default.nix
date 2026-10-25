@@ -22,7 +22,7 @@ with lib; let
       templates = "${./skills/playbooks/templates}";
     };
     guard = {
-      inherit (cfg.guard) credentialPaths;
+      inherit (cfg.guard) credentialPaths excludedCommands;
     };
     delegate = {
       inherit (cfg.delegate) agents settings;
@@ -193,6 +193,19 @@ in {
         login's user): any other repository, and for anyone else's pull
         request every repository, is read only where GitHub says it is
         public.
+      '';
+    };
+
+    guard.excludedCommands = mkOption {
+      type = types.listOf types.str;
+      default = [];
+      internal = true;
+
+      description = ''
+        The command patterns Claude Code's sandbox runs outside it, which
+        the Claude Code module sets to its `sandbox.excludedCommands`. The
+        guard refuses a Claude Code command line that names one anywhere
+        but as the whole line, where it may run sandboxed and fail.
       '';
     };
 

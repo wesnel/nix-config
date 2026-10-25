@@ -74,14 +74,15 @@ as `origin/main` or the parent branch in a stack.
    reviews only the commits ahead of the branch's upstream, which a local
    branch may not have. Then the second opinion, from another model
    family: where the repository has test settings, run
-   `git red-check BASE..TIP > red-check.json` in the working directory, not
-   under `$TMPDIR`, which a sandboxed command and git delegate resolve to
-   different directories; every file you pass delegate goes under the
-   working directory the same way. Then run
-   `git delegate --goal GOAL [--items ITEMS] [--red-check red-check.json] BASE..TIP`,
-   and remove `red-check.json` after it. It runs Codex, and each focused
-   review its scan routes the change to, and keeps their findings in the
-   range's review record. It exits 0 with no open findings, 3 with open
+   `git -C WORKTREE red-check BASE..TIP > WORKTREE/red-check.json`, WORKTREE
+   being the branch's worktree, not `$TMPDIR`, which a sandboxed command and
+   git delegate resolve to different directories; every file you pass
+   delegate goes in WORKTREE the same way, by its absolute path. Then run
+   `git delegate --goal GOAL [--items ITEMS] [--red-check WORKTREE/red-check.json] BASE..TIP`
+   as a command of its own, with no `cd` before it: it resolves the range
+   from any worktree of the repository. Remove `red-check.json` after it.
+   It runs Codex, and each focused review its scan routes the change to,
+   and keeps their findings in the range's review record. It exits 0 with no open findings, 3 with open
    findings, 4 when a reviewer could not run here, and 5 when the record
    fails its structure check. On 4 or 5, say so in the hand-back, with
    delegate's reason.

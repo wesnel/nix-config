@@ -28,8 +28,8 @@ func StatusLine(input []byte, now time.Time) string {
 	if in.Context != nil && in.Context.Used != nil {
 		parts = append(parts, fmt.Sprintf("ctx %d%%", int(math.Floor(*in.Context.Used))))
 	}
-	if r, ok := FromClaudeStatus(input, now); ok {
-		parts = append(parts, windows(r.Windows, now)...)
+	if ws, ok := FromClaudeStatus(input, now); ok {
+		parts = append(parts, windows(ws, now)...)
 	}
 	return strings.Join(parts, " · ")
 }

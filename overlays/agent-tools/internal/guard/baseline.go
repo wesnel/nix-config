@@ -1,9 +1,12 @@
 package guard
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/plans"
@@ -1162,32 +1166,44 @@ func testSocket(socket string) bool {
 		}
 		return p
 	}
-	socket = fold(resolvedPath(socket))
-	below := func(dir string) bool { return strings.HasPrefix(socket, fold(resolvedPath(dir))+"/") }
+	resolved, ok := resolvedPath(socket)
+	if !ok {
+		return false
+	}
+	socket = fold(resolved)
+	// A directory the guard cannot resolve is compared as written.
+	dirPath := func(dir string) string {
+		resolved, _ := resolvedPath(dir)
+		return fold(resolved)
+	}
+	below := func(dir string) bool { return strings.HasPrefix(socket, dirPath(dir)+"/") }
 	uid := strconv.Itoa(os.Getuid())
 	tmp := filepath.Clean(os.TempDir())
 	for _, own := range []string{filepath.Join(tmp, "emacs"+uid), "/run/user/" + uid + "/emacs"} {
-		if socket == fold(resolvedPath(own)) || below(own) {
+		if socket == dirPath(own) || below(own) {
 			return false
 		}
 	}
 	if below(tmp) || below("/tmp/claude-"+uid) {
 		return true
 	}
-	rel, ok := strings.CutPrefix(socket, fold(resolvedPath("/tmp"))+"/et.")
+	rel, ok := strings.CutPrefix(socket, dirPath("/tmp")+"/et.")
 	return ok && strings.Contains(rel, "/") && !strings.HasPrefix(rel, "/")
 }
 
 // resolvedPath is the clean absolute path with the symlinks of its deepest
-// existing directory, or of itself, resolved.
-func resolvedPath(path string) string {
+// existing directory, or of itself, resolved. Only names that do not exist
+// are kept as written: where one that exists cannot be resolved, as a link
+// to nothing or one in a directory the guard may not read, ok is false and
+// path comes back as it is.
+func resolvedPath(path string) (string, bool) {
 	rest := ""
 	for p := path; ; p = filepath.Dir(p) {
 		if real, err := filepath.EvalSymlinks(p); err == nil {
-			return filepath.Join(real, rest)
+			return filepath.Join(real, rest), true
 		}
-		if p == filepath.Dir(p) {
-			return path
+		if _, err := os.Lstat(p); !errors.Is(err, fs.ErrNotExist) || p == filepath.Dir(p) {
+			return path, false
 		}
 		rest = filepath.Join(filepath.Base(p), rest)
 	}
@@ -2056,6 +2072,8 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 			return reason
 		}
 		switch {
+		case unscanned(path, dir):
+			return configUnscanned
 		case sharedConfigFile(path, dir):
 			return sharedConfig
 		case strings.HasSuffix(path, ".codex/hooks.json") && guardFile(path), agentToolsConfig(path):
@@ -2149,10 +2167,8 @@ func (g gitState) query(args ...string) (string, bool) {
 	if g.dir == "" {
 		return "", false
 	}
-	cmd := exec.Command("git", append(append(append([]string{}, g.config...), "-C", g.dir), args...)...)
-	cmd.Env = append(gitenv.Without(os.Environ()), g.env...)
-	out, err := cmd.Output()
-	return strings.TrimSpace(string(out)), err == nil
+	return timedGit(append(gitenv.Without(os.Environ()), g.env...),
+		append(append(append([]string{}, g.config...), "-C", g.dir), args...)...)
 }
 
 // keyTouchText is why a command that waits for a touch of the hardware key
@@ -2488,14 +2504,58 @@ func checkSigning(sub string, rest []string, g gitState) string {
 	return fmt.Sprintf(signingOn, sub, sub)
 }
 
+// run runs git in g.dir without the command's configuration, as the guard
+// itself reads the repository.
 func (g gitState) run(args ...string) (string, bool) {
 	if g.dir == "" {
 		return "", false
 	}
-	cmd := exec.Command("git", append([]string{"-C", g.dir}, args...)...)
-	cmd.Env = gitenv.Without(os.Environ())
+	return timedGit(gitenv.Without(os.Environ()), append([]string{"-C", g.dir}, args...)...)
+}
+
+// gitStalled records that a git the guard ran did not answer within
+// repoTimeout, as one reading a FIFO at .git/config does not. The call is
+// then refused (judged), and every later git of the same hook fails at
+// once, so the hook ends within Claude Code's own timeout however many
+// gits its rules would run.
+var gitStalled atomic.Bool
+
+// stalledGit is why a call is refused when a git the guard ran there
+// stalled.
+const stalledGit = "Git did not answer within the guard's deadline in this repository, as when something under .git, " +
+	"such as .git/config, is a FIFO or on a hung file system, so the guard cannot check this call. " +
+	"Look at what is there with `ls -la .git`, or put the command in your report for the operator."
+
+// timedGit runs git with env and args, its output trimmed and whether it
+// succeeded, within repoTimeout; a git that does not finish in time is
+// killed, and it or a child that keeps its output open after it marks
+// gitStalled.
+func timedGit(env []string, args ...string) (string, bool) {
+	if gitStalled.Load() {
+		return "", false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), repoTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = env
+	cmd.WaitDelay = repoTimeout
 	out, err := cmd.Output()
+	if ctx.Err() != nil || errors.Is(err, exec.ErrWaitDelay) {
+		gitStalled.Store(true)
+		return "", false
+	}
 	return strings.TrimSpace(string(out)), err == nil
+}
+
+// judged is what judge says of a call, with gitStalled cleared first: a
+// call it allows is refused all the same when a git it ran stalled.
+func judged(judge func() string) string {
+	gitStalled.Store(false)
+	reason := judge()
+	if reason == "" && gitStalled.Load() {
+		return stalledGit
+	}
+	return reason
 }
 
 // main reports whether dir is a repository's main worktree, or may be:

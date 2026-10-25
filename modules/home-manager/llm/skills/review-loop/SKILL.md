@@ -72,8 +72,8 @@ opening, are answered before any bot is asked again: when `pr-loop status`
 shows a bot's `unansweredThreads`, the first round runs steps 4 to 9 and the
 next one starts at step 1.
 
-1. **CI.** `pr-loop wait ci`, run in the background or under Monitor
-   (repeat while it exits 3), then `pr-loop ci`. If it exits 4
+1. **CI.** `pr-loop wait ci PR`, run in the background or under Monitor
+   (repeat while it exits 3), then `pr-loop ci PR`. If it exits 4
    (`noChecks`), CI never reported on a head, and no bot can be asked until
    it does: stop and say so in the hand-back. For every failure whose
    `onBase` is not `failed`, read `pr-loop logs <number> <check>` and either

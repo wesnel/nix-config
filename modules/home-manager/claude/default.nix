@@ -212,6 +212,23 @@ with lib; let
   plans = config.wgn.home.llm.plans;
   agentPlan = getExe' config.wgn.home.llm.agentTools "agent-plan";
 
+  # The quota stop's PreToolUse entry, for every Claude Code settings file
+  # this module writes. It stops a session near the account's quota, from
+  # the windows the status line records, and sees every tool, letting
+  # through only those that read, ask or hand back. With no record it can
+  # read it denies nothing; a hook that cannot run denies, as every
+  # PreToolUse hook here does. A deny from it wins over the guard's ask.
+  quotaStopHooks = optional (cfg.quotaStop != null) {
+    matcher = "*";
+    hooks = [
+      {
+        type = "command";
+        command = "${agentPlan} quota-stop --threshold ${toString cfg.quotaStop}";
+        onFailure = "block";
+      }
+    ];
+  };
+
   # Review records, internal/record's Dir(): only the excluded writers,
   # which compute each path from what they review, change them.
   records = "${config.xdg.stateHome}/agent-tools/reviews";
@@ -525,9 +542,11 @@ with lib; let
     # A call made of nothing but these runs unsandboxed, with the operator's
     # login and network, after the usual permission check; piped or chained
     # with anything else, redirected, or given a command substitution, it
-    # stays sandboxed and fails. A pattern's `*` matches every argument that
-    # follows, so a pattern is safe only where no argument can make the
-    # command write beyond what it is for or run a program: no `gh` itself
+    # may stay sandboxed and fail, so the guard refuses such a line
+    # (wgn.home.llm.guard.excludedCommands). A pattern's `*` matches every
+    # argument that follows, so a pattern is safe only where no argument can
+    # make the command write beyond what it is for or run a program: no `gh`
+    # itself
     # (`gh api` writes, and `gh pr view --web` runs a browser), no nix (any
     # flake the session can edit, or --override-input, reads any path the
     # operator can, and the daemon builds with the network on macOS), no
@@ -696,6 +715,23 @@ in {
           Code signed in.
         '';
       };
+    };
+
+    quotaStop = mkOption {
+      type = types.nullOr (types.ints.between 1 100);
+      default = 90;
+
+      description = ''
+        The share of a Claude quota window, in percent, at which every Claude
+        Code session stops. While a window that `agent-plan statusline`
+        recorded in the last five minutes, and that has not reset, is at or
+        above it, the PreToolUse hook `agent-plan quota-stop` refuses
+        starting sub-agents and every tool call but reading, asking the
+        operator, stopping sub-agents, handing back and `agent-plan` alone
+        on its line. Nothing in a session lifts the stop; null turns it off
+        at the next switch. Codex sessions spend another quota and are not
+        stopped.
+      '';
     };
 
     settings = mkOption {
@@ -892,26 +928,28 @@ in {
         };
 
         # A hook list set here replaces the file's own on every switch.
-        hooks.PreToolUse = [
-          # Holds every session to the baseline: what is the operator's to do.
-          # A reviewer agent's own hook adds its reading rules. Every tool
-          # that runs a command or writes a file belongs here: Monitor runs a
-          # shell command as Bash does, and ExitWorktree can delete a
-          # worktree and its branch. MCP tools are held to the guard's
-          # mcp.json: on a server it lists, reads pass, listed writes ask and
-          # the rest are refused; every tool on a server it does not list
-          # asks. A hook that cannot run, or input it cannot read, denies.
-          {
-            matcher = "Bash|Monitor|ExitWorktree|Edit|Write|MultiEdit|NotebookEdit|mcp__.*";
-            hooks = [
-              {
-                type = "command";
-                command = "${getExe' config.wgn.home.llm.agentTools "pr-loop"} guard --baseline";
-                onFailure = "block";
-              }
-            ];
-          }
-        ];
+        hooks.PreToolUse =
+          [
+            # Holds every session to the baseline: what is the operator's to do.
+            # A reviewer agent's own hook adds its reading rules. Every tool
+            # that runs a command or writes a file belongs here: Monitor runs a
+            # shell command as Bash does, and ExitWorktree can delete a
+            # worktree and its branch. MCP tools are held to the guard's
+            # mcp.json: on a server it lists, reads pass, listed writes ask and
+            # the rest are refused; every tool on a server it does not list
+            # asks. A hook that cannot run, or input it cannot read, denies.
+            {
+              matcher = "Bash|Monitor|ExitWorktree|Edit|Write|MultiEdit|NotebookEdit|mcp__.*";
+              hooks = [
+                {
+                  type = "command";
+                  command = "${getExe' config.wgn.home.llm.agentTools "pr-loop"} guard --baseline";
+                  onFailure = "block";
+                }
+              ];
+            }
+          ]
+          ++ quotaStopHooks;
       };
     };
   };
@@ -923,6 +961,8 @@ in {
         agents = "${reviewAgents}";
         settings = "${reviewerSettings}";
       };
+      # The guard refuses a line naming one of these anywhere but alone.
+      wgn.home.llm.guard.excludedCommands = cfg.settings.sandbox.excludedCommands or [];
 
       assertions = [
         {
@@ -1059,8 +1099,9 @@ in {
       home.file = {
         # The session's user settings, read-only. dontAsk denies whatever
         # they do not allow. The allow list names the skill's tools, and the
-        # baseline hook holds their commands; with onFailure block a hook
-        # that cannot run denies. Its SessionStart output becomes the
+        # baseline hook holds their commands; the quota stop holds it as it
+        # does every session; with onFailure block a hook that cannot run
+        # denies. Its SessionStart output becomes the
         # session's context after a start, /clear or /compact.
         "${relative claudeDir}/settings.json".text = builtins.toJSON {
           permissions = {
@@ -1083,18 +1124,20 @@ in {
           syncClaudeAiSkills = false;
           syncClaudeAiPlugins = false;
           hooks = {
-            PreToolUse = [
-              {
-                matcher = "Bash|Monitor|ExitWorktree|Edit|Write|MultiEdit|NotebookEdit|mcp__.*";
-                hooks = [
-                  {
-                    type = "command";
-                    command = "${getExe' agentTools "pr-loop"} guard --baseline";
-                    onFailure = "block";
-                  }
-                ];
-              }
-            ];
+            PreToolUse =
+              [
+                {
+                  matcher = "Bash|Monitor|ExitWorktree|Edit|Write|MultiEdit|NotebookEdit|mcp__.*";
+                  hooks = [
+                    {
+                      type = "command";
+                      command = "${getExe' agentTools "pr-loop"} guard --baseline";
+                      onFailure = "block";
+                    }
+                  ];
+                }
+              ]
+              ++ quotaStopHooks;
             SessionStart = [
               {
                 matcher = "startup|clear|compact";

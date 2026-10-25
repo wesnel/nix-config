@@ -16,6 +16,10 @@ type settings struct {
 	// CredentialPaths are the absolute path prefixes of credentials, which
 	// Claude Code's Read rules are made from too.
 	CredentialPaths []string `json:"credentialPaths"`
+	// ExcludedCommands are the patterns of the commands Claude Code's
+	// sandbox excludes, its sandbox.excludedCommands, which the Claude Code
+	// module writes here too (checkExcludedAlone).
+	ExcludedCommands []string `json:"excludedCommands"`
 }
 
 // builtCredentialPaths are wgn.home.llm.guard.credentialPaths as the

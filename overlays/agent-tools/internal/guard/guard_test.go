@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
@@ -969,6 +972,155 @@ func TestOpenedRepo(t *testing.T) {
 				t.Errorf("git %s: %q passed", name, paths)
 			}
 		})
+	}
+}
+
+// TestGitDeadline holds the hook to a deadline in a repository whose git
+// does not answer, as one whose .git/config is a FIFO with no writer: it
+// refuses the call rather than stall the session, and once one git has
+// stalled it waits on no other, so the whole hook takes about one
+// deadline.
+func TestGitDeadline(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	gitIn(t, filepath.Dir(repo), "init", "-q", repo)
+	config := filepath.Join(repo, ".git", "config")
+	if err := os.Remove(config); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(config, 0o600); err != nil {
+		t.Skip(err)
+	}
+	// A git still waiting on the FIFO reads an empty config and goes on.
+	t.Cleanup(func() {
+		if f, err := os.OpenFile(config, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			f.Close()
+		}
+	})
+	old := repoTimeout
+	repoTimeout = 500 * time.Millisecond
+	t.Cleanup(func() {
+		repoTimeout = old
+		gitStalled.Store(false)
+	})
+	bash := func(command string) map[string]any {
+		return map[string]any{"tool_name": "Bash", "cwd": repo, "tool_input": map[string]string{"command": command}}
+	}
+	for name, event := range map[string]map[string]any{
+		"a commit": bash("git commit -m x"),
+		"a reset":  bash("git reset --hard"),
+		// checkOwner, after check, looks up the worktree the file is in.
+		"a sub-agent's edit": {"tool_name": "Write", "cwd": repo, "agent_id": "a1",
+			"tool_input": map[string]string{"file_path": filepath.Join(repo, "notes.txt"), "content": "x"}},
+	} {
+		t.Run(caseName(true, name), func(t *testing.T) { hookRefusesWithin(t, event, unstalled) })
+	}
+	// Each commit on the line has a git of its own run for it, eight
+	// deadlines in all were each to wait out its own.
+	t.Run(caseName(true, "several queries"), func(t *testing.T) {
+		hookRefusesWithin(t, bash(strings.Repeat("git commit -m x; ", 7)+"git commit -m x"), 3*repoTimeout)
+	})
+	// A git whose child keeps its output open after it exits, as an
+	// fsmonitor hook may, is waited for no longer than a git that hangs.
+	t.Run(caseName(true, "a git whose child holds its output"), func(t *testing.T) {
+		plain := filepath.Join(t.TempDir(), "plain")
+		gitIn(t, filepath.Dir(plain), "init", "-q", plain)
+		real, err := exec.LookPath("git")
+		if err != nil {
+			t.Fatal(err)
+		}
+		fake := t.TempDir()
+		script := "#!/bin/sh\n(sleep 5) &\nexec " + real + " \"$@\"\n"
+		if err := os.WriteFile(filepath.Join(fake, "git"), []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", fake+string(os.PathListSeparator)+os.Getenv("PATH"))
+		hookRefusesWithin(t, map[string]any{"tool_name": "Bash", "cwd": plain,
+			"tool_input": map[string]string{"command": "git commit -m x"}}, 3*repoTimeout)
+	})
+	// branchHint, which runs once every rule has passed, reads the branch
+	// of the edit's worktree for the session's plan; a git that does not
+	// answer there refuses the edit too. This git stalls on that read
+	// (--show-current) alone. The refused edit notes nothing in the plan:
+	// the branch of the last edit stays the one before it.
+	t.Run(caseName(true, "a session's edit whose branch lookup stalls"), func(t *testing.T) {
+		root := t.TempDir()
+		plain := filepath.Join(root, "plain")
+		gitIn(t, root, "init", "-q", "-b", "main", plain)
+		gitIn(t, plain, "commit", "-q", "--allow-empty", "-m", "x")
+		c := plans.Config{Dir: filepath.Join(root, "agents"), Host: "box"}
+		config := filepath.Join(root, "config.json")
+		data, _ := json.Marshal(map[string]any{"plans": c})
+		os.WriteFile(config, data, 0o644)
+		t.Setenv("AGENT_TOOLS_CONFIG", config)
+		if _, err := c.New(plans.NewOptions{Title: "Add the loop", Slug: "loop", Sessions: []string{"claude:s1"}},
+			time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		real, err := exec.LookPath("git")
+		if err != nil {
+			t.Fatal(err)
+		}
+		fake := t.TempDir()
+		script := "#!/bin/sh\nfor a; do [ \"$a\" = --show-current ] && exec sleep 30; done\nexec " + real + " \"$@\"\n"
+		if err := os.WriteFile(filepath.Join(fake, "git"), []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		edit := map[string]any{"tool_name": "Write", "cwd": plain, "session_id": "s1",
+			"tool_input": map[string]string{"file_path": filepath.Join(plain, "notes.txt"), "content": "x"}}
+		data, _ = json.Marshal(edit)
+		Main([]string{"--baseline"}, bytes.NewReader(data), io.Discard, io.Discard)
+		t.Setenv("PATH", fake+string(os.PathListSeparator)+os.Getenv("PATH"))
+		hookRefusesWithin(t, edit, unstalled)
+		p, _, ok := c.Locate("s1", "")
+		if !ok {
+			t.Fatal("the session's plan is not found")
+		}
+		events, _ := p.Events()
+		var noted []string
+		for _, e := range events {
+			if e.Kind == "branch-changed" {
+				noted = append(noted, e.Branch+"@"+e.Tip)
+			}
+		}
+		if len(noted) != 1 || noted[0] != "main@" {
+			t.Errorf("branches noted: %q, want only the first edit's, main", noted)
+		}
+	})
+}
+
+// unstalled is how long a hook that waits on no git without a deadline may
+// take, however loaded the machine: ten deadlines of the tests' own.
+const unstalled = 5 * time.Second
+
+// hookRefusesWithin runs the baseline hook on event and fails unless it
+// denies it, saying what to do instead, within limit.
+func hookRefusesWithin(t *testing.T, event map[string]any, limit time.Duration) {
+	t.Helper()
+	data, _ := json.Marshal(event)
+	var out bytes.Buffer
+	done := make(chan time.Duration, 1)
+	start := time.Now()
+	go func() {
+		Main([]string{"--baseline"}, bytes.NewReader(data), &out, io.Discard)
+		done <- time.Since(start)
+	}()
+	select {
+	case took := <-done:
+		var decision struct {
+			HookSpecificOutput struct {
+				PermissionDecision       string `json:"permissionDecision"`
+				PermissionDecisionReason string `json:"permissionDecisionReason"`
+			} `json:"hookSpecificOutput"`
+		}
+		json.Unmarshal(out.Bytes(), &decision)
+		if d := decision.HookSpecificOutput; d.PermissionDecision != "deny" || !saysInstead(d.PermissionDecisionReason) {
+			t.Errorf("not denied with a way on: %q", out.String())
+		}
+		if took > limit {
+			t.Errorf("the hook took %v, more than %v, with a deadline of %v", took, limit, repoTimeout)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the hook stalled on git")
 	}
 }
 
