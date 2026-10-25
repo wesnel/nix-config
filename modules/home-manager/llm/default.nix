@@ -542,18 +542,21 @@ in {
       run --quiet env PATH=${syncPath}:"$PATH" ${agentPlan} init \
         || warnEcho "agent-plan init failed, so sandboxed sessions may not be able to make plans."
       run --quiet env PATH=${syncPath}:"$PATH" ${agentPlan} sync \
-        || warnEcho "agent-plan sync failed; the watcher tries again on the next change to a plan."
+        || warnEcho "agent-plan sync failed; the watcher tries again within 5 minutes."
     '';
 
-    # Syncs plans a few seconds after one changes, outside every session.
-    # launchd watches the directory's entries only, so agent-plan touches
-    # the directory after each write it makes; a plan file edited in place
-    # by anything else is sent with the next change.
+    # Syncs plans a few seconds after one changes, outside every session,
+    # and every 5 minutes besides, since a watch can miss a change. launchd
+    # watches the directory's entries only, so agent-plan touches the
+    # directory after each write it makes; a plan file edited in place by
+    # anything else is sent by the next run. Sync's lock keeps runs from
+    # overlapping.
     launchd.agents.agent-plan-sync = mkIf pkgs.stdenv.hostPlatform.isDarwin {
       enable = true;
       config = {
         ProgramArguments = [agentPlan "sync" "--settle" "5s"];
         WatchPaths = [cfg.plans.dir];
+        StartInterval = 300;
         ProcessType = "Background";
         EnvironmentVariables.PATH = syncPath;
         StandardOutPath = "/tmp/agent-plan-sync.log";
@@ -566,6 +569,15 @@ in {
         Unit.Description = "Sync agents' plans when one changes";
         Path.PathChanged = cfg.plans.dir;
         Install.WantedBy = ["default.target"];
+      };
+
+      timers.agent-plan-sync = {
+        Unit.Description = "Sync agents' plans every 5 minutes";
+        Timer = {
+          OnActiveSec = "5min";
+          OnUnitActiveSec = "5min";
+        };
+        Install.WantedBy = ["timers.target"];
       };
 
       services.agent-plan-sync = {

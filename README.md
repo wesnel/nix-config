@@ -409,9 +409,9 @@ never to sign; it sets no `core.sshCommand`, with which `git sign-pass`
 refuses a repository. Its `agents/plans/` directory
 holds the plans, which only `agent-plan` writes; the rest of `agents/` holds
 notes agents write with the file tools, beside the operator's own org-roam
-notes. A few seconds after a plan changes, a watcher (a
-launchd agent on macOS, a systemd path unit on Linux) runs `agent-plan
-sync`: it first takes the other hosts' plans by fast-forwarding the
+notes. A few seconds after a plan changes, and every 5 minutes besides, a
+watcher (a launchd agent on macOS, a systemd path unit and timer on Linux)
+runs `agent-plan sync`: it first takes the other hosts' plans by fast-forwarding the
 checked-out branch to the remote's. Then, only if HEAD holds the remote's
 branch, it commits this host's plan files, unsigned, as "Sync plans from
 HOST", on top of the remote's branch, building the commit in an index of
