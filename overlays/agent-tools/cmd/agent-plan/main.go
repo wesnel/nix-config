@@ -226,7 +226,10 @@ have (see status) is refused and writes nothing.
                      is no user.email) and committed by agent-plan sync
                      <agent-plan@HOST.invalid>, and push that commit; --pull only takes them. It never
                      rebases or commits on the checked-out branch, and leaves
-                     it where it is when it cannot fast-forward. The watcher
+                     it where it is when it cannot fast-forward, unless the
+                     remote is ahead only by this host's plan files, with
+                     nothing staged: then it moves the branch and the index
+                     to the remote's and keeps the working tree. The watcher
                      runs it, never an agent
   reseal PLAN        accept a log edited outside agent-plan, recording that in
                      it; the operator's to run
