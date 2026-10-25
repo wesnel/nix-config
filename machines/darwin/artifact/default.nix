@@ -11,7 +11,6 @@
       wgn.home = {
         aerospace.enable = true;
         emacs.enable = true;
-        firefox.enable = true;
         fish.enable = true;
         gamedev.enable = true;
         games.enable = true;
@@ -45,6 +44,7 @@
         paths.enable = false;
         users.enable = true;
         yubikey.enable = true;
+        zen.enable = true;
       };
     })
 

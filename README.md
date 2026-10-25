@@ -17,7 +17,6 @@
 - [replacing the devbox](#replacing-the-devbox)
 - [updating systems](#updating-systems)
     - [nixOS](#nixos)
-    - [orbstack nixOS virtual machine](#orbstack-nixos-virtual-machine)
     - [nix-darwin](#nix-darwin)
     - [home-manager](#home-manager)
     - [devbox](#devbox)
@@ -924,16 +923,6 @@ Assuming you're in this directory:
 ```bash
 sudo nixos-rebuild switch --flake '.#framework'
 ```
-
-## orbstack nixOS virtual machine
-
-Assuming you're in this directory:
-
-``` bash
-sudo nixos-rebuild switch --flake '.#orb' --impure
-```
-
-This is intended to be used in an [OrbStack](https://orbstack.dev) virtual machine running NixOS.
 
 ## nix-darwin
 

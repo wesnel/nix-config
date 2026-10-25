@@ -46,6 +46,12 @@
       flake = false;
     };
 
+    nix-flatpak = {
+      # A release tag: its main branch is unstable. The tag is named in
+      # full, since a branch of the same name would win over it.
+      url = "github:gmodena/nix-flatpak?ref=refs/tags/v0.8.0";
+    };
+
     nixos-hardware = {
       url = "github:nixos/nixos-hardware/master";
     };
@@ -78,10 +84,6 @@
       inputs.nixpkgs.follows = "nixpkgs-x86_64-darwin";
     };
 
-    nur = {
-      url = "github:nix-community/NUR";
-    };
-
     sops-nix = {
       url = "github:Mic92/sops-nix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -98,12 +100,12 @@
     home-manager,
     mac-app-util,
     mattpocock-skills,
+    nix-flatpak,
     nixos-hardware,
     nixpkgs,
     nixpkgs-x86_64-darwin,
     nix-darwin-x86_64-darwin,
     home-manager-x86_64-darwin,
-    nur,
     sops-nix,
   }: let
     key = "0xA776D2AD099E8BC0";
@@ -128,6 +130,9 @@
 
       mac-app-util.homeManagerModules.default
 
+      # Inert unless the system enables Flatpak.
+      nix-flatpak.homeManagerModules.nix-flatpak
+
       (_: {
         _module.args = {
           inherit
@@ -142,7 +147,6 @@
       ./modules/home-manager/claude
       ./modules/home-manager/codex
       ./modules/home-manager/emacs
-      ./modules/home-manager/firefox
       ./modules/home-manager/fish
       ./modules/home-manager/fonts
       ./modules/home-manager/foot
@@ -170,6 +174,7 @@
       ./modules/home-manager/virtualisation
       ./modules/home-manager/yubikey
       ./modules/home-manager/zellij
+      ./modules/home-manager/zen
       ./modules/home-manager/zoom
       ./modules/home-manager/zwift
     ];
@@ -180,10 +185,10 @@
 
       ./modules/nixos/emacs
       ./modules/nixos/fish
+      ./modules/nixos/flatpak
       ./modules/nixos/fonts
       ./modules/nixos/hyprland
       ./modules/nixos/interception-tools
-      ./modules/nixos/kde
       ./modules/nixos/mullvad
       ./modules/nixos/networking
       ./modules/nixos/nix
@@ -210,6 +215,7 @@
       ./modules/darwin/paths
       ./modules/darwin/users
       ./modules/darwin/yubikey
+      ./modules/darwin/zen
     ];
 
     buildNixosConfiguration = args @ {
@@ -236,7 +242,6 @@
 
             (_: {
               nixpkgs.overlays = [
-                nur.overlays.default
                 emacs-config.overlays.default
                 overlay
               ];
@@ -318,7 +323,6 @@
 
             (_: {
               nixpkgs.overlays = [
-                nur.overlays.default
                 emacs-config.overlays.default
                 overlay
               ];
@@ -383,7 +387,6 @@
           inherit system;
 
           overlays = [
-            nur.overlays.default
             emacs-config.overlays.default
             overlay
           ];

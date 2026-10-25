@@ -13,7 +13,6 @@
     (_: {
       wgn.home = {
         emacs.enable = true;
-        firefox.enable = true;
         fish.enable = true;
         fonts.enable = true;
         foot.enable = true;
@@ -27,6 +26,7 @@
         video.enable = true;
         virtualisation.enable = true;
         yubikey.enable = true;
+        zen.enable = true;
         zwift.enable = true;
       };
     })
@@ -40,6 +40,7 @@
       wgn.nixos = {
         emacs.enable = true;
         fish.enable = true;
+        flatpak.enable = true;
         fonts.enable = true;
         hyprland.enable = true;
         interception-tools.enable = true;

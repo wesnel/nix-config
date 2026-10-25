@@ -15,7 +15,6 @@
         claude.enable = true;
         codex.enable = true;
         emacs.enable = true;
-        firefox.enable = true;
         fish.enable = true;
         fonts.enable = true;
         ghostty.enable = true;
@@ -28,6 +27,7 @@
         python.enable = true;
         sway.enable = true;
         yubikey.enable = true;
+        zen.enable = true;
       };
 
       home.programs.wgn.emacs = {
@@ -48,6 +48,7 @@
       wgn.nixos = {
         emacs.enable = true;
         fish.enable = true;
+        flatpak.enable = true;
         fonts.enable = true;
         networking.enable = true;
         nix.enable = true;
@@ -249,6 +250,20 @@
           device = "/dev/disk/by-uuid/6b4f50ab-03bd-4c7a-937c-bc6287cf5647";
         }
       ];
+
+      # Flatpak needs a portal. Sway's own portal (wlr) covers screenshots
+      # and screen sharing; gtk covers the rest, such as the file chooser.
+      xdg.portal = {
+        wlr.enable = true;
+        extraPortals = [pkgs.xdg-desktop-portal-gtk];
+
+        # Since xdg-desktop-portal 1.17 a backend is used only where this
+        # names it; wlr has no file chooser, so that one goes to gtk.
+        config.common = {
+          default = ["wlr" "gtk"];
+          "org.freedesktop.impl.portal.FileChooser" = ["gtk"];
+        };
+      };
     })
   ];
 in {
