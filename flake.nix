@@ -183,7 +183,6 @@
       ./modules/nixos/fonts
       ./modules/nixos/hyprland
       ./modules/nixos/interception-tools
-      ./modules/nixos/kde
       ./modules/nixos/mullvad
       ./modules/nixos/networking
       ./modules/nixos/nix
