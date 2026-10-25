@@ -187,6 +187,7 @@
         paths.enable = false;
         users.enable = true;
         yubikey.enable = true;
+        zen.enable = true;
       };
     })
 

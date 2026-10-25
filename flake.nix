@@ -215,6 +215,7 @@
       ./modules/darwin/paths
       ./modules/darwin/users
       ./modules/darwin/yubikey
+      ./modules/darwin/zen
     ];
 
     buildNixosConfiguration = args @ {
