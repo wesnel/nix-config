@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -117,10 +118,89 @@ func unavailable(auto bool) string {
 	if _, err := exec.LookPath("codex"); err != nil {
 		return "codex is not on PATH"
 	}
+	config, err := loadDelegateConfig()
+	switch {
+	case err != nil:
+		return fmt.Sprintf("agent-tools' config %s cannot be read: %v", repos.Path(), err)
+	case config.Codex != nil:
+		// The provider's auth command stands in for Codex's login, which
+		// `codex login status` checks.
+		if _, err := config.Codex.args(); err != nil {
+			return fmt.Sprintf("agent-tools' config %s: %v", repos.Path(), err)
+		}
+		return ""
+	}
 	if err := exec.Command("codex", "login", "status").Run(); err != nil {
 		return "codex is not signed in (`codex login status` fails)"
 	}
 	return ""
+}
+
+// codexConfig is the model provider Codex runs reach their model through,
+// such as an AI gateway, in place of Codex's own login, the model they
+// use where --model names none, and, where set, the context window in
+// tokens Codex assumes for a model it does not know. `--ignore-user-config`
+// keeps the user's config.toml, and any provider it names, out of every
+// run, so these go on the command line.
+type codexConfig struct {
+	Model         string        `json:"model"`
+	ContextWindow int           `json:"contextWindow"`
+	Provider      codexProvider `json:"provider"`
+}
+
+// codexProvider is a Codex `model_providers` entry speaking the Responses
+// API, whose bearer token is what AuthCommand with AuthArgs prints. Codex
+// runs that command itself, so the token is in no argument or environment
+// of delegate's.
+type codexProvider struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	BaseURL     string   `json:"baseURL"`
+	AuthCommand string   `json:"authCommand"`
+	AuthArgs    []string `json:"authArgs"`
+}
+
+// providerID is what an id may hold to be a bare TOML key, which the
+// `model_providers.ID` key path of a `-c` override needs.
+var providerID = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+// args are the `codex exec` arguments that select c's provider.
+func (c *codexConfig) args() ([]string, error) {
+	p := c.Provider
+	if !providerID.MatchString(p.ID) {
+		return nil, fmt.Errorf("delegate.codex.provider.id %q is not lower-case letters, digits, `-` and `_`", p.ID)
+	}
+	if p.BaseURL == "" || p.AuthCommand == "" {
+		return nil, fmt.Errorf("delegate.codex.provider %q names no baseURL or no authCommand", p.ID)
+	}
+	str := func(s string) (string, error) {
+		if strings.ContainsFunc(s, func(c rune) bool { return c < 0x20 || c == 0x7f }) {
+			return "", fmt.Errorf("delegate.codex.provider %q: %q has a control character, which Codex's "+
+				"configuration cannot hold", p.ID, s)
+		}
+		return `"` + tomlEscape.Replace(s) + `"`, nil
+	}
+	values := append([]string{p.Name, p.BaseURL, p.AuthCommand}, p.AuthArgs...)
+	quoted := make([]string, len(values))
+	for i, v := range values {
+		q, err := str(v)
+		if err != nil {
+			return nil, err
+		}
+		quoted[i] = q
+	}
+	// Codex's analytics go to OpenAI, not the provider; --ignore-user-config
+	// drops the config.toml that turns them off for interactive Codex.
+	args := []string{
+		"-c", `model_provider="` + p.ID + `"`,
+		"-c", fmt.Sprintf(`model_providers.%s={name=%s, base_url=%s, wire_api="responses", auth={command=%s, args=[%s]}}`,
+			p.ID, quoted[0], quoted[1], quoted[2], strings.Join(quoted[3:], ", ")),
+		"-c", "analytics.enabled=false",
+	}
+	if c.ContextWindow > 0 {
+		args = append(args, "-c", fmt.Sprintf("model_context_window=%d", c.ContextWindow))
+	}
+	return args, nil
 }
 
 type inputs struct {
@@ -246,6 +326,20 @@ func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 	if err != nil {
 		return nil, err
 	}
+	config, err := loadDelegateConfig()
+	if err != nil {
+		return nil, err
+	}
+	model := c.Model
+	var provider []string
+	if config.Codex != nil {
+		if provider, err = config.Codex.args(); err != nil {
+			return nil, err
+		}
+		if model == "" {
+			model = config.Codex.Model
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, c.Timeout)
 	defer cancel()
@@ -263,8 +357,9 @@ func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 	}
 	args := append([]string{"exec", "--ignore-user-config", "--ignore-rules", "--ephemeral", "-C", c.Checkout,
 		"--output-schema", schema, "-o", reply}, confined...)
-	if c.Model != "" {
-		args = append(args, "-m", c.Model)
+	args = append(args, provider...)
+	if model != "" {
+		args = append(args, "-m", model)
 	}
 	cmd := exec.CommandContext(ctx, codex, append(args, "-")...)
 	cmd.Dir = c.Checkout
@@ -290,7 +385,7 @@ func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 	}
 	out := &CodexReply{Text: string(data), Model: banner.model}
 	if out.Model == "" {
-		out.Model = c.Model
+		out.Model = model
 	}
 	return out, nil
 }
