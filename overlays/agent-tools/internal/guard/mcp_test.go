@@ -223,3 +223,74 @@ func TestMCPListsDisjoint(t *testing.T) {
 		}
 	}
 }
+
+// TestMCPLookalike covers a server mcp.json does not list whose name says
+// a reviewed service, as one added directly in place of an mcp-proxy server
+// that is not connected: it still asks in Claude Code and is refused in
+// Codex, and its reason names the service's reviewed servers and, where
+// this host's mcp-proxy serves the service, the command that connects it.
+func TestMCPLookalike(t *testing.T) {
+	config := filepath.Join(t.TempDir(), "config.json")
+	os.WriteFile(config, []byte(`{"mcpProxy": {"url": "http://127.0.0.1:6290",
+		"endpoints": {"linear": "/linear/mcp", "notion": "/notion/mcp", "buildkite": "/buildkite/mcp"}}}`), 0o600)
+	t.Setenv("AGENT_TOOLS_CONFIG", config)
+	claude := func(tool string) string { return `{"tool_name":"` + tool + `","tool_input":{}}` }
+	codex := func(tool string) string { return `{"tool_name":"` + tool + `","turn_id":"t","tool_input":{}}` }
+	decide := func(t *testing.T, args []string, event string) (decision, reason string) {
+		t.Helper()
+		var out bytes.Buffer
+		Main(args, strings.NewReader(event), &out, io.Discard)
+		var printed struct {
+			Hook struct {
+				Decision string `json:"permissionDecision"`
+				Reason   string `json:"permissionDecisionReason"`
+			} `json:"hookSpecificOutput"`
+		}
+		if err := json.Unmarshal(out.Bytes(), &printed); err != nil {
+			t.Fatalf("%s: printed %q: %v", event, out.String(), err)
+		}
+		return printed.Hook.Decision, printed.Hook.Reason
+	}
+	covered := map[string]bool{}
+	for _, c := range []struct {
+		key, tool, reviewed string
+		authorize           bool // the proxy serves it, so the reason names mcp-proxy-authorize KEY
+	}{
+		{"linear", "mcp__linear-server__get_issue", "mcp__linear__", true},
+		{"notion", "mcp__notion_direct__notion-fetch", "mcp__notion__", true},
+		{"buildkite", "mcp__my_buildkite__get_build", "mcp__buildkite__", true},
+		{"hex", "mcp__hex-local__get_project", "mcp__hex__", false},
+		{"datadog", "mcp__datadog.eu__search_datadog_logs", "mcp__claude_ai_Datadog_2__", false},
+		{"slack", "mcp__slack__slack_read_thread", "mcp__claude_ai_Slack__", false},
+		{"ngrok", "mcp__ngrok-dev__list_endpoints", "mcp__ngrok__", false},
+	} {
+		covered[c.key] = true
+		for _, h := range []struct {
+			harness, event, want string
+		}{{"Claude Code", claude(c.tool), "ask"}, {"Codex", codex(c.tool), "deny"}} {
+			t.Run(c.key+" from "+h.harness, func(t *testing.T) {
+				decision, reason := decide(t, []string{"--baseline"}, h.event)
+				if decision != h.want {
+					t.Errorf("%s: decision %q, want %q", c.tool, decision, h.want)
+				}
+				if !strings.Contains(reason, c.reviewed) || !saysInstead(reason) {
+					t.Errorf("%s: reason %q does not name %s and say what to do instead", c.tool, reason, c.reviewed)
+				}
+				if got := strings.Contains(reason, "`mcp-proxy-authorize "+c.key+"`"); got != c.authorize {
+					t.Errorf("%s: reason %q names mcp-proxy-authorize %s: %v, want %v", c.tool, reason, c.key, got, c.authorize)
+				}
+			})
+		}
+	}
+	for key := range mcpServices {
+		if !covered[key] {
+			t.Errorf("no case for a server whose name says %s", key)
+		}
+	}
+	t.Run("unrelated server", func(t *testing.T) {
+		decision, reason := decide(t, []string{"--baseline"}, claude("mcp__somewhere__get_thing"))
+		if decision != "ask" || strings.Contains(reason, "mcp-proxy-authorize") || strings.Contains(reason, "mcp__") {
+			t.Errorf("decision %q, reason %q: want ask, naming no reviewed server", decision, reason)
+		}
+	})
+}

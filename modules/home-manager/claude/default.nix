@@ -877,17 +877,31 @@ in {
         # its worktree; after /clear or a compaction, with
         # `agent-plan brief --resume` of the first, which stays within the
         # 10,000 characters Claude Code passes whole.
-        hooks.SessionStart = [
-          {
-            matcher = "clear|compact|resume";
+        hooks.SessionStart =
+          [
+            {
+              matcher = "clear|compact|resume";
+              hooks = [
+                {
+                  type = "command";
+                  command = "${agentPlan} find --hook";
+                }
+              ];
+            }
+          ]
+          # Names each mcp-proxy server that is not connected when the
+          # session starts, which Claude Code reports only as not found,
+          # with the command that connects it, so the session asks the
+          # operator rather than adding a server of its own.
+          ++ optional mcpProxy.enable {
+            matcher = "startup";
             hooks = [
               {
                 type = "command";
-                command = "${agentPlan} find --hook";
+                command = "${getExe' config.wgn.home.llm.agentTools "pr-loop"} mcp-status --hook";
               }
             ];
-          }
-        ];
+          };
 
         # /clear starts a session with a new session_id: this hands the
         # ending session's plan to the one it starts in the same directory.

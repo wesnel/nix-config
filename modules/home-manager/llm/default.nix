@@ -33,6 +33,13 @@ with lib; let
     review = {
       inherit (cfg.review) privateModules;
     };
+    # The servers this host's mcp-proxy serves, by the names mcp.json keys
+    # their services by: the guard names `mcp-proxy-authorize NAME` only for
+    # these.
+    mcpProxy =
+      if config.wgn.home.mcp-proxy.enable
+      then {inherit (config.wgn.home.mcp-proxy) url endpoints;}
+      else null;
   });
 
   agentPlan = getExe' cfg.agentTools "agent-plan";

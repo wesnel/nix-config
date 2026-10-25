@@ -4,6 +4,8 @@ import (
 	_ "embed"
 	"encoding/json"
 	"strings"
+
+	"github.com/wesnel/agent-tools/internal/mcpproxy"
 )
 
 // mcpJSON lists, per service, the MCP servers the guard has reviewed, the
@@ -24,6 +26,9 @@ var mcpJSON []byte
 // of its servers that is neither a read nor a confirmed write, including one
 // the server adds later, is refused until it is reviewed and listed.
 type mcpService struct {
+	// key is the service's key in mcp.json, which is also its server's
+	// name in mcp-proxy.
+	key             string
 	service         string
 	servers         []string
 	reads, confirms map[string]bool
@@ -46,7 +51,7 @@ var mcpServices = func() map[string]*mcpService {
 	}
 	services := map[string]*mcpService{}
 	for id, r := range raw {
-		services[id] = &mcpService{service: r.Service, servers: r.Servers, reads: set(r.Reads...),
+		services[id] = &mcpService{key: id, service: r.Service, servers: r.Servers, reads: set(r.Reads...),
 			confirms: set(r.Confirms...), readsByName: r.ReadsByName}
 	}
 	return services
@@ -78,11 +83,29 @@ const (
 		"servers. Put what you wanted from it in your report for the operator."
 )
 
+// unlistedCodex is, for each reason a main session's call to an unlisted
+// server asks with, the reason Codex refuses the call with: the general one,
+// and for each service one for a server whose name says that service, with
+// and without mcp-proxy serving it.
+var unlistedCodex = func() map[string]string {
+	reasons := map[string]string{unlistedServer: unlistedServerCodex}
+	for _, s := range mcpServices {
+		for _, proxied := range []bool{false, true} {
+			claude, codex := s.lookalikeReasons(proxied)
+			reasons[claude] = codex
+		}
+	}
+	return reasons
+}()
+
 // asks are the reasons the guard asks the operator about rather than denies,
 // where the harness can ask: a write each service's confirms, and a call to
 // an unlisted server.
 var asks = func() map[string]bool {
-	a := map[string]bool{unlistedServer: true}
+	a := map[string]bool{}
+	for reason := range unlistedCodex {
+		a[reason] = true
+	}
 	for _, s := range mcpServices {
 		a[s.confirmReason()] = true
 	}
@@ -91,34 +114,85 @@ var asks = func() map[string]bool {
 
 // cannotAsk is the reason in asks for Codex, whose hooks cannot ask.
 func cannotAsk(reason string) string {
-	if reason == unlistedServer {
-		return unlistedServerCodex
+	if codex, ok := unlistedCodex[reason]; ok {
+		return codex
 	}
 	return "Codex cannot ask the operator to confirm this write, so the guard refuses it. Make it from Claude Code, which asks, or put the draft in your report for the operator."
 }
 
-// mcpTool returns the listed service whose server makes the call and the
-// tool's own name, with mcp false for a tool on no MCP server. Claude Code
-// and Codex name a tool mcp__SERVER__TOOL.
-func mcpTool(tool string) (service *mcpService, name string, mcp bool) {
-	rest, ok := strings.CutPrefix(tool, "mcp__")
-	if !ok {
-		return nil, "", false
-	}
-	server, name, _ := strings.Cut(rest, "__")
-	return mcpByServer[strings.ToLower(server)], name, true
+// mcpServer is the server an MCP tool is on: its name as the harness gives
+// it, and the service mcp.json lists it under, or nil.
+type mcpServer struct {
+	name   string
+	listed *mcpService
 }
 
-// checkMCP returns why who may not call the MCP tool name on a server of
-// service, or of none mcp.json lists when service is nil, or "".
-func checkMCP(service *mcpService, name string, who role) string {
-	switch {
-	case service != nil:
-		return service.check(name, who)
-	case who == baseline:
-		return unlistedServer
+// mcpTool returns the server that makes the call and the tool's own name,
+// with mcp false for a tool on no MCP server. Claude Code and Codex name a
+// tool mcp__SERVER__TOOL.
+func mcpTool(tool string) (server mcpServer, name string, mcp bool) {
+	rest, ok := strings.CutPrefix(tool, "mcp__")
+	if !ok {
+		return mcpServer{}, "", false
 	}
-	return unlistedServerReviewer
+	server.name, name, _ = strings.Cut(rest, "__")
+	server.listed = mcpByServer[strings.ToLower(server.name)]
+	return server, name, true
+}
+
+// checkMCP returns why who may not call the MCP tool name on server, or "".
+func checkMCP(server mcpServer, name string, who role) string {
+	switch {
+	case server.listed != nil:
+		return server.listed.check(name, who)
+	case who != baseline:
+		return unlistedServerReviewer
+	}
+	if s := lookalike(server.name); s != nil {
+		claude, _ := s.lookalikeReasons(mcpproxy.Load().Serves(s.key))
+		return claude
+	}
+	return unlistedServer
+}
+
+// lookalike returns the service whose key is a word of an unlisted server's
+// name, as linear is of linear-server, or nil. A server added directly in
+// place of a reviewed one, often because mcp-proxy's is not connected,
+// bypasses the review; its reason points back to the reviewed server.
+func lookalike(server string) *mcpService {
+	for _, w := range strings.FieldsFunc(strings.ToLower(server), func(r rune) bool {
+		return r == '_' || r == '-' || r == '.'
+	}) {
+		if s, ok := mcpServices[w]; ok {
+			return s
+		}
+	}
+	return nil
+}
+
+// lookalikeReasons are why a call to an unlisted server whose name says the
+// service asks in a main session, and why Codex refuses it. Where mcp-proxy
+// serves the service, they name the command that connects its server.
+func (s *mcpService) lookalikeReasons(proxied bool) (claude, codex string) {
+	servers := make([]string, len(s.servers))
+	for i, name := range s.servers {
+		servers[i] = "mcp__" + name + "__"
+	}
+	reviewed := strings.Join(servers, ", ")
+	connect, connectCodex := "", ""
+	if proxied {
+		connect = ", and if " + s.key + " is not connected, ask the operator to run `mcp-proxy-authorize " + s.key +
+			"` and reconnect it with /mcp"
+		connectCodex = "; if " + s.key + " is not connected, ask the operator to run `mcp-proxy-authorize " + s.key +
+			"`, then start a new session"
+	}
+	claude = "This MCP server is not in the guard's mcp.json, so none of its tools has been reviewed, though its " +
+		"name says " + s.service + ", whose reviewed servers are " + reviewed + ". Use those rather than a server " +
+		"of your own" + connect + "; the operator confirms each call to this one."
+	codex = "This MCP server is not in the guard's mcp.json, and Codex cannot ask the operator to confirm a call to " +
+		"an unreviewed server, so the guard refuses it. Its name says " + s.service + ": use its reviewed servers, " +
+		reviewed + ", instead" + connectCodex + ", or put what you wanted in your report for the operator."
+	return claude, codex
 }
 
 func (s *mcpService) confirmReason() string {
