@@ -67,12 +67,21 @@ const syncName = "agent-plan sync"
 // .invalid is reserved, so the address is nobody's mailbox.
 func (c Config) syncEmail() string { return "agent-plan@" + c.Host + ".invalid" }
 
-// asSync is the environment that makes a commit sync's as author and
-// committer. It goes in the environment, not
-// `-c user.email`, which git hands to a push's pre-push hook and would change
-// whose commits git-push-guard checks.
-func (c Config) asSync() []string {
-	return []string{"GIT_AUTHOR_NAME=" + syncName, "GIT_AUTHOR_EMAIL=" + c.syncEmail(),
+// asSync is the environment for a commit whose committer is sync and whose
+// author is the operator's user.name and user.email as git resolves them in
+// the notes repository, so that GitHub links the commit to their account by
+// the author's email. Where git resolves no user.email or no user.name, the
+// author is sync too, so a sync never fails for want of one. It goes in the
+// environment, not `-c user.email`, which git hands to a push's pre-push hook
+// and would change whose commits git-push-guard checks.
+func (c Config) asSync(ctx context.Context) []string {
+	name, email := syncName, c.syncEmail()
+	if n, err := c.git(ctx, "config", "--get", "user.name"); err == nil && n != "" {
+		if e, err := c.git(ctx, "config", "--get", "user.email"); err == nil && e != "" {
+			name, email = n, e
+		}
+	}
+	return []string{"GIT_AUTHOR_NAME=" + name, "GIT_AUTHOR_EMAIL=" + email,
 		"GIT_COMMITTER_NAME=" + syncName, "GIT_COMMITTER_EMAIL=" + c.syncEmail()}
 }
 
@@ -338,7 +347,7 @@ func (c Config) commitOnto(ctx context.Context, base string) (commit string, cha
 		return "", nil, err
 	}
 	defer os.RemoveAll(dir)
-	env := append(c.asSync(), "GIT_INDEX_FILE="+filepath.Join(dir, "index"))
+	env := append(c.asSync(ctx), "GIT_INDEX_FILE="+filepath.Join(dir, "index"))
 	if _, err := c.gitAs(ctx, env, "read-tree", base); err != nil {
 		return "", nil, err
 	}

@@ -415,9 +415,13 @@ sync`: it first takes the other hosts' plans by fast-forwarding the
 checked-out branch to the remote's. Then, only if HEAD holds the remote's
 branch, it commits this host's plan files, unsigned, as "Sync plans from
 HOST", on top of the remote's branch, building the commit in an index of
-its own, pushes that commit, and fast-forwards again. Sync authors and
-commits as `agent-plan sync <agent-plan@HOST.invalid>`, not as
-`user.email`, so `git-push-guard` lets its unsigned commits through. It
+its own, pushes that commit, and fast-forwards again. Sync authors
+the commit as the notes clone's `user.name` and `user.email`, so GitHub
+links it to the operator's account, and falls back to
+`agent-plan sync <agent-plan@HOST.invalid>` as author where git has no
+`user.email`. It commits as `agent-plan sync <agent-plan@HOST.invalid>`, not
+as `user.email`, so `git-push-guard`, which judges the committer, lets its
+unsigned commits through. It
 never rebases, resets or commits on the checked-out branch, so no commit of
 the operator's is sent or re-committed. It stages only this host's plan
 files that the working tree already holds as the remote does, so that git

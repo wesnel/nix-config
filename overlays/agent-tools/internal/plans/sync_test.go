@@ -58,6 +58,7 @@ func untouched(t *testing.T, c Config) {
 func TestSync(t *testing.T) {
 	t.Run("two hosts", testSyncTwoHosts)
 	t.Run("through git-push-guard", testSyncThroughPushGuard)
+	t.Run("authors as the operator", testSyncAuthor)
 	t.Run("leaves the operator's commits", testSyncLeavesOperatorCommits)
 	t.Run("leaves a commit made while it runs", testSyncLeavesRacingCommit)
 	t.Run("keeps edits and a commit made while it runs", testSyncKeepsEditsAndRacingCommit)
@@ -510,11 +511,48 @@ func testSyncThroughPushGuard(t *testing.T) {
 	}
 	untouched(t, mac)
 	log := gitIn(t, filepath.Dir(mac.Dir), "log", "--format=%an <%ae> %cn <%ce> %s", "origin/main")
-	want := "agent-plan sync <agent-plan@mac.invalid> agent-plan sync <agent-plan@mac.invalid> Sync plans from mac\n" +
-		"agent-plan sync <agent-plan@box.invalid> agent-plan sync <agent-plan@box.invalid> Sync plans from box\n" +
+	want := "Operator <operator@example.com> agent-plan sync <agent-plan@mac.invalid> Sync plans from mac\n" +
+		"Operator <operator@example.com> agent-plan sync <agent-plan@box.invalid> Sync plans from box\n" +
 		"Operator <operator@example.com> Operator <operator@example.com> Start\n"
 	if log != want {
 		t.Errorf("origin's history:\n%s\nnot\n%s", log, want)
+	}
+}
+
+// A sync commit's author is the operator's git identity as git resolves it
+// in the notes clone, so GitHub links it to their account by the author's
+// email; its committer stays sync's. Where git resolves no user.email, the
+// author is sync's too, and the sync still succeeds.
+func testSyncAuthor(t *testing.T) {
+	cases := map[string]struct {
+		config [][]string
+		want   string
+	}{
+		"with the operator's identity": {
+			config: [][]string{{"user.name", "Wesley Nelson"}, {"user.email", "wgn@wgn.dev"}},
+			want:   "Wesley Nelson <wgn@wgn.dev> agent-plan sync <agent-plan@mac.invalid>",
+		},
+		"without user.email": {
+			config: [][]string{{"user.name", "Wesley Nelson"}},
+			want:   "agent-plan sync <agent-plan@mac.invalid> agent-plan sync <agent-plan@mac.invalid>",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, hosts := notes(t, "mac")
+			mac := hosts["mac"]
+			repo := filepath.Dir(mac.Dir)
+			for _, kv := range tc.config {
+				gitIn(t, repo, "config", kv[0], kv[1])
+			}
+			newPlan(t, mac, "x")
+			if got, err := mac.Sync(SyncOptions{}); err != nil || !got.Pushed {
+				t.Fatalf("sync: %+v, %v", got, err)
+			}
+			if got := strings.TrimSpace(gitIn(t, repo, "log", "-1", "--format=%an <%ae> %cn <%ce>", "origin/main")); got != tc.want {
+				t.Errorf("author and committer %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
