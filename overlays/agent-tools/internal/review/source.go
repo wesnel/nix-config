@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/loop"
 	"github.com/wesnel/agent-tools/internal/record"
 	"github.com/wesnel/agent-tools/internal/redact"
@@ -109,8 +110,7 @@ func resolveSource(ctx context.Context, s *source, fetch bool, log io.Writer) (*
 		}
 		return r, err
 	}
-	os.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-	os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	gitenv.SetNoConfig()
 	home, why := homeClone(s.slug())
 	if home == "" {
 		fmt.Fprintf(log, "%s: %s, so the review fetches into a bare clone of its own under %s, which has no agent "+

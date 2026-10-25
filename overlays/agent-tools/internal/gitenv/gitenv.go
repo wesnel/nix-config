@@ -19,9 +19,46 @@ var Location = []string{
 	"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE",
 }
 
-// commandConfig is configuration that `git -c` hands down to the commands it
-// starts.
-var commandConfig = []string{"GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT"}
+// NoConfig is the environment that keeps git from reading the user's and
+// the system's configuration: the user's can name programs (filters,
+// aliases, a signing command) and include files a sandbox denies, which
+// stops every git command there.
+var NoConfig = []string{"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1"}
+
+// handsConfig reports whether the variable name gives git configuration:
+// GIT_CONFIG and every GIT_CONFIG_ one, `git -c`'s among them, which git
+// hands down to the commands it starts.
+func handsConfig(name string) bool {
+	return name == "GIT_CONFIG" || strings.HasPrefix(name, "GIT_CONFIG_")
+}
+
+// WithoutConfig is Without(env) minus every variable that gives git
+// configuration, plus NoConfig: the environment for git, or a program that
+// runs it, that must read no configuration but the repository's own.
+func WithoutConfig(env []string) []string {
+	var out []string
+	for _, kv := range Without(env) {
+		if name, _, _ := strings.Cut(kv, "="); !handsConfig(name) {
+			out = append(out, kv)
+		}
+	}
+	return append(out, NoConfig...)
+}
+
+// SetNoConfig makes this process's environment, and that of every program
+// it starts, read no git configuration but the repository's own: it
+// removes every variable that gives git configuration and sets NoConfig.
+func SetNoConfig() {
+	for _, kv := range os.Environ() {
+		if name, _, _ := strings.Cut(kv, "="); handsConfig(name) {
+			os.Unsetenv(name)
+		}
+	}
+	for _, kv := range NoConfig {
+		name, value, _ := strings.Cut(kv, "=")
+		os.Setenv(name, value)
+	}
+}
 
 // Without is env, as os.Environ returns it, minus Location: the environment
 // for a git command aimed at a directory of its own, or a program started in
@@ -44,11 +81,10 @@ func Clear() {
 	}
 }
 
-// Isolate is for a test binary's TestMain: it clears Location and the
-// configuration `git -c` passes down, and keeps git
-// from reading the user's or the system's configuration, which would sign
-// commits with the hardware key. A test that wants its own global
-// configuration sets GIT_CONFIG_GLOBAL itself.
+// Isolate is for a test binary's TestMain: it clears Location, and, as
+// SetNoConfig does, the configuration `git -c` passes down and the user's
+// and the system's, which would sign commits with the hardware key. A test
+// that wants its own global configuration sets GIT_CONFIG_GLOBAL itself.
 //
 // It also fails the network closed: HTTP and HTTPS requests from the
 // binary and the programs it starts, git and gh included, go to a proxy
@@ -59,11 +95,7 @@ func Clear() {
 // request.
 func Isolate() {
 	Clear()
-	for _, name := range commandConfig {
-		os.Unsetenv(name)
-	}
-	os.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-	os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	SetNoConfig()
 	refuseNetwork()
 }
 

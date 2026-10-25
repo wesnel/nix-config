@@ -40,16 +40,15 @@ func safe() []string {
 // includes a secret. extra is added last.
 func environment(extra []string) []string {
 	var env []string
-	for _, kv := range gitenv.Without(os.Environ()) {
+	for _, kv := range gitenv.WithoutConfig(os.Environ()) {
 		name, _, _ := strings.Cut(kv, "=")
-		if strings.HasPrefix(name, "GIT_CONFIG") || strings.HasPrefix(name, "GIT_ATTR") ||
+		if strings.HasPrefix(name, "GIT_ATTR") ||
 			name == "GIT_TERMINAL_PROMPT" || name == "GIT_ASKPASS" || name == "SSH_ASKPASS" || name == "GIT_EXEC_PATH" {
 			continue
 		}
 		env = append(env, kv)
 	}
-	return append(append(env, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_ATTR_NOSYSTEM=1",
-		"GIT_TERMINAL_PROMPT=0", "GIT_LFS_SKIP_SMUDGE=1"), extra...)
+	return append(append(env, "GIT_ATTR_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "GIT_LFS_SKIP_SMUDGE=1"), extra...)
 }
 
 // gitCommand is git in dir with the safe configuration. env is added to

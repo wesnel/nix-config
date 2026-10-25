@@ -349,13 +349,18 @@ func confinement(common, admin, codex string) ([]string, error) {
 		}
 	}
 	fs.WriteString("}")
+	var gitEnv []string
+	for _, kv := range gitenv.NoConfig {
+		name, value, _ := strings.Cut(kv, "=")
+		gitEnv = append(gitEnv, name+`="`+tomlEscape.Replace(value)+`"`)
+	}
 	args := []string{
 		"-c", `default_permissions="` + profile + `"`,
 		"-c", "permissions." + profile + ".filesystem=" + fs.String(),
 		"-c", `shell_environment_policy.inherit="core"`,
 		// Git cannot read the user's configuration in the sandbox, and
 		// stops if told to.
-		"-c", `shell_environment_policy.set={GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1"}`,
+		"-c", "shell_environment_policy.set={" + strings.Join(gitEnv, ", ") + "}",
 		"-c", `web_search="disabled"`,
 	}
 	// Each must be a feature `codex features list` knows, or Codex refuses
