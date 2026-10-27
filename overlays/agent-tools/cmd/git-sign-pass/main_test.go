@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
@@ -16,12 +17,16 @@ import (
 // this program as the test binary, which is what the commands it prints for
 // resuming name.
 func TestMain(m *testing.M) {
+	// Command subprocesses inherit isolated user paths and the fixture's signing config.
 	if os.Getenv("GIT_SIGN_PASS_RUN_MAIN") == "1" {
 		hostpaths.BakeFromEnv()
 		main()
 	}
 	gitenv.Isolate()
-	os.Exit(m.Run())
+	cleanup := gitenvtest.IsolateUser()
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
 }
 
 func gitIn(t *testing.T, dir string, args ...string) string {

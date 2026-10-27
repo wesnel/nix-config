@@ -20,18 +20,21 @@ import (
 
 // Event is one entry of a plan's log.
 type Event struct {
-	ID       string `json:"event"`
-	Time     string `json:"time"`
-	Kind     string `json:"kind"`
-	Item     string `json:"item"`
-	Summary  string `json:"summary,omitempty"`
-	Agent    string `json:"agent,omitempty"`
-	Role     string `json:"role,omitempty"`
-	Branch   string `json:"branch,omitempty"`
-	Commit   string `json:"commit,omitempty"`
-	Evidence string `json:"evidence,omitempty"`
-	Review   string `json:"review,omitempty"`
-	Outcome  string `json:"outcome,omitempty"`
+	ID          string `json:"event"`
+	Time        string `json:"time"`
+	Kind        string `json:"kind"`
+	Item        string `json:"item"`
+	Summary     string `json:"summary,omitempty"`
+	Agent       string `json:"agent,omitempty"`
+	Role        string `json:"role,omitempty"`
+	Branch      string `json:"branch,omitempty"`
+	Commit      string `json:"commit,omitempty"`
+	Repository  string `json:"repository,omitempty"`
+	Revision    string `json:"revision,omitempty"`
+	OldRevision string `json:"old_revision,omitempty"`
+	Evidence    string `json:"evidence,omitempty"`
+	Review      string `json:"review,omitempty"`
+	Outcome     string `json:"outcome,omitempty"`
 	// Session is the session whose tool call the event records, as its
 	// hook names it: Claude Code's or Codex's session_id.
 	Session string `json:"session,omitempty"`
@@ -79,8 +82,9 @@ var (
 	// refusal Log gives an agent that logs one.
 	toolKinds = func() map[string]string {
 		kinds := map[string]string{
+			"commit-rewritten": "git sign-pass records exact rewrite aliases; log an association with --revision REF",
 			"committed": "a hook after each shell call logs `committed` for every commit, from what git printed. " +
-				"Log `done` with `--commit SUBJECT` for the step a commit completes",
+				"Log `done` with `--revision REF` in its worktree for the step a commit completes",
 			propertyKind: "agent-plan logs each change of a plan's WORKTREES, BRANCHES, PULL_REQUESTS and OWNERS that it makes. " +
 				"Change one with `agent-plan set PLAN NAME VALUE...`, or OWNERS with `agent-plan own`",
 			branchChanged: "the guard logs `branch-changed` when a session's file edit lands on another branch or worktree than its last. " +
@@ -118,6 +122,20 @@ func (p Plan) check(e Event) error {
 		"worktree": e.Worktree, "tip": e.Tip, "property": e.Property, "value": e.Value} {
 		if err := checkLine(what, v); err != nil {
 			return err
+		}
+	}
+	if e.Revision != "" || e.Repository != "" || e.OldRevision != "" {
+		if !repositoryPattern.MatchString(e.Repository) || !revisionPattern.MatchString(e.Revision) {
+			return refusal.New("a commit identity needs a repository owner/name and full revision")
+		}
+		if e.OldRevision != "" && !revisionPattern.MatchString(e.OldRevision) {
+			return refusal.New("a rewritten commit needs its full original revision")
+		}
+		if e.Kind != "committed" && e.Kind != "done" && e.Kind != "verified" && e.Kind != "commit-rewritten" {
+			return refusal.New("commit identities belong to committed, done, verified or commit-rewritten events")
+		}
+		if (e.Kind == "commit-rewritten") != (e.OldRevision != "") {
+			return refusal.New("only a rewrite event carries an original revision")
 		}
 	}
 	for what, v := range map[string]string{"command": e.Command, "dir": e.Dir, "base": e.Base} {
@@ -267,6 +285,11 @@ func eventText(e Event) string {
 		{"REVIEW", e.Review}, {"OUTCOME", e.Outcome}, {"SESSION", e.Session}, {"WORKTREE", e.Worktree}, {"TIP", e.Tip},
 		{"SIGN", e.Sign}, {"EXIT", e.Exit}, {"DELIVERS", e.Delivers}, {"PROPERTY", e.Property}, {"VALUE", e.Value},
 		{"COMMAND", e.Command}, {"DIR", e.Dir}, {"BASE", e.Base}} {
+		if kv[1] != "" {
+			b.WriteString(":" + kv[0] + ": " + kv[1] + "\n")
+		}
+	}
+	for _, kv := range [][2]string{{"REPOSITORY", e.Repository}, {"REVISION", e.Revision}, {"OLD_REVISION", e.OldRevision}} {
 		if kv[1] != "" {
 			b.WriteString(":" + kv[0] + ": " + kv[1] + "\n")
 		}
@@ -585,6 +608,7 @@ func (p Plan) Events() ([]Event, error) {
 			Role: h.Props["ROLE"], Branch: h.Props["BRANCH"], Commit: h.Props["COMMIT"],
 			Evidence: h.Props["EVIDENCE"], Review: h.Props["REVIEW"], Outcome: h.Props["OUTCOME"],
 			Session: h.Props["SESSION"], Worktree: h.Props["WORKTREE"], Tip: h.Props["TIP"], Sign: h.Props["SIGN"],
+			Repository: h.Props["REPOSITORY"], Revision: h.Props["REVISION"], OldRevision: h.Props["OLD_REVISION"],
 			Exit: h.Props["EXIT"], Delivers: h.Props["DELIVERS"], Property: h.Props["PROPERTY"], Value: h.Props["VALUE"]}
 		if _, summary, ok := strings.Cut(h.Title, " — "); ok {
 			e.Summary = summary

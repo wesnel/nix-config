@@ -100,24 +100,15 @@ func Fold(message string) (Kind, string) {
 // A fold with no target stays a commit of its own, as in git.
 func Squashed(commits []Commit) []Commit {
 	var kept []Commit
-	var subjects []string
+	groups := FoldGroups(commits)
 	joined := map[int]bool{}
-	for _, c := range commits {
-		kind, target := Fold(c.Message)
-		at := -1
-		if kind != Kept {
-			for i, s := range subjects {
-				if s == target {
-					at = i
-					break
-				}
-			}
-		}
+	for i, c := range commits {
+		kind, _ := Fold(c.Message)
+		at := groups[i]
 		body := strings.TrimSpace(strings.TrimPrefix(c.Message, Subject(c.Message)))
 		switch {
-		case at < 0:
+		case at == len(kept):
 			kept = append(kept, c)
-			subjects = append(subjects, Subject(c.Message))
 		case kind == Fixup:
 		case kind == Amend && !joined[at]:
 			kept[at].Message = body
@@ -129,6 +120,30 @@ func Squashed(commits []Commit) []Commit {
 		}
 	}
 	return kept
+}
+
+// FoldGroups gives each original commit's surviving position, zero-based.
+// Duplicate subjects stay separate; a fold targets the oldest earlier match.
+func FoldGroups(commits []Commit) []int {
+	groups := make([]int, len(commits))
+	var subjects []string
+	for i, c := range commits {
+		kind, target := Fold(c.Message)
+		at := len(subjects)
+		if kind != Kept {
+			for j, subject := range subjects {
+				if subject == target {
+					at = j
+					break
+				}
+			}
+		}
+		if at == len(subjects) {
+			subjects = append(subjects, Subject(c.Message))
+		}
+		groups[i] = at
+	}
+	return groups
 }
 
 // MaxSubject is the longest subject a message may have, in characters,

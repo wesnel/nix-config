@@ -169,7 +169,7 @@ then on.
 
 ```sh
 agent-plan log PLAN --item S1 --kind started
-agent-plan log PLAN --item S1 --kind done --commit 'Add the run loop' --evidence 'go test ./... passes'
+agent-plan log PLAN --item S1 --kind done --revision HEAD --evidence 'go test ./... passes'
 agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-asserted'
 ```
 
@@ -188,7 +188,30 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
   session and worktree; give it a goal and steps, or say in your report
   which plan the work belongs to. Which step a commit completes stays
   yours to log.
-- `--commit` takes the commit's subject: the signing pass changes every SHA.
+- For a step completed by a commit, run `log --revision REF` in its
+  worktree. It resolves the full commit ID and GitHub origin's owner/name,
+  and derives the subject; `--kind done` and `verified` take it. A supplied
+  `--commit` must match that subject. The commit hook records the same exact
+  identity for the plan or part. `--commit SUBJECT` alone is a subject-only
+  record, useful for existing logs but not exact navigation.
+- `git sign-pass` records private rewrite aliases before clearing its
+  pending state, including fixups that become one commit. If it cannot
+  record them, it warns on stderr and the pass still succeeds; the
+  associations then name the unsigned commits. Other rebases
+  have no automatic alias capture. No plan metadata enters commit messages.
+- `agent-plan commits [PLAN] [--repo OWNER/NAME] [--revision FULL-OID]
+  [--item ID]` prints exact associations as JSON: owning file and item,
+  repository, original revision, resolved revision and subject. Without
+  PLAN it searches every readable host's plans; `--item` requires PLAN.
+  Rewrite aliases are repository-scoped and read from all logs even when
+  PLAN is given. An old or intermediate revision matches its resolved
+  commit, possibly several associations. Subject-only records are
+  unresolved; conflicting or cyclic aliases are refused. Only this host's
+  located plan receives rewrite events; mirrored logs stay read-only.
+- `agent-plan resolve-commit --repo OWNER/NAME --revision FULL-OID`
+  resolves an old raw commit link through the same aliases even without
+  an association. Its JSON holds repository, original revision and
+  resolved revision; an unknown revision stays unchanged.
 - An event about the whole plan names the plan's ID; about a part, the
   part's.
 - `--role` is yours: `single`, `parent` or `subagent`.
@@ -207,8 +230,9 @@ not `verified`, the parts ready to start, the steps ready now, what still
 waits on an `:AFTER:` item, keyword, property and structure drift, steps
 started with nothing logged for a day, and commits no `done` event names
 (a `fixup!`, `amend!` or `squash!` commit counts as the one it names). Log
-`done` with the `--commit` of each listed commit that completes a step, or
-say why none does.
+`done` with `--revision REF` in the worktree for each listed commit that
+completes a step, or say why none does. A legacy subject-only event can
+still be accounted for with `--commit SUBJECT`.
 
 ## Finding it again
 
