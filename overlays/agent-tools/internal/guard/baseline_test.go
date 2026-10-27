@@ -1200,6 +1200,41 @@ func TestTestEmacsSocket(t *testing.T) {
 	}
 }
 
+func TestEmacsAlternateEditor(t *testing.T) {
+	t.Setenv("ALTERNATE_EDITOR", "false")
+	for command, deny := range map[string]bool{
+		`emacsclient -a "" -e '(+ 1 2)'`:                                    true,
+		`emacsclient --alternate-editor= -e '(+ 1 2)'`:                      true,
+		`emacsclient --alternate= -e '(+ 1 2)'`:                             true,
+		`emacsclient -na "" -e '(+ 1 2)'`:                                   true,
+		`ALTERNATE_EDITOR="" emacsclient -e '(+ 1 2)'`:                      true,
+		`env ALTERNATE_EDITOR= emacsclient -e '(+ 1 2)'`:                    true,
+		`emacsclient -a "" -s /tmp/et.ab12/server -e '(+ 1 2)'`:             false,
+		`ALTERNATE_EDITOR= emacsclient -s /tmp/et.ab12/server -e '(+ 1 2)'`: false,
+		`emacsclient -a "" -s /tmp/et.ab12/server -s server -e '(+ 1 2)'`:   true,
+		`ALTERNATE_EDITOR= emacsclient -a false -e '(+ 1 2)'`:               false,
+		`emacsclient -a "" -a false -e '(+ 1 2)'`:                           false,
+		`emacsclient -a false -a "" -e '(+ 1 2)'`:                           true,
+		`emacsclient -a false -e '(+ 1 2)'`:                                 false,
+		`emacsclient -- -a ""`:                                              false,
+	} {
+		t.Run(command, func(t *testing.T) {
+			if reason := judge(t, "/tmp", command); (reason != "") != deny {
+				t.Errorf("reason %q, want refusal %v", reason, deny)
+			}
+		})
+	}
+	t.Run("inherited empty editor", func(t *testing.T) {
+		t.Setenv("ALTERNATE_EDITOR", "")
+		if reason := judge(t, "/tmp", `emacsclient -e '(+ 1 2)'`); reason == "" {
+			t.Fatal("inherited empty alternate editor was accepted")
+		}
+		if reason := judge(t, "/tmp", `emacsclient -a false -e '(+ 1 2)'`); reason != "" {
+			t.Fatalf("explicit nonempty alternate editor refused: %s", reason)
+		}
+	})
+}
+
 // Lisp that stops Emacs, or deletes or starts a server, goes only to a
 // test socket, and names no other server there.
 func TestEmacsServerCall(t *testing.T) {
