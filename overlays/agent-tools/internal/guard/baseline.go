@@ -466,8 +466,8 @@ func checkSession(c call, dir string) string {
 		if emacsBatchServerCall(emacsBatchLisp(args, dir)) {
 			return emacsBatchServer
 		}
-	case "rm", "trash", "chmod", "chown", "chgrp", "mv":
-		recursive := name == "trash" || name == "mv"
+	case "rm", "trash", "trash-scratch", "chmod", "chown", "chgrp", "mv":
+		recursive := name == "trash" || name == "trash-scratch" || name == "mv"
 		for _, a := range args {
 			recursive = recursive || a == "--recursive" || (strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.ContainsAny(a, "rR"))
 		}
@@ -517,8 +517,14 @@ func checkSession(c call, dir string) string {
 			}
 		}
 	}
-	if (name == "rm" || name == "unlink" || name == "find" && has("-delete")) && trashOnPath() {
-		return useTrash
+	if name == "rm" || name == "unlink" || name == "find" && has("-delete") {
+		if slices.Contains(loadSettings().ExcludedCommands, "trash-scratch *") {
+			return "The configured trash-scratch wrapper moves validated untracked worktree and session scratch paths to the Trash. " +
+				"Run `trash-scratch PATH...` as a command of its own in place of rm, unlink or find -delete."
+		}
+		if trashOnPath() {
+			return useTrash
+		}
 	}
 	return ""
 }
@@ -1618,7 +1624,7 @@ func changedFiles(name string, args, redirected []string) []string {
 		return []string{"."}
 	}
 	switch name {
-	case "mv", "rm", "unlink", "trash", "truncate", "shred", "touch", "mkdir", "rmdir":
+	case "mv", "rm", "unlink", "trash", "trash-scratch", "truncate", "shred", "touch", "mkdir", "rmdir":
 		targets = append(targets, positional...)
 	case "chmod", "chown", "chgrp":
 		if len(positional) > 1 {
