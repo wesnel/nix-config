@@ -270,6 +270,23 @@ func testStatusReadyParts(t *testing.T) {
 			t.Errorf("after P2.S1 started: ready %v", s.Ready)
 		}
 	})
+
+	for _, kind := range []string{"abandoned", "done", "verified"} {
+		t.Run(kind+" parts", func(t *testing.T) {
+			p := parts(t)
+			logAll(t, p, Event{Kind: kind, Item: "P1"}, Event{Kind: kind, Item: "P3"})
+			s, err := p.Status()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(s.Ready, " ") != "P2" {
+				t.Errorf("ready after parts %s: %v, want P2", kind, s.Ready)
+			}
+			if len(s.Waiting) != 1 || s.Waiting[0].ID != "Q2" || strings.Join(s.Waiting[0].On, " ") != "Q1" {
+				t.Errorf("waiting after parts %s: %+v, want Q2 for Q1", kind, s.Waiting)
+			}
+		})
+	}
 }
 
 // testStatusReadySteps: status lists the open steps that can be worked

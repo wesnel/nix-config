@@ -234,7 +234,7 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 		if it.ID == p.Name {
 			s.State = it.Props["STATUS"]
 		}
-		if partPattern.MatchString(it.ID) || isOpen[it.ID] {
+		if partPattern.MatchString(it.ID) && !isSettled(it.ID) || isOpen[it.ID] {
 			if on := unsettled(afterIDs(it.Props), isSettled); len(on) > 0 {
 				s.Waiting = append(s.Waiting, Waiting{ID: it.ID, On: on})
 			} else if partPattern.MatchString(it.ID) && !started(it.ID, events) && !scheduledLater(it.heading, now) {
