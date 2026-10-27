@@ -839,6 +839,19 @@
           touch $out
         '';
 
+      checks.git-fetch-urls = let
+        git = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username}.programs.git;
+      in
+        pkgs.runCommand "git-fetch-urls" {
+          nativeBuildInputs = [pkgs.git pkgs.jq];
+          includes = builtins.toJSON (builtins.filter (inc: (inc.condition or null) != null) git.includes);
+          helper = git.settings.credential."https://github.com".helper;
+          passAsFile = ["includes"];
+        } ''
+          bash ${./modules/home-manager/git/fetch-urls-tests.sh}
+          touch $out
+        '';
+
       # The Claude Code settings the ngrok Mac's home configuration writes
       # hold the permission rules beside the guard: bypass mode off; for
       # every server mcp.json lists, each read allowed and each confirm
