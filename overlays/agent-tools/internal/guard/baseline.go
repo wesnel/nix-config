@@ -436,6 +436,17 @@ func checkSession(c call, dir string) string {
 			}
 		}
 	case "emacsclient":
+		_, _, alternate, ok := emacsclientSockets(args)
+		fallback, set := envValue(c.env, "ALTERNATE_EDITOR")
+		if !set {
+			fallback, set = os.LookupEnv("ALTERNATE_EDITOR")
+		}
+		if alternate != nil {
+			fallback, set = *alternate, true
+		}
+		if ok && set && fallback == "" && !testEmacsSocket(args) {
+			return "An empty emacsclient alternate editor starts a daemon with the operator's init when no server answers. Name only an absolute test socket, or use a nonempty alternate editor."
+		}
 		if emacsServerCall(args) {
 			return killEmacs
 		}
@@ -998,15 +1009,15 @@ var (
 		"help": false, "version": false, "tty": false, "nw": false, "no-window-system": false, "create-frame": false,
 		"reuse-frame": false, "alternate-editor": true, "frame-parameters": true, "timeout": true, "socket-name": true,
 		"server-file": true, "display": true, "parent-id": true, "tramp": true}
-	emacsclientFlags, emacsclientValued = "nqueHVtc", "aFwsfdT"
+	emacsclientFlags, emacsclientValued = "nqueHVtcr", "aFwsfdTp"
 )
 
 // emacsclientSockets reads an emacsclient call's options as its
 // getopt_long does, abbreviations, clustered short options and values in
-// the next word included, and returns every socket it names, and whether
-// it names a server file. ok is false where it cannot read an option as
-// emacsclient would.
-func emacsclientSockets(args []string) (sockets []string, serverFile, ok bool) {
+// the next word included, and returns every socket it names, whether it
+// names a server file, and its last alternate editor (nil if unspecified).
+// ok is false where it cannot read an option as emacsclient would.
+func emacsclientSockets(args []string) (sockets []string, serverFile bool, alternate *string, ok bool) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		next := func() (string, bool) {
@@ -1018,7 +1029,7 @@ func emacsclientSockets(args []string) (sockets []string, serverFile, ok bool) {
 		}
 		switch {
 		case a == "--":
-			return sockets, serverFile, true
+			return sockets, serverFile, alternate, true
 		case a == "-nw":
 		case strings.HasPrefix(a, "--"):
 			name, value, hasValue := strings.Cut(a[2:], "=")
@@ -1033,7 +1044,7 @@ func emacsclientSockets(args []string) (sockets []string, serverFile, ok bool) {
 				}
 			}
 			if len(matches) != 1 {
-				return nil, false, false
+				return nil, false, nil, false
 			}
 			o := matches[0]
 			if !emacsclientOptions[o] {
@@ -1041,7 +1052,7 @@ func emacsclientSockets(args []string) (sockets []string, serverFile, ok bool) {
 			}
 			if !hasValue {
 				if value, hasValue = next(); !hasValue {
-					return nil, false, false
+					return nil, false, nil, false
 				}
 			}
 			switch o {
@@ -1049,6 +1060,8 @@ func emacsclientSockets(args []string) (sockets []string, serverFile, ok bool) {
 				sockets = append(sockets, value)
 			case "server-file":
 				serverFile = true
+			case "alternate-editor":
+				alternate = &value
 			}
 		case strings.HasPrefix(a, "-") && len(a) > 1:
 			for j := 1; j < len(a); j++ {
@@ -1057,13 +1070,13 @@ func emacsclientSockets(args []string) (sockets []string, serverFile, ok bool) {
 					continue
 				}
 				if strings.IndexByte(emacsclientValued, c) < 0 {
-					return nil, false, false
+					return nil, false, nil, false
 				}
 				value := a[j+1:]
 				if value == "" {
 					var has bool
 					if value, has = next(); !has {
-						return nil, false, false
+						return nil, false, nil, false
 					}
 				}
 				switch c {
@@ -1071,12 +1084,14 @@ func emacsclientSockets(args []string) (sockets []string, serverFile, ok bool) {
 					sockets = append(sockets, value)
 				case 'f':
 					serverFile = true
+				case 'a':
+					alternate = &value
 				}
 				break
 			}
 		}
 	}
-	return sockets, serverFile, true
+	return sockets, serverFile, alternate, true
 }
 
 // testEmacsSocket reports whether an emacsclient call reaches only a test
@@ -1085,7 +1100,7 @@ func emacsclientSockets(args []string) (sockets []string, serverFile, ok bool) {
 // where a test Emacs keeps its own, and not the operator's daemon's; and
 // it names no server file, which reaches a daemon over TCP instead.
 func testEmacsSocket(args []string) bool {
-	sockets, serverFile, ok := emacsclientSockets(args)
+	sockets, serverFile, _, ok := emacsclientSockets(args)
 	if !ok || serverFile || len(sockets) == 0 {
 		return false
 	}
