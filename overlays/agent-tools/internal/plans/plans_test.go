@@ -773,6 +773,22 @@ func TestGoal(t *testing.T) {
 }
 
 func TestFind(t *testing.T) {
+	t.Run("ownership only", func(t *testing.T) {
+		c := testConfig(t)
+		p := newPlan(t, c, "x")
+		worktree := t.TempDir()
+		if _, err := p.SetOwner(worktree, "builder", day); err != nil {
+			t.Fatal(err)
+		}
+		found, err := c.Find(FindOptions{Worktree: worktree})
+		if err != nil || len(found) != 1 || found[0].Plan != p.file("") || strings.Join(found[0].Matched, " ") != "worktree" {
+			t.Errorf("ownership-only worktree: %+v, %v", found, err)
+		}
+		if found, err := c.Find(FindOptions{Worktree: t.TempDir()}); err != nil || len(found) != 0 {
+			t.Errorf("unrelated worktree: %+v, %v", found, err)
+		}
+	})
+
 	// twoHosts makes a plan on this host and one of the same name on
 	// another, and returns this host's.
 	twoHosts := func(t *testing.T) (Config, Plan) {

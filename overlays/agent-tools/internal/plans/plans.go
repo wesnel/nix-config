@@ -828,7 +828,13 @@ func (c Config) Find(o FindOptions) ([]Found, error) {
 					break
 				}
 			}
-			for _, v := range strings.Fields(top.Props["WORKTREES"]) {
+			worktrees := strings.Fields(top.Props["WORKTREES"])
+			for _, pair := range strings.Fields(top.Props["OWNERS"]) {
+				if wt, _, ok := strings.Cut(pair, "="); ok {
+					worktrees = append(worktrees, wt)
+				}
+			}
+			for _, v := range worktrees {
 				if worktree != "" && filepath.Clean(v) == worktree {
 					matched = append(matched, "worktree")
 					break
