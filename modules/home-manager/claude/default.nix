@@ -623,10 +623,12 @@ with lib; let
           ]
           ++ sandboxLists.allowedDomains;
         strictAllowlist = true;
-        # Lets the session's commands serve and reach test servers on macOS;
-        # Linux gives each command its own loopback instead. It opens every
-        # service listening on loopback as well, to whatever that service
-        # does for a caller without credentials:
+        # On macOS, binding and accepting on local ports also allows direct
+        # connections to localhost on every port; allowedDomains cannot
+        # narrow those connections. Linux gives each command its own
+        # loopback instead. Audit host listeners with lsof, never by
+        # connecting: this opens every service listening on loopback to
+        # whatever that service does for a caller without credentials:
         #
         # - mcp-proxy: closed; it needs its token, which the sandbox hides.
         # - The operator's own applications, outside nix-config: Okta
