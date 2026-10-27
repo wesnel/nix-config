@@ -56,10 +56,22 @@ A review loop over a stack, which the operator starts with
   `git merge-base <child> <parent>`; the restack needs it (the
   `restack-branches` skill).
 - Create each worktree yourself, outside the main checkout, on the branch the
-  part belongs to, and name both in the task:
+  part belongs to, and name both in the task. Base new independent work on
+  `origin/<default>`, using the remote-tracking ref already available. For
+  a local or stacked base, check that it contains that ref first:
 
   ```sh
-  git worktree add <worktrees>/<repo>/<branch> -b <branch> <base>   # new work
+  git merge-base --is-ancestor origin/<default> <base>
+  ```
+
+  Exit 1 means the base lacks upstream commits: update the base or restack
+  before building on it. If the remote-tracking ref needs fetching with the
+  operator's key, hand over that fetch rather than silently using local
+  `main`. Create a new branch with `--no-track`, so it does not track
+  `origin/<default>`, which the signing pass refuses to push to:
+
+  ```sh
+  git worktree add --no-track <worktrees>/<repo>/<branch> -b <branch> <base>   # new work
   git worktree add <worktrees>/<repo>/<branch> <branch>             # existing branch
   ```
 
