@@ -39,7 +39,7 @@ func gitCalls(text, dir string, depth int) []gitCall {
 			defer func() { cwd = before }()
 			return visit()
 		},
-		script: func(text string) string {
+		script: func(text string, _ environment) string {
 			out = append(out, gitCalls(text, cwd, depth+1)...)
 			return ""
 		},

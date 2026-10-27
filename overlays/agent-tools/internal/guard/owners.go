@@ -174,7 +174,7 @@ func stashWrites(text string, depth int) string {
 		return ""
 	}
 	v := visitor{
-		script: func(text string) string { return stashWrites(text, depth+1) },
+		script: func(text string, _ environment) string { return stashWrites(text, depth+1) },
 		call: func(c call) string {
 			if len(c.words) == 0 || c.expands[0] || base(c.words[0]) != "git" {
 				return ""
@@ -274,7 +274,7 @@ func shellEditPaths(text, dir string, depth int) ([]string, bool) {
 			}
 			return ""
 		},
-		script: func(text string) string {
+		script: func(text string, _ environment) string {
 			for _, cwd := range w.here {
 				paths, unresolved := shellEditPaths(text, cwd, depth+1)
 				out = append(out, paths...)

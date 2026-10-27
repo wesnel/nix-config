@@ -68,7 +68,7 @@ func writesPullRequest(text string, depth int) bool {
 	}
 	found := false
 	v := visitor{
-		script: func(text string) string {
+		script: func(text string, _ environment) string {
 			found = found || writesPullRequest(text, depth+1)
 			return ""
 		},
@@ -107,7 +107,7 @@ func pushers(text string, depth int) map[string]bool {
 		return found
 	}
 	v := visitor{
-		script: func(text string) string {
+		script: func(text string, _ environment) string {
 			for name := range pushers(text, depth+1) {
 				found[name] = true
 			}

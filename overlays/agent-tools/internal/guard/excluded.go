@@ -91,7 +91,7 @@ func firstCall(text string, depth int, match func(c call) []string) []string {
 			}
 			return ""
 		},
-		script: func(script string) string {
+		script: func(script string, _ environment) string {
 			if named = firstCall(script, depth+1, match); named != nil {
 				return "named"
 			}

@@ -453,16 +453,13 @@ func checkSession(c call, dir string) string {
 			}
 		}
 	case "emacsclient":
-		_, _, alternate, ok := emacsclientSockets(args)
-		fallback, set := envValue(c.env, "ALTERNATE_EDITOR")
-		if !set {
-			fallback, set = os.LookupEnv("ALTERNATE_EDITOR")
+		parsed := parseEmacsclient(args, c.expands[1:])
+		fallback, set := c.env.lookup("ALTERNATE_EDITOR")
+		if parsed.alternate != nil {
+			fallback, set = *parsed.alternate, true
 		}
-		if alternate != nil {
-			fallback, set = *alternate, true
-		}
-		if ok && set && fallback == "" && !testEmacsSocket(args) {
-			return "An empty emacsclient alternate editor starts a daemon with the operator's init when no server answers. Name only an absolute test socket, or use a nonempty alternate editor."
+		if parsed.ok && set && (fallback.text == "" || fallback.expanded) && !testEmacsSocket(args) {
+			return "An empty or unresolved emacsclient alternate editor may start a daemon with the operator's init when no server answers. Use a literal nonempty alternate editor, such as `-a false`, or name only an absolute test socket."
 		}
 		if emacsServerCall(args) {
 			return killEmacs
@@ -673,7 +670,7 @@ var realNgrokEnv = regexp.MustCompile(`(?i)^(prod|production|stage|staging)$`)
 // pass it on, as `make X NGROK_ENV=prod`, `docker run -e NGROK_ENV=prod`,
 // fish's `set -gx NGROK_ENV prod` and `launchctl setenv NGROK_ENV prod` do.
 func checkNgrokEnv(c call) string {
-	for _, kv := range c.env {
+	for _, kv := range c.env.words() {
 		if name, value, _ := strings.Cut(kv, "="); name == "NGROK_ENV" && realNgrokEnv.MatchString(value) {
 			return realEnvironment
 		}
@@ -759,7 +756,7 @@ func terminalReader(text string) bool {
 	}
 	var found *call
 	unwrap(calls[0], visitor{
-		script: func(string) string { return "" },
+		script: func(string, environment) string { return "" },
 		call:   func(c call) string { found = &c; return "" },
 	})
 	if found == nil || len(found.words) == 0 || found.expands[0] {
@@ -1029,12 +1026,22 @@ var (
 	emacsclientFlags, emacsclientValued = "nqueHVtc", "aFwsfdT"
 )
 
-// emacsclientSockets reads an emacsclient call's options as its
+type parsedEmacsclient struct {
+	sockets    []string
+	serverFile bool
+	alternate  *shellValue
+	ok         bool
+}
+
+// parseEmacsclient reads an emacsclient call's options as its
 // getopt_long does, abbreviations, clustered short options and values in
 // the next word included, and returns every socket it names, whether it
 // names a server file, and its last alternate editor (nil if unspecified).
 // ok is false where it cannot read an option as emacsclient would.
-func emacsclientSockets(args []string) (sockets []string, serverFile bool, alternate *string, ok bool) {
+func parseEmacsclient(args []string, expands []bool) parsedEmacsclient {
+	var sockets []string
+	serverFile := false
+	var alternate *shellValue
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		next := func() (string, bool) {
@@ -1046,7 +1053,7 @@ func emacsclientSockets(args []string) (sockets []string, serverFile bool, alter
 		}
 		switch {
 		case a == "--":
-			return sockets, serverFile, alternate, true
+			return parsedEmacsclient{sockets: sockets, serverFile: serverFile, alternate: alternate, ok: true}
 		case a == "-nw":
 		case strings.HasPrefix(a, "--"):
 			name, value, hasValue := strings.Cut(a[2:], "=")
@@ -1061,7 +1068,7 @@ func emacsclientSockets(args []string) (sockets []string, serverFile bool, alter
 				}
 			}
 			if len(matches) != 1 {
-				return nil, false, nil, false
+				return parsedEmacsclient{}
 			}
 			o := matches[0]
 			if !emacsclientOptions[o] {
@@ -1069,7 +1076,7 @@ func emacsclientSockets(args []string) (sockets []string, serverFile bool, alter
 			}
 			if !hasValue {
 				if value, hasValue = next(); !hasValue {
-					return nil, false, nil, false
+					return parsedEmacsclient{}
 				}
 			}
 			switch o {
@@ -1078,7 +1085,7 @@ func emacsclientSockets(args []string) (sockets []string, serverFile bool, alter
 			case "server-file":
 				serverFile = true
 			case "alternate-editor":
-				alternate = &value
+				alternate = &shellValue{text: value, expanded: i < len(expands) && expands[i]}
 			}
 		case strings.HasPrefix(a, "-") && len(a) > 1:
 			for j := 1; j < len(a); j++ {
@@ -1087,13 +1094,13 @@ func emacsclientSockets(args []string) (sockets []string, serverFile bool, alter
 					continue
 				}
 				if strings.IndexByte(emacsclientValued, c) < 0 {
-					return nil, false, nil, false
+					return parsedEmacsclient{}
 				}
 				value := a[j+1:]
 				if value == "" {
 					var has bool
 					if value, has = next(); !has {
-						return nil, false, nil, false
+						return parsedEmacsclient{}
 					}
 				}
 				switch c {
@@ -1102,13 +1109,13 @@ func emacsclientSockets(args []string) (sockets []string, serverFile bool, alter
 				case 'f':
 					serverFile = true
 				case 'a':
-					alternate = &value
+					alternate = &shellValue{text: value, expanded: i < len(expands) && expands[i]}
 				}
 				break
 			}
 		}
 	}
-	return sockets, serverFile, alternate, true
+	return parsedEmacsclient{sockets: sockets, serverFile: serverFile, alternate: alternate, ok: true}
 }
 
 // testEmacsSocket reports whether an emacsclient call reaches only a test
@@ -1117,11 +1124,11 @@ func emacsclientSockets(args []string) (sockets []string, serverFile bool, alter
 // where a test Emacs keeps its own, and not the operator's daemon's; and
 // it names no server file, which reaches a daemon over TCP instead.
 func testEmacsSocket(args []string) bool {
-	sockets, serverFile, _, ok := emacsclientSockets(args)
-	if !ok || serverFile || len(sockets) == 0 {
+	parsed := parseEmacsclient(args, nil)
+	if !parsed.ok || parsed.serverFile || len(parsed.sockets) == 0 {
 		return false
 	}
-	for _, s := range sockets {
+	for _, s := range parsed.sockets {
 		if !testSocket(s) {
 			return false
 		}

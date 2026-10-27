@@ -200,7 +200,7 @@ func check(tool string, toolInput json.RawMessage, who role, dir string) string 
 		if json.Unmarshal(toolInput, &args) != nil {
 			return unreadable
 		}
-		return command(args.Command, 0, who, dir, checkout, args.RunInBackground)
+		return command(args.Command, 0, who, dir, checkout, args.RunInBackground, environment{})
 	case tool == "Monitor":
 		// Claude Code's Monitor runs a command as Bash does.
 		var args struct {
@@ -209,7 +209,7 @@ func check(tool string, toolInput json.RawMessage, who role, dir string) string 
 		if json.Unmarshal(toolInput, &args) != nil {
 			return unreadable
 		}
-		return command(args.Command, 0, who, dir, checkout, true)
+		return command(args.Command, 0, who, dir, checkout, true, environment{})
 	case tool == "local_shell":
 		// Codex's local_shell runs an argv, which the guard reads as the
 		// command line that would run it.
@@ -229,13 +229,13 @@ func check(tool string, toolInput json.RawMessage, who role, dir string) string 
 			if json.Unmarshal(args.Command, &line) != nil {
 				return unreadable
 			}
-			return command(line, 0, who, dir, checkout, false)
+			return command(line, 0, who, dir, checkout, false, environment{})
 		}
 		quoted := make([]string, len(argv))
 		for i, a := range argv {
 			quoted[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
 		}
-		return command(strings.Join(quoted, " "), 0, who, dir, checkout, false)
+		return command(strings.Join(quoted, " "), 0, who, dir, checkout, false, environment{})
 	case tool == "write_stdin":
 		// Codex's write_stdin types chars into a session exec_command
 		// started, which may be a shell; the session runs on its own, so a
@@ -246,7 +246,7 @@ func check(tool string, toolInput json.RawMessage, who role, dir string) string 
 		if json.Unmarshal(toolInput, &args) != nil {
 			return unreadable
 		}
-		if reason := command(args.Chars, 0, who, dir, checkout, true); reason != "" {
+		if reason := command(args.Chars, 0, who, dir, checkout, true, environment{}); reason != "" {
 			return typed + reason
 		}
 		return ""
@@ -271,7 +271,7 @@ const maxDepth = 3
 
 // command judges a command line run in dir, from a call made in checkout,
 // in the background when background is set.
-func command(text string, depth int, who role, dir, checkout string, background bool) string {
+func command(text string, depth int, who role, dir, checkout string, background bool, env environment) string {
 	if depth > maxDepth {
 		return ""
 	}
@@ -281,6 +281,7 @@ func command(text string, depth int, who role, dir, checkout string, background 
 	texts, inBackground, segmentEnds := backgroundSegments(text)
 	for i, segment := range texts {
 		if c := split(segment); len(c.words) > 0 || len(c.redirects) > 0 {
+			c.env = env
 			calls = append(calls, c)
 			backgrounds = append(backgrounds, background || inBackground[i])
 			ends = append(ends, segmentEnds[i])
@@ -312,9 +313,9 @@ func command(text string, depth int, who role, dir, checkout string, background 
 			return ""
 		},
 		chdir: w.inDir,
-		script: func(text string) string {
+		script: func(text string, env environment) string {
 			for _, cwd := range w.here {
-				if reason := command(text, depth+1, who, cwd, checkout, bg); reason != "" {
+				if reason := command(text, depth+1, who, cwd, checkout, bg, env); reason != "" {
 					return reason
 				}
 			}
@@ -390,7 +391,7 @@ func cdTarget(c call, cwd string) string {
 // program judges a call once unwrap has found the program it runs, in dir,
 // from a call made in checkout.
 func program(c call, who role, files, dir, checkout string) string {
-	if reason := checkEnv(c.env); reason != "" {
+	if reason := checkEnv(c.env.words()); reason != "" {
 		return reason
 	}
 	if reason := checkNgrokEnv(c); reason != "" {
@@ -408,7 +409,7 @@ func program(c call, who role, files, dir, checkout string) string {
 	words := c.words
 	switch name := base(words[0]); {
 	case name == "git":
-		return checkGit(words, c.expands, c.env, who, dir, checkout, c.fed)
+		return checkGit(words, c.expands, c.env.words(), who, dir, checkout, c.fed)
 	case name == "gh":
 		if reason := checkGh(words[1:], c.expands[1:], files, who); reason != "" && who == reviewer {
 			return reviewerReport

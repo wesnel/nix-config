@@ -1224,20 +1224,34 @@ func TestTestEmacsSocket(t *testing.T) {
 func TestEmacsAlternateEditor(t *testing.T) {
 	t.Setenv("ALTERNATE_EDITOR", "false")
 	for command, deny := range map[string]bool{
-		`emacsclient -a "" -e '(+ 1 2)'`:                                    true,
-		`emacsclient --alternate-editor= -e '(+ 1 2)'`:                      true,
-		`emacsclient --alternate= -e '(+ 1 2)'`:                             true,
-		`emacsclient -na "" -e '(+ 1 2)'`:                                   true,
-		`ALTERNATE_EDITOR="" emacsclient -e '(+ 1 2)'`:                      true,
-		`env ALTERNATE_EDITOR= emacsclient -e '(+ 1 2)'`:                    true,
-		`emacsclient -a "" -s /tmp/et.ab12/server -e '(+ 1 2)'`:             false,
-		`ALTERNATE_EDITOR= emacsclient -s /tmp/et.ab12/server -e '(+ 1 2)'`: false,
-		`emacsclient -a "" -s /tmp/et.ab12/server -s server -e '(+ 1 2)'`:   true,
-		`ALTERNATE_EDITOR= emacsclient -a false -e '(+ 1 2)'`:               false,
-		`emacsclient -a "" -a false -e '(+ 1 2)'`:                           false,
-		`emacsclient -a false -a "" -e '(+ 1 2)'`:                           true,
-		`emacsclient -a false -e '(+ 1 2)'`:                                 false,
-		`emacsclient -- -a ""`:                                              false,
+		`ALTERNATE_EDITOR= bash -c "emacsclient -e '(+ 1 2)'"`:                         true,
+		`ALTERNATE_EDITOR= bash -c "env -u ALTERNATE_EDITOR emacsclient -e '(+ 1 2)'"`: false,
+		`ALTERNATE_EDITOR= env -u ALTERNATE_EDITOR emacsclient -e '(+ 1 2)'`:           false,
+		`ALTERNATE_EDITOR= env -i emacsclient -e '(+ 1 2)'`:                            false,
+		`env -i ALTERNATE_EDITOR= emacsclient -e '(+ 1 2)'`:                            true,
+		`env -uALTERNATE_EDITOR ALTERNATE_EDITOR= emacsclient -e '(+ 1 2)'`:            true,
+		`ALTERNATE_EDITOR= env ALTERNATE_EDITOR=false emacsclient -e '(+ 1 2)'`:        false,
+		`ALTERNATE_EDITOR=false env ALTERNATE_EDITOR= emacsclient -e '(+ 1 2)'`:        true,
+		`ALTERNATE_EDITOR="$EMPTY" emacsclient -a false -e '(+ 1 2)'`:                  false,
+		`emacsclient -a "" -e '(+ 1 2)'`:                                               true,
+		`emacsclient -a "$EMPTY" -e '(+ 1 2)'`:                                         true,
+		`emacsclient -a '$EMPTY' -e '(+ 1 2)'`:                                         false,
+		`ALTERNATE_EDITOR="$EMPTY" emacsclient -e '(+ 1 2)'`:                           true,
+		`ALTERNATE_EDITOR='$EMPTY' emacsclient -e '(+ 1 2)'`:                           false,
+		`env ALTERNATE_EDITOR="$EMPTY" emacsclient -e '(+ 1 2)'`:                       true,
+		`emacsclient --alternate-editor= -e '(+ 1 2)'`:                                 true,
+		`emacsclient --alternate= -e '(+ 1 2)'`:                                        true,
+		`emacsclient -na "" -e '(+ 1 2)'`:                                              true,
+		`ALTERNATE_EDITOR="" emacsclient -e '(+ 1 2)'`:                                 true,
+		`env ALTERNATE_EDITOR= emacsclient -e '(+ 1 2)'`:                               true,
+		`emacsclient -a "" -s /tmp/et.ab12/server -e '(+ 1 2)'`:                        false,
+		`ALTERNATE_EDITOR= emacsclient -s /tmp/et.ab12/server -e '(+ 1 2)'`:            false,
+		`emacsclient -a "" -s /tmp/et.ab12/server -s server -e '(+ 1 2)'`:              true,
+		`ALTERNATE_EDITOR= emacsclient -a false -e '(+ 1 2)'`:                          false,
+		`emacsclient -a "" -a false -e '(+ 1 2)'`:                                      false,
+		`emacsclient -a false -a "" -e '(+ 1 2)'`:                                      true,
+		`emacsclient -a false -e '(+ 1 2)'`:                                            false,
+		`emacsclient -- -a ""`:                                                         false,
 	} {
 		t.Run(command, func(t *testing.T) {
 			if reason := judge(t, "/tmp", command); (reason != "") != deny {
@@ -1252,6 +1266,15 @@ func TestEmacsAlternateEditor(t *testing.T) {
 		}
 		if reason := judge(t, "/tmp", `emacsclient -a false -e '(+ 1 2)'`); reason != "" {
 			t.Fatalf("explicit nonempty alternate editor refused: %s", reason)
+		}
+		for _, command := range []string{
+			`env -u ALTERNATE_EDITOR emacsclient -e '(+ 1 2)'`,
+			`env --unset=ALTERNATE_EDITOR emacsclient -e '(+ 1 2)'`,
+			`env -i emacsclient -e '(+ 1 2)'`,
+		} {
+			if reason := judge(t, "/tmp", command); reason != "" {
+				t.Errorf("unset alternate editor refused for %s: %s", command, reason)
+			}
 		}
 	})
 }

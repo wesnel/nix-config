@@ -35,7 +35,7 @@ var namers = set("read", "mapfile", "readarray", "getopts", "export", "declare",
 // Claude Code matches an exclusion against the text of the call, so it
 // runs sandboxed without the token.
 func checkLoopStart(c call) string {
-	for _, kv := range c.env {
+	for _, kv := range c.env.words() {
 		if name, _, _ := strings.Cut(kv, "="); loopVars[name] {
 			return loopStart
 		}

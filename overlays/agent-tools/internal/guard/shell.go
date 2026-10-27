@@ -3,6 +3,7 @@ package guard
 import (
 	"fmt"
 	"maps"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -98,15 +99,78 @@ type call struct {
 	words     []string
 	expands   []bool
 	redirects []redirection
-	env       []string
+	env       environment
 	fed       bool
+}
+
+type shellValue struct {
+	text     string
+	expanded bool
+}
+
+type envBinding struct {
+	name  string
+	value *shellValue
+}
+
+// environment is the command's explicit overlay on the hook's inherited
+// environment. A nil binding value unsets a name; cleared suppresses the
+// inherited environment. Values keep their lexical expansion provenance.
+type environment struct {
+	bindings []envBinding
+	cleared  bool
+}
+
+func (e environment) assign(word string, expanded bool) environment {
+	name, value, _ := strings.Cut(word, "=")
+	e.bindings = append(slices.Clone(e.bindings), envBinding{name: name, value: &shellValue{text: value, expanded: expanded}})
+	return e
+}
+
+func (e environment) unset(name string) environment {
+	e.bindings = append(slices.Clone(e.bindings), envBinding{name: name})
+	return e
+}
+
+func (e environment) lookup(name string) (shellValue, bool) {
+	for i := len(e.bindings) - 1; i >= 0; i-- {
+		binding := e.bindings[i]
+		if binding.name == name {
+			if binding.value == nil {
+				return shellValue{}, false
+			}
+			return *binding.value, true
+		}
+	}
+	if !e.cleared {
+		value, set := os.LookupEnv(name)
+		return shellValue{text: value}, set
+	}
+	return shellValue{}, false
+}
+
+func (e environment) words() []string {
+	var out []string
+	seen := map[string]bool{}
+	for i := len(e.bindings) - 1; i >= 0; i-- {
+		binding := e.bindings[i]
+		if seen[binding.name] {
+			continue
+		}
+		seen[binding.name] = true
+		if binding.value != nil {
+			out = append(out, binding.name+"="+binding.value.text)
+		}
+	}
+	slices.Reverse(out)
+	return out
 }
 
 // visitor judges one call, or a script that a call runs, and returns a
 // denial's reason or "".
 type visitor struct {
 	call      func(c call) string
-	script    func(text string) string
+	script    func(text string, env environment) string
 	redirects func([]redirection) string
 	chdir     func(string, bool, func() string) string
 }
@@ -124,7 +188,7 @@ func unwrap(c call, v visitor) string {
 		w := c.words[0]
 		switch {
 		case assignment.MatchString(w): // the value may expand; the name never does
-			c.env = append(c.env, w)
+			c.env = c.env.assign(w, c.expands[0])
 			c.words, c.expands = c.words[1:], c.expands[1:]
 			continue
 		case !c.expands[0] && keywords[w]:
@@ -152,7 +216,7 @@ func unwrap(c call, v visitor) string {
 			return "" // prints where the command is
 		case name == "watch":
 			// watch runs its words, joined, with sh -c.
-			return v.script(strings.Join(args[min(i, len(args)):], " "))
+			return v.script(strings.Join(args[min(i, len(args)):], " "), c.env)
 		}
 		return unwrap(rest(i), v)
 	}
@@ -170,15 +234,15 @@ func unwrap(c call, v visitor) string {
 		return unwrapNwrap(c, v)
 	case shells[name]:
 		if script, ok := shellScript(args, name == "fish"); ok {
-			return v.script(script)
+			return v.script(script, c.env)
 		}
 		return v.call(c)
 	case name == "eval":
-		return v.script(strings.Join(args, " "))
+		return v.script(strings.Join(args, " "), c.env)
 	case name == "nix-shell":
 		for i, a := range args {
 			if (a == "--run" || a == "--command") && i+1 < len(args) {
-				return v.script(args[i+1])
+				return v.script(args[i+1], c.env)
 			}
 		}
 	case name == "nix" && len(args) > 0 && (args[0] == "shell" || args[0] == "develop"):
@@ -205,9 +269,9 @@ func unwrap(c call, v visitor) string {
 		}
 	case name == "export" || name == "declare" || name == "typeset" || name == "local" || name == "readonly":
 		env := c.env
-		for _, a := range args {
+		for i, a := range args {
 			if assignment.MatchString(a) {
-				env = append(env, a)
+				env = env.assign(a, expands[i])
 			}
 		}
 		if reason := v.call(call{words: c.words, expands: c.expands, env: env}); reason != "" {
@@ -278,11 +342,25 @@ options:
 // unwrapEnv reads env's options and assignments, and hands on the command
 // they run, or env itself when it runs none; `-S` splits its value into
 // words as a shell would.
-func unwrapEnv(env, args []string, expands []bool, v visitor) string {
+func unwrapEnv(env environment, args []string, expands []bool, v visitor) string {
 	opts := true
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
+		case opts && (a == "-i" || a == "--ignore-environment" || a == "-"):
+			env = environment{cleared: true}
+		case opts && (a == "-u" || a == "--unset" || strings.HasPrefix(a, "--unset=") || strings.HasPrefix(a, "-u")):
+			name := ""
+			switch {
+			case strings.HasPrefix(a, "--unset="):
+				name = strings.TrimPrefix(a, "--unset=")
+			case strings.HasPrefix(a, "-u") && len(a) > 2:
+				name = a[2:]
+			case i+1 < len(args):
+				i++
+				name = args[i]
+			}
+			env = env.unset(name)
 		case opts && (a == "-C" || a == "--chdir" || strings.HasPrefix(a, "--chdir=") || strings.HasPrefix(a, "-C")):
 			value, expanded := "", expands[i]
 			switch {
@@ -299,8 +377,8 @@ func unwrapEnv(env, args []string, expands []bool, v visitor) string {
 				return v.chdir(value, expanded, visit)
 			}
 			return visit()
-		case opts && (a == "--" || a == "-"):
-			opts = opts && a != "--"
+		case opts && a == "--":
+			opts = false
 		case opts && (a == "-S" || a == "--split-string" || strings.HasPrefix(a, "--split-string=") || strings.HasPrefix(a, "-S")):
 			script := ""
 			switch {
@@ -320,7 +398,7 @@ func unwrapEnv(env, args []string, expands []bool, v visitor) string {
 			}
 		case !expands[i] && assignment.MatchString(a):
 			opts = false
-			env = append(env, a)
+			env = env.assign(a, expands[i])
 		default:
 			return unwrap(call{words: args[i:], expands: expands[i:], env: env}, v)
 		}
@@ -332,7 +410,7 @@ func unwrapEnv(env, args []string, expands []bool, v visitor) string {
 // by the installable's attribute: nixpkgs#gh runs gh. Another installable
 // names no program the guard can know, which it treats as one the shell
 // expands.
-func unwrapNixRun(env, args []string, expands []bool, v visitor) string {
+func unwrapNixRun(env environment, args []string, expands []bool, v visitor) string {
 	i := 0
 	for i < len(args) && len(args[i]) > 1 && args[i][0] == '-' && args[i] != "--" {
 		i += 1 + nixValues[args[i]]
@@ -361,7 +439,7 @@ func unwrapNixRun(env, args []string, expands []bool, v visitor) string {
 // has judged the git command: a shell alias given for this command alone
 // (envAlias), `bisect run`'s, `submodule foreach`'s script and
 // `rebase --exec`'s.
-func unwrapGit(env, args []string, expands []bool, v visitor) string {
+func unwrapGit(env environment, args []string, expands []bool, v visitor) string {
 	if reason := envAliases(env, v); reason != "" {
 		return reason
 	}
@@ -378,7 +456,7 @@ func unwrapGit(env, args []string, expands []bool, v visitor) string {
 				spec = args[i+1]
 			}
 			key, variable, _ := strings.Cut(spec, "=")
-			value, ok := envValue(env, variable)
+			value, ok := envValue(env.words(), variable)
 			if !ok && aliasKey(key) {
 				return aliasUnknown
 			}
@@ -388,7 +466,7 @@ func unwrapGit(env, args []string, expands []bool, v visitor) string {
 			return aliasUnknown // a key from a variable may be an alias's
 		}
 		if key, value, ok := strings.Cut(entry, "="); ok {
-			if reason := aliasScript(key, value, expanded, v); reason != "" {
+			if reason := aliasScript(key, value, expanded, env, v); reason != "" {
 				return reason
 			}
 		}
@@ -411,18 +489,18 @@ func unwrapGit(env, args []string, expands []bool, v visitor) string {
 				for k < len(rest) && strings.HasPrefix(rest[k], "-") {
 					k++
 				}
-				return v.script(strings.Join(rest[k:], " "))
+				return v.script(strings.Join(rest[k:], " "), env)
 			}
 		}
 	case sub == "rebase":
 		for j, w := range rest {
 			switch {
 			case (w == "-x" || w == "--exec") && j+1 < len(rest):
-				if reason := v.script(rest[j+1]); reason != "" {
+				if reason := v.script(rest[j+1], env); reason != "" {
 					return reason
 				}
 			case strings.HasPrefix(w, "--exec="):
-				if reason := v.script(strings.TrimPrefix(w, "--exec=")); reason != "" {
+				if reason := v.script(strings.TrimPrefix(w, "--exec="), env); reason != "" {
 					return reason
 				}
 			}
@@ -608,12 +686,12 @@ func aliasKey(key string) bool { return strings.HasPrefix(strings.ToLower(key), 
 // aliasScript hands an alias entry given for one git command (KEY=VALUE)
 // to v as the shell command it runs when its value starts with !. A value
 // the shell expands, which could become one, is refused.
-func aliasScript(key, value string, expanded bool, v visitor) string {
+func aliasScript(key, value string, expanded bool, env environment, v visitor) string {
 	if !aliasKey(key) {
 		return ""
 	}
 	if script, ok := strings.CutPrefix(strings.TrimLeft(value, " \t"), "!"); ok {
-		return v.script(script)
+		return v.script(script, env)
 	}
 	if expanded && strings.ContainsAny(value, "$`") {
 		return aliasUnknown
@@ -637,8 +715,8 @@ func envValue(env []string, name string) (string, bool) {
 // GIT_CONFIG_SYSTEM or GIT_CONFIG names. An alias key whose value env does
 // not give, or gives through an expansion, a key that comes from one, and
 // such a file the guard cannot read or that includes another, are refused.
-func envAliases(env []string, v visitor) string {
-	for _, kv := range env {
+func envAliases(env environment, v visitor) string {
+	for _, kv := range env.words() {
 		name, value, _ := strings.Cut(kv, "=")
 		switch {
 		case name == "GIT_CONFIG_GLOBAL" || name == "GIT_CONFIG_SYSTEM" || name == "GIT_CONFIG":
@@ -650,7 +728,7 @@ func envAliases(env []string, v visitor) string {
 				return reason
 			}
 			for _, e := range entries {
-				if reason := aliasScript(e[0], e[1], false, v); reason != "" {
+				if reason := aliasScript(e[0], e[1], false, env, v); reason != "" {
 					return reason
 				}
 			}
@@ -661,18 +739,18 @@ func envAliases(env []string, v visitor) string {
 				if strings.ContainsAny(key, "$`") {
 					return aliasUnknown
 				}
-				if reason := aliasScript(key, val, c.expands[j], v); reason != "" {
+				if reason := aliasScript(key, val, c.expands[j], env, v); reason != "" {
 					return reason
 				}
 			}
 		case strings.HasPrefix(name, "GIT_CONFIG_KEY_") && strings.ContainsAny(value, "$`"):
 			return aliasUnknown
 		case strings.HasPrefix(name, "GIT_CONFIG_KEY_") && aliasKey(value):
-			val, ok := envValue(env, "GIT_CONFIG_VALUE_"+strings.TrimPrefix(name, "GIT_CONFIG_KEY_"))
+			val, ok := envValue(env.words(), "GIT_CONFIG_VALUE_"+strings.TrimPrefix(name, "GIT_CONFIG_KEY_"))
 			if !ok {
 				return aliasUnknown
 			}
-			if reason := aliasScript(value, val, true, v); reason != "" {
+			if reason := aliasScript(value, val, true, env, v); reason != "" {
 				return reason
 			}
 		}
