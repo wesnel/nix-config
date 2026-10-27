@@ -81,7 +81,7 @@ func envSearch(text string, calls []call) bool {
 		return false
 	}
 	dump, grep := calls[0], calls[1]
-	if len(dump.words) != 1 || dump.expands[0] || (dump.words[0] != "env" && dump.words[0] != "printenv") ||
+	if len(dump.words) != 1 || len(grep.words) == 0 || dump.expands[0] || (dump.words[0] != "env" && dump.words[0] != "printenv") ||
 		grep.words[0] != "grep" {
 		return false
 	}
@@ -217,7 +217,24 @@ func checkSession(c call, dir string) string {
 			return reason
 		}
 	}
-	redirected := redirections(words)
+	var redirected []string
+	for _, r := range c.redirects {
+		if r.file() {
+			path, known := r.path(dir)
+			if !known {
+				if r.output() {
+					return unknownShellWrite
+				}
+				continue
+			}
+			if reason := checkSecretPath(path, dir); reason != "" {
+				return reason
+			}
+			if r.output() {
+				redirected = append(redirected, path)
+			}
+		}
+	}
 	for _, target := range redirected {
 		if guardFile(expandPath(target, dir)) {
 			return guardOff
@@ -723,15 +740,15 @@ const readsTerminal = "This reads its input from the terminal, which Codex keeps
 func terminalReader(text string) bool {
 	var calls []call
 	for _, segment := range segments(text) {
-		if words, expands := split(segment); len(words) > 0 {
-			calls = append(calls, call{words: words, expands: expands})
+		if c := split(segment); len(c.words) > 0 || len(c.redirects) > 0 {
+			calls = append(calls, c)
 		}
 	}
-	if len(calls) != 1 {
+	if len(calls) != 1 || len(calls[0].words) == 0 {
 		return false
 	}
-	for _, w := range calls[0].words {
-		if strings.HasPrefix(w, "<") {
+	for _, r := range calls[0].redirects {
+		if strings.HasPrefix(r.op, "<") {
 			return false
 		}
 	}
@@ -2038,25 +2055,6 @@ var scratchRoots = func() []string {
 		roots = append(roots, dir)
 	}
 	return roots
-}
-
-var redirect = regexp.MustCompile(`^[0-9&]?>>?\|?`)
-
-// redirections are the files a command's output redirections write.
-func redirections(words []string) []string {
-	var out []string
-	for i, w := range words {
-		m := redirect.FindString(w)
-		if m == "" {
-			continue
-		}
-		if target := w[len(m):]; target != "" {
-			out = append(out, target)
-		} else if i+1 < len(words) {
-			out = append(out, words[i+1])
-		}
-	}
-	return out
 }
 
 // checkFileTool checks a call to a file-editing tool: Claude Code's Edit,

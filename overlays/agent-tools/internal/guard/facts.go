@@ -33,6 +33,12 @@ func gitCalls(text, dir string, depth int) []gitCall {
 	var out []gitCall
 	cwd := dir
 	v := visitor{
+		chdir: func(word string, expanded bool, visit func() string) string {
+			before := cwd
+			cwd = cdTarget(call{words: []string{"cd", word}, expands: []bool{false, expanded}}, cwd)
+			defer func() { cwd = before }()
+			return visit()
+		},
 		script: func(text string) string {
 			out = append(out, gitCalls(text, cwd, depth+1)...)
 			return ""
@@ -67,8 +73,8 @@ func gitCalls(text, dir string, depth int) []gitCall {
 		},
 	}
 	for _, segment := range segments(text) {
-		if words, expands := split(segment); len(words) > 0 {
-			unwrap(call{words: words, expands: expands}, v)
+		if c := split(segment); len(c.words) > 0 || len(c.redirects) > 0 {
+			unwrap(c, v)
 		}
 	}
 	return out

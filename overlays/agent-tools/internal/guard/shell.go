@@ -3,6 +3,7 @@ package guard
 import (
 	"fmt"
 	"maps"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -94,22 +95,31 @@ func options(args []string, values map[string]bool) int {
 // made for it. fed says that xargs runs it, adding words the guard does
 // not see.
 type call struct {
-	words   []string
-	expands []bool
-	env     []string
-	fed     bool
+	words     []string
+	expands   []bool
+	redirects []redirection
+	env       []string
+	fed       bool
 }
 
 // visitor judges one call, or a script that a call runs, and returns a
 // denial's reason or "".
 type visitor struct {
-	call   func(c call) string
-	script func(text string) string
+	call      func(c call) string
+	script    func(text string) string
+	redirects func([]redirection) string
+	chdir     func(string, bool, func() string) string
 }
 
 // unwrap takes the wrappers, keywords and assignments off a simple command
 // and hands the command they run, or the script, to v.
 func unwrap(c call, v visitor) string {
+	if len(c.redirects) > 0 && v.redirects != nil {
+		if reason := v.redirects(c.redirects); reason != "" {
+			return reason
+		}
+	}
+	c.redirects = nil
 	for len(c.words) > 0 {
 		w := c.words[0]
 		switch {
@@ -273,6 +283,22 @@ func unwrapEnv(env, args []string, expands []bool, v visitor) string {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
+		case opts && (a == "-C" || a == "--chdir" || strings.HasPrefix(a, "--chdir=") || strings.HasPrefix(a, "-C")):
+			value, expanded := "", expands[i]
+			switch {
+			case strings.HasPrefix(a, "--chdir="):
+				value = strings.TrimPrefix(a, "--chdir=")
+			case strings.HasPrefix(a, "-C") && len(a) > 2:
+				value = a[2:]
+			case i+1 < len(args):
+				i++
+				value, expanded = args[i], expands[i]
+			}
+			visit := func() string { return unwrapEnv(env, args[i+1:], expands[i+1:], v) }
+			if v.chdir != nil {
+				return v.chdir(value, expanded, visit)
+			}
+			return visit()
 		case opts && (a == "--" || a == "-"):
 			opts = opts && a != "--"
 		case opts && (a == "-S" || a == "--split-string" || strings.HasPrefix(a, "--split-string=") || strings.HasPrefix(a, "-S")):
@@ -286,8 +312,8 @@ func unwrapEnv(env, args []string, expands []bool, v visitor) string {
 				i++
 				script = args[i]
 			}
-			words, x := split(script)
-			return unwrapEnv(env, append(words, args[i+1:]...), append(x, expands[i+1:]...), v)
+			c := splitArguments(script)
+			return unwrapEnv(env, append(c.words, args[i+1:]...), append(c.expands, expands[i+1:]...), v)
 		case opts && len(a) > 1 && a[0] == '-':
 			if envValues[a] {
 				i++
@@ -473,6 +499,7 @@ func backgroundSegments(text string) (out []string, background []bool, ends []st
 		sub      bool  // the frame is a substitution
 		groups   []int // where each subshell open in the frame starts in out
 		closed   int   // where the subshell that just closed started, or -1
+		redirect bool  // the preceding unquoted character was < or >
 	}
 	stack := []*frame{{closed: -1}}
 	top := func() *frame { return stack[len(stack)-1] }
@@ -493,6 +520,8 @@ func backgroundSegments(text string) (out []string, background []bool, ends []st
 	}
 	for i := 0; i < len(text); i++ {
 		c, f := text[i], top()
+		afterRedirect := f.redirect
+		f.redirect = false
 		if c != ' ' && c != '\t' && c != '&' {
 			f.closed = -1
 		}
@@ -533,7 +562,9 @@ func backgroundSegments(text string) (out []string, background []bool, ends []st
 			if n := len(f.groups); n > 0 {
 				f.closed, f.groups = f.groups[n-1], f.groups[:n-1]
 			}
-		case c == '&' && i > 0 && (text[i-1] == '>' || text[i-1] == '<'),
+		case c == '|' && afterRedirect:
+			f.cur.WriteByte(c)
+		case c == '&' && afterRedirect,
 			c == '&' && i+1 < len(text) && text[i+1] == '>':
 			// A redirection: >&2, 2>&1, <&3, &>file.
 			f.cur.WriteByte(c)
@@ -556,6 +587,7 @@ func backgroundSegments(text string) (out []string, background []bool, ends []st
 			flush(end)
 		default:
 			f.cur.WriteByte(c)
+			f.redirect = c == '>' || c == '<'
 		}
 	}
 	for len(stack) > 1 {
@@ -623,13 +655,13 @@ func envAliases(env []string, v visitor) string {
 				}
 			}
 		case name == "GIT_CONFIG_PARAMETERS":
-			words, expands := split(value)
-			for j, w := range words {
+			c := splitArguments(value)
+			for j, w := range c.words {
 				key, val, _ := strings.Cut(w, "=")
 				if strings.ContainsAny(key, "$`") {
 					return aliasUnknown
 				}
-				if reason := aliasScript(key, val, expands[j], v); reason != "" {
+				if reason := aliasScript(key, val, c.expands[j], v); reason != "" {
 					return reason
 				}
 			}
@@ -740,6 +772,17 @@ func (w *cwds) next(end string) {
 	w.before = nil
 }
 
+func (w *cwds) inDir(word string, expanded bool, visit func() string) string {
+	before := w.here
+	w.here = nil
+	for _, cwd := range before {
+		c := call{words: []string{"cd", word}, expands: []bool{false, expanded}}
+		w.here = addDir(w.here, cdTarget(c, cwd))
+	}
+	defer func() { w.here = before }()
+	return visit()
+}
+
 // addDir is dirs with d, once.
 func addDir(dirs []string, d string) []string {
 	if slices.Contains(dirs, d) {
@@ -748,20 +791,77 @@ func addDir(dirs []string, d string) []string {
 	return append(dirs, d)
 }
 
-// split splits one segment into words the way a shell would, removing quotes,
-// and reports for each word whether the shell expands part of it: a $ or a
-// backquote outside single quotes and not escaped.
-func split(segment string) (words []string, expands []bool) {
+type redirection struct {
+	op, target string
+	expands    bool
+	literal    bool
+}
+
+func (r redirection) file() bool {
+	return r.op != "<<" && r.op != "<<-" && r.op != "<<<" &&
+		!(strings.HasSuffix(r.op, "&") && (r.target == "-" || digits(r.target)))
+}
+
+func (r redirection) output() bool { return r.file() && strings.Contains(r.op, ">") }
+
+func (r redirection) path(cwd string) (string, bool) {
+	target := r.target
+	if r.expands {
+		target = shellPath(target, true)
+		if strings.ContainsAny(target, "$`") {
+			return "", false
+		}
+	}
+	if r.literal {
+		if !filepath.IsAbs(target) && cwd != "" {
+			target = filepath.Join(cwd, target)
+		}
+	} else {
+		target = expandPath(target, cwd)
+	}
+	return target, filepath.IsAbs(target)
+}
+
+func digits(s string) bool {
+	return s != "" && strings.IndexFunc(s, func(r rune) bool { return r < '0' || r > '9' }) < 0
+}
+
+// split separates executable arguments from shell redirections before
+// removing quotes; quoted or escaped operators remain literal arguments.
+func split(segment string) call { return lex(segment, true) }
+
+// splitArguments reads words that another program splits, without giving
+// redirection operators the shell's meaning (env -S, git config values).
+func splitArguments(segment string) call { return lex(segment, false) }
+
+func lex(segment string, redirects bool) (result call) {
 	var cur strings.Builder
-	in, quote, expand := false, byte(0), false
+	in, quote, expand, quoted := false, byte(0), false, false
+	braces := 0
+	pending := -1
 	end := func() {
-		words, expands = append(words, cur.String()), append(expands, expand)
+		if pending >= 0 {
+			result.redirects[pending].target, result.redirects[pending].expands = cur.String(), expand
+			result.redirects[pending].literal = quoted && !expand
+			pending = -1
+		} else {
+			result.words, result.expands = append(result.words, cur.String()), append(result.expands, expand)
+		}
 		cur.Reset()
-		in, expand = false, false
+		in, expand, quoted = false, false, false
 	}
 	for i := 0; i < len(segment); i++ {
 		c := segment[i]
 		switch {
+		case quote == 'a':
+			if c == '\'' {
+				quote = 0
+			} else if c == '\\' && i+1 < len(segment) {
+				i++
+				cur.WriteByte(segment[i])
+			} else {
+				cur.WriteByte(c)
+			}
 		case quote != 0:
 			if c == quote {
 				quote = 0
@@ -772,18 +872,59 @@ func split(segment string) (words []string, expands []bool) {
 				expand = expand || quote == '"' && (c == '$' || c == '`')
 				cur.WriteByte(c)
 			}
+		case c == '$' && i+1 < len(segment) && segment[i+1] == '\'':
+			cur.WriteByte(c)
+			i++
+			quote, in, quoted = 'a', true, true
+			expand = true
+		case c == '$' && i+1 < len(segment) && segment[i+1] == '{':
+			braces++
+			cur.WriteByte(c)
+			in, expand = true, true
+		case c == '}' && braces > 0:
+			braces--
+			cur.WriteByte(c)
+			in = true
 		case c == '\'' || c == '"':
-			quote, in = c, true
+			quote, in, quoted = c, true, true
 		case c == '\\' && i+1 < len(segment):
 			i++
 			cur.WriteByte(segment[i])
-			in = true
+			in, quoted = true, true
+		case redirects && (c == '>' || c == '<' || c == '&' && i+1 < len(segment) && segment[i+1] == '>'):
+			if in {
+				if pending < 0 && !quoted && digits(cur.String()) {
+					cur.Reset()
+					in, expand = false, false
+				} else {
+					end()
+				}
+			}
+			op := string(c)
+			if c == '&' {
+				i++
+				op += ">"
+				c = '>'
+			}
+			if i+1 < len(segment) && segment[i+1] == c {
+				i++
+				op += string(c)
+				if c == '<' && i+1 < len(segment) && (segment[i+1] == '<' || segment[i+1] == '-') {
+					i++
+					op += string(segment[i])
+				}
+			} else if i+1 < len(segment) && (segment[i+1] == '&' || c == '>' && segment[i+1] == '|' || c == '<' && segment[i+1] == '>') {
+				i++
+				op += string(segment[i])
+			}
+			result.redirects = append(result.redirects, redirection{op: op})
+			pending = len(result.redirects) - 1
 		case c == ' ' || c == '\t':
 			if in {
 				end()
 			}
-		case c == '#' && !in:
-			return words, expands
+		case c == '#' && !in && braces == 0:
+			return result
 		default:
 			expand = expand || c == '$' || c == '`'
 			cur.WriteByte(c)
@@ -793,5 +934,5 @@ func split(segment string) (words []string, expands []bool) {
 	if in {
 		end()
 	}
-	return words, expands
+	return result
 }

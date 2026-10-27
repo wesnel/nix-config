@@ -2,7 +2,6 @@ package guard
 
 import (
 	"fmt"
-	"regexp"
 	"slices"
 	"strings"
 )
@@ -87,10 +86,6 @@ func firstCall(text string, depth int, match func(c call) []string) []string {
 	var v visitor
 	v = visitor{
 		call: func(c call) string {
-			// A redirection before the program, as `< /dev/null CMD`.
-			if i := leadingRedirections(c.words); i > 0 && i < len(c.words) {
-				return unwrap(call{words: c.words[i:], expands: c.expands[i:], env: c.env, fed: c.fed}, v)
-			}
 			if named = match(c); named != nil {
 				return "named"
 			}
@@ -104,33 +99,11 @@ func firstCall(text string, depth int, match func(c call) []string) []string {
 		},
 	}
 	for _, segment := range segments(text) {
-		if words, expands := split(segment); len(words) > 0 && unwrap(call{words: words, expands: expands}, v) != "" {
+		if c := split(segment); len(c.words) > 0 && unwrap(c, v) != "" {
 			return named
 		}
 	}
 	return nil
-}
-
-// redirectionWord is a redirection's operator, with the descriptor before
-// it and a duplicated one after it (2>&1, <&-), and any target attached.
-var redirectionWord = regexp.MustCompile(`^(?:[0-9]+|&)?(?:<<<|<<|<>|<|>>|>\||>)(?:&(?:[0-9]+|-))?`)
-
-// leadingRedirections is how many of words, from the first, are
-// redirections and the targets of those whose target is the next word.
-func leadingRedirections(words []string) int {
-	i := 0
-	for i < len(words) {
-		op := redirectionWord.FindString(words[i])
-		switch {
-		case op == "":
-			return i
-		case len(words[i]) > len(op) || strings.Contains(op, "&") && !strings.HasPrefix(op, "&"):
-			i++ // the target is attached, or the operator duplicates a descriptor
-		default:
-			i += 2
-		}
-	}
-	return i
 }
 
 // excludedCall is the pattern whose words c's program and first arguments
@@ -178,7 +151,7 @@ func ExcludedAlone(text string, pattern []string) bool {
 	var only string
 	commands := 0
 	for i, segment := range texts {
-		if words, _ := split(segment); len(words) > 0 {
+		if c := split(segment); len(c.words) > 0 || len(c.redirects) > 0 {
 			commands++
 			only = segment
 			if ends[i] != "" {
@@ -186,56 +159,9 @@ func ExcludedAlone(text string, pattern []string) bool {
 			}
 		}
 	}
-	if commands != 1 || unquotedRedirect(only) {
+	if commands != 1 || len(split(only).redirects) > 0 {
 		return false
 	}
 	line, prefix := strings.TrimLeft(text, " \t"), strings.Join(pattern, " ")
 	return line == prefix || strings.HasPrefix(line, prefix+" ")
-}
-
-// unquotedRedirect reports whether a simple command holds a < or > outside
-// quotes and before any comment, which the shell reads as a redirection.
-// $'…' quotes take backslash escapes, and a # inside ${…} starts no
-// comment; a < or > inside ${…} counts, which errs on refusing.
-func unquotedRedirect(segment string) bool {
-	quote := byte(0) // ', ", or a for $'…'
-	braces := 0      // ${ … } open around this point
-	for i := 0; i < len(segment); i++ {
-		c := segment[i]
-		next := byte(0)
-		if i+1 < len(segment) {
-			next = segment[i+1]
-		}
-		switch {
-		case quote == 'a':
-			if c == '\\' {
-				i++
-			} else if c == '\'' {
-				quote = 0
-			}
-		case quote != 0:
-			if c == quote {
-				quote = 0
-			} else if c == '\\' && quote == '"' {
-				i++
-			}
-		case c == '\\':
-			i++
-		case c == '$' && next == '\'':
-			quote = 'a'
-			i++
-		case c == '$' && next == '{':
-			braces++
-			i++
-		case c == '}' && braces > 0:
-			braces--
-		case c == '#' && braces == 0 && (i == 0 || segment[i-1] == ' ' || segment[i-1] == '\t'):
-			return false
-		case c == '\'' || c == '"':
-			quote = c
-		case c == '<' || c == '>':
-			return true
-		}
-	}
-	return false
 }

@@ -96,6 +96,24 @@ func planProperty(t *testing.T, file, name string) string {
 // and pushes in its log, new worktrees, branches and pull requests in its
 // properties.
 func testPostRecordsFacts(t *testing.T) {
+	t.Run("env chdir commit belongs to part", func(t *testing.T) {
+		main, linked, p := planned(t)
+		output := gitOut(t, linked, "commit", "--allow-empty", "-m", "Add the scoped flag")
+		postHook(t, claudeEvent("s1", main, "env -C "+linked+" git commit --allow-empty -m 'Add the scoped flag'", output))
+		events, err := p.Events()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var committed []plans.Event
+		for _, event := range events {
+			if event.Kind == "committed" {
+				committed = append(committed, event)
+			}
+		}
+		if len(committed) != 1 || committed[0].Item != "P1" || committed[0].Commit != "Add the scoped flag" {
+			t.Errorf("env -C commit attributed incorrectly: %+v", committed)
+		}
+	})
 	main, linked, p := planned(t)
 	partFile := strings.TrimSuffix(p.File(), ".org") + ".P1.org"
 	os.WriteFile(filepath.Join(main, "a"), []byte("a\n"), 0o644)

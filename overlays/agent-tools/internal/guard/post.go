@@ -87,8 +87,8 @@ func writesPullRequest(text string, depth int) bool {
 		},
 	}
 	for _, segment := range segments(text) {
-		if words, expands := split(segment); len(words) > 0 {
-			unwrap(call{words: words, expands: expands}, v)
+		if c := split(segment); len(c.words) > 0 || len(c.redirects) > 0 {
+			unwrap(c, v)
 		}
 	}
 	return found
@@ -142,8 +142,8 @@ func pushers(text string, depth int) map[string]bool {
 		},
 	}
 	for _, segment := range segments(text) {
-		if words, expands := split(segment); len(words) > 0 {
-			unwrap(call{words: words, expands: expands}, v)
+		if c := split(segment); len(c.words) > 0 || len(c.redirects) > 0 {
+			unwrap(c, v)
 		}
 	}
 	return found

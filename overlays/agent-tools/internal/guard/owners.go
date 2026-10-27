@@ -32,7 +32,11 @@ func checkOwner(in input) string {
 			Command string `json:"command"`
 		}
 		json.Unmarshal(in.ToolInput, &args)
-		paths = shellEditPaths(args.Command, in.Cwd, 0)
+		var unknown bool
+		paths, unknown = shellEditPaths(args.Command, in.Cwd, 0)
+		if unknown {
+			return unknownShellWrite
+		}
 	case "Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch":
 		// An input that does not decode is denied before the fence is
 		// asked.
@@ -71,6 +75,9 @@ func checkOwner(in input) string {
 	}
 	return ""
 }
+
+const unknownShellWrite = "The path or directory of a shell write cannot be resolved, so its ownership cannot be checked. " +
+	"Use an explicit directory and write target, or put the command in your report."
 
 // subagentEdits returns why agent may not edit one of paths, or "": it
 // edits only the worktrees owners gives it, the scratch roots, the plans
@@ -189,8 +196,8 @@ func stashWrites(text string, depth int) string {
 		},
 	}
 	for _, segment := range segments(text) {
-		if words, expands := split(segment); len(words) > 0 {
-			if reason := unwrap(call{words: words, expands: expands}, v); reason != "" {
+		if c := split(segment); len(c.words) > 0 {
+			if reason := unwrap(c, v); reason != "" {
 				return reason
 			}
 		}
@@ -233,18 +240,45 @@ func worktreeOf(path string) (string, gitState) {
 // shellEditPaths are the absolute paths of the files a command line
 // writes, moves or removes, as changedFiles names them, and the directory
 // a git command that writes the worktree runs in (gitWrites), following cd
-// as command does.
-func shellEditPaths(text, dir string, depth int) []string {
+// as command does. The second result says a write could not be resolved
+// to an absolute path, so its ownership cannot be checked.
+func shellEditPaths(text, dir string, depth int) ([]string, bool) {
 	if depth > maxDepth {
-		return nil
+		return nil, false
 	}
 	var out []string
+	unknown := false
 	w := cwds{here: []string{dir}}
 	end := ""
+	add := func(target, cwd string) {
+		if p := expandPath(target, cwd); filepath.IsAbs(p) {
+			out = append(out, p)
+		} else {
+			unknown = true
+		}
+	}
 	v := visitor{
+		chdir: w.inDir,
+		redirects: func(redirects []redirection) string {
+			for _, cwd := range w.here {
+				for _, r := range redirects {
+					if !r.output() {
+						continue
+					}
+					if path, known := r.path(cwd); known {
+						out = append(out, path)
+					} else {
+						unknown = true
+					}
+				}
+			}
+			return ""
+		},
 		script: func(text string) string {
 			for _, cwd := range w.here {
-				out = append(out, shellEditPaths(text, cwd, depth+1)...)
+				paths, unresolved := shellEditPaths(text, cwd, depth+1)
+				out = append(out, paths...)
+				unknown = unknown || unresolved
 			}
 			return ""
 		},
@@ -257,13 +291,15 @@ func shellEditPaths(text, dir string, depth int) []string {
 				return ""
 			}
 			for _, cwd := range w.here {
-				for _, t := range changedFiles(base(c.words[0]), c.words[1:], redirections(c.words)) {
-					if p := expandPath(t, cwd); filepath.IsAbs(p) {
-						out = append(out, p)
-					}
+				for _, target := range changedFiles(base(c.words[0]), c.words[1:], nil) {
+					add(target, cwd)
 				}
-				if dir := gitWriteDir(c, cwd); dir != "" {
-					out = append(out, dir)
+				if dir, writes := gitWriteDir(c, cwd); writes {
+					if filepath.IsAbs(dir) {
+						out = append(out, dir)
+					} else {
+						unknown = true
+					}
 				}
 			}
 			return ""
@@ -271,24 +307,24 @@ func shellEditPaths(text, dir string, depth int) []string {
 	}
 	texts, _, ends := backgroundSegments(text)
 	for i, segment := range texts {
-		if words, expands := split(segment); len(words) > 0 {
+		if c := split(segment); len(c.words) > 0 || len(c.redirects) > 0 {
 			end = ends[i]
-			c := call{words: words, expands: expands}
 			w.begin(c)
 			unwrap(c, v)
 			w.next(end)
 		}
 	}
-	return out
+	return out, unknown
 }
 
 // gitWriteDir is the absolute directory a git command, run in cwd, writes,
 // with its -C options applied, when gitWrites names its command and gitRead
 // does not pass it as a reading form (stash list, tag -l, apply --check);
-// "" for any other command.
-func gitWriteDir(c call, cwd string) string {
+// The second result distinguishes a write in an unknown directory from a
+// command that does not write.
+func gitWriteDir(c call, cwd string) (string, bool) {
 	if base(c.words[0]) != "git" {
-		return ""
+		return "", false
 	}
 	dir, words := cwd, c.words[1:]
 	for len(words) > 0 && strings.HasPrefix(words[0], "-") {
@@ -302,8 +338,8 @@ func gitWriteDir(c call, cwd string) string {
 			words = words[1:]
 		}
 	}
-	if len(words) == 0 || !gitWrites[words[0]] || gitRead(words[0], words[1:]) || !filepath.IsAbs(dir) {
-		return ""
+	if len(words) == 0 || !gitWrites[words[0]] || gitRead(words[0], words[1:]) {
+		return "", false
 	}
-	return dir
+	return dir, true
 }

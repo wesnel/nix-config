@@ -64,6 +64,7 @@ func TestSessionRules(t *testing.T) {
 		{true, "pass work/x"},
 		{true, "env"},
 		{true, "env -0"},
+		{true, "env | > /dev/null"},
 		{true, "printenv"},
 		{true, "printenv NGROK_AUTHTOKEN_PROD"},
 		{true, "printenv GITHUB_TOKEN"},
@@ -95,6 +96,9 @@ func TestSessionRules(t *testing.T) {
 		{true, "git filter-repo --path x"},
 		{true, "git update-ref -d refs/heads/x"},
 		{true, "git worktree prune"},
+		{true, "2>/dev/null emacs --daemon"},
+		{true, "< /dev/null emacs --daemon"},
+		{true, "echo x>~/.claude/settings.json"},
 		{true, "echo '{}' > ~/.claude/settings.json"},
 		{true, "echo x >> .claude/settings.local.json"},
 		{true, "sed -i '' s/x/y/ ~/.codex/hooks.json"},
@@ -889,7 +893,6 @@ func TestShellEdits(t *testing.T) {
 		{false, "gawk '{print}' new.txt"},
 		{false, "echo x > /dev/null"},
 		{false, "echo x >&2"},
-		{false, "echo x > $F"},
 		{false, "sed -n 1p a.go"},
 		{true, "sed -i '' s/a/b/ " + outside + "/f"},
 		{true, "sed -i '' s/a/b/ " + scratchRepo + "/a"},
@@ -904,7 +907,6 @@ func TestShellEdits(t *testing.T) {
 		{false, "go fix ./..."},
 		{false, "cat a.go | tee " + scratch + "/copy"},
 		{true, "echo x > " + outside + "/f"},
-		{false, "cd $SOMEWHERE && echo x > a.go"},
 		{true, `python3 -c "open('a.go','w').write('x')"`},
 		{true, `python3 -c 'open("a.go", "r+").write("x")'`},
 		{true, `timeout 10 python3 -c "open('a.go', mode='a').write('x')"`},
@@ -943,6 +945,25 @@ func TestShellEdits(t *testing.T) {
 				if reason != "" && !strings.Contains(reason, tool) {
 					t.Errorf("%q: reason %q does not name %s", c.command, reason, tool)
 				}
+			}
+		})
+	}
+}
+
+func TestUnknownShellWrites(t *testing.T) {
+	for command, deny := range map[string]bool{
+		"echo x > $F":                         true,
+		"cd $SOMEWHERE && echo x > a.go":      true,
+		"cd $SOMEWHERE && cat a.go":           false,
+		"cd $SOMEWHERE && echo x > /dev/null": false,
+	} {
+		t.Run(caseName(deny, command), func(t *testing.T) {
+			reason := judge(t, t.TempDir(), command)
+			if (reason != "") != deny {
+				t.Errorf("reason %q, want refusal %v", reason, deny)
+			}
+			if deny && (!strings.Contains(reason, "cannot be resolved") || !strings.Contains(reason, "explicit") || !saysInstead(reason)) {
+				t.Errorf("unresolved-write recovery missing: %s", reason)
 			}
 		})
 	}
@@ -1237,11 +1258,11 @@ func TestEmacsAlternateEditor(t *testing.T) {
 
 func TestWorktreePrune(t *testing.T) {
 	for command, deny := range map[string]bool{
-		"git worktree prune --dry-run -v": false,
-		"git worktree prune -n": false,
-		"git worktree prune -nv": false,
-		"git worktree prune": true,
-		"git worktree prune --expire=now": true,
+		"git worktree prune --dry-run -v":           false,
+		"git worktree prune -n":                     false,
+		"git worktree prune -nv":                    false,
+		"git worktree prune":                        true,
+		"git worktree prune --expire=now":           true,
 		"git worktree prune --dry-run --no-dry-run": true,
 		"git worktree prune --no-dry-run --dry-run": false,
 	} {
@@ -1546,7 +1567,7 @@ func TestGitConfigAlias(t *testing.T) {
 		"xargs git config --global alias.x < cmd":     shellAlias,
 		"git config alias.x":                          "",
 		"git config --global alias.lg":                "",
-		"git config alias.x < cmd":                    shellAlias,
+		"git config alias.x < cmd":                    "",
 		"timeout 5 xargs git config alias.x":          shellAlias,
 		"git config --unset alias.x":                  "",
 		"printf '[alias] x = !sh' >> .git/config":     gitConfigShell,
@@ -2084,6 +2105,7 @@ func TestCodexTerminalReaders(t *testing.T) {
 		{"ls | xargs echo", false},
 		{"xargs -a list echo", false},
 		{"ls", false},
+		{"> /dev/null", false},
 	} {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
 			input, _ := json.Marshal(map[string]string{"command": c.command})

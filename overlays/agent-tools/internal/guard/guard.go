@@ -280,8 +280,8 @@ func command(text string, depth int, who role, dir, checkout string, background 
 	var ends []string
 	texts, inBackground, segmentEnds := backgroundSegments(text)
 	for i, segment := range texts {
-		if words, expands := split(segment); len(words) > 0 {
-			calls = append(calls, call{words: words, expands: expands})
+		if c := split(segment); len(c.words) > 0 || len(c.redirects) > 0 {
+			calls = append(calls, c)
 			backgrounds = append(backgrounds, background || inBackground[i])
 			ends = append(ends, segmentEnds[i])
 		}
@@ -303,6 +303,15 @@ func command(text string, depth int, who role, dir, checkout string, background 
 	// it.
 	bg, end := false, ""
 	v := visitor{
+		redirects: func(redirects []redirection) string {
+			for _, cwd := range w.here {
+				if reason := checkSession(call{words: []string{":"}, redirects: redirects}, cwd); reason != "" {
+					return reason
+				}
+			}
+			return ""
+		},
+		chdir: w.inDir,
 		script: func(text string) string {
 			for _, cwd := range w.here {
 				if reason := command(text, depth+1, who, cwd, checkout, bg); reason != "" {
@@ -359,7 +368,14 @@ func cdTarget(c call, cwd string) string {
 	if word == "-" {
 		return ""
 	}
-	path := expandPath(word, cwd)
+	path := word
+	if !expands[0] && strings.ContainsAny(word, "$`") {
+		if !filepath.IsAbs(path) && cwd != "" {
+			path = filepath.Join(cwd, path)
+		}
+	} else {
+		path = expandPath(word, cwd)
+	}
 	// A .. after a link climbs from where the link leads, which cleaning
 	// the spelling would not.
 	if strings.Contains("/"+word+"/", "/../") {
