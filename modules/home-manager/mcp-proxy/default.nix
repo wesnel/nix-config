@@ -9,7 +9,6 @@ with lib; let
   darwin = pkgs.stdenv.hostPlatform.isDarwin;
 
   proxy = getExe pkgs.tbxark-mcp-proxy;
-  label = "org.nix-community.home.mcp-proxy";
   tokenFile = "${cfg.stateDir}/token";
 
   # Remote servers are reached with short-lived OAuth tokens that the proxy
@@ -75,9 +74,12 @@ with lib; let
     '';
   };
 
+  # Home Manager's domain values, gui and user, are also launchctl's domain
+  # prefixes.
+  agent = config.launchd.agents.mcp-proxy;
   restart =
     if darwin
-    then "launchctl kickstart -k \"user/$(id -u)/${label}\""
+    then "launchctl kickstart -k \"${agent.domain}/$(id -u)/${agent.config.Label}\""
     else "systemctl --user restart mcp-proxy.service";
 
   authorize = pkgs.writeShellApplication {
@@ -238,9 +240,11 @@ in {
     }
 
     (mkIf darwin {
+      # Left in the default gui domain. In the user domain, where home-manager
+      # adds LimitLoadToSessionType = Background, launchd did not load it
+      # after a reboot, and the proxy stayed down until it was loaded by hand.
       launchd.agents.mcp-proxy = {
         enable = true;
-        domain = "user";
 
         config = {
           ProgramArguments = [(getExe serve)];
