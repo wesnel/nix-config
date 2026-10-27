@@ -1,10 +1,12 @@
 package plans
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // commitRepo makes a repository whose origin is GitHub's o/r and whose
@@ -108,6 +110,122 @@ func TestRecordCommit(t *testing.T) {
 		if got := commitsOf(t, own[0]); len(got) != 8 {
 			t.Errorf("commits %q", got)
 		}
+	})
+}
+
+// locatePlan makes a plan, made at, whose own file names worktrees and
+// sessions, and returns its file.
+func locatePlan(t *testing.T, c Config, slug string, at time.Time, worktrees, sessions []string) string {
+	t.Helper()
+	made, err := c.New(NewOptions{Title: "Add " + slug, Slug: slug, Worktrees: worktrees, Sessions: sessions}, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return made.Plan
+}
+
+// locatePart gives plan a part id whose file names worktrees and sessions.
+func locatePart(t *testing.T, c Config, plan, id string, worktrees, sessions []string) {
+	t.Helper()
+	text, err := os.ReadFile(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withPart := strings.Replace(string(text), "** Distribution\n",
+		"** Distribution\n*** The part\n:PROPERTIES:\n:ID: "+id+"\n:END:\n", 1)
+	if withPart == string(text) {
+		t.Fatalf("%s has no Distribution heading to add %s under", plan, id)
+	}
+	if err := os.WriteFile(plan, []byte(withPart), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.New(NewOptions{Title: "The part", Parent: plan, Part: id, Worktrees: worktrees,
+		Sessions: sessions}, day); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLocate(t *testing.T) {
+	later := day.AddDate(0, 0, 1)
+	locate := func(t *testing.T, c Config, session, worktree, wantPlan, wantPart string) {
+		t.Helper()
+		p, part, ok := c.Locate(session, worktree)
+		if !ok || p.File() != wantPlan || part != wantPart {
+			t.Errorf("Locate(%q, %q) = %s part %q, %v; want %s part %q", session, worktree, p.File(), part, ok,
+				wantPlan, wantPart)
+		}
+	}
+
+	t.Run("the session's plan over an older plan of the worktree", func(t *testing.T) {
+		c := testConfig(t)
+		locatePlan(t, c, "old", day, []string{"/w/main"}, []string{"claude:other"})
+		mine := locatePlan(t, c, "mine", later, []string{"/w/mine"}, []string{"claude:s1"})
+		locate(t, c, "s1", "/w/main", mine, "")
+	})
+
+	t.Run("the session's older plan that names the worktree", func(t *testing.T) {
+		c := testConfig(t)
+		older := locatePlan(t, c, "older", day, []string{"/w/a"}, []string{"claude:s1"})
+		locatePlan(t, c, "newer", later, []string{"/w/b"}, []string{"claude:s1"})
+		locate(t, c, "s1", "/w/a", older, "")
+	})
+
+	t.Run("the worktree's plan when no plan names the session", func(t *testing.T) {
+		c := testConfig(t)
+		plan := locatePlan(t, c, "x", day, []string{"/w/main"}, []string{"claude:other"})
+		locate(t, c, "s1", "/w/main", plan, "")
+	})
+
+	t.Run("a part naming the worktree over its own file naming it", func(t *testing.T) {
+		c := testConfig(t)
+		plan := locatePlan(t, c, "x", day, []string{"/w/part"}, []string{"claude:s1"})
+		locatePart(t, c, plan, "P1", []string{"/w/part"}, []string{"claude:s1"})
+		locate(t, c, "s1", "/w/part", plan, "P1")
+	})
+
+	t.Run("a part naming the worktree but no session", func(t *testing.T) {
+		c := testConfig(t)
+		plan := locatePlan(t, c, "x", day, []string{"/w/main"}, []string{"claude:s1"})
+		locatePart(t, c, plan, "P1", []string{"/w/part"}, nil)
+		locate(t, c, "s1", "/w/part", plan, "P1")
+	})
+
+	// After a /clear only the plan's own file names the new session.
+	t.Run("a part naming an earlier session", func(t *testing.T) {
+		c := testConfig(t)
+		plan := locatePlan(t, c, "x", day, nil, []string{"claude:s1", "claude:s2"})
+		locatePart(t, c, plan, "P1", []string{"/w/part"}, []string{"claude:s1"})
+		locate(t, c, "s2", "/w/part", plan, "P1")
+	})
+
+	t.Run("the own file when no file names the worktree", func(t *testing.T) {
+		c := testConfig(t)
+		plan := locatePlan(t, c, "x", day, nil, []string{"claude:s1"})
+		locatePart(t, c, plan, "P1", []string{"/w/part"}, []string{"claude:s1"})
+		locate(t, c, "s1", "/w/other", plan, "")
+	})
+
+	t.Run("the first part when only parts name the session", func(t *testing.T) {
+		c := testConfig(t)
+		plan := locatePlan(t, c, "x", day, nil, []string{"claude:lead"})
+		locatePart(t, c, plan, "P1", []string{"/w/p1"}, []string{"claude:s1"})
+		locatePart(t, c, plan, "P2", []string{"/w/p2"}, []string{"claude:s1"})
+		locate(t, c, "s1", "/w/other", plan, "P1")
+	})
+
+	t.Run("the newest of equally named plans", func(t *testing.T) {
+		c := testConfig(t)
+		locatePlan(t, c, "older", day, []string{"/w/a"}, []string{"claude:s1"})
+		newer := locatePlan(t, c, "newer", later, []string{"/w/a"}, []string{"claude:s1"})
+		locate(t, c, "s1", "/w/a", newer, "")
+	})
+
+	t.Run("one key", func(t *testing.T) {
+		c := testConfig(t)
+		bySession := locatePlan(t, c, "a", day, []string{"/w/a"}, []string{"claude:s1"})
+		byWorktree := locatePlan(t, c, "b", later, []string{"/w/b"}, []string{"claude:other"})
+		locate(t, c, "s1", "", bySession, "")
+		locate(t, c, "", "/w/b", byWorktree, "")
 	})
 }
 

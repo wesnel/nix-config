@@ -79,16 +79,16 @@ func testRequestSignPlan(t *testing.T) {
 			if out, err := exec.Command("git", "-C", worktree, "init", "-q", "-b", "topic").CombinedOutput(); err != nil {
 				t.Fatalf("git init: %v %s", err, out)
 			}
-			selected, err := c.New(NewOptions{Title: "Selected", Slug: "selected", Sessions: []string{"codex:handoff"}}, day)
+			selected, err := c.New(NewOptions{Title: "Selected", Slug: "selected"}, day)
 			if err != nil {
 				t.Fatal(err)
 			}
-			implicit, err := c.New(NewOptions{Title: "Implicit", Slug: "implicit", Worktrees: []string{worktree}}, day)
+			implicit, err := c.New(NewOptions{Title: "Implicit", Slug: "implicit", Sessions: []string{"codex:handoff"}, Worktrees: []string{worktree}}, day)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if picked, _, ok := c.Locate("codex:handoff", worktree); !ok || picked.Name != implicit.ID {
-				t.Fatalf("fixture has no competing worktree plan: %+v, %v", picked, ok)
+				t.Fatalf("fixture has no competing located plan: %+v, %v", picked, ok)
 			}
 			target := selected.Plan
 			logs := []string{selected.Log, implicit.Log}
