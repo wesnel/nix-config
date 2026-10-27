@@ -1235,6 +1235,24 @@ func TestEmacsAlternateEditor(t *testing.T) {
 	})
 }
 
+func TestWorktreePrune(t *testing.T) {
+	for command, deny := range map[string]bool{
+		"git worktree prune --dry-run -v": false,
+		"git worktree prune -n": false,
+		"git worktree prune -nv": false,
+		"git worktree prune": true,
+		"git worktree prune --expire=now": true,
+		"git worktree prune --dry-run --no-dry-run": true,
+		"git worktree prune --no-dry-run --dry-run": false,
+	} {
+		t.Run(command, func(t *testing.T) {
+			if reason := judge(t, t.TempDir(), command); (reason != "") != deny {
+				t.Errorf("reason %q, want refusal %v", reason, deny)
+			}
+		})
+	}
+}
+
 // Lisp that stops Emacs, or deletes or starts a server, goes only to a
 // test socket, and names no other server there.
 func TestEmacsServerCall(t *testing.T) {

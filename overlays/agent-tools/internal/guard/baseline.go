@@ -2621,6 +2621,20 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 	if len(rest) > 0 {
 		first = rest[0]
 	}
+	pruneDryRun := false
+	if sub == "worktree" && first == "prune" {
+		for _, arg := range rest[1:] {
+			if arg == "--" {
+				break
+			}
+			switch {
+			case arg == "--no-dry-run":
+				pruneDryRun = false
+			case arg == "--dry-run", strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && strings.Contains(arg, "n"):
+				pruneDryRun = true
+			}
+		}
+	}
 	switch {
 	case sub == "stash" && (first == "drop" || first == "clear"):
 		return sharedStash
@@ -2653,7 +2667,7 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 	case sub == "reflog" && (first == "expire" || first == "delete"),
 		sub == "gc" && (has("--prune=now") || has("--prune=all")),
 		sub == "prune", sub == "filter-branch", sub == "filter-repo",
-		sub == "worktree" && first == "prune":
+		sub == "worktree" && first == "prune" && !pruneDryRun:
 		return historyLoss
 	case sub == "update-ref" && has("-d"):
 		for _, w := range rest {
