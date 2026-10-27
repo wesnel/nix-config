@@ -34,10 +34,11 @@ was split among sub-agents: a coordinator runs the same pipeline, and the
 
 ## The goal statement
 
-The reviewer's only view of intent: a file holding the goal and what is not
-this change's job, taken from the plan, with nothing of how the work went.
-Write it with `agent-plan goal PLAN [--part P1] > FILE`. When the caller
-hands you a goal statement, use that file as it stands.
+The reviewer's only view of intent: the plan's Goal, or a part's, holding
+the goal and what is not this change's job, with nothing of how the work
+went. `agent-plan goal PLAN [--part P1]` prints it, and `git delegate`
+reads it with `--plan PLAN [--part P1]`. When the caller names a plan and
+part for the review, use their Goal as it stands.
 
 Measure every proposed change against the goal, not against its size: a
 large change the goal needs is in scope, and a one-line improvement it does
@@ -69,8 +70,9 @@ or a step's.
 The range is the whole change, `BASE..TIP`, with BASE where it starts, such
 as `origin/main` or the parent branch in a stack.
 
-1. Write the goal statement to a file, and the items the change answers
-   (threads, CI checks) with how each was settled to another, if any.
+1. Write the items the change answers (threads, CI checks), with how each
+   was settled, to a file, if any. The goal statement is the plan's Goal,
+   or the part's.
 2. In Claude Code, run `/code-review` with BASE as its target: with none, it
    reviews only the commits ahead of the branch's upstream, which a local
    branch may not have. Then the second opinion, from another model
@@ -79,7 +81,7 @@ as `origin/main` or the parent branch in a stack.
    being the branch's worktree, not `$TMPDIR`, which a sandboxed command and
    git delegate resolve to different directories; every file you pass
    delegate goes in WORKTREE the same way, by its absolute path. Then run
-   `git delegate --goal GOAL [--items ITEMS] [--red-check WORKTREE/red-check.json] BASE..TIP`
+   `git delegate --plan PLAN [--part P1] [--items ITEMS] [--red-check WORKTREE/red-check.json] BASE..TIP`
    as a command of its own, with no `cd` before it: it resolves the range
    from any worktree of the repository. Remove `red-check.json` after it.
    It runs Codex, and each focused review its scan routes the change to,
@@ -106,8 +108,8 @@ as `origin/main` or the parent branch in a stack.
 
 Without `--reviewer`, delegate runs each focused review its scan routes
 the change to. A route only the reviewer named is printed with the command
-that runs it: `git delegate --reviewer ROUTE --goal GOAL BASE..TIP`, the
-same range and goal. `security` reviews what the change lets someone do;
+that runs it: `git delegate --reviewer ROUTE --plan PLAN BASE..TIP`, the
+same range and plan. `security` reviews what the change lets someone do;
 `compat` reviews what outlives the commit (stored state, flags, output
 others parse, config keys and options, what another host or branch reads),
 and checks the pull request description's `## Reverting` section against
@@ -142,7 +144,8 @@ in pr-review.
 
 1. The plan's goal is ours, never the pull request's text: "review
    OWNER/NAME#N at its head for the operator; propose comments only".
-   delegate writes the reviewer's goal statement itself; `--goal` adds ours.
+   delegate writes the reviewer's goal statement itself; `--plan PLAN`
+   adds ours.
 2. For its tests, run red-check in a checkout of this clone:
    `git red-check $(git merge-base refs/pr-review/N/base refs/pr-review/N/head)..refs/pr-review/N/head
    > red-check.json` where delegate fetched into this clone. Where it used a
@@ -235,7 +238,7 @@ for it, or the design review does, for a change that crosses two or more
 packages or modules, or adds a state set or a cross-process protocol.
 
 Add `--reviewer diagram` to the review that needs it, as
-`git delegate --reviewer codex --reviewer diagram --goal GOAL BASE..TIP`.
+`git delegate --reviewer codex --reviewer diagram --plan PLAN BASE..TIP`.
 Claude Code's `diagrammer` agent draws at most three diagrams, each element
 citing the lines at TIP it stands for; delegate holds every citation to the
 code, Codex critiques each element by element, and one the critic faults is

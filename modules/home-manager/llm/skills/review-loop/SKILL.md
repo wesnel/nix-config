@@ -49,10 +49,15 @@ measured as the `review-change` skill's goal statement says.
 1. `pr-loop stack` from each PR's branch. If `linear` is false, stop and
    ask. If its PRs chain by their bases but GitHub's stack (`github`) is
    null or leaves some out, run `pr-loop link` once with them, bottom first.
-2. Write a scope statement per PR into the plan (the `plan-work` skill):
-   the goal from the PR description and its Linear ticket (read-only; the
-   ticket ID is usually in the branch name, e.g. `agent-911` is
-   `AGENT-911`), and what is explicitly not this PR's job.
+2. Write a scope statement per PR as the Goal of a part of the plan (the
+   `plan-work` skill), each command titled with the PR's number and title:
+   `agent-plan part PLAN --title '#12 Add the flag'` adds the part,
+   `agent-plan new --parent PLAN --part P1 --title '#12 Add the flag'`
+   makes its file, and `agent-plan section PLAN Goal --text TEXT --part P1`
+   writes its Goal. It holds the goal
+   from the PR description and its Linear ticket (read-only; the ticket ID
+   is usually in the branch name, e.g. `agent-911` is `AGENT-911`), and
+   what is explicitly not this PR's job.
 3. Work on each PR's branch in a worktree under `~/.claude/worktrees`,
    made with `git worktree add`, with `git config --worktree
    commit.gpgsign false` in it. In each new worktree run `pr-loop setup`,
@@ -104,7 +109,8 @@ next one starts at step 1.
 6. **Review**, once per round: for each PR with new fixups, one round of
    the `review-change` skill's fresh review loop over the range from the
    branch's tip at round start to the branch. The goal statement is the
-   PR's scope statement, and the items are the threads and checks the
+   PR's scope statement, its part's Goal (`--plan PLAN --part P1`), and
+   the items are the threads and checks the
    fixups answer. In a loop session `git delegate`'s Codex review exits 4, so the
    second opinion is an `adversarial-reviewer` sub-agent. A `compat` review
    the change is routed to also takes `--description FILE`, the PR's
@@ -178,3 +184,5 @@ In bots mode, stop and hand back when any of these holds:
    handing over. Then hand over the signing pass as the `signing-pass`
    skill's Handing over says, naming the stack's top branch.
 4. In bots mode, `pr-loop end PR...` deletes the loop's trigger comments.
+5. Log each PR's part done, `agent-plan log PLAN --item P1 --kind done`,
+   so `agent-plan status` no longer lists it as ready to start.

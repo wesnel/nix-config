@@ -78,7 +78,7 @@ func TestFocusCompat(t *testing.T) {
 	t.Run("checked", func(t *testing.T) {
 		f := setUp(t, true)
 		compatSays(t, f, compatReply(t, checkedOf(t, "compat", "")))
-		code, run, stderr := runDelegate(t, "--reviewer", "compat", "--goal", ".git/goal.md", "--description",
+		code, run, stderr := runDelegate(t, "--reviewer", "compat", "--plan", f.plan, "--description",
 			description(t, f, reverting), f.base+"..HEAD")
 		out := run.review("compat")
 		if code != 3 || out.Focus != "compat" || len(out.Findings) != 1 || out.Findings[0]["id"] != "compat-1" ||
@@ -119,7 +119,7 @@ func TestFocusCompat(t *testing.T) {
 	t.Run("a category left out", func(t *testing.T) {
 		f := setUp(t, true)
 		compatSays(t, f, compatReply(t, checkedOf(t, "compat", "reverting")))
-		code, run, stderr := runDelegate(t, "--reviewer", "compat", "--goal", ".git/goal.md", "--description",
+		code, run, stderr := runDelegate(t, "--reviewer", "compat", "--plan", f.plan, "--description",
 			description(t, f, reverting), f.base+"..HEAD")
 		if code != 4 || len(run.NotRun) != 1 || run.NotRun[0]["reviewer"] != "compat" || !strings.Contains(stderr, "reverting") {
 			t.Errorf("exit %d, %+v\n%s", code, run, stderr)
@@ -134,7 +134,7 @@ func TestFocusCompat(t *testing.T) {
 		must(0, json.Unmarshal([]byte(compatReply(t, "[]")), &reply))
 		reply["checked"] = Categories
 		f.claudeSays(t, "security-reviewer", claudeResult(reply, ""))
-		code, run, stderr := runDelegate(t, "--reviewer", "security", "--goal", ".git/goal.md", f.base+"..HEAD")
+		code, run, stderr := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
 		if out := run.review("security"); code != 0 || len(out.Findings) != 0 || len(out.Dropped) != 1 {
 			t.Errorf("exit %d, %+v\n%s", code, run, stderr)
 		}
@@ -145,12 +145,12 @@ func TestFocusCompat(t *testing.T) {
 		compatSays(t, f, compatReply(t, checkedOf(t, "compat", "")))
 		given := f.base + "..HEAD"
 		for what, args := range map[string][]string{
-			"no description": {"--reviewer", "compat", "--goal", ".git/goal.md", given},
-			"no Reverting section": {"--reviewer", "compat", "--goal", ".git/goal.md", "--description",
+			"no description": {"--reviewer", "compat", "--plan", f.plan, given},
+			"no Reverting section": {"--reviewer", "compat", "--plan", f.plan, "--description",
 				description(t, f, "Grows the code.\n\n## Limits\n\nNone.\n"), given},
-			"an empty Reverting section": {"--reviewer", "compat", "--goal", ".git/goal.md", "--description",
+			"an empty Reverting section": {"--reviewer", "compat", "--plan", f.plan, "--description",
 				description(t, f, "Grows the code.\n\n## Reverting\n\n## Limits\n\nNone.\n"), given},
-			"no description, printed": {"--print-prompt", "--reviewer", "compat", "--goal", ".git/goal.md", given},
+			"no description, printed": {"--print-prompt", "--reviewer", "compat", "--plan", f.plan, given},
 		} {
 			code, _, stderr := runDelegate(t, args...)
 			refused(t, what, code, stderr)
@@ -165,7 +165,7 @@ func TestFocusCompat(t *testing.T) {
 
 	t.Run("printed", func(t *testing.T) {
 		f := setUp(t, false)
-		code, stdout, stderr := delegateCmd(t, "--print-prompt", "--reviewer", "compat", "--goal", ".git/goal.md",
+		code, stdout, stderr := delegateCmd(t, "--print-prompt", "--reviewer", "compat", "--plan", f.plan,
 			"--description", description(t, f, reverting), f.base+"..HEAD")
 		if code != 0 || !strings.Contains(stdout, "This is a compatibility review") ||
 			!strings.Contains(stdout, "no reader keeps the third line") {
@@ -183,7 +183,7 @@ func TestFocusCompat(t *testing.T) {
 		// The change is a branch's, from where main stands.
 		run(t, f.repo, "git", "checkout", "-q", "-b", "feat")
 		run(t, f.repo, "git", "branch", "-f", "main", f.base)
-		code, run, stderr := runDelegate(t, "--goal", ".git/goal.md", f.base+"..HEAD")
+		code, run, stderr := runDelegate(t, "--plan", f.plan, f.base+"..HEAD")
 		if code != 4 || len(run.NotRun) != 1 || run.NotRun[0]["reviewer"] != "compat" {
 			t.Fatalf("exit %d, %+v\n%s", code, run, stderr)
 		}
@@ -191,8 +191,8 @@ func TestFocusCompat(t *testing.T) {
 			strings.Contains(stderr, "--print-prompt --reviewer compat") || strings.Contains(stderr, "outside any sandbox") {
 			t.Errorf("stderr:\n%s", stderr)
 		}
-		code, _, stderr = runDelegate(t, "--reviewer", "codex", "--goal", ".git/goal.md", f.base+"..HEAD")
-		if code != 0 || !strings.Contains(stderr, "run `git delegate --reviewer compat --goal FILE --description FILE "+
+		code, _, stderr = runDelegate(t, "--reviewer", "codex", "--plan", f.plan, f.base+"..HEAD")
+		if code != 0 || !strings.Contains(stderr, "run `git delegate --reviewer compat --plan "+f.plan+" --description FILE "+
 			f.base+"..HEAD`") {
 			t.Errorf("exit %d\n%s", code, stderr)
 		}
@@ -203,8 +203,8 @@ func TestFocusCompat(t *testing.T) {
 	t.Run("a hint that runs", func(t *testing.T) {
 		f := setUp(t, true)
 		t.Setenv("PR_LOOP_SESSION", "1")
-		code, _, stderr := runDelegate(t, "--reviewer", "codex", "--goal", ".git/goal.md", f.base+"..HEAD")
-		if code != 4 || !strings.Contains(stderr, "`git delegate --print-prompt --reviewer codex --goal FILE "+f.base+"..HEAD`") {
+		code, _, stderr := runDelegate(t, "--reviewer", "codex", "--plan", f.plan, f.base+"..HEAD")
+		if code != 4 || !strings.Contains(stderr, "`git delegate --print-prompt --reviewer codex --plan "+f.plan+" "+f.base+"..HEAD`") {
 			t.Errorf("exit %d\n%s", code, stderr)
 		}
 	})
@@ -213,11 +213,11 @@ func TestFocusCompat(t *testing.T) {
 	// command that prints its prompt, the description included.
 	t.Run("the agent type named", func(t *testing.T) {
 		f := setUp(t, true)
-		t.Setenv("AGENT_TOOLS_CONFIG", filepath.Join(t.TempDir(), "none.json"))
-		code, _, stderr := runDelegate(t, "--reviewer", "compat", "--goal", ".git/goal.md", "--description",
+		f.config(t, map[string]any{})
+		code, _, stderr := runDelegate(t, "--reviewer", "compat", "--plan", f.plan, "--description",
 			description(t, f, reverting), f.base+"..HEAD")
 		if code != 4 || !strings.Contains(stderr, "start a new `compat-reviewer` sub-agent on what `git delegate "+
-			"--print-prompt --reviewer compat --goal FILE --description FILE "+f.base+"..HEAD` prints") {
+			"--print-prompt --reviewer compat --plan "+f.plan+" --description FILE "+f.base+"..HEAD` prints") {
 			t.Errorf("exit %d\n%s", code, stderr)
 		}
 	})

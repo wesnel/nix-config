@@ -37,7 +37,7 @@ func TestDiagrams(t *testing.T) {
 	t.Setenv("FAKE_CODEX", "critique")
 	t.Setenv("FAKE_CHECKED", `["N1", "N2", "E1"]`)
 	f.claudeSays(t, "diagrammer", diagramsReply(codeDiagram(f.tip, 3), codeDiagram(f.tip, 9)))
-	code, out, stderr := runDelegate(t, "--reviewer", "diagram", "--goal", ".git/goal.md", f.base+"..HEAD")
+	code, out, stderr := runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
@@ -80,7 +80,7 @@ func TestDiagramRedrawn(t *testing.T) {
 	redrawn := codeDiagram(f.tip, 3)
 	redrawn["title"] = "The code, redrawn"
 	f.claudeSays(t, "diagrammer", diagramsReply(codeDiagram(f.tip, 3)), diagramsReply(redrawn))
-	code, out, stderr := runDelegate(t, "--reviewer", "diagram", "--goal", ".git/goal.md", f.base+"..HEAD")
+	code, out, stderr := runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
@@ -109,7 +109,7 @@ func TestDiagramUnresolved(t *testing.T) {
 	redrawn := codeDiagram(f.tip, 3)
 	redrawn["title"] = "The code, redrawn"
 	f.claudeSays(t, "diagrammer", diagramsReply(codeDiagram(f.tip, 3)), diagramsReply(redrawn))
-	code, out, stderr := runDelegate(t, "--reviewer", "diagram", "--goal", ".git/goal.md", f.base+"..HEAD")
+	code, out, stderr := runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
 	if code != 3 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
@@ -137,7 +137,7 @@ func TestDiagramInconclusive(t *testing.T) {
 			t.Setenv("FAKE_CODEX", mode)
 			t.Setenv("FAKE_CHECKED", `["N1", "N2", "E1"]`)
 			f.claudeSays(t, "diagrammer", diagramsReply(codeDiagram(f.tip, 3)))
-			code, out, stderr := runDelegate(t, "--reviewer", "diagram", "--goal", ".git/goal.md", f.base+"..HEAD")
+			code, out, stderr := runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
 			if code != 0 {
 				t.Fatalf("exit %d\n%s", code, stderr)
 			}
@@ -163,7 +163,7 @@ func TestDiagramRerun(t *testing.T) {
 	f.claudeSays(t, "diagrammer", diagramsReply(codeDiagram(f.tip, 3)), diagramsReply(other, codeDiagram(f.tip, 3)))
 	var rec *record.Range
 	for range 2 {
-		code, out, stderr := runDelegate(t, "--reviewer", "diagram", "--goal", ".git/goal.md", f.base+"..HEAD")
+		code, out, stderr := runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
 		if code != 0 {
 			t.Fatalf("exit %d\n%s", code, stderr)
 		}
@@ -194,7 +194,7 @@ func TestReplaceDiagrams(t *testing.T) {
 func TestDiagramsWithoutCodex(t *testing.T) {
 	f := setUp(t, true)
 	t.Setenv("PR_LOOP_SESSION", "1")
-	code, out, stderr := runDelegate(t, "--reviewer", "diagram", "--goal", ".git/goal.md", f.base+"..HEAD")
+	code, out, stderr := runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
 	if code != 4 || len(out.NotRun) != 1 || out.NotRun[0]["reviewer"] != "diagram" {
 		t.Errorf("exit %d, %+v\n%s", code, out, stderr)
 	}

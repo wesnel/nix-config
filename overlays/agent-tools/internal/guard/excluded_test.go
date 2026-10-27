@@ -77,7 +77,7 @@ func TestExcludedAlone(t *testing.T) {
 		says      string // what the reason holds
 	}{
 		{"agent-plan log /p.org --item S1 --kind started --summary '> a | b'", false, "may run sandboxed"},
-		{"git delegate --goal goal.txt main..topic", false, "may run sandboxed"},
+		{"git delegate --plan /p/2026-10-14-x.box.org main..topic", false, "may run sandboxed"},
 		{"gh-read pr view 5 -R o/r", false, "may run sandboxed"},
 		{"pr-loop wait ci 5", false, "may run sandboxed"},
 		// gh cannot read its login in the sandbox, in any form.
@@ -126,7 +126,7 @@ func TestExcludedAlone(t *testing.T) {
 	// git's own options before delegate keep the line from matching. The
 	// hint names what works: delegate takes no -C, and resolves its range
 	// from any worktree.
-	decision, reason := hook(t, "git -C "+work+" delegate --goal g main..topic", false)
+	decision, reason := hook(t, "git -C "+work+" delegate --plan /p/2026-10-14-x.box.org main..topic", false)
 	if decision != "deny" || strings.Contains(reason, "-C") || !strings.Contains(reason, "any worktree") {
 		t.Errorf("git -C DIR delegate: %q, %q", decision, reason)
 	}

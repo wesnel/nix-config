@@ -7,25 +7,27 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/record"
 	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/routes"
 )
 
 // Usage is `git delegate -h`.
-const Usage = `usage: git delegate [--reviewer TYPE]... [--goal FILE] [--items FILE] [--red-check FILE]
+const Usage = `usage: git delegate [--reviewer TYPE]... [--plan PLAN [--part P]] [--items FILE] [--red-check FILE]
                     [--description FILE] [--model M] [--timeout S] SOURCE
        git delegate ask [--reviewer TYPE] --question FILE PATH...   (see git delegate ask -h)
        git delegate show SOURCE                                      (see git delegate show -h)
        git delegate settle SOURCE FINDING OUTCOME [--target X] [--reason-file F]
-       git delegate --print-prompt [--reviewer TYPE] [--goal FILE] [--items FILE] [--red-check FILE]
-                    [--description FILE] SOURCE
+       git delegate --print-prompt [--reviewer TYPE] [--plan PLAN [--part P]] [--items FILE]
+                    [--red-check FILE] [--description FILE] SOURCE
 
 Reviews SOURCE with reviewers that did not write it, and keeps what they
 found in its review record, under $XDG_STATE_HOME/agent-tools/reviews/
@@ -175,8 +177,11 @@ the upstream text before a reviewer sees them. For a pull request the
 earlier findings include those of its newest review at another head.
 
   --reviewer TYPE   a type to run, as above; repeat for more
-  --goal FILE       the goal statement, required for a range: the goal, and
-                    what is not this change's job
+  --plan PLAN       the plan, as agent-plan takes it, whose Goal is the goal
+                    statement: the goal, and what is not this change's job.
+                    Required for a range; for a pull request it adds the
+                    operator's goal to the one delegate writes
+  --part P          read the Goal of PLAN's part P, as P1, instead
   --items FILE      the items the change answers, and how each was settled
   --red-check FILE  git red-check BASE..TIP's JSON
   --description FILE
@@ -272,7 +277,10 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	var reviewers typeList
 	flags.Var(&reviewers, "reviewer", "")
-	goal := flags.String("goal", "", "")
+	// --goal is defined only to refuse it, naming --plan in its place.
+	flags.String("goal", "", "")
+	plan := flags.String("plan", "", "")
+	part := flags.String("part", "", "")
 	items := flags.String("items", "", "")
 	redCheckFile := flags.String("red-check", "", "")
 	description := flags.String("description", "", "")
@@ -297,6 +305,16 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		return 2
 	}
 	report := func(result any, err error, code int) int { return reportRecord(result, err, code, stdout, stderr) }
+	goalGiven := false
+	flags.Visit(func(f *flag.Flag) { goalGiven = goalGiven || f.Name == "goal" })
+	if goalGiven {
+		return report(nil, refusal.New("git delegate reads the goal statement from the plan, not a file; pass "+
+			"`--plan PLAN` in place of `--goal`, with `--part P1` for a part's goal"), 0)
+	}
+	if *part != "" && *plan == "" {
+		return report(nil, refusal.New("--part names a part of the plan --plan names; pass `--plan PLAN --part %s`",
+			*part), 0)
+	}
 	for _, t := range reviewers {
 		if _, ok := reviewerTypes[t]; !ok {
 			return report(nil, refusal.New("%q is not a reviewer type; pass `--reviewer` with one of %s", t,
@@ -322,19 +340,15 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	}
 
 	base := inputs{r: r}
-	if *goal != "" {
-		if base.goal, err = readFile(*goal, stdin); err != nil {
+	if *plan != "" {
+		if base.goal, err = planGoal(*plan, *part); err != nil {
 			return report(nil, err, 0)
 		}
+	} else if s.number == 0 {
+		return report(nil, refusal.New("a review is judged against a goal statement, the Goal of the change's plan; "+
+			"pass `--plan PLAN`, with `--part P1` for a part's goal"), 0)
 	}
-	if s.number == 0 && strings.TrimSpace(base.goal) == "" {
-		if *goal == "" {
-			return report(nil, refusal.New("a review is judged against a goal statement; write the goal, and what is not "+
-				"this change's job, to a file under the working directory and pass `--goal FILE`"), 0)
-		}
-		return report(nil, refusal.New("the goal statement %s is empty; write the goal, and what is not this change's job, "+
-			"into it and pass `--goal %s` again", *goal, *goal), 0)
-	}
+	goal := goalFlags(*plan, *part)
 	if *items != "" {
 		if base.items, err = readFile(*items, stdin); err != nil {
 			return report(nil, err, 0)
@@ -430,7 +444,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			}
 			fmt.Fprintf(stderr, "%s: the %s review could not run here: %s. Run `git delegate` where it can, outside any "+
 				"sandbox and review-loop session, or start %s on what `git delegate --print-prompt "+
-				"--reviewer %s %s%s` prints\n", name, t, run.why, reader, t, typeFlags(s, t), s.given)
+				"--reviewer %s %s%s` prints\n", name, t, run.why, reader, t, typeFlags(s, t, goal), s.given)
 			continue
 		}
 		runs = append(runs, run)
@@ -446,7 +460,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	for _, rt := range result.Routes {
 		if !slices.Contains(chosen, rt.Route) {
 			fmt.Fprintf(stderr, "%s: this change needs a %s review (%s): run `git delegate --reviewer %s %s%s`\n",
-				name, rt.Route, strings.Join(rt.Why, "; "), rt.Route, typeFlags(s, rt.Route), s.given)
+				name, rt.Route, strings.Join(rt.Why, "; "), rt.Route, typeFlags(s, rt.Route, goal), s.given)
 		}
 	}
 	title := s.given
@@ -522,16 +536,57 @@ func typeInputs(ctx context.Context, base inputs, t string, tests *adequacy, log
 
 // typeFlags are the flags, each followed by a space, that a command run
 // for type t of s needs beyond the source, so that a hint runs as given:
-// a range needs its goal, and a compat review of a range the description.
-func typeFlags(s *source, t string) string {
-	if s.number != 0 {
-		return ""
-	}
-	flags := "--goal FILE "
-	if focuses[reviewerTypes[t].focus].reverting {
+// goal, the goal's flags as goalFlags gives them, and for a compat review
+// of a range the description.
+func typeFlags(s *source, t, goal string) string {
+	flags := goal
+	if s.number == 0 && focuses[reviewerTypes[t].focus].reverting {
 		flags += "--description FILE "
 	}
 	return flags
+}
+
+// goalFlags are the --plan and --part flags given, each followed by a
+// space, quoted for the shell where they need it.
+func goalFlags(plan, part string) string {
+	var flags string
+	if plan != "" {
+		flags += "--plan " + shellWord(plan) + " "
+	}
+	if part != "" {
+		flags += "--part " + shellWord(part) + " "
+	}
+	return flags
+}
+
+var plainWord = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
+
+// shellWord is s as one shell word: as it is where nothing in it is special
+// to a shell, else single-quoted.
+func shellWord(s string) string {
+	if plainWord.MatchString(s) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// planGoal is the goal statement of plan, or of its part: the text under
+// its Goal heading, which agent-plan goal prints. plan may name a part's
+// file, which Open takes as its plan's, only together with that part.
+func planGoal(plan, part string) (string, error) {
+	c, err := plans.Load()
+	if err != nil {
+		return "", err
+	}
+	p, named, err := c.OpenFile(plan)
+	if err != nil {
+		return "", err
+	}
+	if named != "" && named != part {
+		return "", refusal.New("%s is part %s's file, and the plan's Goal is not the part's; pass `--plan %s --part %s`",
+			plan, named, shellWord(p.File()), named)
+	}
+	return p.Goal(part)
 }
 
 // reverting is the compat prompt's section of in's pull request

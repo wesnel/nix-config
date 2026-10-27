@@ -262,13 +262,14 @@ reviews evidence an agent cannot talk its way around.
 
 Reviews a range, or someone else's pull request, with reviewers that did
 not write it and see only the commits and what they are handed: a goal
-statement (the goal, and what is not the change's job) and optionally the
-items the change answers. It keeps what they found in a review record:
+statement (the goal, and what is not the change's job), the Goal of the
+change's plan or of a part of it, and optionally the items the change
+answers. It keeps what they found in a review record:
 
 ``` sh
-git delegate --goal goal.md origin/main..HEAD          # Codex, and each focused review the change needs
-git delegate --reviewer security --goal goal.md origin/main..HEAD
-git delegate --reviewer compat --goal goal.md --description pr.md origin/main..HEAD
+git delegate --plan PLAN origin/main..HEAD             # Codex, and each focused review the change needs
+git delegate --reviewer security --plan PLAN --part P1 origin/main..HEAD
+git delegate --reviewer compat --plan PLAN --description pr.md origin/main..HEAD
 git delegate wesnel/emacs-config#2                     # someone else's pull request
 git delegate show wesnel/emacs-config#2                # the review record, as JSON
 git delegate settle origin/main..HEAD F3 rebut --reason-file why.md

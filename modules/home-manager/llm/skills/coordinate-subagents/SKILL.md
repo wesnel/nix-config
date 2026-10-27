@@ -310,10 +310,10 @@ skill's "Questions for the operator" says, not into your message.
 
 Before Coalesce, run the `review-change` skill's fresh review loop on each
 branch by itself, never the whole stack at once: the range `<base>..<branch>`,
-the part's goal and what is not its job as the goal statement, at most three
-rounds. Your general review of a part is an `adversarial-reviewer` sub-agent
-given that range and goal statement, in place of `/code-review`;
-`git delegate` stays the second opinion. Review a branch once its
+the part's Goal as the goal statement, at most three rounds. Your general
+review of a part is an `adversarial-reviewer` sub-agent given that range,
+plan and part, in place of `/code-review`; `git delegate --plan PLAN --part
+P1` stays the second opinion. Review a branch once its
 sub-agent has finished it, then hand all of that round's findings to the
 sub-agent as one fix round, to settle as Triage says; check its report as
 any other.

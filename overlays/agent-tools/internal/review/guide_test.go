@@ -30,7 +30,7 @@ func TestGuide(t *testing.T) {
 		{"title": "Nothing", "summary": "Cites a line of no hunk.", "hunks": []string{"file:code.txt::9@" + tip[:12]}},
 	}, "unverified": []string{}}, "Walked."))
 
-	code, out, stderr := runDelegate(t, "--goal", ".git/goal.md", mid+"..HEAD")
+	code, out, stderr := runDelegate(t, "--plan", f.plan, mid+"..HEAD")
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
@@ -43,7 +43,7 @@ func TestGuide(t *testing.T) {
 		t.Errorf("a walkthrough of hunks outside the range: %+v", rec.Walkthrough)
 	}
 
-	code, out, stderr = runDelegate(t, "--goal", ".git/goal.md", f.base+"..HEAD")
+	code, out, stderr = runDelegate(t, "--plan", f.plan, f.base+"..HEAD")
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
@@ -90,7 +90,7 @@ func TestGuideOddPaths(t *testing.T) {
 	f.claudeSays(t, "review-guide", claudeResult(map[string]any{"chunks": []map[string]any{
 		{"title": "Drop a line", "summary": "s", "hunks": []string{"file:" + odd + "::1@" + r.tip[:12]}}},
 		"unverified": []string{}}, ""))
-	code, out, stderr := runDelegate(t, "--goal", ".git/goal.md", base+"..HEAD")
+	code, out, stderr := runDelegate(t, "--plan", f.plan, base+"..HEAD")
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
