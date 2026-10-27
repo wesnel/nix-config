@@ -661,14 +661,12 @@ with lib; let
 
       # Nothing on PATH (~/go/bin among it) and nothing that a program
       # outside the sandbox loads code or configuration from. Go's and
-      # golangci-lint's own caches, where they are by default. `trash` moves
-      # a file on the home volume into ~/.Trash, which the trash skill asks
-      # for in place of rm.
+      # golangci-lint's own caches, where they are by default.
       allowWrite =
         ["~/go/pkg"]
         ++ (
           if darwin
-          then ["~/Library/Caches/go-build" "~/Library/Caches/golangci-lint" "~/.Trash"]
+          then ["~/Library/Caches/go-build" "~/Library/Caches/golangci-lint"]
           else ["~/.cache/go-build" "~/.cache/golangci-lint"]
         )
         ++ ["~/.claude/worktrees" "~/.cache/nix" "~/.cache/uv"];
