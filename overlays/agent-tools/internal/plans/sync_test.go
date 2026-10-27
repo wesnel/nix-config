@@ -1,10 +1,13 @@
 package plans
 
 import (
+	"bufio"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1026,6 +1029,15 @@ func testInitCloneWithoutKey(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "notes", ".git")); err == nil {
 		t.Error("cloned without the key")
 	}
+	if _, err := os.Stat(c.Dir); !os.IsNotExist(err) {
+		t.Fatalf("deferred clone created the plans directory: %v", err)
+	}
+	if err := os.WriteFile(key, []byte("fixture key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := c.Init(); err != nil || !got.Cloned {
+		t.Errorf("retry with the key: %+v, %v", got, err)
+	}
 }
 
 // Init clones the notes repository where it is missing, with the deploy
@@ -1046,6 +1058,242 @@ func testInitCloneWithKey(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repo, "todo.org")); err != nil {
 		t.Errorf("not a clone of origin: %v", err)
+	}
+}
+
+func testInitCloneRetry(t *testing.T) {
+	c, _, key := cloning(t)
+	if err := os.WriteFile(key, []byte("fixture key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	origin := c.Remote
+	c.Remote = t.TempDir()
+	if got, err := c.Init(); err != nil || got.Cloned || !strings.Contains(got.Note, "failed") {
+		t.Fatalf("rejected clone: %+v, %v", got, err)
+	}
+	if _, err := os.Stat(c.Dir); !os.IsNotExist(err) {
+		t.Fatalf("rejected clone created the plans directory: %v", err)
+	}
+	c.Remote = origin
+	if got, err := c.Init(); err != nil || !got.Cloned {
+		t.Errorf("retry with origin: %+v, %v", got, err)
+	}
+}
+
+func testInitCloneLeftovers(t *testing.T) {
+	for _, layout := range []string{"nested", "repository root"} {
+		t.Run(layout, func(t *testing.T) {
+			c, root, key := cloning(t)
+			c.Repo = filepath.Join(root, "notes")
+			c.Dir = filepath.Join(c.Repo, "agents", "plans")
+			if layout == "repository root" {
+				c.Dir = c.Repo
+			}
+			if err := os.WriteFile(key, []byte("fixture key\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(c.Dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(c.Dir, ".gitignore"), []byte("*.lock\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 2; i++ {
+				if got, err := c.Init(); err != nil || got.Cloned != (i == 0) || got.Note != "" {
+					t.Fatalf("init %d with generated leftovers: %+v, %v", i, got, err)
+				}
+			}
+			if text, err := os.ReadFile(filepath.Join(c.Repo, "todo.org")); err != nil || len(text) == 0 {
+				t.Errorf("origin note missing after recovery: %q, %v", text, err)
+			}
+		})
+	}
+}
+
+func testInitClonePreserves(t *testing.T) {
+	for _, what := range []string{"foreign sibling", "modified ignore", "symlink ancestor", "plans outside repository", "missing key", "no ignore marker", "incomplete directory chain"} {
+		t.Run(what, func(t *testing.T) {
+			c, root, key := cloning(t)
+			c.Repo = filepath.Join(root, "notes")
+			c.Dir = filepath.Join(c.Repo, "agents", "plans")
+			if what != "missing key" {
+				if err := os.WriteFile(key, []byte("fixture key\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.MkdirAll(filepath.Dir(c.Dir), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			link := ""
+			if what == "symlink ancestor" {
+				link = c.Dir
+				if err := os.Symlink(t.TempDir(), link); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if what == "plans outside repository" {
+				c.Dir = t.TempDir()
+			}
+			if what != "incomplete directory chain" {
+				if err := os.MkdirAll(c.Dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			keep := filepath.Join(c.Dir, ".gitignore")
+			want := "*.lock\n"
+			if what == "modified ignore" {
+				want += "operator files\n"
+			}
+			marker := what != "no ignore marker" && what != "incomplete directory chain"
+			if marker {
+				if err := os.WriteFile(keep, []byte(want), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if what == "foreign sibling" {
+				if err := os.WriteFile(filepath.Join(c.Repo, "keep.org"), []byte("Keep this note.\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got, err := c.Init(); err != nil || got.Cloned || got.Note == "" {
+				t.Fatalf("init with %s: %+v, %v", what, got, err)
+			}
+			if marker {
+				if data, err := os.ReadFile(keep); err != nil || string(data) != want {
+					t.Errorf("existing ignore changed: %q, %v", data, err)
+				}
+			} else {
+				preserved := c.Dir
+				if what == "incomplete directory chain" {
+					preserved = filepath.Dir(c.Dir)
+				}
+				if info, err := os.Stat(preserved); err != nil || !info.IsDir() {
+					t.Errorf("existing directory changed: %v, %v", info, err)
+				}
+				if _, err := os.Lstat(keep); !os.IsNotExist(err) {
+					t.Errorf("created ignore in unrelated directory: %v", err)
+				}
+			}
+			if link != "" {
+				if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+					t.Errorf("existing symlink changed: %v, %v", info, err)
+				}
+			}
+			if what == "foreign sibling" {
+				if data, err := os.ReadFile(filepath.Join(c.Repo, "keep.org")); err != nil || string(data) != "Keep this note.\n" {
+					t.Errorf("existing note changed: %q, %v", data, err)
+				}
+			}
+		})
+	}
+}
+
+func testInitConcurrent(t *testing.T) {
+	c, root, key := cloning(t)
+	c.Repo = filepath.Join(root, "notes")
+	if err := os.WriteFile(key, []byte("fixture key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(c.Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(c.Dir, ".gitignore"), []byte("*.lock\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fifo := func(name string) *os.File {
+		t.Helper()
+		path := filepath.Join(root, name)
+		if err := syscall.Mkfifo(path, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f, err := os.OpenFile(path, os.O_RDWR, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+	ready, release := fifo("ready"), fifo("release")
+	t.Cleanup(func() {
+		release.WriteString("go\ngo\n")
+		release.Close()
+		ready.Close()
+	})
+	bin := t.TempDir()
+	// The shim controls scheduling at a real Git clone without a sleep.
+	const shim = `#!/bin/sh
+for arg; do
+  if [ "$arg" = clone ]; then
+    printf 'clone\n' >> "$INIT_TEST_CLONES"
+    printf 'ready\n' > "$INIT_TEST_READY"
+    read release < "$INIT_TEST_RELEASE"
+    break
+  fi
+done
+exec "$INIT_TEST_REAL_GIT" "$@"
+`
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(shim), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	clones := filepath.Join(root, "clones")
+	for name, value := range map[string]string{
+		"PATH": bin + string(os.PathListSeparator) + os.Getenv("PATH"), "INIT_TEST_REAL_GIT": realGit,
+		"INIT_TEST_READY": ready.Name(), "INIT_TEST_RELEASE": release.Name(), "INIT_TEST_CLONES": clones,
+	} {
+		t.Setenv(name, value)
+	}
+	type result struct {
+		ready Ready
+		err   error
+	}
+	init := func() <-chan result {
+		ch := make(chan result, 1)
+		go func() {
+			r, err := c.Init()
+			ch <- result{r, err}
+		}()
+		return ch
+	}
+	a := init()
+	signalled := make(chan error, 1)
+	go func() {
+		_, err := bufio.NewReader(ready).ReadString('\n')
+		signalled <- err
+	}()
+	select {
+	case err := <-signalled:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case got := <-a:
+		t.Fatalf("Init returned before reaching clone: %+v", got)
+	}
+	lock, err := os.OpenFile(filepath.Join(root, ".notes.agent-plan-init.lock"), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { lock.Close() })
+	err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if err == nil {
+		t.Error("Init does not hold the repository bootstrap lock during clone")
+		syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	} else if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+		t.Fatalf("bootstrap lock: %v", err)
+	}
+	b := init()
+	if _, err := release.WriteString("go\ngo\n"); err != nil {
+		t.Fatal(err)
+	}
+	for _, ch := range []<-chan result{a, b} {
+		if got := <-ch; got.err != nil || got.ready.Note != "" {
+			t.Errorf("concurrent Init: %+v", got)
+		}
+	}
+	if data, err := os.ReadFile(clones); err != nil || string(data) != "clone\n" {
+		t.Errorf("clone attempts: %q, %v", data, err)
 	}
 }
 

@@ -107,6 +107,28 @@ func isRefusal(t *testing.T, what string, err error) {
 // A plan is three kinds of file side by side in the plans directory, named
 // for its date, slug and host.
 func TestNew(t *testing.T) {
+	// A plan is notes on the work, written whether or not the notes
+	// repository could be cloned; why it is not synced is a warning.
+	t.Run("deferred clone", func(t *testing.T) {
+		c, _, key := cloning(t)
+		made, err := c.New(NewOptions{Title: "Check", Slug: "check"}, day)
+		if err != nil {
+			t.Fatalf("missing deploy key refused the plan: %v", err)
+		}
+		if !strings.Contains(made.Note, key) {
+			t.Errorf("warning %q does not name the missing key %s", made.Note, key)
+		}
+		if filepath.Dir(made.Plan) != c.Dir {
+			t.Errorf("plan %s is not in %s", made.Plan, c.Dir)
+		}
+		if _, err := os.Stat(made.Plan); err != nil {
+			t.Errorf("plan not written: %v", err)
+		}
+		if data, err := os.ReadFile(filepath.Join(c.Dir, ".gitignore")); err != nil || string(data) != "*.lock\n" {
+			t.Errorf("plans directory ignore: %q, %v", data, err)
+		}
+	})
+
 	t.Run("files", func(t *testing.T) {
 		c := testConfig(t)
 		made, err := c.New(NewOptions{Title: "Add the loop", Slug: "add-loop", Repos: []string{"o/r"},
@@ -429,6 +451,10 @@ func TestInit(t *testing.T) {
 	t.Run("in a repository", testInitInRepository)
 	t.Run("clone without the key", testInitCloneWithoutKey)
 	t.Run("clone with the key", testInitCloneWithKey)
+	t.Run("retry a rejected clone", testInitCloneRetry)
+	t.Run("recover generated leftovers", testInitCloneLeftovers)
+	t.Run("preserve other contents", testInitClonePreserves)
+	t.Run("concurrent clone", testInitConcurrent)
 	t.Run("converges a clone", testInitConverges)
 }
 

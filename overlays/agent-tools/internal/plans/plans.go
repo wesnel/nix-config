@@ -164,6 +164,8 @@ type Created struct {
 	File string `json:"file"`
 	ID   string `json:"id"`
 	Log  string `json:"log"`
+	// Note says why the plan is not synced: Init's Note, for a new plan.
+	Note string `json:"note,omitempty"`
 }
 
 // checkLine refuses a value that would break the Org line it goes on.
@@ -231,8 +233,17 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 		}
 		sections["Goal"] = append([]string{o.Goal}, sections["Goal"]...)
 	}
-	if _, err := c.Init(); err != nil {
+	// A plan is written even where the notes repository could not be
+	// cloned, unsynced, with Init's note as the warning. The plan then
+	// keeps a later clone out of the directory, as any file there does.
+	ready, err := c.Init()
+	if err != nil {
 		return Created{}, err
+	}
+	if ready.Note != "" {
+		if err := c.makeDir(); err != nil {
+			return Created{}, err
+		}
 	}
 	base := now.Format(nameTimeLayout) + "-" + o.Slug
 	var p Plan
@@ -253,7 +264,7 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 	if p.Name == "" {
 		return Created{}, fmt.Errorf("no free name for %s.%s under %s", base, c.Host, c.Dir)
 	}
-	err := p.withLock(func(l *lockedPlan) error {
+	err = p.withLock(func(l *lockedPlan) error {
 		if err := l.append("#+title: Log of " + p.Name + "\n"); err != nil {
 			return err
 		}
@@ -262,7 +273,7 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 	if err != nil {
 		return Created{}, err
 	}
-	return Created{Plan: p.file(""), File: p.file(""), ID: p.Name, Log: p.log()}, nil
+	return Created{Plan: p.file(""), File: p.file(""), ID: p.Name, Log: p.log(), Note: ready.Note}, nil
 }
 
 func (c Config) newPart(o NewOptions, now time.Time) (Created, error) {
@@ -412,21 +423,43 @@ const ignore = "*.lock\n"
 // Init clones the notes repository where it is missing and Remote is set,
 // then makes the plans directory, with a .gitignore for the lock files if
 // it has none, as New does, for a session whose sandbox may write only
-// inside it.
+// inside it. A clone deferred or rejected leaves the plans directory alone.
+// Remote-configured calls hold a repository bootstrap lock outside that
+// directory, so recovery and cloning are serialized even before it exists.
 func (c Config) Init() (Ready, error) {
 	r := Ready{Dir: c.Dir, Repo: c.repo()}
+	if c.Remote != "" {
+		parent := filepath.Dir(c.repo())
+		if err := os.MkdirAll(parent, 0o755); err != nil { //nolint:gosec // the notes repository's parent
+			return r, err
+		}
+		lock, err := lockFile(filepath.Join(parent, "."+filepath.Base(c.repo())+".agent-plan-init.lock"), false)
+		if err != nil {
+			return r, err
+		}
+		defer lock.Close()
+	}
 	var err error
 	if r.Cloned, r.Note, err = c.clone(); err != nil {
 		return r, err
 	}
+	if r.Note != "" {
+		return r, nil
+	}
+	return r, c.makeDir()
+}
+
+// makeDir makes the plans directory, with a .gitignore for the lock files
+// if it has none.
+func (c Config) makeDir() error {
 	if err := os.MkdirAll(c.Dir, 0o755); err != nil { //nolint:gosec // the plans: notes on the work, synced through git
-		return r, err
+		return err
 	}
-	err = writeNew(filepath.Join(c.Dir, ".gitignore"), ignore)
+	err := writeNew(filepath.Join(c.Dir, ".gitignore"), ignore)
 	if err != nil && !errors.Is(err, fs.ErrExist) {
-		return r, err
+		return err
 	}
-	return r, nil
+	return nil
 }
 
 // Plan is one plan's files in the plans directory.

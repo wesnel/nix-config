@@ -97,6 +97,34 @@ func TestCommands(t *testing.T) {
 		}
 	})
 
+	// Without the notes repository's deploy key, new still writes the
+	// plan, and warns on stderr that it is not synced.
+	t.Run("new without the deploy key", func(t *testing.T) {
+		dir, _ := filepath.EvalSymlinks(t.TempDir())
+		key := filepath.Join(dir, "missing-key")
+		c := plans.Config{Dir: filepath.Join(dir, "notes", "agents"), Host: "box", Remote: filepath.Join(dir, "origin"), Key: key}
+		data, _ := json.Marshal(map[string]any{"plans": c})
+		config := filepath.Join(dir, "config.json")
+		os.WriteFile(config, data, 0o644)
+		t.Setenv("AGENT_TOOLS_CONFIG", config)
+		t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+		code, out, errs := agentPlan(t, "", "new", "--title", "Check", "--slug", "check")
+		if code != 0 {
+			t.Fatalf("new without the key: %d %s", code, errs)
+		}
+		var made plans.Created
+		if err := json.Unmarshal([]byte(out), &made); err != nil || filepath.Dir(made.Plan) != c.Dir {
+			t.Errorf("new printed %s, %v", out, err)
+		}
+		if _, err := os.Stat(made.Plan); err != nil {
+			t.Errorf("plan not written: %v", err)
+		}
+		if !strings.Contains(errs, "agent-plan: ") || !strings.Contains(errs, key) {
+			t.Errorf("no warning naming the key on stderr: %q", errs)
+		}
+	})
+
 	t.Run("log and report", func(t *testing.T) {
 		plan := sessionPlan(t)
 		if code, _, errs := agentPlan(t, "", "log", plan, "--item", "S1", "--kind", "done", "--summary", "Add the loop",

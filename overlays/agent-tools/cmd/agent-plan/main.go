@@ -494,7 +494,11 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 				o.Worktrees = []string{top}
 			}
 		}
-		return report(c.New(o, time.Now()))
+		made, err := c.New(o, time.Now())
+		if made.Note != "" {
+			fmt.Fprintf(stderr, "agent-plan: %s\n", made.Note)
+		}
+		return report(made, err)
 	case "log":
 		p, ok := wantPlan()
 		if !ok {
