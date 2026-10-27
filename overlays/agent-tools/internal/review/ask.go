@@ -24,10 +24,10 @@ import (
 )
 
 // AskUsage is `git delegate ask -h`.
-const AskUsage = `usage: git delegate ask [--reviewer TYPE] --question FILE [--model M] [--timeout S] PATH...
+const AskUsage = `usage: git delegate ask [--reviewer TYPE] [--print-prompt] --question FILE [--model M] [--timeout S] PATH...
 
-Asks a reviewer that did not write the change, Codex by default, as a
-model family other than the author's, for a second opinion on a design
+Asks the other model family (Claude for a Codex caller, Codex otherwise)
+for a second opinion on a design
 question: the question in FILE, judged from the files PATH names in this
 repository and nothing else. FILE, where its symlinks lead, is in this
 repository or under $TMPDIR or /tmp, and is no credential the guard
@@ -35,7 +35,9 @@ lists; the reviewer is sent it with only known secret shapes taken out,
 as it is sent the files. It runs as a review of that TYPE does (git
 delegate -h), in a throwaway repository under the git directory's
 delegate/ holding copies of those files, removed on every exit. It
-writes no record.
+writes no record. --print-prompt exports the same contract, question and
+redacted file snapshots for a fresh primary-harness sub-agent, without
+starting a provider. Reviewer availability is shared with every review.
 
 Writes JSON on stdout: reviewer, model, answer and unverified (what the
 answer rests on that the files do not show). Exit status: 0 answered; 4
@@ -44,8 +46,8 @@ question could not be asked; 2 a usage error or refusal.
 `
 
 // askContract is what the reviewer is told before the question.
-const askContract = `You give a second opinion on one design question, from another model family
-than the author's. The working directory holds copies of the files the
+const askContract = `You give an independent second opinion on one design question.
+The working directory or supplied file snapshots hold copies of the files the
 question names, and nothing else. Only read: never edit a file, run the
 code, or reach anything outside the working directory.
 
@@ -73,10 +75,11 @@ type Answer struct {
 // ask runs `git delegate ask` with args and returns its exit status.
 func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet(name+" ask", flag.ContinueOnError)
-	reviewer := flags.String("reviewer", "codex", "")
+	reviewer := flags.String("reviewer", generalReviewer(), "")
 	question := flags.String("question", "", "")
 	model := flags.String("model", "", "")
 	timeout := flags.Int("timeout", 900, "")
+	printPrompt := flags.Bool("print-prompt", false, "")
 	var paths []string
 	for {
 		if code, ok := cli.Parse(flags, args, AskUsage, stdout, stderr); !ok {
@@ -126,19 +129,37 @@ func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	if err != nil {
 		return report(nil, err, 0)
 	}
+	if *printPrompt {
+		fmt.Fprint(stdout, askPrompt(text, files))
+		for _, f := range files {
+			fmt.Fprintf(stdout, "\n## File: %s\n\n%s", f.rel, fenced("text", redact.Secrets(string(f.data))))
+		}
+		return 0
+	}
 	why := ""
+	p := codexProvider
 	if ty.claude {
+		p = claudeProvider
+	}
+	if err := newAvailability().check(p); err != nil {
+		why = err.Error()
+	} else if ty.claude {
 		why = claudeMissing()
 	} else {
 		why = unavailable(true)
 	}
 	if why != "" {
 		fmt.Fprintf(stderr, "%s: the %s reviewer cannot answer here: %s. Ask a new sub-agent that only reads instead "+
-			"(Claude Code's `design-reviewer` agent), giving it %s and the same files, and nothing of your own reasoning.\n",
+			"in the primary harness with a fresh context. Add `--print-prompt` to this ask command to export its contract and file snapshots from %s and the same files, with none of your own reasoning. Keep review-loop text out of Codex.\n",
 			name, *reviewer, why, *question)
 		return 4
 	}
 	out, err := askIn(ctx, top, text, files, *reviewer, ty, *model, time.Duration(*timeout)*time.Second, stderr)
+	var unavailable providerUnavailable
+	if errors.As(err, &unavailable) {
+		fmt.Fprintf(stderr, "%s: %s. Add `--print-prompt` to this ask command and give the result to a fresh read-only sub-agent in the primary harness instead, with none of your reasoning. Keep review-loop text out of Codex.\n", name, err)
+		return 4
+	}
 	var unconfined Unconfined
 	if errors.As(err, &unconfined) {
 		fmt.Fprintf(stderr, "%s: Codex cannot answer here: %s. Ask a new sub-agent that only reads instead, "+
@@ -323,18 +344,12 @@ func askIn(ctx context.Context, top, text string, files []askFile, reviewer stri
 		}
 	}
 
-	var prompt strings.Builder
-	prompt.WriteString(askContract)
-	fmt.Fprintf(&prompt, "\n# The question\n\n%s\n\n# The files\n\n", redact.Secrets(strings.TrimSpace(text)))
-	for _, f := range files {
-		fmt.Fprintf(&prompt, "- %s\n", f.rel)
-	}
 	var reply *CodexReply
 	if ty.claude {
-		reply, err = ClaudeRun(ctx, Claude{Checkout: tree, Agent: ty.agent, Prompt: prompt.String(), Schema: []byte(askSchema),
+		reply, err = ClaudeRun(ctx, Claude{Checkout: tree, Agent: ty.agent, Prompt: askPrompt(text, files), Schema: []byte(askSchema),
 			Timeout: timeout, Log: log})
 	} else {
-		reply, err = CodexRun(ctx, Codex{Checkout: tree, Prompt: prompt.String(), Schema: []byte(askSchema), Model: model,
+		reply, err = CodexRun(ctx, Codex{Checkout: tree, Prompt: askPrompt(text, files), Schema: []byte(askSchema), Model: model,
 			Timeout: timeout, Log: log, Git: run})
 	}
 	if err != nil {
@@ -352,4 +367,14 @@ func askIn(ctx context.Context, top, text string, files []askFile, reviewer stri
 		out.Model = &reply.Model
 	}
 	return out, nil
+}
+
+func askPrompt(text string, files []askFile) string {
+	var prompt strings.Builder
+	prompt.WriteString(askContract)
+	fmt.Fprintf(&prompt, "\n# The question\n\n%s\n\n# The files\n\n", redact.Secrets(strings.TrimSpace(text)))
+	for _, f := range files {
+		fmt.Fprintf(&prompt, "- %s\n", f.rel)
+	}
+	return prompt.String()
 }

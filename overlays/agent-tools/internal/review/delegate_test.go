@@ -29,7 +29,7 @@ func delegateCmd(t *testing.T, args ...string) (int, string, string) {
 // findings by their record IDs.
 func TestRecordRounds(t *testing.T) {
 	f := setUp(t, true)
-	code, first, stderr := runDelegate(t, "--goal", ".git/goal.md", f.base+"..HEAD")
+	code, first, stderr := runDelegate(t, "--model", "fake-model", "--goal", ".git/goal.md", f.base+"..HEAD")
 	if code != 3 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}

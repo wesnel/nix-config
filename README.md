@@ -240,7 +240,8 @@ Every agent session that commits a change runs the `review-change` skill's
 pipeline unless you opt out for the task: a plan, a design review of it, the
 work, a fresh review loop of up to three rounds, and a design review of the
 result. The everyday general review is Claude Code's `/code-review`, given
-the range's base; `git delegate` is the second opinion, from Codex, and
+the range's base; in Codex a fresh read-only sub-agent does that review.
+`git delegate` is the second opinion, from the other model family, and
 runs each focused review the change needs. A coordinator reviews each part
 with an `adversarial-reviewer` sub-agent instead. Two commands give the
 reviews evidence an agent cannot talk its way around.
@@ -253,7 +254,7 @@ statement (the goal, and what is not the change's job) and optionally the
 items the change answers. It keeps what they found in a review record:
 
 ``` sh
-git delegate --goal goal.md origin/main..HEAD          # Codex, and each focused review the change needs
+git delegate --goal goal.md origin/main..HEAD          # the other family, and each focused review the change needs
 git delegate --reviewer security --goal goal.md origin/main..HEAD
 git delegate --reviewer compat --goal goal.md --description pr.md origin/main..HEAD
 git delegate wesnel/emacs-config#2                     # someone else's pull request
@@ -261,8 +262,9 @@ git delegate show wesnel/emacs-config#2                # the review record, as J
 git delegate settle origin/main..HEAD F3 rebut --reason-file why.md
 ```
 
-The general reviewer is Codex, a model family other than the author's, run
-as `codex exec --ignore-user-config --ephemeral` in a throwaway worktree of
+For a Codex caller the general reviewer is Claude's `adversarial-reviewer`;
+otherwise it is Codex. Both use the same review contract. Codex runs
+as `codex exec --json --ignore-user-config --ephemeral` in a throwaway worktree of
 the range's tip. None of your Codex configuration loads, so no MCP server or
 plugin; web search and the image viewer are off; and a permissions profile
 lets its commands read only the worktree, the parts of the git directory git
@@ -272,8 +274,10 @@ macOS sandbox; delegate checks that it starts, confined, before the review.
 Its contract is `overlays/agent-tools/internal/review/reviewer.md`, the same
 text the prompt for a sub-agent carries, and its reply must fit
 `findings.schema.json` beside it.
+The Codex result's `model` is the requested `--model`, or null when Codex
+chooses it: JSON events do not report that selection.
 
-The focused reviews (`--reviewer security`; with no `--reviewer`, those the
+Claude's general review and focused reviews (`--reviewer security`; with no `--reviewer`, those the
 change's scan routes it to) are Claude Code's reviewer agents, run headless:
 `claude -p --setting-sources ""` with an empty MCP config, every CLAUDE.md
 kept out, their agents from the store's `review-agents.json` and their
@@ -327,16 +331,38 @@ replies are `pr-N.org` beside it, which `pr-loop threads` writes too. Only
 delegate and pr-loop write them: the sandbox denies the directory to every
 command, and Claude Code's file tools are denied it. Emacs's review-guide
 reads them. delegate prints JSON and exits 0 with no open findings, 3 with
-open findings, 4 when a reviewer could not run (Codex not installed or
-signed in, its sandbox cannot start, called from inside Codex, or in a
+open findings, 4 when a reviewer could not run (a provider disabled or
+quota-blocked; Codex not installed or signed in, its sandbox cannot start, or in a
 review-loop session, which reads other people's review text; claude or its
 config missing; a reply that did not fit twice), and 5 when a record fails
 its structure check, which only a hand edit makes. `--print-prompt` prints a
 reviewer's prompt instead of running it. See `git delegate -h`.
 
-`git delegate ask --question FILE PATH...` asks Codex, confined the same
-way, for a second opinion on a design question, from copies of the named
-files alone.
+`git delegate ask --question FILE PATH...` selects the other family the
+same way, for a second opinion from copies of the named files alone.
+Add `--print-prompt` to export its contract and snapshots for a fresh
+read-only sub-agent without calling a provider.
+
+When a provider is known to be unavailable, record that before reviewing:
+
+```sh
+git delegate availability --disable claude
+git delegate availability
+```
+
+Terminal quota failures also suppress later calls to that provider,
+including retries, focused reviews, walkthroughs, diagrams and design
+questions. A known exhausted Claude window blocks until its reset. A
+block without a verified reset stays until recovery is confirmed and
+`git delegate availability --clear claude` (or `codex`) clears it. The
+state is shared across repositories; changing accounts needs the same
+clear. Already-started concurrent calls may finish.
+
+The `review-change` skill dispatches each unavailable stage to a fresh
+read-only sub-agent in the primary harness using its printed contract.
+Diagram fallback uses separate drawing and critique contexts. The plan
+records those results and the actual harness separately from delegate's
+incomplete record.
 
 It never runs `git red-check`, which runs the commits' code: the session runs
 it, as it runs any test, and passes its JSON with `--red-check FILE`, a

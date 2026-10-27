@@ -20,8 +20,9 @@ was split among sub-agents: a coordinator runs the same pipeline, and the
 3. **The work**, committed as the `signing-pass` skill says.
 4. **Fresh review loop** over the committed change, once the work is
    complete: in Claude Code, `/code-review` for the general review; then
-   `git delegate` as the second opinion. Settle each round's findings
-   together before the next round.
+   `git delegate` as the second opinion. In Codex, use a fresh read-only
+   sub-agent for the general review. Follow Harness choice for unavailable
+   providers. Settle each round's findings together before the next round.
 5. **Design review of the result**, before handing back.
 6. **Hand back**: what the work's own instructions ask for, and
    - each finding, its outcome and its plan item ID, round by round;
@@ -70,9 +71,11 @@ as `origin/main` or the parent branch in a stack.
 
 1. Write the goal statement to a file, and the items the change answers
    (threads, CI checks) with how each was settled to another, if any.
-2. In Claude Code, run `/code-review` with BASE as its target: with none, it
+2. Apply Harness choice before calling a reviewer. In Claude Code, run
+   `/code-review` with BASE as its target: with none, it
    reviews only the commits ahead of the branch's upstream, which a local
-   branch may not have. Then the second opinion, from another model
+   branch may not have. Elsewhere, start a fresh read-only sub-agent with
+   only the goal and range. Then the second opinion, from another model
    family: where the repository has test settings, run
    `git -C WORKTREE red-check BASE..TIP > WORKTREE/red-check.json`, WORKTREE
    being the branch's worktree, not `$TMPDIR`, which a sandboxed command and
@@ -81,11 +84,12 @@ as `origin/main` or the parent branch in a stack.
    `git delegate --goal GOAL [--items ITEMS] [--red-check WORKTREE/red-check.json] BASE..TIP`
    as a command of its own, with no `cd` before it: it resolves the range
    from any worktree of the repository. Remove `red-check.json` after it.
-   It runs Codex, and each focused review its scan routes the change to,
+   It selects the other model family, and each focused review its scan routes the change to,
    and keeps their findings in the range's review record. It exits 0 with no open findings, 3 with open
    findings, 4 when a reviewer could not run here, and 5 when the record
-   fails its structure check. On 4 or 5, say so in the hand-back, with
-   delegate's reason.
+   fails its structure check. On 4, complete each unavailable review as
+   Harness choice says. On 5, report the record failure. Include delegate's
+   reason and any unfinished review in the hand-back.
 3. Settle every finding of both as Triage says. A delegate finding is
    settled in its record too: `git delegate settle BASE..TIP FINDING
    OUTCOME [--target X] [--reason-file F]`, by the record ID its output
@@ -120,9 +124,8 @@ host before the reviewer starts; the reviewer never fetches. An `UP-`
 finding names a pin whose upstream changes nobody read; read them or say
 in the reply why the pin is safe. Each runs headless as its route's own
 agent type, `ROUTE-reviewer` (`security-reviewer`, `compat-reviewer`,
-`upgrade-reviewer`); where delegate cannot run it (exit 4),
-`git delegate --print-prompt --reviewer ROUTE` with the same files prints
-the prompt for a new sub-agent of that type, which stderr names. Settle
+`upgrade-reviewer`); where delegate cannot run it (exit 4), use the
+fresh-sub-agent fallback in Harness choice. Settle
 each finding as Triage says. A fix moves the change, so the general
 review and each route's run again on it, within the same three rounds.
 
@@ -167,19 +170,49 @@ in pr-review.
 
 ## Harness choice
 
-- Codex, through `git delegate`, for the second opinion: a model family
-  other than the author's. Its commands can read only the worktree under
-  review, the git objects behind it and the system files they need, with
-  none of the operator's Codex configuration, no network and no writes, so
-  a change cannot steer it into reading credentials.
-- The focused reviews, through `git delegate --reviewer TYPE`: Claude Code's
-  reviewer agents, run headless with no settings, MCP server or CLAUDE.md
-  of anyone's, in a sandbox of their own.
-- Never Codex in a review-loop session, which reads other people's review
-  text: there delegate's Codex review exits 4, and the second opinion is an
-  `adversarial-reviewer` sub-agent.
-- Never Codex for a Codex author: from inside Codex, `git delegate`
-  without `--reviewer` exits 4 by itself.
+`git delegate` selects Claude's `adversarial-reviewer` for a Codex caller,
+and Codex otherwise. Both receive the same general contract in confined
+checkouts. Focused reviews and the walkthrough use Claude's headless
+agents. Design questions use the same family selection. Native design
+reviews always start fresh read-only sub-agents in the primary harness.
+
+Before any review, honor what the operator says about provider availability:
+run `git delegate availability --disable claude` or
+`git delegate availability --disable codex` when they say it is exhausted
+or must not be called. This records the instruction without contacting it.
+`git delegate availability` shows the remembered state. Terminal quota
+failures also block further calls, across review types and invocations;
+known reset times expire automatically. With no verified reset, keep the
+block until the operator reports recovery, then run
+`git delegate availability --clear claude` or its Codex equivalent.
+Do not probe a blocked provider or clear its block just to finish a review.
+
+For every entry in delegate's `notRun`, print its contract with
+`git delegate --print-prompt --reviewer TYPE` and the same range and input
+files. Start a new read-only sub-agent in the primary harness for that
+contract, using the named role where available. Its context contains only
+the contract, goal, pinned range or file snapshots, required review inputs
+and prior findings. Start it without inheriting the author's conversation,
+plan log or reasoning. In Codex use a new agent with no inherited context;
+in Claude Code use the corresponding reviewer agent.
+
+Complete every unavailable stage this way, including the general review,
+security, compatibility, upgrades, walkthrough and design second opinions.
+For `git delegate ask`, add `--print-prompt` to the same command; it exports
+the question, contract and redacted snapshots of the named files. A diagram
+prompt exports separate drawing and critique tasks: use separate fresh
+agents, check citations at TIP, and report what remains unverified.
+
+Settle fallback findings by Triage and record each native review in the
+plan log, naming its role, actual harness and same-family fallback. These
+results supplement the incomplete delegate record; they do not make it
+claim the unavailable provider ran. Hand back only after all required
+stages have returned, or name each unfinished stage and why.
+
+Review-loop restrictions still apply: their text stays out of Codex,
+including Codex sub-agents. In a Claude review-loop session use a fresh
+`adversarial-reviewer`. If the permitted primary harness cannot review,
+report the stage unfinished.
 
 ## Design review
 
@@ -215,8 +248,9 @@ choice, get a second opinion from another model family before it is
 decided: write the question and its options to a file, and run
 `git delegate ask --question FILE PATH...`, naming each file in the
 repository the answer rests on (put what it needs from the plan into the
-question file, under the working directory). Codex reads those files and nothing else. On exit 4, ask a
-new sub-agent that only reads instead, as the message says. The answer goes
+question file, under the working directory). The selected reviewer reads
+those files and nothing else. On exit 4, use Harness choice's design
+fallback. The answer goes
 beside your recommendation; it informs your own decision, or the operator's
 on a one-way door, and settles nothing.
 
@@ -234,14 +268,15 @@ for it, or the design review does, for a change that crosses two or more
 packages or modules, or adds a state set or a cross-process protocol.
 
 Add `--reviewer diagram` to the review that needs it, as
-`git delegate --reviewer codex --reviewer diagram --goal GOAL BASE..TIP`.
+`git delegate --reviewer diagram --goal GOAL BASE..TIP`.
 Claude Code's `diagrammer` agent draws at most three diagrams, each element
 citing the lines at TIP it stands for; delegate holds every citation to the
 code, Codex critiques each element by element, and one the critic faults is
 redrawn once. Those that hold are kept in the review record, where review-guide
 and `git delegate show` render them; the rest are under the round's Dropped.
 A diagram is never posted to GitHub: a pull request's description stays the
-operator's.
+operator's. An unavailable drawing or critique uses Harness choice's
+separate native reviewers and is reported as a same-family fallback.
 
 ## Triage
 

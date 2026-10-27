@@ -6,11 +6,12 @@ diagram's elements are the items. Judge whether a reader who trusts the
 diagram would be told the truth about the code. Report only what the code
 at TIP shows; a diagram that holds is a good result.
 
-Every citation has already been checked mechanically, and the check's
-results are listed below: each path and line exists, each symbol is a
+Use the Mechanical check results when supplied. Without mechanical results,
+verify each citation yourself: each path and line exists, each symbol is a
 whole word in its lines, and in Go a node's symbol is declared there, a
 call edge's lines call its callee inside its caller, and a transition's
-lines assign its target. What that check cannot see is yours:
+lines assign its target. Report anything you cannot verify as unverified.
+In either case, also check:
 
 - a label that says something the cited code does not do, or calls it by
   a name that misleads;

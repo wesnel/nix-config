@@ -45,7 +45,7 @@ func TestAsk(t *testing.T) {
 	t.Run("answers from the named files alone", func(t *testing.T) {
 		f := askFixture(t, true)
 		t.Setenv("FAKE_CODEX", "answer")
-		code, out, stderr := askCodex(t, "--question", ".git/question.md", "code.txt", "docs/design.md")
+		code, out, stderr := askCodex(t, "--model", "fake-model", "--question", ".git/question.md", "code.txt", "docs/design.md")
 		if code != 0 {
 			t.Fatalf("exit %d\n%s", code, stderr)
 		}

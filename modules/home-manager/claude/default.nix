@@ -129,25 +129,37 @@ with lib; let
 
   roleAgents = listToAttrs (map (name: nameValuePair ".claude/agents/${name}.md" {inherit (agentFile name) text;}) agentNames);
 
-  principles = import ../llm/principles.nix;
-  # A principle skill's text without its frontmatter.
-  principleBody = name: concatStringsSep "\n---\n" (tail (splitString "\n---\n" (removePrefix "---\n" (builtins.readFile principles.${name}))));
+  headlessSkills = filterAttrs (name: _: elem name (attrNames (import ../llm/principles.nix) ++ ["write-tests"])) config.wgn.home.llm.skills;
+  # These skills need only their text, without frontmatter or support files.
+  skillBody = name: let
+    skill = headlessSkills.${name};
+    text =
+      if skill.source == null
+      then skill.text
+      else
+        builtins.readFile (
+          if llm.isDirectory skill.source
+          then skill.source + "/SKILL.md"
+          else skill.source
+        );
+  in
+    concatStringsSep "\n---\n" (tail (splitString "\n---\n" (removePrefix "---\n" text)));
 
   # The reviewers git delegate runs headless, with `--agents` and this file,
   # which outranks a reviewed project's own agents. Each prompt ends with
-  # the text of the principles its agent file's `skills:` lists, so a
+  # the text of the supported skills its agent file's `skills:` lists, so a
   # reviewer run with `--setting-sources ""` has them whether or not it
   # finds skills by name; the agent file installed for sub-agents keeps
   # them as `skills:`.
   reviewAgents = pkgs.runCommand "review-agents.json" {
     nativeBuildInputs = [pkgs.jq];
-    json = builtins.toJSON (genAttrs (focusReviewers ++ ["review-guide" "diagrammer"]) (name: let
+    json = builtins.toJSON (genAttrs (focusReviewers ++ ["adversarial-reviewer" "review-guide" "diagrammer"]) (name: let
       a = agentFile name;
     in {
       description = a.field "description";
-      prompt = assert assertMsg (all (skill: principles ? ${skill}) a.skills)
-      "claude: ./agents/${name}.md lists a skill that is not a principle, which its headless prompt would leave out";
-        a.prompt + concatMapStrings (skill: "\n" + principleBody skill) a.skills;
+      prompt = assert assertMsg (all (skill: headlessSkills ? ${skill}) a.skills)
+      "claude: ./agents/${name}.md lists an unsupported skill, which its headless prompt would leave out";
+        a.prompt + concatMapStrings (skill: "\n" + skillBody skill) a.skills;
       tools = splitString ", " (a.field "tools");
       model = a.field "model";
       hooks.PreToolUse = [

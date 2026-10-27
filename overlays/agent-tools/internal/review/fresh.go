@@ -106,13 +106,23 @@ func readFile(path string, stdin io.Reader) (string, error) {
 	return string(data), err
 }
 
+func generalReviewer() string {
+	if os.Getenv("CODEX_SANDBOX") != "" || os.Getenv("CODEX_THREAD_ID") != "" {
+		return "claude"
+	}
+	return "codex"
+}
+
 // unavailable says why Codex may not or cannot review from here, or "".
 func unavailable(auto bool) string {
+	if err := newAvailability().check(codexProvider); err != nil {
+		return err.Error()
+	}
 	switch {
 	case os.Getenv("PR_LOOP_SESSION") != "":
 		return "this is a review-loop session (PR_LOOP_SESSION is set), which reads other people's review text and sends none of it to OpenAI"
-	case auto && os.Getenv("CODEX_SANDBOX") != "":
-		return "the caller is Codex (CODEX_SANDBOX is set), so a review from here would not be a fresh one; exit 4"
+	case auto && generalReviewer() == "claude":
+		return "the caller is Codex, so its second opinion needs another family or a fresh primary-harness sub-agent"
 	}
 	if _, err := exec.LookPath("codex"); err != nil {
 		return "codex is not on PATH"
@@ -124,6 +134,7 @@ func unavailable(auto bool) string {
 }
 
 type inputs struct {
+	availability                 *availability
 	r                            *span
 	goal, items, prior, redCheck string
 	// adequacy is what the reviewer is told of test adequacy, beside
@@ -188,6 +199,7 @@ func prompt(in inputs) string {
 
 // Codex is one confined, read-only Codex run.
 type Codex struct {
+	availability *availability
 	// Checkout is a worktree the caller made and removes, whose parent
 	// directory is the caller's own and takes the schema and the reply.
 	Checkout string
@@ -203,7 +215,8 @@ type Codex struct {
 	Git func(args ...string) (string, error)
 }
 
-// CodexReply is what Codex replied, and the model that replied.
+// CodexReply holds the reply and the explicitly requested model, if any.
+// Codex's JSON events do not report its automatically selected model.
 type CodexReply struct {
 	Text, Model string
 }
@@ -212,6 +225,13 @@ type CodexReply struct {
 // confinement says. It returns an Unconfined where Codex's sandbox cannot
 // start confined to the checkout.
 func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
+	a := c.availability
+	if a == nil {
+		a = newAvailability()
+	}
+	if err := a.check(codexProvider); err != nil {
+		return nil, err
+	}
 	dir := filepath.Dir(c.Checkout)
 	schema, reply := filepath.Join(dir, "reply.schema.json"), filepath.Join(dir, "reply.json")
 	if err := os.WriteFile(schema, c.Schema, 0o644); err != nil { //nolint:gosec // a JSON schema compiled into this program
@@ -261,7 +281,7 @@ func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 		return nil, Unconfined(fmt.Sprintf("Codex's sandbox, confined to the worktree, could not run git there (%v: %s)",
 			err, strings.TrimSpace(probeErr.String())))
 	}
-	args := append([]string{"exec", "--ignore-user-config", "--ignore-rules", "--ephemeral", "-C", c.Checkout,
+	args := append([]string{"exec", "--json", "--ignore-user-config", "--ignore-rules", "--ephemeral", "-C", c.Checkout,
 		"--output-schema", schema, "-o", reply}, confined...)
 	if c.Model != "" {
 		args = append(args, "-m", c.Model)
@@ -270,8 +290,8 @@ func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 	cmd.Dir = c.Checkout
 	cmd.Env = env
 	cmd.Stdin = strings.NewReader(c.Prompt)
-	banner := &bannerModel{w: c.Log}
-	cmd.Stdout, cmd.Stderr = c.Log, banner
+	events := &quotaEvents{w: c.Log}
+	cmd.Stdout, cmd.Stderr = events, c.Log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
 		stopGroup(cmd.Process.Pid, 5*time.Second)
@@ -279,6 +299,12 @@ func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 	}
 	cmd.WaitDelay = 5 * time.Second
 	if err := cmd.Run(); err != nil {
+		if !events.discard {
+			events.event(events.line)
+		}
+		if events.quota {
+			return nil, a.exhausted(codexProvider)
+		}
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("codex stopped: %w", ctx.Err())
 		}
@@ -288,11 +314,7 @@ func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 	if err != nil {
 		return nil, fmt.Errorf("codex left no reply: %w", err)
 	}
-	out := &CodexReply{Text: string(data), Model: banner.model}
-	if out.Model == "" {
-		out.Model = c.Model
-	}
-	return out, nil
+	return &CodexReply{Text: string(data), Model: c.Model}, nil
 }
 
 // stopGroup kills the process group pgid until it is empty, or for at most
@@ -388,37 +410,6 @@ func realDirs(path string) string {
 
 // tomlEscape escapes text for the inside of a TOML basic string.
 var tomlEscape = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
-
-// bannerModel passes Codex's stderr on and picks out the model it names in
-// the banner it prints before the prompt, the only place `codex exec` says
-// which model its configuration chose.
-type bannerModel struct {
-	w     io.Writer
-	line  []byte
-	done  bool
-	model string
-}
-
-func (b *bannerModel) Write(p []byte) (int, error) {
-	for _, c := range p {
-		if b.done {
-			break
-		}
-		if c != '\n' {
-			b.line = append(b.line, c)
-			continue
-		}
-		line := string(b.line)
-		b.line = b.line[:0]
-		switch {
-		case strings.HasPrefix(line, "model: "):
-			b.model, b.done = strings.TrimSpace(strings.TrimPrefix(line, "model: ")), true
-		case line == "user":
-			b.done = true
-		}
-	}
-	return b.w.Write(p)
-}
 
 // Finding is one problem a reviewer reports.
 type Finding struct {

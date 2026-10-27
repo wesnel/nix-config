@@ -67,6 +67,7 @@ func claudeMissing() string {
 
 // Claude is one headless Claude Code reviewer's run.
 type Claude struct {
+	availability *availability
 	// Checkout is the worktree of TIP the reviewer reads, its working
 	// directory.
 	Checkout string
@@ -89,6 +90,13 @@ type Claude struct {
 // CLAUDE.md, and its agent from --agents, which outranks a project's own.
 // The agent's frontmatter hook keeps it to reading.
 func ClaudeRun(ctx context.Context, c Claude) (*CodexReply, error) {
+	a := c.availability
+	if a == nil {
+		a = newAvailability()
+	}
+	if err := a.check(claudeProvider); err != nil {
+		return nil, err
+	}
 	config, err := loadDelegateConfig()
 	if err != nil {
 		return nil, err
@@ -119,6 +127,8 @@ func ClaudeRun(ctx context.Context, c Claude) (*CodexReply, error) {
 		return nil, fmt.Errorf("claude stopped: %w", ctx.Err())
 	}
 	var result struct {
+		APIError   string                     `json:"api_error"`
+		Errors     []string                   `json:"errors"`
 		Result     string                     `json:"result"`
 		Structured json.RawMessage            `json:"structured_output"`
 		IsError    bool                       `json:"is_error"`
@@ -136,6 +146,16 @@ func ClaudeRun(ctx context.Context, c Claude) (*CodexReply, error) {
 		reply.Model = strings.Join(models, ", ")
 	}
 	if result.IsError || runErr != nil {
+		if result.IsError {
+			if result.APIError == "usage_limit_reached" {
+				return nil, a.exhausted(claudeProvider)
+			}
+			for _, message := range append(result.Errors, result.Result) {
+				if quotaMessage(message) {
+					return nil, a.exhausted(claudeProvider)
+				}
+			}
+		}
 		return nil, badReply(fmt.Sprintf("the reviewer ended with %q (%v): %s", result.Subtype, runErr,
 			strings.TrimSpace(result.Result)))
 	}
