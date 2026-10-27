@@ -3,6 +3,7 @@ package loop
 import (
 	"encoding/json"
 	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -12,10 +13,12 @@ import (
 // from heads and prs, and createRef, createPullRequest and deleteRef, each
 // recorded in calls. It is a fake because a test must not reach GitHub.
 type fakeOpen struct {
-	heads  map[string]string // branch to its tip on GitHub
-	prs    map[string]int    // head branch to an open same-repository pull request
-	failPR bool
-	calls  []string
+	heads map[string]string // branch to its tip on GitHub
+	prs   map[string]int    // head branch to an open same-repository pull request
+	// authors is who opened each of prs, "me" where it has none.
+	authors map[string]string
+	failPR  bool
+	calls   []string
 }
 
 func (f *fakeOpen) graphQL(query string, vars map[string]any, out any) error {
@@ -34,7 +37,11 @@ func (f *fakeOpen) graphQL(query string, vars map[string]any, out any) error {
 		prs := func(name string) any {
 			nodes := []any{}
 			if n, ok := f.prs[vars[name].(string)]; ok {
-				nodes = append(nodes, map[string]any{"number": n, "headRefName": vars[name], "author": map[string]any{"login": "me"}})
+				author := f.authors[vars[name].(string)]
+				if author == "" {
+					author = "me"
+				}
+				nodes = append(nodes, map[string]any{"number": n, "headRefName": vars[name], "author": map[string]any{"login": author}})
 			}
 			return map[string]any{"nodes": nodes}
 		}
@@ -102,6 +109,14 @@ func published(t *testing.T, f *fakeOpen, dir, branch string) {
 // has at the local tip, without creating or ever deleting that branch, and
 // only when its commits are the operator's.
 func TestOpenPushed(t *testing.T) {
+	t.Run("missing local branch preserves lookup error", func(t *testing.T) {
+		f, _ := pushedBranch(t)
+		_, err := Open("gone", "", "Add feat", "Why it is needed.", false)
+		var command *exec.ExitError
+		if !errors.As(err, &command) || len(f.calls) != 0 {
+			t.Fatalf("missing local branch: %v, mutations %v", err, f.calls)
+		}
+	})
 	t.Run("refused/unsigned matching author", func(t *testing.T) {
 		f, _ := pushedBranch(t)
 		_, err := Open("feat", "", "Add feat", "Why it is needed.", false)

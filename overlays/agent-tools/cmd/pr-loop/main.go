@@ -27,8 +27,8 @@ Policy: apart from open, every write is to the head of an open PR, draft or
 ready, by the authenticated user in the same repository and not the default
 branch, re-checked before it is made. A ready PR's pushes add only fixups of
 its own commits. open publishes a branch GitHub does not have, or takes one
-GitHub has at the local tip, heading no open PR, whose commits since GitHub's
-other branches are all by user.email; never a default branch; and opens it as
+GitHub has at the local tip, heading no open PR, whose commits beyond GitHub's
+base have verified signatures by the protected operator key; never a default branch; and opens it as
 a draft PR based on the default branch or on the head of another open PR by
 the authenticated user in the same repository. open
 refuses a new commit, and push a fixup, whose message breaks the rules git
@@ -55,6 +55,14 @@ worktree. A failure to log is printed on stderr and fails nothing.
                               in BASE's PR's GitHub stack, as link puts it there; refuses
                               when BRANCH contains a remote branch BASE lacks, and names
                               the BASE to pass instead
+  next [--json] [BRANCH...]   the single next step for each BRANCH (default HEAD), reading
+                              only: nothing; open (open's draft PR, for a branch GitHub
+                              lacks, or has at its tip with no PR and verified operator
+                              signatures); sign
+                              (the operator's git sign-pass --push or --set-upstream,
+                              with the agent-plan sign-id that mints its --notify ID);
+                              push (a signed branch GitHub is behind); or blocked,
+                              including divergent histories, saying what to fix
   stack [PR|BRANCH]           the stack of open PRs containing a PR (default HEAD's), as
                               their bases chain them, and GitHub's stack of that PR as
                               "github" (null when GitHub has it in none)
@@ -207,6 +215,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		interval = flags.Int("interval", 30, "")
 		sha      = flags.String("sha", "", "")
 		grace    = flags.Int("grace", 180, "")
+		asJSON   = flags.Bool("json", false, "")
 		bots     multi
 		accepted multi
 		leases   multi
@@ -280,6 +289,13 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		if text, err = body(); err == nil {
 			result, err = loop.Open(branch, *base, *title, text, *dryRun)
 		}
+	case "next":
+		var steps []loop.NextStep
+		if steps, err = loop.Next(rest); err == nil && !*asJSON {
+			fmt.Fprint(stdout, loop.FormatNext(steps))
+			return 0
+		}
+		result = steps
 	case "stack":
 		if len(rest) > 1 {
 			err = errors.New("stack takes at most one PR or branch; see pr-loop --help")

@@ -1264,6 +1264,21 @@ func refusedUnsigned(t *testing.T, err error, hub, unsigned string) {
 	}
 }
 
+// keptOff fails unless hub's one lacks the commit unsigned: the pass refused
+// the branch, or signed it and pushed the signed copy.
+func keptOff(t *testing.T, err error, hub, unsigned string) {
+	t.Helper()
+	if git.OK("-C", hub, "merge-base", "--is-ancestor", unsigned, "refs/heads/one") {
+		t.Errorf("the remote's one has the unsigned commit %s (the pass said %v)", unsigned, err)
+	}
+	if err != nil {
+		var r refusal.Refusal
+		if !errors.As(err, &r) {
+			t.Errorf("not a refusal: %v", err)
+		}
+	}
+}
+
 // testPushUnmovedObjects checks the commits a push sends, not the history git
 // shows: a replace ref or a graft changes what git log says of a branch, but
 // the push sends the commits themselves.
@@ -1278,7 +1293,7 @@ func testPushUnmovedObjects(t *testing.T) {
 		unsigned := gitIn(t, repo, "rev-parse", "HEAD")
 		gitIn(t, repo, "replace", unsigned, decoy)
 		_, err := Run("", false, false, true)
-		refusedUnsigned(t, err, hub, unsigned)
+		keptOff(t, err, hub, unsigned)
 	})
 	t.Run("a graft hides an unsigned commit", func(t *testing.T) {
 		_, repo, hub := unmovedRepo(t)
@@ -1289,7 +1304,7 @@ func testPushUnmovedObjects(t *testing.T) {
 		grafts := filepath.Join(repo, ".git", "info", "grafts")
 		os.WriteFile(grafts, []byte(gitIn(t, repo, "rev-parse", "HEAD")+" "+gitIn(t, repo, "rev-parse", "main")+"\n"), 0o644)
 		_, err := Run("", false, false, true)
-		refusedUnsigned(t, err, hub, unsigned)
+		keptOff(t, err, hub, unsigned)
 	})
 }
 

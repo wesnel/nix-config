@@ -243,24 +243,45 @@ func exists(path string) bool {
 	return err == nil
 }
 
-// rangeStart is the parent of the oldest commit the pass has to rewrite: the
+// RangeStart is the parent of the oldest commit the pass has to rewrite: the
 // oldest unsigned commit, or an older one that a fixup!, amend! or squash!
-// folds into. It also reports whether there is anything to fold.
-func rangeStart(base, tip string) (string, bool, error) {
-	out, err := git.Run("log", "--reverse", "--format=%H%x00%G?%x00%s", base+".."+tip)
+// folds into, or "" when base..tip has nothing to sign. It also reports
+// whether there is anything to fold, and refuses a fold whose target is not
+// in base..tip. A commit is unsigned when its object has no signature header
+// for the repository's object format, the one git reads (gpgsig, or
+// gpgsig-sha256 in a SHA-256 repository): no verifier runs, so pr-loop
+// next, which only reads, can call it.
+func RangeStart(base, tip string) (string, bool, error) {
+	format, err := objectGit("rev-parse", "--show-object-format")
 	if err != nil {
 		return "", false, err
 	}
-	type entry struct{ sha, mark, subject string }
+	header := "\ngpgsig "
+	if format == "sha256" {
+		header = "\ngpgsig-sha256 "
+	}
+	out, err := objectGit("log", "--reverse", "--format=%H%x00%s", base+".."+tip)
+	if err != nil {
+		return "", false, err
+	}
+	type entry struct {
+		sha, subject string
+		unsigned     bool
+	}
 	var commits []entry
 	for _, line := range strings.Split(out, "\n") {
-		if f := strings.SplitN(line, "\x00", 3); len(f) == 3 {
-			commits = append(commits, entry{f[0], f[1], f[2]})
+		if f := strings.SplitN(line, "\x00", 2); len(f) == 2 {
+			raw, err := objectGit("cat-file", "commit", f[0])
+			if err != nil {
+				return "", false, err
+			}
+			headers, _, _ := strings.Cut(raw, "\n\n")
+			commits = append(commits, entry{f[0], f[1], !strings.Contains("\n"+headers, header)})
 		}
 	}
 	oldest, fixups := len(commits), false
 	for i, c := range commits {
-		if c.mark == "N" && i < oldest {
+		if c.unsigned && i < oldest {
 			oldest = i
 		}
 		kind, target := history.Fold(c.subject)
@@ -483,9 +504,9 @@ func localBranches() (map[string]string, error) {
 	return branches, nil
 }
 
-// defaultBase is where branch left the default branch: the remote's when there
+// DefaultBase is where branch left the default branch: the remote's when there
 // is one, and otherwise the local one, unless that is the branch being signed.
-func defaultBase(branch string) (string, error) {
+func DefaultBase(branch string) (string, error) {
 	for _, ref := range []string{"refs/remotes/origin/HEAD", "refs/remotes/origin/main", "refs/remotes/origin/master",
 		"refs/heads/main", "refs/heads/master"} {
 		if ref == "refs/heads/"+branch {
@@ -641,11 +662,11 @@ func Resume(branch string, push, setUpstream bool) (any, error) {
 func prepare(branch, base string) (p *pending, early map[string]string, err error) {
 	tip := "refs/heads/" + branch
 	if base == "" {
-		if base, err = defaultBase(branch); err != nil {
+		if base, err = DefaultBase(branch); err != nil {
 			return nil, nil, err
 		}
 	}
-	start, squash, err := rangeStart(base, tip)
+	start, squash, err := RangeStart(base, tip)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -963,9 +984,9 @@ func planSignatures(pl *plan) int {
 		}
 		base := s.Base
 		if base == "" {
-			base, _ = defaultBase(s.Branch)
+			base, _ = DefaultBase(s.Branch)
 		}
-		if start, _, err := rangeStart(base, tip); err == nil && start != "" {
+		if start, _, err := RangeStart(base, tip); err == nil && start != "" {
 			n += signatures(start, tip)
 		}
 	}
@@ -1716,12 +1737,12 @@ func pushTargets(branches []string, setUpstream bool, retry string) (map[string]
 		case remote == "." && merge != "":
 			return nil, nil, refuse("%s tracks the local branch %s, so --push has nowhere to send it; drop that with "+
 				"`git branch --unset-upstream %s` and use --set-upstream, or set its remote branch with "+
-				"`git branch --set-upstream-to=REMOTE/%s %s`; then %s", b, strings.TrimPrefix(merge, "refs/heads/"), b, b, b, retry)
+				"`git branch --set-upstream-to=%s %s`; then %s", b, strings.TrimPrefix(merge, "refs/heads/"), quote(b), quote("REMOTE/"+b), quote(b), retry)
 		case remote != "" && merge != "":
 			if merge != "refs/heads/"+b {
-				fix := fmt.Sprintf("`git branch --unset-upstream %s` and use --set-upstream", b)
+				fix := fmt.Sprintf("`git branch --unset-upstream %s` and use --set-upstream", quote(b))
 				if git.OK("rev-parse", "--verify", "-q", "refs/remotes/"+remote+"/"+b) {
-					fix = fmt.Sprintf("`git branch --set-upstream-to=%s/%s %s`", remote, b, b)
+					fix = fmt.Sprintf("`git branch --set-upstream-to=%s %s`", quote(remote+"/"+b), quote(b))
 				}
 				return nil, nil, refuse("%s tracks %s/%s, a different branch, and --push only pushes a branch to its own "+
 					"name; point it at its own with %s, then %s", b, remote, strings.TrimPrefix(merge, "refs/heads/"), fix, retry)
@@ -1737,7 +1758,7 @@ func pushTargets(branches []string, setUpstream bool, retry string) (map[string]
 			}
 			if git.OK("rev-parse", "--verify", "-q", "refs/remotes/"+t.remote+"/"+b) {
 				return nil, nil, refuse("%s has no upstream but %s already has a branch %s; if it is this one, run "+
-					"`git branch --set-upstream-to=%s/%s %s`, then %s", b, t.remote, b, t.remote, b, b, retry)
+					"`git branch --set-upstream-to=%s %s`, then %s", b, t.remote, b, quote(t.remote+"/"+b), quote(b), retry)
 			}
 			// An empty lease pushes only if the remote has no such branch,
 			// whatever this repository last fetched.
@@ -1750,6 +1771,35 @@ func pushTargets(branches []string, setUpstream bool, retry string) (map[string]
 		byRemote[t.remote] = append(byRemote[t.remote], t)
 	}
 	return byRemote, skipped, nil
+}
+
+// Destination is where a pass that pushes sends a branch: Flag is the push
+// flag it needs, --push for a branch whose upstream is its own name on Remote
+// or --set-upstream for one with none, and Tracking is the commit of the
+// remote-tracking ref the push is leased on, "" when there is none.
+type Destination struct {
+	Flag, Remote, Tracking string
+}
+
+// DestinationOf is branch's Destination, decided as pushTargets decides it,
+// or the refusal pushTargets makes for branch, ending with retry. It reads
+// only this repository's config and refs.
+func DestinationOf(branch, retry string) (Destination, error) {
+	byRemote, skipped, err := pushTargets([]string{branch}, false, retry)
+	if err != nil {
+		return Destination{}, err
+	}
+	flag := "--push"
+	if _, ok := skipped[branch]; ok {
+		if byRemote, _, err = pushTargets([]string{branch}, true, retry); err != nil {
+			return Destination{}, err
+		}
+		flag = "--set-upstream"
+	}
+	for remote, targets := range byRemote {
+		return Destination{Flag: flag, Remote: remote, Tracking: targets[0].lease}, nil
+	}
+	return Destination{}, fmt.Errorf("no push destination for %s", branch)
 }
 
 // unpushed picks, of branches a pass leaves where they are, those a push
@@ -1768,7 +1818,7 @@ func unpushed(branches []string, base string, setUpstream bool, retry string) (t
 	for _, b := range branches {
 		from := base
 		if from == "" {
-			if from, err = defaultBase(b); err != nil {
+			if from, err = DefaultBase(b); err != nil {
 				return nil, nil, err
 			}
 		}

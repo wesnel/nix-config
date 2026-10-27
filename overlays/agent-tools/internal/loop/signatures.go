@@ -94,6 +94,55 @@ func ownCommits(branch, base, tip string) error {
 	return nil
 }
 
+// operatorFormatSigned is what ownCommits checks short of verifying the
+// signatures, which needs files it writes: the protected operator profile
+// loads, and every commit in base..tip carries a signature in its format.
+// It writes nothing, for pr-loop next; open still proves them.
+func operatorFormatSigned(branch, base, tip string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), operatorVerificationTimeout)
+	defer cancel()
+	ctx = git.KillingTree(ctx)
+	err := func() error {
+		p, err := loadOperatorProfile(ctx)
+		if err != nil {
+			return err
+		}
+		out, err := signingGit(ctx, []string{"GIT_GRAFT_FILE=/dev/null"}, nil, "rev-list", base+".."+tip)
+		if err != nil {
+			return err
+		}
+		commits := strings.Fields(string(out))
+		if len(commits) == 0 {
+			return refuse("there are no commits beyond the GitHub base to authorize")
+		}
+		for _, commit := range commits {
+			raw, err := signingGit(ctx, nil, nil, "cat-file", "commit", commit)
+			if err != nil {
+				return err
+			}
+			if !signedIn(raw, p.format) {
+				return refuse("commit %.12s has no signature in the operator's signing format", commit)
+			}
+		}
+		return nil
+	}()
+	if err != nil {
+		return fmt.Errorf("cannot authorize %s's existing GitHub branch: %w", branch, err)
+	}
+	return nil
+}
+
+// signedIn reports whether the raw commit object carries a signature in
+// format, openpgp or ssh.
+func signedIn(raw []byte, format string) bool {
+	headers, _, _ := strings.Cut(string(raw), "\n\n")
+	label := "PGP"
+	if format == "ssh" {
+		label = "SSH"
+	}
+	return strings.Contains("\n"+headers, "\ngpgsig -----BEGIN "+label+" SIGNATURE-----\n")
+}
+
 func signingGit(ctx context.Context, env []string, stdin []byte, args ...string) ([]byte, error) {
 	env = append([]string{"GIT_NO_REPLACE_OBJECTS=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_COUNT=0", "GIT_CONFIG_PARAMETERS="}, env...)
 	out, err := git.BytesContext(git.WithEnv(ctx, env...), stdin, args...)
@@ -368,12 +417,7 @@ func verifyOperatorRange(ctx context.Context, base, tip string) error {
 		if err != nil {
 			return err
 		}
-		headers, _, _ := strings.Cut(string(raw), "\n\n")
-		label := "PGP"
-		if p.format == "ssh" {
-			label = "SSH"
-		}
-		if !strings.Contains("\n"+headers, "\ngpgsig -----BEGIN "+label+" SIGNATURE-----\n") {
+		if !signedIn(raw, p.format) {
 			return refuse("commit %.12s has no signature in the operator's signing format", commit)
 		}
 		check := append(append([]string{}, args...), "log", "-1", "--format=%G?%x00%GF%x00%GP", commit)

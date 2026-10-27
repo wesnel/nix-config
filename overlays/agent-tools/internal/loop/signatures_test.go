@@ -23,8 +23,9 @@ import (
 )
 
 // signing makes dir's commits verifiable, signed with a throwaway SSH key
-// that its allowed-signers file trusts for t@e, so a test signs commits
-// without the hardware key. It returns the arguments that sign a commit.
+// that its allowed-signers file trusts for t@e and its user.signingkey
+// names, so a test signs commits without the hardware key. It returns the
+// arguments that sign a commit.
 func signing(t *testing.T, dir string) []string {
 	t.Helper()
 	key := filepath.Join(t.TempDir(), "key")
@@ -41,6 +42,7 @@ func signing(t *testing.T, dir string) []string {
 	}
 	gitIn(t, dir, "config", "gpg.format", "ssh")
 	gitIn(t, dir, "config", "gpg.ssh.allowedSignersFile", signers)
+	gitIn(t, dir, "config", "user.signingkey", key)
 	return []string{"-c", "user.signingkey=" + key, "commit", "-q", "-S"}
 }
 

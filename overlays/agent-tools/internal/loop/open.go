@@ -95,13 +95,8 @@ func checkOpen(repo *Repo, view *remoteView, branch, base, local string) (string
 // already has that it can be measured against. A stacked branch must contain
 // its base as GitHub has it, so the pull request shows only its own commits.
 // For a branch onGitHub, its own remote-tracking refs are not among those
-// commits, so the pull request's commits are still counted and linted, and
-// their signatures must all authenticate the protected operator key.
-func checkLocal(repo *Repo, branch, base, baseOid string, onGitHub bool) (string, []string, error) {
-	local, err := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+branch)
-	if err != nil {
-		return "", nil, refuse("no local branch %s; name a branch that `git branch --list` shows", branch)
-	}
+// commits, so the pull request's commits are still counted and linted.
+func checkLocal(repo *Repo, branch, base, baseOid, local string, onGitHub bool) (string, []string, error) {
 	var known []string
 	if git.OK("cat-file", "-e", baseOid+"^{commit}") {
 		known = append(known, baseOid)
@@ -142,11 +137,6 @@ func checkLocal(repo *Repo, branch, base, baseOid string, onGitHub bool) (string
 	}
 	if err := lintNew(branch, local, known); err != nil {
 		return "", nil, err
-	}
-	if onGitHub {
-		if err := ownCommits(branch, baseOid, local); err != nil {
-			return "", nil, err
-		}
 	}
 	return local, known, nil
 }
@@ -250,10 +240,66 @@ func setUpstream(repo *Repo, branch string) error {
 	return err
 }
 
+// opening is what Open would do, found before it writes anything: open
+// branch against base, at local, uploading objects unless GitHub has the
+// branch (onGitHub).
+type opening struct {
+	branch, base, local string
+	onGitHub            bool
+	objects             *objectSet
+}
+
+// planOpen makes every check Open makes before it writes, against view,
+// what viewRemote reports for branch and base, and returns what Open would
+// do. own checks the signatures of base..tip for a branch GitHub has:
+// ownCommits for Open, which proves them in a directory of the protected
+// state home, and operatorFormatSigned for pr-loop next, which writes
+// nothing.
+func planOpen(repo *Repo, view *remoteView, branch, base string, own func(branch, base, tip string) error) (*opening, error) {
+	tip, err := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+branch)
+	if err != nil {
+		return nil, err
+	}
+	baseOid, err := checkOpen(repo, view, branch, base, tip)
+	if err != nil {
+		return nil, err
+	}
+	o := &opening{branch: branch, base: base, onGitHub: view.Heads[branch] != "", objects: &objectSet{}}
+	local, known, err := checkLocal(repo, branch, base, baseOid, tip, o.onGitHub)
+	if err != nil {
+		return nil, err
+	}
+	if o.onGitHub {
+		if err := own(branch, baseOid, local); err != nil {
+			return nil, err
+		}
+	}
+	o.local = local
+	if !o.onGitHub {
+		// The API bypasses git's pre-push hooks, so the check git-push-guard
+		// makes is made here.
+		absent := strings.Repeat("0", 40)
+		update := pushguard.Update{LocalRef: "refs/heads/" + branch, Local: local, RemoteRef: "refs/heads/" + branch, Remote: absent}
+		if err := pushguard.Check("https://github.com/"+repo.Slug, []pushguard.Update{update}, pushguard.GitHub()); err != nil {
+			return nil, err
+		}
+		if o.objects, err = missingObjects([]string{local}, known); err != nil {
+			return nil, err
+		}
+	}
+	return o, nil
+}
+
+// dryRun is Open's result for a dry run that would do o.
+func (o *opening) dryRun() map[string]any {
+	return map[string]any{"wouldOpen": map[string]any{"branch": o.branch, "base": o.base, "head": o.local, "draft": true,
+		"onGitHub": o.onGitHub}, "objects": o.objects.counts()}
+}
+
 // Open pushes a branch GitHub does not have through the API, as Push does,
 // and opens it as a draft pull request against base (default: the default
 // branch). A branch GitHub already has at the local tip, with no open pull
-// request and verified operator-key signatures (checkOpen, checkLocal), it opens
+// request and verified operator-key signatures (checkOpen, ownCommits), it opens
 // as it is: nothing is uploaded, and a failure to open leaves the branch on
 // GitHub, since open did not create it. It never marks the pull request ready
 // for review. A dry run says what it would open, with onGitHub, and the
@@ -281,37 +327,18 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	tip, _ := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+branch)
-	baseOid, err := checkOpen(repo, view, branch, base, tip)
+	o, err := planOpen(repo, view, branch, base, ownCommits)
 	if err != nil {
 		return nil, err
-	}
-	onGitHub := view.Heads[branch] != ""
-	local, known, err := checkLocal(repo, branch, base, baseOid, onGitHub)
-	if err != nil {
-		return nil, err
-	}
-	objects := &objectSet{}
-	if !onGitHub {
-		// The API bypasses git's pre-push hooks, so the check git-push-guard
-		// makes is made here.
-		absent := strings.Repeat("0", 40)
-		update := pushguard.Update{LocalRef: "refs/heads/" + branch, Local: local, RemoteRef: "refs/heads/" + branch, Remote: absent}
-		if err := pushguard.Check("https://github.com/"+repo.Slug, []pushguard.Update{update}, pushguard.GitHub()); err != nil {
-			return nil, err
-		}
-		if objects, err = missingObjects([]string{local}, known); err != nil {
-			return nil, err
-		}
 	}
 	if dryRun {
-		return map[string]any{"wouldOpen": map[string]any{"branch": branch, "base": base, "head": local, "draft": true,
-			"onGitHub": onGitHub}, "objects": objects.counts()}, nil
+		return o.dryRun(), nil
 	}
+	local := o.local
 
 	calls, refID := 0, ""
-	if !onGitHub {
-		if calls, err = objects.upload(repo.Slug); err != nil {
+	if !o.onGitHub {
+		if calls, err = o.objects.upload(repo.Slug); err != nil {
 			return nil, err
 		}
 		var created struct {

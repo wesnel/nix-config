@@ -263,7 +263,7 @@ func TestCheckLocal(t *testing.T) {
 
 	t.Run("stacked", func(t *testing.T) {
 		s := newLocalStack(t)
-		local, known, err := checkLocal(repo, "child", "parent", s.parent, false)
+		local, known, err := checkLocal(repo, "child", "parent", s.parent, s.child, false)
 		if err != nil || local != s.child {
 			t.Fatalf("stacked: %s, %v", local, err)
 		}
@@ -282,8 +282,8 @@ func TestCheckLocal(t *testing.T) {
 	// The default branch may have moved on GitHub past what was fetched;
 	// what was fetched is still left out of the upload.
 	t.Run("default base not fetched", func(t *testing.T) {
-		newLocalStack(t)
-		if _, known, err := checkLocal(repo, "child", "trunk", unfetched, false); err != nil || strings.Join(known, " ") != "--remotes=origin/* --remotes=another/*" {
+		s := newLocalStack(t)
+		if _, known, err := checkLocal(repo, "child", "trunk", unfetched, s.child, false); err != nil || strings.Join(known, " ") != "--remotes=origin/* --remotes=another/*" {
 			t.Errorf("default base not fetched: %v, %v", known, err)
 		}
 	})
@@ -291,7 +291,6 @@ func TestCheckLocal(t *testing.T) {
 	// Each case names its branch, its base, and the base's commit, which is
 	// trunk's unless it says otherwise.
 	refused := map[string][3]string{
-		"no local branch":    {"gone", "trunk", ""},
 		"no new commits":     {"empty", "trunk", ""},
 		"parent not fetched": {"child", "parent", unfetched},
 		"not on its parent":  {"aside", "parent", "parent"},
@@ -308,7 +307,7 @@ func TestCheckLocal(t *testing.T) {
 			case "parent":
 				oid = s.parent
 			}
-			_, _, err := checkLocal(repo, c[0], c[1], oid, false)
+			_, _, err := checkLocal(repo, c[0], c[1], oid, gitIn(t, s.dir, "rev-parse", c[0]), false)
 			if _, ok := err.(Refusal); !ok || !refusal.SaysInstead(err.Error()) {
 				t.Errorf("%s: %v", name, err)
 			}
@@ -320,7 +319,7 @@ func TestCheckLocal(t *testing.T) {
 
 	t.Run("message an amend! rewords", func(t *testing.T) {
 		s := newLocalStack(t)
-		if _, _, err := checkLocal(repo, "reworded", "trunk", s.trunk, false); err != nil {
+		if _, _, err := checkLocal(repo, "reworded", "trunk", s.trunk, gitIn(t, s.dir, "rev-parse", "reworded"), false); err != nil {
 			t.Errorf("a message an amend! rewords: %v", err)
 		}
 	})
@@ -359,7 +358,7 @@ func TestCheckLocalParent(t *testing.T) {
 	t.Run("default base refused, naming the parent", func(t *testing.T) {
 		s := newLocalStack(t)
 		pushed(t, s, "parent")
-		_, _, err := checkLocal(repo, "child", "trunk", s.trunk, false)
+		_, _, err := checkLocal(repo, "child", "trunk", s.trunk, s.child, false)
 		if _, ok := err.(Refusal); !ok || !refusal.SaysInstead(err.Error()) || !strings.Contains(fmt.Sprint(err), "--base parent") {
 			t.Errorf("default base over a pushed parent: %v", err)
 		}
@@ -369,7 +368,7 @@ func TestCheckLocalParent(t *testing.T) {
 		s := newLocalStack(t)
 		grandchild(t, s)
 		pushed(t, s, "parent", "child")
-		_, _, err := checkLocal(repo, "grandchild", "trunk", s.trunk, false)
+		_, _, err := checkLocal(repo, "grandchild", "trunk", s.trunk, gitIn(t, s.dir, "rev-parse", "grandchild"), false)
 		if _, ok := err.(Refusal); !ok || !strings.Contains(fmt.Sprint(err), "--base child") {
 			t.Errorf("nearest parent: %v", err)
 		}
@@ -378,7 +377,7 @@ func TestCheckLocalParent(t *testing.T) {
 	t.Run("explicit base that is the parent passes", func(t *testing.T) {
 		s := newLocalStack(t)
 		pushed(t, s, "parent")
-		if _, _, err := checkLocal(repo, "child", "parent", s.parent, false); err != nil {
+		if _, _, err := checkLocal(repo, "child", "parent", s.parent, s.child, false); err != nil {
 			t.Errorf("explicit parent base: %v", err)
 		}
 	})
@@ -387,7 +386,7 @@ func TestCheckLocalParent(t *testing.T) {
 		s := newLocalStack(t)
 		grandchild(t, s)
 		pushed(t, s, "parent", "child")
-		_, _, err := checkLocal(repo, "grandchild", "parent", s.parent, false)
+		_, _, err := checkLocal(repo, "grandchild", "parent", s.parent, gitIn(t, s.dir, "rev-parse", "grandchild"), false)
 		if _, ok := err.(Refusal); !ok || !strings.Contains(fmt.Sprint(err), "--base child") {
 			t.Errorf("base below the nearest parent: %v", err)
 		}
@@ -396,7 +395,7 @@ func TestCheckLocalParent(t *testing.T) {
 	t.Run("parent already in the base passes", func(t *testing.T) {
 		s := newLocalStack(t)
 		pushed(t, s, "parent")
-		if _, _, err := checkLocal(repo, "child", "trunk", s.parent, false); err != nil {
+		if _, _, err := checkLocal(repo, "child", "trunk", s.parent, s.child, false); err != nil {
 			t.Errorf("merged parent: %v", err)
 		}
 	})
@@ -404,7 +403,7 @@ func TestCheckLocalParent(t *testing.T) {
 	t.Run("unrelated remote branch passes", func(t *testing.T) {
 		s := newLocalStack(t)
 		pushed(t, s, "aside")
-		if _, _, err := checkLocal(repo, "child", "trunk", s.trunk, false); err != nil {
+		if _, _, err := checkLocal(repo, "child", "trunk", s.trunk, s.child, false); err != nil {
 			t.Errorf("unrelated remote branch: %v", err)
 		}
 	})

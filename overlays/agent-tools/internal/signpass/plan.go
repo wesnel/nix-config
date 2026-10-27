@@ -118,11 +118,11 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 		s := step{Branch: t, From: -1, tip: before[t]}
 		b := base
 		if b == "" {
-			if b, err = defaultBase(t); err != nil {
+			if b, err = DefaultBase(t); err != nil {
 				return nil, err
 			}
 		}
-		start, squash, err := rangeStart(b, s.tip)
+		start, squash, err := RangeStart(b, s.tip)
 		if err != nil {
 			return nil, err
 		}
@@ -271,7 +271,7 @@ func rehearseStep(s *step, squash bool) (int, error) {
 // copy gained over the fork point: nothing, unless a fixup above the fork
 // point folded into a commit below it.
 func rehearseFork(s *step, e *step) (int, error) {
-	if _, _, err := rangeStart(s.from, s.tip); err != nil {
+	if _, _, err := RangeStart(s.from, s.tip); err != nil {
 		return 0, err
 	}
 	kept, err := keptCommits(e.from, s.from)
