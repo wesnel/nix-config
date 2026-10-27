@@ -82,6 +82,8 @@ func TestOwners(t *testing.T) {
 		{"quoted variable redirect literal", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"echo x>'$TARGET'"}}`, nil},
 		{"clobber redirect escape", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"echo x>|MAIN/new"}}`, nil},
 		{"multiple digit descriptor escape", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"echo x 12>>MAIN/new"}}`, nil},
+		{"numeric argument before combined redirect", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"touch 123&>SCRATCH/log"}}`, nil},
+		{"numeric argument before combined append", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"touch 123&>>SCRATCH/log"}}`, nil},
 		{"quoted redirect literal", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"echo '>|MAIN/new'"}}`, nil},
 		{"escaped redirect literal", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"echo \\>MAIN/new"}}`, nil},
 		{"redirect is not mkdir operand", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"mkdir SCRATCH/new 2>/dev/null"}}`, nil},

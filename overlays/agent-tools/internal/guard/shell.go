@@ -893,7 +893,7 @@ func lex(segment string, redirects bool) (result call) {
 			in, quoted = true, true
 		case redirects && (c == '>' || c == '<' || c == '&' && i+1 < len(segment) && segment[i+1] == '>'):
 			if in {
-				if pending < 0 && !quoted && digits(cur.String()) {
+				if c != '&' && pending < 0 && !quoted && digits(cur.String()) {
 					cur.Reset()
 					in, expand = false, false
 				} else {
