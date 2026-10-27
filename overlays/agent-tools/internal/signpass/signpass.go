@@ -385,12 +385,21 @@ func statePath(kind, branch string) (string, error) {
 }
 
 // pushes are the branches a signed pass has still to push and, once the push
-// is planned (planPush), each push URL's share of it.
+// is planned (planPush), each push URL's share of it. Checked are those the
+// pass did not move, as unpushed checked them.
 type pushes struct {
-	Branches    []string          `json:"branches"`
-	SetUpstream bool              `json:"setUpstream,omitempty"`
-	URLs        []urlPush         `json:"urls,omitempty"`
-	Skipped     map[string]string `json:"skipped,omitempty"`
+	Branches    []string               `json:"branches"`
+	SetUpstream bool                   `json:"setUpstream,omitempty"`
+	URLs        []urlPush              `json:"urls,omitempty"`
+	Skipped     map[string]string      `json:"skipped,omitempty"`
+	Checked     map[string]checkedPush `json:"checked,omitempty"`
+}
+
+// checkedPush is a branch whose signatures unpushed checked: at Tip, to be
+// pushed leased on Lease. Its push goes only from there.
+type checkedPush struct {
+	Tip   string `json:"tip"`
+	Lease string `json:"lease"`
 }
 
 // urlPush is what one push URL of Remote receives: Refs, one push each, in
@@ -498,7 +507,9 @@ func defaultBase(branch string) (string, error) {
 // at each of its remote's push URLs in turn, one branch per push, bottom up,
 // guarded by the commit its remote-tracking ref names, after checking every
 // destination before the first touch; with setUpstream as well, so is every
-// branch that moved and has none (see planPush). When the key refuses a
+// branch that moved and has none (see planPush). With nothing to sign, push
+// and setUpstream push the branch as it is when unpushed picks it
+// (pushUnmoved). When the key refuses a
 // signature or an SSH login, on a terminal the pass asks whether to retry
 // that step (retryTouch).
 //
@@ -546,9 +557,15 @@ func Run(base string, resume, push, setUpstream bool) (any, error) {
 		if dirty, _ := git.Run("status", "--porcelain", "--untracked-files=no"); dirty != "" {
 			return nil, refuse("this worktree has uncommitted changes; commit them (unsigned) first")
 		}
-		var early any
-		if p, early, err = prepare(branch, base); err != nil || early != nil {
-			return early, err
+		var early map[string]string
+		if p, early, err = prepare(branch, base); err != nil {
+			return nil, err
+		}
+		if early != nil {
+			if !push && !setUpstream {
+				return early, nil
+			}
+			return pushUnmoved(branch, base, early, setUpstream)
 		}
 		p.push, p.setUpstream = push, setUpstream
 		pushBranches, urls := 0, 0
@@ -621,7 +638,7 @@ func Resume(branch string, push, setUpstream bool) (any, error) {
 
 // prepare checks a pass on branch from base and records what it must leave,
 // touching nothing; early is the result when there is nothing to sign.
-func prepare(branch, base string) (p *pending, early any, err error) {
+func prepare(branch, base string) (p *pending, early map[string]string, err error) {
 	tip := "refs/heads/" + branch
 	if base == "" {
 		if base, err = defaultBase(branch); err != nil {
@@ -1430,7 +1447,7 @@ func pushAll(branch string, todo pushes) (pushed map[string]string, err error) {
 	}
 	retry := "run `" + resumeCommand(branch, true, todo.SetUpstream) + "`"
 	if len(todo.URLs) == 0 {
-		if todo, err = planPush(todo.Branches, todo.SetUpstream, retry); err != nil {
+		if todo, err = planPush(todo.Branches, todo.SetUpstream, todo.Checked, retry); err != nil {
 			return nil, err
 		}
 	}
@@ -1512,19 +1529,25 @@ func pushedTo(urls []urlPush) string {
 // they are now. A branch published with setUpstream is leased on nothing,
 // so it lands only where the URL has no branch of that name. Each branch is
 // pushed on its own, bottom up: GitHub starts a pull request's workflows
-// twice when one push moves it and its base together.
-func planPush(branches []string, setUpstream bool, retry string) (pushes, error) {
+// twice when one push moves it and its base together. A branch in checked
+// is refused unless its tip and lease are still those unpushed checked.
+func planPush(branches []string, setUpstream bool, checked map[string]checkedPush, retry string) (pushes, error) {
 	byRemote, skipped, err := pushTargets(branches, setUpstream, retry)
 	if err != nil {
 		return pushes{}, err
 	}
-	todo := pushes{Branches: branches, SetUpstream: setUpstream, Skipped: skipped}
+	todo := pushes{Branches: branches, SetUpstream: setUpstream, Skipped: skipped, Checked: checked}
 	for _, remote := range slices.Sorted(maps.Keys(byRemote)) {
 		var refs []refPush
 		for _, t := range byRemote[remote] {
 			oid, err := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+t.branch)
 			if err != nil {
 				return pushes{}, err
+			}
+			if c, ok := checked[t.branch]; ok && (c.Tip != oid || c.Lease != t.lease) {
+				return pushes{}, refuse("%s moved after the pass checked its signatures, to %.12s from %.12s (leased on %.12s, "+
+					"now %.12s), and the pass pushes only what it checked; nothing was pushed, so look at what moved it, "+
+					"then %s", t.branch, oid, c.Tip, c.Lease, t.lease, retry)
 			}
 			refs = append(refs, refPush{Branch: t.branch, New: oid, Old: t.lease, Publish: t.publish})
 		}
@@ -1650,7 +1673,7 @@ func retryPush(branch string, setUpstream bool) (any, error) {
 		announceTouch()
 	}
 	if setUpstream && !todo.SetUpstream && len(todo.URLs) > 0 && len(todo.Skipped) > 0 {
-		more, err := planPush(slices.Sorted(maps.Keys(todo.Skipped)), true, "run `"+resumeCommand(branch, false, true)+"`")
+		more, err := planPush(slices.Sorted(maps.Keys(todo.Skipped)), true, todo.Checked, "run `"+resumeCommand(branch, false, true)+"`")
 		if err != nil {
 			return nil, err
 		}
@@ -1727,6 +1750,89 @@ func pushTargets(branches []string, setUpstream bool, retry string) (map[string]
 		byRemote[t.remote] = append(byRemote[t.remote], t)
 	}
 	return byRemote, skipped, nil
+}
+
+// unpushed picks, of branches a pass leaves where they are, those a push
+// would publish or move forward: each with commits since base (where it left
+// the default branch, when base is empty) whose push target has no
+// remote-tracking ref of its name or one behind its tip. Of the rest, one
+// without an upstream (unless setUpstream) or whose remote has commits its tip
+// lacks is in skipped with the reason; one the remote has at its tip, or with
+// no commits since base, is in neither. pushTargets checks the branches with
+// commits, refusing as it does for a moved branch, and OperatorSigned the
+// commits a push of each picked would put on the remote's branch: the pass
+// signed none of them, so it pushes them only as the operator's, and only
+// as todo records them (planPush).
+func unpushed(branches []string, base string, setUpstream bool, retry string) (todo map[string]checkedPush, skipped map[string]string, err error) {
+	var ahead []string
+	for _, b := range branches {
+		from := base
+		if from == "" {
+			if from, err = defaultBase(b); err != nil {
+				return nil, nil, err
+			}
+		}
+		if n, _ := git.Run("rev-list", "--count", from+"..refs/heads/"+b); n != "" && n != "0" {
+			ahead = append(ahead, b)
+		}
+	}
+	byRemote, skipped, err := pushTargets(ahead, setUpstream, retry)
+	if err != nil {
+		return nil, nil, err
+	}
+	todo = map[string]checkedPush{}
+	for _, targets := range byRemote {
+		for _, t := range targets {
+			tip, err := git.Run("rev-parse", "refs/heads/"+t.branch)
+			if err != nil {
+				return nil, nil, err
+			}
+			switch {
+			case t.lease == tip:
+			case t.lease == "" || git.OK("merge-base", "--is-ancestor", t.lease, tip):
+				if err := OperatorSigned(t.branch, tip, remoteHas(t)); err != nil {
+					return nil, nil, err
+				}
+				todo[t.branch] = checkedPush{Tip: tip, Lease: t.lease}
+			default:
+				skipped[t.branch] = fmt.Sprintf("not pushed: %s/%s has commits %s lacks", t.remote, t.branch, t.branch)
+			}
+		}
+	}
+	return todo, skipped, nil
+}
+
+// pushUnmoved is a pass on branch that found nothing to sign, and early its
+// result, with push or setUpstream: it pushes branch as pushAll does when
+// unpushed picks it, and adds to early, as pushed, where it went or why it
+// did not.
+func pushUnmoved(branch, base string, early map[string]string, setUpstream bool) (any, error) {
+	retry := "run the pass again"
+	todo, pushed, err := unpushed([]string{branch}, base, setUpstream, retry)
+	if err != nil {
+		return nil, err
+	}
+	if len(todo) > 0 {
+		if err := sshmux.Check(retry); err != nil {
+			return nil, err
+		}
+		if Brief {
+			announceTouch()
+		}
+		done, err := pushAll(branch, pushes{Branches: slices.Sorted(maps.Keys(todo)), SetUpstream: setUpstream, Checked: todo})
+		if err != nil {
+			return nil, err
+		}
+		maps.Copy(pushed, done)
+	}
+	if len(pushed) == 0 {
+		return early, nil
+	}
+	result := map[string]any{"pushed": pushed}
+	for k, v := range early {
+		result[k] = v
+	}
+	return result, nil
 }
 
 // defaultBranches are the names remote's default branch may have: the one

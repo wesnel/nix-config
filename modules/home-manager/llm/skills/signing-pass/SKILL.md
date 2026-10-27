@@ -76,8 +76,8 @@ Then tell the operator to run one of these in that branch:
 
 ```sh
 git sign-pass                  # sign; nothing is pushed
-git sign-pass --push           # sign, then push every branch that moved to its own name upstream
-git sign-pass --set-upstream   # the same, and publish moved branches that have no upstream yet
+git sign-pass --push           # sign, then push to its own name upstream every branch that moved, or that is signed and ahead of its remote
+git sign-pass --set-upstream   # the same, and publish those that have no upstream yet
 ```
 
 The pass pushes one branch per `git push`, bottom up, since GitHub runs a pull

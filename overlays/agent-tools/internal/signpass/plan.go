@@ -28,11 +28,16 @@ type plan struct {
 	// Next is the step after the one running.
 	Next int `json:"next"`
 	// Key is the branch whose push state holds the plan's push.
-	Key         string         `json:"key"`
-	Push        bool           `json:"push,omitempty"`
-	SetUpstream bool           `json:"setUpstream,omitempty"`
-	Moved       []string       `json:"moved,omitempty"`
-	Results     map[string]any `json:"results"`
+	Key         string   `json:"key"`
+	Push        bool     `json:"push,omitempty"`
+	SetUpstream bool     `json:"setUpstream,omitempty"`
+	Moved       []string `json:"moved,omitempty"`
+	// Unmoved are the named branches the pass leaves where they are that it
+	// pushes too, each only as unpushed checked it; Held says why it pushes
+	// some others not.
+	Unmoved map[string]checkedPush `json:"unmoved,omitempty"`
+	Held    map[string]string      `json:"held,omitempty"`
+	Results map[string]any         `json:"results"`
 }
 
 // step signs one stack: from the oldest unsigned commit above Base, as a
@@ -64,7 +69,8 @@ type step struct {
 // out, and prints what it will do before the first key touch. Every check that
 // can refuse runs first, including an unsigned rehearsal of every squash and
 // every fork's replay. With push or setUpstream, every branch that moved is
-// pushed at the end, as a single-branch pass pushes (pushAll).
+// pushed at the end, as a single-branch pass pushes (pushAll), and so is each
+// named branch that did not move when unpushed picks it.
 func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 	if base != "" && len(names) > 1 {
 		return nil, refuse("--base applies to one branch; sign branches with different bases separately")
@@ -190,7 +196,16 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 	}
 
 	if push || setUpstream {
-		byRemote, skipped, err := pushTargets(moving, setUpstream, "run the pass again")
+		var unmoved []string
+		for _, n := range named {
+			if !slices.Contains(moving, n) {
+				unmoved = append(unmoved, n)
+			}
+		}
+		if pl.Unmoved, pl.Held, err = unpushed(unmoved, base, setUpstream, "run the pass again"); err != nil {
+			return nil, err
+		}
+		byRemote, skipped, err := pushTargets(slices.Concat(moving, slices.Sorted(maps.Keys(pl.Unmoved))), setUpstream, "run the pass again")
 		if err != nil {
 			return nil, err
 		}
@@ -216,6 +231,9 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 		}
 		for _, b := range slices.Sorted(maps.Keys(skipped)) {
 			lines = append(lines, fmt.Sprintf("%s: not pushed, no upstream", b))
+		}
+		for _, b := range slices.Sorted(maps.Keys(pl.Held)) {
+			lines = append(lines, fmt.Sprintf("%s: %s", b, pl.Held[b]))
 		}
 	}
 	lines = append(lines, fmt.Sprintf("key touches: up to %d", touches))
@@ -396,7 +414,7 @@ func runPlan(pl *plan) (any, error) {
 		}
 		var p *pending
 		if s.From < 0 {
-			var early any
+			var early map[string]string
 			if p, early, err = prepare(s.Branch, s.Base); err != nil {
 				return nil, err
 			}
@@ -445,10 +463,15 @@ func runPlan(pl *plan) (any, error) {
 	}
 	result := map[string]any{"branches": pl.Results}
 	if pl.Push || pl.SetUpstream {
-		sort.Strings(pl.Moved)
-		pushed, err := pushAll(pl.Key, pushes{Branches: slices.Compact(pl.Moved), SetUpstream: pl.SetUpstream})
+		branches := slices.Sorted(slices.Values(append(pl.Moved, slices.Collect(maps.Keys(pl.Unmoved))...)))
+		pushed, err := pushAll(pl.Key, pushes{Branches: slices.Compact(branches), SetUpstream: pl.SetUpstream, Checked: pl.Unmoved})
 		if err != nil {
 			return nil, err
+		}
+		for b, why := range pl.Held {
+			if _, ok := pushed[b]; !ok {
+				pushed[b] = why
+			}
 		}
 		result["pushed"] = pushed
 	}

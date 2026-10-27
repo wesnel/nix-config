@@ -168,6 +168,16 @@ func TestNotify(t *testing.T) {
 		}
 	})
 
+	t.Run("nothing to sign, one pushed and one not", func(t *testing.T) {
+		dir := t.TempDir()
+		p, id := requested(t, dir)
+		Notify(id, map[string]any{"branch": "one", "signed": "every commit since the base is already signed",
+			"pushed": map[string]string{"one": "origin refs/heads/one", "two": "not pushed: no upstream"}}, nil, time.Now())
+		if e := last(t, p); e.Kind != "signed" || e.Summary != "nothing to sign; pushed one" {
+			t.Errorf("logged %+v", e)
+		}
+	})
+
 	t.Run("an ID no plan holds", func(t *testing.T) {
 		dir := t.TempDir()
 		p, id := requested(t, dir)

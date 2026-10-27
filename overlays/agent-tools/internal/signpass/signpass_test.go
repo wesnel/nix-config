@@ -2,6 +2,7 @@ package signpass
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -154,6 +155,44 @@ func TestPush(t *testing.T) {
 	t.Run("stack bottom up", testPushStackBottomUp)
 	t.Run("control path too long", testPushControlPathTooLong)
 	t.Run("interrupted", testPushInterrupted)
+	t.Run("unmoved branch", testPushUnmoved)
+	t.Run("unmoved branch's signers", testPushUnmovedSigners)
+	t.Run("unmoved branch's objects", testPushUnmovedObjects)
+	t.Run("unmoved branch's range", testPushUnmovedRange)
+	t.Run("unmoved branch moved during the pass", testPushUnmovedMoved)
+}
+
+// testPushUnmovedMoved pushes a named branch the pass leaves where it is only
+// at the commit it checked: one that moves while the pass signs another, as
+// an agent committing while the operator touches the key would move it, is
+// refused rather than pushed where it went.
+func testPushUnmovedMoved(t *testing.T) {
+	dir, repo, hub := unmovedRepo(t)
+	gitIn(t, repo, "switch", "-qc", "fresh")
+	signedCommit(t, "")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned")
+	unsigned := gitIn(t, repo, "rev-parse", "HEAD")
+	gitIn(t, repo, "reset", "-q", "--hard", "HEAD~1")
+	gitIn(t, repo, "switch", "-qc", "signme", "main")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "S1")
+	// The signer moves fresh at its first signature.
+	moved := filepath.Join(dir, "moved")
+	signer := filepath.Join(dir, "signer")
+	os.WriteFile(signer, []byte("#!/bin/sh\ncase \"$*\" in *'-Y sign'*) if [ ! -e '"+moved+"' ]; then touch '"+moved+"'; "+
+		"env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE git -C '"+repo+"' update-ref refs/heads/fresh "+unsigned+"; fi;; esac\n"+
+		"exec ssh-keygen \"$@\"\n"), 0o755)
+	gitIn(t, repo, "config", "gpg.ssh.program", signer)
+	_, err := Plan("", []string{"signme", "fresh"}, false, true)
+	if _, statErr := os.Stat(moved); statErr != nil {
+		t.Fatalf("the signer never moved fresh: %v", err)
+	}
+	if onHub, _ := git.Run("-C", hub, "rev-parse", "-q", "--verify", "refs/heads/fresh"); onHub == unsigned {
+		t.Errorf("the remote's fresh is the unsigned commit %s", unsigned)
+	}
+	var r refusal.Refusal
+	if !errors.As(err, &r) || !strings.Contains(err.Error(), "fresh moved") {
+		t.Errorf("a named branch that moved during the pass: %v", err)
+	}
 }
 
 // The commands a pass prints for resuming name the program that is running,
@@ -941,6 +980,398 @@ func testPushRemote(t *testing.T) {
 	check("upstream", "")
 	gitIn(t, dir, "config", "branch.b.pushRemote", "fork")
 	check("fork", "")
+}
+
+// testPushUnmoved pushes a branch the pass finds already signed when its
+// remote lacks it or is behind it, and leaves it alone when the remote has its
+// tip, when the remote has commits the tip lacks, and when it has no commits
+// of its own; pushTargets' refusals still hold for it.
+func testPushUnmoved(t *testing.T) {
+	dir := t.TempDir()
+	global := signingConfig(t, dir)
+	hub := filepath.Join(dir, "hub.git")
+	gitIn(t, dir, "init", "-q", "--bare", hub)
+	repo := filepath.Join(dir, "repo")
+	os.Mkdir(repo, 0o755)
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+	gitIn(t, repo, "remote", "add", "origin", hub)
+	gitIn(t, repo, "push", "-q", "-u", "origin", "main")
+	gitIn(t, repo, "switch", "-qc", "one")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "O1")
+
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	useDir(t, repo)
+	sign := func() {
+		t.Helper()
+		if _, err := Run("", false, false, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	push := func(setUpstream bool) map[string]string {
+		t.Helper()
+		result, err := Run("", false, true, setUpstream)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, _ := json.Marshal(result)
+		var r struct {
+			Signed string            `json:"signed"`
+			Pushed map[string]string `json:"pushed"`
+		}
+		if err := json.Unmarshal(out, &r); err != nil || r.Signed == "" {
+			t.Fatalf("not an already-signed result: %s", out)
+		}
+		return r.Pushed
+	}
+	hubHas := func(branch string) string {
+		t.Helper()
+		oid, _ := git.Run("-C", hub, "rev-parse", "-q", "--verify", "refs/heads/"+branch)
+		return oid
+	}
+	sign()
+
+	// No upstream: --push says why it leaves the branch, and --set-upstream
+	// publishes it.
+	if got := push(false); got["one"] != "not pushed: no upstream" || hubHas("one") != "" {
+		t.Errorf("--push without an upstream: %v", got)
+	}
+	if got := push(true); got["one"] != "origin refs/heads/one, now its upstream" {
+		t.Errorf("--set-upstream: %v", got)
+	}
+	if got, want := hubHas("one"), gitIn(t, repo, "rev-parse", "one"); got != want {
+		t.Errorf("the remote's one is %q, want %s", got, want)
+	}
+
+	// The remote has the tip: nothing to push.
+	if got := push(false); got["one"] != "" {
+		t.Errorf("a branch the remote has: %v", got)
+	}
+
+	// The remote is behind the tip: pushed.
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "O2")
+	sign()
+	if got := push(false); got["one"] != "origin refs/heads/one" {
+		t.Errorf("a branch the remote is behind: %v", got)
+	}
+	if got, want := hubHas("one"), gitIn(t, repo, "rev-parse", "one"); got != want {
+		t.Errorf("the remote's one is %q, want %s", got, want)
+	}
+
+	// The remote has a commit the tip lacks: left alone, saying why.
+	onRemote := hubHas("one")
+	gitIn(t, repo, "commit", "-q", "--amend", "--allow-empty", "-m", "O2 again")
+	sign()
+	if got := push(false); !strings.HasPrefix(got["one"], "not pushed: origin/one has commits") {
+		t.Errorf("a branch the remote has other commits on: %v", got)
+	}
+	if got := hubHas("one"); got != onRemote {
+		t.Errorf("the remote's one moved to %s", got)
+	}
+
+	// No commits since the base: nothing to push, upstream or not.
+	gitIn(t, repo, "switch", "-qc", "empty", "main")
+	gitIn(t, repo, "config", "branch.empty.remote", "origin")
+	gitIn(t, repo, "config", "branch.empty.merge", "refs/heads/empty")
+	if got := push(true); got["empty"] != "" || hubHas("empty") != "" {
+		t.Errorf("a branch with no commits of its own: %v", got)
+	}
+
+	// A branch tracking another is refused before anything is pushed.
+	gitIn(t, repo, "switch", "-q", "-c", "astray", "--track", "origin/main")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "A1")
+	sign()
+	if _, err := Run("", false, true, false); err == nil || !strings.Contains(err.Error(), "tracks origin/main") {
+		t.Errorf("an already-signed branch tracking main: %v", err)
+	}
+	if hubHas("astray") != "" {
+		t.Error("a refused branch was pushed")
+	}
+}
+
+// testPushUnmovedSigners pushes a branch the pass leaves where it is only when
+// the operator's key signed every commit since the base: git's mark G, or U
+// for a good signature git cannot vouch for, with the fingerprint of the key
+// the pass signs with. A commit another key signed, trusted or not, one whose
+// signature does not match it, and one git cannot check are refused before
+// any push, by a single-branch pass and a pass over named branches.
+func testPushUnmovedSigners(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		// commit makes the branch's one commit in repo, whose operator key
+		// and allowed-signers file are in dir.
+		commit func(t *testing.T, dir, repo string)
+		// mark is git's %G? for the commit.
+		mark   string
+		pushed bool
+	}{
+		{"operator's key, trusted", func(t *testing.T, dir, repo string) {
+			signedCommit(t, "")
+		}, "G", true},
+		{"operator's key, untrusted", func(t *testing.T, dir, repo string) {
+			signedCommit(t, "")
+			os.WriteFile(filepath.Join(dir, "signers"), nil, 0o644)
+		}, "U", true},
+		{"another key, untrusted", func(t *testing.T, dir, repo string) {
+			signedCommit(t, sshKey(t, filepath.Join(dir, "other")))
+		}, "U", false},
+		{"another key, trusted", func(t *testing.T, dir, repo string) {
+			other := sshKey(t, filepath.Join(dir, "other"))
+			pub, _ := os.ReadFile(other + ".pub")
+			f, _ := os.OpenFile(filepath.Join(dir, "signers"), os.O_APPEND|os.O_WRONLY, 0o644)
+			f.WriteString("o@e namespaces=\"git\" " + string(pub))
+			f.Close()
+			signedCommit(t, other)
+		}, "G", false},
+		{"bad signature", func(t *testing.T, dir, repo string) {
+			signedCommit(t, "")
+			object := gitIn(t, repo, "cat-file", "commit", "HEAD")
+			forged := filepath.Join(dir, "forged")
+			os.WriteFile(forged, []byte(strings.Replace(object, "\n\nO1", "\n\nO1 changed", 1)+"\n"), 0o644)
+			gitIn(t, repo, "reset", "-q", "--hard", gitIn(t, repo, "hash-object", "-t", "commit", "-w", forged))
+		}, "B", false},
+		{"cannot be checked", func(t *testing.T, dir, repo string) {
+			pgpCommit(t, dir, repo, "ERRSIG 0123456789ABCDEF 22 8 00 1700000000 9 -", "NO_PUBKEY 0123456789ABCDEF")
+		}, "E", false},
+		{"operator's OpenPGP key by its long ID", func(t *testing.T, dir, repo string) {
+			gitIn(t, repo, "config", "gpg.format", "openpgp")
+			gitIn(t, repo, "config", "user.signingkey", "0x89abcdef01234567!")
+			pgpCommit(t, dir, repo, "GOODSIG 89ABCDEF01234567 T <t@e>",
+				"VALIDSIG 0123456789ABCDEF0123456789ABCDEF01234567 2023-11-14 1700000000 0 4 0 22 8 00 0123456789ABCDEF0123456789ABCDEF01234567",
+				"TRUST_ULTIMATE 0 pgp")
+		}, "G", true},
+		{"another OpenPGP key", func(t *testing.T, dir, repo string) {
+			gitIn(t, repo, "config", "gpg.format", "openpgp")
+			gitIn(t, repo, "config", "user.signingkey", "0x89abcdef01234567")
+			pgpCommit(t, dir, repo, "GOODSIG 1111111111111111 O <o@e>",
+				"VALIDSIG 1111111111111111111111111111111111111111 2023-11-14 1700000000 0 4 0 22 8 00 1111111111111111111111111111111111111111",
+				"TRUST_ULTIMATE 0 pgp")
+		}, "G", false},
+		// The operator's key, but a signature git does not count as good.
+		{"operator's OpenPGP key, revoked", func(t *testing.T, dir, repo string) {
+			operatorPGPCommit(t, dir, repo, "REVKEYSIG 89ABCDEF01234567 T <t@e>")
+		}, "R", false},
+		{"operator's OpenPGP key, signature expired", func(t *testing.T, dir, repo string) {
+			operatorPGPCommit(t, dir, repo, "EXPSIG 89ABCDEF01234567 T <t@e>")
+		}, "X", false},
+		{"operator's OpenPGP key, key expired", func(t *testing.T, dir, repo string) {
+			operatorPGPCommit(t, dir, repo, "EXPKEYSIG 89ABCDEF01234567 T <t@e>")
+		}, "Y", false},
+	} {
+		for _, named := range []bool{false, true} {
+			name := c.name
+			if named {
+				name += ", named"
+			}
+			t.Run(name, func(t *testing.T) {
+				dir := t.TempDir()
+				global := signingConfig(t, dir)
+				hub := filepath.Join(dir, "hub.git")
+				gitIn(t, dir, "init", "-q", "--bare", hub)
+				repo := filepath.Join(dir, "repo")
+				os.Mkdir(repo, 0o755)
+				gitIn(t, repo, "init", "-q", "-b", "main")
+				gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+				gitIn(t, repo, "remote", "add", "origin", hub)
+				gitIn(t, repo, "push", "-q", "-u", "origin", "main")
+				gitIn(t, repo, "switch", "-qc", "one")
+				t.Setenv("GIT_CONFIG_GLOBAL", global)
+				useDir(t, repo)
+				c.commit(t, dir, repo)
+				if mark, _ := git.Run("log", "--format=%G?", "main..one"); mark != c.mark {
+					t.Fatalf("the fixture's commit is marked %q, want %s", mark, c.mark)
+				}
+
+				var err error
+				if named {
+					_, err = Plan("", []string{"one"}, false, true)
+				} else {
+					_, err = Run("", false, false, true)
+				}
+				onHub, _ := git.Run("-C", hub, "rev-parse", "-q", "--verify", "refs/heads/one")
+				if c.pushed {
+					if err != nil || onHub == "" {
+						t.Errorf("an operator-signed branch: %v, on the remote at %q", err, onHub)
+					}
+					return
+				}
+				var r refusal.Refusal
+				if !errors.As(err, &r) || !strings.Contains(err.Error(), "not signed by the operator's key") {
+					t.Errorf("a branch with a commit the operator did not sign: %v", err)
+				}
+				if onHub != "" {
+					t.Errorf("the remote got it at %s", onHub)
+				}
+			})
+		}
+	}
+}
+
+// pgpCommit makes repo's branch one commit, O1, with an OpenPGP signature
+// that a stand-in for gpg, in dir, checks by printing status, gpg's status
+// lines without their prefix. gpg signs only through its agent, whose Unix
+// socket the sandbox the tests may run in refuses.
+func pgpCommit(t *testing.T, dir, repo string, status ...string) {
+	t.Helper()
+	script := "#!/bin/sh\necho '[GNUPG:] NEWSIG'\n"
+	for _, s := range status {
+		script += "echo '[GNUPG:] " + s + "'\n"
+	}
+	stub := filepath.Join(dir, "gpg")
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "config", "gpg.program", stub)
+	object := fmt.Sprintf("tree %s\nparent %s\nauthor T <t@e> 1700000000 +0000\ncommitter T <t@e> 1700000000 +0000\n"+
+		"gpgsig -----BEGIN PGP SIGNATURE-----\n \n iHUEABYKAB0WIQQAAAAAAAAAAAAAAAAAAAAAAAAAAAUCZQAAAAAACgkQAAAAAAAAAAAA\n =AAAA\n -----END PGP SIGNATURE-----\n\nO1\n",
+		gitIn(t, repo, "rev-parse", "HEAD^{tree}"), gitIn(t, repo, "rev-parse", "HEAD"))
+	file := filepath.Join(dir, "pgp-commit")
+	if err := os.WriteFile(file, []byte(object), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, repo, "reset", "-q", "--hard", gitIn(t, repo, "hash-object", "-t", "commit", "-w", file))
+}
+
+// unmovedRepo is a repository whose main its remote origin, a bare
+// repository hub in dir, has, signing with the operator's key in dir.
+func unmovedRepo(t *testing.T) (dir, repo, hub string) {
+	t.Helper()
+	dir = t.TempDir()
+	global := signingConfig(t, dir)
+	hub = filepath.Join(dir, "hub.git")
+	gitIn(t, dir, "init", "-q", "--bare", hub)
+	repo = filepath.Join(dir, "repo")
+	os.Mkdir(repo, 0o755)
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+	gitIn(t, repo, "remote", "add", "origin", hub)
+	gitIn(t, repo, "push", "-q", "-u", "origin", "main")
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	useDir(t, repo)
+	return dir, repo, hub
+}
+
+// refusedUnsigned fails unless err is a refusal and hub's one, if any, lacks
+// the commit unsigned.
+func refusedUnsigned(t *testing.T, err error, hub, unsigned string) {
+	t.Helper()
+	var r refusal.Refusal
+	if !errors.As(err, &r) {
+		t.Errorf("a branch with a commit the operator did not sign: %v", err)
+	}
+	if git.OK("-C", hub, "merge-base", "--is-ancestor", unsigned, "refs/heads/one") {
+		t.Errorf("the remote's one has the unsigned commit %s", unsigned)
+	}
+}
+
+// testPushUnmovedObjects checks the commits a push sends, not the history git
+// shows: a replace ref or a graft changes what git log says of a branch, but
+// the push sends the commits themselves.
+func testPushUnmovedObjects(t *testing.T) {
+	t.Run("a replace ref shows a signed commit for an unsigned one", func(t *testing.T) {
+		_, repo, hub := unmovedRepo(t)
+		gitIn(t, repo, "switch", "-qc", "decoy")
+		signedCommit(t, "")
+		decoy := gitIn(t, repo, "rev-parse", "HEAD")
+		gitIn(t, repo, "switch", "-qc", "one", "main")
+		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned")
+		unsigned := gitIn(t, repo, "rev-parse", "HEAD")
+		gitIn(t, repo, "replace", unsigned, decoy)
+		_, err := Run("", false, false, true)
+		refusedUnsigned(t, err, hub, unsigned)
+	})
+	t.Run("a graft hides an unsigned commit", func(t *testing.T) {
+		_, repo, hub := unmovedRepo(t)
+		gitIn(t, repo, "switch", "-qc", "one")
+		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned")
+		unsigned := gitIn(t, repo, "rev-parse", "HEAD")
+		signedCommit(t, "")
+		grafts := filepath.Join(repo, ".git", "info", "grafts")
+		os.WriteFile(grafts, []byte(gitIn(t, repo, "rev-parse", "HEAD")+" "+gitIn(t, repo, "rev-parse", "main")+"\n"), 0o644)
+		_, err := Run("", false, false, true)
+		refusedUnsigned(t, err, hub, unsigned)
+	})
+}
+
+// testPushUnmovedRange checks every commit the push puts on the remote's
+// branch, wherever the pass's base is: a --base above an unsigned commit, a
+// remote not named origin whose base is the local main, and an origin/HEAD
+// pointed at a ref the remote lacks each leave commits below the base that
+// the push sends.
+func testPushUnmovedRange(t *testing.T) {
+	t.Run("--base above an unsigned commit", func(t *testing.T) {
+		_, repo, hub := unmovedRepo(t)
+		gitIn(t, repo, "switch", "-qc", "one")
+		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned")
+		unsigned := gitIn(t, repo, "rev-parse", "HEAD")
+		signedCommit(t, "")
+		_, err := Run(unsigned, false, false, true)
+		refusedUnsigned(t, err, hub, unsigned)
+	})
+	t.Run("a remote not named origin, behind the local main", func(t *testing.T) {
+		_, repo, hub := unmovedRepo(t)
+		gitIn(t, repo, "remote", "rename", "origin", "github")
+		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned on the local main")
+		unsigned := gitIn(t, repo, "rev-parse", "HEAD")
+		gitIn(t, repo, "switch", "-qc", "one")
+		signedCommit(t, "")
+		_, err := Run("", false, false, true)
+		refusedUnsigned(t, err, hub, unsigned)
+	})
+	t.Run("origin/HEAD at a ref the remote lacks", func(t *testing.T) {
+		_, repo, hub := unmovedRepo(t)
+		gitIn(t, repo, "switch", "-qc", "one")
+		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned")
+		unsigned := gitIn(t, repo, "rev-parse", "HEAD")
+		signedCommit(t, "")
+		gitIn(t, repo, "update-ref", "refs/remotes/origin/fake", unsigned)
+		gitIn(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/fake")
+		_, err := Run("", false, false, true)
+		refusedUnsigned(t, err, hub, unsigned)
+	})
+	t.Run("a remote behind the tip: only what it lacks", func(t *testing.T) {
+		_, repo, hub := unmovedRepo(t)
+		gitIn(t, repo, "switch", "-qc", "one")
+		signedCommit(t, "")
+		gitIn(t, repo, "push", "-q", "-u", "origin", "one")
+		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned")
+		unsigned := gitIn(t, repo, "rev-parse", "HEAD")
+		signedCommit(t, "")
+		_, err := Run(unsigned, false, true, false)
+		refusedUnsigned(t, err, hub, unsigned)
+	})
+}
+
+// operatorPGPCommit is pgpCommit for a signature by the operator's OpenPGP
+// key, 0x89ABCDEF01234567, whose status starts with first.
+func operatorPGPCommit(t *testing.T, dir, repo, first string) {
+	t.Helper()
+	gitIn(t, repo, "config", "gpg.format", "openpgp")
+	gitIn(t, repo, "config", "user.signingkey", "0x89abcdef01234567")
+	pgpCommit(t, dir, repo, first,
+		"VALIDSIG 0123456789ABCDEF0123456789ABCDEF01234567 2023-11-14 1700000000 0 4 0 22 8 00 0123456789ABCDEF0123456789ABCDEF01234567")
+}
+
+// sshKey makes a throwaway SSH key at path and returns path.
+func sshKey(t *testing.T, path string) string {
+	t.Helper()
+	if out, err := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", path).CombinedOutput(); err != nil {
+		t.Fatalf("ssh-keygen: %v %s", err, out)
+	}
+	return path
+}
+
+// signedCommit commits O1 on the current branch of the package's git,
+// signed with key, or the operator's key for "".
+func signedCommit(t *testing.T, key string) {
+	t.Helper()
+	args := []string{"commit", "-q", "-S", "--allow-empty", "-m", "O1"}
+	if key != "" {
+		args = append([]string{"-c", "user.signingkey=" + key}, args...)
+	}
+	if out, err := git.Run(args...); err != nil {
+		t.Fatalf("signed commit: %v %s", err, out)
+	}
 }
 
 // testRunFailedPush leaves a pass whose push failed with nothing but the

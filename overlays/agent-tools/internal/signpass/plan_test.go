@@ -16,6 +16,56 @@ func TestPlan(t *testing.T) {
 	t.Run("fold kinds", testPlanFoldKinds)
 	t.Run("fork conflict", testPlanForkConflict)
 	t.Run("nothing to sign", testPlanNothingToSign)
+	t.Run("push unmoved", testPlanPushUnmoved)
+}
+
+// testPlanPushUnmoved pushes, beside a branch the pass signs, a named branch
+// already signed that the remote lacks, and leaves one whose tip the remote
+// already has.
+func testPlanPushUnmoved(t *testing.T) {
+	dir := t.TempDir()
+	global := signingConfig(t, dir)
+	hub := filepath.Join(dir, "hub.git")
+	gitIn(t, dir, "init", "-q", "--bare", hub)
+	repo := filepath.Join(dir, "repo")
+	os.Mkdir(repo, 0o755)
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+	gitIn(t, repo, "remote", "add", "origin", hub)
+	gitIn(t, repo, "push", "-q", "-u", "origin", "main")
+	for _, b := range []string{"done", "same", "fresh"} {
+		gitIn(t, repo, "switch", "-qc", b, "main")
+		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", b+" 1")
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	useDir(t, repo)
+	for _, b := range []string{"done", "same"} {
+		gitIn(t, repo, "switch", "-q", b)
+		if _, err := Run("", false, false, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitIn(t, repo, "push", "-q", "-u", "origin", "same")
+	sameOnHub := gitIn(t, hub, "rev-parse", "same")
+
+	result, err := Plan("", []string{"done", "fresh", "same"}, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pushed := result.(map[string]any)["pushed"].(map[string]string)
+	if pushed["done"] != "origin refs/heads/done, now its upstream" ||
+		pushed["fresh"] != "origin refs/heads/fresh, now its upstream" || pushed["same"] != "" {
+		t.Errorf("pushed: %v", pushed)
+	}
+	for _, b := range []string{"done", "fresh"} {
+		got, _ := git.Run("-C", hub, "rev-parse", "-q", "--verify", "refs/heads/"+b)
+		if want := gitIn(t, repo, "rev-parse", b); got != want {
+			t.Errorf("the remote's %s is %q, want %s", b, got, want)
+		}
+	}
+	if got := gitIn(t, hub, "rev-parse", "same"); got != sameOnHub {
+		t.Errorf("the remote's same moved to %s", got)
+	}
 }
 
 // testPlanThreeStacks signs three stacks in one pass: a parent P with two
