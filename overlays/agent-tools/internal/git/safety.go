@@ -17,16 +17,18 @@ import (
 // still works. Hooks defined in config run even with core.hooksPath set to
 // /dev/null, so those are refused here.
 var programKeys = regexp.MustCompile(`^(` + strings.Join([]string{
-	`core\.(sshcommand|gitproxy|askpass|editor|pager|attributesfile)`,
+	`core\.(sshcommand|gitproxy|askpass|editor|pager|attributesfile|alternaterefscommand)`,
 	`hook\..*`,
 	`(pager|interactive)\..*`,
 	`sequence\.editor`,
 	`diff\.external`,
 	`diff\..*\.(command|textconv)`,
 	`merge\..*\.driver`,
+	`trailer\..*\.(cmd|command)`,
 	`filter\..*`,
 	`credential(\..*)?`,
 	`gpg\.(.*\.)?program`,
+	`gpg\.ssh\.defaultkeycommand`,
 	`include\..*`,
 	`includeif\..*`,
 	`url\..*\.(pushinsteadof|insteadof)`,
@@ -35,6 +37,15 @@ var programKeys = regexp.MustCompile(`^(` + strings.Join([]string{
 	`ssh\.variant`,
 	`protocol\..*`,
 }, "|") + `)$`)
+
+// bangUpdate reports whether key and value are a submodule's update set to
+// a command, `!CMD`, which git submodule update runs in a shell. Its other
+// values (checkout, rebase, merge, none) run nothing.
+func bangUpdate(key, value string) bool {
+	k := strings.ToLower(key)
+	return strings.HasPrefix(k, "submodule.") && strings.HasSuffix(k, ".update") &&
+		strings.HasPrefix(strings.TrimSpace(value), "!")
+}
 
 // ConfigTimeout bounds CheckConfig's git, which a FIFO in the repository
 // can keep waiting: git reads the config files, and from 2.56 the
@@ -45,7 +56,7 @@ var ConfigTimeout = 10 * time.Second
 // if the repository's own or the worktree's config names a program, or if
 // git cannot list that config within ConfigTimeout.
 func CheckConfig(dir string) error {
-	args := []string{"config", "--list", "--show-scope", "--name-only"}
+	args := []string{"config", "--list", "--show-scope", "-z"}
 	where := dir
 	if dir != "" {
 		args = append([]string{"-C", dir}, args...)
@@ -60,18 +71,21 @@ func CheckConfig(dir string) error {
 			"something there, such as a FIFO in its .git, keeps git waiting; stop, and hand the operator this message",
 			ConfigTimeout, where)
 	}
-	out := strings.TrimSpace(string(raw))
 	if err != nil {
 		// Outside a repository there is nothing to check.
 		return nil
 	}
+	// With -z each entry is its scope, then its key and value: NUL after
+	// each, and a newline between key and value.
+	fields := strings.Split(string(raw), "\x00")
 	var found []string
-	for _, line := range strings.Split(out, "\n") {
-		scope, key, ok := strings.Cut(line, "\t")
-		if !ok || (scope != "local" && scope != "worktree") {
+	for i := 0; i+1 < len(fields); i += 2 {
+		scope := fields[i]
+		key, value, _ := strings.Cut(fields[i+1], "\n")
+		if scope != "local" && scope != "worktree" {
 			continue
 		}
-		if programKeys.MatchString(strings.ToLower(key)) {
+		if programKeys.MatchString(strings.ToLower(key)) || bangUpdate(key, value) {
 			found = append(found, scope+" "+key)
 		}
 	}

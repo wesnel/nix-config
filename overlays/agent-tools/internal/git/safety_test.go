@@ -94,12 +94,33 @@ func TestHardening(t *testing.T) {
 		}
 	})
 
-	for _, key := range []string{"core.sshCommand", "filter.x.clean", "diff.x.textconv", "credential.helper", "gpg.program", "include.path", "url.https://evil/.insteadOf", "hook.x.command"} {
+	for _, key := range []string{"core.sshCommand", "filter.x.clean", "diff.x.textconv", "credential.helper", "gpg.program", "include.path", "url.https://evil/.insteadOf", "hook.x.command", "trailer.x.cmd", "trailer.x.command",
+		"gpg.ssh.defaultKeyCommand", "core.alternateRefsCommand"} {
 		t.Run("refuses "+key, func(t *testing.T) {
 			dir, _ := planted(t)
 			gitIn(t, dir, "config", key, "x")
 			if err := CheckConfig(dir); err == nil {
 				t.Errorf("%s was accepted", key)
+			}
+		})
+	}
+
+	t.Run("allows trailer metadata", func(t *testing.T) {
+		dir, _ := planted(t)
+		gitIn(t, dir, "config", "trailer.x.key", "Reviewed-by")
+		if err := CheckConfig(dir); err != nil {
+			t.Errorf("ordinary trailer metadata refused: %v", err)
+		}
+	})
+
+	// git submodule update runs a submodule's update value as a shell
+	// command when it starts with !.
+	for value, refused := range map[string]bool{"!touch x": true, " !touch x": true, "rebase": false} {
+		t.Run("submodule update "+value, func(t *testing.T) {
+			dir, _ := planted(t)
+			gitIn(t, dir, "config", "submodule.x.update", value)
+			if err := CheckConfig(dir); (err != nil) != refused {
+				t.Errorf("CheckConfig: %v, want refusal %v", err, refused)
 			}
 		})
 	}
