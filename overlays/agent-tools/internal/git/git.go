@@ -77,6 +77,7 @@ func RunEnv(env []string, args ...string) (string, error) {
 // more to let go of the command's output.
 func BytesContext(ctx context.Context, stdin []byte, args ...string) ([]byte, error) {
 	cmd := commandContext(ctx, nil, args...)
+	bound(ctx, cmd)
 	cmd.WaitDelay = time.Second
 	return output(cmd, stdin, args)
 }
@@ -169,7 +170,7 @@ func Attached(ctx context.Context, env []string, args ...string) int {
 
 type treeKey struct{}
 
-// KillingTree marks ctx so that a command AttachedStderr or AttachedQuiet
+// KillingTree marks ctx so that a command BytesContext, AttachedStderr or AttachedQuiet
 // runs under it runs in a process group of its own, which the end of ctx
 // kills whole: git and whatever git started, such as a signer waiting on a
 // locked key, which killing git alone leaves running. Use it only for a

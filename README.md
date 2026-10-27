@@ -113,8 +113,10 @@ commit unsigned, fold corrections into the commit they correct with
 `git commit --fixup`, and never `git push` or tag. The instructions and the
 `signing-pass` skill tell them so. To open a pull request for a new branch,
 an agent runs `pr-loop open`, which pushes the unsigned commits through the
-GitHub API with your `gh` login and opens a draft. It refuses a default
-branch, a branch GitHub already has, and any base but the default branch or
+GitHub API with your `gh` login and opens a draft; for a branch GitHub
+already has at the local tip, with only your commits and no open pull
+request, it opens the draft without pushing. It refuses a default branch,
+any other branch GitHub already has, and any base but the default branch or
 the head of another open pull request of yours in the same repository, runs
 `git-push-guard`'s check, points the branch's upstream at its copy on
 GitHub, and puts a pull request based on another into that one's GitHub

@@ -1,6 +1,7 @@
 {
   buildGoModule,
   git,
+  gnupg,
   lib,
   nodejs,
   openssh,
@@ -38,7 +39,16 @@
     # does. A change of go.mod's requirements changes this hash.
     vendorHash = "sha256-kIOJjGSNKkjPBnW9jPORKrxwVuTq2yLTzvbMjeiMx3U=";
     env.CGO_ENABLED = "0";
-    ldflags = ["-s" "-w"] ++ hostLdflags;
+    ldflags =
+      [
+        "-s"
+        "-w"
+        "-X"
+        "github.com/wesnel/agent-tools/internal/loop.defaultGPGProgram=${lib.getExe gnupg}"
+        "-X"
+        "github.com/wesnel/agent-tools/internal/loop.defaultSSHProgram=${lib.getExe' openssh "ssh-keygen"}"
+      ]
+      ++ hostLdflags;
 
     # Without a list, the guard counts everything under home as a credential
     # where its config is absent.
@@ -53,9 +63,9 @@
     '';
 
     # The rehearsal and signing tests build stacks with the real git, and sign
-    # them with a throwaway SSH key. The page tests run the Agent plans
+    # them with throwaway SSH and OpenPGP keys. The page tests run the Agent plans
     # page's own grammar check with node; without it they skip that one.
-    nativeCheckInputs = [git nodejs openssh];
+    nativeCheckInputs = [git gnupg nodejs openssh];
 
     # The MCP tools the guard lets through (reads) or asks the operator
     # about (confirms), per service, for mcp-proxy's tool filters.

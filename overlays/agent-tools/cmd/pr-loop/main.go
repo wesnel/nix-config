@@ -26,9 +26,11 @@ const usage = `pr-loop: a review loop's way to write to GitHub.
 Policy: apart from open, every write is to the head of an open PR, draft or
 ready, by the authenticated user in the same repository and not the default
 branch, re-checked before it is made. A ready PR's pushes add only fixups of
-its own commits. open publishes a branch GitHub does not have, never a
-default branch, as a draft PR based on the default branch or on the head of
-another open PR by the authenticated user in the same repository. open
+its own commits. open publishes a branch GitHub does not have, or takes one
+GitHub has at the local tip, heading no open PR, whose commits since GitHub's
+other branches are all by user.email; never a default branch; and opens it as
+a draft PR based on the default branch or on the head of another open PR by
+the authenticated user in the same repository. open
 refuses a new commit, and push a fixup, whose message breaks the rules git
 sign-pass holds messages to: a subject of at most 72 characters without a
 trailing period, no attribution lines, and on a fixup only Review-*
@@ -47,8 +49,9 @@ session that runs it: the plan naming the harness's session or this
 worktree. A failure to log is printed on stderr and fails nothing.
 
   open --title T --body-file F [--base BASE] [--dry-run] [BRANCH]
-                              push BRANCH (default HEAD) through the GitHub API and open
-                              it as a draft PR against BASE (default: the default branch),
+                              push BRANCH (default HEAD) through the GitHub API, unless
+                              GitHub has it at its tip already, and open it as a draft
+                              PR against BASE (default: the default branch),
                               in BASE's PR's GitHub stack, as link puts it there; refuses
                               when BRANCH contains a remote branch BASE lacks, and names
                               the BASE to pass instead

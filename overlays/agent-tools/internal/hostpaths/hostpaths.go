@@ -57,6 +57,17 @@ func ConfigHome() string {
 	return dir(builtConfigHome, testConfigHome, "XDG_CONFIG_HOME", ".config")
 }
 
+// BakedConfigHome is the installed config authority, without any environment
+// fallback. Empty means this build has no protected config authority.
+func BakedConfigHome() string {
+	return baked(builtConfigHome, testConfigHome)
+}
+
+// BakedStateHome is the installed state authority, without environment fallback.
+func BakedStateHome() string {
+	return baked(builtStateHome, testStateHome)
+}
+
 // StateHome is the XDG state directory.
 func StateHome() string {
 	return dir(builtStateHome, testStateHome, "XDG_STATE_HOME", filepath.Join(".local", "state"))

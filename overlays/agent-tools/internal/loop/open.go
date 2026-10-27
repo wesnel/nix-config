@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/history"
 	"github.com/wesnel/agent-tools/internal/pushguard"
@@ -30,7 +29,7 @@ func viewRemote(repo *Repo, branch, base string) (*remoteView, error) {
 			HeadPRs, BasePRs prs
 		}
 	}
-	err := gh.GraphQL(`query($owner: String!, $name: String!, $head: String!, $base: String!, $headRef: String!, $baseRef: String!) {
+	err := graphQL(`query($owner: String!, $name: String!, $head: String!, $base: String!, $headRef: String!, $baseRef: String!) {
 		repository(owner: $owner, name: $name) {
 			head: ref(qualifiedName: $headRef) { target { oid } }
 			base: ref(qualifiedName: $baseRef) { target { oid } }
@@ -58,11 +57,12 @@ func viewRemote(repo *Repo, branch, base string) (*remoteView, error) {
 	return view, nil
 }
 
-// checkOpen is the policy open applies before it writes: a new branch that
-// is not a default branch, based on the default branch or on the head of an
-// open pull request by the user in this repository. It returns the base's
-// tip on GitHub.
-func checkOpen(repo *Repo, view *remoteView, branch, base string) (string, error) {
+// checkOpen is the policy open applies before it writes: a branch that is
+// not a default branch and heads no open pull request, which GitHub lacks or
+// has at local, the local branch's tip ("" when there is none), based on the
+// default branch or on the head of an open pull request by the user in this
+// repository. It returns the base's tip on GitHub.
+func checkOpen(repo *Repo, view *remoteView, branch, base, local string) (string, error) {
 	if branch == repo.Default || branch == "main" || branch == "master" {
 		return "", refuse("%s is a default branch; commit the change to a branch of its own (`git switch -c NAME`) and open that", branch)
 	}
@@ -73,9 +73,10 @@ func checkOpen(repo *Repo, view *remoteView, branch, base string) (string, error
 		return "", refuse("%s is already the head of #%d, and open only opens new pull requests; "+
 			"its later commits reach GitHub through `git sign-pass --push`, which the operator runs", branch, pr.Number)
 	}
-	if oid := view.Heads[branch]; oid != "" {
-		return "", refuse("%s already exists on GitHub at %.12s, and open only creates a branch; "+
-			"ask the operator to open its pull request", branch, oid)
+	if oid := view.Heads[branch]; oid != "" && local != "" && oid != local {
+		return "", refuse("%s is on GitHub at %.12s but at %.12s here, and open opens a pull request for a branch "+
+			"GitHub has only when GitHub has it at the local tip; ask the operator to push it with `git sign-pass "+
+			"--push`, or to fetch it, then open again", branch, oid, local)
 	}
 	if base != repo.Default {
 		if _, err := checkBranch(repo, view.PRs, base); err != nil {
@@ -93,7 +94,10 @@ func checkOpen(repo *Repo, view *remoteView, branch, base string) (string, error
 // checkLocal returns the tip of the local branch and the commits GitHub
 // already has that it can be measured against. A stacked branch must contain
 // its base as GitHub has it, so the pull request shows only its own commits.
-func checkLocal(repo *Repo, branch, base, baseOid string) (string, []string, error) {
+// For a branch onGitHub, its own remote-tracking refs are not among those
+// commits, so the pull request's commits are still counted and linted, and
+// their signatures must all authenticate the protected operator key.
+func checkLocal(repo *Repo, branch, base, baseOid string, onGitHub bool) (string, []string, error) {
 	local, err := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+branch)
 	if err != nil {
 		return "", nil, refuse("no local branch %s; name a branch that `git branch --list` shows", branch)
@@ -123,6 +127,9 @@ func checkLocal(repo *Repo, branch, base, baseOid string) (string, []string, err
 			"open it with `--base %s`", branch, parent, base, parent)
 	}
 	for _, name := range names {
+		if onGitHub {
+			known = append(known, "--exclude="+name+"/"+branch)
+		}
 		known = append(known, "--remotes="+name+"/*")
 	}
 	count, err := git.Run(append([]string{"rev-list", "--count", local, "--not"}, known...)...)
@@ -135,6 +142,11 @@ func checkLocal(repo *Repo, branch, base, baseOid string) (string, []string, err
 	}
 	if err := lintNew(branch, local, known); err != nil {
 		return "", nil, err
+	}
+	if onGitHub {
+		if err := ownCommits(branch, baseOid, local); err != nil {
+			return "", nil, err
+		}
 	}
 	return local, known, nil
 }
@@ -240,7 +252,12 @@ func setUpstream(repo *Repo, branch string) error {
 
 // Open pushes a branch GitHub does not have through the API, as Push does,
 // and opens it as a draft pull request against base (default: the default
-// branch). It never marks the pull request ready for review.
+// branch). A branch GitHub already has at the local tip, with no open pull
+// request and verified operator-key signatures (checkOpen, checkLocal), it opens
+// as it is: nothing is uploaded, and a failure to open leaves the branch on
+// GitHub, since open did not create it. It never marks the pull request ready
+// for review. A dry run says what it would open, with onGitHub, and the
+// objects it would upload.
 func Open(branch, base, title, body string, dryRun bool) (any, error) {
 	if strings.TrimSpace(title) == "" {
 		return nil, errors.New("open needs --title")
@@ -264,41 +281,48 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	baseOid, err := checkOpen(repo, view, branch, base)
+	tip, _ := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+branch)
+	baseOid, err := checkOpen(repo, view, branch, base, tip)
 	if err != nil {
 		return nil, err
 	}
-	local, known, err := checkLocal(repo, branch, base, baseOid)
+	onGitHub := view.Heads[branch] != ""
+	local, known, err := checkLocal(repo, branch, base, baseOid, onGitHub)
 	if err != nil {
 		return nil, err
 	}
-	// The API bypasses git's pre-push hooks, so the check git-push-guard makes
-	// is made here.
-	absent := strings.Repeat("0", 40)
-	update := pushguard.Update{LocalRef: "refs/heads/" + branch, Local: local, RemoteRef: "refs/heads/" + branch, Remote: absent}
-	if err := pushguard.Check("https://github.com/"+repo.Slug, []pushguard.Update{update}, pushguard.GitHub()); err != nil {
-		return nil, err
-	}
-	objects, err := missingObjects([]string{local}, known)
-	if err != nil {
-		return nil, err
+	objects := &objectSet{}
+	if !onGitHub {
+		// The API bypasses git's pre-push hooks, so the check git-push-guard
+		// makes is made here.
+		absent := strings.Repeat("0", 40)
+		update := pushguard.Update{LocalRef: "refs/heads/" + branch, Local: local, RemoteRef: "refs/heads/" + branch, Remote: absent}
+		if err := pushguard.Check("https://github.com/"+repo.Slug, []pushguard.Update{update}, pushguard.GitHub()); err != nil {
+			return nil, err
+		}
+		if objects, err = missingObjects([]string{local}, known); err != nil {
+			return nil, err
+		}
 	}
 	if dryRun {
-		return map[string]any{"wouldOpen": map[string]any{"branch": branch, "base": base, "head": local, "draft": true},
-			"objects": objects.counts()}, nil
+		return map[string]any{"wouldOpen": map[string]any{"branch": branch, "base": base, "head": local, "draft": true,
+			"onGitHub": onGitHub}, "objects": objects.counts()}, nil
 	}
 
-	calls, err := objects.upload(repo.Slug)
-	if err != nil {
-		return nil, err
-	}
-	var created struct {
-		CreateRef struct{ Ref struct{ ID string } }
-	}
-	err = gh.GraphQL(`mutation($input: CreateRefInput!) { createRef(input: $input) { ref { id } } }`,
-		map[string]any{"input": map[string]any{"repositoryId": repo.ID, "name": "refs/heads/" + branch, "oid": local}}, &created)
-	if err != nil {
-		return nil, err
+	calls, refID := 0, ""
+	if !onGitHub {
+		if calls, err = objects.upload(repo.Slug); err != nil {
+			return nil, err
+		}
+		var created struct {
+			CreateRef struct{ Ref struct{ ID string } }
+		}
+		err = graphQL(`mutation($input: CreateRefInput!) { createRef(input: $input) { ref { id } } }`,
+			map[string]any{"input": map[string]any{"repositoryId": repo.ID, "name": "refs/heads/" + branch, "oid": local}}, &created)
+		if err != nil {
+			return nil, err
+		}
+		calls, refID = calls+1, created.CreateRef.Ref.ID
 	}
 	var opened struct {
 		CreatePullRequest struct {
@@ -309,15 +333,18 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 			}
 		}
 	}
-	err = gh.GraphQL(`mutation($input: CreatePullRequestInput!) {
+	err = graphQL(`mutation($input: CreatePullRequestInput!) {
 		createPullRequest(input: $input) { pullRequest { number url isDraft } }
 	}`, map[string]any{"input": map[string]any{"repositoryId": repo.ID, "baseRefName": base, "headRefName": branch,
 		"title": title, "body": body, "draft": true}}, &opened)
+	if err != nil && refID == "" {
+		return nil, fmt.Errorf("opening the pull request failed, and %s stays on GitHub as it was: %w", branch, err)
+	}
 	if err != nil {
-		// Without a pull request the branch is outside every later check, so
-		// it is taken back down.
-		undo := gh.GraphQL(`mutation($input: DeleteRefInput!) { deleteRef(input: $input) { clientMutationId } }`,
-			map[string]any{"input": map[string]any{"refId": created.CreateRef.Ref.ID}}, nil)
+		// Without a pull request the branch open created is outside every
+		// later check, so it is taken back down.
+		undo := graphQL(`mutation($input: DeleteRefInput!) { deleteRef(input: $input) { clientMutationId } }`,
+			map[string]any{"input": map[string]any{"refId": refID}}, nil)
 		if undo != nil {
 			return nil, fmt.Errorf("opening the pull request failed (%w), and deleting %s from GitHub again failed too: %v", err, branch, undo)
 		}
@@ -334,7 +361,7 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 		return nil, refuse("GitHub opened #%d (%s) ready for review although a draft was asked for; tell the operator", pr.Number, pr.URL)
 	}
 	result := map[string]any{"pr": pr.Number, "url": pr.URL, "draft": pr.IsDraft, "branch": branch, "base": base,
-		"head": local, "apiCalls": calls + 2}
+		"head": local, "apiCalls": calls + 1}
 	for k, v := range stackOpened(repo, branch, base, pr.Number) {
 		result[k] = v
 	}
