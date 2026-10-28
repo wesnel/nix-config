@@ -80,6 +80,10 @@ func readSnapshotDoc(file string, value any) error {
 	if len(data) > maxDoc || !utf8.Valid(data) {
 		return fmt.Errorf("%s is oversized or invalid UTF-8", file)
 	}
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return fmt.Errorf("%s must be a JSON object", file)
+	}
 	if err := json.Unmarshal(data, value); err != nil {
 		return fmt.Errorf("%s: %w", file, err)
 	}

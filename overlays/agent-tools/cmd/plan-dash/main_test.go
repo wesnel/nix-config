@@ -242,6 +242,39 @@ func TestSpacePrepare(t *testing.T) {
 	if !bytes.Equal(first, second) {
 		t.Error("same saved export produced different snapshot bytes")
 	}
+	for _, document := range []string{"meta/sync.json", "github/status.json", "today/digest.json", "plans/2026-10-27-demo.box.json"} {
+		t.Run(document, func(t *testing.T) {
+			path := filepath.Join(out, document)
+			original, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, invalid := range []struct{ name, data string }{
+				{"null", " \nnull\t"}, {"array", "[]"}, {"number", "7"}, {"string", `"text"`}, {"boolean", "true"},
+			} {
+				t.Run(invalid.name, func(t *testing.T) {
+					if code := prepare(); code != 0 {
+						t.Fatalf("valid source: exit %d: %s", code, &stderr)
+					}
+					t.Cleanup(func() {
+						if err := os.WriteFile(path, original, 0o600); err != nil {
+							t.Fatal(err)
+						}
+					})
+					if err := os.WriteFile(path, []byte(invalid.data), 0o600); err != nil {
+						t.Fatal(err)
+					}
+					if code := prepare(); code != 1 || !strings.Contains(stderr.String(), path) {
+						t.Errorf("non-object source: exit %d: %s", code, &stderr)
+					}
+					kept, err := os.ReadFile(file)
+					if err != nil || !bytes.Equal(first, kept) {
+						t.Errorf("non-object source replaced last-good snapshot: %v", err)
+					}
+				})
+			}
+		})
+	}
 	for _, invalid := range []string{`{"title":"` + strings.Repeat("界", 90000) + `"}`, "{\"title\":\"\xff\"}", "{"} {
 		if err := os.WriteFile(planFile, []byte(invalid), 0o600); err != nil {
 			t.Fatal(err)
