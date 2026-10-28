@@ -10,6 +10,10 @@ import unittest
 from unittest import mock
 
 SCRIPT = Path(__file__).with_name("setup_git.py")
+COMMAND = (
+    [os.environ["CODEX_GIT_SETUP"]] if "CODEX_GIT_SETUP" in os.environ
+    else [sys.executable, str(SCRIPT)]
+)
 
 
 class SetupGitTest(unittest.TestCase):
@@ -35,6 +39,7 @@ class SetupGitTest(unittest.TestCase):
             XDG_STATE_HOME=str(self.home / ".local/state"),
             XDG_CACHE_HOME=str(self.home / ".cache"),
             GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1",
+            PYTHONDONTWRITEBYTECODE="1",
             GIT_AUTHOR_NAME="Sandbox Test",
             GIT_AUTHOR_EMAIL="sandbox@example.invalid",
             GIT_COMMITTER_NAME="Sandbox Test",
@@ -52,11 +57,18 @@ class SetupGitTest(unittest.TestCase):
 
     def setup_git(self, repository=None):
         return subprocess.run(
-            [sys.executable, str(SCRIPT), str(repository or self.repository)],
+            [*COMMAND, str(repository or self.repository)],
             env=self.environment, text=True, capture_output=True,
         )
 
     def test_normal_repository(self):
+        with (self.codex / "config.toml").open("a") as configuration:
+            configuration.write(
+                '[permissions.wgn-workspace.filesystem]\n'
+                f'{json.dumps(str(self.repository / ".git/config"))}'
+                ' = "read"\n'
+                f'{json.dumps(str(self.home / ".ssh"))} = "deny"\n'
+            )
         result = self.setup_git()
         self.assertEqual(result.returncode, 0, result.stderr)
         path = self.repository / ".codex/config.toml"
@@ -190,7 +202,7 @@ class SetupGitTest(unittest.TestCase):
                         self.git(self.root, "init", "-q", str(target))
                     before = path.read_text()
                     result = subprocess.run(
-                        [sys.executable, str(SCRIPT), str(target)],
+                        [*COMMAND, str(target)],
                         env=environment, text=True, capture_output=True,
                     )
                     self.assertNotEqual(result.returncode, 0, result.stdout)
@@ -336,30 +348,123 @@ class SetupGitTest(unittest.TestCase):
                     (self.codex / "config.toml").read_text(), original
                 )
 
-    def test_protected_symlink_targets(self):
-        configuration = self.repository / "shared-config"
-        configuration.write_text("[core]\n")
-        git_config = self.repository / ".git/config"
-        git_config.rename(self.repository / "original-config")
-        git_config.symlink_to(configuration)
-        result = self.setup_git()
-        self.assertEqual(result.returncode, 0, result.stderr)
-        path = self.repository / ".codex/config.toml"
-        self.assertTrue(
-            path.exists(), "setup must protect config symlink targets"
-        )
-        permissions = tomllib.loads(path.read_text())["permissions"]
-        profile = permissions["wgn-project-git"]
-        filesystem = profile["filesystem"]
-        self.assertEqual(filesystem[str(configuration)], "read")
+    def test_protected_metadata_symlinks_are_refused(self):
+        for linked, control in (
+            (False, "config"), (False, "hooks"),
+            (True, "config"), (True, "hooks"),
+        ):
+            with self.subTest(linked=linked, control=control):
+                with tempfile.TemporaryDirectory(dir=self.root) as directory:
+                    repository = Path(directory) / "repository"
+                    self.git(self.root, "init", "-q", str(repository))
+                    worktree = repository
+                    protected = repository / ".git" / control
+                    if linked:
+                        (repository / "tracked").write_text("seed\n")
+                        self.git(repository, "add", "tracked")
+                        self.git(repository, "commit", "-qm", "Fixture seed")
+                        worktree = Path(directory) / "linked"
+                        self.git(repository, "worktree", "add", "--detach",
+                                 str(worktree), "HEAD")
+                        if control == "config":
+                            protected = Path(self.git(
+                                worktree, "rev-parse", "--git-dir"
+                            )) / "config.worktree"
+                            protected.write_text("[core]\n")
+                    if control == "config":
+                        target = Path(directory) / "shared-config"
+                        target.write_text("[core]\n")
+                    else:
+                        target = Path(directory) / "home/.ssh"
+                        target.mkdir(parents=True)
+                    protected.rename(repository / "original-control")
+                    protected.symlink_to(target)
+                    config = worktree / ".codex/config.toml"
+                    config.parent.mkdir()
+                    original = '# Keep me.\nmodel = "operator-model"\n'
+                    config.write_text(original)
+                    result = self.setup_git(worktree)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertIn("symlink", result.stderr)
+                    self.assertEqual(config.read_text(), original)
+                    self.assertEqual(list(config.parent.iterdir()), [config])
+
+    def test_generated_grants_respect_explicit_base_restrictions(self):
+        for rule in (
+            "exact", "ancestor", "glob", "nested", "read", "root", "control",
+        ):
+            with self.subTest(rule=rule):
+                with tempfile.TemporaryDirectory(dir=self.root) as directory:
+                    root = Path(directory)
+                    repository = root / "repository"
+                    metadata = root / "restricted/metadata"
+                    metadata.parent.mkdir()
+                    self.git(root, "init", "-q", "--separate-git-dir",
+                             str(metadata), str(repository))
+                    access = "read" if rule == "read" else "deny"
+                    target = {
+                        "exact": str(metadata),
+                        "ancestor": str(metadata.parent),
+                        "glob": str(root / "restrict*/**"),
+                        "nested": str(metadata.parent),
+                        "read": str(metadata),
+                        "root": ":root",
+                        "control": str(metadata / "config"),
+                    }[rule]
+                    base = (
+                        'default_permissions = "wgn-workspace"\n'
+                        '[permissions.wgn-workspace]\n'
+                        'extends = ":workspace"\n'
+                    )
+                    if rule == "nested":
+                        base += (
+                            '[permissions.wgn-workspace.filesystem.'
+                            f'{json.dumps(target)}]\nmetadata = "deny"\n'
+                        )
+                    else:
+                        base += (
+                            '[permissions.wgn-workspace.filesystem]\n'
+                            f'{json.dumps(target)} = "{access}"\n'
+                        )
+                    (self.codex / "config.toml").write_text(base)
+                    config = repository / ".codex/config.toml"
+                    config.parent.mkdir()
+                    original = 'model = "operator-model"\n'
+                    config.write_text(original)
+                    result = self.setup_git(repository)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertEqual(config.read_text(), original)
+                    self.assertEqual(
+                        (self.codex / "config.toml").read_text(), base
+                    )
+                    self.assertEqual(list(config.parent.iterdir()), [config])
 
     def test_usage(self):
         result = subprocess.run(
-            [sys.executable, str(SCRIPT)], env=self.environment,
+            COMMAND, env=self.environment,
             text=True, capture_output=True,
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("usage", result.stderr.lower())
+
+    def test_unsupported_inherited_patterns_are_refused(self):
+        for pattern in (
+            str(self.repository / ".{git,other}"),
+            str(self.repository / r".gi\t"),
+            str(self.repository / ".[g]it"),
+        ):
+            with self.subTest(pattern=pattern):
+                (self.codex / "config.toml").write_text(
+                    'default_permissions = "wgn-workspace"\n'
+                    '[permissions.wgn-workspace]\n'
+                    'extends = ":workspace"\n'
+                    '[permissions.wgn-workspace.filesystem]\n'
+                    f'{json.dumps(pattern)} = "deny"\n'
+                )
+                result = self.setup_git()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("unsupported filesystem pattern", result.stderr)
+                self.assertFalse((self.repository / ".codex").exists())
 
     def test_replace_failure_preserves_original(self):
         directory = self.repository / ".codex"

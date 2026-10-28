@@ -9,6 +9,7 @@ import sys
 
 import tomlkit
 
+from permission_paths import validate_grants
 
 PROFILE_NAMES = json.loads(
     Path(__file__).with_name("profiles.json").read_text()
@@ -76,6 +77,7 @@ def base_profile():
         raise ValueError(
             "user configuration needs explicit permission-profile migration"
         )
+    return profile.get("filesystem", {})
 
 
 def filesystem_rules(gitdir, common):
@@ -89,9 +91,11 @@ def filesystem_rules(gitdir, common):
     ):
         for name in names:
             path = directory / name
-            rules[str(path)] = "read"
             if path.is_symlink():
-                rules[permission_path(path.resolve(strict=True))] = "read"
+                raise ValueError(
+                    "protected Git metadata symlinks are unsupported"
+                )
+            rules[str(path)] = "read"
     return rules
 
 
@@ -147,7 +151,12 @@ def setup(repository):
     common = git_path(repository, "--git-common-dir", environment)
     if not gitdir.is_dir() or not common.is_dir():
         raise ValueError("Git metadata paths must be directories")
-    base_profile()
+    inherited_filesystem = base_profile()
+    profile = {
+        "extends": BASE_PROFILE,
+        "filesystem": filesystem_rules(gitdir, common),
+    }
+    validate_grants(profile["filesystem"], inherited_filesystem)
     directory = repository / ".codex"
     path = directory / "config.toml"
     if directory.is_symlink() or path.is_symlink():
@@ -188,10 +197,6 @@ def setup(repository):
         features = document.get("features", {})
         if not isinstance(features, Mapping):
             raise ValueError("project features must be a table")
-        profile = {
-            "extends": BASE_PROFILE,
-            "filesystem": filesystem_rules(gitdir, common),
-        }
         validate_migration(document, permissions, profile)
         document.pop("sandbox_mode", None)
         document.pop("sandbox_workspace_write", None)

@@ -33,9 +33,16 @@ with lib; let
   mcpProxy = config.wgn.home.mcp-proxy;
   gitSetup = pkgs.callPackage ./git-setup.nix {};
 
-  reconcile = pkgs.writers.writePython3 "codex-reconcile" {
-    libraries = [pkgs.python3Packages.tomlkit];
-  } (builtins.readFile ./reconcile.py);
+  reconcile =
+    pkgs.writers.writePython3 "codex-reconcile" {
+      libraries = [pkgs.python3Packages.tomlkit];
+    } ''
+      import runpy
+      import sys
+
+      sys.path.insert(0, "${./.}")
+      runpy.run_path("${./.}/reconcile.py", run_name="__main__")
+    '';
   plans = config.wgn.home.llm.plans;
   managedRoots = {
     plans = plans.dir;

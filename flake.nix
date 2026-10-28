@@ -844,11 +844,11 @@
           operatorHome = home.home.homeDirectory;
           activation = home.home.activation.codexSandbox.data;
           hooks = home.home.file.".codex/hooks.json".text;
-          reconcileProgram = ./modules/home-manager/codex/reconcile.py;
+          reconcileProgram = "${./modules/home-manager/codex}/reconcile.py";
           passAsFile = ["activation" "hooks"];
         } ''
-          python ${./modules/home-manager/codex/test_reconcile.py}
-          python ${./modules/home-manager/codex/test_settings.py}
+          python ${./modules/home-manager/codex}/test_reconcile.py
+          python ${./modules/home-manager/codex}/test_settings.py
           mkdir -p $out
           cp "$activationPath" "$out/activation"
         '';
@@ -862,6 +862,7 @@
 
       checks.codex-git-setup =
         pkgs.runCommand "codex-git-setup-tests" {
+          CODEX_GIT_SETUP = "${self.packages.${system}.codex-git-setup}/bin/codex-git-setup";
           nativeBuildInputs = [
             (pkgs.python3.withPackages (python: [python.tomlkit]))
             pkgs.python3Packages.flake8
@@ -869,7 +870,7 @@
           ];
         } ''
           export PYTHONDONTWRITEBYTECODE=1
-          flake8 ${./modules/home-manager/codex}/setup_git.py
+          flake8 ${./modules/home-manager/codex}/setup_git.py ${./modules/home-manager/codex}/permission_paths.py
           python ${./modules/home-manager/codex}/test_setup_git.py
           touch $out
         '';

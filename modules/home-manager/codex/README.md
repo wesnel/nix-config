@@ -45,6 +45,12 @@ can migrate. Explicit project network settings, including legacy and feature
 overrides, also require migration: this Git helper inherits network policy
 from the managed base rather than replacing project-specific network intent.
 Setup does not resolve custom inheritance chains or infer rule precedence.
+Generated Git read and write grants must respect explicit read/deny rules
+in the inherited base. Conflicting paths and unsupported restriction scopes
+are refused before configuration changes. The conflict check supports literal
+paths and `*`, `?`, `**` patterns; brace alternatives, character classes and
+backslash escapes require explicit migration. Symlinked protected Git metadata
+is unsupported: setup refuses it instead of granting access to its target.
 
 The shared denial list is unchanged for Claude. Codex additionally applies
 the shared environment-file patterns beneath each runtime workspace and

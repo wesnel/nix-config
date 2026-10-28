@@ -9,68 +9,12 @@ import sys
 
 import tomlkit
 
-
-class ReconcileError(Exception):
-    pass
-
-
-def mapping(value, label):
-    if not isinstance(value, Mapping):
-        raise ReconcileError(label + " must be a table")
-    return value
-
-
-def absolute(path):
-    if not isinstance(path, str) or not path or "\n" in path or "\0" in path:
-        raise ReconcileError("writable root must be an absolute path")
-    expanded = Path(path).expanduser()
-    if not expanded.is_absolute():
-        raise ReconcileError("writable root must be an absolute path")
-    return expanded.resolve()
-
-
-def matches(path, pattern):
-    return fnmatchcase(path, pattern) or fnmatchcase(
-        path, pattern.replace("**/", "")
-    )
-
-
-def validate_roots(roots, filesystem):
-    for root, enabled in mapping(roots, "workspace roots").items():
-        resolved = absolute(root)
-        if type(enabled) is not bool:
-            raise ReconcileError("workspace root entries must be booleans")
-        if not enabled:
-            continue
-        parents = [resolved, *resolved.parents]
-        for base, rule in filesystem.items():
-            rules = rule if isinstance(rule, Mapping) else {".": rule}
-            for child, access in rules.items():
-                if access != "deny":
-                    continue
-                if base == ":workspace_roots":
-                    candidates = [
-                        str(parent).lstrip("/") for parent in parents
-                    ]
-                    conflict = any(
-                        matches(candidate, child) for candidate in candidates
-                    )
-                elif base == ":root":
-                    conflict = True
-                elif base.startswith(":"):
-                    raise ReconcileError("unsupported managed denial scope")
-                else:
-                    denied = absolute(
-                        base if child == "." else base + "/" + child
-                    )
-                    conflict = any(
-                        matches(str(parent), str(denied)) for parent in parents
-                    )
-                if conflict:
-                    raise ReconcileError(
-                        "writable root conflicts with managed read denial: "
-                        + root
-                    )
+from permission_paths import (
+    PermissionPolicyError as ReconcileError,
+    absolute,
+    mapping,
+    validate_roots,
+)
 
 
 def validate_profile(previous, desired):
