@@ -1327,10 +1327,8 @@ func secretPath(word, dir string, creating bool) string {
 			}
 		}
 	}
-	for _, path := range candidates {
-		if b := fold(filepath.Base(path)); b == ".env" || strings.HasPrefix(b, ".env.") {
-			return secretRead
-		}
+	if slices.ContainsFunc(candidates, envFile) {
+		return secretRead
 	}
 	secrets := credentialPaths()
 	for _, path := range candidates {
