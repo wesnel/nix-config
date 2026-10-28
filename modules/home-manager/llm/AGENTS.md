@@ -10,6 +10,8 @@ parser before adding the flag").
 
 ## Commits and the hardware key
 
+A session commits only in the repository it started in.
+
 Commits stay unsigned and nothing waits for a touch of the operator's
 hardware key: they sign everything in one pass at the end. Load the
 `signing-pass` skill, which holds the commit rules, before creating,
