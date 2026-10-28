@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -212,7 +213,31 @@ func TestSpaceTools(t *testing.T) {
 func TestSpaceConfigProtection(t *testing.T) {
 	root := fakeHome(t)
 	hostpaths.Bake(t, filepath.Join(root, "config"), filepath.Join(root, "state"))
+	alias := filepath.Join(t.TempDir(), "root-alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
+	}
 	for _, file := range []string{agentplans.SpaceConfigFile(), agentplans.SpaceStateFile()} {
+		if _, err := os.Stat(filepath.Dir(file)); !os.IsNotExist(err) {
+			t.Fatalf("fixture requires an absent parent directory: %v", err)
+		}
+		rel, err := filepath.Rel(root, file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		paths := []string{file, filepath.Dir(file) + "/./" + filepath.Base(file), filepath.Join(alias, rel)}
+		if runtime.GOOS == "darwin" {
+			paths = append(paths, filepath.Join(root, strings.ToUpper(rel)))
+		}
+		for _, path := range paths {
+			if !spaceAuthorityFile(path) {
+				t.Errorf("absent-parent Space path is unprotected: %s", path)
+			}
+			input, _ := json.Marshal(map[string]string{"file_path": path, "content": "{}"})
+			if reason := CheckBaseline("Write", input); reason == "" {
+				t.Errorf("agent could create protected file before its parent exists: %s", path)
+			}
+		}
 		if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -233,6 +258,11 @@ func TestSpaceConfigProtection(t *testing.T) {
 				t.Errorf("agent could write %s", path)
 			}
 		}
+	}
+	safe := filepath.Join(root, "safe", "publication.json")
+	input, _ := json.Marshal(map[string]string{"file_path": safe, "content": "{}"})
+	if spaceAuthorityFile(safe) || CheckBaseline("Write", input) != "" {
+		t.Error("unrelated new file was refused")
 	}
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("AGENT_PLANS_CONFIG", filepath.Join(t.TempDir(), "replacement.json"))

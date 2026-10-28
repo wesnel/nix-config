@@ -27,7 +27,13 @@ const spaceAuthority = "Only the operator configures the Space publication targe
 	"Use `plan-dash space prepare` for a snapshot, or put the proposed configuration or recovery in your report for the operator."
 
 func spaceAuthorityFile(path string) bool {
-	return Reaches(path, agentplans.SpaceConfigFile(), false) || Reaches(path, agentplans.SpaceStateFile(), false)
+	for _, target := range []string{agentplans.SpaceConfigFile(), agentplans.SpaceStateFile()} {
+		if fold(filepath.Clean(path)) == fold(filepath.Clean(target)) ||
+			fold(physical(path)) == fold(physical(target)) || Reaches(path, target, false) {
+			return true
+		}
+	}
+	return false
 }
 
 func checkSpaceAuthorityShell(name string, args, redirected []string, dir string) string {
