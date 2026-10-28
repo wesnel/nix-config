@@ -37,10 +37,10 @@ with lib; let
     pkgs.writers.writePython3 "codex-reconcile" {
       libraries = [pkgs.python3Packages.tomlkit];
     } ''
-        import runpy
-        import sys
+      import runpy
+      import sys
 
-        sys.path.insert(0, "${./.}")
+      sys.path.insert(0, "${./.}")
       runpy.run_path(
           "${./.}/reconcile.py",
           run_name="__main__",
