@@ -107,7 +107,7 @@ func TestResumeBrief(t *testing.T) {
 	t.Run("after /clear and a compaction in Claude Code", func(t *testing.T) {
 		c, p := resumed(t)
 		for _, source := range []string{"clear", "compact"} {
-			out, err := c.SessionHook([]byte(`{"session_id":"abc","source":"` + source + `","cwd":"/nowhere"}`))
+			out, err := c.SessionHook([]byte(`{"session_id":"abc","source":"`+source+`","cwd":"/nowhere"}`), "claude")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -119,7 +119,7 @@ func TestResumeBrief(t *testing.T) {
 				t.Errorf("%s: %d characters", source, len(context))
 			}
 		}
-		out, _ := c.SessionHook([]byte(`{"session_id":"abc","source":"resume","cwd":"/nowhere"}`))
+		out, _ := c.SessionHook([]byte(`{"session_id":"abc","source":"resume","cwd":"/nowhere"}`), "claude")
 		if context := hookContext(t, out, "SessionStart"); strings.Contains(context, "brief of") {
 			t.Errorf("a resume carries a brief: %q", context)
 		}
@@ -132,7 +132,7 @@ func TestResumeBrief(t *testing.T) {
 		if err := c.SessionEndHook([]byte(end), time.Now()); err != nil {
 			t.Fatal(err)
 		}
-		out, err := c.SessionHook([]byte(`{"session_id":"def","source":"clear","cwd":"/nowhere"}`))
+		out, err := c.SessionHook([]byte(`{"session_id":"def","source":"clear","cwd":"/nowhere"}`), "claude")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -142,7 +142,7 @@ func TestResumeBrief(t *testing.T) {
 		if found, err := c.Find(FindOptions{Session: "claude:def"}); err != nil || len(found) != 1 || found[0].Plan != p.File() {
 			t.Errorf("the new session is not the plan's: %+v %v", found, err)
 		}
-		out, _ = c.SessionHook([]byte(`{"session_id":"ghi","source":"clear","cwd":"/nowhere"}`))
+		out, _ = c.SessionHook([]byte(`{"session_id":"ghi","source":"clear","cwd":"/nowhere"}`), "claude")
 		if len(out) != 0 {
 			t.Errorf("a hand-over taken twice: %s", out)
 		}
@@ -150,7 +150,7 @@ func TestResumeBrief(t *testing.T) {
 
 	t.Run("no plan prints nothing", func(t *testing.T) {
 		c := testConfig(t)
-		out, err := c.SessionHook([]byte(`{"session_id":"nobody","source":"clear","cwd":"/nowhere"}`))
+		out, err := c.SessionHook([]byte(`{"session_id":"nobody","source":"clear","cwd":"/nowhere"}`), "claude")
 		if err != nil || len(out) != 0 {
 			t.Errorf("%q %v", out, err)
 		}
