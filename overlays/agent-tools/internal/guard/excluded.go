@@ -17,6 +17,42 @@ const excludedNotAlone = "`%s` is sure to run outside the sandbox only as a comm
 	"in place of cd: `-R OWNER/NAME`, a PR number or branch, or the range, which `git delegate` resolves from " +
 	"any worktree of the repository."
 
+// excludedSandboxed is why a line naming an excluded command is refused
+// for holding sandboxedSyntax, with %s the command and then the syntax
+// found.
+const excludedSandboxed = "`%s` runs outside the sandbox only when Claude Code reads its line as that command alone, " +
+	"and it reads a line holding %s as more, even inside quotes, so the line may run sandboxed, where it fails as if " +
+	"it were missing. Where the value has a file form, as agent-plan's `--text-file FILE` takes the place of --text " +
+	"and --context, put it in a file under $TMPDIR and pass that; otherwise word the value without that syntax."
+
+// sandboxedSyntax is the syntax Claude Code was seen to read as more than
+// one command even inside quotes, which sends an excluded command alone on
+// its line into the sandbox. It is what was seen, not documented, and a
+// Claude Code upgrade may change it.
+var sandboxedSyntax = []struct {
+	name    string
+	pattern *regexp.Regexp
+}{
+	{"a backtick", regexp.MustCompile("`")},
+	{"$(", regexp.MustCompile(`\$\(`)},
+	{"<(", regexp.MustCompile(`<\(`)},
+	{">(", regexp.MustCompile(`>\(`)},
+	// After a space only, and not ==: a value starting with =, (=x=) and
+	// a == b were seen running outside.
+	{"a word starting with =", regexp.MustCompile(`\s=[^\s=]`)},
+}
+
+// sandboxedBy is the name of each sandboxedSyntax text holds.
+func sandboxedBy(text string) []string {
+	var found []string
+	for _, s := range sandboxedSyntax {
+		if s.pattern.MatchString(text) {
+			found = append(found, s.name)
+		}
+	}
+	return found
+}
+
 // checkExcludedAlone refuses a Claude Code command line that names one of
 // the commands its sandbox excludes (excludedCommands in the guard's
 // settings, which the Claude Code module sets to its sandbox's list)
@@ -25,14 +61,21 @@ const excludedNotAlone = "`%s` is sure to run outside the sandbox only as a comm
 // with those words and holds one command, with no redirection. Some other
 // lines run outside the sandbox too, but not every one, and one that runs
 // in it fails; the command alone always runs outside it, so every other
-// line is refused.
+// line is refused, and so is the command alone holding sandboxedSyntax,
+// whose refusal names the syntax wherever the line holds it.
 func checkExcludedAlone(text string) string {
 	patterns := excludedPatterns()
 	if len(patterns) == 0 {
 		return ""
 	}
 	named := firstCall(text, 0, func(c call) []string { return excludedCall(c, patterns) })
-	if named == nil || ExcludedAlone(text, named) {
+	if named == nil {
+		return ""
+	}
+	if found := sandboxedBy(text); len(found) > 0 {
+		return fmt.Sprintf(excludedSandboxed, strings.Join(named, " "), strings.Join(found, ", "))
+	}
+	if ExcludedAlone(text, named) {
 		return ""
 	}
 	return fmt.Sprintf(excludedNotAlone, strings.Join(named, " "))
@@ -171,8 +214,9 @@ func excludedCall(c call, patterns [][]string) []string {
 // ExcludedAlone reports whether text is pattern's command alone, as
 // Claude Code matches an exclusion against the line's text: one command,
 // the line's text starting with the pattern's words, unquoted and one
-// space apart, with no redirection. agent-plan's quota stop lets such an
-// agent-plan line through.
+// space apart, with no redirection. It does not look for sandboxedSyntax,
+// which checkExcludedAlone refuses: agent-plan's quota stop lets such an
+// agent-plan line through, to the guard's refusal saying what to change.
 func ExcludedAlone(text string, pattern []string) bool {
 	texts, _, ends := backgroundSegments(text)
 	var only string

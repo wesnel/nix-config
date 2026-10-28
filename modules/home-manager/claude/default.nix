@@ -522,8 +522,9 @@ with lib; let
 
     # A call made of nothing but these runs unsandboxed, with the operator's
     # login and network, after the usual permission check; piped or chained
-    # with anything else, redirected, or given a command substitution, it
-    # may stay sandboxed and fail, so the guard refuses such a line
+    # with anything else, redirected, or holding, even inside quotes, the
+    # syntax agent-tools' guard lists in sandboxedSyntax, it may stay
+    # sandboxed and fail, so the guard refuses such a line
     # (wgn.home.llm.guard.excludedCommands). A pattern's `*` matches every
     # argument that follows, so a pattern is safe only where no argument can
     # make the command write beyond what it is for or run a program: no `gh`

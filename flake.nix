@@ -948,7 +948,8 @@
       # inline code span in the skills and the AGENTS.md files, judged by
       # the guard as a Claude Code Bash call with the ngrok Mac's excluded
       # commands: none is refused for naming an excluded command anywhere
-      # but alone, or for running a read of gh's that gh-read runs, so no
+      # but alone, or with syntax that sends it sandboxed even inside
+      # quotes, or for running a read of gh's that gh-read runs, so no
       # instruction hands an agent a line its sandbox fails. A
       # <PLACEHOLDER> is read as a word, not a redirection.
       checks.skill-commands = let
@@ -1074,7 +1075,8 @@
             reason=$(jq -cn --arg c "$line" '{tool_name: "Bash", cwd: "/", tool_input: {command: $c}}' |
               pr-loop guard --baseline | jq -r '.hookSpecificOutput.permissionDecisionReason // empty')
             case "$reason" in
-              *"only as a command line of its own"* | '`gh` runs in the sandbox'*)
+              *"only as a command line of its own"* | *"only when Claude Code reads its line as that command alone"* | \
+              '`gh` runs in the sandbox'*)
                 printf '%s: %s\n  %s\n' "$where" "$line" "$reason" >&2
                 failed=1
                 ;;
