@@ -6,6 +6,7 @@ effort: high
 tools: Read, Bash, StructuredOutput
 skills:
   - design
+  - tool-selection
   - review-change
   - subtract-first
   - smallest-diff

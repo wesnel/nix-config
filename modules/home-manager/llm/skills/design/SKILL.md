@@ -11,6 +11,7 @@ against them:
 
 - the `subtract-first` skill;
 - the `smallest-diff` skill;
+- the `tool-selection` skill;
 - the `from-scratch` skill;
 - the `one-source-of-truth` skill;
 - the `extend-a-seam` skill;

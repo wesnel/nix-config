@@ -41,6 +41,11 @@ the operator opts out.
 Load the `design` skill when planning a change's structure or changing an
 interface.
 
+## Choosing tools
+
+Load the `tool-selection` skill when choosing or reviewing a language,
+dependency, framework, editor or other tool, including while building.
+
 ## Work in several parts
 
 When parts of a task could proceed in parallel (several pull requests, a
