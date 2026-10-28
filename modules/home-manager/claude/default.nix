@@ -1023,11 +1023,16 @@ in {
       # Claude Code is installed and updated by itself, and owns ~/.claude.json
       # and ~/.claude/settings.json. Only the files it reads without writing
       # are kept here.
-      home.file =
-        llm.mkSkillFiles pkgs ".claude/skills" config.wgn.home.llm.skills
+      home.file = let
+        skills = llm.mkSkillFiles pkgs ".claude/skills" config.wgn.home.llm.skills;
+      in
+        removeAttrs skills [".claude/skills/questions"]
         // roleAgents
         // {
           ".claude/CLAUDE.md".source = config.wgn.home.llm.instructions;
+
+          # Keep this directory real; Home Manager owns only its SKILL.md.
+          ".claude/skills/questions/SKILL.md".source = "${skills.".claude/skills/questions".source}/SKILL.md";
         };
 
       # Merged rather than linked: a read-only settings.json would make every
