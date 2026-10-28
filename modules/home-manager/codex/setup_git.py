@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+import json
 import os
 from pathlib import Path
 import secrets
@@ -9,8 +10,11 @@ import sys
 import tomlkit
 
 
-BASE_PROFILE = "wgn-workspace"
-PROJECT_PROFILE = "wgn-project-git"
+PROFILE_NAMES = json.loads(
+    Path(__file__).with_name("profiles.json").read_text()
+)
+BASE_PROFILE = PROFILE_NAMES["base"]
+PROJECT_PROFILE = PROFILE_NAMES["project"]
 
 
 def permission_path(path):

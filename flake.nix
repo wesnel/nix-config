@@ -852,6 +852,27 @@
           cp "$activationPath" "$out/activation"
         '';
 
+      packages.codex-git-setup = pkgs.callPackage ./modules/home-manager/codex/git-setup.nix {};
+
+      apps.codex-git-setup = {
+        type = "app";
+        program = "${self.packages.${system}.codex-git-setup}/bin/codex-git-setup";
+      };
+
+      checks.codex-git-setup =
+        pkgs.runCommand "codex-git-setup-tests" {
+          nativeBuildInputs = [
+            (pkgs.python3.withPackages (python: [python.tomlkit]))
+            pkgs.python3Packages.flake8
+            pkgs.git
+          ];
+        } ''
+          export PYTHONDONTWRITEBYTECODE=1
+          flake8 ${./modules/home-manager/codex}/setup_git.py
+          python ${./modules/home-manager/codex}/test_setup_git.py
+          touch $out
+        '';
+
       apps.${
         if system == "aarch64-darwin"
         then "codex-sandbox-check"
@@ -862,6 +883,7 @@
       in {
         type = "app";
         program = toString (pkgs.writeShellScript "codex-sandbox-check" ''
+          export CODEX_GIT_SETUP=${self.packages.${system}.codex-git-setup}/bin/codex-git-setup
           exec ${pkgs.python3}/bin/python3 ${./modules/home-manager/codex/test_sandbox.py} \
             ${self.checks.${system}.codex-settings}/activation \
             ${pkgs.lib.escapeShellArg home.home.homeDirectory} "$@"

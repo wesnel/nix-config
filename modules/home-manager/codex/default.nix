@@ -31,6 +31,7 @@ with lib; let
   llm = import ../llm/lib.nix {inherit lib;};
 
   mcpProxy = config.wgn.home.mcp-proxy;
+  gitSetup = pkgs.callPackage ./git-setup.nix {};
 
   reconcile = pkgs.writers.writePython3 "codex-reconcile" {
     libraries = [pkgs.python3Packages.tomlkit];
@@ -91,6 +92,7 @@ in {
     {
       wgn.home.llm.enable = true;
       wgn.home.llm.prLoop.enable = mkDefault true;
+      home.packages = [gitSetup];
 
       # Codex is installed and updated by itself, and writes ~/.codex/config.toml
       # to record project trust, MCP servers and model choice. Generating that

@@ -211,11 +211,30 @@ Codex uses the managed `wgn-workspace` permission profile, extending
 daemon socket. Other network destinations and Unix sockets are
 blocked. Its client evaluates Nix in the sandbox; daemon builds use the
 daemon's filesystem and network authority outside it. Go, linter and XDG
-caches live under `~/.cache/codex/sandbox`. Git metadata stays read-only.
+caches live under `~/.cache/codex/sandbox`. Git metadata stays read-only
+until you set up a project profile for that worktree.
+
+After activating these settings, run this once from a host terminal for
+each existing worktree that needs local Git writes:
+
+```sh
+nix run .#codex-git-setup -- /Users/wgn/git/github.com/wesnel/nix-config
+```
+
+Start a new desktop task or CLI session in that worktree and accept its
+project trust prompt. The generated `.codex/config.toml` selects a profile
+extending the managed base. `git add`, unsigned commits, branch changes
+and rebases can then write repository state within the sandbox. Git
+configuration, hooks, `info`, submodule metadata and other worktrees'
+administration remain read-only. Creating another worktree and setting
+up its profile are explicit host steps. Keep the generated machine-local
+project profile out of commits; an explicit `--sandbox` CLI flag overrides
+the permission-profile settings.
 
 On ngrok, check the installed Codex after an upgrade with the host-only
 runtime test below. It uses a temporary home, checks both permitted and
-blocked operations, builds a Nix derivation and runs agent-tools' Go tests.
+blocked operations, builds a Nix derivation, runs agent-tools' Go tests,
+and checks local Git operations in normal and linked-worktree fixtures.
 The `codex-settings` flake check separately tests the generated settings.
 
 ```sh
