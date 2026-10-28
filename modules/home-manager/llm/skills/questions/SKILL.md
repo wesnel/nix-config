@@ -25,7 +25,9 @@ recommendation first and marked recommended, then its alternatives and
 plan title when questions from multiple plans are pending.
 
 - In Claude Code, use `AskUserQuestion` when the operator requests
-  questions: at most four per call and four options per question, trimming
+  questions. Each header is the question ID followed by ` [#P]` when its
+  priority is present, replacing P with that priority. Use at most four
+  questions per call and four options per question, trimming
   alternatives from the end to fit. The tool supplies free-text answers.
 - In Codex, prefer `request_user_input_async` when available, with at most
   three questions per call. Queue actionable questions promptly, continue
