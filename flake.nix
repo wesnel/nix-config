@@ -744,8 +744,8 @@
       in
         pkgs.runCommand "skill-names" {
           nativeBuildInputs = [pkgs.perl];
-          # claude/default.nix writes questions and agent-plans itself.
-          defined = toString (builtins.attrNames skills ++ ["questions" "agent-plans"]);
+          # claude/default.nix writes agent-plans itself.
+          defined = toString (builtins.attrNames skills ++ ["agent-plans"]);
           principles = toString (builtins.attrNames (import ./modules/home-manager/llm/principles.nix));
         } ''
           cd ${src}

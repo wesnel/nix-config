@@ -484,6 +484,7 @@ in {
           restack-branches = ./skills/restack-branches/SKILL.md;
           review-change = ./skills/review-change/SKILL.md;
           plan-work = ./skills/plan-work/SKILL.md;
+          questions = ./skills/questions;
           coordinate-subagents = ./skills/coordinate-subagents/SKILL.md;
           diagnose-failure = ./skills/diagnose-failure/SKILL.md;
           retro = ./skills/retro/SKILL.md;

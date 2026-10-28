@@ -23,9 +23,8 @@ reach them as the `plan-work` skill's "Questions for the operator" says.
    the questions or steps it depends on as `--after`. Every choice goes to
    the operator, reversible ones included: invoking this skill is the
    operator asking to make them all. Decide none yourself.
-5. Tell the operator only how many questions they can answer now
-   (`agent-plan questions PLAN --all --count`); in Claude Code,
-   `/questions` asks them.
+5. Present actionable questions as the `plan-work` skill's "Questions for
+   the operator" says: queued natively in Codex, on request in Claude Code.
 6. When answers come back as decisions, walk the tree again: reword the
    questions an answer changes, and add those it raises. One it makes moot
    stays the operator's to close: recommend dropping it, naming the decision.
