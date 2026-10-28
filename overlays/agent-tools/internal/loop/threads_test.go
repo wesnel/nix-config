@@ -187,7 +187,7 @@ func TestReply(t *testing.T) {
 		for _, mode := range []string{"", "people"} {
 			f := fakeRepo(t)
 			t.Setenv(ModeEnv, mode)
-			if _, err := Reply("bot1", "x"); !refused(err) || !strings.Contains(err.Error(), "claude-review-loop --bots|--people") {
+			if _, err := Reply("bot1", "x"); !refused(err) || !strings.Contains(err.Error(), "review-loop --harness claude|codex --bots|--people") {
 				t.Errorf("mode %q: %v", mode, err)
 			}
 			if len(f.replies) != 0 {

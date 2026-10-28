@@ -12,12 +12,12 @@ import (
 )
 
 // loopVars mark a review-loop session and its mode, which the operator's
-// claude-review-loop alone sets: pr-loop reads PR_LOOP_MODE to gate request,
-// reply, draft and push, and the session's settings allow `Bash(pr-loop *)`.
+// review-loop alone sets: pr-loop reads PR_LOOP_MODE to gate request,
+// reply, draft and push.
 var loopVars = set("PR_LOOP_SESSION", "PR_LOOP_MODE")
 
 // loopStart is why an agent may not start a loop or set its variables.
-const loopStart = "Only the operator starts a review loop, with `claude-review-loop --bots|--people`, which sets " +
+const loopStart = "Only the operator starts a review loop, with `review-loop --harness claude|codex --bots|--people`, which sets " +
 	"PR_LOOP_SESSION and PR_LOOP_MODE. Run pr-loop without them, and put the loop you propose in the report for the operator."
 
 // namers are the builtins that set or export a variable they are given by
@@ -25,7 +25,7 @@ const loopStart = "Only the operator starts a review loop, with `claude-review-l
 // with `-v NAME`.
 var namers = set("read", "mapfile", "readarray", "getopts", "export", "declare", "typeset", "local", "readonly")
 
-// checkLoopStart refuses claude-review-loop, and any assignment of
+// checkLoopStart refuses review-loop launchers, and any assignment of
 // PR_LOOP_SESSION or PR_LOOP_MODE the guard reads: before a command, as
 // `export` or `env` give it, as `set` or `launchctl setenv` take it, or as
 // a namer or `printf -v` names it.
@@ -43,8 +43,23 @@ func checkLoopStart(c call) string {
 	if len(c.words) == 0 {
 		return ""
 	}
-	if !c.expands[0] && base(c.words[0]) == "claude-review-loop" {
+	if !c.expands[0] && (base(c.words[0]) == "review-loop" || base(c.words[0]) == "claude-review-loop") {
 		return loopStart
+	}
+	if !c.expands[0] {
+		harness := base(c.words[0])
+		for i := 1; i < len(c.words); i++ {
+			arg, previous := c.words[i], c.words[i-1]
+			config := harness == "codex" && (previous == "-c" || previous == "--config" || strings.HasPrefix(arg, "--config=") || strings.HasPrefix(arg, "-c")) ||
+				harness == "claude" && (previous == "--settings" || strings.HasPrefix(arg, "--settings="))
+			if config {
+				for name := range loopVars {
+					if strings.Contains(arg, name) {
+						return loopStart
+					}
+				}
+			}
+		}
 	}
 	setter := !c.expands[0] && (base(c.words[0]) == "set" || base(c.words[0]) == "launchctl")
 	namer := !c.expands[0] && namers[c.words[0]]

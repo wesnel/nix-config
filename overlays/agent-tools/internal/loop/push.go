@@ -29,7 +29,7 @@ import (
 func Push(branches []string, leases map[string]string, dryRun bool) (any, error) {
 	if os.Getenv(ModeEnv) == "people" {
 		return nil, refuse("in a people-mode review loop the operator pushes, after reading the fixups, with " +
-			"`git sign-pass --push`. Only the operator starts a loop, with `claude-review-loop --bots|--people`; " +
+			"`git sign-pass --push`. Only the operator starts a loop, with `review-loop --harness claude|codex --bots|--people`; " +
 			"commit the fixups and say in the report that they wait for that push")
 	}
 	repo, err := repository()
