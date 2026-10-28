@@ -849,6 +849,22 @@
           cp "$activationPath" "$out/activation"
         '';
 
+      apps.${
+        if system == "aarch64-darwin"
+        then "codex-sandbox-check"
+        else null
+      } = let
+        ngrok = darwinSystems.ngrok;
+        home = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username};
+      in {
+        type = "app";
+        program = toString (pkgs.writeShellScript "codex-sandbox-check" ''
+          exec ${pkgs.python3}/bin/python3 ${./modules/home-manager/codex/test_sandbox.py} \
+            ${self.checks.${system}.codex-settings}/activation \
+            ${pkgs.lib.escapeShellArg home.home.homeDirectory} "$@"
+        '');
+      };
+
       # The Claude Code settings the ngrok Mac's home configuration writes
       # hold the permission rules beside the guard: bypass mode off; for
       # every server mcp.json lists, each read allowed and each confirm
