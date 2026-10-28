@@ -660,8 +660,7 @@
       # Defined are the agent files' names (the `name:` line of each in
       # modules/home-manager/claude/agents) and Claude Code's built-in types.
       checks.agent-names = let
-        agentFiles =
-          pkgs.lib.filterAttrs (name: kind: kind == "regular" && pkgs.lib.hasSuffix ".md" name && name != "subagent.md")
+        agentFiles = pkgs.lib.filterAttrs (name: kind: kind == "regular" && pkgs.lib.hasSuffix ".md" name && name != "subagent.md")
           (builtins.readDir ./modules/home-manager/claude/agents);
         fileNames = pkgs.lib.mapAttrsToList (file: _: let
           lines = pkgs.lib.splitString "\n" (builtins.readFile (./modules/home-manager/claude/agents + "/${file}"));
@@ -831,7 +830,7 @@
           touch $out
         '';
 
-      checks.codex-settings = let
+      checks.${if system == "aarch64-darwin" then "codex-settings" else null} = let
         ngrok = darwinSystems.ngrok;
         home = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username};
       in
