@@ -911,7 +911,13 @@
           reviewerAgents = delegate.agents;
           reviewerSettings = delegate.settings;
           reviewerSkills = builtins.toJSON (pkgs.lib.mapAttrs
-            (name: _: "${home.home.file.".claude/skills/${name}".source}/SKILL.md")
+            (name: _: let
+              directory = ".claude/skills/${name}";
+              file = "${directory}/SKILL.md";
+            in
+              if builtins.hasAttr file home.home.file
+              then toString home.home.file.${file}.source
+              else "${home.home.file.${directory}.source}/SKILL.md")
             home.wgn.home.llm.skills);
           mcp = builtins.readFile ./overlays/agent-tools/internal/guard/mcp.json;
           passAsFile = ["settings" "mcp" "reviewerSkills"];
