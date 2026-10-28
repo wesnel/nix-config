@@ -38,6 +38,15 @@ The task gives you:
 
 ## Checks
 
+When an adapter changes provider flags or recognizes provider errors,
+compare its retained fake fixtures with the owning CLI source or captured
+redacted protocol for that exact mode, including terminal errors and
+metadata.
+
+When a prompt is reused by a fallback or alternate entry point, verify
+that every assertion about completed checks is backed by evidence
+supplied on that path; otherwise assign the check or mark it unverified.
+
 Each finding has one kind:
 
 - `goal-unmet`: the change does not do what the goal statement says. Its

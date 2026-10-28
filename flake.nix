@@ -835,17 +835,31 @@
       # every server mcp.json lists, each read allowed and each confirm
       # asked, never allowed; no allow rule that a deny rule covers, which
       # deny would override; and the guard's PreToolUse hook matching MCP
-      # tools, every hook of it blocking when it cannot run.
+      # tools, every hook of it blocking when it cannot run. Build the
+      # configured headless exports too: their general reviewer keeps its
+      # declared preloads and the hook that confines every tool call.
       checks.claude-settings = let
         ngrok = darwinSystems.ngrok;
-        settings = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username}.wgn.home.claude.settings;
+        home = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username};
+        inherit (home.wgn.home.llm) delegate;
+        reviewerTests = ./modules/home-manager/claude/tests;
       in
         pkgs.runCommand "claude-settings" {
-          nativeBuildInputs = [pkgs.jq];
-          settings = builtins.toJSON settings;
+          nativeBuildInputs = [pkgs.jq pkgs.python3];
+          settings = builtins.toJSON home.wgn.home.claude.settings;
+          reviewerAgents = delegate.agents;
+          reviewerSettings = delegate.settings;
+          reviewerSkills = builtins.toJSON (pkgs.lib.mapAttrs
+            (name: _: "${home.home.file.".claude/skills/${name}".source}/SKILL.md")
+            home.wgn.home.llm.skills);
           mcp = builtins.readFile ./overlays/agent-tools/internal/guard/mcp.json;
-          passAsFile = ["settings" "mcp"];
+          passAsFile = ["settings" "mcp" "reviewerSkills"];
         } ''
+          PYTHONDONTWRITEBYTECODE=1 python ${reviewerTests}/reviewer_exports_test.py
+          python ${reviewerTests}/reviewer_exports.py "$reviewerAgents" \
+            ${./modules/home-manager/claude/agents/adversarial-reviewer.md} \
+            "$reviewerSkillsPath" ${pkgs.lib.getExe' home.wgn.home.llm.agentTools "pr-loop"}
+          jq -e 'type == "object"' "$reviewerSettings" > /dev/null
           s=$settingsPath
           # Each check prints what breaks it, and fails on any.
           check() {
