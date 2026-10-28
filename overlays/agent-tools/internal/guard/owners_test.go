@@ -98,7 +98,25 @@ func TestOwners(t *testing.T) {
 		{"unknown cd then read", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"cd $D && cat new"}}`, nil},
 		{"unknown cd then absolute device write", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"cd $D && echo x >/dev/null"}}`, nil},
 		{"env chdir write escape", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"env -C MAIN touch new"}}`, nil},
+		{"env abbreviated chdir escape", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"env --chd=MAIN touch new"}}`, nil},
+		{"env clustered chdir escape", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"env -iCMAIN touch new"}}`, nil},
+		{"env last chdir escape", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"env -C sub -C .. touch new"}}`, nil},
+		{"env last chdir stays local", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"env -C MAIN -C . touch new"}}`, nil},
+		{"nested prefix home cd", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"HOME=MAIN sh -c 'cd \"$HOME\" && touch new'"}}`, nil},
+		{"nested prefix home default cd", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"HOME=MAIN sh -c 'cd && touch new'"}}`, nil},
+		{"nested prefix home tilde cd", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"HOME=MAIN sh -c 'cd ~ && touch new'"}}`, nil},
+		{"nested prefix home tilde operand", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"HOME=MAIN sh -c 'touch ~/new'"}}`, nil},
+		{"nested prefix tmpdir cd", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"TMPDIR=MAIN sh -c 'cd \"$TMPDIR\" && touch new'"}}`, nil},
+		{"nested prefix home write operand", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"HOME=MAIN sh -c 'touch \"$HOME/new\"'"}}`, nil},
+		{"nested prefix home redirect", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"HOME=MAIN sh -c 'echo x > \"$HOME/new\"'"}}`, nil},
+		{"nested prefix parent argument uses outer home", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"HOME=MAIN env -C \"$HOME\" touch new"}}`, nil},
+		{"nested prefix unrelated literal write", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"HOME=MAIN sh -c 'touch literal'"}}`, nil},
+		{"nested prefix read allowed", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"HOME=MAIN sh -c 'cat \"$HOME/new\"'"}}`, nil},
+		{"env unsupported option write unknown", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"env --unrecognized-option touch new"}}`, nil},
+		{"env unsupported option read unresolved", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"env --unrecognized-option cat new"}}`, nil},
 		{"env chdir literal variable", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"env -C '$HOME' touch new"}}`, nil},
+		{"env chdir dash directory", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"env -C -dir touch new"}}`, nil},
+		{"cd dash directory after terminator", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"cd -- -dir && touch new"}}`, nil},
 		{"env chdir shell redirect stays outside", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"env -C MAIN sh -c 'echo x > new'"}}`, nil},
 		{"env chdir leaves parent redirect local", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"env -C MAIN echo x > new"}}`, nil},
 		{"owner's Edit in a sibling's worktree", true, `{"tool_name":"Edit","agent_id":"a1","tool_input":{"file_path":"SIBLING/a.go"}}`, []string{"LINKED"}},
@@ -214,6 +232,13 @@ func TestOwners(t *testing.T) {
 	} {
 		t.Run(caseName(e.deny, e.name), func(t *testing.T) {
 			paths := owned(t)
+			if strings.HasPrefix(e.name, "nested prefix") {
+				oldHome := home
+				home = paths.Replace("LINKED")
+				t.Setenv("HOME", home)
+				t.Setenv("TMPDIR", home)
+				t.Cleanup(func() { home = oldHome })
+			}
 			event := paths.Replace(e.json)
 			var out bytes.Buffer
 			Main([]string{"--baseline"}, strings.NewReader(event), &out, io.Discard)

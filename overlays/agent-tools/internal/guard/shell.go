@@ -55,8 +55,72 @@ var wrappers = map[string]wrapper{
 	"bunx": {values: set("-p", "--package")},
 }
 
-// envValues are env's options whose value is the next word.
-var envValues = set("-u", "--unset", "-C", "--chdir", "-P", "-S", "--split-string")
+type envOption struct {
+	flag  string
+	value bool
+}
+
+var envOptions = map[string]envOption{
+	"argv0": {"-a", true}, "ignore-environment": {"-i", false},
+	"env0-from": {"--env0-from", true}, "null": {"-0", false},
+	"unset": {"-u", true}, "chdir": {"-C", true},
+	"default-signal": {"--default-signal", false}, "ignore-signal": {"--ignore-signal", false},
+	"block-signal": {"--block-signal", false}, "list-signal-handling": {"--list-signal-handling", false},
+	"debug": {"-v", false}, "split-string": {"-S", true},
+	"help": {"--help", false}, "version": {"--version", false},
+}
+
+var envShortOptions = func() map[byte]envOption {
+	options := map[byte]envOption{'P': {flag: "-P", value: true}}
+	for _, option := range envOptions {
+		if len(option.flag) == 2 {
+			options[option.flag[1]] = option
+		}
+	}
+	return options
+}()
+
+// envOptionWords resolves unique long-option prefixes and short clusters
+// before their values or effects are interpreted.
+func envOptionWords(arg string) ([]string, bool) {
+	if strings.HasPrefix(arg, "--") {
+		name, value, hasValue := strings.Cut(arg[2:], "=")
+		option, found := envOptions[name]
+		if !found {
+			matches := 0
+			for candidate, candidateOption := range envOptions {
+				if name != "" && strings.HasPrefix(candidate, name) {
+					option, matches = candidateOption, matches+1
+				}
+			}
+			if matches != 1 {
+				return nil, false
+			}
+		}
+		if hasValue {
+			if option.value {
+				return []string{option.flag, value}, true
+			}
+			return []string{option.flag + "=" + value}, true
+		}
+		return []string{option.flag}, true
+	}
+	var words []string
+	for i := 1; i < len(arg); i++ {
+		option, ok := envShortOptions[arg[i]]
+		if !ok {
+			return nil, false
+		}
+		words = append(words, option.flag)
+		if option.value {
+			if i+1 < len(arg) {
+				words = append(words, arg[i+1:])
+			}
+			break
+		}
+	}
+	return words, true
+}
 
 // shells run the script after -c (or a combined flag such as -lc).
 var shells = set("bash", "sh", "zsh", "fish", "dash", "ksh")
@@ -119,6 +183,34 @@ type envBinding struct {
 type environment struct {
 	bindings []envBinding
 	cleared  bool
+}
+
+func (e environment) overrides(name string) bool {
+	return e.cleared || slices.ContainsFunc(e.bindings, func(binding envBinding) bool { return binding.name == name })
+}
+
+// shellPathIn resolves only the hook's known path variables that the
+// calling shell has not overridden. A command prefix affects its child,
+// whereas its own argument expansion belongs to this calling shell.
+func shellPathIn(word string, expanded bool, env environment) (string, bool) {
+	if env.overrides("HOME") && (word == "~" || strings.HasPrefix(word, "~/")) {
+		return "", false
+	}
+	if !expanded {
+		return word, true
+	}
+	for _, name := range []string{"HOME", "TMPDIR"} {
+		if env.overrides(name) && (strings.Contains(word, "$"+name) || strings.Contains(word, "${"+name+"}")) {
+			return "", false
+		}
+	}
+	word = shellPath(word, true)
+	return word, !strings.ContainsAny(word, "$`")
+}
+
+type envInvocation struct {
+	env       environment
+	directory *shellValue
 }
 
 func (e environment) assign(word string, expanded bool) environment {
@@ -222,7 +314,7 @@ func unwrap(c call, v visitor) string {
 	}
 	switch {
 	case name == "env":
-		return unwrapEnv(c.env, args, expands, v)
+		return unwrapEnv(envInvocation{env: c.env}, args, expands, v)
 	case name == "git":
 		if reason := v.call(c); reason != "" {
 			return reason
@@ -342,13 +434,30 @@ options:
 // unwrapEnv reads env's options and assignments, and hands on the command
 // they run, or env itself when it runs none; `-S` splits its value into
 // words as a shell would.
-func unwrapEnv(env environment, args []string, expands []bool, v visitor) string {
+func unwrapEnv(state envInvocation, args []string, expands []bool, v visitor) string {
 	opts := true
 	for i := 0; i < len(args); i++ {
 		a := args[i]
+		if opts && len(a) > 1 && a[0] == '-' && a != "--" {
+			words, known := envOptionWords(a)
+			if !known {
+				return "The guard cannot interpret this env option or its argument boundary. Use supported literal options and assignments, or put the command in your report."
+			}
+			if len(words) != 1 || words[0] != a {
+				x := make([]bool, len(words))
+				for j := range x {
+					x[j] = expands[i]
+				}
+				return unwrapEnv(state, append(words, args[i+1:]...), append(x, expands[i+1:]...), v)
+			}
+		}
 		switch {
+		case opts && a == "--env0-from":
+			return "An environment loaded from a file may change process startup and credential settings the guard cannot inspect. Use literal environment assignments, or put the command in your report."
+		case opts && (a == "--help" || a == "--version"):
+			return ""
 		case opts && (a == "-i" || a == "--ignore-environment" || a == "-"):
-			env = environment{cleared: true}
+			state.env = environment{cleared: true}
 		case opts && (a == "-u" || a == "--unset" || strings.HasPrefix(a, "--unset=") || strings.HasPrefix(a, "-u")):
 			name := ""
 			switch {
@@ -360,7 +469,7 @@ func unwrapEnv(env environment, args []string, expands []bool, v visitor) string
 				i++
 				name = args[i]
 			}
-			env = env.unset(name)
+			state.env = state.env.unset(name)
 		case opts && (a == "-C" || a == "--chdir" || strings.HasPrefix(a, "--chdir=") || strings.HasPrefix(a, "-C")):
 			value, expanded := "", expands[i]
 			switch {
@@ -372,11 +481,7 @@ func unwrapEnv(env environment, args []string, expands []bool, v visitor) string
 				i++
 				value, expanded = args[i], expands[i]
 			}
-			visit := func() string { return unwrapEnv(env, args[i+1:], expands[i+1:], v) }
-			if v.chdir != nil {
-				return v.chdir(value, expanded, visit)
-			}
-			return visit()
+			state.directory = &shellValue{text: value, expanded: expanded}
 		case opts && a == "--":
 			opts = false
 		case opts && (a == "-S" || a == "--split-string" || strings.HasPrefix(a, "--split-string=") || strings.HasPrefix(a, "-S")):
@@ -391,19 +496,23 @@ func unwrapEnv(env environment, args []string, expands []bool, v visitor) string
 				script = args[i]
 			}
 			c := splitArguments(script)
-			return unwrapEnv(env, append(c.words, args[i+1:]...), append(c.expands, expands[i+1:]...), v)
+			return unwrapEnv(state, append(c.words, args[i+1:]...), append(c.expands, expands[i+1:]...), v)
 		case opts && len(a) > 1 && a[0] == '-':
-			if envValues[a] {
+			if option, ok := envShortOptions[a[1]]; ok && option.value {
 				i++
 			}
 		case !expands[i] && assignment.MatchString(a):
 			opts = false
-			env = env.assign(a, expands[i])
+			state.env = state.env.assign(a, expands[i])
 		default:
-			return unwrap(call{words: args[i:], expands: expands[i:], env: env}, v)
+			visit := func() string { return unwrap(call{words: args[i:], expands: expands[i:], env: state.env}, v) }
+			if state.directory != nil && v.chdir != nil {
+				return v.chdir(state.directory.text, state.directory.expanded, visit)
+			}
+			return visit()
 		}
 	}
-	return v.call(call{words: []string{"env"}, expands: []bool{false}, env: env})
+	return v.call(call{words: []string{"env"}, expands: []bool{false}, env: state.env})
 }
 
 // unwrapNixRun reads `nix run INSTALLABLE [--] ARGS`, whose program is named
@@ -768,6 +877,7 @@ func envAliases(env environment, v visitor) string {
 // branch it guards, and one that && joins to a { } group over the group.
 type cwds struct {
 	here, before []string
+	env          environment // the shell expanding this script, before command prefixes
 	// The call under way is the condition of an if, while or until, and a
 	// cd.
 	condition bool
@@ -820,7 +930,7 @@ func (w *cwds) begin(c call) {
 func (w *cwds) cd(c call, end string) {
 	var to []string
 	for _, d := range w.here {
-		to = addDir(to, cdTarget(c, d))
+		to = addDir(to, cdTarget(c, d, w.env))
 	}
 	if n := len(w.blocks); w.condition && n > 0 && (end == ";" || end == "\n") {
 		outside := w.here
@@ -854,8 +964,7 @@ func (w *cwds) inDir(word string, expanded bool, visit func() string) string {
 	before := w.here
 	w.here = nil
 	for _, cwd := range before {
-		c := call{words: []string{"cd", word}, expands: []bool{false, expanded}}
-		w.here = addDir(w.here, cdTarget(c, cwd))
+		w.here = addDir(w.here, directoryTarget(word, expanded, cwd, w.env))
 	}
 	defer func() { w.here = before }()
 	return visit()
@@ -882,11 +991,12 @@ func (r redirection) file() bool {
 
 func (r redirection) output() bool { return r.file() && strings.Contains(r.op, ">") }
 
-func (r redirection) path(cwd string) (string, bool) {
+func (r redirection) path(cwd string, env environment) (string, bool) {
 	target := r.target
-	if r.expands {
-		target = shellPath(target, true)
-		if strings.ContainsAny(target, "$`") {
+	if !r.literal {
+		var known bool
+		target, known = shellPathIn(target, r.expands, env)
+		if !known {
 			return "", false
 		}
 	}

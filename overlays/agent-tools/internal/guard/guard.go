@@ -299,14 +299,14 @@ func command(text string, depth int, who role, dir, checkout string, background 
 	}
 	// Where each command may run, as cd moves it; a command is judged in
 	// each of those directories.
-	w := cwds{here: []string{dir}}
+	w := cwds{here: []string{dir}, env: env}
 	// Whether the call being judged runs in the background, and what ends
 	// it.
 	bg, end := false, ""
 	v := visitor{
 		redirects: func(redirects []redirection) string {
 			for _, cwd := range w.here {
-				if reason := checkSession(call{words: []string{":"}, redirects: redirects}, cwd); reason != "" {
+				if reason := checkSession(call{words: []string{":"}, redirects: redirects, env: env}, cwd); reason != "" {
 					return reason
 				}
 			}
@@ -352,27 +352,40 @@ func command(text string, depth int, who role, dir, checkout string, background 
 // is unknown and the target relative. Of what the shell expands, the guard
 // takes $TMPDIR and $HOME, which it knows, and leaves the rest to the
 // shell.
-func cdTarget(c call, cwd string) string {
+func cdTarget(c call, cwd string, env environment) string {
 	args, expands := c.words[1:], c.expands[1:]
 	for len(args) > 0 && strings.HasPrefix(args[0], "-") && args[0] != "-" {
+		option := args[0]
 		args, expands = args[1:], expands[1:]
-	}
-	if len(args) == 0 {
-		return home
-	}
-	word := args[0]
-	if expands[0] {
-		if word = shellPath(word, true); strings.ContainsAny(word, "$`") {
-			return ""
+		if option == "--" {
+			break
 		}
 	}
-	if word == "-" {
+	if len(args) == 0 {
+		if env.overrides("HOME") {
+			return ""
+		}
+		return home
+	}
+	if args[0] == "-" {
+		return ""
+	}
+	return directoryTarget(args[0], expands[0], cwd, env)
+}
+
+func directoryTarget(word string, expanded bool, cwd string, env environment) string {
+	if word == "" {
+		return ""
+	}
+	var known bool
+	if word, known = shellPathIn(word, expanded, env); !known {
 		return ""
 	}
 	path := word
-	if !expands[0] && strings.ContainsAny(word, "$`") {
+	literal := !expanded && strings.ContainsAny(word, "$`")
+	if literal {
 		if !filepath.IsAbs(path) && cwd != "" {
-			path = filepath.Join(cwd, path)
+			path = cwd + "/" + path
 		}
 	} else {
 		path = expandPath(word, cwd)
@@ -380,7 +393,11 @@ func cdTarget(c call, cwd string) string {
 	// A .. after a link climbs from where the link leads, which cleaning
 	// the spelling would not.
 	if strings.Contains("/"+word+"/", "/../") {
-		path = physical(rawPath(word, cwd))
+		if literal {
+			path = physical(path)
+		} else {
+			path = physical(rawPath(word, cwd))
+		}
 	}
 	if !filepath.IsAbs(path) {
 		return ""

@@ -220,7 +220,7 @@ func checkSession(c call, dir string) string {
 	var redirected []string
 	for _, r := range c.redirects {
 		if r.file() {
-			path, known := r.path(dir)
+			path, known := r.path(dir, c.env)
 			if !known {
 				if r.output() {
 					return unknownShellWrite

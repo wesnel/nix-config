@@ -33,7 +33,7 @@ func checkOwner(in input) string {
 		}
 		json.Unmarshal(in.ToolInput, &args)
 		var unknown bool
-		paths, unknown = shellEditPaths(args.Command, in.Cwd, 0)
+		paths, unknown = shellEditPaths(args.Command, in.Cwd, 0, environment{})
 		if unknown {
 			return unknownShellWrite
 		}
@@ -242,16 +242,29 @@ func worktreeOf(path string) (string, gitState) {
 // a git command that writes the worktree runs in (gitWrites), following cd
 // as command does. The second result says a write could not be resolved
 // to an absolute path, so its ownership cannot be checked.
-func shellEditPaths(text, dir string, depth int) ([]string, bool) {
+func shellEditPaths(text, dir string, depth int, env environment) ([]string, bool) {
 	if depth > maxDepth {
 		return nil, false
 	}
 	var out []string
 	unknown := false
-	w := cwds{here: []string{dir}}
+	w := cwds{here: []string{dir}, env: env}
 	end := ""
-	add := func(target, cwd string) {
-		if p := expandPath(target, cwd); filepath.IsAbs(p) {
+	add := func(target, cwd string, expanded bool) {
+		word, known := shellPathIn(target, expanded, env)
+		if !known {
+			unknown = true
+			return
+		}
+		p := word
+		if !expanded && strings.ContainsAny(word, "$`") {
+			if !filepath.IsAbs(p) && cwd != "" {
+				p = filepath.Join(cwd, p)
+			}
+		} else {
+			p = expandPath(word, cwd)
+		}
+		if filepath.IsAbs(p) {
 			out = append(out, p)
 		} else {
 			unknown = true
@@ -265,7 +278,7 @@ func shellEditPaths(text, dir string, depth int) ([]string, bool) {
 					if !r.output() {
 						continue
 					}
-					if path, known := r.path(cwd); known {
+					if path, known := r.path(cwd, env); known {
 						out = append(out, path)
 					} else {
 						unknown = true
@@ -274,9 +287,9 @@ func shellEditPaths(text, dir string, depth int) ([]string, bool) {
 			}
 			return ""
 		},
-		script: func(text string, _ environment) string {
+		script: func(text string, child environment) string {
 			for _, cwd := range w.here {
-				paths, unresolved := shellEditPaths(text, cwd, depth+1)
+				paths, unresolved := shellEditPaths(text, cwd, depth+1, child)
 				out = append(out, paths...)
 				unknown = unknown || unresolved
 			}
@@ -292,7 +305,13 @@ func shellEditPaths(text, dir string, depth int) ([]string, bool) {
 			}
 			for _, cwd := range w.here {
 				for _, target := range changedFiles(base(c.words[0]), c.words[1:], nil) {
-					add(target, cwd)
+					expanded := false
+					for i, word := range c.words {
+						if (word == target || afterEquals(word) == target) && c.expands[i] {
+							expanded = true
+						}
+					}
+					add(target, cwd, expanded)
 				}
 				if dir, writes := gitWriteDir(c, cwd); writes {
 					if filepath.IsAbs(dir) {
@@ -308,6 +327,7 @@ func shellEditPaths(text, dir string, depth int) ([]string, bool) {
 	texts, _, ends := backgroundSegments(text)
 	for i, segment := range texts {
 		if c := split(segment); len(c.words) > 0 || len(c.redirects) > 0 {
+			c.env = env
 			end = ends[i]
 			w.begin(c)
 			unwrap(c, v)

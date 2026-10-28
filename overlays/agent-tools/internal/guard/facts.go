@@ -26,7 +26,7 @@ type gitCall struct {
 }
 
 // gitCalls are the git commands text runs, started in dir.
-func gitCalls(text, dir string, depth int) []gitCall {
+func gitCalls(text, dir string, depth int, env environment) []gitCall {
 	if depth > maxDepth {
 		return nil
 	}
@@ -35,12 +35,12 @@ func gitCalls(text, dir string, depth int) []gitCall {
 	v := visitor{
 		chdir: func(word string, expanded bool, visit func() string) string {
 			before := cwd
-			cwd = cdTarget(call{words: []string{"cd", word}, expands: []bool{false, expanded}}, cwd)
+			cwd = directoryTarget(word, expanded, cwd, env)
 			defer func() { cwd = before }()
 			return visit()
 		},
-		script: func(text string, _ environment) string {
-			out = append(out, gitCalls(text, cwd, depth+1)...)
+		script: func(text string, child environment) string {
+			out = append(out, gitCalls(text, cwd, depth+1, child)...)
 			return ""
 		},
 		call: func(c call) string {
@@ -48,7 +48,7 @@ func gitCalls(text, dir string, depth int) []gitCall {
 			switch {
 			case len(w) == 0 || c.expands[0]:
 			case w[0] == "cd" || w[0] == "pushd":
-				cwd = cdTarget(c, cwd)
+				cwd = cdTarget(c, cwd, env)
 			case base(w[0]) == "git":
 				where, i := cwd, 1
 				for i < len(w) && strings.HasPrefix(w[i], "-") {
@@ -74,6 +74,7 @@ func gitCalls(text, dir string, depth int) []gitCall {
 	}
 	for _, segment := range segments(text) {
 		if c := split(segment); len(c.words) > 0 || len(c.redirects) > 0 {
+			c.env = env
 			unwrap(c, v)
 		}
 	}
@@ -215,7 +216,7 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 		return c.Locate(session, top)
 	}
 	output := strings.Join(texts, "\n")
-	for _, g := range gitCalls(command, cwd, 0) {
+	for _, g := range gitCalls(command, cwd, 0, environment{}) {
 		if g.sub == "commit" {
 			for _, m := range summaryLine.FindAllStringSubmatch(output, -1) {
 				if _, ok := (gitState{dir: g.dir}).run("cat-file", "-e", m[2]+"^{commit}"); !ok {
