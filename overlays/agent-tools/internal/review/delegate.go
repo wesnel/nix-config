@@ -122,7 +122,8 @@ exhaustion; unavailable allowance remains unknown and never clears a hold.
 Already-started concurrent attempts may finish. No provider output is stored
 in availability state. On exit 4 use --print-prompt for each not-run type and
 start a fresh read-only sub-agent in the primary harness, with only the printed
-contract and pinned inputs. Keep review-loop text out of Codex. Report native
+contract and pinned inputs. In review-loop sessions use the operator-selected
+harness; automatic Codex delegation remains disabled. Report native
 fallback results separately from the incomplete delegate record.
 
 A reply is taken from the structured output Claude Code returns, else
@@ -457,7 +458,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			}
 			fmt.Fprintf(stderr, "%s: the %s review could not run here: %s. Instead start %s on what `git delegate --print-prompt "+
 				"--reviewer %s %s%s` prints, with a fresh context in the primary harness and none of the author's reasoning. "+
-				"Keep review-loop text out of Codex.\n", name, t, run.why, reader, t, typeFlags(s, t), s.given)
+				"In review-loop sessions use the operator-selected harness.\n", name, t, run.why, reader, t, typeFlags(s, t), s.given)
 			continue
 		}
 		runs = append(runs, run)

@@ -61,7 +61,7 @@ func (a *availability) check(p provider) error {
 		return err
 	}
 	if p == codexProvider && os.Getenv("PR_LOOP_SESSION") != "" {
-		return providerUnavailable{p, "this is a review-loop session; its review text must stay out of Codex"}
+		return providerUnavailable{p, "this is a review-loop session; automatic Codex delegation is disabled; use a fresh read-only sub-agent in the operator-selected harness"}
 	}
 	s, err := shared.Check(p, time.Now())
 	if err != nil {

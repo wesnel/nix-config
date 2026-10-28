@@ -72,6 +72,39 @@ func TestProviderAvailability(t *testing.T) {
 	})
 }
 
+func TestLoopNativeFallback(t *testing.T) {
+	for _, command := range []string{"review", "ask"} {
+		t.Run(command, func(t *testing.T) {
+			f := askFixture(t, true)
+			t.Setenv("PR_LOOP_SESSION", "1")
+			args := []string{"--reviewer", "codex", "--goal", ".git/goal.md", f.base + "..HEAD"}
+			if command == "ask" {
+				args = []string{"ask", "--reviewer", "codex", "--question", ".git/question.md", "code.txt"}
+			}
+			var out, errs bytes.Buffer
+			code := Main(t.Context(), args, strings.NewReader(""), &out, &errs)
+			if code != 4 || !strings.Contains(errs.String(), "automatic Codex delegation is disabled") || !strings.Contains(errs.String(), "operator-selected harness") {
+				t.Fatalf("lost selected-harness fallback: exit %d, %s", code, errs.String())
+			}
+			if strings.Contains(errs.String(), "text out of Codex") || strings.Contains(errs.String(), "text must stay out of Codex") {
+				t.Errorf("native Codex review was forbidden: %s", errs.String())
+			}
+			guideBefore, _ := os.ReadFile(filepath.Join(f.log, "review-guide-runs"))
+			out.Reset()
+			errs.Reset()
+			args = append(args, "--print-prompt")
+			if code := Main(t.Context(), args, strings.NewReader(""), &out, &errs); code != 0 || out.Len() == 0 {
+				t.Fatalf("native contract export failed: exit %d, %s", code, errs.String())
+			}
+			guideAfter, _ := os.ReadFile(filepath.Join(f.log, "review-guide-runs"))
+			if !bytes.Equal(guideBefore, guideAfter) {
+				t.Error("native contract export launched a walkthrough")
+			}
+			noProviderCall(t, f, "calls", "adversarial-reviewer-runs")
+		})
+	}
+}
+
 func TestQuotaFallback(t *testing.T) {
 	t.Run("quota after a schema error still requests fallback", func(t *testing.T) {
 		f := setUp(t, true)

@@ -151,14 +151,14 @@ func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	if why != "" {
 		fmt.Fprintf(stderr, "%s: the %s reviewer cannot answer here: %s. Ask a new sub-agent that only reads instead "+
-			"in the primary harness with a fresh context. Add `--print-prompt` to this ask command to export its contract and file snapshots from %s and the same files, with none of your own reasoning. Keep review-loop text out of Codex.\n",
+			"in the primary harness with a fresh context. Add `--print-prompt` to this ask command to export its contract and file snapshots from %s and the same files, with none of your own reasoning. In review-loop sessions use the operator-selected harness.\n",
 			name, *reviewer, why, *question)
 		return 4
 	}
 	out, err := askIn(ctx, top, text, files, *reviewer, ty, *model, time.Duration(*timeout)*time.Second, stderr, a)
 	var unavailable providerUnavailable
 	if errors.As(err, &unavailable) {
-		fmt.Fprintf(stderr, "%s: %s. Add `--print-prompt` to this ask command and give the result to a fresh read-only sub-agent in the primary harness instead, with none of your reasoning. Keep review-loop text out of Codex.\n", name, err)
+		fmt.Fprintf(stderr, "%s: %s. Add `--print-prompt` to this ask command and give the result to a fresh read-only sub-agent in the primary harness instead, with none of your reasoning. In review-loop sessions use the operator-selected harness.\n", name, err)
 		return 4
 	}
 	var unconfined Unconfined
