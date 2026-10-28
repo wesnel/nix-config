@@ -453,43 +453,6 @@ with lib; let
   # without arguments.
   sub = command: name: "${command} ${name} *";
 
-  # What the host sandbox denies reading beyond the credentials, which the
-  # guard reads from wgn.home.llm.guard.credentialPaths too: what would let
-  # a command act as the operator elsewhere. The guard refuses a .env file
-  # by its name instead.
-  hostDeniedReads = [
-    "~/git/**/.env"
-    "~/git/**/.env.*"
-    "~/.claude/worktrees/**/.env"
-    "~/.claude/worktrees/**/.env.*"
-    # Browser profiles, 1Password and shell histories.
-    "~/Library/Application Support/Google/Chrome"
-    "~/Library/Application Support/BraveSoftware"
-    "~/Library/Application Support/Firefox"
-    "~/Library/Safari"
-    "~/Library/Containers/com.apple.Safari"
-    "~/.config/google-chrome"
-    "~/.config/chromium"
-    "~/.mozilla"
-    "~/Library/Application Support/1Password"
-    "~/Library/Group Containers/2BUA8C4S2C.com.1password"
-    "~/.config/1Password"
-    "~/.local/share/fish/fish_history"
-    "~/.zsh_history"
-    "~/.zsh_sessions"
-    "~/.bash_history"
-    # Only the watcher's sync pushes plans.
-    plans.repository.key
-  ];
-
-  # The credential list, as the sandbox takes paths: no trailing `/`, and
-  # none that is or is under a directory sandboxLists.deniedReads hides
-  # whole, such as the `~/.ssh/id_` prefix.
-  sandboxCredentials = let
-    hidden = p: any (d: p == d || hasPrefix "${d}/" p) sandboxLists.deniedReads;
-  in
-    filter (p: !hidden p) (map (removeSuffix "/") config.wgn.home.llm.guard.credentialPaths);
-
   # The sandbox around every session's commands. Paths starting `~/` are
   # resolved by Claude Code; bare relative ones would resolve against
   # ~/.claude, not the workspace.
@@ -537,23 +500,11 @@ with lib; let
     # Commands inherit Claude Code's environment, and only the variables
     # named here are taken out of it, so every credential a module puts in
     # the environment belongs here.
-    credentials.envVars =
-      map (name: {
-        inherit name;
-        mode = "deny";
-      }) [
-        "GH_TOKEN"
-        "GITHUB_TOKEN"
-        "SSH_AUTH_SOCK"
-        "KEYID"
-        "NGROK_AUTHTOKEN"
-        "NGROK_AUTHTOKEN_PROD"
-        "NGROK_AI_KEY"
-        "MCP_PROXY_TOKEN"
-        "OPENAI_API_KEY"
-        "ANTHROPIC_API_KEY"
-        "CLAUDE_CODE_MESSAGING_TOKEN"
-      ];
+    credentials.envVars = map (name: {
+      inherit name;
+      mode = "deny";
+    })
+    sandboxLists.deniedEnvVars;
 
     # Go programs, gh and the go command among them, verify TLS through
     # trustd on macOS, which they fail to reach otherwise. This opens the
@@ -607,7 +558,7 @@ with lib; let
       );
 
     filesystem = {
-      denyRead = sandboxLists.deniedReads ++ sandboxCredentials ++ hostDeniedReads;
+      denyRead = sandboxLists.deniedReads;
 
       # Git reads the user's name and email from this file on every run.
       allowRead = optional (config.sops.templates ? "git.inc") (

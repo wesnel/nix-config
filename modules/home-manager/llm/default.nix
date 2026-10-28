@@ -319,28 +319,80 @@ in {
         };
     };
 
-    # The host sandbox around every Claude Code session's commands takes
-    # these lists from here.
+    # Harnesses translate this policy into their own sandbox settings.
     sandbox = {
+      workspaceDeniedFiles = mkOption {
+        type = types.listOf types.str;
+        readOnly = true;
+        default = [".env" ".env.*"];
+        description = "Credential file names denied beneath working directories.";
+      };
+
+      deniedEnvVars = mkOption {
+        type = types.listOf types.str;
+        readOnly = true;
+        default = [
+          "GH_TOKEN"
+          "GITHUB_TOKEN"
+          "SSH_AUTH_SOCK"
+          "KEYID"
+          "NGROK_AUTHTOKEN"
+          "NGROK_AUTHTOKEN_PROD"
+          "NGROK_AI_KEY"
+          "MCP_PROXY_TOKEN"
+          "OPENAI_API_KEY"
+          "ANTHROPIC_API_KEY"
+          "CLAUDE_CODE_MESSAGING_TOKEN"
+        ];
+        description = "Credential variables removed from sandboxed commands' environments.";
+      };
+
       deniedReads = mkOption {
         type = types.listOf types.str;
         readOnly = true;
 
         description = ''
-          Absolute paths no sandboxed command may read: credentials, and
-          where agent sockets live.
+          Absolute or home-relative paths and globs no sandboxed command
+          may read: credentials, browser profiles, histories and sockets.
         '';
 
         default = let
           home = config.home.homeDirectory;
           proxy = config.wgn.home.mcp-proxy;
+          directories =
+            ["${home}/.config/gh" "${home}/.gnupg" "${home}/.ssh"]
+            # gh keeps its token in the login keychain.
+            ++ optional pkgs.stdenv.hostPlatform.isDarwin "${home}/Library/Keychains"
+            ++ optional pkgs.stdenv.hostPlatform.isLinux "/run/user"
+            ++ optionals proxy.enable [proxy.stateDir proxy.oauthDir];
+          hidden = p: any (d: p == d || hasPrefix "${d}/" p) directories;
+          credentials = filter (p: !hidden p) (map (removeSuffix "/") cfg.guard.credentialPaths);
         in
-          ["${home}/.config/gh" "${home}/.gnupg" "${home}/.ssh"]
-          # gh keeps its token in the login keychain, which a sandboxed
-          # command can otherwise read.
-          ++ optional pkgs.stdenv.hostPlatform.isDarwin "${home}/Library/Keychains"
-          ++ optional pkgs.stdenv.hostPlatform.isLinux "/run/user"
-          ++ optionals proxy.enable [proxy.stateDir proxy.oauthDir];
+          directories
+          ++ credentials
+          ++ concatMap (root: map (name: "${root}/**/${name}") cfg.sandbox.workspaceDeniedFiles) [
+            "~/git"
+            "~/.claude/worktrees"
+          ]
+          ++ [
+            "~/Library/Application Support/Google/Chrome"
+            "~/Library/Application Support/BraveSoftware"
+            "~/Library/Application Support/Firefox"
+            "~/Library/Safari"
+            "~/Library/Containers/com.apple.Safari"
+            "~/.config/google-chrome"
+            "~/.config/chromium"
+            "~/.mozilla"
+            "~/Library/Application Support/1Password"
+            "~/Library/Group Containers/2BUA8C4S2C.com.1password"
+            "~/.config/1Password"
+            "~/.local/share/fish/fish_history"
+            "~/.zsh_history"
+            "~/.zsh_sessions"
+            "~/.bash_history"
+            # Only the watcher's sync pushes plans.
+            cfg.plans.repository.key
+          ];
       };
 
       allowedDomains = mkOption {

@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -8,13 +9,19 @@ import unittest
 
 class SettingsTest(unittest.TestCase):
     def activate(self, home):
-        activation = Path(os.environ["activationPath"]).read_text().replace(
-            os.environ["operatorHome"], str(home)
+        activation = (
+            Path(os.environ["activationPath"])
+            .read_text()
+            .replace(os.environ["operatorHome"], str(home))
         )
         script = home / "activate.sh"
-        script.write_text('set -e\nwarnEcho() { echo "$@" >&2; exit 1; }\n' + activation)
+        script.write_text(
+            'set -e\nwarnEcho() { echo "$@" >&2; exit 1; }\n' + activation
+        )
         subprocess.run(
-            ["bash", str(script)], env=dict(os.environ, HOME=str(home)), check=True
+            ["bash", str(script)],
+            env=dict(os.environ, HOME=str(home)),
+            check=True,
         )
 
     def test_caches_preserve_settings(self):
@@ -23,18 +30,18 @@ class SettingsTest(unittest.TestCase):
             config = home / ".codex/config.toml"
             config.parent.mkdir()
             config.write_text(
-                '# Keep this comment.\n'
+                "# Keep this comment.\n"
                 'model = "operator-model"\n'
-                '[shell_environment_policy.set]\n'
+                "[shell_environment_policy.set]\n"
                 'KEEP_ME = "operator-value"\n'
-                '[features.network_proxy]\n'
-                'enabled = false\n'
-                'dangerously_allow_all_unix_sockets = true\n'
-                '[features.network_proxy.domains]\n'
+                "[features.network_proxy]\n"
+                "enabled = false\n"
+                "dangerously_allow_all_unix_sockets = true\n"
+                "[features.network_proxy.domains]\n"
                 '"*" = "allow"\n'
-                '[features.network_proxy.unix_sockets]\n'
+                "[features.network_proxy.unix_sockets]\n"
                 '"/var/run/docker.sock" = "allow"\n'
-                '[sandbox_workspace_write]\n'
+                "[sandbox_workspace_write]\n"
                 'writable_roots = ["/operator/root"]\n'
             )
             self.activate(home)
@@ -42,21 +49,45 @@ class SettingsTest(unittest.TestCase):
             settings = tomllib.loads(first)
             self.assertIn("# Keep this comment.", first)
             self.assertEqual(settings["model"], "operator-model")
+            self.assertEqual(settings["default_permissions"], "wgn-workspace")
+            self.assertIs(settings["features"]["network_proxy"], True)
             self.assertNotIn("sandbox_mode", settings)
             self.assertNotIn("sandbox_workspace_write", settings)
-            self.assertEqual(settings["default_permissions"], "wgn-workspace")
-            profile = settings["permissions"]["wgn-workspace"]
+            profile = settings["permissions"][settings["default_permissions"]]
             self.assertEqual(profile["extends"], ":workspace")
-            self.assertIs(profile["network"]["enabled"], True)
-            self.assertEqual(settings["features"]["network_proxy"], {
-                "enabled": True,
-                "allow_local_binding": True,
-                "allow_upstream_proxy": False,
-                "dangerously_allow_all_unix_sockets": False,
-                "dangerously_allow_non_loopback_proxy": False,
-                "domains": {"localhost": "allow", "127.0.0.1": "allow", "::1": "allow"},
-                "unix_sockets": {"/nix/var/nix/daemon-socket/socket": "allow"},
-            })
+            self.assertEqual(
+                profile["network"],
+                {
+                    "enabled": True,
+                    "allow_local_binding": True,
+                    "allow_upstream_proxy": False,
+                    "dangerously_allow_all_unix_sockets": False,
+                    "dangerously_allow_non_loopback_proxy": False,
+                    "domains": {
+                        "localhost": "allow",
+                        "127.0.0.1": "allow",
+                        "::1": "allow",
+                    },
+                    "unix_sockets": {
+                        "/nix/var/nix/daemon-socket/socket": "allow"
+                    },
+                },
+            )
+            for path in (".ssh", ".gnupg", ".config/gh", ".codex/auth.json"):
+                self.assertEqual(
+                    profile["filesystem"][str(home / path)], "deny"
+                )
+            self.assertEqual(
+                profile["filesystem"][":workspace_roots"],
+                {
+                    "**/.env": "deny",
+                    "**/.env.*": "deny",
+                },
+            )
+            environment = settings["shell_environment_policy"]
+            self.assertFalse(environment["ignore_default_excludes"])
+            for name in ("SSH_AUTH_SOCK", "GH_TOKEN", "OPENAI_API_KEY"):
+                self.assertEqual(environment["filters"][name], "exclude")
             cache = home / ".cache/codex/sandbox"
             expected = {
                 "GOCACHE": str(cache / "go-build"),
@@ -68,7 +99,7 @@ class SettingsTest(unittest.TestCase):
             for name, path in expected.items():
                 self.assertEqual(environment_settings.get(name), path)
             roots = profile["workspace_roots"]
-            self.assertIn("/operator/root", roots)
+            self.assertIs(roots["/operator/root"], True)
             self.assertIs(roots[str(cache)], True)
             self.activate(home)
             self.assertEqual(config.read_text(), first)
@@ -78,13 +109,58 @@ class SettingsTest(unittest.TestCase):
             home = Path(directory)
             config = home / ".codex/config.toml"
             config.parent.mkdir()
-            config.write_text('[features]\nnetwork_proxy = true\n')
+            config.write_text("[features]\nnetwork_proxy = true\n")
             self.activate(home)
-            proxy = tomllib.loads(config.read_text())["features"]["network_proxy"]
+            settings = tomllib.loads(config.read_text())
+            self.assertIs(settings["features"]["network_proxy"], True)
+            profile = settings["permissions"][settings["default_permissions"]]
+            proxy = profile["network"]
             self.assertIs(proxy["enabled"], True)
-            self.assertEqual(proxy["unix_sockets"], {
-                "/nix/var/nix/daemon-socket/socket": "allow",
-            })
+            self.assertEqual(
+                proxy["unix_sockets"],
+                {
+                    "/nix/var/nix/daemon-socket/socket": "allow",
+                },
+            )
+
+    def test_lifecycle_hooks_keep_compaction_and_restore_other_starts(self):
+        hooks = json.loads(Path(os.environ["hooksPath"]).read_text())["hooks"]
+        starts = {
+            entry.get("matcher", ""): entry["hooks"]
+            for entry in hooks["SessionStart"]
+        }
+        self.assertEqual(
+            starts["startup|resume|clear|fork"],
+            [
+                {
+                    "type": "command",
+                    "command": "agent-plan find --hook --harness codex",
+                }
+            ],
+        )
+        self.assertEqual(
+            starts["compact"],
+            [
+                {
+                    "type": "command",
+                    "command": "agent-plan remind",
+                }
+            ],
+        )
+        self.assertEqual(
+            hooks["PreToolUse"],
+            [
+                {
+                    "matcher": ".*",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "pr-loop guard --baseline",
+                        }
+                    ],
+                }
+            ],
+        )
 
     def test_profile_replaces_broad_grants(self):
         with tempfile.TemporaryDirectory() as directory:
