@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 import runpy
@@ -108,10 +109,12 @@ class SetupGitTest(unittest.TestCase):
         path.write_text(
             '# Operator comment.\nmodel = "operator-model"\n'
             'sandbox_mode = "workspace-write"\n'
-            '[sandbox_workspace_write]\nnetwork_access = true\n'
-            '[features]\nmemories = false\nnetwork_proxy = false\n'
+            '[sandbox_workspace_write]\n'
+            'writable_roots = ["/stale-write-grant"]\n'
+            'exclude_tmpdir_env_var = false\nexclude_slash_tmp = false\n'
+            '[features]\nmemories = false\n'
             '[permissions.other]\nextends = ":read-only"\n'
-            '[permissions.wgn-project-git]\nextends = ":workspace"\n'
+            '[permissions.wgn-project-git]\nextends = "wgn-workspace"\n'
             '[permissions.wgn-project-git.filesystem]\n"/" = "write"\n'
         )
         result = self.setup_git()
@@ -192,6 +195,146 @@ class SetupGitTest(unittest.TestCase):
                     )
                     self.assertNotEqual(result.returncode, 0, result.stdout)
                     self.assertEqual(path.read_text(), before)
+
+    def test_restrictive_project_configuration_is_not_discarded(self):
+        cases = {
+            "deny": (
+                '[permissions.wgn-project-git]\n'
+                'extends = "wgn-workspace"\n'
+                '[permissions.wgn-project-git.filesystem]\n'
+                '"/synthetic/private" = "deny"\n'
+            ),
+            "read": (
+                '[permissions.wgn-project-git]\n'
+                'extends = "wgn-workspace"\n'
+                '[permissions.wgn-project-git.filesystem]\n'
+                '"/synthetic/readonly" = "read"\n'
+            ),
+            "nested read": (
+                '[permissions.wgn-project-git]\n'
+                'extends = "wgn-workspace"\n'
+                '[permissions.wgn-project-git.filesystem.":workspace_roots"]\n'
+                '"private/**" = "read"\n'
+            ),
+            "protected Git denial": (
+                '[permissions.wgn-project-git]\n'
+                'extends = "wgn-workspace"\n'
+                '[permissions.wgn-project-git.filesystem]\n'
+                + json.dumps(str(self.repository / ".git/config"))
+                + ' = "deny"\n'
+            ),
+            "inherited parent": (
+                '[permissions.wgn-project-git]\nextends = "custom"\n'
+                '[permissions.custom]\nextends = ":read-only"\n'
+            ),
+            "selected custom profile": (
+                'default_permissions = "custom"\n'
+                '[permissions.custom]\nextends = ":read-only"\n'
+            ),
+            "selected builtin profile": 'default_permissions = ":read-only"\n',
+            "undefined selected project": (
+                'default_permissions = "wgn-project-git"\n'
+            ),
+            "legacy read-only": 'sandbox_mode = "read-only"\n',
+            "legacy temporary directory": (
+                'sandbox_mode = "workspace-write"\n'
+                '[sandbox_workspace_write]\nexclude_tmpdir_env_var = true\n'
+            ),
+            "legacy slash tmp": (
+                '[sandbox_workspace_write]\nexclude_slash_tmp = true\n'
+            ),
+            "workspace root disabled": (
+                '[permissions.wgn-project-git]\n'
+                'extends = "wgn-workspace"\n'
+                '[permissions.wgn-project-git.workspace_roots]\n'
+                '"/synthetic/readonly" = false\n'
+            ),
+            "unknown legacy constraint": (
+                '[sandbox_workspace_write]\nfuture_restriction = true\n'
+            ),
+            "malformed legacy roots": (
+                '[sandbox_workspace_write]\nwritable_roots = "invalid"\n'
+            ),
+            "malformed filesystem": (
+                '[permissions.wgn-project-git]\n'
+                'extends = "wgn-workspace"\nfilesystem = "invalid"\n'
+            ),
+        }
+        directory = self.repository / ".codex"
+        directory.mkdir()
+        path = directory / "config.toml"
+        for name, original in cases.items():
+            with self.subTest(name=name):
+                path.write_text("# Preserve this configuration.\n" + original)
+                before = path.read_bytes()
+                modified = path.stat().st_mtime_ns
+                result = self.setup_git()
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(path.read_bytes(), before)
+                self.assertEqual(path.stat().st_mtime_ns, modified)
+                self.assertEqual(list(directory.iterdir()), [path])
+
+    def test_managed_metadata_reads_survive_and_stale_writes_disappear(self):
+        self.assertEqual(self.setup_git().returncode, 0)
+        path = self.repository / ".codex/config.toml"
+        original = path.read_text()
+        self.assertEqual(
+            tomllib.loads(original)["permissions"]["wgn-project-git"][
+                "filesystem"
+            ][str(self.repository / ".git/config")],
+            "read",
+        )
+        path.write_text(original + '\n"/" = "write"\n')
+        result = self.setup_git()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(path.read_text(), original)
+
+    def test_project_network_overrides_require_explicit_migration(self):
+        directory = self.repository / ".codex"
+        directory.mkdir()
+        path = directory / "config.toml"
+        profile = (
+            '[permissions.wgn-project-git]\n'
+            'extends = "wgn-workspace"\n'
+        )
+        for original in (
+            profile + '[permissions.wgn-project-git.network]\n'
+            'allow_local_binding = false\n',
+            profile + '[permissions.wgn-project-git.network.domains]\n'
+            'localhost = "deny"\n',
+            profile + '[permissions.wgn-project-git.network]\n'
+            'enabled = true\n',
+            '[features]\nnetwork_proxy = false\n',
+            '[features.network_proxy.domains]\nlocalhost = "deny"\n',
+            '[sandbox_workspace_write]\nnetwork_access = false\n',
+            '[sandbox_workspace_write]\nnetwork_access = true\n',
+        ):
+            with self.subTest(original=original):
+                path.write_text(original)
+                modified = path.stat().st_mtime_ns
+                result = self.setup_git()
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(path.read_text(), original)
+                self.assertEqual(path.stat().st_mtime_ns, modified)
+                self.assertEqual(list(directory.iterdir()), [path])
+
+    def test_ambiguous_user_profile_refused_before_project_creation(self):
+        base = (
+            'default_permissions = "wgn-workspace"\n'
+            '[permissions.wgn-workspace]\nextends = ":workspace"\n'
+        )
+        for original in (
+            'sandbox_mode = "read-only"\n' + base,
+            base + '[permissions.wgn-project-git]\nextends = ":read-only"\n',
+        ):
+            with self.subTest(original=original):
+                (self.codex / "config.toml").write_text(original)
+                result = self.setup_git()
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertFalse((self.repository / ".codex").exists())
+                self.assertEqual(
+                    (self.codex / "config.toml").read_text(), original
+                )
 
     def test_protected_symlink_targets(self):
         configuration = self.repository / "shared-config"

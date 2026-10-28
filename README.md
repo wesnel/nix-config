@@ -231,6 +231,12 @@ up its profile are explicit host steps. Keep the generated machine-local
 project profile out of commits; an explicit `--sandbox` CLI flag overrides
 the permission-profile settings.
 
+Setup preserves matching generated metadata restrictions and removes stale
+write grants. Custom read/deny rules, alternate selected profiles or parents,
+project network overrides and restrictive legacy settings require explicit
+migration before setup changes the project configuration; see the
+[supported migration limits](modules/home-manager/codex/README.md).
+
 On ngrok, check the installed Codex after an upgrade with the host-only
 runtime test below. It uses a temporary home, checks both permitted and
 blocked operations, builds a Nix derivation, runs agent-tools' Go tests,

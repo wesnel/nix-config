@@ -71,6 +71,11 @@ def base_profile():
             or not isinstance(profile, Mapping)
             or profile.get("extends") != ":workspace"):
         raise ValueError("activate the managed wgn-workspace profile first")
+    if ("sandbox_mode" in settings or "sandbox_workspace_write" in settings
+            or PROJECT_PROFILE in permissions):
+        raise ValueError(
+            "user configuration needs explicit permission-profile migration"
+        )
 
 
 def filesystem_rules(gitdir, common):
@@ -88,6 +93,45 @@ def filesystem_rules(gitdir, common):
             if path.is_symlink():
                 rules[permission_path(path.resolve(strict=True))] = "read"
     return rules
+
+
+def validate_migration(document, permissions, desired):
+    selected = document.get("default_permissions", BASE_PROFILE)
+    if (selected not in (BASE_PROFILE, PROJECT_PROFILE)
+            or (selected == PROJECT_PROFILE
+                and PROJECT_PROFILE not in permissions)):
+        raise ValueError("selected project profile needs explicit migration")
+    if document.get("sandbox_mode", "workspace-write") != "workspace-write":
+        raise ValueError("legacy sandbox mode needs explicit migration")
+    if "network_proxy" in document.get("features", {}):
+        raise ValueError("project network override needs explicit migration")
+    legacy = document.get("sandbox_workspace_write", {})
+    if not isinstance(legacy, Mapping) or set(legacy) - {
+        "writable_roots", "exclude_tmpdir_env_var", "exclude_slash_tmp",
+    }:
+        raise ValueError("unsupported legacy sandbox constraints")
+    for name in ("exclude_tmpdir_env_var", "exclude_slash_tmp"):
+        if legacy.get(name, False) is not False:
+            raise ValueError("legacy temporary restrictions need migration")
+    roots = legacy.get("writable_roots", [])
+    if (not isinstance(roots, list)
+            or any(not isinstance(p, str) for p in roots)):
+        raise ValueError("invalid legacy writable roots")
+    if PROJECT_PROFILE not in permissions:
+        return
+    previous = permissions[PROJECT_PROFILE]
+    if (not isinstance(previous, Mapping)
+            or previous.get("extends") != BASE_PROFILE
+            or set(previous) - {"extends", "filesystem"}):
+        raise ValueError("project profile constraints need explicit migration")
+    filesystem = previous.get("filesystem", {})
+    if not isinstance(filesystem, Mapping):
+        raise ValueError("project filesystem rules must be a table")
+    for path, access in filesystem.items():
+        if access != "write" and desired["filesystem"].get(path) != access:
+            raise ValueError(
+                "project filesystem restrictions need explicit migration"
+            )
 
 
 def setup(repository):
@@ -144,16 +188,16 @@ def setup(repository):
         features = document.get("features", {})
         if not isinstance(features, Mapping):
             raise ValueError("project features must be a table")
-        document.pop("sandbox_mode", None)
-        document.pop("sandbox_workspace_write", None)
-        if "features" in document:
-            document["features"].pop("network_proxy", None)
-        document["default_permissions"] = PROJECT_PROFILE
-        profiles = document.setdefault("permissions", tomlkit.table())
-        profiles[PROJECT_PROFILE] = {
+        profile = {
             "extends": BASE_PROFILE,
             "filesystem": filesystem_rules(gitdir, common),
         }
+        validate_migration(document, permissions, profile)
+        document.pop("sandbox_mode", None)
+        document.pop("sandbox_workspace_write", None)
+        document["default_permissions"] = PROJECT_PROFILE
+        profiles = document.setdefault("permissions", tomlkit.table())
+        profiles[PROJECT_PROFILE] = profile
         text = tomlkit.dumps(document)
         if text == original:
             return path

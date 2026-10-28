@@ -32,6 +32,20 @@ Diagnostics name conflicting variables without printing their values.
 Environment exclusions
 filter inherited variables; programs can still create their own environment.
 
+`codex-git-setup` accepts an unselected project or one selecting the managed
+base or generated Git profile. The user configuration must select the
+managed base without legacy sandbox overrides or a second Git-profile
+definition. An existing project Git profile must inherit that base. Its
+generated metadata read rules survive, and stale write grants are removed.
+Additional read/deny rules, other profile constraints, alternate selected
+profiles or parents, and restrictive or unsupported legacy settings require
+explicit migration; rejection leaves the project configuration unchanged.
+Legacy workspace write grants and false temporary-directory exclusion flags
+can migrate. Explicit project network settings, including legacy and feature
+overrides, also require migration: this Git helper inherits network policy
+from the managed base rather than replacing project-specific network intent.
+Setup does not resolve custom inheritance chains or infer rule precedence.
+
 The shared denial list is unchanged for Claude. Codex additionally applies
 the shared environment-file patterns beneath each runtime workspace and
 profile root. Linux deny globs are enumerated at process startup: files
