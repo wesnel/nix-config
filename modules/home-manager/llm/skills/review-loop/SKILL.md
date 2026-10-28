@@ -48,9 +48,13 @@ measured as the `review-change` skill's goal statement says.
 ## Setup
 
 For Codex, the operator first creates one dedicated detached worktree on the
-host, runs `codex-git-setup` for it, and starts a new loop session from that
-worktree with its project profile trusted. The session and its native
-sub-agents inherit the permissions loaded at startup. Concurrent loops need
+host and runs `codex-git-setup` for it. On the host, they add
+`/.codex/config.toml` to the clone-local exclude file reported by
+`git rev-parse --git-path info/exclude` from that worktree. Before launching,
+`git check-ignore -v .codex/config.toml` must identify the exclusion and
+`git status --porcelain` must be clean. They then start a new loop session
+from that worktree with its project profile trusted. The session and its
+native sub-agents inherit the permissions loaded at startup. Concurrent loops need
 separate prepared worktrees and new sessions. If this session lacks that
 prepared worktree, hand back the host preparation and restart commands.
 
@@ -195,8 +199,9 @@ In bots mode, stop and hand back when any of these holds:
 1. In Claude Code, remove the worktrees you made, once each is clean, and
    check the top branch out in the main worktree. In Codex, finish every
    test and review process, leave the prepared worktree on the top branch
-   with the changes committed, and report its status. The operator handles
-   worktree cleanup and any main-worktree checkout on the host.
+   with the changes committed, and report its status and ignored local
+   project profile. The operator handles worktree cleanup and any
+   main-worktree checkout on the host.
 2. Report, for each PR:
    - each bot's verdict;
    - CI state and any failures for the operator to accept;

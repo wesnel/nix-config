@@ -760,8 +760,12 @@ from a host terminal after activating the managed settings:
 git worktree add --detach ../review-loop-worktree HEAD && codex-git-setup ../review-loop-worktree && cd ../review-loop-worktree
 ```
 
-Keep its generated `.codex/config.toml` out of commits. Start a new loop
-from that prepared worktree and accept its project trust prompt:
+From that worktree on the host, add `/.codex/config.toml` to the clone-local
+exclude file reported by `git rev-parse --git-path info/exclude`. Verify
+that `git check-ignore -v .codex/config.toml` identifies the exclusion and
+`git status --porcelain` is clean. This keeps the machine-local profile out
+of commits and allows the signing pass's clean-worktree check. Then start
+a new loop from that prepared worktree and accept its project trust prompt:
 
 ``` sh
 review-loop --harness codex --bots 12 13     # or --harness claude, or --people
@@ -827,8 +831,8 @@ and stops unless every PR would end with exactly its own commits and the
 files the loop left. Codex leaves that host-only check for you because its
 profile keeps other worktrees' administration read-only. After successful
 verification and signing, remove the clean Codex loop worktree from the
-host, accounting for its local project profile and any files you want to
-keep. Make any main-worktree checkout from the host too. `pr-loop post`
+host, accounting for its ignored local project profile and any files you
+want to keep. Make any main-worktree checkout from the host too. `pr-loop post`
 shows each draft on your terminal and posts exactly what it showed once you
 answer `y`; it resolves the threads answered fix or rebut, and once every
 person's thread has an answer, asks those people to review again. A bots
