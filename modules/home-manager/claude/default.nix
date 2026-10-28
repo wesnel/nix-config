@@ -241,6 +241,19 @@ with lib; let
     ];
   };
 
+  quotaFailureHooks = [
+    {
+      matcher = "rate_limit";
+      hooks = [
+        {
+          type = "command";
+          command = "${agentPlan} quota-failure${optionalString cfg.agentPlans.enable " --stop-dashboard"}";
+          timeout = 15;
+        }
+      ];
+    }
+  ];
+
   # Review records, internal/record's Dir(): only the excluded writers,
   # which compute each path from what they review, change them.
   records = "${config.xdg.stateHome}/agent-tools/reviews";
@@ -724,7 +737,10 @@ in {
           settings, which need root, would be a wall. The kill switch is
           its own: create `agent-plans/off` under {option}`xdg.stateHome`,
           then `systemctl --user stop agent-plans.service`. Needs Claude
-          Code signed in.
+          Code signed in. Startup checks shared provider availability;
+          blocked availability or `off` stops the whole worker control
+          group. The controller never restarts it: after recovery or a
+          normal exit, run `systemctl --user start agent-plans.service`.
         '';
       };
     };
@@ -740,9 +756,10 @@ in {
         above it, the PreToolUse hook `agent-plan quota-stop` refuses
         starting sub-agents and every tool call but reading, asking the
         operator, stopping sub-agents, handing back and `agent-plan` alone
-        on its line. Nothing in a session lifts the stop; null turns it off
-        at the next switch. Codex sessions spend another quota and are not
-        stopped.
+        on its line. An exhausted reading at 100 percent remains blocking
+        until its reset regardless of age. Nothing in a session lifts the
+        stop; null turns it off at the next switch. Codex sessions spend
+        another quota and are not stopped.
       '';
     };
 
@@ -943,6 +960,8 @@ in {
           }
         ];
 
+        hooks.StopFailure = quotaFailureHooks;
+
         # How many open questions the session's plan has, from its files
         # alone, which the `questions` skill asks the operator.
         # Context and quota too; the rerun drops a window once it resets,
@@ -1104,7 +1123,7 @@ in {
       # The session's Bash runs plan-dash by name, and plan-dash runs git
       # and gh; Claude Code installs itself under ~/.local/bin.
       path = concatStringsSep ":" [
-        (makeBinPath [agentTools pkgs.git pkgs.openssh pkgs.gh pkgs.coreutils])
+        (makeBinPath [agentTools pkgs.git pkgs.openssh pkgs.gh pkgs.coreutils pkgs.systemd])
         "${config.home.profileDirectory}/bin"
         "${home}/.local/bin"
         "/usr/local/bin:/usr/bin:/bin"
@@ -1150,6 +1169,7 @@ in {
           syncClaudeAiSkills = false;
           syncClaudeAiPlugins = false;
           hooks = {
+            StopFailure = quotaFailureHooks;
             PreToolUse =
               [
                 {
@@ -1189,10 +1209,7 @@ in {
           ConditionPathExists = "!${state}/off";
         };
         Service = {
-          # --spawn session ends when its session does, with status 0, so
-          # only Restart=always brings it back. Without a terminal it
-          # redraws its status line every second, which would fill the
-          # journal.
+          ExecCondition = "${agentPlan} quota-admit";
           ExecStart = concatStringsSep " " [
             "${home}/.local/bin/claude remote-control --spawn session"
             "--working-directory ${session}"
@@ -1201,11 +1218,46 @@ in {
           ];
           WorkingDirectory = session;
           Environment = ["CLAUDE_CONFIG_DIR=${claudeDir}" "PATH=${path}"];
-          Restart = "always";
-          RestartSec = "30s";
+          # Even a failed hold write must not cause a model restart loop.
+          Restart = "no";
+          KillMode = "control-group";
+          TimeoutStopSec = "15s";
           StandardOutput = "null";
         };
         Install.WantedBy = ["default.target"];
+      };
+
+      systemd.user.services.agent-plans-quota = {
+        Unit.Description = "Stop the Agent plans worker when provider availability blocks it";
+        Service = {
+          Type = "oneshot";
+          ExecStart = "${agentPlan} quota-control";
+          Environment = ["PATH=${makeBinPath [pkgs.systemd]}"];
+          TimeoutStartSec = "15s";
+        };
+      };
+
+      systemd.user.paths.agent-plans-quota = {
+        Unit.Description = "Watch the Agent plans worker's admission state";
+        Path = {
+          PathChanged = [
+            "${config.xdg.stateHome}/agent-tools/review-availability/claude.json"
+            "${config.xdg.stateHome}/agent-plan/usage.json"
+            "${state}/off"
+          ];
+          Unit = "agent-plans-quota.service";
+        };
+        Install.WantedBy = ["default.target"];
+      };
+
+      systemd.user.timers.agent-plans-quota = {
+        Unit.Description = "Recheck the Agent plans worker's admission state";
+        Timer = {
+          OnStartupSec = "1m";
+          OnUnitActiveSec = "1m";
+          Unit = "agent-plans-quota.service";
+        };
+        Install.WantedBy = ["timers.target"];
       };
     }))
 

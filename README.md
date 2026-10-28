@@ -560,8 +560,39 @@ its own Claude Code config, `CLAUDE_CONFIG_DIR` at
 `$XDG_STATE_HOME/agent-plans/claude`. Before the first start the operator
 logs that config in and trusts the folder once: in the folder,
 `CLAUDE_CONFIG_DIR=~/.local/state/agent-plans/claude claude`, `/login`,
-accept the folder, quit. The unit restarts it whenever it ends, and
-sends its output, a status line redrawn every second, to null.
+accept the folder, quit. The unit checks `agent-plan quota-admit` before
+starting and stays stopped when it ends. The operator starts it again with
+`systemctl --user start agent-plans.service`. It sends its output, a status
+line redrawn every second, to null.
+
+`agent-plans-quota.service` runs `agent-plan quota-control` outside the
+model. Its path unit watches Claude availability, recorded usage and the
+`off` switch; its timer also checks each minute. A blocked admission stops
+the complete worker control group, including Monitor and refresh agents:
+SIGTERM first, then SIGKILL after 15 seconds. The controller never starts
+or restarts the worker. The last published snapshot and local export files
+remain available while model-driven publication and notifications pause.
+
+Claude's `StopFailure` hook sends `agent-plan quota-failure` the structured
+error type. Only `error=rate_limit` records an indefinite `rate_limit`
+hold; this is a conservative pause, not confirmed quota exhaustion or a
+guessed reset. On a host running the dashboard, `--stop-dashboard` also
+requests the worker stop even if writing the hold fails. A failed stop
+request is reported, and the timer retries when the hold was recorded.
+The worker has no automatic restart, so a failed hold write cannot create
+a restart loop; without a saved hold, an explicit restart or a new login
+can admit it as unknown. Check recovery before doing either.
+
+An exhausted recorded window remains blocking until its verified reset,
+even after five minutes without a reading. A hold without a verified reset
+requires `git delegate availability --clear claude` after recovery, followed
+by `systemctl --user start agent-plans.service`. Clearing preserves known
+exhausted windows until their resets. This knowledge is host-local and
+assumes sessions use the same current account. Remote Control status-line
+delivery is not relied on: windows recorded by other sessions help, and
+the structured failure hook supplies a conservative pause. Requests
+admitted before a stop can remain in flight until cancellation; stopping
+the worker does not promise instantaneous account-wide zero token use.
 
 The phone reaches the session outside tool calls too: it can run
 `/config key=value`, which writes the user settings, and @-mention a
