@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/wesnel/agent-tools/internal/routes"
 )
 
 func pinsOf(t *testing.T, files ...[3]string) []Pin {
@@ -35,9 +37,63 @@ func byKeys(pins []Pin) map[string]Pin {
 	return m
 }
 
-// Any change to a flake.nix is one pin of the file, whatever form its
-// inputs take, for the reviewer to read its diff: nothing evaluates it.
-// The input names on its changed lines are a hint, nothing more.
+func TestFlakeOptionsOnly(t *testing.T) {
+	old := `{
+  inputs = {
+    emacs-overlay = {
+      url = "github:nix-community/emacs-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+  };
+  outputs = { self, nixpkgs, ... }: let
+    module = { lib, ... }: {
+      options.home.programs.wgn.emacs = {};
+    };
+  in { homeManagerModules.default = module; };
+}`
+	next := strings.Replace(old, "options.home.programs.wgn.emacs = {};", `options.home.programs.wgn.emacs = {
+        org-roam.directory = lib.mkOption { default = null; };
+      };`, 1)
+	for _, tc := range []struct {
+		name string
+		next string
+		want int
+	}{
+		{"options only", next, 0},
+		{"source only", strings.Replace(next, "github:nix-community/emacs-overlay", "github:other/emacs-overlay", 1), 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newRepo(t)
+			base := commit(t, repo, "base", "flake.nix="+old, "flake.lock="+lockBefore)
+			tip := commit(t, repo, "tip", "flake.nix="+tc.next)
+			pins, err := Pins(repo, base, tip)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(pins) != tc.want {
+				t.Errorf("pins = %+v, want %d", pins, tc.want)
+			}
+			if tc.want == 1 && (len(pins) != 1 || pins[0].Kind != "flake-nix" || !pins[0].Moved()) {
+				t.Errorf("source change must remain unread: %+v", pins)
+			}
+			routed, err := routes.Scan(repo, base, tip, routes.Builtin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			upgrade := false
+			for _, r := range routed {
+				upgrade = upgrade || r.Route == "upgrade"
+			}
+			if upgrade != (tc.want == 1) {
+				t.Errorf("upgrade route = %v, want %v: %+v", upgrade, tc.want == 1, routed)
+			}
+		})
+	}
+}
+
+// Changed or unsupported inputs remain one unread pin. The input names
+// on changed lines are a hint for reviewing its diff.
 func TestFlakeNixPin(t *testing.T) {
 	old := "{\n  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-25.05\";\n  outputs = _: {};\n}\n"
 	for name, c := range map[string]struct{ next, hint string }{
@@ -46,7 +102,6 @@ func TestFlakeNixPin(t *testing.T) {
 		"attr form":     {"{\n  inputs.nixpkgs = {\n    type = \"github\";\n    owner = \"evil\";\n  };\n  outputs = _: {};\n}\n", "nixpkgs"},
 		"concat":        {"{\n  inputs.nixpkgs.url = \"github:\" + \"evil/nixpkgs/main\";\n  outputs = _: {};\n}\n", "nixpkgs"},
 		"getFlake":      {"{\n  inputs = (builtins.getFlake \"git+ssh://e.example/x\").inputs;\n  outputs = _: {};\n}\n", ""},
-		"whitespace":    {old + "\n", ""},
 	} {
 		pins := pinsOf(t, [3]string{"flake.nix", old, c.next})
 		if len(pins) != 1 || pins[0].Key != "flake.nix" || pins[0].Kind != "flake-nix" || !pins[0].Moved() ||
@@ -58,6 +113,20 @@ func TestFlakeNixPin(t *testing.T) {
 		if g[0].Read() || !strings.Contains(g[0].Why, "read the diff of its inputs") {
 			t.Errorf("%s: gathered %+v", name, g)
 		}
+	}
+	if pins := pinsOf(t, [3]string{"flake.nix", old, old + "\n"}); len(pins) != 0 {
+		t.Errorf("whitespace changed no input: %+v", pins)
+	}
+}
+
+func TestFlakeOutputPins(t *testing.T) {
+	old := `{ inputs.x.url = "github:o/x";
+  outputs = _: { package = fetchFromGitHub { owner = "o"; repo = "r"; rev = "old"; hash = "sha256-old="; }; };
+}`
+	next := strings.ReplaceAll(strings.ReplaceAll(old, `rev = "old"`, `rev = "new"`), "sha256-old=", "sha256-new=")
+	pins := pinsOf(t, [3]string{"flake.nix", old, next})
+	if len(pins) != 1 || pins[0].Kind != "nix" || pins[0].OldRef != "old" || pins[0].NewRef != "new" {
+		t.Fatalf("output dependency pins = %+v", pins)
 	}
 }
 

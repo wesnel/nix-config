@@ -306,12 +306,14 @@ func flakePins(file string, old, next []byte) []Pin {
 // `inputs.NAME`, `NAME.url`, `NAME.follows` or `NAME = {`.
 var flakeNixName = regexp.MustCompile(`(?:\binputs\.([A-Za-z0-9_-]+)|\b([A-Za-z0-9_-]+)\.(?:url|follows|inputs|flake)\b|^\s*([A-Za-z0-9_-]+)\s*=\s*\{)`)
 
-// flakeNixPin is a change to a flake.nix, as one pin of the file: what
-// its inputs are is what nix evaluates them to, which this does not do,
-// so its diff is the reviewer's to read. Its Note names, best effort, the
+// flakeNixPin reads dependency pins in outputs when literal inputs are
+// unchanged. Otherwise the whole file is one pin for review. Its Note names, best effort, the
 // input names its changed lines give, for the reviewer to start from,
 // trusted for nothing else.
 func flakeNixPin(file, old, next string) []Pin {
+	if !pinscan.FlakeInputsChanged(old, next) {
+		return nixPins(file, old, next)
+	}
 	removed, added := changedLines(old, next)
 	names := map[string]bool{}
 	for _, l := range append(removed, added...) {

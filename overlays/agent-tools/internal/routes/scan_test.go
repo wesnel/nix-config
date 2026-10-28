@@ -293,11 +293,6 @@ func TestUpgradeRules(t *testing.T) {
 		{".github/workflows/ci.yml", `          actions/checkout@main`, true},
 		{".github/workflows/ci.yml", `    steps: [{uses: evil/checkout@main}]`, true},
 		{"docs/ci.md", `      - uses: actions/checkout@v4`, false},
-		{"flake.nix", `    nixpkgs.url = "github:nixos/nixpkgs/nixos-25.11";`, true},
-		{"sub/flake.nix", `      url = "github:o/r";`, true},
-		{"flake.nix", `    inputs.nixpkgs.follows = "nixpkgs";`, true},
-		{"flake.nix", `    owner = "evil";`, true},
-		{"flake.nix", `    ref = "nixos-26.05";`, true},
 		{"modules/x.nix", `    url = "https://example.com";`, false},
 		{"pkgs/x.nix", `  src = fetchFromGitHub { owner = "o"; repo = "r"; rev = "v2.0"; hash = "sha256-B="; };`, true},
 		{"pkgs/y.nix", `    sha512 = "BBB";`, true},
@@ -345,6 +340,40 @@ func TestScanNixFiles(t *testing.T) {
 		if err != nil || got != tc.want {
 			t.Errorf("%q: routes %+v (%v), want upgrade %v", tc.next, rs, err, tc.want)
 		}
+	}
+}
+
+func TestScanFlakeInputs(t *testing.T) {
+	old := "{\n  inputs.x.url = \"github:o/r\";\n  outputs = _: {};\n}\n"
+	for _, tc := range []struct {
+		name, next         string
+		upgrade, dedicated bool
+	}{
+		{"option", strings.Replace(old, "outputs = _: {};", "outputs = _: { options.org-roam.directory = {}; };", 1), false, false},
+		{"input", strings.Replace(old, "github:o/r", "github:o/other", 1), true, true},
+		{"output dependency", strings.Replace(old, "outputs = _: {};", `outputs = _: { package.version = "new"; };`, 1), true, false},
+		{"unsupported", strings.Replace(old, `"github:o/r"`, "source", 1), true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, _ := filepath.EvalSymlinks(t.TempDir())
+			gitIn(t, repo, "init", "-q", "-b", "main")
+			base := write(t, repo, "base", "flake.nix="+old)
+			tip := write(t, repo, "tip", "flake.nix="+tc.next)
+			rs, err := Scan(repo, base, tip, Builtin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			upgrade, dedicated := false, false
+			for _, r := range rs {
+				if r.Route == "upgrade" {
+					upgrade = true
+					dedicated = slices.Contains(r.Why, "a flake's inputs may have changed")
+				}
+			}
+			if upgrade != tc.upgrade || dedicated != tc.dedicated {
+				t.Errorf("routes = %+v, want upgrade=%v dedicated=%v", rs, tc.upgrade, tc.dedicated)
+			}
+		})
 	}
 }
 
