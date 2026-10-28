@@ -140,10 +140,13 @@ def run(activation, operator_home, repository):
             'set -e\nwarnEcho() { echo "$@" >&2; exit 1; }\n'
             + activation.read_text().replace(operator_home, directory)
         )
-        environment = dict(os.environ, HOME=directory, TMPDIR=str(temporary))
+        environment = {
+            name: value for name, value in os.environ.items()
+            if not name.startswith("GIT_")
+        }
+        environment.update(HOME=directory, TMPDIR=str(temporary))
         for name in (
             "SSH_AUTH_SOCK", "SSH_AGENT_PID", "GPG_AGENT_INFO",
-            "GIT_SSH", "GIT_SSH_COMMAND", "GIT_SSH_VARIANT",
         ):
             environment.pop(name, None)
         environment.update(
