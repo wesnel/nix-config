@@ -17,7 +17,7 @@ review across all parts (Design review below) and a fresh review of each
 branch (Review each branch).
 
 A review loop over a stack, which the operator starts with
-`claude-review-loop`, has its own skill, `review-loop`.
+`review-loop`, has its own skill, `review-loop`.
 
 ## Where you run
 

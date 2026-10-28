@@ -9,72 +9,6 @@ with lib; let
 
   llm = import ../llm/lib.nix {inherit lib;};
 
-  # The operator's way into a review loop: an ordinary session, held by the
-  # host sandbox and the baseline guard like any other, with the loop's mode
-  # in its environment, which pr-loop gates its writes on, and pr-loop
-  # allowed without a prompt. The guard refuses this command, and any
-  # assignment of PR_LOOP_SESSION or PR_LOOP_MODE, to agents. "$defaults"
-  # is literal: Claude Code splices its own auto-mode rules in there.
-  mkReviewLoop = {postCheck ? ""}:
-    pkgs.writeShellApplication {
-      name = "claude-review-loop";
-      runtimeInputs = [pkgs.jq];
-      derivationArgs = {inherit postCheck;};
-      text = ''
-        usage() {
-          echo "usage: claude-review-loop --bots|--people PR..." >&2
-          exit 2
-        }
-        case "''${1-}" in
-          --bots) mode=bots ;;
-          --people) mode=people ;;
-          *) usage ;;
-        esac
-        shift
-        [[ $# -gt 0 ]] || usage
-        for pr in "$@"; do
-          [[ "$pr" =~ ^#?[1-9][0-9]*$ ]] || usage
-        done
-        # shellcheck disable=SC2016
-        settings=$(jq -c --arg mode "$mode" '.env.PR_LOOP_MODE = $mode' <<<${escapeShellArg (builtins.toJSON {
-          env.PR_LOOP_SESSION = "1";
-          permissions.allow = ["Bash(pr-loop *)"];
-          autoMode.environment = [
-            "$defaults"
-            "This is the operator's review-loop session over the pull requests it was started for. Its GitHub writes go through `pr-loop`, which holds them to the loop's mode, PR_LOOP_MODE."
-          ];
-        })})
-        exec claude --settings "$settings" --permission-mode auto "/review-loop $*"
-      '';
-    };
-
-  reviewLoop = mkReviewLoop {postCheck = ": ${reviewLoopTests}";};
-
-  # The wrapper under test, with a claude that prints what it was given.
-  reviewLoopTests = let
-    fakeClaude = pkgs.writeShellScriptBin "claude" ''
-      printf '%s\n' "$@"
-    '';
-  in
-    pkgs.runCommand "claude-review-loop-tests" {nativeBuildInputs = [pkgs.jq];} ''
-      export PATH=${fakeClaude}/bin:$PATH
-      out_=$(${getExe (mkReviewLoop {})} --people 12 '#13')
-      settings=$(sed -n 2p <<<"$out_")
-      jq -e '.env == {PR_LOOP_SESSION: "1", PR_LOOP_MODE: "people"} and .permissions.allow == ["Bash(pr-loop *)"]
-        and .autoMode.environment[0] == "$defaults"' <<<"$settings"
-      [[ "$(sed -n 1p <<<"$out_")" == --settings && "$(sed -n 3,4p <<<"$out_")" == $'--permission-mode\nauto' ]]
-      [[ "$(sed -n 5p <<<"$out_")" == "/review-loop 12 #13" ]]
-      ${getExe (mkReviewLoop {})} --bots 7 | sed -n 2p | jq -e '.env.PR_LOOP_MODE == "bots"'
-      for bad in "" "--both 1" "--bots" "--bots x"; do
-        # shellcheck disable=SC2086
-        if ${getExe (mkReviewLoop {})} $bad 2>/dev/null; then
-          echo "claude-review-loop accepted '$bad'" >&2
-          exit 1
-        fi
-      done
-      touch $out
-    '';
-
   # The role agents, plain agent files in ./agents: the sub-agents the
   # coordinate-subagents skill starts, linked into ~/.claude/agents, and the
   # headless reviewers git delegate runs from review-agents.json. A
@@ -1059,12 +993,7 @@ in {
       '';
     }
 
-    # Claude Code runs the review loop.
     {wgn.home.llm.prLoop.enable = mkDefault true;}
-
-    (mkIf config.wgn.home.llm.prLoop.enable {
-      home.packages = [reviewLoop];
-    })
 
     # Claude Code's Linux sandbox runs commands through these, found on PATH,
     # and with `failIfUnavailable` a session without them does not start.

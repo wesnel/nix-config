@@ -335,13 +335,13 @@ outcome goes against its plan item ID and in the hand-back.
 - **A review bot's thread:** draft the replies in the format `pr-loop
   reply --from` reads, one file per pull request (`pr-loop --help`): a
   `=== thread THREAD` line, or `=== thread THREAD resolve` where the
-  outcome resolves, then the reply. In a bots-mode loop (`claude-review-loop
-  --bots`), post them with `pr-loop reply --from FILE` once the fixes are
+  outcome resolves, then the reply. In a bots-mode loop, post them with
+  `pr-loop reply --from FILE` once the fixes are
   pushed; pr-loop takes only threads whose every comment is a configured
   bot's or the operator's. Outside one, the drafted replies go in the
   hand-back, as a person's thread's do.
-- **A person's thread,** in a people-mode loop (`claude-review-loop
-  --people`): write each reply with `pr-loop draft THREAD --body-file F
+- **A person's thread,** in a people-mode loop: write each reply with
+  `pr-loop draft THREAD --body-file F
   --outcome OUTCOME`, and commit the fixups. Push nothing and post
   nothing: the operator reads the fixups and drafts, pushes with `git
   sign-pass --push`, and posts with `pr-loop post` from a terminal.

@@ -271,7 +271,7 @@
   {
     "why": "Only the operator starts a review loop and sets its mode, which pr-loop's writes depend on.",
     "scope": "baseline",
-    "deny": ["claude-review-loop --bots 12", "/nix/store/x/bin/claude-review-loop --people 12", "PR_LOOP_MODE=people pr-loop draft T --body-file d.md --outcome fix",
+    "deny": ["review-loop --harness codex --bots 12", "/nix/store/x/bin/review-loop --harness claude --people 12", "PR_LOOP_MODE=people pr-loop draft T --body-file d.md --outcome fix",
       "export PR_LOOP_SESSION=1", "env PR_LOOP_MODE=bots pr-loop request", "set -x PR_LOOP_MODE bots", "PR_LOOP_SESSION=1",
       "launchctl setenv PR_LOOP_MODE bots", "declare -x PR_LOOP_MODE=bots",
       "printf -v PR_LOOP_MODE bots; export PR_LOOP_MODE; pr-loop reply --from f", "printf -vPR_LOOP_MODE %s bots",

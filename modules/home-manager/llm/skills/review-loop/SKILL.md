@@ -6,9 +6,10 @@ disable-model-invocation: true
 
 # Review loop
 
-The operator starts this session with `claude-review-loop --bots PR...` or
-`claude-review-loop --people PR...`, which sets `PR_LOOP_MODE` to `bots` or
-`people` and starts the session with this skill and the PRs it names. It is
+The operator starts this session with
+`review-loop --harness claude|codex --bots|--people PR...`, choosing one
+harness and one mode. The launcher sets `PR_LOOP_MODE` to `bots` or
+`people` and starts that harness with this skill and the PRs it names. It is
 an ordinary session, held by the same sandbox and guard as any other, and
 `pr-loop` takes its writes to GitHub as the mode says:
 
@@ -20,7 +21,7 @@ an ordinary session, held by the same sandbox and guard as any other, and
   with `pr-loop post PR` from a terminal of their own.
 
 If `PR_LOOP_MODE` is unset, this is not a loop session: tell the operator
-to start one with `claude-review-loop`, and stop.
+to start one with `review-loop`, and stop.
 
 Commit as the `signing-pass` skill says. Every write to GitHub goes through
 `pr-loop`; when it stops a command, that is a decision for the operator, so
@@ -53,7 +54,8 @@ measured as the `review-change` skill's goal statement says.
    the goal from the PR description and its Linear ticket (read-only; the
    ticket ID is usually in the branch name, e.g. `agent-911` is
    `AGENT-911`), and what is explicitly not this PR's job.
-3. Work on each PR's branch in a worktree under `~/.claude/worktrees`,
+3. Work on each PR's branch in a worktree under the session's temporary
+   directory, which both harnesses allow the sandbox to write,
    made with `git worktree add`, with `git config --worktree
    commit.gpgsign false` in it. In each new worktree run `pr-loop setup`,
    which runs the setup command the operator configured for the repository,
@@ -105,8 +107,13 @@ next one starts at step 1.
    the `review-change` skill's fresh review loop over the range from the
    branch's tip at round start to the branch. The goal statement is the
    PR's scope statement, and the items are the threads and checks the
-   fixups answer. In a loop session `git delegate`'s Codex review exits 4, so the
-   second opinion is an `adversarial-reviewer` sub-agent. A `compat` review
+   fixups answer. In a Claude loop, the second opinion is an
+   `adversarial-reviewer` sub-agent. In a Codex loop, run
+   `git delegate --reviewer claude --goal FILE BASE..TIP`, using the
+   independent Claude reviewer. Run any focused reviews it names too.
+   If the independent reviewer cannot run, record the reason in the
+   hand-back. Automatic Codex delegation stays disabled in loop sessions.
+   A `compat` review
    the change is routed to also takes `--description FILE`, the PR's
    description as it stands. A finding still standing goes out with the
    push and into the hand-back.

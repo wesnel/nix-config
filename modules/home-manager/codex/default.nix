@@ -173,6 +173,7 @@ in {
   config = mkIf cfg.enable (mkMerge [
     {
       wgn.home.llm.enable = true;
+      wgn.home.llm.prLoop.enable = mkDefault true;
 
       # Codex is installed and updated by itself, and writes ~/.codex/config.toml
       # to record project trust, MCP servers and model choice. Generating that
