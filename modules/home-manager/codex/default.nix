@@ -218,7 +218,7 @@ in {
             && (cfg.sandbox.features.network_proxy or null) == true
             && (cfg.sandbox.shell_environment_policy.ignore_default_excludes or null) == false
             && (cfg.sandbox.shell_environment_policy.filters or null) == genAttrs sandboxPolicy.deniedEnvVars (_: "exclude")
-            && hasInfix (escapeShellArg (builtins.toJSON managedSettings)) config.home.activation.codexSandbox.data;
+            && hasInfix (builtins.unsafeDiscardStringContext (escapeShellArg (builtins.toJSON managedSettings))) config.home.activation.codexSandbox.data;
           message = "wgn.home.codex: the default workspace profile must deny shared credentials and use the loopback and Nix-socket proxy through one configuration reconciliation";
         }
       ];

@@ -839,19 +839,20 @@
         ngrok = darwinSystems.ngrok;
         home = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username};
       in
-        pkgs.runCommand "codex-settings" {
-          nativeBuildInputs = [(pkgs.python3.withPackages (p: [p.tomlkit])) pkgs.bash];
-          operatorHome = home.home.homeDirectory;
-          activation = home.home.activation.codexSandbox.data;
-          hooks = home.home.file.".codex/hooks.json".text;
-          reconcileProgram = "${./modules/home-manager/codex}/reconcile.py";
-          passAsFile = ["activation" "hooks"];
-        } ''
-          python ${./modules/home-manager/codex}/test_reconcile.py
-          python ${./modules/home-manager/codex}/test_settings.py
-          mkdir -p $out
-          cp "$activationPath" "$out/activation"
-        '';
+        assert builtins.all (entry: entry.assertion) home.assertions;
+          pkgs.runCommand "codex-settings" {
+            nativeBuildInputs = [(pkgs.python3.withPackages (p: [p.tomlkit])) pkgs.bash];
+            operatorHome = home.home.homeDirectory;
+            activation = home.home.activation.codexSandbox.data;
+            hooks = home.home.file.".codex/hooks.json".text;
+            reconcileProgram = "${./modules/home-manager/codex}/reconcile.py";
+            passAsFile = ["activation" "hooks"];
+          } ''
+            python ${./modules/home-manager/codex}/test_reconcile.py
+            python ${./modules/home-manager/codex}/test_settings.py
+            mkdir -p $out
+            cp "$activationPath" "$out/activation"
+          '';
 
       packages.codex-git-setup = pkgs.callPackage ./modules/home-manager/codex/git-setup.nix {};
 
