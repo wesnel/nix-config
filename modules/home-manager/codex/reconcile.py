@@ -217,7 +217,14 @@ def reconcile(config, settings, roots, state):
             "existing permission profile",
         )
         validate_profile(profile, settings["permissions"][name])
-        saved_roots = dict(profile.get("workspace_roots", {}))
+        selected = (
+            "sandbox_mode" not in document
+            and document.get("default_permissions") == name
+            and profile.get("extends") == ":workspace"
+        )
+        saved_roots = (
+            dict(profile.get("workspace_roots", {})) if selected else {}
+        )
         legacy = mapping(
             document.get("sandbox_workspace_write", {}), "legacy sandbox"
         )
@@ -236,7 +243,11 @@ def reconcile(config, settings, roots, state):
             "exclude_tmpdir_env_var",
         }:
             raise ReconcileError("unknown legacy sandbox setting")
-        legacy_roots = legacy.get("writable_roots", [])
+        legacy_roots = (
+            legacy.get("writable_roots", [])
+            if document.get("sandbox_mode") == "workspace-write"
+            else []
+        )
         if not isinstance(legacy_roots, list):
             raise ReconcileError("legacy writable roots must be an array")
         for root in legacy_roots:

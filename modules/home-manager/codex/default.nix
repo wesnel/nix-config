@@ -7,7 +7,7 @@
 with lib; let
   cfg = config.wgn.home.codex;
   sandboxPolicy = config.wgn.home.llm.sandbox;
-  profileName = "wgn-workspace";
+  profileName = (builtins.fromJSON (builtins.readFile ./profiles.json)).base;
   filesystem =
     genAttrs sandboxPolicy.deniedReads (_: "deny")
     // {

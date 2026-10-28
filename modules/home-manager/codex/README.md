@@ -11,7 +11,9 @@ can override it. It is not an administrator-enforced requirement.
 The reconciler removes the legacy sandbox keys that override named profiles.
 It owns the complete managed profile and proxy policy, while preserving
 nonconflicting workspace roots, environment entries, unrelated settings and
-comments outside replaced tables. Plans and tool caches retain their existing
+comments outside replaced tables. Only roots from the selected managed
+profile or active legacy workspace mode migrate; dormant grants stay inactive.
+Plans and tool caches retain their existing
 root ownership files. A temporary pending intent records roots across an
 interrupted write; the next reconciliation removes an abandoned generation
 even when the new desired paths differ. Successful reconciliation clears

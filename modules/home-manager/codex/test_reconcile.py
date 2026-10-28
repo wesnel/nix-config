@@ -149,6 +149,7 @@ class ReconcileTest(unittest.TestCase):
             with self.subTest(stop=stop):
                 user_root = str(self.home / "operator-root")
                 self.config.write_text(
+                    'sandbox_mode = "workspace-write"\n'
                     "[sandbox_workspace_write]\n"
                     f"writable_roots = {json.dumps([user_root])}\n"
                 )
@@ -254,6 +255,7 @@ class ReconcileTest(unittest.TestCase):
         for root in conflicts:
             with self.subTest(root=root):
                 original = (
+                    'sandbox_mode = "workspace-write"\n'
                     "[sandbox_workspace_write]\n"
                     + f"writable_roots = {json.dumps([str(root)])}\n"
                 )
@@ -492,6 +494,36 @@ class ReconcileTest(unittest.TestCase):
                     profile["filesystem"],
                     {str(self.home / "protected"): "deny"},
                 )
+
+    def test_only_active_root_grants_migrate(self):
+        named = str(self.home / "named-root")
+        legacy = str(self.home / "legacy-root")
+        for selection, expected in (
+            ('default_permissions = "managed"\n', {named}),
+            ('sandbox_mode = "workspace-write"\n', {legacy}),
+            ('sandbox_mode = "read-only"\n', set()),
+            ('default_permissions = "other"\n', set()),
+            ("", set()),
+        ):
+            with self.subTest(selection=selection):
+                self.config.write_text(
+                    selection
+                    + '[permissions.managed]\nextends = ":workspace"\n'
+                    + "[permissions.managed.workspace_roots]\n"
+                    + f"{json.dumps(named)} = true\n"
+                    + "[sandbox_workspace_write]\n"
+                    + f"writable_roots = {json.dumps([legacy])}\n"
+                )
+                self.reconcile()
+                first = self.config.read_text()
+                roots = tomllib.loads(first)["permissions"]["managed"][
+                    "workspace_roots"
+                ]
+                self.assertEqual(
+                    set(roots), expected | set(self.roots.values())
+                )
+                self.reconcile()
+                self.assertEqual(self.config.read_text(), first)
 
 
 if __name__ == "__main__":

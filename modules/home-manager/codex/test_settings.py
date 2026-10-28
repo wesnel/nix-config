@@ -32,6 +32,7 @@ class SettingsTest(unittest.TestCase):
             config.write_text(
                 "# Keep this comment.\n"
                 'model = "operator-model"\n'
+                'sandbox_mode = "workspace-write"\n'
                 "[shell_environment_policy.set]\n"
                 'KEEP_ME = "operator-value"\n'
                 "[features.network_proxy]\n"
@@ -170,14 +171,16 @@ class SettingsTest(unittest.TestCase):
             config = home / ".codex/config.toml"
             config.parent.mkdir()
             config.write_text(
+                'default_permissions = "wgn-workspace"\n'
                 "[permissions.wgn-workspace]\n"
                 'extends = ":workspace"\n'
                 "[permissions.wgn-workspace.workspace_roots]\n"
                 '"/operator/root" = true\n'
+                '"/old-cache" = true\n'
                 "[permissions.wgn-workspace.filesystem]\n"
                 '":root" = "write"\n'
                 "[sandbox_workspace_write]\n"
-                'writable_roots = ["/old-cache"]\n'
+                'writable_roots = ["/ignored-root"]\n'
             )
             state = home / ".local/state/codex/cache-root"
             state.parent.mkdir(parents=True)
@@ -187,6 +190,7 @@ class SettingsTest(unittest.TestCase):
             profile = tomllib.loads(first)["permissions"]["wgn-workspace"]
             self.assertEqual(profile["extends"], ":workspace")
             self.assertNotIn("/old-cache", profile["workspace_roots"])
+            self.assertNotIn("/ignored-root", profile["workspace_roots"])
             self.assertIs(profile["workspace_roots"]["/operator/root"], True)
             self.assertNotIn(":root", profile["filesystem"])
             self.assertEqual(profile["filesystem"][str(home / ".ssh")], "deny")
@@ -220,6 +224,41 @@ class SettingsTest(unittest.TestCase):
             self.assertEqual(config.read_text(), original)
             self.assertEqual(state.read_text(), "/old-cache\n")
             self.assertFalse((state.parent / "pending-roots").exists())
+
+    def test_dormant_profile_grants_stay_inactive(self):
+        for restricted in (False, True):
+            with self.subTest(restricted=restricted):
+                with tempfile.TemporaryDirectory() as directory:
+                    home = Path(directory)
+                    config = home / ".codex/config.toml"
+                    config.parent.mkdir()
+                    original = (
+                        'sandbox_mode = "workspace-write"\n'
+                        "[sandbox_workspace_write]\n"
+                        'writable_roots = ["/operator/root"]\n'
+                        f"exclude_tmpdir_env_var = {str(restricted).lower()}\n"
+                        "[permissions.wgn-workspace]\n"
+                        'extends = ":workspace"\n'
+                        "[permissions.wgn-workspace.workspace_roots]\n"
+                        '"/" = true\n'
+                    )
+                    config.write_text(original)
+                    if restricted:
+                        with self.assertRaises(subprocess.CalledProcessError):
+                            self.activate(home)
+                        self.assertEqual(config.read_text(), original)
+                        continue
+                    self.activate(home)
+                    first = config.read_text()
+                    profile = tomllib.loads(first)["permissions"][
+                        "wgn-workspace"
+                    ]
+                    self.assertNotIn("/", profile["workspace_roots"])
+                    self.assertIs(
+                        profile["workspace_roots"]["/operator/root"], True
+                    )
+                    self.activate(home)
+                    self.assertEqual(config.read_text(), first)
 
 
 if __name__ == "__main__":
