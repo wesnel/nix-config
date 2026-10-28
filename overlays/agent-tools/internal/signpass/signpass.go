@@ -1372,7 +1372,7 @@ func finish(p *pending, path string) (result map[string]any, moved map[string]st
 	if p.Squash {
 		signed = len(p.Kept)
 	}
-	result = map[string]any{"signed": signed, "squashed": p.Squash, "moved": moved}
+	result = map[string]any{"signed": signed, "squashed": p.Squash || p.Fixups, "moved": moved}
 	if len(gained) > 0 {
 		sort.Strings(gained)
 		result["gainedFixups"] = gained

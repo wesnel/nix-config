@@ -145,6 +145,9 @@ func testPlanSharedFolds(t *testing.T) {
 				if got := gitIn(t, repo, "log", "--format=%s", "main.."+tc.carrier); got != "Carrier\nParent" {
 					t.Errorf("folded history: %q", got)
 				}
+				if got := branches[tc.carrier].(map[string]any)["squashed"]; got != true {
+					t.Errorf("folded fork reports squashed=%v", got)
+				}
 			} else {
 				for _, b := range []string{tc.leaf, tc.carrier} {
 					want := "fixed"
