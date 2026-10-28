@@ -224,8 +224,8 @@ them.
 
 ## Questions for the operator
 
-Every question for the operator lives in the plan's Questions, with your
-recommendation, and nowhere else. Write each with `agent-plan ask`, which
+Every question for the operator is recorded in the plan's Questions, with
+your recommendation, before it is presented. Write each with `agent-plan ask`, which
 gives it the next ID and the form `agent-plan questions` reads:
 
 ```sh
@@ -234,20 +234,16 @@ agent-plan ask PLAN --question 'Keep the old flag?' --recommendation 'no, drop i
 ```
 
 `--part P1` puts it in that part's file; `--priority A` puts it before the
-others, `C` after. Never restate open questions in a message: when a
-sub-agent reports, say only what changed, add its new questions with
-`agent-plan ask`, and at most give their number. When the operator asks for
-them in Claude Code, take `agent-plan questions PLAN --all --json`, the
-questions they can answer now, and ask them through AskUserQuestion as
-`/questions` does: at most four per call, each question's recommendation
-first, then its alternatives, then "Drop it". In any other harness, print
-`agent-plan questions PLAN --all` and tell the operator to answer them with
-`/questions` in a Claude Code session. When they answer, record each answer
-with `agent-plan decide PLAN Q1 --answer 'ANSWER'`, which settles the question
-in place and logs `decided`; `--drop --answer 'why'` drops it, and
-`--supersedes Q2` marks the earlier decision this one replaces. A decision
-can make waiting questions askable, so list them again until none are
-left. The operator may also run `/questions` in Claude Code themselves.
+others, `C` after. The `questions` skill owns presentation and answer
+recording in each harness. In Codex, load it as soon as a question becomes
+actionable and queue the question through the available native question
+tool; continue work that does not depend on its answer. In Claude Code,
+tell the operator how many questions they can answer and wait for them to
+invoke `/questions`. When the operator requests unanswered questions in
+either harness, use that skill with the current task's plan. Present open
+questions through that workflow rather than repeating them in progress
+messages. `agent-plan decide --supersedes Q2` marks the earlier decision
+this one replaces.
 
 Ask the operator only about a one-way door (a force-push, deleted data, a
 message sent outside, a migration, a stored format, a published interface)
