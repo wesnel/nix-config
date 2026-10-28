@@ -76,15 +76,15 @@ func (p Plan) NoteBranch(session, branch, tip, worktree string, now time.Time) (
 	return last, had, logged, err
 }
 
-// EnvSession is the session of the harness running this process, as its
-// environment names it: Claude Code's or Codex's; or "".
-func EnvSession() string {
-	for _, v := range []string{"CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"} {
-		if id := os.Getenv(v); id != "" {
-			return id
+// EnvSession returns the harness and its raw session ID from the environment,
+// or two empty strings outside Claude Code and Codex.
+func EnvSession() (harness, id string) {
+	for _, env := range []struct{ harness, name string }{{"claude", "CLAUDE_CODE_SESSION_ID"}, {"codex", "CODEX_THREAD_ID"}} {
+		if id := os.Getenv(env.name); id != "" {
+			return env.harness, id
 		}
 	}
-	return ""
+	return "", ""
 }
 
 // RecordCommit logs e as a commit session made in the worktree at top, in

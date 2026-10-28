@@ -21,7 +21,12 @@ func logEvent(e plans.Event) {
 		return
 	}
 	top, _ := git.Run("rev-parse", "--show-toplevel")
-	p, part, ok := c.Locate(plans.EnvSession(), top)
+	harness, id := plans.EnvSession()
+	session := ""
+	if id != "" {
+		session = harness + ":" + id
+	}
+	p, part, ok := c.Locate(session, top)
 	if !ok {
 		return
 	}

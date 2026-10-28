@@ -42,6 +42,7 @@ func setup(t *testing.T) plans.Config {
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	t.Setenv("CODEX_THREAD_ID", "")
 	return c
 }
 
@@ -97,6 +98,30 @@ func TestCommands(t *testing.T) {
 		data, _ := os.ReadFile(plan)
 		if !strings.Contains(string(data), ":SESSIONS: claude:s-1\n") || !strings.Contains(string(data), ":HARNESS: claude\n") {
 			t.Errorf("the session is not recorded:\n%s", data)
+		}
+	})
+
+	t.Run("Codex new and find retain harness identity", func(t *testing.T) {
+		c := setup(t)
+		t.Chdir(t.TempDir())
+		t.Setenv("CODEX_THREAD_ID", "same-id")
+		other, err := c.New(plans.NewOptions{Title: "Claude work", Slug: "claude-work",
+			Sessions: []string{"claude:same-id"}, Harness: "claude"}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan := newPlan(t)
+		data, err := os.ReadFile(plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), ":SESSIONS: codex:same-id\n") || !strings.Contains(string(data), ":HARNESS: codex\n") {
+			t.Errorf("Codex identity missing from new plan:\n%s", data)
+		}
+		code, out, errs := agentPlan(t, "", "find")
+		var found []plans.Found
+		if code != 0 || json.Unmarshal([]byte(out), &found) != nil || len(found) != 1 || found[0].Plan != plan {
+			t.Errorf("find must select Codex plan %s, not Claude plan %s: code %d, output %s, stderr %s", plan, other.Plan, code, out, errs)
 		}
 	})
 

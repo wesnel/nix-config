@@ -51,11 +51,12 @@ have (see status) is refused and writes nothing.
   find [--session ID] [--worktree DIR] [--branch B]
                      this host's plan files that match any one given (default:
                      this session, worktree and branch)
-  find --hook        the same for a Claude Code SessionStart hook (reads stdin),
-                     with brief --resume after /clear or a compaction; as its
-                     SessionEnd hook, hands the plan of a session /clear ends
-                     to the session it starts in the same directory, and
-                     prints nothing
+  find --hook [--harness claude|codex]
+                     read a lifecycle event from stdin; Codex SessionStart
+                     returns bounded plan context without changing sessions.
+                     Claude is the default: after /clear or compaction it adds
+                     brief --resume; SessionEnd clear hands the plan to the
+                     next Claude session in the same directory
   goal PLAN [--part P1]
                      the goal statement, the text under "** Goal"
   status PLAN [--format org|json]
@@ -354,14 +355,6 @@ func checkoutAt(dir string) (top, branch string) {
 	return top, branch
 }
 
-// claudeSession is the Claude Code session running this command, if any.
-func claudeSession() string {
-	if id := os.Getenv("CLAUDE_CODE_SESSION_ID"); id != "" {
-		return "claude:" + id
-	}
-	return ""
-}
-
 func run(command string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	var (
@@ -482,10 +475,10 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		o := plans.NewOptions{Title: *title, Slug: *slug, Repos: repos, Branches: branches, Worktrees: trees,
 			Sessions: sessions, Harness: *harness, Parent: *parent, Part: *part, Template: *template}
 		if len(o.Sessions) == 0 {
-			if s := claudeSession(); s != "" {
-				o.Sessions = []string{s}
+			if h, id := plans.EnvSession(); id != "" {
+				o.Sessions = []string{h + ":" + id}
 				if o.Harness == "" {
-					o.Harness = "claude"
+					o.Harness = h
 				}
 			}
 		}
@@ -525,19 +518,25 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return 0
 	case "find":
 		if *hook {
+			h := *harness
+			if h == "" {
+				h = "claude"
+			}
 			input := readAll(stdin)
 			var event struct {
 				Name string `json:"hook_event_name"`
 			}
-			if json.Unmarshal(input, &event) == nil && event.Name == "SessionEnd" {
+			if json.Unmarshal(input, &event) == nil && event.Name == "SessionEnd" && h == "claude" {
 				return hookReport(nil, c.SessionEndHook(input, time.Now()), stdout, stderr)
 			}
-			out, err := c.SessionHook(input)
+			out, err := c.SessionHook(input, h)
 			return hookReport(out, err, stdout, stderr)
 		}
 		o := plans.FindOptions{Session: session, Worktree: worktree, Branch: branch}
 		if o == (plans.FindOptions{}) {
-			o.Session = claudeSession()
+			if h, id := plans.EnvSession(); id != "" {
+				o.Session = h + ":" + id
+			}
 			o.Worktree, o.Branch = checkout()
 		}
 		return report(c.Find(o))
@@ -750,7 +749,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return 2
 		}
 		if session == "" {
-			session = plans.EnvSession()
+			_, session = plans.EnvSession()
 		}
 		top, current := checkout()
 		if worktree != "" {

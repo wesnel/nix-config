@@ -73,8 +73,11 @@ func In(dir string) Context {
 	if err == nil && top != "" {
 		ctx.Harness = isHarness(top)
 	}
-	if s := plans.EnvSession(); s != "" {
-		ctx.Sessions = append(ctx.Sessions, s)
+	harness, id := plans.EnvSession()
+	planSession := ""
+	if id != "" {
+		ctx.Sessions = append(ctx.Sessions, id)
+		planSession = harness + ":" + id
 	}
 	if home, err := os.UserHomeDir(); err == nil && len(home) > 1 {
 		ctx.Paths = append(ctx.Paths, home)
@@ -85,7 +88,7 @@ func In(dir string) Context {
 	}
 	if c, err := plans.Load(); err == nil {
 		ctx.Paths = append(ctx.Paths, c.Dir)
-		if p, _, ok := c.Locate(plans.EnvSession(), top); ok {
+		if p, _, ok := c.Locate(planSession, top); ok {
 			ctx.PlanIDs, _ = p.IDs()
 		}
 	}
