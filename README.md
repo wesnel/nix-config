@@ -753,11 +753,27 @@ in one of two modes you choose when you start it:
 You need `gh auth login`, which `pr-loop` uses outside the sandbox, and open
 PRs by you, draft or ready, in one repository, stacked by base branch. On a
 ready PR, the loop's pushes, replies and review requests notify its
-reviewers and code owners. Then, in the repository:
+reviewers and code owners. For Codex, first prepare a dedicated worktree
+from a host terminal after activating the managed settings:
+
+```sh
+git worktree add --detach ../review-loop-worktree HEAD && codex-git-setup ../review-loop-worktree && cd ../review-loop-worktree
+```
+
+Keep its generated `.codex/config.toml` out of commits. Start a new loop
+from that prepared worktree and accept its project trust prompt:
 
 ``` sh
 review-loop --harness codex --bots 12 13     # or --harness claude, or --people
 ```
+
+Codex processes the PR branches sequentially in this worktree, finishing
+tests and reviewers before each checkout. Its native sub-agents inherit
+the parent session's permissions; preparing another worktree does not load
+its profile into an existing session. Concurrent Codex loops need separate
+host-prepared worktrees and new sessions. If a branch is checked out
+elsewhere, the operator releases it on the host. Claude Code can start in
+the repository and creates its own worktrees during setup.
 
 It starts an ordinary session in the selected harness, with the host sandbox and the
 guard every session has, running the `review-loop` skill on those PRs. Each
@@ -773,9 +789,9 @@ A repository whose fresh checkouts need preparing, such as generating files
 it does not commit, gets a `setup` command in each clone's agent settings
 (see [reviews](#reviews-fresh-eyes-and-tests-that-fail)). `pr-loop setup
 [PATH]` runs it in the sandbox in a worktree,
-printing the command and its exit status; the loop runs it in each worktree
-it makes, and nothing runs it on its own. A repository cannot name a setup
-command itself.
+printing the command and its exit status. Claude loops run it in each
+worktree they make; Codex loops run it after each checkout or rebase in
+their prepared worktree. A repository cannot name a setup command itself.
 
 `pr-loop` writes only to open PRs by you in the same repository, never the
 default branch, and re-checks that before every write. `pr-loop push`
@@ -787,16 +803,32 @@ bot's or yours.
 
 ### after the loop
 
-In a terminal of your own, in the repository:
+In a terminal of your own, use the stack's top branch. After a Codex loop,
+stay in its prepared worktree and verify before signing:
+
+```sh
+pr-loop sign-check && git sign-pass --push TOP
+```
+
+Claude loops run sign-check before handing over; their signing command is:
 
 ``` sh
 git sign-pass --push TOP   # squash the fixups, sign, and push the stack, TOP its top branch
-pr-loop post 12            # people mode: post the drafted answers, each after you confirm it
 ```
 
-The loop runs `pr-loop sign-check` before it hands over, which squashes the
-fixups unsigned in a throwaway worktree and stops unless every PR would end
-with exactly its own commits and the files the loop left. `pr-loop post`
+In people mode, either harness then needs:
+
+```sh
+pr-loop post 12            # post the drafted answers, each after you confirm it
+```
+
+`pr-loop sign-check` squashes the fixups unsigned in a throwaway worktree
+and stops unless every PR would end with exactly its own commits and the
+files the loop left. Codex leaves that host-only check for you because its
+profile keeps other worktrees' administration read-only. After successful
+verification and signing, remove the clean Codex loop worktree from the
+host, accounting for its local project profile and any files you want to
+keep. Make any main-worktree checkout from the host too. `pr-loop post`
 shows each draft on your terminal and posts exactly what it showed once you
 answer `y`; it resolves the threads answered fix or rebut, and once every
 person's thread has an answer, asks those people to review again. A bots

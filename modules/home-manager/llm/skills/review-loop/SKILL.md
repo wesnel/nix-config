@@ -47,6 +47,19 @@ measured as the `review-change` skill's goal statement says.
 
 ## Setup
 
+For Codex, the operator first creates one dedicated detached worktree on the
+host, runs `codex-git-setup` for it, and starts a new loop session from that
+worktree with its project profile trusted. The session and its native
+sub-agents inherit the permissions loaded at startup. Concurrent loops need
+separate prepared worktrees and new sessions. If this session lacks that
+prepared worktree, hand back the host preparation and restart commands.
+
+Process Codex PR branches sequentially in that one worktree. Before each
+checkout, finish all test and review processes and commit the current PR's
+changes. If a branch is checked out elsewhere, hand that conflict to the
+operator. Use `git -c commit.gpgsign=false` for commands that create or
+rewrite commits, as `signing-pass` says; Git configuration stays host-owned.
+
 1. `pr-loop stack` from each PR's branch. If `linear` is false, stop and
    ask. If its PRs chain by their bases but GitHub's stack (`github`) is
    null or leaves some out, run `pr-loop link` once with them, bottom first.
@@ -54,13 +67,13 @@ measured as the `review-change` skill's goal statement says.
    the goal from the PR description and its Linear ticket (read-only; the
    ticket ID is usually in the branch name, e.g. `agent-911` is
    `AGENT-911`), and what is explicitly not this PR's job.
-3. Work on each PR's branch in a worktree under the session's temporary
-   directory, which both harnesses allow the sandbox to write,
-   made with `git worktree add`, with `git config --worktree
-   commit.gpgsign false` in it. In each new worktree run `pr-loop setup`,
-   which runs the setup command the operator configured for the repository,
-   such as generating files it does not commit. If a setup fails, stop and
-   hand back its output.
+3. In Claude Code, work on each PR's branch in a worktree under the
+   session's temporary directory, made with `git worktree add`, with
+   `git config --worktree commit.gpgsign false` in it. In each new worktree
+   run `pr-loop setup`. In Codex, use the prepared worktree and run
+   `pr-loop setup` after each checkout or rebase. It runs the setup command
+   the operator configured for the repository, such as generating files it
+   does not commit. If a setup fails, stop and hand back its output.
 4. `pr-loop threads <number>` for each PR, which also writes the PR's
    review record.
 
@@ -120,7 +133,8 @@ next one starts at step 1.
    boundaries, compat for interfaces and stored state, upgrade for version
    bumps. For each needed focus, give a fresh read-only sub-agent
    the prompt from `git delegate --print-prompt --reviewer TYPE` with the
-   same goal and range. Use `git delegate` only with `--print-prompt` in
+   same goal and explicit local commit range in the prepared worktree.
+   Use `git delegate` only with `--print-prompt` in
    loop sessions; its live runners can start a different harness.
    Settle findings as the `review-change` skill's Triage says.
    A `compat` review
@@ -128,9 +142,10 @@ next one starts at step 1.
    description as it stands. A finding still standing goes out with the
    push and into the hand-back.
 7. **Restack**, bottom-up:
-   `git rebase --onto <parent-branch> <child's recorded fork point> <branch>`
+   `git -c commit.gpgsign=false rebase --onto <parent-branch> <child's recorded fork point> <branch>`
    for each child, resolving conflicts as the `restack-branches` skill says,
-   with its tests run again.
+   with its tests run again. In Codex, the prepared loop worktree is the
+   dedicated restack worktree; use it for each branch sequentially.
 8. **Push.** `pr-loop push BRANCH...`, bottom up, as the `signing-pass`
    skill says a stack is pushed. A rebased branch no longer contains its
    head on GitHub, so name that head: `--lease BRANCH=SHA`, the `remoteOid`
@@ -177,8 +192,11 @@ In bots mode, stop and hand back when any of these holds:
 
 ## Hand-back
 
-1. Remove the worktrees you made, once each is clean, and check the top
-   branch out in the main worktree.
+1. In Claude Code, remove the worktrees you made, once each is clean, and
+   check the top branch out in the main worktree. In Codex, finish every
+   test and review process, leave the prepared worktree on the top branch
+   with the changes committed, and report its status. The operator handles
+   worktree cleanup and any main-worktree checkout on the host.
 2. Report, for each PR:
    - each bot's verdict;
    - CI state and any failures for the operator to accept;
@@ -189,9 +207,14 @@ In bots mode, stop and hand back when any of these holds:
 
    Also list the Linear changes and follow-up tickets you propose but did
    not make.
-3. Run `pr-loop sign-check` on the top branch. It squashes the fixups
-   unsigned in a throwaway worktree and says whether each PR would end with
-   exactly its own commits and unchanged files; settle what it names before
-   handing over. Then hand over the signing pass as the `signing-pass`
-   skill's Handing over says, naming the stack's top branch.
+3. In Claude Code, run `pr-loop sign-check` on the top branch. It squashes
+   the fixups unsigned in a throwaway worktree and says whether each PR
+   would end with exactly its own commits and unchanged files; settle what
+   it names before handing over. In Codex, creating that scratch worktree
+   needs host permissions: hand over one host command with the prepared
+   worktree's actual path that runs `pr-loop sign-check` before the signing
+   command, joined by `&&`. State that sign-check awaits the operator's
+   run. The signing pass follows the `signing-pass` skill's Handing over,
+   naming the stack's top branch. Codex worktree cleanup follows successful
+   verification and signing.
 4. In bots mode, `pr-loop end PR...` deletes the loop's trigger comments.
