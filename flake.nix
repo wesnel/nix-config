@@ -660,7 +660,8 @@
       # Defined are the agent files' names (the `name:` line of each in
       # modules/home-manager/claude/agents) and Claude Code's built-in types.
       checks.agent-names = let
-        agentFiles = pkgs.lib.filterAttrs (name: kind: kind == "regular" && pkgs.lib.hasSuffix ".md" name && name != "subagent.md")
+        agentFiles =
+          pkgs.lib.filterAttrs (name: kind: kind == "regular" && pkgs.lib.hasSuffix ".md" name && name != "subagent.md")
           (builtins.readDir ./modules/home-manager/claude/agents);
         fileNames = pkgs.lib.mapAttrsToList (file: _: let
           lines = pkgs.lib.splitString "\n" (builtins.readFile (./modules/home-manager/claude/agents + "/${file}"));
@@ -827,6 +828,20 @@
           }
           exit $failed;
           PERL
+          touch $out
+        '';
+
+      checks.codex-settings = let
+        ngrok = darwinSystems.ngrok;
+        home = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username};
+      in
+        pkgs.runCommand "codex-settings" {
+          nativeBuildInputs = [pkgs.python3 pkgs.bash];
+          operatorHome = home.home.homeDirectory;
+          activation = home.home.activation.codexSandbox.data;
+          passAsFile = ["activation"];
+        } ''
+          python ${./modules/home-manager/codex/test_settings.py}
           touch $out
         '';
 

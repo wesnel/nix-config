@@ -6,6 +6,7 @@
 }:
 with lib; let
   cfg = config.wgn.home.codex;
+  cacheRoot = "${config.xdg.cacheHome}/codex/sandbox";
 
   llm = import ../llm/lib.nix {inherit lib;};
 
@@ -41,9 +42,8 @@ with lib; let
             f.write(tomlkit.dumps(doc))
   '';
 
-  # Makes a path the one writable root of Codex's workspace-write sandbox
-  # that this module manages, keeping the rest of the file and any roots set
-  # from inside Codex. The third argument records the root added last time,
+  # Reconciles one managed writable root, keeping the rest of the file and
+  # any roots set from inside Codex. The third argument records the root added last time,
   # which is removed when the path changes; no other root is removed.
   addWritableRoot = pkgs.writers.writePython3 "codex-writable-root" {libraries = [pkgs.python3Packages.tomlkit];} ''
     import os
@@ -130,19 +130,20 @@ with lib; let
         with open(path) as f:
             doc = tomlkit.parse(f.read())
 
-    changed = False
-    for key, value in keys.items():
-        if isinstance(value, dict):
-            table = doc.setdefault(key, tomlkit.table())
-            for k, v in value.items():
-                if table.get(k) != v:
-                    table[k] = v
-                    changed = True
-        elif doc.get(key) != value:
-            doc[key] = value
-            changed = True
 
-    if changed:
+    def merge(table, values):
+        changed = False
+        for key, value in values.items():
+            if isinstance(value, dict):
+                child = table.setdefault(key, tomlkit.table())
+                changed = merge(child, value) or changed
+            elif table.get(key) != value:
+                table[key] = value
+                changed = True
+        return changed
+
+
+    if merge(doc, keys):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
             f.write(tomlkit.dumps(doc))
@@ -159,6 +160,10 @@ in {
       default = {
         sandbox_mode = "workspace-write";
         sandbox_workspace_write.network_access = false;
+        shell_environment_policy.set = {
+          GOCACHE = "${cacheRoot}/go-build";
+          GOLANGCI_LINT_CACHE = "${cacheRoot}/golangci-lint";
+        };
       };
 
       description = ''
@@ -300,6 +305,10 @@ in {
         if [ -z "''${DRY_RUN:-}" ]; then
           ${setKeys} "$HOME/.codex/config.toml" ${escapeShellArg (builtins.toJSON cfg.sandbox)} \
             || warnEcho "Codex's sandbox was not pinned to workspace-write without network."
+          mkdir -p ${escapeShellArg cacheRoot}
+          ${addWritableRoot} "$HOME/.codex/config.toml" ${escapeShellArg cacheRoot} \
+            ${escapeShellArg "${config.xdg.stateHome}/codex/cache-root"} \
+            || warnEcho "Codex's tool cache was not made writable in its sandbox."
         fi
       '';
     }
