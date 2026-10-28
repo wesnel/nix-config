@@ -1025,18 +1025,20 @@ func splitArguments(segment string) call { return lex(segment, false) }
 func lex(segment string, redirects bool) (result call) {
 	var cur strings.Builder
 	in, quote, expand, quoted := false, byte(0), false, false
+	homeTilde := false
 	braces := 0
 	pending := -1
 	end := func() {
 		if pending >= 0 {
 			result.redirects[pending].target, result.redirects[pending].expands = cur.String(), expand
-			result.redirects[pending].literal = quoted && !expand
+			result.redirects[pending].literal = quoted && !expand && !homeTilde
 			pending = -1
 		} else {
 			result.words, result.expands = append(result.words, cur.String()), append(result.expands, expand)
 		}
 		cur.Reset()
 		in, expand, quoted = false, false, false
+		homeTilde = false
 	}
 	for i := 0; i < len(segment); i++ {
 		c := segment[i]
@@ -1114,6 +1116,8 @@ func lex(segment string, redirects bool) (result call) {
 		case c == '#' && !in && braces == 0:
 			return result
 		default:
+			// A quoted suffix does not quote an earlier unquoted ~/ prefix.
+			homeTilde = homeTilde || !in && c == '~' && (i+1 == len(segment) || segment[i+1] == '/')
 			expand = expand || c == '$' || c == '`'
 			cur.WriteByte(c)
 			in = true

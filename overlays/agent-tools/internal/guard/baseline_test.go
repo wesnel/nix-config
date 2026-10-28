@@ -1219,9 +1219,45 @@ func TestTestEmacsSocket(t *testing.T) {
 		"-e (kill-emacs) -s /tmp/et.ab12/server":                         true,
 		"-e (kill-emacs) -s":                                             false,
 	} {
-		if got := testEmacsSocket(strings.Fields(args)); got != want {
+		if got := testEmacsSocket(parseEmacsclient(strings.Fields(args), nil)); got != want {
 			t.Errorf("%q: %v, want %v", args, got, want)
 		}
+	}
+}
+
+func TestRedirectHomePrefix(t *testing.T) {
+	fakeHome(t)
+	for command, deny := range map[string]bool{
+		`cat < ~/'.ssh/id_ed25519'`: true,
+		`cat < ~/".ssh"/id_ed25519`: true,
+		`cat < '~/.ssh/id_ed25519'`: false,
+		`cat < ~"/.ssh/id_ed25519"`: false,
+		`cat < \~/.ssh/id_ed25519`:  false,
+	} {
+		t.Run(command, func(t *testing.T) {
+			if reason := judge(t, t.TempDir(), command); (reason != "") != deny {
+				t.Fatalf("reason %q, want refusal %v", reason, deny)
+			}
+		})
+	}
+}
+
+func TestEmacsSocketExpansion(t *testing.T) {
+	t.Setenv("SOCKET", "../../operator/server")
+	for command, deny := range map[string]bool{
+		`emacsclient -a "" -s /tmp/et.ab12/"$SOCKET" -e '(+ 1 2)'`:                        true,
+		`emacsclient -a "" --socket-name=/tmp/et.ab12/server"$EMPTY" -e '(+ 1 2)'`:        true,
+		`emacsclient -a "" -s/tmp/et.ab12/"$SOCKET" -e '(+ 1 2)'`:                         true,
+		`emacsclient -a "" -s /tmp/et.ab12/server -s /tmp/et.cd34/"$SOCKET" -e '(+ 1 2)'`: true,
+		`emacsclient -s /tmp/et.ab12/"$SOCKET" -e '(kill-emacs)'`:                         true,
+		`emacsclient -a "" -s '/tmp/et.ab12/$SOCKET' -e '(+ 1 2)'`:                        false,
+		`emacsclient -a "" -s /tmp/et.ab12/server -e '(+ 1 2)'`:                           false,
+	} {
+		t.Run(command, func(t *testing.T) {
+			if reason := judge(t, t.TempDir(), command); (reason != "") != deny {
+				t.Fatalf("reason %q, want refusal %v", reason, deny)
+			}
+		})
 	}
 }
 
@@ -1421,11 +1457,11 @@ func TestTestEmacsSocketLink(t *testing.T) {
 				if err := os.Symlink(own, link); err != nil {
 					t.Fatal(err)
 				}
-				if testEmacsSocket([]string{"-s", link + "/server", "-e", "(kill-emacs)"}) {
+				if testEmacsSocket(parseEmacsclient([]string{"-s", link + "/server", "-e", "(kill-emacs)"}, nil)) {
 					t.Errorf("a link from %s to %s passes", link, own)
 				}
 			}
-			if !testEmacsSocket([]string{"-s", filepath.Join(root, "test", "server"), "-e", "(kill-emacs)"}) {
+			if !testEmacsSocket(parseEmacsclient([]string{"-s", filepath.Join(root, "test", "server"), "-e", "(kill-emacs)"}, nil)) {
 				t.Errorf("%s's own socket is refused", root)
 			}
 		})

@@ -458,10 +458,10 @@ func checkSession(c call, dir string) string {
 		if parsed.alternate != nil {
 			fallback, set = *parsed.alternate, true
 		}
-		if parsed.ok && set && (fallback.text == "" || fallback.expanded) && !testEmacsSocket(args) {
+		if parsed.ok && set && (fallback.text == "" || fallback.expanded) && !testEmacsSocket(parsed) {
 			return "An empty or unresolved emacsclient alternate editor may start a daemon with the operator's init when no server answers. Use a literal nonempty alternate editor, such as `-a false`, or name only an absolute test socket."
 		}
-		if emacsServerCall(args) {
+		if emacsServerCall(args, parsed) {
 			return killEmacs
 		}
 	case "emacs", "Emacs":
@@ -1033,7 +1033,7 @@ var (
 )
 
 type parsedEmacsclient struct {
-	sockets    []string
+	sockets    []shellValue
 	serverFile bool
 	alternate  *shellValue
 	ok         bool
@@ -1041,11 +1041,11 @@ type parsedEmacsclient struct {
 
 // parseEmacsclient reads an emacsclient call's options as its
 // getopt_long does, abbreviations, clustered short options and values in
-// the next word included, and returns every socket it names, whether it
-// names a server file, and its last alternate editor (nil if unspecified).
+// the next word included, and retains expansion provenance for sockets
+// and the last alternate editor (nil if unspecified), plus server files.
 // ok is false where it cannot read an option as emacsclient would.
 func parseEmacsclient(args []string, expands []bool) parsedEmacsclient {
-	var sockets []string
+	var sockets []shellValue
 	serverFile := false
 	var alternate *shellValue
 	for i := 0; i < len(args); i++ {
@@ -1087,7 +1087,7 @@ func parseEmacsclient(args []string, expands []bool) parsedEmacsclient {
 			}
 			switch o {
 			case "socket-name":
-				sockets = append(sockets, value)
+				sockets = append(sockets, shellValue{text: value, expanded: i < len(expands) && expands[i]})
 			case "server-file":
 				serverFile = true
 			case "alternate-editor":
@@ -1111,7 +1111,7 @@ func parseEmacsclient(args []string, expands []bool) parsedEmacsclient {
 				}
 				switch c {
 				case 's':
-					sockets = append(sockets, value)
+					sockets = append(sockets, shellValue{text: value, expanded: i < len(expands) && expands[i]})
 				case 'f':
 					serverFile = true
 				case 'a':
@@ -1125,17 +1125,16 @@ func parseEmacsclient(args []string, expands []bool) parsedEmacsclient {
 }
 
 // testEmacsSocket reports whether an emacsclient call reaches only a test
-// Emacs: every socket it names is absolute and, symlinks resolved and,
+// Emacs: every socket it names is literal, absolute and, symlinks resolved and,
 // on darwin, case folded, under $TMPDIR, /tmp/claude-UID or /tmp/et.*,
 // where a test Emacs keeps its own, and not the operator's daemon's; and
 // it names no server file, which reaches a daemon over TCP instead.
-func testEmacsSocket(args []string) bool {
-	parsed := parseEmacsclient(args, nil)
+func testEmacsSocket(parsed parsedEmacsclient) bool {
 	if !parsed.ok || parsed.serverFile || len(parsed.sockets) == 0 {
 		return false
 	}
 	for _, s := range parsed.sockets {
-		if !testSocket(s) {
+		if s.expanded || !testSocket(s.text) {
 			return false
 		}
 	}
@@ -1156,12 +1155,12 @@ var versionedEmacsclient = regexp.MustCompile(`^emacsclient-?[0-9][0-9.]*$`)
 // A lifecycle form sent to a test socket naming no other server acts on
 // that Emacs's own server alone: `(server-mode -1)` there removed the
 // test socket and left the operator's as it was.
-func emacsServerCall(args []string) bool {
+func emacsServerCall(args []string, parsed parsedEmacsclient) bool {
 	text := strings.Join(args, " ")
 	if !emacsServerForm.MatchString(text) {
 		return false
 	}
-	return !testEmacsSocket(args) || lispNamesServer(text, false)
+	return !testEmacsSocket(parsed) || lispNamesServer(text, false)
 }
 
 // lispNamesServer reports whether Lisp text names a server other than the
