@@ -17,7 +17,6 @@ func FlakeInputsChanged(old, next string) bool {
 
 var flakeAttr = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_'-]*$`)
 var flakeInt = regexp.MustCompile(`^-?[0-9]+$`)
-var flakeURI = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:[A-Za-z0-9%/?:@&=+$,_.!~*'-]`)
 
 func literalFlakeInputs(text string) ([]string, bool) {
 	l := flakeLexer{text: text}
@@ -183,10 +182,6 @@ func (l *flakeLexer) token(depth int) (string, bool) {
 			l.at += end + 4
 		default:
 			start := l.at
-			// URI literals can contain quote and comment delimiters.
-			if flakeURI.MatchString(l.text[l.at:]) {
-				return "", false
-			}
 			if c == '"' || strings.HasPrefix(l.text[l.at:], "''") {
 				if !l.quoted(depth + 1) {
 					return "", false
@@ -197,6 +192,13 @@ func (l *flakeLexer) token(depth int) (string, bool) {
 				for l.at < len(l.text) && !strings.ContainsRune(" \t\r\n{}[]();=.\"#", rune(l.text[l.at])) &&
 					!strings.HasPrefix(l.text[l.at:], "/*") && !strings.HasPrefix(l.text[l.at:], "''") {
 					l.at++
+				}
+				// Inside a token these delimiters can belong to an identifier,
+				// URI or path. Guessing a new lexical region could hide inputs.
+				tail := l.text[l.at:]
+				if strings.HasPrefix(tail, "''") || strings.HasPrefix(tail, "/*") ||
+					strings.HasPrefix(tail, `"`) || strings.HasPrefix(tail, "#") {
+					return "", false
 				}
 			}
 			return l.text[start:l.at], l.at > start
