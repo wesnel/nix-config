@@ -1,5 +1,5 @@
 // Package export writes, model-free, the documents the "Agent plans" page
-// keeps in its claude.ai database: one per plan, every host's, and
+// keeps in its database or a Space snapshot: one per plan, every host's, and
 // GitHub's status and the plans' sync state. Everything it writes leaves
 // the host, so each document is a fixed struct whose JSON tags are the
 // allowlist, each always written. Plan fields are read only from the plans
@@ -15,7 +15,7 @@
 // leave it (review.go). Free text is stripped of control
 // and formatting characters, has known secret shapes redacted and is
 // capped in runes, and lists are capped, so that a document stays within
-// maxDoc. Redaction knows shapes, not data: what must not reach claude.ai
+// maxDoc. Redaction knows shapes, not data: what must not reach a dashboard
 // must stay out of plans. A field added here is published; the sentinel
 // test's allowlist names each.
 package export

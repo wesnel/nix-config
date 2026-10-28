@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/wesnel/agent-tools/internal/agentplans"
+	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
 // TestMCPTools covers MCP tools as each harness's hook sends their calls:
@@ -98,6 +101,121 @@ func TestMCPTools(t *testing.T) {
 				t.Errorf("%s: reason %q does not say %q and what to do instead", c.event, reason, c.says)
 			}
 		})
+	}
+}
+
+func TestSpaceTools(t *testing.T) {
+	root := t.TempDir()
+	hostpaths.Bake(t, filepath.Join(root, "config"), filepath.Join(root, "state"))
+	config := filepath.Join(root, "config", "agent-tools", "agent-plans-space.json")
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte(`{"page_id":"page_owned","block_id":"block_owned","thread_id":"thread_owned"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	html := strings.Replace(string(agentplans.Page), "<!-- snapshot -->", `<script type="application/json" id="snapshot">{"plans":[],"github":{},"meta":{},"today":{}}</script>`, 1)
+	write := map[string]any{"page_id": "page_owned", "replace_block": map[string]string{"block_id": "block_owned", "expected_hash": "observed"}, "title": "Agent plans", "html": html}
+	for _, tc := range []struct {
+		name, tool string
+		args       any
+		allow      bool
+	}{
+		{"raw read", "chatgpt_space__read_page", map[string]string{"page_id": "page_owned"}, true},
+		{"normalized read", "chatgpt_space_read_page", map[string]string{"page_id": "page_owned"}, true},
+		{"owned snapshot", "chatgpt_space__create_page_visualization", write, true},
+		{"unrelated app", "sites_get_site", map[string]string{}, false},
+		{"invented name", "chatgpt_space___read_page", map[string]string{}, false},
+		{"new page", "chatgpt_space_create_page", map[string]string{}, false},
+		{"page edit", "chatgpt_space_edit_page", map[string]string{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input, _ := json.Marshal(tc.args)
+			reason := CheckBaseline("mcp__codex_apps__"+tc.tool, input)
+			if (reason == "") != tc.allow {
+				t.Fatalf("allow=%v, reason=%s", tc.allow, reason)
+			}
+		})
+	}
+	for _, change := range []map[string]any{
+		{"page_id": "page_other"}, {"replace_block": map[string]string{"block_id": "block_other", "expected_hash": "observed"}},
+		{"replace_block": nil}, {"after_block_id": "block_other"}, {"html": "<script>fetch('https://example.com')</script>"},
+		{"html": strings.Replace(html, `"plans":[]`, `"plans":["</script><script>bad()</script>"]`, 1)},
+		{"title": "Other"}, {"base_sequence": -1}, {"approval": true},
+	} {
+		args := map[string]any{}
+		for k, v := range write {
+			args[k] = v
+		}
+		for k, v := range change {
+			args[k] = v
+		}
+		input, _ := json.Marshal(args)
+		if reason := CheckBaseline("mcp__codex_apps__chatgpt_space__create_page_visualization", input); reason == "" {
+			t.Errorf("allowed changed snapshot arguments: %v", change)
+		}
+	}
+	input, _ := json.Marshal(write)
+	for _, invalid := range []string{
+		strings.Replace(string(input), `"page_id":"page_owned"`, `"page_id":"page_other","PAGE_ID":"page_owned"`, 1),
+		strings.Replace(string(input), `"block_id":"block_owned"`, `"block_id":"block_other","BLOCK_ID":"block_owned"`, 1),
+	} {
+		if reason := CheckBaseline("mcp__codex_apps__chatgpt_space__create_page_visualization", []byte(invalid)); reason == "" {
+			t.Error("case-insensitive keys overrode the exact target")
+		}
+	}
+	if reason := CheckBaseline("mcp__CODEX_APPS__chatgpt_space__read_page", []byte(`{"page_id":"page_owned"}`)); reason == "" {
+		t.Error("unreviewed server spelling was accepted")
+	}
+	if reason := CheckReviewer("mcp__codex_apps__chatgpt_space__create_page_visualization", input); reason == "" {
+		t.Error("reviewer published")
+	}
+	if err := os.Remove(config); err != nil {
+		t.Fatal(err)
+	}
+	if reason := CheckBaseline("mcp__codex_apps__chatgpt_space__create_page_visualization", input); reason == "" {
+		t.Error("unconfigured publication allowed")
+	}
+}
+
+func TestSpaceConfigProtection(t *testing.T) {
+	root := fakeHome(t)
+	hostpaths.Bake(t, filepath.Join(root, "config"), filepath.Join(root, "state"))
+	for _, file := range []string{agentplans.SpaceConfigFile(), agentplans.SpaceStateFile()} {
+		if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		tmp := t.TempDir()
+		link, hard := filepath.Join(tmp, "link"), filepath.Join(tmp, "hard")
+		if err := os.Symlink(file, link); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Link(file, hard); err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range []string{file, link, hard} {
+			input, _ := json.Marshal(map[string]string{"file_path": path, "content": "{}"})
+			if reason := CheckBaseline("Write", input); reason == "" {
+				t.Errorf("agent could write %s", path)
+			}
+		}
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("AGENT_PLANS_CONFIG", filepath.Join(t.TempDir(), "replacement.json"))
+	if agentplans.SpaceConfigFile() != filepath.Join(root, "config", "agent-tools", "agent-plans-space.json") {
+		t.Fatal("request environment redirected trusted target")
+	}
+}
+
+func TestSpaceRawBridge(t *testing.T) {
+	for _, command := range []string{"codex app-server", "codex app-server --listen stdio://", "codex -c x=y app-server"} {
+		input, _ := json.Marshal(map[string]string{"command": command})
+		if reason := CheckBaseline("Bash", input); reason == "" {
+			t.Errorf("raw bridge allowed: %s", command)
+		}
 	}
 }
 
@@ -263,6 +381,7 @@ func TestMCPLookalike(t *testing.T) {
 		{"datadog", "mcp__datadog.eu__search_datadog_logs", "mcp__claude_ai_Datadog_2__", false},
 		{"slack", "mcp__slack__slack_read_thread", "mcp__claude_ai_Slack__", false},
 		{"ngrok", "mcp__ngrok-dev__list_endpoints", "mcp__ngrok__", false},
+		{"pages", "mcp__pages-direct__chatgpt_space__read_page", "mcp__codex_apps__", false},
 	} {
 		covered[c.key] = true
 		for _, h := range []struct {

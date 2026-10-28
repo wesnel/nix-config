@@ -4,6 +4,7 @@
 package agentplans
 
 import (
+	"bytes"
 	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"unicode/utf8"
 
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
@@ -30,8 +32,8 @@ func Dir() string { return filepath.Join(hostpaths.StateHome(), "agent-plans") }
 func Out() string { return filepath.Join(Dir(), "out") }
 
 // Page is the "Agent plans" page: one HTML file, its CSS and script
-// inline, which reads the documents plan-dash export writes from the
-// page's database and writes nothing. Its script renders every document's text as text, never as markup, and
+// inline, which reads plan-dash export's documents from an embedded snapshot
+// or the page's database and writes nothing. Its script renders every document's text as text, never as markup, and
 // its schema block names each field it reads; export's page test holds
 // both to the documents' types. A review record's diagram source is also
 // given, where it is in the grammar the page's grammar block gives, to
@@ -54,6 +56,34 @@ func PageFile() string { return filepath.Join(Dir(), "page", "agent-plans.html")
 
 // PublishedFile holds PageHash of the page last published.
 func PublishedFile() string { return filepath.Join(Dir(), "page", "published") }
+
+func SnapshotFile() string { return filepath.Join(Dir(), "space", "snapshot.html") }
+
+// ValidateSnapshot enforces create_page_visualization's complete HTML limit.
+func ValidateSnapshot(data []byte) error {
+	if len(data) == 0 || len(data) > 256<<10 || !utf8.Valid(data) {
+		return fmt.Errorf("Space snapshot must be nonempty valid UTF-8 of at most 256 KiB; last-good snapshot is unchanged")
+	}
+	before, after, ok := bytes.Cut(Page, []byte("<!-- snapshot -->"))
+	start, end := append(bytes.Clone(before), []byte(`<script type="application/json" id="snapshot">`)...), append([]byte("</script>"), after...)
+	if !ok || !bytes.HasPrefix(data, start) || !bytes.HasSuffix(data, end) || len(data) < len(start)+len(end) {
+		return fmt.Errorf("Space snapshot must use the built-in renderer")
+	}
+	payload := data[len(start) : len(data)-len(end)]
+	if !json.Valid(payload) || bytes.ContainsAny(payload, "<>&\u2028\u2029") {
+		return fmt.Errorf("Space snapshot data must be HTML-safe JSON")
+	}
+	var documents struct {
+		Plans  []json.RawMessage          `json:"plans"`
+		GitHub map[string]json.RawMessage `json:"github"`
+		Meta   map[string]json.RawMessage `json:"meta"`
+		Today  map[string]json.RawMessage `json:"today"`
+	}
+	if err := strictJSON(payload, &documents); err != nil || documents.Plans == nil || documents.GitHub == nil || documents.Meta == nil || documents.Today == nil {
+		return fmt.Errorf("Space snapshot requires plans, github, meta and today documents")
+	}
+	return nil
+}
 
 // Capabilities are the page's runtime capabilities, which every publish of
 // it declares: its database, readable and writable by its owner alone,

@@ -234,6 +234,9 @@ func checkSession(c call, dir string) string {
 	if reason := checkAgentSettingsShell(name, args, redirected, dir); reason != "" {
 		return reason
 	}
+	if reason := checkSpaceAuthorityShell(name, args, redirected, dir); reason != "" {
+		return reason
+	}
 	if reason := checkShellEdit(name, args, redirected, dir); reason != "" {
 		return reason
 	}
@@ -500,6 +503,10 @@ func checkSession(c call, dir string) string {
 			return guardOff
 		}
 	case "codex":
+		if slices.Contains(args, "app-server") && !(len(args) == 2 && args[0] == "app-server" && (args[1] == "--help" || args[1] == "help")) &&
+			!(len(args) >= 2 && args[0] == "app-server" && (args[1] == "generate-json-schema" || args[1] == "generate-ts")) {
+			return "Raw app-server calls can bypass target-bound Pages authorization. Use `plan-dash space publish`, or inspect its schema with `codex app-server generate-json-schema`."
+		}
 		for _, a := range args {
 			if strings.HasPrefix(a, "--dangerously-bypass") {
 				return guardOff
@@ -2067,6 +2074,9 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 		}
 		if reason := checkFileAgentSettings(path, dir); reason != "" {
 			return reason
+		}
+		if spaceAuthorityFile(path) {
+			return spaceAuthority
 		}
 		if reason := gitConfigAlias(path, dir, c.text); reason != "" {
 			return reason

@@ -194,3 +194,76 @@ func TestUsage(t *testing.T) {
 		t.Errorf("--help: exit %d: %s", code, stdout.String())
 	}
 }
+
+func TestSpacePrepare(t *testing.T) {
+	state := setUp(t)
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"export"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("export: %d: %s", code, &stderr)
+	}
+	file := filepath.Join(state, "agent-plans", "space", "snapshot.html")
+	out := filepath.Join(state, "agent-plans", "out")
+	planFile := filepath.Join(out, "plans", "2026-10-27-demo.box.json")
+	malicious := `</script><script>alert("escaped")</script>&` + "\u2028\u2029"
+	plan := map[string]any{"id": "2026-10-27-demo.box", "title": malicious, "schema": 2, "host": "box", "steps": []any{}}
+	data, _ := json.Marshal(plan)
+	if err := os.WriteFile(planFile, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prepare := func() int {
+		t.Helper()
+		stdout.Reset()
+		stderr.Reset()
+		return run([]string{"space", "prepare"}, &stdout, &stderr)
+	}
+	if code := prepare(); code != 0 {
+		t.Fatalf("prepare: exit %d: %s", code, &stderr)
+	}
+	first, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), `"status": "prepared"`) || strings.Contains(stdout.String(), `"published"`) {
+		t.Errorf("preparation reported publication: %s", &stdout)
+	}
+	_, tail, found := strings.Cut(string(first), `<script type="application/json" id="snapshot">`)
+	embedded, _, closed := strings.Cut(tail, "</script>")
+	var snapshot struct{ Plans []struct{ Title string } }
+	if !found || !closed || json.Unmarshal([]byte(embedded), &snapshot) != nil || len(snapshot.Plans) != 1 || snapshot.Plans[0].Title != malicious {
+		t.Fatalf("snapshot lost or interpreted data: %s", embedded)
+	}
+	if strings.Contains(embedded, "<") || strings.Contains(embedded, "&") || strings.Contains(embedded, "\u2028") || strings.Contains(embedded, "\u2029") {
+		t.Error("embedded JSON contains unescaped HTML/script characters")
+	}
+	if code := prepare(); code != 0 {
+		t.Fatalf("second preparation: %d: %s", code, &stderr)
+	}
+	second, _ := os.ReadFile(file)
+	if !bytes.Equal(first, second) {
+		t.Error("same saved export produced different snapshot bytes")
+	}
+	for _, invalid := range []string{`{"title":"` + strings.Repeat("界", 90000) + `"}`, "{\"title\":\"\xff\"}", "{"} {
+		if err := os.WriteFile(planFile, []byte(invalid), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if code := prepare(); code != 1 {
+			t.Fatalf("invalid snapshot: exit %d: %s", code, &stderr)
+		}
+		kept, _ := os.ReadFile(file)
+		if !bytes.Equal(first, kept) {
+			t.Fatal("failed preparation replaced last-good snapshot")
+		}
+	}
+}
+
+func TestSpacePublishUnconfigured(t *testing.T) {
+	setUp(t)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"space", "publish"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "not configured") {
+		t.Fatalf("unconfigured publish: exit %d: %s%s", code, &stdout, &stderr)
+	}
+	if stdout.Len() != 0 {
+		t.Error("unconfigured publication printed a success receipt")
+	}
+}

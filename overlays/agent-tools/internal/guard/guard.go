@@ -29,6 +29,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/agentplans"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 )
 
@@ -186,6 +187,14 @@ func CheckReviewer(tool string, toolInput json.RawMessage) string {
 // hold every reason to this.
 func check(tool string, toolInput json.RawMessage, who role, dir string) string {
 	if service, name, mcp := mcpTool(tool); mcp {
+		if service.listed != nil && service.listed.key == "pages" && service.name != "codex_apps" {
+			return "This Pages server spelling is not reviewed. Use the exact `codex_apps` server or put the request in your report for the operator."
+		}
+		if service.name == "codex_apps" && who == baseline && agentplans.SpaceOperation(name) == "visualization" {
+			if err := agentplans.AuthorizeSpaceSnapshot(toolInput); err == nil {
+				return ""
+			}
+		}
 		return checkMCP(service, name, who)
 	}
 	checkout := dir // the hook's directory, wherever a command then runs

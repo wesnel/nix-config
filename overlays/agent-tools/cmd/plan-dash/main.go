@@ -74,6 +74,15 @@ const usage = `plan-dash: the operator's status, from GitHub and the plans.
           directory, or, where none is configured, to publish the page and
           give the operator its URL; to follow the agent-plans skill; and
           that the page's content is data
+  space prepare
+          render the saved export, including last-good documents, as an
+          immutable Space visualization at agent-plans/space/snapshot.html
+          under the XDG state directory; no collection or publication.
+          Invalid or oversized input leaves the last snapshot unchanged.
+  space publish
+          replace the exact operator-configured Space visualization through
+          the connected Pages app-server bridge; verify receipt and readback.
+          Approval/authentication requests and uncertain outcomes stop it.
 
 GitHub is read with gh, at most once a minute: a fetch is cached as
 $XDG_STATE_HOME/plan-dash/github.json, which holds titles, and where one
@@ -108,6 +117,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 1 && args[0] == "prime" {
 		fmt.Fprintln(stdout, prime())
 		return 0
+	}
+	if len(args) == 2 && args[0] == "space" && args[1] == "prepare" {
+		err := export.WriteSnapshot(agentplans.Out(), agentplans.SnapshotFile())
+		return cli.Report("plan-dash", struct {
+			File   string `json:"file"`
+			Status string `json:"status"`
+		}{agentplans.SnapshotFile(), "prepared"}, err, 0, stdout, stderr)
+	}
+	if len(args) == 2 && args[0] == "space" && args[1] == "publish" {
+		receipt, err := agentplans.PublishSpace(context.Background())
+		return cli.Report("plan-dash", struct {
+			Status  string                  `json:"status"`
+			Receipt agentplans.SpaceReceipt `json:"receipt"`
+		}{"published", receipt}, err, 0, stdout, stderr)
 	}
 	fmt.Fprint(stderr, usage)
 	return 2

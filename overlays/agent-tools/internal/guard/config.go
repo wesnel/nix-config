@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/wesnel/agent-tools/internal/agentplans"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/repos"
 )
@@ -20,6 +21,28 @@ type settings struct {
 	// sandbox excludes, its sandbox.excludedCommands, which the Claude Code
 	// module writes here too (checkExcludedAlone).
 	ExcludedCommands []string `json:"excludedCommands"`
+}
+
+const spaceAuthority = "Only the operator configures the Space publication target or reconciles its publication journal. " +
+	"Use `plan-dash space prepare` for a snapshot, or put the proposed configuration or recovery in your report for the operator."
+
+func spaceAuthorityFile(path string) bool {
+	return Reaches(path, agentplans.SpaceConfigFile(), false) || Reaches(path, agentplans.SpaceStateFile(), false)
+}
+
+func checkSpaceAuthorityShell(name string, args, redirected []string, dir string) string {
+	if shellWrites(name, args, redirected, dir, spaceAuthorityFile) {
+		return spaceAuthority
+	}
+	if set("mv", "rm", "unlink", "trash", "rmdir")[name] {
+		for _, value := range changedFiles(name, args, redirected) {
+			path := expandPath(value, dir)
+			if spaceAuthorityFile(path) || Reaches(agentplans.SpaceConfigFile(), path, true) || Reaches(agentplans.SpaceStateFile(), path, true) {
+				return spaceAuthority
+			}
+		}
+	}
+	return ""
 }
 
 // builtCredentialPaths are wgn.home.llm.guard.credentialPaths as the
