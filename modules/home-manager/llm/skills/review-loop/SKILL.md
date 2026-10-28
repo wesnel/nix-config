@@ -52,9 +52,11 @@ host and runs `codex-git-setup` for it. On the host, they add
 `/.codex/config.toml` to the clone-local exclude file reported by
 `git rev-parse --git-path info/exclude` from that worktree. Before launching,
 `git check-ignore -v .codex/config.toml` must identify the exclusion and
-`git status --porcelain` must be clean. They then start a new loop session
-from that worktree with its project profile trusted. The session and its
-native sub-agents inherit the permissions loaded at startup. Concurrent loops need
+`git status --porcelain` must be clean. They establish project trust before
+starting the loop. The launcher checks the prepared profile and exact loop
+markers with a model-free sandbox command; a failed preflight stops before
+session launch. The session and its native sub-agents inherit the permissions
+loaded at startup. Concurrent loops need
 separate prepared worktrees and new sessions. If this session lacks that
 prepared worktree, hand back the host preparation and restart commands.
 

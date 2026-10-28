@@ -2,6 +2,7 @@
   lib,
   pkgs,
 }: let
+  profiles = builtins.fromJSON (builtins.readFile ../codex/profiles.json);
   mkReviewLoop = {postCheck ? ""}:
     pkgs.writeShellApplication {
       name = "review-loop";
@@ -41,9 +42,17 @@
             exec claude --settings "$settings" --permission-mode auto "/review-loop $*"
             ;;
           codex)
-            exec codex --no-daemon \
-              -c 'shell_environment_policy.set.PR_LOOP_SESSION="1"' \
-              -c "shell_environment_policy.set.PR_LOOP_MODE=\"$mode\"" \
+            codex_args=(--no-daemon
+              -c ${lib.escapeShellArg ("default_permissions=" + builtins.toJSON profiles.project)}
+              -c 'shell_environment_policy.set.PR_LOOP_SESSION="1"'
+              -c "shell_environment_policy.set.PR_LOOP_MODE=\"$mode\"")
+            # shellcheck disable=SC2016
+            if ! codex "''${codex_args[@]}" sandbox -P ${lib.escapeShellArg profiles.project} -- \
+              /bin/sh -c 'test "$PR_LOOP_SESSION" = 1 && test "$PR_LOOP_MODE" = "$1"' review-loop "$mode"; then
+              echo "Codex review-loop preflight failed: prepare this worktree with codex-git-setup, establish project trust, and resolve any environment filter that removes PR_LOOP_SESSION or PR_LOOP_MODE before retrying." >&2
+              exit 1
+            fi
+            exec codex "''${codex_args[@]}" \
               "Use the review-loop skill to run the operator's $mode review loop on PRs: $*. Read the skill before proceeding."
             ;;
         esac
@@ -53,12 +62,15 @@
     # Model CLIs are stand-ins: tests must never start authenticated sessions.
     fake = name:
       pkgs.writeShellScriptBin name ''
+        for argument in "$@"; do
+          [[ "$argument" != sandbox ]] || exit 0
+        done
         printf '%s\n' "$PR_LOOP_SESSION" "$PR_LOOP_MODE" "$@"
         exit "''${REVIEW_LOOP_TEST_EXIT:-0}"
       '';
     launcher = lib.getExe (mkReviewLoop {});
   in
-    pkgs.runCommand "review-loop-tests" {nativeBuildInputs = [pkgs.jq];} ''
+    pkgs.runCommand "review-loop-tests" {nativeBuildInputs = [pkgs.jq pkgs.python3];} ''
       export PATH=${fake "claude"}/bin:${fake "codex"}/bin:$PATH
       out_=$(${launcher} --harness claude --people 12 '#13')
       [[ "$(sed -n 1,3p <<<"$out_")" == $'1\npeople\n--settings' ]]
@@ -67,13 +79,7 @@
         and .autoMode.environment[0] == "$defaults"' <<<"$(sed -n 4p <<<"$out_")"
       [[ "$(sed -n 5,7p <<<"$out_")" == $'--permission-mode\nauto\n/review-loop 12 #13' ]]
       ${launcher} --harness claude --bots 7 | sed -n 4p | jq -e '.env.PR_LOOP_MODE == "bots"'
-      for mode in bots people; do
-        out_=$(${launcher} --harness codex --$mode 12 '#13')
-        [[ "$(sed -n 1,3p <<<"$out_")" == "$(printf '1\n%s\n--no-daemon' "$mode")" ]]
-        [[ "$(sed -n 4,7p <<<"$out_")" == "$(printf '%s\n' -c 'shell_environment_policy.set.PR_LOOP_SESSION="1"' -c "shell_environment_policy.set.PR_LOOP_MODE=\"$mode\"")" ]]
-        [[ "$(sed -n 8p <<<"$out_")" == "Use the review-loop skill to run the operator's $mode review loop on PRs: 12 #13. Read the skill before proceeding." ]]
-        [[ "$(wc -l <<<"$out_" | tr -d ' ')" == 8 ]]
-      done
+      python ${./test_review_loop.py} ${launcher}
       for bad in "" "--bots 1" "--harness" "--harness other --bots 1" "--harness codex --both 1" "--harness codex --bots" "--harness claude --bots x" "--harness codex --bots 0" "--harness codex --bots 1 --search"; do
         status=0
         # shellcheck disable=SC2086

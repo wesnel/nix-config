@@ -770,8 +770,8 @@ From that worktree on the host, add `/.codex/config.toml` to the clone-local
 exclude file reported by `git rev-parse --git-path info/exclude`. Verify
 that `git check-ignore -v .codex/config.toml` identifies the exclusion and
 `git status --porcelain` is clean. This keeps the machine-local profile out
-of commits and allows the signing pass's clean-worktree check. Then start
-a new loop from that prepared worktree and accept its project trust prompt:
+of commits and allows the signing pass's clean-worktree check. Establish
+Codex project trust before starting the loop from that prepared worktree:
 
 ``` sh
 review-loop --harness codex --bots 12 13     # or --harness claude, or --people
@@ -852,6 +852,11 @@ merging, and any change to Linear, which the hand-back proposes instead.
 
 `review-loop` sets `PR_LOOP_SESSION` and `PR_LOOP_MODE` for the selected
 session and its shell commands; `pr-loop` gates its writes on the mode.
+For Codex, the launcher pins the prepared project profile and first runs a
+model-free sandbox command to check both markers under the effective
+configuration. An unavailable or untrusted profile, or filters that remove
+the markers, stops startup before a model session. Resolve the prerequisite
+named by the refusal and retry; the launcher preserves environment filters.
 Claude Code also gets its auto-mode context and an allow rule for `pr-loop`.
 Codex retains its normal approval settings, hooks and sandbox; approve
 `pr-loop` commands through its normal approval flow when required. Trust
