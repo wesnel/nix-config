@@ -197,9 +197,9 @@ each branch:
 - the same file edited on parallel branches;
 - what the plan leaves undecided, against this bar: someone could build it
   without asking a question;
-- designing for change, by each principle the `design` skill lists (tell
-  the sub-agent to load them), and each of the goal's likely next changes
-  a local edit;
+- designing for change, by each principle and check the `design` skill
+  lists (tell the sub-agent to load the `design` skill and its
+  principles), and each of the goal's likely next changes a local edit;
 - as judgement calls, never as rules: data clumps, primitive obsession, a
   middle man, the same switch in several places, feature envy, and one
   module changed for unrelated reasons.

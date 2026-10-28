@@ -84,8 +84,8 @@ your report for the operator.
   this one, not speculation, which the design review of the plan checks
   would each be a local edit. It holds text, no headings. Write it whole
   with `agent-plan section PLAN Goal --text TEXT [--part P1]`. Load the
-  `design` skill before writing the steps: its principles are what the
-  design review checks them against.
+  `design` skill before writing the steps: its principles and checks are
+  what the design review checks them against.
 - `** Steps`: `*** TODO <step>` headings with `:CUSTOM_ID: S1`, `S2`…; a part's
   are `P1.S1`, `P1.S2`… Each says what observable result marks it done,
   which its `verified` evidence then shows. Add one with
