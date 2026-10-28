@@ -830,7 +830,11 @@
           touch $out
         '';
 
-      checks.${if system == "aarch64-darwin" then "codex-settings" else null} = let
+      checks.${
+        if system == "aarch64-darwin"
+        then "codex-settings"
+        else null
+      } = let
         ngrok = darwinSystems.ngrok;
         home = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username};
       in
@@ -841,7 +845,8 @@
           passAsFile = ["activation"];
         } ''
           python ${./modules/home-manager/codex/test_settings.py}
-          touch $out
+          mkdir -p $out
+          cp "$activationPath" "$out/activation"
         '';
 
       # The Claude Code settings the ngrok Mac's home configuration writes
