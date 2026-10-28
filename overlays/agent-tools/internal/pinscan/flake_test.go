@@ -20,6 +20,8 @@ func TestFlakeInputsChanged(t *testing.T) {
 		{"dotted declarations", `{ inputs.x.url = "github:o/r"; outputs = _: {}; }`, `{ inputs.x.url = "github:o/r"; outputs = _: { a = true; }; }`, false},
 		{"no inputs", `{ outputs = _: {}; }`, `{ outputs = _: { a = true; }; }`, false},
 		{"output expressions", old, strings.Replace(old, "outputs = _: {};", `outputs = _: let a = "${builtins.toJSON { x = "}"; }}"; b = ''text ''${literal} ${a}''; in with {}; assert true; { value = (with {}; a); };`, 1), false},
+		{"static output path", old, strings.Replace(old, "outputs = _: {};", "outputs = _: import ./overlays/default.nix;", 1), false},
+		{"identifier apostrophes", old, strings.Replace(old, "outputs = _: {};", `outputs = _: let a'' = "unused"; in {};`, 1), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := FlakeInputsChanged(tc.old, tc.next); got != tc.want {
@@ -65,12 +67,16 @@ func TestFlakeInputsChanged(t *testing.T) {
 
 func TestFlakeLexicalBoundaries(t *testing.T) {
 	for name, old := range map[string]string{
-		"URI quotes hide input":        `{ description = https://a''; inputs.x.url = "github:o/OLD"; nixConfig.extra-substituters = https://b''; outputs = _: {}; }`,
-		"identifier quotes hide input": `{ description = builtins.a''; inputs.x.url = "github:o/OLD"; nixConfig.extra-substituters = builtins.b''; outputs = _: {}; }`,
-		"URI comment delimiter":        `{ description = https:/*; inputs.x.url = "github:o/OLD"; nixConfig.extra-substituters = https:*/; outputs = _: {}; }`,
-		"indented escape":              `{ inputs.x.url = "github:o/OLD"; description = ''hello ''\n world''; outputs = _: {}; }`,
-		"double dollar string":         `{ inputs.x.url = "github:o/OLD"; description = "$${}"; outputs = _: {}; }`,
-		"double dollar indent":         `{ inputs.x.url = "github:o/OLD"; description = ''$${}''; outputs = _: {}; }`,
+		"URI quotes hide input":   `{ description = https://a''; inputs.x.url = "github:o/OLD"; nixConfig.extra-substituters = https://b''; outputs = _: {}; }`,
+		"URI dot quote":           `{ description = https://a.''; inputs.x.url = "github:o/OLD"; nixConfig.extra-substituters = https://b.''; outputs = _: {}; }`,
+		"URI dot comment":         `{ description = https://a./*; inputs.x.url = "github:o/OLD"; nixConfig.extra-substituters = https://b.*/; outputs = _: {}; }`,
+		"URI comment delimiter":   `{ description = https:/*; inputs.x.url = "github:o/OLD"; nixConfig.extra-substituters = https:*/; outputs = _: {}; }`,
+		"indented escape":         `{ inputs.x.url = "github:o/OLD"; description = ''hello ''\n world''; outputs = _: {}; }`,
+		"double dollar string":    `{ inputs.x.url = "github:o/OLD"; description = "$${}"; outputs = _: {}; }`,
+		"double dollar indent":    `{ inputs.x.url = "github:o/OLD"; description = ''$${}''; outputs = _: {}; }`,
+		"interpolated path":       `{ inputs.x.url = "github:o/OLD"; description = ./a/${name}; outputs = _: {}; }`,
+		"unsupported path quote":  `{ inputs.x.url = "github:o/OLD"; description = ./a''quoted''; outputs = _: {}; }`,
+		"unsupported lookup path": `{ inputs.x.url = "github:o/OLD"; description = <nixpkgs>; outputs = _: {}; }`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if !FlakeInputsChanged(old, strings.Replace(old, "github:o/OLD", "github:o/NEW", 1)) {

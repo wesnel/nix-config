@@ -17,6 +17,10 @@ func FlakeInputsChanged(old, next string) bool {
 
 var flakeAttr = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_'-]*$`)
 var flakeInt = regexp.MustCompile(`^-?[0-9]+$`)
+var flakeIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_'-]*`)
+var flakeNumber = regexp.MustCompile(`^-?[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?`)
+var flakeURI = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:[A-Za-z0-9%/?:@&=+$,_.!~*'-]`)
+var flakePathStart = regexp.MustCompile(`^[A-Za-z0-9._+~-]*/`)
 
 func literalFlakeInputs(text string) ([]string, bool) {
 	l := flakeLexer{text: text}
@@ -182,22 +186,35 @@ func (l *flakeLexer) token(depth int) (string, bool) {
 			l.at += end + 4
 		default:
 			start := l.at
-			if c == '"' || strings.HasPrefix(l.text[l.at:], "''") {
+			s := l.text[l.at:]
+			switch {
+			case flakeURI.MatchString(s):
+				return "", false
+			case c == '"' || strings.HasPrefix(s, "''"):
 				if !l.quoted(depth + 1) {
 					return "", false
 				}
-			} else if strings.ContainsRune("{}[]();=.", rune(c)) {
-				l.at++
-			} else {
-				for l.at < len(l.text) && !strings.ContainsRune(" \t\r\n{}[]();=.\"#", rune(l.text[l.at])) &&
-					!strings.HasPrefix(l.text[l.at:], "/*") && !strings.HasPrefix(l.text[l.at:], "''") {
+			case strings.HasPrefix(s, "//"):
+				l.at += 2
+			case flakePathStart.MatchString(s) && !(c == '/' && (len(s) == 1 || strings.ContainsRune(" \t\r\n", rune(s[1])))):
+				if !l.staticPath() {
+					return "", false
+				}
+			case flakeIdentifier.MatchString(s):
+				l.at += len(flakeIdentifier.FindString(s))
+			case flakeNumber.MatchString(s):
+				l.at += len(flakeNumber.FindString(s))
+			default:
+				for _, op := range []string{"...", "++", "==", "!=", "<=", ">=", "&&", "||", "->"} {
+					if strings.HasPrefix(s, op) {
+						l.at += len(op)
+						break
+					}
+				}
+				if l.at == start && strings.ContainsRune("{}[]();=.:,?@!+-*/>", rune(c)) {
 					l.at++
 				}
-				// Inside a token these delimiters can belong to an identifier,
-				// URI or path. Guessing a new lexical region could hide inputs.
-				tail := l.text[l.at:]
-				if strings.HasPrefix(tail, "''") || strings.HasPrefix(tail, "/*") ||
-					strings.HasPrefix(tail, `"`) || strings.HasPrefix(tail, "#") {
+				if l.at == start {
 					return "", false
 				}
 			}
@@ -205,6 +222,24 @@ func (l *flakeLexer) token(depth int) (string, bool) {
 		}
 	}
 	return "", true
+}
+
+// staticPath consumes a whole atom before punctuation can split it. Paths
+// containing interpolation or bytes outside this static subset require review.
+func (l *flakeLexer) staticPath() bool {
+	start := l.at
+	for l.at < len(l.text) {
+		c := l.text[l.at]
+		if strings.ContainsRune(" \t\r\n;()[]{}", rune(c)) {
+			break
+		}
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("._+~-/", rune(c))) ||
+			strings.HasPrefix(l.text[l.at:], "/*") || strings.HasPrefix(l.text[l.at:], "//") {
+			return false
+		}
+		l.at++
+	}
+	return l.at > start && l.text[l.at-1] != '/'
 }
 
 func (l *flakeLexer) quoted(depth int) bool {
