@@ -112,6 +112,8 @@ next one starts at step 1.
    sub-agent given the goal, range and items. Ask it to inspect every
    changed hunk, check each finding against code or a reproduction, and
    report its evidence and anything it could not verify, without editing.
+   Start every Codex reviewer with `fork_turns="none"`, supplying only
+   the goal, range, items and applicable review contract.
    Codex reviews use a separate context in the same model family; report
    that limitation. Ask the general reviewer to identify the focused
    reviews the change needs, with reasons: security for changes to trust
