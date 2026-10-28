@@ -10,7 +10,12 @@
     (_: {
       wgn.home = {
         aerospace.enable = true;
-        claude.enable = true;
+
+        claude = {
+          enable = true;
+          quotaStop = 99;
+        };
+
         codex.enable = true;
         emacs.enable = true;
         fish.enable = true;
