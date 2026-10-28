@@ -252,9 +252,43 @@ func exists(path string) bool {
 // gpgsig-sha256 in a SHA-256 repository): no verifier runs, so pr-loop
 // next, which only reads, can call it.
 func RangeStart(base, tip string) (string, bool, error) {
-	format, err := objectGit("rev-parse", "--show-object-format")
+	commits, err := readRange(base, tip)
 	if err != nil {
 		return "", false, err
+	}
+	oldest, fixups := len(commits), false
+	for i, c := range commits {
+		if c.unsigned && i < oldest {
+			oldest = i
+		}
+		target, err := foldTarget(commits, i)
+		if err != nil {
+			return "", false, err
+		}
+		if target >= 0 {
+			fixups = true
+			if target < oldest {
+				oldest = target
+			}
+		}
+	}
+	if oldest == len(commits) {
+		return "", false, nil
+	}
+	return commits[oldest].sha + "^", fixups, nil
+}
+
+type rangeCommit struct {
+	sha, subject string
+	unsigned     bool
+}
+
+// readRange is base..tip, oldest first, each commit unsigned when its object
+// has no signature header for the repository's object format (RangeStart).
+func readRange(base, tip string) ([]rangeCommit, error) {
+	format, err := objectGit("rev-parse", "--show-object-format")
+	if err != nil {
+		return nil, err
 	}
 	header := "\ngpgsig "
 	if format == "sha256" {
@@ -262,51 +296,33 @@ func RangeStart(base, tip string) (string, bool, error) {
 	}
 	out, err := objectGit("log", "--reverse", "--format=%H%x00%s", base+".."+tip)
 	if err != nil {
-		return "", false, err
+		return nil, err
 	}
-	type entry struct {
-		sha, subject string
-		unsigned     bool
-	}
-	var commits []entry
+	var commits []rangeCommit
 	for _, line := range strings.Split(out, "\n") {
 		if f := strings.SplitN(line, "\x00", 2); len(f) == 2 {
 			raw, err := objectGit("cat-file", "commit", f[0])
 			if err != nil {
-				return "", false, err
+				return nil, err
 			}
 			headers, _, _ := strings.Cut(raw, "\n\n")
-			commits = append(commits, entry{f[0], f[1], !strings.Contains("\n"+headers, header)})
+			commits = append(commits, rangeCommit{f[0], f[1], !strings.Contains("\n"+headers, header)})
 		}
 	}
-	oldest, fixups := len(commits), false
-	for i, c := range commits {
-		if c.unsigned && i < oldest {
-			oldest = i
-		}
-		kind, target := history.Fold(c.subject)
-		if kind == history.Kept {
-			continue
-		}
-		fixups = true
-		found := -1
-		for j := i - 1; j >= 0; j-- {
-			if k, _ := history.Fold(commits[j].subject); k == history.Kept && commits[j].subject == target {
-				found = j
-				break
-			}
-		}
-		if found < 0 {
-			return "", false, refuse("%q folds into a commit that is not on this branch; retarget it", c.subject)
-		}
-		if found < oldest {
-			oldest = found
+	return commits, nil
+}
+
+func foldTarget(commits []rangeCommit, i int) (int, error) {
+	kind, target := history.Fold(commits[i].subject)
+	if kind == history.Kept {
+		return -1, nil
+	}
+	for j := i - 1; j >= 0; j-- {
+		if k, _ := history.Fold(commits[j].subject); k == history.Kept && commits[j].subject == target {
+			return j, nil
 		}
 	}
-	if oldest == len(commits) {
-		return "", false, nil
-	}
-	return commits[oldest].sha + "^", fixups, nil
+	return -1, refuse("%q folds into a commit that is not on this branch; retarget it", commits[i].subject)
 }
 
 // rehearseSquash squashes start..tip unsigned in a throwaway worktree, and

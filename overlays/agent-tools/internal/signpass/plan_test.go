@@ -3,6 +3,7 @@ package signpass
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,6 +18,146 @@ func TestPlan(t *testing.T) {
 	t.Run("fork conflict", testPlanForkConflict)
 	t.Run("nothing to sign", testPlanNothingToSign)
 	t.Run("push unmoved", testPlanPushUnmoved)
+	t.Run("shared folds", testPlanSharedFolds)
+}
+
+func testPlanSharedFolds(t *testing.T) {
+	for _, tc := range []struct {
+		name, leaf, carrier                         string
+		own, shared, cycle, independent, signedLeaf bool
+	}{
+		{name: "later carrier", leaf: "A", carrier: "Z"},
+		{name: "earlier carrier", leaf: "Z", carrier: "A"},
+		{name: "own tail", leaf: "A", carrier: "Z", own: true},
+		{name: "shared fold", leaf: "A", carrier: "Z", shared: true},
+		{name: "incompatible carriers", leaf: "A", carrier: "Z", cycle: true},
+		{name: "same subject different target", leaf: "A", carrier: "Z", independent: true},
+		{name: "already signed sibling", leaf: "A", carrier: "Z", signedLeaf: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			global := signingConfig(t, dir)
+			signer, err := exec.LookPath("ssh-keygen")
+			if err != nil {
+				t.Fatal(err)
+			}
+			audit := filepath.Join(dir, "sign-actions")
+			wrapper := filepath.Join(dir, "signer")
+			program := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = -Y ] && [ \"$2\" = sign ]; then printf 'sign\\n' >> %q; fi\nexec %q \"$@\"\n", audit, signer)
+			if err := os.WriteFile(wrapper, []byte(program), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			repo := filepath.Join(dir, "repo")
+			if err := os.Mkdir(repo, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			gitIn(t, repo, "init", "-q", "-b", "main")
+			commit := func(message string) {
+				t.Helper()
+				gitIn(t, repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", message)
+			}
+			write := func(name, text string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(repo, name), []byte(text), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				gitIn(t, repo, "add", name)
+			}
+			gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+			gitIn(t, repo, "switch", "-qc", "P")
+			write("p", "original\n")
+			commit("Parent")
+			if tc.signedLeaf {
+				gitIn(t, repo, "-c", "include.path="+global, "-c", "commit.gpgsign=true", "commit", "-q", "--amend", "--no-edit")
+			}
+			if tc.shared {
+				write("p", "fixed\n")
+				commit("fixup! Parent")
+			}
+			gitIn(t, repo, "switch", "-qc", tc.leaf)
+			if tc.cycle {
+				write("p", "other fix\n")
+				commit("fixup! Parent")
+			}
+			write("leaf", "leaf\n")
+			commit("Leaf")
+			if tc.signedLeaf {
+				gitIn(t, repo, "-c", "include.path="+global, "-c", "commit.gpgsign=true", "commit", "-q", "--amend", "--no-edit")
+			}
+			parent := "P"
+			if tc.independent {
+				parent = "main"
+			}
+			gitIn(t, repo, "switch", "-qc", tc.carrier, parent)
+			if tc.independent {
+				write("p", "independent\n")
+				commit("Parent")
+			}
+			if !tc.own && !tc.shared {
+				write("p", "fixed\n")
+				commit("fixup! Parent")
+			}
+			write("carrier", "original\n")
+			commit("Carrier")
+			if tc.own {
+				write("carrier", "fixed\n")
+				commit("fixup! Carrier")
+			}
+			gitIn(t, repo, "switch", "-q", "main")
+			before := gitIn(t, repo, "show-ref", "--heads")
+			gitIn(t, repo, "config", "--file", global, "gpg.ssh.program", wrapper)
+			t.Setenv("GIT_CONFIG_GLOBAL", global)
+			t.Setenv("GIT_EDITOR", "false")
+			t.Setenv("GIT_SEQUENCE_EDITOR", "false")
+			useDir(t, repo)
+			result, err := Plan("", []string{tc.carrier, tc.leaf}, false, false)
+			if tc.cycle || tc.signedLeaf {
+				want := "cannot order"
+				if tc.signedLeaf {
+					want = "already signed"
+				}
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Errorf("incompatible fold order: %v", err)
+				}
+				if actions, err := os.ReadFile(audit); !os.IsNotExist(err) || len(actions) != 0 {
+					t.Errorf("signed before refusing: %q, %v", actions, err)
+				}
+				if after := gitIn(t, repo, "show-ref", "--heads"); after != before {
+					t.Errorf("branches changed before refusal:\n%s", after)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if actions, err := os.ReadFile(audit); err != nil || len(actions) == 0 {
+				t.Fatalf("no actual signing: %q, %v", actions, err)
+			}
+			branches := result.(map[string]any)["branches"].(map[string]any)
+			first := "A"
+			if !tc.own && !tc.shared && !tc.independent {
+				first = tc.carrier
+			}
+			if lines := branches["plan"].([]string); !strings.HasPrefix(lines[0], first+":") {
+				t.Errorf("first top: %s, want %s", lines[0], first)
+			}
+			if tc.own {
+				if got := gitIn(t, repo, "log", "--format=%s", "main.."+tc.carrier); got != "Carrier\nParent" {
+					t.Errorf("folded history: %q", got)
+				}
+			} else {
+				for _, b := range []string{tc.leaf, tc.carrier} {
+					want := "fixed"
+					if tc.independent && b == tc.leaf {
+						want = "original"
+					}
+					if got := gitIn(t, repo, "show", b+":p"); got != want {
+						t.Errorf("%s lost shared fix: %q", b, got)
+					}
+				}
+			}
+		})
+	}
 }
 
 // testPlanPushUnmoved pushes, beside a branch the pass signs, a named branch

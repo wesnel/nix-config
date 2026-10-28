@@ -100,7 +100,10 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 			tips = append(tips, n)
 		}
 	}
-	sort.Strings(tips)
+	tips, err = orderTops(base, tips, before)
+	if err != nil {
+		return nil, err
+	}
 	all, err := checkouts()
 	if err != nil {
 		return nil, err
@@ -245,6 +248,94 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 	}
 	pl.Results["plan"] = lines
 	return runPlan(pl)
+}
+
+// orderTops puts a fold's carrier before a sibling that needs its target's
+// folded copy. Shared folds and folds into a carrier's own tail need no order.
+func orderTops(base string, tips []string, before map[string]string) ([]string, error) {
+	type fold struct{ commit, target string }
+	type top struct {
+		name     string
+		commits  map[string]bool
+		folds    []fold
+		rewrites bool
+	}
+	sort.Strings(tips)
+	var tops []top
+	for _, name := range tips {
+		b := base
+		if b == "" {
+			var err error
+			if b, err = DefaultBase(name); err != nil {
+				return nil, err
+			}
+		}
+		commits, err := readRange(b, before[name])
+		if err != nil {
+			return nil, err
+		}
+		t := top{name: name, commits: map[string]bool{}}
+		for i, c := range commits {
+			t.commits[c.sha] = true
+			t.rewrites = t.rewrites || c.unsigned
+			at, err := foldTarget(commits, i)
+			if err != nil {
+				return nil, err
+			}
+			if at >= 0 {
+				t.folds = append(t.folds, fold{c.sha, commits[at].sha})
+				t.rewrites = true
+			}
+		}
+		tops = append(tops, t)
+	}
+	predecessors := map[string]map[string]bool{}
+	for _, carrier := range tops {
+		for _, f := range carrier.folds {
+			for _, sibling := range tops {
+				if !sibling.commits[f.target] || sibling.commits[f.commit] {
+					continue
+				}
+				if !sibling.rewrites {
+					return nil, refuse("%s is already signed but needs %s's fold into %.12s; restack it onto that folded history before signing these tops together", sibling.name, carrier.name, f.target)
+				}
+				if predecessors[sibling.name] == nil {
+					predecessors[sibling.name] = map[string]bool{}
+				}
+				predecessors[sibling.name][carrier.name] = true
+			}
+		}
+	}
+	var ordered []string
+	done := map[string]bool{}
+	for len(ordered) < len(tops) {
+		ready := ""
+		for _, t := range tops {
+			if done[t.name] {
+				continue
+			}
+			blocked := false
+			for p := range predecessors[t.name] {
+				blocked = blocked || !done[p]
+			}
+			if !blocked {
+				ready = t.name
+				break
+			}
+		}
+		if ready == "" {
+			var remaining []string
+			for _, t := range tops {
+				if !done[t.name] {
+					remaining = append(remaining, t.name)
+				}
+			}
+			return nil, refuse("cannot order shared folds on %s; their carriers require each other first. Restack the folds into shared history before signing these tops together", strings.Join(remaining, ", "))
+		}
+		ordered = append(ordered, ready)
+		done[ready] = true
+	}
+	return ordered, nil
 }
 
 // rehearseStep checks a step that shares nothing with an earlier one, as a
