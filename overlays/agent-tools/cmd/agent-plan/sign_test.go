@@ -13,6 +13,133 @@ import (
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
+func TestSignPlan(t *testing.T) {
+	t.Run("selected", testSignSelectedPlan)
+	t.Run("refused", testSignPlanRefused)
+}
+
+func testSignSelectedPlan(t *testing.T) {
+	c := setup(t)
+	worktree, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("git", "-C", worktree, "init", "-q", "-b", "topic").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	t.Chdir(worktree)
+	selected, err := c.New(plans.NewOptions{Title: "Selected", Slug: "selected", Sessions: []string{"codex:handoff"}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	implicit, err := c.New(plans.NewOptions{Title: "Implicit", Slug: "implicit", Worktrees: []string{worktree}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"sign-id", "--session", "codex:handoff", "--worktree", worktree,
+		"--branch", "topic", "--branch", "other", "--base", "parent-feature"}
+	code, out, errs := agentPlan(t, "", args...)
+	if code != 0 || !strings.HasPrefix(strings.TrimSpace(out), implicit.ID+".") {
+		t.Fatalf("default worktree selection: %d %q %s", code, out, errs)
+	}
+	before, err := os.ReadFile(implicit.Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs = agentPlan(t, "", append(args, "--plan", selected.Plan)...)
+	id := strings.TrimSpace(out)
+	if code != 0 || !strings.HasPrefix(id, selected.ID+".") {
+		t.Fatalf("explicit plan selection: %d %q %s", code, out, strings.SplitN(errs, "\n", 2)[0])
+	}
+	p, err := c.Open(selected.Plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := p.Events()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) == 0 {
+		t.Fatal("explicit request did not reach the selected log")
+	}
+	last := events[len(events)-1]
+	if last.Kind != "sign-requested" || last.Sign != id || last.Item != selected.ID ||
+		last.Session != "codex:handoff" || last.Worktree != worktree || last.Branch != "topic,other" || last.Base != "parent-feature" {
+		t.Errorf("explicit request: %+v", last)
+	}
+	after, err := os.ReadFile(implicit.Log)
+	if err != nil || string(after) != string(before) {
+		t.Errorf("explicit request changed the implicit plan log: %v", err)
+	}
+}
+
+func testSignPlanRefused(t *testing.T) {
+	for _, name := range []string{"empty", "foreign host", "missing", "unreadable", "other command"} {
+		t.Run(name, func(t *testing.T) {
+			c := setup(t)
+			selected, err := c.New(plans.NewOptions{Title: "Selected", Slug: "selected", Sessions: []string{"codex:handoff"}}, time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Chdir(c.Dir)
+			target, want, wantCode := selected.Plan, "", 2
+			logs := []string{selected.Log}
+			switch name {
+			case "empty":
+				target, want = "", "omit --plan"
+			case "foreign host":
+				foreign := c
+				foreign.Host = "away"
+				made, err := foreign.New(plans.NewOptions{Title: "Foreign", Slug: "foreign"}, time.Now())
+				if err != nil {
+					t.Fatal(err)
+				}
+				target, want, logs = made.Plan, "only agent-plan on away", append(logs, made.Log)
+			case "missing":
+				target = filepath.Join(c.Dir, "missing.box.org")
+				want = target
+			case "unreadable":
+				if os.Geteuid() == 0 {
+					t.Skip("run as an unprivileged user to exercise a real file-permission refusal")
+				}
+				if err := os.Chmod(selected.File, 0); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if err := os.Chmod(selected.File, 0o644); err != nil {
+						t.Error(err)
+					}
+				})
+				want, wantCode = selected.File, 1
+			case "other command":
+				want = "--plan is sign-id's"
+			}
+			before := map[string]string{}
+			for _, file := range logs {
+				data, err := os.ReadFile(file)
+				if err != nil {
+					t.Fatal(err)
+				}
+				before[file] = string(data)
+			}
+			args := []string{"sign-id", "--session", "codex:handoff", "--plan", target}
+			if name == "other command" {
+				args = []string{"status", selected.Plan, "--plan", target}
+			}
+			code, out, errs := agentPlan(t, "", args...)
+			if code != wantCode || out != "" || !strings.Contains(errs, want) {
+				t.Errorf("invalid selector: %d %q %q; want code %d and %q", code, out, strings.SplitN(errs, "\n", 2)[0], wantCode, want)
+			}
+			for file, data := range before {
+				after, err := os.ReadFile(file)
+				if err != nil || string(after) != data {
+					t.Errorf("refusal changed %s: %v", file, err)
+				}
+			}
+		})
+	}
+}
+
 // A sign-pass handed over in a session is minted an ID there; its result
 // is read once through sign-result or the next prompt's remind, whichever
 // comes first, even with prompts in separate processes at once.
