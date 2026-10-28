@@ -7,6 +7,19 @@
 with lib; let
   cfg = config.wgn.home.codex;
   cacheRoot = "${config.xdg.cacheHome}/codex/sandbox";
+  networkProxy = {
+    enabled = true;
+    allow_local_binding = true;
+    allow_upstream_proxy = false;
+    dangerously_allow_all_unix_sockets = false;
+    dangerously_allow_non_loopback_proxy = false;
+    domains = {
+      localhost = "allow";
+      "127.0.0.1" = "allow";
+      "::1" = "allow";
+    };
+    unix_sockets."/nix/var/nix/daemon-socket/socket" = "allow";
+  };
 
   llm = import ../llm/lib.nix {inherit lib;};
 
@@ -131,12 +144,15 @@ with lib; let
             doc = tomlkit.parse(f.read())
 
 
-    def merge(table, values):
+    def merge(table, values, path=()):
         changed = False
         for key, value in values.items():
-            if isinstance(value, dict):
+            child_path = path + (key,)
+            # The managed proxy policy replaces any broader saved allowlist.
+            if (isinstance(value, dict)
+                    and child_path != ("features", "network_proxy")):
                 child = table.setdefault(key, tomlkit.table())
-                changed = merge(child, value) or changed
+                changed = merge(child, value, child_path) or changed
             elif table.get(key) != value:
                 table[key] = value
                 changed = True
@@ -159,10 +175,12 @@ in {
       internal = true;
       default = {
         sandbox_mode = "workspace-write";
-        sandbox_workspace_write.network_access = false;
+        sandbox_workspace_write.network_access = true;
+        features.network_proxy = networkProxy;
         shell_environment_policy.set = {
           GOCACHE = "${cacheRoot}/go-build";
           GOLANGCI_LINT_CACHE = "${cacheRoot}/golangci-lint";
+          XDG_CACHE_HOME = "${cacheRoot}/xdg";
         };
       };
 
@@ -170,7 +188,8 @@ in {
         The sandbox every interactive Codex session's commands run in,
         merged into ~/.codex/config.toml on every switch, so that it never
         rests on what Codex chooses for a trusted project. An assertion
-        holds it to workspace-write with the network off.
+        holds it to workspace-write with a proxy permitting host loopback
+        and the Nix daemon socket. The daemon builds outside this sandbox.
       '';
     };
   };
@@ -282,28 +301,27 @@ in {
       '';
     }
 
-    # Pins interactive sessions' sandbox: commands write only the workspace
-    # and the writable roots above, and reach no network; the guard hook
-    # holds the rest of what Codex may do. Codex reads `sandbox_mode` and
-    # `[sandbox_workspace_write] network_access` from config.toml; git
-    # delegate's `codex exec --ignore-user-config` reads neither.
-    # Merged into the config.toml Codex writes.
+    # The proxy allows host loopback and only the Nix daemon's Unix socket.
+    # Nix evaluates in the client sandbox, but daemon builds run outside it
+    # with the daemon's filesystem and network authority. Git delegate's
+    # `codex exec --ignore-user-config` does not read these settings.
     {
       assertions = [
         {
           assertion =
             (cfg.sandbox.sandbox_mode or null)
             == "workspace-write"
-            && (cfg.sandbox.sandbox_workspace_write.network_access or null) == false
+            && (cfg.sandbox.sandbox_workspace_write.network_access or null) == true
+            && (cfg.sandbox.features.network_proxy or null) == networkProxy
             && hasInfix (escapeShellArg (builtins.toJSON cfg.sandbox)) config.home.activation.codexSandbox.data;
-          message = "wgn.home.codex: interactive Codex must run in workspace-write with network_access = false, written into config.toml";
+          message = "wgn.home.codex: interactive Codex must use workspace-write with the loopback and Nix-socket network proxy, written into config.toml";
         }
       ];
 
       home.activation.codexSandbox = lib.hm.dag.entryAfter ["writeBoundary"] ''
         if [ -z "''${DRY_RUN:-}" ]; then
           ${setKeys} "$HOME/.codex/config.toml" ${escapeShellArg (builtins.toJSON cfg.sandbox)} \
-            || warnEcho "Codex's sandbox was not pinned to workspace-write without network."
+            || warnEcho "Codex's sandbox and local network proxy settings were not written."
           mkdir -p ${escapeShellArg cacheRoot}
           ${addWritableRoot} "$HOME/.codex/config.toml" ${escapeShellArg cacheRoot} \
             ${escapeShellArg "${config.xdg.stateHome}/codex/cache-root"} \
