@@ -346,12 +346,17 @@ func publishSpace(target SpaceTarget, html []byte, rpc *spaceRPC, stateFile stri
 	if err := saveSpaceState(stateFile, state); err != nil {
 		return empty, err
 	}
+	type uploadedReference struct {
+		Markdown      string `json:"markdown"`
+		FileReference string `json:"file_reference"`
+	}
 	var response struct {
-		PageID        string          `json:"page_id"`
-		Markdown      string          `json:"markdown"`
-		FileReference string          `json:"file_reference"`
-		Error         json.RawMessage `json:"error"`
-		Edit          struct {
+		PageID string `json:"page_id"`
+		uploadedReference
+		Error *struct {
+			Visualization *uploadedReference `json:"visualization"`
+		} `json:"error"`
+		Edit struct {
 			Error      json.RawMessage `json:"error"`
 			Operations []struct {
 				Index    int      `json:"operation_index"`
@@ -367,8 +372,15 @@ func publishSpace(target SpaceTarget, html []byte, rpc *spaceRPC, stateFile stri
 		} `json:"edit"`
 	}
 	callErr := rpc.tool(target, rpc.writeTool, args, &response)
-	if response.PageID == target.PageID && visualizationMarkdown(response.Markdown) && response.Markdown == "![Agent plans](visualize:"+response.FileReference+")" {
-		state.Pending.Markdown = response.Markdown
+	var uploaded *uploadedReference
+	if response.PageID == target.PageID {
+		uploaded = &response.uploadedReference
+	}
+	if response.Error != nil && (response.PageID == "" || response.PageID == target.PageID) {
+		uploaded = response.Error.Visualization
+	}
+	if uploaded != nil && visualizationMarkdown(uploaded.Markdown) && uploaded.Markdown == "![Agent plans](visualize:"+uploaded.FileReference+")" {
+		state.Pending.Markdown = uploaded.Markdown
 		if err := saveSpaceState(stateFile, state); err != nil {
 			return empty, err
 		}
@@ -376,7 +388,7 @@ func publishSpace(target SpaceTarget, html []byte, rpc *spaceRPC, stateFile stri
 	// Read after every attempted upload, including ambiguous errors. An upload
 	// with no usable receipt remains pending: never create another file blindly.
 	readback, _, readErr := rpc.read(target)
-	if callErr != nil || len(response.Error) > 0 || len(response.Edit.Error) > 0 || len(response.Edit.Operations) != 1 {
+	if callErr != nil || response.Error != nil || len(response.Edit.Error) > 0 || len(response.Edit.Operations) != 1 {
 		return empty, fmt.Errorf("Space publication receipt was not successful; outcome retained for reconciliation")
 	}
 	op := response.Edit.Operations[0]

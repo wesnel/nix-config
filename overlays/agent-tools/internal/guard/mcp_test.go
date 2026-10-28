@@ -137,10 +137,11 @@ func TestSpaceTools(t *testing.T) {
 			}
 		})
 	}
-	for _, change := range []map[string]any{
+	for i, change := range []map[string]any{
 		{"page_id": "page_other"}, {"replace_block": map[string]string{"block_id": "block_other", "expected_hash": "observed"}},
 		{"replace_block": nil}, {"after_block_id": "block_other"}, {"html": "<script>fetch('https://example.com')</script>"},
 		{"html": strings.Replace(html, `"plans":[]`, `"plans":["</script><script>bad()</script>"]`, 1)},
+		{"html": strings.Replace(html, `"plans":[]`, `"Plans":[]`, 1)},
 		{"title": "Other"}, {"base_sequence": -1}, {"approval": true},
 	} {
 		args := map[string]any{}
@@ -152,8 +153,35 @@ func TestSpaceTools(t *testing.T) {
 		}
 		input, _ := json.Marshal(args)
 		if reason := CheckBaseline("mcp__codex_apps__chatgpt_space__create_page_visualization", input); reason == "" {
-			t.Errorf("allowed changed snapshot arguments: %v", change)
+			t.Errorf("allowed changed snapshot arguments at case %d", i)
 		}
+	}
+	for _, tc := range []struct {
+		name, plans string
+		allow       bool
+	}{
+		{"valid ID", `[{"id":"plan-one"}]`, true},
+		{"null", `[null]`, false},
+		{"scalar", `[7]`, false},
+		{"array", `[[]]`, false},
+		{"missing ID", `[{}]`, false},
+		{"wrong ID type", `[{"id":7}]`, false},
+		{"empty ID", `[{"id":""}]`, false},
+		{"wrong ID case", `[{"ID":"plan-one"}]`, false},
+		{"duplicate ID", `[{"id":"plan-one"},{"id":"plan-one"}]`, false},
+	} {
+		t.Run("plan entry "+tc.name, func(t *testing.T) {
+			args := map[string]any{}
+			for k, v := range write {
+				args[k] = v
+			}
+			args["html"] = strings.Replace(html, `"plans":[]`, `"plans":`+tc.plans, 1)
+			input, _ := json.Marshal(args)
+			reason := CheckBaseline("mcp__codex_apps__chatgpt_space__create_page_visualization", input)
+			if (reason == "") != tc.allow {
+				t.Fatalf("allow=%v, reason=%s", tc.allow, reason)
+			}
+		})
 	}
 	input, _ := json.Marshal(write)
 	for _, invalid := range []string{

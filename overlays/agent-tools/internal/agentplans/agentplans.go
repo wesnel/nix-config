@@ -73,6 +73,9 @@ func ValidateSnapshot(data []byte) error {
 	if !json.Valid(payload) || bytes.ContainsAny(payload, "<>&\u2028\u2029") {
 		return fmt.Errorf("Space snapshot data must be HTML-safe JSON")
 	}
+	if err := exactKeys(payload, "plans", "github", "meta", "today"); err != nil {
+		return err
+	}
 	var documents struct {
 		Plans  []json.RawMessage          `json:"plans"`
 		GitHub map[string]json.RawMessage `json:"github"`
@@ -81,6 +84,15 @@ func ValidateSnapshot(data []byte) error {
 	}
 	if err := strictJSON(payload, &documents); err != nil || documents.Plans == nil || documents.GitHub == nil || documents.Meta == nil || documents.Today == nil {
 		return fmt.Errorf("Space snapshot requires plans, github, meta and today documents")
+	}
+	ids := make(map[string]bool, len(documents.Plans))
+	for _, raw := range documents.Plans {
+		var plan map[string]json.RawMessage
+		var id string
+		if err := json.Unmarshal(raw, &plan); err != nil || plan == nil || json.Unmarshal(plan["id"], &id) != nil || id == "" || ids[id] {
+			return fmt.Errorf("Space snapshot plans must be objects with distinct nonempty string IDs")
+		}
+		ids[id] = true
 	}
 	return nil
 }

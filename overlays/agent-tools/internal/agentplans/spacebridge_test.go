@@ -60,8 +60,16 @@ func fakeSpaceRPC(t *testing.T, mode string, saved bool) (*spaceRPC, *bytes.Buff
 		write = `{"jsonrpc":"2.0","id":5,"error":{"code":-32000,"message":"connection lost"}}`
 	case "conflict":
 		write = strings.Replace(write, `"new_sequence":10,"operation_results":[{"operation_index":0,"status":"applied","ignored_reason":null,"error_code":null,"affected_blocks":[{"block_id":"block_owned","hash":"new_hash"}],"created_block_ids":[],"continuation_position":null,"preceding_block_id":null}]`, `"error":{"code":"edit_conflict","commit_status":"not_committed","message":"hash changed"}`, 1)
-	case "saved_unknown":
+	case "saved_unknown_top":
 		write = strings.Replace(write, `"new_sequence":10,"operation_results":[{"operation_index":0,"status":"applied","ignored_reason":null,"error_code":null,"affected_blocks":[{"block_id":"block_owned","hash":"new_hash"}],"created_block_ids":[],"continuation_position":null,"preceding_block_id":null}]`, `"error":{"code":"edit_conflict","commit_status":"unknown","message":"save uncertain"}`, 1)
+	case "saved_unknown", "error_bad_reference", "error_wrong_page":
+		write = `{"jsonrpc":"2.0","id":5,"result":{"isError":true,"content":[],"structuredContent":{"error":{"code":"save_failed","commit_status":"unknown","message":"save uncertain","visualization":{"file_reference":"new_file","markdown":"![Agent plans](visualize:new_file)"}}}}}`
+		if mode == "error_bad_reference" {
+			write = strings.Replace(write, `"file_reference":"new_file"`, `"file_reference":"other_file"`, 1)
+		}
+		if mode == "error_wrong_page" {
+			write = strings.Replace(write, `"structuredContent":{`, `"structuredContent":{"page_id":"page_elsewhere",`, 1)
+		}
 	case "ignored":
 		write = strings.Replace(write, `"ignored_reason":null`, `"ignored_reason":"block_deleted"`, 1)
 	case "wrong_block":
@@ -147,7 +155,7 @@ func validateBridgeRequests(t *testing.T, sent *bytes.Buffer) (reads, writes int
 }
 
 func TestSpacePublication(t *testing.T) {
-	for _, mode := range []string{"success", "approval", "unknown", "conflict", "saved_unknown", "ignored", "wrong_block", "bad_reference"} {
+	for _, mode := range []string{"success", "approval", "unknown", "conflict", "saved_unknown", "saved_unknown_top", "error_bad_reference", "error_wrong_page", "ignored", "wrong_block", "bad_reference"} {
 		t.Run(mode, func(t *testing.T) {
 			target, html := spaceFixture(t)
 			now := func() time.Time { return time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC) }
@@ -172,14 +180,15 @@ func TestSpacePublication(t *testing.T) {
 			} else if state.Pending == nil || state.Published != nil {
 				t.Fatalf("failure discarded pending state or claimed publication: %s", data)
 			}
-			if mode == "success" || mode == "saved_unknown" || mode == "unknown" || mode == "conflict" {
-				rpc, sent = fakeSpaceRPC(t, "success", mode == "success" || mode == "saved_unknown")
+			recovers := mode == "success" || mode == "saved_unknown" || mode == "saved_unknown_top"
+			if recovers || mode == "unknown" || mode == "conflict" || strings.HasPrefix(mode, "error_") {
+				rpc, sent = fakeSpaceRPC(t, "success", recovers || strings.HasPrefix(mode, "error_"))
 				_, err = publishSpace(target, html, rpc, SpaceStateFile(), now)
 				reads, writes := validateBridgeRequests(t, sent)
 				if reads != 1 || writes != 0 {
 					t.Fatalf("retry reads=%d uploads=%d; must read before deciding without another upload", reads, writes)
 				}
-				if (err == nil) != (mode == "success" || mode == "saved_unknown") {
+				if (err == nil) != recovers {
 					t.Fatalf("recovery: %v", err)
 				}
 			}
@@ -189,12 +198,18 @@ func TestSpacePublication(t *testing.T) {
 
 func TestSpacePendingAuthorization(t *testing.T) {
 	target, html := spaceFixture(t)
-	if err := saveSpaceState(SpaceStateFile(), spaceState{Pending: &SpaceReceipt{PageID: target.PageID, BlockID: target.BlockID}}); err != nil {
-		t.Fatal(err)
-	}
 	args := SpaceVisualization{PageID: target.PageID, Title: SpaceTitle, HTML: string(html)}
 	args.ReplaceBlock.BlockID, args.ReplaceBlock.ExpectedHash = target.BlockID, "observed"
 	input, _ := json.Marshal(args)
+	if err := AuthorizeSpaceSnapshot(input); err != nil {
+		t.Fatalf("valid upload without a pending publication: %v", err)
+	}
+	if err := saveSpaceState(SpaceStateFile(), spaceState{Pending: &SpaceReceipt{PageID: target.PageID, BlockID: target.BlockID, SnapshotHash: PageHash(html), BlockHash: "observed"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadSpaceState(SpaceStateFile()); err != nil {
+		t.Fatalf("pending fixture must be valid: %v", err)
+	}
 	if err := AuthorizeSpaceSnapshot(input); err == nil {
 		t.Fatal("pending publication allowed another native upload")
 	}
