@@ -54,7 +54,6 @@ func codexAllowanceDenied(parent context.Context) bool {
 	cmd.Dir = dir
 	cmd.Env = append(gitenv.Without(os.Environ()), "PATH="+realDirs(os.Getenv("PATH")))
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { stopGroup(cmd.Process.Pid, time.Second); return nil }
 	cmd.WaitDelay = time.Second
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -66,6 +65,12 @@ func codexAllowanceDenied(parent context.Context) bool {
 		return false
 	}
 	defer stdout.Close()
+	cmd.Cancel = func() error {
+		// A detached descendant can retain stdout after the process group exits.
+		_ = stdout.Close()
+		stopGroup(cmd.Process.Pid, time.Second)
+		return nil
+	}
 	budget := &allowanceBudget{cancel: cancel}
 	cmd.Stderr = budget
 	if err := cmd.Start(); err != nil {

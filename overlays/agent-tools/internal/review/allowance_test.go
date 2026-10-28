@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -25,6 +26,17 @@ import (
 // This subprocess replaces account/network access. It accepts only the fixed
 // initialization and read sequence; all model, tool and login RPCs fail.
 func allowanceTestServer() int {
+	if len(os.Args) > 1 && os.Args[1] == "allowance-detached-child" {
+		control, err := net.DialTimeout("tcp", os.Getenv("FAKE_ALLOWANCE_CONTROL"), time.Second)
+		if err != nil {
+			return 2
+		}
+		defer control.Close()
+		fmt.Fprintln(control, os.Getpid())
+		// The test owns this connection, including when setup fails or it exits.
+		_, _ = io.Copy(io.Discard, control)
+		return 0
+	}
 	if len(os.Args) > 1 && os.Args[1] == "allowance-child" {
 		ready := os.NewFile(3, "ready")
 		_, _ = ready.Write([]byte{1})
@@ -98,11 +110,13 @@ func allowanceTestServer() int {
 			case "stderr":
 				fmt.Fprint(os.Stderr, strings.Repeat("x", 300<<10))
 				value = `"ordinaryUsageAllowed":false,`
-			case "hang":
+			case "escaped-stdout":
 				_ = os.WriteFile(filepath.Join(os.Getenv("FAKE_CODEX_LOG"), "allowance-group"), []byte(strconv.Itoa(os.Getpid())), 0o600)
-				ready := filepath.Join(os.Getenv("FAKE_CODEX_LOG"), "allowance-ready")
-				if _, err := os.Stat(ready); err == nil {
-					_ = os.WriteFile(ready, []byte{1}, 0o600)
+				child := exec.Command(os.Args[0], "allowance-detached-child")
+				child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+				child.Stdout = os.Stdout
+				if child.Start() != nil {
+					return 2
 				}
 				allowanceTestHang()
 			case "descendant":
@@ -320,60 +334,59 @@ func TestAllowanceProtocol(t *testing.T) {
 			noProviderCall(t, f, "allowance-protocol-error")
 		})
 	}
-	t.Run("cancellation kills and reaps", func(t *testing.T) {
-		f := setUp(t, true)
-		t.Setenv("FAKE_ALLOWANCE", "hang")
-		path := filepath.Join(f.log, "allowance-ready")
-		if err := syscall.Mkfifo(path, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		ready, err := os.OpenFile(path, os.O_RDWR, 0o600)
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = ready.Close() })
-		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
-		defer cancel()
-		signaled := make(chan error, 1)
-		go func() {
-			_, err := io.ReadFull(ready, make([]byte, 1))
-			signaled <- err
-			cancel()
-		}()
-		start := time.Now()
-		if code, errs := allowanceReview(t, ctx, f); code != 4 {
-			t.Fatalf("canceled admission: %d %s", code, errs)
-		}
-		if _, err := os.Stat(shared.File(shared.Codex)); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("cancellation recorded exhaustion: %v", err)
-		}
-		if elapsed := time.Since(start); elapsed > 3*time.Second {
-			t.Fatalf("deadline cleanup took %s", elapsed)
-		}
-		select {
-		case err := <-signaled:
-			if err != nil {
-				t.Fatal(err)
+	for _, name := range []string{"cancellation kills and reaps", "own deadline bounds an unresponsive server"} {
+		t.Run(name, func(t *testing.T) {
+			f := setUp(t, true)
+			t.Setenv("FAKE_ALLOWANCE", "escaped-stdout")
+			t.Setenv("FAKE_CODEX", "none")
+			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+			done := make(chan struct{})
+			t.Cleanup(func() {
+				cancel()
+				select {
+				case <-done:
+				case <-time.After(2 * time.Second):
+					t.Error("review did not finish after detached fixture teardown")
+				}
+			})
+			ready := allowanceDetachedStdout(t)
+			var code int
+			var errs string
+			go func() {
+				defer close(done)
+				code, errs = allowanceReview(t, ctx, f)
+			}()
+			var pid int
+			select {
+			case pid = <-ready:
+				if pid <= 0 {
+					t.Fatal("detached helper did not identify itself")
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("detached helper did not start")
 			}
-		default:
-			t.Fatal("preflight never reached the cancellation signal")
-		}
-		allowanceGroupGone(t, f)
-	})
-	t.Run("own deadline bounds an unresponsive server", func(t *testing.T) {
-		f := setUp(t, true)
-		t.Setenv("FAKE_ALLOWANCE", "hang")
-		t.Setenv("FAKE_CODEX", "none")
-		ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
-		defer cancel()
-		start := time.Now()
-		if code, errs := allowanceReview(t, ctx, f); code != 0 {
-			t.Errorf("bounded unknown must leave time for the review: %d %s", code, errs)
-		}
-		if elapsed := time.Since(start); elapsed > 7*time.Second {
-			t.Fatalf("own deadline failed: %s", elapsed)
-		}
-	})
+			wantCode, bound := 0, 7*time.Second
+			if strings.HasPrefix(name, "cancellation") {
+				wantCode, bound = 4, 3*time.Second
+				cancel()
+			}
+			select {
+			case <-done:
+				if code != wantCode {
+					t.Fatalf("bounded admission: exit %d, want %d: %s", code, wantCode, errs)
+				}
+			case <-time.After(bound):
+				t.Fatal("allowance stayed blocked on detached stdout after cancellation/deadline")
+			}
+			if err := syscall.Kill(pid, 0); err != nil {
+				t.Fatalf("detached stdout holder exited before the reader returned: %v", err)
+			}
+			if _, err := os.Stat(shared.File(shared.Codex)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("cancellation recorded exhaustion: %v", err)
+			}
+			allowanceGroupGone(t, f)
+		})
+	}
 	t.Run("success kills descendants", func(t *testing.T) {
 		f := setUp(t, true)
 		t.Setenv("FAKE_ALLOWANCE", "descendant")
@@ -382,6 +395,39 @@ func TestAllowanceProtocol(t *testing.T) {
 		}
 		allowanceGroupGone(t, f)
 	})
+}
+
+func allowanceDetachedStdout(t *testing.T) <-chan int {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAKE_ALLOWANCE_CONTROL", listener.Addr().String())
+	ready, stop, done := make(chan int, 1), make(chan struct{}), make(chan struct{})
+	t.Cleanup(func() {
+		close(stop)
+		_ = listener.Close()
+		<-done
+	})
+	go func() {
+		defer close(done)
+		control, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		defer control.Close()
+		_ = control.SetReadDeadline(time.Now().Add(time.Second))
+		var pid int
+		if _, err := fmt.Fscanln(control, &pid); err != nil || pid <= 0 {
+			ready <- 0
+			return
+		}
+		defer syscall.Kill(pid, syscall.SIGKILL)
+		ready <- pid
+		<-stop
+	}()
+	return ready
 }
 
 func allowanceGroupGone(t *testing.T, f *fixture) {
