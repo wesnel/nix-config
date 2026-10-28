@@ -130,6 +130,15 @@ func TestFlakeOutputPins(t *testing.T) {
 	}
 }
 
+func TestFlakeURIInputs(t *testing.T) {
+	old := `{ description = https://a''; inputs.x.url = "github:o/OLD"; nixConfig.extra-substituters = https://b''; outputs = _: {}; }`
+	next := strings.Replace(old, "github:o/OLD", "github:o/NEW", 1)
+	pins := pinsOf(t, [3]string{"flake.nix", old, next})
+	if len(pins) != 1 || pins[0].Kind != "flake-nix" || !pins[0].Moved() {
+		t.Fatalf("URI delimiters must not hide changed input: %+v", pins)
+	}
+}
+
 // A flake.lock node whose locked or original object moves in a field
 // this does not read (host, submodules, lfs) has moved.
 func TestFlakeLockIdentity(t *testing.T) {

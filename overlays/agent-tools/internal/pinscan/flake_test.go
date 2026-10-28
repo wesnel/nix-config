@@ -62,3 +62,21 @@ func TestFlakeInputsChanged(t *testing.T) {
 		})
 	}
 }
+
+func TestFlakeLexicalBoundaries(t *testing.T) {
+	for name, old := range map[string]string{
+		"URI quotes hide input": `{ description = https://a''; inputs.x.url = "github:o/OLD"; nixConfig.extra-substituters = https://b''; outputs = _: {}; }`,
+		"indented escape":       `{ inputs.x.url = "github:o/OLD"; description = ''hello ''\n world''; outputs = _: {}; }`,
+		"double dollar string":  `{ inputs.x.url = "github:o/OLD"; description = "$${}"; outputs = _: {}; }`,
+		"double dollar indent":  `{ inputs.x.url = "github:o/OLD"; description = ''$${}''; outputs = _: {}; }`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !FlakeInputsChanged(old, strings.Replace(old, "github:o/OLD", "github:o/NEW", 1)) {
+				t.Error("source-only input change was hidden by lexical boundaries")
+			}
+			if !FlakeInputsChanged(old, old) {
+				t.Error("unsupported lexical syntax must remain conservative")
+			}
+		})
+	}
+}

@@ -17,6 +17,7 @@ func FlakeInputsChanged(old, next string) bool {
 
 var flakeAttr = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_'-]*$`)
 var flakeInt = regexp.MustCompile(`^-?[0-9]+$`)
+var flakeURI = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:[A-Za-z0-9%/?:@&=+$,_.!~*'-]`)
 
 func literalFlakeInputs(text string) ([]string, bool) {
 	l := flakeLexer{text: text}
@@ -182,6 +183,10 @@ func (l *flakeLexer) token(depth int) (string, bool) {
 			l.at += end + 4
 		default:
 			start := l.at
+			// URI literals can contain quote and comment delimiters.
+			if flakeURI.MatchString(l.text[l.at:]) {
+				return "", false
+			}
 			if c == '"' || strings.HasPrefix(l.text[l.at:], "''") {
 				if !l.quoted(depth + 1) {
 					return "", false
@@ -212,7 +217,9 @@ func (l *flakeLexer) quoted(depth int) bool {
 	for l.at < len(l.text) {
 		s := l.text[l.at:]
 		switch {
-		case indented && (strings.HasPrefix(s, "'''") || strings.HasPrefix(s, "''$") || strings.HasPrefix(s, "''\\")):
+		case strings.HasPrefix(s, "$${") || indented && strings.HasPrefix(s, "''\\"):
+			return false
+		case indented && (strings.HasPrefix(s, "'''") || strings.HasPrefix(s, "''$")):
 			l.at += 3
 		case indented && strings.HasPrefix(s, "''"):
 			l.at += 2
