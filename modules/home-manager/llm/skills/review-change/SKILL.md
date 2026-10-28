@@ -65,6 +65,12 @@ or a step's.
 
 ## Fresh review loop
 
+Review-loop sessions use the `review-loop` skill's Review step in place
+of the numbered procedure below. Reviewers run as fresh read-only
+sub-agents in the selected harness; use `git delegate` only with
+`--print-prompt` to obtain their contracts. The numbered procedure applies
+outside review-loop sessions.
+
 The range is the whole change, `BASE..TIP`, with BASE where it starts, such
 as `origin/main` or the parent branch in a stack.
 
@@ -175,13 +181,13 @@ in pr-review.
 - The focused reviews, through `git delegate --reviewer TYPE`: Claude Code's
   reviewer agents, run headless with no settings, MCP server or CLAUDE.md
   of anyone's, in a sandbox of their own.
-- In a review-loop session, delegate's Codex review exits 4. A Claude
-  loop uses an `adversarial-reviewer` sub-agent; a Codex loop uses
-  `git delegate --reviewer claude`, the headless Claude general reviewer.
-  The operator selects the author harness when starting the loop.
+- In a review-loop session, delegate's Codex review exits 4. Use a fresh
+  read-only sub-agent in the operator-selected harness, as the
+  `review-loop` skill says. A Codex loop's review has a separate context
+  in the same model family; report that limitation.
 - Never Codex for a Codex author: from inside Codex, `git delegate`
-  without `--reviewer` exits 4 by itself. Use `--reviewer claude` for an
-  independent general review, then run the focused reviews it names.
+  without `--reviewer` exits 4 by itself. Review-loop sessions use the
+  selected-harness sub-agent path above.
 
 ## Design review
 

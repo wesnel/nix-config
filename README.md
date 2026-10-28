@@ -670,8 +670,8 @@ guard every session has, running the `review-loop` skill on those PRs. Each
 round waits for CI, asks for reviews, triages the threads, fixes in fixups,
 has a fresh review check them (see
 [reviews](#reviews-fresh-eyes-and-tests-that-fail); in a loop the second
-opinion uses Claude, through a sub-agent in Claude Code or
-`git delegate --reviewer claude` in Codex), restacks, and in bots mode pushes the stack through
+opinion is a fresh read-only sub-agent in the selected harness), restacks,
+and in bots mode pushes the stack through
 the GitHub API, then replies and resolves. It stops when the bots are
 satisfied or the loop needs a decision, and hands back.
 
@@ -720,8 +720,9 @@ Claude Code also gets its auto-mode context and an allow rule for `pr-loop`.
 Codex retains its normal approval settings, hooks and sandbox; approve
 `pr-loop` commands through its normal approval flow when required. Trust
 the baseline hook with `/hooks` before using a Codex loop. Both harnesses
-load the shared `review-loop` skill. Independent Claude reviews require
-Claude Code and its configured reviewer sandbox as well.
+load the shared `review-loop` skill. Codex loops run without Claude and
+review in fresh Codex sub-agents; these use a separate context in the same
+model family.
 The guard denies an agent running `review-loop`,
 setting either variable, or running `pr-loop post`.
 

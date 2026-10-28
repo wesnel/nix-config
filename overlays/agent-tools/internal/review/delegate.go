@@ -49,9 +49,6 @@ made the same way under that cache directory and removed after it.
 Reviewers run one at a time, and nothing here runs the change's code.
 
 TYPEs (--reviewer, repeated):
-  claude    the general review, by Claude Code's adversarial-reviewer agent,
-            headless with the same confinement as the focused reviewers.
-            Use this for Codex-authored changes and Codex review loops.
   codex     the general review, by Codex as a model family other than the
             author's: codex exec --ignore-user-config --ephemeral, its
             commands reading only the checkout, the parts of the git
@@ -228,7 +225,6 @@ type reviewerType struct {
 // reviewerTypes are the TYPEs, by name. Each route of routes.Known names
 // one.
 var reviewerTypes = map[string]reviewerType{
-	"claude":   {claude: true, agent: "adversarial-reviewer"},
 	"codex":    {},
 	"security": {claude: true, agent: "security-reviewer", focus: "security"},
 	"compat":   {claude: true, agent: "compat-reviewer", focus: "compat"},
@@ -440,7 +436,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		runs = append(runs, run)
 		if run.out != nil {
 			result.Reviews = append(result.Reviews, run.out)
-			if t == "codex" || t == "claude" {
+			if t == "codex" {
 				result.Routes = run.out.Routes
 			}
 		} else {

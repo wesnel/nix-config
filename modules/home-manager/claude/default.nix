@@ -64,25 +64,24 @@ with lib; let
   roleAgents = listToAttrs (map (name: nameValuePair ".claude/agents/${name}.md" {inherit (agentFile name) text;}) agentNames);
 
   principles = import ../llm/principles.nix;
-  headlessSkills = principles // {write-tests = ../llm/skills/write-tests/SKILL.md;};
-  # A headless reviewer's skill text without its frontmatter.
-  skillBody = name: concatStringsSep "\n---\n" (tail (splitString "\n---\n" (removePrefix "---\n" (builtins.readFile headlessSkills.${name}))));
+  # A principle skill's text without its frontmatter.
+  principleBody = name: concatStringsSep "\n---\n" (tail (splitString "\n---\n" (removePrefix "---\n" (builtins.readFile principles.${name}))));
 
   # The reviewers git delegate runs headless, with `--agents` and this file,
   # which outranks a reviewed project's own agents. Each prompt ends with
-  # the text of the skills its agent file's `skills:` lists, so a
+  # the text of the principles its agent file's `skills:` lists, so a
   # reviewer run with `--setting-sources ""` has them whether or not it
   # finds skills by name; the agent file installed for sub-agents keeps
   # them as `skills:`.
   reviewAgents = pkgs.runCommand "review-agents.json" {
     nativeBuildInputs = [pkgs.jq];
-    json = builtins.toJSON (genAttrs (focusReviewers ++ ["review-guide" "diagrammer" "adversarial-reviewer"]) (name: let
+    json = builtins.toJSON (genAttrs (focusReviewers ++ ["review-guide" "diagrammer"]) (name: let
       a = agentFile name;
     in {
       description = a.field "description";
-      prompt = assert assertMsg (all (skill: headlessSkills ? ${skill}) a.skills)
-      "claude: ./agents/${name}.md lists a skill its headless prompt would leave out";
-        a.prompt + concatMapStrings (skill: "\n" + skillBody skill) a.skills;
+      prompt = assert assertMsg (all (skill: principles ? ${skill}) a.skills)
+      "claude: ./agents/${name}.md lists a skill that is not a principle, which its headless prompt would leave out";
+        a.prompt + concatMapStrings (skill: "\n" + principleBody skill) a.skills;
       tools = splitString ", " (a.field "tools");
       model = a.field "model";
       hooks.PreToolUse = [

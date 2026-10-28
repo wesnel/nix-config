@@ -103,16 +103,24 @@ next one starts at step 1.
    by short SHA, as the `pull-requests` skill says, and `pr-loop reply`
    refuses one naming a thread's ID or key, a plan ID or the loop's own
    terms.
-6. **Review**, once per round: for each PR with new fixups, one round of
-   the `review-change` skill's fresh review loop over the range from the
+6. **Review**, once per round: for each PR with new fixups, a fresh review
+   over the range from the
    branch's tip at round start to the branch. The goal statement is the
    PR's scope statement, and the items are the threads and checks the
-   fixups answer. In a Claude loop, the second opinion is an
-   `adversarial-reviewer` sub-agent. In a Codex loop, run
-   `git delegate --reviewer claude --goal FILE BASE..TIP`, using the
-   independent Claude reviewer. Run any focused reviews it names too.
-   If the independent reviewer cannot run, record the reason in the
-   hand-back. Automatic Codex delegation stays disabled in loop sessions.
+   fixups answer. Start a fresh read-only reviewer sub-agent in the
+   selected harness: Claude Code's `adversarial-reviewer`, or a Codex
+   sub-agent given the goal, range and items. Ask it to inspect every
+   changed hunk, check each finding against code or a reproduction, and
+   report its evidence and anything it could not verify, without editing.
+   Codex reviews use a separate context in the same model family; report
+   that limitation. Ask the general reviewer to identify the focused
+   reviews the change needs, with reasons: security for changes to trust
+   boundaries, compat for interfaces and stored state, upgrade for version
+   bumps. For each needed focus, give a fresh read-only sub-agent
+   the prompt from `git delegate --print-prompt --reviewer TYPE` with the
+   same goal and range. Use `git delegate` only with `--print-prompt` in
+   loop sessions; its live runners can start a different harness.
+   Settle findings as the `review-change` skill's Triage says.
    A `compat` review
    the change is routed to also takes `--description FILE`, the PR's
    description as it stands. A finding still standing goes out with the

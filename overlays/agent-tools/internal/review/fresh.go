@@ -110,7 +110,7 @@ func readFile(path string, stdin io.Reader) (string, error) {
 func unavailable(auto bool) string {
 	switch {
 	case os.Getenv("PR_LOOP_SESSION") != "":
-		return "this is a review-loop session (PR_LOOP_SESSION is set); automatic Codex delegation is disabled; use the selected harness's independent reviewer"
+		return "this is a review-loop session (PR_LOOP_SESSION is set); automatic Codex delegation is disabled; use a fresh read-only sub-agent in the selected harness"
 	case auto && os.Getenv("CODEX_SANDBOX") != "":
 		return "the caller is Codex (CODEX_SANDBOX is set), so a review from here would not be a fresh one; exit 4"
 	}
