@@ -39,6 +39,7 @@
 
     mac-app-util = {
       url = "github:hraban/mac-app-util";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
 
     mattpocock-skills = {
