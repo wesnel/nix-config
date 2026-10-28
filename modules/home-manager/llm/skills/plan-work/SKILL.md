@@ -62,8 +62,15 @@ denies the shell's writes to the plans directory, and every `agent-plan`
 command refuses a change that would add structure drift and writes
 nothing. Each section below names its command. Text (`--text`) may span
 lines but holds no line Org reads as a heading, a drawer, a planning line
-or a `#+` keyword other than a block's. A change no command makes goes in
-your report for the operator.
+or a `#+` keyword other than a block's. The guard refuses an
+`agent-plan` line whose arguments hold code, such as a backtick, or Org's
+`=code=` markup after a space or line break, since Claude Code would run it
+in the sandbox, where it
+fails; the refusal names what it found. Write such text to a file under
+`$TMPDIR` and pass `--text-file FILE` in place of `--text`, or of
+`--context` on `ask` and `followup`; in a value with no file form, such
+as `--summary` or `--question`, write code as Org's `~verbatim~`. A change
+no command makes goes in your report for the operator.
 
 - Before `#+title`, a plan's own file holds a property drawer with its
   `ID`, a UUID: the file is an org-roam node, which Related links name. A
