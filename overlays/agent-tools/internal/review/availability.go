@@ -2,6 +2,7 @@ package review
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -30,9 +31,30 @@ func (e providerUnavailable) Error() string { return string(e.provider) + " unav
 
 // availability is shared by every stage of one invocation. The in-memory
 // block survives a failed state write, so later stages still skip the provider.
-type availability struct{ blocked map[provider]error }
+type availability struct {
+	blocked      map[provider]error
+	codexChecked bool
+}
 
 func newAvailability() *availability { return &availability{blocked: make(map[provider]error)} }
+
+// admit adds one model-free Codex read to the local check. Unknown acquisition
+// leaves eligibility unchanged; no result can clear remembered evidence.
+func (a *availability) admit(ctx context.Context, p provider) error {
+	if err := a.check(p); err != nil {
+		return err
+	}
+	if p == codexProvider && !a.codexChecked {
+		a.codexChecked = true
+		if codexAllowanceDenied(ctx) {
+			return a.exhausted(p)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return a.check(p)
+}
 
 func (a *availability) check(p provider) error {
 	if err := a.blocked[p]; err != nil {

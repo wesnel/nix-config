@@ -24,6 +24,7 @@ import (
 // $FAKE_CODEX says.
 const fakeCodex = `#!/bin/sh
 echo "$1" >> "$FAKE_CODEX_LOG/calls"
+if [ "$1" = app-server ]; then REVIEW_ALLOWANCE_HELPER=1 exec "$REVIEW_ALLOWANCE_TEST_BINARY" "$@"; fi
 if [ "$1" = login ] && [ "$2" = status ]; then
   if [ "$FAKE_CODEX" = unauthenticated ]; then echo "Not logged in"; exit 1; fi
   echo "Logged in"; exit 0
@@ -83,6 +84,7 @@ case "$mode" in
   hang) exec sleep 60 ;;
   fork) echo $$ > "$FAKE_CODEX_LOG/group"; i=0; while [ $i -lt 300 ]; do sleep 30 > /dev/null 2>&1 & i=$((i+1)); if [ $i = 20 ]; then echo > "$FAKE_CODEX_LOG/started"; fi; done; wait ;;
   none) echo '{"findings": [], "unverified": [], "routes": []}' > "$out" ;;
+  bad-reply) echo '{}' > "$out" ;;
   routed) echo '{"findings": [], "unverified": [], "routes": [{"route": "security", "why": "it reads a token", "paths": ["code.txt"]}, {"route": "style", "why": "x", "paths": []}]}' > "$out" ;;
   answer) echo '{"answer": "Extend the seam.", "unverified": ["the callers"]}' > "$out" ;;
   critique) echo '{"findings": [], "unverified": [], "checked": '"$FAKE_CHECKED"'}' > "$out" ;;
@@ -219,6 +221,7 @@ func setUp(t *testing.T, withCodex bool) *fixture {
 		"GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e", "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e",
 		"PR_LOOP_SESSION": "", "CODEX_SANDBOX": "", "CODEX_THREAD_ID": "", "FAKE_CODEX": "", "FAKE_CODEX_COPY": "", "CLAUDECODE": "1",
 		"XDG_STATE_HOME": t.TempDir(), "XDG_CACHE_HOME": t.TempDir(),
+		"FAKE_ALLOWANCE": "", "REVIEW_ALLOWANCE_TEST_BINARY": must(os.Executable()),
 	} {
 		t.Setenv(k, v)
 	}

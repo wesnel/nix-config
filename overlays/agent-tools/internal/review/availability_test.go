@@ -50,7 +50,7 @@ func TestProviderAvailability(t *testing.T) {
 				if code != 4 {
 					t.Errorf("disabled focus: exit %d, %s", code, errs)
 				}
-				noProviderCall(t, f, "adversarial-reviewer-runs", "security-reviewer-runs", "review-guide-runs", "diagrammer-runs")
+				noProviderCall(t, f, "calls", "adversarial-reviewer-runs", "security-reviewer-runs", "review-guide-runs", "diagrammer-runs")
 			} else {
 				noProviderCall(t, f, "calls", "diagrammer-runs")
 			}

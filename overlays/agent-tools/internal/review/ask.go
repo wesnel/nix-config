@@ -137,16 +137,17 @@ func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return 0
 	}
 	why := ""
+	a := newAvailability()
 	p := codexProvider
 	if ty.claude {
 		p = claudeProvider
 	}
-	if err := newAvailability().check(p); err != nil {
+	if err := a.check(p); err != nil {
 		why = err.Error()
 	} else if ty.claude {
 		why = claudeMissing()
 	} else {
-		why = unavailable(true)
+		why = unavailable(ctx, a, true)
 	}
 	if why != "" {
 		fmt.Fprintf(stderr, "%s: the %s reviewer cannot answer here: %s. Ask a new sub-agent that only reads instead "+
@@ -154,7 +155,7 @@ func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 			name, *reviewer, why, *question)
 		return 4
 	}
-	out, err := askIn(ctx, top, text, files, *reviewer, ty, *model, time.Duration(*timeout)*time.Second, stderr)
+	out, err := askIn(ctx, top, text, files, *reviewer, ty, *model, time.Duration(*timeout)*time.Second, stderr, a)
 	var unavailable providerUnavailable
 	if errors.As(err, &unavailable) {
 		fmt.Fprintf(stderr, "%s: %s. Add `--print-prompt` to this ask command and give the result to a fresh read-only sub-agent in the primary harness instead, with none of your reasoning. Keep review-loop text out of Codex.\n", name, err)
@@ -303,7 +304,7 @@ func regularOnly(path string, info os.FileInfo) error {
 // redacted too, confined as a review of that type is, and removes the
 // repository however it ends.
 func askIn(ctx context.Context, top, text string, files []askFile, reviewer string, ty reviewerType, model string,
-	timeout time.Duration, log io.Writer) (*Answer, error) {
+	timeout time.Duration, log io.Writer, a *availability) (*Answer, error) {
 	common, err := git.Run("-C", top, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return nil, err
@@ -347,10 +348,10 @@ func askIn(ctx context.Context, top, text string, files []askFile, reviewer stri
 	var reply *CodexReply
 	if ty.claude {
 		reply, err = ClaudeRun(ctx, Claude{Checkout: tree, Agent: ty.agent, Prompt: askPrompt(text, files), Schema: []byte(askSchema),
-			Timeout: timeout, Log: log})
+			Timeout: timeout, Log: log, availability: a})
 	} else {
 		reply, err = CodexRun(ctx, Codex{Checkout: tree, Prompt: askPrompt(text, files), Schema: []byte(askSchema), Model: model,
-			Timeout: timeout, Log: log, Git: run})
+			Timeout: timeout, Log: log, Git: run, availability: a})
 	}
 	if err != nil {
 		return nil, err

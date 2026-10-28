@@ -114,8 +114,8 @@ func generalReviewer() string {
 }
 
 // unavailable says why Codex may not or cannot review from here, or "".
-func unavailable(auto bool) string {
-	if err := newAvailability().check(codexProvider); err != nil {
+func unavailable(ctx context.Context, a *availability, auto bool) string {
+	if err := a.check(codexProvider); err != nil {
 		return err.Error()
 	}
 	switch {
@@ -123,6 +123,9 @@ func unavailable(auto bool) string {
 		return "this is a review-loop session (PR_LOOP_SESSION is set), which reads other people's review text and sends none of it to OpenAI"
 	case auto && generalReviewer() == "claude":
 		return "the caller is Codex, so its second opinion needs another family or a fresh primary-harness sub-agent"
+	}
+	if err := a.admit(ctx, codexProvider); err != nil {
+		return err.Error()
 	}
 	if _, err := exec.LookPath("codex"); err != nil {
 		return "codex is not on PATH"
@@ -229,7 +232,7 @@ func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 	if a == nil {
 		a = newAvailability()
 	}
-	if err := a.check(codexProvider); err != nil {
+	if err := a.admit(ctx, codexProvider); err != nil {
 		return nil, err
 	}
 	dir := filepath.Dir(c.Checkout)
@@ -255,10 +258,7 @@ func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 	}
 	// Codex runs helpers in its sandbox by executing itself, from the path
 	// it was started by, so start it by a path the sandbox lets it read.
-	codex, err := exec.LookPath("codex")
-	if err == nil {
-		codex, err = filepath.EvalSymlinks(codex)
-	}
+	codex, err := codexExecutable()
 	if err != nil {
 		return nil, err
 	}

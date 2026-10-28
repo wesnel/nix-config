@@ -183,9 +183,18 @@ func runDiagrams(ctx context.Context, s *source, r *span, base inputs, model str
 			return run
 		}
 	}
-	if run.why = claudeMissing(); run.why == "" {
-		run.why = unavailable(false)
+	if run.why = claudeMissing(); run.why != "" {
+		return run
 	}
+	if err := base.availability.admit(ctx, codexProvider); err != nil {
+		run.why = err.Error()
+		return run
+	}
+	if err := base.availability.check(claudeProvider); err != nil {
+		run.why = err.Error()
+		return run
+	}
+	run.why = unavailable(ctx, base.availability, false)
 	if run.why != "" {
 		return run
 	}

@@ -105,7 +105,7 @@ func TestAsk(t *testing.T) {
 		if err := os.Symlink(secret, filepath.Join(f.repo, "code.txt")); err != nil {
 			t.Fatal(err)
 		}
-		askIn(t.Context(), top, "Which way?", files, "codex", reviewerTypes["codex"], "", time.Minute, io.Discard)
+		askIn(t.Context(), top, "Which way?", files, "codex", reviewerTypes["codex"], "", time.Minute, io.Discard, newAvailability())
 		if sent, _ := os.ReadFile(filepath.Join(f.log, "copy")); strings.Contains(string(sent), "hunter2") {
 			t.Errorf("Codex was sent the file the link leads to: %q", sent)
 		}

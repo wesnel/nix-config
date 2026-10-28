@@ -116,6 +116,9 @@ provider, including correction retries, walkthroughs, diagrams and ask.
 An exhausted Claude status-line window blocks until its reset, even if its
 observation is old. A quota failure without a verified reset stays blocked
 until availability --clear PROVIDER after recovery. No background probe runs.
+Eligible Codex work reads model-free account allowance once per invocation,
+before login, sandbox or model execution. Only an authoritative false records
+exhaustion; unavailable allowance remains unknown and never clears a hold.
 Already-started concurrent attempts may finish. No provider output is stored
 in availability state. On exit 4 use --print-prompt for each not-run type and
 start a fresh read-only sub-agent in the primary harness, with only the printed
@@ -588,7 +591,7 @@ func runType(ctx context.Context, s *source, r *span, base inputs, t string, tes
 	if ty.claude {
 		run.why = claudeMissing()
 	} else {
-		run.why = unavailable(implicit)
+		run.why = unavailable(ctx, base.availability, implicit)
 	}
 	if run.why != "" {
 		return run
