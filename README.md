@@ -105,7 +105,7 @@ next switch.
 | --- | --- |
 | `~/.claude/settings.json` | `wgn.home.claude.settings`: attribution off, the ngrok and reviewer hooks, and the plan hook on session resume, compaction or `/clear` (a hook list here replaces the file's own) |
 | `~/.claude.json` | `mcpServers` entries for the MCP proxy |
-| `~/.codex/config.toml` | `[mcp_servers.*]` tables for the MCP proxy |
+| `~/.codex/config.toml` | Workspace sandbox, local network proxy, isolated cache environment and writable roots, and `[mcp_servers.*]` tables for the MCP proxy |
 
 ## committing: unsigned work, one signing pass
 
@@ -205,6 +205,21 @@ one outside it. Hooks, MCP servers and the file tools run outside it.
   socket. Services listening on loopback stay reachable; the comment on
   `allowLocalBinding` in `modules/home-manager/claude/default.nix` lists
   each, and whether a token closes it.
+
+Codex uses `workspace-write` with a network proxy permitting host loopback
+and the Nix daemon socket. Other network destinations and Unix sockets are
+blocked. Its client evaluates Nix in the sandbox; daemon builds use the
+daemon's filesystem and network authority outside it. Go, linter and XDG
+caches live under `~/.cache/codex/sandbox`. Git metadata stays read-only.
+
+On ngrok, check the installed Codex after an upgrade with the host-only
+runtime test below. It uses a temporary home, checks both permitted and
+blocked operations, builds a Nix derivation and runs agent-tools' Go tests.
+The `codex-settings` flake check separately tests the generated settings.
+
+```sh
+nix run .#codex-sandbox-check -- /Users/wgn/git/github.com/wesnel/nix-config
+```
 
 So in a session `git push`, `gh` writes and SSH fail rather than ask. The
 way to GitHub is `pr-loop`: `pr-loop open` for a new pull request, `pr-loop

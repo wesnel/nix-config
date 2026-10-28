@@ -134,7 +134,9 @@ def run(activation, operator_home, repository):
 
 
 if __name__ == "__main__":
-    if sys.argv[1] == "inside":
+    if len(sys.argv) == 5 and sys.argv[1] == "inside":
         inside(Path(sys.argv[2]), int(sys.argv[3]), Path(sys.argv[4]))
+    elif len(sys.argv) == 4:
+        run(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]).resolve())
     else:
-        run(Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]))
+        raise SystemExit("usage: test_sandbox.py ACTIVATION OPERATOR_HOME REPOSITORY")
