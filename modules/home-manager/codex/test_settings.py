@@ -87,7 +87,9 @@ class SettingsTest(unittest.TestCase):
             environment = settings["shell_environment_policy"]
             self.assertFalse(environment["ignore_default_excludes"])
             for name in ("SSH_AUTH_SOCK", "GH_TOKEN", "OPENAI_API_KEY"):
-                self.assertEqual(environment["filters"][name], "exclude")
+                self.assertEqual(
+                    environment["filters"][name.lower()], "exclude"
+                )
             cache = home / ".cache/codex/sandbox"
             expected = {
                 "GOCACHE": str(cache / "go-build"),

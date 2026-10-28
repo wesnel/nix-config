@@ -81,7 +81,28 @@ def environment(document, desired):
         raise ReconcileError(
             "shell environment mixes legacy and canonical filters"
         )
-    filters = dict(mapping(existing.get("filters", {}), "environment filters"))
+    filters = {}
+
+    def add_filter(pattern, access):
+        if not isinstance(pattern, str) or access not in (
+            "include",
+            "exclude",
+        ):
+            raise ReconcileError("invalid environment filter")
+        # Codex compares filter keys with Unicode lowercase, not casefold.
+        pattern = pattern.lower()
+        if pattern in filters and filters[pattern] != access:
+            # Dropping an include can remove allowlist mode or change which
+            # explicit values survive the final include pass.
+            raise ReconcileError(
+                "environment filter both includes and excludes: " + pattern
+            )
+        filters[pattern] = access
+
+    for pattern, access in mapping(
+        existing.get("filters", {}), "environment filters"
+    ).items():
+        add_filter(pattern, access)
     for key, access in (("include_only", "include"), ("exclude", "exclude")):
         patterns = existing.pop(key, [])
         if not isinstance(patterns, list) or any(
@@ -90,28 +111,26 @@ def environment(document, desired):
             raise ReconcileError(
                 "legacy environment filters must be string arrays"
             )
-        filters.update({pattern: access for pattern in patterns})
-    filters.update(desired.get("filters", {}))
-    if any(
-        access not in ("include", "exclude") for access in filters.values()
-    ):
-        raise ReconcileError("invalid environment filter action")
+        for pattern in patterns:
+            add_filter(pattern, access)
+    for pattern, access in mapping(
+        desired.get("filters", {}), "managed environment filters"
+    ).items():
+        add_filter(pattern, access)
     denied = [
-        pattern.upper()
-        for pattern, access in filters.items()
-        if access == "exclude"
+        pattern for pattern, access in filters.items() if access == "exclude"
     ]
     if not desired.get(
         "ignore_default_excludes",
         existing.get("ignore_default_excludes", True),
     ):
-        denied += ["*KEY*", "*SECRET*", "*TOKEN*"]
+        denied += ["*key*", "*secret*", "*token*"]
     values = dict(mapping(existing.get("set", {}), "explicit environment"))
     values.update(desired.get("set", {}))
     for name, value in values.items():
         if not isinstance(value, str):
             raise ReconcileError("explicit environment values must be strings")
-        if any(fnmatchcase(name.upper(), pattern) for pattern in denied):
+        if any(fnmatchcase(name.lower(), pattern) for pattern in denied):
             raise ReconcileError(
                 "explicit environment value conflicts with exclusion: " + name
             )
@@ -212,7 +231,11 @@ def reconcile(config, settings, roots, state):
 
         document.pop("sandbox_mode", None)
         document.pop("sandbox_workspace_write", None)
-        owned = {("permissions", name), ("features", "network_proxy")}
+        owned = {
+            ("permissions", name),
+            ("features", "network_proxy"),
+            ("shell_environment_policy", "filters"),
+        }
         owned.update(
             ("mcp_servers", server)
             for server in settings.get("mcp_servers", {})

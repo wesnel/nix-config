@@ -18,8 +18,11 @@ that intent.
 
 Conflicting roots or explicit environment values fail before configuration
 or ownership changes. A lock file may be created. Legacy environment filters
-migrate to the canonical map. Legacy temporary-directory restrictions require
-an explicit migration instead of being silently removed. Diagnostics name
+migrate to a Unicode-lowercase canonical map. Equivalent exclusions merge;
+an include/exclude collision requires operator resolution because removing
+an include can broaden inheritance or change explicit-value filtering.
+Legacy temporary-directory restrictions require an explicit migration
+instead of being silently removed. Diagnostics name
 conflicting variables without printing their values. Environment exclusions
 filter inherited variables; programs can still create their own environment.
 

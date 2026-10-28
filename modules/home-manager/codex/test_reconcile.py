@@ -266,8 +266,8 @@ class ReconcileTest(unittest.TestCase):
     def test_legacy_environment_filters_migrate_without_widening(self):
         self.config.write_text(
             "[shell_environment_policy]\n"
-            'exclude = ["OLD_PRIVATE", "BOTH"]\n'
-            'include_only = ["PATH", "GOCACHE", "BOTH"]\n'
+            'exclude = ["OLD_PRIVATE"]\n'
+            'include_only = ["PATH", "GOCACHE"]\n'
         )
         self.reconcile()
         policy = tomllib.loads(self.config.read_text())[
@@ -278,14 +278,128 @@ class ReconcileTest(unittest.TestCase):
         self.assertEqual(
             policy["filters"],
             {
-                "OLD_PRIVATE": "exclude",
-                "BOTH": "exclude",
-                "PATH": "include",
-                "GOCACHE": "include",
-                "SSH_AUTH_SOCK": "exclude",
+                "old_private": "exclude",
+                "path": "include",
+                "gocache": "include",
+                "ssh_auth_sock": "exclude",
             },
         )
         self.assertFalse(policy["ignore_default_excludes"])
+
+    def test_environment_filter_keys_follow_runtime_lowercase(self):
+        cases = (
+            (
+                "[shell_environment_policy]\n"
+                'exclude = ["ssh_auth_sock", "SSH_AUTH_SOCK"]\n',
+                {"ssh_auth_sock": "exclude"},
+            ),
+            (
+                "[shell_environment_policy.filters]\n"
+                'ssh_auth_sock = "exclude"\n',
+                {"ssh_auth_sock": "exclude"},
+            ),
+            (
+                '[shell_environment_policy]\nexclude = ["Ä_ENV", "ä_env"]\n',
+                {"ä_env": "exclude", "ssh_auth_sock": "exclude"},
+            ),
+            (
+                "[shell_environment_policy.filters]\n"
+                '"ß_ENV" = "include"\n"SS_ENV" = "exclude"\n',
+                {
+                    "ß_env": "include",
+                    "ss_env": "exclude",
+                    "ssh_auth_sock": "exclude",
+                },
+            ),
+        )
+        for original, expected in cases:
+            with self.subTest(original=original):
+                self.config.write_text(original)
+                self.reconcile()
+                first = self.config.read_text()
+                filters = tomllib.loads(first)["shell_environment_policy"][
+                    "filters"
+                ]
+                self.assertEqual(filters, expected)
+                self.assertEqual(
+                    len(filters), len({p.lower() for p in filters})
+                )
+                self.reconcile()
+                self.assertEqual(self.config.read_text(), first)
+
+    def test_environment_allowlist_conflicts_leave_config_and_state_unchanged(
+        self,
+    ):
+        for original in (
+            "[shell_environment_policy]\n"
+            'include_only = ["ONLY_THIS"]\nexclude = ["ONLY_THIS"]\n',
+            "[shell_environment_policy]\n"
+            'include_only = ["Ä_ENV"]\nexclude = ["ä_env"]\n',
+            '[shell_environment_policy]\ninclude_only = ["ssh_auth_sock"]\n',
+            '[shell_environment_policy.filters]\nssh_auth_sock = "include"\n',
+            "[shell_environment_policy.filters]\n"
+            'ONLY_THIS = "include"\nonly_this = "exclude"\n',
+            "[shell_environment_policy]\n"
+            'include_only = ["PATH", "SSH_AUTH_SOCK"]\n',
+            "[shell_environment_policy]\n"
+            'include_only = ["PATH", "ONLY_THIS"]\nexclude = ["only_this"]\n'
+            '[shell_environment_policy.set]\nONLY_THIS = "synthetic-value"\n',
+        ):
+            with self.subTest(original=original):
+                self.config.write_text(original)
+                for key in self.roots:
+                    (self.state / (key + "-root")).write_text(
+                        str(self.home / ("old-" + key)) + "\n"
+                    )
+                (self.state / "pending-roots").write_text(
+                    json.dumps([str(self.home / "abandoned-plans")])
+                )
+                before = {
+                    p.name: p.read_bytes()
+                    for p in self.state.iterdir()
+                    if p.name != "reconcile.lock"
+                }
+                result = self.reconcile(success=False)
+                self.assertIn("environment", result.stderr)
+                self.assertNotIn("synthetic-value", result.stderr)
+                self.assertEqual(self.config.read_text(), original)
+                self.assertEqual(
+                    {
+                        p.name: p.read_bytes()
+                        for p in self.state.iterdir()
+                        if p.name != "reconcile.lock"
+                    },
+                    before,
+                )
+
+    def test_environment_preserves_nonconflicting_includes_and_explicit_values(
+        self,
+    ):
+        for original in (
+            "[shell_environment_policy]\n"
+            'include_only = ["PATH", "CUSTOM"]\nexclude = ["PRIVATE"]\n',
+            "[shell_environment_policy.filters]\n"
+            'Path = "include"\nCUSTOM = "include"\nPrivate = "exclude"\n',
+        ):
+            with self.subTest(original=original):
+                self.config.write_text(
+                    original + "[shell_environment_policy.set]\n"
+                    'CUSTOM = "synthetic-value"\n'
+                )
+                self.reconcile()
+                policy = tomllib.loads(self.config.read_text())[
+                    "shell_environment_policy"
+                ]
+                self.assertEqual(
+                    policy["filters"],
+                    {
+                        "path": "include",
+                        "custom": "include",
+                        "private": "exclude",
+                        "ssh_auth_sock": "exclude",
+                    },
+                )
+                self.assertEqual(policy["set"]["CUSTOM"], "synthetic-value")
 
     def test_unsupported_legacy_constraints_are_not_silently_removed(self):
         for original in (
