@@ -42,8 +42,12 @@ class SettingsTest(unittest.TestCase):
             settings = tomllib.loads(first)
             self.assertIn("# Keep this comment.", first)
             self.assertEqual(settings["model"], "operator-model")
-            self.assertEqual(settings["sandbox_mode"], "workspace-write")
-            self.assertIs(settings["sandbox_workspace_write"]["network_access"], True)
+            self.assertNotIn("sandbox_mode", settings)
+            self.assertNotIn("sandbox_workspace_write", settings)
+            self.assertEqual(settings["default_permissions"], "wgn-workspace")
+            profile = settings["permissions"]["wgn-workspace"]
+            self.assertEqual(profile["extends"], ":workspace")
+            self.assertIs(profile["network"]["enabled"], True)
             self.assertEqual(settings["features"]["network_proxy"], {
                 "enabled": True,
                 "allow_local_binding": True,
@@ -63,9 +67,9 @@ class SettingsTest(unittest.TestCase):
             self.assertEqual(environment_settings["KEEP_ME"], "operator-value")
             for name, path in expected.items():
                 self.assertEqual(environment_settings.get(name), path)
-            roots = settings["sandbox_workspace_write"]["writable_roots"]
+            roots = profile["workspace_roots"]
             self.assertIn("/operator/root", roots)
-            self.assertEqual(roots.count(str(cache)), 1)
+            self.assertIs(roots[str(cache)], True)
             self.activate(home)
             self.assertEqual(config.read_text(), first)
 
@@ -81,6 +85,41 @@ class SettingsTest(unittest.TestCase):
             self.assertEqual(proxy["unix_sockets"], {
                 "/nix/var/nix/daemon-socket/socket": "allow",
             })
+
+    def test_profile_replaces_broad_grants(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            config = home / ".codex/config.toml"
+            config.parent.mkdir()
+            config.write_text(
+                '[permissions.wgn-workspace]\n'
+                'extends = ":read-only"\n'
+                '[permissions.wgn-workspace.workspace_roots]\n'
+                '"/operator/root" = true\n'
+                '[permissions.wgn-workspace.filesystem]\n'
+                '":root" = "write"\n'
+                '"/operator/private" = "deny"\n'
+                '[sandbox_workspace_write]\n'
+                'writable_roots = ["/old-cache"]\n'
+                'exclude_tmpdir_env_var = true\n'
+                'exclude_slash_tmp = true\n'
+            )
+            state = home / ".local/state/codex/cache-root"
+            state.parent.mkdir(parents=True)
+            state.write_text("/old-cache\n")
+            self.activate(home)
+            first = config.read_text()
+            profile = tomllib.loads(first)["permissions"]["wgn-workspace"]
+            self.assertEqual(profile["extends"], ":workspace")
+            self.assertNotIn("/old-cache", profile["workspace_roots"])
+            self.assertIs(profile["workspace_roots"]["/operator/root"], True)
+            self.assertEqual(profile["filesystem"], {
+                "/operator/private": "deny",
+                ":tmpdir": "read",
+                ":slash_tmp": "read",
+            })
+            self.activate(home)
+            self.assertEqual(config.read_text(), first)
 
 
 if __name__ == "__main__":
