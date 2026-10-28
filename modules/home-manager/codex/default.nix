@@ -6,6 +6,7 @@
 }:
 with lib; let
   cfg = config.wgn.home.codex;
+  profileName = "wgn-workspace";
   cacheRoot = "${config.xdg.cacheHome}/codex/sandbox";
   networkProxy = {
     enabled = true;
@@ -76,16 +77,22 @@ with lib; let
         with open(path) as f:
             doc = tomlkit.parse(f.read())
 
-    table = doc.setdefault("sandbox_workspace_write", tomlkit.table())
-    roots = table.setdefault("writable_roots", tomlkit.array())
+    profiles = doc.setdefault("permissions", tomlkit.table())
+    profile = profiles.setdefault("${profileName}", tomlkit.table())
+    roots = profile.setdefault("workspace_roots", tomlkit.table())
     changed = False
     if previous and previous != root:
-        for i in reversed(range(len(roots))):
-            if str(roots[i]) == previous:
-                del roots[i]
+        if previous in roots:
+            del roots[previous]
+            changed = True
+        legacy = doc.get("sandbox_workspace_write", {}).get(
+            "writable_roots", [])
+        for i in reversed(range(len(legacy))):
+            if str(legacy[i]) == previous:
+                del legacy[i]
                 changed = True
-    if root not in [str(r) for r in roots]:
-        roots.append(root)
+    if roots.get(root) is not True:
+        roots[root] = True
         changed = True
     if changed:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -143,14 +150,57 @@ with lib; let
         with open(path) as f:
             doc = tomlkit.parse(f.read())
 
+    managed_profile = keys.get("default_permissions")
+    changed = False
+    if managed_profile:
+        profiles = doc.setdefault("permissions", tomlkit.table())
+        profile = profiles.setdefault(managed_profile, tomlkit.table())
+        roots = profile.setdefault("workspace_roots", tomlkit.table())
+        legacy = doc.get("sandbox_workspace_write", {})
+        for root in legacy.get("writable_roots", []):
+            if str(root) not in roots:
+                roots[str(root)] = True
+                changed = True
+        exclusions = {"exclude_tmpdir_env_var": ":tmpdir",
+                      "exclude_slash_tmp": ":slash_tmp"}
+        for option, token in exclusions.items():
+            if legacy.get(option):
+                filesystem = profile.setdefault("filesystem", tomlkit.table())
+                filesystem[token] = "read"
+        for key in ("sandbox_mode", "sandbox_workspace_write"):
+            if key in doc:
+                del doc[key]
+                changed = True
+
+
+    def restrictions(values):
+        result = {}
+        for key, value in values.items():
+            if isinstance(value, dict):
+                nested = restrictions(value)
+                if nested:
+                    result[key] = nested
+            elif value in ("read", "deny"):
+                result[key] = value
+        return result
+
 
     def merge(table, values, path=()):
         changed = False
         for key, value in values.items():
             child_path = path + (key,)
-            # The managed proxy policy replaces any broader saved allowlist.
+            if child_path == ("permissions", managed_profile):
+                previous = table.get(key, {})
+                value = dict(value)
+                if previous.get("workspace_roots"):
+                    value["workspace_roots"] = previous["workspace_roots"]
+                limited = restrictions(previous.get("filesystem", {}))
+                if limited:
+                    value["filesystem"] = limited
+            # Managed policies replace saved grants; environment keys merge.
             if (isinstance(value, dict)
-                    and child_path != ("features", "network_proxy")):
+                    and child_path not in (("features", "network_proxy"),
+                                           ("permissions", managed_profile))):
                 child = table.setdefault(key, tomlkit.table())
                 changed = merge(child, value, child_path) or changed
             elif table.get(key) != value:
@@ -159,7 +209,7 @@ with lib; let
         return changed
 
 
-    if merge(doc, keys):
+    if merge(doc, keys) or changed:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
             f.write(tomlkit.dumps(doc))
@@ -174,8 +224,11 @@ in {
       type = types.attrs;
       internal = true;
       default = {
-        sandbox_mode = "workspace-write";
-        sandbox_workspace_write.network_access = true;
+        default_permissions = profileName;
+        permissions.${profileName} = {
+          extends = ":workspace";
+          network.enabled = true;
+        };
         features.network_proxy = networkProxy;
         shell_environment_policy.set = {
           GOCACHE = "${cacheRoot}/go-build";
@@ -188,7 +241,7 @@ in {
         The sandbox every interactive Codex session's commands run in,
         merged into ~/.codex/config.toml on every switch, so that it never
         rests on what Codex chooses for a trusted project. An assertion
-        holds it to workspace-write with a proxy permitting host loopback
+        holds it to the workspace profile with a proxy permitting host loopback
         and the Nix daemon socket. The daemon builds outside this sandbox.
       '';
     };
@@ -309,12 +362,14 @@ in {
       assertions = [
         {
           assertion =
-            (cfg.sandbox.sandbox_mode or null)
-            == "workspace-write"
-            && (cfg.sandbox.sandbox_workspace_write.network_access or null) == true
+            (cfg.sandbox.default_permissions or null) == profileName
+            && (cfg.sandbox.permissions.${profileName}.extends or null) == ":workspace"
+            && (cfg.sandbox.permissions.${profileName}.network.enabled or null) == true
+            && !(cfg.sandbox ? sandbox_mode)
+            && !(cfg.sandbox ? sandbox_workspace_write)
             && (cfg.sandbox.features.network_proxy or null) == networkProxy
             && hasInfix (escapeShellArg (builtins.toJSON cfg.sandbox)) config.home.activation.codexSandbox.data;
-          message = "wgn.home.codex: interactive Codex must use workspace-write with the loopback and Nix-socket network proxy, written into config.toml";
+          message = "wgn.home.codex: interactive Codex must use the managed workspace profile and local network proxy, written into config.toml";
         }
       ];
 

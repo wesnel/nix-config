@@ -206,8 +206,9 @@ one outside it. Hooks, MCP servers and the file tools run outside it.
   `allowLocalBinding` in `modules/home-manager/claude/default.nix` lists
   each, and whether a token closes it.
 
-Codex uses `workspace-write` with a network proxy permitting host loopback
-and the Nix daemon socket. Other network destinations and Unix sockets are
+Codex uses the managed `wgn-workspace` permission profile, extending
+`:workspace`, with a network proxy permitting host loopback and the Nix
+daemon socket. Other network destinations and Unix sockets are
 blocked. Its client evaluates Nix in the sandbox; daemon builds use the
 daemon's filesystem and network authority outside it. Go, linter and XDG
 caches live under `~/.cache/codex/sandbox`. Git metadata stays read-only.

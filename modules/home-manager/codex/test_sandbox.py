@@ -79,29 +79,33 @@ def run(activation, operator_home, repository):
     module_cache = subprocess.check_output(
         ["go", "env", "GOMODCACHE"], text=True
     ).strip()
-    with tempfile.TemporaryDirectory(
-        prefix="codex-local-network-", dir=Path.home()
-    ) as directory:
+    with (
+        tempfile.TemporaryDirectory(
+            prefix="codex-local-network-", dir=Path.home()
+        ) as directory,
+        tempfile.TemporaryDirectory(
+            prefix="c-", dir="/var/tmp"
+        ) as temporary_directory,
+    ):
         root = Path(directory)
         workspace = root / "workspace"
         workspace.mkdir()
+        temporary = Path(temporary_directory)
         script = root / "activate.sh"
         script.write_text(
             'set -e\nwarnEcho() { echo "$@" >&2; exit 1; }\n'
             + activation.read_text().replace(operator_home, directory)
         )
-        environment = dict(os.environ, HOME=directory)
+        environment = dict(os.environ, HOME=directory, TMPDIR=str(temporary))
+        for name in (
+            "SSH_AUTH_SOCK", "SSH_AGENT_PID", "GPG_AGENT_INFO",
+            "GIT_SSH", "GIT_SSH_COMMAND", "GIT_SSH_VARIANT",
+        ):
+            environment.pop(name, None)
         subprocess.run(["bash", str(script)], env=environment, check=True)
         config_path = root / ".codex/config.toml"
         settings = tomllib.loads(config_path.read_text())
-        # The sandbox CLI requires a named profile; project the interactive
-        # workspace permissions into one using the generated proxy policy.
-        profile = '\n[permissions.runtime-test]\nextends = ":workspace"\n'
-        profile += '[permissions.runtime-test.network]\nenabled = true\n'
-        profile += '[permissions.runtime-test.filesystem]\n'
-        for path in settings["sandbox_workspace_write"]["writable_roots"]:
-            profile += json.dumps(path) + ' = "write"\n'
-        config_path.write_text(config_path.read_text() + profile)
+        profile = settings["default_permissions"]
         environment.update(settings["shell_environment_policy"]["set"])
         environment["GOMODCACHE"] = module_cache
         environment["CODEX_HOME"] = str(root / ".codex")
@@ -125,7 +129,7 @@ def run(activation, operator_home, repository):
 
             threading.Thread(target=echo, daemon=True).start()
             subprocess.run(
-                ["codex", "sandbox", "-P", "runtime-test", "-C", str(workspace), "--",
+                ["codex", "sandbox", "-P", profile, "-C", str(workspace), "--",
                  sys.executable, str(Path(__file__).resolve()), "inside", directory,
                  str(server.getsockname()[1]), str(repository)],
                 env=environment,
