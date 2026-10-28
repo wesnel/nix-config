@@ -34,12 +34,10 @@ func checkSpaceAuthorityShell(name string, args, redirected []string, dir string
 	if shellWrites(name, args, redirected, dir, spaceAuthorityFile) {
 		return spaceAuthority
 	}
-	if set("mv", "rm", "unlink", "trash", "rmdir")[name] {
-		for _, value := range changedFiles(name, args, redirected) {
-			path := expandPath(value, dir)
-			if spaceAuthorityFile(path) || Reaches(agentplans.SpaceConfigFile(), path, true) || Reaches(agentplans.SpaceStateFile(), path, true) {
-				return spaceAuthority
-			}
+	for _, value := range changedFiles(name, args, redirected) {
+		path := expandPath(value, dir)
+		if spaceAuthorityFile(path) || Reaches(agentplans.SpaceConfigFile(), path, true) || Reaches(agentplans.SpaceStateFile(), path, true) {
+			return spaceAuthority
 		}
 	}
 	return ""

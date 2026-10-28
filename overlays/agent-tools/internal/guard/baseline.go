@@ -1616,9 +1616,9 @@ func changedFiles(name string, args, redirected []string) []string {
 		if len(positional) > 1 {
 			targets = append(targets, positional[1:]...)
 		}
-	case "cp", "install", "ln", "rsync":
+	case "cp", "install", "ln", "rsync", "ditto":
 		var dirs []string
-		if name != "rsync" { // rsync's -t keeps times
+		if name != "rsync" && name != "ditto" { // rsync's -t keeps times
 			dirs = targetDirectories(args)
 		}
 		switch {

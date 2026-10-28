@@ -190,10 +190,8 @@ func check(tool string, toolInput json.RawMessage, who role, dir string) string 
 		if service.listed != nil && service.listed.key == "pages" && service.name != "codex_apps" {
 			return "This Pages server spelling is not reviewed. Use the exact `codex_apps` server or put the request in your report for the operator."
 		}
-		if service.name == "codex_apps" && who == baseline && agentplans.SpaceOperation(name) == "visualization" {
-			if err := agentplans.AuthorizeSpaceSnapshot(toolInput); err == nil {
-				return ""
-			}
+		if service.name == "codex_apps" && agentplans.SpaceOperation(name) == "visualization" {
+			return "Native Pages uploads do not record pending attempts or verify publication. Use `plan-dash space publish` for the configured dashboard, or put other proposed changes in your report for the operator."
 		}
 		return checkMCP(service, name, who)
 	}

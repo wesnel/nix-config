@@ -2,10 +2,10 @@
   "pages": {
     "service": "Pages",
     "servers": ["codex_apps"],
-    "verify": "Exact read_page and create_page_visualization schemas from the Pages plugin tool metadata; raw namespace spelling observed in guard events and normalized spelling in executor metadata. All unrelated codex_apps tools remain refused. Snapshot writes require argument and trusted-target validation in the guard before this confirmation policy.",
+    "verify": "Exact read_page and create_page_visualization schemas from the Pages plugin tool metadata; raw namespace spelling observed in guard events and normalized spelling in executor metadata. Only native reads are allowed. Automated snapshot writes use the journaled plan-dash publisher, which validates its configured target and verifies receipts by readback. All unrelated codex_apps tools remain refused.",
     "reads": ["chatgpt_space__read_page", "chatgpt_space_read_page"],
-    "confirms": ["chatgpt_space__create_page_visualization", "chatgpt_space_create_page_visualization"],
-    "refuses": []
+    "confirms": [],
+    "refuses": ["chatgpt_space__create_page_visualization", "chatgpt_space_create_page_visualization"]
   },
   "linear": {
     "service": "Linear",

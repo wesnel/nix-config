@@ -31,6 +31,8 @@ func TestMCPTools(t *testing.T) {
 		want  string // "" to let the call through
 		says  string // what a denial's reason must say
 	}{
+		{"Pages native write", []string{"--baseline"}, claude("mcp__codex_apps__chatgpt_space__create_page_visualization"), deny, "plan-dash space publish"},
+		{"Pages native write from Codex", []string{"--baseline"}, codex("mcp__codex_apps__chatgpt_space_create_page_visualization"), deny, "plan-dash space publish"},
 		{"Linear read", []string{"--baseline"}, claude("mcp__linear__get_issue"), "", ""},
 		{"Linear write asks", []string{"--baseline"}, claude("mcp__linear__save_issue"), ask, "Linear"},
 		{"Linear tool not reviewed", []string{"--baseline"}, claude("mcp__linear__delete_workspace"), deny, "delete_workspace"},
@@ -123,7 +125,8 @@ func TestSpaceTools(t *testing.T) {
 	}{
 		{"raw read", "chatgpt_space__read_page", map[string]string{"page_id": "page_owned"}, true},
 		{"normalized read", "chatgpt_space_read_page", map[string]string{"page_id": "page_owned"}, true},
-		{"owned snapshot", "chatgpt_space__create_page_visualization", write, true},
+		{"owned snapshot", "chatgpt_space__create_page_visualization", write, false},
+		{"normalized owned snapshot", "chatgpt_space_create_page_visualization", write, false},
 		{"unrelated app", "sites_get_site", map[string]string{}, false},
 		{"invented name", "chatgpt_space___read_page", map[string]string{}, false},
 		{"new page", "chatgpt_space_create_page", map[string]string{}, false},
@@ -152,7 +155,7 @@ func TestSpaceTools(t *testing.T) {
 			args[k] = v
 		}
 		input, _ := json.Marshal(args)
-		if reason := CheckBaseline("mcp__codex_apps__chatgpt_space__create_page_visualization", input); reason == "" {
+		if err := agentplans.AuthorizeSpaceSnapshot(input); err == nil {
 			t.Errorf("allowed changed snapshot arguments at case %d", i)
 		}
 	}
@@ -177,9 +180,9 @@ func TestSpaceTools(t *testing.T) {
 			}
 			args["html"] = strings.Replace(html, `"plans":[]`, `"plans":`+tc.plans, 1)
 			input, _ := json.Marshal(args)
-			reason := CheckBaseline("mcp__codex_apps__chatgpt_space__create_page_visualization", input)
-			if (reason == "") != tc.allow {
-				t.Fatalf("allow=%v, reason=%s", tc.allow, reason)
+			err := agentplans.AuthorizeSpaceSnapshot(input)
+			if (err == nil) != tc.allow {
+				t.Fatalf("allow=%v, error=%v", tc.allow, err)
 			}
 		})
 	}
@@ -188,7 +191,7 @@ func TestSpaceTools(t *testing.T) {
 		strings.Replace(string(input), `"page_id":"page_owned"`, `"page_id":"page_other","PAGE_ID":"page_owned"`, 1),
 		strings.Replace(string(input), `"block_id":"block_owned"`, `"block_id":"block_other","BLOCK_ID":"block_owned"`, 1),
 	} {
-		if reason := CheckBaseline("mcp__codex_apps__chatgpt_space__create_page_visualization", []byte(invalid)); reason == "" {
+		if err := agentplans.AuthorizeSpaceSnapshot([]byte(invalid)); err == nil {
 			t.Error("case-insensitive keys overrode the exact target")
 		}
 	}
@@ -201,7 +204,7 @@ func TestSpaceTools(t *testing.T) {
 	if err := os.Remove(config); err != nil {
 		t.Fatal(err)
 	}
-	if reason := CheckBaseline("mcp__codex_apps__chatgpt_space__create_page_visualization", input); reason == "" {
+	if err := agentplans.AuthorizeSpaceSnapshot(input); err == nil {
 		t.Error("unconfigured publication allowed")
 	}
 }
@@ -244,6 +247,54 @@ func TestSpaceRawBridge(t *testing.T) {
 		if reason := CheckBaseline("Bash", input); reason == "" {
 			t.Errorf("raw bridge allowed: %s", command)
 		}
+	}
+}
+
+func TestSpaceDirectoryWrites(t *testing.T) {
+	root := fakeHome(t)
+	hostpaths.Bake(t, filepath.Join(root, "config"), filepath.Join(root, "state"))
+	for _, file := range []string{agentplans.SpaceConfigFile(), agentplans.SpaceStateFile()} {
+		t.Run(filepath.Base(file), func(t *testing.T) {
+			dest, work := filepath.Dir(file), t.TempDir()
+			if err := os.MkdirAll(dest, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			link := filepath.Join(work, "linked-destination")
+			if err := os.Symlink(dest, link); err != nil {
+				t.Fatal(err)
+			}
+			for _, tc := range []struct {
+				name, dir, command string
+				deny               bool
+			}{
+				{"tar destination", work, "tar -xf fixture.tar -C " + dest, true},
+				{"tar ancestor", work, "gtar xzf fixture.tgz --directory=" + filepath.Dir(dest), true},
+				{"tar implicit destination", dest, "bsdtar -xf fixture.tar", true},
+				{"tar implicit ancestor", filepath.Dir(dest), "tar -xf fixture.tar", true},
+				{"tar linked destination", work, "tar -xf fixture.tar -C " + link, true},
+				{"unzip destination", work, "unzip fixture.zip -d" + dest, true},
+				{"unzip implicit destination", dest, "unzip fixture.zip", true},
+				{"ditto destination", work, "ditto -x -k fixture.zip " + dest, true},
+				{"copy ancestor", work, "cp -R fixture " + filepath.Dir(dest), true},
+				{"rsync ancestor", work, "rsync -a fixture/ " + filepath.Dir(dest) + "/", true},
+				{"tar listing", work, "tar -tf fixture.tar -C " + dest, false},
+				{"unzip listing", dest, "unzip -l fixture.zip", false},
+				{"safe extraction", dest, "tar -xf fixture.tar -C " + work, false},
+				{"safe ditto", work, "ditto fixture " + filepath.Join(work, "safe"), false},
+				{"safe copy", work, "cp -R fixture " + filepath.Join(work, "safe"), false},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					words := strings.Fields(tc.command)
+					reason := checkSpaceAuthorityShell(words[0], words[1:], nil, tc.dir)
+					if (reason != "") != tc.deny {
+						t.Errorf("Space destination rule deny=%v, reason=%s", tc.deny, reason)
+					}
+					if reason := judge(t, tc.dir, tc.command); (reason != "") != tc.deny {
+						t.Errorf("baseline deny=%v, reason=%s", tc.deny, reason)
+					}
+				})
+			}
+		})
 	}
 }
 

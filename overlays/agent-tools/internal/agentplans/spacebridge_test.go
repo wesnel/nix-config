@@ -211,7 +211,7 @@ func TestSpacePendingAuthorization(t *testing.T) {
 		t.Fatalf("pending fixture must be valid: %v", err)
 	}
 	if err := AuthorizeSpaceSnapshot(input); err == nil {
-		t.Fatal("pending publication allowed another native upload")
+		t.Fatal("pending publication allowed another publisher upload")
 	}
 }
 

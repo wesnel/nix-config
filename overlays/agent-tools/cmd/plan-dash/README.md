@@ -40,13 +40,14 @@ and state paths are baked into the binary. Development builds use the test
 environment's XDG paths and are not an authorization boundary.
 
 The guard protects this configuration and the publication journal from agent
-edits, including writes through links. There are no target, endpoint, tool,
-approval or config-path flags. The native guard reviews only the exact
-`read_page` and `create_page_visualization` Pages tools on `codex_apps`, in
-their raw `chatgpt_space__...` and executor-normalized `chatgpt_space_...`
-spellings. Unrelated tools remain refused. A native visualization write
-outside the configured Page/block requires confirmation; Codex refuses it
-because its guard cannot ask for confirmation.
+edits, including writes through links and recognized archive or directory
+destinations. This command analysis is a guardrail, not complete OS confinement.
+There are no target, endpoint, tool, approval or config-path flags. The native
+guard permits only the exact `read_page` Pages tool on `codex_apps`, in its raw
+`chatgpt_space__read_page` and executor-normalized `chatgpt_space_read_page`
+spellings. Native visualization writes and unrelated tools remain refused.
+Automated writes go through `plan-dash space publish`, which owns the pending
+journal and verifies publication by receipt and readback.
 
 `plan-dash space publish` resumes the configured thread through the supported
 [Codex app-server protocol](https://learn.chatgpt.com/docs/app-server),
@@ -76,8 +77,7 @@ A later invocation reads the Page before deciding what to do. If a pending
 attempt has an observed uploaded file and readback confirms that exact
 embed, it records the recovered publication without uploading again. If
 the saved outcome or file is unknown, the target changed, or the block no
-longer matches, publication stops for operator reconciliation. The guard
-also refuses a native upload while this pending record exists.
+longer matches, publication stops for operator reconciliation.
 
 Do not clear a pending record merely to retry. The operator must inspect the
 same Page and owned block and, where an upload was returned, its file access.

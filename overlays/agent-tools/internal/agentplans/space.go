@@ -67,9 +67,9 @@ func SpaceOperation(name string) string {
 	return ""
 }
 
-// AuthorizeSpaceSnapshot is shared by the native MCP guard and the direct
-// publisher. Its only write replaces the operator's exact owned block with
-// the built-in renderer and safely encoded data, using an observed hash.
+// AuthorizeSpaceSnapshot validates a direct publisher request before it records
+// the pending attempt. Its only write replaces the operator's exact owned block
+// with the built-in renderer and safely encoded data, using an observed hash.
 func AuthorizeSpaceSnapshot(input json.RawMessage) error {
 	target, err := LoadSpaceTarget()
 	if err != nil {
