@@ -41,7 +41,10 @@ with lib; let
       import sys
 
       sys.path.insert(0, "${./.}")
-      runpy.run_path("${./.}/reconcile.py", run_name="__main__")
+    runpy.run_path(
+        "${./.}/reconcile.py",
+        run_name="__main__",
+    )
     '';
   plans = config.wgn.home.llm.plans;
   managedRoots = {
