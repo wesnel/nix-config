@@ -25,6 +25,7 @@ class SettingsTest(unittest.TestCase):
             config.write_text(
                 '# Keep this comment.\n'
                 'model = "operator-model"\n'
+                'sandbox_mode = "workspace-write"\n'
                 '[shell_environment_policy.set]\n'
                 'KEEP_ME = "operator-value"\n'
                 '[features.network_proxy]\n'
@@ -92,17 +93,19 @@ class SettingsTest(unittest.TestCase):
             config = home / ".codex/config.toml"
             config.parent.mkdir()
             config.write_text(
+                'default_permissions = "wgn-workspace"\n'
                 '[permissions.wgn-workspace]\n'
-                'extends = ":read-only"\n'
+                'extends = ":workspace"\n'
                 '[permissions.wgn-workspace.workspace_roots]\n'
                 '"/operator/root" = true\n'
+                '"/old-cache" = true\n'
                 '[permissions.wgn-workspace.filesystem]\n'
                 '":root" = "write"\n'
                 '"/operator/private" = "deny"\n'
+                '":tmpdir" = "read"\n'
+                '":slash_tmp" = "read"\n'
                 '[sandbox_workspace_write]\n'
-                'writable_roots = ["/old-cache"]\n'
-                'exclude_tmpdir_env_var = true\n'
-                'exclude_slash_tmp = true\n'
+                'writable_roots = ["/ignored-root"]\n'
             )
             state = home / ".local/state/codex/cache-root"
             state.parent.mkdir(parents=True)
@@ -112,6 +115,7 @@ class SettingsTest(unittest.TestCase):
             profile = tomllib.loads(first)["permissions"]["wgn-workspace"]
             self.assertEqual(profile["extends"], ":workspace")
             self.assertNotIn("/old-cache", profile["workspace_roots"])
+            self.assertNotIn("/ignored-root", profile["workspace_roots"])
             self.assertIs(profile["workspace_roots"]["/operator/root"], True)
             self.assertEqual(profile["filesystem"], {
                 "/operator/private": "deny",
@@ -120,6 +124,29 @@ class SettingsTest(unittest.TestCase):
             })
             self.activate(home)
             self.assertEqual(config.read_text(), first)
+
+    def test_dormant_profile_grants_stay_inactive(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            config = home / ".codex/config.toml"
+            config.parent.mkdir()
+            config.write_text(
+                'sandbox_mode = "workspace-write"\n'
+                '[sandbox_workspace_write]\n'
+                'writable_roots = ["/operator/root"]\n'
+                'exclude_tmpdir_env_var = true\n'
+                '[permissions.wgn-workspace]\n'
+                'extends = ":workspace"\n'
+                '[permissions.wgn-workspace.workspace_roots]\n'
+                '"/" = true\n'
+            )
+            self.activate(home)
+            profile = tomllib.loads(config.read_text())["permissions"]["wgn-workspace"]
+            self.assertNotIn("/", profile["workspace_roots"])
+            self.assertIs(profile["workspace_roots"]["/operator/root"], True)
+            self.assertEqual(profile["filesystem"][":tmpdir"], "read")
+            self.activate(home)
+            self.assertNotIn("/", tomllib.loads(config.read_text())["permissions"]["wgn-workspace"]["workspace_roots"])
 
 
 if __name__ == "__main__":

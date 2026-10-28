@@ -6,7 +6,7 @@
 }:
 with lib; let
   cfg = config.wgn.home.codex;
-  profileName = "wgn-workspace";
+  profileName = (builtins.fromJSON (builtins.readFile ./profiles.json)).base;
   cacheRoot = "${config.xdg.cacheHome}/codex/sandbox";
   networkProxy = {
     enabled = true;
@@ -155,8 +155,19 @@ with lib; let
     if managed_profile:
         profiles = doc.setdefault("permissions", tomlkit.table())
         profile = profiles.setdefault(managed_profile, tomlkit.table())
+        selected = (
+            "sandbox_mode" not in doc
+            and doc.get("default_permissions") == managed_profile
+            and profile.get("extends") == ":workspace"
+        )
+        if not selected:
+            profile.pop("workspace_roots", None)
+            profile.pop("filesystem", None)
         roots = profile.setdefault("workspace_roots", tomlkit.table())
-        legacy = doc.get("sandbox_workspace_write", {})
+        legacy = (
+            doc.get("sandbox_workspace_write", {})
+            if doc.get("sandbox_mode") == "workspace-write" else {}
+        )
         for root in legacy.get("writable_roots", []):
             if str(root) not in roots:
                 roots[str(root)] = True
@@ -192,8 +203,10 @@ with lib; let
             if child_path == ("permissions", managed_profile):
                 previous = table.get(key, {})
                 value = dict(value)
-                if previous.get("workspace_roots"):
-                    value["workspace_roots"] = previous["workspace_roots"]
+                roots = dict(previous.get("workspace_roots", {}))
+                roots.update(value.get("workspace_roots", {}))
+                if roots:
+                    value["workspace_roots"] = roots
                 limited = restrictions(previous.get("filesystem", {}))
                 if limited:
                     value["filesystem"] = limited
@@ -228,6 +241,7 @@ in {
         permissions.${profileName} = {
           extends = ":workspace";
           network.enabled = true;
+          workspace_roots = genAttrs [cacheRoot plans.dir] (_: true);
         };
         features.network_proxy = networkProxy;
         shell_environment_policy.set = {
@@ -362,7 +376,8 @@ in {
       assertions = [
         {
           assertion =
-            (cfg.sandbox.default_permissions or null) == profileName
+            (cfg.sandbox.default_permissions or null)
+            == profileName
             && (cfg.sandbox.permissions.${profileName}.extends or null) == ":workspace"
             && (cfg.sandbox.permissions.${profileName}.network.enabled or null) == true
             && !(cfg.sandbox ? sandbox_mode)
