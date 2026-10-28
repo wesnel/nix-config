@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -653,6 +654,108 @@ func TestCommands(t *testing.T) {
 		if code, _, errs := agentPlan(t, "", "unfile", plan, "BRANCHES", "main..other", "--reason", "x"); code != 2 || !strings.Contains(errs, "refused") {
 			t.Errorf("unfile of a value not held: %d %s", code, errs)
 		}
+	})
+
+	t.Run("text-file", func(t *testing.T) {
+		// textFile makes a plan whose scratch root is a directory of the
+		// test's own, with a credential directory inside it, and writes
+		// text holding a backtick there; it returns the plan, the scratch
+		// directory, the credential directory and the file.
+		textFile := func(t *testing.T) (plan, scratch, secrets, file string) {
+			t.Helper()
+			c := setup(t)
+			scratch, _ = filepath.EvalSymlinks(t.TempDir())
+			secrets = filepath.Join(scratch, "secrets")
+			os.MkdirAll(secrets, 0o700)
+			data, _ := json.Marshal(map[string]any{"plans": c, "guard": map[string]any{"credentialPaths": []string{secrets}}})
+			os.WriteFile(os.Getenv("AGENT_TOOLS_CONFIG"), data, 0o644)
+			old := scratchRoots
+			scratchRoots = func() []string { return []string{scratch} }
+			t.Cleanup(func() { scratchRoots = old })
+			t.Setenv("CLAUDE_CODE_SESSION_ID", "s-1")
+			plan = newPlan(t)
+			file = filepath.Join(scratch, "text.md")
+			os.WriteFile(file, []byte("Add the `loop`.\nNot its flag.\n"), 0o644)
+			return plan, scratch, secrets, file
+		}
+
+		for _, c := range []struct {
+			name string
+			args []string
+			want string
+		}{
+			{"section", []string{"section", "PLAN", "Goal"}, "** Goal\nAdd the `loop`.\nNot its flag.\n** Steps\n"},
+			{"step", []string{"step", "PLAN", "--title", "Tag it"}, ":CUSTOM_ID: S3\n:END:\nAdd the `loop`.\nNot its flag.\n"},
+			{"ask", []string{"ask", "PLAN", "--question", "Tag it?", "--recommendation", "yes"}, "Add the `loop`.\nNot its flag.\n"},
+			{"part", []string{"part", "PLAN", "--title", "loop-flag"}, ":CUSTOM_ID: P1\n:END:\nAdd the `loop`.\nNot its flag.\n"},
+			{"edit", []string{"edit", "PLAN", "S1"}, ":CUSTOM_ID: S1\n:END:\nAdd the `loop`.\nNot its flag.\n*** TODO Test it\n"},
+			{"followup", []string{"followup", "PLAN", "--title", "Tag it", "--found-in", "S1"}, "Add the `loop`.\nNot its flag.\n"},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				plan, _, _, file := textFile(t)
+				args := append(slices.Clone(c.args), "--text-file", file)
+				args[slices.Index(args, "PLAN")] = plan
+				if code, _, errs := agentPlan(t, "", args...); code != 0 {
+					t.Fatalf("%v: %d %s", args, code, errs)
+				}
+				if data, _ := os.ReadFile(plan); !strings.Contains(string(data), c.want) {
+					t.Errorf("plan lacks %q:\n%s", c.want, data)
+				}
+			})
+		}
+
+		// Each refused file sits beside one the same command takes, so
+		// the refusal is the file check's, not an earlier failure's.
+		for _, c := range []struct {
+			name, says string
+			place      func(t *testing.T, scratch, secrets string) string
+		}{
+			{"a credential", "credential", func(t *testing.T, _, secrets string) string {
+				t.Helper()
+				q := filepath.Join(secrets, "token")
+				if err := os.WriteFile(q, []byte("hunter2\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return q
+			}},
+			{"outside the roots", "outside", func(t *testing.T, _, _ string) string {
+				t.Helper()
+				q := filepath.Join(t.TempDir(), "text.md")
+				if err := os.WriteFile(q, []byte("Add the loop.\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return q
+			}},
+		} {
+			t.Run("refused/"+c.name, func(t *testing.T) {
+				plan, scratch, secrets, file := textFile(t)
+				before, _ := os.ReadFile(plan)
+				code, _, errs := agentPlan(t, "", "section", plan, "Goal", "--text-file", c.place(t, scratch, secrets))
+				reason, _, _ := strings.Cut(errs, "\n")
+				if after, _ := os.ReadFile(plan); code != 2 || !strings.HasPrefix(reason, "agent-plan: refused: ") ||
+					!strings.Contains(reason, c.says) || !refusal.SaysInstead(reason) || !bytes.Equal(before, after) {
+					t.Errorf("exit %d, plan changed: %v, %q", code, !bytes.Equal(before, after), errs)
+				}
+				if code, _, errs := agentPlan(t, "", "section", plan, "Goal", "--text-file", file); code != 0 {
+					t.Errorf("the file in the scratch root: %d %s", code, errs)
+				}
+			})
+		}
+
+		t.Run("refused/beside --text or --context, or on another command", func(t *testing.T) {
+			plan, _, _, file := textFile(t)
+			for _, args := range [][]string{
+				{"section", plan, "Goal", "--text", "x", "--text-file", file},
+				{"ask", plan, "--question", "Tag it?", "--recommendation", "yes", "--context", "x", "--text-file", file},
+				{"log", plan, "--item", "S1", "--kind", "started", "--text-file", file},
+			} {
+				// The first line, not the usage text after it.
+				code, _, errs := agentPlan(t, "", args...)
+				if reason, _, _ := strings.Cut(errs, "\n"); code != 2 || !strings.Contains(reason, "--text-file") {
+					t.Errorf("%v: %d %s", args, code, errs)
+				}
+			}
+		})
 	})
 
 	t.Run("waiting", func(t *testing.T) {
