@@ -74,6 +74,7 @@ func TestQuotaStop(t *testing.T) {
 		{"an MCP call above it", "mcp__linear__save_issue", `{}`, 97.5, resets, time.Now(), true},
 		{"a message to a sub-agent above it", "SendMessage", `{"to":"a1","message":"go on"}`, 97.5, resets, time.Now(), true},
 		{"a reading over 5 minutes old", "Agent", agent, 97.5, resets, time.Now().Add(-6 * time.Minute), false},
+		{"exhaustion over 5 minutes old", "Agent", agent, 100, resets, time.Now().Add(-6 * time.Minute), true},
 		{"a window that has reset", "Agent", agent, 97.5, time.Now().Add(-time.Minute), time.Now().Add(-2 * time.Minute), false},
 		{"a read above it", "Read", `{"file_path":"/x"}`, 97.5, resets, time.Now(), false},
 		{"a search above it", "Grep", `{"pattern":"x"}`, 97.5, resets, time.Now(), false},
@@ -170,4 +171,14 @@ func TestQuotaStopAcrossSessions(t *testing.T) {
 			t.Error("a fresh 91% reading did not hold the stop at 90%")
 		}
 	})
+}
+
+func TestQuotaStopUnknownReset(t *testing.T) {
+	setup(t)
+	writeUsage(t, 100, time.Unix(0, 0), time.Now().Add(-time.Hour))
+	code, out, errs := runQuotaStop(t, "Agent", `{}`)
+	reason := denial(t, out)
+	if code != 0 || !strings.Contains(reason, "no verified reset") || strings.Contains(reason, "resets at") {
+		t.Fatalf("unknown reset stop: exit %d, reason %q, errors %q", code, reason, errs)
+	}
 }

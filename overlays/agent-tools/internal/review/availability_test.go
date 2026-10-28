@@ -253,6 +253,39 @@ func TestKnownClaudeQuota(t *testing.T) {
 }
 
 func TestAvailabilityState(t *testing.T) {
+	for _, data := range []string{`{`, `null`, `{"five_hour":{}}`, `{"five_hor":{"used_percentage":100,"resets_at":100,"observed_at":1}}`, `{"five_hour":{"used_percentage":100,"resets_at":-1,"observed_at":1}}`} {
+		t.Run("corrupt usage "+data, func(t *testing.T) {
+			f := askFixture(t, true)
+			f.claudeSays(t, "adversarial-reviewer", claudeResult(map[string]any{"answer": "Ready.", "unverified": []string{}}, ""))
+			if err := os.MkdirAll(filepath.Dir(usage.File()), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(usage.File(), []byte(data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if code, _, errs := askCodex(t, "--reviewer", "claude", "--question", ".git/question.md", "code.txt"); code != 4 {
+				t.Fatalf("corrupt usage admitted Claude: %d %s", code, errs)
+			}
+			noProviderCall(t, f, "adversarial-reviewer-runs")
+		})
+	}
+	t.Run("unknown reset remains blocked", func(t *testing.T) {
+		f := askFixture(t, true)
+		f.claudeSays(t, "adversarial-reviewer", claudeResult(map[string]any{"answer": "Ready.", "unverified": []string{}}, ""))
+		if err := usage.Record(usage.File(), []usage.Window{{Name: "5h", Used: 100, ObservedAt: 1}}); err != nil {
+			t.Fatal(err)
+		}
+		if code, _, errs := askCodex(t, "--reviewer", "claude", "--question", ".git/question.md", "code.txt"); code != 4 {
+			t.Fatalf("unknown reset admitted Claude: %d %s", code, errs)
+		}
+		noProviderCall(t, f, "adversarial-reviewer-runs")
+		if code, out := runAvailability(t, "--clear", "claude"); code != 0 {
+			t.Fatalf("clear unknown reset: %d %s", code, out)
+		}
+		if code, _, errs := askCodex(t, "--reviewer", "claude", "--question", ".git/question.md", "code.txt"); code != 0 {
+			t.Fatalf("explicit clear did not restore eligibility: %d %s", code, errs)
+		}
+	})
 	t.Run("corrupt state refuses calls and explicit clear repairs it", func(t *testing.T) {
 		f := askFixture(t, true)
 		path := filepath.Join(os.Getenv("XDG_STATE_HOME"), "agent-tools", "review-availability", "codex.json")

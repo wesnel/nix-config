@@ -6,6 +6,7 @@ package usage
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -69,33 +70,52 @@ type stored struct {
 // Load is the windows file holds, in windowNames' order; none where it is
 // missing or unreadable.
 func Load(file string) []Window {
-	data, err := os.ReadFile(file)
-	if err != nil {
-		return nil
-	}
-	var in map[string]stored
-	if json.Unmarshal(data, &in) != nil {
-		return nil
-	}
-	var ws []Window
-	for _, n := range windowNames {
-		if s, ok := in[n.key]; ok && s.ResetsAt > 0 {
-			ws = append(ws, Window{Name: n.name, Used: s.Used, ResetsAt: s.ResetsAt, ObservedAt: s.ObservedAt})
-		}
-	}
+	ws, _ := Read(file)
 	return ws
 }
 
-// Fresh is how long a recorded window counts after it was observed: five
-// of the status line's one-minute refreshes. With no session refreshing,
-// the record stops counting rather than hold on an old reading.
+// Read distinguishes missing evidence from corrupt or unreadable state.
+// Admission callers must block on its error.
+func Read(file string) ([]Window, error) {
+	data, err := os.ReadFile(file)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var in map[string]*struct {
+		Used       *float64 `json:"used_percentage"`
+		ResetsAt   *int64   `json:"resets_at"`
+		ObservedAt *int64   `json:"observed_at"`
+	}
+	if err := json.Unmarshal(data, &in); err != nil || in == nil {
+		return nil, fmt.Errorf("invalid usage state")
+	}
+	var ws []Window
+	for _, n := range windowNames {
+		if s, ok := in[n.key]; ok {
+			if s == nil || s.Used == nil || s.ResetsAt == nil || s.ObservedAt == nil || *s.Used < 0 || *s.ResetsAt < 0 || *s.ObservedAt < 0 {
+				return nil, fmt.Errorf("invalid %s usage state", n.key)
+			}
+			ws = append(ws, Window{Name: n.name, Used: *s.Used, ResetsAt: *s.ResetsAt, ObservedAt: *s.ObservedAt})
+		}
+	}
+	if len(ws) != len(in) {
+		return nil, fmt.Errorf("invalid usage state window")
+	}
+	return ws, nil
+}
+
+// Fresh limits threshold warnings below exhaustion. Exhaustion remains
+// evidence until the window's verified reset, regardless of age.
 const Fresh = 5 * time.Minute
 
 // Over is the first window of ws at or above threshold percent that
-// counts at now: its reset still ahead and observed within Fresh.
+// counts at now: unreset, and either exhausted or observed within Fresh.
 func Over(ws []Window, threshold float64, now time.Time) (Window, bool) {
 	for _, w := range ws {
-		if w.ResetsAt > now.Unix() && now.Unix()-w.ObservedAt <= int64(Fresh/time.Second) && w.Used >= threshold {
+		if (w.ResetsAt == 0 || w.ResetsAt > now.Unix()) && (w.Used >= 100 || now.Unix()-w.ObservedAt <= int64(Fresh/time.Second)) && w.Used >= threshold {
 			return w, true
 		}
 	}
@@ -108,12 +128,22 @@ func Over(ws []Window, threshold float64, now time.Time) (Window, bool) {
 // since reset; within one window usage only grows. So a reading of the
 // stored window (the same resets_at) keeps the higher share and the later
 // observed_at, a reading of an earlier window changes nothing, and only a
-// later window replaces it. Sessions record one at a time, each holding an
+// later window replaces it. Exhaustion without a reset stays until
+// ClearUnknown, even when a later reading names a reset. Sessions record one
+// at a time, each holding an
 // exclusive flock on file's ".lock" from its load to its write, so none
 // writes over another's newer window with what it loaded before. The file
 // is replaced by a rename, so a reader, which takes no lock, sees one
 // whole version. Without the lock, Record records nothing.
 func Record(file string, seen []Window) error {
+	return record(file, seen, false)
+}
+
+// ClearUnknown removes only readings without a verified reset. Known windows
+// retain their high-water marks until reset even after an explicit clear.
+func ClearUnknown(file string) error { return record(file, nil, true) }
+
+func record(file string, seen []Window, clearUnknown bool) error {
 	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
 		return err
 	}
@@ -133,12 +163,21 @@ func Record(file string, seen []Window) error {
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
 	by := map[string]Window{}
-	for _, w := range Load(file) {
-		by[w.Name] = w
+	previous, err := Read(file)
+	if err != nil {
+		return err
+	}
+	for _, w := range previous {
+		if !clearUnknown || w.ResetsAt != 0 {
+			by[w.Name] = w
+		}
 	}
 	for _, w := range seen {
 		old, ok := by[w.Name]
 		switch {
+		case ok && old.ResetsAt == 0 && old.Used >= 100:
+		case w.ResetsAt == 0 && w.Used >= 100:
+			by[w.Name] = w
 		case !ok || w.ResetsAt > old.ResetsAt:
 			by[w.Name] = w
 		case w.ResetsAt == old.ResetsAt:

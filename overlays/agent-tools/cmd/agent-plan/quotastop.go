@@ -51,11 +51,15 @@ func quotaStop(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if !over {
 		return 0
 	}
-	reason := fmt.Sprintf("Quota stop: the Claude account's %s window is at %d%%, at or above the %d%% stop, until it resets at %s. "+
+	reset := "until it resets at " + quota.Clock(w.ResetsAt, now)
+	if w.ResetsAt == 0 {
+		reset = "with no verified reset; the operator must clear the hold after recovery"
+	}
+	reason := fmt.Sprintf("Quota stop: the Claude account's %s window is at %d%%, at or above the %d%% stop, %s. "+
 		"Until then no sub-agent starts and no tool runs but %s, and agent-plan alone on a Bash line. "+
 		"Log where the work stands with agent-plan, then hand back with SubagentHandback or end your turn. "+
 		"Nothing in a session lifts the stop: the operator does, by setting wgn.home.claude.quotaStop = null and switching.",
-		w.Name, int(math.Floor(w.Used)), *threshold, quota.Clock(w.ResetsAt, now), strings.Join(stopAllows, ", "))
+		w.Name, int(math.Floor(w.Used)), *threshold, reset, strings.Join(stopAllows, ", "))
 	if err := json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{
 		"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}); err != nil {
 		fmt.Fprintln(stderr, reason)

@@ -169,12 +169,23 @@ have (see status) is refused and writes nothing.
   quota-stop --threshold N
                      Claude Code's PreToolUse hook (reads stdin): while a
                      window statusline recorded is at or above N percent,
-                     its reset ahead and seen in the last 5 minutes, denies
+                     its reset ahead and seen in the last 5 minutes (or
+                     exhausted at 100 percent regardless of age), denies
                      every call but Read, Grep, Glob, ToolSearch, Skill,
                      AskUserQuestion, TaskStop, SubagentHandback and
                      agent-plan alone on a Bash line, naming the window, its
                      share and its reset; with no record it can read, denies
                      nothing
+  quota-admit        exit 0 if the dashboard may start, 1 if explicitly off,
+                     Claude is held/exhausted, or state is unreadable. Missing
+                     evidence is unknown but eligible. Starts no provider.
+  quota-control      request a stop of agent-plans.service when quota-admit
+                     blocks. Never starts or restarts the worker.
+  quota-failure [--stop-dashboard]
+                     StopFailure hook (reads stdin): error=rate_limit holds
+                     the host-local current Claude account until explicit
+                     clear; --stop-dashboard also requests a worker stop,
+                     even if storing the hold fails. No diagnostic is saved.
   own PLAN --worktree DIR --agent ID
                      record agent ID, the harness's ID for a sub-agent or
                      "main" for the session's main thread, as the one agent
@@ -258,6 +269,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if cli.IsHelp(args[0]) {
 		fmt.Fprint(stdout, usage)
 		return 0
+	}
+	if args[0] == "quota-admit" || args[0] == "quota-control" || args[0] == "quota-failure" {
+		return quotaLifecycleCommand(args[0], args[1:], stdin, stderr)
 	}
 	if args[0] == "quota-stop" {
 		// Before plans.Load: it runs before every tool call.

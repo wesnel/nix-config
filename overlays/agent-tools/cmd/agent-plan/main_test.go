@@ -21,6 +21,10 @@ import (
 // tests that run it as separate processes.
 func TestMain(m *testing.M) {
 	gitenv.Isolate()
+	if filepath.Base(os.Args[0]) == "systemctl" && os.Getenv("QUOTA_TEST_SYSTEMCTL") != "" {
+		quotaTestSystemctl()
+		return
+	}
 	if os.Getenv("AGENT_PLAN_TEST_MAIN") == "1" {
 		os.Exit(Main(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 	}

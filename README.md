@@ -355,8 +355,10 @@ including retries, focused reviews, walkthroughs, diagrams and design
 questions. A known exhausted Claude window blocks until its reset. A
 block without a verified reset stays until recovery is confirmed and
 `git delegate availability --clear claude` (or `codex`) clears it. The
-state is shared across repositories; changing accounts needs the same
-clear. Already-started concurrent calls may finish.
+state is shared across repositories on this host for the current account;
+changing accounts needs the same clear. Missing evidence is unknown but
+eligible; unreadable or corrupt evidence blocks admission. Already-started
+concurrent calls may finish.
 
 The `review-change` skill dispatches each unavailable stage to a fresh
 read-only sub-agent in the primary harness using its printed contract.

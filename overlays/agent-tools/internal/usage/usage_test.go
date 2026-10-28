@@ -2,6 +2,7 @@ package usage
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -184,5 +185,27 @@ func TestRecordConcurrent(t *testing.T) {
 		if got, want := readFile(t, file)["five_hour"].ResetsAt, int64(resets+(writers-1)*3600); got != want {
 			t.Fatalf("round %d: stored resets_at %d, want the latest, %d", round, got, want)
 		}
+	}
+}
+
+func TestUnknownReset(t *testing.T) {
+	for _, unknownFirst := range []bool{true, false} {
+		t.Run(fmt.Sprint("unknown first ", unknownFirst), func(t *testing.T) {
+			file := filepath.Join(t.TempDir(), "usage.json")
+			unknown := Window{Name: "5h", Used: 100, ObservedAt: at.Unix()}
+			known := Window{Name: "5h", Used: 10, ResetsAt: at.Add(time.Hour).Unix(), ObservedAt: at.Unix()}
+			first, second := unknown, known
+			if !unknownFirst {
+				first, second = second, first
+			}
+			for _, w := range []Window{first, second} {
+				if err := Record(file, []Window{w}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := readFile(t, file)["five_hour"]; got.Used != 100 || got.ResetsAt != 0 {
+				t.Fatalf("unknown exhaustion lost: %+v", got)
+			}
+		})
 	}
 }
