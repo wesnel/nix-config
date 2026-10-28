@@ -865,12 +865,17 @@ that cannot run denies too.
 
 Each rule is held by what each harness has. In Claude Code the sandbox and
 permission rules hold most of them, and the hook catches the spellings they
-cannot see and holds the file tools, which run outside the sandbox; Codex
-has the hook alone:
+cannot see and holds the file tools, which run outside the sandbox. Codex's
+named command profile denies shared credential paths, and its environment
+policy filters inherited credential variables. Trusted hooks guard supported
+tool paths. The profile
+is a user default, and hooks are not failure-closed. See the
+[Codex configuration limits](modules/home-manager/codex/README.md) for native
+reviewer inheritance, Linux glob limits and the runtime evidence:
 
 | Rule | Claude Code | Codex |
 |---|---|---|
-| Credential reads (paths, security, sops -d, op, pass, env dumps) | sandbox denyRead and the hook, one list | hook |
+| Credential reads (paths, security, sops -d, op, pass, env dumps) | sandbox denyRead and the hook, one list | named filesystem profile; inherited-environment filters; hook for commands |
 | sudo, doas, su, pkexec, osascript | hook | hook |
 | darwin-rebuild/nixos-rebuild/home-manager switch, nix profile/copy, nix-env | hook; sandbox (profiles not writable) | hook |
 | Publishing (npm, cargo, twine, gem, docker push, goreleaser) | sandbox egress allowlist, hook, deny rules | hook |
@@ -888,7 +893,7 @@ has the hook alone:
 | Bypass-permissions launches | disableBypassPermissionsMode and hook | hook |
 | ExitWorktree discarding work | hook | (no such tool) |
 | Ownership fence | hook (file tools and shell) | hook |
-| Reviewer read-only | agent tools (Read, Bash, StructuredOutput) and the frontmatter hook | (no role agents) |
+| Reviewer read-only | agent tools (Read, Bash, StructuredOutput) and the frontmatter hook | native roles inherit parent permissions; read-only instructions are advisory |
 | MCP reads/confirms; unlisted tools refused | hook, permission rules and mcp-proxy's filter | hook and mcp-proxy's filter |
 | Terminal readers | (n/a) | hook |
 | Emacs (forms named as written; Lisp that builds a form's name at run time is not read) | hook | hook |

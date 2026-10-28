@@ -1,8 +1,9 @@
 # Codex configuration
 
-Activation reconciles `~/.codex/config.toml` once. The `wgn` permission profile
-extends `:workspace`, uses the reviewed loopback and Nix daemon proxy, and
-denies the shared LLM credential paths and workspace environment files.
+Activation reconciles `~/.codex/config.toml` once. The `wgn-workspace`
+permission profile extends `:workspace`, uses the reviewed loopback and
+Nix daemon proxy, and denies the shared LLM credential paths and workspace
+environment files.
 The Nix daemon performs builds outside the command sandbox. The profile is
 a user default: command-line options and higher-precedence configuration
 can override it. It is not an administrator-enforced requirement.
@@ -22,8 +23,11 @@ migrate to a Unicode-lowercase canonical map. Equivalent exclusions merge;
 an include/exclude collision requires operator resolution because removing
 an include can broaden inheritance or change explicit-value filtering.
 Legacy temporary-directory restrictions require an explicit migration
-instead of being silently removed. Diagnostics name
-conflicting variables without printing their values. Environment exclusions
+instead of being silently removed. Existing profile read or deny entries
+must match a managed rule that preserves or tightens them; other restrictions
+and different inherited profiles require explicit migration before any write.
+Diagnostics name conflicting variables without printing their values.
+Environment exclusions
 filter inherited variables; programs can still create their own environment.
 
 The shared denial list is unchanged for Claude. Codex additionally applies

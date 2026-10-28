@@ -73,6 +73,38 @@ def validate_roots(roots, filesystem):
                     )
 
 
+def validate_profile(previous, desired):
+    parent = previous.get("extends")
+    if parent and parent != desired.get("extends"):
+        raise ReconcileError(
+            "existing profile inheritance restrictions need explicit migration"
+        )
+
+    def restrictions(old, new):
+        for key, value in mapping(
+            old, "existing filesystem restrictions"
+        ).items():
+            replacement = new.get(key)
+            if isinstance(value, Mapping):
+                restrictions(
+                    value,
+                    replacement if isinstance(replacement, Mapping) else {},
+                )
+            elif value in ("read", "deny"):
+                if replacement not in (value, "deny"):
+                    raise ReconcileError(
+                        "existing filesystem restrictions need "
+                        "explicit migration"
+                    )
+            elif value != "write" and replacement != value:
+                raise ReconcileError(
+                    "unrecognized filesystem restriction needs "
+                    "explicit migration"
+                )
+
+    restrictions(previous.get("filesystem", {}), desired.get("filesystem", {}))
+
+
 def environment(document, desired):
     existing = document.setdefault("shell_environment_policy", tomlkit.table())
     mapping(existing, "shell environment policy")
@@ -180,7 +212,11 @@ def reconcile(config, settings, roots, state):
         original = read_text(config)
         document = tomlkit.parse(original)
         name = settings["default_permissions"]
-        profile = document.get("permissions", {}).get(name, {})
+        profile = mapping(
+            document.get("permissions", {}).get(name, {}),
+            "existing permission profile",
+        )
+        validate_profile(profile, settings["permissions"][name])
         saved_roots = dict(profile.get("workspace_roots", {}))
         legacy = mapping(
             document.get("sandbox_workspace_write", {}), "legacy sandbox"

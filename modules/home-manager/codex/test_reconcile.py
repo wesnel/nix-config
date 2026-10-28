@@ -88,7 +88,8 @@ class ReconcileTest(unittest.TestCase):
             'model = "operator-model"\n'
             'sandbox_mode = "workspace-write"\n'
             "[sandbox_workspace_write]\n"
-            f"writable_roots = {json.dumps([old_plans, old_cache, user_root])}\n"
+            "writable_roots = "
+            f"{json.dumps([old_plans, old_cache, user_root])}\n"
             "network_access = true\n"
             "[shell_environment_policy.set]\n"
             'KEEP_ME = "operator-value"\n'
@@ -405,7 +406,8 @@ class ReconcileTest(unittest.TestCase):
         for original in (
             "[sandbox_workspace_write]\nexclude_slash_tmp = true\n",
             "[sandbox_workspace_write]\nexclude_tmpdir_env_var = true\n",
-            '[shell_environment_policy]\nfilters = { PATH = "include" }\nexclude = ["PRIVATE"]\n',
+            '[shell_environment_policy]\nfilters = { PATH = "include" }\n'
+            'exclude = ["PRIVATE"]\n',
         ):
             with self.subTest(original=original):
                 self.config.write_text(original)
@@ -435,6 +437,60 @@ class ReconcileTest(unittest.TestCase):
                 self.assertEqual(
                     (self.state / "plans-root").read_text(),
                     self.roots["plans"] + "\n",
+                )
+
+    def test_existing_profile_restrictions_are_not_discarded(self):
+        for original in (
+            '[permissions.managed]\nextends = ":read-only"\n',
+            '[permissions.managed]\nextends = "operator-policy"\n',
+            '[permissions.managed.filesystem]\n"/operator/private" = "deny"\n',
+            "[permissions.managed.filesystem]\n"
+            '"/operator/readonly" = "read"\n',
+            '[permissions.managed.filesystem.":workspace_roots"]\n'
+            '"docs" = "read"\n',
+        ):
+            with self.subTest(original=original):
+                self.config.write_text(original)
+                (self.state / "plans-root").write_text(
+                    self.roots["plans"] + "\n"
+                )
+                (self.state / "pending-roots").write_text(
+                    json.dumps(list(self.roots.values()))
+                )
+                before = {
+                    p.name: p.read_bytes()
+                    for p in self.state.iterdir()
+                    if p.name != "reconcile.lock"
+                }
+                result = self.reconcile(success=False)
+                self.assertIn("restriction", result.stderr)
+                self.assertEqual(self.config.read_text(), original)
+                self.assertEqual(
+                    {
+                        p.name: p.read_bytes()
+                        for p in self.state.iterdir()
+                        if p.name != "reconcile.lock"
+                    },
+                    before,
+                )
+
+    def test_managed_denials_preserve_or_tighten_matching_restrictions(self):
+        for access in ("read", "deny"):
+            with self.subTest(access=access):
+                self.config.write_text(
+                    '[permissions.managed]\nextends = ":workspace"\n'
+                    "[permissions.managed.filesystem]\n"
+                    f"{json.dumps(str(self.home / 'protected'))}"
+                    f' = "{access}"\n'
+                    '"/broad" = "write"\n'
+                )
+                self.reconcile()
+                profile = tomllib.loads(self.config.read_text())[
+                    "permissions"
+                ]["managed"]
+                self.assertEqual(
+                    profile["filesystem"],
+                    {str(self.home / "protected"): "deny"},
                 )
 
 

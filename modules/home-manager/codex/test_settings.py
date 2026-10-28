@@ -170,17 +170,14 @@ class SettingsTest(unittest.TestCase):
             config = home / ".codex/config.toml"
             config.parent.mkdir()
             config.write_text(
-                '[permissions.wgn-workspace]\n'
-                'extends = ":read-only"\n'
-                '[permissions.wgn-workspace.workspace_roots]\n'
+                "[permissions.wgn-workspace]\n"
+                'extends = ":workspace"\n'
+                "[permissions.wgn-workspace.workspace_roots]\n"
                 '"/operator/root" = true\n'
-                '[permissions.wgn-workspace.filesystem]\n'
+                "[permissions.wgn-workspace.filesystem]\n"
                 '":root" = "write"\n'
-                '"/operator/private" = "deny"\n'
-                '[sandbox_workspace_write]\n'
+                "[sandbox_workspace_write]\n"
                 'writable_roots = ["/old-cache"]\n'
-                'exclude_tmpdir_env_var = true\n'
-                'exclude_slash_tmp = true\n'
             )
             state = home / ".local/state/codex/cache-root"
             state.parent.mkdir(parents=True)
@@ -191,13 +188,38 @@ class SettingsTest(unittest.TestCase):
             self.assertEqual(profile["extends"], ":workspace")
             self.assertNotIn("/old-cache", profile["workspace_roots"])
             self.assertIs(profile["workspace_roots"]["/operator/root"], True)
-            self.assertEqual(profile["filesystem"], {
-                "/operator/private": "deny",
-                ":tmpdir": "read",
-                ":slash_tmp": "read",
-            })
+            self.assertNotIn(":root", profile["filesystem"])
+            self.assertEqual(profile["filesystem"][str(home / ".ssh")], "deny")
             self.activate(home)
             self.assertEqual(config.read_text(), first)
+
+    def test_restrictive_profile_requires_explicit_migration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            config = home / ".codex/config.toml"
+            config.parent.mkdir()
+            original = (
+                "[permissions.wgn-workspace]\n"
+                'extends = ":read-only"\n'
+                "[permissions.wgn-workspace.workspace_roots]\n"
+                '"/operator/root" = true\n'
+                "[permissions.wgn-workspace.filesystem]\n"
+                '":root" = "write"\n'
+                '"/operator/private" = "deny"\n'
+                "[sandbox_workspace_write]\n"
+                'writable_roots = ["/old-cache"]\n'
+                "exclude_tmpdir_env_var = true\n"
+                "exclude_slash_tmp = true\n"
+            )
+            config.write_text(original)
+            state = home / ".local/state/codex/cache-root"
+            state.parent.mkdir(parents=True)
+            state.write_text("/old-cache\n")
+            with self.assertRaises(subprocess.CalledProcessError):
+                self.activate(home)
+            self.assertEqual(config.read_text(), original)
+            self.assertEqual(state.read_text(), "/old-cache\n")
+            self.assertFalse((state.parent / "pending-roots").exists())
 
 
 if __name__ == "__main__":
