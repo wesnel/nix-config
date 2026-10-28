@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
@@ -440,17 +441,19 @@ type checkedPush struct {
 }
 
 // urlPush is what one push URL of Remote receives: Refs, one push each, in
-// order. Done is set once the URL has them all.
+// order. Done is set once the URL has them all. NeedsSnapshot is set only
+// for new plans; false, including in legacy state, preserves the saved Old.
 type urlPush struct {
-	Remote string    `json:"remote"`
-	URL    string    `json:"url"`
-	Refs   []refPush `json:"refs"`
-	Done   bool      `json:"done,omitempty"`
+	Remote        string    `json:"remote"`
+	URL           string    `json:"url"`
+	Refs          []refPush `json:"refs"`
+	Done          bool      `json:"done,omitempty"`
+	NeedsSnapshot bool      `json:"needsSnapshot,omitempty"`
 }
 
 // refPush sends New to refs/heads/Branch, leased on Old: what the URL held
-// before the pass pushed anywhere, which is the remote-tracking ref as the
-// push was planned, or empty where the URL must not have the branch yet.
+// when that URL was first observed, or the original remote-tracking
+// expectation in legacy state. Empty means the URL must not have the branch.
 // With Publish, the remote's branch becomes Branch's upstream once every
 // URL has it. Done is set once this URL has it.
 type refPush struct {
@@ -1500,6 +1503,16 @@ func pushAll(branch string, todo pushes) (pushed map[string]string, err error) {
 	defer mux.Close()
 	for i := range todo.URLs {
 		u := &todo.URLs[i]
+		if u.NeedsSnapshot && !u.Done {
+			// %v, as for a failed push: a refusal wrapped here would be
+			// reported without the command that resumes the push.
+			if err := u.snapshot(ctx, mux.Env(i)); err != nil {
+				return nil, fmt.Errorf("%v%s; the branches are signed, so fix the cause and %s", err, pushedTo(todo.URLs), retry)
+			}
+			if err := writeJSON(path, todo); err != nil {
+				return nil, err
+			}
+		}
 		for j := range u.Refs {
 			if u.Done || u.Refs[j].Done {
 				continue
@@ -1566,8 +1579,9 @@ func pushedTo(urls []urlPush) string {
 
 // planPush decides where branches go (pushTargets) and splits that by push
 // URL of each remote, each sending the branches' commits as they are now to
-// the branches of the same names, leased on their remote-tracking refs as
-// they are now. A branch published with setUpstream is leased on nothing,
+// the branches of the same names. The remote-tracking expectations are
+// checked against each URL before its first push, then its actual leases
+// are saved. A branch published with setUpstream is leased on nothing,
 // so it lands only where the URL has no branch of that name. Each branch is
 // pushed on its own, bottom up: GitHub starts a pull request's workflows
 // twice when one push moves it and its base together.
@@ -1597,11 +1611,87 @@ func planPush(branches []string, setUpstream bool, retry string) (pushes, error)
 					"fix it with `git remote set-url --push`, then %s", remote, url, retry)
 			}
 			if url != "" {
-				todo.URLs = append(todo.URLs, urlPush{Remote: remote, URL: url, Refs: slices.Clone(refs)})
+				todo.URLs = append(todo.URLs, urlPush{Remote: remote, URL: url, Refs: slices.Clone(refs), NeedsSnapshot: true})
 			}
 		}
 	}
 	return todo, nil
+}
+
+// snapshot records the URL's exact old refs once, just before its first push.
+// A missing marker in older state preserves the leases that state saved.
+func (u *urlPush) snapshot(ctx context.Context, env []string) error {
+	args := []string{"ls-remote", "--exit-code", "--refs", u.URL}
+	wanted := map[string]bool{}
+	for _, r := range u.Refs {
+		if !r.Done {
+			ref := "refs/heads/" + r.Branch
+			args = append(args, ref)
+			wanted[ref] = true
+		}
+	}
+	if len(wanted) == 0 {
+		u.NeedsSnapshot = false
+		return nil
+	}
+	what := "checking branches at " + u.URL
+	retry := &retrier{}
+	run := ctx
+	var out []byte
+	for {
+		var err error
+		out, err = git.BytesContext(git.WithEnv(run, env...), nil, args...)
+		if err == nil {
+			break
+		}
+		if run.Err() != nil {
+			return fmt.Errorf("%s: %w: %w", what, run.Err(), err)
+		}
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 2 {
+			break
+		}
+		var done context.CancelFunc
+		var again bool
+		if run, done, again = retry.next(ctx, what, "", err.Error()); !again {
+			return fmt.Errorf("%s failed%s: %w", what, retry.locked(), err)
+		}
+		defer done()
+	}
+	observed := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			return fmt.Errorf("%s returned an unexpected ref advertisement", what)
+		}
+		oid := fields[0]
+		validOID := (len(oid) == 40 || len(oid) == 64) && strings.Trim(oid, "0123456789abcdef") == ""
+		if !wanted[fields[1]] || !validOID || observed[fields[1]] != "" {
+			return fmt.Errorf("%s returned an unexpected ref advertisement", what)
+		}
+		observed[fields[1]] = fields[0]
+	}
+	for _, r := range u.Refs {
+		if r.Done {
+			continue
+		}
+		// A URL may already hold New: another URL of the same repository
+		// pushed it, or another client did. A published branch must still
+		// be absent.
+		if old := observed["refs/heads/"+r.Branch]; old != "" && old != r.Old && (r.Publish || old != r.New) {
+			return refuse("%s at %s changed from the expected %.12s to %.12s; fetch and review that destination before pushing", r.Branch, u.URL, r.Old, old)
+		}
+	}
+	for i := range u.Refs {
+		if !u.Refs[i].Done {
+			u.Refs[i].Old = observed["refs/heads/"+u.Refs[i].Branch]
+		}
+	}
+	u.NeedsSnapshot = false
+	return nil
 }
 
 // bottomUp orders refs so that each comes before every ref whose commit

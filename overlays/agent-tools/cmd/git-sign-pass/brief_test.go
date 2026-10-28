@@ -149,12 +149,13 @@ func TestBriefKeepsErrors(t *testing.T) {
 	}
 	repo, global := pushedRepo(t, 3)
 	hub := gitIn(t, repo, "remote", "get-url", "origin")
-	// The hub turns the push away.
+	// The hub declines the push itself: a branch moved there is refused
+	// before any push, in the pass's words rather than git's.
 	if err := os.WriteFile(filepath.Join(hub, "hooks", "pre-receive"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	code, _, stderr := runOutput(t, repo, global, exe, "--push")
-	if code == 0 || !strings.Contains(stderr, "rejected") {
+	if code == 0 || !strings.Contains(stderr, "pre-receive hook declined") {
 		t.Errorf("a push that fails: exit %d\n%s", code, stderr)
 	}
 }

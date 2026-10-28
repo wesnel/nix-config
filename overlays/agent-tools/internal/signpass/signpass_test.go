@@ -200,6 +200,7 @@ func TestPush(t *testing.T) {
 	t.Run("destination", testPushDestination)
 	t.Run("remote", testPushRemote)
 	t.Run("each URL", testPushEachURL)
+	t.Run("URL leases", testPushURLLeases)
 	t.Run("stack bottom up", testPushStackBottomUp)
 	t.Run("control path too long", testPushControlPathTooLong)
 	t.Run("interrupted", testPushInterrupted)
@@ -241,6 +242,177 @@ func testPushUnmovedMoved(t *testing.T) {
 	var r refusal.Refusal
 	if !errors.As(err, &r) || !strings.Contains(err.Error(), "the operator's key did not sign") {
 		t.Errorf("a named branch that moved during the pass: %v", err)
+	}
+}
+
+func testPushURLLeases(t *testing.T) {
+	for _, mode := range []string{"missing mirror", "same value", "already new", "aliased URLs", "publish already new", "moved mirror", "unavailable mirror", "resume absent", "resume deleted", "legacy lease"} {
+		t.Run(mode, func(t *testing.T) {
+			publishing := mode == "publish already new"
+			dir := t.TempDir()
+			// Every commit is signed with the operator's key, as the pushes'
+			// gate requires of those they send.
+			signingConfig(t, dir)
+			commit := []string{"-c", "gpg.format=ssh", "-c", "user.signingkey=" + filepath.Join(dir, "key"), "commit", "-q", "-S", "--allow-empty"}
+			t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+			t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+			noTerminal(t)
+			hub, mirror, repo := filepath.Join(dir, "hub.git"), filepath.Join(dir, "mirror.git"), filepath.Join(dir, "repo")
+			gitIn(t, dir, "init", "-q", "--bare", hub)
+			gitIn(t, dir, "init", "-q", "--bare", mirror)
+			if err := os.Mkdir(repo, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			gitIn(t, repo, "init", "-q", "-b", "main")
+			gitIn(t, repo, append(commit, "-m", "base")...)
+			base := gitIn(t, repo, "rev-parse", "HEAD")
+			gitIn(t, repo, "switch", "-qc", "topic")
+			gitIn(t, repo, append(commit, "-m", "original")...)
+			old := gitIn(t, repo, "rev-parse", "HEAD")
+			gitIn(t, repo, "remote", "add", "origin", hub)
+			if !publishing {
+				gitIn(t, repo, "push", "-q", "-u", "origin", "topic")
+			}
+			absent := mode == "missing mirror" || mode == "resume absent" || mode == "legacy lease" || publishing
+			if !absent {
+				gitIn(t, repo, "push", "-q", mirror, "topic")
+			}
+			gitIn(t, repo, "remote", "set-url", "--add", "--push", "origin", hub)
+			gitIn(t, repo, "remote", "set-url", "--add", "--push", "origin", mirror)
+			gitIn(t, repo, append(commit, "--amend", "-m", "replacement")...)
+			next := gitIn(t, repo, "rev-parse", "HEAD")
+			if mode == "aliased URLs" {
+				if err := os.Rename(mirror, mirror+".unused"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(hub, mirror); err != nil {
+					t.Fatal(err)
+				}
+			}
+			useDir(t, repo)
+			todo, err := planPush([]string{"topic"}, publishing, "retry")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(todo.URLs) != 2 {
+				t.Fatalf("push URLs: %+v", todo.URLs)
+			}
+			if mode == "already new" || publishing {
+				// The mirror fetches, as another client's push would land:
+				// a push from repo to a URL of origin moves origin/topic.
+				gitIn(t, mirror, "fetch", "-q", repo, "+topic:refs/heads/topic")
+			}
+			if mode == "legacy lease" {
+				for i, u := range todo.URLs {
+					todo.URLs[i] = urlPush{Remote: u.Remote, URL: u.URL, Refs: u.Refs}
+				}
+			}
+			if mode == "moved mirror" {
+				gitIn(t, mirror, "update-ref", "refs/heads/topic", base, old)
+			}
+			if mode == "unavailable mirror" {
+				if err := os.Rename(mirror, mirror+".away"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			resuming := strings.HasPrefix(mode, "resume ")
+			hook := filepath.Join(mirror, "hooks", "pre-receive")
+			if resuming {
+				if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, err = pushAll("topic", todo)
+			refused := resuming || publishing || mode == "moved mirror" || mode == "unavailable mirror" || mode == "legacy lease"
+			if refused {
+				if err == nil {
+					t.Fatal("push unexpectedly accepted")
+				}
+				if publishing {
+					if got := gitIn(t, repo, "for-each-ref", "--format=%(objectname)", "refs/remotes/origin/topic"); got != "" {
+						t.Errorf("publishing tracking ref created after partial failure: %s", got)
+					}
+				} else if got := gitIn(t, repo, "rev-parse", "origin/topic"); got != old {
+					t.Errorf("tracking moved after partial failure: %s", got)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if got := gitIn(t, hub, "rev-parse", "topic"); got != next {
+				t.Fatalf("hub has %s, want completed push %s", got, next)
+			}
+			if mode == "moved mirror" {
+				if got := gitIn(t, mirror, "rev-parse", "topic"); got != base {
+					t.Errorf("moved mirror overwritten: %s", got)
+				}
+			}
+			if mode == "legacy lease" {
+				if got := gitIn(t, mirror, "for-each-ref", "--format=%(refname)"); got != "" {
+					t.Errorf("legacy saved lease replaced by absence: %s", got)
+				}
+			}
+			if mode == "unavailable mirror" {
+				if err := os.Rename(mirror+".away", mirror); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Rename(hub, hub+".away"); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := retryPush("topic", false); err != nil {
+					t.Fatalf("operational query failure changed the saved expectation: %v", err)
+				}
+				if got := gitIn(t, mirror, "rev-parse", "topic"); got != next {
+					t.Errorf("restored mirror has %s", got)
+				}
+				return
+			}
+			if !resuming {
+				if !refused {
+					if got := gitIn(t, mirror, "rev-parse", "topic"); got != next {
+						t.Errorf("mirror has %s, want %s", got, next)
+					}
+				}
+				return
+			}
+			path, err := statePath("push", "topic")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var saved pushes
+			if found, err := readJSON(path, &saved); err != nil || !found {
+				t.Fatalf("saved push: %v, %v", found, err)
+			}
+			wantOld := old
+			if absent {
+				wantOld = ""
+			}
+			if saved.URLs[1].Refs[0].Old != wantOld || !saved.URLs[0].Refs[0].Done || saved.URLs[1].Refs[0].Done {
+				t.Errorf("saved destination leases/completion: %+v", saved.URLs)
+			}
+			if err := os.Rename(hook, hook+".disabled"); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "resume deleted" {
+				gitIn(t, mirror, "update-ref", "-d", "refs/heads/topic", old)
+			}
+			gitIn(t, repo, "fetch", "-q", "origin")
+			if err := os.Rename(hub, hub+".away"); err != nil {
+				t.Fatal(err)
+			}
+			_, err = retryPush("topic", false)
+			if mode == "resume deleted" {
+				if err == nil {
+					t.Error("resume refreshed a saved lease after remote deletion")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resume absent mirror: %v", err)
+			}
+			if got := gitIn(t, mirror, "rev-parse", "topic"); got != next {
+				t.Errorf("resumed mirror has %s", got)
+			}
+		})
 	}
 }
 
@@ -1539,7 +1711,7 @@ func testRunFailedPush(t *testing.T) {
 	// the remote's branch going back to that does.
 	signed := gitIn(t, repo, "rev-parse", "one")
 	gitIn(t, repo, "fetch", "-q", "origin")
-	if _, err := Run("", true, false, false); err == nil || !strings.Contains(err.Error(), hub+"'s one is at") {
+	if _, err := Run("", true, false, false); err == nil || !strings.Contains(err.Error(), "one at "+hub+" changed from the expected") {
 		t.Errorf("a retry that fails again: %v", err)
 	}
 	gitIn(t, hub, "update-ref", "refs/heads/one", leased)
