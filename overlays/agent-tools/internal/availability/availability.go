@@ -140,7 +140,7 @@ func Hold(p Provider, next State) error {
 	return write(p, next, false)
 }
 
-// Clear repairs corrupt provider state too. A separately observed exhausted
+// Clear repairs malformed provider and usage state too. A valid exhausted
 // usage window still blocks Check until its verified reset.
 func Clear(p Provider) error {
 	if err := write(p, State{}, true); err != nil {

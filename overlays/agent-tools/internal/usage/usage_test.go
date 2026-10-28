@@ -189,22 +189,34 @@ func TestRecordConcurrent(t *testing.T) {
 }
 
 func TestUnknownReset(t *testing.T) {
-	for _, unknownFirst := range []bool{true, false} {
-		t.Run(fmt.Sprint("unknown first ", unknownFirst), func(t *testing.T) {
+	t.Run("persisted exhaustion survives later readings", func(t *testing.T) {
+		file := filepath.Join(t.TempDir(), "usage.json")
+		if err := os.WriteFile(file, []byte(`{"five_hour":{"used_percentage":100,"resets_at":0,"observed_at":1}}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := Record(file, []Window{{Name: "5h", Used: 10, ResetsAt: 1792032000, ObservedAt: 1792021200}}); err != nil {
+			t.Fatal(err)
+		}
+		if got := readFile(t, file)["five_hour"]; got.Used != 100 || got.ResetsAt != 0 {
+			t.Fatalf("persisted unknown exhaustion lost: %+v", got)
+		}
+	})
+	for _, reset := range []int64{0, -1} {
+		t.Run(fmt.Sprint("reject new reset ", reset), func(t *testing.T) {
 			file := filepath.Join(t.TempDir(), "usage.json")
-			unknown := Window{Name: "5h", Used: 100, ObservedAt: at.Unix()}
-			known := Window{Name: "5h", Used: 10, ResetsAt: at.Add(time.Hour).Unix(), ObservedAt: at.Unix()}
-			first, second := unknown, known
-			if !unknownFirst {
-				first, second = second, first
+			if err := Record(file, []Window{{Name: "5h", Used: 100, ResetsAt: 1792032000, ObservedAt: 1792021200}}); err != nil {
+				t.Fatal(err)
 			}
-			for _, w := range []Window{first, second} {
-				if err := Record(file, []Window{w}); err != nil {
-					t.Fatal(err)
-				}
+			err := Record(file, []Window{
+				{Name: "7d", Used: 50, ResetsAt: 1792602000, ObservedAt: 1792021201},
+				{Name: "5h", Used: 100, ResetsAt: reset, ObservedAt: 1792021201},
+			})
+			if err == nil {
+				t.Error("Record accepted a reading without a known reset")
 			}
-			if got := readFile(t, file)["five_hour"]; got.Used != 100 || got.ResetsAt != 0 {
-				t.Fatalf("unknown exhaustion lost: %+v", got)
+			want := map[string]onDisk{"five_hour": {100, 1792032000, 1792021200}}
+			if got := readFile(t, file); !reflect.DeepEqual(got, want) {
+				t.Fatalf("rejected batch changed known evidence: %+v, want %+v", got, want)
 			}
 		})
 	}

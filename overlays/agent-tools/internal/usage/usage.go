@@ -6,7 +6,6 @@ package usage
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -70,12 +69,18 @@ type stored struct {
 // Load is the windows file holds, in windowNames' order; none where it is
 // missing or unreadable.
 func Load(file string) []Window {
-	ws, _ := Read(file)
+	ws, err := Read(file)
+	if err != nil {
+		return nil
+	}
 	return ws
 }
 
+var errInvalidState = errors.New("invalid usage state")
+
 // Read distinguishes missing evidence from corrupt or unreadable state.
-// Admission callers must block on its error.
+// Admission callers must block on its error. A malformed snapshot may return
+// valid windows alongside the error so explicit recovery can preserve them.
 func Read(file string) ([]Window, error) {
 	data, err := os.ReadFile(file)
 	if errors.Is(err, os.ErrNotExist) {
@@ -84,25 +89,26 @@ func Read(file string) ([]Window, error) {
 	if err != nil {
 		return nil, err
 	}
-	var in map[string]*struct {
-		Used       *float64 `json:"used_percentage"`
-		ResetsAt   *int64   `json:"resets_at"`
-		ObservedAt *int64   `json:"observed_at"`
-	}
+	var in map[string]json.RawMessage
 	if err := json.Unmarshal(data, &in); err != nil || in == nil {
-		return nil, fmt.Errorf("invalid usage state")
+		return nil, errInvalidState
 	}
 	var ws []Window
 	for _, n := range windowNames {
-		if s, ok := in[n.key]; ok {
-			if s == nil || s.Used == nil || s.ResetsAt == nil || s.ObservedAt == nil || *s.Used < 0 || *s.ResetsAt < 0 || *s.ObservedAt < 0 {
-				return nil, fmt.Errorf("invalid %s usage state", n.key)
+		if data, ok := in[n.key]; ok {
+			var s struct {
+				Used       *float64 `json:"used_percentage"`
+				ResetsAt   *int64   `json:"resets_at"`
+				ObservedAt *int64   `json:"observed_at"`
+			}
+			if json.Unmarshal(data, &s) != nil || s.Used == nil || s.ResetsAt == nil || s.ObservedAt == nil || *s.Used < 0 || *s.ResetsAt < 0 || *s.ObservedAt < 0 {
+				continue
 			}
 			ws = append(ws, Window{Name: n.name, Used: *s.Used, ResetsAt: *s.ResetsAt, ObservedAt: *s.ObservedAt})
 		}
 	}
 	if len(ws) != len(in) {
-		return nil, fmt.Errorf("invalid usage state window")
+		return ws, errInvalidState
 	}
 	return ws, nil
 }
@@ -128,19 +134,24 @@ func Over(ws []Window, threshold float64, now time.Time) (Window, bool) {
 // since reset; within one window usage only grows. So a reading of the
 // stored window (the same resets_at) keeps the higher share and the later
 // observed_at, a reading of an earlier window changes nothing, and only a
-// later window replaces it. Exhaustion without a reset stays until
-// ClearUnknown, even when a later reading names a reset. Sessions record one
+// later window replaces it. New readings require a positive reset; stored
+// exhaustion without a reset stays until ClearUnknown. Sessions record one
 // at a time, each holding an
 // exclusive flock on file's ".lock" from its load to its write, so none
 // writes over another's newer window with what it loaded before. The file
 // is replaced by a rename, so a reader, which takes no lock, sees one
 // whole version. Without the lock, Record records nothing.
 func Record(file string, seen []Window) error {
+	for _, w := range seen {
+		if w.ResetsAt <= 0 {
+			return errors.New("usage reading requires a positive reset")
+		}
+	}
 	return record(file, seen, false)
 }
 
-// ClearUnknown removes only readings without a verified reset. Known windows
-// retain their high-water marks until reset even after an explicit clear.
+// ClearUnknown removes malformed readings and readings without a verified
+// reset. Valid known windows retain their high-water marks until reset.
 func ClearUnknown(file string) error { return record(file, nil, true) }
 
 func record(file string, seen []Window, clearUnknown bool) error {
@@ -164,7 +175,7 @@ func record(file string, seen []Window, clearUnknown bool) error {
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
 	by := map[string]Window{}
 	previous, err := Read(file)
-	if err != nil {
+	if err != nil && !(clearUnknown && errors.Is(err, errInvalidState)) {
 		return err
 	}
 	for _, w := range previous {
@@ -176,8 +187,6 @@ func record(file string, seen []Window, clearUnknown bool) error {
 		old, ok := by[w.Name]
 		switch {
 		case ok && old.ResetsAt == 0 && old.Used >= 100:
-		case w.ResetsAt == 0 && w.Used >= 100:
-			by[w.Name] = w
 		case !ok || w.ResetsAt > old.ResetsAt:
 			by[w.Name] = w
 		case w.ResetsAt == old.ResetsAt:

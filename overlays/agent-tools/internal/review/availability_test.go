@@ -253,26 +253,51 @@ func TestKnownClaudeQuota(t *testing.T) {
 }
 
 func TestAvailabilityState(t *testing.T) {
-	for _, data := range []string{`{`, `null`, `{"five_hour":{}}`, `{"five_hor":{"used_percentage":100,"resets_at":100,"observed_at":1}}`, `{"five_hour":{"used_percentage":100,"resets_at":-1,"observed_at":1}}`} {
-		t.Run("corrupt usage "+data, func(t *testing.T) {
+	for _, tc := range []struct {
+		data      string
+		clearCode int
+	}{
+		{`{`, 0},
+		{`null`, 0},
+		{`{"five_hour":{}}`, 0},
+		{`{"five_hor":{"used_percentage":100,"resets_at":100,"observed_at":1}}`, 0},
+		{`{"five_hour":{"used_percentage":100,"resets_at":-1,"observed_at":1}}`, 0},
+		{`{"five_hour":"bad","seven_day":{"used_percentage":100,"resets_at":4102444800,"observed_at":1}}`, 4},
+	} {
+		t.Run("corrupt usage "+tc.data, func(t *testing.T) {
 			f := askFixture(t, true)
 			f.claudeSays(t, "adversarial-reviewer", claudeResult(map[string]any{"answer": "Ready.", "unverified": []string{}}, ""))
 			if err := os.MkdirAll(filepath.Dir(usage.File()), 0o700); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(usage.File(), []byte(data), 0o600); err != nil {
+			if err := os.WriteFile(usage.File(), []byte(tc.data), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			if code, _, errs := askCodex(t, "--reviewer", "claude", "--question", ".git/question.md", "code.txt"); code != 4 {
 				t.Fatalf("corrupt usage admitted Claude: %d %s", code, errs)
 			}
 			noProviderCall(t, f, "adversarial-reviewer-runs")
+			if err := usage.Record(usage.File(), []usage.Window{{Name: "5h", Used: 1, ResetsAt: 4102444800, ObservedAt: 1}}); err == nil {
+				t.Fatal("ordinary recording repaired malformed state without explicit clear")
+			}
+			if got, err := os.ReadFile(usage.File()); err != nil || string(got) != tc.data {
+				t.Fatalf("failed Record changed malformed evidence: %s, %v", got, err)
+			}
+			if code, out := runAvailability(t, "--clear", "claude"); code != 0 {
+				t.Fatalf("clear malformed usage: %d %s", code, out)
+			}
+			if code, _, errs := askCodex(t, "--reviewer", "claude", "--question", ".git/question.md", "code.txt"); code != tc.clearCode {
+				t.Fatalf("after clear: exit %d, want %d: %s", code, tc.clearCode, errs)
+			}
 		})
 	}
 	t.Run("unknown reset remains blocked", func(t *testing.T) {
 		f := askFixture(t, true)
 		f.claudeSays(t, "adversarial-reviewer", claudeResult(map[string]any{"answer": "Ready.", "unverified": []string{}}, ""))
-		if err := usage.Record(usage.File(), []usage.Window{{Name: "5h", Used: 100, ObservedAt: 1}}); err != nil {
+		if err := os.MkdirAll(filepath.Dir(usage.File()), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(usage.File(), []byte(`{"five_hour":{"used_percentage":100,"resets_at":0,"observed_at":1}}`), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		if code, _, errs := askCodex(t, "--reviewer", "claude", "--question", ".git/question.md", "code.txt"); code != 4 {
@@ -285,6 +310,23 @@ func TestAvailabilityState(t *testing.T) {
 		if code, _, errs := askCodex(t, "--reviewer", "claude", "--question", ".git/question.md", "code.txt"); code != 0 {
 			t.Fatalf("explicit clear did not restore eligibility: %d %s", code, errs)
 		}
+	})
+	t.Run("unknown reading cannot erase a known exhausted reset", func(t *testing.T) {
+		f := askFixture(t, true)
+		f.claudeSays(t, "adversarial-reviewer", claudeResult(map[string]any{"answer": "Ready.", "unverified": []string{}}, ""))
+		if err := usage.Record(usage.File(), []usage.Window{{Name: "5h", Used: 100, ResetsAt: 4102444800, ObservedAt: 1}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := usage.Record(usage.File(), []usage.Window{{Name: "5h", Used: 100, ObservedAt: 2}}); err == nil {
+			t.Error("Record accepted an unknown reset")
+		}
+		if code, out := runAvailability(t, "--clear", "claude"); code != 0 {
+			t.Fatalf("clear: %d %s", code, out)
+		}
+		if code, _, errs := askCodex(t, "--reviewer", "claude", "--question", ".git/question.md", "code.txt"); code != 4 {
+			t.Fatalf("clear erased known exhaustion: %d %s", code, errs)
+		}
+		noProviderCall(t, f, "adversarial-reviewer-runs")
 	})
 	t.Run("corrupt state refuses calls and explicit clear repairs it", func(t *testing.T) {
 		f := askFixture(t, true)
