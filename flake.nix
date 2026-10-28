@@ -839,6 +839,39 @@
           touch $out
         '';
 
+      checks.agent-plan-sync = let
+        ngrok = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username};
+        devbox = self.homeConfigurations.devbox.config;
+        activation = ngrok.home.activation.agentPlans;
+        darwinWatcher = ngrok.launchd.agents.agent-plan-sync;
+        linuxPath = devbox.systemd.user.paths.agent-plan-sync;
+        linuxTimer = devbox.systemd.user.timers.agent-plan-sync;
+        linuxExec = devbox.systemd.user.services.agent-plan-sync.Service.ExecStart;
+        fixtureAgent = pkgs.writeShellScript "agent-plan-fixture" ''
+          printf '%s\n' "$*" >>"$PLAN_TEST_LOG"
+          if [[ "$1" == init ]]; then exit "''${PLAN_INIT_EXIT:-0}"; fi
+        '';
+      in
+        assert pkgs.lib.assertMsg (darwinWatcher.enable && (darwinWatcher.config.WatchPaths or []) == [ngrok.wgn.home.llm.plans.dir] && (darwinWatcher.config.StartInterval or null) == 300)
+        "Darwin plan sync needs both its path watcher and periodic trigger";
+        assert pkgs.lib.assertMsg (builtins.tail darwinWatcher.config.ProgramArguments == ["--settle" "5s"] && pkgs.lib.hasSuffix "-agent-plan-sync" (builtins.head darwinWatcher.config.ProgramArguments) && builtins.length linuxExec == 1 && pkgs.lib.hasSuffix "-agent-plan-sync --settle 5s" (builtins.head linuxExec))
+        "Both plan watchers must call the initialization-and-sync runner";
+        assert pkgs.lib.assertMsg ((linuxPath.Path.PathChanged or null) == devbox.wgn.home.llm.plans.dir && builtins.elem "default.target" (linuxPath.Install.WantedBy or []) && (linuxTimer.Timer.OnActiveSec or null) == "5min" && (linuxTimer.Timer.OnUnitActiveSec or null) == "5min" && builtins.elem "timers.target" (linuxTimer.Install.WantedBy or []))
+        "Linux plan sync needs both its enabled path watcher and periodic timer";
+          pkgs.runCommand "agent-plan-sync" {
+            nativeBuildInputs = [pkgs.coreutils pkgs.gnused pkgs.gnugrep];
+            activation = activation.data;
+            agentPlan = pkgs.lib.getExe' ngrok.wgn.home.llm.agentTools "agent-plan";
+            notesKey = ngrok.wgn.home.llm.plans.repository.key;
+            runner = builtins.head darwinWatcher.config.ProgramArguments;
+            inherit fixtureAgent;
+            passAsFile = ["activation"];
+          } ''
+            export runnerPath="$runner"
+            bash ${./modules/home-manager/llm/plan-activation-tests.sh}
+            touch $out
+          '';
+
       checks.git-fetch-urls = let
         git = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username}.programs.git;
       in

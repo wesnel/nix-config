@@ -16,6 +16,7 @@ commands in the README's "updating systems".
 | Changed | Run |
 | --- | --- |
 | `modules/home-manager/git`, or its generated fetch/push URL check | `nix build --no-link .#checks.aarch64-darwin.git-fetch-urls`: generated Git includes keep HTTPS fetches separate from both SSH push destinations |
+| plan activation or watcher configuration in `modules/home-manager/llm`, or its generated-config check | `nix build --no-link .#checks.aarch64-darwin.agent-plan-sync`: activation defers sync until the key is readable, and both hosts retain their path and timer triggers |
 | `overlays/agent-tools` | in that directory: `gofmt -l .` (prints nothing), `go build ./...`, `go vet ./...`, `go test -count=1 ./...`; then `nix build --no-link .#checks.aarch64-darwin.agent-tools-lint` (gosec, which CI also runs) |
 | `overlays/agent-tools`, for its tests in the Nix sandbox | `nix build --no-link .#checks.aarch64-darwin.agent-tools`: the package built with its tests; CI builds the one the devbox deploys, `.#homeConfigurations.devbox.config.wgn.home.llm.agentTools`, which needs a Linux builder this Mac lacks |
 | skills or `AGENTS.md` under `modules/home-manager/llm`, agent files under `modules/home-manager/claude/agents`, `README.md`, or `pr-loop`'s subcommands and agent-tools' messages | `nix build --no-link .#checks.aarch64-darwin.agent-names`: every sub-agent type and `pr-loop` subcommand they name exists |
