@@ -66,6 +66,12 @@ or a step's.
 
 ## Fresh review loop
 
+Review-loop sessions use the `review-loop` skill's Review step in place
+of the numbered procedure below. Reviewers run as fresh read-only
+sub-agents in the selected harness; use `git delegate` only with
+`--print-prompt` to obtain their contracts. The numbered procedure applies
+outside review-loop sessions.
+
 The range is the whole change, `BASE..TIP`, with BASE where it starts, such
 as `origin/main` or the parent branch in a stack.
 
@@ -209,10 +215,11 @@ results supplement the incomplete delegate record; they do not make it
 claim the unavailable provider ran. Hand back only after all required
 stages have returned, or name each unfinished stage and why.
 
-Review-loop restrictions still apply: their text stays out of Codex,
-including Codex sub-agents. In a Claude review-loop session use a fresh
-`adversarial-reviewer`. If the permitted primary harness cannot review,
-report the stage unfinished.
+In review-loop sessions, use fresh read-only sub-agents in the
+operator-selected harness, as the `review-loop` skill says. Automatic
+Codex delegation remains disabled; Codex-native loop reviews use separate
+contexts in the same model family. Report that limitation, and name any
+stage the selected harness cannot complete.
 
 ## Design review
 

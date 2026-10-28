@@ -120,7 +120,7 @@ func unavailable(ctx context.Context, a *availability, auto bool) string {
 	}
 	switch {
 	case os.Getenv("PR_LOOP_SESSION") != "":
-		return "this is a review-loop session (PR_LOOP_SESSION is set), which reads other people's review text and sends none of it to OpenAI"
+		return "this is a review-loop session (PR_LOOP_SESSION is set); automatic Codex delegation is disabled; use a fresh read-only sub-agent in the selected harness"
 	case auto && generalReviewer() == "claude":
 		return "the caller is Codex, so its second opinion needs another family or a fresh primary-harness sub-agent"
 	}
