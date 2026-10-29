@@ -1,6 +1,7 @@
-// Package usage reads the quota windows in Claude Code's status line input,
-// without credentials or network, and records them in File for the quota
-// stop.
+// Package usage reads quota windows, without credentials or network: the
+// Claude account's from Claude Code's status line input, recorded in File,
+// and the Codex account's from a result of Codex's app-server, recorded in
+// CodexFile, each for the quota stop.
 package usage
 
 import (
@@ -15,10 +16,14 @@ import (
 )
 
 // windowNames are the quota windows read: each one's key in Claude Code's
-// rate_limits, which File uses too, and the name shown for it.
-var windowNames = []struct{ key, name string }{
-	{"five_hour", "5h"},
-	{"seven_day", "7d"},
+// rate_limits, which File and CodexFile use too, the name shown for it, and
+// its length in minutes, by which Codex's windows are told apart.
+var windowNames = []struct {
+	key, name string
+	minutes   int
+}{
+	{"five_hour", "5h", 5 * 60},
+	{"seven_day", "7d", 7 * 24 * 60},
 }
 
 // Window is one quota window as observed at ObservedAt: its name ("5h",

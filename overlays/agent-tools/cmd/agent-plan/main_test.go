@@ -24,6 +24,10 @@ func TestMain(m *testing.M) {
 	if os.Getenv("AGENT_PLAN_TEST_MAIN") == "1" {
 		os.Exit(Main(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 	}
+	// Run as codex by fakeCodexOnPath.
+	if os.Getenv("AGENT_PLAN_FAKE_CODEX") == "1" {
+		os.Exit(fakeCodexAppServer())
+	}
 	os.Exit(m.Run())
 }
 
