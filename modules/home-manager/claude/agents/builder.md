@@ -4,6 +4,7 @@ description: Builds one part of a plan, one branch in the worktree its task name
 model: opus
 effort: high
 skills:
+  - tool-selection
   - signing-pass
   - write-tests
   - review-change
