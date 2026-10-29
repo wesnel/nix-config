@@ -872,7 +872,7 @@ func (c Config) clearInitFiles() (bool, error) {
 }
 
 // configure sets the notes repository's own config: unsigned commits, and
-// origin at Remote when there is one. Activation runs it on every switch, so
+// origin at Remote, for fetch and push, when there is one. Activation runs it on every switch, so
 // a host's clone follows Remote. It sets no core.sshCommand, with which git
 // sign-pass refuses the repository, since sync and clone pass SSHConfig's
 // ssh on each command; it takes out the one an earlier configure wrote for
@@ -892,12 +892,22 @@ func (c Config) configure() error {
 	if c.Remote == "" {
 		return nil
 	}
-	url, err := c.git(ctx, "config", "--local", "--get", "remote.origin.url")
+	// Origin has Remote as its one URL and no push URL, which would send
+	// sync's pushes elsewhere. git remote set-url refuses an origin with
+	// several URLs, so the values are replaced through git config.
+	urls, err := c.git(ctx, "config", "--local", "--get-all", "remote.origin.url")
 	switch {
 	case err != nil:
 		_, err = c.git(ctx, "remote", "add", "origin", c.Remote)
-	case url != c.Remote:
-		_, err = c.git(ctx, "remote", "set-url", "origin", c.Remote)
+	case urls != c.Remote:
+		_, err = c.git(ctx, "config", "--local", "--replace-all", "remote.origin.url", c.Remote)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if _, err := c.git(ctx, "config", "--local", "--get-all", "remote.origin.pushurl"); err == nil {
+		_, err = c.git(ctx, "config", "--local", "--unset-all", "remote.origin.pushurl")
+		return err
+	}
+	return nil
 }
