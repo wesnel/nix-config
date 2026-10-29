@@ -31,6 +31,28 @@ func TestRun(t *testing.T) {
 			t.Errorf("exit %d\n%s", code, stderr.String())
 		}
 	})
+
+	// merge reads --method wherever it is given, and refuses before asking
+	// anything of GitHub or the terminal.
+	for name, c := range map[string]struct {
+		args []string
+		code int
+		want string
+	}{
+		"a method after the PR": {[]string{"3", "--method", "fast-forward"}, 2, `"fast-forward" is not a merge method`},
+		"two PRs":               {[]string{"3", "4"}, 1, "merge takes at most one PR"},
+	} {
+		t.Run("merge/"+name, func(t *testing.T) {
+			_, calls := posting(t)
+			var stdout, stderr bytes.Buffer
+			if code := run("merge", c.args, strings.NewReader(""), &stdout, &stderr); code != c.code || !strings.Contains(stderr.String(), c.want) {
+				t.Errorf("exit %d\n%s", code, stderr.String())
+			}
+			if _, err := os.Stat(calls); err == nil {
+				t.Errorf("merge ran gh")
+			}
+		})
+	}
 }
 
 // posting makes a checkout of a GitHub repository to run in, in a bots-mode

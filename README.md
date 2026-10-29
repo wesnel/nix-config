@@ -710,6 +710,7 @@ In a terminal of your own, in the repository:
 ``` sh
 git sign-pass --push TOP   # squash the fixups, sign, and push the stack, TOP its top branch
 pr-loop post 12            # people mode: post the drafted answers, each after you confirm it
+pr-loop merge 14           # merge PR 14 and every open PR below it in its GitHub stack, after you confirm
 ```
 
 The loop runs `pr-loop sign-check` before it hands over, which squashes the
@@ -717,7 +718,10 @@ fixups unsigned in a throwaway worktree and stops unless every PR would end
 with exactly its own commits and the files the loop left. `pr-loop post`
 shows each draft on your terminal and posts exactly what it showed once you
 answer `y`; it resolves the threads answered fix or rebut, and once every
-person's thread has an answer, asks those people to review again. A bots
+person's thread has an answer, asks those people to review again. `gh pr
+merge` refuses a PR in a GitHub stack; `pr-loop merge` lists the PRs
+GitHub's merge-async endpoint would merge and asks GitHub to merge them
+once you answer `y`, refusing if the top PR's head has moved since. A bots
 loop deletes its trigger comments with `pr-loop end` as it hands back.
 
 These stay yours: waiving a CI failure (`pr-loop request --accept-failure
@@ -730,7 +734,7 @@ merging, and any change to Linear, which the hand-back proposes instead.
 `PR_LOOP_SESSION` and `PR_LOOP_MODE` in the environment, which `pr-loop`
 gates its writes on, and an allow rule for `pr-loop`, so its commands run
 without a prompt. The guard denies an agent running `claude-review-loop`,
-setting either variable, or running `pr-loop post`.
+setting either variable, or running `pr-loop post` or `pr-loop merge`.
 
 ## the guard in every session
 
@@ -782,7 +786,8 @@ with only Read, Bash and StructuredOutput, also runs `pr-loop guard
 --reviewer` from its own definition, which keeps it to reading in any
 session. The guard also denies starting a
 review loop or setting its variables (`claude-review-loop`,
-`PR_LOOP_SESSION`, `PR_LOOP_MODE`) and `pr-loop post`, which are yours.
+`PR_LOOP_SESSION`, `PR_LOOP_MODE`), `pr-loop post` and `pr-loop merge`,
+which are yours.
 
 The guard reads commands as typed, through wrappers, shells and `env`, so it
 catches a forgotten rule, not a determined one. The rules that need no

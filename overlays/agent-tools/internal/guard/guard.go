@@ -908,16 +908,24 @@ const nestedReview = "A reviewer does not start a review of its own. Report your
 const postByOperator = "Posting the answers to people's threads is the operator's, each confirmed on their terminal. " +
 	"Leave the drafts in the review record, and say in the report that they wait for `pr-loop post PR`."
 
+// mergeByOperator is why no agent runs `pr-loop merge`, which merges a
+// pull request and every open one below it in its GitHub stack.
+const mergeByOperator = "Merging is the operator's, confirmed on their terminal, and cannot be undone. " +
+	"Say in the report which pull request tops the stack to merge, for the operator to run `pr-loop merge PR`."
+
 // checkPrLoop keeps the decisions that are the operator's: posting to
-// people's threads, and accepting a CI failure as not the PR's.
+// people's threads, merging, and accepting a CI failure as not the PR's.
 func checkPrLoop(args []string, who role) string {
 	if len(args) == 0 {
 		return ""
 	}
-	// The rule allowing `Bash(pr-loop *)` in a loop session matches post as
-	// well, so this is what keeps it the operator's.
-	if args[0] == "post" {
+	// The rule allowing `Bash(pr-loop *)` in a loop session matches post and
+	// merge as well, so this is what keeps them the operator's.
+	switch args[0] {
+	case "post":
 		return postByOperator
+	case "merge":
+		return mergeByOperator
 	}
 	waitCI := args[0] == "wait" && len(args) > 1 && args[1] == "ci"
 	if who == reviewer && !reviewerReads[args[0]] && !waitCI {
