@@ -1,6 +1,8 @@
 final: prev: {
   agent-tools = final.callPackage ./agent-tools {};
 
+  pele = final.callPackage ./pele {};
+
   tbxark-mcp-proxy = final.callPackage ./tbxark-mcp-proxy {};
 
   zwift-offline-image = let
