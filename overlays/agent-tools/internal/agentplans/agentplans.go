@@ -32,7 +32,8 @@ func Out() string { return filepath.Join(Dir(), "out") }
 
 // Page is the "Agent plans" page: one HTML file, its CSS and script
 // inline, which reads the documents plan-dash export writes from the
-// page's database and writes nothing. Its script renders every document's text as text, never as markup, and
+// page's database, or from a snapshot export.Snapshot embeds at its
+// `<!-- snapshot -->` marker, and writes nothing. Its script renders every document's text as text, never as markup, and
 // its schema block names each field it reads; export's page test holds
 // both to the documents' types. A review record's diagram source is also
 // given, where it is in the grammar the page's grammar block gives, to
