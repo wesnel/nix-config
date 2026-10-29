@@ -122,15 +122,15 @@ func TestExportPlanDocuments(t *testing.T) {
 // says the page is not configured.
 func TestPrime(t *testing.T) {
 	setUp(t)
-	config := filepath.Join(t.TempDir(), "agent-plans.json")
-	t.Setenv("AGENT_PLANS_CONFIG", config)
+	config := os.Getenv("AGENT_TOOLS_CONFIG")
+	os.WriteFile(config, []byte(`{"agentPlans": {"claudePage": null, "spacePage": null}}`), 0o600)
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"prime"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "not configured") ||
-		strings.Contains(stdout.String(), "https://") {
+		!strings.Contains(stdout.String(), "wgn.home.llm.agentPlans.claudePage") || strings.Contains(stdout.String(), "https://") {
 		t.Errorf("unconfigured: exit %d: %s%s", code, stdout.String(), stderr.String())
 	}
 	url := "https://claude.ai/artifact/DashboardPage1"
-	os.WriteFile(config, []byte(`{"url": "`+url+`"}`), 0o600)
+	os.WriteFile(config, []byte(`{"agentPlans": {"claudePage": "`+url+`", "spacePage": null}}`), 0o600)
 	stdout.Reset()
 	if code := run([]string{"prime"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr.String())

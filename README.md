@@ -561,11 +561,12 @@ it in the page's Today. The kill switch is its own: create
 `$XDG_STATE_HOME/agent-plans/off`, then `systemctl --user stop
 agent-plans.service`.
 
-Its page is named in `agent-tools/agent-plans.json` under the XDG config
-directory, `{"url": "https://claude.ai/artifact/ID"}`, which the operator
-writes once on the host; the URL stays out of this repository. Started
-without it, the session publishes the page, pinned, and gives the
-operator its URL to write there before restarting the service.
+Its page is `wgn.home.llm.agentPlans.claudePage` in the machine's config,
+`https://claude.ai/artifact/ID`, which the llm module writes as
+`agentPlans.claudePage` in the read-only `agent-tools/config.json`, so no
+session can point the page elsewhere. Started without it, the session
+publishes the page, pinned, and gives the operator its URL to set there
+and switch to before restarting the service.
 
 The page is `overlays/agent-tools/internal/agentplans/page.html`, built
 into agent-tools. `plan-dash page` writes it to

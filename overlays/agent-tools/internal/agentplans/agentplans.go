@@ -1,5 +1,5 @@
 // Package agentplans names what the "Agent plans" dashboard session is
-// given: the page it works on, from the operator's config, and the
+// given: the pages it works on, from the operator's config, and the
 // directories it works in, from the host's XDG state directory.
 package agentplans
 
@@ -14,6 +14,7 @@ import (
 	"regexp"
 
 	"github.com/wesnel/agent-tools/internal/hostpaths"
+	"github.com/wesnel/agent-tools/internal/repos"
 )
 
 // Schema is the version every document on the page carries as "schema".
@@ -64,30 +65,54 @@ const Capabilities = `{"db":{"rules":[{"path":"","read":"owner","write":"owner"}
 // Session is the session's working directory, which holds its settings.
 func Session() string { return filepath.Join(Dir(), "session") }
 
-// ConfigFile is the operator's config of the dashboard,
-// agent-tools/agent-plans.json under the XDG config directory: the page's
-// URL, kept out of the repository that builds the host.
-func ConfigFile() string {
-	return hostpaths.ConfigFile("AGENT_PLANS_CONFIG", filepath.Join("agent-tools", "agent-plans.json"))
+// Targets are where the dashboard is published, each "" where the machine
+// sets none: "agentPlans" in agent-tools' config.json, which the llm
+// module writes from wgn.home.llm.agentPlans. The file is the operator's,
+// read-only and guarded, so no session can point publication elsewhere.
+type Targets struct {
+	// ClaudePage is the Agent plans artifact's claude.ai URL.
+	ClaudePage string `json:"claudePage"`
+	// SpacePage is the ID of the ChatGPT Space page plan-dash space
+	// publishes to.
+	SpacePage string `json:"spacePage"`
 }
 
-// pageURL is an artifact's claude.ai URL, and nothing after its ID.
-var pageURL = regexp.MustCompile(`^https://claude\.ai/(?:code/)?artifact/[A-Za-z0-9-]{1,100}$`)
+var (
+	// pageURL is an artifact's claude.ai URL, and nothing after its ID.
+	pageURL = regexp.MustCompile(`^https://claude\.ai/(?:code/)?artifact/[A-Za-z0-9-]{1,100}$`)
+	// spacePage is a Space page's ID, as read_page takes it.
+	spacePage = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}$`)
+)
 
-// URL is the page's URL, from ConfigFile's "url".
-func URL() (string, error) {
-	data, err := os.ReadFile(ConfigFile())
+// LoadTargets reads Targets, refusing a value that is set but not the
+// shape of its kind.
+func LoadTargets() (Targets, error) {
+	file := repos.Path()
+	data, err := os.ReadFile(file)
 	if err != nil {
-		return "", fmt.Errorf("the Agent plans page's URL: %w", err)
+		return Targets{}, fmt.Errorf("the Agent plans targets: %w", err)
 	}
 	var config struct {
-		URL string `json:"url"`
+		AgentPlans struct {
+			ClaudePage *string `json:"claudePage"`
+			SpacePage  *string `json:"spacePage"`
+		} `json:"agentPlans"`
 	}
 	if err := json.Unmarshal(data, &config); err != nil {
-		return "", fmt.Errorf("%s: %w", ConfigFile(), err)
+		return Targets{}, fmt.Errorf("%s: %w", file, err)
 	}
-	if !pageURL.MatchString(config.URL) {
-		return "", fmt.Errorf("%s: url is not an artifact's claude.ai URL, https://claude.ai/artifact/ID", ConfigFile())
+	var t Targets
+	if p := config.AgentPlans.ClaudePage; p != nil {
+		if !pageURL.MatchString(*p) {
+			return Targets{}, fmt.Errorf("%s: agentPlans.claudePage is not an artifact's claude.ai URL, https://claude.ai/artifact/ID", file)
+		}
+		t.ClaudePage = *p
 	}
-	return config.URL, nil
+	if p := config.AgentPlans.SpacePage; p != nil {
+		if !spacePage.MatchString(*p) {
+			return Targets{}, fmt.Errorf("%s: agentPlans.spacePage is not a Space page's ID", file)
+		}
+		t.SpacePage = *p
+	}
+	return t, nil
 }

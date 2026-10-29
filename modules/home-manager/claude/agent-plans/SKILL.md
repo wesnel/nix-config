@@ -46,9 +46,9 @@ The page's HTML is built into `plan-dash`; publishing puts it on PAGE.
 4. Only once the publish's result says it published: Bash `plan-dash page
    published`. A refused or failed publish records nothing.
 5. After step 3 only: tell the operator the URL the publish returned, to
-   write as `{"url": "URL"}` in `agent-tools/agent-plans.json` under the
-   XDG config directory before restarting `agent-plans.service`. Do
-   nothing else until then.
+   set as `wgn.home.llm.agentPlans.claudePage` in this machine's config
+   and switch to before restarting `agent-plans.service`. Do nothing else
+   until then.
 
 ## Update
 
