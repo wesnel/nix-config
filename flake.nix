@@ -7,6 +7,11 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    cursor-plugins = {
+      url = "github:cursor/plugins";
+      flake = false;
+    };
+
     deploy-rs = {
       url = "github:serokell/deploy-rs";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -94,6 +99,7 @@
   outputs = {
     self,
     nix-darwin,
+    cursor-plugins,
     deploy-rs,
     emacs-config,
     emacs-skills,
@@ -139,6 +145,7 @@
       (_: {
         _module.args = {
           inherit
+            cursor-plugins
             emacs-skills
             mattpocock-skills
             ;
@@ -886,6 +893,86 @@
           passAsFile = ["includes"];
         } ''
           bash ${./modules/home-manager/git/fetch-urls-tests.sh}
+          touch $out
+        '';
+
+      # The pstack skills as the ngrok Mac links them each carry pstack's
+      # licence, and the Codex policy that keeps a skill from being invoked
+      # unasked exactly when its SKILL.md keeps Claude Code from it.
+      # statechart has neither, so agents can run it on their own, and its
+      # SKILL.md no longer sends them to mise. It runs with no network on
+      # one of its own corpus specs, as its corpus.test.ts runs them: it
+      # exits 1 for the rule
+      # that breaks, writes nothing to stderr, its chart and report are the
+      # committed ones, and the chart renders with the node and Pele that
+      # its references/render.md names. Built for aarch64-darwin, the
+      # system of the configuration it reads.
+      checks.pstack-skills = let
+        skills = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username}.wgn.home.llm.skills;
+        statechart = skills.statechart.source;
+        corpus = "${statechart}/scripts/test/corpus/TwoPhase";
+        render = pkgs.writeText "render.mjs" ''
+          import fs from "node:fs";
+          const [pele, mmd] = process.argv.slice(2);
+          const { render } = await import(pele);
+          const { svg } = render(fs.readFileSync(mmd, "utf8"), {
+            limit: 1_000_000,
+            outputLimit: 8_000_000,
+            maxEdges: 10_000,
+          });
+          if (!svg.startsWith("<svg")) throw new Error(`not an SVG: ''${svg.slice(0, 80)}`);
+        '';
+      in
+        pkgs.runCommand "pstack-skills" {} ''
+          export HOME=$TMPDIR
+          for skill in ${toString (map (skill: skill.source) (builtins.filter (skill: skill.source.pstack or false) (builtins.attrValues skills)))}; do
+            if [ ! -f "$skill/LICENSE" ]; then
+              echo "pstack-skills: $skill has no LICENSE" >&2
+              exit 1
+            fi
+            if grep -qx 'disable-model-invocation: true' "$skill/SKILL.md"; then
+              if ! grep -qx '  allow_implicit_invocation: false' "$skill/agents/openai.yaml"; then
+                echo "pstack-skills: $skill lets Codex invoke it unasked" >&2
+                exit 1
+              fi
+            elif [ -e "$skill/agents/openai.yaml" ]; then
+              echo "pstack-skills: $skill keeps Codex from invoking it, but not Claude Code" >&2
+              exit 1
+            fi
+          done
+          if grep -qx 'disable-model-invocation: true' ${statechart}/SKILL.md; then
+            echo "pstack-skills: agents cannot invoke statechart" >&2
+            exit 1
+          fi
+          if grep -q mise ${statechart}/SKILL.md; then
+            echo "pstack-skills: statechart's SKILL.md mentions mise" >&2
+            exit 1
+          fi
+
+          status=0
+          ${statechart}/scripts/statechart ${corpus}/TwoPhase.tla \
+            --view ${corpus}/view.mjs --out out 2> stderr || status=$?
+          if [ "$status" != 1 ]; then
+            echo "pstack-skills: statechart exited $status, want 1: TCConsistent breaks" >&2
+            exit 1
+          fi
+          if [ -s stderr ]; then
+            echo "pstack-skills: statechart wrote to stderr:" >&2
+            cat stderr >&2
+            exit 1
+          fi
+          diff ${corpus}/chart.mmd out/chart.mmd
+          diff ${corpus}/report.md out/report.md
+
+          node=$(grep -o '/nix/store/[^`]*/bin/node' ${statechart}/references/render.md) || {
+            echo "pstack-skills: render.md names no node in the store" >&2
+            exit 1
+          }
+          pele=$(grep -o 'file:///nix/store/[^`]*/pele\.js' ${statechart}/references/render.md) || {
+            echo "pstack-skills: render.md names no Pele in the store" >&2
+            exit 1
+          }
+          "$node" ${render} "$pele" out/chart.mmd
           touch $out
         '';
 

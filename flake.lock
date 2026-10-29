@@ -21,6 +21,22 @@
         "type": "github"
       }
     },
+    "cursor-plugins": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1793237155,
+        "narHash": "sha256-rrg6yOdbD/0G3Q2frUyitvBNDJBX8TEwiR1wyHx2aR4=",
+        "owner": "cursor",
+        "repo": "plugins",
+        "rev": "1ba91fc25c0977741dd0e267849e6234b037ed0a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "cursor",
+        "repo": "plugins",
+        "type": "github"
+      }
+    },
     "deploy-rs": {
       "inputs": {
         "flake-compat": "flake-compat",
@@ -518,6 +534,7 @@
     },
     "root": {
       "inputs": {
+        "cursor-plugins": "cursor-plugins",
         "deploy-rs": "deploy-rs",
         "emacs-config": "emacs-config",
         "emacs-skills": "emacs-skills",
