@@ -186,7 +186,7 @@ func detach(p *pending, checkouts []checkout) error {
 	}
 	p.Worktrees = map[string]string{}
 	for _, c := range mine {
-		if _, err := git.Run("-C", c.path, "switch", "-q", "--detach"); err != nil {
+		if _, err := git.RunLong(nil, "-C", c.path, "switch", "-q", "--detach"); err != nil {
 			reattach(p)
 			return err
 		}
@@ -224,7 +224,7 @@ func reattach(p *pending) error {
 					"`%s`", path, b, f, p.resume())
 			}
 		}
-		if _, err := git.Run("-C", path, "switch", "-q", b); err != nil {
+		if _, err := git.RunLong(nil, "-C", path, "switch", "-q", b); err != nil {
 			return refuse("switching %s back to %s failed (%v); fix that, then run `%s`", path, b, err, p.resume())
 		}
 	}
@@ -360,14 +360,14 @@ func rehearse(what, fix, tip string, args ...string) (string, error) {
 		return "", err
 	}
 	os.Remove(scratch)
-	if _, err := git.Run("worktree", "add", "--detach", scratch, tip); err != nil {
+	if _, err := git.RunLong(nil, "worktree", "add", "--detach", scratch, tip); err != nil {
 		return "", err
 	}
 	defer func() {
-		git.Run("-C", scratch, "rebase", "--abort")
-		git.Run("worktree", "remove", "--force", scratch)
+		git.RunLong(nil, "-C", scratch, "rebase", "--abort")
+		git.RunLong(nil, "worktree", "remove", "--force", scratch)
 	}()
-	if _, err := git.RunEnv(history.NoEditor, append([]string{"-C", scratch, "-c", "commit.gpgsign=false",
+	if _, err := git.RunLong(history.NoEditor, append([]string{"-C", scratch, "-c", "commit.gpgsign=false",
 		"-c", "rebase.updateRefs=false", "rebase"}, args...)...); err != nil {
 		if m := history.CouldNotApply.FindStringSubmatch(err.Error()); m != nil {
 			return "", refuse("%s conflicts at %s %q: %s", what, m[1], m[2], fix)
@@ -1102,7 +1102,7 @@ func recoverKilled(p *pending, r *retrier) error {
 			"it blinks, up to %s), then `%s`%s. The unsigned branch is kept as %s%s", what, unlock, cont,
 			touches(todoSignatures()), p.resume(), also, BackupRef, p.Branch)
 	}
-	if _, err := git.Run("rebase", "--abort"); err != nil {
+	if _, err := git.RunLong(nil, "rebase", "--abort"); err != nil {
 		return fmt.Errorf("%s, and undoing the rebase failed (%v); run `git rebase --abort`, then `%s`%s",
 			what, err, p.resume(), unlock)
 	}
@@ -1226,7 +1226,7 @@ func putBack(rm string) (bool, error) {
 			return false, err
 		}
 	}
-	_, err := git.Run("reset", "-q", "--hard")
+	_, err := git.RunLong(nil, "reset", "-q", "--hard")
 	return err == nil, err
 }
 
@@ -1301,12 +1301,12 @@ func readyRetry() (restart bool, step string, err error) {
 	}
 	onto, _ := os.ReadFile(filepath.Join(rm, "onto"))
 	if head, _ := git.Run("rev-parse", "HEAD"); head != "" && head == strings.TrimSpace(string(onto)) {
-		_, err := git.Run("rebase", "--abort")
+		_, err := git.RunLong(nil, "rebase", "--abort")
 		return true, "", err
 	}
 	last, todo, _ := stoppedAt(rm)
 	if inFold(last, todo) {
-		_, err := git.Run("rebase", "--abort")
+		_, err := git.RunLong(nil, "rebase", "--abort")
 		return true, last, err
 	}
 	back, err := putBackPick(rm)
@@ -1347,7 +1347,7 @@ func putBackPick(rm string) (bool, error) {
 			return false, err
 		}
 	}
-	_, err := git.Run("reset", "-q", "--hard")
+	_, err := git.RunLong(nil, "reset", "-q", "--hard")
 	return err == nil, err
 }
 

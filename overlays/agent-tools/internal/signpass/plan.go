@@ -587,7 +587,7 @@ func (s *step) enter() error {
 			return err
 		}
 		os.Remove(s.Temp)
-		if _, err := git.Run("worktree", "add", "-q", s.Temp, s.Branch); err != nil {
+		if _, err := git.RunLong(nil, "worktree", "add", "-q", s.Temp, s.Branch); err != nil {
 			return err
 		}
 	}
@@ -603,7 +603,7 @@ func (pl *plan) record(s *step, result map[string]any, moved map[string]string) 
 	}
 	if s.Temp != "" {
 		mainWorktree()
-		git.Run("worktree", "remove", s.Temp)
+		git.RunLong(nil, "worktree", "remove", s.Temp)
 		s.Temp = ""
 	}
 }

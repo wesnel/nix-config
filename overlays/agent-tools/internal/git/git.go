@@ -28,18 +28,23 @@ var Dir string
 // by CheckConfig instead, since a command-line value cannot clear it.
 var hardened = []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"}
 
-// command is git with args and env added to this process's environment. A
-// command aimed at a directory, through Dir or a leading `-C DIR`, runs
-// without gitenv.Location, which git sets for the commands it starts and
-// which would otherwise send it to the caller's repository instead. Other
-// commands find the repository as git does, honouring the environment;
-// Toplevel checks that the two agree.
-func command(env []string, args ...string) *exec.Cmd {
-	return commandContext(context.Background(), env, args...)
-}
+// Timeout bounds each command Run, RunEnv, Bytes and OK run, and LongTimeout
+// each RunLong runs: these tools run git in repositories an agent can write,
+// where a FIFO in place of a file git reads stalls it. A command that may
+// take longer by nature, such as a rebase or a worktree's checkout, goes
+// through RunLong; one that waits on the operator takes a context.
+var (
+	Timeout     = time.Minute
+	LongTimeout = 10 * time.Minute
+)
 
-// commandContext is command, killed when ctx is done, with the environment
-// WithEnv gave ctx added last.
+// commandContext is git with args, killed when ctx is done, with env and
+// then the environment WithEnv gave ctx added to this process's. A command
+// aimed at a directory, through Dir or a leading `-C DIR`, runs without
+// gitenv.Location, which git sets for the commands it starts and which would
+// otherwise send it to the caller's repository instead. Other commands find
+// the repository as git does, honouring the environment; Toplevel checks that
+// the two agree.
 func commandContext(ctx context.Context, env []string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "git", append(append([]string{}, hardened...), args...)...)
 	cmd.Dir = Dir
@@ -61,15 +66,35 @@ func WithEnv(ctx context.Context, env ...string) context.Context {
 	return context.WithValue(ctx, envKey{}, append(append([]string{}, extra...), env...))
 }
 
-// Bytes runs git and returns its stdout.
+// Bytes runs git and returns its stdout, within Timeout.
 func Bytes(stdin []byte, args ...string) ([]byte, error) {
-	return bytesEnv(nil, stdin, args...)
+	return within(Timeout, nil, stdin, args...)
 }
 
 // RunEnv is Run with env added to this process's environment.
 func RunEnv(env []string, args ...string) (string, error) {
-	out, err := bytesEnv(env, nil, args...)
+	out, err := within(Timeout, env, nil, args...)
 	return strings.TrimSpace(string(out)), err
+}
+
+// RunLong is RunEnv within LongTimeout, for a command long by nature.
+func RunLong(env []string, args ...string) (string, error) {
+	out, err := within(LongTimeout, env, nil, args...)
+	return strings.TrimSpace(string(out)), err
+}
+
+// within runs git, killed after d, with an error that wraps
+// context.DeadlineExceeded when that ended it.
+func within(d time.Duration, env []string, stdin []byte, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	defer cancel()
+	cmd := commandContext(ctx, env, args...)
+	bound(ctx, cmd)
+	out, err := output(cmd, stdin, args)
+	if err != nil && ctx.Err() != nil {
+		return nil, fmt.Errorf("%w: %w after %s", err, ctx.Err(), d)
+	}
+	return out, err
 }
 
 // BytesContext is Bytes, killed when ctx is done. A program the command
@@ -80,10 +105,6 @@ func BytesContext(ctx context.Context, stdin []byte, args ...string) ([]byte, er
 	bound(ctx, cmd)
 	cmd.WaitDelay = time.Second
 	return output(cmd, stdin, args)
-}
-
-func bytesEnv(env []string, stdin []byte, args ...string) ([]byte, error) {
-	return output(command(env, args...), stdin, args)
 }
 
 func output(cmd *exec.Cmd, stdin []byte, args []string) ([]byte, error) {
@@ -148,9 +169,10 @@ func Run(args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-// OK reports whether git exits successfully.
+// OK reports whether git exits successfully within Timeout.
 func OK(args ...string) bool {
-	return command(nil, args...).Run() == nil
+	_, err := within(Timeout, nil, nil, args...)
+	return err == nil
 }
 
 // Attached runs git connected to this process's terminal, for commands that

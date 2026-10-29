@@ -288,7 +288,7 @@ func checkCommit(ctx context.Context, top, common, commit string, opts Options) 
 	for i, f := range tests {
 		literal[i] = ":(literal)" + f
 	}
-	if _, err := git.Run(append([]string{"-C", wt.path, "restore", "--source", commit, "--staged", "--worktree", "--"}, literal...)...); err != nil {
+	if _, err := git.RunLong(nil, append([]string{"-C", wt.path, "restore", "--source", commit, "--staged", "--worktree", "--"}, literal...)...); err != nil {
 		return nil, err
 	}
 	if opts.Build != "" {
@@ -302,10 +302,10 @@ func checkCommit(ctx context.Context, top, common, commit string, opts Options) 
 		return nil, err
 	}
 
-	if _, err := git.Run("-C", wt.path, "checkout", "--quiet", "--force", "--detach", commit); err != nil {
+	if _, err := git.RunLong(nil, "-C", wt.path, "checkout", "--quiet", "--force", "--detach", commit); err != nil {
 		return nil, err
 	}
-	if _, err := git.Run("-C", wt.path, "clean", "-ffdxq"); err != nil {
+	if _, err := git.RunLong(nil, "-C", wt.path, "clean", "-ffdxq"); err != nil {
 		return nil, err
 	}
 	fmt.Fprintf(opts.Log, "git-red-check: %s: testing with the change\n", short(commit))
@@ -362,7 +362,7 @@ func addWorktree(top, common, commit string) (*worktree, error) {
 		return nil, err
 	}
 	wt := &worktree{path: path, common: common}
-	if _, err := git.Run("-C", top, "worktree", "add", "--quiet", "--detach", path, commit); err != nil {
+	if _, err := git.RunLong(nil, "-C", top, "worktree", "add", "--quiet", "--detach", path, commit); err != nil {
 		wt.remove(top)
 		return nil, err
 	}
@@ -373,7 +373,7 @@ func addWorktree(top, common, commit string) (*worktree, error) {
 // remove deletes the worktree and git's record of it, by hand if the test
 // command left it in a state `git worktree remove` refuses.
 func (wt *worktree) remove(top string) {
-	if _, err := git.Run("-C", top, "worktree", "remove", "--force", "--force", wt.path); err != nil {
+	if _, err := git.RunLong(nil, "-C", top, "worktree", "remove", "--force", "--force", wt.path); err != nil {
 		os.RemoveAll(wt.path)
 		// Only git's own record of a worktree, never where a damaged
 		// worktree's .git file might point.

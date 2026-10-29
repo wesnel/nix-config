@@ -1,9 +1,13 @@
 package git
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
 	"github.com/wesnel/agent-tools/internal/refusal"
@@ -133,6 +137,86 @@ func TestToplevel(t *testing.T) {
 		t.Chdir(t.TempDir())
 		if err := CheckLocation(); err != nil {
 			t.Errorf("outside a repository: %v", err)
+		}
+	})
+}
+
+// A repository an agent can write can stall git: a FIFO where git reads its
+// config blocks it until something writes there. Each wrapper that takes no
+// context ends such a command at its deadline, with an error that says so.
+func TestDeadline(t *testing.T) {
+	stalled := func(t *testing.T) {
+		t.Helper()
+		repo := repository(t)
+		config := filepath.Join(repo, ".git", "config")
+		if err := os.Remove(config); err != nil {
+			t.Fatal(err)
+		}
+		if err := syscall.Mkfifo(config, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		// A git left waiting on the FIFO, as one is before the deadline
+		// exists, reads its end once a writer opens and closes it.
+		t.Cleanup(func() {
+			if f, err := os.OpenFile(config, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+				f.Close()
+			}
+		})
+		useDir(t, repo)
+	}
+	short := func(t *testing.T, d *time.Duration) {
+		t.Helper()
+		old := *d
+		*d = 200 * time.Millisecond
+		t.Cleanup(func() { *d = old })
+	}
+	cases := []struct {
+		name  string
+		limit *time.Duration
+		call  func() error
+	}{
+		{"Run", &Timeout, func() error { _, err := Run("rev-parse", "HEAD"); return err }},
+		{"RunEnv", &Timeout, func() error { _, err := RunEnv([]string{"GIT_AUTHOR_NAME=T"}, "rev-parse", "HEAD"); return err }},
+		{"Bytes", &Timeout, func() error { _, err := Bytes(nil, "rev-parse", "HEAD"); return err }},
+		{"RunLong", &LongTimeout, func() error { _, err := RunLong(nil, "rev-parse", "HEAD"); return err }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			stalled(t)
+			short(t, c.limit)
+			done := make(chan error, 1)
+			go func() { done <- c.call() }()
+			select {
+			case err := <-done:
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Errorf("a stalled git ended with %v, want its deadline", err)
+				}
+			// Only a broken test waits this long: the deadline is 200ms.
+			case <-time.After(30 * time.Second):
+				t.Fatal("a stalled git outlived its deadline")
+			}
+		})
+	}
+	t.Run("OK", func(t *testing.T) {
+		stalled(t)
+		short(t, &Timeout)
+		done := make(chan bool, 1)
+		go func() { done <- OK("rev-parse", "HEAD") }()
+		select {
+		case ok := <-done:
+			if ok {
+				t.Error("a stalled git counted as success")
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatal("a stalled git outlived its deadline")
+		}
+	})
+	// The same command ends well in the same repository without the FIFO,
+	// so the cases above fail for the stall.
+	t.Run("without the FIFO", func(t *testing.T) {
+		useDir(t, repository(t))
+		if _, err := Run("rev-parse", "HEAD"); err != nil {
+			t.Fatal(err)
 		}
 	})
 }
