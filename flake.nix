@@ -876,6 +876,22 @@
             touch $out
           '';
 
+      # The ngrok Mac's mcp-proxy-authorize restarts the proxy, and loads
+      # its plist when kickstart finds it loaded in no domain; a failed load
+      # fails it.
+      checks.mcp-proxy-restart = let
+        authorize =
+          builtins.head (builtins.filter (p: (p.name or "") == "mcp-proxy-authorize")
+            self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username}.home.packages);
+      in
+        pkgs.runCommand "mcp-proxy-restart" {
+          restart = pkgs.lib.getExe authorize.restart;
+          inherit (authorize) plist;
+        } ''
+          bash ${./modules/home-manager/mcp-proxy/restart-tests.sh}
+          touch $out
+        '';
+
       checks.git-fetch-urls = let
         git = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username}.programs.git;
       in

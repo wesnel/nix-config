@@ -29,6 +29,7 @@ commands in the README's "updating systems".
 | `modules/home-manager`, skills, `modules/home-manager/llm/AGENTS.md` | `nix build --no-link --print-out-paths .#darwinConfigurations.ngrok.config.home-manager.users.wgn.home-files` and read the files under the result, e.g. `.claude/CLAUDE.md` or `.claude/skills/<name>/SKILL.md`; and `nix build --no-link --dry-run .#homeConfigurations.devbox.activationPackage` |
 | Claude Code settings, which activation merges into `~/.claude/settings.json` rather than linking | `nix eval --json .#darwinConfigurations.ngrok.config.home-manager.users.wgn.wgn.home.claude.settings`; for devbox, `.#homeConfigurations.devbox.config.wgn.home.claude.settings` |
 | `modules/darwin`, `machines/darwin`, `overlays`, `flake.nix`, `flake.lock` | `nix build --no-link .#darwinConfigurations.ngrok.system`, which also builds agent-tools and runs its tests in the Nix sandbox |
+| `modules/home-manager/mcp-proxy` | `nix build --no-link .#checks.aarch64-darwin.mcp-proxy-restart`: `mcp-proxy-authorize`'s restart, run with a fake launchctl, loads the plist of an agent loaded in no domain |
 | a `.nix` file | `nix fmt -- <file>` formats the whole file; commit only the formatting of lines you changed |
 
 Run the checks by name: `nix flake check` also evaluates the NixOS machines,
