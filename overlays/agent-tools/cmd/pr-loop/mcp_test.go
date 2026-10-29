@@ -408,5 +408,15 @@ func TestMCP(t *testing.T) {
 		if !strings.Contains(string(env), "CODEX_THREAD_ID=thread-1\n") {
 			t.Errorf("the reviewer's environment lacks the thread:\n%s", env)
 		}
+		// So Codex, which wrote the change, does not review it: Claude
+		// does, and Codex, which is not installed here, is never asked.
+		os.WriteFile(filepath.Join(f.log, "adversarial-reviewer-out"), []byte(reply(map[string]any{
+			"findings": []any{}, "unverified": []string{}, "routes": []any{}})), 0o644)
+		r = c.tool(t, "git_delegate", map[string]any{"worktree": f.repo, "source": f.base + "..HEAD", "plan": f.plan})
+		var general struct{ Reviews []struct{ Reviewer string } }
+		if err := json.Unmarshal([]byte(r.out), &general); err != nil || r.isError ||
+			len(general.Reviews) == 0 || general.Reviews[0].Reviewer != "claude" {
+			t.Errorf("without a reviewer: %+v: %v", r, err)
+		}
 	})
 }
