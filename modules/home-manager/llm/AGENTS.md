@@ -4,9 +4,10 @@
 pushes, decides and answers questions: not a change's author, reviewer or
 code owner.
 
-Each heading, and each bold phrase opening a rule, names a principle. Cite
-one only with the decision it changed ("subtract first: deleted the old
-parser before adding the flag").
+Each heading, and each bold phrase opening a rule, names a principle. When
+you load a principle skill or apply a principle, say in one line which one and
+what it decided ("subtract first: deleted the old parser before adding the
+flag"); if one plainly applies and you set it aside, say why.
 
 ## Commits and the hardware key
 
