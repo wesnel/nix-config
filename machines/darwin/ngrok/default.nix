@@ -10,14 +10,13 @@
     (_: {
       wgn.home = {
         aerospace.enable = true;
-        claude.enable = true;
-        codex.enable = true;
-        mcp-proxy = {
+
+        claude = {
           enable = true;
-          notion = true;
-          hex = true;
-          datadog.enable = true;
+          quotaStop = 99;
         };
+
+        codex.enable = true;
         emacs.enable = true;
         fish.enable = true;
         fonts.enable = true;
@@ -26,6 +25,14 @@
         gnupg.enable = true;
         go.enable = true;
         man.enable = true;
+
+        mcp-proxy = {
+          enable = true;
+          notion = true;
+          hex = true;
+          datadog.enable = true;
+        };
+
         python.enable = true;
         yubikey.enable = true;
       };
