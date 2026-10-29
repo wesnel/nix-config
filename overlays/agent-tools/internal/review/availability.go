@@ -6,12 +6,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strings"
 	"time"
 
 	shared "github.com/wesnel/agent-tools/internal/availability"
 	"github.com/wesnel/agent-tools/internal/cli"
+	"github.com/wesnel/agent-tools/internal/usage"
 )
 
 type providerUnavailable struct {
@@ -53,7 +55,29 @@ func (a *availability) check(p shared.Provider) error {
 	if s.Reason != "" {
 		return providerUnavailable{p, s.String() + "; use `git delegate availability --clear " + string(p) + "` after recovery"}
 	}
+	if p == shared.Claude {
+		return quotaStop(now)
+	}
 	return nil
+}
+
+// quotaStop holds Claude's headless reviewers by the rule agent-plan
+// quota-stop holds a session by, which their settings carry no hook for:
+// while a window usage.File recorded within usage.Fresh, and that has not
+// reset, is at or above delegate.quotaStop. A config it cannot read sets no
+// stop; claudeMissing reports it.
+func quotaStop(now time.Time) error {
+	c, err := loadDelegateConfig()
+	if err != nil || c.QuotaStop == nil {
+		return nil
+	}
+	w, over := usage.Over(usage.Load(usage.File()), float64(*c.QuotaStop), now)
+	if !over {
+		return nil
+	}
+	return providerUnavailable{shared.Claude, fmt.Sprintf("the quota stop: the Claude account's %s window is at %d%%, at or above "+
+		"the %d%% stop, until it resets at %s; the operator lifts it by setting wgn.home.claude.quotaStop = null and switching",
+		w.Name, int(math.Floor(w.Used)), *c.QuotaStop, usage.Clock(w.ResetsAt, now))}
 }
 
 // failed records that p's call failed for why, shared.Quota or
@@ -88,6 +112,9 @@ host until its hold ends: a rate limit's after five minutes, an exhausted
 quota's at the reset Claude's quota windows show, and any other only at
 --clear. The holds are kept under
 $XDG_STATE_HOME/agent-tools/review-availability, with no provider output.
+Claude is also held, as agent-plan quota-stop holds a session, while a
+recent quota window is at or above wgn.home.claude.quotaStop, which
+--clear does not lift.
 
   --disable P  hold P, claude or codex, until --clear
   --clear P    end P's hold, after recovery or a change of account; an

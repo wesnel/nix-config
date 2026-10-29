@@ -255,6 +255,56 @@ func TestKnownClaudeQuota(t *testing.T) {
 	}
 }
 
+// The quota stop's threshold, delegate.quotaStop in agent-tools' config,
+// holds the headless Claude reviewers as agent-plan quota-stop holds a
+// session: while a window recorded within the last five minutes is at or
+// above it, none starts, and the refusal names the window and its reset.
+func TestQuotaStop(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		stop any // delegate.quotaStop; nil leaves it out
+		used float64
+		runs bool
+	}{
+		{"a window at the stop", 90, 93, false},
+		{"a window under the stop", 90, 89, true},
+		{"no stop set", nil, 93, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := setUp(t, true)
+			delegate := map[string]any{"agents": "/store/review-agents.json", "settings": "/store/reviewer-settings.json"}
+			if c.stop != nil {
+				delegate["quotaStop"] = c.stop
+			}
+			f.config(t, map[string]any{"delegate": delegate})
+			now := time.Now()
+			reset := now.Add(time.Hour)
+			if err := usage.Record(usage.File(), []usage.Window{{Name: "5h", Used: c.used, ResetsAt: reset.Unix(), ObservedAt: now.Unix()}}); err != nil {
+				t.Fatal(err)
+			}
+			code, _, errs := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
+			if c.runs {
+				if code != 0 {
+					t.Fatalf("exit %d under the stop: %s", code, errs)
+				}
+				if _, err := os.Stat(filepath.Join(f.log, "security-reviewer-runs")); err != nil {
+					t.Errorf("the security reviewer did not run: %v", err)
+				}
+				return
+			}
+			if code != 4 {
+				t.Fatalf("exit %d at the stop, want 4: %s", code, errs)
+			}
+			for _, want := range []string{"5h window", "93%", "90% stop", reset.Format("15:04")} {
+				if !strings.Contains(errs, want) {
+					t.Errorf("the refusal does not name %q: %s", want, errs)
+				}
+			}
+			noProviderCall(t, f, "security-reviewer-runs", "review-guide-runs")
+		})
+	}
+}
+
 // A rate limit pauses its provider for five minutes, for this invocation
 // and later ones alike, and no longer: it is not an exhausted account.
 func TestRateLimit(t *testing.T) {

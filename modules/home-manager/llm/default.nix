@@ -26,7 +26,7 @@ with lib; let
     };
     delegate =
       {
-        inherit (cfg.delegate) agents settings;
+        inherit (cfg.delegate) agents settings quotaStop;
       }
       # The provider git delegate's Codex reviews reach their model
       # through, whose auth command stands in for Codex's login.
@@ -464,6 +464,17 @@ in {
         default = null;
         internal = true;
         description = "The store path of the reviewers' only settings file, reviewer-settings.json.";
+      };
+
+      quotaStop = mkOption {
+        type = types.nullOr (types.ints.between 1 100);
+        default = null;
+        internal = true;
+        description = ''
+          The quota stop's threshold, {option}`wgn.home.claude.quotaStop`:
+          the reviewers carry no hooks, so git delegate applies the stop
+          itself before starting a Claude reviewer.
+        '';
       };
     };
 
