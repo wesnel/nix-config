@@ -117,6 +117,13 @@ worktree. A failure to log is printed on stderr and fails nothing.
                               completes (a commit no plan takes makes a plan
                               naming both); after a push to GitHub, names the
                               pr-loop wait ci to start
+  mcp                         serve the GitHub and review commands an agent runs (open,
+                              stack, link, push, threads, reply --from, draft, request,
+                              status, ci, logs, wait, sign-check, end; git delegate,
+                              ask, settle, show) and a GitHub user's name and pronouns
+                              as typed tools of a stdio MCP server, each run in the
+                              worktree its call names, for Codex, whose commands cannot
+                              reach the gh login and which asks before each call
   mcp-status [--hook]         which of this host's mcp-proxy servers are not connected,
                               each with the command that connects it, probing each route
                               without credentials; nothing when all are; --hook prints it
@@ -209,6 +216,10 @@ func main() {
 	if cli.IsHelp(args[0]) {
 		fmt.Fprint(os.Stdout, usage)
 		os.Exit(0)
+	}
+	if args[0] == "mcp" {
+		// Not in run, which its tools call.
+		os.Exit(mcpMain(args[1:], os.Stdin, os.Stdout, os.Stderr))
 	}
 	os.Exit(run(args[0], args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
