@@ -38,12 +38,23 @@ have (see status) is refused and writes nothing.
   new --parent PLAN --part P1 --title T [...]
                      create part P1's plan file beside its parent's
   log PLAN --item ID --kind KIND [--summary S] [--role R] [--agent A] [--branch B]
-      [--commit SUBJECT] [--evidence E] [--review ROUND.ID --outcome O]
+      [--commit SUBJECT | --revision REF] [--evidence E] [--review ROUND.ID --outcome O]
       [--command CMD [--dir DIR]]
                      append an event about item ID to the plan's log, and
                      write a step's or part's heading keyword from its log.
                      A handed-back event's --command is what the operator
-                     runs next, in the absolute --dir if given
+                     runs next, in the absolute --dir if given. --revision
+                     records an exact commit and its GitHub origin owner/name
+                     from the current worktree, deriving the subject; applies
+                     to done and verified. --commit alone records only a subject
+  commits [PLAN] [--repo OWNER/NAME] [--revision FULL-OID] [--item ID]
+                     JSON exact associations from every readable host's plans,
+                     or PLAN, resolved through signing rewrite aliases in all
+                     logs. --item requires PLAN. Subject-only events have no
+                     exact association. No matches prints []
+  resolve-commit --repo OWNER/NAME --revision FULL-OID
+                     JSON repository, original_revision and resolved revision,
+                     even without an association. No alias leaves it unchanged
   waiting PLAN [--json]
                      the items whose newest event, but planned, property,
                      resealed, referenced and postponed events, is a
@@ -396,6 +407,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		role     = flags.String("role", "", "")
 		agent    = flags.String("agent", "", "")
 		commit   = flags.String("commit", "", "")
+		revision = flags.String("revision", "", "")
 		evidence = flags.String("evidence", "", "")
 		review   = flags.String("review", "", "")
 		outcome  = flags.String("outcome", "", "")
@@ -524,9 +536,36 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		if !ok {
 			return 2
 		}
-		return report(p.Log(plans.Event{Kind: *kind, Item: *item, Summary: *summary, Role: *role, Agent: *agent,
+		e := plans.Event{Kind: *kind, Item: *item, Summary: *summary, Role: *role, Agent: *agent,
 			Branch: branch, Commit: *commit, Evidence: *evidence, Review: *review, Outcome: *outcome,
-			Command: *run, Dir: *runDir}, time.Now()))
+			Command: *run, Dir: *runDir}
+		if *revision != "" {
+			top, _ := checkout()
+			identity, err := plans.CommitIdentity(top, *revision)
+			if err != nil {
+				return report(nil, err)
+			}
+			e.Repository, e.Revision, e.Worktree = identity.Repository, identity.Revision, identity.Worktree
+			if e.Commit != "" && e.Commit != identity.Commit {
+				return report(nil, fmt.Errorf("--commit does not match --revision's subject"))
+			}
+			e.Commit = identity.Commit
+		}
+		return report(p.Log(e, time.Now()))
+	case "commits":
+		if len(positional) > 1 || len(repos) > 1 {
+			return report(nil, fmt.Errorf("commits takes at most one PLAN and --repo"))
+		}
+		plan := ""
+		if len(positional) == 1 {
+			plan = positional[0]
+		}
+		return report(c.Commits(plans.CommitOptions{Plan: plan, Repository: one(repos), Revision: *revision, Item: *item}))
+	case "resolve-commit":
+		if len(positional) != 0 || len(repos) != 1 {
+			return report(nil, fmt.Errorf("resolve-commit takes --repo and --revision, without PLAN"))
+		}
+		return report(c.ResolveCommit(one(repos), *revision))
 	case "waiting":
 		p, ok := wantPlan()
 		if !ok {

@@ -223,7 +223,12 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 				if strings.ContainsAny(who, " \t\r\n") {
 					who = ""
 				}
-				p, created, err := c.RecordCommit(who, toplevel(g.dir), plans.Event{Branch: branch, Commit: m[3], Summary: m[3]}, now)
+				top := toplevel(g.dir)
+				e := plans.Event{Branch: branch, Commit: m[3], Summary: m[3], Worktree: top}
+				if identity, err := plans.CommitIdentity(top, m[2]); err == nil {
+					e.Repository, e.Revision = identity.Repository, identity.Revision
+				}
+				p, created, err := c.RecordCommit(who, top, e, now)
 				if err != nil {
 					continue
 				}
@@ -231,8 +236,12 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 					context = append(context, fmt.Sprintf("No plan named this session or worktree, so %s was made for this commit. "+
 						"Write its goal and steps with `agent-plan section` and `agent-plan step` as the plan-work skill says, or, if the work belongs to another plan, say so in your report.", p.File()))
 				}
+				association := "--commit " + shellQuote(m[3])
+				if e.Revision != "" {
+					association = "--revision " + e.Revision
+				}
 				context = append(context, fmt.Sprintf("The commit %q is logged in %s. If it completes a step, which step? "+
-					"Log `done` for it with `--commit %s`; if none, carry on.", m[3], p.File(), shellQuote(m[3])))
+					"Log `done` for it with `%s` in its worktree; if none, carry on.", m[3], p.File(), association))
 				if who != "" && commits(p, who) == 1 {
 					context = append(context, commitRules)
 				}

@@ -1380,6 +1380,11 @@ func finish(p *pending, path string) (result map[string]any, moved map[string]st
 		sort.Strings(gained)
 		result["gainedFixups"] = gained
 	}
+	// The commits are signed whatever the plans say: a pass the plans could
+	// fail would leave signed branches unpushed over a convenience.
+	if err := recordCommitRewrites(p); err != nil {
+		fmt.Fprintf(os.Stderr, "signed, but could not record the commit rewrites in the plans, whose associations still name the unsigned commits: %v\n", err)
+	}
 	if err := os.Remove(path); err != nil {
 		return nil, nil, err
 	}

@@ -97,6 +97,7 @@ func planProperty(t *testing.T, file, name string) string {
 // properties.
 func testPostRecordsFacts(t *testing.T) {
 	main, linked, p := planned(t)
+	gitOut(t, main, "remote", "add", "origin", "git@github.com:o/r.git")
 	partFile := strings.TrimSuffix(p.File(), ".org") + ".P1.org"
 	os.WriteFile(filepath.Join(main, "a"), []byte("a\n"), 0o644)
 	gitIn(t, main, "add", "a")
@@ -110,7 +111,7 @@ func testPostRecordsFacts(t *testing.T) {
 	}
 	json.Unmarshal([]byte(out), &asked)
 	if c := asked.Specific.Context; asked.Specific.Event != "PostToolUse" || !strings.Contains(c, p.File()) ||
-		!strings.Contains(c, "which step") || !strings.Contains(c, "--commit 'Add the loop'") {
+		!strings.Contains(c, "which step") || !strings.Contains(c, "--revision ") {
 		t.Errorf("after a commit: %s", out)
 	}
 	// A session's first commit also hands over the commit rules.
@@ -167,6 +168,12 @@ func testPostRecordsFacts(t *testing.T) {
 	}
 	var got []string
 	for _, e := range events {
+		if e.Kind == "committed" && e.Commit == "Add the loop" {
+			wantRevision := strings.TrimSpace(gitOut(t, main, "rev-parse", "HEAD~1"))
+			if e.Revision != wantRevision || e.Repository != "o/r" || e.Worktree != main {
+				t.Errorf("exact commit identity: %+v; want %s in %s", e, wantRevision, main)
+			}
+		}
 		if e.Kind != "property" {
 			got = append(got, e.Kind+" "+e.Item+" "+e.Branch+" "+e.Commit+" "+e.Summary+" "+e.Session)
 		}
