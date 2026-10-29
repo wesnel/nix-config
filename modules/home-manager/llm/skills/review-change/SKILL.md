@@ -29,7 +29,8 @@ was split among sub-agents: a coordinator runs the same pipeline, and the
    - the design reviews' open questions for the operator and the decisions you
      made yourself, as one list;
    - for each finding settled `fix`, what the `retro` skill proposes would
-     have prevented it, each a question written with `agent-plan ask`.
+     have prevented it, each a question written with
+     `agent-plan ask --kind retro`.
 
 ## The goal statement
 

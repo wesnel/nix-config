@@ -310,7 +310,8 @@ iframe.renderer {
     "steps": [{"id": "string", "order": "number", "title": "string", "keyword": "string", "ready": "boolean"}],
     "decisions": [{"id": "string", "question": "string", "answer": "string"}],
     "questions": [{"id": "string", "text": "string", "priority": "string", "context": "string",
-      "options": [{"key": "string", "label": "string", "why": "string", "recommended": "boolean"}]}]
+      "options": [{"key": "string", "label": "string", "why": "string", "recommended": "boolean"}]}],
+    "followups": [{"id": "string", "title": "string"}]
   },
   "github": {
     "schema": "number", "at": "string", "stale": "boolean", "mineTotal": "number", "requestsTotal": "number",
@@ -1038,6 +1039,7 @@ iframe.renderer {
         const facts = [statusMark(p.status)];
         if (p.questions.length) facts.push(mark(p.questions.length === 1 ? "1 question" : p.questions.length + " questions", p.host === host ? "t-imp" : "t-none"));
         if (ready) facts.push(h("span", { class: "small muted" }, ready + " ready"));
+        if (p.followups.length) facts.push(h("span", { class: "small muted" }, p.followups.length === 1 ? "1 follow-up" : p.followups.length + " follow-ups"));
         return h("li", null, h("a", { href: "#" + p.id },
           h("span", { class: "row-main" }, h("span", { class: "name" }, p.title || p.id),
             h("span", { class: "small muted" }, "On " + (p.host || "unknown") + " · updated ", timeEl(p.updated, ago(p.updated)))),
@@ -1085,6 +1087,11 @@ iframe.renderer {
             h("span", { class: "mono id" }, s.id), h("span", { class: "kw" }, mark(label, tone, shape)),
             h("span", { class: "title" }, s.title, s.ready && s.keyword === "TODO" ? " " : null, s.ready && s.keyword === "TODO" ? mark("Ready", "t-info") : null));
         }))));
+    }
+    if (p.followups.length) {
+      parts.push(h("details", null, h("summary", null, "Open follow-ups · " + p.followups.length),
+        h("ul", { class: "decisions" }, p.followups.map((f) =>
+          h("li", null, h("span", null, h("span", { class: "mono muted" }, f.id), " ", f.title))))));
     }
     if (p.decisions.length) {
       parts.push(h("details", null, h("summary", null, "Decisions · " + p.decisions.length),

@@ -20,7 +20,9 @@ import (
 type AskOptions struct {
 	// Part is the part whose file takes the question, or "" for the plan's.
 	Part, Question, Priority, Context, Recommendation, Answer, Role string
-	Alternatives, After                                             []string
+	// Kind is one of QuestionKinds, or "" for a plain question.
+	Kind                string
+	Alternatives, After []string
 }
 
 // Asked is what Ask wrote.
@@ -48,6 +50,10 @@ func (p Plan) Ask(o AskOptions, now time.Time) (Asked, error) {
 	}
 	if o.Priority != "" && !oneOf(o.Priority, priorities) {
 		return Asked{}, refusal.New("%q is not a priority. Pass `--priority A`, `B` or `C`", o.Priority)
+	}
+	if o.Kind != "" && !oneOf(o.Kind, QuestionKinds) {
+		return Asked{}, refusal.New("%q is not a question's kind. Pass `--kind %s`, or no --kind for a plain question", o.Kind,
+			strings.Join(QuestionKinds, "` or `--kind "))
 	}
 	if err := checkTitle("question", o.Question); err != nil {
 		return Asked{}, err
@@ -122,6 +128,9 @@ func (p Plan) Ask(o AskOptions, now time.Time) (Asked, error) {
 			line += "[#" + o.Priority + "] "
 		}
 		block := []string{line + o.Question, ":PROPERTIES:", ":CUSTOM_ID: " + qid, ":RECOMMENDATION: " + o.Recommendation}
+		if o.Kind != "" {
+			block = append(block, ":KIND: "+o.Kind)
+		}
 		if len(o.After) > 0 {
 			block = append(block, ":AFTER: "+strings.Join(o.After, " "))
 		}

@@ -277,6 +277,7 @@ func TestReviewerPlans(t *testing.T) {
 		"agent-plan goal PLANFILE --part P1":                false,
 		"agent-plan find --branch x":                        false,
 		"agent-plan questions PLANFILE --all":               false,
+		"agent-plan open --kind retro --json":               false,
 	} {
 		t.Run(caseName(deny, command), func(t *testing.T) {
 			paths, _ := planLogPaths(t)

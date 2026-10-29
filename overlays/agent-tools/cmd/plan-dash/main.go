@@ -28,7 +28,8 @@ const usage = `plan-dash: the operator's status, from GitHub and the plans.
   export  write the "Agent plans" page's database documents, as JSON, under
           $XDG_STATE_HOME/agent-plans/out: plans/<plan>.json for each plan
           of every host not halted (title, goal, status, host, updated,
-          steps, decisions, open questions and their options),
+          steps, decisions, open questions and their options, and the
+          IDs and titles of open follow-ups),
           github/status.json (the operator's open pull requests, with
           draft, CI, review decision and unresolved threads, and the
           reviews asked of the operator, directly or of a team, with since

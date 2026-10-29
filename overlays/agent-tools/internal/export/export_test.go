@@ -206,7 +206,8 @@ func fixture(t *testing.T) (c plans.Config, own, theirs plans.Plan) {
 	under(t, file, "** Steps", "*** TODO Write the loop\n:PROPERTIES:\n:ID: S1\n:END:\nSENTINEL-step-body\n"+
 		"*** TODO Test the loop\n:PROPERTIES:\n:ID: S2\n:AFTER: S1\n:END:\n")
 	under(t, file, "** Distribution", "*** TODO SENTINEL-distribution\n:PROPERTIES:\n:ID: P1\n:END:\n")
-	under(t, file, "** Follow-ups", "*** TODO SENTINEL-followup\n:PROPERTIES:\n:ID: F1\n:END:\n")
+	under(t, file, "** Follow-ups", "*** TODO Cache the parse\n:PROPERTIES:\n:ID: F1\n:FOUND_IN: SENTINEL-found-in\n:END:\n"+
+		"SENTINEL-followup-body\n*** TODO SENTINEL-followup-done\n:PROPERTIES:\n:ID: F2\n:END:\n")
 	under(t, file, "** References", "- [[file:/SENTINEL-reference.org]]\n"+
 		"*** TODO SENTINEL-reference-step\n:PROPERTIES:\n:ID: S8\n:END:\n")
 	under(t, file, "** Verification", "SENTINEL-verification\n")
@@ -249,6 +250,9 @@ func fixture(t *testing.T) (c plans.Config, own, theirs plans.Plan) {
 		":PRIVATE:\n  SENTINEL-private-drawer\n:END:\n"+
 		":LOGBOOK:\n- State \"DECIDED\"    from \"ASK\"        [2026-10-14 Tue 13:05] \\\\\n  yes, in Emacs\n:END:\n")
 	if _, err := own.Log(plans.Event{Kind: "started", Item: "S1", Summary: "SENTINEL-log-summary"}, day); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := own.Log(plans.Event{Kind: "done", Item: "F2"}, day); err != nil {
 		t.Fatal(err)
 	}
 
@@ -303,7 +307,8 @@ var allowed = map[string][]string{
 		"decisions", "decisions[].id", "decisions[].question", "decisions[].answer",
 		"questions", "questions[].id", "questions[].text", "questions[].priority", "questions[].context",
 		"questions[].options", "questions[].options[].key", "questions[].options[].label",
-		"questions[].options[].why", "questions[].options[].recommended"},
+		"questions[].options[].why", "questions[].options[].recommended",
+		"followups", "followups[].id", "followups[].title"},
 	"github": {"schema", "at", "stale", "mineTotal", "requestsTotal",
 		"mine", "mine[].repo", "mine[].number", "mine[].title", "mine[].draft", "mine[].ci", "mine[].review",
 		"mine[].unresolved", "mine[].parent", "mine[].recordExists", "mine[].recordFindings",
@@ -496,12 +501,13 @@ func TestExport(t *testing.T) {
 			{ID: "Q2", Question: "Which name?", Answer: "loop, as recommended"}},
 		Questions: []Question{{ID: "Q1", Text: "Keep the flag?", Priority: "A", Context: "Nothing reads it.",
 			Options: []Option{{Key: "A", Label: "no, drop it", Recommended: true}, {Key: "B", Label: "keep it", Why: "costs a flag"},
-				{Key: "C", Label: "rename it"}}}}}
+				{Key: "C", Label: "rename it"}}}},
+		Followups: []Followup{{ID: "F1", Title: "Cache the parse"}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("own plan\n%+v, want\n%+v", got, want)
 	}
 	if p := e.Plans[0]; p.Host != "mac" || p.Title != "Their plan" || p.Goal != "Their goal." || len(p.Steps) != 0 ||
-		p.Updated != theirsCommitted {
+		p.Updated != theirsCommitted || p.Followups == nil || len(p.Followups) != 0 {
 		t.Errorf("their plan %+v", p)
 	}
 	if s := e.Sync; s.Host != "box" || !s.Repo || !s.Unsynced || s.Pushed == "" || s.Fetched == "" ||
@@ -701,11 +707,19 @@ func TestCaps(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	for range maxFollowups + 5 {
+		if _, err := p.Followup(plans.FollowupOptions{Title: wide(300), FoundIn: "S1"}, day); err != nil {
+			t.Fatal(err)
+		}
+	}
 	got, _, err := Plans(c, day)
 	if err != nil || len(got) != 1 {
 		t.Fatalf("%+v, %v", got, err)
 	}
 	plan := got[0]
+	if len(plan.Followups) != maxFollowups || len([]rune(plan.Followups[0].Title)) != 200 {
+		t.Errorf("follow-ups not capped: %+v", plan.Followups)
+	}
 	q := plan.Questions[0]
 	runes := func(s string) int { return len([]rune(s)) }
 	if runes(plan.Title) != 200 || runes(plan.Goal) != 2000 || runes(plan.Steps[0].Title) != 200 ||

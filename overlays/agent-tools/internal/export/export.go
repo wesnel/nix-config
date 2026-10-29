@@ -5,7 +5,7 @@
 // allowlist, each always written. Plan fields are read only from the plans
 // directory, through plans.Config.Open, which refuses a file outside it or
 // with another name: the title, the Goal section, the headings with IDs
-// under Steps sections, the questions under Questions with their
+// under Steps sections, the titles of open follow-ups, the questions under Questions with their
 // RECOMMENDATION, ANSWER or LOGBOOK note and list items, and STATUS; of
 // the log, only event kinds and times. No other property, section, drawer
 // or log text is read into a document. Outside the plans directory, only
@@ -52,12 +52,13 @@ const (
 
 // The caps on a plan's lists. With the text caps, and at most four bytes
 // a rune in JSON once text is stripped, they bound a plan's document at
-// 134,200 runes of text, 536,800 bytes, plus its keys and IDs.
+// 140,200 runes of text, 560,800 bytes, plus its keys and IDs.
 const (
 	maxSteps     = 100
 	maxDecisions = 30
 	maxQuestions = 10
 	maxOptions   = 6
+	maxFollowups = 30
 )
 
 // maxDoc is the most a document written may hold: under half of the
@@ -87,6 +88,15 @@ type Plan struct {
 	Decisions []Decision `json:"decisions"`
 	// Questions are those the operator can answer now.
 	Questions []Question `json:"questions"`
+	// Followups are the open follow-ups of the plan and its parts, the
+	// first maxFollowups that plans.OpenItems lists.
+	Followups []Followup `json:"followups"`
+}
+
+// Followup is an open follow-up: its ID and title alone.
+type Followup struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
 }
 
 // Step is a heading with a step's ID under a Steps section of the plan or
@@ -395,7 +405,7 @@ func planOf(c plans.Config, p plans.Plan, now time.Time) (Plan, error) {
 		return Plan{}, err
 	}
 	plan := Plan{Schema: agentplans.Schema, ID: p.Name, Title: text(st.Title, short), Status: st.State, Host: p.Host,
-		Steps: []Step{}, Decisions: []Decision{}, Questions: []Question{}}
+		Steps: []Step{}, Decisions: []Decision{}, Questions: []Question{}, Followups: []Followup{}}
 	if !state.MatchString(plan.Status) {
 		plan.Status = "unknown"
 	}
@@ -451,6 +461,15 @@ func planOf(c plans.Config, p plans.Plan, now time.Time) (Plan, error) {
 				Why: text(why, medium), Recommended: i == 0})
 		}
 		plan.Questions = append(plan.Questions, question)
+	}
+	items, err := p.OpenItems(now)
+	if err != nil {
+		return Plan{}, err
+	}
+	for _, it := range items {
+		if it.Kind == "follow-up" && len(plan.Followups) < maxFollowups {
+			plan.Followups = append(plan.Followups, Followup{ID: it.Item, Title: text(it.Title, short)})
+		}
 	}
 	return plan, nil
 }

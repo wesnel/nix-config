@@ -318,6 +318,21 @@ func TestCommands(t *testing.T) {
 		if code, out, errs = agentPlan(t, "", "decide", plan, "Q5", "--answer", "x", "--supersedes", "Q4"); code != 2 {
 			t.Errorf("decide an unknown question: %d %s %s", code, out, errs)
 		}
+		// A retro proposal is asked with its kind, which questions --json
+		// shows, and an unknown kind is refused.
+		code, out, errs = agentPlan(t, "", "ask", plan, "--question", "Deny git add -A?", "--recommendation", "a guard rule",
+			"--kind", "retro")
+		if code != 0 || !strings.Contains(out, `"id": "Q5"`) {
+			t.Errorf("ask --kind retro: %d %s %s", code, out, errs)
+		}
+		code, out, _ = agentPlan(t, "", "questions", plan, "--json")
+		if code != 0 || strings.Count(out, `"kind": "retro"`) != 1 || !strings.Contains(out, `"id": "Q5"`) {
+			t.Errorf("questions --json after ask --kind: %d %s", code, out)
+		}
+		if code, out, errs = agentPlan(t, "", "ask", plan, "--question", "Why?", "--recommendation", "yes",
+			"--kind", "bug"); code != 2 {
+			t.Errorf("ask --kind bug: %d %s %s", code, out, errs)
+		}
 	})
 
 	t.Run("followup", func(t *testing.T) {
@@ -338,6 +353,34 @@ func TestCommands(t *testing.T) {
 		code, out, _ = agentPlan(t, "", "brief", plan, "--resume")
 		if code != 0 || !strings.HasPrefix(out, "Resume brief of plan "+plan) || !strings.Contains(out, "Follow-ups open: 1\n") {
 			t.Errorf("brief --resume: %d\n%s", code, out)
+		}
+	})
+
+	// open lists the open items of every plan of this host, by kind and
+	// since a time.
+	t.Run("open", func(t *testing.T) {
+		plan := sessionPlan(t)
+		if code, _, errs := agentPlan(t, "", "followup", plan, "--title", "Cache the parse", "--found-in", "S1"); code != 0 {
+			t.Fatalf("followup: %s", errs)
+		}
+		name := strings.TrimSuffix(filepath.Base(plan), ".org")
+		code, out, errs := agentPlan(t, "", "open", "--kind", "follow-up")
+		if code != 0 || !strings.HasPrefix(out, "* Add the loop ("+name+")\n- follow-up F1 [") ||
+			!strings.HasSuffix(out, "] :: Cache the parse\n") || strings.Count(out, "\n") != 2 {
+			t.Errorf("open --kind follow-up: %d %q %s", code, out, errs)
+		}
+		code, out, _ = agentPlan(t, "", "open", "--json")
+		if code != 0 || !strings.Contains(out, `"kind": "follow-up"`) || !strings.Contains(out, `"kind": "step"`) {
+			t.Errorf("open --json: %d %s", code, out)
+		}
+		code, out, _ = agentPlan(t, "", "open", "--since", "2099-01-01 09:00")
+		if code != 0 || out != "No open items.\n" {
+			t.Errorf("open --since a later time: %d %q", code, out)
+		}
+		for _, args := range [][]string{{"open", "--kind", "bug"}, {"open", "--since", "yesterday"}, {"open", plan}} {
+			if code, out, errs := agentPlan(t, "", args...); code != 2 {
+				t.Errorf("%v: %d %s %s", args, code, out, errs)
+			}
 		}
 	})
 
