@@ -109,7 +109,8 @@ TYPEs (--reviewer, repeated):
             replaces the record's, one with an earlier one's title keeping
             its ID.
 With no --reviewer, the general review is claude for a Codex caller
-(CODEX_SANDBOX or CODEX_THREAD_ID set) and codex for any other. Each type
+(CODEX_SANDBOX or CODEX_THREAD_ID set), or codex where claude cannot run,
+and codex for any other caller. Each type
 the route scan picks runs too; stderr says what it picked and why.
 
 A type whose provider is held does not run (git delegate availability -h).
@@ -453,8 +454,14 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	result := &RunResult{Source: s.given, Range: r.base + ".." + r.tip, Tip: r.tip, Record: path, Reviews: []*Output{},
 		NotRun: []NotRun{}, Routes: scanned}
 	var runs []*typeRun
-	for _, t := range chosen {
+	for i, t := range chosen {
 		run := runType(ctx, s, r, base, t, tests, *model, time.Duration(*timeout)*time.Second, stderr)
+		// Where Claude cannot review a Codex caller's change, Codex does.
+		if i == 0 && !explicit && t == "claude" && run.out == nil && run.failures == nil && !run.refused {
+			fmt.Fprintf(stderr, "%s: the claude review could not run here: %s; codex reviews in its place\n", name, run.why)
+			t = "codex"
+			run = runType(ctx, s, r, base, t, tests, *model, time.Duration(*timeout)*time.Second, stderr)
+		}
 		if run.out == nil {
 			if run.failures != nil {
 				runs = append(runs, run)

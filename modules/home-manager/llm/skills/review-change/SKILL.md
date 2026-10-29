@@ -182,8 +182,9 @@ in pr-review.
   network and no writes, so a change cannot steer it into reading
   credentials. For a Codex author (`CODEX_SANDBOX` or `CODEX_THREAD_ID`
   set) it is Claude Code's `adversarial-reviewer`, given the same contract
-  and confined as the focused reviews are. `git delegate ask` picks the
-  same way.
+  and confined as the focused reviews are, and Codex, run fresh, where
+  Claude cannot run. `git delegate ask` picks the other family the same
+  way.
 - The focused reviews and the walkthrough, through `git delegate`: Claude
   Code's reviewer agents, run headless with no settings, MCP server or
   CLAUDE.md of anyone's, in a sandbox of their own.

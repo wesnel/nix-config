@@ -276,8 +276,9 @@ git delegate show wesnel/emacs-config#2                # the review record, as J
 git delegate settle origin/main..HEAD F3 rebut --reason-file why.md
 ```
 
-For a Codex caller the general reviewer is Claude's `adversarial-reviewer`;
-otherwise it is Codex. Both use the same review contract. Codex runs
+For a Codex caller the general reviewer is Claude's `adversarial-reviewer`,
+or Codex where Claude cannot run; for any other it is Codex. Both use the
+same review contract. Codex runs
 as `codex exec --json --ignore-user-config --ephemeral` in a throwaway worktree of
 the range's tip. None of your Codex configuration loads, so no MCP server or
 plugin; web search and the image viewer are off; and a permissions profile

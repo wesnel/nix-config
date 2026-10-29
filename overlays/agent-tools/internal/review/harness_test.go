@@ -28,6 +28,26 @@ func TestPrimaryHarness(t *testing.T) {
 			}
 		})
 	}
+	// Where Claude cannot review a Codex author's change, Codex does, in a
+	// run of its own, rather than leave the general review undone.
+	t.Run("Claude held", func(t *testing.T) {
+		f := setUp(t, true)
+		t.Setenv("CODEX_SANDBOX", "seatbelt")
+		t.Setenv("FAKE_CODEX", "none")
+		if code, out := runAvailability(t, "--disable", "claude"); code != 0 {
+			t.Fatalf("disable claude: exit %d, %s", code, out)
+		}
+		_, out, stderr := runDelegate(t, "--plan", f.plan, f.base+"..HEAD")
+		if out.review("codex").Reviewer != "codex" {
+			t.Fatalf("no Codex general review for a Codex author while Claude is held: %+v\n%s", out, stderr)
+		}
+		for _, n := range out.NotRun {
+			if n["reviewer"] == "claude" {
+				t.Errorf("the general review is listed as not run, though Codex ran it: %v", out.NotRun)
+			}
+		}
+		noProviderCall(t, f, "adversarial-reviewer-runs")
+	})
 	t.Run("design question", func(t *testing.T) {
 		f := askFixture(t, true)
 		t.Setenv("CODEX_SANDBOX", "seatbelt")
