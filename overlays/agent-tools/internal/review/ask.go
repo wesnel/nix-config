@@ -139,14 +139,13 @@ func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	if why := runnable(newAvailability(), ty); why != "" {
 		fmt.Fprintf(stderr, "%s: the %s reviewer cannot answer here: %s. Ask a new sub-agent that only reads instead, "+
 			"in the primary harness with a fresh context: add `--print-prompt` to this ask command, with %s and the same "+
-			"files, for its contract and file snapshots, and give it none of your own reasoning. Keep review-loop text "+
-			"out of Codex.\n", name, *reviewer, why, *question)
+			"files, for its contract and file snapshots, and give it none of your own reasoning.\n", name, *reviewer, why, *question)
 		return 4
 	}
 	out, err := askIn(ctx, top, text, files, *reviewer, ty, *model, time.Duration(*timeout)*time.Second, stderr)
 	var unavailable providerUnavailable
 	if errors.As(err, &unavailable) {
-		fmt.Fprintf(stderr, "%s: %s. Add `--print-prompt` to this ask command and give the result to a fresh read-only sub-agent in the primary harness instead, with none of your reasoning. Keep review-loop text out of Codex.\n", name, err)
+		fmt.Fprintf(stderr, "%s: %s. Add `--print-prompt` to this ask command and give the result to a fresh read-only sub-agent in the primary harness instead, with none of your reasoning.\n", name, err)
 		return 4
 	}
 	var unconfined Unconfined

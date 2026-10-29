@@ -217,8 +217,7 @@ and why, the routes, and the record's counts. Exit status:
   0  no open findings
   3  open findings
   4  a type could not run: Codex is not installed or signed in, its
-     sandbox cannot start, this is a review-loop session (PR_LOOP_SESSION
-     is set); its provider is held; claude or agent-tools'
+     sandbox cannot start; its provider is held; claude or agent-tools'
      delegate config is missing; a compat
      review the scan routed has no description with a Reverting section;
      an upgrade review cannot read the change's pins; or a reply did not
@@ -478,8 +477,8 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 				reader = "a new `" + agent + "` sub-agent"
 			}
 			fmt.Fprintf(stderr, "%s: the %s review could not run here: %s. Instead start %s on what `git delegate --print-prompt "+
-				"--reviewer %s %s%s` prints, with a fresh context in the primary harness and none of the author's reasoning. "+
-				"Keep review-loop text out of Codex.\n", name, t, run.why, reader, t, typeFlags(s, t, goal), s.given)
+				"--reviewer %s %s%s` prints, with a fresh context in the primary harness and none of the author's reasoning.\n",
+				name, t, run.why, reader, t, typeFlags(s, t, goal), s.given)
 			continue
 		}
 		runs = append(runs, run)

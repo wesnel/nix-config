@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
 	"strings"
 	"time"
 
@@ -44,9 +43,6 @@ func (a *availability) check(p shared.Provider) error {
 	now := a.now()
 	if b, ok := a.blocked[p]; ok && b.state.Active(now) {
 		return b.err
-	}
-	if p == shared.Codex && os.Getenv("PR_LOOP_SESSION") != "" {
-		return providerUnavailable{p, "this is a review-loop session; its review text must stay out of Codex"}
 	}
 	s, err := shared.Check(p, now)
 	if err != nil {
@@ -118,8 +114,7 @@ recent quota window is at or above wgn.home.claude.quotaStop, which
 
   --disable P  hold P, claude or codex, until --clear
   --clear P    end P's hold, after recovery or a change of account; an
-               exhausted Claude quota window still holds until its reset,
-               and a review-loop session still keeps Codex out
+               exhausted Claude quota window still holds until its reset
 `
 
 func availabilityCommand(args []string, stdout, stderr io.Writer) int {

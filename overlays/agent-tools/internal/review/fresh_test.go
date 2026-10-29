@@ -641,9 +641,10 @@ func TestUnavailable(t *testing.T) {
 		// A provider's own auth command stands in for Codex's login.
 		{"unauthenticated, through a gateway", true, "ngrok-ai", map[string]string{"FAKE_CODEX": "unauthenticated"}, nil, 3},
 		{"gateway whose id is not a TOML key", true, `ngrok"ai`, nil, nil, 4},
-		{"in a loop session", true, "", map[string]string{"PR_LOOP_SESSION": "1"}, nil, 4},
-		{"in a loop session, through a gateway", true, "ngrok-ai", map[string]string{"PR_LOOP_SESSION": "1"}, nil, 4},
-		{"loop session, Codex asked for", true, "", map[string]string{"PR_LOOP_SESSION": "1"}, []string{"--reviewer", "codex"}, 4},
+		// A review loop's text may reach either provider.
+		{"in a loop session", true, "", map[string]string{"PR_LOOP_SESSION": "1", "FAKE_CODEX": "none"}, nil, 0},
+		{"in a loop session, through a gateway", true, "ngrok-ai", map[string]string{"PR_LOOP_SESSION": "1", "FAKE_CODEX": "none"}, nil, 0},
+		{"loop session, Codex asked for", true, "", map[string]string{"PR_LOOP_SESSION": "1", "FAKE_CODEX": "none"}, []string{"--reviewer", "codex"}, 0},
 		{"Codex author, Codex asked for", true, "", map[string]string{"CODEX_SANDBOX": "seatbelt", "FAKE_CODEX": "none"}, []string{"--reviewer", "codex"}, 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -956,7 +957,7 @@ func TestGoalHint(t *testing.T) {
 	f.writeConfig(t)
 	f.plan = must(f.plans.New(plans.NewOptions{Title: "Grow the code", Slug: "grow", Goal: "Grow the code."}, time.Now())).Plan
 	f.addPart(t)
-	t.Setenv("PR_LOOP_SESSION", "1")
+	t.Setenv("FAKE_CODEX", "unauthenticated")
 	code, _, stderr := runDelegate(t, "--reviewer", "codex", "--plan", f.plan, "--part", "P1", f.base+"..HEAD")
 	want := "`git delegate --print-prompt --reviewer codex --plan '" + f.plan + "' --part P1 " + f.base + "..HEAD`"
 	if code != 4 || !strings.Contains(stderr, want) {

@@ -799,6 +799,18 @@ in {
       # Every agent is told to leave signing to `git sign-pass`, which this
       # installs. These run the git and gh on PATH, so the user's signing and
       # SSH settings apply.
-      ++ [cfg.agentTools];
+      ++ [cfg.agentTools]
+      ++ optional cfg.prLoop.enable (import ./review-loop.nix {
+        inherit lib pkgs;
+        # By program, as "git delegate" or "pr-loop", from patterns such as
+        # "pr-loop open *".
+        approved = unique (map (c: let
+          w = splitString " " c;
+        in
+          if head w == "git"
+          then "git ${elemAt w 1}"
+          else head w)
+        cfg.guard.excludedCommands);
+      });
   };
 }

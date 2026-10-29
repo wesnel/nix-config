@@ -40,6 +40,69 @@ func TestLoopSettings(t *testing.T) {
 	}
 }
 
+// A harness started with the loop's variables is a loop session, however
+// its command line hands them over: a Claude Code settings file or text, a
+// Codex profile, or a Codex config override. Only the operator's launchers
+// start one.
+func TestLoopStartHarness(t *testing.T) {
+	loopEnv := `{"env": {"PR_LOOP_MODE": "bots"}}`
+	loopProfile := "[shell_environment_policy]\nset = { PR_LOOP_MODE = \"bots\" }\n"
+	for _, c := range []struct {
+		name    string
+		deny    bool
+		command string
+	}{
+		{"the launcher", true, "review-loop --harness codex --bots 12"},
+		{"the launcher by path", true, "/nix/store/x/bin/review-loop --harness claude --people 12"},
+		{"the Claude launcher", true, "claude-review-loop --bots 12"},
+		{"a settings file", true, "claude --settings loop.json"},
+		{"a settings file after =", true, "claude --settings=WORK/loop.json -p hi"},
+		{"settings text", true, `claude --settings '{"env":{"PR_LOOP_SESSION":"1"}}'`},
+		{"settings that expand", true, `claude --settings "$F"`},
+		{"other settings", false, "claude --settings plain.json -p hi"},
+		{"missing settings", false, "claude --settings missing.json"},
+		{"a Codex profile", true, "codex -p loop"},
+		{"a Codex profile after =", true, "codex --profile=loop exec hi"},
+		{"a Codex profile joined", true, "codex -ploop"},
+		{"a Codex profile in CODEX_HOME", true, "CODEX_HOME=OTHER codex --profile other"},
+		{"another Codex profile", false, "codex -p plain"},
+		{"a missing Codex profile", false, "codex -p absent"},
+		{"a config override", true, `codex -c 'shell_environment_policy.set.PR_LOOP_MODE="bots"'`},
+		{"a joined config override", true, `codex -c'shell_environment_policy.set.PR_LOOP_MODE="bots"'`},
+		{"a long config override", true, `codex --config='shell_environment_policy.set={PR_LOOP_SESSION="1"}'`},
+		{"another config override", false, `codex -c model=o3 exec 'say what PR_LOOP_MODE means'`},
+		{"a prompt after --", false, `codex exec -- '-c PR_LOOP_MODE is the operators'`},
+		{"Claude's -c", false, "claude -c 'explain PR_LOOP_MODE'"},
+	} {
+		t.Run(caseName(c.deny, c.name), func(t *testing.T) {
+			h := fakeHome(t)
+			work := filepath.Join(h, "work")
+			other := filepath.Join(h, "other-codex")
+			for path, text := range map[string]string{
+				filepath.Join(work, "loop.json"):                loopEnv,
+				filepath.Join(work, "plain.json"):               `{"env": {"GOFLAGS": "-mod=mod"}}`,
+				filepath.Join(h, ".codex", "loop.config.toml"):  loopProfile,
+				filepath.Join(h, ".codex", "plain.config.toml"): "model = \"o3\"\n",
+				filepath.Join(other, "other.config.toml"):       loopProfile,
+			} {
+				os.MkdirAll(filepath.Dir(path), 0o755)
+				if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("CODEX_HOME", "")
+			command := strings.NewReplacer("WORK", work, "OTHER", other).Replace(c.command)
+			reason := judge(t, work, command)
+			if (reason != "") != c.deny {
+				t.Errorf("%s: deny=%v, reason %q", command, !c.deny, reason)
+			}
+			if c.deny && reason != loopStart {
+				t.Errorf("%s: reason %q, want the loop-start reason", command, reason)
+			}
+		})
+	}
+}
+
 // The settings are found through links, and by any name the file system
 // folds to theirs: in case, and in Unicode, which APFS folds as well.
 func TestLoopSettingsAliases(t *testing.T) {

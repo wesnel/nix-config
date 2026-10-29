@@ -348,9 +348,8 @@ delegate and pr-loop write them: the sandbox denies the directory to every
 command, and Claude Code's file tools are denied it. Emacs's review-guide
 reads them. delegate prints JSON and exits 0 with no open findings, 3 with
 open findings, 4 when a reviewer could not run (its provider held, as below;
-Codex not installed or signed in, its sandbox cannot start, or in a
-review-loop session, which reads other people's review text; claude or its
-config missing; a reply that did not fit twice), and 5 when a record fails
+Codex not installed or signed in, or its sandbox cannot start; claude or
+its config missing; a reply that did not fit twice), and 5 when a record fails
 its structure check, which only a hand edit makes. `--print-prompt` prints a
 reviewer's prompt instead of running it. See `git delegate -h`.
 
@@ -725,15 +724,16 @@ ready PR, the loop's pushes, replies and review requests notify its
 reviewers and code owners. Then, in the repository:
 
 ``` sh
-claude-review-loop --bots 12 13     # or --people
+review-loop --harness codex --bots 12 13     # or --harness claude; or --people
+claude-review-loop --bots 12 13              # the same as --harness claude
 ```
 
-It starts an ordinary Claude Code session, with the host sandbox and the
-guard every session has, running the `review-loop` skill on those PRs. Each
-round waits for CI, asks for reviews, triages the threads, fixes in fixups,
-has a fresh review check them (see
-[reviews](#reviews-fresh-eyes-and-tests-that-fail); in a loop the second
-opinion is a sub-agent), restacks, and in bots mode pushes the stack through
+It starts an ordinary Claude Code or Codex session, with the sandbox and
+the guard every session of that harness has, running the `review-loop`
+skill on those PRs. Each round waits for CI, asks for reviews, triages the
+threads, fixes in fixups, has a fresh review check them (see
+[reviews](#reviews-fresh-eyes-and-tests-that-fail)), restacks, and in bots
+mode pushes the stack through
 the GitHub API, then replies and resolves. It stops when the bots are
 satisfied or the loop needs a decision, and hands back.
 
@@ -780,11 +780,19 @@ merging, and any change to Linear, which the hand-back proposes instead.
 
 ### what the wrapper adds
 
-`claude-review-loop` adds three settings to an ordinary session:
-`PR_LOOP_SESSION` and `PR_LOOP_MODE` in the environment, which `pr-loop`
-gates its writes on, and an allow rule for `pr-loop`, so its commands run
-without a prompt. The guard denies an agent running `claude-review-loop`,
-setting either variable, or running `pr-loop post` or `pr-loop merge`.
+`review-loop` puts `PR_LOOP_SESSION` and `PR_LOOP_MODE` in the session's
+environment and its commands', which `pr-loop` gates its writes on. Claude
+Code also gets an allow rule for `pr-loop`, so its commands run without a
+prompt, and auto mode. Codex runs in the permission profile and approval
+policy its module writes to `~/.codex/config.toml`, which the launcher
+leaves as they are: each run of `pr-loop`, `gh-read`, `git delegate` or
+another of the excluded commands waits for your approval, as the launcher
+says when it starts. The launcher starts Codex with `--no-daemon`, since a
+shared background server would run the loop's commands without its
+variables. The guard denies an agent running `review-loop` or
+`claude-review-loop`, setting either variable, including through Claude
+Code's `--settings` or a Codex `-c` override or `-p` profile, or running
+`pr-loop post` or `pr-loop merge`.
 
 ## the guard in every session
 
@@ -835,7 +843,7 @@ instead. Each reviewer agent, defined in `modules/home-manager/claude/agents`
 with only Read, Bash and StructuredOutput, also runs `pr-loop guard
 --reviewer` from its own definition, which keeps it to reading in any
 session. The guard also denies starting a
-review loop or setting its variables (`claude-review-loop`,
+review loop or setting its variables (`review-loop`, `claude-review-loop`,
 `PR_LOOP_SESSION`, `PR_LOOP_MODE`), `pr-loop post` and `pr-loop merge`,
 which are yours.
 

@@ -193,7 +193,7 @@ func TestReplaceDiagrams(t *testing.T) {
 // A diagram review needs Codex for its critic.
 func TestDiagramsWithoutCodex(t *testing.T) {
 	f := setUp(t, true)
-	t.Setenv("PR_LOOP_SESSION", "1")
+	t.Setenv("FAKE_CODEX", "unauthenticated")
 	code, out, stderr := runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
 	if code != 4 || len(out.NotRun) != 1 || out.NotRun[0]["reviewer"] != "diagram" {
 		t.Errorf("exit %d, %+v\n%s", code, out, stderr)

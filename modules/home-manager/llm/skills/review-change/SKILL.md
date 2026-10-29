@@ -188,9 +188,6 @@ in pr-review.
 - The focused reviews and the walkthrough, through `git delegate`: Claude
   Code's reviewer agents, run headless with no settings, MCP server or
   CLAUDE.md of anyone's, in a sandbox of their own.
-- Never Codex in a review-loop session, which reads other people's review
-  text: there delegate's Codex review exits 4, and the second opinion is an
-  `adversarial-reviewer` sub-agent.
 - A provider the operator says is exhausted or must not be called: run
   `git delegate availability --disable claude` (or `codex`) before
   reviewing. `git delegate availability` shows each provider's hold and
@@ -327,12 +324,12 @@ outcome goes against its plan item ID and in the hand-back.
 - **A review bot's thread:** draft the replies in the format `pr-loop
   reply --from` reads, one file per pull request (`pr-loop --help`): a
   `=== thread THREAD` line, or `=== thread THREAD resolve` where the
-  outcome resolves, then the reply. In a bots-mode loop (`claude-review-loop
+  outcome resolves, then the reply. In a bots-mode loop (`review-loop
   --bots`), post them with `pr-loop reply --from FILE` once the fixes are
   pushed; pr-loop takes only threads whose every comment is a configured
   bot's or the operator's. Outside one, the drafted replies go in the
   hand-back, as a person's thread's do.
-- **A person's thread,** in a people-mode loop (`claude-review-loop
+- **A person's thread,** in a people-mode loop (`review-loop
   --people`): write each reply with `pr-loop draft THREAD --body-file F
   --outcome OUTCOME`, and commit the fixups. Push nothing and post
   nothing: the operator reads the fixups and drafts, pushes with `git
