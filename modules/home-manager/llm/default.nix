@@ -405,7 +405,8 @@ in {
         The guard matches one holding a glob against a path and each of its
         parents. The sandbox takes each as a whole path, so a prefix that
         names no file, as `~/.ssh/id_`, must lie in a directory
-        {option}`wgn.home.llm.sandbox.deniedReads` hides whole.
+        {option}`wgn.home.llm.sandbox.deniedReads` hides whole, which then
+        leaves the prefix out.
       '';
 
       default = let
@@ -505,28 +506,136 @@ in {
         };
     };
 
-    # The host sandbox around every Claude Code session's commands takes
-    # these lists from here.
+    # The sandboxes around Claude Code's and Codex's commands take these
+    # lists from here.
     sandbox = {
       deniedReads = mkOption {
         type = types.listOf types.str;
         readOnly = true;
 
         description = ''
-          Absolute paths no sandboxed command may read: credentials, and
-          where agent sockets live.
+          Paths no sandboxed command may read: credentials, where agent
+          sockets live, and what would let a command act as the operator
+          elsewhere. Each is absolute or starts `~/`, and one holding a glob
+          matches as Claude Code's sandbox matches it. A path in
+          {option}`wgn.home.llm.sandbox.allowedReads` stays readable in
+          Claude Code; Codex cannot carve a read out of a deny, so it leaves
+          out a path holding one.
         '';
 
         default = let
           home = config.home.homeDirectory;
           proxy = config.wgn.home.mcp-proxy;
+          # Hidden whole, with everything under them.
+          directories =
+            ["${home}/.config/gh" "${home}/.gnupg" "${home}/.ssh"]
+            # gh keeps its token in the login keychain, which a sandboxed
+            # command can otherwise read.
+            ++ optional pkgs.stdenv.hostPlatform.isDarwin "${home}/Library/Keychains"
+            ++ optional pkgs.stdenv.hostPlatform.isLinux "/run/user"
+            ++ optionals proxy.enable [proxy.stateDir proxy.oauthDir];
+          # The credential list, as the sandbox takes paths: no trailing
+          # `/`, and none that is or is under a directory above, such as the
+          # `~/.ssh/id_` prefix, which names no file.
+          hidden = p: any (d: p == d || hasPrefix "${d}/" p) directories;
+          credentials = filter (p: !hidden p) (map (removeSuffix "/") cfg.guard.credentialPaths);
         in
-          ["${home}/.config/gh" "${home}/.gnupg" "${home}/.ssh"]
-          # gh keeps its token in the login keychain, which a sandboxed
-          # command can otherwise read.
-          ++ optional pkgs.stdenv.hostPlatform.isDarwin "${home}/Library/Keychains"
-          ++ optional pkgs.stdenv.hostPlatform.isLinux "/run/user"
-          ++ optionals proxy.enable [proxy.stateDir proxy.oauthDir];
+          directories
+          ++ credentials
+          # The guard refuses a .env file by its name; the sandbox needs
+          # these patterns.
+          ++ [
+            "~/git/**/.env"
+            "~/git/**/.env.*"
+            "~/.claude/worktrees/**/.env"
+            "~/.claude/worktrees/**/.env.*"
+            # Browser profiles, 1Password and shell histories.
+            "~/Library/Application Support/Google/Chrome"
+            "~/Library/Application Support/BraveSoftware"
+            "~/Library/Application Support/Firefox"
+            "~/Library/Safari"
+            "~/Library/Containers/com.apple.Safari"
+            "~/.config/google-chrome"
+            "~/.config/chromium"
+            "~/.mozilla"
+            "~/Library/Application Support/zen"
+            "~/.zen"
+            "~/.config/zen"
+            "~/.var/app/app.zen_browser.zen"
+            "~/Library/Application Support/1Password"
+            "~/Library/Group Containers/2BUA8C4S2C.com.1password"
+            "~/.config/1Password"
+            "~/.local/share/fish/fish_history"
+            "~/.zsh_history"
+            "~/.zsh_sessions"
+            "~/.bash_history"
+            # Only the watcher's sync pushes plans.
+            cfg.plans.repository.key
+          ];
+      };
+
+      allowedReads = mkOption {
+        type = types.listOf types.str;
+        readOnly = true;
+
+        description = ''
+          Paths under {option}`wgn.home.llm.sandbox.deniedReads` that
+          sandboxed commands may still read. Git reads the user's name and
+          email through an include of the `git.inc` template on every run,
+          and dies on an include it cannot read.
+        '';
+
+        default = optional (config.sops.templates ? "git.inc") (
+          if pkgs.stdenv.hostPlatform.isDarwin
+          then "/private/var/folders/*/*/T/secrets.d/*/rendered/git.inc"
+          else "/run/user/*/secrets.d/*/rendered/git.inc"
+        );
+      };
+
+      toolCaches = mkOption {
+        type = types.listOf types.str;
+        readOnly = true;
+
+        description = ''
+          The caches of Go, golangci-lint, Nix and uv where they are by
+          default, which every sandbox lets its commands write. Nothing on
+          PATH (~/go/bin among it) and nothing a program outside the
+          sandbox loads code or configuration from belongs here.
+        '';
+
+        default =
+          ["~/go/pkg"]
+          ++ (
+            if pkgs.stdenv.hostPlatform.isDarwin
+            then ["~/Library/Caches/go-build" "~/Library/Caches/golangci-lint"]
+            else ["~/.cache/go-build" "~/.cache/golangci-lint"]
+          )
+          ++ ["~/.cache/nix" "~/.cache/uv"];
+      };
+
+      deniedEnvVars = mkOption {
+        type = types.listOf types.str;
+        readOnly = true;
+
+        description = ''
+          Variables taken out of the environment sandboxed commands inherit
+          from the agent. Only these are taken out, so every credential a
+          module puts in the environment belongs here.
+        '';
+
+        default = [
+          "GH_TOKEN"
+          "GITHUB_TOKEN"
+          "SSH_AUTH_SOCK"
+          "KEYID"
+          "NGROK_AUTHTOKEN"
+          "NGROK_AUTHTOKEN_PROD"
+          "NGROK_AI_KEY"
+          "MCP_PROXY_TOKEN"
+          "OPENAI_API_KEY"
+          "ANTHROPIC_API_KEY"
+          "CLAUDE_CODE_MESSAGING_TOKEN"
+        ];
       };
 
       allowedDomains = mkOption {

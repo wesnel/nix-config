@@ -864,7 +864,7 @@ func TestSessionHook(t *testing.T) {
 	t.Run("the session's plan", func(t *testing.T) {
 		c := testConfig(t)
 		p := newPlan(t, c, "x")
-		out, err := c.SessionHook([]byte(`{"session_id":"abc","source":"compact","cwd":"/nowhere"}`))
+		out, err := c.SessionHook([]byte(`{"session_id":"abc","source":"compact","cwd":"/nowhere"}`), "claude")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -876,7 +876,7 @@ func TestSessionHook(t *testing.T) {
 	t.Run("no plan", func(t *testing.T) {
 		c := testConfig(t)
 		newPlan(t, c, "x")
-		if out, err := c.SessionHook([]byte(`{"session_id":"zzz","source":"resume","cwd":"/nowhere"}`)); err != nil || len(out) != 0 {
+		if out, err := c.SessionHook([]byte(`{"session_id":"zzz","source":"resume","cwd":"/nowhere"}`), "claude"); err != nil || len(out) != 0 {
 			t.Errorf("no plan: %s, %v", out, err)
 		}
 	})

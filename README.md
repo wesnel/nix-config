@@ -104,7 +104,7 @@ next switch.
 | --- | --- |
 | `~/.claude/settings.json` | `wgn.home.claude.settings`: attribution off, the ngrok and reviewer hooks, and the plan hook on session resume, compaction or `/clear` (a hook list here replaces the file's own) |
 | `~/.claude.json` | `mcpServers` entries for the MCP proxy |
-| `~/.codex/config.toml` | `[mcp_servers.*]` tables for the MCP proxy |
+| `~/.codex/config.toml` | `[mcp_servers.*]` tables for the MCP proxy, and `[mcp_servers.agent_ops]` for `pr-loop mcp` |
 
 ## committing: unsigned work, one signing pass
 
@@ -246,6 +246,15 @@ arguments name, and `gh-read` only reads. The guard refuses a file argument
 that names a credential, and `pr-loop` refuses to post text that holds a
 secret's shape. The read-only ones and `agent-plan`'s writes are allowed
 without a prompt.
+
+Codex's sandbox hides the gh login and the reviewers' logins from every
+command, approved or not, so in Codex `pr-loop`'s GitHub commands and
+`git delegate` run as the tools of `pr-loop mcp`, an MCP server Codex
+starts as a process of its own outside that sandbox, registered as
+`agent_ops`. Each tool runs one command from typed arguments, in the
+worktree its call names, with files only from that worktree, and Codex
+asks you before every call. `gh-read` has no tool there; `agent-plan`'s
+writes ask you as commands.
 
 ## reviews: fresh eyes and tests that fail
 
@@ -838,7 +847,9 @@ claude.ai Slack connector) are held to its lists: reads
 pass, the listed writes ask you first in Claude Code and are denied in
 Codex and to reviewers, and any other tool is denied until it is
 listed. Every tool of a server it does not list asks you first in Claude
-Code, and is denied in Codex and to reviewers. Each refusal says what to do
+Code, and is denied in Codex and to reviewers, but for `agent_ops`
+(`pr-loop mcp`): Codex asks you before each of its calls itself, so the
+guard lets them through there. Each refusal says what to do
 instead. Each reviewer agent, defined in `modules/home-manager/claude/agents`
 with only Read, Bash and StructuredOutput, also runs `pr-loop guard
 --reviewer` from its own definition, which keeps it to reading in any

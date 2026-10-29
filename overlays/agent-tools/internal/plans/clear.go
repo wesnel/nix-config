@@ -52,7 +52,7 @@ func (c Config) SessionEndHook(hook []byte, now time.Time) error {
 		return nil
 	}
 	top, _ := checkout(in.Cwd)
-	p, _, ok := c.Locate(in.SessionID, top)
+	p, _, ok := c.Locate("claude:"+in.SessionID, top)
 	if !ok {
 		return nil
 	}

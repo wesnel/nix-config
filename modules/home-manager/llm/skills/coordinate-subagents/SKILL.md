@@ -122,10 +122,14 @@ configuration can still make a read run a program, and a script or a
 program the guard does not know still writes, so a reviewer's task never
 asks for either.
 
-Codex has no such types: there the rules file also names the installed
-working agreements to read (`~/.codex/AGENTS.md`) and carries the role's
-rules, from its definition in `~/.claude/agents` where Claude Code is
-installed.
+In Codex, each type above but `Explore` is a role in `~/.codex/agents`,
+built from the same definition. Start each with `spawn_agent`, its
+`agent_type` set to the role, since Codex picks a role only when told, and
+`fork_turns: "none"`, so the task is all it is given; the rules file then
+names the working agreements to read (`~/.codex/AGENTS.md`). Codex's own
+`explorer` role takes `Explore`'s lookups. A Codex role carries its prompt
+and effort but not a reviewer's tools or guard hook: there only its prompt
+keeps a reviewer to reading.
 
 ## The rules file
 
@@ -201,10 +205,9 @@ Start every sub-agent with the model and effort this section gives; it is
 what permits setting them. In Claude Code they are the Agent tool's `model`
 and `effort`, which override the agent type's own: Opus at high effort for
 every type above but `Explore`. Cheaper work is the same
-type at the model and effort the list below gives. Codex's `spawn_agent`
-takes a `model`. Start an `adversarial-reviewer` with `effort` and no
-`model`: its definition names its model, which through a gateway is of
-another family than the author's.
+type at the model and effort the list below gives. Start an
+`adversarial-reviewer` with `effort` and no `model`: its definition names
+its model, which through a gateway is of another family than the author's.
 
 - **Haiku 5.5, low effort:** read-only lookups, inventories, running a given
   command and reporting it.
@@ -214,6 +217,9 @@ another family than the author's.
 - **Opus 5.5, the default:** design reviews, adversarial reviews,
   security-sensitive code (the guard, the sandbox, `git sign-pass`,
   `pr-loop`), restacks with many conflicts, and anything ambiguous.
+- **Codex:** the session's model at high effort, which each role's file
+  fixes: give `spawn_agent` no `model` and, for a role, no
+  `reasoning_effort`; an `explorer` lookup runs at `reasoning_effort: "low"`.
 - Reviewers are never given a cheaper model: the second opinion is the
   other model family, as the `review-change` skill's Harness choice says.
 
@@ -236,8 +242,9 @@ wait on no `:AFTER:` item, follow every earlier sibling under an
 
 - **Claude Code:** the Agent tool with `run_in_background`. `SendMessage`
   continues an agent with its context.
-- **Codex:** `spawn_agent`. `send_input` continues an agent, and `wait_agent`
-  collects results.
+- **Codex:** `spawn_agent`, as Agent types says. `followup_task` continues
+  an agent with its context, and `wait_agent` waits for its report. A model
+  on Codex's older tool set has `send_input` in place of `followup_task`.
 - **No sub-agents:** do each part yourself, one at a time, in its worktree.
 
 Run at most three sub-agents at once, and one heavy job across all of
@@ -260,7 +267,7 @@ decisions:
 - Answer a notification only to decide something or to tell an agent
   something. Check reports that arrive together in one pass.
 - Run a fix round by continuing the agent that did the work (`SendMessage`,
-  `send_input`), whose context already holds it.
+  `followup_task`), whose context already holds it.
 - Over the plan's usage limits, wait longer between checks, in fewer turns.
 
 **The quota stop.** In Claude Code, once a quota window reaches the

@@ -9,57 +9,23 @@ with lib; let
 
   llm = import ../llm/lib.nix {inherit lib;};
 
-  # The role agents, plain agent files in ./agents: the sub-agents the
+  # The role agents (llm.agentFiles): the sub-agents the
   # coordinate-subagents skill starts, linked into ~/.claude/agents, and the
   # headless reviewers git delegate runs from review-agents.json. A
   # reviewer's file names its tools and the hook that keeps it to reading,
-  # `@guard@ guard --reviewer`, @guard@ being pr-loop, with `onFailure:
-  # block`, which Claude Code's frontmatter hooks take as its settings'
-  # hooks do. Each prompt ends with
-  # the rules every sub-agent shares, then its contract, if any. A
-  # description is plain YAML: no colon followed by a space. Each focused
-  # review, a route of agent-tools' routes.Known, has a reviewer of its
-  # own, ROUTE-reviewer, whose contract is that focus's.
-  focusReviewers = map (route: "${route}-reviewer") (attrNames pkgs.agent-tools.focusPrompts);
-  agentNames = ["builder" "adversarial-reviewer" "design-reviewer" "review-guide" "diagrammer"] ++ focusReviewers;
-  contracts = mapAttrs' (route: nameValuePair "${route}-reviewer") pkgs.agent-tools.focusPrompts;
+  # `@guard@ guard --reviewer`, with `onFailure: block`, which Claude Code's
+  # frontmatter hooks take as its settings' hooks do.
+  focusReviewers = llm.focusReviewers pkgs;
+  agents = llm.agentFiles pkgs (getExe' config.wgn.home.llm.agentTools "pr-loop");
   reviewerHook = "${getExe' config.wgn.home.llm.agentTools "pr-loop"} guard --reviewer";
 
-  # An agent file's frontmatter, as lines, and its prompt.
   agentFile = name: let
-    raw = builtins.readFile (./agents + "/${name}.md");
-    text = replaceStrings ["@guard@"] [(getExe' config.wgn.home.llm.agentTools "pr-loop")] raw;
-    pieces = splitString "\n---\n" (removePrefix "---\n" text);
-    frontmatter = splitString "\n" (head pieces);
-    field = key: let
-      lines = filter (hasPrefix "${key}: ") frontmatter;
-    in
-      if lines == []
-      then null
-      else removePrefix "${key}: " (head lines);
-    # The `skills:` list, one `  - NAME` line per skill, read from the file
-    # as written: a name taken from `text` carries pr-loop's store path,
-    # which an attribute name cannot.
-    skills = let
-      lines = splitString "\n" (head (splitString "\n---\n" (removePrefix "---\n" raw)));
-      start = lists.findFirstIndex (line: line == "skills:") null lines;
-      after =
-        if start == null
-        then []
-        else drop (start + 1) lines;
-    in
-      map (removePrefix "  - ") (take (lists.findFirstIndex (line: !hasPrefix "  - " line) (length after) after) after);
+    a = agents.${name};
   in
-    assert assertMsg (hasPrefix "---\n" text && length pieces > 1) "claude: ./agents/${name}.md has no frontmatter";
-    assert assertMsg (field "name" == name) "claude: ./agents/${name}.md is not named ${name}";
-    assert assertMsg (field "tools" == null || any (hasSuffix "command: \"${reviewerHook}\"") frontmatter)
+    assert assertMsg (a.field "tools" == null || any (hasSuffix "command: \"${reviewerHook}\"") a.frontmatter)
     "claude: ./agents/${name}.md restricts its tools but runs no `guard --reviewer` hook";
-    assert assertMsg (field "tools" == null || any (hasSuffix " onFailure: block") frontmatter)
-    "claude: ./agents/${name}.md's `guard --reviewer` hook lacks `onFailure: block`, so a hook that cannot run would let the call through"; {
-      inherit field skills;
-      text = text + "\n" + builtins.readFile ./agents/subagent.md + (contracts.${name} or "");
-      prompt = concatStringsSep "\n---\n" (tail pieces) + "\n" + builtins.readFile ./agents/subagent.md + (contracts.${name} or "");
-    };
+    assert assertMsg (a.field "tools" == null || any (hasSuffix " onFailure: block") a.frontmatter)
+    "claude: ./agents/${name}.md's `guard --reviewer` hook lacks `onFailure: block`, so a hook that cannot run would let the call through"; a;
 
   # Through a gateway, the adversarial reviewer, the second opinion when git
   # delegate cannot run Codex, runs on the gateway's review model, of
@@ -74,7 +40,7 @@ with lib; let
         replaceStrings [opus] ["\nmodel: ${gateway.ngrokAi.models.review}\n"] text
     else text;
 
-  roleAgents = listToAttrs (map (name: nameValuePair ".claude/agents/${name}.md" {text = agentText name;}) agentNames);
+  roleAgents = mapAttrs' (name: _: nameValuePair ".claude/agents/${name}.md" {text = agentText name;}) agents;
 
   gateway = config.wgn.home.llm;
 
@@ -546,47 +512,6 @@ with lib; let
   # without arguments.
   sub = command: name: "${command} ${name} *";
 
-  # What the host sandbox denies reading beyond the credentials, which the
-  # guard reads from wgn.home.llm.guard.credentialPaths too: what would let
-  # a command act as the operator elsewhere. The guard refuses a .env file
-  # by its name instead.
-  hostDeniedReads = [
-    "~/git/**/.env"
-    "~/git/**/.env.*"
-    "~/.claude/worktrees/**/.env"
-    "~/.claude/worktrees/**/.env.*"
-    # Browser profiles, 1Password and shell histories.
-    "~/Library/Application Support/Google/Chrome"
-    "~/Library/Application Support/BraveSoftware"
-    "~/Library/Application Support/Firefox"
-    "~/Library/Safari"
-    "~/Library/Containers/com.apple.Safari"
-    "~/.config/google-chrome"
-    "~/.config/chromium"
-    "~/.mozilla"
-    "~/Library/Application Support/zen"
-    "~/.zen"
-    "~/.config/zen"
-    "~/.var/app/app.zen_browser.zen"
-    "~/Library/Application Support/1Password"
-    "~/Library/Group Containers/2BUA8C4S2C.com.1password"
-    "~/.config/1Password"
-    "~/.local/share/fish/fish_history"
-    "~/.zsh_history"
-    "~/.zsh_sessions"
-    "~/.bash_history"
-    # Only the watcher's sync pushes plans.
-    plans.repository.key
-  ];
-
-  # The credential list, as the sandbox takes paths: no trailing `/`, and
-  # none that is or is under a directory sandboxLists.deniedReads hides
-  # whole, such as the `~/.ssh/id_` prefix.
-  sandboxCredentials = let
-    hidden = p: any (d: p == d || hasPrefix "${d}/" p) sandboxLists.deniedReads;
-  in
-    filter (p: !hidden p) (map (removeSuffix "/") config.wgn.home.llm.guard.credentialPaths);
-
   # The sandbox around every session's commands. Paths starting `~/` are
   # resolved by Claude Code; bare relative ones would resolve against
   # ~/.claude, not the workspace.
@@ -634,26 +559,12 @@ with lib; let
       ++ map (sub "pr-loop") prLoopGitHub
       ++ map (sub "agent-plan") agentPlanWrites;
 
-    # Commands inherit Claude Code's environment, and only the variables
-    # named here are taken out of it, so every credential a module puts in
-    # the environment belongs here.
     credentials.envVars =
       map (name: {
         inherit name;
         mode = "deny";
-      }) [
-        "GH_TOKEN"
-        "GITHUB_TOKEN"
-        "SSH_AUTH_SOCK"
-        "KEYID"
-        "NGROK_AUTHTOKEN"
-        "NGROK_AUTHTOKEN_PROD"
-        "NGROK_AI_KEY"
-        "MCP_PROXY_TOKEN"
-        "OPENAI_API_KEY"
-        "ANTHROPIC_API_KEY"
-        "CLAUDE_CODE_MESSAGING_TOKEN"
-      ];
+      })
+      sandboxLists.deniedEnvVars;
 
     # Go programs, gh and the go command among them, verify TLS through
     # trustd on macOS, which they fail to reach otherwise. This opens the
@@ -709,26 +620,18 @@ with lib; let
       );
 
     filesystem = {
-      denyRead = sandboxLists.deniedReads ++ sandboxCredentials ++ hostDeniedReads;
-
-      # Git reads the user's name and email from this file on every run.
-      allowRead = optional (config.sops.templates ? "git.inc") (
-        if darwin
-        then "/private/var/folders/*/*/T/secrets.d/*/rendered/git.inc"
-        else "/run/user/*/secrets.d/*/rendered/git.inc"
-      );
+      denyRead = sandboxLists.deniedReads;
+      allowRead = sandboxLists.allowedReads;
 
       # Nothing on PATH (~/go/bin among it) and nothing that a program
-      # outside the sandbox loads code or configuration from. Go's and
-      # golangci-lint's own caches, where they are by default.
-      allowWrite =
-        ["~/go/pkg"]
-        ++ (
-          if darwin
-          then ["~/Library/Caches/go-build" "~/Library/Caches/golangci-lint"]
-          else ["~/.cache/go-build" "~/.cache/golangci-lint"]
-        )
-        ++ ["~/.claude/worktrees" "~/.cache/nix" "~/.cache/uv"];
+      # outside the sandbox loads code or configuration from: the tool
+      # caches every sandbox shares, and the worktrees.
+      allowWrite = let
+        isGo = hasInfix "go";
+      in
+        filter isGo sandboxLists.toolCaches
+        ++ ["~/.claude/worktrees"]
+        ++ filter (p: !isGo p) sandboxLists.toolCaches;
 
       denyWrite =
         sandboxDeniedWrites

@@ -72,5 +72,6 @@ returns:
 gh api graphql -f query='query{user(login:"LOGIN"){name pronouns}}'
 ```
 
+In Codex, the `agent_ops` server's `github_profile` tool reads them.
 A null field means none is listed: use their `@LOGIN` and they/them, as
 AGENTS.md's "Referring to people" says.
