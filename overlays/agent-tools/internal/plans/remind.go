@@ -29,6 +29,12 @@ var notifiedAgent = regexp.MustCompile(`<summary>Agent "(.*)" finished</summary>
 // operator's own: it keeps each http(s) address in it as a reference of the
 // plan, and prints nothing. Codex sends a sub-agent's turns with agent_id.
 //
+// On Claude Code's PostToolUse of the main thread's Agent call starting a
+// design-reviewer, background or foreground, it records
+// design-review-started in the session's plan (reviewPlan), which the
+// guard holds edits on until it is answered (PendingPlanReviewOf). A
+// sub-agent's call, which carries agent_id, records nothing.
+//
 // On every prompt of the main thread, task-notifications included, it
 // delivers the results of the session's sign-passes that it has not yet
 // received (see DeliverSigns).
@@ -47,7 +53,7 @@ func (c Config) remind(input []byte) []byte {
 	var in struct {
 		Event        string          `json:"hook_event_name"`
 		SessionID    string          `json:"session_id"`
-		AgentID      string          `json:"agent_id"` // Codex's, for a sub-agent
+		AgentID      string          `json:"agent_id"` // a sub-agent's, in Claude Code and Codex
 		Cwd          string          `json:"cwd"`
 		Prompt       string          `json:"prompt"`
 		ToolName     string          `json:"tool_name"`
@@ -95,7 +101,18 @@ func (c Config) remind(input []byte) []byte {
 		if m == nil {
 			return nil
 		}
-		context = finished(fmt.Sprintf("%q ", m[1]))
+		// While the session has design reviews pending, the reminder adds
+		// how to answer each, for the case that the sub-agent was the
+		// reviewer: the notification names neither the agent's type nor its
+		// plan, and reviews described alike cannot be told apart.
+		hint := ""
+		for _, r := range c.pendingReviews(in.SessionID) {
+			hint += " " + AnswerHint(r.Plan)
+		}
+		if hint != "" {
+			hint = " If it was a design reviewer:" + hint
+		}
+		context = finished(fmt.Sprintf("%q ", m[1])) + hint
 	case in.Event == "UserPromptSubmit" && in.AgentID == "":
 		// The operator's own prompt: its addresses are references of the plan.
 		if plan() != "" {
@@ -107,18 +124,49 @@ func (c Config) remind(input []byte) []byte {
 			IsAsync bool `json:"isAsync"`
 		}
 		var call struct {
-			Description string `json:"description"`
+			Description  string `json:"description"`
+			Prompt       string `json:"prompt"`
+			SubagentType string `json:"subagent_type"`
 		}
 		json.Unmarshal(in.ToolResponse, &response)
 		json.Unmarshal(in.ToolInput, &call)
+		// Recorded at a background review's start, and at a foreground
+		// one's end, of the main thread's reviews alone, in a plan whose
+		// SESSIONS name the session (reviewPlan); the guard holds edits
+		// until it is answered (PendingPlanReviewOf).
+		// The reminders name the plan that holds the start.
+		unrecorded, held := "", ""
+		if call.SubagentType == "design-reviewer" && in.AgentID == "" {
+			if p, ok := c.reviewPlan(in.SessionID, call.Prompt); ok {
+				found, file, looked = p, p.File(), true
+				// A summary holds one line; the description's first stands for it.
+				summary, _, _ := strings.Cut(call.Description, "\n")
+				if _, err := p.Record("", Event{Kind: DesignReviewStarted, Session: in.SessionID, Summary: strings.TrimSpace(summary)}, time.Now()); err != nil {
+					unrecorded = fmt.Sprintf("The design review's start was not recorded in %s (%v), so the guard holds no edit for it. "+
+						"Make no change until its report is in and its findings are settled in the plan.", file, err)
+				} else {
+					held = AnswerHint(p)
+				}
+			}
+		}
 		if response.IsAsync {
-			return nil
+			if unrecorded == "" {
+				return nil
+			}
+			context = unrecorded
+			break
 		}
 		what := ""
 		if call.Description != "" {
 			what = fmt.Sprintf("%q ", call.Description)
 		}
-		context = finished(what)
+		if held != "" {
+			// A review answers with its own event, not a part's outcome.
+			context = fmt.Sprintf("Design reviewer %sfinished. Check its report as the coordinate-subagents skill's "+
+				"\"Check every report\" says, then settle its findings in the plan. %s", what, held)
+			break
+		}
+		context = strings.TrimSpace(unrecorded + " " + finished(what))
 	case in.Event == "PostToolUse" && in.ToolName == "wait_agent":
 		context = finished("")
 	case in.Event == "PreCompact":

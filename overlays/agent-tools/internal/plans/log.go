@@ -95,6 +95,8 @@ var (
 				"Link a plan with `agent-plan link PLAN OTHER --why TEXT`",
 			"referenced": "agent-plan reference logs `referenced` for each URL it writes under References, and status reads its summary as that URL. " +
 				"Add one with `agent-plan reference PLAN URL`",
+			DesignReviewStarted: "a hook logs `design-review-started` when the main thread starts a design-reviewer sub-agent in the background, " +
+				"or one returns in the foreground. Once its report is in, log " + ReviewAnswers,
 		}
 		for _, k := range []string{"loop-began", "round", "replied", "resolved", "ci-waited"} {
 			kinds[k] = "pr-loop logs what it did, from begin on, in the plan of the session that ran it. " +

@@ -125,6 +125,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if reason == "" {
 			reason = checkOwner(in)
 		}
+		if reason == "" {
+			reason = checkPlanReview(in)
+		}
 		// The hint runs git too, so it is judged with the rest.
 		if reason == "" && (in.ToolName == "Edit" || in.ToolName == "Write" || in.ToolName == "MultiEdit") {
 			hint = branchHint(in.SessionID, in.ToolInput, in.Cwd)

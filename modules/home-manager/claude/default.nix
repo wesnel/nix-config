@@ -775,6 +775,9 @@ in {
           }
           # A foreground sub-agent's result: asks the coordinator to check
           # it and log the part. A background one's arrives as a prompt.
+          # It also records design-review-started for a design-reviewer the
+          # main thread starts, the only writer of the event the guard holds
+          # edits on.
           {
             matcher = "Agent|Task";
             hooks = [
