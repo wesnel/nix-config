@@ -6,10 +6,12 @@ disable-model-invocation: true
 
 # Review loop
 
-The operator starts this session with `claude-review-loop --bots PR...` or
-`claude-review-loop --people PR...`, which sets `PR_LOOP_MODE` to `bots` or
-`people` and starts the session with this skill and the PRs it names. It is
-an ordinary session, held by the same sandbox and guard as any other, and
+The operator starts this session with
+`review-loop --harness claude|codex --bots|--people PR...`
+(`claude-review-loop` is `--harness claude`), which sets `PR_LOOP_MODE` to
+`bots` or `people` and starts Claude Code or Codex with this skill and the
+PRs it names. It is an ordinary session, held by the same sandbox and guard
+as any other of its harness, and
 `pr-loop` takes its writes to GitHub as the mode says:
 
 - **bots:** `pr-loop request`, `reply`, `resolve` and `push` run; threads
@@ -20,7 +22,7 @@ an ordinary session, held by the same sandbox and guard as any other, and
   with `pr-loop post PR` from a terminal of their own.
 
 If `PR_LOOP_MODE` is unset, this is not a loop session: tell the operator
-to start one with `claude-review-loop`, and stop.
+to start one with `review-loop`, and stop.
 
 Commit as the `signing-pass` skill says. Every write to GitHub goes through
 `pr-loop`; when it stops a command, that is a decision for the operator, so

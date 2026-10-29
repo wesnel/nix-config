@@ -37,14 +37,14 @@ var (
 )
 
 // ModeEnv is the loop's mode, bots or people, which only the operator's
-// claude-review-loop sets: the guard refuses an agent's assignment of it.
+// review-loop sets: the guard refuses an agent's assignment of it.
 const ModeEnv = "PR_LOOP_MODE"
 
 // requireMode refuses command outside a loop in mode want.
 func requireMode(command, want string) error {
 	if os.Getenv(ModeEnv) != want {
 		return refuse("`pr-loop %s` runs only in a %s-mode review loop. Only the operator starts a loop, with "+
-			"`claude-review-loop --bots|--people`; outside one, put what you would do in the report", command, want)
+			"`review-loop --harness claude|codex --bots|--people`; outside one, put what you would do in the report", command, want)
 	}
 	return nil
 }

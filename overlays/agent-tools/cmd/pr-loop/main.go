@@ -37,7 +37,8 @@ trailing period, no attribution lines, and on a fixup only Review-*
 trailers.
 
 A loop runs in a mode, PR_LOOP_MODE, which only the operator sets, by
-starting the session with claude-review-loop --bots|--people. In bots
+starting the session with review-loop --harness claude|codex
+--bots|--people. In bots
 mode, request and reply take bot threads, and push pushes the fixups. In
 people mode, draft writes the answers to people's threads into the PR's
 review record and push refuses: the operator reads the fixups and drafts,
