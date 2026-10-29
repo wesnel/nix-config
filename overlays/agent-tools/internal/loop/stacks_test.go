@@ -27,8 +27,9 @@ type fakeStacks struct {
 	prs       map[int]*fakeStackPR
 	stacks    map[int][]int // stack number to its PRs, bottom first
 	writes    []string
-	conflicts int   // how many writes to answer with 409 first
-	fail      error // the answer to the next write
+	bodies    []map[string]any // each merge-async request's body
+	conflicts int              // how many writes to answer with 409 first
+	fail      error            // the answer to the next write
 }
 
 // chains reports whether each of numbers is based on the one before.
@@ -106,6 +107,7 @@ func (f *fakeStacks) graphQL(query string, vars map[string]any, out any) error {
 		for n, pr := range f.prs {
 			if pr.author == "me" && pr.state == "OPEN" {
 				nodes = append(nodes, map[string]any{"number": n, "headRefName": pr.head, "baseRefName": pr.base,
+					"headRefOid": fmt.Sprintf("%040d", n), "title": "title " + pr.head,
 					"isDraft": pr.draft, "author": map[string]any{"login": pr.author}})
 			}
 		}

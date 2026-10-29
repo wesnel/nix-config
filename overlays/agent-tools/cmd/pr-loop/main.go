@@ -83,6 +83,10 @@ worktree. A failure to log is printed on stderr and fails nothing.
                               for the operator to post (- reads stdin)
   post PR [THREAD...]         the operator's: show each unposted draft on the terminal and
                               post it once answered y there (see below)
+  merge [--method M] [PR|BRANCH]
+                              the operator's: merge the PR (default HEAD's) and every open
+                              PR below it in its GitHub stack, by M (merge, the default,
+                              squash or rebase), once answered y on the terminal (see below)
   request [--bot B] [--accept-failure CHECK] [PR...]
                               ask each bot that has not reviewed the head, once CI allows
                               and every thread it started has a reply
@@ -128,6 +132,14 @@ post reads each draft of the PR's review record once, prints it to
 without a terminal it refuses. A thread answered fix or rebut is then
 resolved. Once every unresolved thread a person commented in has a posted
 answer, those people are asked to review again. Agents never run it.
+
+merge lists on /dev/tty the PRs GitHub's merge-async endpoint would merge,
+the PR and every open PR below it in its GitHub stack, and asks GitHub once
+the operator answers y there; without a terminal it refuses. It refuses a
+draft among them, or one not the authenticated user's. The PR's head must
+still be the one shown, or GitHub refuses. GitHub merges in the background:
+"status" is GitHub's answer (pending, merged, enqueued or failed) and "uuid"
+the request's. Agents never run it.
 
 push takes a branch's head on GitHub from --lease, else from its remote
 tracking ref, and refuses when GitHub's head is another commit, so a push
@@ -216,6 +228,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		sha      = flags.String("sha", "", "")
 		grace    = flags.Int("grace", 180, "")
 		asJSON   = flags.Bool("json", false, "")
+		method   = flags.String("method", "", "")
 		bots     multi
 		accepted multi
 		leases   multi
@@ -308,6 +321,16 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		result, err = loop.Stack(target)
 	case "link":
 		result, err = loop.Link(rest)
+	case "merge":
+		if len(rest) > 1 {
+			err = errors.New("merge takes at most one PR or branch, the top of what to merge; see pr-loop --help")
+			break
+		}
+		target := ""
+		if len(rest) == 1 {
+			target = rest[0]
+		}
+		result, err = loop.Merge(target, *method)
 	case "push":
 		byBranch := map[string]string{}
 		for _, l := range leases {
@@ -491,7 +514,7 @@ func interleave(args []string) []string {
 		"-timeout": true, "--timeout": true, "-interval": true, "--interval": true, "-bot": true, "--bot": true,
 		"-accept-failure": true, "--accept-failure": true, "-base": true, "--base": true, "-title": true, "--title": true,
 		"-sha": true, "--sha": true, "-grace": true, "--grace": true, "-lease": true, "--lease": true,
-		"-outcome": true, "--outcome": true}
+		"-outcome": true, "--outcome": true, "-method": true, "--method": true}
 	var flags, positional []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
