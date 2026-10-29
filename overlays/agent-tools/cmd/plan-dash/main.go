@@ -28,6 +28,7 @@ const usage = `plan-dash: the operator's status, from GitHub and the plans.
   export  write the "Agent plans" page's database documents, as JSON, under
           $XDG_STATE_HOME/agent-plans/out: plans/<plan>.json for each plan
           of every host not halted (title, goal, status, host, updated,
+          the title of its workstream, which the page groups plans by,
           steps, decisions, open questions and their options, and the
           IDs and titles of open follow-ups),
           github/status.json (the operator's open pull requests, with
@@ -92,7 +93,8 @@ $XDG_STATE_HOME/plan-dash/github.json, which holds titles, and where one
 fails, the last good one is written, marked stale. export's documents leave
 the host: they hold only the fields named above and schema, the documents'
 version; read from the plans directory alone (of properties, only STATUS,
-RECOMMENDATION and ANSWER; of the log, only event kinds and times) but for
+RECOMMENDATION, ANSWER and WORKSTREAM, whose workstream file gives only its
+title; of the log, only event kinds and times) but for
 the digests, stripped of control and formatting
 characters, with known secret shapes redacted and text and lists capped.
 

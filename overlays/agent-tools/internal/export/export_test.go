@@ -195,10 +195,15 @@ func fixture(t *testing.T) (c plans.Config, own, theirs plans.Plan) {
 	git(t, notes, nil, "push", "-q", "origin", "main")
 
 	c = plans.Config{Dir: filepath.Join(notes, "agents"), Host: "box"}
+	// The workstream's title is exported; its summary never is.
+	ws, err := c.NewWorkstream("Agent tooling "+fakeToken, "SENTINEL-workstream-summary")
+	if err != nil {
+		t.Fatal(err)
+	}
 	made, err := c.New(plans.NewOptions{Title: "Rotate " + fakeToken + "\u202e", Slug: "loop", Repos: []string{"o/SENTINEL-repo"},
 		Branches: []string{"main..SENTINEL-branch"}, Worktrees: []string{"/w/SENTINEL-worktree"},
 		Sessions: []string{"claude:SENTINEL-session"}, Harness: "claude",
-		Goal: "Run the loop. password=SENTINEL-goal-password"}, day)
+		Goal: "Run the loop. password=SENTINEL-goal-password", Workstream: ws.Name}, day)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +307,7 @@ func fixture(t *testing.T) (c plans.Config, own, theirs plans.Plan) {
 
 // The keys each document may hold, an array's elements' as "name[].key".
 var allowed = map[string][]string{
-	"plans": {"schema", "id", "title", "goal", "status", "host", "updated",
+	"plans": {"schema", "id", "title", "goal", "status", "host", "updated", "workstream",
 		"steps", "steps[].id", "steps[].order", "steps[].title", "steps[].keyword", "steps[].ready",
 		"decisions", "decisions[].id", "decisions[].question", "decisions[].answer",
 		"questions", "questions[].id", "questions[].text", "questions[].priority", "questions[].context",
@@ -484,16 +489,25 @@ func TestSentinel(t *testing.T) {
 // keys, titles and states.
 func TestExport(t *testing.T) {
 	c, own, theirs := fixture(t)
+	ws, err := c.Workstreams()
+	if err != nil || len(ws) != 1 {
+		t.Fatalf("workstreams %+v, %v", ws, err)
+	}
+	before, _ := os.ReadFile(ws[0].File)
 	e, err := Collect(context.Background(), c, filepath.Join(t.TempDir(), "github.json"), day)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// The export computes each plan's workstream and writes nothing into it.
+	if after, _ := os.ReadFile(ws[0].File); string(after) != string(before) {
+		t.Errorf("the export wrote the workstream:\n%s", after)
 	}
 	if len(e.Plans) != 2 || e.Plans[0].ID != theirs.Name || e.Plans[1].ID != own.Name {
 		t.Fatalf("plans %+v", e.Plans)
 	}
 	got := e.Plans[1]
 	want := Plan{Schema: agentplans.Schema, ID: own.Name, Title: "Rotate [REDACTED GitHub token]", Goal: "Run the loop. password=[REDACTED]",
-		Status: "planning", Host: "box", Updated: day.Format(time.RFC3339),
+		Status: "planning", Host: "box", Updated: day.Format(time.RFC3339), Workstream: "Agent tooling [REDACTED GitHub token]",
 		Steps: []Step{{ID: "S1", Order: 0, Title: "Write the loop", Keyword: "STARTED", Ready: true},
 			{ID: "S2", Order: 1, Title: "Test the loop", Keyword: "TODO"},
 			{ID: "P1.S1", Order: 2, Title: "Part step", Keyword: "TODO", Ready: true}},
@@ -506,7 +520,7 @@ func TestExport(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("own plan\n%+v, want\n%+v", got, want)
 	}
-	if p := e.Plans[0]; p.Host != "mac" || p.Title != "Their plan" || p.Goal != "Their goal." || len(p.Steps) != 0 ||
+	if p := e.Plans[0]; p.Host != "mac" || p.Title != "Their plan" || p.Goal != "Their goal." || p.Workstream != "" || len(p.Steps) != 0 ||
 		p.Updated != theirsCommitted || p.Followups == nil || len(p.Followups) != 0 {
 		t.Errorf("their plan %+v", p)
 	}
