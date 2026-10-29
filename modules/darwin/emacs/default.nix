@@ -2,6 +2,8 @@
   pkgs,
   config,
   lib,
+  homeDirectory,
+  username,
   ...
 }:
 with lib; let
@@ -46,5 +48,10 @@ in {
     services.emacs = {
       enable = true;
     };
+
+    launchd.user.agents.emacs.serviceConfig.EnvironmentVariables.PATH = mkForce (
+      replaceStrings ["$HOME" "$USER"] [homeDirectory username]
+      config.launchd.user.agents.emacs.path
+    );
   };
 }
