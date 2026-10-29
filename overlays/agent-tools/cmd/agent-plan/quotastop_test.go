@@ -158,6 +158,79 @@ func TestQuotaStopBothWindows(t *testing.T) {
 	}
 }
 
+// cronAt is CronCreate's input for a one-shot at t's minute, in local time
+// as Claude Code reads a cron expression.
+func cronAt(t time.Time) string {
+	t = t.Local()
+	return fmt.Sprintf(`{"cron":"%d %d %d %d *","prompt":"resume","recurring":false}`, t.Minute(), t.Hour(), t.Day(), int(t.Month()))
+}
+
+// wakeIn is ScheduleWakeup's input for a wakeup in d.
+func wakeIn(d time.Duration) string {
+	return fmt.Sprintf(`{"delaySeconds":%d,"reason":"quota reset","prompt":"resume","noop":false}`, int(d/time.Second))
+}
+
+// The stop lets a session schedule its resume: a ScheduleWakeup or
+// CronCreate that fires after the reset it names goes through, and one
+// that would fire before it, into the stop, is refused. ScheduleWakeup
+// clamps its delay to an hour, so a longer one fires at the hour.
+func TestQuotaStopResume(t *testing.T) {
+	now := time.Now()
+	resets := now.Add(40 * time.Minute).Truncate(time.Minute)
+	for _, c := range []struct {
+		name, tool, input string
+		resets            time.Time
+		stops             bool
+	}{
+		{"a wakeup before the reset", "ScheduleWakeup", wakeIn(20 * time.Minute), resets, true},
+		{"a wakeup after it", "ScheduleWakeup", wakeIn(50 * time.Minute), resets, false},
+		{"a wakeup past the hour it is clamped to", "ScheduleWakeup", wakeIn(2 * time.Hour), now.Add(90 * time.Minute), true},
+		{"ending the wakeups", "ScheduleWakeup", `{"stop":true}`, resets, true},
+		{"a one-shot before the reset", "CronCreate", cronAt(resets.Add(-10 * time.Minute)), resets, true},
+		{"a one-shot after it", "CronCreate", cronAt(resets.Add(10 * time.Minute)), resets, false},
+		{"a one-shot after a reset over an hour away", "CronCreate", cronAt(now.Add(3 * time.Hour)), now.Add(150 * time.Minute), false},
+		{"a cron that fires every five minutes", "CronCreate", `{"cron":"*/5 * * * *","prompt":"resume"}`, resets, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			setup(t)
+			writeUsage(t, 95, c.resets, now)
+			_, out, _ := runQuotaStop(t, c.tool, c.input)
+			if reason := denial(t, out); (reason != "") != c.stops {
+				t.Errorf("stops %v, want %v: %q", reason != "", c.stops, reason)
+			}
+		})
+	}
+
+	// A one-shot on :00 or :30 may run up to 90 seconds early, so one due
+	// a minute after a reset may still run before it.
+	at := func(clock string) time.Time {
+		v, _ := time.ParseInLocation("15:04", clock, time.Local)
+		return v
+	}
+	for _, c := range []struct {
+		fires, resets string
+		after         bool
+	}{{"18:30", "18:29", false}, {"18:31", "18:30", true}, {"18:30", "18:28", true}, {"18:30", "18:30", false}} {
+		if got := firesAfter(at(c.fires), at(c.resets).Unix()); got != c.after {
+			t.Errorf("a wakeup at %s after a reset at %s: %v, want %v", c.fires, c.resets, got, c.after)
+		}
+	}
+
+	// With no window over the threshold there is no reset to wait for,
+	// and nothing is stopped.
+	for _, c := range []struct{ tool, input string }{
+		{"ScheduleWakeup", wakeIn(2 * time.Minute)},
+		{"CronCreate", `{"cron":"*/5 * * * *","prompt":"resume"}`},
+	} {
+		t.Run(c.tool+" with no known reset", func(t *testing.T) {
+			setup(t)
+			if _, out, errs := runQuotaStop(t, c.tool, c.input); out != "" {
+				t.Errorf("stopped: %q %q", out, errs)
+			}
+		})
+	}
+}
+
 // Every open session's status line records the windows; the stop holds
 // whichever of them reports last.
 func TestQuotaStopAcrossSessions(t *testing.T) {

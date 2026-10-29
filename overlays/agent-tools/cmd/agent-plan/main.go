@@ -171,8 +171,10 @@ have (see status) is refused and writes nothing.
                      window statusline recorded is at or above N percent,
                      its reset ahead and seen in the last 5 minutes, denies
                      every call but Read, Grep, Glob, ToolSearch, Skill,
-                     AskUserQuestion, TaskStop, SubagentHandback and
-                     agent-plan alone on a Bash line, naming the window, its
+                     AskUserQuestion, TaskStop, SubagentHandback, agent-plan
+                     alone on a Bash line, and a ScheduleWakeup, or a
+                     CronCreate pinned to one minute ("M H DoM Mon *"),
+                     that fires after the reset, naming the window, its
                      share and its reset (the window that resets last, with
                      both over); with no record it can read, denies nothing
   own PLAN --worktree DIR --agent ID
