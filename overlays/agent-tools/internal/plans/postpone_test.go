@@ -10,6 +10,7 @@ import (
 // A step or part postponed until a time drops out of the ready lists until
 // then, and comes back by itself.
 func TestPostpone(t *testing.T) {
+	t.Parallel()
 	// plan makes a plan with steps S1 and S2 and a part P1.
 	plan := func(t *testing.T) Plan {
 		t.Helper()

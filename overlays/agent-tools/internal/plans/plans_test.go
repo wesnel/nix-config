@@ -240,6 +240,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestOpen(t *testing.T) {
+	t.Parallel()
 	// withPart makes a plan with a part, P1.
 	withPart := func(t *testing.T) (Config, Plan) {
 		t.Helper()
@@ -462,6 +463,7 @@ func TestInit(t *testing.T) {
 // only there, keeping the logs' lock files out of the repository around
 // it, and changes nothing else.
 func testInitInRepository(t *testing.T) {
+	t.Parallel()
 	c := testConfig(t)
 	outer := filepath.Dir(filepath.Dir(c.Dir))
 	gitIn(t, outer, "init", "-q", "-b", "main")
@@ -587,6 +589,7 @@ func TestOtherHost(t *testing.T) {
 }
 
 func TestLog(t *testing.T) {
+	t.Parallel()
 	// withSteps makes a plan with steps S1 and S2.
 	withSteps := func(t *testing.T) Plan {
 		t.Helper()
@@ -686,6 +689,7 @@ func TestLog(t *testing.T) {
 }
 
 func TestStatus(t *testing.T) {
+	t.Parallel()
 	t.Run("items", testStatusItems)
 	t.Run("ready parts", testStatusReadyParts)
 	t.Run("ready steps", testStatusReadySteps)
@@ -773,6 +777,7 @@ func TestGoal(t *testing.T) {
 }
 
 func TestFind(t *testing.T) {
+	t.Parallel()
 	t.Run("ownership only", func(t *testing.T) {
 		c := testConfig(t)
 		p := newPlan(t, c, "x")

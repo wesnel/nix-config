@@ -32,6 +32,7 @@ func linkPlans(t *testing.T, c Config, title string) (Plan, Plan, string) {
 // knows it by, under Related, with why it is related; the log records the
 // link, and Related follows the log as References does.
 func TestLink(t *testing.T) {
+	t.Parallel()
 	t.Run("linked", func(t *testing.T) {
 		c := testConfig(t)
 		p, other, id := linkPlans(t, c, "The [other] plan")

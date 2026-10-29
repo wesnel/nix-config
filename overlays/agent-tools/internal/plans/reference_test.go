@@ -168,6 +168,7 @@ func TestPromptReferences(t *testing.T) {
 // A note is text like any other: no line of it is Org structure, and an
 // entry is found by its own drawer's URL, never by a line of a note.
 func TestReferenceNote(t *testing.T) {
+	t.Parallel()
 	const d, e = "https://example.com/d", "https://example.com/e"
 	for what, note := range map[string]string{
 		"a keyword line":    "#+TODO: | ASK",

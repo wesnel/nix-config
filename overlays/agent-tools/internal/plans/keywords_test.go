@@ -14,6 +14,7 @@ var orgClosed = time.Date(2026, 10, 14, 16, 29, 0, 0, time.Local)
 // A step's or part's heading keyword follows its log, as log writes it, in
 // the form Org itself writes.
 func TestStepKeywords(t *testing.T) {
+	t.Parallel()
 	// logged makes a plan from open.org and logs what Org's fixture shows:
 	// S1, P1 and F1 done, S2 verified, S3 abandoned.
 	logged := func(t *testing.T) Plan {

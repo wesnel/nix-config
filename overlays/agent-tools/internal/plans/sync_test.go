@@ -3,10 +3,12 @@ package plans
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	gosync "sync"
 	"syscall"
 	"testing"
 	"time"
@@ -46,7 +48,10 @@ func notesAsIs(t *testing.T, hosts ...string) (origin string, configs map[string
 	os.WriteFile(filepath.Join(seed, "agents", ".gitignore"), []byte(ignore), 0o644)
 	os.WriteFile(filepath.Join(seed, "todo.org"), []byte("* TODO x\n"), 0o644)
 	gitIn(t, seed, "add", "agents/.gitignore", "todo.org")
-	gitIn(t, seed, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "Start")
+	// The operator's identity is passed here, not taken from the
+	// environment, so that a parallel test whose parent sets none can seed.
+	gitIn(t, seed, "-c", "commit.gpgsign=false", "-c", "user.name=Operator", "-c", "user.email=operator@example.com",
+		"commit", "-q", "-m", "Start")
 	gitIn(t, seed, "push", "-q", "origin", "main")
 	configs = map[string]Config{}
 	for _, h := range hosts {
@@ -72,7 +77,10 @@ func untouched(t *testing.T, c Config) {
 	}
 }
 
+// The subtests that set no environment of their own run in parallel, as
+// the operator, from the environment set here.
 func TestSync(t *testing.T) {
+	asOperator(t)
 	t.Run("two hosts", testSyncTwoHosts)
 	t.Run("through git-push-guard", testSyncThroughPushGuard)
 	t.Run("authors as the operator", testSyncAuthor)
@@ -450,8 +458,10 @@ func testSyncLeavesRacingCommit(t *testing.T) {
 // so never sends plan files older than origin's, whatever the operator does
 // to the working tree there.
 func testSyncSendsNothingBehind(t *testing.T) {
+	t.Parallel()
 	t.Run("older commit checked out", func(t *testing.T) {
-		_, hosts := notes(t, "mac")
+		t.Parallel()
+		_, hosts := notesAsIs(t, "mac")
 		mac := hosts["mac"]
 		repo := filepath.Dir(mac.Dir)
 		newPlan(t, mac, "x")
@@ -469,7 +479,8 @@ func testSyncSendsNothingBehind(t *testing.T) {
 		}
 	})
 	t.Run("stash on a branch with the operator's commits", func(t *testing.T) {
-		_, hosts := notes(t, "mac", "box")
+		t.Parallel()
+		_, hosts := notesAsIs(t, "mac", "box")
 		mac, box := hosts["mac"], hosts["box"]
 		repo := filepath.Dir(mac.Dir)
 		x := newPlan(t, mac, "x")
@@ -519,7 +530,8 @@ func testSyncLeavesIndex(t *testing.T) {
 	}
 	for _, collide := range []bool{false, true} {
 		t.Run(map[bool]string{false: "a staged version", true: "a staged version and a fast-forward git refuses"}[collide], func(t *testing.T) {
-			_, hosts := notes(t, "mac", "box")
+			t.Parallel()
+			_, hosts := notesAsIs(t, "mac", "box")
 			mac, box := hosts["mac"], hosts["box"]
 			repo := filepath.Dir(mac.Dir)
 			x := newPlan(t, mac, "x")
@@ -545,7 +557,8 @@ func testSyncLeavesIndex(t *testing.T) {
 		})
 	}
 	t.Run("a merge in progress", func(t *testing.T) {
-		_, hosts := notes(t, "mac", "box")
+		t.Parallel()
+		_, hosts := notesAsIs(t, "mac", "box")
 		mac, box := hosts["mac"], hosts["box"]
 		repo := filepath.Dir(mac.Dir)
 		x := newPlan(t, mac, "x")
@@ -667,6 +680,37 @@ func testSyncLeavesSwitchedBranch(t *testing.T) {
 	}
 }
 
+// pushGuardDir holds the git-push-guard pushGuard builds, once for the test
+// binary since a build per test cost a second of each; tests only run it,
+// and TestMain removes the directory.
+var pushGuardDir string
+
+var buildPushGuard = gosync.OnceValues(func() (string, error) {
+	dir, err := os.MkdirTemp("", "plans-push-guard")
+	if err != nil {
+		return "", err
+	}
+	pushGuardDir = dir
+	guard := filepath.Join(dir, "git-push-guard")
+	if out, err := exec.Command("go", "build", "-o", guard, "github.com/wesnel/agent-tools/cmd/git-push-guard").CombinedOutput(); err != nil {
+		return "", fmt.Errorf("building git-push-guard: %v\n%s", err, out)
+	}
+	return guard, nil
+})
+
+// pushGuard is git-push-guard built from this module.
+func pushGuard(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("no go here to build git-push-guard")
+	}
+	guard, err := buildPushGuard()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return guard
+}
+
 // guarded is notes whose hosts reach origin as a host reaches the notes
 // repository, at git@github-notes:wesnel/notes.git over ssh, under a global
 // config that, as home-manager's does, names the operator in user.email and
@@ -676,18 +720,12 @@ func testSyncLeavesSwitchedBranch(t *testing.T) {
 // stands in for GitHub, which a test must not contact.
 func guarded(t *testing.T, hosts ...string) (url string, configs map[string]Config) {
 	t.Helper()
-	if _, err := exec.LookPath("go"); err != nil {
-		t.Skip("no go here to build git-push-guard")
-	}
+	guard := pushGuard(t)
 	origin, configs := notes(t, hosts...)
 	for _, k := range []string{"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"} {
 		os.Unsetenv(k)
 	}
 	dir, _ := filepath.EvalSymlinks(t.TempDir())
-	guard := filepath.Join(dir, "git-push-guard")
-	if out, err := exec.Command("go", "build", "-o", guard, "github.com/wesnel/agent-tools/cmd/git-push-guard").CombinedOutput(); err != nil {
-		t.Fatalf("building git-push-guard: %v\n%s", err, out)
-	}
 	os.MkdirAll(filepath.Join(dir, "wesnel"), 0o755)
 	if err := os.Symlink(origin, filepath.Join(dir, "wesnel", "notes.git")); err != nil {
 		t.Fatal(err)
@@ -751,6 +789,7 @@ func testSyncThroughPushGuard(t *testing.T) {
 // email; its committer stays sync's. Where git resolves no user.email, the
 // author is sync's too, and the sync still succeeds.
 func testSyncAuthor(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		config [][]string
 		want   string
@@ -766,7 +805,8 @@ func testSyncAuthor(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			_, hosts := notes(t, "mac")
+			t.Parallel()
+			_, hosts := notesAsIs(t, "mac")
 			mac := hosts["mac"]
 			repo := filepath.Dir(mac.Dir)
 			for _, kv := range tc.config {
@@ -786,7 +826,8 @@ func testSyncAuthor(t *testing.T) {
 // Two hosts sync disjoint plans through one origin, each committing only
 // its own files, and leave every other edit alone.
 func testSyncTwoHosts(t *testing.T) {
-	origin, hosts := notes(t, "mac", "box")
+	t.Parallel()
+	origin, hosts := notesAsIs(t, "mac", "box")
 	mac, box := hosts["mac"], hosts["box"]
 	mine := newPlan(t, mac, "x")
 	addItems(t, mine.file(""), "** Steps", "S1")
@@ -865,6 +906,7 @@ func atOrigin(t *testing.T, c Config) {
 
 // A plans directory outside any repository has nothing to sync with.
 func testSyncWithoutRepository(t *testing.T) {
+	t.Parallel()
 	c := testConfig(t)
 	newPlan(t, c, "x")
 	got, err := c.Sync(SyncOptions{})
@@ -877,12 +919,14 @@ func testSyncWithoutRepository(t *testing.T) {
 // Find, status and new pull first, quietly, so another host's plans are
 // current; a pull that cannot run changes nothing.
 func TestPull(t *testing.T) {
+	asOperator(t)
 	t.Run("takes the other hosts' plans", testPullTakes)
 	t.Run("leaves unsent edits unstaged", testPullLeavesEditsUnstaged)
 }
 
 func testPullTakes(t *testing.T) {
-	_, hosts := notes(t, "mac", "box")
+	t.Parallel()
+	_, hosts := notesAsIs(t, "mac", "box")
 	mac, box := hosts["mac"], hosts["box"]
 	theirs := newPlan(t, box, "y")
 	if _, err := box.Sync(SyncOptions{}); err != nil {
@@ -898,7 +942,8 @@ func testPullTakes(t *testing.T) {
 // A pull that fast-forwards over this host's plan edits not yet sent leaves
 // them as it found them, unstaged.
 func testPullLeavesEditsUnstaged(t *testing.T) {
-	_, hosts := notes(t, "mac", "box")
+	t.Parallel()
+	_, hosts := notesAsIs(t, "mac", "box")
 	mac, box := hosts["mac"], hosts["box"]
 	repo := filepath.Dir(mac.Dir)
 	x := newPlan(t, mac, "x")
@@ -1011,7 +1056,7 @@ func TestSyncState(t *testing.T) {
 // origin with a deploy key that does not exist until the test writes it.
 func cloning(t *testing.T) (c Config, root, key string) {
 	t.Helper()
-	origin, _ := notes(t)
+	origin, _ := notesAsIs(t)
 	root, _ = filepath.EvalSymlinks(t.TempDir())
 	key = filepath.Join(root, "key")
 	c = Config{Dir: filepath.Join(root, "notes", "agents"), Host: "mac", Remote: origin, Key: key,
@@ -1021,6 +1066,7 @@ func cloning(t *testing.T) (c Config, root, key string) {
 
 // Without the deploy key, Init says so and clones nothing.
 func testInitCloneWithoutKey(t *testing.T) {
+	t.Parallel()
 	c, root, key := cloning(t)
 	got, err := c.Init()
 	if err != nil || got.Cloned || !strings.Contains(got.Note, key) {
@@ -1044,6 +1090,7 @@ func testInitCloneWithoutKey(t *testing.T) {
 // key, and sets it never to sign. It sets no core.sshCommand, which would
 // make git sign-pass refuse the repository: sync passes one per command.
 func testInitCloneWithKey(t *testing.T) {
+	t.Parallel()
 	c, root, key := cloning(t)
 	os.WriteFile(key, []byte("private\n"), 0o600)
 	for i := 0; i < 2; i++ {
@@ -1062,6 +1109,7 @@ func testInitCloneWithKey(t *testing.T) {
 }
 
 func testInitCloneRetry(t *testing.T) {
+	t.Parallel()
 	c, _, key := cloning(t)
 	if err := os.WriteFile(key, []byte("fixture key\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -1081,6 +1129,7 @@ func testInitCloneRetry(t *testing.T) {
 }
 
 func testInitCloneLeftovers(t *testing.T) {
+	t.Parallel()
 	for _, layout := range []string{"nested", "repository root"} {
 		t.Run(layout, func(t *testing.T) {
 			c, root, key := cloning(t)
@@ -1111,8 +1160,10 @@ func testInitCloneLeftovers(t *testing.T) {
 }
 
 func testInitClonePreserves(t *testing.T) {
+	t.Parallel()
 	for _, what := range []string{"foreign sibling", "modified ignore", "symlink ancestor", "plans outside repository", "missing key", "no ignore marker", "incomplete directory chain"} {
 		t.Run(what, func(t *testing.T) {
+			t.Parallel()
 			c, root, key := cloning(t)
 			c.Repo = filepath.Join(root, "notes")
 			c.Dir = filepath.Join(c.Repo, "agents", "plans")
@@ -1317,6 +1368,7 @@ func localConfig(t *testing.T, repo string) map[string]string {
 // an earlier Init wrote, leaving what else the clone's config holds, and a
 // second Init changes nothing.
 func testInitConverges(t *testing.T) {
+	t.Parallel()
 	const elsewhere = "git@elsewhere:x.git"
 	cases := []struct {
 		name string
@@ -1344,6 +1396,7 @@ func testInitConverges(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			c, root, key := cloning(t)
 			os.WriteFile(key, []byte("private\n"), 0o600)
 			if _, err := c.Init(); err != nil {

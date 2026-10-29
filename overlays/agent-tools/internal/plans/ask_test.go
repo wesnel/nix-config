@@ -7,6 +7,7 @@ import (
 )
 
 func TestAsk(t *testing.T) {
+	t.Parallel()
 	// asked makes the plan openQuestions does, decides Q2, and asks Q4, after
 	// Q1.
 	asked := func(t *testing.T) (Plan, Asked) {

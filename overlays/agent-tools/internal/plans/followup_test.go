@@ -9,6 +9,7 @@ import (
 // Work found out of scope is recorded where it was found, as a TODO of its
 // own, and status keeps it in view until it is done.
 func TestFollowup(t *testing.T) {
+	t.Parallel()
 	// plan makes a plan with a step S1 and a part P1 with its file.
 	plan := func(t *testing.T) Plan {
 		t.Helper()

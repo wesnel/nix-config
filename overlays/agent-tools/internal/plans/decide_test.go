@@ -55,6 +55,7 @@ func linesAt(t *testing.T, file, id string, n int) string {
 var orgArchived = time.Date(2026, 10, 14, 16, 33, 0, 0, time.Local)
 
 func TestDecide(t *testing.T) {
+	t.Parallel()
 	// A decided question stays where it is, settled as Org settles it, with
 	// the operator's answer, and the log records it.
 	t.Run("in place", func(t *testing.T) {

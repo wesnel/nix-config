@@ -35,6 +35,7 @@ func fileText(t *testing.T, file string) string {
 // A step or a part is added through agent-plan, under the next free ID of
 // its kind, in the form the plan's readers take.
 func TestAddEntry(t *testing.T) {
+	t.Parallel()
 	t.Run("a step", func(t *testing.T) {
 		_, p := entryPlan(t)
 		got, err := p.AddEntry(EntryOptions{Section: "Steps", Title: "Tag it", Text: "Done when the tag is pushed.\nCI passes on it.",
@@ -185,6 +186,7 @@ func TestIDInText(t *testing.T) {
 // A step's, part's or follow-up's title and text change in place, keeping
 // everything Org and the log keep on its heading.
 func TestEditEntry(t *testing.T) {
+	t.Parallel()
 	text := func(s string) *string { return &s }
 
 	t.Run("title and text", func(t *testing.T) {
