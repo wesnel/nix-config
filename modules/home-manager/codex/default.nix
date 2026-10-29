@@ -153,6 +153,33 @@ in {
   options.wgn.home.codex = {
     enable = mkEnableOption "Enables my Codex skills for home-manager";
 
+    quotaStop = mkOption {
+      type = types.nullOr (types.ints.between 1 100);
+      # Through a gateway Codex spends the gateway's quota, not the OpenAI
+      # account's windows that codex-usage reads.
+      default =
+        if config.wgn.home.llm.gateway == "none"
+        then 90
+        else null;
+      defaultText = literalExpression ''if config.wgn.home.llm.gateway == "none" then 90 else null'';
+
+      description = ''
+        The share of a Codex account quota window, in percent, at which
+        every Codex session stops. `agent-plan codex-usage` records the
+        account's windows every minute from a launchd agent (a systemd
+        timer on Linux), outside every session. While a window recorded in
+        the last five minutes, and not yet reset, is at or above this share,
+        the PreToolUse hook `agent-plan quota-stop --harness codex` refuses
+        every tool call but `update_plan`, `request_user_input`,
+        `wait_agent`, `close_agent` and `agent-plan` alone on its line, and
+        tells the session to end its turn for the operator to resume after
+        the reset. Codex trusts the hook only once it is approved with
+        /hooks, again after this value changes. Nothing in a session lifts
+        the stop; null turns it off at the next switch. Must be null
+        through a gateway ({option}`wgn.home.llm.gateway`).
+      '';
+    };
+
     sandbox = mkOption {
       type = types.attrs;
       internal = true;
@@ -245,17 +272,27 @@ in {
                 ];
               }
             ];
-            hooks.PreToolUse = [
-              {
+            hooks.PreToolUse =
+              [
+                {
+                  matcher = ".*";
+                  hooks = [
+                    {
+                      type = "command";
+                      command = "pr-loop guard --baseline";
+                    }
+                  ];
+                }
+              ]
+              ++ optional (cfg.quotaStop != null) {
                 matcher = ".*";
                 hooks = [
                   {
                     type = "command";
-                    command = "pr-loop guard --baseline";
+                    command = "agent-plan quota-stop --harness codex --threshold ${toString cfg.quotaStop}";
                   }
                 ];
-              }
-            ];
+              };
           };
         };
     }
@@ -364,5 +401,54 @@ in {
         fi
       '';
     })
+
+    # Records the Codex account's quota windows for the quota stop's hook.
+    # codex-usage needs Codex's login and the network, which a session's
+    # sandbox denies, so it runs here, outside every session.
+    (mkIf (cfg.quotaStop != null) (let
+      agentPlan = getExe' config.wgn.home.llm.agentTools "agent-plan";
+      # Codex installs itself under ~/.local/bin.
+      path = "${config.home.homeDirectory}/.local/bin:/usr/bin:/bin";
+    in {
+      assertions = [
+        {
+          assertion = config.wgn.home.llm.gateway == "none";
+          message = "wgn.home.codex.quotaStop must be null through a gateway (wgn.home.llm.gateway): Codex then spends the gateway's quota, not the OpenAI account's windows codex-usage reads.";
+        }
+      ];
+
+      launchd.agents.agent-plan-codex-usage = mkIf pkgs.stdenv.hostPlatform.isDarwin {
+        enable = true;
+        config = {
+          ProgramArguments = [agentPlan "codex-usage"];
+          RunAtLoad = true;
+          StartInterval = 60;
+          ProcessType = "Background";
+          EnvironmentVariables.PATH = path;
+          StandardOutPath = "/tmp/agent-plan-codex-usage.log";
+          StandardErrorPath = "/tmp/agent-plan-codex-usage.log";
+        };
+      };
+
+      systemd.user = mkIf pkgs.stdenv.hostPlatform.isLinux {
+        timers.agent-plan-codex-usage = {
+          Unit.Description = "Record the Codex account's quota windows every minute";
+          Timer = {
+            OnActiveSec = "1min";
+            OnUnitActiveSec = "1min";
+          };
+          Install.WantedBy = ["timers.target"];
+        };
+
+        services.agent-plan-codex-usage = {
+          Unit.Description = "Record the Codex account's quota windows";
+          Service = {
+            Type = "oneshot";
+            Environment = ["PATH=${path}"];
+            ExecStart = "${agentPlan} codex-usage";
+          };
+        };
+      };
+    }))
   ]);
 }

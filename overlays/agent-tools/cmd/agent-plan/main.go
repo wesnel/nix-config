@@ -184,10 +184,27 @@ have (see status) is refused and writes nothing.
                      window statusline recorded is at or above N percent,
                      its reset ahead and seen in the last 5 minutes, denies
                      every call but Read, Grep, Glob, ToolSearch, Skill,
-                     AskUserQuestion, TaskStop, SubagentHandback and
-                     agent-plan alone on a Bash line, naming the window, its
-                     share and its reset; with no record it can read, denies
-                     nothing
+                     AskUserQuestion, TaskStop, SubagentHandback, agent-plan
+                     alone on a Bash line, and a ScheduleWakeup, or a
+                     CronCreate pinned to one minute ("M H DoM Mon *"),
+                     that fires after the reset, naming the window, its
+                     share and its reset (the window that resets last, with
+                     both over), and the call that schedules the main
+                     session's resume just after it; with no record it can
+                     read, denies nothing
+  quota-stop --harness codex --threshold N
+                     the same as Codex's PreToolUse hook, from the windows
+                     codex-usage recorded: denies every call but
+                     update_plan, request_user_input, wait_agent,
+                     close_agent and agent-plan alone on a Bash line, and
+                     tells the session to end its turn for the operator to
+                     resume, Codex having no tool to schedule that; exits 2
+                     where Claude Code's exits 1
+  codex-usage       read the Codex account's quota windows through
+                     ` + "`codex app-server`" + ` (account/rateLimits/read) and
+                     record them in $XDG_STATE_HOME/agent-plan/codex-usage.json,
+                     as statusline records Claude's; needs Codex's login and
+                     the network, so a timer runs it, never a session
   own PLAN --worktree DIR --agent ID
                      record agent ID, the harness's ID for a sub-agent or
                      "main" for the session's main thread, as the one agent
@@ -275,6 +292,9 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if args[0] == "quota-stop" {
 		// Before plans.Load: it runs before every tool call.
 		return quotaStop(args[1:], stdin, stdout, stderr)
+	}
+	if args[0] == "codex-usage" {
+		return codexUsage(args[1:], stderr)
 	}
 	if args[0] == "statusline" {
 		// Claude Code shows whatever this prints, so a failure prints

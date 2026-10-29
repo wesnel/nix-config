@@ -774,11 +774,14 @@ in {
         recorded in the last five minutes, and that has not reset, is at or
         above it, the PreToolUse hook `agent-plan quota-stop` refuses
         starting sub-agents and every tool call but reading, asking the
-        operator, stopping sub-agents, handing back and `agent-plan` alone
-        on its line. Nothing in a session lifts the stop; null turns it off
-        at the next switch. Codex sessions spend another quota and are not
-        stopped. Off by default through a gateway
-        ({option}`wgn.home.llm.gateway`), which reports no quota windows.
+        operator, stopping sub-agents, handing back, `agent-plan` alone on
+        its line, and a ScheduleWakeup or CronCreate that fires after the
+        reset; its refusal gives the main session the exact call that
+        schedules its resume. Nothing in a session lifts the stop; null
+        turns it off at the next switch. Codex sessions spend another quota,
+        whose stop is {option}`wgn.home.codex.quotaStop`. Off by default
+        through a gateway ({option}`wgn.home.llm.gateway`), which reports
+        no quota windows.
       '';
     };
 

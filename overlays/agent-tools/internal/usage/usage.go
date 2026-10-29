@@ -1,6 +1,7 @@
-// Package usage reads the quota windows in Claude Code's status line input,
-// without credentials or network, and records them in File for the quota
-// stop.
+// Package usage reads quota windows, without credentials or network: the
+// Claude account's from Claude Code's status line input, recorded in File,
+// and the Codex account's from a result of Codex's app-server, recorded in
+// CodexFile, each for the quota stop.
 package usage
 
 import (
@@ -15,10 +16,14 @@ import (
 )
 
 // windowNames are the quota windows read: each one's key in Claude Code's
-// rate_limits, which File uses too, and the name shown for it.
-var windowNames = []struct{ key, name string }{
-	{"five_hour", "5h"},
-	{"seven_day", "7d"},
+// rate_limits, which File and CodexFile use too, the name shown for it, and
+// its length in minutes, by which Codex's windows are told apart.
+var windowNames = []struct {
+	key, name string
+	minutes   int
+}{
+	{"five_hour", "5h", 5 * 60},
+	{"seven_day", "7d", 7 * 24 * 60},
 }
 
 // Window is one quota window as observed at ObservedAt: its name ("5h",
@@ -91,15 +96,18 @@ func Load(file string) []Window {
 // the record stops counting rather than hold on an old reading.
 const Fresh = 5 * time.Minute
 
-// Over is the first window of ws at or above threshold percent that
-// counts at now: its reset still ahead and observed within Fresh.
+// Over is the window of ws at or above threshold percent that counts at
+// now (its reset still ahead and observed within Fresh) and resets last:
+// with several over, the stop holds until that one resets.
 func Over(ws []Window, threshold float64, now time.Time) (Window, bool) {
+	var over Window
 	for _, w := range ws {
-		if w.ResetsAt > now.Unix() && now.Unix()-w.ObservedAt <= int64(Fresh/time.Second) && w.Used >= threshold {
-			return w, true
+		if w.ResetsAt > now.Unix() && now.Unix()-w.ObservedAt <= int64(Fresh/time.Second) && w.Used >= threshold &&
+			w.ResetsAt > over.ResetsAt {
+			over = w
 		}
 	}
-	return Window{}, false
+	return over, over.ResetsAt > 0
 }
 
 // Record writes the windows seen into file, over what it holds. Every open

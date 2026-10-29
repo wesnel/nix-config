@@ -253,12 +253,22 @@ decisions:
 
 **The quota stop.** In Claude Code, once a quota window reaches the
 threshold set in `wgn.home.claude.quotaStop`, every session is refused
-every call but reading, asking the operator, `TaskStop`, `SubagentHandback`
-and `agent-plan` alone on its line, until the window resets; the refusal
-names the window, its share and its reset time. Each running sub-agent
-meets the same stop and hands back. Start and continue no one; log each
-report as it arrives, then hand back to the operator with the window, its
-reset time and the parts still open. The operator alone lifts the stop.
+every call but reading, asking the operator, `TaskStop`, `SubagentHandback`,
+`agent-plan` alone on its line, and a resume scheduled for after the reset,
+until the window resets; the refusal names the window, its share and its
+reset time, and gives the main session the exact `ScheduleWakeup` or
+`CronCreate` call that schedules its resume. Each running sub-agent meets
+the same stop and hands back. Start and continue no one; log each report
+as it arrives, make that call, then hand back to the operator with the
+window, its reset time and the parts still open. The operator alone lifts
+the stop.
+
+In Codex the same stop holds at `wgn.home.codex.quotaStop`, from the Codex
+account's windows, and lets through only `update_plan`,
+`request_user_input`, `wait_agent`, `close_agent` and `agent-plan` alone on
+its line. Codex cannot schedule a resume: log each report as it arrives,
+then end your turn with the window, its reset time and the parts still
+open, for the operator to resume you after the reset.
 
 ## Check every report
 
