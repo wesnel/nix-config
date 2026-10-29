@@ -506,8 +506,8 @@ in {
         };
     };
 
-    # The host sandbox around every Claude Code session's commands takes
-    # these lists from here.
+    # The sandboxes around Claude Code's and Codex's commands take these
+    # lists from here.
     sandbox = {
       deniedReads = mkOption {
         type = types.listOf types.str;
@@ -518,7 +518,9 @@ in {
           sockets live, and what would let a command act as the operator
           elsewhere. Each is absolute or starts `~/`, and one holding a glob
           matches as Claude Code's sandbox matches it. A path in
-          {option}`wgn.home.llm.sandbox.allowedReads` stays readable.
+          {option}`wgn.home.llm.sandbox.allowedReads` stays readable in
+          Claude Code; Codex cannot carve a read out of a deny, so it leaves
+          out a path holding one.
         '';
 
         default = let

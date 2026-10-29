@@ -41,49 +41,6 @@ with lib; let
             f.write(tomlkit.dumps(doc))
   '';
 
-  # Makes a path the one writable root of Codex's workspace-write sandbox
-  # that this module manages, keeping the rest of the file and any roots set
-  # from inside Codex. The third argument records the root added last time,
-  # which is removed when the path changes; no other root is removed.
-  addWritableRoot = pkgs.writers.writePython3 "codex-writable-root" {libraries = [pkgs.python3Packages.tomlkit];} ''
-    import os
-    import sys
-
-    import tomlkit
-
-    path, root, state = sys.argv[1], sys.argv[2], sys.argv[3]
-
-    previous = None
-    if os.path.exists(state):
-        with open(state) as f:
-            previous = f.read().strip() or None
-
-    doc = tomlkit.document()
-    if os.path.exists(path):
-        with open(path) as f:
-            doc = tomlkit.parse(f.read())
-
-    table = doc.setdefault("sandbox_workspace_write", tomlkit.table())
-    roots = table.setdefault("writable_roots", tomlkit.array())
-    changed = False
-    if previous and previous != root:
-        for i in reversed(range(len(roots))):
-            if str(roots[i]) == previous:
-                del roots[i]
-                changed = True
-    if root not in [str(r) for r in roots]:
-        roots.append(root)
-        changed = True
-    if changed:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
-            f.write(tomlkit.dumps(doc))
-
-    os.makedirs(os.path.dirname(state), exist_ok=True)
-    with open(state, "w") as f:
-        f.write(root + "\n")
-  '';
-
   # Sets keys of config.toml's [notice] table, keeping the rest of the file.
   setNotices = pkgs.writers.writePython3 "codex-notices" {libraries = [pkgs.python3Packages.tomlkit];} ''
     import json
@@ -149,6 +106,113 @@ with lib; let
   '';
 
   plans = config.wgn.home.llm.plans;
+  sandboxLists = config.wgn.home.llm.sandbox;
+  darwin = pkgs.stdenv.hostPlatform.isDarwin;
+
+  # The shared denies Codex leaves out, which the assertion names so that
+  # no other goes missing.
+  omittedDenies =
+    # They hold the git.inc template, which git must read; deniedPaths
+    # denies everything else under them instead.
+    optional (sandboxLists.allowedReads != []) (
+      if darwin
+      then "/private/var/folders/*/*/T/secrets.d"
+      else "/run/user"
+    )
+    # Under ~/.ssh, which is denied whole.
+    ++ [plans.repository.key];
+
+  # The shared deny-read list as Codex takes it. Codex emits its deny rules
+  # after every grant, so no read can be carved out of one: a path holding
+  # one of sandboxLists.allowedReads, since git dies on an include it
+  # cannot read, is replaced by denies of everything under it but the path
+  # to that read, level by level. A path under another is left out, which
+  # Linux's sandbox cannot mount inside the one it hides. A deny holding a
+  # glob matches only the path itself in Codex, so `/**` is added for what
+  # lies under it.
+  deniedPaths = let
+    under = p: d: p == d || hasPrefix "${d}/" p;
+    holdsAllowedRead = p: any (r: under r p) sandboxLists.allowedReads;
+    nested = p: any (d: d != p && under p d) sandboxLists.deniedReads;
+    hasGlob = p: match ".*[][*?{}].*" p != null;
+    # Globs for every name of one path component but `name`: shorter,
+    # longer, and of its length differing in one character. Codex's
+    # `[!…]` matches `/` unless the class names it.
+    otherNames = name: let
+      n = stringLength name;
+      chars = stringToCharacters name;
+      anyOf = k: concatStrings (genList (_: "?") k);
+    in
+      genList (k: anyOf (k + 1)) (n - 1)
+      ++ [(anyOf (n + 1) + "*")]
+      ++ genList (i: anyOf i + "[!/${elemAt chars i}]" + anyOf (n - 1 - i)) n;
+    # A `*` level of an allowed read is a user ID or a sops-nix
+    # generation, so every name there that is not a number is denied.
+    carve = prefix: components:
+      optionals (components != []) (
+        (
+          if head components == "*"
+          then ["${prefix}/[!/0-9]*" "${prefix}/[0-9]*[!/0-9]*"]
+          else map (o: "${prefix}/${o}") (otherNames (head components))
+        )
+        ++ carve "${prefix}/${head components}" (tail components)
+      );
+    carved = d:
+      concatMap (r: carve d (splitString "/" (removePrefix "${d}/" r)))
+      (filter (r: hasPrefix "${d}/" r) sandboxLists.allowedReads);
+  in
+    concatMap (p: [p] ++ optional (hasGlob p) "${p}/**") (
+      filter (p: !holdsAllowedRead p && !nested p) sandboxLists.deniedReads
+      ++ concatMap carved (filter holdsAllowedRead sandboxLists.deniedReads)
+    );
+
+  # Whether Codex's deny `pattern` covers `path`, as Codex 0.165 turns a
+  # glob into a Seatbelt regex (codex-rs/sandboxing/src/seatbelt.rs,
+  # seatbelt_regex_for_glob), for the syntax used here: `*`, `**`, `?` and
+  # `[!…]`. A pattern without a glob covers what lies under it too.
+  codexDenies = pattern: path: let
+    special = ["." "+" "(" ")" "{" "}" "|" "^" "$" "\\"];
+    go = cs:
+      if cs == []
+      then ""
+      else let
+        c = head cs;
+        rest = tail cs;
+      in
+        if c == "*" && rest != [] && head rest == "*"
+        then
+          if tail rest != [] && head (tail rest) == "/"
+          then "(.*/)?" + go (tail (tail rest))
+          else ".*" + go (tail rest)
+        else if c == "*"
+        then "[^/]*" + go rest
+        else if c == "?"
+        then "[^/]" + go rest
+        else if c == "["
+        then let
+          end = lists.findFirstIndex (x: x == "]") 0 rest;
+          class = take end rest;
+        in
+          "["
+          + concatStrings (
+            if class != [] && head class == "!"
+            then ["^"] ++ tail class
+            else class
+          )
+          + "]"
+          + go (drop (end + 1) rest)
+        else optionalString (elem c special) "\\" + c + go rest;
+    expanded =
+      if hasPrefix "~/" pattern
+      then "${config.home.homeDirectory}/${removePrefix "~/" pattern}"
+      else pattern;
+    glob = match ".*[][*?].*" expanded != null;
+  in
+    match (go (stringToCharacters expanded) + optionalString (!glob) "(/.*)?") path != null;
+
+  # Commands' temporary directory on macOS, in place of the per-user one,
+  # which holds the decrypted secrets and is read-only to them.
+  commandTmpdir = "${config.xdg.cacheHome}/codex/tmp";
 in {
   options.wgn.home.codex = {
     enable = mkEnableOption "Enables my Codex skills for home-manager";
@@ -184,15 +248,66 @@ in {
       type = types.attrs;
       internal = true;
       default = {
-        sandbox_mode = "workspace-write";
-        sandbox_workspace_write.network_access = false;
+        default_permissions = "wgn";
+        permissions.wgn = {
+          extends = ":workspace";
+          filesystem =
+            genAttrs deniedPaths (_: "deny")
+            # The plans directory is not among them: only agent-plan's
+            # writes, run bare and approved, write the plans, as in Claude
+            # Code's sandbox. Codex's sandbox cannot tell agent-plan from a
+            # command wrapping it.
+            // genAttrs sandboxLists.toolCaches (_: "write")
+            # On macOS sops-nix decrypts under the per-user temporary
+            # directory, where a command could otherwise rewrite the git.inc
+            # template git includes; commands write commandTmpdir instead.
+            # A run the operator approves with `require_escalated` writes
+            # everywhere but the denied paths, git.inc included.
+            // optionalAttrs darwin {
+              ":tmpdir" = "read";
+              ${commandTmpdir} = "write";
+            };
+          # Commands reach the network only through Codex's proxy, which
+          # lets through these domains alone. The proxy runs only while
+          # features.network_proxy is on: with it off, as `--disable
+          # network_proxy` or a project's config.toml can set, this network
+          # is unfiltered. A session whose proxy fails to start fails.
+          network =
+            {
+              enabled = true;
+              domains = genAttrs sandboxLists.allowedDomains (_: "allow");
+              # Test servers on loopback, as in Claude Code's sandbox.
+              allow_local_binding = true;
+            }
+            # Only the nix daemon's socket, so nix runs in the sandbox; its
+            # builds run in the daemon, outside it.
+            // optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+              unix_sockets."/nix/var/nix/daemon-socket/socket" = "allow";
+            };
+        };
+        # Starts the proxy for a profile whose network is enabled; without
+        # it, that network is unfiltered.
+        features.network_proxy = true;
+        # Commands inherit Codex's whole environment but these.
+        shell_environment_policy =
+          {
+            filters = genAttrs sandboxLists.deniedEnvVars (_: "exclude");
+          }
+          // optionalAttrs darwin {
+            set.TMPDIR = commandTmpdir;
+          };
       };
 
       description = ''
-        The sandbox every interactive Codex session's commands run in,
-        merged into ~/.codex/config.toml on every switch, so that it never
-        rests on what Codex chooses for a trusted project. An assertion
-        holds it to workspace-write with the network off.
+        The permission profile every interactive Codex session's commands
+        run in, merged into ~/.codex/config.toml on every switch, so that it
+        never rests on what Codex chooses for a trusted project. An
+        assertion holds it to denying {option}`wgn.home.llm.sandbox.deniedReads`,
+        reaching only {option}`wgn.home.llm.sandbox.allowedDomains`, and
+        leaving out {option}`wgn.home.llm.sandbox.deniedEnvVars`. The
+        domains hold only while `features.network_proxy` is on: Codex
+        0.165 enforces a proxy regardless of it only from an administrator's
+        requirements.toml, which a home configuration cannot write.
       '';
     };
   };
@@ -299,45 +414,69 @@ in {
         };
     }
 
-    # Plans are written with `agent-plan`, from inside the workspace-write
-    # sandbox too, so the plans directory stays writable there. Claude
-    # Code's sandbox denies it to every command but agent-plan's writes;
-    # Codex's sandbox cannot tell agent-plan from any other command, so in
-    # Codex the guard's plan-log and plan-file rules alone keep the shell
-    # and the file tools off the plans. Merged into the config.toml Codex
-    # writes, as the MCP servers are.
-    {
-      home.activation.codexPlansRoot = lib.hm.dag.entryAfter ["writeBoundary"] ''
-        if [ -z "''${DRY_RUN:-}" ]; then
-          ${addWritableRoot} "$HOME/.codex/config.toml" ${escapeShellArg plans.dir} \
-            ${escapeShellArg "${config.xdg.stateHome}/codex/plans-root"} \
-            || warnEcho "The plans directory was not made writable in Codex's sandbox."
-        fi
-      '';
-    }
-
-    # Pins interactive sessions' sandbox: commands write only the workspace
-    # and the writable roots above, and reach no network; the guard hook
-    # holds the rest of what Codex may do. Codex reads `sandbox_mode` and
-    # `[sandbox_workspace_write] network_access` from config.toml; git
-    # delegate's `codex exec --ignore-user-config` reads neither.
-    # Merged into the config.toml Codex writes.
+    # Pins interactive sessions' sandbox to the profile above; the guard
+    # hook holds the rest of what Codex may do. git delegate's
+    # `codex exec --ignore-user-config` reads none of it. Merged into the
+    # config.toml Codex writes, whose `default_permissions` wins over a
+    # `sandbox_mode` in the same file but not over `--sandbox` or a
+    # project's config.toml.
     {
       assertions = [
         {
-          assertion =
-            (cfg.sandbox.sandbox_mode or null)
-            == "workspace-write"
-            && (cfg.sandbox.sandbox_workspace_write.network_access or null) == false
+          assertion = let
+            profile = cfg.sandbox.permissions.${cfg.sandbox.default_permissions or ""} or {};
+            denied = p: (profile.filesystem.${p} or null) == "deny";
+            filters = cfg.sandbox.shell_environment_policy.filters or {};
+            coveredByDeny = path: any (p: denied p && codexDenies p path) (attrNames profile.filesystem);
+            # Paths under where sops-nix decrypts: git.inc stays readable,
+            # and every other one, named or not, is denied.
+            secretSamples = let
+              root =
+                if darwin
+                then "/private/var/folders/ab/cd/T/secrets.d"
+                else "/run/user/1000/secrets.d";
+            in {
+              allowed = optional (sandboxLists.allowedReads != []) "${root}/3/rendered/git.inc";
+              denied =
+                [
+                  "${root}/age-keys.txt"
+                  "${root}/3/notes-deploy-key"
+                  "${root}/3/a-new-secret"
+                  "${root}/3/rendered/ssh.inc"
+                  "${root}/3/rendered/git.inc.bak"
+                  "${root}/3/rendered/git.in"
+                  "${root}/3/renderedx/git.inc"
+                ]
+                ++ optionals (!darwin) [
+                  "/run/user/1000/gnupg/S.gpg-agent"
+                  "/run/user/1000/bus"
+                  "/run/user/1000/secrets.dx"
+                  "/run/user/me/secrets.d/3/rendered/git.inc"
+                ];
+            };
+          in
+            (profile.extends or null)
+            == ":workspace"
+            && all denied (subtractLists omittedDenies sandboxLists.deniedReads)
+            && !(any denied omittedDenies)
+            && all coveredByDeny secretSamples.denied
+            && !(any coveredByDeny secretSamples.allowed)
+            && !(profile.filesystem ? ${plans.dir})
+            && all (v: (filters.${v} or null) == "exclude") sandboxLists.deniedEnvVars
+            && (darwin -> (profile.filesystem.":tmpdir" or null) == "read")
+            && (profile.network.enabled or null) == true
+            && (cfg.sandbox.features.network_proxy or null) == true
+            && (profile.network.domains or null) == genAttrs sandboxLists.allowedDomains (_: "allow")
             && hasInfix (escapeShellArg (builtins.toJSON cfg.sandbox)) config.home.activation.codexSandbox.data;
-          message = "wgn.home.codex: interactive Codex must run in workspace-write with network_access = false, written into config.toml";
+          message = "wgn.home.codex: interactive Codex must run in a profile extending :workspace that denies wgn.home.llm.sandbox.deniedReads and reaches only wgn.home.llm.sandbox.allowedDomains through Codex's proxy, written into config.toml";
         }
       ];
 
       home.activation.codexSandbox = lib.hm.dag.entryAfter ["writeBoundary"] ''
         if [ -z "''${DRY_RUN:-}" ]; then
           ${setKeys} "$HOME/.codex/config.toml" ${escapeShellArg (builtins.toJSON cfg.sandbox)} \
-            || warnEcho "Codex's sandbox was not pinned to workspace-write without network."
+            || warnEcho "Codex's permission profile was not written."
+          ${optionalString darwin "mkdir -p ${escapeShellArg commandTmpdir}"}
         fi
       '';
     }
