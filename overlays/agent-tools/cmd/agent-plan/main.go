@@ -112,9 +112,12 @@ have (see status) is refused and writes nothing.
                      --all adds the parts'
   ask PLAN --question TEXT --recommendation TEXT [--priority A|B|C]
       [--context TEXT] [--alternative TEXT]... [--after ID]... [--part P1]
+      [--kind QKIND]
                      write a question for the operator under Questions, in
                      the plan's file or the part's, as its next question ID,
-                     in the form questions reads, and log it as asked
+                     in the form questions reads, and log it as asked; a
+                     kind is kept as its KIND property, which questions
+                     --json shows as kind
   ask PLAN ... --answer TEXT [--role R]
                      write a reversible decision of your own, settled as
                      written, and log it as asked and decided
@@ -270,6 +273,7 @@ find, status and new first take the other hosts' plans, quietly, if they can.
 Values are single lines but --text and --context, which may span lines as
 section says; list values hold no whitespace.
 KIND: ` + strings.Join(plans.Kinds, ", ") + `
+QKIND: ` + strings.Join(plans.QuestionKinds, ", ") + `
 ROLE: ` + strings.Join(plans.Roles, ", ") + `
 OUTCOME: ` + strings.Join(plans.Outcomes, ", ") + `
 `
@@ -649,7 +653,8 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return 2
 		}
 		return report(p.Ask(plans.AskOptions{Part: *part, Question: *question, Priority: *priority, Context: *context,
-			Recommendation: *advice, Answer: *answer, Role: *role, Alternatives: alternatives, After: after}, time.Now()))
+			Recommendation: *advice, Answer: *answer, Role: *role, Kind: *kind, Alternatives: alternatives, After: after},
+			time.Now()))
 	case "decide":
 		if len(positional) != 2 {
 			fmt.Fprint(stderr, "agent-plan decide: takes PLAN QID --answer TEXT\n")

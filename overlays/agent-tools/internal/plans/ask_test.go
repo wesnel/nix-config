@@ -1,6 +1,7 @@
 package plans
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -110,6 +111,34 @@ func TestAsk(t *testing.T) {
 		}
 	})
 
+	// A retro proposal is a question of kind retro: its KIND property is
+	// written, and read back as its kind, where a plain question has none.
+	t.Run("a retro proposal", func(t *testing.T) {
+		p, plain := asked(t)
+		got, err := p.Ask(AskOptions{Question: "Deny git add -A?", Recommendation: "a guard rule", Kind: "retro"}, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if entry := linesAt(t, p.file(""), got.ID, 4); entry != "*** ASK Deny git add -A?\n:PROPERTIES:\n:CUSTOM_ID: Q5\n"+
+			":RECOMMENDATION: a guard rule\n:KIND: retro" {
+			t.Errorf("entry:\n%s", entry)
+		}
+		qs, _ := p.Questions(false)
+		kinds := map[string]string{}
+		for _, q := range qs {
+			kinds[q.ID] = q.Kind
+		}
+		if kinds[got.ID] != "retro" || kinds[plain.ID] != "" {
+			t.Errorf("kinds %v", kinds)
+		}
+		for _, q := range qs {
+			data, _ := json.Marshal(q)
+			if has := strings.Contains(string(data), `"kind":"retro"`); has != (q.ID == got.ID) {
+				t.Errorf("JSON of %s: %s", q.ID, data)
+			}
+		}
+	})
+
 	t.Run("part's question", func(t *testing.T) {
 		p, _ := asked(t)
 		part, err := p.Ask(AskOptions{Part: "P1", Question: "Split the file?", Recommendation: "yes"}, day)
@@ -134,6 +163,7 @@ func TestAsk(t *testing.T) {
 		"a part with no file":   {Part: "P7", Question: "Why?", Recommendation: "yes"},
 		"a part ID that is not": {Part: "x", Question: "Why?", Recommendation: "yes"},
 		"an unknown priority":   {Question: "Why?", Recommendation: "yes", Priority: "D"},
+		"an unknown kind":       {Question: "Why?", Recommendation: "yes", Kind: "bug"},
 		"a forged answer":       {Question: "Why?", Recommendation: "yes", Answer: "yes\n* forged"},
 		"a structural context":  {Question: "Why?", Recommendation: "yes", Context: "- a list item"},
 		"a later list item":     {Question: "Why?", Recommendation: "yes", Context: "Because.\n- not an alternative"},

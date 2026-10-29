@@ -16,6 +16,9 @@ type Question struct {
 	Question string `json:"question"`
 	// Priority is the heading's priority cookie's letter, if it has one.
 	Priority string `json:"priority,omitempty"`
+	// Kind is the KIND property, one of QuestionKinds, such as retro for
+	// the retro skill's proposals; a plain question has none.
+	Kind string `json:"kind,omitempty"`
 	// Context is the heading's text that is not a list item.
 	Context string `json:"context,omitempty"`
 	// Recommendation is the RECOMMENDATION property.
@@ -43,6 +46,11 @@ type Decision struct {
 	DecidedBy  string `json:"decidedBy,omitempty"`
 	Supersedes string `json:"supersedes,omitempty"`
 }
+
+// QuestionKinds are the kinds a question's KIND property may name: retro
+// is a proposal of the retro skill's. They are stored in plans, so
+// renaming one means rewriting every plan that holds it.
+var QuestionKinds = []string{"retro"}
 
 var listItem = regexp.MustCompile(`^[-+] (.*)$`)
 
@@ -99,7 +107,7 @@ func (p Plan) Questions(all bool) ([]Question, error) {
 			return
 		}
 		q := Question{ID: itemID(h), Part: partOf(f), File: f, Question: h.Title, Priority: h.Priority,
-			Recommendation: h.Props["RECOMMENDATION"], After: afterIDs(h.Props)}
+			Kind: h.Props["KIND"], Recommendation: h.Props["RECOMMENDATION"], After: afterIDs(h.Props)}
 		q.Waiting = unsettled(q.After, isSettled)
 		var context []string
 		for _, line := range h.Body {

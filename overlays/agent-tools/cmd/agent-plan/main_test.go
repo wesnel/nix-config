@@ -318,6 +318,21 @@ func TestCommands(t *testing.T) {
 		if code, out, errs = agentPlan(t, "", "decide", plan, "Q5", "--answer", "x", "--supersedes", "Q4"); code != 2 {
 			t.Errorf("decide an unknown question: %d %s %s", code, out, errs)
 		}
+		// A retro proposal is asked with its kind, which questions --json
+		// shows, and an unknown kind is refused.
+		code, out, errs = agentPlan(t, "", "ask", plan, "--question", "Deny git add -A?", "--recommendation", "a guard rule",
+			"--kind", "retro")
+		if code != 0 || !strings.Contains(out, `"id": "Q5"`) {
+			t.Errorf("ask --kind retro: %d %s %s", code, out, errs)
+		}
+		code, out, _ = agentPlan(t, "", "questions", plan, "--json")
+		if code != 0 || strings.Count(out, `"kind": "retro"`) != 1 || !strings.Contains(out, `"id": "Q5"`) {
+			t.Errorf("questions --json after ask --kind: %d %s", code, out)
+		}
+		if code, out, errs = agentPlan(t, "", "ask", plan, "--question", "Why?", "--recommendation", "yes",
+			"--kind", "bug"); code != 2 {
+			t.Errorf("ask --kind bug: %d %s %s", code, out, errs)
+		}
 	})
 
 	t.Run("followup", func(t *testing.T) {
