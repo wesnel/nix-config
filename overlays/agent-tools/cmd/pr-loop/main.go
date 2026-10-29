@@ -119,7 +119,8 @@ worktree. A failure to log is printed on stderr and fails nothing.
   mcp-status [--hook]         which of this host's mcp-proxy servers are not connected,
                               each with the command that connects it, probing each route
                               without credentials; nothing when all are; --hook prints it
-                              as context for Claude Code's SessionStart hook
+                              as Claude Code's SessionStart hook output, as context for
+                              the agent and a message shown to the operator
 
 reply and resolve take only a thread whose every comment is a configured
 bot's (its login pattern, on an account GitHub types Bot) or the

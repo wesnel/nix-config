@@ -1018,8 +1018,9 @@ in {
           ]
           # Names each mcp-proxy server that is not connected when the
           # session starts, which Claude Code reports only as not found,
-          # with the command that connects it, so the session asks the
-          # operator rather than adding a server of its own.
+          # with the command that connects it, to the operator and to the
+          # session, so the session asks the operator rather than adding a
+          # server of its own.
           ++ optional mcpProxy.enable {
             matcher = "startup";
             hooks = [

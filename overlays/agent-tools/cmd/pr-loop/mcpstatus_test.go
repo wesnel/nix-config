@@ -14,7 +14,9 @@ import (
 
 // TestMCPStatus covers mcp-status --hook, Claude Code's SessionStart hook:
 // with a proxy server not connected, it adds context naming the command
-// that connects it; with every server connected, or no proxy on the host,
+// that connects it, and shows the operator the same as a systemMessage,
+// since additionalContext reaches only the agent; with every server
+// connected, or no proxy on the host,
 // it prints nothing. The proxy is a stand-in answering as mcp-proxy does:
 // 401 on a mounted server's route, 404 on any other.
 func TestMCPStatus(t *testing.T) {
@@ -52,7 +54,8 @@ func TestMCPStatus(t *testing.T) {
 				return
 			}
 			var out struct {
-				Hook struct {
+				System string `json:"systemMessage"`
+				Hook   struct {
 					Event   string `json:"hookEventName"`
 					Context string `json:"additionalContext"`
 				} `json:"hookSpecificOutput"`
@@ -63,6 +66,9 @@ func TestMCPStatus(t *testing.T) {
 			if out.Hook.Event != "SessionStart" || !strings.Contains(out.Hook.Context, c.says) ||
 				strings.Contains(out.Hook.Context, "mcp-proxy-authorize linear") {
 				t.Errorf("printed %s, want SessionStart context naming %s and not linear", stdout.String(), c.says)
+			}
+			if !strings.Contains(out.System, c.says) || strings.Contains(out.System, "mcp-proxy-authorize linear") {
+				t.Errorf("printed %s, want a systemMessage for the operator naming %s and not linear", stdout.String(), c.says)
 			}
 		})
 	}
