@@ -30,13 +30,19 @@ A command that would leave a plan file with structure drift it did not
 have (see status) is refused and writes nothing.
 
   new --title T --slug S [--repo R]... [--branch BASE..BRANCH]... [--worktree DIR]...
-      [--session HARNESS:ID]... [--harness H] [--template NAME]
+      [--session HARNESS:ID]... [--harness H] [--template NAME] [--workstream NAME]
                      create a plan; prints its file, ID and log. --template
                      starts it with the entries of each section of
                      templates/NAME.org in the plans' repository, or
-                     else NAME.org in plans.templates, the built-in ones
+                     else NAME.org in plans.templates, the built-in ones.
+                     The plan's WORKSTREAM, an id: link, names the
+                     workstream --workstream names (a slug or name that
+                     workstream list prints, or its file); without it,
+                     that of the newest plan, any host's, whose branch
+                     BRANCH or BASE is (main and master aside), or none
   new --parent PLAN --part P1 --title T [...]
-                     create part P1's plan file beside its parent's
+                     create part P1's plan file beside its parent's; a part
+                     is in its plan's workstream
   workstream new --title T [--summary S]
                      write a workstream, a line of work many plans share,
                      as workstream-<slug>.<host>.org beside the plans, the
@@ -416,6 +422,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		slug     = flags.String("slug", "", "")
 		harness  = flags.String("harness", "", "")
 		template = flags.String("template", "", "")
+		stream   = flags.String("workstream", "", "")
 		parent   = flags.String("parent", "", "")
 		part     = flags.String("part", "", "")
 		item     = flags.String("item", "", "")
@@ -498,6 +505,10 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return 2
 		}
 	}
+	if given["workstream"] && command != "new" {
+		fmt.Fprintf(stderr, "agent-plan %s: --workstream is new's\n", command)
+		return 2
+	}
 	if given["base"] && command != "sign-id" {
 		fmt.Fprintf(stderr, "agent-plan %s: --base is sign-id's\n", command)
 		return 2
@@ -556,7 +567,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return 2
 		}
 		o := plans.NewOptions{Title: *title, Slug: *slug, Repos: repos, Branches: branches, Worktrees: trees,
-			Sessions: sessions, Harness: *harness, Parent: *parent, Part: *part, Template: *template}
+			Sessions: sessions, Harness: *harness, Parent: *parent, Part: *part, Template: *template, Workstream: *stream}
 		if len(o.Sessions) == 0 {
 			if s := claudeSession(); s != "" {
 				o.Sessions = []string{s}

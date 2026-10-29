@@ -173,3 +173,107 @@ func (c Config) workstreamBySlug(slug string) (Workstream, bool, error) {
 	}
 	return Workstream{}, false, err
 }
+
+// workstreamNamed is the workstream name names: its slug, its name
+// (workstream-<slug>.<host>) or its file in the plans directory.
+func (c Config) workstreamNamed(name string) (Workstream, error) {
+	listed := func() error {
+		return refusal.New("%q names no workstream. Pass one `agent-plan workstream list` lists, by its slug or name, or make it with `agent-plan workstream new --title T`", name)
+	}
+	ws, err := c.Workstreams()
+	if err != nil {
+		return Workstream{}, err
+	}
+	base := strings.TrimSuffix(filepath.Base(name), ".org")
+	if strings.Contains(name, "/") {
+		dir, err := filepath.EvalSymlinks(filepath.Dir(name))
+		root, rerr := filepath.EvalSymlinks(c.Dir)
+		if err != nil || rerr != nil || dir != root {
+			return Workstream{}, listed()
+		}
+	}
+	var found []Workstream
+	for _, w := range ws {
+		if w.Name == base || w.Slug == name {
+			found = append(found, w)
+		}
+	}
+	switch len(found) {
+	case 0:
+		return Workstream{}, listed()
+	case 1:
+		return found[0], nil
+	}
+	var names []string
+	for _, w := range found {
+		names = append(names, w.Name)
+	}
+	return Workstream{}, refusal.New("%q names a workstream of each of several hosts: %s. Pass one by its name, as `--workstream %s`", name, strings.Join(names, ", "), names[0])
+}
+
+// WorkstreamRef is the workstream a plan's WORKSTREAM property links to:
+// its file-level ID, and its title as the link describes it.
+type WorkstreamRef struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+}
+
+// workstreamLink is a WORKSTREAM value, an org-roam link to the
+// workstream's node, as [[id:ID][TITLE]]: group 1 is the ID and 2 the
+// title.
+var workstreamLink = regexp.MustCompile(`^\[\[id:([^]\s]+)\](?:\[([^]]*)\])?\]$`)
+
+// ref is the WORKSTREAM link to w.
+func (w Workstream) ref() WorkstreamRef {
+	// A link's description ends at its first ]].
+	return WorkstreamRef{ID: w.ID, Title: strings.NewReplacer("[", "(", "]", ")").Replace(w.Title)}
+}
+
+// link is the WORKSTREAM value that names r.
+func (r WorkstreamRef) link() string { return "[[id:" + r.ID + "][" + r.Title + "]]" }
+
+// refOf is the workstream a WORKSTREAM value names, or none for a value
+// that is not an id: link.
+func refOf(value string) WorkstreamRef {
+	m := workstreamLink.FindStringSubmatch(strings.TrimSpace(value))
+	if m == nil {
+		return WorkstreamRef{}
+	}
+	return WorkstreamRef{ID: m[1], Title: m[2]}
+}
+
+// Workstream is the workstream the plan's WORKSTREAM names, which its
+// parts are in too; the zero WorkstreamRef where it names none.
+func (p Plan) Workstream() (WorkstreamRef, error) {
+	props, err := planHeading(p.file(""))
+	if err != nil {
+		return WorkstreamRef{}, err
+	}
+	return refOf(props["WORKSTREAM"]), nil
+}
+
+// workstreamFor is the workstream a new plan made with o is in: the one
+// o names, or else that of the newest plan, any host's, whose branch it
+// continues; or none.
+func (c Config) workstreamFor(o NewOptions) (WorkstreamRef, error) {
+	if o.Workstream != "" {
+		w, err := c.workstreamNamed(o.Workstream)
+		return w.ref(), err
+	}
+	ps, _, err := c.Plans()
+	if err != nil {
+		return WorkstreamRef{}, err
+	}
+	mine := planFacts{repos: o.Repos}
+	mine.addBranches(o.Branches)
+	for _, p := range ps {
+		other, err := factsOf(p)
+		if err != nil || other.workstream.ID == "" {
+			continue
+		}
+		if len(continued(mine, other)) > 0 {
+			return other.workstream, nil
+		}
+	}
+	return WorkstreamRef{}, nil
+}

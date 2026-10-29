@@ -154,6 +154,10 @@ type NewOptions struct {
 	// Goal is a line the plan's Goal starts with, and Status its STATUS
 	// in place of planning.
 	Goal, Status string
+	// Workstream names the plan's workstream, as workstreamNamed reads
+	// it; where it is "", the plan takes the workstream of the plan it
+	// continues, if any. A part is in its plan's and takes none.
+	Workstream string
 }
 
 // Created is what New made.
@@ -217,6 +221,14 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 	if !slugPattern.MatchString(o.Slug) {
 		return Created{}, refusal.New("slug %q is not lower-case words joined by hyphens. Pass one such as `--slug add-run-loop`", o.Slug)
 	}
+	ws, err := c.workstreamFor(o)
+	if err != nil {
+		return Created{}, err
+	}
+	extra := map[string]string{"HOST": c.Host}
+	if ws.ID != "" {
+		extra["WORKSTREAM"] = ws.link()
+	}
 	var sections map[string][]string
 	if o.Template != "" {
 		var err error
@@ -253,7 +265,7 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 			try = fmt.Sprintf("%s-%d", base, i)
 		}
 		candidate := Plan{Dir: c.Dir, Name: try + "." + c.Host, Host: c.Host, Own: true}
-		text := withTemplate(planText(o, candidate.Name, c.Host, map[string]string{"HOST": c.Host}, true), sections)
+		text := withTemplate(planText(o, candidate.Name, c.Host, extra, true), sections)
 		switch err := writeNew(candidate.file(""), text); {
 		case err == nil:
 			p = candidate
@@ -279,6 +291,9 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 func (c Config) newPart(o NewOptions, now time.Time) (Created, error) {
 	if o.Parent == "" || !partPattern.MatchString(o.Part) {
 		return Created{}, refusal.New("a part needs its parent plan and a part ID such as P1. Pass both, as `--parent PLAN --part P1`")
+	}
+	if o.Workstream != "" {
+		return Created{}, refusal.New("a part is in its plan's workstream and names none. Make the part without `--workstream`")
 	}
 	p, err := c.Open(o.Parent)
 	if err != nil {
@@ -334,7 +349,8 @@ func fileTags(repos []string, host string) string {
 
 // planText is a new plan file of host's, with id as its `* Plan`
 // heading's CUSTOM_ID: the parent's sections, and Distribution for a
-// parent alone. A parent's file starts with a property drawer holding a
+// parent alone; extra's PARENT and HOST lead its properties, and its
+// WORKSTREAM, a link, ends them. A parent's file starts with a property drawer holding a
 // fresh UUID as its ID, the one org-roam node of the plan; a part's file
 // is no node and has none.
 func planText(o NewOptions, id, host string, extra map[string]string, parent bool) string {
@@ -368,6 +384,9 @@ func planText(o NewOptions, id, host string, extra map[string]string, parent boo
 	property("STATUS", status)
 	property("PULL_REQUESTS", "")
 	property("PIPELINE", "full")
+	if extra["WORKSTREAM"] != "" {
+		property("WORKSTREAM", extra["WORKSTREAM"])
+	}
 	b.WriteString(":END:\n")
 	for _, s := range planSections {
 		if s == "Distribution" && !parent {

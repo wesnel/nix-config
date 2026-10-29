@@ -401,7 +401,14 @@ func TestCommands(t *testing.T) {
 		if code != 0 || !strings.Contains(out, `"id": "`+w.ID+`"`) {
 			t.Errorf("workstream list --json: %d %s", code, out)
 		}
-		for _, args := range [][]string{{"workstream"}, {"workstream", "remove"}, {"workstream", "new"}, {"workstream", "list", "x"}} {
+		code, out, errs = agentPlan(t, "", "new", "--title", "Add the loop", "--slug", "add-loop", "--workstream", "agent-tooling")
+		var made plans.Created
+		json.Unmarshal([]byte(out), &made)
+		if data, _ := os.ReadFile(made.Plan); code != 0 || !strings.Contains(string(data), ":WORKSTREAM: [[id:"+w.ID+"][Agent tooling]]\n") {
+			t.Errorf("new --workstream: %d %s %s\n%s", code, out, errs, data)
+		}
+		for _, args := range [][]string{{"workstream"}, {"workstream", "remove"}, {"workstream", "new"}, {"workstream", "list", "x"},
+			{"new", "--title", "X", "--slug", "x", "--workstream", "nope"}, {"status", made.Plan, "--workstream", "agent-tooling"}} {
 			if code, out, errs := agentPlan(t, "", args...); code == 0 {
 				t.Errorf("%v: %d %s %s", args, code, out, errs)
 			}

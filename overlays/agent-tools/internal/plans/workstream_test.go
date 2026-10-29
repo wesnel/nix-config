@@ -82,6 +82,121 @@ func TestNewWorkstream(t *testing.T) {
 	})
 }
 
+// planOn makes host's plan titled title on branches, in workstream ws, or
+// none for "".
+func planOn(t *testing.T, c Config, slug, ws string, branches ...string) Plan {
+	t.Helper()
+	made, err := c.New(NewOptions{Title: "Plan " + slug, Slug: slug, Repos: []string{"o/r"}, Branches: branches,
+		Workstream: ws}, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := c.Open(made.Plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// workstreamOf is the ID of p's workstream, or "".
+func workstreamOf(t *testing.T, p Plan) string {
+	t.Helper()
+	ref, err := p.Workstream()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ref.ID
+}
+
+// A plan names its workstream by an id: link in WORKSTREAM, which new
+// writes from --workstream or else takes from the plan whose branch the new
+// plan continues; a part is in its plan's.
+func TestPlanWorkstream(t *testing.T) {
+	t.Run("named", func(t *testing.T) {
+		c := testConfig(t)
+		w, err := c.NewWorkstream("Agent [tooling]", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"agent-tooling", "workstream-agent-tooling.box", w.File} {
+			p := planOn(t, c, "x", name, "main..loop")
+			if !strings.Contains(fileText(t, p.file("")), "\n:WORKSTREAM: [[id:"+w.ID+"][Agent (tooling)]]\n") {
+				t.Errorf("%s: plan:\n%s", name, fileText(t, p.file("")))
+			}
+			ref, err := p.Workstream()
+			if err != nil || ref.ID != w.ID || ref.Title != "Agent (tooling)" {
+				t.Errorf("%s: workstream %+v, %v", name, ref, err)
+			}
+			s, err := p.StatusAt(day)
+			if err != nil || len(s.PropertyDrift) != 0 || len(s.StructureDrift) != 0 || len(s.DanglingLinks) != 0 {
+				t.Errorf("%s: status %v: %+v %+v %v", name, err, s.PropertyDrift, s.StructureDrift, s.DanglingLinks)
+			}
+		}
+	})
+
+	t.Run("unknown", func(t *testing.T) {
+		c := testConfig(t)
+		_, err := c.New(NewOptions{Title: "X", Slug: "x", Workstream: "agent-tooling"}, day)
+		isRefusal(t, "unknown workstream", err)
+		if ps, _ := c.ownPlans(); len(ps) != 0 {
+			t.Errorf("a plan was made: %v", ps)
+		}
+	})
+
+	// Without --workstream, a plan that works on another plan's branch, or
+	// stacks on it, is in that plan's workstream, whichever host's it is;
+	// a default branch such as main says nothing.
+	t.Run("continues a branch", func(t *testing.T) {
+		c := testConfig(t)
+		mac := Config{Dir: c.Dir, Host: "mac"}
+		w, err := mac.NewWorkstream("Agent tooling", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		planOn(t, mac, "loop", "agent-tooling", "main..loop")
+		planOn(t, c, "unrelated", "", "main..other")
+		for slug, branches := range map[string][]string{
+			"stacked":     {"loop..loop-flag"},
+			"same branch": {"main..loop"},
+			"bare branch": {"loop"},
+		} {
+			if got := workstreamOf(t, planOn(t, c, strings.ReplaceAll(slug, " ", "-"), "", branches...)); got != w.ID {
+				t.Errorf("%s: workstream %q, want %q", slug, got, w.ID)
+			}
+		}
+		for slug, branches := range map[string][]string{
+			"on main":   {"main..fresh"},
+			"no branch": nil,
+		} {
+			if got := workstreamOf(t, planOn(t, c, strings.ReplaceAll(slug, " ", "-"), "", branches...)); got != "" {
+				t.Errorf("%s: workstream %q, want none", slug, got)
+			}
+		}
+	})
+
+	// A part is in its plan's workstream: its file names none, and a part
+	// cannot name another.
+	t.Run("part", func(t *testing.T) {
+		c := testConfig(t)
+		if _, err := c.NewWorkstream("Agent tooling", ""); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.NewWorkstream("Codex parity", ""); err != nil {
+			t.Fatal(err)
+		}
+		p := planOn(t, c, "x", "agent-tooling", "main..loop")
+		addItems(t, p.file(""), "** Distribution", "P1", "P2")
+		_, err := c.New(NewOptions{Title: "Part", Parent: p.file(""), Part: "P1", Workstream: "codex-parity"}, day)
+		isRefusal(t, "another workstream", err)
+		if _, err := c.New(NewOptions{Title: "Part", Parent: p.file(""), Part: "P2", Branches: []string{"loop..flag"}}, day); err != nil {
+			t.Fatal(err)
+		}
+		if text := fileText(t, p.file("P2")); strings.Contains(text, "WORKSTREAM") {
+			t.Errorf("part:\n%s", text)
+		}
+	})
+}
+
 // Workstreams lists every host's workstreams, and nothing else in the
 // plans directory.
 func TestWorkstreams(t *testing.T) {
