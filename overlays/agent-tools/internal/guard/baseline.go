@@ -1399,7 +1399,7 @@ const appendOnly = "This is a plan's event log, which is append-only and written
 
 const planWrite = "This is a plan file, which agents change through agent-plan alone, so that every change keeps the structure `agent-plan status` checks. " +
 	"Use the command for the change: `agent-plan step` or `part` to add an entry, `edit` for its title or text, `after` for its AFTER, " +
-	"`section` for Goal or Verification, `set` for a `* Plan` property, `ask` and `decide` for questions, `followup`, `reference` or `postpone`, " +
+	"`section` for Goal or Verification, `set` for a `* Plan` property, `unfile` to take a wrongly filed value out of one, `ask` and `decide` for questions, `followup`, `reference` or `postpone`, " +
 	"and `agent-plan new` (or `new --parent PLAN --part P1`) for a new plan file; " +
 	"a workstream's file is made by `agent-plan workstream new --title T --summary S` and is the operator's to edit; " +
 	"a change none of them makes goes in your report for the operator."

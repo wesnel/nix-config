@@ -86,6 +86,10 @@ your report for the operator.
   step keywords do: `agent-plan set PLAN BRANCHES main..loop [--part P1]`
   logs the whole new value; `agent-plan status` lists a value the log does
   not give, and a References entry it does not hold, as property drift.
+  If a hook or an agent filed a worktree, branch or pull request in the
+  wrong plan, take that one value out with `agent-plan unfile PLAN
+  BRANCHES VALUE --reason 'It belongs to plan X.' [--part P1]`, which logs
+  the new value with the reason.
 - `** Goal`: the goal and what is not this change's job, and nothing of how
   the work went. It is the fresh review's goal statement, word for word:
   `agent-plan goal PLAN [--part P1]` prints it. It ends with a

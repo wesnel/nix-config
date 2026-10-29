@@ -273,7 +273,7 @@ func (p Plan) AddToProperty(part, name, value string, now time.Time) (bool, erro
 				return values
 			}
 			return append(values, value)
-		}, now)
+		}, "", now)
 	})
 	return added, err
 }

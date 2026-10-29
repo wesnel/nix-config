@@ -141,6 +141,114 @@ func TestProperties(t *testing.T) {
 	})
 }
 
+// RemoveFromProperty takes one value a hook or an agent filed into the wrong
+// plan back out of its WORKTREES, BRANCHES or PULL_REQUESTS, and logs the
+// new value with why, so status still finds the file and the log agree.
+func TestRemoveFromProperty(t *testing.T) {
+	// summaries are the summaries of p's property events about item.
+	summaries := func(t *testing.T, p Plan, item string) []string {
+		t.Helper()
+		events, err := p.Events()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, e := range events {
+			if e.Kind == "property" && e.Item == item {
+				out = append(out, e.Summary)
+			}
+		}
+		return out
+	}
+
+	t.Run("removed and logged with the reason", func(t *testing.T) {
+		p := newPlan(t, testConfig(t), "x")
+		if _, err := p.AddToProperty("", "BRANCHES", "main..other", day); err != nil {
+			t.Fatal(err)
+		}
+		if err := p.RemoveFromProperty("", "BRANCHES", "main..other", "It is plan y's work.", day); err != nil {
+			t.Fatal(err)
+		}
+		if got := planProps(t, p.File())["BRANCHES"]; got != "main..loop" {
+			t.Errorf("BRANCHES %q", got)
+		}
+		expectList(t, "logged", propertyEvents(t, p), p.Name+" WORKTREES = /w/loop", p.Name+" BRANCHES = main..loop",
+			p.Name+" BRANCHES = main..loop main..other", p.Name+" BRANCHES = main..loop")
+		got := summaries(t, p, p.Name)
+		if last := got[len(got)-1]; last != "BRANCHES main..loop; removed main..other: It is plan y's work." {
+			t.Errorf("summary %q", last)
+		}
+		expectList(t, "drift", drift(t, p))
+	})
+
+	t.Run("the last value", func(t *testing.T) {
+		p := newPlan(t, testConfig(t), "x")
+		if err := p.RemoveFromProperty("", "WORKTREES", "/w/loop", "Another session's worktree.", day); err != nil {
+			t.Fatal(err)
+		}
+		if got := planProps(t, p.File())["WORKTREES"]; got != "" {
+			t.Errorf("WORKTREES %q", got)
+		}
+		expectList(t, "drift", drift(t, p))
+	})
+
+	// A value only the file holds, as a hand edit leaves, is removed and
+	// logged too, so its reason is on record.
+	t.Run("a value the log never gave", func(t *testing.T) {
+		p := newPlan(t, testConfig(t), "x")
+		setProp(t, p.File(), "PULL_REQUESTS", "https://github.com/o/r/pull/1")
+		if err := p.RemoveFromProperty("", "PULL_REQUESTS", "https://github.com/o/r/pull/1", "Opened by another session.", day); err != nil {
+			t.Fatal(err)
+		}
+		got := summaries(t, p, p.Name)
+		if last := got[len(got)-1]; last != "PULL_REQUESTS; removed https://github.com/o/r/pull/1: Opened by another session." {
+			t.Errorf("summary %q", last)
+		}
+		expectList(t, "drift", drift(t, p))
+	})
+
+	t.Run("a part's", func(t *testing.T) {
+		c := testConfig(t)
+		p := newPlan(t, c, "x")
+		addItems(t, p.file(""), "** Distribution", "P1")
+		if _, err := c.New(NewOptions{Title: "Part", Parent: p.file(""), Part: "P1", Branches: []string{"loop..flag", "main..other"}}, day); err != nil {
+			t.Fatal(err)
+		}
+		if err := p.RemoveFromProperty("P1", "BRANCHES", "main..other", "It is plan y's work.", day); err != nil {
+			t.Fatal(err)
+		}
+		if got := planProps(t, p.file("P1"))["BRANCHES"]; got != "loop..flag" {
+			t.Errorf("part's BRANCHES %q", got)
+		}
+		if got := planProps(t, p.File())["BRANCHES"]; got != "main..loop" {
+			t.Errorf("plan's BRANCHES %q", got)
+		}
+		expectList(t, "drift", drift(t, p))
+	})
+
+	t.Run("refused", func(t *testing.T) {
+		p := newPlan(t, testConfig(t), "x")
+		before, err := os.ReadFile(p.File())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for what, args := range map[string][3]string{
+			"a value the plan does not hold": {"BRANCHES", "main..other", "x"},
+			"OWNERS, own's":                  {"OWNERS", "/w/loop=a1", "x"},
+			"a property not logged":          {"STATUS", "planning", "x"},
+			"no reason":                      {"BRANCHES", "main..loop", ""},
+			"two values":                     {"BRANCHES", "main..loop main..x", "x"},
+		} {
+			isRefusal(t, what, p.RemoveFromProperty("", args[0], args[1], args[2], day))
+		}
+		isRefusal(t, "another host's plan", otherHosts(t, p).RemoveFromProperty("", "BRANCHES", "main..loop", "x", day))
+		if after, _ := os.ReadFile(p.File()); string(after) != string(before) {
+			t.Errorf("refused removals changed the plan:\n%s", after)
+		}
+		expectList(t, "logged", propertyEvents(t, p), p.Name+" WORKTREES = /w/loop", p.Name+" BRANCHES = main..loop")
+	})
+}
+
 // planProps are the properties of file's `* Plan` heading.
 func planProps(t *testing.T, file string) map[string]string {
 	t.Helper()

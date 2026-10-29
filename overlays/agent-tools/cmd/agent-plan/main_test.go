@@ -600,6 +600,36 @@ func TestCommands(t *testing.T) {
 		}
 	})
 
+	t.Run("unfile", func(t *testing.T) {
+		plan := sessionPlan(t)
+		if code, _, errs := agentPlan(t, "", "set", plan, "BRANCHES", "main..loop", "main..other"); code != 0 {
+			t.Fatalf("set: %d %s", code, errs)
+		}
+		code, out, errs := agentPlan(t, "", "unfile", plan, "BRANCHES", "main..other", "--reason", "It is plan y's work.")
+		if code != 0 || !strings.Contains(out, `"removed": "main..other"`) {
+			t.Fatalf("unfile: %d %s %s", code, out, errs)
+		}
+		if data, _ := os.ReadFile(plan); !strings.Contains(string(data), ":BRANCHES: main..loop\n") {
+			t.Errorf("plan:\n%s", data)
+		}
+		code, out, _ = agentPlan(t, "", "status", plan, "--format", "json")
+		var s plans.Status
+		if code != 0 || json.Unmarshal([]byte(out), &s) != nil || len(s.PropertyDrift) != 0 {
+			t.Errorf("status: %d %s", code, out)
+		}
+		for _, args := range [][]string{
+			{"unfile", plan, "BRANCHES"},
+			{"unfile", plan, "BRANCHES", "main..loop", "main..x", "--reason", "x"},
+		} {
+			if code, _, errs := agentPlan(t, "", args...); code != 2 {
+				t.Errorf("%v: %d %s", args, code, errs)
+			}
+		}
+		if code, _, errs := agentPlan(t, "", "unfile", plan, "BRANCHES", "main..other", "--reason", "x"); code != 2 || !strings.Contains(errs, "refused") {
+			t.Errorf("unfile of a value not held: %d %s", code, errs)
+		}
+	})
+
 	t.Run("waiting", func(t *testing.T) {
 		plan := sessionPlan(t)
 		if code, _, errs := agentPlan(t, "", "log", plan, "--item", "S1", "--kind", "handed-back", "--summary", "ready to sign",

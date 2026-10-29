@@ -90,6 +90,6 @@ func (c Config) takeHandover(session, cwd string, now time.Time) {
 				return values
 			}
 			return append(values, session)
-		}, now)
+		}, "", now)
 	})
 }
