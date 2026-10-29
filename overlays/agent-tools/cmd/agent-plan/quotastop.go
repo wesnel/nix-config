@@ -29,16 +29,28 @@ var stopAllows = []string{"Read", "Grep", "Glob", "ToolSearch", "Skill", "AskUse
 // hand back. A record it cannot read lets every
 // call through. A threshold it cannot use, or a denial it cannot write,
 // exits 1, which the hook's onFailure block makes a denial.
+//
+// With --harness codex it is Codex's PreToolUse hook instead, as
+// codexQuotaStop says, and exits 2 where Claude Code's exits 1: Codex runs
+// a tool whose hook exits 1, and blocks one whose hook exits 2 with a
+// reason on stderr.
 func quotaStop(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("agent-plan quota-stop", flag.ContinueOnError)
 	flags.SetOutput(stderr)
+	harness := flags.String("harness", "claude", "")
 	threshold := flags.Int("threshold", 0, "")
-	if err := flags.Parse(args); err != nil {
-		return 1
+	err := flags.Parse(args)
+	codex := *harness == "codex"
+	fail := 1
+	if codex {
+		fail = 2
 	}
-	if *threshold < 1 || *threshold > 100 || flags.NArg() > 0 {
-		fmt.Fprintln(stderr, "agent-plan quota-stop: takes --threshold N, a percentage from 1 to 100")
-		return 1
+	if err != nil {
+		return fail
+	}
+	if *threshold < 1 || *threshold > 100 || flags.NArg() > 0 || !codex && *harness != "claude" {
+		fmt.Fprintln(stderr, "agent-plan quota-stop: takes --threshold N, a percentage from 1 to 100, and --harness claude or codex")
+		return fail
 	}
 	var in struct {
 		Tool string `json:"tool_name"`
@@ -54,6 +66,9 @@ func quotaStop(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		} `json:"tool_input"`
 	}
 	json.Unmarshal(readAll(stdin), &in)
+	if codex {
+		return codexQuotaStop(in.Tool, in.Input.Command, in.AgentID != "", *threshold, stdout, stderr)
+	}
 	if slices.Contains(stopAllows, in.Tool) || in.Tool == "Bash" && guard.ExcludedAlone(in.Input.Command, []string{"agent-plan"}) {
 		return 0
 	}
@@ -91,6 +106,45 @@ func quotaStop(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}); err != nil {
 		fmt.Fprintln(stderr, reason)
 		return 1
+	}
+	return 0
+}
+
+// codexStopAllows are the Codex tools the Codex quota stop lets through,
+// besides agent-plan alone on a Bash line: Codex reads files through its
+// shell, so a session can log, plan, ask the operator, and wait for or close
+// a sub-agent, and nothing more.
+var codexStopAllows = []string{"update_plan", "request_user_input", "wait_agent", "close_agent"}
+
+// codexQuotaStop is quotaStop for a Codex session's call of tool, its shell
+// command, if any, being command: it reads the windows codex-usage records
+// in quota.CodexFile. Codex has no tool that schedules a later turn, so
+// the refusal tells the session to end its turn for the operator to resume
+// it after the reset, and a sub-agent to end its turn with its report.
+func codexQuotaStop(tool, command string, subagent bool, threshold int, stdout, stderr io.Writer) int {
+	if slices.Contains(codexStopAllows, tool) || tool == "Bash" && guard.ExcludedAlone(command, []string{"agent-plan"}) {
+		return 0
+	}
+	now := time.Now()
+	w, over := quota.Over(quota.Load(quota.CodexFile()), float64(threshold), now)
+	if !over {
+		return 0
+	}
+	clock := quota.Clock(w.ResetsAt, now)
+	next := "Log where the work stands with agent-plan, then end your turn, telling the operator the stop holds until " + clock +
+		": Codex cannot schedule its own resume, so the operator resumes this session after the reset."
+	if subagent {
+		next = "You are a sub-agent: log where the work stands with agent-plan, then end your turn with your report, " +
+			"saying the quota stop holds until " + clock + "."
+	}
+	reason := fmt.Sprintf("Quota stop: the Codex account's %s window is at %d%%, at or above the %d%% stop, until it resets at %s. "+
+		"Until then no sub-agent starts and no tool runs but %s, and agent-plan alone on a shell line. %s "+
+		"Nothing in a session lifts the stop: the operator does, by setting wgn.home.codex.quotaStop = null and switching.",
+		w.Name, int(math.Floor(w.Used)), threshold, clock, strings.Join(codexStopAllows, ", "), next)
+	if err := json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{
+		"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}); err != nil {
+		fmt.Fprintln(stderr, reason)
+		return 2
 	}
 	return 0
 }

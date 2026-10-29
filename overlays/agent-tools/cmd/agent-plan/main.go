@@ -179,7 +179,15 @@ have (see status) is refused and writes nothing.
                      both over), and the call that schedules the main
                      session's resume just after it; with no record it can
                      read, denies nothing
-  codex-usage        read the Codex account's quota windows through
+  quota-stop --harness codex --threshold N
+                     the same as Codex's PreToolUse hook, from the windows
+                     codex-usage recorded: denies every call but
+                     update_plan, request_user_input, wait_agent,
+                     close_agent and agent-plan alone on a Bash line, and
+                     tells the session to end its turn for the operator to
+                     resume, Codex having no tool to schedule that; exits 2
+                     where Claude Code's exits 1
+  codex-usage       read the Codex account's quota windows through
                      ` + "`codex app-server`" + ` (account/rateLimits/read) and
                      record them in $XDG_STATE_HOME/agent-plan/codex-usage.json,
                      as statusline records Claude's; needs Codex's login and
