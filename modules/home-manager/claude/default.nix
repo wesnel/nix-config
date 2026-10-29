@@ -491,6 +491,72 @@ with lib; let
       touch $out
     '';
 
+  # The sandbox's denied writes, which trash-scratch refuses too. The plans
+  # directory holds the plans, their logs and the logs' locks, which only
+  # agent-plan's excluded writes change; the notes repository's git
+  # directory, so that no git command run in the repository can reset,
+  # switch, clean or merge the plans either. The review records, which the
+  # excluded writers alone change.
+  sandboxDeniedWrites = [plans.dir "${plans.repository.path}/.git" records];
+
+  # trash-scratch's settings are shell words: scratchBase holds each
+  # session's directory, under its project, named by the session's ID, and
+  # protectedPaths are the paths the sandbox keeps from writes.
+  mkTrashScratch = {
+    trashCommand,
+    scratchBase ? ''"${
+        if darwin
+        then "/private/tmp"
+        else "/tmp"
+      }/claude-$(id -u)"'',
+    protectedPaths ? concatMapStringsSep " " escapeShellArg sandboxDeniedWrites,
+    postCheck ? "",
+  }:
+    pkgs.writeShellApplication {
+      name = "trash-scratch";
+      runtimeInputs = [pkgs.coreutils pkgs.git];
+      derivationArgs = {inherit postCheck;};
+      text =
+        ''
+          trash_command=${escapeShellArg trashCommand}
+          scratch_base=${scratchBase}
+          protected_paths=(${protectedPaths})
+          case_insensitive=${boolToString darwin}
+        ''
+        + builtins.readFile ./trash-scratch.sh;
+    };
+  trashScratch = mkTrashScratch {
+    trashCommand =
+      if darwin
+      then "/usr/bin/trash"
+      else "${pkgs.trash-cli}/bin/trash";
+    postCheck = ": ${trashScratchTests}";
+  };
+  trashScratchTests = let
+    # A fake, since the real one moves to the operator's Trash: it moves
+    # into the fixture's own directory instead, and reads every argument as
+    # a file, -- too, as macOS's trash does.
+    fakeTrash = pkgs.writeShellScriptBin "trash" ''
+      status=0
+      for path in "$@"; do ${pkgs.coreutils}/bin/mv -- "$path" "$TRASH_TEST_DEST/" || status=1; done
+      exit "$status"
+    '';
+    underTest = mkTrashScratch {
+      trashCommand = getExe fakeTrash;
+      scratchBase = ''"$TRASH_TEST_ROOT/scratch"'';
+      protectedPaths = ''"$TRASH_TEST_ROOT/repo/protected"'';
+    };
+    run = pkgs.writeShellApplication {
+      name = "trash-scratch-tests";
+      runtimeInputs = [pkgs.coreutils pkgs.git];
+      text = builtins.readFile ./trash-scratch-tests.sh;
+    };
+  in
+    pkgs.runCommand "trash-scratch-tests" {} ''
+      ${getExe run} ${getExe underTest}
+      touch $out
+    '';
+
   # agent-plan's subcommands that write a plan's files, its log or its lock,
   # run outside the sandbox, which denies the plans directory to every other
   # command. Never sync, init or reseal: sync pushes and init clones with the
@@ -601,6 +667,9 @@ with lib; let
     #   the operator's gh login and prints what it read: pull requests, their
     #   diffs and checks, workflow runs and logs, and repositories, private
     #   ones included, from whichever host its arguments name.
+    # - trash-scratch validates every path before moving untracked worktree
+    #   files or files in this session's scratch directory to the system
+    #   Trash, and refuses what the sandbox protects.
     # - git delegate: Codex's own sandbox cannot start inside this one, a
     #   pull request is fetched with the operator's login, and it writes the
     #   review records the sandbox denies. api.openai.com stays out of the
@@ -614,7 +683,7 @@ with lib; let
     #   which denyRead holds too), and pr-loop refuses to post text holding a
     #   secret's shape.
     excludedCommands =
-      ["gh-read *" "git delegate *" "git-delegate *"]
+      ["gh-read *" "git delegate *" "git-delegate *" "trash-scratch *"]
       ++ map (sub "pr-loop") prLoopGitHub
       ++ map (sub "agent-plan") agentPlanWrites;
 
@@ -704,32 +773,24 @@ with lib; let
 
       # Nothing on PATH (~/go/bin among it) and nothing that a program
       # outside the sandbox loads code or configuration from. Go's and
-      # golangci-lint's own caches, where they are by default. `trash` moves
-      # a file on the home volume into ~/.Trash, which the trash skill asks
-      # for in place of rm.
+      # golangci-lint's own caches, where they are by default.
       allowWrite =
         ["~/go/pkg"]
         ++ (
           if darwin
-          then ["~/Library/Caches/go-build" "~/Library/Caches/golangci-lint" "~/.Trash"]
+          then ["~/Library/Caches/go-build" "~/Library/Caches/golangci-lint"]
           else ["~/.cache/go-build" "~/.cache/golangci-lint"]
         )
         ++ ["~/.claude/worktrees" "~/.cache/nix" "~/.cache/uv"];
 
-      # The plans directory holds the plans, their logs and the logs'
-      # locks, which only agent-plan's excluded writes change; the notes
-      # repository's git directory, so that no git command run in the
-      # repository can reset, switch, clean or merge the plans either. The
-      # review records, which the excluded writers alone change.
       denyWrite =
-        [plans.dir "${plans.repository.path}/.git" records]
+        sandboxDeniedWrites
         # Every clone's agent settings, which the operator alone writes. Only
         # macOS's sandbox takes a wildcard in a write list; Linux's skips the
         # entry, which leaves the guard to refuse the write there.
         ++ optional darwin agentSettingsWrites;
     };
   };
-
 in {
   options.wgn.home.claude = {
     enable = mkEnableOption "Enables my Claude Code skills and context for home-manager";
@@ -847,7 +908,7 @@ in {
           # Every delegate subcommand is one an agent may run; an
           # operator-only action must never become one, since this rule
           # allows it.
-          ++ ["Bash(git delegate *)" "Bash(git-delegate *)"]
+          ++ ["Bash(git delegate *)" "Bash(git-delegate *)" "Bash(trash-scratch *)"]
           ++ map (w: "Bash(${sub "agent-plan" w})") agentPlanWrites
           ++ mcpRules.allow;
 
@@ -1103,6 +1164,10 @@ in {
     # Matched by name in the sandbox's excluded commands.
     (mkIf (elem "gh-read *" (cfg.settings.sandbox.excludedCommands or [])) {
       home.packages = [ghRead];
+    })
+
+    (mkIf (elem "trash-scratch *" (cfg.settings.sandbox.excludedCommands or [])) {
+      home.packages = [trashScratch];
     })
 
     (mkIf cfg.agentPlans.enable (let
