@@ -105,6 +105,23 @@ with lib; let
             f.write(tomlkit.dumps(doc))
   '';
 
+  # The role agents Claude Code starts (llm.agentFiles), as Codex roles:
+  # ~/.codex/agents/NAME.toml, which spawn_agent's agent_type names. Codex
+  # takes a role's prompt and effort but no tools or hooks of its own, so a
+  # reviewer's role does not keep it to reading. Codex preloads no skills,
+  # so the prompt names those its agent file lists.
+  roles = mapAttrs' (name: a:
+    nameValuePair ".codex/agents/${name}.toml" {
+      source = (pkgs.formats.toml {}).generate "codex-role-${name}.toml" ({
+          inherit name;
+          description = a.field "description";
+          developer_instructions =
+            optionalString (a.skills != []) "Load these skills before anything else: ${concatStringsSep ", " a.skills}.\n\n"
+            + a.prompt;
+        }
+        // optionalAttrs (a.field "effort" != null) {model_reasoning_effort = a.field "effort";});
+    }) (llm.agentFiles pkgs (getExe' config.wgn.home.llm.agentTools "pr-loop"));
+
   plans = config.wgn.home.llm.plans;
   sandboxLists = config.wgn.home.llm.sandbox;
   darwin = pkgs.stdenv.hostPlatform.isDarwin;
@@ -332,6 +349,7 @@ in {
       # file is what stops it being able to.
       home.file =
         llm.mkSkillFiles pkgs ".codex/skills" config.wgn.home.llm.skills
+        // roles
         // {
           # Codex skips this when an AGENTS.override.md beside it is non-empty.
           ".codex/AGENTS.md".source = config.wgn.home.llm.instructions;
