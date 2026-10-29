@@ -210,6 +210,10 @@ with lib; let
   in
     match (go (stringToCharacters expanded) + optionalString (!glob) "(/.*)?") path != null;
 
+  # The excluded commands as Codex rule prefixes: "pr-loop open *" is
+  # ["pr-loop" "open"].
+  excludedPrefixes = map (c: splitString " " (removeSuffix " *" c)) config.wgn.home.llm.guard.excludedCommands;
+
   # Commands' temporary directory on macOS, in place of the per-user one,
   # which holds the decrypted secrets and is read-only to them.
   commandTmpdir = "${config.xdg.cacheHome}/codex/tmp";
@@ -288,6 +292,11 @@ in {
         # Starts the proxy for a profile whose network is enabled; without
         # it, that network is unfiltered.
         features.network_proxy = true;
+        # Codex asks the operator, not a reviewer model, when a command
+        # needs more than the profile gives; without this, a project Codex
+        # does not trust gets no prompts.
+        approval_policy = "on-request";
+        approvals_reviewer = "user";
         # Commands inherit Codex's whole environment but these.
         shell_environment_policy =
           {
@@ -479,6 +488,36 @@ in {
           ${optionalString darwin "mkdir -p ${escapeShellArg commandTmpdir}"}
         fi
       '';
+    }
+
+    # The excluded commands need what the profile withholds: GitHub, the
+    # operator's logins, the review records. Codex keeps a command
+    # sandboxed under any allow rule while the profile denies reads, so
+    # the operator approves each run instead: a prompt rule asks every
+    # time, and outranks an allow rule a past approval saved to
+    # default.rules. Approved, a command run with `require_escalated`
+    # writes beyond the workspace but still cannot read the denied paths,
+    # and the proxy asks again for a host it does not allow.
+    {
+      home.file.".codex/rules/nix.rules".text =
+        concatMapStrings (p: ''
+          prefix_rule(pattern=${builtins.toJSON p}, decision="prompt")
+        '')
+        excludedPrefixes;
+
+      assertions = [
+        {
+          assertion = let
+            rules = config.home.file.".codex/rules/nix.rules".text or "";
+          in
+            (cfg.sandbox.approval_policy or null)
+            == "on-request"
+            && (cfg.sandbox.approvals_reviewer or null) == "user"
+            && all (p: hasInfix (builtins.toJSON p) rules) excludedPrefixes
+            && hasInfix (escapeShellArg (builtins.toJSON cfg.sandbox)) config.home.activation.codexSandbox.data;
+          message = "wgn.home.codex: Codex must ask the operator before each command of wgn.home.llm.guard.excludedCommands, through a prompt rule in ~/.codex/rules/nix.rules";
+        }
+      ];
     }
 
     # Near a rate limit Codex offers to switch the running session to a

@@ -85,6 +85,13 @@ that whatever it would have shown is unverified.
 A secret that reaches the session anyway, in a log, a captured request or a
 fixture, is written nowhere: put `<REDACTED>` in its place.
 
+In Codex, `gh-read`, `git delegate`, `pr-loop`'s GitHub commands and
+`agent-plan`'s writes each wait for the operator's approval, every run:
+run each with `sandbox_permissions` set to `require_escalated` and a
+one-line justification, as a command of its own. Without
+`require_escalated` an approved run stays in the sandbox, where it cannot
+reach GitHub. A declined run is a refusal.
+
 ## Commands the operator runs
 
 Hand over what is the operator's to run (a key touch, root, an interactive
