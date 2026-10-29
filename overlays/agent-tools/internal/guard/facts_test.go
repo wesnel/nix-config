@@ -91,6 +91,47 @@ func planProperty(t *testing.T, file, name string) string {
 	return ""
 }
 
+// A branch or pull request the hook records in a plan that another plan
+// names too links the plan to it, with that as the reason.
+func testPostLinksPlans(t *testing.T) {
+	main, _, p := planned(t)
+	c, err := plans.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := func(slug, branch string) plans.Plan {
+		t.Helper()
+		made, err := c.New(plans.NewOptions{Title: "Other " + slug, Slug: slug, Branches: []string{branch}}, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		o, err := c.Open(made.Plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return o
+	}
+	other("topic", "main..topic")
+	reviewed := other("reviewed", "main..reviewed")
+	url := "https://github.com/o/r/pull/12"
+	if _, err := reviewed.AddToProperty("", "PULL_REQUESTS", url, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	gitOut(t, main, "switch", "-q", "-c", "topic")
+	postHook(t, claudeEvent("s1", main, "git switch -c topic", "Switched to a new branch 'topic'\n"))
+	opened := `{"pr": 12, "url": "` + url + `", "draft": true, "branch": "topic", "base": "main"}`
+	postHook(t, claudeEvent("s1", main, "pr-loop open --title T --body-file - topic", opened))
+	text, _ := os.ReadFile(p.File())
+	for _, want := range []string{
+		"][Other topic]]: Both work on branch topic.\n",
+		"][Other reviewed]]: Both name pull request " + url + ".\n",
+	} {
+		if !strings.Contains(string(text), want) {
+			t.Errorf("the plan lacks %q:\n%s", want, text)
+		}
+	}
+}
+
 // What a tool call did to the work, as git and pr-loop report it, reaches
 // the plan the session or worktree belongs to without the agent: commits
 // and pushes in its log, new worktrees, branches and pull requests in its

@@ -3,6 +3,7 @@ package plans
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -22,6 +23,10 @@ type OpenItem struct {
 	Kind      string `json:"kind"`
 	Plan      string `json:"plan"`
 	PlanTitle string `json:"planTitle"`
+	// Workstream and WorkstreamID are the plan's workstream's title and
+	// file-level ID, "" for a plan in none.
+	Workstream   string `json:"workstream,omitempty"`
+	WorkstreamID string `json:"workstreamId,omitempty"`
 	// Halted is a plan whose STATUS is halted.
 	Halted bool `json:"halted,omitempty"`
 	// Item is the item's ID, or the plan's for a sign-pass.
@@ -61,8 +66,10 @@ func ParseSince(s string, loc *time.Location) (time.Time, error) {
 const logTime = "[2006-01-02 Mon 15:04]"
 
 // OpenItems are the open items of this host's plans, halted ones
-// included, newest plan first, that f keeps. A plan that cannot be read
-// is left out and named in the error, beside the rest.
+// included, that f keeps, grouped by their plan's workstream: the
+// workstreams in the order of their newest plan, then the plans in none;
+// within each, newest plan first. A plan that cannot be read is left out
+// and named in the error, beside the rest.
 func (c Config) OpenItems(f OpenFilter, now time.Time) ([]OpenItem, error) {
 	if f.Kind != "" && !oneOf(f.Kind, OpenKinds) {
 		return nil, refusal.New("%q is not a kind of open item. Pass `--kind` with one of %s", f.Kind, strings.Join(OpenKinds, ", "))
@@ -71,10 +78,20 @@ func (c Config) OpenItems(f OpenFilter, now time.Time) ([]OpenItem, error) {
 	if err != nil {
 		return nil, err
 	}
+	titles, err := c.WorkstreamTitles()
 	out := []OpenItem{}
-	var errs []error
+	errs := []error{err}
 	for _, p := range ps {
 		items, err := p.OpenItems(now)
+		if err == nil {
+			var ws WorkstreamRef
+			if ws, err = p.Workstream(); ws.ID != "" && titles[ws.ID] != "" {
+				ws.Title = titles[ws.ID]
+			}
+			for i := range items {
+				items[i].Workstream, items[i].WorkstreamID = ws.Title, ws.ID
+			}
+		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", p.Name, err))
 			continue
@@ -89,6 +106,13 @@ func (c Config) OpenItems(f OpenFilter, now time.Time) ([]OpenItem, error) {
 			out = append(out, it)
 		}
 	}
+	rank := map[string]int{"": len(out)}
+	for i, it := range out {
+		if _, ok := rank[it.WorkstreamID]; !ok {
+			rank[it.WorkstreamID] = i
+		}
+	}
+	slices.SortStableFunc(out, func(a, b OpenItem) int { return rank[a.WorkstreamID] - rank[b.WorkstreamID] })
 	return out, errors.Join(errs...)
 }
 
@@ -202,18 +226,30 @@ func pendingSigns(events []Event) []Event {
 	return out
 }
 
-// OpenItemsOrg is items as Org: under a heading per plan, in the order
-// the items come, one line each.
+// OpenItemsOrg is items as Org: under a heading per workstream, "none" for
+// plans in none, and under it one per plan, in the order the items come,
+// one line each.
 func OpenItemsOrg(items []OpenItem) string {
 	if len(items) == 0 {
 		return "No open items.\n"
 	}
 	var b strings.Builder
-	group := ""
+	stream, group := "-", ""
 	for _, it := range items {
+		if it.WorkstreamID != stream {
+			stream, group = it.WorkstreamID, ""
+			title := it.Workstream
+			switch {
+			case stream == "":
+				title = "none"
+			case title == "":
+				title = "id:" + stream
+			}
+			fmt.Fprintf(&b, "* %s\n", title)
+		}
 		if it.Plan != group {
 			group = it.Plan
-			fmt.Fprintf(&b, "* %s (%s)", it.PlanTitle, it.Plan)
+			fmt.Fprintf(&b, "** %s (%s)", it.PlanTitle, it.Plan)
 			if it.Halted {
 				b.WriteString(" halted")
 			}

@@ -365,8 +365,8 @@ func TestCommands(t *testing.T) {
 		}
 		name := strings.TrimSuffix(filepath.Base(plan), ".org")
 		code, out, errs := agentPlan(t, "", "open", "--kind", "follow-up")
-		if code != 0 || !strings.HasPrefix(out, "* Add the loop ("+name+")\n- follow-up F1 [") ||
-			!strings.HasSuffix(out, "] :: Cache the parse\n") || strings.Count(out, "\n") != 2 {
+		if code != 0 || !strings.HasPrefix(out, "* none\n** Add the loop ("+name+")\n- follow-up F1 [") ||
+			!strings.HasSuffix(out, "] :: Cache the parse\n") || strings.Count(out, "\n") != 3 {
 			t.Errorf("open --kind follow-up: %d %q %s", code, out, errs)
 		}
 		code, out, _ = agentPlan(t, "", "open", "--json")
@@ -381,6 +381,77 @@ func TestCommands(t *testing.T) {
 			if code, out, errs := agentPlan(t, "", args...); code != 2 {
 				t.Errorf("%v: %d %s %s", args, code, out, errs)
 			}
+		}
+	})
+
+	// workstream new writes a workstream's file, and list lists them.
+	t.Run("workstream", func(t *testing.T) {
+		c := setup(t)
+		code, out, errs := agentPlan(t, "", "workstream", "new", "--title", "Agent tooling", "--summary", "The agent tools.")
+		var w plans.Workstream
+		json.Unmarshal([]byte(out), &w)
+		if code != 0 || w.File != filepath.Join(c.Dir, "workstream-agent-tooling.box.org") || w.ID == "" {
+			t.Fatalf("workstream new: %d %s %s", code, out, errs)
+		}
+		code, out, _ = agentPlan(t, "", "workstream", "list")
+		if code != 0 || out != "- Agent tooling (workstream-agent-tooling.box)\n" {
+			t.Errorf("workstream list: %d %q", code, out)
+		}
+		code, out, _ = agentPlan(t, "", "workstream", "list", "--json")
+		if code != 0 || !strings.Contains(out, `"id": "`+w.ID+`"`) {
+			t.Errorf("workstream list --json: %d %s", code, out)
+		}
+		code, out, errs = agentPlan(t, "", "new", "--title", "Add the loop", "--slug", "add-loop", "--workstream", "agent-tooling")
+		var made plans.Created
+		json.Unmarshal([]byte(out), &made)
+		if data, _ := os.ReadFile(made.Plan); code != 0 || !strings.Contains(string(data), ":WORKSTREAM: [[id:"+w.ID+"][Agent tooling]]\n") {
+			t.Errorf("new --workstream: %d %s %s\n%s", code, out, errs, data)
+		}
+		for _, args := range [][]string{{"workstream"}, {"workstream", "remove"}, {"workstream", "new"}, {"workstream", "list", "x"},
+			{"new", "--title", "X", "--slug", "x", "--workstream", "nope"}, {"status", made.Plan, "--workstream", "agent-tooling"}} {
+			if code, out, errs := agentPlan(t, "", args...); code == 0 {
+				t.Errorf("%v: %d %s %s", args, code, out, errs)
+			}
+		}
+	})
+
+	// Hard evidence links a plan as it gains it; related lists every
+	// related plan, linked or not, and writes nothing.
+	t.Run("related", func(t *testing.T) {
+		setup(t)
+		first := newPlan(t)
+		name := strings.TrimSuffix(filepath.Base(first), ".org")
+		second := newPlan(t)
+		if code, _, errs := agentPlan(t, "", "followup", first, "--title", "Cache the parse", "--found-in", "S1"); code != 0 {
+			t.Fatalf("followup: %s", errs)
+		}
+		code, out, errs := agentPlan(t, "", "new", "--title", "Cache it", "--slug", "cache")
+		var made plans.Created
+		json.Unmarshal([]byte(out), &made)
+		if code != 0 || len(made.Linked) != 0 {
+			t.Fatalf("new: %d %s %s", code, out, errs)
+		}
+		short := strings.TrimSuffix(name, ".box")
+		code, _, errs = agentPlan(t, "", "section", made.Plan, "Goal", "--text", "Take F1 of plan "+short+".")
+		if code != 0 || errs != "agent-plan: linked "+made.ID+" to "+name+": Takes over its F1.\n" {
+			t.Errorf("section: %d %q", code, errs)
+		}
+		before, _ := os.ReadFile(second)
+		code, out, errs = agentPlan(t, "", "related", second)
+		// The plans may share the worktree the test runs in, a softer sign.
+		if code != 0 || !strings.HasPrefix(out, "- hard linked "+name+" (Add the loop): Both work on branch loop.\n") ||
+			strings.Count(out, "- hard") != 1 {
+			t.Errorf("related: %d %q %s", code, out, errs)
+		}
+		code, out, _ = agentPlan(t, "", "related", made.Plan, "--json")
+		if code != 0 || !strings.Contains(out, `"linked": true`) || !strings.Contains(out, `"hard": true`) {
+			t.Errorf("related --json: %d %s", code, out)
+		}
+		if after, _ := os.ReadFile(second); string(after) != string(before) {
+			t.Errorf("related wrote the plan:\n%s", after)
+		}
+		if code, out, errs := agentPlan(t, "", "related"); code != 2 {
+			t.Errorf("related without a plan: %d %s %s", code, out, errs)
 		}
 	})
 

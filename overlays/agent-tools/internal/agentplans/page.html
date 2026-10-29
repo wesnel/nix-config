@@ -212,6 +212,7 @@ section { display: grid; gap: 14px; min-width: 0; }
 .waiting.late { color: var(--warning); font-weight: 600; }
 
 /* Plan index */
+.workstream h3 { font-size: var(--text-base); margin: 16px 0 8px; }
 .index { list-style: none; margin: 0; padding: 0; }
 .index li { border-top: 1px solid var(--border-muted); }
 .index li:first-child { border-top: 0; }
@@ -306,7 +307,7 @@ iframe.renderer {
 {
   "plans": {
     "schema": "number", "id": "string", "title": "string", "goal": "string", "status": "string",
-    "host": "string", "updated": "string",
+    "host": "string", "updated": "string", "workstream": "string",
     "steps": [{"id": "string", "order": "number", "title": "string", "keyword": "string", "ready": "boolean"}],
     "decisions": [{"id": "string", "question": "string", "answer": "string"}],
     "questions": [{"id": "string", "text": "string", "priority": "string", "context": "string",
@@ -474,6 +475,10 @@ iframe.renderer {
   const PLAN_ID = /^(?:[0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{14})-[a-z0-9]+(?:-[a-z0-9]+)*\.[A-Za-z0-9][A-Za-z0-9_-]*$/;
   const QID = /^(?:P[0-9]+\.)?Q[0-9]+$/;
   const SLUG = /^([A-Za-z0-9_][A-Za-z0-9_.-]{0,99})\/([A-Za-z0-9_][A-Za-z0-9_.-]{0,99})$/;
+  // BY_WORKSTREAM is plans, in their order, grouped as [workstream, plans]
+  // pairs: each workstream where its first plan comes, the plans in none
+  // last, under "". One line, which a test cuts out and runs.
+  const BY_WORKSTREAM = (plans) => { const groups = new Map(); for (const p of plans) { const w = p.workstream || ""; if (!groups.has(w)) groups.set(w, []); groups.get(w).push(p); } const none = groups.get(""); groups.delete(""); return none ? [...groups, ["", none]] : [...groups]; };
   const DAY = 86400000;
   const DIAGRAM_ID = /^D[1-9][0-9]{0,3}$/;
 
@@ -1030,21 +1035,26 @@ iframe.renderer {
       .sort((a, b) => (when(b.updated) ?? 0) - (when(a.updated) ?? 0) || a.id.localeCompare(b.id));
   }
 
+  // renderIndex lists the plans under their workstreams, as BY_WORKSTREAM
+  // groups them, those in none under "none".
   function renderIndex(list) {
     const host = state.meta ? state.meta.host : "";
+    const row = (p) => {
+      const ready = p.steps.filter((s) => s.ready).length;
+      const facts = [statusMark(p.status)];
+      if (p.questions.length) facts.push(mark(p.questions.length === 1 ? "1 question" : p.questions.length + " questions", p.host === host ? "t-imp" : "t-none"));
+      if (ready) facts.push(h("span", { class: "small muted" }, ready + " ready"));
+      if (p.followups.length) facts.push(h("span", { class: "small muted" }, p.followups.length === 1 ? "1 follow-up" : p.followups.length + " follow-ups"));
+      return h("li", null, h("a", { href: "#" + p.id },
+        h("span", { class: "row-main" }, h("span", { class: "name" }, p.title || p.id),
+          h("span", { class: "small muted" }, "On " + (p.host || "unknown") + " · updated ", timeEl(p.updated, ago(p.updated)))),
+        h("span", { class: "facts" }, facts)));
+    };
     return h("section", { id: "plans", "aria-labelledby": "plans-h" },
       h("div", { class: "section-head" }, h("h2", { id: "plans-h" }, "Plans"), h("span", { class: "small muted" }, list.length === 1 ? "1 plan" : list.length + " plans")),
-      h("ul", { class: "panel index" }, list.map((p) => {
-        const ready = p.steps.filter((s) => s.ready).length;
-        const facts = [statusMark(p.status)];
-        if (p.questions.length) facts.push(mark(p.questions.length === 1 ? "1 question" : p.questions.length + " questions", p.host === host ? "t-imp" : "t-none"));
-        if (ready) facts.push(h("span", { class: "small muted" }, ready + " ready"));
-        if (p.followups.length) facts.push(h("span", { class: "small muted" }, p.followups.length === 1 ? "1 follow-up" : p.followups.length + " follow-ups"));
-        return h("li", null, h("a", { href: "#" + p.id },
-          h("span", { class: "row-main" }, h("span", { class: "name" }, p.title || p.id),
-            h("span", { class: "small muted" }, "On " + (p.host || "unknown") + " · updated ", timeEl(p.updated, ago(p.updated)))),
-          h("span", { class: "facts" }, facts)));
-      })));
+      BY_WORKSTREAM(list).map(([workstream, plans]) => h("div", { class: "workstream" },
+        h("h3", null, workstream || "none"),
+        h("ul", { class: "panel index" }, plans.map(row)))));
   }
 
   // questionView shows a question with its recommendation and options as

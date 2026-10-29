@@ -1401,6 +1401,7 @@ const planWrite = "This is a plan file, which agents change through agent-plan a
 	"Use the command for the change: `agent-plan step` or `part` to add an entry, `edit` for its title or text, `after` for its AFTER, " +
 	"`section` for Goal or Verification, `set` for a `* Plan` property, `ask` and `decide` for questions, `followup`, `reference` or `postpone`, " +
 	"and `agent-plan new` (or `new --parent PLAN --part P1`) for a new plan file; " +
+	"a workstream's file is made by `agent-plan workstream new --title T --summary S` and is the operator's to edit; " +
 	"a change none of them makes goes in your report for the operator."
 
 // planLog reports whether path is a plan's log, or the lock file that
@@ -1410,10 +1411,11 @@ func planLog(path string) bool {
 	return plans.IsLog(filepath.Base(path)) && inPlans(path)
 }
 
-// planFile reports whether path is a plan's file or a part's in the plans
-// directory, as planLog does for a log.
+// planFile reports whether path is a plan's file, a part's or a
+// workstream's in the plans directory, as planLog does for a log.
 func planFile(path string) bool {
-	return plans.IsPlan(filepath.Base(path)) && inPlans(path)
+	base := filepath.Base(path)
+	return (plans.IsPlan(base) || plans.IsWorkstream(base)) && inPlans(path)
 }
 
 // inPlans reports whether path is in the plans directory agent-plan's
@@ -1535,7 +1537,7 @@ func checkCopyIntoPlans(name string, args []string, dir string) string {
 			if plans.IsLog(base) {
 				return appendOnly
 			}
-			if plans.IsPlan(base) || recursive || strings.HasSuffix(s, "/") || base == "." || strings.ContainsAny(s, "*?[{$`") {
+			if plans.IsPlan(base) || plans.IsWorkstream(base) || recursive || strings.HasSuffix(s, "/") || base == "." || strings.ContainsAny(s, "*?[{$`") {
 				return planWrite
 			}
 			if info, err := os.Stat(expandPath(s, dir)); err == nil && info.IsDir() {

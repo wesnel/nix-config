@@ -178,6 +178,68 @@ func TestOpenItems(t *testing.T) {
 		}
 	})
 
+	// Items are grouped by their plan's workstream, computed from the
+	// plans and the workstream's own title each time: the workstreams in
+	// the order of their newest plan, plans without one last, under none.
+	// A part's items are in its plan's workstream. Nothing is written into
+	// a workstream's file.
+	t.Run("by workstream", func(t *testing.T) {
+		c := testConfig(t)
+		tooling, err := c.NewWorkstream("Agent tooling", "The agent tools.")
+		if err != nil {
+			t.Fatal(err)
+		}
+		mac := Config{Dir: c.Dir, Host: "mac"}
+		if _, err := mac.NewWorkstream("Codex parity", ""); err != nil {
+			t.Fatal(err)
+		}
+		// Their names order them d, c, b, a, newest first.
+		plan := func(slug, ws string) Plan {
+			p := planOn(t, c, slug, ws)
+			addItems(t, p.file(""), "** Steps", "S1")
+			return p
+		}
+		a, b, cp, d := plan("a", "agent-tooling"), plan("b", ""), plan("c", "codex-parity"), plan("d", "agent-tooling")
+		addItems(t, a.file(""), "** Distribution", "P1")
+		if _, err := c.New(NewOptions{Title: "Part", Parent: a.file(""), Part: "P1"}, day); err != nil {
+			t.Fatal(err)
+		}
+		addItems(t, a.file("P1"), "** Steps", "P1.S1")
+		// The person renames the workstream in its file.
+		os.WriteFile(tooling.File, []byte(strings.Replace(fileText(t, tooling.File), "#+title: Agent tooling", "#+title: Agent tools", 1)), 0o644)
+		before := fileText(t, tooling.File)
+		items, err := c.OpenItems(OpenFilter{Kind: "step"}, later)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, it := range items {
+			got = append(got, it.Workstream+": "+it.Plan+" "+it.Item)
+		}
+		want := []string{
+			"Agent tools: " + d.Name + " S1",
+			"Agent tools: " + a.Name + " S1",
+			"Agent tools: " + a.Name + " P1.S1",
+			"Codex parity: " + cp.Name + " S1",
+			": " + b.Name + " S1",
+		}
+		if strings.Join(got, "\n") != strings.Join(want, "\n") {
+			t.Errorf("listed\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+		}
+		org := OpenItemsOrg(items)
+		// The plans have no events, so their steps no time.
+		wantOrg := "* Agent tools\n** Plan d (" + d.Name + ")\n- step S1  :: Step S1\n" +
+			"** Plan a (" + a.Name + ")\n- step S1  :: Step S1\n- step P1.S1  :: Step P1.S1\n" +
+			"* Codex parity\n** Plan c (" + cp.Name + ")\n- step S1  :: Step S1\n" +
+			"* none\n** Plan b (" + b.Name + ")\n- step S1  :: Step S1\n"
+		if org != wantOrg {
+			t.Errorf("org:\n%s\nwant:\n%s", org, wantOrg)
+		}
+		if after := fileText(t, tooling.File); after != before {
+			t.Errorf("listing wrote the workstream:\n%s", after)
+		}
+	})
+
 	t.Run("refused/an unknown kind", func(t *testing.T) {
 		c, _, _ := openFixture(t)
 		_, err := c.OpenItems(OpenFilter{Kind: "bug"}, later)
@@ -191,8 +253,8 @@ func TestOpenItems(t *testing.T) {
 		items, _ := c.OpenItems(OpenFilter{}, later)
 		org := OpenItemsOrg(items)
 		for _, s := range []string{
-			"* Add the loop (" + p.Name + ")\n",
-			"* Parked work (" + halted.Name + ") halted\n",
+			"** Add the loop (" + p.Name + ")\n",
+			"** Parked work (" + halted.Name + ") halted\n",
 			"- follow-up F1 [2026-10-16 Fri 13:05] :: Guard accepts --draft=false\n",
 			"- retro Q2 [2026-10-16 Fri 13:05] :: Deny git add -A?\n",
 			"- waiting P1 [2026-10-16 Fri 13:05] :: ready to sign: `git sign-pass` in /w/loop\n",
@@ -200,6 +262,9 @@ func TestOpenItems(t *testing.T) {
 			if !strings.Contains(org, s) {
 				t.Errorf("org lacks %q:\n%s", s, org)
 			}
+		}
+		if !strings.HasPrefix(org, "* none\n** ") {
+			t.Errorf("plans without a workstream are not under none:\n%s", org)
 		}
 		if strings.Contains(org, "("+p.Name+") halted") {
 			t.Errorf("a plan not halted is marked:\n%s", org)

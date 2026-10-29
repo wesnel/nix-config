@@ -30,13 +30,28 @@ A command that would leave a plan file with structure drift it did not
 have (see status) is refused and writes nothing.
 
   new --title T --slug S [--repo R]... [--branch BASE..BRANCH]... [--worktree DIR]...
-      [--session HARNESS:ID]... [--harness H] [--template NAME]
+      [--session HARNESS:ID]... [--harness H] [--template NAME] [--workstream NAME]
                      create a plan; prints its file, ID and log. --template
                      starts it with the entries of each section of
                      templates/NAME.org in the plans' repository, or
-                     else NAME.org in plans.templates, the built-in ones
+                     else NAME.org in plans.templates, the built-in ones.
+                     The plan's WORKSTREAM, an id: link, names the
+                     workstream --workstream names (a slug or name that
+                     workstream list prints, or its file); without it,
+                     that of the newest plan, any host's, whose branch
+                     BRANCH or BASE is (main and master aside), or none
   new --parent PLAN --part P1 --title T [...]
-                     create part P1's plan file beside its parent's
+                     create part P1's plan file beside its parent's; a part
+                     is in its plan's workstream
+  workstream new --title T [--summary S]
+                     write a workstream, a line of work many plans share,
+                     as workstream-<slug>.<host>.org beside the plans, the
+                     slug made from T: an org-roam node holding T and the
+                     summary alone, for a person to edit. Prints its file,
+                     name and ID; where any host has that slug already,
+                     prints that one, unchanged, as existed
+  workstream list [--json]
+                     every host's workstreams, by title
   log PLAN --item ID --kind KIND [--summary S] [--role R] [--agent A] [--branch B]
       [--commit SUBJECT | --revision REF] [--evidence E] [--review ROUND.ID --outcome O]
       [--command CMD [--dir DIR]]
@@ -106,7 +121,9 @@ have (see status) is refused and writes nothing.
                      done, verified or abandoned
   open [--kind OKIND] [--since 'YYYY-MM-DD[ HH:MM]'] [--json]
                      the open items of every plan of this host, halted ones
-                     included and marked, newest plan first: what waits on
+                     included and marked, under a heading per workstream
+                     (those of the newest plans first, then "none") and in
+                     it per plan, newest plan first: what waits on
                      the operator (a hand-back's command, a sign-pass not
                      yet run), the questions they can answer now, retro
                      proposals, ready steps and open follow-ups, its parts'
@@ -186,6 +203,21 @@ have (see status) is refused and writes nothing.
                      it as linked; nothing when PLAN already links OTHER.
                      Refused for PLAN itself, a part's file, and a plan in
                      the old form, which has no file-level ID
+  related PLAN [--json]
+                     the plans, any host's, related to PLAN, and why, as
+                     "- hard|soft [linked] NAME (TITLE): EVIDENCE"; writes
+                     nothing. Hard evidence, which links PLAN to the other
+                     by itself (as link does, the evidence as TEXT) when
+                     new, set, step, part, edit, section or the commit hook
+                     gives PLAN some: a branch both work on or one stacks
+                     on, a pull request both name, a part or follow-up of
+                     one that the other's text names on a line with the
+                     plan's name, a commit both logs record on one branch.
+                     Softer signs, for an agent to judge and link: a session
+                     or linked worktree both name, one's text naming the
+                     other. main, master and the main checkout are no
+                     evidence. A plan that cannot be read is named on
+                     stderr, and the exit is 1, after the rest
   postpone PLAN ID (--until 'YYYY-MM-DD[ HH:MM]' | --clear)
                      schedule step or part ID for that day or time, which
                      keeps it out of the ready lists and the agenda until
@@ -276,7 +308,8 @@ have (see status) is refused and writes nothing.
   sync [--pull] [--settle DURATION]
                      take the other hosts' plans by fast-forwarding the
                      checked-out branch; then, if HEAD holds the remote's
-                     branch, commit this host's plan files and nothing else
+                     branch, commit this host's plan files and workstreams
+                     and nothing else
                      onto it, authored by the git user.name and user.email
                      (agent-plan sync <agent-plan@HOST.invalid> where there
                      is no user.email) and committed by agent-plan sync
@@ -290,7 +323,8 @@ have (see status) is refused and writes nothing.
   reseal PLAN        accept a log edited outside agent-plan, recording that in
                      it; the operator's to run
 
-find, status and new first take the other hosts' plans, quietly, if they can.
+find, status, new and workstream first take the other hosts' plans, quietly,
+if they can.
 Values are single lines but --text and --context, which may span lines as
 section says; list values hold no whitespace.
 KIND: ` + strings.Join(plans.Kinds, ", ") + `
@@ -416,6 +450,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		slug     = flags.String("slug", "", "")
 		harness  = flags.String("harness", "", "")
 		template = flags.String("template", "", "")
+		stream   = flags.String("workstream", "", "")
 		parent   = flags.String("parent", "", "")
 		part     = flags.String("part", "", "")
 		item     = flags.String("item", "", "")
@@ -499,6 +534,10 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return 2
 		}
 	}
+	if given["workstream"] && command != "new" {
+		fmt.Fprintf(stderr, "agent-plan %s: --workstream is new's\n", command)
+		return 2
+	}
 	if given["base"] && command != "sign-id" {
 		fmt.Fprintf(stderr, "agent-plan %s: --base is sign-id's\n", command)
 		return 2
@@ -519,6 +558,24 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	if err != nil {
 		return report(nil, err)
 	}
+	// reportLinking reports a command that may have given p new evidence
+	// of related plans, then links p to them, saying so on stderr.
+	reportLinking := func(p plans.Plan) func(any, error) int {
+		return func(result any, err error) int {
+			code := report(result, err)
+			if err != nil {
+				return code
+			}
+			linked, err := c.LinkEvidence(p.File(), time.Now())
+			for _, r := range linked {
+				fmt.Fprintf(stderr, "agent-plan: linked %s to %s: %s\n", p.Name, r.Plan, strings.Join(r.Evidence, " "))
+			}
+			if err != nil {
+				fmt.Fprintf(stderr, "agent-plan: linking related plans: %s\n", err)
+			}
+			return code
+		}
+	}
 	wantPlan := func() (plans.Plan, bool) {
 		if len(positional) != 1 {
 			fmt.Fprintf(stderr, "agent-plan %s: takes one PLAN\n", command)
@@ -531,17 +588,33 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		return p, true
 	}
-	if command == "new" || command == "status" || (command == "find" && !*hook) {
+	if command == "new" || command == "status" || command == "workstream" || (command == "find" && !*hook) {
 		c.Pull()
 	}
 	switch command {
+	case "workstream":
+		switch {
+		case len(positional) == 1 && positional[0] == "new" && !*asJSON:
+			return report(c.NewWorkstream(*title, *summary))
+		case len(positional) == 1 && positional[0] == "list" && *title == "" && *summary == "":
+			ws, err := c.Workstreams()
+			if err != nil || *asJSON {
+				return report(ws, err)
+			}
+			for _, w := range ws {
+				fmt.Fprintf(stdout, "- %s (%s)\n", w.Title, w.Name)
+			}
+			return 0
+		}
+		fmt.Fprint(stderr, "agent-plan workstream: takes new --title T [--summary S], or list [--json]\n")
+		return 2
 	case "new":
 		if len(positional) != 0 {
 			fmt.Fprint(stderr, usage)
 			return 2
 		}
 		o := plans.NewOptions{Title: *title, Slug: *slug, Repos: repos, Branches: branches, Worktrees: trees,
-			Sessions: sessions, Harness: *harness, Parent: *parent, Part: *part, Template: *template}
+			Sessions: sessions, Harness: *harness, Parent: *parent, Part: *part, Template: *template, Workstream: *stream}
 		if len(o.Sessions) == 0 {
 			if s := claudeSession(); s != "" {
 				o.Sessions = []string{s}
@@ -558,6 +631,9 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		made, err := c.New(o, time.Now())
 		if made.Note != "" {
 			fmt.Fprintf(stderr, "agent-plan: %s\n", made.Note)
+		}
+		if made.Unlinked != "" {
+			fmt.Fprintf(stderr, "agent-plan: linking related plans: %s\n", made.Unlinked)
 		}
 		return report(made, err)
 	case "log":
@@ -766,7 +842,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			fmt.Fprint(stderr, "agent-plan step: a step takes no --repo, --branch or --worktree; a part does\n")
 			return 2
 		}
-		return report(p.AddEntry(o, time.Now()))
+		return reportLinking(p)(p.AddEntry(o, time.Now()))
 	case "edit":
 		if len(positional) != 2 {
 			fmt.Fprint(stderr, "agent-plan edit: takes PLAN ID [--title T] [--text TEXT]\n")
@@ -783,7 +859,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		if given["text"] {
 			o.Text = text
 		}
-		return report(p.EditEntry(positional[1], o, time.Now()))
+		return reportLinking(p)(p.EditEntry(positional[1], o, time.Now()))
 	case "after":
 		if len(positional) < 2 || (len(positional) == 2) != *unset {
 			fmt.Fprint(stderr, "agent-plan after: takes PLAN ID ID..., or PLAN ID --clear\n")
@@ -803,7 +879,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		if err != nil {
 			return report(nil, err)
 		}
-		return report(p.SetSection(*part, positional[1], *text, time.Now()))
+		return reportLinking(p)(p.SetSection(*part, positional[1], *text, time.Now()))
 	case "reference":
 		if len(positional) != 2 {
 			fmt.Fprint(stderr, "agent-plan reference: takes PLAN URL [--note TEXT]\n")
@@ -861,7 +937,32 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		if err := p.SetProperty(*part, name, values, time.Now()); err != nil {
 			return report(nil, err)
 		}
-		return report(map[string]any{"property": name, "values": values}, nil)
+		return reportLinking(p)(map[string]any{"property": name, "values": values}, nil)
+	case "related":
+		p, ok := wantPlan()
+		if !ok {
+			return 2
+		}
+		rs, err := c.Related(p.File())
+		if *asJSON {
+			report(rs, nil)
+		} else {
+			for _, r := range rs {
+				state := "soft"
+				if r.Hard {
+					state = "hard"
+				}
+				if r.Linked {
+					state += " linked"
+				}
+				fmt.Fprintf(stdout, "- %s %s (%s): %s\n", state, r.Plan, r.Title, strings.Join(r.Evidence, " "))
+			}
+		}
+		if err != nil {
+			fmt.Fprintf(stderr, "agent-plan: %s\n", err)
+			return 1
+		}
+		return 0
 	case "reseal":
 		p, ok := wantPlan()
 		if !ok {

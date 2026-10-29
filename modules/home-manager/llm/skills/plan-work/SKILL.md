@@ -27,6 +27,14 @@ of template `NAME`: the `playbooks` skill says which to pick. A file
 `templates/NAME.org` the operator keeps in the plans' repository
 overrides the built-in template of that name.
 
+A plan belongs to a workstream, the line of work it is part of (such as
+the agent tooling), named in its `WORKSTREAM` property. `new` takes the
+workstream of the plan whose branch the new one continues;
+`--workstream NAME` names it, from `agent-plan workstream list`. A line of
+work no workstream covers gets one with `agent-plan workstream new
+--title T --summary S`, the summary saying what the work covers; its file
+is the operator's to edit afterwards.
+
 A sub-agent given part `P1` of a plan makes its own file beside the parent's
 and logs to the same log:
 
@@ -68,10 +76,11 @@ your report for the operator.
   `working`, `reviewing`, `handed-back` or `halted`), `PULL_REQUESTS`,
   `PIPELINE` (`full` or `opted-out:<reason>`), `SKILLS` (the skills the
   work runs under beyond this one, such as `coordinate-subagents` or
-  `review-loop`) and, once `agent-plan own` sets one,
+  `review-loop`), `WORKSTREAM` (an `id:` link to the plan's workstream,
+  in the plan's file alone) and, once `agent-plan own` sets one,
   `OWNERS` (`worktree=agent`). Lists are separated by spaces.
   `agent-plan set PLAN NAME VALUE... [--part P1]` sets each of them but
-  `CUSTOM_ID`, `HOST`, `PIPELINE` and `OWNERS`, as `agent-plan set PLAN STATUS
+  `CUSTOM_ID`, `HOST`, `PIPELINE`, `WORKSTREAM` and `OWNERS`, as `agent-plan set PLAN STATUS
   working` or `agent-plan set PLAN SKILLS coordinate-subagents`.
   `WORKTREES`, `BRANCHES`, `PULL_REQUESTS` and `OWNERS` follow the log, as
   step keywords do: `agent-plan set PLAN BRANCHES main..loop [--part P1]`
@@ -131,10 +140,11 @@ your report for the operator.
   `agent-plan reference PLAN URL --note 'The pstack principles; fed Q3, Q4.'`
 - `** Related`: an org-roam link to each related plan, one line each with
   why it is related, so the operator's org-roam graph shows how the work
-  connects. Link every plan related to this one, even loosely by topic:
-  when the plan starts, search the titles and goals of the plans
-  directory's plan files for the work's topics, repositories and
-  branches, and link what you find, and any plan you come across later:
+  connects. Hard evidence links itself as agent-plan records it: a branch
+  or pull request both plans name, an item one takes over (the other plan's
+  name and the item's ID on one line of text), a commit both log.
+  `agent-plan related PLAN` lists those and the softer candidates; link a
+  candidate, or any plan you come across, that belongs to the same work:
   `agent-plan link PLAN OTHER --why 'It splits the sync work out of this one.'`
   One direction is enough; org-roam shows the backlink. A plan in the old
   form has no file-level `ID` and cannot be linked to. `agent-plan status`

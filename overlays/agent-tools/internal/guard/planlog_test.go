@@ -159,6 +159,11 @@ func TestPlanFile(t *testing.T) {
 		{"the plan", true, "apply_patch", patch("Update File", "PLANFILE")},
 		{"a plan's name outside the plans", false, "Write", map[string]string{"file_path": "WORKDIR/2026-10-14-x.box.org", "content": "mine\n"}},
 		{"another org file in the plans", false, "Write", map[string]string{"file_path": "PLANSDIR/notes.org", "content": "mine\n"}},
+		// A workstream holds only what a person writes; agents make one
+		// with agent-plan workstream new.
+		{"a workstream", true, "Edit", map[string]string{"file_path": "PLANSDIR/workstream-agent-tooling.box.org", "old_string": "a", "new_string": "b"}},
+		{"another host's workstream", true, "Write", map[string]string{"file_path": "PLANSDIR/workstream-codex.other.org", "content": "x\n"}},
+		{"a workstream's name outside the plans", false, "Write", map[string]string{"file_path": "WORKDIR/workstream-agent-tooling.box.org", "content": "mine\n"}},
 	}
 	for _, c := range files {
 		t.Run(caseName(c.deny, c.tool+" of "+c.name), func(t *testing.T) {
@@ -186,6 +191,9 @@ func TestPlanFile(t *testing.T) {
 		{true, "PLANSDIR", "tee 2026-10-14-x.box.org < /tmp/e"},
 		{true, "WORKDIR", "printf x > ~/git/notes/agents/2026-10-14-x.box.org"},
 		{false, "WORKDIR", "agent-plan step PLANFILE --title 'Tag it' --text 'Done when > 1 tag'"},
+		{true, "WORKDIR", "printf x > PLANSDIR/workstream-agent-tooling.box.org"},
+		{true, "WORKDIR", "cp /tmp/workstream-agent-tooling.box.org PLANSDIR"},
+		{false, "WORKDIR", "agent-plan workstream new --title 'Agent tooling' --summary 'The agent tools.'"},
 		{false, "WORKDIR", "agent-plan section PLANFILE Goal --text 'Add the loop.'"},
 		{false, "WORKDIR", "cat PLANFILE"},
 		{false, "WORKDIR", "cp PLANFILE /tmp/copy.org"},

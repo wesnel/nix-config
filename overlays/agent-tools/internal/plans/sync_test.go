@@ -82,6 +82,7 @@ func untouched(t *testing.T, c Config) {
 func TestSync(t *testing.T) {
 	asOperator(t)
 	t.Run("two hosts", testSyncTwoHosts)
+	t.Run("sends this host's workstreams", testSyncWorkstreams)
 	t.Run("through git-push-guard", testSyncThroughPushGuard)
 	t.Run("authors as the operator", testSyncAuthor)
 	t.Run("leaves the operator's commits", testSyncLeavesOperatorCommits)
@@ -947,6 +948,30 @@ func testSyncTwoHosts(t *testing.T) {
 	}
 	atOrigin(t, mac)
 	untouched(t, mac)
+}
+
+// A workstream reaches the other hosts as a plan does, and each host sends
+// only its own.
+func testSyncWorkstreams(t *testing.T) {
+	origin, hosts := notes(t, "mac", "box")
+	mac, box := hosts["mac"], hosts["box"]
+	if _, err := mac.NewWorkstream("Agent tooling", "The agent tools."); err != nil {
+		t.Fatal(err)
+	}
+	got, err := mac.Sync(SyncOptions{})
+	if err != nil || !got.Pushed || strings.Join(got.Committed, " ") != "agents/workstream-agent-tooling.mac.org" {
+		t.Fatalf("mac's sync: %+v, %v", got, err)
+	}
+	if _, err := box.Sync(SyncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := box.Workstreams()
+	if err != nil || len(ws) != 1 || ws[0].Title != "Agent tooling" {
+		t.Errorf("box's workstreams %+v, %v", ws, err)
+	}
+	if files := gitIn(t, origin, "show", "--format=", "--name-only", "main"); files != "agents/workstream-agent-tooling.mac.org\n" {
+		t.Errorf("origin's last commit holds %q", files)
+	}
 }
 
 // atOrigin checks that a host's branch was brought forward to origin's,

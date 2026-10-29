@@ -6,8 +6,10 @@
 // directory, through plans.Config.Open, which refuses a file outside it or
 // with another name: the title, the Goal section, the headings with IDs
 // under Steps sections, the titles of open follow-ups, the questions under Questions with their
-// RECOMMENDATION, ANSWER or LOGBOOK note and list items, and STATUS; of
-// the log, only event kinds and times. No other property, section, drawer
+// RECOMMENDATION, ANSWER or LOGBOOK note and list items, STATUS, and the
+// title of the workstream WORKSTREAM links, from the workstream's own file
+// in the plans directory (its title alone, never its summary) or else from
+// the link; of the log, only event kinds and times. No other property, section, drawer
 // or log text is read into a document. Outside the plans directory, only
 // the newest digests are read, whole, from digests/ in the notes
 // repository, and for each pull request GitHub's status lists, this host's
@@ -83,9 +85,12 @@ type Plan struct {
 	// Updated is, for this host's plan, the time of its log's newest event
 	// and, for another host's, when its log last arrived in a commit:
 	// RFC 3339 with the zone, or "".
-	Updated   string     `json:"updated"`
-	Steps     []Step     `json:"steps"`
-	Decisions []Decision `json:"decisions"`
+	Updated string `json:"updated"`
+	// Workstream is the title of the plan's workstream, "" for none; the
+	// page groups the plans by it.
+	Workstream string     `json:"workstream"`
+	Steps      []Step     `json:"steps"`
+	Decisions  []Decision `json:"decisions"`
 	// Questions are those the operator can answer now.
 	Questions []Question `json:"questions"`
 	// Followups are the open follow-ups of the plan and its parts, the
@@ -379,6 +384,12 @@ func Plans(c plans.Config, now time.Time) ([]Plan, []string, error) {
 	for _, name := range failed {
 		errs = append(errs, fmt.Errorf("%s: not a plan's own files, or its log is missing", name))
 	}
+	// A workstream that cannot be read leaves its plans the title their
+	// link gives it.
+	titles, err := c.WorkstreamTitles()
+	if err != nil {
+		errs = append(errs, fmt.Errorf("reading the workstreams: %w", err))
+	}
 	out := []Plan{}
 	for _, p := range all {
 		if len(p.Name) > maxID {
@@ -386,7 +397,7 @@ func Plans(c plans.Config, now time.Time) ([]Plan, []string, error) {
 			errs = append(errs, fmt.Errorf("%s: its ID is longer than the %d characters a document ID may be", p.Name, maxID))
 			continue
 		}
-		plan, err := planOf(c, p, now)
+		plan, err := planOf(c, p, titles, now)
 		if err != nil {
 			failed = append(failed, p.Name)
 			errs = append(errs, fmt.Errorf("%s: %w", p.Name, err))
@@ -399,13 +410,22 @@ func Plans(c plans.Config, now time.Time) ([]Plan, []string, error) {
 	return out, failed, errors.Join(errs...)
 }
 
-func planOf(c plans.Config, p plans.Plan, now time.Time) (Plan, error) {
+// planOf is p's document, its workstream titled as titles, by ID, name it.
+func planOf(c plans.Config, p plans.Plan, titles map[string]string, now time.Time) (Plan, error) {
 	st, err := p.StatusAt(now)
 	if err != nil {
 		return Plan{}, err
 	}
+	ws, err := p.Workstream()
+	if err != nil {
+		return Plan{}, err
+	}
+	if titles[ws.ID] != "" {
+		ws.Title = titles[ws.ID]
+	}
 	plan := Plan{Schema: agentplans.Schema, ID: p.Name, Title: text(st.Title, short), Status: st.State, Host: p.Host,
-		Steps: []Step{}, Decisions: []Decision{}, Questions: []Question{}, Followups: []Followup{}}
+		Workstream: text(ws.Title, short),
+		Steps:      []Step{}, Decisions: []Decision{}, Questions: []Question{}, Followups: []Followup{}}
 	if !state.MatchString(plan.Status) {
 		plan.Status = "unknown"
 	}
