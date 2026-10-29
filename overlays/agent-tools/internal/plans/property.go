@@ -68,7 +68,45 @@ func (p Plan) SetProperty(part, name string, values []string, now time.Time) err
 		return err
 	}
 	return p.withLock(func(l *lockedPlan) error {
-		return l.setPlanProperty(part, name, func([]string) []string { return values }, now)
+		return l.setPlanProperty(part, name, func([]string) []string { return values }, "", now)
+	})
+}
+
+// RemoveFromProperty removes value from the tracked list property name of
+// the `* Plan` heading in the plan's file, or the part's, and logs the new
+// value with why it was removed: a hook or an agent filed it in the wrong
+// plan. It refuses a value the file does not hold.
+func (p Plan) RemoveFromProperty(part, name, value, why string, now time.Time) error {
+	if err := p.checkOwn(); err != nil {
+		return err
+	}
+	if !slices.Contains(settableProperties, name) {
+		return refusal.New("%s is not a property values are removed from. Remove one from `%s`", name, strings.Join(settableProperties, "`, `"))
+	}
+	if part != "" && !partPattern.MatchString(part) {
+		return refusal.New("%q is not a part ID. Pass one such as `--part P1`", part)
+	}
+	if value == "" {
+		return refusal.New("A removal takes one value. Name it, as `agent-plan unfile PLAN %s VALUE --reason TEXT`", name)
+	}
+	if err := checkWords(strings.ToLower(name), []string{value}); err != nil {
+		return err
+	}
+	if strings.TrimSpace(why) == "" || strings.Contains(why, "\n") {
+		return refusal.New("A removal is logged with its reason, on one line. Say why %s is removed, naming the plan it belongs to, with `--reason`", value)
+	}
+	return p.withLock(func(l *lockedPlan) error {
+		props, err := planHeading(p.file(part))
+		if err != nil {
+			return err
+		}
+		values := strings.Fields(props[name])
+		if !slices.Contains(values, value) {
+			return refusal.New("%s's %s does not hold %s; it holds `%s`", p.item(part), name, value, strings.Join(values, " "))
+		}
+		return l.setPlanProperty(part, name, func(values []string) []string {
+			return slices.DeleteFunc(slices.Clone(values), func(v string) bool { return v == value })
+		}, "removed "+value+": "+why, now)
 	})
 }
 
@@ -85,8 +123,9 @@ func (p Plan) item(part string) string {
 // the property at the end of the drawer if it has none; edit may run more
 // than once, each time on the values the file then holds. A tracked
 // property whose new value is not the one the log last gave it is logged,
-// so a change written before a failed append is logged when run again.
-func (l *lockedPlan) setPlanProperty(part, name string, edit func(values []string) []string, now time.Time) error {
+// so a change written before a failed append is logged when run again; with
+// a note, it is logged whatever its value, the note ending the summary.
+func (l *lockedPlan) setPlanProperty(part, name string, edit func(values []string) []string, note string, now time.Time) error {
 	file := l.p.file(part)
 	var after []string
 	err := l.edit(file, func(lines []string) ([]string, error) {
@@ -128,16 +167,19 @@ func (l *lockedPlan) setPlanProperty(part, name string, edit func(values []strin
 		return err
 	}
 	value := strings.Join(after, " ")
-	if logged, ok := loggedProperty(events, l.p.item(part), name); ok && logged == value {
+	if logged, ok := loggedProperty(events, l.p.item(part), name); ok && logged == value && note == "" {
 		return nil
 	}
-	return l.logProperty(part, name, value, now)
+	return l.logProperty(part, name, value, note, now)
 }
 
-func (l *lockedPlan) logProperty(part, name, value string, now time.Time) error {
+func (l *lockedPlan) logProperty(part, name, value, note string, now time.Time) error {
 	summary := name
 	if value != "" {
 		summary += " " + value
+	}
+	if note != "" {
+		summary += "; " + note
 	}
 	_, err := l.log(Event{Kind: propertyKind, Item: l.p.item(part), Property: name, Value: value, Summary: summary}, now)
 	return err
@@ -152,7 +194,7 @@ func (l *lockedPlan) logNewProperties(part string, now time.Time) error {
 	}
 	for _, name := range trackedProperties {
 		if value := strings.Join(strings.Fields(props[name]), " "); value != "" {
-			if err := l.logProperty(part, name, value, now); err != nil {
+			if err := l.logProperty(part, name, value, "", now); err != nil {
 				return err
 			}
 		}

@@ -78,7 +78,8 @@ have (see status) is refused and writes nothing.
                      the dashboard show them
   find [--session ID] [--worktree DIR] [--branch B]
                      this host's plan files that match any one given (default:
-                     this session, worktree and branch)
+                     this session, and the worktree and branch if a linked
+                     worktree, never a repository's main checkout)
   find --hook        the same for a Claude Code SessionStart hook (reads stdin),
                      with brief --resume after /clear or a compaction; as its
                      SessionEnd hook, hands the plan of a session /clear ends
@@ -113,6 +114,12 @@ have (see status) is refused and writes nothing.
                      (planning, reviewing-plan, working, reviewing,
                      handed-back or halted), SKILLS, REPOSITORIES, SESSIONS
                      and HARNESS are set the same way, with no log event
+  unfile PLAN NAME VALUE --reason TEXT [--part P1]
+                     remove VALUE, which a hook or an agent filed in the
+                     wrong plan, from WORKTREES, BRANCHES or PULL_REQUESTS
+                     of the plan's file, or the part's, and log the new
+                     value with the reason, which names the plan it belongs
+                     to; refused for a value the file does not hold
   questions PLAN [--all] [--waiting] [--json | --count]
                      the open questions the operator can answer now, by
                      priority, with their recommendations; --all adds the
@@ -493,6 +500,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		runDir   = flags.String("dir", "", "")
 		signBase = flags.String("base", "", "")
 		signPlan = flags.String("plan", "", "")
+		reason   = flags.String("reason", "", "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
 		branches multi
@@ -540,6 +548,10 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	}
 	if given["base"] && command != "sign-id" {
 		fmt.Fprintf(stderr, "agent-plan %s: --base is sign-id's\n", command)
+		return 2
+	}
+	if given["reason"] && command != "unfile" {
+		fmt.Fprintf(stderr, "agent-plan %s: --reason is unfile's\n", command)
 		return 2
 	}
 	if given["text"] && command != "step" && command != "part" && command != "edit" && command != "section" {
@@ -705,8 +717,10 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		o := plans.FindOptions{Session: session, Worktree: worktree, Branch: branch}
 		if o == (plans.FindOptions{}) {
-			o.Session = claudeSession()
-			o.Worktree, o.Branch = checkout()
+			cwd, _ := os.Getwd()
+			if o = plans.Here(claudeSession(), cwd); o == (plans.FindOptions{}) {
+				return report([]plans.Found{}, nil)
+			}
 		}
 		return report(c.Find(o))
 	case "goal":
@@ -963,6 +977,20 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return 1
 		}
 		return 0
+	case "unfile":
+		if len(positional) != 3 {
+			fmt.Fprint(stderr, "agent-plan unfile: takes PLAN NAME VALUE --reason TEXT [--part P1]\n")
+			return 2
+		}
+		p, err := c.Open(positional[0])
+		if err != nil {
+			return report(nil, err)
+		}
+		name, value := positional[1], positional[2]
+		if err := p.RemoveFromProperty(*part, name, value, *reason, time.Now()); err != nil {
+			return report(nil, err)
+		}
+		return report(map[string]any{"property": name, "removed": value, "reason": *reason}, nil)
 	case "reseal":
 		p, ok := wantPlan()
 		if !ok {

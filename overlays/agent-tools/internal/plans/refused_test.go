@@ -57,6 +57,9 @@ func TestRefusedWritesNothing(t *testing.T) {
 			return err
 		},
 		"set": func(p Plan) error { return p.SetProperty("", "BRANCHES", []string{"main..other"}, day) },
+		"unfile": func(p Plan) error {
+			return p.RemoveFromProperty("", "BRANCHES", "main..loop", "It is plan y's work.", day)
+		},
 		"new part": func(p Plan) error {
 			_, err := Config{Dir: p.Dir, Host: p.Host}.New(NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day)
 			return err

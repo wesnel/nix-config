@@ -86,6 +86,10 @@ your report for the operator.
   step keywords do: `agent-plan set PLAN BRANCHES main..loop [--part P1]`
   logs the whole new value; `agent-plan status` lists a value the log does
   not give, and a References entry it does not hold, as property drift.
+  If a hook or an agent filed a worktree, branch or pull request in the
+  wrong plan, take that one value out with `agent-plan unfile PLAN
+  BRANCHES VALUE --reason 'It belongs to plan X.' [--part P1]`, which logs
+  the new value with the reason.
 - `** Goal`: the goal and what is not this change's job, and nothing of how
   the work went. It is the fresh review's goal statement, word for word:
   `agent-plan goal PLAN [--part P1]` prints it. It ends with a
@@ -192,9 +196,10 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
   lists the item under keyword drift.
 - A hook after each shell call logs `committed` for every commit and
   `pushed` for every push, and adds new worktrees, branches and pull
-  requests to the plan's properties, in the plan of the session or of the
-  worktree it ran in; `agent-plan log` refuses both. A commit no plan takes
-  makes a plan for it, "Unplanned work in" its repository, which names the
+  requests to the plan's properties, in the plan of the session, else of
+  the linked worktree it ran in, never of the repository's main checkout;
+  `agent-plan log` refuses both. A commit no plan takes, such as one in
+  the main checkout by a session no plan names, makes a plan for it, "Unplanned work in" its repository, which names the
   session and worktree; give it a goal and steps, or say in your report
   which plan the work belongs to. Which step a commit completes stays
   yours to log.
@@ -257,7 +262,8 @@ anything else, then read it, load the skills its `SKILLS` names, and run
 
 - Claude Code names it when the session resumes, compacts or is cleared.
 - Elsewhere, `agent-plan find` lists the plans that match this session,
-  worktree or branch; `--session`, `--worktree` or `--branch` matches the
+  or the linked worktree it runs in or that worktree's branch, never a
+  repository's main checkout; `--session`, `--worktree` or `--branch` matches the
   one given instead.
 - A sub-agent's task names its plan and part.
 

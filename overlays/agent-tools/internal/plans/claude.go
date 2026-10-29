@@ -37,7 +37,8 @@ func checkout(dir string) (top, branch string) {
 }
 
 // SessionHook names the plans of the session Claude Code's SessionStart
-// hook describes, matched by session or by the worktree it runs in, the
+// hook describes, matched by session or by the linked worktree it runs in
+// (never a main checkout, which many plans name, as Locate says), the
 // plan a /clear handed over by SessionEndHook first made the session's, as
 // the hook's output, with the first one's resume brief after /clear or a
 // compaction, the whole within ResumeLimit; nothing when there are none.
@@ -53,7 +54,9 @@ func (c Config) SessionHook(hook []byte) ([]byte, error) {
 			c.takeHandover(o.Session, in.Cwd, time.Now())
 		}
 	}
-	o.Worktree, _ = checkout(in.Cwd)
+	if top, _ := checkout(in.Cwd); linkedWorktree(top) {
+		o.Worktree = top
+	}
 	if o.Session == "" && o.Worktree == "" {
 		return nil, nil
 	}

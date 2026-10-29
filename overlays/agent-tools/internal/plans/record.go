@@ -16,10 +16,22 @@ import (
 )
 
 // Locate is the plan file that what a session did in a worktree belongs
-// to: of this host's plan files that name the worktree, the newest, else
-// of those that name the session, the newest. part is the part whose file
-// it is, or "" for the plan's own.
+// to. The session picks the plan: of this host's plans, the newest whose
+// files name both the session and the worktree, else the newest naming the
+// session, else the newest naming the worktree. Only a linked worktree
+// counts: a repository's main checkout is named by many plans, so it picks
+// neither a plan nor a file within one, and a session no plan names gets
+// no plan there. A linked worktree never outranks the session either. The
+// worktree picks the file within the plan: a part naming the worktree,
+// else the plan's own file naming it, else its own file naming the
+// session, else its first part naming the session. A part's SESSIONS may
+// not name the session (a part made without one, or after a /clear), so a
+// commit in a part's worktree lands on the part all the same. part is the
+// part whose file it is, or "" for the plan's own.
 func (c Config) Locate(session, worktree string) (p Plan, part string, ok bool) {
+	if !linkedWorktree(worktree) {
+		worktree = ""
+	}
 	if session == "" && worktree == "" {
 		return Plan{}, "", false
 	}
@@ -27,15 +39,67 @@ func (c Config) Locate(session, worktree string) (p Plan, part string, ok bool) 
 	if err != nil || len(found) == 0 {
 		return Plan{}, "", false
 	}
-	pick := found[0]
+	type named struct{ session, worktree bool }
+	plans := map[string]*named{}
+	var order []string
 	for _, f := range found {
-		if slices.Contains(f.Matched, "worktree") {
-			pick = f
-			break
+		n := plans[f.Plan]
+		if n == nil {
+			n = &named{}
+			plans[f.Plan] = n
+			order = append(order, f.Plan)
+		}
+		n.session = n.session || slices.Contains(f.Matched, "session")
+		n.worktree = n.worktree || slices.Contains(f.Matched, "worktree")
+	}
+	planRank := func(n *named) int {
+		switch {
+		case n.session && n.worktree:
+			return 0
+		case n.session:
+			return 1
+		}
+		return 2
+	}
+	plan := order[0]
+	for _, name := range order[1:] {
+		if planRank(plans[name]) < planRank(plans[plan]) {
+			plan = name
+		}
+	}
+	fileRank := func(f Found) int {
+		inWorktree := slices.Contains(f.Matched, "worktree")
+		switch {
+		case inWorktree && f.Part != "":
+			return 0
+		case inWorktree:
+			return 1
+		case f.Part == "":
+			return 2
+		}
+		return 3
+	}
+	var pick Found
+	best := 4
+	for _, f := range found {
+		if r := fileRank(f); f.Plan == plan && r < best {
+			pick, best = f, r
 		}
 	}
 	p, err = c.Open(pick.Plan)
 	return p, pick.Part, err == nil
+}
+
+// linkedWorktree is whether top is a linked worktree of its repository,
+// whose git directory differs from the repository's common one; false for
+// the main checkout, for "" and for what git cannot read.
+func linkedWorktree(top string) bool {
+	if top == "" {
+		return false
+	}
+	out, err := git.Run("-C", top, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir")
+	dirs := strings.Split(out, "\n")
+	return err == nil && len(dirs) == 2 && dirs[0] != dirs[1]
 }
 
 // branchChanged is the kind of the event NoteBranch logs.
@@ -209,7 +273,7 @@ func (p Plan) AddToProperty(part, name, value string, now time.Time) (bool, erro
 				return values
 			}
 			return append(values, value)
-		}, now)
+		}, "", now)
 	})
 	return added, err
 }

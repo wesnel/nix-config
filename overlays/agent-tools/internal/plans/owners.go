@@ -79,7 +79,7 @@ func (p Plan) SetOwner(worktree, agent string, now time.Time) (map[string]string
 				owners[worktree] = agent
 			}
 			return pairs
-		}, now)
+		}, "", now)
 	})
 	return owners, err
 }

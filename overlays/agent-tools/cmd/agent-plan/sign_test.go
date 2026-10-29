@@ -28,11 +28,11 @@ func testSignSelectedPlan(t *testing.T) {
 		t.Fatalf("git init: %v %s", err, out)
 	}
 	t.Chdir(worktree)
-	selected, err := c.New(plans.NewOptions{Title: "Selected", Slug: "selected", Sessions: []string{"codex:handoff"}}, time.Now())
+	selected, err := c.New(plans.NewOptions{Title: "Selected", Slug: "selected"}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	implicit, err := c.New(plans.NewOptions{Title: "Implicit", Slug: "implicit", Worktrees: []string{worktree}}, time.Now())
+	implicit, err := c.New(plans.NewOptions{Title: "Implicit", Slug: "implicit", Sessions: []string{"codex:handoff"}, Worktrees: []string{worktree}}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func testSignSelectedPlan(t *testing.T) {
 		"--branch", "topic", "--branch", "other", "--base", "parent-feature"}
 	code, out, errs := agentPlan(t, "", args...)
 	if code != 0 || !strings.HasPrefix(strings.TrimSpace(out), implicit.ID+".") {
-		t.Fatalf("default worktree selection: %d %q %s", code, out, errs)
+		t.Fatalf("default selection: %d %q %s", code, out, errs)
 	}
 	before, err := os.ReadFile(implicit.Log)
 	if err != nil {

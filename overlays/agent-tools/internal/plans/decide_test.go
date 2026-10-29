@@ -191,10 +191,10 @@ func TestStatusLine(t *testing.T) {
 	}
 
 	// Emacs's mode line sends only the directory of the buffer's file.
-	t.Run("a worktree's plan, given only a directory in it", func(t *testing.T) {
+	t.Run("a linked worktree's plan, given only a directory in it", func(t *testing.T) {
 		c := testConfig(t)
-		top, _ := filepath.EvalSymlinks(t.TempDir())
-		gitIn(t, top, "init", "-q", "-b", "main")
+		_, linked := checkouts(t, 1)
+		top := linked[0]
 		sub := filepath.Join(top, "lisp")
 		os.MkdirAll(sub, 0o755)
 		made, err := c.New(NewOptions{Title: "T", Slug: "x", Worktrees: []string{top}}, day)
