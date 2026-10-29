@@ -173,6 +173,9 @@ func judgeInput(in input, who role) (string, string) {
 	if reason := checkOwner(in); reason != "" {
 		return reason, ""
 	}
+	if reason := checkPlanReview(in); reason != "" {
+		return reason, ""
+	}
 	// The hint runs git too, so it is judged with the rest.
 	if in.ToolName == "Edit" || in.ToolName == "Write" || in.ToolName == "MultiEdit" {
 		return "", branchHint(in.SessionID, in.ToolInput, in.Cwd)

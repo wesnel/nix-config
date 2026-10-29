@@ -33,6 +33,12 @@ var notifiedAgent = regexp.MustCompile(`<summary>Agent "(.*)" finished</summary>
 // names the gaps the plan's status shows (Status.Gaps), so the agent logs
 // what it missed without running status.
 //
+// On Claude Code's PostToolUse of the main thread's Agent call starting a
+// design-reviewer, background or foreground, it records
+// design-review-started in the session's plan (reviewPlan), which the
+// guard holds edits on until it is answered (PendingPlanReviewOf). A
+// sub-agent's call, which carries agent_id, records nothing.
+//
 // On every prompt of the main thread, task-notifications included, it
 // delivers the results of the session's sign-passes that it has not yet
 // received (see DeliverSigns).
@@ -51,7 +57,7 @@ func (c Config) remind(input []byte) []byte {
 	var in struct {
 		Event        string          `json:"hook_event_name"`
 		SessionID    string          `json:"session_id"`
-		AgentID      string          `json:"agent_id"` // Codex's, for a sub-agent
+		AgentID      string          `json:"agent_id"` // a sub-agent's, in Claude Code and Codex
 		Cwd          string          `json:"cwd"`
 		Prompt       string          `json:"prompt"`
 		ToolName     string          `json:"tool_name"`
@@ -85,7 +91,7 @@ func (c Config) remind(input []byte) []byte {
 	switch {
 	case in.Event == "UserPromptSubmit" && strings.HasPrefix(in.Prompt, "<task-notification>"):
 		if m := notifiedAgent.FindStringSubmatch(in.Prompt); m != nil {
-			context = finished(fmt.Sprintf("%q ", m[1]))
+			context = finished(fmt.Sprintf("%q ", m[1])) + c.pendingReviewHint(in.SessionID)
 		}
 	case in.Event == "UserPromptSubmit" && in.AgentID == "":
 		// The operator's own prompt: its addresses are references of the plan.
@@ -93,11 +99,13 @@ func (c Config) remind(input []byte) []byte {
 			recordReferences(found, in.Prompt, time.Now())
 		}
 	case in.Event == "PostToolUse" && (in.ToolName == "Agent" || in.ToolName == "Task"):
+		review := c.recordDesignReview(in.SessionID, in.AgentID, in.ToolInput)
+		// The reminders name the plan that holds the start.
+		found, file, looked = review.locate(found, file, looked)
 		what, synchronous := finishedAgent(in.ToolInput, in.ToolResponse)
-		if !synchronous {
+		if context = review.context(what, synchronous, finished); context == "" {
 			return nil
 		}
-		context = finished(what)
 	case in.Event == "PostToolUse" && in.ToolName == "wait_agent":
 		context = finished("")
 	case in.Event == "PreCompact":
@@ -169,6 +177,89 @@ func finishedAgent(inputJSON, responseJSON json.RawMessage) (string, bool) {
 		what = fmt.Sprintf("%q ", call.Description)
 	}
 	return what, true
+}
+
+// pendingReviewHint is what a task-notification's reminder adds while the
+// session has design reviews pending: how to answer each, for the case
+// that the sub-agent was the reviewer, since the notification names neither
+// the agent's type nor its plan, and reviews described alike cannot be
+// told apart.
+func (c Config) pendingReviewHint(session string) string {
+	hint := ""
+	for _, r := range c.pendingReviews(session) {
+		hint += " " + AnswerHint(r.Plan)
+	}
+	if hint == "" {
+		return ""
+	}
+	return " If it was a design reviewer:" + hint
+}
+
+// designReviewStart is what recordDesignReview did: the plan it recorded
+// the start in, if found, and either how to answer the review (held) or
+// why its start was not recorded (unrecorded).
+type designReviewStart struct {
+	plan       Plan
+	found      bool
+	held       string
+	unrecorded string
+}
+
+// recordDesignReview records design-review-started for the main thread's
+// Agent call whose input starts a design-reviewer, at a background
+// review's start and a foreground one's end, in a plan whose SESSIONS name
+// the session (reviewPlan); the guard holds edits until it is answered
+// (PendingPlanReviewOf). Any other call records nothing.
+func (c Config) recordDesignReview(session, agentID string, input json.RawMessage) designReviewStart {
+	var call struct {
+		Description  string `json:"description"`
+		Prompt       string `json:"prompt"`
+		SubagentType string `json:"subagent_type"`
+	}
+	json.Unmarshal(input, &call)
+	if call.SubagentType != "design-reviewer" || agentID != "" {
+		return designReviewStart{}
+	}
+	p, ok := c.reviewPlan(session, call.Prompt)
+	if !ok {
+		return designReviewStart{}
+	}
+	start := designReviewStart{plan: p, found: true}
+	// A summary holds one line; the description's first stands for it.
+	summary, _, _ := strings.Cut(call.Description, "\n")
+	if _, err := p.Record("", Event{Kind: DesignReviewStarted, Session: session, Summary: strings.TrimSpace(summary)}, time.Now()); err != nil {
+		start.unrecorded = fmt.Sprintf("The design review's start was not recorded in %s (%v), so the guard holds no edit for it. "+
+			"Make no change until its report is in and its findings are settled in the plan.", p.File(), err)
+	} else {
+		start.held = AnswerHint(p)
+	}
+	return start
+}
+
+// locate is remind's plan (found, its file, and whether it was looked
+// for), moved to the plan s recorded the start in, if any.
+func (s designReviewStart) locate(found Plan, file string, looked bool) (Plan, string, bool) {
+	if !s.found {
+		return found, file, looked
+	}
+	return s.plan, s.plan.File(), true
+}
+
+// context is the reminder for an Agent call that recorded s, whose
+// description is what and which ran in the foreground if synchronous;
+// finished is the ordinary reminder. A background call is reminded only of
+// a start that was not recorded.
+func (s designReviewStart) context(what string, synchronous bool, finished func(string) string) string {
+	switch {
+	case !synchronous:
+		return s.unrecorded
+	case s.held != "":
+		// A review answers with its own event, not a part's outcome.
+		return fmt.Sprintf("Design reviewer %sfinished. Check its report as the coordinate-subagents skill's "+
+			"\"Check every report\" says, then settle its findings in the plan. %s", what, s.held)
+	default:
+		return strings.TrimSpace(s.unrecorded + " " + finished(what))
+	}
 }
 
 func preCompactPlan(p string) []byte {
