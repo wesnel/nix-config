@@ -538,6 +538,19 @@ in {
       ];
     }
 
+    # Every interactive session, and each sub-agent started without a role,
+    # reasons at high effort, as Claude Code's sub-agents do. Merged into the
+    # config.toml Codex writes, so an effort chosen in /model lasts until
+    # the next switch.
+    {
+      home.activation.codexEffort = lib.hm.dag.entryAfter ["writeBoundary"] ''
+        if [ -z "''${DRY_RUN:-}" ]; then
+          ${setKeys} "$HOME/.codex/config.toml" ${escapeShellArg (builtins.toJSON {model_reasoning_effort = "high";})} \
+            || warnEcho "Codex's reasoning effort was not set."
+        fi
+      '';
+    }
+
     # Near a rate limit Codex offers to switch the running session to a
     # cheaper model, which is the operator's call alone. Merged into the
     # config.toml Codex writes.
