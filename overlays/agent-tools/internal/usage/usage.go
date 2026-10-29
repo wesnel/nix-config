@@ -91,15 +91,18 @@ func Load(file string) []Window {
 // the record stops counting rather than hold on an old reading.
 const Fresh = 5 * time.Minute
 
-// Over is the first window of ws at or above threshold percent that
-// counts at now: its reset still ahead and observed within Fresh.
+// Over is the window of ws at or above threshold percent that counts at
+// now (its reset still ahead and observed within Fresh) and resets last:
+// with several over, the stop holds until that one resets.
 func Over(ws []Window, threshold float64, now time.Time) (Window, bool) {
+	var over Window
 	for _, w := range ws {
-		if w.ResetsAt > now.Unix() && now.Unix()-w.ObservedAt <= int64(Fresh/time.Second) && w.Used >= threshold {
-			return w, true
+		if w.ResetsAt > now.Unix() && now.Unix()-w.ObservedAt <= int64(Fresh/time.Second) && w.Used >= threshold &&
+			w.ResetsAt > over.ResetsAt {
+			over = w
 		}
 	}
-	return Window{}, false
+	return over, over.ResetsAt > 0
 }
 
 // Record writes the windows seen into file, over what it holds. Every open

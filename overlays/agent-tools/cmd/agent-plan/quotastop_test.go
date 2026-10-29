@@ -137,6 +137,27 @@ func TestQuotaStop(t *testing.T) {
 	}
 }
 
+// With both windows over the threshold, the stop holds until the later of
+// their resets, and names that one: a resume at the earlier reset would
+// meet the stop again.
+func TestQuotaStopBothWindows(t *testing.T) {
+	setup(t)
+	now := time.Now()
+	five, seven := now.Add(time.Hour).Truncate(time.Minute), now.Add(50*time.Hour).Truncate(time.Minute)
+	os.MkdirAll(filepath.Dir(usageFile(t)), 0o700)
+	data := fmt.Sprintf(`{"five_hour":{"used_percentage":95,"resets_at":%d,"observed_at":%d},`+
+		`"seven_day":{"used_percentage":92,"resets_at":%d,"observed_at":%d}}`,
+		five.Unix(), now.Unix(), seven.Unix(), now.Unix())
+	if err := os.WriteFile(usageFile(t), []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, out, _ := runQuotaStop(t, "Agent", `{}`)
+	reason := denial(t, out)
+	if want := seven.Format("Mon 2 15:04"); !strings.Contains(reason, "7d window is at 92%") || !strings.Contains(reason, want) {
+		t.Errorf("reason %q does not name the 7d window and its reset %s", reason, want)
+	}
+}
+
 // Every open session's status line records the windows; the stop holds
 // whichever of them reports last.
 func TestQuotaStopAcrossSessions(t *testing.T) {

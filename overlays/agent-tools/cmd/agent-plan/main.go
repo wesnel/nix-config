@@ -173,8 +173,8 @@ have (see status) is refused and writes nothing.
                      every call but Read, Grep, Glob, ToolSearch, Skill,
                      AskUserQuestion, TaskStop, SubagentHandback and
                      agent-plan alone on a Bash line, naming the window, its
-                     share and its reset; with no record it can read, denies
-                     nothing
+                     share and its reset (the window that resets last, with
+                     both over); with no record it can read, denies nothing
   own PLAN --worktree DIR --agent ID
                      record agent ID, the harness's ID for a sub-agent or
                      "main" for the session's main thread, as the one agent
