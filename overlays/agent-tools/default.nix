@@ -44,9 +44,9 @@
         "-s"
         "-w"
         "-X"
-        "github.com/wesnel/agent-tools/internal/loop.defaultGPGProgram=${lib.getExe gnupg}"
+        "github.com/wesnel/agent-tools/internal/operatorkey.defaultGPGProgram=${lib.getExe gnupg}"
         "-X"
-        "github.com/wesnel/agent-tools/internal/loop.defaultSSHProgram=${lib.getExe' openssh "ssh-keygen"}"
+        "github.com/wesnel/agent-tools/internal/operatorkey.defaultSSHProgram=${lib.getExe' openssh "ssh-keygen"}"
       ]
       ++ hostLdflags;
 

@@ -33,11 +33,10 @@ type plan struct {
 	SetUpstream bool     `json:"setUpstream,omitempty"`
 	Moved       []string `json:"moved,omitempty"`
 	// Unmoved are the named branches the pass leaves where they are that it
-	// pushes too, each only as unpushed checked it; Held says why it pushes
-	// some others not.
-	Unmoved map[string]checkedPush `json:"unmoved,omitempty"`
-	Held    map[string]string      `json:"held,omitempty"`
-	Results map[string]any         `json:"results"`
+	// pushes too (unpushed); Held says why it pushes some others not.
+	Unmoved []string          `json:"unmoved,omitempty"`
+	Held    map[string]string `json:"held,omitempty"`
+	Results map[string]any    `json:"results"`
 }
 
 // step signs one stack: from the oldest unsigned commit above Base, as a
@@ -205,7 +204,7 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 		if pl.Unmoved, pl.Held, err = unpushed(unmoved, base, setUpstream, "run the pass again"); err != nil {
 			return nil, err
 		}
-		byRemote, skipped, err := pushTargets(slices.Concat(moving, slices.Sorted(maps.Keys(pl.Unmoved))), setUpstream, "run the pass again")
+		byRemote, skipped, err := pushTargets(slices.Concat(moving, pl.Unmoved), setUpstream, "run the pass again")
 		if err != nil {
 			return nil, err
 		}
@@ -463,8 +462,8 @@ func runPlan(pl *plan) (any, error) {
 	}
 	result := map[string]any{"branches": pl.Results}
 	if pl.Push || pl.SetUpstream {
-		branches := slices.Sorted(slices.Values(append(pl.Moved, slices.Collect(maps.Keys(pl.Unmoved))...)))
-		pushed, err := pushAll(pl.Key, pushes{Branches: slices.Compact(branches), SetUpstream: pl.SetUpstream, Checked: pl.Unmoved})
+		branches := slices.Sorted(slices.Values(append(pl.Moved, pl.Unmoved...)))
+		pushed, err := pushAll(pl.Key, pushes{Branches: slices.Compact(branches), SetUpstream: pl.SetUpstream})
 		if err != nil {
 			return nil, err
 		}

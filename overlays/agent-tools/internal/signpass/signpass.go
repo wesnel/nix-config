@@ -1468,7 +1468,7 @@ func pushAll(branch string, todo pushes) (pushed map[string]string, err error) {
 	}
 	retry := "run `" + resumeCommand(branch, true, todo.SetUpstream) + "`"
 	if len(todo.URLs) == 0 {
-		if todo, err = planPush(todo.Branches, todo.SetUpstream, todo.Checked, retry); err != nil {
+		if todo, err = planPush(todo.Branches, todo.SetUpstream, retry); err != nil {
 			return nil, err
 		}
 	}
@@ -1489,6 +1489,10 @@ func pushAll(branch string, todo pushes) (pushed map[string]string, err error) {
 				continue
 			}
 			if err := pushRef(ctx, u.Remote, u.URL, u.Refs[j], mux.Env(i)); err != nil {
+				var r refusal.Refusal
+				if errors.As(err, &r) {
+					return nil, refuse("%v%s; fix the cause and %s", err, pushedTo(todo.URLs), retry)
+				}
 				return nil, fmt.Errorf("%v%s; the branches are signed, so fix the cause and %s", err, pushedTo(todo.URLs), retry)
 			}
 			u.Refs[j].Done = true
@@ -1550,25 +1554,19 @@ func pushedTo(urls []urlPush) string {
 // they are now. A branch published with setUpstream is leased on nothing,
 // so it lands only where the URL has no branch of that name. Each branch is
 // pushed on its own, bottom up: GitHub starts a pull request's workflows
-// twice when one push moves it and its base together. A branch in checked
-// is refused unless its tip and lease are still those unpushed checked.
-func planPush(branches []string, setUpstream bool, checked map[string]checkedPush, retry string) (pushes, error) {
+// twice when one push moves it and its base together.
+func planPush(branches []string, setUpstream bool, retry string) (pushes, error) {
 	byRemote, skipped, err := pushTargets(branches, setUpstream, retry)
 	if err != nil {
 		return pushes{}, err
 	}
-	todo := pushes{Branches: branches, SetUpstream: setUpstream, Skipped: skipped, Checked: checked}
+	todo := pushes{Branches: branches, SetUpstream: setUpstream, Skipped: skipped}
 	for _, remote := range slices.Sorted(maps.Keys(byRemote)) {
 		var refs []refPush
 		for _, t := range byRemote[remote] {
 			oid, err := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+t.branch)
 			if err != nil {
 				return pushes{}, err
-			}
-			if c, ok := checked[t.branch]; ok && (c.Tip != oid || c.Lease != t.lease) {
-				return pushes{}, refuse("%s moved after the pass checked its signatures, to %.12s from %.12s (leased on %.12s, "+
-					"now %.12s), and the pass pushes only what it checked; nothing was pushed, so look at what moved it, "+
-					"then %s", t.branch, oid, c.Tip, c.Lease, t.lease, retry)
 			}
 			refs = append(refs, refPush{Branch: t.branch, New: oid, Old: t.lease, Publish: t.publish})
 		}
@@ -1635,10 +1633,13 @@ func pushNameFree(retry string) error {
 
 // pushRef pushes r to url, over whatever transport the URL uses (for
 // GitHub, SSH and the key) with env added, without touching any
-// remote-tracking ref (pushName). When the key refuses, it asks whether to
-// retry (retryTouch).
+// remote-tracking ref (pushName), once gate lets it. When the key refuses,
+// it asks whether to retry (retryTouch).
 func pushRef(ctx context.Context, remote, url string, r refPush, env []string) error {
 	if err := pushNameFree(""); err != nil {
+		return err
+	}
+	if err := gate(ctx, url, r, env); err != nil {
 		return err
 	}
 	args := []string{"-c", "remote." + pushName + ".url=" + url, "push",
@@ -1694,7 +1695,7 @@ func retryPush(branch string, setUpstream bool) (any, error) {
 		announceTouch()
 	}
 	if setUpstream && !todo.SetUpstream && len(todo.URLs) > 0 && len(todo.Skipped) > 0 {
-		more, err := planPush(slices.Sorted(maps.Keys(todo.Skipped)), true, todo.Checked, "run `"+resumeCommand(branch, false, true)+"`")
+		more, err := planPush(slices.Sorted(maps.Keys(todo.Skipped)), true, "run `"+resumeCommand(branch, false, true)+"`")
 		if err != nil {
 			return nil, err
 		}
@@ -1809,11 +1810,9 @@ func DestinationOf(branch, retry string) (Destination, error) {
 // without an upstream (unless setUpstream) or whose remote has commits its tip
 // lacks is in skipped with the reason; one the remote has at its tip, or with
 // no commits since base, is in neither. pushTargets checks the branches with
-// commits, refusing as it does for a moved branch, and OperatorSigned the
-// commits a push of each picked would put on the remote's branch: the pass
-// signed none of them, so it pushes them only as the operator's, and only
-// as todo records them (planPush).
-func unpushed(branches []string, base string, setUpstream bool, retry string) (todo map[string]checkedPush, skipped map[string]string, err error) {
+// commits, refusing as it does for a moved branch. Their push, as every
+// push, goes only through gate.
+func unpushed(branches []string, base string, setUpstream bool, retry string) (todo []string, skipped map[string]string, err error) {
 	var ahead []string
 	for _, b := range branches {
 		from := base
@@ -1830,7 +1829,6 @@ func unpushed(branches []string, base string, setUpstream bool, retry string) (t
 	if err != nil {
 		return nil, nil, err
 	}
-	todo = map[string]checkedPush{}
 	for _, targets := range byRemote {
 		for _, t := range targets {
 			tip, err := git.Run("rev-parse", "refs/heads/"+t.branch)
@@ -1840,15 +1838,13 @@ func unpushed(branches []string, base string, setUpstream bool, retry string) (t
 			switch {
 			case t.lease == tip:
 			case t.lease == "" || git.OK("merge-base", "--is-ancestor", t.lease, tip):
-				if err := OperatorSigned(t.branch, tip, remoteHas(t)); err != nil {
-					return nil, nil, err
-				}
-				todo[t.branch] = checkedPush{Tip: tip, Lease: t.lease}
+				todo = append(todo, t.branch)
 			default:
 				skipped[t.branch] = fmt.Sprintf("not pushed: %s/%s has commits %s lacks", t.remote, t.branch, t.branch)
 			}
 		}
 	}
+	sort.Strings(todo)
 	return todo, skipped, nil
 }
 
@@ -1869,7 +1865,7 @@ func pushUnmoved(branch, base string, early map[string]string, setUpstream bool)
 		if Brief {
 			announceTouch()
 		}
-		done, err := pushAll(branch, pushes{Branches: slices.Sorted(maps.Keys(todo)), SetUpstream: setUpstream, Checked: todo})
+		done, err := pushAll(branch, pushes{Branches: todo, SetUpstream: setUpstream})
 		if err != nil {
 			return nil, err
 		}

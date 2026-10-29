@@ -77,10 +77,15 @@ started there may still be running.
                     branch that does not move, is pushed too when it has
                     commits since its base and its remote-tracking ref is
                     absent or behind its tip; one the remote has commits on
-                    that it lacks is left, and the result says why. Such a
-                    branch is refused, before any push, unless the key
-                    user.signingkey names signed every commit the push
-                    sends: a good signature git marks G, or U, by that key
+                    that it lacks is left, and the result says why. Each
+                    push is refused, just before it, unless the URL's
+                    branch is still where the push is leased and every
+                    commit it sends, those no branch or tag there reaches
+                    as ls-remote reads it then, carries a good signature by
+                    the key of the protected operator profile (the baked
+                    git config's user.signingkey, an OpenPGP key by its full
+                    fingerprint or an SSH key), whatever the repository's
+                    own config says
   --brief           print only what it will sign, a progress line every 25
                     signatures, one line per push and the final JSON; git's
                     own account of the rebase and the pushes is left out

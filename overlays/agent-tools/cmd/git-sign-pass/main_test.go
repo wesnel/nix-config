@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
 // TestMain runs main instead of the tests when asked to, so a test can run
@@ -16,6 +17,7 @@ import (
 // resuming name.
 func TestMain(m *testing.M) {
 	if os.Getenv("GIT_SIGN_PASS_RUN_MAIN") == "1" {
+		hostpaths.BakeFromEnv()
 		main()
 	}
 	gitenv.Isolate()
@@ -53,6 +55,36 @@ func run(t *testing.T, dir, global string, args ...string) (int, string) {
 	return 0, stderr.String()
 }
 
+// operatorHome gives this program, as run, a protected operator profile in
+// a config home of the test's own, whose key is the SSH public key line pub,
+// checked by the system's ssh-keygen, as an installed build has one baked in.
+func operatorHome(t *testing.T, pub string) {
+	t.Helper()
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	configHome, state := filepath.Join(home, ".config"), filepath.Join(home, ".local", "state")
+	for _, d := range []string{filepath.Join(configHome, "git"), state} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	program, err := exec.LookPath("ssh-keygen")
+	if err == nil {
+		program, err = filepath.EvalSymlinks(program)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := "[user]\n\tsigningkey = key::" + strings.TrimSpace(pub) + "\n[gpg]\n\tformat = ssh\n[gpg \"ssh\"]\n\tprogram = " + program + "\n"
+	if err := os.WriteFile(filepath.Join(configHome, "git", "config"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(hostpaths.TestConfigHomeEnv, configHome)
+	t.Setenv(hostpaths.TestStateHomeEnv, state)
+}
+
 // The command a failed push prints for resuming is one this program
 // accepts, and it pushes what is left.
 func TestPrintedResume(t *testing.T) {
@@ -62,6 +94,7 @@ func TestPrintedResume(t *testing.T) {
 		t.Skipf("no ssh-keygen: %v %s", err, out)
 	}
 	pub, _ := os.ReadFile(key + ".pub")
+	operatorHome(t, string(pub))
 	signers := filepath.Join(dir, "signers")
 	os.WriteFile(signers, []byte("t@e namespaces=\"git\" "+string(pub)), 0o644)
 	global := filepath.Join(dir, "gitconfig")

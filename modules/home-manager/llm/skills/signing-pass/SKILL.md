@@ -96,7 +96,7 @@ The forms of the pass:
 
 ```sh
 git sign-pass                  # sign; nothing is pushed
-git sign-pass --push           # sign, then push to its own name upstream every branch that moved, or that is ahead of its remote with every commit signed by the operator's key
+git sign-pass --push           # sign, then push to its own name upstream every branch that moved, or that is ahead of its remote, refusing any commit the operator's key did not sign
 git sign-pass --set-upstream   # the same, and publish those that have no upstream yet
 ```
 

@@ -20,6 +20,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
+	"github.com/wesnel/agent-tools/internal/operatorkey"
 )
 
 // signing makes dir's commits verifiable, signed with a throwaway SSH key
@@ -101,6 +102,24 @@ func pushedOperatorBranch(t *testing.T) (*fakeOpen, string) {
 	gitIn(t, dir, append(sign, "--amend", "--no-edit", "--allow-empty")...)
 	published(t, f, dir, "feat")
 	return f, dir
+}
+
+// next's check of a branch GitHub has reads the commits themselves: a
+// shallow file cannot hide the unsigned one below a signed tip.
+func TestOperatorFormatSignedShallow(t *testing.T) {
+	f, dir := pushedBranch(t)
+	_, sign := sshOperatorProfile(t, dir)
+	gitIn(t, dir, append(sign, "--allow-empty", "-m", "Signed on top")...)
+	tip := gitIn(t, dir, "rev-parse", "HEAD")
+	published(t, f, dir, "feat")
+	if err := os.WriteFile(filepath.Join(dir, ".git", "shallow"), []byte(tip+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var r Refusal
+	err := operatorFormatSigned("feat", gitIn(t, dir, "rev-parse", "main"), tip)
+	if !errors.As(err, &r) || !strings.Contains(err.Error(), "no signature") {
+		t.Errorf("a shallow file over an unsigned commit: %v", err)
+	}
 }
 
 func TestOpenAuthorityFailure(t *testing.T) {
@@ -199,7 +218,7 @@ func TestOperatorVerifierCanceled(t *testing.T) {
 		sentinel.Close()
 		cancel()
 	}()
-	err = verifyOperatorRange(ctx, gitIn(t, dir, "rev-parse", "main"), gitIn(t, dir, "rev-parse", "feat"))
+	_, err = operatorkey.Verify(ctx, gitIn(t, dir, "rev-parse", "feat"), []string{gitIn(t, dir, "rev-parse", "main")})
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("canceled verifier lost context cause: %v", err)
 	}
@@ -513,8 +532,7 @@ func TestOpenOperatorSignature(t *testing.T) {
 					t.Fatalf("authorized: error %v, mutations %v", err, f.calls)
 				}
 			} else if name == "object identity" {
-				var command *exec.ExitError
-				if !errors.As(err, &command) || len(f.calls) != 0 {
+				if err == nil || !strings.Contains(err.Error(), "hash mismatch") || len(f.calls) != 0 {
 					t.Fatalf("corrupt object: error %v, mutations %v", err, f.calls)
 				}
 			} else {
