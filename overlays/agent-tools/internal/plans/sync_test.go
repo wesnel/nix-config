@@ -82,7 +82,66 @@ func TestSync(t *testing.T) {
 	t.Run("does not force its push", testSyncDoesNotForce)
 	t.Run("catches up after a plan is written as it pushes", testSyncCatchesUpAfterItsPush)
 	t.Run("catches up only with its own plans", testSyncCatchUp)
+	t.Run("keeps a concurrent edit unstaged while catching up", testSyncConcurrentEdit)
 	t.Run("without a repository", testSyncWithoutRepository)
+}
+
+func testSyncConcurrentEdit(t *testing.T) {
+	origin, hosts := notes(t, "mac")
+	mac := hosts["mac"]
+	repo := filepath.Dir(mac.Dir)
+	f := newPlan(t, mac, "x").file("")
+	if got, err := mac.Sync(SyncOptions{}); err != nil || !got.Pushed {
+		t.Fatalf("initial sync: %+v, %v", got, err)
+	}
+	before, err := os.ReadFile(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(t.TempDir(), "other")
+	gitIn(t, filepath.Dir(other), "clone", "-q", origin, other)
+	newPlan(t, Config{Dir: filepath.Join(other, "agents"), Host: "mac"}, "y")
+	gitIn(t, other, "add", "agents")
+	gitIn(t, other, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "Add another plan")
+	gitIn(t, other, "push", "-q", "origin", "main")
+
+	// Run real Git, then inject a file write after its snapshot is read.
+	// This makes the concurrent writer deterministic without changing Sync.
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	ran := filepath.Join(bin, "ran")
+	script := "#!/bin/sh\n'" + real + "' \"$@\" || exit $?\n" +
+		"for a in \"$@\"; do\n" +
+		"  if [ \"$a\" = hash-object ] && [ ! -e '" + ran + "' ]; then\n" +
+		"    : > '" + ran + "'\n" +
+		"    printf 'concurrent edit\\n' >> '" + f + "' || exit 1\n" +
+		"  fi\ndone\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if got, err := mac.Sync(SyncOptions{}); err != nil || !got.Pushed || got.Behind != "" {
+		t.Errorf("sync after concurrent edit: %+v, %v", got, err)
+	}
+	raced(t, ran)
+	if staged := gitIn(t, repo, "diff", "--cached", "--name-only"); staged != "" {
+		t.Errorf("sync left staged paths: %s", staged)
+	}
+	want := string(before) + "concurrent edit\n"
+	if data, err := os.ReadFile(f); err != nil || string(data) != want {
+		t.Errorf("working plan: %q, %v; want %q", data, err, want)
+	}
+	if sent := gitIn(t, repo, "show", "origin/main:agents/"+filepath.Base(f)); sent != want {
+		t.Errorf("published plan: %q; want %q", sent, want)
+	}
+	if got, err := mac.Sync(SyncOptions{}); err != nil || got.Behind != "" {
+		t.Errorf("next sync: %+v, %v", got, err)
+	}
+	atOrigin(t, mac)
+	untouched(t, mac)
 }
 
 // A plan written after sync has pushed it and before sync fast-forwards to

@@ -592,7 +592,8 @@ func (c Config) bringForward(ctx context.Context, branch, tip string) (string, e
 		}
 	}
 	if len(add) > 0 {
-		if _, err := c.git(ctx, append([]string{"add", "--"}, add...)...); err != nil {
+		// Stage the checked snapshot: a newer working edit must stay unstaged.
+		if _, err := c.git(ctx, append([]string{"reset", "-q", tip, "--"}, add...)...); err != nil {
 			return "", err
 		}
 	}
