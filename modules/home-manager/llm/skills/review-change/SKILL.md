@@ -139,10 +139,12 @@ starts, such as `origin/main` or the parent branch in a stack.
    was settled, to a file, if any. The goal statement is the plan's Goal,
    or the part's.
 2. The general review: prefer `git delegate`, which selects an independent
-   reviewer from the other family where available. Use `/code-review`
-   against BASE in Claude Code, `/review` against BASE in Codex, or a fresh
-   read-only `adversarial-reviewer` given the goal and range as alternatives,
-   not additional passes. Where the clone's settings have test suites, run
+   reviewer from the other family where available. Use `/code-review` with
+   `BASE..TIP` as its target in Claude Code (a bare branch name is reviewed
+   from its merge base with the default branch, wrong for a stacked
+   branch), `/review` against BASE in Codex, or a fresh read-only
+   `adversarial-reviewer` given the goal and range as alternatives, not
+   additional passes. Where the clone's settings have test suites, run
    `git -C WORKTREE red-check BASE..TIP > FILE`, FILE being
    `WORKTREE/red-check.json`, or `red-check.json` in the directory
    `echo $TMPDIR` prints where WORKTREE is not one the sandbox can write (a
