@@ -63,6 +63,11 @@ func PublishedFile() string { return filepath.Join(Dir(), "page", "published") }
 // rule here changes who can read the plans.
 const Capabilities = `{"db":{"rules":[{"path":"","read":"owner","write":"owner"}]}}`
 
+// SpaceStateFile is where plan-dash space records the thread and the block
+// it publishes the Space page in, which the guard keeps sessions from
+// writing.
+func SpaceStateFile() string { return filepath.Join(Dir(), "space.json") }
+
 // Session is the session's working directory, which holds its settings.
 func Session() string { return filepath.Join(Dir(), "session") }
 

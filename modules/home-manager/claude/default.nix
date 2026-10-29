@@ -1178,6 +1178,7 @@ in {
               "Bash(plan-dash export)"
               "Bash(plan-dash page)"
               "Bash(plan-dash page published)"
+              "Bash(plan-dash space)"
               "Artifact"
               "ToolSearch"
               "Monitor"

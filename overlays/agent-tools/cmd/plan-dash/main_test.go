@@ -179,10 +179,37 @@ func TestPage(t *testing.T) {
 	}
 }
 
+// space publishes nothing where the machine names no Space page, and
+// otherwise starts codex's app-server with the export's snapshot to
+// publish (internal/space has the publishing).
+func TestSpace(t *testing.T) {
+	state := setUp(t)
+	config := os.Getenv("AGENT_TOOLS_CONFIG")
+	os.WriteFile(config, []byte(`{"agentPlans": {"claudePage": null, "spacePage": null}}`), 0o600)
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"space"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), `"status": "unconfigured"`) {
+		t.Errorf("unconfigured: exit %d: %s%s", code, stdout.String(), stderr.String())
+	}
+
+	// A codex whose app-server ends at once, as one that cannot start does.
+	bin := filepath.Join(t.TempDir(), "bin")
+	os.MkdirAll(bin, 0o755)
+	os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\nexit 1\n"), 0o755)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	os.WriteFile(config, []byte(`{"agentPlans": {"claudePage": null, "spacePage": "page_a"}}`), 0o600)
+	stdout.Reset()
+	if code := run([]string{"space"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "codex app-server ended during initialize") {
+		t.Errorf("configured: exit %d: %s%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(state, "agent-plans", "space.json")); err == nil {
+		t.Error("a publish that never reached the page recorded state")
+	}
+}
+
 func TestUsage(t *testing.T) {
 	for _, args := range [][]string{{}, {"serve"}, {"export", "now"}, {"export", "--out", "x"},
 		{"watch", "--poll"}, {"watch", "ws://x"}, {"prime", "--url", "x"}, {"page", "now"}, {"page", "published", "x"},
-		{"page", "--out", "x"}} {
+		{"page", "--out", "x"}, {"space", "page_x"}, {"space", "publish"}} {
 		var stdout, stderr bytes.Buffer
 		if code := run(args, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "export") {
 			t.Errorf("%q: exit %d: %s", args, code, stderr.String())
