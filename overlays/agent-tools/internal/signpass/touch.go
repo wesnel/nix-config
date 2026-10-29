@@ -36,6 +36,13 @@ var (
 	RetryTimeout = 60 * time.Second
 )
 
+// retryContext is the context that bounds one automatic retry: RetryTimeout
+// from now. Tests replace it with one they end on an event, as a deadline
+// ends, so that none depends on how long a signature takes.
+var retryContext = func(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, RetryTimeout)
+}
+
 // retrier decides how a step that git ran again after the key refused it is
 // retried, counting the automatic retries of each step on its own.
 type retrier struct {
@@ -89,7 +96,7 @@ func (r *retrier) next(ctx context.Context, what, step, stderr string) (context.
 	if len(sigs) > 0 { // with none, NotifyContext would catch every signal
 		interrupt, stop = signal.NotifyContext(ctx, sigs...)
 	}
-	retry, cancel := context.WithTimeout(interrupt, RetryTimeout)
+	retry, cancel := retryContext(interrupt)
 	r.killed = ""
 	return git.KillingTree(retry), func() {
 		switch {
