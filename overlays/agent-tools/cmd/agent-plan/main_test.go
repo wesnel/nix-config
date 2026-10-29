@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -59,7 +60,7 @@ func newPlan(t *testing.T) string {
 	json.Unmarshal([]byte(out), &made)
 	data, _ := os.ReadFile(made.File)
 	text := strings.Replace(string(data), "** Steps\n",
-		"** Steps\n*** TODO Add the loop\n:PROPERTIES:\n:ID: S1\n:END:\n*** TODO Test it\n:PROPERTIES:\n:ID: S2\n:END:\n", 1)
+		"** Steps\n*** TODO Add the loop\n:PROPERTIES:\n:CUSTOM_ID: S1\n:END:\n*** TODO Test it\n:PROPERTIES:\n:CUSTOM_ID: S2\n:END:\n", 1)
 	os.WriteFile(made.File, []byte(text), 0o644)
 	return made.Plan
 }
@@ -79,20 +80,48 @@ func withQuestions(t *testing.T) string {
 	plan := sessionPlan(t)
 	data, _ := os.ReadFile(plan)
 	os.WriteFile(plan, []byte(strings.Replace(string(data), "** Questions\n",
-		"** Questions\n*** ASK Rename it?\n:PROPERTIES:\n:ID: Q1\n:RECOMMENDATION: no\n:END:\n- yes\n"+
-			"*** ASK Rename its flag too?\n:PROPERTIES:\n:ID: Q2\n:RECOMMENDATION: no\n:AFTER: Q1\n:END:\n", 1)), 0o644)
+		"** Questions\n*** ASK Rename it?\n:PROPERTIES:\n:CUSTOM_ID: Q1\n:RECOMMENDATION: no\n:END:\n- yes\n"+
+			"*** ASK Rename its flag too?\n:PROPERTIES:\n:CUSTOM_ID: Q2\n:RECOMMENDATION: no\n:AFTER: Q1\n:END:\n", 1)), 0o644)
 	return plan
 }
 
 func TestCommands(t *testing.T) {
 	t.Run("new", func(t *testing.T) {
 		plan := sessionPlan(t)
-		if filepath.Base(plan) != time.Now().Format("2006-01-02")+"-add-loop.box.org" {
+		if !regexp.MustCompile(`^` + time.Now().Format("20060102") + `[0-9]{6}-add-loop\.box\.org$`).MatchString(filepath.Base(plan)) {
 			t.Errorf("new printed the plan %s", plan)
 		}
 		data, _ := os.ReadFile(plan)
 		if !strings.Contains(string(data), ":SESSIONS: claude:s-1\n") || !strings.Contains(string(data), ":HARNESS: claude\n") {
 			t.Errorf("the session is not recorded:\n%s", data)
+		}
+	})
+
+	// Without the notes repository's deploy key, new still writes the
+	// plan, and warns on stderr that it is not synced.
+	t.Run("new without the deploy key", func(t *testing.T) {
+		dir, _ := filepath.EvalSymlinks(t.TempDir())
+		key := filepath.Join(dir, "missing-key")
+		c := plans.Config{Dir: filepath.Join(dir, "notes", "agents"), Host: "box", Remote: filepath.Join(dir, "origin"), Key: key}
+		data, _ := json.Marshal(map[string]any{"plans": c})
+		config := filepath.Join(dir, "config.json")
+		os.WriteFile(config, data, 0o644)
+		t.Setenv("AGENT_TOOLS_CONFIG", config)
+		t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+		t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+		code, out, errs := agentPlan(t, "", "new", "--title", "Check", "--slug", "check")
+		if code != 0 {
+			t.Fatalf("new without the key: %d %s", code, errs)
+		}
+		var made plans.Created
+		if err := json.Unmarshal([]byte(out), &made); err != nil || filepath.Dir(made.Plan) != c.Dir {
+			t.Errorf("new printed %s, %v", out, err)
+		}
+		if _, err := os.Stat(made.Plan); err != nil {
+			t.Errorf("plan not written: %v", err)
+		}
+		if !strings.Contains(errs, "agent-plan: ") || !strings.Contains(errs, key) {
+			t.Errorf("no warning naming the key on stderr: %q", errs)
 		}
 	})
 
@@ -126,6 +155,33 @@ func TestCommands(t *testing.T) {
 		code, _, errs := agentPlan(t, "", "goal", plan)
 		if code != 2 || !refusal.SaysInstead(strings.TrimPrefix(strings.TrimSpace(errs), "agent-plan: refused: ")) {
 			t.Errorf("an empty goal: %d %s", code, errs)
+		}
+	})
+
+	// A link to a related plan is an org-roam link to its file-level ID,
+	// with the plan's title and why it is related, under Related.
+	t.Run("link", func(t *testing.T) {
+		plan := sessionPlan(t)
+		code, out, errs := agentPlan(t, "", "new", "--title", "Other plan", "--slug", "other")
+		if code != 0 {
+			t.Fatalf("new: %d %s", code, errs)
+		}
+		var other plans.Created
+		json.Unmarshal([]byte(out), &other)
+		// The file-level ID org-roam knows the plan by, set here so the
+		// link written can be spelled out.
+		const id = "0f1e2d3c-4b5a-4968-8776-655443322110"
+		data, _ := os.ReadFile(other.File)
+		text := regexp.MustCompile(`\A:PROPERTIES:\n:ID: \S+\n:END:\n`).ReplaceAllString(string(data), "")
+		os.WriteFile(other.File, []byte(":PROPERTIES:\n:ID: "+id+"\n:END:\n"+text), 0o644)
+
+		code, _, errs = agentPlan(t, "", "link", plan, other.Plan, "--why", "It splits work out of this one")
+		if code != 0 {
+			t.Fatalf("link: %d %s", code, errs)
+		}
+		data, _ = os.ReadFile(plan)
+		if want := "** Related\n- [[id:" + id + "][Other plan]]: It splits work out of this one\n"; !strings.Contains(string(data), want) {
+			t.Errorf("the plan lacks %q:\n%s", want, data)
 		}
 	})
 
@@ -364,8 +420,8 @@ func TestCommands(t *testing.T) {
 		data, _ := os.ReadFile(plan)
 		for _, want := range []string{
 			"** Goal\nAdd the loop.\nNot its flag.\n** Steps\n",
-			"*** TODO Test it\n:PROPERTIES:\n:ID: S2\n:AFTER: S1 P1\n:END:\n*** TODO Tag the release\n:PROPERTIES:\n:ID: S3\n:END:\n** Distribution\n",
-			"*** TODO plan-write-path\n:PROPERTIES:\n:ID: P1\n:END:\nnix-config: plan-write-path on main, worktree /w/p.\n** Questions\n",
+			"*** TODO Test it\n:PROPERTIES:\n:CUSTOM_ID: S2\n:AFTER: S1 P1\n:END:\n*** TODO Tag the release\n:PROPERTIES:\n:CUSTOM_ID: S3\n:END:\n** Distribution\n",
+			"*** TODO plan-write-path\n:PROPERTIES:\n:CUSTOM_ID: P1\n:END:\nnix-config: plan-write-path on main, worktree /w/p.\n** Questions\n",
 			":STATUS: halted\n",
 		} {
 			if !strings.Contains(string(data), want) {

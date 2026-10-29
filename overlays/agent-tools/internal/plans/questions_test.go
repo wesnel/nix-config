@@ -26,6 +26,7 @@ func openQuestions(t *testing.T) (Config, Plan) {
 }
 
 func TestQuestions(t *testing.T) {
+	t.Parallel()
 	t.Run("open", func(t *testing.T) {
 		_, p := openQuestions(t)
 		qs, err := p.Questions(false)

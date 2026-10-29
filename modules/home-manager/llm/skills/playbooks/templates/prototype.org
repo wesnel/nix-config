@@ -4,14 +4,16 @@
 ** Steps
 *** TODO Ask the question
 :PROPERTIES:
-:ID: S1
+:CUSTOM_ID: S1
 :END:
+First link the plans related to this one with =agent-plan link=, as the
+=plan-work= skill's Related says.
 The design question, written with =agent-plan ask= before any code, as
 the =plan-work= skill's "Spikes" says.
 Done when the question is in the plan's Questions.
 *** TODO The spike
 :PROPERTIES:
-:ID: S2
+:CUSTOM_ID: S2
 :AFTER: S1
 :END:
 Throwaway code on a local branch =spike/<slug>=, never pushed and never
@@ -19,7 +21,7 @@ merged.
 Done when the spike shows an answer to the question.
 *** TODO Record the answer
 :PROPERTIES:
-:ID: S3
+:CUSTOM_ID: S3
 :AFTER: S2
 :END:
 Settle the question as "Questions for the operator" says, its answer

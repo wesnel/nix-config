@@ -12,6 +12,27 @@ import (
 // A sign-pass handed over in a session is requested in the session's plan,
 // under an ID that names the plan, and refused where there is no plan.
 func TestRequestSign(t *testing.T) {
+	t.Run("ownership only", func(t *testing.T) {
+		c := testConfig(t)
+		p := newPlan(t, c, "x")
+		worktree := t.TempDir()
+		if _, err := p.SetOwner(worktree, "builder", day); err != nil {
+			t.Fatal(err)
+		}
+		id, err := c.RequestSign("new-session", worktree, []string{"loop"}, "", day)
+		if err != nil || !strings.HasPrefix(id, p.Name+".") {
+			t.Fatalf("ownership-only request: %q, %v", id, err)
+		}
+		events, err := p.Events()
+		if err != nil {
+			t.Fatal(err)
+		}
+		last := events[len(events)-1]
+		if last.Kind != "sign-requested" || last.Sign != id || last.Worktree != worktree || last.Item != p.Name {
+			t.Errorf("request in owning plan: %+v", last)
+		}
+	})
+
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
 	id, err := c.RequestSign("abc", "", []string{"loop", "flag"}, "", day)

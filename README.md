@@ -386,9 +386,10 @@ trusted.
 
 Agents keep each change's plan with `agent-plan`, as the `plan-work` skill
 says, as files side by side in `wgn.home.llm.plans.dir`
-(`~/git/github.com/wesnel/notes/agents/plans`): `<date>-<slug>.<host>.org`, a
-`<date>-<slug>.<host>.<part>.org` per sub-agent's part, and
-`<date>-<slug>.<host>.log.org`, the append-only record of each item's
+(`~/git/github.com/wesnel/notes/agents/plans`): `<time>-<slug>.<host>.org`
+(`<time>` as `YYYYMMDDHHMMSS`, as org-roam names notes), a
+`<time>-<slug>.<host>.<part>.org` per sub-agent's part, and
+`<time>-<slug>.<host>.log.org`, the append-only record of each item's
 progress and review outcomes. The logs' lock files stay out of git
 through the directory's `.gitignore`, which `agent-plan` writes if it is
 missing.
@@ -397,6 +398,7 @@ missing.
 agent-plan find --branch BRANCH          # plans for a branch on this host
 agent-plan status PLAN                   # what is done, verified and left, and drift, as Org
 agent-plan questions PLAN --all          # open questions, each with its recommendation
+agent-plan link PLAN OTHER --why TEXT    # an org-roam link to a related plan, under Related
 ```
 
 Ask an agent only to plan, and it writes the plan and stops.

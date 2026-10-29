@@ -20,9 +20,11 @@ import (
 
 var usage = `agent-plan: agents' plan files and their append-only event logs.
 
-A plan is files side by side in the plans directory: <date>-<slug>.<host>.org,
-<date>-<slug>.<host>.<part>.org for each sub-agent's part, and
-<date>-<slug>.<host>.log.org, which only "agent-plan log" writes. The plans
+A plan is files side by side in the plans directory: <time>-<slug>.<host>.org,
+<time>-<slug>.<host>.<part>.org for each sub-agent's part, and
+<time>-<slug>.<host>.log.org, which only "agent-plan log" writes, <time>
+being when new made it, as YYYYMMDDHHMMSS; plans named YYYY-MM-DD-<slug>
+are read alike. The plans
 directory and host come from "plans" in the user's agent-tools/config.json.
 A command that would leave a plan file with structure drift it did not
 have (see status) is refused and writes nothing.
@@ -64,15 +66,20 @@ have (see status) is refused and writes nothing.
                      ORDERED siblings settled, not scheduled for later),
                      what still waits, keyword drift, property drift (a
                      WORKTREES, BRANCHES, PULL_REQUESTS or OWNERS value, or a
-                     References entry, the log does not give), and structure
+                     References entry or Related link, the log does not
+                     give), Related links to no file-level ID of an Org file
+                     in the plans' repository, and structure
                      drift (a top-level heading but one * Plan; a section
-                     not a plan's, or twice; a heading under Goal or
+                     not a plan's, or twice; a heading under Goal, Related or
                      Verification; a References entry without a URL; an
                      entry of Steps, Distribution, Questions or Follow-ups
                      without its ID; a question without a question's
                      keyword; an ORDERED or Archive group with text or no
                      entries; a heading skipping a level; a heading line
-                     inside a block; a block with no end)
+                     inside a block; a block with no end; once per file,
+                     the old form, item IDs in ID rather than CUSTOM_ID or
+                     a plan's file without a file-level ID, which stays
+                     readable and refuses no write)
   set PLAN NAME [VALUE...] [--part P1]
                      set WORKTREES, BRANCHES or PULL_REQUESTS of the plan's
                      file, or the part's, to the values, and log it; new,
@@ -149,6 +156,12 @@ have (see status) is refused and writes nothing.
                      used for and which decisions (Q IDs) it fed; log it as
                      referenced. remind adds every URL of the operator's
                      own prompts this way, with no note
+  link PLAN OTHER --why TEXT
+                     write "- [[id:ID][TITLE]]: TEXT" under Related in PLAN, ID
+                     and TITLE being OTHER's file-level ID and title, and log
+                     it as linked; nothing when PLAN already links OTHER.
+                     Refused for PLAN itself, a part's file, and a plan in
+                     the old form, which has no file-level ID
   postpone PLAN ID (--until 'YYYY-MM-DD[ HH:MM]' | --clear)
                      schedule step or part ID for that day or time, which
                      keeps it out of the ready lists and the agenda until
@@ -384,6 +397,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		until    = flags.String("until", "", "")
 		foundIn  = flags.String("found-in", "", "")
 		note     = flags.String("note", "", "")
+		why      = flags.String("why", "", "")
 		unset    = flags.Bool("clear", false, "")
 		check    = flags.Bool("check", false, "")
 		wait     = flags.Bool("wait", false, "")
@@ -480,7 +494,11 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 				o.Worktrees = []string{top}
 			}
 		}
-		return report(c.New(o, time.Now()))
+		made, err := c.New(o, time.Now())
+		if made.Note != "" {
+			fmt.Fprintf(stderr, "agent-plan: %s\n", made.Note)
+		}
+		return report(made, err)
 	case "log":
 		p, ok := wantPlan()
 		if !ok {
@@ -682,6 +700,12 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return report(nil, err)
 		}
 		return report(p.Reference(positional[1], *note, time.Now()))
+	case "link":
+		if len(positional) != 2 {
+			fmt.Fprint(stderr, "agent-plan link: takes PLAN OTHER --why TEXT\n")
+			return 2
+		}
+		return report(c.Link(positional[0], positional[1], *why, time.Now()))
 	case "postpone":
 		if len(positional) != 2 || (*until == "") == !*unset {
 			fmt.Fprint(stderr, "agent-plan postpone: takes PLAN ID and --until TIME or --clear\n")

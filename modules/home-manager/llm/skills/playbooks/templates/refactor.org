@@ -4,14 +4,16 @@
 ** Steps
 *** TODO Pin the behaviour
 :PROPERTIES:
-:ID: S1
+:CUSTOM_ID: S1
 :END:
+First link the plans related to this one with =agent-plan link=, as the
+=plan-work= skill's Related says.
 Name the tests that cover the code to be moved, and run them. A pure
 refactor changes no tests, as the =write-tests= skill says.
 Done when the named tests pass before any change.
 *** TODO Subtract
 :PROPERTIES:
-:ID: S2
+:CUSTOM_ID: S2
 :AFTER: S1
 :END:
 Delete what the new structure makes unneeded before adding any of it, as
@@ -19,7 +21,7 @@ the =subtract-first= skill says.
 Done when the deletions are committed and the named tests pass unchanged.
 *** TODO Move the callers
 :PROPERTIES:
-:ID: S3
+:CUSTOM_ID: S3
 :AFTER: S2
 :END:
 Move every caller to the new structure and delete the old one, as the
@@ -28,7 +30,7 @@ Done when =git grep= finds no caller of the old structure and the named
 tests pass unchanged.
 *** TODO Review and hand back
 :PROPERTIES:
-:ID: S4
+:CUSTOM_ID: S4
 :AFTER: S3
 :END:
 The =review-change= skill's pipeline over the change: the fresh review

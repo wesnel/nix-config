@@ -53,7 +53,7 @@ type structureProblem struct{ heading, problem string }
 // the plan-work skill puts it:
 //   - a top-level heading but one `* Plan`;
 //   - a section of `* Plan` not in planSections, or one it has twice;
-//   - a heading under Goal or Verification, which hold text;
+//   - a heading under Goal, Related or Verification, which hold text;
 //   - a References entry without a URL;
 //   - an entry of Steps, Distribution, Questions or Follow-ups without its
 //     ID, and a question without a question's keyword;
@@ -132,7 +132,7 @@ func structureOf(text string) []structureProblem {
 				me.skip = true
 			}
 			sections[title] = true
-		case me.section == "Goal" || me.section == "Verification":
+		case me.section == "Goal" || me.section == "Verification" || me.section == "Related":
 			add(h, "a heading under %s, which holds text", me.section)
 			me.skip = true
 		case me.section == "References":
@@ -142,7 +142,7 @@ func structureOf(text string) []structureProblem {
 			me.skip = true
 		case h.Level == 3 || parent.group:
 			ids := entryIDs[me.section]
-			id := h.Props["ID"]
+			id := itemID(h)
 			archive := h.Title == "Archive" && slices.Contains(h.Tags, archiveTag)
 			me.group = archive || h.Props["ORDERED"] == "t" && (me.section == "Steps" || me.section == "Distribution")
 			if me.group && (archive || id == "") {
@@ -168,8 +168,35 @@ func structureOf(text string) []structureProblem {
 	return out
 }
 
+// oldFormProblem is the problem of a file in the old form, which status
+// reports and no command is refused for.
+const oldFormProblem = "the old form, its item IDs in ID rather than CUSTOM_ID or, for a plan's own file, no file-level ID; " +
+	"it stays readable as it is, and the old form goes with the plan once its work is done"
+
+// oldForm is the one problem of a plan file's text in the old form, or
+// none: a heading whose item ID, or `* Plan`'s plan ID, is in ID with no
+// CUSTOM_ID, or, unless part says it is a part's file, no file-level ID.
+func oldForm(text string, part bool) []structureProblem {
+	old := !part && fileID(text) == ""
+	for _, h := range parseOrg(text) {
+		if id := h.Props["ID"]; id != "" && h.Props["CUSTOM_ID"] == "" && (isItemID(id) || h.Level == 1) {
+			old = true
+		}
+	}
+	if !old {
+		return nil
+	}
+	return []structureProblem{{"* Plan", oldFormProblem}}
+}
+
+// fileDrift is the drift of a plan's file, or with part a part's: what
+// structureOf finds and, in the old form, oldForm's problem.
+func fileDrift(text string, part bool) []structureProblem {
+	return append(structureOf(text), oldForm(text, part)...)
+}
+
 // structureDrift is the structure drift of each of the plan's files, as
-// structureOf finds it.
+// fileDrift finds it.
 func (p Plan) structureDrift() ([]StructureDrift, error) {
 	files, err := p.files()
 	if err != nil {
@@ -181,7 +208,7 @@ func (p Plan) structureDrift() ([]StructureDrift, error) {
 		if err != nil {
 			return nil, err
 		}
-		for _, d := range structureOf(string(data)) {
+		for _, d := range fileDrift(string(data), partOf(f) != "") {
 			out = append(out, StructureDrift{File: f, Heading: d.heading, Problem: d.problem})
 		}
 	}
@@ -194,7 +221,7 @@ func (p Plan) structureDrift() ([]StructureDrift, error) {
 func keywordsOf(text string, events []Event) map[string]string {
 	out := map[string]string{}
 	for _, h := range parseOrg(text) {
-		if id := h.Props["ID"]; projected(id) && h.Keyword != stepState(events, id) {
+		if id := itemID(h); projected(id) && h.Keyword != stepState(events, id) {
 			out[id] = h.Keyword
 		}
 	}
@@ -223,12 +250,13 @@ func checkKeywords(f, before, after string, events []Event) error {
 // f, where it drifts in a way before, the file's text now, does not. Drift
 // already in the file is the operator's to settle, so it refuses nothing.
 func checkStructure(f, before, after string) error {
+	part := partOf(f) != ""
 	had := map[structureProblem]int{}
-	for _, d := range structureOf(before) {
+	for _, d := range fileDrift(before, part) {
 		had[d]++
 	}
 	var added []string
-	for _, d := range structureOf(after) {
+	for _, d := range fileDrift(after, part) {
 		if had[d] > 0 {
 			had[d]--
 			continue

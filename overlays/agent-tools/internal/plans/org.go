@@ -159,6 +159,61 @@ func headingOf(level int, text string, keywords keywordSet) heading {
 	return h
 }
 
+// itemIDProperties are the properties an entry's ID is read from, the
+// first one set winning: CUSTOM_ID, where agent-plan writes it, then ID,
+// where plans in the old form hold it. emacs-config's
+// wgn/agent-plans--id-properties reads the same, in the same order.
+var itemIDProperties = []string{"CUSTOM_ID", "ID"}
+
+// itemID is the ID of the entry h, or "".
+func itemID(h heading) string { return propsID(h.Props) }
+
+// propsID is the item ID properties give, as itemID reads it.
+func propsID(props map[string]string) string {
+	for _, name := range itemIDProperties {
+		if v := props[name]; v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// drawerProps are the properties of a property drawer's lines, their
+// names upper-cased as parseOrg reads them.
+func drawerProps(lines []string) map[string]string {
+	props := map[string]string{}
+	for _, l := range lines {
+		if m := propertyLine.FindStringSubmatch(l); m != nil {
+			props[strings.ToUpper(m[1])] = m[2]
+		}
+	}
+	return props
+}
+
+// fileID is the ID in the property drawer an Org file starts with, after
+// blank and comment lines alone, which org-roam takes as the file's node;
+// or "".
+func fileID(text string) string {
+	lines := strings.Split(text, "\n")
+	i := 0
+	for i < len(lines) && (strings.TrimSpace(lines[i]) == "" || lines[i] == "#" || strings.HasPrefix(lines[i], "# ")) {
+		i++
+	}
+	if i == len(lines) || strings.TrimSpace(lines[i]) != ":PROPERTIES:" {
+		return ""
+	}
+	start := i + 1
+	for i = start; i < len(lines) && strings.TrimSpace(lines[i]) != ":END:"; i++ {
+		if level(lines[i]) > 0 {
+			return ""
+		}
+	}
+	if i == len(lines) {
+		return ""
+	}
+	return drawerProps(lines[start:i])["ID"]
+}
+
 // orgTitle is the #+title of an Org file.
 func orgTitle(text string) string {
 	for _, line := range strings.Split(text, "\n") {

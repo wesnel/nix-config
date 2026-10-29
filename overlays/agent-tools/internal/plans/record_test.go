@@ -114,6 +114,7 @@ func TestRecordCommit(t *testing.T) {
 // What tools record is theirs alone to log: an agent's `agent-plan log` of
 // one of those kinds is refused, saying what logs it.
 func TestToolKindsNotLoggable(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"committed", "pushed", "sign-requested", "signed", "sign-refused", "sign-failed", "sign-delivered",
 		"loop-began", "round", "replied", "resolved", "ci-waited", "branch-changed", "property"} {
 		t.Run(kind, func(t *testing.T) {

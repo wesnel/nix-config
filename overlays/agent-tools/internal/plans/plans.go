@@ -1,7 +1,9 @@
 // Package plans keeps agents' plan files and their append-only event logs,
-// side by side in one plans directory: a plan <date>-<slug>.<host>.org, a
-// <date>-<slug>.<host>.<part>.org per sub-agent, and the log
-// <date>-<slug>.<host>.log.org, which only Log writes to.
+// side by side in one plans directory: a plan <name>.<host>.org, a
+// <name>.<host>.<part>.org per sub-agent, and the log
+// <name>.<host>.log.org, which only Log writes to. New names a plan
+// <time>-<slug>, its time YYYYMMDDHHMMSS as org-roam names notes; a plan
+// named YYYY-MM-DD-<slug> is read alike.
 package plans
 
 import (
@@ -50,10 +52,27 @@ var (
 	// A host is part of every file name, between dots, so it holds none.
 	hostPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 	slugPattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
-	// planFile is a plan's file name: the plan's name, which is its date and
-	// slug, then its host, and then a part's ID or "log" for those files.
-	planFile = regexp.MustCompile(`^([0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9]+(?:-[a-z0-9]+)*\.([A-Za-z0-9][A-Za-z0-9_-]*))(?:\.(P[0-9]+|log))?\.org$`)
+	// planFile is a plan's file name: the plan's name, which is its time,
+	// YYYYMMDDHHMMSS, or for an older plan its date, YYYY-MM-DD, and its
+	// slug; then its host, and then a part's ID or "log" for those files.
+	// emacs-config's wgn/agent-plans--file-regexp and the Agent plans page's
+	// PLAN_ID (internal/agentplans/page.html) read the same names.
+	planFile = regexp.MustCompile(`^((?:[0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{14})-[a-z0-9]+(?:-[a-z0-9]+)*\.([A-Za-z0-9][A-Za-z0-9_-]*))(?:\.(P[0-9]+|log))?\.org$`)
+	// oldDate is the date an older plan's name starts with.
+	oldDate = regexp.MustCompile(`^([0-9]{4})-([0-9]{2})-([0-9]{2})-`)
 )
+
+// nameTimeLayout is the time a new plan's name starts with, as org-roam
+// starts a note's.
+const nameTimeLayout = "20060102150405"
+
+// newerName reports whether the plan named a sorts before the plan named
+// b, the newer first: by their names with an older plan's YYYY-MM-DD read
+// as YYYYMMDD, as wgn/agent-plans--newer-p in emacs-config orders them.
+func newerName(a, b string) bool {
+	key := func(name string) string { return oldDate.ReplaceAllString(name, "$1$2$3-") }
+	return key(a) > key(b)
+}
 
 // IsLog reports whether name is the file name of a plan's log, or of the
 // lock file that records the log's state.
@@ -69,8 +88,19 @@ func IsPlan(name string) bool {
 	return m != nil && m[3] != "log"
 }
 
-// Load reads the config, defaulting to ~/git/notes/agents and this
-// machine's short host name.
+// notesRepo is the operator's notes repository under home, the plans'
+// repository when the config names no plans directory.
+func notesRepo(home string) string {
+	return filepath.Join(home, "git", "github.com", "wesnel", "notes")
+}
+
+// DefaultDir is the plans directory under home when the config names
+// none: agents/plans in the operator's notes repository.
+func DefaultDir(home string) string { return filepath.Join(notesRepo(home), "agents", "plans") }
+
+// Load reads the config, defaulting to this machine's short host name and
+// to DefaultDir, in the notes repository, which is then the plans'
+// repository too.
 func Load() (Config, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -78,7 +108,7 @@ func Load() (Config, error) {
 	}
 	host, _ := os.Hostname()
 	host, _, _ = strings.Cut(host, ".")
-	c := Config{Dir: filepath.Join(home, "git", "notes", "agents"), Host: host}
+	c := Config{Dir: DefaultDir(home), Repo: notesRepo(home), Host: host}
 	data, err := os.ReadFile(repos.Path())
 	if errors.Is(err, fs.ErrNotExist) {
 		return c, nil
@@ -92,10 +122,13 @@ func Load() (Config, error) {
 	if err := json.Unmarshal(data, &file); err != nil {
 		return Config{}, fmt.Errorf("%s: %w", repos.Path(), err)
 	}
-	dir, host := c.Dir, c.Host
+	dir, repo, host := c.Dir, c.Repo, c.Host
 	c = file.Plans
 	if c.Dir == "" {
 		c.Dir = dir
+		if c.Repo == "" {
+			c.Repo = repo
+		}
 	}
 	if c.Host == "" {
 		c.Host = host
@@ -131,6 +164,8 @@ type Created struct {
 	File string `json:"file"`
 	ID   string `json:"id"`
 	Log  string `json:"log"`
+	// Note says why the plan is not synced: Init's Note, for a new plan.
+	Note string `json:"note,omitempty"`
 }
 
 // checkLine refuses a value that would break the Org line it goes on.
@@ -152,8 +187,9 @@ func checkWords(what string, values []string) error {
 }
 
 // New creates a plan, or with Parent and Part, a part's plan file beside
-// its parent's. A new plan's name is <date>-<slug>, with -2, -3 and so on
-// for a slug this host already used that day.
+// its parent's. A new plan's name is <time>-<slug>, its time now as
+// YYYYMMDDHHMMSS, with -2, -3 and so on for a slug this host already used
+// that second.
 func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 	if strings.TrimSpace(o.Title) == "" {
 		return Created{}, refusal.New("a plan needs a title. Pass one with `--title`")
@@ -197,10 +233,19 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 		}
 		sections["Goal"] = append([]string{o.Goal}, sections["Goal"]...)
 	}
-	if _, err := c.Init(); err != nil {
+	// A plan is written even where the notes repository could not be
+	// cloned, unsynced, with Init's note as the warning. The plan then
+	// keeps a later clone out of the directory, as any file there does.
+	ready, err := c.Init()
+	if err != nil {
 		return Created{}, err
 	}
-	base := now.Format("2006-01-02") + "-" + o.Slug
+	if ready.Note != "" {
+		if err := c.makeDir(); err != nil {
+			return Created{}, err
+		}
+	}
+	base := now.Format(nameTimeLayout) + "-" + o.Slug
 	var p Plan
 	for i := 1; p.Name == "" && i < 1000; i++ {
 		try := base
@@ -219,7 +264,7 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 	if p.Name == "" {
 		return Created{}, fmt.Errorf("no free name for %s.%s under %s", base, c.Host, c.Dir)
 	}
-	err := p.withLock(func(l *lockedPlan) error {
+	err = p.withLock(func(l *lockedPlan) error {
 		if err := l.append("#+title: Log of " + p.Name + "\n"); err != nil {
 			return err
 		}
@@ -228,7 +273,7 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 	if err != nil {
 		return Created{}, err
 	}
-	return Created{Plan: p.file(""), File: p.file(""), ID: p.Name, Log: p.log()}, nil
+	return Created{Plan: p.file(""), File: p.file(""), ID: p.Name, Log: p.log(), Note: ready.Note}, nil
 }
 
 func (c Config) newPart(o NewOptions, now time.Time) (Created, error) {
@@ -287,11 +332,17 @@ func fileTags(repos []string, host string) string {
 	return ":" + strings.Join(tags, ":") + ":"
 }
 
-// planText is a new plan file of host's: the parent's sections, and
-// Distribution for a parent alone.
+// planText is a new plan file of host's, with id as its `* Plan`
+// heading's CUSTOM_ID: the parent's sections, and Distribution for a
+// parent alone. A parent's file starts with a property drawer holding a
+// fresh UUID as its ID, the one org-roam node of the plan; a part's file
+// is no node and has none.
 func planText(o NewOptions, id, host string, extra map[string]string, parent bool) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "#+title: %s\n%s#+FILETAGS: %s\n\n* Plan\n:PROPERTIES:\n:ID: %s\n", o.Title, todoLines(),
+	if parent {
+		fmt.Fprintf(&b, ":PROPERTIES:\n:ID: %s\n:END:\n", newUUID())
+	}
+	fmt.Fprintf(&b, "#+title: %s\n%s#+FILETAGS: %s\n\n* Plan\n:PROPERTIES:\n:CUSTOM_ID: %s\n", o.Title, todoLines(),
 		fileTags(o.Repos, host), id)
 	property := func(name, value string) {
 		if value == "" {
@@ -372,21 +423,43 @@ const ignore = "*.lock\n"
 // Init clones the notes repository where it is missing and Remote is set,
 // then makes the plans directory, with a .gitignore for the lock files if
 // it has none, as New does, for a session whose sandbox may write only
-// inside it.
+// inside it. A clone deferred or rejected leaves the plans directory alone.
+// Remote-configured calls hold a repository bootstrap lock outside that
+// directory, so recovery and cloning are serialized even before it exists.
 func (c Config) Init() (Ready, error) {
 	r := Ready{Dir: c.Dir, Repo: c.repo()}
+	if c.Remote != "" {
+		parent := filepath.Dir(c.repo())
+		if err := os.MkdirAll(parent, 0o755); err != nil { //nolint:gosec // the notes repository's parent
+			return r, err
+		}
+		lock, err := lockFile(filepath.Join(parent, "."+filepath.Base(c.repo())+".agent-plan-init.lock"), false)
+		if err != nil {
+			return r, err
+		}
+		defer lock.Close()
+	}
 	var err error
 	if r.Cloned, r.Note, err = c.clone(); err != nil {
 		return r, err
 	}
+	if r.Note != "" {
+		return r, nil
+	}
+	return r, c.makeDir()
+}
+
+// makeDir makes the plans directory, with a .gitignore for the lock files
+// if it has none.
+func (c Config) makeDir() error {
 	if err := os.MkdirAll(c.Dir, 0o755); err != nil { //nolint:gosec // the plans: notes on the work, synced through git
-		return r, err
+		return err
 	}
-	err = writeNew(filepath.Join(c.Dir, ".gitignore"), ignore)
+	err := writeNew(filepath.Join(c.Dir, ".gitignore"), ignore)
 	if err != nil && !errors.Is(err, fs.ErrExist) {
-		return r, err
+		return err
 	}
-	return r, nil
+	return nil
 }
 
 // Plan is one plan's files in the plans directory.
@@ -396,6 +469,9 @@ type Plan struct {
 	Host string `json:"host"`
 	// Own is whether the plan is this host's, which alone writes it.
 	Own bool `json:"own"`
+	// Repo is the plans' repository, whose Org files' file-level IDs are
+	// what the plan's Related links may name; Open sets it.
+	Repo string `json:"-"`
 }
 
 func (p Plan) file(part string) string {
@@ -447,7 +523,7 @@ func (c Config) Open(arg string) (Plan, error) {
 	if m == nil {
 		return Plan{}, notPlan()
 	}
-	p := Plan{Dir: root, Name: m[1], Host: m[2], Own: m[2] == c.Host}
+	p := Plan{Dir: root, Name: m[1], Host: m[2], Own: m[2] == c.Host, Repo: c.repo()}
 	for _, f := range []string{p.file(""), p.log()} {
 		if info, err := os.Lstat(f); err != nil || !soleFile(info) {
 			return Plan{}, notPlan()
@@ -508,7 +584,7 @@ func (p Plan) itemList() ([]item, error) {
 		}
 		part := partOf(f)
 		for _, h := range parseOrg(string(data)) {
-			id := h.Props["ID"]
+			id := itemID(h)
 			if id == "" || seen[id] {
 				continue
 			}
@@ -535,7 +611,7 @@ func (p Plan) InSection(section string) (map[string]bool, error) {
 		hs := parseOrg(string(data))
 		under := sectionsOf(hs)
 		for i, h := range hs {
-			if id := h.Props["ID"]; id != "" && !seen[id] {
+			if id := itemID(h); id != "" && !seen[id] {
 				seen[id] = true
 				out[id] = h.Level > 2 && under[i] == section
 			}
@@ -627,12 +703,21 @@ func (c Config) plans(host string) (out []Plan, failed []string, err error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	for i := len(entries) - 1; i >= 0; i-- {
-		m := planFile.FindStringSubmatch(entries[i].Name())
-		if m == nil || host != "" && m[2] != host || m[3] != "" || !entries[i].Type().IsRegular() {
+	slices.SortFunc(entries, func(a, b fs.DirEntry) int {
+		switch {
+		case newerName(a.Name(), b.Name()):
+			return -1
+		case newerName(b.Name(), a.Name()):
+			return 1
+		}
+		return 0
+	})
+	for _, e := range entries {
+		m := planFile.FindStringSubmatch(e.Name())
+		if m == nil || host != "" && m[2] != host || m[3] != "" || !e.Type().IsRegular() {
 			continue
 		}
-		if p, err := c.Open(filepath.Join(c.Dir, entries[i].Name())); err == nil {
+		if p, err := c.Open(filepath.Join(c.Dir, e.Name())); err == nil {
 			out = append(out, p)
 		} else {
 			failed = append(failed, m[1])
@@ -743,7 +828,13 @@ func (c Config) Find(o FindOptions) ([]Found, error) {
 					break
 				}
 			}
-			for _, v := range strings.Fields(top.Props["WORKTREES"]) {
+			worktrees := strings.Fields(top.Props["WORKTREES"])
+			for _, pair := range strings.Fields(top.Props["OWNERS"]) {
+				if wt, _, ok := strings.Cut(pair, "="); ok {
+					worktrees = append(worktrees, wt)
+				}
+			}
+			for _, v := range worktrees {
 				if worktree != "" && filepath.Clean(v) == worktree {
 					matched = append(matched, "worktree")
 					break

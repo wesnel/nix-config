@@ -26,7 +26,7 @@ func TestReference(t *testing.T) {
 		}
 		data, _ := os.ReadFile(p.file(""))
 		want := "** References\n*** " + guide + "\n:PROPERTIES:\n:URL: " + guide + "\n:END:\n" +
-			"Principles for the design review; fed Q3 and Q4.\n** Verification\n"
+			"Principles for the design review; fed Q3 and Q4.\n** Related\n** Verification\n"
 		if !strings.HasSuffix(string(data), want) {
 			t.Errorf("plan:\n%s", data)
 		}
@@ -168,6 +168,7 @@ func TestPromptReferences(t *testing.T) {
 // A note is text like any other: no line of it is Org structure, and an
 // entry is found by its own drawer's URL, never by a line of a note.
 func TestReferenceNote(t *testing.T) {
+	t.Parallel()
 	const d, e = "https://example.com/d", "https://example.com/e"
 	for what, note := range map[string]string{
 		"a keyword line":    "#+TODO: | ASK",

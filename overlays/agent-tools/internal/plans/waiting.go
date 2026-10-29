@@ -21,7 +21,7 @@ type Wait struct {
 // unsettling are the kinds of event that change a plan's text, properties
 // or schedule, or its log's seal, and so leave an item waiting on the
 // operator as it was.
-var unsettling = set("planned", propertyKind, "resealed", "referenced", "postponed")
+var unsettling = set("planned", propertyKind, "resealed", "referenced", linkedKind, "postponed")
 
 // Waiting are the plan's items whose newest event, of the kinds that
 // settle one, is a hand-back with a command, in log order.

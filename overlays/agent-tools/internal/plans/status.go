@@ -60,9 +60,13 @@ type Status struct {
 	// one their log gives them: changed in Emacs, or not written while
 	// Emacs held unsaved changes to the file.
 	KeywordDrift []Drift `json:"keywordDrift"`
-	// PropertyDrift are the tracked properties and References whose value
-	// in the file is not the one the log gives them: edited by hand.
+	// PropertyDrift are the tracked properties, References and Related
+	// whose value in the file is not the one the log gives them: edited by
+	// hand.
 	PropertyDrift []PropertyDrift `json:"propertyDrift"`
+	// DanglingLinks are the id: links under Related, as id:ID, whose ID is
+	// the file-level ID of no Org file in the plans' repository.
+	DanglingLinks []string `json:"danglingLinks"`
 	// StructureDrift are the headings of the plan's files that its
 	// structure has no place for, such as a dated section of events.
 	StructureDrift []StructureDrift `json:"structureDrift"`
@@ -102,7 +106,7 @@ func (p Plan) readySteps(isSettled func(string) bool, events []Event, now time.T
 		}
 		hs := parseOrg(string(data))
 		for i, h := range hs {
-			id := h.Props["ID"]
+			id := itemID(h)
 			if !stepPattern.MatchString(id) || planKeywords.done[stepState(events, id)] ||
 				len(unsettled(afterIDs(h.Props), isSettled)) > 0 || scheduledLater(h, now) || !earlierSettled(hs, i, isSettled) {
 				continue
@@ -127,7 +131,7 @@ func earlierSettled(hs []heading, i int, isSettled func(string) bool) bool {
 		if hs[j].Level != hs[i].Level {
 			continue
 		}
-		if id := hs[j].Props["ID"]; id != "" && !isSettled(id) || id == "" && hs[j].Keyword != "" && !hs[j].Done {
+		if id := itemID(hs[j]); id != "" && !isSettled(id) || id == "" && hs[j].Keyword != "" && !hs[j].Done {
 			return false
 		}
 	}
@@ -222,12 +226,15 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 	if s.StructureDrift, err = p.structureDrift(); err != nil {
 		return Status{}, err
 	}
+	if s.DanglingLinks, err = p.danglingLinks(); err != nil {
+		return Status{}, err
+	}
 	index := map[string]int{}
 	for _, it := range list {
 		if it.ID == p.Name {
 			s.State = it.Props["STATUS"]
 		}
-		if partPattern.MatchString(it.ID) || isOpen[it.ID] {
+		if partPattern.MatchString(it.ID) && !isSettled(it.ID) || isOpen[it.ID] {
 			if on := unsettled(afterIDs(it.Props), isSettled); len(on) > 0 {
 				s.Waiting = append(s.Waiting, Waiting{ID: it.ID, On: on})
 			} else if partPattern.MatchString(it.ID) && !started(it.ID, events) && !scheduledLater(it.heading, now) {
@@ -364,6 +371,9 @@ func (s Status) Org() string {
 			drifts = append(drifts, fmt.Sprintf("%s %s (file %s, log %s)", d.ID, d.Property, orNone(d.File), orNone(d.Log)))
 		}
 		fmt.Fprintf(&b, "- Property drift: %s\n", strings.Join(drifts, "; "))
+	}
+	if len(s.DanglingLinks) > 0 {
+		fmt.Fprintf(&b, "- Related links to nothing: %s\n", strings.Join(s.DanglingLinks, ", "))
 	}
 	if len(s.StructureDrift) > 0 {
 		var drifts []string

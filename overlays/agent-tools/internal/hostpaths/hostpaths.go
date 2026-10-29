@@ -62,11 +62,13 @@ func StateHome() string {
 	return dir(builtStateHome, testStateHome, "XDG_STATE_HOME", filepath.Join(".local", "state"))
 }
 
-// ConfigFile is rel under ConfigHome, or the file the environment variable
-// override names where the config directory is not baked in.
+// ConfigFile is rel under ConfigHome, or, where the config directory is
+// not baked in, the file the environment variable override names when it
+// is absolute: an empty or relative one is unset, as for ConfigHome. The
+// plan views in emacs-config read the same file by the same rule.
 func ConfigFile(override, rel string) string {
 	if baked(builtConfigHome, testConfigHome) == "" {
-		if p := os.Getenv(override); p != "" {
+		if p := os.Getenv(override); filepath.IsAbs(p) {
 			return p
 		}
 	}

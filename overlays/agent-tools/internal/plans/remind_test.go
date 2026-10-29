@@ -10,6 +10,7 @@ import (
 // record its part, and a compaction to carry what the plan lacks, in each
 // harness's form, and only in a session with a plan.
 func TestRemind(t *testing.T) {
+	t.Parallel()
 	// As Claude Code 2.1.300 sent it when a background sub-agent finished.
 	notification := "<task-notification>\n<task-id>ac1a150c85cc1d92f</task-id>\n<tool-use-id>toolu_01</tool-use-id>\n" +
 		"<status>completed</status>\n<summary>Agent \"Run echo hi and report output\" finished</summary>\n" +

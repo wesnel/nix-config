@@ -30,6 +30,9 @@ A task of none of these kinds starts without `--template`. One of two
 kinds, such as a feature that needs a refactor first, is two plans, the
 refactor's first.
 
+Each template's first step links the plans related to the new one, as the
+`plan-work` skill's Related says.
+
 The steps come from the template alone: copy no step's text into the plan
 by hand, and add the steps the work needs beyond them with `agent-plan
 step`. A step that does not apply is skipped with its reason, never

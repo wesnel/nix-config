@@ -131,7 +131,13 @@ func (c Config) inRepo() bool {
 // lockSync takes the lock every sync and pull holds, waiting for it unless
 // try; it returns nil when try finds it held.
 func (c Config) lockSync(try bool) (*os.File, error) {
-	f, err := os.OpenFile(filepath.Join(c.Dir, ".sync.lock"), os.O_RDWR|os.O_CREATE, 0o644) //nolint:gosec // an empty lock file
+	return lockFile(filepath.Join(c.Dir, ".sync.lock"), try)
+}
+
+// lockFile locks a persistent inode, waiting unless try. Closing the file
+// releases the lock; keeping its name lets concurrent callers share it.
+func lockFile(path string, try bool) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644) //nolint:gosec // an empty lock file
 	if err != nil {
 		return nil, err
 	}
@@ -788,12 +794,18 @@ func (c Config) clone() (cloned bool, note string, err error) {
 	if c.Remote == "" {
 		return false, "", nil
 	}
-	if entries, err := os.ReadDir(repo); err == nil && len(entries) > 0 {
-		return false, fmt.Sprintf("%s exists and is not a clone of %s; plans are not synced until it is", repo, c.Remote), nil
-	}
 	if c.Key != "" {
 		if _, err := os.Stat(c.Key); errors.Is(err, fs.ErrNotExist) {
 			return false, fmt.Sprintf("the deploy key %s is missing, so %s was not cloned and plans are not synced", c.Key, c.Remote), nil
+		}
+	}
+	if entries, err := os.ReadDir(repo); err == nil && len(entries) > 0 {
+		cleared, err := c.clearInitFiles()
+		if err != nil {
+			return false, "", err
+		}
+		if !cleared {
+			return false, fmt.Sprintf("%s exists and is not a clone of %s; plans are not synced until it is", repo, c.Remote), nil
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(repo), 0o755); err != nil { //nolint:gosec // the notes repository's parent, made as git clone would make it
@@ -813,8 +825,55 @@ func (c Config) clone() (cloned bool, note string, err error) {
 	return true, "", c.configure()
 }
 
+// clearInitFiles removes only the exact ignore file and directory chain
+// Init creates. It validates the entire tree before removing anything;
+// unrelated contents and symbolic links leave the destination untouched.
+func (c Config) clearInitFiles() (bool, error) {
+	repo, dir := filepath.Clean(c.repo()), filepath.Clean(c.Dir)
+	rel, err := filepath.Rel(repo, dir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false, nil
+	}
+	var paths []string
+	valid := true
+	sawIgnore := false
+	err = filepath.WalkDir(repo, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		switch {
+		case d.IsDir():
+			if path != dir && !strings.HasPrefix(dir, path+string(filepath.Separator)) {
+				valid = false
+				return fs.SkipAll
+			}
+		case path == filepath.Join(dir, ".gitignore") && d.Type().IsRegular():
+			data, err := readPlan(path)
+			if err != nil || string(data) != ignore {
+				valid = false
+				return fs.SkipAll
+			}
+			sawIgnore = true
+		default:
+			valid = false
+			return fs.SkipAll
+		}
+		paths = append(paths, path)
+		return nil
+	})
+	if err != nil || !valid || !sawIgnore {
+		return false, err
+	}
+	for i := len(paths) - 1; i >= 0; i-- {
+		if err := os.Remove(paths[i]); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
 // configure sets the notes repository's own config: unsigned commits, and
-// origin at Remote when there is one. Activation runs it on every switch, so
+// origin at Remote, for fetch and push, when there is one. Activation runs it on every switch, so
 // a host's clone follows Remote. It sets no core.sshCommand, with which git
 // sign-pass refuses the repository, since sync and clone pass SSHConfig's
 // ssh on each command; it takes out the one an earlier configure wrote for
@@ -834,12 +893,22 @@ func (c Config) configure() error {
 	if c.Remote == "" {
 		return nil
 	}
-	url, err := c.git(ctx, "config", "--local", "--get", "remote.origin.url")
+	// Origin has Remote as its one URL and no push URL, which would send
+	// sync's pushes elsewhere. git remote set-url refuses an origin with
+	// several URLs, so the values are replaced through git config.
+	urls, err := c.git(ctx, "config", "--local", "--get-all", "remote.origin.url")
 	switch {
 	case err != nil:
 		_, err = c.git(ctx, "remote", "add", "origin", c.Remote)
-	case url != c.Remote:
-		_, err = c.git(ctx, "remote", "set-url", "origin", c.Remote)
+	case urls != c.Remote:
+		_, err = c.git(ctx, "config", "--local", "--replace-all", "remote.origin.url", c.Remote)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if _, err := c.git(ctx, "config", "--local", "--get-all", "remote.origin.pushurl"); err == nil {
+		_, err = c.git(ctx, "config", "--local", "--unset-all", "remote.origin.pushurl")
+		return err
+	}
+	return nil
 }

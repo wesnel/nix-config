@@ -15,6 +15,7 @@ import (
 // Every change to a plan's files is made under the log's lock, so
 // concurrent agent-plan calls neither lose a write nor reuse an ID.
 func TestLock(t *testing.T) {
+	t.Parallel()
 	t.Run("concurrent asks", func(t *testing.T) {
 		p := newPlan(t, testConfig(t), "x")
 		var wg sync.WaitGroup
@@ -29,7 +30,7 @@ func TestLock(t *testing.T) {
 		}
 		wg.Wait()
 		data, _ := os.ReadFile(p.file(""))
-		inFile := regexp.MustCompile(`(?m)^:ID: (Q[0-9]+)$`).FindAllStringSubmatch(string(data), -1)
+		inFile := regexp.MustCompile(`(?m)^:CUSTOM_ID: (Q[0-9]+)$`).FindAllStringSubmatch(string(data), -1)
 		fileIDs := map[string]bool{}
 		for _, m := range inFile {
 			fileIDs[m[1]] = true

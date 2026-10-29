@@ -53,13 +53,17 @@ in {
         # These repositories are mirrored on sourcehut, which is the canonical
         # public copy of emacs-config, so a push to origin goes to both. A
         # push URL replaces the fetch URL for pushing, which is why GitHub is
-        # listed as well.
+        # listed as well. Fetch rewrites the clones' scp-style GitHub URL to
+        # anonymous HTTPS; the distinct ssh:// push URL keeps key-backed SSH.
         ++ map (repo: {
           condition = "gitdir:~/git/github.com/wesnel/${repo}/";
-          contents.remote.origin.pushurl = [
-            "git@github.com:wesnel/${repo}.git"
-            "git@git.sr.ht:~wgn/${repo}"
-          ];
+          contents = {
+            url."https://github.com/wesnel/${repo}.git".insteadOf = "git@github.com:wesnel/${repo}.git";
+            remote.origin.pushurl = [
+              "ssh://git@github.com/wesnel/${repo}.git"
+              "git@git.sr.ht:~wgn/${repo}"
+            ];
+          };
         }) ["nix-config" "emacs-config"];
 
       settings = {
@@ -70,8 +74,9 @@ in {
         # Nix's git names the macOS keychain as a credential helper in its
         # system config, and the keychain holds a GitHub login, with which
         # `git push https://github.com/...` would publish without a key touch.
-        # An empty helper empties the list for github.com, so git there uses
-        # SSH or nothing; gh and pr-loop keep their own login.
+        # An empty helper empties the list for github.com: HTTPS fetches stay
+        # anonymous and authenticated pushes use SSH. gh and pr-loop keep
+        # their own login.
         credential."https://github.com".helper = "";
 
         # Runs before every push from every repository, beside the

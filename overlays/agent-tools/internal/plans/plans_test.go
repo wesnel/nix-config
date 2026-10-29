@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -39,8 +40,16 @@ func newPlan(t *testing.T, c Config, slug string) Plan {
 	return p
 }
 
-// addItems puts headings with IDs under a plan file's heading.
+// addItems puts headings with IDs under a plan file's heading, each in
+// CUSTOM_ID as agent-plan writes it.
 func addItems(t *testing.T, file, under string, ids ...string) {
+	t.Helper()
+	addItemsIn(t, "CUSTOM_ID", file, under, ids...)
+}
+
+// addItemsIn is addItems with each ID in property, such as ID for a plan
+// in the old form.
+func addItemsIn(t *testing.T, property, file, under string, ids ...string) {
 	t.Helper()
 	data, err := os.ReadFile(file)
 	if err != nil {
@@ -48,7 +57,7 @@ func addItems(t *testing.T, file, under string, ids ...string) {
 	}
 	var b strings.Builder
 	for _, id := range ids {
-		fmt.Fprintf(&b, "*** TODO Step %s\n:PROPERTIES:\n:ID: %s\n:END:\n", id, id)
+		fmt.Fprintf(&b, "*** TODO Step %s\n:PROPERTIES:\n:%s: %s\n:END:\n", id, property, id)
 	}
 	text := strings.Replace(string(data), under+"\n", under+"\n"+b.String(), 1)
 	if text == string(data) {
@@ -98,6 +107,28 @@ func isRefusal(t *testing.T, what string, err error) {
 // A plan is three kinds of file side by side in the plans directory, named
 // for its date, slug and host.
 func TestNew(t *testing.T) {
+	// A plan is notes on the work, written whether or not the notes
+	// repository could be cloned; why it is not synced is a warning.
+	t.Run("deferred clone", func(t *testing.T) {
+		c, _, key := cloning(t)
+		made, err := c.New(NewOptions{Title: "Check", Slug: "check"}, day)
+		if err != nil {
+			t.Fatalf("missing deploy key refused the plan: %v", err)
+		}
+		if !strings.Contains(made.Note, key) {
+			t.Errorf("warning %q does not name the missing key %s", made.Note, key)
+		}
+		if filepath.Dir(made.Plan) != c.Dir {
+			t.Errorf("plan %s is not in %s", made.Plan, c.Dir)
+		}
+		if _, err := os.Stat(made.Plan); err != nil {
+			t.Errorf("plan not written: %v", err)
+		}
+		if data, err := os.ReadFile(filepath.Join(c.Dir, ".gitignore")); err != nil || string(data) != "*.lock\n" {
+			t.Errorf("plans directory ignore: %q, %v", data, err)
+		}
+	})
+
 	t.Run("files", func(t *testing.T) {
 		c := testConfig(t)
 		made, err := c.New(NewOptions{Title: "Add the loop", Slug: "add-loop", Repos: []string{"o/r"},
@@ -106,21 +137,23 @@ func TestNew(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		file := filepath.Join(c.Dir, "2026-10-14-add-loop.box.org")
-		if made.Plan != file || made.File != file || made.ID != "2026-10-14-add-loop.box" ||
-			made.Log != filepath.Join(c.Dir, "2026-10-14-add-loop.box.log.org") {
+		// Named the org-roam way, a plan sorts by when it was made beside
+		// the operator's notes.
+		file := filepath.Join(c.Dir, "20261014130500-add-loop.box.org")
+		if made.Plan != file || made.File != file || made.ID != "20261014130500-add-loop.box" ||
+			made.Log != filepath.Join(c.Dir, "20261014130500-add-loop.box.log.org") {
 			t.Errorf("made %+v", made)
 		}
 		data, _ := os.ReadFile(made.File)
 		if header := "#+title: Add the loop\n#+TODO: TODO STARTED | DONE VERIFIED ABANDONED\n#+TODO: ASK | DECIDED(@) DROPPED(@) SUPERSEDED\n" +
-			"#+FILETAGS: :r:box:\n"; !strings.HasPrefix(string(data), header) {
-			t.Errorf("the plan does not start with %q:\n%s", header, data)
+			"#+FILETAGS: :r:box:\n"; !strings.Contains(string(data), ":END:\n"+header) {
+			t.Errorf("the plan's file-level drawer is not followed by %q:\n%s", header, data)
 		}
-		if !strings.HasSuffix(string(data), ":END:\n** Goal\n** Steps\n** Distribution\n** Questions\n** Follow-ups\n** References\n** Verification\n") {
+		if !strings.HasSuffix(string(data), ":END:\n** Goal\n** Steps\n** Distribution\n** Questions\n** Follow-ups\n** References\n** Related\n** Verification\n") {
 			t.Errorf("the plan's sections:\n%s", data)
 		}
 		for _, s := range []string{"* Plan\n:PROPERTIES:\n",
-			":ID: 2026-10-14-add-loop.box\n", ":HOST: box\n", ":REPOSITORIES: o/r\n", ":BRANCHES: main..loop\n",
+			":CUSTOM_ID: 20261014130500-add-loop.box\n", ":HOST: box\n", ":REPOSITORIES: o/r\n", ":BRANCHES: main..loop\n",
 			":WORKTREES: /w/loop\n", ":SESSIONS: claude:abc\n", ":HARNESS: claude\n", ":STATUS: planning\n",
 			":PIPELINE: full\n"} {
 			if !strings.Contains(string(data), s) {
@@ -153,11 +186,40 @@ func TestNew(t *testing.T) {
 		}
 	})
 
+	// A plan's file is one org-roam node, at a file-level ID; its items'
+	// IDs, the same in every plan, are in CUSTOM_ID, which org-id and
+	// org-roam leave alone.
+	t.Run("an org-roam node", func(t *testing.T) {
+		c := testConfig(t)
+		made, err := c.New(NewOptions{Title: "Add the loop", Slug: "add-loop"}, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := os.ReadFile(made.File)
+		uuid := regexp.MustCompile(`\A:PROPERTIES:\n:ID: ([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\n:END:\n#\+title: Add the loop\n`)
+		if !uuid.Match(data) {
+			t.Errorf("the plan does not start with a file-level UUID ID before its title:\n%s", data)
+		}
+		if !strings.Contains(string(data), "* Plan\n:PROPERTIES:\n:CUSTOM_ID: "+made.ID+"\n") ||
+			strings.Contains(string(data), "\n:ID: "+made.ID+"\n") {
+			t.Errorf("the plan's ID is not its * Plan heading's CUSTOM_ID alone:\n%s", data)
+		}
+		other, err := c.New(NewOptions{Title: "Another", Slug: "another"}, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		again, _ := os.ReadFile(other.File)
+		if m, n := uuid.FindSubmatch(data), regexp.MustCompile(`\A:PROPERTIES:\n:ID: (\S+)\n`).FindSubmatch(again); m != nil && n != nil &&
+			string(m[1]) == string(n[1]) {
+			t.Errorf("two plans share the file-level ID %s", m[1])
+		}
+	})
+
 	t.Run("second plan with the slug", func(t *testing.T) {
 		c := testConfig(t)
 		newPlan(t, c, "add-loop")
 		again, err := c.New(NewOptions{Title: "Again", Slug: "add-loop"}, day)
-		if err != nil || again.File != filepath.Join(c.Dir, "2026-10-14-add-loop-2.box.org") {
+		if err != nil || again.File != filepath.Join(c.Dir, "20261014130500-add-loop-2.box.org") {
 			t.Errorf("second plan with the slug: %+v, %v", again, err)
 		}
 	})
@@ -178,6 +240,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestOpen(t *testing.T) {
+	t.Parallel()
 	// withPart makes a plan with a part, P1.
 	withPart := func(t *testing.T) (Config, Plan) {
 		t.Helper()
@@ -194,12 +257,12 @@ func TestOpen(t *testing.T) {
 		"plan file": func(p Plan) string { return p.file("") },
 		"part file": func(p Plan) string { return p.file("P1") },
 		"log":       func(p Plan) string { return p.log() },
-		"name":      func(Plan) string { return "2026-10-14-x.box" },
+		"name":      func(Plan) string { return "20261014130500-x.box" },
 	} {
 		t.Run("by "+name, func(t *testing.T) {
 			c, p := withPart(t)
 			arg := arg(p)
-			if got, err := c.Open(arg); err != nil || got.Name != "2026-10-14-x.box" || got.file("") != p.file("") {
+			if got, err := c.Open(arg); err != nil || got.Name != "20261014130500-x.box" || got.file("") != p.file("") {
 				t.Errorf("Open(%s) = %+v, %v", arg, got, err)
 			}
 		})
@@ -315,6 +378,31 @@ func TestPlans(t *testing.T) {
 	}
 }
 
+// Plans named either way are newest first by their dates, a YYYY-MM-DD
+// name read as YYYYMMDD and so before any plan named the org-roam way
+// that day, as the plan views in emacs-config order them.
+func TestPlansOrder(t *testing.T) {
+	c := testConfig(t)
+	os.MkdirAll(c.Dir, 0o755)
+	names := []string{"2025-12-31-a.box", "20260101000000-b.box", "2026-10-17-c.box", "20261017000001-d.box",
+		"2026-10-23-e.box", "20261023143000-f.box"}
+	for _, name := range names {
+		os.WriteFile(filepath.Join(c.Dir, name+".org"), []byte("* Plan\n"), 0o644)
+		os.WriteFile(filepath.Join(c.Dir, name+".log.org"), nil, 0o644)
+	}
+	got, failed, err := c.Plans()
+	if err != nil || len(failed) != 0 {
+		t.Fatal(failed, err)
+	}
+	var order []string
+	for _, p := range got {
+		order = append(order, p.Name)
+	}
+	if want := "20261023143000-f.box 2026-10-23-e.box 20261017000001-d.box 2026-10-17-c.box 20260101000000-b.box 2025-12-31-a.box"; strings.Join(order, " ") != want {
+		t.Errorf("Plans = %s, want %s", strings.Join(order, " "), want)
+	}
+}
+
 // readPlan reads a plan's file only as the one regular file it opened: a
 // link, a file with another name or a FIFO put there after Open checked
 // it is refused, and a FIFO without blocking.
@@ -364,6 +452,10 @@ func TestInit(t *testing.T) {
 	t.Run("in a repository", testInitInRepository)
 	t.Run("clone without the key", testInitCloneWithoutKey)
 	t.Run("clone with the key", testInitCloneWithKey)
+	t.Run("retry a rejected clone", testInitCloneRetry)
+	t.Run("recover generated leftovers", testInitCloneLeftovers)
+	t.Run("preserve other contents", testInitClonePreserves)
+	t.Run("concurrent clone", testInitConcurrent)
 	t.Run("converges a clone", testInitConverges)
 }
 
@@ -371,6 +463,7 @@ func TestInit(t *testing.T) {
 // only there, keeping the logs' lock files out of the repository around
 // it, and changes nothing else.
 func testInitInRepository(t *testing.T) {
+	t.Parallel()
 	c := testConfig(t)
 	outer := filepath.Dir(filepath.Dir(c.Dir))
 	gitIn(t, outer, "init", "-q", "-b", "main")
@@ -414,12 +507,12 @@ func TestPart(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if made.File != filepath.Join(c.Dir, "2026-10-14-x.box.P1.org") || made.Plan != p.file("") || made.ID != "P1" ||
+		if made.File != filepath.Join(c.Dir, "20261014130500-x.box.P1.org") || made.Plan != p.file("") || made.ID != "P1" ||
 			made.Log != p.log() {
 			t.Errorf("made %+v", made)
 		}
 		data, _ := os.ReadFile(made.File)
-		for _, s := range []string{"#+title: The loop's part\n", ":ID: P1\n", ":PARENT: [[file:2026-10-14-x.box.org]]\n",
+		for _, s := range []string{"#+title: The loop's part\n", ":CUSTOM_ID: P1\n", ":PARENT: [[file:20261014130500-x.box.org]]\n",
 			":BRANCHES: loop..part\n", "** Goal\n", "** Steps\n"} {
 			if !strings.Contains(string(data), s) {
 				t.Errorf("the part lacks %q:\n%s", s, data)
@@ -461,7 +554,7 @@ func TestOtherHost(t *testing.T) {
 		addItems(t, theirs.file(""), "** Steps", "S1")
 		addItems(t, theirs.file(""), "** Distribution", "P1")
 		p, err := c.Open(theirs.file(""))
-		if err != nil || p.Name != "2026-10-14-x.other" {
+		if err != nil || p.Name != "20261014130500-x.other" {
 			t.Fatalf("Open: %+v, %v", p, err)
 		}
 		return c, p
@@ -496,6 +589,7 @@ func TestOtherHost(t *testing.T) {
 }
 
 func TestLog(t *testing.T) {
+	t.Parallel()
 	// withSteps makes a plan with steps S1 and S2.
 	withSteps := func(t *testing.T) Plan {
 		t.Helper()
@@ -518,7 +612,7 @@ func TestLog(t *testing.T) {
 		if !strings.HasSuffix(string(data), entry) {
 			t.Errorf("log:\n%s\nwant it to end with:\n%s", data, entry)
 		}
-		if _, err := p.Log(Event{Kind: "reviewed", Item: "2026-10-14-x.box", Review: "1.F2", Outcome: "fix"}, day); err != nil {
+		if _, err := p.Log(Event{Kind: "reviewed", Item: "20261014130500-x.box", Review: "1.F2", Outcome: "fix"}, day); err != nil {
 			t.Errorf("an event about the whole plan: %v", err)
 		}
 		events := eventsBut(t, p, "property")
@@ -595,6 +689,7 @@ func TestLog(t *testing.T) {
 }
 
 func TestStatus(t *testing.T) {
+	t.Parallel()
 	t.Run("items", testStatusItems)
 	t.Run("ready parts", testStatusReadyParts)
 	t.Run("ready steps", testStatusReadySteps)
@@ -682,6 +777,23 @@ func TestGoal(t *testing.T) {
 }
 
 func TestFind(t *testing.T) {
+	t.Parallel()
+	t.Run("ownership only", func(t *testing.T) {
+		c := testConfig(t)
+		p := newPlan(t, c, "x")
+		worktree := t.TempDir()
+		if _, err := p.SetOwner(worktree, "builder", day); err != nil {
+			t.Fatal(err)
+		}
+		found, err := c.Find(FindOptions{Worktree: worktree})
+		if err != nil || len(found) != 1 || found[0].Plan != p.file("") || strings.Join(found[0].Matched, " ") != "worktree" {
+			t.Errorf("ownership-only worktree: %+v, %v", found, err)
+		}
+		if found, err := c.Find(FindOptions{Worktree: t.TempDir()}); err != nil || len(found) != 0 {
+			t.Errorf("unrelated worktree: %+v, %v", found, err)
+		}
+	})
+
 	// twoHosts makes a plan on this host and one of the same name on
 	// another, and returns this host's.
 	twoHosts := func(t *testing.T) (Config, Plan) {
@@ -767,18 +879,36 @@ func TestLoad(t *testing.T) {
 		}
 	}
 
+	// Unconfigured, plans live in the operator's notes repository, whose
+	// root, not the directory above the plans, is the repository sync
+	// commits to.
 	t.Run("without a config", func(t *testing.T) {
 		useConfig(t, "")
 		home, _ := os.UserHomeDir()
-		if c, err := Load(); err != nil || c.Dir != filepath.Join(home, "git", "notes", "agents") || c.Host == "" {
+		c, err := Load()
+		if err != nil || c.Dir != filepath.Join(home, "git", "github.com", "wesnel", "notes", "agents", "plans") || c.Host == "" {
 			t.Errorf("without a config: %+v, %v", c, err)
+		}
+		if repo := c.repo(); repo != filepath.Join(home, "git", "github.com", "wesnel", "notes") {
+			t.Errorf("without a config, the plans repository is %s", repo)
 		}
 	})
 
+	// A plans directory the config names is in the repository above it
+	// unless plans.repo says otherwise.
 	t.Run("from the config", func(t *testing.T) {
-		useConfig(t, `{"repos": {}, "plans": {"dir": "/p", "host": "ngrok"}}`)
-		if c, err := Load(); err != nil || c.Dir != "/p" || c.Host != "ngrok" {
+		useConfig(t, `{"repos": {}, "plans": {"dir": "/p/plans", "host": "ngrok"}}`)
+		if c, err := Load(); err != nil || c.Dir != "/p/plans" || c.Host != "ngrok" || c.repo() != "/p" {
 			t.Errorf("from the config: %+v, %v", c, err)
+		}
+	})
+
+	t.Run("a config without a directory", func(t *testing.T) {
+		useConfig(t, `{"plans": {"host": "ngrok"}}`)
+		home, _ := os.UserHomeDir()
+		notes := filepath.Join(home, "git", "github.com", "wesnel", "notes")
+		if c, err := Load(); err != nil || c.Dir != filepath.Join(notes, "agents", "plans") || c.repo() != notes || c.Host != "ngrok" {
+			t.Errorf("a config without a directory: %+v, %v", c, err)
 		}
 	})
 

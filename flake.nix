@@ -598,18 +598,24 @@
       # emacs-config's plan views read what agent-plan writes: this runs
       # their tests, at the emacs-config this flake locks, against the
       # agent-plan built from this commit. Point it at a checkout with
-      # `--override-input emacs-config path:<checkout>`.
-      checks.agent-plans =
+      # `--override-input emacs-config path:<checkout>`. The agent-plan is
+      # built without a baked config home, so it reads the scratch config
+      # the tests name in AGENT_TOOLS_CONFIG. Emacs has org-roam, which the
+      # tests of plans as org-roam nodes skip without, and fails at once
+      # where it cannot load it.
+      checks.agent-plans = let
+        emacs = pkgs.emacs-nox.pkgs.withPackages (epkgs: [epkgs.org-roam]);
+      in
         pkgs.runCommand "agent-plans-tests" {
           nativeBuildInputs = [
-            pkgs.emacs-nox
+            emacs
             pkgs.git
             agentTools
           ];
         } ''
           export HOME=$TMPDIR
           cd ${emacs-config}
-          emacs --batch -Q -l tests/run-agent-plans.el \
+          emacs --batch -Q --eval '(require (quote org-roam))' -l tests/run-agent-plans.el \
             --eval '(princ (wgn-agent-plans-run-tests))'
           touch $out
         '';
@@ -640,12 +646,12 @@
               continue
             fi
             status=$(agent-plan status "$(jq -r .plan <<<"$made")" --format json)
-            first=$(grep -m1 -oP '^:ID: \K\S+' "$file")
+            first=$(grep -m1 -oP '^:CUSTOM_ID: \K\S+' "$file")
             jq -e --arg first "$first" '.readySteps | index($first)' <<<"$status" >/dev/null ||
               fail "$name" "its first step, $first, is not ready"
             drift=$(jq -r '.structureDrift[] | tostring' <<<"$status")
             [ -z "$drift" ] || fail "$name" "structure drift: $drift"
-            ids=" $(grep -oP '^:ID: \K\S+' "$file" | tr '\n' ' ') "
+            ids=" $(grep -oP '^:CUSTOM_ID: \K\S+' "$file" | tr '\n' ' ') "
             for after in $(grep -oP '^:AFTER:\s*\K.*' "$file"); do
               case "$ids" in
                 *" $after "*) ;;
@@ -835,6 +841,52 @@
           touch $out
         '';
 
+      checks.agent-plan-sync = let
+        ngrok = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username};
+        devbox = self.homeConfigurations.devbox.config;
+        activation = ngrok.home.activation.agentPlans;
+        darwinWatcher = ngrok.launchd.agents.agent-plan-sync;
+        linuxPath = devbox.systemd.user.paths.agent-plan-sync;
+        linuxTimer = devbox.systemd.user.timers.agent-plan-sync;
+        linuxExec = devbox.systemd.user.services.agent-plan-sync.Service.ExecStart;
+        fixtureAgent = pkgs.writeShellScript "agent-plan-fixture" ''
+          printf '%s\n' "$*" >>"$PLAN_TEST_LOG"
+          if [[ "$1" == init ]]; then exit "''${PLAN_INIT_EXIT:-0}"; fi
+        '';
+      in
+        assert pkgs.lib.assertMsg (darwinWatcher.enable && (darwinWatcher.config.WatchPaths or []) == [ngrok.wgn.home.llm.plans.dir] && (darwinWatcher.config.StartInterval or null) == 300)
+        "Darwin plan sync needs both its path watcher and periodic trigger";
+        assert pkgs.lib.assertMsg (builtins.tail darwinWatcher.config.ProgramArguments == ["--settle" "5s"] && pkgs.lib.hasSuffix "-agent-plan-sync" (builtins.head darwinWatcher.config.ProgramArguments) && builtins.length linuxExec == 1 && pkgs.lib.hasSuffix "-agent-plan-sync --settle 5s" (builtins.head linuxExec))
+        "Both plan watchers must call the initialization-and-sync runner";
+        assert pkgs.lib.assertMsg ((linuxPath.Path.PathChanged or null) == devbox.wgn.home.llm.plans.dir && builtins.elem "default.target" (linuxPath.Install.WantedBy or []) && (linuxTimer.Timer.OnActiveSec or null) == "5min" && (linuxTimer.Timer.OnUnitActiveSec or null) == "5min" && builtins.elem "timers.target" (linuxTimer.Install.WantedBy or []))
+        "Linux plan sync needs both its enabled path watcher and periodic timer";
+          pkgs.runCommand "agent-plan-sync" {
+            nativeBuildInputs = [pkgs.coreutils pkgs.gnused pkgs.gnugrep];
+            activation = activation.data;
+            agentPlan = pkgs.lib.getExe' ngrok.wgn.home.llm.agentTools "agent-plan";
+            notesKey = ngrok.wgn.home.llm.plans.repository.key;
+            runner = builtins.head darwinWatcher.config.ProgramArguments;
+            inherit fixtureAgent;
+            passAsFile = ["activation"];
+          } ''
+            export runnerPath="$runner"
+            bash ${./modules/home-manager/llm/plan-activation-tests.sh}
+            touch $out
+          '';
+
+      checks.git-fetch-urls = let
+        git = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username}.programs.git;
+      in
+        pkgs.runCommand "git-fetch-urls" {
+          nativeBuildInputs = [pkgs.git pkgs.jq];
+          includes = builtins.toJSON (builtins.filter (inc: (inc.condition or null) != null) git.includes);
+          helper = git.settings.credential."https://github.com".helper;
+          passAsFile = ["includes"];
+        } ''
+          bash ${./modules/home-manager/git/fetch-urls-tests.sh}
+          touch $out
+        '';
+
       # The Claude Code settings the ngrok Mac's home configuration writes
       # hold the permission rules beside the guard: bypass mode off; for
       # every server mcp.json lists, each read allowed and each confirm
@@ -863,6 +915,10 @@
           failed=
           check 'if .permissions.disableBypassPermissionsMode == "disable" then empty
             else "bypass-permissions mode is not disabled" end'
+          check 'if (.sandbox.excludedCommands | index("agent-plan link *")) != null then empty
+            else "agent-plan link is not excluded from the sandbox" end'
+          check 'if (.permissions.allow | index("Bash(agent-plan link *)")) != null then empty
+            else "agent-plan link is not allowed" end'
           check '.permissions.deny as $d | ["Bash(gh pr merge *)", "Bash(git push *)"][]
             | select(. as $t | $d | index([$t]) == null) | "not denied: \(.)"'
           check --slurpfile mcp "$mcpPath" '. as $s | $mcp[0][] | .servers[] as $server
@@ -1023,6 +1079,41 @@
             esac
           done < <(lines $(find modules/home-manager/llm/skills -name '*.md' | sort) modules/home-manager/llm/AGENTS.md AGENTS.md)
           [ -z "$failed" ]
+          touch $out
+        '';
+
+      # The agent-tools config.json the ngrok Mac's home configuration writes
+      # holds what agent-plan and emacs-config's plan views read from it:
+      # plans.dir and plans.repo, absolute, the directory inside the
+      # repository, and plans.host. Then agent-plan, unbaked, makes a plan
+      # with it, its home moved under the build's directory so that nothing
+      # outside it is read or written.
+      checks.agent-tools-config = let
+        ngrok = darwinSystems.ngrok;
+        home = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username};
+      in
+        pkgs.runCommand "agent-tools-config" {
+          nativeBuildInputs = [pkgs.jq (pkgs.callPackage ./overlays/agent-tools {})];
+          config = home.xdg.configFile."agent-tools/config.json".source;
+          inherit (home.home) homeDirectory;
+        } ''
+          jq -e '.plans | . as $p | ($p.dir | type == "string" and startswith("/"))
+            and ($p.repo | type == "string" and startswith("/"))
+            and ($p.dir | startswith($p.repo + "/")) and ($p.host | type == "string" and length > 0)' \
+            "$config" >/dev/null || {
+            echo "agent-tools-config: plans lacks an absolute dir inside an absolute repo, or a host:" >&2
+            jq .plans "$config" >&2
+            exit 1
+          }
+          export HOME=$TMPDIR/home AGENT_TOOLS_CONFIG=$TMPDIR/config.json
+          jq --arg from "$homeDirectory" --arg to "$HOME" \
+            'walk(if type == "string" and startswith($from) then $to + .[($from | length):] else . end)' \
+            "$config" > "$AGENT_TOOLS_CONFIG"
+          made=$(agent-plan new --title check --slug check)
+          case "$(jq -r .plan <<<"$made")" in
+            "$(jq -r .plans.dir "$AGENT_TOOLS_CONFIG")"/*) ;;
+            *) echo "agent-tools-config: agent-plan made $made outside plans.dir" >&2; exit 1 ;;
+          esac
           touch $out
         '';
 

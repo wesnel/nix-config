@@ -17,6 +17,7 @@ import (
 // which refuses its event, and not when anything else it checks after
 // writing the plan file refuses.
 func TestRefusedWritesNothing(t *testing.T) {
+	t.Parallel()
 	text := func(s string) *string { return &s }
 	commands := map[string]func(p Plan) error{
 		"followup": func(p Plan) error {
@@ -118,6 +119,7 @@ func TestRefusedWritesNothing(t *testing.T) {
 // be run again: no step without its event, no torn event, and no part
 // file cut short.
 func TestFailedWriteRollsBack(t *testing.T) {
+	t.Parallel()
 	// padded is a plan whose log is longer than any file the commands
 	// below write besides it, so a limit at the log's size fails only the
 	// log's append.

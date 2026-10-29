@@ -9,5 +9,9 @@ import (
 
 func TestMain(m *testing.M) {
 	gitenv.Isolate()
-	os.Exit(m.Run())
+	code := m.Run()
+	if pushGuardDir != "" {
+		os.RemoveAll(pushGuardDir)
+	}
+	os.Exit(code)
 }

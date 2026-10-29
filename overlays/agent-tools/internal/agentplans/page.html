@@ -470,7 +470,7 @@ iframe.renderer {
 
   // The shapes of what the page builds IDs and links from, as the host
   // checks them.
-  const PLAN_ID = /^[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9]+(?:-[a-z0-9]+)*\.[A-Za-z0-9][A-Za-z0-9_-]*$/;
+  const PLAN_ID = /^(?:[0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{14})-[a-z0-9]+(?:-[a-z0-9]+)*\.[A-Za-z0-9][A-Za-z0-9_-]*$/;
   const QID = /^(?:P[0-9]+\.)?Q[0-9]+$/;
   const SLUG = /^([A-Za-z0-9_][A-Za-z0-9_.-]{0,99})\/([A-Za-z0-9_][A-Za-z0-9_.-]{0,99})$/;
   const DAY = 86400000;

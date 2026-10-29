@@ -498,6 +498,7 @@ with lib; let
   agentPlanWrites = [
     "new"
     "log"
+    "link"
     "ask"
     "decide"
     "followup"

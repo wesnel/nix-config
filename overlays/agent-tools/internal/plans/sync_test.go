@@ -1,10 +1,15 @@
 package plans
 
 import (
+	"bufio"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	gosync "sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -43,7 +48,10 @@ func notesAsIs(t *testing.T, hosts ...string) (origin string, configs map[string
 	os.WriteFile(filepath.Join(seed, "agents", ".gitignore"), []byte(ignore), 0o644)
 	os.WriteFile(filepath.Join(seed, "todo.org"), []byte("* TODO x\n"), 0o644)
 	gitIn(t, seed, "add", "agents/.gitignore", "todo.org")
-	gitIn(t, seed, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "Start")
+	// The operator's identity is passed here, not taken from the
+	// environment, so that a parallel test whose parent sets none can seed.
+	gitIn(t, seed, "-c", "commit.gpgsign=false", "-c", "user.name=Operator", "-c", "user.email=operator@example.com",
+		"commit", "-q", "-m", "Start")
 	gitIn(t, seed, "push", "-q", "origin", "main")
 	configs = map[string]Config{}
 	for _, h := range hosts {
@@ -69,7 +77,10 @@ func untouched(t *testing.T, c Config) {
 	}
 }
 
+// The subtests that set no environment of their own run in parallel, as
+// the operator, from the environment set here.
 func TestSync(t *testing.T) {
+	asOperator(t)
 	t.Run("two hosts", testSyncTwoHosts)
 	t.Run("through git-push-guard", testSyncThroughPushGuard)
 	t.Run("authors as the operator", testSyncAuthor)
@@ -506,8 +517,10 @@ func testSyncLeavesRacingCommit(t *testing.T) {
 // so never sends plan files older than origin's, whatever the operator does
 // to the working tree there.
 func testSyncSendsNothingBehind(t *testing.T) {
+	t.Parallel()
 	t.Run("older commit checked out", func(t *testing.T) {
-		_, hosts := notes(t, "mac")
+		t.Parallel()
+		_, hosts := notesAsIs(t, "mac")
 		mac := hosts["mac"]
 		repo := filepath.Dir(mac.Dir)
 		newPlan(t, mac, "x")
@@ -525,7 +538,8 @@ func testSyncSendsNothingBehind(t *testing.T) {
 		}
 	})
 	t.Run("stash on a branch with the operator's commits", func(t *testing.T) {
-		_, hosts := notes(t, "mac", "box")
+		t.Parallel()
+		_, hosts := notesAsIs(t, "mac", "box")
 		mac, box := hosts["mac"], hosts["box"]
 		repo := filepath.Dir(mac.Dir)
 		x := newPlan(t, mac, "x")
@@ -575,7 +589,8 @@ func testSyncLeavesIndex(t *testing.T) {
 	}
 	for _, collide := range []bool{false, true} {
 		t.Run(map[bool]string{false: "a staged version", true: "a staged version and a fast-forward git refuses"}[collide], func(t *testing.T) {
-			_, hosts := notes(t, "mac", "box")
+			t.Parallel()
+			_, hosts := notesAsIs(t, "mac", "box")
 			mac, box := hosts["mac"], hosts["box"]
 			repo := filepath.Dir(mac.Dir)
 			x := newPlan(t, mac, "x")
@@ -601,7 +616,8 @@ func testSyncLeavesIndex(t *testing.T) {
 		})
 	}
 	t.Run("a merge in progress", func(t *testing.T) {
-		_, hosts := notes(t, "mac", "box")
+		t.Parallel()
+		_, hosts := notesAsIs(t, "mac", "box")
 		mac, box := hosts["mac"], hosts["box"]
 		repo := filepath.Dir(mac.Dir)
 		x := newPlan(t, mac, "x")
@@ -723,6 +739,37 @@ func testSyncLeavesSwitchedBranch(t *testing.T) {
 	}
 }
 
+// pushGuardDir holds the git-push-guard pushGuard builds, once for the test
+// binary since a build per test cost a second of each; tests only run it,
+// and TestMain removes the directory.
+var pushGuardDir string
+
+var buildPushGuard = gosync.OnceValues(func() (string, error) {
+	dir, err := os.MkdirTemp("", "plans-push-guard")
+	if err != nil {
+		return "", err
+	}
+	pushGuardDir = dir
+	guard := filepath.Join(dir, "git-push-guard")
+	if out, err := exec.Command("go", "build", "-o", guard, "github.com/wesnel/agent-tools/cmd/git-push-guard").CombinedOutput(); err != nil {
+		return "", fmt.Errorf("building git-push-guard: %v\n%s", err, out)
+	}
+	return guard, nil
+})
+
+// pushGuard is git-push-guard built from this module.
+func pushGuard(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("no go here to build git-push-guard")
+	}
+	guard, err := buildPushGuard()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return guard
+}
+
 // guarded is notes whose hosts reach origin as a host reaches the notes
 // repository, at git@github-notes:wesnel/notes.git over ssh, under a global
 // config that, as home-manager's does, names the operator in user.email and
@@ -732,18 +779,12 @@ func testSyncLeavesSwitchedBranch(t *testing.T) {
 // stands in for GitHub, which a test must not contact.
 func guarded(t *testing.T, hosts ...string) (url string, configs map[string]Config) {
 	t.Helper()
-	if _, err := exec.LookPath("go"); err != nil {
-		t.Skip("no go here to build git-push-guard")
-	}
+	guard := pushGuard(t)
 	origin, configs := notes(t, hosts...)
 	for _, k := range []string{"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"} {
 		os.Unsetenv(k)
 	}
 	dir, _ := filepath.EvalSymlinks(t.TempDir())
-	guard := filepath.Join(dir, "git-push-guard")
-	if out, err := exec.Command("go", "build", "-o", guard, "github.com/wesnel/agent-tools/cmd/git-push-guard").CombinedOutput(); err != nil {
-		t.Fatalf("building git-push-guard: %v\n%s", err, out)
-	}
 	os.MkdirAll(filepath.Join(dir, "wesnel"), 0o755)
 	if err := os.Symlink(origin, filepath.Join(dir, "wesnel", "notes.git")); err != nil {
 		t.Fatal(err)
@@ -807,6 +848,7 @@ func testSyncThroughPushGuard(t *testing.T) {
 // email; its committer stays sync's. Where git resolves no user.email, the
 // author is sync's too, and the sync still succeeds.
 func testSyncAuthor(t *testing.T) {
+	t.Parallel()
 	cases := map[string]struct {
 		config [][]string
 		want   string
@@ -822,7 +864,8 @@ func testSyncAuthor(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			_, hosts := notes(t, "mac")
+			t.Parallel()
+			_, hosts := notesAsIs(t, "mac")
 			mac := hosts["mac"]
 			repo := filepath.Dir(mac.Dir)
 			for _, kv := range tc.config {
@@ -842,7 +885,8 @@ func testSyncAuthor(t *testing.T) {
 // Two hosts sync disjoint plans through one origin, each committing only
 // its own files, and leave every other edit alone.
 func testSyncTwoHosts(t *testing.T) {
-	origin, hosts := notes(t, "mac", "box")
+	t.Parallel()
+	origin, hosts := notesAsIs(t, "mac", "box")
 	mac, box := hosts["mac"], hosts["box"]
 	mine := newPlan(t, mac, "x")
 	addItems(t, mine.file(""), "** Steps", "S1")
@@ -864,7 +908,7 @@ func testSyncTwoHosts(t *testing.T) {
 	}
 	atOrigin(t, box)
 	untouched(t, box)
-	if _, err := os.Stat(filepath.Join(box.Dir, "2026-10-14-x.mac.org")); err != nil {
+	if _, err := os.Stat(filepath.Join(box.Dir, "20261014130500-x.mac.org")); err != nil {
 		t.Errorf("box did not get mac's plan: %v", err)
 	}
 	if got, err := mac.Sync(SyncOptions{PullOnly: true}); err != nil || got.Pushed || len(got.Committed) != 0 {
@@ -921,6 +965,7 @@ func atOrigin(t *testing.T, c Config) {
 
 // A plans directory outside any repository has nothing to sync with.
 func testSyncWithoutRepository(t *testing.T) {
+	t.Parallel()
 	c := testConfig(t)
 	newPlan(t, c, "x")
 	got, err := c.Sync(SyncOptions{})
@@ -933,12 +978,14 @@ func testSyncWithoutRepository(t *testing.T) {
 // Find, status and new pull first, quietly, so another host's plans are
 // current; a pull that cannot run changes nothing.
 func TestPull(t *testing.T) {
+	asOperator(t)
 	t.Run("takes the other hosts' plans", testPullTakes)
 	t.Run("leaves unsent edits unstaged", testPullLeavesEditsUnstaged)
 }
 
 func testPullTakes(t *testing.T) {
-	_, hosts := notes(t, "mac", "box")
+	t.Parallel()
+	_, hosts := notesAsIs(t, "mac", "box")
 	mac, box := hosts["mac"], hosts["box"]
 	theirs := newPlan(t, box, "y")
 	if _, err := box.Sync(SyncOptions{}); err != nil {
@@ -954,7 +1001,8 @@ func testPullTakes(t *testing.T) {
 // A pull that fast-forwards over this host's plan edits not yet sent leaves
 // them as it found them, unstaged.
 func testPullLeavesEditsUnstaged(t *testing.T) {
-	_, hosts := notes(t, "mac", "box")
+	t.Parallel()
+	_, hosts := notesAsIs(t, "mac", "box")
 	mac, box := hosts["mac"], hosts["box"]
 	repo := filepath.Dir(mac.Dir)
 	x := newPlan(t, mac, "x")
@@ -1067,7 +1115,7 @@ func TestSyncState(t *testing.T) {
 // origin with a deploy key that does not exist until the test writes it.
 func cloning(t *testing.T) (c Config, root, key string) {
 	t.Helper()
-	origin, _ := notes(t)
+	origin, _ := notesAsIs(t)
 	root, _ = filepath.EvalSymlinks(t.TempDir())
 	key = filepath.Join(root, "key")
 	c = Config{Dir: filepath.Join(root, "notes", "agents"), Host: "mac", Remote: origin, Key: key,
@@ -1077,6 +1125,7 @@ func cloning(t *testing.T) (c Config, root, key string) {
 
 // Without the deploy key, Init says so and clones nothing.
 func testInitCloneWithoutKey(t *testing.T) {
+	t.Parallel()
 	c, root, key := cloning(t)
 	got, err := c.Init()
 	if err != nil || got.Cloned || !strings.Contains(got.Note, key) {
@@ -1085,12 +1134,22 @@ func testInitCloneWithoutKey(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "notes", ".git")); err == nil {
 		t.Error("cloned without the key")
 	}
+	if _, err := os.Stat(c.Dir); !os.IsNotExist(err) {
+		t.Fatalf("deferred clone created the plans directory: %v", err)
+	}
+	if err := os.WriteFile(key, []byte("fixture key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := c.Init(); err != nil || !got.Cloned {
+		t.Errorf("retry with the key: %+v, %v", got, err)
+	}
 }
 
 // Init clones the notes repository where it is missing, with the deploy
 // key, and sets it never to sign. It sets no core.sshCommand, which would
 // make git sign-pass refuse the repository: sync passes one per command.
 func testInitCloneWithKey(t *testing.T) {
+	t.Parallel()
 	c, root, key := cloning(t)
 	os.WriteFile(key, []byte("private\n"), 0o600)
 	for i := 0; i < 2; i++ {
@@ -1108,23 +1167,267 @@ func testInitCloneWithKey(t *testing.T) {
 	}
 }
 
+func testInitCloneRetry(t *testing.T) {
+	t.Parallel()
+	c, _, key := cloning(t)
+	if err := os.WriteFile(key, []byte("fixture key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	origin := c.Remote
+	c.Remote = t.TempDir()
+	if got, err := c.Init(); err != nil || got.Cloned || !strings.Contains(got.Note, "failed") {
+		t.Fatalf("rejected clone: %+v, %v", got, err)
+	}
+	if _, err := os.Stat(c.Dir); !os.IsNotExist(err) {
+		t.Fatalf("rejected clone created the plans directory: %v", err)
+	}
+	c.Remote = origin
+	if got, err := c.Init(); err != nil || !got.Cloned {
+		t.Errorf("retry with origin: %+v, %v", got, err)
+	}
+}
+
+func testInitCloneLeftovers(t *testing.T) {
+	t.Parallel()
+	for _, layout := range []string{"nested", "repository root"} {
+		t.Run(layout, func(t *testing.T) {
+			c, root, key := cloning(t)
+			c.Repo = filepath.Join(root, "notes")
+			c.Dir = filepath.Join(c.Repo, "agents", "plans")
+			if layout == "repository root" {
+				c.Dir = c.Repo
+			}
+			if err := os.WriteFile(key, []byte("fixture key\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(c.Dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(c.Dir, ".gitignore"), []byte("*.lock\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 2; i++ {
+				if got, err := c.Init(); err != nil || got.Cloned != (i == 0) || got.Note != "" {
+					t.Fatalf("init %d with generated leftovers: %+v, %v", i, got, err)
+				}
+			}
+			if text, err := os.ReadFile(filepath.Join(c.Repo, "todo.org")); err != nil || len(text) == 0 {
+				t.Errorf("origin note missing after recovery: %q, %v", text, err)
+			}
+		})
+	}
+}
+
+func testInitClonePreserves(t *testing.T) {
+	t.Parallel()
+	for _, what := range []string{"foreign sibling", "modified ignore", "symlink ancestor", "plans outside repository", "missing key", "no ignore marker", "incomplete directory chain"} {
+		t.Run(what, func(t *testing.T) {
+			t.Parallel()
+			c, root, key := cloning(t)
+			c.Repo = filepath.Join(root, "notes")
+			c.Dir = filepath.Join(c.Repo, "agents", "plans")
+			if what != "missing key" {
+				if err := os.WriteFile(key, []byte("fixture key\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.MkdirAll(filepath.Dir(c.Dir), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			link := ""
+			if what == "symlink ancestor" {
+				link = c.Dir
+				if err := os.Symlink(t.TempDir(), link); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if what == "plans outside repository" {
+				c.Dir = t.TempDir()
+			}
+			if what != "incomplete directory chain" {
+				if err := os.MkdirAll(c.Dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			keep := filepath.Join(c.Dir, ".gitignore")
+			want := "*.lock\n"
+			if what == "modified ignore" {
+				want += "operator files\n"
+			}
+			marker := what != "no ignore marker" && what != "incomplete directory chain"
+			if marker {
+				if err := os.WriteFile(keep, []byte(want), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if what == "foreign sibling" {
+				if err := os.WriteFile(filepath.Join(c.Repo, "keep.org"), []byte("Keep this note.\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got, err := c.Init(); err != nil || got.Cloned || got.Note == "" {
+				t.Fatalf("init with %s: %+v, %v", what, got, err)
+			}
+			if marker {
+				if data, err := os.ReadFile(keep); err != nil || string(data) != want {
+					t.Errorf("existing ignore changed: %q, %v", data, err)
+				}
+			} else {
+				preserved := c.Dir
+				if what == "incomplete directory chain" {
+					preserved = filepath.Dir(c.Dir)
+				}
+				if info, err := os.Stat(preserved); err != nil || !info.IsDir() {
+					t.Errorf("existing directory changed: %v, %v", info, err)
+				}
+				if _, err := os.Lstat(keep); !os.IsNotExist(err) {
+					t.Errorf("created ignore in unrelated directory: %v", err)
+				}
+			}
+			if link != "" {
+				if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+					t.Errorf("existing symlink changed: %v, %v", info, err)
+				}
+			}
+			if what == "foreign sibling" {
+				if data, err := os.ReadFile(filepath.Join(c.Repo, "keep.org")); err != nil || string(data) != "Keep this note.\n" {
+					t.Errorf("existing note changed: %q, %v", data, err)
+				}
+			}
+		})
+	}
+}
+
+func testInitConcurrent(t *testing.T) {
+	c, root, key := cloning(t)
+	c.Repo = filepath.Join(root, "notes")
+	if err := os.WriteFile(key, []byte("fixture key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(c.Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(c.Dir, ".gitignore"), []byte("*.lock\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fifo := func(name string) *os.File {
+		t.Helper()
+		path := filepath.Join(root, name)
+		if err := syscall.Mkfifo(path, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		f, err := os.OpenFile(path, os.O_RDWR, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+	ready, release := fifo("ready"), fifo("release")
+	t.Cleanup(func() {
+		release.WriteString("go\ngo\n")
+		release.Close()
+		ready.Close()
+	})
+	bin := t.TempDir()
+	// The shim controls scheduling at a real Git clone without a sleep.
+	const shim = `#!/bin/sh
+for arg; do
+  if [ "$arg" = clone ]; then
+    printf 'clone\n' >> "$INIT_TEST_CLONES"
+    printf 'ready\n' > "$INIT_TEST_READY"
+    read release < "$INIT_TEST_RELEASE"
+    break
+  fi
+done
+exec "$INIT_TEST_REAL_GIT" "$@"
+`
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(shim), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	clones := filepath.Join(root, "clones")
+	for name, value := range map[string]string{
+		"PATH": bin + string(os.PathListSeparator) + os.Getenv("PATH"), "INIT_TEST_REAL_GIT": realGit,
+		"INIT_TEST_READY": ready.Name(), "INIT_TEST_RELEASE": release.Name(), "INIT_TEST_CLONES": clones,
+	} {
+		t.Setenv(name, value)
+	}
+	type result struct {
+		ready Ready
+		err   error
+	}
+	init := func() <-chan result {
+		ch := make(chan result, 1)
+		go func() {
+			r, err := c.Init()
+			ch <- result{r, err}
+		}()
+		return ch
+	}
+	a := init()
+	signalled := make(chan error, 1)
+	go func() {
+		_, err := bufio.NewReader(ready).ReadString('\n')
+		signalled <- err
+	}()
+	select {
+	case err := <-signalled:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case got := <-a:
+		t.Fatalf("Init returned before reaching clone: %+v", got)
+	}
+	lock, err := os.OpenFile(filepath.Join(root, ".notes.agent-plan-init.lock"), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { lock.Close() })
+	err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+	if err == nil {
+		t.Error("Init does not hold the repository bootstrap lock during clone")
+		syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	} else if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
+		t.Fatalf("bootstrap lock: %v", err)
+	}
+	b := init()
+	if _, err := release.WriteString("go\ngo\n"); err != nil {
+		t.Fatal(err)
+	}
+	for _, ch := range []<-chan result{a, b} {
+		if got := <-ch; got.err != nil || got.ready.Note != "" {
+			t.Errorf("concurrent Init: %+v", got)
+		}
+	}
+	if data, err := os.ReadFile(clones); err != nil || string(data) != "clone\n" {
+		t.Errorf("clone attempts: %q, %v", data, err)
+	}
+}
+
 // localConfig is a repository's own config, keyed as git config --list
-// prints keys.
+// prints keys; a key with several values maps to them joined by newlines.
 func localConfig(t *testing.T, repo string) map[string]string {
 	t.Helper()
 	got := map[string]string{}
 	for _, line := range strings.Split(strings.TrimSpace(gitIn(t, repo, "config", "--local", "--list")), "\n") {
 		k, v, _ := strings.Cut(line, "=")
+		if old, ok := got[k]; ok {
+			v = old + "\n" + v
+		}
 		got[k] = v
 	}
 	return got
 }
 
 // Init, which activation runs on every switch, brings an existing clone to
-// plans.remote and takes out the core.sshCommand an earlier Init wrote,
-// leaving what else the clone's config holds, and a second Init changes
-// nothing.
+// plans.remote, fetched and pushed alike, and takes out the core.sshCommand
+// an earlier Init wrote, leaving what else the clone's config holds, and a
+// second Init changes nothing.
 func testInitConverges(t *testing.T) {
+	t.Parallel()
 	const elsewhere = "git@elsewhere:x.git"
 	cases := []struct {
 		name string
@@ -1132,9 +1435,9 @@ func testInitConverges(t *testing.T) {
 		set [][]string
 		// noRemote empties plans.remote.
 		noRemote bool
-		// origin is the origin wanted when it is not plans.remote, and ssh
-		// the core.sshCommand wanted.
-		origin, ssh string
+		// origin is the origin wanted when it is not plans.remote, pushURL
+		// the origin push URLs wanted, and ssh the core.sshCommand wanted.
+		origin, pushURL, ssh string
 	}{
 		{name: "moves origin and drops init's core.sshCommand",
 			set: [][]string{{"remote", "set-url", "origin", elsewhere}, {"config", "core.sshCommand", "ssh -F /etc/notes-ssh-config"}}},
@@ -1142,9 +1445,17 @@ func testInitConverges(t *testing.T) {
 		{name: "keeps another core.sshCommand", set: [][]string{{"config", "core.sshCommand", "ssh -i mine"}}, ssh: "ssh -i mine"},
 		{name: "keeps origin without plans.remote", set: [][]string{{"remote", "set-url", "origin", elsewhere}},
 			noRemote: true, origin: elsewhere},
+		{name: "drops origin's push URLs", set: [][]string{
+			{"config", "--add", "remote.origin.pushurl", elsewhere}, {"config", "--add", "remote.origin.pushurl", "git@other:y.git"}}},
+		{name: "keeps push URLs without plans.remote", set: [][]string{{"config", "--add", "remote.origin.pushurl", elsewhere}},
+			noRemote: true, pushURL: elsewhere},
+		{name: "replaces several origin URLs", set: [][]string{
+			{"remote", "set-url", "origin", elsewhere}, {"config", "--add", "remote.origin.url", "git@other:y.git"}}},
+		{name: "keeps plans.remote among several origin URLs", set: [][]string{{"config", "--add", "remote.origin.url", elsewhere}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			c, root, key := cloning(t)
 			os.WriteFile(key, []byte("private\n"), 0o600)
 			if _, err := c.Init(); err != nil {
@@ -1175,8 +1486,9 @@ func testInitConverges(t *testing.T) {
 				}
 			}
 			got := localConfig(t, repo)
-			if got["remote.origin.url"] != want || got["core.sshcommand"] != tc.ssh || got["commit.gpgsign"] != "false" {
-				t.Errorf("the clone's config: %v; want origin %q, core.sshCommand %q", got, want, tc.ssh)
+			if got["remote.origin.url"] != want || got["remote.origin.pushurl"] != tc.pushURL ||
+				got["core.sshcommand"] != tc.ssh || got["commit.gpgsign"] != "false" {
+				t.Errorf("the clone's config: %q; want origin %q, push URLs %q, core.sshCommand %q", got, want, tc.pushURL, tc.ssh)
 			}
 		})
 	}

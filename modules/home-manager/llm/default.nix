@@ -101,6 +101,27 @@ with lib; let
     then "${pkgs.git}/bin:/usr/bin:/bin"
     else "${pkgs.git}/bin:${pkgs.openssh}/bin:/usr/bin:/bin";
 
+  # Initializes and syncs the plans, for activation and both watchers. Its
+  # stderr is what the operator sees: the switch's output, launchd's log
+  # file, the journal. Without the deploy key, which Darwin's secret
+  # loading may not have written yet, it warns and leaves both to the
+  # watcher's next run. A failed init still syncs, and then exits with
+  # init's status.
+  planSyncRunner = pkgs.writeShellScript "agent-plan-sync" ''
+    set -euo pipefail
+    if [[ -n ${escapeShellArg cfg.plans.repository.remote} && ! -r ${escapeShellArg notesKey} ]]; then
+      echo "agent-plan-sync: plans are not synced until the deploy key is readable:" ${escapeShellArg notesKey} >&2
+      exit 0
+    fi
+    status=0
+    ${agentPlan} init || {
+      status=$?
+      echo "agent-plan-sync: agent-plan init failed (exit $status); syncing anyway" >&2
+    }
+    ${agentPlan} sync "$@" || exit
+    exit "$status"
+  '';
+
   # d2 renders a PNG through a Chromium it downloads at run time, after asking
   # on the terminal, which an agent cannot answer and a sandbox cannot
   # download. So a PNG is rendered as SVG, which needs no browser, and
@@ -701,16 +722,15 @@ in {
     # A sandboxed session may write the plans directory and nothing around
     # it, and Linux's sandbox skips a grant whose path does not exist, so
     # the repository is cloned and the directory made here, outside any
-    # sandbox. Neither step fails the switch: init says in one line why it
-    # did not clone, and the sync's failure is a warning. Each is bounded
+    # sandbox. Neither step fails the switch: a failure is a warning, and
+    # the watcher retries initialization and sync. Each is bounded
     # by agent-plan's own timeouts. agent-plan reads its config where the
     # build bakes it in, under xdg.configHome, which is this generation's
-    # once linkGeneration has run.
-    home.activation.agentPlans = hm.dag.entryAfter ["linkGeneration"] ''
-      run --quiet env PATH=${syncPath}:"$PATH" ${agentPlan} init \
-        || warnEcho "agent-plan init failed, so sandboxed sessions may not be able to make plans."
-      run --quiet env PATH=${syncPath}:"$PATH" ${agentPlan} sync \
-        || warnEcho "agent-plan sync failed; the watcher tries again within 5 minutes."
+    # once linkGeneration has run. Darwin starts secret loading
+    # asynchronously, so a missing key defers both steps to the watcher.
+    home.activation.agentPlans = hm.dag.entryAfter (["linkGeneration"] ++ optional (config.sops.secrets != {}) "sops-nix") ''
+      run --quiet env PATH=${syncPath}:"$PATH" ${planSyncRunner} \
+        || warnEcho "agent-plan initialization or sync failed; the watcher tries again within 5 minutes."
     '';
 
     # Syncs plans a few seconds after one changes, outside every session,
@@ -722,7 +742,7 @@ in {
     launchd.agents.agent-plan-sync = mkIf pkgs.stdenv.hostPlatform.isDarwin {
       enable = true;
       config = {
-        ProgramArguments = [agentPlan "sync" "--settle" "5s"];
+        ProgramArguments = [(toString planSyncRunner) "--settle" "5s"];
         WatchPaths = [cfg.plans.dir];
         StartInterval = 300;
         ProcessType = "Background";
@@ -753,7 +773,7 @@ in {
         Service = {
           Type = "oneshot";
           Environment = ["PATH=${syncPath}"];
-          ExecStart = "${agentPlan} sync --settle 5s";
+          ExecStart = "${planSyncRunner} --settle 5s";
         };
       };
     };

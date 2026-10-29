@@ -4,8 +4,10 @@
 ** Steps
 *** TODO Plan
 :PROPERTIES:
-:ID: S1
+:CUSTOM_ID: S1
 :END:
+First link the plans related to this one with =agent-plan link=, as the
+=plan-work= skill's Related says.
 The =review-change= pipeline's first stage, as the =plan-work= skill says:
 the Goal with its =Likely next changes:= line, and the build's steps added
 with =agent-plan step PLAN --after S2=, each with what marks it done. Load
@@ -13,7 +15,7 @@ the =design= skill before writing them.
 Done when the Goal is written and every build step is in the plan.
 *** TODO Design review of the plan
 :PROPERTIES:
-:ID: S2
+:CUSTOM_ID: S2
 :AFTER: S1
 :END:
 The =review-change= skill's "Design review", before any code.
@@ -21,7 +23,7 @@ Done when =plan-reviewed= is logged and each decision it brought is
 settled or asked.
 *** TODO Build
 :PROPERTIES:
-:ID: S3
+:CUSTOM_ID: S3
 :AFTER: S2
 :END:
 The build steps S1 added, each test first as the =write-tests= skill says,
@@ -29,21 +31,21 @@ and committed as the =signing-pass= skill says.
 Done when every build step is logged =verified= or =abandoned=.
 *** TODO Fresh review loop
 :PROPERTIES:
-:ID: S4
+:CUSTOM_ID: S4
 :AFTER: S3
 :END:
 The =review-change= skill's "Fresh review loop" over the committed change.
 Done when a round's findings are all settled.
 *** TODO Design review of the result
 :PROPERTIES:
-:ID: S5
+:CUSTOM_ID: S5
 :AFTER: S4
 :END:
 The =review-change= skill's "Design review", of the change as built.
 Done when it is logged and each decision it brought is settled or asked.
 *** TODO Hand back
 :PROPERTIES:
-:ID: S6
+:CUSTOM_ID: S6
 :AFTER: S5
 :END:
 What the =review-change= pipeline's hand-back lists.

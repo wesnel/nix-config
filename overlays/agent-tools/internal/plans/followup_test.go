@@ -9,6 +9,7 @@ import (
 // Work found out of scope is recorded where it was found, as a TODO of its
 // own, and status keeps it in view until it is done.
 func TestFollowup(t *testing.T) {
+	t.Parallel()
 	// plan makes a plan with a step S1 and a part P1 with its file.
 	plan := func(t *testing.T) Plan {
 		t.Helper()
@@ -34,8 +35,8 @@ func TestFollowup(t *testing.T) {
 			t.Errorf("followup %+v", got)
 		}
 		data, _ := os.ReadFile(p.file(""))
-		want := "** Follow-ups\n*** TODO Guard accepts --draft=false\n:PROPERTIES:\n:ID: F1\n:FOUND_IN: S1\n:END:\n" +
-			"The guard reads the flag's presence only.\n** References\n** Verification\n"
+		want := "** Follow-ups\n*** TODO Guard accepts --draft=false\n:PROPERTIES:\n:CUSTOM_ID: F1\n:FOUND_IN: S1\n:END:\n" +
+			"The guard reads the flag's presence only.\n** References\n** Related\n** Verification\n"
 		if !strings.HasSuffix(string(data), want) {
 			t.Errorf("plan:\n%s", data)
 		}
