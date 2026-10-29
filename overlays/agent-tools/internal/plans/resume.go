@@ -101,20 +101,12 @@ func (p Plan) ResumeBrief(now time.Time, limit int) (string, error) {
 	for _, w := range s.Waiting {
 		waiting = append(waiting, w.ID+" on "+strings.Join(w.On, ", "))
 	}
-	signed := map[string]bool{}
-	for _, e := range events {
-		if slices.Contains(signResultKinds, e.Kind) {
-			signed[e.Sign] = true
+	for _, e := range pendingSigns(events) {
+		on := "sign-pass " + e.Sign + " on the operator"
+		if e.Branch != "" {
+			on += " (" + e.Branch + ")"
 		}
-	}
-	for _, e := range events {
-		if e.Kind == signRequested && !signed[e.Sign] {
-			on := "sign-pass " + e.Sign + " on the operator"
-			if e.Branch != "" {
-				on += " (" + e.Branch + ")"
-			}
-			waiting = append(waiting, on)
-		}
+		waiting = append(waiting, on)
 	}
 	for _, line := range []string{
 		"In progress: " + list(inProgress),

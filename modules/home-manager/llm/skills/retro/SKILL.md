@@ -65,4 +65,5 @@ most costly slip first: the exact change (file and wording, or the rule
 with its examples) as the recommendation, and as context the slip with its
 evidence (log event, transcript line or finding), its class and what the
 change would have prevented. The operator answers them as any other
-question.
+question, and `agent-plan open --kind retro` lists those still open
+across this host's plans.

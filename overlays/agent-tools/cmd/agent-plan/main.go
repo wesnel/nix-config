@@ -93,6 +93,16 @@ have (see status) is refused and writes nothing.
                      parts', --waiting those that wait for an AFTER item: a
                      question until settled, a part or step until logged
                      done, verified or abandoned
+  open [--kind OKIND] [--since 'YYYY-MM-DD[ HH:MM]'] [--json]
+                     the open items of every plan of this host, halted ones
+                     included and marked, newest plan first: what waits on
+                     the operator (a hand-back's command, a sign-pass not
+                     yet run), the questions they can answer now, retro
+                     proposals, ready steps and open follow-ups, its parts'
+                     included; --kind keeps one kind, --since those asked,
+                     discovered or handed back since then (a step's time is
+                     its first event). A plan that cannot be read is named
+                     on stderr, and the exit is 1, after the rest
   brief PLAN         what an agent needs to go on after a compaction: the goal,
                      the decisions, the steps and parts ready, the questions
                      the operator can answer now, the steps done but not
@@ -274,6 +284,7 @@ Values are single lines but --text and --context, which may span lines as
 section says; list values hold no whitespace.
 KIND: ` + strings.Join(plans.Kinds, ", ") + `
 QKIND: ` + strings.Join(plans.QuestionKinds, ", ") + `
+OKIND: ` + strings.Join(plans.OpenKinds, ", ") + `
 ROLE: ` + strings.Join(plans.Roles, ", ") + `
 OUTCOME: ` + strings.Join(plans.Outcomes, ", ") + `
 `
@@ -421,6 +432,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		drop     = flags.Bool("drop", false, "")
 		replaces = flags.String("supersedes", "", "")
 		until    = flags.String("until", "", "")
+		since    = flags.String("since", "", "")
 		foundIn  = flags.String("found-in", "", "")
 		note     = flags.String("note", "", "")
 		why      = flags.String("why", "", "")
@@ -620,6 +632,31 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			fmt.Fprintln(stdout, len(qs))
 		default:
 			io.WriteString(stdout, plans.QuestionsOrg(qs))
+		}
+		return 0
+	case "open":
+		if len(positional) != 0 {
+			fmt.Fprint(stderr, "agent-plan open: takes [--kind KIND] [--since TIME] [--json], and no PLAN\n")
+			return 2
+		}
+		f := plans.OpenFilter{Kind: *kind}
+		if *since != "" {
+			if f.Since, err = plans.ParseSince(*since, time.Local); err != nil {
+				return report(nil, err)
+			}
+		}
+		items, err := c.OpenItems(f, time.Now())
+		if items == nil {
+			return report(nil, err)
+		}
+		if *asJSON {
+			report(items, nil)
+		} else {
+			io.WriteString(stdout, plans.OpenItemsOrg(items))
+		}
+		if err != nil {
+			fmt.Fprintf(stderr, "agent-plan: %s\n", err)
+			return 1
 		}
 		return 0
 	case "brief":
