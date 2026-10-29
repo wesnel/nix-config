@@ -70,9 +70,11 @@ as `origin/main` or the parent branch in a stack.
 
 1. Write the goal statement to a file, and the items the change answers
    (threads, CI checks) with how each was settled to another, if any.
-2. In Claude Code, run `/code-review` with BASE as its target: with none, it
+2. In Claude Code, run `/code-review` with BASE..TIP as its target: with none, it
    reviews only the commits ahead of the branch's upstream, which a local
-   branch may not have. Then the second opinion, from another model
+   branch may not have. For a stacked branch, give /code-review the range
+   BASE..TIP; a bare branch name is reviewed from its merge base with the
+   default branch. Then the second opinion, from another model
    family: where the repository has test settings, run
    `git -C WORKTREE red-check BASE..TIP > WORKTREE/red-check.json`, WORKTREE
    being the branch's worktree, not `$TMPDIR`, which a sandboxed command and

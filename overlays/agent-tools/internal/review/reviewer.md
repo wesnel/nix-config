@@ -64,7 +64,10 @@ Each finding has one kind:
   configuration, the test binary), or passes only because something is
   unreachable or absent.
 - `untrue-doc`: a doc comment, option description, skill, README or other
-  contract the change makes untrue, or leaves untrue.
+  contract the change makes untrue, or leaves untrue. A helper whose
+  behaviour changed: grep its callers and their comments for sentences
+  that describe the old behaviour (for example a limit or a directory the
+  helper no longer uses).
 - `convention`: the change breaks a rule the repository's own docs write
   down. Its evidence names the doc and quotes the rule.
 

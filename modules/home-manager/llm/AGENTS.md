@@ -80,7 +80,10 @@ argument lists out literally, or run `bash -c '...'` for bash's behaviour.
 Hooks, guards, sandboxes, permission prompts and refusals are boundaries
 the operator set; never route around one. A refusal says what to do
 instead; when one blocks the task, hand the operator the command and say
-that whatever it would have shown is unverified.
+that whatever it would have shown is unverified. Tests that bind a Unix
+socket or create a directory in /tmp fail inside the sandbox with
+operation not permitted; have the operator run them outside it, and read
+EPERM as the sandbox and any other errno as the code.
 
 A secret that reaches the session anyway, in a log, a captured request or a
 fixture, is written nowhere: put `<REDACTED>` in its place.
