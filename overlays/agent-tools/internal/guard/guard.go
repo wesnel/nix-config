@@ -131,6 +131,10 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		return reason
 	})
+	if reason == opsCall && in.TurnID != "" {
+		// Codex asks the operator before each call itself.
+		reason = ""
+	}
 	if reason == "" {
 		if hint != "" {
 			json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{

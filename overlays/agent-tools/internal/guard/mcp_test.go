@@ -74,6 +74,10 @@ func TestMCPTools(t *testing.T) {
 		{"unlisted plugin server asks", []string{"--baseline"}, claude("mcp__plugin_x_files__write_file"), ask, "mcp.json"},
 		{"unlisted server from Codex", []string{"--baseline"}, codex("mcp__somewhere__get_thing"), deny, "mcp.json"},
 		{"unlisted server from a reviewer", []string{"--reviewer"}, claude("mcp__somewhere__get_thing"), deny, "mcp.json"},
+		// pr-loop mcp, whose every call Codex asks the operator about itself.
+		{"ops tool from Codex", []string{"--baseline"}, codex("mcp__agent_ops__pr_loop_push"), "", ""},
+		{"ops tool asks in Claude Code", []string{"--baseline"}, claude("mcp__agent_ops__pr_loop_push"), ask, "confirms each call"},
+		{"ops tool from a reviewer", []string{"--reviewer"}, codex("mcp__agent_ops__pr_loop_threads"), deny, "reviewer only reads"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var out bytes.Buffer

@@ -98,11 +98,22 @@ var unlistedCodex = func() map[string]string {
 	return reasons
 }()
 
+// OpsServer is the name pr-loop mcp has as an MCP server, under which the
+// codex module registers it. Codex asks the operator before each of its
+// calls itself (the module holds its default_tools_approval_mode to
+// prompt), so the guard lets them through there; elsewhere a main session
+// asks, and a reviewer is refused.
+const OpsServer = "agent_ops"
+
+// opsCall is why a main session asks before a call to OpsServer's tools.
+const opsCall = "pr-loop mcp's tools act on GitHub and run reviews as the operator, who confirms each call. " +
+	"If they decline, put what you wanted in your report."
+
 // asks are the reasons the guard asks the operator about rather than denies,
-// where the harness can ask: a write each service's confirms, and a call to
-// an unlisted server.
+// where the harness can ask: a write each service's confirms, a call to an
+// unlisted server, and a call to OpsServer.
 var asks = func() map[string]bool {
-	a := map[string]bool{}
+	a := map[string]bool{opsCall: true}
 	for reason := range unlistedCodex {
 		a[reason] = true
 	}
@@ -143,6 +154,10 @@ func mcpTool(tool string) (server mcpServer, name string, mcp bool) {
 // checkMCP returns why who may not call the MCP tool name on server, or "".
 func checkMCP(server mcpServer, name string, who role) string {
 	switch {
+	case strings.EqualFold(server.name, OpsServer) && who != baseline:
+		return reviewerReport
+	case strings.EqualFold(server.name, OpsServer):
+		return opsCall
 	case server.listed != nil:
 		return server.listed.check(name, who)
 	case who != baseline:
