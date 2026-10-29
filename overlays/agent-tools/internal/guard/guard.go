@@ -380,7 +380,7 @@ func program(c call, who role, files, dir, checkout string) string {
 	if reason := checkNgrokEnv(c); reason != "" {
 		return reason
 	}
-	if reason := checkLoopStart(c); reason != "" {
+	if reason := checkLoopStart(c, dir); reason != "" {
 		return reason
 	}
 	if len(c.words) == 0 || c.expands[0] {

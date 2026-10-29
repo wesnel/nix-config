@@ -271,12 +271,13 @@
   {
     "why": "Only the operator starts a review loop and sets its mode, which pr-loop's writes depend on.",
     "scope": "baseline",
-    "deny": ["claude-review-loop --bots 12", "/nix/store/x/bin/claude-review-loop --people 12", "PR_LOOP_MODE=people pr-loop draft T --body-file d.md --outcome fix",
+    "deny": ["review-loop --harness codex --bots 12", "claude-review-loop --bots 12", "/nix/store/x/bin/claude-review-loop --people 12",
+      "codex -c 'shell_environment_policy.set.PR_LOOP_MODE=\"bots\"'", "claude --settings '{\"env\":{\"PR_LOOP_SESSION\":\"1\"}}'", "PR_LOOP_MODE=people pr-loop draft T --body-file d.md --outcome fix",
       "export PR_LOOP_SESSION=1", "env PR_LOOP_MODE=bots pr-loop request", "set -x PR_LOOP_MODE bots", "PR_LOOP_SESSION=1",
       "launchctl setenv PR_LOOP_MODE bots", "declare -x PR_LOOP_MODE=bots",
       "printf -v PR_LOOP_MODE bots; export PR_LOOP_MODE; pr-loop reply --from f", "printf -vPR_LOOP_MODE %s bots",
       "read PR_LOOP_MODE <<< bots", "read -r PR_LOOP_SESSION < f", "export PR_LOOP_MODE", "mapfile -t PR_LOOP_MODE < f"],
-    "allow": ["pr-loop request 663", "echo $PR_LOOP_MODE", "grep -n PR_LOOP_MODE README.md", "printenv PR_LOOP_MODE",
+    "allow": ["pr-loop request 663", "codex -c model=o3 exec hi", "echo $PR_LOOP_MODE", "grep -n PR_LOOP_MODE README.md", "printenv PR_LOOP_MODE",
       "printf '%s\\n' PR_LOOP_MODE", "printf -v line %s PR_LOOP_MODE", "read -r line < f"]
   },
   {
