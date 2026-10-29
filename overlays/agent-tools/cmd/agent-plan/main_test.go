@@ -415,6 +415,46 @@ func TestCommands(t *testing.T) {
 		}
 	})
 
+	// Hard evidence links a plan as it gains it; related lists every
+	// related plan, linked or not, and writes nothing.
+	t.Run("related", func(t *testing.T) {
+		setup(t)
+		first := newPlan(t)
+		name := strings.TrimSuffix(filepath.Base(first), ".org")
+		second := newPlan(t)
+		if code, _, errs := agentPlan(t, "", "followup", first, "--title", "Cache the parse", "--found-in", "S1"); code != 0 {
+			t.Fatalf("followup: %s", errs)
+		}
+		code, out, errs := agentPlan(t, "", "new", "--title", "Cache it", "--slug", "cache")
+		var made plans.Created
+		json.Unmarshal([]byte(out), &made)
+		if code != 0 || len(made.Linked) != 0 {
+			t.Fatalf("new: %d %s %s", code, out, errs)
+		}
+		short := strings.TrimSuffix(name, ".box")
+		code, _, errs = agentPlan(t, "", "section", made.Plan, "Goal", "--text", "Take F1 of plan "+short+".")
+		if code != 0 || errs != "agent-plan: linked "+made.ID+" to "+name+": Takes over its F1.\n" {
+			t.Errorf("section: %d %q", code, errs)
+		}
+		before, _ := os.ReadFile(second)
+		code, out, errs = agentPlan(t, "", "related", second)
+		// The plans may share the worktree the test runs in, a softer sign.
+		if code != 0 || !strings.HasPrefix(out, "- hard linked "+name+" (Add the loop): Both work on branch loop.\n") ||
+			strings.Count(out, "- hard") != 1 {
+			t.Errorf("related: %d %q %s", code, out, errs)
+		}
+		code, out, _ = agentPlan(t, "", "related", made.Plan, "--json")
+		if code != 0 || !strings.Contains(out, `"linked": true`) || !strings.Contains(out, `"hard": true`) {
+			t.Errorf("related --json: %d %s", code, out)
+		}
+		if after, _ := os.ReadFile(second); string(after) != string(before) {
+			t.Errorf("related wrote the plan:\n%s", after)
+		}
+		if code, out, errs := agentPlan(t, "", "related"); code != 2 {
+			t.Errorf("related without a plan: %d %s %s", code, out, errs)
+		}
+	})
+
 	t.Run("reference", func(t *testing.T) {
 		plan := sessionPlan(t)
 		code, out, errs := agentPlan(t, "", "reference", plan, "https://example.com/guide", "--note", "Used for the review; fed Q1.")

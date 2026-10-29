@@ -170,6 +170,19 @@ type Created struct {
 	Log  string `json:"log"`
 	// Note says why the plan is not synced: Init's Note, for a new plan.
 	Note string `json:"note,omitempty"`
+	// Linked are the plans LinkEvidence linked the plan to, and Unlinked
+	// why it could not link them all.
+	Linked   []Relation `json:"linked,omitempty"`
+	Unlinked string     `json:"unlinked,omitempty"`
+}
+
+// linkEvidence is made with the links LinkEvidence writes in its plan.
+func (c Config) linkEvidence(made Created, now time.Time) Created {
+	var err error
+	if made.Linked, err = c.LinkEvidence(made.Plan, now); err != nil {
+		made.Unlinked = err.Error()
+	}
+	return made
 }
 
 // checkLine refuses a value that would break the Org line it goes on.
@@ -285,7 +298,7 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 	if err != nil {
 		return Created{}, err
 	}
-	return Created{Plan: p.file(""), File: p.file(""), ID: p.Name, Log: p.log(), Note: ready.Note}, nil
+	return c.linkEvidence(Created{Plan: p.file(""), File: p.file(""), ID: p.Name, Log: p.log(), Note: ready.Note}, now), nil
 }
 
 func (c Config) newPart(o NewOptions, now time.Time) (Created, error) {
@@ -328,7 +341,8 @@ func (c Config) newPart(o NewOptions, now time.Time) (Created, error) {
 	if err != nil && !kept {
 		return Created{}, err
 	}
-	return Created{Plan: p.file(""), File: file, ID: o.Part, Log: p.log()}, err
+	// A part's branches are its plan's evidence.
+	return c.linkEvidence(Created{Plan: p.file(""), File: file, ID: o.Part, Log: p.log()}, now), err
 }
 
 var nonTag = regexp.MustCompile(`[^A-Za-z0-9_@#%]`)

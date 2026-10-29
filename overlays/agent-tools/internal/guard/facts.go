@@ -195,7 +195,9 @@ func newWorktree(g gitCall) string {
 // run in cwd by session, did, by its output texts, and returns a line of
 // context for each commit recorded, asking which step it completes, which
 // is the agent's judgement. A commit no plan takes makes a plan for it
-// (plans.Config.RecordCommit). Every failure leaves the plan as it was.
+// (plans.Config.RecordCommit). A commit, branch or pull request recorded
+// links the plan to the plans that hard evidence relates it to
+// (plans.Config.LinkEvidence). Every failure leaves the plan as it was.
 func recordFacts(session, cwd, command string, texts []string, now time.Time) (context []string) {
 	c, err := plans.Load()
 	if err != nil {
@@ -227,6 +229,7 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 				if err != nil {
 					continue
 				}
+				c.LinkEvidence(p.File(), now)
 				if created {
 					context = append(context, fmt.Sprintf("No plan named this session or worktree, so %s was made for this commit. "+
 						"Write its goal and steps with `agent-plan section` and `agent-plan step` as the plan-work skill says, or, if the work belongs to another plan, say so in your report.", p.File()))
@@ -271,7 +274,9 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 			value = start + ".." + name
 		}
 		if p, part, ok := at(g.dir); ok {
-			p.AddToProperty(part, "BRANCHES", value, now)
+			if added, _ := p.AddToProperty(part, "BRANCHES", value, now); added {
+				c.LinkEvidence(p.File(), now)
+			}
 		}
 	}
 	who := pushers(command, 0)
@@ -285,7 +290,9 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 	for _, result := range jsonObjects(texts) {
 		if url, isURL := result["url"].(string); isURL && result["pr"] != nil {
 			branch, _ := result["branch"].(string)
-			p.AddToProperty(part, "PULL_REQUESTS", url, now)
+			if added, _ := p.AddToProperty(part, "PULL_REQUESTS", url, now); added {
+				c.LinkEvidence(p.File(), now)
+			}
 			p.Record(part, plans.Event{Kind: "pushed", Branch: branch, Summary: "opened " + url}, now)
 			return
 		}

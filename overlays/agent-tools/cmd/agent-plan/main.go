@@ -190,6 +190,21 @@ have (see status) is refused and writes nothing.
                      it as linked; nothing when PLAN already links OTHER.
                      Refused for PLAN itself, a part's file, and a plan in
                      the old form, which has no file-level ID
+  related PLAN [--json]
+                     the plans, any host's, related to PLAN, and why, as
+                     "- hard|soft [linked] NAME (TITLE): EVIDENCE"; writes
+                     nothing. Hard evidence, which links PLAN to the other
+                     by itself (as link does, the evidence as TEXT) when
+                     new, set, step, part, edit, section or the commit hook
+                     gives PLAN some: a branch both work on or one stacks
+                     on, a pull request both name, a part or follow-up of
+                     one that the other's text names on a line with the
+                     plan's name, a commit both logs record on one branch.
+                     Softer signs, for an agent to judge and link: a session
+                     or linked worktree both name, one's text naming the
+                     other. main, master and the main checkout are no
+                     evidence. A plan that cannot be read is named on
+                     stderr, and the exit is 1, after the rest
   postpone PLAN ID (--until 'YYYY-MM-DD[ HH:MM]' | --clear)
                      schedule step or part ID for that day or time, which
                      keeps it out of the ready lists and the agenda until
@@ -529,6 +544,24 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	if err != nil {
 		return report(nil, err)
 	}
+	// reportLinking reports a command that may have given p new evidence
+	// of related plans, then links p to them, saying so on stderr.
+	reportLinking := func(p plans.Plan) func(any, error) int {
+		return func(result any, err error) int {
+			code := report(result, err)
+			if err != nil {
+				return code
+			}
+			linked, err := c.LinkEvidence(p.File(), time.Now())
+			for _, r := range linked {
+				fmt.Fprintf(stderr, "agent-plan: linked %s to %s: %s\n", p.Name, r.Plan, strings.Join(r.Evidence, " "))
+			}
+			if err != nil {
+				fmt.Fprintf(stderr, "agent-plan: linking related plans: %s\n", err)
+			}
+			return code
+		}
+	}
 	wantPlan := func() (plans.Plan, bool) {
 		if len(positional) != 1 {
 			fmt.Fprintf(stderr, "agent-plan %s: takes one PLAN\n", command)
@@ -584,6 +617,9 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		made, err := c.New(o, time.Now())
 		if made.Note != "" {
 			fmt.Fprintf(stderr, "agent-plan: %s\n", made.Note)
+		}
+		if made.Unlinked != "" {
+			fmt.Fprintf(stderr, "agent-plan: linking related plans: %s\n", made.Unlinked)
 		}
 		return report(made, err)
 	case "log":
@@ -765,7 +801,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			fmt.Fprint(stderr, "agent-plan step: a step takes no --repo, --branch or --worktree; a part does\n")
 			return 2
 		}
-		return report(p.AddEntry(o, time.Now()))
+		return reportLinking(p)(p.AddEntry(o, time.Now()))
 	case "edit":
 		if len(positional) != 2 {
 			fmt.Fprint(stderr, "agent-plan edit: takes PLAN ID [--title T] [--text TEXT]\n")
@@ -782,7 +818,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		if given["text"] {
 			o.Text = text
 		}
-		return report(p.EditEntry(positional[1], o, time.Now()))
+		return reportLinking(p)(p.EditEntry(positional[1], o, time.Now()))
 	case "after":
 		if len(positional) < 2 || (len(positional) == 2) != *unset {
 			fmt.Fprint(stderr, "agent-plan after: takes PLAN ID ID..., or PLAN ID --clear\n")
@@ -802,7 +838,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		if err != nil {
 			return report(nil, err)
 		}
-		return report(p.SetSection(*part, positional[1], *text, time.Now()))
+		return reportLinking(p)(p.SetSection(*part, positional[1], *text, time.Now()))
 	case "reference":
 		if len(positional) != 2 {
 			fmt.Fprint(stderr, "agent-plan reference: takes PLAN URL [--note TEXT]\n")
@@ -860,7 +896,32 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		if err := p.SetProperty(*part, name, values, time.Now()); err != nil {
 			return report(nil, err)
 		}
-		return report(map[string]any{"property": name, "values": values}, nil)
+		return reportLinking(p)(map[string]any{"property": name, "values": values}, nil)
+	case "related":
+		p, ok := wantPlan()
+		if !ok {
+			return 2
+		}
+		rs, err := c.Related(p.File())
+		if *asJSON {
+			report(rs, nil)
+		} else {
+			for _, r := range rs {
+				state := "soft"
+				if r.Hard {
+					state = "hard"
+				}
+				if r.Linked {
+					state += " linked"
+				}
+				fmt.Fprintf(stdout, "- %s %s (%s): %s\n", state, r.Plan, r.Title, strings.Join(r.Evidence, " "))
+			}
+		}
+		if err != nil {
+			fmt.Fprintf(stderr, "agent-plan: %s\n", err)
+			return 1
+		}
+		return 0
 	case "reseal":
 		p, ok := wantPlan()
 		if !ok {
