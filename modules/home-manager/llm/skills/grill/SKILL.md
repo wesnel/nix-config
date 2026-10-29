@@ -1,6 +1,6 @@
 ---
 name: grill
-description: Map the decisions a plan leaves open and write them into it as rounds of questions for /questions.
+description: Map the decisions a plan leaves open and write them into it as rounds of questions for the operator.
 disable-model-invocation: true
 ---
 
@@ -24,8 +24,8 @@ reach them as the `plan-work` skill's "Questions for the operator" says.
    the operator, reversible ones included: invoking this skill is the
    operator asking to make them all. Decide none yourself.
 5. Tell the operator only how many questions they can answer now
-   (`agent-plan questions PLAN --all --count`); in Claude Code,
-   `/questions` asks them.
+   (`agent-plan questions PLAN --all --count`); the `questions` skill asks
+   them, run as `/questions` in Claude Code and `$questions` in Codex.
 6. When answers come back as decisions, walk the tree again: reword the
    questions an answer changes, and add those it raises. One it makes moot
    stays the operator's to close: recommend dropping it, naming the decision.
