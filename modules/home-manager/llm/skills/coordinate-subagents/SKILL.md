@@ -103,7 +103,7 @@ what is this work's.
 - **`adversarial-reviewer`:** tries to break a finished branch, every
   finding reproduced or marked as not, with what held: your review of each
   part (Review each branch below); also the second opinion where
-  `git delegate` cannot run Codex, from the prompt
+  `git delegate` cannot run the selected provider, from the prompt
   `git delegate --print-prompt` prints, replying in the form it gives.
 - **`design-reviewer`:** the design reviews (Design review below).
 - **`security-reviewer`**, **`compat-reviewer`** and
@@ -214,8 +214,8 @@ another family than the author's.
 - **Opus 5.5, the default:** design reviews, adversarial reviews,
   security-sensitive code (the guard, the sandbox, `git sign-pass`,
   `pr-loop`), restacks with many conflicts, and anything ambiguous.
-- Reviewers are never given a cheaper model: the reviewer is Codex by
-  default, as the `review-change` skill's Harness choice says.
+- Reviewers are never given a cheaper model: the second opinion is the
+  other model family, as the `review-change` skill's Harness choice says.
 
 Lower the effort before the model: routine work runs on Opus at low or
 medium effort before it moves to Sonnet or Haiku. Prompt caches belong to

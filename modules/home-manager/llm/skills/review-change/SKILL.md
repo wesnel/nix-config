@@ -19,9 +19,9 @@ was split among sub-agents: a coordinator runs the same pipeline, and the
 2. **Design review of the plan**, before coding.
 3. **The work**, committed as the `signing-pass` skill says.
 4. **Fresh review loop** over the committed change, once the work is
-   complete: in Claude Code, `/code-review` for the general review; then
-   `git delegate` as the second opinion. Settle each round's findings
-   together before the next round.
+   complete: the general review (`/code-review` in Claude Code, `/review`
+   in Codex); then `git delegate` as the second opinion. Settle each
+   round's findings together before the next round.
 5. **Design review of the result**, before handing back.
 6. **Hand back**: what the work's own instructions ask for, and
    - each finding, its outcome and its plan item ID, round by round;
@@ -73,9 +73,11 @@ as `origin/main` or the parent branch in a stack.
 1. Write the items the change answers (threads, CI checks), with how each
    was settled, to a file, if any. The goal statement is the plan's Goal,
    or the part's.
-2. In Claude Code, run `/code-review` with BASE as its target: with none, it
-   reviews only the commits ahead of the branch's upstream, which a local
-   branch may not have. Then the second opinion, from another model
+2. The general review: in Claude Code, run `/code-review` with BASE as its
+   target: with none, it reviews only the commits ahead of the branch's
+   upstream, which a local branch may not have. In Codex, run `/review`
+   against BASE, or start a fresh `adversarial-reviewer` sub-agent given
+   only the goal and the range. Then the second opinion, from another model
    family: where the repository has test settings, run
    `git -C WORKTREE red-check BASE..TIP > WORKTREE/red-check.json`, WORKTREE
    being the branch's worktree, not `$TMPDIR`, which a sandboxed command and
@@ -84,11 +86,13 @@ as `origin/main` or the parent branch in a stack.
    `git delegate --plan PLAN [--part P1] [--items ITEMS] [--red-check WORKTREE/red-check.json] BASE..TIP`
    as a command of its own, with no `cd` before it: it resolves the range
    from any worktree of the repository. Remove `red-check.json` after it.
-   It runs Codex, and each focused review its scan routes the change to,
-   and keeps their findings in the range's review record. It exits 0 with no open findings, 3 with open
-   findings, 4 when a reviewer could not run here, and 5 when the record
-   fails its structure check. On 4 or 5, say so in the hand-back, with
-   delegate's reason.
+   It runs the general review by the other model family, as Harness
+   choice says, and each focused review its scan routes the change to,
+   and keeps their findings in the range's review record. It exits 0 with
+   no open findings, 3 with open findings, 4 when a reviewer could not run
+   here, and 5 when the record fails its structure check. On 4, run each
+   review in `notRun` as Harness choice says; on 4 or 5, say so in the
+   hand-back, with delegate's reason.
 3. Settle every finding of both as Triage says. A delegate finding is
    settled in its record too: `git delegate settle BASE..TIP FINDING
    OUTCOME [--target X] [--reason-file F]`, by the record ID its output
@@ -171,19 +175,36 @@ in pr-review.
 
 ## Harness choice
 
-- Codex, through `git delegate`, for the second opinion: a model family
-  other than the author's. Its commands can read only the worktree under
-  review, the git objects behind it and the system files they need, with
-  none of the operator's Codex configuration, no network and no writes, so
-  a change cannot steer it into reading credentials.
-- The focused reviews, through `git delegate --reviewer TYPE`: Claude Code's
-  reviewer agents, run headless with no settings, MCP server or CLAUDE.md
-  of anyone's, in a sandbox of their own.
+- The second opinion, through `git delegate`: a model family other than
+  the author's. For a Claude author it is Codex, whose commands can read
+  only the worktree under review, the git objects behind it and the system
+  files they need, with none of the operator's Codex configuration, no
+  network and no writes, so a change cannot steer it into reading
+  credentials. For a Codex author (`CODEX_SANDBOX` or `CODEX_THREAD_ID`
+  set) it is Claude Code's `adversarial-reviewer`, given the same contract
+  and confined as the focused reviews are. `git delegate ask` picks the
+  same way.
+- The focused reviews and the walkthrough, through `git delegate`: Claude
+  Code's reviewer agents, run headless with no settings, MCP server or
+  CLAUDE.md of anyone's, in a sandbox of their own.
 - Never Codex in a review-loop session, which reads other people's review
   text: there delegate's Codex review exits 4, and the second opinion is an
   `adversarial-reviewer` sub-agent.
-- Never Codex for a Codex author: from inside Codex, `git delegate`
-  without `--reviewer` exits 4 by itself.
+- A provider the operator says is exhausted or must not be called: run
+  `git delegate availability --disable claude` (or `codex`) before
+  reviewing. `git delegate availability` shows each provider's hold and
+  calls neither. A failed call records its own hold: a rate limit (a 429)
+  holds its provider for five minutes; an exhausted quota holds it until
+  its reset where Claude's quota windows show one, and otherwise until the
+  operator reports recovery and you run
+  `git delegate availability --clear claude` (or `codex`).
+- Each review in `notRun` (exit 4): run `git delegate --print-prompt
+  --reviewer TYPE` with the same plan, range and files, and give what it
+  prints to a new read-only sub-agent of the agent type stderr names, with
+  none of your own reasoning; for `git delegate ask`, add `--print-prompt`
+  to the same command. A diagram's prompt holds a drawing task and a
+  critique task, each for a sub-agent of its own. Name each such review,
+  and the harness it ran in, in the hand-back.
 
 ## Design review
 
@@ -219,8 +240,9 @@ choice, get a second opinion from another model family before it is
 decided: write the question and its options to a file, and run
 `git delegate ask --question FILE PATH...`, naming each file in the
 repository the answer rests on (put what it needs from the plan into the
-question file, under the working directory). Codex reads those files and nothing else. On exit 4, ask a
-new sub-agent that only reads instead, as the message says. The answer goes
+question file, under the working directory). The selected reviewer reads
+those files and nothing else. On exit 4, ask a new sub-agent that only
+reads, as Harness choice says. The answer goes
 beside your recommendation; it informs your own decision, or the operator's
 on a one-way door, and settles nothing.
 

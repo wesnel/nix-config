@@ -28,6 +28,7 @@ import (
 // file $FAKE_CODEX_COPY names in its working directory, and replies as
 // $FAKE_CODEX says.
 const fakeCodex = `#!/bin/sh
+echo "$1" >> "$FAKE_CODEX_LOG/calls"
 if [ "$1" = login ] && [ "$2" = status ]; then
   if [ "$FAKE_CODEX" = unauthenticated ]; then echo "Not logged in"; exit 1; fi
   echo "Logged in"; exit 0
@@ -47,12 +48,13 @@ if [ "$1" = sandbox ]; then
 fi
 if [ "$1" != exec ]; then echo "fake codex: unexpected $*" >&2; exit 64; fi
 shift
-wt= schema= out= stdin=
+wt= schema= out= stdin= json=
 while [ $# -gt 0 ]; do
   case "$1" in
     -c|--disable) printf '%s\n%s\n' "$1" "$2" >> "$FAKE_CODEX_LOG/exec-args"; shift 2 ;;
     --ignore-user-config|--ignore-rules) echo "$1" >> "$FAKE_CODEX_LOG/exec-args"; shift ;;
     --ephemeral) shift ;;
+    --json) json=1; shift ;;
     -C) wt=$2; shift 2 ;;
     --output-schema) schema=$2; shift 2 ;;
     -o) out=$2; shift 2 ;;
@@ -64,7 +66,9 @@ done
 if [ -z "$wt" ] || [ ! -s "$schema" ] || [ -z "$out" ] || [ -z "$stdin" ]; then
   echo "fake codex: missing -C, --output-schema, -o or -" >&2; exit 64
 fi
-printf 'OpenAI Codex v0\n--------\nworkdir: %s\nmodel: fake-model\nsandbox: read-only\n--------\n' "$wt" >&2
+if [ -z "$json" ]; then
+  printf 'OpenAI Codex v0\n--------\nworkdir: %s\nmodel: fake-model\nsandbox: read-only\n--------\n' "$wt" >&2
+fi
 cat > "$FAKE_CODEX_LOG/prompt"
 cp "$schema" "$FAKE_CODEX_LOG/schema"
 echo "$wt" > "$FAKE_CODEX_LOG/worktree"
@@ -78,6 +82,9 @@ if [ "$mode" = fault-once ]; then
   if [ -e "$FAKE_CODEX_LOG/faulted" ]; then mode=critique; else : > "$FAKE_CODEX_LOG/faulted"; mode=fault; fi
 fi
 case "$mode" in
+  quota) echo '{"type":"turn.failed","error":{"message":"You’ve hit your usage limit. Try again later."}}'; exit 1 ;;
+  ratelimit) echo '{"type":"turn.failed","error":{"message":"exceeded retry limit, last status: 429 Too Many Requests"}}'; exit 1 ;;
+  quota-prose) echo '{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"You’ve hit your usage limit."}}'; echo "fake codex: model error" >&2; exit 1 ;;
   fail) echo "fake codex: model error" >&2; exit 1 ;;
   hang) exec sleep 60 ;;
   fork) echo $$ > "$FAKE_CODEX_LOG/group"; i=0; while [ $i -lt 300 ]; do sleep 30 > /dev/null 2>&1 & i=$((i+1)); if [ $i = 20 ]; then echo > "$FAKE_CODEX_LOG/started"; fi; done; wait ;;
@@ -286,7 +293,7 @@ func setUp(t *testing.T, withCodex bool) *fixture {
 	for k, v := range map[string]string{
 		"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
 		"GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e", "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e",
-		"PR_LOOP_SESSION": "", "CODEX_SANDBOX": "", "FAKE_CODEX": "", "FAKE_CODEX_COPY": "", "CLAUDECODE": "1",
+		"PR_LOOP_SESSION": "", "CODEX_SANDBOX": "", "CODEX_THREAD_ID": "", "FAKE_CODEX": "", "FAKE_CODEX_COPY": "", "CLAUDECODE": "1",
 		"XDG_STATE_HOME": t.TempDir(), "XDG_CACHE_HOME": t.TempDir(),
 	} {
 		t.Setenv(k, v)
@@ -422,7 +429,7 @@ func TestCodex(t *testing.T) {
 
 func testCodexReview(t *testing.T) {
 	f := setUp(t, true)
-	code, out, stderr := freshReview(t, "--plan", f.plan, f.base+"..HEAD")
+	code, out, stderr := freshReview(t, "--model", "fake-model", "--plan", f.plan, f.base+"..HEAD")
 	if code != 3 {
 		t.Fatalf("exit %d, want 3 for findings\n%s", code, stderr)
 	}
@@ -430,7 +437,7 @@ func testCodexReview(t *testing.T) {
 		t.Errorf("reviewer %q, tip %q, range %q", out.Reviewer, out.Tip, out.Range)
 	}
 	if out.Model == nil || *out.Model != "fake-model" {
-		t.Errorf("model %v, want the one Codex reported", out.Model)
+		t.Errorf("model %v, want the explicitly requested model", out.Model)
 	}
 	if len(out.Findings) != 1 || out.Findings[0]["path"] != "code.txt" || out.Findings[0]["line"] != 2.0 {
 		t.Fatalf("findings: %v", out.Findings)
@@ -637,7 +644,6 @@ func TestUnavailable(t *testing.T) {
 		{"in a loop session", true, "", map[string]string{"PR_LOOP_SESSION": "1"}, nil, 4},
 		{"in a loop session, through a gateway", true, "ngrok-ai", map[string]string{"PR_LOOP_SESSION": "1"}, nil, 4},
 		{"loop session, Codex asked for", true, "", map[string]string{"PR_LOOP_SESSION": "1"}, []string{"--reviewer", "codex"}, 4},
-		{"Codex author", true, "", map[string]string{"CODEX_SANDBOX": "seatbelt"}, nil, 4},
 		{"Codex author, Codex asked for", true, "", map[string]string{"CODEX_SANDBOX": "seatbelt", "FAKE_CODEX": "none"}, []string{"--reviewer", "codex"}, 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -676,7 +682,9 @@ func TestGateway(t *testing.T) {
 		provider = `model_providers.ngrok-ai={name="ngrok.ai", base_url="https://gateway.example/v1", ` +
 			`wire_api="responses", auth={command="/bin/cat", args=["/keys/ngrok-ai-key"]}}`
 	)
-	review := func(t *testing.T, gateway bool, args ...string) []string {
+	// review returns the arguments codex exec was given; the review's model
+	// is the one they name, model, or null for none.
+	review := func(t *testing.T, gateway bool, model string, args ...string) []string {
 		t.Helper()
 		f := setUp(t, true)
 		if gateway {
@@ -687,8 +695,8 @@ func TestGateway(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("exit %d, want 0\n%s", code, stderr)
 		}
-		if out.Model == nil || *out.Model != "fake-model" {
-			t.Errorf("model %v, want the one Codex reported", out.Model)
+		if model == "" && out.Model != nil || model != "" && (out.Model == nil || *out.Model != model) {
+			t.Errorf("model %v, want %q", out.Model, model)
 		}
 		data, err := os.ReadFile(filepath.Join(f.log, "exec-args"))
 		if err != nil {
@@ -706,7 +714,7 @@ func TestGateway(t *testing.T) {
 	}
 
 	t.Run("provider and its model", func(t *testing.T) {
-		args := review(t, true)
+		args := review(t, true, "gateway-model")
 		for _, want := range [][]string{{"-c", selects}, {"-c", provider}, {"-m", "gateway-model"},
 			{"-c", "model_context_window=200000"}, {"-c", "analytics.enabled=false"}} {
 			if !has(args, want...) {
@@ -715,7 +723,7 @@ func TestGateway(t *testing.T) {
 		}
 	})
 	t.Run("--model over the provider's", func(t *testing.T) {
-		args := review(t, true, "--model", "other-model")
+		args := review(t, true, "other-model", "--model", "other-model")
 		if !has(args, "-m", "other-model") || has(args, "-m", "gateway-model") {
 			t.Errorf("codex exec was not passed --model's model alone: %q", args)
 		}
@@ -724,7 +732,7 @@ func TestGateway(t *testing.T) {
 		}
 	})
 	t.Run("none named", func(t *testing.T) {
-		args := review(t, false)
+		args := review(t, false, "")
 		for _, arg := range args {
 			if strings.HasPrefix(arg, "model_provider") || strings.HasPrefix(arg, "model_context_window") || arg == "-m" {
 				t.Errorf("codex exec was passed a provider, window or model no config named: %q", args)

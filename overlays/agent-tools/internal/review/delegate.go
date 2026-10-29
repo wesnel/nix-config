@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	shared "github.com/wesnel/agent-tools/internal/availability"
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/plans"
@@ -24,6 +25,7 @@ import (
 const Usage = `usage: git delegate [--reviewer TYPE]... [--plan PLAN [--part P]] [--items FILE] [--red-check FILE]
                     [--description FILE] [--model M] [--timeout S] SOURCE
        git delegate ask [--reviewer TYPE] --question FILE PATH...   (see git delegate ask -h)
+       git delegate availability [--disable claude|codex | --clear claude|codex]
        git delegate show SOURCE                                      (see git delegate show -h)
        git delegate settle SOURCE FINDING OUTCOME [--target X] [--reason-file F]
        git delegate --print-prompt [--reviewer TYPE] [--plan PLAN [--part P]] [--items FILE]
@@ -51,8 +53,8 @@ made the same way under that cache directory and removed after it.
 Reviewers run one at a time, and nothing here runs the change's code.
 
 TYPEs (--reviewer, repeated):
-  codex     the general review, by Codex as a model family other than the
-            author's: codex exec --ignore-user-config --ephemeral, its
+  codex     the general review, by Codex:
+            codex exec --json --ignore-user-config --ephemeral, its
             commands reading only the checkout, the parts of the git
             directory git needs and the Nix store, with no writes, network,
             MCP server, plugin, web search or image viewer. Codex's sandbox
@@ -61,6 +63,8 @@ TYPEs (--reviewer, repeated):
             a scan of every commit from TIP's merge base with the default
             branch, by its paths and lines, against built-in rules and the
             operator's repos routes, and the routes it names.
+  claude    the same general review and routing contract, by Claude Code's
+            adversarial-reviewer agent, confined as security below.
   security  the security review, by Claude Code's security-reviewer agent,
             headless: claude -p with --setting-sources "", no MCP server,
             CLAUDE_CODE_DISABLE_CLAUDE_MDS=1, its agent from the
@@ -88,8 +92,8 @@ TYPEs (--reviewer, repeated):
   guide     the walkthrough, by Claude Code's review-guide agent, headless
             as security is: the change's hunks in chunks, in the order to
             read them, each hunk cited as file:PATH::LINE@SHA. A citation of
-            no hunk, and a hunk no chunk cites, are dropped. It always runs,
-            last, and its walkthrough replaces the record's.
+            no hunk, and a hunk no chunk cites, are dropped. It is selected
+            last in every review, and its walkthrough replaces the record's.
   diagram   at most three diagrams, run only when named: drawn by Claude
             Code's diagrammer agent, headless as security is, as JSON each
             element of which cites the lines at TIP it stands for; each
@@ -104,8 +108,15 @@ TYPEs (--reviewer, repeated):
             alone; show generates its Mermaid. A run that keeps a diagram
             replaces the record's, one with an earlier one's title keeping
             its ID.
-With no --reviewer, codex runs, with each type its route scan picks; it
-says on stderr what it picked and why.
+With no --reviewer, the general review is claude for a Codex caller
+(CODEX_SANDBOX or CODEX_THREAD_ID set) and codex for any other. Each type
+the route scan picks runs too; stderr says what it picked and why.
+
+A type whose provider is held does not run (git delegate availability -h).
+A run that fails for a rate limit holds its provider for five minutes, and
+one that fails for exhausted quota holds it until the reset Claude's quota
+windows show, else until availability --clear; no later stage or command
+calls it meanwhile, a retry, walkthrough, diagram or ask included.
 
 A reply is taken from the structured output Claude Code returns, else
 the last fenced json block of its result, else its last JSON object, and
@@ -190,8 +201,9 @@ earlier findings include those of its newest review at another head.
                     unless this names another
   --model M         the Codex model (default: Codex's own)
   --timeout S       seconds before a reviewer is stopped (default 1800)
-  --print-prompt    print the prompt of one type (codex by default) for a
-                    sub-agent the caller starts, and run nothing
+  --print-prompt    print the selected type's prompt for a sub-agent the
+                    caller starts, and run no provider; diagram exports
+                    both drawing and critique tasks
 
 Every file argument is read as given: write it under the working
 directory, never $TMPDIR, which differs inside and outside the sandbox.
@@ -204,8 +216,8 @@ and why, the routes, and the record's counts. Exit status:
   3  open findings
   4  a type could not run: Codex is not installed or signed in, its
      sandbox cannot start, this is a review-loop session (PR_LOOP_SESSION
-     is set) or, with no --reviewer, the caller is Codex (CODEX_SANDBOX is
-     set); claude or agent-tools' delegate config is missing; a compat
+     is set); its provider is held; claude or agent-tools'
+     delegate config is missing; a compat
      review the scan routed has no description with a Reverting section;
      an upgrade review cannot read the change's pins; or a reply did not
      fit twice
@@ -227,10 +239,20 @@ type reviewerType struct {
 	diagram bool
 }
 
+// provider is the account the type's reviewer runs on; a diagram's
+// critique runs on Codex.
+func (ty reviewerType) provider() shared.Provider {
+	if ty.claude {
+		return shared.Claude
+	}
+	return shared.Codex
+}
+
 // reviewerTypes are the TYPEs, by name. Each route of routes.Known names
 // one.
 var reviewerTypes = map[string]reviewerType{
 	"codex":    {},
+	"claude":   {claude: true, agent: "adversarial-reviewer"},
 	"security": {claude: true, agent: "security-reviewer", focus: "security"},
 	"compat":   {claude: true, agent: "compat-reviewer", focus: "compat"},
 	"upgrade":  {claude: true, agent: "upgrade-reviewer", focus: "upgrade"},
@@ -266,6 +288,8 @@ type NotRun struct {
 func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) > 0 {
 		switch args[0] {
+		case "availability":
+			return availabilityCommand(args[1:], stdout, stderr)
 		case "ask":
 			return ask(ctx, args[1:], stdin, stdout, stderr)
 		case "show":
@@ -339,7 +363,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		return report(nil, err, 0)
 	}
 
-	base := inputs{r: r}
+	base := inputs{r: r, availability: newAvailability()}
 	if *plan != "" {
 		if base.goal, err = planGoal(*plan, *part); err != nil {
 			return report(nil, err, 0)
@@ -393,7 +417,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	}
 
 	if *printPrompt {
-		t := "codex"
+		t := generalReviewer()
 		if len(reviewers) == 1 {
 			t = reviewers[0]
 		}
@@ -404,19 +428,19 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		}
 		in.where = where(r)
 		if reviewerTypes[t].diagram {
-			fmt.Fprint(stdout, drawPrompt(in, ""))
+			fmt.Fprint(stdout, diagramFallback(in))
 			return 0
 		}
 		fmt.Fprint(stdout, prompt(in))
 		return 0
 	}
 
-	// Without --reviewer, codex and the types the scan routes the change to.
+	// Without --reviewer, the other family and the scan's focused reviews.
 	explicit := len(reviewers) > 0
 	scanned := routeChange(r, nil, stderr)
 	chosen := slices.Clone([]string(reviewers))
 	if !explicit {
-		chosen = []string{"codex"}
+		chosen = []string{generalReviewer()}
 		for _, rt := range scanned {
 			chosen = append(chosen, rt.Route)
 			fmt.Fprintf(stderr, "%s: reviewing for %s too: %s\n", name, rt.Route, strings.Join(rt.Why, "; "))
@@ -430,8 +454,11 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		NotRun: []NotRun{}, Routes: scanned}
 	var runs []*typeRun
 	for _, t := range chosen {
-		run := runType(ctx, s, r, base, t, tests, !explicit, *model, time.Duration(*timeout)*time.Second, stderr)
-		if run.out == nil && run.failures == nil {
+		run := runType(ctx, s, r, base, t, tests, *model, time.Duration(*timeout)*time.Second, stderr)
+		if run.out == nil {
+			if run.failures != nil {
+				runs = append(runs, run)
+			}
 			result.NotRun = append(result.NotRun, NotRun{Reviewer: t, Why: run.why})
 			if run.refused {
 				// Its inputs are refused anywhere, --print-prompt too.
@@ -442,19 +469,17 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			if agent := reviewerTypes[t].agent; agent != "" {
 				reader = "a new `" + agent + "` sub-agent"
 			}
-			fmt.Fprintf(stderr, "%s: the %s review could not run here: %s. Run `git delegate` where it can, outside any "+
-				"sandbox and review-loop session, or start %s on what `git delegate --print-prompt "+
-				"--reviewer %s %s%s` prints\n", name, t, run.why, reader, t, typeFlags(s, t, goal), s.given)
+			fmt.Fprintf(stderr, "%s: the %s review could not run here: %s. Instead start %s on what `git delegate --print-prompt "+
+				"--reviewer %s %s%s` prints, with a fresh context in the primary harness and none of the author's reasoning. "+
+				"Keep review-loop text out of Codex.\n", name, t, run.why, reader, t, typeFlags(s, t, goal), s.given)
 			continue
 		}
 		runs = append(runs, run)
 		if run.out != nil {
 			result.Reviews = append(result.Reviews, run.out)
-			if t == "codex" {
+			if ty := reviewerTypes[t]; ty.focus == "" && !ty.guide && !ty.diagram {
 				result.Routes = run.out.Routes
 			}
-		} else {
-			result.NotRun = append(result.NotRun, NotRun{Reviewer: t, Why: run.why})
 		}
 	}
 	for _, rt := range result.Routes {
@@ -600,22 +625,26 @@ func (in inputs) reverting() (string, error) {
 	return revertingSection(in.description, in.descriptionFrom)
 }
 
+// runnable says why type ty's reviewer cannot run here, or "".
+func runnable(a *availability, ty reviewerType) string {
+	if err := a.check(ty.provider()); err != nil {
+		return err.Error()
+	}
+	if ty.claude {
+		return claudeMissing()
+	}
+	return unavailable()
+}
+
 // runType runs type t once, and once more where its reply does not fit.
-// implicit is whether t was chosen without --reviewer: then a Codex caller
-// does not review with Codex.
-func runType(ctx context.Context, s *source, r *span, base inputs, t string, tests *adequacy, implicit bool, model string,
+func runType(ctx context.Context, s *source, r *span, base inputs, t string, tests *adequacy, model string,
 	timeout time.Duration, log io.Writer) *typeRun {
 	ty := reviewerTypes[t]
 	if ty.diagram {
 		return runDiagrams(ctx, s, r, base, model, timeout, log)
 	}
 	run := &typeRun{name: t, redCheck: ty.focus == "" && !ty.guide && tests.given}
-	if ty.claude {
-		run.why = claudeMissing()
-	} else {
-		run.why = unavailable(implicit)
-	}
-	if run.why != "" {
+	if run.why = runnable(base.availability, ty); run.why != "" {
 		return run
 	}
 	in, err := typeInputs(ctx, base, t, tests, log)
@@ -647,10 +676,10 @@ func runType(ctx context.Context, s *source, r *span, base inputs, t string, tes
 		}
 		var reply *CodexReply
 		if ty.claude {
-			reply, err = ClaudeRun(ctx, Claude{Checkout: wt, Agent: ty.agent, Prompt: text, Schema: schema, Timeout: timeout, Log: log})
+			reply, err = ClaudeRun(ctx, Claude{Checkout: wt, Agent: ty.agent, Prompt: text, Schema: schema, Timeout: timeout, Log: log, availability: base.availability})
 		} else {
 			reply, err = CodexRun(ctx, Codex{Checkout: wt, Prompt: text, Schema: schema, Model: model, Timeout: timeout,
-				Log: log, Git: worktreeGit(ctx, wt)})
+				Log: log, Git: worktreeGit(ctx, wt), availability: base.availability})
 		}
 		var out *Output
 		var bad badReply
