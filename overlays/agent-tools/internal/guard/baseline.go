@@ -234,6 +234,9 @@ func checkSession(c call, dir string) string {
 	if reason := checkAgentSettingsShell(name, args, redirected, dir); reason != "" {
 		return reason
 	}
+	if reason := checkSpaceStateShell(name, args, redirected, dir); reason != "" {
+		return reason
+	}
 	if reason := checkShellEdit(name, args, redirected, dir); reason != "" {
 		return reason
 	}
@@ -2067,6 +2070,9 @@ func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
 		}
 		if reason := checkFileAgentSettings(path, dir); reason != "" {
 			return reason
+		}
+		if spaceStateFile(path) {
+			return spaceState
 		}
 		if reason := gitConfigAlias(path, dir, c.text); reason != "" {
 			return reason
