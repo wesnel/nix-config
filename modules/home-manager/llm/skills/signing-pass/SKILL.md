@@ -72,37 +72,43 @@ branch left the remote's default branch (`origin/HEAD`, then `origin/main` or
 not matter. For a branch that starts from somewhere else, put that ref in the
 range, hand over `--base REF`, and sign that branch in a pass of its own.
 
-Then tell the operator to run one of these in that branch:
+Then ask `pr-loop next` for each branch's next step, and take that step:
+
+```sh
+pr-loop next <branch> ...
+```
+
+It only reads, and prints one step per branch:
+
+- `open`: the branch's draft pull request, yours to open as the
+  `pull-requests` skill's Opening says; run `pr-loop next` again afterwards.
+  A branch GitHub lacks can open unsigned; one already on GitHub needs
+  verified signatures by the protected operator key.
+- `sign` or `push`: the operator's command, a `git sign-pass` with the
+  right push flag, and the `agent-plan sign-id` line
+  that mints its `--notify` ID, as "Hearing how it ended" says.
+- `blocked`: what to fix first, such as an upstream of another name or a
+  remote-tracking ref behind GitHub. If GitHub has history the local branch
+  lacks, fetch and reconcile it by hand; fix it and ask again.
+- `nothing`: GitHub has the signed tip.
+
+The forms of the pass:
 
 ```sh
 git sign-pass                  # sign; nothing is pushed
-git sign-pass --push           # sign, then push every branch that moved to its own name upstream
-git sign-pass --set-upstream   # the same, and publish moved branches that have no upstream yet
+git sign-pass --push           # sign, then push to its own name upstream every branch that moved, or that is ahead of its remote, refusing any commit the operator's key did not sign
+git sign-pass --set-upstream   # the same, and publish those that have no upstream yet
 ```
 
 The pass pushes one branch per `git push`, bottom up, since GitHub runs a pull
 request's CI twice when one push moves it and its base; any push you suggest
-for a stack does the same, one branch per command, bottom up.
+for a stack does the same, one branch per command, bottom up. `--set-upstream`
+refuses a branch the remote already has, and both refuse, before any touch, a
+branch whose upstream is a branch of another name and any push to the
+remote's default branch.
 
-Suggest `--set-upstream` when a branch has never been pushed: it publishes the
-branch in the same pass, and refuses one the remote already has. Both refuse,
-before any touch, a branch whose upstream is a branch of another name, and any
-push to the remote's default branch.
-
-The refusal says how to fix the upstream, but it costs the operator a round
-trip, so check each branch the pass moves before handing over `--push`:
-
-```sh
-git rev-parse --abbrev-ref <branch>@{upstream}   # origin/<branch>, or no upstream
-```
-
-A branch made with `git switch -c <branch> origin/main` tracks `origin/main`.
-Point it at its own with `git branch --set-upstream-to=origin/<branch> <branch>`,
-or, if the remote has no such branch yet, `git branch --unset-upstream <branch>`
-and hand over `--set-upstream`.
-
-For more than one branch, hand over one command that names the top of every
-stack, run from any worktree of the repository:
+For more than one branch to sign, hand over one command that names the top of
+every stack, run from any worktree of the repository:
 
 ```sh
 git sign-pass --push <top of stack 1> <top of stack 2> <each child of a fork> ...

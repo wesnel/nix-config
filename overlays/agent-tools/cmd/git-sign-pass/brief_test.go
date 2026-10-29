@@ -44,13 +44,16 @@ func pushedRepo(t *testing.T, n int) (repo, global string) {
 		t.Skipf("no ssh-keygen: %v %s", err, out)
 	}
 	pub, _ := os.ReadFile(key + ".pub")
+	operatorHome(t, string(pub))
 	signers := filepath.Join(dir, "signers")
 	os.WriteFile(signers, []byte("t@e namespaces=\"git\" "+string(pub)), 0o644)
 	// A push to a local path runs git-receive-pack from git's exec path (see
-	// runOutput), here a wrapper that prints what a forge prints.
+	// runOutput), here a wrapper that prints what a forge prints, and the
+	// pass's reading of the hub git-upload-pack.
 	os.Mkdir(filepath.Join(dir, "exec"), 0o755)
 	os.WriteFile(filepath.Join(dir, "exec", "git-receive-pack"),
 		[]byte("#!/bin/sh\necho \"remote: Create a pull request for 'one' on GitHub\" >&2\nexec git receive-pack \"$@\"\n"), 0o755)
+	os.WriteFile(filepath.Join(dir, "exec", "git-upload-pack"), []byte("#!/bin/sh\nexec git upload-pack \"$@\"\n"), 0o755)
 	global = filepath.Join(dir, "gitconfig")
 	os.WriteFile(global, []byte("[user]\n\tname = T\n\temail = t@e\n\tsigningkey = "+key+
 		"\n[gpg]\n\tformat = ssh\n[gpg \"ssh\"]\n\tallowedSignersFile = "+signers+"\n"), 0o644)
@@ -146,10 +149,13 @@ func TestBriefKeepsErrors(t *testing.T) {
 	}
 	repo, global := pushedRepo(t, 3)
 	hub := gitIn(t, repo, "remote", "get-url", "origin")
-	// The hub's branch moves without this repository seeing it.
-	gitIn(t, hub, "update-ref", "refs/heads/one", gitIn(t, repo, "rev-parse", "main"))
+	// The hub declines the push itself: a branch moved there is refused
+	// before any push, in the pass's words rather than git's.
+	if err := os.WriteFile(filepath.Join(hub, "hooks", "pre-receive"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	code, _, stderr := runOutput(t, repo, global, exe, "--push")
-	if code == 0 || !strings.Contains(stderr, "stale info") && !strings.Contains(stderr, "rejected") {
+	if code == 0 || !strings.Contains(stderr, "pre-receive hook declined") {
 		t.Errorf("a push that fails: exit %d\n%s", code, stderr)
 	}
 }

@@ -91,17 +91,17 @@ func rehearse(stack *signedStack) error {
 	}
 	os.Remove(scratch)
 	top := stack.Order[len(stack.Order)-1]
-	if _, err := git.Run("worktree", "add", "--detach", scratch, "refs/heads/"+top); err != nil {
+	if _, err := git.RunLong(nil, "worktree", "add", "--detach", scratch, "refs/heads/"+top); err != nil {
 		return err
 	}
 	defer func() {
-		git.Run("-C", scratch, "rebase", "--abort")
-		git.Run("worktree", "remove", "--force", scratch)
+		git.RunLong(nil, "-C", scratch, "rebase", "--abort")
+		git.RunLong(nil, "worktree", "remove", "--force", scratch)
 	}()
 	// rebase.updateRefs off: a user's rebase.updateRefs=true would move every
 	// branch of the stack not checked out elsewhere onto these unsigned
 	// commits.
-	_, err = git.RunEnv(noEditor, "-C", scratch, "-c", "commit.gpgsign=false", "-c", "rebase.updateRefs=false",
+	_, err = git.RunLong(noEditor, "-C", scratch, "-c", "commit.gpgsign=false", "-c", "rebase.updateRefs=false",
 		"rebase", "-i", "--autosquash", "--force-rebase", stack.Upstream)
 	if err != nil {
 		if m := couldNotApply.FindStringSubmatch(err.Error()); m != nil {

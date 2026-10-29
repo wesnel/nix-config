@@ -14,14 +14,19 @@ import (
 
 // requested points agent-tools at a plans directory of the test's own,
 // with a plan for session abc, and returns that plan and the ID of a
-// sign-pass requested in it.
+// sign-pass requested in it. The config goes in the baked config home
+// (bakedHome), where a baked build reads it.
 func requested(t *testing.T, dir string) (plans.Plan, string) {
 	t.Helper()
 	c := plans.Config{Dir: filepath.Join(dir, "agents"), Host: "box"}
-	config := filepath.Join(dir, "config.json")
+	config := filepath.Join(bakedHome(t), "agent-tools", "config.json")
 	data, _ := json.Marshal(map[string]any{"plans": c})
-	os.WriteFile(config, data, 0o644)
-	t.Setenv("AGENT_TOOLS_CONFIG", config)
+	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	made, err := c.New(plans.NewOptions{Title: "Add the loop", Slug: "loop", Sessions: []string{"claude:abc"},
 		Harness: "claude"}, time.Now())
 	if err != nil {
@@ -164,6 +169,16 @@ func TestNotify(t *testing.T) {
 		p, id := requested(t, dir)
 		Notify(id, map[string]string{"branch": "one", "signed": "every commit since the base is already signed"}, nil, time.Now())
 		if e := last(t, p); e.Kind != "signed" || e.Summary != "nothing to sign" {
+			t.Errorf("logged %+v", e)
+		}
+	})
+
+	t.Run("nothing to sign, one pushed and one not", func(t *testing.T) {
+		dir := t.TempDir()
+		p, id := requested(t, dir)
+		Notify(id, map[string]any{"branch": "one", "signed": "every commit since the base is already signed",
+			"pushed": map[string]string{"one": "origin refs/heads/one", "two": "not pushed: no upstream"}}, nil, time.Now())
+		if e := last(t, p); e.Kind != "signed" || e.Summary != "nothing to sign; pushed one" {
 			t.Errorf("logged %+v", e)
 		}
 	})

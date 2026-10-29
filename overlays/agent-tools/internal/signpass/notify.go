@@ -57,19 +57,23 @@ func summarize(result any, err error) plans.SignResult {
 		json.Unmarshal(b, &step)
 		count(step.Signed)
 	}
+	var pushed []string
+	for b, where := range r.Pushed {
+		if !strings.HasPrefix(where, "not pushed") {
+			pushed = append(pushed, b)
+		}
+	}
+	slices.Sort(pushed)
 	var parts []string
 	switch {
 	case counted:
 		parts = append(parts, fmt.Sprintf("%d signed", signed))
-	case len(r.Pushed) == 0:
+	case r.Signed != nil || len(pushed) == 0:
+		// A pass that found nothing to sign says so in signed; a push
+		// retried by --resume has no signed at all.
 		parts = append(parts, "nothing to sign")
 	}
-	if len(r.Pushed) > 0 {
-		pushed := make([]string, 0, len(r.Pushed))
-		for b := range r.Pushed {
-			pushed = append(pushed, b)
-		}
-		slices.Sort(pushed)
+	if len(pushed) > 0 {
 		parts = append(parts, "pushed "+strings.Join(pushed, ", "))
 	}
 	return plans.SignResult{Exit: 0, Summary: strings.Join(parts, "; ")}

@@ -26,9 +26,11 @@ const usage = `pr-loop: a review loop's way to write to GitHub.
 Policy: apart from open, every write is to the head of an open PR, draft or
 ready, by the authenticated user in the same repository and not the default
 branch, re-checked before it is made. A ready PR's pushes add only fixups of
-its own commits. open publishes a branch GitHub does not have, never a
-default branch, as a draft PR based on the default branch or on the head of
-another open PR by the authenticated user in the same repository. open
+its own commits. open publishes a branch GitHub does not have, or takes one
+GitHub has at the local tip, heading no open PR, whose commits beyond GitHub's
+base have verified signatures by the protected operator key; never a default branch; and opens it as
+a draft PR based on the default branch or on the head of another open PR by
+the authenticated user in the same repository. open
 refuses a new commit, and push a fixup, whose message breaks the rules git
 sign-pass holds messages to: a subject of at most 72 characters without a
 trailing period, no attribution lines, and on a fixup only Review-*
@@ -47,11 +49,20 @@ session that runs it: the plan naming the harness's session or this
 worktree. A failure to log is printed on stderr and fails nothing.
 
   open --title T --body-file F [--base BASE] [--dry-run] [BRANCH]
-                              push BRANCH (default HEAD) through the GitHub API and open
-                              it as a draft PR against BASE (default: the default branch),
+                              push BRANCH (default HEAD) through the GitHub API, unless
+                              GitHub has it at its tip already, and open it as a draft
+                              PR against BASE (default: the default branch),
                               in BASE's PR's GitHub stack, as link puts it there; refuses
                               when BRANCH contains a remote branch BASE lacks, and names
                               the BASE to pass instead
+  next [--json] [BRANCH...]   the single next step for each BRANCH (default HEAD), reading
+                              only: nothing; open (open's draft PR, for a branch GitHub
+                              lacks, or has at its tip with no PR and verified operator
+                              signatures); sign
+                              (the operator's git sign-pass --push or --set-upstream,
+                              with the agent-plan sign-id that mints its --notify ID);
+                              push (a signed branch GitHub is behind); or blocked,
+                              including divergent histories, saying what to fix
   stack [PR|BRANCH]           the stack of open PRs containing a PR (default HEAD's), as
                               their bases chain them, and GitHub's stack of that PR as
                               "github" (null when GitHub has it in none)
@@ -204,6 +215,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		interval = flags.Int("interval", 30, "")
 		sha      = flags.String("sha", "", "")
 		grace    = flags.Int("grace", 180, "")
+		asJSON   = flags.Bool("json", false, "")
 		bots     multi
 		accepted multi
 		leases   multi
@@ -277,6 +289,13 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		if text, err = body(); err == nil {
 			result, err = loop.Open(branch, *base, *title, text, *dryRun)
 		}
+	case "next":
+		var steps []loop.NextStep
+		if steps, err = loop.Next(rest); err == nil && !*asJSON {
+			fmt.Fprint(stdout, loop.FormatNext(steps))
+			return 0
+		}
+		result = steps
 	case "stack":
 		if len(rest) > 1 {
 			err = errors.New("stack takes at most one PR or branch; see pr-loop --help")

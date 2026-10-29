@@ -3,6 +3,7 @@ package loop
 import (
 	"encoding/json"
 	"errors"
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -395,7 +396,25 @@ func testWaitCIComparesWithTheBase(t *testing.T) {
 }
 
 func TestShellQuote(t *testing.T) {
-	for in, want := range map[string]string{"build": "build", "a b": "'a b'", `it's "$x"`: `"it's \"\$x\""`} {
+	t.Run("apostrophe and substitution remain literal", func(t *testing.T) {
+		for _, shell := range []string{"sh", "fish"} {
+			t.Run(shell, func(t *testing.T) {
+				if _, err := exec.LookPath(shell); err != nil {
+					t.Skip("literal-argument check needs " + shell)
+				}
+				word := "feat'`true`"
+				args := []string{"-c", "printf '%s' " + shellQuote(word)}
+				if shell == "fish" {
+					args = append([]string{"--no-config"}, args...)
+				}
+				out, err := exec.CommandContext(t.Context(), shell, args...).CombinedOutput()
+				if err != nil || string(out) != word {
+					t.Fatalf("shell argument = %q, error %v; want %q", out, err, word)
+				}
+			})
+		}
+	})
+	for in, want := range map[string]string{"build": "build", "a b": "'a b'", `it's "$x"`: `'it'\''s "$x"'`} {
 		t.Run(in, func(t *testing.T) {
 			if got := shellQuote(in); got != want {
 				t.Errorf("%s: %s", in, got)

@@ -113,22 +113,36 @@ commit unsigned, fold corrections into the commit they correct with
 `git commit --fixup`, and never `git push` or tag. The instructions and the
 `signing-pass` skill tell them so. To open a pull request for a new branch,
 an agent runs `pr-loop open`, which pushes the unsigned commits through the
-GitHub API with your `gh` login and opens a draft. It refuses a default
-branch, a branch GitHub already has, and any base but the default branch or
+GitHub API with your `gh` login and opens a draft; for a branch GitHub
+already has at the local tip, with verified operator-key signatures and no open pull
+request, it opens the draft without pushing. It refuses a default branch,
+any other branch GitHub already has, and any base but the default branch or
 the head of another open pull request of yours in the same repository, runs
 `git-push-guard`'s check, points the branch's upstream at its copy on
 GitHub, and puts a pull request based on another into that one's GitHub
 stack.
 `pr-loop link BOTTOM ... TOP` stacks pull requests whose bases already
 chain, such as those opened after a signed push, and `pr-loop stack PR`
-shows GitHub's stack beside the chain of bases. When the work is done, see
-what will be signed and sign it, in a terminal of your own:
+shows GitHub's stack beside the chain of bases. `pr-loop next [BRANCH...]`
+prints each branch's single next step, which is what an agent hands you:
+nothing, opening its pull request, a signing pass or a push, or what blocks
+it. A branch GitHub already has needs verified signatures by the operator's
+configured key before its pull request can open. The installed tool reads
+that identity from protected global signing configuration, and verifies
+locally using protected public key material. It supports the installed
+`~/.config/git/config` profile, SSH public keys or OpenPGP `pubring.kbx` and
+`pubring.gpg` public rings, and a direct baked state directory. Unprovable
+authority or unsupported layouts refuse the operation. The sandbox must
+protect those authority locations from writes and link creation. If GitHub
+has history the local branch lacks, `next` asks for a fetch and manual
+reconciliation. When the work is done, see what will be signed and sign it,
+in a terminal of your own:
 
 ``` sh
 git log --format='%h %G? %s' origin/main..HEAD   # N marks an unsigned commit
 git sign-pass                                     # squash fixups and sign; nothing is pushed
-git sign-pass --push                              # then push every branch that moved to its own name upstream
-git sign-pass --set-upstream                      # and publish moved branches that have none yet
+git sign-pass --push                              # then push to its own name upstream every branch that moved, or that is ahead of its remote, refusing any commit your key did not sign
+git sign-pass --set-upstream                      # and publish those that have none yet
 git sign-pass --push TOP1 TOP2 ...                # several stacks, wherever they are checked out
 ```
 

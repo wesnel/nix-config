@@ -30,6 +30,23 @@ func Bake(t testing.TB, configHome, stateHome string) {
 	t.Cleanup(func() { testConfigHome, testStateHome = oldConfig, oldState })
 }
 
+// The variables through which a test hands the directories it baked in to
+// a program it runs from its own binary (BakeFromEnv).
+const (
+	TestConfigHomeEnv = "AGENT_TOOLS_TEST_CONFIG_HOME"
+	TestStateHomeEnv  = "AGENT_TOOLS_TEST_STATE_HOME"
+)
+
+// BakeFromEnv has a test binary that runs a program's main in a child
+// process take the directories its parent test baked in, from
+// TestConfigHomeEnv and TestStateHomeEnv. Outside a test binary it does
+// nothing, so no program reads them.
+func BakeFromEnv() {
+	if testing.Testing() {
+		testConfigHome, testStateHome = os.Getenv(TestConfigHomeEnv), os.Getenv(TestStateHomeEnv)
+	}
+}
+
 // baked is the directory baked in, of built for a program and of test for a
 // test, or "".
 func baked(built, test string) string {
@@ -55,6 +72,17 @@ func dir(built, test, env, fallback string) string {
 // ConfigHome is the XDG config directory.
 func ConfigHome() string {
 	return dir(builtConfigHome, testConfigHome, "XDG_CONFIG_HOME", ".config")
+}
+
+// BakedConfigHome is the installed config authority, without any environment
+// fallback. Empty means this build has no protected config authority.
+func BakedConfigHome() string {
+	return baked(builtConfigHome, testConfigHome)
+}
+
+// BakedStateHome is the installed state authority, without environment fallback.
+func BakedStateHome() string {
+	return baked(builtStateHome, testStateHome)
 }
 
 // StateHome is the XDG state directory.

@@ -520,13 +520,13 @@ with lib; let
   # setup, which runs a command a checkout's tools decide, or setup-command
   # and guard, which work in the sandbox. post is the operator's: the guard
   # refuses it to agents, and it asks on /dev/tty.
-  prLoopGitHub = ["open" "stack" "link" "push" "threads" "reply" "resolve" "draft" "post" "request" "status" "ci" "logs" "wait"
+  prLoopGitHub = ["open" "next" "stack" "link" "push" "threads" "reply" "resolve" "draft" "post" "request" "status" "ci" "logs" "wait"
     "sign-check" "end"];
 
   # The read-only ones, which run without a prompt in an ordinary session;
   # threads writes only its PR's review record. The writes are left to the
   # permission flow.
-  prLoopReads = ["stack" "threads" "status" "ci" "logs" "wait"];
+  prLoopReads = ["next" "stack" "threads" "status" "ci" "logs" "wait"];
 
   # A trailing ` *` also matches the bare command (permissions'
   # wildcard-patterns), so one entry per subcommand covers it with and

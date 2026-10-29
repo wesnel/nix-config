@@ -109,7 +109,9 @@
     home-manager-x86_64-darwin,
     sops-nix,
   }: let
-    key = "0xA776D2AD099E8BC0";
+    # The full fingerprint: pr-loop open and git sign-pass prove signatures
+    # against it, which a key ID is too short to do.
+    key = "F84480B20CA9D6CCC7F52479A776D2AD099E8BC0";
 
     sops = {homeDirectory, ...}: {
       sops = {

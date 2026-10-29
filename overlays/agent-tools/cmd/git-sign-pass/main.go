@@ -72,7 +72,20 @@ started there may still be running.
                     the first URL's push, and move that ref once every URL
                     has it; refused, before any key touch, for a branch whose
                     upstream is another branch and for the remote's default
-                    branch (REMOTE/HEAD, or main and master)
+                    branch (REMOTE/HEAD, or main and master). The branch it
+                    finds nothing to sign on, or with BRANCHes each named
+                    branch that does not move, is pushed too when it has
+                    commits since its base and its remote-tracking ref is
+                    absent or behind its tip; one the remote has commits on
+                    that it lacks is left, and the result says why. Each
+                    push is refused, just before it, unless the URL's
+                    branch is still where the push is leased and every
+                    commit it sends, those no branch or tag there reaches
+                    as ls-remote reads it then, carries a good signature by
+                    the key of the protected operator profile (the baked
+                    git config's user.signingkey, an OpenPGP key by its full
+                    fingerprint or an SSH key), whatever the repository's
+                    own config says
   --brief           print only what it will sign, a progress line every 25
                     signatures, one line per push and the final JSON; git's
                     own account of the rebase and the pushes is left out
@@ -90,8 +103,8 @@ started there may still be running.
                     for the session that handed it over; a failure to log
                     it is reported on stderr and leaves the exit status as
                     it was
-  --set-upstream    --push, and in the same push publish every branch that
-                    moved and has no upstream to its push remote
+  --set-upstream    --push, and in the same push publish every branch it
+                    pushes that has no upstream to its push remote
                     (branch.NAME.pushRemote, remote.pushDefault, the only
                     remote, or origin) and make that its upstream; refused for a
                     branch the remote already has

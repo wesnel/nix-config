@@ -191,10 +191,7 @@ func shellQuote(s string) string {
 	if plainWord.MatchString(s) {
 		return s
 	}
-	if !strings.Contains(s, "'") {
-		return "'" + s + "'"
-	}
-	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, `$`, `\$`).Replace(s) + `"`
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // CIStatuses reports CI on the heads of the PRs ciTargets resolves.

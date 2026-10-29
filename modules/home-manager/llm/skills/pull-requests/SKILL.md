@@ -9,9 +9,13 @@ description: How to open, describe and answer a pull request. Use before `pr-loo
 
 - Open every pull request as a draft. Marking it ready for review notifies
   its code owners, and is the operator's call.
-- Open one for a branch GitHub does not have yet with `pr-loop open`, which
-  pushes the unsigned commits through the GitHub API, needs no key touch,
-  and opens the pull request as a draft:
+- `pr-loop next <branch>` says whether a branch's next step is opening its
+  pull request, the operator's signing pass or push, or nothing; take the
+  step it names.
+- Open one with `pr-loop open`, which pushes a branch GitHub does not have
+  yet through the GitHub API, unsigned, or takes one GitHub already has at
+  the local tip with signatures verified against the operator's protected
+  global signing identity, and opens the pull request as a draft:
 
   ```sh
   pr-loop open --title "Say what changed" --body-file description.md feature
@@ -20,8 +24,11 @@ description: How to open, describe and answer a pull request. Use before `pr-loo
   The base is the default branch, or with `--base` the branch of an open
   pull request of the operator's that this one stacks on, whose GitHub stack
   open adds it to; when it cannot, `unstacked` in its output says why and
-  which `pr-loop link` stacks it later. It refuses a branch GitHub already
-  has, and a branch that contains a remote branch its base lacks; later commits reach GitHub through the `signing-pass` skill's pass.
+  which `pr-loop link` stacks it later. It refuses a branch that already
+  heads an open pull request, a branch GitHub has at another commit or with
+  commits whose signatures do not prove that identity, and a branch that contains a remote
+  branch its base lacks; later commits reach GitHub through the
+  `signing-pass` skill's pass.
 - After every push to a pull request, watch its CI as the `signing-pass`
   skill's "After a push" says.
 

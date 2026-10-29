@@ -1,6 +1,7 @@
 package signpass
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -22,6 +24,7 @@ import (
 // "hang" blocks as a locked key waiting on pinentry does, recording its
 // process ID in PLAN.pids, "slow" takes a second before running then,
 // "pid" records its process ID in PLAN.pid and waits a second before
+// running then, "wait" records it there and waits for a file PLAN.go before
 // running then, and anything else, or an empty plan, runs then with the
 // program's arguments.
 func scripted(t *testing.T, dir, name, key, refusal, then string) (program, plan string) {
@@ -36,6 +39,7 @@ if KEY; then
   hang) echo $$ >> 'PLAN.pids'; exec sleep 30 ;;
   slow) sleep 1 ;;
   pid) echo $$ > 'PLAN.pid'; sleep 1 ;;
+  wait) echo $$ > 'PLAN.pid'; while [ ! -e 'PLAN.go' ]; do sleep 0.01; done ;;
   esac
 fi
 THEN
@@ -54,12 +58,78 @@ func script(t *testing.T, plan string, steps ...string) {
 }
 
 // withRetries sets how a pass with no terminal retries a missed touch for
-// the rest of the test.
-func withRetries(t *testing.T, retries int, wait, timeout time.Duration) {
+// the rest of the test. No clock ends a retry: the test ends it with the
+// clock's expire, so no test depends on how long a signature takes.
+func withRetries(t *testing.T, retries int, wait time.Duration) *retryClock {
 	t.Helper()
-	oldRetries, oldWait, oldTimeout := Retries, RetryWait, RetryTimeout
-	Retries, RetryWait, RetryTimeout = retries, wait, timeout
-	t.Cleanup(func() { Retries, RetryWait, RetryTimeout = oldRetries, oldWait, oldTimeout })
+	oldRetries, oldWait, oldContext := Retries, RetryWait, retryContext
+	Retries, RetryWait = retries, wait
+	clock := &retryClock{}
+	retryContext = func(parent context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel := context.WithCancelCause(parent)
+		clock.mu.Lock()
+		clock.ctx, clock.cancel = ctx, cancel
+		clock.mu.Unlock()
+		return expiring{ctx}, func() { cancel(context.Canceled) }
+	}
+	t.Cleanup(func() { Retries, RetryWait, retryContext = oldRetries, oldWait, oldContext })
+	return clock
+}
+
+// retryClock is what ends the latest retry's context in a test, in place of
+// its deadline.
+type retryClock struct {
+	mu     sync.Mutex
+	ctx    context.Context
+	cancel context.CancelCauseFunc
+}
+
+// expire ends the latest retry as its deadline would, and reports whether
+// that retry was still running.
+func (c *retryClock) expire() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.ctx == nil || c.ctx.Err() != nil {
+		return false
+	}
+	c.cancel(context.DeadlineExceeded)
+	return true
+}
+
+// expiring is a context whose Err is why it ended, so one retryClock.expire
+// ends reports context.DeadlineExceeded, as a deadline's does.
+type expiring struct{ context.Context }
+
+func (e expiring) Err() error {
+	if e.Context.Err() == nil {
+		return nil
+	}
+	return context.Cause(e.Context)
+}
+
+// whenFile calls f once path exists, which a scripted signer writes when it
+// reaches a step.
+func whenFile(path string, f func()) {
+	go func() {
+		for !exists(path) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		f()
+	}()
+}
+
+// By default a retry ends RetryTimeout after it starts.
+func TestRetryContext(t *testing.T) {
+	old := RetryTimeout
+	RetryTimeout = time.Hour
+	t.Cleanup(func() { RetryTimeout = old })
+	before := time.Now()
+	ctx, cancel := retryContext(t.Context())
+	defer cancel()
+	deadline, ok := ctx.Deadline()
+	if !ok || deadline.Before(before.Add(time.Hour)) || deadline.After(time.Now().Add(time.Hour)) {
+		t.Errorf("a retry's deadline is %v (set %v), want an hour after %v", deadline, ok, before)
+	}
 }
 
 // captureStderr collects what the pass writes to standard error for the rest
@@ -116,19 +186,18 @@ func TestMissedTouchWithoutTerminal(t *testing.T) {
 	}{
 		{"first signature missed once", []string{"miss"}, false},
 		{"later signature missed once", []string{"ok", "miss"}, false},
+		// However long the retried signature takes, as on a loaded
+		// machine, the test does not depend on it.
+		{"slow retried signature", []string{"miss", "slow"}, false},
 		{"missed twice", []string{"miss", "miss"}, true},
 		{"later signature missed twice", []string{"ok", "miss", "miss", "miss", "miss"}, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, plan := flakyRepo(t)
-			withRetries(t, 1, 20*time.Millisecond, 500*time.Millisecond)
+			withRetries(t, 1, 20*time.Millisecond)
 			stderr := captureStderr(t)
 			script(t, plan, c.steps...)
-			start := time.Now()
 			result, err := Run("", false, false, false)
-			if elapsed := time.Since(start); elapsed > 15*time.Second {
-				t.Errorf("took %s: the retry is not bounded", elapsed)
-			}
 			out := stderr()
 			if n := strings.Count(out, "touch the key now (retry "); n != 1 || !strings.Contains(out, "touch the key now (retry 1 of 1)") {
 				t.Errorf("%d retry announcements in\n%s", n, out)
@@ -177,26 +246,21 @@ func TestRetryKilled(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			repo, plan := flakyRepo(t)
-			timeout := 500 * time.Millisecond
-			if c.sig != 0 {
-				timeout = time.Minute
-				go func() {
-					for !exists(plan + ".pids") {
-						time.Sleep(10 * time.Millisecond)
-					}
+			clock := withRetries(t, 1, 20*time.Millisecond)
+			// Once the retried signer hangs, its retry ends: at its
+			// deadline, or by the signal.
+			whenFile(plan+".pids", func() {
+				if c.sig == 0 {
+					clock.expire()
+				} else {
 					syscall.Kill(os.Getpid(), c.sig)
-				}()
-			}
-			withRetries(t, 1, 20*time.Millisecond, timeout)
+				}
+			})
 			stderr := captureStderr(t)
 			script(t, plan, c.steps...)
 			before := gitIn(t, repo, "log", "--format=%an %ae %at %T %B", "main..one")
 			tip := gitIn(t, repo, "rev-parse", "one")
-			start := time.Now()
 			_, err := Run("", false, false, false)
-			if elapsed := time.Since(start); elapsed > 15*time.Second {
-				t.Errorf("took %s: the retry is not bounded", elapsed)
-			}
 			why := "did not finish"
 			if c.sig != 0 {
 				why = "was interrupted"
@@ -258,7 +322,7 @@ func TestRetryKilled(t *testing.T) {
 func TestRetryRestInForeground(t *testing.T) {
 	repo, plan := flakyRepo(t)
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "c")
-	withRetries(t, 1, 20*time.Millisecond, time.Minute)
+	withRetries(t, 1, 20*time.Millisecond)
 	stderr := captureStderr(t)
 	script(t, plan, "ok", "miss", "ok", "pid")
 	group := make(chan int, 1)
@@ -296,7 +360,7 @@ func TestRetryRestInForeground(t *testing.T) {
 func TestResumeSaysHowToCarryOn(t *testing.T) {
 	repo, plan := flakyRepo(t)
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "c")
-	withRetries(t, 0, 0, time.Second)
+	withRetries(t, 0, 0)
 	stderr := captureStderr(t)
 	script(t, plan, "ok", "miss")
 	if _, err := Run("", false, false, false); err == nil {
@@ -351,7 +415,7 @@ func TestRetryKeepsIgnoredHangup(t *testing.T) {
 	signal.Ignore(syscall.SIGHUP)
 	t.Cleanup(func() { signal.Reset(syscall.SIGHUP) })
 	_, plan := flakyRepo(t)
-	withRetries(t, 1, 20*time.Millisecond, time.Minute)
+	withRetries(t, 1, 20*time.Millisecond)
 	stderr := captureStderr(t)
 	script(t, plan, "ok", "miss", "pid")
 	go func() {
@@ -408,7 +472,7 @@ func TestResumeLeavesOthersRebase(t *testing.T) {
 				gitIn(t, repo, "add", m[0])
 				gitIn(t, repo, "commit", "-q", "-m", m[2])
 			}
-			withRetries(t, 0, 0, time.Second)
+			withRetries(t, 0, 0)
 			captureStderr(t)
 			script(t, plan, "miss")
 			if _, err := Run("", false, false, false); err == nil {
@@ -447,7 +511,7 @@ func TestResumeLeavesOthersRebase(t *testing.T) {
 // while a git the pass started there still runs, it says only that.
 func TestResumeAfterKilledRestart(t *testing.T) {
 	repo, plan := flakyRepo(t)
-	withRetries(t, 0, 0, time.Second)
+	withRetries(t, 0, 0)
 	stderr := captureStderr(t)
 	script(t, plan, "miss")
 	if _, err := Run("", false, false, false); err == nil {
@@ -585,7 +649,7 @@ func TestPlanStopCountsTheRest(t *testing.T) {
 	gitIn(t, repo, "switch", "-q", "two")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "c")
 	gitIn(t, repo, "switch", "-q", "one")
-	withRetries(t, 1, 20*time.Millisecond, time.Minute)
+	withRetries(t, 1, 20*time.Millisecond)
 	stderr := captureStderr(t)
 	script(t, plan, "ok", "miss", "miss")
 	_, err := Plan("", []string{"one", "two"}, false, false)
@@ -647,7 +711,7 @@ func TestFoldMissed(t *testing.T) {
 				if terminal {
 					typed(t, "\n")
 				}
-				withRetries(t, 1, 20*time.Millisecond, time.Minute)
+				withRetries(t, 1, 20*time.Millisecond)
 				stderr := captureStderr(t)
 				script(t, plan, c.steps...)
 				tip := gitIn(t, repo, "rev-parse", "one")
@@ -685,9 +749,17 @@ func TestFoldMissed(t *testing.T) {
 func TestRetryBoundsOnlyItsSignature(t *testing.T) {
 	repo, plan := flakyRepo(t)
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "c")
-	withRetries(t, 1, 20*time.Millisecond, 500*time.Millisecond)
+	clock := withRetries(t, 1, 20*time.Millisecond)
+	// The retry's bound ends while the signature after the retried one
+	// waits, which goes on only then: a bound still running would kill it.
+	whenFile(plan+".pid", func() {
+		if clock.expire() {
+			t.Error("the retry's bound was still running at the signature after it")
+		}
+		os.WriteFile(plan+".go", nil, 0o644)
+	})
 	stderr := captureStderr(t)
-	script(t, plan, "ok", "miss", "ok", "slow")
+	script(t, plan, "ok", "miss", "ok", "wait")
 	result, err := Run("", false, false, false)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, stderr())
@@ -739,7 +811,7 @@ func TestTouchCount(t *testing.T) {
 // it cannot wait.
 func TestMissedTouchWithoutRetries(t *testing.T) {
 	_, plan := flakyRepo(t)
-	withRetries(t, 0, 0, time.Second)
+	withRetries(t, 0, 0)
 	stderr := captureStderr(t)
 	script(t, plan, "miss")
 	_, err := Run("", false, false, false)
@@ -754,7 +826,7 @@ func TestPushMissedTouchWithoutTerminal(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", signingConfig(t, dir))
 	useDir(t, repo)
 	noTerminal(t)
-	withRetries(t, 1, 20*time.Millisecond, 10*time.Second)
+	withRetries(t, 1, 20*time.Millisecond)
 	stderr := captureStderr(t)
 	arm(t, armed, 0)
 	if _, err := Run("", false, true, false); err != nil {

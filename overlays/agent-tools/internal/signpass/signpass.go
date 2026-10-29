@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
@@ -185,7 +186,7 @@ func detach(p *pending, checkouts []checkout) error {
 	}
 	p.Worktrees = map[string]string{}
 	for _, c := range mine {
-		if _, err := git.Run("-C", c.path, "switch", "-q", "--detach"); err != nil {
+		if _, err := git.RunLong(nil, "-C", c.path, "switch", "-q", "--detach"); err != nil {
 			reattach(p)
 			return err
 		}
@@ -223,7 +224,7 @@ func reattach(p *pending) error {
 					"`%s`", path, b, f, p.resume())
 			}
 		}
-		if _, err := git.Run("-C", path, "switch", "-q", b); err != nil {
+		if _, err := git.RunLong(nil, "-C", path, "switch", "-q", b); err != nil {
 			return refuse("switching %s back to %s failed (%v); fix that, then run `%s`", path, b, err, p.resume())
 		}
 	}
@@ -243,49 +244,86 @@ func exists(path string) bool {
 	return err == nil
 }
 
-// rangeStart is the parent of the oldest commit the pass has to rewrite: the
+// RangeStart is the parent of the oldest commit the pass has to rewrite: the
 // oldest unsigned commit, or an older one that a fixup!, amend! or squash!
-// folds into. It also reports whether there is anything to fold.
-func rangeStart(base, tip string) (string, bool, error) {
-	out, err := git.Run("log", "--reverse", "--format=%H%x00%G?%x00%s", base+".."+tip)
+// folds into, or "" when base..tip has nothing to sign. It also reports
+// whether there is anything to fold, and refuses a fold whose target is not
+// in base..tip. A commit is unsigned when its object has no signature header
+// for the repository's object format, the one git reads (gpgsig, or
+// gpgsig-sha256 in a SHA-256 repository): no verifier runs, so pr-loop
+// next, which only reads, can call it.
+func RangeStart(base, tip string) (string, bool, error) {
+	commits, err := readRange(base, tip)
 	if err != nil {
 		return "", false, err
 	}
-	type entry struct{ sha, mark, subject string }
-	var commits []entry
-	for _, line := range strings.Split(out, "\n") {
-		if f := strings.SplitN(line, "\x00", 3); len(f) == 3 {
-			commits = append(commits, entry{f[0], f[1], f[2]})
-		}
-	}
 	oldest, fixups := len(commits), false
 	for i, c := range commits {
-		if c.mark == "N" && i < oldest {
+		if c.unsigned && i < oldest {
 			oldest = i
 		}
-		kind, target := history.Fold(c.subject)
-		if kind == history.Kept {
-			continue
+		target, err := foldTarget(commits, i)
+		if err != nil {
+			return "", false, err
 		}
-		fixups = true
-		found := -1
-		for j := i - 1; j >= 0; j-- {
-			if k, _ := history.Fold(commits[j].subject); k == history.Kept && commits[j].subject == target {
-				found = j
-				break
+		if target >= 0 {
+			fixups = true
+			if target < oldest {
+				oldest = target
 			}
-		}
-		if found < 0 {
-			return "", false, refuse("%q folds into a commit that is not on this branch; retarget it", c.subject)
-		}
-		if found < oldest {
-			oldest = found
 		}
 	}
 	if oldest == len(commits) {
 		return "", false, nil
 	}
 	return commits[oldest].sha + "^", fixups, nil
+}
+
+type rangeCommit struct {
+	sha, subject string
+	unsigned     bool
+}
+
+// readRange is base..tip, oldest first, each commit unsigned when its object
+// has no signature header for the repository's object format (RangeStart).
+func readRange(base, tip string) ([]rangeCommit, error) {
+	format, err := objectGit("rev-parse", "--show-object-format")
+	if err != nil {
+		return nil, err
+	}
+	header := "\ngpgsig "
+	if format == "sha256" {
+		header = "\ngpgsig-sha256 "
+	}
+	out, err := objectGit("log", "--reverse", "--format=%H%x00%s", base+".."+tip)
+	if err != nil {
+		return nil, err
+	}
+	var commits []rangeCommit
+	for _, line := range strings.Split(out, "\n") {
+		if f := strings.SplitN(line, "\x00", 2); len(f) == 2 {
+			raw, err := objectGit("cat-file", "commit", f[0])
+			if err != nil {
+				return nil, err
+			}
+			headers, _, _ := strings.Cut(raw, "\n\n")
+			commits = append(commits, rangeCommit{f[0], f[1], !strings.Contains("\n"+headers, header)})
+		}
+	}
+	return commits, nil
+}
+
+func foldTarget(commits []rangeCommit, i int) (int, error) {
+	kind, target := history.Fold(commits[i].subject)
+	if kind == history.Kept {
+		return -1, nil
+	}
+	for j := i - 1; j >= 0; j-- {
+		if k, _ := history.Fold(commits[j].subject); k == history.Kept && commits[j].subject == target {
+			return j, nil
+		}
+	}
+	return -1, refuse("%q folds into a commit that is not on this branch; retarget it", commits[i].subject)
 }
 
 // rehearseSquash squashes start..tip unsigned in a throwaway worktree, and
@@ -322,14 +360,14 @@ func rehearse(what, fix, tip string, args ...string) (string, error) {
 		return "", err
 	}
 	os.Remove(scratch)
-	if _, err := git.Run("worktree", "add", "--detach", scratch, tip); err != nil {
+	if _, err := git.RunLong(nil, "worktree", "add", "--detach", scratch, tip); err != nil {
 		return "", err
 	}
 	defer func() {
-		git.Run("-C", scratch, "rebase", "--abort")
-		git.Run("worktree", "remove", "--force", scratch)
+		git.RunLong(nil, "-C", scratch, "rebase", "--abort")
+		git.RunLong(nil, "worktree", "remove", "--force", scratch)
 	}()
-	if _, err := git.RunEnv(history.NoEditor, append([]string{"-C", scratch, "-c", "commit.gpgsign=false",
+	if _, err := git.RunLong(history.NoEditor, append([]string{"-C", scratch, "-c", "commit.gpgsign=false",
 		"-c", "rebase.updateRefs=false", "rebase"}, args...)...); err != nil {
 		if m := history.CouldNotApply.FindStringSubmatch(err.Error()); m != nil {
 			return "", refuse("%s conflicts at %s %q: %s", what, m[1], m[2], fix)
@@ -385,26 +423,37 @@ func statePath(kind, branch string) (string, error) {
 }
 
 // pushes are the branches a signed pass has still to push and, once the push
-// is planned (planPush), each push URL's share of it.
+// is planned (planPush), each push URL's share of it. Checked are those the
+// pass did not move, as unpushed checked them.
 type pushes struct {
-	Branches    []string          `json:"branches"`
-	SetUpstream bool              `json:"setUpstream,omitempty"`
-	URLs        []urlPush         `json:"urls,omitempty"`
-	Skipped     map[string]string `json:"skipped,omitempty"`
+	Branches    []string               `json:"branches"`
+	SetUpstream bool                   `json:"setUpstream,omitempty"`
+	URLs        []urlPush              `json:"urls,omitempty"`
+	Skipped     map[string]string      `json:"skipped,omitempty"`
+	Checked     map[string]checkedPush `json:"checked,omitempty"`
+}
+
+// checkedPush is a branch whose signatures unpushed checked: at Tip, to be
+// pushed leased on Lease. Its push goes only from there.
+type checkedPush struct {
+	Tip   string `json:"tip"`
+	Lease string `json:"lease"`
 }
 
 // urlPush is what one push URL of Remote receives: Refs, one push each, in
-// order. Done is set once the URL has them all.
+// order. Done is set once the URL has them all. NeedsSnapshot is set only
+// for new plans; false, including in legacy state, preserves the saved Old.
 type urlPush struct {
-	Remote string    `json:"remote"`
-	URL    string    `json:"url"`
-	Refs   []refPush `json:"refs"`
-	Done   bool      `json:"done,omitempty"`
+	Remote        string    `json:"remote"`
+	URL           string    `json:"url"`
+	Refs          []refPush `json:"refs"`
+	Done          bool      `json:"done,omitempty"`
+	NeedsSnapshot bool      `json:"needsSnapshot,omitempty"`
 }
 
 // refPush sends New to refs/heads/Branch, leased on Old: what the URL held
-// before the pass pushed anywhere, which is the remote-tracking ref as the
-// push was planned, or empty where the URL must not have the branch yet.
+// when that URL was first observed, or the original remote-tracking
+// expectation in legacy state. Empty means the URL must not have the branch.
 // With Publish, the remote's branch becomes Branch's upstream once every
 // URL has it. Done is set once this URL has it.
 type refPush struct {
@@ -474,9 +523,9 @@ func localBranches() (map[string]string, error) {
 	return branches, nil
 }
 
-// defaultBase is where branch left the default branch: the remote's when there
+// DefaultBase is where branch left the default branch: the remote's when there
 // is one, and otherwise the local one, unless that is the branch being signed.
-func defaultBase(branch string) (string, error) {
+func DefaultBase(branch string) (string, error) {
 	for _, ref := range []string{"refs/remotes/origin/HEAD", "refs/remotes/origin/main", "refs/remotes/origin/master",
 		"refs/heads/main", "refs/heads/master"} {
 		if ref == "refs/heads/"+branch {
@@ -498,7 +547,9 @@ func defaultBase(branch string) (string, error) {
 // at each of its remote's push URLs in turn, one branch per push, bottom up,
 // guarded by the commit its remote-tracking ref names, after checking every
 // destination before the first touch; with setUpstream as well, so is every
-// branch that moved and has none (see planPush). When the key refuses a
+// branch that moved and has none (see planPush). With nothing to sign, push
+// and setUpstream push the branch as it is when unpushed picks it
+// (pushUnmoved). When the key refuses a
 // signature or an SSH login, on a terminal the pass asks whether to retry
 // that step (retryTouch).
 //
@@ -546,9 +597,15 @@ func Run(base string, resume, push, setUpstream bool) (any, error) {
 		if dirty, _ := git.Run("status", "--porcelain", "--untracked-files=no"); dirty != "" {
 			return nil, refuse("this worktree has uncommitted changes; commit them (unsigned) first")
 		}
-		var early any
-		if p, early, err = prepare(branch, base); err != nil || early != nil {
-			return early, err
+		var early map[string]string
+		if p, early, err = prepare(branch, base); err != nil {
+			return nil, err
+		}
+		if early != nil {
+			if !push && !setUpstream {
+				return early, nil
+			}
+			return pushUnmoved(branch, base, early, setUpstream)
 		}
 		p.push, p.setUpstream = push, setUpstream
 		pushBranches, urls := 0, 0
@@ -621,14 +678,14 @@ func Resume(branch string, push, setUpstream bool) (any, error) {
 
 // prepare checks a pass on branch from base and records what it must leave,
 // touching nothing; early is the result when there is nothing to sign.
-func prepare(branch, base string) (p *pending, early any, err error) {
+func prepare(branch, base string) (p *pending, early map[string]string, err error) {
 	tip := "refs/heads/" + branch
 	if base == "" {
-		if base, err = defaultBase(branch); err != nil {
+		if base, err = DefaultBase(branch); err != nil {
 			return nil, nil, err
 		}
 	}
-	start, squash, err := rangeStart(base, tip)
+	start, squash, err := RangeStart(base, tip)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -946,9 +1003,9 @@ func planSignatures(pl *plan) int {
 		}
 		base := s.Base
 		if base == "" {
-			base, _ = defaultBase(s.Branch)
+			base, _ = DefaultBase(s.Branch)
 		}
-		if start, _, err := rangeStart(base, tip); err == nil && start != "" {
+		if start, _, err := RangeStart(base, tip); err == nil && start != "" {
 			n += signatures(start, tip)
 		}
 	}
@@ -1045,7 +1102,7 @@ func recoverKilled(p *pending, r *retrier) error {
 			"it blinks, up to %s), then `%s`%s. The unsigned branch is kept as %s%s", what, unlock, cont,
 			touches(todoSignatures()), p.resume(), also, BackupRef, p.Branch)
 	}
-	if _, err := git.Run("rebase", "--abort"); err != nil {
+	if _, err := git.RunLong(nil, "rebase", "--abort"); err != nil {
 		return fmt.Errorf("%s, and undoing the rebase failed (%v); run `git rebase --abort`, then `%s`%s",
 			what, err, p.resume(), unlock)
 	}
@@ -1169,7 +1226,7 @@ func putBack(rm string) (bool, error) {
 			return false, err
 		}
 	}
-	_, err := git.Run("reset", "-q", "--hard")
+	_, err := git.RunLong(nil, "reset", "-q", "--hard")
 	return err == nil, err
 }
 
@@ -1244,12 +1301,12 @@ func readyRetry() (restart bool, step string, err error) {
 	}
 	onto, _ := os.ReadFile(filepath.Join(rm, "onto"))
 	if head, _ := git.Run("rev-parse", "HEAD"); head != "" && head == strings.TrimSpace(string(onto)) {
-		_, err := git.Run("rebase", "--abort")
+		_, err := git.RunLong(nil, "rebase", "--abort")
 		return true, "", err
 	}
 	last, todo, _ := stoppedAt(rm)
 	if inFold(last, todo) {
-		_, err := git.Run("rebase", "--abort")
+		_, err := git.RunLong(nil, "rebase", "--abort")
 		return true, last, err
 	}
 	back, err := putBackPick(rm)
@@ -1290,7 +1347,7 @@ func putBackPick(rm string) (bool, error) {
 			return false, err
 		}
 	}
-	_, err := git.Run("reset", "-q", "--hard")
+	_, err := git.RunLong(nil, "reset", "-q", "--hard")
 	return err == nil, err
 }
 
@@ -1318,7 +1375,7 @@ func finish(p *pending, path string) (result map[string]any, moved map[string]st
 	if p.Squash {
 		signed = len(p.Kept)
 	}
-	result = map[string]any{"signed": signed, "squashed": p.Squash, "moved": moved}
+	result = map[string]any{"signed": signed, "squashed": p.Squash || p.Fixups, "moved": moved}
 	if len(gained) > 0 {
 		sort.Strings(gained)
 		result["gainedFixups"] = gained
@@ -1446,11 +1503,25 @@ func pushAll(branch string, todo pushes) (pushed map[string]string, err error) {
 	defer mux.Close()
 	for i := range todo.URLs {
 		u := &todo.URLs[i]
+		if u.NeedsSnapshot && !u.Done {
+			// %v, as for a failed push: a refusal wrapped here would be
+			// reported without the command that resumes the push.
+			if err := u.snapshot(ctx, mux.Env(i)); err != nil {
+				return nil, fmt.Errorf("%v%s; the branches are signed, so fix the cause and %s", err, pushedTo(todo.URLs), retry)
+			}
+			if err := writeJSON(path, todo); err != nil {
+				return nil, err
+			}
+		}
 		for j := range u.Refs {
 			if u.Done || u.Refs[j].Done {
 				continue
 			}
 			if err := pushRef(ctx, u.Remote, u.URL, u.Refs[j], mux.Env(i)); err != nil {
+				var r refusal.Refusal
+				if errors.As(err, &r) {
+					return nil, refuse("%v%s; fix the cause and %s", err, pushedTo(todo.URLs), retry)
+				}
 				return nil, fmt.Errorf("%v%s; the branches are signed, so fix the cause and %s", err, pushedTo(todo.URLs), retry)
 			}
 			u.Refs[j].Done = true
@@ -1508,8 +1579,9 @@ func pushedTo(urls []urlPush) string {
 
 // planPush decides where branches go (pushTargets) and splits that by push
 // URL of each remote, each sending the branches' commits as they are now to
-// the branches of the same names, leased on their remote-tracking refs as
-// they are now. A branch published with setUpstream is leased on nothing,
+// the branches of the same names. The remote-tracking expectations are
+// checked against each URL before its first push, then its actual leases
+// are saved. A branch published with setUpstream is leased on nothing,
 // so it lands only where the URL has no branch of that name. Each branch is
 // pushed on its own, bottom up: GitHub starts a pull request's workflows
 // twice when one push moves it and its base together.
@@ -1539,11 +1611,87 @@ func planPush(branches []string, setUpstream bool, retry string) (pushes, error)
 					"fix it with `git remote set-url --push`, then %s", remote, url, retry)
 			}
 			if url != "" {
-				todo.URLs = append(todo.URLs, urlPush{Remote: remote, URL: url, Refs: slices.Clone(refs)})
+				todo.URLs = append(todo.URLs, urlPush{Remote: remote, URL: url, Refs: slices.Clone(refs), NeedsSnapshot: true})
 			}
 		}
 	}
 	return todo, nil
+}
+
+// snapshot records the URL's exact old refs once, just before its first push.
+// A missing marker in older state preserves the leases that state saved.
+func (u *urlPush) snapshot(ctx context.Context, env []string) error {
+	args := []string{"ls-remote", "--exit-code", "--refs", u.URL}
+	wanted := map[string]bool{}
+	for _, r := range u.Refs {
+		if !r.Done {
+			ref := "refs/heads/" + r.Branch
+			args = append(args, ref)
+			wanted[ref] = true
+		}
+	}
+	if len(wanted) == 0 {
+		u.NeedsSnapshot = false
+		return nil
+	}
+	what := "checking branches at " + u.URL
+	retry := &retrier{}
+	run := ctx
+	var out []byte
+	for {
+		var err error
+		out, err = git.BytesContext(git.WithEnv(run, env...), nil, args...)
+		if err == nil {
+			break
+		}
+		if run.Err() != nil {
+			return fmt.Errorf("%s: %w: %w", what, run.Err(), err)
+		}
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 2 {
+			break
+		}
+		var done context.CancelFunc
+		var again bool
+		if run, done, again = retry.next(ctx, what, "", err.Error()); !again {
+			return fmt.Errorf("%s failed%s: %w", what, retry.locked(), err)
+		}
+		defer done()
+	}
+	observed := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			return fmt.Errorf("%s returned an unexpected ref advertisement", what)
+		}
+		oid := fields[0]
+		validOID := (len(oid) == 40 || len(oid) == 64) && strings.Trim(oid, "0123456789abcdef") == ""
+		if !wanted[fields[1]] || !validOID || observed[fields[1]] != "" {
+			return fmt.Errorf("%s returned an unexpected ref advertisement", what)
+		}
+		observed[fields[1]] = fields[0]
+	}
+	for _, r := range u.Refs {
+		if r.Done {
+			continue
+		}
+		// A URL may already hold New: another URL of the same repository
+		// pushed it, or another client did. A published branch must still
+		// be absent.
+		if old := observed["refs/heads/"+r.Branch]; old != "" && old != r.Old && (r.Publish || old != r.New) {
+			return refuse("%s at %s changed from the expected %.12s to %.12s; fetch and review that destination before pushing", r.Branch, u.URL, r.Old, old)
+		}
+	}
+	for i := range u.Refs {
+		if !u.Refs[i].Done {
+			u.Refs[i].Old = observed["refs/heads/"+u.Refs[i].Branch]
+		}
+	}
+	u.NeedsSnapshot = false
+	return nil
 }
 
 // bottomUp orders refs so that each comes before every ref whose commit
@@ -1591,10 +1739,13 @@ func pushNameFree(retry string) error {
 
 // pushRef pushes r to url, over whatever transport the URL uses (for
 // GitHub, SSH and the key) with env added, without touching any
-// remote-tracking ref (pushName). When the key refuses, it asks whether to
-// retry (retryTouch).
+// remote-tracking ref (pushName), once gate lets it. When the key refuses,
+// it asks whether to retry (retryTouch).
 func pushRef(ctx context.Context, remote, url string, r refPush, env []string) error {
 	if err := pushNameFree(""); err != nil {
+		return err
+	}
+	if err := gate(ctx, url, r, env); err != nil {
 		return err
 	}
 	args := []string{"-c", "remote." + pushName + ".url=" + url, "push",
@@ -1693,12 +1844,12 @@ func pushTargets(branches []string, setUpstream bool, retry string) (map[string]
 		case remote == "." && merge != "":
 			return nil, nil, refuse("%s tracks the local branch %s, so --push has nowhere to send it; drop that with "+
 				"`git branch --unset-upstream %s` and use --set-upstream, or set its remote branch with "+
-				"`git branch --set-upstream-to=REMOTE/%s %s`; then %s", b, strings.TrimPrefix(merge, "refs/heads/"), b, b, b, retry)
+				"`git branch --set-upstream-to=%s %s`; then %s", b, strings.TrimPrefix(merge, "refs/heads/"), quote(b), quote("REMOTE/"+b), quote(b), retry)
 		case remote != "" && merge != "":
 			if merge != "refs/heads/"+b {
-				fix := fmt.Sprintf("`git branch --unset-upstream %s` and use --set-upstream", b)
+				fix := fmt.Sprintf("`git branch --unset-upstream %s` and use --set-upstream", quote(b))
 				if git.OK("rev-parse", "--verify", "-q", "refs/remotes/"+remote+"/"+b) {
-					fix = fmt.Sprintf("`git branch --set-upstream-to=%s/%s %s`", remote, b, b)
+					fix = fmt.Sprintf("`git branch --set-upstream-to=%s %s`", quote(remote+"/"+b), quote(b))
 				}
 				return nil, nil, refuse("%s tracks %s/%s, a different branch, and --push only pushes a branch to its own "+
 					"name; point it at its own with %s, then %s", b, remote, strings.TrimPrefix(merge, "refs/heads/"), fix, retry)
@@ -1714,7 +1865,7 @@ func pushTargets(branches []string, setUpstream bool, retry string) (map[string]
 			}
 			if git.OK("rev-parse", "--verify", "-q", "refs/remotes/"+t.remote+"/"+b) {
 				return nil, nil, refuse("%s has no upstream but %s already has a branch %s; if it is this one, run "+
-					"`git branch --set-upstream-to=%s/%s %s`, then %s", b, t.remote, b, t.remote, b, b, retry)
+					"`git branch --set-upstream-to=%s %s`, then %s", b, t.remote, b, quote(t.remote+"/"+b), quote(b), retry)
 			}
 			// An empty lease pushes only if the remote has no such branch,
 			// whatever this repository last fetched.
@@ -1727,6 +1878,113 @@ func pushTargets(branches []string, setUpstream bool, retry string) (map[string]
 		byRemote[t.remote] = append(byRemote[t.remote], t)
 	}
 	return byRemote, skipped, nil
+}
+
+// Destination is where a pass that pushes sends a branch: Flag is the push
+// flag it needs, --push for a branch whose upstream is its own name on Remote
+// or --set-upstream for one with none, and Tracking is the commit of the
+// remote-tracking ref the push is leased on, "" when there is none.
+type Destination struct {
+	Flag, Remote, Tracking string
+}
+
+// DestinationOf is branch's Destination, decided as pushTargets decides it,
+// or the refusal pushTargets makes for branch, ending with retry. It reads
+// only this repository's config and refs.
+func DestinationOf(branch, retry string) (Destination, error) {
+	byRemote, skipped, err := pushTargets([]string{branch}, false, retry)
+	if err != nil {
+		return Destination{}, err
+	}
+	flag := "--push"
+	if _, ok := skipped[branch]; ok {
+		if byRemote, _, err = pushTargets([]string{branch}, true, retry); err != nil {
+			return Destination{}, err
+		}
+		flag = "--set-upstream"
+	}
+	for remote, targets := range byRemote {
+		return Destination{Flag: flag, Remote: remote, Tracking: targets[0].lease}, nil
+	}
+	return Destination{}, fmt.Errorf("no push destination for %s", branch)
+}
+
+// unpushed picks, of branches a pass leaves where they are, those a push
+// would publish or move forward: each with commits since base (where it left
+// the default branch, when base is empty) whose push target has no
+// remote-tracking ref of its name or one behind its tip. Of the rest, one
+// without an upstream (unless setUpstream) or whose remote has commits its tip
+// lacks is in skipped with the reason; one the remote has at its tip, or with
+// no commits since base, is in neither. pushTargets checks the branches with
+// commits, refusing as it does for a moved branch. Their push, as every
+// push, goes only through gate.
+func unpushed(branches []string, base string, setUpstream bool, retry string) (todo []string, skipped map[string]string, err error) {
+	var ahead []string
+	for _, b := range branches {
+		from := base
+		if from == "" {
+			if from, err = DefaultBase(b); err != nil {
+				return nil, nil, err
+			}
+		}
+		if n, _ := git.Run("rev-list", "--count", from+"..refs/heads/"+b); n != "" && n != "0" {
+			ahead = append(ahead, b)
+		}
+	}
+	byRemote, skipped, err := pushTargets(ahead, setUpstream, retry)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, targets := range byRemote {
+		for _, t := range targets {
+			tip, err := git.Run("rev-parse", "refs/heads/"+t.branch)
+			if err != nil {
+				return nil, nil, err
+			}
+			switch {
+			case t.lease == tip:
+			case t.lease == "" || git.OK("merge-base", "--is-ancestor", t.lease, tip):
+				todo = append(todo, t.branch)
+			default:
+				skipped[t.branch] = fmt.Sprintf("not pushed: %s/%s has commits %s lacks", t.remote, t.branch, t.branch)
+			}
+		}
+	}
+	sort.Strings(todo)
+	return todo, skipped, nil
+}
+
+// pushUnmoved is a pass on branch that found nothing to sign, and early its
+// result, with push or setUpstream: it pushes branch as pushAll does when
+// unpushed picks it, and adds to early, as pushed, where it went or why it
+// did not.
+func pushUnmoved(branch, base string, early map[string]string, setUpstream bool) (any, error) {
+	retry := "run the pass again"
+	todo, pushed, err := unpushed([]string{branch}, base, setUpstream, retry)
+	if err != nil {
+		return nil, err
+	}
+	if len(todo) > 0 {
+		if err := sshmux.Check(retry); err != nil {
+			return nil, err
+		}
+		if Brief {
+			announceTouch()
+		}
+		done, err := pushAll(branch, pushes{Branches: todo, SetUpstream: setUpstream})
+		if err != nil {
+			return nil, err
+		}
+		maps.Copy(pushed, done)
+	}
+	if len(pushed) == 0 {
+		return early, nil
+	}
+	result := map[string]any{"pushed": pushed}
+	for k, v := range early {
+		result[k] = v
+	}
+	return result, nil
 }
 
 // defaultBranches are the names remote's default branch may have: the one

@@ -28,11 +28,15 @@ type plan struct {
 	// Next is the step after the one running.
 	Next int `json:"next"`
 	// Key is the branch whose push state holds the plan's push.
-	Key         string         `json:"key"`
-	Push        bool           `json:"push,omitempty"`
-	SetUpstream bool           `json:"setUpstream,omitempty"`
-	Moved       []string       `json:"moved,omitempty"`
-	Results     map[string]any `json:"results"`
+	Key         string   `json:"key"`
+	Push        bool     `json:"push,omitempty"`
+	SetUpstream bool     `json:"setUpstream,omitempty"`
+	Moved       []string `json:"moved,omitempty"`
+	// Unmoved are the named branches the pass leaves where they are that it
+	// pushes too (unpushed); Held says why it pushes some others not.
+	Unmoved []string          `json:"unmoved,omitempty"`
+	Held    map[string]string `json:"held,omitempty"`
+	Results map[string]any    `json:"results"`
 }
 
 // step signs one stack: from the oldest unsigned commit above Base, as a
@@ -64,7 +68,8 @@ type step struct {
 // out, and prints what it will do before the first key touch. Every check that
 // can refuse runs first, including an unsigned rehearsal of every squash and
 // every fork's replay. With push or setUpstream, every branch that moved is
-// pushed at the end, as a single-branch pass pushes (pushAll).
+// pushed at the end, as a single-branch pass pushes (pushAll), and so is each
+// named branch that did not move when unpushed picks it.
 func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 	if base != "" && len(names) > 1 {
 		return nil, refuse("--base applies to one branch; sign branches with different bases separately")
@@ -95,7 +100,10 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 			tips = append(tips, n)
 		}
 	}
-	sort.Strings(tips)
+	tips, err = orderTops(base, tips, before)
+	if err != nil {
+		return nil, err
+	}
 	all, err := checkouts()
 	if err != nil {
 		return nil, err
@@ -112,11 +120,11 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 		s := step{Branch: t, From: -1, tip: before[t]}
 		b := base
 		if b == "" {
-			if b, err = defaultBase(t); err != nil {
+			if b, err = DefaultBase(t); err != nil {
 				return nil, err
 			}
 		}
-		start, squash, err := rangeStart(b, s.tip)
+		start, squash, err := RangeStart(b, s.tip)
 		if err != nil {
 			return nil, err
 		}
@@ -190,7 +198,16 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 	}
 
 	if push || setUpstream {
-		byRemote, skipped, err := pushTargets(moving, setUpstream, "run the pass again")
+		var unmoved []string
+		for _, n := range named {
+			if !slices.Contains(moving, n) {
+				unmoved = append(unmoved, n)
+			}
+		}
+		if pl.Unmoved, pl.Held, err = unpushed(unmoved, base, setUpstream, "run the pass again"); err != nil {
+			return nil, err
+		}
+		byRemote, skipped, err := pushTargets(slices.Concat(moving, pl.Unmoved), setUpstream, "run the pass again")
 		if err != nil {
 			return nil, err
 		}
@@ -217,6 +234,9 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 		for _, b := range slices.Sorted(maps.Keys(skipped)) {
 			lines = append(lines, fmt.Sprintf("%s: not pushed, no upstream", b))
 		}
+		for _, b := range slices.Sorted(maps.Keys(pl.Held)) {
+			lines = append(lines, fmt.Sprintf("%s: %s", b, pl.Held[b]))
+		}
 	}
 	lines = append(lines, fmt.Sprintf("key touches: up to %d", touches))
 	if Brief {
@@ -228,6 +248,94 @@ func Plan(base string, names []string, push, setUpstream bool) (any, error) {
 	}
 	pl.Results["plan"] = lines
 	return runPlan(pl)
+}
+
+// orderTops puts a fold's carrier before a sibling that needs its target's
+// folded copy. Shared folds and folds into a carrier's own tail need no order.
+func orderTops(base string, tips []string, before map[string]string) ([]string, error) {
+	type fold struct{ commit, target string }
+	type top struct {
+		name     string
+		commits  map[string]bool
+		folds    []fold
+		rewrites bool
+	}
+	sort.Strings(tips)
+	var tops []top
+	for _, name := range tips {
+		b := base
+		if b == "" {
+			var err error
+			if b, err = DefaultBase(name); err != nil {
+				return nil, err
+			}
+		}
+		commits, err := readRange(b, before[name])
+		if err != nil {
+			return nil, err
+		}
+		t := top{name: name, commits: map[string]bool{}}
+		for i, c := range commits {
+			t.commits[c.sha] = true
+			t.rewrites = t.rewrites || c.unsigned
+			at, err := foldTarget(commits, i)
+			if err != nil {
+				return nil, err
+			}
+			if at >= 0 {
+				t.folds = append(t.folds, fold{c.sha, commits[at].sha})
+				t.rewrites = true
+			}
+		}
+		tops = append(tops, t)
+	}
+	predecessors := map[string]map[string]bool{}
+	for _, carrier := range tops {
+		for _, f := range carrier.folds {
+			for _, sibling := range tops {
+				if !sibling.commits[f.target] || sibling.commits[f.commit] {
+					continue
+				}
+				if !sibling.rewrites {
+					return nil, refuse("%s is already signed but needs %s's fold into %.12s; restack it onto that folded history before signing these tops together", sibling.name, carrier.name, f.target)
+				}
+				if predecessors[sibling.name] == nil {
+					predecessors[sibling.name] = map[string]bool{}
+				}
+				predecessors[sibling.name][carrier.name] = true
+			}
+		}
+	}
+	var ordered []string
+	done := map[string]bool{}
+	for len(ordered) < len(tops) {
+		ready := ""
+		for _, t := range tops {
+			if done[t.name] {
+				continue
+			}
+			blocked := false
+			for p := range predecessors[t.name] {
+				blocked = blocked || !done[p]
+			}
+			if !blocked {
+				ready = t.name
+				break
+			}
+		}
+		if ready == "" {
+			var remaining []string
+			for _, t := range tops {
+				if !done[t.name] {
+					remaining = append(remaining, t.name)
+				}
+			}
+			return nil, refuse("cannot order shared folds on %s; their carriers require each other first. Restack the folds into shared history before signing these tops together", strings.Join(remaining, ", "))
+		}
+		ordered = append(ordered, ready)
+		done[ready] = true
+	}
+	return ordered, nil
 }
 
 // rehearseStep checks a step that shares nothing with an earlier one, as a
@@ -253,7 +361,7 @@ func rehearseStep(s *step, squash bool) (int, error) {
 // copy gained over the fork point: nothing, unless a fixup above the fork
 // point folded into a commit below it.
 func rehearseFork(s *step, e *step) (int, error) {
-	if _, _, err := rangeStart(s.from, s.tip); err != nil {
+	if _, _, err := RangeStart(s.from, s.tip); err != nil {
 		return 0, err
 	}
 	kept, err := keptCommits(e.from, s.from)
@@ -396,7 +504,7 @@ func runPlan(pl *plan) (any, error) {
 		}
 		var p *pending
 		if s.From < 0 {
-			var early any
+			var early map[string]string
 			if p, early, err = prepare(s.Branch, s.Base); err != nil {
 				return nil, err
 			}
@@ -445,10 +553,15 @@ func runPlan(pl *plan) (any, error) {
 	}
 	result := map[string]any{"branches": pl.Results}
 	if pl.Push || pl.SetUpstream {
-		sort.Strings(pl.Moved)
-		pushed, err := pushAll(pl.Key, pushes{Branches: slices.Compact(pl.Moved), SetUpstream: pl.SetUpstream})
+		branches := slices.Sorted(slices.Values(append(pl.Moved, pl.Unmoved...)))
+		pushed, err := pushAll(pl.Key, pushes{Branches: slices.Compact(branches), SetUpstream: pl.SetUpstream})
 		if err != nil {
 			return nil, err
+		}
+		for b, why := range pl.Held {
+			if _, ok := pushed[b]; !ok {
+				pushed[b] = why
+			}
 		}
 		result["pushed"] = pushed
 	}
@@ -474,7 +587,7 @@ func (s *step) enter() error {
 			return err
 		}
 		os.Remove(s.Temp)
-		if _, err := git.Run("worktree", "add", "-q", s.Temp, s.Branch); err != nil {
+		if _, err := git.RunLong(nil, "worktree", "add", "-q", s.Temp, s.Branch); err != nil {
 			return err
 		}
 	}
@@ -490,7 +603,7 @@ func (pl *plan) record(s *step, result map[string]any, moved map[string]string) 
 	}
 	if s.Temp != "" {
 		mainWorktree()
-		git.Run("worktree", "remove", s.Temp)
+		git.RunLong(nil, "worktree", "remove", s.Temp)
 		s.Temp = ""
 	}
 }
