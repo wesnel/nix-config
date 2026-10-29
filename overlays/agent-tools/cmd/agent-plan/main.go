@@ -176,7 +176,9 @@ have (see status) is refused and writes nothing.
                      CronCreate pinned to one minute ("M H DoM Mon *"),
                      that fires after the reset, naming the window, its
                      share and its reset (the window that resets last, with
-                     both over); with no record it can read, denies nothing
+                     both over), and the call that schedules the main
+                     session's resume just after it; with no record it can
+                     read, denies nothing
   own PLAN --worktree DIR --agent ID
                      record agent ID, the harness's ID for a sub-agent or
                      "main" for the session's main thread, as the one agent

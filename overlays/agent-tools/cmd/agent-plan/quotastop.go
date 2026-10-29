@@ -24,7 +24,9 @@ var stopAllows = []string{"Read", "Grep", "Glob", "ToolSearch", "Skill", "AskUse
 // window recorded in quota.File that still counts is at or above
 // --threshold percent, it denies every call but stopAllows', a Bash line
 // that is one agent-plan command, and a ScheduleWakeup or CronCreate that
-// fires after the window resets. A record it cannot read lets every
+// fires after the window resets. The denial gives the main session
+// resumeCall's call, and tells a sub-agent, which can schedule nothing, to
+// hand back. A record it cannot read lets every
 // call through. A threshold it cannot use, or a denial it cannot write,
 // exits 1, which the hook's onFailure block makes a denial.
 func quotaStop(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -39,8 +41,10 @@ func quotaStop(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	var in struct {
-		Tool  string `json:"tool_name"`
-		Input struct {
+		Tool string `json:"tool_name"`
+		// Set only in a sub-agent or a teammate.
+		AgentID string `json:"agent_id"`
+		Input   struct {
 			Command string `json:"command"`
 			// ScheduleWakeup's.
 			DelaySeconds *int `json:"delaySeconds"`
@@ -70,11 +74,19 @@ func quotaStop(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if !fires.IsZero() && firesAfter(fires, w.ResetsAt) {
 		return 0
 	}
+	clock := quota.Clock(w.ResetsAt, now)
+	next := "You are a sub-agent, which can schedule nothing: log where the work stands with agent-plan, then hand back with SubagentHandback, " +
+		"saying the quota stop holds until " + clock + "; the session that started you schedules the resume."
+	if in.AgentID == "" {
+		tool, call := resumeCall(w.ResetsAt, clock, now)
+		next = fmt.Sprintf("Log where the work stands with agent-plan, then schedule this session's resume, unless it is already scheduled, "+
+			"by calling %s with %s (the stop lets it through), and end your turn.", tool, call)
+	}
 	reason := fmt.Sprintf("Quota stop: the Claude account's %s window is at %d%%, at or above the %d%% stop, until it resets at %s. "+
-		"Until then no sub-agent starts and no tool runs but %s, and agent-plan alone on a Bash line. "+
-		"Log where the work stands with agent-plan, then hand back with SubagentHandback or end your turn. "+
+		"Until then no sub-agent starts and no tool runs but %s, agent-plan alone on a Bash line, "+
+		"and a ScheduleWakeup or CronCreate that fires after the reset. %s "+
 		"Nothing in a session lifts the stop: the operator does, by setting wgn.home.claude.quotaStop = null and switching.",
-		w.Name, int(math.Floor(w.Used)), *threshold, quota.Clock(w.ResetsAt, now), strings.Join(stopAllows, ", "))
+		w.Name, int(math.Floor(w.Used)), *threshold, clock, strings.Join(stopAllows, ", "), next)
 	if err := json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{
 		"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}); err != nil {
 		fmt.Fprintln(stderr, reason)
@@ -125,6 +137,38 @@ func cronFires(expr string, now time.Time) time.Time {
 		}
 	}
 	return time.Time{}
+}
+
+// resumeCall is the tool and JSON input that schedule a session's resume
+// for the first minute after resets (a Unix time, shown as clock) that
+// firesAfter accepts: ScheduleWakeup while that minute is within the hour
+// its delay reaches, else a one-shot CronCreate pinned to it. Either way
+// the stop lets the call through.
+func resumeCall(resets int64, clock string, now time.Time) (string, string) {
+	at := time.Unix(resets, 0).In(now.Location()).Truncate(time.Minute).Add(time.Minute)
+	if !firesAfter(at, resets) {
+		at = at.Add(time.Minute)
+	}
+	prompt := "The quota stop's window reset at " + clock + ". Resume the work it halted: " +
+		"run agent-plan find, then agent-plan status on this session's plan, and carry on from where its log stands."
+	var tool string
+	var call any
+	if delay := int(math.Ceil(at.Sub(now).Seconds())); delay <= wakeupMax {
+		tool, call = "ScheduleWakeup", struct {
+			DelaySeconds int    `json:"delaySeconds"`
+			Reason       string `json:"reason"`
+			Prompt       string `json:"prompt"`
+			Noop         bool   `json:"noop"`
+		}{delay, "resume after the quota reset at " + clock, prompt, false}
+	} else {
+		tool, call = "CronCreate", struct {
+			Cron      string `json:"cron"`
+			Prompt    string `json:"prompt"`
+			Recurring bool   `json:"recurring"`
+		}{fmt.Sprintf("%d %d %d %d *", at.Minute(), at.Hour(), at.Day(), int(at.Month())), prompt, false}
+	}
+	data, _ := json.Marshal(call)
+	return tool, string(data)
 }
 
 // firesAfter is whether a wakeup due at fires runs after resets, a Unix
