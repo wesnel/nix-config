@@ -1136,6 +1136,11 @@ func checkGit(words []string, expands []bool, env []string, who role, dir, check
 			switch {
 			case strings.HasPrefix(key, "pr-loop."):
 				return "pr-loop.* settings are the operator's to change. Read them with `git config --get`, and put the `git config` command you propose in the report for the operator."
+			case key == "user.signingkey" || strings.HasPrefix(key, "gpg."):
+				// In any file, --worktree included: a program named here runs
+				// when the operator signs, and a key names whose
+				// signatures count as theirs.
+				return "Signing settings say which key signs for the operator and which program signs and checks, so they are the operator's to change. Commit unsigned with `git -c commit.gpgsign=false commit`, and put the `git config` command you propose in the report for the operator."
 			case includeKey(key):
 				return includeConfig
 			case remoteURL.MatchString(key):
