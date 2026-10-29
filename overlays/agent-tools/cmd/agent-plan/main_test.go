@@ -365,8 +365,8 @@ func TestCommands(t *testing.T) {
 		}
 		name := strings.TrimSuffix(filepath.Base(plan), ".org")
 		code, out, errs := agentPlan(t, "", "open", "--kind", "follow-up")
-		if code != 0 || !strings.HasPrefix(out, "* Add the loop ("+name+")\n- follow-up F1 [") ||
-			!strings.HasSuffix(out, "] :: Cache the parse\n") || strings.Count(out, "\n") != 2 {
+		if code != 0 || !strings.HasPrefix(out, "* none\n** Add the loop ("+name+")\n- follow-up F1 [") ||
+			!strings.HasSuffix(out, "] :: Cache the parse\n") || strings.Count(out, "\n") != 3 {
 			t.Errorf("open --kind follow-up: %d %q %s", code, out, errs)
 		}
 		code, out, _ = agentPlan(t, "", "open", "--json")

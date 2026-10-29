@@ -134,6 +134,19 @@ func (c Config) Workstreams() ([]Workstream, error) {
 	return out, errors.Join(errs...)
 }
 
+// WorkstreamTitles are the titles of every host's workstreams by their
+// file-level IDs, as their files hold them now: a listing names a
+// workstream by these, so that a person's rename shows at once, and a
+// plan's link holds only the title it was made with.
+func (c Config) WorkstreamTitles() (map[string]string, error) {
+	ws, err := c.Workstreams()
+	out := map[string]string{}
+	for _, w := range ws {
+		out[w.ID] = w.Title
+	}
+	return out, err
+}
+
 // readWorkstream reads the workstream file of that name in the plans
 // directory, as readPlan reads a plan's.
 func (c Config) readWorkstream(name string) (Workstream, error) {

@@ -110,7 +110,9 @@ have (see status) is refused and writes nothing.
                      done, verified or abandoned
   open [--kind OKIND] [--since 'YYYY-MM-DD[ HH:MM]'] [--json]
                      the open items of every plan of this host, halted ones
-                     included and marked, newest plan first: what waits on
+                     included and marked, under a heading per workstream
+                     (those of the newest plans first, then "none") and in
+                     it per plan, newest plan first: what waits on
                      the operator (a hand-back's command, a sign-pass not
                      yet run), the questions they can answer now, retro
                      proposals, ready steps and open follow-ups, its parts'
