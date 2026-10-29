@@ -236,18 +236,21 @@ agent-plan ask PLAN --question 'Keep the old flag?' --recommendation 'no, drop i
 `--part P1` puts it in that part's file; `--priority A` puts it before the
 others, `C` after. Never restate open questions in a message: when a
 sub-agent reports, say only what changed, add its new questions with
-`agent-plan ask`, and at most give their number. When the operator asks for
-them in Claude Code, take `agent-plan questions PLAN --all --json`, the
-questions they can answer now, and ask them through AskUserQuestion as
-`/questions` does: at most four per call, each question's recommendation
-first, then its alternatives, then "Drop it". In any other harness, print
-`agent-plan questions PLAN --all` and tell the operator to answer them with
-`/questions` in a Claude Code session. When they answer, record each answer
-with `agent-plan decide PLAN Q1 --answer 'ANSWER'`, which settles the question
-in place and logs `decided`; `--drop --answer 'why'` drops it, and
-`--supersedes Q2` marks the earlier decision this one replaces. A decision
-can make waiting questions askable, so list them again until none are
-left. The operator may also run `/questions` in Claude Code themselves.
+`agent-plan ask`, and at most give their number. The `questions` skill
+presents them to the operator and records each answer with
+`agent-plan decide`:
+
+- In Claude Code the operator runs `/questions`. The skill cannot be loaded
+  by the model there; when the operator asks for the questions in other
+  words, read `~/.claude/skills/questions/SKILL.md` and do as it says.
+- In Codex, load it when the operator asks for the questions (`$questions`
+  or in words), and as soon as a question becomes askable while
+  `request_user_input_async` is offered, which queues it without stopping
+  the work.
+
+`agent-plan decide PLAN Q1 --answer 'ANSWER'` settles a question in place
+and logs `decided`; `--supersedes Q2` marks the earlier decision this one
+replaces.
 
 Ask the operator only about a one-way door (a force-push, deleted data, a
 message sent outside, a migration, a stored format, a published interface)

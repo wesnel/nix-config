@@ -26,9 +26,10 @@ Every change has a plan (`agent-plan new`), started from the template the
 `playbooks` skill gives for its kind and kept true as the work changes,
 with each step's start, completion and verification logged
 (`agent-plan log`). Every question for the operator goes in the plan through
-`agent-plan ask`, never restated in messages. Asked to plan, write the plan
-and stop: no edits outside its files, no commits. The `plan-work` skill has
-the format and the commands.
+`agent-plan ask`, is presented through the `questions` skill, and is never
+restated in messages. Asked to plan, write the plan and stop: no edits
+outside its files, no commits. The `plan-work` skill has the format and the
+commands.
 
 ## Reviews
 
