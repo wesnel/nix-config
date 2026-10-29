@@ -423,3 +423,11 @@ func NixPinned(old, next string) bool {
 	return slices.ContainsFunc(removed, func(l Line) bool { return a[l.N] }) ||
 		slices.ContainsFunc(added, func(l Line) bool { return b[l.N] })
 }
+
+// FlakeConfigured reports whether a flake.nix, old or next, may set
+// nixConfig, the caches, keys and other settings Nix takes from the flake:
+// whether either names it anywhere, since an edit anywhere inside it
+// changes them, and a name in a comment or a string counts too.
+func FlakeConfigured(old, next string) bool {
+	return strings.Contains(old, "nixConfig") || strings.Contains(next, "nixConfig")
+}

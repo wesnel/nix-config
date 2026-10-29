@@ -7,25 +7,29 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
 
+	shared "github.com/wesnel/agent-tools/internal/availability"
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/record"
 	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/routes"
 )
 
 // Usage is `git delegate -h`.
-const Usage = `usage: git delegate [--reviewer TYPE]... [--goal FILE] [--items FILE] [--red-check FILE]
+const Usage = `usage: git delegate [--reviewer TYPE]... [--plan PLAN [--part P]] [--items FILE] [--red-check FILE]
                     [--description FILE] [--model M] [--timeout S] SOURCE
        git delegate ask [--reviewer TYPE] --question FILE PATH...   (see git delegate ask -h)
+       git delegate availability [--disable claude|codex | --clear claude|codex]
        git delegate show SOURCE                                      (see git delegate show -h)
        git delegate settle SOURCE FINDING OUTCOME [--target X] [--reason-file F]
-       git delegate --print-prompt [--reviewer TYPE] [--goal FILE] [--items FILE] [--red-check FILE]
-                    [--description FILE] SOURCE
+       git delegate --print-prompt [--reviewer TYPE] [--plan PLAN [--part P]] [--items FILE]
+                    [--red-check FILE] [--description FILE] SOURCE
 
 Reviews SOURCE with reviewers that did not write it, and keeps what they
 found in its review record, under $XDG_STATE_HOME/agent-tools/reviews/
@@ -49,8 +53,8 @@ made the same way under that cache directory and removed after it.
 Reviewers run one at a time, and nothing here runs the change's code.
 
 TYPEs (--reviewer, repeated):
-  codex     the general review, by Codex as a model family other than the
-            author's: codex exec --ignore-user-config --ephemeral, its
+  codex     the general review, by Codex:
+            codex exec --json --ignore-user-config --ephemeral, its
             commands reading only the checkout, the parts of the git
             directory git needs and the Nix store, with no writes, network,
             MCP server, plugin, web search or image viewer. Codex's sandbox
@@ -59,6 +63,8 @@ TYPEs (--reviewer, repeated):
             a scan of every commit from TIP's merge base with the default
             branch, by its paths and lines, against built-in rules and the
             operator's repos routes, and the routes it names.
+  claude    the same general review and routing contract, by Claude Code's
+            adversarial-reviewer agent, confined as security below.
   security  the security review, by Claude Code's security-reviewer agent,
             headless: claude -p with --setting-sources "", no MCP server,
             CLAUDE_CODE_DISABLE_CLAUDE_MDS=1, its agent from the
@@ -86,8 +92,8 @@ TYPEs (--reviewer, repeated):
   guide     the walkthrough, by Claude Code's review-guide agent, headless
             as security is: the change's hunks in chunks, in the order to
             read them, each hunk cited as file:PATH::LINE@SHA. A citation of
-            no hunk, and a hunk no chunk cites, are dropped. It always runs,
-            last, and its walkthrough replaces the record's.
+            no hunk, and a hunk no chunk cites, are dropped. It is selected
+            last in every review, and its walkthrough replaces the record's.
   diagram   at most three diagrams, run only when named: drawn by Claude
             Code's diagrammer agent, headless as security is, as JSON each
             element of which cites the lines at TIP it stands for; each
@@ -102,8 +108,16 @@ TYPEs (--reviewer, repeated):
             alone; show generates its Mermaid. A run that keeps a diagram
             replaces the record's, one with an earlier one's title keeping
             its ID.
-With no --reviewer, codex runs, with each type its route scan picks; it
-says on stderr what it picked and why.
+With no --reviewer, the general review is claude for a Codex caller
+(CODEX_SANDBOX or CODEX_THREAD_ID set), or codex where claude cannot run,
+and codex for any other caller. Each type
+the route scan picks runs too; stderr says what it picked and why.
+
+A type whose provider is held does not run (git delegate availability -h).
+A run that fails for a rate limit holds its provider for five minutes, and
+one that fails for exhausted quota holds it until the reset Claude's quota
+windows show, else until availability --clear; no later stage or command
+calls it meanwhile, a retry, walkthrough, diagram or ask included.
 
 A reply is taken from the structured output Claude Code returns, else
 the last fenced json block of its result, else its last JSON object, and
@@ -125,9 +139,10 @@ files (flake.lock nodes, by each node's locked and original objects
 whole, and its input paths, as hm/nixpkgs, that resolve to another node;
 go.mod's and go.work's requirements, replacements, and go and toolchain
 lines, as golang.org/x/mod reads them; go.sum hashes that moved under one
-version; niv's and npins' sources; other lock files whole), any change to
+version; niv's and npins' sources; other lock files whole), a change to
 a flake.nix as one pin of the file, whose diff the reviewer reads
-(nothing evaluates it here), each Nix derivation or fetcher set's
+(nothing evaluates it here), where its flake.lock's pins move or it may
+set nixConfig, and otherwise as any Nix file; each Nix derivation or fetcher set's
 version, rev, tag and hash attributes, and each occurrence of an action a
 workflow or composite action runs. The Nix and workflow scanners fail
 closed: a changed line naming what may pin a version that no pin covers
@@ -175,8 +190,11 @@ the upstream text before a reviewer sees them. For a pull request the
 earlier findings include those of its newest review at another head.
 
   --reviewer TYPE   a type to run, as above; repeat for more
-  --goal FILE       the goal statement, required for a range: the goal, and
-                    what is not this change's job
+  --plan PLAN       the plan, as agent-plan takes it, whose Goal is the goal
+                    statement: the goal, and what is not this change's job.
+                    Required for a range; for a pull request it adds the
+                    operator's goal to the one delegate writes
+  --part P          read the Goal of PLAN's part P, as P1, instead
   --items FILE      the items the change answers, and how each was settled
   --red-check FILE  git red-check BASE..TIP's JSON
   --description FILE
@@ -185,8 +203,9 @@ earlier findings include those of its newest review at another head.
                     unless this names another
   --model M         the Codex model (default: Codex's own)
   --timeout S       seconds before a reviewer is stopped (default 1800)
-  --print-prompt    print the prompt of one type (codex by default) for a
-                    sub-agent the caller starts, and run nothing
+  --print-prompt    print the selected type's prompt for a sub-agent the
+                    caller starts, and run no provider; diagram exports
+                    both drawing and critique tasks
 
 Every file argument is read as given: write it under the working
 directory, never $TMPDIR, which differs inside and outside the sandbox.
@@ -199,8 +218,8 @@ and why, the routes, and the record's counts. Exit status:
   3  open findings
   4  a type could not run: Codex is not installed or signed in, its
      sandbox cannot start, this is a review-loop session (PR_LOOP_SESSION
-     is set) or, with no --reviewer, the caller is Codex (CODEX_SANDBOX is
-     set); claude or agent-tools' delegate config is missing; a compat
+     is set); its provider is held; claude or agent-tools'
+     delegate config is missing; a compat
      review the scan routed has no description with a Reverting section;
      an upgrade review cannot read the change's pins; or a reply did not
      fit twice
@@ -222,10 +241,20 @@ type reviewerType struct {
 	diagram bool
 }
 
+// provider is the account the type's reviewer runs on; a diagram's
+// critique runs on Codex.
+func (ty reviewerType) provider() shared.Provider {
+	if ty.claude {
+		return shared.Claude
+	}
+	return shared.Codex
+}
+
 // reviewerTypes are the TYPEs, by name. Each route of routes.Known names
 // one.
 var reviewerTypes = map[string]reviewerType{
 	"codex":    {},
+	"claude":   {claude: true, agent: "adversarial-reviewer"},
 	"security": {claude: true, agent: "security-reviewer", focus: "security"},
 	"compat":   {claude: true, agent: "compat-reviewer", focus: "compat"},
 	"upgrade":  {claude: true, agent: "upgrade-reviewer", focus: "upgrade"},
@@ -261,6 +290,8 @@ type NotRun struct {
 func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) > 0 {
 		switch args[0] {
+		case "availability":
+			return availabilityCommand(args[1:], stdout, stderr)
 		case "ask":
 			return ask(ctx, args[1:], stdin, stdout, stderr)
 		case "show":
@@ -272,7 +303,10 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	var reviewers typeList
 	flags.Var(&reviewers, "reviewer", "")
-	goal := flags.String("goal", "", "")
+	// --goal is defined only to refuse it, naming --plan in its place.
+	flags.String("goal", "", "")
+	plan := flags.String("plan", "", "")
+	part := flags.String("part", "", "")
 	items := flags.String("items", "", "")
 	redCheckFile := flags.String("red-check", "", "")
 	description := flags.String("description", "", "")
@@ -297,6 +331,16 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		return 2
 	}
 	report := func(result any, err error, code int) int { return reportRecord(result, err, code, stdout, stderr) }
+	goalGiven := false
+	flags.Visit(func(f *flag.Flag) { goalGiven = goalGiven || f.Name == "goal" })
+	if goalGiven {
+		return report(nil, refusal.New("git delegate reads the goal statement from the plan, not a file; pass "+
+			"`--plan PLAN` in place of `--goal`, with `--part P1` for a part's goal"), 0)
+	}
+	if *part != "" && *plan == "" {
+		return report(nil, refusal.New("--part names a part of the plan --plan names; pass `--plan PLAN --part %s`",
+			*part), 0)
+	}
 	for _, t := range reviewers {
 		if _, ok := reviewerTypes[t]; !ok {
 			return report(nil, refusal.New("%q is not a reviewer type; pass `--reviewer` with one of %s", t,
@@ -321,20 +365,16 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		return report(nil, err, 0)
 	}
 
-	base := inputs{r: r}
-	if *goal != "" {
-		if base.goal, err = readFile(*goal, stdin); err != nil {
+	base := inputs{r: r, availability: newAvailability()}
+	if *plan != "" {
+		if base.goal, err = planGoal(*plan, *part); err != nil {
 			return report(nil, err, 0)
 		}
+	} else if s.number == 0 {
+		return report(nil, refusal.New("a review is judged against a goal statement, the Goal of the change's plan; "+
+			"pass `--plan PLAN`, with `--part P1` for a part's goal"), 0)
 	}
-	if s.number == 0 && strings.TrimSpace(base.goal) == "" {
-		if *goal == "" {
-			return report(nil, refusal.New("a review is judged against a goal statement; write the goal, and what is not "+
-				"this change's job, to a file under the working directory and pass `--goal FILE`"), 0)
-		}
-		return report(nil, refusal.New("the goal statement %s is empty; write the goal, and what is not this change's job, "+
-			"into it and pass `--goal %s` again", *goal, *goal), 0)
-	}
+	goal := goalFlags(*plan, *part)
 	if *items != "" {
 		if base.items, err = readFile(*items, stdin); err != nil {
 			return report(nil, err, 0)
@@ -379,7 +419,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	}
 
 	if *printPrompt {
-		t := "codex"
+		t := generalReviewer()
 		if len(reviewers) == 1 {
 			t = reviewers[0]
 		}
@@ -390,19 +430,19 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		}
 		in.where = where(r)
 		if reviewerTypes[t].diagram {
-			fmt.Fprint(stdout, drawPrompt(in, ""))
+			fmt.Fprint(stdout, diagramFallback(in))
 			return 0
 		}
 		fmt.Fprint(stdout, prompt(in))
 		return 0
 	}
 
-	// Without --reviewer, codex and the types the scan routes the change to.
+	// Without --reviewer, the other family and the scan's focused reviews.
 	explicit := len(reviewers) > 0
 	scanned := routeChange(r, nil, stderr)
 	chosen := slices.Clone([]string(reviewers))
 	if !explicit {
-		chosen = []string{"codex"}
+		chosen = []string{generalReviewer()}
 		for _, rt := range scanned {
 			chosen = append(chosen, rt.Route)
 			fmt.Fprintf(stderr, "%s: reviewing for %s too: %s\n", name, rt.Route, strings.Join(rt.Why, "; "))
@@ -415,9 +455,18 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	result := &RunResult{Source: s.given, Range: r.base + ".." + r.tip, Tip: r.tip, Record: path, Reviews: []*Output{},
 		NotRun: []NotRun{}, Routes: scanned}
 	var runs []*typeRun
-	for _, t := range chosen {
-		run := runType(ctx, s, r, base, t, tests, !explicit, *model, time.Duration(*timeout)*time.Second, stderr)
-		if run.out == nil && run.failures == nil {
+	for i, t := range chosen {
+		run := runType(ctx, s, r, base, t, tests, *model, time.Duration(*timeout)*time.Second, stderr)
+		// Where Claude cannot review a Codex caller's change, Codex does.
+		if i == 0 && !explicit && t == "claude" && run.out == nil && run.failures == nil && !run.refused {
+			fmt.Fprintf(stderr, "%s: the claude review could not run here: %s; codex reviews in its place\n", name, run.why)
+			t = "codex"
+			run = runType(ctx, s, r, base, t, tests, *model, time.Duration(*timeout)*time.Second, stderr)
+		}
+		if run.out == nil {
+			if run.failures != nil {
+				runs = append(runs, run)
+			}
 			result.NotRun = append(result.NotRun, NotRun{Reviewer: t, Why: run.why})
 			if run.refused {
 				// Its inputs are refused anywhere, --print-prompt too.
@@ -428,25 +477,23 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			if agent := reviewerTypes[t].agent; agent != "" {
 				reader = "a new `" + agent + "` sub-agent"
 			}
-			fmt.Fprintf(stderr, "%s: the %s review could not run here: %s. Run `git delegate` where it can, outside any "+
-				"sandbox and review-loop session, or start %s on what `git delegate --print-prompt "+
-				"--reviewer %s %s%s` prints\n", name, t, run.why, reader, t, typeFlags(s, t), s.given)
+			fmt.Fprintf(stderr, "%s: the %s review could not run here: %s. Instead start %s on what `git delegate --print-prompt "+
+				"--reviewer %s %s%s` prints, with a fresh context in the primary harness and none of the author's reasoning. "+
+				"Keep review-loop text out of Codex.\n", name, t, run.why, reader, t, typeFlags(s, t, goal), s.given)
 			continue
 		}
 		runs = append(runs, run)
 		if run.out != nil {
 			result.Reviews = append(result.Reviews, run.out)
-			if t == "codex" {
+			if ty := reviewerTypes[t]; ty.focus == "" && !ty.guide && !ty.diagram {
 				result.Routes = run.out.Routes
 			}
-		} else {
-			result.NotRun = append(result.NotRun, NotRun{Reviewer: t, Why: run.why})
 		}
 	}
 	for _, rt := range result.Routes {
 		if !slices.Contains(chosen, rt.Route) {
 			fmt.Fprintf(stderr, "%s: this change needs a %s review (%s): run `git delegate --reviewer %s %s%s`\n",
-				name, rt.Route, strings.Join(rt.Why, "; "), rt.Route, typeFlags(s, rt.Route), s.given)
+				name, rt.Route, strings.Join(rt.Why, "; "), rt.Route, typeFlags(s, rt.Route, goal), s.given)
 		}
 	}
 	title := s.given
@@ -522,16 +569,57 @@ func typeInputs(ctx context.Context, base inputs, t string, tests *adequacy, log
 
 // typeFlags are the flags, each followed by a space, that a command run
 // for type t of s needs beyond the source, so that a hint runs as given:
-// a range needs its goal, and a compat review of a range the description.
-func typeFlags(s *source, t string) string {
-	if s.number != 0 {
-		return ""
-	}
-	flags := "--goal FILE "
-	if focuses[reviewerTypes[t].focus].reverting {
+// goal, the goal's flags as goalFlags gives them, and for a compat review
+// of a range the description.
+func typeFlags(s *source, t, goal string) string {
+	flags := goal
+	if s.number == 0 && focuses[reviewerTypes[t].focus].reverting {
 		flags += "--description FILE "
 	}
 	return flags
+}
+
+// goalFlags are the --plan and --part flags given, each followed by a
+// space, quoted for the shell where they need it.
+func goalFlags(plan, part string) string {
+	var flags string
+	if plan != "" {
+		flags += "--plan " + shellWord(plan) + " "
+	}
+	if part != "" {
+		flags += "--part " + shellWord(part) + " "
+	}
+	return flags
+}
+
+var plainWord = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
+
+// shellWord is s as one shell word: as it is where nothing in it is special
+// to a shell, else single-quoted.
+func shellWord(s string) string {
+	if plainWord.MatchString(s) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// planGoal is the goal statement of plan, or of its part: the text under
+// its Goal heading, which agent-plan goal prints. plan may name a part's
+// file, which Open takes as its plan's, only together with that part.
+func planGoal(plan, part string) (string, error) {
+	c, err := plans.Load()
+	if err != nil {
+		return "", err
+	}
+	p, named, err := c.OpenFile(plan)
+	if err != nil {
+		return "", err
+	}
+	if named != "" && named != part {
+		return "", refusal.New("%s is part %s's file, and the plan's Goal is not the part's; pass `--plan %s --part %s`",
+			plan, named, shellWord(p.File()), named)
+	}
+	return p.Goal(part)
 }
 
 // reverting is the compat prompt's section of in's pull request
@@ -545,22 +633,26 @@ func (in inputs) reverting() (string, error) {
 	return revertingSection(in.description, in.descriptionFrom)
 }
 
+// runnable says why type ty's reviewer cannot run here, or "".
+func runnable(a *availability, ty reviewerType) string {
+	if err := a.check(ty.provider()); err != nil {
+		return err.Error()
+	}
+	if ty.claude {
+		return claudeMissing()
+	}
+	return unavailable()
+}
+
 // runType runs type t once, and once more where its reply does not fit.
-// implicit is whether t was chosen without --reviewer: then a Codex caller
-// does not review with Codex.
-func runType(ctx context.Context, s *source, r *span, base inputs, t string, tests *adequacy, implicit bool, model string,
+func runType(ctx context.Context, s *source, r *span, base inputs, t string, tests *adequacy, model string,
 	timeout time.Duration, log io.Writer) *typeRun {
 	ty := reviewerTypes[t]
 	if ty.diagram {
 		return runDiagrams(ctx, s, r, base, model, timeout, log)
 	}
 	run := &typeRun{name: t, redCheck: ty.focus == "" && !ty.guide && tests.given}
-	if ty.claude {
-		run.why = claudeMissing()
-	} else {
-		run.why = unavailable(implicit)
-	}
-	if run.why != "" {
+	if run.why = runnable(base.availability, ty); run.why != "" {
 		return run
 	}
 	in, err := typeInputs(ctx, base, t, tests, log)
@@ -592,10 +684,10 @@ func runType(ctx context.Context, s *source, r *span, base inputs, t string, tes
 		}
 		var reply *CodexReply
 		if ty.claude {
-			reply, err = ClaudeRun(ctx, Claude{Checkout: wt, Agent: ty.agent, Prompt: text, Schema: schema, Timeout: timeout, Log: log})
+			reply, err = ClaudeRun(ctx, Claude{Checkout: wt, Agent: ty.agent, Prompt: text, Schema: schema, Timeout: timeout, Log: log, availability: base.availability})
 		} else {
 			reply, err = CodexRun(ctx, Codex{Checkout: wt, Prompt: text, Schema: schema, Model: model, Timeout: timeout,
-				Log: log, Git: worktreeGit(ctx, wt)})
+				Log: log, Git: worktreeGit(ctx, wt), availability: base.availability})
 		}
 		var out *Output
 		var bad badReply

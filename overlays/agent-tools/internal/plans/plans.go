@@ -531,6 +531,14 @@ func (p Plan) checkOwn() error {
 // Open finds the plan arg names: one of its files under the plans
 // directory, or its name.
 func (c Config) Open(arg string) (Plan, error) {
+	p, _, err := c.OpenFile(arg)
+	return p, err
+}
+
+// OpenFile is Open, and the part whose file arg names, judged by the file
+// a link leads to rather than the link's own name: "" where arg names the
+// plan's own file, its log or its name.
+func (c Config) OpenFile(arg string) (Plan, string, error) {
 	notPlan := func() error {
 		return refusal.New("%s is not a plan under %s. Pass the plan file `agent-plan new` printed, or find it with `agent-plan find`", arg, c.Dir)
 	}
@@ -542,27 +550,31 @@ func (c Config) Open(arg string) (Plan, error) {
 	}
 	path, err := filepath.Abs(path)
 	if err != nil {
-		return Plan{}, err
+		return Plan{}, "", err
 	}
 	real, err := filepath.EvalSymlinks(path)
 	if err != nil {
-		return Plan{}, notPlan()
+		return Plan{}, "", notPlan()
 	}
 	root, err := filepath.EvalSymlinks(c.Dir)
 	if err != nil || filepath.Dir(real) != root {
-		return Plan{}, notPlan()
+		return Plan{}, "", notPlan()
 	}
 	m := planFile.FindStringSubmatch(filepath.Base(real))
 	if m == nil {
-		return Plan{}, notPlan()
+		return Plan{}, "", notPlan()
 	}
 	p := Plan{Dir: root, Name: m[1], Host: m[2], Own: m[2] == c.Host, Repo: c.repo()}
 	for _, f := range []string{p.file(""), p.log()} {
 		if info, err := os.Lstat(f); err != nil || !soleFile(info) {
-			return Plan{}, notPlan()
+			return Plan{}, "", notPlan()
 		}
 	}
-	return p, nil
+	part := m[3]
+	if part == "log" {
+		part = ""
+	}
+	return p, part, nil
 }
 
 // item is a heading with an ID in one of a plan's files.

@@ -253,17 +253,32 @@ func TestOpen(t *testing.T) {
 		return c, p
 	}
 
-	for name, arg := range map[string]func(Plan) string{
-		"plan file": func(p Plan) string { return p.file("") },
-		"part file": func(p Plan) string { return p.file("P1") },
-		"log":       func(p Plan) string { return p.log() },
-		"name":      func(Plan) string { return "20261014130500-x.box" },
+	// Each case names the plan, and the part OpenFile says its file is.
+	for name, c := range map[string]struct {
+		arg  func(t *testing.T, p Plan) string
+		part string
+	}{
+		"plan file": {func(_ *testing.T, p Plan) string { return p.file("") }, ""},
+		"part file": {func(_ *testing.T, p Plan) string { return p.file("P1") }, "P1"},
+		// A link is judged by the file it leads to, not its own name.
+		"link to the part file": {func(t *testing.T, p Plan) string {
+			link := filepath.Join(t.TempDir(), "goal.org")
+			if err := os.Symlink(p.file("P1"), link); err != nil {
+				t.Fatal(err)
+			}
+			return link
+		}, "P1"},
+		"log":  {func(_ *testing.T, p Plan) string { return p.log() }, ""},
+		"name": {func(*testing.T, Plan) string { return "20261014130500-x.box" }, ""},
 	} {
 		t.Run("by "+name, func(t *testing.T) {
-			c, p := withPart(t)
-			arg := arg(p)
-			if got, err := c.Open(arg); err != nil || got.Name != "20261014130500-x.box" || got.file("") != p.file("") {
+			cfg, p := withPart(t)
+			arg := c.arg(t, p)
+			if got, err := cfg.Open(arg); err != nil || got.Name != "20261014130500-x.box" || got.file("") != p.file("") {
 				t.Errorf("Open(%s) = %+v, %v", arg, got, err)
+			}
+			if _, part, err := cfg.OpenFile(arg); err != nil || part != c.part {
+				t.Errorf("OpenFile(%s) part %q, %v; want %q", arg, part, err, c.part)
 			}
 		})
 	}

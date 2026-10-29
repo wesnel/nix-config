@@ -312,7 +312,7 @@
   {
     "why": "A reviewer does not start a review of its own; whoever started it decides on another round.",
     "scope": "reviewer",
-    "deny": ["git delegate --goal g.md main..HEAD", "git -C .pr-loop/12 delegate --print-prompt --goal g.md a..b", "git-delegate --goal g.md a..b", "git delegate settle a..b F1 fix", "git delegate o/r#12"],
+    "deny": ["git delegate --plan /p/2026-10-14-x.box.org main..HEAD", "git -C .pr-loop/12 delegate --print-prompt --plan /p/2026-10-14-x.box.org --part P1 a..b", "git-delegate --plan /p/2026-10-14-x.box.org a..b", "git delegate settle a..b F1 fix", "git delegate o/r#12"],
     "allow": ["git log --oneline main..HEAD", "grep -nE 'git\\s+delegate' SKILL.md"]
   },
   {

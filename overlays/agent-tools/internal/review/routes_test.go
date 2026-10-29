@@ -38,7 +38,7 @@ func TestRouting(t *testing.T) {
 		f, exec := routedFixture(t, `{}`)
 		t.Setenv("FAKE_CODEX", "routed")
 		// BASE above the commit that runs a program.
-		code, run_, stderr := runDelegate(t, "--goal", ".git/goal.md", "HEAD~1..HEAD")
+		code, run_, stderr := runDelegate(t, "--plan", f.plan, "HEAD~1..HEAD")
 		out := run_.review("codex")
 		if code != 0 {
 			t.Fatalf("exit %d\n%s", code, stderr)
@@ -60,9 +60,9 @@ func TestRouting(t *testing.T) {
 		f, _ := routedFixture(t, `{}`)
 		t.Setenv("FAKE_CODEX", "routed")
 		run(t, f.repo, "git", "update-ref", "refs/remotes/origin/main", "HEAD~1")
-		code, run_, stderr := runDelegate(t, "--goal", ".git/goal.md", "HEAD~1..HEAD")
+		code, run_, stderr := runDelegate(t, "--plan", f.plan, "HEAD~1..HEAD")
 		if code != 0 || len(run_.Reviews) != 2 || run_.review("security").Reviewer != "" ||
-			!strings.Contains(stderr, "run `git delegate --reviewer security --goal FILE HEAD~1..HEAD`") {
+			!strings.Contains(stderr, "run `git delegate --reviewer security --plan "+f.plan+" HEAD~1..HEAD`") {
 			t.Errorf("exit %d, %+v\n%s", code, run_, stderr)
 		}
 	})
@@ -71,7 +71,7 @@ func TestRouting(t *testing.T) {
 		f, exec := routedFixture(t, `{"routes": [{"route": "security", "paths": ["code.txt"], "why": "the code"}]}`)
 		t.Setenv("FAKE_CODEX", "none")
 		grow := run(t, f.repo, "git", "rev-parse", f.tip)
-		code, out, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+"..HEAD")
+		code, out, stderr := freshReview(t, "--plan", f.plan, f.base+"..HEAD")
 		if code != 0 || len(out.Routes) != 1 || !slices.Equal(out.Routes[0].Commits, []string{grow, exec}) {
 			t.Errorf("exit %d, routes %+v\n%s", code, out.Routes, stderr)
 		}
@@ -81,7 +81,7 @@ func TestRouting(t *testing.T) {
 		f, _ := routedFixture(t, `{}`)
 		t.Setenv("FAKE_CODEX", "none")
 		run(t, f.repo, "git", "update-ref", "refs/remotes/origin/main", "HEAD~1")
-		code, out, stderr := freshReview(t, "--goal", ".git/goal.md", "HEAD~1..HEAD")
+		code, out, stderr := freshReview(t, "--plan", f.plan, "HEAD~1..HEAD")
 		if code != 0 || len(out.Routes) != 0 || strings.Contains(stderr, "security") {
 			t.Errorf("exit %d, routes %+v\n%s", code, out.Routes, stderr)
 		}
@@ -90,11 +90,11 @@ func TestRouting(t *testing.T) {
 	// Settings the review cannot use refuse it, saying what to fix, rather
 	// than leave out the test settings beside them.
 	t.Run("a broken rule", func(t *testing.T) {
-		routedFixture(t, `{"test": "go test ./...", "testFiles": ["*_test.go"], "routes": [{"route": "security", "why": "nothing"}]}`)
+		f, _ := routedFixture(t, `{"test": "go test ./...", "testFiles": ["*_test.go"], "routes": [{"route": "security", "why": "nothing"}]}`)
 		t.Setenv("FAKE_CODEX", "none")
 		for _, args := range [][]string{{"--print-prompt"}, nil} {
 			var stdout, stderr strings.Builder
-			code := Main(t.Context(), append(args, "--goal", ".git/goal.md", "HEAD~1..HEAD"), nil, &stdout, &stderr)
+			code := Main(t.Context(), append(args, "--plan", f.plan, "HEAD~1..HEAD"), nil, &stdout, &stderr)
 			if code != 2 || !strings.Contains(stderr.String(), "refused") || !strings.Contains(stderr.String(), "fix the rule") ||
 				strings.Contains(stdout.String(), "no test settings") {
 				t.Errorf("%v: exit %d\n%s\n%s", args, code, stdout.String(), stderr.String())
@@ -138,7 +138,7 @@ func TestSharedFilePrompt(t *testing.T) {
 	run(t, f.repo, "git", "add", "lib.rs")
 	run(t, f.repo, "git", "commit", "-q", "-m", "Add lib")
 	var stdout, stderr strings.Builder
-	if code := Main(t.Context(), []string{"--print-prompt", "--goal", ".git/goal.md", f.base + "..HEAD"}, nil, &stdout, &stderr); code != 0 {
+	if code := Main(t.Context(), []string{"--print-prompt", "--plan", f.plan, f.base + "..HEAD"}, nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "shared-file") || !strings.Contains(stdout.String(), "- lib.rs\n") {

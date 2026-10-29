@@ -18,6 +18,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
+	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
@@ -27,6 +28,7 @@ import (
 // file $FAKE_CODEX_COPY names in its working directory, and replies as
 // $FAKE_CODEX says.
 const fakeCodex = `#!/bin/sh
+echo "$1" >> "$FAKE_CODEX_LOG/calls"
 if [ "$1" = login ] && [ "$2" = status ]; then
   if [ "$FAKE_CODEX" = unauthenticated ]; then echo "Not logged in"; exit 1; fi
   echo "Logged in"; exit 0
@@ -46,12 +48,13 @@ if [ "$1" = sandbox ]; then
 fi
 if [ "$1" != exec ]; then echo "fake codex: unexpected $*" >&2; exit 64; fi
 shift
-wt= schema= out= stdin=
+wt= schema= out= stdin= json=
 while [ $# -gt 0 ]; do
   case "$1" in
     -c|--disable) printf '%s\n%s\n' "$1" "$2" >> "$FAKE_CODEX_LOG/exec-args"; shift 2 ;;
     --ignore-user-config|--ignore-rules) echo "$1" >> "$FAKE_CODEX_LOG/exec-args"; shift ;;
     --ephemeral) shift ;;
+    --json) json=1; shift ;;
     -C) wt=$2; shift 2 ;;
     --output-schema) schema=$2; shift 2 ;;
     -o) out=$2; shift 2 ;;
@@ -63,7 +66,9 @@ done
 if [ -z "$wt" ] || [ ! -s "$schema" ] || [ -z "$out" ] || [ -z "$stdin" ]; then
   echo "fake codex: missing -C, --output-schema, -o or -" >&2; exit 64
 fi
-printf 'OpenAI Codex v0\n--------\nworkdir: %s\nmodel: fake-model\nsandbox: read-only\n--------\n' "$wt" >&2
+if [ -z "$json" ]; then
+  printf 'OpenAI Codex v0\n--------\nworkdir: %s\nmodel: fake-model\nsandbox: read-only\n--------\n' "$wt" >&2
+fi
 cat > "$FAKE_CODEX_LOG/prompt"
 cp "$schema" "$FAKE_CODEX_LOG/schema"
 echo "$wt" > "$FAKE_CODEX_LOG/worktree"
@@ -77,6 +82,9 @@ if [ "$mode" = fault-once ]; then
   if [ -e "$FAKE_CODEX_LOG/faulted" ]; then mode=critique; else : > "$FAKE_CODEX_LOG/faulted"; mode=fault; fi
 fi
 case "$mode" in
+  quota) echo '{"type":"turn.failed","error":{"message":"You’ve hit your usage limit. Try again later."}}'; exit 1 ;;
+  ratelimit) echo '{"type":"turn.failed","error":{"message":"exceeded retry limit, last status: 429 Too Many Requests"}}'; exit 1 ;;
+  quota-prose) echo '{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"You’ve hit your usage limit."}}'; echo "fake codex: model error" >&2; exit 1 ;;
   fail) echo "fake codex: model error" >&2; exit 1 ;;
   hang) exec sleep 60 ;;
   fork) echo $$ > "$FAKE_CODEX_LOG/group"; i=0; while [ $i -lt 300 ]; do sleep 30 > /dev/null 2>&1 & i=$((i+1)); if [ $i = 20 ]; then echo > "$FAKE_CODEX_LOG/started"; fi; done; wait ;;
@@ -170,20 +178,28 @@ func securityReply(findings ...map[string]any) map[string]any {
 
 // writeConfig writes agent-tools' config with the Claude Code module's
 // delegate paths, and points the tools at it.
-func writeConfig(t *testing.T) {
+func (f *fixture) writeConfig(t *testing.T) {
 	t.Helper()
+	f.config(t, map[string]any{"delegate": map[string]any{"agents": "/store/review-agents.json",
+		"settings": "/store/reviewer-settings.json"}})
+}
+
+// config writes agent-tools' config as settings, with f's plans directory
+// added, and points the tools at it.
+func (f *fixture) config(t *testing.T, settings map[string]any) {
+	t.Helper()
+	settings["plans"] = f.plans
 	config := filepath.Join(t.TempDir(), "config.json")
-	os.WriteFile(config, []byte(`{"delegate": {"agents": "/store/review-agents.json", `+
-		`"settings": "/store/reviewer-settings.json"}}`), 0o644)
+	os.WriteFile(config, must(json.Marshal(settings)), 0o644)
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
 }
 
 // writeGatewayConfig writes agent-tools' config as writeConfig does, and
 // names a model provider for Codex, as the llm module does on a machine
 // whose agents go through an AI gateway, with the provider's id.
-func writeGatewayConfig(t *testing.T, id string) {
+func (f *fixture) writeGatewayConfig(t *testing.T, id string) {
 	t.Helper()
-	data, err := json.Marshal(map[string]any{"delegate": map[string]any{
+	f.config(t, map[string]any{"delegate": map[string]any{
 		"agents":   "/store/review-agents.json",
 		"settings": "/store/reviewer-settings.json",
 		"codex": map[string]any{
@@ -198,14 +214,42 @@ func writeGatewayConfig(t *testing.T, id string) {
 			},
 		},
 	}})
+}
+
+// addPart adds part P1 to f's plan, its Goal "Add the third line alone.",
+// and returns the part's file.
+func (f *fixture) addPart(t *testing.T) string {
+	t.Helper()
+	p := must(f.plans.Open(f.plan))
+	if _, err := p.AddEntry(plans.EntryOptions{Section: "Distribution", Title: "Third line", Repo: "o/r"},
+		time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	created, err := f.plans.New(plans.NewOptions{Title: "Third line", Parent: f.plan, Part: "P1"}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(config, data, 0o644); err != nil {
+	f.setGoal(t, "P1", "Add the third line alone.")
+	return created.File
+}
+
+// link is a symbolic link to file, named as no plan's file is.
+func link(t *testing.T, file string) string {
+	t.Helper()
+	name := filepath.Join(t.TempDir(), "goal.org")
+	if err := os.Symlink(file, name); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("AGENT_TOOLS_CONFIG", config)
+	return name
+}
+
+// setGoal writes goal as the Goal of f's plan, or of its part.
+func (f *fixture) setGoal(t *testing.T, part, goal string) {
+	t.Helper()
+	p := must(f.plans.Open(f.plan))
+	if _, err := p.SetSection(part, "Goal", goal, time.Now()); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // writeSettings writes settings as the agent settings of f's clone.
@@ -222,6 +266,10 @@ func writeSettings(t *testing.T, f *fixture, settings string) {
 
 type fixture struct {
 	repo, log, base, tip string
+	// plans is the test's plans directory, and plan the file of the plan
+	// whose Goal is the review's goal statement.
+	plans plans.Config
+	plan  string
 }
 
 func run(t *testing.T, dir string, name string, args ...string) string {
@@ -245,13 +293,20 @@ func setUp(t *testing.T, withCodex bool) *fixture {
 	for k, v := range map[string]string{
 		"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
 		"GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e", "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e",
-		"PR_LOOP_SESSION": "", "CODEX_SANDBOX": "", "FAKE_CODEX": "", "FAKE_CODEX_COPY": "", "CLAUDECODE": "1",
+		"PR_LOOP_SESSION": "", "CODEX_SANDBOX": "", "CODEX_THREAD_ID": "", "FAKE_CODEX": "", "FAKE_CODEX_COPY": "", "CLAUDECODE": "1",
 		"XDG_STATE_HOME": t.TempDir(), "XDG_CACHE_HOME": t.TempDir(),
 	} {
 		t.Setenv(k, v)
 	}
-	writeConfig(t)
-	f := &fixture{repo: t.TempDir(), log: t.TempDir()}
+	f := &fixture{repo: t.TempDir(), log: t.TempDir(),
+		plans: plans.Config{Dir: filepath.Join(t.TempDir(), "agents"), Host: "box"}}
+	f.writeConfig(t)
+	created, err := f.plans.New(plans.NewOptions{Title: "Grow the code", Slug: "grow",
+		Goal: "Grow the code to three lines."}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.plan = created.Plan
 	t.Setenv("FAKE_CODEX_LOG", f.log)
 	t.Setenv("FAKE_CLAUDE_LOG", f.log)
 	f.claudeSays(t, "security-reviewer", claudeResult(securityReply(), "Reviewed."))
@@ -266,7 +321,6 @@ func setUp(t *testing.T, withCodex bool) *fixture {
 	run(t, f.repo, "git", "commit", "-q", "-am", "Grow the code")
 	f.tip = run(t, f.repo, "git", "rev-parse", "HEAD")
 	os.WriteFile(filepath.Join(f.repo, "notes.md"), []byte("the author's reasoning\n"), 0o644)
-	os.WriteFile(filepath.Join(f.repo, ".git", "goal.md"), []byte("Grow the code to three lines.\n"), 0o644)
 
 	bin := t.TempDir()
 	if withCodex {
@@ -375,7 +429,7 @@ func TestCodex(t *testing.T) {
 
 func testCodexReview(t *testing.T) {
 	f := setUp(t, true)
-	code, out, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+"..HEAD")
+	code, out, stderr := freshReview(t, "--model", "fake-model", "--plan", f.plan, f.base+"..HEAD")
 	if code != 3 {
 		t.Fatalf("exit %d, want 3 for findings\n%s", code, stderr)
 	}
@@ -383,7 +437,7 @@ func testCodexReview(t *testing.T) {
 		t.Errorf("reviewer %q, tip %q, range %q", out.Reviewer, out.Tip, out.Range)
 	}
 	if out.Model == nil || *out.Model != "fake-model" {
-		t.Errorf("model %v, want the one Codex reported", out.Model)
+		t.Errorf("model %v, want the explicitly requested model", out.Model)
 	}
 	if len(out.Findings) != 1 || out.Findings[0]["path"] != "code.txt" || out.Findings[0]["line"] != 2.0 {
 		t.Fatalf("findings: %v", out.Findings)
@@ -423,7 +477,7 @@ func testCodexGitDirUnderReview(t *testing.T) {
 	f := setUp(t, true)
 	t.Setenv("FAKE_CODEX", "none")
 	t.Setenv("GIT_DIR", filepath.Join(f.repo, ".git"))
-	if code, _, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+"..HEAD"); code != 0 {
+	if code, _, stderr := freshReview(t, "--plan", f.plan, f.base+"..HEAD"); code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
 	if location, _ := os.ReadFile(filepath.Join(f.log, "location")); len(location) != 0 {
@@ -438,7 +492,7 @@ func testCodexGitDirElsewhere(t *testing.T) {
 	t.Setenv("FAKE_CODEX", "none")
 	gitenvtest.Decoy(t)
 	os.Unsetenv("GIT_WORK_TREE")
-	if code, _, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+"..HEAD"); code != 2 || !strings.Contains(stderr, "GIT_DIR") {
+	if code, _, stderr := freshReview(t, "--plan", f.plan, f.base+"..HEAD"); code != 2 || !strings.Contains(stderr, "GIT_DIR") {
 		t.Errorf("GIT_DIR naming another repository: exit %d\n%s", code, stderr)
 	}
 }
@@ -446,7 +500,7 @@ func testCodexGitDirElsewhere(t *testing.T) {
 func testCodexNoFindings(t *testing.T) {
 	f := setUp(t, true)
 	t.Setenv("FAKE_CODEX", "none")
-	if code, out, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+".."+f.tip); code != 0 || len(out.Findings) != 0 {
+	if code, out, stderr := freshReview(t, "--plan", f.plan, f.base+".."+f.tip); code != 0 || len(out.Findings) != 0 {
 		t.Errorf("exit %d, findings %v\n%s", code, out.Findings, stderr)
 	}
 	f.checkCleanedUp(t)
@@ -465,7 +519,7 @@ func testCodexConfinement(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", os.Getenv("PATH")+string(os.PathListSeparator)+link)
-	if code, _, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+"..HEAD"); code != 0 {
+	if code, _, stderr := freshReview(t, "--plan", f.plan, f.base+"..HEAD"); code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
 	path := filepath.SplitList(string(must(os.ReadFile(filepath.Join(f.log, "path")))))
@@ -559,7 +613,7 @@ func testCodexFailures(t *testing.T) {
 		t.Run(c.mode, func(t *testing.T) {
 			f := setUp(t, true)
 			t.Setenv("FAKE_CODEX", c.mode)
-			args := append(append([]string{"--goal", ".git/goal.md"}, c.args...), f.base+"..HEAD")
+			args := append(append([]string{"--plan", f.plan}, c.args...), f.base+"..HEAD")
 			if code, _, stderr := freshReview(t, args...); code != 4 {
 				t.Errorf("exit %d, want 4\n%s", code, stderr)
 			}
@@ -590,18 +644,17 @@ func TestUnavailable(t *testing.T) {
 		{"in a loop session", true, "", map[string]string{"PR_LOOP_SESSION": "1"}, nil, 4},
 		{"in a loop session, through a gateway", true, "ngrok-ai", map[string]string{"PR_LOOP_SESSION": "1"}, nil, 4},
 		{"loop session, Codex asked for", true, "", map[string]string{"PR_LOOP_SESSION": "1"}, []string{"--reviewer", "codex"}, 4},
-		{"Codex author", true, "", map[string]string{"CODEX_SANDBOX": "seatbelt"}, nil, 4},
 		{"Codex author, Codex asked for", true, "", map[string]string{"CODEX_SANDBOX": "seatbelt", "FAKE_CODEX": "none"}, []string{"--reviewer", "codex"}, 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := setUp(t, c.withCodex)
 			if c.gateway != "" {
-				writeGatewayConfig(t, c.gateway)
+				f.writeGatewayConfig(t, c.gateway)
 			}
 			for k, v := range c.env {
 				t.Setenv(k, v)
 			}
-			args := append(append([]string{"--goal", ".git/goal.md"}, c.args...), f.base+"..HEAD")
+			args := append(append([]string{"--plan", f.plan}, c.args...), f.base+"..HEAD")
 			code, _, stderr := freshReview(t, args...)
 			if code != c.want {
 				t.Fatalf("exit %d, want %d\n%s", code, c.want, stderr)
@@ -629,19 +682,21 @@ func TestGateway(t *testing.T) {
 		provider = `model_providers.ngrok-ai={name="ngrok.ai", base_url="https://gateway.example/v1", ` +
 			`wire_api="responses", auth={command="/bin/cat", args=["/keys/ngrok-ai-key"]}}`
 	)
-	review := func(t *testing.T, gateway bool, args ...string) []string {
+	// review returns the arguments codex exec was given; the review's model
+	// is the one they name, model, or null for none.
+	review := func(t *testing.T, gateway bool, model string, args ...string) []string {
 		t.Helper()
 		f := setUp(t, true)
 		if gateway {
-			writeGatewayConfig(t, "ngrok-ai")
+			f.writeGatewayConfig(t, "ngrok-ai")
 		}
 		t.Setenv("FAKE_CODEX", "none")
-		code, out, stderr := freshReview(t, append(append([]string{"--goal", ".git/goal.md"}, args...), f.base+"..HEAD")...)
+		code, out, stderr := freshReview(t, append(append([]string{"--plan", f.plan}, args...), f.base+"..HEAD")...)
 		if code != 0 {
 			t.Fatalf("exit %d, want 0\n%s", code, stderr)
 		}
-		if out.Model == nil || *out.Model != "fake-model" {
-			t.Errorf("model %v, want the one Codex reported", out.Model)
+		if model == "" && out.Model != nil || model != "" && (out.Model == nil || *out.Model != model) {
+			t.Errorf("model %v, want %q", out.Model, model)
 		}
 		data, err := os.ReadFile(filepath.Join(f.log, "exec-args"))
 		if err != nil {
@@ -659,7 +714,7 @@ func TestGateway(t *testing.T) {
 	}
 
 	t.Run("provider and its model", func(t *testing.T) {
-		args := review(t, true)
+		args := review(t, true, "gateway-model")
 		for _, want := range [][]string{{"-c", selects}, {"-c", provider}, {"-m", "gateway-model"},
 			{"-c", "model_context_window=200000"}, {"-c", "analytics.enabled=false"}} {
 			if !has(args, want...) {
@@ -668,7 +723,7 @@ func TestGateway(t *testing.T) {
 		}
 	})
 	t.Run("--model over the provider's", func(t *testing.T) {
-		args := review(t, true, "--model", "other-model")
+		args := review(t, true, "other-model", "--model", "other-model")
 		if !has(args, "-m", "other-model") || has(args, "-m", "gateway-model") {
 			t.Errorf("codex exec was not passed --model's model alone: %q", args)
 		}
@@ -677,7 +732,7 @@ func TestGateway(t *testing.T) {
 		}
 	})
 	t.Run("none named", func(t *testing.T) {
-		args := review(t, false)
+		args := review(t, false, "")
 		for _, arg := range args {
 			if strings.HasPrefix(arg, "model_provider") || strings.HasPrefix(arg, "model_context_window") || arg == "-m" {
 				t.Errorf("codex exec was passed a provider, window or model no config named: %q", args)
@@ -794,7 +849,7 @@ func testRedCheckNotOnHost(t *testing.T) {
 			run(t, f.repo, "git", "commit", "-q", "-m", "Test the code")
 
 			var stdout, stderr bytes.Buffer
-			args := append(append([]string{}, c.args...), "--goal", ".git/goal.md", f.base+"..HEAD")
+			args := append(append([]string{}, c.args...), "--plan", f.plan, f.base+"..HEAD")
 			if code := Main(t.Context(), args, nil, &stdout, &stderr); code != 0 {
 				t.Fatalf("exit %d\n%s", code, stderr.String())
 			}
@@ -820,7 +875,7 @@ func TestPrintPrompt(t *testing.T) {
 	os.WriteFile(filepath.Join(f.repo, ".git", "items.md"), []byte("Thread T1: make it three lines\n"), 0o644)
 
 	var stdout, stderr bytes.Buffer
-	args := []string{"--print-prompt", "--goal", ".git/goal.md", "--items", ".git/items.md", f.base + "..HEAD"}
+	args := []string{"--print-prompt", "--plan", f.plan, "--items", ".git/items.md", f.base + "..HEAD"}
 	if code := Main(t.Context(), args, nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr.String())
 	}
@@ -846,8 +901,8 @@ func TestGoalRedacted(t *testing.T) {
 	f := setUp(t, true)
 	t.Setenv("FAKE_CODEX", "none")
 	token := "ghp_" + strings.Repeat("d", 36)
-	os.WriteFile(filepath.Join(f.repo, ".git", "goal.md"), []byte("Grow the code; the CI token "+token+" stays out.\n"), 0o644)
-	if code, _, stderr := freshReview(t, "--goal", ".git/goal.md", f.base+"..HEAD"); code != 0 {
+	f.setGoal(t, "", "Grow the code; the CI token "+token+" stays out.")
+	if code, _, stderr := freshReview(t, "--plan", f.plan, f.base+"..HEAD"); code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
 	prompt := string(must(os.ReadFile(filepath.Join(f.log, "prompt"))))
@@ -856,26 +911,112 @@ func TestGoalRedacted(t *testing.T) {
 	}
 }
 
-func TestRefusals(t *testing.T) {
+// The goal statement is the Goal of the plan --plan names, or of the part
+// --part names, never the other's.
+func TestGoalFromPlan(t *testing.T) {
 	for _, c := range []struct {
 		name string
-		// args returns the arguments, given the base of the change.
-		args func(base string) []string
+		// plan returns --plan and --part's arguments, given the plan's
+		// file and its part's.
+		plan       func(plan, part string) []string
+		want, lack string
 	}{
-		{"no goal", func(base string) []string { return []string{base + "..HEAD"} }},
-		{"empty goal", func(base string) []string { return []string{"--goal", ".git/empty.md", base + "..HEAD"} }},
-		{"no range", func(string) []string { return []string{"--goal", ".git/goal.md", "HEAD"} }},
-		{"empty range", func(string) []string { return []string{"--goal", ".git/goal.md", "HEAD..HEAD"} }},
-		{"symmetric difference", func(string) []string { return []string{"--goal", ".git/goal.md", "HEAD...HEAD~1"} }},
+		{"plan", func(plan, _ string) []string { return []string{"--plan", plan} },
+			"Grow the code to three lines.", "Add the third line alone."},
+		{"part", func(plan, _ string) []string { return []string{"--plan", plan, "--part", "P1"} },
+			"Add the third line alone.", "Grow the code to three lines."},
+		{"the part's file with its part", func(_, part string) []string { return []string{"--plan", part, "--part", "P1"} },
+			"Add the third line alone.", "Grow the code to three lines."},
+		{"a link to the part's file with its part", func(_, part string) []string {
+			return []string{"--plan", link(t, part), "--part", "P1"}
+		}, "Add the third line alone.", "Grow the code to three lines."},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := setUp(t, true)
-			os.WriteFile(filepath.Join(f.repo, ".git", "empty.md"), []byte("\n"), 0o644)
-			args := c.args(f.base)
+			t.Setenv("FAKE_CODEX", "none")
+			part := f.addPart(t)
+			args := append(c.plan(f.plan, part), f.base+"..HEAD")
+			if code, _, stderr := freshReview(t, args...); code != 0 {
+				t.Fatalf("exit %d\n%s", code, stderr)
+			}
+			prompt := string(must(os.ReadFile(filepath.Join(f.log, "prompt"))))
+			_, goal, _ := strings.Cut(prompt, "## Goal statement\n")
+			if !strings.Contains(goal, c.want) || strings.Contains(goal, c.lack) {
+				t.Errorf("the prompt's goal statement:\n%s", goal)
+			}
+		})
+	}
+}
+
+// A hint to run a review elsewhere names the plan and part given, the
+// plan quoted where the shell would split it.
+func TestGoalHint(t *testing.T) {
+	f := setUp(t, true)
+	f.plans.Dir = filepath.Join(t.TempDir(), "my plans", "agents")
+	f.writeConfig(t)
+	f.plan = must(f.plans.New(plans.NewOptions{Title: "Grow the code", Slug: "grow", Goal: "Grow the code."}, time.Now())).Plan
+	f.addPart(t)
+	t.Setenv("PR_LOOP_SESSION", "1")
+	code, _, stderr := runDelegate(t, "--reviewer", "codex", "--plan", f.plan, "--part", "P1", f.base+"..HEAD")
+	want := "`git delegate --print-prompt --reviewer codex --plan '" + f.plan + "' --part P1 " + f.base + "..HEAD`"
+	if code != 4 || !strings.Contains(stderr, want) {
+		t.Errorf("exit %d, want the hint %s\n%s", code, want, stderr)
+	}
+}
+
+func TestRefusals(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		// args returns the arguments, given the fixture.
+		args func(t *testing.T, f *fixture) []string
+		// says is what the reason holds.
+		says string
+	}{
+		{"no goal", func(t *testing.T, f *fixture) []string { return []string{f.base + "..HEAD"} }, "--plan"},
+		{"empty goal", func(t *testing.T, f *fixture) []string {
+			created := must(f.plans.New(plans.NewOptions{Title: "No goal", Slug: "no-goal"}, time.Now()))
+			return []string{"--plan", created.Plan, f.base + "..HEAD"}
+		}, "agent-plan section"},
+		{"not a plan", func(t *testing.T, f *fixture) []string {
+			os.WriteFile(filepath.Join(f.repo, ".git", "goal.md"), []byte("Grow the code.\n"), 0o644)
+			return []string{"--plan", ".git/goal.md", f.base + "..HEAD"}
+		}, "is not a plan"},
+		{"no such part", func(t *testing.T, f *fixture) []string {
+			return []string{"--plan", f.plan, "--part", "P9", f.base + "..HEAD"}
+		}, "agent-plan new"},
+		{"a part without its plan", func(t *testing.T, f *fixture) []string { return []string{"--part", "P1", f.base + "..HEAD"} }, "--plan"},
+		// A part's own file opens its plan, whose Goal is not the part's.
+		{"a part's file without its part", func(t *testing.T, f *fixture) []string {
+			return []string{"--plan", f.addPart(t), f.base + "..HEAD"}
+		}, "--part P1"},
+		{"a part's file with another part", func(t *testing.T, f *fixture) []string {
+			return []string{"--plan", f.addPart(t), "--part", "P2", f.base + "..HEAD"}
+		}, "--part P1"},
+		// A link is judged by the file it names, not by its own name.
+		{"a link to a part's file without its part", func(t *testing.T, f *fixture) []string {
+			return []string{"--plan", link(t, f.addPart(t)), f.base + "..HEAD"}
+		}, "--part P1"},
+		{"--goal", func(t *testing.T, f *fixture) []string {
+			os.WriteFile(filepath.Join(f.repo, ".git", "goal.md"), []byte("Grow the code.\n"), 0o644)
+			return []string{"--goal", ".git/goal.md", f.base + "..HEAD"}
+		}, "in place of `--goal`"},
+		{"--goal -", func(t *testing.T, f *fixture) []string {
+			return []string{"--goal", "-", "--plan", f.plan, f.base + "..HEAD"}
+		}, "in place of `--goal`"},
+		{"no range", func(t *testing.T, f *fixture) []string { return []string{"--plan", f.plan, "HEAD"} }, ""},
+		{"empty range", func(t *testing.T, f *fixture) []string { return []string{"--plan", f.plan, "HEAD..HEAD"} }, ""},
+		{"symmetric difference", func(t *testing.T, f *fixture) []string { return []string{"--plan", f.plan, "HEAD...HEAD~1"} }, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := setUp(t, true)
+			args := c.args(t, f)
 			code, _, stderr := freshReview(t, args...)
 			reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-delegate: refused: ")
-			if code != 2 || !refusal.SaysInstead(reason) {
+			if code != 2 || !refusal.SaysInstead(reason) || !strings.Contains(reason, c.says) {
 				t.Errorf("%v: exit %d, %q", args, code, stderr)
+			}
+			if _, err := os.Stat(filepath.Join(f.log, "prompt")); err == nil {
+				t.Error("Codex ran")
 			}
 			f.checkCleanedUp(t)
 		})

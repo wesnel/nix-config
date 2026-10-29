@@ -85,6 +85,17 @@ func drawPrompt(in inputs, redraw string) string {
 	return b.String()
 }
 
+func diagramFallback(in inputs) string {
+	return "Run the drawing and critique below in separate fresh read-only sub-agents in the primary harness. " +
+		"Give the drawer only the drawing contract, schema, goal and pinned range. " +
+		"Give the critic only the critique contract, pinned range and the returned diagrams; never the drawer's reasoning. " +
+		"Check each citation against the file and symbol at TIP before critique. Report any unchecked citation as unverified. " +
+		"A critique covers every node and edge ID. Return findings for triage and redraw a faulted diagram at most once, then use another fresh critic. " +
+		"Record the actual harness and that this was a same-family fallback; an unavailable or unfinished stage is not a clean review.\n\n" +
+		"# Drawing task\n\n" + drawPrompt(in, "") + "\n## Drawing schema\n\n" + fenced("json", string(drawSchema())) +
+		"\n# Critique task\n\n" + generalRules() + diagramChecks
+}
+
 // critiqueInputs are what a critic is given.
 type critiqueInputs struct {
 	r       *span
@@ -166,8 +177,9 @@ type DiagramResult struct {
 func runDiagrams(ctx context.Context, s *source, r *span, base inputs, model string, timeout time.Duration,
 	log io.Writer) *typeRun {
 	run := &typeRun{name: "diagram"}
-	if run.why = claudeMissing(); run.why == "" {
-		run.why = unavailable(false)
+	// The diagrammer draws on Claude; the critic is Codex.
+	if run.why = runnable(base.availability, reviewerTypes["claude"]); run.why == "" {
+		run.why = runnable(base.availability, reviewerTypes["codex"])
 	}
 	if run.why != "" {
 		return run
@@ -192,7 +204,7 @@ func runDiagrams(ctx context.Context, s *source, r *span, base inputs, model str
 				return nil, err
 			}
 			reply, err := ClaudeRun(ctx, Claude{Checkout: wt, Agent: "diagrammer", Prompt: prompt, Schema: drawSchema(),
-				Timeout: timeout, Log: log})
+				Timeout: timeout, Log: log, availability: base.availability})
 			remove()
 			var bad badReply
 			switch {
@@ -249,7 +261,7 @@ func runDiagrams(ctx context.Context, s *source, r *span, base inputs, model str
 		fc := &focus{checks: diagramChecks, categories: d.IDs()}
 		ci := critiqueInputs{r: r, d: d, checked: res, where: in.where}
 		reply, err := CodexRun(ctx, Codex{Checkout: wt, Prompt: critiquePrompt(ci), Schema: fc.schema(), Model: model,
-			Timeout: timeout, Log: log, Git: worktreeGit(ctx, wt)})
+			Timeout: timeout, Log: log, Git: worktreeGit(ctx, wt), availability: base.availability})
 		if err != nil {
 			return nil, "", err
 		}
@@ -308,8 +320,9 @@ func runDiagrams(ctx context.Context, s *source, r *span, base inputs, model str
 		}
 		findings, inconclusive, err := critique(d, res)
 		var unconfined Unconfined
-		if errors.As(err, &unconfined) {
-			run.why = string(unconfined)
+		var unavailable providerUnavailable
+		if errors.As(err, &unconfined) || errors.As(err, &unavailable) {
+			run.why = err.Error()
 			return run
 		}
 		if err != nil {
@@ -327,6 +340,10 @@ func runDiagrams(ctx context.Context, s *source, r *span, base inputs, model str
 		text, _ := json.MarshalIndent(findings, "", "  ")
 		redrawn, err := draw(drawPrompt(in, "```json\n"+string(d.JSON())+"\n```\n\nThe critic's findings:\n\n```json\n"+
 			string(text)+"\n```"))
+		if errors.As(err, &unavailable) {
+			run.why = err.Error()
+			return run
+		}
 		if err != nil || len(redrawn) != 1 {
 			keep(d, "unresolved", fmt.Sprintf("the critic found it untrue, and it was not redrawn as one diagram (%v)", err),
 				findings)
@@ -339,8 +356,8 @@ func runDiagrams(ctx context.Context, s *source, r *span, base inputs, model str
 			continue
 		}
 		again, inconclusive, err := critique(d2, res2)
-		if errors.As(err, &unconfined) {
-			run.why = string(unconfined)
+		if errors.As(err, &unconfined) || errors.As(err, &unavailable) {
+			run.why = err.Error()
 			return run
 		}
 		switch {

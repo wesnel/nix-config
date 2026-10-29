@@ -91,7 +91,7 @@ func (u *upgradeFixture) says(t *testing.T, reply string) {
 // review runs an upgrade review of the fixture's range.
 func (u *upgradeFixture) review(t *testing.T) (int, output, string) {
 	t.Helper()
-	code, out, stderr := runDelegate(t, "--reviewer", "upgrade", "--goal", ".git/goal.md", u.given)
+	code, out, stderr := runDelegate(t, "--reviewer", "upgrade", "--plan", u.plan, u.given)
 	return code, out.review("upgrade"), stderr
 }
 
@@ -169,14 +169,14 @@ func TestFocusUpgrade(t *testing.T) {
 	t.Run("settled", func(t *testing.T) {
 		u := setUpUpgrade(t)
 		u.says(t, upgradeReply(t, u.lib))
-		code, first, stderr := runDelegate(t, "--reviewer", "upgrade", "--goal", ".git/goal.md", u.given)
+		code, first, stderr := runDelegate(t, "--reviewer", "upgrade", "--plan", u.plan, u.given)
 		if code != 3 {
 			t.Fatalf("exit %d\n%s", code, stderr)
 		}
 		if code, _, stderr := delegateCmd(t, "settle", u.given, u.private, "fix"); code != 0 {
 			t.Fatalf("settle: exit %d\n%s", code, stderr)
 		}
-		if code, _, stderr := runDelegate(t, "--reviewer", "upgrade", "--goal", ".git/goal.md", u.given); code != 3 {
+		if code, _, stderr := runDelegate(t, "--reviewer", "upgrade", "--plan", u.plan, u.given); code != 3 {
 			t.Fatalf("exit %d\n%s", code, stderr)
 		}
 		rec := must(record.ReadRange(first.Record))
@@ -229,7 +229,7 @@ func TestFocusUpgrade(t *testing.T) {
 		u := setUpUpgrade(t)
 		os.MkdirAll(u.opts.Cache, 0o755)
 		os.Chmod(u.opts.Cache, 0o755)
-		code, stdout, stderr := delegateCmd(t, "--print-prompt", "--reviewer", "upgrade", "--goal", ".git/goal.md", u.given)
+		code, stdout, stderr := delegateCmd(t, "--print-prompt", "--reviewer", "upgrade", "--plan", u.plan, u.given)
 		if code != 0 || !strings.Contains(stdout, "Rename programs.lib.extraConfig to settings") ||
 			!strings.Contains(stderr, "the cache directory is refused") || !strings.Contains(stderr, "mode 0700") {
 			t.Fatalf("exit %d\n%s\n%s", code, stderr, stdout)

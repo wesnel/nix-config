@@ -256,12 +256,12 @@ func TestPinsPaired(t *testing.T) {
 		return p.Moved() && p.Kind == "go-module" && p.Module == "github.com/q/r" && p.Old == "v1.0.0" && p.New == "v1.5.0"
 	})
 	check("go.mod#replace github.com/l/m", func(p Pin) bool { return p.Kind == "go-replace" && p.Old == "../m" && p.New == "../m2" })
-	// A flake.nix is one pin of the file, its input names a hint: the
-	// changed `url = …` line inside other's set names no input.
-	check("sub/flake.nix", func(p Pin) bool {
-		return p.Moved() && p.Kind == "flake-nix" && strings.Contains(p.Note, ": hm") && !strings.Contains(p.Note, "other")
+	// A flake.nix whose flake.lock moves no pin beside it is a Nix file:
+	// its changed `url = …` lines are unread pins of the file.
+	check("sub/flake.nix#unread", func(p Pin) bool {
+		return p.Moved() && p.Kind == "nix-unread" && p.Note == "(lines 3 at BASE, 5 at BASE, 3 at TIP, 5 at TIP)"
 	})
-	check("one/flake.nix", func(p Pin) bool { return p.Kind == "flake-nix" && strings.Contains(p.Note, ": x") })
+	check("one/flake.nix#unread", func(p Pin) bool { return p.Moved() && p.Kind == "nix-unread" })
 	for _, key := range []string{"flake.lock#nixpkgs_2", "flake.lock#nixpkgs_3", "go.mod#github.com/a/b"} {
 		if _, found := byKey[key]; found {
 			t.Errorf("%s is a pin of its own beside its pair", key)

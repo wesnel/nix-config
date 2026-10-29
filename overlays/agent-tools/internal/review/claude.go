@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	shared "github.com/wesnel/agent-tools/internal/availability"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/repos"
 )
@@ -70,6 +71,7 @@ func claudeMissing() string {
 
 // Claude is one headless Claude Code reviewer's run.
 type Claude struct {
+	availability *availability
 	// Checkout is the worktree of TIP the reviewer reads, its working
 	// directory.
 	Checkout string
@@ -92,6 +94,13 @@ type Claude struct {
 // CLAUDE.md, and its agent from --agents, which outranks a project's own.
 // The agent's frontmatter hook keeps it to reading.
 func ClaudeRun(ctx context.Context, c Claude) (*CodexReply, error) {
+	a := c.availability
+	if a == nil {
+		a = newAvailability()
+	}
+	if err := a.check(shared.Claude); err != nil {
+		return nil, err
+	}
 	config, err := loadDelegateConfig()
 	if err != nil {
 		return nil, err
@@ -122,11 +131,14 @@ func ClaudeRun(ctx context.Context, c Claude) (*CodexReply, error) {
 		return nil, fmt.Errorf("claude stopped: %w", ctx.Err())
 	}
 	var result struct {
-		Result     string                     `json:"result"`
-		Structured json.RawMessage            `json:"structured_output"`
-		IsError    bool                       `json:"is_error"`
-		Subtype    string                     `json:"subtype"`
-		ModelUsage map[string]json.RawMessage `json:"modelUsage"`
+		APIError       string                     `json:"api_error"`
+		APIErrorStatus int                        `json:"api_error_status"`
+		Errors         []string                   `json:"errors"`
+		Result         string                     `json:"result"`
+		Structured     json.RawMessage            `json:"structured_output"`
+		IsError        bool                       `json:"is_error"`
+		Subtype        string                     `json:"subtype"`
+		ModelUsage     map[string]json.RawMessage `json:"modelUsage"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		if runErr != nil {
@@ -139,6 +151,21 @@ func ClaudeRun(ctx context.Context, c Claude) (*CodexReply, error) {
 		reply.Model = strings.Join(models, ", ")
 	}
 	if result.IsError || runErr != nil {
+		if result.IsError {
+			var why shared.Reason
+			if result.APIError == "usage_limit_reached" {
+				why = shared.Quota
+			}
+			for _, message := range append(result.Errors, result.Result) {
+				why = worse(why, failure(message))
+			}
+			if result.APIErrorStatus == 429 {
+				why = worse(why, shared.RateLimit)
+			}
+			if why != "" {
+				return nil, a.failed(shared.Claude, why)
+			}
+		}
 		return nil, badReply(fmt.Sprintf("the reviewer ended with %q (%v): %s", result.Subtype, runErr,
 			strings.TrimSpace(result.Result)))
 	}

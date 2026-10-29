@@ -35,29 +35,77 @@ func byKeys(pins []Pin) map[string]Pin {
 	return m
 }
 
-// Any change to a flake.nix is one pin of the file, whatever form its
-// inputs take, for the reviewer to read its diff: nothing evaluates it.
-// The input names on its changed lines are a hint, nothing more.
+// A flake.nix change is one pin of the file, for the reviewer to read its
+// diff, where flake.lock's pins move beside it or the flake has a
+// nixConfig, which may change the caches and keys Nix trusts; nothing
+// evaluates it. Otherwise only what the Nix scanner reads as pinning is a
+// pin: CI refuses a flake.lock that flake.nix has outgrown, so an input
+// moves only with flake.lock.
 func TestFlakeNixPin(t *testing.T) {
-	old := "{\n  inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-25.05\";\n  outputs = _: {};\n}\n"
-	for name, c := range map[string]struct{ next, hint string }{
-		"comment decoy": {"{\n  inputs.nixpkgs.url = \"github:evil/nixpkgs/main\";\n  # inputs.nixpkgs.url = \"github:NixOS/nixpkgs/nixos-25.05\";\n  outputs = _: {};\n}\n", "nixpkgs"},
-		"one-line set":  {"{\n  inputs.nixpkgs = { url = \"github:evil/nixpkgs/main\"; };\n  outputs = _: {};\n}\n", "nixpkgs"},
-		"attr form":     {"{\n  inputs.nixpkgs = {\n    type = \"github\";\n    owner = \"evil\";\n  };\n  outputs = _: {};\n}\n", "nixpkgs"},
-		"concat":        {"{\n  inputs.nixpkgs.url = \"github:\" + \"evil/nixpkgs/main\";\n  outputs = _: {};\n}\n", "nixpkgs"},
-		"getFlake":      {"{\n  inputs = (builtins.getFlake \"git+ssh://e.example/x\").inputs;\n  outputs = _: {};\n}\n", ""},
-		"whitespace":    {old + "\n", ""},
-	} {
-		pins := pinsOf(t, [3]string{"flake.nix", old, c.next})
-		if len(pins) != 1 || pins[0].Key != "flake.nix" || pins[0].Kind != "flake-nix" || !pins[0].Moved() ||
-			!strings.Contains(pins[0].Note, c.hint) {
-			t.Errorf("%s: %+v", name, pins)
-			continue
+	flake := func(config, input, outputs string) string {
+		return "{\n" + config + "  inputs.nixpkgs.url = \"" + input + "\";\n" +
+			"  outputs = { nixpkgs, ... }: {\n    homeModules.x = {\n" + outputs + "    };\n  };\n}\n"
+	}
+	lock := func(rev string) string {
+		return `{"nodes": {"nixpkgs": {"locked": {"type": "github", "owner": "NixOS", "repo": "nixpkgs", "rev": "` +
+			strings.Repeat(rev, 40) + `"}}, "root": {"inputs": {"nixpkgs": "nixpkgs"}}}, "root": "root", "version": 7}` + "\n"
+	}
+	nixpkgs, option := "github:NixOS/nixpkgs/nixos-25.05", "      programs.foo.enable = true;\n"
+	config := "  nixConfig = {\n    extra-trusted-public-keys = [\n      \"a.example:AAAA=\"\n    ];\n  };\n"
+	old := flake("", nixpkgs, option)
+	locked := [3]string{"flake.lock", lock("a"), lock("a")}
+
+	t.Run("an option, no pin moved", func(t *testing.T) {
+		pins := pinsOf(t, [3]string{"flake.nix", old, flake("", nixpkgs, option+"      programs.org-roam.enable = true;\n")}, locked)
+		if len(pins) != 0 {
+			t.Errorf("pins %+v", pins)
+		}
+	})
+
+	t.Run("a pin bumped", func(t *testing.T) {
+		pins := byKeys(pinsOf(t, [3]string{"flake.nix", old, flake("", "github:NixOS/nixpkgs/nixos-25.11", option)},
+			[3]string{"flake.lock", lock("a"), lock("b")}))
+		if p := pins["flake.nix"]; p.Kind != "flake-nix" || !p.Moved() || !strings.Contains(p.Note, ": nixpkgs") {
+			t.Errorf("flake.nix: %+v in %v", p, pins)
+		}
+		if p := pins["flake.lock#nixpkgs"]; !p.Moved() || p.Owner != "NixOS" {
+			t.Errorf("flake.lock#nixpkgs: %+v in %v", p, pins)
+		}
+	})
+
+	t.Run("a key trusted in nixConfig", func(t *testing.T) {
+		with := flake(config, nixpkgs, option)
+		pins := pinsOf(t, [3]string{"flake.nix", with,
+			flake(strings.Replace(config, "AAAA=\"\n", "AAAA=\"\n      \"b.example:BBBB=\"\n", 1), nixpkgs, option)}, locked)
+		if len(pins) != 1 || pins[0].Key != "flake.nix" || pins[0].Kind != "flake-nix" || !pins[0].Moved() {
+			t.Fatalf("pins %+v", pins)
 		}
 		g := Gather(t.Context(), pins, Options{Limits: DefaultLimits})
 		if g[0].Read() || !strings.Contains(g[0].Why, "read the diff of its inputs") {
-			t.Errorf("%s: gathered %+v", name, g)
+			t.Errorf("gathered %+v", g)
 		}
+	})
+
+	// An input moved with flake.lock left stale fails CI, and these forms
+	// are pins of the file as well, which the Nix scanner reads.
+	for name, next := range map[string]string{
+		"an input moved, flake.lock stale": flake("", "github:evil/nixpkgs/main", option),
+		"an input moved behind a comment of the old one": flake("", "github:evil/nixpkgs/main",
+			option+"      # inputs.nixpkgs.url = \""+nixpkgs+"\";\n"),
+		"one-line set": strings.Replace(old, "inputs.nixpkgs.url = \""+nixpkgs+"\"",
+			"inputs.nixpkgs = { url = \"github:evil/nixpkgs/main\"; }", 1),
+		"attr form": strings.Replace(old, "inputs.nixpkgs.url = \""+nixpkgs+"\"",
+			"inputs.nixpkgs = {\n    type = \"github\";\n    owner = \"evil\";\n    repo = \"nixpkgs\";\n  }", 1),
+		"concat": flake("", "github:\" + \"evil/nixpkgs/main", option),
+		"getFlake": strings.Replace(old, "inputs.nixpkgs.url = \""+nixpkgs+"\"",
+			"inputs = (builtins.getFlake \"git+ssh://e.example/x\").inputs", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			pins := pinsOf(t, [3]string{"flake.nix", old, next}, locked)
+			if len(pins) != 1 || pins[0].File != "flake.nix" || !pins[0].DiffOnly() || !pins[0].Moved() {
+				t.Errorf("pins %+v", pins)
+			}
+		})
 	}
 }
 

@@ -34,7 +34,7 @@ func TestCodexStoppedWhileForking(t *testing.T) {
 		cancel()
 	}()
 	var stdout, stderr strings.Builder
-	if code := Main(ctx, []string{"--goal", ".git/goal.md", f.base + "..HEAD"}, strings.NewReader(""), &stdout, &stderr); code != 4 {
+	if code := Main(ctx, []string{"--plan", f.plan, f.base + "..HEAD"}, strings.NewReader(""), &stdout, &stderr); code != 4 {
 		t.Fatalf("exit %d, want 4\n%s", code, stderr.String())
 	}
 	data, _ := os.ReadFile(filepath.Join(f.log, "group"))
