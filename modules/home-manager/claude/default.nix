@@ -853,11 +853,12 @@ in {
         operator, stopping sub-agents, handing back, `agent-plan` alone on
         its line, and a ScheduleWakeup or CronCreate that fires after the
         reset; its refusal gives the main session the exact call that
-        schedules its resume. Nothing in a session lifts the stop; null
-        turns it off at the next switch. Codex sessions spend another quota,
-        whose stop is {option}`wgn.home.codex.quotaStop`. Off by default
-        through a gateway ({option}`wgn.home.llm.gateway`), which reports
-        no quota windows.
+        schedules its resume. `git delegate` meanwhile starts no headless
+        Claude reviewer, whose settings carry no hooks. Nothing in a session
+        lifts the stop; null turns it off at the next switch. Codex sessions
+        spend another quota, whose stop is {option}`wgn.home.codex.quotaStop`.
+        Off by default through a gateway ({option}`wgn.home.llm.gateway`),
+        which reports no quota windows.
       '';
     };
 
@@ -1018,8 +1019,9 @@ in {
           ]
           # Names each mcp-proxy server that is not connected when the
           # session starts, which Claude Code reports only as not found,
-          # with the command that connects it, so the session asks the
-          # operator rather than adding a server of its own.
+          # with the command that connects it, to the operator and to the
+          # session, so the session asks the operator rather than adding a
+          # server of its own.
           ++ optional mcpProxy.enable {
             matcher = "startup";
             hooks = [
@@ -1105,6 +1107,7 @@ in {
       wgn.home.llm.delegate = {
         agents = "${reviewAgents}";
         settings = "${reviewerSettings}";
+        inherit (cfg) quotaStop;
       };
       # The guard refuses a line naming one of these anywhere but alone.
       wgn.home.llm.guard.excludedCommands = cfg.settings.sandbox.excludedCommands or [];

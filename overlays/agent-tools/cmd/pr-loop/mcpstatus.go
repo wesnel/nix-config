@@ -21,8 +21,8 @@ var (
 )
 
 // mcpStatus probes this host's mcp-proxy and prints what is wrong with it,
-// one finding a line, or with --hook as context for Claude Code's
-// SessionStart hook; it prints nothing when every server is connected. A
+// one finding a line, or with --hook as Claude Code's SessionStart hook
+// output, for the agent and the operator alike; it prints nothing when every server is connected. A
 // failure to probe is itself a finding, so it always exits 0 once its
 // arguments are right: a SessionStart hook's failure would only hide it.
 func mcpStatus(args []string, stdout, stderr io.Writer) int {
@@ -49,7 +49,10 @@ func mcpStatus(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, strings.Join(lines, "\n"))
 		return 0
 	}
-	json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{
-		"hookEventName": "SessionStart", "additionalContext": strings.Join(lines, "\n")}})
+	// additionalContext reaches only the agent; systemMessage is shown to
+	// the operator, who is the one to run the command a finding names.
+	text := strings.Join(lines, "\n")
+	json.NewEncoder(stdout).Encode(map[string]any{"systemMessage": text, "hookSpecificOutput": map[string]string{
+		"hookEventName": "SessionStart", "additionalContext": text}})
 	return 0
 }

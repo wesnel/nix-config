@@ -30,12 +30,14 @@ const claudeMaxTurns = 60
 // delegateConfig is what the Claude Code module writes into agent-tools'
 // config for the headless reviewers: the store paths of review-agents.json,
 // their --agents file, and reviewer-settings.json, their only settings;
-// and, from the llm module where agents go through an AI gateway, the
-// provider Codex runs reach their model through.
+// wgn.home.claude.quotaStop, the quota stop's threshold in percent, or
+// null where it is off; and, from the llm module where agents go through an
+// AI gateway, the provider Codex runs reach their model through.
 type delegateConfig struct {
-	Agents   string       `json:"agents"`
-	Settings string       `json:"settings"`
-	Codex    *codexConfig `json:"codex"`
+	Agents    string       `json:"agents"`
+	Settings  string       `json:"settings"`
+	QuotaStop *int         `json:"quotaStop"`
+	Codex     *codexConfig `json:"codex"`
 }
 
 func loadDelegateConfig() (delegateConfig, error) {
