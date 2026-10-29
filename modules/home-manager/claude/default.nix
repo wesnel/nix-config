@@ -546,47 +546,6 @@ with lib; let
   # without arguments.
   sub = command: name: "${command} ${name} *";
 
-  # What the host sandbox denies reading beyond the credentials, which the
-  # guard reads from wgn.home.llm.guard.credentialPaths too: what would let
-  # a command act as the operator elsewhere. The guard refuses a .env file
-  # by its name instead.
-  hostDeniedReads = [
-    "~/git/**/.env"
-    "~/git/**/.env.*"
-    "~/.claude/worktrees/**/.env"
-    "~/.claude/worktrees/**/.env.*"
-    # Browser profiles, 1Password and shell histories.
-    "~/Library/Application Support/Google/Chrome"
-    "~/Library/Application Support/BraveSoftware"
-    "~/Library/Application Support/Firefox"
-    "~/Library/Safari"
-    "~/Library/Containers/com.apple.Safari"
-    "~/.config/google-chrome"
-    "~/.config/chromium"
-    "~/.mozilla"
-    "~/Library/Application Support/zen"
-    "~/.zen"
-    "~/.config/zen"
-    "~/.var/app/app.zen_browser.zen"
-    "~/Library/Application Support/1Password"
-    "~/Library/Group Containers/2BUA8C4S2C.com.1password"
-    "~/.config/1Password"
-    "~/.local/share/fish/fish_history"
-    "~/.zsh_history"
-    "~/.zsh_sessions"
-    "~/.bash_history"
-    # Only the watcher's sync pushes plans.
-    plans.repository.key
-  ];
-
-  # The credential list, as the sandbox takes paths: no trailing `/`, and
-  # none that is or is under a directory sandboxLists.deniedReads hides
-  # whole, such as the `~/.ssh/id_` prefix.
-  sandboxCredentials = let
-    hidden = p: any (d: p == d || hasPrefix "${d}/" p) sandboxLists.deniedReads;
-  in
-    filter (p: !hidden p) (map (removeSuffix "/") config.wgn.home.llm.guard.credentialPaths);
-
   # The sandbox around every session's commands. Paths starting `~/` are
   # resolved by Claude Code; bare relative ones would resolve against
   # ~/.claude, not the workspace.
@@ -634,26 +593,12 @@ with lib; let
       ++ map (sub "pr-loop") prLoopGitHub
       ++ map (sub "agent-plan") agentPlanWrites;
 
-    # Commands inherit Claude Code's environment, and only the variables
-    # named here are taken out of it, so every credential a module puts in
-    # the environment belongs here.
     credentials.envVars =
       map (name: {
         inherit name;
         mode = "deny";
-      }) [
-        "GH_TOKEN"
-        "GITHUB_TOKEN"
-        "SSH_AUTH_SOCK"
-        "KEYID"
-        "NGROK_AUTHTOKEN"
-        "NGROK_AUTHTOKEN_PROD"
-        "NGROK_AI_KEY"
-        "MCP_PROXY_TOKEN"
-        "OPENAI_API_KEY"
-        "ANTHROPIC_API_KEY"
-        "CLAUDE_CODE_MESSAGING_TOKEN"
-      ];
+      })
+      sandboxLists.deniedEnvVars;
 
     # Go programs, gh and the go command among them, verify TLS through
     # trustd on macOS, which they fail to reach otherwise. This opens the
@@ -709,26 +654,18 @@ with lib; let
       );
 
     filesystem = {
-      denyRead = sandboxLists.deniedReads ++ sandboxCredentials ++ hostDeniedReads;
-
-      # Git reads the user's name and email from this file on every run.
-      allowRead = optional (config.sops.templates ? "git.inc") (
-        if darwin
-        then "/private/var/folders/*/*/T/secrets.d/*/rendered/git.inc"
-        else "/run/user/*/secrets.d/*/rendered/git.inc"
-      );
+      denyRead = sandboxLists.deniedReads;
+      allowRead = sandboxLists.allowedReads;
 
       # Nothing on PATH (~/go/bin among it) and nothing that a program
-      # outside the sandbox loads code or configuration from. Go's and
-      # golangci-lint's own caches, where they are by default.
-      allowWrite =
-        ["~/go/pkg"]
-        ++ (
-          if darwin
-          then ["~/Library/Caches/go-build" "~/Library/Caches/golangci-lint"]
-          else ["~/.cache/go-build" "~/.cache/golangci-lint"]
-        )
-        ++ ["~/.claude/worktrees" "~/.cache/nix" "~/.cache/uv"];
+      # outside the sandbox loads code or configuration from: the tool
+      # caches every sandbox shares, and the worktrees.
+      allowWrite = let
+        isGo = hasInfix "go";
+      in
+        filter isGo sandboxLists.toolCaches
+        ++ ["~/.claude/worktrees"]
+        ++ filter (p: !isGo p) sandboxLists.toolCaches;
 
       denyWrite =
         sandboxDeniedWrites
