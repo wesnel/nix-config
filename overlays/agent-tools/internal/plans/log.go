@@ -89,6 +89,8 @@ var (
 				"Watch the push's CI with `pr-loop wait ci` as the signing-pass skill says",
 			linkedKind: "agent-plan link logs `linked` for each link it writes under Related. " +
 				"Link a plan with `agent-plan link PLAN OTHER --why TEXT`",
+			DesignReviewStarted: "a hook logs `design-review-started` when a design-reviewer sub-agent starts in the background, " +
+				"or returns in the foreground. Log `plan-reviewed` once its report is in",
 		}
 		for _, k := range []string{"loop-began", "round", "replied", "resolved", "ci-waited"} {
 			kinds[k] = "pr-loop logs what it did, from begin on, in the plan of the session that ran it. " +

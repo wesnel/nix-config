@@ -25,24 +25,7 @@ import (
 // Shell edits are only those shellEditPaths names: a write through a script
 // it cannot read passes.
 func checkOwner(in input) string {
-	var paths []string
-	switch in.ToolName {
-	case "Bash", "exec_command":
-		var args struct {
-			Command string `json:"command"`
-		}
-		json.Unmarshal(in.ToolInput, &args)
-		paths = shellEditPaths(args.Command, in.Cwd, 0)
-	case "Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch":
-		// An input that does not decode is denied before the fence is
-		// asked.
-		changes, _ := fileChanges(in.ToolName, in.ToolInput)
-		for _, c := range changes {
-			if c.path != "" {
-				paths = append(paths, expandPath(c.path, in.Cwd))
-			}
-		}
-	}
+	paths := editPaths(in)
 	if len(paths) == 0 {
 		return ""
 	}
@@ -70,6 +53,30 @@ func checkOwner(in input) string {
 		}
 	}
 	return ""
+}
+
+// editPaths are the files in's call writes, by a file tool or the shell,
+// as absolute paths; shell edits are only those shellEditPaths names.
+func editPaths(in input) []string {
+	var paths []string
+	switch in.ToolName {
+	case "Bash", "exec_command":
+		var args struct {
+			Command string `json:"command"`
+		}
+		json.Unmarshal(in.ToolInput, &args)
+		paths = shellEditPaths(args.Command, in.Cwd, 0)
+	case "Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch":
+		// An input that does not decode is denied before the fence is
+		// asked.
+		changes, _ := fileChanges(in.ToolName, in.ToolInput)
+		for _, c := range changes {
+			if c.path != "" {
+				paths = append(paths, expandPath(c.path, in.Cwd))
+			}
+		}
+	}
+	return paths
 }
 
 // subagentEdits returns why agent may not edit one of paths, or "": it

@@ -844,6 +844,7 @@ has the hook alone:
 | Shell edits of tracked files, rm where trash is | hook | hook |
 | Guard-off writes (settings, hooks, agent-tools config) | hook; sandbox for ~/.claude | hook |
 | Plan logs and files | sandbox denyWrite (Bash), Edit deny rules and hook (file tools) | hook |
+| Edits while the plan's design review is pending (outside plans and scratch) | hook, from the record agent-plan remind makes when a design-reviewer starts in the background or returns in the foreground | none: no design-reviewer type to record |
 | Destroying home, root, store, keys | sandbox and hook | hook |
 | Kills (protected processes, patterns, others' PIDs) | hook | hook |
 | Long foreground sleeps | hook | hook |

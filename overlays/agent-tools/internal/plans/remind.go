@@ -29,6 +29,10 @@ var notifiedAgent = regexp.MustCompile(`<summary>Agent "(.*)" finished</summary>
 // operator's own: it keeps each http(s) address in it as a reference of the
 // plan, and prints nothing. Codex sends a sub-agent's turns with agent_id.
 //
+// On Claude Code's PostToolUse of an Agent call starting a design-reviewer,
+// background or foreground, it records design-review-started in the
+// session's plan, which the guard holds edits on (PendingPlanReviewOf).
+//
 // On every prompt of the main thread, task-notifications included, it
 // delivers the results of the session's sign-passes that it has not yet
 // received (see DeliverSigns).
@@ -107,10 +111,22 @@ func (c Config) remind(input []byte) []byte {
 			IsAsync bool `json:"isAsync"`
 		}
 		var call struct {
-			Description string `json:"description"`
+			Description  string `json:"description"`
+			SubagentType string `json:"subagent_type"`
 		}
 		json.Unmarshal(in.ToolResponse, &response)
 		json.Unmarshal(in.ToolInput, &call)
+		// Recorded at a background review's start, and at a foreground
+		// one's end, in a plan whose SESSIONS name the session, never one
+		// matched by its worktree alone; the guard holds edits until
+		// plan-reviewed is logged (PendingPlanReviewOf).
+		if call.SubagentType == "design-reviewer" {
+			if p, _, ok := c.Locate(in.SessionID, ""); ok {
+				// A summary holds one line; the description's first stands for it.
+				summary, _, _ := strings.Cut(call.Description, "\n")
+				_, _ = p.Record("", Event{Kind: DesignReviewStarted, Session: in.SessionID, Summary: strings.TrimSpace(summary)}, time.Now())
+			}
+		}
 		if response.IsAsync {
 			return nil
 		}
