@@ -293,11 +293,6 @@ func TestUpgradeRules(t *testing.T) {
 		{".github/workflows/ci.yml", `          actions/checkout@main`, true},
 		{".github/workflows/ci.yml", `    steps: [{uses: evil/checkout@main}]`, true},
 		{"docs/ci.md", `      - uses: actions/checkout@v4`, false},
-		{"flake.nix", `    nixpkgs.url = "github:nixos/nixpkgs/nixos-25.11";`, true},
-		{"sub/flake.nix", `      url = "github:o/r";`, true},
-		{"flake.nix", `    inputs.nixpkgs.follows = "nixpkgs";`, true},
-		{"flake.nix", `    owner = "evil";`, true},
-		{"flake.nix", `    ref = "nixos-26.05";`, true},
 		{"modules/x.nix", `    url = "https://example.com";`, false},
 		{"pkgs/x.nix", `  src = fetchFromGitHub { owner = "o"; repo = "r"; rev = "v2.0"; hash = "sha256-B="; };`, true},
 		{"pkgs/y.nix", `    sha512 = "BBB";`, true},
@@ -345,6 +340,52 @@ func TestScanNixFiles(t *testing.T) {
 		if err != nil || got != tc.want {
 			t.Errorf("%q: routes %+v (%v), want upgrade %v", tc.next, rs, err, tc.want)
 		}
+	}
+}
+
+// A flake.nix edit is the upgrade review's where flake.lock's pins move,
+// where it changes a line the Nix scanner reads as pinning, or where the
+// flake has a nixConfig, which may change the caches and keys Nix trusts;
+// not where it only sets options in the flake's outputs. CI refuses a
+// flake.lock that flake.nix has outgrown, so an input moves only with it.
+func TestScanFlake(t *testing.T) {
+	flake := func(config, input, outputs string) string {
+		return "{\n" + config + "  inputs.nixpkgs.url = \"" + input + "\";\n" +
+			"  outputs = { nixpkgs, ... }: {\n    homeModules.x = {\n" + outputs + "    };\n  };\n}\n"
+	}
+	lock := func(rev string) string {
+		return `{"nodes": {"nixpkgs": {"locked": {"type": "github", "owner": "NixOS", "repo": "nixpkgs", "rev": "` +
+			strings.Repeat(rev, 40) + `"}}, "root": {"inputs": {"nixpkgs": "nixpkgs"}}}, "root": "root", "version": 7}` + "\n"
+	}
+	nixpkgs, option := "github:NixOS/nixpkgs/nixos-25.05", "      programs.foo.enable = true;\n"
+	config := "  nixConfig = {\n    extra-trusted-public-keys = [\n      \"a.example:AAAA=\"\n    ];\n  };\n"
+	base := []string{"flake.nix=" + flake("", nixpkgs, option), "flake.lock=" + lock("a")}
+	for name, tc := range map[string]struct {
+		base, tip []string
+		want      bool
+	}{
+		"an option, no pin moved": {base,
+			[]string{"flake.nix=" + flake("", nixpkgs, option+"      programs.org-roam.enable = true;\n")}, false},
+		"a pin bumped": {base, []string{"flake.lock=" + lock("b")}, true},
+		"a key trusted in nixConfig": {
+			[]string{"flake.nix=" + flake(config, nixpkgs, option), "flake.lock=" + lock("a")},
+			[]string{"flake.nix=" + flake(strings.Replace(config, "AAAA=\"\n", "AAAA=\"\n      \"b.example:BBBB=\"\n", 1), nixpkgs, option)},
+			true},
+		"an input moved, flake.lock stale": {base, []string{"flake.nix=" + flake("", "github:evil/nixpkgs/main", option)}, true},
+		"an input moved behind a comment of the old one": {base, []string{"flake.nix=" +
+			flake("", "github:evil/nixpkgs/main", option+"      # inputs.nixpkgs.url = \""+nixpkgs+"\";\n")}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo, _ := filepath.EvalSymlinks(t.TempDir())
+			gitIn(t, repo, "init", "-q", "-b", "main")
+			from := write(t, repo, "base", tc.base...)
+			to := write(t, repo, "tip", tc.tip...)
+			rs, err := Scan(repo, from, to, Builtin)
+			got := slices.ContainsFunc(rs, func(r Route) bool { return r.Route == "upgrade" })
+			if err != nil || got != tc.want {
+				t.Errorf("routes %+v (%v), want upgrade %v", rs, err, tc.want)
+			}
+		})
 	}
 }
 

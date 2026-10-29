@@ -123,9 +123,12 @@ var Builtin = []Rule{
 	{Route: "upgrade", Paths: []string{".github/workflows/**", ".github/actions/**", "**/action.yml", "**/action.yaml"},
 		// As upgrade's actionsUnread: any form an action may be named in.
 		Lines: []string{`uses|docker://|[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@`}, Why: "the versions of the actions CI runs changed"},
-	// Any line of a flake.nix may change what its inputs evaluate to, so
-	// every change of one is the upgrade review's, its diff read whole.
-	{Route: "upgrade", Paths: []string{"**/flake.nix"}, Why: "a flake's inputs may have changed"},
+	// A flake's inputs move only with its flake.lock, which CI holds to
+	// flake.nix (--no-update-lock-file) and the lock files' rule routes;
+	// a flake.nix is also a Nix file, routed above. What remains is
+	// nixConfig, which no lock records.
+	{Route: "upgrade", Paths: []string{"**/flake.nix"}, Changed: pinscan.FlakeConfigured,
+		Why: "a flake's nixConfig may have changed"},
 }
 
 // Route is a route a change needs, why, and the commits that need it,

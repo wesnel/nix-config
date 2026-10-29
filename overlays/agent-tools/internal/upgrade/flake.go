@@ -4,11 +4,13 @@ import (
 	"cmp"
 	"encoding/json"
 	"maps"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/pinscan"
 )
 
@@ -300,6 +302,22 @@ func flakePins(file string, old, next []byte) []Pin {
 	}
 	slices.SortFunc(pins, func(x, y Pin) int { return strings.Compare(x.Key, y.Key) })
 	return pins
+}
+
+// flakeNixPins are the pins of a change to file, a flake.nix, from old at
+// base to next at tip, in the repository at top. Its inputs move only with
+// the flake.lock beside it, which CI holds to it (--no-update-lock-file):
+// where that lock's pins move, or the flake may set nixConfig, which no
+// lock records, the change is one flakeNixPin, its diff read whole;
+// otherwise it is the Nix file it also is, as nixPins reads one.
+func flakeNixPins(top, base, tip, file, old, next string) []Pin {
+	lock := path.Join(path.Dir(file), "flake.lock")
+	lockOld, _ := git.Bytes(nil, "-C", top, "cat-file", "blob", base+":"+lock)
+	lockNext, _ := git.Bytes(nil, "-C", top, "cat-file", "blob", tip+":"+lock)
+	if pinscan.FlakeConfigured(old, next) || len(flakePins(lock, lockOld, lockNext)) > 0 {
+		return flakeNixPin(file, old, next)
+	}
+	return nixPins(file, old, next)
 }
 
 // flakeNixName is a name a flake.nix line may give an input, as

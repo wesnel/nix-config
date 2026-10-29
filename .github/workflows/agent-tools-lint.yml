@@ -33,7 +33,8 @@ jobs:
       - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
       # Every nix command here takes --no-update-lock-file. Without it, a
       # flake.nix input changed with flake.lock left stale is re-locked and
-      # built from a source flake.lock never named.
+      # built from a source flake.lock never named; git delegate's upgrade
+      # review reads a flake's inputs from flake.lock alone.
       - name: Run gosec over agent-tools
         run: nix build --no-update-lock-file --print-build-logs .#checks.x86_64-linux.agent-tools-lint
       # The agent-tools the devbox deploys, built with the devbox's settings,

@@ -139,9 +139,10 @@ files (flake.lock nodes, by each node's locked and original objects
 whole, and its input paths, as hm/nixpkgs, that resolve to another node;
 go.mod's and go.work's requirements, replacements, and go and toolchain
 lines, as golang.org/x/mod reads them; go.sum hashes that moved under one
-version; niv's and npins' sources; other lock files whole), any change to
+version; niv's and npins' sources; other lock files whole), a change to
 a flake.nix as one pin of the file, whose diff the reviewer reads
-(nothing evaluates it here), each Nix derivation or fetcher set's
+(nothing evaluates it here), where its flake.lock's pins move or it may
+set nixConfig, and otherwise as any Nix file; each Nix derivation or fetcher set's
 version, rev, tag and hash attributes, and each occurrence of an action a
 workflow or composite action runs. The Nix and workflow scanners fail
 closed: a changed line naming what may pin a version that no pin covers

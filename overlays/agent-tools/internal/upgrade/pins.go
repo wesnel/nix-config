@@ -115,7 +115,7 @@ func Pins(top, base, tip string) ([]Pin, error) {
 		case name == "flake.lock":
 			found = flakePins(f, old, next)
 		case name == "flake.nix":
-			found = flakeNixPin(f, string(old), string(next))
+			found = flakeNixPins(top, base, tip, f, string(old), string(next))
 		case name == "go.mod" || name == "go.work":
 			found = goModPins(f, string(old), string(next))
 		case name == "go.sum" || name == "go.work.sum":
