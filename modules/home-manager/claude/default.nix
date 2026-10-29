@@ -9,57 +9,23 @@ with lib; let
 
   llm = import ../llm/lib.nix {inherit lib;};
 
-  # The role agents, plain agent files in ./agents: the sub-agents the
+  # The role agents (llm.agentFiles): the sub-agents the
   # coordinate-subagents skill starts, linked into ~/.claude/agents, and the
   # headless reviewers git delegate runs from review-agents.json. A
   # reviewer's file names its tools and the hook that keeps it to reading,
-  # `@guard@ guard --reviewer`, @guard@ being pr-loop, with `onFailure:
-  # block`, which Claude Code's frontmatter hooks take as its settings'
-  # hooks do. Each prompt ends with
-  # the rules every sub-agent shares, then its contract, if any. A
-  # description is plain YAML: no colon followed by a space. Each focused
-  # review, a route of agent-tools' routes.Known, has a reviewer of its
-  # own, ROUTE-reviewer, whose contract is that focus's.
-  focusReviewers = map (route: "${route}-reviewer") (attrNames pkgs.agent-tools.focusPrompts);
-  agentNames = ["builder" "adversarial-reviewer" "design-reviewer" "review-guide" "diagrammer"] ++ focusReviewers;
-  contracts = mapAttrs' (route: nameValuePair "${route}-reviewer") pkgs.agent-tools.focusPrompts;
+  # `@guard@ guard --reviewer`, with `onFailure: block`, which Claude Code's
+  # frontmatter hooks take as its settings' hooks do.
+  focusReviewers = llm.focusReviewers pkgs;
+  agents = llm.agentFiles pkgs (getExe' config.wgn.home.llm.agentTools "pr-loop");
   reviewerHook = "${getExe' config.wgn.home.llm.agentTools "pr-loop"} guard --reviewer";
 
-  # An agent file's frontmatter, as lines, and its prompt.
   agentFile = name: let
-    raw = builtins.readFile (./agents + "/${name}.md");
-    text = replaceStrings ["@guard@"] [(getExe' config.wgn.home.llm.agentTools "pr-loop")] raw;
-    pieces = splitString "\n---\n" (removePrefix "---\n" text);
-    frontmatter = splitString "\n" (head pieces);
-    field = key: let
-      lines = filter (hasPrefix "${key}: ") frontmatter;
-    in
-      if lines == []
-      then null
-      else removePrefix "${key}: " (head lines);
-    # The `skills:` list, one `  - NAME` line per skill, read from the file
-    # as written: a name taken from `text` carries pr-loop's store path,
-    # which an attribute name cannot.
-    skills = let
-      lines = splitString "\n" (head (splitString "\n---\n" (removePrefix "---\n" raw)));
-      start = lists.findFirstIndex (line: line == "skills:") null lines;
-      after =
-        if start == null
-        then []
-        else drop (start + 1) lines;
-    in
-      map (removePrefix "  - ") (take (lists.findFirstIndex (line: !hasPrefix "  - " line) (length after) after) after);
+    a = agents.${name};
   in
-    assert assertMsg (hasPrefix "---\n" text && length pieces > 1) "claude: ./agents/${name}.md has no frontmatter";
-    assert assertMsg (field "name" == name) "claude: ./agents/${name}.md is not named ${name}";
-    assert assertMsg (field "tools" == null || any (hasSuffix "command: \"${reviewerHook}\"") frontmatter)
+    assert assertMsg (a.field "tools" == null || any (hasSuffix "command: \"${reviewerHook}\"") a.frontmatter)
     "claude: ./agents/${name}.md restricts its tools but runs no `guard --reviewer` hook";
-    assert assertMsg (field "tools" == null || any (hasSuffix " onFailure: block") frontmatter)
-    "claude: ./agents/${name}.md's `guard --reviewer` hook lacks `onFailure: block`, so a hook that cannot run would let the call through"; {
-      inherit field skills;
-      text = text + "\n" + builtins.readFile ./agents/subagent.md + (contracts.${name} or "");
-      prompt = concatStringsSep "\n---\n" (tail pieces) + "\n" + builtins.readFile ./agents/subagent.md + (contracts.${name} or "");
-    };
+    assert assertMsg (a.field "tools" == null || any (hasSuffix " onFailure: block") a.frontmatter)
+    "claude: ./agents/${name}.md's `guard --reviewer` hook lacks `onFailure: block`, so a hook that cannot run would let the call through"; a;
 
   # Through a gateway, the adversarial reviewer, the second opinion when git
   # delegate cannot run Codex, runs on the gateway's review model, of
@@ -74,7 +40,7 @@ with lib; let
         replaceStrings [opus] ["\nmodel: ${gateway.ngrokAi.models.review}\n"] text
     else text;
 
-  roleAgents = listToAttrs (map (name: nameValuePair ".claude/agents/${name}.md" {text = agentText name;}) agentNames);
+  roleAgents = mapAttrs' (name: _: nameValuePair ".claude/agents/${name}.md" {text = agentText name;}) agents;
 
   gateway = config.wgn.home.llm;
 
