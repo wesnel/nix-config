@@ -263,6 +263,13 @@ as it arrives, make that call, then hand back to the operator with the
 window, its reset time and the parts still open. The operator alone lifts
 the stop.
 
+In Codex the same stop holds at `wgn.home.codex.quotaStop`, from the Codex
+account's windows, and lets through only `update_plan`,
+`request_user_input`, `wait_agent`, `close_agent` and `agent-plan` alone on
+its line. Codex cannot schedule a resume: log each report as it arrives,
+then end your turn with the window, its reset time and the parts still
+open, for the operator to resume you after the reset.
+
 ## Check every report
 
 Before relaying a report, confirm it:

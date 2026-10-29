@@ -778,9 +778,10 @@ in {
         its line, and a ScheduleWakeup or CronCreate that fires after the
         reset; its refusal gives the main session the exact call that
         schedules its resume. Nothing in a session lifts the stop; null
-        turns it off at the next switch. Codex sessions spend another quota and are not
-        stopped. Off by default through a gateway
-        ({option}`wgn.home.llm.gateway`), which reports no quota windows.
+        turns it off at the next switch. Codex sessions spend another quota,
+        whose stop is {option}`wgn.home.codex.quotaStop`. Off by default
+        through a gateway ({option}`wgn.home.llm.gateway`), which reports
+        no quota windows.
       '';
     };
 
