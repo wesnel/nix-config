@@ -74,18 +74,30 @@ func (d SignDelivery) Line() string {
 	return fmt.Sprintf("sign-pass %s %s: %s", d.ID, outcome, d.Summary)
 }
 
-// RequestSign logs a sign-pass about to be handed over in session, in the
-// plan Locate finds for it, and returns the pass's ID. The event's
+// SignRequest names a signing pass's notification destination and context.
+// Plan, when nonempty, selects a plan instead of implicit session/worktree lookup.
+type SignRequest struct {
+	Plan     string
+	Session  string
+	Worktree string
+	Branches []string
+	Base     string
+}
+
+// RequestSign logs a sign-pass in r.Plan when set, else in the plan Locate
+// finds for its session and worktree, and returns the pass's ID. An invalid
+// explicit plan returns an error instead of falling back to Locate. The event's
 // WORKTREE is where git sign-pass runs and its BASE, omitted for main by
 // any of its names, what it signs from: Emacs and the dashboard show the
 // operator the command from them.
-func (c Config) RequestSign(session, worktree string, branches []string, base string, now time.Time) (string, error) {
-	if session == "" {
+func (c Config) RequestSign(r SignRequest, now time.Time) (string, error) {
+	if r.Session == "" {
 		return "", refusal.New("there is no session to deliver the sign-pass's result to. Pass the harness's session ID with `agent-plan sign-id --session ID`")
 	}
-	if worktree != "" && !filepath.IsAbs(worktree) {
-		return "", refusal.New("worktree %q is not absolute, and the operator runs git sign-pass from anywhere. Run `agent-plan sign-id` in the worktree, or pass its full path with `--worktree`", worktree)
+	if r.Worktree != "" && !filepath.IsAbs(r.Worktree) {
+		return "", refusal.New("worktree %q is not absolute, and the operator runs git sign-pass from anywhere. Run `agent-plan sign-id` in the worktree, or pass its full path with `--worktree`", r.Worktree)
 	}
+	base := r.Base
 	if base != "" {
 		if err := checkWords("base", []string{base}); err != nil {
 			return "", err
@@ -94,15 +106,25 @@ func (c Config) RequestSign(session, worktree string, branches []string, base st
 	if slices.Contains([]string{"main", "origin/main", "refs/heads/main", "refs/remotes/origin/main"}, base) {
 		base = ""
 	}
-	p, _, ok := c.Locate(session, worktree)
-	if !ok {
-		return "", refusal.New("no plan of this host names session %s or this worktree, and a sign-pass's result is kept in its plan's log. Make one with `agent-plan new` as the plan-work skill says, then run `agent-plan sign-id` again", session)
+	var p Plan
+	if r.Plan != "" {
+		var err error
+		p, err = c.Open(r.Plan)
+		if err != nil {
+			return "", err
+		}
+	} else {
+		var ok bool
+		p, _, ok = c.Locate(r.Session, r.Worktree)
+		if !ok {
+			return "", refusal.New("no plan of this host names session %s or this worktree, and a sign-pass's result is kept in its plan's log. Make one with `agent-plan new` as the plan-work skill says, then run `agent-plan sign-id` again", r.Session)
+		}
 	}
 	var b [4]byte
 	rand.Read(b[:])
 	id := fmt.Sprintf("%s.%x", p.Name, b)
-	if _, err := p.record(Event{Kind: signRequested, Item: p.Name, Summary: id, Sign: id, Session: session,
-		Branch: strings.Join(branches, ","), Worktree: worktree, Base: base}, now); err != nil {
+	if _, err := p.record(Event{Kind: signRequested, Item: p.Name, Summary: id, Sign: id, Session: r.Session,
+		Branch: strings.Join(r.Branches, ","), Worktree: r.Worktree, Base: base}, now); err != nil {
 		return "", err
 	}
 	return id, nil
@@ -160,28 +182,20 @@ func (c Config) RecordSign(id string, r SignResult, now time.Time) (string, erro
 }
 
 // DeliverSigns is the results of the sign-passes session requested that it
-// has not yet received, in the plans that name the session or worktree.
+// has not yet received. The events name the session, even when an explicit
+// plan has no session or worktree association.
 // Each is logged as delivered before it is returned, under the log's lock,
 // so prompts arriving at once receive it once between them.
 func (c Config) DeliverSigns(session, worktree string, now time.Time) []SignDelivery {
 	if session == "" {
 		return nil
 	}
-	found, err := c.Find(FindOptions{Session: session, Worktree: worktree})
+	own, err := c.ownPlans()
 	if err != nil {
 		return nil
 	}
 	var out []SignDelivery
-	seen := map[string]bool{}
-	for _, f := range found {
-		if seen[f.Plan] {
-			continue
-		}
-		seen[f.Plan] = true
-		p, err := c.Open(f.Plan)
-		if err != nil || !p.Own {
-			continue
-		}
+	for _, p := range own {
 		mine := func(e Event) bool { return e.Session == session }
 		// Most prompts find nothing to deliver, and need not wait for the lock.
 		if events, err := p.Events(); err != nil || len(pending(events, mine)) == 0 {

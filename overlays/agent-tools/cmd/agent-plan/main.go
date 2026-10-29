@@ -236,12 +236,14 @@ have (see status) is refused and writes nothing.
                      and on every one of those prompts, with or without a
                      plan, adds the time and how long since the operator's
                      previous message in the session; never blocks
-  sign-id [--session ID] [--branch B]... [--worktree DIR] [--base REF]
+  sign-id [--plan PLAN] [--session ID] [--branch B]... [--worktree DIR] [--base REF]
                      log a sign-pass about to be handed to the operator as
                      sign-requested in the plan of this session (--session,
                      else CLAUDE_CODE_SESSION_ID or CODEX_THREAD_ID) and
                      worktree, and print its ID for
                      ` + "`git sign-pass --notify ID`" + `; refused without a plan.
+                     --plan selects an own-host plan file or name under the
+                     configured plans directory instead of automatic lookup.
                      The event's WORKTREE is where git sign-pass runs (the
                      worktree given, else the one sign-id runs in), and its
                      BASE the pass's --base, left out for main (or
@@ -439,6 +441,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		run      = flags.String("command", "", "")
 		runDir   = flags.String("dir", "", "")
 		signBase = flags.String("base", "", "")
+		signPlan = flags.String("plan", "", "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
 		branches multi
@@ -470,6 +473,16 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	}
 	given := map[string]bool{}
 	flags.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	if given["plan"] {
+		if command != "sign-id" {
+			fmt.Fprintf(stderr, "agent-plan %s: --plan is sign-id's\n", command)
+			return 2
+		}
+		if *signPlan == "" {
+			fmt.Fprint(stderr, "agent-plan sign-id: --plan needs a plan file or name; pass a known plan or omit --plan for automatic selection\n")
+			return 2
+		}
+	}
 	if given["base"] && command != "sign-id" {
 		fmt.Fprintf(stderr, "agent-plan %s: --base is sign-id's\n", command)
 		return 2
@@ -815,7 +828,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return report(p.Reseal(time.Now()))
 	case "sign-id":
 		if len(positional) != 0 {
-			fmt.Fprint(stderr, "agent-plan sign-id: takes [--session ID] [--branch B]... [--worktree DIR] [--base REF]\n")
+			fmt.Fprint(stderr, "agent-plan sign-id: takes [--plan PLAN] [--session ID] [--branch B]... [--worktree DIR] [--base REF]\n")
 			return 2
 		}
 		if session == "" {
@@ -829,7 +842,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		if len(branches) == 0 && current != "" {
 			branches = multi{current}
 		}
-		id, err := c.RequestSign(session, top, branches, *signBase, time.Now())
+		id, err := c.RequestSign(plans.SignRequest{Plan: *signPlan, Session: session, Worktree: top, Branches: branches, Base: *signBase}, time.Now())
 		if err != nil {
 			return report(nil, err)
 		}

@@ -2,7 +2,11 @@ package plans
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +16,7 @@ import (
 // A sign-pass handed over in a session is requested in the session's plan,
 // under an ID that names the plan, and refused where there is no plan.
 func TestRequestSign(t *testing.T) {
+	t.Run("explicit", testRequestSignPlan)
 	t.Run("ownership only", func(t *testing.T) {
 		c := testConfig(t)
 		p := newPlan(t, c, "x")
@@ -19,7 +24,7 @@ func TestRequestSign(t *testing.T) {
 		if _, err := p.SetOwner(worktree, "builder", day); err != nil {
 			t.Fatal(err)
 		}
-		id, err := c.RequestSign("new-session", worktree, []string{"loop"}, "", day)
+		id, err := c.RequestSign(SignRequest{Session: "new-session", Worktree: worktree, Branches: []string{"loop"}}, day)
 		if err != nil || !strings.HasPrefix(id, p.Name+".") {
 			t.Fatalf("ownership-only request: %q, %v", id, err)
 		}
@@ -35,14 +40,14 @@ func TestRequestSign(t *testing.T) {
 
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
-	id, err := c.RequestSign("abc", "", []string{"loop", "flag"}, "", day)
+	id, err := c.RequestSign(SignRequest{Session: "abc", Branches: []string{"loop", "flag"}}, day)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(id, p.Name+".") || !signID.MatchString(id) {
 		t.Errorf("ID %q does not name plan %s", id, p.Name)
 	}
-	again, _ := c.RequestSign("abc", "", nil, "", day)
+	again, _ := c.RequestSign(SignRequest{Session: "abc"}, day)
 	if again == id {
 		t.Errorf("two requests share ID %q", id)
 	}
@@ -53,14 +58,132 @@ func TestRequestSign(t *testing.T) {
 		}
 	}
 
-	_, err = c.RequestSign("zzz", "/elsewhere", nil, "", day)
+	_, err = c.RequestSign(SignRequest{Session: "zzz", Worktree: "/elsewhere"}, day)
 	isRefusal(t, "a session with no plan", err)
-	_, err = c.RequestSign("", "/w/loop", nil, "", day)
+	_, err = c.RequestSign(SignRequest{Worktree: "/w/loop"}, day)
 	isRefusal(t, "no session", err)
-	_, err = c.RequestSign("abc", "w/loop", nil, "", day)
+	_, err = c.RequestSign(SignRequest{Session: "abc", Worktree: "w/loop"}, day)
 	isRefusal(t, "a relative worktree", err)
-	_, err = c.RequestSign("abc", "/w/loop", nil, "two words", day)
+	_, err = c.RequestSign(SignRequest{Session: "abc", Worktree: "/w/loop", Base: "two words"}, day)
 	isRefusal(t, "a base with a space", err)
+}
+
+func testRequestSignPlan(t *testing.T) {
+	for _, name := range []string{"path", "name", "foreign host", "missing", "outside", "symlink outside", "unreadable"} {
+		t.Run(name, func(t *testing.T) {
+			c := testConfig(t)
+			worktree, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out, err := exec.Command("git", "-C", worktree, "init", "-q", "-b", "topic").CombinedOutput(); err != nil {
+				t.Fatalf("git init: %v %s", err, out)
+			}
+			selected, err := c.New(NewOptions{Title: "Selected", Slug: "selected", Sessions: []string{"codex:handoff"}}, day)
+			if err != nil {
+				t.Fatal(err)
+			}
+			implicit, err := c.New(NewOptions{Title: "Implicit", Slug: "implicit", Worktrees: []string{worktree}}, day)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if picked, _, ok := c.Locate("codex:handoff", worktree); !ok || picked.Name != implicit.ID {
+				t.Fatalf("fixture has no competing worktree plan: %+v, %v", picked, ok)
+			}
+			target := selected.Plan
+			logs := []string{selected.Log, implicit.Log}
+			refused := name != "path" && name != "name"
+			switch name {
+			case "name":
+				target = selected.ID
+			case "foreign host":
+				foreign := c
+				foreign.Host = "away"
+				made, err := foreign.New(NewOptions{Title: "Foreign", Slug: "foreign"}, day)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target, logs = made.Plan, append(logs, made.Log)
+			case "missing":
+				target = filepath.Join(c.Dir, "missing.box.org")
+			case "outside", "symlink outside":
+				made, err := testConfig(t).New(NewOptions{Title: "Outside", Slug: "outside"}, day)
+				if err != nil {
+					t.Fatal(err)
+				}
+				target, logs = made.Plan, append(logs, made.Log)
+				if name == "symlink outside" {
+					target = filepath.Join(c.Dir, "outside-link.org")
+					if err := os.Symlink(made.Plan, target); err != nil {
+						t.Fatal(err)
+					}
+				}
+			case "unreadable":
+				if os.Geteuid() == 0 {
+					t.Skip("run as an unprivileged user to exercise a real file-permission refusal")
+				}
+				if err := os.Chmod(selected.File, 0); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if err := os.Chmod(selected.File, 0o644); err != nil {
+						t.Error(err)
+					}
+				})
+			}
+			before := map[string]string{}
+			for _, file := range logs {
+				data, err := os.ReadFile(file)
+				if err != nil {
+					t.Fatal(err)
+				}
+				before[file] = string(data)
+			}
+			id, err := c.RequestSign(SignRequest{Plan: target, Session: "codex:handoff", Worktree: worktree,
+				Branches: []string{"topic", "other"}, Base: "parent-feature"}, day)
+			if refused {
+				if id != "" || err == nil {
+					t.Errorf("invalid explicit plan returned %q, %v", id, err)
+				}
+				if name == "unreadable" {
+					if !errors.Is(err, fs.ErrPermission) {
+						t.Errorf("unreadable plan lost its permission error: %v", err)
+					}
+				} else {
+					isRefusal(t, name, err)
+				}
+			} else {
+				if err != nil || !strings.HasPrefix(id, selected.ID+".") {
+					t.Errorf("explicit plan returned %q, %v", id, err)
+				}
+				p, err := c.Open(selected.Plan)
+				if err != nil {
+					t.Fatal(err)
+				}
+				events, err := p.Events()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(events) == 0 {
+					t.Fatal("explicit request did not reach the selected log")
+				}
+				last := events[len(events)-1]
+				if last.Kind != "sign-requested" || last.Item != selected.ID || last.Sign != id ||
+					last.Session != "codex:handoff" || last.Worktree != worktree || last.Branch != "topic,other" || last.Base != "parent-feature" {
+					t.Errorf("explicit request: %+v", last)
+				}
+			}
+			for file, data := range before {
+				if !refused && file == selected.Log {
+					continue
+				}
+				after, err := os.ReadFile(file)
+				if err != nil || string(after) != data {
+					t.Errorf("request changed %s: %v", file, err)
+				}
+			}
+		})
+	}
 }
 
 // The request names where git sign-pass runs and, unless it is main, the
@@ -69,11 +192,11 @@ func TestRequestSign(t *testing.T) {
 func TestRequestSignWhere(t *testing.T) {
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
-	if _, err := c.RequestSign("abc", "/w/loop", []string{"loop"}, "diagrams", day); err != nil {
+	if _, err := c.RequestSign(SignRequest{Session: "abc", Worktree: "/w/loop", Branches: []string{"loop"}, Base: "diagrams"}, day); err != nil {
 		t.Fatal(err)
 	}
 	for _, base := range []string{"main", "origin/main", "refs/heads/main", "refs/remotes/origin/main"} {
-		if _, err := c.RequestSign("abc", "/w/loop", []string{"loop"}, base, day); err != nil {
+		if _, err := c.RequestSign(SignRequest{Session: "abc", Worktree: "/w/loop", Branches: []string{"loop"}, Base: base}, day); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -97,7 +220,7 @@ func TestRequestSignWhere(t *testing.T) {
 func TestRecordSign(t *testing.T) {
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
-	id, _ := c.RequestSign("abc", "", []string{"loop"}, "", day)
+	id, _ := c.RequestSign(SignRequest{Session: "abc", Branches: []string{"loop"}}, day)
 	file, err := c.RecordSign(id, SignResult{Exit: 2, Summary: "this worktree has uncommitted changes"}, day)
 	if err != nil || file != p.File() {
 		t.Fatalf("record: %q %v", file, err)
@@ -125,9 +248,41 @@ func TestRecordSign(t *testing.T) {
 
 // Each result reaches the session that asked for it once, as one line.
 func TestDeliverSigns(t *testing.T) {
+	t.Run("explicit unassociated plan", func(t *testing.T) {
+		c := testConfig(t)
+		implicit := newPlan(t, c, "implicit")
+		selected, err := c.New(NewOptions{Title: "Selected", Slug: "selected"}, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before, err := os.ReadFile(implicit.log())
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, err := c.RequestSign(SignRequest{Plan: selected.Plan, Session: "abc"}, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.RecordSign(id, SignResult{Summary: "1 signed"}, day); err != nil {
+			t.Fatal(err)
+		}
+		if got := c.DeliverSigns("other", "", day); len(got) != 0 {
+			t.Fatalf("another session received %+v", got)
+		}
+		if got := c.DeliverSigns("abc", "", day); len(got) != 1 || got[0].ID != id {
+			t.Fatalf("explicit unassociated plan delivery: %+v", got)
+		}
+		if got := c.DeliverSigns("abc", "", day); len(got) != 0 {
+			t.Fatalf("delivered twice: %+v", got)
+		}
+		after, err := os.ReadFile(implicit.log())
+		if err != nil || string(after) != string(before) {
+			t.Fatalf("implicit plan log changed: %v", err)
+		}
+	})
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
-	id, _ := c.RequestSign("abc", "", []string{"loop"}, "", day)
+	id, _ := c.RequestSign(SignRequest{Session: "abc", Branches: []string{"loop"}}, day)
 	if got := c.DeliverSigns("abc", "", day); len(got) != 0 {
 		t.Fatalf("delivered before the pass finished: %+v", got)
 	}
@@ -165,7 +320,7 @@ func TestDeliverSigns(t *testing.T) {
 func TestDeliverStale(t *testing.T) {
 	c := testConfig(t)
 	newPlan(t, c, "x")
-	id, _ := c.RequestSign("abc", "", nil, "", day)
+	id, _ := c.RequestSign(SignRequest{Session: "abc"}, day)
 	c.RecordSign(id, SignResult{Exit: 0, Summary: "1 signed"}, day)
 	got := c.DeliverSigns("abc", "", day.Add(25*time.Hour))
 	if len(got) != 1 || !got[0].Stale {
@@ -175,7 +330,7 @@ func TestDeliverStale(t *testing.T) {
 	if !strings.Contains(line, "stale") || !strings.Contains(line, "no follow-up") || !strings.Contains(line, "1 signed") {
 		t.Errorf("line %q", line)
 	}
-	id2, _ := c.RequestSign("abc", "", nil, "", day)
+	id2, _ := c.RequestSign(SignRequest{Session: "abc"}, day)
 	c.RecordSign(id2, SignResult{Exit: 0, Summary: "1 signed"}, day)
 	if got := c.DeliverSigns("abc", "", day.Add(23*time.Hour)); len(got) != 1 || got[0].Stale {
 		t.Errorf("a result under a day old: %+v", got)
@@ -186,7 +341,7 @@ func TestDeliverStale(t *testing.T) {
 func TestDeliverSignsConcurrently(t *testing.T) {
 	c := testConfig(t)
 	newPlan(t, c, "x")
-	id, _ := c.RequestSign("abc", "", nil, "", day)
+	id, _ := c.RequestSign(SignRequest{Session: "abc"}, day)
 	c.RecordSign(id, SignResult{Exit: 0, Summary: "1 signed"}, day)
 	var wg sync.WaitGroup
 	counts := make([]int, 16)
@@ -212,7 +367,7 @@ func TestDeliverSignsConcurrently(t *testing.T) {
 func TestSignResults(t *testing.T) {
 	c := testConfig(t)
 	newPlan(t, c, "x")
-	id, _ := c.RequestSign("abc", "", nil, "", day)
+	id, _ := c.RequestSign(SignRequest{Session: "abc"}, day)
 	if got, err := c.SignResults(id, false, day); err != nil || len(got) != 0 {
 		t.Fatalf("before the pass: %+v %v", got, err)
 	}
@@ -260,7 +415,7 @@ func TestRemindSignResult(t *testing.T) {
 		t.Run(c2.name, func(t *testing.T) {
 			c := testConfig(t)
 			newPlan(t, c, "x")
-			id, err := c.RequestSign("abc", "", []string{"loop"}, "", time.Now())
+			id, err := c.RequestSign(SignRequest{Session: "abc", Branches: []string{"loop"}}, time.Now())
 			if err != nil {
 				t.Fatal(err)
 			}

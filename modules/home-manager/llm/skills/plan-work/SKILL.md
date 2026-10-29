@@ -224,6 +224,11 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
   event about its work, not its plan text or schedule, is logged for it. A
   sandbox cannot name one.
 - The review pipeline's events are the `review-change` skill's.
+- When you know the plan for a signing hand-back, mint its notification ID
+  with `agent-plan sign-id --plan PLAN --branch BRANCH`. `--plan` chooses
+  the notification log; `--worktree` and `--base` still name where the pass
+  runs and what it signs. Without `--plan`, selection uses the session and
+  worktree.
 
 `agent-plan status PLAN` lists the steps without `done` and those done but
 not `verified`, the parts ready to start, the steps ready now, what still
