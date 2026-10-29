@@ -886,12 +886,13 @@
           touch $out
         '';
 
-      # Every line of a shell code block in the skills and the AGENTS.md
-      # files, judged by the guard as a Claude Code Bash call with the ngrok
-      # Mac's excluded commands: none is refused for naming an excluded
-      # command anywhere but alone, or for running a read of gh's that
-      # gh-read runs, so no instruction hands an agent a line its sandbox
-      # fails. A <PLACEHOLDER> is read as a word, not a redirection.
+      # Every line of a shell code block, fenced or indented, and every
+      # inline code span in the skills and the AGENTS.md files, judged by
+      # the guard as a Claude Code Bash call with the ngrok Mac's excluded
+      # commands: none is refused for naming an excluded command anywhere
+      # but alone, or for running a read of gh's that gh-read runs, so no
+      # instruction hands an agent a line its sandbox fails. A
+      # <PLACEHOLDER> is read as a word, not a redirection.
       checks.skill-commands = let
         ngrok = darwinSystems.ngrok;
         excluded = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username}.wgn.home.llm.guard.excludedCommands;
@@ -913,7 +914,7 @@
           cd ${docs}
           # FILE:LINE, a tab, and each command line of an sh, bash, shell,
           # fish, console or unlabelled code block, fenced with ``` or ~~~,
-          # continuations joined.
+          # or indented, continuations joined, and each inline code span.
           lines() {
             awk '
               function emit(line, file, at) {
@@ -927,7 +928,15 @@
                 if (pending != "") emit(pending, pendfile, start)
                 pending = ""
               }
-              FNR == 1 { flush(); fence = ""; kind = "" }
+              # A line of a shell block, joined to the lines it continues
+              # onto with a trailing backslash.
+              function shell(line) {
+                sub(/^[ \t]+/, "", line)
+                if (pending == "") { start = FNR; pendfile = FILENAME } else { line = pending " " line; pending = "" }
+                if (line ~ /\\$/) { sub(/\\$/, "", line); pending = line; return }
+                emit(line, FILENAME, start)
+              }
+              FNR == 1 { flush(); fence = ""; kind = ""; list = -1; blank = 1; code = 0 }
               # A fence closes only on a run of its own character at least
               # as long as the one that opened it, with nothing after.
               /^[ \t]*(```|~~~)/ {
@@ -935,10 +944,11 @@
                 ch = substr(mark, 1, 1); run = mark; sub("[^" ch "].*", "", run)
                 if (fence != "") {
                   if (substr(fence, 1, 1) == ch && length(run) >= length(fence) && mark ~ ("^" run "[ \t]*$")) {
-                    flush(); fence = ""; kind = ""
+                    flush(); fence = ""; kind = ""; blank = 1
                   }
                   next
                 }
+                flush(); code = 0
                 # Only the first word of the info string counts, as in `bash title=x`.
                 fence = run
                 info = mark; sub("^" run "[ \t]*", "", info); sub(/[ \t{].*/, "", info)
@@ -960,11 +970,44 @@
                 }
                 next
               }
-              kind == "shell" {
-                line = $0; sub(/^[ \t]+/, "", line)
-                if (pending == "") { start = FNR; pendfile = FILENAME } else { line = pending " " line; pending = "" }
-                if (line ~ /\\$/) { sub(/\\$/, "", line); pending = line; next }
-                emit(line, FILENAME, start)
+              kind == "shell" { shell($0); next }
+              kind != "" { next }
+              # Outside a fence. A list item sets the column its content
+              # starts at, and a line indented less than that after a
+              # blank line ends the list.
+              {
+                line = $0; gsub(/\t/, "    ", line)
+                if (line ~ /^ *$/) { blank = 1; next }
+                match(line, /^ */); indent = RLENGTH
+                base = (list >= 0) ? list : 0
+                # An indented code block starts after a blank line, four
+                # columns past the content of the list it is in, if any.
+                if (indent >= base + 4 && (blank || code)) {
+                  code = 1; blank = 0; shell(line); next
+                }
+                if (code) flush()
+                code = 0
+                if (match(line, /^ *([-*+]|[0-9]+[.)])( +|$)/)) {
+                  list = RLENGTH
+                } else if (blank && indent < base) {
+                  list = -1
+                }
+                blank = 0
+                # Each code span: a run of backticks, up to the next run
+                # of the same length, with one space trimmed from each end
+                # of what it holds where both have one.
+                rest = line
+                while (match(rest, /`+/)) {
+                  n = RLENGTH; rest = substr(rest, RSTART + n); span = ""; closed = 0
+                  while (match(rest, /`+/)) {
+                    span = span substr(rest, 1, RSTART - 1)
+                    if (RLENGTH == n) { rest = substr(rest, RSTART + n); closed = 1; break }
+                    span = span substr(rest, RSTART, RLENGTH); rest = substr(rest, RSTART + RLENGTH)
+                  }
+                  if (!closed) break
+                  if (span ~ /^ .* $/) span = substr(span, 2, length(span) - 2)
+                  emit(span, FILENAME, FNR)
+                }
               }
               END { flush() }' "$@"
           }
