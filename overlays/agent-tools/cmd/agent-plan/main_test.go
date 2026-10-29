@@ -384,6 +384,30 @@ func TestCommands(t *testing.T) {
 		}
 	})
 
+	// workstream new writes a workstream's file, and list lists them.
+	t.Run("workstream", func(t *testing.T) {
+		c := setup(t)
+		code, out, errs := agentPlan(t, "", "workstream", "new", "--title", "Agent tooling", "--summary", "The agent tools.")
+		var w plans.Workstream
+		json.Unmarshal([]byte(out), &w)
+		if code != 0 || w.File != filepath.Join(c.Dir, "workstream-agent-tooling.box.org") || w.ID == "" {
+			t.Fatalf("workstream new: %d %s %s", code, out, errs)
+		}
+		code, out, _ = agentPlan(t, "", "workstream", "list")
+		if code != 0 || out != "- Agent tooling (workstream-agent-tooling.box)\n" {
+			t.Errorf("workstream list: %d %q", code, out)
+		}
+		code, out, _ = agentPlan(t, "", "workstream", "list", "--json")
+		if code != 0 || !strings.Contains(out, `"id": "`+w.ID+`"`) {
+			t.Errorf("workstream list --json: %d %s", code, out)
+		}
+		for _, args := range [][]string{{"workstream"}, {"workstream", "remove"}, {"workstream", "new"}, {"workstream", "list", "x"}} {
+			if code, out, errs := agentPlan(t, "", args...); code == 0 {
+				t.Errorf("%v: %d %s %s", args, code, out, errs)
+			}
+		}
+	})
+
 	t.Run("reference", func(t *testing.T) {
 		plan := sessionPlan(t)
 		code, out, errs := agentPlan(t, "", "reference", plan, "https://example.com/guide", "--note", "Used for the review; fed Q1.")

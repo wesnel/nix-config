@@ -161,7 +161,7 @@ func lockFile(path string, try bool) (*os.File, error) {
 	return f, nil
 }
 
-// ownFiles are this host's plan files, as paths relative to the
+// ownFiles are this host's plan files and workstreams, as paths relative to the
 // repository: those in the plans directory, and those in any of trees that
 // are gone from it.
 func (c Config) ownFiles(ctx context.Context, trees ...string) ([]string, error) {
@@ -201,8 +201,11 @@ func (c Config) ownFiles(ctx context.Context, trees ...string) ([]string, error)
 }
 
 // ownName reports whether a file named name in the plans directory is one
-// of this host's plan files.
+// of this host's plan files or workstreams, which sync sends.
 func (c Config) ownName(name string) bool {
+	if m := workstreamFile.FindStringSubmatch(name); m != nil {
+		return m[3] == c.Host
+	}
 	m := planFile.FindStringSubmatch(name)
 	return m != nil && m[2] == c.Host
 }

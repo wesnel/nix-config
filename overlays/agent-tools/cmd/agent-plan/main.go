@@ -37,6 +37,15 @@ have (see status) is refused and writes nothing.
                      else NAME.org in plans.templates, the built-in ones
   new --parent PLAN --part P1 --title T [...]
                      create part P1's plan file beside its parent's
+  workstream new --title T [--summary S]
+                     write a workstream, a line of work many plans share,
+                     as workstream-<slug>.<host>.org beside the plans, the
+                     slug made from T: an org-roam node holding T and the
+                     summary alone, for a person to edit. Prints its file,
+                     name and ID; where any host has that slug already,
+                     prints that one, unchanged, as existed
+  workstream list [--json]
+                     every host's workstreams, by title
   log PLAN --item ID --kind KIND [--summary S] [--role R] [--agent A] [--branch B]
       [--commit SUBJECT] [--evidence E] [--review ROUND.ID --outcome O]
       [--command CMD [--dir DIR]]
@@ -265,7 +274,8 @@ have (see status) is refused and writes nothing.
   sync [--pull] [--settle DURATION]
                      take the other hosts' plans by fast-forwarding the
                      checked-out branch; then, if HEAD holds the remote's
-                     branch, commit this host's plan files and nothing else
+                     branch, commit this host's plan files and workstreams
+                     and nothing else
                      onto it, authored by the git user.name and user.email
                      (agent-plan sync <agent-plan@HOST.invalid> where there
                      is no user.email) and committed by agent-plan sync
@@ -279,7 +289,8 @@ have (see status) is refused and writes nothing.
   reseal PLAN        accept a log edited outside agent-plan, recording that in
                      it; the operator's to run
 
-find, status and new first take the other hosts' plans, quietly, if they can.
+find, status, new and workstream first take the other hosts' plans, quietly,
+if they can.
 Values are single lines but --text and --context, which may span lines as
 section says; list values hold no whitespace.
 KIND: ` + strings.Join(plans.Kinds, ", ") + `
@@ -519,10 +530,26 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		return p, true
 	}
-	if command == "new" || command == "status" || (command == "find" && !*hook) {
+	if command == "new" || command == "status" || command == "workstream" || (command == "find" && !*hook) {
 		c.Pull()
 	}
 	switch command {
+	case "workstream":
+		switch {
+		case len(positional) == 1 && positional[0] == "new" && !*asJSON:
+			return report(c.NewWorkstream(*title, *summary))
+		case len(positional) == 1 && positional[0] == "list" && *title == "" && *summary == "":
+			ws, err := c.Workstreams()
+			if err != nil || *asJSON {
+				return report(ws, err)
+			}
+			for _, w := range ws {
+				fmt.Fprintf(stdout, "- %s (%s)\n", w.Title, w.Name)
+			}
+			return 0
+		}
+		fmt.Fprint(stderr, "agent-plan workstream: takes new --title T [--summary S], or list [--json]\n")
+		return 2
 	case "new":
 		if len(positional) != 0 {
 			fmt.Fprint(stderr, usage)
