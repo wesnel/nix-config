@@ -227,9 +227,16 @@ with lib; let
   in
     match (go (stringToCharacters expanded) + optionalString (!glob) "(/.*)?") path != null;
 
-  # The excluded commands as Codex rule prefixes: "pr-loop open *" is
-  # ["pr-loop" "open"].
-  excludedPrefixes = map (c: splitString " " (removeSuffix " *" c)) config.wgn.home.llm.guard.excludedCommands;
+  # The excluded commands an approved run can complete in Codex, as Codex
+  # rule prefixes: "agent-plan new *" is ["agent-plan" "new"]. gh-read,
+  # pr-loop and git delegate need the gh login or the reviewers'
+  # credentials, which no command in the profile can read, approved or
+  # not, so asking before them would only ask for a failure; pr-loop's
+  # and git delegate's run as pr-loop mcp's tools instead.
+  excludedPrefixes = map (c: splitString " " (removeSuffix " *" c)) (
+    filter (c: !(any (p: hasPrefix p c) ["gh-read " "git delegate " "git-delegate " "pr-loop "]))
+    config.wgn.home.llm.guard.excludedCommands
+  );
 
   # Commands' temporary directory on macOS, in place of the per-user one,
   # which holds the decrypted secrets and is read-only to them.
@@ -514,14 +521,14 @@ in {
       '';
     }
 
-    # The excluded commands need what the profile withholds: GitHub, the
-    # operator's logins, the review records. Codex keeps a command
-    # sandboxed under any allow rule while the profile denies reads, so
-    # the operator approves each run instead: a prompt rule asks every
-    # time, and outranks an allow rule a past approval saved to
-    # default.rules. Approved, a command run with `require_escalated`
-    # writes beyond the workspace but still cannot read the denied paths,
-    # and the proxy asks again for a host it does not allow.
+    # agent-plan's writes need what the profile withholds: the plans
+    # directory. Codex keeps a command sandboxed under any allow rule while
+    # the profile denies reads, so the operator approves each run instead:
+    # a prompt rule asks every time, and outranks an allow rule a past
+    # approval saved to default.rules. Approved, a command run with
+    # `require_escalated` writes beyond the workspace but still cannot read
+    # the denied paths, and the proxy asks again for a host it does not
+    # allow.
     {
       home.file.".codex/rules/nix.rules".text =
         concatMapStrings (p: ''
@@ -539,10 +546,55 @@ in {
             && (cfg.sandbox.approvals_reviewer or null) == "user"
             && all (p: hasInfix (builtins.toJSON p) rules) excludedPrefixes
             && hasInfix (escapeShellArg (builtins.toJSON cfg.sandbox)) config.home.activation.codexSandbox.data;
-          message = "wgn.home.codex: Codex must ask the operator before each command of wgn.home.llm.guard.excludedCommands, through a prompt rule in ~/.codex/rules/nix.rules";
+          message = "wgn.home.codex: Codex must ask the operator before each of agent-plan's writes in wgn.home.llm.guard.excludedCommands, through a prompt rule in ~/.codex/rules/nix.rules";
         }
       ];
     }
+
+    # pr-loop mcp, as the MCP server agent_ops, the name the guard lets its
+    # tools through under (OpsServer in agent-tools' internal/guard): the
+    # GitHub and review commands no command in the profile can run. Codex
+    # starts it as a process of its own, outside that sandbox, with only
+    # its core environment (HOME, PATH, TMPDIR and the like) and the
+    # variables env_vars names, a review loop's, which pr-loop holds its
+    # writes to. Approval mode prompt asks the operator before every call,
+    # and never for the rest of the session; approval_policy and
+    # approvals_reviewer above keep the asking with the operator, and a
+    # PermissionRequest hook, which could answer for them, is refused.
+    # tool_timeout_sec covers a git delegate run of several reviewers.
+    # Merged into the config.toml Codex writes, the entry replaced whole.
+    (let
+      opsServer = {
+        command = getExe' config.wgn.home.llm.agentTools "pr-loop";
+        args = ["mcp"];
+        env_vars = ["PR_LOOP_SESSION" "PR_LOOP_MODE"];
+        default_tools_approval_mode = "prompt";
+        tool_timeout_sec = 7200;
+      };
+      servers = builtins.toJSON {agent_ops = opsServer;};
+      hooks = builtins.fromJSON config.home.file.".codex/hooks.json".text;
+    in {
+      home.activation.codexOpsServer = lib.hm.dag.entryAfter ["writeBoundary"] ''
+        if [ -z "''${DRY_RUN:-}" ]; then
+          ${registerMcpServers} "$HOME/.codex/config.toml" ${escapeShellArg servers} \
+            || warnEcho "pr-loop mcp was not registered with Codex."
+        fi
+      '';
+
+      assertions = [
+        {
+          assertion =
+            opsServer.default_tools_approval_mode
+            == "prompt"
+            && !(opsServer ? tools)
+            && !(hooks.hooks ? PermissionRequest)
+            # hasInfix takes no string naming a store path.
+            && hasInfix (unsafeDiscardStringContext (escapeShellArg servers))
+            (unsafeDiscardStringContext config.home.activation.codexOpsServer.data);
+          message = "wgn.home.codex: Codex must ask the operator before every call to pr-loop mcp's tools: approval mode prompt for the whole server, written into config.toml, and no PermissionRequest hook";
+        }
+      ];
+    })
 
     # Every interactive session, and each sub-agent started without a role,
     # reasons at high effort, as Claude Code's sub-agents do. Merged into the

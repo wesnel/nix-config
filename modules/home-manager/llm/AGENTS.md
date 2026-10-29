@@ -85,12 +85,18 @@ that whatever it would have shown is unverified.
 A secret that reaches the session anyway, in a log, a captured request or a
 fixture, is written nowhere: put `<REDACTED>` in its place.
 
-In Codex, `gh-read`, `git delegate`, `pr-loop`'s GitHub commands and
-`agent-plan`'s writes each wait for the operator's approval, every run:
-run each with `sandbox_permissions` set to `require_escalated` and a
-one-line justification, as a command of its own. Without
-`require_escalated` an approved run stays in the sandbox, where it cannot
-reach GitHub. A declined run is a refusal.
+In Codex, no command reaches the gh login or the reviewers' logins, so
+`pr-loop`'s GitHub commands and `git delegate` run as the tools of the
+`agent_ops` MCP server instead, one named for each: `pr-loop X` is
+`pr_loop_X` and `git delegate X` is `git_delegate_X`, dashes as
+underscores (`git delegate` itself is `git_delegate`, `pr-loop reply
+--from` is `pr_loop_reply`). Each flag is the argument of its name,
+`worktree` is the worktree's absolute path, and a file is a path in it.
+`gh-read` has no tool and cannot run there. `agent-plan`'s writes run as
+commands of their own with `sandbox_permissions` set to
+`require_escalated` and a one-line justification; without it an approved
+run stays in the sandbox, which cannot write the plans. Codex asks the
+operator before each of these, every time; a declined one is a refusal.
 
 ## Commands the operator runs
 
