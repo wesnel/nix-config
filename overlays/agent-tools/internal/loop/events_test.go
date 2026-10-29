@@ -13,9 +13,11 @@ import (
 )
 
 // loopPlan makes a plan, in a plans directory of the test's own, that
-// names worktrees and branches.
+// names worktrees and branches and the Claude Code session the test runs
+// pr-loop in: the worktrees are main checkouts, which pick no plan.
 func loopPlan(t *testing.T, worktrees, branches []string) plans.Plan {
 	t.Helper()
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "s-loop")
 	root, _ := filepath.EvalSymlinks(t.TempDir())
 	c := plans.Config{Dir: filepath.Join(root, "agents"), Host: "box"}
 	config := filepath.Join(root, "config.json")
@@ -25,7 +27,8 @@ func loopPlan(t *testing.T, worktrees, branches []string) plans.Plan {
 	for i, w := range worktrees {
 		worktrees[i], _ = filepath.EvalSymlinks(w)
 	}
-	made, err := c.New(plans.NewOptions{Title: "Answer the bots", Slug: "loop", Worktrees: worktrees, Branches: branches}, time.Now())
+	made, err := c.New(plans.NewOptions{Title: "Answer the bots", Slug: "loop", Worktrees: worktrees, Branches: branches,
+		Sessions: []string{"claude:s-loop"}}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

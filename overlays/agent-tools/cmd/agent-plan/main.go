@@ -67,7 +67,8 @@ have (see status) is refused and writes nothing.
                      the dashboard show them
   find [--session ID] [--worktree DIR] [--branch B]
                      this host's plan files that match any one given (default:
-                     this session, worktree and branch)
+                     this session, and the worktree and branch if a linked
+                     worktree, never a repository's main checkout)
   find --hook        the same for a Claude Code SessionStart hook (reads stdin),
                      with brief --resume after /clear or a compaction; as its
                      SessionEnd hook, hands the plan of a session /clear ends
@@ -666,8 +667,10 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		o := plans.FindOptions{Session: session, Worktree: worktree, Branch: branch}
 		if o == (plans.FindOptions{}) {
-			o.Session = claudeSession()
-			o.Worktree, o.Branch = checkout()
+			cwd, _ := os.Getwd()
+			if o = plans.Here(claudeSession(), cwd); o == (plans.FindOptions{}) {
+				return report([]plans.Found{}, nil)
+			}
 		}
 		return report(c.Find(o))
 	case "goal":

@@ -820,6 +820,18 @@ func HostBranches() []string {
 	return out
 }
 
+// Here is what a bare `agent-plan find` matches: session, and the
+// worktree containing dir with its branch only if it is a linked worktree.
+// A repository's main checkout and the branch checked out there are named
+// by many plans, as Locate says, so they match none.
+func Here(session, dir string) FindOptions {
+	o := FindOptions{Session: session}
+	if top, branch := checkout(dir); linkedWorktree(top) {
+		o.Worktree, o.Branch = top, branch
+	}
+	return o
+}
+
 // Find lists this host's plan files that match, newest plan first.
 func (c Config) Find(o FindOptions) ([]Found, error) {
 	if o.Session == "" && o.Worktree == "" && o.Branch == "" {

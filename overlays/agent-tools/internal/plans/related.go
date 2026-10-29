@@ -3,7 +3,6 @@ package plans
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -157,14 +156,6 @@ func factsOf(p Plan) (planFacts, error) {
 		}
 	}
 	return f, nil
-}
-
-// linkedWorktree reports whether dir is a worktree added to a repository,
-// whose .git is a file, rather than its main checkout, whose .git is a
-// directory: every plan of a repository may name the main checkout.
-func linkedWorktree(dir string) bool {
-	info, err := os.Lstat(filepath.Join(dir, ".git"))
-	return err == nil && info.Mode().IsRegular()
 }
 
 // sameRepository reports whether a and b may be in the same repository:

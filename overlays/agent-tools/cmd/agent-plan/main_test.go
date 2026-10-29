@@ -77,6 +77,39 @@ func sessionPlan(t *testing.T) string {
 	return newPlan(t)
 }
 
+// mainCheckoutPlans makes a repository with its main checkout on main and a
+// linked worktree on loop, and two plans of session s-9 naming the main
+// checkout, each with an open question; newer names the branch main too.
+func mainCheckoutPlans(t *testing.T) (main, linked string) {
+	t.Helper()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Env = append(gitenv.Without(os.Environ()), "GIT_AUTHOR_NAME=T", "GIT_AUTHOR_EMAIL=t@e",
+			"GIT_COMMITTER_NAME=T", "GIT_COMMITTER_EMAIL=t@e")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	main, _ = filepath.EvalSymlinks(t.TempDir())
+	linked, _ = filepath.EvalSymlinks(t.TempDir())
+	git("-C", main, "init", "-q", "-b", "main")
+	git("-C", main, "commit", "-q", "--allow-empty", "-m", "base")
+	git("-C", main, "worktree", "add", "-q", "-b", "loop", linked)
+	for _, args := range [][]string{{"--slug", "older"}, {"--slug", "newer", "--branch", "origin/main..main"}} {
+		code, out, errs := agentPlan(t, "", append([]string{"new", "--title", "Add it", "--session", "claude:s-9",
+			"--worktree", main}, args...)...)
+		var made plans.Created
+		if code != 0 || json.Unmarshal([]byte(out), &made) != nil {
+			t.Fatalf("new %v: %d %s", args, code, errs)
+		}
+		if code, _, errs := agentPlan(t, "", "ask", made.Plan, "--question", "Keep it?", "--recommendation", "yes"); code != 0 {
+			t.Fatalf("ask: %d %s", code, errs)
+		}
+	}
+	return main, linked
+}
+
 // withQuestions makes a plan, as sessionPlan does, with two open questions:
 // Q1, and Q2, which waits for Q1.
 func withQuestions(t *testing.T) string {
@@ -688,6 +721,64 @@ func TestHooks(t *testing.T) {
 		code, out, _ = agentPlan(t, `{"session_id":"s-10","hook_event_name":"SessionStart","source":"clear","cwd":"/nowhere"}`, "find", "--hook")
 		if code != 0 || !strings.Contains(out, "Resume brief of plan "+plan) {
 			t.Errorf("find --hook after /clear: %d %s", code, out)
+		}
+	})
+
+	// Many plans name a repository's main checkout; a session started
+	// there that none of them names is given none of them, while one
+	// started in a linked worktree a plan names is given that plan.
+	t.Run("Claude Code session in a checkout another session's plan names", func(t *testing.T) {
+		setup(t)
+		main, linked := mainCheckoutPlans(t)
+		code, out, _ := agentPlan(t, `{"session_id":"other","source":"resume","cwd":"`+main+`"}`, "find", "--hook")
+		if code != 0 || out != "" {
+			t.Errorf("find --hook in the main checkout: %d %q", code, out)
+		}
+		code, made, errs := agentPlan(t, "", "new", "--title", "Add the loop", "--slug", "loop", "--session", "claude:s-9",
+			"--worktree", linked)
+		if code != 0 {
+			t.Fatalf("new loop: %d %s", code, errs)
+		}
+		var plan plans.Created
+		json.Unmarshal([]byte(made), &plan)
+		code, out, _ = agentPlan(t, `{"session_id":"other","source":"resume","cwd":"`+linked+`"}`, "find", "--hook")
+		if code != 0 || !strings.Contains(out, plan.Plan) || strings.Contains(out, "older") || strings.Contains(out, "newer") {
+			t.Errorf("find --hook in the linked worktree: %d %s", code, out)
+		}
+	})
+
+	// The questions skill takes the plan from the first result of a bare
+	// `agent-plan find`, so a fresh session in the main checkout must find
+	// none of the plans that name it, or it offers their questions.
+	t.Run("find in a checkout another session's plan names", func(t *testing.T) {
+		setup(t)
+		main, linked := mainCheckoutPlans(t)
+		t.Setenv("CLAUDE_CODE_SESSION_ID", "fresh")
+		find := func(dir string, args ...string) []plans.Found {
+			t.Helper()
+			t.Chdir(dir)
+			code, out, errs := agentPlan(t, "", append([]string{"find"}, args...)...)
+			var found []plans.Found
+			if code != 0 || json.Unmarshal([]byte(out), &found) != nil {
+				t.Fatalf("find %v in %s: %d %s %s", args, dir, code, out, errs)
+			}
+			return found
+		}
+		if found := find(main); len(found) != 0 {
+			t.Errorf("find in the main checkout: %+v", found)
+		}
+		if found := find(main, "--worktree", main); len(found) != 2 {
+			t.Errorf("find --worktree MAIN: %+v", found)
+		}
+		code, made, errs := agentPlan(t, "", "new", "--title", "Add the loop", "--slug", "loop", "--session", "claude:s-9",
+			"--worktree", linked)
+		if code != 0 {
+			t.Fatalf("new loop: %d %s", code, errs)
+		}
+		var plan plans.Created
+		json.Unmarshal([]byte(made), &plan)
+		if found := find(linked); len(found) != 1 || found[0].Plan != plan.Plan {
+			t.Errorf("find in the linked worktree: %+v", found)
 		}
 	})
 

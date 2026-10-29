@@ -159,11 +159,14 @@ func testPostRecordsFacts(t *testing.T) {
 		t.Errorf("the session's first commit: %s", out)
 	}
 
-	// Codex hands the output over as one string after its own header.
+	// Codex hands the output over as one string after its own header. The
+	// plan names the main checkout but not this session, and the main
+	// checkout is no one plan's, so the commit is unplanned work.
 	codex, _ := json.Marshal(map[string]any{"session_id": "s9", "cwd": main, "hook_event_name": "PostToolUse",
 		"tool_name": "Bash", "turn_id": "t", "tool_input": map[string]string{"command": "git commit --allow-empty -m 'Test it'"},
 		"tool_response": "Exit code: 0\nWall time: 0.1 seconds\nOutput:\n" + gitOut(t, main, "commit", "--allow-empty", "-m", "Test it")})
-	if out := postHook(t, string(codex)); !strings.Contains(out, "`signing-pass` skill") {
+	if out := postHook(t, string(codex)); !strings.Contains(out, "`signing-pass` skill") ||
+		!strings.Contains(out, "No plan named this session or worktree") || strings.Contains(out, p.File()) {
 		t.Errorf("another session's first commit: %s", out)
 	}
 
@@ -214,7 +217,6 @@ func testPostRecordsFacts(t *testing.T) {
 	}
 	want := []string{
 		"committed " + p.Name + " main Add the loop Add the loop s1",
-		"committed " + p.Name + " main Test it Test it s9",
 		"committed P1 part Add the flag Add the flag s1",
 		"pushed " + p.Name + " topic  opened https://github.com/o/r/pull/12 ",
 		"pushed " + p.Name + "   pushed other topic ",

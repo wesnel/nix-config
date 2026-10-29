@@ -18,15 +18,20 @@ import (
 // Locate is the plan file that what a session did in a worktree belongs
 // to. The session picks the plan: of this host's plans, the newest whose
 // files name both the session and the worktree, else the newest naming the
-// session, else the newest naming the worktree. A shared worktree, such as
-// the main checkout, is named by many plans, so it never outranks the
-// session. The worktree picks the file within the plan: a part naming the
-// worktree, else the plan's own file naming it, else its own file naming
-// the session, else its first part naming the session. A part's SESSIONS
-// may not name the session (a part made without one, or after a /clear),
-// so a commit in a part's worktree lands on the part all the same. part is
-// the part whose file it is, or "" for the plan's own.
+// session, else the newest naming the worktree. Only a linked worktree
+// counts: a repository's main checkout is named by many plans, so it picks
+// neither a plan nor a file within one, and a session no plan names gets
+// no plan there. A linked worktree never outranks the session either. The
+// worktree picks the file within the plan: a part naming the worktree,
+// else the plan's own file naming it, else its own file naming the
+// session, else its first part naming the session. A part's SESSIONS may
+// not name the session (a part made without one, or after a /clear), so a
+// commit in a part's worktree lands on the part all the same. part is the
+// part whose file it is, or "" for the plan's own.
 func (c Config) Locate(session, worktree string) (p Plan, part string, ok bool) {
+	if !linkedWorktree(worktree) {
+		worktree = ""
+	}
 	if session == "" && worktree == "" {
 		return Plan{}, "", false
 	}
@@ -83,6 +88,18 @@ func (c Config) Locate(session, worktree string) (p Plan, part string, ok bool) 
 	}
 	p, err = c.Open(pick.Plan)
 	return p, pick.Part, err == nil
+}
+
+// linkedWorktree is whether top is a linked worktree of its repository,
+// whose git directory differs from the repository's common one; false for
+// the main checkout, for "" and for what git cannot read.
+func linkedWorktree(top string) bool {
+	if top == "" {
+		return false
+	}
+	out, err := git.Run("-C", top, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir")
+	dirs := strings.Split(out, "\n")
+	return err == nil && len(dirs) == 2 && dirs[0] != dirs[1]
 }
 
 // branchChanged is the kind of the event NoteBranch logs.

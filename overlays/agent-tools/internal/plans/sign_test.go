@@ -20,7 +20,8 @@ func TestRequestSign(t *testing.T) {
 	t.Run("ownership only", func(t *testing.T) {
 		c := testConfig(t)
 		p := newPlan(t, c, "x")
-		worktree := t.TempDir()
+		_, linked := checkouts(t, 1)
+		worktree := linked[0]
 		if _, err := p.SetOwner(worktree, "builder", day); err != nil {
 			t.Fatal(err)
 		}
