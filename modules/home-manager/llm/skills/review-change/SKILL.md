@@ -255,7 +255,8 @@ fixing it again.
 
 - **fix**: real and inside the goal statement. A fixup of the commit that
   owns the code. Answer with what changed, and resolve once the fix is
-  pushed.
+  pushed. A fix that adds text to a doc or comment changes what the reader
+  does; if the nearby text already makes the point, the fix is a rebut.
 - **propose**: what would be fix, on someone else's pull request. Nothing
   is changed or posted: the finding's `body` is the comment as the
   operator would post it.
