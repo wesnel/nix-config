@@ -111,8 +111,7 @@ next one starts at step 1.
    branch's tip at round start to the branch. The goal statement is the
    PR's scope statement, its part's Goal (`--plan PLAN --part P1`), and
    the items are the threads and checks the
-   fixups answer. In a loop session `git delegate`'s Codex review exits 4, so the
-   second opinion is an `adversarial-reviewer` sub-agent. A `compat` review
+   fixups answer. A `compat` review
    the change is routed to also takes `--description FILE`, the PR's
    description as it stands. A finding still standing goes out with the
    push and into the hand-back.

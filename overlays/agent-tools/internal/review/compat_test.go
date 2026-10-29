@@ -202,7 +202,7 @@ func TestFocusCompat(t *testing.T) {
 	// given, its goal included.
 	t.Run("a hint that runs", func(t *testing.T) {
 		f := setUp(t, true)
-		t.Setenv("PR_LOOP_SESSION", "1")
+		t.Setenv("FAKE_CODEX", "unauthenticated")
 		code, _, stderr := runDelegate(t, "--reviewer", "codex", "--plan", f.plan, f.base+"..HEAD")
 		if code != 4 || !strings.Contains(stderr, "`git delegate --print-prompt --reviewer codex --plan "+f.plan+" "+f.base+"..HEAD`") {
 			t.Errorf("exit %d\n%s", code, stderr)

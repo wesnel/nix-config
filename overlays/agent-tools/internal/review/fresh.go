@@ -118,9 +118,6 @@ func generalReviewer() string {
 // unavailable says why Codex may not or cannot review from here, or "".
 // Its account's availability is the caller's to check.
 func unavailable() string {
-	if os.Getenv("PR_LOOP_SESSION") != "" {
-		return "this is a review-loop session (PR_LOOP_SESSION is set), which reads other people's review text and sends none of it to OpenAI"
-	}
 	if _, err := exec.LookPath("codex"); err != nil {
 		return "codex is not on PATH"
 	}

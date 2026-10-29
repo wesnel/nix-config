@@ -348,9 +348,8 @@ delegate and pr-loop write them: the sandbox denies the directory to every
 command, and Claude Code's file tools are denied it. Emacs's review-guide
 reads them. delegate prints JSON and exits 0 with no open findings, 3 with
 open findings, 4 when a reviewer could not run (its provider held, as below;
-Codex not installed or signed in, its sandbox cannot start, or in a
-review-loop session, which reads other people's review text; claude or its
-config missing; a reply that did not fit twice), and 5 when a record fails
+Codex not installed or signed in, or its sandbox cannot start; claude or
+its config missing; a reply that did not fit twice), and 5 when a record fails
 its structure check, which only a hand edit makes. `--print-prompt` prints a
 reviewer's prompt instead of running it. See `git delegate -h`.
 

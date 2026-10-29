@@ -188,9 +188,6 @@ in pr-review.
 - The focused reviews and the walkthrough, through `git delegate`: Claude
   Code's reviewer agents, run headless with no settings, MCP server or
   CLAUDE.md of anyone's, in a sandbox of their own.
-- Never Codex in a review-loop session, which reads other people's review
-  text: there delegate's Codex review exits 4, and the second opinion is an
-  `adversarial-reviewer` sub-agent.
 - A provider the operator says is exhausted or must not be called: run
   `git delegate availability --disable claude` (or `codex`) before
   reviewing. `git delegate availability` shows each provider's hold and
