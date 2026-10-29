@@ -542,8 +542,8 @@ the session's user settings are a read-only link into the store, where
 reads of credentials and the notes deploy key, which Read rules hold
 @-mentions to. They hold the baseline guard's hook with `onFailure:
 block` (Claude Code 2.1.295 or later), so a hook that cannot run denies,
-and allow the skill's tools: Bash `plan-dash export`, `plan-dash page`
-and `plan-dash page published`, Artifact, Monitor, ArtifactData, Agent,
+and allow the skill's tools: Bash `plan-dash export`, `plan-dash page`,
+`plan-dash page published` and `plan-dash space`, Artifact, Monitor, ArtifactData, Agent,
 Skill, PushNotification and ToolSearch; and a SessionStart hook,
 `plan-dash prime`, that names the page and the `agent-plans` skill after
 every start, `/clear` and `/compact`. The
@@ -561,11 +561,12 @@ it in the page's Today. The kill switch is its own: create
 `$XDG_STATE_HOME/agent-plans/off`, then `systemctl --user stop
 agent-plans.service`.
 
-Its page is named in `agent-tools/agent-plans.json` under the XDG config
-directory, `{"url": "https://claude.ai/artifact/ID"}`, which the operator
-writes once on the host; the URL stays out of this repository. Started
-without it, the session publishes the page, pinned, and gives the
-operator its URL to write there before restarting the service.
+Its page is `wgn.home.llm.agentPlans.claudePage` in the machine's config,
+`https://claude.ai/artifact/ID`, which the llm module writes as
+`agentPlans.claudePage` in the read-only `agent-tools/config.json`, so no
+session can point the page elsewhere. Started without it, the session
+publishes the page, pinned, and gives the operator its URL to set there
+and switch to before restarting the service.
 
 The page is `overlays/agent-tools/internal/agentplans/page.html`, built
 into agent-tools. `plan-dash page` writes it to
@@ -596,6 +597,29 @@ and looked up in the page's tables by own key only, so a STATUS such as
 that, to the capabilities, to the collections it reads, to making no
 write and to the fields of each document. It uses Mantle's colours in
 the system face and loads no file.
+
+### the Space mirror
+
+Codex's counterpart of the page is a block on a ChatGPT Space page,
+`wgn.home.llm.agentPlans.spacePage` in the machine's config, which the
+llm module writes as `agentPlans.spacePage` in `agent-tools/config.json`.
+After each update the session runs `plan-dash space`, which embeds the
+documents `export` last wrote in the page (`export.Snapshot`; it then
+reads no database, loads nothing and shows diagrams as source, within
+the 256 KiB a Space visualization holds) and publishes it through
+`codex app-server` and the ChatGPT Space plugin, `internal/space`. It
+calls the plugin's `read_page` and `create_page_visualization` tools
+itself, in a Codex thread of its own, and starts no model turn. Its first
+run makes the thread, writes it to disk with a note injected into it (a
+thread with no item is not kept for the next app-server), appends a
+block to the page and records both in
+`$XDG_STATE_HOME/agent-plans/space.json`, which the guard keeps sessions
+from writing; later runs read that block's hash and replace that block
+only, and start nothing while the snapshot is unchanged. Where the block
+is gone, the thread cannot be resumed, or codex asks for an approval or a
+login, it stops, and the operator settles it, by removing the state file
+to start again where that is the fix. Codex on the session's host must
+be signed in to ChatGPT with the plugin connected.
 
 ## pushing: private history stays private
 

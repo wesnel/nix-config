@@ -19,32 +19,41 @@ func TestPaths(t *testing.T) {
 	// environment.
 	baked := t.TempDir()
 	hostpaths.Bake(t, filepath.Join(baked, "config"), filepath.Join(baked, "state"))
-	if Out() != filepath.Join(baked, "state", "agent-plans", "out") ||
-		ConfigFile() != filepath.Join(baked, "config", "agent-tools", "agent-plans.json") {
-		t.Errorf("baked: out %s, config %s", Out(), ConfigFile())
+	if Out() != filepath.Join(baked, "state", "agent-plans", "out") {
+		t.Errorf("baked: out %s", Out())
 	}
 }
 
-func TestURL(t *testing.T) {
-	file := filepath.Join(t.TempDir(), "agent-plans.json")
-	t.Setenv("AGENT_PLANS_CONFIG", file)
-	if _, err := URL(); err == nil || !strings.Contains(err.Error(), file) {
+// The targets are agentPlans in agent-tools' config.json, which the llm
+// module writes from the machine's options, null where one is unset.
+func TestLoadTargets(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("AGENT_TOOLS_CONFIG", file)
+	if _, err := LoadTargets(); err == nil || !strings.Contains(err.Error(), file) {
 		t.Errorf("without the file: %v", err)
 	}
-	for _, url := range []string{"https://claude.ai/artifact/XrwFbuUrFW9ctBGqveAFqq",
-		"https://claude.ai/code/artifact/0b7f5c1e-1d2a-4c3b-9e8f-123456789abc"} {
-		os.WriteFile(file, []byte(`{"url": "`+url+`"}`), 0o600)
-		if got, err := URL(); got != url || err != nil {
-			t.Errorf("%s: %q %v", url, got, err)
+	for _, c := range []struct{ body, claude, space string }{
+		{`{"agentPlans": {"claudePage": "https://claude.ai/artifact/XrwFbuUrFW9ctBGqveAFqq", "spacePage": "page_0123abcd"}}`,
+			"https://claude.ai/artifact/XrwFbuUrFW9ctBGqveAFqq", "page_0123abcd"},
+		{`{"agentPlans": {"claudePage": "https://claude.ai/code/artifact/0b7f5c1e-1d2a-4c3b-9e8f-123456789abc", "spacePage": null}}`,
+			"https://claude.ai/code/artifact/0b7f5c1e-1d2a-4c3b-9e8f-123456789abc", ""},
+		{`{"agentPlans": {"claudePage": null, "spacePage": "page_x"}}`, "", "page_x"},
+		{`{"plans": {}}`, "", ""},
+	} {
+		os.WriteFile(file, []byte(c.body), 0o600)
+		if got, err := LoadTargets(); got.ClaudePage != c.claude || got.SpacePage != c.space || err != nil {
+			t.Errorf("%s: %+v %v", c.body, got, err)
 		}
 	}
-	for _, body := range []string{`{"url": "https://claude.ai/artifact/X/../../other"}`,
-		`{"url": "https://claude.ai/artifact/X?y"}`, `{"url": "http://claude.ai/artifact/X"}`,
-		`{"url": "https://claude.ai.example.com/artifact/X"}`, `{"url": "https://claude.ai/artifact/"}`,
-		`{"url": "https://claude.ai/artifact/X "}`, `{"url": ""}`, `{}`, `not json`, `{"url": ["x"]}`} {
+	for _, body := range []string{`{"agentPlans": {"claudePage": "https://claude.ai/artifact/X/../../other"}}`,
+		`{"agentPlans": {"claudePage": "https://claude.ai/artifact/X?y"}}`, `{"agentPlans": {"claudePage": "http://claude.ai/artifact/X"}}`,
+		`{"agentPlans": {"claudePage": "https://claude.ai.example.com/artifact/X"}}`, `{"agentPlans": {"claudePage": "https://claude.ai/artifact/"}}`,
+		`{"agentPlans": {"claudePage": "https://claude.ai/artifact/X "}}`, `{"agentPlans": {"claudePage": ""}}`,
+		`{"agentPlans": {"spacePage": "page/../x"}}`, `{"agentPlans": {"spacePage": ""}}`,
+		`not json`, `{"agentPlans": {"claudePage": ["x"]}}`} {
 		os.WriteFile(file, []byte(body), 0o600)
-		if got, err := URL(); got != "" || err == nil {
-			t.Errorf("%s: %q %v", body, got, err)
+		if got, err := LoadTargets(); got != (Targets{}) || err == nil {
+			t.Errorf("%s: %+v %v", body, got, err)
 		}
 	}
 }

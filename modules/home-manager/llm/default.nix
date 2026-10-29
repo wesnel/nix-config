@@ -42,6 +42,9 @@ with lib; let
     review = {
       inherit (cfg.review) privateModules;
     };
+    agentPlans = {
+      inherit (cfg.agentPlans) claudePage spacePage;
+    };
     # The servers this host's mcp-proxy serves, by the names mcp.json keys
     # their services by: the guard names `mcp-proxy-authorize NAME` only for
     # these.
@@ -240,6 +243,40 @@ in {
         GitHub from one of them may name the harness's tools and state
         directories; from any other repository, it is checked in full.
       '';
+    };
+
+    # Read by plan-dash from agentPlans in agent-tools/config.json, which is
+    # read-only and guarded, so no session can point publication elsewhere.
+    agentPlans = {
+      claudePage = mkOption {
+        type = types.nullOr (types.strMatching "https://claude\\.ai/(code/)?artifact/[A-Za-z0-9-]{1,100}");
+        default = null;
+
+        description = ''
+          The Agent plans page's claude.ai URL,
+          `https://claude.ai/artifact/ID`, which the dashboard session
+          ({option}`wgn.home.claude.agentPlans.enable`) keeps current.
+          Unset, the session publishes a new page and gives its URL to set
+          here.
+        '';
+      };
+
+      spacePage = mkOption {
+        type = types.nullOr (types.strMatching "[A-Za-z0-9_-]{1,256}");
+        default = null;
+
+        description = ''
+          The ID of the ChatGPT Space page, such as `page_0123abcd`, that
+          the dashboard session mirrors the Agent plans page to with
+          `plan-dash space` after each update; unset, it mirrors nothing.
+          The first run makes a Codex thread and a block at the page's end,
+          and records both in `agent-plans/space.json` under
+          {option}`xdg.stateHome`; later runs replace that block only. Set
+          to another page, it makes a block there and leaves the old one.
+          Needs Codex signed in to ChatGPT on the session's host, with the
+          ChatGPT Space plugin connected.
+        '';
+      };
     };
 
     plans = {

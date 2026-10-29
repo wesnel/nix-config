@@ -46,9 +46,9 @@ The page's HTML is built into `plan-dash`; publishing puts it on PAGE.
 4. Only once the publish's result says it published: Bash `plan-dash page
    published`. A refused or failed publish records nothing.
 5. After step 3 only: tell the operator the URL the publish returned, to
-   write as `{"url": "URL"}` in `agent-tools/agent-plans.json` under the
-   XDG config directory before restarting `agent-plans.service`. Do
-   nothing else until then.
+   set as `wgn.home.llm.agentPlans.claudePage` in this machine's config
+   and switch to before restarting `agent-plans.service`. Do nothing else
+   until then.
 
 ## Update
 
@@ -75,6 +75,9 @@ runs. Its prompt, with PAGE and OUT filled in:
 >    `version`; a new one takes none. Where a batch fails on a changed
 >    version, list that collection again as in step 2 and redo that batch
 >    once.
-> 4. Report the counts set and deleted.
+> 4. Bash `plan-dash space`, which mirrors what export wrote to the
+>    Space page; keep the `status` it prints, or `failed` where it
+>    exits non-zero. Do not run it again.
+> 5. Report the counts set and deleted, and that status.
 
-Report its result in one line of counts.
+Report its result in one line of counts and the Space status.

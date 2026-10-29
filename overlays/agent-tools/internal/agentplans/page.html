@@ -458,10 +458,15 @@ iframe.renderer {
   </main>
 </div>
 
+<!-- snapshot -->
 <script>
 "use strict";
 (() => {
   const SPEC = JSON.parse(document.getElementById("schema").textContent);
+  // A snapshot (export.Snapshot) carries its documents in place of the
+  // database; it reads nothing else and loads nothing.
+  const snapshotElement = document.getElementById("snapshot");
+  const snapshot = snapshotElement ? JSON.parse(snapshotElement.textContent) : null;
 
   // The shapes of what the page builds IDs and links from, as the host
   // checks them.
@@ -592,8 +597,9 @@ iframe.renderer {
     else if (g.stale) reasons.push("GitHub couldn't be read; its part is from " + ago(g.at));
     if (m.failed > 0) reasons.push(m.failed === 1 ? "one plan couldn't be read and shows as last exported" : m.failed + " plans couldn't be read and show as last exported");
     for (const [name] of state.errors) reasons.push("the " + name + " data stopped updating");
-    const updated = "Updated " + ago(m.updated);
-    if (reasons.length) return { label: "Partial", tone: "t-warn", shape: "", why: updated + "; " + reasons.join("; ") + "." };
+    const updated = (snapshot ? "Collected " : "Updated ") + ago(m.updated);
+    if (reasons.length) return { label: snapshot ? "Snapshot · partial" : "Partial", tone: "t-warn", shape: "", why: updated + "; " + reasons.join("; ") + "." };
+    if (snapshot) return { label: "Snapshot", tone: "t-none", shape: "ring", why: updated + ". Viewing does not refresh it; the devbox replaces it when the plans change." };
     return { label: "Live", tone: "t-good", shape: "", why: updated + "." };
   }
 
@@ -890,6 +896,10 @@ iframe.renderer {
   // nothing runs or loads. A passing failure is shown until the diagram
   // is next opened, which tries again.
   function drawDiagram(key, d, figure) {
+    if (snapshot) {
+      figure.replaceChildren(sourceText(d.source, "Diagram source; this snapshot loads nothing to draw it."));
+      return;
+    }
     const sig = (dark() ? "dark\n" : "light\n") + d.source;
     const had = state.drawn.get(key);
     if (had && had.sig === sig) { figure.replaceChildren(had.node); return; }
@@ -1152,6 +1162,13 @@ iframe.renderer {
   }
 
   async function start() {
+    if (snapshot) {
+      state.plans = new Map(snapshot.plans.map((p) => [p.id, norm(p, own(SPEC, "plans", {}))]));
+      for (const name of ["github", "meta", "today"]) state[name] = norm(own(snapshot, name, {}), own(SPEC, name, {}));
+      for (const name of ["plans", "github", "meta", "today"]) state.loaded.add(name);
+      render();
+      return;
+    }
     const claude = window.claude;
     if (!claude || typeof claude.use !== "function") { state.noDb = true; render(); return; }
     const db = await claude.use("db");
