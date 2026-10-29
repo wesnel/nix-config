@@ -391,13 +391,19 @@ in {
             ];
             # PreCompact can add no context, so after a compaction
             # (source "compact", which agent-plan checks) asks for the plan
-            # to be brought up to date.
+            # to be brought up to date. Names the session's plans, matched
+            # by Codex session or by worktree, with the brief of the one
+            # plan when only one matches.
             hooks.SessionStart = [
               {
                 hooks = [
                   {
                     type = "command";
                     command = "agent-plan remind";
+                  }
+                  {
+                    type = "command";
+                    command = "agent-plan find --hook --harness codex";
                   }
                 ];
               }
