@@ -512,6 +512,7 @@ with lib; let
     "log"
     "link"
     "carry"
+    "pickup"
     "ask"
     "decide"
     "followup"

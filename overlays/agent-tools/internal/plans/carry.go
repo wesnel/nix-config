@@ -35,6 +35,9 @@ type Carried struct {
 	// Unlinked says why the new plan does not link the old one under
 	// Related, as a plan in the old form cannot be linked to.
 	Unlinked string `json:"unlinked,omitempty"`
+	// Prompt is the line the operator pastes into a fresh session to
+	// pick the new plan up.
+	Prompt string `json:"prompt"`
 }
 
 // leftOver are the items of a plan's own file that Carry moves.
@@ -89,7 +92,7 @@ func (c Config) Carry(plan string, o CarryOptions, now time.Time) (Carried, erro
 		return Carried{}, err
 	}
 	out := Carried{Plan: target.file(""), ID: target.Name, From: old.Name, Steps: left.steps, Followups: left.followups,
-		Questions: left.questions}
+		Questions: left.questions, Prompt: pickupPrompt(target)}
 	why := "Carried from it"
 	if ids := left.ids(); len(ids) > 0 {
 		why += ": " + strings.Join(ids, " ")
