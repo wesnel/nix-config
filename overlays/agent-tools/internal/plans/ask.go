@@ -2,10 +2,8 @@ package plans
 
 import (
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -41,6 +39,9 @@ var priorities = []string{"A", "B", "C"}
 // as Decide would, and logs a decided event too.
 func (p Plan) Ask(o AskOptions, now time.Time) (Asked, error) {
 	if err := p.checkOwn(); err != nil {
+		return Asked{}, err
+	}
+	if err := p.checkOpen(); err != nil {
 		return Asked{}, err
 	}
 	o.Question, o.Recommendation, o.Context = strings.TrimSpace(o.Question), strings.TrimSpace(o.Recommendation), strings.TrimSpace(o.Context)
@@ -113,16 +114,10 @@ func (p Plan) Ask(o AskOptions, now time.Time) (Asked, error) {
 		if o.Part != "" {
 			prefix = o.Part + "."
 		}
-		next := 1
-		question := idOf(prefix, "Q")
-		for id := range known {
-			if m := question.FindStringSubmatch(id); m != nil {
-				if n, _ := strconv.Atoi(m[1]); n >= next {
-					next = n + 1
-				}
-			}
+		qid, err := p.nextID(prefix, "Q")
+		if err != nil {
+			return err
 		}
-		qid := fmt.Sprintf("%sQ%d", prefix, next)
 		line := "*** " + kwAsk + " "
 		if o.Priority != "" {
 			line += "[#" + o.Priority + "] "

@@ -216,6 +216,19 @@ have (see status) is refused and writes nothing.
                      it as linked; nothing when PLAN already links OTHER.
                      Refused for PLAN itself, a part's file, and a plan in
                      the old form, which has no file-level ID
+  carry PLAN [--title T] [--slug S] [--text GOAL]
+                     move what PLAN leaves open, its unsettled steps, open
+                     follow-ups and open questions, under the same IDs to
+                     the plan it is carried to, made the first time with
+                     PLAN's title, slug, goal, repositories, branches,
+                     worktrees, harness, pull requests, skills and pipeline
+                     unless given; CARRIED_TO and CARRIED_FROM name each
+                     other, and the new plan links PLAN under Related. Each
+                     step and follow-up becomes CARRIED in PLAN and each
+                     question DROPPED; PLAN then takes no new work. Run
+                     again, it finishes a run that stopped and otherwise
+                     changes nothing. Refused while a part's steps are open,
+                     and for a plan with nothing open
   related PLAN [--json]
                      the plans, any host's, related to PLAN, and why, as
                      "- hard|soft [linked] NAME (TITLE): EVIDENCE"; writes
@@ -964,6 +977,12 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return 2
 		}
 		return report(c.Link(positional[0], positional[1], *why, time.Now()))
+	case "carry":
+		if len(positional) != 1 {
+			fmt.Fprint(stderr, "agent-plan carry: takes PLAN [--title T] [--slug S] [--text GOAL]\n")
+			return 2
+		}
+		return report(c.Carry(positional[0], plans.CarryOptions{Title: *title, Slug: *slug, Goal: *text}, time.Now()))
 	case "postpone":
 		if len(positional) != 2 || (*until == "") == !*unset {
 			fmt.Fprint(stderr, "agent-plan postpone: takes PLAN ID and --until TIME or --clear\n")

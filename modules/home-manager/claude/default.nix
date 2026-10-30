@@ -478,6 +478,7 @@ with lib; let
     "new"
     "log"
     "link"
+    "carry"
     "ask"
     "decide"
     "followup"

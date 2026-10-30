@@ -178,13 +178,30 @@ func (p Plan) check(e Event) error {
 	if _, ok := items[e.Item]; !ok {
 		return refusal.New("%q is not an item of %s. Add it first with `agent-plan step` or `agent-plan part`, or use an ID `agent-plan status %s` lists", e.Item, p.Name, p.file(""))
 	}
+	if e.Kind != carriedKind && projected(e.Item) {
+		props, err := planHeading(p.file(""))
+		if err != nil {
+			return err
+		}
+		// Only a plan carried from has carried items, so others skip the log.
+		if to := props[propCarriedTo]; to != "" {
+			events, err := p.Events()
+			if err != nil {
+				return err
+			}
+			if stepState(events, e.Item) == kwCarried {
+				return refusal.New("%s was carried to %s, which holds it now. Log it there, as `agent-plan log %s --item %s --kind %s`",
+					e.Item, to, p.carriedToFile(to), e.Item, e.Kind)
+			}
+		}
+	}
 	if e.Kind == handedBack && (e.Item == p.Name || partPattern.MatchString(e.Item)) {
 		open, err := p.unsettledSteps(e.Item)
 		if err != nil {
 			return err
 		}
 		if len(open) > 0 {
-			return refusal.New("%s is not handed back while %s is unsettled. Log each step done, verified or abandoned with its reason, "+
+			return refusal.New("%s is not handed back while %s is unsettled. Log each step and part done, verified or abandoned with its reason, "+
 				"or move what is left to the next plan with `agent-plan carry %s`", e.Item, strings.Join(open, ", "), p.file(""))
 		}
 	}
@@ -195,8 +212,8 @@ func (p Plan) check(e Event) error {
 // it moves to the next plan, which settles it as CARRIED.
 const carriedKind = "carried"
 
-// unsettledSteps are the steps of the plan, or with a part's ID that
-// part's alone, that the log leaves open, in file order.
+// unsettledSteps are the steps and parts of the plan, or with a part's ID
+// that part's steps alone, that the log leaves open, in file order.
 func (p Plan) unsettledSteps(of string) ([]string, error) {
 	list, err := p.itemList()
 	if err != nil {
@@ -208,8 +225,9 @@ func (p Plan) unsettledSteps(of string) ([]string, error) {
 	}
 	var open []string
 	for _, it := range list {
-		if stepPattern.MatchString(it.ID) && (of == p.Name || strings.HasPrefix(it.ID, of+".")) &&
-			!planKeywords.done[stepState(events, it.ID)] {
+		mine := stepPattern.MatchString(it.ID) && (of == p.Name || strings.HasPrefix(it.ID, of+".")) ||
+			partPattern.MatchString(it.ID) && of == p.Name
+		if mine && !planKeywords.done[stepState(events, it.ID)] {
 			open = append(open, it.ID)
 		}
 	}

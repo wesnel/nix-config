@@ -2,10 +2,8 @@ package plans
 
 import (
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +30,9 @@ type Recorded struct {
 // does.
 func (p Plan) Followup(o FollowupOptions, now time.Time) (Recorded, error) {
 	if err := p.checkOwn(); err != nil {
+		return Recorded{}, err
+	}
+	if err := p.checkOpen(); err != nil {
 		return Recorded{}, err
 	}
 	o.Title, o.Context = strings.TrimSpace(o.Title), strings.TrimSpace(o.Context)
@@ -71,16 +72,10 @@ func (p Plan) Followup(o FollowupOptions, now time.Time) (Recorded, error) {
 		if o.Part != "" {
 			prefix = o.Part + "."
 		}
-		next := 1
-		followup := idOf(prefix, "F")
-		for id := range items {
-			if m := followup.FindStringSubmatch(id); m != nil {
-				if n, _ := strconv.Atoi(m[1]); n >= next {
-					next = n + 1
-				}
-			}
+		id, err := p.nextID(prefix, "F")
+		if err != nil {
+			return err
 		}
-		id := fmt.Sprintf("%sF%d", prefix, next)
 		block := append([]string{"*** " + kwTodo + " " + o.Title, ":PROPERTIES:", ":CUSTOM_ID: " + id, ":FOUND_IN: " + o.FoundIn, ":END:"},
 			context...)
 		err = l.edit(file, func(lines []string) ([]string, error) {

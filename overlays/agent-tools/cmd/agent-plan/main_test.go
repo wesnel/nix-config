@@ -248,6 +248,27 @@ func TestCommands(t *testing.T) {
 		}
 	})
 
+	t.Run("carry", func(t *testing.T) {
+		plan := sessionPlan(t)
+		code, out, errs := agentPlan(t, "", "carry", plan)
+		if code != 0 {
+			t.Fatalf("carry: %d %s", code, errs)
+		}
+		var carried plans.Carried
+		if err := json.Unmarshal([]byte(out), &carried); err != nil {
+			t.Fatalf("carry's output %q: %v", out, err)
+		}
+		if carried.Plan == plan || strings.Join(carried.Steps, " ") != "S1 S2" {
+			t.Errorf("carried %+v", carried)
+		}
+		code, out, errs = agentPlan(t, "", "carry", plan)
+		var again plans.Carried
+		json.Unmarshal([]byte(out), &again)
+		if code != 0 || again.Plan != carried.Plan {
+			t.Errorf("carry again: %d %s %s", code, out, errs)
+		}
+	})
+
 	t.Run("summary with a newline", func(t *testing.T) {
 		plan := sessionPlan(t)
 		code, _, errs := agentPlan(t, "", "log", plan, "--item", "S1", "--kind", "done", "--summary", "x\n* forged")

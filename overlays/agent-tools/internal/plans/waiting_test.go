@@ -11,6 +11,13 @@ func TestWaiting(t *testing.T) {
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
 	addItems(t, p.file(""), "** Distribution", "P1", "P2")
+	// Each part's work is done before its hand-back, as the plan's waits
+	// for every part.
+	for _, part := range []string{"P1", "P2"} {
+		if _, err := p.Log(Event{Kind: "done", Item: part}, day); err != nil {
+			t.Fatal(err)
+		}
+	}
 	e, err := p.Log(Event{Kind: "handed-back", Item: "P1", Summary: "signed and pushed next", Command: "git sign-pass --push",
 		Dir: "/w/loop"}, day)
 	if err != nil {
