@@ -220,6 +220,24 @@ func (p Plan) carriedFrom() Plan {
 	return Plan{Dir: p.Dir, Name: props[propCarriedFrom], Host: p.Host, Own: p.Own, Repo: p.Repo}
 }
 
+// lastCarriedTo is the plan p's work was last carried to, following each
+// CARRIED_TO on, or p where it was carried nowhere; a plan named that
+// cannot be opened, or one already passed, ends the chain.
+func (c Config) lastCarriedTo(p Plan) Plan {
+	seen := map[string]bool{p.Name: true}
+	for {
+		props, err := planHeading(p.file(""))
+		if err != nil || props[propCarriedTo] == "" || seen[props[propCarriedTo]] {
+			return p
+		}
+		next, err := c.Open(props[propCarriedTo])
+		if err != nil {
+			return p
+		}
+		seen[next.Name], p = true, next
+	}
+}
+
 // inherit gives the plan what it takes over from old and does not have
 // yet: its goal, pull requests, skills and pipeline.
 func (p Plan) inherit(old Plan, o CarryOptions, now time.Time) error {
