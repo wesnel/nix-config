@@ -38,6 +38,7 @@ func gitCalls(text, dir string, depth int) []gitCall {
 			return ""
 		},
 		call: func(c call) string {
+			c = c.named()
 			w := c.words
 			switch {
 			case len(w) == 0 || c.expands[0]:

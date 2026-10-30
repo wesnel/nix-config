@@ -131,8 +131,8 @@ func firstCall(text string, depth int, match func(c call) []string) []string {
 	v = visitor{
 		call: func(c call) string {
 			// A redirection before the program, as `< /dev/null CMD`.
-			if i := leadingRedirections(c.words); i > 0 && i < len(c.words) {
-				return unwrap(call{words: c.words[i:], expands: c.expands[i:], env: c.env, fed: c.fed}, v)
+			if n := c.named(); len(n.words) < len(c.words) {
+				return unwrap(n, v)
 			}
 			if named = match(c); named != nil {
 				return "named"
@@ -154,24 +154,16 @@ func firstCall(text string, depth int, match func(c call) []string) []string {
 	return nil
 }
 
-// redirectionWord is a redirection's operator, with the descriptor before
-// it and a duplicated one after it (2>&1, <&-), and any target attached.
-var redirectionWord = regexp.MustCompile(`^(?:[0-9]+|&)?(?:<<<|<<|<>|<|>>|>\||>)(?:&(?:[0-9]+|-))?`)
-
 // leadingRedirections is how many of words, from the first, are
 // redirections and the targets of those whose target is the next word.
 func leadingRedirections(words []string) int {
 	i := 0
 	for i < len(words) {
-		op := redirectionWord.FindString(words[i])
-		switch {
-		case op == "":
+		_, _, n := redirection(words, i)
+		if n == 0 {
 			return i
-		case len(words[i]) > len(op) || strings.Contains(op, "&") && !strings.HasPrefix(op, "&"):
-			i++ // the target is attached, or the operator duplicates a descriptor
-		default:
-			i += 2
 		}
+		i += n
 	}
 	return i
 }

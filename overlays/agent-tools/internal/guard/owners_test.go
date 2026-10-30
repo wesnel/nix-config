@@ -36,6 +36,7 @@ func TestOwners(t *testing.T) {
 		old := scratchRoots
 		scratchRoots = func() []string { return []string{scratch} }
 		t.Cleanup(func() { scratchRoots = old })
+		t.Setenv("TMPDIR", scratch)
 
 		main, linked, sibling := filepath.Join(root, "main"), filepath.Join(root, "linked"), filepath.Join(root, "sibling")
 		os.Mkdir(main, 0o755)
@@ -140,6 +141,21 @@ func TestOwners(t *testing.T) {
 		{"owner's unzip in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"unzip -o SCRATCH/a.zip"}}`, []string{"LINKED"}},
 		{"owner's patch in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"patch -d MAIN -p1 < SCRATCH/a.diff"}}`, []string{"LINKED"}},
 		{"owner's gofmt -w in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"gofmt -w MAIN/a.go"}}`, []string{"LINKED"}},
+		// gofmt's and goimports' option values are no files, but for the
+		// profile and trace they write.
+		{"owner's gofmt -r -w in its worktree, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"gofmt -r 'gh.GraphQL -> graphQL' -w LINKED/a.go"}}`, nil},
+		{"owner's goimports -local -w in its worktree, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"goimports -local github.com/x -w LINKED/a.go"}}`, nil},
+		{"owner's gofmt --r -w in its worktree, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"gofmt --r 'a -> b' -w LINKED/a.go"}}`, nil},
+		{"owner's gofmt with -w after its file, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"gofmt -l LINKED/a.go -w"}}`, nil},
+		{"owner's gofmt -w -r missing its value, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"gofmt -w -r"}}`, nil},
+		{"owner's gofmt -r -w in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"gofmt -r 'a -> b' -w MAIN/a.go"}}`, []string{"LINKED"}},
+		{"owner's gofmt -w profile into the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"gofmt -w -cpuprofile MAIN/cpu.out a.go"}}`, []string{"LINKED"}},
+		{"owner's gofmt profile into the main checkout without -w", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"gofmt -cpuprofile MAIN/cpu.out a.go"}}`, []string{"LINKED"}},
+		{"owner's gofmt -l without -w in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"gofmt -l MAIN/a.go"}}`, nil},
+		{"owner's goimports -w trace into the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"goimports -w -trace MAIN/t.out a.go"}}`, []string{"LINKED"}},
+		{"owner's gofmt -w memory profile into the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"gofmt -w --memprofile=MAIN/m.out a.go"}}`, []string{"LINKED"}},
+		{"owner's gofmt -r of a channel rule in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"gofmt -w -r '<-a -> <-b' MAIN/a.go"}}`, []string{"LINKED"}},
+		{"owner's goimports -local of a redirection-like prefix, quiet", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"goimports -w -local '>x' MAIN/a.go 2>/dev/null"}}`, []string{"LINKED"}},
 		{"owner's gofmt -l in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"gofmt -l MAIN"}}`, nil},
 		// Refused first under /nix, as mv and rm are.
 		{"owner's chmod in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"chmod +x MAIN/a.sh"}}`, nil},
@@ -174,6 +190,62 @@ func TestOwners(t *testing.T) {
 		{"owner's ruff check", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"ruff check ."}}`, nil},
 		{"owner's rustfmt in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"rustfmt MAIN/a.rs"}}`, []string{"LINKED"}},
 		{"owner's sops -i in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"sops -i MAIN/s.yaml"}}`, []string{"LINKED"}},
+		// A redirection is no operand, and an operand is read as the shell
+		// expands it: $TMPDIR and $HOME are known, any other variable is
+		// the shell's to decide.
+		{"owner's mkdir in scratch, quiet, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"bash -c 'mkdir SCRATCH/lock 2>/dev/null'"}}`, nil},
+		{"owner's cp into the main checkout, quiet", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"cp a.go MAIN/a.go 2>/dev/null"}}`, []string{"LINKED"}},
+		// A quoted operator is no redirection: it neither takes the real
+		// redirection's target nor hides the operand after it.
+		{"owner's write of a quoted > into the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"echo '>' > MAIN/a.go"}}`, []string{"LINKED"}},
+		{"owner's write of a quoted 2> into the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"echo '2>' > MAIN/a.go"}}`, []string{"LINKED"}},
+		{"owner's tr of a quoted < into the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"tr , '<' > MAIN/out.csv"}}`, []string{"LINKED"}},
+		{"owner's write of a quoted > into the main checkout under bash -c", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"bash -c 'echo '\\''>'\\'' > MAIN/a.go'"}}`, []string{"LINKED"}},
+		{"owner's cp of a file named < into the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"cp '<' MAIN/a.go"}}`, []string{"LINKED"}},
+		{"owner's touch after a file named < in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"touch '<' MAIN/a.go"}}`, []string{"LINKED"}},
+		{"main thread's write of a quoted > into an owned worktree", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"echo '>' > LINKED/a.go"}}`, []string{"a1", "agent-plan own"}},
+		// $PWD and $(pwd) are where the command runs; a path is judged up to
+		// its first part the shell decides, whole where a .. follows that
+		// part, and where it starts with a variable, as the directory the
+		// command runs in.
+		{"owner's cp to $PWD in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"cp a.go $PWD/a.go"}}`, []string{"LINKED"}},
+		{"owner's write to $PWD in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"echo x > $PWD/a.go"}}`, []string{"LINKED"}},
+		{"owner's cp to $(pwd) in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"cp a.go $(pwd)/a.go"}}`, []string{"LINKED"}},
+		{"owner's cp to the top of the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"cp a.go $(git rev-parse --show-toplevel)/a.go"}}`, []string{"LINKED"}},
+		{"owner's cp to a variable's name in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"cp a.go MAIN/$x.go"}}`, []string{"LINKED"}},
+		{"owner's cp to a braced variable's name in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"cp a.go MAIN/${name}.go"}}`, []string{"LINKED"}},
+		{"owner's cp in a loop into the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"for f in a b; do cp $f.go MAIN/$f.go; done"}}`, []string{"LINKED"}},
+		{"owner's cp to $PWD in its worktree", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"cp a.go $PWD/b.go"}}`, nil},
+		{"owner's cp out of a variable's directory into its worktree", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"cp a.go MAIN/$x/../../linked/a.go"}}`, nil},
+		{"owner's cp out of a variable's directory into another's worktree", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"cp a.go MAIN/$x/../../sibling/a.go"}}`, []string{"LINKED"}},
+		{"owner's touch in a loop in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"for f in a b; do touch $f.go; done"}}`, []string{"LINKED"}},
+		{"owner's cp in a loop into directories of the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"for d in x y; do cp a.go $d/a.go; done"}}`, []string{"LINKED"}},
+		{"owner's touch of a variable's file in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"touch $f"}}`, []string{"LINKED"}},
+		{"owner's touch -- of a variable's file in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"touch -- $f"}}`, []string{"LINKED"}},
+		{"owner's write to a variable's file in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"echo x > $out"}}`, []string{"LINKED"}},
+		{"owner's write to a quoted variable's file in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"echo x > \"$out\""}}`, []string{"LINKED"}},
+		{"owner's : > of a variable's file in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":": > $f"}}`, []string{"LINKED"}},
+		{"owner's bare > of a variable's file in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"> $f"}}`, []string{"LINKED"}},
+		{"owner's touch under $OLDPWD in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"touch $OLDPWD/a.go"}}`, []string{"LINKED"}},
+		{"owner's touch of a variable's file after cd into the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"cd MAIN && touch $f"}}`, []string{"LINKED"}},
+		{"main thread's touch of a variable's file in an owned worktree", true, `{"tool_name":"Bash","cwd":"LINKED","tool_input":{"command":"touch $f"}}`, []string{"a1", "agent-plan own"}},
+		{"owner's mkdir under $TMPDIR, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"mkdir \"$TMPDIR/lock\""}}`, nil},
+		{"owner's log under $TMPDIR, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"bash -c 'go vet ./... 2>\"$TMPDIR/vet.log\"'"}}`, nil},
+		{"owner's mkdir of a variable's path, run in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"mkdir \"$L\""}}`, []string{"LINKED"}},
+		// A redirection before the program is judged where it is, and the
+		// program after it by its name.
+		{"owner's write into the main checkout, redirected first", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":">MAIN/a.go echo x"}}`, []string{"LINKED"}},
+		{"owner's write into the main checkout, redirected before env", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"> MAIN/a.go env X=1 echo x"}}`, []string{"LINKED"}},
+		{"owner's write into the main checkout, redirected before bash -c", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"> MAIN/a.go bash -c true"}}`, []string{"LINKED"}},
+		{"owner's write into the main checkout, redirected before eval", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"> MAIN/a.go eval true"}}`, []string{"LINKED"}},
+		{"owner's write into the main checkout, redirected before a variable's program", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":">MAIN/a.go \"$X\""}}`, []string{"LINKED"}},
+		{"owner's write into the main checkout, redirected before command -v", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":">MAIN/go-path.txt command -v go"}}`, []string{"LINKED"}},
+		{"owner's write into the main checkout, redirected last", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"echo x >MAIN/a.go"}}`, []string{"LINKED"}},
+		{"owner's mkdir in the main checkout after a redirection", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"2>/dev/null mkdir MAIN/new"}}`, []string{"LINKED"}},
+		{"owner's mkdir in the main checkout after a redirection to a variable", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"2>\"$TMPDIR/e\" mkdir MAIN/new"}}`, []string{"LINKED"}},
+		{"owner's redirection into the main checkout before cd", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"2>MAIN/cd.err cd LINKED"}}`, []string{"LINKED"}},
+		{"owner's git commit run in the main checkout after a redirection", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"< /dev/null git commit -m x"}}`, []string{"LINKED"}},
+		{"owner's touch under $HOME", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"touch \"$HOME/x\""}}`, []string{"LINKED"}},
 		{"owner's make -n in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"make -n -C MAIN"}}`, nil},
 		// Git's reading forms of its writing commands, anywhere.
 		{"owner's tag -l in another's worktree", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"git -C SIBLING tag -l"}}`, nil},

@@ -15,6 +15,11 @@ func TestMain(m *testing.M) {
 	// Whether trash is on PATH differs between hosts and the Nix build;
 	// TestTrash sets it.
 	trashOnPath = func() bool { return false }
+	// The scratch roots are $TMPDIR alone, as in the Nix build, whose
+	// TMPDIR is not under /tmp. Under a sandbox whose TMPDIR is, /tmp would
+	// make every test's temporary directory scratch; a test that needs
+	// scratch elsewhere sets its own.
+	scratchRoots = func() []string { return []string{os.Getenv("TMPDIR")} }
 	// The credentials the cases name, standing in for the list the Nix
 	// build gives the guard; TestCredentialPaths sets its own.
 	builtCredentialPaths = []string{"~/.ssh/id_", "~/.gnupg/private-keys", "~/.codex/auth.json",

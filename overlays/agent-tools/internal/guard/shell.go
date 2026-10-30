@@ -15,6 +15,46 @@ import (
 
 var assignment = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*=`)
 
+// redirectionWord is a redirection's operator, with the descriptor before
+// it and a duplicated one after it (2>&1, <&-), and any target attached.
+var redirectionWord = regexp.MustCompile(`^(?:[0-9]+|&)?(?:<<<|<<|<>|<|>>|>\||>)(?:&(?:[0-9]+|-))?`)
+
+// redirection reads words[i] as a redirection: op is its operator as
+// redirectionWord has it, target the file it names, attached or the next
+// word ("" where it duplicates a descriptor), and n how many words it
+// takes, 0 where words[i] is no redirection. split has taken the quotes
+// off, so a quoted '>' reads as an operator too; a bare operator never
+// takes another operator as its target, which leaves the real one its own.
+func redirection(words []string, i int) (op, target string, n int) {
+	op = redirectionWord.FindString(words[i])
+	switch {
+	case op == "":
+		return "", "", 0
+	case len(words[i]) > len(op):
+		return op, words[i][len(op):], 1
+	case strings.Contains(op, "&") && !strings.HasPrefix(op, "&"):
+		return op, "", 1
+	case i+1 < len(words) && !redirectionWord.MatchString(words[i+1]):
+		return op, words[i+1], 2
+	}
+	return op, "", 1
+}
+
+// withoutRedirections is words without the words that hold a
+// redirection's operator, alone or with its target attached. A target
+// given as a word of its own stays, since a quoted '<' before it would
+// read as an operator: a command's operands then hold one word too many,
+// never one too few.
+func withoutRedirections(words []string) []string {
+	var out []string
+	for _, w := range words {
+		if !redirectionWord.MatchString(w) {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
 // keywords start a command without being one.
 var keywords = map[string]bool{"if": true, "then": true, "else": true, "elif": true, "do": true,
 	"while": true, "until": true, "!": true, "{": true}
@@ -98,6 +138,18 @@ type call struct {
 	expands []bool
 	env     []string
 	fed     bool
+}
+
+// named is c from its program on, for the rules that go by the program's
+// name: the redirections before it (`< /dev/null git push`) are taken
+// off, as the shell makes them whatever the program is. A rule that reads
+// what a call writes or reads keeps c's words whole. A call of
+// redirections alone is c.
+func (c call) named() call {
+	if i := leadingRedirections(c.words); i > 0 && i < len(c.words) {
+		return call{words: c.words[i:], expands: c.expands[i:], env: c.env, fed: c.fed}
+	}
+	return c
 }
 
 // visitor judges one call, or a script that a call runs, and returns a
