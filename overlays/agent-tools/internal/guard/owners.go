@@ -269,7 +269,7 @@ func shellEditPaths(text, dir string, depth int) []string {
 			return ""
 		},
 	}
-	texts, _, ends := backgroundSegments(text)
+	texts, _, ends, _ := backgroundSegments(text)
 	for i, segment := range texts {
 		if words, expands := split(segment); len(words) > 0 {
 			end = ends[i]

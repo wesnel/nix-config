@@ -240,6 +240,14 @@ func checkSession(c call, dir string) string {
 	if reason := checkShellEdit(name, args, redirected, dir); reason != "" {
 		return reason
 	}
+	// Again with the variables the line assigned followed. The words as
+	// written are judged too, above: an assignment that may not have run,
+	// after || or &&, only adds a path to judge.
+	if words := assignedWords(c); words != nil {
+		if reason := checkShellEdit(name, words[1:], redirections(words), dir); reason != "" {
+			return reason
+		}
+	}
 	if gitConfigShellWrite(name, args, redirected, dir) {
 		return gitConfigShell
 	}
@@ -1920,6 +1928,41 @@ func checkShellEdit(name string, args, redirected []string, dir string) string {
 		}
 	}
 	return ""
+}
+
+// variable is a $NAME or ${NAME} in a word.
+var variable = regexp.MustCompile(`\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))`)
+
+// assignedWords is c's words with each $NAME or ${NAME} that c.assigned
+// gives a literal value replaced by it, in the words the shell expands;
+// nil when none changes. The last assignment of a name counts, as in the
+// shell. A value with $ is not literal, and leaves its variable as
+// written: segments leaves a command substitution, $( ) or backquoted, as
+// $_, so a backquote that reaches a value is a quoted one, part of it. The
+// shell expands no glob in an assignment, so a glob is part of the value
+// too.
+func assignedWords(c call) []string {
+	var out []string
+	for i, w := range c.words {
+		if !c.expands[i] {
+			continue
+		}
+		r := variable.ReplaceAllStringFunc(w, func(ref string) string {
+			m := variable.FindStringSubmatch(ref)
+			if value, ok := envValue(c.assigned, m[1]+m[2]); ok && !strings.Contains(value, "$") {
+				return value
+			}
+			return ref
+		})
+		if r == w {
+			continue
+		}
+		if out == nil {
+			out = slices.Clone(c.words)
+		}
+		out[i] = r
+	}
+	return out
 }
 
 // existingFile reports whether path is absolute and names a regular file.

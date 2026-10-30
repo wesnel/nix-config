@@ -282,17 +282,20 @@ func command(text string, depth int, who role, dir, checkout string, background 
 	var calls []call
 	var backgrounds []bool
 	var ends []string
-	texts, inBackground, segmentEnds := backgroundSegments(text)
+	var tops []bool
+	texts, inBackground, segmentEnds, nested := backgroundSegments(text)
+	segmentTops := topLevel(texts, inBackground, segmentEnds, nested)
 	for i, segment := range texts {
 		if words, expands := split(segment); len(words) > 0 {
 			calls = append(calls, call{words: words, expands: expands})
 			backgrounds = append(backgrounds, background || inBackground[i])
 			ends = append(ends, segmentEnds[i])
+			tops = append(tops, segmentTops[i])
 		}
 	}
 	// The dump in `env | grep PATTERN` is checked with its search.
 	if envSearch(text, calls) {
-		calls, backgrounds, ends = calls[1:], backgrounds[1:], ends[1:]
+		calls, backgrounds, ends, tops = calls[1:], backgrounds[1:], ends[1:], tops[1:]
 	}
 	// A file a gh call reads is what the guard sees only when nothing else
 	// on the command line can have written it first.
@@ -306,6 +309,10 @@ func command(text string, depth int, who role, dir, checkout string, background 
 	// Whether the call being judged runs in the background, and what ends
 	// it.
 	bg, end := false, ""
+	// The assignments made so far by commands of their own at the line's
+	// top level (topLevel), and whether the call being judged is there.
+	var assigned []string
+	top := false
 	v := visitor{
 		script: func(text string) string {
 			for _, cwd := range w.here {
@@ -323,6 +330,12 @@ func command(text string, depth int, who role, dir, checkout string, background 
 			if !bg && longSleep(c) {
 				return sleeping
 			}
+			c.assigned = assigned
+			if top && len(c.words) == 0 {
+				assigned = append(assigned, c.env...)
+			} else if top && !c.expands[0] && c.words[0] == "unset" {
+				assigned = unset(assigned, c.words[1:])
+			}
 			for _, cwd := range w.here {
 				if reason := program(c, who, files, cwd, checkout); reason != "" {
 					return reason
@@ -332,7 +345,7 @@ func command(text string, depth int, who role, dir, checkout string, background 
 		},
 	}
 	for i, c := range calls {
-		bg, end = backgrounds[i], ends[i]
+		bg, end, top = backgrounds[i], ends[i], tops[i]
 		w.begin(c)
 		if reason := unwrap(c, v); reason != "" {
 			return reason
@@ -340,6 +353,21 @@ func command(text string, depth int, who role, dir, checkout string, background 
 		w.next(end)
 	}
 	return ""
+}
+
+// unset is assigned less the variables `unset ARGS` removes: every name
+// it is given, unless -f makes them functions.
+func unset(assigned, args []string) []string {
+	i := 0
+	for ; i < len(args) && strings.HasPrefix(args[i], "-"); i++ {
+		if strings.Contains(args[i], "f") {
+			return assigned
+		}
+	}
+	return slices.DeleteFunc(slices.Clone(assigned), func(a string) bool {
+		name, _, _ := strings.Cut(a, "=")
+		return slices.Contains(args[i:], name)
+	})
 }
 
 // cdTarget is where cd moves from cwd: "" when the shell decides, or cwd

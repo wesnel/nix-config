@@ -174,7 +174,7 @@ func excludedCall(c call, patterns [][]string) []string {
 // space apart, with no redirection. agent-plan's quota stop lets such an
 // agent-plan line through.
 func ExcludedAlone(text string, pattern []string) bool {
-	texts, _, ends := backgroundSegments(text)
+	texts, _, ends, _ := backgroundSegments(text)
 	var only string
 	commands := 0
 	for i, segment := range texts {
