@@ -44,3 +44,35 @@ func TestCheckpoint(t *testing.T) {
 		t.Errorf("hand-back: %+v %v", cp, ok)
 	}
 }
+
+// The plan a session answers for is the one Locate gives it, where its
+// commits go. In a main checkout, which many plans name, a plan that holds
+// a commit of the session's but does not name it is not the session's: its
+// next commit there makes a plan of unplanned work, and that is its plan.
+func TestSessionPlanInMainCheckout(t *testing.T) {
+	c := testConfig(t)
+	repo, _ := checkouts(t, 0)
+	old, err := c.Open(locatePlan(t, c, "old", day, []string{repo}, []string{"other"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.Record("", Event{Kind: "committed", Session: "s1", Commit: "Add x"}, day); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.Log(Event{Kind: "handed-back", Item: old.Name}, day.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if p, ok := c.sessionPlan("s1", repo); ok {
+		t.Errorf("a plan naming only the main checkout: %s", p.File())
+	}
+	if cp, ok := c.Checkpoint("s1", repo); ok {
+		t.Errorf("checkpoint of another session's plan: %+v", cp)
+	}
+	made, created, err := c.RecordCommit("s1", repo, Event{Commit: "Add y", Summary: "Add y"}, day.Add(2*time.Minute))
+	if err != nil || !created {
+		t.Fatalf("created %v, %v", created, err)
+	}
+	if p, ok := c.sessionPlan("s1", repo); !ok || p.File() != made.File() {
+		t.Errorf("after the session's commit: %s %v, want %s", p.File(), ok, made.File())
+	}
+}

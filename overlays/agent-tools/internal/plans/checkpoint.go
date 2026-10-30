@@ -50,37 +50,12 @@ func (c Config) Checkpoint(session, cwd string) (Checkpoint, bool) {
 	return Checkpoint{Plan: p.File(), Kind: e.Kind, Key: e.ID}, true
 }
 
-// sessionPlan is the plan session answers for: of this host's plans that
-// name the session, the first; else, of those that name the worktree at
-// top, the first whose log holds a commit of the session's.
+// sessionPlan is the plan session answers for in the worktree at top: the
+// one Locate finds, which the session's commits there go in.
 func (c Config) sessionPlan(session, top string) (Plan, bool) {
 	if session == "" {
 		return Plan{}, false
 	}
-	found, err := c.Find(FindOptions{Session: session, Worktree: top})
-	if err != nil {
-		return Plan{}, false
-	}
-	for _, f := range found {
-		if slices.Contains(f.Matched, "session") {
-			p, err := c.Open(f.Plan)
-			return p, err == nil
-		}
-	}
-	for _, f := range found {
-		p, err := c.Open(f.Plan)
-		if err != nil {
-			continue
-		}
-		events, err := p.Events()
-		if err != nil {
-			continue
-		}
-		for _, e := range events {
-			if e.Kind == "committed" && e.Session == session {
-				return p, true
-			}
-		}
-	}
-	return Plan{}, false
+	p, _, ok := c.Locate(session, top)
+	return p, ok
 }

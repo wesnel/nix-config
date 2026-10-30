@@ -212,5 +212,20 @@ func TestStatusLine(t *testing.T) {
 		}
 	})
 
+	// Of two plans naming the session, the one that also names the linked
+	// worktree it runs in is where its commits go, though the other is
+	// newer.
+	t.Run("the plan Locate gives the session in its worktree", func(t *testing.T) {
+		c := testConfig(t)
+		_, linked := checkouts(t, 1)
+		here := locatePlan(t, c, "here", day, []string{linked[0]}, []string{"claude:abc"})
+		insertUnder(t, here, "** Questions", question("Q1", "Keep it?", ""))
+		locatePlan(t, c, "newer", day.Add(time.Hour), nil, []string{"claude:abc"})
+		in, _ := json.Marshal(map[string]string{"session_id": "abc", "cwd": linked[0]})
+		if got := c.StatusLine(in); got != "1 open question · /questions" {
+			t.Errorf("status line %q, want the question of the plan naming the worktree", got)
+		}
+	})
+
 	t.Run("after", testStatusLineAfter)
 }
