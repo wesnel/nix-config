@@ -2,10 +2,8 @@ package plans
 
 import (
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +41,9 @@ func (p Plan) Ask(o AskOptions, now time.Time) (Asked, error) {
 	if err := p.checkOwn(); err != nil {
 		return Asked{}, err
 	}
+	if err := p.checkOpen(); err != nil {
+		return Asked{}, err
+	}
 	o.Question, o.Recommendation, o.Context = strings.TrimSpace(o.Question), strings.TrimSpace(o.Recommendation), strings.TrimSpace(o.Context)
 	o.Answer = strings.TrimSpace(o.Answer)
 	context, err := o.validate()
@@ -68,7 +69,10 @@ func (p Plan) Ask(o AskOptions, now time.Time) (Asked, error) {
 				return refusal.New("%q is not an item of %s, so the question would wait for it forever. Pass IDs `agent-plan status %s` lists", id, p.Name, p.file(""))
 			}
 		}
-		qid := nextListedID(o.Part, "Q", known)
+		qid, err := p.nextID(partPrefix(o.Part), "Q")
+		if err != nil {
+			return err
+		}
 		block := o.block(qid, context)
 		err = l.edit(file, func(lines []string) ([]string, error) {
 			return o.insert(lines, block, file, qid, now)
@@ -149,23 +153,12 @@ func (o AskOptions) block(qid string, context []string) []string {
 	return block
 }
 
-func nextListedID[V any](part, letter string, items map[string]V) string {
-	prefix := ""
-	if part != "" {
-		prefix = part + "."
+// partPrefix is what a part's item IDs start with, "" for the plan's own.
+func partPrefix(part string) string {
+	if part == "" {
+		return ""
 	}
-	next := 1
-	pattern := idOf(prefix, letter)
-	for id := range items {
-		m := pattern.FindStringSubmatch(id)
-		if m == nil {
-			continue
-		}
-		if n, _ := strconv.Atoi(m[1]); n >= next {
-			next = n + 1
-		}
-	}
-	return fmt.Sprintf("%s%s%d", prefix, letter, next)
+	return part + "."
 }
 
 func (o AskOptions) insert(lines, block []string, file, qid string, now time.Time) ([]string, error) {

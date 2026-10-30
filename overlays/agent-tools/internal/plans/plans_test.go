@@ -695,6 +695,15 @@ func TestLog(t *testing.T) {
 		if _, err := p.Log(Event{Kind: "handed-back", Item: "P1"}, day); err != nil {
 			t.Errorf("a part's hand-back with S1 of the plan still open: %v", err)
 		}
+		// The plan's own hand-back waits for the part too.
+		if _, err := p.Log(Event{Kind: "done", Item: "S1"}, day); err != nil {
+			t.Fatal(err)
+		}
+		_, err = p.Log(Event{Kind: "handed-back", Item: p.Name}, day)
+		isRefusal(t, "the plan's hand-back with part P1 open", err)
+		if err != nil && !strings.Contains(err.Error(), "P1") {
+			t.Errorf("the refusal does not name P1: %v", err)
+		}
 	})
 
 	// A log changed other than by appending through Log is no longer trusted.

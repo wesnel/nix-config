@@ -20,7 +20,7 @@ type Step struct {
 	// Keyword is the keyword the log gives the step.
 	Keyword string `json:"keyword"`
 	// Minutes is how long the step has been worked on: the sum of its spans
-	// from a started event to the next done or abandoned event, to the
+	// from a started event to the next done, abandoned or carried event, to the
 	// minute the log stamps. A span still open at the time of the status
 	// runs to it, and Running is set. Nil for a step never started.
 	Minutes *int `json:"minutes,omitempty"`
@@ -155,9 +155,9 @@ func eventTime(e Event, loc *time.Location) (time.Time, bool) {
 }
 
 // workTime sets Minutes and Running of the steps of s that events started:
-// the sum of each step's spans, from a started event to the next done or
-// abandoned one, and a span still open at now runs to it. A started event
-// inside an open span, and a done or abandoned one outside any, change
+// the sum of each step's spans, from a started event to the next done,
+// abandoned or carried one, and a span still open at now runs to it. A
+// started event inside an open span, and a closing one outside any, change
 // nothing. An event whose stamp does not parse is ignored.
 func workTime(steps []Step, index map[string]int, events []Event, now time.Time) {
 	opened := map[string]time.Time{}
@@ -171,7 +171,7 @@ func workTime(steps []Step, index map[string]int, events []Event, now time.Time)
 		switch start, open := opened[e.Item]; {
 		case e.Kind == "started" && !open:
 			opened[e.Item], timed[e.Item] = at, true
-		case (e.Kind == "done" || e.Kind == "abandoned") && open:
+		case (e.Kind == "done" || e.Kind == "abandoned" || e.Kind == carriedKind) && open:
 			total[e.Item] += at.Sub(start)
 			delete(opened, e.Item)
 		}

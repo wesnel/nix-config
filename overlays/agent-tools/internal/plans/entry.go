@@ -129,6 +129,9 @@ func (p Plan) AddEntry(o EntryOptions, now time.Time) (Recorded, error) {
 	if err := p.checkOwn(); err != nil {
 		return Recorded{}, err
 	}
+	if err := p.checkOpen(); err != nil {
+		return Recorded{}, err
+	}
 	letter, body, err := o.validate()
 	if err != nil {
 		return Recorded{}, err
@@ -148,7 +151,7 @@ func (p Plan) AddEntry(o EntryOptions, now time.Time) (Recorded, error) {
 		if o.Part != "" {
 			prefix = o.Part + "."
 		}
-		id, err := p.nextID(prefix, letter, items)
+		id, err := p.nextID(prefix, letter)
 		if err != nil {
 			return err
 		}
@@ -204,16 +207,49 @@ func partWhere(repo, branch, worktree string) (string, error) {
 }
 
 // nextID is the next ID prefix+letter+n that no heading, no event and,
-// for a part, no part's file has named: an ID once named is never handed
-// out again, or an event naming it would attach to the new entry.
-func (p Plan) nextID(prefix, letter string, items map[string]item) (string, error) {
-	events, err := p.Events()
+// for a part, no part's file has named, in this plan or any plan its work
+// was carried from: an ID once named is never handed out again, or an
+// event naming it would attach to the new entry, and a carried item keeps
+// its ID.
+func (p Plan) nextID(prefix, letter string) (string, error) {
+	seen, err := p.namedIDs()
 	if err != nil {
 		return "", err
 	}
+	visited := map[string]bool{p.Name: true}
+	for q := p.carriedFrom(); q.Name != "" && !visited[q.Name]; q = q.carriedFrom() {
+		visited[q.Name] = true
+		// A plan carried from that cannot be read names nothing more.
+		ids, err := q.namedIDs()
+		if err != nil {
+			break
+		}
+		seen = append(seen, ids...)
+	}
+	pattern, next := idOf(prefix, letter), 1
+	for _, id := range seen {
+		if m := pattern.FindStringSubmatch(id); m != nil {
+			if n, _ := strconv.Atoi(m[1]); n >= next {
+				next = n + 1
+			}
+		}
+	}
+	return fmt.Sprintf("%s%s%d", prefix, letter, next), nil
+}
+
+// namedIDs are the IDs the plan's headings, events and part files name.
+func (p Plan) namedIDs() ([]string, error) {
+	items, err := p.items()
+	if err != nil {
+		return nil, err
+	}
+	events, err := p.Events()
+	if err != nil {
+		return nil, err
+	}
 	files, err := p.files()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	var seen []string
 	for id := range items {
@@ -225,15 +261,7 @@ func (p Plan) nextID(prefix, letter string, items map[string]item) (string, erro
 	for _, f := range files {
 		seen = append(seen, partOf(f))
 	}
-	pattern, next := idOf(prefix, letter), 1
-	for _, id := range seen {
-		if m := pattern.FindStringSubmatch(id); m != nil {
-			if n, _ := strconv.Atoi(m[1]); n >= next {
-				next = n + 1
-			}
-		}
-	}
-	return fmt.Sprintf("%s%s%d", prefix, letter, next), nil
+	return seen, nil
 }
 
 // EditOptions are what EditEntry changes: the title, the text, or both;
@@ -247,6 +275,9 @@ type EditOptions struct {
 // the headings under it, and logs it as planned.
 func (p Plan) EditEntry(id string, o EditOptions, now time.Time) (Recorded, error) {
 	if err := p.checkOwn(); err != nil {
+		return Recorded{}, err
+	}
+	if err := p.checkOpen(); err != nil {
 		return Recorded{}, err
 	}
 	switch {
@@ -365,6 +396,9 @@ func setBody(lines []string, at int, body []string) []string {
 // none removes it, and logs it as planned.
 func (p Plan) SetAfter(id string, after []string, now time.Time) (Event, error) {
 	if err := p.checkOwn(); err != nil {
+		return Event{}, err
+	}
+	if err := p.checkOpen(); err != nil {
 		return Event{}, err
 	}
 	if !stepPattern.MatchString(id) && !partPattern.MatchString(id) && !questionID.MatchString(id) {

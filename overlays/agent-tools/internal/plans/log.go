@@ -168,6 +168,32 @@ func (p Plan) check(e Event) error {
 	if _, ok := items[e.Item]; !ok {
 		return refusal.New("%q is not an item of %s. Add it first with `agent-plan step` or `agent-plan part`, or use an ID `agent-plan status %s` lists", e.Item, p.Name, p.file(""))
 	}
+	return p.checkCarried(e)
+}
+
+// checkCarried refuses an event about an item this plan carried to the
+// next one, which holds it now.
+func (p Plan) checkCarried(e Event) error {
+	if e.Kind == carriedKind || !projected(e.Item) {
+		return nil
+	}
+	props, err := planHeading(p.file(""))
+	if err != nil {
+		return err
+	}
+	// Only a plan carried from has carried items, so others skip the log.
+	to := props[propCarriedTo]
+	if to == "" {
+		return nil
+	}
+	events, err := p.Events()
+	if err != nil {
+		return err
+	}
+	if stepState(events, e.Item) == kwCarried {
+		return refusal.New("%s was carried to %s, which holds it now. Log it there, as `agent-plan log %s --item %s --kind %s`",
+			e.Item, to, p.carriedToFile(to), e.Item, e.Kind)
+	}
 	return nil
 }
 
@@ -184,8 +210,8 @@ func (e Event) checkCommand() error {
 }
 
 // checkSettled refuses the hand-back of the plan, or of a part, while any
-// of its steps is unsettled, naming them, and adds the gaps status shows
-// (Status.Gaps) so the session fixes them in the same pass.
+// of its steps or parts is unsettled, naming them, and adds the gaps
+// status shows (Status.Gaps) so the session fixes them in the same pass.
 func (p Plan) checkSettled(item string, now time.Time) error {
 	if item != p.Name && !partPattern.MatchString(item) {
 		return nil
@@ -194,7 +220,7 @@ func (p Plan) checkSettled(item string, now time.Time) error {
 	if err != nil || len(open) == 0 {
 		return err
 	}
-	why := fmt.Sprintf("%s is not handed back while %s is unsettled. Log each step done, verified or abandoned with its reason, "+
+	why := fmt.Sprintf("%s is not handed back while %s is unsettled. Log each step and part done, verified or abandoned with its reason, "+
 		"or move what is left to the next plan with `agent-plan carry %s`", item, strings.Join(open, ", "), p.file(""))
 	if s, err := p.StatusAt(now); err == nil {
 		if gaps := s.GapsText(); gaps != "" {
@@ -208,8 +234,8 @@ func (p Plan) checkSettled(item string, now time.Time) error {
 // it moves to the next plan, which settles it as CARRIED.
 const carriedKind = "carried"
 
-// unsettledSteps are the steps of the plan, or with a part's ID that
-// part's alone, that the log leaves open, in file order.
+// unsettledSteps are the steps and parts of the plan, or with a part's ID
+// that part's steps alone, that the log leaves open, in file order.
 func (p Plan) unsettledSteps(of string) ([]string, error) {
 	list, err := p.itemList()
 	if err != nil {
@@ -221,8 +247,9 @@ func (p Plan) unsettledSteps(of string) ([]string, error) {
 	}
 	var open []string
 	for _, it := range list {
-		if stepPattern.MatchString(it.ID) && (of == p.Name || strings.HasPrefix(it.ID, of+".")) &&
-			!planKeywords.done[stepState(events, it.ID)] {
+		mine := stepPattern.MatchString(it.ID) && (of == p.Name || strings.HasPrefix(it.ID, of+".")) ||
+			partPattern.MatchString(it.ID) && of == p.Name
+		if mine && !planKeywords.done[stepState(events, it.ID)] {
 			open = append(open, it.ID)
 		}
 	}
