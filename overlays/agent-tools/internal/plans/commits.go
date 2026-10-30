@@ -205,11 +205,21 @@ func (c Config) RecordRewrites(session, top, repository string, rewrites map[str
 	if err != nil {
 		return err
 	}
+	own := map[string]Plan{}
+	for _, p := range ps {
+		if p.Own {
+			own[p.Name] = p
+		}
+	}
 	affected := false
+	var holder *Plan
 	for _, association := range all {
 		for at := association.OriginalRevision; at != ""; at = a[repository][at] {
 			if rewrites[at] != "" {
 				affected = true
+				if p, ok := own[association.Plan]; ok && holder == nil && rewrites[at] != at {
+					holder = &p
+				}
 				break
 			}
 		}
@@ -234,9 +244,19 @@ func (c Config) RecordRewrites(session, top, repository string, rewrites map[str
 		return nil
 	}
 	sort.Strings(old)
-	p, part, ok := c.Locate(session, top)
+	// The rewrites go with a commit they move, in a plan of this host's;
+	// only when no such plan holds one do they go to the session's plan.
+	// The signing pass runs outside any session, often in a main checkout,
+	// where Locate finds nothing.
+	var p Plan
+	var part string
+	ok := holder != nil
+	if ok {
+		p = *holder
+	} else {
+		p, part, ok = c.Locate(session, top)
+	}
 	if !ok {
-		var err error
 		p, part, _, err = c.unplanned(session, top, now)
 		if err != nil {
 			return err

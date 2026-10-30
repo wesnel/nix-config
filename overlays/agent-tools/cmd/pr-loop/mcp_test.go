@@ -129,13 +129,19 @@ func newMCPFixture(t *testing.T) *mcpFixture {
 	data, _ := json.Marshal(map[string]any{"plans": planConfig, "delegate": map[string]any{
 		"agents": "/store/review-agents.json", "settings": "/store/reviewer-settings.json"}})
 	os.WriteFile(agentTools, data, 0o644)
-	gitPath, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatal(err)
+	// The fake claude runs env and cat, which a Linux build sandbox has
+	// only where coreutils is, not in /usr/bin or /bin.
+	path := []string{bin}
+	for _, tool := range []string{"git", "env", "cat"} {
+		found, err := exec.LookPath(tool)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path = append(path, filepath.Dir(found))
 	}
 	f.env = []string{
 		"HOME=" + home, "TMPDIR=" + tmp, "LANG=C",
-		"PATH=" + bin + string(os.PathListSeparator) + filepath.Dir(gitPath) + string(os.PathListSeparator) + "/usr/bin:/bin",
+		"PATH=" + strings.Join(append(path, "/usr/bin", "/bin"), string(os.PathListSeparator)),
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
 		"GIT_AUTHOR_NAME=T", "GIT_AUTHOR_EMAIL=t@e", "GIT_COMMITTER_NAME=T", "GIT_COMMITTER_EMAIL=t@e",
 		"XDG_STATE_HOME=" + t.TempDir(), "XDG_CACHE_HOME=" + t.TempDir(),

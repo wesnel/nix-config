@@ -64,5 +64,6 @@ func recordCommitRewrites(p *pending) error {
 		}
 		rewrites[old] = newIDs[groups[i]]
 	}
-	return c.RecordRewrites(plans.EnvSession(), p.Dir, identity.Repository, rewrites, time.Now())
+	_, session := plans.EnvSession()
+	return c.RecordRewrites(session, p.Dir, identity.Repository, rewrites, time.Now())
 }
