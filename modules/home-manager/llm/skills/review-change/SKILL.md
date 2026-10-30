@@ -218,6 +218,8 @@ each branch:
   and tooling included, searched for by what it does rather than by name,
   and saying where it looked;
 - the same file edited on parallel branches;
+- a new or changed check: where the repository documents how to check a
+  change, its entry names each path and pin that can break it;
 - what the plan leaves undecided, against this bar: someone could build it
   without asking a question;
 - designing for change, by each principle the `design` skill lists (tell
