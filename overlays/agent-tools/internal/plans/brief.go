@@ -28,12 +28,38 @@ func (p Plan) Brief(now time.Time) (string, error) {
 		goal = "none written\n"
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Brief of plan %s, %s:\nGoal:\n%s", p.file(""), s.Title, goal)
+	fmt.Fprintf(&b, "Brief of plan %s, %s:\n", p.file(""), s.Title)
+	for _, line := range p.carryLines() {
+		b.WriteString(line + "\n")
+	}
+	b.WriteString("Goal:\n" + goal)
 	b.WriteString("Decided:\n")
 	if len(ds) == 0 {
 		b.WriteString("none\n")
 	}
 	b.WriteString(strings.TrimPrefix(DecisionsOrg(ds), "No decisions.\n"))
+	// The decisions the carried work was planned under, and the steps done
+	// but not verified, stay in the plans it was carried from.
+	chain, err := p.carriedChain()
+	if err != nil {
+		return "", err
+	}
+	for _, from := range chain {
+		ds, err := from.Decisions(true)
+		if err != nil {
+			return "", err
+		}
+		if len(ds) > 0 {
+			b.WriteString("Decided in " + from.Name + ":\n" + DecisionsOrg(ds))
+		}
+		fs, err := from.StatusAt(now)
+		if err != nil {
+			return "", err
+		}
+		if len(fs.DoneNotVerified) > 0 {
+			b.WriteString("Done, not verified in " + from.Name + ": " + list(fs.DoneNotVerified) + "\n")
+		}
+	}
 	var askable []string
 	for _, q := range Askable(qs) {
 		askable = append(askable, q.ID)

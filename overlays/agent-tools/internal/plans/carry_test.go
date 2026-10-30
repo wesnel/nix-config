@@ -121,6 +121,46 @@ func TestCarryHandover(t *testing.T) {
 	}
 }
 
+// Each brief says where the plan's work came from or went, and the new
+// plan's brief carries the decisions made before the carry.
+func TestCarryBriefs(t *testing.T) {
+	t.Parallel()
+	c, p := carryFixture(t)
+	got, err := c.Carry(p.File(), CarryOptions{}, day.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, _ := c.Open(got.Plan)
+	briefs := map[string]func(Plan) (string, error){
+		"brief":        func(p Plan) (string, error) { return p.Brief(day) },
+		"resume brief": func(p Plan) (string, error) { return p.ResumeBrief(day, ResumeLimit) },
+	}
+	for name, brief := range briefs {
+		old, err := brief(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "Carried to: " + n.Name + "; pick it up with `agent-plan pickup " + n.File() + "`\n"; !strings.Contains(old, want) {
+			t.Errorf("old plan's %s lacks %q:\n%s", name, want, old)
+		}
+		next, err := brief(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "Carried from: " + p.Name + "\n"; !strings.Contains(next, want) {
+			t.Errorf("new plan's %s lacks %q:\n%s", name, want, next)
+		}
+	}
+	old, _ := p.ResumeBrief(day, ResumeLimit)
+	if !strings.Contains(old, "In progress: none\n") {
+		t.Errorf("the old plan's resume brief shows a carried step in progress:\n%s", old)
+	}
+	next, _ := n.Brief(day)
+	if want := "Decided in " + p.Name + ":\n- Q2 :: Rename it? yes\n"; !strings.Contains(next, want) {
+		t.Errorf("new plan's brief lacks %q:\n%s", want, next)
+	}
+}
+
 // Carry moves what a plan leaves open to a new plan, so the next session
 // starts from only the work left, and settles it in the old plan.
 func TestCarry(t *testing.T) {
@@ -314,6 +354,23 @@ func TestCarry(t *testing.T) {
 			t.Errorf("new IDs %s %s %s, want S5 F3 Q3", step.ID, f.ID, q.ID)
 		}
 	})
+	// A plan along the chain that cannot be read could hold the next ID,
+	// so none is handed out.
+	t.Run("no new ID past a plan that cannot be read", func(t *testing.T) {
+		c, p := carryFixture(t)
+		got, err := c.Carry(p.File(), CarryOptions{}, later)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, _ := c.Open(got.Plan)
+		if err := os.Chmod(p.file(""), 0o000); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(p.file(""), 0o644) })
+		if step, err := n.AddEntry(EntryOptions{Section: "Steps", Title: "Next"}, later); err == nil {
+			t.Errorf("a step was added as %s, an ID the unread plan may use", step.ID)
+		}
+	})
 
 	// A carried plan takes no new work and no events about what it
 	// carried, which belong to the next plan, but still takes its own
@@ -505,14 +562,39 @@ func TestCarry(t *testing.T) {
 		isRefusal(t, "a carry with every item settled", err)
 	})
 
+	// A step done but not verified stays in the old plan, where it is
+	// verified, and the next plan's brief names it.
+	t.Run("a step done but not verified stays", func(t *testing.T) {
+		c, p := carryFixture(t)
+		if _, err := p.Log(Event{Kind: "done", Item: "S2"}, day); err != nil {
+			t.Fatal(err)
+		}
+		got, err := c.Carry(p.File(), CarryOptions{}, later)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(got.Steps, " ") != "S3" {
+			t.Errorf("carried steps %v, want S3", got.Steps)
+		}
+		n, _ := c.Open(got.Plan)
+		brief, err := n.Brief(later)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "Done, not verified in " + p.Name + ": S2\n"; !strings.Contains(brief, want) {
+			t.Errorf("the next plan's brief lacks %q:\n%s", want, brief)
+		}
+		if _, err := p.Log(Event{Kind: "verified", Item: "S2"}, later); err != nil {
+			t.Errorf("verifying it in the old plan: %v", err)
+		}
+		if brief, _ := n.Brief(later); strings.Contains(brief, "Done, not verified in") {
+			t.Errorf("the next plan's brief still names it once verified:\n%s", brief)
+		}
+	})
+
 	// Nothing open is left behind in a plan that is closed and off the
 	// plans page: what carry does not move, it refuses to leave.
 	for what, leave := range map[string]func(t *testing.T, c Config, p Plan){
-		"a step done but not verified": func(t *testing.T, c Config, p Plan) {
-			if _, err := p.Log(Event{Kind: "done", Item: "S2"}, day); err != nil {
-				t.Fatal(err)
-			}
-		},
 		"a part not started": func(t *testing.T, c Config, p Plan) {
 			addItems(t, p.file(""), "** Distribution", "P1")
 		},

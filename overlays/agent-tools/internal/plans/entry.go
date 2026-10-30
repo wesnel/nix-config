@@ -243,13 +243,14 @@ func (p Plan) nextID(prefix, letter string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	visited := map[string]bool{p.Name: true}
-	for q := p.carriedFrom(); q.Name != "" && !visited[q.Name]; q = q.carriedFrom() {
-		visited[q.Name] = true
-		// A plan carried from that cannot be read names nothing more.
+	chain, err := p.carriedChain()
+	if err != nil {
+		return "", err
+	}
+	for _, q := range chain {
 		ids, err := q.namedIDs()
 		if err != nil {
-			break
+			return "", err
 		}
 		seen = append(seen, ids...)
 	}

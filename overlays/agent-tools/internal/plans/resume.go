@@ -67,6 +67,9 @@ func (p Plan) ResumeBrief(now time.Time, limit int) (string, error) {
 	var head strings.Builder
 	fmt.Fprintf(&head, "Resume brief of plan %s, %s (status %s). Read the plan's file for anything below that is cut short.\n",
 		p.File(), s.Title, orNone(s.State))
+	for _, line := range p.carryLines() {
+		head.WriteString(clip(line, 600) + "\n")
+	}
 	head.WriteString("Goal:\n" + clip(strings.TrimRight(goal, "\n"), limit/4) + "\n")
 
 	askable := Askable(qs)
@@ -92,7 +95,7 @@ func (p Plan) ResumeBrief(now time.Time, limit int) (string, error) {
 	}
 	var inProgress []string
 	for _, st := range s.Steps {
-		if started[st.ID] && !st.Done && !st.Abandoned {
+		if st.Keyword == kwStarted {
 			inProgress = append(inProgress, st.ID)
 		}
 	}
