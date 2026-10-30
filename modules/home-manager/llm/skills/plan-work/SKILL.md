@@ -1,6 +1,6 @@
 ---
 name: plan-work
-description: Keep a plan file and its event log for a change with agent-plan - where plans live, their format and item IDs, what to log and when, finding a plan again after a compaction, a resume or a hand-off, and planning without acting when the operator asks only for a plan. Use before starting any change, when picking one up again, and whenever the operator asks for a plan.
+description: Keep a plan file and its event log for a change with agent-plan - where plans live, their format and item IDs, what to log and when, finding a plan again after a compaction, a resume or a hand-off, carrying what a session leaves open to the next plan and picking that up in a fresh session, and planning without acting when the operator asks only for a plan. Use before starting any change, when picking one up again, before handing back, and whenever the operator asks for a plan.
 ---
 
 # Plans
@@ -9,8 +9,10 @@ Every change has a plan: files made by `agent-plan new` side by side in the
 plans directory, `<time>-<slug>.<host>.org`, a
 `<time>-<slug>.<host>.<part>.org` per sub-agent's part, and
 `<time>-<slug>.<host>.log.org`, `<time>` being when it was made, as
-`YYYYMMDDHHMMSS`; plans named `YYYY-MM-DD-<slug>` are read alike. You and
-whoever picks the work up after you work from it, so keep it true.
+`YYYYMMDDHHMMSS`; plans named `YYYY-MM-DD-<slug>` are read alike. A plan
+covers one session's work: you work from it and keep it true, and what
+you leave open goes on in the next plan, as "Carrying and picking up"
+says.
 
 ## Making one
 
@@ -84,8 +86,10 @@ no command makes goes in your report for the operator.
   `PIPELINE` (`full` or `opted-out:<reason>`), `SKILLS` (the skills the
   work runs under beyond this one, such as `coordinate-subagents` or
   `review-loop`), `WORKSTREAM` (an `id:` link to the plan's workstream,
-  in the plan's file alone) and, once `agent-plan own` sets one,
-  `OWNERS` (`worktree=agent`). Lists are separated by spaces.
+  in the plan's file alone), once `agent-plan own` sets one,
+  `OWNERS` (`worktree=agent`), and on a plan `agent-plan carry` made or
+  carried from, `CARRIED_FROM` or `CARRIED_TO`, the other plan's name.
+  Lists are separated by spaces.
   `agent-plan set PLAN NAME VALUE... [--part P1]` sets each of them but
   `CUSTOM_ID`, `HOST`, `PIPELINE`, `WORKSTREAM` and `OWNERS`, as `agent-plan set PLAN STATUS
   working` or `agent-plan set PLAN SKILLS coordinate-subagents`.
@@ -173,12 +177,14 @@ A question or a part that cannot start before others are settled lists
 their IDs in `:AFTER:`, separated by spaces (through `agent-plan ask
 --after`, `step --after` or `part --after`, and `agent-plan after` once
 written): a question is settled once its keyword is a
-done one, a part or step once `done`, `verified` or `abandoned` is logged
-for it. Until then the question is not put to the operator and the part is not
-ready.
+done one, a part or step once `done`, `verified`, `abandoned` or
+`carried` is logged for it. Until then the question is not put to the
+operator and the part is not ready.
 
-An ID is never reused or renumbered; a step dropped from the work keeps its
-ID and gets an `abandoned` event. Change only your own plan file, in the
+An ID is never reused or renumbered, along every plan the work was carried
+through: a carried item keeps its ID, and a new one continues past the
+highest of them. A step dropped from the work keeps its ID and gets an
+`abandoned` event, whose `--summary` gives the reason. Change only your own plan file, in the
 same step as what it describes: a new step (through `agent-plan step`), a
 decision (`agent-plan ask` or `decide`), a moved base (`agent-plan set`).
 
@@ -197,8 +203,8 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
 - Log `started`, `done` and `verified` for every step. `verified` names
   evidence you observed, never one you expect.
 - `log` writes a step's or part's heading keyword from its log
-  (`STARTED`, `DONE`, `VERIFIED`, `ABANDONED`, with `CLOSED` as Org
-  writes it); never change those keywords by hand. When it cannot, the
+  (`STARTED`, `DONE`, `VERIFIED`, `ABANDONED`, `CARRIED`, with `CLOSED`
+  as Org writes it); never change those keywords by hand. When it cannot, the
   event is still logged, its output says why, and `agent-plan status`
   lists the item under keyword drift.
 - A hook after each shell call logs `committed` for every commit and
@@ -252,8 +258,9 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
   runs and what it signs. Without `--plan`, selection uses the session and
   worktree.
 
-`agent-plan status PLAN` lists the steps without `done` and those done but
-not `verified`, the parts ready to start, the steps ready now, what still
+`agent-plan status PLAN` lists the unsettled steps (neither done,
+verified, abandoned nor carried), those done but not `verified`, those
+carried, the parts ready to start, the steps ready now, what still
 waits on an `:AFTER:` item, keyword, property and structure drift, steps
 started with nothing logged for a day, and commits no `done` event names
 (a `fixup!`, `amend!` or `squash!` commit counts as the one it names). Log
@@ -267,7 +274,10 @@ After a compaction, a /clear, a resume or a hand-off, find the plan before
 anything else, then read it, load the skills its `SKILLS` names, and run
 `agent-plan status PLAN`:
 
-- Claude Code names it when the session resumes, compacts or is cleared.
+- Claude Code names it when the session resumes, compacts or is cleared;
+  after /clear, the plan the work was last carried to.
+- Given a line that runs `agent-plan pickup`, the plan it names, as
+  "Carrying and picking up" says.
 - Elsewhere, `agent-plan find` lists the plans that match this session,
   or the linked worktree it runs in or that worktree's branch, never a
   repository's main checkout; `--session`, `--worktree` or `--branch` matches the
@@ -289,6 +299,48 @@ operator when the context is large or its cache cold.
 Only this host's plans, the files named for it, are yours to change; another
 host's beside them are read-only here, and `agent-plan` refuses to write
 them.
+
+## Carrying and picking up
+
+A plan covers one session's work. Before you hand back, settle every
+step: done, verified, abandoned with its reason, or carried. A
+`handed-back` event on the plan's ID is refused while a step is
+unsettled, and names it; a part's hand-back waits on the part's steps
+alone. Before carrying, run the review stages over this session's
+commits and log the hand-back step done, so only the work left moves.
+Then carry it to the next session:
+
+```sh
+agent-plan carry PLAN --template NAME
+```
+
+It moves every unsettled step, open follow-up and open question, under
+the same IDs, to a new plan with this one's title, goal, branches,
+workstream, pull requests and skills, and settles each here as
+`CARRIED`, the questions `DROPPED`. A step done but not verified stays
+here, to be verified here, and the new plan's brief names it.
+`--template` is the template this plan started from: the new plan takes
+the steps it marks `:STAGE: review` under fresh IDs, waiting on the
+carried steps, its own review stages for the rest of the work. A part's
+sub-agent settles or hands back its steps first. Run again, carry
+finishes a run that stopped and otherwise changes nothing. The carried
+plan then takes no new work, only its hand-back and events about the
+items it kept. Give the operator the `prompt` carry prints, word for
+word: a line to paste into a fresh session in a new terminal tab, which
+takes the work from there.
+
+Given such a line, run it before anything else:
+
+```sh
+agent-plan pickup PLAN
+```
+
+It adds this session to the plan, sets it working, and prints the skills
+to load, the open follow-ups and the plan's brief, with the decisions
+made before the carry and the steps left to verify in the plan carried
+from. Load those skills, read the plan, and go on
+from its ready steps. A plan halted after planning is picked up as it
+stands, without a carry.
 
 ## Questions for the operator
 
@@ -351,7 +403,8 @@ agent-plan followup PLAN --title 'Guard accepts --draft=false' --found-in S1 \
 
 It becomes a `TODO` under Follow-ups with the next `F` ID (`--part P1`
 for a part's file), and its keyword then follows `agent-plan log` as a
-step's does. `agent-plan status` lists those still open.
+step's does. `agent-plan status` lists those still open, and `carry`
+moves them to the next plan, still follow-ups.
 
 ## Other hosts
 
@@ -382,7 +435,10 @@ first edit, and its questions and decisions through `agent-plan ask`.
 
 If the operator asks you to plan, write the plan and stop: no edits outside the
 plan's files, and no commits. Log `planned` for the plan's ID, run
-`agent-plan set PLAN STATUS halted`, and report the plan's path with its open questions.
+`agent-plan set PLAN STATUS halted`, and report the plan's path with its
+open questions and the line that picks it up, `agent-plan pickup PLAN`.
+The session that builds it picks it up as it stands; a halted plan is not
+carried.
 
 ## The pipeline
 

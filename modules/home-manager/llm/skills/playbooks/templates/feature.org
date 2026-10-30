@@ -34,6 +34,7 @@ Done when every build step is logged =verified= or =abandoned=.
 :PROPERTIES:
 :CUSTOM_ID: S4
 :AFTER: S3
+:STAGE: review
 :END:
 The =review-change= skill's "Fresh review loop" over the committed change.
 Done when a round's findings are all settled.
@@ -41,6 +42,7 @@ Done when a round's findings are all settled.
 :PROPERTIES:
 :CUSTOM_ID: S5
 :AFTER: S4
+:STAGE: review
 :END:
 Apply the =review-change= skill's condition for a result design review.
 Run it when selected; otherwise log this step =abandoned= with why.
@@ -49,7 +51,10 @@ Done when it is logged and each decision it brought is settled or asked.
 :PROPERTIES:
 :CUSTOM_ID: S6
 :AFTER: S5
+:STAGE: review
 :END:
-What the =review-change= pipeline's hand-back lists.
+What the =review-change= pipeline's hand-back lists, once every other
+step is settled or carried as the =plan-work= skill says.
 Done when the pipeline's agent-owned publication steps are complete, or a
-refusal is reported with the remaining step, and the hand-back is logged.
+refusal is reported with the remaining step; it is logged done before the
+hand-back, which waits on it.

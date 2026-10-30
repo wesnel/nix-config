@@ -40,10 +40,12 @@ original commands pass.
 :PROPERTIES:
 :CUSTOM_ID: S5
 :AFTER: S4
+:STAGE: review
 :END:
 The =review-change= skill's selection and pipeline over the fix, including
-the hand-back.
-Done when the hand-back is logged.
+the hand-back, once every other step is settled or carried as the
+=plan-work= skill says.
+Done when it is logged done, before the hand-back, which waits on it.
 
 ** Verification
 - The red command fails before the fix and passes after it.
