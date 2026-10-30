@@ -310,6 +310,11 @@ func TestCommands(t *testing.T) {
 		if _, out, _ := agentPlan(t, large, "statusline"); strings.Contains(out, "/clear") {
 			t.Errorf("a hint before any checkpoint: %q", out)
 		}
+		for _, step := range []string{"S1", "S2"} {
+			if _, err := p.Log(plans.Event{Kind: "done", Item: step}, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+		}
 		if _, err := p.Log(plans.Event{Kind: "handed-back", Item: p.Name}, time.Now()); err != nil {
 			t.Fatal(err)
 		}

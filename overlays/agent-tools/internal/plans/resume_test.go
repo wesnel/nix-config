@@ -19,7 +19,6 @@ func TestResumeBrief(t *testing.T) {
 		c := testConfig(t)
 		p := newPlan(t, c, "x")
 		setGoal(t, p.file(""), "Add the run loop.")
-		addItems(t, p.file(""), "** Steps", "S1", "S2")
 		insertUnder(t, p.file(""), "** Questions", question("Q1", "Keep the flag?", "")+question("Q2", "Rename it?", "")+
 			question("Q3", "Rename the alias too?", ""))
 		insertUnder(t, p.file(""), "** Distribution", "*** Part one\n:PROPERTIES:\n:ID: P1\n:AFTER: Q3\n:END:\n")
@@ -32,6 +31,8 @@ func TestResumeBrief(t *testing.T) {
 		if _, err := p.Log(Event{Kind: "handed-back", Item: p.Name, Summary: "the loop's first half"}, day); err != nil {
 			t.Fatal(err)
 		}
+		// The steps come after the hand-back, which waits for every step.
+		addItems(t, p.file(""), "** Steps", "S1", "S2")
 		decide("Q2", "yes, to run")
 		if _, err := p.Log(Event{Kind: "started", Item: "S1"}, day); err != nil {
 			t.Fatal(err)
