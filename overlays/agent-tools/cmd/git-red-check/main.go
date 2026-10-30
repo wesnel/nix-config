@@ -71,6 +71,26 @@ type globs []string
 func (g *globs) String() string     { return strings.Join(*g, ",") }
 func (g *globs) Set(v string) error { *g = append(*g, v); return nil }
 
+// suites are the suites a run checks. Where test, build or testFiles is
+// given, they are one suite named flags, which needs test and testFiles
+// both; otherwise they are those of the clone's settings, which lookup is
+// called for only then, so a caller who gives the flags does not need the
+// settings to load.
+func suites(test, build string, testFiles []string, lookup func() (*repos.Settings, error)) ([]redcheck.Suite, error) {
+	if test == "" && build == "" && len(testFiles) == 0 {
+		config, err := lookup()
+		if err != nil {
+			return nil, err
+		}
+		return config.Suites, nil
+	}
+	if test == "" || len(testFiles) == 0 {
+		return nil, refusal.New("--test and --test-files make one suite in place of the configured ones, so each needs " +
+			"the other; pass both, as `--test CMD --test-files GLOB`, or neither to run the configured suites")
+	}
+	return []redcheck.Suite{{Name: "flags", Test: test, Build: build, TestFiles: testFiles}}, nil
+}
+
 func main() {
 	flags := flag.NewFlagSet("git-red-check", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
@@ -114,21 +134,9 @@ func main() {
 		os.Exit(cli.Report("git-red-check", nil, err, 0, os.Stdout, os.Stderr))
 	}
 	opts := redcheck.Options{Fixups: *fixups, Lines: *lines, Log: os.Stderr}
-	// The flags make a suite of their own in place of the configured ones,
-	// so a caller who gives them does not need the settings to load.
-	if *test != "" || *build != "" || len(testFiles) > 0 {
-		if *test == "" || len(testFiles) == 0 {
-			err := refusal.New("--test and --test-files make one suite in place of the configured ones, so each needs " +
-				"the other; pass both, or neither to run the configured suites")
-			os.Exit(cli.Report("git-red-check", nil, err, 0, os.Stdout, os.Stderr))
-		}
-		opts.Suites = []redcheck.Suite{{Name: "flags", Test: *test, Build: *build, TestFiles: testFiles}}
-	} else {
-		config, err := repos.Lookup()
-		if err != nil {
-			os.Exit(cli.Report("git-red-check", nil, err, 0, os.Stdout, os.Stderr))
-		}
-		opts.Suites = config.Suites()
+	var err error
+	if opts.Suites, err = suites(*test, *build, testFiles, repos.Lookup); err != nil {
+		os.Exit(cli.Report("git-red-check", nil, err, 0, os.Stdout, os.Stderr))
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)

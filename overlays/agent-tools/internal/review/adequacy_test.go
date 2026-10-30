@@ -28,6 +28,8 @@ type adequacyFixture struct {
 	start string
 	// edit, where set, changes the JSON's commits before it is written.
 	edit func(checks []*redcheck.Check) []*redcheck.Check
+	// suites, where set, are the JSON's suites in place of adequacySuites.
+	suites []redcheck.Suite
 }
 
 func setUpAdequacy(t *testing.T, verdict string) *adequacyFixture {
@@ -43,7 +45,7 @@ func setUpAdequacy(t *testing.T, verdict string) *adequacyFixture {
 	os.WriteFile(config, must(json.Marshal(map[string]any{"plans": f.plans,
 		"delegate": map[string]any{"agents": "/store/review-agents.json", "settings": "/store/reviewer-settings.json"}})), 0o644)
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
-	writeSettings(t, f, `{"test": "true", "testFiles": ["*_test.txt"]}`)
+	writeSettings(t, f, string(must(json.Marshal(map[string]any{"suites": adequacySuites}))))
 	// The test file the last commit adds to, so its tests start at line 2.
 	os.WriteFile(filepath.Join(f.repo, "code_test.txt"), []byte("x\n"), 0o644)
 	run(t, f.repo, "git", "add", "code_test.txt")
@@ -88,7 +90,7 @@ func (a *adequacyFixture) restart(t *testing.T, start string) {
 }
 
 // adequacySuites are the suites setUpAdequacy's settings give.
-var adequacySuites = []redcheck.Suite{{Name: "default", Test: "true", TestFiles: []string{"*_test.txt"}}}
+var adequacySuites = []redcheck.Suite{{Name: "txt", Test: "true", TestFiles: []string{"*_test.txt"}}}
 
 // redCheck writes git red-check's JSON on the range, as the session would
 // run it, and returns its path.
@@ -106,8 +108,12 @@ func (a *adequacyFixture) redCheck(t *testing.T) string {
 	if a.edit != nil {
 		checks = a.edit(checks)
 	}
+	suites := adequacySuites
+	if a.suites != nil {
+		suites = a.suites
+	}
 	path := filepath.Join(a.repo, ".git", "red-check.json")
-	os.WriteFile(path, must(json.Marshal(redcheck.Result{Suites: adequacySuites, Commits: checks})), 0o644)
+	os.WriteFile(path, must(json.Marshal(redcheck.Result{Suites: suites, Commits: checks})), 0o644)
 	return path
 }
 
@@ -319,6 +325,32 @@ func TestTestAdequacy(t *testing.T) {
 		a.commitTest(t, "assert \"ab\"\n")
 		if again := a.raised(t)["id"]; again == first {
 			t.Errorf("both tests have the key %v", first)
+		}
+	})
+
+	// With two suites, the finding is the suite's that passes without the
+	// change, at that suite's own test files.
+	t.Run("at the test files of the suite that passes without the change", func(t *testing.T) {
+		a := setUpAdequacy(t, redcheck.PassesWithoutChange)
+		a.suites = append(slices.Clone(adequacySuites), redcheck.Suite{Name: "sh", Test: "sh check.sh",
+			TestFiles: []string{"*.sh"}})
+		writeSettings(t, a.fixture, string(must(json.Marshal(map[string]any{"suites": a.suites}))))
+		os.WriteFile(filepath.Join(a.repo, "check.sh"), []byte("true\n"), 0o644)
+		run(t, a.repo, "git", "add", "check.sh")
+		run(t, a.repo, "git", "commit", "-q", "--amend", "--no-edit")
+		a.commit = run(t, a.repo, "git", "rev-parse", "HEAD")
+		a.tip = a.commit
+		a.edit = func(checks []*redcheck.Check) []*redcheck.Check {
+			last := checks[len(checks)-1]
+			last.Suites = []*redcheck.SuiteCheck{
+				{Suite: "txt", Verdict: redcheck.FailsAsAsserted, TestFiles: []string{"code_test.txt"}},
+				{Suite: "sh", Verdict: redcheck.PassesWithoutChange, TestFiles: []string{"check.sh"}}}
+			return checks
+		}
+		f := a.raised(t)
+		if f["path"] != "check.sh" || f["line"] != 1.0 || !strings.Contains(f["evidence"].(string), `suite "sh"`) ||
+			!strings.Contains(f["evidence"].(string), "(check.sh)") {
+			t.Errorf("the finding: %+v", f)
 		}
 	})
 

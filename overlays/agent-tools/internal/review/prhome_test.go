@@ -32,7 +32,7 @@ func TestFetchIntoClone(t *testing.T) {
 		r := newRemote(t, nil)
 		f := setUpPR(t, r)
 		home := operatorClone(t, r, "")
-		write(t, filepath.Join(home, ".git", "info", "agents.json"), `{"test": "go test ./...", "testFiles": ["*_test.go"]}`)
+		write(t, filepath.Join(home, ".git", "info", "agents.json"), `{"suites": [{"name": "go", "test": "go test ./...", "testFiles": ["*_test.go"]}]}`)
 		os.Chmod(filepath.Join(home, ".git", "info", "agents.json"), 0o644)
 		marker := filepath.Join(t.TempDir(), "hook-ran")
 		write(t, filepath.Join(home, ".git", "hooks", "reference-transaction"), "#!/bin/sh\ntouch "+marker+"\n")
@@ -67,7 +67,7 @@ func TestFetchIntoClone(t *testing.T) {
 		if len(entries) != 1 || entries[0].Name() != ".git" {
 			t.Errorf("the review's worktree has the pull request checked out: %v", entries)
 		}
-		if s, err := sp.settings(); err != nil || s.Test != "go test ./..." {
+		if s, err := sp.settings(); err != nil || len(s.Suites) != 1 || s.Suites[0].Test != "go test ./..." {
 			t.Errorf("the clone's settings do not apply: %+v, %v", s, err)
 		}
 		if after := gitT(t, home, "rev-parse", "HEAD"); after != before {

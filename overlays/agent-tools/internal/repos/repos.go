@@ -35,16 +35,11 @@ type Settings struct {
 	// a worktree, inside a sandboxed session's sandbox; nothing runs it on
 	// its own.
 	Setup string `json:"setup,omitempty"`
-	// Test is the test command git red-check runs, with sh at the top of a
-	// checkout. git delegate never runs it, since it runs the reviewed
-	// commits' code.
-	Test string `json:"test,omitempty"`
-	// Build builds the tests without running them, which tells red-check a
-	// test that fails to build without a change from one that fails as
-	// asserted. Without it, no commit's check exits 0.
-	Build string `json:"build,omitempty"`
-	// TestFiles are git pathspec globs (`:(glob)` magic) for test files.
-	TestFiles []string `json:"testFiles,omitempty"`
+	// Suites are the test suites git red-check runs, each where a commit
+	// changes its test files: a JSON object of redcheck.Suite's keys alone,
+	// which redcheck.CheckSuites must accept. git delegate never runs them,
+	// since they run the reviewed commits' code.
+	Suites []redcheck.Suite `json:"suites,omitempty"`
 	// Routes are rules that route this repository's changes to focused
 	// reviews beside the built-in ones, which they only add to. One that
 	// fails routes.Rule.Check makes the lookup refuse.
@@ -62,15 +57,6 @@ type Settings struct {
 
 // File is the settings file s was read from, or would be read from.
 func (s *Settings) File() string { return s.file }
-
-// Suites are git red-check's test suites: Test, Build and TestFiles as one
-// named default, or none where Test or TestFiles is missing.
-func (s *Settings) Suites() []redcheck.Suite {
-	if s.Test == "" || len(s.TestFiles) == 0 {
-		return nil
-	}
-	return []redcheck.Suite{{Name: "default", Test: s.Test, Build: s.Build, TestFiles: s.TestFiles}}
-}
 
 // notesFile reports whether threat notes name a file: an absolute path
 // with no whitespace. Notes holding any are the notes themselves.
@@ -193,7 +179,7 @@ func SettingsFile() (string, error) {
 // file SettingsFile names: empty where it does not exist. A file that is
 // a symbolic link, not a regular file, writable by anyone but its owner,
 // or not a JSON object of Settings' keys alone is refused, as is one whose
-// route rules or threat notes cannot be used.
+// test suites, route rules or threat notes cannot be used.
 func Lookup() (*Settings, error) {
 	file, err := SettingsFile()
 	if err != nil {
@@ -210,8 +196,18 @@ func Lookup() (*Settings, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(s); err != nil {
-		return nil, refusal.New("the agent settings %s do not read as a JSON object of setup, test, build, testFiles, "+
-			"routes and threatNotes (%v); ask the operator to fix them", file, err)
+		if suites := oneSuite(data); suites != "" {
+			return nil, refusal.New("the agent settings %s hold test, build or testFiles, the keys of the one test suite "+
+				"they held before they held a list; ask the operator to replace those keys with %s, NAME a name for the "+
+				"suite", file, suites)
+		}
+		return nil, refusal.New("the agent settings %s do not read as a JSON object of setup, suites, routes and "+
+			"threatNotes (%v); ask the operator to fix them", file, err)
+	}
+	if len(s.Suites) > 0 {
+		if err := redcheck.CheckSuites(s.Suites); err != nil {
+			return nil, refusal.New("the test suites in %s: %v; ask the operator to fix them", file, err)
+		}
 	}
 	for _, r := range s.Routes {
 		if err := r.Check(); err != nil {
@@ -222,6 +218,34 @@ func Lookup() (*Settings, error) {
 		return nil, err
 	}
 	return s, nil
+}
+
+// oneSuite is the "suites" key that holds the one test suite whose keys,
+// test, build and testFiles, the settings data hold at its top level, as
+// the settings held it before they held a list; "" where they hold none of
+// those keys.
+func oneSuite(data []byte) string {
+	var keys map[string]json.RawMessage
+	if json.Unmarshal(data, &keys) != nil {
+		return ""
+	}
+	_, test := keys["test"]
+	_, build := keys["build"]
+	_, files := keys["testFiles"]
+	if !test && !build && !files {
+		return ""
+	}
+	// A value of another type is left out: the operator rewrites it anyway.
+	suite := redcheck.Suite{Name: "NAME"}
+	_ = json.Unmarshal(keys["test"], &suite.Test)
+	_ = json.Unmarshal(keys["build"], &suite.Build)
+	_ = json.Unmarshal(keys["testFiles"], &suite.TestFiles)
+	// Shell commands as written, not with &, < and > escaped.
+	var out strings.Builder
+	enc := json.NewEncoder(&out)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode([]redcheck.Suite{suite})
+	return `"suites": ` + strings.TrimSuffix(out.String(), "\n")
 }
 
 // readSettings reads the settings file, opened without following a link,
