@@ -28,6 +28,50 @@ func TestCommitAssociations(t *testing.T) {
 			t.Fatalf("partial retry lost alias: %+v, %v", got, err)
 		}
 	})
+	t.Run("rewrites go to the plan holding the commit", func(t *testing.T) {
+		c := testConfig(t)
+		repo := commitRepo(t)
+		p := newPlan(t, c, "holder")
+		a, b := strings.Repeat("a", 40), strings.Repeat("b", 40)
+		if _, err := p.Record("", Event{Kind: "committed", Commit: "Original", Repository: "o/r", Revision: a}, day); err != nil {
+			t.Fatal(err)
+		}
+		before, _, _ := c.Plans()
+		if err := c.RecordRewrites("", repo, "o/r", map[string]string{a: b}, day); err != nil {
+			t.Fatal(err)
+		}
+		after, _, _ := c.Plans()
+		if len(after) != len(before) {
+			t.Errorf("made a plan for the rewrite: %d plans, had %d", len(after), len(before))
+		}
+		events, _ := p.Events()
+		if last := events[len(events)-1]; last.Kind != "commit-rewritten" || last.OldRevision != a || last.Revision != b {
+			t.Errorf("holding plan's last event: %+v", last)
+		}
+	})
+	t.Run("an unmoved commit does not choose the plan", func(t *testing.T) {
+		a, b, d := strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("d", 40)
+		// Plans made on the same day sort by slug, so each order puts the
+		// unmoved commit's plan first once.
+		for _, slugs := range [][2]string{{"aaa-unmoved", "zzz-moved"}, {"zzz-unmoved", "aaa-moved"}} {
+			c := testConfig(t)
+			repo := commitRepo(t)
+			unmoved, moved := newPlan(t, c, slugs[0]), newPlan(t, c, slugs[1])
+			if _, err := unmoved.Record("", Event{Kind: "committed", Commit: "Kept", Repository: "o/r", Revision: a}, day); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := moved.Record("", Event{Kind: "committed", Commit: "Signed", Repository: "o/r", Revision: b}, day); err != nil {
+				t.Fatal(err)
+			}
+			if err := c.RecordRewrites("", repo, "o/r", map[string]string{a: a, b: d}, day); err != nil {
+				t.Fatal(err)
+			}
+			events, _ := moved.Events()
+			if last := events[len(events)-1]; last.Kind != "commit-rewritten" || last.OldRevision != b {
+				t.Errorf("%v: the moved commit's plan did not get its rewrite: %+v", slugs, last)
+			}
+		}
+	})
 	t.Run("host owned idempotent rewrites", func(t *testing.T) {
 		c := testConfig(t)
 		repo := commitRepo(t)
