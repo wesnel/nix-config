@@ -42,10 +42,12 @@ this step's evidence and the difference is outside the noise.
 :PROPERTIES:
 :CUSTOM_ID: S5
 :AFTER: S4
+:STAGE: review
 :END:
 The =review-change= skill's selection and pipeline over the change,
-including the hand-back.
-Done when the hand-back is logged.
+including the hand-back, once every other step is settled or carried as
+the =plan-work= skill says.
+Done when it is logged done, before the hand-back, which waits on it.
 
 ** Verification
 - The baseline's command, run the same number of times before and after
