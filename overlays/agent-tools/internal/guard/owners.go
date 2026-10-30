@@ -25,19 +25,17 @@ import (
 // which Claude Code and Codex set for a sub-agent's call alone.
 //
 // Shell edits are only those shellEditPaths names: a write through a script
-// it cannot read passes.
-func checkOwner(in input) string {
-	paths, reason := ownerEditPaths(in, false)
-	if reason != "" {
-		return reason
-	}
+// it cannot read passes. paths are ownerEditPaths(in, false); conf is this
+// host's plans, and nil where confErr says why they cannot be loaded.
+func checkOwner(in input, paths []string, conf *plans.Config, confErr error) string {
 	if len(paths) == 0 {
 		return ""
 	}
 	// A sub-agent's edits fail closed: without plans it owns no worktree.
-	c, err := plans.Load()
+	var c plans.Config
 	owners := map[string]string{}
-	if err == nil {
+	if conf != nil {
+		c = *conf
 		named, _ := c.Owners()
 		for wt, agent := range named {
 			if real := realPath(wt); real != "" {
@@ -55,13 +53,14 @@ func checkOwner(in input) string {
 	if in.ToolName == "Bash" || in.ToolName == "exec_command" {
 		// Creating isolation may start in the main checkout. Its existing
 		// owner was checked above; redirections and other calls still count.
+		var reason string
 		paths, reason = ownerEditPaths(in, true)
 		if reason != "" {
 			return reason
 		}
 	}
 	for _, p := range paths {
-		if reason := checkAssociatedWorktree(p, in, c, err, owners); reason != "" {
+		if reason := checkAssociatedWorktree(p, in, c, confErr, owners); reason != "" {
 			return reason
 		}
 	}
@@ -201,10 +200,27 @@ func worktreeBranch(g gitState) (string, bool) {
 	return "", true
 }
 
+// openPlaces names openRoots in a refusal.
+const openPlaces = "scratch ($TMPDIR, /tmp) and the plans directory"
+
+// openRoots are the directories every edit fence leaves open: the scratch
+// roots, plansDir unless it is "", and devices such as /dev/null.
+func openRoots(plansDir string) []string {
+	roots := slices.Concat(scratchRoots(), []string{"/dev"})
+	if plansDir != "" {
+		roots = append(roots, plansDir)
+	}
+	return roots
+}
+
+// isOpen reports whether path is under one of roots.
+func isOpen(path string, roots []string) bool {
+	return slices.ContainsFunc(roots, func(root string) bool { return within(path, root) })
+}
+
 // subagentEdits returns why agent may not edit one of paths, or "": it
-// edits only the worktrees owners gives it, the scratch roots, the plans
-// directory and devices such as /dev/null. A path in a worktree owners
-// names is the owner's alone, even in scratch.
+// edits only the worktrees owners gives it and openRoots(plansDir). A path
+// in a worktree owners names is the owner's alone, even in scratch.
 func subagentEdits(agent string, paths []string, owners map[string]string, plansDir string) string {
 	var mine []string
 	for wt, a := range owners {
@@ -213,10 +229,7 @@ func subagentEdits(agent string, paths []string, owners map[string]string, plans
 		}
 	}
 	sort.Strings(mine)
-	free := scratchRoots()
-	if plansDir != "" {
-		free = append(free, plansDir)
-	}
+	free := openRoots(plansDir)
 	for _, p := range paths {
 		if within(p, "/dev") {
 			continue
@@ -226,15 +239,15 @@ func subagentEdits(agent string, paths []string, owners map[string]string, plans
 			if owner == agent {
 				continue
 			}
-		} else if slices.ContainsFunc(free, func(root string) bool { return within(p, root) }) {
+		} else if isOpen(p, free) {
 			continue
 		}
 		if len(mine) == 0 {
-			return fmt.Sprintf("Sub-agent %s owns no worktree, so it edits only scratch ($TMPDIR, /tmp) and the plans directory, and %s is outside them. "+
+			return fmt.Sprintf("Sub-agent %s owns no worktree, so it edits only "+openPlaces+", and %s is outside them. "+
 				"Have whoever coordinates give it its worktree with `agent-plan own PLAN --worktree WORKTREE --agent %s` before it writes there, "+
 				"or put the change in your report; reads are not limited.", agent, p, agent)
 		}
-		return fmt.Sprintf("Sub-agent %s edits only the worktree it owns, %s (OWNERS in its plan), scratch ($TMPDIR, /tmp) and the plans directory, and %s is outside them. "+
+		return fmt.Sprintf("Sub-agent %s edits only the worktree it owns, %s (OWNERS in its plan), "+openPlaces+", and %s is outside them. "+
 			"Make the change in %s, or put it in your report for the operator or whoever coordinates; "+
 			"moving the agent to another worktree is `agent-plan own PLAN --worktree WORKTREE --agent %s`, run by whoever coordinates.",
 			agent, strings.Join(mine, ", "), p, strings.Join(mine, ", "), agent)

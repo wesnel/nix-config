@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/plans"
 )
 
 var (
@@ -170,15 +171,35 @@ func judgeInput(in input, who role) (string, string) {
 			return readsTerminal, ""
 		}
 	}
-	if reason := checkOwner(in); reason != "" {
+	return judgeEdits(in)
+}
+
+// judgeEdits is judgeInput's checks of a call's edits, which share its
+// paths and this host's plans: why the call is denied, or the branch
+// hint for a file edit.
+func judgeEdits(in input) (string, string) {
+	paths, reason := ownerEditPaths(in, false)
+	if reason != "" {
 		return reason, ""
 	}
-	if reason := checkPlanReview(in); reason != "" {
+	// nil where the plans cannot be loaded, confErr saying why.
+	var conf *plans.Config
+	var confErr error
+	if len(paths) > 0 {
+		c, err := plans.Load()
+		if conf, confErr = &c, err; err != nil {
+			conf = nil
+		}
+	}
+	if reason := checkOwner(in, paths, conf, confErr); reason != "" {
+		return reason, ""
+	}
+	if reason := checkPlanReview(in, paths, conf); reason != "" {
 		return reason, ""
 	}
 	// The hint runs git too, so it is judged with the rest.
-	if in.ToolName == "Edit" || in.ToolName == "Write" || in.ToolName == "MultiEdit" {
-		return "", branchHint(in.SessionID, in.ToolInput, in.Cwd)
+	if conf != nil && (in.ToolName == "Edit" || in.ToolName == "Write" || in.ToolName == "MultiEdit") {
+		return "", branchHint(in.SessionID, in.ToolInput, in.Cwd, *conf)
 	}
 	return "", ""
 }
