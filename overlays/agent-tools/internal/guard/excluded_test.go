@@ -96,6 +96,45 @@ func TestExcludedAlone(t *testing.T) {
 			})
 		}
 	}
+	// Syntax Claude Code reads as more than one command even inside quotes,
+	// each beside a line it was seen running outside the sandbox, so a
+	// refusal is the syntax's and not the line's.
+	for _, c := range []struct{ refused, allowed, says string }{
+		{"agent-plan log /p.org --item S1 --kind started --summary 'run `make`'",
+			"agent-plan log /p.org --item S1 --kind started --summary 'run make'", "a backtick"},
+		{"agent-plan log /p.org --item S1 --kind started --summary 'run $(make)'",
+			"agent-plan log /p.org --item S1 --kind started --summary 'run $make and ${make}'", "$("},
+		{"agent-plan log /p.org --item S1 --kind started --summary 'diff <(a) b'",
+			"agent-plan log /p.org --item S1 --kind started --summary 'diff <a> b'", "<("},
+		{"agent-plan log /p.org --item S1 --kind started --summary 'tee >(a) b'",
+			"agent-plan log /p.org --item S1 --kind started --summary 'tee > a b'", ">("},
+		{"agent-plan log /p.org --item S1 --kind started --summary 'see =code='",
+			"agent-plan log /p.org --item S1 --kind started --summary 'see key=value'", "a word starting with ="},
+		{"agent-plan log /p.org --item S1 --kind started --summary 'see =code='",
+			"agent-plan log /p.org --item S1 --kind started --summary 'checks a == b'", "a word starting with ="},
+		{"agent-plan log /p.org --item S1 --kind started --summary 'see =code='",
+			"agent-plan log /p.org --item S1 --kind started --summary 'see (=code=)'", "a word starting with ="},
+		{"agent-plan log /p.org --item S1 --kind started --summary 'see =code='",
+			"agent-plan log /p.org --item S1 --kind started --summary '=word first'", "a word starting with ="},
+		{`agent-plan log /p.org --item S1 --kind started --summary "run $(make)"`,
+			`agent-plan log /p.org --item S1 --kind started --summary "run $make"`, "$("},
+		{"git delegate --goal goal.txt main..topic --items 'a `b`'",
+			"git delegate --goal goal.txt main..topic --items 'a b'", "a backtick"},
+	} {
+		t.Run(caseName(true, c.refused), func(t *testing.T) {
+			decision, reason := hook(t, c.refused, false)
+			// Most flags have no file form, so the reason offers rewording too.
+			if decision != "deny" || !strings.Contains(reason, c.says) || !strings.Contains(reason, "--text-file") ||
+				!strings.Contains(reason, "word the value") || strings.Contains(reason, "~verbatim~") || !saysInstead(reason) {
+				t.Errorf("decision %q, reason %q", decision, reason)
+			}
+		})
+		t.Run(caseName(false, c.allowed), func(t *testing.T) {
+			if decision, reason := hook(t, c.allowed, false); decision == "deny" {
+				t.Errorf("decision %q, reason %q", decision, reason)
+			}
+		})
+	}
 	// Lines the shell reads otherwise than as the command alone: a
 	// redirection after a # that is no comment's, a program named in a
 	// quoting form, and a command after a comment line.

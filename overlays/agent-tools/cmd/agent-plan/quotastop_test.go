@@ -84,6 +84,10 @@ func TestQuotaStop(t *testing.T) {
 		{"stopping a sub-agent above it", "TaskStop", `{"task_id":"a1"}`, 97.5, resets, time.Now(), false},
 		{"a hand-back above it", "SubagentHandback", `{"message":"done"}`, 97.5, resets, time.Now(), false},
 		{"agent-plan above it", "Bash", bash("agent-plan log /p.org --item P1 --kind handed-back"), 97.5, resets, time.Now(), false},
+		// The guard refuses this line with what to change, which a quota
+		// refusal would hide.
+		{"agent-plan holding a backtick above it", "Bash", bash("agent-plan log /p.org --item P1 --kind done --summary 'ran `make`'"),
+			97.5, resets, time.Now(), false},
 		{"agent-plan in a pipeline above it", "Bash", bash("agent-plan status /p.org | go run x"), 97.5, resets, time.Now(), true},
 		{"agent-plan after cd above it", "Bash", bash("cd /x && agent-plan status /p.org"), 97.5, resets, time.Now(), true},
 	} {

@@ -225,7 +225,9 @@ push`, `pr-loop reply`.
 
 A few commands run outside the sandbox, as the operator, after the usual
 permission check, and only when the whole call is that one command, with no
-redirection, `cd` or command substitution:
+redirection, `cd` or command substitution, and none of the syntax the
+guard's `sandboxedSyntax` lists, even inside quotes; the guard's refusal
+names what it found:
 
 - `gh-read`, a `gh` that runs only pull request, workflow run and
   repository reads, and refuses `--web`, which opens a browser.

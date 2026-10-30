@@ -12,9 +12,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/checkedfile"
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
@@ -174,33 +174,24 @@ func questionText(top, path string, stdin io.Reader) (string, error) {
 		data, err := io.ReadAll(stdin)
 		return string(data), err
 	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	f, real, err := openRegular(abs)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
+	data, err := checkedfile.Read(path, append([]string{top}, scratchRoots()...))
 	write := "write the question to a file of its own under $TMPDIR or in the repository, and pass that as `--question FILE`"
-	for _, p := range guard.CredentialPaths() {
-		if strings.HasPrefix(abs, p) || strings.HasPrefix(real, p) {
-			return "", refusal.New("%s is a credential, which stays out of what Codex is sent; %s", path, write)
-		}
-	}
-	within := func(root string) bool {
-		if r, err := filepath.EvalSymlinks(root); err == nil {
-			root = r
-		}
-		return real == root || strings.HasPrefix(real, strings.TrimSuffix(root, "/")+"/")
-	}
-	if !slices.ContainsFunc(append([]string{top}, scratchRoots()...), within) {
+	switch {
+	case errors.Is(err, checkedfile.ErrLinked):
+		return "", linked(path)
+	case errors.Is(err, checkedfile.ErrCredential):
+		return "", refusal.New("%s is a credential, which stays out of what Codex is sent; %s", path, write)
+	case errors.Is(err, checkedfile.ErrOutside):
 		return "", refusal.New("%s is outside the repository and the scratch area ($TMPDIR, /tmp), and Codex is sent the question as it is; %s",
 			path, write)
 	}
-	data, err := io.ReadAll(f)
 	return string(data), err
+}
+
+// linked is the refusal of a file at path with other hard links.
+func linked(path string) error {
+	return refusal.New("%s has other hard links, which may be anywhere, so where it is cannot be told from its "+
+		"name; put what the question needs from it into a file of its own, and pass that to `git delegate ask`", path)
 }
 
 // askFile is a file a question names: its path relative to the repository,
@@ -222,10 +213,9 @@ func named(top string, paths []string) ([]askFile, error) {
 		if err != nil {
 			return nil, err
 		}
-		f, real, err := openRegular(abs)
-		var r refusal.Refusal
-		if errors.As(err, &r) {
-			return nil, err
+		f, real, err := checkedfile.Open(abs)
+		if errors.Is(err, checkedfile.ErrLinked) {
+			return nil, linked(abs)
 		}
 		if err != nil {
 			return nil, refusal.New("%s is not a file; name each file the answer rests on, as `git delegate ask "+
@@ -245,45 +235,6 @@ func named(top string, paths []string) ([]askFile, error) {
 		out = append(out, askFile{filepath.ToSlash(rel), data})
 	}
 	return out, nil
-}
-
-// openRegular opens path to read, if it is a regular file, and returns it
-// with the path the kernel has for the file opened, symlinks resolved. A
-// check made on that path holds for what is read from the file, which a
-// link put in place after the open cannot change. A FIFO is refused
-// without waiting for a writer. A file with more than one hard link is
-// refused: that path is only one of its names, any of which may be
-// anywhere on its file system.
-func openRegular(path string) (*os.File, string, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, "", err
-	}
-	real, err := openedPath(f)
-	if err == nil {
-		var info os.FileInfo
-		if info, err = f.Stat(); err == nil {
-			err = regularOnly(path, info)
-		}
-	}
-	if err != nil {
-		f.Close()
-		return nil, "", err
-	}
-	return f, real, nil
-}
-
-// regularOnly is why openRegular refuses the file at path, or nil.
-func regularOnly(path string, info os.FileInfo) error {
-	st, ok := info.Sys().(*syscall.Stat_t)
-	switch {
-	case !info.Mode().IsRegular():
-		return fmt.Errorf("%s is not a regular file", path)
-	case !ok || st.Nlink > 1:
-		return refusal.New("%s has other hard links, which may be anywhere, so where it is cannot be told from its "+
-			"name; put what the question needs from it into a file of its own, and pass that to `git delegate ask`", path)
-	}
-	return nil
 }
 
 // askIn writes files, redacted, into a throwaway repository under the git

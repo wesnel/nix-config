@@ -33,6 +33,9 @@ red, and the failure points at what broke. Everything below follows from that.
   only "no error" or "not empty" passes for most broken code.
 - Assert an absence (no output, no warning, a field left out) together with
   its presence on another input, so the test shows the check would see it.
+- A test that expects a refusal or nothing to happen also shows the code
+  reached the check, such as a request the server saw or a log line, so it
+  cannot pass because something earlier failed.
 
 ## Choosing cases
 

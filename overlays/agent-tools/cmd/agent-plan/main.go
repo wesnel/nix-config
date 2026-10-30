@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -11,10 +12,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/checkedfile"
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/guard"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/prompttime"
+	"github.com/wesnel/agent-tools/internal/refusal"
 	quota "github.com/wesnel/agent-tools/internal/usage"
 )
 
@@ -158,8 +162,8 @@ have (see status) is refused and writes nothing.
                      the questions settled as DECIDED, with their answers;
                      --all adds the parts'
   ask PLAN --question TEXT --recommendation TEXT [--priority A|B|C]
-      [--context TEXT] [--alternative TEXT]... [--after ID]... [--part P1]
-      [--kind QKIND]
+      [--context TEXT | --text-file F] [--alternative TEXT]... [--after ID]...
+      [--part P1] [--kind QKIND]
                      write a question for the operator under Questions, in
                      the plan's file or the part's, as its next question ID,
                      in the form questions reads, and log it as asked; a
@@ -173,20 +177,20 @@ have (see status) is refused and writes nothing.
                      answer, or with --drop as dropped, why in --answer;
                      --supersedes marks the settled question it replaces
                      SUPERSEDED; log it as decided
-  followup PLAN --title T --found-in ID [--context T] [--part P1]
+  followup PLAN --title T --found-in ID [--context T | --text-file F] [--part P1]
                      record work found while doing item ID, outside its
                      scope, as a TODO under Follow-ups with the next follow-up
                      ID, and log it as discovered; its keyword then follows
                      its log, as a step's does
-  step PLAN --title T [--text TEXT] [--after ID]... [--part P1]
+  step PLAN --title T [--text TEXT | --text-file F] [--after ID]... [--part P1]
                      add a step at the end of Steps, in the plan's file or
                      the part's, as its next step ID, and log it as planned
-  part PLAN --title T [--text TEXT] [--after ID]... [--repo R]
+  part PLAN --title T [--text TEXT | --text-file F] [--after ID]... [--repo R]
       [--branch BASE..BRANCH] [--worktree DIR]
                      add a part at the end of Distribution as the next part
                      ID, its text starting "R: BRANCH on BASE, worktree
                      DIR." when given them, and log it as planned
-  edit PLAN ID [--title T] [--text TEXT]
+  edit PLAN ID [--title T] [--text TEXT | --text-file F]
                      change the title or the text of step, part or
                      follow-up ID in place, keeping its keyword, tags,
                      drawers and the headings under it; an empty --text
@@ -194,7 +198,7 @@ have (see status) is refused and writes nothing.
   after PLAN ID ID... | after PLAN ID --clear
                      set the AFTER of step, part or question ID to the IDs
                      it waits for, or with --clear none; log it as planned
-  section PLAN Goal|Verification --text TEXT [--part P1]
+  section PLAN Goal|Verification (--text TEXT | --text-file F) [--part P1]
                      write the whole of the plan's, or the part's, Goal or
                      Verification, the sections that hold text; log it as
                      planned
@@ -335,13 +339,42 @@ have (see status) is refused and writes nothing.
 find, status, new and workstream first take the other hosts' plans, quietly,
 if they can.
 Values are single lines but --text and --context, which may span lines as
-section says; list values hold no whitespace.
+section says; list values hold no whitespace. --text-file FILE gives --text,
+or ask's and followup's --context, the text of FILE, a regular file in the
+caller's worktree or the scratch area ($TMPDIR, /tmp) and not a credential.
 KIND: ` + strings.Join(plans.Kinds, ", ") + `
 QKIND: ` + strings.Join(plans.QuestionKinds, ", ") + `
 OKIND: ` + strings.Join(plans.OpenKinds, ", ") + `
 ROLE: ` + strings.Join(plans.Roles, ", ") + `
 OUTCOME: ` + strings.Join(plans.Outcomes, ", ") + `
 `
+
+// scratchRoots are the directories outside the caller's worktree that
+// --text-file may name a file in.
+var scratchRoots = guard.ScratchRoots
+
+// readTextFile is the text in the file --text-file names. agent-plan runs
+// outside Claude Code's sandbox and plans are pushed to the plans'
+// remote, so the file must be in the caller's worktree or a scratch root,
+// and not a credential, as checkedfile.Read checks.
+func readTextFile(path string) (string, error) {
+	roots := scratchRoots()
+	if top, _ := checkout(); top != "" {
+		roots = append(roots, top)
+	}
+	data, err := checkedfile.Read(path, roots)
+	write := "write the text to a file of its own under $TMPDIR, and pass that as `--text-file FILE`"
+	switch {
+	case errors.Is(err, checkedfile.ErrLinked):
+		return "", refusal.New("%s has other hard links, which may be anywhere, so where it is cannot be told from its name; %s", path, write)
+	case errors.Is(err, checkedfile.ErrCredential):
+		return "", refusal.New("%s is a credential, which stays out of plans; %s", path, write)
+	case errors.Is(err, checkedfile.ErrOutside):
+		return "", refusal.New("%s is outside the worktree agent-plan runs in, if any, and the scratch area ($TMPDIR, /tmp), and plans are pushed to "+
+			"the plans' remote; %s", path, write)
+	}
+	return string(data), err
+}
 
 type multi []string
 
@@ -490,6 +523,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		timeout  = flags.Duration("timeout", 24*time.Hour, "")
 		resume   = flags.Bool("resume", false, "")
 		text     = flags.String("text", "", "")
+		textFile = flags.String("text-file", "", "")
 		run      = flags.String("command", "", "")
 		runDir   = flags.String("dir", "", "")
 		signBase = flags.String("base", "", "")
@@ -551,6 +585,24 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	if given["text"] && command != "step" && command != "part" && command != "edit" && command != "section" {
 		fmt.Fprintf(stderr, "agent-plan %s: --text is step's, part's, edit's and section's\n", command)
 		return 2
+	}
+	if given["text-file"] {
+		fills, ok := map[string]string{"step": "text", "part": "text", "edit": "text", "section": "text", "ask": "context",
+			"followup": "context"}[command]
+		into := map[string]*string{"text": text, "context": context}[fills]
+		switch {
+		case !ok:
+			fmt.Fprintf(stderr, "agent-plan %s: --text-file is step's, part's, edit's and section's, and ask's and followup's for the context\n", command)
+			return 2
+		case given["text"] || given["context"]:
+			fmt.Fprintf(stderr, "agent-plan %s: --text-file takes the place of --text and --context; give one of them\n", command)
+			return 2
+		}
+		data, err := readTextFile(*textFile)
+		if err != nil {
+			return cli.Report("agent-plan", nil, err, 0, stdout, stderr)
+		}
+		*into, given[fills] = data, true
 	}
 	if (command != "new" && (len(trees) > 1 || len(sessions) > 1)) || (command != "new" && command != "sign-id" && len(branches) > 1) {
 		fmt.Fprintf(stderr, "agent-plan %s: --branch, --worktree and --session are given once\n", command)
@@ -888,7 +940,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return report(p.SetAfter(positional[1], positional[2:], time.Now()))
 	case "section":
 		if len(positional) != 2 || !given["text"] {
-			fmt.Fprint(stderr, "agent-plan section: takes PLAN Goal|Verification --text TEXT [--part P1]\n")
+			fmt.Fprint(stderr, "agent-plan section: takes PLAN Goal|Verification (--text TEXT | --text-file F) [--part P1]\n")
 			return 2
 		}
 		p, err := c.Open(positional[0])
