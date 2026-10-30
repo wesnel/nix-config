@@ -245,6 +245,15 @@ func TestPageSchema(t *testing.T) {
 	}
 }
 
+// Plan changes staged show as a stall whatever the last push, before the
+// stall an old push shows. The check reads the script.
+func TestPageStagedStall(t *testing.T) {
+	staged := regexp.MustCompile(`if \(m\.staged\) parts\.push\(mark\("Sync stalled: plan changes staged", "t-bad", "square"\)\);\s*else if \(stalled\)`)
+	if !staged.MatchString(script(t)) {
+		t.Error("no stall mark for m.staged ahead of the old-push stall")
+	}
+}
+
 // WritePage writes the page and says whether it differs from the page
 // last published, which MarkPublished records.
 func TestWritePage(t *testing.T) {

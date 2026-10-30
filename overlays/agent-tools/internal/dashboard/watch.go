@@ -50,7 +50,8 @@ const (
 	// cache's minute, which is one search query of GitHub's 5000 an hour.
 	githubEvery = 5 * time.Minute
 	// stallAfter is how old this host's last push may be while its plans
-	// are unsynced before the sync counts as stalled.
+	// are unsynced before the sync counts as stalled; plan changes staged
+	// stall it at once.
 	stallAfter = 6 * time.Hour
 )
 
@@ -133,7 +134,7 @@ func (w Watch) Run(ctx context.Context) error {
 			}
 		}
 		if s, err := w.Sync(); err == nil {
-			stalled := s.Repo && s.Unsynced && !s.Pushed.IsZero() && now.Sub(s.Pushed) > stallAfter
+			stalled := s.Repo && (s.Staged || s.Unsynced && !s.Pushed.IsZero() && now.Sub(s.Pushed) > stallAfter)
 			if stalled && !st.Stalled {
 				lines = append(lines, LineStalled)
 			}
@@ -293,7 +294,10 @@ func (w Watch) hash(now time.Time) (string, error) {
 		Failed   []string
 		Repo     bool
 		Unsynced bool
-	}{ps, failed, s.Repo, s.Unsynced})
+		// Left out while false, so a hash stored before the field
+		// existed still matches the same plans.
+		Staged bool `json:",omitempty"`
+	}{ps, failed, s.Repo, s.Unsynced, s.Staged})
 	if err != nil {
 		return "", err
 	}

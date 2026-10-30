@@ -572,11 +572,9 @@ func (c Config) bringForward(ctx context.Context, branch, tip string) (string, e
 	if op, err := c.inProgress(ctx); err != nil || op != "" {
 		return fmt.Sprintf("a %s is in progress", op), err
 	}
-	rel, err := filepath.Rel(c.repo(), c.Dir)
-	if err != nil {
+	if staged, err := c.plansStaged(ctx, at); err != nil {
 		return "", err
-	}
-	if _, err := c.git(ctx, "diff", "--cached", "--quiet", at, "--", rel); err != nil {
+	} else if staged {
 		return "changes to plan files are staged", nil
 	}
 	files, err := c.ownFiles(ctx, at, tip)
@@ -620,6 +618,37 @@ func (c Config) bringForward(ctx context.Context, branch, tip string) (string, e
 		return fmt.Sprintf("%s did not fast-forward: %v", branch, err), nil
 	}
 	return "", nil
+}
+
+// stagedAfterSync is plansStaged against HEAD, read once any sync or pull
+// running has ended, by waiting for the sync lock: one stages this host's
+// sent files for a moment before it fast-forwards, and catchUp moves the
+// branch before it writes the index, and neither is a change staged.
+// Where it cannot open the lock, such as in a sandbox that may not write
+// the plans directory, it reads without it. It is false without a commit.
+func (c Config) stagedAfterSync(ctx context.Context) (bool, error) {
+	if lock, err := c.lockSync(false); err == nil {
+		defer lock.Close()
+	}
+	at, err := c.git(ctx, "rev-parse", "-q", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return false, nil
+	}
+	return c.plansStaged(ctx, at)
+}
+
+// plansStaged reports whether the index holds a change under the plans
+// directory against the commit at, which bringForward will not stage over.
+func (c Config) plansStaged(ctx context.Context, at string) (bool, error) {
+	rel, err := filepath.Rel(c.repo(), c.Dir)
+	if err != nil {
+		return false, err
+	}
+	_, err = c.git(ctx, "diff", "--cached", "--quiet", at, "--", rel)
+	if exit := (*exec.ExitError)(nil); errors.As(err, &exit) && exit.ExitCode() == 1 {
+		return true, nil
+	}
+	return false, err
 }
 
 // inProgress names the merge, rebase, cherry-pick, revert or bisect in
@@ -714,6 +743,12 @@ type SyncState struct {
 	// Fetched is when the repository last fetched, zero if never or if
 	// the last fetch failed.
 	Fetched time.Time
+	// Staged is whether a change under the plans directory is staged. A
+	// sync that starts with the branch at origin's still sends this host's
+	// plans, but it cannot then bring the branch forward to what it sent,
+	// and no sync after it sends anything until someone commits or
+	// unstages the change.
+	Staged bool
 }
 
 // SyncState reads the repository alone, never the remote.
@@ -733,6 +768,11 @@ func (c Config) SyncState() (SyncState, error) {
 			s.Fetched = info.ModTime()
 		}
 	}
+	staged, err := c.stagedAfterSync(ctx)
+	if err != nil {
+		return s, err
+	}
+	s.Staged = staged
 	branch, err := c.target(ctx)
 	if err != nil {
 		return s, err

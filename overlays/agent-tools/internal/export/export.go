@@ -157,6 +157,10 @@ type Sync struct {
 	// Failed counts the plans found but not exported for an error, whose
 	// documents the page still shows as last exported.
 	Failed int `json:"failed"`
+	// Staged is whether plan changes are staged in the notes repository,
+	// after which at most one sync sends Host's plans until they are
+	// committed or unstaged.
+	Staged bool `json:"staged"`
 }
 
 // GitHub is the document github/status: status.GitHubAt's result, At ""
@@ -518,7 +522,7 @@ func updated(c plans.Config, p plans.Plan) (string, error) {
 func SyncOf(c plans.Config, now time.Time) (Sync, error) {
 	s, err := c.SyncState()
 	return Sync{Schema: agentplans.Schema, Updated: stamp(now), Host: c.Host, Repo: s.Repo, Pushed: stamp(s.Pushed), Unsynced: s.Unsynced,
-		Fetched: stamp(s.Fetched)}, err
+		Fetched: stamp(s.Fetched), Staged: s.Staged}, err
 }
 
 var (

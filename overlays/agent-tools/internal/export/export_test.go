@@ -301,6 +301,8 @@ func fixture(t *testing.T) (c plans.Config, own, theirs plans.Plan) {
 		t.Fatal(err)
 	}
 	under(t, file, "** Verification", "SENTINEL-after-sync\n")
+	// Staged, so the next sync is blocked until it is committed or unstaged.
+	git(t, notes, nil, "add", "--", file)
 	fakeGitHub(t)
 	return c, own, theirs
 }
@@ -326,7 +328,7 @@ var allowed = map[string][]string{
 		"requests[].recordFindings[].count", "requests[].recordThreads", "requests[].recordUnanswered",
 		"requests[].recordDrafted", "requests[].recordDiagrams", "requests[].recordDiagrams[].id",
 		"requests[].recordDiagrams[].kind", "requests[].recordDiagrams[].source"},
-	"meta":  {"schema", "updated", "host", "repo", "pushed", "unsynced", "fetched", "failed"},
+	"meta":  {"schema", "updated", "host", "repo", "pushed", "unsynced", "fetched", "failed", "staged"},
 	"today": {"schema", "date", "digests", "digests[].kind", "digests[].text"},
 }
 
@@ -524,7 +526,7 @@ func TestExport(t *testing.T) {
 		p.Updated != theirsCommitted || p.Followups == nil || len(p.Followups) != 0 {
 		t.Errorf("their plan %+v", p)
 	}
-	if s := e.Sync; s.Host != "box" || !s.Repo || !s.Unsynced || s.Pushed == "" || s.Fetched == "" ||
+	if s := e.Sync; s.Host != "box" || !s.Repo || !s.Unsynced || !s.Staged || s.Pushed == "" || s.Fetched == "" ||
 		s.Updated != day.Format(time.RFC3339) {
 		t.Errorf("sync %+v", s)
 	}
