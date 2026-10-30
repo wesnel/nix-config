@@ -171,12 +171,10 @@ in {
 
         Claude Code's and Codex's settings are merged into files they own,
         so setting this back to `none` leaves the gateway's keys there:
-        remove `apiKeyHelper` and `env`'s `ANTHROPIC_*`,
-        `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and `DISABLE_TELEMETRY` from
-        ~/.claude/settings.json, and `model_provider`, `model`,
-        `review_model`, `model_context_window`, `[model_providers.ngrok-ai]`,
-        `[features] memories` and `[analytics] enabled` from
-        ~/.codex/config.toml.
+        remove from ~/.claude/settings.json the keys `gatewaySettings` in
+        modules/home-manager/claude/default.nix sets, and from
+        ~/.codex/config.toml those the `codexGateway` activation in
+        modules/home-manager/codex/default.nix sets.
       '';
     };
 
