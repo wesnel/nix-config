@@ -919,7 +919,203 @@
         skills = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username}.wgn.home.llm.skills;
         statechart = skills.statechart.source;
         # What pstackSkill reads to decide the Codex policy.
-        disablesModelInvocation = ./modules/home-manager/llm/disables-model-invocation.awk;
+        disablesModelInvocation = pkgs.callPackage ./modules/home-manager/llm/disables-model-invocation.nix {};
+        # The ngrok Mac's builder, run here on each case below.
+        pstackSkill = import ./modules/home-manager/llm/pstack-skill.nix {inherit cursor-plugins pkgs;};
+        # SKILL.md files, and what the read makes of each: "disabled" or
+        # "not-disabled" through pstackSkill, whose agents/openai.yaml this
+        # checks, or "error" for one whose frontmatter is not plain, which
+        # the read refuses with status 2 and pstackSkill fails to build on.
+        frontmatter = let
+          flag = "disable-model-invocation";
+          text = pkgs.writeText "SKILL.md";
+          skill = lines: text "---\nname: x\n${lines}\n---\nbody\n";
+          # For bytes a Nix string does not hold: printf's escapes.
+          bytes = format: pkgs.runCommand "SKILL.md" {} "printf -- '${format}' > $out";
+        in {
+          plain = {
+            expect = "disabled";
+            file = skill "${flag}: true";
+          };
+          capitalised = {
+            expect = "disabled";
+            file = skill "${flag}: True";
+          };
+          yes = {
+            expect = "disabled";
+            file = skill "${flag}: yes";
+          };
+          on = {
+            expect = "disabled";
+            file = skill "${flag}: ON";
+          };
+          commented-value = {
+            expect = "disabled";
+            file = skill "${flag}: true # no auto";
+          };
+          trailing-space-value = {
+            expect = "disabled";
+            file = skill "${flag}: true ";
+          };
+          after-block-scalar = {
+            expect = "disabled";
+            file = skill "description: |\n  x\n${flag}: true";
+          };
+          byte-order-mark = {
+            expect = "disabled";
+            file = bytes "\\357\\273\\277---\\nname: x\\n${flag}: true\\n---\\nbody\\n";
+          };
+          crlf = {
+            expect = "disabled";
+            file = bytes "---\\r\\nname: x\\r\\n${flag}: true\\r\\n---\\r\\nbody\\r\\n";
+          };
+          trailing-space-opener = {
+            expect = "disabled";
+            file = text "--- \nname: x\n${flag}: true\n---\nbody\n";
+          };
+          trailing-space-closer = {
+            expect = "disabled";
+            file = text "---\nname: x\n${flag}: true\n--- \nbody\n";
+          };
+          closer-at-end = {
+            expect = "disabled";
+            file = text "---\n${flag}: true\n---";
+          };
+          plain-false = {
+            expect = "not-disabled";
+            file = skill "${flag}: false";
+          };
+          false-later = {
+            expect = "not-disabled";
+            file = skill "${flag}: true\n${flag}: false";
+          };
+          absent = {
+            expect = "not-disabled";
+            file = skill "description: x";
+          };
+          commented-out = {
+            expect = "not-disabled";
+            file = skill "# ${flag}: true";
+          };
+          nested = {
+            expect = "not-disabled";
+            file = skill "metadata:\n  ${flag}: true";
+          };
+          in-body = {
+            expect = "not-disabled";
+            file = text "---\nname: x\n---\n\n${flag}: true\n";
+          };
+          no-opener = {
+            expect = "not-disabled";
+            file = text "# x\n${flag}: true\n---\n";
+          };
+          later-block = {
+            expect = "not-disabled";
+            file = text "# x\n\n---\n${flag}: true\n---\n";
+          };
+          blank-first-line = {
+            expect = "not-disabled";
+            file = text "\n---\n${flag}: true\n---\nbody\n";
+          };
+          empty = {
+            expect = "not-disabled";
+            file = text "";
+          };
+          double-quoted = {
+            expect = "error";
+            file = skill "${flag}: \"true\"";
+          };
+          single-quoted = {
+            expect = "error";
+            file = skill "${flag}: 'true'";
+          };
+          one = {
+            expect = "error";
+            file = skill "${flag}: 1";
+          };
+          one-point-oh = {
+            expect = "error";
+            file = skill "${flag}: 1.0";
+          };
+          y = {
+            expect = "error";
+            file = skill "${flag}: y";
+          };
+          no-value = {
+            expect = "error";
+            file = skill "${flag}:";
+          };
+          no-space = {
+            expect = "error";
+            file = skill "${flag}:true";
+          };
+          unquoted-colon = {
+            expect = "error";
+            file = skill "description: Use it for: anything\n${flag}: false";
+          };
+          tab-indented = {
+            expect = "error";
+            file = skill "\t${flag}: true";
+          };
+          never-closed = {
+            expect = "error";
+            file = text "---\nname: x\n${flag}: true\n";
+          };
+          four-dash-closer = {
+            expect = "error";
+            file = text "---\n${flag}: true\n----\nbody\n";
+          };
+          dots-closer = {
+            expect = "error";
+            file = text "---\n${flag}: true\n...\nbody\n";
+          };
+          not-a-mapping = {
+            expect = "error";
+            file = text "---\n- ${flag}\n---\n";
+          };
+          empty-frontmatter = {
+            expect = "error";
+            file = text "---\n---\nbody\n";
+          };
+          not-utf-8 = {
+            expect = "error";
+            file = bytes "---\\nname: x\\n---\\nbody \\377\\n";
+          };
+          # Claude Code's own pattern closes the block at a `---` anywhere.
+          dashes-mid-line = {
+            expect = "error";
+            file = skill "description: a---b\n${flag}: false";
+          };
+          dashes-quoted = {
+            expect = "error";
+            file = skill "description: \"Check it --- then draw\"\n${flag}: false";
+          };
+          # pyyaml raises ValueError, not a YAMLError, for a date that is not.
+          invalid-date = {
+            expect = "error";
+            file = skill "description: 2026-99-99\n${flag}: true";
+          };
+          lone-cr = {
+            expect = "error";
+            file = bytes "---\\nname: x\\r${flag}: true\\n---\\nbody\\n";
+          };
+          next-line = {
+            expect = "error";
+            file = bytes "---\\nname: x\\302\\205${flag}: true\\n---\\nbody\\n";
+          };
+          line-separator = {
+            expect = "error";
+            file = bytes "---\\nname: x\\342\\200\\250${flag}: true\\n---\\nbody\\n";
+          };
+          paragraph-separator = {
+            expect = "error";
+            file = bytes "---\\nname: x\\342\\200\\251${flag}: true\\n---\\nbody\\n";
+          };
+        };
+        # pstackSkill fails to build on a SKILL.md the read refuses.
+        refused = pkgs.testers.testBuildFailure (pstackSkill "create-formal-verification-skill" ''
+          cat ${frontmatter.double-quoted.file} > SKILL.md
+        '');
         corpus = "${statechart}/scripts/test/corpus/TwoPhase";
         render = pkgs.writeText "render.mjs" ''
           import fs from "node:fs";
@@ -935,23 +1131,73 @@
       in
         pkgs.runCommand "pstack-skills" {} ''
           export HOME=$TMPDIR
+          failed=
+          ${pkgs.lib.concatStrings (pkgs.lib.mapAttrsToList (name: case:
+            if case.expect == "error"
+            then ''
+              status=0
+              ${disablesModelInvocation} ${case.file} 2>/dev/null || status=$?
+              if [ "$status" != 2 ]; then
+                echo "pstack-skills: the ${name} SKILL.md is read with status $status, not 2 for frontmatter that is not plain" >&2
+                failed=1
+              fi
+            ''
+            else let
+              skill = pstackSkill "create-formal-verification-skill" ''
+                cat ${case.file} > SKILL.md
+              '';
+            in ''
+              if [ -e ${skill}/agents/openai.yaml ]; then
+                got=disabled
+              else
+                got=not-disabled
+              fi
+              if [ "$got" != ${case.expect} ]; then
+                echo "pstack-skills: pstackSkill makes the ${name} SKILL.md $got, not ${case.expect}" >&2
+                failed=1
+              fi
+            '')
+          frontmatter)}
+          status=0
+          ${disablesModelInvocation} "$TMPDIR/missing/SKILL.md" 2>/dev/null || status=$?
+          if [ "$status" != 2 ]; then
+            echo "pstack-skills: a missing SKILL.md is read with status $status, not 2" >&2
+            failed=1
+          fi
+          if [ "$(cat ${refused}/testBuildFailure.exit)" != 2 ] ||
+            ! grep -q '^disables-model-invocation: SKILL.md: ' ${refused}/testBuildFailure.log; then
+            echo "pstack-skills: pstackSkill on a refused SKILL.md fails other than with the read's status 2:" >&2
+            cat ${refused}/testBuildFailure.log >&2
+            failed=1
+          fi
+          [ -z "$failed" ]
           for skill in ${toString (map (skill: skill.source) (builtins.filter (skill: skill.source.pstack or false) (builtins.attrValues skills)))}; do
             if [ ! -f "$skill/LICENSE" ]; then
               echo "pstack-skills: $skill has no LICENSE" >&2
               exit 1
             fi
-            if awk -f ${disablesModelInvocation} "$skill/SKILL.md"; then
-              if ! grep -qx '  allow_implicit_invocation: false' "$skill/agents/openai.yaml"; then
-                echo "pstack-skills: $skill lets Codex invoke it unasked" >&2
-                exit 1
-              fi
-            elif [ -e "$skill/agents/openai.yaml" ]; then
-              echo "pstack-skills: $skill keeps Codex from invoking it, but not Claude Code" >&2
-              exit 1
-            fi
+            status=0
+            ${disablesModelInvocation} "$skill/SKILL.md" || status=$?
+            case $status in
+              0)
+                if ! grep -qx '  allow_implicit_invocation: false' "$skill/agents/openai.yaml"; then
+                  echo "pstack-skills: $skill lets Codex invoke it unasked" >&2
+                  exit 1
+                fi
+                ;;
+              1)
+                if [ -e "$skill/agents/openai.yaml" ]; then
+                  echo "pstack-skills: $skill keeps Codex from invoking it, but not Claude Code" >&2
+                  exit 1
+                fi
+                ;;
+              *) exit 1 ;;
+            esac
           done
-          if awk -f ${disablesModelInvocation} ${statechart}/SKILL.md; then
-            echo "pstack-skills: agents cannot invoke statechart" >&2
+          status=0
+          ${disablesModelInvocation} ${statechart}/SKILL.md || status=$?
+          if [ "$status" != 1 ]; then
+            echo "pstack-skills: agents cannot invoke statechart: the read gives $status" >&2
             exit 1
           fi
           if grep -q mise ${statechart}/SKILL.md; then
