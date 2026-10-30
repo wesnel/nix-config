@@ -1130,7 +1130,6 @@ in {
           # journal.
           ExecStart = concatStringsSep " " [
             "${home}/.local/bin/claude remote-control --spawn session"
-            "--working-directory ${session}"
             "--permission-mode dontAsk"
             "--remote-control-session-name-prefix agent-plans"
           ];
