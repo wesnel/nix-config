@@ -2,10 +2,12 @@ package plans
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,7 +25,7 @@ const (
 
 // CarryOptions name the plan Carry makes: its title, slug and goal, each
 // "" for the old plan's.
-type CarryOptions struct{ Title, Slug, Goal string }
+type CarryOptions struct{ Title, Slug, Goal, Template string }
 
 // Carried is what Carry did: the plan the work went to, the plan it came
 // from, and the items this run moved.
@@ -83,6 +85,11 @@ func (c Config) Carry(plan string, o CarryOptions, now time.Time) (Carried, erro
 	}
 	if err := target.inherit(old, o, now); err != nil {
 		return Carried{}, err
+	}
+	if o.Template != "" {
+		if err := c.templateSteps(target, o.Template, left.steps, now); err != nil {
+			return Carried{}, err
+		}
 	}
 	if err := old.markCarried(target, now); err != nil {
 		return Carried{}, err
@@ -323,6 +330,88 @@ func (p Plan) inherit(old Plan, o CarryOptions, now time.Time) error {
 		})
 	}
 	return nil
+}
+
+// reviewStage is the STAGE value that marks a template's step as a review
+// stage, which carry --template copies.
+const reviewStage = "review"
+
+// templateSteps starts the plan, while it has no steps, with the review
+// stages of template name, the steps it marks `:STAGE: review`, under the
+// next free IDs, and logs each as planned. Their AFTER is renumbered with
+// them; a stage that waits on nothing copied waits on carried, the steps
+// the plan takes over, instead. A plan with steps already has them.
+func (c Config) templateSteps(p Plan, name string, carried []string, now time.Time) error {
+	sections, err := c.template(name)
+	if err != nil {
+		return err
+	}
+	return p.withLock(func(l *lockedPlan) error {
+		items, err := p.items()
+		if err != nil {
+			return err
+		}
+		for id := range items {
+			if stepPattern.MatchString(id) {
+				return nil
+			}
+		}
+		next, err := p.nextID("", "S")
+		if err != nil {
+			return err
+		}
+		n, _ := strconv.Atoi(strings.TrimPrefix(next, "S"))
+		lines := sections["Steps"]
+		var stages [][]string
+		renamed := map[string]string{}
+		for at := 0; at < len(lines); at++ {
+			if level(lines[at]) == 0 {
+				continue
+			}
+			entry := slices.Clone(lines[at:subtreeEnd(lines, at)])
+			props := drawerProps(drawerOf(entry, 0))
+			if props["STAGE"] == reviewStage && stepPattern.MatchString(propsID(props)) {
+				renamed[propsID(props)] = fmt.Sprintf("S%d", n+len(stages))
+				stages = append(stages, entry)
+			}
+		}
+		var block []string
+		var events []Event
+		for _, entry := range stages {
+			props := drawerProps(drawerOf(entry, 0))
+			id := renamed[propsID(props)]
+			entry = setProperty(entry, 0, "CUSTOM_ID", id)
+			var after []string
+			for _, a := range strings.Fields(props["AFTER"]) {
+				if renamed[a] != "" {
+					after = append(after, renamed[a])
+				}
+			}
+			if len(after) == 0 {
+				after = carried
+			}
+			if len(after) == 0 {
+				entry = deleteProperty(entry, 0, "AFTER")
+			} else {
+				entry = setProperty(entry, 0, "AFTER", strings.Join(after, " "))
+			}
+			block = append(block, entry...)
+			events = append(events, Event{Kind: "planned", Item: id, Summary: lineTitle(entry[0], planKeywords) + "; from template " + name})
+		}
+		if len(events) == 0 {
+			return refusal.New("template %s marks no step `:STAGE: %s`, so carry has no review stages to take from it. Carry without `--template`, or ask the operator to mark the template's review steps",
+				name, reviewStage)
+		}
+		if err := l.appendToSection("Steps", block); err != nil {
+			return err
+		}
+		for _, e := range events {
+			if _, err := l.log(e, now); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // markCarried writes target as the plan's CARRIED_TO, and CARRIED into

@@ -372,6 +372,44 @@ func TestCarry(t *testing.T) {
 		}
 	})
 
+	// A template gives the new plan its review stages afresh, under IDs no
+	// plan along the carry used, waiting on each other as in the template.
+	t.Run("a template's review stages under fresh IDs", func(t *testing.T) {
+		c, p := carryFixture(t)
+		c.Templates = t.TempDir()
+		review := "** Steps\n*** TODO Write the code\n:PROPERTIES:\n:CUSTOM_ID: S1\n:END:\n" +
+			"*** TODO Fresh review loop\n:PROPERTIES:\n:CUSTOM_ID: S2\n:AFTER: S1\n:STAGE: review\n:END:\n" +
+			"*** TODO Hand back\n:PROPERTIES:\n:CUSTOM_ID: S3\n:AFTER: S2\n:STAGE: review\n:END:\n"
+		if err := os.WriteFile(c.Templates+"/review.org", []byte(review), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, err := c.Carry(p.File(), CarryOptions{Template: "review"}, later)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, _ := c.Open(got.Plan)
+		if got := itemKeywords(t, n); got != "S5 TODO, S6 TODO, S2 TODO, S3 TODO, Q1 ASK, F1 TODO" {
+			t.Errorf("new plan's items: %s", got)
+		}
+		items, _ := n.items()
+		if after := items["S5"].Props["AFTER"]; after != "S2 S3" {
+			t.Errorf("the first review stage waits on %q, want the carried S2 S3", after)
+		}
+		if after := items["S6"].Props["AFTER"]; after != "S5" {
+			t.Errorf("the template's second stage waits on %q, want S5", after)
+		}
+		if s, _ := n.Status(); strings.Join(s.ReadySteps, " ") != "S2" {
+			t.Errorf("ready steps %v, want the carried S2 alone", s.ReadySteps)
+		}
+		before := planFiles(t, n)
+		if _, err := c.Carry(p.File(), CarryOptions{Template: "review"}, later); err != nil {
+			t.Fatal(err)
+		}
+		if planFiles(t, n) != before {
+			t.Error("a re-run added the template's steps again")
+		}
+	})
+
 	// A carried plan takes no new work and no events about what it
 	// carried, which belong to the next plan, but still takes its own
 	// hand-back and the events about what it kept.
