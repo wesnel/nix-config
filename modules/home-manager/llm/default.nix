@@ -1,6 +1,7 @@
 {
   computerName,
   config,
+  cursor-plugins,
   emacs-skills,
   lib,
   mattpocock-skills,
@@ -9,6 +10,28 @@
 }:
 with lib; let
   cfg = config.wgn.home.llm;
+
+  # A pstack skill linked as published, with pstack's MIT licence beside it:
+  # the licence requires its notice in every copy. One whose SKILL.md keeps
+  # Claude Code from invoking it unasked gets grill's agents/openai.yaml,
+  # which does the same in Codex. `build` runs in the copy first, so it can
+  # change that SKILL.md. The `pstack` attribute marks it for
+  # checks.pstack-skills.
+  pstackSkill = name: build:
+    pkgs.runCommandLocal name {
+      nativeBuildInputs = [pkgs.makeWrapper];
+      passthru.pstack = true;
+    } ''
+      cp -R ${cursor-plugins}/pstack/skills/${name} $out
+      chmod -R u+w $out
+      cp ${cursor-plugins}/pstack/LICENSE $out/LICENSE
+      cd $out
+      ${build}
+      if grep -qx 'disable-model-invocation: true' SKILL.md; then
+        mkdir -p agents
+        cp ${./skills/grill/agents/openai.yaml} agents/openai.yaml
+      fi
+    '';
 
   agentToolsConfig = pkgs.writeText "agent-tools-config.json" (builtins.toJSON {
     plans = {
@@ -798,7 +821,55 @@ in {
             chmod u+w $out
             cp ${mattpocock-skills}/LICENSE $out/LICENSE
           '';
+
+          # Offline: its script gets TLC and Java from Nix rather than
+          # installing them with mise, and its charts render with the
+          # overlay's Pele rather than one installed from npm; its SKILL.md
+          # says so. Agents may invoke it on their own, so that the verify
+          # skills create-formal-verification-skill writes can hand it TLC
+          # results. Each replaced text is quoted in full, so the build
+          # fails when pstack changes it, or names a Pele other than the
+          # overlay's.
+          #
+          # TLA2TOOLS is tlaplus's fetched jar rather than its installed
+          # one, whose wrappers would bring a Java 8 that statechart cannot
+          # run on, and the build fails unless it is the jar statechart pins.
+          statechart.source = let
+            pele = "${pkgs.pele}/lib/node_modules/pele";
+            tlc = builtins.convertHash {
+              hash = pkgs.tlaplus.src.outputHash;
+              hashAlgo = "sha256";
+              toHashFormat = "base16";
+            };
+          in
+            pstackSkill "statechart" ''
+              grep -qF 'checksum=sha256:${tlc}' scripts/run.ts || {
+                echo "statechart pins a TLC other than tlaplus ${pkgs.tlaplus.version}'s" >&2
+                exit 1
+              }
+              wrapProgram $out/scripts/statechart \
+                --prefix PATH : ${makeBinPath [pkgs.nodejs]} \
+                --set-default TLA2TOOLS ${pkgs.tlaplus.src} \
+                --set-default JAVA ${pkgs.jre_headless}/bin/java
+              substituteInPlace references/render.md \
+                --replace-fail ${escapeShellArg "Render each `.mmd` file that you show with the npm package `pele@${pkgs.pele.version}`, and give the user the SVG. Install Pele once, outside the repo."} \
+                  ${escapeShellArg "Render each `.mmd` file that you show with Pele ${pkgs.pele.version}, and give the user the SVG. Pele is installed: write the render as an ES module that imports `render` from `file://${pele}/dist/pele.js`, and run it with `${pkgs.nodejs}/bin/node`. Do not install Pele from npm."} \
+                --replace-fail ${escapeShellArg "The API is at https://pele.run/api."} \
+                  ${escapeShellArg "Its options are declared in `${pele}/dist/types.d.ts` and its errors in `${pele}/dist/errors.d.ts`."} \
+                --replace-fail ${escapeShellArg "https://pele.run/theming lists them."} \
+                  ${escapeShellArg "The Theme section of `${pele}/README.md` lists those that the CSS below sets."}
+              substituteInPlace SKILL.md \
+                --replace-fail ${escapeShellArg "disable-model-invocation: true\n"} "" \
+                --replace-fail ${escapeShellArg "`scripts/statechart.ts` is TypeScript, so run it with a runtime that can execute TypeScript."} \
+                  ${escapeShellArg "Run `scripts/statechart`, not `scripts/statechart.ts`: it brings its own Node, TLC and Java."} \
+                --replace-fail ${escapeShellArg "The first run installs TLC and Java with mise and needs the network."} \
+                  ${escapeShellArg "It needs no network."}
+            '';
         }
+        // genAttrs [
+          "create-formal-verification-skill"
+          "maintain-formal-verification-skill"
+        ] (name: {source = pstackSkill name "";})
         // optionalAttrs cfg.prLoop.enable {
           review-loop = ./skills/review-loop/SKILL.md;
         }
