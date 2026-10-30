@@ -107,6 +107,11 @@ refuses a branch the remote already has, and both refuse, before any touch, a
 branch whose upstream is a branch of another name and any push to the
 remote's default branch.
 
+When the fixups answer a review bot's threads outside a bots-mode loop,
+the push line you hand over also asks the bots to review again; the
+operator runs it once they have posted the replies, as the
+`review-change` skill's Answering says.
+
 For more than one branch to sign, hand over one command that names the top of
 every stack, run from any worktree of the repository:
 

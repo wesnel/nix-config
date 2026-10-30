@@ -329,6 +329,29 @@ outcome goes against its plan item ID and in the hand-back.
   pushed; pr-loop takes only threads whose every comment is a configured
   bot's or the operator's. Outside one, the drafted replies go in the
   hand-back, as a person's thread's do.
+- **After a round of bot fixes, in a loop or not:** once the fixes are
+  pushed and the replies posted, ask each bot that had threads to review
+  again, on every pull request whose head moved, without being asked. In a
+  bots-mode loop, the `review-loop` skill's round does this. Outside one,
+  `pr-loop request` refuses, so the hand-back gives the operator one line,
+  to run once they have posted the replies: `git sign-pass --push`, naming
+  the top of each stack as the `signing-pass` skill says, and a `gh pr edit
+  N --add-reviewer @copilot` per pull request, all joined with `&&`. `gh pr
+  edit` prints only the URL, and requested_reviewers stays empty for a bot;
+  the review_requested event in the issue timeline confirms the request.
+- **Then wait for the reviews, outside a bots-mode loop,** where the
+  `review-loop` skill's round waits instead: once the sign-pass result shows
+  the push, or the operator says the request ran, run `pr-loop status`;
+  while a bot asked again is neither pending nor has reviewed the new head,
+  its request has not run, so tell the operator. Then start `pr-loop wait
+  reviews --timeout 3600 PR...` in the background, as a command of its
+  own, and start it again while it exits 3, at most three times, then tell
+  the operator; reviews take 5 to 15 minutes. On any other exit, tell the operator what it printed. When it
+  exits 0, run `pr-loop threads` on each pull request and settle the new
+  threads as Triage says, without waiting to be asked. Stop when `pr-loop
+  status` shows each bot asked again has reviewed the new head and its
+  review left no new thread; or after six rounds, handing back what is
+  still open.
 - **A person's thread,** in a people-mode loop (`review-loop
   --people`): write each reply with `pr-loop draft THREAD --body-file F
   --outcome OUTCOME`, and commit the fixups. Push nothing and post
