@@ -27,7 +27,7 @@ with lib; let
       cp ${cursor-plugins}/pstack/LICENSE $out/LICENSE
       cd $out
       ${build}
-      if grep -qx 'disable-model-invocation: true' SKILL.md; then
+      if awk -f ${./disables-model-invocation.awk} SKILL.md; then
         mkdir -p agents
         cp ${./skills/grill/agents/openai.yaml} agents/openai.yaml
       fi
