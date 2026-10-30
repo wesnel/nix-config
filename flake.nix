@@ -1358,26 +1358,32 @@
       # hold the permission rules beside the guard: bypass mode off; for
       # every server mcp.json lists, each read allowed and each confirm
       # asked, never allowed; no allow rule that a deny rule covers, which
-      # deny would override; and the guard's PreToolUse hook matching MCP
-      # tools, every hook of it blocking when it cannot run.
+      # deny would override; the guard's PreToolUse hook matching MCP
+      # tools, every hook of it blocking when it cannot run. In these and
+      # in the headless reviewers' settings, telemetry exported to the
+      # collector the ngrok Mac runs and kept on the host, with no
+      # OTEL_LOG_* content logging, no traces, otlp the only exporter, and
+      # every OTLP endpoint on loopback.
       checks.${darwinOnly "claude-settings"} = let
         ngrok = darwinSystems.ngrok;
-        settings = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username}.wgn.home.claude.settings;
-        codex = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username}.wgn.home.codex.sandbox;
+        home = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username};
       in
         pkgs.runCommand "claude-settings" {
           nativeBuildInputs = [pkgs.jq];
-          settings = builtins.toJSON settings;
-          codex = builtins.toJSON codex;
+          settings = builtins.toJSON home.wgn.home.claude.settings;
+          codex = builtins.toJSON home.wgn.home.codex.sandbox;
           mcp = builtins.readFile ./overlays/agent-tools/internal/guard/mcp.json;
           passAsFile = ["settings" "mcp" "codex"];
+          reviewerSettings = home.wgn.home.llm.delegate.settings;
+          otelUrl = home.wgn.home.otel-collector.url;
         } ''
           s=$settingsPath
+          label=
           # Each check prints what breaks it, and fails on any.
           check() {
             found=$(jq -r "$@" "$s")
             if [ -n "$found" ]; then
-              printf '%s\n' "$found" >&2
+              printf '%s\n' "$found" | sed "s|^|$label|" >&2
               failed=1
             fi
           }
@@ -1427,6 +1433,25 @@
           check 'if (.hooks.PreToolUse | any(.matcher | test("mcp__"))) then empty
             else "no PreToolUse hook matches MCP tools" end'
           check '.hooks.PreToolUse[].hooks[] | select(.onFailure != "block") | "a PreToolUse hook does not block on failure: \(.command)"'
+          for s in "$settingsPath" "$reviewerSettings"; do
+            [ "$s" = "$settingsPath" ] && label="settings: " || label="reviewer settings: "
+            check --arg url "$otelUrl" '(.env // {}) as $env
+              | {CLAUDE_CODE_ENABLE_TELEMETRY: "1", OTEL_METRICS_EXPORTER: "otlp", OTEL_LOGS_EXPORTER: "otlp",
+                  OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf",
+                  OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "\($url)/v1/metrics", OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "\($url)/v1/logs"}
+              | to_entries[] | select($env[.key] != .value) | "telemetry not sent to the collector: \(.key)"'
+            # The collector receives OTLP over HTTP alone.
+            check '.env // {} | to_entries[] | select(.key | test("^OTEL_EXPORTER_OTLP_[A-Z]+_PROTOCOL$")) | select(.value != "http/protobuf")
+              | "OTLP protocol other than http/protobuf: \(.key)=\(.value)"'
+            check '.env // {} | keys[] | select(startswith("OTEL_LOG_")) | "telemetry logs content: \(.)"'
+            check '.env // {} | keys[] | select(IN("OTEL_TRACES_EXPORTER", "BETA_TRACING_ENDPOINT", "ENABLE_BETA_TRACING_DETAILED",
+                "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA", "ENABLE_ENHANCED_TELEMETRY_BETA")) | "telemetry traces: \(.)"'
+            check '.env // {} | to_entries[] | select(.key | IN("OTEL_METRICS_EXPORTER", "OTEL_LOGS_EXPORTER")) | select(.value != "otlp")
+              | "telemetry exporter other than otlp: \(.key)=\(.value)"'
+            check '.env // {} | to_entries[] | select(.key | test("^OTEL_EXPORTER_OTLP_([A-Z]+_)?ENDPOINT$"))
+              | select(.value | test("^https?://(127\\.0\\.0\\.1|localhost|\\[::1\\])(:[0-9]+)?(/|$)") | not)
+              | "OTLP endpoint off the host: \(.key)=\(.value)"'
+          done
           [ -z "$failed" ]
           touch $out
         '';
