@@ -595,6 +595,14 @@
       };
       # agent-tools as the overlay builds it, with no host's settings.
       agentTools = pkgs.callPackage ./overlays/agent-tools {};
+      # The name of a check of aarch64-darwin alone, and null, which Nix
+      # leaves out as an attribute's name, on every other system: a check
+      # that reads a darwin configuration builds that configuration's
+      # derivations, which only an aarch64-darwin builder can build.
+      darwinOnly = name:
+        if system == "aarch64-darwin"
+        then name
+        else null;
     in {
       formatter = pkgs.alejandra;
 
@@ -850,7 +858,7 @@
           touch $out
         '';
 
-      checks.agent-plan-sync = let
+      checks.${darwinOnly "agent-plan-sync"} = let
         ngrok = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username};
         devbox = self.homeConfigurations.devbox.config;
         activation = ngrok.home.activation.agentPlans;
@@ -883,7 +891,7 @@
             touch $out
           '';
 
-      checks.git-fetch-urls = let
+      checks.${darwinOnly "git-fetch-urls"} = let
         git = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username}.programs.git;
       in
         pkgs.runCommand "git-fetch-urls" {
@@ -907,7 +915,7 @@
       # committed ones, and the chart renders with the node and Pele that
       # its references/render.md names. Built for aarch64-darwin, the
       # system of the configuration it reads.
-      checks.pstack-skills = let
+      checks.${darwinOnly "pstack-skills"} = let
         skills = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username}.wgn.home.llm.skills;
         statechart = skills.statechart.source;
         corpus = "${statechart}/scripts/test/corpus/TwoPhase";
@@ -982,7 +990,7 @@
       # asked, never allowed; no allow rule that a deny rule covers, which
       # deny would override; and the guard's PreToolUse hook matching MCP
       # tools, every hook of it blocking when it cannot run.
-      checks.claude-settings = let
+      checks.${darwinOnly "claude-settings"} = let
         ngrok = darwinSystems.ngrok;
         settings = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username}.wgn.home.claude.settings;
       in
@@ -1177,7 +1185,7 @@
       # repository, and plans.host. Then agent-plan, unbaked, makes a plan
       # with it, its home moved under the build's directory so that nothing
       # outside it is read or written.
-      checks.agent-tools-config = let
+      checks.${darwinOnly "agent-tools-config"} = let
         ngrok = darwinSystems.ngrok;
         home = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username};
       in
@@ -1235,6 +1243,87 @@
           cp -r $vendor agent-tools/vendor
           cd agent-tools
           golangci-lint run ./...
+          touch $out
+        '';
+
+      # Every check of every system builds only derivations of that system
+      # or Nix's builtin ones, such as fetchurl, so a check that reads a
+      # darwin configuration is darwinOnly. It reads the .drv file of each
+      # derivation in each check's closure, following each one's input
+      # derivations and building none of them, and names each check that
+      # builds for another system, with how many derivations of which. A
+      # check that does not evaluate builds nothing and is left out: nixpkgs
+      # throws for x86_64-darwin, which it dropped. It walks the checks of
+      # every system, so one system runs it for all, the one this Mac
+      # builds.
+      checks.${darwinOnly "check-systems"} = let
+        listed =
+          pkgs.lib.concatLists (pkgs.lib.mapAttrsToList (checkSystem: checks:
+            pkgs.lib.concatLists (pkgs.lib.mapAttrsToList (name: check: let
+              drvPath = builtins.tryEval check.drvPath;
+            in
+              pkgs.lib.optional drvPath.success {
+                inherit checkSystem name;
+                # The .drv file alone, whose closure of .drv files and sources
+                # the build can read: its drvPath would also make every output
+                # in its closure an input, whatever system builds it, as would
+                # exportReferencesGraph.
+                drv = builtins.unsafeDiscardOutputDependency drvPath.value;
+              }) (builtins.removeAttrs checks ["check-systems"])))
+          self.checks)
+          ++ [
+            {
+              # A derivation with no input derivation, as a check built by
+              # builtin:fetchurl would be, passes.
+              checkSystem = system;
+              name = "a leaf derivation";
+              drv =
+                builtins.unsafeDiscardOutputDependency
+                (derivation {
+                  name = "check-systems-leaf";
+                  inherit system;
+                  builder = "/bin/sh";
+                }).drvPath;
+            }
+          ];
+      in
+        pkgs.runCommand "check-systems" {
+          nativeBuildInputs = [pkgs.coreutils pkgs.findutils pkgs.gnugrep];
+          listed = pkgs.lib.concatMapStrings (c: "${c.drv} ${c.checkSystem} ${c.name}\n") listed;
+          passAsFile = ["listed"];
+        } ''
+          # A .drv file is one line, Derive(outputs,inputDrvs,inputSrcs,
+          # "system",...): each input derivation is a ("PATH.drv",[ and the
+          # system follows the first `],"`.
+          closure() {
+            echo "$1" > seen
+            cp seen frontier
+            while [ -s frontier ]; do
+              # grep finds nothing in a frontier of derivations that have
+              # no input derivation, which is no error.
+              xargs cat < frontier |
+                { grep -oP '\("\K/nix/store/[^"]+\.drv(?=",\[)' || [ $? = 1 ]; } |
+                sort -u | comm -23 - seen > next
+              sort -m -o seen seen next
+              mv next frontier
+            done
+            cat seen
+          }
+          failed=
+          while read -r drv checkSystem name; do
+            closure "$drv" > drvs
+            xargs grep -ohP '^Derive\(.*?\],"\K[^"]*(?=",")' < drvs > systems
+            if [ "$(wc -l < systems)" != "$(wc -l < drvs)" ]; then
+              echo "check-systems: read no system from some of the .drv files of checks.$checkSystem.$name" >&2
+              failed=1
+            fi
+            strays=$({ grep -vx -e "$checkSystem" -e builtin systems || true; } | sort | uniq -c | xargs)
+            if [ -n "$strays" ]; then
+              echo "check-systems: checks.$checkSystem.$name builds derivations of another system (count, system): $strays" >&2
+              failed=1
+            fi
+          done < "$listedPath"
+          [ -z "$failed" ]
           touch $out
         '';
 
