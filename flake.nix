@@ -918,6 +918,8 @@
       checks.${darwinOnly "pstack-skills"} = let
         skills = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username}.wgn.home.llm.skills;
         statechart = skills.statechart.source;
+        # What pstackSkill reads to decide the Codex policy.
+        disablesModelInvocation = ./modules/home-manager/llm/disables-model-invocation.awk;
         corpus = "${statechart}/scripts/test/corpus/TwoPhase";
         render = pkgs.writeText "render.mjs" ''
           import fs from "node:fs";
@@ -938,7 +940,7 @@
               echo "pstack-skills: $skill has no LICENSE" >&2
               exit 1
             fi
-            if grep -qx 'disable-model-invocation: true' "$skill/SKILL.md"; then
+            if awk -f ${disablesModelInvocation} "$skill/SKILL.md"; then
               if ! grep -qx '  allow_implicit_invocation: false' "$skill/agents/openai.yaml"; then
                 echo "pstack-skills: $skill lets Codex invoke it unasked" >&2
                 exit 1
@@ -948,7 +950,7 @@
               exit 1
             fi
           done
-          if grep -qx 'disable-model-invocation: true' ${statechart}/SKILL.md; then
+          if awk -f ${disablesModelInvocation} ${statechart}/SKILL.md; then
             echo "pstack-skills: agents cannot invoke statechart" >&2
             exit 1
           fi
