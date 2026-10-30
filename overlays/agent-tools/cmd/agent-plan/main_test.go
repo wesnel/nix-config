@@ -267,6 +267,14 @@ func TestCommands(t *testing.T) {
 		if code != 0 || again.Plan != carried.Plan {
 			t.Errorf("carry again: %d %s %s", code, out, errs)
 		}
+		// The line carry prints is what a fresh session runs.
+		code, out, errs = agentPlan(t, "", "pickup", carried.Plan, "--session", "claude:fresh")
+		if code != 0 || !strings.HasPrefix(out, "Picked up plan "+carried.Plan+" in session claude:fresh.\n") {
+			t.Errorf("pickup: %d %q %s", code, out, errs)
+		}
+		if !strings.Contains(carried.Prompt, "agent-plan pickup "+carried.Plan) {
+			t.Errorf("carry's prompt %q", carried.Prompt)
+		}
 	})
 
 	t.Run("summary with a newline", func(t *testing.T) {

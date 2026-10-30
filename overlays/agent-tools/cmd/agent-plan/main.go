@@ -144,6 +144,13 @@ have (see status) is refused and writes nothing.
                      discovered or handed back since then (a step's time is
                      its first event). A plan that cannot be read is named
                      on stderr, and the exit is 1, after the rest
+  pickup PLAN [--session HARNESS:ID]
+                     pick PLAN up in a fresh session, as the line carry
+                     prints says: add this session (from the environment,
+                     or --session) to its SESSIONS once, set it working,
+                     and print the skills it works under, its open
+                     follow-ups and its brief. Refused for a plan whose
+                     work was carried on, naming the plan that holds it
   brief PLAN         what an agent needs to go on after a compaction: the goal,
                      the decisions, the steps and parts ready, the questions
                      the operator can answer now, the steps done but not
@@ -854,6 +861,23 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			fmt.Fprintf(stderr, "agent-plan: %s\n", err)
 			return 1
 		}
+		return 0
+	case "pickup":
+		p, ok := wantPlan()
+		if !ok {
+			return 2
+		}
+		session := one(sessions)
+		if session == "" {
+			if h, id := plans.EnvSession(); id != "" {
+				session = h + ":" + id
+			}
+		}
+		out, err := p.Pickup(session, time.Now())
+		if err != nil {
+			return report(nil, err)
+		}
+		io.WriteString(stdout, out)
 		return 0
 	case "brief":
 		p, ok := wantPlan()

@@ -234,6 +234,33 @@ func TestMCPPlan(t *testing.T) {
 			t.Fatalf("sign-id: %s", r.text)
 		}
 	})
+	t.Run("carry and pickup", func(t *testing.T) {
+		r := c.tool(t, "agent_plan_new", map[string]any{"worktree": f.repo, "title": "Left open", "slug": "left-open"})
+		var made struct{ Plan string }
+		if err := json.Unmarshal([]byte(r.out), &made); err != nil || r.isError {
+			t.Fatalf("new: %s", r.text)
+		}
+		r = c.tool(t, "agent_plan_step", map[string]any{"worktree": f.repo, "plan": made.Plan, "title": "Finish it"})
+		if r.isError || !strings.Contains(r.text, "exit 0") {
+			t.Fatalf("step: %s", r.text)
+		}
+		r = c.tool(t, "agent_plan_carry", map[string]any{"worktree": f.repo, "plan": made.Plan, "slug": "picked-up"})
+		var carried struct {
+			Plan  string
+			Steps []string
+		}
+		if err := json.Unmarshal([]byte(r.out), &carried); err != nil || r.isError || len(carried.Steps) != 1 {
+			t.Fatalf("carry: %s", r.text)
+		}
+		r = c.tool(t, "agent_plan_pickup", map[string]any{"worktree": f.repo, "plan": carried.Plan, "session": "codex:thread-2"})
+		if r.isError || !strings.Contains(r.text, "Picked up plan") {
+			t.Fatalf("pickup: %s", r.text)
+		}
+		data, err := os.ReadFile(carried.Plan)
+		if err != nil || !strings.Contains(string(data), "codex:thread-2") {
+			t.Fatalf("picked-up plan: %s: %v", data, err)
+		}
+	})
 	t.Run("repository program settings are refused", func(t *testing.T) {
 		config := func(args ...string) {
 			t.Helper()
