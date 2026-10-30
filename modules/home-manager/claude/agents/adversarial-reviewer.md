@@ -37,6 +37,9 @@ still holds.
   error and partial-failure paths, a second run, concurrency, the other
   platform (macOS or Linux), callers the change did not update, and tests
   that pass whatever the code does.
+- In `runCommand` and Nix builder scripts, a grep, diff or test whose
+  no-match exit is expected, inside a pipeline or alone, aborts under
+  stdenv's `set -eu -o pipefail`.
 - Reproduce each finding: a failing test, a run, or a mutant the branch's
   tests do not catch, with the command and its output. Rate it CONFIRMED
   when reproduced, PLAUSIBLE when argued from the code alone, saying what

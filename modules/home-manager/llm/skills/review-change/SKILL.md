@@ -220,6 +220,8 @@ each branch:
 - the same file edited on parallel branches;
 - a new or changed check: where the repository documents how to check a
   change, its entry names each path and pin that can break it;
+- a program or function whose result is a decision: an error has a result
+  of its own, never one of the decision's, and every caller fails on it;
 - what the plan leaves undecided, against this bar: someone could build it
   without asking a question;
 - designing for change, by each principle the `design` skill lists (tell

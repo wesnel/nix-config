@@ -146,6 +146,8 @@ red, and the failure points at what broke. Everything below follows from that.
   change you named, run the test, and see it fail for the reason you
   expected. Then restore the code. A test that passes on its first run has
   not yet shown it can fail.
+- For each branch and error path the change adds, name the one-line mutant
+  of it that a test fails on. A path no test fails for is untested.
 - While working, run the fast checks after each step: the build, the
   vetter or linter, the package's own tests. Run the whole suite at the end,
   not only the new tests.
