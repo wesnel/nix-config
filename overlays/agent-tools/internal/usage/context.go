@@ -25,6 +25,13 @@ type Context struct {
 	CacheExpiresAt int64  `json:"cache_expires_at"`
 }
 
+// PromptCache is the prompt_cache object of Claude Code's status line
+// input, absent until the session's first response.
+type PromptCache struct {
+	Warm      bool  `json:"warm"`
+	ExpiresAt int64 `json:"expires_at"`
+}
+
 // sessionFile is a session ID usable as a file name.
 var sessionFile = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
@@ -42,10 +49,7 @@ func FromClaudeContext(input []byte, now time.Time) (Context, bool) {
 				CacheRead  int64 `json:"cache_read_input_tokens"`
 			} `json:"current_usage"`
 		} `json:"context_window"`
-		Cache *struct {
-			Warm      bool  `json:"warm"`
-			ExpiresAt int64 `json:"expires_at"`
-		} `json:"prompt_cache"`
+		Cache *PromptCache `json:"prompt_cache"`
 	}
 	if json.Unmarshal(input, &in) != nil || !sessionFile.MatchString(in.SessionID) || in.Context == nil ||
 		in.Context.Current == nil {
