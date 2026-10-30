@@ -84,6 +84,43 @@ func planFiles(t *testing.T, p Plan) string {
 	return string(plan) + string(log)
 }
 
+// /clear hands the session it starts the plan the old one's work was
+// carried to; a compaction leaves the old session with its own plan,
+// though both plans name the worktree it runs in.
+func TestCarryHandover(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	c, p := carryFixture(t)
+	_, linked := mainCheckout(t)
+	if err := p.SetProperty("", "WORKTREES", []string{linked}, day); err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.Carry(p.File(), CarryOptions{}, day.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := c.SessionHook([]byte(`{"session_id":"abc","source":"compact","cwd":"`+linked+`"}`), "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if context := hookContext(t, out, "SessionStart"); !strings.Contains(context, "plan "+p.File()) {
+		t.Errorf("after a compaction the old session is not given its own plan: %q", context)
+	}
+	end := `{"session_id":"abc","hook_event_name":"SessionEnd","reason":"clear","cwd":"/nowhere"}`
+	if err := c.SessionEndHook([]byte(end), time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	out, err = c.SessionHook([]byte(`{"session_id":"def","source":"clear","cwd":"/nowhere"}`), "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if context := hookContext(t, out, "SessionStart"); !strings.Contains(context, "plan "+got.Plan) {
+		t.Errorf("after /clear the new session is not given the carried plan: %q", context)
+	}
+	if found, err := c.Find(FindOptions{Session: "claude:def"}); err != nil || len(found) != 1 || found[0].Plan != got.Plan {
+		t.Errorf("the new session's plans: %+v %v", found, err)
+	}
+}
+
 // Carry moves what a plan leaves open to a new plan, so the next session
 // starts from only the work left, and settles it in the old plan.
 func TestCarry(t *testing.T) {
