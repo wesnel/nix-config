@@ -66,7 +66,7 @@ func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, 
 		fmt.Fprintf(log, "%s: test adequacy is left out: %v\n", name, err)
 		return &adequacy{configured: true}, nil
 	}
-	suites := settings.Suites()
+	suites := settings.Suites
 	a := &adequacy{configured: len(suites) > 0, given: file != ""}
 	switch {
 	case !a.given:

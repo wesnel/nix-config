@@ -98,7 +98,7 @@ func main() {
 	if err := git.CheckConfig(""); err != nil {
 		os.Exit(cli.Report("git-red-check", nil, err, 0, os.Stdout, os.Stderr))
 	}
-	suites, err := a.suites()
+	suites, err := a.suites(repos.Lookup)
 	if err != nil {
 		os.Exit(cli.Report("git-red-check", nil, err, 0, os.Stdout, os.Stderr))
 	}
@@ -156,20 +156,22 @@ func parse(argv []string) args {
 	return a
 }
 
-// suites are the suites to run: the one the flags make, in place of the
-// configured ones, so a caller who gives them does not need the settings
-// to load; else the clone's.
-func (a args) suites() ([]redcheck.Suite, error) {
+// suites are the suites a run checks. Where a flag of a suite is given,
+// they are one suite named flags, which needs --test and test file globs
+// both; otherwise they are those of the clone's settings, which lookup is
+// called for only then, so a caller who gives the flags does not need the
+// settings to load.
+func (a args) suites(lookup func() (*repos.Settings, error)) ([]redcheck.Suite, error) {
 	if a.test == "" && a.build == "" && len(a.testFiles) == 0 && len(a.inlineFiles) == 0 {
-		config, err := repos.Lookup()
+		config, err := lookup()
 		if err != nil {
 			return nil, err
 		}
-		return config.Suites(), nil
+		return config.Suites, nil
 	}
 	if a.test == "" || len(a.testFiles)+len(a.inlineFiles) == 0 {
 		return nil, refusal.New("--test and --test-files or --inline-test-files make one suite in place of the configured ones, " +
-			"so each needs the other; pass both, or neither to run the configured suites")
+			"so each needs the other; pass both, as `--test CMD --test-files GLOB`, or neither to run the configured suites")
 	}
 	return []redcheck.Suite{{Name: "flags", Test: a.test, Build: a.build, TestFiles: a.testFiles, InlineTestFiles: a.inlineFiles}}, nil
 }
