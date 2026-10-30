@@ -658,6 +658,28 @@ in {
           "static.crates.io"
         ];
       };
+
+      allowedSockets = mkOption {
+        # macOS links /var, /tmp and /etc into /private, and the sandbox
+        # never matches a path through the link.
+        type = types.listOf (types.addCheck (types.strMatching "/.*") (p: !(any (d: hasPrefix d p) ["/var/" "/tmp/" "/etc/"]))
+          // {description = "absolute path not under /var, /tmp or /etc";});
+        default = [];
+
+        description = ''
+          macOS only. The Unix sockets the host sandboxes' commands, Claude
+          Code's and Codex's, may connect to: the nix daemon's, which this
+          module adds, and whatever a machine adds. Linux's sandbox cannot
+          allow one socket, so it ignores this list. Claude Code's headless
+          reviewers, which git delegate starts, get none; Codex's role
+          agents run in the session's profile and get them all. Each is the
+          path the socket resolves to, which the
+          sandbox matches (/private/var, not /var), and a command that
+          reaches it can do whatever the service behind it does for a
+          caller without credentials, so a comment beside each entry, where
+          it is added, says what that is.
+        '';
+      };
     };
 
     prLoop = {
@@ -805,6 +827,13 @@ in {
   };
 
   config = mkIf cfg.enable {
+    # The nix daemon's socket, so nix runs in the sandbox. Its client
+    # evaluates inside the sandbox, but every build, including one an
+    # evaluation imports from, runs in the daemon outside it: on macOS
+    # without a sandbox of its own and with the network, so a command that
+    # can define a derivation can reach any host.
+    wgn.home.llm.sandbox.allowedSockets = optional pkgs.stdenv.hostPlatform.isDarwin "/nix/var/nix/daemon-socket/socket";
+
     # Read by `pr-loop` where it runs.
     xdg.configFile."pr-loop/config.json" = mkIf cfg.prLoop.enable {
       text = builtins.toJSON {inherit (cfg.prLoop) bots;};
