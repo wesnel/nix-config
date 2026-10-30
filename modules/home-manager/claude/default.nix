@@ -115,9 +115,10 @@ with lib; let
 
   # The headless reviewers' only settings, since git delegate passes
   # `--setting-sources ""`: the host sandbox's credentials, denied reads and
-  # network, a sandbox no project can loosen, and no exclusions, allow rules
-  # or hooks; through a gateway, its settings too. Each reviewer's hook
-  # rides in its agent entry.
+  # allowed domains, but none of its Unix sockets, which on the ngrok Mac
+  # include the operator's ngrok daemon; a sandbox no project can loosen,
+  # and no exclusions, allow rules or hooks; through a gateway, its settings
+  # too. Each reviewer's hook rides in its agent entry.
   reviewerSettings =
     pkgs.runCommand "reviewer-settings.json" {
       nativeBuildInputs = [pkgs.jq];
@@ -607,16 +608,10 @@ with lib; let
         #   AirPlay receiver among them.
         allowLocalBinding = true;
       }
-      # Only the nix daemon's socket, so nix runs in the sandbox. Its client
-      # evaluates inside the sandbox, but every build, including one an
-      # evaluation imports from, runs in the daemon outside it: on macOS
-      # without a sandbox of its own and with the network, so a command that
-      # can define a derivation can reach any host. No other socket may go
-      # here.
       # Linux cannot allow one socket, so the agent sockets are hidden below.
       // (
         if darwin
-        then {allowUnixSockets = ["/nix/var/nix/daemon-socket/socket"];}
+        then {allowUnixSockets = sandboxLists.allowedSockets;}
         else {allowAllUnixSockets = true;}
       );
 

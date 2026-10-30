@@ -307,10 +307,10 @@ in {
               # Test servers on loopback, as in Claude Code's sandbox.
               allow_local_binding = true;
             }
-            # Only the nix daemon's socket, so nix runs in the sandbox; its
-            # builds run in the daemon, outside it.
-            // optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
-              unix_sockets."/nix/var/nix/daemon-socket/socket" = "allow";
+            # Each socket's reason is beside its entry in
+            # wgn.home.llm.sandbox.allowedSockets.
+            // optionalAttrs darwin {
+              unix_sockets = genAttrs sandboxLists.allowedSockets (_: "allow");
             };
         };
         # Starts the proxy for a profile whose network is enabled; without
@@ -507,8 +507,9 @@ in {
             && (profile.network.enabled or null) == true
             && (cfg.sandbox.features.network_proxy or null) == true
             && (profile.network.domains or null) == genAttrs sandboxLists.allowedDomains (_: "allow")
+            && (profile.network.unix_sockets or {}) == genAttrs (optionals darwin sandboxLists.allowedSockets) (_: "allow")
             && hasInfix (escapeShellArg (builtins.toJSON cfg.sandbox)) config.home.activation.codexSandbox.data;
-          message = "wgn.home.codex: interactive Codex must run in a profile extending :workspace that denies wgn.home.llm.sandbox.deniedReads and reaches only wgn.home.llm.sandbox.allowedDomains through Codex's proxy, written into config.toml";
+          message = "wgn.home.codex: interactive Codex must run in a profile extending :workspace that denies wgn.home.llm.sandbox.deniedReads and reaches only wgn.home.llm.sandbox.allowedDomains through Codex's proxy and, on macOS, only the Unix sockets in wgn.home.llm.sandbox.allowedSockets, written into config.toml";
         }
       ];
 

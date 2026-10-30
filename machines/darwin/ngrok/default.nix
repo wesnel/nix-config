@@ -24,6 +24,21 @@
         git.enable = true;
         gnupg.enable = true;
         go.enable = true;
+
+        # The ngrok v4 daemon's socket, under the per-user temporary
+        # directory (getconf DARWIN_USER_TEMP_DIR), so agents working on
+        # ngrok-agent can drive it. Every session's commands on this Mac reach
+        # it, in any repository. The daemon asks no credential of a
+        # caller and acts under the operator's ngrok account: a command that
+        # reaches it can create and delete endpoints that put local services
+        # on the network, dial the account's private endpoints, read and
+        # replace the daemon's config (whose connect URL can send the agent
+        # and its credential to another server), sign the daemon out and
+        # stop it. The installed ngrok4 4.0.0 looks for the socket under
+        # TMPDIR, which the sandbox changes, so it needs --socket with this
+        # path.
+        llm.sandbox.allowedSockets = ["/private/var/folders/n0/jv6nh0qs1hv95x8x39rjpxz80000gn/T/ngrok/agent.sock"];
+
         man.enable = true;
 
         mcp-proxy = {

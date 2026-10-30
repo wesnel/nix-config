@@ -214,8 +214,12 @@ one outside it. Hooks, MCP servers and the file tools run outside it.
   repository's `.git` or the review records under
   `~/.local/state/agent-tools/reviews`, which file tools are denied too.
 - **Network.** Only GitHub, the Nix caches, the Go, npm, PyPI and crates
-  registries and ngrok's release hosts, and on macOS the Nix daemon's
-  socket. Services listening on loopback stay reachable; the comment on
+  registries and ngrok's release hosts, and on macOS the Unix sockets in
+  `wgn.home.llm.sandbox.allowedSockets`: the Nix daemon's, and on the ngrok
+  Mac the ngrok v4 daemon's, which acts under the operator's ngrok account
+  without a token. The comment beside each entry, in the module or machine
+  that adds it, says what it opens. Services
+  listening on loopback stay reachable; the comment on
   `allowLocalBinding` in `modules/home-manager/claude/default.nix` lists
   each, and whether a token closes it.
 
@@ -881,7 +885,7 @@ has the hook alone:
 | sudo, doas, su, pkexec, osascript | hook | hook |
 | darwin-rebuild/nixos-rebuild/home-manager switch, nix profile/copy, nix-env | hook; sandbox (profiles not writable) | hook |
 | Publishing (npm, cargo, twine, gem, docker push, goreleaser) | sandbox egress allowlist, hook, deny rules | hook |
-| NGROK_ENV prod/stage in any form; ngrok API writes | hook (sandbox scrubs the tokens) | hook |
+| NGROK_ENV prod/stage in any form; ngrok API writes | hook (sandbox scrubs the tokens); on the ngrok Mac nothing holds writes through the v4 daemon's socket, which needs no token and which the hook's `ngrok api` rule does not see | hook; on the ngrok Mac, as in Claude Code, nothing holds writes through the daemon's socket |
 | Fetch/clone/login over SSH (touch) | sandbox (no SSH_AUTH_SOCK, ~/.ssh, port 22) and hook | hook |
 | Signing commits (touch) | sandbox (~/.gnupg, agent socket) and hook | hook |
 | git push, gh writes, GitHub API/GraphQL writes | sandbox (no credentials), hook, deny rules | hook |
