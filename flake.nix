@@ -1459,6 +1459,47 @@
           touch $out
         '';
 
+      # The ngrok Mac's collector config: the collector accepts it, it
+      # receives OTLP on 127.0.0.1 alone, serves none of its own metrics,
+      # and writes metrics and logs, and nothing else, each to a rotated
+      # file.
+      checks.${darwinOnly "otel-collector"} = let
+        home = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username};
+        # The launchd agent's last argument is the config file.
+        config = pkgs.lib.last home.launchd.agents.otel-collector.config.ProgramArguments;
+      in
+        pkgs.runCommand "otel-collector" {
+          nativeBuildInputs = [pkgs.opentelemetry-collector-contrib pkgs.yq-go pkgs.jq];
+        } ''
+          export HOME=$TMPDIR
+          otelcol-contrib validate --config ${config}
+          yq -o=json ${config} > config.json
+          # Each check prints what breaks it, and fails on any.
+          check() {
+            found=$(jq -r "$@" config.json)
+            if [ -n "$found" ]; then
+              printf '%s\n' "$found" >&2
+              failed=1
+            fi
+          }
+          failed=
+          check 'if (.receivers | keys) == ["otlp"] then empty else "receivers other than otlp: \(.receivers | keys)" end'
+          check '.receivers.otlp.protocols | to_entries[] | select((.value.endpoint // "") | startswith("127.0.0.1:") | not)
+            | "receiver off loopback: \(.key) \(.value.endpoint)"'
+          check 'if .service.telemetry.metrics.level == "none" then empty else "the collector serves its own metrics" end'
+          check 'if .extensions == null and .connectors == null and (.service.extensions // []) == [] then empty
+            else "extensions or connectors are set" end'
+          check 'if (.service.pipelines | keys) == ["logs", "metrics"] then empty
+            else "pipelines are not exactly logs and metrics: \(.service.pipelines | keys)" end'
+          check '.service.pipelines | to_entries[] | .key as $p | .value.exporters[] | select(startswith("file/") | not)
+            | "pipeline \($p) exports to \(.)"'
+          check '.exporters | to_entries[]
+            | select((.key | startswith("file/") | not) or (.value.rotation // {} | .max_megabytes and .max_backups and .max_days | not))
+            | "exporter \(.key) is not a rotated file"'
+          [ -z "$failed" ]
+          touch $out
+        '';
+
       # Every line of a shell code block, fenced or indented, and every
       # inline code span in the skills and the AGENTS.md files, judged by
       # the guard as a Claude Code Bash call with the ngrok Mac's excluded
