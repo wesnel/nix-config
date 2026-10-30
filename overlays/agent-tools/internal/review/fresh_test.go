@@ -842,8 +842,8 @@ func testRedCheckNotOnHost(t *testing.T) {
 			f := setUp(t, true)
 			t.Setenv("FAKE_CODEX", "none")
 			marker := filepath.Join(t.TempDir(), "ran")
-			writeSettings(t, f, `{"test": "touch `+marker+`; false", "build": "touch `+marker+`", `+
-				`"testFiles": ["*_test.txt"]}`)
+			writeSettings(t, f, `{"suites": [{"name": "txt", "test": "touch `+marker+`; false", "build": "touch `+marker+`", `+
+				`"testFiles": ["*_test.txt"]}]}`)
 			os.WriteFile(filepath.Join(f.repo, "code.txt"), []byte("a\nb\nc\nd\n"), 0o644)
 			os.WriteFile(filepath.Join(f.repo, "code_test.txt"), []byte("d\n"), 0o644)
 			run(t, f.repo, "git", "add", "code.txt", "code_test.txt")

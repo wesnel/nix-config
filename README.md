@@ -388,10 +388,11 @@ no prompt or provider output. Calls already started may finish.
 It never runs `git red-check`, which runs the commits' code: the session runs
 it, as it runs any test, and passes its JSON with `--red-check FILE`, a
 file under the working directory. delegate refuses JSON whose commits are
-not the range's, or that ran other test settings than the repository's,
+not the range's, or that ran other test suites than the repository's,
 records the round's red-check as the session's, and raises an `untested`
-finding of its own, `RC-…`, for each commit whose tests pass without it.
-Where the repository has test settings and no `--red-check` is given, it
+finding of its own, `RC-…`, for each suite of a commit that passes without
+it, at that suite's test files. Where the repository has test suites and
+no `--red-check` is given, it
 says on stderr that the review has no red-check results. For someone else's
 pull request, the session fetches it from delegate's clone, a local read,
 and runs red-check on it there.
@@ -399,10 +400,12 @@ and runs red-check on it there.
 ### `git red-check`
 
 Checks that the tests a commit adds or changes test it, rather than taking
-an agent's word that they failed first. In a throwaway worktree under
-`.git/red-check/`, removed afterwards, it runs the test command at the
-commit's parent plus only the commit's test files, which must fail, then at
-the commit, which must pass:
+an agent's word that they failed first. A repository's tests are a list of
+suites, each a test command, an optional build command and the globs of its
+test files. A commit runs each suite whose test files it changes: in a
+throwaway worktree under `.git/red-check/`, removed afterwards, the suite's
+test command runs at the commit's parent plus only that suite's test files,
+where it must fail, then at the commit, where it must pass:
 
 ``` sh
 git red-check                                  # HEAD
@@ -410,25 +413,56 @@ git red-check --fixups main..HEAD              # each fixup on the branch
 git red-check --test 'go test ./...' --build 'go vet ./...' --test-files '**/*_test.go' HEAD~2
 ```
 
-It prints each commit's verdict, why it falls short, and the end of each
-run's output as JSON, and exits 0 when every commit's tests build and fail
-without the change and pass with it, 3 when they pass without it or fail
-with it, and 4 when the evidence is missing or weak: no test files changed,
-only test files changed, or the tests fail without the change only to build,
-or with no build command to say whether they built. So a repository needs a
-build command for any commit to exit 0. See `git red-check -h` (git turns
-`--help` into a manual-page lookup).
+It prints, as JSON, each commit's verdict, the worst of its suites', and
+for each suite it ran that suite's verdict, why it falls short, and the end
+of each run's output. It exits 0 when every suite of every commit builds,
+fails without the change and passes with it, 3 when a suite passes without
+it or fails with it, and 4 when the evidence is missing or weak: the commit
+changes no suite's test files, or only a suite's test files, or a suite's
+tests fail without the change only to build, or with no build command to
+say whether they built. So a suite needs a build command for a commit to
+exit 0. See `git red-check -h` (git turns `--help` into a manual-page
+lookup).
 
-Settings missing from the flags come from `test`, `build` and `testFiles` in
-the clone's agent settings, never from the repository. Those are a JSON
-object in `.git/info/agents.json` under the clone's common git directory
+The suites come from `suites` in the clone's agent settings, never from the
+repository; `--test`, `--test-files` and `--build` make one suite, named
+`flags`, in their place. The settings are a JSON object in
+`.git/info/agents.json` under the clone's common git directory
 (`git rev-parse --git-common-dir`), shared by all its worktrees and never
-tracked, with the keys `setup`, `test`, `build`, `testFiles`, `routes` and
-`threatNotes` that `internal/repos` describes. The operator writes it; the
-guard refuses every agent's write, and a clone without it has no settings,
-so `git red-check` there runs nothing until given flags. The test command
-runs the commit's code, so run it in a sandbox when the commit is not
-trusted.
+tracked, with the keys `setup`, `suites`, `routes` and `threatNotes` that
+`internal/repos` describes. Each suite has a `name` of its own, a `test`
+command and `testFiles` globs, and may have a `build` command; the settings
+are refused at load otherwise. A flake check is a suite whose test command
+builds the check and whose test files are the check's own test script. For
+example, settings in the ngrok Mac's clone of this repository, where the
+`aarch64-darwin` checks build, could name the Go tests and the
+`agent-plan-sync` check:
+
+``` json
+{
+  "suites": [
+    {
+      "name": "agent-tools",
+      "test": "cd overlays/agent-tools && go test -count=1 ./...",
+      "build": "cd overlays/agent-tools && go vet ./...",
+      "testFiles": ["overlays/agent-tools/**/*_test.go", "overlays/agent-tools/**/testdata/**"]
+    },
+    {
+      "name": "agent-plan-sync",
+      "test": "nix build --no-link .#checks.aarch64-darwin.agent-plan-sync",
+      "build": "nix eval --raw .#checks.aarch64-darwin.agent-plan-sync.drvPath",
+      "testFiles": ["modules/home-manager/llm/plan-activation-tests.sh"]
+    }
+  ]
+}
+```
+
+The flake suite's build command evaluates the check without building it,
+which tells a flake that fails to evaluate from a test that fails. The
+operator writes the file; the guard refuses every agent's write, and a
+clone without it has no suites, so `git red-check` there runs nothing
+until given flags. A test command runs the commit's code, so run it in a
+sandbox when the commit is not trusted.
 
 ## plans: one file per change, one log
 
