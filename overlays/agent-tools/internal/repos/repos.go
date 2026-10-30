@@ -22,6 +22,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
+	"github.com/wesnel/agent-tools/internal/redcheck"
 	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/routes"
 )
@@ -64,6 +65,16 @@ type Settings struct {
 
 // File is the settings file s was read from, or would be read from.
 func (s *Settings) File() string { return s.file }
+
+// Suites are git red-check's test suites: Test, Build, TestFiles and
+// RustTestFiles, as inline test files, as one named default, or none where
+// Test or both kinds of test files are missing.
+func (s *Settings) Suites() []redcheck.Suite {
+	if s.Test == "" || len(s.TestFiles)+len(s.RustTestFiles) == 0 {
+		return nil
+	}
+	return []redcheck.Suite{{Name: "default", Test: s.Test, Build: s.Build, TestFiles: s.TestFiles, InlineTestFiles: s.RustTestFiles}}
+}
 
 // notesFile reports whether threat notes name a file: an absolute path
 // with no whitespace. Notes holding any are the notes themselves.

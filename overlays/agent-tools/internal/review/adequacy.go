@@ -16,7 +16,6 @@ import (
 	"github.com/wesnel/agent-tools/internal/redact"
 	"github.com/wesnel/agent-tools/internal/redcheck"
 	"github.com/wesnel/agent-tools/internal/refusal"
-	"github.com/wesnel/agent-tools/internal/repos"
 	"github.com/wesnel/agent-tools/internal/routes"
 )
 
@@ -31,7 +30,7 @@ const redCheckCap = 16 << 10
 // adequacy is a review's test adequacy: red-check's results for the prompt,
 // and the findings it raises with no reviewer's judgement.
 type adequacy struct {
-	// configured is whether the repository has test settings; given
+	// configured is whether the repository has test suites; given
 	// whether red-check's JSON came with --red-check.
 	configured, given bool
 	text              string
@@ -44,19 +43,19 @@ type adequacy struct {
 
 // usableSettings refuses agent settings for r's clone that a review
 // cannot use, saying what to fix, where they would otherwise leave out the
-// test settings and route rules beside them.
+// test suites and route rules beside them.
 func usableSettings(r *span) error {
 	_, err := r.settings()
 	return err
 }
 
 // testAdequacy reads data, git red-check's JSON on r from file, the
-// --red-check file ("" where none was given), and turns each commit whose
-// tests pass without the rest of it into an `untested` finding. It refuses
-// JSON that does not parse, that ran other test settings than the
-// repository's, that holds a verdict red-check does not give, whose commits
-// are not r's own in order, or that comes for a repository without test
-// settings, whose test files the findings need.
+// --red-check file ("" where none was given), and turns each suite of a
+// commit that passes without the rest of it into an `untested` finding. It
+// refuses JSON that does not parse, that ran other suites than the
+// repository's, that holds a verdict red-check does not give or a suite it
+// was not given, whose commits are not r's own in order, or that comes for
+// a repository without test suites, whose test files the findings need.
 func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, error) {
 	settings, err := r.settings()
 	if err != nil {
@@ -67,7 +66,8 @@ func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, 
 		fmt.Fprintf(log, "%s: test adequacy is left out: %v\n", name, err)
 		return &adequacy{configured: true}, nil
 	}
-	a := &adequacy{configured: settings.Test != "" && (len(settings.TestFiles) > 0 || len(settings.RustTestFiles) > 0), given: file != ""}
+	suites := settings.Suites()
+	a := &adequacy{configured: len(suites) > 0, given: file != ""}
 	switch {
 	case !a.given:
 		if a.configured {
@@ -76,9 +76,9 @@ func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, 
 		}
 		return a, nil
 	case !a.configured:
-		return nil, refusal.New("--red-check %s needs the clone's test settings, test and testFiles or rustTestFiles, which name the "+
-			"test files its findings are placed at, and this clone has none; review without `--red-check`, or ask "+
-			"the operator to set them in the clone's agent settings, %s", file, settings.File())
+		return nil, refusal.New("--red-check %s needs the clone's test suites, which name the test files its findings "+
+			"are placed at, and this clone has none; review without `--red-check`, or ask the operator to set them in "+
+			"the clone's agent settings, %s", file, settings.File())
 	}
 	var result redcheck.Result
 	if err := json.Unmarshal(data, &result); err != nil {
@@ -86,11 +86,15 @@ func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, 
 			"writes on stdout", file, err, r.base, r.tip)
 	}
 	// The verdicts say what this repository's tests show only where red-check
-	// ran this repository's test settings.
-	if result.Test != settings.Test || result.Build != settings.Build || !slices.Equal(result.TestFiles, settings.TestFiles) || !slices.Equal(result.RustTestFiles, settings.RustTestFiles) {
-		return nil, refusal.New("--red-check %s ran test %q, build %q, test files %q and Rust test files %q, not this repository's settings "+
-			"(%q, %q, %q, %q). Run `git red-check %s..%s` without --test, --build, --test-files or --rust-test-files, and pass what it writes",
-			file, result.Test, result.Build, result.TestFiles, result.RustTestFiles, settings.Test, settings.Build, settings.TestFiles, settings.RustTestFiles, r.base, r.tip)
+	// ran this repository's suites.
+	if !slices.EqualFunc(result.Suites, suites, redcheck.Suite.Equal) {
+		return nil, refusal.New("--red-check %s ran the suites %s, not this repository's, %s. Run `git red-check %s..%s` "+
+			"without --test, --build or --test-files, and pass what it writes", file, suitesText(result.Suites),
+			suitesText(suites), r.base, r.tip)
+	}
+	bySuite := map[string]redcheck.Suite{}
+	for _, s := range suites {
+		bySuite[s.Name] = s
 	}
 	// Oldest first, and without merges, as red-check checks them.
 	out, err := git.Run("-C", r.top, "rev-list", "--reverse", "--no-merges", r.base+".."+r.tip)
@@ -103,9 +107,9 @@ func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, 
 			return nil, refusal.New("--red-check %s has a commit that is null. Pass the file `git red-check %s..%s` "+
 				"writes on stdout", file, r.base, r.tip)
 		}
-		if _, known := redcheck.Messages[c.Verdict]; !known && c.Verdict != redcheck.FailsAsAsserted {
-			return nil, refusal.New("--red-check %s gives commit %q the verdict %q, which red-check does not give. Pass "+
-				"the file `git red-check %s..%s` writes on stdout", file, c.Commit, c.Verdict, r.base, r.tip)
+		if why := badCommit(c, bySuite); why != "" {
+			return nil, refusal.New("--red-check %s gives commit %q %s. Pass the file `git red-check %s..%s` writes on "+
+				"stdout", file, c.Commit, why, r.base, r.tip)
 		}
 		got = append(got, c.Commit)
 	}
@@ -116,29 +120,71 @@ func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, 
 	// Redacted before the cut, which could split a secret's shape and leave
 	// its end unrecognised.
 	a.text = fenced("json", cut([]byte(redact.Secrets(string(data))), redCheckCap))
-	a.addVerdicts(r, settings, result.Commits, log)
+	for _, c := range result.Commits {
+		for _, s := range c.Suites {
+			a.addVerdict(r, bySuite[s.Suite], c.Commit, s.Verdict, log)
+		}
+	}
 	return a, nil
 }
 
-func (a *adequacy) addVerdicts(r *span, settings *repos.Settings, commits []*redcheck.Check, log io.Writer) {
-	for _, c := range commits {
-		switch c.Verdict {
-		case redcheck.FailsToBuildWithoutChange:
-			a.buildOnly = append(a.buildOnly, c.Commit)
-		case redcheck.PassesWithoutChange:
-			f, err := untested(r, settings, c.Commit)
-			switch {
-			case err != nil:
-				fmt.Fprintf(log, "%s: red-check found that %s's tests pass without its change, but: %v\n", name, c.Commit, err)
-			case f == nil:
-			case f.Path == "":
-				raw, _ := json.Marshal(f)
-				a.dropped = append(a.dropped, Dropped{Finding: raw, Reason: "none of its test files exists at TIP"})
-			default:
-				a.findings = append(a.findings, f)
-			}
+// addVerdict records what suite's verdict on commit means for the review:
+// a commit whose tests only fail to build without it, or a finding where
+// they pass without it.
+func (a *adequacy) addVerdict(r *span, suite redcheck.Suite, commit, verdict string, log io.Writer) {
+	switch verdict {
+	case redcheck.FailsToBuildWithoutChange:
+		if !slices.Contains(a.buildOnly, commit) {
+			a.buildOnly = append(a.buildOnly, commit)
+		}
+	case redcheck.PassesWithoutChange:
+		f, err := untested(r, suite, commit)
+		switch {
+		case err != nil:
+			fmt.Fprintf(log, "%s: red-check found that %s's %s tests pass without its change, but: %v\n", name,
+				commit, suite.Name, err)
+		case f == nil:
+		case f.Path == "":
+			raw, _ := json.Marshal(f)
+			a.dropped = append(a.dropped, Dropped{Finding: raw, Reason: "none of its test files exists at TIP"})
+		default:
+			a.findings = append(a.findings, f)
 		}
 	}
+}
+
+// badCommit says what in c, a commit of red-check's JSON whose suites were
+// bySuite, red-check would not have written, or is "" where nothing is.
+func badCommit(c *redcheck.Check, bySuite map[string]redcheck.Suite) string {
+	if !knownVerdict(c.Verdict) {
+		return fmt.Sprintf("the verdict %q, which red-check does not give", c.Verdict)
+	}
+	for _, s := range c.Suites {
+		if s == nil || !knownVerdict(s.Verdict) {
+			return "a suite's verdict red-check does not give, or none"
+		}
+		if _, ok := bySuite[s.Suite]; !ok {
+			return fmt.Sprintf("a result of suite %q, which it was not given", s.Suite)
+		}
+	}
+	// A verdict its suites do not give would raise no finding, or one with
+	// no suite's test files to place it at.
+	if want := redcheck.Worst(c.Suites); c.Verdict != want {
+		return fmt.Sprintf("the verdict %q where its suites give %q", c.Verdict, want)
+	}
+	return ""
+}
+
+// knownVerdict reports whether red-check gives verdict.
+func knownVerdict(verdict string) bool {
+	_, known := redcheck.Messages[verdict]
+	return known || verdict == redcheck.FailsAsAsserted
+}
+
+// suitesText is suites as JSON, for a message.
+func suitesText(suites []redcheck.Suite) string {
+	data, _ := json.Marshal(suites)
+	return string(data)
 }
 
 // mismatch says how got, the commits red-check's JSON names, differs from
@@ -200,21 +246,22 @@ func fenced(info, text string) string {
 	return f + info + "\n" + strings.TrimRight(text, "\n") + "\n" + f + "\n"
 }
 
-// testDiff is the names of the test files commit changes, and their diff.
-func testDiff(r *span, settings *repos.Settings, commit string) ([]string, []byte, error) {
-	files, patch, err := fileTestDiff(r, settings.TestFiles, commit)
+// testDiff is the names of suite's test files commit changes, and their
+// diff.
+func testDiff(r *span, suite redcheck.Suite, commit string) ([]string, []byte, error) {
+	files, patch, err := fileTestDiff(r, suite.TestFiles, commit)
 	if err != nil {
 		return nil, nil, err
 	}
-	inline, _, err := fileTestDiff(r, settings.RustTestFiles, commit)
+	inline, _, err := fileTestDiff(r, suite.InlineTestFiles, commit)
 	if err != nil {
 		return nil, nil, err
 	}
 	for _, path := range inline {
 		if slices.Contains(files, path) {
-			return nil, nil, fmt.Errorf("%s is selected as both a whole file and inline Rust tests", path)
+			return nil, nil, fmt.Errorf("%s is selected as both a test file and an inline test file", path)
 		}
-		change, err := rustTestChange(r.top, commit, path)
+		change, err := inlineTestChange(r.top, commit, path)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -227,14 +274,16 @@ func testDiff(r *span, settings *repos.Settings, commit string) ([]string, []byt
 	return files, patch, nil
 }
 
-func rustTestChange(top, commit, path string) ([]byte, error) {
+// inlineTestChange is the change commit makes to the tests the source file
+// at path holds, as JSON, or nil where it leaves them alone.
+func inlineTestChange(top, commit, path string) ([]byte, error) {
 	var tests []string
 	for _, revision := range []string{commit + "^", commit} {
 		source, err := git.Bytes(nil, "-C", top, "cat-file", "blob", revision+":"+path)
 		if err != nil {
 			return nil, err
 		}
-		module, err := redcheck.RustTestContent(source)
+		module, err := redcheck.InlineTests(path, source)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
@@ -246,6 +295,8 @@ func rustTestChange(top, commit, path string) ([]byte, error) {
 	return json.Marshal(struct{ Path, Before, After string }{path, tests[0], tests[1]})
 }
 
+// fileTestDiff are the files globs select that commit changes, and the
+// change, as a patch.
 func fileTestDiff(r *span, globs []string, commit string) ([]string, []byte, error) {
 	if len(globs) == 0 {
 		return nil, nil, nil
@@ -275,25 +326,26 @@ func fileTestDiff(r *span, globs []string, commit string) ([]string, []byte, err
 	return files, patch, err
 }
 
-// untested is the finding for commit, whose tests red-check found pass
-// without the rest of it: at the first of its test files that exists at
-// TIP, its ID made from testKey of its test files' diff. Its Path is ""
-// where no test file exists at TIP; it is nil where the commit changes no
-// test file here.
-func untested(r *span, settings *repos.Settings, commit string) (*Finding, error) {
-	files, patch, err := testDiff(r, settings, commit)
+// untested is the finding for commit, whose tests of suite red-check found
+// pass without the rest of it: at the first of those test files that exists
+// at TIP, its ID made from testKey of the suite's name and their diff, so
+// that two suites taking in one test file raise two findings. Its Path is
+// "" where no test file exists at TIP; it is nil where the commit changes
+// no test file of the suite here.
+func untested(r *span, suite redcheck.Suite, commit string) (*Finding, error) {
+	files, patch, err := testDiff(r, suite, commit)
 	if err != nil || len(files) == 0 {
 		return nil, err
 	}
 	subject, _ := git.Run("-C", r.top, "log", "-1", "--format=%s", commit)
-	id := mechanicalPrefix + testKey(patch)
+	id := mechanicalPrefix + testKey(append([]byte("suite "+suite.Name+"\n"), patch...))
 	f := &Finding{ID: id, Kind: "untested", Reviewer: "red-check",
 		Claim: fmt.Sprintf("The tests %s %q changes pass without the rest of that commit, so they do not test it.",
 			commit[:12], subject),
-		Evidence: fmt.Sprintf("git red-check %s..%s, from --red-check, gave commit %s the verdict passes-without-change: "+
-			"its parent with only its selected tests (%s) applied passed the test command. Fix the tests, or say in the "+
-			"review reply why they are meant to pass without the change, as a characterisation test is.",
-			r.base, r.tip, commit, strings.Join(files, ", "))}
+		Evidence: fmt.Sprintf("git red-check %s..%s, from --red-check, gave commit %s the verdict passes-without-change "+
+			"in suite %q: its parent with only that suite's test files (%s) applied passed its test command. Fix the "+
+			"tests, or say in the review reply why they are meant to pass without the change, as a characterisation "+
+			"test is.", r.base, r.tip, commit, suite.Name, strings.Join(files, ", "))}
 	f.place(r, commit, files)
 	return f, nil
 }
@@ -369,7 +421,7 @@ func firstChanged(r *span, commit, file string) int {
 func (a *adequacy) prompt(printed bool) string {
 	switch {
 	case !a.configured:
-		return "This repository has no test settings, so there is no mechanical test adequacy for it: " +
+		return "This repository has no test suites, so there is no mechanical test adequacy for it: " +
 			"judge `untested` from the tests themselves.\n"
 	case !a.given:
 		return "This review was given no results of a run of the tests without each commit's change, so there is " +
@@ -377,13 +429,14 @@ func (a *adequacy) prompt(printed bool) string {
 	}
 	var b strings.Builder
 	if printed {
-		b.WriteString("Each commit whose tests pass without the rest of it is an `untested` finding with an ID " +
-			"starting " + mechanicalPrefix + ". This prompt was printed for a reviewer whose reply git delegate never " +
+		b.WriteString("Each test suite of a commit that passes without the rest of the commit is an `untested` " +
+			"finding with an ID starting " + mechanicalPrefix + ". This prompt was printed for a reviewer whose reply git delegate never " +
 			"sees, so nothing raises them for you: report each finding below yourself, as a finding of kind " +
 			"`untested` with the `id`, `path` and `line` given, and its claim and evidence.\n")
 	} else {
-		b.WriteString("Each commit whose tests pass without the rest of it is reported as an `untested` finding " +
-			"with an ID starting " + mechanicalPrefix + ", by this review itself; do not report those again.\n")
+		b.WriteString("Each test suite of a commit that passes without the rest of the commit is reported as an " +
+			"`untested` finding with an ID starting " + mechanicalPrefix + ", by this review itself; do not report " +
+			"those again.\n")
 	}
 	if len(a.buildOnly) > 0 {
 		fmt.Fprintf(&b, "\nThe tests of %s only fail to build without the rest of their commits "+
@@ -406,16 +459,19 @@ func (a *adequacy) prompt(printed bool) string {
 	return b.String()
 }
 
-// sharedPrompt identifies co-located tests for the reviewer's adequacy check.
+// sharedPrompt names the files r changes that hold tests beside their code
+// (shared-file), whose tests the reviewer judges where red-check's results
+// do not cover them.
 func sharedPrompt(r *span) string {
 	files, err := routes.SharedFiles(r.top, r.base, r.tip)
 	if err != nil || len(files) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("\nThese changed files hold tests beside the code they test (shared-file). Consult any supplied red-check " +
-		"results; Rust test modules can be selected with --rust-test-files. Judge whether their tests test the change, " +
-		"and report an `untested` finding where they do not.\n\n")
+	b.WriteString("\nThese changed files hold tests beside the code they test (shared-file). Where the supplied red-check " +
+		"results ran a suite whose inlineTestFiles select one of them, red-check ran its tests apart from its code, " +
+		"splitting them by the file's extension (.rs: its trailing #[cfg(test)] module), and its verdict holds. For the " +
+		"rest, judge whether their tests test the change, and report an `untested` finding where they do not.\n\n")
 	for _, f := range files {
 		fmt.Fprintf(&b, "- %s\n", f)
 	}
