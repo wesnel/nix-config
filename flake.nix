@@ -175,6 +175,7 @@
       ./modules/home-manager/mcp-proxy
       ./modules/home-manager/mosh
       ./modules/home-manager/music
+      ./modules/home-manager/otel-collector
       ./modules/home-manager/photos
       ./modules/home-manager/python
       ./modules/home-manager/slack
