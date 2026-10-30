@@ -141,6 +141,21 @@ func TestOwners(t *testing.T) {
 		{"owner's unzip in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"unzip -o SCRATCH/a.zip"}}`, []string{"LINKED"}},
 		{"owner's patch in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"patch -d MAIN -p1 < SCRATCH/a.diff"}}`, []string{"LINKED"}},
 		{"owner's gofmt -w in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"gofmt -w MAIN/a.go"}}`, []string{"LINKED"}},
+		// gofmt's and goimports' option values are no files, but for the
+		// profile and trace they write.
+		{"owner's gofmt -r -w in its worktree, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"gofmt -r 'gh.GraphQL -> graphQL' -w LINKED/a.go"}}`, nil},
+		{"owner's goimports -local -w in its worktree, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"goimports -local github.com/x -w LINKED/a.go"}}`, nil},
+		{"owner's gofmt --r -w in its worktree, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"gofmt --r 'a -> b' -w LINKED/a.go"}}`, nil},
+		{"owner's gofmt with -w after its file, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"gofmt -l LINKED/a.go -w"}}`, nil},
+		{"owner's gofmt -w -r missing its value, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"gofmt -w -r"}}`, nil},
+		{"owner's gofmt -r -w in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"gofmt -r 'a -> b' -w MAIN/a.go"}}`, []string{"LINKED"}},
+		{"owner's gofmt -w profile into the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"gofmt -w -cpuprofile MAIN/cpu.out a.go"}}`, []string{"LINKED"}},
+		{"owner's gofmt profile into the main checkout without -w", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"gofmt -cpuprofile MAIN/cpu.out a.go"}}`, []string{"LINKED"}},
+		{"owner's gofmt -l without -w in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"gofmt -l MAIN/a.go"}}`, nil},
+		{"owner's goimports -w trace into the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"goimports -w -trace MAIN/t.out a.go"}}`, []string{"LINKED"}},
+		{"owner's gofmt -w memory profile into the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"gofmt -w --memprofile=MAIN/m.out a.go"}}`, []string{"LINKED"}},
+		{"owner's gofmt -r of a channel rule in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"gofmt -w -r '<-a -> <-b' MAIN/a.go"}}`, []string{"LINKED"}},
+		{"owner's goimports -local of a redirection-like prefix, quiet", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"goimports -w -local '>x' MAIN/a.go 2>/dev/null"}}`, []string{"LINKED"}},
 		{"owner's gofmt -l in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"gofmt -l MAIN"}}`, nil},
 		// Refused first under /nix, as mv and rm are.
 		{"owner's chmod in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"chmod +x MAIN/a.sh"}}`, nil},

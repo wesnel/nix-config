@@ -1614,8 +1614,12 @@ func checkPlanLogWrite(name string, args, redirected []string, dir string) strin
 // directory a program writes into, "." for the one it runs in, where it
 // unpacks, patches, formats, generates or builds there. checkPlanLogWrite
 // and checkOwner read a command through it. A redirection among args is
-// none of these; redirected names what the redirections write.
+// none of these; redirected names what the redirections write. gofmt and
+// goimports read their options from the words as given, since a quoted
+// value such as the rule '<-a -> <-b' reads as a redirection once its
+// quotes are gone.
 func changedFiles(name string, args, redirected []string) []string {
+	given := args
 	args = withoutRedirections(args)
 	targets := editTargets(name, args, redirected)
 	var positional []string
@@ -1673,9 +1677,7 @@ func changedFiles(name string, args, redirected []string) []string {
 			targets = append(targets, dirOr("-d", "--directory")...)
 		}
 	case "gofmt", "goimports":
-		if contains(args, "-w") {
-			targets = append(targets, positional...)
-		}
+		targets = append(targets, goFormatWrites(given, contains(args, "-w"))...)
 	case "go":
 		targets = append(targets, goWrites(args)...)
 	case "nix", "nix-build":
@@ -1691,6 +1693,51 @@ func changedFiles(name string, args, redirected []string) []string {
 		targets = append(targets, formatWrites(name, args, positional)...)
 	}
 	return targets
+}
+
+// goFormatValues are gofmt's and goimports' options whose value is the
+// next word: gofmt's rewrite rule, goimports' import prefix and source
+// directory, and either's profile outputs, each with one dash or two, as
+// Go's flag package takes them. The files they format follow the options;
+// a dash word among the files, which flag no longer reads as an option,
+// names none.
+var goFormatValues = set("-r", "--r", "-local", "--local", "-srcdir", "--srcdir", "-cpuprofile", "--cpuprofile",
+	"-memprofile", "--memprofile", "-memrate", "--memrate", "-trace", "--trace")
+
+// goFormatOutputs are the options of goFormatValues whose value is a file
+// gofmt or goimports writes.
+var goFormatOutputs = set("-cpuprofile", "--cpuprofile", "-memprofile", "--memprofile", "-trace", "--trace")
+
+// goFormatWrites are the files gofmt or goimports, given args with their
+// redirections, writes: the value of each option in goFormatOutputs, as
+// the next word or after =, and, with -w, the files after its options, but
+// for dash words and redirections. A redirection before the
+// options ends them, so the options after it count as files.
+func goFormatWrites(args []string, write bool) []string {
+	// An option missing its value counts past the last word.
+	end := min(options(args, goFormatValues), len(args))
+	var out []string
+	for j := 0; j < end; j++ {
+		name, value, attached := strings.Cut(args[j], "=")
+		switch {
+		case goFormatOutputs[name] && attached:
+			out = append(out, value)
+		case goFormatOutputs[name] && j+1 < len(args):
+			out = append(out, args[j+1])
+		}
+		if goFormatValues[name] && !attached {
+			j++
+		}
+	}
+	if !write {
+		return out
+	}
+	for _, a := range withoutRedirections(args[end:]) {
+		if !strings.HasPrefix(a, "-") {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // targetDirectories are the directories cp, install or ln are given to
