@@ -251,6 +251,44 @@ func TestCarry(t *testing.T) {
 		}
 	})
 
+	// Steps of an ORDERED group keep their order in the new plan, where
+	// each waits on the carried steps before it, and leave it no drift.
+	t.Run("keeps an ORDERED group's order", func(t *testing.T) {
+		c := testConfig(t)
+		p := newPlan(t, c, "x")
+		insertUnder(t, p.file(""), "** Steps", "*** Linear\n:PROPERTIES:\n:ORDERED: t\n:END:\n"+
+			"**** TODO First\n:PROPERTIES:\n:CUSTOM_ID: S1\n:END:\n"+
+			"**** TODO Second\n:PROPERTIES:\n:CUSTOM_ID: S2\n:END:\n"+
+			"**** TODO Third\n:PROPERTIES:\n:CUSTOM_ID: S3\n:AFTER: S2 S1\n:END:\n"+
+			"**** TODO Fourth\n:PROPERTIES:\n:CUSTOM_ID: S4\n:END:\n"+
+			"*** TODO Free\n:PROPERTIES:\n:CUSTOM_ID: S5\n:END:\n"+
+			"*** TODO Also free\n:PROPERTIES:\n:CUSTOM_ID: S6\n:END:\n")
+		if _, err := p.Log(Event{Kind: "abandoned", Item: "S1", Summary: "not needed"}, day); err != nil {
+			t.Fatal(err)
+		}
+		got, err := c.Carry(p.File(), CarryOptions{}, later)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, _ := c.Open(got.Plan)
+		s, err := n.Status()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(s.StructureDrift) != 0 {
+			t.Errorf("structure drift %+v", s.StructureDrift)
+		}
+		if got := strings.Join(s.ReadySteps, " "); got != "S2 S5 S6" {
+			t.Errorf("ready steps %q, want S2 S5 S6: S3 and S4 follow S2", got)
+		}
+		items, _ := n.items()
+		for id, want := range map[string]string{"S2": "", "S3": "S2", "S4": "S2 S3", "S6": ""} {
+			if after := items[id].Props["AFTER"]; after != want {
+				t.Errorf("%s waits on %q, want %q", id, after, want)
+			}
+		}
+	})
+
 	t.Run("a re-run changes nothing", func(t *testing.T) {
 		c, p := carryFixture(t)
 		first, err := c.Carry(p.File(), CarryOptions{}, later)
@@ -393,6 +431,44 @@ func TestCarry(t *testing.T) {
 		t.Cleanup(func() { os.Chmod(p.file(""), 0o644) })
 		if step, err := n.AddEntry(EntryOptions{Section: "Steps", Title: "Next"}, later); err == nil {
 			t.Errorf("a step was added as %s, an ID the unread plan may use", step.ID)
+		}
+	})
+
+	// A template gives the new plan its review stages afresh, under IDs no
+	// plan along the carry used, waiting on each other as in the template.
+	t.Run("a template's review stages under fresh IDs", func(t *testing.T) {
+		c, p := carryFixture(t)
+		c.Templates = t.TempDir()
+		review := "** Steps\n*** TODO Write the code\n:PROPERTIES:\n:CUSTOM_ID: S1\n:END:\n" +
+			"*** TODO Fresh review loop\n:PROPERTIES:\n:CUSTOM_ID: S2\n:AFTER: S1\n:STAGE: review\n:END:\n" +
+			"*** TODO Hand back\n:PROPERTIES:\n:CUSTOM_ID: S3\n:AFTER: S2\n:STAGE: review\n:END:\n"
+		if err := os.WriteFile(c.Templates+"/review.org", []byte(review), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, err := c.Carry(p.File(), CarryOptions{Template: "review"}, later)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, _ := c.Open(got.Plan)
+		if got := itemKeywords(t, n); got != "S5 TODO, S6 TODO, S2 TODO, S3 TODO, Q1 ASK, F1 TODO" {
+			t.Errorf("new plan's items: %s", got)
+		}
+		items, _ := n.items()
+		if after := items["S5"].Props["AFTER"]; after != "S2 S3" {
+			t.Errorf("the first review stage waits on %q, want the carried S2 S3", after)
+		}
+		if after := items["S6"].Props["AFTER"]; after != "S5" {
+			t.Errorf("the template's second stage waits on %q, want S5", after)
+		}
+		if s, _ := n.Status(); strings.Join(s.ReadySteps, " ") != "S2" {
+			t.Errorf("ready steps %v, want the carried S2 alone", s.ReadySteps)
+		}
+		before := planFiles(t, n)
+		if _, err := c.Carry(p.File(), CarryOptions{Template: "review"}, later); err != nil {
+			t.Fatal(err)
+		}
+		if planFiles(t, n) != before {
+			t.Error("a re-run added the template's steps again")
 		}
 	})
 

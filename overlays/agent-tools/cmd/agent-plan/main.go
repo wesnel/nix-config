@@ -302,13 +302,16 @@ have (see status) is refused and writes nothing.
                      it as linked; nothing when PLAN already links OTHER.
                      Refused for PLAN itself, a part's file, and a plan in
                      the old form, which has no file-level ID
-  carry PLAN [--title T] [--slug S] [--text GOAL]
+  carry PLAN [--title T] [--slug S] [--text GOAL] [--template NAME]
                      move what PLAN leaves open, its unsettled steps, open
                      follow-ups and open questions, under the same IDs to
                      the plan it is carried to, made the first time with
                      PLAN's title, slug, goal, repositories, branches,
                      worktrees, harness, pull requests, skills and pipeline
-                     unless given; CARRIED_TO and CARRIED_FROM name each
+                     unless given, and with --template, while it has no
+                     steps, the review stages of template NAME (the steps
+                     it marks :STAGE: review) under fresh IDs, waiting on
+                     the carried steps; CARRIED_TO and CARRIED_FROM name each
                      other, and the new plan links PLAN under Related. Each
                      step and follow-up becomes CARRIED in PLAN and each
                      question DROPPED; PLAN then takes no new work. Run
@@ -742,7 +745,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	case "link":
 		return runLink(*why, c, positional, stderr, report)
 	case "carry":
-		return runCarry(plans.CarryOptions{Title: *title, Slug: *slug, Goal: *text}, c, positional, stderr, report)
+		return runCarry(plans.CarryOptions{Title: *title, Slug: *slug, Goal: *text, Template: *template}, c, positional, stderr, report)
 	case "postpone":
 		return runPostpone(*until, *unset, c, positional, stderr, report)
 	case "init":
@@ -1231,7 +1234,7 @@ func runLink(why string, c plans.Config, positional []string, stderr io.Writer, 
 
 func runCarry(o plans.CarryOptions, c plans.Config, positional []string, stderr io.Writer, report func(any, error) int) int {
 	if len(positional) != 1 {
-		fmt.Fprint(stderr, "agent-plan carry: takes PLAN [--title T] [--slug S] [--text GOAL]\n")
+		fmt.Fprint(stderr, "agent-plan carry: takes PLAN [--title T] [--slug S] [--text GOAL] [--template NAME]\n")
 		return 2
 	}
 	return report(c.Carry(positional[0], o, time.Now()))

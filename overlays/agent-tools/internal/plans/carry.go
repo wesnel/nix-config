@@ -2,10 +2,12 @@ package plans
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,7 +25,7 @@ const (
 
 // CarryOptions name the plan Carry makes: its title, slug and goal, each
 // "" for the old plan's.
-type CarryOptions struct{ Title, Slug, Goal string }
+type CarryOptions struct{ Title, Slug, Goal, Template string }
 
 // Carried is what Carry did: the plan the work went to, the plan it came
 // from, and the items this run moved.
@@ -83,6 +85,11 @@ func (c Config) Carry(plan string, o CarryOptions, now time.Time) (Carried, erro
 	}
 	if err := target.inherit(old, o, now); err != nil {
 		return Carried{}, err
+	}
+	if o.Template != "" {
+		if err := c.templateSteps(target, o.Template, left.steps, now); err != nil {
+			return Carried{}, err
+		}
 	}
 	if err := old.markCarried(target, now); err != nil {
 		return Carried{}, err
@@ -286,19 +293,8 @@ func (c Config) lastCarriedTo(p Plan) Plan {
 // inherit gives the plan what it takes over from old and does not have
 // yet: its goal, pull requests, skills and pipeline.
 func (p Plan) inherit(old Plan, o CarryOptions, now time.Time) error {
-	if goal, err := p.goalText(""); err != nil {
+	if err := p.inheritGoal(old, o.Goal, now); err != nil {
 		return err
-	} else if goal == "" {
-		if o.Goal == "" {
-			if o.Goal, err = old.goalText(""); err != nil {
-				return err
-			}
-		}
-		if o.Goal = strings.TrimSpace(o.Goal); o.Goal != "" {
-			if _, err := p.SetSection("", "Goal", o.Goal, now); err != nil {
-				return err
-			}
-		}
 	}
 	from, err := planHeading(old.file(""))
 	if err != nil {
@@ -323,6 +319,126 @@ func (p Plan) inherit(old Plan, o CarryOptions, now time.Time) error {
 		})
 	}
 	return nil
+}
+
+// inheritGoal gives the plan, while it has no goal, goal, or else old's.
+func (p Plan) inheritGoal(old Plan, goal string, now time.Time) error {
+	have, err := p.goalText("")
+	if err != nil || have != "" {
+		return err
+	}
+	if goal == "" {
+		if goal, err = old.goalText(""); err != nil {
+			return err
+		}
+	}
+	if goal = strings.TrimSpace(goal); goal == "" {
+		return nil
+	}
+	_, err = p.SetSection("", "Goal", goal, now)
+	return err
+}
+
+// reviewStage is the STAGE value that marks a template's step as a review
+// stage, which carry --template copies.
+const reviewStage = "review"
+
+// templateSteps starts the plan, while it has no steps, with the review
+// stages of template name, the steps it marks `:STAGE: review`, under the
+// next free IDs, and logs each as planned. Their AFTER is renumbered with
+// them; a stage that waits on nothing copied waits on carried, the steps
+// the plan takes over, instead. A plan with steps already has them.
+func (c Config) templateSteps(p Plan, name string, carried []string, now time.Time) error {
+	sections, err := c.template(name)
+	if err != nil {
+		return err
+	}
+	return p.withLock(func(l *lockedPlan) error {
+		if has, err := p.hasStep(); err != nil || has {
+			return err
+		}
+		next, err := p.nextID("", "S")
+		if err != nil {
+			return err
+		}
+		n, _ := strconv.Atoi(strings.TrimPrefix(next, "S"))
+		stages, renamed := reviewStages(sections["Steps"], n)
+		var block []string
+		var events []Event
+		for _, entry := range stages {
+			entry, id := stageEntry(entry, renamed, carried)
+			block = append(block, entry...)
+			events = append(events, Event{Kind: "planned", Item: id, Summary: lineTitle(entry[0], planKeywords) + "; from template " + name})
+		}
+		if len(events) == 0 {
+			return refusal.New("template %s marks no step `:STAGE: %s`, so carry has no review stages to take from it. Carry without `--template`, or ask the operator to mark the template's review steps",
+				name, reviewStage)
+		}
+		if err := l.appendToSection("Steps", block); err != nil {
+			return err
+		}
+		for _, e := range events {
+			if _, err := l.log(e, now); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// hasStep reports whether the plan has a step.
+func (p Plan) hasStep() (bool, error) {
+	items, err := p.items()
+	if err != nil {
+		return false, err
+	}
+	for id := range items {
+		if stepPattern.MatchString(id) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// reviewStages are the entries of a template's Steps lines marked
+// `:STAGE: review`, and the new ID of each, numbered from n on, by its
+// template ID.
+func reviewStages(lines []string, n int) ([][]string, map[string]string) {
+	var stages [][]string
+	renamed := map[string]string{}
+	for at := 0; at < len(lines); at++ {
+		if level(lines[at]) == 0 {
+			continue
+		}
+		entry := slices.Clone(lines[at:subtreeEnd(lines, at)])
+		props := drawerProps(drawerOf(entry, 0))
+		if props["STAGE"] == reviewStage && stepPattern.MatchString(propsID(props)) {
+			renamed[propsID(props)] = fmt.Sprintf("S%d", n+len(stages))
+			stages = append(stages, entry)
+		}
+	}
+	return stages, renamed
+}
+
+// stageEntry is a review stage's entry under its new ID, waiting on the
+// renamed stages it waited on, or else on carried, and that ID.
+func stageEntry(entry []string, renamed map[string]string, carried []string) ([]string, string) {
+	props := drawerProps(drawerOf(entry, 0))
+	id := renamed[propsID(props)]
+	entry = setProperty(entry, 0, "CUSTOM_ID", id)
+	var after []string
+	for _, a := range strings.Fields(props["AFTER"]) {
+		if renamed[a] != "" {
+			after = append(after, renamed[a])
+		}
+	}
+	if len(after) == 0 {
+		after = carried
+	}
+	if len(after) == 0 {
+		return deleteProperty(entry, 0, "AFTER"), id
+	}
+	return setProperty(entry, 0, "AFTER", strings.Join(after, " ")), id
 }
 
 // markCarried writes target as the plan's CARRIED_TO, and CARRIED into
@@ -367,19 +483,11 @@ func (p Plan) take(old Plan, left leftOver, now time.Time) error {
 			section, kind string
 			ids           []string
 		}{{"Steps", "planned", left.steps}, {"Questions", "asked", left.questions}, {"Follow-ups", "discovered", left.followups}} {
-			var block []string
-			for _, id := range s.ids {
-				if _, ok := items[id]; ok {
-					continue
-				}
-				at := headingWithID(from, id)
-				if at < 0 {
-					return refusal.New("%s has no heading for %s, which it was to carry. Run `agent-plan status %s` and report what it lists", old.file(""), id, old.file(""))
-				}
-				entry := carriedEntry(slices.Clone(from[at:subtreeEnd(from, at)]), carried, now)
-				block = append(block, entry...)
-				events = append(events, Event{Kind: s.kind, Item: id, Summary: lineTitle(entry[0], planKeywords) + "; carried from " + old.Name})
+			block, logged, err := carriedBlock(old, from, s.ids, items, carried, s.kind, now)
+			if err != nil {
+				return err
 			}
+			events = append(events, logged...)
 			if len(block) == 0 {
 				continue
 			}
@@ -394,6 +502,64 @@ func (p Plan) take(old Plan, left leftOver, now time.Time) error {
 		}
 		return nil
 	})
+}
+
+// carriedBlock is the entries of ids, from old's file lines from, that
+// items does not hold yet, as carriedEntry carries them, and the event of
+// kind that logs each.
+func carriedBlock(old Plan, from, ids []string, items map[string]item, carried []string, kind string, now time.Time) ([]string, []Event, error) {
+	var block []string
+	var events []Event
+	for _, id := range ids {
+		if _, ok := items[id]; ok {
+			continue
+		}
+		at := headingWithID(from, id)
+		if at < 0 {
+			return nil, nil, refusal.New("%s has no heading for %s, which it was to carry. Run `agent-plan status %s` and report what it lists", old.file(""), id, old.file(""))
+		}
+		entry := carriedEntry(relevel(slices.Clone(from[at:subtreeEnd(from, at)]), 3), orderedBefore(from, at), carried, now)
+		block = append(block, entry...)
+		events = append(events, Event{Kind: kind, Item: id, Summary: lineTitle(entry[0], planKeywords) + "; carried from " + old.Name})
+	}
+	return block, events, nil
+}
+
+// relevel is entry with its headings moved by one amount, so its first
+// is at level to: a carried entry sits right under its section, whatever
+// group held it.
+func relevel(entry []string, to int) []string {
+	by := to - level(entry[0])
+	blocks := blockLines(entry)
+	for i, line := range entry {
+		if n := level(line); n > 0 && !blocks[i] {
+			entry[i] = strings.Repeat("*", n+by) + line[n:]
+		}
+	}
+	return entry
+}
+
+// orderedBefore are the IDs of the siblings before the heading at
+// lines[at] where its parent's ORDERED property is t, the items it waits
+// on as earlierSettled reads them, which a carried entry outside the
+// group waits on in AFTER; none under any other parent.
+func orderedBefore(lines []string, at int) []string {
+	hs, levels, _ := headings(lines)
+	k := slices.Index(hs, at)
+	parent := k - 1
+	for parent >= 0 && levels[parent] >= levels[k] {
+		parent--
+	}
+	if parent < 0 || drawerProps(drawerOf(lines, hs[parent]))["ORDERED"] != "t" {
+		return nil
+	}
+	var ids []string
+	for j := parent + 1; j < k; j++ {
+		if id := propsID(drawerProps(drawerOf(lines, hs[j]))); levels[j] == levels[k] && id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 // appendToSection writes block at the end of the plan file's `** name`
@@ -415,8 +581,9 @@ func (l *lockedPlan) appendToSection(name string, block []string) error {
 
 // carriedEntry is an entry's subtree as the plan it is carried to holds
 // it: a step or follow-up open as TODO, its ID in CUSTOM_ID as a plan in
-// the new form holds it, and its AFTER naming only items carried with it.
-func carriedEntry(entry []string, carried []string, now time.Time) []string {
+// the new form holds it, and its AFTER naming only items carried with it,
+// among them those of ordered, the siblings its ORDERED group put first.
+func carriedEntry(entry, ordered, carried []string, now time.Time) []string {
 	if ks := planKeywords; ks.all[lineKeyword(entry[0])] && lineKeyword(entry[0]) != kwAsk {
 		entry = setKeyword(entry, 0, kwTodo, ks, now)
 	}
@@ -424,10 +591,10 @@ func carriedEntry(entry []string, carried []string, now time.Time) []string {
 	if id := props["ID"]; id != "" && props["CUSTOM_ID"] == "" {
 		entry = setProperty(deleteProperty(entry, 0, "ID"), 0, "CUSTOM_ID", id)
 	}
-	if after, ok := props["AFTER"]; ok {
+	if after, ok := props["AFTER"]; ok || len(ordered) > 0 {
 		var kept []string
-		for _, id := range strings.Fields(after) {
-			if slices.Contains(carried, id) {
+		for _, id := range slices.Concat(ordered, strings.Fields(after)) {
+			if slices.Contains(carried, id) && !slices.Contains(kept, id) {
 				kept = append(kept, id)
 			}
 		}
@@ -455,40 +622,56 @@ func lineKeyword(line string) string {
 // logging an item and projecting it is finished by the next.
 func (p Plan) settleCarried(target Plan, left leftOver, now time.Time) error {
 	err := p.withLock(func(l *lockedPlan) error {
-		events, err := p.Events()
-		if err != nil {
+		if err := l.logCarried(target, slices.Concat(left.steps, left.followups), now); err != nil {
 			return err
 		}
-		for _, id := range slices.Concat(left.steps, left.followups) {
-			if stepState(events, id) == kwCarried {
-				continue
-			}
-			if _, err := l.log(Event{Kind: carriedKind, Item: id, Summary: "to " + target.Name}, now); err != nil {
-				return err
-			}
-		}
-		if events, err = p.Events(); err != nil {
-			return err
-		}
-		list, err := p.itemList()
-		if err != nil {
-			return err
-		}
-		for _, it := range list {
-			if stepState(events, it.ID) != kwCarried {
-				continue
-			}
-			if err := l.project(it.ID, now); err != nil {
-				return err
-			}
-		}
-		return nil
+		return l.projectCarried(now)
 	})
 	if err != nil {
 		return err
 	}
 	for _, q := range left.questions {
 		if _, err := p.Decide(q, DecideOptions{Drop: true, Answer: "carried to " + target.Name}, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// logCarried logs each of ids carried to target, but those the log has
+// carried already.
+func (l *lockedPlan) logCarried(target Plan, ids []string, now time.Time) error {
+	events, err := l.p.Events()
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if stepState(events, id) == kwCarried {
+			continue
+		}
+		if _, err := l.log(Event{Kind: carriedKind, Item: id, Summary: "to " + target.Name}, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// projectCarried writes the heading keyword of every item the log has
+// carried.
+func (l *lockedPlan) projectCarried(now time.Time) error {
+	events, err := l.p.Events()
+	if err != nil {
+		return err
+	}
+	list, err := l.p.itemList()
+	if err != nil {
+		return err
+	}
+	for _, it := range list {
+		if stepState(events, it.ID) != kwCarried {
+			continue
+		}
+		if err := l.project(it.ID, now); err != nil {
 			return err
 		}
 	}
