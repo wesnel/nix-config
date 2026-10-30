@@ -24,7 +24,7 @@ Done when the spike shows an answer to the question.
 :CUSTOM_ID: S3
 :AFTER: S2
 :END:
-Settle the question as "Questions for the operator" says, its answer
-saying what the spike showed and naming the branch. The real change is
-then written fresh, under a plan of its own.
+Settle the question as the =plan-work= skill's "Questions for the
+operator" says, its answer saying what the spike showed and naming the
+branch. The real change is then written fresh, under a plan of its own.
 Done when the question is settled.
