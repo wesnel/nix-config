@@ -92,12 +92,15 @@ func options(args []string, values map[string]bool) int {
 // call is a simple command once wrappers, keywords and assignments are off:
 // the program's words, which of them the shell expands, and the assignments
 // made for it. fed says that xargs runs it, adding words the guard does
-// not see.
+// not see. assigned holds the NAME=VALUE assignments that commands of
+// their own made earlier at the command line's top level (topLevel), less
+// those unset since.
 type call struct {
-	words   []string
-	expands []bool
-	env     []string
-	fed     bool
+	words    []string
+	expands  []bool
+	env      []string
+	fed      bool
+	assigned []string
 }
 
 // visitor judges one call, or a script that a call runs, and returns a
@@ -455,16 +458,17 @@ func contains(words []string, w string) bool {
 // out of double quotes, is a command of its own, and stands in the command
 // around it as `$_`, a word the shell expands.
 func segments(text string) []string {
-	out, _, _ := backgroundSegments(text)
+	out, _, _, _ := backgroundSegments(text)
 	return out
 }
 
 // backgroundSegments is segments, with whether each runs in the
-// background (it, or the subshell it is in, ends with a lone &) and what
+// background (it, or the subshell it is in, ends with a lone &), what
 // ends each: "&&", "||", ";", "|", "&", a newline, "(" or ")" where a
 // subshell opens or closes, "$" where a command substitution ends, or ""
-// at the end of the line.
-func backgroundSegments(text string) (out []string, background []bool, ends []string) {
+// at the end of the line, and whether each is nested in a subshell or a
+// command substitution.
+func backgroundSegments(text string) (out []string, background []bool, ends []string, nested []bool) {
 	type frame struct {
 		cur      strings.Builder
 		quote    byte  // the quote this frame is inside, if any
@@ -481,6 +485,7 @@ func backgroundSegments(text string) (out []string, background []bool, ends []st
 		out = append(out, f.cur.String())
 		background = append(background, false)
 		ends = append(ends, end)
+		nested = append(nested, len(stack) > 1 || len(f.groups) > 0)
 		f.cur.Reset()
 	}
 	open := func(backtick bool) {
@@ -562,7 +567,56 @@ func backgroundSegments(text string) (out []string, background []bool, ends []st
 		closeSub()
 	}
 	flush("")
-	return out, background, ends
+	return out, background, ends, nested
+}
+
+// topLevel reports for each segment of a line, as backgroundSegments
+// gives them, whether an assignment it makes holds for the rest of the
+// line: it is not nested in a subshell or a command substitution, not in
+// a pipeline or the background, which run in subshells too, and not a
+// line of a here-document's body.
+func topLevel(texts []string, background []bool, ends []string, nested []bool) []bool {
+	top := make([]bool, len(texts))
+	// The here-documents opened on the line under way, and the delimiter
+	// that ends the body being read, if any.
+	var opened []string
+	body := ""
+	lineStart := true
+	for i, text := range texts {
+		words, _ := split(text)
+		if body == "" {
+			top[i] = !nested[i] && !background[i] && ends[i] != "|" && (i == 0 || ends[i-1] != "|")
+			opened = append(opened, heredocs(words)...)
+		} else if lineStart && len(words) == 1 && words[0] == body && (ends[i] == "\n" || ends[i] == "") {
+			body = ""
+		}
+		// A body starts on the line after the one that opens it, or after
+		// the body before it.
+		lineStart = ends[i] == "\n"
+		if body == "" && lineStart && len(opened) > 0 {
+			body, opened = opened[0], opened[1:]
+		}
+	}
+	return top
+}
+
+// heredocs are the delimiters of the here-documents a command's words
+// open, with << or <<-.
+func heredocs(words []string) []string {
+	var out []string
+	for i, w := range words {
+		if !strings.HasPrefix(w, "<<") || strings.HasPrefix(w, "<<<") {
+			continue
+		}
+		d := strings.TrimPrefix(strings.TrimPrefix(w, "<<"), "-")
+		if d == "" && i+1 < len(words) {
+			d = words[i+1]
+		}
+		if d != "" {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // aliasUnknown is why an alias whose name or value the guard cannot read

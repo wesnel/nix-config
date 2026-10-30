@@ -829,7 +829,7 @@ var shellEditRepos = sync.OnceValues(func() (string, error) {
 		os.MkdirAll(d, 0o755)
 	}
 	files := map[string]string{"a.go": "a\n", "sub/b.go": "b\n", ".gitignore": "build/\nvendored.txt\n", "vendored.txt": "v\n",
-		"new.txt": "n\n", "build/out.log": "o\n"}
+		"new.txt": "n\n", "build/out.log": "o\n", "glob[a].go": "g\n"}
 	for name, content := range files {
 		os.WriteFile(filepath.Join(work, name), []byte(content), 0o644)
 	}
@@ -837,7 +837,7 @@ var shellEditRepos = sync.OnceValues(func() (string, error) {
 	os.WriteFile(filepath.Join(scratchRepo, "a"), []byte("a\n"), 0o644)
 	return root, fixtureGits(
 		[]string{work, "init", "-q", "-b", "main"},
-		[]string{work, "add", "a.go", "sub/b.go", ".gitignore"},
+		[]string{work, "add", "a.go", "sub/b.go", ".gitignore", "glob[a].go"},
 		[]string{work, "add", "-f", "vendored.txt"},
 		[]string{work, "commit", "-q", "-m", "base"},
 		[]string{scratchRepo, "init", "-q", "-b", "main"},
@@ -898,6 +898,39 @@ func TestShellEdits(t *testing.T) {
 		{false, "echo x > /dev/null"},
 		{false, "echo x >&2"},
 		{false, "echo x > $F"},
+		{true, "f=a.go && perl -0pi -e 's/a/b/' $f"},
+		{true, "f=a.go && perl -0pi -e 's/a/b/' ${f}"},
+		{true, `f=sub/b.go; sed -i '' s/a/b/ "$f"`},
+		{true, "f=" + outside + "/f\necho x > $f"},
+		{true, "d=sub && echo x > $d/b.go"},
+		{false, "g=a.go && echo x > $F"},
+		{false, "f=$(mktemp) && echo x > $f"},
+		// The shell does not expand a glob in an assignment, so "$f" names
+		// the file as spelt.
+		{true, `f='glob[a].go' && echo x > "$f"`},
+		{false, "f=a.go; f=$(mktemp) && echo x > $f"},
+		// Only an assignment at the top of the line holds for the rest of it.
+		{true, `f=a.go; (f=fresh.txt); echo x > "$f"`},
+		{false, "cat <<X >/dev/null\nf=a.go\nX\nsed -i '' s/a/b/ $f"},
+		{false, "x=$(f=a.go); sed -i '' s/a/b/ $f"},
+		{false, "x=`f=a.go`; sed -i '' s/a/b/ $f"},
+		{false, "(f=a.go); sed -i '' s/a/b/ $f"},
+		{false, "f=a.go | true; sed -i '' s/a/b/ $f"},
+		{false, "true | f=a.go; sed -i '' s/a/b/ $f"},
+		{false, "f=a.go & sed -i '' s/a/b/ $f"},
+		// An assignment before a command is that command's alone, made after
+		// its words expand.
+		{false, "f=a.go perl -0pi -e 's/a/b/' $f"},
+		{false, "f=a.go true && perl -0pi -e 's/a/b/' $f"},
+		// A variable the shell does not expand is a file's name as written.
+		{false, "f=a.go && echo x > '$f'"},
+		{false, "f=a.go && sed -i '' s/a/b/ '$f'"},
+		{false, `f=a.go && echo x > "\$f"`},
+		{false, `f=a.go && echo x > \$f`},
+		{false, "f=a.go; unset f; sed -i '' s/a/b/ $f"},
+		{true, "f=a.go; unset g; sed -i '' s/a/b/ $f"},
+		{false, "f=a.go; unset -v f; sed -i '' s/a/b/ $f"},
+		{true, "f=a.go; unset -f f; sed -i '' s/a/b/ $f"},
 		{false, "sed -n 1p a.go"},
 		{true, "sed -i '' s/a/b/ " + outside + "/f"},
 		{true, "sed -i '' s/a/b/ " + scratchRepo + "/a"},
@@ -954,6 +987,44 @@ func TestShellEdits(t *testing.T) {
 			}
 		})
 	}
+	// Each command line is judged alone: an assignment on an earlier one
+	// is not followed, where the same assignment on the line is, and the
+	// denial names the file the variable holds.
+	t.Run("assignment on an earlier line", func(t *testing.T) {
+		const assign, edit = "f=a.go", "perl -0pi -e 's/a/b/' $f"
+		old := scratchRoots
+		scratchRoots = func() []string { return []string{scratch} }
+		t.Cleanup(func() { scratchRoots = old })
+		if reason := judge(t, work, assign); reason != "" {
+			t.Fatalf("%q: denied: %q", assign, reason)
+		}
+		if reason := judge(t, work, edit); reason != "" {
+			t.Errorf("%q after %q: denied: %q", edit, assign, reason)
+		}
+		if reason := judge(t, work, assign+" && "+edit); !strings.Contains(reason, "`a.go` is a tracked file") {
+			t.Errorf("%q: reason %q does not name a.go as tracked", assign+" && "+edit, reason)
+		}
+	})
+	// $HOME is the one variable the guard expands in a target written out.
+	// A value that expands is not followed even into it, and an assignment
+	// that may not run never hides the target as written.
+	t.Run("assignments and HOME", func(t *testing.T) {
+		old := home
+		home = work
+		t.Cleanup(func() { home = old })
+		for _, c := range []struct {
+			deny    bool
+			command string
+		}{
+			{true, "perl -0pi -e 's/a/b/' $HOME/a.go"},
+			{false, "f=$HOME/a.go && perl -0pi -e 's/a/b/' $f"},
+			{true, "false && HOME=" + outside + "; perl -0pi -e 's/a/b/' $HOME/a.go"},
+		} {
+			if reason := judge(t, work, c.command); (reason != "") != c.deny {
+				t.Errorf("%q, with HOME the work tree: deny=%v, reason %q", c.command, !c.deny, reason)
+			}
+		}
+	})
 }
 
 // TestTrash covers deleting files where trash is on PATH, which moves them
