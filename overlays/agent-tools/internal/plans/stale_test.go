@@ -62,23 +62,35 @@ func TestStaleAndUnrecorded(t *testing.T) {
 		}
 	})
 
-	// The hand-back is the checkpoint: logging it names what the log
-	// lacks, where any other event does not.
+	// The hand-back is the checkpoint: it is refused while a step is
+	// unsettled, and the refusal names what the log lacks; once every step
+	// is settled, logging it still names the rest, where any other event
+	// does not.
 	t.Run("a hand-back names them", func(t *testing.T) {
 		p := worked(t, "Rename the flag")
 		later := day.Add(25 * time.Hour)
-		e, err := p.Log(Event{Kind: "handed-back", Item: p.Name, Summary: "Draft PR open"}, later)
-		if err != nil {
-			t.Fatal(err)
+		_, err := p.Log(Event{Kind: "handed-back", Item: p.Name, Summary: "Draft PR open"}, later)
+		if err == nil {
+			t.Fatal("a hand-back with S1 unsettled was logged")
 		}
-		for _, want := range []string{p.file(""), "Commits no step records: Rename the flag\n",
+		for _, want := range []string{"while S1 is unsettled", p.file(""), "Commits no step records: Rename the flag\n",
 			"Stale, started with nothing logged for a day: S1\n"} {
-			if !strings.Contains(e.Note, want) {
-				t.Errorf("note %q lacks %q", e.Note, want)
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("refusal %q lacks %q", err, want)
 			}
 		}
 		if e, err := p.Log(Event{Kind: "blocked", Item: "S1", Summary: "Waits on the operator"}, later); err != nil || e.Note != "" {
 			t.Errorf("blocked: note %q, %v", e.Note, err)
+		}
+		if _, err := p.Log(Event{Kind: "abandoned", Item: "S1", Summary: "The flag went upstream"}, later); err != nil {
+			t.Fatal(err)
+		}
+		e, err := p.Log(Event{Kind: "handed-back", Item: p.Name, Summary: "Draft PR open"}, later)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(e.Note, "Commits no step records: Rename the flag\n") {
+			t.Errorf("note %q lacks the unrecorded commit", e.Note)
 		}
 		clean := newPlan(t, testConfig(t), "y")
 		if e, err := clean.Log(Event{Kind: "handed-back", Item: clean.Name}, later); err != nil || e.Note != "" {

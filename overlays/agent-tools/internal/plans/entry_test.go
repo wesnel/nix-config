@@ -61,7 +61,7 @@ func TestAddEntry(t *testing.T) {
 	t.Run("an ID the log named is not handed out again", func(t *testing.T) {
 		_, p := entryPlan(t)
 		addItems(t, p.file(""), "** Steps", "S7")
-		if _, err := p.Log(Event{Kind: "abandoned", Item: "S7"}, day); err != nil {
+		if _, err := p.Log(Event{Kind: "abandoned", Item: "S7", Summary: "not needed"}, day); err != nil {
 			t.Fatal(err)
 		}
 		text := fileText(t, p.file(""))
