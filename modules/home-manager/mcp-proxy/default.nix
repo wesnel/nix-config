@@ -77,13 +77,30 @@ with lib; let
   # Home Manager's domain values, gui and user, are also launchctl's domain
   # prefixes.
   agent = config.launchd.agents.mcp-proxy;
-  restart =
-    if darwin
-    then "launchctl kickstart -k \"${agent.domain}/$(id -u)/${agent.config.Label}\""
-    else "systemctl --user restart mcp-proxy.service";
+  # Home Manager writes each agent's plist to ~/Library/LaunchAgents under
+  # its label.
+  plist = "${config.home.homeDirectory}/Library/LaunchAgents/${agent.config.Label}.plist";
+  # A script of its own so that flake.nix's mcp-proxy-restart check can run
+  # it with a fake launchctl on PATH.
+  restart = pkgs.writeShellApplication {
+    name = "mcp-proxy-restart";
+    text =
+      if darwin
+      then ''
+        domain="${agent.domain}/$(id -u)"
+        # kickstart fails when the agent is loaded in no domain, as after an
+        # activation that could not bootstrap it; loading it starts it, since
+        # it runs at load.
+        if ! launchctl kickstart -k "$domain/${agent.config.Label}"; then
+          launchctl bootstrap "$domain" ${escapeShellArg plist}
+        fi
+      ''
+      else "systemctl --user restart mcp-proxy.service";
+  };
 
   authorize = pkgs.writeShellApplication {
     name = "mcp-proxy-authorize";
+    passthru = {inherit restart plist;};
     text = ''
       if [[ $# -ne 1 ]]; then
         echo "usage: mcp-proxy-authorize SERVER   (one of: ${concatStringsSep ", " (attrNames (filterAttrs (_: s: s ? oauth) servers))})" >&2
@@ -93,7 +110,7 @@ with lib; let
       MCP_PROXY_TOKEN=unused ${proxy} -config ${configFile} -authorize "$1"
       # A route is mounted only when its server connects, so the running
       # proxy has to start again to use the new token.
-      ${restart}
+      ${getExe restart}
       # A client that found no route when it started reports the server as
       # not found, and connects again only when told to.
       echo "Sessions started before now reach $1 after a reconnect: /mcp in Claude Code, or a new session." >&2

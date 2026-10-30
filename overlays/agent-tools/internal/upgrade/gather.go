@@ -710,7 +710,7 @@ func diffPaths(ctx context.Context, dir, a, z string, limit int) ([]byte, error)
 	cmd := exec.CommandContext(ctx, "git", "-c", "core.hooksPath=/dev/null", "diff", "--no-index", "--no-color",
 		"--no-ext-diff", "--no-textconv", "-U1", "--", a, z)
 	cmd.Dir = dir
-	cmd.Env = append(gitenv.Without(os.Environ()), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	cmd.Env = append(gitenv.Without(os.Environ()), gitenv.NoConfig...)
 	pipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err

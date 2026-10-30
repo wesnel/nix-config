@@ -7,6 +7,8 @@ package goproxy
 import (
 	"os"
 	"path/filepath"
+
+	"github.com/wesnel/agent-tools/internal/gitenv"
 )
 
 var (
@@ -22,7 +24,7 @@ var (
 // workspace and no settings of the caller's. modcache is GOMODCACHE, tmp
 // the home and temporary directory, and toolchain GOTOOLCHAIN.
 func DownloadEnv(modcache, tmp, toolchain string) []string {
-	return []string{
+	env := []string{
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + tmp,
 		"TMPDIR=" + tmp,
@@ -40,8 +42,7 @@ func DownloadEnv(modcache, tmp, toolchain string) []string {
 		"GOMODCACHE=" + modcache,
 		"GOPATH=" + filepath.Join(tmp, "gopath"),
 		"GOCACHE=" + filepath.Join(tmp, "gocache"),
-		"GIT_CONFIG_GLOBAL=/dev/null",
-		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_TERMINAL_PROMPT=0",
 	}
+	return append(env, gitenv.NoConfig...)
 }

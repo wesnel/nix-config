@@ -876,6 +876,22 @@
             touch $out
           '';
 
+      # The ngrok Mac's mcp-proxy-authorize restarts the proxy, and loads
+      # its plist when kickstart finds it loaded in no domain; a failed load
+      # fails it.
+      checks.mcp-proxy-restart = let
+        authorize =
+          builtins.head (builtins.filter (p: (p.name or "") == "mcp-proxy-authorize")
+            self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username}.home.packages);
+      in
+        pkgs.runCommand "mcp-proxy-restart" {
+          restart = pkgs.lib.getExe authorize.restart;
+          inherit (authorize) plist;
+        } ''
+          bash ${./modules/home-manager/mcp-proxy/restart-tests.sh}
+          touch $out
+        '';
+
       checks.git-fetch-urls = let
         git = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username}.programs.git;
       in
@@ -886,6 +902,30 @@
           passAsFile = ["includes"];
         } ''
           bash ${./modules/home-manager/git/fetch-urls-tests.sh}
+          touch $out
+        '';
+
+      # No Home Manager launchd agent of any Mac sets
+      # LimitLoadToSessionType, which Home Manager sets to Background for an
+      # agent in the user domain. There launchd did not load mcp-proxy after
+      # a reboot, and it stayed down until loaded by hand; agents stay in the
+      # default gui domain.
+      checks.launchd-agents = let
+        inherit (pkgs) lib;
+        limited = lib.concatLists (lib.mapAttrsToList (machine: system:
+          lib.concatLists (lib.mapAttrsToList (user: home:
+            map (agent: "${machine}/${user}/${agent}") (builtins.attrNames
+              (lib.filterAttrs (_: a: a.enable && a.config.LimitLoadToSessionType != null) home.launchd.agents)))
+          system.config.home-manager.users))
+        self.darwinConfigurations);
+      in
+        pkgs.runCommand "launchd-agents" {
+          limited = builtins.concatStringsSep " " limited;
+        } ''
+          if [ -n "$limited" ]; then
+            echo "launchd-agents: these set LimitLoadToSessionType (domain user?): $limited" >&2
+            exit 1
+          fi
           touch $out
         '';
 
