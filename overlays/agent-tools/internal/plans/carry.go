@@ -1,6 +1,8 @@
 package plans
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"regexp"
 	"slices"
@@ -112,9 +114,10 @@ func (c Config) Carry(plan string, o CarryOptions, now time.Time) (Carried, erro
 }
 
 // leftOver are the items of the plan's own file Carry moves: the steps
-// and follow-ups the log leaves open, and the questions still asked. What
-// it does not move it refuses to leave in a plan that takes no new work:
-// a part, or a part's item, still open, and a step done but not verified.
+// and follow-ups the log leaves open, and the questions still asked. A
+// step done but not verified stays, to be verified here, and the next
+// plan's brief names it. A part, or a part's item, still open it refuses
+// to leave in a plan that takes no new work.
 func (p Plan) leftOver() (leftOver, error) {
 	list, err := p.itemList()
 	if err != nil {
@@ -125,7 +128,7 @@ func (p Plan) leftOver() (leftOver, error) {
 		return leftOver{}, err
 	}
 	var l leftOver
-	var parts, unverified []string
+	var parts []string
 	for _, it := range list {
 		state := stepState(events, it.ID)
 		open := projected(it.ID) && !planKeywords.done[state]
@@ -135,8 +138,6 @@ func (p Plan) leftOver() (leftOver, error) {
 			if open || asked {
 				parts = append(parts, it.ID)
 			}
-		case stepPattern.MatchString(it.ID) && state == kwDone:
-			unverified = append(unverified, it.ID)
 		case stepPattern.MatchString(it.ID) && open:
 			l.steps = append(l.steps, it.ID)
 		case followupID.MatchString(it.ID) && open:
@@ -149,11 +150,6 @@ func (p Plan) leftOver() (leftOver, error) {
 		return leftOver{}, refusal.New("%s cannot be carried while its parts' %s are open: a part's work is its sub-agent's to settle. "+
 			"Have each part settle its items and hand back, as `agent-plan log %s --item P1 --kind handed-back`, then carry",
 			p.Name, strings.Join(parts, ", "), p.file(""))
-	}
-	if len(unverified) > 0 {
-		return leftOver{}, refusal.New("%s cannot be carried while %s is done but not verified, which the next plan would not show. "+
-			"Log each verified with its evidence, as `agent-plan log %s --item %s --kind verified --evidence TEXT`, or abandoned with its reason, then carry",
-			p.Name, strings.Join(unverified, ", "), p.file(""), unverified[0])
 	}
 	return l, nil
 }
@@ -175,7 +171,11 @@ func (c Config) carryTarget(old Plan, o CarryOptions, now time.Time) (Plan, erro
 		return Plan{}, err
 	}
 	for _, p := range own {
-		if p.carriedFrom().Name == old.Name {
+		from, err := p.carriedFrom()
+		if err != nil {
+			return Plan{}, err
+		}
+		if from.Name == old.Name {
 			return p, nil
 		}
 	}
@@ -212,12 +212,57 @@ func planSlug(name string) string {
 
 // carriedFrom is the plan the plan's CARRIED_FROM names, or a Plan with no
 // name where it names none.
-func (p Plan) carriedFrom() Plan {
+func (p Plan) carriedFrom() (Plan, error) {
 	props, err := planHeading(p.file(""))
 	if err != nil || props[propCarriedFrom] == "" {
-		return Plan{}
+		return Plan{}, err
 	}
-	return Plan{Dir: p.Dir, Name: props[propCarriedFrom], Host: p.Host, Own: p.Own, Repo: p.Repo}
+	return Plan{Dir: p.Dir, Name: props[propCarriedFrom], Host: p.Host, Own: p.Own, Repo: p.Repo}, nil
+}
+
+// CarriedTo is the name of the plan the plan's work was carried to, or ""
+// for one carried nowhere.
+func (p Plan) CarriedTo() string {
+	props, _ := planHeading(p.file(""))
+	return props[propCarriedTo]
+}
+
+// carriedChain are the plans the plan's work was carried from, nearest
+// first; a plan deleted since ends the chain, and one that cannot be read
+// is an error, since it may hold IDs and decisions the chain's readers
+// need.
+func (p Plan) carriedChain() ([]Plan, error) {
+	var out []Plan
+	seen := map[string]bool{p.Name: true}
+	q, err := p.carriedFrom()
+	for err == nil && q.Name != "" && !seen[q.Name] {
+		if _, err := os.Stat(q.file("")); errors.Is(err, fs.ErrNotExist) {
+			break
+		} else if err != nil {
+			return nil, err
+		}
+		seen[q.Name] = true
+		out = append(out, q)
+		q, err = q.carriedFrom()
+	}
+	return out, err
+}
+
+// carryLines are the lines a brief starts with to say which plan the
+// plan's work came from and which it went to, with how to pick that up.
+func (p Plan) carryLines() []string {
+	props, err := planHeading(p.file(""))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	if from := props[propCarriedFrom]; from != "" {
+		out = append(out, "Carried from: "+from)
+	}
+	if to := props[propCarriedTo]; to != "" {
+		out = append(out, "Carried to: "+to+"; pick it up with `agent-plan pickup "+p.carriedToFile(to)+"`")
+	}
+	return out
 }
 
 // lastCarriedTo is the plan p's work was last carried to, following each
