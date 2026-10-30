@@ -45,6 +45,11 @@ classify it:
 - **Missing fact**, one the agent could not look up: propose where it
   belongs, next to what it constrains.
 
+A rule, hook, setting or fact for one project goes in that project, not
+in the configuration every project loads, unless it is unavoidable there.
+Propose it for that project, and its change as a line for the operator to
+run, as AGENTS.md's "Commands the operator runs" says.
+
 A new rule lands with its existing violations fixed, or with a check that
 keeps them from coming back: propose one or the other with it.
 

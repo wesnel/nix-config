@@ -118,6 +118,107 @@ func TestPendingPlanReview(t *testing.T) {
 		}
 	})
 
+	// A command whose code the guard cannot read could write anywhere, so
+	// while the review is pending it is held as writing its working
+	// directory; commands the guard reads, and runs in scratch, are not.
+	t.Run("code the guard cannot read", func(t *testing.T) {
+		for _, c := range []struct {
+			command string
+			held    bool
+		}{
+			{"./gen.sh", true},
+			{"bash gen.sh", true},
+			{"python3 gen.py", true},
+			// Options that give no code, and a script's own arguments.
+			{"python3 -E gen.py", true},
+			{"python3 gen.py -c x", true},
+			{"perl -p gen.pl", true},
+			{"ruby -E UTF-8 gen.rb", true},
+			{"go -C tools run ./cmd/gen", true},
+			{"cargo +nightly run", true},
+			{"cargo r", true},
+			{"source ./setup.sh", true},
+			{". ./setup.sh", true},
+			{"emacsclient-30 --eval '(save-buffer)'", true},
+			// Run from scratch, the script is still the repository's.
+			{"cd SCRATCH && REPO/gen.sh", true},
+			{"cd SCRATCH && python3 REPO/gen.py", true},
+			{"cd SCRATCH && python3 -W ignore REPO/gen.py", true},
+			{"cd SCRATCH && python3 < REPO/gen.py", true},
+			{"cd SCRATCH && bash < REPO/gen.sh", true},
+			{"cd SCRATCH && go -C REPO run ./cmd/gen", true},
+			{"cd SCRATCH && python3 probe.py", false},
+			{"cd SCRATCH && go run REPO/gen.go", true},
+			{"cd SCRATCH && uv run REPO/gen.py", true},
+			{`cd "$X" && python3 p.py`, true},
+			// Inline code, bundled or after an option's value, or on
+			// standard input from the line itself.
+			{"perl -ne 'print' a.txt", false},
+			{"node -pe '1+1'", false},
+			{"python3 -W ignore -c 'print(1)'", false},
+			{"python3 <<< 'print(1)'", false},
+			{"python3 -I -c 'print(1)'", false},
+			{"perl -W -e 'print 1'", false},
+			{"node --eval='1'", false},
+			{"cd SCRATCH && go -C REPO generate ./...", true},
+			{"bash <<< 'echo hi'", false},
+			{"cargo --config net.offline=true run", true},
+			{"cargo --color always run", true},
+			{"cargo -Z unstable-options run", true},
+			{"python3.12 gen.py", true},
+			{"pypy3 gen.py", true},
+			{"uv run scripts/gen.py", true},
+			{"poetry run gen", true},
+			{"uv pip list", false},
+			{"cargo build", false},
+			{"node -e 'console.log(1)'", false},
+			{"perl -E 'say 1'", false},
+			{"go run ./cmd/x", true},
+			{"cargo run --bin x", true},
+			{"npm run build", true},
+			{"just gen", true},
+			{"emacsclient --eval '(save-buffer)'", true},
+			{"vim -c wq a.go", true},
+			{"$TOOL build", true},
+			{"env FOO=1 ./gen.sh", true},
+			{"git status", false},
+			{"go test ./...", false},
+			{"go vet ./...", false},
+			{"nix build --no-link .#x", false},
+			{"agent-plan log PLAN --item S1 --kind started", false},
+			{"bash -c 'git status'", false},
+			{"python3 -c 'print(1)'", false},
+			{"cd SCRATCH && ./probe.sh", false},
+		} {
+			t.Run(c.command, func(t *testing.T) {
+				repo, scratch, p, call := reviewing(t)
+				record(t, p, plans.DesignReviewStarted)
+				// The directories hold the test's name, which may hold && or
+				// spaces: quoted, they stay one word.
+				command := strings.NewReplacer("SCRATCH", "'"+scratch+"'", "REPO", "'"+repo+"'").Replace(c.command)
+				decision, reason := call("s1", "Bash", map[string]string{"command": command})
+				held := decision == "deny" && strings.Contains(reason, "code the guard cannot read")
+				if held != c.held {
+					t.Errorf("held %v, want %v: decision %q, reason %q", held, c.held, decision, reason)
+				}
+				// The reason names where the run is, or says it is unknown.
+				if held && (!strings.Contains(reason, "plan-reviewed") || !saysInstead(reason) || strings.Contains(reason, "from . ")) {
+					t.Errorf("reason %q", reason)
+				}
+			})
+		}
+		// The same run is free once the review is answered: the hold, not
+		// another rule, refused it.
+		_, _, p, call := reviewing(t)
+		record(t, p, plans.DesignReviewStarted)
+		if _, err := p.Log(plans.Event{Kind: "plan-reviewed", Item: p.Name, Summary: "no findings"}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if decision, reason := call("s1", "Bash", map[string]string{"command": "./gen.sh"}); decision == "deny" {
+			t.Errorf("after plan-reviewed: decision %q, reason %q", decision, reason)
+		}
+	})
+
 	// Both sessions are listed in the plan; only the one that started the
 	// review is held.
 	t.Run("another session of the same plan allowed", func(t *testing.T) {

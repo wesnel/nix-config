@@ -666,6 +666,49 @@ type cwds struct {
 	blocks []*[]string
 }
 
+// walkShell hands visit each simple command of a command line, run in dir,
+// with its wrappers off (unwrap), once for each directory it may run in,
+// following cd and pushd, which it does not hand on; the scripts the line
+// runs inline (bash -c, eval) are walked in turn, to maxDepth.
+func walkShell(text, dir string, depth int, visit func(c call, cwd string)) {
+	if depth > maxDepth {
+		return
+	}
+	w := cwds{here: []string{dir}}
+	end := ""
+	v := visitor{
+		script: func(text string) string {
+			for _, cwd := range w.here {
+				walkShell(text, cwd, depth+1, visit)
+			}
+			return ""
+		},
+		call: func(c call) string {
+			if len(c.words) == 0 {
+				return ""
+			}
+			if !c.expands[0] && (c.words[0] == "cd" || c.words[0] == "pushd") {
+				w.cd(c, end)
+				return ""
+			}
+			for _, cwd := range w.here {
+				visit(c, cwd)
+			}
+			return ""
+		},
+	}
+	texts, _, ends := backgroundSegments(text)
+	for i, segment := range texts {
+		if words, expands := split(segment); len(words) > 0 {
+			end = ends[i]
+			c := call{words: words, expands: expands}
+			w.begin(c)
+			unwrap(c, v)
+			w.next(end)
+		}
+	}
+}
+
 // begin moves w for the shell keyword a call c starts with, before c is
 // judged: it opens or closes a block, or enters an else branch, which runs
 // where the guarding cd's failure left the line.

@@ -13,8 +13,9 @@ import (
 // the session's last edit; "" otherwise. The session's plan, the one
 // naming the session, else the edit's worktree, logs each change as a
 // branch-changed event, from which the next edit reads the last; a
-// session without a plan gets no hint. It never denies.
-func branchHint(session string, toolInput json.RawMessage, cwd string) string {
+// session without a plan gets no hint. It never denies. c is this host's
+// plans.
+func branchHint(session string, toolInput json.RawMessage, cwd string, c plans.Config) string {
 	var in struct {
 		FilePath string `json:"file_path"`
 	}
@@ -24,10 +25,6 @@ func branchHint(session string, toolInput json.RawMessage, cwd string) string {
 	}
 	top, g := worktreeOf(expandPath(in.FilePath, cwd))
 	if top == "" {
-		return ""
-	}
-	c, err := plans.Load()
-	if err != nil {
 		return ""
 	}
 	p, _, ok := c.Locate(session, "")
