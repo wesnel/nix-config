@@ -87,6 +87,9 @@ func (a *adequacyFixture) restart(t *testing.T, start string) {
 	a.commitTest(t, "d\n")
 }
 
+// adequacySuites are the suites setUpAdequacy's settings give.
+var adequacySuites = []redcheck.Suite{{Name: "default", Test: "true", TestFiles: []string{"*_test.txt"}}}
+
 // redCheck writes git red-check's JSON on the range, as the session would
 // run it, and returns its path.
 func (a *adequacyFixture) redCheck(t *testing.T) string {
@@ -97,13 +100,14 @@ func (a *adequacyFixture) redCheck(t *testing.T) string {
 		if c == a.commit {
 			v = a.verdict
 		}
-		checks = append(checks, &redcheck.Check{Commit: c, Subject: "s", Verdict: v, TestFiles: []string{}})
+		checks = append(checks, &redcheck.Check{Commit: c, Subject: "s", Verdict: v,
+			Suites: []*redcheck.SuiteCheck{{Suite: adequacySuites[0].Name, Verdict: v, TestFiles: []string{}}}})
 	}
 	if a.edit != nil {
 		checks = a.edit(checks)
 	}
 	path := filepath.Join(a.repo, ".git", "red-check.json")
-	os.WriteFile(path, must(json.Marshal(redcheck.Result{Test: "true", TestFiles: []string{"*_test.txt"}, Commits: checks})), 0o644)
+	os.WriteFile(path, must(json.Marshal(redcheck.Result{Suites: adequacySuites, Commits: checks})), 0o644)
 	return path
 }
 
@@ -141,6 +145,69 @@ func (f *fixture) refused(t *testing.T, code int, out output, stderr string) {
 	}
 }
 
+// A commit of red-check's JSON is refused where red-check would not have
+// written it: a verdict its suites do not give would raise no finding, or
+// one with no test files to place it at.
+func TestBadCommit(t *testing.T) {
+	bySuite := map[string]redcheck.Suite{"txt": adequacySuites[0], "sh": {Name: "sh", Test: "true", TestFiles: []string{"*.sh"}}}
+	suite := func(name, verdict string) *redcheck.SuiteCheck {
+		return &redcheck.SuiteCheck{Suite: name, Verdict: verdict}
+	}
+	for _, c := range []struct {
+		name    string
+		check   redcheck.Check
+		refused bool
+	}{
+		{"no suites, no test files", redcheck.Check{Verdict: redcheck.NoTestFiles, Suites: []*redcheck.SuiteCheck{}}, false},
+		{"the worst of its suites", redcheck.Check{Verdict: redcheck.PassesWithoutChange, Suites: []*redcheck.SuiteCheck{
+			suite("txt", redcheck.FailsWithoutChange), suite("sh", redcheck.PassesWithoutChange)}}, false},
+		{"passes-without-change with no suites", redcheck.Check{Verdict: redcheck.PassesWithoutChange,
+			Suites: []*redcheck.SuiteCheck{}}, true},
+		{"no-test-files with a suite", redcheck.Check{Verdict: redcheck.NoTestFiles, Suites: []*redcheck.SuiteCheck{
+			suite("txt", redcheck.PassesWithoutChange)}}, true},
+		{"better than its worst suite", redcheck.Check{Verdict: redcheck.FailsAsAsserted, Suites: []*redcheck.SuiteCheck{
+			suite("txt", redcheck.FailsAsAsserted), suite("sh", redcheck.PassesWithoutChange)}}, true},
+		{"an unknown verdict", redcheck.Check{Verdict: "passes", Suites: []*redcheck.SuiteCheck{}}, true},
+		{"a suite it was not given", redcheck.Check{Verdict: redcheck.PassesWithoutChange,
+			Suites: []*redcheck.SuiteCheck{suite("go", redcheck.PassesWithoutChange)}}, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if why := badCommit(&c.check, bySuite); (why != "") != c.refused {
+				t.Errorf("refused %v (%q), want %v", why != "", why, c.refused)
+			}
+		})
+	}
+}
+
+// Two suites whose test files take in the same changed file each raise a
+// finding of their own, which a round keeps only if their IDs differ.
+func TestUntestedID(t *testing.T) {
+	f := setUp(t, false)
+	os.WriteFile(filepath.Join(f.repo, "code.txt"), []byte("a\n"), 0o644)
+	os.WriteFile(filepath.Join(f.repo, "code_test.txt"), []byte("b\n"), 0o644)
+	run(t, f.repo, "git", "add", "code.txt", "code_test.txt")
+	run(t, f.repo, "git", "commit", "-q", "-m", "Test the code")
+	commit := run(t, f.repo, "git", "rev-parse", "HEAD")
+	r := &span{top: f.repo, base: f.base, tip: commit}
+
+	txt := redcheck.Suite{Name: "txt", Test: "true", TestFiles: []string{"*_test.txt"}}
+	all := redcheck.Suite{Name: "all", Test: "true", TestFiles: []string{"*_test.*"}}
+	a, err := untested(r, txt, commit)
+	if err != nil || a == nil {
+		t.Fatalf("suite txt: %+v, %v", a, err)
+	}
+	b, err := untested(r, all, commit)
+	if err != nil || b == nil {
+		t.Fatalf("suite all: %+v, %v", b, err)
+	}
+	if a.ID == b.ID {
+		t.Errorf("both suites' findings have the ID %s", a.ID)
+	}
+	if again, _ := untested(r, txt, commit); again == nil || again.ID != a.ID {
+		t.Errorf("one suite's ID moved between calls: %s, then %+v", a.ID, again)
+	}
+}
+
 func TestTestAdequacy(t *testing.T) {
 	// A commit whose tests pass without the rest of it is untested, said so
 	// by red-check rather than the reviewer, at its test file.
@@ -150,12 +217,12 @@ func TestTestAdequacy(t *testing.T) {
 		a := setUpAdequacy(t, redcheck.FailsAsAsserted)
 		token := "ghp_" + strings.Repeat("Z", 36)
 		a.edit = func(checks []*redcheck.Check) []*redcheck.Check {
-			last := checks[len(checks)-1]
+			last := checks[len(checks)-1].Suites[0]
 			last.Without = &redcheck.Run{Exit: 1, Output: token}
 			// As the fixture writes it: the cut keeps the last redCheckCap
 			// bytes, which start 20 bytes into the token once the padding
 			// after it is long enough.
-			data := must(json.Marshal(redcheck.Result{Test: "true", TestFiles: []string{"*_test.txt"}, Commits: checks}))
+			data := must(json.Marshal(redcheck.Result{Suites: adequacySuites, Commits: checks}))
 			pad := strings.Index(string(data), token) + 20 + redCheckCap - len(data)
 			last.Without.Output = token + strings.Repeat(" ", pad)
 			return checks
@@ -312,6 +379,15 @@ func TestTestAdequacy(t *testing.T) {
 				checks[len(checks)-1].Verdict = "passes"
 				return checks
 			}},
+			{"with a suite's verdict red-check does not give", func(_ *adequacyFixture, checks []*redcheck.Check) []*redcheck.Check {
+				checks[len(checks)-1].Suites[0].Verdict = "passes"
+				return checks
+			}},
+			// Its test files, which the finding is placed at, are unknown.
+			{"with a suite the settings do not have", func(_ *adequacyFixture, checks []*redcheck.Check) []*redcheck.Check {
+				checks[len(checks)-1].Suites[0].Suite = "other"
+				return checks
+			}},
 		} {
 			t.Run(c.name, func(t *testing.T) {
 				a := setUpAdequacy(t, redcheck.PassesWithoutChange)
@@ -325,18 +401,21 @@ func TestTestAdequacy(t *testing.T) {
 	// Verdicts from a run of other test settings say nothing of this
 	// repository's tests.
 	t.Run("refused for other test settings", func(t *testing.T) {
-		for name, result := range map[string]redcheck.Result{
-			"another test command": {Test: "go test ./...", TestFiles: []string{"*_test.txt"}},
-			"a build command":      {Test: "true", Build: "make", TestFiles: []string{"*_test.txt"}},
-			"other test files":     {Test: "true", TestFiles: []string{"*.txt"}},
+		suite := adequacySuites[0]
+		for name, suites := range map[string][]redcheck.Suite{
+			"another test command": {{Name: suite.Name, Test: "go test ./...", TestFiles: suite.TestFiles}},
+			"a build command":      {{Name: suite.Name, Test: suite.Test, Build: "make", TestFiles: suite.TestFiles}},
+			"other test files":     {{Name: suite.Name, Test: suite.Test, TestFiles: []string{"*.txt"}}},
+			"another name":         {{Name: "go", Test: suite.Test, TestFiles: suite.TestFiles}},
+			"another suite":        {suite, {Name: "go", Test: "go test ./...", TestFiles: []string{"*_test.go"}}},
 		} {
 			t.Run(name, func(t *testing.T) {
 				a := setUpAdequacy(t, redcheck.PassesWithoutChange)
-				var checks []*redcheck.Check
+				result := redcheck.Result{Suites: suites}
 				for _, c := range strings.Fields(run(t, a.repo, "git", "rev-list", "--reverse", "--no-merges", a.base+"..HEAD")) {
-					checks = append(checks, &redcheck.Check{Commit: c, Verdict: redcheck.PassesWithoutChange})
+					result.Commits = append(result.Commits, &redcheck.Check{Commit: c, Verdict: redcheck.PassesWithoutChange,
+						Suites: []*redcheck.SuiteCheck{{Suite: suite.Name, Verdict: redcheck.PassesWithoutChange}}})
 				}
-				result.Commits = checks
 				file := filepath.Join(a.repo, ".git", "other.json")
 				os.WriteFile(file, must(json.Marshal(result)), 0o644)
 				code, out, stderr := freshReview(t, "--plan", a.plan, "--red-check", file, a.base+"..HEAD")

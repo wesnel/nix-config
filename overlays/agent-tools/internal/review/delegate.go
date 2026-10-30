@@ -125,14 +125,14 @@ held to the type's schema, each finding to a line of TIP's tree. A reply
 that does not fit is asked for once more, with why; a second is kept
 under the round's Dropped.
 
-Each commit whose tests red-check finds pass without the rest of it, in
-the JSON --red-check gives (git red-check BASE..TIP's, which the session
-runs where the change's tests run, written under its working directory),
-is an untested finding of the review's own, with ID RC-<key>; the JSON is
-refused unless its commits are the range's and it ran the repository's
-test settings, and the round records RED_CHECK session, or absent. A
-printed prompt, whose reply delegate never sees, lists those findings
-instead, for the reviewer to report itself.
+Each suite of a commit that red-check finds passes without the rest of
+it, in the JSON --red-check gives (git red-check BASE..TIP's, which the
+session runs where the change's tests run, written under its working
+directory), is an untested finding of the review's own, with ID RC-<key>;
+the JSON is refused unless its commits are the range's and it ran the
+repository's test suites, and the round records RED_CHECK session, or
+absent. A printed prompt, whose reply delegate never sees, lists those
+findings instead, for the reviewer to report itself.
 
 An upgrade prompt adds the pins BASE..TIP sets, moves or drops in lock
 files (flake.lock nodes, by each node's locked and original objects
