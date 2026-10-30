@@ -138,7 +138,7 @@ starts, such as `origin/main` or the parent branch in a stack.
    reviewer from the other family where available. Use `/code-review`
    against BASE in Claude Code, `/review` against BASE in Codex, or a fresh
    read-only `adversarial-reviewer` given the goal and range as alternatives,
-   not additional passes. Where the repository has test settings, run
+   not additional passes. Where the clone's settings have test suites, run
    `git -C WORKTREE red-check BASE..TIP > FILE`, FILE being
    `WORKTREE/red-check.json`, or `red-check.json` in the directory
    `echo $TMPDIR` prints where WORKTREE is not one the sandbox can write (a
