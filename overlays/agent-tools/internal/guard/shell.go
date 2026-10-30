@@ -140,6 +140,18 @@ type call struct {
 	fed     bool
 }
 
+// named is c from its program on, for the rules that go by the program's
+// name: the redirections before it (`< /dev/null git push`) are taken
+// off, as the shell makes them whatever the program is. A rule that reads
+// what a call writes or reads keeps c's words whole. A call of
+// redirections alone is c.
+func (c call) named() call {
+	if i := leadingRedirections(c.words); i > 0 && i < len(c.words) {
+		return call{words: c.words[i:], expands: c.expands[i:], env: c.env, fed: c.fed}
+	}
+	return c
+}
+
 // visitor judges one call, or a script that a call runs, and returns a
 // denial's reason or "".
 type visitor struct {

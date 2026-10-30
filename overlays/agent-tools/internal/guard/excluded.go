@@ -131,8 +131,8 @@ func firstCall(text string, depth int, match func(c call) []string) []string {
 	v = visitor{
 		call: func(c call) string {
 			// A redirection before the program, as `< /dev/null CMD`.
-			if i := leadingRedirections(c.words); i > 0 && i < len(c.words) {
-				return unwrap(call{words: c.words[i:], expands: c.expands[i:], env: c.env, fed: c.fed}, v)
+			if n := c.named(); len(n.words) < len(c.words) {
+				return unwrap(n, v)
 			}
 			if named = match(c); named != nil {
 				return "named"

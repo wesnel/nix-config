@@ -206,9 +206,11 @@ func rawPath(word, dir string) string {
 
 // checkSession checks a call against the rules for every session that are
 // not about GitHub. dir is where it runs, "" when the guard cannot tell.
+// The program is the named call's; the paths and redirections are read
+// from every word.
 func checkSession(c call, dir string) string {
-	words := c.words
-	name, args := base(words[0]), words[1:]
+	words, p := c.words, c.named()
+	name, args := base(p.words[0]), p.words[1:]
 	if versionedEmacsclient.MatchString(name) {
 		name = "emacsclient"
 	}
@@ -340,7 +342,7 @@ func checkSession(c call, dir string) string {
 			}
 		}
 	case "activate", "activate-user":
-		if strings.Contains(words[0], "/") {
+		if strings.Contains(p.words[0], "/") {
 			return systemSwitch
 		}
 	case "nix":

@@ -73,6 +73,7 @@ func writesPullRequest(text string, depth int) bool {
 			return ""
 		},
 		call: func(c call) string {
+			c = c.named()
 			w := c.words
 			if len(w) < 2 || c.expands[0] {
 				return ""
@@ -114,6 +115,7 @@ func pushers(text string, depth int) map[string]bool {
 			return ""
 		},
 		call: func(c call) string {
+			c = c.named()
 			w := c.words
 			if len(w) == 0 || c.expands[0] {
 				return ""

@@ -169,7 +169,7 @@ func stashWrites(text string, depth int) string {
 	v := visitor{
 		script: func(text string) string { return stashWrites(text, depth+1) },
 		call: func(c call) string {
-			if len(c.words) == 0 || c.expands[0] || base(c.words[0]) != "git" {
+			if c = c.named(); len(c.words) == 0 || c.expands[0] || base(c.words[0]) != "git" {
 				return ""
 			}
 			words := c.words[1:]
@@ -249,20 +249,30 @@ func shellEditPaths(text, dir string, depth int) []string {
 			return ""
 		},
 		call: func(c call) string {
-			if len(c.words) == 0 || c.expands[0] {
+			if len(c.words) == 0 || c.expands[0] && c.named().expands[0] {
 				return ""
 			}
-			if c.words[0] == "cd" || c.words[0] == "pushd" {
-				w.cd(c, end)
+			named := c.named()
+			if named.words[0] == "cd" || named.words[0] == "pushd" {
+				// Redirections before cd open their files where the
+				// command starts, before it changes directory.
+				for _, cwd := range w.here {
+					for _, t := range redirections(c.words) {
+						if p := fencePath(t, cwd); filepath.IsAbs(p) {
+							out = append(out, p)
+						}
+					}
+				}
+				w.cd(named, end)
 				return ""
 			}
 			for _, cwd := range w.here {
-				for _, t := range changedFiles(base(c.words[0]), c.words[1:], redirections(c.words)) {
+				for _, t := range changedFiles(base(named.words[0]), named.words[1:], redirections(c.words)) {
 					if p := fencePath(t, cwd); filepath.IsAbs(p) {
 						out = append(out, p)
 					}
 				}
-				if dir := gitWriteDir(c, cwd); dir != "" {
+				if dir := gitWriteDir(named, cwd); dir != "" {
 					out = append(out, dir)
 				}
 			}
@@ -290,8 +300,9 @@ func shellEditPaths(text, dir string, depth int) []string {
 // gives as $_/a.go, as cwd, where $(pwd) and $(git rev-parse
 // --show-toplevel) lead. Where a .. follows that part, the word is judged
 // whole, cleaned, as if the variable held one name: MAIN/$x/../../b as
-// b. A word that starts with a variable names a directory the guard
-// cannot know, and is "", as cdTarget leaves one.
+// b. A word that starts with a variable ($f.go, $out) is judged as cwd,
+// where the variable most often leads, so the guard never passes it
+// unjudged.
 func fencePath(word, cwd string) string {
 	for _, p := range []string{"$PWD", "${PWD}"} {
 		if (word == p || strings.HasPrefix(word, p+"/")) && cwd != "" {
@@ -305,8 +316,6 @@ func fencePath(word, cwd string) string {
 	switch {
 	case i < 0, slices.Contains(parts[i+1:], ".."):
 		return expandPath(word, cwd)
-	case i == 0 && !strings.HasPrefix(word, "$_"):
-		return ""
 	case i == 1 && parts[0] == "":
 		return "/"
 	}

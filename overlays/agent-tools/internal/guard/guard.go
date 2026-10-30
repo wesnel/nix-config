@@ -316,11 +316,20 @@ func command(text string, depth int, who role, dir, checkout string, background 
 			return ""
 		},
 		call: func(c call) string {
-			if len(c.words) > 0 && !c.expands[0] && (c.words[0] == "cd" || c.words[0] == "pushd") {
-				w.cd(c, end)
+			if p := c.named(); len(p.words) > 0 && !p.expands[0] && (p.words[0] == "cd" || p.words[0] == "pushd") {
+				// Redirections before cd open their files where the
+				// command starts, before it changes directory.
+				if len(p.words) < len(c.words) {
+					for _, cwd := range w.here {
+						if reason := program(c, who, files, cwd, checkout); reason != "" {
+							return reason
+						}
+					}
+				}
+				w.cd(p, end)
 				return ""
 			}
-			if !bg && longSleep(c) {
+			if !bg && longSleep(c.named()) {
 				return sleeping
 			}
 			for _, cwd := range w.here {
@@ -376,7 +385,8 @@ func cdTarget(c call, cwd string) string {
 }
 
 // program judges a call once unwrap has found the program it runs, in dir,
-// from a call made in checkout.
+// from a call made in checkout. The rules after checkSession go by the
+// program, which follows any redirections before it (call.named).
 func program(c call, who role, files, dir, checkout string) string {
 	if reason := checkEnv(c.env); reason != "" {
 		return reason
@@ -384,14 +394,17 @@ func program(c call, who role, files, dir, checkout string) string {
 	if reason := checkNgrokEnv(c); reason != "" {
 		return reason
 	}
-	if reason := checkLoopStart(c, dir); reason != "" {
+	if reason := checkLoopStart(c.named(), dir); reason != "" {
 		return reason
 	}
-	if len(c.words) == 0 || c.expands[0] {
+	if len(c.words) == 0 || c.expands[0] && c.named().expands[0] {
 		return ""
 	}
 	if reason := checkSession(c, dir); reason != "" {
 		return reason
+	}
+	if c = c.named(); c.expands[0] {
+		return ""
 	}
 	words := c.words
 	switch name := base(words[0]); {
