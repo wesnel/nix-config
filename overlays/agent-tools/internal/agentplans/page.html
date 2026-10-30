@@ -329,7 +329,7 @@ iframe.renderer {
   },
   "meta": {
     "schema": "number", "updated": "string", "host": "string", "repo": "boolean", "pushed": "string",
-    "unsynced": "boolean", "fetched": "string", "failed": "number"
+    "unsynced": "boolean", "fetched": "string", "failed": "number", "staged": "boolean"
   },
   "today": {
     "schema": "number", "date": "string", "digests": [{"kind": "string", "text": "string"}]
@@ -622,7 +622,8 @@ iframe.renderer {
         parts.push(h("span", null, "Plans last pushed ", timeEl(m.pushed, ago(m.pushed))));
         parts.push(h("span", null, "Other hosts fetched ", timeEl(m.fetched, ago(m.fetched))));
         const stalled = m.unsynced && when(m.pushed) != null && Date.now() - when(m.pushed) > 6 * 3600000;
-        if (stalled) parts.push(mark("Sync stalled", "t-bad", "square"));
+        if (m.staged) parts.push(mark("Sync stalled: plan changes staged", "t-bad", "square"));
+        else if (stalled) parts.push(mark("Sync stalled", "t-bad", "square"));
         else if (m.unsynced) parts.push(mark("Unsynced changes", "t-warn"));
       } else {
         parts.push(mark("No notes repository", "t-warn", "square"));

@@ -526,6 +526,15 @@ func TestCommands(t *testing.T) {
 		if code, _, _ := agentPlan(t, "", "reference", plan); code != 2 {
 			t.Errorf("reference without a URL: %d", code)
 		}
+		// Status reads a referenced event's summary as a References URL,
+		// so only reference, which checks the URL, logs one.
+		code, _, errs = agentPlan(t, "", "log", plan, "--item", "S1", "--kind", "referenced", "--summary", "see the other plan")
+		if code != 2 || !strings.Contains(errs, "agent-plan reference") {
+			t.Errorf("log --kind referenced: %d %s", code, errs)
+		}
+		if log, _ := os.ReadFile(strings.TrimSuffix(plan, ".org") + ".log.org"); strings.Contains(string(log), "see the other plan") {
+			t.Errorf("the log holds the refused event:\n%s", log)
+		}
 	})
 
 	t.Run("new from a missing template", func(t *testing.T) {

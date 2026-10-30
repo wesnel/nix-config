@@ -50,8 +50,9 @@ const usage = `plan-dash: the operator's status, from GitHub and the plans.
           differs from what the last such line was printed for, at most
           once every 90 seconds (when a log alone changes, or a push or
           fetch, it does not); print "plan sync stalled" once a stall
-          begins, this host's plans unsynced and its last push over 6
-          hours old; and "demo digest ready" for a demo digest new under
+          begins, plan changes staged in the notes repository or this
+          host's plans unsynced and its last push over 6 hours old; and
+          "demo digest ready" for a demo digest new under
           digests/YYYY/ in the notes repository. Takes the other hosts'
           plans every 2 minutes, fast-forward only. Reads GitHub, through
           the export's cache, every 5 minutes, and prints "reviews changed"

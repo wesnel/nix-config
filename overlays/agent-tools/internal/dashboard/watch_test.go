@@ -3,6 +3,9 @@ package dashboard
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/export"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
@@ -142,6 +146,39 @@ func TestWatchChanges(t *testing.T) {
 	}
 }
 
+// A hash stored by a watch from before the staged field stays the hash of
+// the same plans while nothing is staged, so the first watch after an
+// upgrade, or after going back, prints no change that did not happen.
+func TestWatchHashBeforeStaged(t *testing.T) {
+	c, _, p := watchFixture(t)
+	s := newScript(t, c, p)
+	s.sync = plans.SyncState{Repo: true}
+	got, err := s.w.hash(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps, failed, err := export.Plans(c, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range ps {
+		ps[i].Updated = ""
+	}
+	data, err := json.Marshal(struct {
+		Plans    []export.Plan
+		Failed   []string
+		Repo     bool
+		Unsynced bool
+	}{ps, failed, true, false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	if want := hex.EncodeToString(sum[:]); got != want {
+		t.Errorf("hash %s, want the hash from before the staged field, %s", got, want)
+	}
+}
+
 // Pushes and fetches alone change nothing printed, but whether this host's
 // plans are unsynced does; Pull runs at the start and every two minutes.
 func TestWatchSyncAndPull(t *testing.T) {
@@ -194,6 +231,12 @@ func TestWatchStall(t *testing.T) {
 	s.sync = plans.SyncState{Repo: true, Unsynced: true}
 	if got := s.run(t, nothing, nothing); strings.Contains(strings.Join(got, ""), LineStalled) {
 		t.Errorf("printed %q", got)
+	}
+	// Plan changes staged stall every sync from the start, however recent
+	// the last push or unsynced the plans.
+	s.sync = plans.SyncState{Repo: true, Staged: true, Pushed: s.clock}
+	if got := s.run(t, nothing); strings.Count(strings.Join(got, ""), LineStalled) != 1 || !strings.Contains(got[0], LineStalled) {
+		t.Errorf("with plan changes staged: %q", got)
 	}
 }
 

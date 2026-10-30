@@ -67,7 +67,7 @@ var (
 	// Kinds are what an event an agent logs records about its item;
 	// toolKinds are beside them.
 	Kinds = []string{"planned", "plan-reviewed", "started", "done", "blocked", "abandoned", "verified",
-		"reviewed", "finding-settled", "asked", "decided", "handed-back", "postponed", "discovered", "referenced"}
+		"reviewed", "finding-settled", "asked", "decided", "handed-back", "postponed", "discovered"}
 	// Roles are who logs an event.
 	Roles = []string{"single", "parent", "subagent", "reviewer", "design-reviewer"}
 	// Outcomes are the review-change skill's triage outcomes; needs-operator
@@ -93,6 +93,8 @@ var (
 				"Watch the push's CI with `pr-loop wait ci` as the signing-pass skill says",
 			linkedKind: "agent-plan link logs `linked` for each link it writes under Related. " +
 				"Link a plan with `agent-plan link PLAN OTHER --why TEXT`",
+			"referenced": "agent-plan reference logs `referenced` for each URL it writes under References, and status reads its summary as that URL. " +
+				"Add one with `agent-plan reference PLAN URL`",
 		}
 		for _, k := range []string{"loop-began", "round", "replied", "resolved", "ci-waited"} {
 			kinds[k] = "pr-loop logs what it did, from begin on, in the plan of the session that ran it. " +

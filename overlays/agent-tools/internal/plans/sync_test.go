@@ -1093,9 +1093,21 @@ func TestSyncState(t *testing.T) {
 	}
 
 	setGoal(t, mine.file(""), "Changed after the sync.")
-	if s := state(box); !s.Unsynced {
+	if s := state(box); !s.Unsynced || s.Staged {
 		t.Errorf("with an edit: %+v", s)
 	}
+	// A plan change staged keeps sync from bringing the branch forward,
+	// and so from sending anything; a staged change elsewhere does not.
+	os.WriteFile(filepath.Join(filepath.Dir(box.Dir), "elsewhere.org"), []byte("* Not a plan\n"), 0o644)
+	gitIn(t, filepath.Dir(box.Dir), "add", "--", "elsewhere.org")
+	if s := state(box); s.Staged {
+		t.Errorf("with a change outside the plans staged: %+v", s)
+	}
+	gitIn(t, filepath.Dir(box.Dir), "add", "--", mine.file(""))
+	if s := state(box); !s.Staged || !s.Unsynced {
+		t.Errorf("with the edit staged: %+v", s)
+	}
+	gitIn(t, filepath.Dir(box.Dir), "reset", "-q", "--", mine.file(""), "elsewhere.org")
 	gitIn(t, filepath.Dir(box.Dir), "-c", "commit.gpgsign=false", "commit", "-q", "-am", "Commit everything")
 	if s := state(box); !s.Pushed.Equal(pushed) || !s.Unsynced {
 		t.Errorf("committed, not pushed: %+v", s)
@@ -1133,6 +1145,91 @@ func TestSyncState(t *testing.T) {
 
 	if s := state(testConfig(t)); s.Repo || s.Unsynced {
 		t.Errorf("outside a repository: %+v", s)
+	}
+	t.Run("during this host's own sync", testSyncStateDuringOwnSync)
+	t.Run("staged: one sync sends, the next does not", testSyncStateStagedSendsOnce)
+}
+
+// With a plan change staged, a sync from origin's commit still sends this
+// host's plans but cannot fast-forward to them, and the next sends nothing.
+func testSyncStateStagedSendsOnce(t *testing.T) {
+	_, hosts := notes(t, "mac")
+	mac := hosts["mac"]
+	x := newPlan(t, mac, "x")
+	if got, err := mac.Sync(SyncOptions{}); err != nil || !got.Pushed {
+		t.Fatalf("first sync: %+v, %v", got, err)
+	}
+	addItems(t, x.file(""), "** Steps", "S1")
+	gitIn(t, filepath.Dir(mac.Dir), "add", "--", x.file(""))
+	got, err := mac.Sync(SyncOptions{})
+	if err != nil || !got.Pushed || got.Behind != "changes to plan files are staged" {
+		t.Errorf("the sync with the change staged: %+v, %v", got, err)
+	}
+	addItems(t, x.file(""), "** Steps", "S2")
+	if got, err := mac.Sync(SyncOptions{}); err != nil || got.Pushed {
+		t.Errorf("the sync after it: %+v, %v", got, err)
+	}
+	if s, err := mac.SyncState(); err != nil || !s.Staged || !s.Unsynced {
+		t.Errorf("state: %+v, %v", s, err)
+	}
+}
+
+// A sync stages this host's sent plan files just before it fast-forwards
+// over them; SyncState read meanwhile does not count that as plan changes
+// staged.
+func testSyncStateDuringOwnSync(t *testing.T) {
+	_, hosts := notes(t, "mac")
+	mac := hosts["mac"]
+	repo := filepath.Dir(mac.Dir)
+	newPlan(t, mac, "x")
+	// Two pipes: the fast-forward's git writes to started, then waits to
+	// read release.
+	gate := t.TempDir()
+	started, release := filepath.Join(gate, "started"), filepath.Join(gate, "release")
+	for _, p := range []string{started, release} {
+		if err := syscall.Mkfifo(p, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ran := raceAt(t, repo, "--ff-only", "echo > '"+started+"'; read x < '"+release+"'")
+	synced, reached := make(chan error, 1), make(chan struct{})
+	go func() { _, err := mac.Sync(SyncOptions{}); synced <- err }()
+	go func() { os.ReadFile(started); close(reached) }()
+	select {
+	case <-reached:
+	case err := <-synced:
+		t.Fatalf("the sync ended before its fast-forward: %v", err)
+	}
+	if staged := gitIn(t, repo, "diff", "--cached", "--name-only", "HEAD", "--", "agents"); staged == "" {
+		t.Fatal("the sync staged nothing before its fast-forward")
+	}
+	read := make(chan SyncState, 1)
+	go func() {
+		s, err := mac.SyncState()
+		if err != nil {
+			t.Error(err)
+		}
+		read <- s
+	}()
+	var s SyncState
+	got := false
+	// Bounds the time a SyncState that does not wait for the sync has to
+	// answer; one that waits answers once the sync ends.
+	select {
+	case s = <-read:
+		got = true
+	case <-time.After(2 * time.Second):
+	}
+	os.WriteFile(release, []byte("go\n"), 0o600)
+	if err := <-synced; err != nil {
+		t.Fatal(err)
+	}
+	raced(t, ran)
+	if !got {
+		s = <-read
+	}
+	if s.Staged {
+		t.Errorf("this host's own sync read as plan changes staged: %+v", s)
 	}
 }
 
