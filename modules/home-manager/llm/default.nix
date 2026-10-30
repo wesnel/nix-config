@@ -698,10 +698,6 @@ in {
           "cache.nixos.org"
           "channels.nixos.org"
           "vuln.go.dev"
-          # ngrok agent releases and packages.
-          "bin.ngrok.com"
-          "apt.ngrok.com"
-          "ngrok-agent.s3.amazonaws.com"
           "proxy.golang.org"
           "sum.golang.org"
           "storage.googleapis.com"
