@@ -38,9 +38,26 @@ description: How to open, describe and answer a pull request. Use before `pr-loo
   way: no history of how it got there, no list of review follow-ups, and no
   line numbers, line counts or commit counts, all of which go stale. Stack
   position and links to other pull requests are fine.
-- Explain the approach and what it rests on, not each file in turn; the diff
-  already gives that tour. A validation section names only what a reviewer
+- Explain the approach, not each file in turn; the diff already gives that
+  tour. A validation section names only what was checked that a reviewer
   cannot see from CI, never a lint, format, typecheck or codegen run.
+- Under `## Weak spots, assumptions and decisions`, point reviewers, and
+  the review bots that read the description, at what deserves their doubt,
+  one line per item; a small change may have a single item:
+  - the weakest places in the change: a rough edge, the part hardest to get
+    right, the code you are least sure of, each by file or function, with
+    why;
+  - the assumptions it rests on, about callers, data, the environment or
+    another system's behaviour, each with what goes wrong if it does not
+    hold;
+  - each decision this pull request's code rests on, from the questions
+    its plan settled, as the choice and an alternative the question
+    recorded, so a reviewer can argue for that alternative.
+
+  Write each as the change stands: an alternative is one not taken, never a
+  step tried, and an item that review settled leaves the section or is
+  restated as it now stands. What backing the change out does goes under
+  `## Reverting`, and what was checked goes in the validation section.
 - Under `## Reverting`, say whether the change is easy to back out (a
   two-way door) or not (a one-way door: a migration, a stored format, a
   published interface), what it could break if it is wrong, and what
