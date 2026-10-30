@@ -10,6 +10,7 @@ with lib; let
   llm = import ../llm/lib.nix {inherit lib;};
 
   mcpProxy = config.wgn.home.mcp-proxy;
+  otelCollector = config.wgn.home.otel-collector;
 
   registerMcpServers = pkgs.writers.writePython3 "codex-mcp-servers" {libraries = [pkgs.python3Packages.tomlkit];} ''
     import json
@@ -739,6 +740,50 @@ in {
               (unsafeDiscardStringContext config.home.activation.codexMcpServers.data)))
           (attrNames servers);
           message = "wgn.home.codex: native MCP approval must prompt for every call, without tool overrides, in the activation payload";
+        }
+      ];
+    }))
+
+    # Metrics alone, to the local collector: Codex's events
+    # (codex.tool_result) carry tool output, so its log exporter stays off,
+    # as do traces, prompts and responses, each set explicitly since
+    # setKeys keeps any other value already in the file. Its metrics go
+    # here in place of OpenAI's statsig. `analytics.enabled = false`, which
+    # the gateway sets, turns these metrics off too. Merged into the
+    # config.toml Codex writes.
+    (mkIf otelCollector.enable (let
+      keys.otel = {
+        exporter = "none";
+        trace_exporter = "none";
+        log_user_prompt = false;
+        # Unlisted in Codex's docs; codex-cli 0.165 reads it.
+        log_agent_responses = false;
+        metrics_exporter.otlp-http = {
+          endpoint = "${otelCollector.url}/v1/metrics";
+          protocol = "binary";
+        };
+      };
+    in {
+      home.activation.codexOtel = lib.hm.dag.entryAfter ["writeBoundary"] ''
+        if [ -z "''${DRY_RUN:-}" ]; then
+          ${setKeys} "$HOME/.codex/config.toml" ${escapeShellArg (builtins.toJSON keys)} \
+            || warnEcho "Codex's telemetry was not pointed at the local collector."
+        fi
+      '';
+
+      assertions = [
+        {
+          assertion = let
+            o = keys.otel;
+          in
+            o.exporter
+            == "none"
+            && o.trace_exporter == "none"
+            && o.log_user_prompt == false
+            && (o.log_agent_responses or null) == false
+            && attrNames o.metrics_exporter == ["otlp-http"]
+            && hasPrefix "http://127.0.0.1:" o.metrics_exporter.otlp-http.endpoint;
+          message = "wgn.home.codex: Codex must export only metrics, to the collector on loopback, with no logs, traces, prompts or responses";
         }
       ];
     }))
