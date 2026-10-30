@@ -66,7 +66,7 @@ func editPaths(in input) []string {
 			Command string `json:"command"`
 		}
 		json.Unmarshal(in.ToolInput, &args)
-		paths = shellEditPaths(args.Command, in.Cwd, 0)
+		paths = shellEditPaths(args.Command, in.Cwd)
 	case "Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch":
 		// An input that does not decode is denied before the fence is
 		// asked.
@@ -81,7 +81,7 @@ func editPaths(in input) []string {
 }
 
 // openPlaces names openRoots in a refusal.
-const openPlaces = "scratch ($TMPDIR, /tmp) and the plans directory"
+const openPlaces = scratchPlaces + " and the plans directory"
 
 // openRoots are the directories every edit fence leaves open: the scratch
 // roots, plansDir unless it is "", and devices such as /dev/null.
@@ -256,51 +256,21 @@ func worktreeOf(path string) (string, gitState) {
 // writes, moves or removes, as changedFiles names them, and the directory
 // a git command that writes the worktree runs in (gitWrites), following cd
 // as command does.
-func shellEditPaths(text, dir string, depth int) []string {
-	if depth > maxDepth {
-		return nil
-	}
+func shellEditPaths(text, dir string) []string {
 	var out []string
-	w := cwds{here: []string{dir}}
-	end := ""
-	v := visitor{
-		script: func(text string) string {
-			for _, cwd := range w.here {
-				out = append(out, shellEditPaths(text, cwd, depth+1)...)
-			}
-			return ""
-		},
-		call: func(c call) string {
-			if len(c.words) == 0 || c.expands[0] {
-				return ""
-			}
-			if c.words[0] == "cd" || c.words[0] == "pushd" {
-				w.cd(c, end)
-				return ""
-			}
-			for _, cwd := range w.here {
-				for _, t := range changedFiles(base(c.words[0]), c.words[1:], redirections(c.words)) {
-					if p := expandPath(t, cwd); filepath.IsAbs(p) {
-						out = append(out, p)
-					}
-				}
-				if dir := gitWriteDir(c, cwd); dir != "" {
-					out = append(out, dir)
-				}
-			}
-			return ""
-		},
-	}
-	texts, _, ends := backgroundSegments(text)
-	for i, segment := range texts {
-		if words, expands := split(segment); len(words) > 0 {
-			end = ends[i]
-			c := call{words: words, expands: expands}
-			w.begin(c)
-			unwrap(c, v)
-			w.next(end)
+	walkShell(text, dir, 0, func(c call, cwd string) {
+		if c.expands[0] {
+			return
 		}
-	}
+		for _, t := range changedFiles(base(c.words[0]), c.words[1:], redirections(c.words)) {
+			if p := expandPath(t, cwd); filepath.IsAbs(p) {
+				out = append(out, p)
+			}
+		}
+		if dir := gitWriteDir(c, cwd); dir != "" {
+			out = append(out, dir)
+		}
+	})
 	return out
 }
 

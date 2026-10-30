@@ -2040,6 +2040,9 @@ var trashOnPath = func() bool {
 const useTrash = "`trash` is on PATH here, and moves files to the Trash, where they can be got back. " +
 	"Use `trash PATH...` in place of rm, unlink or find -delete (`find ... -print0 | xargs -0 trash`)."
 
+// scratchPlaces names scratchRoots in a refusal.
+const scratchPlaces = "scratch ($TMPDIR, /tmp)"
+
 // scratchRoots are the directories a shell command may write files in,
 // tracked or not: the session's temporary directories.
 var scratchRoots = func() []string {
