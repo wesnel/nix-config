@@ -233,7 +233,7 @@ func worktreeOf(path string) (string, gitState) {
 // shellEditPaths are the absolute paths of the files a command line
 // writes, moves or removes, as changedFiles names them, and the directory
 // a git command that writes the worktree runs in (gitWrites), following cd
-// as command does.
+// as command does. Each file is named as fencePath has it.
 func shellEditPaths(text, dir string, depth int) []string {
 	if depth > maxDepth {
 		return nil
@@ -258,7 +258,7 @@ func shellEditPaths(text, dir string, depth int) []string {
 			}
 			for _, cwd := range w.here {
 				for _, t := range changedFiles(base(c.words[0]), c.words[1:], redirections(c.words)) {
-					if p := expandPath(t, cwd); filepath.IsAbs(p) {
+					if p := fencePath(t, cwd); filepath.IsAbs(p) {
 						out = append(out, p)
 					}
 				}
@@ -280,6 +280,37 @@ func shellEditPaths(text, dir string, depth int) []string {
 		}
 	}
 	return out
+}
+
+// fencePath is word, a file a command run in cwd names, as the owner fence
+// judges it: with $PWD as cwd, and $TMPDIR and $HOME in their place
+// (shellPath), cut at its first part still holding a variable or a
+// command substitution, which the shell decides, so that the directory
+// before it is judged: MAIN/$x.go as MAIN, and $(cmd)/a.go, which split
+// gives as $_/a.go, as cwd, where $(pwd) and $(git rev-parse
+// --show-toplevel) lead. Where a .. follows that part, the word is judged
+// whole, cleaned, as if the variable held one name: MAIN/$x/../../b as
+// b. A word that starts with a variable names a directory the guard
+// cannot know, and is "", as cdTarget leaves one.
+func fencePath(word, cwd string) string {
+	for _, p := range []string{"$PWD", "${PWD}"} {
+		if (word == p || strings.HasPrefix(word, p+"/")) && cwd != "" {
+			word = cwd + strings.TrimPrefix(word, p)
+			break
+		}
+	}
+	word = shellPath(word, true)
+	parts := strings.Split(word, "/")
+	i := slices.IndexFunc(parts, func(p string) bool { return strings.ContainsAny(p, "$`") })
+	switch {
+	case i < 0, slices.Contains(parts[i+1:], ".."):
+		return expandPath(word, cwd)
+	case i == 0 && !strings.HasPrefix(word, "$_"):
+		return ""
+	case i == 1 && parts[0] == "":
+		return "/"
+	}
+	return expandPath(strings.Join(parts[:i], "/"), cwd)
 }
 
 // gitWriteDir is the absolute directory a git command, run in cwd, writes,

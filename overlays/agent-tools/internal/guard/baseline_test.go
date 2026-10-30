@@ -93,6 +93,12 @@ func TestSessionRules(t *testing.T) {
 		{true, "git prune"},
 		{true, "git filter-branch --tree-filter x HEAD"},
 		{true, "git filter-repo --path x"},
+		// A quoted operator is no redirection, and leaves the real one its
+		// target.
+		{true, "echo '>' > ~/.claude/settings.json"},
+		{true, "echo '<' >~/.claude/settings.json"},
+		{true, "tr a '>' > ~/.claude/settings.json"},
+		{true, "printf '%s\\n' '<<' > ~/.claude/settings.json"},
 		{true, "git update-ref -d refs/heads/x"},
 		{true, "git worktree prune"},
 		{true, "echo '{}' > ~/.claude/settings.json"},

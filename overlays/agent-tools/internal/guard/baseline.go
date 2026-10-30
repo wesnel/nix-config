@@ -1611,8 +1611,10 @@ func checkPlanLogWrite(name string, args, redirected []string, dir string) strin
 // create, copy, move, remove or change the mode of files, and the
 // directory a program writes into, "." for the one it runs in, where it
 // unpacks, patches, formats, generates or builds there. checkPlanLogWrite
-// and checkOwner read a command through it.
+// and checkOwner read a command through it. A redirection among args is
+// none of these; redirected names what the redirections write.
 func changedFiles(name string, args, redirected []string) []string {
+	args = withoutRedirections(args)
 	targets := editTargets(name, args, redirected)
 	var positional []string
 	for _, a := range args {
@@ -2050,21 +2052,19 @@ var scratchRoots = func() []string {
 	return roots
 }
 
-var redirect = regexp.MustCompile(`^[0-9&]?>>?\|?`)
-
 // redirections are the files a command's output redirections write.
 func redirections(words []string) []string {
 	var out []string
-	for i, w := range words {
-		m := redirect.FindString(w)
-		if m == "" {
+	for i := 0; i < len(words); {
+		op, target, n := redirection(words, i)
+		if n == 0 {
+			i++
 			continue
 		}
-		if target := w[len(m):]; target != "" {
+		if strings.Contains(op, ">") && target != "" {
 			out = append(out, target)
-		} else if i+1 < len(words) {
-			out = append(out, words[i+1])
 		}
+		i += n
 	}
 	return out
 }
