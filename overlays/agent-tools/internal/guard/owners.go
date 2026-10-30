@@ -201,7 +201,7 @@ func worktreeBranch(g gitState) (string, bool) {
 }
 
 // openPlaces names openRoots in a refusal.
-const openPlaces = "scratch ($TMPDIR, /tmp) and the plans directory"
+const openPlaces = scratchPlaces + " and the plans directory"
 
 // openRoots are the directories every edit fence leaves open: the scratch
 // roots, plansDir unless it is "", and devices such as /dev/null.

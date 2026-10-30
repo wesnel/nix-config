@@ -182,10 +182,18 @@ func judgeEdits(in input) (string, string) {
 	if reason != "" {
 		return reason, ""
 	}
+	var runs []unreadRun
+	if reviewHolds(in) && (in.ToolName == "Bash" || in.ToolName == "exec_command") {
+		var shell struct {
+			Command string `json:"command"`
+		}
+		json.Unmarshal(in.ToolInput, &shell)
+		runs = unreadRuns(shell.Command, in.Cwd)
+	}
 	// nil where the plans cannot be loaded, confErr saying why.
 	var conf *plans.Config
 	var confErr error
-	if len(paths) > 0 {
+	if len(paths)+len(runs) > 0 {
 		c, err := plans.Load()
 		if conf, confErr = &c, err; err != nil {
 			conf = nil
@@ -194,7 +202,7 @@ func judgeEdits(in input) (string, string) {
 	if reason := checkOwner(in, paths, conf, confErr); reason != "" {
 		return reason, ""
 	}
-	if reason := checkPlanReview(in, paths, conf); reason != "" {
+	if reason := checkPlanReview(in, paths, runs, conf); reason != "" {
 		return reason, ""
 	}
 	// The hint runs git too, so it is judged with the rest.
