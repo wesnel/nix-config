@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/plans"
 )
 
 var (
@@ -122,15 +123,25 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				reason = readsTerminal
 			}
 		}
-		if reason == "" {
-			reason = checkOwner(in)
+		if reason != "" {
+			return reason
 		}
+		// The checks of a call's edits share its paths and this host's
+		// plans, nil where they cannot be loaded.
+		paths := editPaths(in)
+		var conf *plans.Config
+		if len(paths) > 0 {
+			if c, err := plans.Load(); err == nil {
+				conf = &c
+			}
+		}
+		reason = checkOwner(in, paths, conf)
 		if reason == "" {
-			reason = checkPlanReview(in)
+			reason = checkPlanReview(in, paths, conf)
 		}
 		// The hint runs git too, so it is judged with the rest.
-		if reason == "" && (in.ToolName == "Edit" || in.ToolName == "Write" || in.ToolName == "MultiEdit") {
-			hint = branchHint(in.SessionID, in.ToolInput, in.Cwd)
+		if reason == "" && conf != nil && (in.ToolName == "Edit" || in.ToolName == "Write" || in.ToolName == "MultiEdit") {
+			hint = branchHint(in.SessionID, in.ToolInput, in.Cwd, *conf)
 		}
 		return reason
 	})
