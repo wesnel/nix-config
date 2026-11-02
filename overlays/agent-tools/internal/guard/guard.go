@@ -132,7 +132,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return reason
 	})
 	if reason == opsCall && in.TurnID != "" {
-		// Codex asks the operator before each call itself.
+		// Codex enforces the module's per-tool approvals.
 		reason = ""
 	}
 	if reason == "" {

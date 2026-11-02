@@ -70,6 +70,7 @@
     # The MCP tools the guard lets through (reads) or asks the operator
     # about (confirms), per service, for mcp-proxy's tool filters.
     passthru.mcpTools = builtins.fromJSON (builtins.readFile ./internal/guard/mcp.json);
+    passthru.routinePlanTools = builtins.fromJSON (builtins.readFile ./cmd/pr-loop/plan-tools.json);
 
     # Each focused review's contract, by route, as `git delegate --reviewer
     # ROUTE` builds it (focus.contract in internal/review): the general

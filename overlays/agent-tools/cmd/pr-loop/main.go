@@ -120,10 +120,12 @@ worktree. A failure to log is printed on stderr and fails nothing.
   mcp                         serve the GitHub and review commands an agent runs (open,
                               stack, link, push, threads, reply --from, draft, request,
                               status, ci, logs, wait, sign-check, end; git delegate,
-                              ask, settle, show) and a GitHub user's name and pronouns
+                              ask, settle, show), routine agent-plan operations,
+                              and a GitHub user's name and pronouns
                               as typed tools of a stdio MCP server, each run in the
                               worktree its call names, for Codex, whose commands cannot
-                              reach the gh login and which asks before each call
+                              reach the gh login. Routine plan tools are preapproved;
+                              other tools ask before each call
   mcp-status [--hook]         which of this host's mcp-proxy servers are not connected,
                               each with the command that connects it, probing each route
                               without credentials; nothing when all are; --hook prints it

@@ -564,29 +564,30 @@ in {
             && hasInfix (builtins.unsafeDiscardStringContext "${promptRulesFile}") config.home.activation.codexRules.data
             && all (p: hasInfix (builtins.toJSON p) promptRules) excludedPrefixes
             && hasInfix (escapeShellArg (builtins.toJSON cfg.sandbox)) config.home.activation.codexSandbox.data;
-          message = "wgn.home.codex: Codex must ask the operator before each of agent-plan's writes in wgn.home.llm.guard.excludedCommands, through a prompt rule in ~/.codex/rules/nix.rules";
+          message = "wgn.home.codex: shell agent-plan writes must retain prompt rules in ~/.codex/rules/nix.rules";
         }
       ];
     }
 
     # pr-loop mcp, as the MCP server agent_ops, the name the guard lets its
     # tools through under (OpsServer in agent-tools' internal/guard): the
-    # GitHub and review commands no command in the profile can run. Codex
+    # GitHub, review and plan commands the profile confines. Codex
     # starts it as a process of its own, outside that sandbox, with only
     # its core environment (HOME, PATH, TMPDIR and the like) and the
     # variables env_vars names, a review loop's, which pr-loop holds its
-    # writes to. Approval mode prompt asks the operator before every call,
-    # and never for the rest of the session; approval_policy and
-    # approvals_reviewer above keep the asking with the operator, and a
-    # PermissionRequest hook, which could answer for them, is refused.
+    # writes to. Named routine plan tools are preapproved; other tools ask
+    # the operator on each call. A PermissionRequest hook cannot answer
+    # those prompts for them.
     # tool_timeout_sec covers a git delegate run of several reviewers.
     # Merged into the config.toml Codex writes, the entry replaced whole.
     (let
+      planApprovals = genAttrs config.wgn.home.llm.agentTools.routinePlanTools (_: {approval_mode = "approve";});
       opsServer = {
         command = getExe' config.wgn.home.llm.agentTools "pr-loop";
         args = ["mcp"];
         env_vars = ["PR_LOOP_SESSION" "PR_LOOP_MODE"];
         default_tools_approval_mode = "prompt";
+        tools = planApprovals;
         tool_timeout_sec = 7200;
       };
       servers = builtins.toJSON {agent_ops = opsServer;};
@@ -604,12 +605,12 @@ in {
           assertion =
             opsServer.default_tools_approval_mode
             == "prompt"
-            && !(opsServer ? tools)
+            && opsServer.tools == planApprovals
             && !(hooks.hooks ? PermissionRequest)
             # hasInfix takes no string naming a store path.
             && hasInfix (unsafeDiscardStringContext (escapeShellArg servers))
             (unsafeDiscardStringContext config.home.activation.codexOpsServer.data);
-          message = "wgn.home.codex: Codex must ask the operator before every call to pr-loop mcp's tools: approval mode prompt for the whole server, written into config.toml, and no PermissionRequest hook";
+          message = "wgn.home.codex: only the routine plan tool catalog is preapproved; other agent_ops tools require prompt and no PermissionRequest hook";
         }
       ];
     })
