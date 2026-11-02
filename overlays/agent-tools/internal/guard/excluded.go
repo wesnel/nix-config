@@ -210,7 +210,7 @@ func excludedCall(c call, patterns [][]string) []string {
 // which checkExcludedAlone refuses: agent-plan's quota stop lets such an
 // agent-plan line through, to the guard's refusal saying what to change.
 func ExcludedAlone(text string, pattern []string) bool {
-	texts, _, ends := backgroundSegments(text)
+	texts, _, ends, _ := backgroundSegments(text)
 	var only string
 	commands := 0
 	for i, segment := range texts {
