@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -518,7 +519,7 @@ func settle(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return report(nil, err)
 	}
 	if _, err := os.Stat(path); path == "" || err != nil {
-		return report(nil, refusal.New("there is no review of %s to settle; run `git delegate %s` first", s.given, s.given))
+		return report(nil, noReviewToSettle(s, path))
 	}
 	var settled *ShowFinding
 	err = record.Update(path, func(rec *record.Range) error {
@@ -544,6 +545,45 @@ func settle(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return report(nil, err)
 	}
 	return report(settled, nil)
+}
+
+// noReviewToSettle is settle's refusal for a source with no record at
+// path. For a range, it lists each record under the same base, such as
+// those an earlier round left before a fixup moved the tip: a line for each
+// open finding, BASE..TIP then the finding's ID and title, or one saying
+// the record has none or cannot be read. Where the records cannot be
+// listed, it is the refusal it would be with none.
+func noReviewToSettle(s *source, path string) error {
+	none := refusal.New("there is no review of %s to settle; run `git delegate %s` first", s.given, s.given)
+	if s.number != 0 || path == "" {
+		return none
+	}
+	base, _, _ := strings.Cut(filepath.Base(path), "..")
+	listed, err := record.Ranges(s.owner, s.repo, base)
+	if err != nil || len(listed) == 0 {
+		return none
+	}
+	var b strings.Builder
+	for _, l := range listed {
+		at := "\n  " + l.Base + ".." + l.Head + ": "
+		if l.Err != nil {
+			fmt.Fprintf(&b, "%sunreadable: %v", at, l.Err)
+			continue
+		}
+		open := 0
+		for _, f := range l.Range.Findings {
+			if f.State == record.Open {
+				fmt.Fprintf(&b, "%s%s %s", at, f.ID, f.Title)
+				open++
+			}
+		}
+		if open == 0 {
+			b.WriteString(at + "no open findings")
+		}
+	}
+	return refusal.New("there is no review of %s to settle; settle a finding of a review under its base with "+
+		"`git delegate settle BASE..TIP FINDING OUTCOME`, or run `git delegate %s` first. The reviews under %s, "+
+		"by their open findings:%s", s.given, s.given, base, b.String())
 }
 
 func nonNil(list []string) []string {

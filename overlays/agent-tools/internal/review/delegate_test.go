@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wesnel/agent-tools/internal/loop"
 	"github.com/wesnel/agent-tools/internal/record"
@@ -309,6 +310,84 @@ func TestSettle(t *testing.T) {
 	if code, _, _ := delegateCmd(t, "show", "owner/repo#12"); code != record.DriftExit {
 		t.Errorf("show with a drifted range record: exit %d", code)
 	}
+}
+
+// Settling a range with no record, as after a fixup moved its tip, is
+// refused naming each record under the same base, BASE..TIP with its open
+// findings, and one that fails its structure check as unreadable.
+func TestSettleNoRecord(t *testing.T) {
+	t.Run("records under the base", func(t *testing.T) {
+		f := setUp(t, false)
+		earlier, drifted := strings.Repeat("1", 40), strings.Repeat("2", 40)
+		writeRange(t, f.base, earlier, []record.Finding{
+			{ID: "F1", State: record.Open, Title: "Guard the nil map", Reviewer: "codex", Round: 1, Kind: "bug"},
+			{ID: "F2", State: record.Fix, Title: "Already fixed", Reviewer: "codex", Round: 1, Kind: "bug"},
+		})
+		path := writeRange(t, f.base, drifted, nil)
+		os.WriteFile(path, append(must(os.ReadFile(path)), "* by hand\n"...), 0o600)
+		settled := strings.Repeat("5", 40)
+		writeRange(t, f.base, settled, []record.Finding{
+			{ID: "F1", State: record.Rebut, Title: "Rebutted", Reviewer: "codex", Round: 1, Kind: "bug"},
+		})
+		writeRange(t, strings.Repeat("3", 40), strings.Repeat("4", 40), []record.Finding{
+			{ID: "F1", State: record.Open, Title: "Another base", Reviewer: "codex", Round: 1, Kind: "bug"},
+		})
+
+		code, _, stderr := delegateCmd(t, "settle", f.base+"..HEAD", "F1", "fix")
+		refused(t, "a moved tip", code, stderr)
+		for _, want := range []string{
+			"there is no review of " + f.base + "..HEAD to settle",
+			f.base + ".." + earlier + ": F1 Guard the nil map\n",
+			f.base + ".." + drifted + ": unreadable",
+			f.base + ".." + settled + ": no open findings",
+		} {
+			if !strings.Contains(stderr, want) {
+				t.Errorf("the refusal does not say %q:\n%s", want, stderr)
+			}
+		}
+		for _, unwanted := range []string{"Already fixed", "Rebutted", "Another base"} {
+			if strings.Contains(stderr, unwanted) {
+				t.Errorf("the refusal names %q:\n%s", unwanted, stderr)
+			}
+		}
+	})
+	t.Run("no record under the base", func(t *testing.T) {
+		f := setUp(t, false)
+		writeRange(t, strings.Repeat("3", 40), strings.Repeat("4", 40), nil)
+		code, _, stderr := delegateCmd(t, "settle", f.base+"..HEAD", "F1", "fix")
+		refused(t, "no record", code, stderr)
+		want := "there is no review of " + f.base + "..HEAD to settle; run `git delegate " + f.base + "..HEAD` first\n"
+		if !strings.HasSuffix(stderr, want) {
+			t.Errorf("refusal %q, want it to end %q", stderr, want)
+		}
+	})
+	t.Run("records that cannot be listed", func(t *testing.T) {
+		f := setUp(t, false)
+		dir := filepath.Dir(writeRange(t, f.base, strings.Repeat("1", 40), nil))
+		os.Chmod(dir, 0o300)
+		t.Cleanup(func() { os.Chmod(dir, 0o700) })
+		code, _, stderr := delegateCmd(t, "settle", f.base+"..HEAD", "F1", "fix")
+		refused(t, "an unlistable directory", code, stderr)
+		want := "there is no review of " + f.base + "..HEAD to settle; run `git delegate " + f.base + "..HEAD` first\n"
+		if !strings.HasSuffix(stderr, want) {
+			t.Errorf("refusal %q, want it to end %q", stderr, want)
+		}
+	})
+}
+
+// writeRange writes the record of base..head in o/r holding findings, and
+// returns its path.
+func writeRange(t *testing.T, base, head string, findings []record.Finding) string {
+	t.Helper()
+	path := must(record.RangeFile("o", "r", base, head))
+	if err := record.Update(path, func(r *record.Range) error {
+		*r = record.Range{Repo: "o/r", Base: base, Head: head, Title: "t", Updated: time.Now(), Findings: findings,
+			Rounds: []record.Round{{ID: "R1", Reviewer: "codex", Model: "m", At: time.Now(), RedCheck: "absent"}}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 // replyJSON takes the structured output, else the last fenced json block,
