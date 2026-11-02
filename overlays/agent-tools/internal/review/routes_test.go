@@ -90,7 +90,7 @@ func TestRouting(t *testing.T) {
 	// Settings the review cannot use refuse it, saying what to fix, rather
 	// than leave out the test settings beside them.
 	t.Run("a broken rule", func(t *testing.T) {
-		f, _ := routedFixture(t, `{"test": "go test ./...", "testFiles": ["*_test.go"], "routes": [{"route": "security", "why": "nothing"}]}`)
+		f, _ := routedFixture(t, `{"suites": [{"name": "go", "test": "go test ./...", "testFiles": ["*_test.go"]}], "routes": [{"route": "security", "why": "nothing"}]}`)
 		t.Setenv("FAKE_CODEX", "none")
 		for _, args := range [][]string{{"--print-prompt"}, nil} {
 			var stdout, stderr strings.Builder

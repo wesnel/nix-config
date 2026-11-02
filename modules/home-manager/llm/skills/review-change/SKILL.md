@@ -78,7 +78,7 @@ as `origin/main` or the parent branch in a stack.
    upstream, which a local branch may not have. In Codex, run `/review`
    against BASE, or start a fresh `adversarial-reviewer` sub-agent given
    only the goal and the range. Then the second opinion, from another model
-   family: where the repository has test settings, run
+   family: where the clone's settings have test suites, run
    `git -C WORKTREE red-check BASE..TIP > WORKTREE/red-check.json`, WORKTREE
    being the branch's worktree, not `$TMPDIR`, which a sandboxed command and
    git delegate resolve to different directories; every file you pass
