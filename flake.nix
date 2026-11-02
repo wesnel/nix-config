@@ -7,6 +7,11 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    cursor-plugins = {
+      url = "github:cursor/plugins";
+      flake = false;
+    };
+
     deploy-rs = {
       url = "github:serokell/deploy-rs";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -94,6 +99,7 @@
   outputs = {
     self,
     nix-darwin,
+    cursor-plugins,
     deploy-rs,
     emacs-config,
     emacs-skills,
@@ -139,6 +145,7 @@
       (_: {
         _module.args = {
           inherit
+            cursor-plugins
             emacs-skills
             mattpocock-skills
             ;
@@ -588,6 +595,14 @@
       };
       # agent-tools as the overlay builds it, with no host's settings.
       agentTools = pkgs.callPackage ./overlays/agent-tools {};
+      # The name of a check of aarch64-darwin alone, and null, which Nix
+      # leaves out as an attribute's name, on every other system: a check
+      # that reads a darwin configuration builds that configuration's
+      # derivations, which only an aarch64-darwin builder can build.
+      darwinOnly = name:
+        if system == "aarch64-darwin"
+        then name
+        else null;
     in {
       formatter = pkgs.alejandra;
 
@@ -843,7 +858,7 @@
           touch $out
         '';
 
-      checks.agent-plan-sync = let
+      checks.${darwinOnly "agent-plan-sync"} = let
         ngrok = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username};
         devbox = self.homeConfigurations.devbox.config;
         activation = ngrok.home.activation.agentPlans;
@@ -879,7 +894,7 @@
       # The ngrok Mac's mcp-proxy-authorize restarts the proxy, and loads
       # its plist when kickstart finds it loaded in no domain; a failed load
       # fails it.
-      checks.mcp-proxy-restart = let
+      checks.${darwinOnly "mcp-proxy-restart"} = let
         authorize =
           builtins.head (builtins.filter (p: (p.name or "") == "mcp-proxy-authorize")
             self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username}.home.packages);
@@ -892,7 +907,7 @@
           touch $out
         '';
 
-      checks.git-fetch-urls = let
+      checks.${darwinOnly "git-fetch-urls"} = let
         git = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username}.programs.git;
       in
         pkgs.runCommand "git-fetch-urls" {
@@ -929,13 +944,341 @@
           touch $out
         '';
 
+      # The pstack skills as the ngrok Mac links them each carry pstack's
+      # licence, and the Codex policy that keeps a skill from being invoked
+      # unasked exactly when its SKILL.md keeps Claude Code from it.
+      # statechart has neither, so agents can run it on their own, and its
+      # SKILL.md no longer sends them to mise. It runs with no network on
+      # one of its own corpus specs, as its corpus.test.ts runs them: it
+      # exits 1 for the rule
+      # that breaks, writes nothing to stderr, its chart and report are the
+      # committed ones, and the chart renders with the node and Pele that
+      # its references/render.md names. Built for aarch64-darwin, the
+      # system of the configuration it reads.
+      checks.${darwinOnly "pstack-skills"} = let
+        skills = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username}.wgn.home.llm.skills;
+        statechart = skills.statechart.source;
+        # What pstackSkill reads to decide the Codex policy.
+        disablesModelInvocation = pkgs.callPackage ./modules/home-manager/llm/disables-model-invocation.nix {};
+        # The ngrok Mac's builder, run here on each case below.
+        pstackSkill = import ./modules/home-manager/llm/pstack-skill.nix {inherit cursor-plugins pkgs;};
+        # SKILL.md files, and what the read makes of each: "disabled" or
+        # "not-disabled" through pstackSkill, whose agents/openai.yaml this
+        # checks, or "error" for one whose frontmatter is not plain, which
+        # the read refuses with status 2 and pstackSkill fails to build on.
+        frontmatter = let
+          flag = "disable-model-invocation";
+          text = pkgs.writeText "SKILL.md";
+          skill = lines: text "---\nname: x\n${lines}\n---\nbody\n";
+          # For bytes a Nix string does not hold: printf's escapes.
+          bytes = format: pkgs.runCommand "SKILL.md" {} "printf -- '${format}' > $out";
+        in {
+          plain = {
+            expect = "disabled";
+            file = skill "${flag}: true";
+          };
+          capitalised = {
+            expect = "disabled";
+            file = skill "${flag}: True";
+          };
+          yes = {
+            expect = "disabled";
+            file = skill "${flag}: yes";
+          };
+          on = {
+            expect = "disabled";
+            file = skill "${flag}: ON";
+          };
+          commented-value = {
+            expect = "disabled";
+            file = skill "${flag}: true # no auto";
+          };
+          trailing-space-value = {
+            expect = "disabled";
+            file = skill "${flag}: true ";
+          };
+          after-block-scalar = {
+            expect = "disabled";
+            file = skill "description: |\n  x\n${flag}: true";
+          };
+          byte-order-mark = {
+            expect = "disabled";
+            file = bytes "\\357\\273\\277---\\nname: x\\n${flag}: true\\n---\\nbody\\n";
+          };
+          crlf = {
+            expect = "disabled";
+            file = bytes "---\\r\\nname: x\\r\\n${flag}: true\\r\\n---\\r\\nbody\\r\\n";
+          };
+          trailing-space-opener = {
+            expect = "disabled";
+            file = text "--- \nname: x\n${flag}: true\n---\nbody\n";
+          };
+          trailing-space-closer = {
+            expect = "disabled";
+            file = text "---\nname: x\n${flag}: true\n--- \nbody\n";
+          };
+          closer-at-end = {
+            expect = "disabled";
+            file = text "---\n${flag}: true\n---";
+          };
+          plain-false = {
+            expect = "not-disabled";
+            file = skill "${flag}: false";
+          };
+          false-later = {
+            expect = "not-disabled";
+            file = skill "${flag}: true\n${flag}: false";
+          };
+          absent = {
+            expect = "not-disabled";
+            file = skill "description: x";
+          };
+          commented-out = {
+            expect = "not-disabled";
+            file = skill "# ${flag}: true";
+          };
+          nested = {
+            expect = "not-disabled";
+            file = skill "metadata:\n  ${flag}: true";
+          };
+          in-body = {
+            expect = "not-disabled";
+            file = text "---\nname: x\n---\n\n${flag}: true\n";
+          };
+          no-opener = {
+            expect = "not-disabled";
+            file = text "# x\n${flag}: true\n---\n";
+          };
+          later-block = {
+            expect = "not-disabled";
+            file = text "# x\n\n---\n${flag}: true\n---\n";
+          };
+          blank-first-line = {
+            expect = "not-disabled";
+            file = text "\n---\n${flag}: true\n---\nbody\n";
+          };
+          empty = {
+            expect = "not-disabled";
+            file = text "";
+          };
+          double-quoted = {
+            expect = "error";
+            file = skill "${flag}: \"true\"";
+          };
+          single-quoted = {
+            expect = "error";
+            file = skill "${flag}: 'true'";
+          };
+          one = {
+            expect = "error";
+            file = skill "${flag}: 1";
+          };
+          one-point-oh = {
+            expect = "error";
+            file = skill "${flag}: 1.0";
+          };
+          y = {
+            expect = "error";
+            file = skill "${flag}: y";
+          };
+          no-value = {
+            expect = "error";
+            file = skill "${flag}:";
+          };
+          no-space = {
+            expect = "error";
+            file = skill "${flag}:true";
+          };
+          unquoted-colon = {
+            expect = "error";
+            file = skill "description: Use it for: anything\n${flag}: false";
+          };
+          tab-indented = {
+            expect = "error";
+            file = skill "\t${flag}: true";
+          };
+          never-closed = {
+            expect = "error";
+            file = text "---\nname: x\n${flag}: true\n";
+          };
+          four-dash-closer = {
+            expect = "error";
+            file = text "---\n${flag}: true\n----\nbody\n";
+          };
+          dots-closer = {
+            expect = "error";
+            file = text "---\n${flag}: true\n...\nbody\n";
+          };
+          not-a-mapping = {
+            expect = "error";
+            file = text "---\n- ${flag}\n---\n";
+          };
+          empty-frontmatter = {
+            expect = "error";
+            file = text "---\n---\nbody\n";
+          };
+          not-utf-8 = {
+            expect = "error";
+            file = bytes "---\\nname: x\\n---\\nbody \\377\\n";
+          };
+          # Claude Code's own pattern closes the block at a `---` anywhere.
+          dashes-mid-line = {
+            expect = "error";
+            file = skill "description: a---b\n${flag}: false";
+          };
+          dashes-quoted = {
+            expect = "error";
+            file = skill "description: \"Check it --- then draw\"\n${flag}: false";
+          };
+          # pyyaml raises ValueError, not a YAMLError, for a date that is not.
+          invalid-date = {
+            expect = "error";
+            file = skill "description: 2026-99-99\n${flag}: true";
+          };
+          lone-cr = {
+            expect = "error";
+            file = bytes "---\\nname: x\\r${flag}: true\\n---\\nbody\\n";
+          };
+          next-line = {
+            expect = "error";
+            file = bytes "---\\nname: x\\302\\205${flag}: true\\n---\\nbody\\n";
+          };
+          line-separator = {
+            expect = "error";
+            file = bytes "---\\nname: x\\342\\200\\250${flag}: true\\n---\\nbody\\n";
+          };
+          paragraph-separator = {
+            expect = "error";
+            file = bytes "---\\nname: x\\342\\200\\251${flag}: true\\n---\\nbody\\n";
+          };
+        };
+        # pstackSkill fails to build on a SKILL.md the read refuses.
+        refused = pkgs.testers.testBuildFailure (pstackSkill "create-formal-verification-skill" ''
+          cat ${frontmatter.double-quoted.file} > SKILL.md
+        '');
+        corpus = "${statechart}/scripts/test/corpus/TwoPhase";
+        render = pkgs.writeText "render.mjs" ''
+          import fs from "node:fs";
+          const [pele, mmd] = process.argv.slice(2);
+          const { render } = await import(pele);
+          const { svg } = render(fs.readFileSync(mmd, "utf8"), {
+            limit: 1_000_000,
+            outputLimit: 8_000_000,
+            maxEdges: 10_000,
+          });
+          if (!svg.startsWith("<svg")) throw new Error(`not an SVG: ''${svg.slice(0, 80)}`);
+        '';
+      in
+        pkgs.runCommand "pstack-skills" {} ''
+          export HOME=$TMPDIR
+          failed=
+          ${pkgs.lib.concatStrings (pkgs.lib.mapAttrsToList (name: case:
+            if case.expect == "error"
+            then ''
+              status=0
+              ${disablesModelInvocation} ${case.file} 2>/dev/null || status=$?
+              if [ "$status" != 2 ]; then
+                echo "pstack-skills: the ${name} SKILL.md is read with status $status, not 2 for frontmatter that is not plain" >&2
+                failed=1
+              fi
+            ''
+            else let
+              skill = pstackSkill "create-formal-verification-skill" ''
+                cat ${case.file} > SKILL.md
+              '';
+            in ''
+              if [ -e ${skill}/agents/openai.yaml ]; then
+                got=disabled
+              else
+                got=not-disabled
+              fi
+              if [ "$got" != ${case.expect} ]; then
+                echo "pstack-skills: pstackSkill makes the ${name} SKILL.md $got, not ${case.expect}" >&2
+                failed=1
+              fi
+            '')
+          frontmatter)}
+          status=0
+          ${disablesModelInvocation} "$TMPDIR/missing/SKILL.md" 2>/dev/null || status=$?
+          if [ "$status" != 2 ]; then
+            echo "pstack-skills: a missing SKILL.md is read with status $status, not 2" >&2
+            failed=1
+          fi
+          if [ "$(cat ${refused}/testBuildFailure.exit)" != 2 ] ||
+            ! grep -q '^disables-model-invocation: SKILL.md: ' ${refused}/testBuildFailure.log; then
+            echo "pstack-skills: pstackSkill on a refused SKILL.md fails other than with the read's status 2:" >&2
+            cat ${refused}/testBuildFailure.log >&2
+            failed=1
+          fi
+          [ -z "$failed" ]
+          for skill in ${toString (map (skill: skill.source) (builtins.filter (skill: skill.source.pstack or false) (builtins.attrValues skills)))}; do
+            if [ ! -f "$skill/LICENSE" ]; then
+              echo "pstack-skills: $skill has no LICENSE" >&2
+              exit 1
+            fi
+            status=0
+            ${disablesModelInvocation} "$skill/SKILL.md" || status=$?
+            case $status in
+              0)
+                if ! grep -qx '  allow_implicit_invocation: false' "$skill/agents/openai.yaml"; then
+                  echo "pstack-skills: $skill lets Codex invoke it unasked" >&2
+                  exit 1
+                fi
+                ;;
+              1)
+                if [ -e "$skill/agents/openai.yaml" ]; then
+                  echo "pstack-skills: $skill keeps Codex from invoking it, but not Claude Code" >&2
+                  exit 1
+                fi
+                ;;
+              *) exit 1 ;;
+            esac
+          done
+          status=0
+          ${disablesModelInvocation} ${statechart}/SKILL.md || status=$?
+          if [ "$status" != 1 ]; then
+            echo "pstack-skills: agents cannot invoke statechart: the read gives $status" >&2
+            exit 1
+          fi
+          if grep -q mise ${statechart}/SKILL.md; then
+            echo "pstack-skills: statechart's SKILL.md mentions mise" >&2
+            exit 1
+          fi
+
+          status=0
+          ${statechart}/scripts/statechart ${corpus}/TwoPhase.tla \
+            --view ${corpus}/view.mjs --out out 2> stderr || status=$?
+          if [ "$status" != 1 ]; then
+            echo "pstack-skills: statechart exited $status, want 1: TCConsistent breaks" >&2
+            exit 1
+          fi
+          if [ -s stderr ]; then
+            echo "pstack-skills: statechart wrote to stderr:" >&2
+            cat stderr >&2
+            exit 1
+          fi
+          diff ${corpus}/chart.mmd out/chart.mmd
+          diff ${corpus}/report.md out/report.md
+
+          node=$(grep -o '/nix/store/[^`]*/bin/node' ${statechart}/references/render.md) || {
+            echo "pstack-skills: render.md names no node in the store" >&2
+            exit 1
+          }
+          pele=$(grep -o 'file:///nix/store/[^`]*/pele\.js' ${statechart}/references/render.md) || {
+            echo "pstack-skills: render.md names no Pele in the store" >&2
+            exit 1
+          }
+          "$node" ${render} "$pele" out/chart.mmd
+          touch $out
+        '';
+
       # The Claude Code settings the ngrok Mac's home configuration writes
       # hold the permission rules beside the guard: bypass mode off; for
       # every server mcp.json lists, each read allowed and each confirm
       # asked, never allowed; no allow rule that a deny rule covers, which
       # deny would override; and the guard's PreToolUse hook matching MCP
       # tools, every hook of it blocking when it cannot run.
-      checks.claude-settings = let
+      checks.${darwinOnly "claude-settings"} = let
         ngrok = darwinSystems.ngrok;
         settings = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username}.wgn.home.claude.settings;
       in
@@ -1132,7 +1475,7 @@
       # repository, and plans.host. Then agent-plan, unbaked, makes a plan
       # with it, its home moved under the build's directory so that nothing
       # outside it is read or written.
-      checks.agent-tools-config = let
+      checks.${darwinOnly "agent-tools-config"} = let
         ngrok = darwinSystems.ngrok;
         home = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username};
       in
@@ -1190,6 +1533,87 @@
           cp -r $vendor agent-tools/vendor
           cd agent-tools
           golangci-lint run ./...
+          touch $out
+        '';
+
+      # Every check of every system builds only derivations of that system
+      # or Nix's builtin ones, such as fetchurl, so a check that reads a
+      # darwin configuration is darwinOnly. It reads the .drv file of each
+      # derivation in each check's closure, following each one's input
+      # derivations and building none of them, and names each check that
+      # builds for another system, with how many derivations of which. A
+      # check that does not evaluate builds nothing and is left out: nixpkgs
+      # throws for x86_64-darwin, which it dropped. It walks the checks of
+      # every system, so one system runs it for all, the one this Mac
+      # builds.
+      checks.${darwinOnly "check-systems"} = let
+        listed =
+          pkgs.lib.concatLists (pkgs.lib.mapAttrsToList (checkSystem: checks:
+            pkgs.lib.concatLists (pkgs.lib.mapAttrsToList (name: check: let
+              drvPath = builtins.tryEval check.drvPath;
+            in
+              pkgs.lib.optional drvPath.success {
+                inherit checkSystem name;
+                # The .drv file alone, whose closure of .drv files and sources
+                # the build can read: its drvPath would also make every output
+                # in its closure an input, whatever system builds it, as would
+                # exportReferencesGraph.
+                drv = builtins.unsafeDiscardOutputDependency drvPath.value;
+              }) (builtins.removeAttrs checks ["check-systems"])))
+          self.checks)
+          ++ [
+            {
+              # A derivation with no input derivation, as a check built by
+              # builtin:fetchurl would be, passes.
+              checkSystem = system;
+              name = "a leaf derivation";
+              drv =
+                builtins.unsafeDiscardOutputDependency
+                (derivation {
+                  name = "check-systems-leaf";
+                  inherit system;
+                  builder = "/bin/sh";
+                }).drvPath;
+            }
+          ];
+      in
+        pkgs.runCommand "check-systems" {
+          nativeBuildInputs = [pkgs.coreutils pkgs.findutils pkgs.gnugrep];
+          listed = pkgs.lib.concatMapStrings (c: "${c.drv} ${c.checkSystem} ${c.name}\n") listed;
+          passAsFile = ["listed"];
+        } ''
+          # A .drv file is one line, Derive(outputs,inputDrvs,inputSrcs,
+          # "system",...): each input derivation is a ("PATH.drv",[ and the
+          # system follows the first `],"`.
+          closure() {
+            echo "$1" > seen
+            cp seen frontier
+            while [ -s frontier ]; do
+              # grep finds nothing in a frontier of derivations that have
+              # no input derivation, which is no error.
+              xargs cat < frontier |
+                { grep -oP '\("\K/nix/store/[^"]+\.drv(?=",\[)' || [ $? = 1 ]; } |
+                sort -u | comm -23 - seen > next
+              sort -m -o seen seen next
+              mv next frontier
+            done
+            cat seen
+          }
+          failed=
+          while read -r drv checkSystem name; do
+            closure "$drv" > drvs
+            xargs grep -ohP '^Derive\(.*?\],"\K[^"]*(?=",")' < drvs > systems
+            if [ "$(wc -l < systems)" != "$(wc -l < drvs)" ]; then
+              echo "check-systems: read no system from some of the .drv files of checks.$checkSystem.$name" >&2
+              failed=1
+            fi
+            strays=$({ grep -vx -e "$checkSystem" -e builtin systems || true; } | sort | uniq -c | xargs)
+            if [ -n "$strays" ]; then
+              echo "check-systems: checks.$checkSystem.$name builds derivations of another system (count, system): $strays" >&2
+              failed=1
+            fi
+          done < "$listedPath"
+          [ -z "$failed" ]
           touch $out
         '';
 
