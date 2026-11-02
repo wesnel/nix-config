@@ -152,24 +152,24 @@ with lib; let
     holdsAllowedRead = p: any (r: under r p) sandboxLists.allowedReads;
     nested = p: any (d: d != p && under p d) sandboxLists.deniedReads;
     hasGlob = p: match ".*[][*?{}].*" p != null;
+    anyOf = k: concatStrings (genList (_: "?") k);
     # Globs for every name of one path component but `name`: shorter,
     # longer, and of its length differing in one character. Codex's
     # `[!…]` matches `/` unless the class names it.
     otherNames = name: let
       n = stringLength name;
       chars = stringToCharacters name;
-      anyOf = k: concatStrings (genList (_: "?") k);
     in
       genList (k: anyOf (k + 1)) (n - 1)
       ++ [(anyOf (n + 1) + "*")]
       ++ genList (i: anyOf i + "[!/${elemAt chars i}]" + anyOf (n - 1 - i)) n;
-    # A `*` level of an allowed read is a user ID or a sops-nix
-    # generation, so every name there that is not a number is denied.
+    # User IDs and generations admit 1–20 ASCII digits. Fixed positions
+    # avoid Seatbelt's false positives with `*[!/0-9]*` in a deny glob.
     carve = prefix: components:
       optionals (components != []) (
         (
           if head components == "*"
-          then ["${prefix}/[!/0-9]*" "${prefix}/[0-9]*[!/0-9]*"]
+          then genList (i: "${prefix}/${anyOf i}[!/0-9]*") 20 ++ ["${prefix}/${anyOf 21}*"]
           else map (o: "${prefix}/${o}") (otherNames (head components))
         )
         ++ carve "${prefix}/${head components}" (tail components)
@@ -237,6 +237,12 @@ with lib; let
     filter (c: !(any (p: hasPrefix p c) ["gh-read " "git delegate " "git-delegate " "pr-loop "]))
     config.wgn.home.llm.guard.excludedCommands
   );
+  promptRules =
+    concatMapStrings (p: ''
+      prefix_rule(pattern=${builtins.toJSON p}, decision="prompt")
+    '')
+    excludedPrefixes;
+  promptRulesFile = pkgs.writeText "codex-nix.rules" promptRules;
 
   # Commands' temporary directory on macOS, in place of the per-user one,
   # which holds the decrypted secrets and is read-only to them.
@@ -476,7 +482,10 @@ in {
                 then "/private/var/folders/ab/cd/T/secrets.d"
                 else "/run/user/1000/secrets.d";
             in {
-              allowed = optional (sandboxLists.allowedReads != []) "${root}/3/rendered/git.inc";
+              allowed = optionals (sandboxLists.allowedReads != []) (
+                map (n: "${root}/${n}/rendered/git.inc") ["1" "111" "11111111111111111111"]
+                ++ optionals (!darwin) ["/run/user/11111111111111111111/secrets.d/111/rendered/git.inc"]
+              );
               denied =
                 [
                   "${root}/age-keys.txt"
@@ -486,12 +495,18 @@ in {
                   "${root}/3/rendered/git.inc.bak"
                   "${root}/3/rendered/git.in"
                   "${root}/3/renderedx/git.inc"
+                  "${root}/x1/rendered/git.inc"
+                  "${root}/12x3/rendered/git.inc"
+                  "${root}/1111111111111111111x/rendered/git.inc"
+                  "${root}/111111111111111111111/rendered/git.inc"
                 ]
                 ++ optionals (!darwin) [
                   "/run/user/1000/gnupg/S.gpg-agent"
                   "/run/user/1000/bus"
                   "/run/user/1000/secrets.dx"
                   "/run/user/me/secrets.d/3/rendered/git.inc"
+                  "/run/user/12x3/secrets.d/3/rendered/git.inc"
+                  "/run/user/111111111111111111111/secrets.d/3/rendered/git.inc"
                 ];
             };
           in
@@ -531,21 +546,23 @@ in {
     # the denied paths, and the proxy asks again for a host it does not
     # allow.
     {
-      home.file.".codex/rules/nix.rules".text =
-        concatMapStrings (p: ''
-          prefix_rule(pattern=${builtins.toJSON p}, decision="prompt")
-        '')
-        excludedPrefixes;
+      # Codex discovers regular .rules files only, not Home Manager symlinks.
+      # Run after linkGeneration removes the old managed symlink.
+      home.activation.codexRules = lib.hm.dag.entryAfter ["linkGeneration"] ''
+        if [ -z "''${DRY_RUN:-}" ]; then
+          ${pkgs.coreutils}/bin/install -D -m 600 ${promptRulesFile} "$HOME/.codex/rules/nix.rules"
+        fi
+      '';
 
       assertions = [
         {
-          assertion = let
-            rules = config.home.file.".codex/rules/nix.rules".text or "";
-          in
+          assertion =
             (cfg.sandbox.approval_policy or null)
             == "on-request"
             && (cfg.sandbox.approvals_reviewer or null) == "user"
-            && all (p: hasInfix (builtins.toJSON p) rules) excludedPrefixes
+            && elem "linkGeneration" config.home.activation.codexRules.after
+            && hasInfix (builtins.unsafeDiscardStringContext "${promptRulesFile}") config.home.activation.codexRules.data
+            && all (p: hasInfix (builtins.toJSON p) promptRules) excludedPrefixes
             && hasInfix (escapeShellArg (builtins.toJSON cfg.sandbox)) config.home.activation.codexSandbox.data;
           message = "wgn.home.codex: Codex must ask the operator before each of agent-plan's writes in wgn.home.llm.guard.excludedCommands, through a prompt rule in ~/.codex/rules/nix.rules";
         }

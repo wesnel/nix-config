@@ -15,6 +15,7 @@ commands in the README's "updating systems".
 
 | Changed | Run |
 | --- | --- |
+| `modules/home-manager/codex`, or the Codex version | `nix build --no-link .#checks.aarch64-darwin.codex-rules`: activation installs regular prompt-rule files, migrates old symlinks, preserves saved approvals, and respects dry runs; for native rule discovery, capture `nix eval --raw .#darwinConfigurations.ngrok.config.home-manager.users.wgn.home.activation.codexRules.data` in a temporary file and pass it with the installed Codex executable to `rules-tests.py`; run `sandbox-tests.py` outside a sandbox as its docstring says to check native Seatbelt matching |
 | `modules/home-manager/git`, or its generated fetch/push URL check | `nix build --no-link .#checks.aarch64-darwin.git-fetch-urls`: generated Git includes keep HTTPS fetches separate from both SSH push destinations |
 | plan activation or watcher configuration in `modules/home-manager/llm`, or its generated-config check | `nix build --no-link .#checks.aarch64-darwin.agent-plan-sync`: activation defers sync until the key is readable, and both hosts retain their path and timer triggers |
 | `overlays/agent-tools` | in that directory: `gofmt -l .` (prints nothing), `go build ./...`, `go vet ./...`, `go test -count=1 ./...`; then `nix build --no-link .#checks.aarch64-darwin.agent-tools-lint` (gosec, which CI also runs) |
