@@ -167,8 +167,8 @@ In bots mode, stop and hand back when any of these holds:
 
 ## Hand-back
 
-1. Remove the worktrees you made, once each is clean, and check the top
-   branch out in the main worktree.
+1. Keep the task worktrees through the signing pass and its verification,
+   as the `coordinate-subagents` skill's Hand back and After the push say.
 2. Report, for each PR:
    - each bot's verdict;
    - CI state and any failures for the operator to accept;

@@ -15,9 +15,9 @@ A session commits only in the repository it started in.
 
 Commits stay unsigned and nothing waits for a touch of the operator's
 hardware key: they sign everything in one pass at the end. Load the
-`signing-pass` skill, which holds the commit rules, before creating,
-amending or rewriting a commit in any repository, a test's fixture
-included.
+`signing-pass` skill, which holds the commit and hand-back rules, before
+creating, amending or rewriting a commit in any repository, a test's
+fixture included, and before handing a change back.
 
 ## Pull requests
 
@@ -55,6 +55,17 @@ dependency, framework, editor or other tool, including while building.
 When parts of a task could proceed in parallel (several pull requests, a
 stack, review threads across PRs, a list of feedback items), coordinate
 sub-agents as the `coordinate-subagents` skill says.
+
+## Session worktree
+
+Before the first repository edit, use a linked task worktree. For new
+independent work, create a unique branch based on the remote-tracking
+default branch; for a requested existing change, use its branch. Record
+the worktree and this session in the plan. An explicitly assigned task
+worktree may be reused; an intentional continuation adds its session to
+that plan. Independent tasks use separate worktrees, even when each has
+only one agent. Leave the main checkout's branch and files as the operator
+left them.
 
 ## Know which branch you are on
 

@@ -1,6 +1,6 @@
 ---
 name: signing-pass
-description: How to commit in the operator's repositories, whose commits are signed with a hardware key that needs a physical touch. The commit rules, committing unsigned, and handing over one signing pass at the end. Use whenever creating, amending or rewriting commits, or when a commit fails with a gpg or signing error.
+description: Use before creating, amending or rewriting commits, before handing a change back, or after a signing failure. Commit unsigned, use pr-loop next to open a fresh branch as an unsigned draft PR, then hand over the operator's hardware-key signing pass.
 ---
 
 # Unsigned work, one signing pass

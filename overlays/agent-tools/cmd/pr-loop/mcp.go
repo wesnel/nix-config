@@ -109,6 +109,11 @@ var (
 // pr-loop X is pr_loop_X and git delegate X is git_delegate_X, dashes as
 // underscores, and each flag is the argument of its name.
 var mcpTools = []mcpTool{
+	{name: "pr_loop_next", desc: "pr-loop next: read each branch's next step: open an unsigned draft PR, sign, push, nothing, or blocked.",
+		params: []mcpParam{{name: "branches", kind: texts, desc: "branches to inspect; default: the worktree's branch"}},
+		argv: func(a mcpArgs) []string {
+			return append([]string{"next", "--json"}, a.strs("branches")...)
+		}, run: prLoopTool},
 	{name: "pr_loop_open", desc: "pr-loop open: push a branch GitHub does not have through the API and open it as a draft PR.",
 		params: []mcpParam{{name: "title", kind: text, required: true, desc: "the PR's title"},
 			{name: "body_file", kind: file, required: true, desc: "the description, a Markdown file in the worktree"},

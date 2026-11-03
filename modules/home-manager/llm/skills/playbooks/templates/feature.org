@@ -49,4 +49,5 @@ Done when it is logged and each decision it brought is settled or asked.
 :AFTER: S5
 :END:
 What the =review-change= pipeline's hand-back lists.
-Done when the hand-back is logged.
+Done when the pipeline's agent-owned publication steps are complete, or a
+refusal is reported with the remaining step, and the hand-back is logged.

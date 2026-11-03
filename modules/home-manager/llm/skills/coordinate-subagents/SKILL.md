@@ -9,7 +9,8 @@ You coordinate. One sub-agent per part does that part's work on its own
 branch, in its own worktree. You own the split, the order and base of every
 stacked branch, the decisions that span parts, the check of every report,
 and coalescing every branch into one signing pass that the operator runs.
-Nothing reaches GitHub until they have signed and pushed.
+The `signing-pass` skill's Handing over selects each branch's publication
+and signing steps from its state.
 
 The work as a whole goes through the `review-change` skill's pipeline, as
 any change does. This skill adds what several branches need: the design
@@ -356,13 +357,11 @@ them fit together:
 
 If you are still running once the operator has pushed:
 
-- Open a pull request for each new branch as the `pull-requests` skill
-  says, based on its parent branch in a stack, then make each stack one
-  GitHub stack, which GitHub shows on
-  every pull request in it and merges from the bottom:
+- Check each stack's draft pull requests with `pr-loop stack <pr>`.
+  If publication reported `unstacked`, link the stack, which GitHub shows
+  on every pull request in it and merges from the bottom:
   `pr-loop link <bottom> ... <top>`, by number or branch. It refuses bases
   that do not chain, and leaves a stack already linked as it is.
-  `pr-loop stack <pr>` shows GitHub's stack under `github`.
 - Run the **Publish** phase: the drafted replies, and every description
   brought up to the change as it stands.
 - Watch every pull request's CI as the `signing-pass` skill's "After a push"
