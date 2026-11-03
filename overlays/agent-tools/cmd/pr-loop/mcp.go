@@ -20,15 +20,15 @@ import (
 	"github.com/wesnel/agent-tools/internal/review"
 )
 
-// The mcp subcommand serves the GitHub and review operations a Codex
+// The mcp subcommand serves the GitHub, review and plan operations a Codex
 // session cannot run in its sandbox, which denies the gh login and the
 // reviewers' credentials to its commands, as tools of a stdio MCP server
 // Codex starts as a process of its own, outside that sandbox. Each tool
-// runs one pr-loop or git delegate command, its argv built from typed
-// arguments, in this process: no tool takes a shell line, gh arguments or
+// runs one pr-loop, git delegate or agent-plan command, its argv built from typed
+// arguments: no tool takes a shell line, gh arguments or
 // argv. The commands read the gh login themselves, as they do on the
-// command line, and print what they print there. Codex asks the operator
-// before each call (the codex module sets the server's approval mode).
+// command line, and print what they print there. Codex preapproves the
+// routine plan catalog; other operations ask the operator on each call.
 
 // mcpParam is one argument of a tool.
 type mcpParam struct {
@@ -42,11 +42,12 @@ type mcpParam struct {
 type paramKind int
 
 const (
-	text   paramKind = iota // a string
-	number                  // an integer
-	toggle                  // a boolean
-	texts                   // an array of strings
-	file                    // a path to a file in the worktree, absolute or relative to it
+	text    paramKind = iota // a string
+	number                   // an integer
+	toggle                   // a boolean
+	texts                    // an array of strings
+	file                     // a path to a file in the worktree, absolute or relative to it
+	literal                  // inline content, encoded as --flag=value by plan tools
 )
 
 // mcpTool is one tool: its argv from its checked arguments, and what runs
@@ -267,7 +268,7 @@ func (t mcpTool) schema() map[string]any {
 	for _, p := range params {
 		var s map[string]any
 		switch p.kind {
-		case text, file:
+		case text, file, literal:
 			s = map[string]any{"type": "string"}
 		case number:
 			s = map[string]any{"type": "integer"}
@@ -289,9 +290,9 @@ func (t mcpTool) schema() map[string]any {
 }
 
 // check returns the call's arguments as its argv takes them, the worktree
-// resolved, or why the tool cannot take them. A string may not start with
-// -, which a command would read as a flag; a file must lie in the worktree
-// once its links are followed.
+// resolved, or why the tool cannot take them. Non-literal strings may not
+// start with -, which a command would read as a flag; a file must lie in
+// the worktree once its links are followed.
 func (t mcpTool) check(raw map[string]any) (mcpArgs, string, error) {
 	params := map[string]mcpParam{}
 	for _, p := range t.params {
@@ -351,7 +352,7 @@ func (p mcpParam) value(v any, worktree string) (any, error) {
 		switch {
 		case !ok:
 			return "", fmt.Errorf("takes a string, not %v", v)
-		case strings.HasPrefix(s, "-"):
+		case p.kind != literal && strings.HasPrefix(s, "-"):
 			return "", fmt.Errorf("%q starts with -, which the command would read as a flag", s)
 		case p.enum != nil && !slices.Contains(p.enum, s):
 			return "", fmt.Errorf("takes one of %s, not %q", strings.Join(p.enum, ", "), s)

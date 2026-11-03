@@ -101,11 +101,16 @@ In Codex, no command reaches the gh login or the reviewers' logins, so
 underscores (`git delegate` itself is `git_delegate`, `pr-loop reply
 --from` is `pr_loop_reply`). Each flag is the argument of its name,
 `worktree` is the worktree's absolute path, and a file is a path in it.
-`gh-read` has no tool and cannot run there. `agent-plan`'s writes run as
-commands of their own with `sandbox_permissions` set to
-`require_escalated` and a one-line justification; without it an approved
-run stays in the sandbox, which cannot write the plans. Codex asks the
-operator before each of these, every time; a declined one is a refusal.
+`gh-read` has no tool and cannot run there. Routine `agent-plan` operations
+use that server's preapproved `agent_plan_X` tools, dashes as underscores;
+`workstream new` and `workstream list` are `agent_plan_workstream_new` and
+`agent_plan_workstream_list`. Pass prose inline as `text` or `context`.
+The `worktree` field is where the command runs; `target_worktree` (or
+`target_worktrees` for `new`) names the worktree the operation records.
+Other reads remain shell commands. Ownership changes (`agent-plan own`)
+remain shell commands because they control the edit guard. Shell plan
+writes require explicit escalation. Other server tools ask before each call;
+a declined one is a refusal.
 
 ## Commands the operator runs
 

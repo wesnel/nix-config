@@ -250,17 +250,21 @@ names what it found:
 They are safe to run as the operator because none runs a program its
 arguments name, and `gh-read` only reads. The guard refuses a file argument
 that names a credential, and `pr-loop` refuses to post text that holds a
-secret's shape. The read-only ones and `agent-plan`'s writes are allowed
-without a prompt.
+secret's shape. In Claude Code, the read-only ones and `agent-plan`'s
+writes are allowed without a prompt.
 
 Codex's sandbox hides the gh login and the reviewers' logins from every
 command, approved or not, so in Codex `pr-loop`'s GitHub commands and
 `git delegate` run as the tools of `pr-loop mcp`, an MCP server Codex
 starts as a process of its own outside that sandbox, registered as
-`agent_ops`. Each tool runs one command from typed arguments, in the
-worktree its call names, with files only from that worktree, and Codex
-asks you before every call. `gh-read` has no tool there; `agent-plan`'s
-writes ask you as commands.
+`agent_ops`. Each tool runs one command from typed arguments in the
+worktree its call names. Routine `agent-plan` tools use inline text and
+the CLI's plan-directory checks; Codex preapproves their explicit catalog
+in `overlays/agent-tools/cmd/pr-loop/plan-tools.json`. Ownership reassignment
+(`agent-plan own`) remains an approved shell command because it changes
+the edit guard's worktree boundary. Other server tools prompt, with file
+inputs confined to the worktree. Shell plan writes also prompt.
+`gh-read` has no tool there.
 
 ## reviews: fresh eyes and tests that fail
 
@@ -854,8 +858,8 @@ pass, the listed writes ask you first in Claude Code and are denied in
 Codex and to reviewers, and any other tool is denied until it is
 listed. Every tool of a server it does not list asks you first in Claude
 Code, and is denied in Codex and to reviewers, but for `agent_ops`
-(`pr-loop mcp`): Codex asks you before each of its calls itself, so the
-guard lets them through there. Each refusal says what to do
+(`pr-loop mcp`): the guard delegates approvals to Codex, which preapproves
+the routine plan-tool catalog and prompts for other calls. Each refusal says what to do
 instead. Each reviewer agent, defined in `modules/home-manager/claude/agents`
 with only Read, Bash and StructuredOutput, also runs `pr-loop guard
 --reviewer` from its own definition, which keeps it to reading in any
