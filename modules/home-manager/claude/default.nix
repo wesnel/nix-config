@@ -575,25 +575,7 @@ with lib; let
 
     network =
       {
-        # A command can send whatever it can read to any of these, with any
-        # credential the session holds itself, such as a token in the
-        # workspace or in a command's output: pushing, uploading a release or
-        # creating a gist on github.com under that token's account.
-        allowedDomains =
-          [
-            "github.com"
-            "*.github.com"
-            "*.githubusercontent.com"
-            "git.sr.ht"
-            "cache.nixos.org"
-            "channels.nixos.org"
-            "vuln.go.dev"
-            # ngrok agent releases and packages.
-            "bin.ngrok.com"
-            "apt.ngrok.com"
-            "ngrok-agent.s3.amazonaws.com"
-          ]
-          ++ sandboxLists.allowedDomains;
+        allowedDomains = sandboxLists.allowedDomains;
         strictAllowlist = true;
         # On macOS, binding and accepting on local ports also allows direct
         # connections to localhost on every port; allowedDomains cannot
