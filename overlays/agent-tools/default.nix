@@ -1,5 +1,6 @@
 {
   buildGoModule,
+  cacert,
   coreutils,
   git,
   gnupg,
@@ -50,6 +51,10 @@
         "github.com/wesnel/agent-tools/internal/operatorkey.defaultSSHProgram=${lib.getExe' openssh "ssh-keygen"}"
         "-X"
         "github.com/wesnel/agent-tools/internal/operatorkey.defaultEnvProgram=${lib.getExe' coreutils "env"}"
+        "-X"
+        "github.com/wesnel/agent-tools/internal/signpass.upstreamGit=${lib.getExe git}"
+        "-X"
+        "github.com/wesnel/agent-tools/internal/signpass.upstreamCA=${cacert}/etc/ssl/certs/ca-bundle.crt"
       ]
       ++ hostLdflags;
 

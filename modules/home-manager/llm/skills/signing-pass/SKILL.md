@@ -96,9 +96,16 @@ The forms of the pass:
 
 ```sh
 git sign-pass                  # sign; nothing is pushed
-git sign-pass --push           # sign, then push to its own name upstream every branch that moved, or that is ahead of its remote, refusing any commit the operator's key did not sign
+git sign-pass --push           # sign, then push each moved or ahead branch to its own name upstream
 git sign-pass --set-upstream   # the same, and publish those that have no upstream yet
 ```
+
+Each push first checks protected operator signatures outside the destination's
+existing history. Success needs no upstream lookup. Otherwise an explicitly
+protected mirror mapping can accept GitHub's freshly authenticated
+default-branch history when its complete commit ancestry is present locally.
+Missing proof refuses that exception and keeps partial push progress; fetch
+the named upstream in the operator's terminal before resuming.
 
 The pass pushes one branch per `git push`, bottom up, since GitHub runs a pull
 request's CI twice when one push moves it and its base; any push you suggest

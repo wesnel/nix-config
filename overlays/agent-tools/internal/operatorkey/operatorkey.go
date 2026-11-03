@@ -7,7 +7,7 @@
 // gpg programs or allowed signers, nor its replace refs, grafts, shallow file
 // or commit-graph, any of which anyone able to write the repository can set.
 // pr-loop open proves a branch GitHub already has with it, and git sign-pass
-// every commit a push sends.
+// commits outside its authenticated destination and upstream exclusions.
 package operatorkey
 
 import (
@@ -171,32 +171,96 @@ func (p Profile) protected(path string) (string, error) {
 // setting asks only for authority fields. Rendered includes containing the
 // operator's name or email are neither returned nor used for authorization.
 func (p Profile) setting(ctx context.Context, key string) (string, error) {
+	values, err := p.settings(ctx, key)
+	if err != nil || len(values) == 0 {
+		return "", err
+	}
+	return values[len(values)-1].value, nil
+}
+
+type protectedSetting struct{ origin, value string }
+
+func (p Profile) settings(ctx context.Context, key string) ([]protectedSetting, error) {
 	config := filepath.Join(p.configHome, "git", "config")
 	out, err := Git(ctx, []string{"HOME=" + p.home, "XDG_CONFIG_HOME=" + p.configHome}, nil,
 		"config", "--file", config, "--includes", "--null", "--show-origin", "--get-all", key)
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && exit.ExitCode() == 1 {
-			return "", nil
+			return nil, nil
 		}
-		return "", err
+		return nil, err
 	}
 	parts := strings.Split(string(out), "\x00")
 	if len(parts) < 3 || len(parts)%2 != 1 || parts[len(parts)-1] != "" {
-		return "", refuse("operator signing setting %s has an unprovable origin", key)
+		return nil, refuse("operator signing setting %s has an unprovable origin", key)
 	}
-	value := ""
+	var values []protectedSetting
 	for i := 0; i+1 < len(parts); i += 2 {
 		origin, ok := strings.CutPrefix(parts[i], "file:")
 		if !ok {
-			return "", refuse("operator signing setting %s does not come from a protected file", key)
+			return nil, refuse("operator signing setting %s does not come from a protected file", key)
 		}
-		if _, err := p.protected(origin); err != nil {
+		origin, err = p.protected(origin)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, protectedSetting{origin, parts[i+1]})
+	}
+	return values, nil
+}
+
+var githubSlug = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// MirrorUpstream returns the GitHub slug authorized for destination in this
+// repository, or empty when no mapping applies. All fields must occur once
+// in the same protected file. The common directory binds linked worktrees
+// to the configured clone; repository and command-line config cannot grant
+// this exception. An incomplete or conflicting mapping is an error.
+func (p Profile) MirrorUpstream(ctx context.Context, destination string) (string, error) {
+	var fields [3]protectedSetting
+	n := 0
+	for i, key := range []string{"commonDir", "destination", "github"} {
+		values, err := p.settings(ctx, "signpass.mirror."+key)
+		if err != nil {
 			return "", err
 		}
-		value = parts[i+1]
+		if len(values) > 1 {
+			return "", refuse("conflicting protected mirror mapping")
+		}
+		if len(values) == 1 {
+			fields[i] = values[0]
+			n++
+		}
 	}
-	return value, nil
+	if n == 0 {
+		return "", nil
+	}
+	if n != 3 || fields[0].origin != fields[1].origin || fields[0].origin != fields[2].origin {
+		return "", refuse("protected mirror mapping must be complete in one protected file")
+	}
+	if !filepath.IsAbs(fields[0].value) || fields[1].value == "" || !githubSlug.MatchString(fields[2].value) || strings.HasSuffix(fields[2].value, ".git") {
+		return "", refuse("invalid protected mirror mapping")
+	}
+	if destination != fields[1].value {
+		return "", nil
+	}
+	configured, err := filepath.EvalSymlinks(fields[0].value)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve protected mirror repository: %w", err)
+	}
+	common, err := Git(ctx, nil, nil, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return "", err
+	}
+	actual, err := filepath.EvalSymlinks(strings.TrimSpace(string(common)))
+	if err != nil {
+		return "", err
+	}
+	if configured != actual {
+		return "", nil
+	}
+	return fields[2].value, nil
 }
 
 // Load reads the protected operator profile. It writes nothing.

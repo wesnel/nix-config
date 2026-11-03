@@ -147,7 +147,7 @@ in a terminal of your own:
 ``` sh
 git log --format='%h %G? %s' origin/main..HEAD   # N marks an unsigned commit
 git sign-pass                                     # squash fixups and sign; nothing is pushed
-git sign-pass --push                              # then push to its own name upstream every branch that moved, or that is ahead of its remote, refusing any commit your key did not sign
+git sign-pass --push                              # then push each moved or ahead branch to its own name upstream
 git sign-pass --set-upstream                      # and publish those that have none yet
 git sign-pass --push TOP1 TOP2 ...                # several stacks, wherever they are checked out
 ```
@@ -169,6 +169,18 @@ remaining commits would differ from what git's autosquash should leave: an
 whole message, subject included, and a `squash!` appends its body. No editor
 opens. Merges are refused. The unsigned tip is kept at
 `refs/sign-pass/backup/<branch>`.
+
+Before each push, the pass checks its destination lease and requires
+protected operator signatures on commits outside that destination's existing
+history. A push passing that signature check proceeds without an upstream
+lookup. If it fails, the protected `signpass.mirror` mapping can authorize
+GitHub default-branch history for the configured nix-config SourceHut mirror.
+It binds the clone's common Git directory, exact destination and GitHub
+repository. The pass reads symbolic HEAD over anonymous HTTPS with verified
+TLS, then verifies the complete raw commit ancestry locally. Missing objects
+or unavailable proof refuse that exception with fetch guidance. A resumed
+partial push preserves completed destinations and obtains fresh proof when
+it needs the mirror exception.
 
 At a missed touch in a terminal it asks: Enter retries, `q` stops. Without
 one (an agent, or a `!` run) it retries that step once by itself after

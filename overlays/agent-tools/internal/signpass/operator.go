@@ -27,8 +27,10 @@ func objectGit(args ...string) (string, error) {
 
 // gate refuses the push of r to url, before it, unless url's branch is
 // still at r.Old, the lease the push goes on, and every commit the push
-// sends carries a good signature by the protected operator key: the commits
-// r.New reaches and no branch or tag url has reaches (operatorkey.Verify).
+// sends carries a good signature by the protected operator key, except
+// authenticated default history authorized by the protected mirror mapping.
+// operatorkey.Verify checks commits outside those exclusions and url's refs.
+// A successful check against url's refs alone needs no upstream proof.
 // url's branches and tags are what ls-remote reads now, over the login env
 // shares with the push, so it costs no touch of its own. Nothing the
 // repository holds decides either: not its remote-tracking refs, its
@@ -70,9 +72,20 @@ func gate(ctx context.Context, url string, r refPush, env []string) error {
 			have = append(have, oid)
 		}
 	}
-	if _, err := operatorkey.Verify(ctx, r.New, have); err != nil {
+	_, signatureErr := operatorkey.Verify(ctx, r.New, have)
+	if signatureErr == nil {
+		return nil
+	}
+	upstream, err := mirrorUpstream(ctx, url)
+	if err != nil {
+		return err
+	}
+	if upstream != "" {
+		_, signatureErr = operatorkey.Verify(ctx, r.New, append(have, upstream))
+	}
+	if signatureErr != nil {
 		return fmt.Errorf("the push of %s to %s would send a commit the operator's key did not sign, so nothing was pushed there: %w",
-			r.Branch, url, err)
+			r.Branch, url, signatureErr)
 	}
 	return nil
 }
