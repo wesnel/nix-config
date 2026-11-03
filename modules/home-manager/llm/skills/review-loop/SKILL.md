@@ -108,13 +108,15 @@ next one starts at step 1.
    by short SHA, as the `pull-requests` skill says, and `pr-loop reply`
    refuses one naming a thread's ID or key, a plan ID or the loop's own
    terms.
-6. **Review**, once per round: for each PR with new fixups, one round of
-   the `review-change` skill's fresh review loop over the range from the
-   branch's tip at round start to the branch. The goal statement is the
+6. **Verify fixes** as the `review-change` skill's Fresh review loop says,
+   using the PR's stable review item and remaining allowance across bot
+   rounds. The delta is from the branch's tip at round start to the branch.
+   At the review allowance limit, hand back unresolved findings and
+   unverified fixes before pushing them. The goal statement is the
    PR's scope statement, its part's Goal (`--plan PLAN --part P1`), and
    the items are the threads and checks the
-   fixups answer. A `compat` review
-   the change is routed to also takes `--description FILE`, the PR's
+   fixups answer. A selected `compat` review
+   also takes `--description FILE`, the PR's
    description as it stands. A finding still standing goes out with the
    push and into the hand-back.
 7. **Restack**, bottom-up:

@@ -73,22 +73,21 @@ An earlier finding that the change claims to settle but does not is
 
 ## Routes
 
-Besides its findings, say which focused reviews the change needs. A route
-is not a finding: it asks for a reviewer with a narrower brief, and needs
-no problem found. Route `security` where the change:
+Propose focused review candidates for concrete risks your review and the
+supplied checks leave unanswered. Each `why` names the changed behaviour
+and the question a specialist should answer; `paths` locates it. A candidate
+is not a finding or an instruction to dispatch. File paths, API names and
+test-fixture operations alone do not establish a risk. Judge their effect
+in the supplied range, including affected callers and dependencies.
 
-- takes input it did not make: from the network, other people's files,
-  pull request, issue or MCP text, or repository content a tool runs;
-- authenticates or authorises anything;
-- handles secrets, credentials or cryptography;
-- runs programs or a shell;
-- exposes anything: listeners, permissions, sandbox or guard rules, file
-  modes;
-- handles customer data, or logs;
-- adds or changes dependencies;
-- changes agent or tooling configuration, skills and prompts included.
+Propose `security` for changed trust boundaries, authentication or
+authorization, secret handling, execution of untrusted input, or exposure
+through network listeners, permissions, sandbox or guard rules. Agent
+instructions count by the authority and behaviour they control. A
+dependency change needs a security candidate only for a distinct security
+question beyond upgrade review.
 
-Route `compat` where the change touches what outlives the commit:
+Propose `compat` for changed contracts that outlive the commit:
 
 - stored formats: files, logs and caches it writes and reads later, plan
   fields, kinds and properties included;
@@ -98,7 +97,7 @@ Route `compat` where the change touches what outlives the commit:
 - config keys, Nix options and Emacs customisations;
 - what another branch, host or program reads from this one.
 
-Route `upgrade` where the change moves a dependency's version:
+Propose `upgrade` where the change moves a dependency's version:
 
 - a lock file: flake.lock, go.mod and go.sum, or another package
   manager's;
@@ -128,7 +127,7 @@ Reply with one JSON object and nothing else:
   ],
   "unverified": ["What you could not check, and why."],
   "routes": [
-    {"route": "security", "why": "It runs the command a config file names.", "paths": ["internal/x/run.go"]}
+    {"route": "security", "why": "Repository config now selects a shell command; can an untrusted checkout execute it without authorization?", "paths": ["internal/x/run.go"]}
   ]
 }
 ```
@@ -146,5 +145,5 @@ Reply with one JSON object and nothing else:
 - `reopens`: the ID of the earlier finding it reopens, or null.
 - `unverified`: one entry for each check you could not make, such as a test
   that would not run; empty when there is none.
-- `routes`: each focused review the change needs, as Routes says, with why
-  in one sentence and the paths that need it; empty when there is none.
+- `routes`: focused review candidates, as Routes says, with the changed
+  behaviour and unanswered question in `why`; empty when there is none.
