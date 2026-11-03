@@ -285,6 +285,8 @@ each branch:
   and tooling included, searched for by what it does rather than by name,
   and saying where it looked;
 - the same file edited on parallel branches;
+- for routing configuration, trace every configured provider and two
+  generations of delegation; identify which context owns inherited defaults;
 - a new or changed check: where the repository documents how to check a
   change, its entry names each path and pin that can break it;
 - a program or function whose result is a decision: an error has a result
