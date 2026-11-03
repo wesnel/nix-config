@@ -192,7 +192,7 @@ in {
         fast = mkOption {
           type = types.str;
           default = "deepseek-v4-flash";
-          description = "The ngrok.ai model behind Claude Code's `haiku` alias, which also runs its background work.";
+          description = "The ngrok.ai model behind Claude Code's `haiku` alias and background work, and the candidate for Codex's routine subagents.";
         };
 
         review = mkOption {

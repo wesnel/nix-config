@@ -364,6 +364,14 @@ in {
         llm.mkSkillFiles pkgs ".codex/skills" config.wgn.home.llm.skills
         // roles
         // {
+          ".codex/cheap-model".text =
+            (
+              if config.wgn.home.llm.gateway == "ngrok-ai"
+              then config.wgn.home.llm.ngrokAi.models.fast
+              else "gpt-6-luna"
+            )
+            + "\n";
+
           # Codex skips this when an AGENTS.override.md beside it is non-empty.
           ".codex/AGENTS.md".source = config.wgn.home.llm.instructions;
 
