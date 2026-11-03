@@ -225,6 +225,9 @@ each branch:
   change, its entry names each path and pin that can break it;
 - a program or function whose result is a decision: an error has a result
   of its own, never one of the decision's, and every caller fails on it;
+- a changed mutation guard: tests compare the resources it authorizes with
+  what the real command or filesystem changes, through alternate spellings
+  and each input form; its suggested recovery command is permitted;
 - what the plan leaves undecided, against this bar: someone could build it
   without asking a question;
 - designing for change, by each principle and check the `design` skill
