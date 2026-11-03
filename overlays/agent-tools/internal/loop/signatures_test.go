@@ -5,13 +5,16 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -259,6 +262,38 @@ func agentSocket(t *testing.T, path string) {
 	os.Remove(path)
 }
 
+func openPGPPublicState(t *testing.T, home string) map[string][sha256.Size]byte {
+	t.Helper()
+	state := make(map[string][sha256.Size]byte)
+	for _, name := range []string{"common.conf", "gpg.conf", "trustdb.gpg", "pubring.kbx", "pubring.gpg", "public-keys.d"} {
+		err := filepath.WalkDir(filepath.Join(home, name), func(path string, entry fs.DirEntry, err error) error {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if !entry.Type().IsRegular() {
+				return nil
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			relative, err := filepath.Rel(home, path)
+			if err != nil {
+				return err
+			}
+			state[relative] = sha256.Sum256(data)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("source public state: %v", err)
+		}
+	}
+	return state
+}
+
 func TestOpenOperatorOpenPGP(t *testing.T) {
 	// gpg-agent, which signs the fixture's commits, listens on sockets in
 	// the keyring, and macOS limits a socket's path to 103 bytes: each case's
@@ -268,8 +303,16 @@ func TestOpenOperatorOpenPGP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i, name := range []string{"primary permits certified subkey", "pinned subkey", "forced subkey excludes primary", "wrong protected fingerprint", "profile options ignored"} {
+	for i, name := range []string{
+		"primary permits certified subkey", "pinned subkey", "forced subkey excludes primary", "wrong protected fingerprint", "profile options ignored",
+		"keyboxd", "keyboxd wrong fingerprint", "keyboxd mixed layout", "keyboxd database hardlink", "keyboxd stopped daemon", "keyboxd revoked primary",
+		"keyboxd socket alias",
+	} {
 		t.Run(name, func(t *testing.T) {
+			keyboxd := strings.HasPrefix(name, "keyboxd")
+			if keyboxd && runtime.GOOS != "darwin" {
+				t.Skip("keyboxd signing authorization supports Darwin only")
+			}
 			home := filepath.Join(homes, strconv.Itoa(i))
 			configHome, keyring := filepath.Join(home, ".config"), filepath.Join(home, ".gnupg")
 			for _, path := range []string{filepath.Join(configHome, "git"), keyring} {
@@ -278,6 +321,11 @@ func TestOpenOperatorOpenPGP(t *testing.T) {
 				}
 			}
 			agentSocket(t, filepath.Join(keyring, "S.gpg-agent.browser"))
+			if keyboxd {
+				if err := os.WriteFile(filepath.Join(keyring, "common.conf"), []byte("use-keyboxd\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			f, dir := pushedBranch(t)
 			program, err := exec.LookPath("gpg")
 			if err != nil {
@@ -300,10 +348,22 @@ func TestOpenOperatorOpenPGP(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if keyboxd {
+				gpgconf = filepath.Join(filepath.Dir(program), "gpgconf")
+			}
 			t.Cleanup(func() {
+				if keyboxd {
+					if err := os.WriteFile(filepath.Join(keyring, "common.conf"), []byte("use-keyboxd\n"), 0600); err != nil {
+						t.Errorf("restore fixture common.conf for cleanup: %v", err)
+					}
+				}
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				exec.CommandContext(ctx, gpgconf, "--homedir", keyring, "--kill", "gpg-agent").Run()
+				for _, daemon := range []string{"gpg-agent", "keyboxd"} {
+					if out, err := exec.CommandContext(ctx, gpgconf, "--homedir", keyring, "--kill", daemon).CombinedOutput(); err != nil && keyboxd {
+						t.Errorf("fixture %s cleanup for %s: %v; diagnostics: %s", daemon, keyring, err, out)
+					}
+				}
 			})
 			fingerprints := func() []string {
 				var out []string
@@ -328,12 +388,13 @@ func TestOpenOperatorOpenPGP(t *testing.T) {
 			}
 			subkey := keys[1]
 			expected, signer, want := primary, subkey+"!", true
+			wantError := "no verified signature by the protected operator key"
 			switch name {
 			case "pinned subkey":
 				expected = subkey + "!"
 			case "forced subkey excludes primary":
 				expected, signer, want = subkey+"!", primary+"!", false
-			case "wrong protected fingerprint":
+			case "wrong protected fingerprint", "keyboxd wrong fingerprint":
 				first := "A"
 				if strings.HasPrefix(primary, first) {
 					first = "B"
@@ -344,30 +405,141 @@ func TestOpenOperatorOpenPGP(t *testing.T) {
 			for _, setting := range [][2]string{{"user.signingkey", expected}, {"gpg.format", "openpgp"}, {"gpg.openpgp.program", program}} {
 				gitIn(t, dir, "config", "--file", config, setting[0], setting[1])
 			}
-			bakeOperatorProfile(t, configHome)
+			if keyboxd {
+				hostpaths.Bake(t, configHome, filepath.Join(home, "state"))
+			} else {
+				bakeOperatorProfile(t, configHome)
+			}
 			t.Setenv("GNUPGHOME", keyring)
 			gitIn(t, dir, "-c", "gpg.format=openpgp", "-c", "gpg.program="+program, "-c", "user.signingkey="+signer,
 				"commit", "-q", "-S", "--amend", "--no-edit", "--allow-empty")
+			if keyboxd {
+				gitIn(t, dir, "-c", "gpg.format=openpgp", "-c", "gpg.program="+program, "verify-commit", "HEAD")
+			}
 			marker := filepath.Join(home, "profile-option-used")
-			if name == "profile options ignored" {
+			if keyboxd {
+				if _, err := os.Stat(filepath.Join(keyring, "public-keys.d", "pubring.db")); err != nil {
+					t.Fatalf("keyboxd fixture database: %v", err)
+				}
+				for _, name := range []string{"pubring.kbx", "pubring.gpg"} {
+					if _, err := os.Lstat(filepath.Join(keyring, name)); !os.IsNotExist(err) {
+						t.Fatalf("keyboxd fixture has legacy ring %s: %v", name, err)
+					}
+				}
+				switch name {
+				case "keyboxd socket alias":
+					socket := filepath.Join(keyring, "S.keyboxd")
+					target := filepath.Join(configHome, "S.keyboxd")
+					if err := os.Rename(socket, target); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(target, socket); err != nil {
+						t.Fatal(err)
+					}
+					want, wantError = false, "operator keyboxd socket is outside its protected home"
+				case "keyboxd mixed layout":
+					if err := os.WriteFile(filepath.Join(keyring, "pubring.gpg"), []byte("legacy public ring"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					want, wantError = false, "both legacy and keyboxd public keys"
+				case "keyboxd database hardlink":
+					if err := os.Link(filepath.Join(keyring, "public-keys.d", "pubring.db"), filepath.Join(dir, "database-alias")); err != nil {
+						t.Fatal(err)
+					}
+					want, wantError = false, "unprovable file alias"
+				case "keyboxd stopped daemon":
+					if out, err := exec.CommandContext(t.Context(), gpgconf, "--homedir", keyring, "--kill", "keyboxd").CombinedOutput(); err != nil {
+						t.Fatalf("stop fixture keyboxd: %v; diagnostics: %s", err, out)
+					}
+					want, wantError = false, "cannot export operator keyboxd public keys"
+				case "keyboxd revoked primary":
+					revocation, err := os.ReadFile(filepath.Join(keyring, "openpgp-revocs.d", primary+".rev"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					start := bytes.Index(revocation, []byte(":-----BEGIN PGP PUBLIC KEY BLOCK-----"))
+					if start < 0 {
+						t.Fatal("fixture has no generated primary revocation certificate")
+					}
+					cmd := exec.CommandContext(t.Context(), program, "--homedir", keyring, "--batch", "--import")
+					cmd.Stdin = bytes.NewReader(revocation[start+1:])
+					if out, err := cmd.CombinedOutput(); err != nil {
+						t.Fatalf("import fixture revocation: %v; diagnostics: %s", err, out)
+					}
+					if !strings.Contains("\n"+gpg("--with-colons", "--list-keys", primary), "\npub:r:") {
+						t.Fatal("fixture primary key was not revoked")
+					}
+					want = false
+				}
+				if err := os.WriteFile(filepath.Join(keyring, "common.conf"), []byte("use-keyboxd\nlog-file "+marker+"\nsource-config-must-not-be-read\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if name == "profile options ignored" || keyboxd {
 				if err := os.WriteFile(filepath.Join(keyring, "gpg.conf"), []byte("status-file "+marker+"\n"), 0600); err != nil {
 					t.Fatal(err)
 				}
 			}
+			var before map[string][sha256.Size]byte
+			if keyboxd {
+				before = openPGPPublicState(t, keyring)
+			}
 			published(t, f, dir, "feat")
+			oldBuildRoot, buildRootWasSet := os.LookupEnv("GNUPG_BUILD_ROOT")
+			if keyboxd {
+				buildRoot := filepath.Join(home, "untrusted-build")
+				for _, path := range []string{filepath.Join(buildRoot, "bin"), filepath.Join(buildRoot, "etc")} {
+					if err := os.MkdirAll(path, 0700); err != nil {
+						t.Fatal(err)
+					}
+				}
+				control := "rootdir=" + buildRoot + "\nsysconfdir=" + filepath.Join(buildRoot, "etc") + "\n"
+				if err := os.WriteFile(filepath.Join(buildRoot, "bin", "gpgconf.ctl"), []byte(control), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(buildRoot, "etc", "common.conf"), []byte("use-keyboxd\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv("GNUPG_BUILD_ROOT", buildRoot)
+			}
 			_, err = Open("feat", "", "Add feat", "Why it is needed.", false)
+			if keyboxd {
+				if buildRootWasSet {
+					t.Setenv("GNUPG_BUILD_ROOT", oldBuildRoot)
+				} else if err := os.Unsetenv("GNUPG_BUILD_ROOT"); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if want {
 				if err != nil || len(f.calls) != 1 {
 					t.Fatalf("authorized OpenPGP: %v, calls %v", err, f.calls)
 				}
 			} else {
 				var policy Refusal
-				if !errors.As(err, &policy) || len(f.calls) != 0 {
+				if !errors.As(err, &policy) || len(f.calls) != 0 || !strings.Contains(err.Error(), wantError) {
 					t.Fatalf("unauthorized OpenPGP: %v, calls %v", err, f.calls)
 				}
 			}
 			if _, err := os.Stat(marker); !os.IsNotExist(err) {
 				t.Fatalf("verification used ambient gpg options: %v", err)
+			}
+			if keyboxd {
+				for _, suffix := range []string{"-gpg", "-keyboxd", "-gpg-agent"} {
+					if _, err := os.Lstat(marker + suffix); !os.IsNotExist(err) {
+						t.Errorf("verification used source common.conf: %s: %v", suffix, err)
+					}
+				}
+				after := openPGPPublicState(t, keyring)
+				for path, digest := range before {
+					if updated, ok := after[path]; !ok || updated != digest {
+						t.Errorf("source public state changed: %s", path)
+					}
+				}
+				for path := range after {
+					if _, ok := before[path]; !ok {
+						t.Errorf("source public state appeared: %s", path)
+					}
+				}
 			}
 		})
 	}

@@ -52,6 +52,7 @@ func TestVerifyMarks(t *testing.T) {
 		ok     bool
 	}{
 		{"good", []string{"GOODSIG 89ABCDEF01234567 T <t@e>", valid(operator), "TRUST_ULTIMATE 0 pgp"}, true},
+		{"mixed keyrings", []string{"GOODSIG 89ABCDEF01234567 T <t@e>", valid(operator), "TRUST_ULTIMATE 0 pgp"}, false},
 		{"good, another key", []string{"GOODSIG 1111111111111111 O <o@e>", valid(strings.Repeat("1", 40)), "TRUST_ULTIMATE 0 pgp"}, false},
 		{"bad", []string{"BADSIG 89ABCDEF01234567 T <t@e>"}, false},
 		{"cannot be checked", []string{"ERRSIG 89ABCDEF01234567 22 8 00 1700000000 9 -", "NO_PUBKEY 89ABCDEF01234567"}, false},
@@ -68,6 +69,15 @@ func TestVerifyMarks(t *testing.T) {
 			if err := os.WriteFile(stub, []byte(script), 0o700); err != nil {
 				t.Fatal(err)
 			}
+			if c.name == "mixed keyrings" {
+				dir := filepath.Join(filepath.Dir(filepath.Dir(stub)), ".gnupg", "public-keys.d")
+				if err := os.Mkdir(dir, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "pubring.db"), nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			base, tip := pgpRepo(t)
 			n, err := Verify(t.Context(), tip, []string{base})
 			if c.ok {
@@ -77,8 +87,68 @@ func TestVerifyMarks(t *testing.T) {
 				return
 			}
 			var r refusal.Refusal
-			if !errors.As(err, &r) || !strings.Contains(err.Error(), "no verified signature by the protected operator key") {
+			want := "no verified signature by the protected operator key"
+			if c.name == "mixed keyrings" {
+				want = "both legacy and keyboxd public keys"
+			}
+			if !errors.As(err, &r) || !strings.Contains(err.Error(), want) {
 				t.Errorf("%s: %d, %v", c.name, n, err)
+			}
+		})
+	}
+}
+
+func TestVerifyEnvironmentProgram(t *testing.T) {
+	for _, name := range []string{"configured", "symlink", "missing"} {
+		t.Run(name, func(t *testing.T) {
+			stub := pgpProfile(t)
+			script := "#!/bin/sh\n" +
+				"[ -z \"${OPERATOR_ENV_CANARY+x}\" ] || exit 1\n" +
+				"[ \"$HOME\" = \"$GNUPGHOME\" ] && [ \"$TMPDIR\" = \"$GNUPGHOME\" ] || exit 1\n" +
+				"[ \"$LC_ALL\" = C ] && [ \"$PATH\" = /usr/bin:/bin ] || exit 1\n" +
+				"echo '[GNUPG:] NEWSIG'\n" +
+				"echo '[GNUPG:] GOODSIG 89ABCDEF01234567 T <t@e>'\n" +
+				"echo '[GNUPG:] VALIDSIG " + operator + " 2023-11-14 1700000000 0 4 0 22 8 00 " + operator + "'\n" +
+				"echo '[GNUPG:] TRUST_ULTIMATE 0 pgp'\n"
+			if err := os.WriteFile(stub, []byte(script), 0700); err != nil {
+				t.Fatal(err)
+			}
+			original := defaultEnvProgram
+			defaultEnvProgram = filepath.Join(filepath.Dir(stub), "env 'fixture")
+			t.Cleanup(func() { defaultEnvProgram = original })
+			marker := filepath.Join(t.TempDir(), "environment-program-ran")
+			if name != "missing" {
+				// The shim records selection, then uses the real env to isolate GPG.
+				script := "#!/bin/sh\nprintf used > " + quote(marker) + "\nexec " + quote(original) + " \"$@\"\n"
+				program := defaultEnvProgram
+				if name == "symlink" {
+					// Nix's multicall coreutils dispatches by its invoked symlink name.
+					program = filepath.Join(filepath.Dir(stub), "multicall")
+					script = "#!/bin/sh\n[ \"$0\" = " + quote(defaultEnvProgram) + " ] || exit 1\n" +
+						"printf used > " + quote(marker) + "\nexec " + quote(original) + " \"$@\"\n"
+					if err := os.Symlink(program, defaultEnvProgram); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := os.WriteFile(program, []byte(script), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("OPERATOR_ENV_CANARY", "inherited")
+			base, tip := pgpRepo(t)
+			n, err := Verify(t.Context(), tip, []string{base})
+			if name == "missing" {
+				var r refusal.Refusal
+				if !errors.As(err, &r) || !strings.Contains(err.Error(), "protected environment program") {
+					t.Fatalf("missing configured env: %d, %v; want environment-program refusal", n, err)
+				}
+				return
+			}
+			if err != nil || n != 1 {
+				t.Fatalf("verification through configured env: %d, %v", n, err)
+			}
+			if got, err := os.ReadFile(marker); err != nil || string(got) != "used" {
+				t.Fatalf("configured environment program was not used: %q, %v", got, err)
 			}
 		})
 	}

@@ -35,6 +35,9 @@ import (
 // A development build needs an explicit, protected verifier in its profile.
 var defaultGPGProgram, defaultSSHProgram string
 
+// Nix supplies coreutils' env; development builds use the protected system path.
+var defaultEnvProgram = "/usr/bin/env"
+
 var fullFingerprint = regexp.MustCompile(`^(?:[0-9A-Fa-f]{40}|[0-9A-Fa-f]{64})$`)
 
 var refuse = refusal.New
@@ -84,11 +87,15 @@ func readPublicAuthority(path string) ([]byte, error) {
 }
 
 func verificationDir() (string, error) {
+	return privateStateDir(filepath.Join("agent-tools", "signature-verification"), "view-")
+}
+
+func privateStateDir(subdir, prefix string) (string, error) {
 	root := hostpaths.BakedStateHome()
 	if !filepath.IsAbs(root) {
 		return "", refuse("there is no baked protected signing-verification state directory")
 	}
-	parent := filepath.Join(root, "agent-tools", "signature-verification")
+	parent := filepath.Join(root, subdir)
 	if err := os.MkdirAll(parent, 0700); err != nil {
 		return "", err
 	}
@@ -99,7 +106,7 @@ func verificationDir() (string, error) {
 	if real != parent {
 		return "", refuse("operator signing-verification state resolves outside its baked location")
 	}
-	return os.MkdirTemp(parent, "view-")
+	return os.MkdirTemp(parent, prefix)
 }
 
 // SignedIn reports whether the raw commit object carries a signature in
@@ -332,6 +339,11 @@ func Verify(ctx context.Context, tip string, have []string) (int, error) {
 		if err := os.Mkdir(keyring, 0700); err != nil {
 			return 0, err
 		}
+		database := filepath.Join(p.home, ".gnupg", "public-keys.d", "pubring.db")
+		_, dbErr := os.Lstat(database)
+		if dbErr != nil && !errors.Is(dbErr, os.ErrNotExist) {
+			return 0, dbErr
+		}
 		copied := false
 		for _, name := range []string{"pubring.kbx", "pubring.gpg"} {
 			source := filepath.Join(p.home, ".gnupg", name)
@@ -339,6 +351,9 @@ func Verify(ctx context.Context, tip string, have []string) (int, error) {
 				continue
 			} else if err != nil {
 				return 0, err
+			}
+			if dbErr == nil {
+				return 0, refuse("operator has both legacy and keyboxd public keys; select one authority before verification")
 			}
 			source, err = p.protected(source)
 			if err != nil {
@@ -353,13 +368,32 @@ func Verify(ctx context.Context, tip string, have []string) (int, error) {
 			}
 			copied = true
 		}
+		if dbErr == nil {
+			data, err := p.keyboxdPublicKeys(ctx, database)
+			if err != nil {
+				return 0, err
+			}
+			if err := os.WriteFile(filepath.Join(keyring, "pubring.gpg"), data, 0600); err != nil {
+				return 0, err
+			}
+			copied = true
+		}
 		if !copied {
 			return 0, refuse("operator public keyring is unavailable or uses an unsupported layout; ask the operator to run the step")
 		}
-		// A private verifier home avoids gpg.conf, agents and keyboxd. Only
-		// public rings are copied; key retrieval and importing stay disabled.
+		// Verification uses only the acquired public rings. Environment and
+		// configuration cannot select another authority or start a daemon.
+		envProgram := defaultEnvProgram
+		if _, err := p.protected(envProgram); err != nil {
+			return 0, refuse("protected environment program is unavailable: %v", err)
+		}
 		wrapper := filepath.Join(dir, "verify-openpgp")
-		script := "#!/bin/sh\nexec " + quote(p.program) + " --no-options --no-auto-key-retrieve --no-auto-key-import --homedir " + quote(keyring) + " \"$@\"\n"
+		// Preserve the validated entrypoint name for multicall coreutils.
+		script := "#!/bin/sh\nexec " + quote(envProgram) + " -i"
+		for _, entry := range publicKeyEnvironment(keyring) {
+			script += " " + quote(entry)
+		}
+		script += " " + quote(p.program) + " --no-options --no-autostart --disable-dirmngr --no-auto-key-retrieve --no-auto-key-import --homedir " + quote(keyring) + " \"$@\"\n"
 		if err := os.WriteFile(wrapper, []byte(script), 0700); err != nil { //nolint:gosec // Git executes this owner-only verifier wrapper.
 			return 0, err
 		}
