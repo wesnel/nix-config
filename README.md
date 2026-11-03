@@ -130,9 +130,15 @@ it. A branch GitHub already has needs verified signatures by the operator's
 configured key before its pull request can open. The installed tool reads
 that identity from protected global signing configuration, and verifies
 locally using protected public key material. It supports the installed
-`~/.config/git/config` profile, SSH public keys or OpenPGP `pubring.kbx` and
-`pubring.gpg` public rings, and a direct baked state directory. Unprovable
-authority or unsupported layouts refuse the operation. The sandbox must
+`~/.config/git/config` profile and a direct baked state directory. Public
+keys can be SSH keys or OpenPGP `pubring.kbx` and `pubring.gpg` rings. On
+Darwin, it also supports keyboxd-only homes with an already running daemon
+and a protected `S.keyboxd` socket directly in the GnuPG home. That path
+requires the runtime socket roots and global `common.conf` to be absent;
+it exports public keys through a private client without starting a daemon
+or changing the source keyring. Homes containing both legacy rings and a
+keyboxd database are refused as ambiguous. Unprovable authority or other
+unsupported layouts refuse the operation. The sandbox must
 protect those authority locations from writes and link creation. If GitHub
 has history the local branch lacks, `next` asks for a fetch and manual
 reconciliation. When the work is done, see what will be signed and sign it,
@@ -1075,7 +1081,11 @@ machine needs no such flag.
 
 ### stale lockfiles in `.gnupg/public-keys.d/` cause gpg to hang
 
-Remove `use_keyboxd` from `.gnupg/common.conf`. This file seems to be a rogue file created by GPG, rather than one managed by Nix.
+Disabling `use_keyboxd` in `.gnupg/common.conf` does not migrate the public
+keys in `public-keys.d/pubring.db` to a legacy ring. It can leave both
+storage layouts present. The protected signature verifier refuses that
+mixed layout; on Linux it supports only legacy public rings. Diagnose the
+daemon and lock ownership before choosing a keyring migration.
 
 ### error with `command-not-found` helper function
 

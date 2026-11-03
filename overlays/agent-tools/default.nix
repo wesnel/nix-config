@@ -1,5 +1,6 @@
 {
   buildGoModule,
+  coreutils,
   git,
   gnupg,
   lib,
@@ -47,6 +48,8 @@
         "github.com/wesnel/agent-tools/internal/operatorkey.defaultGPGProgram=${lib.getExe gnupg}"
         "-X"
         "github.com/wesnel/agent-tools/internal/operatorkey.defaultSSHProgram=${lib.getExe' openssh "ssh-keygen"}"
+        "-X"
+        "github.com/wesnel/agent-tools/internal/operatorkey.defaultEnvProgram=${lib.getExe' coreutils "env"}"
       ]
       ++ hostLdflags;
 
