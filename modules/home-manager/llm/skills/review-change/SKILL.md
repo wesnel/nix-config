@@ -28,9 +28,8 @@ was split among sub-agents: a coordinator runs the same pipeline, and the
    - findings still standing, with the reviewer's evidence;
    - the design reviews' open questions for the operator and the decisions you
      made yourself, as one list;
-   - for each finding settled `fix`, what the `retro` skill proposes would
-     have prevented it, each a question written with
-     `agent-plan ask --kind retro`.
+   - the `retro` skill's proposals for findings settled `fix` and session
+     papercuts, referring to those already recorded as they occurred.
 
 ## The goal statement
 
