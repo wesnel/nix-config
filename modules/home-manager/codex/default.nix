@@ -677,18 +677,42 @@ in {
     # Merged into the config.toml Codex writes, keeping its formatting and
     # everything else in it. Each named entry is replaced whole.
     # http_headers_helper reads the token when Codex connects.
-    (mkIf mcpProxy.enable {
+    (mkIf mcpProxy.enable (let
+      servers = mapAttrs (name: path:
+        {
+          url = mcpProxy.url + path;
+          http_headers_helper = mcpProxy.headersHelper;
+        }
+        // optionalAttrs (pkgs.agent-tools.mcpTools.${name}.codexPrompt or false) {
+          default_tools_approval_mode = "prompt";
+        }
+        // optionalAttrs (name == "parallels") {
+          tool_timeout_sec = 370;
+        })
+      mcpProxy.endpoints;
+      payload = escapeShellArg (builtins.toJSON servers);
+    in {
       home.activation.codexMcpServers = lib.hm.dag.entryAfter ["writeBoundary" "mcpProxyToken"] ''
         if [ -z "''${DRY_RUN:-}" ]; then
-          ${registerMcpServers} "$HOME/.codex/config.toml" ${escapeShellArg (builtins.toJSON (mapAttrs (_: path: {
-            url = mcpProxy.url + path;
-            http_headers_helper = mcpProxy.headersHelper;
-          })
-          mcpProxy.endpoints))} \
+          ${registerMcpServers} "$HOME/.codex/config.toml" ${payload} \
             || warnEcho "The MCP proxy was not registered with Codex."
         fi
       '';
-    })
+
+      assertions = [
+        {
+          assertion = all (name:
+            !(pkgs.agent-tools.mcpTools.${name}.codexPrompt or false)
+            || (servers.${name}.default_tools_approval_mode
+              == "prompt"
+              && !(servers.${name} ? tools)
+              && hasInfix (unsafeDiscardStringContext payload)
+              (unsafeDiscardStringContext config.home.activation.codexMcpServers.data)))
+          (attrNames servers);
+          message = "wgn.home.codex: native MCP approval must prompt for every call, without tool overrides, in the activation payload";
+        }
+      ];
+    }))
 
     # Records the Codex account's quota windows for the quota stop's hook.
     # codex-usage needs Codex's login and the network, which a session's

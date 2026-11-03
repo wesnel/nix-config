@@ -35,6 +35,9 @@ type mcpService struct {
 	// readsByName stands in for reads where the vendor publishes no tool
 	// list: a tool whose name has a reading verb and no writing one.
 	readsByName bool
+	// codexPrompt requires native per-call approval in the generated Codex
+	// registration. Only inventoried confirmed tools may use that approval.
+	codexPrompt bool
 }
 
 // mcpServices are the services in mcp.json, by their key there.
@@ -45,6 +48,7 @@ var mcpServices = func() map[string]*mcpService {
 		Reads       []string `json:"reads"`
 		Confirms    []string `json:"confirms"`
 		ReadsByName bool     `json:"readsByName"`
+		CodexPrompt bool     `json:"codexPrompt"`
 	}
 	if err := json.Unmarshal(mcpJSON, &raw); err != nil {
 		panic("mcp.json: " + err.Error())
@@ -52,7 +56,7 @@ var mcpServices = func() map[string]*mcpService {
 	services := map[string]*mcpService{}
 	for id, r := range raw {
 		services[id] = &mcpService{key: id, service: r.Service, servers: r.Servers, reads: set(r.Reads...),
-			confirms: set(r.Confirms...), readsByName: r.ReadsByName}
+			confirms: set(r.Confirms...), readsByName: r.ReadsByName, codexPrompt: r.CodexPrompt}
 	}
 	return services
 }()
@@ -91,8 +95,10 @@ var unlistedCodex = func() map[string]string {
 	reasons := map[string]string{unlistedServer: unlistedServerCodex}
 	for _, s := range mcpServices {
 		for _, proxied := range []bool{false, true} {
-			claude, codex := s.lookalikeReasons(proxied)
-			reasons[claude] = codex
+			for _, local := range []bool{false, true} {
+				claude, codex := s.lookalikeReasons(proxied, local)
+				reasons[claude] = codex
+			}
 		}
 	}
 	return reasons
@@ -164,7 +170,8 @@ func checkMCP(server mcpServer, name string, who role) string {
 		return unlistedServerReviewer
 	}
 	if s := lookalike(server.name); s != nil {
-		claude, _ := s.lookalikeReasons(mcpproxy.Load().Serves(s.key))
+		proxy := mcpproxy.Load()
+		claude, _ := s.lookalikeReasons(proxy.Serves(s.key), proxy.IsLocal(s.key))
 		return claude
 	}
 	return unlistedServer
@@ -188,7 +195,7 @@ func lookalike(server string) *mcpService {
 // lookalikeReasons are why a call to an unlisted server whose name says the
 // service asks in a main session, and why Codex refuses it. Where mcp-proxy
 // serves the service, they name the command that connects its server.
-func (s *mcpService) lookalikeReasons(proxied bool) (claude, codex string) {
+func (s *mcpService) lookalikeReasons(proxied, local bool) (claude, codex string) {
 	servers := make([]string, len(s.servers))
 	for i, name := range s.servers {
 		servers[i] = "mcp__" + name + "__"
@@ -196,10 +203,14 @@ func (s *mcpService) lookalikeReasons(proxied bool) (claude, codex string) {
 	reviewed := strings.Join(servers, ", ")
 	connect, connectCodex := "", ""
 	if proxied {
-		connect = ", and if " + s.key + " is not connected, ask the operator to run `mcp-proxy-authorize " + s.key +
-			"` and reconnect it with /mcp"
-		connectCodex = "; if " + s.key + " is not connected, ask the operator to run `mcp-proxy-authorize " + s.key +
-			"`, then start a new session"
+		recovery := "run `mcp-proxy-authorize " + s.key + "`"
+		if local {
+			recovery = "inspect the mcp-proxy service log for the local server's startup failure"
+		}
+		connect = ", and if " + s.key + " is not connected, ask the operator to " + recovery +
+			" and reconnect it with /mcp"
+		connectCodex = "; if " + s.key + " is not connected, ask the operator to " + recovery +
+			", then start a new session"
 	}
 	claude = "This MCP server is not in the guard's mcp.json, so none of its tools has been reviewed, though its " +
 		"name says " + s.service + ", whose reviewed servers are " + reviewed + ". Use those rather than a server " +
@@ -212,6 +223,15 @@ func (s *mcpService) lookalikeReasons(proxied bool) (claude, codex string) {
 
 func (s *mcpService) confirmReason() string {
 	return "Writing to " + s.service + " acts as the operator, who confirms each write. If they decline, put the draft in your report."
+}
+
+// nativeMCPApproval hands only a reviewed write's confirmation to Codex;
+// another refusal, including a reviewer's, must keep blocking the call.
+func nativeMCPApproval(tool, reason string) bool {
+	server, name, ok := mcpTool(tool)
+	s := server.listed
+	return ok && s != nil && server.name == s.key && s.codexPrompt && s.confirms[name] &&
+		reason == s.confirmReason() && mcpproxy.Load().Serves(s.key)
 }
 
 // check returns why who may not call the service's tool name, or "".

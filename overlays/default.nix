@@ -3,6 +3,8 @@ final: prev: {
 
   pele = final.callPackage ./pele {};
 
+  pdfm-mcp = final.callPackage ./pdfm-mcp {};
+
   tbxark-mcp-proxy = final.callPackage ./tbxark-mcp-proxy {};
 
   zwift-offline-image = let

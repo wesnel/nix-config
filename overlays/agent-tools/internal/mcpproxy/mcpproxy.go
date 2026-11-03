@@ -6,6 +6,7 @@ package mcpproxy
 import (
 	"encoding/json"
 	"os"
+	"slices"
 
 	"github.com/wesnel/agent-tools/internal/repos"
 )
@@ -17,6 +18,8 @@ type Config struct {
 	// Endpoints are the paths of the servers the host enables, each by its
 	// name, which is its service's key in the guard's mcp.json.
 	Endpoints map[string]string `json:"endpoints"`
+	// LocalServers run as subprocesses and do not use OAuth authorization.
+	LocalServers []string `json:"localServers,omitempty"`
 }
 
 // Load returns the host's mcp-proxy, with no endpoints where the config
@@ -35,4 +38,9 @@ func Load() Config {
 func (c Config) Serves(name string) bool {
 	_, ok := c.Endpoints[name]
 	return ok
+}
+
+// IsLocal reports whether the server runs as a subprocess of the proxy.
+func (c Config) IsLocal(name string) bool {
+	return slices.Contains(c.LocalServers, name)
 }

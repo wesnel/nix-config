@@ -2,6 +2,7 @@ package mcpproxy
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -60,6 +61,22 @@ func refusing(t *testing.T) string {
 
 func TestProbe(t *testing.T) {
 	endpoints := map[string]string{"linear": "/linear/mcp", "notion": "/notion/mcp"}
+	t.Run("local server not connected", func(t *testing.T) {
+		url, _ := standIn(t, nil, 0)
+		var config Config
+		if err := json.Unmarshal([]byte(`{"endpoints":{"parallels":"/parallels/mcp"},"localServers":["parallels"]}`), &config); err != nil {
+			t.Fatal(err)
+		}
+		config.URL = url
+		got := Probe(t.Context(), http.DefaultClient, config)
+		if len(got) != 1 || got[0].Kind != NotConnected {
+			t.Fatalf("got %+v, want one disconnected local server", got)
+		}
+		message := got[0].String()
+		if !strings.Contains(message, "mcp-proxy service log") || strings.Contains(message, "mcp-proxy-authorize") {
+			t.Errorf("local server recovery %q should name the service log, not OAuth authorization", message)
+		}
+	})
 	t.Run("a server not connected", func(t *testing.T) {
 		url, _ := standIn(t, map[string]int{"/linear/mcp": 401}, 0)
 		got := Probe(t.Context(), http.DefaultClient, Config{URL: url, Endpoints: endpoints})

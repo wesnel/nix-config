@@ -131,7 +131,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		return reason
 	})
-	if reason == opsCall && in.TurnID != "" {
+	if in.TurnID != "" && who == baseline && (reason == opsCall || nativeMCPApproval(in.ToolName, reason)) {
 		// Codex enforces the module's per-tool approvals.
 		reason = ""
 	}
@@ -147,7 +147,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	decision := "deny"
 	if asks[reason] && who == baseline {
-		// Claude Code asks the operator; Codex cannot.
+		// Claude Code can ask from a hook; Codex needs native tool policy.
 		if in.TurnID != "" {
 			reason = cannotAsk(reason)
 		} else {

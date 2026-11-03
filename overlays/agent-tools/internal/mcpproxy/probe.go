@@ -21,8 +21,7 @@ const (
 	// says it is connected.
 	Undecided
 	// NotConnected: the server's route answers 404, as the proxy's does for
-	// a server it could not connect (never authorized, or its token
-	// refused).
+	// a server it could not connect or start.
 	NotConnected
 	// Unexpected: the server's route answers neither 401 nor 404.
 	Unexpected
@@ -39,6 +38,8 @@ type Finding struct {
 	Status int
 	// Err is why a request failed.
 	Err string
+	// Local distinguishes a subprocess failure from an OAuth failure.
+	Local bool
 }
 
 // control is a server name no proxy serves: its route must answer 404, or
@@ -72,7 +73,7 @@ func Probe(ctx context.Context, client *http.Client, c Config) []Finding {
 			// same timeout.
 			return []Finding{{Kind: Unreachable, URL: base + "/" + control + "/mcp", Err: err.Error()}}
 		case status == http.StatusNotFound:
-			findings = append(findings, Finding{Kind: NotConnected, Server: name, URL: url, Status: status})
+			findings = append(findings, Finding{Kind: NotConnected, Server: name, URL: url, Status: status, Local: c.IsLocal(name)})
 		case status != http.StatusUnauthorized:
 			findings = append(findings, Finding{Kind: Unexpected, Server: name, URL: url, Status: status})
 		}
@@ -115,6 +116,11 @@ func (f Finding) String() string {
 		return fmt.Sprintf("mcp-proxy answered %s for %s, a server it does not serve, where it answered 404, so this "+
 			"check cannot tell which of its servers are connected. Ask the operator to run `mcp-proxy-status`.", answer, f.URL)
 	case NotConnected:
+		if f.Local {
+			return fmt.Sprintf("mcp-proxy's %s server is not connected (%s answered 404). Ask the operator to inspect "+
+				"the mcp-proxy service log for the local server's startup failure, then reconnect it with /mcp in Claude Code "+
+				"or start a new session; do not add a server of your own in its place.", f.Server, f.URL)
+		}
 		return fmt.Sprintf("mcp-proxy's %s server is not connected (%s answered 404), so its tools are missing from "+
 			"this session: it was never authorized, or its token was refused. Ask the operator to run "+
 			"`mcp-proxy-authorize %s`, then reconnect it with /mcp in Claude Code or start a new session; do not add a "+

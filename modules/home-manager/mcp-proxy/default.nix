@@ -11,6 +11,11 @@ with lib; let
   proxy = getExe pkgs.tbxark-mcp-proxy;
   tokenFile = "${cfg.stateDir}/token";
 
+  toolFilter = id: {
+    mode = "allow";
+    list = pkgs.agent-tools.mcpTools.${id}.reads ++ pkgs.agent-tools.mcpTools.${id}.confirms;
+  };
+
   # Remote servers are reached with short-lived OAuth tokens that the proxy
   # obtains and refreshes itself; nothing here is a credential. Each serves
   # only the tools the guard's mcp.json lists for its service, reads and
@@ -21,10 +26,7 @@ with lib; let
     inherit url;
     transportType = "streamable-http";
     oauth.scopes = scopes;
-    options.toolFilter = {
-      mode = "allow";
-      list = pkgs.agent-tools.mcpTools.${id}.reads ++ pkgs.agent-tools.mcpTools.${id}.confirms;
-    };
+    options.toolFilter = toolFilter id;
   };
 
   servers =
@@ -44,6 +46,19 @@ with lib; let
     // optionalAttrs cfg.datadog.enable {
       # Without toolsets the server serves `core` alone.
       datadog = oauthServer "datadog" "https://mcp.${cfg.datadog.site}/v1/mcp?toolsets=core,error-tracking" ["mcp_all"];
+    }
+    // optionalAttrs cfg.parallels {
+      parallels = {
+        transportType = "stdio";
+        command = getExe pkgs.pdfm-mcp;
+        args = ["--allow-tools" (concatStringsSep "," (toolFilter "parallels").list)];
+        env = {
+          PATH = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+          PDFM_MCP_TELEMETRY_DISABLED = "true";
+        };
+        timeout = "6m";
+        options.toolFilter = toolFilter "parallels";
+      };
     };
 
   configFile = pkgs.writeText "mcp-proxy.json" (builtins.toJSON {
@@ -181,6 +196,13 @@ in {
       '';
     };
 
+    localServers = mkOption {
+      type = types.listOf types.str;
+      readOnly = true;
+      default = attrNames (filterAttrs (_: s: s.transportType == "stdio") servers);
+      description = "Servers started as local subprocesses, whose recovery does not use OAuth.";
+    };
+
     url = mkOption {
       type = types.str;
       readOnly = true;
@@ -224,6 +246,12 @@ in {
       default = false;
     };
 
+    parallels = mkOption {
+      type = types.bool;
+      default = false;
+      description = "Serve local Parallels Desktop VMs. Guest commands require Parallels Tools in the guest.";
+    };
+
     datadog = {
       enable = mkOption {
         type = types.bool;
@@ -245,6 +273,12 @@ in {
 
   config = mkIf cfg.enable (mkMerge [
     {
+      assertions = [
+        {
+          assertion = !cfg.parallels || darwin;
+          message = "wgn.home.mcp-proxy.parallels requires macOS and Parallels Desktop";
+        }
+      ];
       home.packages = [authorize status];
 
       home.activation.mcpProxyToken = hm.dag.entryAfter ["writeBoundary"] ''

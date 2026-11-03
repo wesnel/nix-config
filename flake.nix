@@ -905,6 +905,25 @@
             touch $out
           '';
 
+      checks.${darwinOnly "parallels-mcp"} = let
+        hm = self.darwinConfigurations.ngrok.config.home-manager.users.wgn;
+        package = self.darwinConfigurations.ngrok.pkgs.pdfm-mcp;
+      in
+        pkgs.runCommand "parallels-mcp" {
+          nativeBuildInputs = [pkgs.python3 pkgs.bash];
+          binary = pkgs.lib.getExe package;
+          inventory = ./overlays/agent-tools/internal/guard/mcp.json;
+          serve = builtins.head hm.launchd.agents.mcp-proxy.config.ProgramArguments;
+          codexActivation = pkgs.writeText "codex-mcp-activation" hm.home.activation.codexMcpServers.data;
+          claudeActivation = pkgs.writeText "claude-mcp-activation" hm.home.activation.claudeMcpServers.data;
+          devboxEndpoints = builtins.toJSON self.homeConfigurations.devbox.config.wgn.home.mcp-proxy.endpoints;
+          agentConfig = hm.xdg.configFile."agent-tools/config.json".source;
+        } ''
+          python ${./overlays/pdfm-mcp/check.py} "$binary" "$inventory" ${./overlays/agent-tools/internal/guard/testdata/tools/parallels.json}
+          python ${./modules/home-manager/mcp-proxy/parallels-tests.py}
+          touch $out
+        '';
+
       # The ngrok Mac's mcp-proxy-authorize restarts the proxy, and loads
       # its plist when kickstart finds it loaded in no domain; a failed load
       # fails it.
