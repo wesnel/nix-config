@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/refusal"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 // askCodex runs `git delegate ask` with args, and returns its exit
@@ -42,7 +43,11 @@ func askFixture(t *testing.T, withCodex bool) *fixture {
 // Codex answers a design question from the files named and nothing else,
 // confined as a review is, and leaves nothing behind.
 func TestAsk(t *testing.T) {
-	t.Run("answers from the named files alone", func(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
+	testprocess.Run(t, "answers from the named files alone", tmp, func(t *testing.T) {
 		f := askFixture(t, true)
 		t.Setenv("FAKE_CODEX", "answer")
 		code, out, stderr := askCodex(t, "--model", "fake-model", "--question", ".git/question.md", "code.txt", "docs/design.md")
@@ -74,7 +79,7 @@ func TestAsk(t *testing.T) {
 	})
 
 	// A Claude type answers in the same copies, headless.
-	t.Run("a Claude reviewer", func(t *testing.T) {
+	testprocess.Run(t, "a Claude reviewer", tmp, func(t *testing.T) {
 		f := askFixture(t, true)
 		f.claudeSays(t, "security-reviewer", claudeResult(map[string]any{"answer": "Keep it in the flag set.", "unverified": []string{}}, "done"))
 		code, out, stderr := askCodex(t, "--reviewer", "security", "--question", ".git/question.md", "code.txt")
@@ -90,7 +95,7 @@ func TestAsk(t *testing.T) {
 	// Codex is sent a named file as it was when named checked it: one
 	// swapped afterwards for a link to a file elsewhere sends nothing from
 	// elsewhere.
-	t.Run("a file swapped for a link after the check", func(t *testing.T) {
+	testprocess.Run(t, "a file swapped for a link after the check", tmp, func(t *testing.T) {
 		f := askFixture(t, true)
 		t.Setenv("FAKE_CODEX", "answer")
 		t.Setenv("FAKE_CODEX_COPY", "code.txt")
@@ -112,7 +117,7 @@ func TestAsk(t *testing.T) {
 		f.checkCleanedUp(t)
 	})
 
-	t.Run("Codex unavailable", func(t *testing.T) {
+	testprocess.Run(t, "Codex unavailable", tmp, func(t *testing.T) {
 		f := askFixture(t, false)
 		code, _, stderr := askCodex(t, "--question", ".git/question.md", "code.txt")
 		reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-delegate:")
@@ -124,7 +129,7 @@ func TestAsk(t *testing.T) {
 
 	// Known secret shapes are taken out of the question and of each file
 	// copied for Codex.
-	t.Run("redacted", func(t *testing.T) {
+	testprocess.Run(t, "redacted", tmp, func(t *testing.T) {
 		f := askFixture(t, true)
 		t.Setenv("FAKE_CODEX", "answer")
 		t.Setenv("FAKE_CODEX_COPY", "docs/design.md")
@@ -201,7 +206,7 @@ func TestAsk(t *testing.T) {
 				return filepath.Join(scratch, "q.md")
 			}, false},
 		} {
-			t.Run(c.name, func(t *testing.T) {
+			testprocess.Run(t, c.name, tmp, func(t *testing.T) {
 				f := askFixture(t, true)
 				t.Setenv("FAKE_CODEX", "answer")
 				scratch, _ := filepath.EvalSymlinks(t.TempDir())
@@ -230,7 +235,7 @@ func TestAsk(t *testing.T) {
 		}
 	})
 
-	t.Run("refused/a hard link to a file elsewhere", func(t *testing.T) {
+	testprocess.Run(t, "refused/a hard link to a file elsewhere", tmp, func(t *testing.T) {
 		f := askFixture(t, true)
 		t.Setenv("FAKE_CODEX", "answer")
 		secret := filepath.Join(t.TempDir(), "secret")
@@ -256,7 +261,7 @@ func TestAsk(t *testing.T) {
 		"a missing file":                {"--question", ".git/question.md", "gone.txt"},
 		"a directory":                   {"--question", ".git/question.md", "docs"},
 	} {
-		t.Run("refused/"+name, func(t *testing.T) {
+		testprocess.Run(t, "refused/"+name, tmp, func(t *testing.T) {
 			f := askFixture(t, true)
 			t.Setenv("FAKE_CODEX", "answer")
 			code, _, stderr := askCodex(t, args...)
@@ -285,7 +290,7 @@ func TestAsk(t *testing.T) {
 			return "docs/link.md"
 		},
 	} {
-		t.Run("refused/"+name, func(t *testing.T) {
+		testprocess.Run(t, "refused/"+name, tmp, func(t *testing.T) {
 			f := askFixture(t, true)
 			t.Setenv("FAKE_CODEX", "answer")
 			arg := place(t, f)

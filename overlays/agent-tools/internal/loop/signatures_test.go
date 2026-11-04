@@ -24,6 +24,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/operatorkey"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 // signing makes dir's commits verifiable, signed with a throwaway SSH key
@@ -126,8 +127,12 @@ func TestOperatorFormatSignedShallow(t *testing.T) {
 }
 
 func TestOpenAuthorityFailure(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	for _, name := range []string{"missing profile", "malformed include", "blocked include", "blocked public key"} {
-		t.Run(name, func(t *testing.T) {
+		testprocess.Run(t, name, tmp, func(t *testing.T) {
 			f, dir := pushedOperatorBranch(t)
 			home := hostpaths.BakedConfigHome()
 			config := filepath.Join(home, "git", "config")
@@ -546,8 +551,12 @@ func TestOpenOperatorOpenPGP(t *testing.T) {
 }
 
 func TestOpenOperatorSignature(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	for _, name := range []string{"operator", "different author", "unsigned", "wrong key", "public key hardlink", "configuration hardlink", "tracking exclusion", "replacement traversal", "grafted traversal", "shallow traversal", "cached traversal", "object identity", "temporary environment ignored", "environment override", "included key override", "irrelevant include", "public key escape", "verifier override", "tampered payload", "unbaked"} {
-		t.Run(name, func(t *testing.T) {
+		testprocess.Run(t, name, tmp, func(t *testing.T) {
 			f, dir := pushedBranch(t)
 			home, sign := sshOperatorProfile(t, dir)
 			unsigned := gitIn(t, dir, "rev-parse", "HEAD")

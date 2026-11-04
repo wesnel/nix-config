@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 // runOutput runs this program in dir with args, signing with the git config
@@ -69,16 +71,51 @@ func pushedRepo(t *testing.T, n int) (repo, global string) {
 	gitIn(t, repo, "switch", "-qc", "one")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "first")
 	gitIn(t, repo, "push", "-q", "-u", "origin", "one")
-	for i := 1; i < n; i++ {
-		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Change "+strings.Repeat("x", i%7)+string(rune('a'+i%26)))
+	if n > 1 {
+		var input strings.Builder
+		first := gitIn(t, repo, "rev-parse", "one")
+		for i := 1; i < n; i++ {
+			subject := "Change " + strings.Repeat("x", i%7) + string(rune('a'+i%26))
+			fmt.Fprintf(&input, "commit refs/heads/one\ncommitter T <t@e> 0 +0000\ndata %d\n%s\n\n", len(subject)+1, subject)
+			if i == 1 {
+				fmt.Fprintf(&input, "from %s\n", first)
+			}
+		}
+		cmd := exec.CommandContext(t.Context(), "git", "fast-import", "--quiet")
+		cmd.Dir = repo
+		cmd.Env = append(gitenv.Without(os.Environ()), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+		cmd.Stdin = strings.NewReader(input.String())
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("import commits: %v\n%s", err, out)
+		}
 	}
 	return repo, global
+}
+
+func TestPushedRepoHistory(t *testing.T) {
+	repo, _ := pushedRepo(t, 200)
+	if got := gitIn(t, repo, "rev-list", "--count", "main..one"); got != "200" {
+		t.Fatalf("commit count: got %s, want 200", got)
+	}
+	got := strings.Split(gitIn(t, repo, "log", "--reverse", "--format=%s", "main..one"), "\n")
+	for i, subject := range got {
+		want := "first"
+		if i != 0 {
+			want = "Change " + strings.Repeat("x", i%7) + string(rune('a'+i%26))
+		}
+		if subject != want {
+			t.Fatalf("commit %d: got %q, want %q", i, subject, want)
+		}
+	}
 }
 
 // With standard output a pipe, a pass prints a handful of lines however many
 // commits it signs, and leaves out what git says about its own work; a
 // failure keeps git's own words.
 func TestBriefOutput(t *testing.T) {
+	if !testprocess.Top(t, testprocess.SocketTemp(t)) {
+		return
+	}
 	repo, global := pushedRepo(t, 200)
 	exe, err := os.Executable()
 	if err != nil {
@@ -125,6 +162,9 @@ func TestBriefOutput(t *testing.T) {
 // --no-brief keeps git's words when standard output is a pipe, and --brief
 // drops them whatever standard output is.
 func TestBriefFlags(t *testing.T) {
+	if !testprocess.Top(t, testprocess.SocketTemp(t)) {
+		return
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -143,6 +183,9 @@ func TestBriefFlags(t *testing.T) {
 
 // A failing push shows git's error in full though the pass is brief.
 func TestBriefKeepsErrors(t *testing.T) {
+	if !testprocess.Top(t, testprocess.SocketTemp(t)) {
+		return
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)

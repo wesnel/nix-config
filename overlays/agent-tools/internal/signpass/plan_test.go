@@ -10,18 +10,23 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 func TestPlan(t *testing.T) {
-	t.Run("three stacks", testPlanThreeStacks)
-	t.Run("fold kinds", testPlanFoldKinds)
-	t.Run("fork conflict", testPlanForkConflict)
-	t.Run("nothing to sign", testPlanNothingToSign)
-	t.Run("push unmoved", testPlanPushUnmoved)
-	t.Run("shared folds", testPlanSharedFolds)
+	tmp := testprocess.SocketTemp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
+	testprocess.Run(t, "three stacks", tmp, testPlanThreeStacks)
+	testprocess.Run(t, "fold kinds", tmp, testPlanFoldKinds)
+	testprocess.Run(t, "fork conflict", tmp, testPlanForkConflict)
+	testprocess.Run(t, "nothing to sign", tmp, testPlanNothingToSign)
+	testprocess.Run(t, "push unmoved", tmp, testPlanPushUnmoved)
+	t.Run("shared folds", func(t *testing.T) { testPlanSharedFolds(t, tmp) })
 }
 
-func testPlanSharedFolds(t *testing.T) {
+func testPlanSharedFolds(t *testing.T, tmp string) {
 	for _, tc := range []struct {
 		name, leaf, carrier                         string
 		own, shared, cycle, independent, signedLeaf bool
@@ -34,7 +39,7 @@ func testPlanSharedFolds(t *testing.T) {
 		{name: "same subject different target", leaf: "A", carrier: "Z", independent: true},
 		{name: "already signed sibling", leaf: "A", carrier: "Z", signedLeaf: true},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
+		testprocess.Run(t, tc.name, tmp, func(t *testing.T) {
 			dir := t.TempDir()
 			global := signingConfig(t, dir)
 			signer, err := exec.LookPath("ssh-keygen")

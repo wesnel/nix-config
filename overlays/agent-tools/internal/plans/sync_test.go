@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 // notes makes a bare origin holding a notes repository with an agents
@@ -80,22 +81,27 @@ func untouched(t *testing.T, c Config) {
 // The subtests that set no environment of their own run in parallel, as
 // the operator, from the environment set here.
 func TestSync(t *testing.T) {
-	asOperator(t)
-	t.Run("two hosts", testSyncTwoHosts)
-	t.Run("sends this host's workstreams", testSyncWorkstreams)
-	t.Run("through git-push-guard", testSyncThroughPushGuard)
-	t.Run("authors as the operator", testSyncAuthor)
-	t.Run("leaves the operator's commits", testSyncLeavesOperatorCommits)
-	t.Run("leaves a commit made while it runs", testSyncLeavesRacingCommit)
-	t.Run("keeps edits and a commit made while it runs", testSyncKeepsEditsAndRacingCommit)
-	t.Run("leaves a branch switched to while it runs", testSyncLeavesSwitchedBranch)
-	t.Run("sends nothing behind origin", testSyncSendsNothingBehind)
-	t.Run("leaves the index", testSyncLeavesIndex)
-	t.Run("does not force its push", testSyncDoesNotForce)
-	t.Run("catches up after a plan is written as it pushes", testSyncCatchesUpAfterItsPush)
-	t.Run("catches up only with its own plans", testSyncCatchUp)
-	t.Run("keeps a concurrent edit unstaged while catching up", testSyncConcurrentEdit)
-	t.Run("without a repository", testSyncWithoutRepository)
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	} else {
+		asOperator(t)
+	}
+	testprocess.Run(t, "two hosts", tmp, testSyncTwoHosts)
+	testprocess.Run(t, "sends this host's workstreams", tmp, testSyncWorkstreams)
+	testprocess.Run(t, "through git-push-guard", tmp, testSyncThroughPushGuard)
+	t.Run("authors as the operator", func(t *testing.T) { testSyncAuthor(t, tmp) })
+	t.Run("leaves the operator's commits", func(t *testing.T) { testSyncLeavesOperatorCommits(t, tmp) })
+	t.Run("leaves a commit made while it runs", func(t *testing.T) { testSyncLeavesRacingCommit(t, tmp) })
+	testprocess.Run(t, "keeps edits and a commit made while it runs", tmp, testSyncKeepsEditsAndRacingCommit)
+	testprocess.Run(t, "leaves a branch switched to while it runs", tmp, testSyncLeavesSwitchedBranch)
+	t.Run("sends nothing behind origin", func(t *testing.T) { testSyncSendsNothingBehind(t, tmp) })
+	t.Run("leaves the index", func(t *testing.T) { testSyncLeavesIndex(t, tmp) })
+	testprocess.Run(t, "does not force its push", tmp, testSyncDoesNotForce)
+	testprocess.Run(t, "catches up after a plan is written as it pushes", tmp, testSyncCatchesUpAfterItsPush)
+	t.Run("catches up only with its own plans", func(t *testing.T) { testSyncCatchUp(t, tmp) })
+	testprocess.Run(t, "keeps a concurrent edit unstaged while catching up", tmp, testSyncConcurrentEdit)
+	testprocess.Run(t, "without a repository", tmp, testSyncWithoutRepository)
 }
 
 func testSyncConcurrentEdit(t *testing.T) {
@@ -188,7 +194,7 @@ func testSyncCatchesUpAfterItsPush(t *testing.T) {
 // when origin is ahead by nothing but this host's plans, with nothing
 // staged and nothing of the operator's ahead; otherwise it leaves the branch
 // and the index as they are, as when the fast-forward is refused.
-func testSyncCatchUp(t *testing.T) {
+func testSyncCatchUp(t *testing.T, tmp string) {
 	cases := map[string]struct {
 		// arrived are files other than mac's plan that origin's new commit
 		// changes, with their content.
@@ -221,9 +227,11 @@ func testSyncCatchUp(t *testing.T) {
 		"killed before it moves the branch":     {kill: "diff-index"},
 		"killed as it moves the branch":         {kill: "update-ref", caughtUp: true},
 	}
-	asOperator(t)
+	if tmp == "" {
+		asOperator(t)
+	}
 	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
+		testprocess.Run(t, name, tmp, func(t *testing.T) {
 			// raceAt sets PATH, which a parallel test may not.
 			if tc.race == "" && tc.kill == "" {
 				t.Parallel()
@@ -370,7 +378,7 @@ func TestSyncHelper(t *testing.T) {
 // would lose its signature and pass git-push-guard on the operator's next
 // push as sync's. Nor does sync send this host's plans from a checkout that
 // lacks origin's latest, whose plan files may be older than origin's.
-func testSyncLeavesOperatorCommits(t *testing.T) {
+func testSyncLeavesOperatorCommits(t *testing.T, tmp string) {
 	const sync = syncName + " <agent-plan@mac.invalid>"
 	cases := map[string]struct {
 		// args and env make the operator's commit.
@@ -390,7 +398,7 @@ func testSyncLeavesOperatorCommits(t *testing.T) {
 			env: []string{"GIT_COMMITTER_NAME=" + syncName, "GIT_COMMITTER_EMAIL=agent-plan@mac.invalid"}},
 	}
 	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
+		testprocess.Run(t, name, tmp, func(t *testing.T) {
 			_, hosts := guarded(t, "mac", "box")
 			mac, box := hosts["mac"], hosts["box"]
 			newPlan(t, box, "y")
@@ -483,9 +491,9 @@ func operatorsCommit(t *testing.T, repo, subject string) {
 
 // A commit the operator makes while sync runs, at any of its steps, is
 // neither published nor re-committed under sync's identity.
-func testSyncLeavesRacingCommit(t *testing.T) {
+func testSyncLeavesRacingCommit(t *testing.T, tmp string) {
 	for _, word := range []string{"commit-tree", "push", "merge-base", "merge"} {
-		t.Run(word, func(t *testing.T) {
+		testprocess.Run(t, word, tmp, func(t *testing.T) {
 			_, hosts := guarded(t, "mac", "box")
 			mac, box := hosts["mac"], hosts["box"]
 			newPlan(t, box, "y")
@@ -517,9 +525,9 @@ func testSyncLeavesRacingCommit(t *testing.T) {
 // older commit checked out or a branch with commits of the operator's, and
 // so never sends plan files older than origin's, whatever the operator does
 // to the working tree there.
-func testSyncSendsNothingBehind(t *testing.T) {
+func testSyncSendsNothingBehind(t *testing.T, tmp string) {
 	t.Parallel()
-	t.Run("older commit checked out", func(t *testing.T) {
+	testprocess.Run(t, "older commit checked out", tmp, func(t *testing.T) {
 		t.Parallel()
 		_, hosts := notesAsIs(t, "mac")
 		mac := hosts["mac"]
@@ -538,7 +546,7 @@ func testSyncSendsNothingBehind(t *testing.T) {
 			t.Errorf("origin moved from %s to %s", sent, now)
 		}
 	})
-	t.Run("stash on a branch with the operator's commits", func(t *testing.T) {
+	testprocess.Run(t, "stash on a branch with the operator's commits", tmp, func(t *testing.T) {
 		t.Parallel()
 		_, hosts := notesAsIs(t, "mac", "box")
 		mac, box := hosts["mac"], hosts["box"]
@@ -576,7 +584,7 @@ func testSyncSendsNothingBehind(t *testing.T) {
 // fast-forward, and then only when nothing else is staged at a plan path
 // and no merge, rebase, cherry-pick, revert or bisect is in progress; what
 // it stages and cannot fast-forward over, it unstages.
-func testSyncLeavesIndex(t *testing.T) {
+func testSyncLeavesIndex(t *testing.T, tmp string) {
 	// staged gives a plan file of mac's a staged version and an unstaged
 	// one on top, and returns its path in the repository.
 	staged := func(t *testing.T, mac Config, x Plan) string {
@@ -589,7 +597,7 @@ func testSyncLeavesIndex(t *testing.T) {
 		return "agents/" + filepath.Base(f)
 	}
 	for _, collide := range []bool{false, true} {
-		t.Run(map[bool]string{false: "a staged version", true: "a staged version and a fast-forward git refuses"}[collide], func(t *testing.T) {
+		testprocess.Run(t, map[bool]string{false: "a staged version", true: "a staged version and a fast-forward git refuses"}[collide], tmp, func(t *testing.T) {
 			t.Parallel()
 			_, hosts := notesAsIs(t, "mac", "box")
 			mac, box := hosts["mac"], hosts["box"]
@@ -616,7 +624,7 @@ func testSyncLeavesIndex(t *testing.T) {
 			}
 		})
 	}
-	t.Run("a merge in progress", func(t *testing.T) {
+	testprocess.Run(t, "a merge in progress", tmp, func(t *testing.T) {
 		t.Parallel()
 		_, hosts := notesAsIs(t, "mac", "box")
 		mac, box := hosts["mac"], hosts["box"]
@@ -647,7 +655,7 @@ func testSyncLeavesIndex(t *testing.T) {
 		}
 		gitIn(t, repo, "rev-parse", "-q", "--verify", "MERGE_HEAD")
 	})
-	t.Run("a fast-forward refused after staging", func(t *testing.T) {
+	testprocess.Run(t, "a fast-forward refused after staging", tmp, func(t *testing.T) {
 		_, hosts := notes(t, "mac")
 		mac := hosts["mac"]
 		repo := filepath.Dir(mac.Dir)
@@ -848,7 +856,7 @@ func testSyncThroughPushGuard(t *testing.T) {
 // in the notes clone, so GitHub links it to their account by the author's
 // email; its committer stays sync's. Where git resolves no user.email, the
 // author is sync's too, and the sync still succeeds.
-func testSyncAuthor(t *testing.T) {
+func testSyncAuthor(t *testing.T, tmp string) {
 	t.Parallel()
 	cases := map[string]struct {
 		config [][]string
@@ -864,7 +872,7 @@ func testSyncAuthor(t *testing.T) {
 		},
 	}
 	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
+		testprocess.Run(t, name, tmp, func(t *testing.T) {
 			t.Parallel()
 			_, hosts := notesAsIs(t, "mac")
 			mac := hosts["mac"]

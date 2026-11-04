@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/wesnel/agent-tools/internal/hostpaths"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 // nextStep is the one step Next gives for branch.
@@ -30,8 +31,12 @@ func nextStep(t *testing.T, branch string) NextStep {
 // TestNext gives each state of a branch its one next step, from pushedBranch's
 // checkout: feat, one unsigned commit past main, which GitHub has at its tip.
 func TestNext(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	for _, state := range []string{"fetch", "push", "upstream"} {
-		t.Run("quoted operands/"+state, func(t *testing.T) {
+		testprocess.Run(t, "quoted operands/"+state, tmp, func(t *testing.T) {
 			f, dir := pushedBranch(t)
 			branch, remote := "feat'`true`", "origin'`true`"
 			gitIn(t, dir, "remote", "rename", "origin", remote)
@@ -89,7 +94,7 @@ func TestNext(t *testing.T) {
 			}
 		})
 	}
-	t.Run("not on GitHub: open it, signed or not", func(t *testing.T) {
+	testprocess.Run(t, "not on GitHub: open it, signed or not", tmp, func(t *testing.T) {
 		_, dir := pushedBranch(t)
 		gitIn(t, dir, "config", "push-guard.allowPublic", "o/r")
 		gitIn(t, dir, "switch", "-qc", "fresh", "main")
@@ -100,14 +105,14 @@ func TestNext(t *testing.T) {
 		}
 	})
 
-	t.Run("on GitHub with no pull request: open it", func(t *testing.T) {
+	testprocess.Run(t, "on GitHub with no pull request: open it", tmp, func(t *testing.T) {
 		pushedOperatorBranch(t)
 		if step, ok := nextStep(t, "feat").(ToOpen); !ok || !strings.HasSuffix(step.Command, " feat") {
 			t.Errorf("feat: %#v", nextStep(t, "feat"))
 		}
 	})
 
-	t.Run("unsigned on GitHub with no pull request: signing authority blocks opening", func(t *testing.T) {
+	testprocess.Run(t, "unsigned on GitHub with no pull request: signing authority blocks opening", tmp, func(t *testing.T) {
 		_, dir := pushedBranch(t)
 		sshOperatorProfile(t, dir)
 		step, ok := nextStep(t, "feat").(Blocked)
@@ -116,7 +121,7 @@ func TestNext(t *testing.T) {
 		}
 	})
 
-	t.Run("a pull request with unsigned commits: the operator signs and pushes", func(t *testing.T) {
+	testprocess.Run(t, "a pull request with unsigned commits: the operator signs and pushes", tmp, func(t *testing.T) {
 		f, _ := pushedBranch(t)
 		f.prs["feat"] = 7
 		step, ok := nextStep(t, "feat").(ToSign)
@@ -125,7 +130,7 @@ func TestNext(t *testing.T) {
 		}
 	})
 
-	t.Run("a pull request at the signed tip: nothing", func(t *testing.T) {
+	testprocess.Run(t, "a pull request at the signed tip: nothing", tmp, func(t *testing.T) {
 		f, dir := pushedBranch(t)
 		f.prs["feat"] = 7
 		gitIn(t, dir, append(signing(t, dir), "--amend", "--no-edit", "--allow-empty")...)
@@ -135,7 +140,7 @@ func TestNext(t *testing.T) {
 		}
 	})
 
-	t.Run("GitHub behind the signed tip: the operator pushes", func(t *testing.T) {
+	testprocess.Run(t, "GitHub behind the signed tip: the operator pushes", tmp, func(t *testing.T) {
 		f, dir := pushedBranch(t)
 		f.prs["feat"] = 7
 		sign := signing(t, dir)
@@ -147,7 +152,7 @@ func TestNext(t *testing.T) {
 		}
 	})
 
-	t.Run("rewritten signed tip is blocked even with the same tree", func(t *testing.T) {
+	testprocess.Run(t, "rewritten signed tip is blocked even with the same tree", tmp, func(t *testing.T) {
 		f, dir := pushedBranch(t)
 		f.prs["feat"] = 7
 		gitIn(t, dir, append(signing(t, dir), "--amend", "--no-edit", "--allow-empty")...)
@@ -156,7 +161,7 @@ func TestNext(t *testing.T) {
 		}
 	})
 
-	t.Run("unsigned local history cannot replace remote commits", func(t *testing.T) {
+	testprocess.Run(t, "unsigned local history cannot replace remote commits", tmp, func(t *testing.T) {
 		f, dir := pushedBranch(t)
 		f.prs["feat"] = 7
 		gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "Add remote work")
@@ -169,7 +174,7 @@ func TestNext(t *testing.T) {
 		}
 	})
 
-	t.Run("empty local range cannot hide remote commits", func(t *testing.T) {
+	testprocess.Run(t, "empty local range cannot hide remote commits", tmp, func(t *testing.T) {
 		f, dir := pushedBranch(t)
 		f.prs["feat"] = 7
 		gitIn(t, dir, "reset", "--hard", "main")
@@ -180,7 +185,7 @@ func TestNext(t *testing.T) {
 		}
 	})
 
-	t.Run("unrelated remote history is blocked", func(t *testing.T) {
+	testprocess.Run(t, "unrelated remote history is blocked", tmp, func(t *testing.T) {
 		f, dir := pushedBranch(t)
 		f.prs["feat"] = 7
 		gitIn(t, dir, "switch", "--orphan", "remote-side")
@@ -196,7 +201,7 @@ func TestNext(t *testing.T) {
 		}
 	})
 
-	t.Run("branch arguments survive shell parsing", func(t *testing.T) {
+	testprocess.Run(t, "branch arguments survive shell parsing", tmp, func(t *testing.T) {
 		f, dir := pushedBranch(t)
 		branch := "feat'`true`"
 		gitIn(t, dir, "branch", "-m", "feat", branch)
@@ -219,7 +224,7 @@ func TestNext(t *testing.T) {
 		}
 	})
 
-	t.Run("an unpublished quoted branch has one literal open argument", func(t *testing.T) {
+	testprocess.Run(t, "an unpublished quoted branch has one literal open argument", tmp, func(t *testing.T) {
 		_, dir := pushedBranch(t)
 		branch := "fresh'`true`"
 		gitIn(t, dir, "config", "push-guard.allowPublic", "o/r")
@@ -239,7 +244,7 @@ func TestNext(t *testing.T) {
 		}
 	})
 
-	t.Run("GitHub moved since the last fetch: fetch first", func(t *testing.T) {
+	testprocess.Run(t, "GitHub moved since the last fetch: fetch first", tmp, func(t *testing.T) {
 		f, dir := pushedBranch(t)
 		f.prs["feat"] = 7
 		f.heads["feat"] = gitIn(t, dir, "rev-parse", "main")
@@ -248,7 +253,7 @@ func TestNext(t *testing.T) {
 		}
 	})
 
-	t.Run("an upstream of another name: blocked, saying how to fix it", func(t *testing.T) {
+	testprocess.Run(t, "an upstream of another name: blocked, saying how to fix it", tmp, func(t *testing.T) {
 		f, dir := pushedBranch(t)
 		f.prs["feat"] = 7
 		gitIn(t, dir, "config", "branch.feat.merge", "refs/heads/main")
@@ -257,7 +262,7 @@ func TestNext(t *testing.T) {
 		}
 	})
 
-	t.Run("no commits of its own: nothing", func(t *testing.T) {
+	testprocess.Run(t, "no commits of its own: nothing", tmp, func(t *testing.T) {
 		_, dir := pushedBranch(t)
 		gitIn(t, dir, "branch", "empty", "main")
 		if step, ok := nextStep(t, "empty").(Done); !ok || step.Kind != "nothing" {
@@ -265,7 +270,7 @@ func TestNext(t *testing.T) {
 		}
 	})
 
-	t.Run("another user's pull request: blocked", func(t *testing.T) {
+	testprocess.Run(t, "another user's pull request: blocked", tmp, func(t *testing.T) {
 		f, _ := pushedBranch(t)
 		f.prs["feat"], f.authors = 7, map[string]string{"feat": "someone-else"}
 		if step, ok := nextStep(t, "feat").(Blocked); !ok || !strings.Contains(step.Why, "#7 is not a same-repository pull request by me") {
@@ -273,7 +278,7 @@ func TestNext(t *testing.T) {
 		}
 	})
 
-	t.Run("the current branch by default, and the text", func(t *testing.T) {
+	testprocess.Run(t, "the current branch by default, and the text", tmp, func(t *testing.T) {
 		f, _ := pushedBranch(t)
 		f.prs["feat"] = 7
 		steps, err := Next(nil)

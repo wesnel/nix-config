@@ -13,6 +13,7 @@ import (
 	"time"
 
 	shared "github.com/wesnel/agent-tools/internal/availability"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 	"github.com/wesnel/agent-tools/internal/usage"
 )
 
@@ -33,8 +34,12 @@ func noProviderCall(t *testing.T, f *fixture, files ...string) {
 }
 
 func TestProviderAvailability(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	for _, provider := range []string{"claude", "codex"} {
-		t.Run(provider, func(t *testing.T) {
+		testprocess.Run(t, provider, tmp, func(t *testing.T) {
 			f := askFixture(t, true)
 			if code, out := runAvailability(t, "--disable", provider); code != 0 {
 				t.Fatalf("disable provider: exit %d, %s", code, out)
@@ -67,7 +72,7 @@ func TestProviderAvailability(t *testing.T) {
 			}
 		})
 	}
-	t.Run("validate provider", func(t *testing.T) {
+	testprocess.Run(t, "validate provider", tmp, func(t *testing.T) {
 		setUp(t, true)
 		if code, _ := runAvailability(t, "--disable", "../other"); code != 2 {
 			t.Fatalf("invalid provider: %d", code)
@@ -76,7 +81,11 @@ func TestProviderAvailability(t *testing.T) {
 }
 
 func TestQuotaFallback(t *testing.T) {
-	t.Run("quota after a schema error still requests fallback", func(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
+	testprocess.Run(t, "quota after a schema error still requests fallback", tmp, func(t *testing.T) {
 		f := setUp(t, true)
 		f.claudeSays(t, "security-reviewer", claudeResult(nil, "No JSON."), `{"is_error":true,"errors":["API Error: 429 rate_limit_error"]}`)
 		code, _, errs := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
@@ -85,7 +94,7 @@ func TestQuotaFallback(t *testing.T) {
 		}
 		noProviderCall(t, f, "review-guide-runs")
 	})
-	t.Run("Claude suppresses retry guide and later commands", func(t *testing.T) {
+	testprocess.Run(t, "Claude suppresses retry guide and later commands", tmp, func(t *testing.T) {
 		f := askFixture(t, true)
 		f.claudeSays(t, "security-reviewer", `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"You've hit your limit · resets later"}`)
 		code, _, errs := runDelegate(t, "--reviewer", "security", "--reviewer", "guide", "--plan", f.plan, f.base+"..HEAD")
@@ -100,7 +109,7 @@ func TestQuotaFallback(t *testing.T) {
 		}
 		noProviderCall(t, f, "review-guide-runs", "adversarial-reviewer-runs")
 	})
-	t.Run("Codex terminal event blocks later invocations", func(t *testing.T) {
+	testprocess.Run(t, "Codex terminal event blocks later invocations", tmp, func(t *testing.T) {
 		f := askFixture(t, true)
 		t.Setenv("FAKE_CODEX", "quota")
 		if code, _, errs := askCodex(t, "--question", ".git/question.md", "code.txt"); code != 4 || !strings.Contains(errs, "quota") {
@@ -114,7 +123,7 @@ func TestQuotaFallback(t *testing.T) {
 			t.Fatal("blocked Codex executed again, including a preflight")
 		}
 	})
-	t.Run("tool output is not quota evidence", func(t *testing.T) {
+	testprocess.Run(t, "tool output is not quota evidence", tmp, func(t *testing.T) {
 		f := askFixture(t, true)
 		t.Setenv("FAKE_CODEX", "quota-prose")
 		askCodex(t, "--question", ".git/question.md", "code.txt")
@@ -167,9 +176,13 @@ func TestClaudeQuotaCode(t *testing.T) {
 }
 
 func TestClaudeQuotaMessages(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	for _, message := range []string{"You're out of usage credits", "You're out of extra usage",
 		"You've hit your channel's monthly spend limit.", "You've hit your monthly spend limit."} {
-		t.Run(message, func(t *testing.T) {
+		testprocess.Run(t, message, tmp, func(t *testing.T) {
 			f := setUp(t, true)
 			out := must(json.Marshal(map[string]any{"type": "result", "is_error": true, "result": message}))
 			f.claudeSays(t, "security-reviewer", string(out))
@@ -209,8 +222,12 @@ func TestFallbackPrompts(t *testing.T) {
 }
 
 func TestDiagramQuota(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	for _, stage := range []string{"drawing", "critique", "redraw"} {
-		t.Run(stage, func(t *testing.T) {
+		testprocess.Run(t, stage, tmp, func(t *testing.T) {
 			f := setUp(t, true)
 			t.Setenv("FAKE_CODEX", "critique")
 			t.Setenv("FAKE_CHECKED", `["N1","N2","E1"]`)
@@ -237,6 +254,9 @@ func TestDiagramQuota(t *testing.T) {
 }
 
 func TestKnownClaudeQuota(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	f := setUp(t, true)
 	now := time.Now()
 	if err := usage.Record(usage.File(), []usage.Window{{Name: "7d", Used: 100, ResetsAt: now.Add(time.Hour).Unix(), ObservedAt: now.Add(-time.Hour).Unix()}}); err != nil {

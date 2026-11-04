@@ -13,6 +13,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
 	"github.com/wesnel/agent-tools/internal/refusal"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 // useDir points the package's git at dir for the rest of the test.
@@ -258,10 +259,14 @@ func newLocalStack(t *testing.T) *localStack {
 }
 
 func TestCheckLocal(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	repo := &Repo{Slug: "o/r", Default: "trunk"}
 	unfetched := strings.Repeat("1", 40)
 
-	t.Run("stacked", func(t *testing.T) {
+	testprocess.Run(t, "stacked", tmp, func(t *testing.T) {
 		s := newLocalStack(t)
 		local, known, err := checkLocal(repo, "child", "parent", s.parent, s.child, false)
 		if err != nil || local != s.child {
@@ -281,7 +286,7 @@ func TestCheckLocal(t *testing.T) {
 
 	// The default branch may have moved on GitHub past what was fetched;
 	// what was fetched is still left out of the upload.
-	t.Run("default base not fetched", func(t *testing.T) {
+	testprocess.Run(t, "default base not fetched", tmp, func(t *testing.T) {
 		s := newLocalStack(t)
 		if _, known, err := checkLocal(repo, "child", "trunk", unfetched, s.child, false); err != nil || strings.Join(known, " ") != "--remotes=origin/* --remotes=another/*" {
 			t.Errorf("default base not fetched: %v, %v", known, err)
@@ -298,7 +303,7 @@ func TestCheckLocal(t *testing.T) {
 		"Co-Authored-By":     {"attributed", "trunk", ""},
 	}
 	for name, c := range refused {
-		t.Run("refused/"+name, func(t *testing.T) {
+		testprocess.Run(t, "refused/"+name, tmp, func(t *testing.T) {
 			s := newLocalStack(t)
 			oid := c[2]
 			switch oid {
@@ -317,14 +322,14 @@ func TestCheckLocal(t *testing.T) {
 		})
 	}
 
-	t.Run("message an amend! rewords", func(t *testing.T) {
+	testprocess.Run(t, "message an amend! rewords", tmp, func(t *testing.T) {
 		s := newLocalStack(t)
 		if _, _, err := checkLocal(repo, "reworded", "trunk", s.trunk, gitIn(t, s.dir, "rev-parse", "reworded"), false); err != nil {
 			t.Errorf("a message an amend! rewords: %v", err)
 		}
 	})
 
-	t.Run("upstream", func(t *testing.T) {
+	testprocess.Run(t, "upstream", tmp, func(t *testing.T) {
 		s := newLocalStack(t)
 		gitIn(t, s.dir, "branch", "--set-upstream-to=origin/trunk", "child")
 		if err := setUpstream(repo, "child"); err != nil {
@@ -339,6 +344,10 @@ func TestCheckLocal(t *testing.T) {
 // TestCheckLocalParent covers a branch that contains a branch GitHub has
 // but its base lacks: its pull request would carry the parent's commits.
 func TestCheckLocalParent(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	repo := &Repo{Slug: "o/r", Default: "trunk"}
 	// pushed publishes branches to a bare repository that origin pushes to,
 	// which leaves origin/<branch> in the checkout as a fetch would.
@@ -355,7 +364,7 @@ func TestCheckLocalParent(t *testing.T) {
 		gitIn(t, s.dir, "commit", "-q", "--allow-empty", "-m", "grandchild")
 	}
 
-	t.Run("default base refused, naming the parent", func(t *testing.T) {
+	testprocess.Run(t, "default base refused, naming the parent", tmp, func(t *testing.T) {
 		s := newLocalStack(t)
 		pushed(t, s, "parent")
 		_, _, err := checkLocal(repo, "child", "trunk", s.trunk, s.child, false)
@@ -364,7 +373,7 @@ func TestCheckLocalParent(t *testing.T) {
 		}
 	})
 
-	t.Run("nearest parent when several", func(t *testing.T) {
+	testprocess.Run(t, "nearest parent when several", tmp, func(t *testing.T) {
 		s := newLocalStack(t)
 		grandchild(t, s)
 		pushed(t, s, "parent", "child")
@@ -374,7 +383,7 @@ func TestCheckLocalParent(t *testing.T) {
 		}
 	})
 
-	t.Run("explicit base that is the parent passes", func(t *testing.T) {
+	testprocess.Run(t, "explicit base that is the parent passes", tmp, func(t *testing.T) {
 		s := newLocalStack(t)
 		pushed(t, s, "parent")
 		if _, _, err := checkLocal(repo, "child", "parent", s.parent, s.child, false); err != nil {
@@ -382,7 +391,7 @@ func TestCheckLocalParent(t *testing.T) {
 		}
 	})
 
-	t.Run("explicit base above the nearest parent refused", func(t *testing.T) {
+	testprocess.Run(t, "explicit base above the nearest parent refused", tmp, func(t *testing.T) {
 		s := newLocalStack(t)
 		grandchild(t, s)
 		pushed(t, s, "parent", "child")
@@ -392,7 +401,7 @@ func TestCheckLocalParent(t *testing.T) {
 		}
 	})
 
-	t.Run("parent already in the base passes", func(t *testing.T) {
+	testprocess.Run(t, "parent already in the base passes", tmp, func(t *testing.T) {
 		s := newLocalStack(t)
 		pushed(t, s, "parent")
 		if _, _, err := checkLocal(repo, "child", "trunk", s.parent, s.child, false); err != nil {
@@ -400,7 +409,7 @@ func TestCheckLocalParent(t *testing.T) {
 		}
 	})
 
-	t.Run("unrelated remote branch passes", func(t *testing.T) {
+	testprocess.Run(t, "unrelated remote branch passes", tmp, func(t *testing.T) {
 		s := newLocalStack(t)
 		pushed(t, s, "aside")
 		if _, _, err := checkLocal(repo, "child", "trunk", s.trunk, s.child, false); err != nil {
@@ -565,9 +574,13 @@ func (s *fixedStack) stack(t *testing.T) *signedStack {
 // TestRehearse checks the rehearsal of a pass over a two-branch stack with
 // fixups in both branches.
 func TestRehearse(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	// It accepts the stack without moving a branch, even with
 	// rebase.updateRefs on.
-	t.Run("clean stack", func(t *testing.T) {
+	testprocess.Run(t, "clean stack", tmp, func(t *testing.T) {
 		s := newFixedStack(t)
 		branches := gitIn(t, s.dir, "for-each-ref", "refs/heads/")
 		if err := rehearse(s.stack(t)); err != nil {
@@ -582,7 +595,7 @@ func TestRehearse(t *testing.T) {
 	})
 
 	// A fixup aimed at L1 that touches a line L2 later changed conflicts.
-	t.Run("conflicting fixup", func(t *testing.T) {
+	testprocess.Run(t, "conflicting fixup", tmp, func(t *testing.T) {
 		s := newFixedStack(t)
 		gitIn(t, s.dir, "switch", "-q", "lower")
 		before := gitIn(t, s.dir, "rev-parse", "lower")

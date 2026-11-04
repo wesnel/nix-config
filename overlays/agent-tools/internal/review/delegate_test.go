@@ -14,6 +14,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/loop"
 	"github.com/wesnel/agent-tools/internal/record"
 	"github.com/wesnel/agent-tools/internal/redcheck"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 // delegateCmd runs `git delegate` with args and returns its exit status,
@@ -29,6 +30,9 @@ func delegateCmd(t *testing.T, args ...string) (int, string, string) {
 // of the range adds rounds, and its reviewers are given the earlier
 // findings by their record IDs.
 func TestRecordRounds(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	f := setUp(t, true)
 	code, first, stderr := runDelegate(t, "--model", "fake-model", "--plan", f.plan, f.base+"..HEAD")
 	if code != 3 {
@@ -88,6 +92,9 @@ func TestRecordRedCheck(t *testing.T) {
 // recorded with its number; its next review is given the findings of the
 // last.
 func TestPullRequestSource(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	f := setUp(t, true)
 	r := newRemote(t, nil)
 	gh := setUpPR(t, r)
@@ -170,6 +177,9 @@ func TestPRInputsRedactThenCap(t *testing.T) {
 
 // A pr-N.org that fails its structure check stops the review with exit 5.
 func TestPRRecordDrift(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	setUp(t, true)
 	r := newRemote(t, nil)
 	setUpPR(t, r)

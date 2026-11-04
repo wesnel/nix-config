@@ -13,6 +13,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/record"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 type fakeComment struct{ login, typ string }
@@ -183,7 +184,11 @@ func refused(err error) bool {
 }
 
 func TestReply(t *testing.T) {
-	t.Run("outside a bots-mode loop", func(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
+	testprocess.Run(t, "outside a bots-mode loop", tmp, func(t *testing.T) {
 		for _, mode := range []string{"", "people"} {
 			f := fakeRepo(t)
 			t.Setenv(ModeEnv, mode)
@@ -197,7 +202,7 @@ func TestReply(t *testing.T) {
 	})
 
 	for _, id := range []string{"bot1", "answered1", "long1", "bot2"} {
-		t.Run("reply/"+id, func(t *testing.T) {
+		testprocess.Run(t, "reply/"+id, tmp, func(t *testing.T) {
 			f := fakeRepo(t)
 			t.Setenv(ModeEnv, "bots")
 			if _, err := Reply(id, "done"); err != nil || f.replies[id] != "done" {
@@ -209,7 +214,7 @@ func TestReply(t *testing.T) {
 	// A person's comment anywhere in a thread, the 121st of 150 included,
 	// makes it the operator's; so does a login that only looks like a bot's.
 	for _, id := range []string{"human1", "joined1", "posed1", "longmix1", "theirs", "closed"} {
-		t.Run("refused/"+id, func(t *testing.T) {
+		testprocess.Run(t, "refused/"+id, tmp, func(t *testing.T) {
 			f := fakeRepo(t)
 			t.Setenv(ModeEnv, "bots")
 			if _, err := Reply(id, "x"); !refused(err) {
@@ -224,7 +229,7 @@ func TestReply(t *testing.T) {
 		})
 	}
 
-	t.Run("a page that fails", func(t *testing.T) {
+	testprocess.Run(t, "a page that fails", tmp, func(t *testing.T) {
 		f := fakeRepo(t)
 		t.Setenv(ModeEnv, "bots")
 		if _, err := Reply("broken5", "x"); err == nil || len(f.replies) != 0 {
@@ -235,7 +240,7 @@ func TestReply(t *testing.T) {
 		}
 	})
 
-	t.Run("resolve", func(t *testing.T) {
+	testprocess.Run(t, "resolve", tmp, func(t *testing.T) {
 		f := fakeRepo(t)
 		t.Setenv(ModeEnv, "bots")
 		if _, err := Resolve("bot1"); !refused(err) {
@@ -249,7 +254,7 @@ func TestReply(t *testing.T) {
 		}
 	})
 
-	t.Run("missing thread", func(t *testing.T) {
+	testprocess.Run(t, "missing thread", tmp, func(t *testing.T) {
 		fakeRepo(t)
 		t.Setenv(ModeEnv, "bots")
 		if _, err := Reply("missing", "x"); err == nil {
@@ -257,7 +262,7 @@ func TestReply(t *testing.T) {
 		}
 	})
 
-	t.Run("empty reply", func(t *testing.T) {
+	testprocess.Run(t, "empty reply", tmp, func(t *testing.T) {
 		fakeRepo(t)
 		t.Setenv(ModeEnv, "bots")
 		if _, err := Reply("bot1", " \n"); !refused(err) {

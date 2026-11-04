@@ -11,6 +11,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 // TestMain runs main instead of the tests when asked to, so a test can run
@@ -93,6 +94,9 @@ func operatorHome(t *testing.T, pub string) {
 // The command a failed push prints for resuming is one this program
 // accepts, and it pushes what is left.
 func TestPrintedResume(t *testing.T) {
+	if !testprocess.Top(t, testprocess.SocketTemp(t)) {
+		return
+	}
 	dir := t.TempDir()
 	key := filepath.Join(dir, "key")
 	if out, err := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key).CombinedOutput(); err != nil {

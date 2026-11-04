@@ -13,6 +13,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/record"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 	"github.com/wesnel/agent-tools/internal/upgrade"
 )
 
@@ -117,7 +118,11 @@ func ids(out output) []string {
 // for them, fenced as data; a pin with none gathered, or none the reply
 // says it read, is an unread-upgrade finding of the review's own.
 func TestFocusUpgrade(t *testing.T) {
-	t.Run("checked", func(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
+	testprocess.Run(t, "checked", tmp, func(t *testing.T) {
 		u := setUpUpgrade(t)
 		u.says(t, upgradeReply(t, u.lib))
 		code, out, stderr := u.review(t)
@@ -152,7 +157,7 @@ func TestFocusUpgrade(t *testing.T) {
 		}
 	})
 
-	t.Run("a pin the reply does not say it read", func(t *testing.T) {
+	testprocess.Run(t, "a pin the reply does not say it read", tmp, func(t *testing.T) {
 		u := setUpUpgrade(t)
 		u.says(t, upgradeReply(t))
 		code, out, stderr := u.review(t)
@@ -166,7 +171,7 @@ func TestFocusUpgrade(t *testing.T) {
 
 	// An unread pin keeps its ID in the record, and is settled as any
 	// finding is: a later round raising it again adds nothing.
-	t.Run("settled", func(t *testing.T) {
+	testprocess.Run(t, "settled", tmp, func(t *testing.T) {
 		u := setUpUpgrade(t)
 		u.says(t, upgradeReply(t, u.lib))
 		code, first, stderr := runDelegate(t, "--reviewer", "upgrade", "--plan", u.plan, u.given)
@@ -192,7 +197,7 @@ func TestFocusUpgrade(t *testing.T) {
 	})
 
 	// A reviewer's own finding cannot take an ID the review raises itself.
-	t.Run("a reviewer's UP- id", func(t *testing.T) {
+	testprocess.Run(t, "a reviewer's UP- id", tmp, func(t *testing.T) {
 		u := setUpUpgrade(t)
 		u.says(t, strings.Replace(upgradeReply(t, u.lib), `"id": "1"`, `"id": "UP-x"`, 1))
 		_, out, stderr := u.review(t)
@@ -202,7 +207,7 @@ func TestFocusUpgrade(t *testing.T) {
 	})
 
 	// A pin added, or dropped, that is no other's pair is unread too.
-	t.Run("added and dropped", func(t *testing.T) {
+	testprocess.Run(t, "added and dropped", tmp, func(t *testing.T) {
 		u := setUpUpgrade(t)
 		lock := string(must(os.ReadFile(filepath.Join(u.repo, "flake.lock"))))
 		lock = strings.Replace(lock, `"private": {"locked": {"type": "git", "url": "ssh://git@example.com/p"`,
@@ -225,7 +230,7 @@ func TestFocusUpgrade(t *testing.T) {
 	// The printed prompt holds what was gathered; a cache directory
 	// others may write is refused, said on stderr, and the pins fetched
 	// all the same.
-	t.Run("printed", func(t *testing.T) {
+	testprocess.Run(t, "printed", tmp, func(t *testing.T) {
 		u := setUpUpgrade(t)
 		os.MkdirAll(u.opts.Cache, 0o755)
 		os.Chmod(u.opts.Cache, 0o755)
@@ -252,7 +257,7 @@ func TestFocusUpgrade(t *testing.T) {
 
 	// A reply's account counts only at the pin's two versions, as the
 	// prompt shows them or whole.
-	t.Run("the versions read", func(t *testing.T) {
+	testprocess.Run(t, "the versions read", tmp, func(t *testing.T) {
 		u := setUpUpgrade(t)
 		other := u.lib
 		other.Old = "0123456789ab"
@@ -264,7 +269,7 @@ func TestFocusUpgrade(t *testing.T) {
 
 	// A private repository nothing names is not read: its pin is unread,
 	// and says why.
-	t.Run("a private repository", func(t *testing.T) {
+	testprocess.Run(t, "a private repository", tmp, func(t *testing.T) {
 		u := setUpUpgrade(t)
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/repos/acme/lib" {

@@ -344,6 +344,10 @@ func Load(ctx context.Context) (Profile, error) {
 	return p, nil
 }
 
+// statusBatch is how many commits' signature statuses one git log reads;
+// tests lower it to cross chunk boundaries with few commits.
+var statusBatch = 64
+
 // Verify refuses unless every commit tip reaches and none of have does
 // carries a good signature by the protected operator key, and returns how
 // many there are. It reads both the graph and the signatures in an
@@ -483,28 +487,41 @@ func Verify(ctx context.Context, tip string, have []string) (int, error) {
 			args = append(args, "-c", "gpg.ssh.revocationFile="+path)
 		}
 	}
-	for _, commit := range commits {
-		raw, err := readView(nil, "cat-file", "commit", commit)
-		if err != nil {
-			return 0, err
-		}
+	if err := git.BatchCommits(commits, readView, func(commit string, raw []byte) error {
 		// git reads an object file without checking that its content is the
 		// object it is named for.
 		if named(objectFormat, raw) != commit {
-			return 0, fmt.Errorf("hash mismatch: the object of commit %.12s holds another commit", commit)
+			return fmt.Errorf("hash mismatch: the object of commit %.12s holds another commit", commit)
 		}
 		if !SignedIn(raw, p.format) {
-			return 0, refuse("commit %.12s has no signature in the operator's signing format", commit)
+			return refuse("commit %.12s has no signature in the operator's signing format", commit)
 		}
-		check := append(append([]string{}, args...), "log", "-1", "--format=%G?%x00%GF%x00%GP", commit)
+		return nil
+	}); err != nil {
+		return 0, err
+	}
+	for start := 0; start < len(commits); start += statusBatch {
+		end := min(start+statusBatch, len(commits))
+		check := append(append([]string{}, args...), "log", "--no-walk=unsorted", "--format=%H%x00%G?%x00%GF%x00%GP")
+		check = append(check, commits[start:end]...)
 		out, err := readView(nil, check...)
 		if err != nil {
 			return 0, err
 		}
-		fields := strings.Split(strings.TrimSuffix(string(out), "\n"), "\x00")
-		if len(fields) != 3 || fields[0] != "G" && fields[0] != "U" ||
-			!strings.EqualFold(fields[1], p.fingerprint) && (p.exactSigner || !strings.EqualFold(fields[2], p.fingerprint)) {
-			return 0, refuse("commit %.12s has no verified signature by the protected operator key", commit)
+		if !strings.HasSuffix(string(out), "\n") {
+			return 0, fmt.Errorf("git returned incomplete signature statuses")
+		}
+		lines := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+		if len(lines) != end-start {
+			return 0, fmt.Errorf("git returned an unexpected number of signature statuses")
+		}
+		for i, line := range lines {
+			commit := commits[start+i]
+			fields := strings.Split(line, "\x00")
+			if len(fields) != 4 || fields[0] != commit || fields[1] != "G" && fields[1] != "U" ||
+				!strings.EqualFold(fields[2], p.fingerprint) && (p.exactSigner || !strings.EqualFold(fields[3], p.fingerprint)) {
+				return 0, refuse("commit %.12s has no verified signature by the protected operator key", commit)
+			}
 		}
 	}
 	return len(commits), nil

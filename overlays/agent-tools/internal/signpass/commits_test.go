@@ -13,10 +13,15 @@ import (
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/plans"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 func TestPlanCommitRewrites(t *testing.T) {
-	t.Run("fork duplicate subjects and reword", func(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
+	testprocess.Run(t, "fork duplicate subjects and reword", tmp, func(t *testing.T) {
 		repo, _ := flakyRepo(t)
 		gitIn(t, repo, "remote", "add", "origin", "git@github.com:o/r.git")
 		gitIn(t, repo, "commit", "--amend", "--allow-empty", "-m", "a")
@@ -60,7 +65,7 @@ func TestPlanCommitRewrites(t *testing.T) {
 			}
 		}
 	})
-	t.Run("fixup identities", func(t *testing.T) {
+	testprocess.Run(t, "fixup identities", tmp, func(t *testing.T) {
 		repo, _ := flakyRepo(t)
 		gitIn(t, repo, "remote", "add", "origin", "git@github.com:o/r.git")
 		gitIn(t, repo, "commit", "--allow-empty", "-m", "fixup! a")
@@ -152,7 +157,7 @@ func TestPlanCommitRewrites(t *testing.T) {
 			}
 		}},
 	} {
-		t.Run(c.name+" warns and signs", func(t *testing.T) {
+		testprocess.Run(t, c.name+" warns and signs", tmp, func(t *testing.T) {
 			repo, _ := flakyRepo(t)
 			gitIn(t, repo, "remote", "add", "origin", "git@github.com:o/r.git")
 			cfg, p := commitPlan(t, repo)
@@ -185,7 +190,7 @@ func TestPlanCommitRewrites(t *testing.T) {
 	// than wrongly, and the pass still ends. The pass itself cannot get there
 	// once verify has passed, so finish is given a pending state whose
 	// unsigned tip has a commit more than the signed branch.
-	t.Run("count mismatch warns and records nothing", func(t *testing.T) {
+	testprocess.Run(t, "count mismatch warns and records nothing", tmp, func(t *testing.T) {
 		repo, _ := flakyRepo(t)
 		gitIn(t, repo, "remote", "add", "origin", "git@github.com:o/r.git")
 		cfg, p := commitPlan(t, repo)

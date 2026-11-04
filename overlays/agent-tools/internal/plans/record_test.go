@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 // commitRepo makes a repository whose origin is GitHub's o/r and whose
@@ -178,6 +180,10 @@ func locatePart(t *testing.T, c Config, plan, id string, worktrees, sessions []s
 }
 
 func TestLocate(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	later := day.AddDate(0, 0, 1)
 	locate := func(t *testing.T, c Config, session, worktree, wantPlan, wantPart string) {
 		t.Helper()
@@ -195,7 +201,7 @@ func TestLocate(t *testing.T) {
 		}
 	}
 
-	t.Run("the session's plan over an older plan of the worktree", func(t *testing.T) {
+	testprocess.Run(t, "the session's plan over an older plan of the worktree", tmp, func(t *testing.T) {
 		c := testConfig(t)
 		_, w := checkouts(t, 2)
 		locatePlan(t, c, "old", day, []string{w[0]}, []string{"claude:other"})
@@ -203,7 +209,7 @@ func TestLocate(t *testing.T) {
 		locate(t, c, "s1", w[0], mine, "")
 	})
 
-	t.Run("the session's older plan that names the worktree", func(t *testing.T) {
+	testprocess.Run(t, "the session's older plan that names the worktree", tmp, func(t *testing.T) {
 		c := testConfig(t)
 		_, w := checkouts(t, 2)
 		older := locatePlan(t, c, "older", day, []string{w[0]}, []string{"claude:s1"})
@@ -211,7 +217,7 @@ func TestLocate(t *testing.T) {
 		locate(t, c, "s1", w[0], older, "")
 	})
 
-	t.Run("the linked worktree's plan when no plan names the session", func(t *testing.T) {
+	testprocess.Run(t, "the linked worktree's plan when no plan names the session", tmp, func(t *testing.T) {
 		c := testConfig(t)
 		_, w := checkouts(t, 1)
 		plan := locatePlan(t, c, "x", day, []string{w[0]}, []string{"claude:other"})
@@ -221,7 +227,7 @@ func TestLocate(t *testing.T) {
 
 	// Many plans name the main checkout, and none of them is the plan of a
 	// session they do not name.
-	t.Run("no plan for the main checkout when no plan names the session", func(t *testing.T) {
+	testprocess.Run(t, "no plan for the main checkout when no plan names the session", tmp, func(t *testing.T) {
 		c := testConfig(t)
 		main, _ := checkouts(t, 0)
 		locatePlan(t, c, "older", day, []string{main}, []string{"claude:other"})
@@ -232,7 +238,7 @@ func TestLocate(t *testing.T) {
 
 	// The session's older plan, such as an unplanned plan made for a
 	// commit in the main checkout, is not its plan for naming it too.
-	t.Run("the session's newest plan over its older plan of the main checkout", func(t *testing.T) {
+	testprocess.Run(t, "the session's newest plan over its older plan of the main checkout", tmp, func(t *testing.T) {
 		c := testConfig(t)
 		main, w := checkouts(t, 1)
 		locatePlan(t, c, "older", day, []string{main}, []string{"claude:s1"})
@@ -240,7 +246,7 @@ func TestLocate(t *testing.T) {
 		locate(t, c, "s1", main, newer, "")
 	})
 
-	t.Run("a part naming the worktree over its own file naming it", func(t *testing.T) {
+	testprocess.Run(t, "a part naming the worktree over its own file naming it", tmp, func(t *testing.T) {
 		c := testConfig(t)
 		_, w := checkouts(t, 1)
 		plan := locatePlan(t, c, "x", day, []string{w[0]}, []string{"claude:s1"})
@@ -248,7 +254,7 @@ func TestLocate(t *testing.T) {
 		locate(t, c, "s1", w[0], plan, "P1")
 	})
 
-	t.Run("a part naming the worktree but no session", func(t *testing.T) {
+	testprocess.Run(t, "a part naming the worktree but no session", tmp, func(t *testing.T) {
 		c := testConfig(t)
 		main, w := checkouts(t, 1)
 		plan := locatePlan(t, c, "x", day, []string{main}, []string{"claude:s1"})
@@ -257,7 +263,7 @@ func TestLocate(t *testing.T) {
 	})
 
 	// After a /clear only the plan's own file names the new session.
-	t.Run("a part naming an earlier session", func(t *testing.T) {
+	testprocess.Run(t, "a part naming an earlier session", tmp, func(t *testing.T) {
 		c := testConfig(t)
 		_, w := checkouts(t, 1)
 		plan := locatePlan(t, c, "x", day, nil, []string{"claude:s1", "claude:s2"})
@@ -265,7 +271,7 @@ func TestLocate(t *testing.T) {
 		locate(t, c, "s2", w[0], plan, "P1")
 	})
 
-	t.Run("the own file when no file names the worktree", func(t *testing.T) {
+	testprocess.Run(t, "the own file when no file names the worktree", tmp, func(t *testing.T) {
 		c := testConfig(t)
 		_, w := checkouts(t, 2)
 		plan := locatePlan(t, c, "x", day, nil, []string{"claude:s1"})
@@ -273,7 +279,7 @@ func TestLocate(t *testing.T) {
 		locate(t, c, "s1", w[1], plan, "")
 	})
 
-	t.Run("the own file in the main checkout a part names", func(t *testing.T) {
+	testprocess.Run(t, "the own file in the main checkout a part names", tmp, func(t *testing.T) {
 		c := testConfig(t)
 		main, _ := checkouts(t, 0)
 		plan := locatePlan(t, c, "x", day, nil, []string{"claude:s1"})
@@ -281,7 +287,7 @@ func TestLocate(t *testing.T) {
 		locate(t, c, "s1", main, plan, "")
 	})
 
-	t.Run("the first part when only parts name the session", func(t *testing.T) {
+	testprocess.Run(t, "the first part when only parts name the session", tmp, func(t *testing.T) {
 		c := testConfig(t)
 		_, w := checkouts(t, 3)
 		plan := locatePlan(t, c, "x", day, nil, []string{"claude:lead"})
@@ -290,7 +296,7 @@ func TestLocate(t *testing.T) {
 		locate(t, c, "s1", w[2], plan, "P1")
 	})
 
-	t.Run("the newest of equally named plans", func(t *testing.T) {
+	testprocess.Run(t, "the newest of equally named plans", tmp, func(t *testing.T) {
 		c := testConfig(t)
 		_, w := checkouts(t, 1)
 		locatePlan(t, c, "older", day, []string{w[0]}, []string{"claude:s1"})
@@ -298,7 +304,7 @@ func TestLocate(t *testing.T) {
 		locate(t, c, "s1", w[0], newer, "")
 	})
 
-	t.Run("one key", func(t *testing.T) {
+	testprocess.Run(t, "one key", tmp, func(t *testing.T) {
 		c := testConfig(t)
 		_, w := checkouts(t, 2)
 		bySession := locatePlan(t, c, "a", day, []string{w[0]}, []string{"claude:s1"})

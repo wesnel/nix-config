@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/wesnel/agent-tools/internal/gh"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 // mergeAsync answers PUT pulls/N/merge-async as GitHub's REST docs ("Merge
@@ -70,7 +71,11 @@ func mergeRepo(t *testing.T, answers string) (*fakeStacks, *fakeTTY) {
 }
 
 func TestMerge(t *testing.T) {
-	t.Run("the top and every open PR below it", func(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
+	testprocess.Run(t, "the top and every open PR below it", tmp, func(t *testing.T) {
 		f, tty := mergeRepo(t, "y\n")
 		got, err := Merge("3", "")
 		if err != nil {
@@ -101,7 +106,7 @@ func TestMerge(t *testing.T) {
 		}
 	})
 
-	t.Run("a merged PR below is left out", func(t *testing.T) {
+	testprocess.Run(t, "a merged PR below is left out", tmp, func(t *testing.T) {
 		f, tty := mergeRepo(t, "y\n")
 		f.prs[1].state = "MERGED"
 		got, err := Merge("c", "squash")
@@ -116,7 +121,7 @@ func TestMerge(t *testing.T) {
 		}
 	})
 
-	t.Run("a PR in no stack", func(t *testing.T) {
+	testprocess.Run(t, "a PR in no stack", tmp, func(t *testing.T) {
 		f, _ := mergeRepo(t, "y\n")
 		got, err := Merge("5", "")
 		if err != nil {
@@ -127,7 +132,7 @@ func TestMerge(t *testing.T) {
 		}
 	})
 
-	t.Run("not confirmed", func(t *testing.T) {
+	testprocess.Run(t, "not confirmed", tmp, func(t *testing.T) {
 		f, _ := mergeRepo(t, "n\n")
 		got, err := Merge("3", "")
 		if err != nil {
@@ -151,7 +156,7 @@ func TestMerge(t *testing.T) {
 			return "9", ""
 		},
 	} {
-		t.Run("refused/"+name, func(t *testing.T) {
+		testprocess.Run(t, "refused/"+name, tmp, func(t *testing.T) {
 			f, tty := mergeRepo(t, "y\n")
 			target, method := setup(f)
 			if _, err := Merge(target, method); !refusedWell(err) {
@@ -163,7 +168,7 @@ func TestMerge(t *testing.T) {
 		})
 	}
 
-	t.Run("refused/no terminal", func(t *testing.T) {
+	testprocess.Run(t, "refused/no terminal", tmp, func(t *testing.T) {
 		f, _ := mergeRepo(t, "")
 		openTTY = func() (io.ReadWriteCloser, error) { return nil, errors.New("device not configured") }
 		if _, err := Merge("3", ""); !refusedWell(err) || len(f.writes) != 0 {
@@ -172,7 +177,7 @@ func TestMerge(t *testing.T) {
 	})
 
 	// GitHub's own refusal is reported as a failure, not a policy refusal.
-	t.Run("GitHub's 409", func(t *testing.T) {
+	testprocess.Run(t, "GitHub's 409", tmp, func(t *testing.T) {
 		f, _ := mergeRepo(t, "y\n")
 		f.fail = &gh.StatusError{Code: 409}
 		if _, err := Merge("3", ""); err == nil || refused(err) || len(f.writes) != 1 {

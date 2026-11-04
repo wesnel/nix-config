@@ -98,6 +98,176 @@ func TestVerifyMarks(t *testing.T) {
 	}
 }
 
+func TestVerifyMalformedBatch(t *testing.T) {
+	stub := pgpProfile(t)
+	script := "#!/bin/sh\necho '[GNUPG:] NEWSIG'\necho '[GNUPG:] GOODSIG 89ABCDEF01234567 T <t@e>'\n" +
+		"echo '[GNUPG:] VALIDSIG " + operator + " 2023-11-14 1700000000 0 4 0 22 8 00 " + operator + "'\n" +
+		"echo '[GNUPG:] TRUST_ULTIMATE 0 pgp'\n"
+	if err := os.WriteFile(stub, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	base, tip := pgpRepo(t)
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	marker := filepath.Join(bin, "intercepted")
+	wrapper := "#!/bin/sh\nfor arg do\n  if [ \"$arg\" = --batch ]; then : > \"$MARKER\"; printf malformed; exit 0; fi\ndone\nexec \"$REAL_GIT\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(wrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("REAL_GIT", real)
+	t.Setenv("MARKER", marker)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if n, err := Verify(t.Context(), tip, []string{base}); err == nil {
+		t.Fatalf("malformed commit response was accepted: %d", n)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("object response was not intercepted: %v", err)
+	}
+}
+
+func TestVerifyMalformedStatuses(t *testing.T) {
+	for _, tc := range []struct{ name, response string }{
+		{"malformed", "printf malformed"},
+		{"missing", ":"},
+		{"duplicate", `"$REAL_GIT" "$@"; "$REAL_GIT" "$@"`},
+		{"wrong object", `printf '%s\000G\000%s\000%s\n' 0000000000000000000000000000000000000000 "$OPERATOR" "$OPERATOR"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := pgpProfile(t)
+			script := "#!/bin/sh\necho '[GNUPG:] NEWSIG'\necho '[GNUPG:] GOODSIG 89ABCDEF01234567 T <t@e>'\n" +
+				"echo '[GNUPG:] VALIDSIG " + operator + " 2023-11-14 1700000000 0 4 0 22 8 00 " + operator + "'\n" +
+				"echo '[GNUPG:] TRUST_ULTIMATE 0 pgp'\n"
+			if err := os.WriteFile(stub, []byte(script), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			base, tip := pgpRepo(t)
+			real, err := exec.LookPath("git")
+			if err != nil {
+				t.Fatal(err)
+			}
+			bin := t.TempDir()
+			marker := filepath.Join(bin, "intercepted")
+			wrapper := "#!/bin/sh\nfor arg do\n  if [ \"$arg\" = --no-walk=unsorted ]; then : > \"$MARKER\"; " + tc.response + "; exit 0; fi\ndone\nexec \"$REAL_GIT\" \"$@\"\n"
+			if err := os.WriteFile(filepath.Join(bin, "git"), []byte(wrapper), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("REAL_GIT", real)
+			t.Setenv("MARKER", marker)
+			t.Setenv("OPERATOR", operator)
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			if n, err := Verify(t.Context(), tip, []string{base}); err == nil {
+				t.Fatalf("invalid signature statuses were accepted: %d", n)
+			}
+			if _, err := os.Stat(marker); err != nil {
+				t.Fatalf("signature statuses were not intercepted: %v", err)
+			}
+		})
+	}
+}
+
+func TestVerifyMultipleStatuses(t *testing.T) {
+	stub := pgpProfile(t)
+	script := "#!/bin/sh\necho '[GNUPG:] NEWSIG'\necho '[GNUPG:] GOODSIG 89ABCDEF01234567 T <t@e>'\n" +
+		"echo '[GNUPG:] VALIDSIG " + operator + " 2023-11-14 1700000000 0 4 0 22 8 00 " + operator + "'\n" +
+		"echo '[GNUPG:] TRUST_ULTIMATE 0 pgp'\n"
+	if err := os.WriteFile(stub, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	base, tip := pgpRepo(t)
+	raw, err := git.Bytes(nil, "cat-file", "commit", tip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := strings.Replace(string(raw), "parent "+base+"\n", "parent "+tip+"\n", 1)
+	if second == string(raw) {
+		t.Fatal("first commit had no expected parent")
+	}
+	oid, err := git.Bytes([]byte(second), "hash-object", "-t", "commit", "-w", "--stdin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tip2 := strings.TrimSpace(string(oid))
+	if n, err := Verify(t.Context(), tip2, []string{base}); err != nil || n != 2 {
+		t.Fatalf("two valid commits: %d, %v", n, err)
+	}
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	marker := filepath.Join(bin, "intercepted")
+	wrapper := "#!/bin/sh\nfor arg do\n  if [ \"$arg\" = --no-walk=unsorted ]; then : > \"$MARKER\"; " +
+		"printf '%s\\000G\\000%s\\000%s\\n' \"$OID2\" \"$OPERATOR\" \"$OPERATOR\"; " +
+		"printf '%s\\000G\\000%s\\000%s\\n' \"$OID1\" bad bad; exit 0; fi\ndone\nexec \"$REAL_GIT\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(wrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("REAL_GIT", real)
+	t.Setenv("MARKER", marker)
+	t.Setenv("OID1", tip)
+	t.Setenv("OID2", tip2)
+	t.Setenv("OPERATOR", operator)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if n, err := Verify(t.Context(), tip2, []string{base}); err == nil {
+		t.Fatalf("a second, wrong signer was accepted: %d", n)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("signature statuses were not intercepted: %v", err)
+	}
+}
+
+// TestVerifyStatusChunks checks signature statuses beyond the first chunk
+// Verify reads them in, with chunks of two. The stub signer refuses only the
+// commit whose message says Rejected, the middle one of seven, which is in
+// the second chunk whichever order the commits are listed in.
+func TestVerifyStatusChunks(t *testing.T) {
+	saved := statusBatch
+	statusBatch = 2
+	t.Cleanup(func() { statusBatch = saved })
+	stub := pgpProfile(t)
+	// Verify runs the signer with PATH=/usr/bin:/bin, which in a Linux build
+	// sandbox holds no grep, so the stub reads the payload with sh builtins.
+	script := "#!/bin/sh\nbad=\nwhile IFS= read -r line || [ -n \"$line\" ]; do\n  [ \"$line\" = Rejected ] && bad=1\ndone\nif [ -n \"$bad\" ]; then\n  echo '[GNUPG:] NEWSIG'\n  echo '[GNUPG:] BADSIG 89ABCDEF01234567 T <t@e>'\n  exit 1\nfi\n" +
+		"echo '[GNUPG:] NEWSIG'\necho '[GNUPG:] GOODSIG 89ABCDEF01234567 T <t@e>'\n" +
+		"echo '[GNUPG:] VALIDSIG " + operator + " 2023-11-14 1700000000 0 4 0 22 8 00 " + operator + "'\n" +
+		"echo '[GNUPG:] TRUST_ULTIMATE 0 pgp'\n"
+	if err := os.WriteFile(stub, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	base, tip := pgpRepo(t)
+	raw, err := git.Bytes(nil, "cat-file", "commit", tip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// chain[0] is tip; each later commit copies it onto the one before.
+	chain := []string{tip}
+	for i := 1; i < 7; i++ {
+		next := strings.Replace(string(raw), "parent "+base+"\n", "parent "+chain[i-1]+"\n", 1)
+		if i == 3 {
+			next = strings.Replace(next, "\n\nSigned\n", "\n\nRejected\n", 1)
+		}
+		oid, err := git.Bytes([]byte(next), "hash-object", "-t", "commit", "-w", "--stdin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		chain = append(chain, strings.TrimSpace(string(oid)))
+	}
+	if n, err := Verify(t.Context(), chain[2], []string{base}); err != nil || n != 3 {
+		t.Fatalf("three valid commits across two chunks: %d, %v", n, err)
+	}
+	n, err := Verify(t.Context(), chain[6], []string{base})
+	var r refusal.Refusal
+	if !errors.As(err, &r) || !strings.Contains(err.Error(), "no verified signature by the protected operator key") {
+		t.Fatalf("a bad signature in the second chunk was not refused: %d, %v", n, err)
+	}
+	if !strings.Contains(err.Error(), chain[3][:12]) {
+		t.Fatalf("refusal names another commit than the bad one %.12s: %v", chain[3], err)
+	}
+}
+
 func TestVerifyEnvironmentProgram(t *testing.T) {
 	for _, name := range []string{"configured", "symlink", "missing"} {
 		t.Run(name, func(t *testing.T) {

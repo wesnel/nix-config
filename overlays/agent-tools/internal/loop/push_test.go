@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 // fakeRefs answers what Push asks GitHub, for the viewer "me" in o/r, from a
@@ -185,12 +186,16 @@ func pushStack(t *testing.T) (*fakeRefs, string, string) {
 // each, bottom up, as separate pushes would, so GitHub starts each pull
 // request's workflows once, and only from the heads it expects.
 func TestPush(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	onGitHub := func(t *testing.T, f *fakeRefs, dir, b string) bool {
 		t.Helper()
 		return gitIn(t, f.bare, "rev-parse", b) == gitIn(t, dir, "rev-parse", b)
 	}
 
-	t.Run("one ref per call, bottom up", func(t *testing.T) {
+	testprocess.Run(t, "one ref per call, bottom up", tmp, func(t *testing.T) {
 		f, dir, oldUpper := pushStack(t)
 		if _, err := Push([]string{"upper", "lower"}, map[string]string{"upper": oldUpper}, false); err != nil {
 			t.Fatal(err)
@@ -208,7 +213,7 @@ func TestPush(t *testing.T) {
 		}
 	})
 
-	t.Run("HEAD's branch alone by default", func(t *testing.T) {
+	testprocess.Run(t, "HEAD's branch alone by default", tmp, func(t *testing.T) {
 		f, dir, _ := pushStack(t)
 		gitIn(t, dir, "switch", "-q", "lower")
 		if _, err := Push(nil, nil, false); err != nil {
@@ -222,7 +227,7 @@ func TestPush(t *testing.T) {
 	// A call that fails leaves the branches below it pushed, with their
 	// tracking refs moved, so the next push carries on from the branch that
 	// failed.
-	t.Run("failure partway", func(t *testing.T) {
+	testprocess.Run(t, "failure partway", tmp, func(t *testing.T) {
 		f, dir, oldUpper := pushStack(t)
 		f.failCall = 2
 		leases := map[string]string{"upper": oldUpper}
@@ -244,7 +249,7 @@ func TestPush(t *testing.T) {
 		}
 	})
 
-	t.Run("a rebased branch needs a lease", func(t *testing.T) {
+	testprocess.Run(t, "a rebased branch needs a lease", tmp, func(t *testing.T) {
 		f, dir, oldUpper := pushStack(t)
 		if _, err := Push([]string{"lower", "upper"}, nil, false); !refusedWell(err) || !strings.Contains(err.Error(), "--lease upper=") {
 			t.Errorf("a rebased branch without a lease: %v", err)
@@ -259,7 +264,7 @@ func TestPush(t *testing.T) {
 
 	// Someone pushed to GitHub since the last fetch: nothing moves, with a
 	// lease or without.
-	t.Run("the remote moved", func(t *testing.T) {
+	testprocess.Run(t, "the remote moved", tmp, func(t *testing.T) {
 		f, dir, oldUpper := pushStack(t)
 		gitIn(t, dir, "push", "-q", f.bare, "lower:refs/heads/other")
 		gitIn(t, f.bare, "update-ref", "refs/heads/upper", "refs/heads/other")
@@ -269,7 +274,7 @@ func TestPush(t *testing.T) {
 		}
 	})
 
-	t.Run("a plain commit on a ready PR", func(t *testing.T) {
+	testprocess.Run(t, "a plain commit on a ready PR", tmp, func(t *testing.T) {
 		f, dir, _ := pushStack(t)
 		gitIn(t, dir, "switch", "-q", "lower")
 		gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "Add more")
@@ -286,7 +291,7 @@ func TestPush(t *testing.T) {
 	// must not carry the changed commit onto a ready PR.
 	// Whitespace counts: an indent is a change in Python, YAML or a Makefile.
 	for name, content := range map[string]string{"content": "a rewritten\n", "whitespace alone": "    a\n"} {
-		t.Run("an amended own commit, with a lease/"+name, func(t *testing.T) {
+		testprocess.Run(t, "an amended own commit, with a lease/"+name, tmp, func(t *testing.T) {
 			f, dir, _ := pushStack(t)
 			gitIn(t, dir, "switch", "-q", "lower")
 			gitIn(t, dir, "reset", "-q", "--hard", "refs/remotes/origin/lower")
@@ -311,7 +316,7 @@ func TestPush(t *testing.T) {
 		"another user's PR":  func(f *fakeRefs) { f.authors["lower"] = "josh" },
 		"a branch with none": func(f *fakeRefs) { delete(f.prs, "lower") },
 	} {
-		t.Run("refused/"+name, func(t *testing.T) {
+		testprocess.Run(t, "refused/"+name, tmp, func(t *testing.T) {
 			f, _, _ := pushStack(t)
 			edit(f)
 			branch := "lower"
@@ -324,7 +329,7 @@ func TestPush(t *testing.T) {
 		})
 	}
 
-	t.Run("people mode", func(t *testing.T) {
+	testprocess.Run(t, "people mode", tmp, func(t *testing.T) {
 		f, _, _ := pushStack(t)
 		t.Setenv(ModeEnv, "people")
 		if _, err := Push([]string{"lower"}, nil, false); !refusedWell(err) || !strings.Contains(err.Error(), "git sign-pass --push") || len(f.calls) != 0 {
@@ -336,6 +341,9 @@ func TestPush(t *testing.T) {
 // checkPatches compares a merge by its resolution, and an empty change
 // matches only the same commit.
 func TestCheckPatches(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	dir := t.TempDir()

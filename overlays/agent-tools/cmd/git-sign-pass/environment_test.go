@@ -7,9 +7,13 @@ import (
 	"testing"
 
 	"github.com/wesnel/agent-tools/internal/plans"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 func TestPlanEnvironment(t *testing.T) {
+	if !testprocess.Top(t, testprocess.SocketTemp(t)) {
+		return
+	}
 	home := os.Getenv("HOME")
 	temp, _ := filepath.EvalSymlinks(os.TempDir())
 	realHome, _ := filepath.EvalSymlinks(home)

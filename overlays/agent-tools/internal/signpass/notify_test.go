@@ -10,6 +10,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
 	"github.com/wesnel/agent-tools/internal/plans"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 // requested points agent-tools at a plans directory of the test's own,
@@ -53,7 +54,11 @@ func last(t *testing.T, p plans.Plan) plans.Event {
 // A finished pass's result lands in the plan that requested it, however
 // the pass ended.
 func TestNotify(t *testing.T) {
-	t.Run("signed and pushed", func(t *testing.T) {
+	tmp := testprocess.SocketTemp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
+	testprocess.Run(t, "signed and pushed", tmp, func(t *testing.T) {
 		dir := t.TempDir()
 		global := signingConfig(t, dir)
 		hub := filepath.Join(dir, "hub.git")
@@ -85,7 +90,7 @@ func TestNotify(t *testing.T) {
 		}
 	})
 
-	t.Run("refused before any touch", func(t *testing.T) {
+	testprocess.Run(t, "refused before any touch", tmp, func(t *testing.T) {
 		dir := t.TempDir()
 		global := signingConfig(t, dir)
 		repo := filepath.Join(dir, "repo")
@@ -113,7 +118,7 @@ func TestNotify(t *testing.T) {
 
 	// The session hears which URLs have the branch and the exact command
 	// that pushes the rest.
-	t.Run("pushed to one URL of two", func(t *testing.T) {
+	testprocess.Run(t, "pushed to one URL of two", tmp, func(t *testing.T) {
 		dir, repo, hub, _, armed := mirrored(t)
 		p, id := requested(t, dir)
 		NotifyID = id
@@ -137,7 +142,7 @@ func TestNotify(t *testing.T) {
 		}
 	})
 
-	t.Run("several branches", func(t *testing.T) {
+	testprocess.Run(t, "several branches", tmp, func(t *testing.T) {
 		dir := t.TempDir()
 		global := signingConfig(t, dir)
 		repo := filepath.Join(dir, "repo")
@@ -164,7 +169,7 @@ func TestNotify(t *testing.T) {
 		}
 	})
 
-	t.Run("nothing to sign", func(t *testing.T) {
+	testprocess.Run(t, "nothing to sign", tmp, func(t *testing.T) {
 		dir := t.TempDir()
 		p, id := requested(t, dir)
 		Notify(id, map[string]string{"branch": "one", "signed": "every commit since the base is already signed"}, nil, time.Now())
@@ -173,7 +178,7 @@ func TestNotify(t *testing.T) {
 		}
 	})
 
-	t.Run("nothing to sign, one pushed and one not", func(t *testing.T) {
+	testprocess.Run(t, "nothing to sign, one pushed and one not", tmp, func(t *testing.T) {
 		dir := t.TempDir()
 		p, id := requested(t, dir)
 		Notify(id, map[string]any{"branch": "one", "signed": "every commit since the base is already signed",
@@ -183,7 +188,7 @@ func TestNotify(t *testing.T) {
 		}
 	})
 
-	t.Run("an ID no plan holds", func(t *testing.T) {
+	testprocess.Run(t, "an ID no plan holds", tmp, func(t *testing.T) {
 		dir := t.TempDir()
 		p, id := requested(t, dir)
 		if _, err := Notify(p.Name+".0badc0de", map[string]any{"signed": 1}, nil, time.Now()); err == nil {

@@ -20,6 +20,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/refusal"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 // fakeCodex stands in for `codex`: it accepts only the flags the real
@@ -419,12 +420,16 @@ func (f *fixture) checkCleanedUp(t *testing.T) {
 }
 
 func TestCodex(t *testing.T) {
-	t.Run("review", testCodexReview)
-	t.Run("GIT_DIR naming the repository under review", testCodexGitDirUnderReview)
-	t.Run("GIT_DIR naming another repository", testCodexGitDirElsewhere)
-	t.Run("no findings", testCodexNoFindings)
-	t.Run("confinement", testCodexConfinement)
-	t.Run("failure", testCodexFailures)
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
+	testprocess.Run(t, "review", tmp, testCodexReview)
+	testprocess.Run(t, "GIT_DIR naming the repository under review", tmp, testCodexGitDirUnderReview)
+	testprocess.Run(t, "GIT_DIR naming another repository", tmp, testCodexGitDirElsewhere)
+	testprocess.Run(t, "no findings", tmp, testCodexNoFindings)
+	testprocess.Run(t, "confinement", tmp, testCodexConfinement)
+	t.Run("failure", func(t *testing.T) { testCodexFailures(t, tmp) })
 }
 
 func testCodexReview(t *testing.T) {
@@ -602,7 +607,7 @@ func must[T any](v T, err error) T {
 	return v
 }
 
-func testCodexFailures(t *testing.T) {
+func testCodexFailures(t *testing.T, tmp string) {
 	for _, c := range []struct {
 		mode string
 		args []string
@@ -610,7 +615,7 @@ func testCodexFailures(t *testing.T) {
 		{"fail", nil},
 		{"hang", []string{"--timeout", "1"}},
 	} {
-		t.Run(c.mode, func(t *testing.T) {
+		testprocess.Run(t, c.mode, tmp, func(t *testing.T) {
 			f := setUp(t, true)
 			t.Setenv("FAKE_CODEX", c.mode)
 			args := append(append([]string{"--plan", f.plan}, c.args...), f.base+"..HEAD")
@@ -627,6 +632,10 @@ func testCodexFailures(t *testing.T) {
 // beside them where it may. gateway is the id of the model provider
 // agent-tools' config names, if any.
 func TestUnavailable(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	for _, c := range []struct {
 		name      string
 		withCodex bool
@@ -647,7 +656,7 @@ func TestUnavailable(t *testing.T) {
 		{"loop session, Codex asked for", true, "", map[string]string{"PR_LOOP_SESSION": "1", "FAKE_CODEX": "none"}, []string{"--reviewer", "codex"}, 0},
 		{"Codex author, Codex asked for", true, "", map[string]string{"CODEX_SANDBOX": "seatbelt", "FAKE_CODEX": "none"}, []string{"--reviewer", "codex"}, 0},
 	} {
-		t.Run(c.name, func(t *testing.T) {
+		testprocess.Run(t, c.name, tmp, func(t *testing.T) {
 			f := setUp(t, c.withCodex)
 			if c.gateway != "" {
 				f.writeGatewayConfig(t, c.gateway)
@@ -872,6 +881,9 @@ func testRedCheckNotOnHost(t *testing.T) {
 }
 
 func TestPrintPrompt(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	f := setUp(t, false)
 	os.WriteFile(filepath.Join(f.repo, ".git", "items.md"), []byte("Thread T1: make it three lines\n"), 0o644)
 
@@ -899,6 +911,9 @@ func TestPrintPrompt(t *testing.T) {
 // The goal statement reaches Codex with known secret shapes taken out, as
 // the items and earlier findings do.
 func TestGoalRedacted(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	f := setUp(t, true)
 	t.Setenv("FAKE_CODEX", "none")
 	token := "ghp_" + strings.Repeat("d", 36)
@@ -952,6 +967,9 @@ func TestGoalFromPlan(t *testing.T) {
 // A hint to run a review elsewhere names the plan and part given, the
 // plan quoted where the shell would split it.
 func TestGoalHint(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	f := setUp(t, true)
 	f.plans.Dir = filepath.Join(t.TempDir(), "my plans", "agents")
 	f.writeConfig(t)
@@ -966,6 +984,10 @@ func TestGoalHint(t *testing.T) {
 }
 
 func TestRefusals(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	for _, c := range []struct {
 		name string
 		// args returns the arguments, given the fixture.
@@ -1008,7 +1030,7 @@ func TestRefusals(t *testing.T) {
 		{"empty range", func(t *testing.T, f *fixture) []string { return []string{"--plan", f.plan, "HEAD..HEAD"} }, ""},
 		{"symmetric difference", func(t *testing.T, f *fixture) []string { return []string{"--plan", f.plan, "HEAD...HEAD~1"} }, ""},
 	} {
-		t.Run(c.name, func(t *testing.T) {
+		testprocess.Run(t, c.name, tmp, func(t *testing.T) {
 			f := setUp(t, true)
 			args := c.args(t, f)
 			code, _, stderr := freshReview(t, args...)

@@ -34,6 +34,11 @@ func longest(base string) int {
 	return len(filepath.Join(base, pattern+"4294967295", "999")) + len(".0123456789abcdef")
 }
 
+// Fits reports whether the longest SSH control socket under base fits.
+func Fits(base string) bool {
+	return longest(filepath.Clean(base)) <= len(syscall.RawSockaddrUnix{}.Path)-1
+}
+
 // Mux is a pass's private directory of control sockets, one per push URL,
 // and the ssh command git would run, which pushes share them through.
 type Mux struct {
@@ -48,7 +53,7 @@ func Check(fix string) error {
 		return nil
 	}
 	base := filepath.Clean(os.TempDir())
-	if n, limit := longest(base), len(syscall.RawSockaddrUnix{}.Path)-1; n > limit {
+	if n, limit := longest(base), len(syscall.RawSockaddrUnix{}.Path)-1; !Fits(base) {
 		return refusal.New("SSH's shared connections would need socket paths of up to %d bytes under %s (TMPDIR), "+
 			"more than the %d a Unix socket takes; set a shorter TMPDIR, as `env TMPDIR=/tmp` before the command does, "+
 			"then %s", n, base, limit, fix)

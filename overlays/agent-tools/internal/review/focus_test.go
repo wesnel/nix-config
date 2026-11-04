@@ -11,6 +11,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/record"
 	"github.com/wesnel/agent-tools/internal/refusal"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 // TestFocusContracts holds each focus's contract to where the package's
@@ -40,6 +41,9 @@ func TestFocusContracts(t *testing.T) {
 // Where a focused review cannot run headless, delegate names the agent
 // type to start on the prompt it prints.
 func TestFocusAgentNamed(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	f := setUp(t, true)
 	f.config(t, map[string]any{})
 	code, _, stderr := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
@@ -95,9 +99,13 @@ func claudeArgs(t *testing.T, f *fixture, agent string, n int) []string {
 // checklist and the general rules, and requires every category to be named
 // as checked.
 func TestSecurityReviewer(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	finding := map[string]any{"id": "1", "path": "code.txt", "line": 2, "endLine": nil, "kind": "vulnerability",
 		"claim": "c", "evidence": "e", "about": nil, "reopens": nil}
-	t.Run("checked", func(t *testing.T) {
+	testprocess.Run(t, "checked", tmp, func(t *testing.T) {
 		f := setUp(t, true)
 		f.claudeSays(t, "security-reviewer", claudeResult(securityReply(finding), "Reviewed."))
 		code, run, stderr := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
@@ -159,7 +167,7 @@ func TestSecurityReviewer(t *testing.T) {
 		{"a category left out, twice", []string{claudeResult(map[string]any{"findings": []any{}, "unverified": []any{},
 			"checked": Categories[1:]}, "")}, 4, "2"},
 	} {
-		t.Run(c.name, func(t *testing.T) {
+		testprocess.Run(t, c.name, tmp, func(t *testing.T) {
 			f := setUp(t, true)
 			f.claudeSays(t, "security-reviewer", c.outs...)
 			code, run, stderr := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
@@ -186,7 +194,7 @@ func TestSecurityReviewer(t *testing.T) {
 	// The operator's global git configuration includes a file the
 	// reviewer's sandbox denies, which stopped every git command the
 	// reviewer ran on a local range.
-	t.Run("git diff of a local range despite a denied global config", func(t *testing.T) {
+	testprocess.Run(t, "git diff of a local range despite a denied global config", tmp, func(t *testing.T) {
 		f := setUp(t, true)
 		dir := t.TempDir()
 		global, included := filepath.Join(dir, "gitconfig"), filepath.Join(dir, "included")
@@ -208,7 +216,7 @@ func TestSecurityReviewer(t *testing.T) {
 		}
 	})
 
-	t.Run("no delegate config", func(t *testing.T) {
+	testprocess.Run(t, "no delegate config", tmp, func(t *testing.T) {
 		f := setUp(t, true)
 		f.config(t, map[string]any{})
 		code, run, stderr := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
@@ -217,7 +225,7 @@ func TestSecurityReviewer(t *testing.T) {
 		}
 	})
 
-	t.Run("an unknown type", func(t *testing.T) {
+	testprocess.Run(t, "an unknown type", tmp, func(t *testing.T) {
 		f := setUp(t, true)
 		code, _, stderr := runDelegate(t, "--reviewer", "style", "--plan", f.plan, f.base+"..HEAD")
 		refused(t, "an unknown type", code, stderr)
@@ -287,6 +295,9 @@ func TestRedCheckRedacted(t *testing.T) {
 // --print-prompt --reviewer security prints the security review's prompt,
 // the contract a security-reviewer agent works to.
 func TestFocusPrompt(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	f := setUp(t, false)
 	var stdout, stderr strings.Builder
 	if code := Main(t.Context(), []string{"--print-prompt", "--reviewer", "security", "--plan", f.plan, f.base + "..HEAD"},

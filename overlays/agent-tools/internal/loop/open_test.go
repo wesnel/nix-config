@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 // fakeOpen answers what Open asks GitHub, for the viewer "me" in o/r with
@@ -109,7 +111,11 @@ func published(t *testing.T, f *fakeOpen, dir, branch string) {
 // has at the local tip, without creating or ever deleting that branch, and
 // only when its commits are the operator's.
 func TestOpenPushed(t *testing.T) {
-	t.Run("missing local branch preserves lookup error", func(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
+	testprocess.Run(t, "missing local branch preserves lookup error", tmp, func(t *testing.T) {
 		f, _ := pushedBranch(t)
 		_, err := Open("gone", "", "Add feat", "Why it is needed.", false)
 		var command *exec.ExitError
@@ -117,7 +123,7 @@ func TestOpenPushed(t *testing.T) {
 			t.Fatalf("missing local branch: %v, mutations %v", err, f.calls)
 		}
 	})
-	t.Run("refused/unsigned matching author", func(t *testing.T) {
+	testprocess.Run(t, "refused/unsigned matching author", tmp, func(t *testing.T) {
 		f, _ := pushedBranch(t)
 		_, err := Open("feat", "", "Add feat", "Why it is needed.", false)
 		var refusal Refusal
@@ -125,7 +131,7 @@ func TestOpenPushed(t *testing.T) {
 			t.Fatalf("unsigned branch with matching author: error %v, mutations %v", err, f.calls)
 		}
 	})
-	t.Run("opens it", func(t *testing.T) {
+	testprocess.Run(t, "opens it", tmp, func(t *testing.T) {
 		f, _ := pushedOperatorBranch(t)
 		result, err := Open("feat", "", "Add feat", "Why it is needed.", false)
 		if err != nil {
@@ -140,7 +146,7 @@ func TestOpenPushed(t *testing.T) {
 		}
 	})
 
-	t.Run("dry run", func(t *testing.T) {
+	testprocess.Run(t, "dry run", tmp, func(t *testing.T) {
 		f, _ := pushedOperatorBranch(t)
 		result, err := Open("feat", "", "Add feat", "Why it is needed.", true)
 		if err != nil {
@@ -152,7 +158,7 @@ func TestOpenPushed(t *testing.T) {
 		}
 	})
 
-	t.Run("a failed pull request leaves the branch", func(t *testing.T) {
+	testprocess.Run(t, "a failed pull request leaves the branch", tmp, func(t *testing.T) {
 		f, _ := pushedOperatorBranch(t)
 		f.failPR = true
 		if _, err := Open("feat", "", "Add feat", "Why it is needed.", false); err == nil || strings.Contains(err.Error(), "deleted") {
@@ -163,7 +169,7 @@ func TestOpenPushed(t *testing.T) {
 		}
 	})
 
-	t.Run("its message is still checked", func(t *testing.T) {
+	testprocess.Run(t, "its message is still checked", tmp, func(t *testing.T) {
 		f, dir := pushedBranch(t)
 		gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "Add x.")
 		published(t, f, dir, "feat")
@@ -190,7 +196,7 @@ func TestOpenPushed(t *testing.T) {
 		}, "already the head of #3"},
 	}
 	for name, c := range refused {
-		t.Run("refused/"+name, func(t *testing.T) {
+		testprocess.Run(t, "refused/"+name, tmp, func(t *testing.T) {
 			f, dir := pushedOperatorBranch(t)
 			c.change(t, f, dir)
 			_, err := Open("feat", "", "Add feat", "Why it is needed.", false)
