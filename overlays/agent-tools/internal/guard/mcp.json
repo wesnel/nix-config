@@ -17,6 +17,7 @@
   "linear": {
     "service": "Linear",
     "servers": ["linear", "claude_ai_Linear"],
+    "codexPrompt": true,
     "verify": "reads are the tools/list of https://mcp.linear.app/mcp/readonly; Linear's docs name no tools, so confirms (every other write) and refuses (deletions and merge_diff) come from the full endpoint's tools/list, kept as testdata/tools/linear.json beside this file, which TestMCPListsMatchServer holds these lists to. It was recorded on 2026-10-23 from the claude.ai Linear connector's tool names as Claude Code lists them, names only. The file is a tools/list result, {\"tools\": [{\"name\": \"save_issue\"}, ...]}, of which the test reads only each name; a full result with descriptions and schemas reads the same. Record it again either from a Claude Code session with the claude.ai Linear connector, whose tools it names mcp__claude_ai_Linear__NAME, or from https://mcp.linear.app/mcp itself: initialize, then tools/list, over streamable HTTP with a Linear OAuth access token as the bearer. Never record it through mcp-proxy, which serves only the tools listed here and so never shows a new one",
     "reads": ["extract_images", "get_agent_skill", "get_attachment", "get_diff", "get_diff_threads", "get_document",
       "get_initiative", "get_issue", "get_issue_status", "get_milestone", "get_notifications", "get_project", "get_release",
