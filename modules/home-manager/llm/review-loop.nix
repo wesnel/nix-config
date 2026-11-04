@@ -7,10 +7,33 @@
 {
   lib,
   pkgs,
-  # The commands a Codex loop waits for the operator to approve, named to
-  # them when it starts.
-  approved,
 }: let
+  loopTools = [
+    "pr_loop_ci"
+    "pr_loop_draft"
+    "pr_loop_end"
+    "pr_loop_link"
+    "pr_loop_logs"
+    "pr_loop_next"
+    "pr_loop_open"
+    "pr_loop_push"
+    "pr_loop_reply"
+    "pr_loop_request"
+    "pr_loop_sign_check"
+    "pr_loop_stack"
+    "pr_loop_status"
+    "pr_loop_threads"
+    "pr_loop_wait"
+    "git_delegate"
+    "git_delegate_ask"
+    "git_delegate_settle"
+    "git_delegate_show"
+    "github_file"
+    "github_pr_diff"
+    "github_pr_view"
+    "github_profile"
+  ];
+  approvalArgs = lib.concatMapStringsSep " " (tool: "-c ${lib.escapeShellArg "mcp_servers.agent_ops.tools.${tool}.approval_mode=\"approve\""}") loopTools;
   # "$defaults" is literal: Claude Code splices its own auto-mode rules in
   # there.
   claudeSettings = builtins.toJSON {
@@ -21,8 +44,6 @@
       "This is the operator's review-loop session over the pull requests it was started for. Its GitHub writes go through `pr-loop`, which holds them to the loop's mode, PR_LOOP_MODE."
     ];
   };
-
-  notice = "review-loop: in Codex, each run of ${lib.concatStringsSep ", " approved} waits for your approval.";
 
   launcher = pkgs.writeShellApplication {
     name = "review-loop";
@@ -62,12 +83,12 @@
           exec claude --settings "$settings" --permission-mode auto "/review-loop $*"
           ;;
         codex)
-          ${lib.optionalString (approved != []) "echo ${lib.escapeShellArg notice} >&2"}
           # --no-daemon: a shared background server would run the loop's
           # commands in its own environment, without the loop's variables.
           exec codex --no-daemon \
             -c 'shell_environment_policy.set.PR_LOOP_SESSION="1"' \
             -c "shell_environment_policy.set.PR_LOOP_MODE=\"$mode\"" \
+            ${approvalArgs} \
             "\$review-loop Run the operator's $mode-mode review loop on these pull requests: $*"
           ;;
       esac
@@ -106,10 +127,16 @@
         out_=$(${bin}/review-loop --harness codex --$mode 12 '#13' 2>err)
         expected=$(printf '%s\n' 1 "$mode" --no-daemon \
           -c 'shell_environment_policy.set.PR_LOOP_SESSION="1"' \
-          -c "shell_environment_policy.set.PR_LOOP_MODE=\"$mode\"" \
-          "\$review-loop Run the operator's $mode-mode review loop on these pull requests: 12 #13")
-        [[ "$out_" == "$expected" ]]
-        [[ "$(cat err)" == ${lib.escapeShellArg (lib.optionalString (approved != []) notice)} ]]
+          -c "shell_environment_policy.set.PR_LOOP_MODE=\"$mode\"")
+        for tool in pr_loop_ci pr_loop_draft pr_loop_end pr_loop_link pr_loop_logs pr_loop_next \
+          pr_loop_open pr_loop_push pr_loop_reply pr_loop_request pr_loop_sign_check pr_loop_stack \
+          pr_loop_status pr_loop_threads pr_loop_wait git_delegate git_delegate_ask git_delegate_settle \
+          git_delegate_show github_file github_pr_diff github_pr_view github_profile; do
+          expected+=$(printf '\n%s\n%s' -c "mcp_servers.agent_ops.tools.$tool.approval_mode=\"approve\"")
+        done
+        expected+=$(printf '\n%s' "\$review-loop Run the operator's $mode-mode review loop on these pull requests: 12 #13")
+        [[ "$out_" == "$expected" ]] || { echo "Codex launcher arguments differ" >&2; exit 1; }
+        [[ ! -s err ]] || { cat err >&2; exit 1; }
       done
       for bad in "" "--bots 1" "--harness" "--harness other --bots 1" "--harness codex --both 1" \
         "--harness codex --bots" "--harness claude --bots x" "--harness codex --bots 0" "--harness codex --bots 1 --search"; do

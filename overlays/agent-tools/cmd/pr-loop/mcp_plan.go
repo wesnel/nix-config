@@ -17,8 +17,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/git"
 )
 
-// This catalog also supplies Codex's per-tool approvals. New authority
-// requires an explicit entry; the server's other tools keep prompting.
+// This catalog also supplies Codex's routine plan-tool approvals.
 //
 //go:embed plan-tools.json
 var routinePlanToolsJSON []byte

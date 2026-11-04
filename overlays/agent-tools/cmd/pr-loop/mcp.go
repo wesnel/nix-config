@@ -27,8 +27,8 @@ import (
 // runs a GitHub read or one pr-loop, git delegate or agent-plan command
 // from typed arguments: no tool takes a shell line, gh arguments or
 // argv. The operations read the gh login themselves, as they do on the
-// command line, and print what they print there. Codex preapproves the
-// routine plan catalog; other operations ask the operator on each call.
+// command line, and print what they print there. Codex prompts for non-plan
+// tools outside a review-loop session.
 
 // mcpParam is one argument of a tool.
 type mcpParam struct {
