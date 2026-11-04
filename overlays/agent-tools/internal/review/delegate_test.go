@@ -40,8 +40,7 @@ func TestRecordRounds(t *testing.T) {
 	}
 	rec := must(record.ReadRange(want))
 	if rec.Repo != "o/r" || rec.Base != f.base || rec.Head != f.tip || rec.PR != 0 || rec.Title != "Grow the code" ||
-		len(rec.Rounds) != 2 || rec.Rounds[0].Reviewer != "codex" || rec.Rounds[0].Model != "fake-model" ||
-		rec.Rounds[1].Reviewer != "guide" ||
+		len(rec.Rounds) != 1 || rec.Rounds[0].Reviewer != "codex" || rec.Rounds[0].Model != "fake-model" ||
 		rec.Rounds[0].RedCheck != "absent" || len(rec.Rounds[0].Dropped) != 3 || len(rec.Findings) != 1 {
 		t.Fatalf("record %+v", rec)
 	}
@@ -55,7 +54,7 @@ func TestRecordRounds(t *testing.T) {
 		t.Fatalf("exit %d, %+v\n%s", code, second, stderr)
 	}
 	rec = must(record.ReadRange(want))
-	if len(rec.Rounds) != 4 || rec.Rounds[2].ID != "R3" || len(rec.Findings) != 2 || rec.Findings[1].Round != 3 {
+	if len(rec.Rounds) != 2 || rec.Rounds[1].ID != "R2" || len(rec.Findings) != 2 || rec.Findings[1].Round != 2 {
 		t.Errorf("the rerun's record: %+v", rec)
 	}
 	prompt := string(must(os.ReadFile(filepath.Join(f.log, "prompt"))))
@@ -78,7 +77,7 @@ func TestRecordRedCheck(t *testing.T) {
 		t.Fatalf("records %v", files)
 	}
 	rec := must(record.ReadRange(files[0]))
-	if len(rec.Rounds) != 4 || rec.Rounds[0].RedCheck != "session" || rec.Rounds[1].RedCheck != "absent" || len(rec.Findings) != 1 ||
+	if len(rec.Rounds) != 2 || rec.Rounds[0].RedCheck != "session" || rec.Rounds[1].RedCheck != "session" || len(rec.Findings) != 1 ||
 		!strings.HasPrefix(rec.Findings[0].ID, mechanicalPrefix) || rec.Findings[0].Reviewer != "red-check" {
 		t.Errorf("record %+v", rec)
 	}

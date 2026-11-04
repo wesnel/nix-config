@@ -88,7 +88,7 @@ func TestQuotaFallback(t *testing.T) {
 	t.Run("Claude suppresses retry guide and later commands", func(t *testing.T) {
 		f := askFixture(t, true)
 		f.claudeSays(t, "security-reviewer", `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"You've hit your limit · resets later"}`)
-		code, _, errs := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
+		code, _, errs := runDelegate(t, "--reviewer", "security", "--reviewer", "guide", "--plan", f.plan, f.base+"..HEAD")
 		if code != 4 || !strings.Contains(errs, "quota") {
 			t.Fatalf("quota: %d %s", code, errs)
 		}

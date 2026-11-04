@@ -1,6 +1,6 @@
 ---
 name: review-change
-description: The review pipeline every session that commits a change runs (plan, design review, fresh review loop, design review, hand-back), and the one definition of how to triage and answer review feedback, whether bot threads, people's threads or a reviewer's findings. Use before starting a change, before handing one back, and whenever review feedback needs an outcome or a reply.
+description: Select reviews by the change's risks, verify fixes within one review allowance, and triage review feedback. Use before starting a change, before handing one back, and when review feedback needs an outcome or reply.
 ---
 
 # Reviewing a change
@@ -16,13 +16,16 @@ was split among sub-agents: a coordinator runs the same pipeline, and the
    the goal, what is not this change's job, and the items the change is made
    of, each with an ID. Record every review outcome against the plan item ID
    it concerns, as "Recording it in the log" below says.
-2. **Design review of the plan**, before coding.
+2. **Select reviews.** Use Review selection below; log the selected reviews
+   and the concrete question each must answer. Run a design review before
+   coding when that selection calls for one.
 3. **The work**, committed as the `signing-pass` skill says.
-4. **Fresh review loop** over the committed change, once the work is
-   complete: the general review (`/code-review` in Claude Code, `/review`
-   in Codex); then `git delegate` as the second opinion. Settle each
-   round's findings together before the next round.
-5. **Design review of the result**, before handing back.
+4. **Fresh review loop**, once the work is complete, for the reviews
+   selected above. Settle each round's
+   findings together, then verify the fixes as Fresh review loop says.
+5. **Design review of the result** when the implementation materially
+   changes the reviewed design or introduces a design risk not reviewed
+   before coding.
 6. **Publish and hand back.** Follow the `signing-pass` skill's "Handing
    over" and complete each agent-owned next step before ending the session.
    Report a refusal with its reason and the remaining step. The report
@@ -33,6 +36,42 @@ was split among sub-agents: a coordinator runs the same pipeline, and the
      made yourself, as one list;
    - the `retro` skill's proposals for findings settled `fix` and session
      papercuts, referring to those already recorded as they occurred.
+
+## Review selection
+
+Judge the current change's behaviour and affected callers, not its file
+count. Ordinary prose and mechanical formatting need their checks alone;
+agent instructions, permissions and configuration count by the behaviour
+they control. Other changes get one fresh general reviewer, preferably
+from a model family other than the author's. An additional general opinion
+needs a specific unresolved question or the operator's request.
+
+Select focused reviews for concrete questions the general review and
+checks do not already answer:
+
+- `security`: a changed trust boundary, authorization, secret handling,
+  execution of untrusted input, or exposure through permissions or a sandbox.
+- `compat`: changed persisted data or an interface another version, host
+  or program consumes, including rollback across versions.
+- `upgrade`: changed dependency versions and their effects on this code.
+  Add security only for a distinct security question.
+- Design review: a new architecture, ownership or state model, a
+  significant interface decision, or interactions across parts whose
+  structure needs judgement.
+
+The scan and general reviewer return candidates, not dispatch decisions.
+For each candidate, record the affected behaviour and either the question
+for a specialist, the evidence already answering it, or why it does not
+apply. The scan includes commits back to the default branch: a signal from
+an unchanged parent or a reverted edit needs assessment against the current
+change. File-writing calls in test fixtures, a lock-file path, or editing
+agent prose alone do not establish an uncovered security risk. If the
+impact cannot be bounded, select the relevant review and state the uncertainty.
+
+Put a selected specialist's question and affected paths in `--items`, with
+the goal and range. A reviewer may inspect callers and dependencies beyond
+those paths to answer it. Generate a walkthrough with `--reviewer guide`
+only when the operator requests one, on the tip they will read.
 
 ## The goal statement
 
@@ -59,8 +98,13 @@ or a step's.
 - Design review of the plan: `plan-reviewed`; each decision it brings is
   a question written with `agent-plan ask` and settled with
   `agent-plan decide`, which logs `decided`.
-- Each fresh review round: `reviewed`, with the number of findings in the
-  summary.
+- Review selection: `planned`, with selected reviews, questions and the
+  reasons for leaving candidates out.
+- Before each fresh review round: `started` on the same plan review item,
+  with a summary beginning `review round N/3`, followed by the selected
+  reviewers and exact range. After it: `reviewed` with the same summary
+  prefix and the findings count. The allowance counts those `started`
+  entries, including any interrupted round.
 - Each finding settled: `finding-settled` against the item it concerns, with
   `--review <round>.<id> --outcome <outcome>`, the outcome as Triage below.
 - Design review of the result: `reviewed` with `--role design-reviewer`.
@@ -69,18 +113,28 @@ or a step's.
 
 ## Fresh review loop
 
-The range is the whole change, `BASE..TIP`, with BASE where it starts, such
-as `origin/main` or the parent branch in a stack.
+Use one stable plan item for the change's review allowance. Read its log
+before dispatching: at most three logical rounds, including fix
+verification, across changed tips, rebases, resumes and provider fallbacks.
+Moving the work to another item carries its used allowance with it. Each
+round includes its general and selected specialist reviews; delegate's
+per-reviewer record rounds are not this counter. Log the round before its
+first dispatch so an interrupted run cannot silently restart it. Resume
+only unfinished reviews in that round, with at most one provider fallback
+for each; report a review still unavailable. At the limit, hand back open
+findings and missing coverage; more rounds require the operator's decision.
+
+The first round covers the whole change, `BASE..TIP`, with BASE where it
+starts, such as `origin/main` or the parent branch in a stack.
 
 1. Write the items the change answers (threads, CI checks), with how each
    was settled, to a file, if any. The goal statement is the plan's Goal,
    or the part's.
-2. The general review: in Claude Code, run `/code-review` with BASE as its
-   target: with none, it reviews only the commits ahead of the branch's
-   upstream, which a local branch may not have. In Codex, run `/review`
-   against BASE, or start a fresh `adversarial-reviewer` sub-agent given
-   only the goal and the range. Then the second opinion, from another model
-   family: where the repository has test settings, run
+2. The general review: prefer `git delegate`, which selects an independent
+   reviewer from the other family where available. Use `/code-review`
+   against BASE in Claude Code, `/review` against BASE in Codex, or a fresh
+   read-only `adversarial-reviewer` given the goal and range as alternatives,
+   not additional passes. Where the repository has test settings, run
    `git -C WORKTREE red-check BASE..TIP > WORKTREE/red-check.json`, WORKTREE
    being the branch's worktree, not `$TMPDIR`, which a sandboxed command and
    git delegate resolve to different directories; every file you pass
@@ -88,9 +142,9 @@ as `origin/main` or the parent branch in a stack.
    `git delegate --plan PLAN [--part P1] [--items ITEMS] [--red-check WORKTREE/red-check.json] BASE..TIP`
    as a command of its own, with no `cd` before it: it resolves the range
    from any worktree of the repository. Remove `red-check.json` after it.
-   It runs the general review by the other model family, as Harness
-   choice says, and each focused review its scan routes the change to,
-   and keeps their findings in the range's review record. It exits 0 with
+   It runs one general review, as Harness choice says, reports focused
+   review candidates, and keeps findings in the range's review record.
+   Select focused reviews as Review selection says. It exits 0 with
    no open findings, 3 with open findings, 4 when a reviewer could not run
    here, and 5 when the record fails its structure check. On 4, run each
    review in `notRun` as Harness choice says; on 4 or 5, say so in the
@@ -100,22 +154,29 @@ as `origin/main` or the parent branch in a stack.
    OUTCOME [--target X] [--reason-file F]`, by the record ID its output
    gives (`finding`, such as F3). `dropped` lists what pointed at no line
    at TIP or did not fit the schema; read it, but it needs no outcome.
-   `routes` lists the focused reviews the change needs, from a scan of
+   `routes` lists focused review candidates, from a scan of
    every commit since the default branch and from the reviewer.
    `git delegate show BASE..TIP` prints the whole record.
-4. For the next round, run `git delegate` on the range again: the record
-   gives the new reviewers every earlier finding and how it was settled. A
-   new range, its tip moved by the fixups, starts a record of its own; pass
-   the earlier findings that still matter as `--items`.
-5. Stop after a round with no findings, or after three rounds. A finding
-   still standing goes in the hand-back.
+4. After fixes, run the relevant checks and verify the delta from the last
+   reviewed tip to the new tip. Pass the original goal, relevant findings,
+   their dispositions and the earlier coverage as `--items`; a new range
+   starts its own record. Select only reviewers whose earlier conclusions
+   the fix could invalidate, considering affected callers, shared contracts
+   and dependencies as well as edited files. A reviewer reads every hunk
+   of this delta and the context needed to judge it. Use the whole change
+   again when its impact cannot be bounded, within the same allowance.
+   A changed SHA alone does not invalidate completed review coverage.
+5. Stop when in-scope findings are settled, fixes are verified and selected
+   coverage is complete, or the allowance is spent. A rebuttal or deferral
+   alone needs no new review. Reopen a settled finding only with new
+   evidence. Report unresolved findings and unavailable checks explicitly;
+   they are not a clean result.
 
 ## Focused reviews
 
-Without `--reviewer`, delegate runs each focused review its scan routes
-the change to. A route only the reviewer named is printed with the command
-that runs it: `git delegate --reviewer ROUTE --plan PLAN BASE..TIP`, the
-same range and plan. `security` reviews what the change lets someone do;
+Run a selected focused review with
+`git delegate --reviewer ROUTE --plan PLAN --items ITEMS BASE..TIP`.
+`security` reviews what the change lets someone do;
 `compat` reviews what outlives the commit (stored state, flags, output
 others parse, config keys and options, what another host or branch reads),
 and checks the pull request description's `## Reverting` section against
@@ -132,8 +193,8 @@ agent type, `ROUTE-reviewer` (`security-reviewer`, `compat-reviewer`,
 `upgrade-reviewer`); where delegate cannot run it (exit 4),
 `git delegate --print-prompt --reviewer ROUTE` with the same files prints
 the prompt for a new sub-agent of that type, which stderr names. Settle
-each finding as Triage says. A fix moves the change, so the general
-review and each route's run again on it, within the same three rounds.
+each finding as Triage says. Verify fixes under the same selection and
+allowance as Fresh review loop.
 
 ## Someone else's pull request
 
@@ -158,9 +219,11 @@ in pr-review.
    clone of its own, fetch from it first, a local read the sandbox allows:
    `git fetch $XDG_CACHE_HOME/pr-review/OWNER/NAME/N/clone refs/pr-review/head
    refs/pr-review/base`, then `git red-check MERGE_BASE..FETCH_HEAD >
-   red-check.json` in the working directory. Then run
-   `git delegate --red-check red-check.json OWNER/NAME#N`, which adds a
-   round. delegate refuses red-check JSON of any other range.
+   red-check.json` in the working directory. Use that evidence to settle
+   the findings. If it leaves a concrete review question unanswered,
+   select a targeted follow-up within the same review allowance and pass
+   the evidence with `--red-check red-check.json`; delegate refuses JSON
+   of any other range.
 3. Triage only proposes. Each finding's outcome is `propose`, `rebut`,
    `duplicate-of` (with `--target`) or `needs-operator`: never fix, push,
    reply or resolve on someone else's pull request. Write a proposed
@@ -177,15 +240,16 @@ in pr-review.
 
 ## Harness choice
 
-- The second opinion, through `git delegate`: a model family other than
-  the author's. For a Claude author it is Codex, whose commands can read
+- The general review, through `git delegate`: prefer a model family other
+  than the author's. For a Claude author it is Codex, whose commands can read
   only the worktree under review, the git objects behind it and the system
   files they need, with none of the operator's Codex configuration, no
   network and no writes, so a change cannot steer it into reading
   credentials. For a Codex author (`CODEX_SANDBOX` or `CODEX_THREAD_ID`
   set) it is Claude Code's `adversarial-reviewer`, given the same contract
   and confined as the focused reviews are, and Codex, run fresh, where
-  Claude cannot run. `git delegate ask` picks the other family the same
+  Claude cannot run; disclose that same-family fallback in the hand-back.
+  `git delegate ask` picks the other family the same
   way.
 - The focused reviews and the walkthrough, through `git delegate`: Claude
   Code's reviewer agents, run headless with no settings, MCP server or
@@ -208,8 +272,9 @@ in pr-review.
 
 ## Design review
 
-Twice in the pipeline: of the plan before coding, and of the result before
-hand-back. Start a new sub-agent that only reads (Claude Code's
+Run when Review selection or the pipeline's result check calls for it.
+For a template's unused design stage, log `abandoned` with the selection
+reason. Start a new sub-agent that only reads (Claude Code's
 `design-reviewer` agent; elsewhere one told to only read), and give it
 the plan, the goal statements and, for the result, every branch with its
 range. It reviews the work as a whole, where the fresh review loop reviews

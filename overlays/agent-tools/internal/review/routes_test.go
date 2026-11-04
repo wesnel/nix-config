@@ -29,10 +29,37 @@ func routedFixture(t *testing.T, settings string) (*fixture, string) {
 	return f, exec
 }
 
-// A general review routes the change by its scan, from where the change
-// starts whatever BASE it is given, and by its reviewer's routes. Without
-// --reviewer, delegate runs the types the scan picks with it, and says how
-// to run one only the reviewer named.
+// Paid model providers are faked by routedFixture; Git and dispatch are real.
+func TestDispatch(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"default", nil, []string{"codex"}},
+		{"security", []string{"--reviewer", "security"}, []string{"security"}},
+		{"guide", []string{"--reviewer", "guide"}, []string{"guide"}},
+		{"combined", []string{"--reviewer", "codex", "--reviewer", "security", "--reviewer", "guide"}, []string{"codex", "security", "guide"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, _ := routedFixture(t, `{}`)
+			t.Setenv("FAKE_CODEX", "none")
+			args := append(slices.Clone(tc.args), "--plan", f.plan, "HEAD~1..HEAD")
+			code, out, stderr := runDelegate(t, args...)
+			var got []string
+			for _, review := range out.Reviews {
+				got = append(got, review.Reviewer)
+			}
+			if code != 0 || !slices.Equal(got, tc.want) || len(out.NotRun) != 0 {
+				t.Fatalf("exit %d, reviewers %v, want %v; not run %v\n%s", code, got, tc.want, out.NotRun, stderr)
+			}
+			if tc.name == "default" && !strings.Contains(stderr, "--reviewer security") {
+				t.Errorf("security candidate lost: %s", stderr)
+			}
+		})
+	}
+}
+
 func TestRouting(t *testing.T) {
 	t.Run("scan and reviewer", func(t *testing.T) {
 		f, exec := routedFixture(t, `{}`)
@@ -48,8 +75,8 @@ func TestRouting(t *testing.T) {
 			!slices.Equal(out.Routes[0].Commits, []string{exec, head}) || len(out.Routes[0].Why) != 2 {
 			t.Errorf("routes %+v, want security for %s (the scan) and %s (the reviewer's paths)", out.Routes, exec, head)
 		}
-		if run_.review("security").Reviewer != "security" || !strings.Contains(stderr, "reviewing for security too") {
-			t.Errorf("the routed security review did not run: %+v\n%s", run_, stderr)
+		if len(run_.Reviews) != 1 || run_.review("security").Reviewer != "" || !strings.Contains(stderr, "candidate security review") {
+			t.Errorf("security must be a candidate, not an automatic review: %+v\n%s", run_, stderr)
 		}
 		if !strings.Contains(stderr, `"style"`) {
 			t.Errorf("stderr does not report the unknown route: %s", stderr)
@@ -61,7 +88,7 @@ func TestRouting(t *testing.T) {
 		t.Setenv("FAKE_CODEX", "routed")
 		run(t, f.repo, "git", "update-ref", "refs/remotes/origin/main", "HEAD~1")
 		code, run_, stderr := runDelegate(t, "--plan", f.plan, "HEAD~1..HEAD")
-		if code != 0 || len(run_.Reviews) != 2 || run_.review("security").Reviewer != "" ||
+		if code != 0 || len(run_.Reviews) != 1 || run_.review("security").Reviewer != "" ||
 			!strings.Contains(stderr, "run `git delegate --reviewer security --plan "+f.plan+" HEAD~1..HEAD`") {
 			t.Errorf("exit %d, %+v\n%s", code, run_, stderr)
 		}

@@ -43,8 +43,8 @@ this step's evidence and the difference is outside the noise.
 :CUSTOM_ID: S5
 :AFTER: S4
 :END:
-The =review-change= skill's pipeline over the change: the fresh review
-loop, the design review of the result, and the hand-back.
+The =review-change= skill's selection and pipeline over the change,
+including the hand-back.
 Done when the hand-back is logged.
 
 ** Verification

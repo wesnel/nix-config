@@ -409,8 +409,6 @@ func TestMCP(t *testing.T) {
 		}
 		os.WriteFile(filepath.Join(f.log, "security-reviewer-out"), []byte(reply(map[string]any{
 			"findings": []any{finding}, "unverified": []string{}, "checked": review.Categories})), 0o644)
-		os.WriteFile(filepath.Join(f.log, "review-guide-out"), []byte(reply(map[string]any{
-			"chunks": []any{}, "unverified": []any{}})), 0o644)
 		c := f.start(t)
 		r := c.tool(t, "git_delegate", map[string]any{"worktree": f.repo, "source": f.base + "..HEAD",
 			"reviewer": []string{"security"}, "plan": f.plan})
@@ -421,7 +419,7 @@ func TestMCP(t *testing.T) {
 			}
 		}
 		if err := json.Unmarshal([]byte(r.out), &run); err != nil || r.isError ||
-			len(run.Reviews) != 2 || run.Reviews[0].Reviewer != "security" || len(run.Reviews[0].Findings) != 1 ||
+			len(run.Reviews) != 1 || run.Reviews[0].Reviewer != "security" || len(run.Reviews[0].Findings) != 1 ||
 			run.Reviews[0].Findings[0].Finding != "F1" || !strings.Contains(r.text, "exit 3") {
 			t.Fatalf("result %+v: %v", r, err)
 		}
@@ -438,7 +436,7 @@ func TestMCP(t *testing.T) {
 		r = c.tool(t, "git_delegate", map[string]any{"worktree": f.repo, "source": f.base + "..HEAD", "plan": f.plan})
 		var general struct{ Reviews []struct{ Reviewer string } }
 		if err := json.Unmarshal([]byte(r.out), &general); err != nil || r.isError ||
-			len(general.Reviews) == 0 || general.Reviews[0].Reviewer != "claude" {
+			len(general.Reviews) != 1 || general.Reviews[0].Reviewer != "claude" {
 			t.Errorf("without a reviewer: %+v: %v", r, err)
 		}
 	})

@@ -173,25 +173,24 @@ func TestFocusCompat(t *testing.T) {
 		}
 	})
 
-	// A routed compat review with no description says why and how to give
-	// one, and no fallback that would be refused again; a compat route not
-	// run names --description too.
-	t.Run("routed without a description", func(t *testing.T) {
+	// An explicit compat review requires a description; a candidate only
+	// reports how to supply one when selected.
+	t.Run("candidate without a description", func(t *testing.T) {
 		f := setUp(t, true)
 		writeSettings(t, f, `{"routes": [{"route": "compat", "paths": ["code.txt"], "why": "it is read"}]}`)
 		t.Setenv("FAKE_CODEX", "none")
 		// The change is a branch's, from where main stands.
 		run(t, f.repo, "git", "checkout", "-q", "-b", "feat")
 		run(t, f.repo, "git", "branch", "-f", "main", f.base)
-		code, run, stderr := runDelegate(t, "--plan", f.plan, f.base+"..HEAD")
-		if code != 4 || len(run.NotRun) != 1 || run.NotRun[0]["reviewer"] != "compat" {
+		code, run, stderr := runDelegate(t, "--reviewer", "compat", "--plan", f.plan, f.base+"..HEAD")
+		if code != 2 {
 			t.Fatalf("exit %d, %+v\n%s", code, run, stderr)
 		}
-		if !strings.Contains(stderr, "the compat review could not run: a compat review checks") ||
+		if !strings.Contains(stderr, "a compat review checks") ||
 			strings.Contains(stderr, "--print-prompt --reviewer compat") || strings.Contains(stderr, "outside any sandbox") {
 			t.Errorf("stderr:\n%s", stderr)
 		}
-		code, _, stderr = runDelegate(t, "--reviewer", "codex", "--plan", f.plan, f.base+"..HEAD")
+		code, _, stderr = runDelegate(t, "--plan", f.plan, f.base+"..HEAD")
 		if code != 0 || !strings.Contains(stderr, "run `git delegate --reviewer compat --plan "+f.plan+" --description FILE "+
 			f.base+"..HEAD`") {
 			t.Errorf("exit %d\n%s", code, stderr)

@@ -103,8 +103,7 @@ func TestSecurityReviewer(t *testing.T) {
 		code, run, stderr := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
 		out := run.review("security")
 		if code != 3 || out.Focus != "security" || len(out.Findings) != 1 || out.Findings[0]["id"] != "security-1" ||
-			out.Findings[0]["kind"] != "vulnerability" || out.Findings[0]["finding"] != "F1" || len(run.Reviews) != 2 ||
-			run.Reviews[1].Reviewer != "guide" {
+			out.Findings[0]["kind"] != "vulnerability" || out.Findings[0]["finding"] != "F1" || len(run.Reviews) != 1 {
 			t.Fatalf("exit %d, %+v\n%s", code, run, stderr)
 		}
 		args := claudeArgs(t, f, "security-reviewer", 1)
@@ -177,7 +176,7 @@ func TestSecurityReviewer(t *testing.T) {
 				}
 			}
 			rec := must(record.ReadRange(run.Record))
-			if c.code == 4 && (len(rec.Rounds) != 2 || len(rec.Rounds[0].Dropped) != 3 || len(rec.Findings) != 0) {
+			if c.code == 4 && (len(rec.Rounds) != 1 || len(rec.Rounds[0].Dropped) != 3 || len(rec.Findings) != 0) {
 				t.Errorf("the dropped replies are not in the record: %+v", rec.Rounds)
 			}
 			f.checkCleanedUp(t)
@@ -197,7 +196,7 @@ func TestSecurityReviewer(t *testing.T) {
 		t.Setenv("GIT_CONFIG_NOSYSTEM", "")
 		t.Setenv("FAKE_CLAUDE_DENY", included)
 		t.Setenv("FAKE_CLAUDE_RANGE", f.base+".."+f.tip)
-		code, run, stderr := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
+		code, run, stderr := runDelegate(t, "--reviewer", "security", "--reviewer", "guide", "--plan", f.plan, f.base+"..HEAD")
 		if code != 0 || run.review("security").Focus != "security" {
 			t.Fatalf("exit %d, %+v\n%s", code, run, stderr)
 		}
@@ -213,7 +212,7 @@ func TestSecurityReviewer(t *testing.T) {
 		f := setUp(t, true)
 		f.config(t, map[string]any{})
 		code, run, stderr := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
-		if code != 4 || len(run.NotRun) != 2 || !strings.Contains(run.NotRun[0]["why"], "delegate.agents") {
+		if code != 4 || len(run.NotRun) != 1 || !strings.Contains(run.NotRun[0]["why"], "delegate.agents") {
 			t.Errorf("exit %d, %+v\n%s", code, run, stderr)
 		}
 	})

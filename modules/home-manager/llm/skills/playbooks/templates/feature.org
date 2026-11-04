@@ -18,7 +18,8 @@ Done when the Goal is written and every build step is in the plan.
 :CUSTOM_ID: S2
 :AFTER: S1
 :END:
-The =review-change= skill's "Design review", before any code.
+Apply the =review-change= skill's review selection. Run its design review
+before coding when selected; otherwise log this step =abandoned= with why.
 Done when =plan-reviewed= is logged and each decision it brought is
 settled or asked.
 *** TODO Build
@@ -41,7 +42,8 @@ Done when a round's findings are all settled.
 :CUSTOM_ID: S5
 :AFTER: S4
 :END:
-The =review-change= skill's "Design review", of the change as built.
+Apply the =review-change= skill's condition for a result design review.
+Run it when selected; otherwise log this step =abandoned= with why.
 Done when it is logged and each decision it brought is settled or asked.
 *** TODO Hand back
 :PROPERTIES:

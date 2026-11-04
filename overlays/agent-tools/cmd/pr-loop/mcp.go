@@ -201,7 +201,7 @@ var mcpTools = []mcpTool{
 	{name: "git_delegate", desc: "git delegate: review a range or a pull request with reviewers that did not write it, and keep " +
 		"their findings in its review record. Exit 3: open findings; 4: a reviewer could not run here.",
 		params: []mcpParam{sourceParm,
-			{name: "reviewer", kind: texts, desc: "reviewer types to run (git delegate -h); default: the general review and the routed ones"},
+			{name: "reviewer", kind: texts, desc: "reviewer types to run (git delegate -h); default: one general review; specialists and guide require explicit selection"},
 			{name: "plan", kind: text, desc: "the plan, its file or name, whose Goal is the goal statement; required for a range"},
 			{name: "part", kind: text, desc: "the plan's part whose Goal to read, as P1"},
 			{name: "items", kind: file, desc: "the items the change answers, a file in the worktree"},

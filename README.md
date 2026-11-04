@@ -292,14 +292,12 @@ or it is not UTF-8 text.
 ## reviews: fresh eyes and tests that fail
 
 Every agent session that commits a change runs the `review-change` skill's
-pipeline unless you opt out for the task: a plan, a design review of it, the
-work, a fresh review loop of up to three rounds, and a design review of the
-result. The everyday general review is Claude Code's `/code-review`, given
-the range's base, or Codex's `/review`; `git delegate` is the second
-opinion, from the other model family, and
-runs each focused review the change needs. A coordinator reviews each part
-with an `adversarial-reviewer` sub-agent instead. Two commands give the
-reviews evidence an agent cannot talk its way around.
+pipeline unless you opt out for the task. That skill selects reviews by
+the change's risks, sets the allowance across fixups and resumes, and says
+when fixes have enough verification. `git delegate` supplies one fresh
+general reviewer, preferring the other model family. Focused reviews and
+walkthroughs are selected explicitly. Two commands give reviews evidence
+from the code and its tests.
 
 ### `git delegate`
 
@@ -310,9 +308,10 @@ change's plan or of a part of it, and optionally the items the change
 answers. It keeps what they found in a review record:
 
 ``` sh
-git delegate --plan PLAN origin/main..HEAD             # the other family, and each focused review the change needs
+git delegate --plan PLAN origin/main..HEAD             # one general reviewer; reports specialist candidates
 git delegate --reviewer security --plan PLAN --part P1 origin/main..HEAD
 git delegate --reviewer compat --plan PLAN --description pr.md origin/main..HEAD
+git delegate --reviewer guide --plan PLAN origin/main..HEAD  # a requested walkthrough
 git delegate wesnel/emacs-config#2                     # someone else's pull request
 git delegate show wesnel/emacs-config#2                # the review record, as JSON
 git delegate settle origin/main..HEAD F3 rebut --reason-file why.md
@@ -335,15 +334,15 @@ The Codex result's `model` is `--model`, else the model agent-tools'
 config names, else null: with `--json`, Codex names the model it chose
 nowhere.
 
-The Claude general review and the focused reviews (`--reviewer security`; with no `--reviewer`, those the
-change's scan routes it to) are Claude Code's reviewer agents, run headless:
+The Claude general review and the explicitly selected focused reviews
+(`--reviewer security`, for example) are Claude Code's reviewer agents, run headless:
 `claude -p --setting-sources ""` with an empty MCP config, every CLAUDE.md
 kept out, their agents from the store's `review-agents.json` and their
 sandbox from `reviewer-settings.json`, so no settings, hooks, agents or MCP
 servers of yours or of the reviewed project reach them. Each reply is held
 to its schema, and asked for once more where it does not fit. Findings that
-point at no line at the tip are dropped with the reason. Every review ends
-with the `review-guide` agent's walkthrough: the change's hunks in chunks,
+point at no line at the tip are dropped with the reason. `--reviewer guide`
+runs the `review-guide` agent's walkthrough: the change's hunks in chunks,
 in the order to read them, each hunk cited at the tip, and every hunk no
 chunk cites listed as dropped.
 

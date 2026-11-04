@@ -12,10 +12,9 @@ and coalescing every branch into one signing pass that the operator runs.
 The `signing-pass` skill's Handing over selects each branch's publication
 and signing steps from its state.
 
-The work as a whole goes through the `review-change` skill's pipeline, as
-any change does. This skill adds what several branches need: the design
-review across all parts (Design review below) and a fresh review of each
-branch (Review each branch).
+The work as a whole goes through the `review-change` skill's selection and
+review pipeline. This skill adds the cross-part context for selected design
+reviews and the ranges for reviewing each branch.
 
 A review loop over a stack, which the operator starts with
 `review-loop`, has its own skill, `review-loop`.
@@ -103,7 +102,7 @@ what is this work's.
   part's Investigate phase (Phases below), which commits nothing.
 - **`adversarial-reviewer`:** tries to break a finished branch, every
   finding reproduced or marked as not, with what held: your review of each
-  part (Review each branch below); also the second opinion where
+  part (Review each branch below); also the fallback where
   `git delegate` cannot run the selected provider, from the prompt
   `git delegate --print-prompt` prints, replying in the form it gives.
 - **`design-reviewer`:** the design reviews (Design review below).
@@ -181,14 +180,12 @@ feedback list, runs in phases.
 
 ## Design review
 
-Run the `review-change` skill's design review at two points, over every
-part at once:
-
-- before splitting: settle the structure, find the files parts share, and
-  decide which branches stack;
-- before Coalesce, once a batch of sub-agents has finished: cohesion,
-  duplication, contradictions, the same file edited on parallel branches,
-  and tooling that has drifted apart.
+Use the `review-change` skill to decide whether a design review is needed.
+A selected review sees every interacting part at once: before splitting,
+the structure, shared files and branch ordering; for a result whose design
+needs another review, cohesion, duplication, contradictions and tooling
+that has drifted apart. Independent parts alone do not require a design
+review.
 
 Settle its questions as the `plan-work` skill's "Questions for the operator"
 says: decide the reversible ones yourself, and merge the one-way doors and
@@ -221,8 +218,8 @@ its model, which through a gateway is of another family than the author's.
 - **Codex:** the session's model at high effort, which each role's file
   fixes: give `spawn_agent` no `model` and, for a role, no
   `reasoning_effort`; an `explorer` lookup runs at `reasoning_effort: "low"`.
-- Reviewers are never given a cheaper model: the second opinion is the
-  other model family, as the `review-change` skill's Harness choice says.
+- Reviewers are never given a cheaper model: use the `review-change`
+  skill's Harness choice for independence and provider fallback.
 
 Lower the effort before the model: routine work runs on Opus at low or
 medium effort before it moves to Sonnet or Haiku. Prompt caches belong to
@@ -316,15 +313,14 @@ skill's "Questions for the operator" says, not into your message.
 
 ## Review each branch
 
-Before Coalesce, run the `review-change` skill's fresh review loop on each
-branch by itself, never the whole stack at once: the range `<base>..<branch>`,
-the part's Goal as the goal statement, at most three rounds. Your general
-review of a part is an `adversarial-reviewer` sub-agent given that range,
-plan and part, in place of `/code-review`; `git delegate --plan PLAN --part
-P1` stays the second opinion. Review a branch once its
-sub-agent has finished it, then hand all of that round's findings to the
-sub-agent as one fix round, to settle as Triage says; check its report as
-any other.
+Before Coalesce, select and run reviews as the `review-change` skill says
+for each completed branch: the range `<base>..<branch>`, with the part's
+Goal and its stable review item. Give reviewers the interacting parts as
+context. An `adversarial-reviewer` sub-agent given that range, goal and
+items can supply the general review in place of delegate. Hand the
+round's findings to the builder together, then verify the fixes under the
+same allowance, carrying it across restacks and moved tips. Check the
+builder's report as any other.
 
 ## Coalesce
 

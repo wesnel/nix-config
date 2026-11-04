@@ -59,7 +59,7 @@ TYPEs (--reviewer, repeated):
             directory git needs and the Nix store, with no writes, network,
             MCP server, plugin, web search or image viewer. Codex's sandbox
             cannot start inside another macOS sandbox, so run this outside
-            one. It also routes the change to the focused reviews it needs:
+            one. It also reports candidates for focused review:
             a scan of every commit from TIP's merge base with the default
             branch, by its paths and lines, against built-in rules and the
             operator's repos routes, and the routes it names.
@@ -92,8 +92,8 @@ TYPEs (--reviewer, repeated):
   guide     the walkthrough, by Claude Code's review-guide agent, headless
             as security is: the change's hunks in chunks, in the order to
             read them, each hunk cited as file:PATH::LINE@SHA. A citation of
-            no hunk, and a hunk no chunk cites, are dropped. It is selected
-            last in every review, and its walkthrough replaces the record's.
+            no hunk, and a hunk no chunk cites, are dropped. Run it with
+            --reviewer guide; its walkthrough replaces the record's.
   diagram   at most three diagrams, run only when named: drawn by Claude
             Code's diagrammer agent, headless as security is, as JSON each
             element of which cites the lines at TIP it stands for; each
@@ -110,8 +110,9 @@ TYPEs (--reviewer, repeated):
             its ID.
 With no --reviewer, the general review is claude for a Codex caller
 (CODEX_SANDBOX or CODEX_THREAD_ID set), or codex where claude cannot run,
-and codex for any other caller. Each type
-the route scan picks runs too; stderr says what it picked and why.
+and codex for any other caller. Only that general review runs. The route
+scan and reviewer report candidates with reasons and commands; assess the
+concrete risk before selecting a focused review with --reviewer.
 
 A type whose provider is held does not run (git delegate availability -h).
 A run that fails for a rate limit holds its provider for five minutes, and
@@ -436,20 +437,14 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		return 0
 	}
 
-	// Without --reviewer, the other family and the scan's focused reviews.
+	// Without --reviewer, prefer one general review by the other family.
 	explicit := len(reviewers) > 0
 	scanned := routeChange(r, nil, stderr)
 	chosen := slices.Clone([]string(reviewers))
 	if !explicit {
 		chosen = []string{generalReviewer()}
-		for _, rt := range scanned {
-			chosen = append(chosen, rt.Route)
-			fmt.Fprintf(stderr, "%s: reviewing for %s too: %s\n", name, rt.Route, strings.Join(rt.Why, "; "))
-		}
 	}
-	// The walkthrough comes with every review, after the reviewers.
-	chosen = slices.DeleteFunc(chosen, func(t string) bool { return t == "guide" })
-	chosen = append(slices.Compact(chosen), "guide")
+	chosen = slices.Compact(chosen)
 
 	result := &RunResult{Source: s.given, Range: r.base + ".." + r.tip, Tip: r.tip, Record: path, Reviews: []*Output{},
 		NotRun: []NotRun{}, Routes: scanned}
@@ -491,7 +486,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	}
 	for _, rt := range result.Routes {
 		if !slices.Contains(chosen, rt.Route) {
-			fmt.Fprintf(stderr, "%s: this change needs a %s review (%s): run `git delegate --reviewer %s %s%s`\n",
+			fmt.Fprintf(stderr, "%s: candidate %s review (%s): assess the risk, then run `git delegate --reviewer %s %s%s` if needed\n",
 				name, rt.Route, strings.Join(rt.Why, "; "), rt.Route, typeFlags(s, rt.Route, goal), s.given)
 		}
 	}
