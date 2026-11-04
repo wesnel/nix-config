@@ -24,9 +24,9 @@ import (
 // session cannot run in its sandbox, which denies the gh login and the
 // reviewers' credentials to its commands, as tools of a stdio MCP server
 // Codex starts as a process of its own, outside that sandbox. Each tool
-// runs one pr-loop, git delegate or agent-plan command, its argv built from typed
-// arguments: no tool takes a shell line, gh arguments or
-// argv. The commands read the gh login themselves, as they do on the
+// runs a GitHub read or one pr-loop, git delegate or agent-plan command
+// from typed arguments: no tool takes a shell line, gh arguments or
+// argv. The operations read the gh login themselves, as they do on the
 // command line, and print what they print there. Codex preapproves the
 // routine plan catalog; other operations ask the operator on each call.
 
@@ -47,7 +47,7 @@ const (
 	toggle                   // a boolean
 	texts                    // an array of strings
 	file                     // a path to a file in the worktree, absolute or relative to it
-	literal                  // inline content, encoded as --flag=value by plan tools
+	literal                  // literal data; plan tools encode it as --flag=value
 )
 
 // mcpTool is one tool: its argv from its checked arguments, and what runs
@@ -240,6 +240,19 @@ var mcpTools = []mcpTool{
 	{name: "github_profile", desc: "The name and pronouns a GitHub user's profile lists, null where it lists none.",
 		params:     []mcpParam{{name: "login", kind: text, required: true, desc: "the user's login"}},
 		noWorktree: true, argv: func(a mcpArgs) []string { return []string{a.str("login")} }, run: githubProfile},
+	{name: "github_pr_diff", desc: "Read a PR's unified diff and base/head SHAs without a checkout. Fails if the revisions move or the response is incomplete or exceeds 16 MiB.",
+		params: []mcpParam{{name: "repo", kind: text, required: true, desc: "GitHub repository OWNER/NAME"},
+			{name: "number", kind: number, required: true, desc: "positive pull request number"}},
+		noWorktree: true, argv: func(a mcpArgs) []string { return []string{a.str("repo"), strconv.Itoa(a["number"].(int))} }, run: githubPRDiff},
+	{name: "github_pr_view", desc: "Read a PR's metadata, description, discussion comments, reviews and inline comments without a checkout. Reads every page or fails explicitly; discussion may change during collection.",
+		params: []mcpParam{{name: "repo", kind: text, required: true, desc: "GitHub repository OWNER/NAME"},
+			{name: "number", kind: number, required: true, desc: "positive pull request number"}},
+		noWorktree: true, argv: func(a mcpArgs) []string { return []string{a.str("repo"), strconv.Itoa(a["number"].(int))} }, run: githubPRView},
+	{name: "github_file", desc: "Read a repository text file at an exact commit without a checkout. Returns content and blob SHA; refuses omitted, binary or non-file content. GitHub may resolve an in-repository symlink.",
+		params: []mcpParam{{name: "repo", kind: text, required: true, desc: "GitHub repository OWNER/NAME"},
+			{name: "commit", kind: text, required: true, desc: "full 40-character commit SHA"},
+			{name: "path", kind: literal, required: true, desc: "repository-relative file path, not a local file"}},
+		noWorktree: true, argv: func(a mcpArgs) []string { return []string{a.str("repo"), a.str("commit"), a.str("path")} }, run: githubFile},
 }
 
 // githubProfile prints the profile of the login argv names.

@@ -64,7 +64,7 @@ func Token() (string, error) {
 // for.
 const defaultVersion = "2022-11-28"
 
-func do(method, url string, body any, accept, version string) ([]byte, error) {
+func do(method, url string, body any, accept, version string, transport *http.Client, limit int64) ([]byte, error) {
 	tok, err := Token()
 	if err != nil {
 		return nil, err
@@ -87,14 +87,21 @@ func do(method, url string, body any, accept, version string) ([]byte, error) {
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := client.Do(req)
+	resp, err := transport.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
+	var source io.Reader = resp.Body
+	if limit > 0 {
+		source = io.LimitReader(source, limit+1)
+	}
+	data, err := io.ReadAll(source)
 	if err != nil {
 		return nil, err
+	}
+	if limit > 0 && int64(len(data)) > limit {
+		return nil, fmt.Errorf("GitHub response exceeds %d bytes; no partial content returned", limit)
 	}
 	if resp.StatusCode >= 300 {
 		return nil, &StatusError{resp.StatusCode, fmt.Sprintf("%s %s: %s: %s", method, strings.TrimPrefix(url, api), resp.Status, strings.TrimSpace(string(data)))}
@@ -128,7 +135,7 @@ func REST(method, path string, body, out any) error {
 // RESTVersion is REST for an endpoint GitHub serves only under a later API
 // version, named in GitHub's documentation of the endpoint.
 func RESTVersion(version, method, path string, body, out any) error {
-	data, err := do(method, api+"/"+strings.TrimPrefix(path, "/"), body, "application/vnd.github+json", version)
+	data, err := do(method, api+"/"+strings.TrimPrefix(path, "/"), body, "application/vnd.github+json", version, client, 0)
 	if err != nil || out == nil || len(data) == 0 {
 		return err
 	}
@@ -137,12 +144,20 @@ func RESTVersion(version, method, path string, body, out any) error {
 
 // Raw returns a GET response body as is, following redirects.
 func Raw(path string) ([]byte, error) {
-	return do("GET", api+"/"+strings.TrimPrefix(path, "/"), nil, "application/vnd.github+json", defaultVersion)
+	return do("GET", api+"/"+strings.TrimPrefix(path, "/"), nil, "application/vnd.github+json", defaultVersion, client, 0)
+}
+
+// Read returns at most 16 MiB from an API path, refusing redirects and
+// oversized responses instead of following URLs or returning partial content.
+func Read(path, accept string) ([]byte, error) {
+	transport := *client
+	transport.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return do("GET", api+"/"+strings.TrimPrefix(path, "/"), nil, accept, defaultVersion, &transport, 16<<20)
 }
 
 // GraphQL runs a query and decodes its data into out.
 func GraphQL(query string, variables map[string]any, out any) error {
-	data, err := do("POST", api+"/graphql", map[string]any{"query": query, "variables": variables}, "application/json", defaultVersion)
+	data, err := do("POST", api+"/graphql", map[string]any{"query": query, "variables": variables}, "application/json", defaultVersion, client, 0)
 	if err != nil {
 		return err
 	}
