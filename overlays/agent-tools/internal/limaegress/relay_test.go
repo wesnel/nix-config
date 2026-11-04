@@ -82,7 +82,8 @@ func newFixture(t *testing.T) *fixture {
 			}
 			return c.(*net.TCPConn), nil
 		},
-		Log: &f.log,
+		Slots: FlockSlots{Dir: t.TempDir(), N: 64},
+		Log:   &f.log,
 	}
 	return f
 }
