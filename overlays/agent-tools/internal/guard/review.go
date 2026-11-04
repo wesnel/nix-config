@@ -103,9 +103,13 @@ func unreadRunsOf(c call, cwd string) []unreadRun {
 // an option's value may look like one), the file on its standard input,
 // by a redirection or from the command before it in a pipeline (c.stdin),
 // what a subcommand of programs that runs code is given where its sources
-// say so, and what the program's location options name. Code on standard
+// say so, what the program's location options name, and the local flake
+// nix run builds it from. Code on standard
 // input from the line itself (<<, <<<) is inline, as -c is.
 func runsUnread(c call) (bool, []string) {
+	if c.flake != "" {
+		return true, []string{c.flake}
+	}
 	if c.expands[0] {
 		return true, nil
 	}
