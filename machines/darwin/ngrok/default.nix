@@ -47,6 +47,7 @@
           hex = true;
           datadog.enable = true;
           parallels = true;
+          lima = true;
         };
 
         python.enable = true;

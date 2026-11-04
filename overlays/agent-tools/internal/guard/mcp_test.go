@@ -16,7 +16,7 @@ import (
 // every tool asks in a main session that can ask and is refused elsewhere.
 func TestMCPTools(t *testing.T) {
 	config := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(config, []byte(`{"mcpProxy":{"endpoints":{"parallels":"/parallels/mcp","linear":"/linear/mcp"}}}`), 0o600); err != nil {
+	if err := os.WriteFile(config, []byte(`{"mcpProxy":{"endpoints":{"parallels":"/parallels/mcp","lima":"/lima/mcp","linear":"/linear/mcp"}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
@@ -47,6 +47,12 @@ func TestMCPTools(t *testing.T) {
 		{"Linear deletion from Codex", []string{"--baseline"}, codex("mcp__linear__delete_comment"), deny, "delete_comment"},
 		{"Linear connector write from Codex", []string{"--baseline"}, codex("mcp__claude_ai_Linear__save_issue"), deny, "Claude Code"},
 		{"Linear read from Codex", []string{"--baseline"}, codex("mcp__linear__get_issue"), "", ""},
+		{"Lima list", []string{"--baseline"}, codex("mcp__lima__lima_list"), "", ""},
+		{"Lima stop asks", []string{"--baseline"}, claude("mcp__lima__lima_stop"), ask, "Lima"},
+		{"Lima stop uses native Codex approval", []string{"--baseline"}, codex("mcp__lima__lima_stop"), "", ""},
+		{"Lima stop from a reviewer", []string{"--reviewer"}, codex("mcp__lima__lima_stop"), deny, "reviewer only reads"},
+		{"Lima exec refused", []string{"--baseline"}, codex("mcp__lima__lima_exec"), deny, "lima_exec"},
+		{"Lima deletion", []string{"--baseline"}, codex("mcp__lima__lima_delete"), deny, "lima_delete"},
 		{"Parallels read", []string{"--baseline"}, claude("mcp__parallels__parallels_list_vms"), "", ""},
 		{"Parallels read from Codex", []string{"--baseline"}, codex("mcp__parallels__parallels_vm_capture"), "", ""},
 		{"Parallels exec asks", []string{"--baseline"}, claude("mcp__parallels__parallels_vm_exec"), ask, "Parallels"},
@@ -316,6 +322,7 @@ func TestMCPLookalike(t *testing.T) {
 		{"slack", "mcp__slack__slack_read_thread", "mcp__claude_ai_Slack__", false},
 		{"ngrok", "mcp__ngrok-dev__list_endpoints", "mcp__ngrok__", false},
 		{"parallels", "mcp__parallels-direct__parallels_vm_info", "mcp__parallels__", false},
+		{"lima", "mcp__lima-direct__lima_list", "mcp__lima__", false},
 	} {
 		covered[c.key] = true
 		for _, h := range []struct {
