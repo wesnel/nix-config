@@ -30,8 +30,10 @@ import (
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"golang.ngrok.com/ngrok/privatedial"
+	"google.golang.org/protobuf/encoding/protowire"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/limaegress"
 	"github.com/wesnel/agent-tools/internal/udpframe"
 )
 
@@ -298,8 +300,8 @@ func newFixture(t *testing.T, configure func(*Config)) *fixture {
 	f.shimPort = uint16(shimPacket.LocalAddr().(*net.UDPAddr).Port)
 
 	cfg := Config{
-		Servers:   []string{server},
-		Endpoints: []string{"db.internal:5432"},
+		Servers:   []limaegress.Name{server},
+		Endpoints: []limaegress.Endpoint{{Host: "db.internal", Port: 5432}},
 		CA:        brokerCA.cert,
 		Upstream: Upstream{
 			Resolver: staticResolver{server: {upstreamLoopback}},
@@ -403,8 +405,7 @@ func send(t *testing.T, ctx context.Context, tr *http3.Transport, req *http.Requ
 	if err != nil {
 		t.Fatalf("%s %s: %v", req.Method, req.URL, err)
 	}
-	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
 	return resp.StatusCode
 }
 
@@ -692,6 +693,119 @@ func TestRequestShape(t *testing.T) {
 	}
 }
 
+// The fields of a message, for the encoding tests.
+func text(num protowire.Number, s string) []byte {
+	return protowire.AppendString(protowire.AppendTag(nil, num, protowire.BytesType), s)
+}
+
+func varint(num protowire.Number, v uint64) []byte {
+	return protowire.AppendVarint(protowire.AppendTag(nil, num, protowire.VarintType), v)
+}
+
+// delimited joins fields into one message behind its varint length, as the
+// client's first message.
+func delimited(fields ...[]byte) []byte {
+	message := bytes.Join(fields, nil)
+	return append(protowire.AppendVarint(nil, uint64(len(message))), message...)
+}
+
+func TestEncoding(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx := testContext(t)
+	tr := f.rawClient(t)
+	base := fmt.Sprintf("https://%s:%d", server, f.shimPort)
+	host, port := text(1, "db.internal"), varint(2, 5432)
+	entry := text(3, string(bytes.Join([][]byte{text(1, "key"), text(2, "value")}, nil)))
+	session := text(4, "")
+	// A metadata entry whose field holds pad bytes, making a DialReq of
+	// exactly size bytes.
+	padded := func(size int) []byte {
+		fixed := len(host) + len(port)
+		for n := size - fixed - 3; n >= 0; n-- {
+			if m := delimited(host, port, text(3, strings.Repeat("x", n))); len(m)-len(protowire.AppendVarint(nil, uint64(size))) == size {
+				return m
+			}
+		}
+		t.Fatalf("no DialReq of %d bytes", size)
+		return nil
+	}
+
+	for _, tc := range []struct {
+		name, path string
+		body       []byte
+		relayed    bool
+	}{
+		{"a dial with metadata entries and a session_req", pathDial, delimited(host, port, entry, entry, session), true},
+		{"a dial whose first message is exactly 64 KiB", pathDial, padded(64 << 10), true},
+		{"a get-host", pathGetHost, delimited(host), true},
+		{"a session request with a client version and metadata", pathSession, delimited(text(1, "v1"), text(2, "m"), text(2, "n")), true},
+
+		{"a dial with field 1 twice", pathDial, delimited(host, host, port), false},
+		{"a dial whose last host is the allowlisted one", pathDial, delimited(text(1, "other.internal"), host, port), false},
+		{"a dial whose last port is the allowlisted one", pathDial, delimited(host, varint(2, 22), port), false},
+		{"a dial with a field 1 of the varint type", pathDial, delimited(host, varint(1, 7), port), false},
+		{"a dial with a field 2 of the bytes type", pathDial, delimited(host, port, text(2, "5432")), false},
+		{"a dial with field 4 twice", pathDial, delimited(host, port, session, session), false},
+		{"a dial with an unknown field", pathDial, delimited(host, port, varint(5, 1)), false},
+		{"a dial whose host is not lowercase", pathDial, delimited(text(1, "DB.internal"), port), false},
+		{"a dial to port 0", pathDial, delimited(host, varint(2, 0)), false},
+		{"a dial whose first message is one byte over 64 KiB", pathDial, padded(64<<10 + 1), false},
+		{"a get-host whose last host is the allowlisted one", pathGetHost, delimited(text(1, "other.internal"), host), false},
+		{"a get-host with a port", pathGetHost, delimited(host, port), false},
+		{"a get-host followed by a second one", pathGetHost, append(delimited(host), delimited(text(1, "other.internal"))...), false},
+		{"a get-host followed by a byte", pathGetHost, append(delimited(host), 0), false},
+		{"a session request with an unknown field", pathSession, delimited(text(1, "v1"), varint(3, 1)), false},
+		{"a session request with a client version of the varint type", pathSession, delimited(varint(1, 1)), false},
+		{"a session request with two client versions", pathSession, delimited(text(1, "v1"), text(1, "v2")), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f.logs.clear()
+			req, err := http.NewRequest(http.MethodPost, base+tc.path, bytes.NewReader(tc.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			status := send(t, ctx, tr, req)
+			if !tc.relayed {
+				if status != http.StatusForbidden {
+					t.Fatalf("status %d, want 403", status)
+				}
+				if !f.logs.has("refused", map[string]string{"reason": "first message", "path": tc.path}) {
+					t.Fatal("no refusal of its first message")
+				}
+				f.upstream.noneSeen(t)
+				return
+			}
+			if status != http.StatusOK {
+				t.Fatalf("status %d, want 200", status)
+			}
+			if got := f.upstream.next(t); got.path != tc.path || !bytes.Equal(got.first, tc.body) {
+				t.Fatalf("upstream saw %s with a %d-byte first message, want %s with the %d bytes sent", got.path, len(got.first), tc.path, len(tc.body))
+			}
+		})
+	}
+}
+
+func TestFirstMessageDeadline(t *testing.T) {
+	f := newFixture(t, func(cfg *Config) { cfg.firstMessageTimeout = 100 * time.Millisecond })
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	// A first message that declares five bytes and sends none of them.
+	body, stall := io.Pipe()
+	defer stall.Close()
+	go stall.Write([]byte{5})
+	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("https://%s:%d/get-host", server, f.shimPort), body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status := send(t, ctx, f.rawClient(t), req); status != http.StatusForbidden {
+		t.Fatalf("status %d, want 403", status)
+	}
+	if !f.logs.has("refused", map[string]string{"reason": "first message", "path": "/get-host"}) {
+		t.Fatal("no refusal of the stalled first message")
+	}
+	f.upstream.noneSeen(t)
+}
+
 func TestAuthority(t *testing.T) {
 	for _, tc := range []struct {
 		authority string
@@ -747,7 +861,7 @@ func TestRelayedHeaders(t *testing.T) {
 
 func TestServe(t *testing.T) {
 	brokerCA := newAuthority(t)
-	broker, err := New(Config{Servers: []string{server}, CA: brokerCA.cert})
+	broker, err := New(Config{Servers: []limaegress.Name{server}, CA: brokerCA.cert})
 	if err != nil {
 		t.Fatal(err)
 	}
