@@ -26,6 +26,7 @@ import (
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 
+	"github.com/wesnel/agent-tools/internal/limaegress"
 	"github.com/wesnel/agent-tools/internal/udpframe"
 )
 
@@ -47,11 +48,11 @@ type Upstream struct {
 type Config struct {
 	// Servers are the private-dial QUIC server names, such as
 	// us.quic.connect-endpoint.ngrok.com: the only names the broker
-	// serves, and the only ones it relays to.
-	Servers []string
-	// Endpoints are the private endpoints a dial may reach, each host:port
-	// with a lowercase LDH host name or an IP literal.
-	Endpoints []string
+	// serves, and the only ones it relays to. limaegress.Policy's
+	// QUICServers are these.
+	Servers []limaegress.Name
+	// Endpoints are the private endpoints a dial may reach.
+	Endpoints []limaegress.Endpoint
 	// CA signs the leaf the broker presents for each server name; the
 	// guest trusts it.
 	CA tls.Certificate
@@ -65,9 +66,13 @@ type Config struct {
 	Logger *slog.Logger
 
 	// For tests: the upstream's port in place of 443, and the check of an
-	// upstream address in place of publicAddr and the host's own addresses.
+	// upstream address in place of limaegress.CheckAddrs with the host's
+	// own addresses.
 	dialPort  uint16
 	allowAddr func(netip.Addr) bool
+	// For tests: how long a request's first message may take in place of
+	// ten seconds.
+	firstMessageTimeout time.Duration
 }
 
 // Broker serves flows under one Config.
@@ -82,37 +87,42 @@ type Broker struct {
 	dialPort  uint16
 	allowAddr func(netip.Addr) bool
 	log       *slog.Logger
+	// firstMessageTimeout bounds the wait for a request's first message.
+	firstMessageTimeout time.Duration
 }
 
 // New checks cfg and returns its broker.
 func New(cfg Config) (*Broker, error) {
 	b := &Broker{
-		servers:   map[string]bool{},
-		endpoints: map[string]bool{},
-		hosts:     map[string]bool{},
-		port:      cfg.Port,
-		resolver:  cfg.Upstream.Resolver,
-		rootCAs:   cfg.Upstream.RootCAs,
-		dialPort:  cfg.dialPort,
-		allowAddr: cfg.allowAddr,
-		log:       cfg.Logger,
+		servers:             map[string]bool{},
+		endpoints:           map[string]bool{},
+		hosts:               map[string]bool{},
+		port:                cfg.Port,
+		resolver:            cfg.Upstream.Resolver,
+		rootCAs:             cfg.Upstream.RootCAs,
+		dialPort:            cfg.dialPort,
+		allowAddr:           cfg.allowAddr,
+		log:                 cfg.Logger,
+		firstMessageTimeout: cfg.firstMessageTimeout,
+	}
+	if b.firstMessageTimeout == 0 {
+		b.firstMessageTimeout = 10 * time.Second
 	}
 	if len(cfg.Servers) == 0 {
 		return nil, errors.New("limaquic: no server names")
 	}
 	for _, name := range cfg.Servers {
-		if !ldhName(name) {
-			return nil, fmt.Errorf("limaquic: server name %q is not a lowercase LDH name", name)
+		if _, err := limaegress.ParseName(string(name)); err != nil {
+			return nil, fmt.Errorf("limaquic: server name: %w", err)
 		}
-		b.servers[name] = true
+		b.servers[string(name)] = true
 	}
-	for _, endpoint := range cfg.Endpoints {
-		host, port, err := net.SplitHostPort(endpoint)
-		if err != nil || !endpointHost(host) || !validPort(port) {
-			return nil, fmt.Errorf("limaquic: endpoint %q is not host:port", endpoint)
+	for _, e := range cfg.Endpoints {
+		if _, err := limaegress.ParseEndpoint(e.String()); err != nil {
+			return nil, fmt.Errorf("limaquic: %w", err)
 		}
-		b.endpoints[net.JoinHostPort(host, port)] = true
-		b.hosts[host] = true
+		b.endpoints[e.String()] = true
+		b.hosts[e.Host] = true
 	}
 	if b.port == 0 {
 		b.port = 443
@@ -128,7 +138,7 @@ func New(cfg Config) (*Broker, error) {
 		b.dialPort = 443
 	}
 	if b.allowAddr == nil {
-		local, err := localAddrs()
+		local, err := limaegress.InterfaceAddrs()
 		if err != nil {
 			return nil, err
 		}
@@ -140,33 +150,14 @@ func New(cfg Config) (*Broker, error) {
 	return b, nil
 }
 
-// validPort reports whether s is a port, 1 to 65535, in decimal without a
-// leading zero.
-func validPort(s string) bool {
-	n, err := strconv.ParseUint(s, 10, 16)
-	return err == nil && n != 0 && strconv.FormatUint(n, 10) == s
-}
-
-// upstreamCheck reports whether an upstream address may be dialled: it is
-// public, and none of local, the host's own addresses.
-func upstreamCheck(local map[netip.Addr]bool) func(netip.Addr) bool {
-	return func(a netip.Addr) bool { return publicAddr(a) && !local[a.Unmap()] }
-}
-
-// localAddrs returns the host's interface addresses, which an upstream may
-// not resolve to.
-func localAddrs() (map[netip.Addr]bool, error) {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return nil, err
+// upstreamCheck reports whether an upstream address may be dialled, by the
+// CONNECT relay's check: it is public, and none of local, the host's own
+// addresses.
+func upstreamCheck(local []netip.Addr) func(netip.Addr) bool {
+	return func(a netip.Addr) bool {
+		_, err := limaegress.CheckAddrs([]netip.Addr{a}, local)
+		return err == nil
 	}
-	local := map[netip.Addr]bool{}
-	for _, addr := range addrs {
-		if prefix, err := netip.ParsePrefix(addr.String()); err == nil {
-			local[prefix.Addr().Unmap().WithZone("")] = true
-		}
-	}
-	return local, nil
 }
 
 // The flow's addresses, which quic-go needs and nothing reads: the flow has
@@ -298,38 +289,63 @@ func (f *flowRelay) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.refuse(w, "authority", "authority", r.Host)
 		return
 	}
-	var first []byte
+	// Every path's body starts with one message, which the broker reads,
+	// within firstMessageTimeout, judges, and relays ahead of the rest of
+	// the body.
+	body := http.NewResponseController(w)
+	if err := body.SetReadDeadline(time.Now().Add(b.firstMessageTimeout)); err != nil {
+		f.refuse(w, "first message", "path", path, "error", err)
+		return
+	}
+	first, message, err := readFirst(r.Body)
+	if err != nil {
+		f.refuse(w, "first message", "path", path, "error", err)
+		return
+	}
 	switch path {
+	case pathSession:
+		// After its SessionReq, a session carries control frames, which
+		// name no destination, so they pass unread.
+		if err := checkSessionReq(message); err != nil {
+			f.refuse(w, "first message", "path", path, "error", err)
+			return
+		}
 	case pathDial:
-		raw, message, err := readFirst(r.Body)
+		host, port, err := parseDialReq(message)
 		if err != nil {
 			f.refuse(w, "first message", "path", path, "error", err)
 			return
 		}
-		host, port, err := parseDialReq(message)
 		endpoint := net.JoinHostPort(host, strconv.FormatUint(port, 10))
-		if err != nil || !b.endpoints[endpoint] {
+		if !b.endpoints[endpoint] {
 			f.refuse(w, "endpoint", "endpoint", endpoint)
 			return
 		}
-		first = raw
+		log.Info("dial", "endpoint", endpoint)
 	case pathGetHost:
-		raw, message, err := readFirst(r.Body)
+		host, err := parseGetHostReq(message)
 		if err != nil {
 			f.refuse(w, "first message", "path", path, "error", err)
 			return
 		}
-		host, err := parseGetHostReq(message)
-		if err != nil || !b.hosts[host] {
+		if !b.hosts[host] {
 			f.refuse(w, "host", "host", host)
 			return
 		}
-		first = raw
+		// A get-host is one GetHostReq and nothing after it, so nothing
+		// the broker has not judged reaches upstream.
+		if err := atEnd(r.Body); err != nil {
+			f.refuse(w, "first message", "path", path, "error", err)
+			return
+		}
+	}
+	if err := body.SetReadDeadline(time.Time{}); err != nil {
+		f.refuse(w, "first message", "path", path, "error", err)
+		return
 	}
 
 	target := &url.URL{Scheme: "https", Host: sni, Path: path}
-	body := io.MultiReader(bytes.NewReader(first), r.Body)
-	upstream, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target.String(), body)
+	upstream, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target.String(), io.MultiReader(bytes.NewReader(first), r.Body))
 	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
