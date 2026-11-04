@@ -188,6 +188,42 @@ func TestCommands(t *testing.T) {
 		}
 	})
 
+	// find lists every plan naming the session; --chosen only the one
+	// Locate chooses, here the one under way over one handed back the
+	// same day, which find lists first.
+	t.Run("find --chosen", func(t *testing.T) {
+		c := setup(t)
+		t.Chdir(t.TempDir())
+		t.Setenv("CLAUDE_CODE_SESSION_ID", "s-1")
+		at := time.Date(2026, 10, 30, 9, 0, 0, 0, time.Local)
+		made := map[string]string{}
+		for slug, status := range map[string]string{"aaa": "working", "zzz": "handed-back"} {
+			p, err := c.New(plans.NewOptions{Title: "Add " + slug, Slug: slug, Sessions: []string{"claude:s-1"},
+				Harness: "claude", Status: status}, at)
+			if err != nil {
+				t.Fatal(err)
+			}
+			made[slug] = p.Plan
+		}
+		for _, args := range [][]string{{"find", "--chosen"}, {"find", "--chosen", "--session", "claude:s-1"}} {
+			code, out, errs := agentPlan(t, "", args...)
+			var found []plans.Found
+			if code != 0 || json.Unmarshal([]byte(out), &found) != nil || len(found) != 1 || found[0].Plan != made["aaa"] {
+				t.Errorf("%v: code %d, output %s, stderr %s; want only %s", args, code, out, errs, made["aaa"])
+			}
+		}
+		code, out, _ := agentPlan(t, "", "find")
+		var all []plans.Found
+		if code != 0 || json.Unmarshal([]byte(out), &all) != nil || len(all) != 2 || all[0].Plan != made["zzz"] {
+			t.Errorf("find: code %d, output %s; want both plans, %s first", code, out, made["zzz"])
+		}
+		// A session no plan names chooses none.
+		code, out, _ = agentPlan(t, "", "find", "--chosen", "--session", "claude:s-2")
+		if code != 0 || strings.TrimSpace(out) != "[]" {
+			t.Errorf("find --chosen for another session: code %d, output %s; want []", code, out)
+		}
+	})
+
 	t.Run("log and report", func(t *testing.T) {
 		plan := sessionPlan(t)
 		if code, _, errs := agentPlan(t, "", "log", plan, "--item", "S1", "--kind", "done", "--summary", "Add the loop",

@@ -80,10 +80,14 @@ have (see status) is refused and writes nothing.
                      hand-back with a command, each with its command and
                      directory: what waits on the operator, which Emacs and
                      the dashboard show them
-  find [--session ID] [--worktree DIR] [--branch B]
+  find [--session ID] [--worktree DIR] [--branch B] [--chosen]
                      this host's plan files that match any one given (default:
                      this session, and the worktree and branch if a linked
-                     worktree, never a repository's main checkout)
+                     worktree, never a repository's main checkout); --chosen
+                     lists only the one file the hooks and the status line
+                     take for the session and worktree, or none: of the
+                     plans naming them, one not handed back, then the one
+                     with the session's latest event, then the newest
   find --hook [--harness claude|codex]
                      the same for a SessionStart hook (reads stdin); Codex's
                      returns bounded plan context without changing sessions.
@@ -499,6 +503,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		outcome  = flags.String("outcome", "", "")
 		format   = flags.String("format", "org", "")
 		hook     = flags.Bool("hook", false, "")
+		chosen   = flags.Bool("chosen", false, "")
 		pull     = flags.Bool("pull", false, "")
 		all      = flags.Bool("all", false, "")
 		asJSON   = flags.Bool("json", false, "")
@@ -572,6 +577,10 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	}
 	if given["workstream"] && command != "new" {
 		fmt.Fprintf(stderr, "agent-plan %s: --workstream is new's\n", command)
+		return 2
+	}
+	if given["chosen"] && command != "find" {
+		fmt.Fprintf(stderr, "agent-plan %s: --chosen is find's\n", command)
 		return 2
 	}
 	if given["base"] && command != "sign-id" {
@@ -775,6 +784,9 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			if o = plans.Here(session, cwd); o == (plans.FindOptions{}) {
 				return report([]plans.Found{}, nil)
 			}
+		}
+		if *chosen {
+			return report(c.Chosen(o))
 		}
 		return report(c.Find(o))
 	case "goal":

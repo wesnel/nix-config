@@ -844,6 +844,25 @@ func Here(session, dir string) FindOptions {
 	return o
 }
 
+// Chosen is the one file of those Find lists for o that Locate takes for
+// o's session and worktree, or none, as agent-plan find --chosen lists it.
+func (c Config) Chosen(o FindOptions) ([]Found, error) {
+	found, err := c.Find(o)
+	if err != nil {
+		return nil, err
+	}
+	out := []Found{}
+	if p, part, ok := c.Locate(o.Session, o.Worktree); ok {
+		for _, f := range found {
+			if f.Plan == p.File() && f.Part == part {
+				out = append(out, f)
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
 // Find lists this host's plan files that match, newest plan first.
 func (c Config) Find(o FindOptions) ([]Found, error) {
 	if o.Session == "" && o.Worktree == "" && o.Branch == "" {
