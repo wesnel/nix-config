@@ -91,10 +91,14 @@ have (see status) is refused and writes nothing.
                      Exit 0 means the scan completed, including any findings;
                      an enumeration failure exits nonzero. Inspect drift with
                      status PLAN; preserve historical events as recorded
-  find [--session ID] [--worktree DIR] [--branch B]
+  find [--session ID] [--worktree DIR] [--branch B] [--chosen]
                      this host's plan files that match any one given (default:
                      this session, and the worktree and branch if a linked
-                     worktree, never a repository's main checkout)
+                     worktree, never a repository's main checkout); --chosen
+                     lists only the one file the hooks and the status line
+                     take for the session and worktree, or none: of the
+                     plans naming them, one not handed back, then the one
+                     with the session's latest event, then the newest
   find --hook [--harness claude|codex]
                      the same for a SessionStart hook (reads stdin); Codex's
                      returns bounded plan context without changing sessions.
@@ -580,6 +584,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		outcome  = flags.String("outcome", "", "")
 		format   = flags.String("format", "org", "")
 		hook     = flags.Bool("hook", false, "")
+		chosen   = flags.Bool("chosen", false, "")
 		pull     = flags.Bool("pull", false, "")
 		all      = flags.Bool("all", false, "")
 		asJSON   = flags.Bool("json", false, "")
@@ -700,7 +705,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	case "acknowledge":
 		return runAcknowledge(*evidence, c, positional, stderr, report)
 	case "find":
-		return runFind(*harness, *hook, plans.FindOptions{Session: session, Worktree: worktree, Branch: branch}, c, stdin, stdout, stderr, report)
+		return runFind(*harness, *hook, *chosen, plans.FindOptions{Session: session, Worktree: worktree, Branch: branch}, c, stdin, stdout, stderr, report)
 	case "worktrees":
 		return runWorktrees(session, c, positional, given, stdout, stderr, report)
 	case "goal":
@@ -953,7 +958,7 @@ func runWaiting(asJSON bool, stdout io.Writer, report func(any, error) int, want
 	return 0
 }
 
-func runFind(harness string, hook bool, o plans.FindOptions, c plans.Config, stdin io.Reader, stdout io.Writer, stderr io.Writer, report func(any, error) int) int {
+func runFind(harness string, hook, chosen bool, o plans.FindOptions, c plans.Config, stdin io.Reader, stdout io.Writer, stderr io.Writer, report func(any, error) int) int {
 	if hook {
 		h := harness
 		if h == "" {
@@ -978,6 +983,9 @@ func runFind(harness string, hook bool, o plans.FindOptions, c plans.Config, std
 		if o = plans.Here(session, cwd); o == (plans.FindOptions{}) {
 			return report([]plans.Found{}, nil)
 		}
+	}
+	if chosen {
+		return report(c.Chosen(o))
 	}
 	return report(c.Find(o))
 }
@@ -1506,6 +1514,10 @@ func commandFlags(command string, flags *flag.FlagSet, unset bool, signPlan stri
 	}
 	if given["workstream"] && command != "new" {
 		fmt.Fprintf(stderr, "agent-plan %s: --workstream is new's\n", command)
+		return nil, false
+	}
+	if given["chosen"] && command != "find" {
+		fmt.Fprintf(stderr, "agent-plan %s: --chosen is find's\n", command)
 		return nil, false
 	}
 	if given["base"] && command != "sign-id" {
