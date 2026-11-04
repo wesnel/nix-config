@@ -144,12 +144,9 @@ func judgeInput(in input, who role) (string, string) {
 	// sets TurnID, and has none, nor has a headless reviewer, whose
 	// hook is --reviewer.
 	claudeShell := in.ToolName == "Bash" && in.TurnID == "" && who == baseline
-	var shell struct {
-		Command string `json:"command"`
-	}
-	json.Unmarshal(in.ToolInput, &shell)
+	shell, _, _ := shellCommand(in.ToolName, in.ToolInput, in.Cwd)
 	if claudeShell {
-		if reason := checkExcludedAlone(shell.Command); reason != "" {
+		if reason := checkExcludedAlone(shell.text); reason != "" {
 			return reason, ""
 		}
 	}
@@ -157,19 +154,13 @@ func judgeInput(in input, who role) (string, string) {
 		return reason, ""
 	}
 	if claudeShell {
-		if reason := checkPlainGh(shell.Command); reason != "" {
+		if reason := checkPlainGh(shell.text); reason != "" {
 			return reason, ""
 		}
 	}
-	if in.TurnID != "" && (in.ToolName == "Bash" || in.ToolName == "exec_command") {
-		// Codex alone keeps a command's terminal for write_stdin.
-		var args struct {
-			Command string `json:"command"`
-		}
-		json.Unmarshal(in.ToolInput, &args)
-		if terminalReader(args.Command) {
-			return readsTerminal, ""
-		}
+	// Codex alone keeps a command's terminal for write_stdin.
+	if in.TurnID != "" && (in.ToolName == "Bash" || in.ToolName == "exec_command") && terminalReader(shell.text) {
+		return readsTerminal, ""
 	}
 	return judgeEdits(in)
 }
@@ -248,43 +239,17 @@ func check(tool string, toolInput json.RawMessage, who role, dir string) string 
 		return checkMCP(service, name, who)
 	}
 	checkout := dir // the hook's directory, wherever a command then runs
-	switch {
-	case tool == "Bash" || tool == "exec_command":
-		// Claude Code's Bash runs the command in the background with
-		// run_in_background.
-		var args struct {
-			Command         string `json:"command"`
-			RunInBackground bool   `json:"run_in_background"`
-		}
-		if json.Unmarshal(toolInput, &args) != nil {
+	if line, ok, err := shellCommand(tool, toolInput, dir); ok {
+		if err != nil {
 			return unreadable
 		}
-		return command(args.Command, 0, who, dir, checkout, args.RunInBackground)
-	case tool == "Monitor":
-		// Claude Code's Monitor runs a command as Bash does.
-		var args struct {
-			Command string `json:"command"`
-		}
-		if json.Unmarshal(toolInput, &args) != nil {
-			return unreadable
-		}
-		return command(args.Command, 0, who, dir, checkout, true)
-	case tool == "local_shell":
-		return checkLocalShell(toolInput, who, dir, checkout)
-	case tool == "write_stdin":
-		// Codex's write_stdin types chars into a session exec_command
-		// started, which may be a shell; the session runs on its own, so a
-		// sleep there holds nothing.
-		var args struct {
-			Chars string `json:"chars"`
-		}
-		if json.Unmarshal(toolInput, &args) != nil {
-			return unreadable
-		}
-		if reason := command(args.Chars, 0, who, dir, checkout, true); reason != "" {
+		reason := command(line.text, 0, who, line.dir, checkout, line.background)
+		if reason != "" && line.typed {
 			return typed + reason
 		}
-		return ""
+		return reason
+	}
+	switch {
 	case tool == "ExitWorktree":
 		return checkExitWorktree(toolInput, dir)
 	case tool == "Edit" || tool == "Write" || tool == "MultiEdit" || tool == "NotebookEdit" || tool == "apply_patch":
@@ -296,32 +261,75 @@ func check(tool string, toolInput json.RawMessage, who role, dir string) string 
 	return ""
 }
 
-func checkLocalShell(toolInput json.RawMessage, who role, dir, checkout string) string {
-	// Codex's local_shell runs an argv, which the guard reads as the
-	// command line that would run it.
+// shellLine is the command line a shell tool's call runs: text, run in dir,
+// in the background when background is set. typed marks text written into
+// a running session (write_stdin), which may be a shell anywhere: dir is
+// then the call's own, the guard knowing no better.
+type shellLine struct {
+	text, dir         string
+	background, typed bool
+}
+
+// shellCommand is the command line tool's call runs, from a call made in
+// dir, for every check that reads one: Claude Code's Bash, in the
+// background with run_in_background, and Monitor, which runs a command as
+// Bash does in the background; Codex's exec_command, local_shell
+// (localShellLine), and write_stdin, which types chars into a session
+// exec_command started, where a sleep holds nothing. ok is false for
+// another tool; err says the input could not be read.
+func shellCommand(tool string, toolInput json.RawMessage, dir string) (line shellLine, ok bool, err error) {
+	switch tool {
+	case "Bash", "exec_command":
+		var args struct {
+			Command         string `json:"command"`
+			RunInBackground bool   `json:"run_in_background"`
+		}
+		err = json.Unmarshal(toolInput, &args)
+		return shellLine{text: args.Command, dir: dir, background: args.RunInBackground}, true, err
+	case "Monitor":
+		var args struct {
+			Command string `json:"command"`
+		}
+		err = json.Unmarshal(toolInput, &args)
+		return shellLine{text: args.Command, dir: dir, background: true}, true, err
+	case "local_shell":
+		line, err = localShellLine(toolInput, dir)
+		return line, true, err
+	case "write_stdin":
+		var args struct {
+			Chars string `json:"chars"`
+		}
+		err = json.Unmarshal(toolInput, &args)
+		return shellLine{text: args.Chars, dir: dir, background: true, typed: true}, true, err
+	}
+	return shellLine{}, false, nil
+}
+
+// localShellLine is the command line Codex's local_shell runs: its argv,
+// which the guard reads as the command line that would run it, in its
+// working_directory.
+func localShellLine(toolInput json.RawMessage, dir string) (shellLine, error) {
 	var args struct {
 		Command          json.RawMessage `json:"command"`
 		WorkingDirectory string          `json:"working_directory"`
 	}
-	if json.Unmarshal(toolInput, &args) != nil {
-		return unreadable
+	if err := json.Unmarshal(toolInput, &args); err != nil {
+		return shellLine{}, err
 	}
 	if filepath.IsAbs(args.WorkingDirectory) {
 		dir = args.WorkingDirectory
 	}
 	var argv []string
 	if json.Unmarshal(args.Command, &argv) != nil {
-		var line string
-		if json.Unmarshal(args.Command, &line) != nil {
-			return unreadable
-		}
-		return command(line, 0, who, dir, checkout, false)
+		var text string
+		err := json.Unmarshal(args.Command, &text)
+		return shellLine{text: text, dir: dir}, err
 	}
 	quoted := make([]string, len(argv))
 	for i, a := range argv {
 		quoted[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
 	}
-	return command(strings.Join(quoted, " "), 0, who, dir, checkout, false)
+	return shellLine{text: strings.Join(quoted, " "), dir: dir}, nil
 }
 
 // typed prefixes the reason a command line typed into a running session is
