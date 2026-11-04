@@ -219,6 +219,11 @@ func TestRemindRecordsDesignReview(t *testing.T) {
 		if _, err := held.Record("", Event{Kind: DesignReviewStarted, Session: "abc", Summary: "Design review of the plan"}, day); err != nil {
 			t.Fatal(err)
 		}
+		// The session works on in the part's plan, which stays the one
+		// Locate gives (underWay).
+		if _, err := part.Record("", Event{Kind: "committed", Session: "abc", Commit: "Add the loop"}, day.Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
 		notice, _ := json.Marshal(map[string]any{"session_id": "abc", "cwd": "/nowhere", "hook_event_name": "UserPromptSubmit",
 			"prompt": "<task-notification>\n<summary>Agent \"Build the loop\" finished</summary>\n</task-notification>"})
 		out := string(conf.Remind(notice))
