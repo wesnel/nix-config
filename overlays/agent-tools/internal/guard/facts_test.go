@@ -223,6 +223,57 @@ func testPostRecordsEachCommitOnce(t *testing.T) {
 	}
 }
 
+// A commit in a repository no plan names and with no GitHub origin, such as
+// a reviewer's probe in a repository of its own, is no plan's: the
+// session's plan does not take it, and no plan is made for it. Once a plan
+// names the repository, the session's plan takes it.
+func testPostRecordsOnlyNamedRepositories(t *testing.T) {
+	_, _, p := planned(t)
+	c, err := plans.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	// repo makes a repository with origin GitHub's o/NAME, or none when
+	// origin is false.
+	repo := func(name string, origin bool) string {
+		t.Helper()
+		dir := filepath.Join(root, name)
+		os.Mkdir(dir, 0o755)
+		gitIn(t, dir, "init", "-q", "-b", "main")
+		gitIn(t, dir, "config", "commit.gpgsign", "false")
+		if origin {
+			gitIn(t, dir, "remote", "add", "origin", "git@github.com:o/"+name+".git")
+		}
+		return dir
+	}
+	planFiles := func() []string {
+		t.Helper()
+		files, _ := filepath.Glob(filepath.Join(c.Dir, "*.org"))
+		return files
+	}
+	before := planFiles()
+	probe := repo("probe", false)
+	out := postHook(t, claudeEvent("s1", probe, "git commit --allow-empty -m 'Probe'",
+		gitOut(t, probe, "commit", "--allow-empty", "-m", "Probe")))
+	if out != "" {
+		t.Errorf("a commit in a repository no plan names: printed %s", out)
+	}
+	if after := planFiles(); len(after) != len(before) {
+		t.Errorf("plans made for it: %v, before %v", after, before)
+	}
+
+	if _, err := c.New(plans.NewOptions{Title: "Other", Slug: "other", Repos: []string{"o/named"}}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	named := repo("named", true)
+	postHook(t, claudeEvent("s1", named, "git commit --allow-empty -m 'Named'",
+		gitOut(t, named, "commit", "--allow-empty", "-m", "Named")))
+	if got := committedIn(t, p); strings.Join(got, "\n") != p.Name+" Named" {
+		t.Errorf("logged:\n%s\nwant only Named", strings.Join(got, "\n"))
+	}
+}
+
 // What a tool call did to the work, as git and pr-loop report it, reaches
 // the plan the session or worktree belongs to without the agent: commits
 // and pushes in its log, new worktrees, branches and pull requests in its

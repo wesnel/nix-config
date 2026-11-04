@@ -79,6 +79,7 @@ func TestPost(t *testing.T) {
 
 	t.Run("records facts", testPostRecordsFacts)
 	t.Run("records each commit once", testPostRecordsEachCommitOnce)
+	t.Run("records commits only where a plan names the repository", testPostRecordsOnlyNamedRepositories)
 	t.Run("links plans on the facts it records", testPostLinksPlans)
 	t.Run("hands over the pull-requests skill", testPostPullRequests)
 }

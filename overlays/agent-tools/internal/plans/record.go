@@ -152,29 +152,50 @@ func EnvSession() (harness, id string) {
 }
 
 // RecordCommit logs e as a commit session made in the worktree at top, in
-// the plan Locate finds for them. Where there is none, it first makes one:
+// the plan filed finds for them. Where it finds none, it first makes one:
 // a plan of the repository's unplanned work, working under the full
-// pipeline, that names the session and the worktree. It returns the plan
-// and whether it made it. Calls running at once make one plan between
-// them.
+// pipeline, that names the session and the worktree. It does so in a
+// repository no plan names only when its origin is on GitHub; a commit in
+// one with no GitHub origin, such as a reviewer's probe in a repository
+// of its own, is no plan's. It returns the plan and whether it made it.
+// Calls running at once make one plan between them.
 func (c Config) RecordCommit(session, top string, e Event, now time.Time) (Plan, bool, error) {
 	e.Kind, e.Session = "committed", session
-	p, part, ok := c.Locate(session, top)
+	if top == "" {
+		return Plan{}, false, refusal.New("a commit outside a worktree has no plan to go in. Run the commit inside the repository")
+	}
+	p, part, named, ok, err := c.filed(session, top)
+	if err != nil {
+		return Plan{}, false, err
+	}
+	if _, origin := gitHubOrigin(top); !named && origin != nil {
+		return Plan{}, false, refusal.New("no plan names %s or its repository, and its origin is not on GitHub, so a commit there is no plan's. "+
+			"If a plan's work is there, add the worktree to that plan's WORKTREES with `agent-plan set`", top)
+	}
 	created := false
 	if !ok {
-		if top == "" {
-			return Plan{}, false, refusal.New("a commit outside a worktree has no plan to go in. Run the commit inside the repository")
-		}
-		var err error
 		if p, part, created, err = c.unplanned(session, top, now); err != nil {
 			return Plan{}, false, err
 		}
 	}
-	_, err := p.Record(part, e, now)
+	_, err = p.Record(part, e, now)
 	return p, created, err
 }
 
-// unplanned is the plan Locate finds for session and top once this host's
+// filed is the plan and part a commit session made in the worktree at top
+// goes in, as Locate finds them, provided some plan names top or its
+// repository; named says whether one does. In a repository no plan names,
+// the session alone files nothing.
+func (c Config) filed(session, top string) (p Plan, part string, named, ok bool, err error) {
+	found, err := c.Find(FindOptions{Worktree: top, Repository: repoName(top)})
+	if err != nil || len(found) == 0 {
+		return Plan{}, "", false, false, err
+	}
+	p, part, ok = c.Locate(session, top)
+	return p, part, true, ok, nil
+}
+
+// unplanned is the plan filed finds for session and top once this host's
 // plans directory is locked, or else a new one for them, and whether it is
 // new.
 func (c Config) unplanned(session, top string, now time.Time) (Plan, string, bool, error) {
@@ -196,7 +217,7 @@ func (c Config) unplanned(session, top string, now time.Time) (Plan, string, boo
 		return Plan{}, "", false, err
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-	if p, part, ok := c.Locate(session, top); ok {
+	if p, part, _, ok, err := c.filed(session, top); err == nil && ok {
 		return p, part, false, nil
 	}
 	name := repoName(top)

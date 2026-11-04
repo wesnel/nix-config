@@ -14,15 +14,25 @@ import (
 var revisionPattern = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 var repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
-// CommitIdentity resolves ref in top and uses its GitHub origin as a portable identity.
-func CommitIdentity(top, ref string) (Event, error) {
+// gitHubOrigin is the GitHub owner/name of the origin of the worktree at
+// top.
+func gitHubOrigin(top string) (string, error) {
 	url, err := git.Run("-C", top, "remote", "get-url", "origin")
 	if err != nil {
-		return Event{}, err
+		return "", err
 	}
 	repository := gh.Slug(url)
 	if !repositoryPattern.MatchString(repository) {
-		return Event{}, refusal.New("origin has no portable owner/name identity")
+		return "", refusal.New("origin has no portable owner/name identity")
+	}
+	return repository, nil
+}
+
+// CommitIdentity resolves ref in top and uses its GitHub origin as a portable identity.
+func CommitIdentity(top, ref string) (Event, error) {
+	repository, err := gitHubOrigin(top)
+	if err != nil {
+		return Event{}, err
 	}
 	revision, err := git.Run("-C", top, "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
 	if err != nil {

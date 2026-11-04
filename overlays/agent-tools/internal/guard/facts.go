@@ -320,7 +320,8 @@ func newWorktree(g gitCall) string {
 // run in cwd by session, did, by its output texts, and returns a line of
 // context for each commit recorded, asking which step it completes, which
 // is the agent's judgement. A commit no plan takes makes a plan for it
-// (plans.Config.RecordCommit). A commit, branch or pull request recorded
+// where a plan names its worktree or repository or its origin is on
+// GitHub, and is recorded nowhere else (plans.Config.RecordCommit). A commit, branch or pull request recorded
 // links the plan to the plans that hard evidence relates it to
 // (plans.Config.LinkEvidence). Every failure leaves the plan as it was.
 func recordFacts(session, cwd, command string, texts []string, now time.Time) (context []string) {
