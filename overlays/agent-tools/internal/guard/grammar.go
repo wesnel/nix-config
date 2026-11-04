@@ -121,26 +121,48 @@ func programOf(name string) (program string, g grammar, ok bool) {
 }
 
 // command is where g's subcommand starts in args, past the options and
-// toolchain before it, and the values of the location options among them
-// by kind. `--` ends the options.
-func (g grammar) command(args []string) (int, map[location][]string) {
-	at := map[location][]string{}
+// toolchain before it, len(args) where none follows them. `--` ends the
+// options.
+func (g grammar) command(args []string) int {
 	i := 0
 	for i < len(args) {
 		a := args[i]
 		switch {
 		case a == "--":
-			return i + 1, at
+			return i + 1
 		case len(a) > 1 && a[0] == '-':
-			if kind := g.locations[a]; kind != 0 && i+1 < len(args) {
-				at[kind] = append(at[kind], args[i+1])
-			}
 			i += 1 + g.values[a]
 		case g.toolchain && strings.HasPrefix(a, "+"):
 			i++
 		default:
-			return i, at
+			return i
 		}
 	}
-	return i, at
+	return min(i, len(args))
+}
+
+// places are the values of g's location options among the options before
+// its subcommand in args, by kind.
+func (g grammar) places(args []string) map[location][]string {
+	at := map[location][]string{}
+	end := g.command(args)
+	for i := 0; i < end; i++ {
+		a := args[i]
+		if kind := g.locations[a]; kind != 0 && i+1 < len(args) {
+			at[kind] = append(at[kind], args[i+1])
+		}
+		if len(a) > 1 && a[0] == '-' {
+			i += g.values[a]
+		}
+	}
+	return at
+}
+
+// workDir is the directory g's location options in args move the program
+// to, the last one's, or "" for none.
+func (g grammar) workDir(args []string) string {
+	if dirs := g.places(args)[dir]; len(dirs) > 0 {
+		return dirs[len(dirs)-1]
+	}
+	return ""
 }
