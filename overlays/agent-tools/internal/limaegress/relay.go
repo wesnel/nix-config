@@ -52,6 +52,10 @@ type Relay struct {
 	// Dial opens a TCP connection to one checked address. Nil uses a
 	// net.Dialer with a 10 s timeout.
 	Dial func(ctx context.Context, addr netip.AddrPort) (Upstream, error)
+	// LocalAddrs returns the host's own addresses, which the guest may not
+	// reach. Nil reads the host's interfaces; an error refuses the
+	// connection.
+	LocalAddrs func() ([]netip.Addr, error)
 	// Log receives one line per connection. Nil discards it.
 	Log io.Writer
 
@@ -181,13 +185,20 @@ func (r *Relay) checkTarget(target string, v *verdict) (Name, error) {
 	return name, nil
 }
 
-// connect resolves host once and dials its addresses in turn.
+// connect resolves host once, refuses it unless every address is public
+// and not the host's own, and dials those checked addresses in turn.
 func (r *Relay) connect(ctx context.Context, host Name) (Upstream, error) {
+	localAddrs := r.LocalAddrs
+	if localAddrs == nil {
+		localAddrs = InterfaceAddrs
+	}
+	local, err := localAddrs()
+	if err != nil {
+		return nil, refuse("reading the host's addresses: %v", err)
+	}
 	resolve := r.Resolve
 	if resolve == nil {
-		resolve = func(ctx context.Context, host Name) ([]netip.Addr, error) {
-			return net.DefaultResolver.LookupNetIP(ctx, "ip", string(host))
-		}
+		resolve = lookupFQDN(net.DefaultResolver.LookupNetIP)
 	}
 	addrs, err := resolve(ctx, host)
 	if err != nil {
@@ -195,6 +206,10 @@ func (r *Relay) connect(ctx context.Context, host Name) (Upstream, error) {
 	}
 	if len(addrs) == 0 {
 		return nil, fmt.Errorf("resolving %q: no addresses", host)
+	}
+	addrs, err = CheckAddrs(addrs, local)
+	if err != nil {
+		return nil, err
 	}
 	dial := r.Dial
 	if dial == nil {
