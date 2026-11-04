@@ -26,37 +26,21 @@ const ReviewAnswers = "`--item PLAN_ID --kind plan-reviewed` for a review of the
 // reviewPlan is the plan a design review that session starts belongs in,
 // among the plans naming the session: the one the reviewer's prompt names
 // first, by its file or its ID, since a prompt names the plan under review
-// before any it cites; else the one whose log has the latest event; false
-// with none. A session works on one plan at a time, and the latest to
-// change is the one under way.
+// before any it cites; else the one under way, as Locate chooses it
+// (underWay); false with none.
 func (c Config) reviewPlan(session, prompt string) (Plan, bool) {
-	var named, latest Plan
+	plans := c.sessionPlans(session)
+	var named Plan
 	first := -1
-	var at string
-	ok := false
-	for _, p := range c.sessionPlans(session) {
+	for _, p := range plans {
 		if i := strings.Index(prompt, p.Name); i >= 0 && (first < 0 || i < first) {
 			named, first = p, i
-		}
-		if first >= 0 {
-			continue
-		}
-		events, err := p.Events()
-		if err != nil {
-			continue
-		}
-		last := ""
-		if len(events) > 0 {
-			last = events[len(events)-1].Time
-		}
-		if !ok || last > at {
-			latest, at, ok = p, last, true
 		}
 	}
 	if first >= 0 {
 		return named, true
 	}
-	return latest, ok
+	return underWay(session, plans)
 }
 
 // AnswerHint is the sentence that tells an agent how to answer a design
