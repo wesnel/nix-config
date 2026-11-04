@@ -926,7 +926,7 @@ has the hook alone:
 | Long foreground sleeps | hook | hook |
 | Bypass-permissions launches | disableBypassPermissionsMode and hook | hook |
 | ExitWorktree discarding work | hook | (no such tool) |
-| Ownership fence | hook (file tools and shell) | hook |
+| Ownership fence (a rebase in progress is on the branch it rebases) | hook (file tools, Bash and Monitor) | hook (file tools, exec_command, local_shell and write_stdin) |
 | Reviewer read-only | agent tools (Read, Bash, StructuredOutput) and the frontmatter hook | (no role agents) |
 | MCP reads/confirms; unlisted tools refused | hook, permission rules and mcp-proxy's filter | hook and mcp-proxy's filter |
 | Terminal readers | (n/a) | hook |

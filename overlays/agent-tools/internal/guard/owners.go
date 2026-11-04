@@ -105,7 +105,7 @@ func checkOwner(in input, edits []editPath, conf *plans.Config, confErr error) s
 		if len(opened) < 3 || resolved(opened[0]) == resolved(opened[1]) {
 			return "This edits the repository's main checkout. Create a task worktree at an absolute path outside this checkout (`git worktree add --no-track /ABSOLUTE/PATH -b BRANCH origin/HEAD`)."
 		}
-		branch, branchOK := g.run("branch", "--show-current")
+		branch, branchOK := currentBranch(g)
 		defaults, defaultsOK := g.run("for-each-ref", "--format=%(symref)", "refs/remotes/*/HEAD")
 		if !branchOK || !defaultsOK {
 			return "The guard cannot read this worktree's branch. Ask the operator to repair its Git metadata before editing."
@@ -315,6 +315,41 @@ func stashWrites(text string, depth int) string {
 		}
 	}
 	return ""
+}
+
+// rebaseHeads are where git keeps the branch a rebase in progress rebases,
+// under the worktree's git directory: the merge backend's, then apply's.
+var rebaseHeads = []string{"rebase-merge/head-name", "rebase-apply/head-name"}
+
+// currentBranch is the branch checked out in g's worktree, or, on a
+// detached HEAD, the branch a rebase in progress there rebases, which git
+// checks out again when the rebase ends; "" for another detached HEAD, a
+// bisect's among them. ok is false where git cannot say.
+func currentBranch(g gitState) (branch string, ok bool) {
+	if branch, ok = g.run("branch", "--show-current"); !ok || branch != "" {
+		return branch, ok
+	}
+	args := []string{"rev-parse"}
+	for _, p := range rebaseHeads {
+		args = append(args, "--git-path", p)
+	}
+	paths, ok := g.run(args...)
+	if !ok {
+		return "", false
+	}
+	for _, p := range strings.Split(paths, "\n") {
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(g.dir, p)
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		if name, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "refs/heads/"); ok && name != "" {
+			return name, true
+		}
+	}
+	return "", true
 }
 
 // worktreeOf is the top level of the worktree holding path, which need not
