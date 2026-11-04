@@ -317,6 +317,14 @@ func TestOwners(t *testing.T) {
 		{"owner's chmod in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"chmod +x MAIN/a.sh"}}`, nil},
 		{"owner's mkdir in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"mkdir -p MAIN/new"}}`, []string{"LINKED"}},
 		{"owner's go generate in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"go generate ./..."}}`, []string{"LINKED"}},
+		// Options before the subcommand, read by the program's grammar: go
+		// writes in the directory -C names, not where it runs.
+		{"owner's go -C generate in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"go -C MAIN generate ./..."}}`, []string{"LINKED"}},
+		{"owner's go -C build in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"go -C MAIN build ./cmd/x"}}`, []string{"LINKED"}},
+		{"owner's go -C fmt in its worktree, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"go -C LINKED fmt ./..."}}`, nil},
+		{"owner's cargo +nightly fmt in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"cargo +nightly fmt"}}`, []string{"LINKED"}},
+		{"owner's cargo --color fmt in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"cargo --color never fmt"}}`, []string{"LINKED"}},
+		{"owner's cargo +nightly fmt --check in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"cargo +nightly fmt --check"}}`, nil},
 		{"owner's go test profile in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"go test -coverprofile=MAIN/c.out ./..."}}`, []string{"LINKED"}},
 		{"owner's go test in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"go test -count=1 ./..."}}`, nil},
 		{"owner's nix build in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"nix build .#x"}}`, []string{"LINKED"}},

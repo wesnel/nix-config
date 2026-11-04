@@ -32,11 +32,8 @@ func checkPlanReview(in input, edits []editPath, runs []unreadRun, conf *plans.C
 	answer := "When its report is in, settle its findings. " + plans.AnswerHint(p) +
 		" If the review was stopped and will not report, log that answer with a summary saying so, and run the review again before going on."
 	free := openRoots(conf.Dir)
-	for _, path := range paths {
-		if !isOpen(path, free) {
-			return fmt.Sprintf("%s, so edits outside "+openPlaces+" wait for it, %s among them. %s", held, path, answer)
-		}
-	}
+	// A run is named first: what it writes is not all its paths say, as
+	// for go generate, which writes its package and runs what it names.
 	for _, r := range runs {
 		if !isOpen(r.where, free) {
 			where := r.where
@@ -45,6 +42,11 @@ func checkPlanReview(in input, edits []editPath, runs []unreadRun, conf *plans.C
 			}
 			return fmt.Sprintf("%s, so `%s` waits for it: it runs code the guard cannot read, which could write anywhere, "+
 				"in or from %s. Run a probe with its code in "+scratchPlaces+", from there, instead. %s", held, r.program, where, answer)
+		}
+	}
+	for _, path := range paths {
+		if !isOpen(path, free) {
+			return fmt.Sprintf("%s, so edits outside "+openPlaces+" wait for it, %s among them. %s", held, path, answer)
 		}
 	}
 	return ""
@@ -129,11 +131,11 @@ func runsUnread(c call) (bool, []string) {
 			files, inlineInput := operands(args)
 			return len(files) > 0 || !inlineInput, files
 		case subcommands:
-			i, at := g.command(args)
+			i := g.command(args)
 			if i >= len(args) || !g.runs[args[i]] {
 				return false, nil
 			}
-			sources := at[dir]
+			sources := g.places(args)[dir]
 			if g.sources[args[i]] {
 				files, _ := operands(args[i+1:])
 				sources = append(sources, files...)

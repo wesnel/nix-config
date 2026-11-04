@@ -1781,6 +1781,14 @@ func formatWrites(name string, args, positional []string) []string {
 	has := func(flags ...string) bool {
 		return slices.ContainsFunc(args, func(a string) bool { return contains(flags, a) })
 	}
+	if g, ok := programs[name]; ok {
+		// Its grammar finds the subcommand past its options and toolchain.
+		i := g.command(args)
+		if i >= len(args) || !g.writes[args[i]] {
+			return nil
+		}
+		positional = slices.DeleteFunc(slices.Clone(args[i+1:]), func(a string) bool { return strings.HasPrefix(a, "-") })
+	}
 	switch {
 	case has("--check", "--diff", "-l", "--list-different", "--help", "--version"),
 		name == "alejandra" && has("-c"),
@@ -1788,11 +1796,10 @@ func formatWrites(name string, args, positional []string) []string {
 		name == "shfmt" && !has("-w", "--write"),
 		name == "gofumpt" && !has("-w"),
 		name == "sops" && !has("-i", "--in-place"),
-		name == "cargo" && (len(positional) == 0 || !programs["cargo"].writes[positional[0]]),
 		name == "ruff" && (len(positional) == 0 || positional[0] != "format") && !has("--fix"):
 		return nil
 	}
-	if (name == "cargo" || name == "ruff") && len(positional) > 0 {
+	if name == "ruff" && len(positional) > 0 {
 		positional = positional[1:] // the subcommand
 	}
 	if len(positional) == 0 {
@@ -1838,8 +1845,23 @@ func tarExtracts(args []string) bool {
 
 // goWrites are the files and directories a go command writes: its -o
 // output, its test profiles, and "." for the commands that rewrite source
-// or go.mod in the package it runs in.
+// or go.mod in the package it runs in, each relative one in the directory
+// -C names, where go runs.
 func goWrites(args []string) []string {
+	g := programs["go"]
+	out := goCommandWrites(args[g.command(args):])
+	if in := g.workDir(args); in != "" {
+		for i, p := range out {
+			if !filepath.IsAbs(p) {
+				out[i] = filepath.Join(in, p)
+			}
+		}
+	}
+	return out
+}
+
+// goCommandWrites are goWrites from the subcommand on.
+func goCommandWrites(args []string) []string {
 	if len(args) == 0 {
 		return nil
 	}
