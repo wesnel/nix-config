@@ -114,7 +114,12 @@ func (r *Relay) serve(ctx context.Context, guest Stream, v *verdict) error {
 	if _, err := io.WriteString(guest, "HTTP/1.1 200 Connection established\r\n\r\n"); err != nil {
 		return err
 	}
-	return splice(guest, br, up, nil, v)
+	hello, err := within(r.after, helloTimeout, func() ([]byte, error) { return checkHello(br, host) })
+	if err != nil {
+		guest.CloseWrite()
+		return err
+	}
+	return splice(guest, br, up, hello, v)
 }
 
 // readTarget reads one HTTP/1.1 CONNECT request of at most maxHeader
