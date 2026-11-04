@@ -72,7 +72,8 @@ var sourcing = set("source", ".")
 var editors = set("vi", "vim", "nvim")
 
 // unreadRunsOf are the runs of code the guard cannot read that c, a call
-// walkShell gives with its leading redirections off, makes in cwd: one for
+// walkShell gives with its leading redirections moved after its words
+// (redirectedLast), makes in cwd: one for
 // the directory it runs in and one for each file or directory it may take
 // the code from. Such a call is a program named by a path or by an
 // expansion, a shell or an interpreter given a file or its standard input,
@@ -96,12 +97,13 @@ func unreadRunsOf(c call, cwd string) []unreadRun {
 }
 
 // runsUnread reports whether c, once unwrap has taken its wrappers off,
-// runs code the guard cannot read, as unreadRuns lists, and the files or
+// runs code the guard cannot read, as unreadRunsOf lists, and the files or
 // directories it may take that code from: a program's path, the operands
 // of a shell, source or an interpreter (any of them may be the script, as
 // an option's value may look like one), the file on its standard input,
+// by a redirection or from the command before it in a pipeline (c.stdin),
 // what a subcommand of programs that runs code is given where its sources
-// say so, and the directories its location options name. Code on standard
+// say so, and what the program's location options name. Code on standard
 // input from the line itself (<<, <<<) is inline, as -c is.
 func runsUnread(c call) (bool, []string) {
 	if c.expands[0] {
@@ -114,11 +116,10 @@ func runsUnread(c call) (bool, []string) {
 	if shells[name] || sourcing[name] {
 		// unwrap hands a shell's inline script on as a script; a shell
 		// that reaches here runs a file or its standard input.
-		files, inlineInput := operands(args)
-		return len(files) > 0 || !inlineInput, files
+		return scriptRun(args, c.stdin)
 	}
 	if _, g, ok := programOf(name); ok {
-		return g.runsUnread(args)
+		return g.runsUnread(args, c.stdin)
 	}
 	switch {
 	case name == "emacsclient" || versionedEmacsclient.MatchString(name):
@@ -131,42 +132,55 @@ func runsUnread(c call) (bool, []string) {
 	return false, nil
 }
 
-// runsUnread is runsUnread for a program read by g, given args.
-func (g grammar) runsUnread(args []string) (bool, []string) {
+// scriptRun is runsUnread for a program given args that runs a script
+// given as a file, or on its standard input, which stdin may feed.
+func scriptRun(args, stdin []string) (bool, []string) {
+	files, inlineInput := operands(args)
+	if len(files) == 0 && !inlineInput {
+		return true, stdin
+	}
+	return len(files) > 0, files
+}
+
+// runsUnread is runsUnread for a program read by g, given args, whose
+// standard input stdin may feed.
+func (g grammar) runsUnread(args, stdin []string) (bool, []string) {
 	switch g.kind {
 	case recipes:
-		return true, nil
+		return true, g.codeAt(args)
 	case interpreters:
-		return g.interpreterRunsUnread(args)
+		return g.interpreterRunsUnread(args, stdin)
 	case subcommands:
 		i := g.command(args)
 		if i >= len(args) || !g.runs[args[i]] {
 			return false, nil
 		}
-		sources := g.places(args)[dir]
+		sources := g.codeAt(args)
 		if g.sources[args[i]] {
 			files, _ := operands(args[i+1:])
 			sources = append(sources, files...)
 		}
 		return true, sources
 	case scripts:
-		return len(args) == 0 || !g.reads[args[0]], nil
+		if i := g.command(args); len(args) > 0 && (g.reads[args[0]] || i < len(args) && g.reads[args[i]]) {
+			return false, nil
+		}
+		return true, g.codeAt(args)
 	}
 	return false, nil
 }
 
 // interpreterRunsUnread is runsUnread for an interpreter g reads, given
 // args: unless an inline option gives the code, it runs a file or its
-// standard input.
-func (g grammar) interpreterRunsUnread(args []string) (bool, []string) {
+// standard input, which stdin may feed.
+func (g grammar) interpreterRunsUnread(args, stdin []string) (bool, []string) {
 	for i := 0; i < len(args) && strings.HasPrefix(args[i], "-"); i++ {
 		if inlineOption(args[i], g.inline) {
 			return false, nil
 		}
 		i += g.values[args[i]]
 	}
-	files, inlineInput := operands(args)
-	return len(files) > 0 || !inlineInput, files
+	return scriptRun(args, stdin)
 }
 
 // inlineOption reports whether option, one word, is one of inline, with
