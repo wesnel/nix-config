@@ -1788,7 +1788,7 @@ func formatWrites(name string, args, positional []string) []string {
 		name == "shfmt" && !has("-w", "--write"),
 		name == "gofumpt" && !has("-w"),
 		name == "sops" && !has("-i", "--in-place"),
-		name == "cargo" && (len(positional) == 0 || positional[0] != "fmt"),
+		name == "cargo" && (len(positional) == 0 || !programs["cargo"].writes[positional[0]]),
 		name == "ruff" && (len(positional) == 0 || positional[0] != "format") && !has("--fix"):
 		return nil
 	}
@@ -1859,9 +1859,10 @@ func goWrites(args []string) []string {
 			output = output || name == "o"
 		}
 	}
-	switch args[0] {
-	case "generate", "fmt", "fix", "get", "work":
+	if programs["go"].writes[args[0]] {
 		out = append(out, ".")
+	}
+	switch args[0] {
 	case "mod":
 		if len(args) > 1 && (args[1] == "tidy" || args[1] == "edit" || args[1] == "vendor" || args[1] == "init") {
 			out = append(out, ".")
@@ -2044,7 +2045,6 @@ func editTargets(name string, args, redirected []string) []string {
 }
 
 var (
-	interpreter = regexp.MustCompile(`^(python[0-9.]*|node|ruby)$`)
 	// openForWriting is Python's or Ruby's open of a literal path with a
 	// literal mode, which writes when the mode has w, a, x or +.
 	openForWriting = regexp.MustCompile(`\bopen\(\s*['"]([^'"]+)['"]\s*,\s*(?:mode\s*=\s*)?['"]([^'"]*)['"]`)
@@ -2054,17 +2054,16 @@ var (
 		`\bFile\.(?:write|binwrite)\(\s*['"]([^'"]+)['"]`)
 )
 
-// oneLinerWrites are the files a Python, Node or Ruby one-liner (-c, -e,
-// --eval) writes, as it names them in string literals: a narrow reading of
-// the usual calls, not of every way code can write.
+// oneLinerWrites are the files a Python, Node or Ruby one-liner, the code
+// an inline option of its grammar gives (-c, -e, --eval), writes, as it
+// names them in string literals: a narrow reading of the usual calls, not
+// of every way code can write.
 func oneLinerWrites(name string, args []string) []string {
-	if !interpreter.MatchString(name) {
+	program, g, _ := programOf(name)
+	if program != "python" && program != "node" && program != "ruby" {
 		return nil
 	}
-	flags := set("-e", "--eval", "-p", "--print")
-	if strings.HasPrefix(name, "python") {
-		flags = set("-c")
-	}
+	flags := g.inline
 	var targets []string
 	for i, a := range args {
 		code, ok := "", false

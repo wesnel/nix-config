@@ -3,7 +3,6 @@ package guard
 import (
 	"fmt"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -64,50 +63,6 @@ type unreadRun struct {
 	program, where string
 }
 
-// interpreterOptions are how an interpreter reads its options before the
-// script: inline are those whose value is the code itself, values those
-// whose value is the next word. Any other option, such as python's -E or
-// perl's -p, gives no code: the run still reads a file.
-type interpreterOptions struct {
-	inline, values map[string]bool
-}
-
-// interpreters run the file they are given, or their standard input,
-// unless an inline option gives them the code.
-var interpreters = map[string]interpreterOptions{
-	"python":    {inline: set("-c"), values: set("-W", "-X")},
-	"node":      {inline: set("-e", "--eval", "-p", "--print"), values: set("-r", "--require")},
-	"ruby":      {inline: set("-e"), values: set("-I", "-r")},
-	"perl":      {inline: set("-e", "-E"), values: set()},
-	"php":       {inline: set("-r"), values: set()},
-	"lua":       {inline: set("-e"), values: set()},
-	"Rscript":   {inline: set("-e"), values: set()},
-	"osascript": {inline: set("-e"), values: set()},
-	"pwsh":      {inline: set("-c", "-Command"), values: set()},
-	"tclsh":     {inline: set(), values: set()},
-}
-
-// versionedPython names a python, such as python3 or pypy3, that takes
-// python's options.
-var versionedPython = regexp.MustCompile(`^(python|pypy)[0-9.]*$`)
-
-// projectRunners run the project's code with their run command.
-var projectRunners = set("uv", "poetry", "pipenv")
-
-// cargoValues are cargo's options before its command whose value is the
-// next word.
-var cargoValues = set("--color", "--config", "-Z", "-C")
-
-// packageManagers run a package's scripts for every command but those in
-// packageReads.
-var packageManagers = set("npm", "pnpm", "yarn", "bun", "deno")
-
-var packageReads = set("view", "info", "show", "ls", "list", "outdated", "why", "explain", "help", "search", "--version", "-v")
-
-// runners run code named in a file the guard does not read. npx and bunx
-// are wrappers: unwrap hands on the program they run.
-var runners = set("just", "task")
-
 // sourcing run the script they are given in the shell itself.
 var sourcing = set("source", ".")
 
@@ -143,8 +98,9 @@ func unreadRunsOf(c call, cwd string) []unreadRun {
 // directories it may take that code from: a program's path, the operands
 // of a shell, source or an interpreter (any of them may be the script, as
 // an option's value may look like one), the file on its standard input,
-// what go, uv, poetry or pipenv run is given, and go's -C directory. Code
-// on standard input from the line itself (<<, <<<) is inline, as -c is.
+// what a subcommand of programs that runs code is given where its sources
+// say so, and the directories its location options name. Code on standard
+// input from the line itself (<<, <<<) is inline, as -c is.
 func runsUnread(c call) (bool, []string) {
 	if c.expands[0] {
 		return true, nil
@@ -153,65 +109,41 @@ func runsUnread(c call) (bool, []string) {
 	if strings.Contains(name, "/") {
 		return true, []string{name}
 	}
-	interp, isInterpreter := interpreters[name]
-	if !isInterpreter && versionedPython.MatchString(name) {
-		interp, isInterpreter = interpreters["python"], true
-	}
-	switch {
-	case shells[name], sourcing[name]:
+	if shells[name] || sourcing[name] {
 		// unwrap hands a shell's inline script on as a script; a shell
 		// that reaches here runs a file or its standard input.
 		files, inlineInput := operands(args)
 		return len(files) > 0 || !inlineInput, files
-	case runners[name]:
-		return true, nil
-	case isInterpreter:
-		for i := 0; i < len(args) && strings.HasPrefix(args[i], "-"); i++ {
-			if inlineOption(args[i], interp.inline) {
+	}
+	if _, g, ok := programOf(name); ok {
+		switch g.kind {
+		case recipes:
+			return true, nil
+		case interpreters:
+			for i := 0; i < len(args) && strings.HasPrefix(args[i], "-"); i++ {
+				if inlineOption(args[i], g.inline) {
+					return false, nil
+				}
+				i += g.values[args[i]]
+			}
+			files, inlineInput := operands(args)
+			return len(files) > 0 || !inlineInput, files
+		case subcommands:
+			i, at := g.command(args)
+			if i >= len(args) || !g.runs[args[i]] {
 				return false, nil
 			}
-			if interp.values[args[i]] {
-				i++
+			sources := at[dir]
+			if g.sources[args[i]] {
+				files, _ := operands(args[i+1:])
+				sources = append(sources, files...)
 			}
+			return true, sources
+		case scripts:
+			return len(args) == 0 || !g.reads[args[0]], nil
 		}
-		files, inlineInput := operands(args)
-		return len(files) > 0 || !inlineInput, files
-	case name == "go":
-		var dirs []string
-		i := 0
-		for i < len(args) && strings.HasPrefix(args[i], "-") {
-			if args[i] == "-C" && i+1 < len(args) {
-				dirs = append(dirs, args[i+1])
-				i++
-			}
-			i++
-		}
-		switch {
-		case i < len(args) && args[i] == "run":
-			files, _ := operands(args[i+1:])
-			return true, append(dirs, files...)
-		case i < len(args) && args[i] == "generate":
-			// It runs the commands its //go:generate lines name.
-			return true, dirs
-		}
-		return false, nil
-	case name == "cargo":
-		i := 0
-		for i < len(args) && (strings.HasPrefix(args[i], "-") || strings.HasPrefix(args[i], "+")) {
-			if cargoValues[args[i]] {
-				i++
-			}
-			i++
-		}
-		return i < len(args) && (args[i] == "run" || args[i] == "r"), nil
-	case projectRunners[name]:
-		if i := options(args, nil); i < len(args) && args[i] == "run" {
-			files, _ := operands(args[i+1:])
-			return true, files
-		}
-		return false, nil
-	case packageManagers[name]:
-		return len(args) == 0 || !packageReads[args[0]], nil
+	}
+	switch {
 	case name == "emacsclient" || versionedEmacsclient.MatchString(name):
 		return slices.ContainsFunc(args, func(a string) bool { return a == "--eval" || a == "-e" }), nil
 	case editors[name]:
