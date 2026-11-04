@@ -893,8 +893,10 @@ which are yours.
 
 The guard reads commands as typed, through wrappers, shells and `env`, so it
 catches a forgotten rule, not a determined one. The rules that need no
-repository state are in `overlays/agent-tools/internal/guard/policy.json`,
-each with a `scope` (`baseline` or `reviewer`) and
+repository state, and those whose state a test fixture holds, are in
+`overlays/agent-tools/internal/guard/policy.json`,
+each with a `scope` (`baseline` or `reviewer`), any `fixture` repository its
+examples run in, and
 commands it must deny and allow, which the guard's tests hold it to, failing
 on a denial whose reason does not go on to say what to do instead; the rest
 are in the guard's Go tests. A call whose input the guard cannot read is
@@ -917,6 +919,7 @@ has the hook alone:
 | Signing commits (touch) | sandbox (~/.gnupg, agent socket) and hook | hook |
 | git push, gh writes, GitHub API/GraphQL writes | sandbox (no credentials), hook, deny rules | hook |
 | git-state rules (main checkout, stash, worktrees, history loss, shared config, shell aliases) | hook | hook |
+| Committing a conflict marker (git commit and the --continue of rebase, cherry-pick, revert, merge and am, with a staged line, or one commit -a or a path takes, starting with seven < or >) | hook | hook |
 | Shell edits of tracked files, rm where trash is | hook | hook |
 | Guard-off writes (settings, hooks, agent-tools config) | hook; sandbox for ~/.claude | hook |
 | Plan logs and files | sandbox denyWrite (Bash), Edit deny rules and hook (file tools) | hook |

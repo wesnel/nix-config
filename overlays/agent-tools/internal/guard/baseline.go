@@ -2648,6 +2648,142 @@ func checkSigning(sub string, rest []string, g gitState) string {
 	return fmt.Sprintf(signingOn, sub, sub)
 }
 
+const conflictMarkers = "`%s` has a line to be committed that starts with a conflict marker, seven < or > then a space or the line's end, " +
+	"so this `git %s` would commit an unresolved conflict. Resolve the conflict in the file, removing the marker lines, " +
+	"`git add` it, and run the command again; if the file is meant to hold such a line, put the commit in your report for the operator."
+
+// conflictMarker is a line that opens or closes a conflict git wrote.
+var conflictMarker = regexp.MustCompile(`^(<{7}|>{7})( |$)`)
+
+// commitValues are git commit's options whose value is the next word, or
+// the rest of a group of short flags (-am MSG, -mMSG).
+var commitValues = set("-m", "--message", "-F", "--file", "-C", "--reuse-message", "-c", "--reedit-message",
+	"--author", "--date", "-t", "--template", "--cleanup", "--trailer", "--fixup", "--squash", "--pathspec-from-file")
+
+// commitFlags are git commit's options, in full, that take no value and
+// change nothing of what it commits beyond what readCommitScope reads;
+// commitLetters their short letters, with a, i and o.
+var (
+	commitFlags = set("-q", "--quiet", "-v", "--verbose", "-s", "--signoff", "--no-signoff", "--no-verify", "--verify",
+		"--amend", "--no-edit", "-e", "--edit", "--allow-empty", "--allow-empty-message", "--no-gpg-sign", "--reset-author",
+		"--status", "--no-status", "--no-post-rewrite", "-z", "--null", "--short", "--branch", "--porcelain", "--long",
+		"-o", "--only")
+	commitLetters = "qvsenzaio"
+)
+
+// checkConflictMarkers denies a git command that commits, git commit or
+// the --continue of the other commitWriters but pull, while an added line
+// of what it commits is a conflict marker, naming the file: the index;
+// for commit -a, the worktree against HEAD too; for commit with paths,
+// those paths alone, staged and in the worktree, or with -i the whole
+// index and those paths' worktree. It narrows to paths, or lets --dry-run
+// and help through, only where it knows every word of the commit in full:
+// git takes an abbreviated long option (--inc for --include), so any other
+// word scans the whole index and worktree. git records no path as resolved
+// once it is staged, so a staged marker line is read as an unresolved
+// conflict wherever it is.
+func checkConflictMarkers(sub string, rest []string, g gitState) string {
+	if _, writes := commitWriters[sub]; !writes || sub == "pull" || sub != "commit" && !contains(rest, "--continue") {
+		return ""
+	}
+	diff := []string{"diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/"}
+	diffs := [][]string{append(slices.Clone(diff), "--cached")}
+	if sub == "commit" {
+		scope := readCommitScope(rest)
+		switch {
+		case scope.unknown:
+			diffs = append(diffs, append(slices.Clone(diff), "HEAD", "--"))
+		case scope.none:
+			return ""
+		case len(scope.paths) > 0 && !scope.include:
+			diffs = [][]string{append(append(slices.Clone(diff), "--cached", "--"), scope.paths...)}
+			fallthrough
+		case scope.all || len(scope.paths) > 0:
+			diffs = append(diffs, append(append(slices.Clone(diff), "HEAD", "--"), scope.paths...))
+		}
+	}
+	for _, args := range diffs {
+		out, _ := g.run(args...)
+		if file := markedFile(out); file != "" {
+			return fmt.Sprintf(conflictMarkers, file, sub)
+		}
+	}
+	return ""
+}
+
+// commitScope is what git commit, given rest, commits beyond the index,
+// read with its options' values (commitValues) so that a value is no
+// option: all for -a or --all, include for -i or --include, the paths it
+// names, none where it commits nothing (--dry-run, -h, --help), and
+// unknown where a word starting with - is no full spelling it knows, so
+// none of the rest holds.
+type commitScope struct {
+	all, include, none, unknown bool
+	paths                       []string
+}
+
+func readCommitScope(rest []string) commitScope {
+	var s commitScope
+	for i := 0; i < len(rest); i++ {
+		w := rest[i]
+		switch {
+		case w == "--":
+			s.paths = append(s.paths, rest[i+1:]...)
+			return s
+		case w == "--dry-run" || w == "-h" || w == "--help":
+			s.none = true
+		case w == "-a" || w == "--all":
+			s.all = true
+		case w == "-i" || w == "--include":
+			s.include = true
+		case commitValues[w]:
+			i++
+		case commitFlags[w]:
+		case strings.HasPrefix(w, "--"):
+			if name, _, attached := strings.Cut(w, "="); !attached || !commitValues[name] {
+				s.unknown = true
+			}
+		case strings.HasPrefix(w, "-") && len(w) > 1:
+			for j, letter := range w[1:] {
+				s.all = s.all || letter == 'a'
+				s.include = s.include || letter == 'i'
+				if commitValues["-"+string(letter)] {
+					if j == len(w)-2 {
+						i++ // the value is the next word
+					}
+					break
+				}
+				if !strings.ContainsRune(commitLetters, letter) {
+					s.unknown = true
+				}
+			}
+		default:
+			s.paths = append(s.paths, w)
+		}
+	}
+	return s
+}
+
+// markedFile is the first file of a git diff -U0 whose added lines hold a
+// conflict marker, or "".
+func markedFile(diff string) string {
+	file, body := "", false
+	for _, line := range strings.Split(diff, "\n") {
+		switch {
+		case strings.HasPrefix(line, "diff "):
+			body = false
+		case !body && strings.HasPrefix(line, "+++ "):
+			file = strings.Trim(strings.TrimPrefix(line, "+++ "), `"`)
+			file = strings.TrimPrefix(file, "b/")
+		case strings.HasPrefix(line, "@@"):
+			body = true
+		case body && strings.HasPrefix(line, "+") && conflictMarker.MatchString(line[1:]):
+			return file
+		}
+	}
+	return ""
+}
+
 // run runs git in g.dir without the command's configuration, as the guard
 // itself reads the repository.
 func (g gitState) run(args ...string) (string, bool) {

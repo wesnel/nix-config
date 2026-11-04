@@ -14,6 +14,14 @@
     "allow": ["git commit --fixup=abc", "grep -rn -e '--no-verif[y]' ."]
   },
   {
+    "why": "An unresolved conflict's markers stay out of commits: a staged line may not start with seven < or > and a space.",
+    "scope": "baseline",
+    "fixture": "conflict-markers-staged",
+    "deny": ["git -c commit.gpgsign=false commit -m x", "git rebase --continue", "git cherry-pick --continue",
+      "git am --continue"],
+    "allow": ["git rebase --abort", "git commit --dry-run", "git diff --cached"]
+  },
+  {
     "why": "Tags are the operator's to make; listing and verifying them is fine.",
     "scope": "baseline",
     "deny": ["git tag v1", "git tag -a v1 -m x", "git tag -d v1", "git -C r tag -s v1", "git tag -l && git tag v2"],

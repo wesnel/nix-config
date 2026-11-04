@@ -1237,7 +1237,7 @@ func checkGit(words []string, expands []bool, env []string, who role, dir, check
 	if reason := checkSigning(sub, rest, gitState{dir: dir, config: config, env: env}); reason != "" {
 		return reason
 	}
-	return ""
+	return checkConflictMarkers(sub, rest, gitState{dir: dir})
 }
 
 // scratchRepo reports whether a reviewer's git command sub, with these
