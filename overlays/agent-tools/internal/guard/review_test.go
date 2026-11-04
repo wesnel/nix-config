@@ -226,6 +226,16 @@ func TestPendingPlanReview(t *testing.T) {
 			{"go test ./...", false},
 			{"go vet ./...", false},
 			{"nix build --no-link .#x", false},
+			// nix run of a local flake runs the flake's code, however the
+			// flake is spelled; a registry's package does not.
+			{"nix run .#codegen", true},
+			{"nix run . -- --help", true},
+			{"cd SCRATCH && nix run REPO#codegen", true},
+			{"cd SCRATCH && nix run REPO", true},
+			{"cd SCRATCH && nix run path:REPO#codegen", true},
+			{"cd SCRATCH && nix run git+file://REPO?ref=loop#codegen", true},
+			{"cd SCRATCH && nix run ./probe#gen", false},
+			{"nix run nixpkgs#hello", false},
 			{"agent-plan log PLAN --item S1 --kind started", false},
 			{"bash -c 'git status'", false},
 			{"python3 -c 'print(1)'", false},

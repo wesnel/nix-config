@@ -140,7 +140,8 @@ func options(args []string, values map[string]bool) int {
 // it. stdin are the files, as absolute paths, the command before it in a
 // pipeline reads or was itself fed, from which its standard input may
 // come; walkShell sets
-// them.
+// them. flake is the local flake, as written, that nix run builds the
+// program from, which its words name only by its attribute.
 type call struct {
 	words    []string
 	expands  []bool
@@ -149,6 +150,7 @@ type call struct {
 	assigned []string
 	chdir    string
 	stdin    []string
+	flake    string
 }
 
 // named is c from its program on, for the rules that go by the program's
@@ -158,7 +160,8 @@ type call struct {
 // redirectedLast. A call of redirections alone is c.
 func (c call) named() call {
 	if i := leadingRedirections(c.words); i > 0 && i < len(c.words) {
-		return call{words: c.words[i:], expands: c.expands[i:], env: c.env, fed: c.fed, chdir: c.chdir, stdin: c.stdin}
+		return call{words: c.words[i:], expands: c.expands[i:], env: c.env, fed: c.fed, chdir: c.chdir, stdin: c.stdin,
+			flake: c.flake}
 	}
 	return c
 }
@@ -398,7 +401,9 @@ func unwrapEnv(c call, v visitor) string {
 // unwrapNixRun reads `nix run INSTALLABLE [--] ARGS`, whose program is named
 // by the installable's attribute: nixpkgs#gh runs gh. Another installable
 // names no program the guard can know, which it treats as one the shell
-// expands.
+// expands. A local flake's program (., ./x, /x, path:, git+file:) is the
+// flake's code, which the call's flake names, but for its fmt, a
+// formatter, nix-fmt.
 func unwrapNixRun(env, args []string, expands []bool, v visitor) string {
 	i := 0
 	for i < len(args) && len(args[i]) > 1 && args[i][0] == '-' && args[i] != "--" {
@@ -413,15 +418,33 @@ func unwrapNixRun(env, args []string, expands []bool, v visitor) string {
 		i++
 	}
 	program, expanded := "", true
-	if _, attribute, ok := strings.Cut(args[at], "#"); ok && attribute != "" {
+	ref, attribute, _ := strings.Cut(args[at], "#")
+	flake := localFlake(ref)
+	if attribute != "" {
 		program, expanded = attribute[strings.LastIndex(attribute, ".")+1:], expands[at]
 		if program == "fmt" {
-			program = "nix-fmt" // a flake's formatter, not coreutils' fmt
+			program, flake = "nix-fmt", "" // a flake's formatter, not coreutils' fmt
 		}
 	}
 	words := append([]string{program}, args[min(i, len(args)):]...)
 	x := append([]bool{expanded}, expands[min(i, len(expands)):]...)
-	return v.call(call{words: words, expands: x, env: env})
+	return v.call(call{words: words, expands: x, env: env, flake: flake})
+}
+
+// localFlake is the directory a flake reference names on this machine:
+// ".", a path, or path: or git+file: with its query off; "" for any other.
+func localFlake(ref string) string {
+	if r, ok := strings.CutPrefix(ref, "git+file:"); ok {
+		ref = "path:" + strings.TrimPrefix(r, "//")
+	}
+	if r, ok := strings.CutPrefix(ref, "path:"); ok {
+		r, _, _ = strings.Cut(r, "?")
+		return r
+	}
+	if ref == "." || ref == ".." || strings.HasPrefix(ref, "./") || strings.HasPrefix(ref, "../") || strings.HasPrefix(ref, "/") {
+		return ref
+	}
+	return ""
 }
 
 // unwrapGit hands on the command a git command runs for itself, once v
