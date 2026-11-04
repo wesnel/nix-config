@@ -46,6 +46,7 @@
           notion = true;
           hex = true;
           datadog.enable = true;
+          parallels = true;
         };
 
         python.enable = true;

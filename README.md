@@ -873,12 +873,11 @@ another server, destroying the home directory, the Nix store or
 your keys, switching its own hooks off, changing agent-tools' config,
 sleeping 30 seconds or more in the
 foreground, and writing a plan's log other than with `agent-plan log`.
-MCP tools of the servers in `overlays/agent-tools/internal/guard/mcp.json`
-(Linear, Notion, Hex, Datadog, Buildkite, ngrok, and the
-claude.ai Slack connector) are held to its lists: reads
-pass, the listed writes ask you first in Claude Code and are denied in
-Codex and to reviewers, and any other tool is denied until it is
-listed. Every tool of a server it does not list asks you first in Claude
+MCP tools are checked against `overlays/agent-tools/internal/guard/mcp.json`.
+The [MCP servers](#mcp-servers) section lists the services and each client's
+confirmation policy. Reviewers get reads alone, and tools absent from a
+listed server's inventory are denied until reviewed.
+Every tool of a server it does not list asks you first in Claude
 Code, and is denied in Codex and to reviewers, but for `agent_ops`
 (`pr-loop mcp`): the guard delegates approvals to Codex, which preapproves
 the routine plan-tool catalog and prompts for other calls. Each refusal says what to do
@@ -945,13 +944,22 @@ git itself does not use the keychain's GitHub login:
 | `notion` (`notion`) | Notion's `/mcp` | reads; writes you confirm, OAuth |
 | `hex` (`hex`) | Hex's `/mcp` | reads; edits and runs you confirm, OAuth |
 | `datadog` (`datadog.enable`, `datadog.site`) | the site's `/v1/mcp`, toolsets `core` and `error-tracking` | read tools only, OAuth |
+| `parallels` (`parallels`) | local Parallels Desktop MCP | VM reads; guest commands, keyboard input and lifecycle changes you confirm |
 
-Options in parentheses are off by default. Each remote server serves only
+Options in parentheses are off by default. Each server serves only
 the tools listed for it in the guard's `mcp.json`. In Claude Code those
 lists are also permission rules generated from `mcp.json`: each server's
 reads allowed and its listed writes asked, and the guard still refuses any
-other tool on a listed server. Codex's lists are the guard's alone, and
-Codex and reviewers get the reads alone.
+other tool on a listed server. Codex gets the remote servers' reads alone;
+Parallels calls use Codex's native per-call approval. Reviewers get reads alone.
+
+ngrok enables Parallels. It requires an installed Parallels Desktop, and
+guest commands require Parallels Tools inside Windows. The server can discover
+all VMs; calls identify which VM to use. Screen capture and keyboard input
+require a running VM. VM deletion, reset, configuration and encryption tools
+are excluded. If the local server cannot start, inspect
+`~/.local/state/mcp-proxy.log`; `mcp-proxy-status` checks authentication,
+not local process startup.
 
 The proxy signs in to each remote server itself and refreshes their
 short-lived tokens, so agents hold only the proxy's own token, kept in
@@ -959,7 +967,7 @@ short-lived tokens, so agents hold only the proxy's own token, kept in
 Code and Codex on every switch, and each reads the token when it
 connects.
 
-Authorize each server once, in a browser, after the first switch:
+Authorize each remote server once, in a browser, after the first switch:
 
 ``` sh
 mcp-proxy-authorize linear
@@ -971,7 +979,7 @@ A session started while a server was not authorized reports it as not
 found; reconnect it with `/mcp` in Claude Code, or start a new session.
 The proxy serves only the servers it connected, so a server whose token
 was refused is not found either. `pr-loop mcp-status` names each server
-that is not connected and the command that connects it; each Claude Code
+that is not connected and its recovery guidance; each Claude Code
 session runs it as it starts and shows you what it found, and tells the
 session too, so it can ask you rather than add the vendor's server itself. If one does add it, the guard's reason for a
 server named after a reviewed service names the reviewed server.

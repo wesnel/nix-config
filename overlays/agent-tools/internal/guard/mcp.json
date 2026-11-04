@@ -1,4 +1,19 @@
 {
+  "parallels": {
+    "service": "Parallels",
+    "servers": ["parallels"],
+    "verify": "pdfm-mcp 0.1.4 tools/list, with isolated fake Parallels CLIs; recorded in testdata/tools/parallels.json",
+    "codexPrompt": true,
+    "reads": ["parallels_list_vms", "parallels_search_vms", "parallels_vm_info", "parallels_vm_capture",
+      "parallels_vm_observe", "parallels_vm_exec_result", "parallels_vm_snapshot_list"],
+    "confirms": ["parallels_vm_start", "parallels_vm_resume", "parallels_vm_pause", "parallels_vm_suspend",
+      "parallels_vm_stop", "parallels_vm_restart", "parallels_vm_exec", "parallels_vm_exec_start",
+      "parallels_vm_exec_cancel", "parallels_vm_send_key", "parallels_vm_type", "parallels_vm_snapshot_create"],
+    "refuses": ["parallels_vm_reset", "parallels_vm_reset_uptime", "parallels_vm_delete", "parallels_vm_clone",
+      "parallels_vm_set", "parallels_vm_device_add", "parallels_vm_device_set", "parallels_vm_device_del",
+      "parallels_vm_sequence", "parallels_vm_snapshot_switch", "parallels_vm_snapshot_delete",
+      "parallels_vm_reclaim_disk", "parallels_vm_encrypt", "parallels_vm_decrypt", "parallels_vm_change_encryption_password"]
+  },
   "linear": {
     "service": "Linear",
     "servers": ["linear", "claude_ai_Linear"],

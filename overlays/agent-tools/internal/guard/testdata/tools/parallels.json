@@ -1,0 +1,106 @@
+{
+  "tools": [
+    {
+      "name": "parallels_list_vms"
+    },
+    {
+      "name": "parallels_search_vms"
+    },
+    {
+      "name": "parallels_vm_capture"
+    },
+    {
+      "name": "parallels_vm_change_encryption_password"
+    },
+    {
+      "name": "parallels_vm_clone"
+    },
+    {
+      "name": "parallels_vm_decrypt"
+    },
+    {
+      "name": "parallels_vm_delete"
+    },
+    {
+      "name": "parallels_vm_device_add"
+    },
+    {
+      "name": "parallels_vm_device_del"
+    },
+    {
+      "name": "parallels_vm_device_set"
+    },
+    {
+      "name": "parallels_vm_encrypt"
+    },
+    {
+      "name": "parallels_vm_exec"
+    },
+    {
+      "name": "parallels_vm_exec_cancel"
+    },
+    {
+      "name": "parallels_vm_exec_result"
+    },
+    {
+      "name": "parallels_vm_exec_start"
+    },
+    {
+      "name": "parallels_vm_info"
+    },
+    {
+      "name": "parallels_vm_observe"
+    },
+    {
+      "name": "parallels_vm_pause"
+    },
+    {
+      "name": "parallels_vm_reclaim_disk"
+    },
+    {
+      "name": "parallels_vm_reset"
+    },
+    {
+      "name": "parallels_vm_reset_uptime"
+    },
+    {
+      "name": "parallels_vm_restart"
+    },
+    {
+      "name": "parallels_vm_resume"
+    },
+    {
+      "name": "parallels_vm_send_key"
+    },
+    {
+      "name": "parallels_vm_sequence"
+    },
+    {
+      "name": "parallels_vm_set"
+    },
+    {
+      "name": "parallels_vm_snapshot_create"
+    },
+    {
+      "name": "parallels_vm_snapshot_delete"
+    },
+    {
+      "name": "parallels_vm_snapshot_list"
+    },
+    {
+      "name": "parallels_vm_snapshot_switch"
+    },
+    {
+      "name": "parallels_vm_start"
+    },
+    {
+      "name": "parallels_vm_stop"
+    },
+    {
+      "name": "parallels_vm_suspend"
+    },
+    {
+      "name": "parallels_vm_type"
+    }
+  ]
+}

@@ -15,6 +15,11 @@ import (
 // harness can ask, and every other tool is refused; on any other server,
 // every tool asks in a main session that can ask and is refused elsewhere.
 func TestMCPTools(t *testing.T) {
+	config := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(config, []byte(`{"mcpProxy":{"endpoints":{"parallels":"/parallels/mcp","linear":"/linear/mcp"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENT_TOOLS_CONFIG", config)
 	const (
 		ask  = `"permissionDecision":"ask"`
 		deny = `"permissionDecision":"deny"`
@@ -39,6 +44,16 @@ func TestMCPTools(t *testing.T) {
 		{"Linear read from a reviewer", []string{"--reviewer"}, claude("mcp__linear__list_issues"), "", ""},
 		{"Linear write from Codex", []string{"--baseline"}, codex("mcp__linear__save_issue"), deny, "Claude Code"},
 		{"Linear read from Codex", []string{"--baseline"}, codex("mcp__linear__get_issue"), "", ""},
+		{"Parallels read", []string{"--baseline"}, claude("mcp__parallels__parallels_list_vms"), "", ""},
+		{"Parallels read from Codex", []string{"--baseline"}, codex("mcp__parallels__parallels_vm_capture"), "", ""},
+		{"Parallels exec asks", []string{"--baseline"}, claude("mcp__parallels__parallels_vm_exec"), ask, "Parallels"},
+		{"Parallels exec uses native Codex approval", []string{"--baseline"}, codex("mcp__parallels__parallels_vm_exec"), "", ""},
+		{"Parallels input uses native Codex approval", []string{"--baseline"}, codex("mcp__parallels__parallels_vm_type"), "", ""},
+		{"Parallels read from a reviewer", []string{"--reviewer"}, codex("mcp__parallels__parallels_vm_info"), "", ""},
+		{"Parallels exec from a reviewer", []string{"--reviewer"}, codex("mcp__parallels__parallels_vm_exec"), deny, "reviewer only reads"},
+		{"Parallels deletion", []string{"--baseline"}, codex("mcp__parallels__parallels_vm_delete"), deny, "parallels_vm_delete"},
+		{"Parallels unknown tool", []string{"--baseline"}, codex("mcp__parallels__parallels_vm_future"), deny, "parallels_vm_future"},
+		{"Parallels lookalike from Codex", []string{"--baseline"}, codex("mcp__parallels_direct__parallels_vm_exec"), deny, "unreviewed"},
 		{"Notion read", []string{"--baseline"}, claude("mcp__notion__notion-fetch"), "", ""},
 		{"Notion write asks", []string{"--baseline"}, claude("mcp__notion__notion-create-pages"), ask, "Notion"},
 		{"Notion connector write asks", []string{"--baseline"}, claude("mcp__claude_ai_Notion__notion-update-page"), ask, ""},
@@ -100,6 +115,35 @@ func TestMCPTools(t *testing.T) {
 			reason := printed.Hook.Reason
 			if !strings.Contains(reason, c.says) || !saysInstead(reason) {
 				t.Errorf("%s: reason %q does not say %q and what to do instead", c.event, reason, c.says)
+			}
+		})
+	}
+}
+
+func TestMCPNativeRegistration(t *testing.T) {
+	for _, c := range []struct {
+		name, config, server string
+		denied               bool
+	}{
+		{"registered proxy", `{"mcpProxy":{"endpoints":{"parallels":"/parallels/mcp"}}}`, "parallels", false},
+		{"not registered", `{"mcpProxy":{"endpoints":{}}}`, "parallels", true},
+		{"different spelling", `{"mcpProxy":{"endpoints":{"parallels":"/parallels/mcp"}}}`, "PARALLELS", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			config := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(config, []byte(c.config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("AGENT_TOOLS_CONFIG", config)
+			event := `{"tool_name":"mcp__` + c.server + `__parallels_vm_exec","turn_id":"t","tool_input":{}}`
+			var out bytes.Buffer
+			Main([]string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
+			if c.denied {
+				if !strings.Contains(out.String(), `"permissionDecision":"deny"`) {
+					t.Fatalf("printed %q, want refusal without registered native approval", out.String())
+				}
+			} else if out.Len() != 0 {
+				t.Fatalf("printed %q, want handoff to native approval", out.String())
 			}
 		})
 	}
@@ -236,7 +280,8 @@ func TestMCPListsDisjoint(t *testing.T) {
 func TestMCPLookalike(t *testing.T) {
 	config := filepath.Join(t.TempDir(), "config.json")
 	os.WriteFile(config, []byte(`{"mcpProxy": {"url": "http://127.0.0.1:6290",
-		"endpoints": {"linear": "/linear/mcp", "notion": "/notion/mcp", "buildkite": "/buildkite/mcp"}}}`), 0o600)
+		"endpoints": {"linear": "/linear/mcp", "notion": "/notion/mcp", "buildkite": "/buildkite/mcp", "parallels": "/parallels/mcp"},
+		"localServers": ["parallels"]}}`), 0o600)
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
 	claude := func(tool string) string { return `{"tool_name":"` + tool + `","tool_input":{}}` }
 	codex := func(tool string) string { return `{"tool_name":"` + tool + `","turn_id":"t","tool_input":{}}` }
@@ -267,6 +312,7 @@ func TestMCPLookalike(t *testing.T) {
 		{"datadog", "mcp__datadog.eu__search_datadog_logs", "mcp__claude_ai_Datadog_2__", false},
 		{"slack", "mcp__slack__slack_read_thread", "mcp__claude_ai_Slack__", false},
 		{"ngrok", "mcp__ngrok-dev__list_endpoints", "mcp__ngrok__", false},
+		{"parallels", "mcp__parallels-direct__parallels_vm_info", "mcp__parallels__", false},
 	} {
 		covered[c.key] = true
 		for _, h := range []struct {
@@ -274,6 +320,9 @@ func TestMCPLookalike(t *testing.T) {
 		}{{"Claude Code", claude(c.tool), "ask"}, {"Codex", codex(c.tool), "deny"}} {
 			t.Run(c.key+" from "+h.harness, func(t *testing.T) {
 				decision, reason := decide(t, []string{"--baseline"}, h.event)
+				if c.key == "parallels" && !strings.Contains(reason, "mcp-proxy service log") {
+					t.Errorf("local server recovery %q does not name the service log", reason)
+				}
 				if decision != h.want {
 					t.Errorf("%s: decision %q, want %q", c.tool, decision, h.want)
 				}

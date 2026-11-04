@@ -48,12 +48,11 @@ with lib; let
     agentPlans = {
       inherit (cfg.agentPlans) claudePage spacePage;
     };
-    # The servers this host's mcp-proxy serves, by the names mcp.json keys
-    # their services by: the guard names `mcp-proxy-authorize NAME` only for
-    # these.
+    # Server names match mcp.json; local servers need startup diagnostics
+    # instead of OAuth authorization when disconnected.
     mcpProxy =
       if config.wgn.home.mcp-proxy.enable
-      then {inherit (config.wgn.home.mcp-proxy) url endpoints;}
+      then {inherit (config.wgn.home.mcp-proxy) url endpoints localServers;}
       else null;
   });
 
