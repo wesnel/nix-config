@@ -996,9 +996,10 @@ type cwds struct {
 // since its redirections open where it starts; it gives a call after a |
 // the files the call before it reads or was fed as its stdin; the scripts
 // the line
-// runs inline (bash -c, eval) are walked in turn, to maxDepth. It returns
-// the first reason visit gives, or "".
-func walkShell(text, dir string, depth int, visit func(c call, cwd string) string) string {
+// runs inline (bash -c, eval) are walked in turn, to maxDepth. first marks
+// the first directory visit is given a call in, so that it can tell the
+// calls apart. It returns the first reason visit gives, or "".
+func walkShell(text, dir string, depth int, visit func(c call, cwd string, first bool) string) string {
 	if depth > maxDepth {
 		return ""
 	}
@@ -1055,15 +1056,18 @@ func walkShell(text, dir string, depth int, visit func(c call, cwd string) strin
 
 // visitIn hands visit c in each directory it runs in when the line is in
 // one of lines (callDirs), with its redirections as the line's directory
-// names them (redirectedIn). It returns read with the files c reads there
-// added (readFiles), and the first reason visit gives, or "".
-func visitIn(c call, lines []string, visit func(c call, cwd string) string, read []string) ([]string, string) {
+// names them (redirectedIn), first set for the first of them. It returns
+// read with the files c reads there added (readFiles), and the first
+// reason visit gives, or "".
+func visitIn(c call, lines []string, visit func(c call, cwd string, first bool) string, read []string) ([]string, string) {
+	first := true
 	reason := inEach(lines, func(line string) string {
 		at := c.redirectedIn(line)
 		return inEach(callDirs(c.chdir, line), func(cwd string) string {
-			if reason := visit(at, cwd); reason != "" {
+			if reason := visit(at, cwd, first); reason != "" {
 				return reason
 			}
+			first = false
 			read = append(read, readFiles(at, cwd)...)
 			return ""
 		})

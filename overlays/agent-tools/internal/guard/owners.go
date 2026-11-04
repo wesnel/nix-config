@@ -58,7 +58,7 @@ func checkOwner(in input, edits []editPath, conf *plans.Config, confErr error) s
 			// calls still count.
 			continue
 		}
-		if reason := checkAssociatedWorktree(e.path, in, c, confErr, owners); reason != "" {
+		if reason := checkAssociatedWorktree(e, in, c, confErr, owners); reason != "" {
 			return reason
 		}
 	}
@@ -68,10 +68,14 @@ func checkOwner(in input, edits []editPath, conf *plans.Config, confErr error) s
 // editPath is a file or directory a call edits, as an absolute path.
 // worktreeAdd marks the directory a git worktree add runs in, which the
 // owner fence judges by its owner alone, since creating isolation may start
-// in the main checkout.
+// in the main checkout. gitRan marks the directory any other git write
+// runs in, and alsoIn are the other directories its call is judged in
+// after a cd (gitAfterCd), which the fence's refusal names.
 type editPath struct {
 	path        string
 	worktreeAdd bool
+	gitRan      bool
+	alsoIn      []string
 }
 
 // pathsOf is the paths of edits.
@@ -130,8 +134,8 @@ func checkNamedOwners(paths []string, owners map[string]string) string {
 	return ""
 }
 
-func checkAssociatedWorktree(p string, in input, c plans.Config, err error, owners map[string]string) string {
-	top, g := worktreeOf(p)
+func checkAssociatedWorktree(e editPath, in input, c plans.Config, err error, owners map[string]string) string {
+	top, g := worktreeOf(e.path)
 	if gitStalled.Load() {
 		return stalledGit
 	}
@@ -161,7 +165,7 @@ func checkAssociatedWorktree(p string, in input, c plans.Config, err error, owne
 		return ""
 	}
 	if len(opened) < 3 || resolved(opened[0]) == resolved(opened[1]) {
-		return "This edits the repository's main checkout. Create a task worktree at an absolute path outside this checkout (`git worktree add --no-track /ABSOLUTE/PATH -b BRANCH origin/HEAD`)."
+		return mainCheckoutRefusal(e, opened)
 	}
 	if reason := checkTaskBranch(g); reason != "" {
 		return reason
@@ -170,6 +174,18 @@ func checkAssociatedWorktree(p string, in input, c plans.Config, err error, owne
 		return fmt.Sprintf("This session is not associated with %s in its newest plan. Work in your own task worktree and record its session and worktree with `agent-plan new`; for an intentional continuation, associate the session with that plan before editing.", top)
 	}
 	return ""
+}
+
+// mainCheckoutRefusal is why e, an edit of the repository's main checkout
+// opened names, is refused: where a cd on the line led its git command
+// into a linked worktree of that repository, the form the guard accepts,
+// git -C with that worktree's path; else to make a task worktree.
+func mainCheckoutRefusal(e editPath, opened []string) string {
+	if linked := linkedWorktreeOf(e.alsoIn, opened); linked != "" {
+		return fmt.Sprintf("This may run git in the repository's main checkout: the guard cannot tell that the cd before it still holds. "+
+			"Run that git command as `git -C %s ...`, without the cd.", shellQuote(linked))
+	}
+	return "This edits the repository's main checkout. Create a task worktree at an absolute path outside this checkout (`git worktree add --no-track /ABSOLUTE/PATH -b BRANCH origin/HEAD`)."
 }
 
 func associatedPlan(c plans.Config, session, top string) (*plans.Found, error) {
@@ -416,11 +432,16 @@ var operationExits = map[string]map[string]bool{
 // runs in (gitWritePaths), each named as fencePath has it; the runs of
 // code the guard cannot read (unreadRunsOf, with its redirections all
 // after its words); and a refusal for a command
-// whose writes it cannot place.
+// whose writes it cannot place. Each git write carries the other
+// directories its call is judged in after a cd (gitAfterCd).
 func shellEdits(text, dir string) ([]editPath, []unreadRun, string) {
 	var edits []editPath
 	var runs []unreadRun
-	reason := walkShell(text, dir, 0, func(c call, cwd string) string {
+	var after gitAfterCd
+	reason := walkShell(text, dir, 0, func(c call, cwd string, first bool) string {
+		if first {
+			after.endCall()
+		}
 		named := c.named()
 		runs = append(runs, unreadRunsOf(c.redirectedLast(), cwd)...)
 		if c.expands[0] && named.expands[0] {
@@ -434,13 +455,71 @@ func shellEdits(text, dir string) ([]editPath, []unreadRun, string) {
 			}
 		}
 		paths, reason := gitWritePaths(named, cwd)
+		after.visit(named, cwd, paths)
 		edits = append(edits, paths...)
 		return reason
 	})
 	if reason != "" {
 		return nil, nil, reason
 	}
+	after.endCall()
+	for i := range edits {
+		if edits[i].gitRan {
+			edits[i].alsoIn = after.also[edits[i].path]
+		}
+	}
 	return edits, runs, ""
+}
+
+// gitAfterCd collects, for the git writes of a command line, the other
+// directories each is judged in from a directory a cd on the line led to:
+// after a command substitution or a subshell, the guard judges a call
+// both where the cd led and where the line started, since it cannot tell
+// that the cd still holds.
+type gitAfterCd struct {
+	// reached are the directories a cd on the line led to.
+	reached []string
+	// ran are the directories the call under way's git writes run in, and
+	// cdRan those of them judged from a directory in reached.
+	ran, cdRan []string
+	// also maps the directory a git write runs in to the others its call
+	// is judged in from reached.
+	also map[string][]string
+}
+
+// visit reads named, a call walkShell gives in cwd, whose git writes are
+// edits.
+func (g *gitAfterCd) visit(named call, cwd string, edits []editPath) {
+	if !named.expands[0] && (named.words[0] == "cd" || named.words[0] == "pushd") {
+		if to := cdTarget(named, cwd); to != "" {
+			g.reached = addDir(g.reached, to)
+		}
+	}
+	for _, e := range edits {
+		if !e.gitRan {
+			continue
+		}
+		g.ran = addDir(g.ran, e.path)
+		if slices.Contains(g.reached, cwd) {
+			g.cdRan = addDir(g.cdRan, e.path)
+		}
+	}
+}
+
+// endCall files the call under way's directories in also.
+func (g *gitAfterCd) endCall() {
+	for _, d := range g.ran {
+		for _, o := range g.cdRan {
+			if o == d {
+				continue
+			}
+			if g.also == nil {
+				g.also = map[string][]string{}
+			}
+			g.also[d] = addDir(g.also[d], o)
+		}
+	}
+	g.ran, g.cdRan = nil, nil
 }
 
 // fencePath is word, a file a command run in cwd names, as the owner fence
@@ -476,8 +555,9 @@ func fencePath(word, cwd string) string {
 // gitWritePaths names the absolute paths a git command, run in cwd, writes,
 // with its -C options applied, when gitWrites names its command and gitRead
 // does not pass it as a reading form (stash list, tag -l, apply --check),
-// the directory a worktree add runs in tagged; a refusal when a worktree
-// target cannot be resolved.
+// the directory a worktree add runs in tagged, as is the one any other
+// command but git worktree's runs in; a refusal when a worktree target
+// cannot be resolved.
 func gitWritePaths(c call, cwd string) ([]editPath, string) {
 	if base(c.words[0]) != "git" {
 		return nil, ""
@@ -504,7 +584,32 @@ func gitWritePaths(c call, cwd string) ([]editPath, string) {
 	if len(words) > 1 && words[0] == "worktree" && (words[1] == "remove" || words[1] == "move") {
 		return worktreeMutationTargets(words, dir)
 	}
-	return []editPath{{path: dir}}, ""
+	return []editPath{{path: dir, gitRan: true}}, ""
+}
+
+// linkedWorktreeOf is the one of dirs, the other directories a git
+// command was judged in, that is in a linked worktree of the repository
+// opened names, by its common directory; "" when none is or several are.
+func linkedWorktreeOf(dirs []string, opened []string) string {
+	if len(opened) < 2 {
+		return ""
+	}
+	found := ""
+	for _, d := range dirs {
+		top, g := worktreeOf(d)
+		if top == "" {
+			continue
+		}
+		other, ok := openedRepo(g.dir)
+		if !ok || len(other) < 3 || resolved(other[0]) == resolved(other[1]) || resolved(other[1]) != resolved(opened[1]) {
+			continue
+		}
+		if found != "" {
+			return ""
+		}
+		found = d
+	}
+	return found
 }
 
 func gitMutationLocation(c call, cwd string) ([]string, string, bool) {
