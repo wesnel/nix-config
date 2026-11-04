@@ -35,7 +35,7 @@ func checkOwner(in input) string {
 			Command string `json:"command"`
 		}
 		json.Unmarshal(in.ToolInput, &args)
-		paths, reason = shellEditPaths(args.Command, in.Cwd, 0, false)
+		paths, _, reason = shellEditPaths(args.Command, in.Cwd, 0, false)
 	case "Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch":
 		// An input that does not decode is denied before the fence is
 		// asked.
@@ -78,6 +78,7 @@ func checkOwner(in input) string {
 				top, owner, top)
 		}
 	}
+	var gitAlso map[string][]string
 	if in.ToolName == "Bash" || in.ToolName == "exec_command" {
 		var args struct {
 			Command string `json:"command"`
@@ -85,7 +86,7 @@ func checkOwner(in input) string {
 		json.Unmarshal(in.ToolInput, &args)
 		// Creating isolation may start in the main checkout. Its existing
 		// owner was checked above; redirections and other calls still count.
-		paths, reason = shellEditPaths(args.Command, in.Cwd, 0, true)
+		paths, gitAlso, reason = shellEditPaths(args.Command, in.Cwd, 0, true)
 		if reason != "" {
 			return reason
 		}
@@ -128,6 +129,10 @@ func checkOwner(in input) string {
 			continue
 		}
 		if len(opened) < 3 || resolved(opened[0]) == resolved(opened[1]) {
+			if linked := linkedWorktreeOf(gitAlso[p], opened); linked != "" {
+				return fmt.Sprintf("This may run git in the repository's main checkout: the guard cannot tell that the cd before it still holds. "+
+					"Run that git command as `git -C %s ...`, without the cd.", shellQuote(linked))
+			}
 			return "This edits the repository's main checkout. Create a task worktree at an absolute path outside this checkout (`git worktree add --no-track /ABSOLUTE/PATH -b BRANCH origin/HEAD`)."
 		}
 		branch, branchOK := g.run("branch", "--show-current")
@@ -313,22 +318,33 @@ func worktreeOf(path string) (string, gitState) {
 // shellEditPaths are the absolute paths of the files a command line
 // writes, moves or removes, as changedFiles names them, and the directory
 // a git command that writes the worktree runs in (gitWrites), following cd
-// as command does. Each file is named as fencePath has it.
-func shellEditPaths(text, dir string, depth int, creatingWorktree bool) ([]string, string) {
+// as command does. Each file is named as fencePath has it. gitAlso maps the
+// directory such a git command is judged in to the others the same call
+// is judged in from a directory a cd on the line led to: the guard judges
+// it in each place the line may be, whether or not the cd still holds.
+func shellEditPaths(text, dir string, depth int, creatingWorktree bool) (paths []string, gitAlso map[string][]string, reason string) {
 	if depth > maxDepth {
-		return nil, ""
+		return nil, nil, ""
 	}
 	var out []string
+	gitAlso = map[string][]string{}
 	w := cwds{here: []string{dir}}
+	// The directories a cd on the line led to.
+	var reached []string
 	end := ""
 	v := visitor{
 		script: func(text string) string {
 			for _, cwd := range w.here {
-				paths, reason := shellEditPaths(text, cwd, depth+1, creatingWorktree)
+				paths, also, reason := shellEditPaths(text, cwd, depth+1, creatingWorktree)
 				if reason != "" {
 					return reason
 				}
 				out = append(out, paths...)
+				for d, others := range also {
+					for _, o := range others {
+						gitAlso[d] = addDir(gitAlso[d], o)
+					}
+				}
 			}
 			return ""
 		},
@@ -347,20 +363,39 @@ func shellEditPaths(text, dir string, depth int, creatingWorktree bool) ([]strin
 						}
 					}
 				}
+				for _, cwd := range w.here {
+					if to := cdTarget(named, cwd); to != "" {
+						reached = addDir(reached, to)
+					}
+				}
 				w.cd(named, end)
 				return ""
 			}
+			var ran, cdRan []string
 			for _, cwd := range w.here {
 				for _, t := range changedFiles(base(named.words[0]), named.words[1:], redirections(c.words)) {
 					if p := fencePath(t, cwd); filepath.IsAbs(p) {
 						out = append(out, p)
 					}
 				}
-				paths, reason := gitWritePaths(named, cwd, creatingWorktree)
+				paths, in, reason := gitWritePaths(named, cwd, creatingWorktree)
 				if reason != "" {
 					return reason
 				}
 				out = append(out, paths...)
+				if in != "" {
+					ran = addDir(ran, in)
+					if slices.Contains(reached, cwd) {
+						cdRan = addDir(cdRan, in)
+					}
+				}
+			}
+			for _, d := range ran {
+				for _, o := range cdRan {
+					if o != d {
+						gitAlso[d] = addDir(gitAlso[d], o)
+					}
+				}
 			}
 			return ""
 		},
@@ -372,12 +407,12 @@ func shellEditPaths(text, dir string, depth int, creatingWorktree bool) ([]strin
 			c := call{words: words, expands: expands}
 			w.begin(c)
 			if reason := unwrap(c, v); reason != "" {
-				return nil, reason
+				return nil, nil, reason
 			}
 			w.next(end)
 		}
 	}
-	return out, ""
+	return out, gitAlso, ""
 }
 
 // fencePath is word, a file a command run in cwd names, as the owner fence
@@ -413,10 +448,12 @@ func fencePath(word, cwd string) string {
 // gitWritePaths names the absolute paths a git command, run in cwd, writes,
 // with its -C options applied, when gitWrites names its command and gitRead
 // does not pass it as a reading form (stash list, tag -l, apply --check);
-// a refusal when a worktree target cannot be resolved.
-func gitWritePaths(c call, cwd string, creatingWorktree bool) ([]string, string) {
+// a refusal when a worktree target cannot be resolved. ran is the
+// directory a command other than `git worktree` writes, which is where it
+// runs; "" for the rest.
+func gitWritePaths(c call, cwd string, creatingWorktree bool) (paths []string, ran, reason string) {
 	if base(c.words[0]) != "git" {
-		return nil, ""
+		return nil, "", ""
 	}
 	dir, words := cwd, c.words[1:]
 	relocated := false
@@ -442,10 +479,10 @@ func gitWritePaths(c call, cwd string, creatingWorktree bool) ([]string, string)
 		}
 	}
 	if len(words) == 0 || !gitWrites[words[0]] || gitRead(words[0], words[1:]) || !filepath.IsAbs(dir) {
-		return nil, ""
+		return nil, "", ""
 	}
 	if relocated {
-		return nil, "The guard requires an explicit working directory for Git mutations. Use `git -C /ABSOLUTE/TASK/WORKTREE` without repository-location flags or GIT_* path overrides."
+		return nil, "", "The guard requires an explicit working directory for Git mutations. Use `git -C /ABSOLUTE/TASK/WORKTREE` without repository-location flags or GIT_* path overrides."
 	}
 	if len(words) > 1 && words[0] == "worktree" && words[1] == "add" {
 		positional := gitPositionals(words[0], words[1:])
@@ -456,7 +493,7 @@ func gitWritePaths(c call, cwd string, creatingWorktree bool) ([]string, string)
 		if !creatingWorktree {
 			paths = append(paths, dir)
 		}
-		return paths, ""
+		return paths, "", ""
 	}
 	if len(words) > 1 && words[0] == "worktree" && (words[1] == "remove" || words[1] == "move") {
 		args := words[2:]
@@ -471,19 +508,44 @@ func gitWritePaths(c call, cwd string, creatingWorktree bool) ([]string, string)
 			want = 2
 		}
 		if len(args) != want || strings.HasPrefix(args[0], "-") {
-			return nil, "The guard cannot determine this worktree command's targets. Use an explicit worktree path and only --force or -- before it."
+			return nil, "", "The guard cannot determine this worktree command's targets. Use an explicit worktree path and only --force or -- before it."
 		}
 		target, reason := worktreeTarget(dir, args[0])
 		if reason != "" {
-			return nil, reason
+			return nil, "", reason
 		}
 		paths := []string{target}
 		if want == 2 {
 			paths = append(paths, fencePath(args[1], dir))
 		}
-		return paths, ""
+		return paths, "", ""
 	}
-	return []string{dir}, ""
+	return []string{dir}, dir, ""
+}
+
+// linkedWorktreeOf is the one of dirs, the other directories a git
+// command was judged in, that is in a linked worktree of the repository
+// opened names, by its common directory; "" when none is or several are.
+func linkedWorktreeOf(dirs []string, opened []string) string {
+	if len(opened) < 2 {
+		return ""
+	}
+	found := ""
+	for _, d := range dirs {
+		top, g := worktreeOf(d)
+		if top == "" {
+			continue
+		}
+		other, ok := openedRepo(g.dir)
+		if !ok || len(other) < 3 || resolved(other[0]) == resolved(other[1]) || resolved(other[1]) != resolved(opened[1]) {
+			continue
+		}
+		if found != "" {
+			return ""
+		}
+		found = d
+	}
+	return found
 }
 
 // Require an absolute path so Git's suffix and case-matching rules cannot
