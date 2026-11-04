@@ -5,12 +5,18 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 // A resume brief is what a session needs from its plan to go on after
 // /clear or a compaction, within the 10,000 characters a SessionStart
 // hook's context keeps.
 func TestResumeBrief(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	// resumed makes a plan with a goal, S1 started, S2 ready, Q1 decided
 	// before a hand-back, Q2 decided after it, an open Q3, and P1 waiting
 	// for Q3.
@@ -39,7 +45,7 @@ func TestResumeBrief(t *testing.T) {
 		return c, p
 	}
 
-	t.Run("the plan", func(t *testing.T) {
+	testprocess.Run(t, "the plan", tmp, func(t *testing.T) {
 		_, p := resumed(t)
 		got, err := p.ResumeBrief(day, ResumeLimit)
 		if err != nil {
@@ -65,7 +71,7 @@ func TestResumeBrief(t *testing.T) {
 		}
 	})
 
-	t.Run("a plan with many decisions stays under the cap", func(t *testing.T) {
+	testprocess.Run(t, "a plan with many decisions stays under the cap", tmp, func(t *testing.T) {
 		c := testConfig(t)
 		p := newPlan(t, c, "x")
 		setGoal(t, p.file(""), strings.Repeat("Add the run loop. ", 400))
@@ -104,7 +110,7 @@ func TestResumeBrief(t *testing.T) {
 		}
 	})
 
-	t.Run("after /clear and a compaction in Claude Code", func(t *testing.T) {
+	testprocess.Run(t, "after /clear and a compaction in Claude Code", tmp, func(t *testing.T) {
 		c, p := resumed(t)
 		for _, source := range []string{"clear", "compact"} {
 			out, err := c.SessionHook([]byte(`{"session_id":"abc","source":"`+source+`","cwd":"/nowhere"}`), "claude")
@@ -125,7 +131,7 @@ func TestResumeBrief(t *testing.T) {
 		}
 	})
 
-	t.Run("after /clear, which starts a new session", func(t *testing.T) {
+	testprocess.Run(t, "after /clear, which starts a new session", tmp, func(t *testing.T) {
 		t.Setenv("XDG_STATE_HOME", t.TempDir())
 		c, p := resumed(t)
 		end := `{"session_id":"abc","hook_event_name":"SessionEnd","reason":"clear","cwd":"/nowhere"}`
@@ -148,7 +154,7 @@ func TestResumeBrief(t *testing.T) {
 		}
 	})
 
-	t.Run("no plan prints nothing", func(t *testing.T) {
+	testprocess.Run(t, "no plan prints nothing", tmp, func(t *testing.T) {
 		c := testConfig(t)
 		out, err := c.SessionHook([]byte(`{"session_id":"nobody","source":"clear","cwd":"/nowhere"}`), "claude")
 		if err != nil || len(out) != 0 {

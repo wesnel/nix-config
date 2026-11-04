@@ -11,6 +11,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/loop"
 	"github.com/wesnel/agent-tools/internal/routes"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 // checkedOf is every category of route's checklist but leaveOut, as a
@@ -75,7 +76,11 @@ func TestFocusesKnown(t *testing.T) {
 // compat checklist, the general rules and the description's Reverting
 // section, and requires every category as checked.
 func TestFocusCompat(t *testing.T) {
-	t.Run("checked", func(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
+	testprocess.Run(t, "checked", tmp, func(t *testing.T) {
 		f := setUp(t, true)
 		compatSays(t, f, compatReply(t, checkedOf(t, "compat", "")))
 		code, run, stderr := runDelegate(t, "--reviewer", "compat", "--plan", f.plan, "--description",
@@ -116,7 +121,7 @@ func TestFocusCompat(t *testing.T) {
 		f.checkCleanedUp(t)
 	})
 
-	t.Run("a category left out", func(t *testing.T) {
+	testprocess.Run(t, "a category left out", tmp, func(t *testing.T) {
 		f := setUp(t, true)
 		compatSays(t, f, compatReply(t, checkedOf(t, "compat", "reverting")))
 		code, run, stderr := runDelegate(t, "--reviewer", "compat", "--plan", f.plan, "--description",
@@ -128,7 +133,7 @@ func TestFocusCompat(t *testing.T) {
 
 	// The kind is the compat review's: a security review's reply that
 	// uses it has the finding dropped.
-	t.Run("its kind elsewhere", func(t *testing.T) {
+	testprocess.Run(t, "its kind elsewhere", tmp, func(t *testing.T) {
 		f := setUp(t, true)
 		reply := map[string]any{}
 		must(0, json.Unmarshal([]byte(compatReply(t, "[]")), &reply))
@@ -140,7 +145,7 @@ func TestFocusCompat(t *testing.T) {
 		}
 	})
 
-	t.Run("refused", func(t *testing.T) {
+	testprocess.Run(t, "refused", tmp, func(t *testing.T) {
 		f := setUp(t, true)
 		compatSays(t, f, compatReply(t, checkedOf(t, "compat", "")))
 		given := f.base + "..HEAD"
@@ -163,7 +168,7 @@ func TestFocusCompat(t *testing.T) {
 		}
 	})
 
-	t.Run("printed", func(t *testing.T) {
+	testprocess.Run(t, "printed", tmp, func(t *testing.T) {
 		f := setUp(t, false)
 		code, stdout, stderr := delegateCmd(t, "--print-prompt", "--reviewer", "compat", "--plan", f.plan,
 			"--description", description(t, f, reverting), f.base+"..HEAD")
@@ -175,7 +180,7 @@ func TestFocusCompat(t *testing.T) {
 
 	// An explicit compat review requires a description; a candidate only
 	// reports how to supply one when selected.
-	t.Run("candidate without a description", func(t *testing.T) {
+	testprocess.Run(t, "candidate without a description", tmp, func(t *testing.T) {
 		f := setUp(t, true)
 		writeSettings(t, f, `{"routes": [{"route": "compat", "paths": ["code.txt"], "why": "it is read"}]}`)
 		t.Setenv("FAKE_CODEX", "none")
@@ -199,7 +204,7 @@ func TestFocusCompat(t *testing.T) {
 
 	// A type that cannot run here is hinted with a command that runs as
 	// given, its goal included.
-	t.Run("a hint that runs", func(t *testing.T) {
+	testprocess.Run(t, "a hint that runs", tmp, func(t *testing.T) {
 		f := setUp(t, true)
 		t.Setenv("FAKE_CODEX", "unauthenticated")
 		code, _, stderr := runDelegate(t, "--reviewer", "codex", "--plan", f.plan, f.base+"..HEAD")
@@ -210,7 +215,7 @@ func TestFocusCompat(t *testing.T) {
 
 	// Where it cannot run headless, the hint names the agent type and a
 	// command that prints its prompt, the description included.
-	t.Run("the agent type named", func(t *testing.T) {
+	testprocess.Run(t, "the agent type named", tmp, func(t *testing.T) {
 		f := setUp(t, true)
 		f.config(t, map[string]any{})
 		code, _, stderr := runDelegate(t, "--reviewer", "compat", "--plan", f.plan, "--description",
@@ -223,7 +228,7 @@ func TestFocusCompat(t *testing.T) {
 
 	// A pull request's own description is the one checked, unless
 	// --description names another.
-	t.Run("a pull request", func(t *testing.T) {
+	testprocess.Run(t, "a pull request", tmp, func(t *testing.T) {
 		f := setUp(t, true)
 		r := newRemote(t, nil)
 		gh := setUpPR(t, r)

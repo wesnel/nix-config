@@ -12,6 +12,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/refusal"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 type fakeStackPR struct {
@@ -309,12 +310,16 @@ func TestStackOpened(t *testing.T) {
 
 // Stack shows GitHub's record of a PR's stack.
 func TestStack(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	for _, arg := range []string{"", "b", "2", "#2", "a"} {
 		name := arg
 		if name == "" {
 			name = "current branch"
 		}
-		t.Run(name, func(t *testing.T) {
+		testprocess.Run(t, name, tmp, func(t *testing.T) {
 			stacksRepo(t)
 			got, err := Stack(arg)
 			if err != nil {
@@ -336,7 +341,7 @@ func TestStack(t *testing.T) {
 		})
 	}
 
-	t.Run("unstacked PR", func(t *testing.T) {
+	testprocess.Run(t, "unstacked PR", tmp, func(t *testing.T) {
 		stacksRepo(t)
 		got, err := Stack("c")
 		if err != nil {
@@ -348,7 +353,7 @@ func TestStack(t *testing.T) {
 	})
 
 	for _, arg := range []string{"6", "x", "99"} {
-		t.Run("refused/"+arg, func(t *testing.T) {
+		testprocess.Run(t, "refused/"+arg, tmp, func(t *testing.T) {
 			stacksRepo(t)
 			if _, err := Stack(arg); !refused(err) || !refusal.SaysInstead(err.Error()) {
 				t.Errorf("stack %q: %v", arg, err)

@@ -15,6 +15,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/operatorkey"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 type mirrorFixture struct{ dir, repo, mirror, upstream, tip, profile string }
@@ -185,8 +186,12 @@ func TestMirrorSHA256(t *testing.T) {
 }
 
 func TestMirrorBoundary(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	for _, mode := range []string{"new unsigned", "foreign signer", "topic-only history", "other destination", "local mapping", "conflicting mapping", "split origins", "invalid slug", "other repository", "missing ancestor", "replacement", "shallow", "graft", "hash mismatch", "unavailable proof", "changed lease"} {
-		t.Run(mode, func(t *testing.T) {
+		testprocess.Run(t, mode, tmp, func(t *testing.T) {
 			f := newMirrorFixture(t)
 			url, tip, old := f.mirror, f.tip, ""
 			observed := 0
@@ -356,8 +361,12 @@ func TestMirrorTransport(t *testing.T) {
 }
 
 func TestMirrorResume(t *testing.T) {
+	tmp := testprocess.SocketTemp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	for _, rewrite := range []string{"pushInsteadOf", "insteadOf"} {
-		t.Run(rewrite, func(t *testing.T) {
+		testprocess.Run(t, rewrite, tmp, func(t *testing.T) {
 			f := newMirrorFixture(t)
 			hub := filepath.Join(f.dir, "hub.git")
 			gitIn(t, f.dir, "init", "-q", "--bare", hub)
@@ -430,8 +439,12 @@ func TestMirrorResume(t *testing.T) {
 }
 
 func TestMirrorHTTPS(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	for _, mode := range []string{"authenticated", "redirect", "wrong CA"} {
-		t.Run(mode, func(t *testing.T) {
+		testprocess.Run(t, mode, tmp, func(t *testing.T) {
 			f := newMirrorFixture(t)
 			requests := 0
 			packet := func(s string) string { return fmt.Sprintf("%04x%s", len(s)+4, s) }

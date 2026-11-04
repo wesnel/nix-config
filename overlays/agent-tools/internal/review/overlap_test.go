@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/plans"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 // fakeGh stands in for `gh pr list`, logging each call, and lists the
@@ -94,7 +95,11 @@ func listed(text string) []string {
 // The security reviewer is shown the other open branches that change the
 // files this change does, as this host knows them, without fetching.
 func TestOverlap(t *testing.T) {
-	t.Run("main session", func(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
+	testprocess.Run(t, "main session", tmp, func(t *testing.T) {
 		f := overlapFixture(t)
 		text := overlapText(t, f)
 		expectRefs(t, text, "refs/heads/other", "refs/remotes/origin/planned", "refs/remotes/origin/pr-branch")
@@ -114,7 +119,7 @@ func TestOverlap(t *testing.T) {
 		}
 	})
 
-	t.Run("review-loop session", func(t *testing.T) {
+	testprocess.Run(t, "review-loop session", tmp, func(t *testing.T) {
 		f := overlapFixture(t)
 		t.Setenv("PR_LOOP_SESSION", "1")
 		text := overlapText(t, f)
@@ -128,7 +133,7 @@ func TestOverlap(t *testing.T) {
 		}
 	})
 
-	t.Run("bounded", func(t *testing.T) {
+	testprocess.Run(t, "bounded", tmp, func(t *testing.T) {
 		f := overlapFixture(t)
 		start := time.Now()
 		calls := 0
@@ -142,7 +147,7 @@ func TestOverlap(t *testing.T) {
 
 	// Finding the candidates counts against the budget too: once it is
 	// spent, gh is not asked and nothing more is looked at.
-	t.Run("spent before the checks", func(t *testing.T) {
+	testprocess.Run(t, "spent before the checks", tmp, func(t *testing.T) {
 		f := overlapFixture(t)
 		start, first := time.Now(), true
 		overlapNow = func() time.Time {
@@ -164,7 +169,7 @@ func TestOverlap(t *testing.T) {
 
 	// gh lists the newest open pull requests up to a limit; the list says
 	// when it reached it.
-	t.Run("gh's limit", func(t *testing.T) {
+	testprocess.Run(t, "gh's limit", tmp, func(t *testing.T) {
 		f := overlapFixture(t)
 		prListLimit = 1
 		t.Cleanup(func() { prListLimit = 200 })

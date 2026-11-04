@@ -16,6 +16,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/history"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 // scripted writes a program that stands in for the key. Each run for which
@@ -177,6 +178,10 @@ func flakyRepo(t *testing.T) (repo, plan string) {
 // miss on the retry, or a retry that hangs, stops the pass with the command
 // that resumes it and a word about unlocking the key.
 func TestMissedTouchWithoutTerminal(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	resume := "`" + testBinary(t) + " --resume one`"
 	for _, c := range []struct {
 		name  string
@@ -192,7 +197,7 @@ func TestMissedTouchWithoutTerminal(t *testing.T) {
 		{"missed twice", []string{"miss", "miss"}, true},
 		{"later signature missed twice", []string{"ok", "miss", "miss", "miss", "miss"}, true},
 	} {
-		t.Run(c.name, func(t *testing.T) {
+		testprocess.Run(t, c.name, tmp, func(t *testing.T) {
 			_, plan := flakyRepo(t)
 			withRetries(t, 1, 20*time.Millisecond)
 			stderr := captureStderr(t)
@@ -320,6 +325,9 @@ func TestRetryKilled(t *testing.T) {
 // process group, where the terminal can reach a signer that reads it or an
 // interrupt.
 func TestRetryRestInForeground(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	repo, plan := flakyRepo(t)
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "c")
 	withRetries(t, 1, 20*time.Millisecond)
@@ -358,6 +366,9 @@ func TestRetryRestInForeground(t *testing.T) {
 // stopped, as it marks it (marking), it says how to carry on, here past a
 // break a pass killed in a retry left after the step it retried (oneStep).
 func TestResumeSaysHowToCarryOn(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	repo, plan := flakyRepo(t)
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "c")
 	withRetries(t, 0, 0)
@@ -412,6 +423,9 @@ func TestResumeSaysHowToCarryOn(t *testing.T) {
 // A pass started ignoring hangups, as under nohup, keeps ignoring them
 // while it retries.
 func TestRetryKeepsIgnoredHangup(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	signal.Ignore(syscall.SIGHUP)
 	t.Cleanup(func() { signal.Reset(syscall.SIGHUP) })
 	_, plan := flakyRepo(t)
@@ -436,6 +450,10 @@ func TestRetryKeepsIgnoredHangup(t *testing.T) {
 // left state for as it is, work in progress staged, whether or not it
 // rebases onto the pass's start.
 func TestResumeLeavesOthersRebase(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	editor := func(script string) []string {
 		return []string{"GIT_EDITOR=:", `GIT_SEQUENCE_EDITOR=f() { awk '` + script + `' "$1" >"$1.t" && mv "$1.t" "$1"; }; f`}
 	}
@@ -465,7 +483,7 @@ func TestResumeLeavesOthersRebase(t *testing.T) {
 			return err
 		}, "x"},
 	} {
-		t.Run(c.name, func(t *testing.T) {
+		testprocess.Run(t, c.name, tmp, func(t *testing.T) {
 			repo, plan := flakyRepo(t)
 			for _, m := range [][]string{{"x", "1", "Add x"}, {"y", "2", "Add y"}, {"x", "3", "Change x"}, {"z", "4", "Add z"}} {
 				os.WriteFile(filepath.Join(repo, m[0]), []byte(m[1]+"\n"), 0o644)
@@ -510,6 +528,9 @@ func TestResumeLeavesOthersRebase(t *testing.T) {
 // --resume, changing nothing, says to undo it and sign from the start; and
 // while a git the pass started there still runs, it says only that.
 func TestResumeAfterKilledRestart(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	repo, plan := flakyRepo(t)
 	withRetries(t, 0, 0)
 	stderr := captureStderr(t)
@@ -571,6 +592,9 @@ func TestResumeAfterKilledRestart(t *testing.T) {
 // the break after it, has that step done already: putBack must not put it
 // back, which would make its commit twice.
 func TestPutBackAfterCommit(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	repo, _ := flakyRepo(t)
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "c")
 	env := []string{"GIT_EDITOR=:", "GIT_SEQUENCE_EDITOR=" + strings.Replace(stopAfterFirst, "NR==1", "NR==2", 1)}
@@ -599,6 +623,9 @@ func TestPutBackAfterCommit(t *testing.T) {
 // its changes staged, where earlier versions put the pick back at the head
 // of the todo list: readyRetry readies either stop for a retry of that pick.
 func TestReadyRetryUnrescheduled(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	repo, plan := flakyRepo(t)
 	os.WriteFile(filepath.Join(repo, "c"), []byte("c\n"), 0o644)
 	gitIn(t, repo, "add", "c")
@@ -644,6 +671,9 @@ func todoLinesIn(path string) []string {
 // A pass over several branches that stops says what the rest of its plan
 // needs too, and the commands it prints sign every branch.
 func TestPlanStopCountsTheRest(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	repo, plan := flakyRepo(t)
 	gitIn(t, repo, "branch", "two", "one~1")
 	gitIn(t, repo, "switch", "-q", "two")
@@ -680,6 +710,10 @@ func TestPlanStopCountsTheRest(t *testing.T) {
 // all. With no terminal the pass stops and says to resume, which signs it
 // all; on a terminal, Enter signs it all again at once.
 func TestFoldMissed(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	for _, c := range []struct {
 		name string
 		// folds are the commits after a and b, each a subject and a body.
@@ -697,7 +731,7 @@ func TestFoldMissed(t *testing.T) {
 		{"pick a fold starts with", [][]string{{"fixup! b"}}, []string{"ok", "miss"}, "b\nG\na\nG"},
 	} {
 		for _, terminal := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s, terminal %v", c.name, terminal), func(t *testing.T) {
+			testprocess.Run(t, fmt.Sprintf("%s, terminal %v", c.name, terminal), tmp, func(t *testing.T) {
 				repo, plan := flakyRepo(t)
 				for _, m := range c.folds {
 					os.WriteFile(filepath.Join(repo, "x"), []byte(m[0]+strings.Join(m[1:], "")), 0o644)
@@ -747,6 +781,9 @@ func TestFoldMissed(t *testing.T) {
 // A retry's RetryTimeout bounds the signature it retries, not the rest of
 // the rebase, whose touches may take as long as they take.
 func TestRetryBoundsOnlyItsSignature(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	repo, plan := flakyRepo(t)
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "c")
 	clock := withRetries(t, 1, 20*time.Millisecond)
@@ -776,6 +813,10 @@ func TestRetryBoundsOnlyItsSignature(t *testing.T) {
 // fixups are more than the commits that remain: git signs every step of an
 // autosquash.
 func TestTouchCount(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	for _, c := range []struct {
 		name  string
 		brief bool
@@ -785,7 +826,7 @@ func TestTouchCount(t *testing.T) {
 		{"brief", true, func() (any, error) { return Run("", false, false, false) }, "up to 4 key touches"},
 		{"plan", false, func() (any, error) { return Plan("", []string{"one"}, false, false) }, "key touches: up to 4"},
 	} {
-		t.Run(c.name, func(t *testing.T) {
+		testprocess.Run(t, c.name, tmp, func(t *testing.T) {
 			Brief = c.brief
 			t.Cleanup(func() { Brief = false })
 			repo, plan := flakyRepo(t)
@@ -810,6 +851,9 @@ func TestTouchCount(t *testing.T) {
 // A pass that is told not to retry stops at the first miss, as it does when
 // it cannot wait.
 func TestMissedTouchWithoutRetries(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	_, plan := flakyRepo(t)
 	withRetries(t, 0, 0)
 	stderr := captureStderr(t)

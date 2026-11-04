@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 // fakeOpenPRs answers the GraphQL that finds the repository and the
@@ -55,7 +57,11 @@ func checkStack(t *testing.T) (*fixedStack, *fakeOpenPRs) {
 // HEAD when its fixups squash into each branch's own commits without moving
 // a branch, and refuses one where they do not, or that is not linear.
 func TestSignCheck(t *testing.T) {
-	t.Run("clean stack", func(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
+	testprocess.Run(t, "clean stack", tmp, func(t *testing.T) {
 		s, _ := checkStack(t)
 		branches := gitIn(t, s.dir, "for-each-ref", "refs/heads/")
 		if _, err := SignCheck(); err != nil {
@@ -71,7 +77,7 @@ func TestSignCheck(t *testing.T) {
 
 	// A fixup of lower's commit, committed on upper, squashes into lower and
 	// changes its files.
-	t.Run("a fixup in the wrong branch", func(t *testing.T) {
+	testprocess.Run(t, "a fixup in the wrong branch", tmp, func(t *testing.T) {
 		s, _ := checkStack(t)
 		os.WriteFile(filepath.Join(s.dir, "a"), []byte("a fixed again\n"), 0o644)
 		gitIn(t, s.dir, "commit", "-qa", "--fixup=lower~2")
@@ -82,7 +88,7 @@ func TestSignCheck(t *testing.T) {
 		}
 	})
 
-	t.Run("a stack that is not linear", func(t *testing.T) {
+	testprocess.Run(t, "a stack that is not linear", tmp, func(t *testing.T) {
 		s, f := checkStack(t)
 		gitIn(t, s.dir, "branch", "side", "lower")
 		f.bases["side"] = "lower"
@@ -91,7 +97,7 @@ func TestSignCheck(t *testing.T) {
 		}
 	})
 
-	t.Run("HEAD heads no PR", func(t *testing.T) {
+	testprocess.Run(t, "HEAD heads no PR", tmp, func(t *testing.T) {
 		s, _ := checkStack(t)
 		gitIn(t, s.dir, "switch", "-q", "main")
 		if _, err := SignCheck(); !refused(err) {

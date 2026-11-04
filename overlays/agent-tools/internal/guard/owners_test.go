@@ -12,9 +12,14 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/plans"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 func TestSessionEdits(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
 	for _, tc := range []struct {
 		name, session, target, branch, command, association, file, reason string
 		noPlan, newer, sessionOnly, fixture, reclaim                      bool
@@ -62,7 +67,7 @@ func TestSessionEdits(t *testing.T) {
 		{name: "remove own worktree from main", session: "s1", target: "MAIN", association: "LINKED", command: "git worktree remove LINKED"},
 		{name: "remove another session worktree from main", session: "s2", target: "MAIN", association: "LINKED", command: "git worktree remove LINKED", deny: true},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
+		testprocess.Run(t, tc.name, tmp, func(t *testing.T) {
 			root, _ := filepath.EvalSymlinks(t.TempDir())
 			main, linked, scratch := filepath.Join(root, "main"), filepath.Join(root, "linked"), filepath.Join(root, "scratch")
 			os.MkdirAll(scratch, 0o755)
@@ -223,6 +228,8 @@ func TestOwners(t *testing.T) {
 			"THROWAWAY", throwaway, "SCRATCH", scratch, "PLANS", c.Dir, "LOOSE", filepath.Join(root, "loose"))
 	}
 
+	// Cases read this shared fixture; none may change its files or repositories.
+	paths := owned(t)
 	// MAIN, LINKED, SIBLING, SCRATCH, PLANS and LOOSE (a directory in no
 	// repository) in an event or a reason stand for the paths owned makes.
 	for _, e := range []struct {
@@ -417,7 +424,6 @@ func TestOwners(t *testing.T) {
 		{"owner's touch in submodule foreach from the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"git submodule foreach 'touch a.go'"}}`, []string{"LINKED"}},
 	} {
 		t.Run(caseName(e.deny, e.name), func(t *testing.T) {
-			paths := owned(t)
 			event := paths.Replace(e.json)
 			var out bytes.Buffer
 			Main([]string{"--baseline"}, strings.NewReader(event), &out, io.Discard)

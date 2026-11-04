@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/wesnel/agent-tools/internal/record"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 // codeDiagram is a component diagram of setUp's code.txt at tip, its
@@ -33,6 +34,9 @@ func diagramsReply(ds ...map[string]any) string {
 // TIP, has Codex critique it, and keeps the JSON of those that hold, which
 // show renders as Mermaid; one citing a line that is not there is dropped.
 func TestDiagrams(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	f := setUp(t, true)
 	t.Setenv("FAKE_CODEX", "critique")
 	t.Setenv("FAKE_CHECKED", `["N1", "N2", "E1"]`)
@@ -74,6 +78,9 @@ func TestDiagrams(t *testing.T) {
 // A diagram the critic faults is redrawn once, checked and critiqued
 // again, and the redraw kept as corrected when that critique passes.
 func TestDiagramRedrawn(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	f := setUp(t, true)
 	t.Setenv("FAKE_CODEX", "fault-once")
 	t.Setenv("FAKE_CHECKED", `["N1", "N2", "E1"]`)
@@ -103,6 +110,9 @@ func TestDiagramRedrawn(t *testing.T) {
 // A diagram whose redraw the critic faults too is kept as first drawn,
 // unresolved, with the first critique's findings about it.
 func TestDiagramUnresolved(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	f := setUp(t, true)
 	t.Setenv("FAKE_CODEX", "fault")
 	t.Setenv("FAKE_CHECKED", `["N1", "N2", "E1"]`)
@@ -155,6 +165,9 @@ func TestDiagramInconclusive(t *testing.T) {
 // Rerunning the diagram type replaces the record's diagrams, one with the
 // same title keeping its ID.
 func TestDiagramRerun(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	f := setUp(t, true)
 	t.Setenv("FAKE_CODEX", "critique")
 	t.Setenv("FAKE_CHECKED", `["N1", "N2", "E1"]`)
@@ -192,6 +205,9 @@ func TestReplaceDiagrams(t *testing.T) {
 
 // A diagram review needs Codex for its critic.
 func TestDiagramsWithoutCodex(t *testing.T) {
+	if !testprocess.Top(t, testprocess.Temp(t)) {
+		return
+	}
 	f := setUp(t, true)
 	t.Setenv("FAKE_CODEX", "unauthenticated")
 	code, out, stderr := runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")

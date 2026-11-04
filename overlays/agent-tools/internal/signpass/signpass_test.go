@@ -17,6 +17,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/refusal"
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 func gitIn(t *testing.T, dir string, args ...string) string {
@@ -185,31 +186,39 @@ func testBinary(t *testing.T) string {
 }
 
 func TestRun(t *testing.T) {
-	t.Run("signs and folds a stack", testRunStack)
-	t.Run("lint", testRunLint)
-	t.Run("worktree branch", testRunWorktreeBranch)
-	t.Run("gains", testRunGains)
-	t.Run("fork gains", testRunForkGains)
-	t.Run("message gains", testRunMessageGains)
-	t.Run("failed push", testRunFailedPush)
-	t.Run("missed touch", testRunMissedTouch)
+	tmp := testprocess.SocketTemp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
+	testprocess.Run(t, "signs and folds a stack", tmp, testRunStack)
+	testprocess.Run(t, "lint", tmp, testRunLint)
+	testprocess.Run(t, "worktree branch", tmp, testRunWorktreeBranch)
+	testprocess.Run(t, "gains", tmp, testRunGains)
+	testprocess.Run(t, "fork gains", tmp, testRunForkGains)
+	testprocess.Run(t, "message gains", tmp, testRunMessageGains)
+	testprocess.Run(t, "failed push", tmp, testRunFailedPush)
+	testprocess.Run(t, "missed touch", tmp, testRunMissedTouch)
 }
 
 func TestPush(t *testing.T) {
-	t.Run("moved branches", testPushMoved)
-	t.Run("destination", testPushDestination)
-	t.Run("remote", testPushRemote)
-	t.Run("each URL", testPushEachURL)
-	t.Run("URL leases", testPushURLLeases)
-	t.Run("stack bottom up", testPushStackBottomUp)
-	t.Run("control path too long", testPushControlPathTooLong)
-	t.Run("interrupted", testPushInterrupted)
-	t.Run("unmoved branch", testPushUnmoved)
-	t.Run("unmoved branch's signers", testPushUnmovedSigners)
-	t.Run("unmoved branch's objects", testPushUnmovedObjects)
-	t.Run("unmoved branch's range", testPushUnmovedRange)
-	t.Run("unmoved branch moved during the pass", testPushUnmovedMoved)
-	t.Run("what a repository says of signatures", testPushRepositoryClaims)
+	tmp := testprocess.SocketTemp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
+	testprocess.Run(t, "moved branches", tmp, testPushMoved)
+	testprocess.Run(t, "destination", tmp, testPushDestination)
+	testprocess.Run(t, "remote", tmp, testPushRemote)
+	testprocess.Run(t, "each URL", tmp, testPushEachURL)
+	t.Run("URL leases", func(t *testing.T) { testPushURLLeases(t, tmp) })
+	testprocess.Run(t, "stack bottom up", tmp, testPushStackBottomUp)
+	testprocess.Run(t, "control path too long", tmp, testPushControlPathTooLong)
+	testprocess.Run(t, "interrupted", tmp, testPushInterrupted)
+	testprocess.Run(t, "unmoved branch", tmp, testPushUnmoved)
+	t.Run("unmoved branch's signers", func(t *testing.T) { testPushUnmovedSigners(t, tmp) })
+	t.Run("unmoved branch's objects", func(t *testing.T) { testPushUnmovedObjects(t, tmp) })
+	t.Run("unmoved branch's range", func(t *testing.T) { testPushUnmovedRange(t, tmp) })
+	testprocess.Run(t, "unmoved branch moved during the pass", tmp, testPushUnmovedMoved)
+	t.Run("what a repository says of signatures", func(t *testing.T) { testPushRepositoryClaims(t, tmp) })
 }
 
 // testPushUnmovedMoved checks a named branch the pass leaves where it is as
@@ -245,9 +254,9 @@ func testPushUnmovedMoved(t *testing.T) {
 	}
 }
 
-func testPushURLLeases(t *testing.T) {
+func testPushURLLeases(t *testing.T, tmp string) {
 	for _, mode := range []string{"missing mirror", "same value", "already new", "aliased URLs", "publish already new", "moved mirror", "unavailable mirror", "resume absent", "resume deleted", "legacy lease"} {
-		t.Run(mode, func(t *testing.T) {
+		testprocess.Run(t, mode, tmp, func(t *testing.T) {
 			publishing := mode == "publish already new"
 			dir := t.TempDir()
 			// Every commit is signed with the operator's key, as the pushes'
@@ -1317,7 +1326,7 @@ func testPushUnmoved(t *testing.T) {
 // there or not, one whose signature does not match it, and one in another
 // format are refused before the push, by a single-branch pass and a pass
 // over named branches. The marks a verifier gives are operatorkey's tests'.
-func testPushUnmovedSigners(t *testing.T) {
+func testPushUnmovedSigners(t *testing.T, tmp string) {
 	for _, c := range []struct {
 		name string
 		// commit makes the branch's one commit in repo, whose operator key
@@ -1369,7 +1378,7 @@ func testPushUnmovedSigners(t *testing.T) {
 			if named {
 				name += ", named"
 			}
-			t.Run(name, func(t *testing.T) {
+			testprocess.Run(t, name, tmp, func(t *testing.T) {
 				dir := t.TempDir()
 				global := signingConfig(t, dir)
 				hub := filepath.Join(dir, "hub.git")
@@ -1475,9 +1484,9 @@ func refusedUnsigned(t *testing.T, err error, hub, unsigned string) {
 // says: its own signing key, its remote-tracking refs, or a push state left
 // for --resume. A moved branch is checked as an unmoved one is, below the
 // commits the pass signed as well as at them.
-func testPushRepositoryClaims(t *testing.T) {
+func testPushRepositoryClaims(t *testing.T, tmp string) {
 	for _, worktree := range []bool{false, true} {
-		t.Run(map[bool]string{false: "a local signing key", true: "a worktree's signing key"}[worktree], func(t *testing.T) {
+		testprocess.Run(t, map[bool]string{false: "a local signing key", true: "a worktree's signing key"}[worktree], tmp, func(t *testing.T) {
 			dir, repo, hub := unmovedRepo(t)
 			gitIn(t, repo, "switch", "-qc", "one")
 			other := sshKey(t, filepath.Join(dir, "agent"))
@@ -1493,7 +1502,7 @@ func testPushRepositoryClaims(t *testing.T) {
 			refusedForeign(t, err, hub, foreign)
 		})
 	}
-	t.Run("another key's commit below an unsigned one", func(t *testing.T) {
+	testprocess.Run(t, "another key's commit below an unsigned one", tmp, func(t *testing.T) {
 		dir, repo, hub := unmovedRepo(t)
 		gitIn(t, repo, "switch", "-qc", "one")
 		signedCommit(t, sshKey(t, filepath.Join(dir, "agent")))
@@ -1502,7 +1511,7 @@ func testPushRepositoryClaims(t *testing.T) {
 		_, err := Run("", false, false, true)
 		refusedForeign(t, err, hub, foreign)
 	})
-	t.Run("origin/HEAD above an unsigned commit, below another", func(t *testing.T) {
+	testprocess.Run(t, "origin/HEAD above an unsigned commit, below another", tmp, func(t *testing.T) {
 		_, repo, hub := unmovedRepo(t)
 		gitIn(t, repo, "switch", "-qc", "one")
 		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned low")
@@ -1513,7 +1522,7 @@ func testPushRepositoryClaims(t *testing.T) {
 		_, err := Run("", false, false, true)
 		refusedForeign(t, err, hub, low)
 	})
-	t.Run("a push state written for --resume", func(t *testing.T) {
+	testprocess.Run(t, "a push state written for --resume", tmp, func(t *testing.T) {
 		_, repo, hub := unmovedRepo(t)
 		gitIn(t, repo, "switch", "-qc", "one")
 		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned")
@@ -1558,8 +1567,8 @@ func keptOff(t *testing.T, err error, hub, unsigned string) {
 // testPushUnmovedObjects checks the commits a push sends, not the history git
 // shows: a replace ref or a graft changes what git log says of a branch, but
 // the push sends the commits themselves.
-func testPushUnmovedObjects(t *testing.T) {
-	t.Run("a replace ref shows a signed commit for an unsigned one", func(t *testing.T) {
+func testPushUnmovedObjects(t *testing.T, tmp string) {
+	testprocess.Run(t, "a replace ref shows a signed commit for an unsigned one", tmp, func(t *testing.T) {
 		_, repo, hub := unmovedRepo(t)
 		gitIn(t, repo, "switch", "-qc", "decoy")
 		signedCommit(t, "")
@@ -1571,7 +1580,7 @@ func testPushUnmovedObjects(t *testing.T) {
 		_, err := Run("", false, false, true)
 		keptOff(t, err, hub, unsigned)
 	})
-	t.Run("a graft hides an unsigned commit", func(t *testing.T) {
+	testprocess.Run(t, "a graft hides an unsigned commit", tmp, func(t *testing.T) {
 		_, repo, hub := unmovedRepo(t)
 		gitIn(t, repo, "switch", "-qc", "one")
 		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned")
@@ -1589,8 +1598,8 @@ func testPushUnmovedObjects(t *testing.T) {
 // remote not named origin whose base is the local main, and an origin/HEAD
 // pointed at a ref the remote lacks each leave commits below the base that
 // the push sends.
-func testPushUnmovedRange(t *testing.T) {
-	t.Run("--base above an unsigned commit", func(t *testing.T) {
+func testPushUnmovedRange(t *testing.T, tmp string) {
+	testprocess.Run(t, "--base above an unsigned commit", tmp, func(t *testing.T) {
 		_, repo, hub := unmovedRepo(t)
 		gitIn(t, repo, "switch", "-qc", "one")
 		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned")
@@ -1599,7 +1608,7 @@ func testPushUnmovedRange(t *testing.T) {
 		_, err := Run(unsigned, false, false, true)
 		refusedUnsigned(t, err, hub, unsigned)
 	})
-	t.Run("a remote not named origin, behind the local main", func(t *testing.T) {
+	testprocess.Run(t, "a remote not named origin, behind the local main", tmp, func(t *testing.T) {
 		_, repo, hub := unmovedRepo(t)
 		gitIn(t, repo, "remote", "rename", "origin", "github")
 		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned on the local main")
@@ -1609,7 +1618,7 @@ func testPushUnmovedRange(t *testing.T) {
 		_, err := Run("", false, false, true)
 		refusedUnsigned(t, err, hub, unsigned)
 	})
-	t.Run("origin/HEAD at a ref the remote lacks", func(t *testing.T) {
+	testprocess.Run(t, "origin/HEAD at a ref the remote lacks", tmp, func(t *testing.T) {
 		_, repo, hub := unmovedRepo(t)
 		gitIn(t, repo, "switch", "-qc", "one")
 		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned")
@@ -1620,7 +1629,7 @@ func testPushUnmovedRange(t *testing.T) {
 		_, err := Run("", false, false, true)
 		refusedUnsigned(t, err, hub, unsigned)
 	})
-	t.Run("a remote behind the tip: only what it lacks", func(t *testing.T) {
+	testprocess.Run(t, "a remote behind the tip: only what it lacks", tmp, func(t *testing.T) {
 		_, repo, hub := unmovedRepo(t)
 		gitIn(t, repo, "switch", "-qc", "one")
 		signedCommit(t, "")

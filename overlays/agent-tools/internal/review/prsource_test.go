@@ -9,10 +9,16 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/wesnel/agent-tools/internal/testprocess"
 )
 
 func TestFetch(t *testing.T) {
-	t.Run("first round", func(t *testing.T) {
+	tmp := testprocess.Temp(t)
+	if tmp != "" {
+		t.Parallel()
+	}
+	testprocess.Run(t, "first round", tmp, func(t *testing.T) {
 		r := newRemote(t, nil)
 		f := setUpPR(t, r)
 		pr, err := Fetch(t.Context(), "o/r", 7, "")
@@ -42,7 +48,7 @@ func TestFetch(t *testing.T) {
 	})
 
 	// The next round fetches into the same clone.
-	t.Run("next round", func(t *testing.T) {
+	testprocess.Run(t, "next round", tmp, func(t *testing.T) {
 		r := newRemote(t, nil)
 		f := setUpPR(t, r)
 		if _, err := Fetch(t.Context(), "o/r", 7, ""); err != nil {
@@ -61,7 +67,7 @@ func TestFetch(t *testing.T) {
 
 	// A head other than the one GitHub reports, such as one pushed between
 	// the query and the fetch, is refused.
-	t.Run("pins the head", func(t *testing.T) {
+	testprocess.Run(t, "pins the head", tmp, func(t *testing.T) {
 		r := newRemote(t, nil)
 		f := setUpPR(t, r)
 		f.pr["headRefOid"] = r.base
@@ -78,7 +84,7 @@ func TestFetch(t *testing.T) {
 		slug   string
 		number int
 	}{{"o/..", 7}, {"../r", 7}, {"o/r/x", 7}, {"o", 7}, {"o/r", 0}, {"o/r", -1}, {".git/r", 7}} {
-		t.Run("refuses/"+c.slug+"#"+strconv.Itoa(c.number), func(t *testing.T) {
+		testprocess.Run(t, "refuses/"+c.slug+"#"+strconv.Itoa(c.number), tmp, func(t *testing.T) {
 			r := newRemote(t, nil)
 			setUpPR(t, r)
 			if _, err := Fetch(t.Context(), c.slug, c.number, ""); err == nil {
@@ -87,9 +93,9 @@ func TestFetch(t *testing.T) {
 		})
 	}
 
-	t.Run("hooks do not run", testFetchHooksDoNotRun)
-	t.Run("LFS stays inert", testFetchLFSStaysInert)
-	t.Run("symlinks check out as files", testFetchSymlinksCheckOutAsFiles)
+	testprocess.Run(t, "hooks do not run", tmp, testFetchHooksDoNotRun)
+	testprocess.Run(t, "LFS stays inert", tmp, testFetchLFSStaysInert)
+	testprocess.Run(t, "symlinks check out as files", tmp, testFetchSymlinksCheckOutAsFiles)
 }
 
 // testFetchHooksDoNotRun holds every git command on the clone and its

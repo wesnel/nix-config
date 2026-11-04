@@ -76,6 +76,7 @@ func shown(items []OpenItem) []string {
 }
 
 func TestOpenItems(t *testing.T) {
+	t.Parallel()
 	// Every open item of this host's plans and their parts is listed under
 	// its kind; what is settled, waits on another item or is another
 	// host's is not.

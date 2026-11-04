@@ -3,6 +3,7 @@
 package signpass
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -302,13 +303,33 @@ func readRange(base, tip string) ([]rangeCommit, error) {
 	var commits []rangeCommit
 	for _, line := range strings.Split(out, "\n") {
 		if f := strings.SplitN(line, "\x00", 2); len(f) == 2 {
-			raw, err := objectGit("cat-file", "commit", f[0])
-			if err != nil {
-				return nil, err
-			}
-			headers, _, _ := strings.Cut(raw, "\n\n")
-			commits = append(commits, rangeCommit{f[0], f[1], !strings.Contains("\n"+headers, header)})
+			commits = append(commits, rangeCommit{sha: f[0], subject: f[1]})
 		}
+	}
+	if len(commits) == 0 {
+		return commits, nil
+	}
+	ids := make([]string, len(commits))
+	for i, c := range commits {
+		ids[i] = c.sha
+	}
+	read := func(input []byte, args ...string) ([]byte, error) {
+		ctx, cancel := context.WithTimeout(git.WithEnv(context.Background(), objectView...), git.Timeout)
+		defer cancel()
+		out, err := git.BytesContext(ctx, input, append(append([]string{}, objectArgs...), args...)...)
+		if err != nil && ctx.Err() != nil {
+			return nil, fmt.Errorf("%w: %w after %s", err, ctx.Err(), git.Timeout)
+		}
+		return out, err
+	}
+	i := 0
+	if err := git.BatchCommits(ids, read, func(_ string, raw []byte) error {
+		headers, _, _ := bytes.Cut(raw, []byte("\n\n"))
+		commits[i].unsigned = !bytes.HasPrefix(headers, []byte(header[1:])) && !bytes.Contains(headers, []byte(header))
+		i++
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	return commits, nil
 }
