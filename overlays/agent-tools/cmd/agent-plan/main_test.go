@@ -479,6 +479,53 @@ func TestCommands(t *testing.T) {
 		}
 	})
 
+	// open's --plan, --workstream and --repo each repeat, keep the plans
+	// any of their values names, and combine with --kind and --since.
+	t.Run("open filtered", func(t *testing.T) {
+		plan := sessionPlan(t)
+		if code, _, errs := agentPlan(t, "", "workstream", "new", "--title", "Agent tooling"); code != 0 {
+			t.Fatalf("workstream new: %s", errs)
+		}
+		code, out, errs := agentPlan(t, "", "new", "--title", "Other", "--slug", "other", "--repo", "o/r",
+			"--workstream", "agent-tooling")
+		var other plans.Created
+		if code != 0 || json.Unmarshal([]byte(out), &other) != nil {
+			t.Fatalf("new: %d %s", code, errs)
+		}
+		for p, title := range map[string]string{plan: "Cache the parse", other.Plan: "Ship the other"} {
+			name := strings.TrimSuffix(filepath.Base(p), ".org")
+			if code, _, errs := agentPlan(t, "", "followup", p, "--title", title, "--found-in", name); code != 0 {
+				t.Fatalf("followup: %s", errs)
+			}
+		}
+		for _, tc := range []struct {
+			args []string
+			want []string
+		}{
+			{[]string{"--plan", plan}, []string{"Cache the parse"}},
+			{[]string{"--plan", plan, "--plan", other.Plan}, []string{"Cache the parse", "Ship the other"}},
+			{[]string{"--workstream", "agent-tooling"}, []string{"Ship the other"}},
+			{[]string{"--repo", "o/x", "--repo", "o/r"}, []string{"Ship the other"}},
+			{[]string{"--plan", plan, "--since", "2099-01-01"}, nil},
+		} {
+			code, out, errs := agentPlan(t, "", append([]string{"open", "--kind", "follow-up"}, tc.args...)...)
+			if code != 0 {
+				t.Errorf("open %v: %d %s", tc.args, code, errs)
+			}
+			for _, title := range []string{"Cache the parse", "Ship the other"} {
+				if strings.Contains(out, title) != slices.Contains(tc.want, title) {
+					t.Errorf("open %v lists %q: %v; want %v\n%s", tc.args, title, !slices.Contains(tc.want, title),
+						slices.Contains(tc.want, title), out)
+				}
+			}
+		}
+		for _, args := range [][]string{{"open", "--plan", "no-such-plan"}, {"open", "--workstream", "no-such"}} {
+			if code, out, errs := agentPlan(t, "", args...); code != 2 {
+				t.Errorf("%v: %d %s %s; want refused", args, code, out, errs)
+			}
+		}
+	})
+
 	// workstream new writes a workstream's file, and list lists them.
 	t.Run("workstream", func(t *testing.T) {
 		c := setup(t)

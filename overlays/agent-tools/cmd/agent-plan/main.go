@@ -136,7 +136,8 @@ have (see status) is refused and writes nothing.
                      parts', --waiting those that wait for an AFTER item: a
                      question until settled, a part or step until logged
                      done, verified or abandoned
-  open [--kind OKIND] [--since 'YYYY-MM-DD[ HH:MM]'] [--json]
+  open [--plan PLAN]... [--workstream W]... [--repo R]... [--kind OKIND]
+      [--since 'YYYY-MM-DD[ HH:MM]'] [--json]
                      the open items of every plan of this host, halted ones
                      included and marked, under a heading per workstream
                      (those of the newest plans first, then "none") and in
@@ -146,7 +147,10 @@ have (see status) is refused and writes nothing.
                      proposals, ready steps and open follow-ups, its parts'
                      included; --kind keeps one kind, --since those asked,
                      discovered or handed back since then (a step's time is
-                     its first event). A plan that cannot be read is named
+                     its first event); --plan, --workstream (a slug or name)
+                     and --repo (owner/name, or the name) each keep the plans
+                     any of their values names, and a PLAN or W naming none
+                     is refused. A plan that cannot be read is named
                      on stderr, and the exit is 1, after the rest
   brief PLAN         what an agent needs to go on after a compaction: the goal,
                      the decisions, the steps and parts ready, the questions
@@ -488,7 +492,6 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		slug     = flags.String("slug", "", "")
 		harness  = flags.String("harness", "", "")
 		template = flags.String("template", "", "")
-		stream   = flags.String("workstream", "", "")
 		parent   = flags.String("parent", "", "")
 		part     = flags.String("part", "", "")
 		item     = flags.String("item", "", "")
@@ -532,7 +535,6 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		run      = flags.String("command", "", "")
 		runDir   = flags.String("dir", "", "")
 		signBase = flags.String("base", "", "")
-		signPlan = flags.String("plan", "", "")
 		reason   = flags.String("reason", "", "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
@@ -542,9 +544,14 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		// Repeatable for ask.
 		alternatives multi
 		after        multi
+		// Repeatable for open; sign-id and new take the last.
+		planArgs multi
+		streams  multi
 	)
 	flags.Var(&alternatives, "alternative", "")
 	flags.Var(&after, "after", "")
+	flags.Var(&planArgs, "plan", "")
+	flags.Var(&streams, "workstream", "")
 	flags.Var(&repos, "repo", "")
 	flags.Var(&branches, "branch", "")
 	flags.Var(&trees, "worktree", "")
@@ -565,18 +572,19 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	}
 	given := map[string]bool{}
 	flags.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	signPlan, stream := one(planArgs), one(streams)
 	if given["plan"] {
-		if command != "sign-id" {
-			fmt.Fprintf(stderr, "agent-plan %s: --plan is sign-id's\n", command)
+		if command != "sign-id" && command != "open" {
+			fmt.Fprintf(stderr, "agent-plan %s: --plan is sign-id's and open's\n", command)
 			return 2
 		}
-		if *signPlan == "" {
+		if command == "sign-id" && signPlan == "" {
 			fmt.Fprint(stderr, "agent-plan sign-id: --plan needs a plan file or name; pass a known plan or omit --plan for automatic selection\n")
 			return 2
 		}
 	}
-	if given["workstream"] && command != "new" {
-		fmt.Fprintf(stderr, "agent-plan %s: --workstream is new's\n", command)
+	if given["workstream"] && command != "new" && command != "open" {
+		fmt.Fprintf(stderr, "agent-plan %s: --workstream is new's and open's\n", command)
 		return 2
 	}
 	if given["chosen"] && command != "find" {
@@ -681,7 +689,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return 2
 		}
 		o := plans.NewOptions{Title: *title, Slug: *slug, Repos: repos, Branches: branches, Worktrees: trees,
-			Sessions: sessions, Harness: *harness, Parent: *parent, Part: *part, Template: *template, Workstream: *stream}
+			Sessions: sessions, Harness: *harness, Parent: *parent, Part: *part, Template: *template, Workstream: stream}
 		if len(o.Sessions) == 0 {
 			if h, id := plans.EnvSession(); id != "" {
 				o.Sessions = []string{h + ":" + id}
@@ -831,10 +839,10 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return 0
 	case "open":
 		if len(positional) != 0 {
-			fmt.Fprint(stderr, "agent-plan open: takes [--kind KIND] [--since TIME] [--json], and no PLAN\n")
+			fmt.Fprint(stderr, "agent-plan open: takes [--plan PLAN]... [--workstream W]... [--repo R]... [--kind KIND] [--since TIME] [--json], and no PLAN of its own\n")
 			return 2
 		}
-		f := plans.OpenFilter{Kind: *kind}
+		f := plans.OpenFilter{Kind: *kind, Plans: planArgs, Workstreams: streams, Repos: repos}
 		if *since != "" {
 			if f.Since, err = plans.ParseSince(*since, time.Local); err != nil {
 				return report(nil, err)
@@ -1079,7 +1087,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		if len(branches) == 0 && current != "" {
 			branches = multi{current}
 		}
-		id, err := c.RequestSign(plans.SignRequest{Plan: *signPlan, Session: session, Worktree: top, Branches: branches, Base: *signBase}, time.Now())
+		id, err := c.RequestSign(plans.SignRequest{Plan: signPlan, Session: session, Worktree: top, Branches: branches, Base: *signBase}, time.Now())
 		if err != nil {
 			return report(nil, err)
 		}
