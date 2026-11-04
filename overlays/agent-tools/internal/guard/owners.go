@@ -348,14 +348,15 @@ func worktreeOf(path string) (string, gitState) {
 // absolute paths of the files it writes, moves or removes, as changedFiles
 // names them, and the directory a git command that writes the worktree
 // runs in (gitWritePaths), each named as fencePath has it; the runs of
-// code the guard cannot read (unreadRunsOf); and a refusal for a command
+// code the guard cannot read (unreadRunsOf, with its redirections all
+// after its words); and a refusal for a command
 // whose writes it cannot place.
 func shellEdits(text, dir string) ([]editPath, []unreadRun, string) {
 	var edits []editPath
 	var runs []unreadRun
 	reason := walkShell(text, dir, 0, func(c call, cwd string) string {
 		named := c.named()
-		runs = append(runs, unreadRunsOf(named, cwd)...)
+		runs = append(runs, unreadRunsOf(c.redirectedLast(), cwd)...)
 		if c.expands[0] && named.expands[0] {
 			return ""
 		}

@@ -324,6 +324,11 @@ func TestOwners(t *testing.T) {
 		{"owner's go -C fmt in its worktree, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"go -C LINKED fmt ./..."}}`, nil},
 		{"owner's cargo +nightly fmt in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"cargo +nightly fmt"}}`, []string{"LINKED"}},
 		{"owner's cargo --color fmt in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"cargo --color never fmt"}}`, []string{"LINKED"}},
+		{"owner's env -C touch in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"env -C MAIN touch a.go"}}`, []string{"LINKED"}},
+		// The case's name, in its directories' paths, holds no =, which
+		// OWNERS reads as its separator.
+		{"owner's env --chdir touch, its value attached, in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"env --chdir=../main touch a.go"}}`, []string{"LINKED"}},
+		{"owner's env -C touch in its worktree, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"env -C LINKED touch a.go"}}`, nil},
 		{"owner's cargo +nightly fmt --check in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"cargo +nightly fmt --check"}}`, nil},
 		{"owner's go test profile in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"go test -coverprofile=MAIN/c.out ./..."}}`, []string{"LINKED"}},
 		{"owner's go test in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"go test -count=1 ./..."}}`, nil},

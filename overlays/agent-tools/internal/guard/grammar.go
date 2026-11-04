@@ -34,6 +34,9 @@ type location int
 const (
 	// dir is the directory the program works in, and runs code from.
 	dir location = iota + 1
+	// file is a file the program takes its code from, such as a manifest
+	// or a justfile.
+	file
 )
 
 // grammar is how a program reads its command line.
@@ -49,8 +52,9 @@ type grammar struct {
 	toolchain bool
 	// inline are the options whose value is the code itself (python -c).
 	inline map[string]bool
-	// locations are the options of values whose value names where the
-	// program works.
+	// locations are the options whose value, the next word or after =,
+	// names where the program works or takes its code from, before or
+	// after the subcommand.
 	locations map[string]location
 	// runs are the subcommands that run code the guard cannot read
 	// (subcommands), reads those that run none (scripts), and sources
@@ -74,22 +78,25 @@ var programs = map[string]grammar{
 	"pwsh":      {kind: interpreters, inline: set("-c", "-Command")},
 	"tclsh":     {kind: interpreters},
 	// go generate runs the commands its //go:generate lines name.
-	"go": {kind: subcommands, values: arity("-C"), locations: map[string]location{"-C": dir},
+	"go": {kind: subcommands, locations: places{"-C": dir},
 		runs: set("run", "generate"), sources: set("run"), writes: set("generate", "fmt", "fix", "get", "work")},
-	"cargo": {kind: subcommands, toolchain: true, values: arity("--color", "--config", "-Z", "-C"),
-		runs: set("run", "r"), writes: set("fmt")},
-	"uv":     {kind: subcommands, runs: set("run"), sources: set("run")},
-	"poetry": {kind: subcommands, runs: set("run"), sources: set("run")},
+	"cargo": {kind: subcommands, toolchain: true, values: arity("--color", "--config", "-Z"),
+		locations: places{"-C": dir, "--manifest-path": file}, runs: set("run", "r"), writes: set("fmt")},
+	"uv":     {kind: subcommands, locations: places{"--directory": dir, "--project": dir}, runs: set("run"), sources: set("run")},
+	"poetry": {kind: subcommands, locations: places{"-C": dir, "--directory": dir, "-P": dir, "--project": dir}, runs: set("run"), sources: set("run")},
 	"pipenv": {kind: subcommands, runs: set("run"), sources: set("run")},
-	"npm":    {kind: scripts, reads: packageReads},
-	"pnpm":   {kind: scripts, reads: packageReads},
-	"yarn":   {kind: scripts, reads: packageReads},
-	"bun":    {kind: scripts, reads: packageReads},
+	"npm":    {kind: scripts, locations: places{"--prefix": dir, "-C": dir}, reads: packageReads},
+	"pnpm":   {kind: scripts, locations: places{"-C": dir, "--dir": dir}, reads: packageReads},
+	"yarn":   {kind: scripts, locations: places{"--cwd": dir}, reads: packageReads},
+	"bun":    {kind: scripts, locations: places{"--cwd": dir}, reads: packageReads},
 	"deno":   {kind: scripts, reads: packageReads},
 	// npx and bunx are wrappers: unwrap hands on the program they run.
-	"just": {kind: recipes},
-	"task": {kind: recipes},
+	"just": {kind: recipes, locations: places{"-f": file, "--justfile": file, "-d": dir, "--working-directory": dir}},
+	"task": {kind: recipes, locations: places{"-d": dir, "--dir": dir, "-t": file, "--taskfile": file}},
 }
+
+// places are a grammar's location options.
+type places = map[string]location
 
 // packageReads are the package managers' subcommands that run no script.
 var packageReads = set("view", "info", "show", "ls", "list", "outdated", "why", "explain", "help", "search", "--version", "-v")
@@ -131,7 +138,7 @@ func (g grammar) command(args []string) int {
 		case a == "--":
 			return i + 1
 		case len(a) > 1 && a[0] == '-':
-			i += 1 + g.values[a]
+			i += 1 + g.arity(a)
 		case g.toolchain && strings.HasPrefix(a, "+"):
 			i++
 		default:
@@ -141,27 +148,45 @@ func (g grammar) command(args []string) int {
 	return min(i, len(args))
 }
 
-// places are the values of g's location options among the options before
-// its subcommand in args, by kind.
-func (g grammar) places(args []string) map[location][]string {
+// arity is how many words of value option takes: one for a location
+// option not given its value after =.
+func (g grammar) arity(option string) int {
+	if g.locations[option] != 0 {
+		return 1
+	}
+	return g.values[option]
+}
+
+// where are the values of g's location options in args, before or after
+// its subcommand up to a `--`, by kind.
+func (g grammar) where(args []string) map[location][]string {
 	at := map[location][]string{}
-	end := g.command(args)
-	for i := 0; i < end; i++ {
+	for i := 0; i < len(args) && args[i] != "--"; i++ {
 		a := args[i]
+		if name, value, attached := strings.Cut(a, "="); attached && g.locations[name] != 0 {
+			at[g.locations[name]] = append(at[g.locations[name]], value)
+			continue
+		}
 		if kind := g.locations[a]; kind != 0 && i+1 < len(args) {
 			at[kind] = append(at[kind], args[i+1])
 		}
 		if len(a) > 1 && a[0] == '-' {
-			i += g.values[a]
+			i += g.arity(a)
 		}
 	}
 	return at
 }
 
-// workDir is the directory g's location options in args move the program
-// to, the last one's, or "" for none.
+// codeAt are the directories and files g's location options in args name.
+func (g grammar) codeAt(args []string) []string {
+	at := g.where(args)
+	return append(at[dir], at[file]...)
+}
+
+// workDir is the directory g's location options of kind dir in args move
+// the program to, the last one's, or "" for none.
 func (g grammar) workDir(args []string) string {
-	if dirs := g.places(args)[dir]; len(dirs) > 0 {
+	if dirs := g.where(args)[dir]; len(dirs) > 0 {
 		return dirs[len(dirs)-1]
 	}
 	return ""
