@@ -1360,12 +1360,14 @@
       checks.${darwinOnly "claude-settings"} = let
         ngrok = darwinSystems.ngrok;
         settings = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username}.wgn.home.claude.settings;
+        codex = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username}.wgn.home.codex.sandbox;
       in
         pkgs.runCommand "claude-settings" {
           nativeBuildInputs = [pkgs.jq];
           settings = builtins.toJSON settings;
+          codex = builtins.toJSON codex;
           mcp = builtins.readFile ./overlays/agent-tools/internal/guard/mcp.json;
-          passAsFile = ["settings" "mcp"];
+          passAsFile = ["settings" "mcp" "codex"];
         } ''
           s=$settingsPath
           # Each check prints what breaks it, and fails on any.
@@ -1377,6 +1379,26 @@
             fi
           }
           failed=
+          for domain in rubygems.org api.nuget.org repo.packagist.org repo.hex.pm plugins.gradle.org plugins-artifacts.gradle.org formulae.brew.sh ghcr.io; do
+            check --arg domain "$domain" 'if (.sandbox.network.allowedDomains | index($domain)) != null then empty
+              else "registry not allowed in Claude: \($domain)" end'
+            if ! jq -e --arg domain "$domain" '.permissions.wgn.network.domains[$domain] == "allow"' "$codexPath" > /dev/null; then
+              echo "registry not allowed in Codex: $domain" >&2
+              failed=1
+            fi
+          done
+          check 'if (.sandbox.network.allowedDomains | index("repo1.maven.org")) != null then empty
+            else "Maven Central is not allowed in Claude" end'
+          check 'if (.sandbox.network.allowedDomains | index("repo.maven.apache.org")) != null then empty
+            else "Maven default repository is not allowed in Claude" end'
+          if ! jq -e '.permissions.wgn.network.domains["repo1.maven.org"] == "allow"' "$codexPath" > /dev/null; then
+            echo 'Maven Central is not allowed in Codex' >&2
+            failed=1
+          fi
+          if ! jq -e '.permissions.wgn.network.domains["repo.maven.apache.org"] == "allow"' "$codexPath" > /dev/null; then
+            echo 'Maven default repository is not allowed in Codex' >&2
+            failed=1
+          fi
           check 'if .permissions.disableBypassPermissionsMode == "disable" then empty
             else "bypass-permissions mode is not disabled" end'
           check 'if (.sandbox.excludedCommands | index("agent-plan link *")) != null then empty
