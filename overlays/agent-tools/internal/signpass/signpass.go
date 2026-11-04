@@ -509,6 +509,13 @@ func fullShape(base, tip string) ([]string, error) {
 	return shape, nil
 }
 
+// refChange is a branch another session moved during a pass, from tip Old to
+// New, which is empty when the branch was deleted.
+type refChange struct {
+	Old string `json:"old"`
+	New string `json:"new"`
+}
+
 func localBranches() (map[string]string, error) {
 	out, err := git.Run("for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/")
 	if err != nil {
@@ -1352,7 +1359,13 @@ func putBackPick(rm string) (bool, error) {
 }
 
 // finish verifies a pass whose rebase has ended, switches detached worktrees
-// back, and clears its signing state. moved is every branch that moved.
+// back, and clears its signing state. moved is the branches the pass updates
+// that did move: the one it signs and those stacked inside its range, each
+// from the tip recorded at the start (Before) to where it is now. Any other
+// branch whose ref differs from Before changed because of someone else, such
+// as a session committing in its own worktree during the pass; it is in the
+// result as changedOutsidePass, with its old and new tips, and is neither
+// moved nor pushed.
 func finish(p *pending, path string) (result map[string]any, moved map[string]string, err error) {
 	if err := reattach(p); err != nil {
 		return nil, nil, err
@@ -1366,9 +1379,15 @@ func finish(p *pending, path string) (result map[string]any, moved map[string]st
 		return nil, nil, err
 	}
 	moved = map[string]string{}
-	for b, oid := range after {
-		if old, ok := p.Before[b]; ok && old != oid {
+	outside := map[string]refChange{}
+	own := append([]string{p.Branch}, p.Stacked...)
+	for b, old := range p.Before {
+		switch oid := after[b]; {
+		case oid == old:
+		case slices.Contains(own, b):
 			moved[b] = oid
+		default:
+			outside[b] = refChange{Old: old, New: oid}
 		}
 	}
 	signed := len(p.Shape)
@@ -1376,6 +1395,9 @@ func finish(p *pending, path string) (result map[string]any, moved map[string]st
 		signed = len(p.Kept)
 	}
 	result = map[string]any{"signed": signed, "squashed": p.Squash || p.Fixups, "moved": moved}
+	if len(outside) > 0 {
+		result["changedOutsidePass"] = outside
+	}
 	if len(gained) > 0 {
 		sort.Strings(gained)
 		result["gainedFixups"] = gained
