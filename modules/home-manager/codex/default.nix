@@ -583,9 +583,9 @@ in {
     # starts it as a process of its own, outside that sandbox, with only
     # its core environment (HOME, PATH, TMPDIR and the like) and the
     # variables env_vars names, a review loop's, which pr-loop holds its
-    # writes to. Named routine plan tools are preapproved; other tools ask
-    # the operator on each call. A PermissionRequest hook cannot answer
-    # those prompts for them.
+    # writes to. Named routine plan tools are preapproved; review-loop
+    # preapproves its own tools for its session. Other calls prompt. A
+    # PermissionRequest hook cannot answer those prompts.
     # tool_timeout_sec covers a git delegate run of several reviewers.
     # Merged into the config.toml Codex writes, the entry replaced whole.
     (let

@@ -124,8 +124,8 @@ worktree. A failure to log is printed on stderr and fails nothing.
                               and a GitHub user's name and pronouns
                               as typed tools of a stdio MCP server, each run in the
                               worktree its call names, for Codex, whose commands cannot
-                              reach the gh login. Routine plan tools are preapproved;
-                              other tools ask before each call
+                              reach the gh login. Codex prompts for non-plan tools
+                              outside a review-loop session
   mcp-status [--hook]         which of this host's mcp-proxy servers are not connected,
                               each with the command that connects it, probing each route
                               without credentials; nothing when all are; --hook prints it

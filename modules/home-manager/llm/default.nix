@@ -1010,15 +1010,6 @@ in {
       ++ [cfg.agentTools]
       ++ optional cfg.prLoop.enable (import ./review-loop.nix {
         inherit lib pkgs;
-        # By program, as "git delegate" or "pr-loop", from patterns such as
-        # "pr-loop open *".
-        approved = unique (map (c: let
-          w = splitString " " c;
-        in
-          if head w == "git"
-          then "git ${elemAt w 1}"
-          else head w)
-        cfg.guard.excludedCommands);
       });
   };
 }

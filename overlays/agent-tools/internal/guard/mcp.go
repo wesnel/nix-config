@@ -105,9 +105,8 @@ var unlistedCodex = func() map[string]string {
 }()
 
 // OpsServer is the name pr-loop mcp has as an MCP server, under which the
-// codex module registers it. Codex enforces the module's tool approvals:
-// routine plan tools are preapproved and other calls prompt. The guard
-// delegates approvals to Codex; elsewhere a main session asks, and a
+// codex module registers it. The guard delegates approvals to Codex;
+// elsewhere a main session asks, and a
 // reviewer is refused.
 const OpsServer = "agent_ops"
 

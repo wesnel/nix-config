@@ -280,8 +280,9 @@ worktree their call names. Routine `agent-plan` tools use inline text and
 the CLI's plan-directory checks; Codex preapproves their explicit catalog
 in `overlays/agent-tools/cmd/pr-loop/plan-tools.json`. Ownership reassignment
 (`agent-plan own`) remains an approved shell command because it changes
-the edit guard's worktree boundary. Other server tools prompt, with file
-inputs confined to the worktree. Shell plan writes also prompt.
+the edit guard's worktree boundary. Other server tools prompt, with file inputs
+confined to the worktree. A Codex review loop preapproves its named agent_ops
+tools for that session. Shell plan writes also prompt.
 Its GitHub read tools take a repository name without a checkout: `github_pr_view`
 returns a PR's description and discussion, `github_pr_diff` its unified
 diff with base and head SHAs, and `github_file` a text file at a full
@@ -880,7 +881,8 @@ listed server's inventory are denied until reviewed.
 Every tool of a server it does not list asks you first in Claude
 Code, and is denied in Codex and to reviewers, but for `agent_ops`
 (`pr-loop mcp`): the guard delegates approvals to Codex, which preapproves
-the routine plan-tool catalog and prompts for other calls. Each refusal says what to do
+the routine plan-tool catalog and prompts for other calls outside a Codex
+review-loop session. Each refusal says what to do
 instead. Each reviewer agent, defined in `modules/home-manager/claude/agents`
 with only Read, Bash and StructuredOutput, also runs `pr-loop guard
 --reviewer` from its own definition, which keeps it to reading in any
