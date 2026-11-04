@@ -24,13 +24,14 @@ import (
 // compared with its symlinks resolved. The caller is the event's agent_id,
 // which Claude Code and Codex set for a sub-agent's call alone.
 //
-// Shell edits are only those shellEditPaths names: a write through a script
-// it cannot read passes. paths are editPaths(in); conf is this host's
-// plans, and nil where confErr says why they cannot be loaded.
-func checkOwner(in input, paths []string, conf *plans.Config, confErr error) string {
-	if len(paths) == 0 {
+// Shell edits are only those shellEdits names: a write through a script it
+// cannot read passes. edits are editPaths(in); conf is this host's plans,
+// and nil where confErr says why they cannot be loaded.
+func checkOwner(in input, edits []editPath, conf *plans.Config, confErr error) string {
+	if len(edits) == 0 {
 		return ""
 	}
+	paths := pathsOf(edits)
 	// A sub-agent's edits fail closed: without plans it owns no worktree.
 	owners := map[string]string{}
 	plansDir := ""
@@ -58,21 +59,14 @@ func checkOwner(in input, paths []string, conf *plans.Config, confErr error) str
 				top, owner, top)
 		}
 	}
-	if in.ToolName == "Bash" || in.ToolName == "exec_command" {
-		var args struct {
-			Command string `json:"command"`
+	for _, e := range edits {
+		if e.worktreeAdd {
+			// Creating isolation may start in the main checkout. Its
+			// existing owner was checked above; redirections and other
+			// calls still count.
+			continue
 		}
-		json.Unmarshal(in.ToolInput, &args)
-		// Creating isolation may start in the main checkout. Its existing
-		// owner was checked above; redirections and other calls still count.
-		var reason string
-		paths, reason = shellEditPaths(args.Command, in.Cwd, 0, true)
-		if reason != "" {
-			return reason
-		}
-	}
-	for _, p := range paths {
-		top, g := worktreeOf(p)
+		top, g := worktreeOf(e.path)
 		if gitStalled.Load() {
 			return stalledGit
 		}
@@ -133,30 +127,49 @@ func checkOwner(in input, paths []string, conf *plans.Config, confErr error) str
 	return ""
 }
 
-// editPaths are the files in's call writes, by a file tool or the shell,
-// as absolute paths, and a refusal for a shell command whose writes it
-// cannot place; shell edits are only those shellEditPaths names.
-func editPaths(in input) ([]string, string) {
-	var paths []string
-	var reason string
+// editPath is a file or directory a call edits, as an absolute path.
+// worktreeAdd marks the directory a git worktree add runs in, which the
+// owner fence judges by its owner alone, since creating isolation may start
+// in the main checkout.
+type editPath struct {
+	path        string
+	worktreeAdd bool
+}
+
+// pathsOf is the paths of edits.
+func pathsOf(edits []editPath) []string {
+	paths := make([]string, len(edits))
+	for i, e := range edits {
+		paths[i] = e.path
+	}
+	return paths
+}
+
+// editPaths are what the edit checks read of in's call: the files it
+// writes, by a file tool or the shell, the runs of code the guard cannot
+// read among its shell commands, and a refusal for a shell command whose
+// writes it cannot place; shell edits are only those shellEdits names.
+func editPaths(in input) ([]editPath, []unreadRun, string) {
 	switch in.ToolName {
 	case "Bash", "exec_command":
 		var args struct {
 			Command string `json:"command"`
 		}
 		json.Unmarshal(in.ToolInput, &args)
-		paths, reason = shellEditPaths(args.Command, in.Cwd, 0, false)
+		return shellEdits(args.Command, in.Cwd)
 	case "Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch":
 		// An input that does not decode is denied before the fence is
 		// asked.
 		changes, _ := fileChanges(in.ToolName, in.ToolInput)
+		var edits []editPath
 		for _, c := range changes {
 			if c.path != "" {
-				paths = append(paths, physical(rawPath(c.path, in.Cwd)))
+				edits = append(edits, editPath{path: physical(rawPath(c.path, in.Cwd))})
 			}
 		}
+		return edits, nil, ""
 	}
-	return paths, reason
+	return nil, nil, ""
 }
 
 // openPlaces names openRoots in a refusal.
@@ -331,74 +344,36 @@ func worktreeOf(path string) (string, gitState) {
 	return top, g
 }
 
-// shellEditPaths are the absolute paths of the files a command line
-// writes, moves or removes, as changedFiles names them, and the directory
-// a git command that writes the worktree runs in (gitWrites), following cd
-// as command does. Each file is named as fencePath has it.
-func shellEditPaths(text, dir string, depth int, creatingWorktree bool) ([]string, string) {
-	if depth > maxDepth {
-		return nil, ""
-	}
-	var out []string
-	w := cwds{here: []string{dir}}
-	end := ""
-	v := visitor{
-		script: func(text string) string {
-			for _, cwd := range w.here {
-				paths, reason := shellEditPaths(text, cwd, depth+1, creatingWorktree)
-				if reason != "" {
-					return reason
-				}
-				out = append(out, paths...)
-			}
+// shellEdits reads a command line run in dir in one walk (walkShell): the
+// absolute paths of the files it writes, moves or removes, as changedFiles
+// names them, and the directory a git command that writes the worktree
+// runs in (gitWritePaths), each named as fencePath has it; the runs of
+// code the guard cannot read (unreadRunsOf); and a refusal for a command
+// whose writes it cannot place.
+func shellEdits(text, dir string) ([]editPath, []unreadRun, string) {
+	var edits []editPath
+	var runs []unreadRun
+	reason := walkShell(text, dir, 0, func(c call, cwd string) string {
+		named := c.named()
+		runs = append(runs, unreadRunsOf(named, cwd)...)
+		if c.expands[0] && named.expands[0] {
 			return ""
-		},
-		call: func(c call) string {
-			if len(c.words) == 0 || c.expands[0] && c.named().expands[0] {
-				return ""
-			}
-			named := c.named()
-			if named.words[0] == "cd" || named.words[0] == "pushd" {
-				// Redirections before cd open their files where the
-				// command starts, before it changes directory.
-				for _, cwd := range w.here {
-					for _, t := range redirections(c.words) {
-						if p := fencePath(t, cwd); filepath.IsAbs(p) {
-							out = append(out, p)
-						}
-					}
-				}
-				w.cd(named, end)
-				return ""
-			}
-			for _, cwd := range w.here {
-				for _, t := range changedFiles(base(named.words[0]), named.words[1:], redirections(c.words)) {
-					if p := fencePath(t, cwd); filepath.IsAbs(p) {
-						out = append(out, p)
-					}
-				}
-				paths, reason := gitWritePaths(named, cwd, creatingWorktree)
-				if reason != "" {
-					return reason
-				}
-				out = append(out, paths...)
-			}
-			return ""
-		},
-	}
-	texts, _, ends, _ := backgroundSegments(text)
-	for i, segment := range texts {
-		if words, expands := split(segment); len(words) > 0 {
-			end = ends[i]
-			c := call{words: words, expands: expands}
-			w.begin(c)
-			if reason := unwrap(c, v); reason != "" {
-				return nil, reason
-			}
-			w.next(end)
 		}
+		// A cd's redirections open their files where it starts, before it
+		// changes directory: walkShell hands it on first.
+		for _, t := range changedFiles(base(named.words[0]), named.words[1:], redirections(c.words)) {
+			if p := fencePath(t, cwd); filepath.IsAbs(p) {
+				edits = append(edits, editPath{path: p})
+			}
+		}
+		paths, reason := gitWritePaths(named, cwd)
+		edits = append(edits, paths...)
+		return reason
+	})
+	if reason != "" {
+		return nil, nil, reason
 	}
-	return out, ""
+	return edits, runs, ""
 }
 
 // fencePath is word, a file a command run in cwd names, as the owner fence
@@ -433,9 +408,10 @@ func fencePath(word, cwd string) string {
 
 // gitWritePaths names the absolute paths a git command, run in cwd, writes,
 // with its -C options applied, when gitWrites names its command and gitRead
-// does not pass it as a reading form (stash list, tag -l, apply --check);
-// a refusal when a worktree target cannot be resolved.
-func gitWritePaths(c call, cwd string, creatingWorktree bool) ([]string, string) {
+// does not pass it as a reading form (stash list, tag -l, apply --check),
+// the directory a worktree add runs in tagged; a refusal when a worktree
+// target cannot be resolved.
+func gitWritePaths(c call, cwd string) ([]editPath, string) {
 	if base(c.words[0]) != "git" {
 		return nil, ""
 	}
@@ -470,14 +446,11 @@ func gitWritePaths(c call, cwd string, creatingWorktree bool) ([]string, string)
 	}
 	if len(words) > 1 && words[0] == "worktree" && words[1] == "add" {
 		positional := gitPositionals(words[0], words[1:])
-		var paths []string
+		var paths []editPath
 		if len(positional) > 1 {
-			paths = append(paths, fencePath(words[1+positional[1]], dir))
+			paths = append(paths, editPath{path: fencePath(words[1+positional[1]], dir)})
 		}
-		if !creatingWorktree {
-			paths = append(paths, dir)
-		}
-		return paths, ""
+		return append(paths, editPath{path: dir, worktreeAdd: true}), ""
 	}
 	if len(words) > 1 && words[0] == "worktree" && (words[1] == "remove" || words[1] == "move") {
 		args := words[2:]
@@ -498,13 +471,13 @@ func gitWritePaths(c call, cwd string, creatingWorktree bool) ([]string, string)
 		if reason != "" {
 			return nil, reason
 		}
-		paths := []string{target}
+		paths := []editPath{{path: target}}
 		if want == 2 {
-			paths = append(paths, fencePath(args[1], dir))
+			paths = append(paths, editPath{path: fencePath(args[1], dir)})
 		}
 		return paths, ""
 	}
-	return []string{dir}, ""
+	return []editPath{{path: dir}}, ""
 }
 
 // Require an absolute path so Git's suffix and case-matching rules cannot

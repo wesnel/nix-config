@@ -773,34 +773,38 @@ type cwds struct {
 }
 
 // walkShell hands visit each simple command of a command line, run in dir,
-// with its wrappers and leading redirections off (unwrap, named), once for
-// each directory it may run in, following cd and pushd, which it does not
-// hand on; the scripts the line runs inline (bash -c, eval) are walked in
-// turn, to maxDepth.
-func walkShell(text, dir string, depth int, visit func(c call, cwd string)) {
+// with its wrappers off (unwrap) and its leading redirections on, which a
+// rule that goes by the program takes off with named, once for each
+// directory it may run in. It follows cd and pushd, handing each on before
+// it moves the directories, since its redirections open where it starts;
+// the scripts the line runs inline (bash -c, eval) are walked in turn, to
+// maxDepth. It returns the first reason visit gives, or "".
+func walkShell(text, dir string, depth int, visit func(c call, cwd string) string) string {
 	if depth > maxDepth {
-		return
+		return ""
 	}
 	w := cwds{here: []string{dir}}
 	end := ""
 	v := visitor{
 		script: func(text string) string {
 			for _, cwd := range w.here {
-				walkShell(text, cwd, depth+1, visit)
+				if reason := walkShell(text, cwd, depth+1, visit); reason != "" {
+					return reason
+				}
 			}
 			return ""
 		},
 		call: func(c call) string {
-			c = c.named()
 			if len(c.words) == 0 {
 				return ""
 			}
-			if !c.expands[0] && (c.words[0] == "cd" || c.words[0] == "pushd") {
-				w.cd(c, end)
-				return ""
-			}
 			for _, cwd := range w.here {
-				visit(c, cwd)
+				if reason := visit(c, cwd); reason != "" {
+					return reason
+				}
+			}
+			if named := c.named(); !named.expands[0] && (named.words[0] == "cd" || named.words[0] == "pushd") {
+				w.cd(named, end)
 			}
 			return ""
 		},
@@ -811,10 +815,13 @@ func walkShell(text, dir string, depth int, visit func(c call, cwd string)) {
 			end = ends[i]
 			c := call{words: words, expands: expands}
 			w.begin(c)
-			unwrap(c, v)
+			if reason := unwrap(c, v); reason != "" {
+				return reason
+			}
 			w.next(end)
 		}
 	}
+	return ""
 }
 
 // begin moves w for the shell keyword a call c starts with, before c is

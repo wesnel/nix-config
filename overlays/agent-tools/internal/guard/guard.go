@@ -128,25 +128,24 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		// The checks of a call's edits share its paths and this host's
 		// plans, nil where they cannot be loaded, confErr saying why.
-		paths, reason := editPaths(in)
+		edits, runs, reason := editPaths(in)
 		if reason != "" {
 			return reason
 		}
-		var runs []unreadRun
-		if reviewHolds(in) && (in.ToolName == "Bash" || in.ToolName == "exec_command") {
-			runs = unreadRuns(shell.Command, in.Cwd)
+		if !reviewHolds(in) {
+			runs = nil
 		}
 		var conf *plans.Config
 		var confErr error
-		if len(paths)+len(runs) > 0 {
+		if len(edits)+len(runs) > 0 {
 			c, err := plans.Load()
 			if conf, confErr = &c, err; err != nil {
 				conf = nil
 			}
 		}
-		reason = checkOwner(in, paths, conf, confErr)
+		reason = checkOwner(in, edits, conf, confErr)
 		if reason == "" {
-			reason = checkPlanReview(in, paths, runs, conf)
+			reason = checkPlanReview(in, edits, runs, conf)
 		}
 		// The hint runs git too, so it is judged with the rest.
 		if reason == "" && conf != nil && (in.ToolName == "Edit" || in.ToolName == "Write" || in.ToolName == "MultiEdit") {

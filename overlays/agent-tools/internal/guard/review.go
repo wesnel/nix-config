@@ -15,11 +15,12 @@ import (
 // of the plan or of the result, recorded and not yet answered
 // (plans.PendingPlanReviewOf), so its findings shape the work before more
 // of it is written. A command that runs code the guard cannot read
-// (unreadRuns) counts as editing the directory it runs in. openRoots stay
+// (unreadRunsOf) counts as editing the directory it runs in. openRoots stay
 // open. A sub-agent is not held: its edits are fenced to its own worktree
-// already (checkOwner). paths are editPaths(in), runs are unreadRuns of
-// its command; conf is this host's plans, and with none nothing is held.
-func checkPlanReview(in input, paths []string, runs []unreadRun, conf *plans.Config) string {
+// already (checkOwner). edits and runs are editPaths(in); conf is this
+// host's plans, and with none nothing is held.
+func checkPlanReview(in input, edits []editPath, runs []unreadRun, conf *plans.Config) string {
+	paths := pathsOf(edits)
 	if !reviewHolds(in) || len(paths)+len(runs) == 0 || conf == nil {
 		return ""
 	}
@@ -113,29 +114,27 @@ var sourcing = set("source", ".")
 // editors run the commands an option gives them.
 var editors = set("vi", "vim", "nvim")
 
-// unreadRuns are the calls of command, run in cwd, that run code the guard
-// cannot read, each with the directory it runs in and the files and
-// directories it may take the code from, as walkShell gives them: a
-// program named by a path or by an expansion, a shell or an interpreter
-// given a file or its standard input, source, go run or generate, cargo
-// run, uv, poetry or pipenv run, a package manager's scripts, just, task,
-// emacsclient --eval, and vim given a command. go test, emacs --batch and
-// inline code (bash -c, python3 -c) are not: the first two run code the
-// change holds, and the shell's script is read in turn.
-func unreadRuns(command, cwd string) []unreadRun {
-	var out []unreadRun
-	walkShell(command, cwd, 0, func(c call, cwd string) {
-		unread, sources := runsUnread(c)
-		if !unread {
-			return
+// unreadRunsOf are the runs of code the guard cannot read that c, a call
+// walkShell gives with its leading redirections off, makes in cwd: one for
+// the directory it runs in and one for each file or directory it may take
+// the code from. Such a call is a program named by a path or by an
+// expansion, a shell or an interpreter given a file or its standard input,
+// source, go run or generate, cargo run, uv, poetry or pipenv run, a
+// package manager's scripts, just, task, emacsclient --eval, and vim given
+// a command. go test, emacs --batch and inline code (bash -c, python3 -c)
+// are not: the first two run code the change holds, and the shell's script
+// is read in turn.
+func unreadRunsOf(c call, cwd string) []unreadRun {
+	unread, sources := runsUnread(c)
+	if !unread {
+		return nil
+	}
+	out := []unreadRun{{program: c.words[0], where: cwd}}
+	for _, s := range sources {
+		if p := expandPath(s, cwd); filepath.IsAbs(p) {
+			out = append(out, unreadRun{program: c.words[0], where: p})
 		}
-		out = append(out, unreadRun{program: c.words[0], where: cwd})
-		for _, s := range sources {
-			if p := expandPath(s, cwd); filepath.IsAbs(p) {
-				out = append(out, unreadRun{program: c.words[0], where: p})
-			}
-		}
-	})
+	}
 	return out
 }
 
@@ -246,28 +245,22 @@ func inlineOption(option string, inline map[string]bool) bool {
 // reads standard input from. inlineInput reports that its standard input
 // comes from the line itself, by << or <<<.
 func operands(args []string) (files []string, inlineInput bool) {
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		op := redirectionWord.FindString(a)
+	for i := 0; i < len(args); {
+		// A redirection's target, attached or the next word, is no operand.
+		op, target, n := redirection(args, i)
 		switch {
-		case op == "":
-			if a != "-" && !strings.HasPrefix(a, "-") {
+		case n == 0:
+			if a := args[i]; a != "-" && !strings.HasPrefix(a, "-") {
 				files = append(files, a)
 			}
+			i++
 			continue
 		case strings.HasSuffix(op, "<<") || strings.HasSuffix(op, "<<<"):
 			inlineInput = true
-		case strings.HasSuffix(op, "<") && !strings.Contains(op, "&"):
-			if target := a[len(op):]; target != "" {
-				files = append(files, target)
-			} else if i+1 < len(args) {
-				files = append(files, args[i+1])
-			}
+		case strings.HasSuffix(op, "<") && target != "":
+			files = append(files, target)
 		}
-		// The target, attached or the next word, is no operand.
-		if len(a) == len(op) && !strings.Contains(op, "&") {
-			i++
-		}
+		i += n
 	}
 	return files, inlineInput
 }
