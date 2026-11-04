@@ -20,12 +20,14 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"golang.ngrok.com/ngrok/privatedial"
 
@@ -259,6 +261,13 @@ func (l *logs) has(msg string, attrs map[string]string) bool {
 	return false
 }
 
+// clear forgets the lines logged so far, so that has sees only later ones.
+func (l *logs) clear() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.buf.Reset()
+}
+
 func (l *logs) String() string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -296,6 +305,7 @@ func newFixture(t *testing.T, configure func(*Config)) *fixture {
 			Resolver: staticResolver{server: {upstreamLoopback}},
 			RootCAs:  upstreamCA.pool,
 		},
+		Port:      f.shimPort,
 		Logger:    slog.New(slog.NewJSONHandler(f.logs, nil)),
 		dialPort:  f.upstream.port,
 		allowAddr: func(a netip.Addr) bool { return a == upstreamLoopback },
@@ -359,6 +369,43 @@ func (f *fixture) client(t *testing.T, serverName string) *privatedial.Dialer {
 	})
 	t.Cleanup(func() { d.Close() })
 	return d
+}
+
+// rawClient returns an HTTP/3 client that reaches the broker through the
+// shim, as the guest's client does, but sends whatever request it is given.
+func (f *fixture) rawClient(t *testing.T) *http3.Transport {
+	t.Helper()
+	shim := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: int(f.shimPort)}
+	tr := &http3.Transport{
+		TLSClientConfig: &tls.Config{RootCAs: f.brokerCA.pool, ServerName: server},
+		Dial: func(ctx context.Context, _ string, tlsCfg *tls.Config, cfg *quic.Config) (*quic.Conn, error) {
+			pc, err := net.ListenUDP("udp", nil)
+			if err != nil {
+				return nil, err
+			}
+			conn, err := quic.Dial(ctx, pc, shim, tlsCfg, cfg)
+			if err != nil {
+				pc.Close()
+				return nil, err
+			}
+			context.AfterFunc(conn.Context(), func() { pc.Close() })
+			return conn, nil
+		},
+	}
+	t.Cleanup(func() { tr.Close() })
+	return tr
+}
+
+// send sends one request through tr and returns its status.
+func send(t *testing.T, ctx context.Context, tr *http3.Transport, req *http.Request) int {
+	t.Helper()
+	resp, err := tr.RoundTrip(req.WithContext(ctx))
+	if err != nil {
+		t.Fatalf("%s %s: %v", req.Method, req.URL, err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode
 }
 
 func testContext(t *testing.T) context.Context {
@@ -522,6 +569,179 @@ func TestUpstreamAddress(t *testing.T) {
 			}
 			f.upstream.noneSeen(t)
 		})
+	}
+}
+
+func TestPolicy(t *testing.T) {
+	t.Run("a dial outside the endpoint allowlist is refused", func(t *testing.T) {
+		f := newFixture(t, nil)
+		ctx := testContext(t)
+		d := f.client(t, server)
+		connect(t, ctx, d)
+		f.upstream.next(t) // the session
+		conn, err := d.DialContext(ctx, "tcp", "db.internal:5433")
+		if err == nil {
+			conn.Close()
+			t.Fatal("a dial to db.internal:5433, outside the allowlist, was relayed")
+		}
+		if !strings.Contains(err.Error(), "status 403") {
+			t.Fatalf("dial error %v, want a 403", err)
+		}
+		if !f.logs.has("refused", map[string]string{"reason": "endpoint", "endpoint": "db.internal:5433"}) {
+			t.Fatalf("the dial failed (%v) without the broker refusing its endpoint", err)
+		}
+		f.upstream.noneSeen(t)
+	})
+
+	t.Run("get-host is relayed for an allowlisted host and refused for another", func(t *testing.T) {
+		f := newFixture(t, nil)
+		ctx := testContext(t)
+		d := f.client(t, server)
+		connect(t, ctx, d)
+		f.upstream.next(t) // the session
+		if exists, err := d.GetHost(ctx, "db.internal"); err != nil || !exists {
+			t.Fatalf("GetHost(db.internal) = %v, %v; want true, nil", exists, err)
+		}
+		if got := f.upstream.next(t).path; got != "/get-host" {
+			t.Fatalf("upstream saw %s, want /get-host", got)
+		}
+		if _, err := d.GetHost(ctx, "other.internal"); err == nil || !strings.Contains(err.Error(), "status 403") {
+			t.Fatalf("GetHost(other.internal) error %v, want a 403", err)
+		}
+		if !f.logs.has("refused", map[string]string{"reason": "host", "host": "other.internal"}) {
+			t.Fatal("GetHost(other.internal) failed without the broker refusing its host")
+		}
+		f.upstream.noneSeen(t)
+	})
+
+	t.Run("an :authority other than the server name is refused", func(t *testing.T) {
+		f := newFixture(t, nil)
+		ctx := testContext(t)
+		// The client names the shim by address, so its :authority is
+		// 127.0.0.1:port while its SNI is the server's name.
+		d := privatedial.New(privatedial.Config{
+			QUICServerAddr: fmt.Sprintf("127.0.0.1:%d", f.shimPort),
+			ForceProtocol:  privatedial.ProtocolQUIC,
+			AuthToken:      "synthetic",
+			TLSConfig:      &tls.Config{RootCAs: f.brokerCA.pool, ServerName: server},
+		})
+		t.Cleanup(func() { d.Close() })
+		err := d.Connect(ctx)
+		if err == nil || !strings.Contains(err.Error(), "status 403") {
+			t.Fatalf("Connect error %v, want a 403", err)
+		}
+		if !f.logs.has("refused", map[string]string{"reason": "authority"}) {
+			t.Fatalf("Connect failed (%v) without the broker refusing its authority", err)
+		}
+		f.upstream.noneSeen(t)
+	})
+}
+
+func TestRequestShape(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx := testContext(t)
+	tr := f.rawClient(t)
+	base := fmt.Sprintf("https://%s:%d", server, f.shimPort)
+	getHost := []byte{13, 0x0a, 11, 'd', 'b', '.', 'i', 'n', 't', 'e', 'r', 'n', 'a', 'l'}
+
+	request := func(method, target string, body []byte) *http.Request {
+		req, err := http.NewRequest(method, target, bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return req
+	}
+
+	// The same client and body pass when the request has the right shape.
+	if status := send(t, ctx, tr, request(http.MethodPost, base+"/get-host", getHost)); status != http.StatusOK {
+		t.Fatalf("a well-formed get-host got %d, want 200", status)
+	}
+	if got := f.upstream.next(t).path; got != "/get-host" {
+		t.Fatalf("upstream saw %s, want /get-host", got)
+	}
+
+	plainConnect := &http.Request{Method: http.MethodConnect, URL: &url.URL{Scheme: "https", Host: fmt.Sprintf("%s:%d", server, f.shimPort)}, Header: http.Header{}}
+	extended := request(http.MethodConnect, base+"/dial", nil)
+	extended.Proto = "websocket"
+	for _, tc := range []struct {
+		name   string
+		req    *http.Request
+		reason string
+	}{
+		{"a GET", request(http.MethodGet, base+"/get-host", nil), "method"},
+		{"a PUT", request(http.MethodPut, base+"/get-host", getHost), "method"},
+		{"a CONNECT", plainConnect, "method"},
+		{"an extended CONNECT", extended, "method"},
+		{"a query", request(http.MethodPost, base+"/get-host?x=1", getHost), "path"},
+		{"an empty query", request(http.MethodPost, base+"/get-host?", getHost), "path"},
+		{"another path", request(http.MethodPost, base+"/get-hosts", getHost), "path"},
+		{"a trailing slash", request(http.MethodPost, base+"/get-host/", getHost), "path"},
+		{"another case", request(http.MethodPost, base+"/Get-Host", getHost), "path"},
+		{"a doubled slash", request(http.MethodPost, base+"//get-host", getHost), "path"},
+	} {
+		t.Run(tc.name+" is refused", func(t *testing.T) {
+			f.logs.clear()
+			if status := send(t, ctx, tr, tc.req); status != http.StatusForbidden {
+				t.Fatalf("status %d, want 403", status)
+			}
+			if !f.logs.has("refused", map[string]string{"reason": tc.reason}) {
+				t.Fatalf("no refusal for its %s", tc.reason)
+			}
+			f.upstream.noneSeen(t)
+		})
+	}
+}
+
+func TestAuthority(t *testing.T) {
+	for _, tc := range []struct {
+		authority string
+		port      uint16
+		ok        bool
+	}{
+		{server, 443, true},
+		{server + ":443", 443, true},
+		{server + ":4443", 4443, true},
+		{server + ":4443", 443, false},
+		{server + ":", 443, false},
+		{server + ".", 443, false},
+		{"US.QUIC.CONNECT-ENDPOINT.NGROK.COM:443", 443, false},
+		{"eu.quic.connect-endpoint.ngrok.com:443", 443, false},
+		{"user@" + server + ":443", 443, false},
+	} {
+		t.Run(fmt.Sprintf("%s with port %d", tc.authority, tc.port), func(t *testing.T) {
+			if got := authorityMatches(tc.authority, server, tc.port); got != tc.ok {
+				t.Fatalf("authorityMatches = %v, want %v", got, tc.ok)
+			}
+		})
+	}
+}
+
+func TestRelayedHeaders(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx := testContext(t)
+	getHost := []byte{13, 0x0a, 11, 'd', 'b', '.', 'i', 'n', 't', 'e', 'r', 'n', 'a', 'l'}
+	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("https://%s:%d/get-host", server, f.shimPort), bytes.NewReader(getHost))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer synthetic")
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("User-Agent", "probe/1")
+	req.Header.Set("X-Probe", "guest")
+	req.Header.Set("Cookie", "session=guest")
+	if status := send(t, ctx, f.rawClient(t), req); status != http.StatusOK {
+		t.Fatalf("status %d, want 200", status)
+	}
+	got := f.upstream.next(t).header
+	for name, want := range map[string]string{"Authorization": "Bearer synthetic", "Content-Type": "application/octet-stream", "User-Agent": "probe/1"} {
+		if got.Get(name) != want {
+			t.Errorf("upstream %s %q, want %q", name, got.Get(name), want)
+		}
+	}
+	for _, name := range []string{"X-Probe", "Cookie"} {
+		if values, ok := got[name]; ok {
+			t.Errorf("upstream got %s %q, which the broker must not relay", name, values)
+		}
 	}
 }
 
