@@ -645,11 +645,23 @@ in {
 
         description = ''
           Hosts every sandbox's commands may reach, for fetching
-          dependencies when building and testing. The host sandbox names
-          GitHub in a list of its own.
+          dependencies when building and testing. Commands can send anything
+          they can read to these hosts, including uploading to GitHub with
+          credentials available in the workspace or command output.
         '';
 
         default = [
+          "github.com"
+          "*.github.com"
+          "*.githubusercontent.com"
+          "git.sr.ht"
+          "cache.nixos.org"
+          "channels.nixos.org"
+          "vuln.go.dev"
+          # ngrok agent releases and packages.
+          "bin.ngrok.com"
+          "apt.ngrok.com"
+          "ngrok-agent.s3.amazonaws.com"
           "proxy.golang.org"
           "sum.golang.org"
           "storage.googleapis.com"
