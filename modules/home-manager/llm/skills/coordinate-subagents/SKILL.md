@@ -200,8 +200,12 @@ sub-agent, in its current task or its next one.
 ## Model and effort
 
 Start every sub-agent with the model and effort this section gives; it is
-what permits setting them. In Claude Code they are the Agent tool's `model`
-and `effort`, which override the agent type's own: Opus at high effort for
+what permits setting them.
+
+### Claude Code
+
+Use the Agent tool's `model` and `effort`, which override the agent type's
+own: Opus at high effort for
 every type above but `Explore`. Cheaper work is the same
 type at the model and effort the list below gives. Start an
 `adversarial-reviewer` with `effort` and no `model`: its definition names
@@ -215,9 +219,6 @@ its model, which through a gateway is of another family than the author's.
 - **Opus 5.5, the default:** design reviews, adversarial reviews,
   security-sensitive code (the guard, the sandbox, `git sign-pass`,
   `pr-loop`), restacks with many conflicts, and anything ambiguous.
-- **Codex:** the session's model at high effort, which each role's file
-  fixes: give `spawn_agent` no `model` and, for a role, no
-  `reasoning_effort`; an `explorer` lookup runs at `reasoning_effort: "low"`.
 - Reviewers are never given a cheaper model: use the `review-change`
   skill's Harness choice for independence and provider fallback.
 
@@ -226,6 +227,45 @@ medium effort before it moves to Sonnet or Haiku. Prompt caches belong to
 one model, so mixing models loses their reuse; judge the cost of a completed
 task, not of a request. When a cheaper sub-agent's report fails Check every
 report, or a review of its work finds real defects, rerun the task on Opus.
+
+### Codex
+
+Read `~/.codex/cheap-model` for the cheaper model candidate generated from
+the Nix provider configuration. Select it per task with `spawn_agent.model`,
+using `fork_turns: "none"` so the override is accepted:
+
+- **Bounded read-only lookups, inventories and specified commands:** use
+  the cheaper model, with `reasoning_effort: "low"` for `explorer`.
+- **Well-specified changes with tests and little judgement:** use
+  the cheaper model with the task's role, such as `builder`. Omit
+  `reasoning_effort` when the role fixes it; for a built-in role without
+  fixed effort, use `medium`.
+- **Reviews, design, security-sensitive changes, difficult restacks and
+  ambiguous work:** inherit the session's model by omitting `model`.
+  Keep the role's fixed effort; otherwise use `high`. Reviewers always
+  take this route; use the `review-change` skill's Harness choice for
+  independence and provider fallback.
+
+Use the candidate only when the spawn tool advertises it and the active
+provider supports it. A missing or empty file, or unknown availability or
+provider compatibility, means inheritance. The generated candidate alone
+does not prove which provider the running session uses. A custom role's
+model and effort take precedence over spawn arguments: inspect its
+definition when it pins them.
+The generated roles keep model selection at the call site and fix effort.
+
+The original coordinator starts reviews and escalation from its own
+session; inheriting inside a cheap worker would keep the cheap model.
+Include this in every cheap worker's brief: return review requests,
+security-sensitive or ambiguous work, and failures to the original
+coordinator for a strong-model spawn.
+
+When a cheaper sub-agent's report fails Check every report, or review finds
+real defects, the original coordinator stops that worker and spawns a fresh
+one with its own session model. A follow-up retains the cheap model. Give
+the replacement the failed checks and existing worktree, transfer ownership
+with `agent-plan own`, and have it inspect and preserve partial work before
+continuing.
 
 Keep briefs and reports small: a task points at files, such as the rules
 file and the plan, rather than pasting them, and gives the report a length.

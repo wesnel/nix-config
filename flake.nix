@@ -1306,6 +1306,51 @@
           touch $out
         '';
 
+      checks.${darwinOnly "codex-subagent-routing"} = let
+        username = darwinSystems.ngrok.username;
+        homeFor = gateway:
+          (self.darwinConfigurations.ngrok.extendModules {
+            modules = [
+              {
+                home-manager.users.${username}.wgn.home.llm = {
+                  gateway = pkgs.lib.mkForce gateway;
+                  ngrokAi.models.fast = pkgs.lib.mkForce "gateway-fast-test";
+                };
+              }
+            ];
+          }).config.home-manager.users.${
+            username
+          };
+        native = homeFor "none";
+        gateway = homeFor "ngrok-ai";
+        candidate = home: home.home.file.".codex/cheap-model".source or (pkgs.writeText "missing-cheap-model" "");
+        roles = pkgs.lib.filterAttrs (name: _: pkgs.lib.hasPrefix ".codex/agents/" name) native.home.file;
+      in
+        pkgs.runCommand "codex-subagent-routing" {
+          nativeBuildInputs = [pkgs.python3];
+          nativeModel = candidate native;
+          gatewayModel = candidate gateway;
+          roleFiles = builtins.toJSON (pkgs.lib.mapAttrsToList (_: file: toString file.source) roles);
+        } ''
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import tomllib
+
+          for key, expected in [("nativeModel", "gpt-6-luna"), ("gatewayModel", "gateway-fast-test")]:
+              actual = pathlib.Path(os.environ[key]).read_text().strip()
+              assert actual == expected, f"{key}: expected {expected!r}, got {actual!r}"
+          roles = [tomllib.loads(pathlib.Path(p).read_text()) for p in json.loads(os.environ["roleFiles"])]
+          assert any(role["name"] == "builder" for role in roles), "builder role missing"
+          assert any(role["name"] == "adversarial-reviewer" for role in roles), "reviewer role missing"
+          for role in roles:
+              assert "model" not in role, f"{role['name']}: model pin defeats task routing"
+              assert role["model_reasoning_effort"] == "high", f"{role['name']}: effort changed"
+          PY
+          touch $out
+        '';
+
       # The Claude Code settings the ngrok Mac's home configuration writes
       # hold the permission rules beside the guard: bypass mode off; for
       # every server mcp.json lists, each read allowed and each confirm
