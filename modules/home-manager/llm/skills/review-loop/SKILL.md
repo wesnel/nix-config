@@ -60,12 +60,16 @@ measured as the `review-change` skill's goal statement says.
    from the PR description and its Linear ticket (read-only; the ticket ID
    is usually in the branch name, e.g. `agent-911` is `AGENT-911`), and
    what is explicitly not this PR's job.
-3. Work on each PR's branch in a worktree under `~/.claude/worktrees`,
-   made with `git worktree add`, with `git config --worktree
-   commit.gpgsign false` in it. In each new worktree run `pr-loop setup`,
-   which runs the setup command the operator configured for the repository,
-   such as generating files it does not commit. If a setup fails, stop and
-   hand back its output.
+3. Work on each PR's branch in a task worktree assigned to this session or
+   recorded in its plan, preserving its files. If the branch is not checked
+   out, create a linked worktree with `git worktree add`. Leave the main
+   checkout and unrelated work alone; if the branch is checked out elsewhere,
+   stop and hand it back.
+   Create worktrees within the active sandbox's writable roots; in sandboxed
+   Claude Code, use `~/.claude/worktrees`. In each new worktree run `pr-loop setup`, which
+   runs the setup command the operator configured for the repository, such
+   as generating files it does not commit. If a setup fails, stop and hand
+   back its output.
 4. `pr-loop threads <number>` for each PR, which also writes the PR's
    review record.
 
@@ -120,7 +124,7 @@ next one starts at step 1.
    description as it stands. A finding still standing goes out with the
    push and into the hand-back.
 7. **Restack**, bottom-up:
-   `git rebase --onto <parent-branch> <child's recorded fork point> <branch>`
+   `git -c commit.gpgsign=false rebase --onto <parent-branch> <child's recorded fork point> <branch>`
    for each child, resolving conflicts as the `restack-branches` skill says,
    with its tests run again.
 8. **Push.** `pr-loop push BRANCH...`, bottom up, as the `signing-pass`
