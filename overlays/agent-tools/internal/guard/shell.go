@@ -141,13 +141,15 @@ func options(args []string, values map[string]bool) int {
 // pipeline reads or was itself fed, from which its standard input may
 // come, and piped says a pipe feeds it at all; walkShell sets both. flake
 // is the local flake, as written, that nix run builds the program from,
-// which its words name only by its attribute.
+// which its words name only by its attribute. staged are the paths a git
+// add earlier on the command line stages (stagedPaths), which command sets.
 type call struct {
 	words    []string
 	expands  []bool
 	env      []string
 	fed      bool
 	assigned []string
+	staged   []string
 	chdir    string
 	stdin    []string
 	piped    bool

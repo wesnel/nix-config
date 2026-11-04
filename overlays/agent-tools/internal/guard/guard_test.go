@@ -355,7 +355,8 @@ func testCheckGraphQLQuerySources(t *testing.T) {
 
 // TestPolicy holds the guard to the examples in policy.json. A rule's scope
 // is the least strict role it holds for: baseline (every session) or
-// reviewer. Each denial's reason, which is what the
+// reviewer; its fixture, if any, names the repository its examples run in.
+// Each denial's reason, which is what the
 // agent sees, must say what to do instead; a rule's `why` is for whoever
 // maintains it and reaches no agent.
 func TestPolicy(t *testing.T) {
@@ -365,15 +366,21 @@ func TestPolicy(t *testing.T) {
 	}
 	// The examples name no repository, so they run outside one, as in the
 	// Nix build; a checkout's remotes would decide `git fetch origin`. They
-	// run outside a review loop, whose mode decides `pr-loop reply`.
+	// run outside a review loop, whose mode decides `pr-loop reply`. A
+	// rule that reads a repository's state names a fixture's repository
+	// (fixture, as fixtureDirs names it) to run its examples in.
 	t.Chdir(t.TempDir())
 	t.Setenv("PR_LOOP_MODE", "")
 	t.Run("pr-loop reply in a bots-mode loop", testReplyInLoop)
 	var rules []struct {
-		Why   string   `json:"why"`
-		Scope string   `json:"scope"`
-		Deny  []string `json:"deny"`
-		Allow []string `json:"allow"`
+		Why     string   `json:"why"`
+		Scope   string   `json:"scope"`
+		Fixture string   `json:"fixture"`
+		Deny    []string `json:"deny"`
+		Allow   []string `json:"allow"`
+	}
+	fixtureDirs := map[string]func() string{
+		"conflict-markers-staged": func() string { return filepath.Join(fixture(t, markerRepos), "staged") },
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
@@ -387,6 +394,13 @@ func TestPolicy(t *testing.T) {
 		t.Run(r.Why, func(t *testing.T) {
 			if len(r.Deny) == 0 || len(r.Allow) == 0 {
 				t.Errorf("%s: needs examples both ways", r.Why)
+			}
+			if r.Fixture != "" {
+				dir, ok := fixtureDirs[r.Fixture]
+				if !ok {
+					t.Fatalf("%s: no fixture %q", r.Why, r.Fixture)
+				}
+				t.Chdir(dir())
 			}
 			scope, ok := scopes[r.Scope]
 			if !ok {

@@ -364,12 +364,7 @@ func command(text string, depth int, who role, dir, checkout string, background 
 	if envSearch(text, calls) {
 		calls, backgrounds, ends, tops = calls[1:], backgrounds[1:], ends[1:], tops[1:]
 	}
-	// A file a gh call reads is what the guard sees only when nothing else
-	// on the command line can have written it first.
-	files := ""
-	if depth == 0 && len(calls) == 1 {
-		files = dir
-	}
+	files := readableFiles(depth, len(calls), dir)
 	// Where each command may run, as cd moves it; a command is judged in
 	// each of those directories.
 	w := cwds{here: []string{dir}}
@@ -380,6 +375,11 @@ func command(text string, depth int, who role, dir, checkout string, background 
 	// top level (topLevel), and whether the call being judged is there.
 	var assigned []string
 	top := false
+	// The paths a git add earlier on the line stages (stagedPaths), and
+	// whether a call earlier on the line assigned a variable that sends
+	// git elsewhere (gitLocated), in any form: VAR=, export, declare -x.
+	var staged []string
+	moved := false
 	v := visitor{
 		script: func(text string) string {
 			return commandsInDirs(text, depth+1, who, w.here, checkout, bg)
@@ -391,11 +391,16 @@ func command(text string, depth int, who role, dir, checkout string, background 
 			if !bg && longSleep(c.named()) {
 				return sleeping
 			}
-			c.assigned = assigned
+			c.assigned, c.staged = assigned, staged
 			if top {
 				assigned = commandAssignments(c, assigned)
 			}
-			return programInDirs(c, who, files, w.here, checkout)
+			if reason := programInDirs(c, who, files, w.here, checkout); reason != "" {
+				return reason
+			}
+			staged = append(staged, stagedPaths(c, w.here, moved)...)
+			moved = movesGit(c, moved)
+			return ""
 		},
 	}
 	for i, c := range calls {
@@ -405,6 +410,17 @@ func command(text string, depth int, who role, dir, checkout string, background 
 			return reason
 		}
 		w.next(end)
+	}
+	return ""
+}
+
+// readableFiles is the directory whose files a gh call on a line of
+// calls commands, nested depth deep, may read, or "" for none: a file is
+// what the guard sees only when nothing else on the line can have written
+// it first.
+func readableFiles(depth, calls int, dir string) string {
+	if depth == 0 && calls == 1 {
+		return dir
 	}
 	return ""
 }
@@ -514,13 +530,14 @@ func program(c call, who role, files, dir, checkout string) string {
 	if reason := checkSession(c, dir); reason != "" {
 		return reason
 	}
+	staged := c.staged
 	if c = c.named(); c.expands[0] {
 		return ""
 	}
 	words := c.words
 	switch name := base(words[0]); {
 	case name == "git":
-		return checkGit(words, c.expands, c.env, who, dir, checkout, c.fed)
+		return checkGit(words, c.expands, c.env, who, dir, checkout, c.fed, staged)
 	case name == "gh":
 		if reason := checkGh(words[1:], c.expands[1:], files, who); reason != "" && who == reviewer {
 			return reviewerReport
@@ -1239,9 +1256,10 @@ func branchWrites(args []string) bool {
 
 // checkGit checks a git command run in dir, "" when the guard cannot tell
 // where, with the assignments env made for it, in a call made in checkout,
-// the hook's directory. expands says which words the shell expands, and
-// fed that xargs adds more.
-func checkGit(words []string, expands []bool, env []string, who role, dir, checkout string, fed bool) string {
+// the hook's directory. expands says which words the shell expands, fed
+// that xargs adds more, and staged what a git add earlier on the line
+// stages (stagedPaths).
+func checkGit(words []string, expands []bool, env []string, who role, dir, checkout string, fed bool, staged []string) string {
 	i, config, located, dir, physical, reason := gitInvocationOptions(words, expands, dir)
 	if reason != "" {
 		return reason
@@ -1271,7 +1289,7 @@ func checkGit(words []string, expands []bool, env []string, who role, dir, check
 	if reason := checkGitSession(sub, rest, gitState{dir: dir}); reason != "" {
 		return reason
 	}
-	return checkGitOperation(sub, rest, expands[min(i+1, len(expands)):], gitState{dir: dir, config: config, env: env}, fed)
+	return checkGitOperation(sub, rest, expands[min(i+1, len(expands)):], gitState{dir: dir, config: config, env: env}, fed, staged)
 }
 
 func gitInvocationOptions(words []string, expands []bool, dir string) (i int, config []string, located bool, logical, physical, reason string) {
@@ -1308,7 +1326,7 @@ func gitInvocationOptions(words []string, expands []bool, dir string) (i int, co
 	return i, config, located, dir, physical, ""
 }
 
-func checkGitOperation(sub string, rest []string, expands []bool, g gitState, fed bool) string {
+func checkGitOperation(sub string, rest []string, expands []bool, g gitState, fed bool, staged []string) string {
 	switch {
 	case sub == "credential" && len(rest) > 0 && rest[0] == "fill",
 		sub == "credential-osxkeychain" && len(rest) > 0 && rest[0] == "get":
@@ -1333,7 +1351,7 @@ func checkGitOperation(sub string, rest []string, expands []bool, g gitState, fe
 	if reason := checkSigning(sub, rest, g); reason != "" {
 		return reason
 	}
-	return ""
+	return checkConflictMarkers(sub, rest, gitState{dir: g.dir}, staged)
 }
 
 func checkGitConfigWrite(rest []string, expands []bool, fed bool) string {
@@ -1365,6 +1383,33 @@ func checkGitConfigWrite(rest []string, expands []bool, fed bool) string {
 	return ""
 }
 
+// movesGit reports whether git is sent elsewhere for the rest of a line:
+// moved already, or c assigns a variable that does (gitLocated), for
+// itself or as the words of export, declare or typeset.
+func movesGit(c call, moved bool) bool {
+	if moved || gitLocated(c.env) {
+		return true
+	}
+	n := c.named()
+	return len(n.words) > 0 && exporters[n.words[0]] && gitLocated(n.words[1:])
+}
+
+// exporters are the builtins whose words assign and export variables.
+var exporters = set("export", "declare", "typeset")
+
+// gitLocated reports whether the assignments env name a git directory,
+// work tree, index or object store, so git works somewhere other than
+// where it runs.
+func gitLocated(env []string) bool {
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if set("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR")[name] {
+			return true
+		}
+	}
+	return false
+}
+
 // scratchRepo reports whether a reviewer's git command sub, with these
 // arguments (expands saying which the shell expands) and the assignments
 // env made for it, run in dir as git reaches it, works only in a
@@ -1380,11 +1425,8 @@ func scratchRepo(sub string, rest []string, expands []bool, dir, checkout string
 	if dir == "" || checkout == "" || set("push", "send-pack", "receive-pack")[sub] {
 		return "", false
 	}
-	for _, kv := range env {
-		name, _, _ := strings.Cut(kv, "=")
-		if set("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR")[name] {
-			return "", false
-		}
+	if gitLocated(env) {
+		return "", false
 	}
 	// The checkout, and the repository it belongs to, wherever that is.
 	reviewed := []string{checkout}
