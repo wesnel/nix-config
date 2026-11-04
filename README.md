@@ -950,8 +950,9 @@ Options in parentheses are off by default. Each server serves only
 the tools listed for it in the guard's `mcp.json`. In Claude Code those
 lists are also permission rules generated from `mcp.json`: each server's
 reads allowed and its listed writes asked, and the guard still refuses any
-other tool on a listed server. Codex gets the remote servers' reads alone;
-Parallels calls use Codex's native per-call approval. Reviewers get reads alone.
+other tool on a listed server. Linear and Parallels calls use Codex's native
+per-call approval; Codex gets the other remote servers' reads alone. Reviewers
+get reads alone.
 
 ngrok enables Parallels. It requires an installed Parallels Desktop, and
 guest commands require Parallels Tools inside Windows. The server can discover
