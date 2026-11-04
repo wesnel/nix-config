@@ -59,6 +59,14 @@ with lib; let
         timeout = "6m";
         options.toolFilter = toolFilter "parallels";
       };
+    }
+    // optionalAttrs cfg.lima {
+      lima = {
+        transportType = "stdio";
+        command = getExe' config.wgn.home.llm.agentTools "lima-mcp";
+        timeout = "6m";
+        options.toolFilter = toolFilter "lima";
+      };
     };
 
   configFile = pkgs.writeText "mcp-proxy.json" (builtins.toJSON {
@@ -252,6 +260,12 @@ in {
       description = "Serve local Parallels Desktop VMs. Guest commands require Parallels Tools in the guest.";
     };
 
+    lima = mkOption {
+      type = types.bool;
+      default = false;
+      description = "List and stop local Lima instances.";
+    };
+
     datadog = {
       enable = mkOption {
         type = types.bool;
@@ -277,6 +291,10 @@ in {
         {
           assertion = !cfg.parallels || darwin;
           message = "wgn.home.mcp-proxy.parallels requires macOS and Parallels Desktop";
+        }
+        {
+          assertion = !cfg.lima || darwin;
+          message = "wgn.home.mcp-proxy.lima requires macOS and Lima";
         }
       ];
       home.packages = [authorize status];

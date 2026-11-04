@@ -49,6 +49,7 @@
           hex = true;
           datadog.enable = true;
           parallels = true;
+          lima = true;
         };
 
         otel-collector.enable = true;
