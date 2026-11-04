@@ -14,10 +14,165 @@ import (
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
-// TestOwners covers worktrees a plan gives an owner. A sub-agent edits,
-// by a file tool or the shell, only the worktrees it owns, scratch and the
-// plans directory; one that owns none edits only scratch and plans. The
-// main thread is kept out of worktrees other agents own alone.
+func TestSessionEdits(t *testing.T) {
+	for _, tc := range []struct {
+		name, session, target, branch, command, association, file, reason string
+		noPlan, newer, sessionOnly, fixture, reclaim                      bool
+		deny                                                              bool
+	}{
+		{name: "own task worktree", session: "s1"},
+		{name: "remove requires absolute worktree path", session: "s1", command: "git worktree remove linked", deny: true},
+		{name: "suffix precedes local symlink", session: "s1", command: "git worktree remove parked", deny: true},
+		{name: "remove another session worktree by basename", session: "s1", command: "git worktree remove parked", deny: true},
+		{name: "move another session worktree", session: "s1", command: "git worktree move PARKED SCRATCH/moved", deny: true},
+		{name: "move own worktree", session: "s1", command: "git worktree move LINKED SCRATCH/moved"},
+		{name: "move requires absolute worktree path", session: "s1", command: "git worktree move linked SCRATCH/moved", deny: true},
+		{name: "move into another session worktree", session: "s1", command: "git worktree move LINKED PARKED/moved", deny: true},
+		{name: "unknown worktree target", session: "s1", command: "git worktree remove absent", deny: true},
+		{name: "remove through symlink parent", session: "s1", command: "git worktree remove MAIN/../hop/../linked", deny: true},
+		{name: "file edit through symlink parent", session: "s1", file: "MAIN/../hop/../linked/a.go", deny: true},
+		{name: "move into symlink parent", session: "s1", command: "git worktree move LINKED MAIN/../hop/../linked/moved", deny: true},
+		{name: "create inside another worktree", session: "s1", command: "git worktree add PARKED/nested -b nested", deny: true},
+		{name: "create orphan inside another worktree", session: "s1", command: "git worktree add --orphan PARKED/nested", deny: true},
+		{name: "create named orphan inside another worktree", session: "s1", command: "git worktree add --orphan -b fresh PARKED/nested", deny: true},
+		{name: "metadata without worktree", session: "s1", file: "MAIN/.git/info/exclude", deny: true, reason: "outside a working tree"},
+		{name: "create with PWD inside another worktree", session: "s1", command: "git worktree add $PWD/../scratch/parked/nested -b nested", deny: true},
+		{name: "stage with PWD in another worktree", session: "s1", command: "git -C $PWD/../scratch/parked add a.go", deny: true},
+		{name: "another session", session: "s2", deny: true},
+		{name: "missing session", deny: true},
+		{name: "no plan", session: "s1", noPlan: true, deny: true},
+		{name: "newest worktree association wins", session: "s1", newer: true, deny: true},
+		{name: "newer session-only association is ignored", session: "s1", newer: true, sessionOnly: true},
+		{name: "reclaimed worktree", session: "s1", reclaim: true},
+		{name: "main owner is not every session", session: "s2", reclaim: true, deny: true},
+		{name: "main checkout", session: "s1", target: "MAIN", deny: true},
+		{name: "default branch", session: "s1", branch: "main", deny: true},
+		{name: "remote default branch", session: "s1", branch: "trunk", deny: true},
+		{name: "detached head", session: "s1", branch: "detached", deny: true},
+		{name: "scratch linked worktree still needs a plan", session: "s1", target: "PARKED", noPlan: true, deny: true},
+		{name: "scratch repository fixture", target: "FIXTURE", fixture: true, noPlan: true},
+		{name: "scratch fixture with a plan is protected", session: "s2", target: "FIXTURE", fixture: true, deny: true},
+		{name: "create worktree from main", target: "MAIN", command: "git worktree add --no-track SCRATCH/new -b new"},
+		{name: "creation does not allow staging in main", target: "MAIN", command: "git worktree add --no-track SCRATCH/new -b new && git add a.go", deny: true},
+		{name: "creation does not allow redirection into main", target: "MAIN", command: "git worktree add --no-track SCRATCH/new -b new > MAIN/out", deny: true},
+		{name: "stage in own worktree", session: "s1", command: "git add a.go"},
+		{name: "repository flags require explicit cwd", session: "s1", command: "git --git-dir=MAIN/.git --work-tree=MAIN checkout -- a.go", deny: true},
+		{name: "repository environment requires explicit cwd", session: "s1", command: "GIT_DIR=MAIN/.git GIT_WORK_TREE=MAIN git checkout -- a.go", deny: true},
+		{name: "stage in another session worktree", session: "s2", command: "git add a.go", deny: true},
+		{name: "remove own worktree from main", session: "s1", target: "MAIN", association: "LINKED", command: "git worktree remove LINKED"},
+		{name: "remove another session worktree from main", session: "s2", target: "MAIN", association: "LINKED", command: "git worktree remove LINKED", deny: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, _ := filepath.EvalSymlinks(t.TempDir())
+			main, linked, scratch := filepath.Join(root, "main"), filepath.Join(root, "linked"), filepath.Join(root, "scratch")
+			os.MkdirAll(scratch, 0o755)
+			os.Mkdir(main, 0o755)
+			old := scratchRoots
+			scratchRoots = func() []string { return []string{scratch} }
+			t.Cleanup(func() { scratchRoots = old })
+			gitIn(t, main, "init", "-q", "-b", "base")
+			gitIn(t, main, "commit", "-q", "--allow-empty", "-m", "base")
+			gitIn(t, main, "worktree", "add", "-q", "-b", "task", linked)
+			parked, fixture := filepath.Join(scratch, "parked"), filepath.Join(scratch, "fixture")
+			linkParent := strings.Contains(tc.command, "hop") || strings.Contains(tc.file, "hop")
+			other := strings.Contains(tc.command, "PARKED") || strings.Contains(tc.command, "parked") || linkParent
+			if linkParent {
+				parked = filepath.Join(scratch, "linked")
+				if err := os.Mkdir(filepath.Join(scratch, "sub"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(scratch, "sub"), filepath.Join(root, "hop")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.target == "PARKED" || other {
+				gitIn(t, main, "worktree", "add", "-q", "-b", "parked", parked)
+			}
+			if tc.name == "suffix precedes local symlink" {
+				if err := os.Symlink(linked, filepath.Join(linked, "parked")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.fixture {
+				os.Mkdir(fixture, 0o755)
+				gitIn(t, fixture, "init", "-q", "-b", "main")
+			}
+			if tc.branch == "detached" {
+				gitIn(t, linked, "checkout", "--detach")
+			} else if tc.branch != "" {
+				gitIn(t, linked, "branch", "-m", tc.branch)
+				if tc.branch == "trunk" {
+					gitIn(t, main, "update-ref", "refs/remotes/upstream/trunk", "HEAD")
+					gitIn(t, main, "symbolic-ref", "refs/remotes/upstream/HEAD", "refs/remotes/upstream/trunk")
+				}
+			}
+			paths := strings.NewReplacer("MAIN", main, "LINKED", linked, "PARKED", parked, "FIXTURE", fixture, "SCRATCH", scratch)
+			target := linked
+			if tc.target != "" {
+				target = paths.Replace(tc.target)
+			}
+			c := plans.Config{Dir: filepath.Join(root, "plans"), Host: "box"}
+			config := filepath.Join(root, "config.json")
+			data, _ := json.Marshal(map[string]any{"plans": c})
+			os.WriteFile(config, data, 0o600)
+			t.Setenv("AGENT_TOOLS_CONFIG", config)
+			now := time.Now()
+			if other {
+				if _, err := c.New(plans.NewOptions{Title: "Other", Slug: "other", Worktrees: []string{parked}, Sessions: []string{"codex:s2"}}, now.Add(-time.Second)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !tc.noPlan {
+				association := target
+				if tc.association != "" {
+					association = paths.Replace(tc.association)
+				}
+				made, err := c.New(plans.NewOptions{Title: "Task", Slug: "task", Worktrees: []string{association}, Sessions: []string{"codex:s1"}}, now)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if tc.reclaim {
+					p, err := c.Open(made.Plan)
+					if err != nil {
+						t.Fatal(err)
+					}
+					for _, owner := range []string{"worker", "main"} {
+						if _, err := p.SetOwner(target, owner, now); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				if tc.newer {
+					o := plans.NewOptions{Title: "Newer", Slug: "newer", Worktrees: []string{target}, Sessions: []string{"codex:s2"}}
+					if tc.sessionOnly {
+						o.Worktrees, o.Sessions = []string{main}, []string{"codex:s1"}
+					}
+					if _, err := c.New(o, now.Add(time.Second)); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			event := map[string]any{"tool_name": "Edit", "session_id": tc.session, "cwd": target,
+				"tool_input": map[string]any{"file_path": filepath.Join(target, "a.go")}}
+			if tc.file != "" {
+				event["tool_input"] = map[string]any{"file_path": paths.Replace(tc.file)}
+			}
+			if tc.command != "" {
+				event["tool_name"], event["tool_input"] = "Bash", map[string]any{"command": paths.Replace(tc.command)}
+			}
+			data, _ = json.Marshal(event)
+			var out bytes.Buffer
+			Main([]string{"--baseline"}, bytes.NewReader(data), &out, io.Discard)
+			if denied := strings.Contains(out.String(), `"deny"`); denied != tc.deny {
+				t.Fatalf("deny=%v, want %v: %s", denied, tc.deny, out.String())
+			}
+			if tc.reason != "" && !strings.Contains(out.String(), tc.reason) {
+				t.Fatalf("want reason containing %q: %s", tc.reason, out.String())
+			}
+		})
+	}
+}
+
 func TestOwners(t *testing.T) {
 	// owned makes a repository, main, with linked worktrees: linked, which a
 	// plan in a plans directory of the test's own gives to agent a1, and
@@ -93,9 +248,10 @@ func TestOwners(t *testing.T) {
 		{"unowned agent's patch", true, `{"tool_name":"apply_patch","turn_id":"t","agent_id":"a2","cwd":"LINKED","tool_input":{"command":"*** Begin Patch\n*** Add File: b.go\n+x\n*** End Patch\n"}}`, []string{"a2", "agent-plan own"}},
 		{"unowned agent's shell read", false, `{"tool_name":"Bash","agent_id":"a2","cwd":"LINKED","tool_input":{"command":"cat a.go > /dev/null"}}`, nil},
 		{"unowned agent's Write in scratch", false, `{"tool_name":"Write","agent_id":"a2","tool_input":{"file_path":"SCRATCH/notes.md"}}`, nil},
-		{"main thread's Edit in the main checkout", false, `{"tool_name":"Edit","tool_input":{"file_path":"MAIN/a.go"}}`, nil},
-		{"main thread's shell write in the main checkout", false, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"echo x > new.txt"}}`, nil},
+		{"main thread's Edit in the main checkout", true, `{"tool_name":"Edit","tool_input":{"file_path":"MAIN/a.go"}}`, []string{"worktree"}},
+		{"main thread's shell write in the main checkout", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"echo x > new.txt"}}`, []string{"worktree"}},
 		{"main thread's Write in an owned worktree", true, `{"tool_name":"Write","tool_input":{"file_path":"LINKED/sub/new.go"}}`, []string{"a1", "agent-plan own"}},
+		{"main thread's removal of a delegated worktree", true, `{"tool_name":"Bash","cwd":"MAIN","tool_input":{"command":"git worktree remove LINKED"}}`, []string{"a1", "agent-plan own"}},
 		// A worktree a plan names is judged by its owner wherever it is, and
 		// a path by where its links lead.
 		{"owner's Edit in another's worktree in scratch", true, `{"tool_name":"Edit","agent_id":"a1","tool_input":{"file_path":"PARKED/a.go"}}`, []string{"LINKED"}},

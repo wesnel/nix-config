@@ -2213,6 +2213,7 @@ func TestCodexTerminalReaders(t *testing.T) {
 // TestSleep covers long sleeps in the foreground, which hold the session,
 // and the advice each agent gets for waiting instead.
 func TestSleep(t *testing.T) {
+	t.Chdir(t.TempDir())
 	// Each agent's hook event for a shell command, %s its tool_input's
 	// fields.
 	const (

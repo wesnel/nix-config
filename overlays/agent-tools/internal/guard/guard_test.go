@@ -415,6 +415,7 @@ func TestPolicy(t *testing.T) {
 }
 
 func TestBaseline(t *testing.T) {
+	t.Chdir(t.TempDir())
 	t.Run("commands", testBaselineCommands)
 	t.Run("roles", testBaselineRoles)
 	t.Run("formats", testBaselineFormats)
@@ -1142,6 +1143,7 @@ func TestReviewerReasons(t *testing.T) {
 }
 
 func TestFormats(t *testing.T) {
+	t.Chdir(t.TempDir())
 	for _, c := range []struct {
 		name, event, want string
 	}{

@@ -316,13 +316,28 @@ func TestMCP(t *testing.T) {
 		}
 		slices.Sort(names)
 		want := []string{"git_delegate", "git_delegate_ask", "git_delegate_settle", "git_delegate_show", "github_profile",
-			"pr_loop_ci", "pr_loop_draft", "pr_loop_end", "pr_loop_link", "pr_loop_logs", "pr_loop_open", "pr_loop_push",
+			"pr_loop_ci", "pr_loop_draft", "pr_loop_end", "pr_loop_link", "pr_loop_logs", "pr_loop_next", "pr_loop_open", "pr_loop_push",
 			"pr_loop_reply", "pr_loop_request", "pr_loop_sign_check", "pr_loop_stack", "pr_loop_status", "pr_loop_threads",
 			"pr_loop_wait"}
 		want = append(want, strings.Fields("agent_plan_new agent_plan_log agent_plan_set agent_plan_unfile agent_plan_ask agent_plan_decide agent_plan_followup agent_plan_step agent_plan_part agent_plan_edit agent_plan_after agent_plan_section agent_plan_reference agent_plan_link agent_plan_postpone agent_plan_sign_id agent_plan_workstream_new agent_plan_workstream_list agent_plan_find agent_plan_status")...)
 		slices.Sort(want)
 		if !slices.Equal(names, want) {
 			t.Errorf("tools %q, want %q", names, want)
+		}
+	})
+
+	t.Run("pr_loop_next returns a decision for each branch", func(t *testing.T) {
+		f := newMCPFixture(t)
+		c := f.start(t)
+		r := c.tool(t, "pr_loop_next", map[string]any{"worktree": f.repo, "branches": []string{"absent-a", "absent-b"}})
+		var steps []struct{ Kind, Branch, Why string }
+		if err := json.Unmarshal([]byte(r.out), &steps); err != nil || r.isError || len(steps) != 2 {
+			t.Fatalf("result %+v: %v", r, err)
+		}
+		for i, branch := range []string{"absent-a", "absent-b"} {
+			if step := steps[i]; step.Kind != "blocked" || step.Branch != branch || !strings.Contains(step.Why, "no local branch") {
+				t.Errorf("decision for %s: %+v", branch, step)
+			}
 		}
 	})
 

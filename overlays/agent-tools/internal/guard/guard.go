@@ -1403,7 +1403,7 @@ func gitPositionals(sub string, args []string) []int {
 		"clone": set("-o", "--origin", "-b", "--branch", "-u", "--upload-pack", "--template", "-c", "--config",
 			"--depth", "--shallow-since", "--shallow-exclude", "--reference", "--reference-if-able",
 			"--separate-git-dir", "-j", "--jobs", "--filter", "--server-option", "--bundle-uri", "--revision"),
-		"worktree": set("-b", "-B", "--reason", "--orphan"),
+		"worktree": set("-b", "-B", "--reason"),
 	}[sub]
 	var out []int
 	for j := 0; j < len(args); j++ {

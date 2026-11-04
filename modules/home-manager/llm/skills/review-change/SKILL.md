@@ -23,7 +23,10 @@ was split among sub-agents: a coordinator runs the same pipeline, and the
    in Codex); then `git delegate` as the second opinion. Settle each
    round's findings together before the next round.
 5. **Design review of the result**, before handing back.
-6. **Hand back**: what the work's own instructions ask for, and
+6. **Publish and hand back.** Follow the `signing-pass` skill's "Handing
+   over" and complete each agent-owned next step before ending the session.
+   Report a refusal with its reason and the remaining step. The report
+   includes what the work's own instructions ask for, and
    - each finding, its outcome and its plan item ID, round by round;
    - findings still standing, with the reviewer's evidence;
    - the design reviews' open questions for the operator and the decisions you
@@ -222,6 +225,9 @@ each branch:
   change, its entry names each path and pin that can break it;
 - a program or function whose result is a decision: an error has a result
   of its own, never one of the decision's, and every caller fails on it;
+- a changed mutation guard: tests compare the resources it authorizes with
+  what the real command or filesystem changes, through alternate spellings
+  and each input form; its suggested recovery command is permitted;
 - what the plan leaves undecided, against this bar: someone could build it
   without asking a question;
 - designing for change, by each principle and check the `design` skill
