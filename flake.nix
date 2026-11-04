@@ -928,6 +928,7 @@
           nativeBuildInputs = [pkgs.git pkgs.jq];
           includes = builtins.toJSON (builtins.filter (inc: (inc.condition or null) != null) git.includes);
           helper = git.settings.credential."https://github.com".helper;
+          operatorHome = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username}.home.homeDirectory;
           passAsFile = ["includes"];
         } ''
           bash ${./modules/home-manager/git/fetch-urls-tests.sh}

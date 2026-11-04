@@ -26,6 +26,19 @@ for repo in nix-config emacs-config; do
     exit 1
   }
   [[ -z "$actual" ]] || { echo "$repo GitHub credential helper reset is not empty" >&2; exit 1; }
+  if [[ "$repo" == nix-config ]]; then
+    [[ "$(git -C "$dir" config --get signpass.mirror.github)" == wesnel/nix-config ]]
+    [[ "$(git -C "$dir" config --get signpass.mirror.destination)" == git@git.sr.ht:~wgn/nix-config ]]
+    [[ "$(git -C "$dir" config --get signpass.mirror.commonDir)" == "$operatorHome/git/github.com/wesnel/nix-config/.git" ]]
+  else
+    if git --no-pager -C "$dir" config --get-regexp '^signpass\.mirror\.'; then
+      echo 'emacs-config unexpectedly authorizes upstream mirror history' >&2
+      exit 1
+    else
+      status=$?
+      [[ "$status" == 1 ]] || exit "$status"
+    fi
+  fi
 done
 dir="$HOME/git/github.com/wesnel/unrelated"
 git init -q "$dir"

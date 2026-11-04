@@ -85,7 +85,11 @@ started there may still be running.
                     the key of the protected operator profile (the baked
                     git config's user.signingkey, an OpenPGP key by its full
                     fingerprint or an SSH key), whatever the repository's
-                    own config says
+                    own config says. A successful signature check needs no
+                    upstream lookup. Otherwise a protected mirror mapping
+                    can accept GitHub's freshly authenticated default history,
+                    with complete local ancestry; missing proof refuses that
+                    exception and preserves push state
   --brief           print only what it will sign, a progress line every 25
                     signatures, one line per push and the final JSON; git's
                     own account of the rebase and the pushes is left out
