@@ -56,6 +56,9 @@ type Relay struct {
 	// reach. Nil reads the host's interfaces; an error refuses the
 	// connection.
 	LocalAddrs func() ([]netip.Addr, error)
+	// Slots caps the relays running at once. It is required: with none,
+	// or none free, Serve refuses at once.
+	Slots Slots
 	// Log receives one line per connection. Nil discards it.
 	Log io.Writer
 
@@ -97,6 +100,17 @@ func (r *Relay) Serve(ctx context.Context, guest Stream) error {
 }
 
 func (r *Relay) serve(ctx context.Context, guest Stream, v *verdict) error {
+	if r.Slots == nil {
+		return answer(guest, refuse("no relay slots are configured"))
+	}
+	release, err := r.Slots.Acquire()
+	if errors.Is(err, ErrNoSlot) {
+		return answer(guest, refuse("%v", err))
+	}
+	if err != nil {
+		return answer(guest, err)
+	}
+	defer release()
 	br := bufio.NewReader(guest)
 	target, err := within(r.after, headerTimeout, func() (string, error) { return readTarget(br) })
 	if err != nil {
