@@ -46,10 +46,19 @@ type OpenItem struct {
 }
 
 // OpenFilter keeps the items of Kind, or of every kind for "", whose
-// time is at or after Since, or all for the zero time.
+// time is at or after Since, or all for the zero time, in the plans that
+// each of Plans, Workstreams and Repos keeps, or all for an empty one.
+// Plans keeps the plans it names (agent-plan's PLAN: a file or a name),
+// Workstreams those in a workstream it names (a slug or a name, as
+// agent-plan workstream list gives), and Repos those whose REPOSITORIES
+// name one of them, as owner/name or by the name alone. A plan or
+// workstream that names none is refused.
 type OpenFilter struct {
-	Kind  string
-	Since time.Time
+	Kind        string
+	Since       time.Time
+	Plans       []string
+	Workstreams []string
+	Repos       []string
 }
 
 // ParseSince reads a --since value, a day as 2006-01-02 or a time as
@@ -75,6 +84,10 @@ func (c Config) OpenItems(f OpenFilter, now time.Time) ([]OpenItem, error) {
 	if f.Kind != "" && !oneOf(f.Kind, OpenKinds) {
 		return nil, refusal.New("%q is not a kind of open item. Pass `--kind` with one of %s", f.Kind, strings.Join(OpenKinds, ", "))
 	}
+	keep, err := c.openPlans(f)
+	if err != nil {
+		return nil, err
+	}
 	ps, err := c.ownPlans()
 	if err != nil {
 		return nil, err
@@ -83,6 +96,12 @@ func (c Config) OpenItems(f OpenFilter, now time.Time) ([]OpenItem, error) {
 	out := []OpenItem{}
 	errs := []error{err}
 	for _, p := range ps {
+		if ok, err := keep(p); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", p.Name, err))
+			continue
+		} else if !ok {
+			continue
+		}
 		items, err := p.openItemsInWorkstream(now, titles)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", p.Name, err))
@@ -102,6 +121,59 @@ func (c Config) OpenItems(f OpenFilter, now time.Time) ([]OpenItem, error) {
 	}
 	slices.SortStableFunc(out, func(a, b OpenItem) int { return rank[a.WorkstreamID] - rank[b.WorkstreamID] })
 	return out, errors.Join(errs...)
+}
+
+// openPlans reports whether f's Plans, Workstreams and Repos keep a plan,
+// refusing a plan or workstream that names none. The predicate's error is
+// a plan file it could not read to judge the plan.
+func (c Config) openPlans(f OpenFilter) (func(Plan) (bool, error), error) {
+	names, streams, err := c.filterNames(f)
+	if err != nil {
+		return nil, err
+	}
+	inRepo := func(repo string) bool {
+		return slices.ContainsFunc(f.Repos, func(r string) bool { return repo == r || strings.HasSuffix(repo, "/"+r) })
+	}
+	return func(p Plan) (bool, error) {
+		if len(names) > 0 && !names[p.Name] {
+			return false, nil
+		}
+		if len(streams) > 0 {
+			ws, err := p.Workstream()
+			if err != nil || !streams[ws.ID] {
+				return false, err
+			}
+		}
+		if len(f.Repos) > 0 {
+			props, err := planHeading(p.file(""))
+			if err != nil {
+				return false, err
+			}
+			return slices.ContainsFunc(strings.Fields(props["REPOSITORIES"]), inRepo), nil
+		}
+		return true, nil
+	}, nil
+}
+
+// filterNames are the names of the plans f's Plans name and the IDs of the
+// workstreams its Workstreams name, refusing one that names none.
+func (c Config) filterNames(f OpenFilter) (names, streams map[string]bool, err error) {
+	names, streams = map[string]bool{}, map[string]bool{}
+	for _, arg := range f.Plans {
+		p, err := c.Open(arg)
+		if err != nil {
+			return nil, nil, err
+		}
+		names[p.Name] = true
+	}
+	for _, name := range f.Workstreams {
+		w, err := c.workstreamNamed(name)
+		if err != nil {
+			return nil, nil, err
+		}
+		streams[w.ID] = true
+	}
+	return names, streams, nil
 }
 
 // OpenItems are the plan's open items as at now, its parts' included:

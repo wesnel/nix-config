@@ -163,7 +163,8 @@ have (see status) is refused and writes nothing.
                      parts', --waiting those that wait for an AFTER item: a
                      question until settled, a part or step until logged
                      done, verified or abandoned
-  open [--kind OKIND] [--since 'YYYY-MM-DD[ HH:MM]'] [--json]
+  open [--plan PLAN]... [--workstream W]... [--repo R]... [--kind OKIND]
+      [--since 'YYYY-MM-DD[ HH:MM]'] [--json]
                      the open items of every plan of this host, halted ones
                      included and marked, under a heading per workstream
                      (those of the newest plans first, then "none") and in
@@ -174,7 +175,10 @@ have (see status) is refused and writes nothing.
                      and open follow-ups, its parts'
                      included; --kind keeps one kind, --since those asked,
                      discovered or handed back since then (a step's time is
-                     its first event). A plan that cannot be read is named
+                     its first event); --plan, --workstream (a slug or name)
+                     and --repo (owner/name, or the name) each keep the plans
+                     any of their values names, and a PLAN or W naming none
+                     is refused. A plan that cannot be read is named
                      on stderr, and the exit is 1, after the rest
   pickup PLAN [--session HARNESS:ID]
                      pick PLAN up in a fresh session, as the line carry
@@ -569,7 +573,6 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		slug     = flags.String("slug", "", "")
 		harness  = flags.String("harness", "", "")
 		template = flags.String("template", "", "")
-		stream   = flags.String("workstream", "", "")
 		parent   = flags.String("parent", "", "")
 		part     = flags.String("part", "", "")
 		item     = flags.String("item", "", "")
@@ -613,7 +616,6 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		run      = flags.String("command", "", "")
 		runDir   = flags.String("dir", "", "")
 		signBase = flags.String("base", "", "")
-		signPlan = flags.String("plan", "", "")
 		reason   = flags.String("reason", "", "")
 		span     = flags.String("range", "", "")
 		drawing  = flags.String("diagram", "", "")
@@ -630,9 +632,14 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		// Repeatable for ask.
 		alternatives multi
 		after        multi
+		// Repeatable for open; sign-id and new take the last.
+		planArgs multi
+		streams  multi
 	)
 	flags.Var(&alternatives, "alternative", "")
 	flags.Var(&after, "after", "")
+	flags.Var(&planArgs, "plan", "")
+	flags.Var(&streams, "workstream", "")
 	flags.Var(&repos, "repo", "")
 	flags.Var(&branches, "branch", "")
 	flags.Var(&trees, "worktree", "")
@@ -641,7 +648,8 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	if !ok {
 		return code
 	}
-	given, ok := commandFlags(command, flags, *unset, *signPlan, stderr)
+	signPlan, stream := lastValue(planArgs), lastValue(streams)
+	given, ok := commandFlags(command, flags, *unset, signPlan, stderr)
 	if !ok {
 		return 2
 	}
@@ -689,7 +697,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return runWorkstream(*title, *summary, *asJSON, c, positional, stdout, stderr, report)
 	case "new":
 		return runNew(plans.NewOptions{Title: *title, Slug: *slug, Repos: repos, Branches: branches, Worktrees: trees,
-			Sessions: sessions, Harness: *harness, Parent: *parent, Part: *part, Template: *template, Workstream: *stream}, c, positional, stderr, report)
+			Sessions: sessions, Harness: *harness, Parent: *parent, Part: *part, Template: *template, Workstream: stream}, c, positional, stderr, report)
 	case "log":
 		return runLog(plans.Event{Kind: *kind, Item: *item, Summary: *summary, Role: *role, Agent: *agent,
 			Branch: branch, Commit: *commit, Evidence: *evidence, Review: *review, Outcome: *outcome,
@@ -715,7 +723,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	case "questions":
 		return runQuestions(*all, *asJSON, *count, *waiting, stdout, report, wantPlan)
 	case "open":
-		return runOpen(*kind, *since, *asJSON, c, positional, stdout, stderr, report)
+		return runOpen(plans.OpenFilter{Kind: *kind, Plans: planArgs, Workstreams: streams, Repos: repos}, *since, *asJSON, c, positional, stdout, stderr, report)
 	case "pickup":
 		return runPickup(lastValue(sessions), stdout, report, wantPlan)
 	case "brief":
@@ -768,7 +776,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	case "reseal":
 		return runReseal(report, wantPlan)
 	case "sign-id":
-		return runSignID(plans.SignRequest{Plan: *signPlan, Session: session, Worktree: worktree, Branches: branches, Base: *signBase}, c, positional, stdout, stderr, report)
+		return runSignID(plans.SignRequest{Plan: signPlan, Session: session, Worktree: worktree, Branches: branches, Base: *signBase}, c, positional, stdout, stderr, report)
 	case "sign-result":
 		return runSignResult(*check, *wait, *timeout, c, positional, stdout, stderr, report)
 	}
@@ -1051,13 +1059,12 @@ func runQuestions(all bool, asJSON bool, count bool, waiting bool, stdout io.Wri
 	return 0
 }
 
-func runOpen(kind string, since string, asJSON bool, c plans.Config, positional []string, stdout io.Writer, stderr io.Writer, report func(any, error) int) int {
+func runOpen(f plans.OpenFilter, since string, asJSON bool, c plans.Config, positional []string, stdout io.Writer, stderr io.Writer, report func(any, error) int) int {
 	var err error
 	if len(positional) != 0 {
-		fmt.Fprint(stderr, "agent-plan open: takes [--kind KIND] [--since TIME] [--json], and no PLAN\n")
+		fmt.Fprint(stderr, "agent-plan open: takes [--plan PLAN]... [--workstream W]... [--repo R]... [--kind KIND] [--since TIME] [--json], and no PLAN of its own\n")
 		return 2
 	}
-	f := plans.OpenFilter{Kind: kind}
 	if since != "" {
 		if f.Since, err = plans.ParseSince(since, time.Local); err != nil {
 			return report(nil, err)
@@ -1502,18 +1509,7 @@ func commandFlags(command string, flags *flag.FlagSet, unset bool, signPlan stri
 	if allowed := map[string]string{"audit": "json", "acknowledge": "evidence"}[command]; allowed != "" {
 		return given, onlyFlag(command, allowed, given, stderr)
 	}
-	if given["plan"] {
-		if command != "sign-id" {
-			fmt.Fprintf(stderr, "agent-plan %s: --plan is sign-id's\n", command)
-			return nil, false
-		}
-		if signPlan == "" {
-			fmt.Fprint(stderr, "agent-plan sign-id: --plan needs a plan file or name; pass a known plan or omit --plan for automatic selection\n")
-			return nil, false
-		}
-	}
-	if given["workstream"] && command != "new" {
-		fmt.Fprintf(stderr, "agent-plan %s: --workstream is new's\n", command)
+	if !planFlags(command, given, signPlan, stderr) {
 		return nil, false
 	}
 	if given["chosen"] && command != "find" {
@@ -1534,6 +1530,27 @@ func commandFlags(command string, flags *flag.FlagSet, unset bool, signPlan stri
 		return nil, false
 	}
 	return given, visualFlags(command, given, stderr) && notesFlags(command, given, stderr)
+}
+
+// planFlags reports whether command takes the --plan and --workstream
+// given, saying why not on stderr: sign-id takes one plan, new one
+// workstream, and open any number of each.
+func planFlags(command string, given map[string]bool, signPlan string, stderr io.Writer) bool {
+	if given["plan"] {
+		if command != "sign-id" && command != "open" {
+			fmt.Fprintf(stderr, "agent-plan %s: --plan is sign-id's and open's\n", command)
+			return false
+		}
+		if command == "sign-id" && signPlan == "" {
+			fmt.Fprint(stderr, "agent-plan sign-id: --plan needs a plan file or name; pass a known plan or omit --plan for automatic selection\n")
+			return false
+		}
+	}
+	if given["workstream"] && command != "new" && command != "open" {
+		fmt.Fprintf(stderr, "agent-plan %s: --workstream is new's and open's\n", command)
+		return false
+	}
+	return true
 }
 
 func onlyFlag(command, allowed string, given map[string]bool, stderr io.Writer) bool {
