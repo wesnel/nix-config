@@ -13,6 +13,34 @@ import (
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
+// AuthorizeGitStage rechecks that agent, in session, may still edit
+// worktree, as checkOwner judges a git_stage call there.
+func AuthorizeGitStage(session, agent, worktree string) error {
+	data, err := json.Marshal(map[string]string{"worktree": worktree})
+	if err != nil {
+		return err
+	}
+	in := input{ToolName: gitStageTool, ToolInput: data, SessionID: session, AgentID: agent}
+	edits, _, reason := editPaths(in)
+	if reason == "" {
+		conf, confErr := loadPlans()
+		reason = checkOwner(in, edits, conf, confErr)
+	}
+	if reason != "" {
+		return fmt.Errorf("Git stage ownership: %s", reason)
+	}
+	return nil
+}
+
+// loadPlans is this host's plans, or nil and why they cannot be loaded.
+func loadPlans() (*plans.Config, error) {
+	c, err := plans.Load()
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
 // checkOwner holds file edits, by a file tool or the shell, to the
 // worktrees the plans of this host give agents (`agent-plan own`). A
 // sub-agent edits only the worktrees it owns, scratch and the plans
@@ -93,7 +121,8 @@ func pathsOf(edits []editPath) []string {
 // command whose writes it cannot place; shell edits are only those
 // shellEdits names. Text typed into a running session is read where the
 // call is, as check reads it, and is a run of its own in a directory the
-// guard cannot know, since the session may be a shell anywhere.
+// guard cannot know, since the session may be a shell anywhere. A
+// git_stage call edits the worktree it names, which must be absolute.
 func editPaths(in input) ([]editPath, []unreadRun, string) {
 	if line, ok, _ := shellCommand(in.ToolName, in.ToolInput, in.Cwd); ok {
 		// An input that does not decode is denied before.
@@ -104,6 +133,14 @@ func editPaths(in input) ([]editPath, []unreadRun, string) {
 		return edits, runs, reason
 	}
 	switch in.ToolName {
+	case gitStageTool:
+		var args struct {
+			Worktree string `json:"worktree"`
+		}
+		if json.Unmarshal(in.ToolInput, &args) != nil || !filepath.IsAbs(args.Worktree) {
+			return nil, nil, "The Git stage operation needs an absolute worktree path."
+		}
+		return []editPath{{path: physical(args.Worktree)}}, nil, ""
 	case "Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch":
 		// An input that does not decode is denied before the fence is
 		// asked.

@@ -56,6 +56,15 @@ var ConfigTimeout = 10 * time.Second
 // if the repository's own or the worktree's config names a program, or if
 // git cannot list that config within ConfigTimeout.
 func CheckConfig(dir string) error {
+	return checkConfig(dir, false)
+}
+
+// CheckConfigStrict also refuses when git cannot list the configuration.
+func CheckConfigStrict(dir string) error {
+	return checkConfig(dir, true)
+}
+
+func checkConfig(dir string, strict bool) error {
 	args := []string{"config", "--list", "--show-scope", "-z"}
 	where := dir
 	if dir != "" {
@@ -72,6 +81,9 @@ func CheckConfig(dir string) error {
 			ConfigTimeout, where)
 	}
 	if err != nil {
+		if strict {
+			return refusal.New("git could not list the config at %s, so it is refused unchecked; stop and ask the operator to repair it", where)
+		}
 		// Outside a repository there is nothing to check.
 		return nil
 	}

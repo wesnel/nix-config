@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/gitgrant"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
@@ -95,10 +96,11 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if in.Cwd == "" {
 		in.Cwd, _ = os.Getwd()
 	}
-	hint := ""
+	var hint string
+	var updatedInput map[string]any
 	reason := judged(func() string {
-		reason, context := judgeInput(in, who)
-		hint = context
+		var reason string
+		reason, hint, updatedInput = judgeCall(in, who)
 		return reason
 	})
 	if in.TurnID != "" && who == baseline && (reason == opsCall || nativeMCPApproval(in.ToolName, reason) || in.AgentID == "" && codexTaskOperation(in.ToolName, reason)) {
@@ -106,10 +108,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		reason = ""
 	}
 	if reason == "" {
-		if hint != "" {
-			json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{
-				"hookEventName": "PreToolUse", "additionalContext": hint}})
-		}
+		writeAllowed(stdout, updatedInput, hint)
 		return 0
 	}
 	if reason == sleeping && in.TurnID == "" {
@@ -133,6 +132,31 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// writeAllowed answers an allowed call: with updatedInput, the input it
+// runs with, where the guard changed it; else with hint, context for the
+// agent; else with nothing.
+func writeAllowed(stdout io.Writer, updatedInput map[string]any, hint string) {
+	switch {
+	case updatedInput != nil:
+		json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]any{
+			"hookEventName": "PreToolUse", "permissionDecision": "allow", "updatedInput": updatedInput}})
+	case hint != "":
+		json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{
+			"hookEventName": "PreToolUse", "additionalContext": hint}})
+	}
+}
+
+// judgeCall is judgeInput's reason and hint, and for a Codex git_stage
+// call it allows, the input the call runs with, which carries its grant.
+func judgeCall(in input, who role) (string, string, map[string]any) {
+	reason, hint := judgeInput(in, who)
+	if reason != "" || !codexGitStage(in) {
+		return reason, hint, nil
+	}
+	updatedInput, reason := grantGitStage(in)
+	return reason, "", updatedInput
+}
+
 func judgeInput(in input, who role) (string, string) {
 	if handled, reason := checkMirror(in, who); handled {
 		return reason, ""
@@ -150,7 +174,9 @@ func judgeInput(in input, who role) (string, string) {
 			return reason, ""
 		}
 	}
-	if reason := check(in.ToolName, in.ToolInput, who, in.Cwd); reason != "" {
+	// Codex's git_stage is judged by its worktree's owner, as an edit,
+	// rather than by the approval every other agent_ops call gets.
+	if reason := check(in.ToolName, in.ToolInput, who, in.Cwd); reason != "" && (reason != opsCall || !codexGitStage(in)) {
 		return reason, ""
 	}
 	if claudeShell {
@@ -180,10 +206,7 @@ func judgeEdits(in input) (string, string) {
 	var conf *plans.Config
 	var confErr error
 	if len(edits)+len(runs) > 0 {
-		c, err := plans.Load()
-		if conf, confErr = &c, err; err != nil {
-			conf = nil
-		}
+		conf, confErr = loadPlans()
 	}
 	if reason := checkOwner(in, edits, conf, confErr); reason != "" {
 		return reason, ""
@@ -196,6 +219,37 @@ func judgeEdits(in input) (string, string) {
 		return "", branchHint(in.SessionID, in.ToolInput, in.Cwd, *conf)
 	}
 	return "", ""
+}
+
+// gitStageTool is agent_ops' git_stage, which stages files in a worktree
+// only with a grant this hook issues (gitgrant).
+const gitStageTool = "mcp__" + OpsServer + "__git_stage"
+
+// codexGitStage reports whether in is a Codex call of gitStageTool.
+func codexGitStage(in input) bool {
+	return in.TurnID != "" && in.ToolName == gitStageTool
+}
+
+// grantGitStage returns in's arguments with the authorization pr-loop mcp
+// consumes: a one-use grant bound to the call's session, agent, call ID and
+// exact other arguments. It returns why none was issued instead.
+func grantGitStage(in input) (map[string]any, string) {
+	var args map[string]any
+	if json.Unmarshal(in.ToolInput, &args) != nil || args == nil {
+		return nil, "The Git stage arguments could not be read."
+	}
+	delete(args, "authorization")
+	data, err := json.Marshal(args)
+	if err != nil {
+		return nil, "The Git stage arguments could not be authorized."
+	}
+	token, err := gitgrant.Issue(gitgrant.Record{Tool: in.ToolName, Session: in.SessionID,
+		Agent: in.AgentID, Call: in.ToolUseID, Arguments: data})
+	if err != nil {
+		return nil, "The Git stage authorization could not be issued."
+	}
+	args["authorization"] = token
+	return args, ""
 }
 
 // unreadable is why a call is denied whose event or tool input the guard

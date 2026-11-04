@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/gitgrant"
+	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/review"
 )
@@ -268,9 +270,255 @@ func (c *mcpClient) tool(t *testing.T, name string, args map[string]any) toolRes
 	return out
 }
 
+// stageFixture is an MCP fixture whose server can stage: grants in a state
+// home of its own, and this binary as its codex. Codex's sandbox cannot
+// nest in the one the tests may run in, so this binary stands in for it
+// (TestMain), running the child unconfined; TestGitStageNative covers the
+// real one.
+func stageFixture(t *testing.T) *mcpFixture {
+	t.Helper()
+	state := realTempDir(t)
+	hostpaths.Bake(t, "", state)
+	f := newMCPFixture(t)
+	codex := filepath.Join(realTempDir(t), "codex")
+	if err := os.Symlink(os.Args[0], codex); err != nil {
+		t.Fatal(err)
+	}
+	f.env = append(f.env, hostpaths.TestStateHomeEnv+"="+state, "AGENT_GIT_TEST_SANDBOX=1", gitStageCodexEnv+"="+codex)
+	return f
+}
+
+// stageTaskWorktree is a linked worktree of f's repository on branch task,
+// with its symlinks resolved, and a plan of session thread-1 naming it.
+func stageTaskWorktree(t *testing.T, f *mcpFixture) (string, plans.Plan) {
+	t.Helper()
+	worktree := filepath.Join(realTempDir(t), "task")
+	cmd := exec.Command("git", "-C", f.repo, "worktree", "add", "-q", "-b", "task", worktree)
+	cmd.Env = f.env
+	if data, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("worktree: %s: %v", data, err)
+	}
+	config := plans.Config{Dir: filepath.Dir(f.plan), Host: "box"}
+	made, err := config.New(plans.NewOptions{Title: "Task", Slug: "task", Worktrees: []string{worktree}, Sessions: []string{"codex:thread-1"}}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := config.Open(made.Plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return worktree, plan
+}
+
 // The server Codex runs outside its sandbox: each operation a typed tool,
 // with the operator's GitHub login read by the server and never returned.
 func TestMCP(t *testing.T) {
+	t.Run("git stage restores content the repository holds only in a pack", func(t *testing.T) {
+		f := stageFixture(t)
+		worktree, _ := stageTaskWorktree(t, f)
+		git := func(args ...string) {
+			t.Helper()
+			cmd := exec.Command("git", append([]string{"-C", worktree}, args...)...)
+			cmd.Env = f.env
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %s: %v", args, out, err)
+			}
+		}
+		for _, content := range []string{"packed\n", "a\nb\nc\n"} {
+			if err := os.WriteFile(filepath.Join(worktree, "code.txt"), []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			git("-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-q", "-am", content)
+		}
+		git("gc", "-q", "--prune=now")
+		if err := os.WriteFile(filepath.Join(worktree, "code.txt"), []byte("packed\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		args := map[string]any{"worktree": worktree, "paths": []string{"code.txt"}}
+		data, _ := json.Marshal(args)
+		token, err := gitgrant.Issue(gitgrant.Record{Tool: "mcp__agent_ops__git_stage", Session: "thread-1", Call: "call", Arguments: data})
+		if err != nil {
+			t.Fatal(err)
+		}
+		args["authorization"] = token
+		if result := f.start(t).tool(t, "git_stage", args); result.isError {
+			t.Fatalf("stage of packed content: %+v", result)
+		}
+		cmd := exec.Command("git", "-C", worktree, "show", ":code.txt")
+		cmd.Env = f.env
+		if data, err := cmd.Output(); err != nil || string(data) != "packed\n" {
+			t.Fatalf("index content %q: %v", data, err)
+		}
+	})
+	t.Run("git stage accepts an unchanged file alongside a changed one", func(t *testing.T) {
+		f := stageFixture(t)
+		worktree, _ := stageTaskWorktree(t, f)
+		if err := os.WriteFile(filepath.Join(worktree, "new.txt"), []byte("new\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// code.txt is as checked out and older than the index, so git add
+		// finds it stat-clean, not racily clean, and hashes nothing.
+		old := time.Now().Add(-time.Hour)
+		if err := os.Chtimes(filepath.Join(worktree, "code.txt"), old, old); err != nil {
+			t.Fatal(err)
+		}
+		refresh := exec.Command("git", "-C", worktree, "update-index", "--refresh")
+		refresh.Env = f.env
+		if out, err := refresh.CombinedOutput(); err != nil {
+			t.Fatalf("refresh: %s: %v", out, err)
+		}
+		args := map[string]any{"worktree": worktree, "paths": []string{"code.txt", "new.txt"}}
+		data, _ := json.Marshal(args)
+		token, err := gitgrant.Issue(gitgrant.Record{Tool: "mcp__agent_ops__git_stage", Session: "thread-1", Call: "call", Arguments: data})
+		if err != nil {
+			t.Fatal(err)
+		}
+		args["authorization"] = token
+		if result := f.start(t).tool(t, "git_stage", args); result.isError {
+			t.Fatalf("stage with an unchanged file: %+v", result)
+		}
+		cmd := exec.Command("git", "-C", worktree, "diff", "--cached", "--name-only")
+		cmd.Env = f.env
+		if data, err := cmd.Output(); err != nil || string(data) != "new.txt\n" {
+			t.Fatalf("staged %q: %v", data, err)
+		}
+	})
+	t.Run("git stage stages an authorized file", func(t *testing.T) {
+		f := stageFixture(t)
+		worktree, _ := stageTaskWorktree(t, f)
+		if err := os.WriteFile(filepath.Join(worktree, "code.txt"), []byte("through broker\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		args := map[string]any{"worktree": worktree, "paths": []string{"code.txt"}}
+		data, _ := json.Marshal(args)
+		token, err := gitgrant.Issue(gitgrant.Record{Tool: "mcp__agent_ops__git_stage", Session: "thread-1", Call: "call", Arguments: data})
+		if err != nil {
+			t.Fatal(err)
+		}
+		args["authorization"] = token
+		result := f.start(t).tool(t, "git_stage", args)
+		if result.isError {
+			t.Fatalf("authorized stage: %+v", result)
+		}
+		cmd := exec.Command("git", "-C", worktree, "show", ":code.txt")
+		cmd.Env = f.env
+		data, err = cmd.Output()
+		if err != nil || string(data) != "through broker\n" {
+			t.Fatalf("index content %q: %v", data, err)
+		}
+	})
+	t.Run("git stage refuses without a configured sandbox launcher", func(t *testing.T) {
+		state := realTempDir(t)
+		hostpaths.Bake(t, "", state)
+		f := newMCPFixture(t)
+		f.env = append(f.env, hostpaths.TestStateHomeEnv+"="+state, "AGENT_GIT_TEST_SANDBOX=1", gitStageCodexEnv+"=codex")
+		worktree, _ := stageTaskWorktree(t, f)
+		if err := os.WriteFile(filepath.Join(worktree, "code.txt"), []byte("unconfined\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		args := map[string]any{"worktree": worktree, "paths": []string{"code.txt"}}
+		data, _ := json.Marshal(args)
+		token, err := gitgrant.Issue(gitgrant.Record{Tool: "mcp__agent_ops__git_stage", Session: "thread-1", Call: "call", Arguments: data})
+		if err != nil {
+			t.Fatal(err)
+		}
+		args["authorization"] = token
+		result := f.start(t).tool(t, "git_stage", args)
+		if !result.isError || !strings.Contains(result.text, gitStageCodexEnv) {
+			t.Fatalf("relative launcher: %+v", result)
+		}
+		cmd := exec.Command("git", "-C", worktree, "show", ":code.txt")
+		cmd.Env = f.env
+		if data, err := cmd.Output(); err != nil || string(data) != "a\nb\nc\n" {
+			t.Fatalf("index content %q after refusal: %v", data, err)
+		}
+	})
+	t.Run("git stage refuses a grant after ownership changes", func(t *testing.T) {
+		state := realTempDir(t)
+		hostpaths.Bake(t, "", state)
+		f := newMCPFixture(t)
+		f.env = append(f.env, hostpaths.TestStateHomeEnv+"="+state)
+		worktree, plan := stageTaskWorktree(t, f)
+		if _, err := plan.SetOwner(worktree, "a1", time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		args := map[string]any{"worktree": worktree, "paths": []string{"code.txt"}}
+		data, _ := json.Marshal(args)
+		token, err := gitgrant.Issue(gitgrant.Record{Tool: "mcp__agent_ops__git_stage", Session: "thread-1", Agent: "a1", Call: "call", Arguments: data})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := plan.SetOwner(worktree, "a2", time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		args["authorization"] = token
+		result := f.start(t).tool(t, "git_stage", args)
+		if !result.isError || !strings.Contains(result.text, "ownership") {
+			t.Fatalf("staging after transfer: %+v", result)
+		}
+	})
+	t.Run("git stage rejects changed paths", func(t *testing.T) {
+		state := realTempDir(t)
+		hostpaths.Bake(t, "", state)
+		f := newMCPFixture(t)
+		f.env = append(f.env, hostpaths.TestStateHomeEnv+"="+state)
+		data, err := json.Marshal(map[string]any{"worktree": f.repo, "paths": []string{"allowed"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		token, err := gitgrant.Issue(gitgrant.Record{Tool: "mcp__agent_ops__git_stage", Session: "thread-1", Call: "call", Arguments: data})
+		if err != nil {
+			t.Fatal(err)
+		}
+		c := f.start(t)
+		result := c.tool(t, "git_stage", map[string]any{"worktree": f.repo, "paths": []string{"other"}, "authorization": token})
+		if !result.isError || !strings.Contains(result.text, "authorization") {
+			t.Fatalf("changed paths: %+v", result)
+		}
+		again := c.tool(t, "git_stage", map[string]any{"worktree": f.repo, "paths": []string{"allowed"}, "authorization": token})
+		if !again.isError || !strings.Contains(again.text, "authorization") {
+			t.Fatalf("replay after changed paths: %+v", again)
+		}
+	})
+	t.Run("git stage consumes authorization before an ownership refusal", func(t *testing.T) {
+		state := realTempDir(t)
+		hostpaths.Bake(t, "", state)
+		f := newMCPFixture(t)
+		f.env = append(f.env, hostpaths.TestStateHomeEnv+"="+state)
+		// A worktree a plan gives another agent is refused wherever it is,
+		// scratch included, where an unnamed fixture repository would pass.
+		worktree, plan := stageTaskWorktree(t, f)
+		if _, err := plan.SetOwner(worktree, "a2", time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		args := map[string]any{"worktree": worktree, "paths": []string{"code.txt"}}
+		data, err := json.Marshal(args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		token, err := gitgrant.Issue(gitgrant.Record{Tool: "mcp__agent_ops__git_stage", Session: "thread-1", Agent: "a1", Call: "call", Arguments: data})
+		if err != nil {
+			t.Fatal(err)
+		}
+		args["authorization"] = token
+		c := f.start(t)
+		first := c.tool(t, "git_stage", args)
+		if !first.isError || !strings.Contains(first.text, "ownership") {
+			t.Fatalf("ownership refusal: %+v", first)
+		}
+		second := c.tool(t, "git_stage", args)
+		if !second.isError || !strings.Contains(second.text, "authorization") {
+			t.Fatalf("replayed authorization: %+v", second)
+		}
+	})
+	t.Run("git stage refuses without hook authorization", func(t *testing.T) {
+		f := newMCPFixture(t)
+		c := f.start(t)
+		r := c.tool(t, "git_stage", map[string]any{"worktree": f.repo, "paths": []string{"README.md"}})
+		if !r.isError || !strings.Contains(r.text, "authorization") {
+			t.Fatalf("stage without authorization: %+v", r)
+		}
+	})
 	t.Run("initialize", func(t *testing.T) {
 		c := newMCPFixture(t).start(t)
 		r := c.call(t, "initialize", map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{},
@@ -315,7 +563,7 @@ func TestMCP(t *testing.T) {
 			}
 		}
 		slices.Sort(names)
-		want := []string{"git_delegate", "git_delegate_ask", "git_delegate_settle", "git_delegate_show", "github_file", "github_pr_diff", "github_pr_view", "github_profile",
+		want := []string{"git_stage", "git_delegate", "git_delegate_ask", "git_delegate_settle", "git_delegate_show", "github_file", "github_pr_diff", "github_pr_view", "github_profile",
 			"pr_loop_ci", "pr_loop_draft", "pr_loop_end", "pr_loop_link", "pr_loop_logs", "pr_loop_next", "pr_loop_open", "pr_loop_push",
 			"pr_loop_reply", "pr_loop_request", "pr_loop_sign_check", "pr_loop_stack", "pr_loop_status", "pr_loop_threads",
 			"pr_loop_wait"}

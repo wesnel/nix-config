@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
@@ -22,9 +23,9 @@ func TestSessionEdits(t *testing.T) {
 		// rebase stops a rebase of the linked worktree onto base on a
 		// conflict in a.go: "merge" or "apply" names its backend; the
 		// branch field, applied first, says what it rebases.
-		rebase                                       string
-		noPlan, newer, sessionOnly, fixture, reclaim bool
-		deny                                         bool
+		rebase                                            string
+		noPlan, newer, sessionOnly, fixture, reclaim, mcp bool
+		deny                                              bool
 
 		// A part of the reason that must not appear.
 		without string
@@ -83,6 +84,8 @@ func TestSessionEdits(t *testing.T) {
 		{name: "repository flags require explicit cwd", session: "s1", command: "git --git-dir=MAIN/.git --work-tree=MAIN checkout -- a.go", deny: true},
 		{name: "repository environment requires explicit cwd", session: "s1", command: "GIT_DIR=MAIN/.git GIT_WORK_TREE=MAIN git checkout -- a.go", deny: true},
 		{name: "stage in another session worktree", session: "s2", command: "git add a.go", deny: true},
+		{name: "MCP stage in own worktree", session: "s1", mcp: true},
+		{name: "MCP stage in another session worktree", session: "s2", mcp: true, deny: true},
 		{name: "remove own worktree from main", session: "s1", target: "MAIN", association: "LINKED", command: "git worktree remove LINKED"},
 		{name: "remove another session worktree from main", session: "s2", target: "MAIN", association: "LINKED", command: "git worktree remove LINKED", deny: true},
 		// env -C to a directory the shell decides is judged where the line
@@ -97,6 +100,12 @@ func TestSessionEdits(t *testing.T) {
 		{name: "commit in the main checkout keeps the worktree advice", session: "s1", target: "MAIN", association: "LINKED", command: "git commit --allow-empty -m x", deny: true, reason: "This edits the repository's main checkout. Create a task worktree", without: "git -C"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.mcp {
+				// The grant directory refuses a state home through a
+				// symlink, as $TMPDIR may be.
+				state, _ := filepath.EvalSymlinks(t.TempDir())
+				hostpaths.Bake(t, "", state)
+			}
 			root, _ := filepath.EvalSymlinks(t.TempDir())
 			main, linked, scratch := filepath.Join(root, "main"), filepath.Join(root, "linked"), filepath.Join(root, "scratch")
 			os.MkdirAll(scratch, 0o755)
@@ -213,11 +222,29 @@ func TestSessionEdits(t *testing.T) {
 			if tc.command != "" {
 				event["tool_name"], event["tool_input"] = "Bash", map[string]any{"command": paths.Replace(tc.command)}
 			}
+			if tc.mcp {
+				event["tool_name"] = "mcp__agent_ops__git_stage"
+				event["turn_id"] = "turn"
+				event["tool_use_id"] = "call"
+				event["tool_input"] = map[string]any{"worktree": target, "paths": []string{"a.go"}}
+			}
 			data, _ = json.Marshal(event)
 			var out bytes.Buffer
 			Main([]string{"--baseline"}, bytes.NewReader(data), &out, io.Discard)
 			if denied := strings.Contains(out.String(), `"deny"`); denied != tc.deny {
 				t.Fatalf("deny=%v, want %v: %s", denied, tc.deny, out.String())
+			}
+			if tc.mcp && !tc.deny {
+				var response struct {
+					Output struct {
+						Input struct {
+							Authorization string `json:"authorization"`
+						} `json:"updatedInput"`
+					} `json:"hookSpecificOutput"`
+				}
+				if err := json.Unmarshal(out.Bytes(), &response); err != nil || response.Output.Input.Authorization == "" {
+					t.Fatalf("authorized MCP call did not receive a grant: %s (%v)", out.String(), err)
+				}
 			}
 			if reason := paths.Replace(tc.reason); reason != "" && !strings.Contains(out.String(), reason) {
 				t.Fatalf("want reason containing %q: %s", reason, out.String())
