@@ -139,9 +139,9 @@ func options(args []string, values map[string]bool) int {
 // written (env -C DIR), relative to where the line is; walkShell resolves
 // it. stdin are the files, as absolute paths, the command before it in a
 // pipeline reads or was itself fed, from which its standard input may
-// come; walkShell sets
-// them. flake is the local flake, as written, that nix run builds the
-// program from, which its words name only by its attribute.
+// come, and piped says a pipe feeds it at all; walkShell sets both. flake
+// is the local flake, as written, that nix run builds the program from,
+// which its words name only by its attribute.
 type call struct {
 	words    []string
 	expands  []bool
@@ -150,6 +150,7 @@ type call struct {
 	assigned []string
 	chdir    string
 	stdin    []string
+	piped    bool
 	flake    string
 }
 
@@ -161,7 +162,7 @@ type call struct {
 func (c call) named() call {
 	if i := leadingRedirections(c.words); i > 0 && i < len(c.words) {
 		return call{words: c.words[i:], expands: c.expands[i:], env: c.env, fed: c.fed, chdir: c.chdir, stdin: c.stdin,
-			flake: c.flake}
+			piped: c.piped, flake: c.flake}
 	}
 	return c
 }
@@ -853,6 +854,7 @@ func walkShell(text, dir string, depth int, visit func(c call, cwd string) strin
 	// own standard input came from, which a command passes on (cat | cat,
 	// grep -v), for the call a pipe feeds.
 	var read, piped []string
+	fed := false // a pipe feeds the segment under way
 	v := visitor{
 		script: func(text string) string {
 			for _, cwd := range w.here {
@@ -866,7 +868,7 @@ func walkShell(text, dir string, depth int, visit func(c call, cwd string) strin
 			if len(c.words) == 0 {
 				return ""
 			}
-			c.stdin, read = piped, slices.Clone(piped)
+			c.stdin, c.piped, read = piped, fed, slices.Clone(piped)
 			for _, cwd := range w.here {
 				if c.chdir != "" {
 					cwd = cdTarget(call{words: []string{"cd", c.chdir}, expands: []bool{false, strings.ContainsAny(c.chdir, "$`")}}, cwd)
@@ -898,8 +900,8 @@ func walkShell(text, dir string, depth int, visit func(c call, cwd string) strin
 			if reason := unwrap(c, v); reason != "" {
 				return reason
 			}
-			piped = nil
-			if end == "|" {
+			piped, fed = nil, end == "|"
+			if fed {
 				piped = read
 			}
 			w.next(end)

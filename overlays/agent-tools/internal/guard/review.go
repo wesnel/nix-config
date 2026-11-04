@@ -3,6 +3,7 @@ package guard
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -15,15 +16,21 @@ import (
 // (plans.PendingPlanReviewOf), so its findings shape the work before more
 // of it is written. A command that runs code the guard cannot read
 // (unreadRunsOf) counts as editing the directory it runs in. openRoots stay
-// open. A sub-agent is not held: its edits are fenced to its own worktree
-// already (checkOwner). edits and runs are editPaths(in); conf is this
-// host's plans, and with none nothing is held.
+// open, and a call that touches nothing else reads no plan. A sub-agent is
+// not held: its edits are fenced to its own worktree already (checkOwner).
+// edits and runs are editPaths(in); conf is this host's plans, and with
+// none nothing is held.
 func checkPlanReview(in input, edits []editPath, runs []unreadRun, conf *plans.Config) string {
-	paths := pathsOf(edits)
-	if !reviewHolds(in) || len(paths)+len(runs) == 0 || conf == nil {
+	if !reviewHolds(in) || conf == nil {
 		return ""
 	}
-	p, recorded, pending := conf.PendingPlanReviewOf(in.SessionID)
+	free := openRoots(conf.Dir)
+	runs = slices.DeleteFunc(slices.Clone(runs), func(r unreadRun) bool { return isOpen(r.where, free) })
+	paths := slices.DeleteFunc(pathsOf(edits), func(path string) bool { return isOpen(path, free) })
+	if len(paths)+len(runs) == 0 {
+		return ""
+	}
+	p, recorded, pending := pendingPlanReview(conf, in.SessionID)
 	if !pending {
 		return ""
 	}
@@ -31,26 +38,22 @@ func checkPlanReview(in input, edits []editPath, runs []unreadRun, conf *plans.C
 		p.File(), recorded.Time)
 	answer := "When its report is in, settle its findings. " + plans.AnswerHint(p) +
 		" If the review was stopped and will not report, log that answer with a summary saying so, and run the review again before going on."
-	free := openRoots(conf.Dir)
 	// A run is named first: what it writes is not all its paths say, as
 	// for go generate, which writes its package and runs what it names.
-	for _, r := range runs {
-		if !isOpen(r.where, free) {
-			where := r.where
-			if where == "" {
-				where = "a directory the guard cannot work out"
-			}
-			return fmt.Sprintf("%s, so `%s` waits for it: it runs code the guard cannot read, which could write anywhere, "+
-				"in or from %s. Run a probe with its code in "+scratchPlaces+", from there, instead. %s", held, r.program, where, answer)
+	if len(runs) > 0 {
+		where := runs[0].where
+		if where == "" {
+			where = "a directory the guard cannot work out"
 		}
+		return fmt.Sprintf("%s, so `%s` waits for it: it runs code the guard cannot read, which could write anywhere, "+
+			"in or from %s. Run a probe with its code in "+scratchPlaces+", from there, instead. %s", held, runs[0].program, where, answer)
 	}
-	for _, path := range paths {
-		if !isOpen(path, free) {
-			return fmt.Sprintf("%s, so edits outside "+openPlaces+" wait for it, %s among them. %s", held, path, answer)
-		}
-	}
-	return ""
+	return fmt.Sprintf("%s, so edits outside "+openPlaces+" wait for it, %s among them. %s", held, paths[0], answer)
 }
+
+// pendingPlanReview is plans.Config.PendingPlanReviewOf, which reads every
+// plan naming the session; a test counts its calls through it.
+var pendingPlanReview = (*plans.Config).PendingPlanReviewOf
 
 // reviewHolds reports whether checkPlanReview may hold in's call: the main
 // thread's, in a session.
@@ -115,7 +118,10 @@ func runsUnread(c call) (bool, []string) {
 	}
 	name, args := c.words[0], c.words[1:]
 	if strings.Contains(name, "/") {
-		return true, []string{name}
+		if !systemProgram(name) {
+			return true, []string{name}
+		}
+		name = base(name)
 	}
 	// A script given as a file, or on its standard input.
 	script := func() (bool, []string) {
@@ -131,6 +137,9 @@ func runsUnread(c call) (bool, []string) {
 		return script()
 	}
 	if _, g, ok := programOf(name); ok {
+		if !c.piped && g.informs(args) {
+			return false, nil
+		}
 		switch g.kind {
 		case recipes:
 			return true, g.codeAt(args)
@@ -169,6 +178,31 @@ func runsUnread(c call) (bool, []string) {
 		}), nil
 	}
 	return false, nil
+}
+
+// systemDirs hold the programs of the system and of the installed
+// profiles, which a change cannot rewrite, so one named by its path there
+// is judged by its name: /usr/bin/git as git. /nix/store is not one: nix
+// build puts the repository's own programs there.
+var systemDirs = []string{"/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/libexec", "/run/current-system/sw/bin"}
+
+// profileBin is the bin directory of a user's profile under
+// /etc/profiles/per-user.
+var profileBin = regexp.MustCompile(`^/etc/profiles/per-user/[^/]+/bin$`)
+
+// systemProgram reports whether path, a program's, lies under one of
+// systemDirs, a per-user profile's bin or the user's ~/.nix-profile/bin,
+// with no .. to climb out.
+func systemProgram(path string) bool {
+	if strings.Contains("/"+path+"/", "/../") || !strings.HasPrefix(path, "/") {
+		return false
+	}
+	for dir := filepath.Dir(path); dir != "/"; dir = filepath.Dir(dir) {
+		if slices.Contains(systemDirs, dir) || profileBin.MatchString(dir) || dir == home+"/.nix-profile/bin" {
+			return true
+		}
+	}
+	return false
 }
 
 // inlineOption reports whether option, one word, is one of inline, with

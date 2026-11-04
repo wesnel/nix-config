@@ -52,6 +52,10 @@ type grammar struct {
 	toolchain bool
 	// inline are the options whose value is the code itself (python -c).
 	inline map[string]bool
+	// info are its options that, given alone, print what it is or holds
+	// and run nothing (python -V, just --list). A program without them,
+	// such as tclsh, passes such words to its script and runs it.
+	info map[string]bool
 	// locations are the options whose value, the next word or after =,
 	// names where the program works or takes its code from, before or
 	// after the subcommand.
@@ -67,10 +71,11 @@ type grammar struct {
 
 // programs are the grammars, by program name; pythons name python's.
 var programs = map[string]grammar{
-	"python":    {kind: interpreters, inline: set("-c"), values: arity("-W", "-X")},
-	"node":      {kind: interpreters, inline: set("-e", "--eval", "-p", "--print"), values: arity("-r", "--require")},
-	"ruby":      {kind: interpreters, inline: set("-e"), values: arity("-I", "-r")},
-	"perl":      {kind: interpreters, inline: set("-e", "-E")},
+	"python": {kind: interpreters, inline: set("-c"), values: arity("-W", "-X"), info: set("--version", "-V", "--help", "-h")},
+	"node": {kind: interpreters, inline: set("-e", "--eval", "-p", "--print"), values: arity("-r", "--require"),
+		info: set("--version", "-v", "--help", "-h")},
+	"ruby":      {kind: interpreters, inline: set("-e"), values: arity("-I", "-r"), info: set("--version", "-v", "--help", "-h")},
+	"perl":      {kind: interpreters, inline: set("-e", "-E"), info: set("--version", "-v", "--help", "-h")},
 	"php":       {kind: interpreters, inline: set("-r")},
 	"lua":       {kind: interpreters, inline: set("-e")},
 	"Rscript":   {kind: interpreters, inline: set("-e")},
@@ -85,21 +90,27 @@ var programs = map[string]grammar{
 	"uv":     {kind: subcommands, locations: places{"--directory": dir, "--project": dir}, runs: set("run"), sources: set("run")},
 	"poetry": {kind: subcommands, locations: places{"-C": dir, "--directory": dir, "-P": dir, "--project": dir}, runs: set("run"), sources: set("run")},
 	"pipenv": {kind: subcommands, runs: set("run"), sources: set("run")},
-	"npm":    {kind: scripts, locations: places{"--prefix": dir, "-C": dir}, reads: packageReads},
-	"pnpm":   {kind: scripts, locations: places{"-C": dir, "--dir": dir}, reads: packageReads},
-	"yarn":   {kind: scripts, locations: places{"--cwd": dir}, reads: packageReads},
-	"bun":    {kind: scripts, locations: places{"--cwd": dir}, reads: packageReads},
-	"deno":   {kind: scripts, reads: packageReads},
+	"npm":    {kind: scripts, locations: places{"--prefix": dir, "-C": dir}, reads: packageReads, info: packageInfo},
+	"pnpm":   {kind: scripts, locations: places{"-C": dir, "--dir": dir}, reads: packageReads, info: packageInfo},
+	"yarn":   {kind: scripts, locations: places{"--cwd": dir}, reads: packageReads, info: packageInfo},
+	"bun":    {kind: scripts, locations: places{"--cwd": dir}, reads: packageReads, info: packageInfo},
+	"deno":   {kind: scripts, reads: packageReads, info: packageInfo},
 	// npx and bunx are wrappers: unwrap hands on the program they run.
-	"just": {kind: recipes, locations: places{"-f": file, "--justfile": file, "-d": dir, "--working-directory": dir}},
-	"task": {kind: recipes, locations: places{"-d": dir, "--dir": dir, "-t": file, "--taskfile": file}},
+	"just": {kind: recipes, locations: places{"-f": file, "--justfile": file, "-d": dir, "--working-directory": dir},
+		info: set("--version", "-V", "--help", "-h", "-l", "--list", "--summary")},
+	"task": {kind: recipes, locations: places{"-d": dir, "--dir": dir, "-t": file, "--taskfile": file},
+		info: set("--version", "--help", "-h", "-l", "--list", "-a", "--list-all")},
 }
 
 // places are a grammar's location options.
 type places = map[string]location
 
-// packageReads are the package managers' subcommands that run no script.
-var packageReads = set("view", "info", "show", "ls", "list", "outdated", "why", "explain", "help", "search", "--version", "-v")
+// packageReads are the package managers' subcommands that run no script,
+// and packageInfo their options that print their version or help.
+var (
+	packageReads = set("view", "info", "show", "ls", "list", "outdated", "why", "explain", "help", "search")
+	packageInfo  = set("--version", "-v", "--help", "-h")
+)
 
 // pythons names a python, such as python3 or pypy3, whose grammar is
 // python's.
@@ -146,6 +157,15 @@ func (g grammar) command(args []string) int {
 		}
 	}
 	return min(i, len(args))
+}
+
+// informs reports whether args, a call's words after the program with its
+// redirections among them, are one of g's info alone, so the program runs
+// nothing. Any other word may be what it runs after printing (ruby -v
+// gen.rb), or turn the option into a value (perl -I -v); piped input, which
+// the caller checks, may be run too.
+func (g grammar) informs(args []string) bool {
+	return len(args) == 1 && g.info[args[0]]
 }
 
 // arity is how many words of value option takes: one for a location
