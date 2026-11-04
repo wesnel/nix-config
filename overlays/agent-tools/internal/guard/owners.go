@@ -146,17 +146,22 @@ func pathsOf(edits []editPath) []string {
 }
 
 // editPaths are what the edit checks read of in's call: the files it
-// writes, by a file tool or the shell, the runs of code the guard cannot
-// read among its shell commands, and a refusal for a shell command whose
-// writes it cannot place; shell edits are only those shellEdits names.
+// writes, by a file tool or a command line (shellCommand), the runs of
+// code the guard cannot read among its commands, and a refusal for a
+// command whose writes it cannot place; shell edits are only those
+// shellEdits names. Text typed into a running session is read where the
+// call is, as check reads it, and is a run of its own in a directory the
+// guard cannot know, since the session may be a shell anywhere.
 func editPaths(in input) ([]editPath, []unreadRun, string) {
-	switch in.ToolName {
-	case "Bash", "exec_command":
-		var args struct {
-			Command string `json:"command"`
+	if line, ok, _ := shellCommand(in.ToolName, in.ToolInput, in.Cwd); ok {
+		// An input that does not decode is denied before.
+		edits, runs, reason := shellEdits(line.text, line.dir)
+		if line.typed && reason == "" {
+			runs = append(runs, unreadRun{program: in.ToolName})
 		}
-		json.Unmarshal(in.ToolInput, &args)
-		return shellEdits(args.Command, in.Cwd)
+		return edits, runs, reason
+	}
+	switch in.ToolName {
 	case "Edit", "Write", "MultiEdit", "NotebookEdit", "apply_patch":
 		// An input that does not decode is denied before the fence is
 		// asked.

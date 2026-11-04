@@ -332,6 +332,37 @@ func TestPendingPlanReview(t *testing.T) {
 		}
 	})
 
+	// Monitor and local_shell run a command line as Bash does; write_stdin
+	// types into a session that may be a shell anywhere, so it is held
+	// whatever it types.
+	t.Run("other tools that run a command line", func(t *testing.T) {
+		for _, c := range []struct {
+			tool  string
+			input map[string]string
+			held  string // what the reason names, "" for not held
+		}{
+			{"Monitor", map[string]string{"command": "./gen.sh", "description": "d"}, "code the guard cannot read"},
+			{"Monitor", map[string]string{"command": "cd SCRATCH && ./probe.sh", "description": "d"}, ""},
+			{"local_shell", map[string]string{"command": "./gen.sh"}, "code the guard cannot read"},
+			{"local_shell", map[string]string{"command": "echo x > a.txt"}, "plan-reviewed"},
+			{"local_shell", map[string]string{"command": "./probe.sh", "working_directory": "SCRATCH"}, ""},
+			{"write_stdin", map[string]string{"chars": "ls\n"}, "a directory the guard cannot work out"},
+		} {
+			t.Run(c.tool+" "+c.input["command"]+c.input["chars"], func(t *testing.T) {
+				_, scratch, p, call := reviewing(t)
+				record(t, p, plans.DesignReviewStarted)
+				input := map[string]string{}
+				for k, v := range c.input {
+					input[k] = strings.ReplaceAll(v, "SCRATCH", scratch)
+				}
+				decision, reason := call("s1", c.tool, input)
+				if held := decision == "deny"; held != (c.held != "") || !strings.Contains(reason, c.held) {
+					t.Errorf("decision %q, reason %q, want held naming %q", decision, reason, c.held)
+				}
+			})
+		}
+	})
+
 	// Both sessions are listed in the plan; only the one that started the
 	// review is held.
 	t.Run("another session of the same plan allowed", func(t *testing.T) {

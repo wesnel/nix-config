@@ -324,6 +324,13 @@ func TestOwners(t *testing.T) {
 		{"owner's go -C fmt in its worktree, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"go -C LINKED fmt ./..."}}`, nil},
 		{"owner's cargo +nightly fmt in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"cargo +nightly fmt"}}`, []string{"LINKED"}},
 		{"owner's cargo --color fmt in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"cargo --color never fmt"}}`, []string{"LINKED"}},
+		// Every tool that runs a command line is fenced as Bash is.
+		{"owner's Monitor write into the main checkout", true, `{"tool_name":"Monitor","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"echo x > MAIN/a.go","description":"d"}}`, []string{"LINKED"}},
+		{"owner's local_shell touch in the main checkout", true, `{"tool_name":"local_shell","turn_id":"t","agent_id":"a1","cwd":"LINKED","tool_input":{"command":["touch","MAIN/a.go"]}}`, []string{"LINKED"}},
+		{"owner's local_shell touch in its working directory, the main checkout", true, `{"tool_name":"local_shell","turn_id":"t","agent_id":"a1","cwd":"LINKED","tool_input":{"command":["touch","a.go"],"working_directory":"MAIN"}}`, []string{"LINKED"}},
+		{"owner's local_shell touch in its worktree", false, `{"tool_name":"local_shell","turn_id":"t","agent_id":"a1","cwd":"MAIN","tool_input":{"command":["touch","a.go"],"working_directory":"LINKED"}}`, nil},
+		{"owner's write_stdin touch in the main checkout", true, `{"tool_name":"write_stdin","turn_id":"t","agent_id":"a1","cwd":"LINKED","tool_input":{"session_id":1,"chars":"touch MAIN/a.go\n"}}`, []string{"LINKED"}},
+		{"owner's write_stdin touch in its worktree", false, `{"tool_name":"write_stdin","turn_id":"t","agent_id":"a1","cwd":"LINKED","tool_input":{"session_id":1,"chars":"touch a.go\n"}}`, nil},
 		{"owner's env -C touch in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"env -C MAIN touch a.go"}}`, []string{"LINKED"}},
 		// The case's name, in its directories' paths, holds no =, which
 		// OWNERS reads as its separator.
