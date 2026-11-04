@@ -55,6 +55,11 @@ func newFixture(t *testing.T) *fixture {
 	f := &fixture{t: t, answers: []netip.Addr{publicAddr}, upstream: ln, refuse: map[netip.AddrPort]bool{}}
 	f.relay = &Relay{
 		Policy: policy,
+		// The host's interfaces are a fake so that the test does not
+		// depend on this machine's addresses.
+		LocalAddrs: func() ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr("9.9.9.9"), netip.MustParseAddr("2620:fe::fe")}, nil
+		},
 		// The resolver is a fake because a real lookup leaves the machine.
 		Resolve: func(_ context.Context, _ Name) ([]netip.Addr, error) {
 			f.resolved.Add(1)
