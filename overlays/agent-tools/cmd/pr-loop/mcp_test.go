@@ -310,12 +310,12 @@ func TestMCP(t *testing.T) {
 			if s.Type != "object" || s.AdditionalProperties == nil || *s.AdditionalProperties {
 				t.Errorf("%s: schema takes properties it does not name: %+v", tool.Name, s)
 			}
-			if wantWorktree := tool.Name != "github_profile"; slices.Contains(s.Required, "worktree") != wantWorktree {
+			if wantWorktree := !strings.HasPrefix(tool.Name, "github_"); slices.Contains(s.Required, "worktree") != wantWorktree {
 				t.Errorf("%s: requires worktree: %v, want %v", tool.Name, !wantWorktree, wantWorktree)
 			}
 		}
 		slices.Sort(names)
-		want := []string{"git_delegate", "git_delegate_ask", "git_delegate_settle", "git_delegate_show", "github_profile",
+		want := []string{"git_delegate", "git_delegate_ask", "git_delegate_settle", "git_delegate_show", "github_file", "github_pr_diff", "github_pr_view", "github_profile",
 			"pr_loop_ci", "pr_loop_draft", "pr_loop_end", "pr_loop_link", "pr_loop_logs", "pr_loop_next", "pr_loop_open", "pr_loop_push",
 			"pr_loop_reply", "pr_loop_request", "pr_loop_sign_check", "pr_loop_stack", "pr_loop_status", "pr_loop_threads",
 			"pr_loop_wait"}

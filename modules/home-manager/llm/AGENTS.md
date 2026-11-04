@@ -112,7 +112,10 @@ In Codex, no command reaches the gh login or the reviewers' logins, so
 underscores (`git delegate` itself is `git_delegate`, `pr-loop reply
 --from` is `pr_loop_reply`). Each flag is the argument of its name,
 `worktree` is the worktree's absolute path, and a file is a path in it.
-`gh-read` has no tool and cannot run there. Routine `agent-plan` operations
+Read GitHub PR descriptions and discussion with `github_pr_view`, complete
+diffs with `github_pr_diff`, and repository text at a commit with
+`github_file`; these take a repository name without a local checkout.
+Routine `agent-plan` operations
 use that server's preapproved `agent_plan_X` tools, dashes as underscores;
 `workstream new` and `workstream list` are `agent_plan_workstream_new` and
 `agent_plan_workstream_list`. Pass prose inline as `text` or `context`.
