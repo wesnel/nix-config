@@ -8,6 +8,7 @@
 package limaquic
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -54,6 +55,9 @@ type Config struct {
 	// CA signs the leaf the broker presents for each server name; the
 	// guest trusts it.
 	CA tls.Certificate
+	// Port is the port the guest's client names in :authority, the shim's
+	// UDP port; 0 is 443. An :authority may also leave it out.
+	Port uint16
 	// Upstream is how the broker reaches the servers.
 	Upstream Upstream
 	// Logger gets a line for each refusal and each relayed request, never
@@ -69,7 +73,9 @@ type Config struct {
 // Broker serves flows under one Config.
 type Broker struct {
 	servers   map[string]bool
-	endpoints map[string]bool
+	endpoints map[string]bool // host:port
+	hosts     map[string]bool // the endpoints' hosts
+	port      uint16
 	leaves    *leaves
 	resolver  Resolver
 	rootCAs   *x509.CertPool
@@ -83,6 +89,8 @@ func New(cfg Config) (*Broker, error) {
 	b := &Broker{
 		servers:   map[string]bool{},
 		endpoints: map[string]bool{},
+		hosts:     map[string]bool{},
+		port:      cfg.Port,
 		resolver:  cfg.Upstream.Resolver,
 		rootCAs:   cfg.Upstream.RootCAs,
 		dialPort:  cfg.dialPort,
@@ -103,7 +111,11 @@ func New(cfg Config) (*Broker, error) {
 		if err != nil || !endpointHost(host) || !validPort(port) {
 			return nil, fmt.Errorf("limaquic: endpoint %q is not host:port", endpoint)
 		}
-		b.endpoints[endpoint] = true
+		b.endpoints[net.JoinHostPort(host, port)] = true
+		b.hosts[host] = true
+	}
+	if b.port == 0 {
+		b.port = 443
 	}
 	var err error
 	if b.leaves, err = newLeaves(cfg.CA); err != nil {
@@ -261,11 +273,63 @@ type flowRelay struct {
 // relayedHeaders are the only request headers copied upstream.
 var relayedHeaders = []string{"Authorization", "Content-Type", "User-Agent"}
 
+// paths maps each :path the broker serves to the constant it relays to.
+var paths = map[string]string{pathSession: pathSession, pathDial: pathDial, pathGetHost: pathGetHost}
+
+// refuse answers 403 and logs why, with attrs that name no credential.
+func (f *flowRelay) refuse(w http.ResponseWriter, reason string, attrs ...any) {
+	f.broker.log.Warn("refused", append([]any{"reason", reason}, attrs...)...)
+	http.Error(w, "refused", http.StatusForbidden)
+}
+
 func (f *flowRelay) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	log := f.broker.log
+	b, log := f.broker, f.broker.log
 	sni := r.TLS.ServerName
-	target := &url.URL{Scheme: "https", Host: sni, Path: r.URL.Path}
-	upstream, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target.String(), r.Body)
+	if r.Method != http.MethodPost {
+		f.refuse(w, "method", "method", r.Method)
+		return
+	}
+	path, ok := paths[r.RequestURI]
+	if !ok {
+		f.refuse(w, "path", "path", r.RequestURI)
+		return
+	}
+	if !authorityMatches(r.Host, sni, b.port) {
+		f.refuse(w, "authority", "authority", r.Host)
+		return
+	}
+	var first []byte
+	switch path {
+	case pathDial:
+		raw, message, err := readFirst(r.Body)
+		if err != nil {
+			f.refuse(w, "first message", "path", path, "error", err)
+			return
+		}
+		host, port, err := parseDialReq(message)
+		endpoint := net.JoinHostPort(host, strconv.FormatUint(port, 10))
+		if err != nil || !b.endpoints[endpoint] {
+			f.refuse(w, "endpoint", "endpoint", endpoint)
+			return
+		}
+		first = raw
+	case pathGetHost:
+		raw, message, err := readFirst(r.Body)
+		if err != nil {
+			f.refuse(w, "first message", "path", path, "error", err)
+			return
+		}
+		host, err := parseGetHostReq(message)
+		if err != nil || !b.hosts[host] {
+			f.refuse(w, "host", "host", host)
+			return
+		}
+		first = raw
+	}
+
+	target := &url.URL{Scheme: "https", Host: sni, Path: path}
+	body := io.MultiReader(bytes.NewReader(first), r.Body)
+	upstream, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target.String(), body)
 	if err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
@@ -277,12 +341,12 @@ func (f *flowRelay) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := f.transport.RoundTrip(upstream)
 	if err != nil {
-		log.Warn("upstream failed", "path", r.URL.Path, "error", err)
+		log.Warn("upstream failed", "path", path, "error", err)
 		http.Error(w, "upstream unavailable", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
-	log.Info("relayed", "path", r.URL.Path, "status", resp.StatusCode)
+	log.Info("relayed", "path", path, "status", resp.StatusCode)
 	for name, values := range resp.Header {
 		if name != "Trailer" {
 			w.Header()[name] = values

@@ -38,7 +38,8 @@
     };
 
     # golang.org/x/mod, which reads go.mod and go.work as the go command
-    # does; quic-go, the Lima private-dial broker's HTTP/3; and, for its
+    # does; quic-go, the Lima private-dial broker's HTTP/3, and protobuf's
+    # wire format, in which it reads the guest's requests; and, for its
     # tests alone, the privatedial client and x/net's DNS messages. A change
     # of go.mod's requirements changes this hash.
     vendorHash = "sha256-eLdHNdoFmPy/ORO/vLAII0acRc12yqSb7gRUPV7HUmk=";
