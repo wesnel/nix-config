@@ -178,31 +178,26 @@ func judgeInput(in input, who role) (string, string) {
 // paths and this host's plans: why the call is denied, or the branch
 // hint for a file edit.
 func judgeEdits(in input) (string, string) {
-	paths, reason := ownerEditPaths(in, false)
+	edits, runs, reason := editPaths(in)
 	if reason != "" {
 		return reason, ""
 	}
-	var runs []unreadRun
-	if reviewHolds(in) && (in.ToolName == "Bash" || in.ToolName == "exec_command") {
-		var shell struct {
-			Command string `json:"command"`
-		}
-		json.Unmarshal(in.ToolInput, &shell)
-		runs = unreadRuns(shell.Command, in.Cwd)
+	if !reviewHolds(in) {
+		runs = nil
 	}
 	// nil where the plans cannot be loaded, confErr saying why.
 	var conf *plans.Config
 	var confErr error
-	if len(paths)+len(runs) > 0 {
+	if len(edits)+len(runs) > 0 {
 		c, err := plans.Load()
 		if conf, confErr = &c, err; err != nil {
 			conf = nil
 		}
 	}
-	if reason := checkOwner(in, paths, conf, confErr); reason != "" {
+	if reason := checkOwner(in, edits, conf, confErr); reason != "" {
 		return reason, ""
 	}
-	if reason := checkPlanReview(in, paths, runs, conf); reason != "" {
+	if reason := checkPlanReview(in, edits, runs, conf); reason != "" {
 		return reason, ""
 	}
 	// The hint runs git too, so it is judged with the rest.
