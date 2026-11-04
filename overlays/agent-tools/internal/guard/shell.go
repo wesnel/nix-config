@@ -139,9 +139,9 @@ func options(args []string, values map[string]bool) int {
 // written (env -C DIR), relative to where the line is; walkShell resolves
 // it. stdin are the files, as absolute paths, the command before it in a
 // pipeline reads or was itself fed, from which its standard input may
-// come; walkShell sets
-// them. flake is the local flake, as written, that nix run builds the
-// program from, which its words name only by its attribute.
+// come, and piped says a pipe feeds it at all; walkShell sets both. flake
+// is the local flake, as written, that nix run builds the program from,
+// which its words name only by its attribute.
 type call struct {
 	words    []string
 	expands  []bool
@@ -150,6 +150,7 @@ type call struct {
 	assigned []string
 	chdir    string
 	stdin    []string
+	piped    bool
 	flake    string
 }
 
@@ -161,7 +162,7 @@ type call struct {
 func (c call) named() call {
 	if i := leadingRedirections(c.words); i > 0 && i < len(c.words) {
 		return call{words: c.words[i:], expands: c.expands[i:], env: c.env, fed: c.fed, chdir: c.chdir, stdin: c.stdin,
-			flake: c.flake}
+			piped: c.piped, flake: c.flake}
 	}
 	return c
 }
@@ -178,11 +179,53 @@ func (c call) redirectedLast() call {
 	return n
 }
 
+// redirectedIn is c with the files its redirections name, but for a here
+// document or string, as absolute paths in line, the directory the shell
+// is in, and judged as fencePath judges them: the shell opens them there,
+// before a wrapper's chdir moves the command (`env -C X true > f` writes
+// f where the line is). A call with no chdir, or a line in a directory
+// the guard cannot tell, is c.
+func (c call) redirectedIn(line string) call {
+	if c.chdir == "" || line == "" {
+		return c
+	}
+	words, expands := slices.Clone(c.words), slices.Clone(c.expands)
+	for i := 0; i < len(words); {
+		op, target, n := redirection(words, i)
+		if n == 0 {
+			i++
+			continue
+		}
+		if p := fencePath(target, line); target != "" && !strings.HasSuffix(op, "<<") && !strings.HasSuffix(op, "<<<") &&
+			filepath.IsAbs(p) {
+			at := i + n - 1
+			if n == 1 {
+				p = op + p
+			}
+			words[at], expands[at] = p, false
+		}
+		i += n
+	}
+	c.words, c.expands = words, expands
+	return c
+}
+
 // visitor judges one call, or a script that a call runs, and returns a
 // denial's reason or "".
 type visitor struct {
 	call   func(c call) string
 	script func(text string) string
+	// in, where set, is the visitor for a command a wrapper runs in chdir
+	// (call.chdir), whose script runs there too.
+	in func(chdir string) visitor
+}
+
+// within is v for a command a wrapper runs in chdir, as in gives it, or v.
+func (v visitor) within(chdir string) visitor {
+	if chdir == "" || v.in == nil {
+		return v
+	}
+	return v.in(chdir)
 }
 
 // unwrap takes the wrappers, keywords and assignments off a simple command
@@ -434,7 +477,8 @@ func unwrapEnv(c call, v visitor) string {
 			opts = false
 			env = append(env, a)
 		default:
-			return unwrap(call{words: args[i:], expands: expands[i:], env: env, fed: c.fed, chdir: chdir, stdin: c.stdin}, v)
+			return unwrap(call{words: args[i:], expands: expands[i:], env: env, fed: c.fed, chdir: chdir, stdin: c.stdin},
+				v.within(chdir))
 		}
 	}
 	return v.call(call{words: []string{"env"}, expands: []bool{false}, env: env})
@@ -943,7 +987,9 @@ type cwds struct {
 // walkShell hands visit each simple command of a command line, run in dir,
 // with its wrappers off (unwrap) and its leading redirections on, which a
 // rule that goes by the program takes off with named, once for each
-// directory it may run in, or the one a wrapper's chdir moves it to. It
+// directory it may run in, or those a wrapper's chdir moves it to
+// (callDirs), where the scripts it runs inline run too, with its
+// redirections as the line's directory names them (redirectedIn). It
 // follows cd and pushd, handing each on before it moves the directories,
 // since its redirections open where it starts; it gives a call after a |
 // the files the call before it reads or was fed as its stdin; the scripts
@@ -960,31 +1006,30 @@ func walkShell(text, dir string, depth int, visit func(c call, cwd string) strin
 	// own standard input came from, which a command passes on (cat | cat,
 	// grep -v), for the call a pipe feeds.
 	var read, piped []string
-	v := visitor{
-		script: func(text string) string {
-			return inEach(w.here, func(cwd string) string { return walkShell(text, cwd, depth+1, visit) })
-		},
-		call: func(c call) string {
-			if len(c.words) == 0 {
-				return ""
-			}
-			c.stdin, read = piped, slices.Clone(piped)
-			if reason := inEach(w.here, func(cwd string) string {
-				cwd = callDir(c, cwd)
-				if reason := visit(c, cwd); reason != "" {
-					return reason
-				}
-				read = append(read, readFiles(c, cwd)...)
-				return ""
-			}); reason != "" {
-				return reason
-			}
-			if named := c.named(); !named.expands[0] && (named.words[0] == "cd" || named.words[0] == "pushd") {
-				w.cd(named, end)
-			}
+	fed := false // a pipe feeds the segment under way
+	visitCall := func(c call) string {
+		if len(c.words) == 0 {
 			return ""
-		},
+		}
+		c.stdin, c.piped = piped, fed
+		var reason string
+		if read, reason = visitIn(c, w.here, visit, slices.Clone(piped)); reason != "" {
+			return reason
+		}
+		if named := c.named(); !named.expands[0] && (named.words[0] == "cd" || named.words[0] == "pushd") {
+			w.cd(named, end)
+		}
+		return ""
 	}
+	var in func(chdir string) visitor
+	in = func(chdir string) visitor {
+		return visitor{in: in, call: visitCall, script: func(text string) string {
+			return inEach(w.here, func(line string) string {
+				return inEach(callDirs(chdir, line), func(cwd string) string { return walkShell(text, cwd, depth+1, visit) })
+			})
+		}}
+	}
+	v := in("")
 	texts, _, ends, _ := backgroundSegments(text)
 	for i, segment := range texts {
 		words, expands := split(segment)
@@ -997,13 +1042,31 @@ func walkShell(text, dir string, depth int, visit func(c call, cwd string) strin
 		if reason := unwrap(c, v); reason != "" {
 			return reason
 		}
-		piped = nil
-		if end == "|" {
+		piped, fed = nil, end == "|"
+		if fed {
 			piped = read
 		}
 		w.next(end)
 	}
 	return ""
+}
+
+// visitIn hands visit c in each directory it runs in when the line is in
+// one of lines (callDirs), with its redirections as the line's directory
+// names them (redirectedIn). It returns read with the files c reads there
+// added (readFiles), and the first reason visit gives, or "".
+func visitIn(c call, lines []string, visit func(c call, cwd string) string, read []string) ([]string, string) {
+	reason := inEach(lines, func(line string) string {
+		at := c.redirectedIn(line)
+		return inEach(callDirs(c.chdir, line), func(cwd string) string {
+			if reason := visit(at, cwd); reason != "" {
+				return reason
+			}
+			read = append(read, readFiles(at, cwd)...)
+			return ""
+		})
+	})
+	return read, reason
 }
 
 // inEach is the first reason f gives for one of dirs, or "".
@@ -1016,19 +1079,28 @@ func inEach(dirs []string, f func(cwd string) string) string {
 	return ""
 }
 
-// callDir is the directory c runs in when the line is in cwd: the one its
-// wrapper's chdir names, or cwd.
-func callDir(c call, cwd string) string {
-	if c.chdir == "" {
-		return cwd
+// callDirs are the directories a call runs in when the line is in cwd and
+// its wrapper's chdir (call.chdir) is chdir: the one chdir names, or cwd
+// without one. A chdir the guard cannot place, as one the shell expands,
+// gives "", for the rules that hold what runs where the guard cannot
+// tell, and cwd, where the owner fence judges it as it does a call with
+// no chdir.
+func callDirs(chdir, cwd string) []string {
+	if chdir == "" {
+		return []string{cwd}
 	}
-	return cdTarget(call{words: []string{"cd", c.chdir}, expands: []bool{false, strings.ContainsAny(c.chdir, "$`")}}, cwd)
+	to := cdTarget(call{words: []string{"cd", chdir}, expands: []bool{false, strings.ContainsAny(chdir, "$`")}}, cwd)
+	if to == "" && cwd != "" {
+		return []string{"", cwd}
+	}
+	return []string{to}
 }
 
-// readFiles are the files c, run in cwd, names as operands, as absolute
-// paths: where the standard input of the call a pipe feeds may come from.
+// readFiles are the files c, run in cwd, names as operands or as a <
+// redirection's, before its program or after, as absolute paths: where the
+// standard input of the call a pipe feeds may come from.
 func readFiles(c call, cwd string) []string {
-	n := c.named()
+	n := c.redirectedLast()
 	if len(n.words) < 2 {
 		return nil
 	}

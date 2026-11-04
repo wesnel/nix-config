@@ -82,6 +82,10 @@ func TestSessionEdits(t *testing.T) {
 		{name: "stage in another session worktree", session: "s2", command: "git add a.go", deny: true},
 		{name: "remove own worktree from main", session: "s1", target: "MAIN", association: "LINKED", command: "git worktree remove LINKED"},
 		{name: "remove another session worktree from main", session: "s2", target: "MAIN", association: "LINKED", command: "git worktree remove LINKED", deny: true},
+		// env -C to a directory the shell decides is judged where the line
+		// is too, as a call env runs without -C is.
+		{name: "commit through env -C to a variable from the main checkout", session: "s1", target: "MAIN", association: "LINKED", command: `env -C "$D" git commit -m x`, deny: true, reason: "This edits the repository's main checkout"},
+		{name: "commit in an inline script through env -C to a variable from the main checkout", session: "s1", target: "MAIN", association: "LINKED", command: `env -C "$D" bash -c 'git commit -m x'`, deny: true, reason: "This edits the repository's main checkout"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root, _ := filepath.EvalSymlinks(t.TempDir())
@@ -369,6 +373,10 @@ func TestOwners(t *testing.T) {
 		// OWNERS reads as its separator.
 		{"owner's env --chdir touch, its value attached, in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"env --chdir=../main touch a.go"}}`, []string{"LINKED"}},
 		{"owner's env -C touch in its worktree, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"env -C LINKED touch a.go"}}`, nil},
+		// The shell opens a redirection where the line is, before env -C
+		// moves the command.
+		{"owner's env -C into its worktree, redirected in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"env -C LINKED true > new-file"}}`, []string{"LINKED"}},
+		{"owner's env -C into the main checkout, redirected in its worktree", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"env -C MAIN true > new-file"}}`, nil},
 		{"owner's cargo +nightly fmt --check in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"cargo +nightly fmt --check"}}`, nil},
 		{"owner's go test profile in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"go test -coverprofile=MAIN/c.out ./..."}}`, []string{"LINKED"}},
 		{"owner's go test in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"go test -count=1 ./..."}}`, nil},
