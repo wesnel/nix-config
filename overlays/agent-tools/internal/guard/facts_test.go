@@ -132,6 +132,97 @@ func testPostLinksPlans(t *testing.T) {
 	}
 }
 
+// committedIn is the item and subject of each committed event in p's log.
+func committedIn(t *testing.T, p plans.Plan) []string {
+	t.Helper()
+	events, err := p.Events()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, e := range events {
+		if e.Kind == "committed" {
+			out = append(out, e.Item+" "+e.Commit)
+		}
+	}
+	return out
+}
+
+// Each commit a call made is logged once, whether git printed its summary
+// line or, given -q, nothing: a quiet commit is read from the reflog of the
+// call's worktree, while it is at most ten minutes old, and a call yields
+// at most as many commits there as it runs git commit.
+func testPostRecordsEachCommitOnce(t *testing.T) {
+	// old commits in dir, age before now, as the committer's date the
+	// reflog takes.
+	old := func(t *testing.T, dir, subject string, age time.Duration) {
+		t.Helper()
+		cmd := exec.Command("git", "-c", "user.name=T", "-c", "user.email=t@e", "commit", "-q", "--allow-empty", "-m", subject)
+		cmd.Dir = dir
+		cmd.Env = append(gitenv.Without(os.Environ()), "GIT_COMMITTER_DATE="+time.Now().Add(-age).Format(time.RFC3339))
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git commit: %v\n%s", err, out)
+		}
+	}
+	for _, c := range []struct {
+		name string
+		// calls runs the git commands of each call in the part's worktree
+		// and returns the calls' command lines and outputs.
+		calls func(t *testing.T, linked string) [][2]string
+		want  []string
+	}{
+		{"a quiet commit", func(t *testing.T, linked string) [][2]string {
+			command := "git commit -q --allow-empty -m 'Quiet'"
+			return [][2]string{
+				{command, gitOut(t, linked, "commit", "-q", "--allow-empty", "-m", "Quiet")},
+				// A later call that commits nothing claims it again.
+				{"git commit -q -m 'Nothing'", ""},
+			}
+		}, []string{"P1 Quiet"}},
+		// With no GitHub origin, a commit has no revision to log.
+		{"a quiet commit without an origin", func(t *testing.T, linked string) [][2]string {
+			gitIn(t, linked, "remote", "remove", "origin")
+			return [][2]string{
+				{"git commit -q --allow-empty -m 'Quiet'", gitOut(t, linked, "commit", "-q", "--allow-empty", "-m", "Quiet")},
+				{"git commit -q -m 'Nothing'", ""},
+			}
+		}, []string{"P1 Quiet"}},
+		{"a quiet and a loud commit chained", func(t *testing.T, linked string) [][2]string {
+			gitOut(t, linked, "commit", "-q", "--allow-empty", "-m", "Quiet")
+			loud := gitOut(t, linked, "commit", "--allow-empty", "-m", "Loud")
+			return [][2]string{{"git commit -q --allow-empty -m 'Quiet' && git commit --allow-empty -m 'Loud'", loud}}
+		}, []string{"P1 Quiet", "P1 Loud"}},
+		{"a loud commit beside a commit that made none", func(t *testing.T, linked string) [][2]string {
+			loud := gitOut(t, linked, "commit", "--allow-empty", "-m", "Loud")
+			return [][2]string{{"git commit --allow-empty -m 'Loud'; git commit -m 'Again'",
+				loud + "On branch part\nnothing to commit, working tree clean\n"}}
+		}, []string{"P1 Loud"}},
+		// The hook reads the reflog once the call ends, which may be
+		// minutes after its commit.
+		{"a quiet commit the call ran on for minutes after", func(t *testing.T, linked string) [][2]string {
+			old(t, linked, "Earlier", 5*time.Minute)
+			return [][2]string{{"git commit -q --allow-empty -m 'Earlier' && go test ./...", "ok\n"}}
+		}, []string{"P1 Earlier"}},
+		{"a commit older than ten minutes", func(t *testing.T, linked string) [][2]string {
+			old(t, linked, "Old", 11*time.Minute)
+			gitOut(t, linked, "commit", "-q", "--allow-empty", "-m", "New")
+			return [][2]string{{"git commit -q --allow-empty -m 'New'; git commit -q -m 'Nothing'", ""}}
+		}, []string{"P1 New"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			main, linked, p := planned(t)
+			gitIn(t, main, "config", "commit.gpgsign", "false")
+			gitIn(t, main, "remote", "add", "origin", "git@github.com:o/r.git")
+			for _, call := range c.calls(t, linked) {
+				postHook(t, claudeEvent("s1", linked, call[0], call[1]))
+			}
+			if got := committedIn(t, p); strings.Join(got, "\n") != strings.Join(c.want, "\n") {
+				t.Errorf("logged:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(c.want, "\n"))
+			}
+		})
+	}
+}
+
 // What a tool call did to the work, as git and pr-loop report it, reaches
 // the plan the session or worktree belongs to without the agent: commits
 // and pushes in its log, new worktrees, branches and pull requests in its
