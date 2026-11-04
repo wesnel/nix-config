@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/gitenv"
+	"github.com/wesnel/agent-tools/internal/gitgrant"
 )
 
 var (
@@ -53,6 +54,7 @@ type input struct {
 	// Set by Codex alone, whose hooks cannot ask the user.
 	TurnID    string `json:"turn_id"`
 	SessionID string `json:"session_id"`
+	ToolUseID string `json:"tool_use_id"`
 	// Set by Claude Code and Codex for a sub-agent's call alone.
 	AgentID string `json:"agent_id"`
 }
@@ -93,6 +95,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		in.Cwd, _ = os.Getwd()
 	}
 	hint := ""
+	var updatedInput map[string]any
 	reason := judged(func() string {
 		reason := checkSubagentStash(in)
 		// Claude Code's shell, where its sandbox's exclusions apply; Codex
@@ -122,8 +125,29 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				reason = readsTerminal
 			}
 		}
+		if reason == opsCall && in.TurnID != "" && in.ToolName == "mcp__agent_ops__git_stage" {
+			reason = ""
+		}
 		if reason == "" {
 			reason = checkOwner(in)
+		}
+		if reason == "" && in.TurnID != "" && in.ToolName == "mcp__agent_ops__git_stage" {
+			var args map[string]any
+			if json.Unmarshal(in.ToolInput, &args) != nil || args == nil {
+				return "The Git stage arguments could not be read."
+			}
+			delete(args, "authorization")
+			data, err := json.Marshal(args)
+			if err != nil {
+				return "The Git stage arguments could not be authorized."
+			}
+			token, err := gitgrant.Issue(gitgrant.Record{Tool: in.ToolName, Session: in.SessionID,
+				Agent: in.AgentID, Call: in.ToolUseID, Arguments: data})
+			if err != nil {
+				return "The Git stage authorization could not be issued."
+			}
+			args["authorization"] = token
+			updatedInput = args
 		}
 		// The hint runs git too, so it is judged with the rest.
 		if reason == "" && (in.ToolName == "Edit" || in.ToolName == "Write" || in.ToolName == "MultiEdit") {
@@ -136,7 +160,10 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		reason = ""
 	}
 	if reason == "" {
-		if hint != "" {
+		if updatedInput != nil {
+			json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]any{
+				"hookEventName": "PreToolUse", "permissionDecision": "allow", "updatedInput": updatedInput}})
+		} else if hint != "" {
 			json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]string{
 				"hookEventName": "PreToolUse", "additionalContext": hint}})
 		}

@@ -528,7 +528,7 @@ in {
           proxy = config.wgn.home.mcp-proxy;
           # Hidden whole, with everything under them.
           directories =
-            ["${home}/.config/gh" "${home}/.gnupg" "${home}/.ssh"]
+            ["${home}/.config/gh" "${home}/.gnupg" "${home}/.ssh" "${config.xdg.stateHome}/agent-tools/git-authorizations"]
             # gh keeps its token in the login keychain, which a sandboxed
             # command can otherwise read.
             ++ optional pkgs.stdenv.hostPlatform.isDarwin "${home}/Library/Keychains"

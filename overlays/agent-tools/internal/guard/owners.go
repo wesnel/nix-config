@@ -13,6 +13,19 @@ import (
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
+// AuthorizeGitStage rechecks the recorded caller's current worktree ownership.
+func AuthorizeGitStage(session, agent, worktree string) error {
+	data, err := json.Marshal(map[string]string{"worktree": worktree})
+	if err != nil {
+		return err
+	}
+	if reason := checkOwner(input{ToolName: "mcp__agent_ops__git_stage", ToolInput: data,
+		SessionID: session, AgentID: agent}); reason != "" {
+		return fmt.Errorf("Git stage ownership: %s", reason)
+	}
+	return nil
+}
+
 // checkOwner holds file edits, by a file tool or the shell, to the
 // worktrees the plans of this host give agents (`agent-plan own`). A
 // sub-agent edits only the worktrees it owns, scratch and the plans
@@ -30,6 +43,14 @@ func checkOwner(in input) string {
 	var paths []string
 	var reason string
 	switch in.ToolName {
+	case "mcp__agent_ops__git_stage":
+		var args struct {
+			Worktree string `json:"worktree"`
+		}
+		if json.Unmarshal(in.ToolInput, &args) != nil || !filepath.IsAbs(args.Worktree) {
+			return "The Git stage operation needs an absolute worktree path."
+		}
+		paths = append(paths, physical(args.Worktree))
 	case "Bash", "exec_command":
 		var args struct {
 			Command string `json:"command"`

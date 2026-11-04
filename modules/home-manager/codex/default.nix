@@ -247,9 +247,29 @@ with lib; let
   # Commands' temporary directory on macOS, in place of the per-user one,
   # which holds the decrypted secrets and is read-only to them.
   commandTmpdir = "${config.xdg.cacheHome}/codex/tmp";
+
+  # Codex installs itself under ~/.local/bin.
+  codexBin = "${config.home.homeDirectory}/.local/bin";
 in {
   options.wgn.home.codex = {
     enable = mkEnableOption "Enables my Codex skills for home-manager";
+
+    gitStage = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Whether agent_ops' `git_stage` stages: it then runs its Git child in
+        the sandbox of the Codex in ~/.local/bin, and installs the result.
+        Off, every call is refused before it touches the repository. The
+        tool prompts either way. Its safety rests on that sandbox keeping
+        the child out of the shared Git directory, which agent-tools'
+        `TestGitStageNative` checks when run on the machine outside any
+        sandbox, and on the guard's hook giving each call a grant bound to
+        its session and agent. Enable it only where that test passes and a
+        Codex session has staged through it from the main agent and from a
+        sub-agent.
+      '';
+    };
 
     quotaStop = mkOption {
       type = types.nullOr (types.ints.between 1 100);
@@ -593,6 +613,10 @@ in {
       opsServer = {
         command = getExe' config.wgn.home.llm.agentTools "pr-loop";
         args = ["mcp"];
+        # The Codex whose sandbox confines git_stage's Git child, by
+        # absolute path: a launcher found on PATH could be one a sandboxed
+        # command planted. Without it git_stage refuses (cfg.gitStage).
+        env = optionalAttrs cfg.gitStage {PR_LOOP_CODEX = "${codexBin}/codex";};
         env_vars = ["PR_LOOP_SESSION" "PR_LOOP_MODE"];
         default_tools_approval_mode = "prompt";
         tools = planApprovals;
@@ -727,8 +751,7 @@ in {
     # sandbox denies, so it runs here, outside every session.
     (mkIf (cfg.quotaStop != null) (let
       agentPlan = getExe' config.wgn.home.llm.agentTools "agent-plan";
-      # Codex installs itself under ~/.local/bin.
-      path = "${config.home.homeDirectory}/.local/bin:/usr/bin:/bin";
+      path = "${codexBin}:/usr/bin:/bin";
     in {
       assertions = [
         {
