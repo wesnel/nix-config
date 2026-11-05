@@ -287,7 +287,8 @@ Its `git_stage` tool stages literal paths in a task worktree the caller
 owns without giving commands write access to the shared Git metadata: the
 guard's hook adds a one-use grant to the call, the server checks it and
 the worktree's ownership again, stages in a private index and object
-directory with a Git child in Codex's sandbox, and installs only those
+directory with a Git child in a Codex sandbox profile of its own, run
+only once a probe in that sandbox cannot write the repository, and installs only those
 paths' entries and their verified blobs under `index.lock`. It refuses
 every call unless `wgn.home.codex.gitStage` is on; that option says what
 must pass on the machine before turning it on.

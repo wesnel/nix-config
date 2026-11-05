@@ -257,6 +257,9 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	if command == "git-stage-child" {
 		return gitStageChild(args, stdout, stderr)
 	}
+	if command == "git-stage-probe" {
+		return gitStageProbe(args, stdout, stderr)
+	}
 	if command == "mcp-status" {
 		return mcpStatus(args, stdout, stderr)
 	}

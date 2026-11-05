@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,43 @@ import (
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 )
+
+// gitStageProbe is run by gitStage, with args WORKSPACE TARGET..., in the
+// sandbox its child will run in, before the child: it prints "confined" only
+// when it can create a file in the directory WORKSPACE and is refused one in
+// each directory TARGET. Any other failure, such as a missing target, fails
+// it. It removes each file it creates.
+func gitStageProbe(args []string, stdout, stderr io.Writer) int {
+	if len(args) < 2 {
+		fmt.Fprintln(stderr, "the probe requires its workspace and at least one target")
+		return 1
+	}
+	create := func(dir string) error {
+		f, err := os.CreateTemp(dir, ".git-stage-probe-")
+		if err != nil {
+			return err
+		}
+		name := f.Name()
+		//nolint:gosec // the probe's own file, just created by CreateTemp in a directory gitStage names.
+		return errors.Join(f.Close(), os.Remove(name))
+	}
+	if err := create(args[0]); err != nil {
+		fmt.Fprintln(stderr, "the probe cannot write its workspace:", err)
+		return 1
+	}
+	for _, target := range args[1:] {
+		switch err := create(target); {
+		case err == nil:
+			fmt.Fprintln(stderr, "the sandbox lets git_stage's child write", target)
+			return 1
+		case !errors.Is(err, fs.ErrPermission):
+			fmt.Fprintln(stderr, "the probe could not test", target+":", err)
+			return 1
+		}
+	}
+	fmt.Fprintln(stdout, "confined")
+	return 0
+}
 
 // gitStageChild is git_stage's Git child, run by gitStage in Codex's
 // sandbox with args WORKTREE PRIVATE/index PRIVATE/objects PATH...: it
@@ -66,7 +104,9 @@ func gitStageChild(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	ctx := git.WithEnv(context.Background(), "GIT_LITERAL_PATHSPECS=1")
+	// Git looks for a repository's objects to recognise it; its sandbox
+	// hides the shared ones, so every command names the private ones.
+	ctx := git.WithEnv(context.Background(), "GIT_LITERAL_PATHSPECS=1", "GIT_OBJECT_DIRECTORY="+objectPath)
 	conversion, err := git.BytesContext(ctx, nil, "-C", worktree, "config", "--get", "core.autocrlf")
 	if err != nil {
 		var exit *exec.ExitError
@@ -98,11 +138,6 @@ func gitStageChild(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "unsupported Git metadata paths")
 			return 1
 		}
-	}
-	objects, err := os.Lstat(filepath.Join(dirs[1], "objects")) //nolint:gosec // Git's own directory, checked physical above; inspected only.
-	if err != nil || !objects.IsDir() {
-		fmt.Fprintln(stderr, "unsupported Git object directory")
-		return 1
 	}
 	//nolint:gosec // Git's own directory, checked physical above; inspected only.
 	if index, err := os.Lstat(filepath.Join(dirs[0], "index")); err == nil && !index.Mode().IsRegular() {
@@ -138,7 +173,7 @@ func gitStageChild(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "private index aliases the real index")
 		return 1
 	}
-	ctx = git.WithEnv(ctx, "GIT_INDEX_FILE="+indexPath, "GIT_OBJECT_DIRECTORY="+objectPath)
+	ctx = git.WithEnv(ctx, "GIT_INDEX_FILE="+indexPath)
 	sparse, err := git.BytesContext(ctx, nil, "-C", worktree, "config", "--bool", "--get", "index.sparse")
 	if err != nil {
 		var exit *exec.ExitError

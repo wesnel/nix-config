@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/wesnel/agent-tools/internal/gitstage"
 )
 
 // realTempDir is a temporary directory without symlinks on its path, which
@@ -78,28 +80,158 @@ func TestGitStageNative(t *testing.T) {
 		t.Fatalf("staged %q", got)
 	}
 	// The child's sandbox, as gitStage starts it: a workspace of its own,
-	// where it writes, and the shared Git directory, where it may not.
+	// where it writes, and the repository, where it may not.
+	layout, err := gitstage.Resolve(task)
+	if err != nil {
+		t.Fatal(err)
+	}
 	workspace := realTempDir(t)
-	touch := func(target string) error {
-		cmd := exec.Command(codex, "sandbox", "--", "/usr/bin/touch", target) // #nosec G204 -- the test's own fixture paths.
+	self, err := os.Executable()
+	if err == nil {
+		self, err = filepath.EvalSymlinks(self)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if codex, err = filepath.EvalSymlinks(codex); err != nil {
+		t.Fatal(err)
+	}
+	sandbox, err := gitStageSandbox(layout, workspace, codex, self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	confined := func(command ...string) error {
+		cmd := exec.Command(codex, append(sandbox, command...)...) // #nosec G204 -- the test's own fixture paths.
 		cmd.Dir = workspace
 		if data, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("%v: %s", err, data)
 		}
 		return nil
 	}
-	if err := touch(filepath.Join(workspace, "written")); err != nil {
+	if err := confined("/usr/bin/touch", filepath.Join(workspace, "written")); err != nil {
 		t.Fatalf("the sandbox could not write its own workspace, so the probes below show nothing: %v", err)
 	}
+	if err := confined("/bin/ls", filepath.Join(main, ".git", "refs")); err != nil {
+		t.Fatalf("the sandbox could not read the repository's refs, so the read probe below shows nothing: %v", err)
+	}
 	for _, target := range []string{
+		filepath.Join(task, "probe"),
+		filepath.Join(main, ".git", "probe"),
 		filepath.Join(main, ".git", "objects", "probe"),
 		filepath.Join(main, ".git", "worktrees", "task", "probe"),
 		filepath.Join(main, ".git", "refs", "heads", "probe"),
 	} {
-		err := touch(target)
+		err := confined("/usr/bin/touch", target)
 		if _, statErr := os.Lstat(target); err == nil || statErr == nil {
 			t.Errorf("a sandboxed command wrote %s (%v)", target, err)
 		}
+	}
+	if err := confined("/bin/ls", filepath.Join(main, ".git", "objects")); err == nil {
+		t.Error("a sandboxed command read the shared objects")
+	}
+}
+
+// readOnlyDir is a new directory no one may create files in, as Codex's
+// sandbox makes the repository for git_stage's probe.
+func readOnlyDir(t *testing.T) string {
+	t.Helper()
+	dir := realTempDir(t)
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	return dir
+}
+
+func TestGitStageProbe(t *testing.T) {
+	probe := func(args ...string) (int, string, string) {
+		var out, stderr bytes.Buffer
+		code := run("git-stage-probe", args, strings.NewReader(""), &out, &stderr)
+		return code, out.String(), stderr.String()
+	}
+	t.Run("reports confined when only its workspace takes writes", func(t *testing.T) {
+		workspace := realTempDir(t)
+		code, out, stderr := probe(workspace, readOnlyDir(t), readOnlyDir(t))
+		if code != 0 || out != "confined\n" {
+			t.Fatalf("exit %d, %q: %s", code, out, stderr)
+		}
+		if left, _ := os.ReadDir(workspace); len(left) != 0 {
+			t.Fatalf("probe left %v in its workspace", left)
+		}
+	})
+	t.Run("refuses a target it can write, and removes what it wrote", func(t *testing.T) {
+		writable := realTempDir(t)
+		code, out, stderr := probe(realTempDir(t), readOnlyDir(t), writable)
+		if code == 0 || out != "" || !strings.Contains(stderr, "lets git_stage's child write "+writable) {
+			t.Fatalf("exit %d, %q: %s", code, out, stderr)
+		}
+		if left, _ := os.ReadDir(writable); len(left) != 0 {
+			t.Fatalf("probe left %v in %s", left, writable)
+		}
+	})
+	t.Run("refuses when it cannot write its workspace", func(t *testing.T) {
+		code, out, stderr := probe(readOnlyDir(t), readOnlyDir(t))
+		if code == 0 || out != "" || !strings.Contains(stderr, "workspace") {
+			t.Fatalf("exit %d, %q: %s", code, out, stderr)
+		}
+	})
+	t.Run("refuses a target that does not exist", func(t *testing.T) {
+		missing := filepath.Join(realTempDir(t), "missing")
+		code, out, stderr := probe(realTempDir(t), missing)
+		if code == 0 || out != "" || !strings.Contains(stderr, missing) {
+			t.Fatalf("exit %d, %q: %s", code, out, stderr)
+		}
+	})
+}
+
+// TestGitStageSandbox checks the profile git_stage's child runs in, as
+// Codex is given it; TestGitStageNative checks that Codex enforces it.
+func TestGitStageSandbox(t *testing.T) {
+	layout := gitstage.Layout{Worktree: "/w/task", GitDir: "/r/.git/worktrees/task", CommonDir: "/r/.git"}
+	args, err := gitStageSandbox(layout, "/p/private", "/bin/codex", "/bin/pr-loop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := strings.Join(args, " ")
+	for _, want := range []string{
+		"sandbox ", " -P git-stage ", " -C /p/private --",
+		`":workspace_roots"={"."="write"}`,
+		`"/w/task"="read"`, `"/r/.git/worktrees/task"="read"`,
+		`"/r/.git/HEAD"="read"`, `"/r/.git/config"="read"`, `"/r/.git/refs"="read"`,
+		`"/r/.git/packed-refs"="read"`, `"/r/.git/info"="read"`,
+		`"/bin/codex"="read"`, `"/bin/pr-loop"="read"`, `"/private/tmp"="deny"`,
+		// Denied, not only left out, in case a read above holds it.
+		`"/r/.git/objects"="deny"`,
+	} {
+		if !strings.Contains(line, want) {
+			t.Errorf("profile lacks %s:\n%s", want, line)
+		}
+	}
+	if n := strings.Count(line, `="write"`); n != 1 {
+		t.Errorf("profile grants %d writes, want only its workspace:\n%s", n, line)
+	}
+	for _, never := range []string{`"/r/.git/objects"="read"`, `"/r/.git"=`, `"/r"=`} {
+		if strings.Contains(line, never) {
+			t.Errorf("profile names %s:\n%s", never, line)
+		}
+	}
+	if args[len(args)-1] != "--" {
+		t.Errorf("profile does not end its options: %q", args[len(args)-1])
+	}
+	// A TOML table holds each key once, or Codex cannot load the profile.
+	t.Setenv("TMPDIR", "/tmp")
+	if args, err = gitStageSandbox(layout, "/p/private", "/bin/codex", "/bin/pr-loop"); err != nil {
+		t.Fatal(err)
+	}
+	if line = strings.Join(args, " "); strings.Count(line, `"/tmp"=`) != 1 {
+		t.Errorf("profile names /tmp more than once:\n%s", line)
+	}
+	if _, err := gitStageSandbox(layout, "/p/private", "/tmp", "/bin/pr-loop"); err == nil {
+		t.Error("a path both read and denied reached Codex's configuration")
+	}
+	layout.Worktree = "/w/task\n"
+	if _, err := gitStageSandbox(layout, "/p/private", "/bin/codex", "/bin/pr-loop"); err == nil {
+		t.Error("a path with a control character reached Codex's configuration")
 	}
 }
 
@@ -266,25 +398,6 @@ func TestGitStageChild(t *testing.T) {
 		data, err = cmd.Output()
 		if err != nil || string(data) != "a\nb\nc\n" {
 			t.Fatalf("real index changed: %q: %v", data, err)
-		}
-	})
-	t.Run("refuses a symlinked object directory", func(t *testing.T) {
-		f := newMCPFixture(t)
-		objects := filepath.Join(f.repo, ".git", "objects")
-		outside := filepath.Join(t.TempDir(), "objects")
-		if err := os.Rename(objects, outside); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink(outside, objects); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(f.repo, "code.txt"), []byte("new content\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		var out, stderr bytes.Buffer
-		code := run("git-stage-child", privateStageArgs(t, f.repo, "code.txt"), strings.NewReader(""), &out, &stderr)
-		if code == 0 || !strings.Contains(stderr.String(), "object directory") {
-			t.Fatalf("stage with symlinked objects: exit %d: %s", code, stderr.String())
 		}
 	})
 	t.Run("stages a deleted tracked file", func(t *testing.T) {

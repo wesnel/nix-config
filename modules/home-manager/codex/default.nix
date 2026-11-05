@@ -259,10 +259,12 @@ in {
       default = false;
       description = ''
         Whether agent_ops' `git_stage` stages: it then runs its Git child in
-        the sandbox of the Codex in ~/.local/bin, and installs the result.
-        Off, every call is refused before it touches the repository. The
-        tool prompts either way. Its safety rests on that sandbox keeping
-        the child out of the shared Git directory, which agent-tools'
+        a sandbox profile of its own, which may write only a private
+        directory and never read the shared objects, after a probe in that
+        sandbox shows it cannot write the repository, and installs the
+        result. Off, every call is refused before it touches the repository.
+        The tool prompts either way. Its safety rests on Codex enforcing
+        that profile, which agent-tools'
         `TestGitStageNative` checks when run on the machine outside any
         sandbox, and on the guard's hook giving each call a grant bound to
         its session and agent. Enable it only where that test passes and a
