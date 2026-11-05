@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/wesnel/agent-tools/internal/limaegress"
 )
 
 // configJSON is a configuration as Nix renders one, with the probe's
@@ -56,14 +58,12 @@ func TestParseConfig(t *testing.T) {
 		if c.Connect != netip.MustParseAddrPort("192.168.5.100:3128") || c.QUIC != netip.MustParseAddrPort("192.168.5.101:443") {
 			t.Errorf("guestfwd endpoints %v %v", c.Connect, c.QUIC)
 		}
-		if !slices.Equal(c.QUICServers, []string{"us.quic.connect-endpoint.ngrok.com"}) || !slices.Equal(c.Endpoints, []string{"db.internal:5432"}) {
+		if !slices.Equal(c.QUICServers, []limaegress.Name{"us.quic.connect-endpoint.ngrok.com"}) ||
+			!slices.Equal(c.Endpoints, []limaegress.Endpoint{{Host: "db.internal", Port: 5432}}) {
 			t.Errorf("private dial: %v %v", c.QUICServers, c.Endpoints)
 		}
 		if !c.Egress.Allows("github.com") || c.Egress.Allows("us.quic.connect-endpoint.ngrok.com") {
 			t.Error("the egress policy is not the one configured, with its QUIC servers denied")
-		}
-		if !slices.Equal(c.Firmware(), []string{"/private/tmp/claude/limaprobe/share/qemu", "/nix/store/59hhc8zlvdlbcls7dkbhkhw9afwb6mps-qemu-11.1.2/share/qemu"}) {
-			t.Errorf("firmware directories %v", c.Firmware())
 		}
 	})
 
@@ -81,6 +81,8 @@ func TestParseConfig(t *testing.T) {
 		{"a space, which would split the guestfwd command", func(m map[string]any) { m["limaHome"] = "/tmp/a b" }, "limaHome"},
 		{"a quote in a denied path, which would end the Seatbelt string", func(m map[string]any) { m["deniedReads"] = []any{`/a"b`} }, "deniedReads"},
 		{"a relative denied path", func(m map[string]any) { m["deniedReads"] = []any{"~/.ssh"} }, "deniedReads"},
+		{"a ? in a denied path, which the profile would not translate", func(m map[string]any) { m["deniedReads"] = []any{"/Users/wgn/.ssh/id_?sa"} }, "deniedReads"},
+		{"a [ in a denied path, which the profile would not translate", func(m map[string]any) { m["deniedReads"] = []any{"/Users/wgn/[ab]"} }, "deniedReads"},
 		{"an instance name with a slash", func(m map[string]any) { m["instance"] = "a/b" }, "instance"},
 		{"a workdir leaving the guest home", func(m map[string]any) { m["workdir"] = "../root" }, "workdir"},
 		{"an absolute workdir", func(m map[string]any) { m["workdir"] = "/root" }, "workdir"},
@@ -111,4 +113,26 @@ func TestParseConfig(t *testing.T) {
 			t.Fatal("trailing data parsed")
 		}
 	})
+}
+
+func TestParseGuardConfig(t *testing.T) {
+	guard := `{"home":"/Users/wgn","limaHome":"/private/tmp/lima-probe","instance":"probe",
+	"qemu":"/nix/store/59hhc8zlvdlbcls7dkbhkhw9afwb6mps-qemu-11.1.2/bin/qemu-system-aarch64",
+	"deniedReads":["/Users/wgn/.ssh"],"connect":"192.168.5.100:3128","quic":"192.168.5.101:443"`
+	g, err := ParseGuardConfig([]byte(guard + "}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.InstanceDir() != "/private/tmp/lima-probe/probe" || g.QUIC != netip.MustParseAddrPort("192.168.5.101:443") {
+		t.Fatalf("parsed %+v", g)
+	}
+	// The guard's file names no guard, and nothing it does not need.
+	for _, extra := range []string{`,"guard":"/nix/store/g/bin/qemu-system-aarch64"`, `,"limactl":"/nix/store/l/bin/limactl"`} {
+		if _, err := ParseGuardConfig([]byte(guard + extra + "}")); err == nil || !strings.Contains(err.Error(), "unknown field") {
+			t.Errorf("%s: err = %v; want an unknown field", extra, err)
+		}
+	}
+	if _, err := ParseGuardConfig([]byte(strings.Replace(guard, `"/Users/wgn"`, `"/Users/a b"`, 1) + "}")); err == nil {
+		t.Error("a home with a space parsed")
+	}
 }

@@ -101,21 +101,9 @@ func runEgress(ctx context.Context, mode string, c *limavm.Config, guest net.Con
 		if err != nil {
 			return err
 		}
-		servers := make([]limaegress.Name, len(c.QUICServers))
-		for i, s := range c.QUICServers {
-			servers[i] = limaegress.Name(s)
-		}
-		var endpoints []limaegress.Endpoint
-		for _, s := range c.Endpoints {
-			e, err := limaegress.ParseEndpoint(fmt.Sprint(s))
-			if err != nil {
-				return err
-			}
-			endpoints = append(endpoints, e)
-		}
 		broker, err := limaquic.New(limaquic.Config{
-			Servers:   servers,
-			Endpoints: endpoints,
+			Servers:   c.QUICServers,
+			Endpoints: c.Endpoints,
 			CA:        ca,
 			Logger:    slog.New(slog.NewTextHandler(log, nil)),
 		})
