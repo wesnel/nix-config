@@ -32,3 +32,6 @@ Make each of these while planning:
   directory present or absent), name every code path or command that
   creates it; if anything besides the event the condition is meant to
   detect creates it, the inference is wrong.
+- For each helper whose behaviour the change alters, list its callers and
+  the comments beside them that describe the old behaviour (a limit, a
+  directory, an order), and plan to update each.

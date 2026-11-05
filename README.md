@@ -920,6 +920,7 @@ has the hook alone:
 | Shell edits of tracked files, rm where trash is | hook | hook |
 | Guard-off writes (settings, hooks, agent-tools config) | hook; sandbox for ~/.claude | hook |
 | Plan logs and files | sandbox denyWrite (Bash), Edit deny rules and hook (file tools) | hook |
+| Edits while a design review the main thread started is unanswered (outside plans and scratch) | hook, from the record agent-plan remind makes when the main thread starts a design-reviewer in the background or one returns in the foreground | none: no design-reviewer type to record |
 | Destroying home, root, store, keys | sandbox and hook | hook |
 | Kills (protected processes, patterns, others' PIDs) | hook | hook |
 | Long foreground sleeps | hook | hook |

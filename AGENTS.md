@@ -6,6 +6,13 @@ sit under `wgn.darwin`, `wgn.nixos` and `wgn.home`. Packages are in `overlays/`;
 the agent tooling is the Go module `overlays/agent-tools`. `ngrok` is the
 aarch64-darwin work Mac; `devbox` is an x86_64-linux Home Manager machine.
 
+## What belongs here
+
+Agent configuration here serves every project, or nix-config itself. A rule,
+hook or setting for one other project goes in that project, unless it is
+unavoidable here; where an agent cannot write it there, it hands the change
+to the operator as the global AGENTS.md's "Commands the operator runs" says.
+
 ## Checking a change
 
 Run these from the repository root unless a row names a directory. Nix sees
