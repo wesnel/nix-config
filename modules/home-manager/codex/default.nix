@@ -305,6 +305,7 @@ in {
             # so the guard holds them, as it does in Claude Code's sandbox
             # beyond its agents.json deny.
             // {${sandboxLists.worktrees} = "write";}
+            // genAttrs sandboxLists.writableRoots (_: "write")
             # On macOS sops-nix decrypts under the per-user temporary
             # directory, where a command could otherwise rewrite the git.inc
             # template git includes; commands write commandTmpdir instead.
