@@ -75,8 +75,9 @@ red, and the failure points at what broke. Everything below follows from that.
 
 - A test touches nothing outside what it set up: only its own temporary
   directories, never the home directory, global or system configuration,
-  or the test binary itself. Point every path the code reads from the
-  environment (`HOME`, `XDG_*`, a config path) into the test's directory.
+  or the test binary itself. Give the code under test an environment of its
+  own, with every path it reads (`HOME`, `XDG_*`, a config path) inside the
+  test's directory.
 - No internet. A network dependency gets a local stand-in the test starts,
   such as an `httptest` server, with its address injected into the code.
 - Never rely on something being unreachable or absent: a closed port, a
@@ -136,10 +137,28 @@ red, and the failure points at what broke. Everything below follows from that.
   a channel, a callback, a hook, an event in its output. If it gives none,
   add one; a test that needs it is a caller that needs it. Drive time with an
   injected clock.
+- Assume nothing about how long anything takes: a test passes on a slow,
+  loaded host. It asserts no real duration, tunes no delay and measures no
+  elapsed time; time the test itself controls, through an injected clock or a
+  deadline it reads without waiting for it, is fine. A timeout exists only to
+  fail a test that is truly deadlocked, so set it in minutes, far above any
+  run's length.
 - Each test sets up what it needs and leaves nothing behind. None depends on
   another having run first; they pass alone, in any order and in parallel.
   Share setup only when it is too slow to repeat and read-only once built,
   and say so where it is defined.
+- Each test shares no mutable state with another, so each is safe to run in
+  parallel (`t.Parallel()` in Go). Process-wide state is shared: environment
+  variables, the working directory, signal dispositions, the umask and
+  package-level variables. A test changes none of them. Code under test takes
+  the environment, working directory and clock it uses as parameters (a value
+  carried in the call's context counts), and the test passes values of its
+  own. In Go, `t.Setenv`, `t.Chdir` and
+  `os.Setenv` in a test, and a test that cannot call `t.Parallel()`, are
+  findings. Where code reads the process environment itself, change it to
+  take one. A test of a process-level behaviour, such as signal handling or a
+  `main` function, runs the program as a child process with an environment
+  of its own.
 - Seed or inject every source of randomness, time and environment the
   result depends on.
 
