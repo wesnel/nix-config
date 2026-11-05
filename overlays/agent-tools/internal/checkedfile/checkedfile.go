@@ -20,29 +20,37 @@ import (
 // The reasons Read and Open refuse a file, wrapped with its path; each
 // caller words its own refusal from them.
 var (
+	ErrNotRegular = errors.New("is not a regular file")
 	ErrLinked     = errors.New("has other hard links")
 	ErrCredential = errors.New("is a credential")
 	ErrOutside    = errors.New("is outside every root")
 )
 
-// Read is the contents of the file at path, relative to the process's
-// directory or absolute, if Open takes it, it is not a credential
-// (guard.IsCredential) by its name or by the opened path, and the
-// opened path is in one of roots, each an absolute directory whose
-// symlinks are resolved before the check. A root that is not absolute
-// takes nothing, since an empty one would take every path.
+// Read is the contents of the file at path, if OpenIn takes it from roots.
 func Read(path string, roots []string) ([]byte, error) {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return nil, err
-	}
-	f, real, err := Open(abs)
+	f, _, err := OpenIn(path, roots)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	if guard.IsCredential(abs) || guard.IsCredential(real) {
-		return nil, fmt.Errorf("%s %w", path, ErrCredential)
+	return io.ReadAll(f)
+}
+
+// OpenIn opens the file at path, relative to the process's directory or
+// absolute, and returns it with the path the kernel has for it, as Open
+// does, if Open takes it, it is not a credential (guard.IsCredential) by
+// its name or by the opened path, and the opened path is in one of roots,
+// each an absolute directory whose symlinks are resolved before the check.
+// A root that is not absolute takes nothing, since an empty one would take
+// every path.
+func OpenIn(path string, roots []string) (*os.File, string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, "", err
+	}
+	f, real, err := Open(abs)
+	if err != nil {
+		return nil, "", err
 	}
 	within := func(root string) bool {
 		if !filepath.IsAbs(root) {
@@ -53,10 +61,17 @@ func Read(path string, roots []string) ([]byte, error) {
 		}
 		return real == root || strings.HasPrefix(real, strings.TrimSuffix(root, "/")+"/")
 	}
-	if !slices.ContainsFunc(roots, within) {
-		return nil, fmt.Errorf("%s %w", path, ErrOutside)
+	switch {
+	case guard.IsCredential(abs) || guard.IsCredential(real):
+		err = fmt.Errorf("%s %w", path, ErrCredential)
+	case !slices.ContainsFunc(roots, within):
+		err = fmt.Errorf("%s %w", path, ErrOutside)
 	}
-	return io.ReadAll(f)
+	if err != nil {
+		f.Close()
+		return nil, "", err
+	}
+	return f, real, nil
 }
 
 // Open opens path to read, if it is a regular file, and returns it with
@@ -90,7 +105,7 @@ func regularOnly(path string, info os.FileInfo) error {
 	st, ok := info.Sys().(*syscall.Stat_t)
 	switch {
 	case !info.Mode().IsRegular():
-		return fmt.Errorf("%s is not a regular file", path)
+		return fmt.Errorf("%s %w", path, ErrNotRegular)
 	case !ok || st.Nlink > 1:
 		return fmt.Errorf("%s %w", path, ErrLinked)
 	}
