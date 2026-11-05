@@ -9,6 +9,8 @@
 // managed home.
 // lima-mcp lima-egress connect|quic --config FILE relays one guest
 // connection, as the managed VM's QEMU runs it for each.
+// lima-mcp export --outbox DIR NAME, run by a session in its repository,
+// writes the bundle lima_dev_import NAME carries into the managed VM.
 package main
 
 import (
@@ -37,6 +39,13 @@ func main() {
 		// Its stderr is the guest's connection: an error is logged, if
 		// anywhere, in the egress log.
 		if egressMain(os.Args[2:], os.Stdin) != nil {
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "export" {
+		if err := exportMain(context.Background(), os.Args[2:], "."); err != nil {
+			fmt.Fprintln(os.Stderr, "lima-mcp export:", err)
 			os.Exit(1)
 		}
 		return
