@@ -49,6 +49,15 @@ in {
       enable = true;
     };
 
+    # A GUI Emacs launched from Finder or `open` inherits launchd's soft limit
+    # of 256 descriptors, and kqueue spends one per watched file.  Only a
+    # system-wide `launchctl limit` reaches apps launched that way.
+    launchd.daemons.limit-maxfiles.serviceConfig = {
+      Label = "limit.maxfiles";
+      ProgramArguments = ["/bin/launchctl" "limit" "maxfiles" "65536" "524288"];
+      RunAtLoad = true;
+    };
+
     launchd.user.agents.emacs.serviceConfig.EnvironmentVariables.PATH = mkForce (
       replaceStrings ["$HOME" "$USER"] [homeDirectory username]
       config.launchd.user.agents.emacs.path

@@ -36,6 +36,7 @@ commands in the README's "updating systems".
 | `modules/darwin`, `machines/darwin`, `overlays`, `flake.nix`, `flake.lock` | `nix build --no-link .#darwinConfigurations.ngrok.system`, which also builds agent-tools and runs its tests in the Nix sandbox |
 | `modules/home-manager/mcp-proxy` | `nix build --no-link .#checks.aarch64-darwin.mcp-proxy-restart`: `mcp-proxy-authorize`'s restart, run with a fake launchctl, loads the plist of an agent loaded in no domain |
 | `overlays/pdfm-mcp`, `overlays/agent-tools/internal/guard/mcp.json` or its Parallels tool fixture, `modules/home-manager/mcp-proxy`, `modules/home-manager/llm`, `modules/home-manager/codex`, `modules/home-manager/claude`, `machines/darwin/ngrok`, or `flake.nix`'s Parallels check | `nix build --no-link .#checks.aarch64-darwin.parallels-mcp`: the packaged server's handshake and tool filter with fake Parallels CLIs, and ngrok's generated proxy/client registration with native approval and isolated client files |
+| `modules/darwin/emacs`, or the `emacs-maxfiles` check in `flake.nix` | `nix build --no-link .#checks.aarch64-darwin.emacs-maxfiles`: the ngrok Mac runs `launchctl limit maxfiles 65536 524288` at load, so a GUI Emacs does not get launchd's default of 256 descriptors |
 | a `.nix` file | `nix fmt -- <file>` formats the whole file; commit only the formatting of lines you changed |
 
 Run the checks by name: `nix flake check` also evaluates the NixOS machines,
