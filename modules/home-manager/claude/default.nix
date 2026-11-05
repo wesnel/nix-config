@@ -159,6 +159,12 @@ with lib; let
   # A clone's agent settings, in its common git directory, wherever the
   # clone is (internal/repos).
   agentSettingsWrites = "/**/.git/info/agents.json";
+  # The sandbox's own deny: a write rule's allow cannot reopen a path its
+  # deny covers (the profile lists denies last), so a test fixture's
+  # agents.json under the session's temporary directory, outside the home
+  # directory, stays writable only if the glob does not reach it. The Edit
+  # deny and the guard still cover every clone.
+  agentSettingsSandboxWrites = "${config.home.homeDirectory}/**/.git/info/agents.json";
   mcpProxy = config.wgn.home.mcp-proxy;
   plans = config.wgn.home.llm.plans;
   agentPlan = getExe' config.wgn.home.llm.agentTools "agent-plan";
@@ -613,10 +619,11 @@ with lib; let
 
       denyWrite =
         sandboxDeniedWrites
-        # Every clone's agent settings, which the operator alone writes. Only
-        # macOS's sandbox takes a wildcard in a write list; Linux's skips the
-        # entry, which leaves the guard to refuse the write there.
-        ++ optional darwin agentSettingsWrites;
+        # The agent settings of every clone in the home directory, which the
+        # operator alone writes. Only macOS's sandbox takes a wildcard in a
+        # write list; Linux's skips the entry, which leaves the guard to
+        # refuse the write there.
+        ++ optional darwin agentSettingsSandboxWrites;
     };
   };
 in {
