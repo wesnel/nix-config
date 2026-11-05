@@ -19,6 +19,9 @@ func TestSessionEdits(t *testing.T) {
 		name, session, target, branch, command, association, file, reason string
 		noPlan, newer, sessionOnly, fixture, reclaim                      bool
 		deny                                                              bool
+
+		// A part of the reason that must not appear.
+		without string
 	}{
 		{name: "own task worktree", session: "s1"},
 		{name: "remove requires absolute worktree path", session: "s1", command: "git worktree remove linked", deny: true},
@@ -61,6 +64,12 @@ func TestSessionEdits(t *testing.T) {
 		{name: "stage in another session worktree", session: "s2", command: "git add a.go", deny: true},
 		{name: "remove own worktree from main", session: "s1", target: "MAIN", association: "LINKED", command: "git worktree remove LINKED"},
 		{name: "remove another session worktree from main", session: "s2", target: "MAIN", association: "LINKED", command: "git worktree remove LINKED", deny: true},
+		// The guard judges a git command after a command substitution in
+		// the directory the line started in as well as where the cd took
+		// it, so it still refuses; the refusal names the form it accepts.
+		{name: "commit after cd into own worktree and a substitution points at git -C", session: "s1", target: "MAIN", association: "LINKED", command: `cd LINKED && before=$(git rev-parse HEAD) && git -c commit.gpgsign=false commit --allow-empty -m x`, deny: true, reason: "`git -C 'LINKED' ...`", without: "Create a task worktree"},
+		{name: "commit after cd into the main checkout and a substitution keeps the worktree advice", session: "s1", command: `cd MAIN && before=$(git rev-parse HEAD) && git commit --allow-empty -m x`, deny: true, reason: "This edits the repository's main checkout. Create a task worktree", without: "git -C"},
+		{name: "commit in the main checkout keeps the worktree advice", session: "s1", target: "MAIN", association: "LINKED", command: "git commit --allow-empty -m x", deny: true, reason: "This edits the repository's main checkout. Create a task worktree", without: "git -C"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root, _ := filepath.EvalSymlinks(t.TempDir())
@@ -166,8 +175,57 @@ func TestSessionEdits(t *testing.T) {
 			if denied := strings.Contains(out.String(), `"deny"`); denied != tc.deny {
 				t.Fatalf("deny=%v, want %v: %s", denied, tc.deny, out.String())
 			}
-			if tc.reason != "" && !strings.Contains(out.String(), tc.reason) {
-				t.Fatalf("want reason containing %q: %s", tc.reason, out.String())
+			if reason := paths.Replace(tc.reason); reason != "" && !strings.Contains(out.String(), reason) {
+				t.Fatalf("want reason containing %q: %s", reason, out.String())
+			}
+			if without := paths.Replace(tc.without); without != "" && strings.Contains(out.String(), without) {
+				t.Fatalf("want reason without %q: %s", without, out.String())
+			}
+		})
+	}
+}
+
+func TestLinkedWorktreeOf(t *testing.T) {
+	// A repository, main, with linked worktrees linked and second, and
+	// another repository, other, with its own linked worktree, otherlinked.
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	dir := func(name string) string { return filepath.Join(root, name) }
+	for _, repo := range []string{"main", "other"} {
+		os.Mkdir(dir(repo), 0o755)
+		gitIn(t, dir(repo), "init", "-q", "-b", "base")
+		gitIn(t, dir(repo), "commit", "-q", "--allow-empty", "-m", "base")
+	}
+	gitIn(t, dir("main"), "worktree", "add", "-q", "-b", "linked", dir("linked"))
+	gitIn(t, dir("main"), "worktree", "add", "-q", "-b", "second", dir("second"))
+	gitIn(t, dir("other"), "worktree", "add", "-q", "-b", "otherlinked", dir("otherlinked"))
+	os.Mkdir(dir("plain"), 0o755)
+	opened, ok := openedRepo(dir("main"))
+	if !ok {
+		t.Fatal("openedRepo(main) failed")
+	}
+	for _, tc := range []struct {
+		name string
+		dirs []string
+		want string
+	}{
+		{"a linked worktree of the same repository", []string{"linked"}, "linked"},
+		{"the main checkout itself", []string{"main"}, ""},
+		{"a linked worktree of another repository", []string{"otherlinked"}, ""},
+		{"two linked worktrees", []string{"linked", "second"}, ""},
+		{"no repository beside one linked worktree", []string{"plain", "linked"}, "linked"},
+		{"nothing", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var dirs []string
+			for _, d := range tc.dirs {
+				dirs = append(dirs, dir(d))
+			}
+			want := ""
+			if tc.want != "" {
+				want = dir(tc.want)
+			}
+			if got := linkedWorktreeOf(dirs, opened); got != want {
+				t.Fatalf("linkedWorktreeOf(%v) = %q, want %q", tc.dirs, got, want)
 			}
 		})
 	}
