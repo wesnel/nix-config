@@ -84,8 +84,8 @@ It only reads, and prints one step per branch:
   `pull-requests` skill's Opening says; run `pr-loop next` again afterwards.
   A branch GitHub lacks can open unsigned; one already on GitHub needs
   verified signatures by the protected operator key.
-- `sign` or `push`: the operator's command, a `git sign-pass` with the
-  right push flag, and the `agent-plan sign-id` line
+- `sign` or `push`: the operator's command, a `git sign-pass -C WORKTREE`
+  with the right push flag, and the `agent-plan sign-id` line
   that mints its `--notify` ID, as "Hearing how it ended" says.
 - `blocked`: what to fix first, such as an upstream of another name or a
   remote-tracking ref behind GitHub. If GitHub has history the local branch
@@ -95,10 +95,16 @@ It only reads, and prints one step per branch:
 The forms of the pass:
 
 ```sh
-git sign-pass                  # sign; nothing is pushed
-git sign-pass --push           # sign, then push each moved or ahead branch to its own name upstream
-git sign-pass --set-upstream   # the same, and publish those that have no upstream yet
+git sign-pass -C WORKTREE                  # sign; nothing is pushed
+git sign-pass -C WORKTREE --push           # sign, then push each moved or ahead branch to its own name upstream
+git sign-pass -C WORKTREE --set-upstream   # the same, and publish those that have no upstream yet
 ```
+
+Every `git sign-pass` you hand over carries `-C WORKTREE`, the absolute path
+of the worktree the branch is checked out in, which the plan records. The
+operator's terminal is not in that worktree, and `-C` runs the pass there as
+git's own `-C` does, so they need no `cd`. `pr-loop next` prints it; add it
+to a command you write yourself.
 
 Each push first checks protected operator signatures outside the destination's
 existing history. Success needs no upstream lookup. Otherwise an explicitly
@@ -120,10 +126,10 @@ operator runs it once they have posted the replies, as the
 `review-change` skill's Answering says.
 
 For more than one branch to sign, hand over one command that names the top of
-every stack, run from any worktree of the repository:
+every stack, with `-C` any worktree of the repository:
 
 ```sh
-git sign-pass --push <top of stack 1> <top of stack 2> <each child of a fork> ...
+git sign-pass -C WORKTREE --push <top of stack 1> <top of stack 2> <each child of a fork> ...
 ```
 
 It signs each stack from wherever its branch is checked out, replays a fork's
