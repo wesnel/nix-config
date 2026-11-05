@@ -33,8 +33,9 @@ func branchHint(session string, toolInput json.RawMessage, cwd string, c plans.C
 			return ""
 		}
 	}
-	// A branch or tip git did not give, as when it stalled, is not noted.
-	branch, ok := g.run("branch", "--show-current")
+	// A branch or tip git did not give, as when it stalled, is not noted. A
+	// rebase in progress is on the branch it rebases (currentBranch).
+	branch, ok := currentBranch(g)
 	if !ok {
 		return ""
 	}

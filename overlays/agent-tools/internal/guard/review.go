@@ -15,15 +15,22 @@ import (
 // of the plan or of the result, recorded and not yet answered
 // (plans.PendingPlanReviewOf), so its findings shape the work before more
 // of it is written. A command that runs code the guard cannot read
-// (unreadRuns) counts as editing the directory it runs in. openRoots stay
-// open. A sub-agent is not held: its edits are fenced to its own worktree
-// already (checkOwner). paths are editPaths(in), runs are unreadRuns of
-// its command; conf is this host's plans, and with none nothing is held.
-func checkPlanReview(in input, paths []string, runs []unreadRun, conf *plans.Config) string {
-	if !reviewHolds(in) || len(paths)+len(runs) == 0 || conf == nil {
+// (unreadRunsOf) counts as editing the directory it runs in. openRoots stay
+// open, and a call that touches nothing else reads no plan. A sub-agent is
+// not held: its edits are fenced to its own worktree already (checkOwner).
+// edits and runs are editPaths(in); conf is this host's plans, and with
+// none nothing is held.
+func checkPlanReview(in input, edits []editPath, runs []unreadRun, conf *plans.Config) string {
+	if !reviewHolds(in) || conf == nil {
 		return ""
 	}
-	p, recorded, pending := conf.PendingPlanReviewOf(in.SessionID)
+	free := openRoots(conf.Dir)
+	runs = slices.DeleteFunc(slices.Clone(runs), func(r unreadRun) bool { return isOpen(r.where, free) })
+	paths := slices.DeleteFunc(pathsOf(edits), func(path string) bool { return isOpen(path, free) })
+	if len(paths)+len(runs) == 0 {
+		return ""
+	}
+	p, recorded, pending := pendingPlanReview(conf, in.SessionID)
 	if !pending {
 		return ""
 	}
@@ -31,24 +38,22 @@ func checkPlanReview(in input, paths []string, runs []unreadRun, conf *plans.Con
 		p.File(), recorded.Time)
 	answer := "When its report is in, settle its findings. " + plans.AnswerHint(p) +
 		" If the review was stopped and will not report, log that answer with a summary saying so, and run the review again before going on."
-	free := openRoots(conf.Dir)
-	for _, path := range paths {
-		if !isOpen(path, free) {
-			return fmt.Sprintf("%s, so edits outside "+openPlaces+" wait for it, %s among them. %s", held, path, answer)
+	// A run is named first: what it writes is not all its paths say, as
+	// for go generate, which writes its package and runs what it names.
+	if len(runs) > 0 {
+		where := runs[0].where
+		if where == "" {
+			where = "a directory the guard cannot work out"
 		}
+		return fmt.Sprintf("%s, so `%s` waits for it: it runs code the guard cannot read, which could write anywhere, "+
+			"in or from %s. Run a probe with its code in "+scratchPlaces+", from there, instead. %s", held, runs[0].program, where, answer)
 	}
-	for _, r := range runs {
-		if !isOpen(r.where, free) {
-			where := r.where
-			if where == "" {
-				where = "a directory the guard cannot work out"
-			}
-			return fmt.Sprintf("%s, so `%s` waits for it: it runs code the guard cannot read, which could write anywhere, "+
-				"in or from %s. Run a probe with its code in "+scratchPlaces+", from there, instead. %s", held, r.program, where, answer)
-		}
-	}
-	return ""
+	return fmt.Sprintf("%s, so edits outside "+openPlaces+" wait for it, %s among them. %s", held, paths[0], answer)
 }
+
+// pendingPlanReview is plans.Config.PendingPlanReviewOf, which reads every
+// plan naming the session; a test counts its calls through it.
+var pendingPlanReview = (*plans.Config).PendingPlanReviewOf
 
 // reviewHolds reports whether checkPlanReview may hold in's call: the main
 // thread's, in a session.
@@ -63,156 +68,108 @@ type unreadRun struct {
 	program, where string
 }
 
-// interpreterOptions are how an interpreter reads its options before the
-// script: inline are those whose value is the code itself, values those
-// whose value is the next word. Any other option, such as python's -E or
-// perl's -p, gives no code: the run still reads a file.
-type interpreterOptions struct {
-	inline, values map[string]bool
-}
-
-// interpreters run the file they are given, or their standard input,
-// unless an inline option gives them the code.
-var interpreters = map[string]interpreterOptions{
-	"python":    {inline: set("-c"), values: set("-W", "-X")},
-	"node":      {inline: set("-e", "--eval", "-p", "--print"), values: set("-r", "--require")},
-	"ruby":      {inline: set("-e"), values: set("-I", "-r")},
-	"perl":      {inline: set("-e", "-E"), values: set()},
-	"php":       {inline: set("-r"), values: set()},
-	"lua":       {inline: set("-e"), values: set()},
-	"Rscript":   {inline: set("-e"), values: set()},
-	"osascript": {inline: set("-e"), values: set()},
-	"pwsh":      {inline: set("-c", "-Command"), values: set()},
-	"tclsh":     {inline: set(), values: set()},
-}
-
-// versionedPython names a python, such as python3 or pypy3, that takes
-// python's options.
-var versionedPython = regexp.MustCompile(`^(python|pypy)[0-9.]*$`)
-
-// projectRunners run the project's code with their run command.
-var projectRunners = set("uv", "poetry", "pipenv")
-
-// cargoValues are cargo's options before its command whose value is the
-// next word.
-var cargoValues = set("--color", "--config", "-Z", "-C")
-
-// packageManagers run a package's scripts for every command but those in
-// packageReads.
-var packageManagers = set("npm", "pnpm", "yarn", "bun", "deno")
-
-var packageReads = set("view", "info", "show", "ls", "list", "outdated", "why", "explain", "help", "search", "--version", "-v")
-
-// runners run code named in a file the guard does not read. npx and bunx
-// are wrappers: unwrap hands on the program they run.
-var runners = set("just", "task")
-
 // sourcing run the script they are given in the shell itself.
 var sourcing = set("source", ".")
 
 // editors run the commands an option gives them.
 var editors = set("vi", "vim", "nvim")
 
-// unreadRuns are the calls of command, run in cwd, that run code the guard
-// cannot read, each with the directory it runs in and the files and
-// directories it may take the code from, as walkShell gives them: a
-// program named by a path or by an expansion, a shell or an interpreter
-// given a file or its standard input, source, go run or generate, cargo
-// run, uv, poetry or pipenv run, a package manager's scripts, just, task,
-// emacsclient --eval, and vim given a command. go test, emacs --batch and
-// inline code (bash -c, python3 -c) are not: the first two run code the
-// change holds, and the shell's script is read in turn.
-func unreadRuns(command, cwd string) []unreadRun {
-	var out []unreadRun
-	walkShell(command, cwd, 0, func(c call, cwd string) {
-		unread, sources := runsUnread(c)
-		if !unread {
-			return
+// unreadRunsOf are the runs of code the guard cannot read that c, a call
+// walkShell gives with its leading redirections moved after its words
+// (redirectedLast), makes in cwd: one for
+// the directory it runs in and one for each file or directory it may take
+// the code from. Such a call is a program named by a path or by an
+// expansion, a shell or an interpreter given a file or its standard input,
+// source, go run or generate, cargo run, uv, poetry or pipenv run, a
+// package manager's scripts, just, task, emacsclient --eval, and vim given
+// a command. go test, emacs --batch and inline code (bash -c, python3 -c)
+// are not: the first two run code the change holds, and the shell's script
+// is read in turn.
+func unreadRunsOf(c call, cwd string) []unreadRun {
+	unread, sources := runsUnread(c)
+	if !unread {
+		return nil
+	}
+	out := []unreadRun{{program: c.words[0], where: cwd}}
+	for _, s := range sources {
+		if p := expandPath(s, cwd); filepath.IsAbs(p) {
+			out = append(out, unreadRun{program: c.words[0], where: p})
 		}
-		out = append(out, unreadRun{program: c.words[0], where: cwd})
-		for _, s := range sources {
-			if p := expandPath(s, cwd); filepath.IsAbs(p) {
-				out = append(out, unreadRun{program: c.words[0], where: p})
-			}
-		}
-	})
+	}
 	return out
 }
 
 // runsUnread reports whether c, once unwrap has taken its wrappers off,
-// runs code the guard cannot read, as unreadRuns lists, and the files or
+// runs code the guard cannot read, as unreadRunsOf lists, and the files or
 // directories it may take that code from: a program's path, the operands
 // of a shell, source or an interpreter (any of them may be the script, as
 // an option's value may look like one), the file on its standard input,
-// what go, uv, poetry or pipenv run is given, and go's -C directory. Code
-// on standard input from the line itself (<<, <<<) is inline, as -c is.
+// by a redirection or from the command before it in a pipeline (c.stdin),
+// what a subcommand of programs that runs code is given where its sources
+// say so, what the program's location options name, and the local flake
+// nix run builds it from. Code on standard
+// input from the line itself (<<, <<<) is inline, as -c is.
 func runsUnread(c call) (bool, []string) {
+	if c.flake != "" {
+		return true, []string{c.flake}
+	}
 	if c.expands[0] {
 		return true, nil
 	}
 	name, args := c.words[0], c.words[1:]
 	if strings.Contains(name, "/") {
-		return true, []string{name}
+		if !systemProgram(name) {
+			return true, []string{name}
+		}
+		name = base(name)
 	}
-	interp, isInterpreter := interpreters[name]
-	if !isInterpreter && versionedPython.MatchString(name) {
-		interp, isInterpreter = interpreters["python"], true
+	// A script given as a file, or on its standard input.
+	script := func() (bool, []string) {
+		files, inlineInput := operands(args)
+		if len(files) == 0 && !inlineInput {
+			return true, c.stdin
+		}
+		return len(files) > 0, files
 	}
-	switch {
-	case shells[name], sourcing[name]:
+	if shells[name] || sourcing[name] {
 		// unwrap hands a shell's inline script on as a script; a shell
 		// that reaches here runs a file or its standard input.
-		files, inlineInput := operands(args)
-		return len(files) > 0 || !inlineInput, files
-	case runners[name]:
-		return true, nil
-	case isInterpreter:
-		for i := 0; i < len(args) && strings.HasPrefix(args[i], "-"); i++ {
-			if inlineOption(args[i], interp.inline) {
+		return script()
+	}
+	if _, g, ok := programOf(name); ok {
+		if !c.piped && g.informs(args) {
+			return false, nil
+		}
+		switch g.kind {
+		case recipes:
+			return true, g.codeAt(args)
+		case interpreters:
+			for i := 0; i < len(args) && strings.HasPrefix(args[i], "-"); i++ {
+				if inlineOption(args[i], g.inline) {
+					return false, nil
+				}
+				i += g.values[args[i]]
+			}
+			return script()
+		case subcommands:
+			i := g.command(args)
+			if i >= len(args) || !g.runs[args[i]] {
 				return false, nil
 			}
-			if interp.values[args[i]] {
-				i++
+			sources := g.codeAt(args)
+			if g.sources[args[i]] {
+				files, _ := operands(args[i+1:])
+				sources = append(sources, files...)
 			}
-		}
-		files, inlineInput := operands(args)
-		return len(files) > 0 || !inlineInput, files
-	case name == "go":
-		var dirs []string
-		i := 0
-		for i < len(args) && strings.HasPrefix(args[i], "-") {
-			if args[i] == "-C" && i+1 < len(args) {
-				dirs = append(dirs, args[i+1])
-				i++
+			return true, sources
+		case scripts:
+			if i := g.command(args); len(args) > 0 && (g.reads[args[0]] || i < len(args) && g.reads[args[i]]) {
+				return false, nil
 			}
-			i++
+			return true, g.codeAt(args)
 		}
-		switch {
-		case i < len(args) && args[i] == "run":
-			files, _ := operands(args[i+1:])
-			return true, append(dirs, files...)
-		case i < len(args) && args[i] == "generate":
-			// It runs the commands its //go:generate lines name.
-			return true, dirs
-		}
-		return false, nil
-	case name == "cargo":
-		i := 0
-		for i < len(args) && (strings.HasPrefix(args[i], "-") || strings.HasPrefix(args[i], "+")) {
-			if cargoValues[args[i]] {
-				i++
-			}
-			i++
-		}
-		return i < len(args) && (args[i] == "run" || args[i] == "r"), nil
-	case projectRunners[name]:
-		if i := options(args, nil); i < len(args) && args[i] == "run" {
-			files, _ := operands(args[i+1:])
-			return true, files
-		}
-		return false, nil
-	case packageManagers[name]:
-		return len(args) == 0 || !packageReads[args[0]], nil
+	}
+	switch {
 	case name == "emacsclient" || versionedEmacsclient.MatchString(name):
 		return slices.ContainsFunc(args, func(a string) bool { return a == "--eval" || a == "-e" }), nil
 	case editors[name]:
@@ -221,6 +178,31 @@ func runsUnread(c call) (bool, []string) {
 		}), nil
 	}
 	return false, nil
+}
+
+// systemDirs hold the programs of the system and of the installed
+// profiles, which a change cannot rewrite, so one named by its path there
+// is judged by its name: /usr/bin/git as git. /nix/store is not one: nix
+// build puts the repository's own programs there.
+var systemDirs = []string{"/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/libexec", "/run/current-system/sw/bin"}
+
+// profileBin is the bin directory of a user's profile under
+// /etc/profiles/per-user.
+var profileBin = regexp.MustCompile(`^/etc/profiles/per-user/[^/]+/bin$`)
+
+// systemProgram reports whether path, a program's, lies under one of
+// systemDirs, a per-user profile's bin or the user's ~/.nix-profile/bin,
+// with no .. to climb out.
+func systemProgram(path string) bool {
+	if strings.Contains("/"+path+"/", "/../") || !strings.HasPrefix(path, "/") {
+		return false
+	}
+	for dir := filepath.Dir(path); dir != "/"; dir = filepath.Dir(dir) {
+		if slices.Contains(systemDirs, dir) || profileBin.MatchString(dir) || dir == home+"/.nix-profile/bin" {
+			return true
+		}
+	}
+	return false
 }
 
 // inlineOption reports whether option, one word, is one of inline, with
@@ -246,28 +228,22 @@ func inlineOption(option string, inline map[string]bool) bool {
 // reads standard input from. inlineInput reports that its standard input
 // comes from the line itself, by << or <<<.
 func operands(args []string) (files []string, inlineInput bool) {
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		op := redirectionWord.FindString(a)
+	for i := 0; i < len(args); {
+		// A redirection's target, attached or the next word, is no operand.
+		op, target, n := redirection(args, i)
 		switch {
-		case op == "":
-			if a != "-" && !strings.HasPrefix(a, "-") {
+		case n == 0:
+			if a := args[i]; a != "-" && !strings.HasPrefix(a, "-") {
 				files = append(files, a)
 			}
+			i++
 			continue
 		case strings.HasSuffix(op, "<<") || strings.HasSuffix(op, "<<<"):
 			inlineInput = true
-		case strings.HasSuffix(op, "<") && !strings.Contains(op, "&"):
-			if target := a[len(op):]; target != "" {
-				files = append(files, target)
-			} else if i+1 < len(args) {
-				files = append(files, args[i+1])
-			}
+		case strings.HasSuffix(op, "<") && target != "":
+			files = append(files, target)
 		}
-		// The target, attached or the next word, is no operand.
-		if len(a) == len(op) && !strings.Contains(op, "&") {
-			i++
-		}
+		i += n
 	}
 	return files, inlineInput
 }

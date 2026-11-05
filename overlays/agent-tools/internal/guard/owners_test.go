@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
@@ -49,6 +51,16 @@ func TestSessionEdits(t *testing.T) {
 		{name: "default branch", session: "s1", branch: "main", deny: true},
 		{name: "remote default branch", session: "s1", branch: "trunk", deny: true},
 		{name: "detached head", session: "s1", branch: "detached", deny: true},
+		// A rebase stopped on a conflict detaches HEAD, and is the branch it
+		// rebases: its conflicts are resolved and the rebase ended there.
+		{name: "rebase stopped on a conflict", session: "s1", branch: "rebasing"},
+		{name: "rebase --continue", session: "s1", branch: "rebasing", command: "git rebase --continue"},
+		{name: "rebase --abort", session: "s1", branch: "rebasing", command: "git rebase --abort"},
+		{name: "rebase --skip", session: "s1", branch: "rebasing", command: "git -C LINKED rebase --skip"},
+		{name: "rebase --apply stopped on a conflict", session: "s1", branch: "rebasing-apply"},
+		{name: "rebase of a default branch", session: "s1", branch: "rebasing-main", deny: true},
+		{name: "rebase in another session worktree", session: "s2", branch: "rebasing", command: "git rebase --abort", deny: true},
+		{name: "bisect", session: "s1", branch: "bisecting", deny: true},
 		{name: "scratch linked worktree still needs a plan", session: "s1", target: "PARKED", noPlan: true, deny: true},
 		{name: "scratch repository fixture", target: "FIXTURE", fixture: true, noPlan: true},
 		{name: "scratch fixture with a plan is protected", session: "s2", target: "FIXTURE", fixture: true, deny: true},
@@ -97,9 +109,36 @@ func TestSessionEdits(t *testing.T) {
 				os.Mkdir(fixture, 0o755)
 				gitIn(t, fixture, "init", "-q", "-b", "main")
 			}
-			if tc.branch == "detached" {
+			switch tc.branch {
+			case "detached":
 				gitIn(t, linked, "checkout", "--detach")
-			} else if tc.branch != "" {
+			case "bisecting":
+				gitIn(t, linked, "bisect", "start")
+				gitIn(t, linked, "checkout", "--detach")
+			case "rebasing", "rebasing-apply", "rebasing-main":
+				if tc.branch == "rebasing-main" {
+					gitIn(t, linked, "branch", "-m", "main")
+				}
+				// Each side changes a.go, so the rebase stops on it.
+				for dir, text := range map[string]string{linked: "task\n", main: "base\n"} {
+					os.WriteFile(filepath.Join(dir, "a.go"), []byte(text), 0o644)
+					gitIn(t, dir, "add", "a.go")
+					gitIn(t, dir, "commit", "-q", "-m", text)
+				}
+				args := []string{"-c", "user.name=T", "-c", "user.email=t@e", "-c", "commit.gpgsign=false", "rebase"}
+				if tc.branch == "rebasing-apply" {
+					args = append(args, "--apply")
+				}
+				rebase := exec.Command("git", append(args, "base")...)
+				rebase.Dir, rebase.Env = linked, gitenv.Without(os.Environ())
+				if out, err := rebase.CombinedOutput(); err == nil {
+					t.Fatalf("the rebase did not stop: %s", out)
+				}
+				if current := gitIn(t, linked, "branch", "--show-current"); current != "" {
+					t.Fatalf("rebasing on %q, want a detached HEAD", current)
+				}
+			case "":
+			default:
 				gitIn(t, linked, "branch", "-m", tc.branch)
 				if tc.branch == "trunk" {
 					gitIn(t, main, "update-ref", "refs/remotes/upstream/trunk", "HEAD")
@@ -317,6 +356,26 @@ func TestOwners(t *testing.T) {
 		{"owner's chmod in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"chmod +x MAIN/a.sh"}}`, nil},
 		{"owner's mkdir in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"mkdir -p MAIN/new"}}`, []string{"LINKED"}},
 		{"owner's go generate in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"go generate ./..."}}`, []string{"LINKED"}},
+		// Options before the subcommand, read by the program's grammar: go
+		// writes in the directory -C names, not where it runs.
+		{"owner's go -C generate in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"go -C MAIN generate ./..."}}`, []string{"LINKED"}},
+		{"owner's go -C build in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"go -C MAIN build ./cmd/x"}}`, []string{"LINKED"}},
+		{"owner's go -C fmt in its worktree, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"go -C LINKED fmt ./..."}}`, nil},
+		{"owner's cargo +nightly fmt in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"cargo +nightly fmt"}}`, []string{"LINKED"}},
+		{"owner's cargo --color fmt in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"cargo --color never fmt"}}`, []string{"LINKED"}},
+		// Every tool that runs a command line is fenced as Bash is.
+		{"owner's Monitor write into the main checkout", true, `{"tool_name":"Monitor","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"echo x > MAIN/a.go","description":"d"}}`, []string{"LINKED"}},
+		{"owner's local_shell touch in the main checkout", true, `{"tool_name":"local_shell","turn_id":"t","agent_id":"a1","cwd":"LINKED","tool_input":{"command":["touch","MAIN/a.go"]}}`, []string{"LINKED"}},
+		{"owner's local_shell touch in its working directory, the main checkout", true, `{"tool_name":"local_shell","turn_id":"t","agent_id":"a1","cwd":"LINKED","tool_input":{"command":["touch","a.go"],"working_directory":"MAIN"}}`, []string{"LINKED"}},
+		{"owner's local_shell touch in its worktree", false, `{"tool_name":"local_shell","turn_id":"t","agent_id":"a1","cwd":"MAIN","tool_input":{"command":["touch","a.go"],"working_directory":"LINKED"}}`, nil},
+		{"owner's write_stdin touch in the main checkout", true, `{"tool_name":"write_stdin","turn_id":"t","agent_id":"a1","cwd":"LINKED","tool_input":{"session_id":1,"chars":"touch MAIN/a.go\n"}}`, []string{"LINKED"}},
+		{"owner's write_stdin touch in its worktree", false, `{"tool_name":"write_stdin","turn_id":"t","agent_id":"a1","cwd":"LINKED","tool_input":{"session_id":1,"chars":"touch a.go\n"}}`, nil},
+		{"owner's env -C touch in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"env -C MAIN touch a.go"}}`, []string{"LINKED"}},
+		// The case's name, in its directories' paths, holds no =, which
+		// OWNERS reads as its separator.
+		{"owner's env --chdir touch, its value attached, in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"env --chdir=../main touch a.go"}}`, []string{"LINKED"}},
+		{"owner's env -C touch in its worktree, run in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"env -C LINKED touch a.go"}}`, nil},
+		{"owner's cargo +nightly fmt --check in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"cargo +nightly fmt --check"}}`, nil},
 		{"owner's go test profile in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"go test -coverprofile=MAIN/c.out ./..."}}`, []string{"LINKED"}},
 		{"owner's go test in the main checkout", false, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"go test -count=1 ./..."}}`, nil},
 		{"owner's nix build in the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"nix build .#x"}}`, []string{"LINKED"}},

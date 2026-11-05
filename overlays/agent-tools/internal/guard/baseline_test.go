@@ -556,6 +556,130 @@ func TestExitWorktree(t *testing.T) {
 	}
 }
 
+// markerRepos are repositories whose index or worktree holds conflict
+// markers, under the returned root: staged, with a.txt staged holding a
+// resolved conflict's markers; unstaged, with a.txt holding them in the
+// worktree alone and c.txt changed and staged; headfile, as unstaged with
+// an untracked file named HEAD beside them, which a diff against HEAD
+// without -- reads as ambiguous; clean, with lines staged that only look
+// like markers. TestConflictMarkers and TestPolicy share
+// them, built once; the guard only reads them.
+var markerRepos = sync.OnceValues(func() (string, error) {
+	if err := os.MkdirAll(fixtures, 0o755); err != nil {
+		return "", err
+	}
+	root, err := os.MkdirTemp(fixtures, "markers")
+	if err != nil {
+		return "", err
+	}
+	root, _ = filepath.EvalSymlinks(root)
+	conflict := "one\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> topic\n"
+	lookalikes := "<<<<<<<< eight\n <<<<<<< indented\n>>>>>>>x attached\n"
+	for _, name := range []string{"staged", "unstaged", "headfile", "clean"} {
+		dir := filepath.Join(root, name)
+		os.Mkdir(dir, 0o755)
+		for _, f := range []string{"a.txt", "c.txt"} {
+			if err := os.WriteFile(filepath.Join(dir, f), []byte("one\n"), 0o644); err != nil {
+				return "", err
+			}
+		}
+		if err := fixtureGits([]string{dir, "init", "-q", "-b", "main"}, []string{dir, "add", "a.txt", "c.txt"},
+			[]string{dir, "commit", "-q", "-m", "base"}); err != nil {
+			return "", err
+		}
+		written := map[string]string{"staged": conflict, "unstaged": conflict, "headfile": conflict, "clean": lookalikes}[name]
+		if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte(written), 0o644); err != nil {
+			return "", err
+		}
+		os.WriteFile(filepath.Join(dir, "c.txt"), []byte("two\n"), 0o644)
+		staged := []string{"a.txt", "c.txt"}
+		if name == "unstaged" || name == "headfile" {
+			staged = staged[1:]
+		}
+		if name == "headfile" {
+			if err := os.WriteFile(filepath.Join(dir, "HEAD"), []byte("not a revision\n"), 0o644); err != nil {
+				return "", err
+			}
+		}
+		if err := fixtureGit(dir, append([]string{"add"}, staged...)...); err != nil {
+			return "", err
+		}
+	}
+	return root, nil
+})
+
+// TestConflictMarkers covers the commands that would commit the index, or
+// the worktree's changes, while a line there starts with a conflict marker:
+// they are refused naming the file, and the same commands are let through
+// where no such line would be committed.
+func TestConflictMarkers(t *testing.T) {
+	root := fixture(t, markerRepos)
+	staged, unstaged, clean := filepath.Join(root, "staged"), filepath.Join(root, "unstaged"), filepath.Join(root, "clean")
+	headfile := filepath.Join(root, "headfile")
+	for _, c := range []struct {
+		deny         bool
+		dir, command string
+	}{
+		{true, staged, "git commit -m x"},
+		{true, staged, "git -c commit.gpgsign=false commit --fixup=HEAD"},
+		{true, staged, "git commit -qm x"},
+		{true, staged, "git rebase --continue"},
+		{true, staged, "git cherry-pick --continue"},
+		{true, staged, "git revert --continue"},
+		{true, staged, "git merge --continue"},
+		{true, staged, "git am --continue"},
+		{true, clean, "git -C " + staged + " commit -m x"},
+		{true, unstaged, "git commit -a -m x"},
+		{true, unstaged, "git commit -am x"},
+		{true, unstaged, "git commit --all -m x"},
+		{true, unstaged, "git commit -m x a.txt"},
+		{true, unstaged, "git commit -i -m x -- a.txt"},
+		// A message that reads as an option is a message: the commit is
+		// real.
+		{true, staged, "git -c commit.gpgsign=false commit -m --dry-run"},
+		{true, staged, "git commit -m -h"},
+		{true, staged, "git commit --message --help"},
+		{false, staged, "git commit --dry-run"},
+		// Paths commit those paths alone, from the worktree; another
+		// file's staged markers stay staged.
+		{false, staged, "git commit -m x -- c.txt"},
+		{false, staged, "git commit -m x c.txt"},
+		{true, staged, "git commit -m x -- a.txt"},
+		{true, staged, "git commit -i -m x c.txt"},
+		// git takes an abbreviated long option (--inc for --include, --mes
+		// for --message), so a word the guard does not know in full means
+		// the whole index and worktree, and no early return.
+		{true, staged, "git commit --inc -m x c.txt"},
+		{true, staged, "git commit --mes --dry-run"},
+		{true, staged, "git commit --no-such-option -m x -- c.txt"},
+		{false, staged, "git commit --quiet --message=x -- c.txt"},
+		// A file named HEAD does not make the worktree scan ambiguous.
+		{true, headfile, "git commit --all --no-such-option -m x"},
+		{true, headfile, "git commit -a -m x"},
+		{false, staged, "git rebase --abort"},
+		{false, staged, "git cherry-pick --skip"},
+		{false, staged, "git diff --cached"},
+		{false, unstaged, "git commit -m x"},
+		{false, unstaged, "git commit -m x c.txt"},
+		{false, unstaged, "git commit -m a.txt"},
+		{false, clean, "git commit -m x"},
+		{false, clean, "git commit -a -m x"},
+	} {
+		t.Run(caseName(c.deny, filepath.Base(c.dir)+": "+c.command), func(t *testing.T) {
+			reason := judge(t, c.dir, c.command)
+			if (reason != "") != c.deny {
+				t.Errorf("%s: %q: deny=%v, reason %q", filepath.Base(c.dir), c.command, !c.deny, reason)
+			}
+			if c.deny && (!strings.Contains(reason, "a.txt") || !strings.Contains(reason, "conflict")) {
+				t.Errorf("%q: reason %q does not name a.txt and the conflict", c.command, reason)
+			}
+			if reason != "" && !saysInstead(reason) {
+				t.Errorf("%q: reason %q does not say what to do instead", c.command, reason)
+			}
+		})
+	}
+}
+
 // signingRepos is a repository, signing, that signs its commits, a linked
 // worktree of it, loop, that does not, and a repository, plain, with no
 // signing set, all under the returned root. TestSigning's cases share them,

@@ -106,6 +106,29 @@ func TestPendingPlanReview(t *testing.T) {
 		}
 	})
 
+	// A call that touches only open roots never reads the plans for a
+	// pending review, which costs a read of every plan the session names;
+	// one that touches the repository does.
+	t.Run("an open-only call reads no plan", func(t *testing.T) {
+		_, scratch, p, call := reviewing(t)
+		record(t, p, plans.DesignReviewStarted)
+		reads := 0
+		old := pendingPlanReview
+		pendingPlanReview = func(c *plans.Config, session string) (plans.Plan, plans.Event, bool) {
+			reads++
+			return old(c, session)
+		}
+		t.Cleanup(func() { pendingPlanReview = old })
+		for _, command := range []string{"echo x > " + filepath.Join(scratch, "a.txt"), "cd " + scratch + " && ./probe.sh"} {
+			if decision, reason := call("s1", "Bash", map[string]string{"command": command}); decision == "deny" || reads != 0 {
+				t.Errorf("%s: decision %q, reason %q, plans read %d times", command, decision, reason, reads)
+			}
+		}
+		if decision, _ := call("s1", "Bash", map[string]string{"command": "./gen.sh"}); decision != "deny" || reads != 1 {
+			t.Errorf("./gen.sh in the repository: decision %q, plans read %d times, want deny after one read", decision, reads)
+		}
+	})
+
 	t.Run("allowed once plan-reviewed is logged", func(t *testing.T) {
 		repo, _, p, call := reviewing(t)
 		record(t, p, plans.DesignReviewStarted)
@@ -155,6 +178,41 @@ func TestPendingPlanReview(t *testing.T) {
 			{"cd SCRATCH && go -C REPO run ./cmd/gen", true},
 			{"cd SCRATCH && python3 probe.py", false},
 			{"cd SCRATCH && go run REPO/gen.go", true},
+			// Options naming where the code is, before or after the
+			// subcommand, and a script piped or redirected in first.
+			{"cd SCRATCH && go run REPO/cmd/gen", true},
+			{"cd SCRATCH && cargo run --manifest-path REPO/Cargo.toml", true},
+			{"cd SCRATCH && cargo run --manifest-path=REPO/Cargo.toml", true},
+			{"cd SCRATCH && cargo -C REPO run", true},
+			{"cd SCRATCH && cargo run --manifest-path probe/Cargo.toml", false},
+			{"cd SCRATCH && npm --prefix REPO run build", true},
+			{"cd SCRATCH && npm run build --prefix=REPO", true},
+			{"cd SCRATCH && npm --prefix probe run build", false},
+			{"cd SCRATCH && pnpm -C REPO run build", true},
+			{"cd SCRATCH && pnpm --dir REPO build", true},
+			{"cd SCRATCH && yarn --cwd REPO build", true},
+			{"cd SCRATCH && bun --cwd REPO run build", true},
+			{"cd SCRATCH && just --justfile REPO/justfile gen", true},
+			{"cd SCRATCH && just -f REPO/justfile gen", true},
+			{"cd SCRATCH && just -f probe/justfile gen", false},
+			{"cd SCRATCH && task -d REPO gen", true},
+			{"cd SCRATCH && task --taskfile REPO/Taskfile.yml gen", true},
+			{"cd SCRATCH && uv run --directory REPO gen", true},
+			{"cd SCRATCH && uv --project REPO run gen", true},
+			{"cd SCRATCH && poetry -C REPO run gen", true},
+			{"cd SCRATCH && env -C REPO ./gen.sh", true},
+			{"cd SCRATCH && env --chdir=REPO ./gen.sh", true},
+			{"cd SCRATCH && env --chdir REPO python3 gen.py", true},
+			{"cd SCRATCH && env -C probe ./gen.sh", false},
+			{"cd SCRATCH && cat REPO/gen.sh | bash", true},
+			{"cd SCRATCH && cat REPO/gen.py | python3", true},
+			{"cd SCRATCH && cat probe.sh | bash", false},
+			// A command between them passes its input on.
+			{"cd SCRATCH && cat REPO/gen.sh | cat | bash", true},
+			{"cd SCRATCH && cat REPO/gen.sh | grep -v '^#' | sh", true},
+			{"cd SCRATCH && cat probe.sh | cat | bash", false},
+			{"cd SCRATCH && < REPO/gen.py python3", true},
+			{"cd SCRATCH && < probe.py python3", false},
 			{"cd SCRATCH && uv run REPO/gen.py", true},
 			{`cd "$X" && python3 p.py`, true},
 			// Inline code, bundled or after an option's value, or on
@@ -191,6 +249,55 @@ func TestPendingPlanReview(t *testing.T) {
 			{"go test ./...", false},
 			{"go vet ./...", false},
 			{"nix build --no-link .#x", false},
+			// nix run of a local flake runs the flake's code, however the
+			// flake is spelled; a registry's package does not.
+			{"nix run .#codegen", true},
+			{"nix run . -- --help", true},
+			{"cd SCRATCH && nix run REPO#codegen", true},
+			{"cd SCRATCH && nix run REPO", true},
+			{"cd SCRATCH && nix run path:REPO#codegen", true},
+			{"cd SCRATCH && nix run git+file://REPO?ref=loop#codegen", true},
+			{"cd SCRATCH && nix run ./probe#gen", false},
+			{"nix run nixpkgs#hello", false},
+			// A program of the system or of an installed profile is judged
+			// by its name; the store holds what nix build makes of the
+			// repository, so a program there is the repository's code.
+			{"/usr/bin/git status", false},
+			{"/run/current-system/sw/bin/git status", false},
+			{"/etc/profiles/per-user/u/bin/git status", false},
+			{"/nix/store/abc-codegen/bin/codegen", true},
+			{"/nix/store/abc-git-2.50/bin/git log", true},
+			{"/etc/profiles/per-user/u/lib/gen", true},
+			{"/usr/bin/python3 gen.py", true},
+			{"cd SCRATCH && /usr/bin/python3 REPO/gen.py", true},
+			{"/usr/local/bin/gen", true},
+			{"python3 --version", false},
+			{"python3 -V", false},
+			{"node --help", false},
+			{"ruby --version", false},
+			{"just --list", false},
+			{"npm --version", false},
+			{"npm --help", false},
+			{"pnpm -h", false},
+			// An information option runs nothing only as the call's sole
+			// argument, with no input given it: ruby -v runs a script
+			// after it, and perl -I takes -v as its value.
+			{"python3 -E --version", true},
+			{"ruby -v gen.rb", true},
+			{"perl -I -v gen.pl", true},
+			{"cat REPO/gen.rb | ruby -v", true},
+			{"cd SCRATCH && ruby -v < REPO/gen.rb", true},
+			// Only the options a program's row declares inform: tclsh
+			// takes --version and -h as its script's arguments and runs
+			// its standard input.
+			{"tclsh --version", true},
+			{"cd SCRATCH && tclsh -h < REPO/gen.tcl", true},
+			{"perl -v", false},
+			{"ruby -v", false},
+			// An option's value is no option: -W takes --version as its
+			// value and runs gen.py.
+			{"python3 -W --version gen.py", true},
+			{"cd SCRATCH && python3 -W --version REPO/gen.py", true},
 			{"agent-plan log PLAN --item S1 --kind started", false},
 			{"bash -c 'git status'", false},
 			{"python3 -c 'print(1)'", false},
@@ -222,6 +329,37 @@ func TestPendingPlanReview(t *testing.T) {
 		}
 		if decision, reason := call("s1", "Bash", map[string]string{"command": "./gen.sh"}); decision == "deny" {
 			t.Errorf("after plan-reviewed: decision %q, reason %q", decision, reason)
+		}
+	})
+
+	// Monitor and local_shell run a command line as Bash does; write_stdin
+	// types into a session that may be a shell anywhere, so it is held
+	// whatever it types.
+	t.Run("other tools that run a command line", func(t *testing.T) {
+		for _, c := range []struct {
+			tool  string
+			input map[string]string
+			held  string // what the reason names, "" for not held
+		}{
+			{"Monitor", map[string]string{"command": "./gen.sh", "description": "d"}, "code the guard cannot read"},
+			{"Monitor", map[string]string{"command": "cd SCRATCH && ./probe.sh", "description": "d"}, ""},
+			{"local_shell", map[string]string{"command": "./gen.sh"}, "code the guard cannot read"},
+			{"local_shell", map[string]string{"command": "echo x > a.txt"}, "plan-reviewed"},
+			{"local_shell", map[string]string{"command": "./probe.sh", "working_directory": "SCRATCH"}, ""},
+			{"write_stdin", map[string]string{"chars": "ls\n"}, "a directory the guard cannot work out"},
+		} {
+			t.Run(c.tool+" "+c.input["command"]+c.input["chars"], func(t *testing.T) {
+				_, scratch, p, call := reviewing(t)
+				record(t, p, plans.DesignReviewStarted)
+				input := map[string]string{}
+				for k, v := range c.input {
+					input[k] = strings.ReplaceAll(v, "SCRATCH", scratch)
+				}
+				decision, reason := call("s1", c.tool, input)
+				if held := decision == "deny"; held != (c.held != "") || !strings.Contains(reason, c.held) {
+					t.Errorf("decision %q, reason %q, want held naming %q", decision, reason, c.held)
+				}
+			})
 		}
 	})
 
