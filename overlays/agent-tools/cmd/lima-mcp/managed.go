@@ -58,6 +58,11 @@ type managed struct {
 	lifecycle chan struct{}
 	mu        sync.Mutex
 	starting  *job
+	// workdir is held by an import alone, and shared by guest commands,
+	// so that an import never runs beside another import or a command in
+	// the workdir it replaces. Neither waits: the one that finds it taken
+	// fails.
+	workdir sync.RWMutex
 }
 
 func newManaged(cfg *limavm.Config, configFile string, processes func() ([]limavm.Proc, error), processArgs func(int) (string, []string, error)) *managed {
@@ -284,9 +289,12 @@ func guestKill(id string) []string {
 }
 
 // exec runs script in the guest's workdir under the guest's timeout, once
-// the VM attests. When ctx is cancelled it kills the guest's command too,
-// since killing limactl ends only the host's side of it.
+// the VM attests.
 func (m *managed) exec(ctx context.Context, id, script string, seconds int) (string, bool, *int, error) {
+	if !m.workdir.TryRLock() {
+		return "", false, nil, errors.New("an import is running in the guest: run the command once its job ends")
+	}
+	defer m.workdir.RUnlock()
 	a, err := m.attest(ctx)
 	if err != nil {
 		return "", false, nil, err
@@ -301,8 +309,15 @@ func (m *managed) exec(ctx context.Context, id, script string, seconds int) (str
 	if home == "" {
 		return "", false, nil, errors.New("Lima reports no guest home")
 	}
-	workdir := home + "/" + m.cfg.Workdir
-	out, truncated, err := m.limactl(ctx, append([]string{"shell", "--workdir", workdir, m.cfg.Instance, "--"},
+	return m.guestRun(ctx, id, home+"/"+m.cfg.Workdir, seconds, script)
+}
+
+// guestRun runs script as job id's guest command in the guest's dir, under
+// the guest's timeout of seconds, and returns its output and exit code.
+// When ctx is cancelled it kills the guest's command too, since killing
+// limactl ends only the host's side of it.
+func (m *managed) guestRun(ctx context.Context, id, dir string, seconds int, script string) (string, bool, *int, error) {
+	out, truncated, err := m.limactl(ctx, append([]string{"shell", "--workdir", dir, m.cfg.Instance, "--"},
 		guestJob(id, seconds, script)...)...)
 	if ctx.Err() != nil {
 		kill, cancel := context.WithTimeout(context.Background(), time.Minute)

@@ -25,6 +25,8 @@ func configJSON(t *testing.T, edit func(map[string]any)) []byte {
 		"limaMcp":     "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-agent-tools/bin/lima-mcp",
 		"template":    "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-ngrok-agent.yaml",
 		"shim":        "/nix/store/cccccccccccccccccccccccccccccccc-lima-udp-shim/bin/lima-udp-shim",
+		"git":         "/nix/store/dddddddddddddddddddddddddddddddd-git-2.51.0/bin/git",
+		"outbox":      "/Users/wgn/.local/state/lima-mcp-outbox",
 		"deniedReads": []any{"/Users/wgn/.ssh", "/private/var/folders/*/*/T/secrets.d", "/Users/wgn/Library/Application Support/ngrok"},
 		"connect":     "192.168.5.100:3128",
 		"quic":        "192.168.5.101:443",
@@ -62,6 +64,10 @@ func TestParseConfig(t *testing.T) {
 			!slices.Equal(c.Endpoints, []limaegress.Endpoint{{Host: "db.internal", Port: 5432}}) {
 			t.Errorf("private dial: %v %v", c.QUICServers, c.Endpoints)
 		}
+		if c.Git != "/nix/store/dddddddddddddddddddddddddddddddd-git-2.51.0/bin/git" || c.Outbox != "/Users/wgn/.local/state/lima-mcp-outbox" ||
+			c.Imports() != "/private/tmp/lima-probe/_mcp/imports" {
+			t.Errorf("import paths: %q %q %q", c.Git, c.Outbox, c.Imports())
+		}
 		if !c.Egress.Allows("github.com") || c.Egress.Allows("us.quic.connect-endpoint.ngrok.com") {
 			t.Error("the egress policy is not the one configured, with its QUIC servers denied")
 		}
@@ -75,6 +81,8 @@ func TestParseConfig(t *testing.T) {
 		{"an unknown field", func(m map[string]any) { m["extra"] = true }, "unknown field"},
 		{"a missing path", func(m map[string]any) { delete(m, "limactl") }, "limactl"},
 		{"a missing home", func(m map[string]any) { delete(m, "home") }, "home"},
+		{"a missing git", func(m map[string]any) { delete(m, "git") }, "git"},
+		{"a relative outbox", func(m map[string]any) { m["outbox"] = "lima-mcp-outbox" }, "outbox"},
 		{"a relative path", func(m map[string]any) { m["qemu"] = "bin/qemu" }, "qemu"},
 		{"an unclean path", func(m map[string]any) { m["limaHome"] = "/private/tmp/../lima-probe" }, "limaHome"},
 		{"a comma, which would split QEMU's netdev option", func(m map[string]any) { m["limaHome"] = "/tmp/a,b" }, "limaHome"},
