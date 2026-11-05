@@ -1,4 +1,5 @@
 {
+  bash,
   buildGoModule,
   cacert,
   coreutils,
@@ -76,9 +77,11 @@
 
     # The rehearsal and signing tests build stacks with the real git, and sign
     # them with throwaway SSH and OpenPGP keys. The page tests run the Agent plans
-    # page's own grammar check with node; without it they skip that one.
-    # Red-check's inline test fixtures compile and run with rustc.
-    nativeCheckInputs = [git gnupg nodejs openssh rustc];
+    # page's own grammar check with node; without it they skip that one. The
+    # lima-mcp tests' stand-in guest runs its scripts with bash, which the
+    # Linux build sandbox does not otherwise have. Red-check's inline test
+    # fixtures compile and run with rustc.
+    nativeCheckInputs = [(lib.getBin bash) git gnupg nodejs openssh rustc];
 
     # The MCP tools the guard lets through (reads) or asks the operator
     # about (confirms), per service, for mcp-proxy's tool filters.

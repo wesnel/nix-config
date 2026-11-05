@@ -100,6 +100,19 @@ var tools = []tool{
 		}, "script"),
 		call: callExecStart,
 	},
+	{
+		name: "lima_dev_import",
+		description: "Import a repository into the managed VM's configured working directory as a job. First run `lima-dev-export NAME` in the repository, " +
+			"which writes NAME.bundle (HEAD, origin/main, the index and the worktree, untracked files included but the ignored) into the outbox. " +
+			"The import refuses a bundle whose history holds a credential's path, then makes the guest's branch work, index, worktree and untracked files the repository's. " +
+			"Changes made only in the guest are discarded: its edits, staged or not, its untracked files and its commits on work; only its ignored files stay. " +
+			"It fails while another import or a lima_dev_exec_start command runs. Returns {job}; read it with lima_dev_job_result.",
+		approval: confirm,
+		schema: object(map[string]any{
+			"name": map[string]any{"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$"},
+		}, "name"),
+		call: callImport,
+	},
 }
 
 // object is the JSON schema of an object with exactly these properties, of

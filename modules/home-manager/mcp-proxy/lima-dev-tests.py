@@ -5,8 +5,9 @@ template, configuration and pinned limactl. It asserts what the VM's
 isolation rests on, so that a change to the template or its options that
 loosens one fails here: no mounts, networks, forwards or host resolver,
 plain mode, the broker CA at its fixed path, a pinned image, the guest's
-proxy and private-dial names pointing only at the relays, and a guard
-beside the store firmware.
+proxy and private-dial names pointing only at the relays, a guard
+beside the store firmware, and an import's store git and outbox outside
+the Lima home.
 """
 
 import json
@@ -71,6 +72,14 @@ assert not any(
     or host.endswith(".connect-endpoint.ngrok.com")
     for host in config["egress"]["allow"]
 )
+
+# An import checks bundles with the store's git, from an outbox outside
+# the Lima home, which sessions may not read.
+assert config["git"].startswith("/nix/store/") and Path(config["git"]).name == "git", config["git"]
+assert Path(config["git"]).is_file(), config["git"]
+outbox = config["outbox"]
+assert outbox.startswith(config["home"] + "/") and os.path.normpath(outbox) == outbox, outbox
+assert not (outbox + "/").startswith(config["limaHome"] + "/"), outbox
 
 # Lima finds the firmware beside the guard, and the guard runs lima-mcp's
 # qemu-guard with its own configuration from the store, never one in the
