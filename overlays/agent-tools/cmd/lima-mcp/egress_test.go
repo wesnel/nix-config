@@ -23,14 +23,6 @@ import (
 	"github.com/wesnel/agent-tools/internal/udpframe"
 )
 
-func toNames[S ~string](ss []S) []limaegress.Name {
-	out := make([]limaegress.Name, len(ss))
-	for i, s := range ss {
-		out[i] = limaegress.Name(s)
-	}
-	return out
-}
-
 // managedConfig writes a managed VM configuration whose Lima home is a
 // temporary directory, and returns it parsed.
 func managedConfig(t *testing.T) *limavm.Config {
@@ -145,7 +137,7 @@ func quicHandshake(t *testing.T, c *limavm.Config, guest net.Conn, name string) 
 func TestEgressQUIC(t *testing.T) {
 	t.Run("serves a configured server with the instance CA", func(t *testing.T) {
 		c := managedConfig(t)
-		if err := limavm.EnsureCA(t.Context(), c.CACert(), c.CAKey(), toNames(c.QUICServers)); err != nil {
+		if err := limavm.EnsureCA(t.Context(), c.CACert(), c.CAKey(), c.QUICServers); err != nil {
 			t.Fatal(err)
 		}
 		holdSlots(t, c.QUICSlots(), 15)
@@ -158,7 +150,7 @@ func TestEgressQUIC(t *testing.T) {
 
 	t.Run("exits at once when 16 flows run", func(t *testing.T) {
 		c := managedConfig(t)
-		if err := limavm.EnsureCA(t.Context(), c.CACert(), c.CAKey(), toNames(c.QUICServers)); err != nil {
+		if err := limavm.EnsureCA(t.Context(), c.CACert(), c.CAKey(), c.QUICServers); err != nil {
 			t.Fatal(err)
 		}
 		holdSlots(t, c.QUICSlots(), 16)
