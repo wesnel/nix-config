@@ -20,8 +20,9 @@ was split among sub-agents: a coordinator runs the same pipeline, and the
    and the concrete question each must answer. Run a design review before
    coding when that selection calls for one.
 3. **The work**, committed as the `signing-pass` skill says.
-4. **Fresh review loop**, once the work is complete, for the reviews
-   selected above. Settle each round's
+4. **Fresh review loop**, once the work is complete, or once this
+   session's part of it is, before carrying the rest as the `plan-work`
+   skill says, for the reviews selected above. Settle each round's
    findings together, then verify the fixes as Fresh review loop says.
 5. **Design review of the result** when the implementation materially
    changes the reviewed design or introduces a design risk not reviewed
@@ -30,6 +31,9 @@ was split among sub-agents: a coordinator runs the same pipeline, and the
    over" and complete each agent-owned next step before ending the session.
    Report a refusal with its reason and the remaining step. The report
    includes what the work's own instructions ask for, and
+   - the steps carried, the plan they went to, and carry's `prompt` for
+     the operator, word for word; the steps abandoned, each with its
+     reason;
    - each finding, its outcome and its plan item ID, round by round;
    - findings still standing, with the reviewer's evidence;
    - the design reviews' open questions for the operator and the decisions you

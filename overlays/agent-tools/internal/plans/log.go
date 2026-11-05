@@ -95,6 +95,8 @@ var (
 				"Link a plan with `agent-plan link PLAN OTHER --why TEXT`",
 			"referenced": "agent-plan reference logs `referenced` for each URL it writes under References, and status reads its summary as that URL. " +
 				"Add one with `agent-plan reference PLAN URL`",
+			carriedKind: "agent-plan carry logs `carried` for each step and follow-up it moves to the next plan. " +
+				"Carry what is left with `agent-plan carry PLAN`",
 		}
 		for _, k := range []string{"loop-began", "round", "replied", "resolved", "ci-waited"} {
 			kinds[k] = "pr-loop logs what it did, from begin on, in the plan of the session that ran it. " +
@@ -164,6 +166,8 @@ func (p Plan) check(e Event) error {
 		return refusal.New("review %q is not <round>.<finding id>. Pass it as `--review 1.F3`", e.Review)
 	case e.Kind == "finding-settled" && (e.Review == "" || e.Outcome == ""):
 		return refusal.New("a settled finding needs the finding and its outcome. Pass `--review <round>.<id> --outcome <outcome>`")
+	case e.Kind == "abandoned" && strings.TrimSpace(e.Summary) == "":
+		return refusal.New("an abandoned item needs the reason it was dropped. Pass it, as `--summary 'the flag went upstream'`")
 	case strings.ContainsAny(e.Agent+e.Branch+e.Session, " \t"):
 		return refusal.New("agent, branch and session are single words. Pass them without spaces, as `--agent reviewer`")
 	}
@@ -174,7 +178,60 @@ func (p Plan) check(e Event) error {
 	if _, ok := items[e.Item]; !ok {
 		return refusal.New("%q is not an item of %s. Add it first with `agent-plan step` or `agent-plan part`, or use an ID `agent-plan status %s` lists", e.Item, p.Name, p.file(""))
 	}
+	if e.Kind != carriedKind && projected(e.Item) {
+		props, err := planHeading(p.file(""))
+		if err != nil {
+			return err
+		}
+		// Only a plan carried from has carried items, so others skip the log.
+		if to := props[propCarriedTo]; to != "" {
+			events, err := p.Events()
+			if err != nil {
+				return err
+			}
+			if stepState(events, e.Item) == kwCarried {
+				return refusal.New("%s was carried to %s, which holds it now. Log it there, as `agent-plan log %s --item %s --kind %s`",
+					e.Item, to, p.carriedToFile(to), e.Item, e.Kind)
+			}
+		}
+	}
+	if e.Kind == handedBack && (e.Item == p.Name || partPattern.MatchString(e.Item)) {
+		open, err := p.unsettledSteps(e.Item)
+		if err != nil {
+			return err
+		}
+		if len(open) > 0 {
+			return refusal.New("%s is not handed back while %s is unsettled. Log each step and part done, verified or abandoned with its reason, "+
+				"or move what is left to the next plan with `agent-plan carry %s`", e.Item, strings.Join(open, ", "), p.file(""))
+		}
+	}
 	return nil
+}
+
+// carriedKind is the kind of event carry logs for each step and follow-up
+// it moves to the next plan, which settles it as CARRIED.
+const carriedKind = "carried"
+
+// unsettledSteps are the steps and parts of the plan, or with a part's ID
+// that part's steps alone, that the log leaves open, in file order.
+func (p Plan) unsettledSteps(of string) ([]string, error) {
+	list, err := p.itemList()
+	if err != nil {
+		return nil, err
+	}
+	events, err := p.Events()
+	if err != nil {
+		return nil, err
+	}
+	var open []string
+	for _, it := range list {
+		mine := stepPattern.MatchString(it.ID) && (of == p.Name || strings.HasPrefix(it.ID, of+".")) ||
+			partPattern.MatchString(it.ID) && of == p.Name
+		if mine && !planKeywords.done[stepState(events, it.ID)] {
+			open = append(open, it.ID)
+		}
+	}
+	return open, nil
 }
 
 // Log appends e, an event an agent logs, to the plan's log, with a new

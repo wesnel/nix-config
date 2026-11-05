@@ -28,11 +28,14 @@ type Status struct {
 	Title string `json:"title"`
 	State string `json:"status"`
 	Steps []Step `json:"steps"`
-	// NotDone are the steps with no done event, and DoneNotVerified those
-	// with one but no verified event; abandoned steps are in neither.
-	NotDone         []string `json:"notDone"`
+	// Unsettled are the steps the log leaves TODO or STARTED, which a
+	// hand-back waits for; DoneNotVerified those it leaves DONE; Carried
+	// those it carried to the next plan. Abandoned steps are in none.
+	Unsettled       []string `json:"unsettled"`
 	DoneNotVerified []string `json:"doneNotVerified"`
-	// Implemented is Verified of Total, the steps not abandoned.
+	Carried         []string `json:"carried"`
+	// Implemented is Verified of Total, the steps neither abandoned nor
+	// carried.
 	Verified    int    `json:"verified"`
 	Total       int    `json:"total"`
 	Implemented string `json:"implemented"`
@@ -205,8 +208,8 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	s := Status{Plan: p.file(""), Title: orgTitle(string(data)), Steps: []Step{}, NotDone: []string{},
-		DoneNotVerified: []string{}, Ready: []string{}, Waiting: []Waiting{}, KeywordDrift: []Drift{}, Followups: []string{}}
+	s := Status{Plan: p.file(""), Title: orgTitle(string(data)), Steps: []Step{}, Unsettled: []string{},
+		DoneNotVerified: []string{}, Carried: []string{}, Ready: []string{}, Waiting: []Waiting{}, KeywordDrift: []Drift{}, Followups: []string{}}
 	open, err := p.Questions(true)
 	if err != nil {
 		return Status{}, err
@@ -272,15 +275,18 @@ func (p Plan) StatusAt(now time.Time) (Status, error) {
 		}
 	}
 	for _, step := range s.Steps {
-		switch {
-		case step.Abandoned:
+		switch step.Keyword {
+		case kwAbandoned:
 			continue
-		case !step.Done:
-			s.NotDone = append(s.NotDone, step.ID)
-		case !step.Verified:
+		case kwCarried:
+			s.Carried = append(s.Carried, step.ID)
+			continue
+		case kwDone:
 			s.DoneNotVerified = append(s.DoneNotVerified, step.ID)
-		default:
+		case kwVerified:
 			s.Verified++
+		default:
+			s.Unsettled = append(s.Unsettled, step.ID)
 		}
 		s.Total++
 	}
@@ -331,13 +337,16 @@ func (s Status) Org() string {
 	b.WriteString("|-\n")
 	for _, step := range s.Steps {
 		done := yes(step.Done)
-		if step.Abandoned {
+		switch step.Keyword {
+		case kwAbandoned:
 			done = "abandoned"
+		case kwCarried:
+			done = "carried"
 		}
 		b.WriteString(row(step.ID, step.Title, done, yes(step.Verified), strings.Join(step.Commits, "; ")))
 	}
-	fmt.Fprintf(&b, "\n- Status: %s\n- Implemented: %s verified\n- Without done: %s\n- Done, not verified: %s\n",
-		s.State, s.Implemented, list(s.NotDone), list(s.DoneNotVerified))
+	fmt.Fprintf(&b, "\n- Status: %s\n- Implemented: %s verified\n- Unsettled: %s\n- Done, not verified: %s\n- Carried: %s\n",
+		s.State, s.Implemented, list(s.Unsettled), list(s.DoneNotVerified), list(s.Carried))
 	fmt.Fprintf(&b, "- Parts ready to start: %s\n", list(s.Ready))
 	fmt.Fprintf(&b, "- Steps ready: %s\n", list(s.ReadySteps))
 	fmt.Fprintf(&b, "- Follow-ups open: %s\n", list(s.Followups))

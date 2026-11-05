@@ -67,8 +67,8 @@ func (c Config) SessionEndHook(hook []byte, now time.Time) error {
 }
 
 // takeHandover adds session to the SESSIONS of the plan a /clear in cwd
-// handed over, when one did within clearHandoverAge, and removes the
-// hand-over.
+// handed over, or of the plan its work was last carried to, when one did
+// within clearHandoverAge, and removes the hand-over.
 func (c Config) takeHandover(session, cwd string, now time.Time) {
 	file := clearFile(cwd)
 	data, err := os.ReadFile(file)
@@ -84,6 +84,7 @@ func (c Config) takeHandover(session, cwd string, now time.Time) {
 	if err != nil {
 		return
 	}
+	p = c.lastCarriedTo(p)
 	p.withLock(func(l *lockedPlan) error {
 		return l.setPlanProperty("", "SESSIONS", func(values []string) []string {
 			if slices.Contains(values, session) {

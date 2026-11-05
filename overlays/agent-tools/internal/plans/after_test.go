@@ -133,7 +133,7 @@ func testQuestionsAfter(t *testing.T) {
 		if _, err := p.Decide("Q1", DecideOptions{Answer: "moot", Drop: true}, day); err != nil {
 			t.Fatal(err)
 		}
-		for _, e := range []Event{{Kind: "done", Item: "P1"}, {Kind: "abandoned", Item: "S1"}} {
+		for _, e := range []Event{{Kind: "done", Item: "P1"}, {Kind: "abandoned", Item: "S1", Summary: "not needed"}} {
 			if _, err := p.Log(e, day); err != nil {
 				t.Fatal(err)
 			}
@@ -274,7 +274,7 @@ func testStatusReadyParts(t *testing.T) {
 	for _, kind := range []string{"abandoned", "done", "verified"} {
 		t.Run(kind+" parts", func(t *testing.T) {
 			p := parts(t)
-			logAll(t, p, Event{Kind: kind, Item: "P1"}, Event{Kind: kind, Item: "P3"})
+			logAll(t, p, Event{Kind: kind, Item: "P1", Summary: "settled"}, Event{Kind: kind, Item: "P3", Summary: "settled"})
 			s, err := p.Status()
 			if err != nil {
 				t.Fatal(err)
@@ -333,7 +333,7 @@ func testStatusReadySteps(t *testing.T) {
 	// An abandoned step settles what waits for it, as a done one does.
 	t.Run("once their blockers settle", func(t *testing.T) {
 		p := steps(t)
-		for _, e := range []Event{{Kind: "done", Item: "S1"}, {Kind: "done", Item: "P1.S1"}, {Kind: "abandoned", Item: "S6"}} {
+		for _, e := range []Event{{Kind: "done", Item: "S1"}, {Kind: "done", Item: "P1.S1"}, {Kind: "abandoned", Item: "S6", Summary: "not needed"}} {
 			if _, err := p.Log(e, day); err != nil {
 				t.Fatal(err)
 			}

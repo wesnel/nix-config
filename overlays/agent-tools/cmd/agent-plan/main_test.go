@@ -248,6 +248,35 @@ func TestCommands(t *testing.T) {
 		}
 	})
 
+	t.Run("carry", func(t *testing.T) {
+		plan := sessionPlan(t)
+		code, out, errs := agentPlan(t, "", "carry", plan)
+		if code != 0 {
+			t.Fatalf("carry: %d %s", code, errs)
+		}
+		var carried plans.Carried
+		if err := json.Unmarshal([]byte(out), &carried); err != nil {
+			t.Fatalf("carry's output %q: %v", out, err)
+		}
+		if carried.Plan == plan || strings.Join(carried.Steps, " ") != "S1 S2" {
+			t.Errorf("carried %+v", carried)
+		}
+		code, out, errs = agentPlan(t, "", "carry", plan)
+		var again plans.Carried
+		json.Unmarshal([]byte(out), &again)
+		if code != 0 || again.Plan != carried.Plan {
+			t.Errorf("carry again: %d %s %s", code, out, errs)
+		}
+		// The line carry prints is what a fresh session runs.
+		code, out, errs = agentPlan(t, "", "pickup", carried.Plan, "--session", "claude:fresh")
+		if code != 0 || !strings.HasPrefix(out, "Picked up plan "+carried.Plan+" in session claude:fresh.\n") {
+			t.Errorf("pickup: %d %q %s", code, out, errs)
+		}
+		if !strings.Contains(carried.Prompt, "agent-plan pickup "+carried.Plan) {
+			t.Errorf("carry's prompt %q", carried.Prompt)
+		}
+	})
+
 	t.Run("summary with a newline", func(t *testing.T) {
 		plan := sessionPlan(t)
 		code, _, errs := agentPlan(t, "", "log", plan, "--item", "S1", "--kind", "done", "--summary", "x\n* forged")
@@ -309,6 +338,11 @@ func TestCommands(t *testing.T) {
 		large, small := status(250000, time.Now().Add(time.Hour)), status(30000, time.Now().Add(time.Hour))
 		if _, out, _ := agentPlan(t, large, "statusline"); strings.Contains(out, "/clear") {
 			t.Errorf("a hint before any checkpoint: %q", out)
+		}
+		for _, step := range []string{"S1", "S2"} {
+			if _, err := p.Log(plans.Event{Kind: "done", Item: step}, time.Now()); err != nil {
+				t.Fatal(err)
+			}
 		}
 		if _, err := p.Log(plans.Event{Kind: "handed-back", Item: p.Name}, time.Now()); err != nil {
 			t.Fatal(err)

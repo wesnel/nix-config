@@ -158,6 +158,12 @@ type NewOptions struct {
 	// it; where it is "", the plan takes the workstream of the plan it
 	// continues, if any. A part is in its plan's and takes none.
 	Workstream string
+	// carriedFrom is the name of the plan Carry makes this one to take
+	// the work of, written as its CARRIED_FROM; where it is set, the plan
+	// is in carriedWorkstream, that plan's workstream as it stands, or in
+	// none, and Workstream is not read.
+	carriedFrom       string
+	carriedWorkstream WorkstreamRef
 }
 
 // Created is what New made.
@@ -234,11 +240,14 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 	if !slugPattern.MatchString(o.Slug) {
 		return Created{}, refusal.New("slug %q is not lower-case words joined by hyphens. Pass one such as `--slug add-run-loop`", o.Slug)
 	}
-	ws, err := c.workstreamFor(o)
-	if err != nil {
-		return Created{}, err
+	ws := o.carriedWorkstream
+	if o.carriedFrom == "" {
+		var err error
+		if ws, err = c.workstreamFor(o); err != nil {
+			return Created{}, err
+		}
 	}
-	extra := map[string]string{"HOST": c.Host}
+	extra := map[string]string{"HOST": c.Host, propCarriedFrom: o.carriedFrom}
 	if ws.ID != "" {
 		extra["WORKSTREAM"] = ws.link()
 	}
@@ -363,7 +372,7 @@ func fileTags(repos []string, host string) string {
 
 // planText is a new plan file of host's, with id as its `* Plan`
 // heading's CUSTOM_ID: the parent's sections, and Distribution for a
-// parent alone; extra's PARENT and HOST lead its properties, and its
+// parent alone; extra's PARENT, HOST and CARRIED_FROM lead its properties, and its
 // WORKSTREAM, a link, ends them. A parent's file starts with a property drawer holding a
 // fresh UUID as its ID, the one org-roam node of the plan; a part's file
 // is no node and has none.
@@ -381,7 +390,7 @@ func planText(o NewOptions, id, host string, extra map[string]string, parent boo
 			fmt.Fprintf(&b, ":%s: %s\n", name, value)
 		}
 	}
-	for _, name := range []string{"PARENT", "HOST"} {
+	for _, name := range []string{"PARENT", "HOST", propCarriedFrom} {
 		if extra[name] != "" {
 			property(name, extra[name])
 		}
@@ -678,8 +687,17 @@ func (p Plan) items() (map[string]item, error) {
 }
 
 // Goal is the text under "** Goal" in the plan's file, or the part's: the
-// goal statement a fresh review reads.
+// goal statement a fresh review reads. It refuses a plan with none.
 func (p Plan) Goal(part string) (string, error) {
+	goal, err := p.goalText(part)
+	if err == nil && goal == "" {
+		err = refusal.New("%s has no goal statement under its Goal heading. Write the goal and what is not this change's job with `agent-plan section PLAN Goal --text TEXT [--part P1]`, as the `plan-work` skill says", p.file(part))
+	}
+	return goal, err
+}
+
+// goalText is Goal, "" for a plan with none.
+func (p Plan) goalText(part string) (string, error) {
 	if part != "" && !partPattern.MatchString(part) {
 		return "", refusal.New("%q is not a part ID. Pass one such as `--part P1`", part)
 	}
@@ -703,7 +721,7 @@ func (p Plan) Goal(part string) (string, error) {
 		}
 		return body + "\n", nil
 	}
-	return "", refusal.New("%s has no goal statement under its Goal heading. Write the goal and what is not this change's job with `agent-plan section PLAN Goal --text TEXT [--part P1]`, as the `plan-work` skill says", file)
+	return "", nil
 }
 
 // FindOptions select plans; a plan matches any one given.

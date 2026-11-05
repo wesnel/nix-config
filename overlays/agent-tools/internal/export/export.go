@@ -375,7 +375,8 @@ var (
 	keywords = map[string]bool{"TODO": true, "STARTED": true, "DONE": true, "VERIFIED": true, "ABANDONED": true}
 )
 
-// Plans are c's plans of every host, newest first, but those halted, and
+// Plans are c's plans of every host, newest first, but those halted or
+// whose work was carried to another, and
 // the IDs of those that failed: refused by Open, unreadable, or with an ID
 // longer than maxID, each named in the error. Plans is nil only where the
 // plans directory could not be listed.
@@ -399,6 +400,9 @@ func Plans(c plans.Config, now time.Time) ([]Plan, []string, error) {
 		if len(p.Name) > maxID {
 			failed = append(failed, p.Name)
 			errs = append(errs, fmt.Errorf("%s: its ID is longer than the %d characters a document ID may be", p.Name, maxID))
+			continue
+		}
+		if p.CarriedTo() != "" {
 			continue
 		}
 		plan, err := planOf(c, p, titles, now)

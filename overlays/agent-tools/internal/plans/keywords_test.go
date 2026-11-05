@@ -21,7 +21,7 @@ func TestStepKeywords(t *testing.T) {
 		t.Helper()
 		p := fromFixture(t, "open.org")
 		for _, e := range []Event{{Kind: "done", Item: "S1"}, {Kind: "done", Item: "S2"}, {Kind: "verified", Item: "S2"},
-			{Kind: "abandoned", Item: "S3"}, {Kind: "done", Item: "P1"}, {Kind: "done", Item: "F1"}} {
+			{Kind: "abandoned", Item: "S3", Summary: "not needed"}, {Kind: "done", Item: "P1"}, {Kind: "done", Item: "F1"}} {
 			if _, err := p.Log(e, orgClosed); err != nil {
 				t.Fatal(err)
 			}

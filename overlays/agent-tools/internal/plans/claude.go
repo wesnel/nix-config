@@ -41,7 +41,8 @@ func checkout(dir string) (top, branch string) {
 // session's SessionStart hook, its plans matched by session or by the
 // linked worktree it runs in (never a main checkout, which many plans name,
 // as Locate says), the whole within ResumeLimit; nothing when there are
-// none. Claude clear events first consume its SessionEnd handover. Codex
+// none. Claude clear events first consume its SessionEnd handover, and
+// Claude's brief is of the first plan matched by session, if any. Codex
 // events only read: exact session matches take precedence, and ambiguous
 // matches get no brief.
 func (c Config) SessionHook(hook []byte, harness string) ([]byte, error) {
@@ -101,7 +102,13 @@ func (c Config) SessionHook(hook []byte, harness string) ([]byte, error) {
 		brief = len(found) == 1
 	}
 	if brief {
-		if p, err := c.Open(found[0].Plan); err == nil {
+		// The session's own plan, before a newer one sharing its worktree,
+		// such as the plan its work was carried to.
+		own := found[0]
+		if i := slices.IndexFunc(found, func(f Found) bool { return slices.Contains(f.Matched, "session") }); i >= 0 {
+			own = found[i]
+		}
+		if p, err := c.Open(own.Plan); err == nil {
 			if brief, err := p.ResumeBrief(time.Now(), ResumeLimit-len(context)-2); err == nil {
 				context += "\n\n" + brief
 			}

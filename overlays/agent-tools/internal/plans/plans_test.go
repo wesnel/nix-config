@@ -145,7 +145,7 @@ func TestNew(t *testing.T) {
 			t.Errorf("made %+v", made)
 		}
 		data, _ := os.ReadFile(made.File)
-		if header := "#+title: Add the loop\n#+TODO: TODO STARTED | DONE VERIFIED ABANDONED\n#+TODO: ASK | DECIDED(@) DROPPED(@) SUPERSEDED\n" +
+		if header := "#+title: Add the loop\n#+TODO: TODO STARTED | DONE VERIFIED ABANDONED CARRIED\n#+TODO: ASK | DECIDED(@) DROPPED(@) SUPERSEDED\n" +
 			"#+FILETAGS: :r:box:\n"; !strings.Contains(string(data), ":END:\n"+header) {
 			t.Errorf("the plan's file-level drawer is not followed by %q:\n%s", header, data)
 		}
@@ -647,6 +647,7 @@ func TestLog(t *testing.T) {
 		"an unknown role":        {Kind: "done", Item: "S1", Role: "boss"},
 		"an unknown outcome":     {Kind: "finding-settled", Item: "S1", Review: "1.F1", Outcome: "ignore"},
 		"a malformed review":     {Kind: "finding-settled", Item: "S1", Review: "F1", Outcome: "fix"},
+		"abandoned with no why":  {Kind: "abandoned", Item: "S1"},
 	} {
 		t.Run("refused/"+what, func(t *testing.T) {
 			p := withSteps(t)
@@ -654,6 +655,56 @@ func TestLog(t *testing.T) {
 			isRefusal(t, what, err)
 		})
 	}
+
+	// A session hands back only once each step is settled: done, verified,
+	// abandoned with a reason, or carried to the next plan.
+	t.Run("hand-back waits for every step", func(t *testing.T) {
+		p := withSteps(t)
+		if _, err := p.Log(Event{Kind: "done", Item: "S1"}, day); err != nil {
+			t.Fatal(err)
+		}
+		_, err := p.Log(Event{Kind: "handed-back", Item: p.Name}, day)
+		isRefusal(t, "a hand-back with S2 open", err)
+		if err == nil || !strings.Contains(err.Error(), "S2") || !strings.Contains(err.Error(), "agent-plan carry") {
+			t.Errorf("the refusal names neither the open step nor carry: %v", err)
+		}
+		if _, err := p.record(Event{Kind: "carried", Item: "S2"}, day); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := p.Log(Event{Kind: "handed-back", Item: p.Name}, day); err != nil {
+			t.Errorf("a hand-back with every step settled: %v", err)
+		}
+	})
+
+	// A part's hand-back waits for the part's own steps alone.
+	t.Run("part's hand-back waits for its steps", func(t *testing.T) {
+		c := testConfig(t)
+		p := newPlan(t, c, "x")
+		addItems(t, p.file(""), "** Steps", "S1")
+		addItems(t, p.file(""), "** Distribution", "P1")
+		part, err := c.New(NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		addItems(t, part.File, "** Steps", "P1.S1")
+		_, err = p.Log(Event{Kind: "handed-back", Item: "P1"}, day)
+		isRefusal(t, "a part's hand-back with P1.S1 open", err)
+		if _, err := p.Log(Event{Kind: "abandoned", Item: "P1.S1", Summary: "the flag went upstream"}, day); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := p.Log(Event{Kind: "handed-back", Item: "P1"}, day); err != nil {
+			t.Errorf("a part's hand-back with S1 of the plan still open: %v", err)
+		}
+		// The plan's own hand-back waits for the part too.
+		if _, err := p.Log(Event{Kind: "done", Item: "S1"}, day); err != nil {
+			t.Fatal(err)
+		}
+		_, err = p.Log(Event{Kind: "handed-back", Item: p.Name}, day)
+		isRefusal(t, "the plan's hand-back with part P1 open", err)
+		if err != nil && !strings.Contains(err.Error(), "P1") {
+			t.Errorf("the refusal does not name P1: %v", err)
+		}
+	})
 
 	// A log changed other than by appending through Log is no longer trusted.
 	t.Run("after a rewrite in place", func(t *testing.T) {
@@ -714,7 +765,7 @@ func testStatusItems(t *testing.T) {
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
 	plan := p.file("")
-	addItems(t, plan, "** Steps", "S1", "S2", "S3")
+	addItems(t, plan, "** Steps", "S1", "S2", "S3", "S4", "S5", "S6")
 	addItems(t, plan, "** Distribution", "P1")
 	part, err := c.New(NewOptions{Title: "Part", Parent: plan, Part: "P1"}, day)
 	if err != nil {
@@ -728,8 +779,10 @@ func testStatusItems(t *testing.T) {
 		{Kind: "done", Item: "P1.S1", Commit: "Add the part"},
 		{Kind: "reviewed", Item: "P1"},
 		{Kind: "started", Item: "S3"},
+		{Kind: "abandoned", Item: "S4", Summary: "the flag went upstream"},
+		{Kind: "carried", Item: "S5"},
 	} {
-		if _, err := p.Log(e, day); err != nil {
+		if _, err := p.record(e, day); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -737,21 +790,25 @@ func testStatusItems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(s.NotDone, " ") != "S3" || strings.Join(s.DoneNotVerified, " ") != "S2 P1.S1" ||
-		s.Implemented != "1/4" || s.Verified != 1 || s.Total != 4 || s.State != "planning" || s.Title != "Add the loop" ||
-		s.Plan != plan {
+	if strings.Join(s.Unsettled, " ") != "S3 S6" || strings.Join(s.DoneNotVerified, " ") != "S2 P1.S1" ||
+		strings.Join(s.Carried, " ") != "S5" || s.Implemented != "1/5" || s.Verified != 1 || s.Total != 5 ||
+		s.State != "planning" || s.Title != "Add the loop" || s.Plan != plan {
 		t.Errorf("status %+v", s)
 	}
 	var keywords []string
 	for _, step := range s.Steps {
 		keywords = append(keywords, step.ID+" "+step.Keyword)
 	}
-	if got := strings.Join(keywords, ", "); got != "S1 VERIFIED, S2 DONE, S3 STARTED, P1.S1 DONE" {
+	if got := strings.Join(keywords, ", "); got != "S1 VERIFIED, S2 DONE, S3 STARTED, S4 ABANDONED, S5 CARRIED, S6 TODO, P1.S1 DONE" {
 		t.Errorf("keywords %s", got)
+	}
+	if data, _ := os.ReadFile(plan); !strings.Contains(string(data), "*** CARRIED Step S5\n") {
+		t.Errorf("S5's heading does not show it carried:\n%s", data)
 	}
 	org := s.Org()
 	for _, line := range []string{"| S1 | Step S1 | yes | yes | Add the run loop |", "| P1.S1 | Step P1.S1 | yes | no | Add the part |",
-		"| S3 | Step S3 | no | no | |", "- Implemented: 1/4 verified", "- Without done: S3", "- Done, not verified: S2, P1.S1"} {
+		"| S3 | Step S3 | no | no | |", "- Implemented: 1/5 verified", "- Unsettled: S3, S6", "- Done, not verified: S2, P1.S1",
+		"- Carried: S5"} {
 		if !strings.Contains(org, line) {
 			t.Errorf("org status lacks %q:\n%s", line, org)
 		}

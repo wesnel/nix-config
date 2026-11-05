@@ -53,7 +53,7 @@ func openFixture(t *testing.T) (Config, Plan, Plan) {
 	halted, err := c.Open(made.Plan)
 	must(nil, err)
 	addItems(t, halted.file(""), "** Steps", "S1")
-	must(halted.Log(Event{Kind: "abandoned", Item: "S1"}, day))
+	must(halted.Log(Event{Kind: "abandoned", Item: "S1", Summary: "parked"}, day))
 	must(halted.Followup(FollowupOptions{Title: "Forgotten idea", FoundIn: "S1"}, later))
 
 	mac := Config{Dir: c.Dir, Host: "mac"}

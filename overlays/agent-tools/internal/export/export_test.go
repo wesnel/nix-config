@@ -688,6 +688,38 @@ func TestFailures(t *testing.T) {
 	}
 }
 
+// A plan whose work was carried on leaves the page as a halted one does,
+// and the plan it went to is there in its place.
+func TestCarried(t *testing.T) {
+	c := plans.Config{Dir: filepath.Join(t.TempDir(), "agents"), Host: "box"}
+	made, err := c.New(plans.NewOptions{Title: "Add the loop", Slug: "loop"}, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := c.Open(made.Plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.AddEntry(plans.EntryOptions{Section: "Steps", Title: "Write the loop"}, day); err != nil {
+		t.Fatal(err)
+	}
+	carried, err := c.Carry(p.File(), plans.CarryOptions{}, day.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ps, _, err := Plans(c, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, plan := range ps {
+		ids = append(ids, plan.ID)
+	}
+	if strings.Join(ids, " ") != carried.ID {
+		t.Errorf("exported %v, want %s alone", ids, carried.ID)
+	}
+}
+
 // Long text is cut to its cap in runes, lists to theirs, and a plan
 // filled past every cap with the widest characters stays within maxDoc.
 func TestCaps(t *testing.T) {

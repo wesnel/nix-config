@@ -36,6 +36,9 @@ func TestCheckpoint(t *testing.T) {
 	if _, ok := at(); ok {
 		t.Error("a step started after the checkpoint is still at it")
 	}
+	if _, err := p.Log(Event{Kind: "done", Item: "S1"}, day); err != nil {
+		t.Fatal(err)
+	}
 	back, err := p.Log(Event{Kind: "handed-back", Item: p.Name}, day.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)

@@ -158,6 +158,8 @@ func planTools() []mcpTool {
 		makeTool("reference", []string{"plan", "url"}, plan, p("url", text, true, "the reference URL"), prose("note")),
 		makeTool("link", []string{"plan", "other"}, plan, p("other", text, true, "the related plan file or name"), p("why", literal, true, "why the plans are related")),
 		makeTool("postpone", []string{"plan", "item"}, plan, item, flag("until"), boolFlag("clear", "clear the postponement")),
+		makeTool("carry", []string{"plan"}, plan, prose("title"), flag("slug"), prose("text"), flag("template")),
+		makeTool("pickup", []string{"plan"}, plan, flag("session")),
 		makeTool("sign-id", nil, plan, list("branch"), flag("session"), flag("base")),
 		makeTool("workstream new", nil, title, prose("summary")),
 		makeTool("workstream list", nil, boolFlag("json", "return JSON")),
