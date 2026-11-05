@@ -292,6 +292,13 @@ in {
             # Code's sandbox. Codex's sandbox cannot tell agent-plan from a
             # command wrapping it.
             // genAttrs sandboxLists.toolCaches (_: "write")
+            # The task worktrees Claude Code writes too; the .env denies
+            # above still hold, as Codex emits denies after every grant. A
+            # worktree's `.git` link and agent settings cannot be carved
+            # out as read-only: Codex takes a glob key with `deny` alone,
+            # so the guard holds them, as it does in Claude Code's sandbox
+            # beyond its agents.json deny.
+            // {${sandboxLists.worktrees} = "write";}
             # On macOS sops-nix decrypts under the per-user temporary
             # directory, where a command could otherwise rewrite the git.inc
             # template git includes; commands write commandTmpdir instead.
@@ -524,6 +531,11 @@ in {
             && !(any denied omittedDenies)
             && all coveredByDeny secretSamples.denied
             && !(any coveredByDeny secretSamples.allowed)
+            && (profile.filesystem.${sandboxLists.worktrees} or null) == "write"
+            && coveredByDeny "${config.home.homeDirectory}/.claude/worktrees/x/.env"
+            # Codex refuses to start on a glob key with any access but
+            # `deny`: `read` and `write` take an exact path or a trailing `/**`.
+            && all (p: match ".*[][*?{}].*" (removeSuffix "/**" p) == null || profile.filesystem.${p} == "deny") (attrNames profile.filesystem)
             && !(profile.filesystem ? ${plans.dir})
             && all (v: (filters.${v} or null) == "exclude") sandboxLists.deniedEnvVars
             && (darwin -> (profile.filesystem.":tmpdir" or null) == "read")

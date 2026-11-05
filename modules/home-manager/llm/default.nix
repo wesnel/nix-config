@@ -547,8 +547,8 @@ in {
           ++ [
             "~/git/**/.env"
             "~/git/**/.env.*"
-            "~/.claude/worktrees/**/.env"
-            "~/.claude/worktrees/**/.env.*"
+            "${cfg.sandbox.worktrees}/**/.env"
+            "${cfg.sandbox.worktrees}/**/.env.*"
             # Browser profiles, 1Password and shell histories.
             "~/Library/Application Support/Google/Chrome"
             "~/Library/Application Support/BraveSoftware"
@@ -590,6 +590,19 @@ in {
           then "/private/var/folders/*/*/T/secrets.d/*/rendered/git.inc"
           else "/run/user/*/secrets.d/*/rendered/git.inc"
         );
+      };
+
+      worktrees = mkOption {
+        type = types.str;
+        readOnly = true;
+        default = "~/.claude/worktrees";
+
+        description = ''
+          Where task worktrees live, as `<this>/<repo>/<branch>`: the one
+          directory outside the working directory that every harness's
+          sandbox lets its commands write, so a plan begun in one harness
+          continues in another. Its `.env` files stay denied to reads.
+        '';
       };
 
       toolCaches = mkOption {
