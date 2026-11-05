@@ -947,13 +947,14 @@ git itself does not use the keychain's GitHub login:
 | `hex` (`hex`) | Hex's `/mcp` | reads; edits and runs you confirm, OAuth |
 | `datadog` (`datadog.enable`, `datadog.site`) | the site's `/v1/mcp`, toolsets `core` and `error-tracking` | read tools only, OAuth |
 | `parallels` (`parallels`) | local Parallels Desktop MCP | VM reads; guest commands, keyboard input and lifecycle changes you confirm |
+| `lima` (`lima`, `limaDev.enable`) | local `lima-mcp` | default-home list and the managed VM's status and job results; stops, the managed VM's start and guest commands you confirm |
 
 Options in parentheses are off by default. Each server serves only
 the tools listed for it in the guard's `mcp.json`. In Claude Code those
 lists are also permission rules generated from `mcp.json`: each server's
 reads allowed and its listed writes asked, and the guard still refuses any
-other tool on a listed server. Linear and Parallels calls use Codex's native
-per-call approval; Codex gets the other remote servers' reads alone. Reviewers
+other tool on a listed server. Linear, Parallels and Lima calls use Codex's
+native per-call approval; Codex gets the other remote servers' reads alone. Reviewers
 get reads alone.
 
 ngrok enables Parallels. It requires an installed Parallels Desktop, and
@@ -963,6 +964,25 @@ require a running VM. VM deletion, reset, configuration and encryption tools
 are excluded. If the local server cannot start, inspect
 `~/.local/state/mcp-proxy.log`; `mcp-proxy-status` checks authentication,
 not local process startup.
+
+ngrok also enables `lima` with `limaDev`: the instances of the default
+Lima home, listed and stopped, and a managed `ngrok-agent` VM in a Lima
+home of its own, `~/.local/state/lima-mcp/lima`, which sessions cannot
+read. Run `limactl` against that home only as `lima-dev`, never plain
+`limactl`, which would start QEMU without its launch guard. What its
+isolation rests on:
+
+- QEMU starts only through the guard, which reads its configuration from
+  the store, allows each flag and value, restricts the network to two
+  relays, and runs QEMU under `sandbox-exec`.
+- Attestation finds QEMU in the process table and checks its argv against
+  the guard's, on every status and command and each minute, and stops a VM
+  that fails. It cannot see whether QEMU runs under the Seatbelt profile:
+  that needs cgo. This is a recorded residual.
+- The guest reaches only the HTTPS hosts of the egress policy, through the
+  CONNECT relay, and private dial, through the HTTP/3 broker, whose CA
+  vouches for the private-dial servers' names alone.
+- No VM boots in a session sandbox, so the operator runs the live checks.
 
 The proxy signs in to each remote server itself and refreshes their
 short-lived tokens, so agents hold only the proxy's own token, kept in
