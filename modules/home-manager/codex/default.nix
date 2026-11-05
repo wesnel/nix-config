@@ -648,6 +648,27 @@ in {
       '';
     }
 
+    # The TUI footer's status line, as /statusline sets it: the share of
+    # the context used, as Claude Code's status line shows it, and the
+    # usage remaining in the 5-hour and weekly rate-limit windows, where
+    # Claude Code shows the share used. Codex leaves an item out when it
+    # does not know its value. The list replaces Codex's default items, so
+    # it names the model and directory too. Item names and what they show
+    # are codex-cli 0.165's; Codex's docs list the items but not their
+    # identifiers.
+    # Merged into the config.toml Codex writes, so /statusline lasts until
+    # the next switch.
+    {
+      home.activation.codexStatusLine = lib.hm.dag.entryAfter ["writeBoundary"] ''
+        if [ -z "''${DRY_RUN:-}" ]; then
+          ${setKeys} "$HOME/.codex/config.toml" ${escapeShellArg (builtins.toJSON {
+          tui.status_line = ["model-with-reasoning" "current-dir" "context-used" "five-hour-limit" "weekly-limit"];
+        })} \
+            || warnEcho "Codex's status line was not set."
+        fi
+      '';
+    }
+
     # Through the ngrok.ai gateway (wgn.home.llm.gateway), interactive Codex
     # and codex-acp use it as their model provider, whose auth command reads
     # the key, so no login and no environment holds it. Memories are off:

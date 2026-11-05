@@ -865,10 +865,12 @@
           nativeBuildInputs = [pkgs.python3 pkgs.bash];
           activation = ngrok.home.activation.codexRules.data;
           opsActivation = ngrok.home.activation.codexOpsServer.data;
-          passAsFile = ["activation" "opsActivation"];
+          statusLineActivation = ngrok.home.activation.codexStatusLine.data;
+          passAsFile = ["activation" "opsActivation" "statusLineActivation"];
         } ''
           python3 ${./modules/home-manager/codex/rules-tests.py} "$activationPath"
           python3 ${./modules/home-manager/codex/ops-tests.py} "$opsActivationPath"
+          python3 ${./modules/home-manager/codex/statusline-tests.py} "$statusLineActivationPath"
           touch $out
         '';
 
