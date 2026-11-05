@@ -16,9 +16,10 @@ import (
 )
 
 // Locate is the plan file that what a session did in a worktree belongs
-// to. The session picks the plan: of this host's plans, the newest whose
-// files name both the session and the worktree, else the newest naming the
-// session, else the newest naming the worktree. Only a linked worktree
+// to. The session picks the plan: of this host's plans, those whose files
+// name both the session and the worktree, else those naming the session,
+// else those naming the worktree, and of those the one underWay picks.
+// Only a linked worktree
 // counts: a repository's main checkout is named by many plans, so it picks
 // neither a plan nor a file within one, and a session no plan names gets
 // no plan there. A linked worktree never outranks the session either. The
@@ -61,12 +62,23 @@ func (c Config) Locate(session, worktree string) (p Plan, part string, ok bool) 
 		}
 		return 2
 	}
-	plan := order[0]
+	rank := planRank(plans[order[0]])
 	for _, name := range order[1:] {
-		if planRank(plans[name]) < planRank(plans[plan]) {
-			plan = name
+		rank = min(rank, planRank(plans[name]))
+	}
+	var ranked []Plan
+	for _, name := range order {
+		if planRank(plans[name]) == rank {
+			if p, err := c.Open(name); err == nil {
+				ranked = append(ranked, p)
+			}
 		}
 	}
+	chosen, ok := underWay(session, ranked)
+	if !ok {
+		return Plan{}, "", false
+	}
+	plan := chosen.File()
 	fileRank := func(f Found) int {
 		inWorktree := slices.Contains(f.Matched, "worktree")
 		switch {
@@ -88,6 +100,56 @@ func (c Config) Locate(session, worktree string) (p Plan, part string, ok bool) 
 	}
 	p, err = c.Open(pick.Plan)
 	return p, pick.Part, err == nil
+}
+
+// underWay is the plan of plans, given in Find's order, that session
+// works on now, and false for none: a plan whose STATUS is handed-back
+// loses to any other, then the one whose log holds session's latest
+// event, then the first. Plans made the same day order by slug alone, so
+// Find's order cannot tell which is under way; and only session's own
+// events count, so another session's work in a plan they share does not
+// make it this one's. Event times are to the minute: a tie goes to Find's
+// order. Locate and reviewPlan choose by it, so the hooks, the status
+// line and a design review's start agree.
+func underWay(session string, plans []Plan) (Plan, bool) {
+	best, bestAt, bestBack := -1, "", false
+	for i, p := range plans {
+		props, err := planHeading(p.File())
+		back := err == nil && props["STATUS"] == "handed-back"
+		at := latestBy(p, session)
+		if best < 0 || bestBack && !back || back == bestBack && at > bestAt {
+			best, bestAt, bestBack = i, at, back
+		}
+	}
+	if best < 0 {
+		return Plan{}, false
+	}
+	return plans[best], true
+}
+
+// latestBy is the time of the latest event in p's log that session
+// logged, "" for none or for no session.
+func latestBy(p Plan, session string) string {
+	if session == "" {
+		return ""
+	}
+	events, err := p.Events()
+	if err != nil {
+		return ""
+	}
+	latest := ""
+	for _, e := range events {
+		if sameSession(e.Session, session) && e.Time > latest {
+			latest = e.Time
+		}
+	}
+	return latest
+}
+
+// sameSession is whether a and b name one session, either of them with
+// its harness (claude:ID) or without, as hooks and SESSIONS differ.
+func sameSession(a, b string) bool {
+	return a != "" && b != "" && (a == b || strings.HasSuffix(a, ":"+b) || strings.HasSuffix(b, ":"+a))
 }
 
 // linkedWorktree is whether top is a linked worktree of its repository,

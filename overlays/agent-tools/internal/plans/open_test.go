@@ -178,6 +178,37 @@ func TestOpenItems(t *testing.T) {
 		}
 	})
 
+	// A filter that must read a plan's own file to judge it names a plan
+	// it cannot read in the error, as the unfiltered list does, rather
+	// than leaving it out.
+	t.Run("a plan a filter cannot read", func(t *testing.T) {
+		for _, tc := range []struct {
+			name   string
+			filter func(c Config) OpenFilter
+		}{
+			{"repository", func(Config) OpenFilter { return OpenFilter{Repos: []string{"nix-config"}} }},
+			{"workstream", func(c Config) OpenFilter {
+				ws, err := c.NewWorkstream("Agent tooling", "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				return OpenFilter{Workstreams: []string{ws.Name}}
+			}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				c, p, _ := openFixture(t)
+				f := tc.filter(c)
+				if err := os.Chmod(p.file(""), 0); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { os.Chmod(p.file(""), 0o644) })
+				if _, err := c.OpenItems(f, later); err == nil || !strings.Contains(err.Error(), p.Name) {
+					t.Errorf("error %v, want one naming %s", err, p.Name)
+				}
+			})
+		}
+	})
+
 	// Items are grouped by their plan's workstream, computed from the
 	// plans and the workstream's own title each time: the workstreams in
 	// the order of their newest plan, plans without one last, under none.
@@ -244,6 +275,125 @@ func TestOpenItems(t *testing.T) {
 		c, _, _ := openFixture(t)
 		_, err := c.OpenItems(OpenFilter{Kind: "bug"}, later)
 		isRefusal(t, "an unknown kind", err)
+	})
+
+	// Plans keeps the items of the plans it names, by file or name, any
+	// of them; with Kind and Since, the items all of them keep.
+	t.Run("filtered by plan", func(t *testing.T) {
+		c, p, halted := openFixture(t)
+		for _, tc := range []struct {
+			name string
+			f    OpenFilter
+			want []string
+		}{
+			{"one plan by its file", OpenFilter{Plans: []string{halted.File()}}, []string{halted.Name + " follow-up F1"}},
+			{"two plans, by name", OpenFilter{Plans: []string{p.Name, halted.Name}, Kind: "follow-up"},
+				[]string{halted.Name + " follow-up F1", p.Name + " follow-up F1", p.Name + " follow-up P1.F1"}},
+			{"with since", OpenFilter{Plans: []string{p.Name}, Since: day.Add(24 * time.Hour), Kind: "follow-up"},
+				[]string{p.Name + " follow-up F1"}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				items, err := c.OpenItems(tc.f, later)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := shown(items)
+				slices.Sort(got)
+				slices.Sort(tc.want)
+				if !slices.Equal(got, tc.want) {
+					t.Errorf("listed\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(tc.want, "\n"))
+				}
+			})
+		}
+	})
+
+	// Workstreams keeps the items of plans in any workstream it names, by
+	// slug or name.
+	t.Run("filtered by workstream", func(t *testing.T) {
+		c := testConfig(t)
+		for _, title := range []string{"Agent tooling", "Codex parity"} {
+			if _, err := c.NewWorkstream(title, ""); err != nil {
+				t.Fatal(err)
+			}
+		}
+		plan := func(slug, ws string) Plan {
+			p := planOn(t, c, slug, ws)
+			addItems(t, p.file(""), "** Steps", "S1")
+			return p
+		}
+		a, _, cp := plan("a", "agent-tooling"), plan("b", ""), plan("c", "codex-parity")
+		for _, tc := range []struct {
+			workstreams []string
+			want        []string
+		}{
+			{[]string{"agent-tooling"}, []string{a.Name + " step S1"}},
+			{[]string{"agent-tooling", "codex-parity"}, []string{a.Name + " step S1", cp.Name + " step S1"}},
+		} {
+			items, err := c.OpenItems(OpenFilter{Workstreams: tc.workstreams, Kind: "step"}, later)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := shown(items)
+			slices.Sort(got)
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("%v: listed\n%s\nwant\n%s", tc.workstreams, strings.Join(got, "\n"), strings.Join(tc.want, "\n"))
+			}
+		}
+	})
+
+	// Repos keeps the items of plans whose REPOSITORIES name any of them,
+	// as owner/name or by name alone.
+	t.Run("filtered by repository", func(t *testing.T) {
+		c := testConfig(t)
+		plan := func(slug string, repos ...string) Plan {
+			made, err := c.New(NewOptions{Title: "Plan " + slug, Slug: slug, Repos: repos}, day)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p, err := c.Open(made.Plan)
+			if err != nil {
+				t.Fatal(err)
+			}
+			addItems(t, p.file(""), "** Steps", "S1")
+			return p
+		}
+		x, y, z := plan("x", "o/r"), plan("y", "o/s"), plan("z", "o/r", "o/t")
+		for _, tc := range []struct {
+			repos []string
+			want  []Plan
+		}{
+			{[]string{"o/r"}, []Plan{x, z}},
+			{[]string{"s"}, []Plan{y}},
+			{[]string{"o/s", "o/t"}, []Plan{y, z}},
+			{[]string{"other/r"}, nil},
+		} {
+			items, err := c.OpenItems(OpenFilter{Repos: tc.repos, Kind: "step"}, later)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := shown(items)
+			slices.Sort(got)
+			var want []string
+			for _, p := range tc.want {
+				want = append(want, p.Name+" step S1")
+			}
+			if !slices.Equal(got, want) {
+				t.Errorf("%v: listed\n%s\nwant\n%s", tc.repos, strings.Join(got, "\n"), strings.Join(want, "\n"))
+			}
+		}
+	})
+
+	// A plan or workstream that names none of this host's is refused, not
+	// read as a filter that keeps nothing.
+	t.Run("refused/an unknown plan", func(t *testing.T) {
+		c, _, _ := openFixture(t)
+		_, err := c.OpenItems(OpenFilter{Plans: []string{"no-such-plan"}}, later)
+		isRefusal(t, "an unknown plan", err)
+	})
+	t.Run("refused/an unknown workstream", func(t *testing.T) {
+		c, _, _ := openFixture(t)
+		_, err := c.OpenItems(OpenFilter{Workstreams: []string{"no-such-workstream"}}, later)
+		isRefusal(t, "an unknown workstream", err)
 	})
 
 	// The Org listing puts each plan's items under a line naming it, and

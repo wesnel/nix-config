@@ -7,9 +7,9 @@ disable-model-invocation: true
 # Questions
 
 1. PLAN is the plan the operator names, else the plan of the current task,
-   else the one `agent-plan find` lists. With several and no way to tell
-   which, list their paths and stop for the operator to choose; with none,
-   say this session has no plan, and stop.
+   else the `plan` of the one entry `agent-plan find --chosen` lists, the
+   plan the status line counts questions of. With none, say this session
+   has no plan, and stop.
 2. Run `agent-plan questions PLAN --all --json`: the questions the operator
    can answer now, in order. Leave out those already waiting for an answer
    in this session. With none, say so if the operator asked, and stop.
