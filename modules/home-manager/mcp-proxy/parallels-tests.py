@@ -13,14 +13,20 @@ proxy = json.loads(Path(config_path).read_text())["mcpServers"]["parallels"]
 lima = json.loads(Path(config_path).read_text())["mcpServers"]["lima"]
 assert lima["transportType"] == "stdio"
 assert lima["command"].endswith("/bin/lima-mcp")
-assert lima["options"]["toolFilter"] == {"mode": "allow", "list": ["lima_list", "lima_stop"]}
+limaInventory = json.loads(Path(os.environ["inventory"]).read_text())["lima"]
+assert "lima_dev_exec_start" in limaInventory["confirms"] and "lima_dev_status" in limaInventory["reads"]
+assert lima["options"]["toolFilter"] == {"mode": "allow", "list": limaInventory["reads"] + limaInventory["confirms"]}
+# The ngrok Mac serves the managed VM, whose configuration lima-mcp parses
+# at start, exiting on an invalid one.
+assert lima["args"][0] == "--config" and lima["args"][1].endswith("-lima-dev.json"), lima["args"]
 requests = [
     {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}}},
     {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
 ]
-result = subprocess.run([lima["command"]], input="".join(json.dumps(x) + "\n" for x in requests),
+result = subprocess.run([lima["command"], *lima["args"]], input="".join(json.dumps(x) + "\n" for x in requests),
                         text=True, capture_output=True, check=True)
-replies = [json.loads(line) for line in result.stdout.splitlines()]
+# The replies may come in either order: lima-mcp answers concurrently.
+replies = sorted((json.loads(line) for line in result.stdout.splitlines()), key=lambda r: r["id"])
 assert replies[0]["result"]["protocolVersion"] == "2025-06-18"
 assert [tool["name"] for tool in replies[1]["result"]["tools"]] == lima["options"]["toolFilter"]["list"]
 inventory = json.loads(Path(os.environ["inventory"]).read_text())["parallels"]
