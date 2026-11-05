@@ -1,7 +1,11 @@
 package gitenv
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -120,24 +124,99 @@ func TestIsolate(t *testing.T) {
 			t.Errorf("GIT_CONFIGURED = %q, want it kept", got)
 		}
 	})
+}
 
-	// Packages must be isolated by their own TestMain, not by setup helpers
-	// that remember to be careful.
-	t.Run("in each package's TestMain", func(t *testing.T) {
-		if testing.Short() {
-			t.Skip("runs other packages' tests")
+// noTestMain names the packages whose tests run no git, and so need no
+// TestMain. A package that gains one that isolates must leave this list.
+var noTestMain = map[string]bool{
+	"internal/agentplans": true,
+	"internal/env":        true,
+	"internal/goproxy":    true,
+	"internal/hostpaths":  true,
+}
+
+// Packages must be isolated by their own TestMain, not by setup helpers
+// that remember to be careful: every package of the module with tests has a
+// TestMain that calls Isolate before m.Run. TestIsolate shows what Isolate
+// keeps out of the caller's repository; this reads the source alone.
+func TestEveryTestMainIsolates(t *testing.T) {
+	t.Parallel()
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tested := map[string]bool{}   // package directory: has test files
+	isolated := map[string]bool{} // package directory: its TestMain isolates
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
-		snapshot := decoy(t)
-		before := snapshot()
-		cmd := exec.Command("go", "test", "-count=1", "../git", "../repos", "../pushguard")
-		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Logf("go test: %v\n%s", err, out)
+		if d.IsDir() && path != root && (d.Name() == "testdata" || strings.HasPrefix(d.Name(), ".")) {
+			return filepath.SkipDir
 		}
-		if after := snapshot(); after != before {
-			t.Errorf("the caller's repository changed:\n--- before\n%s\n--- after\n%s", before, after)
+		if d.IsDir() || !strings.HasSuffix(path, "_test.go") {
+			return nil
 		}
+		dir, _ := filepath.Rel(root, filepath.Dir(path))
+		tested[dir] = true
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.SkipObjectResolution)
+		if err != nil {
+			return err
+		}
+		for _, decl := range file.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil && fn.Name.Name == "TestMain" && isolatesFirst(fn) {
+				isolated[dir] = true
+			}
+		}
+		return nil
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tested["internal/gitenv"] {
+		t.Fatalf("found no tests under %s: %v", root, tested)
+	}
+	for dir := range tested {
+		switch {
+		case noTestMain[dir] && isolated[dir]:
+			t.Errorf("%s isolates in its TestMain: remove it from noTestMain", dir)
+		case !noTestMain[dir] && !isolated[dir]:
+			t.Errorf("%s has no TestMain that calls gitenv.Isolate() before m.Run()", dir)
+		}
+	}
+}
+
+// isolatesFirst reports whether the TestMain fn calls Isolate, as
+// gitenv.Isolate or in this package, before it calls Run on its argument.
+func isolatesFirst(fn *ast.FuncDecl) bool {
+	params := fn.Type.Params.List
+	if len(params) != 1 || len(params[0].Names) != 1 {
+		return false
+	}
+	m := params[0].Names[0].Name
+	var isolate, run token.Pos
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		switch f := call.Fun.(type) {
+		case *ast.Ident:
+			if f.Name == "Isolate" && !isolate.IsValid() {
+				isolate = call.Pos()
+			}
+		case *ast.SelectorExpr:
+			x, _ := f.X.(*ast.Ident)
+			switch {
+			case x != nil && x.Name == "gitenv" && f.Sel.Name == "Isolate" && !isolate.IsValid():
+				isolate = call.Pos()
+			case x != nil && x.Name == m && f.Sel.Name == "Run" && !run.IsValid():
+				run = call.Pos()
+			}
+		}
+		return true
+	})
+	return isolate.IsValid() && run.IsValid() && isolate < run
 }
 
 // After Isolate in TestMain, a request that escapes the test's own servers
