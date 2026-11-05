@@ -407,6 +407,37 @@ func TestMCP(t *testing.T) {
 			t.Fatalf("index content %q: %v", data, err)
 		}
 	})
+	t.Run("git stage refuses when the sandbox lets its child write the repository", func(t *testing.T) {
+		f := stageFixture(t)
+		// The stand-in runs the probe unconfined, as a sandbox that does
+		// not hold would.
+		f.env = append(f.env, "AGENT_GIT_TEST_SANDBOX=leaky")
+		worktree, _ := stageTaskWorktree(t, f)
+		if err := os.WriteFile(filepath.Join(worktree, "code.txt"), []byte("unconfined\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		args := map[string]any{"worktree": worktree, "paths": []string{"code.txt"}}
+		data, _ := json.Marshal(args)
+		token, err := gitgrant.Issue(gitgrant.Record{Tool: "mcp__agent_ops__git_stage", Session: "thread-1", Call: "call", Arguments: data})
+		if err != nil {
+			t.Fatal(err)
+		}
+		args["authorization"] = token
+		result := f.start(t).tool(t, "git_stage", args)
+		if !result.isError || !strings.Contains(result.text, "sandbox does not hold") {
+			t.Fatalf("leaky sandbox: %+v", result)
+		}
+		cmd := exec.Command("git", "-C", worktree, "show", ":code.txt")
+		cmd.Env = f.env
+		if data, err := cmd.Output(); err != nil || string(data) != "a\nb\nc\n" {
+			t.Fatalf("index content %q after refusal: %v", data, err)
+		}
+		status := exec.Command("git", "-C", worktree, "status", "--porcelain", "--ignored")
+		status.Env = f.env
+		if data, err := status.Output(); err != nil || string(data) != " M code.txt\n" {
+			t.Fatalf("worktree status %q after refusal: %v", data, err)
+		}
+	})
 	t.Run("git stage refuses without a configured sandbox launcher", func(t *testing.T) {
 		state := realTempDir(t)
 		hostpaths.Bake(t, "", state)

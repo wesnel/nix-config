@@ -132,6 +132,20 @@ func TestResolve(t *testing.T) {
 			t.Fatalf("aliased worktree: %v", err)
 		}
 	})
+	t.Run("a symlinked object directory is refused", func(t *testing.T) {
+		f := newFixture(t)
+		objects := filepath.Join(f.main, ".git", "objects")
+		moved := filepath.Join(realTempDir(t), "objects")
+		if err := os.Rename(objects, moved); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(moved, objects); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Resolve(f.task); err == nil || !strings.Contains(err.Error(), "object directory") {
+			t.Fatalf("symlinked objects: %v", err)
+		}
+	})
 }
 
 func TestInstall(t *testing.T) {
