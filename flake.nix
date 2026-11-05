@@ -1638,6 +1638,23 @@
             echo "the writable-root assertion refuses the outbox $outbox" >&2
             failed=1
           fi
+          # A clone's agents.json is the operator's alone, but a test
+          # fixture's, in the session's temporary directory, is not. The
+          # sandbox writes allow, then deny, and the last match wins, so no
+          # allow reopens a path a deny covers: the deny's glob itself must
+          # leave the temporary directories out. A glob reads as the
+          # sandbox reads it: `**/` any directories, `*` within one.
+          check --arg home "$homeDirectory" 'def rx: gsub("(?<c>[.+?^$|{}()\\[\\]\\\\])"; "\\\(.c)")
+              | gsub("\\*\\*/"; "\u0001") | gsub("\\*"; "[^/]*") | gsub("\u0001"; "(.*/)?");
+            [.sandbox.filesystem.denyWrite[] | select(endswith("/.git/info/agents.json"))] as $globs
+            | def denied($p): any($globs[]; . as $g | $p | test("^" + ($g | rx) + "$"));
+              (if ($globs | length) == 0 then "no sandbox deny for a clone agents.json" else empty end),
+              ("/tmp/claude-501/fixture", "/private/tmp/claude-501/fixture", "/private/var/folders/ab/cd/T/fixture"
+                | . + "/.git/info/agents.json" | select(denied(.)) | "sandbox denies a fixture agents.json: \(.)"),
+              ($home + "/git/github.com/owner/repo/.git/info/agents.json"
+                | select(denied(.) | not) | "sandbox allows a clone agents.json: \(.)"),
+              (if (.permissions.deny | any(endswith("/.git/info/agents.json)"))) then empty
+                else "no Edit deny for a clone agents.json" end)'
           for s in "$settingsPath" "$reviewerSettings"; do
             [ "$s" = "$settingsPath" ] && label="settings: " || label="reviewer settings: "
             check --arg url "$otelUrl" '(.env // {}) as $env
