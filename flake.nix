@@ -1366,6 +1366,7 @@
           nativeBuildInputs = [pkgs.jq];
           settings = builtins.toJSON settings;
           codex = builtins.toJSON codex;
+          home = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username}.home.homeDirectory;
           mcp = builtins.readFile ./overlays/agent-tools/internal/guard/mcp.json;
           passAsFile = ["settings" "mcp" "codex"];
         } ''
@@ -1424,6 +1425,23 @@
           check 'if (.hooks.PreToolUse | any(.matcher | test("mcp__"))) then empty
             else "no PreToolUse hook matches MCP tools" end'
           check '.hooks.PreToolUse[].hooks[] | select(.onFailure != "block") | "a PreToolUse hook does not block on failure: \(.command)"'
+          # A clone's agents.json is the operator's alone, but a test
+          # fixture's, in the session's temporary directory, is not. The
+          # sandbox writes allow, then deny, and the last match wins, so no
+          # allow reopens a path a deny covers: the deny's glob itself must
+          # leave the temporary directories out. A glob reads as the
+          # sandbox reads it: `**/` any directories, `*` within one.
+          check --arg home "$home" 'def rx: gsub("(?<c>[.+?^$|{}()\\[\\]\\\\])"; "\\\(.c)")
+              | gsub("\\*\\*/"; "\u0001") | gsub("\\*"; "[^/]*") | gsub("\u0001"; "(.*/)?");
+            [.sandbox.filesystem.denyWrite[] | select(endswith("/.git/info/agents.json"))] as $globs
+            | def denied($p): any($globs[]; . as $g | $p | test("^" + ($g | rx) + "$"));
+              (if ($globs | length) == 0 then "no sandbox deny for a clone agents.json" else empty end),
+              ("/tmp/claude-501/fixture", "/private/tmp/claude-501/fixture", "/private/var/folders/ab/cd/T/fixture"
+                | . + "/.git/info/agents.json" | select(denied(.)) | "sandbox denies a fixture agents.json: \(.)"),
+              ($home + "/git/github.com/owner/repo/.git/info/agents.json"
+                | select(denied(.) | not) | "sandbox allows a clone agents.json: \(.)"),
+              (if (.permissions.deny | any(endswith("/.git/info/agents.json)"))) then empty
+                else "no Edit deny for a clone agents.json" end)'
           [ -z "$failed" ]
           touch $out
         '';

@@ -135,13 +135,17 @@ starts, such as `origin/main` or the parent branch in a stack.
    against BASE in Claude Code, `/review` against BASE in Codex, or a fresh
    read-only `adversarial-reviewer` given the goal and range as alternatives,
    not additional passes. Where the repository has test settings, run
-   `git -C WORKTREE red-check BASE..TIP > WORKTREE/red-check.json`, WORKTREE
-   being the branch's worktree, not `$TMPDIR`, which a sandboxed command and
-   git delegate resolve to different directories; every file you pass
-   delegate goes in WORKTREE the same way, by its absolute path. Then run
-   `git delegate --plan PLAN [--part P1] [--items ITEMS] [--red-check WORKTREE/red-check.json] BASE..TIP`
+   `git -C WORKTREE red-check BASE..TIP > FILE`, FILE being
+   `WORKTREE/red-check.json`, or `red-check.json` in the directory
+   `echo $TMPDIR` prints where WORKTREE is not one the sandbox can write (a
+   worktree under `/private/tmp`, in Claude Code). Spell FILE out as an
+   absolute path in every command that names it, and never as `$TMPDIR`
+   in delegate's line: delegate runs outside the sandbox, where `$TMPDIR`
+   is another directory. Every file you pass delegate goes the same way.
+   Then run
+   `git delegate --plan PLAN [--part P1] [--items ITEMS] [--red-check FILE] BASE..TIP`
    as a command of its own, with no `cd` before it: it resolves the range
-   from any worktree of the repository. Remove `red-check.json` after it.
+   from any worktree of the repository. Remove FILE after it.
    It runs one general review, as Harness choice says, reports focused
    review candidates, and keeps findings in the range's review record.
    Select focused reviews as Review selection says. It exits 0 with
