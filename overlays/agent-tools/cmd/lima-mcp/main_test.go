@@ -20,7 +20,15 @@ import (
 
 func TestMain(m *testing.M) {
 	gitenv.Isolate()
-	os.Exit(m.Run())
+	dir, err := os.MkdirTemp("", "lima-mcp-fakes-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fakes = dir
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
 }
 
 // unused is a server whose commands are never run.
@@ -74,6 +82,10 @@ func TestToolTable(t *testing.T) {
 	for _, tool := range tools {
 		if want, ok := class[tool.name]; !ok || tool.approval != want {
 			t.Errorf("tool %s has approval %d; mcp.json lists it as %d (listed: %v)", tool.name, tool.approval, want, ok)
+		}
+		// The workload is the server's configuration, not the tools'.
+		if strings.Contains(tool.description, "ngrok") {
+			t.Errorf("tool %s's description names a workload: %q", tool.name, tool.description)
 		}
 	}
 }

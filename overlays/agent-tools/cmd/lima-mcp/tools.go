@@ -42,11 +42,63 @@ var tools = []tool{
 		call:        callList,
 	},
 	{
+		name: "lima_dev_status",
+		description: "Report the managed VM's state: absent, stopped, running-unattested, attested or mismatch. " +
+			"Attesting checks the running QEMU against the launch guard; a VM that fails is stopped. " +
+			"The call fails, leaving the VM as it is, when what attestation reads cannot be read.",
+		approval: read,
+		schema:   object(nil),
+		call:     callStatus,
+	},
+	{
+		name:        "lima_dev_job_result",
+		description: "Wait up to wait_seconds (at most 240) for a managed VM job and return its status, exit code and output (its last MiB)",
+		approval:    read,
+		schema: object(map[string]any{
+			"job":          map[string]any{"type": "string"},
+			"wait_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": maxWaitSeconds},
+		}, "job"),
+		call: callJobResult,
+	},
+	{
+		name:        "lima_dev_job_cancel",
+		description: "Cancel a managed VM job, killing its command",
+		approval:    read,
+		schema:      object(map[string]any{"job": map[string]any{"type": "string"}}, "job"),
+		call:        callJobCancel,
+	},
+	{
 		name:        "lima_stop",
 		description: "Stop an instance of the default Lima home",
 		approval:    confirm,
 		schema:      object(map[string]any{"instance": map[string]any{"type": "string"}}, "instance"),
 		call:        callStop,
+	},
+	{
+		name: "lima_dev_start",
+		description: "Start the managed VM as a job, creating it from its template first if it is absent, " +
+			"and attest it. Returns {job}; read it with lima_dev_job_result.",
+		approval: confirm,
+		schema:   object(nil),
+		call:     callStart,
+	},
+	{
+		name:        "lima_dev_stop",
+		description: "Stop the managed VM",
+		approval:    confirm,
+		schema:      object(nil),
+		call:        callDevStop,
+	},
+	{
+		name: "lima_dev_exec_start",
+		description: "Run a bash script in the managed VM, in its configured working directory, as a job, once the VM attests. " +
+			"The guest kills it after timeout_seconds (default 600, at most 7200). Returns {job}; read it with lima_dev_job_result.",
+		approval: confirm,
+		schema: object(map[string]any{
+			"script":          map[string]any{"type": "string"},
+			"timeout_seconds": map[string]any{"type": "integer", "minimum": 1, "maximum": maxExecSeconds},
+		}, "script"),
+		call: callExecStart,
 	},
 }
 
@@ -70,6 +122,8 @@ type server struct {
 	limactl string
 	// timeout bounds each synchronous command.
 	timeout time.Duration
+	// managed is the managed VM, nil unless lima-mcp runs with --config.
+	managed *managed
 }
 
 // call answers a tools/call request's params.
