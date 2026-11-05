@@ -246,9 +246,11 @@ in {
       default = "${config.xdg.stateHome}/lima-mcp-outbox";
       description = ''
         Where sessions write the git bundles lima_dev_import carries into
-        the VM, with `lima-dev-export NAME` run in a repository. lima-mcp
-        takes only a bundle that passes its checks from it. It holds only
-        letters, digits and `._/+-`.
+        the VM, with `lima-dev-export NAME` run in a repository. It is one
+        of {option}`wgn.home.llm.sandbox.writableRoots`, which Codex's and
+        Claude Code's sandboxes let sessions write, and activation makes
+        it, mode 0700. lima-mcp takes only a bundle that passes its checks
+        from it. It holds only letters, digits and `._/+-`.
       '';
     };
 
@@ -342,9 +344,11 @@ in {
       }
       {
         # lima-mcp's configuration takes it only so, and lima-dev-export's
-        # wrapper splits its flags at spaces.
-        assertion = builtins.match "/[A-Za-z0-9._/+-]*" cfg.outbox != null && !(hasPrefix "${cfg.home}/" "${cfg.outbox}/");
-        message = "wgn.home.mcp-proxy.limaDev.outbox holds a character other than letters, digits and ._/+-, or is in the Lima home, which sessions may not read";
+        # wrapper splits its flags at spaces. That it is in no credential
+        # path, the Lima home included, wgn.home.llm asserts of every
+        # writable root.
+        assertion = builtins.match "/[A-Za-z0-9._/+-]*" cfg.outbox != null;
+        message = "wgn.home.mcp-proxy.limaDev.outbox holds a character other than letters, digits and ._/+-";
       }
       {
         assertion = cfg.privateDial.servers != [];
@@ -352,5 +356,10 @@ in {
       }
     ];
     home.packages = [wrapper export];
+    wgn.home.llm.sandbox.writableRoots = [cfg.outbox];
+    home.activation.limaMcpOutbox = hm.dag.entryAfter ["writeBoundary"] ''
+      run mkdir -p ${escapeShellArg cfg.outbox}
+      run chmod 700 ${escapeShellArg cfg.outbox}
+    '';
   };
 }

@@ -1372,17 +1372,47 @@
       # hold the permission rules beside the guard: bypass mode off; for
       # every server mcp.json lists, each read allowed and each confirm
       # asked, never allowed; no allow rule that a deny rule covers, which
-      # deny would override; and the guard's PreToolUse hook matching MCP
-      # tools, every hook of it blocking when it cannot run.
+      # deny would override; the guard's PreToolUse hook matching MCP
+      # tools, every hook of it blocking when it cannot run; and every
+      # wgn.home.llm.sandbox.writableRoots entry, the Lima import's outbox
+      # among them, writable in Claude Code's sandbox and Codex's. The
+      # writable-root assertion refuses a root under a denied read written
+      # as ~/, one that may hold a glob's match, one with a .. component
+      # and one with a trailing slash, and passes the outbox.
       checks.${darwinOnly "claude-settings"} = let
         ngrok = darwinSystems.ngrok;
-        settings = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username}.wgn.home.claude.settings;
-        codex = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username}.wgn.home.codex.sandbox;
+        hm = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username};
+        settings = hm.wgn.home.claude.settings;
+        codex = hm.wgn.home.codex.sandbox;
+        home = hm.home.homeDirectory;
+        outbox = "${home}/.local/state/lima-mcp-outbox";
+        refusedRoots = [
+          "${home}/.local/share/fish"
+          "/private/var/folders/x/y/T/secrets.d/z"
+          "${home}/.local/../.ssh"
+          "${outbox}/"
+        ];
+        probe =
+          (self.darwinConfigurations.ngrok.extendModules {
+            modules = [
+              {
+                home-manager.users.${ngrok.username}.wgn.home.llm.sandbox.writableRoots =
+                  pkgs.lib.mkForce (refusedRoots ++ [outbox]);
+              }
+            ];
+          }).config.home-manager.users.${
+            ngrok.username
+          };
+        rootFailures = map (a: a.message) (builtins.filter (a: !a.assertion) probe.assertions);
       in
         pkgs.runCommand "claude-settings" {
           nativeBuildInputs = [pkgs.jq];
           settings = builtins.toJSON settings;
           codex = builtins.toJSON codex;
+          roots = builtins.toJSON hm.wgn.home.llm.sandbox.writableRoots;
+          refusedRoots = builtins.toJSON refusedRoots;
+          rootFailures = builtins.toJSON rootFailures;
+          inherit outbox;
           mcp = builtins.readFile ./overlays/agent-tools/internal/guard/mcp.json;
           passAsFile = ["settings" "mcp" "codex"];
         } ''
@@ -1441,6 +1471,24 @@
           check 'if (.hooks.PreToolUse | any(.matcher | test("mcp__"))) then empty
             else "no PreToolUse hook matches MCP tools" end'
           check '.hooks.PreToolUse[].hooks[] | select(.onFailure != "block") | "a PreToolUse hook does not block on failure: \(.command)"'
+          # Every writable root, the Lima outbox among them, in both.
+          check --argjson roots "$roots" '$roots[] as $r | if (.sandbox.filesystem.allowWrite | index([$r])) != null then empty
+            else "a writable root is not writable in Claude: \($r)" end'
+          if ! jq -e --argjson roots "$roots" '. as $c | $roots | length > 0 and all(.[]; $c.permissions.wgn.filesystem[.] == "write")' "$codexPath" > /dev/null; then
+            echo "a writable root is not writable in Codex: $roots" >&2
+            failed=1
+          fi
+          # Each refused root fails the assertion, and the outbox does not.
+          for r in $(jq -r '.[]' <<< "$refusedRoots"); do
+            if ! jq -e --arg r "$r" 'any(.[]; contains("writableRoots: \($r) is "))' <<< "$rootFailures" > /dev/null; then
+              echo "the writable-root assertion passes $r" >&2
+              failed=1
+            fi
+          done
+          if jq -e --arg r "$outbox" 'any(.[]; contains("writableRoots: \($r) is "))' <<< "$rootFailures" > /dev/null; then
+            echo "the writable-root assertion refuses the outbox $outbox" >&2
+            failed=1
+          fi
           [ -z "$failed" ]
           touch $out
         '';

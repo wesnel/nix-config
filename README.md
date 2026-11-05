@@ -947,7 +947,7 @@ git itself does not use the keychain's GitHub login:
 | `hex` (`hex`) | Hex's `/mcp` | reads; edits and runs you confirm, OAuth |
 | `datadog` (`datadog.enable`, `datadog.site`) | the site's `/v1/mcp`, toolsets `core` and `error-tracking` | read tools only, OAuth |
 | `parallels` (`parallels`) | local Parallels Desktop MCP | VM reads; guest commands, keyboard input and lifecycle changes you confirm |
-| `lima` (`lima`, `limaDev.enable`) | local `lima-mcp` | default-home list and the managed VM's status and job results; stops, the managed VM's start and guest commands you confirm |
+| `lima` (`lima`, `limaDev.enable`) | local `lima-mcp` | default-home list and the managed VM's status and job results; stops, the managed VM's start, guest commands and imports you confirm |
 
 Options in parentheses are off by default. Each server serves only
 the tools listed for it in the guard's `mcp.json`. In Claude Code those
@@ -983,6 +983,17 @@ isolation rests on:
   CONNECT relay, and private dial, through the HTTP/3 broker, whose CA
   vouches for the private-dial servers' names alone.
 - No VM boots in a session sandbox, so the operator runs the live checks.
+
+A session hands a repository to the VM through an outbox,
+`~/.local/state/lima-mcp-outbox`, which is the one directory besides the
+workspace and tool caches that Codex's and Claude Code's sandboxes let
+their commands write (`wgn.home.llm.sandbox.writableRoots`). In the
+repository, `lima-dev-export NAME` writes `NAME.bundle` there: HEAD,
+`origin/main`, the index and the worktree, untracked files included but
+not ignored ones. `lima_dev_import`, which you confirm, then copies the
+bundle out of the outbox, refuses it if its history holds a credential's
+path, and makes the guest's working directory the repository's. What was
+changed only in the guest is discarded.
 
 The proxy signs in to each remote server itself and refreshes their
 short-lived tokens, so agents hold only the proxy's own token, kept in
