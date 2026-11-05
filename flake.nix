@@ -924,6 +924,23 @@
           touch $out
         '';
 
+      # The ngrok Mac's managed Lima VM: its rendered template and
+      # configuration keep the invariants its isolation rests on
+      # (lima-dev-tests.py), and the pinned Lima validates the template.
+      checks.${darwinOnly "lima-dev-template"} = let
+        hm = self.darwinConfigurations.ngrok.config.home-manager.users.wgn;
+        limaDev = hm.wgn.home.mcp-proxy.limaDev;
+      in
+        pkgs.runCommand "lima-dev-template" {
+          nativeBuildInputs = [(pkgs.python3.withPackages (p: [p.pyyaml]))];
+          inherit (limaDev) template guardConfig;
+          config = limaDev.configFile;
+          limactl = pkgs.lib.getExe' self.darwinConfigurations.ngrok.pkgs.lima "limactl";
+        } ''
+          python ${./modules/home-manager/mcp-proxy/lima-dev-tests.py}
+          touch $out
+        '';
+
       # The ngrok Mac's mcp-proxy-authorize restarts the proxy, and loads
       # its plist when kickstart finds it loaded in no domain; a failed load
       # fails it.
