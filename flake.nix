@@ -978,6 +978,24 @@
           touch $out
         '';
 
+      # The ngrok Mac raises launchd's maxfiles at load, which a GUI Emacs
+      # inherits at 256 by default; kqueue spends one descriptor per watched
+      # file.
+      checks.${darwinOnly "emacs-maxfiles"} = let
+        daemon = self.darwinConfigurations.ngrok.config.launchd.daemons.limit-maxfiles.serviceConfig or {};
+      in
+        pkgs.runCommand "emacs-maxfiles" {
+          command = builtins.concatStringsSep " " (daemon.ProgramArguments or []);
+          runAtLoad = toString (daemon.RunAtLoad or false);
+        } ''
+          want="/bin/launchctl limit maxfiles 65536 524288"
+          if [ "$command" != "$want" ] || [ "$runAtLoad" != 1 ]; then
+            echo "emacs-maxfiles: got '$command' (RunAtLoad=$runAtLoad), want '$want' at load" >&2
+            exit 1
+          fi
+          touch $out
+        '';
+
       # The pstack skills as the ngrok Mac links them each carry pstack's
       # licence, and the Codex policy that keeps a skill from being invoked
       # unasked exactly when its SKILL.md keeps Claude Code from it.
