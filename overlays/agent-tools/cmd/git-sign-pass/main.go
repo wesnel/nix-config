@@ -15,8 +15,8 @@ import (
 	"github.com/wesnel/agent-tools/internal/signpass"
 )
 
-const usage = `usage: git sign-pass [--base REF] [--push | --set-upstream] [--notify ID] [BRANCH...]
-       git sign-pass --resume [--push | --set-upstream] [--notify ID] [BRANCH]
+const usage = `usage: git sign-pass [-C DIR] [--base REF] [--push | --set-upstream] [--notify ID] [BRANCH...]
+       git sign-pass [-C DIR] --resume [--push | --set-upstream] [--notify ID] [BRANCH]
 
 Re-signs the current branch from its oldest unsigned commit (or the oldest
 commit a fixup!, amend! or squash! folds into) to its tip, folding those in
@@ -107,6 +107,8 @@ started there may still be running.
                     for the session that handed it over; a failure to log
                     it is reported on stderr and leaves the exit status as
                     it was
+  -C DIR            run in DIR, as git's own -C does, so the pass acts on the
+                    worktree DIR is in from any directory
   --set-upstream    --push, and in the same push publish every branch it
                     pushes that has no upstream to its push remote
                     (branch.NAME.pushRemote, remote.pushDefault, the only
@@ -116,6 +118,7 @@ started there may still be running.
 
 func main() {
 	flags := flag.NewFlagSet("git-sign-pass", flag.ContinueOnError)
+	dir := flags.String("C", "", "")
 	base := flags.String("base", "", "")
 	resume := flags.Bool("resume", false, "")
 	push := flags.Bool("push", false, "")
@@ -131,6 +134,11 @@ func main() {
 	if *resume && flags.NArg() > 1 || *brief && *noBrief {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
+	}
+	if *dir != "" {
+		if err := os.Chdir(*dir); err != nil {
+			os.Exit(cli.Report("git-sign-pass", nil, err, 0, os.Stdout, os.Stderr))
+		}
 	}
 	signpass.Brief = *brief || !*noBrief && !signpass.StdoutIsTerminal()
 	if *notify != "" {

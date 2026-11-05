@@ -90,10 +90,11 @@ func operatorHome(t *testing.T, pub string) {
 	t.Setenv(hostpaths.TestStateHomeEnv, state)
 }
 
-// The command a failed push prints for resuming is one this program
-// accepts, and it pushes what is left.
-func TestPrintedResume(t *testing.T) {
-	dir := t.TempDir()
+// signingFixture returns a scratch directory and the git config global
+// that signs with a fresh SSH key the test's operator profile trusts.
+func signingFixture(t *testing.T) (dir, global string) {
+	t.Helper()
+	dir = t.TempDir()
 	key := filepath.Join(dir, "key")
 	if out, err := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key).CombinedOutput(); err != nil {
 		t.Skipf("no ssh-keygen: %v %s", err, out)
@@ -102,10 +103,17 @@ func TestPrintedResume(t *testing.T) {
 	operatorHome(t, string(pub))
 	signers := filepath.Join(dir, "signers")
 	os.WriteFile(signers, []byte("t@e namespaces=\"git\" "+string(pub)), 0o644)
-	global := filepath.Join(dir, "gitconfig")
+	global = filepath.Join(dir, "gitconfig")
 	os.WriteFile(global, []byte("[user]\n\tname = T\n\temail = t@e\n\tsigningkey = "+key+
 		"\n[gpg]\n\tformat = ssh\n[gpg \"ssh\"]\n\tallowedSignersFile = "+signers+"\n"), 0o644)
 
+	return dir, global
+}
+
+// The command a failed push prints for resuming is one this program
+// accepts, and it pushes what is left.
+func TestPrintedResume(t *testing.T) {
+	dir, global := signingFixture(t)
 	hub := filepath.Join(dir, "hub.git")
 	gitIn(t, dir, "init", "-q", "--bare", hub)
 	repo := filepath.Join(dir, "repo")
@@ -138,4 +146,36 @@ func TestPrintedResume(t *testing.T) {
 	if got, want := gitIn(t, hub, "rev-parse", "one"), gitIn(t, repo, "rev-parse", "one"); got != want {
 		t.Errorf("the hub has one at %s, want %s", got, want)
 	}
+}
+
+// -C DIR runs the pass in DIR, as git's own -C does, from any directory.
+func TestDirFlag(t *testing.T) {
+	dir, global := signingFixture(t)
+	repo := filepath.Join(dir, "repo")
+	os.Mkdir(repo, 0o755)
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+	gitIn(t, repo, "switch", "-qc", "one")
+	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "O1")
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := t.TempDir()
+
+	t.Run("signs the repository it names", func(t *testing.T) {
+		if code, stderr := run(t, elsewhere, global, exe, "-C", repo); code != 0 {
+			t.Fatalf("exit %d\n%s", code, stderr)
+		}
+		if out := gitIn(t, repo, "log", "-1", "--format=%G?", "one"); out == "N" {
+			t.Errorf("one's tip is still unsigned")
+		}
+	})
+
+	t.Run("a directory that does not exist is refused", func(t *testing.T) {
+		code, stderr := run(t, elsewhere, global, exe, "-C", filepath.Join(dir, "missing"))
+		if code == 0 || !strings.Contains(stderr, "missing") {
+			t.Errorf("exit %d\n%s", code, stderr)
+		}
+	})
 }

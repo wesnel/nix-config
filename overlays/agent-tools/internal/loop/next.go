@@ -195,7 +195,11 @@ func next(repo *Repo, branch string) (NextStep, error) {
 	if empty {
 		return Done{Kind: "nothing", Branch: branch, Why: "it has no commits since it left the default branch"}, nil
 	}
-	pass := fmt.Sprintf("git sign-pass %s --notify ID %s", dest.Flag, shellQuote(branch))
+	top, err := git.Toplevel()
+	if err != nil {
+		return nil, err
+	}
+	pass := fmt.Sprintf("git sign-pass -C %s %s --notify ID %s", shellQuote(top), dest.Flag, shellQuote(branch))
 	notify := "agent-plan sign-id --branch " + shellQuote(branch)
 	switch {
 	case unsigned:

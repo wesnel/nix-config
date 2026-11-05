@@ -27,6 +27,13 @@ func nextStep(t *testing.T, branch string) NextStep {
 	return steps[0]
 }
 
+// signPass is the start of the sign-pass Next hands over: it names the
+// worktree dir, so the operator may run it from any directory.
+func signPass(t *testing.T, dir string) string {
+	t.Helper()
+	return "git sign-pass -C " + shellQuote(gitIn(t, dir, "rev-parse", "--show-toplevel"))
+}
+
 // TestNext gives each state of a branch its one next step, from pushedBranch's
 // checkout: feat, one unsigned commit past main, which GitHub has at its tip.
 func TestNext(t *testing.T) {
@@ -117,10 +124,10 @@ func TestNext(t *testing.T) {
 	})
 
 	t.Run("a pull request with unsigned commits: the operator signs and pushes", func(t *testing.T) {
-		f, _ := pushedBranch(t)
+		f, dir := pushedBranch(t)
 		f.prs["feat"] = 7
 		step, ok := nextStep(t, "feat").(ToSign)
-		if !ok || step.Command != "git sign-pass --push --notify ID feat" || step.Notify != "agent-plan sign-id --branch feat" || step.PR != 7 {
+		if !ok || step.Command != signPass(t, dir)+" --push --notify ID feat" || step.Notify != "agent-plan sign-id --branch feat" || step.PR != 7 {
 			t.Errorf("feat: %#v", nextStep(t, "feat"))
 		}
 	})
@@ -142,7 +149,7 @@ func TestNext(t *testing.T) {
 		gitIn(t, dir, append(sign, "--amend", "--no-edit", "--allow-empty")...)
 		published(t, f, dir, "feat")
 		gitIn(t, dir, append(sign, "--allow-empty", "-m", "Add more")...)
-		if step, ok := nextStep(t, "feat").(ToPush); !ok || step.Command != "git sign-pass --push --notify ID feat" {
+		if step, ok := nextStep(t, "feat").(ToPush); !ok || step.Command != signPass(t, dir)+" --push --notify ID feat" {
 			t.Errorf("feat: %#v", nextStep(t, "feat"))
 		}
 	})
@@ -274,7 +281,7 @@ func TestNext(t *testing.T) {
 	})
 
 	t.Run("the current branch by default, and the text", func(t *testing.T) {
-		f, _ := pushedBranch(t)
+		f, dir := pushedBranch(t)
 		f.prs["feat"] = 7
 		steps, err := Next(nil)
 		if err != nil {
@@ -282,7 +289,7 @@ func TestNext(t *testing.T) {
 		}
 		text := FormatNext(steps)
 		if !strings.HasPrefix(text, "feat: sign:") || !strings.Contains(text, "\n  agent-plan sign-id --branch feat\n") ||
-			!strings.Contains(text, "\n  git sign-pass --push --notify ID feat\n") {
+			!strings.Contains(text, "\n  "+signPass(t, dir)+" --push --notify ID feat\n") {
 			t.Errorf("text:\n%s", text)
 		}
 		data, err := json.Marshal(steps)
