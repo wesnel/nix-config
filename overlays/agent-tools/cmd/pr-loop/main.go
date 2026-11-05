@@ -115,7 +115,9 @@ worktree. A failure to log is printed on stderr and fails nothing.
                               branches and PRs in the plan of its session or worktree,
                               each commit with the session, asking which step it
                               completes (a commit no plan takes makes a plan
-                              naming both); after a push to GitHub, names the
+                              naming both, where a plan names the worktree or
+                              repository or its origin is on GitHub); after a
+                              push to GitHub, names the
                               pr-loop wait ci to start
   mcp                         serve the GitHub and review commands an agent runs (open,
                               stack, link, push, threads, reply --from, draft, request,

@@ -714,6 +714,9 @@ type FindOptions struct {
 	Worktree string
 	// Branch is a branch name.
 	Branch string
+	// Repository is a repository as REPOSITORIES gives it: its GitHub
+	// owner/name.
+	Repository string
 }
 
 // Found is a plan file that matched.
@@ -846,7 +849,7 @@ func Here(session, dir string) FindOptions {
 
 // Find lists this host's plan files that match, newest plan first.
 func (c Config) Find(o FindOptions) ([]Found, error) {
-	if o.Session == "" && o.Worktree == "" && o.Branch == "" {
+	if o.Session == "" && o.Worktree == "" && o.Branch == "" && o.Repository == "" {
 		return nil, refusal.New("find needs something to match. Pass `--session`, `--worktree` or `--branch`")
 	}
 	worktree := o.Worktree
@@ -903,6 +906,12 @@ func (c Config) Find(o FindOptions) ([]Found, error) {
 				}
 				if o.Branch != "" && v == o.Branch {
 					matched = append(matched, "branch")
+					break
+				}
+			}
+			for _, v := range strings.Fields(top.Props["REPOSITORIES"]) {
+				if o.Repository != "" && v == o.Repository {
+					matched = append(matched, "repository")
 					break
 				}
 			}

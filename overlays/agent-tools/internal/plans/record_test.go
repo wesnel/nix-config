@@ -1,6 +1,7 @@
 package plans
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -8,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
 // commitRepo makes a repository whose origin is GitHub's o/r and whose
@@ -45,11 +48,88 @@ func commitsOf(t *testing.T, p Plan) []string {
 	return out
 }
 
-// Every session that commits has a plan: a commit no plan takes makes one,
-// named for the repository, which names the session and the worktree.
+// nameRepository makes a plan of no session or worktree that names the
+// repository o/r, as commitRepo's origin gives it.
+func nameRepository(t *testing.T, c Config) {
+	t.Helper()
+	if _, err := c.New(NewOptions{Title: "Other", Slug: "other", Repos: []string{"o/r"}}, day); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A commit is recorded where some plan names its worktree or repository, or
+// its origin is on GitHub: a commit no plan takes there makes one, named
+// for the repository, which names the session and the worktree. A commit
+// in a repository no plan names and with no GitHub origin, such as a
+// reviewer's probe, is no plan's; the session alone never files a commit
+// in a repository no plan names.
 func TestRecordCommit(t *testing.T) {
-	t.Run("no plan", func(t *testing.T) {
+	// sessionPlan makes a plan naming the session s1 alone.
+	sessionPlan := func(t *testing.T, c Config) string {
+		t.Helper()
+		made, err := c.New(NewOptions{Title: "Add x", Slug: "x", Sessions: []string{"s1"}}, day)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return made.Plan
+	}
+
+	t.Run("no plan names a repository with no GitHub origin", func(t *testing.T) {
 		c := testConfig(t)
+		repo := commitRepo(t)
+		gitIn(t, repo, "remote", "remove", "origin")
+		made := sessionPlan(t, c)
+		if _, created, err := c.RecordCommit("s1", repo, Event{Commit: "Probe", Summary: "Probe"}, day); err == nil || created {
+			t.Errorf("created %v, %v; want a refusal", created, err)
+		}
+		own, err := c.ownPlans()
+		if err != nil || len(own) != 1 || own[0].File() != made {
+			t.Fatalf("plans %v, %v; want only %s", own, err, made)
+		}
+		if got := commitsOf(t, own[0]); len(got) != 0 {
+			t.Errorf("the session's plan took %q", got)
+		}
+	})
+
+	t.Run("no plan names a repository on GitHub", func(t *testing.T) {
+		c := testConfig(t)
+		repo := commitRepo(t)
+		made := sessionPlan(t, c)
+		p, created, err := c.RecordCommit("s1", repo, Event{Commit: "Add x", Summary: "Add x"}, day)
+		if err != nil || !created || p.File() == made {
+			t.Fatalf("recorded in %s, created %v, %v; want a new plan", p.File(), created, err)
+		}
+		if goal, err := p.Goal(""); err != nil || goal != "Unplanned work in o/r.\n" {
+			t.Errorf("goal %q, %v", goal, err)
+		}
+		session, err := c.Open(made)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := commitsOf(t, session); len(got) != 0 {
+			t.Errorf("the session's plan took %q", got)
+		}
+	})
+
+	// Plans that cannot be read are an error of their own, not the
+	// finding that no plan names the repository.
+	t.Run("the plans cannot be read", func(t *testing.T) {
+		c := testConfig(t)
+		nameRepository(t, c)
+		repo := commitRepo(t)
+		if err := os.Chmod(c.Dir, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(c.Dir, 0o755) })
+		_, _, err := c.RecordCommit("s1", repo, Event{Commit: "Add x", Summary: "Add x"}, day)
+		if err == nil || errors.As(err, new(refusal.Refusal)) {
+			t.Errorf("error %v, want the read error rather than a refusal", err)
+		}
+	})
+
+	t.Run("no plan takes it", func(t *testing.T) {
+		c := testConfig(t)
+		nameRepository(t, c)
 		repo := commitRepo(t)
 		p, created, err := c.RecordCommit("s1", repo, Event{Commit: "Add x", Summary: "Add x", Branch: "main"}, day)
 		if err != nil || !created {
@@ -109,6 +189,7 @@ func TestRecordCommit(t *testing.T) {
 	// Hooks of the same session running at once make one plan between them.
 	t.Run("concurrent commits", func(t *testing.T) {
 		c := testConfig(t)
+		nameRepository(t, c)
 		repo := commitRepo(t)
 		var wg sync.WaitGroup
 		for i := range 8 {
@@ -123,10 +204,14 @@ func TestRecordCommit(t *testing.T) {
 		}
 		wg.Wait()
 		own, err := c.ownPlans()
-		if err != nil || len(own) != 1 {
-			t.Fatalf("%d plans, %v", len(own), err)
+		if err != nil || len(own) != 2 {
+			t.Fatalf("%d plans, %v; want the one naming o/r and one made", len(own), err)
 		}
-		if got := commitsOf(t, own[0]); len(got) != 8 {
+		var got []string
+		for _, p := range own {
+			got = append(got, commitsOf(t, p)...)
+		}
+		if len(got) != 8 {
 			t.Errorf("commits %q", got)
 		}
 	})

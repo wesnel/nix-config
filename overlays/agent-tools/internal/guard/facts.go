@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,7 +18,9 @@ import (
 // agent: each commit and push in the plan's log, and each new worktree,
 // branch and pull request in its properties. Each fact is read from what
 // git or pr-loop printed and checked against the repository, so a failed
-// command, or one that only prints the same words, records nothing.
+// command, or one that only prints the same words, records nothing; a
+// commit git printed nothing for is read from the reflog (commitsMade).
+// A commit some plan's log holds already is not logged again.
 
 // gitCall is a git command a command line runs: the directory it runs in,
 // "" when the hook cannot tell, its subcommand and the words after it.
@@ -90,6 +94,126 @@ func toplevel(dir string) string {
 
 // summaryLine is the line git commit prints for the commit it made.
 var summaryLine = regexp.MustCompile(`(?m)^\[(.+?)(?: \(root-commit\))? ([0-9a-f]{7,40})\] (.+?)\s*$`)
+
+// quietAge is how old a commit HEAD's reflog records may be and still count
+// as one a call made without printing its summary line, as git commit -q
+// does. The hook reads the reflog only once the call ends, so this is the
+// longest a foreground Bash call runs (Claude Code's limit is ten
+// minutes): any shorter, and a commit followed by a long test run is lost.
+const quietAge = 10 * time.Minute
+
+// madeCommit is a commit a call made: the worktree it was made in, its
+// full ID, the branch git named for it ("" when unknown), its subject,
+// whether git printed its summary line, and, for one it did not, when the
+// reflog says it was made.
+type madeCommit struct {
+	top, sha, branch, subject string
+	printed                   bool
+	at                        time.Time
+}
+
+// commitsMade are the commits the git commit calls among calls made, each
+// once, oldest first in each worktree. They are read from HEAD's reflog in
+// each call's worktree: its newest commit entries, at most as many as the
+// calls that commit there, each counted when output holds its summary
+// line, or when it is at most quietAge older than now. A summary line no
+// reflog entry accounts for, as where the reflog is off, counts in the
+// first of those worktrees that has its commit.
+func commitsMade(calls []gitCall, output string, now time.Time) []madeCommit {
+	printed := summaryLine.FindAllStringSubmatch(output, -1)
+	var tops []string
+	runs := map[string]int{}
+	for _, g := range calls {
+		if g.sub != "commit" {
+			continue
+		}
+		top := toplevel(g.dir)
+		if top == "" {
+			continue
+		}
+		if runs[top] == 0 {
+			tops = append(tops, top)
+		}
+		runs[top]++
+	}
+	var out []madeCommit
+	seen := map[string]bool{}
+	for _, top := range tops {
+		state := gitState{dir: top}
+		entries, _ := state.run("log", "-g", "--no-show-signature", "--grep-reflog=^commit", "--date=unix",
+			"--format=%H%x09%gd%x09%s", "-n", strconv.Itoa(runs[top]), "HEAD")
+		var made []madeCommit
+		for _, entry := range strings.Split(entries, "\n") {
+			sha, rest, _ := strings.Cut(entry, "\t")
+			selector, subject, _ := strings.Cut(rest, "\t")
+			if sha == "" || seen[sha] {
+				continue
+			}
+			m := madeCommit{top: top, sha: sha, subject: subject}
+			if i := slices.IndexFunc(printed, func(s []string) bool { return strings.HasPrefix(sha, s[2]) }); i >= 0 {
+				m.branch, m.subject, m.printed = printed[i][1], printed[i][3], true
+			} else if at, ok := reflogTime(selector); !ok || now.Sub(at) > quietAge {
+				continue
+			} else {
+				m.at = at
+				if _, ok := state.run("merge-base", "--is-ancestor", sha, "HEAD"); ok {
+					m.branch, _ = state.run("branch", "--show-current")
+				}
+			}
+			seen[sha] = true
+			made = append(made, m)
+		}
+		slices.Reverse(made)
+		out = append(out, made...)
+	}
+	for _, s := range printed {
+		if slices.ContainsFunc(out, func(m madeCommit) bool { return strings.HasPrefix(m.sha, s[2]) }) {
+			continue
+		}
+		for _, top := range tops {
+			if sha, ok := (gitState{dir: top}).run("rev-parse", "--verify", "-q", s[2]+"^{commit}"); ok {
+				out = append(out, madeCommit{top: top, sha: sha, branch: s[1], subject: s[3], printed: true})
+				break
+			}
+		}
+	}
+	return out
+}
+
+// loggedQuiet reports whether the plan Locate finds for session and m's
+// worktree already logs m, a commit git printed nothing for and that has
+// no GitHub identity, so no revision to compare: whether it holds a
+// committed event of m's worktree and subject, logged no earlier than the
+// minute m was made. Two such commits of one subject in one minute count
+// as one.
+func loggedQuiet(c plans.Config, session string, m madeCommit) bool {
+	p, _, ok := c.Locate(session, m.top)
+	if !ok {
+		return false
+	}
+	events, err := p.Events()
+	if err != nil {
+		return false
+	}
+	made := m.at.Truncate(time.Minute)
+	for _, e := range events {
+		if e.Kind != "committed" || e.Worktree != m.top || e.Commit != m.subject {
+			continue
+		}
+		if at, err := time.ParseInLocation("[2006-01-02 Mon 15:04]", e.Time, m.at.Location()); err == nil && !at.Before(made) {
+			return true
+		}
+	}
+	return false
+}
+
+// reflogTime is the time of a reflog selector git prints with
+// --date=unix, such as HEAD@{1793832295}.
+func reflogTime(selector string) (time.Time, bool) {
+	_, stamp, _ := strings.Cut(selector, "@{")
+	seconds, err := strconv.ParseInt(strings.TrimSuffix(stamp, "}"), 10, 64)
+	return time.Unix(seconds, 0), err == nil
+}
 
 // newBranch is the branch a branch-making call made, and the start point
 // it names, if any.
@@ -196,7 +320,8 @@ func newWorktree(g gitCall) string {
 // run in cwd by session, did, by its output texts, and returns a line of
 // context for each commit recorded, asking which step it completes, which
 // is the agent's judgement. A commit no plan takes makes a plan for it
-// (plans.Config.RecordCommit). A commit, branch or pull request recorded
+// where a plan names its worktree or repository or its origin is on
+// GitHub, and is recorded nowhere else (plans.Config.RecordCommit). A commit, branch or pull request recorded
 // links the plan to the plans that hard evidence relates it to
 // (plans.Config.LinkEvidence). Every failure leaves the plan as it was.
 func recordFacts(session, cwd, command string, texts []string, now time.Time) (context []string) {
@@ -212,44 +337,64 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 		return c.Locate(session, top)
 	}
 	output := strings.Join(texts, "\n")
-	for _, g := range gitCalls(command, cwd, 0) {
-		if g.sub == "commit" {
-			for _, m := range summaryLine.FindAllStringSubmatch(output, -1) {
-				if _, ok := (gitState{dir: g.dir}).run("cat-file", "-e", m[2]+"^{commit}"); !ok {
-					continue
+	calls := gitCalls(command, cwd, 0)
+	// logged are the revisions some plan's log holds, by repository.
+	logged := map[string]map[string]bool{}
+	for _, m := range commitsMade(calls, output, now) {
+		branch := m.branch
+		if strings.ContainsAny(branch, " \t") {
+			branch = ""
+		}
+		who := session
+		if strings.ContainsAny(who, " \t\r\n") {
+			who = ""
+		}
+		e := plans.Event{Branch: branch, Commit: m.subject, Summary: m.subject, Worktree: m.top}
+		if identity, err := plans.CommitIdentity(m.top, m.sha); err == nil {
+			e.Repository, e.Revision = identity.Repository, identity.Revision
+			if logged[e.Repository] == nil {
+				revisions := map[string]bool{}
+				found, err := c.Commits(plans.CommitOptions{Repository: e.Repository})
+				for _, a := range found {
+					revisions[a.OriginalRevision], revisions[a.Revision] = true, true
 				}
-				branch := m[1]
-				if strings.ContainsAny(branch, " \t") {
-					branch = ""
-				}
-				who := session
-				if strings.ContainsAny(who, " \t\r\n") {
-					who = ""
-				}
-				top := toplevel(g.dir)
-				e := plans.Event{Branch: branch, Commit: m[3], Summary: m[3], Worktree: top}
-				if identity, err := plans.CommitIdentity(top, m[2]); err == nil {
-					e.Repository, e.Revision = identity.Repository, identity.Revision
-				}
-				p, created, err := c.RecordCommit(who, top, e, now)
+				// Where the logs cannot be read, only a commit git
+				// printed counts.
 				if err != nil {
-					continue
+					revisions = nil
 				}
-				c.LinkEvidence(p.File(), now)
-				if created {
-					context = append(context, fmt.Sprintf("No plan named this session or worktree, so %s was made for this commit. "+
-						"Write its goal and steps with `agent-plan section` and `agent-plan step` as the plan-work skill says, or, if the work belongs to another plan, say so in your report.", p.File()))
-				}
-				association := "--commit " + shellQuote(m[3])
-				if e.Revision != "" {
-					association = "--revision " + e.Revision
-				}
-				context = append(context, fmt.Sprintf("The commit %q is logged in %s. If it completes a step, which step? "+
-					"Log `done` for it with `%s` in its worktree; if none, carry on.", m[3], p.File(), association))
-				if who != "" && commits(p, who) == 1 {
-					context = append(context, commitRules)
-				}
+				logged[e.Repository] = revisions
 			}
+			if revisions := logged[e.Repository]; revisions[e.Revision] || revisions == nil && !m.printed {
+				continue
+			}
+			if revisions := logged[e.Repository]; revisions != nil {
+				revisions[e.Revision] = true
+			}
+		} else if !m.printed && loggedQuiet(c, who, m) {
+			continue
+		}
+		p, created, err := c.RecordCommit(who, m.top, e, now)
+		if err != nil {
+			continue
+		}
+		c.LinkEvidence(p.File(), now)
+		if created {
+			context = append(context, fmt.Sprintf("No plan named this session or worktree, so %s was made for this commit. "+
+				"Write its goal and steps with `agent-plan section` and `agent-plan step` as the plan-work skill says, or, if the work belongs to another plan, say so in your report.", p.File()))
+		}
+		association := "--commit " + shellQuote(m.subject)
+		if e.Revision != "" {
+			association = "--revision " + e.Revision
+		}
+		context = append(context, fmt.Sprintf("The commit %q is logged in %s. If it completes a step, which step? "+
+			"Log `done` for it with `%s` in its worktree; if none, carry on.", m.subject, p.File(), association))
+		if who != "" && commits(p, who) == 1 {
+			context = append(context, commitRules)
+		}
+	}
+	for _, g := range calls {
+		if g.sub == "commit" {
 			continue
 		}
 		state := gitState{dir: g.dir}

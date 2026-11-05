@@ -206,9 +206,12 @@ agent-plan log PLAN --item S1 --kind verified --evidence 'red-check: fails-as-as
   requests to the plan's properties, in the plan of the session, else of
   the linked worktree it ran in, never of the repository's main checkout;
   `agent-plan log` refuses both. A commit no plan takes, such as one in
-  the main checkout by a session no plan names, makes a plan for it, "Unplanned work in" its repository, which names the
-  session and worktree; give it a goal and steps, or say in your report
-  which plan the work belongs to. Which step a commit completes stays
+  the main checkout by a session no plan names, makes a plan for it,
+  "Unplanned work in" its repository, which names the session and
+  worktree, where some plan names the worktree or the repository or its
+  origin is on GitHub; a probe in a repository of your own with no
+  GitHub origin reaches no plan. Give a plan made so a goal and steps,
+  or say in your report which plan the work belongs to. Which step a commit completes stays
   yours to log.
 - For a step completed by a commit, run `log --revision REF` in its
   worktree. It resolves the full commit ID and GitHub origin's owner/name,
