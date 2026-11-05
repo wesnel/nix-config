@@ -49,6 +49,7 @@
           parallels = true;
         };
 
+        otel-collector.enable = true;
         python.enable = true;
         yubikey.enable = true;
       };

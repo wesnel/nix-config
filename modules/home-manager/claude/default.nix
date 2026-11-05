@@ -64,6 +64,25 @@ with lib; let
     };
   });
 
+  # Metrics and events exported over OTLP/HTTP to the local collector. No
+  # OTEL_LOG_* is set, so events carry no prompt, response or tool detail
+  # or content; the claude-settings check refuses one, and an endpoint off
+  # loopback.
+  otelCollector = config.wgn.home.otel-collector;
+  otelSettings = optionalAttrs otelCollector.enable {
+    env = {
+      CLAUDE_CODE_ENABLE_TELEMETRY = "1";
+      OTEL_METRICS_EXPORTER = "otlp";
+      OTEL_LOGS_EXPORTER = "otlp";
+      OTEL_EXPORTER_OTLP_PROTOCOL = "http/protobuf";
+      OTEL_EXPORTER_OTLP_METRICS_ENDPOINT = "${otelCollector.url}/v1/metrics";
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT = "${otelCollector.url}/v1/logs";
+    };
+  };
+
+  # What both Claude Code and the headless reviewers run with.
+  sharedSettings = recursiveUpdate gatewaySettings otelSettings;
+
   headlessSkills = filterAttrs (name: _: elem name (attrNames (import ../llm/principles.nix) ++ ["write-tests"])) config.wgn.home.llm.skills;
   # These skills need only their text, without frontmatter or support files.
   skillBody = name: let
@@ -118,11 +137,12 @@ with lib; let
   # allowed domains, but none of its Unix sockets, which on the ngrok Mac
   # include the operator's ngrok daemon; a sandbox no project can loosen,
   # and no exclusions, allow rules or hooks; through a gateway, its settings
-  # too. Each reviewer's hook rides in its agent entry.
+  # too, and with the collector, its telemetry. Each reviewer's hook rides
+  # in its agent entry.
   reviewerSettings =
     pkgs.runCommand "reviewer-settings.json" {
       nativeBuildInputs = [pkgs.jq];
-      json = builtins.toJSON ({
+      json = builtins.toJSON (recursiveUpdate {
           sandbox = {
             enabled = true;
             failIfUnavailable = true;
@@ -132,7 +152,7 @@ with lib; let
           };
           permissions.deny = credentialReads;
         }
-        // gatewaySettings);
+        sharedSettings);
     } ''
       jq -e . <<<"$json" > $out
       jq -e '.sandbox.excludedCommands == null and .permissions.allow == null and .hooks == null' $out > /dev/null
@@ -910,9 +930,9 @@ in {
           ++ quotaStopHooks;
       };
 
-      # Through a gateway, its settings join whatever these are, its `env`
-      # beside the machine's own.
-      apply = settings: recursiveUpdate settings gatewaySettings;
+      # Through a gateway, its settings join whatever these are, and with
+      # the collector, its telemetry: their `env` beside the machine's own.
+      apply = settings: recursiveUpdate settings sharedSettings;
     };
   };
 

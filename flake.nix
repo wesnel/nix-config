@@ -175,6 +175,7 @@
       ./modules/home-manager/mcp-proxy
       ./modules/home-manager/mosh
       ./modules/home-manager/music
+      ./modules/home-manager/otel-collector
       ./modules/home-manager/photos
       ./modules/home-manager/python
       ./modules/home-manager/slack
@@ -866,11 +867,14 @@
           activation = ngrok.home.activation.codexRules.data;
           opsActivation = ngrok.home.activation.codexOpsServer.data;
           statusLineActivation = ngrok.home.activation.codexStatusLine.data;
-          passAsFile = ["activation" "opsActivation" "statusLineActivation"];
+          otelActivation = ngrok.home.activation.codexOtel.data;
+          otelUrl = ngrok.wgn.home.otel-collector.url;
+          passAsFile = ["activation" "opsActivation" "statusLineActivation" "otelActivation"];
         } ''
           python3 ${./modules/home-manager/codex/rules-tests.py} "$activationPath"
           python3 ${./modules/home-manager/codex/ops-tests.py} "$opsActivationPath"
           python3 ${./modules/home-manager/codex/statusline-tests.py} "$statusLineActivationPath"
+          python3 ${./modules/home-manager/codex/otel-tests.py} "$otelActivationPath" "$otelUrl"
           touch $out
         '';
 
@@ -1357,26 +1361,32 @@
       # hold the permission rules beside the guard: bypass mode off; for
       # every server mcp.json lists, each read allowed and each confirm
       # asked, never allowed; no allow rule that a deny rule covers, which
-      # deny would override; and the guard's PreToolUse hook matching MCP
-      # tools, every hook of it blocking when it cannot run.
+      # deny would override; the guard's PreToolUse hook matching MCP
+      # tools, every hook of it blocking when it cannot run. In these and
+      # in the headless reviewers' settings, telemetry exported to the
+      # collector the ngrok Mac runs and kept on the host, with no
+      # OTEL_LOG_* content logging, no traces, otlp the only exporter, and
+      # every OTLP endpoint on loopback.
       checks.${darwinOnly "claude-settings"} = let
         ngrok = darwinSystems.ngrok;
-        settings = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username}.wgn.home.claude.settings;
-        codex = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username}.wgn.home.codex.sandbox;
+        home = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username};
       in
         pkgs.runCommand "claude-settings" {
           nativeBuildInputs = [pkgs.jq];
-          settings = builtins.toJSON settings;
-          codex = builtins.toJSON codex;
+          settings = builtins.toJSON home.wgn.home.claude.settings;
+          codex = builtins.toJSON home.wgn.home.codex.sandbox;
           mcp = builtins.readFile ./overlays/agent-tools/internal/guard/mcp.json;
           passAsFile = ["settings" "mcp" "codex"];
+          reviewerSettings = home.wgn.home.llm.delegate.settings;
+          otelUrl = home.wgn.home.otel-collector.url;
         } ''
           s=$settingsPath
+          label=
           # Each check prints what breaks it, and fails on any.
           check() {
             found=$(jq -r "$@" "$s")
             if [ -n "$found" ]; then
-              printf '%s\n' "$found" >&2
+              printf '%s\n' "$found" | sed "s|^|$label|" >&2
               failed=1
             fi
           }
@@ -1426,6 +1436,66 @@
           check 'if (.hooks.PreToolUse | any(.matcher | test("mcp__"))) then empty
             else "no PreToolUse hook matches MCP tools" end'
           check '.hooks.PreToolUse[].hooks[] | select(.onFailure != "block") | "a PreToolUse hook does not block on failure: \(.command)"'
+          for s in "$settingsPath" "$reviewerSettings"; do
+            [ "$s" = "$settingsPath" ] && label="settings: " || label="reviewer settings: "
+            check --arg url "$otelUrl" '(.env // {}) as $env
+              | {CLAUDE_CODE_ENABLE_TELEMETRY: "1", OTEL_METRICS_EXPORTER: "otlp", OTEL_LOGS_EXPORTER: "otlp",
+                  OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf",
+                  OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "\($url)/v1/metrics", OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "\($url)/v1/logs"}
+              | to_entries[] | select($env[.key] != .value) | "telemetry not sent to the collector: \(.key)"'
+            # The collector receives OTLP over HTTP alone.
+            check '.env // {} | to_entries[] | select(.key | test("^OTEL_EXPORTER_OTLP_[A-Z]+_PROTOCOL$")) | select(.value != "http/protobuf")
+              | "OTLP protocol other than http/protobuf: \(.key)=\(.value)"'
+            check '.env // {} | keys[] | select(startswith("OTEL_LOG_")) | "telemetry logs content: \(.)"'
+            check '.env // {} | keys[] | select(IN("OTEL_TRACES_EXPORTER", "BETA_TRACING_ENDPOINT", "ENABLE_BETA_TRACING_DETAILED",
+                "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA", "ENABLE_ENHANCED_TELEMETRY_BETA")) | "telemetry traces: \(.)"'
+            check '.env // {} | to_entries[] | select(.key | IN("OTEL_METRICS_EXPORTER", "OTEL_LOGS_EXPORTER")) | select(.value != "otlp")
+              | "telemetry exporter other than otlp: \(.key)=\(.value)"'
+            check '.env // {} | to_entries[] | select(.key | test("^OTEL_EXPORTER_OTLP_([A-Z]+_)?ENDPOINT$"))
+              | select(.value | test("^https?://(127\\.0\\.0\\.1|localhost|\\[::1\\])(:[0-9]+)?(/|$)") | not)
+              | "OTLP endpoint off the host: \(.key)=\(.value)"'
+          done
+          [ -z "$failed" ]
+          touch $out
+        '';
+
+      # The ngrok Mac's collector config: the collector accepts it, it
+      # receives OTLP on 127.0.0.1 alone, serves none of its own metrics,
+      # and writes metrics and logs, and nothing else, each to a rotated
+      # file.
+      checks.${darwinOnly "otel-collector"} = let
+        home = self.darwinConfigurations.ngrok.config.home-manager.users.${darwinSystems.ngrok.username};
+        # The launchd agent's last argument is the config file.
+        config = pkgs.lib.last home.launchd.agents.otel-collector.config.ProgramArguments;
+      in
+        pkgs.runCommand "otel-collector" {
+          nativeBuildInputs = [pkgs.opentelemetry-collector-contrib pkgs.yq-go pkgs.jq];
+        } ''
+          export HOME=$TMPDIR
+          otelcol-contrib validate --config ${config}
+          yq -o=json ${config} > config.json
+          # Each check prints what breaks it, and fails on any.
+          check() {
+            found=$(jq -r "$@" config.json)
+            if [ -n "$found" ]; then
+              printf '%s\n' "$found" >&2
+              failed=1
+            fi
+          }
+          failed=
+          check 'if (.receivers | keys) == ["otlp"] then empty else "receivers other than otlp: \(.receivers | keys)" end'
+          check '.receivers.otlp.protocols | to_entries[] | select((.value.endpoint // "") | startswith("127.0.0.1:") | not)
+            | "receiver off loopback: \(.key) \(.value.endpoint)"'
+          check 'if .service.telemetry.metrics.level == "none" then empty else "the collector serves its own metrics" end'
+          check 'if .extensions == null and .connectors == null and (.service.extensions // []) == [] then empty
+            else "extensions or connectors are set" end'
+          check 'if (.service.pipelines | keys) == ["logs", "metrics"] then empty
+            else "pipelines are not exactly logs and metrics: \(.service.pipelines | keys)" end'
+          check '.service.pipelines | to_entries[] | .key as $p | .value.exporters[] | select(startswith("file/") | not)
+            | "pipeline \($p) exports to \(.)"'
+          check '.exporters | to_entries[]
+            | select((.key | startswith("file/") | not) or (.value.rotation // {} | .max_megabytes and .max_backups and .max_days | not))
+            | "exporter \(.key) is not a rotated file"'
           [ -z "$failed" ]
           touch $out
         '';

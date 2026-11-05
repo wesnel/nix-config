@@ -34,6 +34,7 @@
         man.enable = true;
         mcp-proxy.enable = true;
         mosh.enable = true;
+        otel-collector.enable = true;
         zellij.enable = true;
       };
 
