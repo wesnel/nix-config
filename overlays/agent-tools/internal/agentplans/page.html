@@ -767,7 +767,8 @@ iframe.renderer {
   function recordDiagrams(r) {
     const diagrams = r.recordDiagrams.filter((d) => DIAGRAM_ID.test(d.id)).slice(0, 5);
     if (!diagrams.length) return null;
-    return h("div", { class: "diagrams" }, diagrams.map((d) => diagramPart(r.repo + "#" + r.number, d)));
+    return h("div", { class: "diagrams" }, diagrams.map((d) => diagramPart(r.repo + "#" + r.number + "~" + d.id, d,
+      own(DIAGRAM_KIND, d.kind, "Diagram"), "Diagram " + d.id + " of the review")));
   }
 
   const DIAGRAM_KIND = {
@@ -907,7 +908,7 @@ iframe.renderer {
   // back as a string, and the page shows it only as an image, in which
   // nothing runs or loads. A passing failure is shown until the diagram
   // is next opened, which tries again.
-  function drawDiagram(key, d, figure) {
+  function drawDiagram(key, d, figure, alt) {
     if (snapshot) {
       figure.replaceChildren(sourceText(d.source, "Diagram source; this snapshot loads nothing to draw it."));
       return;
@@ -927,7 +928,7 @@ iframe.renderer {
     renderSVG(d.source, theme()).then(({ svg, width, height }) => {
       if (state.drawn.get(key) !== entry) return;
       node.replaceChildren(h("img", { class: "diagram-img", src: "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg),
-        width, height, alt: "Diagram " + d.id + " of the review" }));
+        width, height, alt }));
     }).catch((e) => {
       if (state.drawn.get(key) !== entry) return;
       entry.retry = !!(e && e.passing);
@@ -936,11 +937,13 @@ iframe.renderer {
     });
   }
 
-  function diagramPart(pr, d) {
-    const key = pr + "~" + d.id;
+  // diagramPart is d, a diagram with an id and a source, closed until
+  // opened, under label; key names it among every diagram the page shows,
+  // and alt is its drawing's text.
+  function diagramPart(key, d, label, alt) {
     const figure = h("div", { class: "diagram-figure" });
     const details = h("details", { class: "diagram", open: state.diagramsOpen.has(key) },
-      h("summary", null, h("span", { class: "mono muted" }, d.id), h("span", null, own(DIAGRAM_KIND, d.kind, "Diagram"))),
+      h("summary", null, h("span", { class: "mono muted" }, d.id), h("span", null, label)),
       h("div", { class: "diagram-body" }, figure));
     details.addEventListener("toggle", () => {
       if (details.open) {
@@ -949,10 +952,10 @@ iframe.renderer {
         const had = state.drawn.get(key);
         if (!state.diagramsOpen.has(key) && had && had.retry) state.drawn.delete(key);
         state.diagramsOpen.add(key);
-        drawDiagram(key, d, figure);
+        drawDiagram(key, d, figure, alt);
       } else state.diagramsOpen.delete(key);
     });
-    if (details.open) drawDiagram(key, d, figure);
+    if (details.open) drawDiagram(key, d, figure, alt);
     return details;
   }
 
