@@ -13,16 +13,12 @@ import (
 	"github.com/wesnel/agent-tools/internal/gitenv"
 )
 
-// transport is the one protocol git may fetch over; tests serve a local
-// remote over "file".
-var transport = "https"
-
 // safe is the configuration every git command on a review clone, or a
 // checkout or copy of it, runs with. The pull request chooses what is in
 // them, so nothing it names may run on this side: no hook or fsmonitor, no
 // link that a reader would follow out of the checkout, no submodule and no
 // transport but transport, with every object checked as it arrives.
-func safe() []string {
+func safe(transport string) []string {
 	return []string{
 		"-c", "core.hooksPath=/dev/null",
 		"-c", "core.fsmonitor=false",
@@ -53,10 +49,11 @@ func environment(vars, extra []string) []string {
 }
 
 // gitCommand is git in dir with the safe configuration, found and run in
-// ctx's Env as environment says. extra is added to environment's, and is
-// where a credential helper goes, never argv.
+// ctx's Env as environment says, fetching only over the transport of ctx's
+// seams. extra is added to environment's, and is where a credential helper
+// goes, never argv.
 func gitCommand(ctx context.Context, dir string, extra []string, args ...string) *exec.Cmd {
-	cmd := env.Command(ctx, "git", append(safe(), args...)...)
+	cmd := env.Command(ctx, "git", append(safe(seamsOf(ctx).transport), args...)...)
 	cmd.Dir = dir
 	cmd.Env = environment(cmd.Env, extra)
 	return cmd

@@ -41,6 +41,7 @@ func TestFocusContracts(t *testing.T) {
 // Where a focused review cannot run headless, delegate names the agent
 // type to start on the prompt it prints.
 func TestFocusAgentNamed(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, true)
 	f.config(t, map[string]any{})
 	code, _, stderr := f.runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
@@ -96,9 +97,11 @@ func claudeArgs(t *testing.T, f *fixture, agent string, n int) []string {
 // checklist and the general rules, and requires every category to be named
 // as checked.
 func TestSecurityReviewer(t *testing.T) {
+	t.Parallel()
 	finding := map[string]any{"id": "1", "path": "code.txt", "line": 2, "endLine": nil, "kind": "vulnerability",
 		"claim": "c", "evidence": "e", "about": nil, "reopens": nil}
 	t.Run("checked", func(t *testing.T) {
+		t.Parallel()
 		f := setUp(t, true)
 		f.claudeSays(t, "security-reviewer", claudeResult(securityReply(finding), "Reviewed."))
 		code, run, stderr := f.runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
@@ -161,6 +164,7 @@ func TestSecurityReviewer(t *testing.T) {
 			"checked": Categories[1:]}, "")}, 4, "2"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			f := setUp(t, true)
 			f.claudeSays(t, "security-reviewer", c.outs...)
 			code, run, stderr := f.runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
@@ -188,6 +192,7 @@ func TestSecurityReviewer(t *testing.T) {
 	// reviewer's sandbox denies, which stopped every git command the
 	// reviewer ran on a local range.
 	t.Run("git diff of a local range despite a denied global config", func(t *testing.T) {
+		t.Parallel()
 		f := setUp(t, true)
 		dir := t.TempDir()
 		global, included := filepath.Join(dir, "gitconfig"), filepath.Join(dir, "included")
@@ -210,6 +215,7 @@ func TestSecurityReviewer(t *testing.T) {
 	})
 
 	t.Run("no delegate config", func(t *testing.T) {
+		t.Parallel()
 		f := setUp(t, true)
 		f.config(t, map[string]any{})
 		code, run, stderr := f.runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
@@ -219,6 +225,7 @@ func TestSecurityReviewer(t *testing.T) {
 	})
 
 	t.Run("an unknown type", func(t *testing.T) {
+		t.Parallel()
 		f := setUp(t, true)
 		code, _, stderr := f.runDelegate(t, "--reviewer", "style", "--plan", f.plan, f.base+"..HEAD")
 		refused(t, "an unknown type", code, stderr)
@@ -229,6 +236,7 @@ func TestSecurityReviewer(t *testing.T) {
 // says there are none, and the overlapping branches; notes the repository
 // holds are refused.
 func TestThreatNotesPrompt(t *testing.T) {
+	t.Parallel()
 	notes := func(t *testing.T, value string) *fixture {
 		t.Helper()
 		f := setUp(t, true)
@@ -246,6 +254,7 @@ func TestThreatNotesPrompt(t *testing.T) {
 	}
 
 	t.Run("inline", func(t *testing.T) {
+		t.Parallel()
 		f := notes(t, "T1: the token ghp_"+strings.Repeat("b", 36)+" never leaves the host")
 		code, prompt, stderr := printed(t, f)
 		if code != 0 || !strings.Contains(prompt, "## Threat notes") || !strings.Contains(prompt, "T1: the token [REDACTED") ||
@@ -255,6 +264,7 @@ func TestThreatNotesPrompt(t *testing.T) {
 	})
 
 	t.Run("none", func(t *testing.T) {
+		t.Parallel()
 		f := notes(t, "")
 		if code, prompt, stderr := printed(t, f); code != 0 || !strings.Contains(prompt, "keeps no threat notes") {
 			t.Errorf("exit %d\n%s\n%s", code, prompt, stderr)
@@ -262,6 +272,7 @@ func TestThreatNotesPrompt(t *testing.T) {
 	})
 
 	t.Run("in the repository", func(t *testing.T) {
+		t.Parallel()
 		f := notes(t, "TOP/THREATS.md")
 		code, _, stderr := printed(t, f)
 		refused(t, "in the repository", code, stderr)
@@ -290,6 +301,7 @@ func TestRedCheckRedacted(t *testing.T) {
 // --print-prompt --reviewer security prints the security review's prompt,
 // the contract a security-reviewer agent works to.
 func TestFocusPrompt(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, false)
 	var stdout, stderr strings.Builder
 	if code := Main(f.ctx(t), []string{"--print-prompt", "--reviewer", "security", "--plan", f.plan, f.base + "..HEAD"},

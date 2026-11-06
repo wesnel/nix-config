@@ -14,19 +14,8 @@ import (
 	"strings"
 
 	"github.com/wesnel/agent-tools/internal/env"
-	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/record"
 	"github.com/wesnel/agent-tools/internal/refusal"
-)
-
-var (
-	// graphQL and remoteURL are replaced by tests that fake GitHub.
-	// graphQL asks in ctx's Env, and ctx's end does not stop it, as
-	// before it took one.
-	graphQL = func(ctx context.Context, query string, variables map[string]any, out any) error {
-		return gh.GraphQL(context.WithoutCancel(ctx), query, variables, out)
-	}
-	remoteURL = func(slug string) string { return "https://github.com/" + slug + ".git" }
 )
 
 // credentialHelper lets the fetch alone use the gh login, for a private
@@ -121,7 +110,7 @@ func Fetch(ctx context.Context, slug string, number int, home string) (*PR, erro
 			}
 		}
 	}
-	err = graphQL(ctx, `query($owner: String!, $name: String!, $number: Int!) {
+	err = seamsOf(ctx).graphQL(ctx, `query($owner: String!, $name: String!, $number: Int!) {
 		viewer { login }
 		repository(owner: $owner, name: $name) { pullRequest(number: $number) {
 			url title body headRefOid baseRefName author { login }
@@ -162,7 +151,7 @@ func Fetch(ctx context.Context, slug string, number int, home string) (*PR, erro
 		return nil, fmt.Errorf("GitHub gave %q as the base branch of %s#%d", pr.BaseRef, slug, number)
 	}
 	_, err = gitOut(ctx, pr.Clone, credentialHelper, "fetch", "--quiet", "--no-tags", "--no-recurse-submodules",
-		"--no-write-fetch-head", remoteURL(pr.Repo),
+		"--no-write-fetch-head", seamsOf(ctx).remoteURL(pr.Repo),
 		fmt.Sprintf("+refs/pull/%d/head:%s/head", number, pr.Refs),
 		"+refs/heads/"+pr.BaseRef+":"+pr.Refs+"/base")
 	if err != nil {

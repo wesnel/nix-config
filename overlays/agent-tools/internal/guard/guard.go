@@ -137,7 +137,7 @@ func mainIn(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 		}
 		return reason
 	})
-	if in.TurnID != "" && who == baseline && (reason == opsCall || nativeMCPApproval(in.ToolName, reason)) {
+	if in.TurnID != "" && who == baseline && (reason == opsCall || nativeMCPApproval(ctx, in.ToolName, reason)) {
 		// Codex enforces the module's per-tool approvals.
 		reason = ""
 	}
@@ -196,7 +196,7 @@ func CheckReviewer(ctx context.Context, tool string, toolInput json.RawMessage) 
 // hold every reason to this.
 func check(ctx context.Context, tool string, toolInput json.RawMessage, who role, dir string) string {
 	if service, name, mcp := mcpTool(tool); mcp {
-		return checkMCP(service, name, who)
+		return checkMCP(ctx, service, name, who)
 	}
 	checkout := dir // the hook's directory, wherever a command then runs
 	switch {

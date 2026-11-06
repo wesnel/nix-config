@@ -12,14 +12,13 @@ import (
 // guard judges a command's file arguments: a .env file by its name, or a
 // path under one of the credential paths by spelling, case folded where
 // the file system folds it, by glob, and by what the file system would
-// open. A command that sends a file elsewhere calls it to keep secrets out
-// of what it sends.
-func IsCredential(path string) bool {
+// open, with the credential paths of the config ctx's Env names. A command
+// that sends a file elsewhere calls it to keep secrets out of what it sends.
+func IsCredential(ctx context.Context, path string) bool {
 	if envFile(path) {
 		return true
 	}
-	// Its callers, in other packages, have no Env to pass yet.
-	for _, p := range credentialPaths(env.With(context.Background(), env.Process())) {
+	for _, p := range credentialPaths(ctx) {
 		if credentialUnder(path, p, false) {
 			return true
 		}
@@ -35,5 +34,5 @@ func envFile(path string) bool {
 }
 
 // ScratchRoots are the session's temporary directories, where an agent
-// writes files that are not the repository's.
-func ScratchRoots() []string { return scratchRoots(env.Process()) }
+// writes files that are not the repository's, as the Env of ctx has them.
+func ScratchRoots(ctx context.Context) []string { return scratchRoots(env.From(ctx)) }

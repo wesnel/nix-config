@@ -33,10 +33,6 @@ var (
 	overlapBudget = 10 * time.Second
 	overlapRecent = 14 * 24 * time.Hour
 	prCacheFor    = time.Hour
-	// prListLimit is the most open pull requests gh lists, newest first.
-	prListLimit = 200
-	// overlapNow is the clock the budget is kept by.
-	overlapNow = time.Now
 )
 
 // candidate is a branch that may change what the change does.
@@ -56,9 +52,11 @@ type candidate struct {
 // branches this host's plans name, and remote refs with an open pull
 // request, or, in a review-loop session, which has no GitHub, those with a
 // commit in the last overlapRecent. Names and subjects are their authors'
-// text, so the list is fenced and redacted.
-func overlapSection(r *span) string {
-	deadline := overlapNow().Add(overlapBudget)
+// text, so the list is fenced and redacted. The budget is kept by the clock
+// of ctx's seams.
+func overlapSection(ctx context.Context, r *span) string {
+	s := seamsOf(ctx)
+	deadline := s.now().Add(overlapBudget)
 	loop := r.env.Get("PR_LOOP_SESSION") != ""
 	g := r.git()
 	base := routes.MergeBase(r.top, r.tip)
@@ -71,7 +69,7 @@ func overlapSection(r *span) string {
 
 	// Finding the candidates counts against the budget as checking them
 	// does: each one past it is left unchecked.
-	over := func() bool { return overlapNow().After(deadline) }
+	over := func() bool { return s.now().After(deadline) }
 	unchecked := 0
 	found := map[string]*candidate{}
 	add := func(ref string, group int, label string, remote bool) {
@@ -102,7 +100,7 @@ func overlapSection(r *span) string {
 		add(ref, 0, "local", false)
 	}
 	remotes := remotesOf(r)
-	for _, b := range plans.HostBranches(env.Process()) {
+	for _, b := range plans.HostBranches(r.env) {
 		if over() {
 			unchecked++
 			continue
@@ -136,14 +134,14 @@ func overlapSection(r *span) string {
 					"branches are left out.\n", slug)
 				continue
 			}
-			prs, err := openPRs(r.env, slug, deadline.Sub(overlapNow()))
+			prs, err := openPRs(r.env, slug, s.prListLimit, deadline.Sub(s.now()))
 			if err != nil {
 				note += fmt.Sprintf("The open pull requests of %s could not be listed (%v), so remote branches are left out.\n", slug, err)
 				continue
 			}
-			if len(prs) >= prListLimit {
+			if len(prs) >= s.prListLimit {
 				note += fmt.Sprintf("gh gave only its newest %d open pull requests of %s, so the branches of older ones are "+
-					"left out.\n", prListLimit, slug)
+					"left out.\n", s.prListLimit, slug)
 			}
 			for _, pr := range prs {
 				if over() {
@@ -289,11 +287,11 @@ type openPR struct {
 	Number      int    `json:"number"`
 }
 
-// openPRs are slug's open pull requests, by `gh pr list` given at most
-// timeout and 20 seconds, kept for prCacheFor in agent-tools' directory
-// under the XDG cache directory: e's, as gh is the one e's PATH finds, run
-// in e.
-func openPRs(e env.Env, slug string, timeout time.Duration) ([]openPR, error) {
+// openPRs are slug's newest limit open pull requests, by `gh pr list` given
+// at most timeout and 20 seconds, kept for prCacheFor in agent-tools'
+// directory under the XDG cache directory: e's, as gh is the one e's PATH
+// finds, run in e.
+func openPRs(e env.Env, slug string, limit int, timeout time.Duration) ([]openPR, error) {
 	cache := e.Get("XDG_CACHE_HOME")
 	if cache == "" {
 		home := e.Get("HOME")
@@ -314,7 +312,7 @@ func openPRs(e env.Env, slug string, timeout time.Duration) ([]openPR, error) {
 	ctx, cancel := context.WithTimeout(env.With(context.Background(), e), min(timeout, 20*time.Second))
 	defer cancel()
 	data, err := gh.Command(ctx, "pr", "list", "--repo", slug, "--state", "open", "--json", "headRefName,number",
-		"--limit", strconv.Itoa(prListLimit)).Output()
+		"--limit", strconv.Itoa(limit)).Output()
 	if err != nil {
 		return nil, err
 	}

@@ -23,13 +23,14 @@ type Config struct {
 	LocalServers []string `json:"localServers,omitempty"`
 }
 
-// Load returns the host's mcp-proxy, with no endpoints where the config
-// names none, as on a host without the proxy, or cannot be read.
-func Load() Config {
+// Load returns the host's mcp-proxy from the config e names, with no
+// endpoints where it names none, as on a host without the proxy, or cannot
+// be read.
+func Load(e env.Env) Config {
 	var file struct {
 		MCPProxy Config `json:"mcpProxy"`
 	}
-	if data, err := os.ReadFile(repos.Path(env.Process())); err == nil {
+	if data, err := os.ReadFile(repos.Path(e)); err == nil {
 		json.Unmarshal(data, &file)
 	}
 	return file.MCPProxy

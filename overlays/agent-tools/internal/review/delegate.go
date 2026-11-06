@@ -371,7 +371,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 
 	base := inputs{r: r, availability: newAvailability(r.env)}
 	if *plan != "" {
-		if base.goal, err = planGoal(*plan, *part); err != nil {
+		if base.goal, err = planGoal(r.env, *plan, *part); err != nil {
 			return report(nil, err, 0)
 		}
 	} else if s.number == 0 {
@@ -561,7 +561,7 @@ func typeInputs(ctx context.Context, base inputs, t string, tests *adequacy, log
 			in.focused += ups.printedSection(in.r)
 		}
 	}
-	in.focused += overlapSection(in.r)
+	in.focused += overlapSection(ctx, in.r)
 	return in, nil
 }
 
@@ -603,9 +603,10 @@ func shellWord(s string) string {
 
 // planGoal is the goal statement of plan, or of its part: the text under
 // its Goal heading, which agent-plan goal prints. plan may name a part's
-// file, which Open takes as its plan's, only together with that part.
-func planGoal(plan, part string) (string, error) {
-	c, err := plans.Load(env.Process())
+// file, which Open takes as its plan's, only together with that part. The
+// plans are those of the config e names.
+func planGoal(e env.Env, plan, part string) (string, error) {
+	c, err := plans.Load(e)
 	if err != nil {
 		return "", err
 	}

@@ -2,6 +2,7 @@ package review
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -42,7 +43,9 @@ func askFixture(t *testing.T, withCodex bool) *fixture {
 // Codex answers a design question from the files named and nothing else,
 // confined as a review is, and leaves nothing behind.
 func TestAsk(t *testing.T) {
+	t.Parallel()
 	t.Run("answers from the named files alone", func(t *testing.T) {
+		t.Parallel()
 		f := askFixture(t, true)
 		f.setenv("FAKE_CODEX", "answer")
 		code, out, stderr := f.askCodex(t, "--model", "fake-model", "--question", ".git/question.md", "code.txt", "docs/design.md")
@@ -75,6 +78,7 @@ func TestAsk(t *testing.T) {
 
 	// A Claude type answers in the same copies, headless.
 	t.Run("a Claude reviewer", func(t *testing.T) {
+		t.Parallel()
 		f := askFixture(t, true)
 		f.claudeSays(t, "security-reviewer", claudeResult(map[string]any{"answer": "Keep it in the flag set.", "unverified": []string{}}, "done"))
 		code, out, stderr := f.askCodex(t, "--reviewer", "security", "--question", ".git/question.md", "code.txt")
@@ -91,6 +95,7 @@ func TestAsk(t *testing.T) {
 	// swapped afterwards for a link to a file elsewhere sends nothing from
 	// elsewhere.
 	t.Run("a file swapped for a link after the check", func(t *testing.T) {
+		t.Parallel()
 		f := askFixture(t, true)
 		f.setenv("FAKE_CODEX", "answer")
 		f.setenv("FAKE_CODEX_COPY", "code.txt")
@@ -105,7 +110,7 @@ func TestAsk(t *testing.T) {
 		if err := os.Symlink(secret, filepath.Join(f.repo, "code.txt")); err != nil {
 			t.Fatal(err)
 		}
-		askIn(t.Context(), top, "Which way?", files, "codex", reviewerTypes["codex"], "", time.Minute, io.Discard)
+		askIn(f.ctx(t), top, "Which way?", files, "codex", reviewerTypes["codex"], "", time.Minute, io.Discard)
 		if sent, _ := os.ReadFile(filepath.Join(f.log, "copy")); strings.Contains(string(sent), "hunter2") {
 			t.Errorf("Codex was sent the file the link leads to: %q", sent)
 		}
@@ -113,6 +118,7 @@ func TestAsk(t *testing.T) {
 	})
 
 	t.Run("Codex unavailable", func(t *testing.T) {
+		t.Parallel()
 		f := askFixture(t, false)
 		code, _, stderr := f.askCodex(t, "--question", ".git/question.md", "code.txt")
 		reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-delegate:")
@@ -125,6 +131,7 @@ func TestAsk(t *testing.T) {
 	// Known secret shapes are taken out of the question and of each file
 	// copied for Codex.
 	t.Run("redacted", func(t *testing.T) {
+		t.Parallel()
 		f := askFixture(t, true)
 		f.setenv("FAKE_CODEX", "answer")
 		f.setenv("FAKE_CODEX_COPY", "docs/design.md")
@@ -147,6 +154,7 @@ func TestAsk(t *testing.T) {
 	// so it comes from the repository or the scratch area, read where its
 	// symlinks lead, and never from a credential.
 	t.Run("question files", func(t *testing.T) {
+		t.Parallel()
 		for _, c := range []struct {
 			name string
 			// place makes the question file and returns the path to pass;
@@ -202,21 +210,17 @@ func TestAsk(t *testing.T) {
 			}, false},
 		} {
 			t.Run(c.name, func(t *testing.T) {
+				t.Parallel()
 				f := askFixture(t, true)
 				f.setenv("FAKE_CODEX", "answer")
 				scratch, _ := filepath.EvalSymlinks(t.TempDir())
 				secrets := filepath.Join(scratch, "secrets")
 				os.MkdirAll(secrets, 0o700)
-				old := scratchRoots
-				scratchRoots = func() []string { return []string{scratch} }
-				t.Cleanup(func() { scratchRoots = old })
+				f.seams.scratchRoots = func(context.Context) []string { return []string{scratch} }
 				config := filepath.Join(t.TempDir(), "config.json")
 				data, _ := json.Marshal(map[string]any{"guard": map[string]any{"credentialPaths": []string{secrets}}})
 				os.WriteFile(config, data, 0o600)
 				f.setenv("AGENT_TOOLS_CONFIG", config)
-				// The guard's credential paths, which checkedfile reads,
-				// still come from this process's environment.
-				t.Setenv("AGENT_TOOLS_CONFIG", config)
 				code, _, stderr := f.askCodex(t, "--question", c.place(t, f, scratch, secrets), "code.txt")
 				_, ran := os.Stat(filepath.Join(f.log, "prompt"))
 				if c.ok && code != 0 {
@@ -234,6 +238,7 @@ func TestAsk(t *testing.T) {
 	})
 
 	t.Run("refused/a hard link to a file elsewhere", func(t *testing.T) {
+		t.Parallel()
 		f := askFixture(t, true)
 		f.setenv("FAKE_CODEX", "answer")
 		secret := filepath.Join(t.TempDir(), "secret")
@@ -260,6 +265,7 @@ func TestAsk(t *testing.T) {
 		"a directory":                   {"--question", ".git/question.md", "docs"},
 	} {
 		t.Run("refused/"+name, func(t *testing.T) {
+			t.Parallel()
 			f := askFixture(t, true)
 			f.setenv("FAKE_CODEX", "answer")
 			code, _, stderr := f.askCodex(t, args...)
@@ -289,6 +295,7 @@ func TestAsk(t *testing.T) {
 		},
 	} {
 		t.Run("refused/"+name, func(t *testing.T) {
+			t.Parallel()
 			f := askFixture(t, true)
 			f.setenv("FAKE_CODEX", "answer")
 			arg := place(t, f)

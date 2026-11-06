@@ -12,7 +12,9 @@ import (
 )
 
 func TestFetch(t *testing.T) {
+	t.Parallel()
 	t.Run("first round", func(t *testing.T) {
+		t.Parallel()
 		r := newRemote(t, nil)
 		f := setUpPR(t, r)
 		pr, err := Fetch(f.ctx(t), "o/r", 7, "")
@@ -43,6 +45,7 @@ func TestFetch(t *testing.T) {
 
 	// The next round fetches into the same clone.
 	t.Run("next round", func(t *testing.T) {
+		t.Parallel()
 		r := newRemote(t, nil)
 		f := setUpPR(t, r)
 		if _, err := Fetch(f.ctx(t), "o/r", 7, ""); err != nil {
@@ -62,6 +65,7 @@ func TestFetch(t *testing.T) {
 	// A head other than the one GitHub reports, such as one pushed between
 	// the query and the fetch, is refused.
 	t.Run("pins the head", func(t *testing.T) {
+		t.Parallel()
 		r := newRemote(t, nil)
 		f := setUpPR(t, r)
 		f.pr["headRefOid"] = r.base
@@ -79,6 +83,7 @@ func TestFetch(t *testing.T) {
 		number int
 	}{{"o/..", 7}, {"../r", 7}, {"o/r/x", 7}, {"o", 7}, {"o/r", 0}, {"o/r", -1}, {".git/r", 7}} {
 		t.Run("refuses/"+c.slug+"#"+strconv.Itoa(c.number), func(t *testing.T) {
+			t.Parallel()
 			r := newRemote(t, nil)
 			f := setUpPR(t, r)
 			if _, err := Fetch(f.ctx(t), c.slug, c.number, ""); err == nil {
@@ -95,6 +100,7 @@ func TestFetch(t *testing.T) {
 // testFetchHooksDoNotRun holds every git command on the clone and its
 // checkouts to running no hook, wherever one is planted.
 func testFetchHooksDoNotRun(t *testing.T) {
+	t.Parallel()
 	r := newRemote(t, nil)
 	f := setUpPR(t, r)
 	pr, err := Fetch(f.ctx(t), "o/r", 7, "")
@@ -130,6 +136,7 @@ func testFetchHooksDoNotRun(t *testing.T) {
 // and points LFS at a server of its choosing gets neither the user's LFS
 // filter run on this side nor that server contacted.
 func testFetchLFSStaysInert(t *testing.T) {
+	t.Parallel()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -206,6 +213,7 @@ func testFetchLFSStaysInert(t *testing.T) {
 // testFetchSymlinksCheckOutAsFiles: a link in the pull request cannot point
 // a reader of the checkout at a file outside it.
 func testFetchSymlinksCheckOutAsFiles(t *testing.T) {
+	t.Parallel()
 	secret := filepath.Join(t.TempDir(), "secret")
 	write(t, secret, "token\n")
 	r := newRemote(t, func(work string) {

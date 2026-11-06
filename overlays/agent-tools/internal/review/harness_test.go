@@ -8,8 +8,10 @@ import (
 )
 
 func TestPrimaryHarness(t *testing.T) {
+	t.Parallel()
 	for _, marker := range []string{"CODEX_SANDBOX", "CODEX_THREAD_ID"} {
 		t.Run(marker, func(t *testing.T) {
+			t.Parallel()
 			f := setUp(t, true)
 			f.setenv(marker, "codex-session")
 			f.claudeSays(t, "adversarial-reviewer", claudeResult(map[string]any{
@@ -31,6 +33,7 @@ func TestPrimaryHarness(t *testing.T) {
 	// Where Claude cannot review a Codex author's change, Codex does, in a
 	// run of its own, rather than leave the general review undone.
 	t.Run("Claude held", func(t *testing.T) {
+		t.Parallel()
 		f := setUp(t, true)
 		f.setenv("CODEX_SANDBOX", "seatbelt")
 		f.setenv("FAKE_CODEX", "none")
@@ -49,6 +52,7 @@ func TestPrimaryHarness(t *testing.T) {
 		noProviderCall(t, f, "adversarial-reviewer-runs")
 	})
 	t.Run("design question", func(t *testing.T) {
+		t.Parallel()
 		f := askFixture(t, true)
 		f.setenv("CODEX_SANDBOX", "seatbelt")
 		f.claudeSays(t, "adversarial-reviewer", claudeResult(map[string]any{"answer": "Extend the seam.", "unverified": []string{}}, ""))
@@ -60,8 +64,10 @@ func TestPrimaryHarness(t *testing.T) {
 }
 
 func TestCodexJSONModel(t *testing.T) {
+	t.Parallel()
 	for _, model := range []string{"", "chosen-model"} {
 		t.Run(model, func(t *testing.T) {
+			t.Parallel()
 			f := setUp(t, true)
 			f.setenv("FAKE_CODEX", "none")
 			args := []string{"--reviewer", "codex", "--plan", f.plan}

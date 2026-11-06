@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wesnel/agent-tools/internal/env"
 )
 
 // TestMCPStatus covers mcp-status --hook, Claude Code's SessionStart hook:
@@ -20,6 +22,7 @@ import (
 // it prints nothing. The proxy is a stand-in answering as mcp-proxy does:
 // 401 on a mounted server's route, 404 on any other.
 func TestMCPStatus(t *testing.T) {
+	t.Parallel()
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/linear/mcp" {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -38,12 +41,12 @@ func TestMCPStatus(t *testing.T) {
 		{"no proxy on this host", `{"mcpProxy": null}`, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			config := filepath.Join(t.TempDir(), "config.json")
 			os.WriteFile(config, []byte(c.config), 0o600)
-			t.Setenv("AGENT_TOOLS_CONFIG", config)
-			t.Chdir(t.TempDir())
+			ctx := env.With(t.Context(), env.New(t.TempDir(), "AGENT_TOOLS_CONFIG="+config))
 			var stdout, stderr bytes.Buffer
-			code := run(t.Context(), "mcp-status", []string{"--hook"}, strings.NewReader(`{"hook_event_name":"SessionStart","source":"startup"}`), &stdout, &stderr)
+			code := run(ctx, "mcp-status", []string{"--hook"}, strings.NewReader(`{"hook_event_name":"SessionStart","source":"startup"}`), &stdout, &stderr)
 			if code != 0 {
 				t.Fatalf("exit %d\n%s", code, stderr.String())
 			}
@@ -105,12 +108,11 @@ func TestMCPStatusTimeouts(t *testing.T) {
 			probeTimeout, requestTimeout = c.probe, c.request
 			config := filepath.Join(t.TempDir(), "config.json")
 			os.WriteFile(config, []byte(`{"mcpProxy": {"url": "`+proxy.URL+`", "endpoints": {"linear": "/linear/mcp"}}}`), 0o600)
-			t.Setenv("AGENT_TOOLS_CONFIG", config)
-			t.Chdir(t.TempDir())
+			ctx := env.With(t.Context(), env.New(t.TempDir(), "AGENT_TOOLS_CONFIG="+config))
 			var stdout, stderr bytes.Buffer
 			done := make(chan int, 1)
 			go func() {
-				done <- run(t.Context(), "mcp-status", nil, strings.NewReader(""), &stdout, &stderr)
+				done <- run(ctx, "mcp-status", nil, strings.NewReader(""), &stdout, &stderr)
 			}()
 			select {
 			case code := <-done:

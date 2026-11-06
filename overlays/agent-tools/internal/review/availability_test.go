@@ -34,8 +34,10 @@ func noProviderCall(t *testing.T, f *fixture, files ...string) {
 }
 
 func TestProviderAvailability(t *testing.T) {
+	t.Parallel()
 	for _, provider := range []string{"claude", "codex"} {
 		t.Run(provider, func(t *testing.T) {
+			t.Parallel()
 			f := askFixture(t, true)
 			if code, out := f.runAvailability(t, "--disable", provider); code != 0 {
 				t.Fatalf("disable provider: exit %d, %s", code, out)
@@ -69,6 +71,7 @@ func TestProviderAvailability(t *testing.T) {
 		})
 	}
 	t.Run("validate provider", func(t *testing.T) {
+		t.Parallel()
 		f := setUp(t, true)
 		if code, _ := f.runAvailability(t, "--disable", "../other"); code != 2 {
 			t.Fatalf("invalid provider: %d", code)
@@ -77,7 +80,9 @@ func TestProviderAvailability(t *testing.T) {
 }
 
 func TestQuotaFallback(t *testing.T) {
+	t.Parallel()
 	t.Run("quota after a schema error still requests fallback", func(t *testing.T) {
+		t.Parallel()
 		f := setUp(t, true)
 		f.claudeSays(t, "security-reviewer", claudeResult(nil, "No JSON."), `{"is_error":true,"errors":["API Error: 429 rate_limit_error"]}`)
 		code, _, errs := f.runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
@@ -87,6 +92,7 @@ func TestQuotaFallback(t *testing.T) {
 		noProviderCall(t, f, "review-guide-runs")
 	})
 	t.Run("Claude suppresses retry guide and later commands", func(t *testing.T) {
+		t.Parallel()
 		f := askFixture(t, true)
 		f.claudeSays(t, "security-reviewer", `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"You've hit your limit · resets later"}`)
 		code, _, errs := f.runDelegate(t, "--reviewer", "security", "--reviewer", "guide", "--plan", f.plan, f.base+"..HEAD")
@@ -102,6 +108,7 @@ func TestQuotaFallback(t *testing.T) {
 		noProviderCall(t, f, "review-guide-runs", "adversarial-reviewer-runs")
 	})
 	t.Run("Codex terminal event blocks later invocations", func(t *testing.T) {
+		t.Parallel()
 		f := askFixture(t, true)
 		f.setenv("FAKE_CODEX", "quota")
 		if code, _, errs := f.askCodex(t, "--question", ".git/question.md", "code.txt"); code != 4 || !strings.Contains(errs, "quota") {
@@ -116,6 +123,7 @@ func TestQuotaFallback(t *testing.T) {
 		}
 	})
 	t.Run("tool output is not quota evidence", func(t *testing.T) {
+		t.Parallel()
 		f := askFixture(t, true)
 		f.setenv("FAKE_CODEX", "quota-prose")
 		f.askCodex(t, "--question", ".git/question.md", "code.txt")
@@ -133,6 +141,7 @@ func TestQuotaFallback(t *testing.T) {
 }
 
 func TestClaudeQuotaCode(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, apiError string
 		failed, quota  bool
@@ -142,6 +151,7 @@ func TestClaudeQuotaCode(t *testing.T) {
 		{"other terminal error is not account exhaustion", "model_requires_usage_credits", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			f := askFixture(t, true)
 			out := must(json.Marshal(map[string]any{
 				"type": "result", "subtype": "success", "is_error": tc.failed,
@@ -168,9 +178,11 @@ func TestClaudeQuotaCode(t *testing.T) {
 }
 
 func TestClaudeQuotaMessages(t *testing.T) {
+	t.Parallel()
 	for _, message := range []string{"You're out of usage credits", "You're out of extra usage",
 		"You've hit your channel's monthly spend limit.", "You've hit your monthly spend limit."} {
 		t.Run(message, func(t *testing.T) {
+			t.Parallel()
 			f := setUp(t, true)
 			out := must(json.Marshal(map[string]any{"type": "result", "is_error": true, "result": message}))
 			f.claudeSays(t, "security-reviewer", string(out))
@@ -187,6 +199,7 @@ func TestClaudeQuotaMessages(t *testing.T) {
 }
 
 func TestFallbackPrompts(t *testing.T) {
+	t.Parallel()
 	f := askFixture(t, true)
 	for _, p := range []string{"claude", "codex"} {
 		if code, out := f.runAvailability(t, "--disable", p); code != 0 {
@@ -210,8 +223,10 @@ func TestFallbackPrompts(t *testing.T) {
 }
 
 func TestDiagramQuota(t *testing.T) {
+	t.Parallel()
 	for _, stage := range []string{"drawing", "critique", "redraw"} {
 		t.Run(stage, func(t *testing.T) {
+			t.Parallel()
 			f := setUp(t, true)
 			f.setenv("FAKE_CODEX", "critique")
 			f.setenv("FAKE_CHECKED", `["N1","N2","E1"]`)
@@ -238,6 +253,7 @@ func TestDiagramQuota(t *testing.T) {
 }
 
 func TestKnownClaudeQuota(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, true)
 	now := time.Now()
 	if err := usage.Record(usage.File(f.env), []usage.Window{{Name: "7d", Used: 100, ResetsAt: now.Add(time.Hour).Unix(), ObservedAt: now.Add(-time.Hour).Unix()}}); err != nil {
@@ -261,6 +277,7 @@ func TestKnownClaudeQuota(t *testing.T) {
 // session: while a window recorded within the last five minutes is at or
 // above it, none starts, and the refusal names the window and its reset.
 func TestQuotaStop(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name string
 		stop any // delegate.quotaStop; nil leaves it out
@@ -272,6 +289,7 @@ func TestQuotaStop(t *testing.T) {
 		{"no stop set", nil, 93, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			f := setUp(t, true)
 			delegate := map[string]any{"agents": "/store/review-agents.json", "settings": "/store/reviewer-settings.json"}
 			if c.stop != nil {
@@ -309,6 +327,7 @@ func TestQuotaStop(t *testing.T) {
 // A rate limit pauses its provider for five minutes, for this invocation
 // and later ones alike, and no longer: it is not an exhausted account.
 func TestRateLimit(t *testing.T) {
+	t.Parallel()
 	const pause = 5 * time.Minute
 	// blocked is whether a holds p at start+at, a clock the test sets so
 	// the pause's end is exact.
@@ -324,6 +343,7 @@ func TestRateLimit(t *testing.T) {
 			`"result":"API Error: Request rejected (429) · Number of request tokens has exceeded your per-minute rate limit"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			start := time.Unix(1_900_000_000, 0)
 			f := setUp(t, true)
 			f.claudeSays(t, "security-reviewer", result)
@@ -349,6 +369,7 @@ func TestRateLimit(t *testing.T) {
 		})
 	}
 	t.Run("codex", func(t *testing.T) {
+		t.Parallel()
 		f := askFixture(t, true)
 		f.setenv("FAKE_CODEX", "ratelimit")
 		// ask runs on the real clock.
@@ -366,7 +387,9 @@ func TestRateLimit(t *testing.T) {
 }
 
 func TestAvailabilityState(t *testing.T) {
+	t.Parallel()
 	t.Run("corrupt state refuses calls and explicit clear repairs it", func(t *testing.T) {
+		t.Parallel()
 		f := askFixture(t, true)
 		path := filepath.Join(f.env.Get("XDG_STATE_HOME"), "agent-tools", "review-availability", "codex.json")
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -388,6 +411,7 @@ func TestAvailabilityState(t *testing.T) {
 		}
 	})
 	t.Run("failed persistence still suppresses later stages", func(t *testing.T) {
+		t.Parallel()
 		f := setUp(t, true)
 		path := filepath.Join(f.env.Get("XDG_STATE_HOME"), "agent-tools", "review-availability")
 		if err := os.MkdirAll(path, 0o700); err != nil {
@@ -404,6 +428,7 @@ func TestAvailabilityState(t *testing.T) {
 		noProviderCall(t, f, "review-guide-runs")
 	})
 	t.Run("concurrent disables preserve both providers", func(t *testing.T) {
+		t.Parallel()
 		f := askFixture(t, true)
 		var wg sync.WaitGroup
 		for _, p := range []string{"claude", "codex", "claude", "codex"} {

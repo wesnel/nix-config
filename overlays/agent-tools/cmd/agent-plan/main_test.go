@@ -715,7 +715,7 @@ func TestCommands(t *testing.T) {
 			os.WriteFile(config, data, 0o644)
 			t.Setenv("AGENT_TOOLS_CONFIG", config)
 			old := scratchRoots
-			scratchRoots = func() []string { return []string{scratch} }
+			scratchRoots = func(context.Context) []string { return []string{scratch} }
 			t.Cleanup(func() { scratchRoots = old })
 			ctx = withVars(ctx, "CLAUDE_CODE_SESSION_ID=s-1")
 			plan = newPlan(ctx, t)

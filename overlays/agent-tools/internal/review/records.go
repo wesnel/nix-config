@@ -334,18 +334,15 @@ func stamp(t time.Time) string {
 	return t.Format(time.RFC3339)
 }
 
-// mermaid renders a diagram's stored JSON as Mermaid, with the renderer
-// internal/diagram builds from numbered IDs and labels Mermaid can only
-// draw; where it is nil, or fails, a diagram is shown without it.
-var mermaid = diagramMermaid
-
 func showFinding(f record.Finding) ShowFinding {
 	return ShowFinding{Finding: f.ID, State: string(f.State), Title: f.Title, Reviewer: f.Reviewer, Round: f.Round,
 		Kind: f.Kind, Path: f.Path, Line: f.Line, EndLine: f.EndLine, Side: f.Side, OutcomeTarget: f.OutcomeTarget,
 		Evidence: f.Evidence, Reason: f.Reason}
 }
 
-func showRange(path string, rec *record.Range) *ShowRange {
+// showRange is the record rec at path as show prints it, each diagram
+// rendered as Mermaid by mermaid where it is not nil and does not fail.
+func showRange(path string, rec *record.Range, mermaid func(string) (string, error)) *ShowRange {
 	out := &ShowRange{File: path, Repo: rec.Repo, Base: rec.Base, Head: rec.Head, PR: rec.PR, Title: rec.Title,
 		Updated: stamp(rec.Updated), Walkthrough: []ShowChunk{}, Diagrams: []ShowDiagram{},
 		Findings: []ShowFinding{}, Rounds: []ShowRound{}, Counts: rec.Counts()}
@@ -407,7 +404,7 @@ func showDoc(ctx context.Context, s *source) (*ShowDoc, error) {
 		case err != nil:
 			return nil, err
 		default:
-			doc.Range = showRange(path, rec)
+			doc.Range = showRange(path, rec, seamsOf(ctx).mermaid)
 			if number == 0 {
 				number = rec.PR
 			}

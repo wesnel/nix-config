@@ -89,13 +89,19 @@ type fakeGitHub struct {
 	// env is the environment a review runs in, with a cache of the
 	// test's own.
 	env env.Env
+	// seams send a review's GitHub queries to f and its fetches to the
+	// remote; a fixture that reviews the pull request takes them as its
+	// own.
+	seams *seams
 }
 
 // setenv sets name to value in f's Env.
 func (f *fakeGitHub) setenv(name, value string) { f.env = f.env.Set(name + "=" + value) }
 
-// ctx carries f's Env.
-func (f *fakeGitHub) ctx(t *testing.T) context.Context { return env.With(t.Context(), f.env) }
+// ctx carries f's Env and seams.
+func (f *fakeGitHub) ctx(t *testing.T) context.Context {
+	return withSeams(env.With(t.Context(), f.env), f.seams)
+}
 
 func (f *fakeGitHub) graphQL(_ context.Context, query string, vars map[string]any, out any) error {
 	if strings.HasPrefix(strings.TrimSpace(query), "mutation") {
@@ -115,8 +121,9 @@ func (f *fakeGitHub) graphQL(_ context.Context, query string, vars map[string]an
 	return json.Unmarshal(encoded, out)
 }
 
-// setUpPR points reviews at a cache directory of the test's own, the remote
-// and a fake GitHub serving pull request 7 of o/r with the remote's head.
+// setUpPR points reviews in its context at a cache directory of the test's
+// own, the remote and a fake GitHub serving pull request 7 of o/r with the
+// remote's head.
 func setUpPR(t *testing.T, r *remote) *fakeGitHub {
 	t.Helper()
 	f := &fakeGitHub{env: env.Process().Set("XDG_CACHE_HOME=" + t.TempDir()), pr: map[string]any{
@@ -124,10 +131,9 @@ func setUpPR(t *testing.T, r *remote) *fakeGitHub {
 		"headRefOid": r.head, "baseRefName": "main", "isCrossRepository": true,
 		"closingIssuesReferences": map[string]any{"nodes": []map[string]any{{"number": 3, "title": "A is wrong", "body": "It should be two."}}},
 	}}
-	oldGraphQL, oldURL, oldProtocol := graphQL, remoteURL, transport
-	graphQL = f.graphQL
-	remoteURL = func(string) string { return r.bare }
-	transport = "file"
-	t.Cleanup(func() { graphQL, remoteURL, transport = oldGraphQL, oldURL, oldProtocol })
+	f.seams = productionSeams()
+	f.seams.graphQL = f.graphQL
+	f.seams.remoteURL = func(string) string { return r.bare }
+	f.seams.transport = "file"
 	return f
 }

@@ -73,9 +73,7 @@ func setUpUpgrade(t *testing.T) *upgradeFixture {
 	t.Cleanup(gh.SetAPI(srv.URL))
 	f.setenv("GH_TOKEN", "test-token")
 	u.opts = upgrade.Options{Cache: filepath.Join(root, "cache"), Clones: filepath.Join(root, "clones"), Limits: upgrade.DefaultLimits}
-	old2 := upgradeOptions
-	upgradeOptions = func(context.Context) upgrade.Options { return u.opts }
-	t.Cleanup(func() { upgradeOptions = old2 })
+	f.seams.upgradeOptions = func(context.Context) upgrade.Options { return u.opts }
 	return u
 }
 
@@ -336,6 +334,7 @@ func TestUpgradeReadKeys(t *testing.T) {
 // read, whatever the patterns name.
 func TestUpgradeOwnChange(t *testing.T) {
 	t.Run("whose pull request", func(t *testing.T) {
+		t.Parallel()
 		for _, c := range []struct {
 			name   string
 			author any

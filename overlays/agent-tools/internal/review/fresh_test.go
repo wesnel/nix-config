@@ -193,17 +193,24 @@ func (f *fixture) config(t *testing.T, settings map[string]any) {
 	config := filepath.Join(t.TempDir(), "config.json")
 	os.WriteFile(config, must(json.Marshal(settings)), 0o644)
 	f.setenv("AGENT_TOOLS_CONFIG", config)
-	// plans.Load, which reads the plan's Goal, still reads this process's
-	// environment, so the config is named there too, and a test with a
-	// fixture stays serial until it takes a context.
-	t.Setenv("AGENT_TOOLS_CONFIG", config)
 }
 
 // setenv sets name to value in f's Env.
 func (f *fixture) setenv(name, value string) { f.env = f.env.Set(name + "=" + value) }
 
-// ctx carries f's Env.
-func (f *fixture) ctx(t *testing.T) context.Context { return env.With(t.Context(), f.env) }
+// ctx carries f's Env and seams.
+func (f *fixture) ctx(t *testing.T) context.Context {
+	return withSeams(env.With(t.Context(), f.env), f.seams)
+}
+
+// withSeams carries s, where it is not nil, in ctx, for the code under
+// test to use in place of production's.
+func withSeams(ctx context.Context, s *seams) context.Context {
+	if s == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, seamsKey{}, s)
+}
 
 // writeGatewayConfig writes agent-tools' config as writeConfig does, and
 // names a model provider for Codex, as the llm module does on a machine
@@ -284,6 +291,9 @@ type fixture struct {
 	// env is the environment delegate runs in: its directory the
 	// repository, and its PATH the fakes'.
 	env env.Env
+	// seams are what delegate reaches GitHub, upstreams and the clock
+	// through: production's unless a test stands in for one.
+	seams *seams
 }
 
 // identity is the author and committer of the fixtures' commits.
@@ -314,7 +324,7 @@ func runWith(t *testing.T, extra []string, dir string, name string, args ...stri
 func setUp(t *testing.T, withCodex bool) *fixture {
 	t.Helper()
 	f := &fixture{repo: t.TempDir(), log: t.TempDir(),
-		plans: plans.Config{Dir: filepath.Join(t.TempDir(), "agents"), Host: "box"}}
+		plans: plans.Config{Dir: filepath.Join(t.TempDir(), "agents"), Host: "box"}, seams: productionSeams()}
 	f.env = env.Process().In(f.repo).Set(append([]string{
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
 		"PR_LOOP_SESSION=", "CODEX_SANDBOX=", "CODEX_THREAD_ID=", "FAKE_CODEX=", "FAKE_CODEX_COPY=", "CLAUDECODE=1",
@@ -438,6 +448,7 @@ func (f *fixture) checkCleanedUp(t *testing.T) {
 }
 
 func TestCodex(t *testing.T) {
+	t.Parallel()
 	t.Run("review", testCodexReview)
 	t.Run("GIT_DIR naming the repository under review", testCodexGitDirUnderReview)
 	t.Run("GIT_DIR naming another repository", testCodexGitDirElsewhere)
@@ -447,6 +458,7 @@ func TestCodex(t *testing.T) {
 }
 
 func testCodexReview(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, true)
 	code, out, stderr := f.freshReview(t, "--model", "fake-model", "--plan", f.plan, f.base+"..HEAD")
 	if code != 3 {
@@ -493,6 +505,7 @@ func testCodexReview(t *testing.T) {
 // GIT_DIR naming the repository under review, as git sets it for a hook,
 // reaches neither the review's worktree nor Codex.
 func testCodexGitDirUnderReview(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, true)
 	f.setenv("FAKE_CODEX", "none")
 	f.setenv("GIT_DIR", filepath.Join(f.repo, ".git"))
@@ -507,6 +520,7 @@ func testCodexGitDirUnderReview(t *testing.T) {
 
 // GIT_DIR naming another repository is refused.
 func testCodexGitDirElsewhere(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, true)
 	f.setenv("FAKE_CODEX", "none")
 	decoy, _ := gitenvtest.DecoyEnv(t)
@@ -517,6 +531,7 @@ func testCodexGitDirElsewhere(t *testing.T) {
 }
 
 func testCodexNoFindings(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, true)
 	f.setenv("FAKE_CODEX", "none")
 	if code, out, stderr := f.freshReview(t, "--plan", f.plan, f.base+".."+f.tip); code != 0 || len(out.Findings) != 0 {
@@ -530,6 +545,7 @@ func testCodexNoFindings(t *testing.T) {
 // with nothing of the user's Codex configuration, and checks that its
 // sandbox starts before it reviews.
 func testCodexConfinement(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, true)
 	f.setenv("FAKE_CODEX", "none")
 	tools := t.TempDir()
@@ -622,6 +638,7 @@ func must[T any](v T, err error) T {
 }
 
 func testCodexFailures(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		mode string
 		args []string
@@ -630,6 +647,7 @@ func testCodexFailures(t *testing.T) {
 		{"hang", []string{"--timeout", "1"}},
 	} {
 		t.Run(c.mode, func(t *testing.T) {
+			t.Parallel()
 			f := setUp(t, true)
 			f.setenv("FAKE_CODEX", c.mode)
 			args := append(append([]string{"--plan", f.plan}, c.args...), f.base+"..HEAD")
@@ -646,6 +664,7 @@ func testCodexFailures(t *testing.T) {
 // beside them where it may. gateway is the id of the model provider
 // agent-tools' config names, if any.
 func TestUnavailable(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name      string
 		withCodex bool
@@ -667,6 +686,7 @@ func TestUnavailable(t *testing.T) {
 		{"Codex author, Codex asked for", true, "", map[string]string{"CODEX_SANDBOX": "seatbelt", "FAKE_CODEX": "none"}, []string{"--reviewer", "codex"}, 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			f := setUp(t, c.withCodex)
 			if c.gateway != "" {
 				f.writeGatewayConfig(t, c.gateway)
@@ -697,6 +717,7 @@ func TestUnavailable(t *testing.T) {
 // names, which the user's Codex configuration, ignored, cannot supply: its
 // table and its model on the command line, --model over the config's.
 func TestGateway(t *testing.T) {
+	t.Parallel()
 	const (
 		selects  = `model_provider="ngrok-ai"`
 		provider = `model_providers.ngrok-ai={name="ngrok.ai", base_url="https://gateway.example/v1", ` +
@@ -734,6 +755,7 @@ func TestGateway(t *testing.T) {
 	}
 
 	t.Run("provider and its model", func(t *testing.T) {
+		t.Parallel()
 		args := review(t, true, "gateway-model")
 		for _, want := range [][]string{{"-c", selects}, {"-c", provider}, {"-m", "gateway-model"},
 			{"-c", "model_context_window=200000"}, {"-c", "analytics.enabled=false"}} {
@@ -743,6 +765,7 @@ func TestGateway(t *testing.T) {
 		}
 	})
 	t.Run("--model over the provider's", func(t *testing.T) {
+		t.Parallel()
 		args := review(t, true, "other-model", "--model", "other-model")
 		if !has(args, "-m", "other-model") || has(args, "-m", "gateway-model") {
 			t.Errorf("codex exec was not passed --model's model alone: %q", args)
@@ -752,6 +775,7 @@ func TestGateway(t *testing.T) {
 		}
 	})
 	t.Run("none named", func(t *testing.T) {
+		t.Parallel()
 		args := review(t, false, "")
 		for _, arg := range args {
 			if strings.HasPrefix(arg, "model_provider") || strings.HasPrefix(arg, "model_context_window") || arg == "-m" {
@@ -761,6 +785,7 @@ func TestGateway(t *testing.T) {
 	})
 	// A name or path holding `"` or `\` stays one TOML string.
 	t.Run("quotes and backslashes", func(t *testing.T) {
+		t.Parallel()
 		config := &codexConfig{Provider: codexProvider{ID: "ngrok-ai", Name: `ngrok "ai" \ x`,
 			BaseURL: "https://gateway.example/v1", AuthCommand: `/bin/c\at`, AuthArgs: []string{`/keys/a"b\c`}}}
 		args, err := config.args()
@@ -782,6 +807,7 @@ func TestGateway(t *testing.T) {
 // the model given. It needs the real codex, so it runs only with
 // AGENT_TOOLS_REAL_CODEX=1.
 func testGatewayRealCodex(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("AGENT_TOOLS_REAL_CODEX") != "1" {
 		t.Skip("set AGENT_TOOLS_REAL_CODEX=1 to run the codex on PATH against a local stand-in for the gateway")
 	}
@@ -843,6 +869,7 @@ func testGatewayRealCodex(t *testing.T) {
 }
 
 func TestRedCheck(t *testing.T) {
+	t.Parallel()
 	t.Run("never on the host", testRedCheckNotOnHost)
 }
 
@@ -850,6 +877,7 @@ func TestRedCheck(t *testing.T) {
 // repository's test command where it runs, whatever the settings say: the
 // commits under review may be anyone's, and red-check runs them.
 func testRedCheckNotOnHost(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name string
 		args []string
@@ -858,6 +886,7 @@ func testRedCheckNotOnHost(t *testing.T) {
 		{"codex", nil},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			f := setUp(t, true)
 			f.setenv("FAKE_CODEX", "none")
 			marker := filepath.Join(t.TempDir(), "ran")
@@ -891,6 +920,7 @@ func testRedCheckNotOnHost(t *testing.T) {
 }
 
 func TestPrintPrompt(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, false)
 	os.WriteFile(filepath.Join(f.repo, ".git", "items.md"), []byte("Thread T1: make it three lines\n"), 0o644)
 
@@ -918,6 +948,7 @@ func TestPrintPrompt(t *testing.T) {
 // The goal statement reaches Codex with known secret shapes taken out, as
 // the items and earlier findings do.
 func TestGoalRedacted(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, true)
 	f.setenv("FAKE_CODEX", "none")
 	token := "ghp_" + strings.Repeat("d", 36)
@@ -934,6 +965,7 @@ func TestGoalRedacted(t *testing.T) {
 // The goal statement is the Goal of the plan --plan names, or of the part
 // --part names, never the other's.
 func TestGoalFromPlan(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name string
 		// plan returns --plan and --part's arguments, given the plan's
@@ -952,6 +984,7 @@ func TestGoalFromPlan(t *testing.T) {
 		}, "Add the third line alone.", "Grow the code to three lines."},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			f := setUp(t, true)
 			f.setenv("FAKE_CODEX", "none")
 			part := f.addPart(t)
@@ -971,6 +1004,7 @@ func TestGoalFromPlan(t *testing.T) {
 // A hint to run a review elsewhere names the plan and part given, the
 // plan quoted where the shell would split it.
 func TestGoalHint(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, true)
 	f.plans.Dir = filepath.Join(t.TempDir(), "my plans", "agents")
 	f.writeConfig(t)
@@ -985,6 +1019,7 @@ func TestGoalHint(t *testing.T) {
 }
 
 func TestRefusals(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name string
 		// args returns the arguments, given the fixture.
@@ -1028,6 +1063,7 @@ func TestRefusals(t *testing.T) {
 		{"symmetric difference", func(t *testing.T, f *fixture) []string { return []string{"--plan", f.plan, "HEAD...HEAD~1"} }, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			f := setUp(t, true)
 			args := c.args(t, f)
 			code, _, stderr := f.freshReview(t, args...)

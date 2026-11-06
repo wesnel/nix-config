@@ -1,10 +1,12 @@
 package guard
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"strings"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/mcpproxy"
 )
 
@@ -156,8 +158,9 @@ func mcpTool(tool string) (server mcpServer, name string, mcp bool) {
 	return server, name, true
 }
 
-// checkMCP returns why who may not call the MCP tool name on server, or "".
-func checkMCP(server mcpServer, name string, who role) string {
+// checkMCP returns why who may not call the MCP tool name on server, or "",
+// with the mcp-proxy of the config ctx's Env names.
+func checkMCP(ctx context.Context, server mcpServer, name string, who role) string {
 	switch {
 	case strings.EqualFold(server.name, OpsServer) && who != baseline:
 		return reviewerReport
@@ -169,7 +172,7 @@ func checkMCP(server mcpServer, name string, who role) string {
 		return unlistedServerReviewer
 	}
 	if s := lookalike(server.name); s != nil {
-		proxy := mcpproxy.Load()
+		proxy := mcpproxy.Load(env.From(ctx))
 		claude, _ := s.lookalikeReasons(proxy.Serves(s.key), proxy.IsLocal(s.key))
 		return claude
 	}
@@ -226,11 +229,11 @@ func (s *mcpService) confirmReason() string {
 
 // nativeMCPApproval hands only a reviewed write's confirmation to Codex;
 // another refusal, including a reviewer's, must keep blocking the call.
-func nativeMCPApproval(tool, reason string) bool {
+func nativeMCPApproval(ctx context.Context, tool, reason string) bool {
 	server, name, ok := mcpTool(tool)
 	s := server.listed
 	return ok && s != nil && server.name == s.key && s.codexPrompt && s.confirms[name] &&
-		reason == s.confirmReason() && mcpproxy.Load().Serves(s.key)
+		reason == s.confirmReason() && mcpproxy.Load(env.From(ctx)).Serves(s.key)
 }
 
 // check returns why who may not call the service's tool name, or "".

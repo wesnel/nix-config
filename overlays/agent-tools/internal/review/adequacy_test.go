@@ -141,11 +141,13 @@ func (f *fixture) refused(t *testing.T, code int, out output, stderr string) {
 }
 
 func TestTestAdequacy(t *testing.T) {
+	t.Parallel()
 	// A commit whose tests pass without the rest of it is untested, said so
 	// by red-check rather than the reviewer, at its test file.
 	// The JSON is redacted before it is cut to fit the prompt: a token the
 	// cut splits would keep its end, which no longer has a token's shape.
 	t.Run("redacted before it is cut", func(t *testing.T) {
+		t.Parallel()
 		a := setUpAdequacy(t, redcheck.FailsAsAsserted)
 		token := "ghp_" + strings.Repeat("Z", 36)
 		a.edit = func(checks []*redcheck.Check) []*redcheck.Check {
@@ -169,6 +171,7 @@ func TestTestAdequacy(t *testing.T) {
 	})
 
 	t.Run("raised", func(t *testing.T) {
+		t.Parallel()
 		a := setUpAdequacy(t, redcheck.PassesWithoutChange)
 		f := a.raised(t)
 		id, _ := f["id"].(string)
@@ -190,6 +193,7 @@ func TestTestAdequacy(t *testing.T) {
 	// reviewer report red-check's findings itself; delegate's own run
 	// raises them and tells its reviewer not to.
 	t.Run("printed", func(t *testing.T) {
+		t.Parallel()
 		a := setUpAdequacy(t, redcheck.PassesWithoutChange)
 		f := a.raised(t)
 		id := f["id"].(string)
@@ -220,6 +224,7 @@ func TestTestAdequacy(t *testing.T) {
 	// The key is the commit's test diff, so a rebase or a change of the code
 	// keeps it.
 	t.Run("same key for the same tests", func(t *testing.T) {
+		t.Parallel()
 		a := setUpAdequacy(t, redcheck.PassesWithoutChange)
 		first := a.raised(t)["id"]
 		old := a.commit
@@ -234,6 +239,7 @@ func TestTestAdequacy(t *testing.T) {
 
 	// A rebase that moves the tests' lines keeps the key.
 	t.Run("same key after a rebase", func(t *testing.T) {
+		t.Parallel()
 		a := setUpAdequacy(t, redcheck.PassesWithoutChange)
 		a.restart(t, "1\n2\n3\n4\n")
 		first := a.raised(t)["id"]
@@ -246,6 +252,7 @@ func TestTestAdequacy(t *testing.T) {
 	// The key is the tests as written, whitespace included: a test of "a b"
 	// is not a test of "ab".
 	t.Run("whitespace changes the key", func(t *testing.T) {
+		t.Parallel()
 		a := setUpAdequacy(t, redcheck.PassesWithoutChange)
 		a.commitTest(t, "assert \"a b\"\n")
 		first := a.raised(t)["id"]
@@ -256,6 +263,7 @@ func TestTestAdequacy(t *testing.T) {
 	})
 
 	t.Run("other verdicts", func(t *testing.T) {
+		t.Parallel()
 		a := setUpAdequacy(t, redcheck.FailsAsAsserted)
 		if code, out, stderr := a.review(t); code != 0 || len(out.Findings) != 0 {
 			t.Errorf("exit %d, %+v\n%s", code, out, stderr)
@@ -265,6 +273,7 @@ func TestTestAdequacy(t *testing.T) {
 	// A commit whose tests only fail to build without it raises nothing,
 	// but the reviewer is asked to judge its tests.
 	t.Run("tests that only fail to build", func(t *testing.T) {
+		t.Parallel()
 		a := setUpAdequacy(t, redcheck.FailsToBuildWithoutChange)
 		if code, out, stderr := a.review(t); code != 0 || len(out.Findings) != 0 {
 			t.Fatalf("exit %d, %+v\n%s", code, out, stderr)
@@ -285,6 +294,7 @@ func TestTestAdequacy(t *testing.T) {
 	// of it in order and nothing else, or the verdicts are not this
 	// change's.
 	t.Run("refused", func(t *testing.T) {
+		t.Parallel()
 		for _, c := range []struct {
 			name string
 			edit func(a *adequacyFixture, checks []*redcheck.Check) []*redcheck.Check
@@ -314,6 +324,7 @@ func TestTestAdequacy(t *testing.T) {
 			}},
 		} {
 			t.Run(c.name, func(t *testing.T) {
+				t.Parallel()
 				a := setUpAdequacy(t, redcheck.PassesWithoutChange)
 				a.edit = func(checks []*redcheck.Check) []*redcheck.Check { return c.edit(a, checks) }
 				code, out, stderr := a.review(t)
@@ -325,12 +336,14 @@ func TestTestAdequacy(t *testing.T) {
 	// Verdicts from a run of other test settings say nothing of this
 	// repository's tests.
 	t.Run("refused for other test settings", func(t *testing.T) {
+		t.Parallel()
 		for name, result := range map[string]redcheck.Result{
 			"another test command": {Test: "go test ./...", TestFiles: []string{"*_test.txt"}},
 			"a build command":      {Test: "true", Build: "make", TestFiles: []string{"*_test.txt"}},
 			"other test files":     {Test: "true", TestFiles: []string{"*.txt"}},
 		} {
 			t.Run(name, func(t *testing.T) {
+				t.Parallel()
 				a := setUpAdequacy(t, redcheck.PassesWithoutChange)
 				var checks []*redcheck.Check
 				for _, c := range strings.Fields(run(t, a.repo, "git", "rev-list", "--reverse", "--no-merges", a.base+"..HEAD")) {
@@ -346,6 +359,7 @@ func TestTestAdequacy(t *testing.T) {
 	})
 
 	t.Run("refused if it does not parse", func(t *testing.T) {
+		t.Parallel()
 		a := setUpAdequacy(t, redcheck.PassesWithoutChange)
 		bad := filepath.Join(a.repo, ".git", "bad.json")
 		os.WriteFile(bad, []byte(`{"commits": [`), 0o644)
@@ -356,6 +370,7 @@ func TestTestAdequacy(t *testing.T) {
 	// Without the repository's test globs, an untested finding has no test
 	// file to be placed at.
 	t.Run("refused without test settings", func(t *testing.T) {
+		t.Parallel()
 		f := setUp(t, true)
 		f.setenv("FAKE_CODEX", "none")
 		file := filepath.Join(f.repo, ".git", "red-check.json")
@@ -368,6 +383,7 @@ func TestTestAdequacy(t *testing.T) {
 	// Without --red-check there are no red-check results: no section, no
 	// finding, and the reviewer judges the tests itself.
 	t.Run("without --red-check", func(t *testing.T) {
+		t.Parallel()
 		a := setUpAdequacy(t, redcheck.PassesWithoutChange)
 		code, out, stderr := a.freshReview(t, "--plan", a.plan, a.base+"..HEAD")
 		if code != 0 || len(out.Findings) != 0 || !strings.Contains(stderr, "red-check runs in the session") {
@@ -383,6 +399,7 @@ func TestTestAdequacy(t *testing.T) {
 	// of the caller's own: a config of its own does not stand in for the
 	// clone's settings.
 	t.Run("not redirected by the environment", func(t *testing.T) {
+		t.Parallel()
 		a := setUpAdequacy(t, redcheck.PassesWithoutChange)
 		a.config(t, map[string]any{})
 		a.setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -395,6 +412,7 @@ func TestTestAdequacy(t *testing.T) {
 	// id is dropped, and so is one naming red-check as its reviewer, which
 	// the schema has no place for.
 	t.Run("a reply cannot pass as red-check", func(t *testing.T) {
+		t.Parallel()
 		blob := func(string) ([]byte, error) { return []byte("a\n"), nil }
 		const rest = `"path": "code.txt", "line": 1, "endLine": null, "claim": "c", "evidence": "e", "about": null, "reopens": null`
 		out, err := validateWith(`{"findings": [
