@@ -108,6 +108,7 @@ or a step's.
   entries, including any interrupted round.
 - Each finding settled: `finding-settled` against the item it concerns, with
   `--review <round>.<id> --outcome <outcome>`, the outcome as Triage below.
+  `pr-loop reply --from` logs it for each bot thread it answers.
 - Design review of the result: `reviewed` with `--role design-reviewer`.
 - Hand-back: `handed-back`, with `STATUS` set to `handed-back`.
 - When the operator opts the task out, `PIPELINE` becomes `opted-out:<reason>`.
@@ -402,12 +403,15 @@ outcome goes against its plan item ID and in the hand-back.
   every SHA.
 - **A review bot's thread:** draft the replies in the format `pr-loop
   reply --from` reads, one file per pull request (`pr-loop --help`): a
-  `=== thread THREAD` line, or `=== thread THREAD resolve` where the
-  outcome resolves, then the reply. In a bots-mode loop (`review-loop
-  --bots`), post them with `pr-loop reply --from FILE` once the fixes are
-  pushed; pr-loop takes only threads whose every comment is a configured
-  bot's or the operator's. Outside one, the drafted replies go in the
-  hand-back, as a person's thread's do.
+  `=== thread THREAD OUTCOME` line, or `=== thread THREAD OUTCOME resolve`
+  where the outcome resolves, OUTCOME as Triage names it, then the reply.
+  `pr-loop reply --from FILE --round N`, N the bot review round the
+  replies answer, posts them and logs each thread as `finding-settled`;
+  it takes only threads whose every comment is a configured bot's or the
+  operator's. In a bots-mode loop (`review-loop --bots`), run it once the
+  fixes are pushed. Outside one, it posts only from the operator's
+  terminal, confirming each reply: put the file in the worktree and hand
+  the operator that command, run in the worktree.
 - **After a round of bot fixes, in a loop or not:** once the fixes are
   pushed and the replies posted, ask each bot that had threads to review
   again, on every pull request whose head moved, without being asked. In a

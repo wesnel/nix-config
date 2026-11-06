@@ -370,6 +370,7 @@ func TestMCP(t *testing.T) {
 		os.WriteFile(outside, []byte("=== thread T1\nDone.\n"), 0o644)
 		t.Cleanup(func() { os.Remove(outside) })
 		os.Symlink(outside, filepath.Join(f.repo, "link.md"))
+		os.WriteFile(filepath.Join(f.repo, "replies.md"), []byte("=== thread T1 fix\nDone.\n"), 0o644)
 		c := f.start(t)
 		for _, tc := range []struct {
 			name, tool string
@@ -381,9 +382,10 @@ func TestMCP(t *testing.T) {
 			{"an argument of another type", "pr_loop_threads", map[string]any{"worktree": f.repo, "pr": "1"}, "pr"},
 			{"a value that reads as a flag", "pr_loop_stack", map[string]any{"worktree": f.repo, "target": "--help"}, "target"},
 			{"a relative worktree", "pr_loop_status", map[string]any{"worktree": "."}, "worktree"},
-			{"a file outside the worktree", "pr_loop_reply", map[string]any{"worktree": f.repo, "replies_file": outside}, "worktree"},
-			{"a file that leaves the worktree by ..", "pr_loop_reply", map[string]any{"worktree": f.repo, "replies_file": "../replies.md"}, "worktree"},
-			{"a link out of the worktree", "pr_loop_reply", map[string]any{"worktree": f.repo, "replies_file": "link.md"}, "worktree"},
+			{"a file outside the worktree", "pr_loop_reply", map[string]any{"worktree": f.repo, "replies_file": outside, "round": 1}, "worktree"},
+			{"a file that leaves the worktree by ..", "pr_loop_reply", map[string]any{"worktree": f.repo, "replies_file": "../replies.md", "round": 1}, "worktree"},
+			{"a link out of the worktree", "pr_loop_reply", map[string]any{"worktree": f.repo, "replies_file": "link.md", "round": 1}, "worktree"},
+			{"a reply file without its round", "pr_loop_reply", map[string]any{"worktree": f.repo, "replies_file": "replies.md"}, "round"},
 			{"a tool it does not have", "gh_api", map[string]any{"worktree": f.repo}, "gh_api"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
@@ -392,6 +394,13 @@ func TestMCP(t *testing.T) {
 					t.Errorf("result %+v, want an error naming %q", r, tc.says)
 				}
 			})
+		}
+		// Outside a bots-mode loop, reply posts only on the operator's
+		// terminal, and the server's terminal is not theirs to answer: the
+		// tool refuses by the loop's mode, never reaching for /dev/tty.
+		r := c.tool(t, "pr_loop_reply", map[string]any{"worktree": f.repo, "replies_file": "replies.md", "round": 1})
+		if !r.isError || !strings.Contains(r.text, "bots-mode") || strings.Contains(r.text, "/dev/tty") {
+			t.Errorf("a reply outside a loop: %+v", r)
 		}
 		if n := f.github.calls.Load(); n != 0 {
 			t.Errorf("GitHub was called %d times", n)

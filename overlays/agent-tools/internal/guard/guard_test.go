@@ -364,8 +364,11 @@ func TestPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The examples name no repository, so they run outside one, as in the
-	// Nix build; a checkout's remotes would decide `git fetch origin`.
+	// Nix build; a checkout's remotes would decide `git fetch origin`. They
+	// run outside a review loop, whose mode decides `pr-loop reply`.
 	t.Chdir(t.TempDir())
+	t.Setenv("PR_LOOP_MODE", "")
+	t.Run("pr-loop reply in a bots-mode loop", testReplyInLoop)
 	var rules []struct {
 		Why   string   `json:"why"`
 		Scope string   `json:"scope"`
@@ -411,6 +414,19 @@ func TestPolicy(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// In a bots-mode loop, whose mode the operator set when starting the
+// session, an agent posts replies to bot threads itself; policy.json shows
+// the same commands refused outside one.
+func testReplyInLoop(t *testing.T) {
+	t.Setenv("PR_LOOP_MODE", "bots")
+	for _, command := range []string{"pr-loop reply --from r.md --round 1", "pr-loop reply PRRT_kwDOx --body-file r.md"} {
+		input, _ := json.Marshal(map[string]string{"command": command})
+		if reason := CheckBaseline("Bash", input); reason != "" {
+			t.Errorf("%q in a bots-mode loop: %s", command, reason)
+		}
 	}
 }
 
