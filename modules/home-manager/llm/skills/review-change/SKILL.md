@@ -330,8 +330,10 @@ settled before the work starts.
 
 A diagram shows the code a change touches, drawn by one model family and
 critiqued by the other. Draw one on request alone: where the operator asks
-for it, or the design review does, for a change that crosses two or more
-packages or modules, or adds a state set or a cross-process protocol.
+for it; where the design review does, for a change that crosses two or more
+packages or modules, or adds a state set or a cross-process protocol; or
+where a pull request's `## Visuals` needs one, as the `pull-requests`
+skill's description says.
 
 Add `--reviewer diagram` to the review that needs it, as
 `git delegate --reviewer codex --reviewer diagram --plan PLAN BASE..TIP`.
@@ -340,8 +342,8 @@ citing the lines at TIP it stands for; delegate holds every citation to the
 code, Codex critiques each element by element, and one the critic faults is
 redrawn once. Those that hold are kept in the review record, where review-guide
 and `git delegate show` render them; the rest are under the round's Dropped.
-A diagram is never posted to GitHub: a pull request's description stays the
-operator's.
+delegate posts nothing to GitHub; a kept diagram reaches a pull request only
+through its description's `## Visuals`.
 
 ## Triage
 
