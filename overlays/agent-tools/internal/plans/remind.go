@@ -27,7 +27,11 @@ var notifiedAgent = regexp.MustCompile(`<summary>Agent "(.*)" finished</summary>
 //
 // On any other UserPromptSubmit of the main thread the prompt is the
 // operator's own: it keeps each http(s) address in it as a reference of the
-// plan, and prints nothing. Codex sends a sub-agent's turns with agent_id.
+// plan. Codex sends a sub-agent's turns with agent_id.
+//
+// On every prompt of the main thread, task-notifications included, it
+// names the gaps the plan's status shows (Status.Gaps), so the agent logs
+// what it missed without running status.
 //
 // On every prompt of the main thread, task-notifications included, it
 // delivers the results of the session's sign-passes that it has not yet
@@ -91,17 +95,14 @@ func (c Config) remind(input []byte) []byte {
 	var context string
 	switch {
 	case in.Event == "UserPromptSubmit" && strings.HasPrefix(in.Prompt, "<task-notification>"):
-		m := notifiedAgent.FindStringSubmatch(in.Prompt)
-		if m == nil {
-			return nil
+		if m := notifiedAgent.FindStringSubmatch(in.Prompt); m != nil {
+			context = finished(fmt.Sprintf("%q ", m[1]))
 		}
-		context = finished(fmt.Sprintf("%q ", m[1]))
 	case in.Event == "UserPromptSubmit" && in.AgentID == "":
 		// The operator's own prompt: its addresses are references of the plan.
 		if plan() != "" {
 			recordReferences(found, in.Prompt, time.Now())
 		}
-		return nil
 	case in.Event == "PostToolUse" && (in.ToolName == "Agent" || in.ToolName == "Task"):
 		var response struct {
 			IsAsync bool `json:"isAsync"`
@@ -134,6 +135,18 @@ func (c Config) remind(input []byte) []byte {
 		return nil
 	}
 	if plan() == "" {
+		return nil
+	}
+	if in.Event == "UserPromptSubmit" && in.AgentID == "" {
+		if s, err := found.Status(); err == nil {
+			if gaps := s.GapsText(); gaps != "" && context != "" {
+				context += "\n\n" + gaps
+			} else if gaps != "" {
+				context = gaps
+			}
+		}
+	}
+	if context == "" {
 		return nil
 	}
 	data, _ := json.Marshal(map[string]any{"hookSpecificOutput": map[string]string{"hookEventName": in.Event, "additionalContext": context}})

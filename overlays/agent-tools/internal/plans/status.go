@@ -323,6 +323,33 @@ func list(ids []string) string {
 	return strings.Join(ids, ", ")
 }
 
+// Gaps are the lines naming what the log lacks that s shows: steps started
+// with nothing logged since (Stale) and commits no done event names
+// (Unrecorded). The remind hook and a handed-back event give them to the
+// agent, so it logs them without running status.
+func (s Status) Gaps() []string {
+	var out []string
+	if len(s.Stale) > 0 {
+		out = append(out, "Stale, started with nothing logged for a day: "+list(s.Stale))
+	}
+	if len(s.Unrecorded) > 0 {
+		out = append(out, "Commits no step records: "+strings.Join(s.Unrecorded, "; "))
+	}
+	return out
+}
+
+// GapsText is Gaps as context for the agent, naming the plan, or "" when
+// there are none.
+func (s Status) GapsText() string {
+	gaps := s.Gaps()
+	if len(gaps) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("agent-plan status %s shows what its log lacks:\n- %s\n"+
+		"Log `done` with `--revision REF` in its worktree for each commit that completes a step, or say why none does, "+
+		"and log where each stale step stands.", s.Plan, strings.Join(gaps, "\n- "))
+}
+
 // Org is s as Org: a table of steps, and what is left.
 func (s Status) Org() string {
 	var b strings.Builder
@@ -341,11 +368,8 @@ func (s Status) Org() string {
 	fmt.Fprintf(&b, "- Parts ready to start: %s\n", list(s.Ready))
 	fmt.Fprintf(&b, "- Steps ready: %s\n", list(s.ReadySteps))
 	fmt.Fprintf(&b, "- Follow-ups open: %s\n", list(s.Followups))
-	if len(s.Stale) > 0 {
-		fmt.Fprintf(&b, "- Stale, started with nothing logged for a day: %s\n", list(s.Stale))
-	}
-	if len(s.Unrecorded) > 0 {
-		fmt.Fprintf(&b, "- Commits no step records: %s\n", strings.Join(s.Unrecorded, "; "))
+	for _, gap := range s.Gaps() {
+		fmt.Fprintf(&b, "- %s\n", gap)
 	}
 	if len(s.Waiting) > 0 {
 		var waits []string
