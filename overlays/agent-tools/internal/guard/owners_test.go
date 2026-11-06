@@ -16,6 +16,7 @@ import (
 )
 
 func TestSessionEdits(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, session, target, branch, command, association, file, reason string
 		noPlan, newer, sessionOnly, fixture, reclaim                      bool
@@ -64,6 +65,7 @@ func TestSessionEdits(t *testing.T) {
 		{name: "remove another session worktree from main", session: "s2", target: "MAIN", association: "LINKED", command: "git worktree remove LINKED", deny: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root, _ := filepath.EvalSymlinks(t.TempDir())
 			main, linked, scratch := filepath.Join(root, "main"), filepath.Join(root, "linked"), filepath.Join(root, "scratch")
 			os.MkdirAll(scratch, 0o755)
@@ -114,7 +116,7 @@ func TestSessionEdits(t *testing.T) {
 			config := filepath.Join(root, "config.json")
 			data, _ := json.Marshal(map[string]any{"plans": c})
 			os.WriteFile(config, data, 0o600)
-			t.Setenv("AGENT_TOOLS_CONFIG", config)
+			ctx = withVars(ctx, "AGENT_TOOLS_CONFIG="+config)
 			now := time.Now()
 			if other {
 				if _, err := c.New(t.Context(), plans.NewOptions{Title: "Other", Slug: "other", Worktrees: []string{parked}, Sessions: []string{"codex:s2"}}, now.Add(-time.Second)); err != nil {
@@ -173,6 +175,7 @@ func TestSessionEdits(t *testing.T) {
 }
 
 func TestOwners(t *testing.T) {
+	t.Parallel()
 	// owned makes a repository, main, with linked worktrees: linked, which a
 	// plan in a plans directory of the test's own gives to agent a1, and
 	// sibling, which it gives to a3. Scratch is a directory beside them that
@@ -185,7 +188,6 @@ func TestOwners(t *testing.T) {
 		config := filepath.Join(root, "config.json")
 		data, _ := json.Marshal(map[string]any{"plans": c})
 		os.WriteFile(config, data, 0o644)
-		t.Setenv("AGENT_TOOLS_CONFIG", config)
 		scratch := filepath.Join(root, "scratch")
 		os.Mkdir(scratch, 0o755)
 
@@ -215,7 +217,7 @@ func TestOwners(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		return withVars(guardCtx(t), "TMPDIR="+scratch), strings.NewReplacer("MAIN", main, "LINKED", linked, "SIBLING", sibling, "PARKED", parked,
+		return withVars(guardCtx(t), "TMPDIR="+scratch, "AGENT_TOOLS_CONFIG="+config), strings.NewReplacer("MAIN", main, "LINKED", linked, "SIBLING", sibling, "PARKED", parked,
 			"THROWAWAY", throwaway, "SCRATCH", scratch, "PLANS", c.Dir, "LOOSE", filepath.Join(root, "loose"))
 	}
 
@@ -413,6 +415,7 @@ func TestOwners(t *testing.T) {
 		{"owner's touch in submodule foreach from the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"git submodule foreach 'touch a.go'"}}`, []string{"LINKED"}},
 	} {
 		t.Run(caseName(e.deny, e.name), func(t *testing.T) {
+			t.Parallel()
 			ctx, paths := owned(t)
 			event := paths.Replace(e.json)
 			var out bytes.Buffer
@@ -444,6 +447,7 @@ func TestOwners(t *testing.T) {
 	// go install writes where the guard's own $GOBIN names: in scratch, the
 	// owner may run it.
 	t.Run(caseName(false, "owner's go install with GOBIN in scratch"), func(t *testing.T) {
+		t.Parallel()
 		ctx, paths := owned(t)
 		ctx = withVars(ctx, "GOBIN="+paths.Replace("SCRATCH/bin"))
 		event := paths.Replace(`{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"go install ./cmd/x"}}`)

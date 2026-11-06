@@ -1106,7 +1106,6 @@ func TestGitDeadline(t *testing.T) {
 		config := filepath.Join(root, "config.json")
 		data, _ := json.Marshal(map[string]any{"plans": c})
 		os.WriteFile(config, data, 0o644)
-		t.Setenv("AGENT_TOOLS_CONFIG", config)
 		if _, err := c.New(t.Context(), plans.NewOptions{Title: "Add the loop", Slug: "loop", Sessions: []string{"claude:s1"}},
 			time.Now()); err != nil {
 			t.Fatal(err)
@@ -1123,7 +1122,7 @@ func TestGitDeadline(t *testing.T) {
 		edit := map[string]any{"tool_name": "Write", "cwd": plain, "session_id": "s1",
 			"tool_input": map[string]string{"file_path": filepath.Join(plain, "notes.txt"), "content": "x"}}
 		data, _ = json.Marshal(edit)
-		ctx := guardCtx(t)
+		ctx := withVars(guardCtx(t), "AGENT_TOOLS_CONFIG="+config)
 		mainIn(ctx, []string{"--baseline"}, bytes.NewReader(data), io.Discard, io.Discard)
 		ctx = withVars(ctx, "PATH="+fake+string(os.PathListSeparator)+env.From(ctx).Get("PATH"))
 		hookRefusesWithin(t, ctx, edit, unstalled)

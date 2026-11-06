@@ -11,6 +11,7 @@ import (
 )
 
 func TestTrashScratch(t *testing.T) {
+	t.Parallel()
 	ctx, root := fakeHome(t)
 	scratch := filepath.Join(root, "scratch")
 	ctx = withVars(ctx, "TMPDIR="+scratch)
@@ -24,7 +25,7 @@ func TestTrashScratch(t *testing.T) {
 	if err := os.WriteFile(config, []byte(`{"plans":{"dir":"`+filepath.Join(root, "plans")+`","host":"box"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("AGENT_TOOLS_CONFIG", config)
+	ctx = withVars(ctx, "AGENT_TOOLS_CONFIG="+config)
 	for _, test := range []struct {
 		name, dir string
 		deny      bool
@@ -33,6 +34,7 @@ func TestTrashScratch(t *testing.T) {
 		{"reviewer in scratch", scratch, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			data, _ := json.Marshal(map[string]any{"tool_name": "Bash", "agent_id": "reviewer", "cwd": test.dir, "tool_input": map[string]string{"command": "trash-scratch new"}})
 			var out bytes.Buffer
 			mainIn(ctx, []string{"--reviewer"}, bytes.NewReader(data), &out, io.Discard)
@@ -44,6 +46,7 @@ func TestTrashScratch(t *testing.T) {
 }
 
 func TestTrashAdvice(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name               string
 		configured, onPath bool
@@ -55,6 +58,7 @@ func TestTrashAdvice(t *testing.T) {
 		{"no recoverable route", false, false, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			config := filepath.Join(t.TempDir(), "config.json")
 			settings := `{"guard":{}}`
 			if test.configured {
@@ -63,8 +67,7 @@ func TestTrashAdvice(t *testing.T) {
 			if err := os.WriteFile(config, []byte(settings), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			t.Setenv("AGENT_TOOLS_CONFIG", config)
-			ctx := guardCtx(t)
+			ctx := withVars(guardCtx(t), "AGENT_TOOLS_CONFIG="+config)
 			if test.onPath {
 				ctx = withTrash(t, ctx)
 			}

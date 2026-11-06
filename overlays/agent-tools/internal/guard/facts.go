@@ -202,7 +202,7 @@ func newWorktree(ctx context.Context, g gitCall) string {
 // links the plan to the plans that hard evidence relates it to
 // (plans.Config.LinkEvidence). Every failure leaves the plan as it was.
 func recordFacts(ctx context.Context, session, cwd, command string, texts []string, now time.Time) (context []string) {
-	c, err := plans.Load(env.Process())
+	c, err := plans.Load(env.From(ctx))
 	if err != nil {
 		return nil
 	}

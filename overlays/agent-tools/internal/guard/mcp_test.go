@@ -19,6 +19,8 @@ func TestMCPTools(t *testing.T) {
 	if err := os.WriteFile(config, []byte(`{"mcpProxy":{"endpoints":{"parallels":"/parallels/mcp","linear":"/linear/mcp"}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Main runs under the process environment, and mcpproxy.Load reads the
+	// process's config whatever the Env, so this test sets it there.
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
 	const (
 		ask  = `"permissionDecision":"ask"`
@@ -138,10 +140,12 @@ func TestMCPNativeRegistration(t *testing.T) {
 			if err := os.WriteFile(config, []byte(c.config), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			// mcpproxy.Load reads the process's config whatever the Env, so
+			// this test sets it there as well as in the Env.
 			t.Setenv("AGENT_TOOLS_CONFIG", config)
 			event := `{"tool_name":"mcp__` + c.server + `__parallels_vm_exec","turn_id":"t","tool_input":{}}`
 			var out bytes.Buffer
-			mainIn(guardCtx(t), []string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
+			mainIn(withVars(guardCtx(t), "AGENT_TOOLS_CONFIG="+config), []string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
 			if c.denied {
 				if !strings.Contains(out.String(), `"permissionDecision":"deny"`) {
 					t.Fatalf("printed %q, want refusal without registered native approval", out.String())
@@ -290,6 +294,8 @@ func TestMCPLookalike(t *testing.T) {
 	os.WriteFile(config, []byte(`{"mcpProxy": {"url": "http://127.0.0.1:6290",
 		"endpoints": {"linear": "/linear/mcp", "notion": "/notion/mcp", "buildkite": "/buildkite/mcp", "parallels": "/parallels/mcp"},
 		"localServers": ["parallels"]}}`), 0o600)
+	// Main runs under the process environment, and mcpproxy.Load reads the
+	// process's config whatever the Env, so this test sets it there.
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
 	claude := func(tool string) string { return `{"tool_name":"` + tool + `","tool_input":{}}` }
 	codex := func(tool string) string { return `{"tool_name":"` + tool + `","turn_id":"t","tool_input":{}}` }

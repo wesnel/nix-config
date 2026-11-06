@@ -28,7 +28,7 @@ func branchHint(ctx context.Context, session string, toolInput json.RawMessage, 
 	if top == "" {
 		return ""
 	}
-	c, err := plans.Load(env.Process())
+	c, err := plans.Load(env.From(ctx))
 	if err != nil {
 		return ""
 	}

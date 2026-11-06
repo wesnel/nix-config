@@ -15,11 +15,11 @@ import (
 // on a line they run sandboxed and fail as if missing, so the guard
 // refuses the line and says to run them bare.
 func TestExcludedAlone(t *testing.T) {
+	t.Parallel()
 	config := filepath.Join(t.TempDir(), "config.json")
 	os.WriteFile(config, []byte(`{"guard": {"excludedCommands": `+
 		`["gh-read *", "git delegate *", "git-delegate *", "pr-loop wait *", "agent-plan log *"]}}`), 0o600)
-	t.Setenv("AGENT_TOOLS_CONFIG", config)
-	ctx := guardCtx(t)
+	ctx := withVars(guardCtx(t), "AGENT_TOOLS_CONFIG="+config)
 	work := t.TempDir()
 	// hook runs the baseline hook on a shell call, as Claude Code makes it
 	// or, with codex, as Codex does, and returns its decision and reason.

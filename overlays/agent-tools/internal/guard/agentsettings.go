@@ -298,7 +298,7 @@ func checkGitAgentSettings(ctx context.Context, sub string, rest []string, expan
 		}
 	}
 	for _, p := range outputs {
-		if spaceStateFile(p) {
+		if spaceStateFile(ctx, p) {
 			return spaceState
 		}
 		if agentSettingsFile(p, physical, checkout) {

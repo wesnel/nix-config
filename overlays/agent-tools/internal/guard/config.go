@@ -34,7 +34,7 @@ var builtCredentialPaths []string
 // without them the built-in ones, which stand in where the config is
 // absent, as in a sandbox guest or on a host before its first switch. With neither, everything under the home directory is one.
 func credentialPaths(ctx context.Context) []string {
-	paths := loadSettings().CredentialPaths
+	paths := loadSettings(ctx).CredentialPaths
 	if len(paths) == 0 {
 		paths = builtCredentialPaths
 	}
@@ -77,13 +77,13 @@ func inAgentTools(path string, bases ...string) bool {
 	return false
 }
 
-// loadSettings reads the guard's settings; a config that is missing or
-// unreadable gives none.
-func loadSettings() settings {
+// loadSettings reads the guard's settings from the config the Env of ctx
+// names; a config that is missing or unreadable gives none.
+func loadSettings(ctx context.Context) settings {
 	var file struct {
 		Guard settings `json:"guard"`
 	}
-	if data, err := os.ReadFile(repos.Path(env.Process())); err == nil {
+	if data, err := os.ReadFile(repos.Path(env.From(ctx))); err == nil {
 		json.Unmarshal(data, &file)
 	}
 	return file.Guard

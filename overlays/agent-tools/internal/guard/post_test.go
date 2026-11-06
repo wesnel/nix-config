@@ -11,6 +11,7 @@ import (
 // TestPost covers the context added after a tool call that pushed to
 // GitHub: Claude Code's and Codex's PostToolUse events.
 func TestPost(t *testing.T) {
+	t.Parallel()
 	claude := func(command, stdout string) string {
 		event, _ := json.Marshal(map[string]any{"hook_event_name": "PostToolUse", "tool_name": "Bash",
 			"tool_input": map[string]string{"command": command}, "tool_response": map[string]any{"stdout": stdout, "stderr": "", "interrupted": false}})

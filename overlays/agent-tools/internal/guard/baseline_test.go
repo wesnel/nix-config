@@ -1873,6 +1873,7 @@ func TestSubmoduleScanLimit(t *testing.T) {
 // credential list: its directory under the XDG config directory, and the
 // file AGENT_TOOLS_CONFIG names.
 func TestGuardConfig(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name, tool string
 		input      any // with HOME for the guard's ~ and NAMED for AGENT_TOOLS_CONFIG
@@ -1892,11 +1893,11 @@ func TestGuardConfig(t *testing.T) {
 		{"another tool's config", "Write", map[string]string{"file_path": "HOME/.config/other/config.json", "content": "{}"}, false},
 	} {
 		t.Run(caseName(c.deny, c.tool+" "+c.name), func(t *testing.T) {
+			t.Parallel()
 			ctx, h := fakeHome(t)
-			ctx = withVars(ctx, "XDG_CONFIG_HOME=")
 			named := filepath.Join(t.TempDir(), "named.json")
 			os.WriteFile(named, []byte("{}"), 0o600)
-			t.Setenv("AGENT_TOOLS_CONFIG", named)
+			ctx = withVars(ctx, "XDG_CONFIG_HOME=", "AGENT_TOOLS_CONFIG="+named)
 			work := filepath.Join(h, "work")
 			data, _ := json.Marshal(c.input)
 			input := []byte(strings.NewReplacer("HOME", h, "NAMED", named).Replace(string(data)))
@@ -1992,7 +1993,7 @@ func TestCredentialPaths(t *testing.T) {
 			config := filepath.Join(t.TempDir(), "config.json")
 			data, _ := json.Marshal(map[string]any{"guard": map[string]any{"credentialPaths": listed}})
 			os.WriteFile(config, data, 0o600)
-			t.Setenv("AGENT_TOOLS_CONFIG", config)
+			ctx = withVars(ctx, "AGENT_TOOLS_CONFIG="+config)
 			reason := judge(ctx, filepath.Join(h, "work"), c.command)
 			if (reason != "") != c.deny {
 				t.Errorf("%q with %q listed: deny=%v, reason %q", c.command, listed, !c.deny, reason)
@@ -2008,6 +2009,7 @@ func TestCredentialPaths(t *testing.T) {
 // reading too, which is all Codex has: each command is judged the same
 // from Claude Code and from Codex.
 func TestCredentialList(t *testing.T) {
+	t.Parallel()
 	ctx, h := fakeHome(t)
 	// A credential whose name holds an accent, composed (NFC).
 	secret := "/.secrét"
@@ -2016,7 +2018,7 @@ func TestCredentialList(t *testing.T) {
 	config := filepath.Join(t.TempDir(), "config.json")
 	data, _ := json.Marshal(map[string]any{"guard": map[string]any{"credentialPaths": listed}})
 	os.WriteFile(config, data, 0o600)
-	t.Setenv("AGENT_TOOLS_CONFIG", config)
+	ctx = withVars(ctx, "AGENT_TOOLS_CONFIG="+config)
 	// Links and hard links in the working directory to credentials, and the
 	// files they lead to.
 	for _, d := range []string{".aws/sso", ".ssh", ".kube", ".config/fish", "work"} {

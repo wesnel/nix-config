@@ -1,7 +1,6 @@
 package guard
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -14,22 +13,13 @@ import (
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
-// bake bakes configHome and stateHome in for the rest of the test: in the
-// Env of ctx, which it returns, and in the process environment, which
-// agentplans.SpaceStateFile still reads.
-func bake(t *testing.T, ctx context.Context, configHome, stateHome string) context.Context {
-	t.Helper()
-	t.Setenv(hostpaths.TestConfigHomeEnv, configHome)
-	t.Setenv(hostpaths.TestStateHomeEnv, stateHome)
-	return withVars(ctx, hostpaths.TestBaked(configHome, stateHome)...)
-}
-
 // The Space publisher's state names the block it replaces, so no session
 // writes it: by any name for it, before its directory exists or after.
 func TestSpaceState(t *testing.T) {
+	t.Parallel()
 	ctx, root := fakeHome(t)
-	ctx = bake(t, ctx, filepath.Join(root, "config"), filepath.Join(root, "state"))
-	file := agentplans.SpaceStateFile(env.Process())
+	ctx = withVars(ctx, hostpaths.TestBaked(filepath.Join(root, "config"), filepath.Join(root, "state"))...)
+	file := agentplans.SpaceStateFile(env.From(ctx))
 	alias := filepath.Join(t.TempDir(), "root-alias")
 	if err := os.Symlink(root, alias); err != nil {
 		t.Fatal(err)
@@ -86,9 +76,10 @@ func TestSpaceState(t *testing.T) {
 // archive's extraction or a recursive copy, is refused; one that only
 // reads it, or writes elsewhere, is not.
 func TestSpaceStateDirectoryWrites(t *testing.T) {
+	t.Parallel()
 	ctx, root := fakeHome(t)
-	ctx = bake(t, ctx, filepath.Join(root, "config"), filepath.Join(root, "state"))
-	dest, work := filepath.Dir(agentplans.SpaceStateFile(env.Process())), t.TempDir()
+	ctx = withVars(ctx, hostpaths.TestBaked(filepath.Join(root, "config"), filepath.Join(root, "state"))...)
+	dest, work := filepath.Dir(agentplans.SpaceStateFile(env.From(ctx))), t.TempDir()
 	if err := os.MkdirAll(dest, 0o700); err != nil {
 		t.Fatal(err)
 	}

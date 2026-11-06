@@ -65,7 +65,7 @@ func sandboxedBy(text string) []string {
 // line is refused, and so is the command alone holding sandboxedSyntax,
 // whose refusal names the syntax wherever the line holds it.
 func checkExcludedAlone(ctx context.Context, text string) string {
-	patterns := excludedPatterns()
+	patterns := excludedPatterns(ctx)
 	if len(patterns) == 0 {
 		return ""
 	}
@@ -83,10 +83,10 @@ func checkExcludedAlone(ctx context.Context, text string) string {
 }
 
 // excludedPatterns are the words of each excludedCommands pattern, its
-// trailing ` *` left off.
-func excludedPatterns() [][]string {
+// trailing ` *` left off, from the settings the Env of ctx names.
+func excludedPatterns(ctx context.Context) [][]string {
 	var patterns [][]string
-	for _, p := range loadSettings().ExcludedCommands {
+	for _, p := range loadSettings(ctx).ExcludedCommands {
 		if words := strings.Fields(strings.TrimSuffix(p, " *")); len(words) > 0 {
 			patterns = append(patterns, words)
 		}
@@ -106,7 +106,7 @@ const plainGh = "`gh` runs in the sandbox, which hides its login, so it cannot r
 // reads (ghReadOnly), where the sandbox excludes gh-read. It runs after
 // the other rules, so a gh write meets its own refusal first.
 func checkPlainGh(ctx context.Context, text string) string {
-	if !slices.ContainsFunc(excludedPatterns(), func(p []string) bool { return slices.Equal(p, []string{"gh-read"}) }) {
+	if !slices.ContainsFunc(excludedPatterns(ctx), func(p []string) bool { return slices.Equal(p, []string{"gh-read"}) }) {
 		return ""
 	}
 	gh := firstCall(ctx, text, 0, func(c call) []string {

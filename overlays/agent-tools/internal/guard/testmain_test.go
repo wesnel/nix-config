@@ -31,9 +31,8 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	config := filepath.Join(dir, "config.json")
-	os.WriteFile(config, []byte(`{"plans": {"dir": "`+filepath.Join(dir, "agents")+`", "host": "box"}}`), 0o600)
-	os.Setenv("AGENT_TOOLS_CONFIG", config)
+	testConfig = filepath.Join(dir, "config.json")
+	os.WriteFile(testConfig, []byte(`{"plans": {"dir": "`+filepath.Join(dir, "agents")+`", "host": "box"}}`), 0o600)
 	fixtures = filepath.Join(dir, "fixtures")
 	testBin = filepath.Join(dir, "bin")
 	if err := os.Mkdir(testBin, 0o700); err != nil {
@@ -57,9 +56,16 @@ func TestMain(m *testing.M) {
 // Nix build, is each test's to say.
 var testBin string
 
-// guardEnv is the Env a test runs the guard under: this process's, as
-// TestMain left it, with PATH testBin alone.
-func guardEnv() env.Env { return env.Process().Set("PATH=" + testBin) }
+// testConfig is the agent-tools config every test shares unless it names
+// its own in its Env: plans in a directory of the tests' own, and no
+// settings of the guard's.
+var testConfig string
+
+// guardEnv is the Env a test runs the guard under: this process's, with
+// PATH testBin alone and AGENT_TOOLS_CONFIG testConfig.
+func guardEnv() env.Env {
+	return env.Process().Set("PATH="+testBin, "AGENT_TOOLS_CONFIG="+testConfig)
+}
 
 // guardCtx is t's context, carrying guardEnv.
 func guardCtx(t *testing.T) context.Context { return env.With(t.Context(), guardEnv()) }

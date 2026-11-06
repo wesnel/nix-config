@@ -2,6 +2,7 @@ package guard
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -31,8 +32,10 @@ func gitOut(t *testing.T, dir string, args ...string) string {
 
 // planned makes a repository with a worktree for a plan's part, and a plan
 // in a plans directory of the test's own that names the session claude:s1
-// and the main worktree, with part P1 in the linked one.
-func planned(t *testing.T) (main, linked string, p plans.Plan) {
+// and the main worktree, with part P1 in the linked one, and returns t's
+// context with an Env (guardEnv) whose agent-tools config names that
+// directory.
+func planned(t *testing.T) (ctx context.Context, main, linked string, p plans.Plan) {
 	t.Helper()
 	root, _ := filepath.EvalSymlinks(t.TempDir())
 	main, linked = filepath.Join(root, "main"), filepath.Join(root, "linked")
@@ -44,7 +47,7 @@ func planned(t *testing.T) (main, linked string, p plans.Plan) {
 	config := filepath.Join(root, "config.json")
 	data, _ := json.Marshal(map[string]any{"plans": c})
 	os.WriteFile(config, data, 0o644)
-	t.Setenv("AGENT_TOOLS_CONFIG", config)
+	ctx = withVars(guardCtx(t), "AGENT_TOOLS_CONFIG="+config)
 	made, err := c.New(t.Context(), plans.NewOptions{Title: "Add the loop", Slug: "loop", Branches: []string{"main..loop"},
 		Worktrees: []string{main}, Sessions: []string{"claude:s1"}}, time.Now())
 	if err != nil {
@@ -60,7 +63,7 @@ func planned(t *testing.T) (main, linked string, p plans.Plan) {
 	if p, err = c.Open(made.Plan); err != nil {
 		t.Fatal(err)
 	}
-	return main, linked, p
+	return ctx, main, linked, p
 }
 
 // claudeEvent is Claude Code's PostToolUse for a Bash call that printed
@@ -72,10 +75,10 @@ func claudeEvent(session, cwd, command, stdout string) string {
 	return string(event)
 }
 
-func postHook(t *testing.T, event string) string {
+func postHook(t *testing.T, ctx context.Context, event string) string {
 	t.Helper()
 	var out bytes.Buffer
-	if code := mainIn(guardCtx(t), []string{"--post"}, strings.NewReader(event), &out, io.Discard); code != 0 {
+	if code := mainIn(ctx, []string{"--post"}, strings.NewReader(event), &out, io.Discard); code != 0 {
 		t.Errorf("%s: exit %d", event, code)
 	}
 	return out.String()
@@ -95,8 +98,9 @@ func planProperty(t *testing.T, file, name string) string {
 // A branch or pull request the hook records in a plan that another plan
 // names too links the plan to it, with that as the reason.
 func testPostLinksPlans(t *testing.T) {
-	main, _, p := planned(t)
-	c, err := plans.Load(env.Process())
+	t.Parallel()
+	ctx, main, _, p := planned(t)
+	c, err := plans.Load(env.From(ctx))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,9 +123,9 @@ func testPostLinksPlans(t *testing.T) {
 		t.Fatal(err)
 	}
 	gitOut(t, main, "switch", "-q", "-c", "topic")
-	postHook(t, claudeEvent("s1", main, "git switch -c topic", "Switched to a new branch 'topic'\n"))
+	postHook(t, ctx, claudeEvent("s1", main, "git switch -c topic", "Switched to a new branch 'topic'\n"))
 	opened := `{"pr": 12, "url": "` + url + `", "draft": true, "branch": "topic", "base": "main"}`
-	postHook(t, claudeEvent("s1", main, "pr-loop open --title T --body-file - topic", opened))
+	postHook(t, ctx, claudeEvent("s1", main, "pr-loop open --title T --body-file - topic", opened))
 	text, _ := os.ReadFile(p.File())
 	for _, want := range []string{
 		"][Other topic]]: Both work on branch topic.\n",
@@ -138,13 +142,14 @@ func testPostLinksPlans(t *testing.T) {
 // and pushes in its log, new worktrees, branches and pull requests in its
 // properties.
 func testPostRecordsFacts(t *testing.T) {
-	main, linked, p := planned(t)
+	t.Parallel()
+	ctx, main, linked, p := planned(t)
 	gitOut(t, main, "remote", "add", "origin", "git@github.com:o/r.git")
 	partFile := strings.TrimSuffix(p.File(), ".org") + ".P1.org"
 	os.WriteFile(filepath.Join(main, "a"), []byte("a\n"), 0o644)
 	gitIn(t, main, "add", "a")
 	commit := "git -c commit.gpgsign=false commit -m 'Add the loop'"
-	out := postHook(t, claudeEvent("s1", main, commit, gitOut(t, main, "commit", "-m", "Add the loop")))
+	out := postHook(t, ctx, claudeEvent("s1", main, commit, gitOut(t, main, "commit", "-m", "Add the loop")))
 	var asked struct {
 		Specific struct {
 			Event   string `json:"hookEventName"`
@@ -167,31 +172,31 @@ func testPostRecordsFacts(t *testing.T) {
 	codex, _ := json.Marshal(map[string]any{"session_id": "s9", "cwd": main, "hook_event_name": "PostToolUse",
 		"tool_name": "Bash", "turn_id": "t", "tool_input": map[string]string{"command": "git commit --allow-empty -m 'Test it'"},
 		"tool_response": "Exit code: 0\nWall time: 0.1 seconds\nOutput:\n" + gitOut(t, main, "commit", "--allow-empty", "-m", "Test it")})
-	if out := postHook(t, string(codex)); !strings.Contains(out, "`signing-pass` skill") ||
+	if out := postHook(t, ctx, string(codex)); !strings.Contains(out, "`signing-pass` skill") ||
 		!strings.Contains(out, "No plan named this session or worktree") || strings.Contains(out, p.File()) {
 		t.Errorf("another session's first commit: %s", out)
 	}
 
 	// In the part's worktree, reached by cd, a commit is the part's.
-	out = postHook(t, claudeEvent("s1", main, "cd ../linked && git commit --allow-empty -m 'Add the flag'",
+	out = postHook(t, ctx, claudeEvent("s1", main, "cd ../linked && git commit --allow-empty -m 'Add the flag'",
 		gitOut(t, linked, "commit", "--allow-empty", "-m", "Add the flag")))
 	if !strings.Contains(out, "which step") || strings.Contains(out, "signing-pass") {
 		t.Errorf("the session's second commit: %s", out)
 	}
 
 	gitOut(t, main, "worktree", "add", "-q", "-b", "feature", "../feature")
-	postHook(t, claudeEvent("s1", main, "git worktree add -b feature ../feature", ""))
+	postHook(t, ctx, claudeEvent("s1", main, "git worktree add -b feature ../feature", ""))
 	gitOut(t, main, "switch", "-q", "-c", "topic")
-	postHook(t, claudeEvent("s1", main, "git switch -c topic", "Switched to a new branch 'topic'\n"))
+	postHook(t, ctx, claudeEvent("s1", main, "git switch -c topic", "Switched to a new branch 'topic'\n"))
 	gitOut(t, main, "switch", "-q", "main")
 	gitOut(t, main, "branch", "other", "topic")
-	postHook(t, claudeEvent("s1", main, "git -C "+main+" branch other topic", ""))
+	postHook(t, ctx, claudeEvent("s1", main, "git -C "+main+" branch other topic", ""))
 
 	opened := `{"pr": 12, "url": "https://github.com/o/r/pull/12", "draft": true, "branch": "topic", "base": "main"}`
-	postHook(t, claudeEvent("s1", main, "pr-loop open --title T --body-file - topic", opened))
+	postHook(t, ctx, claudeEvent("s1", main, "pr-loop open --title T --body-file - topic", opened))
 	// pr-loop push logs its own push.
-	postHook(t, claudeEvent("s1", main, "pr-loop push", `{"pushed": {"topic": "2222", "other": "1111"}, "round": 2}`))
-	postHook(t, claudeEvent("s1", main, "git sign-pass --push", `{"signed": 2, "pushed": {"topic": "3333", "other": "4444"}}`))
+	postHook(t, ctx, claudeEvent("s1", main, "pr-loop push", `{"pushed": {"topic": "2222", "other": "1111"}, "round": 2}`))
+	postHook(t, ctx, claudeEvent("s1", main, "git sign-pass --push", `{"signed": 2, "pushed": {"topic": "3333", "other": "4444"}}`))
 
 	// Nothing that did not happen is recorded.
 	for _, event := range []string{
@@ -202,7 +207,7 @@ func testPostRecordsFacts(t *testing.T) {
 		claudeEvent("s1", main, "pr-loop push --dry-run", `{"wouldUpdate": {"a": "1111"}}`),
 		`not json`,
 	} {
-		if out := postHook(t, event); out != "" {
+		if out := postHook(t, ctx, event); out != "" {
 			t.Errorf("%s: printed %s", event, out)
 		}
 	}
