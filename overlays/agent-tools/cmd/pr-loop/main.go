@@ -10,11 +10,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/cli"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/guard"
 	"github.com/wesnel/agent-tools/internal/loop"
@@ -220,15 +222,17 @@ func main() {
 		fmt.Fprint(os.Stdout, usage)
 		os.Exit(0)
 	}
+	ctx := env.With(context.Background(), env.Process())
 	if args[0] == "mcp" {
 		// Not in run, which its tools call.
-		os.Exit(mcpMain(args[1:], os.Stdin, os.Stdout, os.Stderr))
+		os.Exit(mcpMain(ctx, args[1:], os.Stdin, os.Stdout, os.Stderr))
 	}
-	os.Exit(run(args[0], args[1:], os.Stdin, os.Stdout, os.Stderr))
+	os.Exit(run(ctx, args[0], args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
-// run runs command with args and returns its exit status.
-func run(command string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+// run runs command with args, in the Env of ctx, and returns its exit
+// status.
+func run(ctx context.Context, command string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	var (
 		dryRun   = flags.Bool("dry-run", false, "")
@@ -256,16 +260,16 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return guard.Main(args, stdin, stdout, stderr)
 	}
 	if command == "mcp-status" {
-		return mcpStatus(args, stdout, stderr)
+		return mcpStatus(ctx, args, stdout, stderr)
 	}
 	if code, ok := cli.Parse(flags, interleave(args), usage, stdout, stderr); !ok {
 		return code
 	}
 	rest := flags.Args()
-	if err := git.CheckLocation(); err != nil {
+	if err := git.In(ctx).CheckLocation(); err != nil {
 		return cli.Report("pr-loop", nil, err, 0, stdout, stderr)
 	}
-	if err := git.CheckConfig(""); err != nil {
+	if err := git.In(ctx).CheckConfig(""); err != nil {
 		return cli.Report("pr-loop", nil, err, 0, stdout, stderr)
 	}
 	need := func(n int) error {
@@ -298,8 +302,6 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return string(data), err
 	}
 
-	// The loop runs in this process's environment.
-	ctx := context.Background()
 	var result any
 	var err error
 	code := 0
@@ -446,15 +448,22 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		if len(rest) == 1 {
 			// The repository is identified from where the command runs.
-			if err = os.Chdir(rest[0]); err != nil {
+			// loop.SetupCommand reads it from this process's directory,
+			// so the process moves there too.
+			dir := rest[0]
+			if !filepath.IsAbs(dir) {
+				dir = filepath.Join(env.From(ctx).Dir(), dir)
+			}
+			if err = os.Chdir(dir); err != nil {
 				break
 			}
-			if err = git.CheckConfig(""); err != nil {
+			ctx = env.With(ctx, env.From(ctx).In(dir))
+			if err = git.In(ctx).CheckConfig(""); err != nil {
 				break
 			}
 		}
 		var dir string
-		if dir, err = git.Toplevel(); err != nil {
+		if dir, err = git.In(ctx).Toplevel(); err != nil {
 			break
 		}
 		var setup *loop.Setup

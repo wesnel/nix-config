@@ -38,8 +38,8 @@ func githubPRPath(argv []string) (string, error) {
 	return path + "/pulls/" + argv[1], nil
 }
 
-func githubJSON(path string, out any) error {
-	data, err := gh.Read(context.Background(), path, "application/vnd.github+json")
+func githubJSON(ctx context.Context, path string, out any) error {
+	data, err := gh.Read(ctx, path, "application/vnd.github+json")
 	if err != nil {
 		return err
 	}
@@ -57,13 +57,13 @@ func githubPRDiff(ctx context.Context, argv []string, stdout, stderr io.Writer) 
 	var before, after githubPRIdentity
 	var diff []byte
 	if err == nil {
-		err = githubJSON(path, &before)
+		err = githubJSON(ctx, path, &before)
 	}
 	if err == nil {
-		diff, err = gh.Read(context.Background(), path, "application/vnd.github.diff")
+		diff, err = gh.Read(ctx, path, "application/vnd.github.diff")
 	}
 	if err == nil {
-		err = githubJSON(path, &after)
+		err = githubJSON(ctx, path, &after)
 	}
 	if err == nil && (before.Base.SHA == "" || before.Head.SHA == "" || before != after) {
 		err = fmt.Errorf("PR base or head changed or was missing; read the diff again")
@@ -76,11 +76,11 @@ func githubPRDiff(ctx context.Context, argv []string, stdout, stderr io.Writer) 
 		"base_sha": before.Base.SHA, "head_sha": before.Head.SHA, "diff": string(diff)}, err, 0, stdout, stderr)
 }
 
-func githubPages(path string) ([]json.RawMessage, error) {
+func githubPages(ctx context.Context, path string) ([]json.RawMessage, error) {
 	all := []json.RawMessage{}
 	for page := 1; page <= 100; page++ {
 		var batch []json.RawMessage
-		if err := githubJSON(fmt.Sprintf("%s?per_page=100&page=%d", path, page), &batch); err != nil {
+		if err := githubJSON(ctx, fmt.Sprintf("%s?per_page=100&page=%d", path, page), &batch); err != nil {
 			return nil, err
 		}
 		if batch == nil {
@@ -98,7 +98,7 @@ func githubPRView(ctx context.Context, argv []string, stdout, stderr io.Writer) 
 	path, err := githubPRPath(argv)
 	var pr map[string]json.RawMessage
 	if err == nil {
-		err = githubJSON(path, &pr)
+		err = githubJSON(ctx, path, &pr)
 	}
 	if err == nil && len(pr) == 0 {
 		err = fmt.Errorf("GitHub returned missing PR metadata")
@@ -110,7 +110,7 @@ func githubPRView(ctx context.Context, argv []string, stdout, stderr io.Writer) 
 			{"reviews", path + "/reviews"},
 			{"review_comments", path + "/comments"},
 		} {
-			result[collection.name], err = githubPages(collection.path)
+			result[collection.name], err = githubPages(ctx, collection.path)
 			if err != nil {
 				break
 			}
@@ -140,7 +140,7 @@ func githubFile(ctx context.Context, argv []string, stdout, stderr io.Writer) in
 			Size                         *int64
 			Submodule                    string `json:"submodule_git_url"`
 		}
-		if err := githubJSON(repo+"/contents/"+strings.Join(parts, "/")+"?ref="+argv[1], &file); err != nil {
+		if err := githubJSON(ctx, repo+"/contents/"+strings.Join(parts, "/")+"?ref="+argv[1], &file); err != nil {
 			return nil, err
 		}
 		if file.Type != "file" || file.Submodule != "" || file.Encoding != "base64" || !githubCommit.MatchString(file.SHA) || file.Size == nil {

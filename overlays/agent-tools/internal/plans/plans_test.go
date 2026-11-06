@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
@@ -27,7 +28,7 @@ func testConfig(t *testing.T) Config {
 
 func newPlan(t *testing.T, c Config, slug string) Plan {
 	t.Helper()
-	made, err := c.New(NewOptions{Title: "Add the loop", Slug: slug, Repos: []string{"o/r"},
+	made, err := c.New(t.Context(), NewOptions{Title: "Add the loop", Slug: slug, Repos: []string{"o/r"},
 		Branches: []string{"main..loop"}, Worktrees: []string{"/w/loop"}, Sessions: []string{"claude:abc"},
 		Harness: "claude"}, day)
 	if err != nil {
@@ -111,7 +112,7 @@ func TestNew(t *testing.T) {
 	// repository could be cloned; why it is not synced is a warning.
 	t.Run("deferred clone", func(t *testing.T) {
 		c, _, key := cloning(t)
-		made, err := c.New(NewOptions{Title: "Check", Slug: "check"}, day)
+		made, err := c.New(t.Context(), NewOptions{Title: "Check", Slug: "check"}, day)
 		if err != nil {
 			t.Fatalf("missing deploy key refused the plan: %v", err)
 		}
@@ -131,7 +132,7 @@ func TestNew(t *testing.T) {
 
 	t.Run("files", func(t *testing.T) {
 		c := testConfig(t)
-		made, err := c.New(NewOptions{Title: "Add the loop", Slug: "add-loop", Repos: []string{"o/r"},
+		made, err := c.New(t.Context(), NewOptions{Title: "Add the loop", Slug: "add-loop", Repos: []string{"o/r"},
 			Branches: []string{"main..loop"}, Worktrees: []string{"/w/loop"}, Sessions: []string{"claude:abc"},
 			Harness: "claude"}, day)
 		if err != nil {
@@ -175,7 +176,7 @@ func TestNew(t *testing.T) {
 	t.Run("tags of repository and host", func(t *testing.T) {
 		c := testConfig(t)
 		c.Host = "ngrok-mac"
-		made, err := c.New(NewOptions{Title: "T", Slug: "x", Repos: []string{"wesnel/nix-config", "wesnel/emacs.config.git",
+		made, err := c.New(t.Context(), NewOptions{Title: "T", Slug: "x", Repos: []string{"wesnel/nix-config", "wesnel/emacs.config.git",
 			"other/nix-config"}}, day)
 		if err != nil {
 			t.Fatal(err)
@@ -191,7 +192,7 @@ func TestNew(t *testing.T) {
 	// org-roam leave alone.
 	t.Run("an org-roam node", func(t *testing.T) {
 		c := testConfig(t)
-		made, err := c.New(NewOptions{Title: "Add the loop", Slug: "add-loop"}, day)
+		made, err := c.New(t.Context(), NewOptions{Title: "Add the loop", Slug: "add-loop"}, day)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -204,7 +205,7 @@ func TestNew(t *testing.T) {
 			strings.Contains(string(data), "\n:ID: "+made.ID+"\n") {
 			t.Errorf("the plan's ID is not its * Plan heading's CUSTOM_ID alone:\n%s", data)
 		}
-		other, err := c.New(NewOptions{Title: "Another", Slug: "another"}, day)
+		other, err := c.New(t.Context(), NewOptions{Title: "Another", Slug: "another"}, day)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -218,7 +219,7 @@ func TestNew(t *testing.T) {
 	t.Run("second plan with the slug", func(t *testing.T) {
 		c := testConfig(t)
 		newPlan(t, c, "add-loop")
-		again, err := c.New(NewOptions{Title: "Again", Slug: "add-loop"}, day)
+		again, err := c.New(t.Context(), NewOptions{Title: "Again", Slug: "add-loop"}, day)
 		if err != nil || again.File != filepath.Join(c.Dir, "20261014130500-add-loop-2.box.org") {
 			t.Errorf("second plan with the slug: %+v, %v", again, err)
 		}
@@ -233,7 +234,7 @@ func TestNew(t *testing.T) {
 	} {
 		t.Run("refused/"+what, func(t *testing.T) {
 			c := testConfig(t)
-			_, err := c.New(o, day)
+			_, err := c.New(t.Context(), o, day)
 			isRefusal(t, what, err)
 		})
 	}
@@ -247,7 +248,7 @@ func TestOpen(t *testing.T) {
 		c := testConfig(t)
 		p := newPlan(t, c, "x")
 		addItems(t, p.file(""), "** Distribution", "P1")
-		if _, err := c.New(NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day); err != nil {
+		if _, err := c.New(t.Context(), NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day); err != nil {
 			t.Fatal(err)
 		}
 		return c, p
@@ -341,7 +342,7 @@ func TestOpen(t *testing.T) {
 				if as == "PLAN" {
 					_, err = c.Open(arg)
 				} else {
-					_, err = c.New(NewOptions{Title: "Part", Parent: arg, Part: "P2"}, day)
+					_, err = c.New(t.Context(), NewOptions{Title: "Part", Parent: arg, Part: "P2"}, day)
 				}
 				isRefusal(t, as+" "+arg, err)
 			})
@@ -357,7 +358,7 @@ func TestPlans(t *testing.T) {
 	c := testConfig(t)
 	older := newPlan(t, c, "a")
 	addItems(t, older.file(""), "** Distribution", "P1")
-	if _, err := c.New(NewOptions{Title: "Part", Parent: older.file(""), Part: "P1"}, day); err != nil {
+	if _, err := c.New(t.Context(), NewOptions{Title: "Part", Parent: older.file(""), Part: "P1"}, day); err != nil {
 		t.Fatal(err)
 	}
 	theirs := newPlan(t, Config{Dir: c.Dir, Host: "other"}, "b")
@@ -484,7 +485,7 @@ func testInitInRepository(t *testing.T) {
 	gitIn(t, outer, "init", "-q", "-b", "main")
 	before, _ := os.ReadFile(filepath.Join(outer, ".git", "info", "exclude"))
 	for i := 0; i < 2; i++ {
-		got, err := c.Init()
+		got, err := c.Init(t.Context())
 		if err != nil || got.Dir != c.Dir {
 			t.Fatalf("Init: %+v, %v", got, err)
 		}
@@ -517,7 +518,7 @@ func TestPart(t *testing.T) {
 
 	t.Run("made", func(t *testing.T) {
 		c, p := distributing(t)
-		made, err := c.New(NewOptions{Title: "The loop's part", Parent: p.file(""), Part: "P1",
+		made, err := c.New(t.Context(), NewOptions{Title: "The loop's part", Parent: p.file(""), Part: "P1",
 			Branches: []string{"loop..part"}}, day)
 		if err != nil {
 			t.Fatal(err)
@@ -537,22 +538,22 @@ func TestPart(t *testing.T) {
 
 	t.Run("refused/not distributed", func(t *testing.T) {
 		c, p := distributing(t)
-		_, err := c.New(NewOptions{Title: "T", Parent: p.file(""), Part: "P2"}, day)
+		_, err := c.New(t.Context(), NewOptions{Title: "T", Parent: p.file(""), Part: "P2"}, day)
 		isRefusal(t, "a part the parent does not distribute", err)
 	})
 
 	t.Run("refused/made twice", func(t *testing.T) {
 		c, p := distributing(t)
-		if _, err := c.New(NewOptions{Title: "The loop's part", Parent: p.file(""), Part: "P1"}, day); err != nil {
+		if _, err := c.New(t.Context(), NewOptions{Title: "The loop's part", Parent: p.file(""), Part: "P1"}, day); err != nil {
 			t.Fatal(err)
 		}
-		_, err := c.New(NewOptions{Title: "T", Parent: p.file(""), Part: "P1"}, day)
+		_, err := c.New(t.Context(), NewOptions{Title: "T", Parent: p.file(""), Part: "P1"}, day)
 		isRefusal(t, "a part made twice", err)
 	})
 
 	t.Run("refused/no ID", func(t *testing.T) {
 		c, p := distributing(t)
-		_, err := c.New(NewOptions{Title: "T", Parent: p.file(""), Part: "../x"}, day)
+		_, err := c.New(t.Context(), NewOptions{Title: "T", Parent: p.file(""), Part: "../x"}, day)
 		isRefusal(t, "a part that is no ID", err)
 	})
 }
@@ -595,7 +596,7 @@ func TestOtherHost(t *testing.T) {
 	t.Run("refused/part", func(t *testing.T) {
 		c, p := theirs(t)
 		before, _ := os.ReadFile(p.log())
-		_, err := c.New(NewOptions{Title: "T", Parent: p.file(""), Part: "P1"}, day)
+		_, err := c.New(t.Context(), NewOptions{Title: "T", Parent: p.file(""), Part: "P1"}, day)
 		isRefusal(t, "a part of another host's plan", err)
 		if after, _ := os.ReadFile(p.log()); string(after) != string(before) {
 			t.Errorf("another host's log changed:\n%s", after)
@@ -716,7 +717,7 @@ func testStatusItems(t *testing.T) {
 	plan := p.file("")
 	addItems(t, plan, "** Steps", "S1", "S2", "S3")
 	addItems(t, plan, "** Distribution", "P1")
-	part, err := c.New(NewOptions{Title: "Part", Parent: plan, Part: "P1"}, day)
+	part, err := c.New(t.Context(), NewOptions{Title: "Part", Parent: plan, Part: "P1"}, day)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -777,7 +778,7 @@ func TestGoal(t *testing.T) {
 		c := testConfig(t)
 		p := newPlan(t, c, "x")
 		addItems(t, p.file(""), "** Distribution", "P1")
-		part, _ := c.New(NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day)
+		part, _ := c.New(t.Context(), NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day)
 		setGoal(t, part.File, "The part.")
 		if goal, err := p.Goal("P1"); err != nil || goal != "The part.\n" {
 			t.Errorf("part goal %q, %v", goal, err)
@@ -864,7 +865,7 @@ func TestSessionHook(t *testing.T) {
 	t.Run("the session's plan", func(t *testing.T) {
 		c := testConfig(t)
 		p := newPlan(t, c, "x")
-		out, err := c.SessionHook([]byte(`{"session_id":"abc","source":"compact","cwd":"/nowhere"}`), "claude")
+		out, err := c.SessionHook(t.Context(), []byte(`{"session_id":"abc","source":"compact","cwd":"/nowhere"}`), "claude")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -876,31 +877,34 @@ func TestSessionHook(t *testing.T) {
 	t.Run("no plan", func(t *testing.T) {
 		c := testConfig(t)
 		newPlan(t, c, "x")
-		if out, err := c.SessionHook([]byte(`{"session_id":"zzz","source":"resume","cwd":"/nowhere"}`), "claude"); err != nil || len(out) != 0 {
+		if out, err := c.SessionHook(t.Context(), []byte(`{"session_id":"zzz","source":"resume","cwd":"/nowhere"}`), "claude"); err != nil || len(out) != 0 {
 			t.Errorf("no plan: %s, %v", out, err)
 		}
 	})
 }
 
 func TestLoad(t *testing.T) {
-	// useConfig points AGENT_TOOLS_CONFIG at a file of the test's own, with
-	// the content given, or none.
-	useConfig := func(t *testing.T, content string) {
+	t.Parallel()
+	// useConfig is an Env whose HOME is a directory of the test's own and
+	// whose AGENT_TOOLS_CONFIG names a file of its own, with the content
+	// given, or none.
+	useConfig := func(t *testing.T, content string) env.Env {
 		t.Helper()
 		config := filepath.Join(t.TempDir(), "config.json")
-		t.Setenv("AGENT_TOOLS_CONFIG", config)
 		if content != "" {
 			os.WriteFile(config, []byte(content), 0o644)
 		}
+		return env.New(t.TempDir(), "HOME="+t.TempDir(), "AGENT_TOOLS_CONFIG="+config)
 	}
 
-	// Unconfigured, plans live in the operator's notes repository, whose
-	// root, not the directory above the plans, is the repository sync
-	// commits to.
+	// Unconfigured, plans live in the operator's notes repository, under
+	// the Env's HOME, whose root, not the directory above the plans, is
+	// the repository sync commits to.
 	t.Run("without a config", func(t *testing.T) {
-		useConfig(t, "")
-		home, _ := os.UserHomeDir()
-		c, err := Load()
+		t.Parallel()
+		e := useConfig(t, "")
+		home := e.Get("HOME")
+		c, err := Load(e)
 		if err != nil || c.Dir != filepath.Join(home, "git", "github.com", "wesnel", "notes", "agents", "plans") || c.Host == "" {
 			t.Errorf("without a config: %+v, %v", c, err)
 		}
@@ -909,42 +913,54 @@ func TestLoad(t *testing.T) {
 		}
 	})
 
+	// Without HOME there is no notes repository to default to.
+	t.Run("without HOME", func(t *testing.T) {
+		t.Parallel()
+		if c, err := Load(useConfig(t, "").Without("HOME")); err == nil {
+			t.Errorf("without HOME: %+v", c)
+		}
+	})
+
 	// A plans directory the config names is in the repository above it
 	// unless plans.repo says otherwise.
 	t.Run("from the config", func(t *testing.T) {
-		useConfig(t, `{"repos": {}, "plans": {"dir": "/p/plans", "host": "ngrok"}}`)
-		if c, err := Load(); err != nil || c.Dir != "/p/plans" || c.Host != "ngrok" || c.repo() != "/p" {
+		t.Parallel()
+		e := useConfig(t, `{"repos": {}, "plans": {"dir": "/p/plans", "host": "ngrok"}}`)
+		if c, err := Load(e); err != nil || c.Dir != "/p/plans" || c.Host != "ngrok" || c.repo() != "/p" {
 			t.Errorf("from the config: %+v, %v", c, err)
 		}
 	})
 
 	t.Run("a config without a directory", func(t *testing.T) {
-		useConfig(t, `{"plans": {"host": "ngrok"}}`)
-		home, _ := os.UserHomeDir()
-		notes := filepath.Join(home, "git", "github.com", "wesnel", "notes")
-		if c, err := Load(); err != nil || c.Dir != filepath.Join(notes, "agents", "plans") || c.repo() != notes || c.Host != "ngrok" {
+		t.Parallel()
+		e := useConfig(t, `{"plans": {"host": "ngrok"}}`)
+		notes := filepath.Join(e.Get("HOME"), "git", "github.com", "wesnel", "notes")
+		if c, err := Load(e); err != nil || c.Dir != filepath.Join(notes, "agents", "plans") || c.repo() != notes || c.Host != "ngrok" {
 			t.Errorf("a config without a directory: %+v, %v", c, err)
 		}
 	})
 
 	t.Run("templates from the config", func(t *testing.T) {
-		useConfig(t, `{"plans": {"dir": "/p", "host": "ngrok", "templates": "/t"}}`)
-		if c, err := Load(); err != nil || c.Templates != "/t" {
+		t.Parallel()
+		e := useConfig(t, `{"plans": {"dir": "/p", "host": "ngrok", "templates": "/t"}}`)
+		if c, err := Load(e); err != nil || c.Templates != "/t" {
 			t.Errorf("templates from the config: %+v, %v", c, err)
 		}
 	})
 
 	t.Run("relative templates", func(t *testing.T) {
-		useConfig(t, `{"plans": {"dir": "/p", "host": "ngrok", "templates": "t"}}`)
-		if c, err := Load(); err == nil {
+		t.Parallel()
+		e := useConfig(t, `{"plans": {"dir": "/p", "host": "ngrok", "templates": "t"}}`)
+		if c, err := Load(e); err == nil {
 			t.Errorf("relative templates: %+v", c)
 		}
 	})
 
 	// A dot would make a plan's file names ambiguous.
 	t.Run("host with a dot", func(t *testing.T) {
-		useConfig(t, `{"plans": {"dir": "/p", "host": "a.b"}}`)
-		if c, err := Load(); err == nil {
+		t.Parallel()
+		e := useConfig(t, `{"plans": {"dir": "/p", "host": "a.b"}}`)
+		if c, err := Load(e); err == nil {
 			t.Errorf("a host with a dot: %+v", c)
 		}
 	})

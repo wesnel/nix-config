@@ -39,6 +39,7 @@ import (
 	"unicode"
 
 	"github.com/wesnel/agent-tools/internal/agentplans"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/redact"
 	"github.com/wesnel/agent-tools/internal/status"
@@ -265,9 +266,9 @@ type Export struct {
 func Collect(ctx context.Context, c plans.Config, cache string, now time.Time) (Export, error) {
 	var e Export
 	var errs [4]error
-	e.Plans, e.Failed, errs[0] = Plans(c, now)
+	e.Plans, e.Failed, errs[0] = Plans(ctx, c, now)
 	e.Listed = e.Plans != nil
-	e.Sync, errs[1] = SyncOf(c, now)
+	e.Sync, errs[1] = SyncOf(ctx, c, now)
 	e.Sync.Failed = len(e.Failed)
 	e.GitHub, errs[2] = GitHubOf(ctx, cache, now)
 	e.Today, errs[3] = TodayOf(c, now)
@@ -378,8 +379,8 @@ var (
 // Plans are c's plans of every host, newest first, but those halted, and
 // the IDs of those that failed: refused by Open, unreadable, or with an ID
 // longer than maxID, each named in the error. Plans is nil only where the
-// plans directory could not be listed.
-func Plans(c plans.Config, now time.Time) ([]Plan, []string, error) {
+// plans directory could not be listed. Git runs in ctx's Env.
+func Plans(ctx context.Context, c plans.Config, now time.Time) ([]Plan, []string, error) {
 	all, failed, err := c.Plans()
 	if err != nil {
 		return nil, nil, fmt.Errorf("listing the plans: %w", err)
@@ -401,7 +402,7 @@ func Plans(c plans.Config, now time.Time) ([]Plan, []string, error) {
 			errs = append(errs, fmt.Errorf("%s: its ID is longer than the %d characters a document ID may be", p.Name, maxID))
 			continue
 		}
-		plan, err := planOf(c, p, titles, now)
+		plan, err := planOf(ctx, c, p, titles, now)
 		if err != nil {
 			failed = append(failed, p.Name)
 			errs = append(errs, fmt.Errorf("%s: %w", p.Name, err))
@@ -415,7 +416,7 @@ func Plans(c plans.Config, now time.Time) ([]Plan, []string, error) {
 }
 
 // planOf is p's document, its workstream titled as titles, by ID, name it.
-func planOf(c plans.Config, p plans.Plan, titles map[string]string, now time.Time) (Plan, error) {
+func planOf(ctx context.Context, c plans.Config, p plans.Plan, titles map[string]string, now time.Time) (Plan, error) {
 	st, err := p.StatusAt(now)
 	if err != nil {
 		return Plan{}, err
@@ -436,7 +437,7 @@ func planOf(c plans.Config, p plans.Plan, titles map[string]string, now time.Tim
 	if goal, err := p.Goal(""); err == nil {
 		plan.Goal = text(strings.TrimSpace(goal), long)
 	}
-	if plan.Updated, err = updated(c, p); err != nil {
+	if plan.Updated, err = updated(ctx, c, p); err != nil {
 		return Plan{}, err
 	}
 	steps, err := p.InSection("Steps")
@@ -500,9 +501,9 @@ func planOf(c plans.Config, p plans.Plan, titles map[string]string, now time.Tim
 
 // updated is Plan.Updated of p: a log's times carry no zone, so only this
 // host's are read as local time.
-func updated(c plans.Config, p plans.Plan) (string, error) {
+func updated(ctx context.Context, c plans.Config, p plans.Plan) (string, error) {
 	if !p.Own {
-		at, err := c.Committed(p)
+		at, err := c.Committed(ctx, p)
 		return stamp(at), err
 	}
 	events, err := p.Events()
@@ -518,9 +519,9 @@ func updated(c plans.Config, p plans.Plan) (string, error) {
 	return stamp(at), nil
 }
 
-// SyncOf is c's sync state as at now.
-func SyncOf(c plans.Config, now time.Time) (Sync, error) {
-	s, err := c.SyncState()
+// SyncOf is c's sync state as at now, git running in ctx's Env.
+func SyncOf(ctx context.Context, c plans.Config, now time.Time) (Sync, error) {
+	s, err := c.SyncState(ctx)
 	return Sync{Schema: agentplans.Schema, Updated: stamp(now), Host: c.Host, Repo: s.Repo, Pushed: stamp(s.Pushed), Unsynced: s.Unsynced,
 		Fetched: stamp(s.Fetched), Staged: s.Staged}, err
 }
@@ -546,7 +547,7 @@ func GitHubOf(ctx context.Context, cache string, now time.Time) (GitHub, error) 
 		if slug.MatchString(p.Repo) && p.Number > 0 {
 			pr := PR{Repo: p.Repo, Number: p.Number, Title: text(p.Title, short), Draft: p.Draft,
 				CI: enum(p.CI), Review: enum(p.Review), Unresolved: p.Unresolved, Parent: max(p.Parent, 0)}
-			pr.setReview(reviewOf(p.Repo, p.Number, &budget))
+			pr.setReview(reviewOf(env.From(ctx), p.Repo, p.Number, &budget))
 			g.Mine = append(g.Mine, pr)
 		}
 	}
@@ -555,7 +556,7 @@ func GitHubOf(ctx context.Context, cache string, now time.Time) (GitHub, error) 
 			req := Request{Repo: r.Repo, Number: r.Number, Title: text(r.Title, short),
 				Draft: r.Draft, Team: r.Team, Requested: stamp(r.Requested), Head: r.Head, CI: enum(r.CI),
 				Record: enum(r.Record), Parent: max(r.Parent, 0)}
-			req.setReview(reviewOf(r.Repo, r.Number, &budget))
+			req.setReview(reviewOf(env.From(ctx), r.Repo, r.Number, &budget))
 			g.Requests = append(g.Requests, req)
 		}
 	}

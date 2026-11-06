@@ -1,6 +1,7 @@
 package plans
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -34,16 +35,16 @@ var notifiedAgent = regexp.MustCompile(`<summary>Agent "(.*)" finished</summary>
 // received (see DeliverSigns).
 //
 // It returns the hook's output, or nothing, on any error too.
-func (c Config) Remind(input []byte) []byte {
-	out := c.remind(input)
-	if signs := c.remindSigns(input, time.Now()); signs != "" {
+func (c Config) Remind(ctx context.Context, input []byte) []byte {
+	out := c.remind(ctx, input)
+	if signs := c.remindSigns(ctx, input, time.Now()); signs != "" {
 		return WithContext(out, input, signs)
 	}
 	return out
 }
 
 // remind is Remind but for the sign-passes.
-func (c Config) remind(input []byte) []byte {
+func (c Config) remind(ctx context.Context, input []byte) []byte {
 	var in struct {
 		Event        string          `json:"hook_event_name"`
 		SessionID    string          `json:"session_id"`
@@ -66,8 +67,8 @@ func (c Config) remind(input []byte) []byte {
 			return file
 		}
 		looked = true
-		top, _ := checkout(in.Cwd)
-		if p, _, ok := c.Locate(in.SessionID, top); ok {
+		top, _ := checkout(ctx, in.Cwd)
+		if p, _, ok := c.Locate(ctx, in.SessionID, top); ok {
 			found, file = p, p.File()
 		}
 		return file

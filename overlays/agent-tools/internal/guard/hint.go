@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
@@ -27,13 +28,13 @@ func branchHint(ctx context.Context, session string, toolInput json.RawMessage, 
 	if top == "" {
 		return ""
 	}
-	c, err := plans.Load()
+	c, err := plans.Load(env.Process())
 	if err != nil {
 		return ""
 	}
-	p, _, ok := c.Locate(session, "")
+	p, _, ok := c.Locate(ctx, session, "")
 	if !ok {
-		if p, _, ok = c.Locate("", top); !ok {
+		if p, _, ok = c.Locate(ctx, "", top); !ok {
 			return ""
 		}
 	}

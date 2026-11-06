@@ -37,7 +37,7 @@ func TestPlanCommitRewrites(t *testing.T) {
 		childOne := gitIn(t, repo, "rev-parse", "HEAD")
 		c, p := commitPlan(t, repo)
 		for _, oid := range []string{first, second, childTwo, fixup, amend, childOne} {
-			e, err := plans.CommitIdentity(repo, oid)
+			e, err := plans.CommitIdentity(t.Context(), repo, oid)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -68,7 +68,7 @@ func TestPlanCommitRewrites(t *testing.T) {
 		gitIn(t, repo, "commit", "--allow-empty", "-m", "fixup! a")
 		c := plans.Config{Dir: filepath.Join(t.TempDir(), "agents"), Host: "box"}
 		plansConfig(t, c)
-		made, err := c.New(plans.NewOptions{Title: "Link commits", Slug: "links", Worktrees: []string{repo}}, time.Now())
+		made, err := c.New(t.Context(), plans.NewOptions{Title: "Link commits", Slug: "links", Worktrees: []string{repo}}, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -78,7 +78,7 @@ func TestPlanCommitRewrites(t *testing.T) {
 		}
 		var old []string
 		for _, rev := range []string{"one~2", "one~1", "one"} {
-			e, err := plans.CommitIdentity(repo, rev)
+			e, err := plans.CommitIdentity(t.Context(), repo, rev)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -228,7 +228,7 @@ func TestPlanCommitRewrites(t *testing.T) {
 // returns the event.
 func recordCommitted(t *testing.T, p plans.Plan, repo, ref string) plans.Event {
 	t.Helper()
-	identity, err := plans.CommitIdentity(repo, ref)
+	identity, err := plans.CommitIdentity(t.Context(), repo, ref)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +273,7 @@ func commitPlan(t *testing.T, repo string) (plans.Config, plans.Plan) {
 	repo, _ = filepath.EvalSymlinks(repo)
 	c := plans.Config{Dir: filepath.Join(t.TempDir(), "agents"), Host: "box"}
 	plansConfig(t, c)
-	made, err := c.New(plans.NewOptions{Title: "Link commits", Slug: "links", Worktrees: []string{repo}}, time.Now())
+	made, err := c.New(t.Context(), plans.NewOptions{Title: "Link commits", Slug: "links", Worktrees: []string{repo}}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

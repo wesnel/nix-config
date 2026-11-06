@@ -2,13 +2,14 @@
 package history
 
 import (
+	"context"
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 	"sync"
 	"unicode/utf8"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/publictext"
 	"github.com/wesnel/agent-tools/internal/refusal"
@@ -24,14 +25,15 @@ type Commit struct {
 // CouldNotApply finds the commit a stopped rebase names.
 var CouldNotApply = regexp.MustCompile(`could not apply ([0-9a-f]+)\.\.\. (.*)`)
 
-// Between lists base..tip oldest first.
-func Between(base, tip string) ([]Commit, error) {
-	return Log(base + ".." + tip)
+// Between lists base..tip oldest first, in the repository of ctx's Env.
+func Between(ctx context.Context, base, tip string) ([]Commit, error) {
+	return Log(ctx, base+".."+tip)
 }
 
-// Log lists the commits git log selects with revs, oldest first.
-func Log(revs ...string) ([]Commit, error) {
-	out, err := git.Run(append([]string{"log", "--reverse", "--format=%B%x00%an <%ae>%x01"}, revs...)...)
+// Log lists the commits git log selects with revs, oldest first, in the
+// repository of ctx's Env.
+func Log(ctx context.Context, revs ...string) ([]Commit, error) {
+	out, err := git.In(ctx).Run(append([]string{"log", "--reverse", "--format=%B%x00%an <%ae>%x01"}, revs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -162,8 +164,9 @@ var (
 // or links a session. A fixup! carries only Review-* trailers. Nothing else
 // names what publictext finds, since GitHub shows every message pushed. A
 // fold's subject is not a subject the history keeps, so a caller that can
-// lints the messages Squashed leaves.
-func LintMessage(message string) []string {
+// lints the messages Squashed leaves. What publictext finds depends on the
+// repository of ctx's Env.
+func LintMessage(ctx context.Context, message string) []string {
 	var problems []string
 	subject := Subject(message)
 	kind, _ := Fold(message)
@@ -199,7 +202,7 @@ func LintMessage(message string) []string {
 		paragraphs[len(paragraphs)-1] = strings.Join(kept, "\n")
 		public = subject + "\n\n" + strings.Join(paragraphs, "\n\n")
 	}
-	if problem := publictext.Problem(publictext.Check(public, publicContext())); problem != "" {
+	if problem := publictext.Problem(publictext.Check(public, publicContext(ctx))); problem != "" {
 		problems = append(problems, problem)
 	}
 	return problems
@@ -207,17 +210,16 @@ func LintMessage(message string) []string {
 
 var contexts sync.Map
 
-// publicContext is publictext.In for the repository git runs in, once per
+// publicContext is publictext.In for the directory of ctx's Env, once per
 // directory.
-func publicContext() publictext.Context {
-	cwd, _ := os.Getwd()
-	key := git.Dir + "\x00" + cwd
-	if ctx, ok := contexts.Load(key); ok {
-		return ctx.(publictext.Context)
+func publicContext(ctx context.Context) publictext.Context {
+	dir := env.From(ctx).Dir()
+	if c, ok := contexts.Load(dir); ok {
+		return c.(publictext.Context)
 	}
-	ctx := publictext.In(git.Dir)
-	contexts.Store(key, ctx)
-	return ctx
+	c := publictext.In(dir)
+	contexts.Store(dir, c)
+	return c
 }
 
 // NoEditor keeps a rebase from opening an editor: for the todo list, and for
@@ -226,8 +228,8 @@ func publicContext() publictext.Context {
 var NoEditor = []string{"GIT_SEQUENCE_EDITOR=:", "GIT_EDITOR=:"}
 
 // Match refuses unless base..tip holds exactly the wanted commits.
-func Match(want []Commit, base, tip, branch string) error {
-	got, err := Between(base, tip)
+func Match(ctx context.Context, want []Commit, base, tip, branch string) error {
+	got, err := Between(ctx, base, tip)
 	if err != nil {
 		return err
 	}

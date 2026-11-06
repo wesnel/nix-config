@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/plans"
@@ -100,7 +101,7 @@ func overlapSection(r *span) string {
 		add(ref, 0, "local", false)
 	}
 	remotes := remotesOf(r)
-	for _, b := range plans.HostBranches() {
+	for _, b := range plans.HostBranches(env.Process()) {
 		if over() {
 			unchecked++
 			continue

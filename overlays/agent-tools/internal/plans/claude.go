@@ -1,6 +1,7 @@
 package plans
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -25,15 +26,15 @@ func hookOutput(event, context string) ([]byte, error) {
 
 // checkout is the top level and branch of the worktree containing dir,
 // asked of that directory alone.
-func checkout(dir string) (top, branch string) {
+func checkout(ctx context.Context, dir string) (top, branch string) {
 	if dir == "" {
 		return "", ""
 	}
-	top, err := git.Run("-C", dir, "rev-parse", "--show-toplevel")
+	top, err := git.In(ctx).Run("-C", dir, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return "", ""
 	}
-	branch, _ = git.Run("-C", dir, "branch", "--show-current")
+	branch, _ = git.In(ctx).Run("-C", dir, "branch", "--show-current")
 	return top, branch
 }
 
@@ -44,7 +45,7 @@ func checkout(dir string) (top, branch string) {
 // none. Claude clear events first consume its SessionEnd handover. Codex
 // events only read: exact session matches take precedence, and ambiguous
 // matches get no brief.
-func (c Config) SessionHook(hook []byte, harness string) ([]byte, error) {
+func (c Config) SessionHook(ctx context.Context, hook []byte, harness string) ([]byte, error) {
 	var in sessionHook
 	if err := json.Unmarshal(hook, &in); err != nil {
 		return nil, err
@@ -66,10 +67,10 @@ func (c Config) SessionHook(hook []byte, harness string) ([]byte, error) {
 	if in.SessionID != "" {
 		o.Session = harness + ":" + in.SessionID
 		if harness == "claude" && in.Source == "clear" && in.Cwd != "" {
-			c.takeHandover(o.Session, in.Cwd, time.Now())
+			c.takeHandover(ctx, o.Session, in.Cwd, time.Now())
 		}
 	}
-	if top, _ := checkout(in.Cwd); linkedWorktree(top) {
+	if top, _ := checkout(ctx, in.Cwd); linkedWorktree(ctx, top) {
 		o.Worktree = top
 	}
 	if o.Session == "" && o.Worktree == "" {

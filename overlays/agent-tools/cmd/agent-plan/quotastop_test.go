@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,23 +11,24 @@ import (
 	"time"
 )
 
-// runQuotaStop runs the hook at threshold 90 on a call of tool with input.
-func runQuotaStop(t *testing.T, tool, input string) (int, string, string) {
+// runQuotaStop runs the hook at threshold 90 on a call of tool with input,
+// in the Env of ctx.
+func runQuotaStop(ctx context.Context, t *testing.T, tool, input string) (int, string, string) {
 	t.Helper()
 	event := fmt.Sprintf(`{"session_id":"s-1","cwd":"/nowhere","hook_event_name":"PreToolUse","tool_name":%q,"tool_input":%s}`,
 		tool, input)
-	return agentPlan(t, event, "quota-stop", "--threshold", "90")
+	return agentPlan(ctx, t, event, "quota-stop", "--threshold", "90")
 }
 
-// writeUsage writes usage.json with the five_hour window at used, and
-// seven_day at 10%.
-func writeUsage(t *testing.T, used float64, resets, observed time.Time) {
+// writeUsage writes usage.json, in the state directory of ctx's Env, with
+// the five_hour window at used, and seven_day at 10%.
+func writeUsage(ctx context.Context, t *testing.T, used float64, resets, observed time.Time) {
 	t.Helper()
-	os.MkdirAll(filepath.Dir(usageFile(t)), 0o700)
+	os.MkdirAll(filepath.Dir(usageFile(ctx)), 0o700)
 	data := fmt.Sprintf(`{"five_hour":{"used_percentage":%g,"resets_at":%d,"observed_at":%d},`+
 		`"seven_day":{"used_percentage":10,"resets_at":%d,"observed_at":%d}}`,
 		used, resets.Unix(), observed.Unix(), resets.Add(72*time.Hour).Unix(), observed.Unix())
-	if err := os.WriteFile(usageFile(t), []byte(data), 0o600); err != nil {
+	if err := os.WriteFile(usageFile(ctx), []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -56,6 +58,7 @@ func denial(t *testing.T, out string) string {
 // agent-plan's own, naming the window, its share and its reset, and how
 // the operator lifts it.
 func TestQuotaStop(t *testing.T) {
+	t.Parallel()
 	agent := `{"description":"Build P1","prompt":"go"}`
 	bash := func(command string) string { return fmt.Sprintf(`{"command":%q}`, command) }
 	resets := time.Now().Add(2 * time.Hour).Truncate(time.Minute)
@@ -92,9 +95,10 @@ func TestQuotaStop(t *testing.T) {
 		{"agent-plan after cd above it", "Bash", bash("cd /x && agent-plan status /p.org"), 97.5, resets, time.Now(), true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			setup(t)
-			writeUsage(t, c.used, c.resets, c.observed)
-			code, out, errs := runQuotaStop(t, c.tool, c.input)
+			t.Parallel()
+			ctx, _ := setup(t)
+			writeUsage(ctx, t, c.used, c.resets, c.observed)
+			code, out, errs := runQuotaStop(ctx, t, c.tool, c.input)
 			if code != 0 {
 				t.Fatalf("quota-stop: %d %q %q", code, out, errs)
 			}
@@ -116,12 +120,13 @@ func TestQuotaStop(t *testing.T) {
 	// With nothing recorded, or a record it cannot read, nothing stops.
 	for name, data := range map[string]string{"no usage file": "", "a broken usage file": "{"} {
 		t.Run(name, func(t *testing.T) {
-			setup(t)
+			t.Parallel()
+			ctx, _ := setup(t)
 			if data != "" {
-				os.MkdirAll(filepath.Dir(usageFile(t)), 0o700)
-				os.WriteFile(usageFile(t), []byte(data), 0o600)
+				os.MkdirAll(filepath.Dir(usageFile(ctx)), 0o700)
+				os.WriteFile(usageFile(ctx), []byte(data), 0o600)
 			}
-			if code, out, errs := runQuotaStop(t, "Agent", agent); code != 0 || out != "" {
+			if code, out, errs := runQuotaStop(ctx, t, "Agent", agent); code != 0 || out != "" {
 				t.Errorf("quota-stop: %d %q %q", code, out, errs)
 			}
 		})
@@ -132,9 +137,10 @@ func TestQuotaStop(t *testing.T) {
 	for _, args := range [][]string{{"quota-stop"}, {"quota-stop", "--threshold", "0"}, {"quota-stop", "--threshold", "101"},
 		{"quota-stop", "--threshold", "ninety"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
-			setup(t)
-			writeUsage(t, 97.5, resets, time.Now())
-			if code, out, errs := agentPlan(t, `{"tool_name":"Agent","tool_input":{}}`, args...); code != 1 || out != "" || errs == "" {
+			t.Parallel()
+			ctx, _ := setup(t)
+			writeUsage(ctx, t, 97.5, resets, time.Now())
+			if code, out, errs := agentPlan(ctx, t, `{"tool_name":"Agent","tool_input":{}}`, args...); code != 1 || out != "" || errs == "" {
 				t.Errorf("%d %q %q", code, out, errs)
 			}
 		})
@@ -145,17 +151,18 @@ func TestQuotaStop(t *testing.T) {
 // their resets, and names that one: a resume at the earlier reset would
 // meet the stop again.
 func TestQuotaStopBothWindows(t *testing.T) {
-	setup(t)
+	t.Parallel()
+	ctx, _ := setup(t)
 	now := time.Now()
 	five, seven := now.Add(time.Hour).Truncate(time.Minute), now.Add(50*time.Hour).Truncate(time.Minute)
-	os.MkdirAll(filepath.Dir(usageFile(t)), 0o700)
+	os.MkdirAll(filepath.Dir(usageFile(ctx)), 0o700)
 	data := fmt.Sprintf(`{"five_hour":{"used_percentage":95,"resets_at":%d,"observed_at":%d},`+
 		`"seven_day":{"used_percentage":92,"resets_at":%d,"observed_at":%d}}`,
 		five.Unix(), now.Unix(), seven.Unix(), now.Unix())
-	if err := os.WriteFile(usageFile(t), []byte(data), 0o600); err != nil {
+	if err := os.WriteFile(usageFile(ctx), []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, out, _ := runQuotaStop(t, "Agent", `{}`)
+	_, out, _ := runQuotaStop(ctx, t, "Agent", `{}`)
 	reason := denial(t, out)
 	if want := seven.Format("Mon 2 15:04"); !strings.Contains(reason, "7d window is at 92%") || !strings.Contains(reason, want) {
 		t.Errorf("reason %q does not name the 7d window and its reset %s", reason, want)
@@ -179,6 +186,7 @@ func wakeIn(d time.Duration) string {
 // that would fire before it, into the stop, is refused. ScheduleWakeup
 // clamps its delay to an hour, so a longer one fires at the hour.
 func TestQuotaStopResume(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	resets := now.Add(40 * time.Minute).Truncate(time.Minute)
 	for _, c := range []struct {
@@ -196,9 +204,10 @@ func TestQuotaStopResume(t *testing.T) {
 		{"a cron that fires every five minutes", "CronCreate", `{"cron":"*/5 * * * *","prompt":"resume"}`, resets, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			setup(t)
-			writeUsage(t, 95, c.resets, now)
-			_, out, _ := runQuotaStop(t, c.tool, c.input)
+			t.Parallel()
+			ctx, _ := setup(t)
+			writeUsage(ctx, t, 95, c.resets, now)
+			_, out, _ := runQuotaStop(ctx, t, c.tool, c.input)
 			if reason := denial(t, out); (reason != "") != c.stops {
 				t.Errorf("stops %v, want %v: %q", reason != "", c.stops, reason)
 			}
@@ -227,8 +236,9 @@ func TestQuotaStopResume(t *testing.T) {
 		{"CronCreate", `{"cron":"*/5 * * * *","prompt":"resume"}`},
 	} {
 		t.Run(c.tool+" with no known reset", func(t *testing.T) {
-			setup(t)
-			if _, out, errs := runQuotaStop(t, c.tool, c.input); out != "" {
+			t.Parallel()
+			ctx, _ := setup(t)
+			if _, out, errs := runQuotaStop(ctx, t, c.tool, c.input); out != "" {
 				t.Errorf("stopped: %q %q", out, errs)
 			}
 		})
@@ -258,6 +268,7 @@ func givenCall(t *testing.T, reason string) (string, string) {
 // ScheduleWakeup within the hour it can reach, else a one-shot CronCreate.
 // A sub-agent, which has neither tool, is told to hand back instead.
 func TestQuotaStopResumeCall(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	for _, c := range []struct {
 		name, tool string
@@ -267,9 +278,10 @@ func TestQuotaStopResumeCall(t *testing.T) {
 		{"a reset hours away", "CronCreate", now.Add(3 * time.Hour).Truncate(time.Minute)},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			setup(t)
-			writeUsage(t, 95, c.resets, now)
-			_, out, _ := runQuotaStop(t, "Bash", `{"command":"go test ./..."}`)
+			t.Parallel()
+			ctx, _ := setup(t)
+			writeUsage(ctx, t, 95, c.resets, now)
+			_, out, _ := runQuotaStop(ctx, t, "Bash", `{"command":"go test ./..."}`)
 			tool, input := givenCall(t, denial(t, out))
 			if tool != c.tool {
 				t.Fatalf("the refusal gives a %q call, want %s: %q", tool, c.tool, out)
@@ -303,17 +315,18 @@ func TestQuotaStopResumeCall(t *testing.T) {
 			if !fires.After(c.resets) || fires.After(c.resets.Add(3*time.Minute)) {
 				t.Errorf("the resume fires at %s, not just after the reset at %s: %s", fires, c.resets, input)
 			}
-			if _, out, _ := runQuotaStop(t, tool, input); out != "" {
+			if _, out, _ := runQuotaStop(ctx, t, tool, input); out != "" {
 				t.Errorf("the stop refused the call it gave: %q", denial(t, out))
 			}
 		})
 	}
 
 	t.Run("a sub-agent", func(t *testing.T) {
-		setup(t)
-		writeUsage(t, 95, now.Add(40*time.Minute), now)
+		t.Parallel()
+		ctx, _ := setup(t)
+		writeUsage(ctx, t, 95, now.Add(40*time.Minute), now)
 		event := `{"session_id":"s-1","agent_id":"a1","agent_type":"builder","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"go test ./..."}}`
-		_, out, _ := agentPlan(t, event, "quota-stop", "--threshold", "90")
+		_, out, _ := agentPlan(ctx, t, event, "quota-stop", "--threshold", "90")
 		reason := denial(t, out)
 		if tool, _ := givenCall(t, reason); tool != "" || !strings.Contains(reason, "SubagentHandback") {
 			t.Errorf("a sub-agent is not told to hand back, or is given a %q call: %q", tool, reason)
@@ -324,22 +337,24 @@ func TestQuotaStopResumeCall(t *testing.T) {
 // Every open session's status line records the windows; the stop holds
 // whichever of them reports last.
 func TestQuotaStopAcrossSessions(t *testing.T) {
+	t.Parallel()
 	status := func(used float64, resets time.Time) string {
 		return fmt.Sprintf(`{"rate_limits":{"five_hour":{"used_percentage":%g,"resets_at":%d}}}`, used, resets.Unix())
 	}
 	resets := time.Now().Add(2 * time.Hour)
-	stopped := func(t *testing.T) bool {
+	stopped := func(ctx context.Context, t *testing.T) bool {
 		t.Helper()
-		_, out, _ := runQuotaStop(t, "Agent", `{}`)
+		_, out, _ := runQuotaStop(ctx, t, "Agent", `{}`)
 		return denial(t, out) != ""
 	}
 
 	// An idle session repeats its reading of the window before this one.
 	t.Run("an idle session's earlier window", func(t *testing.T) {
-		setup(t)
-		agentPlan(t, status(95, resets), "statusline")
-		agentPlan(t, status(50, time.Now().Add(-3*time.Hour)), "statusline")
-		if !stopped(t) {
+		t.Parallel()
+		ctx, _ := setup(t)
+		agentPlan(ctx, t, status(95, resets), "statusline")
+		agentPlan(ctx, t, status(50, time.Now().Add(-3*time.Hour)), "statusline")
+		if !stopped(ctx, t) {
 			t.Error("a reading of a window that has reset lifted the stop")
 		}
 	})
@@ -347,10 +362,11 @@ func TestQuotaStopAcrossSessions(t *testing.T) {
 	// A reading over the threshold seen 6 minutes ago no longer counts
 	// alone, but a fresh, lower one of the same window still over it does.
 	t.Run("a fresh, lower reading over the threshold", func(t *testing.T) {
-		setup(t)
-		writeUsage(t, 95, resets, time.Now().Add(-6*time.Minute))
-		agentPlan(t, status(91, resets), "statusline")
-		if !stopped(t) {
+		t.Parallel()
+		ctx, _ := setup(t)
+		writeUsage(ctx, t, 95, resets, time.Now().Add(-6*time.Minute))
+		agentPlan(ctx, t, status(91, resets), "statusline")
+		if !stopped(ctx, t) {
 			t.Error("a fresh 91% reading did not hold the stop at 90%")
 		}
 	})

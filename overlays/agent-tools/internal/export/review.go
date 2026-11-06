@@ -52,12 +52,12 @@ type reviewSummary struct {
 var states = []record.State{record.Open, record.Defer, record.Operator, record.Fix, record.Propose, record.Rebut,
 	record.Duplicate, record.Belongs}
 
-// reviewOf is repo#number's review, its diagrams taken from what is left
-// of budget.
-func reviewOf(repo string, number int, budget *int) reviewSummary {
+// reviewOf is repo#number's review, as e's records keep it, its diagrams
+// taken from what is left of budget.
+func reviewOf(e env.Env, repo string, number int, budget *int) reviewSummary {
 	out := reviewSummary{findings: []FindingCount{}, diagrams: []ReviewDiagram{}}
 	owner, name, _ := strings.Cut(repo, "/")
-	if rec, _, err := record.NewestRange(env.Process(), owner, name, number, ""); err == nil && rec != nil {
+	if rec, _, err := record.NewestRange(e, owner, name, number, ""); err == nil && rec != nil {
 		out.exists = true
 		for _, s := range states {
 			n := 0
@@ -84,7 +84,7 @@ func reviewOf(repo string, number int, budget *int) reviewSummary {
 			}
 		}
 	}
-	if path, err := record.PRFile(env.Process(), owner, name, number); err == nil {
+	if path, err := record.PRFile(e, owner, name, number); err == nil {
 		if p, err := record.ReadPR(path); err == nil {
 			c := p.Counts()
 			out.threads, out.unanswered, out.drafted = len(p.Threads), c.Unanswered, c.Drafted

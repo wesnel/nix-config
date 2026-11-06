@@ -12,7 +12,7 @@ import (
 func TestNewWorkstream(t *testing.T) {
 	t.Run("written", func(t *testing.T) {
 		c := testConfig(t)
-		w, err := c.NewWorkstream("Agent tooling", "The agent-tools overlay and the skills.\nNot Codex parity.")
+		w, err := c.NewWorkstream(t.Context(), "Agent tooling", "The agent-tools overlay and the skills.\nNot Codex parity.")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -31,13 +31,13 @@ func TestNewWorkstream(t *testing.T) {
 	// leaves its file as the person last wrote it.
 	t.Run("again", func(t *testing.T) {
 		c := testConfig(t)
-		first, err := c.NewWorkstream("Agent tooling", "")
+		first, err := c.NewWorkstream(t.Context(), "Agent tooling", "")
 		if err != nil {
 			t.Fatal(err)
 		}
 		os.WriteFile(first.File, []byte(fileText(t, first.File)+"Edited by hand.\n"), 0o644)
 		before := fileText(t, first.File)
-		again, err := c.NewWorkstream("Agent tooling!", "Another summary.")
+		again, err := c.NewWorkstream(t.Context(), "Agent tooling!", "Another summary.")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -51,11 +51,11 @@ func TestNewWorkstream(t *testing.T) {
 	t.Run("another host's", func(t *testing.T) {
 		c := testConfig(t)
 		mac := Config{Dir: c.Dir, Host: "mac"}
-		theirs, err := mac.NewWorkstream("Codex parity", "")
+		theirs, err := mac.NewWorkstream(t.Context(), "Codex parity", "")
 		if err != nil {
 			t.Fatal(err)
 		}
-		mine, err := c.NewWorkstream("Codex parity", "")
+		mine, err := c.NewWorkstream(t.Context(), "Codex parity", "")
 		if err != nil || mine.ID != theirs.ID || mine.Host != "mac" || !mine.Existed {
 			t.Errorf("box's %+v, %v", mine, err)
 		}
@@ -73,7 +73,7 @@ func TestNewWorkstream(t *testing.T) {
 			"summary heading":    {"Agent tooling", "* Not a summary"},
 			"summary drawer":     {"Agent tooling", ":PROPERTIES:"},
 		} {
-			_, err := c.NewWorkstream(args[0], args[1])
+			_, err := c.NewWorkstream(t.Context(), args[0], args[1])
 			isRefusal(t, name, err)
 		}
 		if entries, _ := os.ReadDir(c.Dir); len(entries) > 1 {
@@ -86,7 +86,7 @@ func TestNewWorkstream(t *testing.T) {
 // none for "".
 func planOn(t *testing.T, c Config, slug, ws string, branches ...string) Plan {
 	t.Helper()
-	made, err := c.New(NewOptions{Title: "Plan " + slug, Slug: slug, Repos: []string{"o/r"}, Branches: branches,
+	made, err := c.New(t.Context(), NewOptions{Title: "Plan " + slug, Slug: slug, Repos: []string{"o/r"}, Branches: branches,
 		Workstream: ws}, day)
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func workstreamOf(t *testing.T, p Plan) string {
 func TestPlanWorkstream(t *testing.T) {
 	t.Run("named", func(t *testing.T) {
 		c := testConfig(t)
-		w, err := c.NewWorkstream("Agent [tooling]", "")
+		w, err := c.NewWorkstream(t.Context(), "Agent [tooling]", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -136,7 +136,7 @@ func TestPlanWorkstream(t *testing.T) {
 
 	t.Run("unknown", func(t *testing.T) {
 		c := testConfig(t)
-		_, err := c.New(NewOptions{Title: "X", Slug: "x", Workstream: "agent-tooling"}, day)
+		_, err := c.New(t.Context(), NewOptions{Title: "X", Slug: "x", Workstream: "agent-tooling"}, day)
 		isRefusal(t, "unknown workstream", err)
 		if ps, _ := c.ownPlans(); len(ps) != 0 {
 			t.Errorf("a plan was made: %v", ps)
@@ -149,7 +149,7 @@ func TestPlanWorkstream(t *testing.T) {
 	t.Run("continues a branch", func(t *testing.T) {
 		c := testConfig(t)
 		mac := Config{Dir: c.Dir, Host: "mac"}
-		w, err := mac.NewWorkstream("Agent tooling", "")
+		w, err := mac.NewWorkstream(t.Context(), "Agent tooling", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -178,17 +178,17 @@ func TestPlanWorkstream(t *testing.T) {
 	// cannot name another.
 	t.Run("part", func(t *testing.T) {
 		c := testConfig(t)
-		if _, err := c.NewWorkstream("Agent tooling", ""); err != nil {
+		if _, err := c.NewWorkstream(t.Context(), "Agent tooling", ""); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := c.NewWorkstream("Codex parity", ""); err != nil {
+		if _, err := c.NewWorkstream(t.Context(), "Codex parity", ""); err != nil {
 			t.Fatal(err)
 		}
 		p := planOn(t, c, "x", "agent-tooling", "main..loop")
 		addItems(t, p.file(""), "** Distribution", "P1", "P2")
-		_, err := c.New(NewOptions{Title: "Part", Parent: p.file(""), Part: "P1", Workstream: "codex-parity"}, day)
+		_, err := c.New(t.Context(), NewOptions{Title: "Part", Parent: p.file(""), Part: "P1", Workstream: "codex-parity"}, day)
 		isRefusal(t, "another workstream", err)
-		if _, err := c.New(NewOptions{Title: "Part", Parent: p.file(""), Part: "P2", Branches: []string{"loop..flag"}}, day); err != nil {
+		if _, err := c.New(t.Context(), NewOptions{Title: "Part", Parent: p.file(""), Part: "P2", Branches: []string{"loop..flag"}}, day); err != nil {
 			t.Fatal(err)
 		}
 		if text := fileText(t, p.file("P2")); strings.Contains(text, "WORKSTREAM") {
@@ -203,10 +203,10 @@ func TestWorkstreams(t *testing.T) {
 	c := testConfig(t)
 	newPlan(t, c, "x")
 	mac := Config{Dir: c.Dir, Host: "mac"}
-	if _, err := mac.NewWorkstream("Codex parity", ""); err != nil {
+	if _, err := mac.NewWorkstream(t.Context(), "Codex parity", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.NewWorkstream("Agent tooling", ""); err != nil {
+	if _, err := c.NewWorkstream(t.Context(), "Agent tooling", ""); err != nil {
 		t.Fatal(err)
 	}
 	ws, err := c.Workstreams()

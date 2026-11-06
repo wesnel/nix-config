@@ -14,15 +14,9 @@ import (
 // origin/main is its first commit, as a session commits in.
 func commitRepo(t *testing.T) string {
 	t.Helper()
-	for _, v := range []string{"GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"} {
-		t.Setenv(v, "T")
-	}
-	for _, v := range []string{"GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"} {
-		t.Setenv(v, "t@e")
-	}
 	repo, _ := filepath.EvalSymlinks(t.TempDir())
 	gitIn(t, repo, "init", "-q", "-b", "main")
-	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+	gitIn(t, repo, "-c", "user.name=T", "-c", "user.email=t@e", "commit", "-q", "--allow-empty", "-m", "base")
 	gitIn(t, repo, "update-ref", "refs/remotes/origin/main", "HEAD")
 	gitIn(t, repo, "remote", "add", "origin", "https://github.com/o/r.git")
 	return repo
@@ -48,10 +42,12 @@ func commitsOf(t *testing.T, p Plan) []string {
 // Every session that commits has a plan: a commit no plan takes makes one,
 // named for the repository, which names the session and the worktree.
 func TestRecordCommit(t *testing.T) {
+	t.Parallel()
 	t.Run("no plan", func(t *testing.T) {
+		t.Parallel()
 		c := testConfig(t)
 		repo := commitRepo(t)
-		p, created, err := c.RecordCommit("s1", repo, Event{Commit: "Add x", Summary: "Add x", Branch: "main"}, day)
+		p, created, err := c.RecordCommit(t.Context(), "s1", repo, Event{Commit: "Add x", Summary: "Add x", Branch: "main"}, day)
 		if err != nil || !created {
 			t.Fatalf("created %v, %v", created, err)
 		}
@@ -69,20 +65,21 @@ func TestRecordCommit(t *testing.T) {
 		if goal, err := p.Goal(""); err != nil || goal != "Unplanned work in o/r.\n" {
 			t.Errorf("goal %q, %v", goal, err)
 		}
-		again, created, err := c.RecordCommit("s1", repo, Event{Commit: "Add y", Summary: "Add y"}, day)
+		again, created, err := c.RecordCommit(t.Context(), "s1", repo, Event{Commit: "Add y", Summary: "Add y"}, day)
 		if err != nil || created || again.File() != p.File() {
 			t.Errorf("second commit: %s, created %v, %v", again.File(), created, err)
 		}
 	})
 
 	t.Run("a plan names the linked worktree", func(t *testing.T) {
+		t.Parallel()
 		c := testConfig(t)
 		_, linked := checkouts(t, 1)
-		made, err := c.New(NewOptions{Title: "Add x", Slug: "x", Worktrees: []string{linked[0]}}, day)
+		made, err := c.New(t.Context(), NewOptions{Title: "Add x", Slug: "x", Worktrees: []string{linked[0]}}, day)
 		if err != nil {
 			t.Fatal(err)
 		}
-		p, created, err := c.RecordCommit("s1", linked[0], Event{Commit: "Add x", Summary: "Add x"}, day)
+		p, created, err := c.RecordCommit(t.Context(), "s1", linked[0], Event{Commit: "Add x", Summary: "Add x"}, day)
 		if err != nil || created || p.File() != made.Plan {
 			t.Errorf("recorded in %s, created %v, %v; want %s", p.File(), created, err, made.Plan)
 		}
@@ -91,13 +88,14 @@ func TestRecordCommit(t *testing.T) {
 	// The main checkout is named by many plans and is no one plan's: a
 	// commit there by a session no plan names is unplanned work.
 	t.Run("a plan names only the main checkout", func(t *testing.T) {
+		t.Parallel()
 		c := testConfig(t)
 		repo, _ := checkouts(t, 0)
-		made, err := c.New(NewOptions{Title: "Add x", Slug: "x", Worktrees: []string{repo}, Sessions: []string{"other"}}, day)
+		made, err := c.New(t.Context(), NewOptions{Title: "Add x", Slug: "x", Worktrees: []string{repo}, Sessions: []string{"other"}}, day)
 		if err != nil {
 			t.Fatal(err)
 		}
-		p, created, err := c.RecordCommit("s1", repo, Event{Commit: "Add x", Summary: "Add x"}, day)
+		p, created, err := c.RecordCommit(t.Context(), "s1", repo, Event{Commit: "Add x", Summary: "Add x"}, day)
 		if err != nil || !created || p.File() == made.Plan {
 			t.Errorf("recorded in %s, created %v, %v; want a new plan, not %s", p.File(), created, err, made.Plan)
 		}
@@ -108,6 +106,7 @@ func TestRecordCommit(t *testing.T) {
 
 	// Hooks of the same session running at once make one plan between them.
 	t.Run("concurrent commits", func(t *testing.T) {
+		t.Parallel()
 		c := testConfig(t)
 		repo := commitRepo(t)
 		var wg sync.WaitGroup
@@ -116,7 +115,7 @@ func TestRecordCommit(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				subject := "Commit " + string(rune('a'+i))
-				if _, _, err := c.RecordCommit("s1", repo, Event{Commit: subject, Summary: subject}, day); err != nil {
+				if _, _, err := c.RecordCommit(t.Context(), "s1", repo, Event{Commit: subject, Summary: subject}, day); err != nil {
 					t.Error(err)
 				}
 			}()
@@ -149,7 +148,7 @@ func checkouts(t *testing.T, n int) (main string, linked []string) {
 // sessions, and returns its file.
 func locatePlan(t *testing.T, c Config, slug string, at time.Time, worktrees, sessions []string) string {
 	t.Helper()
-	made, err := c.New(NewOptions{Title: "Add " + slug, Slug: slug, Worktrees: worktrees, Sessions: sessions}, at)
+	made, err := c.New(t.Context(), NewOptions{Title: "Add " + slug, Slug: slug, Worktrees: worktrees, Sessions: sessions}, at)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,17 +170,18 @@ func locatePart(t *testing.T, c Config, plan, id string, worktrees, sessions []s
 	if err := os.WriteFile(plan, []byte(withPart), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.New(NewOptions{Title: "The part", Parent: plan, Part: id, Worktrees: worktrees,
+	if _, err := c.New(t.Context(), NewOptions{Title: "The part", Parent: plan, Part: id, Worktrees: worktrees,
 		Sessions: sessions}, day); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestLocate(t *testing.T) {
+	t.Parallel()
 	later := day.AddDate(0, 0, 1)
 	locate := func(t *testing.T, c Config, session, worktree, wantPlan, wantPart string) {
 		t.Helper()
-		p, part, ok := c.Locate(session, worktree)
+		p, part, ok := c.Locate(t.Context(), session, worktree)
 		if !ok || p.File() != wantPlan || part != wantPart {
 			t.Errorf("Locate(%q, %q) = %s part %q, %v; want %s part %q", session, worktree, p.File(), part, ok,
 				wantPlan, wantPart)
@@ -190,7 +190,7 @@ func TestLocate(t *testing.T) {
 
 	none := func(t *testing.T, c Config, session, worktree string) {
 		t.Helper()
-		if p, part, ok := c.Locate(session, worktree); ok {
+		if p, part, ok := c.Locate(t.Context(), session, worktree); ok {
 			t.Errorf("Locate(%q, %q) = %s part %q; want none", session, worktree, p.File(), part)
 		}
 	}

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
@@ -44,7 +45,7 @@ func planned(t *testing.T) (main, linked string, p plans.Plan) {
 	data, _ := json.Marshal(map[string]any{"plans": c})
 	os.WriteFile(config, data, 0o644)
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
-	made, err := c.New(plans.NewOptions{Title: "Add the loop", Slug: "loop", Branches: []string{"main..loop"},
+	made, err := c.New(t.Context(), plans.NewOptions{Title: "Add the loop", Slug: "loop", Branches: []string{"main..loop"},
 		Worktrees: []string{main}, Sessions: []string{"claude:s1"}}, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -52,7 +53,7 @@ func planned(t *testing.T) (main, linked string, p plans.Plan) {
 	text, _ := os.ReadFile(made.Plan)
 	os.WriteFile(made.Plan, []byte(strings.Replace(string(text), "** Distribution\n",
 		"** Distribution\n*** The part\n:PROPERTIES:\n:ID: P1\n:END:\n", 1)), 0o644)
-	if _, err := c.New(plans.NewOptions{Title: "The part", Parent: made.Plan, Part: "P1",
+	if _, err := c.New(t.Context(), plans.NewOptions{Title: "The part", Parent: made.Plan, Part: "P1",
 		Branches: []string{"main..part"}, Worktrees: []string{linked}}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
@@ -95,13 +96,13 @@ func planProperty(t *testing.T, file, name string) string {
 // names too links the plan to it, with that as the reason.
 func testPostLinksPlans(t *testing.T) {
 	main, _, p := planned(t)
-	c, err := plans.Load()
+	c, err := plans.Load(env.Process())
 	if err != nil {
 		t.Fatal(err)
 	}
 	other := func(slug, branch string) plans.Plan {
 		t.Helper()
-		made, err := c.New(plans.NewOptions{Title: "Other " + slug, Slug: slug, Branches: []string{branch}}, time.Now())
+		made, err := c.New(t.Context(), plans.NewOptions{Title: "Other " + slug, Slug: slug, Branches: []string{branch}}, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}

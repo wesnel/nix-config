@@ -2,9 +2,13 @@ package plans
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wesnel/agent-tools/internal/env"
 )
 
 // A resume brief is what a session needs from its plan to go on after
@@ -107,7 +111,7 @@ func TestResumeBrief(t *testing.T) {
 	t.Run("after /clear and a compaction in Claude Code", func(t *testing.T) {
 		c, p := resumed(t)
 		for _, source := range []string{"clear", "compact"} {
-			out, err := c.SessionHook([]byte(`{"session_id":"abc","source":"`+source+`","cwd":"/nowhere"}`), "claude")
+			out, err := c.SessionHook(t.Context(), []byte(`{"session_id":"abc","source":"`+source+`","cwd":"/nowhere"}`), "claude")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -119,20 +123,26 @@ func TestResumeBrief(t *testing.T) {
 				t.Errorf("%s: %d characters", source, len(context))
 			}
 		}
-		out, _ := c.SessionHook([]byte(`{"session_id":"abc","source":"resume","cwd":"/nowhere"}`), "claude")
+		out, _ := c.SessionHook(t.Context(), []byte(`{"session_id":"abc","source":"resume","cwd":"/nowhere"}`), "claude")
 		if context := hookContext(t, out, "SessionStart"); strings.Contains(context, "brief of") {
 			t.Errorf("a resume carries a brief: %q", context)
 		}
 	})
 
 	t.Run("after /clear, which starts a new session", func(t *testing.T) {
-		t.Setenv("XDG_STATE_HOME", t.TempDir())
+		t.Parallel()
+		state := t.TempDir()
+		ctx := env.With(t.Context(), env.Process().Set("XDG_STATE_HOME="+state))
 		c, p := resumed(t)
 		end := `{"session_id":"abc","hook_event_name":"SessionEnd","reason":"clear","cwd":"/nowhere"}`
-		if err := c.SessionEndHook([]byte(end), time.Now()); err != nil {
+		if err := c.SessionEndHook(ctx, []byte(end), time.Now()); err != nil {
 			t.Fatal(err)
 		}
-		out, err := c.SessionHook([]byte(`{"session_id":"def","source":"clear","cwd":"/nowhere"}`), "claude")
+		// The hand-over is kept in the Env's state directory.
+		if handed, _ := os.ReadDir(filepath.Join(state, "agent-tools", "cleared")); len(handed) != 1 {
+			t.Errorf("hand-overs in the Env's state directory: %v", handed)
+		}
+		out, err := c.SessionHook(ctx, []byte(`{"session_id":"def","source":"clear","cwd":"/nowhere"}`), "claude")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -142,7 +152,7 @@ func TestResumeBrief(t *testing.T) {
 		if found, err := c.Find(FindOptions{Session: "claude:def"}); err != nil || len(found) != 1 || found[0].Plan != p.File() {
 			t.Errorf("the new session is not the plan's: %+v %v", found, err)
 		}
-		out, _ = c.SessionHook([]byte(`{"session_id":"ghi","source":"clear","cwd":"/nowhere"}`), "claude")
+		out, _ = c.SessionHook(ctx, []byte(`{"session_id":"ghi","source":"clear","cwd":"/nowhere"}`), "claude")
 		if len(out) != 0 {
 			t.Errorf("a hand-over taken twice: %s", out)
 		}
@@ -150,7 +160,7 @@ func TestResumeBrief(t *testing.T) {
 
 	t.Run("no plan prints nothing", func(t *testing.T) {
 		c := testConfig(t)
-		out, err := c.SessionHook([]byte(`{"session_id":"nobody","source":"clear","cwd":"/nowhere"}`), "claude")
+		out, err := c.SessionHook(t.Context(), []byte(`{"session_id":"nobody","source":"clear","cwd":"/nowhere"}`), "claude")
 		if err != nil || len(out) != 0 {
 			t.Errorf("%q %v", out, err)
 		}

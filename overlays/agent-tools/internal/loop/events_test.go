@@ -27,7 +27,7 @@ func loopPlan(t *testing.T, worktrees, branches []string) plans.Plan {
 	for i, w := range worktrees {
 		worktrees[i], _ = filepath.EvalSymlinks(w)
 	}
-	made, err := c.New(plans.NewOptions{Title: "Answer the bots", Slug: "loop", Worktrees: worktrees, Branches: branches,
+	made, err := c.New(t.Context(), plans.NewOptions{Title: "Answer the bots", Slug: "loop", Worktrees: worktrees, Branches: branches,
 		Sessions: []string{"claude:s-loop"}}, time.Now())
 	if err != nil {
 		t.Fatal(err)

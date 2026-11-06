@@ -30,7 +30,7 @@ func TestTemplate(t *testing.T) {
 
 	t.Run("copied", func(t *testing.T) {
 		c := withTemplate(t, release)
-		made, err := c.New(NewOptions{Title: "Release 1.2", Slug: "release", Template: "release"}, day)
+		made, err := c.New(t.Context(), NewOptions{Title: "Release 1.2", Slug: "release", Template: "release"}, day)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -60,7 +60,7 @@ func TestTemplate(t *testing.T) {
 
 	t.Run("built in", func(t *testing.T) {
 		c := builtIn(t, testConfig(t), release)
-		made, err := c.New(NewOptions{Title: "Release 1.2", Slug: "release", Template: "release"}, day)
+		made, err := c.New(t.Context(), NewOptions{Title: "Release 1.2", Slug: "release", Template: "release"}, day)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -71,7 +71,7 @@ func TestTemplate(t *testing.T) {
 
 	t.Run("the plans repository's before the built-in one", func(t *testing.T) {
 		c := builtIn(t, withTemplate(t, release), strings.ReplaceAll(release, "Bump the version", "Built in"))
-		made, err := c.New(NewOptions{Title: "Release 1.2", Slug: "release", Template: "release"}, day)
+		made, err := c.New(t.Context(), NewOptions{Title: "Release 1.2", Slug: "release", Template: "release"}, day)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -82,7 +82,7 @@ func TestTemplate(t *testing.T) {
 
 	t.Run("refused/a built-in template with drift", func(t *testing.T) {
 		c := builtIn(t, testConfig(t), release+"** Follow-ups\n*** TODO Announce it\n")
-		_, err := c.New(NewOptions{Title: "T", Slug: "x", Template: "release"}, day)
+		_, err := c.New(t.Context(), NewOptions{Title: "T", Slug: "x", Template: "release"}, day)
 		isRefusal(t, "a built-in template with drift", err)
 	})
 
@@ -98,7 +98,7 @@ func TestTemplate(t *testing.T) {
 	} {
 		t.Run("refused/"+what, func(t *testing.T) {
 			cfg := withTemplate(t, c[1])
-			_, err := cfg.New(NewOptions{Title: "T", Slug: "x", Template: c[0]}, day)
+			_, err := cfg.New(t.Context(), NewOptions{Title: "T", Slug: "x", Template: c[0]}, day)
 			isRefusal(t, what, err)
 			if entries, _ := os.ReadDir(cfg.Dir); len(entries) > 1 {
 				t.Errorf("a refused plan left files: %v", entries)

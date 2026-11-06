@@ -13,7 +13,7 @@ func TestCheckpoint(t *testing.T) {
 	p := newPlan(t, c, "x")
 	insertUnder(t, p.file(""), "** Questions", question("Q1", "Keep the flag?", "")+question("Q2", "Rename it?", ""))
 	addItems(t, p.file(""), "** Steps", "S1")
-	at := func() (Checkpoint, bool) { return c.Checkpoint("abc", "") }
+	at := func() (Checkpoint, bool) { return c.Checkpoint(t.Context(), "abc", "") }
 	if _, ok := at(); ok {
 		t.Error("a new plan is at a checkpoint")
 	}
@@ -62,17 +62,17 @@ func TestSessionPlanInMainCheckout(t *testing.T) {
 	if _, err := old.Log(Event{Kind: "handed-back", Item: old.Name}, day.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if p, ok := c.sessionPlan("s1", repo); ok {
+	if p, ok := c.sessionPlan(t.Context(), "s1", repo); ok {
 		t.Errorf("a plan naming only the main checkout: %s", p.File())
 	}
-	if cp, ok := c.Checkpoint("s1", repo); ok {
+	if cp, ok := c.Checkpoint(t.Context(), "s1", repo); ok {
 		t.Errorf("checkpoint of another session's plan: %+v", cp)
 	}
-	made, created, err := c.RecordCommit("s1", repo, Event{Commit: "Add y", Summary: "Add y"}, day.Add(2*time.Minute))
+	made, created, err := c.RecordCommit(t.Context(), "s1", repo, Event{Commit: "Add y", Summary: "Add y"}, day.Add(2*time.Minute))
 	if err != nil || !created {
 		t.Fatalf("created %v, %v", created, err)
 	}
-	if p, ok := c.sessionPlan("s1", repo); !ok || p.File() != made.File() {
+	if p, ok := c.sessionPlan(t.Context(), "s1", repo); !ok || p.File() != made.File() {
 		t.Errorf("after the session's commit: %s %v, want %s", p.File(), ok, made.File())
 	}
 }

@@ -1,6 +1,7 @@
 package plans
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -95,7 +96,7 @@ func addAll(list *[]string, values ...string) {
 var itemRef = regexp.MustCompile(`\b((?:P[0-9]+\.)?[PF][0-9]+)\b`)
 
 // factsOf reads p's facts from its files and its log.
-func factsOf(p Plan) (planFacts, error) {
+func factsOf(ctx context.Context, p Plan) (planFacts, error) {
 	f := planFacts{plan: p, refs: map[string]bool{}}
 	files, err := p.files()
 	if err != nil {
@@ -132,7 +133,7 @@ func factsOf(p Plan) (planFacts, error) {
 			}
 		}
 		for _, wt := range trees {
-			if linkedWorktree(wt) {
+			if linkedWorktree(ctx, wt) {
 				addAll(&f.worktrees, filepath.Clean(wt))
 			}
 		}
@@ -289,12 +290,12 @@ type Relation struct {
 // on hard evidence first, then those on softer signs, each newest first.
 // It writes nothing. A plan that cannot be read is left out and named in
 // the error.
-func (c Config) Related(plan string) ([]Relation, error) {
+func (c Config) Related(ctx context.Context, plan string) ([]Relation, error) {
 	p, err := c.Open(plan)
 	if err != nil {
 		return nil, err
 	}
-	mine, err := factsOf(p)
+	mine, err := factsOf(ctx, p)
 	if err != nil {
 		return nil, err
 	}
@@ -308,7 +309,7 @@ func (c Config) Related(plan string) ([]Relation, error) {
 		if o.Name == p.Name {
 			continue
 		}
-		theirs, err := factsOf(o)
+		theirs, err := factsOf(ctx, o)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", o.Name, err))
 			continue
@@ -333,7 +334,7 @@ func (c Config) Related(plan string) ([]Relation, error) {
 // the old form, which has no file-level ID to link to, is left unlinked.
 // What gives a plan new evidence calls it: new, the commit hook, and the
 // commands that change a plan's branches, pull requests or text.
-func (c Config) LinkEvidence(plan string, now time.Time) ([]Relation, error) {
+func (c Config) LinkEvidence(ctx context.Context, plan string, now time.Time) ([]Relation, error) {
 	p, err := c.Open(plan)
 	if err != nil {
 		return nil, err
@@ -341,7 +342,7 @@ func (c Config) LinkEvidence(plan string, now time.Time) ([]Relation, error) {
 	if err := p.checkOwn(); err != nil {
 		return nil, err
 	}
-	rs, err := c.Related(plan)
+	rs, err := c.Related(ctx, plan)
 	errs := []error{err}
 	out := []Relation{}
 	for _, r := range rs {

@@ -13,7 +13,7 @@ import (
 func linkPlans(t *testing.T, c Config, title string) (Plan, Plan, string) {
 	t.Helper()
 	p := newPlan(t, c, "x")
-	made, err := c.New(NewOptions{Title: title, Slug: "other"}, day)
+	made, err := c.New(t.Context(), NewOptions{Title: title, Slug: "other"}, day)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestLink(t *testing.T) {
 			c := testConfig(t)
 			p, other, _ := linkPlans(t, c, "Other")
 			addItems(t, other.file(""), "** Distribution", "P1")
-			if _, err := c.New(NewOptions{Title: "Part", Parent: other.file(""), Part: "P1"}, day); err != nil {
+			if _, err := c.New(t.Context(), NewOptions{Title: "Part", Parent: other.file(""), Part: "P1"}, day); err != nil {
 				t.Fatal(err)
 			}
 			old := filepath.Join(c.Dir, "2026-10-14-old.box")

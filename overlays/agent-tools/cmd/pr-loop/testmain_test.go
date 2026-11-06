@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"os"
 	"testing"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 )
@@ -14,7 +16,7 @@ func TestMain(m *testing.M) {
 	gitenv.Isolate()
 	if api := os.Getenv(serveMCPEnv); api != "" {
 		gh.SetAPI(api)
-		os.Exit(mcpMain(nil, os.Stdin, os.Stdout, os.Stderr))
+		os.Exit(mcpMain(env.With(context.Background(), env.Process()), nil, os.Stdin, os.Stdout, os.Stderr))
 	}
 	os.Exit(m.Run())
 }

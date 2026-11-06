@@ -1,6 +1,7 @@
 package plans
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/refusal"
@@ -28,8 +30,8 @@ import (
 // not name the session (a part made without one, or after a /clear), so a
 // commit in a part's worktree lands on the part all the same. part is the
 // part whose file it is, or "" for the plan's own.
-func (c Config) Locate(session, worktree string) (p Plan, part string, ok bool) {
-	if !linkedWorktree(worktree) {
+func (c Config) Locate(ctx context.Context, session, worktree string) (p Plan, part string, ok bool) {
+	if !linkedWorktree(ctx, worktree) {
 		worktree = ""
 	}
 	if session == "" && worktree == "" {
@@ -93,11 +95,11 @@ func (c Config) Locate(session, worktree string) (p Plan, part string, ok bool) 
 // linkedWorktree is whether top is a linked worktree of its repository,
 // whose git directory differs from the repository's common one; false for
 // the main checkout, for "" and for what git cannot read.
-func linkedWorktree(top string) bool {
+func linkedWorktree(ctx context.Context, top string) bool {
 	if top == "" {
 		return false
 	}
-	out, err := git.Run("-C", top, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir")
+	out, err := git.In(ctx).Run("-C", top, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir")
 	dirs := strings.Split(out, "\n")
 	return err == nil && len(dirs) == 2 && dirs[0] != dirs[1]
 }
@@ -140,12 +142,12 @@ func (p Plan) NoteBranch(session, branch, tip, worktree string, now time.Time) (
 	return last, had, logged, err
 }
 
-// EnvSession returns the harness and its raw session ID from the environment,
-// or two empty strings outside Claude Code and Codex.
-func EnvSession() (harness, id string) {
-	for _, env := range []struct{ harness, name string }{{"claude", "CLAUDE_CODE_SESSION_ID"}, {"codex", "CODEX_THREAD_ID"}} {
-		if id := os.Getenv(env.name); id != "" {
-			return env.harness, id
+// EnvSession returns the harness and its raw session ID from e, or two
+// empty strings outside Claude Code and Codex.
+func EnvSession(e env.Env) (harness, id string) {
+	for _, v := range []struct{ harness, name string }{{"claude", "CLAUDE_CODE_SESSION_ID"}, {"codex", "CODEX_THREAD_ID"}} {
+		if id := e.Get(v.name); id != "" {
+			return v.harness, id
 		}
 	}
 	return "", ""
@@ -157,16 +159,16 @@ func EnvSession() (harness, id string) {
 // pipeline, that names the session and the worktree. It returns the plan
 // and whether it made it. Calls running at once make one plan between
 // them.
-func (c Config) RecordCommit(session, top string, e Event, now time.Time) (Plan, bool, error) {
+func (c Config) RecordCommit(ctx context.Context, session, top string, e Event, now time.Time) (Plan, bool, error) {
 	e.Kind, e.Session = "committed", session
-	p, part, ok := c.Locate(session, top)
+	p, part, ok := c.Locate(ctx, session, top)
 	created := false
 	if !ok {
 		if top == "" {
 			return Plan{}, false, refusal.New("a commit outside a worktree has no plan to go in. Run the commit inside the repository")
 		}
 		var err error
-		if p, part, created, err = c.unplanned(session, top, now); err != nil {
+		if p, part, created, err = c.unplanned(ctx, session, top, now); err != nil {
 			return Plan{}, false, err
 		}
 	}
@@ -177,7 +179,7 @@ func (c Config) RecordCommit(session, top string, e Event, now time.Time) (Plan,
 // unplanned is the plan Locate finds for session and top once this host's
 // plans directory is locked, or else a new one for them, and whether it is
 // new.
-func (c Config) unplanned(session, top string, now time.Time) (Plan, string, bool, error) {
+func (c Config) unplanned(ctx context.Context, session, top string, now time.Time) (Plan, string, bool, error) {
 	if err := os.MkdirAll(c.Dir, 0o755); err != nil { //nolint:gosec // the plans: notes on the work, synced through git
 		return Plan{}, "", false, err
 	}
@@ -196,16 +198,16 @@ func (c Config) unplanned(session, top string, now time.Time) (Plan, string, boo
 		return Plan{}, "", false, err
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-	if p, part, ok := c.Locate(session, top); ok {
+	if p, part, ok := c.Locate(ctx, session, top); ok {
 		return p, part, false, nil
 	}
-	name := repoName(top)
+	name := repoName(ctx, top)
 	o := NewOptions{Title: "Unplanned work in " + name, Slug: slug("unplanned " + name), Repos: []string{name},
 		Worktrees: []string{top}, Goal: "Unplanned work in " + name + ".", Status: "working"}
 	if checkWords("session", []string{session}) == nil {
 		o.Sessions = []string{session}
 	}
-	made, err := c.New(o, now)
+	made, err := c.New(ctx, o, now)
 	if err != nil {
 		return Plan{}, "", false, err
 	}
@@ -215,13 +217,13 @@ func (c Config) unplanned(session, top string, now time.Time) (Plan, string, boo
 
 // repoName is the GitHub owner/name origin of the worktree at top fetches
 // from, else the name of the directory its repository is in.
-func repoName(top string) string {
-	if url, err := git.Run("-C", top, "remote", "get-url", "origin"); err == nil {
+func repoName(ctx context.Context, top string) string {
+	if url, err := git.In(ctx).Run("-C", top, "remote", "get-url", "origin"); err == nil {
 		if s := gh.Slug(url); s != "" {
 			return s
 		}
 	}
-	common, err := git.Run("-C", top, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	common, err := git.In(ctx).Run("-C", top, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return filepath.Base(top)
 	}

@@ -1,6 +1,7 @@
 package plans
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -63,7 +64,7 @@ func slugOf(title string) string {
 // text, as this host's. A workstream of the same slug that any host has
 // is that workstream already: it is returned as it stands, Existed, and
 // no file is written, so that a person's edits of it stay.
-func (c Config) NewWorkstream(title, summary string) (Workstream, error) {
+func (c Config) NewWorkstream(ctx context.Context, title, summary string) (Workstream, error) {
 	if err := checkTitle("title", title); err != nil {
 		return Workstream{}, err
 	}
@@ -79,7 +80,7 @@ func (c Config) NewWorkstream(title, summary string) (Workstream, error) {
 		w.Existed = ok
 		return w, err
 	}
-	ready, err := c.Init()
+	ready, err := c.Init(ctx)
 	if err != nil {
 		return Workstream{}, err
 	}
@@ -268,7 +269,7 @@ func (p Plan) Workstream() (WorkstreamRef, error) {
 // workstreamFor is the workstream a new plan made with o is in: the one
 // o names, or else that of the newest plan, any host's, whose branch it
 // continues; or none.
-func (c Config) workstreamFor(o NewOptions) (WorkstreamRef, error) {
+func (c Config) workstreamFor(ctx context.Context, o NewOptions) (WorkstreamRef, error) {
 	if o.Workstream != "" {
 		w, err := c.workstreamNamed(o.Workstream)
 		return w.ref(), err
@@ -280,7 +281,7 @@ func (c Config) workstreamFor(o NewOptions) (WorkstreamRef, error) {
 	mine := planFacts{repos: o.Repos}
 	mine.addBranches(o.Branches)
 	for _, p := range ps {
-		other, err := factsOf(p)
+		other, err := factsOf(ctx, p)
 		if err != nil || other.workstream.ID == "" {
 			continue
 		}

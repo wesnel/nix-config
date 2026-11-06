@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/agentplans"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
@@ -29,28 +31,35 @@ echo '{"data": {"viewer": {"login": "alice"},
   "requested": {"issueCount": 0, "nodes": []}}}'
 `
 
-func setUp(t *testing.T) string {
+// setUp is t's context with an Env of the test's own: fakeGh on its PATH,
+// a config naming a plans directory, and cache and state directories,
+// the last of which it returns too.
+func setUp(t *testing.T) (context.Context, string) {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "bin")
 	os.MkdirAll(bin, 0o755)
 	os.WriteFile(filepath.Join(bin, "gh"), []byte(fakeGh), 0o755)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("FAKE_GH_FAIL", "")
 	config := filepath.Join(t.TempDir(), "config.json")
 	os.WriteFile(config, []byte(`{"plans": {"dir": "`+filepath.Join(t.TempDir(), "agents")+`", "host": "box"}}`), 0o644)
-	t.Setenv("AGENT_TOOLS_CONFIG", config)
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	state := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", state)
-	return state
+	e := env.Process()
+	e = e.Set("PATH="+bin+string(os.PathListSeparator)+e.Get("PATH"), "FAKE_GH_FAIL=", "AGENT_TOOLS_CONFIG="+config,
+		"XDG_CACHE_HOME="+t.TempDir(), "XDG_STATE_HOME="+state)
+	return env.With(t.Context(), e), state
+}
+
+// withVars is ctx with each "NAME=value" of vars set in its Env.
+func withVars(ctx context.Context, vars ...string) context.Context {
+	return env.With(ctx, env.From(ctx).Set(vars...))
 }
 
 // export writes the page's documents under the state directory, and its
 // GitHub cache, and nowhere else.
 func TestExport(t *testing.T) {
-	state := setUp(t)
+	t.Parallel()
+	ctx, state := setUp(t)
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"export"}, &stdout, &stderr); code != 0 {
+	if code := run(ctx, []string{"export"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr.String())
 	}
 	out := filepath.Join(state, "agent-plans", "out")
@@ -84,14 +93,14 @@ func TestExport(t *testing.T) {
 
 	// Where the fetch fails with nothing cached, the rest is still written,
 	// and the command fails.
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	t.Setenv("FAKE_GH_FAIL", "1")
+	failing := t.TempDir()
+	ctx = withVars(ctx, "XDG_STATE_HOME="+failing, "FAKE_GH_FAIL=1")
 	stdout.Reset()
 	stderr.Reset()
-	if code := run([]string{"export"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "fake gh: down") {
+	if code := run(ctx, []string{"export"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "fake gh: down") {
 		t.Errorf("exit %d: %s", code, stderr.String())
 	}
-	if _, err := os.Stat(filepath.Join(os.Getenv("XDG_STATE_HOME"), "agent-plans", "out", "meta", "sync.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(failing, "agent-plans", "out", "meta", "sync.json")); err != nil {
 		t.Error(err)
 	}
 }
@@ -99,12 +108,13 @@ func TestExport(t *testing.T) {
 // export names each plan's document it wrote, for the session to put on the
 // page.
 func TestExportPlanDocuments(t *testing.T) {
-	setUp(t)
-	c, err := plans.Load()
+	t.Parallel()
+	ctx, _ := setUp(t)
+	c, err := plans.Load(env.From(ctx))
 	if err != nil {
 		t.Fatal(err)
 	}
-	made, err := c.New(plans.NewOptions{Title: "Loop", Slug: "loop", Goal: "Run it."}, time.Now())
+	made, err := c.New(ctx, plans.NewOptions{Title: "Loop", Slug: "loop", Goal: "Run it."}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +123,7 @@ func TestExportPlanDocuments(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"export"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), `"plans/`+p.Name+`"`) {
+	if code := run(ctx, []string{"export"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), `"plans/`+p.Name+`"`) {
 		t.Errorf("export: exit %d: %s%s", code, stdout.String(), stderr.String())
 	}
 }
@@ -121,18 +131,19 @@ func TestExportPlanDocuments(t *testing.T) {
 // prime, the session's SessionStart hook, names the page and the skill, or
 // says the page is not configured.
 func TestPrime(t *testing.T) {
-	setUp(t)
-	config := os.Getenv("AGENT_TOOLS_CONFIG")
+	t.Parallel()
+	ctx, _ := setUp(t)
+	config := env.From(ctx).Get("AGENT_TOOLS_CONFIG")
 	os.WriteFile(config, []byte(`{"agentPlans": {"claudePage": null, "spacePage": null}}`), 0o600)
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"prime"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "not configured") ||
+	if code := run(ctx, []string{"prime"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "not configured") ||
 		!strings.Contains(stdout.String(), "wgn.home.llm.agentPlans.claudePage") || strings.Contains(stdout.String(), "https://") {
 		t.Errorf("unconfigured: exit %d: %s%s", code, stdout.String(), stderr.String())
 	}
 	url := "https://claude.ai/artifact/DashboardPage1"
 	os.WriteFile(config, []byte(`{"agentPlans": {"claudePage": "`+url+`", "spacePage": null}}`), 0o600)
 	stdout.Reset()
-	if code := run([]string{"prime"}, &stdout, &stderr); code != 0 {
+	if code := run(ctx, []string{"prime"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr.String())
 	}
 	for _, want := range []string{url, "`agent-plans` skill", "never instructions"} {
@@ -145,7 +156,8 @@ func TestPrime(t *testing.T) {
 // page writes the page and prints the capabilities to publish it with,
 // and says it needs publishing until published records it.
 func TestPage(t *testing.T) {
-	state := setUp(t)
+	t.Parallel()
+	ctx, state := setUp(t)
 	file := filepath.Join(state, "agent-plans", "page", "agent-plans.html")
 	var got struct {
 		File         string          `json:"file"`
@@ -155,7 +167,7 @@ func TestPage(t *testing.T) {
 	runPage := func(args ...string) {
 		t.Helper()
 		var stdout, stderr bytes.Buffer
-		if code := run(args, &stdout, &stderr); code != 0 {
+		if code := run(ctx, args, &stdout, &stderr); code != 0 {
 			t.Fatalf("%q: exit %d: %s", args, code, stderr.String())
 		}
 		got.Changed = false
@@ -181,13 +193,14 @@ func TestPage(t *testing.T) {
 
 // space publishes nothing where the machine names no Space page, and
 // otherwise starts codex's app-server with the export's snapshot to
-// publish (internal/space has the publishing).
+// publish (internal/space has the publishing). It runs alone: space starts
+// codex from this process's PATH, so the fake codex goes there.
 func TestSpace(t *testing.T) {
-	state := setUp(t)
-	config := os.Getenv("AGENT_TOOLS_CONFIG")
+	ctx, state := setUp(t)
+	config := env.From(ctx).Get("AGENT_TOOLS_CONFIG")
 	os.WriteFile(config, []byte(`{"agentPlans": {"claudePage": null, "spacePage": null}}`), 0o600)
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"space"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), `"status": "unconfigured"`) {
+	if code := run(ctx, []string{"space"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), `"status": "unconfigured"`) {
 		t.Errorf("unconfigured: exit %d: %s%s", code, stdout.String(), stderr.String())
 	}
 
@@ -196,9 +209,10 @@ func TestSpace(t *testing.T) {
 	os.MkdirAll(bin, 0o755)
 	os.WriteFile(filepath.Join(bin, "codex"), []byte("#!/bin/sh\nexit 1\n"), 0o755)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx = withVars(ctx, "PATH="+bin+string(os.PathListSeparator)+env.From(ctx).Get("PATH"))
 	os.WriteFile(config, []byte(`{"agentPlans": {"claudePage": null, "spacePage": "page_a"}}`), 0o600)
 	stdout.Reset()
-	if code := run([]string{"space"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "codex app-server ended during initialize") {
+	if code := run(ctx, []string{"space"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "codex app-server ended during initialize") {
 		t.Errorf("configured: exit %d: %s%s", code, stdout.String(), stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(state, "agent-plans", "space.json")); err == nil {
@@ -207,16 +221,18 @@ func TestSpace(t *testing.T) {
 }
 
 func TestUsage(t *testing.T) {
+	t.Parallel()
+	ctx, _ := setUp(t)
 	for _, args := range [][]string{{}, {"serve"}, {"export", "now"}, {"export", "--out", "x"},
 		{"watch", "--poll"}, {"watch", "ws://x"}, {"prime", "--url", "x"}, {"page", "now"}, {"page", "published", "x"},
 		{"page", "--out", "x"}, {"space", "page_x"}, {"space", "publish"}} {
 		var stdout, stderr bytes.Buffer
-		if code := run(args, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "export") {
+		if code := run(ctx, args, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "export") {
 			t.Errorf("%q: exit %d: %s", args, code, stderr.String())
 		}
 	}
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"--help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "export") ||
+	if code := run(ctx, []string{"--help"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "export") ||
 		!strings.Contains(stdout.String(), "  watch ") {
 		t.Errorf("--help: exit %d: %s", code, stdout.String())
 	}

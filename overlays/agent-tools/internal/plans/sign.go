@@ -1,6 +1,7 @@
 package plans
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -90,7 +91,7 @@ type SignRequest struct {
 // WORKTREE is where git sign-pass runs and its BASE, omitted for main by
 // any of its names, what it signs from: Emacs and the dashboard show the
 // operator the command from them.
-func (c Config) RequestSign(r SignRequest, now time.Time) (string, error) {
+func (c Config) RequestSign(ctx context.Context, r SignRequest, now time.Time) (string, error) {
 	if r.Session == "" {
 		return "", refusal.New("there is no session to deliver the sign-pass's result to. Pass the harness's session ID with `agent-plan sign-id --session ID`")
 	}
@@ -115,7 +116,7 @@ func (c Config) RequestSign(r SignRequest, now time.Time) (string, error) {
 		}
 	} else {
 		var ok bool
-		p, _, ok = c.Locate(r.Session, r.Worktree)
+		p, _, ok = c.Locate(ctx, r.Session, r.Worktree)
 		if !ok {
 			return "", refusal.New("no plan of this host names session %s or this worktree, and a sign-pass's result is kept in its plan's log. Make one with `agent-plan new` as the plan-work skill says, then run `agent-plan sign-id` again", r.Session)
 		}
@@ -306,7 +307,7 @@ func delivery(p Plan, e Event, delivered bool, now time.Time) SignDelivery {
 // remindSigns is the line of each sign-pass result the session of a main
 // thread's prompt has not yet received: Claude Code's and Codex's
 // UserPromptSubmit.
-func (c Config) remindSigns(input []byte, now time.Time) string {
+func (c Config) remindSigns(ctx context.Context, input []byte, now time.Time) string {
 	var in struct {
 		Event     string `json:"hook_event_name"`
 		SessionID string `json:"session_id"`
@@ -316,7 +317,7 @@ func (c Config) remindSigns(input []byte, now time.Time) string {
 	if json.Unmarshal(input, &in) != nil || in.Event != "UserPromptSubmit" || in.AgentID != "" {
 		return ""
 	}
-	top, _ := checkout(in.Cwd)
+	top, _ := checkout(ctx, in.Cwd)
 	var lines []string
 	for _, d := range c.DeliverSigns(in.SessionID, top, now) {
 		lines = append(lines, d.Line())

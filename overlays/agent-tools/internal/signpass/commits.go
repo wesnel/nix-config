@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/history"
 	"github.com/wesnel/agent-tools/internal/plans"
@@ -15,7 +16,7 @@ import (
 // cleared. finish only warns when it fails, and it records nothing when the
 // commits before and after do not pair up.
 func recordCommitRewrites(ctx context.Context, p *pending) error {
-	c, err := plans.Load()
+	c, err := plans.Load(env.Process())
 	if err != nil {
 		return err
 	}
@@ -26,7 +27,7 @@ func recordCommitRewrites(ctx context.Context, p *pending) error {
 	if len(all) == 0 {
 		return nil
 	}
-	identity, err := plans.CommitIdentity(p.Dir, p.Before[p.Branch])
+	identity, err := plans.CommitIdentity(ctx, p.Dir, p.Before[p.Branch])
 	if err != nil {
 		return nil
 	}
@@ -49,7 +50,7 @@ func recordCommitRewrites(ctx context.Context, p *pending) error {
 		groups[i] = i
 	}
 	if p.Fixups {
-		commits, err := history.Between(from, p.Before[p.Branch])
+		commits, err := history.Between(ctx, from, p.Before[p.Branch])
 		if err != nil {
 			return err
 		}
@@ -65,6 +66,6 @@ func recordCommitRewrites(ctx context.Context, p *pending) error {
 		}
 		rewrites[old] = newIDs[groups[i]]
 	}
-	_, session := plans.EnvSession()
-	return c.RecordRewrites(session, p.Dir, identity.Repository, rewrites, time.Now())
+	_, session := plans.EnvSession(env.Process())
+	return c.RecordRewrites(ctx, session, p.Dir, identity.Repository, rewrites, time.Now())
 }

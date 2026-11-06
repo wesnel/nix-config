@@ -1,11 +1,13 @@
 package loop
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
@@ -15,18 +17,18 @@ import (
 // harness's session or this worktree. A failure is reported on stderr and
 // never fails the action.
 func logEvent(e plans.Event) {
-	c, err := plans.Load()
+	c, err := plans.Load(env.Process())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pr-loop: %s is not logged: %v\n", e.Kind, err)
 		return
 	}
 	top, _ := git.Run("rev-parse", "--show-toplevel")
-	harness, id := plans.EnvSession()
+	harness, id := plans.EnvSession(env.Process())
 	session := ""
 	if id != "" {
 		session = harness + ":" + id
 	}
-	p, part, ok := c.Locate(session, top)
+	p, part, ok := c.Locate(context.Background(), session, top)
 	if !ok {
 		return
 	}

@@ -8,10 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/env"
 )
 
 func TestFold(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name, message string
 		kind          Kind
@@ -29,6 +30,7 @@ func TestFold(t *testing.T) {
 		{"prefix inside the subject", "A first mentions fixup! itself", Kept, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if kind, target := Fold(c.message); kind != c.kind || target != c.target {
 				t.Errorf("Fold(%q) = %v %q, want %v %q", c.message, kind, target, c.kind, c.target)
 			}
@@ -37,6 +39,7 @@ func TestFold(t *testing.T) {
 }
 
 func TestLintMessage(t *testing.T) {
+	t.Parallel()
 	long := strings.Repeat("x", 73)
 	for _, c := range []struct{ name, message, want string }{
 		{"subject only", "Add the run loop", ""},
@@ -65,7 +68,8 @@ func TestLintMessage(t *testing.T) {
 		{"commits, tickets and code", "Resolve symlinks first\n\nAfter 1a2b3c4, `filepath.EvalSymlinks` runs first (AGENT-1191).", ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got := strings.Join(LintMessage(c.message), "; ")
+			t.Parallel()
+			got := strings.Join(LintMessage(t.Context(), c.message), "; ")
 			if c.want == "" && got != "" || !strings.Contains(got, c.want) {
 				t.Errorf("LintMessage(%q) = %q, want %q", c.message, got, c.want)
 			}
@@ -76,12 +80,10 @@ func TestLintMessage(t *testing.T) {
 // TestSquashed runs git's own autosquash over each history and checks
 // Squashed predicts the commits it leaves, messages and authors included.
 func TestSquashed(t *testing.T) {
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Parallel()
 	// GIT_EDITOR=false fails any commit that opens an editor, so NoEditor
 	// must override it.
-	t.Setenv("GIT_EDITOR", "false")
-	t.Setenv("GIT_SEQUENCE_EDITOR", "false")
+	vars := []string{"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_EDITOR=false", "GIT_SEQUENCE_EDITOR=false"}
 	type commit struct{ message, author string }
 	orig := "Orig <o@e>"
 	for name, history := range map[string][]commit{
@@ -100,12 +102,14 @@ func TestSquashed(t *testing.T) {
 		"no target":         {{"A1", orig}, {"squash! gone\n\nsq", ""}},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
-			run := func(env []string, args ...string) string {
+			e := env.Process().In(dir).Set(vars...)
+			run := func(extra []string, args ...string) string {
 				t.Helper()
 				cmd := exec.Command("git", append([]string{"-c", "commit.gpgsign=false"}, args...)...)
 				cmd.Dir = dir
-				cmd.Env = append(os.Environ(), append([]string{"GIT_COMMITTER_NAME=T", "GIT_COMMITTER_EMAIL=t@e"}, env...)...)
+				cmd.Env = append(e.Environ(), append([]string{"GIT_COMMITTER_NAME=T", "GIT_COMMITTER_EMAIL=t@e"}, extra...)...)
 				out, err := cmd.CombinedOutput()
 				if err != nil {
 					t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -129,9 +133,7 @@ func TestSquashed(t *testing.T) {
 				commits = append(commits, Commit{Message: c.message, Author: author})
 			}
 			run(NoEditor, "rebase", "-q", "-i", "--autosquash", "--force-rebase", "main")
-			git.Dir = dir
-			t.Cleanup(func() { git.Dir = "" })
-			got, err := Between("main", "HEAD")
+			got, err := Between(env.With(t.Context(), e), "main", "HEAD")
 			if err != nil {
 				t.Fatal(err)
 			}

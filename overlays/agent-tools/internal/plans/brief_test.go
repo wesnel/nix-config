@@ -52,7 +52,7 @@ func TestBrief(t *testing.T) {
 	t.Run("after a compaction in Codex", func(t *testing.T) {
 		c, p := briefed(t)
 		in := `{"session_id":"abc","hook_event_name":"SessionStart","source":"compact"}`
-		if out := string(c.Remind([]byte(in))); !strings.Contains(out, "Brief of plan "+p.file("")) ||
+		if out := string(c.Remind(t.Context(), []byte(in))); !strings.Contains(out, "Brief of plan "+p.file("")) ||
 			!strings.Contains(out, "Steps ready: S2") {
 			t.Errorf("%s: %s", in, out)
 		}

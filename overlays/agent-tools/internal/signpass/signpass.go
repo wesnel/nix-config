@@ -335,7 +335,7 @@ func rehearseSquash(ctx context.Context, start, tip string, kept []history.Commi
 	if err != nil {
 		return "", err
 	}
-	if err := history.Match(kept, start, head, tip); err != nil {
+	if err := history.Match(ctx, kept, start, head, tip); err != nil {
 		return "", err
 	}
 	if a, _ := git.In(ctx).Run("rev-parse", head+"^{tree}"); a != mustTree(ctx, tip) {
@@ -695,7 +695,7 @@ func prepare(ctx context.Context, branch, base string) (p *pending, early map[st
 	if merges, _ := git.In(ctx).Run("rev-list", "--merges", start+".."+tip); merges != "" {
 		return nil, nil, refuse("the commits to sign include merges, which re-signing would flatten; sign them by hand")
 	}
-	if err := lintMessages(branch, start, tip); err != nil {
+	if err := lintMessages(ctx, branch, start, tip); err != nil {
 		return nil, nil, err
 	}
 	before, err := localBranches(ctx)
@@ -707,14 +707,14 @@ func prepare(ctx context.Context, branch, base string) (p *pending, early map[st
 	if err := inProgress(ctx, append([]string{branch}, p.Stacked...)); err != nil {
 		return nil, nil, err
 	}
-	if p.Lands, err = landings(before, p.Stacked, start); err != nil {
+	if p.Lands, err = landings(ctx, before, p.Stacked, start); err != nil {
 		return nil, nil, err
 	}
 	if !squash {
 		p.Shape, err = fullShape(ctx, start, tip)
 		return p, nil, err
 	}
-	if p.Kept, err = keptCommits(start, tip); err != nil {
+	if p.Kept, err = keptCommits(ctx, start, tip); err != nil {
 		return nil, nil, err
 	}
 	p.Trees = map[string]string{}
@@ -735,10 +735,10 @@ func prepare(ctx context.Context, branch, base string) (p *pending, early map[st
 // once its fixup!, amend! and squash! commits fold in. A rebase of from..tip
 // that keeps those commits leaves the branch on the last of them: for a
 // branch whose tip is a fixup, the nearest commit below the tip that remains.
-func landings(before map[string]string, stacked []string, from string) (map[string]int, error) {
+func landings(ctx context.Context, before map[string]string, stacked []string, from string) (map[string]int, error) {
 	lands := map[string]int{}
 	for _, b := range stacked {
-		kept, err := keptCommits(from, before[b])
+		kept, err := keptCommits(ctx, from, before[b])
 		if err != nil {
 			return nil, err
 		}
@@ -784,11 +784,11 @@ func gained(ctx context.Context, from, old, newFrom, at string) (bool, error) {
 	if mustTree(ctx, at) != mustTree(ctx, old) {
 		return true, nil
 	}
-	own, err := keptCommits(from, old)
+	own, err := keptCommits(ctx, from, old)
 	if err != nil {
 		return false, err
 	}
-	return history.Match(own, newFrom, at, "") != nil, nil
+	return history.Match(ctx, own, newFrom, at, "") != nil, nil
 }
 
 // gainsPhrase says which branches gain folds they do not contain.
@@ -821,8 +821,8 @@ func stackedIn(ctx context.Context, before map[string]string, branch, from, tip 
 
 // keptCommits are the commits from..tip leaves once its fixup!, amend! and
 // squash! commits fold in, with the messages they leave.
-func keptCommits(from, tip string) ([]history.Commit, error) {
-	all, err := history.Between(from, tip)
+func keptCommits(ctx context.Context, from, tip string) ([]history.Commit, error) {
+	all, err := history.Between(ctx, from, tip)
 	if err != nil {
 		return nil, err
 	}
@@ -831,13 +831,13 @@ func keptCommits(from, tip string) ([]history.Commit, error) {
 
 // lintMessages refuses unless every message from..tip leaves, once its
 // folds are squashed in, passes history.LintMessage.
-func lintMessages(branch, from, tip string) error {
-	kept, err := keptCommits(from, tip)
+func lintMessages(ctx context.Context, branch, from, tip string) error {
+	kept, err := keptCommits(ctx, from, tip)
 	if err != nil {
 		return err
 	}
 	for _, c := range kept {
-		if problems := history.LintMessage(c.Message); len(problems) > 0 {
+		if problems := history.LintMessage(ctx, c.Message); len(problems) > 0 {
 			return refuse("%s's commit %q would be signed with a message where %s. Reword it with an amend! commit, "+
 				"`git -c commit.gpgsign=false commit --allow-empty -m 'amend! SUBJECT' -m 'NEW MESSAGE'`, and run the pass again",
 				branch, history.Subject(c.Message), strings.Join(problems, ", and "))
@@ -1394,7 +1394,7 @@ func finish(ctx context.Context, p *pending, path string) (result map[string]any
 // branches below the tip that gained fixups.
 func verify(ctx context.Context, p *pending) ([]string, error) {
 	if p.Squash {
-		if err := history.Match(p.Kept, p.Start, "refs/heads/"+p.Branch, p.Branch); err != nil {
+		if err := history.Match(ctx, p.Kept, p.Start, "refs/heads/"+p.Branch, p.Branch); err != nil {
 			return nil, err
 		}
 	} else {

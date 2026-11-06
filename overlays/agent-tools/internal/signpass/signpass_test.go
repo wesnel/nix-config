@@ -1047,14 +1047,14 @@ func TestLandings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lands, err := landings(before, stacked, base)
+	lands, err := landings(ctx, before, stacked, base)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := fmt.Sprint(lands); got != "map[amend:2 chain:2 fix:1 kept:2 squash:2]" {
 		t.Errorf("landings: %s", got)
 	}
-	kept, err := keptCommits(base, "top")
+	kept, err := keptCommits(ctx, base, "top")
 	if err != nil {
 		t.Fatal(err)
 	}

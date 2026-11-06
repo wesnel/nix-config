@@ -42,7 +42,7 @@ func TestPartCustomID(t *testing.T) {
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
 	addItems(t, p.file(""), "** Distribution", "P1")
-	made, err := c.New(NewOptions{Title: "The part", Parent: p.file(""), Part: "P1"}, day)
+	made, err := c.New(t.Context(), NewOptions{Title: "The part", Parent: p.file(""), Part: "P1"}, day)
 	if err != nil {
 		t.Fatal(err)
 	}

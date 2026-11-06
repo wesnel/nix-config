@@ -55,7 +55,7 @@ func checkOwner(ctx context.Context, in input) string {
 		return ""
 	}
 	// A sub-agent's edits fail closed: without plans it owns no worktree.
-	c, err := plans.Load()
+	c, err := plans.Load(env.Process())
 	owners := map[string]string{}
 	if err == nil {
 		named, _ := c.Owners()

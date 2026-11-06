@@ -1,6 +1,7 @@
 package plans
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -61,7 +62,7 @@ func TestRefusedWritesNothing(t *testing.T) {
 			return p.RemoveFromProperty("", "BRANCHES", "main..loop", "It is plan y's work.", day)
 		},
 		"new part": func(p Plan) error {
-			_, err := Config{Dir: p.Dir, Host: p.Host}.New(NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day)
+			_, err := Config{Dir: p.Dir, Host: p.Host}.New(t.Context(), NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day)
 			return err
 		},
 	}
@@ -191,7 +192,7 @@ var limitCommands = map[string]func(Plan) error{
 	},
 	// part has a branch, which its creation logs.
 	"part": func(p Plan) error {
-		_, err := Config{Dir: p.Dir, Host: p.Host}.New(NewOptions{Title: "Part", Parent: p.file(""), Part: "P1", Branches: []string{"main..part"}}, day)
+		_, err := Config{Dir: p.Dir, Host: p.Host}.New(context.Background(), NewOptions{Title: "Part", Parent: p.file(""), Part: "P1", Branches: []string{"main..part"}}, day)
 		return err
 	},
 }

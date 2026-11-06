@@ -1448,7 +1448,7 @@ func inPlans(ctx context.Context, path string) bool {
 // resolve.
 func plansDirs(ctx context.Context) []string {
 	dir := plans.DefaultDir(homeDir(ctx))
-	if c, err := plans.Load(); err == nil {
+	if c, err := plans.Load(env.Process()); err == nil {
 		dir = c.Dir
 	}
 	out := []string{filepath.Clean(dir)}

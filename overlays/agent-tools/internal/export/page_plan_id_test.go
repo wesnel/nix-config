@@ -35,7 +35,7 @@ func TestPagePlanID(t *testing.T) {
 		t.Skip("node is not on PATH")
 	}
 	c := plans.Config{Dir: filepath.Join(t.TempDir(), "agents"), Host: "box"}
-	made, err := c.New(plans.NewOptions{Title: "T", Slug: "add-loop"}, time.Date(2026, 10, 14, 13, 5, 0, 0, time.Local))
+	made, err := c.New(t.Context(), plans.NewOptions{Title: "T", Slug: "add-loop"}, time.Date(2026, 10, 14, 13, 5, 0, 0, time.Local))
 	if err != nil {
 		t.Fatal(err)
 	}

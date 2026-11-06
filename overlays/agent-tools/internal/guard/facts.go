@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
@@ -201,7 +202,7 @@ func newWorktree(ctx context.Context, g gitCall) string {
 // links the plan to the plans that hard evidence relates it to
 // (plans.Config.LinkEvidence). Every failure leaves the plan as it was.
 func recordFacts(ctx context.Context, session, cwd, command string, texts []string, now time.Time) (context []string) {
-	c, err := plans.Load()
+	c, err := plans.Load(env.Process())
 	if err != nil {
 		return nil
 	}
@@ -210,7 +211,7 @@ func recordFacts(ctx context.Context, session, cwd, command string, texts []stri
 		if dir != "" {
 			top = toplevel(ctx, dir)
 		}
-		return c.Locate(session, top)
+		return c.Locate(ctx, session, top)
 	}
 	output := strings.Join(texts, "\n")
 	for _, g := range gitCalls(ctx, command, cwd, 0) {
@@ -229,14 +230,14 @@ func recordFacts(ctx context.Context, session, cwd, command string, texts []stri
 				}
 				top := toplevel(ctx, g.dir)
 				e := plans.Event{Branch: branch, Commit: m[3], Summary: m[3], Worktree: top}
-				if identity, err := plans.CommitIdentity(top, m[2]); err == nil {
+				if identity, err := plans.CommitIdentity(ctx, top, m[2]); err == nil {
 					e.Repository, e.Revision = identity.Repository, identity.Revision
 				}
-				p, created, err := c.RecordCommit(who, top, e, now)
+				p, created, err := c.RecordCommit(ctx, who, top, e, now)
 				if err != nil {
 					continue
 				}
-				c.LinkEvidence(p.File(), now)
+				c.LinkEvidence(ctx, p.File(), now)
 				if created {
 					context = append(context, fmt.Sprintf("No plan named this session or worktree, so %s was made for this commit. "+
 						"Write its goal and steps with `agent-plan section` and `agent-plan step` as the plan-work skill says, or, if the work belongs to another plan, say so in your report.", p.File()))
@@ -286,7 +287,7 @@ func recordFacts(ctx context.Context, session, cwd, command string, texts []stri
 		}
 		if p, part, ok := at(g.dir); ok {
 			if added, _ := p.AddToProperty(part, "BRANCHES", value, now); added {
-				c.LinkEvidence(p.File(), now)
+				c.LinkEvidence(ctx, p.File(), now)
 			}
 		}
 	}
@@ -302,7 +303,7 @@ func recordFacts(ctx context.Context, session, cwd, command string, texts []stri
 		if url, isURL := result["url"].(string); isURL && result["pr"] != nil {
 			branch, _ := result["branch"].(string)
 			if added, _ := p.AddToProperty(part, "PULL_REQUESTS", url, now); added {
-				c.LinkEvidence(p.File(), now)
+				c.LinkEvidence(ctx, p.File(), now)
 			}
 			p.Record(part, plans.Event{Kind: "pushed", Branch: branch, Summary: "opened " + url}, now)
 			return

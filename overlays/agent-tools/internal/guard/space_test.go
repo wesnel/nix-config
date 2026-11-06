@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/wesnel/agent-tools/internal/agentplans"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
@@ -28,7 +29,7 @@ func bake(t *testing.T, ctx context.Context, configHome, stateHome string) conte
 func TestSpaceState(t *testing.T) {
 	ctx, root := fakeHome(t)
 	ctx = bake(t, ctx, filepath.Join(root, "config"), filepath.Join(root, "state"))
-	file := agentplans.SpaceStateFile()
+	file := agentplans.SpaceStateFile(env.Process())
 	alias := filepath.Join(t.TempDir(), "root-alias")
 	if err := os.Symlink(root, alias); err != nil {
 		t.Fatal(err)
@@ -87,7 +88,7 @@ func TestSpaceState(t *testing.T) {
 func TestSpaceStateDirectoryWrites(t *testing.T) {
 	ctx, root := fakeHome(t)
 	ctx = bake(t, ctx, filepath.Join(root, "config"), filepath.Join(root, "state"))
-	dest, work := filepath.Dir(agentplans.SpaceStateFile()), t.TempDir()
+	dest, work := filepath.Dir(agentplans.SpaceStateFile(env.Process())), t.TempDir()
 	if err := os.MkdirAll(dest, 0o700); err != nil {
 		t.Fatal(err)
 	}

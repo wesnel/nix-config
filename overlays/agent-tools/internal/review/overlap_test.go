@@ -59,7 +59,7 @@ func overlapFixture(t *testing.T) *fixture {
 	config := filepath.Join(t.TempDir(), "config.json")
 	os.WriteFile(config, must(json.Marshal(map[string]any{"plans": c})), 0o644)
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
-	if _, err := c.New(plans.NewOptions{Title: "Plan", Slug: "plan", Branches: []string{"main..planned"}}, time.Now()); err != nil {
+	if _, err := c.New(t.Context(), plans.NewOptions{Title: "Plan", Slug: "plan", Branches: []string{"main..planned"}}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(t.TempDir(), "bin")

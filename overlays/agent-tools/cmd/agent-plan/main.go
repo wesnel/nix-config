@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -358,9 +359,9 @@ var scratchRoots = guard.ScratchRoots
 // outside Claude Code's sandbox and plans are pushed to the plans'
 // remote, so the file must be in the caller's worktree or a scratch root,
 // and not a credential, as checkedfile.Read checks.
-func readTextFile(path string) (string, error) {
+func readTextFile(ctx context.Context, path string) (string, error) {
 	roots := scratchRoots()
-	if top, _ := checkout(); top != "" {
+	if top, _ := checkout(ctx); top != "" {
 		roots = append(roots, top)
 	}
 	data, err := checkedfile.Read(path, roots)
@@ -382,10 +383,14 @@ type multi []string
 func (m *multi) String() string     { return strings.Join(*m, ",") }
 func (m *multi) Set(v string) error { *m = append(*m, v); return nil }
 
-func main() { os.Exit(Main(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
+func main() {
+	os.Exit(Main(env.With(context.Background(), env.Process()), os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+}
 
-// Main runs agent-plan with args and returns its exit code.
-func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+// Main runs agent-plan with args, in the Env of ctx, and returns its exit
+// code.
+func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	e := env.From(ctx)
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
 		return 2
@@ -396,27 +401,27 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "quota-stop" {
 		// Before plans.Load: it runs before every tool call.
-		return quotaStop(args[1:], stdin, stdout, stderr)
+		return quotaStop(e, args[1:], stdin, stdout, stderr)
 	}
 	if args[0] == "codex-usage" {
-		return codexUsage(args[1:], stderr)
+		return codexUsage(ctx, args[1:], stderr)
 	}
 	if args[0] == "statusline" {
 		// Claude Code shows whatever this prints, so a failure prints
 		// nothing.
 		input := readAll(stdin)
 		if ws, ok := quota.FromClaudeStatus(input, time.Now()); ok {
-			_ = quota.Record(quota.File(env.Process()), ws) // a reading not recorded waits for the next refresh
+			_ = quota.Record(quota.File(e), ws) // a reading not recorded waits for the next refresh
 		}
 		var parts []string
 		if line := quota.StatusLine(input, time.Now()); line != "" {
 			parts = append(parts, line)
 		}
-		if c, err := plans.Load(); err == nil {
-			if line := c.StatusLine(input); line != "" {
+		if c, err := plans.Load(e); err == nil {
+			if line := c.StatusLine(ctx, input); line != "" {
 				parts = append(parts, line)
 			}
-			if checkpointHint(c, input, time.Now()) != "" {
+			if checkpointHint(ctx, c, input, time.Now()) != "" {
 				parts = append(parts, "checkpoint · /clear")
 			}
 		}
@@ -429,10 +434,10 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		// A failure asks for nothing, quietly.
 		input := readAll(stdin)
 		var out []byte
-		if c, err := plans.Load(); err == nil {
-			out = c.Remind(input)
+		if c, err := plans.Load(e); err == nil {
+			out = c.Remind(ctx, input)
 		}
-		if line := prompttime.Remind(prompttime.DefaultDir(env.Process()), input, time.Now()); line != "" {
+		if line := prompttime.Remind(prompttime.DefaultDir(e), input, time.Now()); line != "" {
 			out = plans.WithContext(out, input, line)
 		}
 		if len(out) > 0 {
@@ -440,7 +445,7 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		return 0
 	}
-	return run(args[0], args[1:], stdin, stdout, stderr)
+	return run(ctx, args[0], args[1:], stdin, stdout, stderr)
 }
 
 // parse parses flags wherever they fall among the positional arguments,
@@ -459,26 +464,27 @@ func parse(flags *flag.FlagSet, args []string, stdout, stderr io.Writer) ([]stri
 	}
 }
 
-// checkout is the top level and branch of the worktree the caller is in.
-func checkout() (top, branch string) {
-	cwd, err := os.Getwd()
-	if err != nil {
+// checkout is the top level and branch of the worktree the directory of
+// ctx's Env is in.
+func checkout(ctx context.Context) (top, branch string) {
+	cwd := env.From(ctx).Dir()
+	if cwd == "" {
 		return "", ""
 	}
-	return checkoutAt(cwd)
+	return checkoutAt(ctx, cwd)
 }
 
 // checkoutAt is the top level and branch of the worktree dir is in.
-func checkoutAt(dir string) (top, branch string) {
-	top, err := git.Run("-C", dir, "rev-parse", "--show-toplevel")
+func checkoutAt(ctx context.Context, dir string) (top, branch string) {
+	top, err := git.In(ctx).Run("-C", dir, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return "", ""
 	}
-	branch, _ = git.Run("-C", dir, "branch", "--show-current")
+	branch, _ = git.In(ctx).Run("-C", dir, "branch", "--show-current")
 	return top, branch
 }
 
-func run(command string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func run(ctx context.Context, command string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	var (
 		title    = flags.String("title", "", "")
@@ -599,7 +605,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			fmt.Fprintf(stderr, "agent-plan %s: --text-file takes the place of --text and --context; give one of them\n", command)
 			return 2
 		}
-		data, err := readTextFile(*textFile)
+		data, err := readTextFile(ctx, *textFile)
 		if err != nil {
 			return cli.Report("agent-plan", nil, err, 0, stdout, stderr)
 		}
@@ -613,7 +619,8 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	report := func(result any, err error) int {
 		return cli.Report("agent-plan", result, err, 0, stdout, stderr)
 	}
-	c, err := plans.Load()
+	e := env.From(ctx)
+	c, err := plans.Load(e)
 	if err != nil {
 		return report(nil, err)
 	}
@@ -625,7 +632,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			if err != nil {
 				return code
 			}
-			linked, err := c.LinkEvidence(p.File(), time.Now())
+			linked, err := c.LinkEvidence(ctx, p.File(), time.Now())
 			for _, r := range linked {
 				fmt.Fprintf(stderr, "agent-plan: linked %s to %s: %s\n", p.Name, r.Plan, strings.Join(r.Evidence, " "))
 			}
@@ -648,13 +655,13 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return p, true
 	}
 	if command == "new" || command == "status" || command == "workstream" || (command == "find" && !*hook) {
-		c.Pull()
+		c.Pull(ctx)
 	}
 	switch command {
 	case "workstream":
 		switch {
 		case len(positional) == 1 && positional[0] == "new" && !*asJSON:
-			return report(c.NewWorkstream(*title, *summary))
+			return report(c.NewWorkstream(ctx, *title, *summary))
 		case len(positional) == 1 && positional[0] == "list" && *title == "" && *summary == "":
 			ws, err := c.Workstreams()
 			if err != nil || *asJSON {
@@ -675,7 +682,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		o := plans.NewOptions{Title: *title, Slug: *slug, Repos: repos, Branches: branches, Worktrees: trees,
 			Sessions: sessions, Harness: *harness, Parent: *parent, Part: *part, Template: *template, Workstream: *stream}
 		if len(o.Sessions) == 0 {
-			if h, id := plans.EnvSession(); id != "" {
+			if h, id := plans.EnvSession(e); id != "" {
 				o.Sessions = []string{h + ":" + id}
 				if o.Harness == "" {
 					o.Harness = h
@@ -683,11 +690,11 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			}
 		}
 		if len(o.Worktrees) == 0 {
-			if top, _ := checkout(); top != "" && !strings.ContainsAny(top, " \t") {
+			if top, _ := checkout(ctx); top != "" && !strings.ContainsAny(top, " \t") {
 				o.Worktrees = []string{top}
 			}
 		}
-		made, err := c.New(o, time.Now())
+		made, err := c.New(ctx, o, time.Now())
 		if made.Note != "" {
 			fmt.Fprintf(stderr, "agent-plan: %s\n", made.Note)
 		}
@@ -704,8 +711,8 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			Branch: branch, Commit: *commit, Evidence: *evidence, Review: *review, Outcome: *outcome,
 			Command: *run, Dir: *runDir}
 		if *revision != "" {
-			top, _ := checkout()
-			identity, err := plans.CommitIdentity(top, *revision)
+			top, _ := checkout(ctx)
+			identity, err := plans.CommitIdentity(ctx, top, *revision)
 			if err != nil {
 				return report(nil, err)
 			}
@@ -761,19 +768,18 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 				Name string `json:"hook_event_name"`
 			}
 			if json.Unmarshal(input, &event) == nil && event.Name == "SessionEnd" && h == "claude" {
-				return hookReport(nil, c.SessionEndHook(input, time.Now()), stdout, stderr)
+				return hookReport(nil, c.SessionEndHook(ctx, input, time.Now()), stdout, stderr)
 			}
-			out, err := c.SessionHook(input, h)
+			out, err := c.SessionHook(ctx, input, h)
 			return hookReport(out, err, stdout, stderr)
 		}
 		o := plans.FindOptions{Session: session, Worktree: worktree, Branch: branch}
 		if o == (plans.FindOptions{}) {
 			session := ""
-			if h, id := plans.EnvSession(); id != "" {
+			if h, id := plans.EnvSession(e); id != "" {
 				session = h + ":" + id
 			}
-			cwd, _ := os.Getwd()
-			if o = plans.Here(session, cwd); o == (plans.FindOptions{}) {
+			if o = plans.Here(ctx, session, e.Dir()); o == (plans.FindOptions{}) {
 				return report([]plans.Found{}, nil)
 			}
 		}
@@ -976,7 +982,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		return report(p.Postpone(positional[1], *until, time.Now()))
 	case "init":
-		r, err := c.Init()
+		r, err := c.Init(ctx)
 		if r.Note != "" {
 			fmt.Fprintf(stderr, "agent-plan: %s\n", r.Note)
 		}
@@ -986,7 +992,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			fmt.Fprint(stderr, usage)
 			return 2
 		}
-		return report(c.Sync(plans.SyncOptions{PullOnly: *pull, Settle: *settle}))
+		return report(c.Sync(ctx, plans.SyncOptions{PullOnly: *pull, Settle: *settle}))
 	case "own":
 		p, ok := wantPlan()
 		if !ok {
@@ -1012,7 +1018,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		if !ok {
 			return 2
 		}
-		rs, err := c.Related(p.File())
+		rs, err := c.Related(ctx, p.File())
 		if *asJSON {
 			report(rs, nil)
 		} else {
@@ -1058,17 +1064,17 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return 2
 		}
 		if session == "" {
-			_, session = plans.EnvSession()
+			_, session = plans.EnvSession(e)
 		}
-		top, current := checkout()
+		top, current := checkout(ctx)
 		if worktree != "" {
 			top = worktree
-			_, current = checkoutAt(worktree)
+			_, current = checkoutAt(ctx, worktree)
 		}
 		if len(branches) == 0 && current != "" {
 			branches = multi{current}
 		}
-		id, err := c.RequestSign(plans.SignRequest{Plan: *signPlan, Session: session, Worktree: top, Branches: branches, Base: *signBase}, time.Now())
+		id, err := c.RequestSign(ctx, plans.SignRequest{Plan: *signPlan, Session: session, Worktree: top, Branches: branches, Base: *signBase}, time.Now())
 		if err != nil {
 			return report(nil, err)
 		}

@@ -1083,7 +1083,7 @@ func TestGitDeadline(t *testing.T) {
 		data, _ := json.Marshal(map[string]any{"plans": c})
 		os.WriteFile(config, data, 0o644)
 		t.Setenv("AGENT_TOOLS_CONFIG", config)
-		if _, err := c.New(plans.NewOptions{Title: "Add the loop", Slug: "loop", Sessions: []string{"claude:s1"}},
+		if _, err := c.New(t.Context(), plans.NewOptions{Title: "Add the loop", Slug: "loop", Sessions: []string{"claude:s1"}},
 			time.Now()); err != nil {
 			t.Fatal(err)
 		}
@@ -1103,7 +1103,7 @@ func TestGitDeadline(t *testing.T) {
 		mainIn(ctx, []string{"--baseline"}, bytes.NewReader(data), io.Discard, io.Discard)
 		ctx = withVars(ctx, "PATH="+fake+string(os.PathListSeparator)+env.From(ctx).Get("PATH"))
 		hookRefusesWithin(t, ctx, edit, unstalled)
-		p, _, ok := c.Locate("s1", "")
+		p, _, ok := c.Locate(t.Context(), "s1", "")
 		if !ok {
 			t.Fatal("the session's plan is not found")
 		}

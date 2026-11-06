@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
@@ -17,7 +18,7 @@ import (
 // plans.RecordSign), and returns that plan's file. The exit status is the
 // one the command exits with: 0, 2 for a refusal, 1 for any other error.
 func Notify(id string, result any, err error, now time.Time) (string, error) {
-	c, lerr := plans.Load()
+	c, lerr := plans.Load(env.Process())
 	if lerr != nil {
 		return "", lerr
 	}

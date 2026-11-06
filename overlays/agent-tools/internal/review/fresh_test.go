@@ -225,7 +225,7 @@ func (f *fixture) addPart(t *testing.T) string {
 		time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	created, err := f.plans.New(plans.NewOptions{Title: "Third line", Parent: f.plan, Part: "P1"}, time.Now())
+	created, err := f.plans.New(t.Context(), plans.NewOptions{Title: "Third line", Parent: f.plan, Part: "P1"}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -301,7 +301,7 @@ func setUp(t *testing.T, withCodex bool) *fixture {
 	f := &fixture{repo: t.TempDir(), log: t.TempDir(),
 		plans: plans.Config{Dir: filepath.Join(t.TempDir(), "agents"), Host: "box"}}
 	f.writeConfig(t)
-	created, err := f.plans.New(plans.NewOptions{Title: "Grow the code", Slug: "grow",
+	created, err := f.plans.New(t.Context(), plans.NewOptions{Title: "Grow the code", Slug: "grow",
 		Goal: "Grow the code to three lines."}, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -955,7 +955,7 @@ func TestGoalHint(t *testing.T) {
 	f := setUp(t, true)
 	f.plans.Dir = filepath.Join(t.TempDir(), "my plans", "agents")
 	f.writeConfig(t)
-	f.plan = must(f.plans.New(plans.NewOptions{Title: "Grow the code", Slug: "grow", Goal: "Grow the code."}, time.Now())).Plan
+	f.plan = must(f.plans.New(t.Context(), plans.NewOptions{Title: "Grow the code", Slug: "grow", Goal: "Grow the code."}, time.Now())).Plan
 	f.addPart(t)
 	t.Setenv("FAKE_CODEX", "unauthenticated")
 	code, _, stderr := runDelegate(t, "--reviewer", "codex", "--plan", f.plan, "--part", "P1", f.base+"..HEAD")
@@ -975,7 +975,7 @@ func TestRefusals(t *testing.T) {
 	}{
 		{"no goal", func(t *testing.T, f *fixture) []string { return []string{f.base + "..HEAD"} }, "--plan"},
 		{"empty goal", func(t *testing.T, f *fixture) []string {
-			created := must(f.plans.New(plans.NewOptions{Title: "No goal", Slug: "no-goal"}, time.Now()))
+			created := must(f.plans.New(t.Context(), plans.NewOptions{Title: "No goal", Slug: "no-goal"}, time.Now()))
 			return []string{"--plan", created.Plan, f.base + "..HEAD"}
 		}, "agent-plan section"},
 		{"not a plan", func(t *testing.T, f *fixture) []string {

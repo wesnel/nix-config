@@ -1,6 +1,9 @@
 package plans
 
-import "slices"
+import (
+	"context"
+	"slices"
+)
 
 // Checkpoint is a natural stopping point of a session's plan: its file,
 // the kind of the event that made it, and that event's ID, which tells one
@@ -19,9 +22,9 @@ var passiveKinds = []string{signDelivered, "referenced"}
 // stops in cwd, stands at: its newest event, past the passive ones, is a
 // checkpoint event, or a decision that left no question the operator can
 // answer now. It reads local files alone and is false on any error.
-func (c Config) Checkpoint(session, cwd string) (Checkpoint, bool) {
-	top, _ := checkout(cwd)
-	p, found := c.sessionPlan(session, top)
+func (c Config) Checkpoint(ctx context.Context, session, cwd string) (Checkpoint, bool) {
+	top, _ := checkout(ctx, cwd)
+	p, found := c.sessionPlan(ctx, session, top)
 	if !found {
 		return Checkpoint{}, false
 	}
@@ -52,10 +55,10 @@ func (c Config) Checkpoint(session, cwd string) (Checkpoint, bool) {
 
 // sessionPlan is the plan session answers for in the worktree at top: the
 // one Locate finds, which the session's commits there go in.
-func (c Config) sessionPlan(session, top string) (Plan, bool) {
+func (c Config) sessionPlan(ctx context.Context, session, top string) (Plan, bool) {
 	if session == "" {
 		return Plan{}, false
 	}
-	p, _, ok := c.Locate(session, top)
+	p, _, ok := c.Locate(ctx, session, top)
 	return p, ok
 }

@@ -167,7 +167,7 @@ func next(ctx context.Context, repo *Repo, branch string) (NextStep, error) {
 		return Done{Kind: "nothing", Branch: branch, Why: "it has no commits since it left the default branch"}, nil
 	}
 	if onGitHub == "" || onGitHub == tip && pr == 0 {
-		o, err := planOpen(repo, view, branch, repo.Default, operatorFormatSigned)
+		o, err := planOpen(ctx, repo, view, branch, repo.Default, operatorFormatSigned)
 		if err != nil {
 			return nil, err
 		}

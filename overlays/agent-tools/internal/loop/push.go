@@ -95,15 +95,15 @@ func Push(ctx context.Context, branches []string, leases map[string]string, dryR
 			return nil, err
 		}
 		if !pr.IsDraft {
-			before, err := commitsBetween(remoteParent, expected)
+			before, err := commitsBetween(ctx, remoteParent, expected)
 			if err != nil {
 				return nil, err
 			}
-			now, err := commitsBetween(localParent, local)
+			now, err := commitsBetween(ctx, localParent, local)
 			if err != nil {
 				return nil, err
 			}
-			if err := checkFixups(b, own(before), now); err != nil {
+			if err := checkFixups(ctx, b, own(before), now); err != nil {
 				return nil, err
 			}
 			if err := checkPatches(b, remoteParent, expected, localParent, local); err != nil {

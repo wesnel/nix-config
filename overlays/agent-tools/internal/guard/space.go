@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 
 	"github.com/wesnel/agent-tools/internal/agentplans"
+	"github.com/wesnel/agent-tools/internal/env"
 )
 
 // spaceState is why a write to the Space publisher's state is refused: it
@@ -17,7 +18,7 @@ const spaceState = "The Space publisher's state names the block it replaces, so 
 // written, through its links or, where names fold, in any case, or a
 // link to it, there yet or not.
 func spaceStateFile(path string) bool {
-	state := agentplans.SpaceStateFile()
+	state := agentplans.SpaceStateFile(env.Process())
 	return fold(filepath.Clean(path)) == fold(filepath.Clean(state)) || fold(physical(path)) == fold(physical(state)) ||
 		Reaches(path, state, false)
 }
@@ -29,7 +30,7 @@ func checkSpaceStateShell(ctx context.Context, name string, args, redirected []s
 	if shellWrites(ctx, name, args, redirected, dir, spaceStateFile) {
 		return spaceState
 	}
-	state := agentplans.SpaceStateFile()
+	state := agentplans.SpaceStateFile(env.Process())
 	for _, value := range changedFiles(ctx, name, args, redirected) {
 		path := expandPath(ctx, value, dir)
 		if spaceStateFile(path) || Reaches(state, path, true) {

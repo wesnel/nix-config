@@ -1,6 +1,7 @@
 package publictext
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -74,7 +75,7 @@ func In(dir string) Context {
 	if err == nil && top != "" {
 		ctx.Harness = isHarness(top)
 	}
-	harness, id := plans.EnvSession()
+	harness, id := plans.EnvSession(env.Process())
 	planSession := ""
 	if id != "" {
 		ctx.Sessions = append(ctx.Sessions, id)
@@ -87,9 +88,9 @@ func In(dir string) Context {
 	if tmp := strings.TrimRight(os.Getenv("TMPDIR"), "/"); tmp != "" && tmp != "/tmp" {
 		ctx.Paths = append(ctx.Paths, tmp)
 	}
-	if c, err := plans.Load(); err == nil {
+	if c, err := plans.Load(env.Process()); err == nil {
 		ctx.Paths = append(ctx.Paths, c.Dir)
-		if p, _, ok := c.Locate(planSession, top); ok {
+		if p, _, ok := c.Locate(context.Background(), planSession, top); ok {
 			ctx.PlanIDs, _ = p.IDs()
 		}
 	}

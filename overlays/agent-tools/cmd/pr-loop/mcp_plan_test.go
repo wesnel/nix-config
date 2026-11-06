@@ -181,7 +181,7 @@ func TestMCPPlan(t *testing.T) {
 		}
 	})
 	t.Run("plan boundary", func(t *testing.T) {
-		foreign, err := (plans.Config{Dir: filepath.Dir(f.plan), Host: "elsewhere"}).New(plans.NewOptions{Title: "Foreign", Slug: "foreign", Goal: "Owned elsewhere."}, time.Now())
+		foreign, err := (plans.Config{Dir: filepath.Dir(f.plan), Host: "elsewhere"}).New(t.Context(), plans.NewOptions{Title: "Foreign", Slug: "foreign", Goal: "Owned elsewhere."}, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}

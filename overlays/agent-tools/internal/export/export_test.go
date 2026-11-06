@@ -70,10 +70,10 @@ const reply = `{"data": {
   ]}
 }}`
 
-// fakeGitHub puts a gh on PATH that answers `gh api graphql` with reply,
-// or fails where $FAKE_GH_FAIL is set, and puts review records of p/q#3
-// and o/r#7 in the records' directory under a new $XDG_STATE_HOME.
-func fakeGitHub(t *testing.T) {
+// fakeGitHub is t's context with an Env whose PATH has a gh that answers
+// `gh api graphql` with reply, or fails where $FAKE_GH_FAIL is set, and
+// whose new $XDG_STATE_HOME holds review records of p/q#3 and o/r#7.
+func fakeGitHub(t *testing.T) context.Context {
 	t.Helper()
 	bin := t.TempDir()
 	answer := filepath.Join(t.TempDir(), "reply.json")
@@ -81,10 +81,15 @@ func fakeGitHub(t *testing.T) {
 	script := "#!/bin/sh\nif [ \"$1 $2\" != \"api graphql\" ]; then exit 64; fi\n" +
 		"if [ -n \"$FAKE_GH_FAIL\" ]; then echo 'fake gh: down' >&2; exit 1; fi\ncat " + answer + "\n"
 	os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0o755)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("FAKE_GH_FAIL", "")
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	writeRecords(t)
+	e := env.Process()
+	e = e.Set("PATH="+bin+string(os.PathListSeparator)+e.Get("PATH"), "FAKE_GH_FAIL=", "XDG_STATE_HOME="+t.TempDir())
+	writeRecords(t, e)
+	return env.With(t.Context(), e)
+}
+
+// failingGitHub is ctx with its fake gh failing.
+func failingGitHub(ctx context.Context) context.Context {
+	return env.With(ctx, env.From(ctx).Set("FAKE_GH_FAIL=1"))
 }
 
 // reviewDiagram is a diagram's JSON at head, one label holding a token.
@@ -98,8 +103,8 @@ func reviewDiagram() string {
 
 // writeRecords writes git delegate's and pr-loop's records of p/q#3, a
 // review request, and o/r#7, one of the operator's, every text in them a
-// sentinel's.
-func writeRecords(t *testing.T) {
+// sentinel's, in e's record directory.
+func writeRecords(t *testing.T, e env.Env) {
 	t.Helper()
 	finding := func(id string, s record.State) record.Finding {
 		return record.Finding{ID: id, State: s, Title: "SENTINEL-finding-title", Reviewer: "codex", Round: 1, Kind: "bug",
@@ -119,7 +124,7 @@ func writeRecords(t *testing.T) {
 		{"o", "r", 7, record.Range{Title: "SENTINEL-mine", Findings: []record.Finding{finding("F1", record.Fix)},
 			Diagrams: []record.Diagram{{ID: "D2", Title: "SENTINEL-diagram", Verdict: "corrected", JSON: reviewDiagram()}}}},
 	} {
-		path, err := record.RangeFile(env.Process(), r.owner, r.repo, strings.Repeat("0", 40), head)
+		path, err := record.RangeFile(e, r.owner, r.repo, strings.Repeat("0", 40), head)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -128,7 +133,7 @@ func writeRecords(t *testing.T) {
 		if err := record.Update(path, func(got *record.Range) error { *got = rec; return nil }); err != nil {
 			t.Fatal(err)
 		}
-		if path, err = record.PRFile(env.Process(), r.owner, r.repo, r.pr); err != nil {
+		if path, err = record.PRFile(e, r.owner, r.repo, r.pr); err != nil {
 			t.Fatal(err)
 		}
 		comment := []record.Comment{{Author: "alice", Type: "User", Body: "SENTINEL-comment"}}
@@ -180,28 +185,27 @@ func git(t *testing.T, dir string, env []string, args ...string) {
 // box's, with a plan of box's with every section filled, synced and then
 // changed, one of mac's, committed in mac's zone, and a halted one; beside
 // it notes and org files, and outside it a plan linked into the directory.
-// Every text the export must leave out holds SENTINEL.
-func fixture(t *testing.T) (c plans.Config, own, theirs plans.Plan) {
+// Every text the export must leave out holds SENTINEL. Its context's Env
+// is fakeGitHub's.
+func fixture(t *testing.T) (ctx context.Context, c plans.Config, own, theirs plans.Plan) {
 	t.Helper()
-	for k, v := range map[string]string{"GIT_AUTHOR_NAME": "Operator", "GIT_AUTHOR_EMAIL": "operator@example.com",
-		"GIT_COMMITTER_NAME": "Operator", "GIT_COMMITTER_EMAIL": "operator@example.com"} {
-		t.Setenv(k, v)
-	}
+	operator := []string{"GIT_AUTHOR_NAME=Operator", "GIT_AUTHOR_EMAIL=operator@example.com",
+		"GIT_COMMITTER_NAME=Operator", "GIT_COMMITTER_EMAIL=operator@example.com"}
 	root, _ := filepath.EvalSymlinks(t.TempDir())
 	origin, notes := filepath.Join(root, "origin.git"), filepath.Join(root, "notes")
 	git(t, root, nil, "init", "-q", "--bare", "-b", "main", origin)
 	git(t, root, nil, "init", "-q", "-b", "main", notes)
-	git(t, notes, nil, "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "Start")
+	git(t, notes, operator, "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "Start")
 	git(t, notes, nil, "remote", "add", "origin", origin)
 	git(t, notes, nil, "push", "-q", "origin", "main")
 
 	c = plans.Config{Dir: filepath.Join(notes, "agents"), Host: "box"}
 	// The workstream's title is exported; its summary never is.
-	ws, err := c.NewWorkstream("Agent tooling "+fakeToken, "SENTINEL-workstream-summary")
+	ws, err := c.NewWorkstream(t.Context(), "Agent tooling "+fakeToken, "SENTINEL-workstream-summary")
 	if err != nil {
 		t.Fatal(err)
 	}
-	made, err := c.New(plans.NewOptions{Title: "Rotate " + fakeToken + "\u202e", Slug: "loop", Repos: []string{"o/SENTINEL-repo"},
+	made, err := c.New(t.Context(), plans.NewOptions{Title: "Rotate " + fakeToken + "\u202e", Slug: "loop", Repos: []string{"o/SENTINEL-repo"},
 		Branches: []string{"main..SENTINEL-branch"}, Worktrees: []string{"/w/SENTINEL-worktree"},
 		Sessions: []string{"claude:SENTINEL-session"}, Harness: "claude",
 		Goal: "Run the loop. password=SENTINEL-goal-password", Workstream: ws.Name}, day)
@@ -217,7 +221,7 @@ func fixture(t *testing.T) (c plans.Config, own, theirs plans.Plan) {
 	under(t, file, "** References", "- [[file:/SENTINEL-reference.org]]\n"+
 		"*** TODO SENTINEL-reference-step\n:PROPERTIES:\n:ID: S8\n:END:\n")
 	under(t, file, "** Verification", "SENTINEL-verification\n")
-	part, err := c.New(plans.NewOptions{Title: "SENTINEL-part-title", Parent: file, Part: "P1",
+	part, err := c.New(t.Context(), plans.NewOptions{Title: "SENTINEL-part-title", Parent: file, Part: "P1",
 		Goal: "SENTINEL-part-goal"}, day)
 	if err != nil {
 		t.Fatal(err)
@@ -263,14 +267,14 @@ func fixture(t *testing.T) (c plans.Config, own, theirs plans.Plan) {
 	}
 
 	mac := plans.Config{Dir: c.Dir, Host: "mac"}
-	made, err = mac.New(plans.NewOptions{Title: "Their plan", Slug: "theirs", Goal: "Their goal."}, day)
+	made, err = mac.New(t.Context(), plans.NewOptions{Title: "Their plan", Slug: "theirs", Goal: "Their goal."}, day)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if theirs, err = c.Open(made.Plan); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.New(plans.NewOptions{Title: "SENTINEL-halted", Slug: "halted", Status: "halted"}, day); err != nil {
+	if _, err := c.New(t.Context(), plans.NewOptions{Title: "SENTINEL-halted", Slug: "halted", Status: "halted"}, day); err != nil {
 		t.Fatal(err)
 	}
 
@@ -296,16 +300,15 @@ func fixture(t *testing.T) (c plans.Config, own, theirs plans.Plan) {
 		return []string{filepath.Join("agents", filepath.Base(p.File())), filepath.Join("agents", p.Name+".log.org")}
 	}
 	git(t, notes, nil, append([]string{"add", "--"}, rel(theirs)...)...)
-	git(t, notes, []string{"GIT_COMMITTER_DATE=" + theirsCommitted}, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "Sync plans from mac")
+	git(t, notes, append(operator, "GIT_COMMITTER_DATE="+theirsCommitted), "-c", "commit.gpgsign=false", "commit", "-q", "-m", "Sync plans from mac")
 	git(t, notes, nil, "push", "-q", "origin", "main")
-	if _, err := c.Sync(plans.SyncOptions{}); err != nil {
+	if _, err := c.Sync(t.Context(), plans.SyncOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	under(t, file, "** Verification", "SENTINEL-after-sync\n")
 	// Staged, so the next sync is blocked until it is committed or unstaged.
 	git(t, notes, nil, "add", "--", file)
-	fakeGitHub(t)
-	return c, own, theirs
+	return fakeGitHub(t), c, own, theirs
 }
 
 // The keys each document may hold, an array's elements' as "name[].key".
@@ -398,6 +401,7 @@ func tagKeys(t *testing.T, typ reflect.Type, path string, out map[string]bool) {
 
 // Every document type's JSON keys are the allowlist, each always written.
 func TestDocumentTypes(t *testing.T) {
+	t.Parallel()
 	for collection, typ := range map[string]reflect.Type{"plans": reflect.TypeFor[Plan](),
 		"github": reflect.TypeFor[GitHub](), "meta": reflect.TypeFor[Sync](), "today": reflect.TypeFor[Today]()} {
 		got := map[string]bool{}
@@ -413,21 +417,21 @@ func TestDocumentTypes(t *testing.T) {
 // and no text outside the exported plan fields, nor a secret or a
 // formatting character within them, reaches any document.
 func TestSentinel(t *testing.T) {
-	c, own, theirs := fixture(t)
+	t.Parallel()
+	ctx, c, own, theirs := fixture(t)
 	out := filepath.Join(t.TempDir(), "out")
 	cache := filepath.Join(t.TempDir(), "github.json")
-	if _, err := Collect(context.Background(), c, cache, day); err != nil {
+	if _, err := Collect(ctx, c, cache, day); err != nil {
 		t.Fatal(err)
 	}
 	// A plan whose log is gone is counted, never exported.
-	broken, err := c.New(plans.NewOptions{Title: "SENTINEL-broken", Slug: "broken"}, day)
+	broken, err := c.New(t.Context(), plans.NewOptions{Title: "SENTINEL-broken", Slug: "broken"}, day)
 	if err != nil {
 		t.Fatal(err)
 	}
 	os.Rename(strings.TrimSuffix(broken.Plan, ".org")+".log.org", filepath.Join(t.TempDir(), "log.org"))
 	// The fetch fails after the cache's minute, so GitHub's part is stale.
-	t.Setenv("FAKE_GH_FAIL", "1")
-	e, err := Collect(context.Background(), c, cache, day.Add(2*time.Minute))
+	e, err := Collect(failingGitHub(ctx), c, cache, day.Add(2*time.Minute))
 	if err == nil || !strings.Contains(err.Error(), "fake gh: down") {
 		t.Fatalf("a failed fetch: %v", err)
 	}
@@ -491,13 +495,14 @@ func TestSentinel(t *testing.T) {
 // from ANSWER or the LOGBOOK alone, times with their zone, and GitHub's
 // keys, titles and states.
 func TestExport(t *testing.T) {
-	c, own, theirs := fixture(t)
+	t.Parallel()
+	ctx, c, own, theirs := fixture(t)
 	ws, err := c.Workstreams()
 	if err != nil || len(ws) != 1 {
 		t.Fatalf("workstreams %+v, %v", ws, err)
 	}
 	before, _ := os.ReadFile(ws[0].File)
-	e, err := Collect(context.Background(), c, filepath.Join(t.TempDir(), "github.json"), day)
+	e, err := Collect(ctx, c, filepath.Join(t.TempDir(), "github.json"), day)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -564,6 +569,7 @@ func TestExport(t *testing.T) {
 // Today holds the newest day's demo digest of the last week, and nothing
 // where none is that recent or the directory is a link.
 func TestToday(t *testing.T) {
+	t.Parallel()
 	repo := t.TempDir()
 	c := plans.Config{Dir: filepath.Join(repo, "agents"), Host: "box"}
 	digests := filepath.Join(repo, "digests", "2026")
@@ -589,13 +595,14 @@ func TestToday(t *testing.T) {
 // A digest that cannot be read is an error, and Write keeps the last good
 // today/digest rather than putting an empty one over it.
 func TestTodayKept(t *testing.T) {
-	fakeGitHub(t)
+	t.Parallel()
+	ctx := fakeGitHub(t)
 	repo := t.TempDir()
 	c := plans.Config{Dir: filepath.Join(repo, "agents"), Host: "box"}
 	digest := filepath.Join(repo, "digests", "2026", "10-14-demo.org")
 	write(t, digest, "* Yesterday\n- Shipped.\n")
 	out := t.TempDir()
-	e, _ := Collect(context.Background(), c, filepath.Join(t.TempDir(), "github.json"), day)
+	e, _ := Collect(ctx, c, filepath.Join(t.TempDir(), "github.json"), day)
 	if err := Write(out, e); err != nil {
 		t.Fatal(err)
 	}
@@ -606,7 +613,7 @@ func TestTodayKept(t *testing.T) {
 	}
 	os.Chmod(digest, 0)
 	defer os.Chmod(digest, 0o644)
-	e, err = Collect(context.Background(), c, filepath.Join(t.TempDir(), "github.json"), day)
+	e, err = Collect(ctx, c, filepath.Join(t.TempDir(), "github.json"), day)
 	if err == nil || !e.TodayFailed {
 		t.Fatalf("an unreadable digest: failed %v, %v", e.TodayFailed, err)
 	}
@@ -623,11 +630,12 @@ func TestTodayKept(t *testing.T) {
 // one that is gone, or halted now, loses its document. Where the plans
 // directory cannot be listed, no document is removed.
 func TestFailures(t *testing.T) {
-	fakeGitHub(t)
+	t.Parallel()
+	ctx := fakeGitHub(t)
 	c := plans.Config{Dir: filepath.Join(t.TempDir(), "agents"), Host: "box"}
 	newPlan := func(slug, status string) plans.Plan {
 		t.Helper()
-		made, err := c.New(plans.NewOptions{Title: "Plan " + slug, Slug: slug, Status: status}, day)
+		made, err := c.New(t.Context(), plans.NewOptions{Title: "Plan " + slug, Slug: slug, Status: status}, day)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -639,7 +647,7 @@ func TestFailures(t *testing.T) {
 	}
 	kept, gone, halting := newPlan("kept", ""), newPlan("gone", ""), newPlan("halting", "")
 	out := t.TempDir()
-	e, err := Collect(context.Background(), c, filepath.Join(t.TempDir(), "github.json"), day)
+	e, err := Collect(ctx, c, filepath.Join(t.TempDir(), "github.json"), day)
 	if err != nil || len(e.Plans) != 3 {
 		t.Fatalf("first export: %d plans, %v", len(e.Plans), err)
 	}
@@ -655,7 +663,7 @@ func TestFailures(t *testing.T) {
 	data, _ := os.ReadFile(halting.File())
 	os.WriteFile(halting.File(), []byte(strings.Replace(string(data), ":STATUS: planning", ":STATUS: halted", 1)), 0o644)
 	long := newPlan(strings.Repeat("a", 200), "")
-	e, err = Collect(context.Background(), c, filepath.Join(t.TempDir(), "github.json"), day)
+	e, err = Collect(ctx, c, filepath.Join(t.TempDir(), "github.json"), day)
 	if err == nil || !strings.Contains(err.Error(), kept.Name) || !strings.Contains(err.Error(), long.Name) {
 		t.Errorf("the error does not name the failed plans: %v", err)
 	}
@@ -675,7 +683,7 @@ func TestFailures(t *testing.T) {
 	os.WriteFile(doc(gone), []byte("{}"), 0o600)
 	os.Chmod(c.Dir, 0)
 	defer os.Chmod(c.Dir, 0o755)
-	e, err = Collect(context.Background(), c, filepath.Join(t.TempDir(), "github.json"), day)
+	e, err = Collect(ctx, c, filepath.Join(t.TempDir(), "github.json"), day)
 	if err == nil {
 		t.Error("an unreadable plans directory is no error")
 	}
@@ -692,9 +700,10 @@ func TestFailures(t *testing.T) {
 // Long text is cut to its cap in runes, lists to theirs, and a plan
 // filled past every cap with the widest characters stays within maxDoc.
 func TestCaps(t *testing.T) {
+	t.Parallel()
 	c := plans.Config{Dir: filepath.Join(t.TempDir(), "agents"), Host: "box"}
 	wide := func(n int) string { return strings.Repeat("😀", n) }
-	made, err := c.New(plans.NewOptions{Title: wide(300), Slug: "long", Goal: wide(2500)}, day)
+	made, err := c.New(t.Context(), plans.NewOptions{Title: wide(300), Slug: "long", Goal: wide(2500)}, day)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -729,7 +738,7 @@ func TestCaps(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, _, err := Plans(c, day)
+	got, _, err := Plans(t.Context(), c, day)
 	if err != nil || len(got) != 1 {
 		t.Fatalf("%+v, %v", got, err)
 	}
@@ -765,6 +774,7 @@ func TestCaps(t *testing.T) {
 // leaves every other file in the directory alone; it writes into no
 // collection directory that is a link.
 func TestWrite(t *testing.T) {
+	t.Parallel()
 	out := t.TempDir()
 	write(t, filepath.Join(out, "plans", "2026-01-01-old.box.json"), "{}")
 	write(t, filepath.Join(out, "answers", "x.json"), `{"choice": "A"}`)

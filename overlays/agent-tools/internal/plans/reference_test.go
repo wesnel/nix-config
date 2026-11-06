@@ -98,9 +98,9 @@ func TestPromptReferences(t *testing.T) {
 	t.Run("the operator's prompt", func(t *testing.T) {
 		c := testConfig(t)
 		p := newPlan(t, c, "x")
-		out := c.Remind(prompt("Read https://github.com/cursor/plugins/blob/main/pstack/docs/guide/08-principles.md " +
-			"and its 24 principle skills (https://github.com/cursor/plugins/tree/main/pstack/skills), then grill me on " +
-			"which belong in our skills. See also http://example.com/a?b=1&c=2. Same guide again: " +
+		out := c.Remind(t.Context(), prompt("Read https://github.com/cursor/plugins/blob/main/pstack/docs/guide/08-principles.md "+
+			"and its 24 principle skills (https://github.com/cursor/plugins/tree/main/pstack/skills), then grill me on "+
+			"which belong in our skills. See also http://example.com/a?b=1&c=2. Same guide again: "+
 			"https://github.com/cursor/plugins/blob/main/pstack/docs/guide/08-principles.md"))
 		if len(out) != 0 {
 			t.Errorf("printed %s", out)
@@ -116,7 +116,7 @@ func TestPromptReferences(t *testing.T) {
 	t.Run("a sub-agent's result", func(t *testing.T) {
 		c := testConfig(t)
 		p := newPlan(t, c, "x")
-		c.Remind(prompt("<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n" +
+		c.Remind(t.Context(), prompt("<task-notification>\n<task-id>a1</task-id>\n<status>completed</status>\n"+
 			"<summary>Agent \"Look it up\" finished</summary>\n<result>See https://example.com/found.</result>\n</task-notification>"))
 		if refs := references(t, p); len(refs) != 0 {
 			t.Errorf("references %v", refs)
@@ -145,7 +145,7 @@ func TestPromptReferences(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			c := testConfig(t)
 			p := newPlan(t, c, "x")
-			if out := c.Remind(c2.input); len(out) != 0 {
+			if out := c.Remind(t.Context(), c2.input); len(out) != 0 {
 				t.Errorf("printed %s", out)
 			}
 			if refs := references(t, p); len(refs) != c2.want {
@@ -159,7 +159,7 @@ func TestPromptReferences(t *testing.T) {
 		newPlan(t, c, "x")
 		data, _ := json.Marshal(map[string]any{"session_id": "zzz", "hook_event_name": "UserPromptSubmit",
 			"prompt": "Read https://example.com/x"})
-		if out := c.Remind(data); len(out) != 0 {
+		if out := c.Remind(t.Context(), data); len(out) != 0 {
 			t.Errorf("printed %s", out)
 		}
 	})

@@ -59,14 +59,14 @@ func SignCheck(ctx context.Context) (any, error) {
 		if stack.Trees[b], err = git.Run("rev-parse", "refs/heads/"+b+"^{tree}"); err != nil {
 			return nil, err
 		}
-		commits, err := commitsBetween(below, "refs/heads/"+b)
+		commits, err := commitsBetween(ctx, below, "refs/heads/"+b)
 		if err != nil {
 			return nil, err
 		}
 		stack.Commits[b] = own(commits)
 		below = "refs/heads/" + b
 	}
-	if err := rehearse(stack); err != nil {
+	if err := rehearse(ctx, stack); err != nil {
 		return nil, err
 	}
 	return map[string]any{"verified": "squashing the fixups leaves every branch with its own commits and the same files",
@@ -85,7 +85,7 @@ type signedStack struct {
 
 // rehearse squashes the stack, unsigned, in a throwaway worktree and checks
 // the result, so a conflict or a stray commit shows up before any key touch.
-func rehearse(stack *signedStack) error {
+func rehearse(ctx context.Context, stack *signedStack) error {
 	scratch, err := os.MkdirTemp("", "pr-loop-rehearsal-")
 	if err != nil {
 		return err
@@ -131,7 +131,7 @@ func rehearse(stack *signedStack) error {
 			base = squashed[at-1]
 		}
 		end := squashed[at+len(want)-1]
-		if err := matches(want, base, end, b); err != nil {
+		if err := matches(ctx, want, base, end, b); err != nil {
 			return err
 		}
 		if tree, _ := git.Run("rev-parse", end+"^{tree}"); tree != stack.Trees[b] {

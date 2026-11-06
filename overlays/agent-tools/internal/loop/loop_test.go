@@ -82,31 +82,31 @@ func TestCheckFixups(t *testing.T) {
 	t.Run("fixups and nested fixups", func(t *testing.T) {
 		fix := c("fixup! A first\n\nReview-Thread: x")
 		nested := c("fixup! fixup! B second")
-		if err := checkFixups("br", []Commit{a, b}, []Commit{a, b, fix, nested}); err != nil {
+		if err := checkFixups(t.Context(), "br", []Commit{a, b}, []Commit{a, b, fix, nested}); err != nil {
 			t.Errorf("fixups refused: %v", err)
 		}
 	})
 
 	t.Run("plain commit", func(t *testing.T) {
-		if err := checkFixups("br", []Commit{a, b}, []Commit{a, b, c("stray")}); err == nil {
+		if err := checkFixups(t.Context(), "br", []Commit{a, b}, []Commit{a, b, c("stray")}); err == nil {
 			t.Error("a plain commit was accepted")
 		}
 	})
 
 	t.Run("fixup of another branch's commit", func(t *testing.T) {
-		if err := checkFixups("br", []Commit{a}, []Commit{a, c("fixup! elsewhere")}); err == nil {
+		if err := checkFixups(t.Context(), "br", []Commit{a}, []Commit{a, c("fixup! elsewhere")}); err == nil {
 			t.Error("a fixup of another branch's commit was accepted")
 		}
 	})
 
 	t.Run("rewritten original", func(t *testing.T) {
-		if err := checkFixups("br", []Commit{a, b}, []Commit{c("A reworded"), b}); err == nil {
+		if err := checkFixups(t.Context(), "br", []Commit{a, b}, []Commit{c("A reworded"), b}); err == nil {
 			t.Error("a rewritten original was accepted")
 		}
 	})
 
 	t.Run("fixup of an amend", func(t *testing.T) {
-		if err := checkFixups("br", []Commit{a, b}, []Commit{a, b, c("fixup! amend! A first\n\nignored")}); err != nil {
+		if err := checkFixups(t.Context(), "br", []Commit{a, b}, []Commit{a, b, c("fixup! amend! A first\n\nignored")}); err != nil {
 			t.Errorf("a fixup! of an amend! refused: %v", err)
 		}
 	})
@@ -117,7 +117,7 @@ func TestCheckFixups(t *testing.T) {
 		"amend of fixup": "amend! fixup! A first\n\nA renamed",
 	} {
 		t.Run("rewrite/"+name, func(t *testing.T) {
-			if err := checkFixups("br", []Commit{a, b}, []Commit{a, b, c(rewrite)}); err == nil || !strings.Contains(err.Error(), "--fixup=<commit>") {
+			if err := checkFixups(t.Context(), "br", []Commit{a, b}, []Commit{a, b, c(rewrite)}); err == nil || !strings.Contains(err.Error(), "--fixup=<commit>") {
 				t.Errorf("%q: %v", rewrite, err)
 			}
 		})
@@ -129,7 +129,7 @@ func TestCheckFixups(t *testing.T) {
 		"fixup! A first\n\nAs in thread tZ1Cm.\n\nReview-Thread: x":  "tZ1Cm",
 	} {
 		t.Run("trailer/"+problem, func(t *testing.T) {
-			err := checkFixups("br", []Commit{a, b}, []Commit{a, b, c(message)})
+			err := checkFixups(t.Context(), "br", []Commit{a, b}, []Commit{a, b, c(message)})
 			if _, ok := err.(Refusal); !ok || !strings.Contains(err.Error(), problem) || !strings.Contains(err.Error(), `"fixup! A first"`) ||
 				!refusal.SaysInstead(err.Error()) {
 				t.Errorf("%q: %v", message, err)
@@ -267,7 +267,7 @@ func TestCheckLocal(t *testing.T) {
 
 	t.Run("stacked", func(t *testing.T) {
 		s := newLocalStack(t)
-		local, known, err := checkLocal(repo, "child", "parent", s.parent, s.child, false)
+		local, known, err := checkLocal(t.Context(), repo, "child", "parent", s.parent, s.child, false)
 		if err != nil || local != s.child {
 			t.Fatalf("stacked: %s, %v", local, err)
 		}
@@ -287,7 +287,7 @@ func TestCheckLocal(t *testing.T) {
 	// what was fetched is still left out of the upload.
 	t.Run("default base not fetched", func(t *testing.T) {
 		s := newLocalStack(t)
-		if _, known, err := checkLocal(repo, "child", "trunk", unfetched, s.child, false); err != nil || strings.Join(known, " ") != "--remotes=origin/* --remotes=another/*" {
+		if _, known, err := checkLocal(t.Context(), repo, "child", "trunk", unfetched, s.child, false); err != nil || strings.Join(known, " ") != "--remotes=origin/* --remotes=another/*" {
 			t.Errorf("default base not fetched: %v, %v", known, err)
 		}
 	})
@@ -311,7 +311,7 @@ func TestCheckLocal(t *testing.T) {
 			case "parent":
 				oid = s.parent
 			}
-			_, _, err := checkLocal(repo, c[0], c[1], oid, gitIn(t, s.dir, "rev-parse", c[0]), false)
+			_, _, err := checkLocal(t.Context(), repo, c[0], c[1], oid, gitIn(t, s.dir, "rev-parse", c[0]), false)
 			if _, ok := err.(Refusal); !ok || !refusal.SaysInstead(err.Error()) {
 				t.Errorf("%s: %v", name, err)
 			}
@@ -323,7 +323,7 @@ func TestCheckLocal(t *testing.T) {
 
 	t.Run("message an amend! rewords", func(t *testing.T) {
 		s := newLocalStack(t)
-		if _, _, err := checkLocal(repo, "reworded", "trunk", s.trunk, gitIn(t, s.dir, "rev-parse", "reworded"), false); err != nil {
+		if _, _, err := checkLocal(t.Context(), repo, "reworded", "trunk", s.trunk, gitIn(t, s.dir, "rev-parse", "reworded"), false); err != nil {
 			t.Errorf("a message an amend! rewords: %v", err)
 		}
 	})
@@ -362,7 +362,7 @@ func TestCheckLocalParent(t *testing.T) {
 	t.Run("default base refused, naming the parent", func(t *testing.T) {
 		s := newLocalStack(t)
 		pushed(t, s, "parent")
-		_, _, err := checkLocal(repo, "child", "trunk", s.trunk, s.child, false)
+		_, _, err := checkLocal(t.Context(), repo, "child", "trunk", s.trunk, s.child, false)
 		if _, ok := err.(Refusal); !ok || !refusal.SaysInstead(err.Error()) || !strings.Contains(fmt.Sprint(err), "--base parent") {
 			t.Errorf("default base over a pushed parent: %v", err)
 		}
@@ -372,7 +372,7 @@ func TestCheckLocalParent(t *testing.T) {
 		s := newLocalStack(t)
 		grandchild(t, s)
 		pushed(t, s, "parent", "child")
-		_, _, err := checkLocal(repo, "grandchild", "trunk", s.trunk, gitIn(t, s.dir, "rev-parse", "grandchild"), false)
+		_, _, err := checkLocal(t.Context(), repo, "grandchild", "trunk", s.trunk, gitIn(t, s.dir, "rev-parse", "grandchild"), false)
 		if _, ok := err.(Refusal); !ok || !strings.Contains(fmt.Sprint(err), "--base child") {
 			t.Errorf("nearest parent: %v", err)
 		}
@@ -381,7 +381,7 @@ func TestCheckLocalParent(t *testing.T) {
 	t.Run("explicit base that is the parent passes", func(t *testing.T) {
 		s := newLocalStack(t)
 		pushed(t, s, "parent")
-		if _, _, err := checkLocal(repo, "child", "parent", s.parent, s.child, false); err != nil {
+		if _, _, err := checkLocal(t.Context(), repo, "child", "parent", s.parent, s.child, false); err != nil {
 			t.Errorf("explicit parent base: %v", err)
 		}
 	})
@@ -390,7 +390,7 @@ func TestCheckLocalParent(t *testing.T) {
 		s := newLocalStack(t)
 		grandchild(t, s)
 		pushed(t, s, "parent", "child")
-		_, _, err := checkLocal(repo, "grandchild", "parent", s.parent, gitIn(t, s.dir, "rev-parse", "grandchild"), false)
+		_, _, err := checkLocal(t.Context(), repo, "grandchild", "parent", s.parent, gitIn(t, s.dir, "rev-parse", "grandchild"), false)
 		if _, ok := err.(Refusal); !ok || !strings.Contains(fmt.Sprint(err), "--base child") {
 			t.Errorf("base below the nearest parent: %v", err)
 		}
@@ -399,7 +399,7 @@ func TestCheckLocalParent(t *testing.T) {
 	t.Run("parent already in the base passes", func(t *testing.T) {
 		s := newLocalStack(t)
 		pushed(t, s, "parent")
-		if _, _, err := checkLocal(repo, "child", "trunk", s.parent, s.child, false); err != nil {
+		if _, _, err := checkLocal(t.Context(), repo, "child", "trunk", s.parent, s.child, false); err != nil {
 			t.Errorf("merged parent: %v", err)
 		}
 	})
@@ -407,7 +407,7 @@ func TestCheckLocalParent(t *testing.T) {
 	t.Run("unrelated remote branch passes", func(t *testing.T) {
 		s := newLocalStack(t)
 		pushed(t, s, "aside")
-		if _, _, err := checkLocal(repo, "child", "trunk", s.trunk, s.child, false); err != nil {
+		if _, _, err := checkLocal(t.Context(), repo, "child", "trunk", s.trunk, s.child, false); err != nil {
 			t.Errorf("unrelated remote branch: %v", err)
 		}
 	})
@@ -568,7 +568,7 @@ func (s *fixedStack) stack(t *testing.T) *signedStack {
 	below := "main"
 	for _, b := range st.Order {
 		st.Trees[b] = gitIn(t, s.dir, "rev-parse", b+"^{tree}")
-		c, err := commitsBetween(below, b)
+		c, err := commitsBetween(t.Context(), below, b)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -586,7 +586,7 @@ func TestRehearse(t *testing.T) {
 	t.Run("clean stack", func(t *testing.T) {
 		s := newFixedStack(t)
 		branches := gitIn(t, s.dir, "for-each-ref", "refs/heads/")
-		if err := rehearse(s.stack(t)); err != nil {
+		if err := rehearse(t.Context(), s.stack(t)); err != nil {
 			t.Fatalf("rehearsal refused a clean stack: %v", err)
 		}
 		if got := gitIn(t, s.dir, "worktree", "list"); strings.Count(got, "\n") != 0 {
@@ -605,7 +605,7 @@ func TestRehearse(t *testing.T) {
 		os.WriteFile(filepath.Join(s.dir, "b"), []byte("b again\n"), 0o644)
 		gitIn(t, s.dir, "commit", "-qa", "--fixup=lower~2")
 		gitIn(t, s.dir, "rebase", "-q", "--onto", "lower", before, "upper")
-		err := rehearse(s.stack(t))
+		err := rehearse(t.Context(), s.stack(t))
 		if _, ok := err.(Refusal); !ok || !strings.Contains(err.Error(), "conflicts") {
 			t.Errorf("conflicting fixup: %v", err)
 		}

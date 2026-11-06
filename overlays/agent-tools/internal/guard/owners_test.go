@@ -117,7 +117,7 @@ func TestSessionEdits(t *testing.T) {
 			t.Setenv("AGENT_TOOLS_CONFIG", config)
 			now := time.Now()
 			if other {
-				if _, err := c.New(plans.NewOptions{Title: "Other", Slug: "other", Worktrees: []string{parked}, Sessions: []string{"codex:s2"}}, now.Add(-time.Second)); err != nil {
+				if _, err := c.New(t.Context(), plans.NewOptions{Title: "Other", Slug: "other", Worktrees: []string{parked}, Sessions: []string{"codex:s2"}}, now.Add(-time.Second)); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -126,7 +126,7 @@ func TestSessionEdits(t *testing.T) {
 				if tc.association != "" {
 					association = paths.Replace(tc.association)
 				}
-				made, err := c.New(plans.NewOptions{Title: "Task", Slug: "task", Worktrees: []string{association}, Sessions: []string{"codex:s1"}}, now)
+				made, err := c.New(t.Context(), plans.NewOptions{Title: "Task", Slug: "task", Worktrees: []string{association}, Sessions: []string{"codex:s1"}}, now)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -146,7 +146,7 @@ func TestSessionEdits(t *testing.T) {
 					if tc.sessionOnly {
 						o.Worktrees, o.Sessions = []string{main}, []string{"codex:s1"}
 					}
-					if _, err := c.New(o, now.Add(time.Second)); err != nil {
+					if _, err := c.New(t.Context(), o, now.Add(time.Second)); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -205,7 +205,7 @@ func TestOwners(t *testing.T) {
 		// Links in scratch into the sibling's worktree and the main checkout.
 		os.Symlink(sibling, filepath.Join(scratch, "to-sibling"))
 		os.Symlink(main, filepath.Join(scratch, "to-main"))
-		made, err := c.New(plans.NewOptions{Title: "X", Slug: "x"}, time.Now())
+		made, err := c.New(t.Context(), plans.NewOptions{Title: "X", Slug: "x"}, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -27,13 +27,13 @@ func requested(t *testing.T, dir string) (plans.Plan, string) {
 	if err := os.WriteFile(config, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	made, err := c.New(plans.NewOptions{Title: "Add the loop", Slug: "loop", Sessions: []string{"claude:abc"},
+	made, err := c.New(t.Context(), plans.NewOptions{Title: "Add the loop", Slug: "loop", Sessions: []string{"claude:abc"},
 		Harness: "claude"}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	p, _ := c.Open(made.Plan)
-	id, err := c.RequestSign(plans.SignRequest{Session: "abc", Branches: []string{"one"}}, time.Now())
+	id, err := c.RequestSign(t.Context(), plans.SignRequest{Session: "abc", Branches: []string{"one"}}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

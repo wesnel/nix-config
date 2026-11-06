@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
@@ -36,7 +37,7 @@ func TestBranchHint(t *testing.T) {
 		data, _ := json.Marshal(map[string]any{"plans": c})
 		os.WriteFile(config, data, 0o644)
 		t.Setenv("AGENT_TOOLS_CONFIG", config)
-		if _, err := c.New(plans.NewOptions{Title: "Add the loop", Slug: "loop", Sessions: []string{"claude:s1", "claude:s2"}},
+		if _, err := c.New(t.Context(), plans.NewOptions{Title: "Add the loop", Slug: "loop", Sessions: []string{"claude:s1", "claude:s2"}},
 			time.Now()); err != nil {
 			t.Fatal(err)
 		}
@@ -149,8 +150,8 @@ func TestBranchHint(t *testing.T) {
 		gitIn(t, linked, "switch", "-q", "--detach")
 		edit("s1", "Edit", filepath.Join(linked, "b.go"))
 		edit("s2", "Edit", filepath.Join(linked, "b.go"))
-		c, _ := plans.Load()
-		p, _, _ := c.Locate("s1", "")
+		c, _ := plans.Load(env.Process())
+		p, _, _ := c.Locate(t.Context(), "s1", "")
 		events, _ := p.Events()
 		var got []string
 		for _, e := range events {

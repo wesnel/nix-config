@@ -149,7 +149,7 @@ func Plan(ctx context.Context, base string, names []string, push, setUpstream bo
 		if merges, _ := git.In(ctx).Run("rev-list", "--merges", s.from+".."+s.tip); merges != "" {
 			return nil, refuse("%s's commits to sign include merges, which re-signing would flatten; sign them by hand", t)
 		}
-		if err := lintMessages(t, s.from, s.tip); err != nil {
+		if err := lintMessages(ctx, t, s.from, s.tip); err != nil {
 			return nil, err
 		}
 		var signs int
@@ -178,7 +178,7 @@ func Plan(ctx context.Context, base string, names []string, push, setUpstream bo
 				}
 			}
 		}
-		lands, err := landings(before, stacked, s.from)
+		lands, err := landings(ctx, before, stacked, s.from)
 		if err != nil {
 			return nil, err
 		}
@@ -349,7 +349,7 @@ func rehearseStep(ctx context.Context, s *step, squash bool) (int, error) {
 		fmt.Sscan(n, &count)
 		return count, err
 	}
-	kept, err := keptCommits(s.from, s.tip)
+	kept, err := keptCommits(ctx, s.from, s.tip)
 	if err != nil {
 		return 0, err
 	}
@@ -365,7 +365,7 @@ func rehearseFork(ctx context.Context, s *step, e *step) (int, error) {
 	if _, _, err := RangeStart(ctx, s.from, s.tip); err != nil {
 		return 0, err
 	}
-	kept, err := keptCommits(e.from, s.from)
+	kept, err := keptCommits(ctx, e.from, s.from)
 	if err != nil {
 		return 0, err
 	}
@@ -374,7 +374,7 @@ func rehearseFork(ctx context.Context, s *step, e *step) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	own, err := keptCommits(s.Fork, s.tip)
+	own, err := keptCommits(ctx, s.Fork, s.tip)
 	if err != nil {
 		return 0, err
 	}
@@ -389,7 +389,7 @@ func rehearseFork(ctx context.Context, s *step, e *step) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if err := history.Match(own, onto, head, s.Branch); err != nil {
+	if err := history.Match(ctx, own, onto, head, s.Branch); err != nil {
 		return 0, err
 	}
 	if gained, err := sameChange(ctx, s.Fork, onto, s.tip, head); err != nil {
@@ -531,7 +531,7 @@ func runPlan(ctx context.Context, pl *plan) (any, error) {
 			tip := "refs/heads/" + s.Branch
 			p = &pending{Branch: s.Branch, Start: onto, Onto: onto, Fork: s.Fork, Fixups: s.Fixups, Shape: s.Shape,
 				Before: before, Stacked: stackedIn(ctx, before, s.Branch, s.Fork, tip), Trees: map[string]string{}}
-			if p.Lands, err = landings(before, p.Stacked, s.Fork); err != nil {
+			if p.Lands, err = landings(ctx, before, p.Stacked, s.Fork); err != nil {
 				return nil, err
 			}
 			for _, b := range append([]string{s.Branch}, p.Stacked...) {

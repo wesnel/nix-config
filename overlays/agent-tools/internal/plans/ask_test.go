@@ -103,7 +103,7 @@ func TestAsk(t *testing.T) {
 		if qs, _ := p.Questions(true); ids(qs) != "Q1 Q2 P1.Q1" {
 			t.Errorf("open %s", ids(qs))
 		}
-		if line := c.StatusLine([]byte(`{"session_id":"abc"}`)); line != "3 open questions · /questions" {
+		if line := c.StatusLine(t.Context(), []byte(`{"session_id":"abc"}`)); line != "3 open questions · /questions" {
 			t.Errorf("status line %q", line)
 		}
 		if ds, _ := p.Decisions(false); decisionIDs(ds) != "Q3 Q4" {

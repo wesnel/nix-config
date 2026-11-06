@@ -602,7 +602,7 @@ func shellWord(s string) string {
 // its Goal heading, which agent-plan goal prints. plan may name a part's
 // file, which Open takes as its plan's, only together with that part.
 func planGoal(plan, part string) (string, error) {
-	c, err := plans.Load()
+	c, err := plans.Load(env.Process())
 	if err != nil {
 		return "", err
 	}
