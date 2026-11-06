@@ -170,7 +170,7 @@ section { display: grid; gap: 14px; min-width: 0; }
 /* Today */
 .digest { padding: 14px 16px; display: grid; gap: 8px; }
 .digest + .digest { border-top: 1px solid var(--border-muted); }
-.digest pre {
+.digest-raw {
   margin: 0;
   font-family: var(--font-sans);
   font-size: var(--text-sm);
@@ -180,6 +180,26 @@ section { display: grid; gap: 14px; min-width: 0; }
   max-height: 28rem;
   overflow: auto;
 }
+.digest-text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg); }
+.change { display: grid; gap: 10px; padding-top: 12px; border-top: 1px solid var(--border-muted); min-width: 0; }
+.change h3 { font-size: var(--text-base); overflow-wrap: anywhere; }
+.demo-steps { margin: 0; padding-left: 22px; display: grid; gap: 12px; }
+.demo-steps > li { display: grid; gap: 6px; min-width: 0; }
+.demo-command, .demo-result {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 20rem;
+  overflow: auto;
+}
+.demo-command { background: var(--surface); border: 1px solid var(--border); color: var(--fg-strong); }
+.demo-result { border: 1px dashed var(--border); color: var(--fg); }
+.demo-links { margin: 0; padding-left: 22px; display: grid; gap: 4px; }
+.digest-dropped ul { margin: 6px 0 0; padding-left: 22px; }
 
 /* Review requests and pull requests */
 .group { display: grid; gap: 6px; }
@@ -657,10 +677,44 @@ iframe.renderer {
     const dateText = Number.isNaN(date.getTime()) ? t.date : date.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
     return h("section", { id: "today", "aria-labelledby": "today-h" },
       h("div", { class: "section-head" }, h("h2", { id: "today-h" }, heading), h("span", { class: "small muted" }, dateText)),
-      h("div", { class: "panel" }, t.digests.map((d) =>
-        h("div", { class: "digest" },
-          h("p", { class: "eyebrow" }, "Demo"),
-          h("pre", null, d.text)))));
+      h("div", { class: "panel" }, t.digests.map((d, i) => renderDigest(d, "digest~" + t.date + "~" + (i + 1)))));
+  }
+
+  // DIGEST_LINK is whether a digest's link may be a link: an https URL
+  // holding no space, quote, angle bracket or backslash.
+  const DIGEST_LINK = /^https:\/\/[^\s"'<>\\]+$/;
+
+  // renderDigest is d drawn from d alone, so that it carries nothing else
+  // on the page and can stand on a page of its own: its changes where it
+  // has any, else its text. key names its diagrams among the page's.
+  function renderDigest(d, key) {
+    if (!d.changes.length) {
+      return h("div", { class: "digest" }, h("p", { class: "eyebrow" }, "Demo"), h("pre", { class: "digest-raw" }, d.text));
+    }
+    return h("div", { class: "digest" },
+      h("p", { class: "eyebrow" }, "Demo"),
+      d.summary ? h("p", { class: "digest-text" }, d.summary) : null,
+      d.changes.map((c, i) => renderChange(c, key + "~" + (i + 1))),
+      d.dropped.length ? h("details", { class: "digest-dropped" },
+        h("summary", { class: "small muted" }, d.dropped.length === 1 ? "1 part not shown" : d.dropped.length + " parts not shown"),
+        h("ul", { class: "small muted" }, d.dropped.map((x) => h("li", null, (x.line > 0 ? "Line " + x.line + ", " : "") + x.what + ": " + x.why)))) : null);
+  }
+
+  function renderChange(c, key) {
+    const links = c.links.filter((l) => DIGEST_LINK.test(l.url));
+    return h("article", { class: "change" },
+      h("h3", null, c.title || "Untitled change", c.repo ? " " : null, c.repo ? prLink(c.repo, c.number) : null),
+      c.summary ? h("p", { class: "digest-text" }, c.summary) : null,
+      c.steps.length ? h("ol", { class: "demo-steps" }, c.steps.map((s) => h("li", null,
+        s.text ? h("p", { class: "digest-text" }, s.text) : null,
+        h("pre", { class: "demo-command" }, s.command),
+        s.result ? h("pre", { class: "demo-result" }, s.result) : h("p", { class: "small muted" }, "No result recorded.")))) : null,
+      c.diagrams.length ? h("div", { class: "diagrams" }, c.diagrams.map((g, j) => {
+        const id = "D" + (j + 1);
+        return diagramPart(key + "~" + id, { id, source: g.source }, g.caption || "Diagram", "Diagram: " + (g.caption || id));
+      })) : null,
+      links.length ? h("ul", { class: "demo-links" }, links.map((l) =>
+        h("li", null, h("a", { href: l.url, target: "_blank", rel: "noopener noreferrer" }, l.caption || l.url)))) : null);
   }
 
   // ---- Review requests ----
@@ -937,10 +991,15 @@ iframe.renderer {
     });
   }
 
+  // shown are the keys of the diagrams the page draws now, which keep
+  // their drawings.
+  const shown = new Set();
+
   // diagramPart is d, a diagram with an id and a source, closed until
   // opened, under label; key names it among every diagram the page shows,
   // and alt is its drawing's text.
   function diagramPart(key, d, label, alt) {
+    shown.add(key);
     const figure = h("div", { class: "diagram-figure" });
     const details = h("details", { class: "diagram", open: state.diagramsOpen.has(key) },
       h("summary", null, h("span", { class: "mono muted" }, d.id), h("span", null, label)),
@@ -1140,6 +1199,7 @@ iframe.renderer {
     const ready = ["plans", "meta"].every((c) => state.loaded.has(c));
     if (!ready) return;
     const list = plansSorted();
+    shown.clear();
     const parts = [renderToday(), renderReviews(), renderMine()];
     if (!list.length) {
       parts.push(h("section", { id: "plans", class: "empty" }, h("h3", null, "No plans yet"),
@@ -1150,11 +1210,8 @@ iframe.renderer {
       parts.push(renderIndex(list));
       for (const p of list) parts.push(renderPlan(p));
     }
-    // Drawings of diagrams no longer listed are let go.
-    const kept = new Set();
-    const g = state.github;
-    for (const r of g ? [...g.mine, ...g.requests] : []) for (const d of r.recordDiagrams) kept.add(r.repo + "#" + r.number + "~" + d.id);
-    for (const k of [...state.drawn.keys()]) if (!kept.has(k)) state.drawn.delete(k);
+    // Drawings of diagrams no longer shown are let go.
+    for (const k of [...state.drawn.keys()]) if (!shown.has(k)) state.drawn.delete(k);
     const focused = document.activeElement && document.activeElement.id;
     app.replaceChildren(...parts.filter(Boolean));
     if (focused) { const f = document.getElementById(focused); if (f) f.focus(); }
