@@ -165,6 +165,23 @@ no command makes goes in your report for the operator.
 - `** Follow-ups`: work found while doing an item but outside this
   change's job, each with `:CUSTOM_ID: F1`, `F2`… and the `:FOUND_IN:` item, as
   "Follow-ups" says.
+- `** Visuals`, in a plan's own file once it has one: the one copy of each
+  change's diagrams, recordings and screenshots, which its pull request,
+  review-guide, the demo digest and the brag sheet read. Each entry has
+  `:CUSTOM_ID: V1`, `V2`…, its caption as its title and the `:BRANCH:` it
+  shows; its pull request is the one `PULL_REQUESTS` holds for that
+  branch. `agent-plan visual` writes them, adding the section with the
+  first, and running it again with the same visual changes nothing:
+  - `agent-plan visual PLAN --branch B --range BASE..TIP --diagram D1
+    [--caption C]`, run in the change's worktree, copies a diagram the
+    review kept as `holds` or `corrected`, with its range and Mermaid;
+  - `--branch B --tape FILE --caption C` keeps a VHS tape's source;
+  - `--branch B --url URL --caption C` keeps a screenshot's or
+    recording's GitHub attachment URL alone, and `agent-plan visual PLAN
+    V1 --url URL` gives entry V1 its recording's.
+
+  A GIF or PNG is never committed: it lives only as the pull request's
+  attachment.
 - `** References`: each URL the operator gave the work, one entry each with
   `:URL:`, and a note of what it was used for and which decisions (Q IDs)
   it fed. In Claude Code and Codex every URL in their prompts is added

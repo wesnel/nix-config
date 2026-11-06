@@ -263,7 +263,7 @@ names what it found:
   `wait`, `sign-check`, `end`).
 - `agent-plan`'s writes (`new`, `log`, `ask`, `decide`, `followup`,
   `reference`, `postpone`, `set`, `own`, `sign-id`, `sign-result`, `step`,
-  `part`, `edit`, `after`, `section`): the sandbox denies the plans
+  `part`, `edit`, `after`, `section`, `visual`): the sandbox denies the plans
   directory to every other command, so a plan changes only through them.
   `agent-plan sync`, `init` and `reseal` stay sandboxed.
 
