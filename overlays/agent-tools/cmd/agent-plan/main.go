@@ -127,9 +127,9 @@ have (see status) is refused and writes nothing.
                      drift (a top-level heading but one * Plan; a section
                      not a plan's, or twice; a heading under Goal, Related or
                      Verification; a References entry without a URL; an
-                     entry of Steps, Distribution, Questions or Follow-ups
-                     without its ID; a question without a question's
-                     keyword; an ORDERED or Archive group with text or no
+                     entry of Steps, Distribution, Questions, Follow-ups or
+                     Visuals without its ID; a question without a question's
+                     keyword; a visual without its BRANCH; an ORDERED or Archive group with text or no
                      entries; a heading skipping a level; a heading line
                      inside a block; a block with no end; once per file,
                      the old form, item IDs in ID rather than CUSTOM_ID or

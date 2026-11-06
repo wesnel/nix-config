@@ -359,7 +359,7 @@ func planText(o NewOptions, id, host string, extra map[string]string, parent boo
 	}
 	b.WriteString(":END:\n")
 	for _, s := range planSections {
-		if s == "Distribution" && !parent {
+		if s == "Visuals" || s == "Distribution" && !parent {
 			continue
 		}
 		fmt.Fprintf(&b, "** %s\n", s)
