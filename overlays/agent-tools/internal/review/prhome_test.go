@@ -29,7 +29,9 @@ func operatorClone(t *testing.T, f *fakeGitHub, r *remote, origin string) string
 // clone's agent settings apply; the clone's own checkout and branches are
 // left as they were, and the worktree goes when the review ends.
 func TestFetchIntoClone(t *testing.T) {
+	t.Parallel()
 	t.Run("reviews in a worktree of the clone", func(t *testing.T) {
+		t.Parallel()
 		r := newRemote(t, nil)
 		f := setUpPR(t, r)
 		home := operatorClone(t, f, r, "")
@@ -114,6 +116,7 @@ func TestFetchIntoClone(t *testing.T) {
 	// A head other than the one GitHub reports is refused, as for the
 	// cache's own clone, and no worktree is made for it.
 	t.Run("pins the head", func(t *testing.T) {
+		t.Parallel()
 		r := newRemote(t, nil)
 		f := setUpPR(t, r)
 		home := operatorClone(t, f, r, "")
@@ -140,6 +143,7 @@ func TestFetchIntoClone(t *testing.T) {
 		{"a clone whose config runs a program", "", []string{"filter.x.smudge", "cat"}, "filter.x.smudge"},
 	} {
 		t.Run("falls back: "+c.name, func(t *testing.T) {
+			t.Parallel()
 			r := newRemote(t, nil)
 			f := setUpPR(t, r)
 			home := operatorClone(t, f, r, c.origin)

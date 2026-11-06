@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
+	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/review"
 )
@@ -271,7 +274,9 @@ func (c *mcpClient) tool(t *testing.T, name string, args map[string]any) toolRes
 // The server Codex runs outside its sandbox: each operation a typed tool,
 // with the operator's GitHub login read by the server and never returned.
 func TestMCP(t *testing.T) {
+	t.Parallel()
 	t.Run("initialize", func(t *testing.T) {
+		t.Parallel()
 		c := newMCPFixture(t).start(t)
 		r := c.call(t, "initialize", map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{},
 			"clientInfo": map[string]any{"name": "codex", "version": "0.165.0"}})
@@ -287,6 +292,7 @@ func TestMCP(t *testing.T) {
 	})
 
 	t.Run("tools/list", func(t *testing.T) {
+		t.Parallel()
 		c := newMCPFixture(t).start(t)
 		r := c.call(t, "tools/list", map[string]any{})
 		var result struct {
@@ -327,6 +333,7 @@ func TestMCP(t *testing.T) {
 	})
 
 	t.Run("pr_loop_next returns a decision for each branch", func(t *testing.T) {
+		t.Parallel()
 		f := newMCPFixture(t)
 		c := f.start(t)
 		r := c.tool(t, "pr_loop_next", map[string]any{"worktree": f.repo, "branches": []string{"absent-a", "absent-b"}})
@@ -342,6 +349,7 @@ func TestMCP(t *testing.T) {
 	})
 
 	t.Run("pr_loop_threads reads with the server's own login", func(t *testing.T) {
+		t.Parallel()
 		f := newMCPFixture(t)
 		c := f.start(t)
 		r := c.tool(t, "pr_loop_threads", map[string]any{"worktree": f.repo, "pr": 1})
@@ -353,6 +361,7 @@ func TestMCP(t *testing.T) {
 	})
 
 	t.Run("github_profile", func(t *testing.T) {
+		t.Parallel()
 		c := newMCPFixture(t).start(t)
 		r := c.tool(t, "github_profile", map[string]any{"login": "ada"})
 		var profile struct{ Login, Name, Pronouns string }
@@ -365,6 +374,7 @@ func TestMCP(t *testing.T) {
 	// A call the tool cannot take as given is refused before the server
 	// reaches GitHub, saying what to change.
 	t.Run("refused", func(t *testing.T) {
+		t.Parallel()
 		f := newMCPFixture(t)
 		outside := filepath.Join(filepath.Dir(f.repo), "replies.md")
 		os.WriteFile(outside, []byte("=== thread T1\nDone.\n"), 0o644)
@@ -399,6 +409,7 @@ func TestMCP(t *testing.T) {
 	})
 
 	t.Run("git_delegate runs the reviewers it names", func(t *testing.T) {
+		t.Parallel()
 		f := newMCPFixture(t)
 		finding := map[string]any{"id": "1", "path": "code.txt", "line": 2, "endLine": nil, "kind": "vulnerability",
 			"claim": "c", "evidence": "e", "about": nil, "reopens": nil}
@@ -440,4 +451,34 @@ func TestMCP(t *testing.T) {
 			t.Errorf("without a reviewer: %+v: %v", r, err)
 		}
 	})
+}
+
+// A tool call runs in its worktree, for its thread, through its context's
+// Env alone: the server's own directory and variables are as they were for
+// the calls after it.
+func TestCallTool(t *testing.T) {
+	t.Parallel()
+	worktree, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "init", "-q", "-b", "main")
+	cmd.Dir, cmd.Env = worktree, gitenv.Without(os.Environ())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	dir, _ := os.Getwd()
+	thread, threadSet := os.LookupEnv("CODEX_THREAD_ID")
+	r := callTool(env.With(t.Context(), env.Process()), "pr_loop_stack", map[string]any{"worktree": worktree}, "thread-of-the-call")
+	// The worktree has no remote, unlike this test's own checkout: the
+	// stack is refused there, before anything reaches GitHub.
+	if text := fmt.Sprint(r["content"]); !strings.Contains(text, "found []") {
+		t.Errorf("the call did not run in its worktree: %s", text)
+	}
+	if now, _ := os.Getwd(); now != dir {
+		t.Errorf("the call moved this process from %s to %s", dir, now)
+	}
+	if now, set := os.LookupEnv("CODEX_THREAD_ID"); now != thread || set != threadSet {
+		t.Errorf("the call left CODEX_THREAD_ID=%q (set %v) in this process", now, set)
+	}
 }

@@ -9,6 +9,7 @@ import (
 // A brief rebase reports each 25th signature once it is done, and the last,
 // and keeps what git says besides its progress for a failure.
 func TestBriefWriter(t *testing.T) {
+	t.Parallel()
 	var out strings.Builder
 	w := &briefStderr{label: "one", out: &out}
 	for i := 1; i <= 60; i++ {

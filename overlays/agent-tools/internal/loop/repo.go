@@ -13,8 +13,8 @@ import (
 )
 
 // githubRemotes maps each remote whose fetch URL is on GitHub to owner/name.
-func githubRemotes() (map[string]string, error) {
-	return repos.Remotes(git.WithDir(context.Background()))
+func githubRemotes(ctx context.Context) (map[string]string, error) {
+	return repos.Remotes(ctx)
 }
 
 // Repo is the GitHub repository a checkout belongs to.
@@ -26,7 +26,7 @@ type Repo struct {
 }
 
 func repository(ctx context.Context) (*Repo, error) {
-	remotes, err := githubRemotes()
+	remotes, err := githubRemotes(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -155,8 +155,8 @@ func stackOrder(prs map[string]*PR, branch string) []string {
 	return order
 }
 
-func currentBranch() (string, error) {
-	branch, err := git.Run("rev-parse", "--abbrev-ref", "HEAD")
+func currentBranch(ctx context.Context) (string, error) {
+	branch, err := git.In(ctx).Run("rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
 		return "", err
 	}
@@ -167,8 +167,8 @@ func currentBranch() (string, error) {
 }
 
 // trackingRef is the freshest local ref for a branch on GitHub.
-func trackingRef(repo *Repo, branch string) (string, error) {
-	remotes, err := githubRemotes()
+func trackingRef(ctx context.Context, repo *Repo, branch string) (string, error) {
+	remotes, err := githubRemotes(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -179,24 +179,24 @@ func trackingRef(repo *Repo, branch string) (string, error) {
 	sort.Strings(names)
 	for _, remote := range names {
 		ref := "refs/remotes/" + remote + "/" + branch
-		if remotes[remote] == repo.Slug && git.OK("rev-parse", "--verify", "-q", ref) {
+		if remotes[remote] == repo.Slug && git.In(ctx).OK("rev-parse", "--verify", "-q", ref) {
 			return ref, nil
 		}
 	}
-	if git.OK("rev-parse", "--verify", "-q", "refs/heads/"+branch) {
+	if git.In(ctx).OK("rev-parse", "--verify", "-q", "refs/heads/"+branch) {
 		return "refs/heads/" + branch, nil
 	}
 	return "", refuse("no local ref for %s, which a pull request is based on; ask the operator to fetch it", branch)
 }
 
-func recordTracking(repo *Repo, branch, oid string) error {
-	remotes, err := githubRemotes()
+func recordTracking(ctx context.Context, repo *Repo, branch, oid string) error {
+	remotes, err := githubRemotes(ctx)
 	if err != nil {
 		return err
 	}
 	for remote, slug := range remotes {
 		if slug == repo.Slug {
-			if _, err := git.Run("update-ref", "refs/remotes/"+remote+"/"+branch, oid); err != nil {
+			if _, err := git.In(ctx).Run("update-ref", "refs/remotes/"+remote+"/"+branch, oid); err != nil {
 				return err
 			}
 		}

@@ -31,10 +31,6 @@ func isOwn(id string) bool {
 	return strings.HasPrefix(id, mechanicalPrefix) || strings.HasPrefix(id, unreadPrefix)
 }
 
-// upgradeOptions are how an upgrade review gathers upstream text; tests
-// give their own.
-var upgradeOptions = upgrade.DefaultOptions
-
 // UpgradeRead is a reviewer's account of one moved pin, from its reply.
 type UpgradeRead struct {
 	Pin    string `json:"pin"`
@@ -52,13 +48,13 @@ type upgrades struct {
 }
 
 // gatherUpgrades reads the pins r's change moves and gathers their
-// upstream text on this host.
+// upstream text on this host, with the options of ctx's seams.
 func gatherUpgrades(ctx context.Context, r *span, log io.Writer) (*upgrades, error) {
 	pins, err := upgrade.Pins(ctx, r.top, r.base, r.tip)
 	if err != nil {
 		return nil, fmt.Errorf("the change's pins could not be read: %w", err)
 	}
-	o := upgradeOptions(ctx)
+	o := seamsOf(ctx).upgradeOptions(ctx)
 	o.Own = r.own
 	if err := upgrade.CacheProblem(o); err != nil {
 		fmt.Fprintf(log, "%s: %v; nothing gathered is kept, so each pin is fetched again: make it a directory of yours "+

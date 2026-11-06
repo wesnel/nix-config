@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -24,14 +25,6 @@ func repository(t *testing.T) string {
 	gitIn(t, dir, "init", "-q", "-b", "main")
 	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "base")
 	return dir
-}
-
-// useDir points the package's commands at dir for the rest of the test,
-// which therefore cannot run in parallel with another that runs git here.
-func useDir(t *testing.T, dir string) {
-	t.Helper()
-	Dir = dir
-	t.Cleanup(func() { Dir = "" })
 }
 
 // under is the test's context with an Env of its own: this process's, as
@@ -73,6 +66,25 @@ func TestRun(t *testing.T) {
 		}
 	})
 
+	// A command attached to the terminal reads and writes the streams its
+	// caller gives, not this process's.
+	t.Run("attached to the caller's streams", func(t *testing.T) {
+		t.Parallel()
+		bin := t.TempDir()
+		if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\ncat >&2\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		ctx := under(t, repository(t), "PATH="+bin+string(os.PathListSeparator)+env.Process().Get("PATH"))
+		var stderr bytes.Buffer
+		if code, got := AttachedStderr(ctx, nil, strings.NewReader("typed\n"), &stderr, "status"); code != 0 || got != "typed\n" || stderr.String() != "typed\n" {
+			t.Errorf("AttachedStderr: exit %d, returned %q, wrote %q; want what was typed in both", code, got, stderr.String())
+		}
+		stderr.Reset()
+		if code := AttachedQuiet(ctx, nil, strings.NewReader("typed\n"), &stderr, "status"); code != 0 || stderr.String() != "typed\n" {
+			t.Errorf("AttachedQuiet: exit %d, wrote %q; want what was typed", code, stderr.String())
+		}
+	})
+
 	// The git that runs is the one on the Env's PATH, not the process's.
 	t.Run("found on the Env's PATH", func(t *testing.T) {
 		t.Parallel()
@@ -86,7 +98,7 @@ func TestRun(t *testing.T) {
 			t.Errorf("Run ran %q, %v; want the fake git on the Env's PATH", got, err)
 		}
 		var stderr bytes.Buffer
-		if code := AttachedQuiet(ctx, nil, &stderr, "status"); code != 0 || stderr.String() != "fake\n" {
+		if code := AttachedQuiet(ctx, nil, os.Stdin, &stderr, "status"); code != 0 || stderr.String() != "fake\n" {
 			t.Errorf("AttachedQuiet: exit %d, %q; want the fake git on the Env's PATH", code, stderr.String())
 		}
 		missing := under(t, t.TempDir(), "PATH="+t.TempDir())
@@ -216,10 +228,13 @@ func TestToplevel(t *testing.T) {
 }
 
 // A repository an agent can write can stall git: a FIFO where git reads its
-// config blocks it until something writes there. Each wrapper that takes no
-// context ends such a command at its deadline, with an error that says so.
+// config blocks it until something writes there. Each method that runs
+// within Timeout or LongTimeout ends such a command at its deadline, with
+// an error that says so. The cases change those package variables, so they
+// run one at a time.
 func TestDeadline(t *testing.T) {
-	stalled := func(t *testing.T) {
+	// stalled is where git runs in a repository whose config is a FIFO.
+	stalled := func(t *testing.T) Where {
 		t.Helper()
 		repo := repository(t)
 		config := filepath.Join(repo, ".git", "config")
@@ -236,7 +251,7 @@ func TestDeadline(t *testing.T) {
 				f.Close()
 			}
 		})
-		useDir(t, repo)
+		return In(At(t.Context(), repo))
 	}
 	short := func(t *testing.T, d *time.Duration) {
 		t.Helper()
@@ -247,19 +262,22 @@ func TestDeadline(t *testing.T) {
 	cases := []struct {
 		name  string
 		limit *time.Duration
-		call  func() error
+		call  func(w Where) error
 	}{
-		{"Run", &Timeout, func() error { _, err := Run("rev-parse", "HEAD"); return err }},
-		{"RunEnv", &Timeout, func() error { _, err := RunEnv([]string{"GIT_AUTHOR_NAME=T"}, "rev-parse", "HEAD"); return err }},
-		{"Bytes", &Timeout, func() error { _, err := Bytes(nil, "rev-parse", "HEAD"); return err }},
-		{"RunLong", &LongTimeout, func() error { _, err := RunLong(nil, "rev-parse", "HEAD"); return err }},
+		{"Run", &Timeout, func(w Where) error { _, err := w.Run("rev-parse", "HEAD"); return err }},
+		{"RunEnv", &Timeout, func(w Where) error {
+			_, err := w.RunEnv([]string{"GIT_AUTHOR_NAME=T"}, "rev-parse", "HEAD")
+			return err
+		}},
+		{"Bytes", &Timeout, func(w Where) error { _, err := w.Bytes(nil, "rev-parse", "HEAD"); return err }},
+		{"RunLong", &LongTimeout, func(w Where) error { _, err := w.RunLong(nil, "rev-parse", "HEAD"); return err }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			stalled(t)
+			w := stalled(t)
 			short(t, c.limit)
 			done := make(chan error, 1)
-			go func() { done <- c.call() }()
+			go func() { done <- c.call(w) }()
 			select {
 			case err := <-done:
 				if !errors.Is(err, context.DeadlineExceeded) {
@@ -272,10 +290,10 @@ func TestDeadline(t *testing.T) {
 		})
 	}
 	t.Run("OK", func(t *testing.T) {
-		stalled(t)
+		w := stalled(t)
 		short(t, &Timeout)
 		done := make(chan bool, 1)
-		go func() { done <- OK("rev-parse", "HEAD") }()
+		go func() { done <- w.OK("rev-parse", "HEAD") }()
 		select {
 		case ok := <-done:
 			if ok {
@@ -288,8 +306,7 @@ func TestDeadline(t *testing.T) {
 	// The same command ends well in the same repository without the FIFO,
 	// so the cases above fail for the stall.
 	t.Run("without the FIFO", func(t *testing.T) {
-		useDir(t, repository(t))
-		if _, err := Run("rev-parse", "HEAD"); err != nil {
+		if _, err := In(At(t.Context(), repository(t))).Run("rev-parse", "HEAD"); err != nil {
 			t.Fatal(err)
 		}
 	})

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
@@ -85,12 +86,14 @@ func routed(t *testing.T, got []Route) map[string][]string {
 // The scan routes each commit by its changed paths and its added and
 // removed lines, from where the change starts, and operator rules only add.
 func TestScan(t *testing.T) {
+	t.Parallel()
 	repo, c := scanRepo(t)
-	base := MergeBase(repo, "work")
+	ctx := git.At(t.Context(), repo)
+	base := MergeBase(ctx, repo, "work")
 	if base != gitIn(t, repo, "rev-parse", "origin/main") {
 		t.Fatalf("merge base %s", base)
 	}
-	got, err := Scan(repo, base, "work", Builtin)
+	got, err := Scan(ctx, repo, base, "work", Builtin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +109,7 @@ func TestScan(t *testing.T) {
 	}
 
 	extra := append(Builtin, Rule{Route: "security", Paths: []string{"docs/secret/**"}, Why: "secrets docs"})
-	got, err = Scan(repo, base, "work", extra)
+	got, err = Scan(ctx, repo, base, "work", extra)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,6 +122,7 @@ func TestScan(t *testing.T) {
 // A path git quotes in a patch's headers, for a space, a quote or a
 // control character in it, is matched by its lines as any other is.
 func TestScanQuotedPaths(t *testing.T) {
+	t.Parallel()
 	repo, _ := filepath.EvalSymlinks(t.TempDir())
 	gitIn(t, repo, "init", "-q", "-b", "main")
 	base := write(t, repo, "Start", "README.md=hi\n")
@@ -132,7 +136,7 @@ func TestScanQuotedPaths(t *testing.T) {
 	gitIn(t, repo, "add", "ünï.go")
 	gitIn(t, repo, "commit", "-q", "-m", "Link it")
 	want = append(want, gitIn(t, repo, "rev-parse", "HEAD"))
-	got, err := Scan(repo, base, "HEAD", Builtin)
+	got, err := Scan(git.At(t.Context(), repo), repo, base, "HEAD", Builtin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,6 +326,7 @@ func TestUpgradeRules(t *testing.T) {
 // A Nix change is routed to upgrade as its scanner reads the file whole:
 // a line naming what may pin in code is, prose in a string is not.
 func TestScanNixFiles(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		old, next string
 		want      bool
@@ -335,7 +340,7 @@ func TestScanNixFiles(t *testing.T) {
 		gitIn(t, repo, "init", "-q", "-b", "main")
 		base := write(t, repo, "base", "x.nix="+tc.old)
 		tip := write(t, repo, "tip", "x.nix="+tc.next)
-		rs, err := Scan(repo, base, tip, Builtin)
+		rs, err := Scan(git.At(t.Context(), repo), repo, base, tip, Builtin)
 		got := slices.ContainsFunc(rs, func(r Route) bool { return r.Route == "upgrade" })
 		if err != nil || got != tc.want {
 			t.Errorf("%q: routes %+v (%v), want upgrade %v", tc.next, rs, err, tc.want)
@@ -376,11 +381,12 @@ func TestScanFlake(t *testing.T) {
 			flake("", "github:evil/nixpkgs/main", option+"      # inputs.nixpkgs.url = \""+nixpkgs+"\";\n")}, true},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			repo, _ := filepath.EvalSymlinks(t.TempDir())
 			gitIn(t, repo, "init", "-q", "-b", "main")
 			from := write(t, repo, "base", tc.base...)
 			to := write(t, repo, "tip", tc.tip...)
-			rs, err := Scan(repo, from, to, Builtin)
+			rs, err := Scan(git.At(t.Context(), repo), repo, from, to, Builtin)
 			got := slices.ContainsFunc(rs, func(r Route) bool { return r.Route == "upgrade" })
 			if err != nil || got != tc.want {
 				t.Errorf("routes %+v (%v), want upgrade %v", rs, err, tc.want)
@@ -392,13 +398,14 @@ func TestScanFlake(t *testing.T) {
 // A commit that adds a JSON field is not routed to compat; one that
 // renames or removes a field's tag is.
 func TestScanJSONTags(t *testing.T) {
+	t.Parallel()
 	repo, _ := filepath.EvalSymlinks(t.TempDir())
 	gitIn(t, repo, "init", "-q", "-b", "main")
 	base := write(t, repo, "Start", "x.go=package x\n\ntype T struct {\n\tA int `json:\"a\"`\n}\n")
 	write(t, repo, "Add a field", "x.go=package x\n\ntype T struct {\n\tA int `json:\"a\"`\n\tB int `json:\"b\"`\n}\n")
 	renamed := write(t, repo, "Rename a field", "x.go=package x\n\ntype T struct {\n\tA int `json:\"a\"`\n\tB int `json:\"bee\"`\n}\n")
 	removed := write(t, repo, "Drop a field", "x.go=package x\n\ntype T struct {\n\tA int `json:\"a\"`\n}\n")
-	got, err := Scan(repo, base, "HEAD", Builtin)
+	got, err := Scan(git.At(t.Context(), repo), repo, base, "HEAD", Builtin)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -433,12 +440,13 @@ func TestMatch(t *testing.T) {
 // A changed file that holds tests beside its code, which red-check cannot
 // tell apart, is named for the reviewer; a Go file never is.
 func TestSharedFiles(t *testing.T) {
+	t.Parallel()
 	repo, _ := scanRepo(t)
 	base := gitIn(t, repo, "rev-parse", "HEAD")
 	write(t, repo, "Add code with its tests", "src/lib.rs=fn f() {}\n#[cfg(test)]\nmod tests {}\n",
 		"x.py=def f():\n    \"\"\"\n    >>> f()\n    \"\"\"\n", "plain.py=def g(): pass\n",
 		"y_test.go=package main\n", "z.rs=fn h() {}\n")
-	got, err := SharedFiles(repo, base, "HEAD")
+	got, err := SharedFiles(git.At(t.Context(), repo), repo, base, "HEAD")
 	if err != nil {
 		t.Fatal(err)
 	}

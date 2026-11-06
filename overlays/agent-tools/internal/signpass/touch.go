@@ -25,24 +25,6 @@ var refusedByKey = regexp.MustCompile(`agent refused operation|signing failed|si
 // its signature fails for any reason.
 var unwritten = regexp.MustCompile(`failed to write commit object`)
 
-// With no terminal to ask, a step the key refused is retried Retries times,
-// each after RetryWait, and the retried signature, with everything git
-// started for it, is killed after RetryTimeout. One missed touch locks the
-// key, and the next request then waits on pinentry without end, so a retry
-// must never run unbounded, and one is all a locked key allows.
-var (
-	Retries      = 1
-	RetryWait    = 10 * time.Second
-	RetryTimeout = 60 * time.Second
-)
-
-// retryContext is the context that bounds one automatic retry: RetryTimeout
-// from now. Tests replace it with one they end on an event, as a deadline
-// ends, so that none depends on how long a signature takes.
-var retryContext = func(parent context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(parent, RetryTimeout)
-}
-
 // retrier decides how a step that git ran again after the key refused it is
 // retried, counting the automatic retries of each step on its own.
 type retrier struct {
@@ -55,31 +37,32 @@ type retrier struct {
 }
 
 // next reports whether to run step again, and under which context: on a
-// terminal the operator decides (retryTouch); otherwise the retry comes
-// after RetryWait, and its context kills the command's process group at
-// RetryTimeout or when the pass is interrupted or hung up on. That group is
-// not the terminal's foreground group, so the command must stop after the
-// one step it retries. step must name the same work however often git reschedules
-// it.
+// terminal the operator decides (retryTouch); otherwise, up to the pass's
+// Retries (Options), the retry comes after RetryWait, and its context kills
+// the command's process group at RetryTimeout or when the pass is
+// interrupted or hung up on. That group is not the terminal's foreground
+// group, so the command must stop after the one step it retries. step must
+// name the same work however often git reschedules it.
 func (r *retrier) next(ctx context.Context, what, step, stderr string) (context.Context, context.CancelFunc, bool) {
 	none := func() {}
 	if !refusedByKey.MatchString(stderr) {
 		return ctx, none, false
 	}
-	if isTerminal(os.Stdin) {
+	o := options(ctx)
+	if o.interactive() {
 		return ctx, none, retryTouch(ctx, what, stderr)
 	}
 	if step != r.step {
 		r.step, r.n = step, 0
 	}
-	if r.n >= Retries {
+	if r.n >= o.Retries {
 		return ctx, none, false
 	}
 	r.n++
 	r.retried = true
-	fmt.Fprintf(os.Stderr, "%s: touch the key now (retry %d of %d)\n", what, r.n, Retries)
+	fmt.Fprintf(o.Err, "%s: touch the key now (retry %d of %d)\n", what, r.n, o.Retries)
 	select {
-	case <-time.After(RetryWait):
+	case <-time.After(o.RetryWait):
 	case <-ctx.Done():
 		return ctx, none, false
 	}
@@ -96,12 +79,12 @@ func (r *retrier) next(ctx context.Context, what, step, stderr string) (context.
 	if len(sigs) > 0 { // with none, NotifyContext would catch every signal
 		interrupt, stop = signal.NotifyContext(ctx, sigs...)
 	}
-	retry, cancel := retryContext(interrupt)
+	retry, cancel := o.retry(interrupt)
 	r.killed = ""
 	return git.KillingTree(retry), func() {
 		switch {
 		case errors.Is(retry.Err(), context.DeadlineExceeded):
-			r.killed = "did not finish within " + RetryTimeout.String()
+			r.killed = "did not finish within " + o.RetryTimeout.String()
 		case interrupt.Err() != nil:
 			r.killed = "was interrupted"
 		}
@@ -121,17 +104,19 @@ func (r *retrier) locked() string {
 
 // retryTouch reports whether to retry what the key refused, given the
 // stderr of the command that failed: only when that stderr shows the key's
-// refusal and standard input is a terminal, on which the operator answers
-// Enter to retry or q to stop. A ctx done before the answer stops: where
-// SIGINT is caught, it is how Ctrl-C at the question still stops the pass.
+// refusal and the pass's standard input (Options) is a terminal, on which
+// the operator answers Enter to retry or q to stop. A ctx done before the
+// answer stops: where SIGINT is caught, it is how Ctrl-C at the question
+// still stops the pass.
 func retryTouch(ctx context.Context, what, stderr string) bool {
-	if !refusedByKey.MatchString(stderr) || !isTerminal(os.Stdin) {
+	o := options(ctx)
+	if !refusedByKey.MatchString(stderr) || !o.interactive() {
 		return false
 	}
-	fmt.Fprintf(os.Stderr, "%s: the key refused to sign. Touch missed. Enter to retry, q to stop: ", what)
+	fmt.Fprintf(o.Err, "%s: the key refused to sign. Touch missed. Enter to retry, q to stop: ", what)
 	answers := make(chan string, 1)
 	go func() {
-		answer, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		answer, err := bufio.NewReader(o.In).ReadString('\n')
 		if err != nil && answer == "" {
 			answer = "q"
 		}
@@ -141,18 +126,15 @@ func retryTouch(ctx context.Context, what, stderr string) bool {
 	case answer := <-answers:
 		return strings.TrimSpace(answer) != "q"
 	case <-ctx.Done():
-		fmt.Fprintln(os.Stderr)
+		fmt.Fprintln(o.Err)
 		return false
 	}
 }
 
-// NotifyID is the --notify ID the pass runs with, which every command it
-// prints for resuming carries.
-var NotifyID string
-
 // resumeCommand is the command that resumes the pass on branch, as one line
-// to run in fish or a POSIX shell. The branch goes last: flag parsing stops
-// at the first argument that is not a flag.
+// to run in fish or a POSIX shell, with the pass's --notify ID (Options).
+// The branch goes last: flag parsing stops at the first argument that is
+// not a flag.
 func resumeCommand(ctx context.Context, branch string, push, setUpstream bool) string {
 	cmd := self(ctx) + " --resume"
 	switch {
@@ -161,8 +143,8 @@ func resumeCommand(ctx context.Context, branch string, push, setUpstream bool) s
 	case push:
 		cmd += " --push"
 	}
-	if NotifyID != "" {
-		cmd += " --notify " + quote(NotifyID)
+	if id := options(ctx).NotifyID; id != "" {
+		cmd += " --notify " + quote(id)
 	}
 	return cmd + " " + quote(branch)
 }

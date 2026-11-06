@@ -41,7 +41,7 @@ func Push(ctx context.Context, branches []string, leases map[string]string, dryR
 		return nil, err
 	}
 	if len(branches) == 0 {
-		current, err := currentBranch()
+		current, err := currentBranch(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -72,25 +72,25 @@ func Push(ctx context.Context, branches []string, leases map[string]string, dryR
 		pr := prs[b]
 		expected, leased := leases[b]
 		if leased {
-			if expected, err = fullOid(expected); err != nil {
+			if expected, err = fullOid(ctx, expected); err != nil {
 				return nil, err
 			}
-		} else if expected, err = remoteHead(repo, b); err != nil {
+		} else if expected, err = remoteHead(ctx, repo, b); err != nil {
 			return nil, err
 		}
 		if pr.HeadRefOid != expected {
 			return nil, refuse("%s on GitHub is at %.12s, not %.12s as expected, so someone else pushed; fetch it, look at what "+
 				"changed, then push again with `--lease %s=%s` if it is still to be replaced", b, pr.HeadRefOid, expected, b, pr.HeadRefOid)
 		}
-		local, err := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+b)
+		local, err := git.In(ctx).Run("rev-parse", "--verify", "-q", "refs/heads/"+b)
 		if err != nil {
 			return nil, refuse("no local branch %s; check it out, or leave it out of the push", b)
 		}
-		if !leased && !git.OK("merge-base", "--is-ancestor", expected, local) {
+		if !leased && !git.In(ctx).OK("merge-base", "--is-ancestor", expected, local) {
 			return nil, refuse("local %s does not contain %.12s, its head on GitHub, so pushing would drop commits; if it was "+
 				"rebased on purpose, push it with `--lease %s=%s`", b, expected, b, expected)
 		}
-		remoteParent, localParent, err := parents(repo, prs, pr.BaseRefName)
+		remoteParent, localParent, err := parents(ctx, repo, prs, pr.BaseRefName)
 		if err != nil {
 			return nil, err
 		}
@@ -106,12 +106,12 @@ func Push(ctx context.Context, branches []string, leases map[string]string, dryR
 			if err := checkFixups(ctx, b, own(before), now); err != nil {
 				return nil, err
 			}
-			if err := checkPatches(b, remoteParent, expected, localParent, local); err != nil {
+			if err := checkPatches(ctx, b, remoteParent, expected, localParent, local); err != nil {
 				return nil, err
 			}
 		}
 		known = append(known, expected)
-		if git.OK("cat-file", "-e", remoteParent+"^{commit}") {
+		if git.In(ctx).OK("cat-file", "-e", remoteParent+"^{commit}") {
 			known = append(known, remoteParent)
 		}
 		if local != expected {
@@ -126,7 +126,7 @@ func Push(ctx context.Context, branches []string, leases map[string]string, dryR
 	for i, u := range updates {
 		tips[i] = u.after
 	}
-	objects, err := missingObjects(tips, known)
+	objects, err := missingObjects(ctx, tips, known)
 	if err != nil {
 		return nil, err
 	}
@@ -159,19 +159,19 @@ func Push(ctx context.Context, branches []string, leases map[string]string, dryR
 			}
 			return nil, err
 		}
-		if err := recordTracking(repo, u.branch, u.after); err != nil {
+		if err := recordTracking(ctx, repo, u.branch, u.after); err != nil {
 			return nil, err
 		}
 		pushed[u.branch] = u.after
 	}
-	logEvent(plans.Event{Kind: "pushed", Summary: "pushed " + branchTips(branches, pushed)})
+	logEvent(ctx, plans.Event{Kind: "pushed", Summary: "pushed " + branchTips(branches, pushed)})
 	return map[string]any{"pushed": pushed, "apiCalls": calls}, nil
 }
 
 // remoteHead is branch's head as this checkout last saw it on GitHub: its
 // remote tracking ref, origin's first.
-func remoteHead(repo *Repo, branch string) (string, error) {
-	remotes, err := githubRemotes()
+func remoteHead(ctx context.Context, repo *Repo, branch string) (string, error) {
+	remotes, err := githubRemotes(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -193,7 +193,7 @@ func remoteHead(repo *Repo, branch string) (string, error) {
 		return strings.Compare(a, b)
 	})
 	for _, remote := range names {
-		if oid, err := git.Run("rev-parse", "--verify", "-q", "refs/remotes/"+remote+"/"+branch); err == nil {
+		if oid, err := git.In(ctx).Run("rev-parse", "--verify", "-q", "refs/remotes/"+remote+"/"+branch); err == nil {
 			return oid, nil
 		}
 	}
@@ -204,15 +204,15 @@ func remoteHead(repo *Repo, branch string) (string, error) {
 // parents is what a PR on base is measured against: on GitHub, the head of
 // the PR base heads, else base's tracking ref; and here, that PR's local
 // branch, else the same tracking ref.
-func parents(repo *Repo, prs map[string]*PR, base string) (remote, local string, err error) {
+func parents(ctx context.Context, repo *Repo, prs map[string]*PR, base string) (remote, local string, err error) {
 	if below := prs[base]; below != nil {
 		local = below.HeadRefOid
-		if oid, err := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+base); err == nil {
+		if oid, err := git.In(ctx).Run("rev-parse", "--verify", "-q", "refs/heads/"+base); err == nil {
 			local = oid
 		}
 		return below.HeadRefOid, local, nil
 	}
-	ref, err := trackingRef(repo, base)
+	ref, err := trackingRef(ctx, repo, base)
 	return ref, ref, err
 }
 
@@ -235,9 +235,9 @@ type objectSet struct {
 	commits []string // parents first
 }
 
-func missingObjects(tips, known []string) (*objectSet, error) {
+func missingObjects(ctx context.Context, tips, known []string) (*objectSet, error) {
 	exclude := append([]string{"--not"}, known...)
-	listed, err := git.Run(append(append([]string{"rev-list", "--objects"}, tips...), exclude...)...)
+	listed, err := git.In(ctx).Run(append(append([]string{"rev-list", "--objects"}, tips...), exclude...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -249,7 +249,7 @@ func missingObjects(tips, known []string) (*objectSet, error) {
 	}
 	set := &objectSet{kinds: map[string]string{}}
 	if len(shas) > 0 {
-		out, err := git.Bytes([]byte(strings.Join(shas, "\n")+"\n"), "cat-file", "--batch-check=%(objectname) %(objecttype)")
+		out, err := git.In(ctx).Bytes([]byte(strings.Join(shas, "\n")+"\n"), "cat-file", "--batch-check=%(objectname) %(objecttype)")
 		if err != nil {
 			return nil, err
 		}
@@ -259,7 +259,7 @@ func missingObjects(tips, known []string) (*objectSet, error) {
 			set.order = append(set.order, sha)
 		}
 	}
-	commits, err := git.Run(append(append([]string{"rev-list", "--topo-order", "--reverse"}, tips...), exclude...)...)
+	commits, err := git.In(ctx).Run(append(append([]string{"rev-list", "--topo-order", "--reverse"}, tips...), exclude...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -331,7 +331,7 @@ func (u *uploader) expect(kind, want, got string) error {
 }
 
 func (u *uploader) blob(ctx context.Context, sha string) error {
-	content, err := git.Bytes(nil, "cat-file", "blob", sha)
+	content, err := git.In(ctx).Bytes(nil, "cat-file", "blob", sha)
 	if err != nil {
 		return err
 	}
@@ -347,7 +347,7 @@ func (u *uploader) blob(ctx context.Context, sha string) error {
 }
 
 func (u *uploader) tree(ctx context.Context, sha string) error {
-	out, err := git.Bytes(nil, "ls-tree", "-z", sha)
+	out, err := git.In(ctx).Bytes(nil, "ls-tree", "-z", sha)
 	if err != nil {
 		return err
 	}
@@ -426,7 +426,7 @@ func commitBody(sha string, raw []byte) (map[string]any, error) {
 }
 
 func (u *uploader) commit(ctx context.Context, sha string) error {
-	raw, err := git.Bytes(nil, "cat-file", "commit", sha)
+	raw, err := git.In(ctx).Bytes(nil, "cat-file", "commit", sha)
 	if err != nil {
 		return err
 	}

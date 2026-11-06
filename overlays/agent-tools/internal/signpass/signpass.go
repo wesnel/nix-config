@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"maps"
 	"os"
@@ -583,8 +584,8 @@ func Run(ctx context.Context, base string, resume, push, setUpstream bool) (any,
 		p.push, p.setUpstream = push, setUpstream
 		// A pass whose first signature the key refused rewrote nothing.
 		if tip, _ := git.In(ctx).Run("rev-parse", "refs/heads/"+p.Branch); tip == p.Before[p.Branch] {
-			if Brief {
-				announceTouch()
+			if o := options(ctx); o.Brief {
+				announceTouch(o.Err)
 			}
 			if err := rebase(ctx, p); err != nil {
 				return nil, err
@@ -619,13 +620,14 @@ func Run(ctx context.Context, base string, resume, push, setUpstream bool) (any,
 			}
 			pushBranches, urls = pushShare(ctx, byRemote)
 		}
-		announceGains(p.gains)
-		if Brief {
+		o := options(ctx)
+		announceGains(o.Err, p.gains)
+		if o.Brief {
 			commits := len(p.Shape)
 			if p.Squash {
 				commits = len(p.Kept)
 			}
-			announce(commits, 1+len(p.Stacked), pushBranches, urls, signatures(ctx, p.Start, "refs/heads/"+branch)+urls)
+			announce(o.Err, commits, 1+len(p.Stacked), pushBranches, urls, signatures(ctx, p.Start, "refs/heads/"+branch)+urls)
 		}
 		if err := sign(ctx, p, path); err != nil {
 			return nil, err
@@ -798,11 +800,11 @@ func gainsPhrase(gains []string) string {
 	return strings.Join(gains, ", ") + " gain fixups from commits they do not contain"
 }
 
-// announceGains names, before the first touch, the branches the pass will
-// give folds they do not contain, in a brief pass as in a full one.
-func announceGains(gains []string) {
+// announceGains names on w, before the first touch, the branches the pass
+// will give folds they do not contain, in a brief pass as in a full one.
+func announceGains(w io.Writer, gains []string) {
 	if len(gains) > 0 {
-		fmt.Fprintf(os.Stderr, "%s\n", gainsPhrase(gains))
+		fmt.Fprintf(w, "%s\n", gainsPhrase(gains))
 	}
 }
 
@@ -884,9 +886,10 @@ func rebase(ctx context.Context, p *pending) error {
 	if p.Onto != "" {
 		upstream = []string{"--onto", p.Onto, p.Fork}
 	}
-	if !Brief {
+	o := options(ctx)
+	if !o.Brief {
 		count, _ := git.In(ctx).Run("rev-list", "--count", upstream[len(upstream)-1]+"..refs/heads/"+p.Branch)
-		fmt.Fprintf(os.Stderr, "signing %s commits on %s, squashing fixups first if any; touch the key for each when it blinks\n", count, p.Branch)
+		fmt.Fprintf(o.Err, "signing %s commits on %s, squashing fixups first if any; touch the key for each when it blinks\n", count, p.Branch)
 	}
 	args := []string{"rebase", "--force-rebase", "--gpg-sign", "--update-refs"}
 	if p.Fixups {
@@ -907,7 +910,7 @@ func rebase(ctx context.Context, p *pending) error {
 		}
 		// A refusal in a fold undoes the rebase (readyRetry), and signing it
 		// all again is for the operator to choose, on a terminal.
-		if folded = restart && step != ""; folded && !isTerminal(os.Stdin) {
+		if folded = restart && step != ""; folded && !o.interactive() {
 			aborted = true
 			break
 		}
@@ -1380,7 +1383,7 @@ func finish(ctx context.Context, p *pending, path string) (result map[string]any
 	// The commits are signed whatever the plans say: a pass the plans could
 	// fail would leave signed branches unpushed over a convenience.
 	if err := recordCommitRewrites(ctx, p); err != nil {
-		fmt.Fprintf(os.Stderr, "signed, but could not record the commit rewrites in the plans, whose associations still name the unsigned commits: %v\n", err)
+		fmt.Fprintf(options(ctx).Err, "signed, but could not record the commit rewrites in the plans, whose associations still name the unsigned commits: %v\n", err)
 	}
 	if err := os.Remove(path); err != nil {
 		return nil, nil, err
@@ -1752,7 +1755,8 @@ func pushRef(ctx context.Context, remote, url string, r refPush, env []string) e
 	}
 	args := []string{"-c", "remote." + pushName + ".url=" + url, "push",
 		fmt.Sprintf("--force-with-lease=refs/heads/%s:%s", r.Branch, r.Old), pushName, r.New + ":refs/heads/" + r.Branch}
-	if Brief {
+	o := options(ctx)
+	if o.Brief {
 		args = slices.Insert(args, 3, "--quiet")
 	}
 	what := fmt.Sprintf("the push of %s to %s", r.Branch, url)
@@ -1761,13 +1765,13 @@ func pushRef(ctx context.Context, remote, url string, r refPush, env []string) e
 	// to reach the key, and a key waiting on its PIN is theirs to answer.
 	run := ctx
 	for {
-		if !Brief {
-			fmt.Fprintf(os.Stderr, "pushing %s to %s; touch the key if it blinks\n", r.Branch, url)
+		if !o.Brief {
+			fmt.Fprintf(o.Err, "pushing %s to %s; touch the key if it blinks\n", r.Branch, url)
 		}
 		code, stderr := runGit(run, env, "", args...)
 		if code == 0 {
-			if Brief {
-				fmt.Fprintf(os.Stderr, "pushed %s -> %s %.7s\n", r.Branch, remote, r.New)
+			if o.Brief {
+				fmt.Fprintf(o.Err, "pushed %s -> %s %.7s\n", r.Branch, remote, r.New)
 			}
 			return nil
 		}
@@ -1799,8 +1803,8 @@ func retryPush(ctx context.Context, branch string, setUpstream bool) (any, error
 	if !found {
 		return nil, refuse("no signing pass or push is in progress on %s; run `%s` without --resume to start one", branch, self(ctx))
 	}
-	if Brief {
-		announceTouch()
+	if o := options(ctx); o.Brief {
+		announceTouch(o.Err)
 	}
 	if setUpstream && !todo.SetUpstream && len(todo.URLs) > 0 && len(todo.Skipped) > 0 {
 		more, err := planPush(ctx, slices.Sorted(maps.Keys(todo.Skipped)), true, "run `"+resumeCommand(ctx, branch, false, true)+"`")
@@ -1970,8 +1974,8 @@ func pushUnmoved(ctx context.Context, branch, base string, early map[string]stri
 		if err := sshmux.Check(ctx, retry); err != nil {
 			return nil, err
 		}
-		if Brief {
-			announceTouch()
+		if o := options(ctx); o.Brief {
+			announceTouch(o.Err)
 		}
 		done, err := pushAll(ctx, branch, pushes{Branches: todo, SetUpstream: setUpstream})
 		if err != nil {

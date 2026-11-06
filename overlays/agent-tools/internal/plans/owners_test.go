@@ -8,6 +8,7 @@ import (
 )
 
 func TestOwners(t *testing.T) {
+	t.Parallel()
 	t.Run("none before any owner", func(t *testing.T) {
 		c := testConfig(t)
 		newPlan(t, c, "x")

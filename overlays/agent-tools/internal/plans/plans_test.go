@@ -1,6 +1,7 @@
 package plans
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -108,6 +109,7 @@ func isRefusal(t *testing.T, what string, err error) {
 // A plan is three kinds of file side by side in the plans directory, named
 // for its date, slug and host.
 func TestNew(t *testing.T) {
+	t.Parallel()
 	// A plan is notes on the work, written whether or not the notes
 	// repository could be cloned; why it is not synced is a warning.
 	t.Run("deferred clone", func(t *testing.T) {
@@ -355,6 +357,7 @@ func TestOpen(t *testing.T) {
 // file that Open refuses, such as one without its log or with another
 // name, is named among those that failed.
 func TestPlans(t *testing.T) {
+	t.Parallel()
 	c := testConfig(t)
 	older := newPlan(t, c, "a")
 	addItems(t, older.file(""), "** Distribution", "P1")
@@ -398,6 +401,7 @@ func TestPlans(t *testing.T) {
 // name read as YYYYMMDD and so before any plan named the org-roam way
 // that day, as the plan views in emacs-config order them.
 func TestPlansOrder(t *testing.T) {
+	t.Parallel()
 	c := testConfig(t)
 	os.MkdirAll(c.Dir, 0o755)
 	names := []string{"2025-12-31-a.box", "20260101000000-b.box", "2026-10-17-c.box", "20261017000001-d.box",
@@ -423,6 +427,7 @@ func TestPlansOrder(t *testing.T) {
 // link, a file with another name or a FIFO put there after Open checked
 // it is refused, and a FIFO without blocking.
 func TestReadPlan(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	plain := filepath.Join(dir, "plain.org")
 	os.WriteFile(plain, []byte("* Plan\n"), 0o644)
@@ -447,16 +452,32 @@ func TestReadPlan(t *testing.T) {
 			if err == nil {
 				t.Errorf("%s was read", name)
 			}
-		case <-time.After(5 * time.Second):
+		// Only a blocked read outlasts this: the others end at once.
+		case <-time.After(2 * time.Minute):
 			t.Fatalf("reading %s blocked", name)
 		}
 	}
 }
 
+// operator is the environment the git commands of a test run in: this
+// process's, which TestMain isolated and no test changes, with the
+// operator as their author and committer.
+func operator() env.Env {
+	return env.Process().Set("GIT_AUTHOR_NAME=Operator", "GIT_AUTHOR_EMAIL=operator@example.com",
+		"GIT_COMMITTER_NAME=Operator", "GIT_COMMITTER_EMAIL=operator@example.com")
+}
+
+// gitIn is git in dir as the operator.
 func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir, cmd.Env = dir, gitenv.Without(os.Environ())
+	return gitAs(t, operator(), dir, args...)
+}
+
+// gitAs is git in dir with e's variables and the git of its PATH.
+func gitAs(t *testing.T, e env.Env, dir string, args ...string) string {
+	t.Helper()
+	cmd := env.Command(env.With(context.Background(), e.In(dir)), "git", args...)
+	cmd.Env = gitenv.Without(cmd.Env)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -465,6 +486,7 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 }
 
 func TestInit(t *testing.T) {
+	t.Parallel()
 	t.Run("in a repository", testInitInRepository)
 	t.Run("clone without the key", testInitCloneWithoutKey)
 	t.Run("clone with the key", testInitCloneWithKey)
@@ -507,6 +529,7 @@ func testInitInRepository(t *testing.T) {
 }
 
 func TestPart(t *testing.T) {
+	t.Parallel()
 	// distributing makes a plan that distributes P1.
 	distributing := func(t *testing.T) (Config, Plan) {
 		t.Helper()
@@ -561,6 +584,7 @@ func TestPart(t *testing.T) {
 // Another host's plan sits beside this host's and can be read, but only its
 // own host writes it.
 func TestOtherHost(t *testing.T) {
+	t.Parallel()
 	// theirs makes a plan of another host, with a step S1 and a part P1, and
 	// opens it as this host.
 	theirs := func(t *testing.T) (Config, Plan) {
@@ -760,6 +784,7 @@ func testStatusItems(t *testing.T) {
 }
 
 func TestGoal(t *testing.T) {
+	t.Parallel()
 	t.Run("empty", func(t *testing.T) {
 		p := newPlan(t, testConfig(t), "x")
 		_, err := p.Goal("")
@@ -862,6 +887,7 @@ func hookContext(t *testing.T, out []byte, event string) string {
 }
 
 func TestSessionHook(t *testing.T) {
+	t.Parallel()
 	t.Run("the session's plan", func(t *testing.T) {
 		c := testConfig(t)
 		p := newPlan(t, c, "x")

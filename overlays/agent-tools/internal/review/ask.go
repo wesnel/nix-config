@@ -19,7 +19,6 @@ import (
 	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
-	"github.com/wesnel/agent-tools/internal/guard"
 	"github.com/wesnel/agent-tools/internal/redact"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
@@ -120,7 +119,7 @@ func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	if err != nil {
 		return report(nil, err, 0)
 	}
-	text, err := questionText(e, top, *question, stdin)
+	text, err := questionText(ctx, top, *question, stdin)
 	if err != nil {
 		return report(nil, err, 0)
 	}
@@ -172,20 +171,18 @@ func inDir(e env.Env, path string) string {
 	return filepath.Join(e.Dir(), path)
 }
 
-// scratchRoots are the directories outside the repository a question may
-// be written in.
-var scratchRoots = guard.ScratchRoots
-
 // questionText is the question in the file path names, or on stdin for
 // "-". Codex is sent it as it is, so the file, where its symlinks lead,
-// must be in the repository at top or a scratch root, and not a
-// credential. A relative path is relative to the directory of e.
-func questionText(e env.Env, top, path string, stdin io.Reader) (string, error) {
+// must be in the repository at top or a scratch root of ctx's seams, and
+// not a credential in ctx's Env. A relative path is relative to the
+// directory of ctx's Env.
+func questionText(ctx context.Context, top, path string, stdin io.Reader) (string, error) {
 	if path == "-" {
 		data, err := io.ReadAll(stdin)
 		return string(data), err
 	}
-	data, err := checkedfile.Read(inDir(e, path), append([]string{top}, scratchRoots()...))
+	roots := append([]string{top}, seamsOf(ctx).scratchRoots(ctx)...)
+	data, err := checkedfile.Read(ctx, inDir(env.From(ctx), path), roots)
 	write := "write the question to a file of its own under $TMPDIR or in the repository, and pass that as `--question FILE`"
 	switch {
 	case errors.Is(err, checkedfile.ErrLinked):

@@ -77,7 +77,9 @@ func TestFocusesKnown(t *testing.T) {
 // compat checklist, the general rules and the description's Reverting
 // section, and requires every category as checked.
 func TestFocusCompat(t *testing.T) {
+	t.Parallel()
 	t.Run("checked", func(t *testing.T) {
+		t.Parallel()
 		f := setUp(t, true)
 		compatSays(t, f, compatReply(t, checkedOf(t, "compat", "")))
 		code, run, stderr := f.runDelegate(t, "--reviewer", "compat", "--plan", f.plan, "--description",
@@ -120,6 +122,7 @@ func TestFocusCompat(t *testing.T) {
 	})
 
 	t.Run("a category left out", func(t *testing.T) {
+		t.Parallel()
 		f := setUp(t, true)
 		compatSays(t, f, compatReply(t, checkedOf(t, "compat", "reverting")))
 		code, run, stderr := f.runDelegate(t, "--reviewer", "compat", "--plan", f.plan, "--description",
@@ -133,6 +136,7 @@ func TestFocusCompat(t *testing.T) {
 	// The kind is the compat review's: a security review's reply that
 	// uses it has the finding dropped.
 	t.Run("its kind elsewhere", func(t *testing.T) {
+		t.Parallel()
 		f := setUp(t, true)
 		reply := map[string]any{}
 		must(0, json.Unmarshal([]byte(compatReply(t, "[]")), &reply))
@@ -145,6 +149,7 @@ func TestFocusCompat(t *testing.T) {
 	})
 
 	t.Run("refused", func(t *testing.T) {
+		t.Parallel()
 		f := setUp(t, true)
 		compatSays(t, f, compatReply(t, checkedOf(t, "compat", "")))
 		given := f.base + "..HEAD"
@@ -168,6 +173,7 @@ func TestFocusCompat(t *testing.T) {
 	})
 
 	t.Run("printed", func(t *testing.T) {
+		t.Parallel()
 		f := setUp(t, false)
 		code, stdout, stderr := f.delegateCmd(t, "--print-prompt", "--reviewer", "compat", "--plan", f.plan,
 			"--description", description(t, f, reverting), f.base+"..HEAD")
@@ -181,6 +187,7 @@ func TestFocusCompat(t *testing.T) {
 	// An explicit compat review requires a description; a candidate only
 	// reports how to supply one when selected.
 	t.Run("candidate without a description", func(t *testing.T) {
+		t.Parallel()
 		f := setUp(t, true)
 		writeSettings(t, f, `{"routes": [{"route": "compat", "paths": ["code.txt"], "why": "it is read"}]}`)
 		f.setenv("FAKE_CODEX", "none")
@@ -205,6 +212,7 @@ func TestFocusCompat(t *testing.T) {
 	// A type that cannot run here is hinted with a command that runs as
 	// given, its goal included.
 	t.Run("a hint that runs", func(t *testing.T) {
+		t.Parallel()
 		f := setUp(t, true)
 		f.setenv("FAKE_CODEX", "unauthenticated")
 		code, _, stderr := f.runDelegate(t, "--reviewer", "codex", "--plan", f.plan, f.base+"..HEAD")
@@ -216,6 +224,7 @@ func TestFocusCompat(t *testing.T) {
 	// Where it cannot run headless, the hint names the agent type and a
 	// command that prints its prompt, the description included.
 	t.Run("the agent type named", func(t *testing.T) {
+		t.Parallel()
 		f := setUp(t, true)
 		f.config(t, map[string]any{})
 		code, _, stderr := f.runDelegate(t, "--reviewer", "compat", "--plan", f.plan, "--description",
@@ -230,12 +239,12 @@ func TestFocusCompat(t *testing.T) {
 	// A pull request's own description is the one checked, unless
 	// --description names another.
 	t.Run("a pull request", func(t *testing.T) {
+		t.Parallel()
 		f := setUp(t, true)
 		r := newRemote(t, nil)
 		gh := setUpPR(t, r)
-		old := refreshThreads
-		refreshThreads = func(context.Context, string, int) ([]loop.Thread, error) { return nil, nil }
-		t.Cleanup(func() { refreshThreads = old })
+		f.seams = gh.seams
+		f.seams.refreshThreads = func(context.Context, string, int) ([]loop.Thread, error) { return nil, nil }
 		compatSays(t, f, `{"findings": [], "unverified": [], "checked": `+checkedOf(t, "compat", "")+`}`)
 
 		code, _, stderr := f.runDelegate(t, "--reviewer", "compat", "o/r#7")

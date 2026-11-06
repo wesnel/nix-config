@@ -12,14 +12,6 @@ import (
 	"github.com/wesnel/agent-tools/internal/git"
 )
 
-// stacksVersion is the REST API version GitHub serves stacks under.
-const stacksVersion = "2026-03-10"
-
-// stacksREST changes stacks; tests replace it to fake GitHub.
-var stacksREST = func(ctx context.Context, method, path string, body, out any) error {
-	return gh.RESTVersion(ctx, stacksVersion, method, path, body, out)
-}
-
 // Link puts open PRs by the user, named by number or branch bottom first and
 // each based on the one before, into one GitHub stack: onto the top of the
 // stack the lowest is already in or is based on, or else into a new one.
@@ -38,7 +30,7 @@ func Link(ctx context.Context, targets []string) (any, error) {
 	}
 	var chain []*PR
 	for _, t := range targets {
-		branch, err := prBranch(repo, prs, t)
+		branch, err := prBranch(ctx, repo, prs, t)
 		if err != nil {
 			return nil, err
 		}
@@ -76,7 +68,7 @@ func Stack(ctx context.Context, target string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	branch, err := prBranch(repo, prs, target)
+	branch, err := prBranch(ctx, repo, prs, target)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +83,7 @@ func Stack(ctx context.Context, target string) (any, error) {
 		pr := prs[b]
 		entry := StackEntry{Branch: b, PR: pr.Number, Base: pr.BaseRefName, Draft: pr.IsDraft,
 			Title: pr.Title, URL: pr.URL, RemoteOid: pr.HeadRefOid, Children: []string{}}
-		if oid, err := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+b); err == nil {
+		if oid, err := git.In(ctx).Run("rev-parse", "--verify", "-q", "refs/heads/"+b); err == nil {
 			entry.LocalOid = oid
 		}
 		for _, c := range order {
@@ -213,7 +205,7 @@ func stackWrite(ctx context.Context, method, path string, body, out any) error {
 	err := stacksREST(ctx, method, path, body, out)
 	var status *gh.StatusError
 	if errors.As(err, &status) && status.Code == 409 {
-		sleep(2 * time.Second)
+		sleep(ctx, 2*time.Second)
 		err = stacksREST(ctx, method, path, body, out)
 	}
 	return err
@@ -275,10 +267,10 @@ type StackMember struct {
 
 // prBranch is the head branch of target, one of prs named by number or by
 // branch, or by default the current branch.
-func prBranch(repo *Repo, prs map[string]*PR, target string) (string, error) {
+func prBranch(ctx context.Context, repo *Repo, prs map[string]*PR, target string) (string, error) {
 	if target == "" {
 		var err error
-		if target, err = currentBranch(); err != nil {
+		if target, err = currentBranch(ctx); err != nil {
 			return "", err
 		}
 	} else if n, ok := prNumber(target); ok {

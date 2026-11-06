@@ -7,6 +7,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/wesnel/agent-tools/internal/env"
 )
 
 func flakeNode(owner, rev, extra string) string {
@@ -85,29 +87,61 @@ func TestFlakeInputEdges(t *testing.T) {
 	}
 }
 
-// A clone command that hangs is stopped, and the configuration the
-// environment passes git never reaches one.
+// A clone command that hangs is stopped, after the options' timeout where
+// git.CheckConfig lets it start, and the configuration the environment
+// passes git never reaches one.
 func TestCloneCommands(t *testing.T) {
+	t.Parallel()
 	w := setWorld(t)
 	old, next := w.clone(t, "acme", "lib")
 	p := Pin{Owner: "acme", Repo: "lib", OldRef: old, NewRef: next}
 	w.env = w.env.Set("GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=core.abbrev", "GIT_CONFIG_VALUE_0=40",
 		"GIT_CONFIG_PARAMETERS='core.abbrev'='40'")
-	text, err := cloneLog(w.ctx(t), w.o.Clones, p)
+	text, err := cloneLog(w.ctx(t), w.o, p)
 	if err != nil || strings.Contains(text.Body, next) || !strings.Contains(text.Body, next[:7]+" Drop the old flag") {
 		t.Errorf("with the environment's config: %q, %v", text.Body, err)
 	}
 
+	// A git first on the Env's PATH that never ends the clone's own
+	// commands, which alone pass --no-replace-objects first, stands in for
+	// a clone that hangs one; the options' timeout, shorter than
+	// production's so the test need not wait that out, stops it.
+	real, err := w.env.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	hang := "#!/bin/sh\n[ \"$1\" = --no-replace-objects ] && exec sleep 600\nexec '" + real + "' \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(hang), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hung := env.With(t.Context(), w.env.Set("PATH="+bin+string(os.PathListSeparator)+w.env.Get("PATH")))
+	o := w.o
+	o.testCloneTimeout = 2 * time.Second
+	stopped := make(chan error, 1)
+	go func() {
+		_, err := cloneLog(hung, o, p)
+		stopped <- err
+	}()
+	select {
+	case err := <-stopped:
+		if err == nil || !strings.Contains(err.Error(), "stopped after 2s") {
+			t.Errorf("a clone command that never ends: %v; want it stopped after the options' 2s", err)
+		}
+	// Only a deadlock outlasts this: the call ends at its own timeout.
+	case <-time.After(2 * time.Minute):
+		t.Fatal("cloneLog waits on a clone command that never ends")
+	}
+
+	// git.CheckConfig's own bound refuses a clone whose alternates never
+	// end, before any of the clone's commands start.
 	dir := filepath.Join(w.o.Clones, "acme", "lib")
 	if err := syscall.Mkfifo(filepath.Join(dir, ".git", "objects", "info", "alternates"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	old2 := cloneTimeout
-	cloneTimeout = 2 * time.Second
-	t.Cleanup(func() { cloneTimeout = old2 })
 	done := make(chan error, 1)
 	go func() {
-		_, err := cloneLog(w.ctx(t), w.o.Clones, p)
+		_, err := cloneLog(w.ctx(t), w.o, p)
 		done <- err
 	}()
 	select {
@@ -115,7 +149,8 @@ func TestCloneCommands(t *testing.T) {
 		if err == nil {
 			t.Error("a clone whose alternates never end was read")
 		}
-	case <-time.After(20 * time.Second):
+	// Only a deadlock outlasts this: CheckConfig ends at its own timeout.
+	case <-time.After(2 * time.Minute):
 		f, _ := os.OpenFile(filepath.Join(dir, ".git", "objects", "info", "alternates"), os.O_WRONLY, 0)
 		f.Close()
 		t.Fatal("cloneLog hangs on a FIFO")

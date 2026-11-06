@@ -447,14 +447,13 @@ func run(ctx context.Context, command string, args []string, stdin io.Reader, st
 			break
 		}
 		if len(rest) == 1 {
-			// The repository is identified from where the command runs.
-			// loop.SetupCommand reads it from this process's directory,
-			// so the process moves there too.
+			// The repository is identified from where the command runs:
+			// the directory of ctx's Env.
 			dir := rest[0]
 			if !filepath.IsAbs(dir) {
 				dir = filepath.Join(env.From(ctx).Dir(), dir)
 			}
-			if err = os.Chdir(dir); err != nil {
+			if _, err = os.Stat(dir); err != nil { //nolint:gosec // setup's own path argument, only checked to exist, as os.Chdir was
 				break
 			}
 			ctx = env.With(ctx, env.From(ctx).In(dir))
@@ -467,7 +466,7 @@ func run(ctx context.Context, command string, args []string, stdin io.Reader, st
 			break
 		}
 		var setup *loop.Setup
-		if setup, err = loop.SetupCommand(); err != nil {
+		if setup, err = loop.SetupCommand(ctx); err != nil {
 			break
 		}
 		runs := []loop.SetupRun{}
@@ -477,7 +476,7 @@ func run(ctx context.Context, command string, args []string, stdin io.Reader, st
 		result = map[string]any{"settings": setup.Settings, "command": setup.Command, "runs": runs}
 		code = setupFailures(runs, stderr)
 	case "setup-command":
-		result, err = loop.SetupCommand()
+		result, err = loop.SetupCommand(ctx)
 	case "sign-check":
 		result, err = loop.SignCheck(ctx)
 	case "end":

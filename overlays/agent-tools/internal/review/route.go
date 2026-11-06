@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"maps"
@@ -14,7 +15,7 @@ import (
 // content scan of every commit from where the change starts, by the
 // built-in rules and the operator's, and by the routes a general review's
 // reply named, where out is one. Each source only adds.
-func routeChange(r *span, out *Output, log io.Writer) []routes.Route {
+func routeChange(ctx context.Context, r *span, out *Output, log io.Writer) []routes.Route {
 	rules := slices.Clone(routes.Builtin)
 	settings, err := r.settings()
 	if err != nil {
@@ -22,7 +23,7 @@ func routeChange(r *span, out *Output, log io.Writer) []routes.Route {
 	} else {
 		rules = append(rules, settings.Routes...)
 	}
-	base := routes.MergeBase(r.top, r.tip)
+	base := routes.MergeBase(ctx, r.top, r.tip)
 	if base == "" {
 		fmt.Fprintf(log, "%s: this repository has no default branch to measure the change from, so only %s is scanned for "+
 			"the reviews it needs; fetch origin's default branch to route the whole of it\n", name, r.given)
@@ -44,7 +45,7 @@ func routeChange(r *span, out *Output, log io.Writer) []routes.Route {
 			}
 		}
 	}
-	scanned, err := routes.Scan(r.top, base, r.tip, rules)
+	scanned, err := routes.Scan(ctx, r.top, base, r.tip, rules)
 	if err != nil {
 		fmt.Fprintf(log, "%s: the change's commits could not be scanned for the reviews they need: %v\n", name, err)
 	}

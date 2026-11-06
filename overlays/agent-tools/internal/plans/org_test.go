@@ -31,6 +31,7 @@ func readOrg(t *testing.T, name string) []heading {
 // defines, as Org does, and keeps drawers other than the property drawer
 // out of the body.
 func TestParseOrg(t *testing.T) {
+	t.Parallel()
 	// emacs-closed.org and emacs-note.org are Org's own output: open.org,
 	// with states changed in Emacs and saved.
 	t.Run("the file's own keywords", func(t *testing.T) {

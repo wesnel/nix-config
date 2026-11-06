@@ -60,7 +60,19 @@ type Options struct {
 	// it is public.
 	Own    bool
 	Limits Limits
+
+	// testStore and testCloneTimeout are set by this package's tests
+	// alone, which serve a store of their own and stop a hung clone
+	// sooner; zero is defaultStoreDir and defaultCloneTimeout.
+	testStore        string
+	testCloneTimeout time.Duration
 }
+
+// storeDir holds every source tree prefetch gives.
+func (o Options) storeDir() string { return cmp.Or(o.testStore, defaultStoreDir) }
+
+// cloneTimeout bounds each git command in a local clone.
+func (o Options) cloneTimeout() time.Duration { return cmp.Or(o.testCloneTimeout, defaultCloneTimeout) }
 
 // DefaultPrivateModules are the private module patterns where the
 // operator's config names none: ngrok's, which the host's Go settings
@@ -224,7 +236,7 @@ func gatherPin(ctx context.Context, p Pin, o Options, left *int) Gathered {
 	logged := false
 	if p.Owner != "" && validName(p.Owner) && validName(p.Repo) && validRef(p.OldRef) && validRef(p.NewRef) {
 		t, err := cached(o, "clone", []string{o.Clones, p.Owner, p.Repo, p.OldRef, p.NewRef}, func() (Text, error) {
-			return cloneLog(ctx, o.Clones, p)
+			return cloneLog(ctx, o, p)
 		})
 		logged = err == nil && t.Body != ""
 		add(t, err, "local clone")
@@ -421,16 +433,16 @@ var cloneConfig = []string{"-c", "log.showSignature=false", "-c", "gpg.program=f
 	"-c", "gpg.x509.program=false", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.pager=cat",
 	"-c", "pager.log=false", "-c", "log.mailmap=false", "-c", "core.sshCommand=false"}
 
-// cloneTimeout bounds each git command in a local clone, whose files, an
-// object store's alternates among them, may never end.
-var cloneTimeout = 30 * time.Second
+// defaultCloneTimeout bounds each git command in a local clone, whose
+// files, an object store's alternates among them, may never end.
+const defaultCloneTimeout = 30 * time.Second
 
 // cloneGit runs git with args in the local clone at dir, with cloneConfig
-// and localGit's environment, for at most cloneTimeout. The configuration
+// and localGit's environment, for at most timeout. The configuration
 // the environment hands git (GIT_CONFIG_PARAMETERS, GIT_CONFIG_COUNT and
 // its keys and values) never reaches it.
-func cloneGit(ctx context.Context, dir string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, cloneTimeout)
+func cloneGit(ctx context.Context, timeout time.Duration, dir string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := env.Command(ctx, "git", append(append([]string{"--no-replace-objects", "-C", dir}, cloneConfig...), args...)...)
 	cmd.Dir = os.TempDir()
@@ -447,7 +459,7 @@ func cloneGit(ctx context.Context, dir string, args ...string) (string, error) {
 	out, err := cmd.Output()
 	switch {
 	case ctx.Err() != nil:
-		return "", fmt.Errorf("git %s in %s stopped after %s", args[0], dir, cloneTimeout)
+		return "", fmt.Errorf("git %s in %s stopped after %s", args[0], dir, timeout)
 	case err != nil:
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, oneLine(stderr.String()))
 	}
@@ -459,12 +471,12 @@ func cloneGit(ctx context.Context, dir string, args ...string) (string, error) {
 var countsOnly = map[string]bool{"nixos/nixpkgs": true}
 
 // cloneLog is the history between p's two refs in the local clone of its
-// repository under clones, where that has both.
-func cloneLog(ctx context.Context, clones string, p Pin) (Text, error) {
-	if clones == "" {
+// repository under o.Clones, where that has both.
+func cloneLog(ctx context.Context, o Options, p Pin) (Text, error) {
+	if o.Clones == "" {
 		return Text{}, errors.New("no directory of clones")
 	}
-	dir := filepath.Join(clones, p.Owner, p.Repo)
+	dir := filepath.Join(o.Clones, p.Owner, p.Repo)
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
 		return Text{}, fmt.Errorf("none at %s", dir)
 	}
@@ -473,7 +485,7 @@ func cloneLog(ctx context.Context, clones string, p Pin) (Text, error) {
 	if err := git.In(ctx).CheckConfig(dir); err != nil {
 		return Text{}, err
 	}
-	run := func(args ...string) (string, error) { return cloneGit(ctx, dir, args...) }
+	run := func(args ...string) (string, error) { return cloneGit(ctx, o.cloneTimeout(), dir, args...) }
 	// A shallow clone's history stops where its boundary says, which may
 	// hide what lies between the two revisions.
 	if shallow, err := run("rev-parse", "--path-format=absolute", "--git-path", "shallow"); err != nil {
@@ -530,11 +542,11 @@ func sourceTrees(ctx context.Context, p Pin, o Options) (Text, error, bool) {
 	case (p.Kind == "flake" || p.Kind == "nix") && p.Owner != "" && validName(p.Owner) && validName(p.Repo) &&
 		validRef(p.OldRef) && validRef(p.NewRef) && strings.HasPrefix(p.OldHash, "sha256-") && strings.HasPrefix(p.NewHash, "sha256-"):
 		t, err := cached(o, "tree", []string{p.Owner, p.Repo, p.OldRef, p.OldHash, p.NewRef, p.NewHash}, func() (Text, error) {
-			old, err := prefetch(ctx, p.Owner, p.Repo, p.OldRef, p.OldHash)
+			old, err := prefetch(ctx, o.storeDir(), p.Owner, p.Repo, p.OldRef, p.OldHash)
 			if err != nil {
 				return Text{}, err
 			}
-			next, err := prefetch(ctx, p.Owner, p.Repo, p.NewRef, p.NewHash)
+			next, err := prefetch(ctx, o.storeDir(), p.Owner, p.Repo, p.NewRef, p.NewHash)
 			if err != nil {
 				return Text{}, err
 			}
@@ -548,13 +560,14 @@ func sourceTrees(ctx context.Context, p Pin, o Options) (Text, error, bool) {
 	return Text{}, nil, false
 }
 
-// storeDir holds every source tree prefetch gives; tests serve their own.
-var storeDir = "/nix/store/"
+// defaultStoreDir holds every source tree prefetch gives.
+const defaultStoreDir = "/nix/store/"
 
 // prefetch is the store path of github:owner/repo at ref, which `nix flake
-// prefetch` fetches over HTTPS, refused unless its NAR hash is narHash:
-// nix does not check a hash given with a source it already has.
-func prefetch(ctx context.Context, owner, repo, ref, narHash string) (string, error) {
+// prefetch` fetches over HTTPS, refused unless its NAR hash is narHash and
+// it is under store: nix does not check a hash given with a source it
+// already has.
+func prefetch(ctx context.Context, store, owner, repo, ref, narHash string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	cmd := env.Command(ctx, "nix", "flake", "prefetch", "--json", "--", "github:"+owner+"/"+repo+"/"+ref)
@@ -573,7 +586,7 @@ func prefetch(ctx context.Context, owner, repo, ref, narHash string) (string, er
 	if err := json.Unmarshal(out, &got); err != nil {
 		return "", fmt.Errorf("nix flake prefetch github:%s/%s/%s: %v", owner, repo, ref, err)
 	}
-	if got.Hash != narHash || !strings.HasPrefix(got.StorePath, storeDir) {
+	if got.Hash != narHash || !strings.HasPrefix(got.StorePath, store) {
 		return "", fmt.Errorf("github:%s/%s/%s has the NAR hash %s, not the %s the pin names", owner, repo, ref, got.Hash, narHash)
 	}
 	return got.StorePath, nil

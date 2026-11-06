@@ -551,20 +551,14 @@ func callTool(ctx context.Context, name string, raw map[string]any, threadID str
 	}
 	// The call runs in the worktree, and what it runs takes it for the
 	// Codex session's own, as the commands Codex runs do: in the Env of
-	// its context, and in this process too, since the loop and git
-	// delegate still read some of both from the process.
+	// its context, leaving this process's own as they were.
 	e := env.From(ctx)
 	if worktree != "" {
-		if err := os.Chdir(worktree); err != nil {
-			return refused(err)
-		}
 		e = e.In(worktree)
 	}
 	if threadID != "" {
-		os.Setenv("CODEX_THREAD_ID", threadID)
 		e = e.Set("CODEX_THREAD_ID=" + threadID)
 	} else {
-		os.Unsetenv("CODEX_THREAD_ID")
 		e = e.Without("CODEX_THREAD_ID")
 	}
 	ctx = env.With(ctx, e)

@@ -38,9 +38,11 @@ func loadSchema(t *testing.T) schema {
 // TestContract holds the reviewer's instructions to the schema its reply is
 // checked against.
 func TestContract(t *testing.T) {
+	t.Parallel()
 	// Each kind the schema accepts is one the contract defines and the check
 	// keeps.
 	t.Run("defines every kind", func(t *testing.T) {
+		t.Parallel()
 		schemaKinds := loadSchema(t).Properties.Findings.Items.Properties.Kind.Enum
 		if len(schemaKinds) == 0 {
 			t.Fatal("the schema names no kinds")
@@ -61,6 +63,7 @@ func TestContract(t *testing.T) {
 	// A breach of a rule the repository writes down is a finding of its own
 	// kind, which names the doc and the rule.
 	t.Run("convention kind", func(t *testing.T) {
+		t.Parallel()
 		found := false
 		for _, kind := range loadSchema(t).Properties.Findings.Items.Properties.Kind.Enum {
 			found = found || kind == "convention"
@@ -78,6 +81,7 @@ func TestContract(t *testing.T) {
 	// A finding's evidence names what triggers the problem, as both the
 	// contract's description of the field and the schema's say.
 	t.Run("evidence names the trigger", func(t *testing.T) {
+		t.Parallel()
 		const trigger = "the input or state that triggers it"
 		if d := loadSchema(t).Properties.Findings.Items.Properties.Evidence.Description; !strings.Contains(strings.ToLower(d), trigger) {
 			t.Errorf("the schema's evidence is %q, without %q", d, trigger)
@@ -91,6 +95,7 @@ func TestContract(t *testing.T) {
 	// The reply the contract shows has the fields the schema requires, no
 	// more and no fewer.
 	t.Run("example", func(t *testing.T) {
+		t.Parallel()
 		_, rest, ok := strings.Cut(Contract, "```json\n")
 		example, _, closed := strings.Cut(rest, "```")
 		if !ok || !closed {

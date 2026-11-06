@@ -33,6 +33,7 @@ func diagramsReply(ds ...map[string]any) string {
 // TIP, has Codex critique it, and keeps the JSON of those that hold, which
 // show renders as Mermaid; one citing a line that is not there is dropped.
 func TestDiagrams(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, true)
 	f.setenv("FAKE_CODEX", "critique")
 	f.setenv("FAKE_CHECKED", `["N1", "N2", "E1"]`)
@@ -74,6 +75,7 @@ func TestDiagrams(t *testing.T) {
 // A diagram the critic faults is redrawn once, checked and critiqued
 // again, and the redraw kept as corrected when that critique passes.
 func TestDiagramRedrawn(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, true)
 	f.setenv("FAKE_CODEX", "fault-once")
 	f.setenv("FAKE_CHECKED", `["N1", "N2", "E1"]`)
@@ -103,6 +105,7 @@ func TestDiagramRedrawn(t *testing.T) {
 // A diagram whose redraw the critic faults too is kept as first drawn,
 // unresolved, with the first critique's findings about it.
 func TestDiagramUnresolved(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, true)
 	f.setenv("FAKE_CODEX", "fault")
 	f.setenv("FAKE_CHECKED", `["N1", "N2", "E1"]`)
@@ -131,8 +134,10 @@ func TestDiagramUnresolved(t *testing.T) {
 // A critique that faults nothing but leaves an element unverified, or
 // whose every finding is dropped, does not let a diagram hold.
 func TestDiagramInconclusive(t *testing.T) {
+	t.Parallel()
 	for mode, why := range map[string]string{"unsure": "could not verify", "misfault": "was dropped"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			f := setUp(t, true)
 			f.setenv("FAKE_CODEX", mode)
 			f.setenv("FAKE_CHECKED", `["N1", "N2", "E1"]`)
@@ -155,6 +160,7 @@ func TestDiagramInconclusive(t *testing.T) {
 // Rerunning the diagram type replaces the record's diagrams, one with the
 // same title keeping its ID.
 func TestDiagramRerun(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, true)
 	f.setenv("FAKE_CODEX", "critique")
 	f.setenv("FAKE_CHECKED", `["N1", "N2", "E1"]`)
@@ -193,6 +199,7 @@ func TestReplaceDiagrams(t *testing.T) {
 
 // A diagram review needs Codex for its critic.
 func TestDiagramsWithoutCodex(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, true)
 	f.setenv("FAKE_CODEX", "unauthenticated")
 	code, out, stderr := f.runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")

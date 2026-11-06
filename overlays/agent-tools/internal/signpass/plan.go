@@ -240,12 +240,12 @@ func Plan(ctx context.Context, base string, names []string, push, setUpstream bo
 		}
 	}
 	lines = append(lines, fmt.Sprintf("key touches: up to %d", touches))
-	if Brief {
+	if o := options(ctx); o.Brief {
 		sort.Strings(allGains)
-		announceGains(allGains)
-		announce(commits, len(moving), pushBranches, pushURLs, touches)
+		announceGains(o.Err, allGains)
+		announce(o.Err, commits, len(moving), pushBranches, pushURLs, touches)
 	} else {
-		fmt.Fprintf(os.Stderr, "git sign-pass plan:\n  %s\n", strings.Join(lines, "\n  "))
+		fmt.Fprintf(o.Err, "git sign-pass plan:\n  %s\n", strings.Join(lines, "\n  "))
 	}
 	pl.Results["plan"] = lines
 	return runPlan(ctx, pl)

@@ -8,7 +8,6 @@ import (
 	"os/exec"
 
 	"github.com/wesnel/agent-tools/internal/env"
-	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/repos"
 )
@@ -22,10 +21,10 @@ type Setup struct {
 }
 
 // SetupCommand looks up the setup command for the clone containing the
-// current directory in its agent settings (package repos). Command is
+// directory of ctx's Env in its agent settings (package repos). Command is
 // empty when none is configured.
-func SetupCommand() (*Setup, error) {
-	s, err := repos.Lookup(git.WithDir(context.Background()))
+func SetupCommand(ctx context.Context) (*Setup, error) {
+	s, err := repos.Lookup(ctx)
 	if err != nil {
 		return &Setup{}, err
 	}

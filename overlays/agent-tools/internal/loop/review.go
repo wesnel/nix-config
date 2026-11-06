@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/redact"
 )
 
@@ -332,16 +331,6 @@ func Request(ctx context.Context, args, onlyBots, acceptFailures []string) (any,
 		}
 	}
 	return log, nil
-}
-
-// requestReviewer asks reviewer to review PR number in slug, with the gh of
-// ctx's Env. Tests that fake GitHub replace it.
-var requestReviewer = func(ctx context.Context, slug string, number int, reviewer string) error {
-	cmd := gh.Command(ctx, "pr", "edit", fmt.Sprint(number), "--repo", slug, "--add-reviewer", reviewer)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%w: %s", err, out)
-	}
-	return nil
 }
 
 // WaitReviews blocks until requested reviews land. It reports settled=false

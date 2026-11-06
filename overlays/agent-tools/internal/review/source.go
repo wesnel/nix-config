@@ -14,18 +14,10 @@ import (
 	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
-	"github.com/wesnel/agent-tools/internal/loop"
 	"github.com/wesnel/agent-tools/internal/record"
 	"github.com/wesnel/agent-tools/internal/redact"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
-
-// refreshThreads reads a pull request's threads and writes them to its
-// record, pr-loop threads' writer, in ctx's Env; tests replace it. ctx's
-// end does not stop it, as before it took one.
-var refreshThreads = func(ctx context.Context, slug string, number int) ([]loop.Thread, error) {
-	return loop.RefreshThreads(context.WithoutCancel(ctx), slug, number)
-}
 
 // source is what a review reviews: a range of the current repository, or a
 // pull request, by its GitHub repository.
@@ -244,7 +236,7 @@ func prInputs(ctx context.Context, s *source, in *inputs, log io.Writer) error {
 	goal.WriteString(fenced("text", record.Cap(redact.Secrets(record.Clean(claims)), 32<<10)))
 	in.goal = goal.String()
 
-	threads, err := refreshThreads(ctx, s.slug(), s.number)
+	threads, err := seamsOf(ctx).refreshThreads(ctx, s.slug(), s.number)
 	if drift := (*record.DriftError)(nil); errors.As(err, &drift) {
 		return err
 	}

@@ -16,6 +16,7 @@ import (
 // A review stopped while Codex forks leaves none of Codex's process group
 // behind: a child forked as the kill lands is killed too.
 func TestCodexStoppedWhileForking(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, true)
 	f.setenv("FAKE_CODEX", "fork")
 	// Codex records its process group, then starts children without pause,

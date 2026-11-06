@@ -360,11 +360,11 @@ var scratchRoots = guard.ScratchRoots
 // remote, so the file must be in the caller's worktree or a scratch root,
 // and not a credential, as checkedfile.Read checks.
 func readTextFile(ctx context.Context, path string) (string, error) {
-	roots := scratchRoots()
+	roots := scratchRoots(ctx)
 	if top, _ := checkout(ctx); top != "" {
 		roots = append(roots, top)
 	}
-	data, err := checkedfile.Read(path, roots)
+	data, err := checkedfile.Read(ctx, path, roots)
 	write := "write the text to a file of its own under $TMPDIR, and pass that as `--text-file FILE`"
 	switch {
 	case errors.Is(err, checkedfile.ErrLinked):

@@ -31,6 +31,7 @@ func routedFixture(t *testing.T, settings string) (*fixture, string) {
 
 // Paid model providers are faked by routedFixture; Git and dispatch are real.
 func TestDispatch(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		args []string
@@ -42,6 +43,7 @@ func TestDispatch(t *testing.T) {
 		{"combined", []string{"--reviewer", "codex", "--reviewer", "security", "--reviewer", "guide"}, []string{"codex", "security", "guide"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			f, _ := routedFixture(t, `{}`)
 			f.setenv("FAKE_CODEX", "none")
 			args := append(slices.Clone(tc.args), "--plan", f.plan, "HEAD~1..HEAD")
@@ -61,7 +63,9 @@ func TestDispatch(t *testing.T) {
 }
 
 func TestRouting(t *testing.T) {
+	t.Parallel()
 	t.Run("scan and reviewer", func(t *testing.T) {
+		t.Parallel()
 		f, exec := routedFixture(t, `{}`)
 		f.setenv("FAKE_CODEX", "routed")
 		// BASE above the commit that runs a program.
@@ -84,6 +88,7 @@ func TestRouting(t *testing.T) {
 	})
 
 	t.Run("named only by the reviewer", func(t *testing.T) {
+		t.Parallel()
 		f, _ := routedFixture(t, `{}`)
 		f.setenv("FAKE_CODEX", "routed")
 		run(t, f.repo, "git", "update-ref", "refs/remotes/origin/main", "HEAD~1")
@@ -95,6 +100,7 @@ func TestRouting(t *testing.T) {
 	})
 
 	t.Run("operator rules", func(t *testing.T) {
+		t.Parallel()
 		f, exec := routedFixture(t, `{"routes": [{"route": "security", "paths": ["code.txt"], "why": "the code"}]}`)
 		f.setenv("FAKE_CODEX", "none")
 		grow := run(t, f.repo, "git", "rev-parse", f.tip)
@@ -105,6 +111,7 @@ func TestRouting(t *testing.T) {
 	})
 
 	t.Run("nothing to route", func(t *testing.T) {
+		t.Parallel()
 		f, _ := routedFixture(t, `{}`)
 		f.setenv("FAKE_CODEX", "none")
 		run(t, f.repo, "git", "update-ref", "refs/remotes/origin/main", "HEAD~1")
@@ -117,6 +124,7 @@ func TestRouting(t *testing.T) {
 	// Settings the review cannot use refuse it, saying what to fix, rather
 	// than leave out the test settings beside them.
 	t.Run("a broken rule", func(t *testing.T) {
+		t.Parallel()
 		f, _ := routedFixture(t, `{"test": "go test ./...", "testFiles": ["*_test.go"], "routes": [{"route": "security", "why": "nothing"}]}`)
 		f.setenv("FAKE_CODEX", "none")
 		for _, args := range [][]string{{"--print-prompt"}, nil} {
@@ -161,6 +169,7 @@ func TestSchemaRoutes(t *testing.T) {
 // A changed file that holds tests beside its code is named in the prompt,
 // for the reviewer to judge its tests.
 func TestSharedFilePrompt(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, false)
 	os.WriteFile(filepath.Join(f.repo, "lib.rs"), []byte("fn f() {}\n#[cfg(test)]\nmod tests {}\n"), 0o644)
 	run(t, f.repo, "git", "add", "lib.rs")

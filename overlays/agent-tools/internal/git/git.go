@@ -19,15 +19,8 @@ import (
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
-// Dir aims the functions that take no context (Run, OK, Bytes, RunEnv,
-// RunLong, Toplevel, CheckLocation, CheckConfig) and WithDir at a
-// directory, as At does; empty means the process's own. Nothing but
-// pr-loop's tests sets it, since pr-loop runs git through those functions;
-// In never reads it.
-var Dir string
-
 // Where is where git runs: an Env, in whose directory each command runs, and
-// whether the caller aimed git there (At or Dir).
+// whether the caller aimed git there (At).
 type Where struct {
 	env env.Env
 	at  bool
@@ -53,26 +46,6 @@ func At(ctx context.Context, dir string) context.Context {
 
 // aimed is e in dir without gitenv.Location.
 func aimed(e env.Env, dir string) env.Env { return e.Without(gitenv.Location...).In(dir) }
-
-// process is In for a caller with no context: this process's environment,
-// aimed at Dir when it is set.
-func process() Where {
-	e := env.Process()
-	if Dir != "" {
-		return Where{env: aimed(e, Dir), at: true}
-	}
-	return Where{env: e}
-}
-
-// WithDir is ctx aimed at Dir (At) where it is set, else ctx, for pr-loop,
-// which runs git both through the functions that take no context and
-// through code that takes one, so that both act on one repository.
-func WithDir(ctx context.Context) context.Context {
-	if Dir == "" {
-		return ctx
-	}
-	return At(ctx, Dir)
-}
 
 // hardened keeps the repository from running programs through these tools. A
 // sandboxed agent can write the repository's .git, and these tools run git on
@@ -120,17 +93,6 @@ type envKey struct{}
 func WithEnv(ctx context.Context, env ...string) context.Context {
 	extra, _ := ctx.Value(envKey{}).([]string)
 	return context.WithValue(ctx, envKey{}, append(append([]string{}, extra...), env...))
-}
-
-// Bytes is Where.Bytes in this process's environment.
-func Bytes(stdin []byte, args ...string) ([]byte, error) { return process().Bytes(stdin, args...) }
-
-// RunEnv is Where.RunEnv in this process's environment.
-func RunEnv(extra []string, args ...string) (string, error) { return process().RunEnv(extra, args...) }
-
-// RunLong is Where.RunLong in this process's environment.
-func RunLong(extra []string, args ...string) (string, error) {
-	return process().RunLong(extra, args...)
 }
 
 // Bytes runs git and returns its stdout, within Timeout.
@@ -193,9 +155,6 @@ func output(cmd *exec.Cmd, stdin []byte, args []string) ([]byte, error) {
 	return out, nil
 }
 
-// Toplevel is Where.Toplevel in this process's environment.
-func Toplevel() (string, error) { return process().Toplevel() }
-
 // Toplevel is the top of the worktree containing w's Env's directory, as
 // git finds it. It refuses when the environment gives git another git
 // directory than that worktree's own, since the commands aimed at the
@@ -224,14 +183,11 @@ func (w Where) Toplevel() (string, error) {
 	return top, nil
 }
 
-// Aimed reports whether the caller aimed git at a directory, with At or Dir:
-// git then finds the repository from that directory, and the Env holds none
-// of gitenv.Location. A Where from In of a context never aimed is not Aimed,
+// Aimed reports whether the caller aimed git at a directory, with At: git
+// then finds the repository from that directory, and the Env holds none of
+// gitenv.Location. A Where from In of a context never aimed is not Aimed,
 // whatever its Env holds.
 func (w Where) Aimed() bool { return w.at }
-
-// CheckLocation is Where.CheckLocation in this process's environment.
-func CheckLocation() error { return process().CheckLocation() }
 
 // CheckLocation is Toplevel for a command that only needs the check. Outside
 // a worktree there is nothing to check.
@@ -249,12 +205,6 @@ func canonical(path string) string {
 	}
 	return path
 }
-
-// Run is Where.Run in this process's environment.
-func Run(args ...string) (string, error) { return process().Run(args...) }
-
-// OK is Where.OK in this process's environment.
-func OK(args ...string) bool { return process().OK(args...) }
 
 // Run runs git and returns its stdout with surrounding whitespace removed.
 func (w Where) Run(args ...string) (string, error) {
@@ -354,15 +304,17 @@ func run(ctx context.Context, cmd *exec.Cmd) error {
 	return cmd.Wait()
 }
 
-// AttachedStderr is Attached, also returning what the command wrote to
-// stderr, which reaches this process's stderr as it is written. Git sees a
-// pipe there rather than the terminal, so it prints no progress meters. See
-// bound for how the end of ctx ends it.
-func AttachedStderr(ctx context.Context, extra []string, args ...string) (int, string) {
+// AttachedStderr is Attached with the terminal the caller gives, stdin and
+// errs, also returning what the command wrote to standard error, which
+// reaches errs as it is written. Git sees a pipe there rather than the
+// terminal, so it prints no progress meters. A stdin that is not an
+// *os.File is copied to the command until it ends, which the command's end
+// waits for. See bound for how the end of ctx ends it.
+func AttachedStderr(ctx context.Context, extra []string, stdin io.Reader, errs io.Writer, args ...string) (int, string) {
 	cmd := commandContext(ctx, extra, args...)
 	bound(ctx, cmd)
 	var stderr bytes.Buffer
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, io.MultiWriter(os.Stderr, &stderr)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, os.Stdout, io.MultiWriter(errs, &stderr)
 	if err := run(ctx, cmd); err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
 			return exit.ExitCode(), stderr.String()
@@ -372,14 +324,14 @@ func AttachedStderr(ctx context.Context, extra []string, args ...string) (int, s
 	return 0, stderr.String()
 }
 
-// AttachedQuiet is Attached with standard output discarded and standard
-// error written to stderr alone, for a caller that decides what of it to
-// show. It returns the exit code; a failure to run git at all is written to
-// stderr too. See bound for how the end of ctx ends it.
-func AttachedQuiet(ctx context.Context, extra []string, stderr io.Writer, args ...string) int {
+// AttachedQuiet is AttachedStderr with standard output discarded and
+// standard error written to stderr alone, for a caller that decides what
+// of it to show. It returns the exit code; a failure to run git at all is
+// written to stderr too. See bound for how the end of ctx ends it.
+func AttachedQuiet(ctx context.Context, extra []string, stdin io.Reader, stderr io.Writer, args ...string) int {
 	cmd := commandContext(ctx, extra, args...)
 	bound(ctx, cmd)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, io.Discard, stderr
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, io.Discard, stderr
 	if err := run(ctx, cmd); err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
 			return exit.ExitCode()

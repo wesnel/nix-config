@@ -5,9 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
-	"os"
 	"slices"
 	"strings"
 	"time"
@@ -54,7 +52,7 @@ func Draft(ctx context.Context, id, body, outcome string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := checkPublic("the draft", body, append(threads, id), "run `pr-loop draft` again"); err != nil {
+	if err := checkPublic(ctx, "the draft", body, append(threads, id), "run `pr-loop draft` again"); err != nil {
 		return nil, err
 	}
 	path, err := prFile(ctx, policy.repo, thread.pr)
@@ -77,9 +75,6 @@ func Draft(ctx context.Context, id, body, outcome string) (any, error) {
 	return map[string]any{"thread": id, "pr": thread.pr, "outcome": outcome, "drafted": path}, nil
 }
 
-// openTTY opens the operator's terminal. Tests replace it.
-var openTTY = func() (io.ReadWriteCloser, error) { return os.OpenFile("/dev/tty", os.O_RDWR, 0) }
-
 // PostResult is what Post did with one draft.
 type PostResult struct {
 	Thread   string `json:"thread"`
@@ -96,7 +91,7 @@ type PostResult struct {
 // review again. It is the operator's: the guard refuses it to agents, and
 // it refuses where no terminal can be opened.
 func Post(ctx context.Context, number int, threads []string) (any, error) {
-	tty, err := openTTY()
+	tty, err := openTTY(ctx)
 	if err != nil {
 		return nil, refuse("`pr-loop post` asks the operator on the terminal before each reply, and /dev/tty cannot be "+
 			"opened here (%v); the operator runs it from a terminal of their own", err)

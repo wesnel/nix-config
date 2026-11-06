@@ -11,14 +11,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
-// nextStep is the one step Next gives for branch.
-func nextStep(t *testing.T, branch string) NextStep {
+// nextStep is the one step Next gives for branch in f's checkout.
+func nextStep(t *testing.T, f *fakeOpen, branch string) NextStep {
 	t.Helper()
-	steps, err := Next(t.Context(), []string{branch})
+	steps, err := Next(f.ctx(t), []string{branch})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,8 +30,10 @@ func nextStep(t *testing.T, branch string) NextStep {
 // TestNext gives each state of a branch its one next step, from pushedBranch's
 // checkout: feat, one unsigned commit past main, which GitHub has at its tip.
 func TestNext(t *testing.T) {
+	t.Parallel()
 	for _, state := range []string{"fetch", "push", "upstream"} {
 		t.Run("quoted operands/"+state, func(t *testing.T) {
+			t.Parallel()
 			f, dir := pushedBranch(t)
 			branch, remote := "feat'`true`", "origin'`true`"
 			gitIn(t, dir, "remote", "rename", "origin", remote)
@@ -55,7 +56,7 @@ func TestNext(t *testing.T) {
 			case "upstream":
 				gitIn(t, dir, "config", "branch."+branch+".merge", "refs/heads/main")
 			}
-			step := nextStep(t, branch)
+			step := nextStep(t, f, branch)
 			command := ""
 			if state == "push" {
 				push, ok := step.(ToPush)
@@ -91,79 +92,87 @@ func TestNext(t *testing.T) {
 		})
 	}
 	t.Run("not on GitHub: open it, signed or not", func(t *testing.T) {
-		_, dir := pushedBranch(t)
+		t.Parallel()
+		f, dir := pushedBranch(t)
 		gitIn(t, dir, "config", "push-guard.allowPublic", "o/r")
 		gitIn(t, dir, "switch", "-qc", "fresh", "main")
 		gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "Add fresh")
-		step, ok := nextStep(t, "fresh").(ToOpen)
+		step, ok := nextStep(t, f, "fresh").(ToOpen)
 		if !ok || step.Kind != "open" || !strings.HasPrefix(step.Command, "pr-loop open --title") || !strings.HasSuffix(step.Command, " fresh") {
 			t.Errorf("fresh: %+v", step)
 		}
 	})
 
 	t.Run("on GitHub with no pull request: open it", func(t *testing.T) {
-		pushedOperatorBranch(t)
-		if step, ok := nextStep(t, "feat").(ToOpen); !ok || !strings.HasSuffix(step.Command, " feat") {
-			t.Errorf("feat: %#v", nextStep(t, "feat"))
+		t.Parallel()
+		f, _ := pushedOperatorBranch(t)
+		if step, ok := nextStep(t, f, "feat").(ToOpen); !ok || !strings.HasSuffix(step.Command, " feat") {
+			t.Errorf("feat: %#v", nextStep(t, f, "feat"))
 		}
 	})
 
 	t.Run("unsigned on GitHub with no pull request: signing authority blocks opening", func(t *testing.T) {
-		_, dir := pushedBranch(t)
-		sshOperatorProfile(t, dir)
-		step, ok := nextStep(t, "feat").(Blocked)
+		t.Parallel()
+		f, _ := pushedBranch(t)
+		sshOperatorProfile(t, f)
+		step, ok := nextStep(t, f, "feat").(Blocked)
 		if !ok || !strings.Contains(step.Why, "no signature") {
-			t.Errorf("unsigned published branch: %#v", nextStep(t, "feat"))
+			t.Errorf("unsigned published branch: %#v", nextStep(t, f, "feat"))
 		}
 	})
 
 	t.Run("a pull request with unsigned commits: the operator signs and pushes", func(t *testing.T) {
+		t.Parallel()
 		f, _ := pushedBranch(t)
 		f.prs["feat"] = 7
-		step, ok := nextStep(t, "feat").(ToSign)
+		step, ok := nextStep(t, f, "feat").(ToSign)
 		if !ok || step.Command != "git sign-pass --push --notify ID feat" || step.Notify != "agent-plan sign-id --branch feat" || step.PR != 7 {
-			t.Errorf("feat: %#v", nextStep(t, "feat"))
+			t.Errorf("feat: %#v", nextStep(t, f, "feat"))
 		}
 	})
 
 	t.Run("a pull request at the signed tip: nothing", func(t *testing.T) {
+		t.Parallel()
 		f, dir := pushedBranch(t)
 		f.prs["feat"] = 7
 		gitIn(t, dir, append(signing(t, dir), "--amend", "--no-edit", "--allow-empty")...)
 		published(t, f, dir, "feat")
-		if step, ok := nextStep(t, "feat").(Done); !ok || step.PR != 7 {
-			t.Errorf("feat: %#v", nextStep(t, "feat"))
+		if step, ok := nextStep(t, f, "feat").(Done); !ok || step.PR != 7 {
+			t.Errorf("feat: %#v", nextStep(t, f, "feat"))
 		}
 	})
 
 	t.Run("GitHub behind the signed tip: the operator pushes", func(t *testing.T) {
+		t.Parallel()
 		f, dir := pushedBranch(t)
 		f.prs["feat"] = 7
 		sign := signing(t, dir)
 		gitIn(t, dir, append(sign, "--amend", "--no-edit", "--allow-empty")...)
 		published(t, f, dir, "feat")
 		gitIn(t, dir, append(sign, "--allow-empty", "-m", "Add more")...)
-		if step, ok := nextStep(t, "feat").(ToPush); !ok || step.Command != "git sign-pass --push --notify ID feat" {
-			t.Errorf("feat: %#v", nextStep(t, "feat"))
+		if step, ok := nextStep(t, f, "feat").(ToPush); !ok || step.Command != "git sign-pass --push --notify ID feat" {
+			t.Errorf("feat: %#v", nextStep(t, f, "feat"))
 		}
 	})
 
 	t.Run("rewritten signed tip is blocked even with the same tree", func(t *testing.T) {
+		t.Parallel()
 		f, dir := pushedBranch(t)
 		f.prs["feat"] = 7
 		gitIn(t, dir, append(signing(t, dir), "--amend", "--no-edit", "--allow-empty")...)
-		if _, ok := nextStep(t, "feat").(Blocked); !ok {
-			t.Errorf("feat: %#v", nextStep(t, "feat"))
+		if _, ok := nextStep(t, f, "feat").(Blocked); !ok {
+			t.Errorf("feat: %#v", nextStep(t, f, "feat"))
 		}
 	})
 
 	t.Run("unsigned local history cannot replace remote commits", func(t *testing.T) {
+		t.Parallel()
 		f, dir := pushedBranch(t)
 		f.prs["feat"] = 7
 		gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "Add remote work")
 		published(t, f, dir, "feat")
 		gitIn(t, dir, "reset", "--hard", "HEAD^")
-		if step := nextStep(t, "feat"); step == nil {
+		if step := nextStep(t, f, "feat"); step == nil {
 			t.Fatal("no next state")
 		} else if _, ok := step.(Blocked); !ok {
 			t.Fatalf("remote-ahead history must be blocked: %#v", step)
@@ -171,10 +180,11 @@ func TestNext(t *testing.T) {
 	})
 
 	t.Run("empty local range cannot hide remote commits", func(t *testing.T) {
+		t.Parallel()
 		f, dir := pushedBranch(t)
 		f.prs["feat"] = 7
 		gitIn(t, dir, "reset", "--hard", "main")
-		if step := nextStep(t, "feat"); step == nil {
+		if step := nextStep(t, f, "feat"); step == nil {
 			t.Fatal("no next state")
 		} else if _, ok := step.(Blocked); !ok {
 			t.Fatalf("remote-ahead empty local range must be blocked: %#v", step)
@@ -182,6 +192,7 @@ func TestNext(t *testing.T) {
 	})
 
 	t.Run("unrelated remote history is blocked", func(t *testing.T) {
+		t.Parallel()
 		f, dir := pushedBranch(t)
 		f.prs["feat"] = 7
 		gitIn(t, dir, "switch", "--orphan", "remote-side")
@@ -190,7 +201,7 @@ func TestNext(t *testing.T) {
 		f.heads["feat"] = remote
 		gitIn(t, dir, "update-ref", "refs/remotes/origin/feat", remote)
 		gitIn(t, dir, "switch", "feat")
-		if step := nextStep(t, "feat"); step == nil {
+		if step := nextStep(t, f, "feat"); step == nil {
 			t.Fatal("no next state")
 		} else if _, ok := step.(Blocked); !ok {
 			t.Fatalf("unrelated history must be blocked: %#v", step)
@@ -198,14 +209,15 @@ func TestNext(t *testing.T) {
 	})
 
 	t.Run("branch arguments survive shell parsing", func(t *testing.T) {
+		t.Parallel()
 		f, dir := pushedBranch(t)
 		branch := "feat'`true`"
 		gitIn(t, dir, "branch", "-m", "feat", branch)
 		published(t, f, dir, branch)
 		f.prs[branch] = 7
-		step, ok := nextStep(t, branch).(ToSign)
+		step, ok := nextStep(t, f, branch).(ToSign)
 		if !ok {
-			t.Fatalf("next state: %#v", nextStep(t, branch))
+			t.Fatalf("next state: %#v", nextStep(t, f, branch))
 		}
 		for name, command := range map[string]string{"command": step.Command, "notify": step.Notify} {
 			out, err := exec.CommandContext(t.Context(), "sh", "-c", "printf '%s\\n' "+command).CombinedOutput()
@@ -221,14 +233,15 @@ func TestNext(t *testing.T) {
 	})
 
 	t.Run("an unpublished quoted branch has one literal open argument", func(t *testing.T) {
-		_, dir := pushedBranch(t)
+		t.Parallel()
+		f, dir := pushedBranch(t)
 		branch := "fresh'`true`"
 		gitIn(t, dir, "config", "push-guard.allowPublic", "o/r")
 		gitIn(t, dir, "switch", "-qc", branch, "main")
 		gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "Add quoted branch")
-		step, ok := nextStep(t, branch).(ToOpen)
+		step, ok := nextStep(t, f, branch).(ToOpen)
 		if !ok {
-			t.Fatalf("next state: %#v", nextStep(t, branch))
+			t.Fatalf("next state: %#v", nextStep(t, f, branch))
 		}
 		out, err := exec.CommandContext(t.Context(), "sh", "-c", "printf '%s\\n' "+step.Command).CombinedOutput()
 		if err != nil {
@@ -241,43 +254,48 @@ func TestNext(t *testing.T) {
 	})
 
 	t.Run("GitHub moved since the last fetch: fetch first", func(t *testing.T) {
+		t.Parallel()
 		f, dir := pushedBranch(t)
 		f.prs["feat"] = 7
 		f.heads["feat"] = gitIn(t, dir, "rev-parse", "main")
-		if step, ok := nextStep(t, "feat").(Blocked); !ok || !strings.Contains(step.Why, "git fetch origin feat") {
-			t.Errorf("feat: %#v", nextStep(t, "feat"))
+		if step, ok := nextStep(t, f, "feat").(Blocked); !ok || !strings.Contains(step.Why, "git fetch origin feat") {
+			t.Errorf("feat: %#v", nextStep(t, f, "feat"))
 		}
 	})
 
 	t.Run("an upstream of another name: blocked, saying how to fix it", func(t *testing.T) {
+		t.Parallel()
 		f, dir := pushedBranch(t)
 		f.prs["feat"] = 7
 		gitIn(t, dir, "config", "branch.feat.merge", "refs/heads/main")
-		if step, ok := nextStep(t, "feat").(Blocked); !ok || !strings.Contains(step.Why, "--set-upstream-to=origin/feat feat") {
-			t.Errorf("feat: %#v", nextStep(t, "feat"))
+		if step, ok := nextStep(t, f, "feat").(Blocked); !ok || !strings.Contains(step.Why, "--set-upstream-to=origin/feat feat") {
+			t.Errorf("feat: %#v", nextStep(t, f, "feat"))
 		}
 	})
 
 	t.Run("no commits of its own: nothing", func(t *testing.T) {
-		_, dir := pushedBranch(t)
+		t.Parallel()
+		f, dir := pushedBranch(t)
 		gitIn(t, dir, "branch", "empty", "main")
-		if step, ok := nextStep(t, "empty").(Done); !ok || step.Kind != "nothing" {
-			t.Errorf("empty: %#v", nextStep(t, "empty"))
+		if step, ok := nextStep(t, f, "empty").(Done); !ok || step.Kind != "nothing" {
+			t.Errorf("empty: %#v", nextStep(t, f, "empty"))
 		}
 	})
 
 	t.Run("another user's pull request: blocked", func(t *testing.T) {
+		t.Parallel()
 		f, _ := pushedBranch(t)
 		f.prs["feat"], f.authors = 7, map[string]string{"feat": "someone-else"}
-		if step, ok := nextStep(t, "feat").(Blocked); !ok || !strings.Contains(step.Why, "#7 is not a same-repository pull request by me") {
-			t.Errorf("feat: %#v", nextStep(t, "feat"))
+		if step, ok := nextStep(t, f, "feat").(Blocked); !ok || !strings.Contains(step.Why, "#7 is not a same-repository pull request by me") {
+			t.Errorf("feat: %#v", nextStep(t, f, "feat"))
 		}
 	})
 
 	t.Run("the current branch by default, and the text", func(t *testing.T) {
+		t.Parallel()
 		f, _ := pushedBranch(t)
 		f.prs["feat"] = 7
-		steps, err := Next(t.Context(), nil)
+		steps, err := Next(f.ctx(t), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -305,6 +323,7 @@ func TestNext(t *testing.T) {
 // (a trust database, a keybox): the verifier here is a stand-in for gpg's
 // writes, an ssh-keygen that first writes a file in GNUPGHOME.
 func TestNextWritesNothing(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name string
 		// pr is the branch's pull request, 0 for none; ahead is whether the
@@ -317,8 +336,9 @@ func TestNextWritesNothing(t *testing.T) {
 		{"GitHub behind the signed tip: push it", 7, true, "push"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			f, dir := pushedBranch(t)
-			_, sign := sshOperatorProfile(t, dir)
+			_, sign := sshOperatorProfile(t, f)
 			gitIn(t, dir, append(sign, "--amend", "--no-edit", "--allow-empty")...)
 			published(t, f, dir, "feat")
 			if c.pr != 0 {
@@ -328,16 +348,16 @@ func TestNextWritesNothing(t *testing.T) {
 				gitIn(t, dir, append(sign, "--allow-empty", "-m", "Add more")...)
 			}
 			gnupg := t.TempDir()
-			t.Setenv("GNUPGHOME", gnupg)
+			f.set("GNUPGHOME=" + gnupg)
 			verifier := filepath.Join(t.TempDir(), "ssh-keygen")
 			if err := os.WriteFile(verifier, []byte("#!/bin/sh\necho \"$*\" >> \"$GNUPGHOME/verified\"\nexec ssh-keygen \"$@\"\n"), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			gitIn(t, dir, "config", "gpg.ssh.program", verifier)
-			dirs := []string{hostpaths.BakedConfigHome(env.Process()), hostpaths.BakedStateHome(env.Process()), os.Getenv("XDG_STATE_HOME"), filepath.Join(dir, ".git")}
+			dirs := []string{hostpaths.BakedConfigHome(f.e), hostpaths.BakedStateHome(f.e), f.e.Get("XDG_STATE_HOME"), filepath.Join(dir, ".git")}
 			before := files(t, append(dirs, gnupg)...)
 			readOnly(t, dirs...)
-			step := nextStep(t, "feat")
+			step := nextStep(t, f, "feat")
 			data, _ := json.Marshal(step)
 			var got struct{ Kind string }
 			json.Unmarshal(data, &got)

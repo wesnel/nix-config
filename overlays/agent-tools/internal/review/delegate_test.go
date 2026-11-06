@@ -31,6 +31,7 @@ func (f *fixture) delegateCmd(t *testing.T, args ...string) (int, string, string
 // of the range adds rounds, and its reviewers are given the earlier
 // findings by their record IDs.
 func TestRecordRounds(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, true)
 	code, first, stderr := f.runDelegate(t, "--model", "fake-model", "--plan", f.plan, f.base+"..HEAD")
 	if code != 3 {
@@ -68,6 +69,7 @@ func TestRecordRounds(t *testing.T) {
 // Red-check's results given with --red-check mark the general review's
 // round, and its untested finding keeps its RC- ID, added once.
 func TestRecordRedCheck(t *testing.T) {
+	t.Parallel()
 	a := setUpAdequacy(t, redcheck.PassesWithoutChange)
 	for range 2 {
 		if code, _, stderr := a.review(t); code != 3 {
@@ -90,18 +92,18 @@ func TestRecordRedCheck(t *testing.T) {
 // recorded with its number; its next review is given the findings of the
 // last.
 func TestPullRequestSource(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, true)
 	r := newRemote(t, nil)
 	gh := setUpPR(t, r)
+	f.seams = gh.seams
 	var refreshed []string
-	old := refreshThreads
-	refreshThreads = func(_ context.Context, slug string, n int) ([]loop.Thread, error) {
+	f.seams.refreshThreads = func(_ context.Context, slug string, n int) ([]loop.Thread, error) {
 		refreshed = append(refreshed, slug)
 		line := 3
 		return []loop.Thread{{ID: "PRRT_1", Path: "r.go", Line: &line, Comments: []loop.ThreadComment{
 			{Author: "alice", Type: "User", Body: "Why two?"}}}}, nil
 	}
-	t.Cleanup(func() { refreshThreads = old })
 	f.setenv("FAKE_CODEX", "none")
 
 	code, out, stderr := f.runDelegate(t, "o/r#7")
@@ -151,16 +153,16 @@ func TestPullRequestSource(t *testing.T) {
 // A pull request's text is redacted before it is capped, so a secret the
 // cap would cut is redacted whole.
 func TestPRInputsRedactThenCap(t *testing.T) {
+	t.Parallel()
 	token := "ghp_" + strings.Repeat("A1b2C3d4", 5)
 	near := func(limit int) string { return strings.Repeat("x", limit-len("\n[cut]")-24) + " " + token }
-	old := refreshThreads
-	refreshThreads = func(context.Context, string, int) ([]loop.Thread, error) {
+	fake := productionSeams()
+	fake.refreshThreads = func(context.Context, string, int) ([]loop.Thread, error) {
 		return []loop.Thread{{ID: "PRRT_1", Path: "r.go", Comments: []loop.ThreadComment{{Author: "alice", Body: near(64 << 10)}}}}, nil
 	}
-	t.Cleanup(func() { refreshThreads = old })
 	s := &source{owner: "o", repo: "r", number: 7, pr: &PR{Head: strings.Repeat("1", 40), Body: near(32 << 10)}}
 	var in inputs
-	if err := prInputs(t.Context(), s, &in, io.Discard); err != nil {
+	if err := prInputs(withSeams(t.Context(), fake), s, &in, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	for what, text := range map[string]string{"claims": in.goal, "threads": in.items} {
@@ -172,14 +174,13 @@ func TestPRInputsRedactThenCap(t *testing.T) {
 
 // A pr-N.org that fails its structure check stops the review with exit 5.
 func TestPRRecordDrift(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, true)
 	r := newRemote(t, nil)
-	setUpPR(t, r)
-	old := refreshThreads
-	refreshThreads = func(context.Context, string, int) ([]loop.Thread, error) {
+	f.seams = setUpPR(t, r).seams
+	f.seams.refreshThreads = func(context.Context, string, int) ([]loop.Thread, error) {
 		return nil, &record.DriftError{Path: "pr-7.org", Line: 3, Part: "the file's header", Why: "edited by hand"}
 	}
-	t.Cleanup(func() { refreshThreads = old })
 	f.setenv("FAKE_CODEX", "none")
 	if code, _, stderr := f.runDelegate(t, "o/r#7"); code != record.DriftExit || !strings.Contains(stderr, "pr-7.org") {
 		t.Errorf("exit %d, want %d\n%s", code, record.DriftExit, stderr)
@@ -227,10 +228,10 @@ func diagrams(v any) []map[string]any {
 // document, in which each diagram, and nothing else, holds a string id and
 // mermaid.
 func TestShow(t *testing.T) {
+	t.Parallel()
 	f, _, _ := writeGoldens(t)
-	old := mermaid
-	mermaid = func(j string) (string, error) { return "flowchart TD\n  n1[\"load\"]", nil }
-	t.Cleanup(func() { mermaid = old })
+	f.seams = productionSeams()
+	f.seams.mermaid = func(j string) (string, error) { return "flowchart TD\n  n1[\"load\"]", nil }
 
 	code, stdout, stderr := f.delegateCmd(t, "show", "owner/repo#12")
 	if code != 0 {
@@ -252,7 +253,7 @@ func TestShow(t *testing.T) {
 	}
 
 	// Without a renderer, a diagram is shown without Mermaid.
-	mermaid = nil
+	f.seams.mermaid = nil
 	_, stdout, _ = f.delegateCmd(t, "show", "owner/repo#12")
 	must(0, json.Unmarshal([]byte(stdout), &doc))
 	if found := diagrams(doc); len(found) != 0 {
@@ -317,7 +318,9 @@ func TestSettle(t *testing.T) {
 // refused naming each record under the same base, BASE..TIP with its open
 // findings, and one that fails its structure check as unreadable.
 func TestSettleNoRecord(t *testing.T) {
+	t.Parallel()
 	t.Run("records under the base", func(t *testing.T) {
+		t.Parallel()
 		f := setUp(t, false)
 		earlier, drifted := strings.Repeat("1", 40), strings.Repeat("2", 40)
 		writeRange(t, f.env, f.base, earlier, []record.Finding{
@@ -355,6 +358,7 @@ func TestSettleNoRecord(t *testing.T) {
 		}
 	})
 	t.Run("no record under the base", func(t *testing.T) {
+		t.Parallel()
 		f := setUp(t, false)
 		writeRange(t, f.env, strings.Repeat("3", 40), strings.Repeat("4", 40), nil)
 		code, _, stderr := f.delegateCmd(t, "settle", f.base+"..HEAD", "F1", "fix")
@@ -365,6 +369,7 @@ func TestSettleNoRecord(t *testing.T) {
 		}
 	})
 	t.Run("records that cannot be listed", func(t *testing.T) {
+		t.Parallel()
 		f := setUp(t, false)
 		dir := filepath.Dir(writeRange(t, f.env, f.base, strings.Repeat("1", 40), nil))
 		os.Chmod(dir, 0o300)

@@ -82,6 +82,7 @@ func TestQuestions(t *testing.T) {
 }
 
 func TestDecisions(t *testing.T) {
+	t.Parallel()
 	t.Run("from the answer", func(t *testing.T) {
 		_, p := openQuestions(t)
 		if _, err := p.Decide("P1.Q1", DecideOptions{Answer: "no"}, day); err != nil {

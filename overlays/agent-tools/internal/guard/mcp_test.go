@@ -15,13 +15,11 @@ import (
 // harness can ask, and every other tool is refused; on any other server,
 // every tool asks in a main session that can ask and is refused elsewhere.
 func TestMCPTools(t *testing.T) {
+	t.Parallel()
 	config := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(config, []byte(`{"mcpProxy":{"endpoints":{"parallels":"/parallels/mcp","linear":"/linear/mcp"}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// Main runs under the process environment, and mcpproxy.Load reads the
-	// process's config whatever the Env, so this test sets it there.
-	t.Setenv("AGENT_TOOLS_CONFIG", config)
 	const (
 		ask  = `"permissionDecision":"ask"`
 		deny = `"permissionDecision":"deny"`
@@ -102,7 +100,7 @@ func TestMCPTools(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			var out bytes.Buffer
-			Main(c.args, strings.NewReader(c.event), &out, io.Discard)
+			mainIn(withVars(guardCtx(t), "AGENT_TOOLS_CONFIG="+config), c.args, strings.NewReader(c.event), &out, io.Discard)
 			if c.want == "" {
 				if out.Len() != 0 {
 					t.Errorf("%s: printed %s, want nothing", c.event, out.String())
@@ -127,6 +125,7 @@ func TestMCPTools(t *testing.T) {
 }
 
 func TestMCPNativeRegistration(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name, config, server string
 		denied               bool
@@ -136,13 +135,11 @@ func TestMCPNativeRegistration(t *testing.T) {
 		{"different spelling", `{"mcpProxy":{"endpoints":{"parallels":"/parallels/mcp"}}}`, "PARALLELS", true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			config := filepath.Join(t.TempDir(), "config.json")
 			if err := os.WriteFile(config, []byte(c.config), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			// mcpproxy.Load reads the process's config whatever the Env, so
-			// this test sets it there as well as in the Env.
-			t.Setenv("AGENT_TOOLS_CONFIG", config)
 			event := `{"tool_name":"mcp__` + c.server + `__parallels_vm_exec","turn_id":"t","tool_input":{}}`
 			var out bytes.Buffer
 			mainIn(withVars(guardCtx(t), "AGENT_TOOLS_CONFIG="+config), []string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
@@ -290,19 +287,17 @@ func TestMCPListsDisjoint(t *testing.T) {
 // Codex, and its reason names the service's reviewed servers and, where
 // this host's mcp-proxy serves the service, the command that connects it.
 func TestMCPLookalike(t *testing.T) {
+	t.Parallel()
 	config := filepath.Join(t.TempDir(), "config.json")
 	os.WriteFile(config, []byte(`{"mcpProxy": {"url": "http://127.0.0.1:6290",
 		"endpoints": {"linear": "/linear/mcp", "notion": "/notion/mcp", "buildkite": "/buildkite/mcp", "parallels": "/parallels/mcp"},
 		"localServers": ["parallels"]}}`), 0o600)
-	// Main runs under the process environment, and mcpproxy.Load reads the
-	// process's config whatever the Env, so this test sets it there.
-	t.Setenv("AGENT_TOOLS_CONFIG", config)
 	claude := func(tool string) string { return `{"tool_name":"` + tool + `","tool_input":{}}` }
 	codex := func(tool string) string { return `{"tool_name":"` + tool + `","turn_id":"t","tool_input":{}}` }
 	decide := func(t *testing.T, args []string, event string) (decision, reason string) {
 		t.Helper()
 		var out bytes.Buffer
-		Main(args, strings.NewReader(event), &out, io.Discard)
+		mainIn(withVars(guardCtx(t), "AGENT_TOOLS_CONFIG="+config), args, strings.NewReader(event), &out, io.Discard)
 		var printed struct {
 			Hook struct {
 				Decision string `json:"permissionDecision"`

@@ -61,12 +61,12 @@ func checkFixups(ctx context.Context, branch string, original, now []Commit) err
 // be its counterpart in remoteBase..remoteTip, or have the same non-empty
 // change as it; a rebase keeps the change, so a lease that only moves the
 // commits passes.
-func checkPatches(branch, remoteBase, remoteTip, localBase, localTip string) error {
-	before, err := ownPatches(remoteBase, remoteTip)
+func checkPatches(ctx context.Context, branch, remoteBase, remoteTip, localBase, localTip string) error {
+	before, err := ownPatches(ctx, remoteBase, remoteTip)
 	if err != nil {
 		return err
 	}
-	now, err := ownPatches(localBase, localTip)
+	now, err := ownPatches(ctx, localBase, localTip)
 	if err != nil {
 		return err
 	}
@@ -95,21 +95,21 @@ type patch struct{ sha, subject, id string }
 
 // ownPatches are base..tip's commits but fixups, oldest first; a commit
 // that changes nothing has an empty id.
-func ownPatches(base, tip string) ([]patch, error) {
-	list, err := git.Run("rev-list", "--reverse", base+".."+tip)
+func ownPatches(ctx context.Context, base, tip string) ([]patch, error) {
+	list, err := git.In(ctx).Run("rev-list", "--reverse", base+".."+tip)
 	if err != nil {
 		return nil, err
 	}
 	var out []patch
 	for _, sha := range strings.Fields(list) {
-		message, err := git.Run("log", "-1", "--format=%B", sha)
+		message, err := git.In(ctx).Run("log", "-1", "--format=%B", sha)
 		if err != nil {
 			return nil, err
 		}
 		if kind, _ := fold(message); kind != history.Kept {
 			continue
 		}
-		id, err := changeID(sha)
+		id, err := changeID(ctx, sha)
 		if err != nil {
 			return nil, err
 		}
@@ -119,8 +119,8 @@ func ownPatches(base, tip string) ([]patch, error) {
 }
 
 // changeID is patch's id for the commit sha.
-func changeID(sha string) (string, error) {
-	line, err := git.Run("rev-list", "--parents", "-n", "1", sha)
+func changeID(ctx context.Context, sha string) (string, error) {
+	line, err := git.In(ctx).Run("rev-list", "--parents", "-n", "1", sha)
 	if err != nil {
 		return "", err
 	}
@@ -139,11 +139,11 @@ func changeID(sha string) (string, error) {
 	}
 	var ids []string
 	for _, args := range diffs {
-		diff, err := git.Bytes(nil, args...)
+		diff, err := git.In(ctx).Bytes(nil, args...)
 		if err != nil {
 			return "", err
 		}
-		out, err := git.Bytes(diff, "patch-id", "--verbatim")
+		out, err := git.In(ctx).Bytes(diff, "patch-id", "--verbatim")
 		if err != nil {
 			return "", err
 		}

@@ -4,6 +4,7 @@
 package routes
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"slices"
@@ -32,10 +33,10 @@ func IsKnown(route string) bool { return slices.Contains(Known, route) }
 // DefaultRef is the default branch of the repository at top, which a
 // change is measured from: origin/HEAD, else origin/main or origin/master,
 // else main or master; "" where none exists.
-func DefaultRef(top string) string {
+func DefaultRef(ctx context.Context, top string) string {
 	for _, ref := range []string{"refs/remotes/origin/HEAD", "refs/remotes/origin/main", "refs/remotes/origin/master",
 		"refs/heads/main", "refs/heads/master"} {
-		if git.OK("-C", top, "rev-parse", "--verify", "-q", ref+"^{commit}") {
+		if git.In(ctx).OK("-C", top, "rev-parse", "--verify", "-q", ref+"^{commit}") {
 			return ref
 		}
 	}
@@ -46,12 +47,12 @@ func DefaultRef(top string) string {
 // its merge base with DefaultRef, whatever base a caller names, so that a
 // base chosen above a commit cannot leave it out. It is "" where there is
 // no default branch, or tip shares no history with it.
-func MergeBase(top, tip string) string {
-	ref := DefaultRef(top)
+func MergeBase(ctx context.Context, top, tip string) string {
+	ref := DefaultRef(ctx, top)
 	if ref == "" {
 		return ""
 	}
-	base, err := git.Run("-C", top, "merge-base", ref, tip)
+	base, err := git.In(ctx).Run("-C", top, "merge-base", ref, tip)
 	if err != nil {
 		return ""
 	}

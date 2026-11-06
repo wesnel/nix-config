@@ -10,6 +10,7 @@ import (
 // A workstream is an org-roam node file beside the plans, holding only a
 // title and the summary a person writes.
 func TestNewWorkstream(t *testing.T) {
+	t.Parallel()
 	t.Run("written", func(t *testing.T) {
 		c := testConfig(t)
 		w, err := c.NewWorkstream(t.Context(), "Agent tooling", "The agent-tools overlay and the skills.\nNot Codex parity.")
@@ -112,6 +113,7 @@ func workstreamOf(t *testing.T, p Plan) string {
 // writes from --workstream or else takes from the plan whose branch the new
 // plan continues; a part is in its plan's.
 func TestPlanWorkstream(t *testing.T) {
+	t.Parallel()
 	t.Run("named", func(t *testing.T) {
 		c := testConfig(t)
 		w, err := c.NewWorkstream(t.Context(), "Agent [tooling]", "")
@@ -200,6 +202,7 @@ func TestPlanWorkstream(t *testing.T) {
 // Workstreams lists every host's workstreams, and nothing else in the
 // plans directory.
 func TestWorkstreams(t *testing.T) {
+	t.Parallel()
 	c := testConfig(t)
 	newPlan(t, c, "x")
 	mac := Config{Dir: c.Dir, Host: "mac"}

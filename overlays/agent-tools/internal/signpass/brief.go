@@ -13,14 +13,8 @@ import (
 	"github.com/wesnel/agent-tools/internal/git"
 )
 
-// Brief makes a pass print only what someone reading its output later needs:
-// what it will sign, one line for the touches, a progress line every
-// progressEvery signatures, one line per push, and anything git reports as an
-// error, in full. Git's own account of a rebase or a push is left out.
-var Brief bool
-
 // progressEvery is how many signatures pass between progress lines in a
-// brief pass.
+// brief pass (Options.Brief).
 const progressEvery = 25
 
 // StdoutIsTerminal reports whether standard output is a terminal, which is
@@ -87,36 +81,38 @@ func (w *briefStderr) finish(ok bool) {
 	}
 }
 
-// runGit runs git attached to the terminal for a command that asks for a key
-// touch, and returns its exit code and what it wrote to standard error. A
-// brief pass shows that only when the command fails, and the progress of a
-// rebase of the branch label as it goes.
+// runGit runs git attached to the pass's terminal (Options) for a command
+// that asks for a key touch, and returns its exit code and what it wrote to
+// standard error. A brief pass shows that only when the command fails, and
+// the progress of a rebase of the branch label as it goes.
 func runGit(ctx context.Context, env []string, label string, args ...string) (int, string) {
-	if !Brief {
-		return git.AttachedStderr(ctx, env, args...)
+	o := options(ctx)
+	if !o.Brief {
+		return git.AttachedStderr(ctx, env, o.In, o.Err, args...)
 	}
-	w := &briefStderr{label: label, out: os.Stderr}
-	code := git.AttachedQuiet(ctx, env, w, args...)
+	w := &briefStderr{label: label, out: o.Err}
+	code := git.AttachedQuiet(ctx, env, o.In, w, args...)
 	w.finish(code == 0)
 	if code != 0 {
-		os.Stderr.Write(w.kept.Bytes())
+		o.Err.Write(w.kept.Bytes())
 	}
 	return code, w.all.String()
 }
 
-// announce says what a brief pass will do and what it asks of the operator.
-func announce(commits, branches, pushBranches, urls, touches int) {
+// announce says on w what a brief pass will do and what it asks of the
+// operator.
+func announce(w io.Writer, commits, branches, pushBranches, urls, touches int) {
 	line := fmt.Sprintf("signing %s on %s", plural(commits, "commit"), plural(branches, "branch"))
 	if pushBranches > 0 {
 		line += fmt.Sprintf("; pushing %s to %s", plural(pushBranches, "branch"), plural(urls, "URL"))
 	}
-	fmt.Fprintf(os.Stderr, "%s; up to %s\n", line, plural(touches, "key touch"))
-	announceTouch()
+	fmt.Fprintf(w, "%s; up to %s\n", line, plural(touches, "key touch"))
+	announceTouch(w)
 }
 
-// announceTouch is the one line that tells the operator what to do.
-func announceTouch() {
-	fmt.Fprintln(os.Stderr, "touch the key when it blinks")
+// announceTouch is the one line, on w, that tells the operator what to do.
+func announceTouch(w io.Writer) {
+	fmt.Fprintln(w, "touch the key when it blinks")
 }
 
 func plural(n int, noun string) string {

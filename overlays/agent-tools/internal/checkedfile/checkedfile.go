@@ -5,6 +5,7 @@
 package checkedfile
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/guard"
 )
 
@@ -25,14 +27,18 @@ var (
 	ErrOutside    = errors.New("is outside every root")
 )
 
-// Read is the contents of the file at path, relative to the process's
-// directory or absolute, if Open takes it, it is not a credential
-// (guard.IsCredential) by its name or by the opened path, and the
-// opened path is in one of roots, each an absolute directory whose
+// Read is the contents of the file at path, relative to the directory of
+// ctx's Env or absolute, if Open takes it, it is not a credential
+// (guard.IsCredential, in ctx's Env) by its name or by the opened path, and
+// the opened path is in one of roots, each an absolute directory whose
 // symlinks are resolved before the check. A root that is not absolute
 // takes nothing, since an empty one would take every path.
-func Read(path string, roots []string) ([]byte, error) {
-	abs, err := filepath.Abs(path)
+func Read(ctx context.Context, path string, roots []string) ([]byte, error) {
+	abs := path
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(env.From(ctx).Dir(), abs)
+	}
+	abs, err := filepath.Abs(abs)
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +47,7 @@ func Read(path string, roots []string) ([]byte, error) {
 		return nil, err
 	}
 	defer f.Close()
-	if guard.IsCredential(abs) || guard.IsCredential(real) {
+	if guard.IsCredential(ctx, abs) || guard.IsCredential(ctx, real) {
 		return nil, fmt.Errorf("%s %w", path, ErrCredential)
 	}
 	within := func(root string) bool {

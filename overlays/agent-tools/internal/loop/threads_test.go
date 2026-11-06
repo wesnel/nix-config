@@ -13,7 +13,6 @@ import (
 	"testing"
 
 	"github.com/wesnel/agent-tools/internal/env"
-	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/record"
 )
 
@@ -41,8 +40,10 @@ type fakeGitHub struct {
 	resolved  []string
 	failReply string
 	// ctx carries the Env the loop runs in: its config, its review
-	// records' directory, and no loop mode.
+	// records' directory, and no loop mode; and git aimed at dir, the
+	// checkout.
 	ctx context.Context
+	dir string
 }
 
 // in is f's context in loop mode mode.
@@ -146,20 +147,17 @@ var (
 
 // fakeRepo makes a repository for o/r with one configured bot, copilot, and
 // threads on PR 1 and PR 2, both by "me", and a context in no loop mode,
-// with review records kept in a directory of the test's own. It points the
-// git package's process-wide git.Dir at the repository, so its tests run
-// alone.
+// with review records kept in a directory of the test's own, and git aimed
+// at the repository.
 func fakeRepo(t *testing.T) *fakeGitHub {
 	t.Helper()
 	dir := t.TempDir()
 	gitIn(t, dir, "init", "-q", "-b", "main")
 	gitIn(t, dir, "remote", "add", "origin", "https://github.com/o/r.git")
-	git.Dir = dir
-	t.Cleanup(func() { git.Dir = "" })
 
 	config := filepath.Join(t.TempDir(), "config.json")
 	os.WriteFile(config, []byte(`{"bots": {"copilot": {"login": "^copilot", "request": {"reviewer": "@copilot"}}}}`), 0o644)
-	ctx := withEnv(t.Context(), ModeEnv+"=", "XDG_STATE_HOME="+t.TempDir(), "PR_LOOP_CONFIG="+config)
+	ctx := withEnv(inRepo(t, dir), ModeEnv+"=", "XDG_STATE_HOME="+t.TempDir(), "PR_LOOP_CONFIG="+config)
 
 	long := []fakeComment{copilot}
 	for i := 1; i < 150; i++ {
@@ -167,7 +165,7 @@ func fakeRepo(t *testing.T) *fakeGitHub {
 	}
 	mixed := append([]fakeComment{}, long...)
 	mixed[120] = josh
-	f := &fakeGitHub{ctx: ctx, replies: map[string]string{}, threads: map[string]*fakeThread{
+	f := &fakeGitHub{dir: dir, replies: map[string]string{}, threads: map[string]*fakeThread{
 		"bot1":      {pr: 1, author: "me", state: "OPEN", path: "a.go", comments: []fakeComment{copilot}},
 		"answered1": {pr: 1, author: "me", state: "OPEN", path: "a.go", comments: []fakeComment{copilot, me}},
 		"human1":    {pr: 1, author: "me", state: "OPEN", path: "b.go", comments: []fakeComment{josh}},
@@ -182,9 +180,7 @@ func fakeRepo(t *testing.T) *fakeGitHub {
 		"theirs":    {pr: 3, author: "josh", state: "OPEN", comments: []fakeComment{copilot}},
 		"closed":    {pr: 4, author: "me", state: "MERGED", comments: []fakeComment{copilot}},
 	}}
-	old := graphQL
-	graphQL = f.graphQL
-	t.Cleanup(func() { graphQL = old })
+	f.ctx = withOutside(ctx, outside{graphQL: f.graphQL})
 	return f
 }
 
@@ -194,7 +190,9 @@ func refused(err error) bool {
 }
 
 func TestReply(t *testing.T) {
+	t.Parallel()
 	t.Run("outside a bots-mode loop", func(t *testing.T) {
+		t.Parallel()
 		for _, mode := range []string{"", "people"} {
 			f := fakeRepo(t)
 			if _, err := Reply(f.in(mode), "bot1", "x"); !refused(err) || !strings.Contains(err.Error(), "review-loop --harness claude|codex --bots|--people") {
@@ -208,6 +206,7 @@ func TestReply(t *testing.T) {
 
 	for _, id := range []string{"bot1", "answered1", "long1", "bot2"} {
 		t.Run("reply/"+id, func(t *testing.T) {
+			t.Parallel()
 			f := fakeRepo(t)
 			if _, err := Reply(f.in("bots"), id, "done"); err != nil || f.replies[id] != "done" {
 				t.Errorf("reply to %s: %v", id, err)
@@ -219,6 +218,7 @@ func TestReply(t *testing.T) {
 	// makes it the operator's; so does a login that only looks like a bot's.
 	for _, id := range []string{"human1", "joined1", "posed1", "longmix1", "theirs", "closed"} {
 		t.Run("refused/"+id, func(t *testing.T) {
+			t.Parallel()
 			f := fakeRepo(t)
 			ctx := f.in("bots")
 			if _, err := Reply(ctx, id, "x"); !refused(err) {
@@ -234,6 +234,7 @@ func TestReply(t *testing.T) {
 	}
 
 	t.Run("a page that fails", func(t *testing.T) {
+		t.Parallel()
 		f := fakeRepo(t)
 		ctx := f.in("bots")
 		if _, err := Reply(ctx, "broken5", "x"); err == nil || len(f.replies) != 0 {
@@ -245,6 +246,7 @@ func TestReply(t *testing.T) {
 	})
 
 	t.Run("resolve", func(t *testing.T) {
+		t.Parallel()
 		f := fakeRepo(t)
 		ctx := f.in("bots")
 		if _, err := Resolve(ctx, "bot1"); !refused(err) {
@@ -259,6 +261,7 @@ func TestReply(t *testing.T) {
 	})
 
 	t.Run("missing thread", func(t *testing.T) {
+		t.Parallel()
 		f := fakeRepo(t)
 		if _, err := Reply(f.in("bots"), "missing", "x"); err == nil {
 			t.Error("replied to a thread that does not exist")
@@ -266,6 +269,7 @@ func TestReply(t *testing.T) {
 	})
 
 	t.Run("empty reply", func(t *testing.T) {
+		t.Parallel()
 		f := fakeRepo(t)
 		if _, err := Reply(f.in("bots"), "bot1", " \n"); !refused(err) {
 			t.Errorf("empty reply: %v", err)
@@ -276,6 +280,7 @@ func TestReply(t *testing.T) {
 // threads lists the unresolved threads and writes every thread, with every
 // comment and its author's type, to the PR's record, keeping drafts.
 func TestThreads(t *testing.T) {
+	t.Parallel()
 	f := fakeRepo(t)
 	got, err := Threads(f.ctx, 2, false)
 	if err != nil {
@@ -310,6 +315,7 @@ func TestThreads(t *testing.T) {
 	}
 
 	t.Run("every comment of a long thread", func(t *testing.T) {
+		t.Parallel()
 		f := fakeRepo(t)
 		listed, err := Threads(f.ctx, 1, false)
 		if err != nil {

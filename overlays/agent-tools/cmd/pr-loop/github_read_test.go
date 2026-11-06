@@ -33,7 +33,9 @@ func githubReadClient(t *testing.T, handler http.HandlerFunc) *mcpClient {
 }
 
 func TestGitHubRead(t *testing.T) {
+	t.Parallel()
 	t.Run("missing view data fails", func(t *testing.T) {
+		t.Parallel()
 		for _, missing := range []string{"metadata", "page"} {
 			t.Run(missing, func(t *testing.T) {
 				c := githubReadClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -58,6 +60,7 @@ func TestGitHubRead(t *testing.T) {
 	})
 
 	t.Run("refuse invalid arguments before request", func(t *testing.T) {
+		t.Parallel()
 		var calls atomic.Int32
 		c := githubReadClient(t, func(w http.ResponseWriter, r *http.Request) {
 			calls.Add(1)
@@ -101,6 +104,7 @@ func TestGitHubRead(t *testing.T) {
 	})
 
 	t.Run("diff failures return no partial content", func(t *testing.T) {
+		t.Parallel()
 		for _, scenario := range []string{"base moves", "head moves", "missing base", "missing head", "missing file", "not a diff", "invalid UTF8", "http error", "oversized", "redirect"} {
 			t.Run(scenario, func(t *testing.T) {
 				metadata := 0
@@ -159,6 +163,7 @@ func TestGitHubRead(t *testing.T) {
 	})
 
 	t.Run("diff at response limit", func(t *testing.T) {
+		t.Parallel()
 		const header = "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -0,0 +1 @@\n+"
 		diff := header + strings.Repeat("x", (16<<20)-len(header)-1) + "\n"
 		c := githubReadClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -176,6 +181,7 @@ func TestGitHubRead(t *testing.T) {
 	})
 
 	t.Run("later page failure discards partial view", func(t *testing.T) {
+		t.Parallel()
 		lastPage := false
 		c := githubReadClient(t, func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/repos/o/r/pulls/1" {
@@ -196,6 +202,7 @@ func TestGitHubRead(t *testing.T) {
 	})
 
 	t.Run("unsupported file responses", func(t *testing.T) {
+		t.Parallel()
 		for _, tc := range []struct {
 			name, field string
 			value       any
@@ -238,6 +245,7 @@ func TestGitHubRead(t *testing.T) {
 	})
 
 	t.Run("view includes later discussion pages", func(t *testing.T) {
+		t.Parallel()
 		c := githubReadClient(t, func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
 			case "/repos/o/r/pulls/893":
@@ -278,6 +286,7 @@ func TestGitHubRead(t *testing.T) {
 	})
 
 	t.Run("file at commit preserves text and escapes path", func(t *testing.T) {
+		t.Parallel()
 		for _, path := range []string{"dir/a ?#.txt", "-notes.md"} {
 			t.Run(path, func(t *testing.T) {
 				c := githubReadClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -296,6 +305,7 @@ func TestGitHubRead(t *testing.T) {
 	})
 
 	t.Run("diff without checkout", func(t *testing.T) {
+		t.Parallel()
 		const diff = "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-old\n+new\n"
 		metadata := 0
 		c := githubReadClient(t, func(w http.ResponseWriter, r *http.Request) {

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/mcpproxy"
 )
 
@@ -37,7 +38,7 @@ func mcpStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	findings := mcpproxy.Probe(ctx, &http.Client{Timeout: requestTimeout}, mcpproxy.Load())
+	findings := mcpproxy.Probe(ctx, &http.Client{Timeout: requestTimeout}, mcpproxy.Load(env.From(ctx)))
 	if len(findings) == 0 {
 		return 0
 	}

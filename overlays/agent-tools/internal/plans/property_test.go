@@ -67,6 +67,7 @@ func expectList(t *testing.T, what string, got []string, want ...string) {
 // is logged with the whole new value, and status reports a value its log
 // does not give it.
 func TestProperties(t *testing.T) {
+	t.Parallel()
 	t.Run("logged from the start", func(t *testing.T) {
 		p := newPlan(t, testConfig(t), "x")
 		expectList(t, "logged", propertyEvents(t, p), p.Name+" WORKTREES = /w/loop", p.Name+" BRANCHES = main..loop")
@@ -145,6 +146,7 @@ func TestProperties(t *testing.T) {
 // plan back out of its WORKTREES, BRANCHES or PULL_REQUESTS, and logs the
 // new value with why, so status still finds the file and the log agree.
 func TestRemoveFromProperty(t *testing.T) {
+	t.Parallel()
 	// summaries are the summaries of p's property events about item.
 	summaries := func(t *testing.T, p Plan, item string) []string {
 		t.Helper()

@@ -99,7 +99,7 @@ func checkOpen(repo *Repo, view *remoteView, branch, base, local string) (string
 // commits, so the pull request's commits are still counted and linted.
 func checkLocal(ctx context.Context, repo *Repo, branch, base, baseOid, local string, onGitHub bool) (string, []string, error) {
 	var known []string
-	if git.OK("cat-file", "-e", baseOid+"^{commit}") {
+	if git.In(ctx).OK("cat-file", "-e", baseOid+"^{commit}") {
 		known = append(known, baseOid)
 	}
 	if base != repo.Default {
@@ -107,16 +107,16 @@ func checkLocal(ctx context.Context, repo *Repo, branch, base, baseOid, local st
 			return "", nil, refuse("%s on GitHub is at %.12s, which is not in this repository; ask the operator to fetch it,"+
 				"then open again", base, baseOid)
 		}
-		if !git.OK("merge-base", "--is-ancestor", baseOid, local) {
+		if !git.In(ctx).OK("merge-base", "--is-ancestor", baseOid, local) {
 			return "", nil, refuse("%s does not contain %.12s, the tip of %s on GitHub; rebase it onto that commit "+
 				"with `git -c commit.gpgsign=false rebase`, then open again", branch, baseOid, base)
 		}
 	}
-	names, err := remotesOf(repo)
+	names, err := remotesOf(ctx, repo)
 	if err != nil {
 		return "", nil, err
 	}
-	if parent, err := unmergedParent(repo, names, branch, base, local, known); err != nil {
+	if parent, err := unmergedParent(ctx, repo, names, branch, base, local, known); err != nil {
 		return "", nil, err
 	} else if parent != "" {
 		return "", nil, refuse("%s contains commits of %s, a branch on GitHub that %s lacks, so its pull request would carry them; "+
@@ -128,7 +128,7 @@ func checkLocal(ctx context.Context, repo *Repo, branch, base, baseOid, local st
 		}
 		known = append(known, "--remotes="+name+"/*")
 	}
-	count, err := git.Run(append([]string{"rev-list", "--count", local, "--not"}, known...)...)
+	count, err := git.In(ctx).Run(append([]string{"rev-list", "--count", local, "--not"}, known...)...)
 	if err != nil {
 		return "", nil, err
 	}
@@ -145,28 +145,28 @@ func checkLocal(ctx context.Context, repo *Repo, branch, base, baseOid, local st
 // unmergedParent names the remote branch, other than branch, base and the
 // default branch, that local contains and the base's commits (baseCommits)
 // lack: the nearest one, when there are several. It is "" when there is none.
-func unmergedParent(repo *Repo, remotes []string, branch, base, local string, baseCommits []string) (string, error) {
+func unmergedParent(ctx context.Context, repo *Repo, remotes []string, branch, base, local string, baseCommits []string) (string, error) {
 	if len(baseCommits) == 0 {
 		// The base's tip is not in this checkout; what was fetched of it stands in.
 		for _, name := range remotes {
-			if git.OK("rev-parse", "--verify", "-q", "refs/remotes/"+name+"/"+base) {
+			if git.In(ctx).OK("rev-parse", "--verify", "-q", "refs/remotes/"+name+"/"+base) {
 				baseCommits = append(baseCommits, "refs/remotes/"+name+"/"+base)
 			}
 		}
 	}
 	best, bestCount := "", 0
 	for _, name := range remotes {
-		refs, err := git.Run("for-each-ref", "--format=%(refname)", "refs/remotes/"+name+"/")
+		refs, err := git.In(ctx).Run("for-each-ref", "--format=%(refname)", "refs/remotes/"+name+"/")
 		if err != nil {
 			return "", err
 		}
 		for _, ref := range strings.Fields(refs) {
 			short := strings.TrimPrefix(ref, "refs/remotes/"+name+"/")
 			if short == "HEAD" || short == branch || short == base || short == repo.Default ||
-				!git.OK("merge-base", "--is-ancestor", ref, local) {
+				!git.In(ctx).OK("merge-base", "--is-ancestor", ref, local) {
 				continue
 			}
-			out, err := git.Run(append([]string{"rev-list", "--count", ref, "--not"}, baseCommits...)...)
+			out, err := git.In(ctx).Run(append([]string{"rev-list", "--count", ref, "--not"}, baseCommits...)...)
 			if err != nil {
 				return "", err
 			}
@@ -184,7 +184,7 @@ func unmergedParent(repo *Repo, remotes []string, branch, base, local string, ba
 // history.LintMessage: each fold as it is, and the rest as the signing
 // pass will leave them.
 func lintNew(ctx context.Context, branch, local string, known []string) error {
-	commits, err := history.Log(git.WithDir(ctx), append([]string{local, "--not"}, known...)...)
+	commits, err := history.Log(ctx, append([]string{local, "--not"}, known...)...)
 	if err != nil {
 		return err
 	}
@@ -206,8 +206,8 @@ func lintNew(ctx context.Context, branch, local string, known []string) error {
 }
 
 // remotesOf names the remotes that fetch from repo, origin first.
-func remotesOf(repo *Repo) ([]string, error) {
-	remotes, err := githubRemotes()
+func remotesOf(ctx context.Context, repo *Repo) ([]string, error) {
+	remotes, err := githubRemotes(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -229,15 +229,15 @@ func remotesOf(repo *Repo) ([]string, error) {
 // setUpstream makes the branch track its copy on GitHub, which is where `git
 // sign-pass --push` sends it. Without this a branch started from
 // origin/<default> would still track the default branch.
-func setUpstream(repo *Repo, branch string) error {
-	names, err := remotesOf(repo)
+func setUpstream(ctx context.Context, repo *Repo, branch string) error {
+	names, err := remotesOf(ctx, repo)
 	if err != nil || len(names) == 0 {
 		return err
 	}
-	if _, err := git.Run("config", "branch."+branch+".remote", names[0]); err != nil {
+	if _, err := git.In(ctx).Run("config", "branch."+branch+".remote", names[0]); err != nil {
 		return err
 	}
-	_, err = git.Run("config", "branch."+branch+".merge", "refs/heads/"+branch)
+	_, err = git.In(ctx).Run("config", "branch."+branch+".merge", "refs/heads/"+branch)
 	return err
 }
 
@@ -256,8 +256,8 @@ type opening struct {
 // ownCommits for Open, which proves them in a directory of the protected
 // state home, and operatorFormatSigned for pr-loop next, which writes
 // nothing.
-func planOpen(ctx context.Context, repo *Repo, view *remoteView, branch, base string, own func(branch, base, tip string) error) (*opening, error) {
-	tip, err := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+branch)
+func planOpen(ctx context.Context, repo *Repo, view *remoteView, branch, base string, own func(ctx context.Context, branch, base, tip string) error) (*opening, error) {
+	tip, err := git.In(ctx).Run("rev-parse", "--verify", "-q", "refs/heads/"+branch)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +271,7 @@ func planOpen(ctx context.Context, repo *Repo, view *remoteView, branch, base st
 		return nil, err
 	}
 	if o.onGitHub {
-		if err := own(branch, baseOid, local); err != nil {
+		if err := own(ctx, branch, baseOid, local); err != nil {
 			return nil, err
 		}
 	}
@@ -281,10 +281,10 @@ func planOpen(ctx context.Context, repo *Repo, view *remoteView, branch, base st
 		// makes is made here.
 		absent := strings.Repeat("0", 40)
 		update := pushguard.Update{LocalRef: "refs/heads/" + branch, Local: local, RemoteRef: "refs/heads/" + branch, Remote: absent}
-		if err := pushguard.Check(git.WithDir(context.Background()), "https://github.com/"+repo.Slug, []pushguard.Update{update}, pushguard.GitHub()); err != nil {
+		if err := pushguard.Check(context.WithoutCancel(ctx), "https://github.com/"+repo.Slug, []pushguard.Update{update}, pushguard.GitHub()); err != nil {
 			return nil, err
 		}
-		if o.objects, err = missingObjects([]string{local}, known); err != nil {
+		if o.objects, err = missingObjects(ctx, []string{local}, known); err != nil {
 			return nil, err
 		}
 	}
@@ -309,7 +309,7 @@ func Open(ctx context.Context, branch, base, title, body string, dryRun bool) (a
 	if strings.TrimSpace(title) == "" {
 		return nil, errors.New("open needs --title")
 	}
-	if err := checkPublic("the pull request's title and description", title+"\n\n"+body, nil, "run `pr-loop open` again"); err != nil {
+	if err := checkPublic(ctx, "the pull request's title and description", title+"\n\n"+body, nil, "run `pr-loop open` again"); err != nil {
 		return nil, err
 	}
 	repo, err := repository(ctx)
@@ -317,7 +317,7 @@ func Open(ctx context.Context, branch, base, title, body string, dryRun bool) (a
 		return nil, err
 	}
 	if branch == "" {
-		if branch, err = currentBranch(); err != nil {
+		if branch, err = currentBranch(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -379,10 +379,10 @@ func Open(ctx context.Context, branch, base, title, body string, dryRun bool) (a
 		return nil, fmt.Errorf("opening the pull request failed, so %s was deleted from GitHub again: %w", branch, err)
 	}
 	pr := opened.CreatePullRequest.PullRequest
-	if err := recordTracking(repo, branch, local); err != nil {
+	if err := recordTracking(ctx, repo, branch, local); err != nil {
 		return nil, err
 	}
-	if err := setUpstream(repo, branch); err != nil {
+	if err := setUpstream(ctx, repo, branch); err != nil {
 		return nil, err
 	}
 	if !pr.IsDraft {

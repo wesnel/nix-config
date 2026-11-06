@@ -14,6 +14,7 @@ import (
 // hunks of the diff it cites; a citation of no hunk, a chunk citing none
 // and a hunk no chunk cites go to the round's Dropped.
 func TestGuide(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, true)
 	f.setenv("FAKE_CODEX", "none")
 	os.WriteFile(filepath.Join(f.repo, "other.txt"), []byte("x\n"), 0o644)
@@ -73,6 +74,7 @@ func TestGuide(t *testing.T) {
 // A path git quotes, and a removed line that starts like a file header,
 // are read as the diff means them, kept in the record, and shown whole.
 func TestGuideOddPaths(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, true)
 	f.setenv("FAKE_CODEX", "none")
 	odd := "odd \"näme\"\tx.txt"
@@ -108,6 +110,7 @@ func TestGuideOddPaths(t *testing.T) {
 
 // A hunk that only removes lines is cited at BASE.
 func TestGuideCitesRemovals(t *testing.T) {
+	t.Parallel()
 	f := setUp(t, false)
 	os.WriteFile(filepath.Join(f.repo, "gone.txt"), []byte("y\nz\n"), 0o644)
 	run(t, f.repo, "git", "add", "gone.txt")

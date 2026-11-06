@@ -6,16 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-
-	"github.com/wesnel/agent-tools/internal/gh"
 )
-
-// mergeREST asks GitHub to merge a pull request; tests replace it to fake
-// GitHub. GitHub documents merge-async beside the stacks endpoints, under
-// the REST API version they are served at.
-var mergeREST = func(ctx context.Context, method, path string, body, out any) error {
-	return gh.RESTVersion(ctx, stacksVersion, method, path, body, out)
-}
 
 // mergeMethods are the merge_method values merge-async takes.
 var mergeMethods = []string{"merge", "squash", "rebase"}
@@ -45,7 +36,7 @@ func Merge(ctx context.Context, target, method string) (any, error) {
 		return nil, refuse("%q is not a merge method GitHub takes; pass `--method` as one of %s",
 			method, strings.Join(mergeMethods, ", "))
 	}
-	tty, err := openTTY()
+	tty, err := openTTY(ctx)
 	if err != nil {
 		return nil, refuse("`pr-loop merge` asks the operator on the terminal before merging, and /dev/tty cannot be "+
 			"opened here (%v); the operator runs it from a terminal of their own", err)
@@ -59,7 +50,7 @@ func Merge(ctx context.Context, target, method string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	branch, err := prBranch(repo, prs, target)
+	branch, err := prBranch(ctx, repo, prs, target)
 	if err != nil {
 		return nil, err
 	}

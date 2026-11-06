@@ -6,6 +6,7 @@ import (
 )
 
 func TestIDs(t *testing.T) {
+	t.Parallel()
 	_, p := openQuestions(t)
 	ids, err := p.IDs()
 	if err != nil {

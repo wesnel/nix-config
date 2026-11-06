@@ -2,6 +2,7 @@ package plans
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 )
 
@@ -20,24 +22,6 @@ import (
 // directory, and a clone of it per host, each with an edit of its own that
 // no sync may touch: a change to a tracked note, and a new untracked one.
 func notes(t *testing.T, hosts ...string) (origin string, configs map[string]Config) {
-	t.Helper()
-	asOperator(t)
-	return notesAsIs(t, hosts...)
-}
-
-// asOperator makes the operator the author and committer of the git
-// commands a test runs.
-func asOperator(t *testing.T) {
-	t.Helper()
-	for k, v := range map[string]string{"GIT_AUTHOR_NAME": "Operator", "GIT_AUTHOR_EMAIL": "operator@example.com",
-		"GIT_COMMITTER_NAME": "Operator", "GIT_COMMITTER_EMAIL": "operator@example.com"} {
-		t.Setenv(k, v)
-	}
-}
-
-// notesAsIs is notes for a parallel test, whose parent calls asOperator,
-// since a parallel test may not set the environment.
-func notesAsIs(t *testing.T, hosts ...string) (origin string, configs map[string]Config) {
 	t.Helper()
 	root, _ := filepath.EvalSymlinks(t.TempDir())
 	origin = filepath.Join(root, "origin.git")
@@ -48,8 +32,6 @@ func notesAsIs(t *testing.T, hosts ...string) (origin string, configs map[string
 	os.WriteFile(filepath.Join(seed, "agents", ".gitignore"), []byte(ignore), 0o644)
 	os.WriteFile(filepath.Join(seed, "todo.org"), []byte("* TODO x\n"), 0o644)
 	gitIn(t, seed, "add", "agents/.gitignore", "todo.org")
-	// The operator's identity is passed here, not taken from the
-	// environment, so that a parallel test whose parent sets none can seed.
 	gitIn(t, seed, "-c", "commit.gpgsign=false", "-c", "user.name=Operator", "-c", "user.email=operator@example.com",
 		"commit", "-q", "-m", "Start")
 	gitIn(t, seed, "push", "-q", "origin", "main")
@@ -64,6 +46,10 @@ func notesAsIs(t *testing.T, hosts ...string) (origin string, configs map[string
 	return origin, configs
 }
 
+// asOperator is a context for the code under test whose Env is
+// operator(), as the environment of every sync test was.
+func asOperator(t *testing.T) context.Context { return env.With(t.Context(), operator()) }
+
 // untouched checks that a host's own edits are still there, uncommitted.
 func untouched(t *testing.T, c Config) {
 	t.Helper()
@@ -77,10 +63,10 @@ func untouched(t *testing.T, c Config) {
 	}
 }
 
-// The subtests that set no environment of their own run in parallel, as
-// the operator, from the environment set here.
+// Each subtest runs sync as the operator, from asOperator's Env or one of
+// its own.
 func TestSync(t *testing.T) {
-	asOperator(t)
+	t.Parallel()
 	t.Run("two hosts", testSyncTwoHosts)
 	t.Run("sends this host's workstreams", testSyncWorkstreams)
 	t.Run("through git-push-guard", testSyncThroughPushGuard)
@@ -99,11 +85,12 @@ func TestSync(t *testing.T) {
 }
 
 func testSyncConcurrentEdit(t *testing.T) {
+	t.Parallel()
 	origin, hosts := notes(t, "mac")
 	mac := hosts["mac"]
 	repo := filepath.Dir(mac.Dir)
 	f := newPlan(t, mac, "x").file("")
-	if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
+	if got, err := mac.Sync(asOperator(t), SyncOptions{}); err != nil || !got.Pushed {
 		t.Fatalf("initial sync: %+v, %v", got, err)
 	}
 	before, err := os.ReadFile(f)
@@ -119,7 +106,7 @@ func testSyncConcurrentEdit(t *testing.T) {
 
 	// Run real Git, then inject a file write after its snapshot is read.
 	// This makes the concurrent writer deterministic without changing Sync.
-	real, err := exec.LookPath("git")
+	real, err := operator().LookPath("git")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,8 +121,8 @@ func testSyncConcurrentEdit(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed || got.Behind != "" {
+	ctx := env.With(t.Context(), onPath(operator(), bin))
+	if got, err := mac.Sync(ctx, SyncOptions{}); err != nil || !got.Pushed || got.Behind != "" {
 		t.Errorf("sync after concurrent edit: %+v, %v", got, err)
 	}
 	raced(t, ran)
@@ -149,11 +136,16 @@ func testSyncConcurrentEdit(t *testing.T) {
 	if sent := gitIn(t, repo, "show", "origin/main:agents/"+filepath.Base(f)); sent != want {
 		t.Errorf("published plan: %q; want %q", sent, want)
 	}
-	if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || got.Behind != "" {
+	if got, err := mac.Sync(ctx, SyncOptions{}); err != nil || got.Behind != "" {
 		t.Errorf("next sync: %+v, %v", got, err)
 	}
 	atOrigin(t, mac)
 	untouched(t, mac)
+}
+
+// onPath is e with dir first on its PATH.
+func onPath(e env.Env, dir string) env.Env {
+	return e.Set("PATH=" + dir + string(os.PathListSeparator) + e.Get("PATH"))
 }
 
 // A plan written after sync has pushed it and before sync fast-forwards to
@@ -161,17 +153,18 @@ func testSyncConcurrentEdit(t *testing.T) {
 // sync: the branch catches up with origin, the newer file stays, and the
 // next sync sends it.
 func testSyncCatchesUpAfterItsPush(t *testing.T) {
+	t.Parallel()
 	_, hosts := notes(t, "mac")
 	mac := hosts["mac"]
 	repo := filepath.Dir(mac.Dir)
 	f := newPlan(t, mac, "x").file("")
-	ran := raceAt(t, repo, "push", "printf 'newer\\n' >> '"+f+"'")
-	if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
+	ran, ctx := raceAt(t, operator(), repo, "push", "printf 'newer\\n' >> '"+f+"'")
+	if got, err := mac.Sync(ctx, SyncOptions{}); err != nil || !got.Pushed {
 		t.Fatalf("sync: %+v, %v", got, err)
 	}
 	raced(t, ran)
 	newer, _ := os.ReadFile(f)
-	if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
+	if got, err := mac.Sync(ctx, SyncOptions{}); err != nil || !got.Pushed {
 		t.Errorf("the next sync: %+v, %v", got, err)
 	}
 	if sent := gitIn(t, repo, "show", "origin/main:agents/"+filepath.Base(f)); sent != string(newer) {
@@ -221,19 +214,16 @@ func testSyncCatchUp(t *testing.T) {
 		"killed before it moves the branch":     {kill: "diff-index"},
 		"killed as it moves the branch":         {kill: "update-ref", caughtUp: true},
 	}
-	asOperator(t)
+	t.Parallel()
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			// raceAt sets PATH, which a parallel test may not.
-			if tc.race == "" && tc.kill == "" {
-				t.Parallel()
-			}
-			_, hosts := notesAsIs(t, "mac")
+			t.Parallel()
+			_, hosts := notes(t, "mac")
 			mac := hosts["mac"]
 			repo := filepath.Dir(mac.Dir)
 			f := newPlan(t, mac, "x").file("")
 			rel := "agents/" + filepath.Base(f)
-			if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
+			if got, err := mac.Sync(asOperator(t), SyncOptions{}); err != nil || !got.Pushed {
 				t.Fatalf("sync: %+v, %v", got, err)
 			}
 			// Origin gets a newer version of mac's plan, as a push of
@@ -273,9 +263,9 @@ func testSyncCatchUp(t *testing.T) {
 			}
 			head := gitIn(t, repo, "rev-parse", "HEAD")
 			staged := gitIn(t, repo, "diff", "--cached", "--name-only")
-			ran := ""
+			ran, ctx := "", asOperator(t)
 			if tc.race != "" {
-				ran = raceAt(t, repo, "update-ref", tc.race)
+				ran, ctx = raceAt(t, operator(), repo, "update-ref", tc.race)
 			}
 			if tc.kill != "" {
 				killed(t, mac, tc.kill)
@@ -294,7 +284,7 @@ func testSyncCatchUp(t *testing.T) {
 				}
 				return
 			}
-			got, err := mac.Sync(t.Context(), SyncOptions{})
+			got, err := mac.Sync(ctx, SyncOptions{})
 			if err != nil {
 				t.Fatalf("sync: %v", err)
 			}
@@ -341,9 +331,9 @@ func testSyncCatchUp(t *testing.T) {
 func killed(t *testing.T, c Config, word string) {
 	t.Helper()
 	repo := filepath.Dir(c.Dir)
-	ran := raceAt(t, repo, word, "kill -TERM $PPID")
+	ran, ctx := raceAt(t, operator(), repo, word, "kill -TERM $PPID")
 	cmd := exec.Command(os.Args[0], "-test.run=^TestSyncHelper$", "-test.count=1")
-	cmd.Env = append(os.Environ(), "AGENT_PLAN_SYNC_HELPER="+c.Dir+string(os.PathListSeparator)+c.Host)
+	cmd.Env = append(env.From(ctx).Environ(), "AGENT_PLAN_SYNC_HELPER="+c.Dir+string(os.PathListSeparator)+c.Host)
 	out, err := cmd.CombinedOutput()
 	raced(t, ran)
 	t.Logf("sync's process: %v\n%s", err, out)
@@ -355,10 +345,12 @@ func killed(t *testing.T, c Config, word string) {
 // TestSyncHelper is the process killed runs: a sync of the plans directory
 // and host its environment names.
 func TestSyncHelper(t *testing.T) {
+	t.Parallel()
 	dir, host, ok := strings.Cut(os.Getenv("AGENT_PLAN_SYNC_HELPER"), string(os.PathListSeparator))
 	if !ok {
 		t.Skip("run by killed")
 	}
+	// The process's own environment, which killed gives it.
 	if _, err := (Config{Dir: dir, Host: host}).Sync(t.Context(), SyncOptions{}); err != nil {
 		t.Fatal(err)
 	}
@@ -389,30 +381,30 @@ func testSyncLeavesOperatorCommits(t *testing.T) {
 		"on a branch origin lacks": {branch: "local",
 			env: []string{"GIT_COMMITTER_NAME=" + syncName, "GIT_COMMITTER_EMAIL=agent-plan@mac.invalid"}},
 	}
+	t.Parallel()
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			_, hosts := guarded(t, "mac", "box")
+			t.Parallel()
+			_, hosts, host := guarded(t, "mac", "box")
+			ctx := env.With(t.Context(), host)
 			mac, box := hosts["mac"], hosts["box"]
 			newPlan(t, box, "y")
-			if got, err := box.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
+			if got, err := box.Sync(ctx, SyncOptions{}); err != nil || !got.Pushed {
 				t.Fatalf("box's sync: %+v, %v", got, err)
 			}
 			repo := filepath.Dir(mac.Dir)
 			if tc.branch != "" {
 				gitIn(t, repo, "switch", "-q", "-c", tc.branch)
 			}
-			commit := exec.Command("git", append([]string{"-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "Changed by the operator"}, tc.args...)...)
-			commit.Dir, commit.Env = repo, append(gitenv.Without(os.Environ()), tc.env...)
-			if out, err := commit.CombinedOutput(); err != nil {
-				t.Fatalf("the operator's commit: %v\n%s", err, out)
-			}
+			gitAs(t, host.Set(tc.env...), repo, append([]string{"-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty",
+				"-m", "Changed by the operator"}, tc.args...)...)
 			mine := strings.TrimSpace(gitIn(t, repo, "rev-parse", "HEAD"))
 			if tc.topic {
 				gitIn(t, repo, "update-ref", "refs/remotes/origin/topic", mine)
 			}
 			newPlan(t, mac, "x")
 			for _, o := range []SyncOptions{{PullOnly: true}, {}} {
-				got, err := mac.Sync(t.Context(), o)
+				got, err := mac.Sync(ctx, o)
 				if err != nil || got.Pushed || got.Behind == "" {
 					t.Errorf("sync %+v over the operator's commit: %+v, %v", o, got, err)
 				}
@@ -433,13 +425,14 @@ func testSyncLeavesOperatorCommits(t *testing.T) {
 	}
 }
 
-// raceAt puts a git ahead of the real one on PATH that runs action, a shell
-// command, in repo as the operator, with the repository's own index, once,
-// as the first git command with an argument equal to word starts. It returns
-// a file that exists once action has run.
-func raceAt(t *testing.T, repo, word, action string) (ran string) {
+// raceAt puts a git ahead of the real one on the PATH of e that runs
+// action, a shell command, in repo as the operator, with the repository's
+// own index, once, as the first git command with an argument equal to word
+// starts. It returns a file that exists once action has run, and a context
+// whose Env is e with that PATH.
+func raceAt(t *testing.T, e env.Env, repo, word, action string) (ran string, ctx context.Context) {
 	t.Helper()
-	real, err := exec.LookPath("git")
+	real, err := e.LookPath("git")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -457,8 +450,7 @@ func raceAt(t *testing.T, repo, word, action string) (ran string) {
 	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return ran
+	return ran, env.With(t.Context(), onPath(e, bin))
 }
 
 // raced fails the test unless raceAt's action ran.
@@ -484,18 +476,20 @@ func operatorsCommit(t *testing.T, repo, subject string) {
 // A commit the operator makes while sync runs, at any of its steps, is
 // neither published nor re-committed under sync's identity.
 func testSyncLeavesRacingCommit(t *testing.T) {
+	t.Parallel()
 	for _, word := range []string{"commit-tree", "push", "merge-base", "merge"} {
 		t.Run(word, func(t *testing.T) {
-			_, hosts := guarded(t, "mac", "box")
+			t.Parallel()
+			_, hosts, host := guarded(t, "mac", "box")
 			mac, box := hosts["mac"], hosts["box"]
 			newPlan(t, box, "y")
-			if got, err := box.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
+			if got, err := box.Sync(env.With(t.Context(), host), SyncOptions{}); err != nil || !got.Pushed {
 				t.Fatalf("box's sync: %+v, %v", got, err)
 			}
 			repo := filepath.Dir(mac.Dir)
-			ran := raceAt(t, repo, word, "git -c commit.gpgsign=false commit -q --allow-empty -m 'Racing operator commit'")
+			ran, ctx := raceAt(t, host, repo, word, "git -c commit.gpgsign=false commit -q --allow-empty -m 'Racing operator commit'")
 			newPlan(t, mac, "x")
-			got, err := mac.Sync(t.Context(), SyncOptions{})
+			got, err := mac.Sync(ctx, SyncOptions{})
 			raced(t, ran)
 			t.Logf("sync: %+v, %v", got, err)
 			operatorsCommit(t, repo, "Racing operator commit")
@@ -521,17 +515,17 @@ func testSyncSendsNothingBehind(t *testing.T) {
 	t.Parallel()
 	t.Run("older commit checked out", func(t *testing.T) {
 		t.Parallel()
-		_, hosts := notesAsIs(t, "mac")
+		_, hosts := notes(t, "mac")
 		mac := hosts["mac"]
 		repo := filepath.Dir(mac.Dir)
 		newPlan(t, mac, "x")
-		if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
+		if got, err := mac.Sync(asOperator(t), SyncOptions{}); err != nil || !got.Pushed {
 			t.Fatalf("mac's sync: %+v, %v", got, err)
 		}
 		sent := gitIn(t, repo, "rev-parse", "origin/main")
 		gitIn(t, repo, "checkout", "-q", "--detach", "HEAD~1")
 		newPlan(t, mac, "z")
-		if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || got.Pushed || got.Behind == "" {
+		if got, err := mac.Sync(asOperator(t), SyncOptions{}); err != nil || got.Pushed || got.Behind == "" {
 			t.Errorf("sync from an older commit: %+v, %v", got, err)
 		}
 		if now := gitIn(t, repo, "rev-parse", "origin/main"); now != sent {
@@ -540,17 +534,17 @@ func testSyncSendsNothingBehind(t *testing.T) {
 	})
 	t.Run("stash on a branch with the operator's commits", func(t *testing.T) {
 		t.Parallel()
-		_, hosts := notesAsIs(t, "mac", "box")
+		_, hosts := notes(t, "mac", "box")
 		mac, box := hosts["mac"], hosts["box"]
 		repo := filepath.Dir(mac.Dir)
 		x := newPlan(t, mac, "x")
 		addItems(t, x.file(""), "** Steps", "S1")
-		if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
+		if got, err := mac.Sync(asOperator(t), SyncOptions{}); err != nil || !got.Pushed {
 			t.Fatalf("mac's sync: %+v, %v", got, err)
 		}
 		gitIn(t, repo, "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "Operator, unpushed")
 		newPlan(t, box, "y")
-		if got, err := box.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
+		if got, err := box.Sync(asOperator(t), SyncOptions{}); err != nil || !got.Pushed {
 			t.Fatalf("box's sync: %+v, %v", got, err)
 		}
 		gitIn(t, repo, "fetch", "-q")
@@ -562,7 +556,7 @@ func testSyncSendsNothingBehind(t *testing.T) {
 			if step == "after a stash" {
 				gitIn(t, repo, "stash", "-q")
 			}
-			if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || got.Pushed || got.Behind == "" {
+			if got, err := mac.Sync(asOperator(t), SyncOptions{}); err != nil || got.Pushed || got.Behind == "" {
 				t.Errorf("sync %s: %+v, %v", step, got, err)
 			}
 			if now := gitIn(t, repo, "rev-parse", "origin/main"); now != before {
@@ -577,6 +571,7 @@ func testSyncSendsNothingBehind(t *testing.T) {
 // and no merge, rebase, cherry-pick, revert or bisect is in progress; what
 // it stages and cannot fast-forward over, it unstages.
 func testSyncLeavesIndex(t *testing.T) {
+	t.Parallel()
 	// staged gives a plan file of mac's a staged version and an unstaged
 	// one on top, and returns its path in the repository.
 	staged := func(t *testing.T, mac Config, x Plan) string {
@@ -591,15 +586,15 @@ func testSyncLeavesIndex(t *testing.T) {
 	for _, collide := range []bool{false, true} {
 		t.Run(map[bool]string{false: "a staged version", true: "a staged version and a fast-forward git refuses"}[collide], func(t *testing.T) {
 			t.Parallel()
-			_, hosts := notesAsIs(t, "mac", "box")
+			_, hosts := notes(t, "mac", "box")
 			mac, box := hosts["mac"], hosts["box"]
 			repo := filepath.Dir(mac.Dir)
 			x := newPlan(t, mac, "x")
-			if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
+			if got, err := mac.Sync(asOperator(t), SyncOptions{}); err != nil || !got.Pushed {
 				t.Fatalf("mac's sync: %+v, %v", got, err)
 			}
 			y := newPlan(t, box, "y")
-			if got, err := box.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
+			if got, err := box.Sync(asOperator(t), SyncOptions{}); err != nil || !got.Pushed {
 				t.Fatalf("box's sync: %+v, %v", got, err)
 			}
 			if collide {
@@ -607,7 +602,7 @@ func testSyncLeavesIndex(t *testing.T) {
 			}
 			rel := staged(t, mac, x)
 			before := gitIn(t, repo, "show", ":"+rel)
-			got, err := mac.Sync(t.Context(), SyncOptions{PullOnly: true})
+			got, err := mac.Sync(asOperator(t), SyncOptions{PullOnly: true})
 			if err != nil || got.Behind == "" {
 				t.Errorf("pull: %+v, %v", got, err)
 			}
@@ -618,11 +613,11 @@ func testSyncLeavesIndex(t *testing.T) {
 	}
 	t.Run("a merge in progress", func(t *testing.T) {
 		t.Parallel()
-		_, hosts := notesAsIs(t, "mac", "box")
+		_, hosts := notes(t, "mac", "box")
 		mac, box := hosts["mac"], hosts["box"]
 		repo := filepath.Dir(mac.Dir)
 		x := newPlan(t, mac, "x")
-		if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
+		if got, err := mac.Sync(asOperator(t), SyncOptions{}); err != nil || !got.Pushed {
 			t.Fatalf("mac's sync: %+v, %v", got, err)
 		}
 		f := x.file("")
@@ -635,10 +630,10 @@ func testSyncLeavesIndex(t *testing.T) {
 		gitIn(t, repo, "-c", "commit.gpgsign=false", "merge", "-q", "--no-ff", "--no-commit", "side")
 		before := gitIn(t, repo, "diff", "--cached", "--name-only")
 		newPlan(t, box, "y")
-		if got, err := box.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
+		if got, err := box.Sync(asOperator(t), SyncOptions{}); err != nil || !got.Pushed {
 			t.Fatalf("box's sync: %+v, %v", got, err)
 		}
-		got, err := mac.Sync(t.Context(), SyncOptions{PullOnly: true})
+		got, err := mac.Sync(asOperator(t), SyncOptions{PullOnly: true})
 		if err != nil || got.Behind == "" {
 			t.Errorf("pull: %+v, %v", got, err)
 		}
@@ -648,14 +643,15 @@ func testSyncLeavesIndex(t *testing.T) {
 		gitIn(t, repo, "rev-parse", "-q", "--verify", "MERGE_HEAD")
 	})
 	t.Run("a fast-forward refused after staging", func(t *testing.T) {
+		t.Parallel()
 		_, hosts := notes(t, "mac")
 		mac := hosts["mac"]
 		repo := filepath.Dir(mac.Dir)
 		newPlan(t, mac, "x")
 		// The operator commits through an index of their own just as
 		// sync fast-forwards to what it sent.
-		ran := raceAt(t, repo, "merge", "git update-ref HEAD $(git commit-tree HEAD^{tree} -p HEAD -m 'Racing operator commit')")
-		got, err := mac.Sync(t.Context(), SyncOptions{})
+		ran, ctx := raceAt(t, operator(), repo, "merge", "git update-ref HEAD $(git commit-tree HEAD^{tree} -p HEAD -m 'Racing operator commit')")
+		got, err := mac.Sync(ctx, SyncOptions{})
 		raced(t, ran)
 		if err != nil || !got.Pushed || got.Behind == "" {
 			t.Errorf("sync: %+v, %v", got, err)
@@ -668,12 +664,13 @@ func testSyncLeavesIndex(t *testing.T) {
 
 // Sync's push never overwrites what another host pushed after sync fetched.
 func testSyncDoesNotForce(t *testing.T) {
+	t.Parallel()
 	_, hosts := notes(t, "mac", "box")
 	mac, box := hosts["mac"], hosts["box"]
 	repo, other := filepath.Dir(mac.Dir), filepath.Dir(box.Dir)
 	newPlan(t, mac, "x")
-	ran := raceAt(t, repo, "push", "git -C '"+other+"' -c commit.gpgsign=false commit -q --allow-empty -m Moved && git -C '"+other+"' push -q origin HEAD:main")
-	got, err := mac.Sync(t.Context(), SyncOptions{})
+	ran, ctx := raceAt(t, operator(), repo, "push", "git -C '"+other+"' -c commit.gpgsign=false commit -q --allow-empty -m Moved && git -C '"+other+"' push -q origin HEAD:main")
+	got, err := mac.Sync(ctx, SyncOptions{})
 	raced(t, ran)
 	if err == nil || got.Pushed {
 		t.Errorf("sync after origin moved: %+v, %v", got, err)
@@ -688,6 +685,7 @@ func testSyncDoesNotForce(t *testing.T) {
 // has changed a file the operator has uncommitted edits in, and the edits
 // stay.
 func testSyncKeepsEditsAndRacingCommit(t *testing.T) {
+	t.Parallel()
 	_, hosts := notes(t, "mac")
 	mac := hosts["mac"]
 	repo := filepath.Dir(mac.Dir)
@@ -705,8 +703,8 @@ func testSyncKeepsEditsAndRacingCommit(t *testing.T) {
 	gitIn(t, other, "-c", "commit.gpgsign=false", "commit", "-qam", "Other edits todo")
 	gitIn(t, other, "push", "-q", "origin", "main")
 	newPlan(t, mac, "x")
-	ran := raceAt(t, repo, "merge-base", "git -c commit.gpgsign=false commit -q --allow-empty -m 'Racing operator commit'")
-	got, err := mac.Sync(t.Context(), SyncOptions{})
+	ran, ctx := raceAt(t, operator(), repo, "merge-base", "git -c commit.gpgsign=false commit -q --allow-empty -m 'Racing operator commit'")
+	got, err := mac.Sync(ctx, SyncOptions{})
 	raced(t, ran)
 	t.Logf("sync: %+v, %v", got, err)
 	operatorsCommit(t, repo, "Racing operator commit")
@@ -717,6 +715,7 @@ func testSyncKeepsEditsAndRacingCommit(t *testing.T) {
 
 // A pull-only sync moves no branch the operator switches to while it runs.
 func testSyncLeavesSwitchedBranch(t *testing.T) {
+	t.Parallel()
 	_, hosts := notes(t, "mac", "box")
 	mac, box := hosts["mac"], hosts["box"]
 	repo := filepath.Dir(mac.Dir)
@@ -725,14 +724,14 @@ func testSyncLeavesSwitchedBranch(t *testing.T) {
 	gitIn(t, repo, "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "Undone")
 	gitIn(t, repo, "reset", "-q", "--soft", start)
 	newPlan(t, box, "y")
-	if got, err := box.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
+	if got, err := box.Sync(asOperator(t), SyncOptions{}); err != nil || !got.Pushed {
 		t.Fatalf("box's sync: %+v, %v", got, err)
 	}
 	gitIn(t, repo, "fetch", "-q")
 	gitIn(t, repo, "branch", "work", "origin/main")
 	work := strings.TrimSpace(gitIn(t, repo, "rev-parse", "work"))
-	ran := raceAt(t, repo, "merge-base", "git switch -q work")
-	got, err := mac.Sync(t.Context(), SyncOptions{PullOnly: true})
+	ran, ctx := raceAt(t, operator(), repo, "merge-base", "git switch -q work")
+	got, err := mac.Sync(ctx, SyncOptions{PullOnly: true})
 	raced(t, ran)
 	t.Logf("sync: %+v, %v", got, err)
 	if now := strings.TrimSpace(gitIn(t, repo, "rev-parse", "work")); now != work {
@@ -777,14 +776,12 @@ func pushGuard(t *testing.T) string {
 // runs git-push-guard, built from this module, before every push. The
 // operator's identity comes from that config alone, as on a host. The ssh is
 // a fake that runs git's command against the bare origin on this machine: it
-// stands in for GitHub, which a test must not contact.
-func guarded(t *testing.T, hosts ...string) (url string, configs map[string]Config) {
+// stands in for GitHub, which a test must not contact. host is that
+// environment, for the commands the test runs as the host does.
+func guarded(t *testing.T, hosts ...string) (url string, configs map[string]Config, host env.Env) {
 	t.Helper()
 	guard := pushGuard(t)
 	origin, configs := notes(t, hosts...)
-	for _, k := range []string{"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"} {
-		os.Unsetenv(k)
-	}
 	dir, _ := filepath.EvalSymlinks(t.TempDir())
 	os.MkdirAll(filepath.Join(dir, "wesnel"), 0o755)
 	if err := os.Symlink(origin, filepath.Join(dir, "wesnel", "notes.git")); err != nil {
@@ -794,48 +791,49 @@ func guarded(t *testing.T, hosts ...string) (url string, configs map[string]Conf
 	if err := os.WriteFile(ssh, []byte("#!/bin/sh\ncd '"+dir+"' && exec sh -c \"$2\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("GIT_SSH_COMMAND", ssh)
-	t.Setenv("GIT_SSH_VARIANT", "simple")
 	global := filepath.Join(dir, "gitconfig")
 	config := "[user]\n\tname = Operator\n\temail = operator@example.com\n" +
 		"[hook \"push-guard\"]\n\tevent = pre-push\n\tcommand = " + guard + "\n"
 	if err := os.WriteFile(global, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	host = operator().Without("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL").
+		Set("GIT_SSH_COMMAND="+ssh, "GIT_SSH_VARIANT=simple", "GIT_CONFIG_GLOBAL="+global)
 	url = "git@github-notes:wesnel/notes.git"
 	for _, c := range configs {
-		gitIn(t, filepath.Dir(c.Dir), "remote", "set-url", "origin", url)
+		gitAs(t, host, filepath.Dir(c.Dir), "remote", "set-url", "origin", url)
 	}
-	return url, configs
+	return url, configs, host
 }
 
 // Sync's pushes pass git-push-guard, which refuses the operator's own
 // unsigned commits, with no bypass: box's first sync, and mac's, whose
 // commit is rebased onto box's before it is pushed.
 func testSyncThroughPushGuard(t *testing.T) {
-	url, hosts := guarded(t, "mac", "box")
+	t.Parallel()
+	url, hosts, host := guarded(t, "mac", "box")
+	ctx := env.With(t.Context(), host)
 	mac, box := hosts["mac"], hosts["box"]
 	// The guard is running: it refuses the operator's own unsigned commit.
 	control := filepath.Join(t.TempDir(), "control")
-	gitIn(t, filepath.Dir(control), "clone", "-q", url, control)
-	gitIn(t, control, "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "Unsigned")
-	push := exec.Command("git", "push", "-q", "origin", "HEAD:refs/heads/control")
-	push.Dir, push.Env = control, gitenv.Without(os.Environ())
+	gitAs(t, host, filepath.Dir(control), "clone", "-q", url, control)
+	gitAs(t, host, control, "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "Unsigned")
+	push := env.Command(env.With(ctx, host.In(control)), "git", "push", "-q", "origin", "HEAD:refs/heads/control")
+	push.Env = gitenv.Without(push.Env)
 	if out, err := push.CombinedOutput(); err == nil || !strings.Contains(string(out), "are not signed") {
 		t.Fatalf("git-push-guard did not refuse the operator's unsigned commit: %v\n%s", err, out)
 	}
 
 	newPlan(t, box, "y")
-	if got, err := box.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
+	if got, err := box.Sync(ctx, SyncOptions{}); err != nil || !got.Pushed {
 		t.Fatalf("box's sync: %+v, %v", got, err)
 	}
 	newPlan(t, mac, "x")
-	if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
+	if got, err := mac.Sync(ctx, SyncOptions{}); err != nil || !got.Pushed {
 		t.Fatalf("mac's sync, rebased onto box's: %+v, %v", got, err)
 	}
 	untouched(t, mac)
-	log := gitIn(t, filepath.Dir(mac.Dir), "log", "--format=%an <%ae> %cn <%ce> %s", "origin/main")
+	log := gitAs(t, host, filepath.Dir(mac.Dir), "log", "--format=%an <%ae> %cn <%ce> %s", "origin/main")
 	want := "Operator <operator@example.com> agent-plan sync <agent-plan@mac.invalid> Sync plans from mac\n" +
 		"Operator <operator@example.com> agent-plan sync <agent-plan@box.invalid> Sync plans from box\n" +
 		"Operator <operator@example.com> Operator <operator@example.com> Start\n"
@@ -866,14 +864,14 @@ func testSyncAuthor(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			_, hosts := notesAsIs(t, "mac")
+			_, hosts := notes(t, "mac")
 			mac := hosts["mac"]
 			repo := filepath.Dir(mac.Dir)
 			for _, kv := range tc.config {
 				gitIn(t, repo, "config", kv[0], kv[1])
 			}
 			newPlan(t, mac, "x")
-			if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
+			if got, err := mac.Sync(asOperator(t), SyncOptions{}); err != nil || !got.Pushed {
 				t.Fatalf("sync: %+v, %v", got, err)
 			}
 			if got := strings.TrimSpace(gitIn(t, repo, "log", "-1", "--format=%an <%ae> %cn <%ce>", "origin/main")); got != tc.want {
@@ -887,14 +885,14 @@ func testSyncAuthor(t *testing.T) {
 // its own files, and leave every other edit alone.
 func testSyncTwoHosts(t *testing.T) {
 	t.Parallel()
-	origin, hosts := notesAsIs(t, "mac", "box")
+	origin, hosts := notes(t, "mac", "box")
 	mac, box := hosts["mac"], hosts["box"]
 	mine := newPlan(t, mac, "x")
 	addItems(t, mine.file(""), "** Steps", "S1")
 	if _, err := mine.Log(Event{Kind: "started", Item: "S1"}, day); err != nil {
 		t.Fatal(err)
 	}
-	got, err := mac.Sync(t.Context(), SyncOptions{})
+	got, err := mac.Sync(asOperator(t), SyncOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -904,7 +902,7 @@ func testSyncTwoHosts(t *testing.T) {
 	atOrigin(t, mac)
 	untouched(t, mac)
 	theirs := newPlan(t, box, "y")
-	if got, err := box.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
+	if got, err := box.Sync(asOperator(t), SyncOptions{}); err != nil || !got.Pushed {
 		t.Fatalf("box's sync: %+v, %v", got, err)
 	}
 	atOrigin(t, box)
@@ -912,7 +910,7 @@ func testSyncTwoHosts(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(box.Dir, "20261014130500-x.mac.org")); err != nil {
 		t.Errorf("box did not get mac's plan: %v", err)
 	}
-	if got, err := mac.Sync(t.Context(), SyncOptions{PullOnly: true}); err != nil || got.Pushed || len(got.Committed) != 0 {
+	if got, err := mac.Sync(asOperator(t), SyncOptions{PullOnly: true}); err != nil || got.Pushed || len(got.Committed) != 0 {
 		t.Fatalf("mac's pull: %+v, %v", got, err)
 	}
 	untouched(t, mac)
@@ -936,14 +934,14 @@ func testSyncTwoHosts(t *testing.T) {
 		}
 	}
 	// Nothing new: no commit, no push.
-	if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || got.Pushed || len(got.Committed) != 0 {
+	if got, err := mac.Sync(asOperator(t), SyncOptions{}); err != nil || got.Pushed || len(got.Committed) != 0 {
 		t.Errorf("a sync with nothing to send: %+v, %v", got, err)
 	}
 	// A plan changed since it was last sent, and so modified against HEAD.
 	if _, err := mine.Log(Event{Kind: "done", Item: "S1"}, day); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed || len(got.Committed) != 2 {
+	if got, err := mac.Sync(asOperator(t), SyncOptions{}); err != nil || !got.Pushed || len(got.Committed) != 2 {
 		t.Errorf("mac's second sync: %+v, %v", got, err)
 	}
 	atOrigin(t, mac)
@@ -953,16 +951,17 @@ func testSyncTwoHosts(t *testing.T) {
 // A workstream reaches the other hosts as a plan does, and each host sends
 // only its own.
 func testSyncWorkstreams(t *testing.T) {
+	t.Parallel()
 	origin, hosts := notes(t, "mac", "box")
 	mac, box := hosts["mac"], hosts["box"]
-	if _, err := mac.NewWorkstream(t.Context(), "Agent tooling", "The agent tools."); err != nil {
+	if _, err := mac.NewWorkstream(asOperator(t), "Agent tooling", "The agent tools."); err != nil {
 		t.Fatal(err)
 	}
-	got, err := mac.Sync(t.Context(), SyncOptions{})
+	got, err := mac.Sync(asOperator(t), SyncOptions{})
 	if err != nil || !got.Pushed || strings.Join(got.Committed, " ") != "agents/workstream-agent-tooling.mac.org" {
 		t.Fatalf("mac's sync: %+v, %v", got, err)
 	}
-	if _, err := box.Sync(t.Context(), SyncOptions{}); err != nil {
+	if _, err := box.Sync(asOperator(t), SyncOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	ws, err := box.Workstreams()
@@ -993,30 +992,30 @@ func testSyncWithoutRepository(t *testing.T) {
 	t.Parallel()
 	c := testConfig(t)
 	newPlan(t, c, "x")
-	got, err := c.Sync(t.Context(), SyncOptions{})
+	got, err := c.Sync(asOperator(t), SyncOptions{})
 	if err != nil || got.Skipped == "" || got.Pushed {
 		t.Errorf("sync outside a repository: %+v, %v", got, err)
 	}
-	c.Pull(t.Context())
+	c.Pull(asOperator(t))
 }
 
 // Find, status and new pull first, quietly, so another host's plans are
 // current; a pull that cannot run changes nothing.
 func TestPull(t *testing.T) {
-	asOperator(t)
+	t.Parallel()
 	t.Run("takes the other hosts' plans", testPullTakes)
 	t.Run("leaves unsent edits unstaged", testPullLeavesEditsUnstaged)
 }
 
 func testPullTakes(t *testing.T) {
 	t.Parallel()
-	_, hosts := notesAsIs(t, "mac", "box")
+	_, hosts := notes(t, "mac", "box")
 	mac, box := hosts["mac"], hosts["box"]
 	theirs := newPlan(t, box, "y")
-	if _, err := box.Sync(t.Context(), SyncOptions{}); err != nil {
+	if _, err := box.Sync(asOperator(t), SyncOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	mac.Pull(t.Context())
+	mac.Pull(asOperator(t))
 	if _, err := mac.Open(filepath.Join(mac.Dir, filepath.Base(theirs.file("")))); err != nil {
 		t.Errorf("after a pull: %v", err)
 	}
@@ -1027,19 +1026,19 @@ func testPullTakes(t *testing.T) {
 // them as it found them, unstaged.
 func testPullLeavesEditsUnstaged(t *testing.T) {
 	t.Parallel()
-	_, hosts := notesAsIs(t, "mac", "box")
+	_, hosts := notes(t, "mac", "box")
 	mac, box := hosts["mac"], hosts["box"]
 	repo := filepath.Dir(mac.Dir)
 	x := newPlan(t, mac, "x")
-	if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
+	if got, err := mac.Sync(asOperator(t), SyncOptions{}); err != nil || !got.Pushed {
 		t.Fatalf("mac's sync: %+v, %v", got, err)
 	}
 	addItems(t, x.file(""), "** Steps", "S1")
 	newPlan(t, box, "y")
-	if got, err := box.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
+	if got, err := box.Sync(asOperator(t), SyncOptions{}); err != nil || !got.Pushed {
 		t.Fatalf("box's sync: %+v, %v", got, err)
 	}
-	mac.Pull(t.Context())
+	mac.Pull(asOperator(t))
 	if head, origin := gitIn(t, repo, "rev-parse", "HEAD"), gitIn(t, repo, "rev-parse", "origin/main"); head != origin {
 		t.Errorf("the pull did not fast-forward: HEAD %s, origin %s", head, origin)
 	}
@@ -1055,11 +1054,15 @@ func testPullLeavesEditsUnstaged(t *testing.T) {
 // they have changed since, and when the repository last fetched; another
 // host's commits and the repository's other files count for none of it.
 func TestSyncState(t *testing.T) {
+	t.Parallel()
 	origin, hosts := notes(t, "mac", "box")
 	mac, box := hosts["mac"], hosts["box"]
+	// ctx is the operator's, and from the first sync on dated as the
+	// commits the test makes are.
+	ctx := asOperator(t)
 	state := func(c Config) SyncState {
 		t.Helper()
-		s, err := c.SyncState(t.Context())
+		s, err := c.SyncState(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1073,8 +1076,8 @@ func TestSyncState(t *testing.T) {
 		t.Errorf("with a new plan: %+v", s)
 	}
 	pushed := time.Date(2026, 10, 15, 9, 30, 0, 0, time.UTC)
-	t.Setenv("GIT_COMMITTER_DATE", pushed.Format(time.RFC3339))
-	if _, err := box.Sync(t.Context(), SyncOptions{}); err != nil {
+	ctx = env.With(t.Context(), operator().Set("GIT_COMMITTER_DATE="+pushed.Format(time.RFC3339)))
+	if _, err := box.Sync(ctx, SyncOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	s := state(box)
@@ -1082,12 +1085,13 @@ func TestSyncState(t *testing.T) {
 		t.Errorf("after a sync: %+v", s)
 	}
 
-	t.Setenv("GIT_COMMITTER_DATE", pushed.Add(time.Hour).Format(time.RFC3339))
+	later := operator().Set("GIT_COMMITTER_DATE=" + pushed.Add(time.Hour).Format(time.RFC3339))
+	ctx = env.With(t.Context(), later)
 	newPlan(t, mac, "y")
-	if _, err := mac.Sync(t.Context(), SyncOptions{}); err != nil {
+	if _, err := mac.Sync(ctx, SyncOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	box.Pull(t.Context())
+	box.Pull(ctx)
 	if s := state(box); !s.Pushed.Equal(pushed) || s.Unsynced {
 		t.Errorf("after mac's plan arrived: %+v", s)
 	}
@@ -1099,20 +1103,20 @@ func TestSyncState(t *testing.T) {
 	// A plan change staged keeps sync from bringing the branch forward,
 	// and so from sending anything; a staged change elsewhere does not.
 	os.WriteFile(filepath.Join(filepath.Dir(box.Dir), "elsewhere.org"), []byte("* Not a plan\n"), 0o644)
-	gitIn(t, filepath.Dir(box.Dir), "add", "--", "elsewhere.org")
+	gitAs(t, later, filepath.Dir(box.Dir), "add", "--", "elsewhere.org")
 	if s := state(box); s.Staged {
 		t.Errorf("with a change outside the plans staged: %+v", s)
 	}
-	gitIn(t, filepath.Dir(box.Dir), "add", "--", mine.file(""))
+	gitAs(t, later, filepath.Dir(box.Dir), "add", "--", mine.file(""))
 	if s := state(box); !s.Staged || !s.Unsynced {
 		t.Errorf("with the edit staged: %+v", s)
 	}
-	gitIn(t, filepath.Dir(box.Dir), "reset", "-q", "--", mine.file(""), "elsewhere.org")
-	gitIn(t, filepath.Dir(box.Dir), "-c", "commit.gpgsign=false", "commit", "-q", "-am", "Commit everything")
+	gitAs(t, later, filepath.Dir(box.Dir), "reset", "-q", "--", mine.file(""), "elsewhere.org")
+	gitAs(t, later, filepath.Dir(box.Dir), "-c", "commit.gpgsign=false", "commit", "-q", "-am", "Commit everything")
 	if s := state(box); !s.Pushed.Equal(pushed) || !s.Unsynced {
 		t.Errorf("committed, not pushed: %+v", s)
 	}
-	if log := gitIn(t, origin, "log", "-1", "--format=%s", "main"); log != "Sync plans from mac\n" {
+	if log := gitAs(t, later, origin, "log", "-1", "--format=%s", "main"); log != "Sync plans from mac\n" {
 		t.Errorf("origin moved: %q", log)
 	}
 
@@ -1125,13 +1129,12 @@ func TestSyncState(t *testing.T) {
 		"unreachable remote": {"fetch", "-q", filepath.Join(t.TempDir(), "missing.git")},
 		"missing ref":        {"fetch", "-q", "origin", "refs/heads/missing"},
 	} {
-		gitIn(t, repo, "fetch", "-q", "origin")
+		gitAs(t, later, repo, "fetch", "-q", "origin")
 		os.Chtimes(fetchHead, good, good)
 		if s := state(box); !s.Fetched.Equal(good) {
 			t.Errorf("%s: after a good fetch: %+v", name, s)
 		}
-		cmd := exec.Command("git", args...)
-		cmd.Dir = repo
+		cmd := env.Command(env.With(ctx, later.In(repo)), "git", args...)
 		if out, err := cmd.CombinedOutput(); err == nil {
 			t.Fatalf("%s: the fetch succeeded: %s", name, out)
 		}
@@ -1153,23 +1156,24 @@ func TestSyncState(t *testing.T) {
 // With a plan change staged, a sync from origin's commit still sends this
 // host's plans but cannot fast-forward to them, and the next sends nothing.
 func testSyncStateStagedSendsOnce(t *testing.T) {
+	t.Parallel()
 	_, hosts := notes(t, "mac")
 	mac := hosts["mac"]
 	x := newPlan(t, mac, "x")
-	if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
+	if got, err := mac.Sync(asOperator(t), SyncOptions{}); err != nil || !got.Pushed {
 		t.Fatalf("first sync: %+v, %v", got, err)
 	}
 	addItems(t, x.file(""), "** Steps", "S1")
 	gitIn(t, filepath.Dir(mac.Dir), "add", "--", x.file(""))
-	got, err := mac.Sync(t.Context(), SyncOptions{})
+	got, err := mac.Sync(asOperator(t), SyncOptions{})
 	if err != nil || !got.Pushed || got.Behind != "changes to plan files are staged" {
 		t.Errorf("the sync with the change staged: %+v, %v", got, err)
 	}
 	addItems(t, x.file(""), "** Steps", "S2")
-	if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || got.Pushed {
+	if got, err := mac.Sync(asOperator(t), SyncOptions{}); err != nil || got.Pushed {
 		t.Errorf("the sync after it: %+v, %v", got, err)
 	}
-	if s, err := mac.SyncState(t.Context()); err != nil || !s.Staged || !s.Unsynced {
+	if s, err := mac.SyncState(asOperator(t)); err != nil || !s.Staged || !s.Unsynced {
 		t.Errorf("state: %+v, %v", s, err)
 	}
 }
@@ -1178,6 +1182,7 @@ func testSyncStateStagedSendsOnce(t *testing.T) {
 // over them; SyncState read meanwhile does not count that as plan changes
 // staged.
 func testSyncStateDuringOwnSync(t *testing.T) {
+	t.Parallel()
 	_, hosts := notes(t, "mac")
 	mac := hosts["mac"]
 	repo := filepath.Dir(mac.Dir)
@@ -1191,9 +1196,9 @@ func testSyncStateDuringOwnSync(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	ran := raceAt(t, repo, "--ff-only", "echo > '"+started+"'; read x < '"+release+"'")
+	ran, ctx := raceAt(t, operator(), repo, "--ff-only", "echo > '"+started+"'; read x < '"+release+"'")
 	synced, reached := make(chan error, 1), make(chan struct{})
-	go func() { _, err := mac.Sync(t.Context(), SyncOptions{}); synced <- err }()
+	go func() { _, err := mac.Sync(ctx, SyncOptions{}); synced <- err }()
 	go func() { os.ReadFile(started); close(reached) }()
 	select {
 	case <-reached:
@@ -1203,22 +1208,51 @@ func testSyncStateDuringOwnSync(t *testing.T) {
 	if staged := gitIn(t, repo, "diff", "--cached", "--name-only", "HEAD", "--", "agents"); staged == "" {
 		t.Fatal("the sync staged nothing before its fast-forward")
 	}
-	read := make(chan SyncState, 1)
+	// SyncState's git, first on its PATH, says through asked when SyncState
+	// looks for FETCH_HEAD, its last git command before it waits for the
+	// sync's lock; a SyncState that waits answers only once the sync ends.
+	asked := filepath.Join(gate, "asked")
+	if err := syscall.Mkfifo(asked, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	real, err := env.From(ctx).LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	signal := "#!/bin/sh\nfor a; do\n  if [ \"$a\" = FETCH_HEAD ] && [ ! -e '" + bin + "/said' ]; then\n" +
+		"    : > '" + bin + "/said'; echo > '" + asked + "'\n  fi\ndone\nexec '" + real + "' \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(signal), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	read, reading := make(chan SyncState, 1), make(chan struct{})
 	go func() {
-		s, err := mac.SyncState(t.Context())
+		s, err := mac.SyncState(env.With(t.Context(), onPath(env.From(ctx), bin)))
 		if err != nil {
 			t.Error(err)
 		}
 		read <- s
 	}()
+	go func() { os.ReadFile(asked); close(reading) }()
 	var s SyncState
 	got := false
-	// Bounds the time a SyncState that does not wait for the sync has to
-	// answer; one that waits answers once the sync ends.
 	select {
 	case s = <-read:
 		got = true
-	case <-time.After(2 * time.Second):
+	case <-reading:
+		// It has reached the lock. A SyncState that took none would answer
+		// now, while the sync is held, and this window is for it to: the
+		// waiting one this package has cannot be told apart from a slow
+		// one without a duration. Its end only lets the sync go on, so a
+		// slow host weakens the check and never fails a correct build.
+		select {
+		case s = <-read:
+			got = true
+		case <-time.After(2 * time.Second):
+		}
+	// Only a deadlock outlasts this: SyncState asks at once.
+	case <-time.After(2 * time.Minute):
+		t.Error("SyncState neither answered nor looked for FETCH_HEAD")
 	}
 	os.WriteFile(release, []byte("go\n"), 0o600)
 	if err := <-synced; err != nil {
@@ -1237,7 +1271,7 @@ func testSyncStateDuringOwnSync(t *testing.T) {
 // origin with a deploy key that does not exist until the test writes it.
 func cloning(t *testing.T) (c Config, root, key string) {
 	t.Helper()
-	origin, _ := notesAsIs(t)
+	origin, _ := notes(t)
 	root, _ = filepath.EvalSymlinks(t.TempDir())
 	key = filepath.Join(root, "key")
 	c = Config{Dir: filepath.Join(root, "notes", "agents"), Host: "mac", Remote: origin, Key: key,
@@ -1421,6 +1455,7 @@ func testInitClonePreserves(t *testing.T) {
 }
 
 func testInitConcurrent(t *testing.T) {
+	t.Parallel()
 	c, root, key := cloning(t)
 	c.Repo = filepath.Join(root, "notes")
 	if err := os.WriteFile(key, []byte("fixture key\n"), 0o600); err != nil {
@@ -1432,7 +1467,7 @@ func testInitConcurrent(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(c.Dir, ".gitignore"), []byte("*.lock\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	realGit, err := exec.LookPath("git")
+	realGit, err := env.Process().LookPath("git")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1471,12 +1506,8 @@ exec "$INIT_TEST_REAL_GIT" "$@"
 		t.Fatal(err)
 	}
 	clones := filepath.Join(root, "clones")
-	for name, value := range map[string]string{
-		"PATH": bin + string(os.PathListSeparator) + os.Getenv("PATH"), "INIT_TEST_REAL_GIT": realGit,
-		"INIT_TEST_READY": ready.Name(), "INIT_TEST_RELEASE": release.Name(), "INIT_TEST_CLONES": clones,
-	} {
-		t.Setenv(name, value)
-	}
+	ctx := env.With(t.Context(), onPath(env.Process(), bin).Set("INIT_TEST_REAL_GIT="+realGit,
+		"INIT_TEST_READY="+ready.Name(), "INIT_TEST_RELEASE="+release.Name(), "INIT_TEST_CLONES="+clones))
 	type result struct {
 		ready Ready
 		err   error
@@ -1484,7 +1515,7 @@ exec "$INIT_TEST_REAL_GIT" "$@"
 	init := func() <-chan result {
 		ch := make(chan result, 1)
 		go func() {
-			r, err := c.Init(t.Context())
+			r, err := c.Init(ctx)
 			ch <- result{r, err}
 		}()
 		return ch
@@ -1618,6 +1649,7 @@ func testInitConverges(t *testing.T) {
 
 // Reseal accepts a log edited outside agent-plan, and records that it did.
 func TestReseal(t *testing.T) {
+	t.Parallel()
 	withStep := func(t *testing.T) (Config, Plan) {
 		t.Helper()
 		c := testConfig(t)

@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/operatorkey"
@@ -51,26 +50,18 @@ func signing(t *testing.T, dir string) []string {
 	return []string{"-c", "user.signingkey=" + key, "commit", "-q", "-S"}
 }
 
-func bakeOperatorProfile(t *testing.T, configHome string) {
+func bakeOperatorProfile(t *testing.T, f *fakeOpen, configHome string) {
 	t.Helper()
 	state, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	bake(t, configHome, state)
+	f.bake(configHome, state)
 }
 
-// bake bakes configHome and stateHome in for the rest of the test, through
-// the process environment, which the loop reads hostpaths from. Empty ones
-// bake nothing in.
-func bake(t *testing.T, configHome, stateHome string) {
+func sshOperatorProfile(t *testing.T, f *fakeOpen) (string, []string) {
 	t.Helper()
-	t.Setenv(hostpaths.TestConfigHomeEnv, configHome)
-	t.Setenv(hostpaths.TestStateHomeEnv, stateHome)
-}
-
-func sshOperatorProfile(t *testing.T, dir string) (string, []string) {
-	t.Helper()
+	dir := f.dir
 	sign := signing(t, dir)
 	key := strings.TrimPrefix(sign[1], "user.signingkey=")
 	home, err := filepath.EvalSymlinks(t.TempDir())
@@ -104,14 +95,14 @@ func sshOperatorProfile(t *testing.T, dir string) (string, []string) {
 	for _, setting := range [][2]string{{"user.signingkey", public}, {"gpg.format", "ssh"}, {"gpg.ssh.program", program}} {
 		gitIn(t, dir, "config", "--file", config, setting[0], setting[1])
 	}
-	bakeOperatorProfile(t, configHome)
+	bakeOperatorProfile(t, f, configHome)
 	return home, sign
 }
 
 func pushedOperatorBranch(t *testing.T) (*fakeOpen, string) {
 	t.Helper()
 	f, dir := pushedBranch(t)
-	_, sign := sshOperatorProfile(t, dir)
+	_, sign := sshOperatorProfile(t, f)
 	gitIn(t, dir, append(sign, "--amend", "--no-edit", "--allow-empty")...)
 	published(t, f, dir, "feat")
 	return f, dir
@@ -120,8 +111,9 @@ func pushedOperatorBranch(t *testing.T) (*fakeOpen, string) {
 // next's check of a branch GitHub has reads the commits themselves: a
 // shallow file cannot hide the unsigned one below a signed tip.
 func TestOperatorFormatSignedShallow(t *testing.T) {
+	t.Parallel()
 	f, dir := pushedBranch(t)
-	_, sign := sshOperatorProfile(t, dir)
+	_, sign := sshOperatorProfile(t, f)
 	gitIn(t, dir, append(sign, "--allow-empty", "-m", "Signed on top")...)
 	tip := gitIn(t, dir, "rev-parse", "HEAD")
 	published(t, f, dir, "feat")
@@ -129,21 +121,23 @@ func TestOperatorFormatSignedShallow(t *testing.T) {
 		t.Fatal(err)
 	}
 	var r Refusal
-	err := operatorFormatSigned("feat", gitIn(t, dir, "rev-parse", "main"), tip)
+	err := operatorFormatSigned(f.ctx(t), "feat", gitIn(t, dir, "rev-parse", "main"), tip)
 	if !errors.As(err, &r) || !strings.Contains(err.Error(), "no signature") {
 		t.Errorf("a shallow file over an unsigned commit: %v", err)
 	}
 }
 
 func TestOpenAuthorityFailure(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"missing profile", "malformed include", "blocked include", "blocked public key"} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			f, dir := pushedOperatorBranch(t)
-			home := hostpaths.BakedConfigHome(env.Process())
+			home := hostpaths.BakedConfigHome(f.e)
 			config := filepath.Join(home, "git", "config")
 			switch name {
 			case "missing profile":
-				bake(t, filepath.Join(t.TempDir(), ".config"), t.TempDir())
+				f.bake(filepath.Join(t.TempDir(), ".config"), t.TempDir())
 			case "blocked public key":
 				public := filepath.Join(filepath.Dir(home), ".ssh", "operator.pub")
 				if err := os.Remove(public); err != nil {
@@ -164,11 +158,9 @@ func TestOpenAuthorityFailure(t *testing.T) {
 					t.Fatal(err)
 				}
 				gitIn(t, dir, "config", "--file", config, "include.path", include)
-				old := operatorVerificationTimeout
-				operatorVerificationTimeout = 100 * time.Millisecond
-				t.Cleanup(func() { operatorVerificationTimeout = old })
+				f.verifyTimeout = 100 * time.Millisecond
 			}
-			_, err := Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", false)
+			_, err := Open(f.ctx(t), "feat", "", "Add feat", "Why it is needed.", false)
 			if len(f.calls) != 0 {
 				t.Fatalf("authority failure wrote to GitHub: %v", f.calls)
 			}
@@ -192,9 +184,39 @@ func TestOpenAuthorityFailure(t *testing.T) {
 	}
 }
 
+// A check of the operator's signatures is bounded by the timeout the loop's
+// context carries, 30 s by default, and not by a fixed one. The deadline is
+// read, not waited for, and the bounds are minutes apart, so no host speed
+// changes the result.
+func TestVerifyContext(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name     string
+		ctx      context.Context
+		min, max time.Duration
+	}{
+		{"configured", withOutside(t.Context(), outside{verifyTimeout: time.Hour}), 30 * time.Minute, time.Hour},
+		{"default", t.Context(), 0, 30 * time.Second},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := verifyContext(c.ctx)
+			defer cancel()
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Fatal("a check of the operator's signatures has no deadline")
+			}
+			if left := time.Until(deadline); left <= c.min || left > c.max {
+				t.Errorf("the deadline is %s away, want between %s and %s", left, c.min, c.max)
+			}
+		})
+	}
+}
+
 func TestOperatorVerifierCanceled(t *testing.T) {
-	_, dir := pushedOperatorBranch(t)
-	configHome := hostpaths.BakedConfigHome(env.Process())
+	t.Parallel()
+	f, dir := pushedOperatorBranch(t)
+	configHome := hostpaths.BakedConfigHome(f.e)
 	config := filepath.Join(configHome, "git", "config")
 	program, err := exec.LookPath("ssh-keygen")
 	if err != nil {
@@ -215,12 +237,14 @@ func TestOperatorVerifierCanceled(t *testing.T) {
 	}
 	t.Cleanup(func() { ready.Close() })
 	verifier := filepath.Join(configHome, "waiting-verifier")
-	script := "#!/bin/sh\nif test \"$1\" = -lf; then exec " + shellQuote(program) + " \"$@\"; fi\nexec 3> " + shellQuote(fifo) + "\nprintf '%s\\n' \"$$\" >&3\nexec /bin/sleep 30\n"
+	script := "#!/bin/sh\nif test \"$1\" = -lf; then exec " + shellQuote(program) + " \"$@\"; fi\nexec 3> " + shellQuote(fifo) + "\nprintf '%s\\n' \"$$\" >&3\nexec /bin/sleep 600\n"
 	if err := os.WriteFile(verifier, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	gitIn(t, dir, "config", "--file", config, "gpg.ssh.program", verifier)
-	ctx, cancel := context.WithTimeout(git.At(t.Context(), dir), 5*time.Second)
+	// Both bounds below only catch a verifier that never starts or never
+	// dies; they are far above any run on a slow host.
+	ctx, cancel := context.WithTimeout(f.ctx(t), 2*time.Minute)
 	defer cancel()
 	pid := make(chan int, 1)
 	reader := bufio.NewReader(ready)
@@ -242,7 +266,7 @@ func TestOperatorVerifierCanceled(t *testing.T) {
 		}
 		exited := make(chan error, 1)
 		go func() { _, err := reader.ReadByte(); exited <- err }()
-		timer := time.NewTimer(time.Second)
+		timer := time.NewTimer(2 * time.Minute)
 		defer timer.Stop()
 		select {
 		case err := <-exited:
@@ -305,6 +329,7 @@ func openPGPPublicState(t *testing.T, home string) map[string][sha256.Size]byte 
 }
 
 func TestOpenOperatorOpenPGP(t *testing.T) {
+	t.Parallel()
 	// gpg-agent, which signs the fixture's commits, listens on sockets in
 	// the keyring, and macOS limits a socket's path to 103 bytes: each case's
 	// home is under this test's directory, whose name is shorter than a
@@ -319,6 +344,7 @@ func TestOpenOperatorOpenPGP(t *testing.T) {
 		"keyboxd socket alias",
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			keyboxd := strings.HasPrefix(name, "keyboxd")
 			if keyboxd && runtime.GOOS != "darwin" {
 				t.Skip("keyboxd signing authorization supports Darwin only")
@@ -416,15 +442,16 @@ func TestOpenOperatorOpenPGP(t *testing.T) {
 				gitIn(t, dir, "config", "--file", config, setting[0], setting[1])
 			}
 			if keyboxd {
-				bake(t, configHome, filepath.Join(home, "state"))
+				f.bake(configHome, filepath.Join(home, "state"))
 			} else {
-				bakeOperatorProfile(t, configHome)
+				bakeOperatorProfile(t, f, configHome)
 			}
-			t.Setenv("GNUPGHOME", keyring)
-			gitIn(t, dir, "-c", "gpg.format=openpgp", "-c", "gpg.program="+program, "-c", "user.signingkey="+signer,
+			f.set("GNUPGHOME=" + keyring)
+			keyed := []string{"GNUPGHOME=" + keyring}
+			gitWith(t, dir, keyed, "-c", "gpg.format=openpgp", "-c", "gpg.program="+program, "-c", "user.signingkey="+signer,
 				"commit", "-q", "-S", "--amend", "--no-edit", "--allow-empty")
 			if keyboxd {
-				gitIn(t, dir, "-c", "gpg.format=openpgp", "-c", "gpg.program="+program, "verify-commit", "HEAD")
+				gitWith(t, dir, keyed, "-c", "gpg.format=openpgp", "-c", "gpg.program="+program, "verify-commit", "HEAD")
 			}
 			marker := filepath.Join(home, "profile-option-used")
 			if keyboxd {
@@ -495,7 +522,6 @@ func TestOpenOperatorOpenPGP(t *testing.T) {
 				before = openPGPPublicState(t, keyring)
 			}
 			published(t, f, dir, "feat")
-			oldBuildRoot, buildRootWasSet := os.LookupEnv("GNUPG_BUILD_ROOT")
 			if keyboxd {
 				buildRoot := filepath.Join(home, "untrusted-build")
 				for _, path := range []string{filepath.Join(buildRoot, "bin"), filepath.Join(buildRoot, "etc")} {
@@ -510,16 +536,9 @@ func TestOpenOperatorOpenPGP(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(buildRoot, "etc", "common.conf"), []byte("use-keyboxd\n"), 0600); err != nil {
 					t.Fatal(err)
 				}
-				t.Setenv("GNUPG_BUILD_ROOT", buildRoot)
+				f.set("GNUPG_BUILD_ROOT=" + buildRoot)
 			}
-			_, err = Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", false)
-			if keyboxd {
-				if buildRootWasSet {
-					t.Setenv("GNUPG_BUILD_ROOT", oldBuildRoot)
-				} else if err := os.Unsetenv("GNUPG_BUILD_ROOT"); err != nil {
-					t.Fatal(err)
-				}
-			}
+			_, err = Open(f.ctx(t), "feat", "", "Add feat", "Why it is needed.", false)
 			if want {
 				if err != nil || len(f.calls) != 1 {
 					t.Fatalf("authorized OpenPGP: %v, calls %v", err, f.calls)
@@ -556,10 +575,12 @@ func TestOpenOperatorOpenPGP(t *testing.T) {
 }
 
 func TestOpenOperatorSignature(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"operator", "different author", "unsigned", "wrong key", "public key hardlink", "configuration hardlink", "tracking exclusion", "replacement traversal", "grafted traversal", "shallow traversal", "cached traversal", "object identity", "temporary environment ignored", "environment override", "included key override", "irrelevant include", "public key escape", "verifier override", "tampered payload", "unbaked"} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			f, dir := pushedBranch(t)
-			home, sign := sshOperatorProfile(t, dir)
+			home, sign := sshOperatorProfile(t, f)
 			unsigned := gitIn(t, dir, "rev-parse", "HEAD")
 			config := filepath.Join(home, ".config", "git", "config")
 			want := name == "operator" || name == "different author" || name == "environment override" || name == "irrelevant include" || name == "temporary environment ignored"
@@ -633,7 +654,7 @@ func TestOpenOperatorSignature(t *testing.T) {
 			case "object identity":
 				// The named object must match its content even when the other
 				// payload carries a legitimate signature.
-				raw, err := git.Bytes(nil, "cat-file", "commit", "HEAD")
+				raw, err := git.In(f.ctx(t)).Bytes(nil, "cat-file", "commit", "HEAD")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -652,7 +673,7 @@ func TestOpenOperatorSignature(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "tampered payload":
-				raw, err := git.Bytes(nil, "cat-file", "commit", "HEAD")
+				raw, err := git.In(f.ctx(t)).Bytes(nil, "cat-file", "commit", "HEAD")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -660,17 +681,15 @@ func TestOpenOperatorSignature(t *testing.T) {
 				if bytes.Equal(raw, changed) {
 					t.Fatal("fixture message was not changed")
 				}
-				oid, err := git.Bytes(changed, "hash-object", "-t", "commit", "-w", "--stdin")
+				oid, err := git.In(f.ctx(t)).Bytes(changed, "hash-object", "-t", "commit", "-w", "--stdin")
 				if err != nil {
 					t.Fatal(err)
 				}
 				gitIn(t, dir, "update-ref", "HEAD", strings.TrimSpace(string(oid)))
 			case "environment override":
-				t.Setenv("HOME", t.TempDir())
-				t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-				t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(dir, "forged-global"))
+				f.set("HOME="+t.TempDir(), "XDG_CONFIG_HOME="+t.TempDir(), "GIT_CONFIG_GLOBAL="+filepath.Join(dir, "forged-global"))
 			case "temporary environment ignored":
-				t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing-untrusted-temp"))
+				f.set("TMPDIR=" + filepath.Join(t.TempDir(), "missing-untrusted-temp"))
 			case "included key override", "irrelevant include":
 				include := filepath.Join(dir, "included-config")
 				gitIn(t, dir, "config", "--file", config, "include.path", include)
@@ -702,13 +721,13 @@ func TestOpenOperatorSignature(t *testing.T) {
 				}
 				gitIn(t, dir, "config", "gpg.ssh.program", fake)
 			case "unbaked":
-				bake(t, "", "")
-				t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+				f.bake("", "")
+				f.set("XDG_CONFIG_HOME=" + filepath.Join(home, ".config"))
 			}
 			if name != "object identity" {
 				published(t, f, dir, "feat")
 			}
-			_, err := Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", false)
+			_, err := Open(f.ctx(t), "feat", "", "Add feat", "Why it is needed.", false)
 			if want {
 				if err != nil || strings.Join(f.calls, " ") != "createPullRequest" {
 					t.Fatalf("authorized: error %v, mutations %v", err, f.calls)

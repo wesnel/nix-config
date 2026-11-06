@@ -10,6 +10,7 @@ import (
 // References the operator gives a session stay in its plan, with what each was
 // used for.
 func TestReference(t *testing.T) {
+	t.Parallel()
 	const guide = "https://github.com/cursor/plugins/blob/main/pstack/docs/guide/08-principles.md"
 
 	t.Run("added, then noted", func(t *testing.T) {
@@ -78,6 +79,7 @@ func TestReference(t *testing.T) {
 // the session's plan, quietly; a prompt that carries tool or agent output
 // is not theirs.
 func TestPromptReferences(t *testing.T) {
+	t.Parallel()
 	prompt := func(text string) []byte {
 		data, _ := json.Marshal(map[string]any{"session_id": "abc", "transcript_path": "/h/.claude/projects/p/abc.jsonl",
 			"cwd": "/nowhere", "permission_mode": "default", "hook_event_name": "UserPromptSubmit", "prompt": text})

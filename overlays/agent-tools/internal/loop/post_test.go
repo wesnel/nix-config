@@ -23,14 +23,21 @@ type fakeTTY struct {
 func (f *fakeTTY) Write(p []byte) (int, error) { return f.shown.Write(p) }
 func (f *fakeTTY) Close() error                { return nil }
 
-// useTTY has Post read answers from a fake terminal.
-func useTTY(t *testing.T, answers string) *fakeTTY {
-	t.Helper()
+// useTTY has what runs under *ctx read answers from a fake terminal, as
+// the operator's is not the test's to use.
+func useTTY(ctx *context.Context, answers string) *fakeTTY {
 	tty := &fakeTTY{Reader: strings.NewReader(answers)}
-	old := openTTY
-	openTTY = func() (io.ReadWriteCloser, error) { return tty, nil }
-	t.Cleanup(func() { openTTY = old })
+	*ctx = alsoOutside(*ctx, func(o *outside) {
+		o.openTTY = func() (io.ReadWriteCloser, error) { return tty, nil }
+	})
 	return tty
+}
+
+// noTTY has what runs under *ctx find no terminal.
+func noTTY(ctx *context.Context) {
+	*ctx = alsoOutside(*ctx, func(o *outside) {
+		o.openTTY = func() (io.ReadWriteCloser, error) { return nil, errors.New("device not configured") }
+	})
 }
 
 // draftedRepo is fakeRepo in a people-mode loop with PR 2's record written,
@@ -49,17 +56,19 @@ func draftedRepo(t *testing.T) (*fakeGitHub, *[]string) {
 		t.Fatal(err)
 	}
 	var requested []string
-	old := requestReviewer
-	requestReviewer = func(_ context.Context, slug string, number int, reviewer string) error {
-		requested = append(requested, reviewer)
-		return nil
-	}
-	t.Cleanup(func() { requestReviewer = old })
+	f.ctx = alsoOutside(f.ctx, func(o *outside) {
+		o.requestReviewer = func(_ context.Context, slug string, number int, reviewer string) error {
+			requested = append(requested, reviewer)
+			return nil
+		}
+	})
 	return f, &requested
 }
 
 func TestDraft(t *testing.T) {
+	t.Parallel()
 	t.Run("people mode only", func(t *testing.T) {
+		t.Parallel()
 		for _, mode := range []string{"", "bots"} {
 			f := fakeRepo(t)
 			if _, err := Draft(f.in(mode), "human2", "x", "fix"); !refusedWell(err) {
@@ -69,6 +78,7 @@ func TestDraft(t *testing.T) {
 	})
 
 	t.Run("written to the record", func(t *testing.T) {
+		t.Parallel()
 		f, _ := draftedRepo(t)
 		path, _ := record.PRFile(env.From(f.ctx), "o", "r", 2)
 		p, err := record.ReadPR(path)
@@ -91,6 +101,7 @@ func TestDraft(t *testing.T) {
 		"a thread not in record": {"human1", "x", "fix"},
 	} {
 		t.Run("refused/"+name, func(t *testing.T) {
+			t.Parallel()
 			f := fakeRepo(t)
 			if _, err := Draft(f.in("people"), args[0], args[1], args[2]); err == nil {
 				t.Errorf("%s was drafted", name)
@@ -106,6 +117,7 @@ func TestDraft(t *testing.T) {
 		"over the cap":        strings.Repeat("a", record.TextCap+1),
 	} {
 		t.Run("changed by the record/"+name, func(t *testing.T) {
+			t.Parallel()
 			f, _ := draftedRepo(t)
 			_, err := Draft(f.in("people"), "human2", body, "fix")
 			if !refusedWell(err) || !strings.Contains(err.Error(), "other than as written") {
@@ -124,12 +136,14 @@ func TestDraft(t *testing.T) {
 }
 
 func TestPost(t *testing.T) {
+	t.Parallel()
 	// Each draft is shown, and posted as shown once the operator says y;
 	// fix and rebut resolve the thread; once the person's thread has its
 	// answer, they are asked to review again.
 	t.Run("confirmed", func(t *testing.T) {
+		t.Parallel()
 		f, requested := draftedRepo(t)
-		tty := useTTY(t, "y\ny\n")
+		tty := useTTY(&f.ctx, "y\ny\n")
 		got, err := Post(f.ctx, 2, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -149,15 +163,16 @@ func TestPost(t *testing.T) {
 			t.Errorf("not marked posted: %+v", p.Threads)
 		}
 		// Posted drafts are not offered again.
-		useTTY(t, "y\n")
+		useTTY(&f.ctx, "y\n")
 		if _, err := Post(f.ctx, 2, nil); err != nil || len(f.replies) != 2 {
 			t.Errorf("posting again: %v, %v", err, f.replies)
 		}
 	})
 
 	t.Run("n skips", func(t *testing.T) {
+		t.Parallel()
 		f, requested := draftedRepo(t)
-		useTTY(t, "n\ny\n")
+		useTTY(&f.ctx, "n\ny\n")
 		if _, err := Post(f.ctx, 2, nil); err != nil {
 			t.Fatal(err)
 		}
@@ -170,8 +185,9 @@ func TestPost(t *testing.T) {
 	})
 
 	t.Run("named threads alone", func(t *testing.T) {
+		t.Parallel()
 		f, requested := draftedRepo(t)
-		useTTY(t, "y\n")
+		useTTY(&f.ctx, "y\n")
 		if _, err := Post(f.ctx, 2, []string{"bot2"}); err != nil {
 			t.Fatal(err)
 		}
@@ -181,10 +197,9 @@ func TestPost(t *testing.T) {
 	})
 
 	t.Run("no terminal", func(t *testing.T) {
+		t.Parallel()
 		f, _ := draftedRepo(t)
-		old := openTTY
-		openTTY = func() (io.ReadWriteCloser, error) { return nil, errors.New("device not configured") }
-		t.Cleanup(func() { openTTY = old })
+		noTTY(&f.ctx)
 		if _, err := Post(f.ctx, 2, nil); !refusedWell(err) || len(f.replies) != 0 {
 			t.Errorf("no terminal: %v, %v", err, f.replies)
 		}

@@ -11,6 +11,7 @@ import (
 )
 
 func TestPlanEnvironment(t *testing.T) {
+	t.Parallel()
 	home := os.Getenv("HOME")
 	temp, _ := filepath.EvalSymlinks(os.TempDir())
 	realHome, _ := filepath.EvalSymlinks(home)

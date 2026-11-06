@@ -136,7 +136,7 @@ func TestIn(t *testing.T) {
 	dir := t.TempDir()
 	run := func(args ...string) {
 		t.Helper()
-		if _, err := git.Run(append([]string{"-C", dir}, args...)...); err != nil {
+		if _, err := git.In(ctx).Run(append([]string{"-C", dir}, args...)...); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -183,5 +183,24 @@ func TestInPaths(t *testing.T) {
 				t.Errorf("Paths = %q, want %q first", paths, c.want)
 			}
 		})
+	}
+}
+
+// The session, and the plans directory a reader cannot open, are those the
+// context's Env names, as a Codex thread's tool call gives them, not this
+// process's.
+func TestInSession(t *testing.T) {
+	t.Parallel()
+	plans := t.TempDir()
+	config := filepath.Join(t.TempDir(), "config.json")
+	os.WriteFile(config, []byte(`{"plans": {"dir": "`+plans+`", "host": "box"}}`), 0o644)
+	ctx := env.With(t.Context(), env.Process().Without("CLAUDE_CODE_SESSION_ID").
+		Set("CODEX_THREAD_ID=thread-of-the-env", "AGENT_TOOLS_CONFIG="+config))
+	got := In(ctx, t.TempDir())
+	if !slices.Contains(got.Sessions, "thread-of-the-env") {
+		t.Errorf("Sessions = %q, want the Env's thread", got.Sessions)
+	}
+	if !slices.Contains(got.Paths, filepath.Clean(plans)) {
+		t.Errorf("Paths = %q, want the plans directory of the Env's config, %s", got.Paths, plans)
 	}
 }

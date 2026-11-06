@@ -16,7 +16,9 @@ import (
 )
 
 func TestPlanCommitRewrites(t *testing.T) {
+	t.Parallel()
 	t.Run("fork duplicate subjects and reword", func(t *testing.T) {
+		t.Parallel()
 		ctx, repo, _ := flakyRepo(t)
 		gitIn(t, repo, "remote", "add", "origin", "git@github.com:o/r.git")
 		gitIn(t, repo, "commit", "--amend", "--allow-empty", "-m", "a")
@@ -61,6 +63,7 @@ func TestPlanCommitRewrites(t *testing.T) {
 		}
 	})
 	t.Run("fixup identities", func(t *testing.T) {
+		t.Parallel()
 		ctx, repo, _ := flakyRepo(t)
 		gitIn(t, repo, "remote", "add", "origin", "git@github.com:o/r.git")
 		gitIn(t, repo, "commit", "--allow-empty", "-m", "fixup! a")
@@ -153,12 +156,13 @@ func TestPlanCommitRewrites(t *testing.T) {
 		}},
 	} {
 		t.Run(c.name+" warns and signs", func(t *testing.T) {
+			t.Parallel()
 			ctx, repo, _ := flakyRepo(t)
 			gitIn(t, repo, "remote", "add", "origin", "git@github.com:o/r.git")
 			ctx, cfg, p, config := commitPlan(t, ctx, repo)
 			identity := recordCommitted(t, p, repo, "one")
 			restore := c.spoil(t, p, config)
-			stderr := captureStderr(t)
+			ctx, stderr := captureStderr(t, ctx)
 			result, err := Run(ctx, "main", false, false, false)
 			if err != nil {
 				t.Fatalf("a pass that could not record its rewrites failed: %v", err)
@@ -186,6 +190,7 @@ func TestPlanCommitRewrites(t *testing.T) {
 	// once verify has passed, so finish is given a pending state whose
 	// unsigned tip has a commit more than the signed branch.
 	t.Run("count mismatch warns and records nothing", func(t *testing.T) {
+		t.Parallel()
 		ctx, repo, _ := flakyRepo(t)
 		gitIn(t, repo, "remote", "add", "origin", "git@github.com:o/r.git")
 		ctx, cfg, p, _ := commitPlan(t, ctx, repo)
@@ -207,7 +212,7 @@ func TestPlanCommitRewrites(t *testing.T) {
 		if err := writeJSON(path, pass); err != nil {
 			t.Fatal(err)
 		}
-		stderr := captureStderr(t)
+		ctx, stderr := captureStderr(t, ctx)
 		if _, _, err := finish(ctx, pass, path); err != nil {
 			t.Fatalf("a rewrite that does not pair up failed the pass: %v", err)
 		}

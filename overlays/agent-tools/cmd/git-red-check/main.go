@@ -105,7 +105,7 @@ func main() {
 		rev = positional[0]
 	}
 
-	if err := git.CheckConfig(""); err != nil {
+	if err := git.In(context.Background()).CheckConfig(""); err != nil {
 		os.Exit(cli.Report("git-red-check", nil, err, 0, os.Stdout, os.Stderr))
 	}
 	opts := redcheck.Options{
