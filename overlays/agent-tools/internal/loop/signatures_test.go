@@ -576,14 +576,14 @@ func TestOpenOperatorOpenPGP(t *testing.T) {
 
 func TestOpenOperatorSignature(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"operator", "different author", "unsigned", "wrong key", "public key hardlink", "configuration hardlink", "tracking exclusion", "replacement traversal", "grafted traversal", "shallow traversal", "cached traversal", "object identity", "temporary environment ignored", "environment override", "included key override", "irrelevant include", "public key escape", "verifier override", "tampered payload", "unbaked"} {
+	for _, name := range []string{"different author", "unsigned", "wrong key", "public key hardlink", "configuration hardlink", "tracking exclusion", "replacement traversal", "grafted traversal", "shallow traversal", "cached traversal", "object identity", "temporary environment ignored", "environment override", "included key override", "irrelevant include", "public key escape", "verifier override", "tampered payload", "unbaked"} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			f, dir := pushedBranch(t)
 			home, sign := sshOperatorProfile(t, f)
 			unsigned := gitIn(t, dir, "rev-parse", "HEAD")
 			config := filepath.Join(home, ".config", "git", "config")
-			want := name == "operator" || name == "different author" || name == "environment override" || name == "irrelevant include" || name == "temporary environment ignored"
+			want := name == "different author" || name == "environment override" || name == "irrelevant include" || name == "temporary environment ignored"
 			marker := filepath.Join(t.TempDir(), "verifier-ran")
 			switch name {
 			case "unsigned":

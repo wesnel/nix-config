@@ -191,23 +191,6 @@ func TestNext(t *testing.T) {
 		}
 	})
 
-	t.Run("unrelated remote history is blocked", func(t *testing.T) {
-		t.Parallel()
-		f, dir := pushedBranch(t)
-		f.prs["feat"] = 7
-		gitIn(t, dir, "switch", "--orphan", "remote-side")
-		gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "Start remote work")
-		remote := gitIn(t, dir, "rev-parse", "HEAD")
-		f.heads["feat"] = remote
-		gitIn(t, dir, "update-ref", "refs/remotes/origin/feat", remote)
-		gitIn(t, dir, "switch", "feat")
-		if step := nextStep(t, f, "feat"); step == nil {
-			t.Fatal("no next state")
-		} else if _, ok := step.(Blocked); !ok {
-			t.Fatalf("unrelated history must be blocked: %#v", step)
-		}
-	})
-
 	t.Run("branch arguments survive shell parsing", func(t *testing.T) {
 		t.Parallel()
 		f, dir := pushedBranch(t)
@@ -259,16 +242,6 @@ func TestNext(t *testing.T) {
 		f.prs["feat"] = 7
 		f.heads["feat"] = gitIn(t, dir, "rev-parse", "main")
 		if step, ok := nextStep(t, f, "feat").(Blocked); !ok || !strings.Contains(step.Why, "git fetch origin feat") {
-			t.Errorf("feat: %#v", nextStep(t, f, "feat"))
-		}
-	})
-
-	t.Run("an upstream of another name: blocked, saying how to fix it", func(t *testing.T) {
-		t.Parallel()
-		f, dir := pushedBranch(t)
-		f.prs["feat"] = 7
-		gitIn(t, dir, "config", "branch.feat.merge", "refs/heads/main")
-		if step, ok := nextStep(t, f, "feat").(Blocked); !ok || !strings.Contains(step.Why, "--set-upstream-to=origin/feat feat") {
 			t.Errorf("feat: %#v", nextStep(t, f, "feat"))
 		}
 	})

@@ -1386,8 +1386,10 @@ func testPushUnmoved(t *testing.T) {
 // the protected operator key signed every commit it sends, whatever the
 // repository's allowed signers trust: a commit another key signed, trusted
 // there or not, one whose signature does not match it, and one in another
-// format are refused before the push, by a single-branch pass and a pass
-// over named branches. The marks a verifier gives are operatorkey's tests'.
+// format are refused before the push, by a single-branch pass. A pass over
+// named branches reaches the same check (gate) for any commit, so one case
+// it pushes and one it refuses cover it. The marks a verifier gives are
+// operatorkey's tests'.
 func testPushUnmovedSigners(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
@@ -1398,17 +1400,19 @@ func testPushUnmovedSigners(t *testing.T) {
 		// mark is git's %G? for the commit.
 		mark   string
 		pushed bool
+		// named is whether a pass over named branches is checked too.
+		named bool
 	}{
 		{"operator's key, trusted", func(t *testing.T, ctx context.Context, dir, repo string) {
 			signedCommit(t, ctx, "")
-		}, "G", true},
+		}, "G", true, true},
 		{"operator's key, untrusted", func(t *testing.T, ctx context.Context, dir, repo string) {
 			signedCommit(t, ctx, "")
 			os.WriteFile(filepath.Join(dir, "signers"), nil, 0o644)
-		}, "U", true},
+		}, "U", true, false},
 		{"another key, untrusted", func(t *testing.T, ctx context.Context, dir, repo string) {
 			signedCommit(t, ctx, sshKey(t, filepath.Join(dir, "other")))
-		}, "U", false},
+		}, "U", false, false},
 		{"another key, trusted", func(t *testing.T, ctx context.Context, dir, repo string) {
 			other := sshKey(t, filepath.Join(dir, "other"))
 			pub, _ := os.ReadFile(other + ".pub")
@@ -1416,17 +1420,17 @@ func testPushUnmovedSigners(t *testing.T) {
 			f.WriteString("o@e namespaces=\"git\" " + string(pub))
 			f.Close()
 			signedCommit(t, ctx, other)
-		}, "G", false},
+		}, "G", false, true},
 		{"bad signature", func(t *testing.T, ctx context.Context, dir, repo string) {
 			signedCommit(t, ctx, "")
 			object := gitIn(t, repo, "cat-file", "commit", "HEAD")
 			forged := filepath.Join(dir, "forged")
 			os.WriteFile(forged, []byte(strings.Replace(object, "\n\nO1", "\n\nO1 changed", 1)+"\n"), 0o644)
 			gitIn(t, repo, "reset", "-q", "--hard", gitIn(t, repo, "hash-object", "-t", "commit", "-w", forged))
-		}, "B", false},
+		}, "B", false, false},
 		{"cannot be checked", func(t *testing.T, ctx context.Context, dir, repo string) {
 			pgpCommit(t, dir, repo, "ERRSIG 0123456789ABCDEF 22 8 00 1700000000 9 -", "NO_PUBKEY 0123456789ABCDEF")
-		}, "E", false},
+		}, "E", false, false},
 		// The repository's own key and verifier vouch for this one.
 		{"an OpenPGP key the repository names", func(t *testing.T, ctx context.Context, dir, repo string) {
 			gitIn(t, repo, "config", "gpg.format", "openpgp")
@@ -1434,9 +1438,12 @@ func testPushUnmovedSigners(t *testing.T) {
 			pgpCommit(t, dir, repo, "GOODSIG 89ABCDEF01234567 T <t@e>",
 				"VALIDSIG 0123456789ABCDEF0123456789ABCDEF01234567 2023-11-14 1700000000 0 4 0 22 8 00 0123456789ABCDEF0123456789ABCDEF01234567",
 				"TRUST_ULTIMATE 0 pgp")
-		}, "G", false},
+		}, "G", false, false},
 	} {
 		for _, named := range []bool{false, true} {
+			if named && !c.named {
+				continue
+			}
 			name := c.name
 			if named {
 				name += ", named"

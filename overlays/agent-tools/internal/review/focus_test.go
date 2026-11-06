@@ -146,9 +146,9 @@ func TestSecurityReviewer(t *testing.T) {
 		f.checkCleanedUp(t)
 	})
 
-	// The reply is taken from the structured output, a fenced json block
-	// of the result, or the result's last JSON object; with none, the type
-	// is asked once more, then dropped.
+	// The reply is taken from the structured output or the result's text,
+	// as TestReplyJSON shows for each form; with none, the type is asked
+	// once more, then dropped.
 	reply := string(must(json.Marshal(securityReply(finding))))
 	for _, c := range []struct {
 		name string
@@ -157,7 +157,6 @@ func TestSecurityReviewer(t *testing.T) {
 		runs string
 	}{
 		{"a fenced block", []string{claudeResult(nil, "Findings:\n```json\n{\"draft\": 1}\n```\nand then\n```json\n"+reply+"\n```\n")}, 3, "1"},
-		{"a bare object", []string{claudeResult(nil, `Done. {"a": {"b": 1}} The reply: `+reply+` That is all.`)}, 3, "1"},
 		{"neither, then a reply", []string{claudeResult(nil, "No JSON here."), claudeResult(securityReply(finding), "")}, 3, "2"},
 		{"neither, twice", []string{claudeResult(nil, "No JSON here.")}, 4, "2"},
 		{"a category left out, twice", []string{claudeResult(map[string]any{"findings": []any{}, "unverified": []any{},

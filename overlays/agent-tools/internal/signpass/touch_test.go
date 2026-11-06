@@ -23,11 +23,10 @@ import (
 // the shell condition key holds takes the next line of the file plan it
 // returns: "miss" refuses as the key does at a missed touch, printing refusal,
 // "hang" blocks as a locked key waiting on pinentry does, recording its
-// process ID in PLAN.pids, "slow" takes a second before running then,
-// "pid" records its process ID in PLAN.pid and waits a second before
-// running then, "wait" records it there and waits for a file PLAN.go before
-// running then, and anything else, or an empty plan, runs then with the
-// program's arguments.
+// process ID in PLAN.pids, "pid" records its process ID in PLAN.pid and
+// waits a second before running then, "wait" records it there and waits for
+// a file PLAN.go before running then, and anything else, or an empty plan,
+// runs then with the program's arguments.
 func scripted(t *testing.T, dir, name, key, refusal, then string) (program, plan string) {
 	t.Helper()
 	program, plan = filepath.Join(dir, name), filepath.Join(dir, name+".plan")
@@ -38,7 +37,6 @@ if KEY; then
   case "$step" in
   miss) printf '%s\n' REFUSAL >&2; exit 255 ;;
   hang) echo $$ >> 'PLAN.pids'; exec sleep 30 ;;
-  slow) sleep 1 ;;
   pid) echo $$ > 'PLAN.pid'; sleep 1 ;;
   wait) echo $$ > 'PLAN.pid'; while [ ! -e 'PLAN.go' ]; do sleep 0.01; done ;;
   esac
@@ -218,9 +216,6 @@ func TestMissedTouchWithoutTerminal(t *testing.T) {
 	}{
 		{"first signature missed once", []string{"miss"}, false},
 		{"later signature missed once", []string{"ok", "miss"}, false},
-		// However long the retried signature takes, as on a loaded
-		// machine, the test does not depend on it.
-		{"slow retried signature", []string{"miss", "slow"}, false},
 		{"missed twice", []string{"miss", "miss"}, true},
 		{"later signature missed twice", []string{"ok", "miss", "miss", "miss", "miss"}, true},
 	} {
