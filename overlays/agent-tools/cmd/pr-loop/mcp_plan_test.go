@@ -80,6 +80,16 @@ func TestMCPPlan(t *testing.T) {
 			t.Fatalf("goal = %q, err %v", got, err)
 		}
 	})
+	t.Run("visual round trip", func(t *testing.T) {
+		const url = "https://github.com/user-attachments/assets/1a2b"
+		v := call(t, "visual", map[string]any{"branch": "loop", "url": url, "caption": "The plan page"})
+		call(t, "visual", map[string]any{"entry": v["id"], "url": url + "c"})
+		data, err := os.ReadFile(f.plan)
+		if err != nil || !strings.Contains(string(data), "*** The plan page\n:PROPERTIES:\n:CUSTOM_ID: "+v["id"].(string)+
+			"\n:BRANCH: loop\n:URL: "+url+"c\n:END:\n") {
+			t.Fatalf("visual: %v\n%s", err, data)
+		}
+	})
 	t.Run("empty section", func(t *testing.T) {
 		call(t, "section", map[string]any{"section": "Verification", "text": "Temporary verification text."})
 		before, err := os.ReadFile(f.plan)
