@@ -287,6 +287,12 @@
     "allow": ["pr-loop draft PRRT_kwDOx --body-file d.md --outcome fix", "grep -n 'pr-loop post' SKILL.md"]
   },
   {
+    "why": "Outside a bots-mode loop, posting replies to bot threads is the operator's, each confirmed on their terminal; an agent's harness may give it a terminal of its own. The examples run with PR_LOOP_MODE empty; in a bots-mode loop the guard allows reply (testReplyInLoop).",
+    "scope": "baseline",
+    "deny": ["pr-loop reply --from r.md --round 1", "cd r && pr-loop reply --from - --round 2", "pr-loop reply PRRT_kwDOx --body-file r.md"],
+    "allow": ["pr-loop threads 12", "grep -n 'pr-loop reply' SKILL.md"]
+  },
+  {
     "why": "pr-loop.* settings are the operator's to change.",
     "scope": "baseline",
     "deny": ["git config pr-loop.x 1", "git config --unset pr-loop.x"],

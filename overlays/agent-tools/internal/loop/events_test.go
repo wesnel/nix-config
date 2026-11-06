@@ -83,6 +83,36 @@ func TestLoopEvents(t *testing.T) {
 		expectEvents(t, p, "replied: in thread bot1 on #1", "resolved: thread bot1 on #1")
 	})
 
+	// Each thread a reply file answers is a finding settled with the
+	// file's outcome, in the round given, so the agent need not log it;
+	// a thread already resolved, answered by nothing, is not.
+	t.Run("a reply file settles findings", func(t *testing.T) {
+		fakeRepo(t)
+		t.Setenv(ModeEnv, "bots")
+		p := loopPlan(t, []string{git.Dir}, nil)
+		plan, err := ParseReplies(replyFile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ReplyAll(plan, 3); err != nil {
+			t.Fatal(err)
+		}
+		events, err := p.Events()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, e := range events {
+			if e.Kind == "finding-settled" {
+				got = append(got, e.Item+" "+e.Review+" "+e.Outcome)
+			}
+		}
+		want := []string{p.Name + " 3.bot1 fix", p.Name + " 3.bot2 defer"}
+		if strings.Join(got, "\n") != strings.Join(want, "\n") {
+			t.Errorf("settled:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+		}
+	})
+
 	t.Run("CI", func(t *testing.T) {
 		f := ciRepo(t)
 		f.checks["a1"] = passing

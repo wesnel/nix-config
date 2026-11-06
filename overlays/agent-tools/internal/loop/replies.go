@@ -1,16 +1,24 @@
 package loop
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"regexp"
+	"slices"
 	"strings"
+
+	"github.com/wesnel/agent-tools/internal/plans"
+	"github.com/wesnel/agent-tools/internal/record"
 )
 
 // PlannedReply is one section of a reply file.
 type PlannedReply struct {
 	Thread  string
+	Outcome string
 	Body    string
 	Resolve bool
 }
@@ -19,12 +27,14 @@ type PlannedReply struct {
 // begins with it is a header, so a body cannot contain such a line.
 const ReplyHeader = "=== thread"
 
-var replyHeader = regexp.MustCompile(`^=== thread (\S+)( resolve)?$`)
+var replyHeader = regexp.MustCompile(`^=== thread (\S+) (\S+)( resolve)?$`)
 
 // ParseReplies reads a reply file: sections, each a header line
-// "=== thread THREAD" or "=== thread THREAD resolve", followed by the reply's
-// Markdown body up to the next header. Blank lines around a body are
-// dropped; everything else, including code fences, is kept as written.
+// "=== thread THREAD OUTCOME" or "=== thread THREAD OUTCOME resolve",
+// OUTCOME being how the reply settles the thread (record.Outcomes),
+// followed by the reply's Markdown body up to the next header. Blank lines
+// around a body are dropped; everything else, including code fences, is
+// kept as written.
 func ParseReplies(text string) ([]PlannedReply, error) {
 	var out []PlannedReply
 	var body []string
@@ -59,8 +69,9 @@ func ParseReplies(text string) ([]PlannedReply, error) {
 			continue
 		}
 		m := replyHeader.FindStringSubmatch(strings.TrimRight(line, "\r"))
-		if m == nil {
-			return nil, fmt.Errorf("line %d: %q is not %q or %q", n, line, ReplyHeader+" THREAD", ReplyHeader+" THREAD resolve")
+		if m == nil || !slices.Contains(record.Outcomes, m[2]) {
+			return nil, fmt.Errorf("line %d: %q is not %q or %q, OUTCOME being how the reply settles the thread: one of %s",
+				n, line, ReplyHeader+" THREAD OUTCOME", ReplyHeader+" THREAD OUTCOME resolve", strings.Join(record.Outcomes, ", "))
 		}
 		if err := finish(); err != nil {
 			return nil, err
@@ -69,7 +80,7 @@ func ParseReplies(text string) ([]PlannedReply, error) {
 			return nil, fmt.Errorf("line %d: %s already has a section, at line %d", n, m[1], first)
 		}
 		seen[m[1]] = n
-		out = append(out, PlannedReply{Thread: m[1], Resolve: m[2] != ""})
+		out = append(out, PlannedReply{Thread: m[1], Outcome: m[2], Resolve: m[3] != ""})
 	}
 	if err := finish(); err != nil {
 		return nil, err
@@ -90,14 +101,32 @@ type ReplyResult struct {
 }
 
 // ReplyAll posts each planned reply and resolves the threads marked for it,
-// skipping threads already resolved. Every thread is checked before anything
-// is posted, so one bad section leaves nothing half done.
-func ReplyAll(plan []PlannedReply) ([]ReplyResult, error) {
-	if err := requireMode("reply", "bots"); err != nil {
-		return nil, err
+// skipping threads already resolved, and logs each thread it answers as a
+// finding settled in review round round, with the reply's outcome. Every
+// thread is checked before anything is posted, so one bad section leaves
+// nothing half done.
+//
+// It runs in a bots-mode loop, or outside one on the operator's terminal,
+// where it shows each reply and posts it only once the operator answers y,
+// as Post does; an agent, which cannot open /dev/tty, is refused there.
+func ReplyAll(plan []PlannedReply, round int) ([]ReplyResult, error) {
+	if round < 1 {
+		return nil, refuse("pass the review round these replies answer as `--round N`, counting from 1")
+	}
+	var answers *bufio.Reader
+	var tty io.ReadWriteCloser
+	if os.Getenv(ModeEnv) != "bots" {
+		var err error
+		if tty, err = openTTY(); err != nil {
+			return nil, refuse("outside a bots-mode review loop, `pr-loop reply --from` posts only from the operator's "+
+				"terminal, confirming each reply there, and /dev/tty cannot be opened here (%v). Put the reply file in "+
+				"the report, with `pr-loop reply --from FILE --round N` for the operator to run in the worktree", err)
+		}
+		defer tty.Close()
+		answers = bufio.NewReader(tty)
 	}
 	if len(plan) == 0 {
-		return nil, refuse("the reply file names no threads; start each reply with a line `=== thread THREAD`")
+		return nil, refuse("the reply file names no threads; start each reply with a line `=== thread THREAD OUTCOME`")
 	}
 	policy, err := newThreadPolicy()
 	if err != nil {
@@ -133,9 +162,27 @@ func ReplyAll(plan []PlannedReply) ([]ReplyResult, error) {
 			results = append(results, result)
 			continue
 		}
+		if tty != nil {
+			then := ""
+			if r.Resolve {
+				then = ", then resolved"
+			}
+			fmt.Fprintf(tty, "\n=== %s on #%d, answered %s%s:\n%s\n=== Post this reply? [y/N] ", r.Thread, checks[i].pr, r.Outcome, then, r.Body)
+			answer, err := answers.ReadString('\n')
+			if err != nil && answer == "" {
+				return nil, partial(results, r.Thread, "reading the answer for", err)
+			}
+			if strings.TrimSpace(answer) != "y" {
+				result.Skipped = "not confirmed"
+				results = append(results, result)
+				continue
+			}
+		}
 		if result.URL, err = postReply(checks[i].pr, r.Thread, r.Body); err != nil {
 			return nil, partial(results, r.Thread, "replying", err)
 		}
+		logEvent(plans.Event{Kind: "finding-settled", Review: fmt.Sprintf("%d.%s", round, r.Thread), Outcome: r.Outcome,
+			Summary: fmt.Sprintf("thread %s on #%d", r.Thread, checks[i].pr)})
 		if r.Resolve {
 			if err := resolveThread(checks[i].pr, r.Thread); err != nil {
 				return nil, partial(append(results, result), r.Thread, "resolving", err)

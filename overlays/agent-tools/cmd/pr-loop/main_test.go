@@ -104,7 +104,7 @@ func TestOutgoingText(t *testing.T) {
 	token := "ghp_" + strings.Repeat("a", 36)
 	for name, args := range map[string]func(file string) []string{
 		"a reply":         func(file string) []string { return []string{"reply", "T", "--body-file", file} },
-		"a reply file":    func(file string) []string { return []string{"reply", "--from", file} },
+		"a reply file":    func(file string) []string { return []string{"reply", "--from", file, "--round", "1"} },
 		"a draft":         func(file string) []string { return []string{"draft", "T", "--outcome", "fix", "--body-file", file} },
 		"an open's body":  func(file string) []string { return []string{"open", "--title", "T", "--body-file", file} },
 		"an open's title": func(string) []string { return []string{"open", "--title", "Drop " + token, "--body-file", "body.md"} },
@@ -112,7 +112,7 @@ func TestOutgoingText(t *testing.T) {
 		t.Run("refused/a token in "+name, func(t *testing.T) {
 			dir, calls := posting(t)
 			file := filepath.Join(dir, "token.md")
-			os.WriteFile(file, []byte("=== thread T\nThe token "+token+" is gone.\n"), 0o644)
+			os.WriteFile(file, []byte("=== thread T fix\nThe token "+token+" is gone.\n"), 0o644)
 			code, stderr := pr(args(file)...)
 			if code != 2 || !strings.Contains(stderr, "GitHub token") || strings.Contains(stderr, token) {
 				t.Errorf("exit %d, %s", code, stderr)
@@ -122,6 +122,20 @@ func TestOutgoingText(t *testing.T) {
 			}
 		})
 	}
+
+	// The round goes into each finding the file settles, so a reply file
+	// without one posts nothing; with one it gets as far as GitHub.
+	t.Run("a reply file's round", func(t *testing.T) {
+		dir, calls := posting(t)
+		file := filepath.Join(dir, "replies.md")
+		os.WriteFile(file, []byte("=== thread T fix resolve\nFixed in \"Check the input\".\n"), 0o644)
+		if code, stderr := pr("reply", "--from", file); code != 2 || !strings.Contains(stderr, "--round N") || ghCalled(calls) {
+			t.Errorf("without --round: exit %d, %s", code, stderr)
+		}
+		if code, stderr := pr("reply", "--from", file, "--round", "2"); code != 1 || strings.Contains(stderr, "refused") || strings.Contains(stderr, "--round") {
+			t.Errorf("with --round: exit %d, %s", code, stderr)
+		}
+	})
 
 	t.Run("refused/a lease without its SHA", func(t *testing.T) {
 		_, calls := posting(t)

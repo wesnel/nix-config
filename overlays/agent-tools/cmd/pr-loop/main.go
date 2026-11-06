@@ -43,11 +43,15 @@ mode, request and reply take bot threads, and push pushes the fixups. In
 people mode, draft writes the answers to people's threads into the PR's
 review record and push refuses: the operator reads the fixups and drafts,
 pushes with git sign-pass --push and posts with pr-loop post. request and
-reply refuse outside a bots-mode loop, and draft outside a people-mode one.
+reply refuse outside a bots-mode loop, and draft outside a people-mode one;
+reply --from runs outside one only on the operator's terminal, showing each
+reply and posting it once the operator answers y.
 
 Each push, reply, resolve and wait ci's result is logged in the plan of the
 session that runs it: the plan naming the harness's session or this
-worktree. A failure to log is printed on stderr and fails nothing.
+worktree; reply --from also logs each thread it answers as finding-settled,
+with --review ROUND.THREAD and the file's outcome. A failure to log is
+printed on stderr and fails nothing.
 
   open --title T --body-file F [--base BASE] [--dry-run] [BRANCH]
                               push BRANCH (default HEAD) through the GitHub API, unless
@@ -77,7 +81,8 @@ worktree. A failure to log is printed on stderr and fails nothing.
   threads [--all] PR          unresolved review threads, labelled by bot, every comment
                               read; writes every thread to the PR's review record
   reply THREAD --body-file F  reply inside a bot's review thread (- reads stdin)
-  reply --from F              post the replies in a reply file (- reads stdin)
+  reply --from F --round N    post the replies in a reply file (- reads stdin), each
+                              logged as a finding settled in review round N
   resolve THREAD              resolve a bot's review thread whose last comment is yours
   draft THREAD --body-file F --outcome OUTCOME
                               write the answer to a thread into the PR's review record,
@@ -186,11 +191,13 @@ refused, before anything is posted, while redaction would change them: name
 a secret without its value. A placeholder such as $VAR, ${VAR}, <token> or
 {{ .Values.x }}, or an obvious example value, passes.
 
-A reply file has a section per thread: a line "=== thread THREAD", or
-"=== thread THREAD resolve" to resolve the thread after replying, then the
-Markdown reply up to the next such line. Every line starting "=== thread" is
-a header. Every thread is checked before anything is posted; threads already
-resolved are skipped and reported.
+A reply file has a section per thread: a line "=== thread THREAD OUTCOME",
+or "=== thread THREAD OUTCOME resolve" to resolve the thread after
+replying, then the Markdown reply up to the next such line. OUTCOME is how
+the reply settles the thread: fix, rebut, defer, duplicate-of, belongs-in
+or needs-operator. Every line starting "=== thread" is a header. Every
+thread is checked before anything is posted; threads already resolved are
+skipped and reported.
 
 A review record that fails its structure check, which only a hand edit
 makes, refuses threads, draft and post with exit 5; the operator fixes or
@@ -237,6 +244,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		title    = flags.String("title", "", "")
 		from     = flags.String("from", "", "")
 		outcome  = flags.String("outcome", "", "")
+		round    = flags.Int("round", 0, "")
 		lines    = flags.Int("lines", 200, "")
 		timeout  = flags.Int("timeout", 240, "")
 		interval = flags.Int("interval", 30, "")
@@ -368,7 +376,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 	case "reply":
 		if *from != "" {
-			result, err = replyFrom(*from, *bodyFile, rest, stdin)
+			result, err = replyFrom(*from, *bodyFile, *round, rest, stdin)
 		} else if err = need(1); err == nil {
 			var text string
 			if text, err = body(); err == nil {
@@ -483,8 +491,9 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 	return cli.Report("pr-loop", result, err, code, stdout, stderr)
 }
 
-// replyFrom posts the replies in a reply file (- for stdin).
-func replyFrom(path, bodyFile string, rest []string, stdin io.Reader) (any, error) {
+// replyFrom posts the replies in a reply file (- for stdin), answering
+// review round round.
+func replyFrom(path, bodyFile string, round int, rest []string, stdin io.Reader) (any, error) {
 	if bodyFile != "" || len(rest) != 0 {
 		return nil, errors.New("reply --from takes no THREAD and no --body-file; the file names the threads")
 	}
@@ -507,7 +516,7 @@ func replyFrom(path, bodyFile string, rest []string, stdin io.Reader) (any, erro
 			return nil, fmt.Errorf("the reply to %s: %w", r.Thread, err)
 		}
 	}
-	return loop.ReplyAll(plan)
+	return loop.ReplyAll(plan, round)
 }
 
 // setupFailures names each failed run and returns 1 if there was one.

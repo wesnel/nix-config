@@ -1985,6 +1985,9 @@ func TestCredentialList(t *testing.T) {
 	data, _ := json.Marshal(map[string]any{"guard": map[string]any{"credentialPaths": listed}})
 	os.WriteFile(config, data, 0o600)
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
+	// The pr-loop reply cases below are a bots-mode loop's, where the
+	// guard allows reply and only a credential argument is refused.
+	t.Setenv("PR_LOOP_MODE", "bots")
 	// Links and hard links in the working directory to credentials, and the
 	// files they lead to.
 	for _, d := range []string{".aws/sso", ".ssh", ".kube", ".config/fish", "work"} {
