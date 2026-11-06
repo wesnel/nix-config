@@ -2,8 +2,12 @@ package env
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -99,6 +103,82 @@ func TestEnv(t *testing.T) {
 		ctx := With(t.Context(), New("/work", "A=1"))
 		if got := From(ctx); got.Get("A") != "1" || got.Dir() != "/work" {
 			t.Errorf("From = dir %q, A %q, want /work and 1", got.Dir(), got.Get("A"))
+		}
+	})
+
+	t.Run("Command runs the program of the Env's PATH in its directory", func(t *testing.T) {
+		t.Parallel()
+		bin, work := t.TempDir(), t.TempDir()
+		script := "#!/bin/sh\necho \"$(pwd -P) $SAYS\"\n"
+		if err := os.WriteFile(filepath.Join(bin, "envtest-prog"), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// A relative directory first, which holds no such program.
+		ctx := With(t.Context(), New(work, "PATH=relative:"+bin+":/usr/bin:/bin", "SAYS=hello"))
+		out, err := Command(ctx, "envtest-prog").Output()
+		if err != nil {
+			t.Fatalf("Command(envtest-prog): %v", err)
+		}
+		real, err := filepath.EvalSymlinks(work)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.TrimSpace(string(out)); got != real+" hello" {
+			t.Errorf("the program printed %q, want %q", got, real+" hello")
+		}
+	})
+
+	// exec.LookPath refuses to run a program it finds in a relative directory
+	// of the PATH, an empty entry included, with exec.ErrDot, and never goes on
+	// to a later directory's program of the same name.
+	t.Run("a program found in a relative PATH entry is refused with ErrDot", func(t *testing.T) {
+		t.Parallel()
+		bin := t.TempDir()
+		for _, dir := range []string{bin, filepath.Join(bin, "later")} {
+			os.MkdirAll(dir, 0o755)
+			if err := os.WriteFile(filepath.Join(dir, "envtest-dot"), []byte("#!/bin/sh\necho ran\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		wd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		rel, err := filepath.Rel(wd, bin)
+		if err != nil {
+			t.Skipf("no relative path from %s to %s: %v", wd, bin, err)
+		}
+		e := New(t.TempDir(), "PATH="+rel+":"+filepath.Join(bin, "later"))
+		if path, err := e.LookPath("envtest-dot"); !errors.Is(err, exec.ErrDot) {
+			t.Errorf("LookPath found %q, %v in a relative entry; want exec.ErrDot", path, err)
+		}
+		if err := Command(With(t.Context(), e), "envtest-dot").Run(); !errors.Is(err, exec.ErrDot) {
+			t.Errorf("Command ran a program found in a relative entry, or failed otherwise: %v; want exec.ErrDot", err)
+		}
+	})
+
+	t.Run("Command finds nothing the Env's PATH lacks", func(t *testing.T) {
+		t.Parallel()
+		ctx := With(t.Context(), New(t.TempDir(), "PATH="+t.TempDir()))
+		if err := Command(ctx, "sh", "-c", "true").Run(); !errors.Is(err, exec.ErrNotFound) {
+			t.Errorf("Command(sh) with a PATH that lacks it ran, or failed otherwise: %v", err)
+		}
+		if _, err := New("", "PATH="+t.TempDir()).LookPath("sh"); !errors.Is(err, exec.ErrNotFound) {
+			t.Errorf("LookPath(sh) with a PATH that lacks it: %v, want exec.ErrNotFound", err)
+		}
+	})
+
+	t.Run("Command gives an empty Env nothing of this process's", func(t *testing.T) {
+		t.Parallel()
+		if _, ok := os.LookupEnv("HOME"); !ok {
+			t.Skip("HOME is unset in this process")
+		}
+		out, err := Command(With(t.Context(), New("")), "/bin/sh", "-c", "echo \"HOME=${HOME-unset}\"").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.TrimSpace(string(out)); got != "HOME=unset" {
+			t.Errorf("a program of an empty Env saw %q, want HOME=unset", got)
 		}
 	})
 

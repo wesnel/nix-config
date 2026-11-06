@@ -56,7 +56,7 @@ func checkPublicGh(ctx context.Context, args []string, expanded []bool, dir stri
 	if len(texts) == 0 {
 		return ""
 	}
-	findings := publictext.Check(strings.Join(texts, "\n\n"), publictext.In(dir))
+	findings := publictext.Check(strings.Join(texts, "\n\n"), publictext.In(ctx, dir))
 	if len(findings) == 0 {
 		return ""
 	}

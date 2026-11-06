@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/routes"
 )
 
@@ -55,7 +54,7 @@ func routeChange(r *span, out *Output, log io.Writer) []routes.Route {
 		}
 	}
 	if out != nil {
-		reviewed, _ := git.Run("-C", r.top, "rev-list", "--reverse", "--no-merges", r.base+".."+r.tip)
+		reviewed, _ := r.git().Run("-C", r.top, "rev-list", "--reverse", "--no-merges", r.base+".."+r.tip)
 		for _, p := range out.proposed {
 			if !routes.IsKnown(p.Route) {
 				fmt.Fprintf(log, "%s: the reviewer named the route %q, which no focused review exists for; it is left out\n", name, p.Route)
@@ -64,7 +63,7 @@ func routeChange(r *span, out *Output, log io.Writer) []routes.Route {
 			add(p.Route, "the reviewer: "+strings.TrimSpace(p.Why), touching(r, reviewed, p.Paths))
 		}
 	}
-	all, _ := git.Run("-C", r.top, "rev-list", "--reverse", "--no-merges", base+".."+r.tip)
+	all, _ := r.git().Run("-C", r.top, "rev-list", "--reverse", "--no-merges", base+".."+r.tip)
 	order := strings.Fields(all)
 	var list []routes.Route
 	for _, route := range slices.Sorted(maps.Keys(found)) {
@@ -81,7 +80,7 @@ func routeChange(r *span, out *Output, log io.Writer) []routes.Route {
 func touching(r *span, reviewed string, paths []string) []string {
 	var hits []string
 	for _, c := range strings.Fields(reviewed) {
-		names, err := git.Run("-C", r.top, "diff-tree", "-r", "--name-only", "--no-commit-id", "--no-renames", "--root", c)
+		names, err := r.git().Run("-C", r.top, "diff-tree", "-r", "--name-only", "--no-commit-id", "--no-renames", "--root", c)
 		if err != nil {
 			continue
 		}

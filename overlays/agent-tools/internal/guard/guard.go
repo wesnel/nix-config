@@ -1281,7 +1281,7 @@ func openedRepo(ctx context.Context, dir string) (paths []string, ok bool) {
 	run := func(args ...string) (string, string, error) {
 		ctx, cancel := context.WithTimeout(ctx, repoTimeout)
 		defer cancel()
-		cmd := commandIn(ctx, "git", append([]string{"-C", dir}, args...)...)
+		cmd := env.Command(ctx, "git", append([]string{"-C", dir}, args...)...)
 		cmd.Env = append(gitenv.Without(cmd.Env), "LC_ALL=C")
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
@@ -1325,7 +1325,7 @@ func configFileEntries(ctx context.Context, path string) (entries [][2]string, r
 	}
 	ctx, cancel := context.WithTimeout(ctx, repoTimeout)
 	defer cancel()
-	cmd := commandIn(ctx, "git", "config", "--file", path, "--null", "--list")
+	cmd := env.Command(ctx, "git", "config", "--file", path, "--null", "--list")
 	cmd.Env = append(gitenv.Without(cmd.Env), "LC_ALL=C")
 	out, err := cmd.Output()
 	if err != nil {

@@ -33,17 +33,16 @@ type adequacyFixture struct {
 func setUpAdequacy(t *testing.T, verdict string) *adequacyFixture {
 	t.Helper()
 	f := setUp(t, true)
-	t.Setenv("FAKE_CODEX", "none")
+	f.setenv("FAKE_CODEX", "none")
 	// Baked in, as the module's build bakes it, and named by the
 	// environment too, which a test may change.
 	configHome := t.TempDir()
-	t.Setenv(hostpaths.TestConfigHomeEnv, configHome)
-	t.Setenv(hostpaths.TestStateHomeEnv, t.TempDir())
+	f.env = f.env.Set(hostpaths.TestBaked(configHome, t.TempDir())...)
 	config := filepath.Join(configHome, "agent-tools", "config.json")
 	os.MkdirAll(filepath.Dir(config), 0o755)
 	os.WriteFile(config, must(json.Marshal(map[string]any{"plans": f.plans,
 		"delegate": map[string]any{"agents": "/store/review-agents.json", "settings": "/store/reviewer-settings.json"}})), 0o644)
-	t.Setenv("AGENT_TOOLS_CONFIG", config)
+	f.setenv("AGENT_TOOLS_CONFIG", config)
 	writeSettings(t, f, `{"test": "true", "testFiles": ["*_test.txt"]}`)
 	// The test file the last commit adds to, so its tests start at line 2.
 	os.WriteFile(filepath.Join(f.repo, "code_test.txt"), []byte("x\n"), 0o644)
@@ -68,9 +67,8 @@ func (a *adequacyFixture) commitTest(t *testing.T, test string) {
 	// A new date, so that a commit made again is a new commit.
 	a.made++
 	date := fmt.Sprintf("2026-01-01T00:00:%02d", a.made)
-	t.Setenv("GIT_AUTHOR_DATE", date)
-	t.Setenv("GIT_COMMITTER_DATE", date)
-	run(t, a.repo, "git", "commit", "-q", "-m", "Test the code")
+	runWith(t, []string{"GIT_AUTHOR_DATE=" + date, "GIT_COMMITTER_DATE=" + date}, a.repo, "git", "commit", "-q", "-m",
+		"Test the code")
 	a.commit = run(t, a.repo, "git", "rev-parse", "HEAD")
 	a.tip = a.commit
 }
@@ -110,7 +108,7 @@ func (a *adequacyFixture) redCheck(t *testing.T) string {
 
 func (a *adequacyFixture) review(t *testing.T) (int, output, string) {
 	t.Helper()
-	return freshReview(t, "--plan", a.plan, "--red-check", a.redCheck(t), a.base+"..HEAD")
+	return a.freshReview(t, "--plan", a.plan, "--red-check", a.redCheck(t), a.base+"..HEAD")
 }
 
 // raised reviews the change and returns its one red-check finding.
@@ -200,8 +198,9 @@ func TestTestAdequacy(t *testing.T) {
 			strings.Contains(headless, "report each finding below yourself") {
 			t.Errorf("a headless run's prompt has the reviewer raise red-check's findings:\n%s", headless)
 		}
-		code, stdout, stderr := delegateCmd(t, "--print-prompt", "--plan", a.plan, "--red-check", a.redCheck(t),
+		code, stdout, stderr := a.delegateCmd(t, "--print-prompt", "--plan", a.plan, "--red-check", a.redCheck(t),
 			a.base+"..HEAD")
+
 		if code != 0 {
 			t.Fatalf("exit %d\n%s", code, stderr)
 		}
@@ -340,7 +339,7 @@ func TestTestAdequacy(t *testing.T) {
 				result.Commits = checks
 				file := filepath.Join(a.repo, ".git", "other.json")
 				os.WriteFile(file, must(json.Marshal(result)), 0o644)
-				code, out, stderr := freshReview(t, "--plan", a.plan, "--red-check", file, a.base+"..HEAD")
+				code, out, stderr := a.freshReview(t, "--plan", a.plan, "--red-check", file, a.base+"..HEAD")
 				a.refused(t, code, out, stderr)
 			})
 		}
@@ -350,7 +349,7 @@ func TestTestAdequacy(t *testing.T) {
 		a := setUpAdequacy(t, redcheck.PassesWithoutChange)
 		bad := filepath.Join(a.repo, ".git", "bad.json")
 		os.WriteFile(bad, []byte(`{"commits": [`), 0o644)
-		code, out, stderr := freshReview(t, "--plan", a.plan, "--red-check", bad, a.base+"..HEAD")
+		code, out, stderr := a.freshReview(t, "--plan", a.plan, "--red-check", bad, a.base+"..HEAD")
 		a.refused(t, code, out, stderr)
 	})
 
@@ -358,11 +357,11 @@ func TestTestAdequacy(t *testing.T) {
 	// file to be placed at.
 	t.Run("refused without test settings", func(t *testing.T) {
 		f := setUp(t, true)
-		t.Setenv("FAKE_CODEX", "none")
+		f.setenv("FAKE_CODEX", "none")
 		file := filepath.Join(f.repo, ".git", "red-check.json")
 		os.WriteFile(file, must(json.Marshal(redcheck.Result{Commits: []*redcheck.Check{
 			{Commit: f.tip, Verdict: redcheck.PassesWithoutChange}}})), 0o644)
-		code, out, stderr := freshReview(t, "--plan", f.plan, "--red-check", file, f.base+"..HEAD")
+		code, out, stderr := f.freshReview(t, "--plan", f.plan, "--red-check", file, f.base+"..HEAD")
 		f.refused(t, code, out, stderr)
 	})
 
@@ -370,7 +369,7 @@ func TestTestAdequacy(t *testing.T) {
 	// finding, and the reviewer judges the tests itself.
 	t.Run("without --red-check", func(t *testing.T) {
 		a := setUpAdequacy(t, redcheck.PassesWithoutChange)
-		code, out, stderr := freshReview(t, "--plan", a.plan, a.base+"..HEAD")
+		code, out, stderr := a.freshReview(t, "--plan", a.plan, a.base+"..HEAD")
 		if code != 0 || len(out.Findings) != 0 || !strings.Contains(stderr, "red-check runs in the session") {
 			t.Errorf("exit %d, %+v\n%s", code, out, stderr)
 		}
@@ -386,7 +385,7 @@ func TestTestAdequacy(t *testing.T) {
 	t.Run("not redirected by the environment", func(t *testing.T) {
 		a := setUpAdequacy(t, redcheck.PassesWithoutChange)
 		a.config(t, map[string]any{})
-		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		a.setenv("XDG_CONFIG_HOME", t.TempDir())
 		if f := a.raised(t); f["reviewer"] != "red-check" {
 			t.Errorf("with a config without test settings: %+v", f)
 		}

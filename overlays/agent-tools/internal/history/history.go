@@ -217,7 +217,7 @@ func publicContext(ctx context.Context) publictext.Context {
 	if c, ok := contexts.Load(dir); ok {
 		return c.(publictext.Context)
 	}
-	c := publictext.In(dir)
+	c := publictext.In(ctx, dir)
 	contexts.Store(dir, c)
 	return c
 }

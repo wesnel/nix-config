@@ -1,13 +1,14 @@
 package upgrade
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/wesnel/agent-tools/internal/env"
 )
 
 func pinsOf(t *testing.T, files ...[3]string) []Pin {
@@ -20,7 +21,7 @@ func pinsOf(t *testing.T, files ...[3]string) []Pin {
 	}
 	base := commit(t, repo, "base", olds...)
 	tip := commit(t, repo, "tip", news...)
-	pins, err := Pins(repo, base, tip)
+	pins, err := Pins(t.Context(), repo, base, tip)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,6 +43,7 @@ func byKeys(pins []Pin) map[string]Pin {
 // pin: CI refuses a flake.lock that flake.nix has outgrown, so an input
 // moves only with flake.lock.
 func TestFlakeNixPin(t *testing.T) {
+	t.Parallel()
 	flake := func(config, input, outputs string) string {
 		return "{\n" + config + "  inputs.nixpkgs.url = \"" + input + "\";\n" +
 			"  outputs = { nixpkgs, ... }: {\n    homeModules.x = {\n" + outputs + "    };\n  };\n}\n"
@@ -56,6 +58,7 @@ func TestFlakeNixPin(t *testing.T) {
 	locked := [3]string{"flake.lock", lock("a"), lock("a")}
 
 	t.Run("an option, no pin moved", func(t *testing.T) {
+		t.Parallel()
 		pins := pinsOf(t, [3]string{"flake.nix", old, flake("", nixpkgs, option+"      programs.org-roam.enable = true;\n")}, locked)
 		if len(pins) != 0 {
 			t.Errorf("pins %+v", pins)
@@ -63,6 +66,7 @@ func TestFlakeNixPin(t *testing.T) {
 	})
 
 	t.Run("a pin bumped", func(t *testing.T) {
+		t.Parallel()
 		pins := byKeys(pinsOf(t, [3]string{"flake.nix", old, flake("", "github:NixOS/nixpkgs/nixos-25.11", option)},
 			[3]string{"flake.lock", lock("a"), lock("b")}))
 		if p := pins["flake.nix"]; p.Kind != "flake-nix" || !p.Moved() || !strings.Contains(p.Note, ": nixpkgs") {
@@ -74,6 +78,7 @@ func TestFlakeNixPin(t *testing.T) {
 	})
 
 	t.Run("a key trusted in nixConfig", func(t *testing.T) {
+		t.Parallel()
 		with := flake(config, nixpkgs, option)
 		pins := pinsOf(t, [3]string{"flake.nix", with,
 			flake(strings.Replace(config, "AAAA=\"\n", "AAAA=\"\n      \"b.example:BBBB=\"\n", 1), nixpkgs, option)}, locked)
@@ -101,6 +106,7 @@ func TestFlakeNixPin(t *testing.T) {
 			"inputs = (builtins.getFlake \"git+ssh://e.example/x\").inputs", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			pins := pinsOf(t, [3]string{"flake.nix", old, next}, locked)
 			if len(pins) != 1 || pins[0].File != "flake.nix" || !pins[0].DiffOnly() || !pins[0].Moved() {
 				t.Errorf("pins %+v", pins)
@@ -112,6 +118,7 @@ func TestFlakeNixPin(t *testing.T) {
 // A flake.lock node whose locked or original object moves in a field
 // this does not read (host, submodules, lfs) has moved.
 func TestFlakeLockIdentity(t *testing.T) {
+	t.Parallel()
 	a := strings.Repeat("a", 40)
 	lock := func(locked, original string) []byte {
 		return []byte(`{"nodes": {"x": {"locked": {"type": "github", "owner": "o", "repo": "x", "rev": "` + a +
@@ -139,6 +146,7 @@ func TestFlakeLockIdentity(t *testing.T) {
 
 // A flake.lock that is not JSON is one unreadable pin.
 func TestFlakeLockUnreadable(t *testing.T) {
+	t.Parallel()
 	old := []byte(`{"nodes": {"root": {}}, "root": "root", "version": 7}`)
 	if pins := flakePins("flake.lock", old, []byte("{")); len(pins) != 1 || pins[0].Kind != "flake-unreadable" || !pins[0].Moved() {
 		t.Errorf("%+v", pins)
@@ -147,6 +155,7 @@ func TestFlakeLockUnreadable(t *testing.T) {
 
 // Input paths are followed to any depth, through follows too.
 func TestFlakeDeepInputs(t *testing.T) {
+	t.Parallel()
 	a, b := strings.Repeat("a", 40), strings.Repeat("b", 40)
 	mk := func(to string) []byte {
 		n := func(name, inputs string) string {
@@ -166,6 +175,7 @@ func TestFlakeDeepInputs(t *testing.T) {
 // Each Nix derivation, or fetcher set, is one pin, however close its
 // neighbours, and a fetcher on one line is read as one on many.
 func TestNixPerDerivation(t *testing.T) {
+	t.Parallel()
 	two := func(a, b string) string {
 		return "{\n  a = fetchFromGitHub {\n    owner = \"oa\";\n    repo = \"ra\";\n    rev = \"" + a + "\";\n    hash = \"sha256-" + a +
 			"\";\n  };\n  b = fetchFromGitHub {\n    owner = \"ob\";\n    repo = \"rb\";\n    rev = \"" + b + "\";\n    hash = \"sha256-" + b + "\";\n  };\n}\n"
@@ -207,6 +217,7 @@ func TestNixPerDerivation(t *testing.T) {
 // A workflow's action is a pin per occurrence: its job, its name, and
 // that name's place among the job's uses of it.
 func TestActionOccurrences(t *testing.T) {
+	t.Parallel()
 	old := "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n  b:\n    steps:\n      - uses: actions/checkout@v4\n"
 	next := "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n  b:\n    steps:\n      - uses: actions/checkout@0123456789abcdef0123456789abcdef01234567\n"
 	pins := actionPins(".github/workflows/ci.yml", old, next)
@@ -262,6 +273,7 @@ func TestActionOccurrences(t *testing.T) {
 // dropped before another moves neither. A unit moved to another file has
 // moved, not been dropped and added.
 func TestNixUnitsPaired(t *testing.T) {
+	t.Parallel()
 	image := func(name, digest string) string {
 		return "(pkgs.dockerTools.pullImage { imageName = \"" + name + "\"; imageDigest = \"" + digest + "\"; })\n"
 	}
@@ -285,6 +297,7 @@ func TestNixUnitsPaired(t *testing.T) {
 // Pins of one repository between the same two versions, as one nixpkgs
 // bump seen through many input paths, are one pin naming every key.
 func TestMergedPins(t *testing.T) {
+	t.Parallel()
 	a, b := strings.Repeat("a", 40), strings.Repeat("b", 40)
 	lock := func(to string) string {
 		return `{"nodes": {"nixpkgs": ` + flakeNode("nixos", a, "") + `, "nixpkgs_2": ` + flakeNode("nixos", b, "") +
@@ -317,6 +330,7 @@ func TestMergedPins(t *testing.T) {
 // niv's and npins' sources, go.work, and a go.sum hash that moved are
 // pins.
 func TestOtherPinFiles(t *testing.T) {
+	t.Parallel()
 	niv := func(rev string) string {
 		return `{"nixpkgs": {"owner": "NixOS", "repo": "nixpkgs", "rev": "` + rev + `", "sha256": "x` + rev + `", "type": "tarball"}}`
 	}
@@ -350,6 +364,7 @@ func TestOtherPinFiles(t *testing.T) {
 
 // Pins whose keys collide are told apart by an index.
 func TestUniqueKeys(t *testing.T) {
+	t.Parallel()
 	two := "{\n  a = {\n    pname = \"same\";\n    version = \"1\";\n  };\n  b = {\n    pname = \"same\";\n    version = \"1\";\n  };\n}\n"
 	pins := pinsOf(t, [3]string{"x.nix", two, strings.ReplaceAll(two, `"1"`, `"2"`)})
 	if got := keys(pins); got != "x.nix#same x.nix#same #2" {
@@ -360,6 +375,7 @@ func TestUniqueKeys(t *testing.T) {
 // A clone's replace refs and grafts are never followed, and a shallow
 // clone is refused.
 func TestCloneReplaceGrafts(t *testing.T) {
+	t.Parallel()
 	clones, _ := filepath.EvalSymlinks(t.TempDir())
 	repo := filepath.Join(clones, "o", "r")
 	os.MkdirAll(repo, 0o755)
@@ -368,7 +384,8 @@ func TestCloneReplaceGrafts(t *testing.T) {
 	b := commit(t, repo, "Add a backdoor to the auth check", "f=2")
 	fake := gitIn(t, repo, "commit-tree", gitIn(t, repo, "rev-parse", b+"^{tree}"), "-p", a, "-m", "Fix a typo in the README")
 	gitIn(t, repo, "replace", b, fake)
-	got, err := cloneLog(context.Background(), clones, Pin{Owner: "o", Repo: "r", OldRef: a, NewRef: b})
+	ctx := env.With(t.Context(), env.Process())
+	got, err := cloneLog(ctx, clones, Pin{Owner: "o", Repo: "r", OldRef: a, NewRef: b})
 	if err != nil || !strings.Contains(got.Body, "backdoor") || strings.Contains(got.Body, "typo") {
 		t.Errorf("replace: %q %v", got.Body, err)
 	}
@@ -376,13 +393,13 @@ func TestCloneReplaceGrafts(t *testing.T) {
 	c := commit(t, repo, "Remove signature checks", "f=3")
 	d := commit(t, repo, "v2", "f=4")
 	os.WriteFile(filepath.Join(repo, ".git", "info", "grafts"), []byte(d+" "+a+"\n"), 0o644)
-	t.Setenv("GIT_GRAFT_FILE", filepath.Join(repo, ".git", "info", "grafts"))
-	got, err = cloneLog(context.Background(), clones, Pin{Owner: "o", Repo: "r", OldRef: a, NewRef: d})
+	ctx = env.With(t.Context(), env.Process().Set("GIT_GRAFT_FILE="+filepath.Join(repo, ".git", "info", "grafts")))
+	got, err = cloneLog(ctx, clones, Pin{Owner: "o", Repo: "r", OldRef: a, NewRef: d})
 	if err != nil || !strings.Contains(got.Body, "Remove signature checks") {
 		t.Errorf("grafts hide %s: %q %v", c[:7], got.Body, err)
 	}
 	os.WriteFile(filepath.Join(repo, ".git", "shallow"), []byte(a+"\n"), 0o644)
-	if _, err := cloneLog(context.Background(), clones, Pin{Owner: "o", Repo: "r", OldRef: a, NewRef: d}); err == nil ||
+	if _, err := cloneLog(ctx, clones, Pin{Owner: "o", Repo: "r", OldRef: a, NewRef: d}); err == nil ||
 		!strings.Contains(err.Error(), "shallow") {
 		t.Errorf("a shallow clone: %v", err)
 	}

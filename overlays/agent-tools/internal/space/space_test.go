@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 )
 
@@ -263,6 +264,7 @@ func publisher(t *testing.T, f *fakeCodex) Publisher {
 // both; a later run with other HTML replaces that block alone, in the same
 // thread; one with the same HTML starts nothing.
 func TestPublish(t *testing.T) {
+	t.Parallel()
 	f := newFake("page_a")
 	p := publisher(t, f)
 	got, err := p.Publish(t.Context(), "page_a", []byte("<p>one</p>"))
@@ -295,6 +297,7 @@ func TestPublish(t *testing.T) {
 // A page set to another starts a block there, in the same thread, and
 // leaves the old page as it was.
 func TestPublishNewPage(t *testing.T) {
+	t.Parallel()
 	f := newFake("page_a", "page_b")
 	p := publisher(t, f)
 	if _, err := p.Publish(t.Context(), "page_a", []byte("<p>one</p>")); err != nil {
@@ -312,6 +315,7 @@ func TestPublishNewPage(t *testing.T) {
 
 // What stops a publish records nothing new and makes no second block.
 func TestPublishRefuses(t *testing.T) {
+	t.Parallel()
 	setUp := func(t *testing.T) (*fakeCodex, Publisher, State) {
 		f := newFake("page_a")
 		p := publisher(t, f)
@@ -331,6 +335,7 @@ func TestPublishRefuses(t *testing.T) {
 		{"its thread is gone", func(f *fakeCodex) { f.threads = map[string]bool{} }, "no rollout found"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			f, p, before := setUp(t)
 			c.break_(f)
 			blocks := len(f.pages["page_a"])
@@ -345,6 +350,35 @@ func TestPublishRefuses(t *testing.T) {
 	}
 }
 
+// Codex starts the codex the PATH of the context's Env finds, in dir, with
+// that Env's variables.
+func TestCodex(t *testing.T) {
+	t.Parallel()
+	bin, dir := t.TempDir(), filepath.Join(t.TempDir(), "made")
+	// It stands in for codex, which would reach the operator's account.
+	script := "#!/bin/sh\necho \"$* $(pwd -P) $SPACE_FAKE\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := env.With(t.Context(), env.New(t.TempDir(), "PATH="+bin+":/usr/bin:/bin", "SPACE_FAKE=from-env"))
+	rw, err := Codex(dir)(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _ := io.ReadAll(rw)
+	closed := rw.Close()
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "app-server --listen stdio:// " + real + " from-env"; strings.TrimSpace(string(out)) != want {
+		t.Errorf("codex printed %q, want %q", out, want)
+	}
+	if closed != nil {
+		t.Errorf("Close: %v", closed)
+	}
+}
+
 // Against the real `codex app-server`, in a CODEX_HOME of its own with no
 // login: the thread the first run makes and records is the one a second
 // app-server resumes, though no Space tool can run. It needs codex on
@@ -354,14 +388,15 @@ func TestPublishRealCodexThread(t *testing.T) {
 	if os.Getenv("PLAN_DASH_REAL_CODEX") != "1" {
 		t.Skip("set PLAN_DASH_REAL_CODEX=1, with codex on PATH, to run it")
 	}
-	t.Setenv("CODEX_HOME", t.TempDir())
+	t.Parallel()
+	ctx := env.With(t.Context(), env.Process().Set("CODEX_HOME="+t.TempDir()))
 	dir := t.TempDir()
 	p := Publisher{Dial: Codex(dir), StateFile: filepath.Join(dir, "space.json"), Dir: dir}
-	if _, err := p.Publish(t.Context(), "page_a", []byte("<p>one</p>")); err == nil {
+	if _, err := p.Publish(ctx, "page_a", []byte("<p>one</p>")); err == nil {
 		t.Fatal("published with no login")
 	}
 	first := readState(t, p.StateFile)
-	_, err := p.Publish(t.Context(), "page_a", []byte("<p>one</p>"))
+	_, err := p.Publish(ctx, "page_a", []byte("<p>one</p>"))
 	if second := readState(t, p.StateFile); first.Thread == "" || second != first || err == nil ||
 		!strings.Contains(err.Error(), "mcpServer/tool/call") {
 		t.Errorf("first %+v, second %+v: %v", first, second, err)

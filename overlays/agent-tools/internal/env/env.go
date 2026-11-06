@@ -10,6 +10,8 @@ package env
 import (
 	"context"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -92,6 +94,43 @@ func (e Env) Without(names ...string) Env {
 		}
 	}
 	return out
+}
+
+// Command is name with args, killed when ctx is done, run in the directory
+// and with the variables of ctx's Env, and found on its $PATH where name
+// has no slash. The caller may change Dir and Env before starting it.
+func Command(ctx context.Context, name string, args ...string) *exec.Cmd {
+	e := From(ctx)
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = e.Dir()
+	// Never nil, which would hand the program this process's environment.
+	cmd.Env = append([]string{}, e.vars...)
+	if !strings.Contains(name, "/") {
+		cmd.Path, cmd.Err = e.LookPath(name)
+	}
+	return cmd
+}
+
+// LookPath is the executable name in a directory of e's $PATH, as
+// exec.LookPath finds it in this process's. The first program found in a
+// relative directory, an empty entry included, is refused with an error that
+// wraps exec.ErrDot, as exec.LookPath refuses it (without its GODEBUG
+// escape); it does not go on to a later directory. The error of a name not
+// found wraps exec.ErrNotFound.
+func (e Env) LookPath(name string) (string, error) {
+	for _, dir := range filepath.SplitList(e.Get("PATH")) {
+		if dir == "" {
+			dir = "."
+		}
+		path := filepath.Join(dir, name)
+		if info, err := os.Stat(path); err == nil && !info.IsDir() && info.Mode().Perm()&0o111 != 0 {
+			if !filepath.IsAbs(path) {
+				return path, &exec.Error{Name: name, Err: exec.ErrDot}
+			}
+			return path, nil
+		}
+	}
+	return name, &exec.Error{Name: name, Err: exec.ErrNotFound}
 }
 
 // In is e with the working directory dir.

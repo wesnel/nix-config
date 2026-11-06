@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -185,22 +186,23 @@ func priorText(path string, s *source) (string, error) {
 // newestForPR is the newest range record of s's pull request but the one
 // at except, with its path, as record.NewestRange finds it.
 func newestForPR(s *source, except string) (*record.Range, string, error) {
-	return record.NewestRange(env.Process(), s.owner, s.repo, s.number, except)
+	return record.NewestRange(s.env, s.owner, s.repo, s.number, except)
 }
 
 // recordOf is the path of the range record a SOURCE names, for show and
-// settle: a range's in the current repository, or a pull request's newest.
-// It is "" for a pull request reviewed nowhere yet.
-func recordOf(s *source) (string, error) {
+// settle: a range's in the current repository, the one containing the
+// directory of ctx's Env, or a pull request's newest. It is "" for a pull
+// request reviewed nowhere yet.
+func recordOf(ctx context.Context, s *source) (string, error) {
 	if s.number != 0 {
 		_, path, err := newestForPR(s, "")
 		return path, err
 	}
-	r, err := resolve("", s.given)
+	r, err := resolve(ctx, "", s.given)
 	if err != nil {
 		return "", err
 	}
-	return record.RangeFile(env.Process(), s.owner, s.repo, r.base, r.tip)
+	return record.RangeFile(s.env, s.owner, s.repo, r.base, r.tip)
 }
 
 // ShowUsage is `git delegate show -h`.
@@ -372,8 +374,8 @@ func showRange(path string, rec *record.Range) *ShowRange {
 	return out
 }
 
-// show runs `git delegate show` with args.
-func show(args []string, stdout, stderr io.Writer) int {
+// show runs `git delegate show` with args, in ctx's Env.
+func show(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet(name+" show", flag.ContinueOnError)
 	if code, ok := cli.Parse(flags, args, ShowUsage, stdout, stderr); !ok {
 		return code
@@ -383,17 +385,17 @@ func show(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	report := func(result any, err error) int { return reportRecord(result, err, 0, stdout, stderr) }
-	s, err := parseSource(flags.Arg(0))
+	s, err := parseSource(ctx, flags.Arg(0))
 	if err != nil {
 		return report(nil, err)
 	}
-	doc, err := showDoc(s)
+	doc, err := showDoc(ctx, s)
 	return report(doc, err)
 }
 
-func showDoc(s *source) (*ShowDoc, error) {
+func showDoc(ctx context.Context, s *source) (*ShowDoc, error) {
 	doc := &ShowDoc{Source: s.given}
-	path, err := recordOf(s)
+	path, err := recordOf(ctx, s)
 	if err != nil {
 		return nil, err
 	}
@@ -412,7 +414,7 @@ func showDoc(s *source) (*ShowDoc, error) {
 		}
 	}
 	if number != 0 {
-		prPath, err := record.PRFile(env.Process(), s.owner, s.repo, number)
+		prPath, err := record.PRFile(s.env, s.owner, s.repo, number)
 		if err != nil {
 			return nil, err
 		}
@@ -471,8 +473,8 @@ var outcomes = map[string]record.State{"fix": record.Fix, "propose": record.Prop
 	"defer": record.Defer, "duplicate-of": record.Duplicate, "belongs-in": record.Belongs,
 	"needs-operator": record.Operator, "open": record.Open}
 
-// settle runs `git delegate settle` with args.
-func settle(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+// settle runs `git delegate settle` with args, in ctx's Env.
+func settle(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet(name+" settle", flag.ContinueOnError)
 	target := flags.String("target", "", "")
 	reasonFile := flags.String("reason-file", "", "")
@@ -505,17 +507,17 @@ func settle(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	reason := ""
 	if *reasonFile != "" {
-		text, err := readFile(*reasonFile, stdin)
+		text, err := readFile(env.From(ctx), *reasonFile, stdin)
 		if err != nil {
 			return report(nil, err)
 		}
 		reason = strings.TrimSpace(text)
 	}
-	s, err := parseSource(positional[0])
+	s, err := parseSource(ctx, positional[0])
 	if err != nil {
 		return report(nil, err)
 	}
-	path, err := recordOf(s)
+	path, err := recordOf(ctx, s)
 	if err != nil {
 		return report(nil, err)
 	}
@@ -560,7 +562,7 @@ func noReviewToSettle(s *source, path string) error {
 		return none
 	}
 	base, _, _ := strings.Cut(filepath.Base(path), "..")
-	listed, err := record.Ranges(env.Process(), s.owner, s.repo, base)
+	listed, err := record.Ranges(s.env, s.owner, s.repo, base)
 	if err != nil || len(listed) == 0 {
 		return none
 	}

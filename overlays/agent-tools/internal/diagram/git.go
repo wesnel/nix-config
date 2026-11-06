@@ -17,9 +17,9 @@ var errTooBig = errors.New("too big")
 // alone: nothing in it runs.
 type GitRepo string
 
-// Blob is path's content at rev.
-func (g GitRepo) Blob(rev, path string) ([]byte, error) {
-	return TimedRepo{Dir: string(g), Ctx: context.Background()}.Blob(rev, path)
+// Blob is path's content at rev, read by git in ctx's Env.
+func (g GitRepo) Blob(ctx context.Context, rev, path string) ([]byte, error) {
+	return TimedRepo{Dir: string(g), Ctx: ctx}.Blob(rev, path)
 }
 
 // TimedRepo is GitRepo with each git call stopped when Ctx is done.

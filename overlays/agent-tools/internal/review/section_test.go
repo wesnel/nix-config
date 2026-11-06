@@ -8,6 +8,7 @@ import (
 // A heading's section runs to the next heading of its level or above,
 // outside code fences, in any case and with CRLF lines.
 func TestSectionNamed(t *testing.T) {
+	t.Parallel()
 	text := "# Title\n\n### reverting\n\nRevert it.\n\n```\n# not a heading\n```\n\n#### A subheading\n\nmore\n\n## Limits\n\nnone\n"
 	got, ok := SectionNamed(text, "Reverting")
 	if !ok || !strings.Contains(got, "Revert it.") || !strings.Contains(got, "# not a heading") ||
@@ -32,6 +33,7 @@ func TestSectionNamed(t *testing.T) {
 // A fence closes only on a line of its own character, at least as long as
 // the one that opened it, so a heading inside it is never read.
 func TestSectionFences(t *testing.T) {
+	t.Parallel()
 	for name, text := range map[string]string{
 		"a shorter fence inside": "````md\n```\n## Reverting\n\nexample\n```\n````\n\n## Reverting\n\nreal\n",
 		"the other character":    "~~~\n```\n## Reverting\n\nexample\n~~~\n\n## Reverting\n\nreal\n",
@@ -46,6 +48,7 @@ func TestSectionFences(t *testing.T) {
 // A Reverting section of only a template's comment is no section, and a
 // long one is cut short.
 func TestRevertingSection(t *testing.T) {
+	t.Parallel()
 	for name, text := range map[string]string{
 		"only a comment":              "## Reverting\n\n<!-- say what\nreverting leaves behind -->\n\n## Next\n",
 		"a comment holding a heading": "## Reverting\n<!--\n## Template\n\nfill this in\n-->\n",

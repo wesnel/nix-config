@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -46,29 +45,9 @@ var (
 // Command is gh with args, killed when ctx is done, run in Outside with the
 // variables of ctx's Env and the gh its $PATH finds.
 func Command(ctx context.Context, args ...string) *exec.Cmd {
-	e := env.From(ctx)
-	cmd := exec.CommandContext(ctx, "gh", args...)
+	cmd := env.Command(ctx, "gh", args...)
 	cmd.Dir = Outside
-	// Never nil, which would hand gh this process's environment.
-	cmd.Env = append([]string{}, e.Environ()...)
-	cmd.Path, cmd.Err = lookPath(e, "gh")
 	return cmd
-}
-
-// lookPath is the executable name in a directory of e's $PATH, as
-// exec.LookPath finds it in this process's. A relative directory, which
-// exec.LookPath refuses to run from, is passed over.
-func lookPath(e env.Env, name string) (string, error) {
-	for _, dir := range filepath.SplitList(e.Get("PATH")) {
-		if !filepath.IsAbs(dir) {
-			continue
-		}
-		path := filepath.Join(dir, name)
-		if info, err := os.Stat(path); err == nil && !info.IsDir() && info.Mode().Perm()&0o111 != 0 {
-			return path, nil
-		}
-	}
-	return name, &exec.Error{Name: name, Err: exec.ErrNotFound}
 }
 
 // Token is $GH_TOKEN or $GITHUB_TOKEN of ctx's Env, or else what `gh auth

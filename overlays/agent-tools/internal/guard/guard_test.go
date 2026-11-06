@@ -1006,6 +1006,30 @@ func TestOpenedRepo(t *testing.T) {
 			}
 		})
 	}
+
+	// A git found in a relative PATH entry is refused with exec.ErrDot, as
+	// exec.LookPath refuses it, though the same git answers from an absolute
+	// entry.
+	t.Run("relative PATH entry", func(t *testing.T) {
+		answers := t.TempDir()
+		if err := os.WriteFile(filepath.Join(answers, "git"), []byte("#!/bin/sh\necho /x\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if paths, ok := openedRepo(withVars(guardCtx(t), "PATH="+answers), own); !ok || len(paths) != 2 {
+			t.Fatalf("a git in an absolute entry: %q, %v; want its two answers", paths, ok)
+		}
+		wd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		rel, err := filepath.Rel(wd, answers)
+		if err != nil {
+			t.Skipf("no relative path from %s to %s: %v", wd, answers, err)
+		}
+		if paths, ok := openedRepo(withVars(guardCtx(t), "PATH="+rel), own); ok {
+			t.Errorf("a git in a relative entry ran: %q", paths)
+		}
+	})
 }
 
 // TestGitDeadline holds the hook to a deadline in a repository whose git

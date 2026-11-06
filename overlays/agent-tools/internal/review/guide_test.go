@@ -15,7 +15,7 @@ import (
 // and a hunk no chunk cites go to the round's Dropped.
 func TestGuide(t *testing.T) {
 	f := setUp(t, true)
-	t.Setenv("FAKE_CODEX", "none")
+	f.setenv("FAKE_CODEX", "none")
 	os.WriteFile(filepath.Join(f.repo, "other.txt"), []byte("x\n"), 0o644)
 	os.WriteFile(filepath.Join(f.repo, "gone.txt"), []byte("y\n"), 0o644)
 	run(t, f.repo, "git", "add", "other.txt", "gone.txt")
@@ -30,7 +30,7 @@ func TestGuide(t *testing.T) {
 		{"title": "Nothing", "summary": "Cites a line of no hunk.", "hunks": []string{"file:code.txt::9@" + tip[:12]}},
 	}, "unverified": []string{}}, "Walked."))
 
-	code, out, stderr := runDelegate(t, "--reviewer", "guide", "--plan", f.plan, mid+"..HEAD")
+	code, out, stderr := f.runDelegate(t, "--reviewer", "guide", "--plan", f.plan, mid+"..HEAD")
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
@@ -43,7 +43,7 @@ func TestGuide(t *testing.T) {
 		t.Errorf("a walkthrough of hunks outside the range: %+v", rec.Walkthrough)
 	}
 
-	code, out, stderr = runDelegate(t, "--reviewer", "guide", "--plan", f.plan, f.base+"..HEAD")
+	code, out, stderr = f.runDelegate(t, "--reviewer", "guide", "--plan", f.plan, f.base+"..HEAD")
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
@@ -74,7 +74,7 @@ func TestGuide(t *testing.T) {
 // are read as the diff means them, kept in the record, and shown whole.
 func TestGuideOddPaths(t *testing.T) {
 	f := setUp(t, true)
-	t.Setenv("FAKE_CODEX", "none")
+	f.setenv("FAKE_CODEX", "none")
 	odd := "odd \"näme\"\tx.txt"
 	os.WriteFile(filepath.Join(f.repo, odd), []byte("-- a\nb\n"), 0o644)
 	run(t, f.repo, "git", "add", "--", odd)
@@ -82,7 +82,7 @@ func TestGuideOddPaths(t *testing.T) {
 	base := run(t, f.repo, "git", "rev-parse", "HEAD")
 	os.WriteFile(filepath.Join(f.repo, odd), []byte("b\n"), 0o644)
 	run(t, f.repo, "git", "commit", "-q", "-am", "Drop its first line")
-	r := must(resolve("", base+"..HEAD"))
+	r := must(resolve(f.ctx(t), "", base+"..HEAD"))
 	hunks := must(diffHunks(r))
 	if len(hunks) != 1 || hunks[0].Path != odd || hunks[0].OldStart != 1 || hunks[0].OldLines != 2 {
 		t.Fatalf("hunks %+v", hunks)
@@ -90,7 +90,7 @@ func TestGuideOddPaths(t *testing.T) {
 	f.claudeSays(t, "review-guide", claudeResult(map[string]any{"chunks": []map[string]any{
 		{"title": "Drop a line", "summary": "s", "hunks": []string{"file:" + odd + "::1@" + r.tip[:12]}}},
 		"unverified": []string{}}, ""))
-	code, out, stderr := runDelegate(t, "--reviewer", "guide", "--plan", f.plan, base+"..HEAD")
+	code, out, stderr := f.runDelegate(t, "--reviewer", "guide", "--plan", f.plan, base+"..HEAD")
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
@@ -98,7 +98,7 @@ func TestGuideOddPaths(t *testing.T) {
 	if len(rec.Walkthrough) != 1 || rec.Walkthrough[0].Hunks[0].Path != odd {
 		t.Fatalf("walkthrough %+v", rec.Walkthrough)
 	}
-	_, stdout, _ := delegateCmd(t, "show", base+"..HEAD")
+	_, stdout, _ := f.delegateCmd(t, "show", base+"..HEAD")
 	var doc ShowDoc
 	must(0, json.Unmarshal([]byte(stdout), &doc))
 	if doc.Range == nil || doc.Range.Walkthrough[0].Hunks[0].Path != odd {
@@ -115,7 +115,7 @@ func TestGuideCitesRemovals(t *testing.T) {
 	base := run(t, f.repo, "git", "rev-parse", "HEAD")
 	run(t, f.repo, "git", "rm", "-q", "gone.txt")
 	run(t, f.repo, "git", "commit", "-q", "-m", "Remove it")
-	r := must(resolve("", base+"..HEAD"))
+	r := must(resolve(f.ctx(t), "", base+"..HEAD"))
 	out := must(validateGuide(`{"chunks": [{"title": "Remove gone.txt", "summary": "s", "hunks": ["file:gone.txt::2@`+
 		base[:12]+`"]}], "unverified": []}`, r))
 	if len(out.Walkthrough) != 1 || len(out.Dropped) != 0 || out.Walkthrough[0].Hunks[0].OldLines != 2 {

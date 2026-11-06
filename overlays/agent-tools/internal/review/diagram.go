@@ -178,8 +178,8 @@ func runDiagrams(ctx context.Context, s *source, r *span, base inputs, model str
 	log io.Writer) *typeRun {
 	run := &typeRun{name: "diagram"}
 	// The diagrammer draws on Claude; the critic is Codex.
-	if run.why = runnable(base.availability, reviewerTypes["claude"]); run.why == "" {
-		run.why = runnable(base.availability, reviewerTypes["codex"])
+	if run.why = runnable(ctx, base.availability, reviewerTypes["claude"]); run.why == "" {
+		run.why = runnable(ctx, base.availability, reviewerTypes["codex"])
 	}
 	if run.why != "" {
 		return run
@@ -193,7 +193,7 @@ func runDiagrams(ctx context.Context, s *source, r *span, base inputs, model str
 		raw, _ := json.Marshal(what)
 		out.Dropped = append(out.Dropped, Dropped{Finding: raw, Reason: why})
 	}
-	blob := func(path string) ([]byte, error) { return diagram.GitRepo(r.top).Blob(r.tip, path) }
+	blob := func(path string) ([]byte, error) { return diagram.GitRepo(r.top).Blob(ctx, r.tip, path) }
 
 	// draw returns the diagrams the diagrammer replied with.
 	draw := func(prompt string) ([]json.RawMessage, error) {

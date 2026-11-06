@@ -15,14 +15,14 @@ func TestFetch(t *testing.T) {
 	t.Run("first round", func(t *testing.T) {
 		r := newRemote(t, nil)
 		f := setUpPR(t, r)
-		pr, err := Fetch(t.Context(), "o/r", 7, "")
+		pr, err := Fetch(f.ctx(t), "o/r", 7, "")
 		if err != nil {
 			t.Fatal(err)
 		}
 		if pr.Head != r.head || pr.Base != r.base || pr.BaseRef != "main" || pr.Title != "Make A two" {
 			t.Errorf("fetched %+v, want head %s and base %s", pr, r.head, r.base)
 		}
-		cache := os.Getenv("XDG_CACHE_HOME")
+		cache := f.env.Get("XDG_CACHE_HOME")
 		if pr.Clone != filepath.Join(cache, "pr-review", "o", "r", "7", "clone") ||
 			pr.Dir != filepath.Join(cache, "pr-review", "o", "r", "7", r.head[:12]) {
 			t.Errorf("clone %s, review %s", pr.Clone, pr.Dir)
@@ -45,12 +45,12 @@ func TestFetch(t *testing.T) {
 	t.Run("next round", func(t *testing.T) {
 		r := newRemote(t, nil)
 		f := setUpPR(t, r)
-		if _, err := Fetch(t.Context(), "o/r", 7, ""); err != nil {
+		if _, err := Fetch(f.ctx(t), "o/r", 7, ""); err != nil {
 			t.Fatal(err)
 		}
 		r.push(t)
 		f.pr["headRefOid"] = r.head
-		pr, err := Fetch(t.Context(), "o/r", 7, "")
+		pr, err := Fetch(f.ctx(t), "o/r", 7, "")
 		if err != nil || pr.Head != r.head {
 			t.Fatalf("second round: %+v, %v", pr, err)
 		}
@@ -65,11 +65,11 @@ func TestFetch(t *testing.T) {
 		r := newRemote(t, nil)
 		f := setUpPR(t, r)
 		f.pr["headRefOid"] = r.base
-		_, err := Fetch(t.Context(), "o/r", 7, "")
+		_, err := Fetch(f.ctx(t), "o/r", 7, "")
 		if err == nil || !strings.Contains(err.Error(), r.base) {
 			t.Fatalf("a head that moved was accepted: %v", err)
 		}
-		if _, err := os.Stat(filepath.Join(os.Getenv("XDG_CACHE_HOME"), "pr-review", "o", "r", "7", r.head[:12])); err == nil {
+		if _, err := os.Stat(filepath.Join(f.env.Get("XDG_CACHE_HOME"), "pr-review", "o", "r", "7", r.head[:12])); err == nil {
 			t.Error("a review directory was made for an unpinned head")
 		}
 	})
@@ -80,8 +80,8 @@ func TestFetch(t *testing.T) {
 	}{{"o/..", 7}, {"../r", 7}, {"o/r/x", 7}, {"o", 7}, {"o/r", 0}, {"o/r", -1}, {".git/r", 7}} {
 		t.Run("refuses/"+c.slug+"#"+strconv.Itoa(c.number), func(t *testing.T) {
 			r := newRemote(t, nil)
-			setUpPR(t, r)
-			if _, err := Fetch(t.Context(), c.slug, c.number, ""); err == nil {
+			f := setUpPR(t, r)
+			if _, err := Fetch(f.ctx(t), c.slug, c.number, ""); err == nil {
 				t.Errorf("%s#%d was fetched", c.slug, c.number)
 			}
 		})
@@ -97,7 +97,7 @@ func TestFetch(t *testing.T) {
 func testFetchHooksDoNotRun(t *testing.T) {
 	r := newRemote(t, nil)
 	f := setUpPR(t, r)
-	pr, err := Fetch(t.Context(), "o/r", 7, "")
+	pr, err := Fetch(f.ctx(t), "o/r", 7, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,14 +108,14 @@ func testFetchHooksDoNotRun(t *testing.T) {
 	}
 	r.push(t)
 	f.pr["headRefOid"] = r.head
-	if pr, err = Fetch(t.Context(), "o/r", 7, ""); err != nil {
+	if pr, err = Fetch(f.ctx(t), "o/r", 7, ""); err != nil {
 		t.Fatal(err)
 	}
 	tree := filepath.Join(t.TempDir(), "tree")
-	if err := Checkout(t.Context(), pr.Clone, tree, pr.Head); err != nil {
+	if err := Checkout(f.ctx(t), pr.Clone, tree, pr.Head); err != nil {
 		t.Fatal(err)
 	}
-	RemoveCheckout(pr.Clone, tree)
+	RemoveCheckout(f.ctx(t), pr.Clone, tree)
 	if _, err := os.Stat(marker); err == nil {
 		t.Error("a hook ran")
 	}
@@ -153,7 +153,7 @@ func testFetchLFSStaysInert(t *testing.T) {
 		write(t, filepath.Join(work, ".lfsconfig"), "[lfs]\n\turl = http://"+listener.Addr().String()+"/\n")
 		write(t, filepath.Join(work, "big.bin"), pointer)
 	})
-	setUpPR(t, r)
+	f := setUpPR(t, r)
 
 	// The user's global config defines the LFS filter as required, the way
 	// `git lfs install` does, with a step that leaves a marker.
@@ -166,21 +166,21 @@ func testFetchLFSStaysInert(t *testing.T) {
 	write(t, global, "[filter \"lfs\"]\n\trequired = true\n"+
 		"\tsmudge = \"sh -c 'touch "+marker+"; exec "+lfs+"' --\"\n"+
 		"\tclean = \"sh -c 'touch "+marker+"; cat'\"\n")
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "")
+	f.setenv("GIT_CONFIG_GLOBAL", global)
+	f.setenv("GIT_CONFIG_NOSYSTEM", "")
 
-	pr, err := Fetch(t.Context(), "o/r", 7, "")
+	pr, err := Fetch(f.ctx(t), "o/r", 7, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	tree := filepath.Join(t.TempDir(), "tree")
-	if err := Checkout(t.Context(), pr.Clone, tree, pr.Head); err != nil {
+	if err := Checkout(f.ctx(t), pr.Clone, tree, pr.Head); err != nil {
 		t.Fatal(err)
 	}
 	if data, _ := os.ReadFile(filepath.Join(tree, "big.bin")); string(data) != pointer {
 		t.Errorf("big.bin is not the pointer as committed: %q", data)
 	}
-	RemoveCheckout(pr.Clone, tree)
+	RemoveCheckout(f.ctx(t), pr.Clone, tree)
 	if _, err := os.Stat(marker); err == nil {
 		t.Error("the user's LFS filter ran")
 	}
@@ -192,7 +192,9 @@ func testFetchLFSStaysInert(t *testing.T) {
 	// user's config.
 	control := filepath.Join(t.TempDir(), "control")
 	gitT(t, "", "clone", "-q", "--no-checkout", r.bare, control)
-	exec.Command("git", "-C", control, "checkout", "-q", r.head).Run()
+	checkout := exec.Command("git", "-C", control, "checkout", "-q", r.head)
+	checkout.Env = f.env.Environ()
+	checkout.Run()
 	if _, err := os.Stat(marker); err != nil {
 		t.Errorf("the fixture's filter does not run under the user's config, so it shows nothing: %v", err)
 	}
@@ -211,16 +213,16 @@ func testFetchSymlinksCheckOutAsFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	setUpPR(t, r)
-	pr, err := Fetch(t.Context(), "o/r", 7, "")
+	f := setUpPR(t, r)
+	pr, err := Fetch(f.ctx(t), "o/r", 7, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	tree := filepath.Join(t.TempDir(), "tree")
-	if err := Checkout(t.Context(), pr.Clone, tree, pr.Head); err != nil {
+	if err := Checkout(f.ctx(t), pr.Clone, tree, pr.Head); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { RemoveCheckout(pr.Clone, tree) })
+	t.Cleanup(func() { RemoveCheckout(f.ctx(t), pr.Clone, tree) })
 	info, err := os.Lstat(filepath.Join(tree, "link"))
 	if err != nil {
 		t.Fatal(err)

@@ -117,6 +117,7 @@ buildGoModule rec {
 // requirements and go line, a Nix fetcher's hunk, a workflow's actions,
 // and other lock files as one pin each.
 func TestPins(t *testing.T) {
+	t.Parallel()
 	repo := newRepo(t)
 	base := commit(t, repo, "Start", "flake.lock="+lockBefore,
 		"go.mod=module x\n\ngo 1.25\n\nrequire (\n\tgithub.com/a/b v1.0.0\n\tgolang.org/x/mod v0.20.0 // indirect\n\texample.com/same v1.0.0\n)\n\nrequire github.com/c/d v0.0.0-20240101000000-abcdefabcdef\n",
@@ -128,7 +129,7 @@ func TestPins(t *testing.T) {
 		"go.sum=y\n", "pkgs/tool.nix="+nixAfter, "web/package-lock.json={\"a\": 1}\n",
 		".github/workflows/ci.yml=jobs:\n  x:\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-go@41dfa10bad2bb2ae585af6ee5bb4d7d973ad74ed # v5.1.0\n      - uses: ./local\n",
 		"README.md=hello\n")
-	pins, err := Pins(repo, base, tip)
+	pins, err := Pins(t.Context(), repo, base, tip)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,10 +192,11 @@ func TestPins(t *testing.T) {
 // A Nix file's hunk that changes only a hash, beside no fetchFromGitHub,
 // is a pin by its package name, without a repository.
 func TestNixHashOnly(t *testing.T) {
+	t.Parallel()
 	repo := newRepo(t)
 	base := commit(t, repo, "Start", "x.nix={ fetchurl }:\n{\n  pname = \"thing\";\n  src = fetchurl {\n    url = \"https://e.example/x.tar.gz\";\n    sha256 = \"aaa\";\n  };\n}\n")
 	tip := commit(t, repo, "Bump", "x.nix={ fetchurl }:\n{\n  pname = \"thing\";\n  src = fetchurl {\n    url = \"https://e.example/y.tar.gz\";\n    sha256 = \"bbb\";\n  };\n}\n")
-	pins, err := Pins(repo, base, tip)
+	pins, err := Pins(t.Context(), repo, base, tip)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,6 +210,7 @@ func TestNixHashOnly(t *testing.T) {
 // next major version. A replace directive, a flake input's URL with no
 // lock moved beside it, and a revision whose NAR hash moved are pins too.
 func TestPinsPaired(t *testing.T) {
+	t.Parallel()
 	repo := newRepo(t)
 	lock := func(name, rev, nar, odd string) string {
 		return `{"nodes": {"` + name + `": {"locked": {"type": "github", "owner": "nixos", "repo": "nixpkgs", "rev": "` + rev +
@@ -224,7 +227,7 @@ func TestPinsPaired(t *testing.T) {
 	tip := commit(t, repo, "Bump", "flake.lock="+lock("nixpkgs_3", strings.Repeat("b", 40), "sha256-same2=", "odd\\n``` ## Output"),
 		"go.mod=module x\n\nrequire github.com/a/b/v2 v2.0.0\n\nreplace github.com/q/r => github.com/q/r v1.5.0\n\nreplace (\n\tgithub.com/l/m => ../m2\n)\n",
 		strings.Replace(strings.Replace(sub, "release-24.05", "release-25.05", 1), "github:o/other", "github:o/other/v2", 1))
-	pins, err := Pins(repo, base, tip)
+	pins, err := Pins(t.Context(), repo, base, tip)
 	if err != nil {
 		t.Fatal(err)
 	}

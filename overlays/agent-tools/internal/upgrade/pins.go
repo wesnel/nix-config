@@ -5,6 +5,7 @@
 package upgrade
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -94,8 +95,9 @@ func (p Pin) ID() string {
 
 // Pins are the pins base..tip changes in the repository at top, in file
 // order, then as each file lists them, each with a key no other has.
-func Pins(top, base, tip string) ([]Pin, error) {
-	names, err := git.Bytes(nil, "-C", top, "diff", "--name-only", "-z", "--no-renames", base, tip)
+func Pins(ctx context.Context, top, base, tip string) ([]Pin, error) {
+	g := git.In(ctx)
+	names, err := g.Bytes(nil, "-C", top, "diff", "--name-only", "-z", "--no-renames", base, tip)
 	if err != nil {
 		return nil, err
 	}
@@ -108,14 +110,14 @@ func Pins(top, base, tip string) ([]Pin, error) {
 	slices.Sort(files)
 	var pins []Pin
 	for _, f := range files {
-		old, _ := git.Bytes(nil, "-C", top, "cat-file", "blob", base+":"+f)
-		next, _ := git.Bytes(nil, "-C", top, "cat-file", "blob", tip+":"+f)
+		old, _ := g.Bytes(nil, "-C", top, "cat-file", "blob", base+":"+f)
+		next, _ := g.Bytes(nil, "-C", top, "cat-file", "blob", tip+":"+f)
 		var found []Pin
 		switch name := path.Base(f); {
 		case name == "flake.lock":
 			found = flakePins(f, old, next)
 		case name == "flake.nix":
-			found = flakeNixPins(top, base, tip, f, string(old), string(next))
+			found = flakeNixPins(g, top, base, tip, f, string(old), string(next))
 		case name == "go.mod" || name == "go.work":
 			found = goModPins(f, string(old), string(next))
 		case name == "go.sum" || name == "go.work.sum":
@@ -125,7 +127,7 @@ func Pins(top, base, tip string) ([]Pin, error) {
 		case routes.Match("**/npins/sources.json", f):
 			found = npinsPins(f, old, next)
 		case slices.ContainsFunc(routes.LockFiles, func(g string) bool { return routes.Match(g, f) }):
-			found = lockFilePin(top, base, tip, f)
+			found = lockFilePin(g, top, base, tip, f)
 		case strings.HasSuffix(f, ".nix"):
 			found = nixPins(f, string(old), string(next))
 		case routes.Match(".github/workflows/**", f) || routes.Match(".github/actions/**", f) ||
@@ -233,9 +235,9 @@ func blobID(data []byte) string {
 
 // lockFilePin is a lock file this package reads no versions from, as one
 // pin, versioned by its blob on each side; none where TIP drops it.
-func lockFilePin(top, base, tip, file string) []Pin {
-	old, _ := git.Run("-C", top, "rev-parse", "--verify", "-q", base+":"+file)
-	next, err := git.Run("-C", top, "rev-parse", "--verify", "-q", tip+":"+file)
+func lockFilePin(g git.Where, top, base, tip, file string) []Pin {
+	old, _ := g.Run("-C", top, "rev-parse", "--verify", "-q", base+":"+file)
+	next, err := g.Run("-C", top, "rev-parse", "--verify", "-q", tip+":"+file)
 	if err != nil || next == "" {
 		return nil
 	}

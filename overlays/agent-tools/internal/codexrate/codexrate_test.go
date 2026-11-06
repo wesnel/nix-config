@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 )
 
@@ -121,24 +122,25 @@ func hang() {
 	os.Exit(0)
 }
 
-// fake makes the test binary the codex Read starts, in mode.
-func fake(t *testing.T, mode string) (codex, log string) {
+// fake makes the test binary the codex Read starts, in mode, under the
+// context it returns, whose Env also holds extra.
+func fake(t *testing.T, mode string, extra ...string) (ctx context.Context, codex, log string) {
 	t.Helper()
 	log = t.TempDir()
-	t.Setenv("FAKE_CODEX", mode)
-	t.Setenv("FAKE_CODEX_LOG", log)
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return exe, log
+	e := env.Process().Set(append([]string{"FAKE_CODEX=" + mode, "FAKE_CODEX_LOG=" + log}, extra...)...)
+	return env.With(t.Context(), e), exe, log
 }
 
 // Read sends the request the operator's probe did, and nothing that
 // overrides Codex's own configuration, and gives back the call's result.
 func TestRead(t *testing.T) {
-	codex, log := fake(t, "answer")
-	got, err := Read(t.Context(), codex)
+	t.Parallel()
+	ctx, codex, log := fake(t, "answer")
+	got, err := Read(ctx, codex)
 	if err != nil {
 		data, _ := os.ReadFile(filepath.Join(log, "unexpected"))
 		t.Fatalf("Read: %v (unexpected request: %s)", err, data)
@@ -154,10 +156,12 @@ func TestRead(t *testing.T) {
 // A reply Read cannot trust as the call's result is an error, never a
 // result.
 func TestReadRefuses(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"error", "wrong-id", "bad-json", "request", "no-rate-limits", "oversized", "notifications", "stderr", "exits"} {
 		t.Run(mode, func(t *testing.T) {
-			codex, _ := fake(t, mode)
-			if got, err := Read(t.Context(), codex); err == nil {
+			t.Parallel()
+			ctx, codex, _ := fake(t, mode)
+			if got, err := Read(ctx, codex); err == nil {
 				t.Errorf("result %s from %s", got, mode)
 			}
 		})
@@ -167,15 +171,15 @@ func TestReadRefuses(t *testing.T) {
 // Cancelling Read ends it even while a process Codex detached holds its
 // output open, and leaves nothing of Codex's process group running.
 func TestReadCancelled(t *testing.T) {
-	codex, log := fake(t, "detached")
+	t.Parallel()
 	// The detached child writes its pid here once all three requests are
 	// read; reading the fifo waits for it.
-	pidFile := filepath.Join(log, "pid")
+	pidFile := filepath.Join(t.TempDir(), "pid")
 	if err := syscall.Mkfifo(pidFile, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("FAKE_CODEX_PID", pidFile)
-	ctx, cancel := context.WithCancel(t.Context())
+	ctx, codex, log := fake(t, "detached", "FAKE_CODEX_PID="+pidFile)
+	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() {
 		_, err := Read(ctx, codex)

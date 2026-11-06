@@ -2129,7 +2129,7 @@ func realPath(path string) string {
 
 // trashOnPath reports whether trash is on e's PATH, the hook's.
 func trashOnPath(e env.Env) bool {
-	_, err := lookPath(e, "trash")
+	_, err := e.LookPath("trash")
 	return err == nil
 }
 
@@ -2550,7 +2550,7 @@ func sshTouch(ctx context.Context, name string, args []string, dir string) bool 
 		if touchHosts[strings.ToLower(host)] {
 			return true
 		}
-		out, err := commandIn(ctx, "ssh", append(append([]string{"-G"}, config...), host)...).Output()
+		out, err := env.Command(ctx, "ssh", append(append([]string{"-G"}, config...), host)...).Output()
 		if err != nil {
 			continue
 		}
@@ -2674,7 +2674,7 @@ func timedGit(ctx context.Context, vars []string, args ...string) (string, bool)
 	}
 	ctx, cancel := context.WithTimeout(ctx, repoTimeout)
 	defer cancel()
-	cmd := commandIn(ctx, "git", args...)
+	cmd := env.Command(ctx, "git", args...)
 	cmd.Env = vars
 	cmd.WaitDelay = repoTimeout
 	out, err := cmd.Output()
@@ -2683,49 +2683,6 @@ func timedGit(ctx context.Context, vars []string, args ...string) (string, bool)
 		return "", false
 	}
 	return strings.TrimSpace(string(out)), err == nil
-}
-
-// commandIn is exec.CommandContext for the Env of ctx: it runs name as
-// found on that Env's PATH, with that Env's variables. A name not found
-// there fails to start, as exec.Command's does.
-func commandIn(ctx context.Context, name string, args ...string) *exec.Cmd {
-	e := env.From(ctx)
-	path, err := lookPath(e, name)
-	if path == "" {
-		path = name
-	}
-	cmd := exec.CommandContext(ctx, path, args...)
-	cmd.Args[0] = name
-	cmd.Err = err
-	cmd.Env = e.Environ()
-	return cmd
-}
-
-// lookPath is exec.LookPath of file on e's PATH rather than this
-// process's: an empty element is the working directory, and a file found
-// by a relative element is refused with exec.ErrDot, as exec.LookPath does.
-func lookPath(e env.Env, file string) (string, error) {
-	if strings.Contains(file, "/") {
-		return exec.LookPath(file)
-	}
-	for _, dir := range filepath.SplitList(e.Get("PATH")) {
-		if dir == "" {
-			dir = "."
-		}
-		path := filepath.Join(dir, file)
-		check := path
-		if !filepath.IsAbs(path) {
-			check = "./" + path // with a slash, LookPath checks the file where it is
-		}
-		if _, err := exec.LookPath(check); err != nil {
-			continue
-		}
-		if !filepath.IsAbs(path) {
-			return path, &exec.Error{Name: file, Err: exec.ErrDot}
-		}
-		return path, nil
-	}
-	return "", &exec.Error{Name: file, Err: exec.ErrNotFound}
 }
 
 // judged is what judge says of a call, given ctx with a stall record of

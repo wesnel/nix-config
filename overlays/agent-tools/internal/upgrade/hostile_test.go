@@ -38,8 +38,8 @@ func TestCloneConfigRefused(t *testing.T) {
 	// commands turn off.
 	global := filepath.Join(t.TempDir(), "gitconfig")
 	os.WriteFile(global, []byte("[log]\n\tshowSignature = true\n[gpg]\n\tprogram = "+evil+"\n"), 0o644)
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
-	got := Gather(t.Context(), []Pin{p}, w.o)
+	w.env = w.env.Set("GIT_CONFIG_GLOBAL=" + global)
+	got := Gather(w.ctx(t), []Pin{p}, w.o)
 	if _, err := os.Stat(pwned); err == nil {
 		t.Fatal("the user's gpg.program ran during the review")
 	}
@@ -47,11 +47,11 @@ func TestCloneConfigRefused(t *testing.T) {
 		t.Errorf("gathered %+v", got)
 	}
 
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+	w.env = w.env.Set("GIT_CONFIG_GLOBAL=/dev/null")
 	gitIn(t, dir, "config", "gpg.program", evil)
 	gitIn(t, dir, "config", "log.showSignature", "true")
 	w.o.Cache = t.TempDir()
-	got = Gather(t.Context(), []Pin{p}, w.o)
+	got = Gather(w.ctx(t), []Pin{p}, w.o)
 	if _, err := os.Stat(pwned); err == nil {
 		t.Fatal("the clone's gpg.program ran during the review")
 	}
@@ -61,7 +61,7 @@ func TestCloneConfigRefused(t *testing.T) {
 	// With GitHub giving nothing either, the refusal is the reason.
 	w.compareBody = "not json"
 	w.o.Cache = t.TempDir()
-	if got = Gather(t.Context(), []Pin{p}, w.o); got[0].Read() || !strings.Contains(got[0].Why, "gpg.program") {
+	if got = Gather(w.ctx(t), []Pin{p}, w.o); got[0].Read() || !strings.Contains(got[0].Why, "gpg.program") {
 		t.Errorf("gathered %+v", got)
 	}
 }
@@ -80,7 +80,7 @@ func TestNotesSymlinks(t *testing.T) {
 	os.Symlink(filepath.Join(outside, "passwd"), filepath.Join(next, "CHANGELOG"))
 	p := flakePin("nixos", "nixpkgs", "aaaaaaa", "bbbbbbb")
 	p.OldTime, p.NewTime = time.Time{}, time.Time{}
-	got := Gather(t.Context(), []Pin{p}, w.o)
+	got := Gather(w.ctx(t), []Pin{p}, w.o)
 	all := ""
 	for _, t := range got[0].Texts {
 		all += t.Body
@@ -92,6 +92,7 @@ func TestNotesSymlinks(t *testing.T) {
 
 // A diff longer than the text a pin takes is cut while it is read.
 func TestNotesDiffCapped(t *testing.T) {
+	t.Parallel()
 	old, next := t.TempDir(), t.TempDir()
 	writeFiles(t, old, "CHANGELOG=a\n")
 	writeFiles(t, next, "CHANGELOG="+strings.Repeat("a long line of the changelog\n", 10000))
@@ -106,7 +107,7 @@ func TestNotesDiffCapped(t *testing.T) {
 func TestCacheModes(t *testing.T) {
 	w := setWorld(t)
 	p := Pin{Key: "x", Kind: "action", Owner: "o", Repo: "r", Old: "aaaaaaa", New: "bbbbbbb", OldRef: "aaaaaaa", NewRef: "bbbbbbb"}
-	Gather(t.Context(), []Pin{p}, w.o)
+	Gather(w.ctx(t), []Pin{p}, w.o)
 	if info, err := os.Stat(w.o.Cache); err != nil || info.Mode().Perm() != 0o700 {
 		t.Fatalf("cache %v %v", info, err)
 	}
@@ -114,11 +115,11 @@ func TestCacheModes(t *testing.T) {
 		requests, _ := w.calls(t)
 		return len(requests)
 	}
-	if Gather(t.Context(), []Pin{p}, w.o); fetched() != 1 {
+	if Gather(w.ctx(t), []Pin{p}, w.o); fetched() != 1 {
 		t.Fatalf("not kept: %d requests", fetched())
 	}
 	os.Chmod(w.o.Cache, 0o777)
-	if Gather(t.Context(), []Pin{p}, w.o); fetched() != 2 {
+	if Gather(w.ctx(t), []Pin{p}, w.o); fetched() != 2 {
 		t.Errorf("read from a cache others may write: %d requests", fetched())
 	}
 	// A link in place of the directory is refused too.
@@ -127,7 +128,7 @@ func TestCacheModes(t *testing.T) {
 	os.Symlink(w.o.Cache, link)
 	linked := w.o
 	linked.Cache = link
-	if Gather(t.Context(), []Pin{p}, linked); fetched() != 3 {
+	if Gather(w.ctx(t), []Pin{p}, linked); fetched() != 3 {
 		t.Errorf("read through a link: %d requests", fetched())
 	}
 }
@@ -138,7 +139,7 @@ func TestHashOnly(t *testing.T) {
 	w := setWorld(t)
 	p := Pin{Key: "x.nix#acme/t", Kind: "nix", Owner: "acme", Repo: "t", Old: "sha256-V1=", New: "sha256-V2=",
 		OldRef: "v1.0", NewRef: "v1.0"}
-	got := Gather(t.Context(), []Pin{p}, w.o)
+	got := Gather(w.ctx(t), []Pin{p}, w.o)
 	if got[0].Read() || !strings.Contains(got[0].Why, "only its hash or its directory moved") {
 		t.Errorf("gathered %+v", got)
 	}
@@ -149,6 +150,7 @@ func TestHashOnly(t *testing.T) {
 
 // Private module patterns ignore case.
 func TestPrivateCase(t *testing.T) {
+	t.Parallel()
 	patterns := strings.Join(DefaultPrivateModules, ",")
 	for _, m := range []string{"github.com/NGROK/secret", "GitHub.com/ngrok/x/sub", "go.ngrok.com/lib", "github.com/Ngrok-Private/y"} {
 		if !matchPrefixPatterns(patterns, m) {

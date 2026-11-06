@@ -17,14 +17,14 @@ import (
 // behind: a child forked as the kill lands is killed too.
 func TestCodexStoppedWhileForking(t *testing.T) {
 	f := setUp(t, true)
-	t.Setenv("FAKE_CODEX", "fork")
+	f.setenv("FAKE_CODEX", "fork")
 	// Codex records its process group, then starts children without pause,
 	// sending the cue to stop the review among them.
 	started := filepath.Join(f.log, "started")
 	if err := syscall.Mkfifo(started, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(t.Context())
+	ctx, cancel := context.WithCancel(f.ctx(t))
 	t.Cleanup(cancel)
 	go func() {
 		if r, err := os.Open(started); err == nil {

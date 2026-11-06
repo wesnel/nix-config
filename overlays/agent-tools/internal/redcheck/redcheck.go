@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/refusal"
@@ -143,6 +144,9 @@ func (r *Result) Exit() int {
 // git directory, which a sandbox that lets git create a worktree at all lets
 // it write. The worktree is removed afterwards, also on error or when ctx is
 // cancelled. No ref, index or file of the caller's worktrees is touched.
+//
+// git and the commands run in ctx's Env, from whose directory the
+// repository is found where opts.Dir is "".
 func Do(ctx context.Context, rev string, opts Options) (*Result, error) {
 	if opts.Test == "" {
 		return nil, refusal.New("no test command is configured for this clone, so no test ran; pass `--test CMD`, " +
@@ -160,22 +164,23 @@ func Do(ctx context.Context, rev string, opts Options) (*Result, error) {
 	}
 	var top string
 	var err error
+	g := git.In(ctx)
 	if opts.Dir != "" {
-		top, err = git.Run("-C", opts.Dir, "rev-parse", "--show-toplevel")
+		top, err = g.Run("-C", opts.Dir, "rev-parse", "--show-toplevel")
 	} else {
-		top, err = git.Toplevel()
+		top, err = g.Toplevel()
 	}
 	if err != nil {
 		return nil, err
 	}
-	common, err := git.Run("-C", top, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	common, err := g.Run("-C", top, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return nil, err
 	}
 	// Once the repository is found, neither these tools' git nor the test
 	// command may reach the caller's tree.
-	gitenv.Clear()
-	commits, err := commitsOf(top, rev, opts.Fixups)
+	ctx = env.With(ctx, env.From(ctx).Without(gitenv.Location...))
+	commits, err := commitsOf(git.In(ctx), top, rev, opts.Fixups)
 	if err != nil {
 		return nil, err
 	}
@@ -191,19 +196,19 @@ func Do(ctx context.Context, rev string, opts Options) (*Result, error) {
 	return result, nil
 }
 
-// commitsOf lists the commits rev names, oldest first.
-func commitsOf(top, rev string, fixups bool) ([]string, error) {
+// commitsOf lists the commits rev names, oldest first, with w's git.
+func commitsOf(w git.Where, top, rev string, fixups bool) ([]string, error) {
 	if !strings.Contains(rev, "..") {
 		if fixups {
 			return nil, refusal.New("--fixups picks the fixups out of a range, so it needs one; pass one such as `origin/main..HEAD`")
 		}
-		commit, err := git.Run("-C", top, "rev-parse", "--verify", "--end-of-options", rev+"^{commit}")
+		commit, err := w.Run("-C", top, "rev-parse", "--verify", "--end-of-options", rev+"^{commit}")
 		if err != nil {
 			return nil, err
 		}
 		return []string{commit}, nil
 	}
-	out, err := git.Run("-C", top, "rev-list", "--reverse", "--no-merges", "--format=%H %s", "--end-of-options", rev)
+	out, err := w.Run("-C", top, "rev-list", "--reverse", "--no-merges", "--format=%H %s", "--end-of-options", rev)
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +243,8 @@ func short(commit string) string {
 }
 
 func checkCommit(ctx context.Context, top, common, commit string, opts Options) (*Check, error) {
-	info, err := git.Run("-C", top, "log", "-1", "--format=%P%n%s", commit)
+	w := git.In(ctx)
+	info, err := w.Run("-C", top, "log", "-1", "--format=%P%n%s", commit)
 	if err != nil {
 		return nil, err
 	}
@@ -254,7 +260,7 @@ func checkCommit(ctx context.Context, top, common, commit string, opts Options) 
 	}
 	parent := strings.Fields(parents)[0]
 
-	changed, err := changedFiles(top, parent, commit, nil)
+	changed, err := changedFiles(w, top, parent, commit, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -262,7 +268,7 @@ func checkCommit(ctx context.Context, top, common, commit string, opts Options) 
 	for i, g := range opts.TestFiles {
 		globs[i] = ":(glob)" + g
 	}
-	tests, err := changedFiles(top, parent, commit, globs)
+	tests, err := changedFiles(w, top, parent, commit, globs)
 	if err != nil {
 		return nil, err
 	}
@@ -276,11 +282,11 @@ func checkCommit(ctx context.Context, top, common, commit string, opts Options) 
 		return check, nil
 	}
 
-	wt, err := addWorktree(top, common, parent)
+	wt, err := addWorktree(w, top, common, parent)
 	if err != nil {
 		return nil, err
 	}
-	defer wt.remove(top)
+	defer wt.remove(w, top)
 
 	// The parent with the commit's test files: what the tests see without
 	// the change. Restoring a file the commit deletes deletes it.
@@ -288,7 +294,7 @@ func checkCommit(ctx context.Context, top, common, commit string, opts Options) 
 	for i, f := range tests {
 		literal[i] = ":(literal)" + f
 	}
-	if _, err := git.RunLong(nil, append([]string{"-C", wt.path, "restore", "--source", commit, "--staged", "--worktree", "--"}, literal...)...); err != nil {
+	if _, err := w.RunLong(nil, append([]string{"-C", wt.path, "restore", "--source", commit, "--staged", "--worktree", "--"}, literal...)...); err != nil {
 		return nil, err
 	}
 	if opts.Build != "" {
@@ -302,10 +308,10 @@ func checkCommit(ctx context.Context, top, common, commit string, opts Options) 
 		return nil, err
 	}
 
-	if _, err := git.RunLong(nil, "-C", wt.path, "checkout", "--quiet", "--force", "--detach", commit); err != nil {
+	if _, err := w.RunLong(nil, "-C", wt.path, "checkout", "--quiet", "--force", "--detach", commit); err != nil {
 		return nil, err
 	}
-	if _, err := git.RunLong(nil, "-C", wt.path, "clean", "-ffdxq"); err != nil {
+	if _, err := w.RunLong(nil, "-C", wt.path, "clean", "-ffdxq"); err != nil {
 		return nil, err
 	}
 	fmt.Fprintf(opts.Log, "git-red-check: %s: testing with the change\n", short(commit))
@@ -329,13 +335,13 @@ func checkCommit(ctx context.Context, top, common, commit string, opts Options) 
 }
 
 // changedFiles lists the paths that differ between from and to, limited to
-// pathspecs when there are any.
-func changedFiles(top, from, to string, pathspecs []string) ([]string, error) {
+// pathspecs when there are any, with w's git.
+func changedFiles(w git.Where, top, from, to string, pathspecs []string) ([]string, error) {
 	args := []string{"-C", top, "diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", from, to}
 	if pathspecs != nil {
 		args = append(append(args, "--"), pathspecs...)
 	}
-	out, err := git.Bytes(nil, args...)
+	out, err := w.Bytes(nil, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -351,8 +357,8 @@ func changedFiles(top, from, to string, pathspecs []string) ([]string, error) {
 type worktree struct{ path, admin, common string }
 
 // addWorktree checks commit out, detached, in a new directory under
-// <common>/red-check.
-func addWorktree(top, common, commit string) (*worktree, error) {
+// <common>/red-check, with w's git.
+func addWorktree(w git.Where, top, common, commit string) (*worktree, error) {
 	parent := filepath.Join(common, "red-check")
 	if err := os.MkdirAll(parent, 0o755); err != nil { //nolint:gosec // holds checkouts of the repository, in its git directory
 		return nil, err
@@ -362,18 +368,18 @@ func addWorktree(top, common, commit string) (*worktree, error) {
 		return nil, err
 	}
 	wt := &worktree{path: path, common: common}
-	if _, err := git.RunLong(nil, "-C", top, "worktree", "add", "--quiet", "--detach", path, commit); err != nil {
-		wt.remove(top)
+	if _, err := w.RunLong(nil, "-C", top, "worktree", "add", "--quiet", "--detach", path, commit); err != nil {
+		wt.remove(w, top)
 		return nil, err
 	}
-	wt.admin, _ = git.Run("-C", path, "rev-parse", "--path-format=absolute", "--git-dir")
+	wt.admin, _ = w.Run("-C", path, "rev-parse", "--path-format=absolute", "--git-dir")
 	return wt, nil
 }
 
 // remove deletes the worktree and git's record of it, by hand if the test
-// command left it in a state `git worktree remove` refuses.
-func (wt *worktree) remove(top string) {
-	if _, err := git.RunLong(nil, "-C", top, "worktree", "remove", "--force", "--force", wt.path); err != nil {
+// command left it in a state `git worktree remove` refuses. w runs git.
+func (wt *worktree) remove(w git.Where, top string) {
+	if _, err := w.RunLong(nil, "-C", top, "worktree", "remove", "--force", "--force", wt.path); err != nil {
 		os.RemoveAll(wt.path)
 		// Only git's own record of a worktree, never where a damaged
 		// worktree's .git file might point.
@@ -387,10 +393,10 @@ func (wt *worktree) remove(top string) {
 
 // run runs command with sh in dir, in its own process group so that
 // cancelling ctx stops everything it started, and keeps the end of its
-// combined output.
+// combined output. sh is the one ctx's Env finds, run with its variables.
 func run(ctx context.Context, dir, command string, lines int) (*Run, error) {
 	var out bytes.Buffer
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd := env.Command(ctx, "sh", "-c", command)
 	cmd.Dir = dir
 	cmd.Stdout, cmd.Stderr = &out, &out
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

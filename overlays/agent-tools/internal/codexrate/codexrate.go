@@ -13,13 +13,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
 	"strconv"
 	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 )
 
@@ -42,7 +41,8 @@ var ErrProtocol = errors.New("codex app-server: no usable account/rateLimits/rea
 
 // Read runs codex, the path of the Codex executable, as `codex app-server
 // --listen stdio://`, calls account/rateLimits/read, and returns the call's
-// result, a JSON object holding rateLimits. It sends the requests as a
+// result, a JSON object holding rateLimits. Codex runs in parent's Env,
+// minus gitenv.Location. It sends the requests as a
 // plain client does, overriding none of Codex's configuration, since an
 // override such as a model provider or --strict-config makes Codex refuse
 // the call or a configuration it would otherwise load. It kills Codex's
@@ -50,8 +50,8 @@ var ErrProtocol = errors.New("codex app-server: no usable account/rateLimits/rea
 func Read(parent context.Context, codex string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(parent, Timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, codex, "app-server", "--listen", "stdio://")
-	cmd.Env = gitenv.Without(os.Environ())
+	cmd := env.Command(ctx, codex, "app-server", "--listen", "stdio://")
+	cmd.Env = gitenv.Without(cmd.Env)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.WaitDelay = time.Second
 	stdin, err := cmd.StdinPipe()

@@ -74,11 +74,13 @@ var privateVars = []string{"GOPRIVATE", "GONOPROXY", "GONOSUMDB"}
 // XDG cache directory, clones under ~/git/github.com, and as private
 // modules those GOPRIVATE, GONOPROXY and GONOSUMDB name, in the
 // environment and as `go env` gives them, with review.privateModules of
-// the operator's config, DefaultPrivateModules where it names none.
+// the operator's config, DefaultPrivateModules where it names none. The
+// environment and the home directory are ctx's Env's.
 func DefaultOptions(ctx context.Context) Options {
 	o := Options{Limits: DefaultLimits}
-	home, _ := os.UserHomeDir()
-	cache := os.Getenv("XDG_CACHE_HOME")
+	e := env.From(ctx)
+	home := e.Get("HOME")
+	cache := e.Get("XDG_CACHE_HOME")
 	if cache == "" && home != "" {
 		cache = filepath.Join(home, ".cache")
 	}
@@ -88,11 +90,11 @@ func DefaultOptions(ctx context.Context) Options {
 	if home != "" {
 		o.Clones = filepath.Join(home, "git", "github.com")
 	}
-	patterns := privateModules(repos.Path(env.Process()))
+	patterns := privateModules(repos.Path(e))
 	for _, v := range privateVars {
-		patterns = append(patterns, os.Getenv(v))
+		patterns = append(patterns, e.Get(v))
 	}
-	cmd := exec.CommandContext(ctx, "go", append([]string{"env"}, privateVars...)...)
+	cmd := env.Command(ctx, "go", append([]string{"env"}, privateVars...)...)
 	cmd.Dir = os.TempDir()
 	if out, err := cmd.Output(); err == nil {
 		patterns = append(patterns, strings.Fields(string(out))...)
@@ -215,7 +217,7 @@ func gatherPin(ctx context.Context, p Pin, o Options, left *int) Gathered {
 		g.Why = fmt.Sprintf("a %s node, which this review never fetches", cmp.Or(p.Type, "non-github"))
 		return g
 	}
-	if why := unreadable(p, o, private); why != "" {
+	if why := unreadable(ctx, p, o, private); why != "" {
 		g.Why = why
 		return g
 	}
@@ -247,12 +249,13 @@ func gatherPin(ctx context.Context, p Pin, o Options, left *int) Gathered {
 }
 
 // repoPrivate reports whether GitHub, asked with the user's login, says
-// the repository owner/repo is private.
-func repoPrivate(owner, repo string) (bool, error) {
+// the repository owner/repo is private. Only ctx's Env reaches the
+// request: as before it took a context, ctx's end does not stop it.
+func repoPrivate(ctx context.Context, owner, repo string) (bool, error) {
 	var r struct {
 		Private *bool `json:"private"`
 	}
-	if err := gh.REST(context.Background(), "GET", fmt.Sprintf("repos/%s/%s", url.PathEscape(owner), url.PathEscape(repo)), nil, &r); err != nil {
+	if err := gh.REST(context.WithoutCancel(ctx), "GET", fmt.Sprintf("repos/%s/%s", url.PathEscape(owner), url.PathEscape(repo)), nil, &r); err != nil {
 		return false, err
 	}
 	if r.Private == nil {
@@ -268,12 +271,12 @@ func repoPrivate(owner, repo string) (bool, error) {
 // (o.Own), where it is a private module, or its github.com path, that
 // o.Private names. Anyone else's change could name the operator's private
 // repositories to have them read into a review it sees.
-func unreadable(p Pin, o Options, privateModule bool) string {
+func unreadable(ctx context.Context, p Pin, o Options, privateModule bool) string {
 	if p.Owner == "" || !validName(p.Owner) || !validName(p.Repo) ||
 		o.Own && (privateModule || matchPrefixPatterns(o.Private, "github.com/"+p.Owner+"/"+p.Repo)) {
 		return ""
 	}
-	private, err := repoPrivate(p.Owner, p.Repo)
+	private, err := repoPrivate(ctx, p.Owner, p.Repo)
 	switch {
 	case err != nil:
 		return fmt.Sprintf("github.com/%s/%s's visibility could not be read (%s), and only a public repository, or for the "+
@@ -429,15 +432,15 @@ var cloneTimeout = 30 * time.Second
 func cloneGit(ctx context.Context, dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, cloneTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", append(append([]string{"--no-replace-objects", "-C", dir}, cloneConfig...), args...)...)
+	cmd := env.Command(ctx, "git", append(append([]string{"--no-replace-objects", "-C", dir}, cloneConfig...), args...)...)
 	cmd.Dir = os.TempDir()
-	env := slices.DeleteFunc(gitenv.Without(os.Environ()), func(kv string) bool {
+	vars := slices.DeleteFunc(gitenv.Without(cmd.Env), func(kv string) bool {
 		name, _, _ := strings.Cut(kv, "=")
 		return name == "GIT_CONFIG_PARAMETERS" || name == "GIT_CONFIG_COUNT" ||
 			strings.HasPrefix(name, "GIT_CONFIG_KEY_") || strings.HasPrefix(name, "GIT_CONFIG_VALUE_") ||
 			name == "GIT_REPLACE_REF_BASE" || name == "GIT_GRAFT_FILE" || name == "GIT_NO_REPLACE_OBJECTS"
 	})
-	cmd.Env = append(env, localGit...)
+	cmd.Env = append(vars, localGit...)
 	cmd.WaitDelay = time.Second
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -467,7 +470,7 @@ func cloneLog(ctx context.Context, clones string, p Pin) (Text, error) {
 	}
 	// The clone is the operator's, but anything may have written its
 	// config: one that names a program is never run.
-	if err := git.CheckConfig(dir); err != nil {
+	if err := git.In(ctx).CheckConfig(dir); err != nil {
 		return Text{}, err
 	}
 	run := func(args ...string) (string, error) { return cloneGit(ctx, dir, args...) }
@@ -554,9 +557,9 @@ var storeDir = "/nix/store/"
 func prefetch(ctx context.Context, owner, repo, ref, narHash string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "nix", "flake", "prefetch", "--json", "--", "github:"+owner+"/"+repo+"/"+ref)
+	cmd := env.Command(ctx, "nix", "flake", "prefetch", "--json", "--", "github:"+owner+"/"+repo+"/"+ref)
 	cmd.Dir = os.TempDir()
-	cmd.Env = gitenv.Without(os.Environ())
+	cmd.Env = gitenv.Without(cmd.Env)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -591,18 +594,18 @@ func moduleTrees(ctx context.Context, p Pin, o Options) (Text, error) {
 	if err != nil {
 		return Text{}, err
 	}
-	env := goproxy.DownloadEnv(filepath.Join(tmp, "mod"), tmp, "local")
+	vars := goproxy.DownloadEnv(env.From(ctx), filepath.Join(tmp, "mod"), tmp, "local")
 	defer func() {
 		// go makes its module cache read-only; this makes it removable.
-		clean := exec.Command("go", "clean", "-modcache")
-		clean.Dir, clean.Env = tmp, env
+		clean := env.Command(context.WithoutCancel(ctx), "go", "clean", "-modcache")
+		clean.Dir, clean.Env = tmp, vars
 		clean.Run()
 		os.RemoveAll(tmp)
 	}()
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "go", "mod", "download", "-json", "--", oldModule+"@"+p.Old, p.Module+"@"+p.New)
-	cmd.Dir, cmd.Env = tmp, env
+	cmd := env.Command(ctx, "go", "mod", "download", "-json", "--", oldModule+"@"+p.Old, p.Module+"@"+p.New)
+	cmd.Dir, cmd.Env = tmp, vars
 	out, _ := cmd.Output()
 	dirs := map[string]string{}
 	dec := json.NewDecoder(bytes.NewReader(out))
@@ -708,10 +711,10 @@ func notesDiff(ctx context.Context, old, next string, extra []string, limit int)
 func diffPaths(ctx context.Context, dir, a, z string, limit int) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, diffTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-c", "core.hooksPath=/dev/null", "diff", "--no-index", "--no-color",
+	cmd := env.Command(ctx, "git", "-c", "core.hooksPath=/dev/null", "diff", "--no-index", "--no-color",
 		"--no-ext-diff", "--no-textconv", "-U1", "--", a, z)
 	cmd.Dir = dir
-	cmd.Env = append(gitenv.Without(os.Environ()), gitenv.NoConfig...)
+	cmd.Env = append(gitenv.Without(cmd.Env), gitenv.NoConfig...)
 	pipe, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -756,12 +759,12 @@ func githubSources(ctx context.Context, p Pin, o Options, logged bool) []source 
 	if !countsOnly[slug] && (p.OldTag != "" && p.NewTag != "" || !p.OldTime.IsZero() && !p.NewTime.IsZero()) && calls < o.Limits.Calls {
 		calls++
 		t, err := cached(o, "releases", []string{p.Owner, p.Repo, p.OldTag, p.NewTag, p.OldTime.String(), p.NewTime.String()},
-			func() (Text, error) { return releases(p) })
+			func() (Text, error) { return releases(ctx, p) })
 		out = append(out, source{"GitHub releases", t, err})
 	}
 	if !logged && validRef(p.OldRef) && validRef(p.NewRef) && calls < o.Limits.Calls {
 		t, err := cached(o, "compare", []string{p.Owner, p.Repo, p.OldRef, p.NewRef}, func() (Text, error) {
-			return compare(p, countsOnly[slug])
+			return compare(ctx, p, countsOnly[slug])
 		})
 		out = append(out, source{"GitHub's comparison", t, err})
 	}
@@ -770,8 +773,9 @@ func githubSources(ctx context.Context, p Pin, o Options, logged bool) []source 
 
 // releases are p's repository's releases between its two versions: by
 // tag, where its newest hundred hold both, else by when they were
-// published, between the times its revisions were made.
-func releases(p Pin) (Text, error) {
+// published, between the times its revisions were made. Only ctx's Env
+// reaches the request, as for repoPrivate.
+func releases(ctx context.Context, p Pin) (Text, error) {
 	var all []struct {
 		TagName     string    `json:"tag_name"`
 		Name        string    `json:"name"`
@@ -779,7 +783,7 @@ func releases(p Pin) (Text, error) {
 		Draft       bool      `json:"draft"`
 		PublishedAt time.Time `json:"published_at"`
 	}
-	if err := gh.REST(context.Background(), "GET", fmt.Sprintf("repos/%s/%s/releases?per_page=100", url.PathEscape(p.Owner), url.PathEscape(p.Repo)),
+	if err := gh.REST(context.WithoutCancel(ctx), "GET", fmt.Sprintf("repos/%s/%s/releases?per_page=100", url.PathEscape(p.Owner), url.PathEscape(p.Repo)),
 		nil, &all); err != nil {
 		return Text{}, err
 	}
@@ -816,8 +820,9 @@ func releases(p Pin) (Text, error) {
 }
 
 // compare is GitHub's comparison of p's two refs: its counts, and for a
-// repository not in countsOnly the first commits' subjects.
-func compare(p Pin, counts bool) (Text, error) {
+// repository not in countsOnly the first commits' subjects. Only ctx's
+// Env reaches the request, as for repoPrivate.
+func compare(ctx context.Context, p Pin, counts bool) (Text, error) {
 	var c struct {
 		Status       string `json:"status"`
 		AheadBy      int    `json:"ahead_by"`
@@ -830,7 +835,7 @@ func compare(p Pin, counts bool) (Text, error) {
 			} `json:"commit"`
 		} `json:"commits"`
 	}
-	if err := gh.REST(context.Background(), "GET", fmt.Sprintf("repos/%s/%s/compare/%s...%s?per_page=100", url.PathEscape(p.Owner),
+	if err := gh.REST(context.WithoutCancel(ctx), "GET", fmt.Sprintf("repos/%s/%s/compare/%s...%s?per_page=100", url.PathEscape(p.Owner),
 		url.PathEscape(p.Repo), url.PathEscape(p.OldRef), url.PathEscape(p.NewRef)), nil, &c); err != nil {
 		return Text{}, err
 	}

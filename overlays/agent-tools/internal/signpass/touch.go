@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"regexp"
@@ -176,14 +175,18 @@ func self(ctx context.Context) string {
 	e := env.From(ctx)
 	exe, err := os.Executable()
 	if err != nil {
-		if exe, err = lookPath(e, os.Args[0]); err != nil {
-			exe = os.Args[0]
+		// A name with a slash is a path already.
+		exe = os.Args[0]
+		if !strings.Contains(exe, "/") {
+			if found, err := e.LookPath(exe); err == nil {
+				exe = found
+			}
 		}
 	}
 	if abs, err := filepath.Abs(exe); err == nil {
 		exe = abs
 	}
-	if onPath, err := lookPath(e, "git-sign-pass"); err == nil {
+	if onPath, err := e.LookPath("git-sign-pass"); err == nil {
 		a, aerr := os.Stat(onPath)
 		b, berr := os.Stat(exe) //nolint:gosec // this program's own path, only compared with another
 		if aerr == nil && berr == nil && os.SameFile(a, b) {
@@ -191,33 +194,6 @@ func self(ctx context.Context) string {
 		}
 	}
 	return quote(exe)
-}
-
-// lookPath is exec.LookPath with the PATH of e rather than this process's:
-// file itself when it names a path, otherwise the first executable regular
-// file of that name in a directory of PATH, an empty entry meaning the
-// working directory.
-func lookPath(e env.Env, file string) (string, error) {
-	if strings.Contains(file, "/") {
-		if executable(file) {
-			return file, nil
-		}
-		return "", &exec.Error{Name: file, Err: exec.ErrNotFound}
-	}
-	for _, dir := range filepath.SplitList(e.Get("PATH")) {
-		if dir == "" {
-			dir = "."
-		}
-		if path := filepath.Join(dir, file); executable(path) {
-			return path, nil
-		}
-	}
-	return "", &exec.Error{Name: file, Err: exec.ErrNotFound}
-}
-
-func executable(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
 }
 
 var plainWord = regexp.MustCompile(`^[A-Za-z0-9_./@%+=:,-]+$`)

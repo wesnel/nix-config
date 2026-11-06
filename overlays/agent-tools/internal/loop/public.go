@@ -12,7 +12,7 @@ import (
 // where it names what publictext finds, knowing threads as the review
 // threads its author has seen. then is what to do once it is rewritten.
 func checkPublic(what, text string, threads []string, then string) error {
-	ctx := publictext.In(git.Dir)
+	ctx := publictext.In(context.Background(), git.Dir)
 	ctx.Threads = append(ctx.Threads, threads...)
 	if reason := publictext.Refusal(what, publictext.Check(text, ctx), then); reason != "" {
 		return refuse("%s", reason)

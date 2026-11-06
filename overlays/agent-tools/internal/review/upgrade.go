@@ -11,7 +11,6 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/redact"
 	"github.com/wesnel/agent-tools/internal/upgrade"
 )
@@ -55,7 +54,7 @@ type upgrades struct {
 // gatherUpgrades reads the pins r's change moves and gathers their
 // upstream text on this host.
 func gatherUpgrades(ctx context.Context, r *span, log io.Writer) (*upgrades, error) {
-	pins, err := upgrade.Pins(r.top, r.base, r.tip)
+	pins, err := upgrade.Pins(ctx, r.top, r.base, r.tip)
 	if err != nil {
 		return nil, fmt.Errorf("the change's pins could not be read: %w", err)
 	}
@@ -292,7 +291,7 @@ func (u *upgrades) add(r *span, out *Output) {
 
 // lineAt is line, within the lines of path at r's TIP, at least 1.
 func lineAt(r *span, path string, line int) int {
-	data, err := git.Bytes(nil, "-C", r.top, "cat-file", "blob", r.tip+":"+path)
+	data, err := r.git().Bytes(nil, "-C", r.top, "cat-file", "blob", r.tip+":"+path)
 	if err != nil {
 		return 1
 	}

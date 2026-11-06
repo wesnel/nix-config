@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"maps"
 	"os"
-	"os/exec"
 	"regexp"
 	"slices"
 	"strconv"
@@ -41,11 +40,12 @@ type delegateConfig struct {
 	Codex     *codexConfig `json:"codex"`
 }
 
-func loadDelegateConfig() (delegateConfig, error) {
+// loadDelegateConfig reads the delegate settings of the config e names.
+func loadDelegateConfig(e env.Env) (delegateConfig, error) {
 	var config struct {
 		Delegate delegateConfig `json:"delegate"`
 	}
-	data, err := os.ReadFile(repos.Path(env.Process()))
+	data, err := os.ReadFile(repos.Path(e))
 	if errors.Is(err, fs.ErrNotExist) {
 		return config.Delegate, nil
 	}
@@ -56,18 +56,18 @@ func loadDelegateConfig() (delegateConfig, error) {
 	return config.Delegate, err
 }
 
-// claudeMissing says why no Claude reviewer can run, or "".
-func claudeMissing() string {
-	if _, err := exec.LookPath("claude"); err != nil {
+// claudeMissing says why no Claude reviewer can run in e, or "".
+func claudeMissing(e env.Env) string {
+	if _, err := e.LookPath("claude"); err != nil {
 		return "claude is not on PATH"
 	}
-	c, err := loadDelegateConfig()
+	c, err := loadDelegateConfig(e)
 	switch {
 	case err != nil:
-		return fmt.Sprintf("agent-tools' config %s cannot be read: %v", repos.Path(env.Process()), err)
+		return fmt.Sprintf("agent-tools' config %s cannot be read: %v", repos.Path(e), err)
 	case c.Agents == "" || c.Settings == "":
 		return fmt.Sprintf("agent-tools' config %s names no delegate.agents and delegate.settings, which the Claude Code "+
-			"module writes", repos.Path(env.Process()))
+			"module writes", repos.Path(e))
 	}
 	return ""
 }
@@ -95,16 +95,18 @@ type Claude struct {
 // file (--setting-sources "", with reviewer-settings.json as --settings, so
 // its sandbox holds and no project can loosen it), no MCP server, no
 // CLAUDE.md, and its agent from --agents, which outranks a project's own.
-// The agent's frontmatter hook keeps it to reading.
+// The agent's frontmatter hook keeps it to reading. claude is the one the
+// PATH of ctx's Env finds, run in that Env as claudeEnv says.
 func ClaudeRun(ctx context.Context, c Claude) (*CodexReply, error) {
+	e := env.From(ctx)
 	a := c.availability
 	if a == nil {
-		a = newAvailability()
+		a = newAvailability(e)
 	}
 	if err := a.check(shared.Claude); err != nil {
 		return nil, err
 	}
-	config, err := loadDelegateConfig()
+	config, err := loadDelegateConfig(e)
 	if err != nil {
 		return nil, err
 	}
@@ -118,9 +120,9 @@ func ClaudeRun(ctx context.Context, c Claude) (*CodexReply, error) {
 		"--output-format", "json", "--json-schema", string(c.Schema),
 		"--no-session-persistence", "--max-turns", strconv.Itoa(claudeMaxTurns),
 		c.Prompt}
-	cmd := exec.CommandContext(ctx, "claude", args...)
+	cmd := env.Command(ctx, "claude", args...)
 	cmd.Dir = c.Checkout
-	cmd.Env = claudeEnv(os.Environ())
+	cmd.Env = claudeEnv(cmd.Env)
 	var stdout bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, c.Log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

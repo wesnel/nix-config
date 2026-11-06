@@ -494,6 +494,20 @@ func TestResumeCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	check("git sign-pass")
+
+	// This program found only in a relative PATH entry, which names another
+	// directory wherever the pass is resumed from, is refused with
+	// exec.ErrDot, as exec.LookPath refuses it, so the command names its path.
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel, err := filepath.Rel(wd, bin)
+	if err != nil {
+		t.Skipf("no relative path from %s to %s: %v", wd, bin, err)
+	}
+	ctx = under(t.Context(), "PATH="+rel+string(os.PathListSeparator)+env.Process().Get("PATH"))
+	check(exe)
 }
 
 // testRunMissedTouch covers a signature the key refuses, the first or a

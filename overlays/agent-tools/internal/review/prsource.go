@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/record"
 	"github.com/wesnel/agent-tools/internal/refusal"
@@ -20,8 +21,10 @@ import (
 
 var (
 	// graphQL and remoteURL are replaced by tests that fake GitHub.
-	graphQL = func(query string, variables map[string]any, out any) error {
-		return gh.GraphQL(context.Background(), query, variables, out)
+	// graphQL asks in ctx's Env, and ctx's end does not stop it, as
+	// before it took one.
+	graphQL = func(ctx context.Context, query string, variables map[string]any, out any) error {
+		return gh.GraphQL(context.WithoutCancel(ctx), query, variables, out)
 	}
 	remoteURL = func(slug string) string { return "https://github.com/" + slug + ".git" }
 )
@@ -80,13 +83,12 @@ func checkSlug(slug string) (owner, repo string, err error) {
 	return owner, repo, nil
 }
 
-// Root is where reviews are kept: pr-review under $XDG_CACHE_HOME, or under
-// ~/.cache.
-func Root() string {
-	base := os.Getenv("XDG_CACHE_HOME")
+// Root is where reviews are kept: pr-review under e's $XDG_CACHE_HOME, or
+// under its ~/.cache.
+func Root(e env.Env) string {
+	base := e.Get("XDG_CACHE_HOME")
 	if !filepath.IsAbs(base) {
-		home, _ := os.UserHomeDir()
-		base = filepath.Join(home, ".cache")
+		base = filepath.Join(e.Get("HOME"), ".cache")
 	}
 	return filepath.Join(base, "pr-review")
 }
@@ -119,7 +121,7 @@ func Fetch(ctx context.Context, slug string, number int, home string) (*PR, erro
 			}
 		}
 	}
-	err = graphQL(`query($owner: String!, $name: String!, $number: Int!) {
+	err = graphQL(ctx, `query($owner: String!, $name: String!, $number: Int!) {
 		viewer { login }
 		repository(owner: $owner, name: $name) { pullRequest(number: $number) {
 			url title body headRefOid baseRefName author { login }
@@ -142,7 +144,7 @@ func Fetch(ctx context.Context, slug string, number int, home string) (*PR, erro
 	if pr.Issues == nil {
 		pr.Issues = []Issue{}
 	}
-	top := filepath.Join(Root(), owner, repo, strconv.Itoa(number))
+	top := filepath.Join(Root(env.From(ctx)), owner, repo, strconv.Itoa(number))
 	pr.Clone, pr.Refs = filepath.Join(top, "clone"), "refs/pr-review"
 	if home != "" {
 		pr.Clone, pr.Refs, pr.Home = home, fmt.Sprintf("refs/pr-review/%d", number), true

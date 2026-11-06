@@ -11,19 +11,20 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/loop"
 	"github.com/wesnel/agent-tools/internal/record"
 	"github.com/wesnel/agent-tools/internal/redact"
 	"github.com/wesnel/agent-tools/internal/refusal"
-	"github.com/wesnel/agent-tools/internal/repos"
 )
 
 // refreshThreads reads a pull request's threads and writes them to its
-// record, pr-loop threads' writer; tests replace it.
-var refreshThreads = func(slug string, number int) ([]loop.Thread, error) {
-	return loop.RefreshThreads(context.Background(), slug, number)
+// record, pr-loop threads' writer, in ctx's Env; tests replace it. ctx's
+// end does not stop it, as before it took one.
+var refreshThreads = func(ctx context.Context, slug string, number int) ([]loop.Thread, error) {
+	return loop.RefreshThreads(context.WithoutCancel(ctx), slug, number)
 }
 
 // source is what a review reviews: a range of the current repository, or a
@@ -34,6 +35,8 @@ type source struct {
 	// number is the pull request's, or 0 for a range.
 	number int
 	pr     *PR
+	// env is the environment its records are found through.
+	env env.Env
 }
 
 func (s *source) slug() string { return s.owner + "/" + s.repo }
@@ -45,19 +48,20 @@ var (
 
 // parseSource reads SOURCE: BASE..TIP, OWNER/NAME#N, or N for origin's
 // repository. A range's repository is origin's GitHub name, under which its
-// record is kept.
-func parseSource(given string) (*source, error) {
-	s := &source{given: given}
+// record is kept. The current repository is the one containing the
+// directory of ctx's Env.
+func parseSource(ctx context.Context, given string) (*source, error) {
+	s := &source{given: given, env: env.From(ctx)}
 	if m := prSource.FindStringSubmatch(given); m != nil {
 		s.owner, s.repo = m[1], m[2]
 		s.number, _ = strconv.Atoi(m[3])
 	} else if m := prNumbers.FindStringSubmatch(given); m != nil {
 		s.number, _ = strconv.Atoi(m[1])
-		if err := s.fromOrigin(); err != nil {
+		if err := s.fromOrigin(ctx); err != nil {
 			return nil, err
 		}
 	} else if strings.Contains(given, "..") {
-		if err := s.fromOrigin(); err != nil {
+		if err := s.fromOrigin(ctx); err != nil {
 			return nil, err
 		}
 	} else {
@@ -74,15 +78,15 @@ func parseSource(given string) (*source, error) {
 	return s, nil
 }
 
-// fromOrigin names s's repository by the current repository's origin.
-func (s *source) fromOrigin() error {
-	top, err := git.Toplevel()
+// fromOrigin names s's repository by the origin of the repository
+// containing the directory of ctx's Env.
+func (s *source) fromOrigin(ctx context.Context) error {
+	g := git.In(ctx)
+	top, err := g.Toplevel()
 	if err != nil {
 		return err
 	}
-	git.Dir = top
-	remotes, err := repos.Remotes()
-	git.Dir = ""
+	remotes, err := remotesAt(g, top)
 	if err != nil {
 		return err
 	}
@@ -102,21 +106,25 @@ func (s *source) fromOrigin() error {
 // with nothing checked out, under Root, so that the clone's agent
 // settings apply; or else in its own bare clone, which has none, as log
 // is told. Either holds what its author pushed, so git reads it with
-// neither the user's configuration nor the system's from here on. The
-// span's release removes the worktree; the refs stay for the next round.
+// neither the user's configuration nor the system's from here on: the
+// span's Env, in which the rest of the review runs, is ctx's without it
+// (gitenv.WithNoConfig). The span's release removes the worktree; the refs
+// stay for the next round. The current repository is the one containing
+// the directory of ctx's Env.
 func resolveSource(ctx context.Context, s *source, fetch bool, log io.Writer) (*span, error) {
 	if s.number == 0 {
-		r, err := resolve("", s.given)
+		r, err := resolve(ctx, "", s.given)
 		if err == nil {
 			r.slug, r.own = s.slug(), true
 		}
 		return r, err
 	}
-	gitenv.SetNoConfig()
-	home, why := homeClone(s.slug())
+	ctx = env.With(ctx, gitenv.WithNoConfig(env.From(ctx)))
+	e := env.From(ctx)
+	home, why := homeClone(ctx, s.slug())
 	if home == "" {
 		fmt.Fprintf(log, "%s: %s, so the review fetches into a bare clone of its own under %s, which has no agent "+
-			"settings: no route rules, threat notes or test settings of a clone apply\n", name, why, Root())
+			"settings: no route rules, threat notes or test settings of a clone apply\n", name, why, Root(e))
 	}
 	var err error
 	if fetch {
@@ -136,12 +144,12 @@ func resolveSource(ctx context.Context, s *source, fetch bool, log io.Writer) (*
 			s.pr.BaseRef)
 	}
 	r := &span{given: s.given, base: s.pr.Base, tip: s.pr.Head, top: s.pr.Clone, common: s.pr.Clone,
-		commits: record.Cap(record.Clean(commits), 32<<10), slug: s.slug(), pr: s.number, own: s.pr.Own}
+		commits: record.Cap(record.Clean(commits), 32<<10), slug: s.slug(), pr: s.number, own: s.pr.Own, env: e}
 	if home != "" {
 		if r.common, err = gitRun(ctx, home, "rev-parse", "--path-format=absolute", "--git-common-dir"); err != nil {
 			return nil, err
 		}
-		parent := filepath.Join(Root(), s.owner, s.repo, strconv.Itoa(s.number))
+		parent := filepath.Join(Root(e), s.owner, s.repo, strconv.Itoa(s.number))
 		if err := os.MkdirAll(parent, 0o755); err != nil {
 			return nil, err
 		}
@@ -151,7 +159,7 @@ func resolveSource(ctx context.Context, s *source, fetch bool, log io.Writer) (*
 		}
 		r.top, r.home = filepath.Join(dir, "tree"), true
 		r.cleanup = func() {
-			RemoveCheckout(home, r.top)
+			RemoveCheckout(ctx, home, r.top)
 			os.RemoveAll(dir)
 		}
 		if _, err := gitRun(ctx, home, "worktree", "add", "--quiet", "--detach", "--no-checkout", r.top,
@@ -167,21 +175,21 @@ func resolveSource(ctx context.Context, s *source, fetch bool, log io.Writer) (*
 // worktree it is in, one of whose GitHub remotes, as its own config names
 // them, is slug, without regard to case. Where there is none, or its
 // config names a program (git.CheckConfig), which git would run on the
-// pull request's files, it is "", with why.
-func homeClone(slug string) (top, why string) {
-	top, err := git.Toplevel()
+// pull request's files, it is "", with why. The process runs in the
+// directory of ctx's Env.
+func homeClone(ctx context.Context, slug string) (top, why string) {
+	g := git.In(ctx)
+	top, err := g.Toplevel()
 	if err != nil {
 		return "", fmt.Sprintf("no clone of %s is here (%v)", slug, err)
 	}
-	git.Dir = top
-	remotes, err := repos.Remotes()
-	git.Dir = ""
+	remotes, err := remotesAt(g, top)
 	if err != nil {
 		return "", fmt.Sprintf("no clone of %s is here: the remotes of %s cannot be read (%v)", slug, top, err)
 	}
 	for _, s := range remotes {
 		if strings.EqualFold(s, slug) {
-			if err := git.CheckConfig(top); err != nil {
+			if err := g.CheckConfig(top); err != nil {
 				return "", fmt.Sprintf("the clone of %s at %s is not used: %v", slug, top, err)
 			}
 			return top, ""
@@ -197,7 +205,7 @@ func latest(ctx context.Context, slug string, number int, home string) (*PR, err
 	if err != nil {
 		return nil, err
 	}
-	top := filepath.Join(Root(), owner, repo, strconv.Itoa(number))
+	top := filepath.Join(Root(env.From(ctx)), owner, repo, strconv.Itoa(number))
 	pr := &PR{Repo: slug, Number: number, Clone: filepath.Join(top, "clone"), Refs: "refs/pr-review"}
 	if home != "" {
 		pr.Clone, pr.Refs, pr.Home = home, fmt.Sprintf("refs/pr-review/%d", number), true
@@ -218,8 +226,8 @@ func latest(ctx context.Context, slug string, number int, home string) (*PR, err
 // items without threads, and say so on log; a pr-N.org that fails its
 // structure check is returned, as the record.DriftError it is. Each text
 // is redacted before it is capped, so the cap cannot cut a secret below
-// the length its pattern matches.
-func prInputs(s *source, in *inputs, log io.Writer) error {
+// the length its pattern matches. The threads are read in ctx's Env.
+func prInputs(ctx context.Context, s *source, in *inputs, log io.Writer) error {
 	var goal strings.Builder
 	fmt.Fprintf(&goal, "Review %s#%d at %s for the operator, who did not write it. Your findings become comments they may "+
 		"post on it; propose, never fix.\n\n", s.slug(), s.number, s.pr.Head[:12])
@@ -236,7 +244,7 @@ func prInputs(s *source, in *inputs, log io.Writer) error {
 	goal.WriteString(fenced("text", record.Cap(redact.Secrets(record.Clean(claims)), 32<<10)))
 	in.goal = goal.String()
 
-	threads, err := refreshThreads(s.slug(), s.number)
+	threads, err := refreshThreads(ctx, s.slug(), s.number)
 	if drift := (*record.DriftError)(nil); errors.As(err, &drift) {
 		return err
 	}
@@ -273,7 +281,7 @@ func prInputs(s *source, in *inputs, log io.Writer) error {
 // prgit.go, with the function that removes it. A reviewer may write in its
 // checkout, so each gets one of its own.
 func worktree(ctx context.Context, s *source, r *span) (string, func(), error) {
-	parent := filepath.Join(Root(), s.owner, s.repo, "work")
+	parent := filepath.Join(Root(env.From(ctx)), s.owner, s.repo, "work")
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return "", nil, err
 	}
@@ -283,7 +291,7 @@ func worktree(ctx context.Context, s *source, r *span) (string, func(), error) {
 	}
 	wt := filepath.Join(dir, "tree")
 	remove := func() {
-		RemoveCheckout(r.top, wt)
+		RemoveCheckout(ctx, r.top, wt)
 		os.RemoveAll(dir)
 		// Left in place while another review is using it.
 		os.Remove(parent)
