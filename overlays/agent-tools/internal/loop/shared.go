@@ -5,6 +5,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gh"
+	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/history"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
@@ -23,12 +24,16 @@ const (
 )
 
 var (
-	commitsBetween = history.Between
-	subject        = history.Subject
-	fold           = history.Fold
-	matches        = history.Match
-	couldNotApply  = history.CouldNotApply
-	noEditor       = history.NoEditor
+	commitsBetween = func(ctx context.Context, base, tip string) ([]Commit, error) {
+		return history.Between(git.WithDir(ctx), base, tip)
+	}
+	subject = history.Subject
+	fold    = history.Fold
+	matches = func(ctx context.Context, want []Commit, base, tip, branch string) error {
+		return history.Match(git.WithDir(ctx), want, base, tip, branch)
+	}
+	couldNotApply = history.CouldNotApply
+	noEditor      = history.NoEditor
 	// graphQL, objectsREST, which creates Git objects, and commentsREST,
 	// which posts and deletes top-level comments, are replaced by tests that
 	// fake GitHub.

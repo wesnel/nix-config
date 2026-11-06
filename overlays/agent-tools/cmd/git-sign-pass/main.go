@@ -145,7 +145,7 @@ func main() {
 	result, err := pass(ctx, *base, *resume, *push, *setUpstream, flags.Args())
 	code := cli.Report("git-sign-pass", result, err, 0, os.Stdout, os.Stderr)
 	if *notify != "" {
-		if _, nerr := signpass.Notify(*notify, result, err, time.Now()); nerr != nil {
+		if _, nerr := signpass.Notify(ctx, *notify, result, err, time.Now()); nerr != nil {
 			fmt.Fprintf(os.Stderr, "git-sign-pass: --notify %s: the result is not logged: %s\n", *notify, nerr)
 		}
 	}

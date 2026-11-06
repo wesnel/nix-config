@@ -130,6 +130,7 @@ func Next(ctx context.Context, branches []string) ([]NextStep, error) {
 
 // next is branch's step, or the refusal that blocks it.
 func next(ctx context.Context, repo *Repo, branch string) (NextStep, error) {
+	ctx = git.WithDir(ctx)
 	tip, err := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+branch)
 	if err != nil {
 		return nil, refuse("no local branch %s; name a branch that `git branch --list` shows", branch)

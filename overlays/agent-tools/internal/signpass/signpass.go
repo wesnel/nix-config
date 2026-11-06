@@ -637,8 +637,7 @@ func Run(ctx context.Context, base string, resume, push, setUpstream bool) (any,
 		return nil, err
 	}
 	if p.Plan != nil {
-		p.Plan.record(ctx, &p.Plan.Steps[p.Plan.Next-1], result, moved)
-		return runPlan(ctx, p.Plan)
+		return runPlan(p.Plan.record(ctx, &p.Plan.Steps[p.Plan.Next-1], result, moved), p.Plan)
 	}
 	if push || setUpstream {
 		branches := make([]string, 0, len(moved))
@@ -671,7 +670,7 @@ func Resume(ctx context.Context, branch string, push, setUpstream bool) (any, er
 		return retryPush(ctx, branch, setUpstream)
 	}
 	if p.Dir != "" {
-		git.Dir = p.Dir
+		ctx = git.At(ctx, p.Dir)
 	}
 	return Run(ctx, "", true, push, setUpstream)
 }

@@ -16,7 +16,7 @@ import (
 // cleared. finish only warns when it fails, and it records nothing when the
 // commits before and after do not pair up.
 func recordCommitRewrites(ctx context.Context, p *pending) error {
-	c, err := plans.Load(env.Process())
+	c, err := plans.Load(env.From(ctx))
 	if err != nil {
 		return err
 	}
@@ -66,6 +66,6 @@ func recordCommitRewrites(ctx context.Context, p *pending) error {
 		}
 		rewrites[old] = newIDs[groups[i]]
 	}
-	_, session := plans.EnvSession(env.Process())
+	_, session := plans.EnvSession(env.From(ctx))
 	return c.RecordRewrites(ctx, session, p.Dir, identity.Repository, rewrites, time.Now())
 }

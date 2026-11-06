@@ -13,7 +13,9 @@ import (
 )
 
 // githubRemotes maps each remote whose fetch URL is on GitHub to owner/name.
-func githubRemotes() (map[string]string, error) { return repos.Remotes() }
+func githubRemotes() (map[string]string, error) {
+	return repos.Remotes(git.WithDir(context.Background()))
+}
 
 // Repo is the GitHub repository a checkout belongs to.
 type Repo struct {

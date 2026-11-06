@@ -61,9 +61,7 @@ func (r *span) release() {
 // settings are the agent settings of the clone r is in: for a pull
 // request, the operator's clone's, or none in its own bare clone.
 func (r *span) settings() (*repos.Settings, error) {
-	git.Dir = r.top
-	defer func() { git.Dir = "" }()
-	return repos.Lookup()
+	return repos.Lookup(git.At(env.With(context.Background(), r.env), r.top))
 }
 
 // resolve resolves the range given in the repository at dir, or, for "", the

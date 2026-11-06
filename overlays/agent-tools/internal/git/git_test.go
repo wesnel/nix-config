@@ -1,9 +1,12 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"syscall"
 	"testing"
@@ -39,9 +42,11 @@ func under(t *testing.T, dir string, vars ...string) context.Context {
 }
 
 func TestRun(t *testing.T) {
+	t.Parallel()
 	// A command aimed at a directory acts on the repository there, whatever
 	// repository the environment names.
 	t.Run("aimed at a directory ignores the environment", func(t *testing.T) {
+		t.Parallel()
 		repo := repository(t)
 		_, decoy := gitenvtest.DecoyEnv(t)
 		ctx := under(t, t.TempDir(), decoy...)
@@ -55,16 +60,38 @@ func TestRun(t *testing.T) {
 		if code := Attached(ctx, nil, "-C", repo, "config", "test.attached", "1"); code != 0 {
 			t.Fatalf("attached: exit %d", code)
 		}
-		useDir(t, repo)
+		ctx = At(ctx, repo)
 		if _, err := In(ctx).Run("config", "test.dir", "1"); err != nil {
 			t.Fatal(err)
 		}
 		if !In(ctx).OK("config", "test.dir") {
-			t.Error("OK did not read the repository in Dir")
+			t.Error("OK did not read the repository At aimed at")
 		}
 		got := gitIn(t, repo, "config", "--get-regexp", `^test\.`)
 		if got != "test.c 1\ntest.env 1\ntest.attached 1\ntest.dir 1" {
 			t.Errorf("config of the repository aimed at:\n%s", got)
+		}
+	})
+
+	// The git that runs is the one on the Env's PATH, not the process's.
+	t.Run("found on the Env's PATH", func(t *testing.T) {
+		t.Parallel()
+		bin := t.TempDir()
+		fake := "#!/bin/sh\necho fake git \"$#\"\necho fake >&2\n"
+		if err := os.WriteFile(filepath.Join(bin, "git"), []byte(fake), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		ctx := under(t, repository(t), "PATH="+bin+string(os.PathListSeparator)+env.Process().Get("PATH"))
+		if got, err := In(ctx).Run("status"); err != nil || got != "fake git 5" {
+			t.Errorf("Run ran %q, %v; want the fake git on the Env's PATH", got, err)
+		}
+		var stderr bytes.Buffer
+		if code := AttachedQuiet(ctx, nil, &stderr, "status"); code != 0 || stderr.String() != "fake\n" {
+			t.Errorf("AttachedQuiet: exit %d, %q; want the fake git on the Env's PATH", code, stderr.String())
+		}
+		missing := under(t, t.TempDir(), "PATH="+t.TempDir())
+		if _, err := In(missing).Run("status"); !errors.Is(err, exec.ErrNotFound) {
+			t.Errorf("with no git on the Env's PATH: %v", err)
 		}
 	})
 
@@ -128,6 +155,43 @@ func TestToplevel(t *testing.T) {
 		}
 		if err := In(ctx).CheckLocation(); err == nil {
 			t.Error("CheckLocation accepted GIT_DIR naming another repository")
+		}
+	})
+
+	// A repository an agent can write puts its worktree elsewhere with its own
+	// config, and no variable in the environment: that is a git directory other
+	// than the worktree's own, as GIT_DIR naming another repository is.
+	t.Run("config naming another worktree", func(t *testing.T) {
+		t.Parallel()
+		repo, other := repository(t), repository(t)
+		cfg, err := os.OpenFile(filepath.Join(repo, ".git", "config"), os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(cfg, "[core]\n\tworktree = %s\n", other)
+		cfg.Close()
+		ctx := under(t, repo)
+		top, err := In(ctx).Toplevel()
+		if _, ok := err.(refusal.Refusal); !ok {
+			t.Errorf("a config naming the worktree %s: %q, %v; want a refusal", other, top, err)
+		}
+		if err := In(ctx).CheckLocation(); err == nil {
+			t.Error("CheckLocation accepted a config naming another worktree")
+		}
+	})
+
+	// Aimed at a directory, git finds the worktree there, whatever
+	// repository the caller's environment names.
+	t.Run("aimed at a directory", func(t *testing.T) {
+		t.Parallel()
+		repo, sub := inSub(t)
+		_, decoy := gitenvtest.DecoyEnv(t)
+		ctx := At(env.With(t.Context(), env.From(under(t, t.TempDir(), decoy...)).Without("GIT_WORK_TREE")), sub)
+		if top, err := In(ctx).Toplevel(); err != nil || top != repo {
+			t.Errorf("aimed at %s: %q, %v", sub, top, err)
+		}
+		if err := In(ctx).CheckLocation(); err != nil {
+			t.Errorf("aimed at %s: %v", sub, err)
 		}
 	})
 

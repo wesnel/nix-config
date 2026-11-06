@@ -13,6 +13,7 @@ import (
 )
 
 func TestPlan(t *testing.T) {
+	t.Parallel()
 	t.Run("three stacks", testPlanThreeStacks)
 	t.Run("fold kinds", testPlanFoldKinds)
 	t.Run("fork conflict", testPlanForkConflict)
@@ -22,6 +23,7 @@ func TestPlan(t *testing.T) {
 }
 
 func testPlanSharedFolds(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, leaf, carrier                         string
 		own, shared, cycle, independent, signedLeaf bool
@@ -35,6 +37,7 @@ func testPlanSharedFolds(t *testing.T) {
 		{name: "already signed sibling", leaf: "A", carrier: "Z", signedLeaf: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			ctx, global := signingConfig(t, dir)
 			signer, err := exec.LookPath("ssh-keygen")
@@ -109,7 +112,7 @@ func testPlanSharedFolds(t *testing.T) {
 			ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 			ctx = under(ctx, "GIT_EDITOR=false")
 			ctx = under(ctx, "GIT_SEQUENCE_EDITOR=false")
-			useDir(t, repo)
+			ctx = git.At(ctx, repo)
 			result, err := Plan(ctx, "", []string{tc.carrier, tc.leaf}, false, false)
 			if tc.cycle || tc.signedLeaf {
 				want := "cannot order"
@@ -167,6 +170,7 @@ func testPlanSharedFolds(t *testing.T) {
 // already signed that the remote lacks, and leaves one whose tip the remote
 // already has.
 func testPlanPushUnmoved(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	ctx, global := signingConfig(t, dir)
 	hub := filepath.Join(dir, "hub.git")
@@ -182,7 +186,7 @@ func testPlanPushUnmoved(t *testing.T) {
 		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", b+" 1")
 	}
 	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
-	useDir(t, repo)
+	ctx = git.At(ctx, repo)
 	for _, b := range []string{"done", "same"} {
 		gitIn(t, repo, "switch", "-q", b)
 		if _, err := Run(ctx, "", false, false, false); err != nil {
@@ -218,6 +222,7 @@ func testPlanPushUnmoved(t *testing.T) {
 // Local main is behind origin/main, whose unsigned commit is not the pass's
 // to sign.
 func testPlanThreeStacks(t *testing.T) {
+	t.Parallel()
 	dir, _ := filepath.EvalSymlinks(t.TempDir())
 	ctx, global := signingConfig(t, dir)
 	hub := filepath.Join(dir, "hub.git")
@@ -264,7 +269,7 @@ func testPlanThreeStacks(t *testing.T) {
 
 	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 	ctx = decoy(t, under(ctx, "GIT_EDITOR=:"))
-	useDir(t, repo)
+	ctx = git.At(ctx, repo)
 
 	// Everything that can refuse does so before anything moves: here an
 	// untracked file in the worktree of P, which only moves with C1.
@@ -290,7 +295,6 @@ func testPlanThreeStacks(t *testing.T) {
 		t.Fatalf("a failed signature: %v", err)
 	}
 	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
-	git.Dir = repo
 	if _, err := Plan(ctx, "", []string{"P"}, false, false); err == nil || !strings.Contains(err.Error(), "in progress") {
 		t.Errorf("a branch of the stopped pass: %v", err)
 	}
@@ -301,7 +305,6 @@ func testPlanThreeStacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	git.Dir = repo
 
 	got := result.(map[string]any)
 	if plan := fmt.Sprint(got["branches"].(map[string]any)["plan"]); !strings.Contains(plan, "C2: replay its 1 commit(s)") ||
@@ -364,6 +367,7 @@ func testPlanThreeStacks(t *testing.T) {
 // during its replay. Editors that fail stand in for ones that would wait for
 // input: neither rebase may open one.
 func testPlanFoldKinds(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	ctx, global := signingConfig(t, dir)
 	repo := filepath.Join(dir, "repo")
@@ -399,7 +403,7 @@ func testPlanFoldKinds(t *testing.T) {
 	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 	ctx = under(ctx, "GIT_EDITOR=false")
 	ctx = under(ctx, "GIT_SEQUENCE_EDITOR=false")
-	useDir(t, repo)
+	ctx = git.At(ctx, repo)
 	result, err := Plan(ctx, "", []string{"C1", "C2"}, false, false)
 	if err != nil {
 		t.Fatal(err)
@@ -454,7 +458,7 @@ func forkConflict(t *testing.T) (context.Context, string) {
 	gitIn(t, repo, "switch", "-q", "main")
 
 	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
-	useDir(t, repo)
+	ctx = git.At(ctx, repo)
 	return ctx, repo
 }
 
@@ -462,6 +466,7 @@ func forkConflict(t *testing.T) (context.Context, string) {
 // onto its parent's signed copy would conflict with a fixup the parent
 // gained.
 func testPlanForkConflict(t *testing.T) {
+	t.Parallel()
 	ctx, repo := forkConflict(t)
 	refs := gitIn(t, repo, "for-each-ref")
 	if _, err := Plan(ctx, "", []string{"C1", "C2"}, false, false); err == nil || !strings.Contains(err.Error(), "replaying C2") {
@@ -477,6 +482,7 @@ func testPlanForkConflict(t *testing.T) {
 
 // A stack with nothing to sign is reported, not refused.
 func testPlanNothingToSign(t *testing.T) {
+	t.Parallel()
 	ctx, _ := forkConflict(t)
 	result, err := Plan(ctx, "main", []string{"main"}, false, false)
 	if err != nil {

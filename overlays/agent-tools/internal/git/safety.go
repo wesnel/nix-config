@@ -63,7 +63,7 @@ func (w Where) CheckConfig(dir string) error {
 	where := dir
 	if dir != "" {
 		args = append([]string{"-C", dir}, args...)
-	} else if where = w.dir; where == "" {
+	} else if where = w.env.Dir(); where == "" {
 		where = "the current directory"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), ConfigTimeout)

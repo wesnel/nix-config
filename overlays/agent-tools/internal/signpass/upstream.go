@@ -26,8 +26,26 @@ import (
 // cannot choose the program or the trust roots for upstream authorization.
 var upstreamGit, upstreamCA string
 
-// Only the external GitHub observation is replaced by hermetic tests.
-var upstreamAdvertisement = func(cmd *exec.Cmd) ([]byte, error) { return cmd.Output() }
+// upstreamTransport is how a pass observes GitHub's default history: the
+// git program and CA bundle, and the observation, which runs the command.
+type upstreamTransport struct {
+	git, ca   string
+	advertise func(cmd *exec.Cmd) ([]byte, error)
+}
+
+// transportKey holds a *upstreamTransport in a context. Only hermetic tests
+// set it, to replace the external GitHub observation; nothing outside this
+// package can, so no environment or caller chooses the program or the
+// trust roots.
+type transportKey struct{}
+
+// transport is the upstreamTransport of ctx, or the installed one.
+func transport(ctx context.Context) *upstreamTransport {
+	if t, ok := ctx.Value(transportKey{}).(*upstreamTransport); ok {
+		return t
+	}
+	return &upstreamTransport{git: upstreamGit, ca: upstreamCA, advertise: func(cmd *exec.Cmd) ([]byte, error) { return cmd.Output() }}
+}
 
 var upstreamOID = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 var upstreamBranch = regexp.MustCompile(`^refs/heads/[A-Za-z0-9][A-Za-z0-9._/-]*$`)
@@ -44,7 +62,8 @@ func mirrorUpstream(ctx context.Context, destination string) (string, error) {
 	if err := unchangedMirrorURL(ctx, destination); err != nil {
 		return "", err
 	}
-	if !filepath.IsAbs(upstreamGit) || !filepath.IsAbs(upstreamCA) {
+	via := transport(ctx)
+	if !filepath.IsAbs(via.git) || !filepath.IsAbs(via.ca) {
 		return "", refuse("mirror upstream proof needs the installed Git and CA bundle")
 	}
 	root := hostpaths.BakedStateHome(env.From(ctx))
@@ -74,12 +93,12 @@ func mirrorUpstream(ctx context.Context, destination string) (string, error) {
 		"GIT_ALLOW_PROTOCOL=https", "LC_ALL=C",
 	}
 	command := func(args ...string) *exec.Cmd {
-		cmd := exec.CommandContext(ctx, upstreamGit, args...)
+		cmd := exec.CommandContext(ctx, via.git, args...)
 		cmd.Dir, cmd.Env, cmd.WaitDelay = dir, env, time.Second
 		return cmd
 	}
 	url := "https://github.com/" + slug + ".git"
-	listed, err := upstreamAdvertisement(command("-c", "credential.helper=", "-c", "http.sslVerify=true", "-c", "http.sslCAInfo="+upstreamCA,
+	listed, err := via.advertise(command("-c", "credential.helper=", "-c", "http.sslVerify=true", "-c", "http.sslCAInfo="+via.ca,
 		"-c", "http.followRedirects=false", "-c", "http.proxy=", "ls-remote", "--symref", url, "HEAD", "refs/heads/*"))
 	if err != nil {
 		return "", fmt.Errorf("cannot authenticate GitHub default history for %s: %w", slug, err)

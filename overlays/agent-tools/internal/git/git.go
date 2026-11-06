@@ -19,22 +19,60 @@ import (
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
-// Dir is the working directory for every command; empty means the Env's.
+// Dir aims the functions that take no context (Run, OK, Bytes, RunEnv,
+// RunLong, Toplevel, CheckLocation, CheckConfig) and WithDir at a
+// directory, as At does; empty means the process's own. Nothing but
+// pr-loop's tests sets it, since pr-loop runs git through those functions;
+// In never reads it.
 var Dir string
 
-// Where is where git runs: an Env, and the directory the command is aimed
-// at, which Dir gives; empty means the Env's own directory.
+// Where is where git runs: an Env, in whose directory each command runs, and
+// whether the caller aimed git there (At or Dir).
 type Where struct {
 	env env.Env
-	dir string
+	at  bool
 }
 
-// In is where a command run under ctx runs: in ctx's Env (env.From), aimed
-// at Dir when it is set.
-func In(ctx context.Context) Where { return Where{env: env.From(ctx), dir: Dir} }
+type atKey struct{}
 
-// process is In for a caller with no context: this process's environment.
-func process() Where { return In(context.Background()) }
+// In is where a command run under ctx runs: in ctx's Env (env.From). It
+// reads the Env and nothing else of ctx: the commands of the Where end at
+// their own timeout (Timeout, LongTimeout), not when ctx does. BytesContext,
+// Attached, AttachedStderr and AttachedQuiet take a ctx of their own to be
+// ended by.
+func In(ctx context.Context) Where {
+	return Where{env: env.From(ctx), at: ctx.Value(atKey{}) != nil}
+}
+
+// At is ctx with git aimed at dir: its Env in dir, without gitenv.Location,
+// which git sets for the commands it starts (hooks, aliases, `rebase
+// --exec`) and which would send git to the caller's repository instead.
+func At(ctx context.Context, dir string) context.Context {
+	return context.WithValue(env.With(ctx, aimed(env.From(ctx), dir)), atKey{}, true)
+}
+
+// aimed is e in dir without gitenv.Location.
+func aimed(e env.Env, dir string) env.Env { return e.Without(gitenv.Location...).In(dir) }
+
+// process is In for a caller with no context: this process's environment,
+// aimed at Dir when it is set.
+func process() Where {
+	e := env.Process()
+	if Dir != "" {
+		return Where{env: aimed(e, Dir), at: true}
+	}
+	return Where{env: e}
+}
+
+// WithDir is ctx aimed at Dir (At) where it is set, else ctx, for pr-loop,
+// which runs git both through the functions that take no context and
+// through code that takes one, so that both act on one repository.
+func WithDir(ctx context.Context) context.Context {
+	if Dir == "" {
+		return ctx
+	}
+	return At(ctx, Dir)
+}
 
 // hardened keeps the repository from running programs through these tools. A
 // sandboxed agent can write the repository's .git, and these tools run git on
@@ -60,20 +98,15 @@ func commandContext(ctx context.Context, extra []string, args ...string) *exec.C
 	return In(ctx).command(ctx, append(append([]string{}, extra...), more...), args...)
 }
 
-// command is git with args, killed when ctx is done, with extra added to
-// w's environment. A command aimed at a directory, through Dir or a leading
-// `-C DIR`, runs without gitenv.Location, which git sets for the commands it
-// starts and which would otherwise send it to the caller's repository
-// instead. Other commands find the repository as git does, honouring the
-// environment; Toplevel checks that the two agree.
+// command is the git on the PATH of w's Env with args, killed when ctx is
+// done, with extra added to w's environment. A command aimed at a
+// directory by a leading `-C DIR` runs without gitenv.Location, as one
+// under At does. Other commands find the repository as git does, honouring
+// the environment; Toplevel checks that the two agree.
 func (w Where) command(ctx context.Context, extra []string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "git", append(append([]string{}, hardened...), args...)...)
-	cmd.Dir = w.env.Dir()
+	cmd := env.Command(env.With(ctx, w.env), "git", append(append([]string{}, hardened...), args...)...)
 	base := w.env.Environ()
-	if w.dir != "" || (len(args) > 1 && args[0] == "-C" && args[1] != "") {
-		if w.dir != "" {
-			cmd.Dir = w.dir
-		}
+	if len(args) > 1 && args[0] == "-C" && args[1] != "" {
 		base = gitenv.Without(base)
 	}
 	cmd.Env = append(base, extra...)
@@ -163,15 +196,16 @@ func output(cmd *exec.Cmd, stdin []byte, args []string) ([]byte, error) {
 // Toplevel is Where.Toplevel in this process's environment.
 func Toplevel() (string, error) { return process().Toplevel() }
 
-// Toplevel is the top of the worktree containing the directory w is aimed
-// at, or its Env's directory, as git finds it. It refuses when the
-// environment gives git another git directory than that worktree's own,
-// since the commands aimed at the worktree would act on one repository and
-// the others on another. A git directory outside its worktree is
-// unsupported for that reason.
+// Toplevel is the top of the worktree containing w's Env's directory, as
+// git finds it. It refuses when the environment gives git another git
+// directory than that worktree's own, since the commands aimed at the
+// worktree would act on one repository and the others on another. A git
+// directory outside its worktree is unsupported for that reason, and so is
+// a worktree the repository's own config puts elsewhere. Where the caller
+// aimed git at a directory (Aimed) there is nothing to check.
 func (w Where) Toplevel() (string, error) {
 	top, err := w.Run("rev-parse", "--show-toplevel")
-	if err != nil || w.dir != "" {
+	if err != nil || w.Aimed() {
 		return top, err
 	}
 	named, err := w.Run("rev-parse", "--absolute-git-dir")
@@ -189,6 +223,12 @@ func (w Where) Toplevel() (string, error) {
 	}
 	return top, nil
 }
+
+// Aimed reports whether the caller aimed git at a directory, with At or Dir:
+// git then finds the repository from that directory, and the Env holds none
+// of gitenv.Location. A Where from In of a context never aimed is not Aimed,
+// whatever its Env holds.
+func (w Where) Aimed() bool { return w.at }
 
 // CheckLocation is Where.CheckLocation in this process's environment.
 func CheckLocation() error { return process().CheckLocation() }

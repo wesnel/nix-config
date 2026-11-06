@@ -168,7 +168,7 @@ func flakyRepo(t *testing.T) (ctx context.Context, repo, plan string) {
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "a")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "b")
 	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+flaky, "GIT_EDITOR=false")
-	useDir(t, repo)
+	ctx = git.At(ctx, repo)
 	noTerminal(t)
 	return ctx, repo, plan
 }
@@ -411,7 +411,7 @@ func TestResumeSaysHowToCarryOn(t *testing.T) {
 
 // A pass started ignoring hangups, as under nohup, keeps ignoring them
 // while it retries. Not parallel: the disposition it sets is the
-// process's, as the pass reads it, and the pass under it runs in git.Dir.
+// process's, as the pass reads it.
 func TestRetryKeepsIgnoredHangup(t *testing.T) {
 	signal.Ignore(syscall.SIGHUP)
 	t.Cleanup(func() { signal.Reset(syscall.SIGHUP) })
@@ -826,7 +826,7 @@ func TestPushMissedTouchWithoutTerminal(t *testing.T) {
 	dir, repo, hub, _, armed, ssh := mirrored(t)
 	ctx, global := signingConfig(t, dir)
 	ctx = under(ctx, append(ssh, "GIT_CONFIG_GLOBAL="+global)...)
-	useDir(t, repo)
+	ctx = git.At(ctx, repo)
 	noTerminal(t)
 	withRetries(t, 1, 20*time.Millisecond)
 	stderr := captureStderr(t)

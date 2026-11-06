@@ -114,7 +114,7 @@ func main() {
 	}
 	// The configuration only fills in what the flags leave out, so a caller
 	// who gives both required settings does not need it to load.
-	config, err := repos.Lookup()
+	config, err := repos.Lookup(context.Background())
 	if err != nil && (opts.Test == "" || len(opts.TestFiles) == 0) {
 		os.Exit(cli.Report("git-red-check", nil, err, 0, os.Stdout, os.Stderr))
 	}

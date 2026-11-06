@@ -8,6 +8,7 @@ import (
 	"os/exec"
 
 	"github.com/wesnel/agent-tools/internal/env"
+	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/repos"
 )
@@ -24,7 +25,7 @@ type Setup struct {
 // current directory in its agent settings (package repos). Command is
 // empty when none is configured.
 func SetupCommand() (*Setup, error) {
-	s, err := repos.Lookup()
+	s, err := repos.Lookup(git.WithDir(context.Background()))
 	if err != nil {
 		return &Setup{}, err
 	}

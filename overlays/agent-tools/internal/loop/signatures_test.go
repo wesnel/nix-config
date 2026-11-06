@@ -220,7 +220,7 @@ func TestOperatorVerifierCanceled(t *testing.T) {
 		t.Fatal(err)
 	}
 	gitIn(t, dir, "config", "--file", config, "gpg.ssh.program", verifier)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(git.At(t.Context(), dir), 5*time.Second)
 	defer cancel()
 	pid := make(chan int, 1)
 	reader := bufio.NewReader(ready)

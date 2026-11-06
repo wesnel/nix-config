@@ -52,3 +52,9 @@ The `write-tests` skill has the rules. In Go they take these forms:
 - Files go under `t.TempDir()`, and teardown in `t.Cleanup`.
 - A package's `TestMain` calls `gitenv.Isolate()` before `m.Run()`, as
   `internal/gitenv/testmain_test.go` does; `gitenv` says what it isolates.
+- Code reads its environment variables and working directory from
+  `env.From(ctx)` (`internal/env`). A test gives it its own with
+  `env.With(t.Context(), env.New(dir, "NAME=value"))`, aims git at a
+  repository with `git.At(ctx, dir)`, bakes config and state directories in
+  with `hostpaths.TestBaked`, and calls `t.Parallel()`; it never calls
+  `t.Setenv` or `t.Chdir`.

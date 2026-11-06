@@ -491,12 +491,14 @@ func describe(s step, steps []step, signs int, stacked, gains []string) string {
 	return line
 }
 
-// runPlan runs the steps from pl.Next on, then the push.
+// runPlan runs the steps from pl.Next on, then the push, each where git
+// runs under ctx until a step moves it.
 func runPlan(ctx context.Context, pl *plan) (any, error) {
 	for pl.Next < len(pl.Steps) {
 		s := &pl.Steps[pl.Next]
 		pl.Next++
-		if err := s.enter(ctx); err != nil {
+		var err error
+		if ctx, err = s.enter(ctx); err != nil {
 			return nil, err
 		}
 		path, err := statePath(ctx, "pending", s.Branch)
@@ -510,7 +512,7 @@ func runPlan(ctx context.Context, pl *plan) (any, error) {
 				return nil, err
 			}
 			if early != nil {
-				pl.record(ctx, s, map[string]any{"result": early}, nil)
+				ctx = pl.record(ctx, s, map[string]any{"result": early}, nil)
 				continue
 			}
 			s.NewFrom = p.Start
@@ -547,9 +549,10 @@ func runPlan(ctx context.Context, pl *plan) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		pl.record(ctx, s, result, moved)
+		ctx = pl.record(ctx, s, result, moved)
 	}
-	if err := mainWorktree(ctx); err != nil {
+	ctx, err := mainWorktree(ctx)
+	if err != nil {
 		return nil, err
 	}
 	result := map[string]any{"branches": pl.Results}
@@ -569,54 +572,56 @@ func runPlan(ctx context.Context, pl *plan) (any, error) {
 	return result, nil
 }
 
-// enter makes the step's worktree the one git runs in, adding a throwaway one
+// enter is ctx with git aimed at the step's worktree, adding a throwaway one
 // when its branch is checked out nowhere.
-func (s *step) enter(ctx context.Context) error {
+func (s *step) enter(ctx context.Context) (context.Context, error) {
 	if s.Dir != "" {
-		git.Dir = s.Dir
-		return nil
+		return git.At(ctx, s.Dir), nil
 	}
 	if s.Temp == "" {
 		dir, err := stateDir(ctx)
 		if err != nil {
-			return err
+			return ctx, err
 		}
 		if err := os.MkdirAll(filepath.Join(dir, "worktrees"), 0o755); err != nil { //nolint:gosec // holds checkouts of the repository, in its git directory
-			return err
+			return ctx, err
 		}
 		if s.Temp, err = os.MkdirTemp(filepath.Join(dir, "worktrees"), "pass-"); err != nil {
-			return err
+			return ctx, err
 		}
 		os.Remove(s.Temp)
 		if _, err := git.In(ctx).RunLong(nil, "worktree", "add", "-q", s.Temp, s.Branch); err != nil {
-			return err
+			return ctx, err
 		}
 	}
-	git.Dir = s.Temp
-	return nil
+	return git.At(ctx, s.Temp), nil
 }
 
 // record keeps a finished step's result and removes its throwaway worktree.
-func (pl *plan) record(ctx context.Context, s *step, result map[string]any, moved map[string]string) {
+// It returns where git runs next: ctx, or the main worktree (mainWorktree)
+// where it removed the throwaway one ctx was aimed at.
+func (pl *plan) record(ctx context.Context, s *step, result map[string]any, moved map[string]string) context.Context {
 	pl.Results[s.Branch] = result
 	for b := range moved {
 		pl.Moved = append(pl.Moved, b)
 	}
 	if s.Temp != "" {
-		mainWorktree(ctx)
+		if main, err := mainWorktree(ctx); err == nil {
+			ctx = main
+		}
 		git.In(ctx).RunLong(nil, "worktree", "remove", s.Temp)
 		s.Temp = ""
 	}
+	return ctx
 }
 
-// mainWorktree makes the repository's main worktree the one git runs in, so
+// mainWorktree is ctx with git aimed at the repository's main worktree, so
 // nothing runs in a throwaway worktree once it is gone.
-func mainWorktree(ctx context.Context) error {
+func mainWorktree(ctx context.Context) (context.Context, error) {
 	list, err := git.In(ctx).Run("worktree", "list", "--porcelain")
 	if err != nil {
-		return err
+		return ctx, err
 	}
 	first, _, _ := strings.Cut(list, "\n")
-	git.Dir = strings.TrimPrefix(first, "worktree ")
-	return nil
+	return git.At(ctx, strings.TrimPrefix(first, "worktree ")), nil
 }

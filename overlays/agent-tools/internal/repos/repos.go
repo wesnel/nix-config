@@ -10,6 +10,7 @@ package repos
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -83,19 +84,20 @@ func (s *Settings) Notes() (string, error) {
 	return string(data), nil
 }
 
-// checkNotes refuses threat notes in a file the repository containing
-// git.Dir holds: in one of its worktrees or its git directory, followed
+// checkNotes refuses threat notes in a file the repository git finds under
+// ctx holds: in one of its worktrees or its git directory, followed
 // through symbolic links, where a change under review could write them.
-func checkNotes(s *Settings) error {
+func checkNotes(ctx context.Context, s *Settings) error {
 	if !notesFile(s.ThreatNotes) {
 		return nil
 	}
 	file := realPath(s.ThreatNotes, 0)
 	var roots []string
-	if common, err := git.Run("rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil {
+	g := git.In(ctx)
+	if common, err := g.Run("rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil {
 		roots = append(roots, common)
 	}
-	if list, err := git.Run("worktree", "list", "--porcelain"); err == nil {
+	if list, err := g.Run("worktree", "list", "--porcelain"); err == nil {
 		for _, line := range strings.Split(list, "\n") {
 			if wt, ok := strings.CutPrefix(line, "worktree "); ok {
 				roots = append(roots, wt)
@@ -138,10 +140,10 @@ func Path(e env.Env) string {
 	return hostpaths.ConfigFile(e, "AGENT_TOOLS_CONFIG", filepath.Join("agent-tools", "config.json"))
 }
 
-// Remotes maps each remote of the repository containing git.Dir whose fetch
-// URL is on GitHub to its owner/name.
-func Remotes() (map[string]string, error) {
-	out, err := git.Run("remote", "-v")
+// Remotes maps each remote of the repository git finds under ctx (git.In)
+// whose fetch URL is on GitHub to its owner/name.
+func Remotes(ctx context.Context) (map[string]string, error) {
+	out, err := git.In(ctx).Run("remote", "-v")
 	if err != nil {
 		return nil, err
 	}
@@ -158,35 +160,36 @@ func Remotes() (map[string]string, error) {
 	return remotes, nil
 }
 
-// SettingsFile is the settings file of the clone containing git.Dir, or
-// the process's directory where git.Dir is "": info/agents.json in its
-// common git directory, as git finds it there with gitenv.Location, which
-// GIT_DIR and GIT_COMMON_DIR are among, unset. Without git.Dir, the
-// environment must agree with the worktree on its git directory
-// (git.Toplevel).
-func SettingsFile() (string, error) {
-	dir := git.Dir
-	if dir == "" {
-		top, err := git.Toplevel()
+// SettingsFile is the settings file of the clone containing the directory
+// of ctx's Env: info/agents.json in its common git directory, as git finds
+// it there with gitenv.Location, which GIT_DIR and GIT_COMMON_DIR are
+// among, unset. Unless the caller aimed git at a directory (git.At), the
+// environment and the repository's own config must agree with the worktree on
+// its git directory (git.Where.Toplevel).
+func SettingsFile(ctx context.Context) (string, error) {
+	g := git.In(ctx)
+	dir := env.From(ctx).Dir()
+	if !g.Aimed() {
+		top, err := g.Toplevel()
 		if err != nil {
 			return "", err
 		}
 		dir = top
 	}
-	common, err := git.Run("-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	common, err := g.Run("-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(common, "info", "agents.json"), nil
 }
 
-// Lookup returns the settings of the clone containing git.Dir, from the
-// file SettingsFile names: empty where it does not exist. A file that is
-// a symbolic link, not a regular file, writable by anyone but its owner,
-// or not a JSON object of Settings' keys alone is refused, as is one whose
-// route rules or threat notes cannot be used.
-func Lookup() (*Settings, error) {
-	file, err := SettingsFile()
+// Lookup returns the settings of the clone containing the directory of
+// ctx's Env, from the file SettingsFile names: empty where it does not
+// exist. A file that is a symbolic link, not a regular file, writable by
+// anyone but its owner, or not a JSON object of Settings' keys alone is
+// refused, as is one whose route rules or threat notes cannot be used.
+func Lookup(ctx context.Context) (*Settings, error) {
+	file, err := SettingsFile(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +212,7 @@ func Lookup() (*Settings, error) {
 			return nil, refusal.New("the routes in %s: %v", file, err)
 		}
 	}
-	if err := checkNotes(s); err != nil {
+	if err := checkNotes(ctx, s); err != nil {
 		return nil, err
 	}
 	return s, nil

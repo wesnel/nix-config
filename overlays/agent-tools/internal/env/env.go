@@ -5,6 +5,17 @@
 // a test gives the code under test an Env of its own with With and changes
 // nothing process-wide. A context with no Env gives Process, which is what
 // production code runs under.
+//
+// A function that reads variables or the directory takes a context and calls
+// From. One that only builds paths from variables (hostpaths, repos.Path)
+// takes an Env, so a caller that has no context passes the one it has. A
+// program's main calls Process once, at its entry point, and puts it in the
+// context it passes down.
+//
+// The context carries the Env, and in a few packages the per-call settings
+// and test stand-ins of one caller as well (signpass's Options, review's
+// seams, the loop's outside value). Each is set by that caller or by a test,
+// and holds the production default where nothing set it.
 package env
 
 import (

@@ -88,21 +88,6 @@ func bakedHome(t *testing.T, ctx context.Context) (context.Context, string) {
 	return under(ctx, hostpaths.TestBaked(configHome, state)...), configHome
 }
 
-// bakedProcessHome is bakedHome for code that reads hostpaths from the
-// process environment, as plans does until it takes a context: it bakes
-// the home into the process's for the rest of the test, which therefore
-// cannot run in parallel.
-func bakedProcessHome(t *testing.T) string {
-	t.Helper()
-	if home := hostpaths.BakedConfigHome(env.Process()); home != "" {
-		return home
-	}
-	configHome, state := newHome(t)
-	t.Setenv(hostpaths.TestConfigHomeEnv, configHome)
-	t.Setenv(hostpaths.TestStateHomeEnv, state)
-	return configHome
-}
-
 // newHome makes a config home and a state home beside it.
 func newHome(t *testing.T) (configHome, state string) {
 	t.Helper()
@@ -142,15 +127,6 @@ func operatorProfile(t *testing.T, ctx context.Context, pub string) context.Cont
 		t.Fatal(err)
 	}
 	return ctx
-}
-
-// useDir points the package's git at dir for the rest of the test, which
-// therefore cannot run in parallel: history, which the pass reads commits
-// through, takes the directory from git.Dir alone.
-func useDir(t *testing.T, dir string) {
-	t.Helper()
-	git.Dir = dir
-	t.Cleanup(func() { git.Dir = "" })
 }
 
 // withStdin makes f the pass's standard input for the rest of the test.
@@ -266,6 +242,7 @@ func TestPush(t *testing.T) {
 // another, as an agent committing while the operator touches the key would
 // move it, is refused rather than pushed where it went.
 func testPushUnmovedMoved(t *testing.T) {
+	t.Parallel()
 	ctx, dir, repo, hub := unmovedRepo(t)
 	gitIn(t, repo, "switch", "-qc", "fresh")
 	signedCommit(t, ctx, "")
@@ -337,7 +314,7 @@ func testPushURLLeases(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			useDir(t, repo)
+			ctx = git.At(ctx, repo)
 			todo, err := planPush(ctx, []string{"topic"}, publishing, "retry")
 			if err != nil {
 				t.Fatal(err)
@@ -534,7 +511,7 @@ func testRunMissedTouch(t *testing.T) {
 	}
 	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+flaky)
 	ctx = under(ctx, "GIT_EDITOR=false")
-	useDir(t, repo)
+	ctx = git.At(ctx, repo)
 
 	resume := "`" + testBinary(t) + " --resume one`"
 	want := ""
@@ -585,6 +562,7 @@ func testRunMissedTouch(t *testing.T) {
 }
 
 func testRunStack(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	ctx, global := signingConfig(t, dir)
 
@@ -604,7 +582,7 @@ func testRunStack(t *testing.T) {
 
 	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 	ctx = decoy(t, ctx)
-	useDir(t, repo)
+	ctx = git.At(ctx, repo)
 	result, err := Run(ctx, "", false, false, false)
 	if err != nil {
 		t.Fatal(err)
@@ -698,6 +676,7 @@ func testRunStack(t *testing.T) {
 // breaks the message rules before touching anything, judging the message
 // as signed, so an amend! that fixes it lets the pass through.
 func testRunLint(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	ctx, global := signingConfig(t, dir)
 	repo := filepath.Join(dir, "repo")
@@ -715,7 +694,7 @@ func testRunLint(t *testing.T) {
 
 	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 	ctx = decoy(t, ctx)
-	useDir(t, repo)
+	ctx = git.At(ctx, repo)
 	for name, pass := range map[string]func() (any, error){
 		"Run":  func() (any, error) { return Run(ctx, "", false, false, false) },
 		"Plan": func() (any, error) { return Plan(ctx, "", []string{"br"}, false, false) },
@@ -744,6 +723,7 @@ func testRunLint(t *testing.T) {
 // testRunWorktreeBranch signs a stack whose lower branch is checked out in
 // a worktree of its own, which --update-refs alone would leave behind.
 func testRunWorktreeBranch(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	ctx, global := signingConfig(t, dir)
 	repo := filepath.Join(dir, "repo")
@@ -765,7 +745,7 @@ func testRunWorktreeBranch(t *testing.T) {
 
 	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 	ctx = decoy(t, ctx)
-	useDir(t, repo)
+	ctx = git.At(ctx, repo)
 	check := func(result any, wantA string) {
 		t.Helper()
 		lower, _ := git.In(ctx).Run("rev-parse", "lower")
@@ -896,7 +876,7 @@ func testRunGains(t *testing.T) {
 
 	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 	ctx = decoy(t, ctx)
-	useDir(t, repo)
+	ctx = git.At(ctx, repo)
 	const named = "lower gains fixups from commits it does not contain\n"
 	stderr := captureStderr(t)
 	if _, err := Run(ctx, "", false, false, false); err != nil {
@@ -970,7 +950,7 @@ func testRunMessageGains(t *testing.T) {
 
 	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 	ctx = decoy(t, ctx)
-	useDir(t, repo)
+	ctx = git.At(ctx, repo)
 	stderr := captureStderr(t)
 	result, err := Run(ctx, "", false, false, false)
 	if err != nil {
@@ -992,6 +972,7 @@ func testRunMessageGains(t *testing.T) {
 // commits they do not contain, which the plan says before the first touch
 // and the result reports once signed.
 func testRunForkGains(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	ctx, global := signingConfig(t, dir)
 	repo := filepath.Join(dir, "repo")
@@ -1012,7 +993,7 @@ func testRunForkGains(t *testing.T) {
 
 	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 	ctx = decoy(t, ctx)
-	useDir(t, repo)
+	ctx = git.At(ctx, repo)
 	res, err := Plan(ctx, "", []string{"c1", "c2top"}, false, false)
 	if err != nil {
 		t.Fatal(err)
@@ -1033,6 +1014,7 @@ func testRunForkGains(t *testing.T) {
 // gaining fixups: a fixup, a fixup of a fixup, a squash! and an empty amend!
 // each leave a branch on the last commit it keeps.
 func TestLandings(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	ctx, global := signingConfig(t, dir)
 	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
@@ -1056,7 +1038,7 @@ func TestLandings(t *testing.T) {
 	commitFile(t, repo, "y", "y\n", "Add y")
 	stacked := []string{"amend", "chain", "fix", "kept", "squash"}
 
-	useDir(t, repo)
+	ctx = git.At(ctx, repo)
 	before, err := localBranches(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -1088,6 +1070,7 @@ func TestLandings(t *testing.T) {
 }
 
 func testPushMoved(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	ctx, global := signingConfig(t, dir)
 	hub, mirror := filepath.Join(dir, "hub.git"), filepath.Join(dir, "mirror.git")
@@ -1106,7 +1089,7 @@ func testPushMoved(t *testing.T) {
 	gitIn(t, repo, "push", "-q", "-u", "origin", "tracked")
 	// The commits pushed are signed, as a pass leaves them.
 	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
-	useDir(t, repo)
+	ctx = git.At(ctx, repo)
 	git.In(ctx).Run("commit", "-q", "-S", "--amend", "--allow-empty", "-m", "T1 again")
 	gitIn(t, repo, "switch", "-qc", "fresh")
 	git.In(ctx).Run("commit", "-q", "-S", "--allow-empty", "-m", "F1")
@@ -1158,6 +1141,7 @@ func testPushMoved(t *testing.T) {
 // testPushDestination holds --push to each branch's own name and away from
 // the remote's default branch, refusing before the pass signs anything.
 func testPushDestination(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	ctx, global := signingConfig(t, dir)
 	hub := filepath.Join(dir, "hub.git")
@@ -1176,7 +1160,7 @@ func testPushDestination(t *testing.T) {
 	hubMain := gitIn(t, hub, "rev-parse", "main")
 
 	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
-	useDir(t, repo)
+	ctx = git.At(ctx, repo)
 	refs := gitIn(t, repo, "for-each-ref")
 	for _, setUpstream := range []bool{false, true} {
 		_, err := Run(ctx, "", false, true, setUpstream)
@@ -1271,6 +1255,7 @@ func testPushRemote(t *testing.T) {
 // tip, when the remote has commits the tip lacks, and when it has no commits
 // of its own; pushTargets' refusals still hold for it.
 func testPushUnmoved(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	ctx, global := signingConfig(t, dir)
 	hub := filepath.Join(dir, "hub.git")
@@ -1285,7 +1270,7 @@ func testPushUnmoved(t *testing.T) {
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "O1")
 
 	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
-	useDir(t, repo)
+	ctx = git.At(ctx, repo)
 	sign := func() {
 		t.Helper()
 		if _, err := Run(ctx, "", false, false, false); err != nil {
@@ -1380,6 +1365,7 @@ func testPushUnmoved(t *testing.T) {
 // format are refused before the push, by a single-branch pass and a pass
 // over named branches. The marks a verifier gives are operatorkey's tests'.
 func testPushUnmovedSigners(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name string
 		// commit makes the branch's one commit in repo, whose operator key
@@ -1444,7 +1430,7 @@ func testPushUnmovedSigners(t *testing.T) {
 				gitIn(t, repo, "push", "-q", "-u", "origin", "main")
 				gitIn(t, repo, "switch", "-qc", "one")
 				ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
-				useDir(t, repo)
+				ctx = git.At(ctx, repo)
 				c.commit(t, ctx, dir, repo)
 				if mark, _ := git.In(ctx).Run("log", "--format=%G?", "main..one"); mark != c.mark {
 					t.Fatalf("the fixture's commit is marked %q, want %s", mark, c.mark)
@@ -1516,7 +1502,7 @@ func unmovedRepo(t *testing.T) (ctx context.Context, dir, repo, hub string) {
 	gitIn(t, repo, "remote", "add", "origin", hub)
 	gitIn(t, repo, "push", "-q", "-u", "origin", "main")
 	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
-	useDir(t, repo)
+	ctx = git.At(ctx, repo)
 	return ctx, dir, repo, hub
 }
 
@@ -1539,6 +1525,7 @@ func refusedUnsigned(t *testing.T, ctx context.Context, err error, hub, unsigned
 // for --resume. A moved branch is checked as an unmoved one is, below the
 // commits the pass signed as well as at them.
 func testPushRepositoryClaims(t *testing.T) {
+	t.Parallel()
 	for _, worktree := range []bool{false, true} {
 		t.Run(map[bool]string{false: "a local signing key", true: "a worktree's signing key"}[worktree], func(t *testing.T) {
 			ctx, dir, repo, hub := unmovedRepo(t)
@@ -1622,6 +1609,7 @@ func keptOff(t *testing.T, ctx context.Context, err error, hub, unsigned string)
 // shows: a replace ref or a graft changes what git log says of a branch, but
 // the push sends the commits themselves.
 func testPushUnmovedObjects(t *testing.T) {
+	t.Parallel()
 	t.Run("a replace ref shows a signed commit for an unsigned one", func(t *testing.T) {
 		ctx, _, repo, hub := unmovedRepo(t)
 		gitIn(t, repo, "switch", "-qc", "decoy")
@@ -1653,6 +1641,7 @@ func testPushUnmovedObjects(t *testing.T) {
 // pointed at a ref the remote lacks each leave commits below the base that
 // the push sends.
 func testPushUnmovedRange(t *testing.T) {
+	t.Parallel()
 	t.Run("--base above an unsigned commit", func(t *testing.T) {
 		ctx, _, repo, hub := unmovedRepo(t)
 		gitIn(t, repo, "switch", "-qc", "one")
@@ -1721,6 +1710,7 @@ func signedCommit(t *testing.T, ctx context.Context, key string) {
 // testRunFailedPush leaves a pass whose push failed with nothing but the
 // push to retry, and blocks no other branch.
 func testRunFailedPush(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	ctx, global := signingConfig(t, dir)
 	hub := filepath.Join(dir, "hub.git")
@@ -1741,7 +1731,7 @@ func testRunFailedPush(t *testing.T) {
 	gitIn(t, hub, "update-ref", "refs/heads/one", gitIn(t, repo, "rev-parse", "main"))
 
 	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
-	useDir(t, repo)
+	ctx = git.At(ctx, repo)
 	if _, err := Run(ctx, "", false, true, false); err == nil || !strings.Contains(err.Error(), "`"+testBinary(t)+" --resume --push one`") {
 		t.Fatalf("a failed push: %v", err)
 	}
@@ -1760,14 +1750,13 @@ func testRunFailedPush(t *testing.T) {
 	wt := filepath.Join(dir, "two-wt")
 	gitIn(t, repo, "worktree", "add", "-q", wt, "two")
 	gitIn(t, wt, "commit", "-q", "--allow-empty", "-m", "T1")
-	git.Dir = wt
-	if _, err := Run(ctx, "", false, false, false); err != nil {
+	inWt := git.At(ctx, wt)
+	if _, err := Run(inWt, "", false, false, false); err != nil {
 		t.Errorf("an unrelated branch: %v", err)
 	}
-	if _, err := Run(ctx, "", true, false, false); err == nil || !strings.Contains(err.Error(), "no signing pass or push") {
+	if _, err := Run(inWt, "", true, false, false); err == nil || !strings.Contains(err.Error(), "no signing pass or push") {
 		t.Errorf("--resume on a branch with nothing in progress: %v", err)
 	}
-	git.Dir = repo
 
 	// --resume retries only the push, leased on what the remote held before
 	// the pass, until it goes through: a fetch does not lift the lease, and
@@ -1846,7 +1835,7 @@ func testPushEachURL(t *testing.T) {
 	dir, repo, hub, mirror, armed, ssh := mirrored(t)
 	ctx, global := signingConfig(t, dir)
 	ctx = under(ctx, append(ssh, "GIT_CONFIG_GLOBAL="+global)...)
-	useDir(t, repo)
+	ctx = git.At(ctx, repo)
 	before := gitIn(t, repo, "rev-parse", "origin/one")
 
 	noTerminal(t)
@@ -2060,7 +2049,7 @@ func sshStack(t *testing.T) (ctx context.Context, dir, repo, sshLogFile, hubPush
 	pushesTo(t, hubPushes)
 	pushesTo(t, mirrorPushes)
 	sshLog(t, sshLogFile)
-	useDir(t, repo)
+	ctx = git.At(ctx, repo)
 	return ctx, dir, repo, sshLogFile, hubPushes, mirrorPushes
 }
 
@@ -2133,6 +2122,7 @@ func testPushStackBottomUp(t *testing.T) {
 // shared SSH connection would need a socket path longer than a Unix socket
 // takes.
 func testPushControlPathTooLong(t *testing.T) {
+	t.Parallel()
 	ctx, dir, _, sshLogFile, hubPushes, _ := sshStack(t)
 	long := filepath.Join(dir, strings.Repeat("d", 120))
 	if err := os.Mkdir(long, 0o755); err != nil {

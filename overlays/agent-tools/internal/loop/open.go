@@ -184,7 +184,7 @@ func unmergedParent(repo *Repo, remotes []string, branch, base, local string, ba
 // history.LintMessage: each fold as it is, and the rest as the signing
 // pass will leave them.
 func lintNew(ctx context.Context, branch, local string, known []string) error {
-	commits, err := history.Log(ctx, append([]string{local, "--not"}, known...)...)
+	commits, err := history.Log(git.WithDir(ctx), append([]string{local, "--not"}, known...)...)
 	if err != nil {
 		return err
 	}
@@ -281,7 +281,7 @@ func planOpen(ctx context.Context, repo *Repo, view *remoteView, branch, base st
 		// makes is made here.
 		absent := strings.Repeat("0", 40)
 		update := pushguard.Update{LocalRef: "refs/heads/" + branch, Local: local, RemoteRef: "refs/heads/" + branch, Remote: absent}
-		if err := pushguard.Check(context.Background(), "https://github.com/"+repo.Slug, []pushguard.Update{update}, pushguard.GitHub()); err != nil {
+		if err := pushguard.Check(git.WithDir(context.Background()), "https://github.com/"+repo.Slug, []pushguard.Update{update}, pushguard.GitHub()); err != nil {
 			return nil, err
 		}
 		if o.objects, err = missingObjects([]string{local}, known); err != nil {

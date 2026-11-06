@@ -20,10 +20,11 @@ import (
 )
 
 // mirrorFixture is a mirrored repository whose pushes the gate checks, under
-// ctx.
+// ctx, which observes GitHub through up.
 type mirrorFixture struct {
 	ctx                                       context.Context
 	dir, repo, mirror, upstream, tip, profile string
+	up                                        *upstreamTransport
 }
 
 // newMirrorFixture makes the fixture, its repositories initialised with
@@ -59,21 +60,21 @@ func newMirrorFixture(t *testing.T, initArgs ...string) mirrorFixture {
 	if closeErr := f.Close(); err != nil || closeErr != nil {
 		t.Fatalf("profile: %v, %v", err, closeErr)
 	}
-	useDir(t, repo)
+	ctx = git.At(ctx, repo)
 	program, err := exec.LookPath("git")
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldGit, oldCA, oldAdvertisement := upstreamGit, upstreamCA, upstreamAdvertisement
-	upstreamGit, upstreamCA = program, "/unused-test-ca"
-	upstreamAdvertisement = func(cmd *exec.Cmd) ([]byte, error) {
+	// A fake of GitHub's advertisement, which the test must not reach.
+	up := &upstreamTransport{git: program, ca: "/unused-test-ca", advertise: func(cmd *exec.Cmd) ([]byte, error) {
 		return []byte("ref: refs/heads/main\tHEAD\n" + upstream + "\tHEAD\n" + upstream + "\trefs/heads/main\n"), nil
-	}
-	t.Cleanup(func() { upstreamGit, upstreamCA, upstreamAdvertisement = oldGit, oldCA, oldAdvertisement })
-	return mirrorFixture{ctx, dir, repo, mirror, upstream, tip, profile}
+	}}
+	ctx = context.WithValue(ctx, transportKey{}, up)
+	return mirrorFixture{ctx, dir, repo, mirror, upstream, tip, profile, up}
 }
 
 func TestMirrorUpstream(t *testing.T) {
+	t.Parallel()
 	f := newMirrorFixture(t)
 	if err := gate(f.ctx, f.mirror, refPush{Branch: "topic", New: f.tip}, nil); err != nil {
 		t.Fatalf("authorized mirror rejected upstream history before the operator-signed tip: %v", err)
@@ -81,14 +82,16 @@ func TestMirrorUpstream(t *testing.T) {
 }
 
 func TestMirrorStrictFirst(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"offline", "missing upstream"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			f := newMirrorFixture(t)
 			gitIn(t, f.repo, "checkout", "-q", "--orphan", "signed-root")
 			gitIn(t, f.repo, "-c", "gpg.format=ssh", "-c", "user.signingkey="+filepath.Join(f.dir, "key"), "commit", "-q", "-S", "--allow-empty", "-m", "signed root")
 			tip := gitIn(t, f.repo, "rev-parse", "HEAD")
 			observed := 0
-			upstreamAdvertisement = func(cmd *exec.Cmd) ([]byte, error) {
+			f.up.advertise = func(cmd *exec.Cmd) ([]byte, error) {
 				observed++
 				if mode == "offline" {
 					return nil, fmt.Errorf("fixture offline")
@@ -107,13 +110,14 @@ func TestMirrorStrictFirst(t *testing.T) {
 }
 
 func TestMirrorDiscovery(t *testing.T) {
+	t.Parallel()
 	f := newMirrorFixture(t)
 	// The baked state directory belongs to this fixture, never the operator.
 	root := hostpaths.BakedStateHome(env.From(f.ctx))
 	gitIn(t, root, "init", "-q")
 	gitIn(t, root, "config", "url.https://attacker.invalid/.insteadOf", "https://github.com/")
-	advertise := upstreamAdvertisement
-	upstreamAdvertisement = func(cmd *exec.Cmd) ([]byte, error) {
+	advertise := f.up.advertise
+	f.up.advertise = func(cmd *exec.Cmd) ([]byte, error) {
 		// --get-url uses the real ls-remote URL resolution without contacting
 		// either service. Only the external advertisement remains a stand-in.
 		for i, arg := range cmd.Args {
@@ -137,6 +141,7 @@ func TestMirrorDiscovery(t *testing.T) {
 }
 
 func TestMirrorConditionalProfile(t *testing.T) {
+	t.Parallel()
 	f := newMirrorFixture(t)
 	repo := filepath.Join(filepath.Dir(hostpaths.BakedConfigHome(env.From(f.ctx))), "git", "github.com", "wesnel", "nix-config")
 	if err := os.MkdirAll(filepath.Dir(repo), 0700); err != nil {
@@ -145,7 +150,7 @@ func TestMirrorConditionalProfile(t *testing.T) {
 	if err := os.Rename(f.repo, repo); err != nil {
 		t.Fatal(err)
 	}
-	f.repo, git.Dir = repo, repo
+	f.repo, f.ctx = repo, git.At(f.ctx, repo)
 	gitIn(t, f.repo, "config", "--file", f.profile, "signpass.mirror.commonDir", filepath.Join(repo, ".git"))
 	data, err := os.ReadFile(f.profile)
 	if err != nil {
@@ -169,12 +174,12 @@ func TestMirrorConditionalProfile(t *testing.T) {
 	gitIn(t, f.dir, "init", "-q", other)
 	for _, tc := range []struct{ name, dir, want string }{{"primary", f.repo, "wesnel/nix-config"}, {"linked", linked, "wesnel/nix-config"}, {"unrelated", other, ""}} {
 		t.Run(tc.name, func(t *testing.T) {
-			git.Dir = tc.dir
-			p, err := operatorkey.Load(f.ctx)
+			ctx := git.At(f.ctx, tc.dir)
+			p, err := operatorkey.Load(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := p.MirrorUpstream(f.ctx, f.mirror)
+			got, err := p.MirrorUpstream(ctx, f.mirror)
 			if err != nil || got != tc.want {
 				t.Fatalf("conditional mapping = %q, %v; want %q", got, err, tc.want)
 			}
@@ -183,6 +188,7 @@ func TestMirrorConditionalProfile(t *testing.T) {
 }
 
 func TestMirrorSHA256(t *testing.T) {
+	t.Parallel()
 	f := newMirrorFixture(t, "--object-format=sha256")
 	if len(f.upstream) != 64 {
 		t.Fatal("fixture did not use SHA256")
@@ -193,13 +199,15 @@ func TestMirrorSHA256(t *testing.T) {
 }
 
 func TestMirrorBoundary(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"new unsigned", "foreign signer", "topic-only history", "other destination", "local mapping", "conflicting mapping", "split origins", "invalid slug", "other repository", "missing ancestor", "replacement", "shallow", "graft", "hash mismatch", "unavailable proof", "changed lease"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			f := newMirrorFixture(t)
 			url, tip, old := f.mirror, f.tip, ""
 			observed := 0
-			advertise := upstreamAdvertisement
-			upstreamAdvertisement = func(cmd *exec.Cmd) ([]byte, error) { observed++; return advertise(cmd) }
+			advertise := f.up.advertise
+			f.up.advertise = func(cmd *exec.Cmd) ([]byte, error) { observed++; return advertise(cmd) }
 			switch mode {
 			case "new unsigned":
 				gitIn(t, f.repo, "commit", "-q", "--allow-empty", "-m", "unsigned new")
@@ -214,7 +222,7 @@ func TestMirrorBoundary(t *testing.T) {
 			case "topic-only history":
 				gitIn(t, f.repo, "commit", "-q", "--allow-empty", "-m", "topic only")
 				tip = gitIn(t, f.repo, "rev-parse", "HEAD")
-				upstreamAdvertisement = func(cmd *exec.Cmd) ([]byte, error) {
+				f.up.advertise = func(cmd *exec.Cmd) ([]byte, error) {
 					observed++
 					out, err := advertise(cmd)
 					return append(out, []byte(tip+"\trefs/heads/topic\n")...), err
@@ -252,7 +260,7 @@ func TestMirrorBoundary(t *testing.T) {
 				gitIn(t, f.repo, "checkout", "-q", "main")
 				gitIn(t, f.repo, "commit", "-q", "--allow-empty", "-m", "later upstream")
 				advertised := gitIn(t, f.repo, "rev-parse", "HEAD")
-				upstreamAdvertisement = func(cmd *exec.Cmd) ([]byte, error) {
+				f.up.advertise = func(cmd *exec.Cmd) ([]byte, error) {
 					observed++
 					return []byte("ref: refs/heads/main\tHEAD\n" + advertised + "\tHEAD\n" + advertised + "\trefs/heads/main\n"), nil
 				}
@@ -285,7 +293,7 @@ func TestMirrorBoundary(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "unavailable proof":
-				upstreamAdvertisement = func(cmd *exec.Cmd) ([]byte, error) { observed++; return nil, fmt.Errorf("fixture unavailable") }
+				f.up.advertise = func(cmd *exec.Cmd) ([]byte, error) { observed++; return nil, fmt.Errorf("fixture unavailable") }
 			case "changed lease":
 				old = f.upstream
 			}
@@ -312,20 +320,21 @@ func TestMirrorBoundary(t *testing.T) {
 }
 
 func TestMirrorTransport(t *testing.T) {
+	t.Parallel()
 	f := newMirrorFixture(t)
 	linked := filepath.Join(f.dir, "linked")
 	gitIn(t, f.repo, "worktree", "add", "-q", "-b", "linked", linked)
-	git.Dir = linked
+	f.ctx = git.At(f.ctx, linked)
 	for _, key := range []string{"HTTPS_PROXY", "ALL_PROXY", "GIT_SSL_NO_VERIFY", "GIT_SSL_CAINFO", "SSL_CERT_FILE", "CURL_CA_BUNDLE", "GIT_ASKPASS", "GIT_EXEC_PATH"} {
 		f.ctx = under(f.ctx, key+"=untrusted")
 	}
 	// A repository-controlled URL rewrite must not steer the observation.
 	gitIn(t, f.repo, "config", "url.https://evil.invalid/.insteadOf", "https://github.com/")
-	advertise := upstreamAdvertisement
+	advertise := f.up.advertise
 	observed := false
-	upstreamAdvertisement = func(cmd *exec.Cmd) ([]byte, error) {
+	f.up.advertise = func(cmd *exec.Cmd) ([]byte, error) {
 		observed = true
-		if cmd.Path != upstreamGit || cmd.Dir == linked || cmd.Dir == f.repo {
+		if cmd.Path != f.up.git || cmd.Dir == linked || cmd.Dir == f.repo {
 			t.Fatal("transport escaped its isolated program or directory")
 		}
 		for _, entry := range cmd.Env {
@@ -364,8 +373,10 @@ func TestMirrorTransport(t *testing.T) {
 }
 
 func TestMirrorResume(t *testing.T) {
+	t.Parallel()
 	for _, rewrite := range []string{"pushInsteadOf", "insteadOf"} {
 		t.Run(rewrite, func(t *testing.T) {
+			t.Parallel()
 			f := newMirrorFixture(t)
 			hub := filepath.Join(f.dir, "hub.git")
 			gitIn(t, f.dir, "init", "-q", "--bare", hub)
@@ -375,9 +386,9 @@ func TestMirrorResume(t *testing.T) {
 				{Remote: "origin", URL: hub, Done: true, Refs: []refPush{{Branch: "topic", New: f.tip, Done: true}}},
 				{Remote: "origin", URL: f.mirror, Refs: []refPush{{Branch: "topic", New: f.tip}}},
 			}}
-			advertise := upstreamAdvertisement
+			advertise := f.up.advertise
 			observed := 0
-			upstreamAdvertisement = func(cmd *exec.Cmd) ([]byte, error) { observed++; return nil, fmt.Errorf("fixture unavailable") }
+			f.up.advertise = func(cmd *exec.Cmd) ([]byte, error) { observed++; return nil, fmt.Errorf("fixture unavailable") }
 			if _, err := pushAll(f.ctx, "topic", todo); err == nil {
 				t.Fatal("resume without fresh proof accepted")
 			}
@@ -396,7 +407,7 @@ func TestMirrorResume(t *testing.T) {
 			if !saved.URLs[0].Done || !saved.URLs[0].Refs[0].Done || saved.URLs[1].Done {
 				t.Fatal("partial push progress changed")
 			}
-			upstreamAdvertisement = func(cmd *exec.Cmd) ([]byte, error) { observed++; return advertise(cmd) }
+			f.up.advertise = func(cmd *exec.Cmd) ([]byte, error) { observed++; return advertise(cmd) }
 			redirected := filepath.Join(f.dir, "redirected.git")
 			gitIn(t, f.dir, "init", "-q", "--bare", redirected)
 			global := filepath.Join(f.dir, "gitconfig")
@@ -438,8 +449,10 @@ func TestMirrorResume(t *testing.T) {
 }
 
 func TestMirrorHTTPS(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"authenticated", "redirect", "wrong CA"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			f := newMirrorFixture(t)
 			requests := 0
 			packet := func(s string) string { return fmt.Sprintf("%04x%s", len(s)+4, s) }
@@ -464,19 +477,19 @@ func TestMirrorHTTPS(t *testing.T) {
 			cert := server.Certificate()
 			if mode == "wrong CA" {
 				// An empty trust bundle must not fall back to system trust.
-				upstreamCA = filepath.Join(f.dir, "empty-ca")
-				if err := os.WriteFile(upstreamCA, nil, 0600); err != nil {
+				f.up.ca = filepath.Join(f.dir, "empty-ca")
+				if err := os.WriteFile(f.up.ca, nil, 0600); err != nil {
 					t.Fatal(err)
 				}
 			} else {
-				upstreamCA = filepath.Join(f.dir, "ca.pem")
-				if err := os.WriteFile(upstreamCA, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}), 0600); err != nil {
+				f.up.ca = filepath.Join(f.dir, "ca.pem")
+				if err := os.WriteFile(f.up.ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}), 0600); err != nil {
 					t.Fatal(err)
 				}
 			}
 			// Substitute only the external service address. The real Git
 			// process retains its isolated environment and transport options.
-			upstreamAdvertisement = func(cmd *exec.Cmd) ([]byte, error) {
+			f.up.advertise = func(cmd *exec.Cmd) ([]byte, error) {
 				replaced := false
 				for i, arg := range cmd.Args {
 					if arg == "https://github.com/wesnel/nix-config.git" {
@@ -505,6 +518,7 @@ func TestMirrorHTTPS(t *testing.T) {
 }
 
 func TestDefaultAdvertisement(t *testing.T) {
+	t.Parallel()
 	a, b := strings.Repeat("a", 40), strings.Repeat("b", 40)
 	for _, tc := range []struct {
 		name, text string
