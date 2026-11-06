@@ -204,7 +204,9 @@ have (see status) is refused and writes nothing.
                      planned
                      TEXT may hold line breaks, but no line Org reads as a
                      heading, a drawer, a planning line or a #+ keyword
-                     other than a block's
+                     other than a block's. A Goal holds a line starting
+                     "Builds on:" and one starting "Likely next changes:",
+                     each followed by text, as the plan-work skill says
   reference PLAN URL [--note TEXT]
                      keep URL under References, or set its note: what it was
                      used for and which decisions (Q IDs) it fed; log it as
