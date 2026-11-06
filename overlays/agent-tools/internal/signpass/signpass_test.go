@@ -71,8 +71,31 @@ func signingConfig(t *testing.T, dir string) (context.Context, string) {
 	global := filepath.Join(dir, "gitconfig")
 	os.WriteFile(global, []byte("[user]\n\tname = T\n\temail = t@e\n\tsigningkey = "+key+
 		"\n[gpg]\n\tformat = ssh\n[gpg \"ssh\"]\n\tallowedSignersFile = "+signers+"\n"), 0o644)
-	ctx := under(t.Context(), "GIT_CONFIG_NOSYSTEM=1")
+	ctx := under(passContext(t), "GIT_CONFIG_NOSYSTEM=1")
 	return operatorProfile(t, ctx, string(pub)), global
+}
+
+// passContext is the test's context with the pass's options a test starts
+// from: a standard input that is no terminal and holds nothing, and no
+// automatic retry of a missed touch, so a pass that misses one stops at
+// once; withRetries sets some.
+func passContext(t *testing.T) context.Context {
+	t.Helper()
+	null, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { null.Close() })
+	o := DefaultOptions()
+	o.In, o.Retries = null, 0
+	return WithOptions(t.Context(), o)
+}
+
+// tuned is ctx with the pass's options changed by f.
+func tuned(ctx context.Context, f func(*Options)) context.Context {
+	o := options(ctx)
+	f(&o)
+	return WithOptions(ctx, o)
 }
 
 // bakedHome is the config home baked in for the code under test, as an
@@ -129,17 +152,9 @@ func operatorProfile(t *testing.T, ctx context.Context, pub string) context.Cont
 	return ctx
 }
 
-// withStdin makes f the pass's standard input for the rest of the test.
-func withStdin(t *testing.T, f *os.File) {
-	t.Helper()
-	old := os.Stdin
-	os.Stdin = f
-	t.Cleanup(func() { os.Stdin = old })
-}
-
-// noTerminal gives the pass a standard input that is not a terminal, though
-// Enter waits on it.
-func noTerminal(t *testing.T) {
+// noTerminal is ctx giving the pass a standard input that is not a
+// terminal, though Enter waits on it.
+func noTerminal(t *testing.T, ctx context.Context) context.Context {
 	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -148,17 +163,18 @@ func noTerminal(t *testing.T) {
 	w.WriteString("\n")
 	w.Close()
 	t.Cleanup(func() { r.Close() })
-	withStdin(t, r)
+	return tuned(ctx, func(o *Options) { o.In = r })
 }
 
-// typed gives the pass a terminal on which answer has already been typed.
-func typed(t *testing.T, answer string) {
+// typed is ctx giving the pass a terminal on which answer has already been
+// typed.
+func typed(t *testing.T, ctx context.Context, answer string) context.Context {
 	t.Helper()
 	term, tty := openPTY(t)
 	if _, err := term.WriteString(answer); err != nil {
 		t.Fatal(err)
 	}
-	withStdin(t, tty)
+	return tuned(ctx, func(o *Options) { o.In = tty })
 }
 
 // refusing writes a program to dir that fails as the hardware key does at a
@@ -210,6 +226,7 @@ func testBinary(t *testing.T) string {
 }
 
 func TestRun(t *testing.T) {
+	t.Parallel()
 	t.Run("signs and folds a stack", testRunStack)
 	t.Run("lint", testRunLint)
 	t.Run("worktree branch", testRunWorktreeBranch)
@@ -221,6 +238,7 @@ func TestRun(t *testing.T) {
 }
 
 func TestPush(t *testing.T) {
+	t.Parallel()
 	t.Run("moved branches", testPushMoved)
 	t.Run("destination", testPushDestination)
 	t.Run("remote", testPushRemote)
@@ -272,16 +290,17 @@ func testPushUnmovedMoved(t *testing.T) {
 }
 
 func testPushURLLeases(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"missing mirror", "same value", "already new", "aliased URLs", "publish already new", "moved mirror", "unavailable mirror", "resume absent", "resume deleted", "legacy lease"} {
 		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
 			publishing := mode == "publish already new"
 			dir := t.TempDir()
 			// Every commit is signed with the operator's key, as the pushes'
 			// gate requires of those they send.
 			ctx, _ := signingConfig(t, dir)
 			commit := []string{"-c", "gpg.format=ssh", "-c", "user.signingkey=" + filepath.Join(dir, "key"), "commit", "-q", "-S", "--allow-empty"}
-			ctx = under(ctx, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
-			noTerminal(t)
+			ctx = noTerminal(t, under(ctx, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1"))
 			hub, mirror, repo := filepath.Join(dir, "hub.git"), filepath.Join(dir, "mirror.git"), filepath.Join(dir, "repo")
 			gitIn(t, dir, "init", "-q", "--bare", hub)
 			gitIn(t, dir, "init", "-q", "--bare", mirror)
@@ -446,12 +465,15 @@ func testPushURLLeases(t *testing.T) {
 func TestResumeCommand(t *testing.T) {
 	exe := testBinary(t)
 	bin := t.TempDir()
-	ctx := under(t.Context(), "PATH="+bin+string(os.PathListSeparator)+env.Process().Get("PATH"))
-	// Not parallel: it sets NotifyID for the package.
-	NotifyID = "loop.0123abcd"
-	t.Cleanup(func() { NotifyID = "" })
+	t.Parallel()
+	plain := under(t.Context(), "PATH="+bin+string(os.PathListSeparator)+env.Process().Get("PATH"))
+	ctx := tuned(plain, func(o *Options) { o.NotifyID = "loop.0123abcd" })
 	check := func(prog string) {
 		t.Helper()
+		// The ID is the pass's own: one without carries none.
+		if got, want := resumeCommand(plain, "one", true, false), prog+" --resume --push one"; got != want {
+			t.Errorf("without an ID: got %q, want %q", got, want)
+		}
 		if got, want := resumeCommand(ctx, "one", true, false), prog+" --resume --push --notify loop.0123abcd one"; got != want {
 			t.Errorf("got %q, want %q", got, want)
 		}
@@ -483,7 +505,8 @@ func TestResumeCommand(t *testing.T) {
 	if err != nil {
 		t.Skipf("no relative path from %s to %s: %v", wd, bin, err)
 	}
-	ctx = under(t.Context(), "PATH="+rel+string(os.PathListSeparator)+env.Process().Get("PATH"))
+	plain = under(t.Context(), "PATH="+rel+string(os.PathListSeparator)+env.Process().Get("PATH"))
+	ctx = tuned(plain, func(o *Options) { o.NotifyID = "loop.0123abcd" })
 	check(exe)
 }
 
@@ -491,6 +514,7 @@ func TestResumeCommand(t *testing.T) {
 // later one: on a terminal the pass asks and, on Enter, signs that commit
 // again; otherwise it stops, and the commands it names finish the pass.
 func testRunMissedTouch(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	ctx, global := signingConfig(t, dir)
 	// Git runs the program to verify signatures too, which needs no key.
@@ -517,22 +541,22 @@ func testRunMissedTouch(t *testing.T) {
 	want := ""
 	for i, c := range []struct {
 		name  string
-		stdin func(*testing.T)
+		stdin func(*testing.T, context.Context) context.Context
 		// signed is how many signatures the key gives before refusing one.
 		signed int
 		// cont is whether the pass stops for `git rebase --continue`.
 		stops, cont bool
 	}{
-		{"first, Enter", func(t *testing.T) { typed(t, "\n") }, 0, false, false},
-		{"later, Enter", func(t *testing.T) { typed(t, "\n") }, 1, false, false},
+		{"first, Enter", func(t *testing.T, ctx context.Context) context.Context { return typed(t, ctx, "\n") }, 0, false, false},
+		{"later, Enter", func(t *testing.T, ctx context.Context) context.Context { return typed(t, ctx, "\n") }, 1, false, false},
 		{"first, no terminal", noTerminal, 0, true, false},
 		{"later, no terminal", noTerminal, 1, true, true},
-		{"later, answered q", func(t *testing.T) { typed(t, "q\n") }, 1, true, true},
+		{"later, answered q", func(t *testing.T, ctx context.Context) context.Context { return typed(t, ctx, "q\n") }, 1, true, true},
 	} {
 		commit(fmt.Sprintf("a%d", i))
 		commit(fmt.Sprintf("b%d", i))
 		want = strings.TrimPrefix(want+"\nG\nG", "\n")
-		c.stdin(t)
+		ctx := c.stdin(t, ctx)
 		arm(t, armed, c.signed)
 		result, err := Run(ctx, "", false, false, false)
 		switch {
@@ -858,6 +882,7 @@ func commitFile(t *testing.T, repo, file, content string, message ...string) {
 // prints its whole plan, and refuses afterwards a stacked branch on any
 // commit but the signed copy of the last one it keeps.
 func testRunGains(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	ctx, global := signingConfig(t, dir)
 	repo := filepath.Join(dir, "repo")
@@ -878,7 +903,7 @@ func testRunGains(t *testing.T) {
 	ctx = decoy(t, ctx)
 	ctx = git.At(ctx, repo)
 	const named = "lower gains fixups from commits it does not contain\n"
-	stderr := captureStderr(t)
+	ctx, stderr := captureStderr(t, ctx)
 	if _, err := Run(ctx, "", false, false, false); err != nil {
 		t.Fatal(err)
 	}
@@ -888,18 +913,16 @@ func testRunGains(t *testing.T) {
 	}
 
 	// A brief pass over named branches prints no plan, but names it still.
-	Brief = true
-	t.Cleanup(func() { Brief = false })
+	brief := tuned(ctx, func(o *Options) { o.Brief = true })
 	commitFile(t, repo, "x2", "x2 fixed again\n", "fixup! Add x2")
 	skip := len(stderr())
-	if _, err := Plan(ctx, "", []string{"upper"}, false, false); err != nil {
+	if _, err := Plan(brief, "", []string{"upper"}, false, false); err != nil {
 		t.Fatal(err)
 	}
 	out = stderr()[skip:]
 	if at := strings.Index(out, named); at < 0 || at > strings.Index(out, "touch the key") {
 		t.Errorf("a brief pass did not name lower before the touches:\n%s", out)
 	}
-	Brief = false
 
 	commitFile(t, repo, "x1", "x1 fixed again\n", "fixup! Add x1")
 	res, err := Plan(ctx, "", []string{"upper"}, false, false)
@@ -935,6 +958,7 @@ func testRunGains(t *testing.T) {
 // the lower one with an amend! that changes no files: lower gains it, which
 // the pass says before the first touch and reports once signed.
 func testRunMessageGains(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	ctx, global := signingConfig(t, dir)
 	repo := filepath.Join(dir, "repo")
@@ -951,7 +975,7 @@ func testRunMessageGains(t *testing.T) {
 	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 	ctx = decoy(t, ctx)
 	ctx = git.At(ctx, repo)
-	stderr := captureStderr(t)
+	ctx, stderr := captureStderr(t, ctx)
 	result, err := Run(ctx, "", false, false, false)
 	if err != nil {
 		t.Fatal(err)
@@ -1832,13 +1856,14 @@ func mirrored(t *testing.T) (dir, repo, hub, mirror, armed string, ssh []string)
 // otherwise left for --resume, which pushes only that URL, leased on what it
 // held before the pass, however the remote-tracking ref has moved since.
 func testPushEachURL(t *testing.T) {
+	t.Parallel()
 	dir, repo, hub, mirror, armed, ssh := mirrored(t)
 	ctx, global := signingConfig(t, dir)
 	ctx = under(ctx, append(ssh, "GIT_CONFIG_GLOBAL="+global)...)
 	ctx = git.At(ctx, repo)
 	before := gitIn(t, repo, "rev-parse", "origin/one")
 
-	noTerminal(t)
+	ctx = noTerminal(t, ctx)
 	arm(t, armed, 0)
 	_, err := Run(ctx, "", false, true, false)
 	if err == nil {
@@ -1881,7 +1906,7 @@ func testPushEachURL(t *testing.T) {
 		t.Error("the finished push is still recorded")
 	}
 
-	typed(t, "\n")
+	ctx = typed(t, ctx, "\n")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "O3")
 	arm(t, armed, 0)
 	if _, err := Run(ctx, "", false, true, false); err != nil {
@@ -2058,6 +2083,7 @@ func sshStack(t *testing.T) (ctx context.Context, dir, repo, sshLogFile, hubPush
 // pushes to one URL share a single SSH login, one key touch. A push refused
 // partway is resumed from the first branch that URL lacks.
 func testPushStackBottomUp(t *testing.T) {
+	t.Parallel()
 	ctx, dir, repo, sshLogFile, hubPushes, mirrorPushes := sshStack(t)
 	before := map[string]string{}
 	for _, b := range []string{"parent", "child", "grandchild"} {
@@ -2065,7 +2091,7 @@ func testPushStackBottomUp(t *testing.T) {
 	}
 	os.WriteFile(filepath.Join(dir, "reject"), nil, 0o644)
 
-	noTerminal(t)
+	ctx = noTerminal(t, ctx)
 	_, err := Run(ctx, "", false, true, false)
 	if err == nil || !strings.Contains(err.Error(), "`"+testBinary(t)+" --resume --push grandchild`") {
 		t.Fatalf("a push the mirror refuses: %v", err)
@@ -2152,8 +2178,12 @@ func testPushControlPathTooLong(t *testing.T) {
 
 // testPushInterrupted stops a pass with SIGTERM while its first push waits
 // on SSH. The pass returns instead of dying, having ended its shared
-// connection and removed the directory of its control sockets.
+// connection and removed the directory of its control sockets. The signal
+// reaches the whole process, so it runs in a process of its own.
 func testPushInterrupted(t *testing.T) {
+	if !alone(t) {
+		return
+	}
 	ctx, dir, _, sshLogFile, _, _ := sshStack(t)
 	ready := filepath.Join(dir, "ready")
 	if err := syscall.Mkfifo(ready, 0o600); err != nil {
@@ -2167,7 +2197,7 @@ func testPushInterrupted(t *testing.T) {
 			syscall.Kill(os.Getpid(), syscall.SIGTERM)
 		}
 	}()
-	noTerminal(t)
+	ctx = noTerminal(t, ctx)
 	if _, err := Run(ctx, "", false, true, false); err == nil {
 		t.Fatal("the interrupted pass succeeded")
 	}

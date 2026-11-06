@@ -55,6 +55,7 @@ func last(t *testing.T, p plans.Plan) plans.Event {
 // A finished pass's result lands in the plan that requested it, however
 // the pass ended.
 func TestNotify(t *testing.T) {
+	t.Parallel()
 	t.Run("signed and pushed", func(t *testing.T) {
 		t.Parallel()
 		dir := t.TempDir()
@@ -115,18 +116,16 @@ func TestNotify(t *testing.T) {
 	})
 
 	// The session hears which URLs have the branch and the exact command
-	// that pushes the rest. Not parallel: it sets the process's standard
-	// input (noTerminal).
+	// that pushes the rest.
 	t.Run("pushed to one URL of two", func(t *testing.T) {
+		t.Parallel()
 		dir, repo, hub, _, armed, ssh := mirrored(t)
 		ctx, global := signingConfig(t, dir)
 		ctx, p, id := requested(t, ctx, dir)
-		NotifyID = id
-		t.Cleanup(func() { NotifyID = "" })
+		ctx = tuned(ctx, func(o *Options) { o.NotifyID = id })
 
 		ctx = under(ctx, append(ssh, "GIT_CONFIG_GLOBAL="+global)...)
-		ctx = git.At(ctx, repo)
-		noTerminal(t)
+		ctx = noTerminal(t, git.At(ctx, repo))
 		arm(t, armed, 0)
 		result, err := Run(ctx, "", false, true, false)
 		if err == nil {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -73,6 +74,25 @@ func TestRun(t *testing.T) {
 		}
 	})
 
+	// A command attached to the terminal reads and writes the streams its
+	// caller gives, not this process's.
+	t.Run("attached to the caller's streams", func(t *testing.T) {
+		t.Parallel()
+		bin := t.TempDir()
+		if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\ncat >&2\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		ctx := under(t, repository(t), "PATH="+bin+string(os.PathListSeparator)+env.Process().Get("PATH"))
+		var stderr bytes.Buffer
+		if code, got := AttachedStderr(ctx, nil, strings.NewReader("typed\n"), &stderr, "status"); code != 0 || got != "typed\n" || stderr.String() != "typed\n" {
+			t.Errorf("AttachedStderr: exit %d, returned %q, wrote %q; want what was typed in both", code, got, stderr.String())
+		}
+		stderr.Reset()
+		if code := AttachedQuiet(ctx, nil, strings.NewReader("typed\n"), &stderr, "status"); code != 0 || stderr.String() != "typed\n" {
+			t.Errorf("AttachedQuiet: exit %d, wrote %q; want what was typed", code, stderr.String())
+		}
+	})
+
 	// The git that runs is the one on the Env's PATH, not the process's.
 	t.Run("found on the Env's PATH", func(t *testing.T) {
 		t.Parallel()
@@ -86,7 +106,7 @@ func TestRun(t *testing.T) {
 			t.Errorf("Run ran %q, %v; want the fake git on the Env's PATH", got, err)
 		}
 		var stderr bytes.Buffer
-		if code := AttachedQuiet(ctx, nil, &stderr, "status"); code != 0 || stderr.String() != "fake\n" {
+		if code := AttachedQuiet(ctx, nil, os.Stdin, &stderr, "status"); code != 0 || stderr.String() != "fake\n" {
 			t.Errorf("AttachedQuiet: exit %d, %q; want the fake git on the Env's PATH", code, stderr.String())
 		}
 		missing := under(t, t.TempDir(), "PATH="+t.TempDir())

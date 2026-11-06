@@ -3,7 +3,6 @@ package signpass
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/wesnel/agent-tools/internal/git"
@@ -37,8 +36,8 @@ func objectGit(ctx context.Context, args ...string) (string, error) {
 // pass's state, its signing config or the history it shows, all of which
 // anyone able to write the repository can set.
 func gate(ctx context.Context, url string, r refPush, env []string) error {
-	if !Brief {
-		fmt.Fprintf(os.Stderr, "reading what %s has; touch the key if it blinks\n", url)
+	if o := options(ctx); !o.Brief {
+		fmt.Fprintf(o.Err, "reading what %s has; touch the key if it blinks\n", url)
 	}
 	listed, err := lsRemote(ctx, url, env)
 	if err != nil {

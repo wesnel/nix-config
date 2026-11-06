@@ -354,15 +354,17 @@ func run(ctx context.Context, cmd *exec.Cmd) error {
 	return cmd.Wait()
 }
 
-// AttachedStderr is Attached, also returning what the command wrote to
-// stderr, which reaches this process's stderr as it is written. Git sees a
-// pipe there rather than the terminal, so it prints no progress meters. See
-// bound for how the end of ctx ends it.
-func AttachedStderr(ctx context.Context, extra []string, args ...string) (int, string) {
+// AttachedStderr is Attached with the terminal the caller gives, stdin and
+// errs, also returning what the command wrote to standard error, which
+// reaches errs as it is written. Git sees a pipe there rather than the
+// terminal, so it prints no progress meters. A stdin that is not an
+// *os.File is copied to the command until it ends, which the command's end
+// waits for. See bound for how the end of ctx ends it.
+func AttachedStderr(ctx context.Context, extra []string, stdin io.Reader, errs io.Writer, args ...string) (int, string) {
 	cmd := commandContext(ctx, extra, args...)
 	bound(ctx, cmd)
 	var stderr bytes.Buffer
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, io.MultiWriter(os.Stderr, &stderr)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, os.Stdout, io.MultiWriter(errs, &stderr)
 	if err := run(ctx, cmd); err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
 			return exit.ExitCode(), stderr.String()
@@ -372,14 +374,14 @@ func AttachedStderr(ctx context.Context, extra []string, args ...string) (int, s
 	return 0, stderr.String()
 }
 
-// AttachedQuiet is Attached with standard output discarded and standard
-// error written to stderr alone, for a caller that decides what of it to
-// show. It returns the exit code; a failure to run git at all is written to
-// stderr too. See bound for how the end of ctx ends it.
-func AttachedQuiet(ctx context.Context, extra []string, stderr io.Writer, args ...string) int {
+// AttachedQuiet is AttachedStderr with standard output discarded and
+// standard error written to stderr alone, for a caller that decides what
+// of it to show. It returns the exit code; a failure to run git at all is
+// written to stderr too. See bound for how the end of ctx ends it.
+func AttachedQuiet(ctx context.Context, extra []string, stdin io.Reader, stderr io.Writer, args ...string) int {
 	cmd := commandContext(ctx, extra, args...)
 	bound(ctx, cmd)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, io.Discard, stderr
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, io.Discard, stderr
 	if err := run(ctx, cmd); err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
 			return exit.ExitCode()

@@ -125,8 +125,9 @@ func main() {
 	notify := flags.String("notify", "", "")
 	brief := flags.Bool("brief", false, "")
 	noBrief := flags.Bool("no-brief", false, "")
-	flags.DurationVar(&signpass.RetryWait, "retry-wait", signpass.RetryWait, "")
-	flags.DurationVar(&signpass.RetryTimeout, "retry-timeout", signpass.RetryTimeout, "")
+	opts := signpass.DefaultOptions()
+	flags.DurationVar(&opts.RetryWait, "retry-wait", opts.RetryWait, "")
+	flags.DurationVar(&opts.RetryTimeout, "retry-timeout", opts.RetryTimeout, "")
 	if code, ok := cli.Parse(flags, os.Args[1:], usage, os.Stdout, os.Stderr); !ok {
 		os.Exit(code)
 	}
@@ -134,14 +135,14 @@ func main() {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
-	signpass.Brief = *brief || !*noBrief && !signpass.StdoutIsTerminal()
+	opts.Brief = *brief || !*noBrief && !signpass.StdoutIsTerminal()
 	if *notify != "" {
 		if err := plans.CheckSignID(*notify); err != nil {
 			os.Exit(cli.Report("git-sign-pass", nil, err, 0, os.Stdout, os.Stderr))
 		}
-		signpass.NotifyID = *notify
+		opts.NotifyID = *notify
 	}
-	ctx := env.With(context.Background(), env.Process())
+	ctx := signpass.WithOptions(env.With(context.Background(), env.Process()), opts)
 	result, err := pass(ctx, *base, *resume, *push, *setUpstream, flags.Args())
 	code := cli.Report("git-sign-pass", result, err, 0, os.Stdout, os.Stderr)
 	if *notify != "" {
