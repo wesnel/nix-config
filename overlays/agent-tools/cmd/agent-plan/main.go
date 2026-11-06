@@ -225,6 +225,25 @@ have (see status) is refused and writes nothing.
                      entry, keeping its caption unless one is given, and
                      writes nothing where that changes nothing. VID --url
                      gives entry VID its recording's URL
+  digest --date YYYY-MM-DD (--text TEXT | --text-file F)
+                     write TEXT as the demo digest of that day, a Friday,
+                     at digests/YYYY/MM-DD-demo.org in the notes
+                     repository, replacing the one there. Refused for
+                     another day, over the 64 KiB the export reads, and
+                     for text without a level-1 heading per change whose
+                     property drawer holds PLAN, an id: link, and PR,
+                     OWNER/NAME#N or its GitHub URL. The same text again
+                     writes nothing
+  brag PLAN --pr OWNER/NAME#N --date YYYY-MM-DD --title T (--text TEXT | --text-file F)
+                     add the merged change's entry to brag/YYYY.org in the
+                     notes repository, YYYY the year of --date, the day it
+                     merged: heading T, with PR, REPOSITORY and PLAN, an
+                     id: link to PLAN, and TEXT, the summary the operator
+                     approved. An entry for the same pull request again
+                     writes nothing, and is refused where it differs.
+                     digest and brag write on the host plans.notesHost
+                     names alone, whose sync sends them, and are refused
+                     on every other
   reference PLAN URL [--note TEXT]
                      keep URL under References, or set its note: what it was
                      used for and which decisions (Q IDs) it fed; log it as
@@ -554,6 +573,8 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		caption  = flags.String("caption", "", "")
 		tape     = flags.String("tape", "", "")
 		address  = flags.String("url", "", "")
+		date     = flags.String("date", "", "")
+		pr       = flags.String("pr", "", "")
 		// Repeatable for new; log and find take one each.
 		repos    multi
 		branches multi
@@ -613,17 +634,24 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			return 2
 		}
 	}
-	if given["text"] && command != "step" && command != "part" && command != "edit" && command != "section" {
-		fmt.Fprintf(stderr, "agent-plan %s: --text is step's, part's, edit's and section's\n", command)
+	for _, f := range []string{"date", "pr"} {
+		if given[f] && command != "digest" && command != "brag" {
+			fmt.Fprintf(stderr, "agent-plan %s: --%s is digest's and brag's\n", command, f)
+			return 2
+		}
+	}
+	textual := map[string]bool{"step": true, "part": true, "edit": true, "section": true, "digest": true, "brag": true}
+	if given["text"] && !textual[command] {
+		fmt.Fprintf(stderr, "agent-plan %s: --text is step's, part's, edit's, section's, digest's and brag's\n", command)
 		return 2
 	}
 	if given["text-file"] {
-		fills, ok := map[string]string{"step": "text", "part": "text", "edit": "text", "section": "text", "ask": "context",
-			"followup": "context"}[command]
+		fills, ok := map[string]string{"step": "text", "part": "text", "edit": "text", "section": "text", "digest": "text", "brag": "text",
+			"ask": "context", "followup": "context"}[command]
 		into := map[string]*string{"text": text, "context": context}[fills]
 		switch {
 		case !ok:
-			fmt.Fprintf(stderr, "agent-plan %s: --text-file is step's, part's, edit's and section's, and ask's and followup's for the context\n", command)
+			fmt.Fprintf(stderr, "agent-plan %s: --text-file is step's, part's, edit's, section's, digest's and brag's, and ask's and followup's for the context\n", command)
 			return 2
 		case given["text"] || given["context"]:
 			fmt.Fprintf(stderr, "agent-plan %s: --text-file takes the place of --text and --context; give one of them\n", command)
@@ -1010,6 +1038,19 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			o.Diagram = &d
 		}
 		return report(p.Visual(o, time.Now()))
+	case "digest", "brag":
+		day, err := time.ParseInLocation("2006-01-02", *date, time.Local)
+		switch {
+		case command == "digest" && (len(positional) != 0 || !given["text"] || err != nil):
+			fmt.Fprint(stderr, "agent-plan digest: takes --date YYYY-MM-DD (--text TEXT | --text-file F)\n")
+			return 2
+		case command == "brag" && (len(positional) != 1 || !given["text"] || err != nil):
+			fmt.Fprint(stderr, "agent-plan brag: takes PLAN --pr OWNER/NAME#N --date YYYY-MM-DD --title T (--text TEXT | --text-file F)\n")
+			return 2
+		case command == "digest":
+			return report(c.WriteDigest(day, *text))
+		}
+		return report(c.WriteBrag(plans.BragOptions{Day: day, PR: *pr, Plan: positional[0], Title: *title, Summary: *text}))
 	case "reference":
 		if len(positional) != 2 {
 			fmt.Fprint(stderr, "agent-plan reference: takes PLAN URL [--note TEXT]\n")
