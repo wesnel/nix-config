@@ -1,6 +1,7 @@
 package signpass
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -105,16 +106,51 @@ func (e expiring) Err() error {
 	return context.Cause(e.Context)
 }
 
-// whenFile calls f once path exists, which a scripted signer writes when it
-// reaches a step.
+// whenFile calls f once path holds a whole line, which a scripted signer
+// writes when it reaches a step. The shell creates the file before it writes
+// the line, so a file that exists may still be empty.
 func whenFile(path string, f func()) {
 	go func() {
-		for !exists(path) {
+		for !lineWritten(path) {
 			time.Sleep(10 * time.Millisecond)
 		}
 		f()
 	}()
 }
+
+// lineWritten reports whether path holds a whole line.
+func lineWritten(path string) bool {
+	b, _ := os.ReadFile(path)
+	return bytes.HasSuffix(b, []byte("\n"))
+}
+
+// A file a signer has created but not yet written is not a line, so a test
+// that waits for the signer's process ID does not act before it is there.
+func TestLineWritten(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "pids")
+	for _, c := range []struct {
+		name    string
+		content *string
+		want    bool
+	}{
+		{"missing", nil, false},
+		{"created and empty", ptr(""), false},
+		{"a line not yet ended", ptr("123"), false},
+		{"a whole line", ptr("123\n"), true},
+	} {
+		if c.content != nil {
+			if err := os.WriteFile(path, []byte(*c.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := lineWritten(path); got != c.want {
+			t.Errorf("%s: lineWritten = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func ptr(s string) *string { return &s }
 
 // By default a retry ends RetryTimeout after it starts.
 func TestRetryContext(t *testing.T) {
