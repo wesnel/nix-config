@@ -15,8 +15,8 @@ import (
 func TestMain(m *testing.M) {
 	gitenv.Isolate()
 	if api := os.Getenv(serveMCPEnv); api != "" {
-		gh.SetAPI(api)
-		os.Exit(mcpMain(env.With(context.Background(), env.Process()), nil, os.Stdin, os.Stdout, os.Stderr))
+		ctx := gh.WithAPI(env.With(context.Background(), env.Process()), api)
+		os.Exit(mcpMain(ctx, nil, os.Stdin, os.Stdout, os.Stderr))
 	}
 	os.Exit(m.Run())
 }

@@ -49,7 +49,9 @@ done
 type world struct {
 	o Options
 	// env is the environment the fakes run in, which ctx carries.
-	env         env.Env
+	env env.Env
+	// api is the test's GitHub, which ctx sends every call to.
+	api         string
 	log, store  string
 	mods        string
 	mu          sync.Mutex
@@ -72,13 +74,14 @@ func (w *world) calls(t *testing.T) (github []string, programs string) {
 	return append([]string{}, w.requests...), string(data)
 }
 
-// ctx carries w's Env.
-func (w *world) ctx(t *testing.T) context.Context { return env.With(t.Context(), w.env) }
+// ctx carries w's Env and GitHub.
+func (w *world) ctx(t *testing.T) context.Context {
+	return gh.WithAPI(env.With(t.Context(), w.env), w.api)
+}
 
 // setWorld puts fake nix and go first on the PATH of an Env, serves
 // GitHub's API from a test server, and gives Options a cache and clones
-// of the test's own. It sets the package's storeDir and gh's API, which
-// keeps a test that calls it serial.
+// of the test's own, and a store of its own that prefetch accepts.
 func setWorld(t *testing.T) *world {
 	t.Helper()
 	root, _ := filepath.EvalSymlinks(t.TempDir())
@@ -94,9 +97,6 @@ func setWorld(t *testing.T) *world {
 	os.WriteFile(filepath.Join(bin, "go"), []byte(goScript), 0o755)
 	w.env = env.Process().Set("PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "FAKE_LOG="+w.log,
 		"FAKE_STORE="+w.store, "FAKE_MODS="+w.mods, "GH_TOKEN=test-token")
-	old := storeDir
-	storeDir = w.store + "/"
-	t.Cleanup(func() { storeDir = old })
 	w.private = map[string]bool{}
 	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		repo, visibility := strings.CutPrefix(r.URL.Path, "/repos/")
@@ -131,8 +131,9 @@ func setWorld(t *testing.T) *world {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	t.Cleanup(gh.SetAPI(srv.URL))
-	w.o = Options{Cache: filepath.Join(root, "cache"), Clones: filepath.Join(root, "clones"), Limits: DefaultLimits}
+	w.api = srv.URL
+	w.o = Options{Cache: filepath.Join(root, "cache"), Clones: filepath.Join(root, "clones"), Limits: DefaultLimits,
+		testStore: w.store + "/"}
 	return w
 }
 
@@ -188,6 +189,7 @@ func sources(g Gathered) string {
 // changelog files and its releases between the two times, and GitHub's
 // comparison is left out once the clone gave the history.
 func TestGatherFlake(t *testing.T) {
+	t.Parallel()
 	w := setWorld(t)
 	old, next := w.clone(t, "acme", "lib")
 	w.tree(t, "acme", "lib", old, "sha256-o=", "CHANGELOG.md=# 1.0\n", "src/x=1\n")
@@ -226,6 +228,7 @@ func TestGatherFlake(t *testing.T) {
 // private patterns name it: a pin of any other is left unread, with why,
 // and nothing of it is fetched.
 func TestGatherPrivateRepos(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name, owner, patterns string
 		private, own, read    bool
@@ -241,6 +244,7 @@ func TestGatherPrivateRepos(t *testing.T) {
 		{"named, unknown, someone else's", "gone", "github.com/gone/*", false, false, false, "could not be read"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			w := setWorld(t)
 			old, next := w.clone(t, c.owner, "lib")
 			w.tree(t, c.owner, "lib", old, "sha256-o=", "CHANGELOG.md=# 1.0\n")
@@ -262,6 +266,7 @@ func TestGatherPrivateRepos(t *testing.T) {
 // Without a local clone, GitHub's comparison gives the history; releases
 // are picked by tag where both are released.
 func TestGatherCompareAndTags(t *testing.T) {
+	t.Parallel()
 	w := setWorld(t)
 	w.releases = `[{"tag_name": "v5.1.0", "name": "", "body": "New input.", "published_at": "2024-02-01T00:00:00Z"},
 		{"tag_name": "v5.0.2", "name": "", "body": "A fix.", "published_at": "2024-01-15T00:00:00Z"},
@@ -297,6 +302,7 @@ func TestGatherCompareAndTags(t *testing.T) {
 // nixpkgs is too long to list: its clone gives a count, its tree the
 // release notes where nixpkgs keeps them, and GitHub only counts.
 func TestGatherNixpkgs(t *testing.T) {
+	t.Parallel()
 	w := setWorld(t)
 	old, next := w.clone(t, "nixos", "nixpkgs")
 	notes := "nixos/doc/manual/release-notes/rl-2611.section.md="
@@ -330,6 +336,7 @@ func TestGatherNixpkgs(t *testing.T) {
 // A source tree whose NAR hash is not the lock's is refused, and the
 // pin's other sources still count.
 func TestGatherHashMismatch(t *testing.T) {
+	t.Parallel()
 	w := setWorld(t)
 	w.tree(t, "acme", "lib", "aaaaaaa", "sha256-o=", "NEWS=old\n")
 	w.tree(t, "acme", "lib", "bbbbbbb", "sha256-forged=", "NEWS=new\n")
@@ -355,6 +362,7 @@ func TestGatherHashMismatch(t *testing.T) {
 // A Go module's two versions come from the public proxy alone, with no
 // version control; a module GOPRIVATE matches is requested from nowhere.
 func TestGatherGoModule(t *testing.T) {
+	t.Parallel()
 	w := setWorld(t)
 	writeFiles(t, filepath.Join(w.mods, "github.com_a_b@v1.0.0"), "CHANGELOG.md=## 1.0.0\n")
 	writeFiles(t, filepath.Join(w.mods, "github.com_a_b@v1.1.0"), "CHANGELOG.md=## 1.1.0\n- Renames Run to Start\n\n## 1.0.0\n")
@@ -477,6 +485,7 @@ func TestDefaultPrivateModules(t *testing.T) {
 // A flake node of another type, a lock file this does not read, and a Go
 // release are never fetched, and say why.
 func TestGatherNever(t *testing.T) {
+	t.Parallel()
 	w := setWorld(t)
 	pins := []Pin{
 		{Key: "flake.lock#private", Kind: "flake", Type: "git", Old: "a", New: "b"},
@@ -501,6 +510,7 @@ func TestGatherNever(t *testing.T) {
 // A name that would leave the clones directory, or a ref that is an
 // option, is never used.
 func TestGatherHostileNames(t *testing.T) {
+	t.Parallel()
 	w := setWorld(t)
 	for _, p := range []Pin{
 		{Key: "a", Kind: "action", Owner: "..", Repo: "x", Old: "a", New: "b", OldRef: "a", NewRef: "b"},
@@ -520,6 +530,7 @@ func TestGatherHostileNames(t *testing.T) {
 // The limits cut each text, stop at the total, and gather for the first
 // pins only.
 func TestGatherLimits(t *testing.T) {
+	t.Parallel()
 	w := setWorld(t)
 	w.compareBody = `{"status": "ahead", "ahead_by": 1, "total_commits": 1, "commits": [{"sha": "1234567890123", "commit": {"message": "` +
 		strings.Repeat("x", 3000) + `"}}]}`
@@ -548,6 +559,7 @@ func TestGatherLimits(t *testing.T) {
 // What was gathered is kept by source and versions: gathered again, it
 // needs no network.
 func TestGatherCache(t *testing.T) {
+	t.Parallel()
 	w := setWorld(t)
 	p := Pin{Key: "x", Kind: "action", Owner: "o", Repo: "r", Old: "aaaaaaa", New: "bbbbbbb", OldRef: "aaaaaaa", NewRef: "bbbbbbb"}
 	first := Gather(w.ctx(t), []Pin{p}, w.o)

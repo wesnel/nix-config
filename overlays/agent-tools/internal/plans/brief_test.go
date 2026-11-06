@@ -8,6 +8,7 @@ import (
 // A brief is what an agent needs from its plan to go on after the
 // conversation was compacted.
 func TestBrief(t *testing.T) {
+	t.Parallel()
 	// briefed makes a plan with a goal, steps S1 (done) and S2, a decided
 	// Q1, an open Q2, Q3 waiting for Q2, and a follow-up.
 	briefed := func(t *testing.T) (Config, Plan) {

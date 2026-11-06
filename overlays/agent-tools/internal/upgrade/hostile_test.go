@@ -15,6 +15,7 @@ import (
 // gpg.program, which log.showSignature would run on a signed commit,
 // never runs, and the pin is not gathered from it.
 func TestCloneConfigRefused(t *testing.T) {
+	t.Parallel()
 	w := setWorld(t)
 	old, next := w.clone(t, "acme", "lib")
 	dir := filepath.Join(w.o.Clones, "acme", "lib")
@@ -69,6 +70,7 @@ func TestCloneConfigRefused(t *testing.T) {
 // A changelog path reached through a symbolic link in a source tree, the
 // path's own or a directory's on the way, is never read.
 func TestNotesSymlinks(t *testing.T) {
+	t.Parallel()
 	w := setWorld(t)
 	outside := t.TempDir()
 	writeFiles(t, outside, "manual/release-notes/rl.md=SECRET outside the tree\n", "passwd=root:x:0:0\n")
@@ -105,6 +107,7 @@ func TestNotesDiffCapped(t *testing.T) {
 // A cache directory another user could have written is neither read nor
 // written.
 func TestCacheModes(t *testing.T) {
+	t.Parallel()
 	w := setWorld(t)
 	p := Pin{Key: "x", Kind: "action", Owner: "o", Repo: "r", Old: "aaaaaaa", New: "bbbbbbb", OldRef: "aaaaaaa", NewRef: "bbbbbbb"}
 	Gather(w.ctx(t), []Pin{p}, w.o)
@@ -136,6 +139,7 @@ func TestCacheModes(t *testing.T) {
 // A pin whose ref is the same on both sides, only its hash moved, has no
 // upstream changes to read, and is never counted as read.
 func TestHashOnly(t *testing.T) {
+	t.Parallel()
 	w := setWorld(t)
 	p := Pin{Key: "x.nix#acme/t", Kind: "nix", Owner: "acme", Repo: "t", Old: "sha256-V1=", New: "sha256-V2=",
 		OldRef: "v1.0", NewRef: "v1.0"}

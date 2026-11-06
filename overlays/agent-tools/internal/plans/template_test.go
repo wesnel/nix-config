@@ -10,6 +10,7 @@ import (
 // A plan can start from a template in the plans repository: the template's
 // entries land in the same sections of the new plan.
 func TestTemplate(t *testing.T) {
+	t.Parallel()
 	// withTemplate makes a config whose plans repository holds template
 	// release with text.
 	withTemplate := func(t *testing.T, text string) Config {

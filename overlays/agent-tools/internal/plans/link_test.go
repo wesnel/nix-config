@@ -149,6 +149,7 @@ func TestLink(t *testing.T) {
 // A Related link resolves to a file-level ID of any Org file in the plans'
 // repository, a plan's or a note's; status lists one that resolves to none.
 func TestDanglingLinks(t *testing.T) {
+	t.Parallel()
 	c := testConfig(t)
 	p, other, id := linkPlans(t, c, "Other")
 	if _, err := c.Link(p.file(""), other.file(""), "Same area.", day); err != nil {
@@ -172,6 +173,7 @@ func TestDanglingLinks(t *testing.T) {
 
 // Related holds a list, not headings.
 func TestRelatedStructure(t *testing.T) {
+	t.Parallel()
 	got := structureOf(planOrg("** Related\n- [[id:x][X]]: why\n*** A heading\n"))
 	if len(got) != 1 || got[0].problem != "a heading under Related, which holds text" {
 		t.Errorf("drift %+v", got)

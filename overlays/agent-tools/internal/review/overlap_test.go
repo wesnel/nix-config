@@ -28,6 +28,10 @@ echo '[{"headRefName": "pr-branch", "number": 7}]'
 func overlapFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := setUp(t, true)
+	// The list keeps a budget by this clock; a clock that does not move keeps
+	// a slow host from spending it. The tests of the budget set their own.
+	frozen := time.Now()
+	f.seams.now = func() time.Time { return frozen }
 	run(t, f.repo, "git", "update-ref", "refs/remotes/origin/main", f.base)
 	run(t, f.repo, "git", "update-ref", "refs/heads/merged", f.base)
 	run(t, f.repo, "git", "switch", "-q", "-c", "work")

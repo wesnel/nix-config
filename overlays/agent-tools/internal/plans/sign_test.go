@@ -16,6 +16,7 @@ import (
 // A sign-pass handed over in a session is requested in the session's plan,
 // under an ID that names the plan, and refused where there is no plan.
 func TestRequestSign(t *testing.T) {
+	t.Parallel()
 	t.Run("explicit", testRequestSignPlan)
 	t.Run("ownership only", func(t *testing.T) {
 		c := testConfig(t)
@@ -191,6 +192,7 @@ func testRequestSignPlan(t *testing.T) {
 // base it signs from, main by any of its names, for Emacs to show the
 // operator the command.
 func TestRequestSignWhere(t *testing.T) {
+	t.Parallel()
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
 	if _, err := c.RequestSign(t.Context(), SignRequest{Session: "abc", Worktree: "/w/loop", Branches: []string{"loop"}, Base: "diagrams"}, day); err != nil {
@@ -219,6 +221,7 @@ func TestRequestSignWhere(t *testing.T) {
 
 // A result is logged in the plan that holds its request, and only there.
 func TestRecordSign(t *testing.T) {
+	t.Parallel()
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
 	id, _ := c.RequestSign(t.Context(), SignRequest{Session: "abc", Branches: []string{"loop"}}, day)
@@ -249,6 +252,7 @@ func TestRecordSign(t *testing.T) {
 
 // Each result reaches the session that asked for it once, as one line.
 func TestDeliverSigns(t *testing.T) {
+	t.Parallel()
 	t.Run("explicit unassociated plan", func(t *testing.T) {
 		c := testConfig(t)
 		implicit := newPlan(t, c, "implicit")
@@ -319,6 +323,7 @@ func TestDeliverSigns(t *testing.T) {
 // A result first seen more than a day after it finished is delivered as
 // stale, for the record, and asks for nothing.
 func TestDeliverStale(t *testing.T) {
+	t.Parallel()
 	c := testConfig(t)
 	newPlan(t, c, "x")
 	id, _ := c.RequestSign(t.Context(), SignRequest{Session: "abc"}, day)
@@ -340,6 +345,7 @@ func TestDeliverStale(t *testing.T) {
 
 // However many prompts arrive at once, a result is delivered once.
 func TestDeliverSignsConcurrently(t *testing.T) {
+	t.Parallel()
 	c := testConfig(t)
 	newPlan(t, c, "x")
 	id, _ := c.RequestSign(t.Context(), SignRequest{Session: "abc"}, day)
@@ -366,6 +372,7 @@ func TestDeliverSignsConcurrently(t *testing.T) {
 // SignResults reads a result by its ID, and consuming it stops the next
 // prompt delivering it again.
 func TestSignResults(t *testing.T) {
+	t.Parallel()
 	c := testConfig(t)
 	newPlan(t, c, "x")
 	id, _ := c.RequestSign(t.Context(), SignRequest{Session: "abc"}, day)
@@ -393,6 +400,7 @@ func TestSignResults(t *testing.T) {
 // A finished sign-pass reaches the session that handed it over on its next
 // prompt, in each harness's form, and never a sub-agent's turn.
 func TestRemindSignResult(t *testing.T) {
+	t.Parallel()
 	event := func(fields map[string]any) []byte {
 		data, _ := json.Marshal(fields)
 		return data

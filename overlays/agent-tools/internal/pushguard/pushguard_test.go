@@ -109,9 +109,10 @@ func TestCheck(t *testing.T) {
 }
 
 // TestGitHub holds the GitHub lookup to the Env of the context Check runs
-// in: it authenticates with that Env's GH_TOKEN. Not parallel: it points
-// the gh package at a server of its own.
+// in: it authenticates with that Env's GH_TOKEN, and its server is the one
+// the context names.
 func TestGitHub(t *testing.T) {
+	t.Parallel()
 	// Stands in for GitHub, which is outside the machine: it says a
 	// repository is private only to a caller with the Env's token.
 	const token = "pushguard-test-token"
@@ -125,9 +126,8 @@ func TestGitHub(t *testing.T) {
 		fmt.Fprint(w, `{"private":true}`)
 	}))
 	t.Cleanup(srv.Close)
-	t.Cleanup(gh.SetAPI(srv.URL))
 	ctx, _, _, fix := fork(t)
-	ctx = env.With(ctx, env.From(ctx).Set("GH_TOKEN="+token))
+	ctx = gh.WithAPI(env.With(ctx, env.From(ctx).Set("GH_TOKEN="+token)), srv.URL)
 	if err := Check(ctx, "https://github.com/org/hidden", []Update{{"refs/heads/x", fix, "refs/heads/x", zero}}, GitHub()); err != nil {
 		t.Errorf("a push to a repository GitHub calls private, asked with the Env's token: %v", err)
 	}

@@ -104,8 +104,8 @@ func (c Config) gitRawAs(ctx context.Context, extra []string, args ...string) (s
 	if c.SSHConfig != "" {
 		pre = append(pre, "-c", "core.sshCommand="+c.sshCommand())
 	}
-	cmd := exec.CommandContext(ctx, "git", append(pre, args...)...)
-	cmd.Env = append(append(gitenv.Without(env.From(ctx).Environ()), "GIT_TERMINAL_PROMPT=0"), extra...)
+	cmd := env.Command(ctx, "git", append(pre, args...)...)
+	cmd.Env = append(append(gitenv.Without(cmd.Env), "GIT_TERMINAL_PROMPT=0"), extra...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -862,8 +862,8 @@ func (c Config) clone(ctx context.Context) (cloned bool, note string, err error)
 	}
 	timed, cancel := context.WithTimeout(ctx, gitTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(timed, "git", append(args, "clone", "-q", c.Remote, repo)...)
-	cmd.Env = append(gitenv.Without(env.From(ctx).Environ()), "GIT_TERMINAL_PROMPT=0")
+	cmd := env.Command(timed, "git", append(args, "clone", "-q", c.Remote, repo)...)
+	cmd.Env = append(gitenv.Without(cmd.Env), "GIT_TERMINAL_PROMPT=0")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return false, fmt.Sprintf("cloning %s failed, so plans are not synced: %s", c.Remote, strings.TrimSpace(string(out))), nil
 	}

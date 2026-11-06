@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/env"
+	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
 	"github.com/wesnel/agent-tools/internal/plans"
@@ -198,9 +199,13 @@ func (f *fixture) config(t *testing.T, settings map[string]any) {
 // setenv sets name to value in f's Env.
 func (f *fixture) setenv(name, value string) { f.env = f.env.Set(name + "=" + value) }
 
-// ctx carries f's Env and seams.
+// ctx carries f's Env and seams, and its GitHub where it has one.
 func (f *fixture) ctx(t *testing.T) context.Context {
-	return withSeams(env.With(t.Context(), f.env), f.seams)
+	ctx := withSeams(env.With(t.Context(), f.env), f.seams)
+	if f.api != "" {
+		ctx = gh.WithAPI(ctx, f.api)
+	}
+	return ctx
 }
 
 // withSeams carries s, where it is not nil, in ctx, for the code under
@@ -294,6 +299,9 @@ type fixture struct {
 	// seams are what delegate reaches GitHub, upstreams and the clock
 	// through: production's unless a test stands in for one.
 	seams *seams
+	// api is the test's GitHub, where a test serves one, that ctx sends
+	// gh's calls to.
+	api string
 }
 
 // identity is the author and committer of the fixtures' commits.

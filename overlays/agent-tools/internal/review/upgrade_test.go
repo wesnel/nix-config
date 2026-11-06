@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/record"
 	"github.com/wesnel/agent-tools/internal/upgrade"
 )
@@ -70,7 +69,7 @@ func setUpUpgrade(t *testing.T) *upgradeFixture {
 		w.Write([]byte("[]"))
 	}))
 	t.Cleanup(srv.Close)
-	t.Cleanup(gh.SetAPI(srv.URL))
+	f.api = srv.URL
 	f.setenv("GH_TOKEN", "test-token")
 	u.opts = upgrade.Options{Cache: filepath.Join(root, "cache"), Clones: filepath.Join(root, "clones"), Limits: upgrade.DefaultLimits}
 	f.seams.upgradeOptions = func(context.Context) upgrade.Options { return u.opts }
@@ -115,7 +114,9 @@ func ids(out output) []string {
 // for them, fenced as data; a pin with none gathered, or none the reply
 // says it read, is an unread-upgrade finding of the review's own.
 func TestFocusUpgrade(t *testing.T) {
+	t.Parallel()
 	t.Run("checked", func(t *testing.T) {
+		t.Parallel()
 		u := setUpUpgrade(t)
 		u.says(t, upgradeReply(t, u.lib))
 		code, out, stderr := u.review(t)
@@ -151,6 +152,7 @@ func TestFocusUpgrade(t *testing.T) {
 	})
 
 	t.Run("a pin the reply does not say it read", func(t *testing.T) {
+		t.Parallel()
 		u := setUpUpgrade(t)
 		u.says(t, upgradeReply(t))
 		code, out, stderr := u.review(t)
@@ -165,6 +167,7 @@ func TestFocusUpgrade(t *testing.T) {
 	// An unread pin keeps its ID in the record, and is settled as any
 	// finding is: a later round raising it again adds nothing.
 	t.Run("settled", func(t *testing.T) {
+		t.Parallel()
 		u := setUpUpgrade(t)
 		u.says(t, upgradeReply(t, u.lib))
 		code, first, stderr := u.runDelegate(t, "--reviewer", "upgrade", "--plan", u.plan, u.given)
@@ -191,6 +194,7 @@ func TestFocusUpgrade(t *testing.T) {
 
 	// A reviewer's own finding cannot take an ID the review raises itself.
 	t.Run("a reviewer's UP- id", func(t *testing.T) {
+		t.Parallel()
 		u := setUpUpgrade(t)
 		u.says(t, strings.Replace(upgradeReply(t, u.lib), `"id": "1"`, `"id": "UP-x"`, 1))
 		_, out, stderr := u.review(t)
@@ -201,6 +205,7 @@ func TestFocusUpgrade(t *testing.T) {
 
 	// A pin added, or dropped, that is no other's pair is unread too.
 	t.Run("added and dropped", func(t *testing.T) {
+		t.Parallel()
 		u := setUpUpgrade(t)
 		lock := string(must(os.ReadFile(filepath.Join(u.repo, "flake.lock"))))
 		lock = strings.Replace(lock, `"private": {"locked": {"type": "git", "url": "ssh://git@example.com/p"`,
@@ -224,6 +229,7 @@ func TestFocusUpgrade(t *testing.T) {
 	// others may write is refused, said on stderr, and the pins fetched
 	// all the same.
 	t.Run("printed", func(t *testing.T) {
+		t.Parallel()
 		u := setUpUpgrade(t)
 		os.MkdirAll(u.opts.Cache, 0o755)
 		os.Chmod(u.opts.Cache, 0o755)
@@ -251,6 +257,7 @@ func TestFocusUpgrade(t *testing.T) {
 	// A reply's account counts only at the pin's two versions, as the
 	// prompt shows them or whole.
 	t.Run("the versions read", func(t *testing.T) {
+		t.Parallel()
 		u := setUpUpgrade(t)
 		other := u.lib
 		other.Old = "0123456789ab"
@@ -263,6 +270,7 @@ func TestFocusUpgrade(t *testing.T) {
 	// A private repository nothing names is not read: its pin is unread,
 	// and says why.
 	t.Run("a private repository", func(t *testing.T) {
+		t.Parallel()
 		u := setUpUpgrade(t)
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/repos/acme/lib" {
@@ -273,7 +281,7 @@ func TestFocusUpgrade(t *testing.T) {
 			w.Write([]byte("[]"))
 		}))
 		t.Cleanup(srv.Close)
-		t.Cleanup(gh.SetAPI(srv.URL))
+		u.api = srv.URL
 		u.says(t, upgradeReply(t, u.lib))
 		_, out, stderr := u.review(t)
 		if strings.Join(ids(out), " ") != "upgrade-1 "+u.github+" "+u.private ||
@@ -333,6 +341,7 @@ func TestUpgradeReadKeys(t *testing.T) {
 // the gh login's user. For anyone else's, a private repository is never
 // read, whatever the patterns name.
 func TestUpgradeOwnChange(t *testing.T) {
+	t.Parallel()
 	t.Run("whose pull request", func(t *testing.T) {
 		t.Parallel()
 		for _, c := range []struct {
@@ -354,6 +363,7 @@ func TestUpgradeOwnChange(t *testing.T) {
 	})
 
 	t.Run("what is read", func(t *testing.T) {
+		t.Parallel()
 		u := setUpUpgrade(t)
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/repos/acme/lib" {
@@ -363,7 +373,7 @@ func TestUpgradeOwnChange(t *testing.T) {
 			w.Write([]byte("[]"))
 		}))
 		t.Cleanup(srv.Close)
-		t.Cleanup(gh.SetAPI(srv.URL))
+		u.api = srv.URL
 		u.opts.Private = "github.com/acme/*"
 		r := must(resolve(u.ctx(t), u.repo, u.given))
 		for _, own := range []bool{true, false} {

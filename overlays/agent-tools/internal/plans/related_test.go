@@ -41,6 +41,7 @@ func mainCheckout(t *testing.T) (main, linked string) {
 // a branch both work on or one stacks on, a pull request both name, an
 // item one takes over from the other, and a commit both log.
 func TestLinkEvidence(t *testing.T) {
+	t.Parallel()
 	t.Run("shared branch", func(t *testing.T) {
 		c := testConfig(t)
 		a := planOn(t, c, "a", "", "main..loop")
@@ -163,6 +164,7 @@ func TestLinkEvidence(t *testing.T) {
 // the other plan with none of its items, are listed by Related as
 // candidates, and never linked.
 func TestRelated(t *testing.T) {
+	t.Parallel()
 	c := testConfig(t)
 	_, linked := mainCheckout(t)
 	a := planOn(t, c, "a", "", "main..loop")

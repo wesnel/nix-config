@@ -15,6 +15,7 @@ import (
 // /clear or a compaction, within the 10,000 characters a SessionStart
 // hook's context keeps.
 func TestResumeBrief(t *testing.T) {
+	t.Parallel()
 	// resumed makes a plan with a goal, S1 started, S2 ready, Q1 decided
 	// before a hand-back, Q2 decided after it, an open Q3, and P1 waiting
 	// for Q3.

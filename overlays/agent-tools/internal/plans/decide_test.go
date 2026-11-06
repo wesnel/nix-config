@@ -170,6 +170,7 @@ func TestDecide(t *testing.T) {
 
 // The status line names the session's open questions, and nothing else.
 func TestStatusLine(t *testing.T) {
+	t.Parallel()
 	t.Run("the session's open questions", func(t *testing.T) {
 		c, _ := openQuestions(t)
 		if got := c.StatusLine(t.Context(), []byte(`{"session_id":"abc","cwd":"/nowhere","workspace":{"current_dir":"/nowhere"}}`)); got != "3 open questions · /questions" {

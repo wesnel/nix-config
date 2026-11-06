@@ -8,6 +8,7 @@ import (
 // A hand-back can name the command the operator runs, and the item waits
 // on them until an event that settles it is logged.
 func TestWaiting(t *testing.T) {
+	t.Parallel()
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
 	addItems(t, p.file(""), "** Distribution", "P1", "P2")

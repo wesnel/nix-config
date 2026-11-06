@@ -12,6 +12,7 @@ import (
 // org-id and org-roam leave alone, and never in ID, which they take as
 // global: S1 is S1 in every plan.
 func TestWritersCustomID(t *testing.T) {
+	t.Parallel()
 	p := newPlan(t, testConfig(t), "x")
 	if _, err := p.AddEntry(EntryOptions{Section: "Steps", Title: "Add the loop"}, day); err != nil {
 		t.Fatal(err)
@@ -39,6 +40,7 @@ func TestWritersCustomID(t *testing.T) {
 // A part's file is no org-roam node: it has no file-level ID, and its own
 // ID, like its entries', is in CUSTOM_ID.
 func TestPartCustomID(t *testing.T) {
+	t.Parallel()
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
 	addItems(t, p.file(""), "** Distribution", "P1")
@@ -56,6 +58,7 @@ func TestPartCustomID(t *testing.T) {
 // Plans in either form are read alike: an item's ID is its CUSTOM_ID, or
 // else its ID, so an org-id :ID: beside a CUSTOM_ID names nothing.
 func TestItemIDForms(t *testing.T) {
+	t.Parallel()
 	p := newPlan(t, testConfig(t), "x")
 	addItemsIn(t, "ID", p.file(""), "** Steps", "S1")
 	data, _ := os.ReadFile(p.file(""))
@@ -97,6 +100,7 @@ func TestItemIDForms(t *testing.T) {
 // file-level ID, is one drift entry that says it stays readable, and a
 // write to it is not refused for it.
 func TestOldForm(t *testing.T) {
+	t.Parallel()
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
 	if drift, err := p.structureDrift(); err != nil || len(drift) != 0 {

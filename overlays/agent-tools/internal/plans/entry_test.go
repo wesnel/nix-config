@@ -156,6 +156,7 @@ func TestAddEntry(t *testing.T) {
 // An ID line in an entry's text, as the operator may write one, names no
 // heading: a command finds an entry by the drawer Org reads as its own.
 func TestIDInText(t *testing.T) {
+	t.Parallel()
 	text := func(s string) *string { return &s }
 	t.Run("edit", func(t *testing.T) {
 		_, p := entryPlan(t)
@@ -262,6 +263,7 @@ func TestEditEntry(t *testing.T) {
 // An entry's AFTER is set, replaced and cleared through agent-plan, and
 // status waits on it.
 func TestSetAfter(t *testing.T) {
+	t.Parallel()
 	_, p := entryPlan(t)
 	if _, err := p.SetAfter("S2", []string{"S1"}, day); err != nil {
 		t.Fatal(err)
@@ -308,6 +310,7 @@ func TestSetAfter(t *testing.T) {
 // Goal and Verification, the sections that hold text, are written through
 // agent-plan as a whole.
 func TestSetSection(t *testing.T) {
+	t.Parallel()
 	_, p := entryPlan(t)
 	setGoal(t, p.file(""), "Old goal.")
 	e, err := p.SetSection("", "Goal", "Add the loop.\n\nLikely next changes: its flag.", day)
@@ -353,6 +356,7 @@ func TestSetSection(t *testing.T) {
 
 // The `* Plan` properties no log tracks are set through agent-plan too.
 func TestSetPlainProperty(t *testing.T) {
+	t.Parallel()
 	_, p := entryPlan(t)
 	for name, values := range map[string][]string{"STATUS": {"halted"}, "SKILLS": {"coordinate-subagents", "review-loop"},
 		"REPOSITORIES": {"o/r", "o/s"}, "HARNESS": {"codex"}} {

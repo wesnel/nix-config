@@ -9,6 +9,7 @@ import (
 // status points at work that went quiet and at commits no step accounts
 // for.
 func TestStaleAndUnrecorded(t *testing.T) {
+	t.Parallel()
 	// worked makes a plan whose S1 was started at day, and S2 started and
 	// done then, with these commits logged.
 	worked := func(t *testing.T, commits ...string) Plan {

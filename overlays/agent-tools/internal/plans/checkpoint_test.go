@@ -9,6 +9,7 @@ import (
 // hand-back, a sign-pass handed over or signed, or a decision that left no
 // question to ask.
 func TestCheckpoint(t *testing.T) {
+	t.Parallel()
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
 	insertUnder(t, p.file(""), "** Questions", question("Q1", "Keep the flag?", "")+question("Q2", "Rename it?", ""))
@@ -50,6 +51,7 @@ func TestCheckpoint(t *testing.T) {
 // a commit of the session's but does not name it is not the session's: its
 // next commit there makes a plan of unplanned work, and that is its plan.
 func TestSessionPlanInMainCheckout(t *testing.T) {
+	t.Parallel()
 	c := testConfig(t)
 	repo, _ := checkouts(t, 0)
 	old, err := c.Open(locatePlan(t, c, "old", day, []string{repo}, []string{"other"}))

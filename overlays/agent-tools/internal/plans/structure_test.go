@@ -49,6 +49,7 @@ func entry(keyword, title, props string) string {
 // agent-plan new writes: structureOf reports a heading that holds anything
 // else, such as the history the log holds.
 func TestStructureOf(t *testing.T) {
+	t.Parallel()
 	question := "a question without a keyword ASK, DECIDED, DROPPED or SUPERSEDED"
 	for name, c := range map[string]struct {
 		text string
@@ -150,6 +151,7 @@ func TestStructureOf(t *testing.T) {
 // Every command finds a section by the title the structure check reads,
 // whatever statistics cookies or tags Org keeps on it.
 func TestSectionsWithCookies(t *testing.T) {
+	t.Parallel()
 	p := newPlan(t, testConfig(t), "x")
 	data, err := os.ReadFile(p.File())
 	if err != nil {
@@ -222,6 +224,7 @@ func TestSectionsWithCookies(t *testing.T) {
 // A section is the plan's only under its first `* Plan`: commands neither
 // write to nor read from a section of the same title elsewhere.
 func TestSectionsUnderPlan(t *testing.T) {
+	t.Parallel()
 	p := newPlan(t, testConfig(t), "x")
 	stray := "* Notes\n** Questions\n" + entry("ASK", "Stray?", ":ID: Q7\n") + "** Goal\nNot the goal.\n"
 	setGoal(t, p.File(), "Add the loop.")
@@ -247,6 +250,7 @@ func TestSectionsUnderPlan(t *testing.T) {
 // Status, its JSON and the briefs report the structure drift of every
 // file of the plan.
 func TestStructureDrift(t *testing.T) {
+	t.Parallel()
 	t.Run("a new plan", func(t *testing.T) {
 		p := newPlan(t, testConfig(t), "x")
 		expectList(t, "structure drift", structureDrift(t, p))
@@ -328,6 +332,7 @@ func TestStructureDrift(t *testing.T) {
 // that would add drift is refused before anything is written, and drift
 // already in the file, which is the operator's to settle, refuses nothing.
 func TestWriteKeepsStructure(t *testing.T) {
+	t.Parallel()
 	edit := func(p Plan, file string, fn func(lines []string) ([]string, error)) error {
 		return p.withLock(func(l *lockedPlan) error { return l.edit(file, fn) })
 	}

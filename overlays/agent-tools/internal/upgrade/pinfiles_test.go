@@ -384,8 +384,9 @@ func TestCloneReplaceGrafts(t *testing.T) {
 	b := commit(t, repo, "Add a backdoor to the auth check", "f=2")
 	fake := gitIn(t, repo, "commit-tree", gitIn(t, repo, "rev-parse", b+"^{tree}"), "-p", a, "-m", "Fix a typo in the README")
 	gitIn(t, repo, "replace", b, fake)
+	o := Options{Clones: clones}
 	ctx := env.With(t.Context(), env.Process())
-	got, err := cloneLog(ctx, clones, Pin{Owner: "o", Repo: "r", OldRef: a, NewRef: b})
+	got, err := cloneLog(ctx, o, Pin{Owner: "o", Repo: "r", OldRef: a, NewRef: b})
 	if err != nil || !strings.Contains(got.Body, "backdoor") || strings.Contains(got.Body, "typo") {
 		t.Errorf("replace: %q %v", got.Body, err)
 	}
@@ -394,12 +395,12 @@ func TestCloneReplaceGrafts(t *testing.T) {
 	d := commit(t, repo, "v2", "f=4")
 	os.WriteFile(filepath.Join(repo, ".git", "info", "grafts"), []byte(d+" "+a+"\n"), 0o644)
 	ctx = env.With(t.Context(), env.Process().Set("GIT_GRAFT_FILE="+filepath.Join(repo, ".git", "info", "grafts")))
-	got, err = cloneLog(ctx, clones, Pin{Owner: "o", Repo: "r", OldRef: a, NewRef: d})
+	got, err = cloneLog(ctx, o, Pin{Owner: "o", Repo: "r", OldRef: a, NewRef: d})
 	if err != nil || !strings.Contains(got.Body, "Remove signature checks") {
 		t.Errorf("grafts hide %s: %q %v", c[:7], got.Body, err)
 	}
 	os.WriteFile(filepath.Join(repo, ".git", "shallow"), []byte(a+"\n"), 0o644)
-	if _, err := cloneLog(ctx, clones, Pin{Owner: "o", Repo: "r", OldRef: a, NewRef: d}); err == nil ||
+	if _, err := cloneLog(ctx, o, Pin{Owner: "o", Repo: "r", OldRef: a, NewRef: d}); err == nil ||
 		!strings.Contains(err.Error(), "shallow") {
 		t.Errorf("a shallow clone: %v", err)
 	}

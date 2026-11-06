@@ -18,16 +18,26 @@ import (
 	"github.com/wesnel/agent-tools/internal/env"
 )
 
-// api is where every call goes, with the user's token: GitHub's API, or a
-// test's server, which SetAPI points it at.
-var api = "https://api.github.com"
+// githubAPI is where every call goes, with the user's token, unless its
+// context names a test's server.
+const githubAPI = "https://api.github.com"
 
-// SetAPI sends every later call to url, a test's own server, and returns
-// the function that restores GitHub's.
-func SetAPI(url string) (restore func()) {
-	old := api
-	api = strings.TrimSuffix(url, "/")
-	return func() { api = old }
+type apiKey struct{}
+
+// WithAPI is ctx with every call made with it sent to url, a test's own
+// server, in place of GitHub's API. Only tests call it: the server
+// receives the user's token. It is a context value, not an environment
+// variable, so that nothing outside this process can redirect the token.
+func WithAPI(ctx context.Context, url string) context.Context {
+	return context.WithValue(ctx, apiKey{}, strings.TrimSuffix(url, "/"))
+}
+
+// api is where a call made with ctx goes: WithAPI's server, else GitHub's.
+func api(ctx context.Context) string {
+	if url, ok := ctx.Value(apiKey{}).(string); ok {
+		return url
+	}
+	return githubAPI
 }
 
 // Outside is where pr-loop runs gh: gh calls git with the repository's own
@@ -75,7 +85,10 @@ func Token(ctx context.Context) (string, error) {
 // for.
 const defaultVersion = "2022-11-28"
 
-func do(ctx context.Context, method, url string, body any, accept, version string, transport *http.Client, limit int64) ([]byte, error) {
+// do sends a request for path, under api(ctx).
+func do(ctx context.Context, method, path string, body any, accept, version string, transport *http.Client, limit int64) ([]byte, error) {
+	path = "/" + strings.TrimPrefix(path, "/")
+	url := api(ctx) + path
 	tok, err := Token(ctx)
 	if err != nil {
 		return nil, err
@@ -115,7 +128,7 @@ func do(ctx context.Context, method, url string, body any, accept, version strin
 		return nil, fmt.Errorf("GitHub response exceeds %d bytes; no partial content returned", limit)
 	}
 	if resp.StatusCode >= 300 {
-		return nil, &StatusError{resp.StatusCode, fmt.Sprintf("%s %s: %s: %s", method, strings.TrimPrefix(url, api), resp.Status, strings.TrimSpace(string(data)))}
+		return nil, &StatusError{resp.StatusCode, fmt.Sprintf("%s %s: %s: %s", method, path, resp.Status, strings.TrimSpace(string(data)))}
 	}
 	return data, nil
 }
@@ -147,7 +160,7 @@ func REST(ctx context.Context, method, path string, body, out any) error {
 // RESTVersion is REST for an endpoint GitHub serves only under a later API
 // version, named in GitHub's documentation of the endpoint.
 func RESTVersion(ctx context.Context, version, method, path string, body, out any) error {
-	data, err := do(ctx, method, api+"/"+strings.TrimPrefix(path, "/"), body, "application/vnd.github+json", version, client, 0)
+	data, err := do(ctx, method, path, body, "application/vnd.github+json", version, client, 0)
 	if err != nil || out == nil || len(data) == 0 {
 		return err
 	}
@@ -156,7 +169,7 @@ func RESTVersion(ctx context.Context, version, method, path string, body, out an
 
 // Raw returns a GET response body as is, following redirects.
 func Raw(ctx context.Context, path string) ([]byte, error) {
-	return do(ctx, "GET", api+"/"+strings.TrimPrefix(path, "/"), nil, "application/vnd.github+json", defaultVersion, client, 0)
+	return do(ctx, "GET", path, nil, "application/vnd.github+json", defaultVersion, client, 0)
 }
 
 // Read returns at most 16 MiB from an API path, refusing redirects and
@@ -164,12 +177,12 @@ func Raw(ctx context.Context, path string) ([]byte, error) {
 func Read(ctx context.Context, path, accept string) ([]byte, error) {
 	transport := *client
 	transport.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return do(ctx, "GET", api+"/"+strings.TrimPrefix(path, "/"), nil, accept, defaultVersion, &transport, 16<<20)
+	return do(ctx, "GET", path, nil, accept, defaultVersion, &transport, 16<<20)
 }
 
 // GraphQL runs a query and decodes its data into out.
 func GraphQL(ctx context.Context, query string, variables map[string]any, out any) error {
-	data, err := do(ctx, "POST", api+"/graphql", map[string]any{"query": query, "variables": variables}, "application/json", defaultVersion, client, 0)
+	data, err := do(ctx, "POST", "graphql", map[string]any{"query": query, "variables": variables}, "application/json", defaultVersion, client, 0)
 	if err != nil {
 		return err
 	}

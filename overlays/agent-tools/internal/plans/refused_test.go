@@ -221,6 +221,7 @@ func atFileLimit(t *testing.T, p Plan, command string, limit int64) {
 
 // TestAtFileLimit is atFileLimit's child, and passes at once without it.
 func TestAtFileLimit(t *testing.T) {
+	t.Parallel()
 	spec := os.Getenv(atFileLimitEnv)
 	if spec == "" {
 		return
@@ -254,6 +255,7 @@ func TestAtFileLimit(t *testing.T) {
 // A temporary file a write left behind, its process killed before the
 // rename, is cleared by the next write; one being written now is not.
 func TestStaleEditFile(t *testing.T) {
+	t.Parallel()
 	_, p := entryPlan(t)
 	stale, fresh := filepath.Join(p.Dir, ".edit-stale"), filepath.Join(p.Dir, ".edit-fresh")
 	os.WriteFile(stale, []byte("x"), 0o644)

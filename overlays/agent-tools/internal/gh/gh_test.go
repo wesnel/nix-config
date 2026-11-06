@@ -3,6 +3,9 @@ package gh
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,6 +33,57 @@ func TestToken(t *testing.T) {
 			ctx := env.With(t.Context(), env.New(t.TempDir(), c.vars...))
 			if got, err := Token(ctx); err != nil || got != c.want {
 				t.Errorf("Token = %q, %v; want %q", got, err, c.want)
+			}
+		})
+	}
+}
+
+// Every call made with a context from WithAPI goes to that context's
+// server, with the Env's token, and two contexts with different servers,
+// in use at once, each reach their own. An error names the path without
+// the server.
+func TestWithAPI(t *testing.T) {
+	t.Parallel()
+	serve := func(t *testing.T, name string) context.Context {
+		t.Helper()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case r.Header.Get("Authorization") != "Bearer test-token":
+				http.Error(w, "no token", http.StatusUnauthorized)
+			case r.URL.Path == "/graphql":
+				fmt.Fprintf(w, `{"data": {"server": %q}}`, name)
+			case r.URL.Path == "/missing":
+				http.NotFound(w, r)
+			default:
+				fmt.Fprintf(w, `{"server": %q, "path": %q}`, name, r.URL.Path)
+			}
+		}))
+		t.Cleanup(srv.Close)
+		return WithAPI(env.With(t.Context(), env.New(t.TempDir(), "GH_TOKEN=test-token")), srv.URL+"/")
+	}
+	for _, name := range []string{"one", "two"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ctx := serve(t, name)
+			want := `{"server": "` + name + `", "path": "/repos/o/r"}`
+			var rest map[string]string
+			if err := REST(ctx, "GET", "repos/o/r", nil, &rest); err != nil || rest["server"] != name || rest["path"] != "/repos/o/r" {
+				t.Errorf("REST: %v, %v; want server %s", rest, err, name)
+			}
+			if raw, err := Raw(ctx, "/repos/o/r"); err != nil || string(raw) != want {
+				t.Errorf("Raw: %s, %v; want %s", raw, err, want)
+			}
+			if read, err := Read(ctx, "repos/o/r", "application/json"); err != nil || string(read) != want {
+				t.Errorf("Read: %s, %v; want %s", read, err, want)
+			}
+			var q map[string]string
+			if err := GraphQL(ctx, "{ viewer { login } }", nil, &q); err != nil || q["server"] != name {
+				t.Errorf("GraphQL: %v, %v; want server %s", q, err, name)
+			}
+			var status *StatusError
+			if err := REST(ctx, "GET", "missing", nil, nil); !errors.As(err, &status) || status.Code != 404 ||
+				!strings.HasPrefix(err.Error(), "GET /missing: 404") {
+				t.Errorf("a missing path: %v; want a 404 naming GET /missing", err)
 			}
 		})
 	}
