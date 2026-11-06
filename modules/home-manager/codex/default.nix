@@ -292,6 +292,7 @@ in {
             # Code's sandbox. Codex's sandbox cannot tell agent-plan from a
             # command wrapping it.
             // genAttrs sandboxLists.toolCaches (_: "write")
+            // genAttrs sandboxLists.writableRoots (_: "write")
             # On macOS sops-nix decrypts under the per-user temporary
             # directory, where a command could otherwise rewrite the git.inc
             # template git includes; commands write commandTmpdir instead.

@@ -603,13 +603,15 @@ with lib; let
 
       # Nothing on PATH (~/go/bin among it) and nothing that a program
       # outside the sandbox loads code or configuration from: the tool
-      # caches every sandbox shares, and the worktrees.
+      # caches every sandbox shares, the worktrees, and the writable roots
+      # every sandbox shares.
       allowWrite = let
         isGo = hasInfix "go";
       in
         filter isGo sandboxLists.toolCaches
         ++ ["~/.claude/worktrees"]
-        ++ filter (p: !isGo p) sandboxLists.toolCaches;
+        ++ filter (p: !isGo p) sandboxLists.toolCaches
+        ++ sandboxLists.writableRoots;
 
       denyWrite =
         sandboxDeniedWrites

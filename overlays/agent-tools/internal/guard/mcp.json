@@ -5,7 +5,7 @@
     "verify": "lima-mcp tools/list, which cmd/lima-mcp's TestToolTable holds to these lists; lima_dev_job_cancel is a read, since it only stops work",
     "codexPrompt": true,
     "reads": ["lima_list", "lima_dev_status", "lima_dev_job_result", "lima_dev_job_cancel"],
-    "confirms": ["lima_stop", "lima_dev_start", "lima_dev_stop", "lima_dev_exec_start"]
+    "confirms": ["lima_stop", "lima_dev_start", "lima_dev_stop", "lima_dev_exec_start", "lima_dev_import"]
   },
   "parallels": {
     "service": "Parallels",

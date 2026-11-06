@@ -54,6 +54,13 @@ with lib; let
       --add-flags ${escapeShellArg "qemu-guard --config ${guardConfig} --"}
   '';
 
+  # What a session runs in a repository to write NAME.bundle into the
+  # outbox for lima_dev_import, which names it.
+  export = pkgs.runCommand "lima-dev-export" {nativeBuildInputs = [pkgs.makeBinaryWrapper];} ''
+    makeBinaryWrapper ${getExe' agentTools "lima-mcp"} $out/bin/lima-dev-export \
+      --add-flags ${escapeShellArg "export --outbox ${cfg.outbox}"}
+  '';
+
   # The operator's limactl for the managed home, never plain limactl, which
   # would start QEMU without the guard: lima-mcp lima-dev refreshes the
   # stable links and makes the CA as lima-mcp's start does, then runs the
@@ -197,6 +204,8 @@ with lib; let
       limaMcp = getExe' agentTools "lima-mcp";
       template = "${template}";
       shim = "${agentTools.guestShim}/bin/linux_arm64/lima-udp-shim";
+      git = getExe pkgs.git;
+      inherit (cfg) outbox;
       # limaegress.ParsePolicy adds the denials: ngrok's connect endpoints
       # and API, and the QUIC servers.
       egress = {
@@ -230,6 +239,19 @@ in {
       type = types.str;
       default = "ngrok-agent";
       readOnly = true;
+    };
+
+    outbox = mkOption {
+      type = types.str;
+      default = "${config.xdg.stateHome}/lima-mcp-outbox";
+      description = ''
+        Where sessions write the git bundles lima_dev_import carries into
+        the VM, with `lima-dev-export NAME` run in a repository. It is one
+        of {option}`wgn.home.llm.sandbox.writableRoots`, which Codex's and
+        Claude Code's sandboxes let sessions write, and activation makes
+        it, mode 0700. lima-mcp takes only a bundle that passes its checks
+        from it. It holds only letters, digits and `._/+-`.
+      '';
     };
 
     workdir = mkOption {
@@ -321,10 +343,23 @@ in {
         message = "wgn.home.mcp-proxy.limaDev.home holds a character the guard cannot write into QEMU's arguments";
       }
       {
+        # lima-mcp's configuration takes it only so, and lima-dev-export's
+        # wrapper splits its flags at spaces. That it is in no credential
+        # path, the Lima home included, wgn.home.llm asserts of every
+        # writable root.
+        assertion = builtins.match "/[A-Za-z0-9._/+-]*" cfg.outbox != null;
+        message = "wgn.home.mcp-proxy.limaDev.outbox holds a character other than letters, digits and ._/+-";
+      }
+      {
         assertion = cfg.privateDial.servers != [];
         message = "wgn.home.mcp-proxy.limaDev.privateDial.servers is empty";
       }
     ];
-    home.packages = [wrapper];
+    home.packages = [wrapper export];
+    wgn.home.llm.sandbox.writableRoots = [cfg.outbox];
+    home.activation.limaMcpOutbox = hm.dag.entryAfter ["writeBoundary"] ''
+      run mkdir -p ${escapeShellArg cfg.outbox}
+      run chmod 700 ${escapeShellArg cfg.outbox}
+    '';
   };
 }

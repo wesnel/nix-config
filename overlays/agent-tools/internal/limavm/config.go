@@ -64,6 +64,11 @@ type Config struct {
 	Template string
 	// Shim is the guest's UDP shim, a linux/arm64 executable.
 	Shim string
+	// Git is the pinned git, which checks a bundle before an import.
+	Git string
+	// Outbox is the directory sessions write bundles into for an import,
+	// the one directory outside their workspaces they may write.
+	Outbox string
 	// Egress is the CONNECT relay's policy.
 	Egress *limaegress.Policy
 	// EgressJSON is that policy's JSON form, as configured.
@@ -93,6 +98,8 @@ type rawConfig struct {
 	LimaMCP              string          `json:"limaMcp"`
 	Template             string          `json:"template"`
 	Shim                 string          `json:"shim"`
+	Git                  string          `json:"git"`
+	Outbox               string          `json:"outbox"`
 	Egress               json.RawMessage `json:"egress"`
 	PrivateDialEndpoints []string        `json:"privateDialEndpoints"`
 }
@@ -210,10 +217,11 @@ func ParseConfig(data []byte) (*Config, error) {
 	}
 	c := &Config{
 		GuardConfig: g, Workdir: raw.Workdir, Limactl: raw.Limactl, Guard: raw.Guard, LimaMCP: raw.LimaMCP,
-		Template: raw.Template, Shim: raw.Shim, EgressJSON: raw.Egress,
+		Template: raw.Template, Shim: raw.Shim, Git: raw.Git, Outbox: raw.Outbox, EgressJSON: raw.Egress,
 	}
 	if err := checkPaths("lima config", [2]string{"limactl", c.Limactl}, [2]string{"guard", c.Guard},
-		[2]string{"limaMcp", c.LimaMCP}, [2]string{"template", c.Template}, [2]string{"shim", c.Shim}); err != nil {
+		[2]string{"limaMcp", c.LimaMCP}, [2]string{"template", c.Template}, [2]string{"shim", c.Shim},
+		[2]string{"git", c.Git}, [2]string{"outbox", c.Outbox}); err != nil {
 		return nil, err
 	}
 	if !workdir.MatchString(c.Workdir) || strings.Contains("/"+c.Workdir+"/", "/../") || strings.Contains("/"+c.Workdir+"/", "/./") {
@@ -266,6 +274,10 @@ func (g *GuardConfig) ConfigLink() string { return path.Join(g.MCPDir(), "config
 // BinLink names LimaMCP. The guestfwd commands run it, so that the store
 // path of a running VM's relays is not collected.
 func (g *GuardConfig) BinLink() string { return path.Join(g.MCPDir(), "bin", "lima-mcp") }
+
+// Imports is where an import keeps its private copy of a bundle, which
+// no session can read or write, since the Lima home is a credential path.
+func (g *GuardConfig) Imports() string { return path.Join(g.MCPDir(), "imports") }
 
 // Slots and QUICSlots hold the CONNECT and QUIC relays' slot files.
 func (g *GuardConfig) Slots() string     { return path.Join(g.MCPDir(), "slots") }

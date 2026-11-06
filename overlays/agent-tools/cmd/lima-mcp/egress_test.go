@@ -32,6 +32,7 @@ func managedConfig(t *testing.T) *limavm.Config {
 	"limactl":"/nix/store/l/bin/limactl","qemu":"/nix/store/q/bin/qemu-system-aarch64",
 	"guard":"/nix/store/g/bin/qemu-system-aarch64","limaMcp":"/nix/store/m/bin/lima-mcp",
 	"template":"/nix/store/t.yaml","shim":"/nix/store/s/bin/lima-udp-shim","deniedReads":["/Users/x/.ssh"],
+	"git":"/nix/store/v/bin/git","outbox":"/Users/x/.local/state/lima-mcp-outbox",
 	"connect":"192.168.5.100:3128","quic":"192.168.5.101:443",
 	"egress":{"allow":["github.com"],"deny":[],"quicServers":["us.quic.connect-endpoint.ngrok.com"]},
 	"privateDialEndpoints":["db.internal:5432"]}`

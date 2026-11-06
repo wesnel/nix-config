@@ -65,11 +65,20 @@ func newVM(t *testing.T) *vm {
 	if err := os.WriteFile(template, []byte("vmType: qemu\nplain: true\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outbox := filepath.Join(dir, "outbox")
+	if err := os.Mkdir(outbox, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	data, err := json.Marshal(map[string]any{
 		"home": "/Users/x", "limaHome": home, "instance": "ngrok-agent", "workdir": "src/ngrok-agent",
 		"limactl": fakeLimactl(t), "qemu": testQEMU,
 		"guard": "/nix/store/g/bin/qemu-system-aarch64", "limaMcp": "/nix/store/m/bin/lima-mcp",
 		"template": template, "shim": "/nix/store/s/bin/lima-udp-shim", "deniedReads": []string{},
+		"git": git, "outbox": outbox,
 		"connect": "192.168.5.100:3128", "quic": "192.168.5.101:443",
 		"egress":               map[string]any{"allow": []string{}, "deny": []string{}, "quicServers": []string{"us.quic.connect-endpoint.ngrok.com"}},
 		"privateDialEndpoints": []string{},
