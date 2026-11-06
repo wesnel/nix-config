@@ -150,11 +150,12 @@ func captureStderr(t *testing.T) func() string {
 }
 
 // flakyRepo is a repository on branch one with two unsigned commits, signed
-// through a signer that follows the plan it returns.
-func flakyRepo(t *testing.T) (repo, plan string) {
+// through a signer that follows the plan it returns, under the context it
+// returns.
+func flakyRepo(t *testing.T) (ctx context.Context, repo, plan string) {
 	t.Helper()
 	dir := t.TempDir()
-	global := signingConfig(t, dir)
+	ctx, global := signingConfig(t, dir)
 	program, plan := scripted(t, dir, "sign", `[ "$1 $2" = "-Y sign" ]`,
 		`"Couldn't sign message (signer): agent refused operation"`, `exec ssh-keygen "$@"`)
 	flaky := filepath.Join(dir, "flaky")
@@ -166,11 +167,10 @@ func flakyRepo(t *testing.T) (repo, plan string) {
 	gitIn(t, repo, "switch", "-qc", "one")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "a")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "b")
-	t.Setenv("GIT_CONFIG_GLOBAL", flaky)
-	t.Setenv("GIT_EDITOR", "false")
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+flaky, "GIT_EDITOR=false")
 	useDir(t, repo)
 	noTerminal(t)
-	return repo, plan
+	return ctx, repo, plan
 }
 
 // With no terminal to ask, a missed touch is retried once, after a wait; a
@@ -193,11 +193,11 @@ func TestMissedTouchWithoutTerminal(t *testing.T) {
 		{"later signature missed twice", []string{"ok", "miss", "miss", "miss", "miss"}, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			_, plan := flakyRepo(t)
+			ctx, _, plan := flakyRepo(t)
 			withRetries(t, 1, 20*time.Millisecond)
 			stderr := captureStderr(t)
 			script(t, plan, c.steps...)
-			result, err := Run("", false, false, false)
+			result, err := Run(ctx, "", false, false, false)
 			out := stderr()
 			if n := strings.Count(out, "touch the key now (retry "); n != 1 || !strings.Contains(out, "touch the key now (retry 1 of 1)") {
 				t.Errorf("%d retry announcements in\n%s", n, out)
@@ -209,7 +209,7 @@ func TestMissedTouchWithoutTerminal(t *testing.T) {
 				if got := result.(map[string]any)["signed"]; got != 2 {
 					t.Errorf("signed %v commits", got)
 				}
-				if marks, _ := git.Run("log", "--format=%G?", "main..one"); marks != "G\nG" {
+				if marks, _ := git.In(ctx).Run("log", "--format=%G?", "main..one"); marks != "G\nG" {
 					t.Errorf("signatures %q", marks)
 				}
 				return
@@ -245,7 +245,7 @@ func TestRetryKilled(t *testing.T) {
 		{"hung up", []string{"ok", "miss", "hang"}, syscall.SIGHUP, false, "up to 1 touch"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			repo, plan := flakyRepo(t)
+			ctx, repo, plan := flakyRepo(t)
 			clock := withRetries(t, 1, 20*time.Millisecond)
 			// Once the retried signer hangs, its retry ends: at its
 			// deadline, or by the signal.
@@ -260,7 +260,7 @@ func TestRetryKilled(t *testing.T) {
 			script(t, plan, c.steps...)
 			before := gitIn(t, repo, "log", "--format=%an %ae %at %T %B", "main..one")
 			tip := gitIn(t, repo, "rev-parse", "one")
-			_, err := Run("", false, false, false)
+			_, err := Run(ctx, "", false, false, false)
 			why := "did not finish"
 			if c.sig != 0 {
 				why = "was interrupted"
@@ -296,20 +296,20 @@ func TestRetryKilled(t *testing.T) {
 				if !strings.Contains(err.Error(), "`git rebase --continue`") {
 					t.Errorf("no --continue in %v", err)
 				}
-				if marks, _ := git.Run("log", "--format=%G?", "main..HEAD"); marks != "G" {
+				if marks, _ := git.In(ctx).Run("log", "--format=%G?", "main..HEAD"); marks != "G" {
 					t.Errorf("the signature before the step is gone: %q", marks)
 				}
-				if _, err := git.RunEnv(history.NoEditor, "rebase", "--continue"); err != nil {
+				if _, err := git.In(ctx).RunEnv(history.NoEditor, "rebase", "--continue"); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if _, err := Resume("one", false, false); err != nil {
+			if _, err := Resume(ctx, "one", false, false); err != nil {
 				t.Fatal(err)
 			}
 			if after := gitIn(t, repo, "log", "--format=%an %ae %at %T %B", "main..one"); after != before {
 				t.Errorf("the commits changed:\n%s\n%s", before, after)
 			}
-			if marks, _ := git.Run("log", "--format=%G?", "main..one"); marks != "G\nG" {
+			if marks, _ := git.In(ctx).Run("log", "--format=%G?", "main..one"); marks != "G\nG" {
 				t.Errorf("signatures %q", marks)
 			}
 		})
@@ -320,7 +320,7 @@ func TestRetryKilled(t *testing.T) {
 // process group, where the terminal can reach a signer that reads it or an
 // interrupt.
 func TestRetryRestInForeground(t *testing.T) {
-	repo, plan := flakyRepo(t)
+	ctx, repo, plan := flakyRepo(t)
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "c")
 	withRetries(t, 1, 20*time.Millisecond)
 	stderr := captureStderr(t)
@@ -338,7 +338,7 @@ func TestRetryRestInForeground(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}()
-	if _, err := Run("", false, false, false); err != nil {
+	if _, err := Run(ctx, "", false, false, false); err != nil {
 		t.Fatalf("%v\n%s", err, stderr())
 	}
 	select {
@@ -349,7 +349,7 @@ func TestRetryRestInForeground(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Error("the signer never recorded its process ID")
 	}
-	if marks, _ := git.Run("log", "--format=%G?", "main..one"); marks != "G\nG\nG" {
+	if marks, _ := git.In(ctx).Run("log", "--format=%G?", "main..one"); marks != "G\nG\nG" {
 		t.Errorf("signatures %q", marks)
 	}
 }
@@ -358,12 +358,12 @@ func TestRetryRestInForeground(t *testing.T) {
 // stopped, as it marks it (marking), it says how to carry on, here past a
 // break a pass killed in a retry left after the step it retried (oneStep).
 func TestResumeSaysHowToCarryOn(t *testing.T) {
-	repo, plan := flakyRepo(t)
+	ctx, repo, plan := flakyRepo(t)
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "c")
 	withRetries(t, 0, 0)
 	stderr := captureStderr(t)
 	script(t, plan, "ok", "miss")
-	if _, err := Run("", false, false, false); err == nil {
+	if _, err := Run(ctx, "", false, false, false); err == nil {
 		t.Fatal("a missed touch with no retries went through")
 	}
 	rm := filepath.Join(repo, ".git", "rebase-merge")
@@ -381,12 +381,12 @@ func TestResumeSaysHowToCarryOn(t *testing.T) {
 	// While another git may be at work there, it says only that.
 	lock := filepath.Join(repo, ".git", "index.lock")
 	os.WriteFile(lock, nil, 0o644)
-	if _, err := Resume("one", false, false); err == nil || !strings.Contains(err.Error(), "index.lock exists") {
+	if _, err := Resume(ctx, "one", false, false); err == nil || !strings.Contains(err.Error(), "index.lock exists") {
 		t.Fatalf("%v\n%s", err, stderr())
 	}
 	os.Remove(lock)
 	todo := todoLines(rm)
-	if _, err := Resume("one", false, false); err == nil || !strings.Contains(err.Error(), "`git rebase --continue` twice") ||
+	if _, err := Resume(ctx, "one", false, false); err == nil || !strings.Contains(err.Error(), "`git rebase --continue` twice") ||
 		!strings.Contains(err.Error(), "up to 2 touches") {
 		t.Fatalf("%v\n%s", err, stderr())
 	}
@@ -394,27 +394,28 @@ func TestResumeSaysHowToCarryOn(t *testing.T) {
 		t.Fatalf("--resume changed the todo list from %q to %q", todo, now)
 	}
 	for range 2 {
-		if _, err := git.RunEnv(history.NoEditor, "rebase", "--continue"); err != nil {
+		if _, err := git.In(ctx).RunEnv(history.NoEditor, "rebase", "--continue"); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if exists(rm) {
 		t.Fatal("the rebase is still in progress")
 	}
-	if _, err := Resume("one", false, false); err != nil {
+	if _, err := Resume(ctx, "one", false, false); err != nil {
 		t.Fatalf("%v\n%s", err, stderr())
 	}
-	if marks, _ := git.Run("log", "--format=%G?", "main..one"); marks != "G\nG\nG" {
+	if marks, _ := git.In(ctx).Run("log", "--format=%G?", "main..one"); marks != "G\nG\nG" {
 		t.Errorf("signatures %q", marks)
 	}
 }
 
 // A pass started ignoring hangups, as under nohup, keeps ignoring them
-// while it retries.
+// while it retries. Not parallel: the disposition it sets is the
+// process's, as the pass reads it, and the pass under it runs in git.Dir.
 func TestRetryKeepsIgnoredHangup(t *testing.T) {
 	signal.Ignore(syscall.SIGHUP)
 	t.Cleanup(func() { signal.Reset(syscall.SIGHUP) })
-	_, plan := flakyRepo(t)
+	ctx, _, plan := flakyRepo(t)
 	withRetries(t, 1, 20*time.Millisecond)
 	stderr := captureStderr(t)
 	script(t, plan, "ok", "miss", "pid")
@@ -424,10 +425,10 @@ func TestRetryKeepsIgnoredHangup(t *testing.T) {
 		}
 		syscall.Kill(os.Getpid(), syscall.SIGHUP)
 	}()
-	if _, err := Run("", false, false, false); err != nil {
+	if _, err := Run(ctx, "", false, false, false); err != nil {
 		t.Fatalf("%v\n%s", err, stderr())
 	}
-	if marks, _ := git.Run("log", "--format=%G?", "main..one"); marks != "G\nG" {
+	if marks, _ := git.In(ctx).Run("log", "--format=%G?", "main..one"); marks != "G\nG" {
 		t.Errorf("signatures %q", marks)
 	}
 }
@@ -443,30 +444,30 @@ func TestResumeLeavesOthersRebase(t *testing.T) {
 		name string
 		// rebase starts the operator's rebase, which stops; work is the
 		// file it then changes and stages.
-		rebase func(t *testing.T) error
+		rebase func(t *testing.T, ctx context.Context) error
 		work   string
 	}{
-		{"edit", func(t *testing.T) error {
-			_, err := git.RunEnv(editor(`NR==4{sub(/^pick/,"edit")}1`), "-c", "commit.gpgsign=false", "rebase", "-i", "main")
+		{"edit", func(t *testing.T, ctx context.Context) error {
+			_, err := git.In(ctx).RunEnv(editor(`NR==4{sub(/^pick/,"edit")}1`), "-c", "commit.gpgsign=false", "rebase", "-i", "main")
 			return err
 		}, "y"},
-		{"conflict at the first step", func(t *testing.T) error {
-			_, err := git.RunEnv(editor(`{l[NR]=$0}END{print l[5]; for(i=1;i<=NR;i++) if(i!=5) print l[i]}`),
+		{"conflict at the first step", func(t *testing.T, ctx context.Context) error {
+			_, err := git.In(ctx).RunEnv(editor(`{l[NR]=$0}END{print l[5]; for(i=1;i<=NR;i++) if(i!=5) print l[i]}`),
 				"-c", "commit.gpgsign=false", "rebase", "-i", "main")
 			return err
 		}, "x"},
-		{"conflict at a later step", func(t *testing.T) error {
-			_, err := git.RunEnv(editor(`{l[NR]=$0}END{print l[1]; print l[5]; for(i=2;i<=NR;i++) if(i!=5) print l[i]}`),
+		{"conflict at a later step", func(t *testing.T, ctx context.Context) error {
+			_, err := git.In(ctx).RunEnv(editor(`{l[NR]=$0}END{print l[1]; print l[5]; for(i=2;i<=NR;i++) if(i!=5) print l[i]}`),
 				"-c", "commit.gpgsign=false", "rebase", "-i", "main")
 			return err
 		}, "x"},
-		{"onto the pass's start", func(t *testing.T) error {
-			_, err := git.RunEnv([]string{"GIT_EDITOR=:"}, "-c", "commit.gpgsign=false", "rebase", "--onto", "main", "one~3")
+		{"onto the pass's start", func(t *testing.T, ctx context.Context) error {
+			_, err := git.In(ctx).RunEnv([]string{"GIT_EDITOR=:"}, "-c", "commit.gpgsign=false", "rebase", "--onto", "main", "one~3")
 			return err
 		}, "x"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			repo, plan := flakyRepo(t)
+			ctx, repo, plan := flakyRepo(t)
 			for _, m := range [][]string{{"x", "1", "Add x"}, {"y", "2", "Add y"}, {"x", "3", "Change x"}, {"z", "4", "Add z"}} {
 				os.WriteFile(filepath.Join(repo, m[0]), []byte(m[1]+"\n"), 0o644)
 				gitIn(t, repo, "add", m[0])
@@ -475,10 +476,10 @@ func TestResumeLeavesOthersRebase(t *testing.T) {
 			withRetries(t, 0, 0)
 			captureStderr(t)
 			script(t, plan, "miss")
-			if _, err := Run("", false, false, false); err == nil {
+			if _, err := Run(ctx, "", false, false, false); err == nil {
 				t.Fatal("a missed touch with no retries went through")
 			}
-			c.rebase(t)
+			c.rebase(t, ctx)
 			rm := filepath.Join(repo, ".git", "rebase-merge")
 			if !exists(rm) {
 				t.Fatal("the operator's rebase did not stop")
@@ -486,7 +487,7 @@ func TestResumeLeavesOthersRebase(t *testing.T) {
 			os.WriteFile(filepath.Join(repo, c.work), []byte("the operator's\n"), 0o644)
 			gitIn(t, repo, "add", c.work)
 			todo, status, head := todoLines(rm), gitIn(t, repo, "status", "--porcelain"), gitIn(t, repo, "rev-parse", "HEAD")
-			if _, err := Run("", true, false, false); err == nil || !strings.Contains(err.Error(), "not one this signing pass left stopped") {
+			if _, err := Run(ctx, "", true, false, false); err == nil || !strings.Contains(err.Error(), "not one this signing pass left stopped") {
 				t.Fatalf("--resume on the operator's rebase: %v", err)
 			}
 			if now := gitIn(t, repo, "status", "--porcelain"); now != status {
@@ -510,17 +511,17 @@ func TestResumeLeavesOthersRebase(t *testing.T) {
 // --resume, changing nothing, says to undo it and sign from the start; and
 // while a git the pass started there still runs, it says only that.
 func TestResumeAfterKilledRestart(t *testing.T) {
-	repo, plan := flakyRepo(t)
+	ctx, repo, plan := flakyRepo(t)
 	withRetries(t, 0, 0)
 	stderr := captureStderr(t)
 	script(t, plan, "miss")
-	if _, err := Run("", false, false, false); err == nil {
+	if _, err := Run(ctx, "", false, false, false); err == nil {
 		t.Fatal("a missed touch with no retries went through")
 	}
 	// What a kill mid-way through the restart leaves (oneStep), marked as
 	// the pass marks its rebase (marking).
 	breakFirst := strings.Replace(stopAfterFirst, `{print;print "break";`, `{print "break";print;`, 1)
-	if _, err := git.RunEnv([]string{"GIT_EDITOR=:", "GIT_SEQUENCE_EDITOR=" + breakFirst},
+	if _, err := git.In(ctx).RunEnv([]string{"GIT_EDITOR=:", "GIT_SEQUENCE_EDITOR=" + breakFirst},
 		"rebase", "-q", "-i", "--force-rebase", "--gpg-sign", "main"); err != nil {
 		t.Fatal(err)
 	}
@@ -542,13 +543,13 @@ func TestResumeAfterKilledRestart(t *testing.T) {
 	readJSON(state, &p)
 	p.GitPID = orphan.Process.Pid
 	writeJSON(state, &p)
-	if _, err := Resume("one", false, false); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("still be running on one's rebase: pid %d", p.GitPID)) {
+	if _, err := Resume(ctx, "one", false, false); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("still be running on one's rebase: pid %d", p.GitPID)) {
 		t.Fatalf("%v\n%s", err, stderr())
 	}
 	orphan.Process.Kill()
 	orphan.Wait()
 
-	_, err := Resume("one", false, false)
+	_, err := Resume(ctx, "one", false, false)
 	if err == nil || !strings.Contains(err.Error(), "stopped mid-step") || !strings.Contains(err.Error(), "`git rebase --abort`") ||
 		!strings.Contains(err.Error(), "up to 2 touches") {
 		t.Fatalf("%v\n%s", err, stderr())
@@ -556,13 +557,13 @@ func TestResumeAfterKilledRestart(t *testing.T) {
 	if now := todoLines(rm); !slices.Equal(now, todo) {
 		t.Fatalf("--resume changed the todo list from %q to %q", todo, now)
 	}
-	if _, err := git.Run("rebase", "--abort"); err != nil {
+	if _, err := git.In(ctx).Run("rebase", "--abort"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Resume("one", false, false); err != nil {
+	if _, err := Resume(ctx, "one", false, false); err != nil {
 		t.Fatalf("%v\n%s", err, stderr())
 	}
-	if marks, _ := git.Run("log", "--format=%s %G?", "main..one"); marks != "b G\na G" {
+	if marks, _ := git.In(ctx).Run("log", "--format=%s %G?", "main..one"); marks != "b G\na G" {
 		t.Errorf("the commits: %q", marks)
 	}
 }
@@ -571,10 +572,10 @@ func TestResumeAfterKilledRestart(t *testing.T) {
 // the break after it, has that step done already: putBack must not put it
 // back, which would make its commit twice.
 func TestPutBackAfterCommit(t *testing.T) {
-	repo, _ := flakyRepo(t)
+	ctx, repo, _ := flakyRepo(t)
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "c")
 	env := []string{"GIT_EDITOR=:", "GIT_SEQUENCE_EDITOR=" + strings.Replace(stopAfterFirst, "NR==1", "NR==2", 1)}
-	if _, err := git.RunEnv(env, "rebase", "-q", "-i", "--force-rebase", "--gpg-sign", "main"); err != nil {
+	if _, err := git.In(ctx).RunEnv(env, "rebase", "-q", "-i", "--force-rebase", "--gpg-sign", "main"); err != nil {
 		t.Fatal(err)
 	}
 	rm := filepath.Join(repo, ".git", "rebase-merge")
@@ -584,13 +585,13 @@ func TestPutBackAfterCommit(t *testing.T) {
 	}
 	os.WriteFile(filepath.Join(rm, "done"), []byte(strings.Join(done[:len(done)-1], "\n")+"\n"), 0o644)
 	writeTodo(rm, append([]string{"break"}, todoLines(rm)...))
-	if back, err := putBack(rm); err != nil || !back {
+	if back, err := putBack(ctx, rm); err != nil || !back {
 		t.Fatalf("putBack: %v %v", back, err)
 	}
-	if _, err := git.RunEnv(history.NoEditor, "rebase", "--continue"); err != nil {
+	if _, err := git.In(ctx).RunEnv(history.NoEditor, "rebase", "--continue"); err != nil {
 		t.Fatal(err)
 	}
-	if log, _ := git.Run("log", "--format=%s %G?", "main..one"); log != "c G\nb G\na G" {
+	if log, _ := git.In(ctx).Run("log", "--format=%s %G?", "main..one"); log != "c G\nb G\na G" {
 		t.Errorf("the commits: %q", log)
 	}
 }
@@ -599,13 +600,13 @@ func TestPutBackAfterCommit(t *testing.T) {
 // its changes staged, where earlier versions put the pick back at the head
 // of the todo list: readyRetry readies either stop for a retry of that pick.
 func TestReadyRetryUnrescheduled(t *testing.T) {
-	repo, plan := flakyRepo(t)
+	ctx, repo, plan := flakyRepo(t)
 	os.WriteFile(filepath.Join(repo, "c"), []byte("c\n"), 0o644)
 	gitIn(t, repo, "add", "c")
 	gitIn(t, repo, "commit", "-q", "-m", "c")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "d")
 	script(t, plan, "ok", "ok", "miss")
-	if _, err := git.RunEnv(history.NoEditor, "rebase", "--force-rebase", "--gpg-sign", "main"); err == nil {
+	if _, err := git.In(ctx).RunEnv(history.NoEditor, "rebase", "--force-rebase", "--gpg-sign", "main"); err == nil {
 		t.Fatal("the rebase went on past a refused signature")
 	}
 	rm := filepath.Join(repo, ".git", "rebase-merge")
@@ -615,23 +616,23 @@ func TestReadyRetryUnrescheduled(t *testing.T) {
 	if todo := todoLines(rm); todo[0] == step {
 		writeTodo(rm, todo[1:])
 	}
-	restart, got, err := readyRetry()
+	restart, got, err := readyRetry(ctx)
 	if err != nil || restart || got != step {
 		t.Fatalf("readyRetry: %v %q %v, want the step %q", restart, got, err, step)
 	}
 	if todo := todoLines(rm); todo[0] != step {
 		t.Errorf("the todo list does not start with the step: %q", todo)
 	}
-	if !git.OK("diff", "--cached", "--quiet") {
+	if !git.In(ctx).OK("diff", "--cached", "--quiet") {
 		t.Error("the step's changes are still staged")
 	}
-	if _, err := git.RunEnv(history.NoEditor, "rebase", "--continue"); err != nil {
+	if _, err := git.In(ctx).RunEnv(history.NoEditor, "rebase", "--continue"); err != nil {
 		t.Fatal(err)
 	}
-	if log, _ := git.Run("log", "--format=%s %G?", "main..one"); log != "d G\nc G\nb G\na G" {
+	if log, _ := git.In(ctx).Run("log", "--format=%s %G?", "main..one"); log != "d G\nc G\nb G\na G" {
 		t.Errorf("the commits: %q", log)
 	}
-	if files, _ := git.Run("ls-files"); files != "c" {
+	if files, _ := git.In(ctx).Run("ls-files"); files != "c" {
 		t.Errorf("the files: %q", files)
 	}
 }
@@ -644,7 +645,7 @@ func todoLinesIn(path string) []string {
 // A pass over several branches that stops says what the rest of its plan
 // needs too, and the commands it prints sign every branch.
 func TestPlanStopCountsTheRest(t *testing.T) {
-	repo, plan := flakyRepo(t)
+	ctx, repo, plan := flakyRepo(t)
 	gitIn(t, repo, "branch", "two", "one~1")
 	gitIn(t, repo, "switch", "-q", "two")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "c")
@@ -652,24 +653,24 @@ func TestPlanStopCountsTheRest(t *testing.T) {
 	withRetries(t, 1, 20*time.Millisecond)
 	stderr := captureStderr(t)
 	script(t, plan, "ok", "miss", "miss")
-	_, err := Plan("", []string{"one", "two"}, false, false)
+	_, err := Plan(ctx, "", []string{"one", "two"}, false, false)
 	if err == nil || !strings.Contains(err.Error(), "up to 1 touch)") ||
 		!strings.Contains(err.Error(), "; --resume also signs the plan's other branches after it, up to 1 touch more") {
 		t.Fatalf("%v\n%s", err, stderr())
 	}
 	// --resume before the --continue names the worktree the rebase is in.
-	if _, err := Resume("one", false, false); err == nil || !strings.Contains(err.Error(), "still in progress; run `git -C ") ||
+	if _, err := Resume(ctx, "one", false, false); err == nil || !strings.Contains(err.Error(), "still in progress; run `git -C ") ||
 		!strings.Contains(err.Error(), " rebase --continue` (touching the key when it blinks, up to 1 touch)") {
 		t.Fatalf("%v\n%s", err, stderr())
 	}
-	if _, err := git.RunEnv(history.NoEditor, "rebase", "--continue"); err != nil {
+	if _, err := git.In(ctx).RunEnv(history.NoEditor, "rebase", "--continue"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Resume("one", false, false); err != nil {
+	if _, err := Resume(ctx, "one", false, false); err != nil {
 		t.Fatalf("%v\n%s", err, stderr())
 	}
 	for _, b := range []string{"one", "two"} {
-		if marks, _ := git.Run("log", "--format=%G?", "main.."+b); marks != "G\nG" {
+		if marks, _ := git.In(ctx).Run("log", "--format=%G?", "main.."+b); marks != "G\nG" {
 			t.Errorf("%s's signatures %q", b, marks)
 		}
 	}
@@ -698,7 +699,7 @@ func TestFoldMissed(t *testing.T) {
 	} {
 		for _, terminal := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s, terminal %v", c.name, terminal), func(t *testing.T) {
-				repo, plan := flakyRepo(t)
+				ctx, repo, plan := flakyRepo(t)
 				for _, m := range c.folds {
 					os.WriteFile(filepath.Join(repo, "x"), []byte(m[0]+strings.Join(m[1:], "")), 0o644)
 					gitIn(t, repo, "add", "x")
@@ -715,7 +716,7 @@ func TestFoldMissed(t *testing.T) {
 				stderr := captureStderr(t)
 				script(t, plan, c.steps...)
 				tip := gitIn(t, repo, "rev-parse", "one")
-				_, err := Run("", false, false, false)
+				_, err := Run(ctx, "", false, false, false)
 				want := fmt.Sprintf("up to %d touches", 2+len(c.folds))
 				if terminal && !strings.Contains(stderr(), "again from the start, "+want) {
 					t.Errorf("the question does not say it signs from the start:\n%s", stderr())
@@ -731,12 +732,12 @@ func TestFoldMissed(t *testing.T) {
 					if now := gitIn(t, repo, "rev-parse", "one"); now != tip {
 						t.Errorf("one moved to %s", now)
 					}
-					_, err = Resume("one", false, false)
+					_, err = Resume(ctx, "one", false, false)
 				}
 				if err != nil {
 					t.Fatalf("%v\n%s", err, stderr())
 				}
-				if log, _ := git.Run("log", "--format=%B%G?", "main..one"); log != c.signed {
+				if log, _ := git.In(ctx).Run("log", "--format=%B%G?", "main..one"); log != c.signed {
 					t.Errorf("the commits: %q", log)
 				}
 			})
@@ -747,7 +748,7 @@ func TestFoldMissed(t *testing.T) {
 // A retry's RetryTimeout bounds the signature it retries, not the rest of
 // the rebase, whose touches may take as long as they take.
 func TestRetryBoundsOnlyItsSignature(t *testing.T) {
-	repo, plan := flakyRepo(t)
+	ctx, repo, plan := flakyRepo(t)
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "c")
 	clock := withRetries(t, 1, 20*time.Millisecond)
 	// The retry's bound ends while the signature after the retried one
@@ -760,14 +761,14 @@ func TestRetryBoundsOnlyItsSignature(t *testing.T) {
 	})
 	stderr := captureStderr(t)
 	script(t, plan, "ok", "miss", "ok", "wait")
-	result, err := Run("", false, false, false)
+	result, err := Run(ctx, "", false, false, false)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, stderr())
 	}
 	if got := result.(map[string]any)["signed"]; got != 3 {
 		t.Errorf("signed %v commits", got)
 	}
-	if marks, _ := git.Run("log", "--format=%G?", "main..one"); marks != "G\nG\nG" {
+	if marks, _ := git.In(ctx).Run("log", "--format=%G?", "main..one"); marks != "G\nG\nG" {
 		t.Errorf("signatures %q", marks)
 	}
 }
@@ -779,21 +780,21 @@ func TestTouchCount(t *testing.T) {
 	for _, c := range []struct {
 		name  string
 		brief bool
-		pass  func() (any, error)
+		pass  func(ctx context.Context) (any, error)
 		want  string
 	}{
-		{"brief", true, func() (any, error) { return Run("", false, false, false) }, "up to 4 key touches"},
-		{"plan", false, func() (any, error) { return Plan("", []string{"one"}, false, false) }, "key touches: up to 4"},
+		{"brief", true, func(ctx context.Context) (any, error) { return Run(ctx, "", false, false, false) }, "up to 4 key touches"},
+		{"plan", false, func(ctx context.Context) (any, error) { return Plan(ctx, "", []string{"one"}, false, false) }, "key touches: up to 4"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			Brief = c.brief
 			t.Cleanup(func() { Brief = false })
-			repo, plan := flakyRepo(t)
+			ctx, repo, plan := flakyRepo(t)
 			gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "fixup! a")
 			gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "fixup! b")
 			stderr := captureStderr(t)
 			script(t, plan, strings.Split(strings.Repeat("ok ", 10), " ")[:10]...)
-			if _, err := c.pass(); err != nil {
+			if _, err := c.pass(ctx); err != nil {
 				t.Fatalf("%v\n%s", err, stderr())
 			}
 			left, _ := os.ReadFile(plan)
@@ -810,11 +811,11 @@ func TestTouchCount(t *testing.T) {
 // A pass that is told not to retry stops at the first miss, as it does when
 // it cannot wait.
 func TestMissedTouchWithoutRetries(t *testing.T) {
-	_, plan := flakyRepo(t)
+	ctx, _, plan := flakyRepo(t)
 	withRetries(t, 0, 0)
 	stderr := captureStderr(t)
 	script(t, plan, "miss")
-	_, err := Run("", false, false, false)
+	_, err := Run(ctx, "", false, false, false)
 	if err == nil || strings.Contains(err.Error(), "pinentry") || strings.Contains(stderr(), "retry") {
 		t.Fatalf("%v\n%s", err, stderr())
 	}
@@ -822,14 +823,15 @@ func TestMissedTouchWithoutRetries(t *testing.T) {
 
 // A push whose SSH login the key refuses is retried once as well.
 func TestPushMissedTouchWithoutTerminal(t *testing.T) {
-	dir, repo, hub, _, armed := mirrored(t)
-	t.Setenv("GIT_CONFIG_GLOBAL", signingConfig(t, dir))
+	dir, repo, hub, _, armed, ssh := mirrored(t)
+	ctx, global := signingConfig(t, dir)
+	ctx = under(ctx, append(ssh, "GIT_CONFIG_GLOBAL="+global)...)
 	useDir(t, repo)
 	noTerminal(t)
 	withRetries(t, 1, 20*time.Millisecond)
 	stderr := captureStderr(t)
 	arm(t, armed, 0)
-	if _, err := Run("", false, true, false); err != nil {
+	if _, err := Run(ctx, "", false, true, false); err != nil {
 		t.Fatalf("a refused SSH login without a terminal: %v", err)
 	}
 	if !strings.Contains(stderr(), "touch the key now (retry 1 of 1)") {

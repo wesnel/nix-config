@@ -2,6 +2,7 @@ package signpass
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,9 +23,16 @@ import (
 
 func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
+	return gitWith(t, dir, nil, args...)
+}
+
+// gitWith is gitIn with vars added to git's environment, for the test's own
+// setup.
+func gitWith(t *testing.T, dir string, vars []string, args ...string) string {
+	t.Helper()
 	cmd := exec.Command("git", append([]string{"-c", "user.name=T", "-c", "user.email=t@e", "-c", "commit.gpgsign=false"}, args...)...)
 	cmd.Dir = dir
-	cmd.Env = append(gitenv.Without(os.Environ()), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	cmd.Env = append(append(gitenv.Without(os.Environ()), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1"), vars...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -32,11 +40,26 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// under is ctx with vars, each "NAME=value", set in its Env, which the code
+// under test reads in place of the process's environment.
+func under(ctx context.Context, vars ...string) context.Context {
+	return env.With(ctx, env.From(ctx).Set(vars...))
+}
+
+// decoy is ctx with git pointed, as gitenvtest.Decoy points it, at a
+// repository the code under test must leave alone.
+func decoy(t *testing.T, ctx context.Context) context.Context {
+	t.Helper()
+	_, vars := gitenvtest.DecoyEnv(t)
+	return under(ctx, vars...)
+}
+
 // signingConfig writes a global git config that signs with a throwaway SSH
 // key, which git verifies through an allowed-signers file, so a whole pass
 // runs without a hardware key. That key is the operator's in the protected
-// profile the test's pushes are checked against (operatorProfile).
-func signingConfig(t *testing.T, dir string) string {
+// profile the test's pushes are checked against (operatorProfile), which
+// the context it returns, the test's, bakes in.
+func signingConfig(t *testing.T, dir string) (context.Context, string) {
 	t.Helper()
 	key := filepath.Join(dir, "key")
 	if out, err := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", key).CombinedOutput(); err != nil {
@@ -48,42 +71,62 @@ func signingConfig(t *testing.T, dir string) string {
 	global := filepath.Join(dir, "gitconfig")
 	os.WriteFile(global, []byte("[user]\n\tname = T\n\temail = t@e\n\tsigningkey = "+key+
 		"\n[gpg]\n\tformat = ssh\n[gpg \"ssh\"]\n\tallowedSignersFile = "+signers+"\n"), 0o644)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	operatorProfile(t, string(pub))
-	return global
+	ctx := under(t.Context(), "GIT_CONFIG_NOSYSTEM=1")
+	return operatorProfile(t, ctx, string(pub)), global
 }
 
-// bakedHome is the config home baked in for the rest of the test, as an
-// installed build has one: the one baked in already, or else a new one,
-// with a state home beside it.
-func bakedHome(t *testing.T) string {
+// bakedHome is the config home baked in for the code under test, as an
+// installed build has one: the one ctx's Env bakes in already, or else a
+// new one, with a state home beside it, which the context it returns bakes
+// in.
+func bakedHome(t *testing.T, ctx context.Context) (context.Context, string) {
+	t.Helper()
+	if home := hostpaths.BakedConfigHome(env.From(ctx)); home != "" {
+		return ctx, home
+	}
+	configHome, state := newHome(t)
+	return under(ctx, hostpaths.TestBaked(configHome, state)...), configHome
+}
+
+// bakedProcessHome is bakedHome for code that reads hostpaths from the
+// process environment, as plans does until it takes a context: it bakes
+// the home into the process's for the rest of the test, which therefore
+// cannot run in parallel.
+func bakedProcessHome(t *testing.T) string {
 	t.Helper()
 	if home := hostpaths.BakedConfigHome(env.Process()); home != "" {
 		return home
 	}
-	home, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	configHome := filepath.Join(home, ".config")
-	state := filepath.Join(home, ".local", "state")
-	for _, d := range []string{configHome, state} {
-		if err := os.MkdirAll(d, 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// The pass reads hostpaths from the process environment.
+	configHome, state := newHome(t)
 	t.Setenv(hostpaths.TestConfigHomeEnv, configHome)
 	t.Setenv(hostpaths.TestStateHomeEnv, state)
 	return configHome
 }
 
-// operatorProfile writes, in the baked config home (bakedHome), a protected
-// operator profile whose key is the SSH public key line pub, checked by the
-// system's ssh-keygen, as the installed profile is.
-func operatorProfile(t *testing.T, pub string) {
+// newHome makes a config home and a state home beside it.
+func newHome(t *testing.T) (configHome, state string) {
 	t.Helper()
-	configHome := bakedHome(t)
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	configHome = filepath.Join(home, ".config")
+	state = filepath.Join(home, ".local", "state")
+	for _, d := range []string{configHome, state} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return configHome, state
+}
+
+// operatorProfile writes, in the config home ctx bakes in (bakedHome), a
+// protected operator profile whose key is the SSH public key line pub,
+// checked by the system's ssh-keygen, as the installed profile is. It
+// returns ctx with that home baked in.
+func operatorProfile(t *testing.T, ctx context.Context, pub string) context.Context {
+	t.Helper()
+	ctx, configHome := bakedHome(t, ctx)
 	if err := os.MkdirAll(filepath.Join(configHome, "git"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -98,9 +141,12 @@ func operatorProfile(t *testing.T, pub string) {
 	if err := os.WriteFile(filepath.Join(configHome, "git", "config"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	return ctx
 }
 
-// useDir points the package's git at dir for the rest of the test.
+// useDir points the package's git at dir for the rest of the test, which
+// therefore cannot run in parallel: history, which the pass reads commits
+// through, takes the directory from git.Dir alone.
 func useDir(t *testing.T, dir string) {
 	t.Helper()
 	git.Dir = dir
@@ -220,9 +266,9 @@ func TestPush(t *testing.T) {
 // another, as an agent committing while the operator touches the key would
 // move it, is refused rather than pushed where it went.
 func testPushUnmovedMoved(t *testing.T) {
-	dir, repo, hub := unmovedRepo(t)
+	ctx, dir, repo, hub := unmovedRepo(t)
 	gitIn(t, repo, "switch", "-qc", "fresh")
-	signedCommit(t, "")
+	signedCommit(t, ctx, "")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned")
 	unsigned := gitIn(t, repo, "rev-parse", "HEAD")
 	gitIn(t, repo, "reset", "-q", "--hard", "HEAD~1")
@@ -235,11 +281,11 @@ func testPushUnmovedMoved(t *testing.T) {
 		"env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE git -C '"+repo+"' update-ref refs/heads/fresh "+unsigned+"; fi;; esac\n"+
 		"exec ssh-keygen \"$@\"\n"), 0o755)
 	gitIn(t, repo, "config", "gpg.ssh.program", signer)
-	_, err := Plan("", []string{"signme", "fresh"}, false, true)
+	_, err := Plan(ctx, "", []string{"signme", "fresh"}, false, true)
 	if _, statErr := os.Stat(moved); statErr != nil {
 		t.Fatalf("the signer never moved fresh: %v", err)
 	}
-	if onHub, _ := git.Run("-C", hub, "rev-parse", "-q", "--verify", "refs/heads/fresh"); onHub == unsigned {
+	if onHub, _ := git.In(ctx).Run("-C", hub, "rev-parse", "-q", "--verify", "refs/heads/fresh"); onHub == unsigned {
 		t.Errorf("the remote's fresh is the unsigned commit %s", unsigned)
 	}
 	var r refusal.Refusal
@@ -255,10 +301,9 @@ func testPushURLLeases(t *testing.T) {
 			dir := t.TempDir()
 			// Every commit is signed with the operator's key, as the pushes'
 			// gate requires of those they send.
-			signingConfig(t, dir)
+			ctx, _ := signingConfig(t, dir)
 			commit := []string{"-c", "gpg.format=ssh", "-c", "user.signingkey=" + filepath.Join(dir, "key"), "commit", "-q", "-S", "--allow-empty"}
-			t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-			t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+			ctx = under(ctx, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 			noTerminal(t)
 			hub, mirror, repo := filepath.Join(dir, "hub.git"), filepath.Join(dir, "mirror.git"), filepath.Join(dir, "repo")
 			gitIn(t, dir, "init", "-q", "--bare", hub)
@@ -293,7 +338,7 @@ func testPushURLLeases(t *testing.T) {
 				}
 			}
 			useDir(t, repo)
-			todo, err := planPush([]string{"topic"}, publishing, "retry")
+			todo, err := planPush(ctx, []string{"topic"}, publishing, "retry")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -325,7 +370,7 @@ func testPushURLLeases(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			_, err = pushAll("topic", todo)
+			_, err = pushAll(ctx, "topic", todo)
 			refused := resuming || publishing || mode == "moved mirror" || mode == "unavailable mirror" || mode == "legacy lease"
 			if refused {
 				if err == nil {
@@ -361,7 +406,7 @@ func testPushURLLeases(t *testing.T) {
 				if err := os.Rename(hub, hub+".away"); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := retryPush("topic", false); err != nil {
+				if _, err := retryPush(ctx, "topic", false); err != nil {
 					t.Fatalf("operational query failure changed the saved expectation: %v", err)
 				}
 				if got := gitIn(t, mirror, "rev-parse", "topic"); got != next {
@@ -377,7 +422,7 @@ func testPushURLLeases(t *testing.T) {
 				}
 				return
 			}
-			path, err := statePath("push", "topic")
+			path, err := statePath(ctx, "push", "topic")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -402,7 +447,7 @@ func testPushURLLeases(t *testing.T) {
 			if err := os.Rename(hub, hub+".away"); err != nil {
 				t.Fatal(err)
 			}
-			_, err = retryPush("topic", false)
+			_, err = retryPush(ctx, "topic", false)
 			if mode == "resume deleted" {
 				if err == nil {
 					t.Error("resume refreshed a saved lease after remote deletion")
@@ -424,15 +469,16 @@ func testPushURLLeases(t *testing.T) {
 func TestResumeCommand(t *testing.T) {
 	exe := testBinary(t)
 	bin := t.TempDir()
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx := under(t.Context(), "PATH="+bin+string(os.PathListSeparator)+env.Process().Get("PATH"))
+	// Not parallel: it sets NotifyID for the package.
 	NotifyID = "loop.0123abcd"
 	t.Cleanup(func() { NotifyID = "" })
 	check := func(prog string) {
 		t.Helper()
-		if got, want := resumeCommand("one", true, false), prog+" --resume --push --notify loop.0123abcd one"; got != want {
+		if got, want := resumeCommand(ctx, "one", true, false), prog+" --resume --push --notify loop.0123abcd one"; got != want {
 			t.Errorf("got %q, want %q", got, want)
 		}
-		if got, want := resumeCommand("one", false, true), prog+" --resume --set-upstream --notify loop.0123abcd one"; got != want {
+		if got, want := resumeCommand(ctx, "one", false, true), prog+" --resume --set-upstream --notify loop.0123abcd one"; got != want {
 			t.Errorf("got %q, want %q", got, want)
 		}
 	}
@@ -455,7 +501,7 @@ func TestResumeCommand(t *testing.T) {
 // again; otherwise it stops, and the commands it names finish the pass.
 func testRunMissedTouch(t *testing.T) {
 	dir := t.TempDir()
-	global := signingConfig(t, dir)
+	ctx, global := signingConfig(t, dir)
 	// Git runs the program to verify signatures too, which needs no key.
 	program, armed := refusing(t, dir, "sign", `[ "$1 $2" = "-Y sign" ]`,
 		`"Couldn't sign message (signer): agent refused operation"`, `exec ssh-keygen "$@"`)
@@ -472,8 +518,8 @@ func testRunMissedTouch(t *testing.T) {
 		gitIn(t, repo, "add", name)
 		gitIn(t, repo, "commit", "-q", "-m", name)
 	}
-	t.Setenv("GIT_CONFIG_GLOBAL", flaky)
-	t.Setenv("GIT_EDITOR", "false")
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+flaky)
+	ctx = under(ctx, "GIT_EDITOR=false")
 	useDir(t, repo)
 
 	resume := "`" + testBinary(t) + " --resume one`"
@@ -497,7 +543,7 @@ func testRunMissedTouch(t *testing.T) {
 		want = strings.TrimPrefix(want+"\nG\nG", "\n")
 		c.stdin(t)
 		arm(t, armed, c.signed)
-		result, err := Run("", false, false, false)
+		result, err := Run(ctx, "", false, false, false)
 		switch {
 		case !c.stops && err != nil:
 			t.Fatalf("%s: %v", c.name, err)
@@ -510,15 +556,15 @@ func testRunMissedTouch(t *testing.T) {
 			t.Fatalf("%s: %v", c.name, err)
 		default:
 			if c.cont {
-				if _, err := git.Run("rebase", "--continue"); err != nil {
+				if _, err := git.In(ctx).Run("rebase", "--continue"); err != nil {
 					t.Fatalf("%s: continuing as the pass said: %v", c.name, err)
 				}
 			}
-			if _, err := Run("", true, false, false); err != nil {
+			if _, err := Run(ctx, "", true, false, false); err != nil {
 				t.Fatalf("%s: resuming as the pass said: %v", c.name, err)
 			}
 		}
-		if marks, _ := git.Run("log", "--format=%G?", "main..one"); marks != want {
+		if marks, _ := git.In(ctx).Run("log", "--format=%G?", "main..one"); marks != want {
 			t.Errorf("%s: signatures %q", c.name, marks)
 		}
 	}
@@ -526,7 +572,7 @@ func testRunMissedTouch(t *testing.T) {
 
 func testRunStack(t *testing.T) {
 	dir := t.TempDir()
-	global := signingConfig(t, dir)
+	ctx, global := signingConfig(t, dir)
 
 	repo := filepath.Join(dir, "repo")
 	os.Mkdir(repo, 0o755)
@@ -542,29 +588,29 @@ func testRunStack(t *testing.T) {
 	gitIn(t, repo, "commit", "-q", "-m", "B1")
 	before := gitIn(t, repo, "log", "--format=%T %s", "main..upper")
 
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
-	gitenvtest.Decoy(t)
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
+	ctx = decoy(t, ctx)
 	useDir(t, repo)
-	result, err := Run("", false, false, false)
+	result, err := Run(ctx, "", false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := result.(map[string]any)["signed"]; got != 2 {
 		t.Errorf("signed %v commits", got)
 	}
-	marks, _ := git.Run("log", "--format=%G?", "main..upper")
+	marks, _ := git.In(ctx).Run("log", "--format=%G?", "main..upper")
 	if marks != "G\nG" {
 		t.Errorf("signatures: %q", marks)
 	}
-	if after, _ := git.Run("log", "--format=%T %s", "main..upper"); after != before {
+	if after, _ := git.In(ctx).Run("log", "--format=%T %s", "main..upper"); after != before {
 		t.Errorf("content changed:\n%s\n%s", before, after)
 	}
-	lower, _ := git.Run("rev-parse", "lower")
-	parent, _ := git.Run("rev-parse", "upper~1")
+	lower, _ := git.In(ctx).Run("rev-parse", "lower")
+	parent, _ := git.In(ctx).Run("rev-parse", "upper~1")
 	if lower != parent {
 		t.Error("the stacked branch did not move with the signed commits")
 	}
-	if again, err := Run("", false, false, false); err != nil || again.(map[string]string)["signed"] == "" {
+	if again, err := Run(ctx, "", false, false, false); err != nil || again.(map[string]string)["signed"] == "" {
 		t.Errorf("a signed branch: %v %v", again, err)
 	}
 
@@ -573,7 +619,7 @@ func testRunStack(t *testing.T) {
 	os.WriteFile(filepath.Join(repo, "a"), []byte("a fixed\n"), 0o644)
 	gitIn(t, repo, "commit", "-q", "-a", "--fixup=lower")
 	wantTree := gitIn(t, repo, "rev-parse", "upper^{tree}")
-	result, err = Run("", false, false, false)
+	result, err = Run(ctx, "", false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -581,16 +627,16 @@ func testRunStack(t *testing.T) {
 	if got["squashed"] != true || got["signed"] != 2 || fmt.Sprint(got["gainedFixups"]) != "[lower]" {
 		t.Errorf("squash result: %v", got)
 	}
-	if subjects, _ := git.Run("log", "--format=%s %G?", "main..upper"); subjects != "B1 G\nA1 G" {
+	if subjects, _ := git.In(ctx).Run("log", "--format=%s %G?", "main..upper"); subjects != "B1 G\nA1 G" {
 		t.Errorf("after squashing: %q", subjects)
 	}
-	if got, _ := git.Run("rev-parse", "upper^{tree}"); got != wantTree {
+	if got, _ := git.In(ctx).Run("rev-parse", "upper^{tree}"); got != wantTree {
 		t.Error("squashing changed the files")
 	}
-	if a, _ := git.Run("show", "lower:a"); a != "a fixed" {
+	if a, _ := git.In(ctx).Run("show", "lower:a"); a != "a fixed" {
 		t.Errorf("the fix did not land in A1: %q", a)
 	}
-	if !git.OK("rev-parse", "--verify", "-q", BackupRef+"upper") {
+	if !git.In(ctx).OK("rev-parse", "--verify", "-q", BackupRef+"upper") {
 		t.Error("no backup of the unsigned branch")
 	}
 
@@ -598,39 +644,38 @@ func testRunStack(t *testing.T) {
 	// included, a squash! appends to B1's, and a fixup! alongside them
 	// folds as before. Editors that fail stand in for ones that would wait
 	// for input: the pass must open neither.
-	t.Setenv("GIT_EDITOR", `printf 'amend! A1\n\nA renamed\n\nWhy.\n' >`)
-	gitIn(t, repo, "commit", "-q", "--fixup=reword:lower")
+	gitWith(t, repo, []string{`GIT_EDITOR=printf 'amend! A1\n\nA renamed\n\nWhy.\n' >`}, "commit", "-q", "--fixup=reword:lower")
 	os.WriteFile(filepath.Join(repo, "b"), []byte("b squashed\n"), 0o644)
 	gitIn(t, repo, "commit", "-q", "-a", "--squash=upper~1", "-m", "More about B.")
 	os.WriteFile(filepath.Join(repo, "b"), []byte("b fixed\n"), 0o644)
 	gitIn(t, repo, "commit", "-q", "-a", "--fixup=upper~2")
 	wantTree = gitIn(t, repo, "rev-parse", "upper^{tree}")
-	t.Setenv("GIT_EDITOR", "false")
-	t.Setenv("GIT_SEQUENCE_EDITOR", "false")
-	result, err = Run("", false, false, false)
+	ctx = under(ctx, "GIT_EDITOR=false")
+	ctx = under(ctx, "GIT_SEQUENCE_EDITOR=false")
+	result, err = Run(ctx, "", false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := result.(map[string]any); got["squashed"] != true || got["signed"] != 2 {
 		t.Errorf("amend and squash result: %v", got)
 	}
-	if messages, _ := git.Run("log", "--format=%B%G?", "main..upper"); messages != "B1\n\nMore about B.\nG\nA renamed\n\nWhy.\nG" {
+	if messages, _ := git.In(ctx).Run("log", "--format=%B%G?", "main..upper"); messages != "B1\n\nMore about B.\nG\nA renamed\n\nWhy.\nG" {
 		t.Errorf("after amend and squash: %q", messages)
 	}
-	if got, _ := git.Run("rev-parse", "upper^{tree}"); got != wantTree {
+	if got, _ := git.In(ctx).Run("rev-parse", "upper^{tree}"); got != wantTree {
 		t.Error("amend and squash changed the files")
 	}
 
 	// On the default branch with no remote, the base is not guessed.
 	gitIn(t, repo, "switch", "-q", "main")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "on main")
-	if _, err := Run("", false, false, false); err == nil || !strings.Contains(err.Error(), "--base") {
+	if _, err := Run(ctx, "", false, false, false); err == nil || !strings.Contains(err.Error(), "--base") {
 		t.Errorf("signing main without a base: %v", err)
 	}
-	if _, err := Run("main~1", false, false, false); err != nil {
+	if _, err := Run(ctx, "main~1", false, false, false); err != nil {
 		t.Errorf("signing main with a base: %v", err)
 	}
-	if marks, _ := git.Run("log", "-1", "--format=%G?", "main"); marks != "G" {
+	if marks, _ := git.In(ctx).Run("log", "-1", "--format=%G?", "main"); marks != "G" {
 		t.Errorf("main's commit: %q", marks)
 	}
 }
@@ -640,7 +685,7 @@ func testRunStack(t *testing.T) {
 // as signed, so an amend! that fixes it lets the pass through.
 func testRunLint(t *testing.T) {
 	dir := t.TempDir()
-	global := signingConfig(t, dir)
+	ctx, global := signingConfig(t, dir)
 	repo := filepath.Join(dir, "repo")
 	os.Mkdir(repo, 0o755)
 	gitIn(t, repo, "init", "-q", "-b", "main")
@@ -654,12 +699,12 @@ func testRunLint(t *testing.T) {
 	gitIn(t, repo, "commit", "-q", "-m", "Add b")
 	tip := gitIn(t, repo, "rev-parse", "br")
 
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
-	gitenvtest.Decoy(t)
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
+	ctx = decoy(t, ctx)
 	useDir(t, repo)
 	for name, pass := range map[string]func() (any, error){
-		"Run":  func() (any, error) { return Run("", false, false, false) },
-		"Plan": func() (any, error) { return Plan("", []string{"br"}, false, false) },
+		"Run":  func() (any, error) { return Run(ctx, "", false, false, false) },
+		"Plan": func() (any, error) { return Plan(ctx, "", []string{"br"}, false, false) },
 	} {
 		_, err := pass()
 		var r refusal.Refusal
@@ -668,16 +713,16 @@ func testRunLint(t *testing.T) {
 			!refusal.SaysInstead(err.Error()) {
 			t.Errorf("%s: %v", name, err)
 		}
-		if now, _ := git.Run("rev-parse", "br"); now != tip {
+		if now, _ := git.In(ctx).Run("rev-parse", "br"); now != tip {
 			t.Errorf("%s moved the branch", name)
 		}
 	}
 
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "amend! Add a.", "-m", "Add a")
-	if _, err := Run("", false, false, false); err != nil {
+	if _, err := Run(ctx, "", false, false, false); err != nil {
 		t.Fatal(err)
 	}
-	if subjects, _ := git.Run("log", "--format=%s %G?", "main..br"); subjects != "Add b G\nAdd a G" {
+	if subjects, _ := git.In(ctx).Run("log", "--format=%s %G?", "main..br"); subjects != "Add b G\nAdd a G" {
 		t.Errorf("after the amend!: %q", subjects)
 	}
 }
@@ -686,7 +731,7 @@ func testRunLint(t *testing.T) {
 // a worktree of its own, which --update-refs alone would leave behind.
 func testRunWorktreeBranch(t *testing.T) {
 	dir := t.TempDir()
-	global := signingConfig(t, dir)
+	ctx, global := signingConfig(t, dir)
 	repo := filepath.Join(dir, "repo")
 	os.Mkdir(repo, 0o755)
 	gitIn(t, repo, "init", "-q", "-b", "main")
@@ -704,19 +749,19 @@ func testRunWorktreeBranch(t *testing.T) {
 	gitIn(t, repo, "worktree", "add", "-q", wt, "lower")
 	os.WriteFile(filepath.Join(wt, "build"), []byte("output\n"), 0o644)
 
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
-	gitenvtest.Decoy(t)
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
+	ctx = decoy(t, ctx)
 	useDir(t, repo)
 	check := func(result any, wantA string) {
 		t.Helper()
-		lower, _ := git.Run("rev-parse", "lower")
+		lower, _ := git.In(ctx).Run("rev-parse", "lower")
 		if moved := result.(map[string]any)["moved"].(map[string]string); moved["lower"] != lower {
 			t.Errorf("moved: %v", moved)
 		}
-		if parent, _ := git.Run("rev-parse", "upper~1"); lower != parent {
+		if parent, _ := git.In(ctx).Run("rev-parse", "upper~1"); lower != parent {
 			t.Error("lower did not move with the signed commits")
 		}
-		if marks, _ := git.Run("log", "--format=%G?", "main..upper"); marks != "G\nG" {
+		if marks, _ := git.In(ctx).Run("log", "--format=%G?", "main..upper"); marks != "G\nG" {
 			t.Errorf("signatures: %q", marks)
 		}
 		if head := gitIn(t, wt, "symbolic-ref", "HEAD"); head != "refs/heads/lower" {
@@ -732,7 +777,7 @@ func testRunWorktreeBranch(t *testing.T) {
 			t.Error("the worktree lost its ignored file")
 		}
 	}
-	result, err := Run("", false, false, false)
+	result, err := Run(ctx, "", false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -745,7 +790,7 @@ func testRunWorktreeBranch(t *testing.T) {
 	gitIn(t, repo, "commit", "-q", "-a", "--fixup=lower")
 	os.WriteFile(filepath.Join(wt, "notes"), []byte("mine\n"), 0o644)
 	refs := gitIn(t, repo, "for-each-ref")
-	if _, err := Run("", false, false, false); err == nil || !strings.Contains(err.Error(), wt) {
+	if _, err := Run(ctx, "", false, false, false); err == nil || !strings.Contains(err.Error(), wt) {
 		t.Errorf("a dirty worktree: %v", err)
 	}
 	if after := gitIn(t, repo, "for-each-ref"); after != refs {
@@ -761,7 +806,7 @@ func testRunWorktreeBranch(t *testing.T) {
 	rebase.Dir = wt
 	rebase.Env = gitenv.Without(os.Environ())
 	rebase.Run()
-	if _, err := Run("", false, false, false); err == nil || !strings.Contains(err.Error(), "being rebased") {
+	if _, err := Run(ctx, "", false, false, false); err == nil || !strings.Contains(err.Error(), "being rebased") {
 		t.Errorf("a worktree mid-rebase: %v", err)
 	}
 	gitIn(t, wt, "rebase", "--abort")
@@ -772,27 +817,27 @@ func testRunWorktreeBranch(t *testing.T) {
 	bad := filepath.Join(dir, "bad")
 	os.WriteFile(bad, []byte("[user]\n\tname = T\n\temail = t@e\n\tsigningkey = "+filepath.Join(dir, "nokey")+
 		"\n[gpg]\n\tformat = ssh\n"), 0o644)
-	t.Setenv("GIT_CONFIG_GLOBAL", bad)
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+bad)
 	os.WriteFile(filepath.Join(wt, "c"), []byte("ignored\n"), 0o644)
-	if _, err := Run("", false, false, false); err == nil || !strings.Contains(err.Error(), "--resume") {
+	if _, err := Run(ctx, "", false, false, false); err == nil || !strings.Contains(err.Error(), "--resume") {
 		t.Fatalf("a failed signature: %v", err)
 	}
-	if git.OK("-C", wt, "symbolic-ref", "-q", "HEAD") {
+	if git.In(ctx).OK("-C", wt, "symbolic-ref", "-q", "HEAD") {
 		t.Error("the worktree was not detached for the rebase")
 	}
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
-	t.Setenv("GIT_EDITOR", ":")
-	if _, err := git.Run("rebase", "--continue"); err != nil {
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
+	ctx = under(ctx, "GIT_EDITOR=:")
+	if _, err := git.In(ctx).Run("rebase", "--continue"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Run("", true, false, false); err == nil || !strings.Contains(err.Error(), "overwrite c") {
+	if _, err := Run(ctx, "", true, false, false); err == nil || !strings.Contains(err.Error(), "overwrite c") {
 		t.Errorf("an ignored file in the way: %v", err)
 	}
 	if c, _ := os.ReadFile(filepath.Join(wt, "c")); string(c) != "ignored\n" {
 		t.Errorf("the ignored file was overwritten: %q", c)
 	}
 	os.Remove(filepath.Join(wt, "c"))
-	if result, err = Run("", true, false, false); err != nil {
+	if result, err = Run(ctx, "", true, false, false); err != nil {
 		t.Fatal(err)
 	}
 	check(result, "a fixed\n")
@@ -820,7 +865,7 @@ func commitFile(t *testing.T, repo, file, content string, message ...string) {
 // commit but the signed copy of the last one it keeps.
 func testRunGains(t *testing.T) {
 	dir := t.TempDir()
-	global := signingConfig(t, dir)
+	ctx, global := signingConfig(t, dir)
 	repo := filepath.Join(dir, "repo")
 	os.Mkdir(repo, 0o755)
 	gitIn(t, repo, "init", "-q", "-b", "main")
@@ -835,12 +880,12 @@ func testRunGains(t *testing.T) {
 	wt := filepath.Join(dir, "lower-wt")
 	gitIn(t, repo, "worktree", "add", "-q", wt, "lower")
 
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
-	gitenvtest.Decoy(t)
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
+	ctx = decoy(t, ctx)
 	useDir(t, repo)
 	const named = "lower gains fixups from commits it does not contain\n"
 	stderr := captureStderr(t)
-	if _, err := Run("", false, false, false); err != nil {
+	if _, err := Run(ctx, "", false, false, false); err != nil {
 		t.Fatal(err)
 	}
 	out := stderr()
@@ -853,7 +898,7 @@ func testRunGains(t *testing.T) {
 	t.Cleanup(func() { Brief = false })
 	commitFile(t, repo, "x2", "x2 fixed again\n", "fixup! Add x2")
 	skip := len(stderr())
-	if _, err := Plan("", []string{"upper"}, false, false); err != nil {
+	if _, err := Plan(ctx, "", []string{"upper"}, false, false); err != nil {
 		t.Fatal(err)
 	}
 	out = stderr()[skip:]
@@ -863,7 +908,7 @@ func testRunGains(t *testing.T) {
 	Brief = false
 
 	commitFile(t, repo, "x1", "x1 fixed again\n", "fixup! Add x1")
-	res, err := Plan("", []string{"upper"}, false, false)
+	res, err := Plan(ctx, "", []string{"upper"}, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -876,18 +921,18 @@ func testRunGains(t *testing.T) {
 	// where it belongs.
 	lower := gitIn(t, repo, "rev-parse", "lower")
 	unsigned := gitIn(t, repo, "rev-parse", BackupRef+"upper~1")
-	shape, err := fullShape("main", "upper")
+	shape, err := fullShape(ctx, "main", "upper")
 	if err != nil {
 		t.Fatal(err)
 	}
 	p := &pending{Branch: "upper", Start: "main", Shape: shape, Stacked: []string{"lower"},
 		Before: map[string]string{"lower": unsigned}, Lands: map[string]int{"lower": 2}}
 	gitIn(t, wt, "reset", "-q", "--keep", "upper~2")
-	if _, err := verify(p); err == nil || !strings.Contains(err.Error(), "lower belongs at "+lower) {
+	if _, err := verify(ctx, p); err == nil || !strings.Contains(err.Error(), "lower belongs at "+lower) {
 		t.Errorf("a misplaced branch: %v", err)
 	}
 	gitIn(t, wt, "reset", "-q", "--keep", lower)
-	if _, err := verify(p); err != nil {
+	if _, err := verify(ctx, p); err != nil {
 		t.Errorf("a branch where it belongs: %v", err)
 	}
 }
@@ -897,7 +942,7 @@ func testRunGains(t *testing.T) {
 // the pass says before the first touch and reports once signed.
 func testRunMessageGains(t *testing.T) {
 	dir := t.TempDir()
-	global := signingConfig(t, dir)
+	ctx, global := signingConfig(t, dir)
 	repo := filepath.Join(dir, "repo")
 	os.Mkdir(repo, 0o755)
 	gitIn(t, repo, "init", "-q", "-b", "main")
@@ -909,11 +954,11 @@ func testRunMessageGains(t *testing.T) {
 	commitFile(t, repo, "y", "y\n", "Add y")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "amend! Add x1", "-m", "Add the first x")
 
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
-	gitenvtest.Decoy(t)
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
+	ctx = decoy(t, ctx)
 	useDir(t, repo)
 	stderr := captureStderr(t)
-	result, err := Run("", false, false, false)
+	result, err := Run(ctx, "", false, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -923,7 +968,7 @@ func testRunMessageGains(t *testing.T) {
 	if got := fmt.Sprint(result.(map[string]any)["gainedFixups"]); got != "[lower]" {
 		t.Errorf("gainedFixups: %s", got)
 	}
-	if subjects, _ := git.Run("log", "--format=%s", "main..lower"); subjects != "Add x2\nAdd the first x" {
+	if subjects, _ := git.In(ctx).Run("log", "--format=%s", "main..lower"); subjects != "Add x2\nAdd the first x" {
 		t.Errorf("lower's commits: %q", subjects)
 	}
 }
@@ -934,7 +979,7 @@ func testRunMessageGains(t *testing.T) {
 // and the result reports once signed.
 func testRunForkGains(t *testing.T) {
 	dir := t.TempDir()
-	global := signingConfig(t, dir)
+	ctx, global := signingConfig(t, dir)
 	repo := filepath.Join(dir, "repo")
 	os.Mkdir(repo, 0o755)
 	gitIn(t, repo, "init", "-q", "-b", "main")
@@ -951,10 +996,10 @@ func testRunForkGains(t *testing.T) {
 	commitFile(t, repo, "e", "e\n", "Add e")
 	gitIn(t, repo, "switch", "-q", "c1")
 
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
-	gitenvtest.Decoy(t)
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
+	ctx = decoy(t, ctx)
 	useDir(t, repo)
-	res, err := Plan("", []string{"c1", "c2top"}, false, false)
+	res, err := Plan(ctx, "", []string{"c1", "c2top"}, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -965,7 +1010,7 @@ func testRunForkGains(t *testing.T) {
 	if got := fmt.Sprint(branches["c2top"].(map[string]any)["gainedFixups"]); got != "[c2 c2top]" {
 		t.Errorf("c2top's gainedFixups: %s", got)
 	}
-	if x2, _ := git.Run("show", "c2:x2"); x2 != "x2 fixed" {
+	if x2, _ := git.In(ctx).Run("show", "c2:x2"); x2 != "x2 fixed" {
 		t.Errorf("c2 did not gain the fix: %q", x2)
 	}
 }
@@ -975,7 +1020,8 @@ func testRunForkGains(t *testing.T) {
 // each leave a branch on the last commit it keeps.
 func TestLandings(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("GIT_CONFIG_GLOBAL", signingConfig(t, dir))
+	ctx, global := signingConfig(t, dir)
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 	repo := filepath.Join(dir, "repo")
 	os.Mkdir(repo, 0o755)
 	gitIn(t, repo, "init", "-q", "-b", "main")
@@ -997,7 +1043,7 @@ func TestLandings(t *testing.T) {
 	stacked := []string{"amend", "chain", "fix", "kept", "squash"}
 
 	useDir(t, repo)
-	before, err := localBranches()
+	before, err := localBranches(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1012,11 +1058,11 @@ func TestLandings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	head, err := rehearseSquash(base, "top", kept)
+	head, err := rehearseSquash(ctx, base, "top", kept)
 	if err != nil {
 		t.Fatal(err)
 	}
-	gains, err := gaining(lands, before, base, base, head)
+	gains, err := gaining(ctx, lands, before, base, base, head)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1029,7 +1075,7 @@ func TestLandings(t *testing.T) {
 
 func testPushMoved(t *testing.T) {
 	dir := t.TempDir()
-	global := signingConfig(t, dir)
+	ctx, global := signingConfig(t, dir)
 	hub, mirror := filepath.Join(dir, "hub.git"), filepath.Join(dir, "mirror.git")
 	gitIn(t, dir, "init", "-q", "--bare", hub)
 	gitIn(t, dir, "init", "-q", "--bare", mirror)
@@ -1045,21 +1091,21 @@ func testPushMoved(t *testing.T) {
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "T1")
 	gitIn(t, repo, "push", "-q", "-u", "origin", "tracked")
 	// The commits pushed are signed, as a pass leaves them.
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 	useDir(t, repo)
-	git.Run("commit", "-q", "-S", "--amend", "--allow-empty", "-m", "T1 again")
+	git.In(ctx).Run("commit", "-q", "-S", "--amend", "--allow-empty", "-m", "T1 again")
 	gitIn(t, repo, "switch", "-qc", "fresh")
-	git.Run("commit", "-q", "-S", "--allow-empty", "-m", "F1")
+	git.In(ctx).Run("commit", "-q", "-S", "--allow-empty", "-m", "F1")
 	moved := []string{"fresh", "tracked"}
 
-	pushed, err := pushAll("tracked", pushes{Branches: moved})
+	pushed, err := pushAll(ctx, "tracked", pushes{Branches: moved})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if pushed["fresh"] != "not pushed: no upstream" || pushed["tracked"] != "origin refs/heads/tracked" {
 		t.Errorf("--push: %v", pushed)
 	}
-	pushed, err = pushAll("tracked", pushes{Branches: moved, SetUpstream: true})
+	pushed, err = pushAll(ctx, "tracked", pushes{Branches: moved, SetUpstream: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1080,17 +1126,17 @@ func testPushMoved(t *testing.T) {
 	// this repository has fetched it.
 	gitIn(t, repo, "push", "-q", "origin", "main:refs/heads/taken")
 	gitIn(t, repo, "branch", "taken", "fresh")
-	if _, err := pushAll("taken", pushes{Branches: []string{"taken"}, SetUpstream: true}); err == nil || !strings.Contains(err.Error(), "--set-upstream-to=origin/taken") {
+	if _, err := pushAll(ctx, "taken", pushes{Branches: []string{"taken"}, SetUpstream: true}); err == nil || !strings.Contains(err.Error(), "--set-upstream-to=origin/taken") {
 		t.Errorf("a fetched branch of the same name: %v", err)
 	}
 	gitIn(t, repo, "update-ref", "-d", "refs/remotes/origin/taken")
-	if _, err := pushAll("taken", pushes{Branches: []string{"taken"}, SetUpstream: true}); err == nil {
+	if _, err := pushAll(ctx, "taken", pushes{Branches: []string{"taken"}, SetUpstream: true}); err == nil {
 		t.Error("an unfetched branch of the same name was pushed over")
 	}
 	if got, base := gitIn(t, hub, "rev-parse", "taken"), gitIn(t, repo, "rev-parse", "main"); got != base {
 		t.Errorf("the remote's branch moved to %s", got)
 	}
-	if git.OK("config", "--get", "branch.taken.remote") {
+	if git.In(ctx).OK("config", "--get", "branch.taken.remote") {
 		t.Error("a refused branch got an upstream")
 	}
 }
@@ -1099,7 +1145,7 @@ func testPushMoved(t *testing.T) {
 // the remote's default branch, refusing before the pass signs anything.
 func testPushDestination(t *testing.T) {
 	dir := t.TempDir()
-	global := signingConfig(t, dir)
+	ctx, global := signingConfig(t, dir)
 	hub := filepath.Join(dir, "hub.git")
 	gitIn(t, dir, "init", "-q", "--bare", hub)
 	repo := filepath.Join(dir, "repo")
@@ -1115,11 +1161,11 @@ func testPushDestination(t *testing.T) {
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "F1")
 	hubMain := gitIn(t, hub, "rev-parse", "main")
 
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 	useDir(t, repo)
 	refs := gitIn(t, repo, "for-each-ref")
 	for _, setUpstream := range []bool{false, true} {
-		_, err := Run("", false, true, setUpstream)
+		_, err := Run(ctx, "", false, true, setUpstream)
 		if err == nil || !strings.Contains(err.Error(), "tracks origin/main") || !strings.Contains(err.Error(), "--unset-upstream feature") {
 			t.Errorf("a branch tracking main (setUpstream %v): %v", setUpstream, err)
 		}
@@ -1137,11 +1183,11 @@ func testPushDestination(t *testing.T) {
 	// Once the remote has the branch, the fix names it.
 	gitIn(t, repo, "push", "-q", "origin", "feature")
 	gitIn(t, repo, "fetch", "-q", "origin")
-	if _, _, err := pushTargets([]string{"feature"}, false, "retry"); err == nil || !strings.Contains(err.Error(), "--set-upstream-to=origin/feature feature") {
+	if _, _, err := pushTargets(ctx, []string{"feature"}, false, "retry"); err == nil || !strings.Contains(err.Error(), "--set-upstream-to=origin/feature feature") {
 		t.Errorf("a branch tracking main, which the remote also has: %v", err)
 	}
 	gitIn(t, repo, "branch", "-q", "--set-upstream-to=origin/feature", "feature")
-	if _, err := Run("", false, true, false); err != nil {
+	if _, err := Run(ctx, "", false, true, false); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := gitIn(t, hub, "rev-parse", "feature"), gitIn(t, repo, "rev-parse", "feature"); got != want {
@@ -1153,43 +1199,42 @@ func testPushDestination(t *testing.T) {
 
 	// The default branch itself is never a destination: main and master while
 	// the remote's HEAD is unknown, and whatever HEAD names once it is.
-	if _, _, err := pushTargets([]string{"main"}, false, "retry"); err == nil || !strings.Contains(err.Error(), "default branch") {
+	if _, _, err := pushTargets(ctx, []string{"main"}, false, "retry"); err == nil || !strings.Contains(err.Error(), "default branch") {
 		t.Errorf("main with no origin/HEAD: %v", err)
 	}
 	gitIn(t, repo, "branch", "-q", "--track", "develop", "origin/develop")
-	if _, _, err := pushTargets([]string{"develop"}, false, "retry"); err != nil {
+	if _, _, err := pushTargets(ctx, []string{"develop"}, false, "retry"); err != nil {
 		t.Errorf("develop with no origin/HEAD: %v", err)
 	}
 	gitIn(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop")
-	if _, _, err := pushTargets([]string{"develop"}, false, "retry"); err == nil || !strings.Contains(err.Error(), "default branch") {
+	if _, _, err := pushTargets(ctx, []string{"develop"}, false, "retry"); err == nil || !strings.Contains(err.Error(), "default branch") {
 		t.Errorf("develop as origin/HEAD: %v", err)
 	}
-	if _, _, err := pushTargets([]string{"main"}, false, "retry"); err != nil {
+	if _, _, err := pushTargets(ctx, []string{"main"}, false, "retry"); err != nil {
 		t.Errorf("main beside origin/HEAD develop: %v", err)
 	}
 	gitIn(t, repo, "branch", "-q", "--unset-upstream", "develop")
 	gitIn(t, repo, "update-ref", "-d", "refs/remotes/origin/develop")
-	if _, _, err := pushTargets([]string{"develop"}, true, "retry"); err == nil || !strings.Contains(err.Error(), "default branch") {
+	if _, _, err := pushTargets(ctx, []string{"develop"}, true, "retry"); err == nil || !strings.Contains(err.Error(), "default branch") {
 		t.Errorf("publishing develop as origin/HEAD: %v", err)
 	}
 
 	// A remote of the name each push sets up would add its settings to it.
 	gitIn(t, repo, "config", "remote."+pushName+".pushurl", filepath.Join(dir, "elsewhere.git"))
-	if _, _, err := pushTargets([]string{"feature"}, false, "retry"); err == nil ||
+	if _, _, err := pushTargets(ctx, []string{"feature"}, false, "retry"); err == nil ||
 		!strings.Contains(err.Error(), "`git remote rename "+pushName+" NAME`, then retry") {
 		t.Errorf("a remote named %s: %v", pushName, err)
 	}
 }
 
 func testPushRemote(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	ctx := env.With(t.Context(), env.Process().In(dir).Set("GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1"))
 	gitIn(t, dir, "init", "-q", "-b", "main")
-	useDir(t, dir)
 	check := func(want, wantErr string) {
 		t.Helper()
-		got, err := pushRemote("b", "retry")
+		got, err := pushRemote(ctx, "b", "retry")
 		if got != want || (err == nil) != (wantErr == "") || (err != nil && !strings.Contains(err.Error(), wantErr)) {
 			t.Errorf("got %q, %v; want %q, %q", got, err, want, wantErr)
 		}
@@ -1213,7 +1258,7 @@ func testPushRemote(t *testing.T) {
 // of its own; pushTargets' refusals still hold for it.
 func testPushUnmoved(t *testing.T) {
 	dir := t.TempDir()
-	global := signingConfig(t, dir)
+	ctx, global := signingConfig(t, dir)
 	hub := filepath.Join(dir, "hub.git")
 	gitIn(t, dir, "init", "-q", "--bare", hub)
 	repo := filepath.Join(dir, "repo")
@@ -1225,17 +1270,17 @@ func testPushUnmoved(t *testing.T) {
 	gitIn(t, repo, "switch", "-qc", "one")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "O1")
 
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 	useDir(t, repo)
 	sign := func() {
 		t.Helper()
-		if _, err := Run("", false, false, false); err != nil {
+		if _, err := Run(ctx, "", false, false, false); err != nil {
 			t.Fatal(err)
 		}
 	}
 	push := func(setUpstream bool) map[string]string {
 		t.Helper()
-		result, err := Run("", false, true, setUpstream)
+		result, err := Run(ctx, "", false, true, setUpstream)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1251,7 +1296,7 @@ func testPushUnmoved(t *testing.T) {
 	}
 	hubHas := func(branch string) string {
 		t.Helper()
-		oid, _ := git.Run("-C", hub, "rev-parse", "-q", "--verify", "refs/heads/"+branch)
+		oid, _ := git.In(ctx).Run("-C", hub, "rev-parse", "-q", "--verify", "refs/heads/"+branch)
 		return oid
 	}
 	sign()
@@ -1306,7 +1351,7 @@ func testPushUnmoved(t *testing.T) {
 	gitIn(t, repo, "switch", "-q", "-c", "astray", "--track", "origin/main")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "A1")
 	sign()
-	if _, err := Run("", false, true, false); err == nil || !strings.Contains(err.Error(), "tracks origin/main") {
+	if _, err := Run(ctx, "", false, true, false); err == nil || !strings.Contains(err.Error(), "tracks origin/main") {
 		t.Errorf("an already-signed branch tracking main: %v", err)
 	}
 	if hubHas("astray") != "" {
@@ -1325,41 +1370,41 @@ func testPushUnmovedSigners(t *testing.T) {
 		name string
 		// commit makes the branch's one commit in repo, whose operator key
 		// and allowed-signers file are in dir.
-		commit func(t *testing.T, dir, repo string)
+		commit func(t *testing.T, ctx context.Context, dir, repo string)
 		// mark is git's %G? for the commit.
 		mark   string
 		pushed bool
 	}{
-		{"operator's key, trusted", func(t *testing.T, dir, repo string) {
-			signedCommit(t, "")
+		{"operator's key, trusted", func(t *testing.T, ctx context.Context, dir, repo string) {
+			signedCommit(t, ctx, "")
 		}, "G", true},
-		{"operator's key, untrusted", func(t *testing.T, dir, repo string) {
-			signedCommit(t, "")
+		{"operator's key, untrusted", func(t *testing.T, ctx context.Context, dir, repo string) {
+			signedCommit(t, ctx, "")
 			os.WriteFile(filepath.Join(dir, "signers"), nil, 0o644)
 		}, "U", true},
-		{"another key, untrusted", func(t *testing.T, dir, repo string) {
-			signedCommit(t, sshKey(t, filepath.Join(dir, "other")))
+		{"another key, untrusted", func(t *testing.T, ctx context.Context, dir, repo string) {
+			signedCommit(t, ctx, sshKey(t, filepath.Join(dir, "other")))
 		}, "U", false},
-		{"another key, trusted", func(t *testing.T, dir, repo string) {
+		{"another key, trusted", func(t *testing.T, ctx context.Context, dir, repo string) {
 			other := sshKey(t, filepath.Join(dir, "other"))
 			pub, _ := os.ReadFile(other + ".pub")
 			f, _ := os.OpenFile(filepath.Join(dir, "signers"), os.O_APPEND|os.O_WRONLY, 0o644)
 			f.WriteString("o@e namespaces=\"git\" " + string(pub))
 			f.Close()
-			signedCommit(t, other)
+			signedCommit(t, ctx, other)
 		}, "G", false},
-		{"bad signature", func(t *testing.T, dir, repo string) {
-			signedCommit(t, "")
+		{"bad signature", func(t *testing.T, ctx context.Context, dir, repo string) {
+			signedCommit(t, ctx, "")
 			object := gitIn(t, repo, "cat-file", "commit", "HEAD")
 			forged := filepath.Join(dir, "forged")
 			os.WriteFile(forged, []byte(strings.Replace(object, "\n\nO1", "\n\nO1 changed", 1)+"\n"), 0o644)
 			gitIn(t, repo, "reset", "-q", "--hard", gitIn(t, repo, "hash-object", "-t", "commit", "-w", forged))
 		}, "B", false},
-		{"cannot be checked", func(t *testing.T, dir, repo string) {
+		{"cannot be checked", func(t *testing.T, ctx context.Context, dir, repo string) {
 			pgpCommit(t, dir, repo, "ERRSIG 0123456789ABCDEF 22 8 00 1700000000 9 -", "NO_PUBKEY 0123456789ABCDEF")
 		}, "E", false},
 		// The repository's own key and verifier vouch for this one.
-		{"an OpenPGP key the repository names", func(t *testing.T, dir, repo string) {
+		{"an OpenPGP key the repository names", func(t *testing.T, ctx context.Context, dir, repo string) {
 			gitIn(t, repo, "config", "gpg.format", "openpgp")
 			gitIn(t, repo, "config", "user.signingkey", "0x89abcdef01234567!")
 			pgpCommit(t, dir, repo, "GOODSIG 89ABCDEF01234567 T <t@e>",
@@ -1374,7 +1419,7 @@ func testPushUnmovedSigners(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				dir := t.TempDir()
-				global := signingConfig(t, dir)
+				ctx, global := signingConfig(t, dir)
 				hub := filepath.Join(dir, "hub.git")
 				gitIn(t, dir, "init", "-q", "--bare", hub)
 				repo := filepath.Join(dir, "repo")
@@ -1384,20 +1429,20 @@ func testPushUnmovedSigners(t *testing.T) {
 				gitIn(t, repo, "remote", "add", "origin", hub)
 				gitIn(t, repo, "push", "-q", "-u", "origin", "main")
 				gitIn(t, repo, "switch", "-qc", "one")
-				t.Setenv("GIT_CONFIG_GLOBAL", global)
+				ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 				useDir(t, repo)
-				c.commit(t, dir, repo)
-				if mark, _ := git.Run("log", "--format=%G?", "main..one"); mark != c.mark {
+				c.commit(t, ctx, dir, repo)
+				if mark, _ := git.In(ctx).Run("log", "--format=%G?", "main..one"); mark != c.mark {
 					t.Fatalf("the fixture's commit is marked %q, want %s", mark, c.mark)
 				}
 
 				var err error
 				if named {
-					_, err = Plan("", []string{"one"}, false, true)
+					_, err = Plan(ctx, "", []string{"one"}, false, true)
 				} else {
-					_, err = Run("", false, false, true)
+					_, err = Run(ctx, "", false, false, true)
 				}
-				onHub, _ := git.Run("-C", hub, "rev-parse", "-q", "--verify", "refs/heads/one")
+				onHub, _ := git.In(ctx).Run("-C", hub, "rev-parse", "-q", "--verify", "refs/heads/one")
 				if c.pushed {
 					if err != nil || onHub == "" {
 						t.Errorf("an operator-signed branch: %v, on the remote at %q", err, onHub)
@@ -1442,11 +1487,12 @@ func pgpCommit(t *testing.T, dir, repo string, status ...string) {
 }
 
 // unmovedRepo is a repository whose main its remote origin, a bare
-// repository hub in dir, has, signing with the operator's key in dir.
-func unmovedRepo(t *testing.T) (dir, repo, hub string) {
+// repository hub in dir, has, signing with the operator's key in dir under
+// the context it returns.
+func unmovedRepo(t *testing.T) (ctx context.Context, dir, repo, hub string) {
 	t.Helper()
 	dir = t.TempDir()
-	global := signingConfig(t, dir)
+	ctx, global := signingConfig(t, dir)
 	hub = filepath.Join(dir, "hub.git")
 	gitIn(t, dir, "init", "-q", "--bare", hub)
 	repo = filepath.Join(dir, "repo")
@@ -1455,20 +1501,20 @@ func unmovedRepo(t *testing.T) (dir, repo, hub string) {
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
 	gitIn(t, repo, "remote", "add", "origin", hub)
 	gitIn(t, repo, "push", "-q", "-u", "origin", "main")
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 	useDir(t, repo)
-	return dir, repo, hub
+	return ctx, dir, repo, hub
 }
 
 // refusedUnsigned fails unless err is a refusal and hub's one, if any, lacks
 // the commit unsigned.
-func refusedUnsigned(t *testing.T, err error, hub, unsigned string) {
+func refusedUnsigned(t *testing.T, ctx context.Context, err error, hub, unsigned string) {
 	t.Helper()
 	var r refusal.Refusal
 	if !errors.As(err, &r) {
 		t.Errorf("a branch with a commit the operator did not sign: %v", err)
 	}
-	if git.OK("-C", hub, "merge-base", "--is-ancestor", unsigned, "refs/heads/one") {
+	if git.In(ctx).OK("-C", hub, "merge-base", "--is-ancestor", unsigned, "refs/heads/one") {
 		t.Errorf("the remote's one has the unsigned commit %s", unsigned)
 	}
 }
@@ -1481,10 +1527,10 @@ func refusedUnsigned(t *testing.T, err error, hub, unsigned string) {
 func testPushRepositoryClaims(t *testing.T) {
 	for _, worktree := range []bool{false, true} {
 		t.Run(map[bool]string{false: "a local signing key", true: "a worktree's signing key"}[worktree], func(t *testing.T) {
-			dir, repo, hub := unmovedRepo(t)
+			ctx, dir, repo, hub := unmovedRepo(t)
 			gitIn(t, repo, "switch", "-qc", "one")
 			other := sshKey(t, filepath.Join(dir, "agent"))
-			signedCommit(t, other)
+			signedCommit(t, ctx, other)
 			foreign := gitIn(t, repo, "rev-parse", "HEAD")
 			if worktree {
 				gitIn(t, repo, "config", "extensions.worktreeConfig", "true")
@@ -1492,32 +1538,32 @@ func testPushRepositoryClaims(t *testing.T) {
 			} else {
 				gitIn(t, repo, "config", "user.signingkey", other)
 			}
-			_, err := Run("", false, false, true)
-			refusedForeign(t, err, hub, foreign)
+			_, err := Run(ctx, "", false, false, true)
+			refusedForeign(t, ctx, err, hub, foreign)
 		})
 	}
 	t.Run("another key's commit below an unsigned one", func(t *testing.T) {
-		dir, repo, hub := unmovedRepo(t)
+		ctx, dir, repo, hub := unmovedRepo(t)
 		gitIn(t, repo, "switch", "-qc", "one")
-		signedCommit(t, sshKey(t, filepath.Join(dir, "agent")))
+		signedCommit(t, ctx, sshKey(t, filepath.Join(dir, "agent")))
 		foreign := gitIn(t, repo, "rev-parse", "HEAD")
 		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned on top")
-		_, err := Run("", false, false, true)
-		refusedForeign(t, err, hub, foreign)
+		_, err := Run(ctx, "", false, false, true)
+		refusedForeign(t, ctx, err, hub, foreign)
 	})
 	t.Run("origin/HEAD above an unsigned commit, below another", func(t *testing.T) {
-		_, repo, hub := unmovedRepo(t)
+		ctx, _, repo, hub := unmovedRepo(t)
 		gitIn(t, repo, "switch", "-qc", "one")
 		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned low")
 		low := gitIn(t, repo, "rev-parse", "HEAD")
 		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned top")
 		gitIn(t, repo, "update-ref", "refs/remotes/origin/fake", low)
 		gitIn(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/fake")
-		_, err := Run("", false, false, true)
-		refusedForeign(t, err, hub, low)
+		_, err := Run(ctx, "", false, false, true)
+		refusedForeign(t, ctx, err, hub, low)
 	})
 	t.Run("a push state written for --resume", func(t *testing.T) {
-		_, repo, hub := unmovedRepo(t)
+		ctx, _, repo, hub := unmovedRepo(t)
 		gitIn(t, repo, "switch", "-qc", "one")
 		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned")
 		unsigned := gitIn(t, repo, "rev-parse", "HEAD")
@@ -1525,29 +1571,29 @@ func testPushRepositoryClaims(t *testing.T) {
 		os.MkdirAll(filepath.Dir(state), 0o755)
 		os.WriteFile(state, []byte(`{"branches":["one"],"urls":[{"remote":"origin","url":"`+hub+
 			`","refs":[{"branch":"one","new":"`+unsigned+`","old":""}]}]}`), 0o644)
-		_, err := Resume("one", true, false)
-		refusedForeign(t, err, hub, unsigned)
+		_, err := Resume(ctx, "one", true, false)
+		refusedForeign(t, ctx, err, hub, unsigned)
 	})
 }
 
 // refusedForeign fails unless err is a refusal and hub's one lacks commit,
 // which the operator's key did not sign.
-func refusedForeign(t *testing.T, err error, hub, commit string) {
+func refusedForeign(t *testing.T, ctx context.Context, err error, hub, commit string) {
 	t.Helper()
 	var r refusal.Refusal
 	if !errors.As(err, &r) {
 		t.Errorf("a push of a commit the operator's key did not sign: %v", err)
 	}
-	if git.OK("-C", hub, "merge-base", "--is-ancestor", commit, "refs/heads/one") {
+	if git.In(ctx).OK("-C", hub, "merge-base", "--is-ancestor", commit, "refs/heads/one") {
 		t.Errorf("the remote's one has %s, which the operator's key did not sign", commit)
 	}
 }
 
 // keptOff fails unless hub's one lacks the commit unsigned: the pass refused
 // the branch, or signed it and pushed the signed copy.
-func keptOff(t *testing.T, err error, hub, unsigned string) {
+func keptOff(t *testing.T, ctx context.Context, err error, hub, unsigned string) {
 	t.Helper()
-	if git.OK("-C", hub, "merge-base", "--is-ancestor", unsigned, "refs/heads/one") {
+	if git.In(ctx).OK("-C", hub, "merge-base", "--is-ancestor", unsigned, "refs/heads/one") {
 		t.Errorf("the remote's one has the unsigned commit %s (the pass said %v)", unsigned, err)
 	}
 	if err != nil {
@@ -1563,27 +1609,27 @@ func keptOff(t *testing.T, err error, hub, unsigned string) {
 // the push sends the commits themselves.
 func testPushUnmovedObjects(t *testing.T) {
 	t.Run("a replace ref shows a signed commit for an unsigned one", func(t *testing.T) {
-		_, repo, hub := unmovedRepo(t)
+		ctx, _, repo, hub := unmovedRepo(t)
 		gitIn(t, repo, "switch", "-qc", "decoy")
-		signedCommit(t, "")
+		signedCommit(t, ctx, "")
 		decoy := gitIn(t, repo, "rev-parse", "HEAD")
 		gitIn(t, repo, "switch", "-qc", "one", "main")
 		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned")
 		unsigned := gitIn(t, repo, "rev-parse", "HEAD")
 		gitIn(t, repo, "replace", unsigned, decoy)
-		_, err := Run("", false, false, true)
-		keptOff(t, err, hub, unsigned)
+		_, err := Run(ctx, "", false, false, true)
+		keptOff(t, ctx, err, hub, unsigned)
 	})
 	t.Run("a graft hides an unsigned commit", func(t *testing.T) {
-		_, repo, hub := unmovedRepo(t)
+		ctx, _, repo, hub := unmovedRepo(t)
 		gitIn(t, repo, "switch", "-qc", "one")
 		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned")
 		unsigned := gitIn(t, repo, "rev-parse", "HEAD")
-		signedCommit(t, "")
+		signedCommit(t, ctx, "")
 		grafts := filepath.Join(repo, ".git", "info", "grafts")
 		os.WriteFile(grafts, []byte(gitIn(t, repo, "rev-parse", "HEAD")+" "+gitIn(t, repo, "rev-parse", "main")+"\n"), 0o644)
-		_, err := Run("", false, false, true)
-		keptOff(t, err, hub, unsigned)
+		_, err := Run(ctx, "", false, false, true)
+		keptOff(t, ctx, err, hub, unsigned)
 	})
 }
 
@@ -1594,45 +1640,45 @@ func testPushUnmovedObjects(t *testing.T) {
 // the push sends.
 func testPushUnmovedRange(t *testing.T) {
 	t.Run("--base above an unsigned commit", func(t *testing.T) {
-		_, repo, hub := unmovedRepo(t)
+		ctx, _, repo, hub := unmovedRepo(t)
 		gitIn(t, repo, "switch", "-qc", "one")
 		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned")
 		unsigned := gitIn(t, repo, "rev-parse", "HEAD")
-		signedCommit(t, "")
-		_, err := Run(unsigned, false, false, true)
-		refusedUnsigned(t, err, hub, unsigned)
+		signedCommit(t, ctx, "")
+		_, err := Run(ctx, unsigned, false, false, true)
+		refusedUnsigned(t, ctx, err, hub, unsigned)
 	})
 	t.Run("a remote not named origin, behind the local main", func(t *testing.T) {
-		_, repo, hub := unmovedRepo(t)
+		ctx, _, repo, hub := unmovedRepo(t)
 		gitIn(t, repo, "remote", "rename", "origin", "github")
 		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned on the local main")
 		unsigned := gitIn(t, repo, "rev-parse", "HEAD")
 		gitIn(t, repo, "switch", "-qc", "one")
-		signedCommit(t, "")
-		_, err := Run("", false, false, true)
-		refusedUnsigned(t, err, hub, unsigned)
+		signedCommit(t, ctx, "")
+		_, err := Run(ctx, "", false, false, true)
+		refusedUnsigned(t, ctx, err, hub, unsigned)
 	})
 	t.Run("origin/HEAD at a ref the remote lacks", func(t *testing.T) {
-		_, repo, hub := unmovedRepo(t)
+		ctx, _, repo, hub := unmovedRepo(t)
 		gitIn(t, repo, "switch", "-qc", "one")
 		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned")
 		unsigned := gitIn(t, repo, "rev-parse", "HEAD")
-		signedCommit(t, "")
+		signedCommit(t, ctx, "")
 		gitIn(t, repo, "update-ref", "refs/remotes/origin/fake", unsigned)
 		gitIn(t, repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/fake")
-		_, err := Run("", false, false, true)
-		refusedUnsigned(t, err, hub, unsigned)
+		_, err := Run(ctx, "", false, false, true)
+		refusedUnsigned(t, ctx, err, hub, unsigned)
 	})
 	t.Run("a remote behind the tip: only what it lacks", func(t *testing.T) {
-		_, repo, hub := unmovedRepo(t)
+		ctx, _, repo, hub := unmovedRepo(t)
 		gitIn(t, repo, "switch", "-qc", "one")
-		signedCommit(t, "")
+		signedCommit(t, ctx, "")
 		gitIn(t, repo, "push", "-q", "-u", "origin", "one")
 		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Unsigned")
 		unsigned := gitIn(t, repo, "rev-parse", "HEAD")
-		signedCommit(t, "")
-		_, err := Run(unsigned, false, true, false)
-		refusedUnsigned(t, err, hub, unsigned)
+		signedCommit(t, ctx, "")
+		_, err := Run(ctx, unsigned, false, true, false)
+		refusedUnsigned(t, ctx, err, hub, unsigned)
 	})
 }
 
@@ -1646,14 +1692,14 @@ func sshKey(t *testing.T, path string) string {
 }
 
 // signedCommit commits O1 on the current branch of the package's git,
-// signed with key, or the operator's key for "".
-func signedCommit(t *testing.T, key string) {
+// signed with key, or the operator's key for "", under ctx.
+func signedCommit(t *testing.T, ctx context.Context, key string) {
 	t.Helper()
 	args := []string{"commit", "-q", "-S", "--allow-empty", "-m", "O1"}
 	if key != "" {
 		args = append([]string{"-c", "user.signingkey=" + key}, args...)
 	}
-	if out, err := git.Run(args...); err != nil {
+	if out, err := git.In(ctx).Run(args...); err != nil {
 		t.Fatalf("signed commit: %v %s", err, out)
 	}
 }
@@ -1662,7 +1708,7 @@ func signedCommit(t *testing.T, key string) {
 // push to retry, and blocks no other branch.
 func testRunFailedPush(t *testing.T) {
 	dir := t.TempDir()
-	global := signingConfig(t, dir)
+	ctx, global := signingConfig(t, dir)
 	hub := filepath.Join(dir, "hub.git")
 	gitIn(t, dir, "init", "-q", "--bare", hub)
 	repo := filepath.Join(dir, "repo")
@@ -1680,12 +1726,12 @@ func testRunFailedPush(t *testing.T) {
 	leased := gitIn(t, hub, "rev-parse", "one")
 	gitIn(t, hub, "update-ref", "refs/heads/one", gitIn(t, repo, "rev-parse", "main"))
 
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 	useDir(t, repo)
-	if _, err := Run("", false, true, false); err == nil || !strings.Contains(err.Error(), "`"+testBinary(t)+" --resume --push one`") {
+	if _, err := Run(ctx, "", false, true, false); err == nil || !strings.Contains(err.Error(), "`"+testBinary(t)+" --resume --push one`") {
 		t.Fatalf("a failed push: %v", err)
 	}
-	if marks, _ := git.Run("log", "--format=%G?", "main..one"); marks != "G" {
+	if marks, _ := git.In(ctx).Run("log", "--format=%G?", "main..one"); marks != "G" {
 		t.Errorf("one is not signed: %q", marks)
 	}
 	state := filepath.Join(repo, ".git", "sign-pass")
@@ -1701,10 +1747,10 @@ func testRunFailedPush(t *testing.T) {
 	gitIn(t, repo, "worktree", "add", "-q", wt, "two")
 	gitIn(t, wt, "commit", "-q", "--allow-empty", "-m", "T1")
 	git.Dir = wt
-	if _, err := Run("", false, false, false); err != nil {
+	if _, err := Run(ctx, "", false, false, false); err != nil {
 		t.Errorf("an unrelated branch: %v", err)
 	}
-	if _, err := Run("", true, false, false); err == nil || !strings.Contains(err.Error(), "no signing pass or push") {
+	if _, err := Run(ctx, "", true, false, false); err == nil || !strings.Contains(err.Error(), "no signing pass or push") {
 		t.Errorf("--resume on a branch with nothing in progress: %v", err)
 	}
 	git.Dir = repo
@@ -1714,11 +1760,11 @@ func testRunFailedPush(t *testing.T) {
 	// the remote's branch going back to that does.
 	signed := gitIn(t, repo, "rev-parse", "one")
 	gitIn(t, repo, "fetch", "-q", "origin")
-	if _, err := Run("", true, false, false); err == nil || !strings.Contains(err.Error(), "one at "+hub+" changed from the expected") {
+	if _, err := Run(ctx, "", true, false, false); err == nil || !strings.Contains(err.Error(), "one at "+hub+" changed from the expected") {
 		t.Errorf("a retry that fails again: %v", err)
 	}
 	gitIn(t, hub, "update-ref", "refs/heads/one", leased)
-	result, err := Run("", true, false, false)
+	result, err := Run(ctx, "", true, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1728,7 +1774,7 @@ func testRunFailedPush(t *testing.T) {
 	if got := gitIn(t, hub, "rev-parse", "one"); got != signed || gitIn(t, repo, "rev-parse", "one") != signed {
 		t.Errorf("the remote's one is %s, want %s", got, signed)
 	}
-	if _, err := Run("", true, false, false); err == nil {
+	if _, err := Run(ctx, "", true, false, false); err == nil {
 		t.Error("a finished push was retried")
 	}
 
@@ -1738,11 +1784,11 @@ func testRunFailedPush(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, branches := range [][]string{{"feature/upper"}, {"x", "lower"}} {
-		if err := inProgress(branches); err == nil || !strings.Contains(err.Error(), "feature/upper") {
+		if err := inProgress(ctx, branches); err == nil || !strings.Contains(err.Error(), "feature/upper") {
 			t.Errorf("%v beside a pass on feature/upper: %v", branches, err)
 		}
 	}
-	if err := inProgress([]string{"one", "two"}); err != nil {
+	if err := inProgress(ctx, []string{"one", "two"}); err != nil {
 		t.Errorf("unrelated branches: %v", err)
 	}
 }
@@ -1751,18 +1797,18 @@ func testRunFailedPush(t *testing.T) {
 // one does: the bare repository hub, by path, and mirror.git over SSH through
 // a fake ssh that refuses each time the file armed exists. The fake stands in
 // for a forge reached over SSH with a hardware key, which a test must not
-// contact. Branch one is pushed to both, then gains an unsigned commit.
-func mirrored(t *testing.T) (dir, repo, hub, mirror, armed string) {
+// contact. Branch one is pushed to both, then gains an unsigned commit. ssh
+// is the environment that makes git use the fake.
+func mirrored(t *testing.T) (dir, repo, hub, mirror, armed string, ssh []string) {
 	t.Helper()
 	dir = t.TempDir()
 	hub, mirror = filepath.Join(dir, "hub.git"), filepath.Join(dir, "mirror.git")
 	gitIn(t, dir, "init", "-q", "--bare", hub)
 	gitIn(t, dir, "init", "-q", "--bare", mirror)
-	ssh, armed := refusing(t, dir, "ssh", "true",
+	program, armed := refusing(t, dir, "ssh", "true",
 		`'sign_and_send_pubkey: signing failed for ED25519-SK "id_ed25519_sk" from agent: agent refused operation' 'git@fake: Permission denied (publickey).'`,
 		`cd '`+dir+`' && exec sh -c "$2"`)
-	t.Setenv("GIT_SSH_COMMAND", ssh)
-	t.Setenv("GIT_SSH_VARIANT", "simple")
+	ssh = []string{"GIT_SSH_COMMAND=" + program, "GIT_SSH_VARIANT=simple"}
 	repo = filepath.Join(dir, "repo")
 	os.Mkdir(repo, 0o755)
 	gitIn(t, repo, "init", "-q", "-b", "main")
@@ -1770,12 +1816,12 @@ func mirrored(t *testing.T) (dir, repo, hub, mirror, armed string) {
 	gitIn(t, repo, "remote", "add", "origin", hub)
 	gitIn(t, repo, "remote", "set-url", "--add", "--push", "origin", hub)
 	gitIn(t, repo, "remote", "set-url", "--add", "--push", "origin", "fake:mirror.git")
-	gitIn(t, repo, "push", "-q", "-u", "origin", "main")
+	gitWith(t, repo, ssh, "push", "-q", "-u", "origin", "main")
 	gitIn(t, repo, "switch", "-qc", "one")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "O1")
-	gitIn(t, repo, "push", "-q", "-u", "origin", "one")
+	gitWith(t, repo, ssh, "push", "-q", "-u", "origin", "one")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "O2")
-	return dir, repo, hub, mirror, armed
+	return dir, repo, hub, mirror, armed, ssh
 }
 
 // testPushEachURL pushes to each of a remote's push URLs on its own: a URL
@@ -1783,14 +1829,15 @@ func mirrored(t *testing.T) (dir, repo, hub, mirror, armed string) {
 // otherwise left for --resume, which pushes only that URL, leased on what it
 // held before the pass, however the remote-tracking ref has moved since.
 func testPushEachURL(t *testing.T) {
-	dir, repo, hub, mirror, armed := mirrored(t)
-	t.Setenv("GIT_CONFIG_GLOBAL", signingConfig(t, dir))
+	dir, repo, hub, mirror, armed, ssh := mirrored(t)
+	ctx, global := signingConfig(t, dir)
+	ctx = under(ctx, append(ssh, "GIT_CONFIG_GLOBAL="+global)...)
 	useDir(t, repo)
 	before := gitIn(t, repo, "rev-parse", "origin/one")
 
 	noTerminal(t)
 	arm(t, armed, 0)
-	_, err := Run("", false, true, false)
+	_, err := Run(ctx, "", false, true, false)
 	if err == nil {
 		t.Fatal("a refused SSH login without a terminal")
 	}
@@ -1816,7 +1863,7 @@ func testPushEachURL(t *testing.T) {
 	if err := os.Rename(hub, hub+".away"); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Run("", true, false, false)
+	result, err := Run(ctx, "", true, false, false)
 	if err != nil {
 		t.Fatalf("resuming the mirror's push: %v", err)
 	}
@@ -1834,7 +1881,7 @@ func testPushEachURL(t *testing.T) {
 	typed(t, "\n")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "O3")
 	arm(t, armed, 0)
-	if _, err := Run("", false, true, false); err != nil {
+	if _, err := Run(ctx, "", false, true, false); err != nil {
 		t.Fatalf("a refused SSH login retried on Enter: %v", err)
 	}
 	signed = gitIn(t, repo, "rev-parse", "one")
@@ -1858,8 +1905,9 @@ func testPushEachURL(t *testing.T) {
 // its standard input. It is a
 // fake because a test must not reach a forge or touch a key. The ssh it puts
 // first on PATH only fails, so a push that loses the configured command
-// fails instead of reaching the real one.
-func sharingSSH(t *testing.T, dir string) (program, log string) {
+// fails instead of reaching the real one. vars is that PATH, for the
+// Env of the code under test.
+func sharingSSH(t *testing.T, dir string) (program, log string, vars []string) {
 	t.Helper()
 	program, log = filepath.Join(dir, "sharing-ssh"), filepath.Join(dir, "ssh.log")
 	script := `#!/bin/sh
@@ -1915,9 +1963,8 @@ cd 'DIR' && exec sh -c "$2"
 	if err := os.WriteFile(filepath.Join(bin, "ssh"), []byte("#!/bin/sh\necho 'the ssh on PATH ran' >&2\nexit 255\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("GIT_SSH_VARIANT", "ssh")
-	return program, log
+	vars = []string{"PATH=" + bin + string(os.PathListSeparator) + env.Process().Get("PATH"), "GIT_SSH_VARIANT=ssh"}
+	return program, log, vars
 }
 
 // sshLog counts each line of the fake ssh's log, and empties it.
@@ -1966,13 +2013,13 @@ func pushesTo(t *testing.T, log string) string {
 // that, each unsigned and tracking its own name on origin, which pushes over
 // the fake sharingSSH to two hosts: hub, then mirror. The names sort
 // otherwise than the stack does. While dir/reject exists, the mirror
-// refuses child.
-func sshStack(t *testing.T) (dir, repo, sshLogFile, hubPushes, mirrorPushes string) {
+// refuses child. The pass runs there under the context it returns.
+func sshStack(t *testing.T) (ctx context.Context, dir, repo, sshLogFile, hubPushes, mirrorPushes string) {
 	t.Helper()
 	dir = t.TempDir()
-	t.Setenv("GIT_CONFIG_GLOBAL", signingConfig(t, dir))
-	program, sshLogFile := sharingSSH(t, dir)
-	t.Setenv("GIT_SSH_COMMAND", program)
+	ctx, global := signingConfig(t, dir)
+	program, sshLogFile, vars := sharingSSH(t, dir)
+	ctx = under(ctx, append(vars, "GIT_CONFIG_GLOBAL="+global, "GIT_SSH_COMMAND="+program)...)
 	hub, hubPushes := receiving(t, dir, "hub")
 	mirror, mirrorPushes := receiving(t, dir, "mirror")
 	reject := "#!/bin/sh\nwhile read old new ref; do\n  if [ \"$ref\" = refs/heads/child ] && [ -e '" +
@@ -2000,7 +2047,7 @@ func sshStack(t *testing.T) (dir, repo, sshLogFile, hubPushes, mirrorPushes stri
 	pushesTo(t, mirrorPushes)
 	sshLog(t, sshLogFile)
 	useDir(t, repo)
-	return dir, repo, sshLogFile, hubPushes, mirrorPushes
+	return ctx, dir, repo, sshLogFile, hubPushes, mirrorPushes
 }
 
 // testPushStackBottomUp pushes a moved stack one branch per push, bottom
@@ -2008,7 +2055,7 @@ func sshStack(t *testing.T) (dir, repo, sshLogFile, hubPushes, mirrorPushes stri
 // pushes to one URL share a single SSH login, one key touch. A push refused
 // partway is resumed from the first branch that URL lacks.
 func testPushStackBottomUp(t *testing.T) {
-	dir, repo, sshLogFile, hubPushes, mirrorPushes := sshStack(t)
+	ctx, dir, repo, sshLogFile, hubPushes, mirrorPushes := sshStack(t)
 	before := map[string]string{}
 	for _, b := range []string{"parent", "child", "grandchild"} {
 		before[b] = gitIn(t, repo, "rev-parse", b)
@@ -2016,7 +2063,7 @@ func testPushStackBottomUp(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "reject"), nil, 0o644)
 
 	noTerminal(t)
-	_, err := Run("", false, true, false)
+	_, err := Run(ctx, "", false, true, false)
 	if err == nil || !strings.Contains(err.Error(), "`"+testBinary(t)+" --resume --push grandchild`") {
 		t.Fatalf("a push the mirror refuses: %v", err)
 	}
@@ -2037,7 +2084,7 @@ func testPushStackBottomUp(t *testing.T) {
 	}
 
 	os.Remove(filepath.Join(dir, "reject"))
-	result, err := Run("", true, false, false)
+	result, err := Run(ctx, "", true, false, false)
 	if err != nil {
 		t.Fatalf("resuming the mirror's push: %v", err)
 	}
@@ -2072,15 +2119,15 @@ func testPushStackBottomUp(t *testing.T) {
 // shared SSH connection would need a socket path longer than a Unix socket
 // takes.
 func testPushControlPathTooLong(t *testing.T) {
-	dir, _, sshLogFile, hubPushes, _ := sshStack(t)
+	ctx, dir, _, sshLogFile, hubPushes, _ := sshStack(t)
 	long := filepath.Join(dir, strings.Repeat("d", 120))
 	if err := os.Mkdir(long, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("TMPDIR", long)
+	ctx = under(ctx, "TMPDIR="+long)
 	for name, pass := range map[string]func() (any, error){
-		"one branch": func() (any, error) { return Run("", false, true, false) },
-		"named":      func() (any, error) { return Plan("", []string{"grandchild"}, true, false) },
+		"one branch": func() (any, error) { return Run(ctx, "", false, true, false) },
+		"named":      func() (any, error) { return Plan(ctx, "", []string{"grandchild"}, true, false) },
 	} {
 		_, err := pass()
 		var r refusal.Refusal
@@ -2088,7 +2135,7 @@ func testPushControlPathTooLong(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
-	if marks, _ := git.Run("log", "--format=%G?", "main..grandchild"); marks != "N\nN\nN" {
+	if marks, _ := git.In(ctx).Run("log", "--format=%G?", "main..grandchild"); marks != "N\nN\nN" {
 		t.Errorf("the refused pass signed: %q", marks)
 	}
 	if got := pushesTo(t, hubPushes); got != "" {
@@ -2103,7 +2150,7 @@ func testPushControlPathTooLong(t *testing.T) {
 // on SSH. The pass returns instead of dying, having ended its shared
 // connection and removed the directory of its control sockets.
 func testPushInterrupted(t *testing.T) {
-	dir, _, sshLogFile, _, _ := sshStack(t)
+	ctx, dir, _, sshLogFile, _, _ := sshStack(t)
 	ready := filepath.Join(dir, "ready")
 	if err := syscall.Mkfifo(ready, 0o600); err != nil {
 		t.Fatal(err)
@@ -2117,7 +2164,7 @@ func testPushInterrupted(t *testing.T) {
 		}
 	}()
 	noTerminal(t)
-	if _, err := Run("", false, true, false); err == nil {
+	if _, err := Run(ctx, "", false, true, false); err == nil {
 		t.Fatal("the interrupted pass succeeded")
 	}
 	data, _ := os.ReadFile(sshLogFile)

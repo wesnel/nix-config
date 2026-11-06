@@ -8,18 +8,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
 // requested points agent-tools at a plans directory of the test's own,
 // with a plan for session abc, and returns that plan and the ID of a
-// sign-pass requested in it. The config goes in the baked config home
-// (bakedHome), where a baked build reads it.
+// sign-pass requested in it. The config goes in the baked config home,
+// where a baked build reads it, baked into the process's environment
+// (bakedProcessHome), which plans reads.
 func requested(t *testing.T, dir string) (plans.Plan, string) {
 	t.Helper()
 	c := plans.Config{Dir: filepath.Join(dir, "agents"), Host: "box"}
-	config := filepath.Join(bakedHome(t), "agent-tools", "config.json")
+	config := filepath.Join(bakedProcessHome(t), "agent-tools", "config.json")
 	data, _ := json.Marshal(map[string]any{"plans": c})
 	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
 		t.Fatal(err)
@@ -51,11 +51,12 @@ func last(t *testing.T, p plans.Plan) plans.Event {
 }
 
 // A finished pass's result lands in the plan that requested it, however
-// the pass ended.
+// the pass ended. Not parallel: plans reads its config from the process's
+// environment (requested).
 func TestNotify(t *testing.T) {
 	t.Run("signed and pushed", func(t *testing.T) {
 		dir := t.TempDir()
-		global := signingConfig(t, dir)
+		ctx, global := signingConfig(t, dir)
 		hub := filepath.Join(dir, "hub.git")
 		gitIn(t, dir, "init", "-q", "--bare", hub)
 		repo := filepath.Join(dir, "repo")
@@ -70,10 +71,9 @@ func TestNotify(t *testing.T) {
 		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "O2")
 		p, id := requested(t, dir)
 
-		t.Setenv("GIT_CONFIG_GLOBAL", global)
-		gitenvtest.Decoy(t)
+		ctx = decoy(t, under(ctx, "GIT_CONFIG_GLOBAL="+global))
 		useDir(t, repo)
-		result, err := Run("", false, true, false)
+		result, err := Run(ctx, "", false, true, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -87,7 +87,7 @@ func TestNotify(t *testing.T) {
 
 	t.Run("refused before any touch", func(t *testing.T) {
 		dir := t.TempDir()
-		global := signingConfig(t, dir)
+		ctx, global := signingConfig(t, dir)
 		repo := filepath.Join(dir, "repo")
 		os.Mkdir(repo, 0o755)
 		gitIn(t, repo, "init", "-q", "-b", "main")
@@ -96,9 +96,9 @@ func TestNotify(t *testing.T) {
 		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Add a.")
 		p, id := requested(t, dir)
 
-		t.Setenv("GIT_CONFIG_GLOBAL", global)
+		ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 		useDir(t, repo)
-		result, err := Run("", false, false, false)
+		result, err := Run(ctx, "", false, false, false)
 		if err == nil {
 			t.Fatal("the pass signed a subject ending in a period")
 		}
@@ -114,16 +114,17 @@ func TestNotify(t *testing.T) {
 	// The session hears which URLs have the branch and the exact command
 	// that pushes the rest.
 	t.Run("pushed to one URL of two", func(t *testing.T) {
-		dir, repo, hub, _, armed := mirrored(t)
+		dir, repo, hub, _, armed, ssh := mirrored(t)
 		p, id := requested(t, dir)
 		NotifyID = id
 		t.Cleanup(func() { NotifyID = "" })
 
-		t.Setenv("GIT_CONFIG_GLOBAL", signingConfig(t, dir))
+		ctx, global := signingConfig(t, dir)
+		ctx = under(ctx, append(ssh, "GIT_CONFIG_GLOBAL="+global)...)
 		useDir(t, repo)
 		noTerminal(t)
 		arm(t, armed, 0)
-		result, err := Run("", false, true, false)
+		result, err := Run(ctx, "", false, true, false)
 		if err == nil {
 			t.Fatal("a refused SSH login without a terminal")
 		}
@@ -139,7 +140,7 @@ func TestNotify(t *testing.T) {
 
 	t.Run("several branches", func(t *testing.T) {
 		dir := t.TempDir()
-		global := signingConfig(t, dir)
+		ctx, global := signingConfig(t, dir)
 		repo := filepath.Join(dir, "repo")
 		os.Mkdir(repo, 0o755)
 		gitIn(t, repo, "init", "-q", "-b", "main")
@@ -152,9 +153,9 @@ func TestNotify(t *testing.T) {
 		gitIn(t, repo, "switch", "-q", "main")
 		p, id := requested(t, dir)
 
-		t.Setenv("GIT_CONFIG_GLOBAL", global)
+		ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 		useDir(t, repo)
-		result, err := Plan("", []string{"one", "two"}, false, false)
+		result, err := Plan(ctx, "", []string{"one", "two"}, false, false)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -1,6 +1,7 @@
 package signpass
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -18,7 +19,7 @@ import (
 
 func TestPlanCommitRewrites(t *testing.T) {
 	t.Run("fork duplicate subjects and reword", func(t *testing.T) {
-		repo, _ := flakyRepo(t)
+		ctx, repo, _ := flakyRepo(t)
 		gitIn(t, repo, "remote", "add", "origin", "git@github.com:o/r.git")
 		gitIn(t, repo, "commit", "--amend", "--allow-empty", "-m", "a")
 		first := gitIn(t, repo, "rev-parse", "one~1")
@@ -45,7 +46,7 @@ func TestPlanCommitRewrites(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, err := Plan("", []string{"C1", "C2"}, false, false); err != nil {
+		if _, err := Plan(ctx, "", []string{"C1", "C2"}, false, false); err != nil {
 			t.Fatal(err)
 		}
 		for old, ref := range map[string]string{first: "C1~2", second: "C1~1", fixup: "C1~2", amend: "C1~2", childOne: "C1", childTwo: "C2"} {
@@ -62,7 +63,7 @@ func TestPlanCommitRewrites(t *testing.T) {
 		}
 	})
 	t.Run("fixup identities", func(t *testing.T) {
-		repo, _ := flakyRepo(t)
+		ctx, repo, _ := flakyRepo(t)
 		gitIn(t, repo, "remote", "add", "origin", "git@github.com:o/r.git")
 		gitIn(t, repo, "commit", "--allow-empty", "-m", "fixup! a")
 		c := plans.Config{Dir: filepath.Join(t.TempDir(), "agents"), Host: "box"}
@@ -87,7 +88,7 @@ func TestPlanCommitRewrites(t *testing.T) {
 			}
 			old = append(old, e.Revision)
 		}
-		if _, err := Run("main", false, false, false); err != nil {
+		if _, err := Run(ctx, "main", false, false, false); err != nil {
 			t.Fatal(err)
 		}
 		want := []string{gitIn(t, repo, "rev-parse", "one~1"), gitIn(t, repo, "rev-parse", "one"), gitIn(t, repo, "rev-parse", "one~1")}
@@ -154,26 +155,26 @@ func TestPlanCommitRewrites(t *testing.T) {
 		}},
 	} {
 		t.Run(c.name+" warns and signs", func(t *testing.T) {
-			repo, _ := flakyRepo(t)
+			ctx, repo, _ := flakyRepo(t)
 			gitIn(t, repo, "remote", "add", "origin", "git@github.com:o/r.git")
 			cfg, p := commitPlan(t, repo)
 			identity := recordCommitted(t, p, repo, "one")
 			restore := c.spoil(t, p)
 			stderr := captureStderr(t)
-			result, err := Run("main", false, false, false)
+			result, err := Run(ctx, "main", false, false, false)
 			if err != nil {
 				t.Fatalf("a pass that could not record its rewrites failed: %v", err)
 			}
 			if got := result.(map[string]any)["signed"]; got != 2 {
 				t.Errorf("signed %v commits", got)
 			}
-			if marks, _ := git.Run("log", "--format=%G?", "main..one"); marks != "G\nG" {
+			if marks, _ := git.In(ctx).Run("log", "--format=%G?", "main..one"); marks != "G\nG" {
 				t.Errorf("signatures %q", marks)
 			}
 			if out := stderr(); !strings.Contains(out, "could not record the commit rewrites in the plans") {
 				t.Errorf("no warning on stderr:\n%s", out)
 			}
-			assertNoPending(t, "one")
+			assertNoPending(t, ctx, "one")
 			restore()
 			got, err := cfg.Commits(plans.CommitOptions{Revision: identity.Revision})
 			if err != nil || len(got) != 1 || got[0].Revision != identity.Revision {
@@ -187,20 +188,20 @@ func TestPlanCommitRewrites(t *testing.T) {
 	// once verify has passed, so finish is given a pending state whose
 	// unsigned tip has a commit more than the signed branch.
 	t.Run("count mismatch warns and records nothing", func(t *testing.T) {
-		repo, _ := flakyRepo(t)
+		ctx, repo, _ := flakyRepo(t)
 		gitIn(t, repo, "remote", "add", "origin", "git@github.com:o/r.git")
 		cfg, p := commitPlan(t, repo)
-		if _, err := Run("main", false, false, false); err != nil {
+		if _, err := Run(ctx, "main", false, false, false); err != nil {
 			t.Fatal(err)
 		}
 		extra := gitIn(t, repo, "commit-tree", "--no-gpg-sign", "-p", BackupRef+"one", "-m", "c", gitIn(t, repo, "rev-parse", "one^{tree}"))
 		gitIn(t, repo, "update-ref", "refs/heads/extra", extra)
 		identity := recordCommitted(t, p, repo, "extra")
-		shape, err := fullShape("main", "one")
+		shape, err := fullShape(ctx, "main", "one")
 		if err != nil {
 			t.Fatal(err)
 		}
-		path, err := statePath("pending", "one")
+		path, err := statePath(ctx, "pending", "one")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -209,13 +210,13 @@ func TestPlanCommitRewrites(t *testing.T) {
 			t.Fatal(err)
 		}
 		stderr := captureStderr(t)
-		if _, _, err := finish(pass, path); err != nil {
+		if _, _, err := finish(ctx, pass, path); err != nil {
 			t.Fatalf("a rewrite that does not pair up failed the pass: %v", err)
 		}
 		if out := stderr(); !strings.Contains(out, "could not record the commit rewrites in the plans") || !strings.Contains(out, "count differs") {
 			t.Errorf("no warning on stderr:\n%s", out)
 		}
-		assertNoPending(t, "one")
+		assertNoPending(t, ctx, "one")
 		got, err := cfg.Commits(plans.CommitOptions{Revision: identity.Revision})
 		if err != nil || len(got) != 1 || got[0].Revision != identity.Revision {
 			t.Errorf("a rewrite was recorded: %+v, %v", got, err)
@@ -239,9 +240,9 @@ func recordCommitted(t *testing.T, p plans.Plan, repo, ref string) plans.Event {
 }
 
 // assertNoPending fails unless branch has no pass left to resume.
-func assertNoPending(t *testing.T, branch string) {
+func assertNoPending(t *testing.T, ctx context.Context, branch string) {
 	t.Helper()
-	path, err := statePath("pending", branch)
+	path, err := statePath(ctx, "pending", branch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,11 +252,12 @@ func assertNoPending(t *testing.T, branch string) {
 }
 
 // plansConfig points agent-tools at c, through the config file in the baked
-// config home (bakedHome), where a baked build reads it, and returns that
-// file.
+// config home, where a baked build reads it, and returns that file. plans
+// reads it from the process's environment (bakedProcessHome), so a test
+// that calls this cannot run in parallel.
 func plansConfig(t *testing.T, c plans.Config) string {
 	t.Helper()
-	config := filepath.Join(bakedHome(t), "agent-tools", "config.json")
+	config := filepath.Join(bakedProcessHome(t), "agent-tools", "config.json")
 	data, _ := json.Marshal(map[string]any{"plans": c})
 	if err := os.MkdirAll(filepath.Dir(config), 0o700); err != nil {
 		t.Fatal(err)

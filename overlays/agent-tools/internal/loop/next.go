@@ -134,7 +134,7 @@ func next(ctx context.Context, repo *Repo, branch string) (NextStep, error) {
 	if err != nil {
 		return nil, refuse("no local branch %s; name a branch that `git branch --list` shows", branch)
 	}
-	base, err := signpass.DefaultBase(branch)
+	base, err := signpass.DefaultBase(ctx, branch)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +143,7 @@ func next(ctx context.Context, repo *Repo, branch string) (NextStep, error) {
 		return nil, err
 	}
 	empty := n == "0"
-	start, _, err := signpass.RangeStart(base, tip)
+	start, _, err := signpass.RangeStart(ctx, base, tip)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +180,7 @@ func next(ctx context.Context, repo *Repo, branch string) (NextStep, error) {
 	}
 
 	retry := "run `pr-loop next` again"
-	dest, err := signpass.DestinationOf(branch, retry)
+	dest, err := signpass.DestinationOf(ctx, branch, retry)
 	if err != nil {
 		return nil, err
 	}

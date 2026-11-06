@@ -131,9 +131,9 @@ func plural(n int, noun string) string {
 
 // pushShare counts what a push plan sends: the branches it pushes, and the
 // push URLs they go to, each of which is one SSH login and so one touch.
-func pushShare(byRemote map[string][]target) (branches, urls int) {
+func pushShare(ctx context.Context, byRemote map[string][]target) (branches, urls int) {
 	for remote, targets := range byRemote {
-		out, _ := git.Run("remote", "get-url", "--push", "--all", remote)
+		out, _ := git.In(ctx).Run("remote", "get-url", "--push", "--all", remote)
 		urls += len(bytes.Fields([]byte(out)))
 		branches += len(targets)
 	}

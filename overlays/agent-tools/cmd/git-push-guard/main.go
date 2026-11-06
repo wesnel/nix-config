@@ -4,10 +4,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
 	"github.com/wesnel/agent-tools/internal/cli"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/pushguard"
 )
 
@@ -33,12 +35,13 @@ func main() {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
+	ctx := env.With(context.Background(), env.Process())
 	updates, err := pushguard.Parse(os.Stdin)
 	if err == nil {
-		err = pushguard.CheckUnsigned(os.Args[1], os.Args[2], updates)
+		err = pushguard.CheckUnsigned(ctx, os.Args[1], os.Args[2], updates)
 	}
 	if err == nil {
-		err = pushguard.Check(os.Args[2], updates, pushguard.GitHub())
+		err = pushguard.Check(ctx, os.Args[2], updates, pushguard.GitHub())
 	}
 	if err != nil {
 		os.Exit(cli.Report("git-push-guard", nil, err, 0, os.Stdout, os.Stderr))

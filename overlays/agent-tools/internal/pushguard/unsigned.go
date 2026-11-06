@@ -38,38 +38,39 @@ const listed = 20
 // signed commit whose kind of signature this machine is not set up to
 // verify. Of the signed commits only a bad signature (B), which no longer
 // matches the commit, refuses; the other statuses (G, U, X, Y, R, E) turn on
-// how far this machine trusts the key, which is not what GitHub checks.
-func CheckUnsigned(remote, url string, updates []Update) error {
+// how far this machine trusts the key, which is not what GitHub checks. Git
+// runs in ctx's Env.
+func CheckUnsigned(ctx context.Context, remote, url string, updates []Update) error {
 	if url == "" || strings.HasPrefix(url, "file://") || strings.HasPrefix(url, "/") || !strings.Contains(url, ":") {
 		return nil
 	}
-	if allowed, _ := git.Run("config", "--type=bool", "--get", UnsignedKey); allowed == "true" {
+	if allowed, _ := git.In(ctx).Run("config", "--type=bool", "--get", UnsignedKey); allowed == "true" {
 		return nil
 	}
-	me, _ := git.Run("config", "--get", "user.email")
+	me, _ := git.In(ctx).Run("config", "--get", "user.email")
 	if me == "" {
 		return nil
 	}
 
 	var tips, known []string
 	for _, u := range updates {
-		if !absent(u.Local) && git.OK("cat-file", "-e", u.Local+"^{commit}") {
+		if !absent(u.Local) && git.In(ctx).OK("cat-file", "-e", u.Local+"^{commit}") {
 			tips = append(tips, u.Local)
 		}
-		if !absent(u.Remote) && git.OK("cat-file", "-e", u.Remote+"^{commit}") {
+		if !absent(u.Remote) && git.In(ctx).OK("cat-file", "-e", u.Remote+"^{commit}") {
 			known = append(known, u.Remote)
 		}
 	}
 	if len(tips) == 0 {
 		return nil
 	}
-	tracked, err := trackingRefs(remote, url)
+	tracked, err := trackingRefs(ctx, remote, url)
 	if err != nil {
 		return err
 	}
 	known = append(known, tracked...)
 
-	ctx, cancel := context.WithTimeout(context.Background(), verifyTimeout)
+	ctx, cancel := context.WithTimeout(ctx, verifyTimeout)
 	defer cancel()
 	timedOut := func(err error) error {
 		if ctx.Err() == nil {
@@ -138,8 +139,8 @@ func CheckUnsigned(remote, url string, updates []Update) error {
 
 // trackingRefs are rev-list arguments for the remote-tracking refs of
 // remote, or of every remote whose fetch or push URL is url.
-func trackingRefs(remote, url string) ([]string, error) {
-	names, err := git.Run("remote")
+func trackingRefs(ctx context.Context, remote, url string) ([]string, error) {
+	names, err := git.In(ctx).Run("remote")
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +151,7 @@ func trackingRefs(remote, url string) ([]string, error) {
 			if match {
 				break
 			}
-			urls, _ := git.Run(append(append([]string{"remote", "get-url", "--all"}, push...), name)...)
+			urls, _ := git.In(ctx).Run(append(append([]string{"remote", "get-url", "--all"}, push...), name)...)
 			for _, u := range strings.Fields(urls) {
 				match = match || u == url
 			}

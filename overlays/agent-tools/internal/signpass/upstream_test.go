@@ -1,6 +1,7 @@
 package signpass
 
 import (
+	"context"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -18,16 +19,23 @@ import (
 	"github.com/wesnel/agent-tools/internal/operatorkey"
 )
 
-type mirrorFixture struct{ dir, repo, mirror, upstream, tip, profile string }
+// mirrorFixture is a mirrored repository whose pushes the gate checks, under
+// ctx.
+type mirrorFixture struct {
+	ctx                                       context.Context
+	dir, repo, mirror, upstream, tip, profile string
+}
 
-func newMirrorFixture(t *testing.T) mirrorFixture {
+// newMirrorFixture makes the fixture, its repositories initialised with
+// initArgs.
+func newMirrorFixture(t *testing.T, initArgs ...string) mirrorFixture {
 	t.Helper()
 	dir := t.TempDir()
-	global := signingConfig(t, dir)
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	ctx, global := signingConfig(t, dir)
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 	repo, mirror := filepath.Join(dir, "repo"), filepath.Join(dir, "mirror.git")
-	gitIn(t, dir, "init", "-q", "-b", "main", repo)
-	gitIn(t, dir, "init", "-q", "--bare", mirror)
+	gitIn(t, dir, append(append([]string{"init", "-q", "-b", "main"}, initArgs...), repo)...)
+	gitIn(t, dir, append(append([]string{"init", "-q", "--bare"}, initArgs...), mirror)...)
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "upstream")
 	gitIn(t, repo, "checkout", "-q", "-b", "incoming")
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "incoming")
@@ -42,7 +50,7 @@ func newMirrorFixture(t *testing.T) mirrorFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile := filepath.Join(bakedHome(t), "git", "config")
+	profile := filepath.Join(hostpaths.BakedConfigHome(env.From(ctx)), "git", "config")
 	f, err := os.OpenFile(profile, os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -62,12 +70,12 @@ func newMirrorFixture(t *testing.T) mirrorFixture {
 		return []byte("ref: refs/heads/main\tHEAD\n" + upstream + "\tHEAD\n" + upstream + "\trefs/heads/main\n"), nil
 	}
 	t.Cleanup(func() { upstreamGit, upstreamCA, upstreamAdvertisement = oldGit, oldCA, oldAdvertisement })
-	return mirrorFixture{dir, repo, mirror, upstream, tip, profile}
+	return mirrorFixture{ctx, dir, repo, mirror, upstream, tip, profile}
 }
 
 func TestMirrorUpstream(t *testing.T) {
 	f := newMirrorFixture(t)
-	if err := gate(t.Context(), f.mirror, refPush{Branch: "topic", New: f.tip}, nil); err != nil {
+	if err := gate(f.ctx, f.mirror, refPush{Branch: "topic", New: f.tip}, nil); err != nil {
 		t.Fatalf("authorized mirror rejected upstream history before the operator-signed tip: %v", err)
 	}
 }
@@ -88,7 +96,7 @@ func TestMirrorStrictFirst(t *testing.T) {
 				missing := strings.Repeat("a", 40)
 				return []byte("ref: refs/heads/main\tHEAD\n" + missing + "\tHEAD\n" + missing + "\trefs/heads/main\n"), nil
 			}
-			if err := gate(t.Context(), f.mirror, refPush{Branch: "topic", New: tip}, nil); err != nil {
+			if err := gate(f.ctx, f.mirror, refPush{Branch: "topic", New: tip}, nil); err != nil {
 				t.Fatalf("fully operator-signed branch needs no upstream exception: %v", err)
 			}
 			if observed != 0 {
@@ -101,7 +109,7 @@ func TestMirrorStrictFirst(t *testing.T) {
 func TestMirrorDiscovery(t *testing.T) {
 	f := newMirrorFixture(t)
 	// The baked state directory belongs to this fixture, never the operator.
-	root := hostpaths.BakedStateHome(env.Process())
+	root := hostpaths.BakedStateHome(env.From(f.ctx))
 	gitIn(t, root, "init", "-q")
 	gitIn(t, root, "config", "url.https://attacker.invalid/.insteadOf", "https://github.com/")
 	advertise := upstreamAdvertisement
@@ -123,14 +131,14 @@ func TestMirrorDiscovery(t *testing.T) {
 		}
 		return advertise(cmd)
 	}
-	if err := gate(t.Context(), f.mirror, refPush{Branch: "topic", New: f.tip}, nil); err != nil {
+	if err := gate(f.ctx, f.mirror, refPush{Branch: "topic", New: f.tip}, nil); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestMirrorConditionalProfile(t *testing.T) {
 	f := newMirrorFixture(t)
-	repo := filepath.Join(filepath.Dir(bakedHome(t)), "git", "github.com", "wesnel", "nix-config")
+	repo := filepath.Join(filepath.Dir(hostpaths.BakedConfigHome(env.From(f.ctx))), "git", "github.com", "wesnel", "nix-config")
 	if err := os.MkdirAll(filepath.Dir(repo), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -162,11 +170,11 @@ func TestMirrorConditionalProfile(t *testing.T) {
 	for _, tc := range []struct{ name, dir, want string }{{"primary", f.repo, "wesnel/nix-config"}, {"linked", linked, "wesnel/nix-config"}, {"unrelated", other, ""}} {
 		t.Run(tc.name, func(t *testing.T) {
 			git.Dir = tc.dir
-			p, err := operatorkey.Load(t.Context())
+			p, err := operatorkey.Load(f.ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := p.MirrorUpstream(t.Context(), f.mirror)
+			got, err := p.MirrorUpstream(f.ctx, f.mirror)
 			if err != nil || got != tc.want {
 				t.Fatalf("conditional mapping = %q, %v; want %q", got, err, tc.want)
 			}
@@ -175,12 +183,11 @@ func TestMirrorConditionalProfile(t *testing.T) {
 }
 
 func TestMirrorSHA256(t *testing.T) {
-	t.Setenv("GIT_DEFAULT_HASH", "sha256")
-	f := newMirrorFixture(t)
+	f := newMirrorFixture(t, "--object-format=sha256")
 	if len(f.upstream) != 64 {
 		t.Fatal("fixture did not use SHA256")
 	}
-	if got, err := mirrorUpstream(t.Context(), f.mirror); err != nil || got != f.upstream {
+	if got, err := mirrorUpstream(f.ctx, f.mirror); err != nil || got != f.upstream {
 		t.Fatalf("SHA256 upstream proof = %s, %v", got, err)
 	}
 }
@@ -282,7 +289,7 @@ func TestMirrorBoundary(t *testing.T) {
 			case "changed lease":
 				old = f.upstream
 			}
-			err := gate(t.Context(), url, refPush{Branch: "topic", New: tip, Old: old}, nil)
+			err := gate(f.ctx, url, refPush{Branch: "topic", New: tip, Old: old}, nil)
 			if err == nil {
 				t.Fatal("unsafe mirror push accepted")
 			}
@@ -310,7 +317,7 @@ func TestMirrorTransport(t *testing.T) {
 	gitIn(t, f.repo, "worktree", "add", "-q", "-b", "linked", linked)
 	git.Dir = linked
 	for _, key := range []string{"HTTPS_PROXY", "ALL_PROXY", "GIT_SSL_NO_VERIFY", "GIT_SSL_CAINFO", "SSL_CERT_FILE", "CURL_CA_BUNDLE", "GIT_ASKPASS", "GIT_EXEC_PATH"} {
-		t.Setenv(key, "untrusted")
+		f.ctx = under(f.ctx, key+"=untrusted")
 	}
 	// A repository-controlled URL rewrite must not steer the observation.
 	gitIn(t, f.repo, "config", "url.https://evil.invalid/.insteadOf", "https://github.com/")
@@ -347,8 +354,8 @@ func TestMirrorTransport(t *testing.T) {
 	}
 	// The fixture's unrelated inherited Git execution path must not affect
 	// local gate commands either; the isolation assertion still sees it.
-	t.Setenv("GIT_EXEC_PATH", "")
-	if err := gate(t.Context(), f.mirror, refPush{Branch: "topic", New: f.tip}, nil); err != nil {
+	f.ctx = under(f.ctx, "GIT_EXEC_PATH=")
+	if err := gate(f.ctx, f.mirror, refPush{Branch: "topic", New: f.tip}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !observed {
@@ -371,10 +378,10 @@ func TestMirrorResume(t *testing.T) {
 			advertise := upstreamAdvertisement
 			observed := 0
 			upstreamAdvertisement = func(cmd *exec.Cmd) ([]byte, error) { observed++; return nil, fmt.Errorf("fixture unavailable") }
-			if _, err := pushAll("topic", todo); err == nil {
+			if _, err := pushAll(f.ctx, "topic", todo); err == nil {
 				t.Fatal("resume without fresh proof accepted")
 			}
-			path, err := statePath("push", "topic")
+			path, err := statePath(f.ctx, "push", "topic")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -394,7 +401,7 @@ func TestMirrorResume(t *testing.T) {
 			gitIn(t, f.dir, "init", "-q", "--bare", redirected)
 			global := filepath.Join(f.dir, "gitconfig")
 			gitIn(t, f.repo, "config", "--file", global, "url."+redirected+"."+rewrite, f.mirror)
-			if _, err := pushAll("topic", saved); err == nil {
+			if _, err := pushAll(f.ctx, "topic", saved); err == nil {
 				t.Fatal("saved mirror URL was redirected after authorization")
 			}
 			if refs := gitIn(t, redirected, "for-each-ref", "--format=%(refname)"); refs != "" {
@@ -411,7 +418,7 @@ func TestMirrorResume(t *testing.T) {
 				t.Fatal("rewrite refusal changed partial progress")
 			}
 			gitIn(t, f.repo, "config", "--file", global, "--unset", "url."+redirected+"."+rewrite)
-			if _, err := pushAll("topic", saved); err != nil {
+			if _, err := pushAll(f.ctx, "topic", saved); err != nil {
 				t.Fatal(err)
 			}
 			if observed != 2 {
@@ -482,7 +489,7 @@ func TestMirrorHTTPS(t *testing.T) {
 				}
 				return cmd.Output()
 			}
-			err := gate(t.Context(), f.mirror, refPush{Branch: "topic", New: f.tip}, nil)
+			err := gate(f.ctx, f.mirror, refPush{Branch: "topic", New: f.tip}, nil)
 			if mode == "authenticated" {
 				if err != nil || requests != 1 {
 					t.Fatalf("HTTPS proof: %v; requests %d", err, requests)

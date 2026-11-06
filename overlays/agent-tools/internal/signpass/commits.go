@@ -1,6 +1,7 @@
 package signpass
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -13,7 +14,7 @@ import (
 // recordCommitRewrites runs after verification and before pending state is
 // cleared. finish only warns when it fails, and it records nothing when the
 // commits before and after do not pair up.
-func recordCommitRewrites(p *pending) error {
+func recordCommitRewrites(ctx context.Context, p *pending) error {
 	c, err := plans.Load()
 	if err != nil {
 		return err
@@ -33,12 +34,12 @@ func recordCommitRewrites(p *pending) error {
 	if p.Fork != "" {
 		from = p.Fork
 	}
-	old, err := git.Run("rev-list", "--reverse", from+".."+p.Before[p.Branch])
+	old, err := git.In(ctx).Run("rev-list", "--reverse", from+".."+p.Before[p.Branch])
 	if err != nil {
 		return err
 	}
 	oldIDs := strings.Fields(old)
-	new, err := git.Run("rev-list", "--reverse", p.Start+"..refs/heads/"+p.Branch)
+	new, err := git.In(ctx).Run("rev-list", "--reverse", p.Start+"..refs/heads/"+p.Branch)
 	if err != nil {
 		return err
 	}

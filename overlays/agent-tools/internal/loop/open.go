@@ -281,7 +281,7 @@ func planOpen(repo *Repo, view *remoteView, branch, base string, own func(branch
 		// makes is made here.
 		absent := strings.Repeat("0", 40)
 		update := pushguard.Update{LocalRef: "refs/heads/" + branch, Local: local, RemoteRef: "refs/heads/" + branch, Remote: absent}
-		if err := pushguard.Check("https://github.com/"+repo.Slug, []pushguard.Update{update}, pushguard.GitHub()); err != nil {
+		if err := pushguard.Check(context.Background(), "https://github.com/"+repo.Slug, []pushguard.Update{update}, pushguard.GitHub()); err != nil {
 			return nil, err
 		}
 		if o.objects, err = missingObjects([]string{local}, known); err != nil {

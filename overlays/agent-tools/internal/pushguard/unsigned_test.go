@@ -1,6 +1,7 @@
 package pushguard
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -9,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
@@ -20,15 +21,16 @@ const (
 
 // signer is a repository whose commits can be signed with a throwaway SSH
 // key, verified through an allowed-signers file, so no gpg or hardware key
-// is involved.
+// is involved. The package's git runs there under ctx.
 type signer struct {
 	t        *testing.T
+	ctx      context.Context
 	dir, key string
 }
 
 // newSigner builds the repository, with the operator's identity configured,
-// a remote origin whose remote-tracking main holds one of the operator's
-// unsigned commits, and points the package's git at it.
+// and a remote origin whose remote-tracking main holds one of the operator's
+// unsigned commits.
 func newSigner(t *testing.T) (s *signer, published string) {
 	t.Helper()
 	keygen, err := exec.LookPath("ssh-keygen")
@@ -49,6 +51,7 @@ func newSigner(t *testing.T) (s *signer, published string) {
 		t.Fatal(err)
 	}
 	s = &signer{t: t, dir: t.TempDir(), key: key}
+	s.ctx = env.With(t.Context(), env.Process().In(s.dir))
 	s.git(nil, "init", "-q", "-b", "main")
 	s.git(nil, "config", "user.name", "Operator")
 	s.git(nil, "config", "user.email", operator)
@@ -60,8 +63,6 @@ func newSigner(t *testing.T) (s *signer, published string) {
 	s.git(nil, "remote", "set-url", "--add", "--push", "origin", "git@git.sr.ht:~me/repo")
 	published = s.commit(operator, operator, false, "published unsigned")
 	s.git(nil, "update-ref", "refs/remotes/origin/main", published)
-	git.Dir = s.dir
-	t.Cleanup(func() { git.Dir = "" })
 	return s, published
 }
 
@@ -107,6 +108,7 @@ func (s *signer) forged(signed string) string {
 }
 
 func TestCheckUnsigned(t *testing.T) {
+	t.Parallel()
 	branch := func(local, remote string) []Update {
 		return []Update{{"refs/heads/x", local, "refs/heads/x", remote}}
 	}
@@ -197,9 +199,10 @@ func TestCheckUnsigned(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			s, published := newSigner(t)
 			remote, url, updates := c.build(s, published)
-			err := CheckUnsigned(remote, url, updates)
+			err := CheckUnsigned(s.ctx, remote, url, updates)
 			var r refusal.Refusal
 			if c.refused && !errors.As(err, &r) || !c.refused && err != nil {
 				t.Errorf("err = %v, want refused = %v", err, c.refused)
@@ -211,11 +214,12 @@ func TestCheckUnsigned(t *testing.T) {
 // TestCheckUnsignedReason checks that a refusal names each commit and both
 // ways forward.
 func TestCheckUnsignedReason(t *testing.T) {
+	t.Parallel()
 	s, _ := newSigner(t)
 	first := s.commit(operator, operator, false, "first change")
 	s.commit(operator, operator, true, "signed change")
 	second := s.commit(other, operator, false, "second change")
-	err := CheckUnsigned("origin", "git@github.com:org/repo.git", []Update{{"refs/heads/x", second, "refs/heads/x", zero}})
+	err := CheckUnsigned(s.ctx, "origin", "git@github.com:org/repo.git", []Update{{"refs/heads/x", second, "refs/heads/x", zero}})
 	var r refusal.Refusal
 	if !errors.As(err, &r) {
 		t.Fatalf("not refused: %v", err)
@@ -241,7 +245,7 @@ func TestCheckUnsignedReason(t *testing.T) {
 
 // TestCheckUnsignedTimeout checks that a signature check that hangs, as one
 // waiting on an agent or a key would, refuses the push rather than holding
-// it.
+// it. Not parallel: it shortens verifyTimeout for the package.
 func TestCheckUnsignedTimeout(t *testing.T) {
 	s, _ := newSigner(t)
 	tip := s.commit(operator, operator, true, "signed")
@@ -254,7 +258,7 @@ func TestCheckUnsignedTimeout(t *testing.T) {
 	verifyTimeout = time.Second
 
 	start := time.Now()
-	err := CheckUnsigned("origin", "git@github.com:org/repo.git", []Update{{"refs/heads/x", tip, "refs/heads/x", zero}})
+	err := CheckUnsigned(s.ctx, "origin", "git@github.com:org/repo.git", []Update{{"refs/heads/x", tip, "refs/heads/x", zero}})
 	if elapsed := time.Since(start); elapsed > 10*time.Second {
 		t.Errorf("the check took %v", elapsed)
 	}

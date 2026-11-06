@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
@@ -22,11 +23,19 @@ func repository(t *testing.T) string {
 	return dir
 }
 
-// useDir points the package's commands at dir for the rest of the test.
+// useDir points the package's commands at dir for the rest of the test,
+// which therefore cannot run in parallel with another that runs git here.
 func useDir(t *testing.T, dir string) {
 	t.Helper()
 	Dir = dir
 	t.Cleanup(func() { Dir = "" })
+}
+
+// under is the test's context with an Env of its own: this process's, as
+// TestMain left it, in dir and with vars set.
+func under(t *testing.T, dir string, vars ...string) context.Context {
+	t.Helper()
+	return env.With(t.Context(), env.Process().In(dir).Set(vars...))
 }
 
 func TestRun(t *testing.T) {
@@ -34,22 +43,23 @@ func TestRun(t *testing.T) {
 	// repository the environment names.
 	t.Run("aimed at a directory ignores the environment", func(t *testing.T) {
 		repo := repository(t)
-		gitenvtest.Decoy(t)
+		_, decoy := gitenvtest.DecoyEnv(t)
+		ctx := under(t, t.TempDir(), decoy...)
 
-		if _, err := Run("-C", repo, "config", "test.c", "1"); err != nil {
+		if _, err := In(ctx).Run("-C", repo, "config", "test.c", "1"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := RunEnv([]string{"GIT_AUTHOR_NAME=T"}, "-C", repo, "config", "test.env", "1"); err != nil {
+		if _, err := In(ctx).RunEnv([]string{"GIT_AUTHOR_NAME=T"}, "-C", repo, "config", "test.env", "1"); err != nil {
 			t.Fatal(err)
 		}
-		if code := Attached(t.Context(), nil, "-C", repo, "config", "test.attached", "1"); code != 0 {
+		if code := Attached(ctx, nil, "-C", repo, "config", "test.attached", "1"); code != 0 {
 			t.Fatalf("attached: exit %d", code)
 		}
 		useDir(t, repo)
-		if _, err := Run("config", "test.dir", "1"); err != nil {
+		if _, err := In(ctx).Run("config", "test.dir", "1"); err != nil {
 			t.Fatal(err)
 		}
-		if !OK("config", "test.dir") {
+		if !In(ctx).OK("config", "test.dir") {
 			t.Error("OK did not read the repository in Dir")
 		}
 		got := gitIn(t, repo, "config", "--get-regexp", `^test\.`)
@@ -59,9 +69,10 @@ func TestRun(t *testing.T) {
 	})
 
 	t.Run("discovery honours the environment", func(t *testing.T) {
-		decoy := gitenvtest.Decoy(t)
-		Dir = ""
-		if got, _ := Run("rev-parse", "--absolute-git-dir"); got != filepath.Join(decoy, ".git") {
+		t.Parallel()
+		decoy, vars := gitenvtest.DecoyEnv(t)
+		ctx := under(t, t.TempDir(), vars...)
+		if got, _ := In(ctx).Run("rev-parse", "--absolute-git-dir"); got != filepath.Join(decoy, ".git") {
 			resolved, _ := filepath.EvalSymlinks(got)
 			want, _ := filepath.EvalSymlinks(filepath.Join(decoy, ".git"))
 			if resolved != want {
@@ -74,68 +85,67 @@ func TestRun(t *testing.T) {
 // Toplevel finds the worktree as git does, and refuses one the environment
 // gives another git directory.
 func TestToplevel(t *testing.T) {
-	// inSub makes a repository and moves into a directory below its top.
-	inSub := func(t *testing.T) string {
+	t.Parallel()
+	// inSub makes a repository and a directory below its top, and returns
+	// the repository and that directory.
+	inSub := func(t *testing.T) (repo, sub string) {
 		t.Helper()
-		repo := repository(t)
-		sub := filepath.Join(repo, "sub")
+		repo = repository(t)
+		sub = filepath.Join(repo, "sub")
 		os.Mkdir(sub, 0o755)
-		t.Chdir(sub)
-		return repo
+		return repo, sub
 	}
 
 	t.Run("without GIT_DIR", func(t *testing.T) {
-		repo := inSub(t)
-		if top, err := Toplevel(); err != nil || top != repo {
+		t.Parallel()
+		repo, sub := inSub(t)
+		ctx := under(t, sub)
+		if top, err := In(ctx).Toplevel(); err != nil || top != repo {
 			t.Errorf("without GIT_DIR: %q, %v", top, err)
 		}
-		if err := CheckLocation(); err != nil {
+		if err := In(ctx).CheckLocation(); err != nil {
 			t.Errorf("without GIT_DIR: %v", err)
 		}
 	})
 
 	t.Run("GIT_DIR naming this repository", func(t *testing.T) {
-		repo := inSub(t)
-		t.Setenv("GIT_DIR", filepath.Join(repo, ".git"))
-		t.Setenv("GIT_WORK_TREE", repo)
-		if top, err := Toplevel(); err != nil || top != repo {
+		t.Parallel()
+		repo, sub := inSub(t)
+		ctx := under(t, sub, "GIT_DIR="+filepath.Join(repo, ".git"), "GIT_WORK_TREE="+repo)
+		if top, err := In(ctx).Toplevel(); err != nil || top != repo {
 			t.Errorf("GIT_DIR naming this repository: %q, %v", top, err)
 		}
 	})
 
 	t.Run("GIT_DIR naming another repository", func(t *testing.T) {
-		inSub(t)
-		gitenvtest.Decoy(t)
-		os.Unsetenv("GIT_WORK_TREE")
-		_, err := Toplevel()
+		t.Parallel()
+		_, sub := inSub(t)
+		_, decoy := gitenvtest.DecoyEnv(t)
+		ctx := env.With(t.Context(), env.From(under(t, sub, decoy...)).Without("GIT_WORK_TREE"))
+		_, err := In(ctx).Toplevel()
 		if _, ok := err.(refusal.Refusal); !ok || !refusal.SaysInstead(err.Error()) {
 			t.Errorf("GIT_DIR naming another repository: %v", err)
 		}
-		if err := CheckLocation(); err == nil {
+		if err := In(ctx).CheckLocation(); err == nil {
 			t.Error("CheckLocation accepted GIT_DIR naming another repository")
 		}
 	})
 
 	// GIT_DIR and GIT_WORK_TREE that agree name a repository to act on.
 	t.Run("GIT_DIR and GIT_WORK_TREE agreeing", func(t *testing.T) {
-		inSub(t)
-		decoy := gitenvtest.Decoy(t)
-		os.Unsetenv("GIT_WORK_TREE")
-		t.Setenv("GIT_WORK_TREE", decoy)
-		if err := CheckLocation(); err != nil {
+		t.Parallel()
+		_, sub := inSub(t)
+		_, decoy := gitenvtest.DecoyEnv(t)
+		if err := In(under(t, sub, decoy...)).CheckLocation(); err != nil {
 			t.Errorf("GIT_DIR and GIT_WORK_TREE naming the decoy: %v", err)
 		}
 	})
 
 	// Outside a repository there is nothing to check.
 	t.Run("outside a repository", func(t *testing.T) {
-		// t.Setenv first, so the environment is restored after the test.
-		for _, name := range []string{"GIT_DIR", "GIT_WORK_TREE"} {
-			t.Setenv(name, "")
-			os.Unsetenv(name)
-		}
-		t.Chdir(t.TempDir())
-		if err := CheckLocation(); err != nil {
+		t.Parallel()
+		ctx := env.With(t.Context(), env.From(under(t, t.TempDir())).Without("GIT_DIR", "GIT_WORK_TREE"))
+		if err := In(ctx).CheckLocation(); err != nil {
 			t.Errorf("outside a repository: %v", err)
 		}
 	})

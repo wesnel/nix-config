@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 )
 
@@ -153,8 +154,8 @@ var NotifyID string
 // resumeCommand is the command that resumes the pass on branch, as one line
 // to run in fish or a POSIX shell. The branch goes last: flag parsing stops
 // at the first argument that is not a flag.
-func resumeCommand(branch string, push, setUpstream bool) string {
-	cmd := self() + " --resume"
+func resumeCommand(ctx context.Context, branch string, push, setUpstream bool) string {
+	cmd := self(ctx) + " --resume"
 	switch {
 	case setUpstream:
 		cmd += " --set-upstream"
@@ -168,19 +169,21 @@ func resumeCommand(branch string, push, setUpstream bool) string {
 }
 
 // self is how to run this program again: `git sign-pass` when the
-// git-sign-pass on PATH is this program, and otherwise its path, since an
-// older or newer install on PATH may not understand what this one saved.
-func self() string {
+// git-sign-pass on the PATH of ctx's Env is this program, and otherwise its
+// path, since an older or newer install on PATH may not understand what
+// this one saved.
+func self(ctx context.Context) string {
+	e := env.From(ctx)
 	exe, err := os.Executable()
 	if err != nil {
-		if exe, err = exec.LookPath(os.Args[0]); err != nil {
+		if exe, err = lookPath(e, os.Args[0]); err != nil {
 			exe = os.Args[0]
 		}
 	}
 	if abs, err := filepath.Abs(exe); err == nil {
 		exe = abs
 	}
-	if onPath, err := exec.LookPath("git-sign-pass"); err == nil {
+	if onPath, err := lookPath(e, "git-sign-pass"); err == nil {
 		a, aerr := os.Stat(onPath)
 		b, berr := os.Stat(exe) //nolint:gosec // this program's own path, only compared with another
 		if aerr == nil && berr == nil && os.SameFile(a, b) {
@@ -188,6 +191,33 @@ func self() string {
 		}
 	}
 	return quote(exe)
+}
+
+// lookPath is exec.LookPath with the PATH of e rather than this process's:
+// file itself when it names a path, otherwise the first executable regular
+// file of that name in a directory of PATH, an empty entry meaning the
+// working directory.
+func lookPath(e env.Env, file string) (string, error) {
+	if strings.Contains(file, "/") {
+		if executable(file) {
+			return file, nil
+		}
+		return "", &exec.Error{Name: file, Err: exec.ErrNotFound}
+	}
+	for _, dir := range filepath.SplitList(e.Get("PATH")) {
+		if dir == "" {
+			dir = "."
+		}
+		if path := filepath.Join(dir, file); executable(path) {
+			return path, nil
+		}
+	}
+	return "", &exec.Error{Name: file, Err: exec.ErrNotFound}
+}
+
+func executable(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
 }
 
 var plainWord = regexp.MustCompile(`^[A-Za-z0-9_./@%+=:,-]+$`)

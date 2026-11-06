@@ -52,20 +52,23 @@ func bangUpdate(key, value string) bool {
 // alternates file, to list the config.
 var ConfigTimeout = 10 * time.Second
 
-// CheckConfig refuses to run git in dir (the process's directory when empty)
-// if the repository's own or the worktree's config names a program, or if
-// git cannot list that config within ConfigTimeout.
-func CheckConfig(dir string) error {
+// CheckConfig is Where.CheckConfig in this process's environment.
+func CheckConfig(dir string) error { return process().CheckConfig(dir) }
+
+// CheckConfig refuses to run git in dir (where w runs when empty) if the
+// repository's own or the worktree's config names a program, or if git
+// cannot list that config within ConfigTimeout.
+func (w Where) CheckConfig(dir string) error {
 	args := []string{"config", "--list", "--show-scope", "-z"}
 	where := dir
 	if dir != "" {
 		args = append([]string{"-C", dir}, args...)
-	} else if where = Dir; where == "" {
+	} else if where = w.dir; where == "" {
 		where = "the current directory"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), ConfigTimeout)
 	defer cancel()
-	raw, err := BytesContext(ctx, nil, args...)
+	raw, err := w.bytesContext(ctx, nil, nil, args...)
 	if ctx.Err() != nil {
 		return refusal.New("git took over %v to list the config of the repository at %s, so it is refused unchecked: "+
 			"something there, such as a FIFO in its .git, keeps git waiting; stop, and hand the operator this message",

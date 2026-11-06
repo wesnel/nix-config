@@ -12,14 +12,14 @@ import (
 )
 
 // runOutput runs this program in dir with args, signing with the git config
-// global, with standard output and error each a pipe, never a terminal, and
-// returns the exit status and both.
-func runOutput(t *testing.T, dir, global string, args ...string) (code int, stdout, stderr string) {
+// global and the operator profile baked in, with standard output and error
+// each a pipe, never a terminal, and returns the exit status and both.
+func runOutput(t *testing.T, dir, global string, baked []string, args ...string) (code int, stdout, stderr string) {
 	t.Helper()
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir = dir
-	cmd.Env = append(gitenv.Without(os.Environ()), "GIT_SIGN_PASS_RUN_MAIN=1", "GIT_CONFIG_GLOBAL="+global,
-		"GIT_EXEC_PATH="+filepath.Join(filepath.Dir(global), "exec"))
+	cmd.Env = append(append(gitenv.Without(os.Environ()), "GIT_SIGN_PASS_RUN_MAIN=1", "GIT_CONFIG_GLOBAL="+global,
+		"GIT_EXEC_PATH="+filepath.Join(filepath.Dir(global), "exec")), baked...)
 	var out, errs strings.Builder
 	cmd.Stdout, cmd.Stderr = &out, &errs
 	err := cmd.Run()
@@ -35,8 +35,9 @@ func runOutput(t *testing.T, dir, global string, args ...string) (code int, stdo
 // pushedRepo is a clone of a bare hub on branch one, which the hub has, with n
 // unsigned empty commits on it. Everything the hub's receive-pack prints is
 // a banner, as a forge's is. The global git config it returns signs with a
-// throwaway SSH key.
-func pushedRepo(t *testing.T, n int) (repo, global string) {
+// throwaway SSH key, whose operator profile baked is the environment that
+// bakes in.
+func pushedRepo(t *testing.T, n int) (repo, global string, baked []string) {
 	t.Helper()
 	dir := t.TempDir()
 	key := filepath.Join(dir, "key")
@@ -44,7 +45,7 @@ func pushedRepo(t *testing.T, n int) (repo, global string) {
 		t.Skipf("no ssh-keygen: %v %s", err, out)
 	}
 	pub, _ := os.ReadFile(key + ".pub")
-	operatorHome(t, string(pub))
+	baked = operatorHome(t, string(pub))
 	signers := filepath.Join(dir, "signers")
 	os.WriteFile(signers, []byte("t@e namespaces=\"git\" "+string(pub)), 0o644)
 	// A push to a local path runs git-receive-pack from git's exec path (see
@@ -72,19 +73,20 @@ func pushedRepo(t *testing.T, n int) (repo, global string) {
 	for i := 1; i < n; i++ {
 		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "Change "+strings.Repeat("x", i%7)+string(rune('a'+i%26)))
 	}
-	return repo, global
+	return repo, global, baked
 }
 
 // With standard output a pipe, a pass prints a handful of lines however many
 // commits it signs, and leaves out what git says about its own work; a
 // failure keeps git's own words.
 func TestBriefOutput(t *testing.T) {
-	repo, global := pushedRepo(t, 200)
+	t.Parallel()
+	repo, global, baked := pushedRepo(t, 200)
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, stdout, stderr := runOutput(t, repo, global, exe, "--push")
+	code, stdout, stderr := runOutput(t, repo, global, baked, exe, "--push")
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
@@ -125,17 +127,18 @@ func TestBriefOutput(t *testing.T) {
 // --no-brief keeps git's words when standard output is a pipe, and --brief
 // drops them whatever standard output is.
 func TestBriefFlags(t *testing.T) {
+	t.Parallel()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo, global := pushedRepo(t, 4)
-	code, _, stderr := runOutput(t, repo, global, exe, "--no-brief", "--push")
+	repo, global, baked := pushedRepo(t, 4)
+	code, _, stderr := runOutput(t, repo, global, baked, exe, "--no-brief", "--push")
 	if code != 0 || !strings.Contains(stderr, "Rebasing") || !strings.Contains(stderr, "Create a pull request") {
 		t.Errorf("--no-brief: exit %d\n%s", code, stderr)
 	}
-	repo, global = pushedRepo(t, 4)
-	code, _, stderr = runOutput(t, repo, global, exe, "--brief", "--push")
+	repo, global, baked = pushedRepo(t, 4)
+	code, _, stderr = runOutput(t, repo, global, baked, exe, "--brief", "--push")
 	if code != 0 || strings.Contains(stderr, "Rebasing") || !strings.Contains(stderr, "pushed one -> origin") {
 		t.Errorf("--brief: exit %d\n%s", code, stderr)
 	}
@@ -143,18 +146,19 @@ func TestBriefFlags(t *testing.T) {
 
 // A failing push shows git's error in full though the pass is brief.
 func TestBriefKeepsErrors(t *testing.T) {
+	t.Parallel()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo, global := pushedRepo(t, 3)
+	repo, global, baked := pushedRepo(t, 3)
 	hub := gitIn(t, repo, "remote", "get-url", "origin")
 	// The hub declines the push itself: a branch moved there is refused
 	// before any push, in the pass's words rather than git's.
 	if err := os.WriteFile(filepath.Join(hub, "hooks", "pre-receive"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	code, _, stderr := runOutput(t, repo, global, exe, "--push")
+	code, _, stderr := runOutput(t, repo, global, baked, exe, "--push")
 	if code == 0 || !strings.Contains(stderr, "pre-receive hook declined") {
 		t.Errorf("a push that fails: exit %d\n%s", code, stderr)
 	}

@@ -1,6 +1,7 @@
 package signpass
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/wesnel/agent-tools/internal/git"
-	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
 )
 
 func TestPlan(t *testing.T) {
@@ -36,7 +36,7 @@ func testPlanSharedFolds(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			global := signingConfig(t, dir)
+			ctx, global := signingConfig(t, dir)
 			signer, err := exec.LookPath("ssh-keygen")
 			if err != nil {
 				t.Fatal(err)
@@ -106,11 +106,11 @@ func testPlanSharedFolds(t *testing.T) {
 			gitIn(t, repo, "switch", "-q", "main")
 			before := gitIn(t, repo, "show-ref", "--heads")
 			gitIn(t, repo, "config", "--file", global, "gpg.ssh.program", wrapper)
-			t.Setenv("GIT_CONFIG_GLOBAL", global)
-			t.Setenv("GIT_EDITOR", "false")
-			t.Setenv("GIT_SEQUENCE_EDITOR", "false")
+			ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
+			ctx = under(ctx, "GIT_EDITOR=false")
+			ctx = under(ctx, "GIT_SEQUENCE_EDITOR=false")
 			useDir(t, repo)
-			result, err := Plan("", []string{tc.carrier, tc.leaf}, false, false)
+			result, err := Plan(ctx, "", []string{tc.carrier, tc.leaf}, false, false)
 			if tc.cycle || tc.signedLeaf {
 				want := "cannot order"
 				if tc.signedLeaf {
@@ -168,7 +168,7 @@ func testPlanSharedFolds(t *testing.T) {
 // already has.
 func testPlanPushUnmoved(t *testing.T) {
 	dir := t.TempDir()
-	global := signingConfig(t, dir)
+	ctx, global := signingConfig(t, dir)
 	hub := filepath.Join(dir, "hub.git")
 	gitIn(t, dir, "init", "-q", "--bare", hub)
 	repo := filepath.Join(dir, "repo")
@@ -181,18 +181,18 @@ func testPlanPushUnmoved(t *testing.T) {
 		gitIn(t, repo, "switch", "-qc", b, "main")
 		gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", b+" 1")
 	}
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 	useDir(t, repo)
 	for _, b := range []string{"done", "same"} {
 		gitIn(t, repo, "switch", "-q", b)
-		if _, err := Run("", false, false, false); err != nil {
+		if _, err := Run(ctx, "", false, false, false); err != nil {
 			t.Fatal(err)
 		}
 	}
 	gitIn(t, repo, "push", "-q", "-u", "origin", "same")
 	sameOnHub := gitIn(t, hub, "rev-parse", "same")
 
-	result, err := Plan("", []string{"done", "fresh", "same"}, false, true)
+	result, err := Plan(ctx, "", []string{"done", "fresh", "same"}, false, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func testPlanPushUnmoved(t *testing.T) {
 		t.Errorf("pushed: %v", pushed)
 	}
 	for _, b := range []string{"done", "fresh"} {
-		got, _ := git.Run("-C", hub, "rev-parse", "-q", "--verify", "refs/heads/"+b)
+		got, _ := git.In(ctx).Run("-C", hub, "rev-parse", "-q", "--verify", "refs/heads/"+b)
 		if want := gitIn(t, repo, "rev-parse", b); got != want {
 			t.Errorf("the remote's %s is %q, want %s", b, got, want)
 		}
@@ -219,7 +219,7 @@ func testPlanPushUnmoved(t *testing.T) {
 // to sign.
 func testPlanThreeStacks(t *testing.T) {
 	dir, _ := filepath.EvalSymlinks(t.TempDir())
-	global := signingConfig(t, dir)
+	ctx, global := signingConfig(t, dir)
 	hub := filepath.Join(dir, "hub.git")
 	gitIn(t, dir, "init", "-q", "--bare", hub)
 	repo := filepath.Join(dir, "repo")
@@ -262,16 +262,15 @@ func testPlanThreeStacks(t *testing.T) {
 	gitIn(t, repo, "commit", "-q", "-m", "X1")
 	gitIn(t, repo, "switch", "-q", "main")
 
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
-	t.Setenv("GIT_EDITOR", ":")
-	gitenvtest.Decoy(t)
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
+	ctx = decoy(t, under(ctx, "GIT_EDITOR=:"))
 	useDir(t, repo)
 
 	// Everything that can refuse does so before anything moves: here an
 	// untracked file in the worktree of P, which only moves with C1.
 	os.WriteFile(filepath.Join(wtP, "notes"), []byte("mine\n"), 0o644)
 	refs := gitIn(t, repo, "for-each-ref")
-	if _, err := Plan("", []string{"C2", "X", "C1"}, false, true); err == nil || !strings.Contains(err.Error(), wtP) {
+	if _, err := Plan(ctx, "", []string{"C2", "X", "C1"}, false, true); err == nil || !strings.Contains(err.Error(), wtP) {
 		t.Errorf("a dirty worktree: %v", err)
 	}
 	if after := gitIn(t, repo, "for-each-ref"); after != refs {
@@ -284,21 +283,21 @@ func testPlanThreeStacks(t *testing.T) {
 	bad := filepath.Join(dir, "bad")
 	os.WriteFile(bad, []byte("[user]\n\tname = T\n\temail = t@e\n\tsigningkey = "+filepath.Join(dir, "nokey")+
 		"\n[gpg]\n\tformat = ssh\n"), 0o644)
-	t.Setenv("GIT_CONFIG_GLOBAL", bad)
-	_, err := Plan("", []string{"C2", "X", "C1"}, false, true)
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+bad)
+	_, err := Plan(ctx, "", []string{"C2", "X", "C1"}, false, true)
 	if err == nil || !strings.Contains(err.Error(), "git -C "+wtC1+" rebase --continue") ||
 		!strings.Contains(err.Error(), "`"+testBinary(t)+" --resume --set-upstream C1`") {
 		t.Fatalf("a failed signature: %v", err)
 	}
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 	git.Dir = repo
-	if _, err := Plan("", []string{"P"}, false, false); err == nil || !strings.Contains(err.Error(), "in progress") {
+	if _, err := Plan(ctx, "", []string{"P"}, false, false); err == nil || !strings.Contains(err.Error(), "in progress") {
 		t.Errorf("a branch of the stopped pass: %v", err)
 	}
-	if _, err := git.Run("-C", wtC1, "rebase", "--continue"); err != nil {
+	if _, err := git.In(ctx).Run("-C", wtC1, "rebase", "--continue"); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Resume("C1", false, false)
+	result, err := Resume(ctx, "C1", false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,23 +315,23 @@ func testPlanThreeStacks(t *testing.T) {
 		"C2": "C2a G\nP2 G\nP1 G",
 		"X":  "X1 G",
 	} {
-		if log, _ := git.Run("log", "--format=%s %G?", "origin/main.."+b); log != want {
+		if log, _ := git.In(ctx).Run("log", "--format=%s %G?", "origin/main.."+b); log != want {
 			t.Errorf("%s:\n%s\nwant\n%s", b, log, want)
 		}
-		if !git.OK("merge-base", "--is-ancestor", upstream, b) {
+		if !git.In(ctx).OK("merge-base", "--is-ancestor", upstream, b) {
 			t.Errorf("%s left origin/main", b)
 		}
 	}
-	p, _ := git.Run("rev-parse", "P")
+	p, _ := git.In(ctx).Run("rev-parse", "P")
 	for _, b := range []string{"C1", "C2"} {
-		if parent, _ := git.Run("rev-parse", b+"~1"); parent != p {
+		if parent, _ := git.In(ctx).Run("rev-parse", b+"~1"); parent != p {
 			t.Errorf("%s is not on the signed P", b)
 		}
-		if content, _ := git.Run("show", b+":p"); content != "p fixed" {
+		if content, _ := git.In(ctx).Run("show", b+":p"); content != "p fixed" {
 			t.Errorf("%s's p: %q", b, content)
 		}
 	}
-	if got, _ := git.Run("rev-parse", "main"); got != stale {
+	if got, _ := git.In(ctx).Run("rev-parse", "main"); got != stale {
 		t.Error("the stale main moved")
 	}
 	for wt, b := range map[string]string{wtP: "P", wtC1: "C1", wtC2: "C2"} {
@@ -366,7 +365,7 @@ func testPlanThreeStacks(t *testing.T) {
 // input: neither rebase may open one.
 func testPlanFoldKinds(t *testing.T) {
 	dir := t.TempDir()
-	global := signingConfig(t, dir)
+	ctx, global := signingConfig(t, dir)
 	repo := filepath.Join(dir, "repo")
 	os.Mkdir(repo, 0o755)
 	gitIn(t, repo, "init", "-q", "-b", "main")
@@ -397,11 +396,11 @@ func testPlanFoldKinds(t *testing.T) {
 		trees[b] = gitIn(t, repo, "rev-parse", b+"^{tree}")
 	}
 
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
-	t.Setenv("GIT_EDITOR", "false")
-	t.Setenv("GIT_SEQUENCE_EDITOR", "false")
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
+	ctx = under(ctx, "GIT_EDITOR=false")
+	ctx = under(ctx, "GIT_SEQUENCE_EDITOR=false")
 	useDir(t, repo)
-	result, err := Plan("", []string{"C1", "C2"}, false, false)
+	result, err := Plan(ctx, "", []string{"C1", "C2"}, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,28 +413,28 @@ func testPlanFoldKinds(t *testing.T) {
 		"C1": "C1a\nG\nP2\nG\nP1 renamed\n\nWhy.\nG",
 		"C2": "C2a\n\nMore about C2.\nG\nP2\nG\nP1 renamed\n\nWhy.\nG",
 	} {
-		if log, _ := git.Run("log", "--format=%B%G?", "main.."+b); log != want {
+		if log, _ := git.In(ctx).Run("log", "--format=%B%G?", "main.."+b); log != want {
 			t.Errorf("%s:\n%q\nwant\n%q", b, log, want)
 		}
 	}
 	for b, tree := range trees {
-		if got, _ := git.Run("rev-parse", b+"^{tree}"); got != tree {
+		if got, _ := git.In(ctx).Run("rev-parse", b+"^{tree}"); got != tree {
 			t.Errorf("%s's files changed", b)
 		}
 	}
-	p, _ := git.Run("rev-parse", "P")
-	if parent, _ := git.Run("rev-parse", "C2~1"); parent != p {
+	p, _ := git.In(ctx).Run("rev-parse", "P")
+	if parent, _ := git.In(ctx).Run("rev-parse", "C2~1"); parent != p {
 		t.Error("C2 is not on the signed P")
 	}
 }
 
 // forkConflict makes a repository where P gained a fixup that conflicts with
 // C2, which forked from P before it, and points the package's git at it with
-// a signing config.
-func forkConflict(t *testing.T) string {
+// a signing config, under the context it returns.
+func forkConflict(t *testing.T) (context.Context, string) {
 	t.Helper()
 	dir := t.TempDir()
-	global := signingConfig(t, dir)
+	ctx, global := signingConfig(t, dir)
 	repo := filepath.Join(dir, "repo")
 	os.Mkdir(repo, 0o755)
 	gitIn(t, repo, "init", "-q", "-b", "main")
@@ -454,18 +453,18 @@ func forkConflict(t *testing.T) string {
 	gitIn(t, repo, "commit", "-q", "--allow-empty", "-m", "C1a")
 	gitIn(t, repo, "switch", "-q", "main")
 
-	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	ctx = under(ctx, "GIT_CONFIG_GLOBAL="+global)
 	useDir(t, repo)
-	return repo
+	return ctx, repo
 }
 
 // testPlanForkConflict refuses, before any touch, a fork child whose replay
 // onto its parent's signed copy would conflict with a fixup the parent
 // gained.
 func testPlanForkConflict(t *testing.T) {
-	repo := forkConflict(t)
+	ctx, repo := forkConflict(t)
 	refs := gitIn(t, repo, "for-each-ref")
-	if _, err := Plan("", []string{"C1", "C2"}, false, false); err == nil || !strings.Contains(err.Error(), "replaying C2") {
+	if _, err := Plan(ctx, "", []string{"C1", "C2"}, false, false); err == nil || !strings.Contains(err.Error(), "replaying C2") {
 		t.Errorf("a conflicting replay: %v", err)
 	}
 	if after := gitIn(t, repo, "for-each-ref"); after != refs {
@@ -478,8 +477,8 @@ func testPlanForkConflict(t *testing.T) {
 
 // A stack with nothing to sign is reported, not refused.
 func testPlanNothingToSign(t *testing.T) {
-	forkConflict(t)
-	result, err := Plan("main", []string{"main"}, false, false)
+	ctx, _ := forkConflict(t)
+	result, err := Plan(ctx, "main", []string{"main"}, false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
