@@ -1573,18 +1573,30 @@
       # The agent-tools config.json the ngrok Mac's home configuration writes
       # holds what agent-plan and emacs-config's plan views read from it:
       # plans.dir and plans.repo, absolute, the directory inside the
-      # repository, and plans.host. Then agent-plan, unbaked, makes a plan
-      # with it, its home moved under the build's directory so that nothing
-      # outside it is read or written.
+      # repository, and plans.host; and plans.notesHost, which names the
+      # devbox, as the devbox's own config does, so both agree on which one
+      # writes the digests and brag files. Then agent-plan, unbaked, makes a
+      # plan with it, its home moved under the build's directory so that
+      # nothing outside it is read or written.
       checks.${darwinOnly "agent-tools-config"} = let
         ngrok = darwinSystems.ngrok;
         home = self.darwinConfigurations.ngrok.config.home-manager.users.${ngrok.username};
+        devbox = self.homeConfigurations.devbox.config.wgn.home.llm.plans;
       in
         pkgs.runCommand "agent-tools-config" {
           nativeBuildInputs = [pkgs.jq (pkgs.callPackage ./overlays/agent-tools {})];
           config = home.xdg.configFile."agent-tools/config.json".source;
           inherit (home.home) homeDirectory;
+          devboxHost = devbox.host;
+          devboxNotesHost = devbox.notesHost;
         } ''
+          jq -e --arg devbox "$devboxHost" '.plans.notesHost == $devbox' "$config" >/dev/null \
+            && [ "$devboxNotesHost" = "$devboxHost" ] || {
+            echo "agent-tools-config: plans.notesHost is not the devbox's plans.host, $devboxHost, on both hosts:" >&2
+            jq .plans.notesHost "$config" >&2
+            echo "devbox: $devboxNotesHost" >&2
+            exit 1
+          }
           jq -e '.plans | . as $p | ($p.dir | type == "string" and startswith("/"))
             and ($p.repo | type == "string" and startswith("/"))
             and ($p.dir | startswith($p.repo + "/")) and ($p.host | type == "string" and length > 0)' \

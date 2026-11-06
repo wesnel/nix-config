@@ -46,6 +46,11 @@ type Config struct {
 	// Key is the deploy key SSHConfig names; init clones only when it
 	// exists.
 	Key string `json:"key,omitempty"`
+	// NotesHost names the one host that writes and syncs the notes files
+	// outside the plans directory (notesFile): demo digests and brag
+	// files. Every other host only takes them, so no two hosts write the
+	// same file. With "" no host writes them.
+	NotesHost string `json:"notesHost,omitempty"`
 }
 
 var (
@@ -134,8 +139,8 @@ func Load() (Config, error) {
 		c.Host = host
 	}
 	if !filepath.IsAbs(c.Dir) || !hostPattern.MatchString(c.Host) || (c.Repo != "" && !filepath.IsAbs(c.Repo)) ||
-		(c.Templates != "" && !filepath.IsAbs(c.Templates)) {
-		return Config{}, fmt.Errorf("%s: plans.dir, plans.repo and plans.templates must be absolute and plans.host a plain name without dots: %+v", repos.Path(), c)
+		(c.Templates != "" && !filepath.IsAbs(c.Templates)) || (c.NotesHost != "" && !hostPattern.MatchString(c.NotesHost)) {
+		return Config{}, fmt.Errorf("%s: plans.dir, plans.repo and plans.templates must be absolute and plans.host and plans.notesHost plain names without dots: %+v", repos.Path(), c)
 	}
 	return c, nil
 }
