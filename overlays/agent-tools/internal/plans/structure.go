@@ -29,6 +29,7 @@ var entryIDs = map[string]struct {
 	"Distribution": {partPattern.MatchString, "P<n>"},
 	"Questions":    {questionID.MatchString, "Q<n>"},
 	"Follow-ups":   {followupID.MatchString, "F<n>"},
+	"Visuals":      {visualID.MatchString, "V<n>"},
 }
 
 // questionKeywords are the keywords of questionSequence, in its order.
@@ -55,8 +56,9 @@ type structureProblem struct{ heading, problem string }
 //   - a section of `* Plan` not in planSections, or one it has twice;
 //   - a heading under Goal, Related or Verification, which hold text;
 //   - a References entry without a URL;
-//   - an entry of Steps, Distribution, Questions or Follow-ups without its
-//     ID, and a question without a question's keyword;
+//   - an entry of Steps, Distribution, Questions, Follow-ups or Visuals
+//     without its ID, a question without a question's keyword, and a
+//     visual without its BRANCH;
 //   - a heading more than a level below its parent;
 //   - a heading line inside a block, which Org reads as a heading where
 //     agent-plan does not, and a #+begin_ line no #+end_ line closes;
@@ -158,6 +160,8 @@ func structureOf(text string) []structureProblem {
 			me.skip = !me.group
 			if !ids.match(id) {
 				add(h, "a %s entry without an ID %s", me.section, ids.shown)
+			} else if me.section == "Visuals" && h.Props["BRANCH"] == "" {
+				add(h, "a Visuals entry without a BRANCH")
 			} else if me.section == "Questions" && !slices.Contains(questionKeywords, h.Keyword) {
 				add(h, "a question without a keyword %s or %s", strings.Join(questionKeywords[:len(questionKeywords)-1], ", "),
 					questionKeywords[len(questionKeywords)-1])
