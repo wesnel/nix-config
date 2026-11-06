@@ -332,7 +332,12 @@ iframe.renderer {
     "unsynced": "boolean", "fetched": "string", "failed": "number", "staged": "boolean"
   },
   "today": {
-    "schema": "number", "date": "string", "digests": [{"kind": "string", "text": "string"}]
+    "schema": "number", "date": "string", "digests": [{"kind": "string", "text": "string", "summary": "string",
+      "changes": [{"title": "string", "repo": "string", "number": "number", "summary": "string",
+        "steps": [{"text": "string", "command": "string", "result": "string"}],
+        "diagrams": [{"caption": "string", "source": "string"}],
+        "links": [{"url": "string", "caption": "string"}]}],
+      "dropped": [{"line": "number", "what": "string", "why": "string"}]}]
   }
 }
 </script>

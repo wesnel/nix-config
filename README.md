@@ -564,7 +564,13 @@ since, when the repository last fetched, how many plans could not be
 read) and `today/digest.json` (the page's Today: the demo digest of the
 newest day of the last week that has one, read whole from
 `digests/YYYY/MM-DD-demo.org` in the notes repository, never through a
-link; where it cannot be read, the last document written stays). `gh` is
+link; where it cannot be read, the last document written stays). A digest
+whose level-1 headings carry `PR` or `PLAN` properties is also parsed, as
+`internal/export/digest.go` describes its format, into each change's
+title, pull request, steps (an `sh` block and the `example` block of its
+result), captioned diagrams whose Mermaid is in the one grammar the page
+draws, and https links; what does not fit, such as a block never closed,
+is dropped with its line and why. `gh` is
 asked at most once a minute; the answer is cached as
 `$XDG_STATE_HOME/plan-dash/github.json`, which holds pull request titles,
 and when a fetch fails the last good answer is written, marked stale.

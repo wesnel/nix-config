@@ -25,6 +25,35 @@ var day = time.Date(2026, 10, 14, 13, 5, 0, 0, time.Local)
 // fakeToken has a GitHub token's shape, which redaction knows.
 const fakeToken = "ghp_SENTINELaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
+// demoDigest is the fixture's demo digest, in the digest's format, with
+// every field the export parses set, a secret in a step's command, and a
+// link it drops.
+const demoDigest = `The week of the loop.
+
+* Ship the loop
+:PROPERTIES:
+:PLAN: [[id:00000000-0000-0000-0000-000000000000][The loop]]
+:PR: o/r#7
+:END:
+The loop runs.
+
+Run it:
+#+begin_src sh
+loop ` + fakeToken + `
+#+end_src
+#+begin_example
+done
+#+end_example
+#+caption: The loop
+#+begin_src mermaid
+flowchart LR
+    N1["loop"]
+    N2["done"]
+    N1 -->|"ends"| N2
+#+end_src
+[[https://github.com/user-attachments/assets/1][recording]] and [[http://example.com/][the old page]].
+`
+
 const (
 	head  = "0123456789abcdef0123456789abcdef01234567"
 	head2 = "89abcdef0123456789abcdef0123456789abcdef"
@@ -276,7 +305,7 @@ func fixture(t *testing.T) (c plans.Config, own, theirs plans.Plan) {
 	// The newest day's demo digest is read; a newer one that is a link is
 	// refused, and older digests and other files are never read.
 	digests := filepath.Join(notes, "digests", "2026")
-	write(t, filepath.Join(digests, "10-13-demo.org"), "* Yesterday\n- Shipped the loop "+fakeToken+".\n")
+	write(t, filepath.Join(digests, "10-13-demo.org"), demoDigest)
 	write(t, filepath.Join(outside, "demo.org"), "* SENTINEL-linked-demo\n")
 	os.Symlink(filepath.Join(outside, "demo.org"), filepath.Join(digests, "10-14-demo.org"))
 	write(t, filepath.Join(digests, "10-12-demo.org"), "* SENTINEL-older\n")
@@ -328,8 +357,14 @@ var allowed = map[string][]string{
 		"requests[].recordFindings[].count", "requests[].recordThreads", "requests[].recordUnanswered",
 		"requests[].recordDrafted", "requests[].recordDiagrams", "requests[].recordDiagrams[].id",
 		"requests[].recordDiagrams[].kind", "requests[].recordDiagrams[].source"},
-	"meta":  {"schema", "updated", "host", "repo", "pushed", "unsynced", "fetched", "failed", "staged"},
-	"today": {"schema", "date", "digests", "digests[].kind", "digests[].text"},
+	"meta": {"schema", "updated", "host", "repo", "pushed", "unsynced", "fetched", "failed", "staged"},
+	"today": {"schema", "date", "digests", "digests[].kind", "digests[].text", "digests[].summary",
+		"digests[].changes", "digests[].changes[].title", "digests[].changes[].repo", "digests[].changes[].number",
+		"digests[].changes[].summary", "digests[].changes[].steps", "digests[].changes[].steps[].text",
+		"digests[].changes[].steps[].command", "digests[].changes[].steps[].result", "digests[].changes[].diagrams",
+		"digests[].changes[].diagrams[].caption", "digests[].changes[].diagrams[].source", "digests[].changes[].links",
+		"digests[].changes[].links[].url", "digests[].changes[].links[].caption",
+		"digests[].dropped", "digests[].dropped[].line", "digests[].dropped[].what", "digests[].dropped[].why"},
 }
 
 func join(path, key string) string {
@@ -553,8 +588,13 @@ func TestExport(t *testing.T) {
 		!reflect.DeepEqual(g.Requests, wantRequests) || g.MineTotal != 2 || g.RequestsTotal != 2 {
 		t.Errorf("github %+v", g)
 	}
-	wantToday := Today{Schema: agentplans.Schema, Date: "2026-10-13",
-		Digests: []Digest{{Kind: "demo", Text: "* Yesterday\n- Shipped the loop [REDACTED GitHub token]."}}}
+	loop := Change{Title: "Ship the loop", Repo: "o/r", Number: 7, Summary: "The loop runs.\n\nrecording and the old page.",
+		Steps:    []DemoStep{{Text: "Run it:", Command: "loop [REDACTED GitHub token]", Result: "done"}},
+		Diagrams: []DigestDiagram{{Caption: "The loop", Source: "flowchart LR\n    N1[\"loop\"]\n    N2[\"done\"]\n    N1 -->|\"ends\"| N2\n"}},
+		Links:    []DigestLink{{URL: "https://github.com/user-attachments/assets/1", Caption: "recording"}}}
+	wantToday := Today{Schema: agentplans.Schema, Date: "2026-10-13", Digests: []Digest{{Kind: "demo",
+		Text:    strings.TrimSpace(strings.Replace(demoDigest, fakeToken, "[REDACTED GitHub token]", 1)),
+		Summary: "The week of the loop.", Changes: []Change{loop}, Dropped: []Dropped{{24, "link", "not an https URL"}}}}}
 	if !reflect.DeepEqual(e.Today, wantToday) {
 		t.Errorf("today %+v, want %+v", e.Today, wantToday)
 	}
@@ -570,7 +610,8 @@ func TestToday(t *testing.T) {
 		write(t, filepath.Join(digests, name), body)
 	}
 	got, err := TodayOf(c, day)
-	want := Today{Schema: agentplans.Schema, Date: "2026-10-09", Digests: []Digest{{"demo", "demo"}}}
+	want := Today{Schema: agentplans.Schema, Date: "2026-10-09", Digests: []Digest{{Kind: "demo", Text: "demo",
+		Changes: []Change{}, Dropped: []Dropped{}}}}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Errorf("today %+v (%v), want %+v", got, err, want)
 	}
