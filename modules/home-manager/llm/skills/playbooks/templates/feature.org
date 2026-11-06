@@ -9,9 +9,10 @@
 First link the plans related to this one with =agent-plan link=, as the
 =plan-work= skill's Related says.
 The =review-change= pipeline's first stage, as the =plan-work= skill says:
-the Goal with its =Likely next changes:= line, and the build's steps added
-with =agent-plan step PLAN --after S2=, each with what marks it done. Load
-the =design= skill before writing them.
+the Goal with its =Builds on:= and =Likely next changes:= lines, which
+that skill's Goal defines, and the build's steps added with
+=agent-plan step PLAN --after S2=, each with what marks it done. Load the
+=design= skill before writing them.
 Done when the Goal is written and every build step is in the plan.
 *** TODO Design review of the plan
 :PROPERTIES:

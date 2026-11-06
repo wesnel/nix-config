@@ -491,7 +491,7 @@ func TestCommands(t *testing.T) {
 			t.Fatalf("new: %d %s %s", code, out, errs)
 		}
 		short := strings.TrimSuffix(name, ".box")
-		code, _, errs = agentPlan(t, "", "section", made.Plan, "Goal", "--text", "Take F1 of plan "+short+".")
+		code, _, errs = agentPlan(t, "", "section", made.Plan, "Goal", "--text", "Take F1 of plan "+short+".\nBuilds on: its follow-up.\nLikely next changes: none.")
 		if code != 0 || errs != "agent-plan: linked "+made.ID+" to "+name+": Takes over its F1.\n" {
 			t.Errorf("section: %d %q", code, errs)
 		}
@@ -597,7 +597,7 @@ func TestCommands(t *testing.T) {
 		if code, _, errs := agentPlan(t, "", "after", plan, "S3", "--clear"); code != 0 {
 			t.Errorf("after --clear: %d %s", code, errs)
 		}
-		if code, _, errs := agentPlan(t, "", "section", plan, "Goal", "--text", "Add the loop.\nNot its flag."); code != 0 {
+		if code, _, errs := agentPlan(t, "", "section", plan, "Goal", "--text", "Add the loop.\nNot its flag.\nBuilds on: the run command.\nLikely next changes: its default."); code != 0 {
 			t.Errorf("section: %d %s", code, errs)
 		}
 		if code, _, errs := agentPlan(t, "", "set", plan, "STATUS", "halted"); code != 0 {
@@ -605,7 +605,7 @@ func TestCommands(t *testing.T) {
 		}
 		data, _ := os.ReadFile(plan)
 		for _, want := range []string{
-			"** Goal\nAdd the loop.\nNot its flag.\n** Steps\n",
+			"** Goal\nAdd the loop.\nNot its flag.\nBuilds on: the run command.\nLikely next changes: its default.\n** Steps\n",
 			"*** TODO Test it\n:PROPERTIES:\n:CUSTOM_ID: S2\n:AFTER: S1 P1\n:END:\n*** TODO Tag the release\n:PROPERTIES:\n:CUSTOM_ID: S3\n:END:\n** Distribution\n",
 			"*** TODO plan-write-path\n:PROPERTIES:\n:CUSTOM_ID: P1\n:END:\nnix-config: plan-write-path on main, worktree /w/p.\n** Questions\n",
 			":STATUS: halted\n",
@@ -684,7 +684,7 @@ func TestCommands(t *testing.T) {
 			t.Setenv("CLAUDE_CODE_SESSION_ID", "s-1")
 			plan = newPlan(t)
 			file = filepath.Join(scratch, "text.md")
-			os.WriteFile(file, []byte("Add the `loop`.\nNot its flag.\n"), 0o644)
+			os.WriteFile(file, []byte("Add the `loop`.\nNot its flag.\nBuilds on: the run command.\nLikely next changes: its default.\n"), 0o644)
 			return plan, scratch, secrets, file
 		}
 
@@ -693,12 +693,12 @@ func TestCommands(t *testing.T) {
 			args []string
 			want string
 		}{
-			{"section", []string{"section", "PLAN", "Goal"}, "** Goal\nAdd the `loop`.\nNot its flag.\n** Steps\n"},
-			{"step", []string{"step", "PLAN", "--title", "Tag it"}, ":CUSTOM_ID: S3\n:END:\nAdd the `loop`.\nNot its flag.\n"},
-			{"ask", []string{"ask", "PLAN", "--question", "Tag it?", "--recommendation", "yes"}, "Add the `loop`.\nNot its flag.\n"},
-			{"part", []string{"part", "PLAN", "--title", "loop-flag"}, ":CUSTOM_ID: P1\n:END:\nAdd the `loop`.\nNot its flag.\n"},
-			{"edit", []string{"edit", "PLAN", "S1"}, ":CUSTOM_ID: S1\n:END:\nAdd the `loop`.\nNot its flag.\n*** TODO Test it\n"},
-			{"followup", []string{"followup", "PLAN", "--title", "Tag it", "--found-in", "S1"}, "Add the `loop`.\nNot its flag.\n"},
+			{"section", []string{"section", "PLAN", "Goal"}, "** Goal\nAdd the `loop`.\nNot its flag.\nBuilds on: the run command.\nLikely next changes: its default.\n** Steps\n"},
+			{"step", []string{"step", "PLAN", "--title", "Tag it"}, ":CUSTOM_ID: S3\n:END:\nAdd the `loop`.\nNot its flag.\nBuilds on: the run command.\nLikely next changes: its default.\n"},
+			{"ask", []string{"ask", "PLAN", "--question", "Tag it?", "--recommendation", "yes"}, "Add the `loop`.\nNot its flag.\nBuilds on: the run command.\nLikely next changes: its default.\n"},
+			{"part", []string{"part", "PLAN", "--title", "loop-flag"}, ":CUSTOM_ID: P1\n:END:\nAdd the `loop`.\nNot its flag.\nBuilds on: the run command.\nLikely next changes: its default.\n"},
+			{"edit", []string{"edit", "PLAN", "S1"}, ":CUSTOM_ID: S1\n:END:\nAdd the `loop`.\nNot its flag.\nBuilds on: the run command.\nLikely next changes: its default.\n*** TODO Test it\n"},
+			{"followup", []string{"followup", "PLAN", "--title", "Tag it", "--found-in", "S1"}, "Add the `loop`.\nNot its flag.\nBuilds on: the run command.\nLikely next changes: its default.\n"},
 		} {
 			t.Run(c.name, func(t *testing.T) {
 				plan, _, _, file := textFile(t)

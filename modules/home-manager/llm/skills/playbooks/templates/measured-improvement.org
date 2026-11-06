@@ -9,7 +9,9 @@
 First link the plans related to this one with =agent-plan link=, as the
 =plan-work= skill's Related says.
 Write the Goal with =agent-plan section PLAN Goal=: the number to move,
-and when to stop, both a target for it and the most attempts to make.
+and when to stop, both a target for it and the most attempts to make,
+with the =Builds on:= and =Likely next changes:= lines the =plan-work=
+skill's Goal defines.
 Done when =agent-plan goal PLAN= prints the target and the attempt limit.
 *** TODO Freeze the harness
 :PROPERTIES:

@@ -444,8 +444,37 @@ func (p Plan) SetAfter(id string, after []string, now time.Time) (Event, error) 
 	return e, err
 }
 
+// goalLines are the lines a Goal holds besides its goal and what is not its
+// job, each a line starting with its label followed by text, and what that
+// text says. The plan-work skill's Goal defines them.
+var goalLines = []struct{ label, holds string }{
+	{"Builds on:", "what already does the job, or part of it, and how this change extends it, or that nothing was found and where the search looked"},
+	{"Likely next changes:", "one or two concrete changes expected after this one"},
+}
+
+// checkGoalLines refuses a Goal's lines without each of goalLines, naming
+// every one missing.
+func checkGoalLines(body []string) error {
+	var missing, add []string
+	for _, want := range goalLines {
+		if !slices.ContainsFunc(body, func(line string) bool {
+			rest, ok := strings.CutPrefix(strings.TrimSpace(line), want.label)
+			return ok && strings.TrimSpace(rest) != ""
+		}) {
+			missing = append(missing, "no `"+want.label+"` line")
+			add = append(add, "a line starting `"+want.label+"` that says "+want.holds)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return refusal.New("the goal has %s, which every plan's and part's Goal holds. Add %s, as the `plan-work` skill's Goal says, and pass the whole goal with `--text` again",
+		strings.Join(missing, " and "), strings.Join(add, ", and "))
+}
+
 // SetSection writes text as the whole of section name, Goal or
 // Verification, of the plan's file or the part's, and logs it as planned.
+// It refuses a Goal without the lines goalLines names.
 func (p Plan) SetSection(part, name, text string, now time.Time) (Event, error) {
 	if err := p.checkOwn(); err != nil {
 		return Event{}, err
@@ -460,6 +489,11 @@ func (p Plan) SetSection(part, name, text string, now time.Time) (Event, error) 
 	}
 	if len(body) == 0 && name == "Goal" {
 		return Event{}, refusal.New("the goal is empty, and the fresh review reads it as its goal statement. Pass the goal and what is not this change's job with `--text`")
+	}
+	if name == "Goal" {
+		if err := checkGoalLines(body); err != nil {
+			return Event{}, err
+		}
 	}
 	file, err := p.partFile(part)
 	if err != nil {
