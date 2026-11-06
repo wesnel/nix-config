@@ -32,6 +32,12 @@ whether it gave a finding or not:
 - `untrusted-input`: input from the network, other people's files, pull
   request, issue or MCP text, or repository content a tool runs: where it
   enters, how it is checked, and what it reaches.
+- `in-band-signaling`: control information carried in the same type or
+  channel as data, so data another party supplies can forge it: a string
+  such as `"*"` that means "no password" in a field of passwords, `-1` or
+  `""` for "absent", a delimiter or escape inside the text it frames, a
+  magic value in an ID, a timestamp or a length. Name the data's source,
+  the value that doubles as a signal, and the check that treats it as one.
 - `authn-authz`: who may do what: a check added, removed, made after the
   action, or decided on something the caller controls.
 - `secrets`: credentials, tokens and keys read, printed, logged, passed on
