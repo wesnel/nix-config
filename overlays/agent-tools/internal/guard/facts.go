@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -212,42 +214,65 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 		return c.Locate(session, top)
 	}
 	output := strings.Join(texts, "\n")
+	who := session
+	if strings.ContainsAny(who, " \t\r\n") {
+		who = ""
+	}
+	// logged holds the revisions recorded by this call, so the reflog
+	// does not record one twice.
+	logged := map[string]bool{}
+	record := func(dir, revision, branch, subject string) {
+		top := toplevel(dir)
+		e := plans.Event{Branch: branch, Commit: subject, Summary: subject, Worktree: top}
+		if identity, err := plans.CommitIdentity(top, revision); err == nil {
+			e.Repository, e.Revision = identity.Repository, identity.Revision
+			logged[identity.Revision] = true
+		}
+		p, created, err := c.RecordCommit(who, top, e, now)
+		if err != nil {
+			return
+		}
+		c.LinkEvidence(p.File(), now)
+		if created {
+			context = append(context, fmt.Sprintf("No plan named this session or worktree, so %s was made for this commit. "+
+				"Write its goal and steps with `agent-plan section` and `agent-plan step` as the plan-work skill says, or, if the work belongs to another plan, say so in your report.", p.File()))
+		}
+		association := "--commit " + shellQuote(subject)
+		if e.Revision != "" {
+			association = "--revision " + e.Revision
+		}
+		context = append(context, fmt.Sprintf("The commit %q is logged in %s. If it completes a step, which step? "+
+			"Log `done` for it with `%s` in its worktree; if none, carry on.", subject, p.File(), association))
+		if who != "" && commits(p, who) == 1 {
+			context = append(context, commitRules)
+		}
+	}
+	// committedIn are the worktrees commit calls ran in, by top level, in
+	// order, and commitCalls how many ran in each, for the reflog, which the
+	// worktree's directories share; printed, the summary lines recorded,
+	// since every commit call sees the whole output.
+	var committedIn []string
+	commitCalls := map[string]int{}
+	printed := map[string]bool{}
 	for _, g := range gitCalls(command, cwd, 0) {
 		if g.sub == "commit" {
 			for _, m := range summaryLine.FindAllStringSubmatch(output, -1) {
+				if printed[m[0]] {
+					continue
+				}
 				if _, ok := (gitState{dir: g.dir}).run("cat-file", "-e", m[2]+"^{commit}"); !ok {
 					continue
 				}
+				printed[m[0]] = true
 				branch := m[1]
 				if strings.ContainsAny(branch, " \t") {
 					branch = ""
 				}
-				who := session
-				if strings.ContainsAny(who, " \t\r\n") {
-					who = ""
-				}
-				top := toplevel(g.dir)
-				e := plans.Event{Branch: branch, Commit: m[3], Summary: m[3], Worktree: top}
-				if identity, err := plans.CommitIdentity(top, m[2]); err == nil {
-					e.Repository, e.Revision = identity.Repository, identity.Revision
-				}
-				p, created, err := c.RecordCommit(who, top, e, now)
-				if err != nil {
-					continue
-				}
-				c.LinkEvidence(p.File(), now)
-				if created {
-					context = append(context, fmt.Sprintf("No plan named this session or worktree, so %s was made for this commit. "+
-						"Write its goal and steps with `agent-plan section` and `agent-plan step` as the plan-work skill says, or, if the work belongs to another plan, say so in your report.", p.File()))
-				}
-				association := "--commit " + shellQuote(m[3])
-				if e.Revision != "" {
-					association = "--revision " + e.Revision
-				}
-				context = append(context, fmt.Sprintf("The commit %q is logged in %s. If it completes a step, which step? "+
-					"Log `done` for it with `%s` in its worktree; if none, carry on.", m[3], p.File(), association))
-				if who != "" && commits(p, who) == 1 {
-					context = append(context, commitRules)
+				record(g.dir, m[2], branch, m[3])
+			}
+			if top := toplevel(g.dir); top != "" {
+				if commitCalls[top]++; commitCalls[top] == 1 {
+					committedIn = append(committedIn, top)
 				}
 			}
 			continue
@@ -289,8 +314,13 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 			}
 		}
 	}
-	who := pushers(command, 0)
-	if len(who) == 0 {
+	for _, dir := range committedIn {
+		for _, r := range reflogCommits(c, dir, commitCalls[dir], logged, now) {
+			record(dir, r.revision, r.branch, r.subject)
+		}
+	}
+	pushed := pushers(command, 0)
+	if len(pushed) == 0 {
 		return
 	}
 	p, part, ok := at(cwd)
@@ -308,11 +338,60 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 		}
 	}
 	// pr-loop push logs its push itself.
-	delete(who, "pr-loop push")
-	if branches := pushedTo(texts); len(branches) > 0 && len(who) > 0 {
+	delete(pushed, "pr-loop push")
+	if branches := pushedTo(texts); len(branches) > 0 && len(pushed) > 0 {
 		p.Record(part, plans.Event{Kind: "pushed", Summary: "pushed " + strings.Join(branches, " ")}, now)
 	}
 	return context
+}
+
+// reflogWindow is how recent a commit in HEAD's reflog must be for a
+// commit call to have made it: longer than any one shell call runs.
+const reflogWindow = 10 * time.Minute
+
+type reflogCommit struct{ revision, branch, subject string }
+
+// reflogCommits are the commits the calls commit calls in dir made that git
+// did not print a summary line for, as with -q or output sent elsewhere,
+// oldest first. Each commit call makes at most one commit, so they are
+// among the top calls entries of HEAD's reflog: those git commit wrote in
+// the last reflogWindow, skipping those this call recorded (logged), down
+// to the first any plan has already recorded. Without an owner/name
+// identity for origin no plan's record can be checked, so it returns none.
+func reflogCommits(c plans.Config, dir string, calls int, logged map[string]bool, now time.Time) []reflogCommit {
+	state := gitState{dir: dir}
+	repository := ""
+	if identity, err := plans.CommitIdentity(toplevel(dir), "HEAD"); err == nil {
+		repository = identity.Repository
+	}
+	if repository == "" {
+		return nil
+	}
+	text, ok := state.run("log", "-g", "-n", fmt.Sprint(calls), "--format=%H%x1f%ct%x1f%gs%x1f%s", "HEAD")
+	if !ok {
+		return nil
+	}
+	branch, _ := state.run("branch", "--show-current")
+	var out []reflogCommit
+	for _, line := range strings.Split(text, "\n") {
+		f := strings.SplitN(line, "\x1f", 4)
+		if len(f) != 4 || !strings.HasPrefix(f[2], "commit") {
+			break
+		}
+		at, err := strconv.ParseInt(f[1], 10, 64)
+		if err != nil || now.Sub(time.Unix(at, 0)) > reflogWindow {
+			break
+		}
+		if logged[f[0]] {
+			continue
+		}
+		if known, err := c.Commits(plans.CommitOptions{Repository: repository, Revision: f[0]}); err != nil || len(known) > 0 {
+			break
+		}
+		out = append(out, reflogCommit{revision: f[0], branch: branch, subject: f[3]})
+	}
+	slices.Reverse(out)
+	return out
 }
 
 // commitRules hands over the commit rules, which AGENTS.md keeps in the

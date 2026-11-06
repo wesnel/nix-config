@@ -43,7 +43,7 @@ func TestReplyPublic(t *testing.T) {
 	t.Run("a file of replies", func(t *testing.T) {
 		f := fakeRepo(t)
 		t.Setenv(ModeEnv, "bots")
-		_, err := ReplyAll([]PlannedReply{{Thread: "bot1", Body: "Fixed in 1a2b3c4."}, {Thread: "bot2", Body: "Deferred per D188."}})
+		_, err := ReplyAll([]PlannedReply{{Thread: "bot1", Body: "Fixed in 1a2b3c4."}, {Thread: "bot2", Body: "Deferred per D188."}}, 1)
 		if !leaked(err, "D188") || !strings.Contains(err.Error(), "bot2") {
 			t.Errorf("reply file with a plan ID: %v", err)
 		}

@@ -61,4 +61,28 @@ func TestStaleAndUnrecorded(t *testing.T) {
 			t.Errorf("org:\n%s", s.Org())
 		}
 	})
+
+	// The hand-back is the checkpoint: logging it names what the log
+	// lacks, where any other event does not.
+	t.Run("a hand-back names them", func(t *testing.T) {
+		p := worked(t, "Rename the flag")
+		later := day.Add(25 * time.Hour)
+		e, err := p.Log(Event{Kind: "handed-back", Item: p.Name, Summary: "Draft PR open"}, later)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{p.file(""), "Commits no step records: Rename the flag\n",
+			"Stale, started with nothing logged for a day: S1\n"} {
+			if !strings.Contains(e.Note, want) {
+				t.Errorf("note %q lacks %q", e.Note, want)
+			}
+		}
+		if e, err := p.Log(Event{Kind: "blocked", Item: "S1", Summary: "Waits on the operator"}, later); err != nil || e.Note != "" {
+			t.Errorf("blocked: note %q, %v", e.Note, err)
+		}
+		clean := newPlan(t, testConfig(t), "y")
+		if e, err := clean.Log(Event{Kind: "handed-back", Item: clean.Name}, later); err != nil || e.Note != "" {
+			t.Errorf("a hand-back with nothing missing: note %q, %v", e.Note, err)
+		}
+	})
 }

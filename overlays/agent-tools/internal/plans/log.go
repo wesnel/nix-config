@@ -182,12 +182,25 @@ func (p Plan) check(e Event) error {
 // only tools log. A step's or part's heading keyword then follows the log:
 // the log is the record, and the keyword its projection for Emacs. A
 // keyword it cannot write leaves the event logged, says so in the returned
-// event's Note, and shows in status as drift.
+// event's Note, and shows in status as drift. A hand-back's Note also names
+// the gaps status shows (Status.Gaps), since the hand-back is the
+// checkpoint that should leave none.
 func (p Plan) Log(e Event, now time.Time) (Event, error) {
 	if why := toolKinds[e.Kind]; why != "" {
 		return Event{}, refusal.New("%s", why)
 	}
-	return p.record(e, now)
+	e, err := p.record(e, now)
+	if err != nil || e.Kind != handedBack {
+		return e, err
+	}
+	if s, err := p.StatusAt(now); err == nil {
+		if gaps := s.GapsText(); gaps != "" && e.Note != "" {
+			e.Note += "\n\n" + gaps
+		} else if gaps != "" {
+			e.Note = gaps
+		}
+	}
+	return e, nil
 }
 
 // record is Log for any kind, the tools' too.
