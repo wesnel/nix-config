@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -19,13 +20,39 @@ import (
 
 func TestMain(m *testing.M) {
 	gitenv.Isolate()
-	os.Exit(m.Run())
+	dir, err := os.MkdirTemp("", "lima-mcp-fakes-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fakes = dir
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
 }
 
-func TestTools(t *testing.T) {
-	var output bytes.Buffer
-	err := serve(context.Background(), bytes.NewBufferString(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`), &output, "unused")
+// unused is a server whose commands are never run.
+var unused = &server{limactl: "unused", timeout: time.Minute}
+
+// TestToolTable holds the guard's inventory, internal/guard/mcp.json, to
+// the tools the server lists: its lima reads then its confirms, which is
+// the allow list mcp-proxy builds from it, are tools/list's names in order,
+// and each is in the table under that class.
+func TestToolTable(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "guard", "mcp.json"))
 	if err != nil {
+		t.Fatal(err)
+	}
+	var inventory map[string]struct {
+		Reads    []string `json:"reads"`
+		Confirms []string `json:"confirms"`
+	}
+	if err := json.Unmarshal(data, &inventory); err != nil {
+		t.Fatal(err)
+	}
+	lima := inventory["lima"]
+	var output bytes.Buffer
+	if err := serve(context.Background(), bytes.NewBufferString(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`), &output, unused); err != nil {
 		t.Fatal(err)
 	}
 	var reply struct {
@@ -42,14 +69,184 @@ func TestTools(t *testing.T) {
 	for _, tool := range reply.Result.Tools {
 		names = append(names, tool.Name)
 	}
-	if len(names) != 2 || names[0] != "lima_list" || names[1] != "lima_stop" {
-		t.Fatalf("tools = %v; want list and stop", names)
+	if want := append(append([]string{}, lima.Reads...), lima.Confirms...); !slices.Equal(names, want) {
+		t.Fatalf("tools/list = %v; mcp.json's reads then confirms are %v", names, want)
+	}
+	class := map[string]approval{}
+	for _, name := range lima.Reads {
+		class[name] = read
+	}
+	for _, name := range lima.Confirms {
+		class[name] = confirm
+	}
+	for _, tool := range tools {
+		if want, ok := class[tool.name]; !ok || tool.approval != want {
+			t.Errorf("tool %s has approval %d; mcp.json lists it as %d (listed: %v)", tool.name, tool.approval, want, ok)
+		}
+		// The workload is the server's configuration, not the tools'.
+		if strings.Contains(tool.description, "ngrok") {
+			t.Errorf("tool %s's description names a workload: %q", tool.name, tool.description)
+		}
+	}
+}
+
+// session runs serve on pipes, for tests that send requests one at a
+// time and read the replies as they come.
+type session struct {
+	in      *io.PipeWriter
+	replies chan map[string]any
+	done    chan error
+}
+
+func startSession(t *testing.T, s *server) *session {
+	t.Helper()
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	ss := &session{in: inW, replies: make(chan map[string]any, 16), done: make(chan error, 1)}
+	go func() {
+		err := serve(t.Context(), inR, outW, s)
+		outW.Close()
+		ss.done <- err
+	}()
+	go func() {
+		decoder := json.NewDecoder(outR)
+		for {
+			var reply map[string]any
+			if decoder.Decode(&reply) != nil {
+				close(ss.replies)
+				return
+			}
+			ss.replies <- reply
+		}
+	}()
+	t.Cleanup(func() { inW.Close() })
+	return ss
+}
+
+func (ss *session) send(t *testing.T, message string) {
+	t.Helper()
+	if _, err := io.WriteString(ss.in, message+"\n"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (ss *session) reply(t *testing.T) map[string]any {
+	t.Helper()
+	select {
+	case reply, ok := <-ss.replies:
+		if !ok {
+			t.Fatal("the server wrote no more replies")
+		}
+		return reply
+	case <-time.After(10 * time.Second):
+		t.Fatal("no reply within 10 s")
+	}
+	return nil
+}
+
+// holdingStop is the arguments of a lima_stop call to the fake CLI that
+// runs until killed, holding a connection to listener open.
+func holdingStop(t *testing.T, listener net.Listener) string {
+	t.Helper()
+	return fmt.Sprintf(`{"name":"lima_stop","arguments":{"instance":"hold-%d"}}`, listener.Addr().(*net.TCPAddr).Port)
+}
+
+// accepted waits for the fake CLI's child to connect and say it is ready.
+// The child runs until the connection closes or it is killed.
+func accepted(t *testing.T, listener net.Listener) net.Conn {
+	t.Helper()
+	if err := listener.(*net.TCPListener).SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	conn, err := listener.Accept()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ready [6]byte
+	if _, err := io.ReadFull(conn, ready[:]); err != nil || string(ready[:]) != "ready\n" {
+		t.Fatalf("child readiness: %q, %v", ready, err)
+	}
+	return conn
+}
+
+func TestConcurrentCalls(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	ss := startSession(t, &server{limactl: fakeCLI(t), timeout: time.Minute})
+	var held net.Conn
+	defer func() {
+		if held != nil {
+			held.Close()
+		}
+	}()
+
+	t.Run("answers while another call runs", func(t *testing.T) {
+		ss.send(t, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":`+holdingStop(t, listener)+`}`)
+		held = accepted(t, listener)
+		ss.send(t, `{"jsonrpc":"2.0","id":2,"method":"ping"}`)
+		if reply := ss.reply(t); reply["id"] != float64(2) {
+			t.Fatalf("first reply %v; want the ping's, while the stop still runs", reply)
+		}
+	})
+
+	t.Run("cancellation kills the call and drops its reply", func(t *testing.T) {
+		ss.send(t, `{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1}}`)
+		ss.send(t, `{"jsonrpc":"2.0","id":3,"method":"ping"}`)
+		if reply := ss.reply(t); reply["id"] != float64(3) {
+			t.Fatalf("reply %v; want only the ping's, the cancelled call's dropped", reply)
+		}
+		// serve returns once its calls end; the stop runs for the
+		// server's minute unless the cancellation killed it.
+		ss.in.Close()
+		select {
+		case err := <-ss.done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("the cancelled call still runs")
+		}
+		if reply, ok := <-ss.replies; ok {
+			t.Fatalf("the cancelled call replied: %v", reply)
+		}
+	})
+}
+
+func TestParseError(t *testing.T) {
+	var out bytes.Buffer
+	in := "{not json\n" + `{"jsonrpc":"2.0","id":2,"method":"ping"}` + "\n"
+	if err := serve(context.Background(), strings.NewReader(in), &out, unused); err != nil {
+		t.Fatalf("serve stopped at malformed JSON: %v", err)
+	}
+	var codes []any
+	var ids []any
+	decoder := json.NewDecoder(&out)
+	for decoder.More() {
+		var reply struct {
+			ID    any `json:"id"`
+			Error *struct {
+				Code int `json:"code"`
+			} `json:"error"`
+		}
+		if err := decoder.Decode(&reply); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, reply.ID)
+		if reply.Error != nil {
+			codes = append(codes, reply.Error.Code)
+		}
+	}
+	if len(ids) != 2 || ids[0] != nil || ids[1] != float64(2) || len(codes) != 1 || codes[0] != -32700 {
+		t.Fatalf("replies to ids %v with error codes %v; want a -32700 parse error with a null id, then the ping's", ids, codes)
 	}
 }
 
 func TestUnknownMethod(t *testing.T) {
 	var out bytes.Buffer
-	if err := serve(context.Background(), strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"missing"}`), &out, "unused"); err != nil {
+	if err := serve(context.Background(), strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"missing"}`), &out, unused); err != nil {
 		t.Fatal(err)
 	}
 	var reply struct {
@@ -65,7 +262,7 @@ func TestUnknownMethod(t *testing.T) {
 func TestInitialize(t *testing.T) {
 	var out bytes.Buffer
 	request := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}`
-	if err := serve(context.Background(), strings.NewReader(request), &out, "unused"); err != nil {
+	if err := serve(context.Background(), strings.NewReader(request), &out, unused); err != nil {
 		t.Fatal(err)
 	}
 	var reply struct {
@@ -140,7 +337,7 @@ func TestCalls(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var out bytes.Buffer
 			request := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":` + tc.request + `}`
-			if err := serve(context.Background(), strings.NewReader(request), &out, cli); err != nil {
+			if err := serve(context.Background(), strings.NewReader(request), &out, &server{limactl: cli, timeout: time.Minute}); err != nil {
 				t.Fatal(err)
 			}
 			var reply struct {
@@ -180,7 +377,7 @@ func TestCancelClosesPipes(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan map[string]any, 1)
-	go func() { done <- call(ctx, cli, params, 5*time.Minute) }()
+	go func() { done <- (&server{limactl: cli, timeout: 5 * time.Minute}).call(ctx, params) }()
 	conn, err := listener.Accept()
 	if err != nil {
 		t.Fatal(err)
@@ -215,7 +412,7 @@ func TestDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	done := make(chan map[string]any, 1)
-	go func() { done <- call(context.Background(), cli, params, 2*time.Second) }()
+	go func() { done <- (&server{limactl: cli, timeout: 2 * time.Second}).call(context.Background(), params) }()
 	if err := listener.(*net.TCPListener).SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
 		t.Fatal(err)
 	}

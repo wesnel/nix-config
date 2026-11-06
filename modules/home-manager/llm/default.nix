@@ -438,6 +438,8 @@ in {
         ]
         # The secret's link, besides where it resolves to below.
         ++ optional ngrokAi config.sops.secrets.ngrok-ai-key.path
+        # The managed Lima VM's home: its SSH key and the broker CA's key.
+        ++ optional proxy.limaDev.enable proxy.limaDev.home
         # sops-nix decrypts into the per-user temporary directory on macOS
         # and /run/user on Linux; ~/.config/sops-nix/secrets links there.
         # The sandbox matches the path a link resolves to, and denying the
@@ -646,7 +648,11 @@ in {
           Hosts every sandbox's commands may reach, for fetching
           dependencies when building and testing. Commands can send anything
           they can read to these hosts, including uploading to GitHub with
-          credentials available in the workspace or command output.
+          credentials available in the workspace or command output. The
+          managed Lima VM's guest (`wgn.home.mcp-proxy.limaDev`) reaches
+          them too, through its CONNECT relay; an entry the relay's policy
+          refuses as a host name or `*.` pattern stops lima-mcp from
+          starting.
         '';
 
         default = [

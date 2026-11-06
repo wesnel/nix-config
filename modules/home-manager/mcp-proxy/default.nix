@@ -64,6 +64,8 @@ with lib; let
       lima = {
         transportType = "stdio";
         command = getExe' config.wgn.home.llm.agentTools "lima-mcp";
+        # With the configuration, it also serves the managed VM.
+        args = optionals cfg.limaDev.enable ["--config" "${cfg.limaDev.configFile}"];
         timeout = "6m";
         options.toolFilter = toolFilter "lima";
       };
@@ -153,6 +155,8 @@ with lib; let
     '';
   };
 in {
+  imports = [./lima-dev.nix];
+
   options.wgn.home.mcp-proxy = {
     enable = mkEnableOption ''
       one MCP endpoint per upstream server at http://127.0.0.1:PORT/NAME/mcp,
@@ -263,7 +267,7 @@ in {
     lima = mkOption {
       type = types.bool;
       default = false;
-      description = "List and stop local Lima instances.";
+      description = "List and stop the instances of the default Lima home, and serve the managed VM when `limaDev` is enabled.";
     };
 
     datadog = {

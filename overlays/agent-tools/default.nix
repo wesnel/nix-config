@@ -83,6 +83,9 @@
     passthru.mcpTools = builtins.fromJSON (builtins.readFile ./internal/guard/mcp.json);
     passthru.routinePlanTools = builtins.fromJSON (builtins.readFile ./cmd/pr-loop/plan-tools.json);
 
+    # The managed Lima VM's guest UDP shim, for its linux/arm64 guest.
+    passthru.guestShim = guestShim;
+
     # Each focused review's contract, by route, as `git delegate --reviewer
     # ROUTE` builds it (focus.contract in internal/review): the general
     # contract up to its Checks heading, then internal/review/ROUTE.md.
@@ -97,6 +100,20 @@
         (route: builtins.head parts + "\n" + builtins.readFile (./internal/review + "/${route}.md"));
 
     meta.description = "pr-loop (the review loop), git-sign-pass (the signing pass), git-red-check (checks a commit's tests fail without its change), git-delegate (reviews a range or a pull request with reviewers that did not write it, and keeps their findings), git-push-guard (keeps private history out of public repositories), agent-plan (agents' plan files and event logs) and plan-dash (the Agent plans page's documents)";
+  };
+
+  # Built from the same module and vendored dependencies, which do not
+  # depend on the target; only the build is cross-compiled, so the shim's
+  # tests, which agent-tools runs, are not run here.
+  guestShim = buildGoModule {
+    pname = "lima-udp-shim";
+    inherit (agent-tools) version src vendorHash;
+    subPackages = ["cmd/lima-udp-shim"];
+    env.CGO_ENABLED = "0";
+    preBuild = "export GOOS=linux GOARCH=arm64";
+    ldflags = ["-s" "-w"];
+    doCheck = false;
+    meta.description = "The managed Lima VM's guest UDP shim, for linux/arm64";
   };
 in
   agent-tools

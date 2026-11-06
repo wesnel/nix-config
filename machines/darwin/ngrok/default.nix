@@ -48,6 +48,7 @@
           datadog.enable = true;
           parallels = true;
           lima = true;
+          limaDev.enable = true;
         };
 
         python.enable = true;
