@@ -94,9 +94,8 @@ func (o AskOptions) validate() ([]string, error) {
 	if o.Priority != "" && !oneOf(o.Priority, priorities) {
 		return nil, refusal.New("%q is not a priority. Pass `--priority A`, `B` or `C`", o.Priority)
 	}
-	if o.Kind != "" && !oneOf(o.Kind, QuestionKinds) {
-		return nil, refusal.New("%q is not a question's kind. Pass `--kind %s`, or no --kind for a plain question", o.Kind,
-			strings.Join(QuestionKinds, "` or `--kind "))
+	if err := o.checkKind(); err != nil {
+		return nil, err
 	}
 	if err := checkTitle("question", o.Question); err != nil {
 		return nil, err
@@ -193,6 +192,17 @@ func (o AskOptions) checkAlternatives() error {
 		if strings.TrimSpace(a) == "" {
 			return refusal.New("an alternative is empty. Pass each other answer as its own `--alternative 'one line'`")
 		}
+	}
+	return nil
+}
+
+func (o AskOptions) checkKind() error {
+	if o.Kind != "" && !oneOf(o.Kind, QuestionKinds) {
+		return refusal.New("%q is not a question's kind. Pass `--kind %s`, or no --kind for a plain question", o.Kind,
+			strings.Join(QuestionKinds, "` or `--kind "))
+	}
+	if o.Kind == "brag" && o.Answer != "" {
+		return refusal.New("a brag item's summary is the operator's to approve, so it is not settled as it is asked. Ask it without `--answer`, and leave it for the operator to answer through the questions skill")
 	}
 	return nil
 }

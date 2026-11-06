@@ -143,6 +143,36 @@ func TestOpenItems(t *testing.T) {
 		}
 	})
 
+	// A brag item waiting for the operator's approval is open as kind
+	// brag, which --kind brag keeps alone; once decided it is not open.
+	t.Run("a brag item", func(t *testing.T) {
+		c := testConfig(t)
+		p := newPlan(t, c, "brag")
+		for _, o := range []AskOptions{
+			{Question: "Keep the flag?", Recommendation: "no"},
+			{Question: "Made the loop twice as fast", Recommendation: "The loop takes half the time.", Kind: "brag"},
+			{Question: "Fixed the sync race", Recommendation: "Two hosts no longer lose plans.", Kind: "brag"},
+		} {
+			if _, err := p.Ask(o, day); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := p.Decide("Q3", DecideOptions{Answer: "approved"}, day); err != nil {
+			t.Fatal(err)
+		}
+		items, err := c.OpenItems(OpenFilter{}, later)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Join(shown(items), "; "); got != p.Name+" question Q1; "+p.Name+" brag Q2" {
+			t.Errorf("open %s", got)
+		}
+		items, _ = c.OpenItems(OpenFilter{Kind: "brag"}, later)
+		if len(items) != 1 || items[0].Item != "Q2" || items[0].Title != "Made the loop twice as fast" {
+			t.Errorf("brag %+v", items)
+		}
+	})
+
 	// Since keeps the items asked, discovered or handed back at or after
 	// it; a step's time is its first event, else its plan's.
 	t.Run("since", func(t *testing.T) {

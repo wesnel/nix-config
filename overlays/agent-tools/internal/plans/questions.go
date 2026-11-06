@@ -48,9 +48,11 @@ type Decision struct {
 }
 
 // QuestionKinds are the kinds a question's KIND property may name: retro
-// is a proposal of the retro skill's. They are stored in plans, so
-// renaming one means rewriting every plan that holds it.
-var QuestionKinds = []string{"retro"}
+// is a proposal of the retro skill's, and brag an item of the brag skill's,
+// its title the question and its summary the answer. Each is also a kind
+// of open item. They are stored in plans, so renaming one means rewriting
+// every plan that holds it.
+var QuestionKinds = []string{"retro", "brag"}
 
 var listItem = regexp.MustCompile(`^[-+] (.*)$`)
 
@@ -167,6 +169,9 @@ func QuestionsOrg(qs []Question) string {
 		fmt.Fprintf(&b, "- %s", q.ID)
 		if q.Priority != "" {
 			fmt.Fprintf(&b, " [#%s]", q.Priority)
+		}
+		if q.Kind != "" {
+			b.WriteString(" " + q.Kind)
 		}
 		fmt.Fprintf(&b, " :: %s", q.Question)
 		if q.Recommendation != "" {
