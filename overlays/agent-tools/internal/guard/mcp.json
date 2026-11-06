@@ -1,4 +1,12 @@
 {
+  "lima": {
+    "service": "Lima",
+    "servers": ["lima"],
+    "verify": "lima-mcp tools/list, tested against the server",
+    "codexPrompt": true,
+    "reads": ["lima_list"],
+    "confirms": ["lima_stop"]
+  },
   "parallels": {
     "service": "Parallels",
     "servers": ["parallels"],

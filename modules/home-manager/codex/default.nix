@@ -694,7 +694,7 @@ in {
         // optionalAttrs (pkgs.agent-tools.mcpTools.${name}.codexPrompt or false) {
           default_tools_approval_mode = "prompt";
         }
-        // optionalAttrs (name == "parallels") {
+        // optionalAttrs (elem name ["parallels" "lima"]) {
           tool_timeout_sec = 370;
         })
       mcpProxy.endpoints;
