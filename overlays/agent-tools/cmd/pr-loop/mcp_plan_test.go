@@ -94,7 +94,7 @@ func TestMCPPlan(t *testing.T) {
 		return strings.TrimSpace(string(got))
 	}
 	t.Run("section round trip", func(t *testing.T) {
-		goal := "- Keep literal prose.\nA second line with `code` and $(literal)."
+		goal := "- Keep literal prose.\nA second line with `code` and $(literal).\nBuilds on: the section tool.\nLikely next changes: none."
 		r := c.tool(t, "agent_plan_section", map[string]any{"worktree": f.repo, "plan": f.plan, "section": "Goal", "text": goal})
 		if r.isError || !strings.Contains(r.text, "exit 0") {
 			t.Fatalf("section: %s", r.text)

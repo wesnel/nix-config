@@ -229,7 +229,7 @@ func (f *fixture) addPart(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.setGoal(t, "P1", "Add the third line alone.")
+	f.setGoal(t, "P1", "Add the third line alone.\nBuilds on: the first two lines.\nLikely next changes: none.")
 	return created.File
 }
 
@@ -902,7 +902,7 @@ func TestGoalRedacted(t *testing.T) {
 	f := setUp(t, true)
 	t.Setenv("FAKE_CODEX", "none")
 	token := "ghp_" + strings.Repeat("d", 36)
-	f.setGoal(t, "", "Grow the code; the CI token "+token+" stays out.")
+	f.setGoal(t, "", "Grow the code; the CI token "+token+" stays out.\nBuilds on: nothing found.\nLikely next changes: none.")
 	if code, _, stderr := freshReview(t, "--plan", f.plan, f.base+"..HEAD"); code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}

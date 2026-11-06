@@ -114,11 +114,19 @@ no command makes goes in your report for the operator.
   the new value with the reason.
 - `** Goal`: the goal and what is not this change's job, and nothing of how
   the work went. It is the fresh review's goal statement, word for word:
-  `agent-plan goal PLAN [--part P1]` prints it. It ends with a
-  `Likely next changes:` line: one or two concrete changes expected after
-  this one, not speculation, which the design review of the plan checks
-  would each be a local edit. It holds text, no headings. Write it whole
-  with `agent-plan section PLAN Goal --text TEXT [--part P1]`. Load the
+  `agent-plan goal PLAN [--part P1]` prints it. It holds text, no
+  headings, and these two lines, each starting a line with its label;
+  `agent-plan section` refuses a plan's or a part's Goal without either:
+  - `Builds on:` what already does the job, or part of it (code, a skill
+    section, a tool, an agent, another plan), and how this change extends
+    it; or that nothing was found, and where the search looked. Search by
+    what the thing does, not only by its name.
+  - `Likely next changes:` one or two concrete changes expected after
+    this one, not speculation, which the design review of the plan checks
+    would each be a local edit.
+
+  Write it whole with
+  `agent-plan section PLAN Goal --text TEXT [--part P1]`. Load the
   `design` skill before writing the steps: its principles and checks are
   what the design review checks them against.
 - `** Steps`: `*** TODO <step>` headings with `:CUSTOM_ID: S1`, `S2`…; a part's
