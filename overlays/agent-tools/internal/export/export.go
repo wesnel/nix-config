@@ -12,7 +12,7 @@
 // the link; of the log, only event kinds and times. No other property, section, drawer
 // or log text is read into a document. Outside the plans directory, only
 // the newest digests are read, whole, from digests/ in the notes
-// repository, and for each pull request GitHub's status lists, this host's
+// repository, and parsed (digest.go), and for each pull request GitHub's status lists, this host's
 // review records of it, of which only counts and the diagrams' Mermaid
 // leave it (review.go). Free text is stripped of control
 // and formatting characters, has known secret shapes redacted and is
@@ -238,10 +238,61 @@ type Today struct {
 	Digests []Digest `json:"digests"`
 }
 
-// Digest is one digest: Kind is "demo", and Text its Org text.
+// Digest is one digest: Kind is "demo", and Text its Org text, cut to
+// digestCap. The rest is the digest parsed in the demo digest's format
+// (digest.go), each empty where no level-1 heading has a PR or PLAN
+// property: Summary is the text before the first change, Changes the
+// changes, and Dropped what the parse left out, each with why.
 type Digest struct {
-	Kind string `json:"kind"`
-	Text string `json:"text"`
+	Kind    string    `json:"kind"`
+	Text    string    `json:"text"`
+	Summary string    `json:"summary"`
+	Changes []Change  `json:"changes"`
+	Dropped []Dropped `json:"dropped"`
+}
+
+// Change is a level-1 heading of a digest: its title; the pull request
+// its PR property names, Repo "" and Number 0 where it names none; the
+// text that comes before no step; and its steps, diagrams and https links.
+type Change struct {
+	Title    string          `json:"title"`
+	Repo     string          `json:"repo"`
+	Number   int             `json:"number"`
+	Summary  string          `json:"summary"`
+	Steps    []DemoStep      `json:"steps"`
+	Diagrams []DigestDiagram `json:"diagrams"`
+	Links    []DigestLink    `json:"links"`
+}
+
+// DemoStep is a verified demo step: the text just before it, the command
+// of its sh block, and the result of the example block after it, "" where
+// none follows.
+type DemoStep struct {
+	Text    string `json:"text"`
+	Command string `json:"command"`
+	Result  string `json:"result"`
+}
+
+// DigestDiagram is a mermaid block with its caption; its source is in the
+// grammar diagram.ValidSource takes.
+type DigestDiagram struct {
+	Caption string `json:"caption"`
+	Source  string `json:"source"`
+}
+
+// DigestLink is an Org link to an https URL, such as a recording's or a
+// screenshot's, with its caption, the URL itself where it has none.
+type DigestLink struct {
+	URL     string `json:"url"`
+	Caption string `json:"caption"`
+}
+
+// Dropped is what a digest's parse left out: the line it starts on, 0 for
+// the whole file, what it is, and why.
+type Dropped struct {
+	Line int    `json:"line"`
+	What string `json:"what"`
+	Why  string `json:"why"`
 }
 
 // Export is one export's documents. Failed are the IDs of plans found but
@@ -335,12 +386,12 @@ func TodayOf(c plans.Config, now time.Time) (Today, error) {
 			if !f.day.Equal(newest) || f.kind != kind {
 				continue
 			}
-			data, err := readRegular(f.file, maxDigestFile)
+			data, err := readRegular(f.file, maxDigestFile+1)
 			if err != nil {
 				errs = append(errs, err)
 				continue
 			}
-			t.Digests = append(t.Digests, Digest{Kind: kind, Text: text(strings.TrimSpace(string(data)), digestCap)})
+			t.Digests = append(t.Digests, digestOf(kind, data))
 		}
 	}
 	if len(t.Digests) > 0 {
