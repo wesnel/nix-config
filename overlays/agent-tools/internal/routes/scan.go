@@ -3,6 +3,7 @@ package routes
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"maps"
 	"path"
@@ -142,23 +143,23 @@ type Route struct {
 // Scan routes each commit of base..tip, merges left out, in the repository
 // at top, by rules: by the paths it changes and the lines it adds or
 // removes. Routes come in name order.
-func Scan(top, base, tip string, rules []Rule) ([]Route, error) {
+func Scan(ctx context.Context, top, base, tip string, rules []Rule) ([]Route, error) {
 	cs, err := compile(rules)
 	if err != nil {
 		return nil, err
 	}
-	out, err := git.Run("-C", top, "rev-list", "--reverse", "--no-merges", base+".."+tip)
+	out, err := git.In(ctx).Run("-C", top, "rev-list", "--reverse", "--no-merges", base+".."+tip)
 	if err != nil {
 		return nil, err
 	}
 	found := map[string]*Route{}
 	for _, commit := range strings.Fields(out) {
-		files, err := changes(top, commit)
+		files, err := changes(ctx, top, commit)
 		if err != nil {
 			return nil, err
 		}
 		for _, c := range cs {
-			if !matches(files, c) && !changedMatch(top, commit, files, c) {
+			if !matches(files, c) && !changedMatch(ctx, top, commit, files, c) {
 				continue
 			}
 			r := found[c.Route]
@@ -231,7 +232,7 @@ func matches(files map[string][]string, c compiled) bool {
 
 // changedMatch reports whether c's Changed takes the change commit, in the
 // repository at top, makes to one of files that c's paths match.
-func changedMatch(top, commit string, files map[string][]string, c compiled) bool {
+func changedMatch(ctx context.Context, top, commit string, files map[string][]string, c compiled) bool {
 	if c.Changed == nil {
 		return false
 	}
@@ -239,8 +240,8 @@ func changedMatch(top, commit string, files map[string][]string, c compiled) boo
 		if len(c.paths) > 0 && !slices.ContainsFunc(c.paths, func(re *regexp.Regexp) bool { return re.MatchString(file) }) {
 			continue
 		}
-		old, _ := git.Bytes(nil, "-C", top, "cat-file", "blob", commit+"^:"+file)
-		next, _ := git.Bytes(nil, "-C", top, "cat-file", "blob", commit+":"+file)
+		old, _ := git.In(ctx).Bytes(nil, "-C", top, "cat-file", "blob", commit+"^:"+file)
+		next, _ := git.In(ctx).Bytes(nil, "-C", top, "cat-file", "blob", commit+":"+file)
 		if c.Changed(string(old), string(next)) {
 			return true
 		}
@@ -253,8 +254,8 @@ func changedMatch(top, commit string, files map[string][]string, c compiled) boo
 // The patch's headers quote some paths, so its sections are matched to
 // the NUL-separated raw list by order instead: one section for each
 // change, two for a change of type.
-func changes(top, commit string) (map[string][]string, error) {
-	raw, err := git.Bytes(nil, "-C", top, "diff-tree", "-r", "-z", "--raw", "--no-commit-id", "--no-renames", "--root", commit)
+func changes(ctx context.Context, top, commit string) (map[string][]string, error) {
+	raw, err := git.In(ctx).Bytes(nil, "-C", top, "diff-tree", "-r", "-z", "--raw", "--no-commit-id", "--no-renames", "--root", commit)
 	if err != nil {
 		return nil, err
 	}
@@ -269,7 +270,7 @@ func changes(top, commit string) (map[string][]string, error) {
 			sections = append(sections, path)
 		}
 	}
-	patch, err := git.Bytes(nil, "-C", top, "diff-tree", "-r", "-p", "-U0", "--no-commit-id",
+	patch, err := git.In(ctx).Bytes(nil, "-C", top, "diff-tree", "-r", "-p", "-U0", "--no-commit-id",
 		"--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--root", commit)
 	if err != nil {
 		return nil, err
@@ -351,8 +352,8 @@ var sharedMarkers = map[string]*regexp.Regexp{
 // that hold tests and code together at tip, in path order: red-check runs
 // a commit's test files without the rest of it, which it cannot do for
 // these, so their tests are the reviewer's to judge.
-func SharedFiles(top, base, tip string) ([]string, error) {
-	names, err := git.Bytes(nil, "-C", top, "diff", "--name-only", "-z", "--no-renames", "--diff-filter=d", base, tip)
+func SharedFiles(ctx context.Context, top, base, tip string) ([]string, error) {
+	names, err := git.In(ctx).Bytes(nil, "-C", top, "diff", "--name-only", "-z", "--no-renames", "--diff-filter=d", base, tip)
 	if err != nil {
 		return nil, err
 	}
@@ -362,7 +363,7 @@ func SharedFiles(top, base, tip string) ([]string, error) {
 		if f == "" || marker == nil {
 			continue
 		}
-		data, err := git.Bytes(nil, "-C", top, "cat-file", "blob", tip+":"+f)
+		data, err := git.In(ctx).Bytes(nil, "-C", top, "cat-file", "blob", tip+":"+f)
 		if err == nil && marker.Match(data) {
 			out = append(out, f)
 		}

@@ -15,6 +15,7 @@ import (
 )
 
 func TestMCPPlan(t *testing.T) {
+	t.Parallel()
 	bin := t.TempDir()
 	build := exec.CommandContext(t.Context(), "go", "build", "-o", bin+string(filepath.Separator), ".", "../agent-plan")
 	if out, err := build.CombinedOutput(); err != nil {

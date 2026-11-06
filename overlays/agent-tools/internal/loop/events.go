@@ -14,21 +14,21 @@ import (
 
 // logEvent logs e, an action of pr-loop's that has happened, in the plan of
 // the session running it: the plan plans.Config.Locate finds for the
-// harness's session or this worktree. A failure is reported on stderr and
-// never fails the action.
-func logEvent(e plans.Event) {
-	c, err := plans.Load(env.Process())
+// harness's session or this worktree, as ctx's Env names them. A failure is
+// reported on stderr and never fails the action.
+func logEvent(ctx context.Context, e plans.Event) {
+	c, err := plans.Load(env.From(ctx))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "pr-loop: %s is not logged: %v\n", e.Kind, err)
 		return
 	}
-	top, _ := git.Run("rev-parse", "--show-toplevel")
-	harness, id := plans.EnvSession(env.Process())
+	top, _ := git.In(ctx).Run("rev-parse", "--show-toplevel")
+	harness, id := plans.EnvSession(env.From(ctx))
 	session := ""
 	if id != "" {
 		session = harness + ":" + id
 	}
-	p, part, ok := c.Locate(context.Background(), session, top)
+	p, part, ok := c.Locate(context.WithoutCancel(ctx), session, top)
 	if !ok {
 		return
 	}

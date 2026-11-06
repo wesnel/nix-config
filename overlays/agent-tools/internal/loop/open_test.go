@@ -7,6 +7,11 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/wesnel/agent-tools/internal/env"
+	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
 // fakeOpen answers what Open asks GitHub, for the viewer "me" in o/r with
@@ -20,6 +25,28 @@ type fakeOpen struct {
 	authors map[string]string
 	failPR  bool
 	calls   []string
+	// dir is the checkout, and e the Env Open runs in there, which a test
+	// changes with set and bake.
+	dir string
+	e   env.Env
+	// verifyTimeout, when set, bounds each check of the operator's
+	// signatures.
+	verifyTimeout time.Duration
+}
+
+// ctx is the test's context with f's Env, git aimed at f's checkout, and f
+// for GitHub.
+func (f *fakeOpen) ctx(t *testing.T) context.Context {
+	return withOutside(git.At(env.With(t.Context(), f.e), f.dir), outside{graphQL: f.graphQL, verifyTimeout: f.verifyTimeout})
+}
+
+// set sets vars, each "NAME=value", on f's Env.
+func (f *fakeOpen) set(vars ...string) { f.e = f.e.Set(vars...) }
+
+// bake bakes configHome and stateHome in for the code under test, through
+// f's Env, which the loop reads hostpaths from. Empty ones bake nothing in.
+func (f *fakeOpen) bake(configHome, stateHome string) {
+	f.set(hostpaths.TestBaked(configHome, stateHome)...)
 }
 
 func (f *fakeOpen) graphQL(_ context.Context, query string, vars map[string]any, out any) error {
@@ -73,12 +100,10 @@ func (f *fakeOpen) graphQL(_ context.Context, query string, vars map[string]any,
 // pushedBranch makes a checkout of o/r, whose operator is t@e, with branch
 // feat one commit "Add feat" past main, which GitHub has at that tip as the
 // checkout last fetched it, with no pull request; it returns the fake and
-// the checkout.
+// the checkout. Its Env has a state directory of the test's own, which the
+// signature checks of internal/signpass and operatorkey read.
 func pushedBranch(t *testing.T) (*fakeOpen, string) {
 	t.Helper()
-	// The signature checks of internal/signpass and operatorkey read the
-	// state directory from the process.
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	dir := t.TempDir()
 	gitIn(t, dir, "init", "-q", "-b", "main")
 	gitIn(t, dir, "remote", "add", "origin", "https://github.com/o/r.git")
@@ -87,12 +112,9 @@ func pushedBranch(t *testing.T) (*fakeOpen, string) {
 	gitIn(t, dir, "update-ref", "refs/remotes/origin/main", "main")
 	gitIn(t, dir, "switch", "-qc", "feat")
 	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "Add feat")
-	useDir(t, dir)
-	f := &fakeOpen{heads: map[string]string{"main": gitIn(t, dir, "rev-parse", "main")}, prs: map[string]int{}}
+	f := &fakeOpen{heads: map[string]string{"main": gitIn(t, dir, "rev-parse", "main")}, prs: map[string]int{},
+		dir: dir, e: env.Process().Set("XDG_STATE_HOME=" + t.TempDir())}
 	published(t, f, dir, "feat")
-	old := graphQL
-	graphQL = f.graphQL
-	t.Cleanup(func() { graphQL = old })
 	return f, dir
 }
 
@@ -109,25 +131,29 @@ func published(t *testing.T, f *fakeOpen, dir, branch string) {
 // has at the local tip, without creating or ever deleting that branch, and
 // only when its commits are the operator's.
 func TestOpenPushed(t *testing.T) {
+	t.Parallel()
 	t.Run("missing local branch preserves lookup error", func(t *testing.T) {
+		t.Parallel()
 		f, _ := pushedBranch(t)
-		_, err := Open(t.Context(), "gone", "", "Add feat", "Why it is needed.", false)
+		_, err := Open(f.ctx(t), "gone", "", "Add feat", "Why it is needed.", false)
 		var command *exec.ExitError
 		if !errors.As(err, &command) || len(f.calls) != 0 {
 			t.Fatalf("missing local branch: %v, mutations %v", err, f.calls)
 		}
 	})
 	t.Run("refused/unsigned matching author", func(t *testing.T) {
+		t.Parallel()
 		f, _ := pushedBranch(t)
-		_, err := Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", false)
+		_, err := Open(f.ctx(t), "feat", "", "Add feat", "Why it is needed.", false)
 		var refusal Refusal
 		if !errors.As(err, &refusal) || len(f.calls) != 0 {
 			t.Fatalf("unsigned branch with matching author: error %v, mutations %v", err, f.calls)
 		}
 	})
 	t.Run("opens it", func(t *testing.T) {
+		t.Parallel()
 		f, _ := pushedOperatorBranch(t)
-		result, err := Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", false)
+		result, err := Open(f.ctx(t), "feat", "", "Add feat", "Why it is needed.", false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -141,8 +167,9 @@ func TestOpenPushed(t *testing.T) {
 	})
 
 	t.Run("dry run", func(t *testing.T) {
+		t.Parallel()
 		f, _ := pushedOperatorBranch(t)
-		result, err := Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", true)
+		result, err := Open(f.ctx(t), "feat", "", "Add feat", "Why it is needed.", true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -153,9 +180,10 @@ func TestOpenPushed(t *testing.T) {
 	})
 
 	t.Run("a failed pull request leaves the branch", func(t *testing.T) {
+		t.Parallel()
 		f, _ := pushedOperatorBranch(t)
 		f.failPR = true
-		if _, err := Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", false); err == nil || strings.Contains(err.Error(), "deleted") {
+		if _, err := Open(f.ctx(t), "feat", "", "Add feat", "Why it is needed.", false); err == nil || strings.Contains(err.Error(), "deleted") {
 			t.Errorf("a failed pull request: %v", err)
 		}
 		if got := strings.Join(f.calls, " "); got != "createPullRequest" {
@@ -164,10 +192,11 @@ func TestOpenPushed(t *testing.T) {
 	})
 
 	t.Run("its message is still checked", func(t *testing.T) {
+		t.Parallel()
 		f, dir := pushedBranch(t)
 		gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "Add x.")
 		published(t, f, dir, "feat")
-		_, err := Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", false)
+		_, err := Open(f.ctx(t), "feat", "", "Add feat", "Why it is needed.", false)
 		if _, ok := err.(Refusal); !ok || !strings.Contains(err.Error(), "Add x.") || len(f.calls) != 0 {
 			t.Errorf("a pushed commit ending in a period: %v, calls %v", err, f.calls)
 		}
@@ -191,9 +220,10 @@ func TestOpenPushed(t *testing.T) {
 	}
 	for name, c := range refused {
 		t.Run("refused/"+name, func(t *testing.T) {
+			t.Parallel()
 			f, dir := pushedOperatorBranch(t)
 			c.change(t, f, dir)
-			_, err := Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", false)
+			_, err := Open(f.ctx(t), "feat", "", "Add feat", "Why it is needed.", false)
 			var policy Refusal
 			if !errors.As(err, &policy) || !strings.Contains(err.Error(), c.says) || len(f.calls) != 0 {
 				t.Errorf("%s: %v, calls %v", name, err, f.calls)

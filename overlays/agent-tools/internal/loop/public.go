@@ -4,17 +4,16 @@ import (
 	"context"
 	"strings"
 
-	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/publictext"
 )
 
 // checkPublic refuses text, what a command would post to GitHub as what,
 // where it names what publictext finds, knowing threads as the review
 // threads its author has seen. then is what to do once it is rewritten.
-func checkPublic(what, text string, threads []string, then string) error {
-	ctx := publictext.In(context.Background(), git.Dir)
-	ctx.Threads = append(ctx.Threads, threads...)
-	if reason := publictext.Refusal(what, publictext.Check(text, ctx), then); reason != "" {
+func checkPublic(ctx context.Context, what, text string, threads []string, then string) error {
+	known := publictext.In(ctx, "")
+	known.Threads = append(known.Threads, threads...)
+	if reason := publictext.Refusal(what, publictext.Check(text, known), then); reason != "" {
 		return refuse("%s", reason)
 	}
 	return nil
@@ -36,7 +35,7 @@ func checkReplies(ctx context.Context, slug string, plan []PlannedReply, checks 
 	}
 	var reasons []string
 	for i, r := range plan {
-		if err := checkPublic("the reply to "+r.Thread, r.Body, threads[checks[i].pr], "run `pr-loop reply --from` again"); err != nil {
+		if err := checkPublic(ctx, "the reply to "+r.Thread, r.Body, threads[checks[i].pr], "run `pr-loop reply --from` again"); err != nil {
 			reasons = append(reasons, err.Error())
 		}
 	}

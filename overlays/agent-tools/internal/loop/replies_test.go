@@ -56,7 +56,9 @@ func TestParseReplies(t *testing.T) {
 }
 
 func TestReplyAll(t *testing.T) {
+	t.Parallel()
 	t.Run("replies and resolves", func(t *testing.T) {
+		t.Parallel()
 		f := fakeRepo(t)
 		plan, err := ParseReplies(replyFile)
 		if err != nil {
@@ -85,6 +87,7 @@ func TestReplyAll(t *testing.T) {
 	})
 
 	t.Run("outside a bots-mode loop", func(t *testing.T) {
+		t.Parallel()
 		f := fakeRepo(t)
 		if _, err := ReplyAll(f.ctx, []PlannedReply{{Thread: "bot1", Body: "a"}}); !refused(err) || len(f.replies) != 0 {
 			t.Errorf("replied outside a loop: %v, %v", err, f.replies)
@@ -92,6 +95,7 @@ func TestReplyAll(t *testing.T) {
 	})
 
 	t.Run("checks every thread first", func(t *testing.T) {
+		t.Parallel()
 		f := fakeRepo(t)
 		ctx := f.in("bots")
 		plan := []PlannedReply{{Thread: "bot1", Body: "a"}, {Thread: "theirs", Body: "b"}, {Thread: "bot2", Body: "c"}, {Thread: "closed", Body: "d"}}
@@ -109,6 +113,7 @@ func TestReplyAll(t *testing.T) {
 	})
 
 	t.Run("a reply file naming a person's thread", func(t *testing.T) {
+		t.Parallel()
 		f := fakeRepo(t)
 		if _, err := ReplyAll(f.in("bots"), []PlannedReply{{Thread: "bot1", Body: "a"}, {Thread: "human1", Body: "b"}}); !refused(err) {
 			t.Errorf("a reply file reached a person: %v", err)
@@ -119,6 +124,7 @@ func TestReplyAll(t *testing.T) {
 	})
 
 	t.Run("reports where it stopped", func(t *testing.T) {
+		t.Parallel()
 		f := fakeRepo(t)
 		f.failReply = "bot2"
 		_, err := ReplyAll(f.in("bots"), []PlannedReply{{Thread: "bot1", Body: "a", Resolve: true}, {Thread: "bot2", Body: "b"}, {Thread: "answered1", Body: "c"}})

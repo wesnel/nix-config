@@ -8,22 +8,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
 // loopPlan makes a plan, in a plans directory of the test's own, that
 // names worktrees and branches and the Claude Code session the test runs
-// pr-loop in: the worktrees are main checkouts, which pick no plan.
-func loopPlan(t *testing.T, worktrees, branches []string) plans.Plan {
+// pr-loop in: the worktrees are main checkouts, which pick no plan. It
+// returns the plan and the variables, for pr-loop's Env, that name its
+// config and that session.
+func loopPlan(t *testing.T, worktrees, branches []string) (plans.Plan, []string) {
 	t.Helper()
-	t.Setenv("CLAUDE_CODE_SESSION_ID", "s-loop")
 	root, _ := filepath.EvalSymlinks(t.TempDir())
 	c := plans.Config{Dir: filepath.Join(root, "agents"), Host: "box"}
 	config := filepath.Join(root, "config.json")
 	data, _ := json.Marshal(map[string]any{"plans": c})
 	os.WriteFile(config, data, 0o644)
-	t.Setenv("AGENT_TOOLS_CONFIG", config)
 	for i, w := range worktrees {
 		worktrees[i], _ = filepath.EvalSymlinks(w)
 	}
@@ -36,7 +35,7 @@ func loopPlan(t *testing.T, worktrees, branches []string) plans.Plan {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return p
+	return p, []string{"CLAUDE_CODE_SESSION_ID=s-loop", "AGENT_TOOLS_CONFIG=" + config}
 }
 
 // loopEvents are the kind and summary of each event in p's log but the
@@ -67,10 +66,12 @@ func expectEvents(t *testing.T, p plans.Plan, want ...string) {
 // whether or not the session has hooks: the replies, resolutions and CI
 // outcomes.
 func TestLoopEvents(t *testing.T) {
+	t.Parallel()
 	t.Run("reply and resolve", func(t *testing.T) {
+		t.Parallel()
 		f := fakeRepo(t)
-		ctx := f.in("bots")
-		p := loopPlan(t, []string{git.Dir}, nil)
+		p, vars := loopPlan(t, []string{f.dir}, nil)
+		ctx := withEnv(f.in("bots"), vars...)
 		if _, err := Reply(ctx, "bot1", "done"); err != nil {
 			t.Fatal(err)
 		}
@@ -84,10 +85,11 @@ func TestLoopEvents(t *testing.T) {
 	})
 
 	t.Run("CI", func(t *testing.T) {
+		t.Parallel()
 		f := ciRepo(t)
 		f.checks["a1"] = passing
-		p := loopPlan(t, []string{git.Dir}, nil)
-		if _, _, err := WaitCI(t.Context(), []string{"1"}, "", time.Hour, time.Minute, 3*time.Minute); err != nil {
+		p, vars := loopPlan(t, []string{f.dir}, nil)
+		if _, _, err := WaitCI(withEnv(f.ctx, vars...), []string{"1"}, "", time.Hour, time.Minute, 3*time.Minute); err != nil {
 			t.Fatal(err)
 		}
 		expectEvents(t, p, "ci-waited: passed: #1")

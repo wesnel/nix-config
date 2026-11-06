@@ -59,13 +59,13 @@ func overlapSection(ctx context.Context, r *span) string {
 	deadline := s.now().Add(overlapBudget)
 	loop := r.env.Get("PR_LOOP_SESSION") != ""
 	g := r.git()
-	base := routes.MergeBase(r.top, r.tip)
+	base := routes.MergeBase(ctx, r.top, r.tip)
 	if base == "" {
 		base = r.base
 	}
 	changed := lines(r, "diff", "--name-only", "--no-renames", base, r.tip)
 	current, _ := g.Run("-C", r.top, "branch", "--show-current")
-	defaultRef := routes.DefaultRef(r.top)
+	defaultRef := routes.DefaultRef(ctx, r.top)
 
 	// Finding the candidates counts against the budget as checking them
 	// does: each one past it is left unchecked.

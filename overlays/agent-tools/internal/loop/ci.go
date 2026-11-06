@@ -223,12 +223,6 @@ type CIWait struct {
 	PRs    []*CI  `json:"prs"`
 }
 
-var (
-	// now and sleep are replaced by tests.
-	now   = time.Now
-	sleep = time.Sleep
-)
-
 // WaitCI polls until CI has finished on every PR's expected head, or the
 // timeout passes. sha names the commit a single PR's head is expected to be.
 // A head that has no checks grace after WaitCI first sees it as the PR's
@@ -244,7 +238,7 @@ func WaitCI(ctx context.Context, args []string, sha string, timeout, interval, g
 		if len(numbers) != 1 {
 			return nil, false, refuse("--sha names one head, so it takes exactly one PR; run `pr-loop wait ci --sha REV PR` for each")
 		}
-		if want, err = fullOid(sha); err != nil {
+		if want, err = fullOid(ctx, sha); err != nil {
 			return nil, false, err
 		}
 	}
@@ -253,7 +247,7 @@ func WaitCI(ctx context.Context, args []string, sha string, timeout, interval, g
 		at  time.Time
 	}
 	seen := map[int]sighting{}
-	deadline := now().Add(timeout)
+	deadline := now(ctx).Add(timeout)
 	for {
 		out := &CIWait{Result: "passed", PRs: []*CI{}}
 		settled, noChecks := true, false
@@ -266,9 +260,9 @@ func WaitCI(ctx context.Context, args []string, sha string, timeout, interval, g
 			finished := ci.finished()
 			if ci.State != "awaitingHead" {
 				if s, ok := seen[n]; !ok || s.oid != ci.HeadOid {
-					seen[n] = sighting{ci.HeadOid, now()}
+					seen[n] = sighting{ci.HeadOid, now(ctx)}
 				}
-				if ci.State == "none" && now().Sub(seen[n].at) >= grace {
+				if ci.State == "none" && now(ctx).Sub(seen[n].at) >= grace {
 					finished, noChecks = true, true
 				}
 			}
@@ -284,15 +278,15 @@ func WaitCI(ctx context.Context, args []string, sha string, timeout, interval, g
 		if noChecks && out.Result == "passed" {
 			out.Result = "noChecks"
 		}
-		left := deadline.Sub(now())
+		left := deadline.Sub(now(ctx))
 		if settled || left <= 0 {
 			if !settled {
 				out.Result = "timedOut"
 			}
-			logEvent(plans.Event{Kind: "ci-waited", Summary: out.Result + ": " + prList(numbers)})
+			logEvent(ctx, plans.Event{Kind: "ci-waited", Summary: out.Result + ": " + prList(numbers)})
 			return out, settled, nil
 		}
-		sleep(min(interval, left))
+		sleep(ctx, min(interval, left))
 	}
 }
 
@@ -300,11 +294,11 @@ var hexOid = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 // fullOid resolves a revision to a full commit ID, accepting a full ID this
 // checkout lacks.
-func fullOid(rev string) (string, error) {
+func fullOid(ctx context.Context, rev string) (string, error) {
 	if hexOid.MatchString(rev) {
 		return rev, nil
 	}
-	if oid, err := git.Run("rev-parse", "--verify", "-q", rev+"^{commit}"); err == nil {
+	if oid, err := git.In(ctx).Run("rev-parse", "--verify", "-q", rev+"^{commit}"); err == nil {
 		return oid, nil
 	}
 	return "", refuse("%s is not a commit here; pass the full 40-character commit ID as `--sha`", rev)
@@ -363,7 +357,7 @@ func ciTargets(ctx context.Context, args []string) (string, []int, error) {
 // targetsIn is ciTargets in repo.
 func targetsIn(ctx context.Context, repo *Repo, args []string) ([]int, error) {
 	if len(args) == 0 {
-		branch, err := currentBranch()
+		branch, err := currentBranch(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -427,13 +421,13 @@ func checkPR(ctx context.Context, repo *Repo, number int) error {
 // branchPR finds the open PR by the viewer whose head is local's upstream
 // branch, when that is on repo, or else the branch named local on GitHub.
 func branchPR(ctx context.Context, repo *Repo, local string) (int, error) {
-	remotes, err := githubRemotes()
+	remotes, err := githubRemotes(ctx)
 	if err != nil {
 		return 0, err
 	}
 	head := local
-	remote, _ := git.Run("config", "--get", "branch."+local+".remote")
-	merge, _ := git.Run("config", "--get", "branch."+local+".merge")
+	remote, _ := git.In(ctx).Run("config", "--get", "branch."+local+".remote")
+	merge, _ := git.In(ctx).Run("config", "--get", "branch."+local+".merge")
 	if remotes[remote] == repo.Slug && strings.HasPrefix(merge, "refs/heads/") {
 		head = strings.TrimPrefix(merge, "refs/heads/")
 	}

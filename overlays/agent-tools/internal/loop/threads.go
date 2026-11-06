@@ -335,7 +335,7 @@ func postReply(ctx context.Context, pr int, id, body string) (string, error) {
 		addPullRequestReviewThreadReply(input: $input) { comment { url } } }`,
 		map[string]any{"input": map[string]any{"pullRequestReviewThreadId": id, "body": body}}, &data)
 	if err == nil {
-		logEvent(plans.Event{Kind: "replied", Summary: fmt.Sprintf("in thread %s on #%d", id, pr)})
+		logEvent(ctx, plans.Event{Kind: "replied", Summary: fmt.Sprintf("in thread %s on #%d", id, pr)})
 	}
 	return data.AddPullRequestReviewThreadReply.Comment.URL, err
 }
@@ -345,7 +345,7 @@ func resolveThread(ctx context.Context, pr int, id string) error {
 	err := graphQL(ctx, `mutation($id: ID!) { resolveReviewThread(input: { threadId: $id }) { thread { isResolved } } }`,
 		map[string]any{"id": id}, nil)
 	if err == nil {
-		logEvent(plans.Event{Kind: "resolved", Summary: fmt.Sprintf("thread %s on #%d", id, pr)})
+		logEvent(ctx, plans.Event{Kind: "resolved", Summary: fmt.Sprintf("thread %s on #%d", id, pr)})
 	}
 	return err
 }
@@ -371,7 +371,7 @@ func Reply(ctx context.Context, id, body string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := checkPublic("the reply", body, append(threads, id), "run `pr-loop reply` again"); err != nil {
+	if err := checkPublic(ctx, "the reply", body, append(threads, id), "run `pr-loop reply` again"); err != nil {
 		return nil, err
 	}
 	url, err := postReply(ctx, check.pr, id, body)

@@ -3,9 +3,7 @@ package loop
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"testing"
 
@@ -64,16 +62,16 @@ func mergeRepo(t *testing.T, answers string) (*fakeStacks, *fakeTTY) {
 		f.prs[n].draft = false
 	}
 	f.stacks[10] = []int{1, 2, 3, 4}
-	old := mergeREST
-	mergeREST = f.mergeAsync
-	t.Cleanup(func() { mergeREST = old })
-	return f, useTTY(t, answers)
+	f.ctx = alsoOutside(f.ctx, func(o *outside) { o.mergeREST = f.mergeAsync })
+	return f, useTTY(&f.ctx, answers)
 }
 
 func TestMerge(t *testing.T) {
+	t.Parallel()
 	t.Run("the top and every open PR below it", func(t *testing.T) {
+		t.Parallel()
 		f, tty := mergeRepo(t, "y\n")
-		got, err := Merge(t.Context(), "3", "")
+		got, err := Merge(f.ctx, "3", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -103,9 +101,10 @@ func TestMerge(t *testing.T) {
 	})
 
 	t.Run("a merged PR below is left out", func(t *testing.T) {
+		t.Parallel()
 		f, tty := mergeRepo(t, "y\n")
 		f.prs[1].state = "MERGED"
-		got, err := Merge(t.Context(), "c", "squash")
+		got, err := Merge(f.ctx, "c", "squash")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -118,8 +117,9 @@ func TestMerge(t *testing.T) {
 	})
 
 	t.Run("a PR in no stack", func(t *testing.T) {
+		t.Parallel()
 		f, _ := mergeRepo(t, "y\n")
-		got, err := Merge(t.Context(), "5", "")
+		got, err := Merge(f.ctx, "5", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -129,8 +129,9 @@ func TestMerge(t *testing.T) {
 	})
 
 	t.Run("not confirmed", func(t *testing.T) {
+		t.Parallel()
 		f, _ := mergeRepo(t, "n\n")
-		got, err := Merge(t.Context(), "3", "")
+		got, err := Merge(f.ctx, "3", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -153,9 +154,10 @@ func TestMerge(t *testing.T) {
 		},
 	} {
 		t.Run("refused/"+name, func(t *testing.T) {
+			t.Parallel()
 			f, tty := mergeRepo(t, "y\n")
 			target, method := setup(f)
-			if _, err := Merge(t.Context(), target, method); !refusedWell(err) {
+			if _, err := Merge(f.ctx, target, method); !refusedWell(err) {
 				t.Errorf("%s: %v", name, err)
 			}
 			if len(f.writes) != 0 || tty.shown.Len() != 0 {
@@ -165,18 +167,20 @@ func TestMerge(t *testing.T) {
 	}
 
 	t.Run("refused/no terminal", func(t *testing.T) {
+		t.Parallel()
 		f, _ := mergeRepo(t, "")
-		openTTY = func() (io.ReadWriteCloser, error) { return nil, errors.New("device not configured") }
-		if _, err := Merge(t.Context(), "3", ""); !refusedWell(err) || len(f.writes) != 0 {
+		noTTY(&f.ctx)
+		if _, err := Merge(f.ctx, "3", ""); !refusedWell(err) || len(f.writes) != 0 {
 			t.Errorf("no terminal: %v, writes %v", err, f.writes)
 		}
 	})
 
 	// GitHub's own refusal is reported as a failure, not a policy refusal.
 	t.Run("GitHub's 409", func(t *testing.T) {
+		t.Parallel()
 		f, _ := mergeRepo(t, "y\n")
 		f.fail = &gh.StatusError{Code: 409}
-		if _, err := Merge(t.Context(), "3", ""); err == nil || refused(err) || len(f.writes) != 1 {
+		if _, err := Merge(f.ctx, "3", ""); err == nil || refused(err) || len(f.writes) != 1 {
 			t.Errorf("a 409: %v, writes %v", err, f.writes)
 		}
 	})

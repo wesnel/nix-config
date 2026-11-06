@@ -443,7 +443,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 
 	// Without --reviewer, prefer one general review by the other family.
 	explicit := len(reviewers) > 0
-	scanned := routeChange(r, nil, stderr)
+	scanned := routeChange(ctx, r, nil, stderr)
 	chosen := slices.Clone([]string(reviewers))
 	if !explicit {
 		chosen = []string{generalReviewer(r.env)}
@@ -527,7 +527,7 @@ func typeInputs(ctx context.Context, base inputs, t string, tests *adequacy, log
 		return in, nil
 	}
 	if ty.focus == "" {
-		in.redCheck, in.adequacy = tests.text, tests.prompt(in.printed)+sharedPrompt(in.r)
+		in.redCheck, in.adequacy = tests.text, tests.prompt(in.printed)+sharedPrompt(ctx, in.r)
 		return in, nil
 	}
 	fc := focuses[ty.focus]
@@ -717,7 +717,7 @@ func runType(ctx context.Context, s *source, r *span, base inputs, t string, tes
 			}
 			if ty.focus == "" && !ty.guide {
 				tests.add(out)
-				out.Routes = routeChange(r, out, log)
+				out.Routes = routeChange(ctx, r, out, log)
 			}
 			if in.upgrades != nil {
 				in.upgrades.add(r, out)

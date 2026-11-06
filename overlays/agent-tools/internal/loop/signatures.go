@@ -4,18 +4,22 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/operatorkey"
 )
 
-var operatorVerificationTimeout = 30 * time.Second
+// verifyContext bounds one check of the operator's signatures by the
+// verification timeout ctx carries, 30 s unless a test sets another, and does
+// not end when ctx does.
+func verifyContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), reach(ctx).verifyTimeout)
+}
 
 // ownCommits authenticates the PR's actual range, not the mutable tracking
 // refs used to avoid uploading objects GitHub already has.
-func ownCommits(branch, base, tip string) error {
-	ctx, cancel := context.WithTimeout(git.WithDir(context.Background()), operatorVerificationTimeout)
+func ownCommits(ctx context.Context, branch, base, tip string) error {
+	ctx, cancel := verifyContext(ctx)
 	defer cancel()
 	n, err := operatorkey.Verify(ctx, tip, []string{base})
 	if err == nil && n == 0 {
@@ -32,8 +36,8 @@ func ownCommits(branch, base, tip string) error {
 // loads, and every commit in base..tip, read from the objects alone, carries
 // a signature in its format. It writes nothing, for pr-loop next; open
 // still proves them.
-func operatorFormatSigned(branch, base, tip string) error {
-	ctx, cancel := context.WithTimeout(git.WithDir(context.Background()), operatorVerificationTimeout)
+func operatorFormatSigned(ctx context.Context, branch, base, tip string) error {
+	ctx, cancel := verifyContext(ctx)
 	defer cancel()
 	ctx = git.KillingTree(ctx)
 	err := func() error {

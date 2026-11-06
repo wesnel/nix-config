@@ -52,9 +52,6 @@ func bangUpdate(key, value string) bool {
 // alternates file, to list the config.
 var ConfigTimeout = 10 * time.Second
 
-// CheckConfig is Where.CheckConfig in this process's environment.
-func CheckConfig(dir string) error { return process().CheckConfig(dir) }
-
 // CheckConfig refuses to run git in dir (where w runs when empty) if the
 // repository's own or the worktree's config names a program, or if git
 // cannot list that config within ConfigTimeout.

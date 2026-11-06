@@ -2,6 +2,7 @@ package loop
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,17 +10,19 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
-// useDir points the package's git at dir for the rest of the test.
-func useDir(t *testing.T, dir string) {
+// inRepo is the test's context with an Env of its own, this process's as
+// TestMain left it with vars set, and git aimed at dir (git.At), which
+// drops any GIT_DIR and GIT_WORK_TREE among vars from what git sees.
+func inRepo(t *testing.T, dir string, vars ...string) context.Context {
 	t.Helper()
-	git.Dir = dir
-	t.Cleanup(func() { git.Dir = "" })
+	return git.At(env.With(t.Context(), env.Process().Set(vars...)), dir)
 }
 
 func TestIdentity(t *testing.T) {
@@ -223,6 +226,8 @@ func TestCheckOpen(t *testing.T) {
 // it; and attributed, whose fixup! credits a co-author.
 type localStack struct {
 	dir, trunk, parent, child string
+	// ctx aims the package's git at dir.
+	ctx context.Context
 }
 
 func newLocalStack(t *testing.T) *localStack {
@@ -257,24 +262,26 @@ func newLocalStack(t *testing.T) *localStack {
 	gitIn(t, dir, "switch", "-qc", "attributed", "trunk")
 	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "Add y")
 	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "fixup! Add y", "-m", "Co-Authored-By: C <c@e>")
-	useDir(t, dir)
+	s.ctx = inRepo(t, dir)
 	return s
 }
 
 func TestCheckLocal(t *testing.T) {
+	t.Parallel()
 	repo := &Repo{Slug: "o/r", Default: "trunk"}
 	unfetched := strings.Repeat("1", 40)
 
 	t.Run("stacked", func(t *testing.T) {
+		t.Parallel()
 		s := newLocalStack(t)
-		local, known, err := checkLocal(t.Context(), repo, "child", "parent", s.parent, s.child, false)
+		local, known, err := checkLocal(s.ctx, repo, "child", "parent", s.parent, s.child, false)
 		if err != nil || local != s.child {
 			t.Fatalf("stacked: %s, %v", local, err)
 		}
 		if got := strings.Join(known, " "); got != s.parent+" --remotes=origin/* --remotes=another/*" {
 			t.Errorf("known: %s", got)
 		}
-		objects, err := missingObjects([]string{local}, known)
+		objects, err := missingObjects(s.ctx, []string{local}, known)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -286,8 +293,9 @@ func TestCheckLocal(t *testing.T) {
 	// The default branch may have moved on GitHub past what was fetched;
 	// what was fetched is still left out of the upload.
 	t.Run("default base not fetched", func(t *testing.T) {
+		t.Parallel()
 		s := newLocalStack(t)
-		if _, known, err := checkLocal(t.Context(), repo, "child", "trunk", unfetched, s.child, false); err != nil || strings.Join(known, " ") != "--remotes=origin/* --remotes=another/*" {
+		if _, known, err := checkLocal(s.ctx, repo, "child", "trunk", unfetched, s.child, false); err != nil || strings.Join(known, " ") != "--remotes=origin/* --remotes=another/*" {
 			t.Errorf("default base not fetched: %v, %v", known, err)
 		}
 	})
@@ -303,6 +311,7 @@ func TestCheckLocal(t *testing.T) {
 	}
 	for name, c := range refused {
 		t.Run("refused/"+name, func(t *testing.T) {
+			t.Parallel()
 			s := newLocalStack(t)
 			oid := c[2]
 			switch oid {
@@ -311,7 +320,7 @@ func TestCheckLocal(t *testing.T) {
 			case "parent":
 				oid = s.parent
 			}
-			_, _, err := checkLocal(t.Context(), repo, c[0], c[1], oid, gitIn(t, s.dir, "rev-parse", c[0]), false)
+			_, _, err := checkLocal(s.ctx, repo, c[0], c[1], oid, gitIn(t, s.dir, "rev-parse", c[0]), false)
 			if _, ok := err.(Refusal); !ok || !refusal.SaysInstead(err.Error()) {
 				t.Errorf("%s: %v", name, err)
 			}
@@ -322,16 +331,18 @@ func TestCheckLocal(t *testing.T) {
 	}
 
 	t.Run("message an amend! rewords", func(t *testing.T) {
+		t.Parallel()
 		s := newLocalStack(t)
-		if _, _, err := checkLocal(t.Context(), repo, "reworded", "trunk", s.trunk, gitIn(t, s.dir, "rev-parse", "reworded"), false); err != nil {
+		if _, _, err := checkLocal(s.ctx, repo, "reworded", "trunk", s.trunk, gitIn(t, s.dir, "rev-parse", "reworded"), false); err != nil {
 			t.Errorf("a message an amend! rewords: %v", err)
 		}
 	})
 
 	t.Run("upstream", func(t *testing.T) {
+		t.Parallel()
 		s := newLocalStack(t)
 		gitIn(t, s.dir, "branch", "--set-upstream-to=origin/trunk", "child")
-		if err := setUpstream(repo, "child"); err != nil {
+		if err := setUpstream(s.ctx, repo, "child"); err != nil {
 			t.Fatal(err)
 		}
 		if got := gitIn(t, s.dir, "config", "branch.child.remote") + " " + gitIn(t, s.dir, "config", "branch.child.merge"); got != "origin refs/heads/child" {
@@ -343,6 +354,7 @@ func TestCheckLocal(t *testing.T) {
 // TestCheckLocalParent covers a branch that contains a branch GitHub has
 // but its base lacks: its pull request would carry the parent's commits.
 func TestCheckLocalParent(t *testing.T) {
+	t.Parallel()
 	repo := &Repo{Slug: "o/r", Default: "trunk"}
 	// pushed publishes branches to a bare repository that origin pushes to,
 	// which leaves origin/<branch> in the checkout as a fetch would.
@@ -360,54 +372,60 @@ func TestCheckLocalParent(t *testing.T) {
 	}
 
 	t.Run("default base refused, naming the parent", func(t *testing.T) {
+		t.Parallel()
 		s := newLocalStack(t)
 		pushed(t, s, "parent")
-		_, _, err := checkLocal(t.Context(), repo, "child", "trunk", s.trunk, s.child, false)
+		_, _, err := checkLocal(s.ctx, repo, "child", "trunk", s.trunk, s.child, false)
 		if _, ok := err.(Refusal); !ok || !refusal.SaysInstead(err.Error()) || !strings.Contains(fmt.Sprint(err), "--base parent") {
 			t.Errorf("default base over a pushed parent: %v", err)
 		}
 	})
 
 	t.Run("nearest parent when several", func(t *testing.T) {
+		t.Parallel()
 		s := newLocalStack(t)
 		grandchild(t, s)
 		pushed(t, s, "parent", "child")
-		_, _, err := checkLocal(t.Context(), repo, "grandchild", "trunk", s.trunk, gitIn(t, s.dir, "rev-parse", "grandchild"), false)
+		_, _, err := checkLocal(s.ctx, repo, "grandchild", "trunk", s.trunk, gitIn(t, s.dir, "rev-parse", "grandchild"), false)
 		if _, ok := err.(Refusal); !ok || !strings.Contains(fmt.Sprint(err), "--base child") {
 			t.Errorf("nearest parent: %v", err)
 		}
 	})
 
 	t.Run("explicit base that is the parent passes", func(t *testing.T) {
+		t.Parallel()
 		s := newLocalStack(t)
 		pushed(t, s, "parent")
-		if _, _, err := checkLocal(t.Context(), repo, "child", "parent", s.parent, s.child, false); err != nil {
+		if _, _, err := checkLocal(s.ctx, repo, "child", "parent", s.parent, s.child, false); err != nil {
 			t.Errorf("explicit parent base: %v", err)
 		}
 	})
 
 	t.Run("explicit base above the nearest parent refused", func(t *testing.T) {
+		t.Parallel()
 		s := newLocalStack(t)
 		grandchild(t, s)
 		pushed(t, s, "parent", "child")
-		_, _, err := checkLocal(t.Context(), repo, "grandchild", "parent", s.parent, gitIn(t, s.dir, "rev-parse", "grandchild"), false)
+		_, _, err := checkLocal(s.ctx, repo, "grandchild", "parent", s.parent, gitIn(t, s.dir, "rev-parse", "grandchild"), false)
 		if _, ok := err.(Refusal); !ok || !strings.Contains(fmt.Sprint(err), "--base child") {
 			t.Errorf("base below the nearest parent: %v", err)
 		}
 	})
 
 	t.Run("parent already in the base passes", func(t *testing.T) {
+		t.Parallel()
 		s := newLocalStack(t)
 		pushed(t, s, "parent")
-		if _, _, err := checkLocal(t.Context(), repo, "child", "trunk", s.parent, s.child, false); err != nil {
+		if _, _, err := checkLocal(s.ctx, repo, "child", "trunk", s.parent, s.child, false); err != nil {
 			t.Errorf("merged parent: %v", err)
 		}
 	})
 
 	t.Run("unrelated remote branch passes", func(t *testing.T) {
+		t.Parallel()
 		s := newLocalStack(t)
 		pushed(t, s, "aside")
-		if _, _, err := checkLocal(t.Context(), repo, "child", "trunk", s.trunk, s.child, false); err != nil {
+		if _, _, err := checkLocal(s.ctx, repo, "child", "trunk", s.trunk, s.child, false); err != nil {
 			t.Errorf("unrelated remote branch: %v", err)
 		}
 	})
@@ -416,9 +434,16 @@ func TestCheckLocalParent(t *testing.T) {
 // gitIn runs git in dir with a fixed identity and signing off.
 func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
+	return gitWith(t, dir, nil, args...)
+}
+
+// gitWith is gitIn with vars, each "NAME=value", added to git's
+// environment.
+func gitWith(t *testing.T, dir string, vars []string, args ...string) string {
+	t.Helper()
 	cmd := exec.Command("git", append([]string{"-c", "user.name=T", "-c", "user.email=t@e", "-c", "commit.gpgsign=false"}, args...)...)
 	cmd.Dir = dir
-	cmd.Env = append(gitenv.Without(os.Environ()), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	cmd.Env = append(append(gitenv.Without(os.Environ()), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1"), vars...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -427,41 +452,46 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 }
 
 func TestSetup(t *testing.T) {
-	// setupRepo makes a clone, points the package's git at it, and returns
-	// it with its agent settings file, which the test may write.
-	setupRepo := func(t *testing.T) (dir, settings string) {
+	t.Parallel()
+	// setupRepo makes a clone and a decoy repository, and returns a context
+	// that aims the package's git at the clone, one whose Env points git at
+	// the decoy, as git does for a command it starts, the clone, and its
+	// agent settings file, which the test may write.
+	setupRepo := func(t *testing.T) (ctx, decoyed context.Context, dir, settings string) {
 		t.Helper()
 		dir, _ = filepath.EvalSymlinks(t.TempDir())
 		gitIn(t, dir, "init", "-q", "-b", "main")
 		gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "base")
-		gitenvtest.Decoy(t)
-		useDir(t, dir)
+		_, decoy := gitenvtest.DecoyEnv(t)
 		settings = filepath.Join(dir, ".git", "info", "agents.json")
 		os.MkdirAll(filepath.Dir(settings), 0o755)
-		return dir, settings
+		return inRepo(t, dir, decoy...), withEnv(t.Context(), decoy...), dir, settings
 	}
 	const configured = `{"setup": "echo generated > gen"}`
 
 	t.Run("command without settings", func(t *testing.T) {
-		setupRepo(t)
-		if s, err := SetupCommand(); err != nil || s.Command != "" {
+		t.Parallel()
+		ctx, _, _, _ := setupRepo(t)
+		if s, err := SetupCommand(ctx); err != nil || s.Command != "" {
 			t.Errorf("without settings: %+v, %v", s, err)
 		}
 	})
 
 	t.Run("configured command", func(t *testing.T) {
-		_, settings := setupRepo(t)
+		t.Parallel()
+		ctx, _, _, settings := setupRepo(t)
 		os.WriteFile(settings, []byte(configured), 0o644)
-		s, err := SetupCommand()
+		s, err := SetupCommand(ctx)
 		if err != nil || s.Command != "echo generated > gen" || s.Settings != settings {
 			t.Fatalf("configured: %+v, %v", s, err)
 		}
 	})
 
 	t.Run("runs in a worktree", func(t *testing.T) {
-		dir, settings := setupRepo(t)
+		t.Parallel()
+		ctx, decoyed, dir, settings := setupRepo(t)
 		os.WriteFile(settings, []byte(configured), 0o644)
-		s, err := SetupCommand()
+		s, err := SetupCommand(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -469,7 +499,7 @@ func TestSetup(t *testing.T) {
 		wt := filepath.Join(t.TempDir(), "wt")
 		gitIn(t, dir, "worktree", "add", "-q", wt, "feature")
 		var log bytes.Buffer
-		runs := RunSetup(t.Context(), s.Command, []string{wt}, &log)
+		runs := RunSetup(decoyed, s.Command, []string{wt}, &log)
 		if len(runs) != 1 || runs[0].Exit != 0 {
 			t.Fatalf("setup did not run in the worktree: %+v\n%s", runs, log.String())
 		}
@@ -482,11 +512,11 @@ func TestSetup(t *testing.T) {
 		if got := gitIn(t, wt, "status", "--porcelain"); got != "?? gen" {
 			t.Errorf("setup left more than its output in the worktree: %q", got)
 		}
-		if runs := RunSetup(t.Context(), "exit 3", []string{wt}, &log); runs[0].Exit != 3 {
+		if runs := RunSetup(decoyed, "exit 3", []string{wt}, &log); runs[0].Exit != 3 {
 			t.Errorf("a failed setup: %+v", runs)
 		}
 		// The command's git finds the worktree's repository.
-		RunSetup(t.Context(), "git rev-parse --absolute-git-dir > where", []string{wt}, &log)
+		RunSetup(decoyed, "git rev-parse --absolute-git-dir > where", []string{wt}, &log)
 		where, _ := os.ReadFile(filepath.Join(wt, "where"))
 		if got, want := strings.TrimSpace(string(where)), gitIn(t, wt, "rev-parse", "--absolute-git-dir"); got != want {
 			t.Errorf("the setup command's git found %q, not %q", got, want)
@@ -514,14 +544,12 @@ func TestRunSetupEnv(t *testing.T) {
 // rebase.updateRefs on and main checked out.
 type fixedStack struct {
 	dir string
+	// ctx aims the package's git at dir, with a fixed identity.
+	ctx context.Context
 }
 
 func newFixedStack(t *testing.T) *fixedStack {
 	t.Helper()
-	t.Setenv("GIT_AUTHOR_NAME", "T")
-	t.Setenv("GIT_AUTHOR_EMAIL", "t@e")
-	t.Setenv("GIT_COMMITTER_NAME", "T")
-	t.Setenv("GIT_COMMITTER_EMAIL", "t@e")
 	dir := t.TempDir()
 	write := func(name, content string) { os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644) }
 	gitIn(t, dir, "init", "-q", "-b", "main")
@@ -540,8 +568,9 @@ func newFixedStack(t *testing.T) *fixedStack {
 	gitIn(t, dir, "add", "c")
 	gitIn(t, dir, "commit", "-qm", "U1 add c")
 
-	gitenvtest.Decoy(t)
-	useDir(t, dir)
+	_, decoy := gitenvtest.DecoyEnv(t)
+	ctx := inRepo(t, dir, append(decoy, "GIT_AUTHOR_NAME=T", "GIT_AUTHOR_EMAIL=t@e",
+		"GIT_COMMITTER_NAME=T", "GIT_COMMITTER_EMAIL=t@e")...)
 
 	oldLower := gitIn(t, dir, "rev-parse", "lower")
 	gitIn(t, dir, "switch", "-q", "lower")
@@ -556,7 +585,7 @@ func newFixedStack(t *testing.T) *fixedStack {
 	// the rehearsal's unsigned commits.
 	gitIn(t, dir, "config", "rebase.updateRefs", "true")
 	gitIn(t, dir, "switch", "-q", "main")
-	return &fixedStack{dir: dir}
+	return &fixedStack{dir: dir, ctx: ctx}
 }
 
 // stack is what the rehearsal checks the stack against as it stands: each
@@ -568,7 +597,7 @@ func (s *fixedStack) stack(t *testing.T) *signedStack {
 	below := "main"
 	for _, b := range st.Order {
 		st.Trees[b] = gitIn(t, s.dir, "rev-parse", b+"^{tree}")
-		c, err := commitsBetween(t.Context(), below, b)
+		c, err := commitsBetween(s.ctx, below, b)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -581,12 +610,14 @@ func (s *fixedStack) stack(t *testing.T) *signedStack {
 // TestRehearse checks the rehearsal of a pass over a two-branch stack with
 // fixups in both branches.
 func TestRehearse(t *testing.T) {
+	t.Parallel()
 	// It accepts the stack without moving a branch, even with
 	// rebase.updateRefs on.
 	t.Run("clean stack", func(t *testing.T) {
+		t.Parallel()
 		s := newFixedStack(t)
 		branches := gitIn(t, s.dir, "for-each-ref", "refs/heads/")
-		if err := rehearse(t.Context(), s.stack(t)); err != nil {
+		if err := rehearse(s.ctx, s.stack(t)); err != nil {
 			t.Fatalf("rehearsal refused a clean stack: %v", err)
 		}
 		if got := gitIn(t, s.dir, "worktree", "list"); strings.Count(got, "\n") != 0 {
@@ -599,13 +630,14 @@ func TestRehearse(t *testing.T) {
 
 	// A fixup aimed at L1 that touches a line L2 later changed conflicts.
 	t.Run("conflicting fixup", func(t *testing.T) {
+		t.Parallel()
 		s := newFixedStack(t)
 		gitIn(t, s.dir, "switch", "-q", "lower")
 		before := gitIn(t, s.dir, "rev-parse", "lower")
 		os.WriteFile(filepath.Join(s.dir, "b"), []byte("b again\n"), 0o644)
 		gitIn(t, s.dir, "commit", "-qa", "--fixup=lower~2")
 		gitIn(t, s.dir, "rebase", "-q", "--onto", "lower", before, "upper")
-		err := rehearse(t.Context(), s.stack(t))
+		err := rehearse(s.ctx, s.stack(t))
 		if _, ok := err.(Refusal); !ok || !strings.Contains(err.Error(), "conflicts") {
 			t.Errorf("conflicting fixup: %v", err)
 		}

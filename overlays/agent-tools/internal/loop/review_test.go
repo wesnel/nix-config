@@ -128,19 +128,18 @@ func reviewRepo(t *testing.T, config string, threads ...fakeReviewThread) *fakeR
 	t.Helper()
 	f := &fakeReview{fakeCI: ciRepo(t), threads: threads}
 	f.checks["a1"] = []fakeCheck{{name: "build", status: "COMPLETED", conclusion: "SUCCESS"}}
-	graphQL = f.graphQL
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	f.ctx = withEnv(t.Context(), ModeEnv+"=bots", "PR_LOOP_CONFIG="+path)
-	oldRequest, oldREST := requestReviewer, commentsREST
-	requestReviewer = func(_ context.Context, slug string, number int, reviewer string) error {
-		f.requested = append(f.requested, reviewer)
-		return nil
-	}
-	commentsREST = f.rest
-	t.Cleanup(func() { requestReviewer, commentsREST = oldRequest, oldREST })
+	f.ctx = alsoOutside(withEnv(f.fakeCI.ctx, ModeEnv+"=bots", "PR_LOOP_CONFIG="+path), func(o *outside) {
+		o.graphQL = f.graphQL
+		o.requestReviewer = func(_ context.Context, slug string, number int, reviewer string) error {
+			f.requested = append(f.requested, reviewer)
+			return nil
+		}
+		o.commentsREST = f.rest
+	})
 	return f
 }
 
@@ -150,6 +149,7 @@ const (
 )
 
 func TestReviewStatusThreads(t *testing.T) {
+	t.Parallel()
 	// pilot's login pattern also matches Copilot's: a thread is counted
 	// once, for the first bot by name that matches its author, as `pr-loop
 	// threads` labels it.
@@ -180,10 +180,12 @@ func TestReviewStatusThreads(t *testing.T) {
 }
 
 func TestRequest(t *testing.T) {
+	t.Parallel()
 	const config = `{"bots": {"copilot": {"login": "^copilot", "request": {"reviewer": "@copilot"}}}}`
 	const qodo = `{"bots": {"qodo": {"login": "^qodo-code-review", "request": {"comment": "/agentic_review"}, "resolvesOwnThreads": true}}}`
 
 	t.Run("outside a bots-mode loop", func(t *testing.T) {
+		t.Parallel()
 		for _, mode := range []string{"", "people"} {
 			f := reviewRepo(t, config)
 			if _, err := Request(withEnv(f.ctx, ModeEnv+"="+mode), nil, nil, nil); !refusedWell(err) || len(f.requested) != 0 {
@@ -193,6 +195,7 @@ func TestRequest(t *testing.T) {
 	})
 
 	t.Run("copilot as a reviewer", func(t *testing.T) {
+		t.Parallel()
 		f := reviewRepo(t, config)
 		if _, err := Request(f.ctx, nil, nil, nil); err != nil {
 			t.Fatal(err)
@@ -205,6 +208,7 @@ func TestRequest(t *testing.T) {
 	// A draft, where qodo does not review on its own, gets the trigger
 	// comment, and the earlier identical one is deleted first.
 	t.Run("qodo on a draft", func(t *testing.T) {
+		t.Parallel()
 		f := reviewRepo(t, qodo)
 		f.comments = []fakeIssueComment{{id: 7, login: "me", body: "/agentic_review", at: "2026-10-19T09:00:00Z"},
 			{id: 8, login: "josh", body: "/agentic_review", at: "2026-10-19T09:00:00Z"}}
@@ -218,6 +222,7 @@ func TestRequest(t *testing.T) {
 	})
 
 	t.Run("qodo has reviewed this head", func(t *testing.T) {
+		t.Parallel()
 		f := reviewRepo(t, qodo)
 		f.reviews = []fakeSubmitted{{login: qodoLogin, commit: "a1", at: "2026-10-19T10:00:00Z"}}
 		if _, err := Request(f.ctx, nil, nil, nil); err != nil || len(f.posted) != 0 {
@@ -228,6 +233,7 @@ func TestRequest(t *testing.T) {
 	// After a push, qodo, which never reviews on push, is asked again: its
 	// last review is of the earlier head, after the earlier trigger.
 	t.Run("qodo after a push", func(t *testing.T) {
+		t.Parallel()
 		f := reviewRepo(t, qodo)
 		f.comments = []fakeIssueComment{{id: 7, login: "me", body: "/agentic_review", at: "2026-10-19T09:00:00Z"}}
 		f.reviews = []fakeSubmitted{{login: qodoLogin, commit: "a0", at: "2026-10-19T10:00:00Z"}}
@@ -243,6 +249,7 @@ func TestRequest(t *testing.T) {
 	// A thread nobody has answered must be triaged before the bot is asked
 	// again, or its findings go unread while it adds more.
 	t.Run("unanswered bot thread", func(t *testing.T) {
+		t.Parallel()
 		f := reviewRepo(t, config,
 			fakeReviewThread{first: copilotLogin, last: "me"},
 			fakeReviewThread{first: copilotLogin, last: copilotLogin})
@@ -259,6 +266,7 @@ func TestRequest(t *testing.T) {
 	// for a bot that resolves its own) and people's threads do not hold the
 	// bot back: people's are the operator's.
 	t.Run("answered and people's threads", func(t *testing.T) {
+		t.Parallel()
 		f := reviewRepo(t, config,
 			fakeReviewThread{first: copilotLogin, last: "me"},
 			fakeReviewThread{first: copilotLogin, last: copilotLogin, resolved: true},
@@ -272,6 +280,7 @@ func TestRequest(t *testing.T) {
 	})
 
 	t.Run("CI failing", func(t *testing.T) {
+		t.Parallel()
 		f := reviewRepo(t, config)
 		f.checks["a1"] = []fakeCheck{{name: "build", status: "COMPLETED", conclusion: "FAILURE"}}
 		if _, err := Request(f.ctx, nil, nil, nil); !refused(err) || len(f.requested) != 0 {
@@ -285,6 +294,7 @@ func TestRequest(t *testing.T) {
 
 // end deletes the viewer's trigger comments alone.
 func TestEnd(t *testing.T) {
+	t.Parallel()
 	f := reviewRepo(t, `{"bots": {"qodo": {"login": "^qodo-code-review", "request": {"comment": "/agentic_review"}}}}`)
 	f.comments = []fakeIssueComment{{id: 7, login: "me", body: "/agentic_review"}, {id: 8, login: "josh", body: "/agentic_review"},
 		{id: 9, login: "me", body: "Thanks"}, {id: 10, login: "me", body: "/agentic_review"}}

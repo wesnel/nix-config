@@ -9,8 +9,9 @@ import (
 )
 
 func TestOpenCapturedTip(t *testing.T) {
+	t.Parallel()
 	f, dir := pushedBranch(t)
-	_, sign := sshOperatorProfile(t, dir)
+	_, sign := sshOperatorProfile(t, f)
 	publishedTip := gitIn(t, dir, "rev-parse", "feat")
 	gitIn(t, dir, append(sign, "--amend", "--no-edit", "--allow-empty")...)
 	signedTip := gitIn(t, dir, "rev-parse", "feat")
@@ -26,8 +27,8 @@ func TestOpenCapturedTip(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	_, err = Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", false)
+	f.set("PATH=" + bin + string(os.PathListSeparator) + f.e.Get("PATH"))
+	_, err = Open(f.ctx(t), "feat", "", "Add feat", "Why it is needed.", false)
 	var policy Refusal
 	if !errors.As(err, &policy) || len(f.calls) != 0 {
 		t.Fatalf("published captured tip was not validated: %v, mutations %v", err, f.calls)

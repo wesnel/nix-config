@@ -173,7 +173,7 @@ func TestNixRouted(t *testing.T) {
 			t.Errorf("%s: no pin (%v)", name, err)
 			continue
 		}
-		rs, err := routes.Scan(repo, base, tip, routes.Builtin)
+		rs, err := routes.Scan(t.Context(), repo, base, tip, routes.Builtin)
 		if err != nil || !slices.ContainsFunc(rs, func(r routes.Route) bool { return r.Route == "upgrade" }) {
 			t.Errorf("%s: routes %+v (%v), pins %+v", name, rs, err, pins)
 		}

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/gh"
-	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
@@ -31,6 +30,7 @@ type fakeStacks struct {
 	bodies    []map[string]any // each merge-async request's body
 	conflicts int              // how many writes to answer with 409 first
 	fail      error            // the answer to the next write
+	ctx       context.Context  // aims the package's git at the checkout, with f for GitHub
 }
 
 // chains reports whether each of numbers is based on the one before.
@@ -150,8 +150,6 @@ func stacksRepo(t *testing.T) *fakeStacks {
 	gitIn(t, dir, "remote", "add", "origin", "https://github.com/o/r.git")
 	gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "base")
 	gitIn(t, dir, "switch", "-qc", "b")
-	git.Dir = dir
-	t.Cleanup(func() { git.Dir = "" })
 
 	f := &fakeStacks{
 		prs: map[int]*fakeStackPR{
@@ -166,9 +164,7 @@ func stacksRepo(t *testing.T) *fakeStacks {
 		},
 		stacks: map[int][]int{10: {1, 2}},
 	}
-	oldGraphQL, oldREST, oldSleep := graphQL, stacksREST, sleep
-	graphQL, stacksREST, sleep = f.graphQL, f.rest, func(time.Duration) {}
-	t.Cleanup(func() { graphQL, stacksREST, sleep = oldGraphQL, oldREST, oldSleep })
+	f.ctx = withOutside(inRepo(t, dir), outside{graphQL: f.graphQL, stacksREST: f.rest, sleep: func(time.Duration) {}})
 	return f
 }
 
@@ -178,9 +174,11 @@ func refusedWell(err error) bool {
 }
 
 func TestLink(t *testing.T) {
+	t.Parallel()
 	t.Run("onto the top of an existing stack", func(t *testing.T) {
+		t.Parallel()
 		f := stacksRepo(t)
-		got, err := Link(t.Context(), []string{"3", "d"})
+		got, err := Link(f.ctx, []string{"3", "d"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -195,9 +193,10 @@ func TestLink(t *testing.T) {
 	// Idempotent, for part or all of a stack.
 	for _, args := range [][]string{{"3", "4"}, {"1", "2", "3", "4"}, {"2"}} {
 		t.Run("again/"+strings.Join(args, " "), func(t *testing.T) {
+			t.Parallel()
 			f := stacksRepo(t)
 			f.stacks[10] = []int{1, 2, 3, 4}
-			got, err := Link(t.Context(), args)
+			got, err := Link(f.ctx, args)
 			if err != nil || len(f.writes) != 0 {
 				t.Errorf("again %v: %v, writes %v", args, err, f.writes)
 			} else if r := got.(map[string]any); r["stack"] != 10 || fmt.Sprint(r["added"]) != "[]" {
@@ -208,9 +207,10 @@ func TestLink(t *testing.T) {
 
 	// A new stack, once GitHub stops answering 409.
 	t.Run("new stack after a 409", func(t *testing.T) {
+		t.Parallel()
 		f := stacksRepo(t)
 		f.conflicts = 1
-		if _, err := Link(t.Context(), []string{"5", "7"}); err != nil {
+		if _, err := Link(f.ctx, []string{"5", "7"}); err != nil {
 			t.Fatalf("after a 409: %v", err)
 		}
 		if s := f.stackOf(5); s == 0 || fmt.Sprint(f.stacks[s]) != "[5 7]" || len(f.writes) != 2 {
@@ -228,8 +228,9 @@ func TestLink(t *testing.T) {
 		"above a PR that has a top": {"8"},
 	} {
 		t.Run("refused/"+name, func(t *testing.T) {
+			t.Parallel()
 			f := stacksRepo(t)
-			if _, err := Link(t.Context(), args); !refusedWell(err) {
+			if _, err := Link(f.ctx, args); !refusedWell(err) {
 				t.Errorf("%s: %v", name, err)
 			}
 			if len(f.writes) != 0 {
@@ -240,17 +241,19 @@ func TestLink(t *testing.T) {
 
 	// GitHub's own refusal is reported, and only a 409 is retried.
 	t.Run("GitHub's 422", func(t *testing.T) {
+		t.Parallel()
 		f := stacksRepo(t)
 		f.fail = &gh.StatusError{Code: 422}
-		if _, err := Link(t.Context(), []string{"5", "7"}); err == nil || refused(err) || len(f.writes) != 1 {
+		if _, err := Link(f.ctx, []string{"5", "7"}); err == nil || refused(err) || len(f.writes) != 1 {
 			t.Errorf("a 422: %v, writes %v", err, f.writes)
 		}
 	})
 
 	t.Run("two 409s", func(t *testing.T) {
+		t.Parallel()
 		f := stacksRepo(t)
 		f.conflicts = 2
-		if _, err := Link(t.Context(), []string{"5", "7"}); err == nil || len(f.writes) != 2 {
+		if _, err := Link(f.ctx, []string{"5", "7"}); err == nil || len(f.writes) != 2 {
 			t.Errorf("two 409s: %v, writes %v", err, f.writes)
 		}
 	})
@@ -259,17 +262,19 @@ func TestLink(t *testing.T) {
 // A PR that open has just opened goes into its base's stack, and a failure
 // to stack it leaves it open, saying how to stack it later.
 func TestStackOpened(t *testing.T) {
+	t.Parallel()
 	// openedIn returns a function that records PR n, as open has just
 	// opened it from head onto base, in f, and stacks it.
 	openedIn := func(f *fakeStacks) func(n int, head, base string) map[string]any {
 		repo := &Repo{Slug: "o/r", Default: "main", Viewer: "me"}
 		return func(n int, head, base string) map[string]any {
 			f.prs[n] = &fakeStackPR{head: head, base: base, author: "me", state: "OPEN", draft: true}
-			return stackOpened(context.Background(), repo, head, base, n)
+			return stackOpened(f.ctx, repo, head, base, n)
 		}
 	}
 
 	t.Run("on the default branch", func(t *testing.T) {
+		t.Parallel()
 		f := stacksRepo(t)
 		opened := openedIn(f)
 		if got := opened(11, "h", "main"); len(got) != 0 || len(f.writes) != 0 {
@@ -278,6 +283,7 @@ func TestStackOpened(t *testing.T) {
 	})
 
 	t.Run("onto a stack's top", func(t *testing.T) {
+		t.Parallel()
 		f := stacksRepo(t)
 		opened := openedIn(f)
 		if got := opened(12, "i", "b"); got["stack"] == nil || fmt.Sprint(f.stacks[10]) != "[1 2 12]" {
@@ -286,6 +292,7 @@ func TestStackOpened(t *testing.T) {
 	})
 
 	t.Run("onto an unstacked PR", func(t *testing.T) {
+		t.Parallel()
 		f := stacksRepo(t)
 		opened := openedIn(f)
 		if got := opened(13, "j", "f"); got["stack"] == nil || fmt.Sprint(f.stacks[f.stackOf(13)]) != "[7 13]" {
@@ -295,6 +302,7 @@ func TestStackOpened(t *testing.T) {
 
 	// A failure to stack it leaves it open, saying how to stack it later.
 	t.Run("onto a PR with another above it", func(t *testing.T) {
+		t.Parallel()
 		f := stacksRepo(t)
 		opened := openedIn(f)
 		writes := len(f.writes)
@@ -308,14 +316,16 @@ func TestStackOpened(t *testing.T) {
 
 // Stack shows GitHub's record of a PR's stack.
 func TestStack(t *testing.T) {
+	t.Parallel()
 	for _, arg := range []string{"", "b", "2", "#2", "a"} {
 		name := arg
 		if name == "" {
 			name = "current branch"
 		}
 		t.Run(name, func(t *testing.T) {
-			stacksRepo(t)
-			got, err := Stack(t.Context(), arg)
+			t.Parallel()
+			f := stacksRepo(t)
+			got, err := Stack(f.ctx, arg)
 			if err != nil {
 				t.Fatalf("stack %q: %v", arg, err)
 			}
@@ -336,8 +346,9 @@ func TestStack(t *testing.T) {
 	}
 
 	t.Run("unstacked PR", func(t *testing.T) {
-		stacksRepo(t)
-		got, err := Stack(t.Context(), "c")
+		t.Parallel()
+		f := stacksRepo(t)
+		got, err := Stack(f.ctx, "c")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -348,8 +359,9 @@ func TestStack(t *testing.T) {
 
 	for _, arg := range []string{"6", "x", "99"} {
 		t.Run("refused/"+arg, func(t *testing.T) {
-			stacksRepo(t)
-			if _, err := Stack(t.Context(), arg); !refused(err) || !refusal.SaysInstead(err.Error()) {
+			t.Parallel()
+			f := stacksRepo(t)
+			if _, err := Stack(f.ctx, arg); !refused(err) || !refusal.SaysInstead(err.Error()) {
 				t.Errorf("stack %q: %v", arg, err)
 			}
 		})

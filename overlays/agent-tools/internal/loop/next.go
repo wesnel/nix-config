@@ -107,7 +107,7 @@ func Next(ctx context.Context, branches []string) ([]NextStep, error) {
 		return nil, err
 	}
 	if len(branches) == 0 {
-		b, err := currentBranch()
+		b, err := currentBranch(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -130,8 +130,7 @@ func Next(ctx context.Context, branches []string) ([]NextStep, error) {
 
 // next is branch's step, or the refusal that blocks it.
 func next(ctx context.Context, repo *Repo, branch string) (NextStep, error) {
-	ctx = git.WithDir(ctx)
-	tip, err := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+branch)
+	tip, err := git.In(ctx).Run("rev-parse", "--verify", "-q", "refs/heads/"+branch)
 	if err != nil {
 		return nil, refuse("no local branch %s; name a branch that `git branch --list` shows", branch)
 	}
@@ -139,7 +138,7 @@ func next(ctx context.Context, repo *Repo, branch string) (NextStep, error) {
 	if err != nil {
 		return nil, err
 	}
-	n, err := git.Run("rev-list", "--count", base+".."+tip)
+	n, err := git.In(ctx).Run("rev-list", "--count", base+".."+tip)
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +188,7 @@ func next(ctx context.Context, repo *Repo, branch string) (NextStep, error) {
 		return nil, refuse("%s/%s is at %.12s here but GitHub has %s at %.12s; run `git fetch %s %s`, then %s",
 			dest.Remote, branch, dest.Tracking, branch, onGitHub, shellQuote(dest.Remote), shellQuote(branch), retry)
 	}
-	if onGitHub != tip && !git.OK("merge-base", "--is-ancestor", onGitHub, tip) {
+	if onGitHub != tip && !git.In(ctx).OK("merge-base", "--is-ancestor", onGitHub, tip) {
 		return nil, refuse("GitHub's %s, at %.12s, has history the local branch does not contain; fetch with "+
 			"`git fetch %s %s`, then reconcile the histories by hand and %s", branch, onGitHub,
 			shellQuote(dest.Remote), shellQuote(branch), retry)

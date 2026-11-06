@@ -2,33 +2,60 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
 )
 
 func TestRun(t *testing.T) {
+	t.Parallel()
 	// A command run from a worktree that GIT_DIR, set by a git hook or
 	// `rebase --exec` elsewhere, does not name is refused before it reads or
 	// writes either repository.
 	t.Run("GIT_DIR names another repository", func(t *testing.T) {
+		t.Parallel()
 		dir := t.TempDir()
 		cmd := exec.Command("git", "init", "-q", "-b", "main")
 		cmd.Dir, cmd.Env = dir, gitenv.Without(os.Environ())
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git init: %v\n%s", err, out)
 		}
-		gitenvtest.Decoy(t)
-		os.Unsetenv("GIT_WORK_TREE")
-		t.Chdir(dir)
+		_, decoy := gitenvtest.DecoyEnv(t)
+		ctx := env.With(t.Context(), env.Process().Set(decoy...).Without("GIT_WORK_TREE").In(dir))
 		var stdout, stderr bytes.Buffer
-		if code := run(t.Context(), "end", nil, strings.NewReader(""), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "GIT_DIR") {
+		if code := run(ctx, "end", nil, strings.NewReader(""), &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "GIT_DIR") {
 			t.Errorf("exit %d\n%s", code, stderr.String())
+		}
+	})
+
+	// setup PATH looks the command up in the clone at PATH, and leaves this
+	// process in its own directory.
+	t.Run("setup in another worktree", func(t *testing.T) {
+		t.Parallel()
+		dir, err := filepath.EvalSymlinks(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("git", "init", "-q", "-b", "main")
+		cmd.Dir, cmd.Env = dir, gitenv.Without(os.Environ())
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git init: %v\n%s", err, out)
+		}
+		before, _ := os.Getwd()
+		var stdout, stderr bytes.Buffer
+		code := run(env.With(t.Context(), env.Process().In(t.TempDir())), "setup", []string{dir}, strings.NewReader(""), &stdout, &stderr)
+		if code != 0 || !strings.Contains(stdout.String(), filepath.Join(dir, ".git", "info", "agents.json")) {
+			t.Errorf("exit %d, printed %s\n%s; want the settings of %s", code, stdout.String(), stderr.String(), dir)
+		}
+		if after, _ := os.Getwd(); after != before {
+			t.Errorf("setup moved this process from %s to %s", before, after)
 		}
 	})
 
@@ -43,9 +70,10 @@ func TestRun(t *testing.T) {
 		"two PRs":               {[]string{"3", "4"}, 1, "merge takes at most one PR"},
 	} {
 		t.Run("merge/"+name, func(t *testing.T) {
-			_, calls := posting(t)
+			t.Parallel()
+			ctx, _, calls := posting(t)
 			var stdout, stderr bytes.Buffer
-			if code := run(t.Context(), "merge", c.args, strings.NewReader(""), &stdout, &stderr); code != c.code || !strings.Contains(stderr.String(), c.want) {
+			if code := run(ctx, "merge", c.args, strings.NewReader(""), &stdout, &stderr); code != c.code || !strings.Contains(stderr.String(), c.want) {
 				t.Errorf("exit %d\n%s", code, stderr.String())
 			}
 			if _, err := os.Stat(calls); err == nil {
@@ -55,10 +83,11 @@ func TestRun(t *testing.T) {
 	}
 }
 
-// posting makes a checkout of a GitHub repository to run in, in a bots-mode
-// loop, and a gh on PATH that records each call in the file it returns and
-// fails.
-func posting(t *testing.T) (string, string) {
+// posting makes a checkout of a GitHub repository, and a gh that records
+// each call in a file and fails. It returns a context to run in, in the
+// checkout in a bots-mode loop with that gh on its PATH, the checkout, and
+// the file.
+func posting(t *testing.T) (context.Context, string, string) {
 	t.Helper()
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -73,31 +102,31 @@ func posting(t *testing.T) (string, string) {
 	}
 	bin, calls := t.TempDir(), filepath.Join(t.TempDir(), "calls")
 	os.WriteFile(filepath.Join(bin, "gh"), []byte("#!/bin/sh\necho \"$*\" >> \"$FAKE_GH_CALLS\"\nexit 1\n"), 0o755)
-	t.Setenv("FAKE_GH_CALLS", calls)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("PR_LOOP_MODE", "bots")
-	t.Chdir(dir)
-	return dir, calls
+	e := env.Process()
+	e = e.Set("FAKE_GH_CALLS="+calls, "PATH="+bin+string(os.PathListSeparator)+e.Get("PATH"), "PR_LOOP_MODE=bots").In(dir)
+	return env.With(t.Context(), e), dir, calls
 }
 
 // pr-loop may run outside the sandbox with the operator's login, so text
 // it posts holds no secret's shape.
 func TestOutgoingText(t *testing.T) {
+	t.Parallel()
 	ghCalled := func(calls string) bool {
 		_, err := os.Stat(calls)
 		return err == nil
 	}
-	pr := func(args ...string) (int, string) {
+	pr := func(ctx context.Context, args ...string) (int, string) {
 		var stdout, stderr bytes.Buffer
-		code := run(t.Context(), args[0], args[1:], strings.NewReader(""), &stdout, &stderr)
+		code := run(ctx, args[0], args[1:], strings.NewReader(""), &stdout, &stderr)
 		return code, stderr.String()
 	}
 	// The fake gh fails, so the reply gets as far as GitHub and no further.
 	t.Run("a reply of placeholders is posted", func(t *testing.T) {
-		dir, _ := posting(t)
+		t.Parallel()
+		ctx, dir, _ := posting(t)
 		file := filepath.Join(dir, "reply.md")
 		os.WriteFile(file, []byte("Set NGROK_AUTHTOKEN=$NGROK_AUTHTOKEN and send `Authorization: Bearer <token>`.\n"), 0o644)
-		if code, stderr := pr("reply", "T", "--body-file", file); code != 1 || strings.Contains(stderr, "refused") {
+		if code, stderr := pr(ctx, "reply", "T", "--body-file", file); code != 1 || strings.Contains(stderr, "refused") {
 			t.Errorf("exit %d, %s", code, stderr)
 		}
 	})
@@ -110,10 +139,11 @@ func TestOutgoingText(t *testing.T) {
 		"an open's title": func(string) []string { return []string{"open", "--title", "Drop " + token, "--body-file", "body.md"} },
 	} {
 		t.Run("refused/a token in "+name, func(t *testing.T) {
-			dir, calls := posting(t)
+			t.Parallel()
+			ctx, dir, calls := posting(t)
 			file := filepath.Join(dir, "token.md")
 			os.WriteFile(file, []byte("=== thread T\nThe token "+token+" is gone.\n"), 0o644)
-			code, stderr := pr(args(file)...)
+			code, stderr := pr(ctx, args(file)...)
 			if code != 2 || !strings.Contains(stderr, "GitHub token") || strings.Contains(stderr, token) {
 				t.Errorf("exit %d, %s", code, stderr)
 			}
@@ -124,8 +154,9 @@ func TestOutgoingText(t *testing.T) {
 	}
 
 	t.Run("refused/a lease without its SHA", func(t *testing.T) {
-		_, calls := posting(t)
-		if code, stderr := pr("push", "--lease", "x", "x"); code != 1 || !strings.Contains(stderr, "BRANCH=SHA") || ghCalled(calls) {
+		t.Parallel()
+		ctx, _, calls := posting(t)
+		if code, stderr := pr(ctx, "push", "--lease", "x", "x"); code != 1 || !strings.Contains(stderr, "BRANCH=SHA") || ghCalled(calls) {
 			t.Errorf("exit %d, %s", code, stderr)
 		}
 	})

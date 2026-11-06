@@ -23,7 +23,7 @@ func SignCheck(ctx context.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	current, err := currentBranch()
+	current, err := currentBranch(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -37,26 +37,26 @@ func SignCheck(ctx context.Context) (any, error) {
 		}
 	}
 	for _, b := range branches {
-		if !git.OK("rev-parse", "--verify", "-q", "refs/heads/"+b) {
+		if !git.In(ctx).OK("rev-parse", "--verify", "-q", "refs/heads/"+b) {
 			return nil, refuse("no local branch %s, which is in the stack; check it out, then check again", b)
 		}
 	}
-	parent, err := trackingRef(repo, prs[branches[0]].BaseRefName)
+	parent, err := trackingRef(ctx, repo, prs[branches[0]].BaseRefName)
 	if err != nil {
 		return nil, err
 	}
-	upstream, err := git.Run("merge-base", "refs/heads/"+branches[0], parent)
+	upstream, err := git.In(ctx).Run("merge-base", "refs/heads/"+branches[0], parent)
 	if err != nil {
 		return nil, err
 	}
 	top := branches[len(branches)-1]
-	if merges, _ := git.Run("rev-list", "--merges", upstream+"..refs/heads/"+top); merges != "" {
+	if merges, _ := git.In(ctx).Run("rev-list", "--merges", upstream+"..refs/heads/"+top); merges != "" {
 		return nil, refuse("the stack contains merge commits, which squashing would flatten; hand it to the operator to sign by hand")
 	}
 	stack := &signedStack{Order: branches, Upstream: upstream, Trees: map[string]string{}, Commits: map[string][]Commit{}}
 	below := upstream
 	for _, b := range branches {
-		if stack.Trees[b], err = git.Run("rev-parse", "refs/heads/"+b+"^{tree}"); err != nil {
+		if stack.Trees[b], err = git.In(ctx).Run("rev-parse", "refs/heads/"+b+"^{tree}"); err != nil {
 			return nil, err
 		}
 		commits, err := commitsBetween(ctx, below, "refs/heads/"+b)
@@ -92,17 +92,18 @@ func rehearse(ctx context.Context, stack *signedStack) error {
 	}
 	os.Remove(scratch)
 	top := stack.Order[len(stack.Order)-1]
-	if _, err := git.RunLong(nil, "worktree", "add", "--detach", scratch, "refs/heads/"+top); err != nil {
+	g := git.In(ctx)
+	if _, err := g.RunLong(nil, "worktree", "add", "--detach", scratch, "refs/heads/"+top); err != nil {
 		return err
 	}
 	defer func() {
-		git.RunLong(nil, "-C", scratch, "rebase", "--abort")
-		git.RunLong(nil, "worktree", "remove", "--force", scratch)
+		g.RunLong(nil, "-C", scratch, "rebase", "--abort")
+		g.RunLong(nil, "worktree", "remove", "--force", scratch)
 	}()
 	// rebase.updateRefs off: a user's rebase.updateRefs=true would move every
 	// branch of the stack not checked out elsewhere onto these unsigned
 	// commits.
-	_, err = git.RunLong(noEditor, "-C", scratch, "-c", "commit.gpgsign=false", "-c", "rebase.updateRefs=false",
+	_, err = g.RunLong(noEditor, "-C", scratch, "-c", "commit.gpgsign=false", "-c", "rebase.updateRefs=false",
 		"rebase", "-i", "--autosquash", "--force-rebase", stack.Upstream)
 	if err != nil {
 		if m := couldNotApply.FindStringSubmatch(err.Error()); m != nil {
@@ -112,7 +113,7 @@ func rehearse(ctx context.Context, stack *signedStack) error {
 	}
 	// The rehearsal leaves the branches alone, so each branch's end is found
 	// by counting its own commits.
-	list, err := git.Run("-C", scratch, "rev-list", "--reverse", stack.Upstream+"..HEAD")
+	list, err := g.Run("-C", scratch, "rev-list", "--reverse", stack.Upstream+"..HEAD")
 	if err != nil {
 		return err
 	}
@@ -134,7 +135,7 @@ func rehearse(ctx context.Context, stack *signedStack) error {
 		if err := matches(ctx, want, base, end, b); err != nil {
 			return err
 		}
-		if tree, _ := git.Run("rev-parse", end+"^{tree}"); tree != stack.Trees[b] {
+		if tree, _ := g.Run("rev-parse", end+"^{tree}"); tree != stack.Trees[b] {
 			return refuse("squashing changes %s's files; a fixup is probably in the wrong branch", b)
 		}
 		at += len(want)

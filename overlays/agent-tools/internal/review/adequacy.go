@@ -2,6 +2,7 @@ package review
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -356,8 +357,8 @@ func (a *adequacy) prompt(printed bool) string {
 // sharedPrompt is what the reviewer is told of the files r changes that
 // hold tests beside their code, whose tests red-check cannot run without
 // the rest of them: the verdict shared-file, judged by the reviewer.
-func sharedPrompt(r *span) string {
-	files, err := routes.SharedFiles(r.top, r.base, r.tip)
+func sharedPrompt(ctx context.Context, r *span) string {
+	files, err := routes.SharedFiles(ctx, r.top, r.base, r.tip)
 	if err != nil || len(files) == 0 {
 		return ""
 	}

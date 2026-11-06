@@ -46,9 +46,7 @@ func checkStack(t *testing.T) (*fixedStack, *fakeOpenPRs) {
 	gitIn(t, s.dir, "update-ref", "refs/remotes/origin/main", "main")
 	gitIn(t, s.dir, "switch", "-q", "upper")
 	f := &fakeOpenPRs{bases: map[string]string{"lower": "main", "upper": "lower"}}
-	old := graphQL
-	graphQL = f.graphQL
-	t.Cleanup(func() { graphQL = old })
+	s.ctx = withOutside(s.ctx, outside{graphQL: f.graphQL})
 	return s, f
 }
 
@@ -56,10 +54,12 @@ func checkStack(t *testing.T) (*fixedStack, *fakeOpenPRs) {
 // HEAD when its fixups squash into each branch's own commits without moving
 // a branch, and refuses one where they do not, or that is not linear.
 func TestSignCheck(t *testing.T) {
+	t.Parallel()
 	t.Run("clean stack", func(t *testing.T) {
+		t.Parallel()
 		s, _ := checkStack(t)
 		branches := gitIn(t, s.dir, "for-each-ref", "refs/heads/")
-		if _, err := SignCheck(t.Context()); err != nil {
+		if _, err := SignCheck(s.ctx); err != nil {
 			t.Fatalf("a clean stack: %v", err)
 		}
 		if got := gitIn(t, s.dir, "for-each-ref", "refs/heads/"); got != branches {
@@ -73,10 +73,11 @@ func TestSignCheck(t *testing.T) {
 	// A fixup of lower's commit, committed on upper, squashes into lower and
 	// changes its files.
 	t.Run("a fixup in the wrong branch", func(t *testing.T) {
+		t.Parallel()
 		s, _ := checkStack(t)
 		os.WriteFile(filepath.Join(s.dir, "a"), []byte("a fixed again\n"), 0o644)
 		gitIn(t, s.dir, "commit", "-qa", "--fixup=lower~2")
-		if _, err := SignCheck(t.Context()); err == nil {
+		if _, err := SignCheck(s.ctx); err == nil {
 			t.Error("a fixup in the wrong branch was accepted")
 		} else if _, ok := err.(Refusal); !ok {
 			t.Errorf("not a refusal: %v", err)
@@ -84,18 +85,20 @@ func TestSignCheck(t *testing.T) {
 	})
 
 	t.Run("a stack that is not linear", func(t *testing.T) {
+		t.Parallel()
 		s, f := checkStack(t)
 		gitIn(t, s.dir, "branch", "side", "lower")
 		f.bases["side"] = "lower"
-		if _, err := SignCheck(t.Context()); err == nil || !strings.Contains(err.Error(), "linear") {
+		if _, err := SignCheck(s.ctx); err == nil || !strings.Contains(err.Error(), "linear") {
 			t.Errorf("a stack that is not linear: %v", err)
 		}
 	})
 
 	t.Run("HEAD heads no PR", func(t *testing.T) {
+		t.Parallel()
 		s, _ := checkStack(t)
 		gitIn(t, s.dir, "switch", "-q", "main")
-		if _, err := SignCheck(t.Context()); !refused(err) {
+		if _, err := SignCheck(s.ctx); !refused(err) {
 			t.Errorf("main: %v", err)
 		}
 	})
