@@ -65,6 +65,24 @@ description: How to open, describe and answer a pull request. Use before `pr-loo
   settings people made for it, state on other hosts. A compat review
   (the `review-change` skill's focused reviews) checks this section
   against the code, and refuses a description without it.
+- Under `## Visuals`, give reviewers a picture of what the change does or
+  how its parts fit, the one that serves the operator reading the change
+  locally too:
+  - how parts call each other, the order things happen in, or the states
+    something moves through: a diagram from the review's diagram pass (the
+    `review-change` skill's Diagrams), which review-guide shows the
+    operator. Take a diagram `git delegate show BASE..TIP` gives the
+    verdict `holds` or `corrected`, and paste its `mermaid` into a
+    `mermaid` code block, which GitHub renders.
+  - what a command-line program prints or how it behaves: a recording made
+    with VHS (https://github.com/charmbracelet/vhs) from a `.tape` file.
+  - a changed screen or page: a screenshot.
+
+  GitHub takes an image into a description only through its web editor:
+  for a recording or a screenshot, make the file, write the line saying
+  what it shows, and name the file in the hand-back for the operator to
+  attach. Leave the section out when no picture would help a reviewer,
+  such as for a wording change or a one-line fix, or when none can be made.
 - Write it as the `docs-and-comments` skill's "Write plainly" says.
 - Write for a reader who has never seen the tools that made the change:
   link a review thread by its URL, a commit by its short SHA and a ticket by
