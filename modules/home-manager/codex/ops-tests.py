@@ -12,7 +12,7 @@ EXPECTED = {
     "agent_plan_" + name
     for name in (
         "new log set unfile ask decide followup step part edit after section "
-        "visual reference link postpone sign_id workstream_new workstream_list find status"
+        "visual digest brag reference link postpone sign_id workstream_new workstream_list find status"
     ).split()
 }
 

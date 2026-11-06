@@ -408,9 +408,12 @@ with lib; let
   # directory holds the plans, their logs and the logs' locks, which only
   # agent-plan's excluded writes change; the notes repository's git
   # directory, so that no git command run in the repository can reset,
-  # switch, clean or merge the plans either. The review records, which the
-  # excluded writers alone change.
-  sandboxDeniedWrites = [plans.dir "${plans.repository.path}/.git" records];
+  # switch, clean or merge the plans either. The demo digests and brag
+  # files beside the plans, which `agent-plan digest` and `brag` alone
+  # write. The review records, which the excluded writers alone change.
+  sandboxDeniedWrites = [plans.dir "${plans.repository.path}/.git" notesDigests notesBrag records];
+  notesDigests = "${plans.repository.path}/digests";
+  notesBrag = "${plans.repository.path}/brag";
 
   # trash-scratch's settings are shell words: scratchBase holds each
   # session's directory, under its project, named by the session's ID, and
@@ -471,9 +474,10 @@ with lib; let
     '';
 
   # agent-plan's subcommands that write a plan's files, its log or its lock,
-  # run outside the sandbox, which denies the plans directory to every other
-  # command. Never sync, init or reseal: sync pushes and init clones with the
-  # notes deploy key, and reseal is the operator's.
+  # or a digest or brag file, run outside the sandbox, which denies the plans
+  # directory and those files to every other command. Never sync, init or
+  # reseal: sync pushes and init clones with the notes deploy key, and reseal
+  # is the operator's.
   agentPlanWrites = [
     "new"
     "log"
@@ -494,6 +498,8 @@ with lib; let
     "after"
     "section"
     "visual"
+    "digest"
+    "brag"
   ];
 
   # pr-loop's subcommands that need the operator's GitHub login, or write
@@ -706,9 +712,9 @@ in {
           ++ map (p: "Edit(${rulePath plans.dir}/${p})") ["*.log.org" "*.log.org.lock"]
           # Every plan file is agent-plan's to change, which the sandbox
           # holds for shell commands and this for file tools, which run
-          # outside it, where the guard's hook cannot run. Review records
-          # likewise.
-          ++ ["Edit(${rulePath plans.dir}/**)" "Edit(${rulePath records}/**)"]
+          # outside it, where the guard's hook cannot run. Digests, brag
+          # files and review records likewise.
+          ++ map (d: "Edit(${rulePath d}/**)") [plans.dir notesDigests notesBrag records]
           # Every clone's agent settings, for the file tools, wherever the
           # clone is. The guard refuses the same writes.
           ++ ["Edit(${rulePath agentSettingsWrites})"]

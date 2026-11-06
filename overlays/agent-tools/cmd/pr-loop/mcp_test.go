@@ -118,7 +118,7 @@ func newMCPFixture(t *testing.T) *mcpFixture {
 	os.WriteFile(filepath.Join(bin, "claude"), []byte(fakeClaude), 0o755)
 	config := filepath.Join(t.TempDir(), "config.json")
 	os.WriteFile(config, []byte(`{"bots": {"copilot": {"login": "^copilot", "request": {"reviewer": "@copilot"}}}}`), 0o644)
-	planConfig := plans.Config{Dir: filepath.Join(t.TempDir(), "agents"), Host: "box"}
+	planConfig := plans.Config{Dir: filepath.Join(t.TempDir(), "agents"), Host: "box", NotesHost: "box"}
 	created, err := planConfig.New(plans.NewOptions{Title: "Grow the code", Slug: "grow",
 		Goal: "Grow the code to three lines."}, time.Now())
 	if err != nil {
@@ -319,7 +319,7 @@ func TestMCP(t *testing.T) {
 			"pr_loop_ci", "pr_loop_draft", "pr_loop_end", "pr_loop_link", "pr_loop_logs", "pr_loop_next", "pr_loop_open", "pr_loop_push",
 			"pr_loop_reply", "pr_loop_request", "pr_loop_sign_check", "pr_loop_stack", "pr_loop_status", "pr_loop_threads",
 			"pr_loop_wait"}
-		want = append(want, strings.Fields("agent_plan_new agent_plan_log agent_plan_set agent_plan_unfile agent_plan_ask agent_plan_decide agent_plan_followup agent_plan_step agent_plan_part agent_plan_edit agent_plan_after agent_plan_section agent_plan_visual agent_plan_reference agent_plan_link agent_plan_postpone agent_plan_sign_id agent_plan_workstream_new agent_plan_workstream_list agent_plan_find agent_plan_status")...)
+		want = append(want, strings.Fields("agent_plan_new agent_plan_log agent_plan_set agent_plan_unfile agent_plan_ask agent_plan_decide agent_plan_followup agent_plan_step agent_plan_part agent_plan_edit agent_plan_after agent_plan_section agent_plan_visual agent_plan_digest agent_plan_brag agent_plan_reference agent_plan_link agent_plan_postpone agent_plan_sign_id agent_plan_workstream_new agent_plan_workstream_list agent_plan_find agent_plan_status")...)
 		slices.Sort(want)
 		if !slices.Equal(names, want) {
 			t.Errorf("tools %q, want %q", names, want)

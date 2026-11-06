@@ -261,8 +261,10 @@ names what it found:
   `wait`, `sign-check`, `end`).
 - `agent-plan`'s writes (`new`, `log`, `ask`, `decide`, `followup`,
   `reference`, `postpone`, `set`, `own`, `sign-id`, `sign-result`, `step`,
-  `part`, `edit`, `after`, `section`, `visual`): the sandbox denies the plans
-  directory to every other command, so a plan changes only through them.
+  `part`, `edit`, `after`, `section`, `visual`, `digest`, `brag`): the
+  sandbox denies the plans directory, and the notes repository's `digests`
+  and `brag` directories, to every other command, so a plan, a demo digest
+  or a brag file changes only through them.
   `agent-plan sync`, `init` and `reseal` stay sandboxed.
 
 They are safe to run as the operator because none runs a program its
