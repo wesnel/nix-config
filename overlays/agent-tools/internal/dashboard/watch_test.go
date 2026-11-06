@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/export"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
@@ -37,17 +38,21 @@ func under(t *testing.T, file, heading, text string) {
 }
 
 // script runs w, one poll every 30 seconds of a fake clock from start, with
-// steps[i] run before poll i+1, and returns what each poll printed.
+// steps[i] run before poll i+1, in the Env of ctx, and returns what each
+// poll printed.
 type script struct {
 	w     Watch
+	ctx   context.Context
 	clock time.Time
 	pulls int
 	sync  plans.SyncState
 }
 
+// newScript is a script whose Env keeps review records in a state
+// directory of the test's own.
 func newScript(t *testing.T, c plans.Config, dir string) *script {
 	t.Helper()
-	s := &script{clock: now}
+	s := &script{clock: now, ctx: env.With(t.Context(), env.Process().Set("XDG_STATE_HOME="+t.TempDir()))}
 	var out bytes.Buffer
 	s.w = Watch{Dir: dir, Config: c, Out: &out,
 		Now:  func() time.Time { return s.clock },
@@ -77,7 +82,7 @@ func (s *script) run(t *testing.T, steps ...func()) []string {
 		s.clock = s.clock.Add(d)
 		return true
 	}
-	if err := s.w.Run(context.Background()); err != nil {
+	if err := s.w.Run(s.ctx); err != nil {
 		t.Fatal(err)
 	}
 	if i != len(steps) {
@@ -94,7 +99,7 @@ func watchFixture(t *testing.T) (plans.Config, plans.Plan, string) {
 	t.Helper()
 	root := t.TempDir()
 	c := plans.Config{Dir: filepath.Join(root, "notes", "agents"), Host: "box"}
-	made, err := c.New(plans.NewOptions{Title: "Loop", Slug: "loop", Goal: "Run the loop."}, day)
+	made, err := c.New(t.Context(), plans.NewOptions{Title: "Loop", Slug: "loop", Goal: "Run the loop."}, day)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,6 +126,7 @@ func ask(t *testing.T, p plans.Plan, q string) func() {
 // when only a log does, at most once every 90 seconds, and never for the
 // state the first watch found.
 func TestWatchChanges(t *testing.T) {
+	t.Parallel()
 	c, own, p := watchFixture(t)
 	s := newScript(t, c, p)
 	logged := func() {
@@ -150,14 +156,15 @@ func TestWatchChanges(t *testing.T) {
 // the same plans while nothing is staged, so the first watch after an
 // upgrade, or after going back, prints no change that did not happen.
 func TestWatchHashBeforeStaged(t *testing.T) {
+	t.Parallel()
 	c, _, p := watchFixture(t)
 	s := newScript(t, c, p)
 	s.sync = plans.SyncState{Repo: true}
-	got, err := s.w.hash(now)
+	got, err := s.w.hash(s.ctx, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ps, failed, err := export.Plans(c, now)
+	ps, failed, err := export.Plans(s.ctx, c, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,6 +189,7 @@ func TestWatchHashBeforeStaged(t *testing.T) {
 // Pushes and fetches alone change nothing printed, but whether this host's
 // plans are unsynced does; Pull runs at the start and every two minutes.
 func TestWatchSyncAndPull(t *testing.T) {
+	t.Parallel()
 	c, _, p := watchFixture(t)
 	s := newScript(t, c, p)
 	s.sync = plans.SyncState{Repo: true, Pushed: now.Add(-time.Hour), Fetched: now}
@@ -208,6 +216,7 @@ func TestWatchSyncAndPull(t *testing.T) {
 // old, is printed once, a restart included, and again once it has ended
 // and come back.
 func TestWatchStall(t *testing.T) {
+	t.Parallel()
 	c, _, p := watchFixture(t)
 	s := newScript(t, c, p)
 	s.sync = plans.SyncState{Repo: true, Unsynced: true, Pushed: now.Add(-5 * time.Hour)}
@@ -243,6 +252,7 @@ func TestWatchStall(t *testing.T) {
 // A demo digest committed to the notes repository after the first watch
 // is announced once; other files there are not.
 func TestWatchDigest(t *testing.T) {
+	t.Parallel()
 	c, _, p := watchFixture(t)
 	digests := filepath.Join(filepath.Dir(c.Dir), "digests", "2026")
 	put := func(name string) func() {
@@ -267,6 +277,7 @@ func TestWatchDigest(t *testing.T) {
 
 // One watch at a time: another says so and returns at once.
 func TestWatchLock(t *testing.T) {
+	t.Parallel()
 	c, _, p := watchFixture(t)
 	held, err := tryLock(filepath.Join(p, "watch.lock"))
 	if err != nil || held == nil {
@@ -278,7 +289,7 @@ func TestWatchLock(t *testing.T) {
 		t.Error("a second watch polled")
 		return false
 	}
-	if err := s.w.Run(context.Background()); err != nil {
+	if err := s.w.Run(s.ctx); err != nil {
 		t.Fatal(err)
 	}
 	if got := s.w.Out.(*bytes.Buffer).String(); got != LineAlready+"\n" {

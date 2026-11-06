@@ -14,6 +14,7 @@ import (
 
 	shared "github.com/wesnel/agent-tools/internal/availability"
 	"github.com/wesnel/agent-tools/internal/cli"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/record"
@@ -291,13 +292,13 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	if len(args) > 0 {
 		switch args[0] {
 		case "availability":
-			return availabilityCommand(args[1:], stdout, stderr)
+			return availabilityCommand(ctx, args[1:], stdout, stderr)
 		case "ask":
 			return ask(ctx, args[1:], stdin, stdout, stderr)
 		case "show":
-			return show(args[1:], stdout, stderr)
+			return show(ctx, args[1:], stdout, stderr)
 		case "settle":
-			return settle(args[1:], stdin, stdout, stderr)
+			return settle(ctx, args[1:], stdin, stdout, stderr)
 		}
 	}
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
@@ -347,12 +348,12 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 				strings.Join(slices.Sorted(maps.Keys(reviewerTypes)), ", ")), 0)
 		}
 	}
-	s, err := parseSource(positional[0])
+	s, err := parseSource(ctx, positional[0])
 	if err != nil {
 		return report(nil, err, 0)
 	}
 	if s.number == 0 {
-		if err := git.CheckConfig(""); err != nil {
+		if err := git.In(ctx).CheckConfig(""); err != nil {
 			return report(nil, err, 0)
 		}
 	}
@@ -361,11 +362,14 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		return report(nil, err, 0)
 	}
 	defer r.release()
+	// The rest runs in r's Env, which for a pull request reads no git
+	// configuration but the repository's.
+	ctx = env.With(ctx, r.env)
 	if err := usableSettings(r); err != nil {
 		return report(nil, err, 0)
 	}
 
-	base := inputs{r: r, availability: newAvailability()}
+	base := inputs{r: r, availability: newAvailability(r.env)}
 	if *plan != "" {
 		if base.goal, err = planGoal(*plan, *part); err != nil {
 			return report(nil, err, 0)
@@ -376,13 +380,13 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	}
 	goal := goalFlags(*plan, *part)
 	if *items != "" {
-		if base.items, err = readFile(*items, stdin); err != nil {
+		if base.items, err = readFile(r.env, *items, stdin); err != nil {
 			return report(nil, err, 0)
 		}
 	}
 	switch {
 	case *description != "":
-		if base.description, err = readFile(*description, stdin); err != nil {
+		if base.description, err = readFile(r.env, *description, stdin); err != nil {
 			return report(nil, err, 0)
 		}
 		base.descriptionFrom = "the description " + *description
@@ -391,7 +395,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 		base.descriptionFrom = fmt.Sprintf("the description of %s#%d", s.slug(), s.number)
 	}
 	if s.number != 0 {
-		if err := prInputs(s, &base, stderr); err != nil {
+		if err := prInputs(ctx, s, &base, stderr); err != nil {
 			return report(nil, err, 0)
 		}
 	}
@@ -400,7 +404,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 			return report(nil, err, 0)
 		}
 	}
-	path, err := record.RangeFile(s.owner, s.repo, r.base, r.tip)
+	path, err := record.RangeFile(r.env, s.owner, s.repo, r.base, r.tip)
 	if err != nil {
 		return report(nil, err, 0)
 	}
@@ -409,7 +413,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	}
 	var redCheckJSON string
 	if *redCheckFile != "" {
-		if redCheckJSON, err = readFile(*redCheckFile, stdin); err != nil {
+		if redCheckJSON, err = readFile(r.env, *redCheckFile, stdin); err != nil {
 			return report(nil, err, 0)
 		}
 	}
@@ -419,7 +423,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	}
 
 	if *printPrompt {
-		t := generalReviewer()
+		t := generalReviewer(r.env)
 		if len(reviewers) == 1 {
 			t = reviewers[0]
 		}
@@ -442,7 +446,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	scanned := routeChange(r, nil, stderr)
 	chosen := slices.Clone([]string(reviewers))
 	if !explicit {
-		chosen = []string{generalReviewer()}
+		chosen = []string{generalReviewer(r.env)}
 	}
 	chosen = slices.Compact(chosen)
 
@@ -493,7 +497,7 @@ func Main(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io
 	title := s.given
 	if s.pr != nil {
 		title = s.pr.Title
-	} else if subject, err := git.Run("-C", r.top, "log", "-1", "--format=%s", r.tip); err == nil {
+	} else if subject, err := r.git().Run("-C", r.top, "log", "-1", "--format=%s", r.tip); err == nil {
 		title = subject
 	}
 	rec, err := writeRuns(path, s, r, title, runs, time.Now())
@@ -601,7 +605,7 @@ func shellWord(s string) string {
 // its Goal heading, which agent-plan goal prints. plan may name a part's
 // file, which Open takes as its plan's, only together with that part.
 func planGoal(plan, part string) (string, error) {
-	c, err := plans.Load()
+	c, err := plans.Load(env.Process())
 	if err != nil {
 		return "", err
 	}
@@ -627,15 +631,16 @@ func (in inputs) reverting() (string, error) {
 	return revertingSection(in.description, in.descriptionFrom)
 }
 
-// runnable says why type ty's reviewer cannot run here, or "".
-func runnable(a *availability, ty reviewerType) string {
+// runnable says why type ty's reviewer cannot run here, in ctx's Env, or
+// "".
+func runnable(ctx context.Context, a *availability, ty reviewerType) string {
 	if err := a.check(ty.provider()); err != nil {
 		return err.Error()
 	}
 	if ty.claude {
-		return claudeMissing()
+		return claudeMissing(env.From(ctx))
 	}
-	return unavailable()
+	return unavailable(ctx)
 }
 
 // runType runs type t once, and once more where its reply does not fit.
@@ -646,7 +651,7 @@ func runType(ctx context.Context, s *source, r *span, base inputs, t string, tes
 		return runDiagrams(ctx, s, r, base, model, timeout, log)
 	}
 	run := &typeRun{name: t, redCheck: ty.focus == "" && !ty.guide && tests.given}
-	if run.why = runnable(base.availability, ty); run.why != "" {
+	if run.why = runnable(ctx, base.availability, ty); run.why != "" {
 		return run
 	}
 	in, err := typeInputs(ctx, base, t, tests, log)

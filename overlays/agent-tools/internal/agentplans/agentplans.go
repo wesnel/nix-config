@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/repos"
 )
@@ -23,12 +24,12 @@ import (
 // only where it is present.
 const Schema = 5
 
-// Dir is the dashboard's state directory, $XDG_STATE_HOME/agent-plans.
-func Dir() string { return filepath.Join(hostpaths.StateHome(), "agent-plans") }
+// Dir is the dashboard's state directory, $XDG_STATE_HOME/agent-plans in e.
+func Dir(e env.Env) string { return filepath.Join(hostpaths.StateHome(e), "agent-plans") }
 
 // Out is where plan-dash export writes the page's documents and the session
 // reads the page's database into.
-func Out() string { return filepath.Join(Dir(), "out") }
+func Out(e env.Env) string { return filepath.Join(Dir(e), "out") }
 
 // Page is the "Agent plans" page: one HTML file, its CSS and script
 // inline, which reads the documents plan-dash export writes from the
@@ -52,10 +53,10 @@ func PageHash(data []byte) string {
 
 // PageFile is the page's HTML as plan-dash page writes it, the one file the
 // session publishes.
-func PageFile() string { return filepath.Join(Dir(), "page", "agent-plans.html") }
+func PageFile(e env.Env) string { return filepath.Join(Dir(e), "page", "agent-plans.html") }
 
 // PublishedFile holds PageHash of the page last published.
-func PublishedFile() string { return filepath.Join(Dir(), "page", "published") }
+func PublishedFile(e env.Env) string { return filepath.Join(Dir(e), "page", "published") }
 
 // Capabilities are the page's runtime capabilities, which every publish of
 // it declares: its database, readable and writable by its owner alone,
@@ -66,10 +67,10 @@ const Capabilities = `{"db":{"rules":[{"path":"","read":"owner","write":"owner"}
 // SpaceStateFile is where plan-dash space records the thread and the block
 // it publishes the Space page in, which the guard keeps sessions from
 // writing.
-func SpaceStateFile() string { return filepath.Join(Dir(), "space.json") }
+func SpaceStateFile(e env.Env) string { return filepath.Join(Dir(e), "space.json") }
 
 // Session is the session's working directory, which holds its settings.
-func Session() string { return filepath.Join(Dir(), "session") }
+func Session(e env.Env) string { return filepath.Join(Dir(e), "session") }
 
 // Targets are where the dashboard is published, each "" where the machine
 // sets none: "agentPlans" in agent-tools' config.json, which the llm
@@ -90,10 +91,10 @@ var (
 	spacePage = regexp.MustCompile(`^[A-Za-z0-9_-]{1,256}$`)
 )
 
-// LoadTargets reads Targets, refusing a value that is set but not the
-// shape of its kind.
-func LoadTargets() (Targets, error) {
-	file := repos.Path()
+// LoadTargets reads Targets from the config e names, refusing a value that
+// is set but not the shape of its kind.
+func LoadTargets(e env.Env) (Targets, error) {
+	file := repos.Path(e)
 	data, err := os.ReadFile(file)
 	if err != nil {
 		return Targets{}, fmt.Errorf("the Agent plans targets: %w", err)

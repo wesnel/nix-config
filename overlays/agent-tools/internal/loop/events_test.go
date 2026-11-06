@@ -27,7 +27,7 @@ func loopPlan(t *testing.T, worktrees, branches []string) plans.Plan {
 	for i, w := range worktrees {
 		worktrees[i], _ = filepath.EvalSymlinks(w)
 	}
-	made, err := c.New(plans.NewOptions{Title: "Answer the bots", Slug: "loop", Worktrees: worktrees, Branches: branches,
+	made, err := c.New(t.Context(), plans.NewOptions{Title: "Answer the bots", Slug: "loop", Worktrees: worktrees, Branches: branches,
 		Sessions: []string{"claude:s-loop"}}, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -68,16 +68,16 @@ func expectEvents(t *testing.T, p plans.Plan, want ...string) {
 // outcomes.
 func TestLoopEvents(t *testing.T) {
 	t.Run("reply and resolve", func(t *testing.T) {
-		fakeRepo(t)
-		t.Setenv(ModeEnv, "bots")
+		f := fakeRepo(t)
+		ctx := f.in("bots")
 		p := loopPlan(t, []string{git.Dir}, nil)
-		if _, err := Reply("bot1", "done"); err != nil {
+		if _, err := Reply(ctx, "bot1", "done"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := Resolve("bot1"); err != nil {
+		if _, err := Resolve(ctx, "bot1"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := Reply("theirs", "x"); err == nil {
+		if _, err := Reply(ctx, "theirs", "x"); err == nil {
 			t.Fatal("replied to a thread the policy refuses")
 		}
 		expectEvents(t, p, "replied: in thread bot1 on #1", "resolved: thread bot1 on #1")
@@ -87,7 +87,7 @@ func TestLoopEvents(t *testing.T) {
 		f := ciRepo(t)
 		f.checks["a1"] = passing
 		p := loopPlan(t, []string{git.Dir}, nil)
-		if _, _, err := WaitCI([]string{"1"}, "", time.Hour, time.Minute, 3*time.Minute); err != nil {
+		if _, _, err := WaitCI(t.Context(), []string{"1"}, "", time.Hour, time.Minute, 3*time.Minute); err != nil {
 			t.Fatal(err)
 		}
 		expectEvents(t, p, "ci-waited: passed: #1")

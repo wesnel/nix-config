@@ -25,7 +25,7 @@ var (
 // output, for the agent and the operator alike; it prints nothing when every server is connected. A
 // failure to probe is itself a finding, so it always exits 0 once its
 // arguments are right: a SessionStart hook's failure would only hide it.
-func mcpStatus(args []string, stdout, stderr io.Writer) int {
+func mcpStatus(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	hook := false
 	switch {
 	case len(args) == 0:
@@ -35,7 +35,7 @@ func mcpStatus(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "pr-loop: mcp-status takes only --hook; see pr-loop --help")
 		return 2
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
 	findings := mcpproxy.Probe(ctx, &http.Client{Timeout: requestTimeout}, mcpproxy.Load())
 	if len(findings) == 0 {

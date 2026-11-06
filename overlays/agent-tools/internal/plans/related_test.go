@@ -66,7 +66,7 @@ func TestLinkEvidence(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		linked, err := c.LinkEvidence(b.file(""), day)
+		linked, err := c.LinkEvidence(t.Context(), b.file(""), day)
 		if err != nil || len(linked) != 1 || linked[0].Plan != a.Name {
 			t.Fatalf("linked %+v, %v", linked, err)
 		}
@@ -89,14 +89,14 @@ func TestLinkEvidence(t *testing.T) {
 		if _, err := b.SetSection("", "Goal", "Finish follow-up F2 and part P3 of plan "+shortName(a)+", but not F9.", day); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := c.LinkEvidence(b.file(""), day); err != nil {
+		if _, err := c.LinkEvidence(t.Context(), b.file(""), day); err != nil {
 			t.Fatal(err)
 		}
 		if why := linksTo(t, b, a); why != "Takes over its F2, P3." {
 			t.Errorf("b's link to a: %q", why)
 		}
 		// The plan whose item was taken links the plan that took it too.
-		if _, err := c.LinkEvidence(a.file(""), day); err != nil {
+		if _, err := c.LinkEvidence(t.Context(), a.file(""), day); err != nil {
 			t.Fatal(err)
 		}
 		if why := linksTo(t, a, b); why != "Took over this plan's F2, P3." {
@@ -112,7 +112,7 @@ func TestLinkEvidence(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, err := c.LinkEvidence(b.file(""), day); err != nil {
+		if _, err := c.LinkEvidence(t.Context(), b.file(""), day); err != nil {
 			t.Fatal(err)
 		}
 		if why := linksTo(t, b, a); why != "Both log the commit 'Fix the loop' on loop-fix." {
@@ -137,11 +137,11 @@ func TestLinkEvidence(t *testing.T) {
 			}
 			ps = append(ps, p)
 		}
-		events, err := c.LinkEvidence(ps[1].file(""), day)
+		events, err := c.LinkEvidence(t.Context(), ps[1].file(""), day)
 		if err != nil || len(events) != 0 {
 			t.Errorf("events %+v, %v", events, err)
 		}
-		rs, err := c.Related(ps[1].file(""))
+		rs, err := c.Related(t.Context(), ps[1].file(""))
 		if err != nil || len(rs) != 0 {
 			t.Errorf("related %+v, %v", rs, err)
 		}
@@ -152,7 +152,7 @@ func TestLinkEvidence(t *testing.T) {
 		a := planOn(t, c, "a", "", "main..loop")
 		b := planOn(t, c, "b", "", "main..loop")
 		before := fileText(t, b.file(""))
-		events, err := c.LinkEvidence(b.file(""), day)
+		events, err := c.LinkEvidence(t.Context(), b.file(""), day)
 		if err != nil || len(events) != 0 || fileText(t, b.file("")) != before || linksTo(t, b, a) == "" {
 			t.Errorf("again: %+v, %v\n%s", events, err, fileText(t, b.file("")))
 		}
@@ -166,7 +166,7 @@ func TestRelated(t *testing.T) {
 	c := testConfig(t)
 	_, linked := mainCheckout(t)
 	a := planOn(t, c, "a", "", "main..loop")
-	made, err := c.New(NewOptions{Title: "Plan b", Slug: "b", Repos: []string{"o/r"}, Branches: []string{"main..other"},
+	made, err := c.New(t.Context(), NewOptions{Title: "Plan b", Slug: "b", Repos: []string{"o/r"}, Branches: []string{"main..other"},
 		Worktrees: []string{linked}, Sessions: []string{"claude:s-1"}}, day)
 	if err != nil {
 		t.Fatal(err)
@@ -183,7 +183,7 @@ func TestRelated(t *testing.T) {
 	}
 	stacked := planOn(t, c, "stacked", "", "other..flag")
 	before := fileText(t, b.file(""))
-	rs, err := c.Related(b.file(""))
+	rs, err := c.Related(t.Context(), b.file(""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,11 +202,11 @@ func TestRelated(t *testing.T) {
 	if after := fileText(t, b.file("")); after != before {
 		t.Errorf("Related wrote b:\n%s", after)
 	}
-	events, err := c.LinkEvidence(b.file(""), day)
+	events, err := c.LinkEvidence(t.Context(), b.file(""), day)
 	if err != nil || len(events) != 1 || linksTo(t, b, stacked) == "" || linksTo(t, b, a) != "" {
 		t.Errorf("LinkEvidence %+v, %v: b links a with %q", events, err, linksTo(t, b, a))
 	}
-	rs, _ = c.Related(b.file(""))
+	rs, _ = c.Related(t.Context(), b.file(""))
 	if len(rs) != 2 || !rs[0].Linked || rs[1].Linked {
 		t.Errorf("related after linking %+v", rs)
 	}

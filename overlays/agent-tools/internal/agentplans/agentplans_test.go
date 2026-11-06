@@ -6,30 +6,33 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
 func TestPaths(t *testing.T) {
+	t.Parallel()
 	state := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", state)
-	if Out() != filepath.Join(state, "agent-plans", "out") || Session() != filepath.Join(state, "agent-plans", "session") {
-		t.Errorf("out %s, session %s", Out(), Session())
+	e := env.New(t.TempDir(), "XDG_STATE_HOME="+state)
+	if Out(e) != filepath.Join(state, "agent-plans", "out") || Session(e) != filepath.Join(state, "agent-plans", "session") {
+		t.Errorf("out %s, session %s", Out(e), Session(e))
 	}
 	// A build that bakes the directories in takes neither from the
 	// environment.
 	baked := t.TempDir()
-	hostpaths.Bake(t, filepath.Join(baked, "config"), filepath.Join(baked, "state"))
-	if Out() != filepath.Join(baked, "state", "agent-plans", "out") {
-		t.Errorf("baked: out %s", Out())
+	e = e.Set(hostpaths.TestBaked(filepath.Join(baked, "config"), filepath.Join(baked, "state"))...)
+	if Out(e) != filepath.Join(baked, "state", "agent-plans", "out") {
+		t.Errorf("baked: out %s", Out(e))
 	}
 }
 
 // The targets are agentPlans in agent-tools' config.json, which the llm
 // module writes from the machine's options, null where one is unset.
 func TestLoadTargets(t *testing.T) {
+	t.Parallel()
 	file := filepath.Join(t.TempDir(), "config.json")
-	t.Setenv("AGENT_TOOLS_CONFIG", file)
-	if _, err := LoadTargets(); err == nil || !strings.Contains(err.Error(), file) {
+	e := env.New(t.TempDir(), "AGENT_TOOLS_CONFIG="+file)
+	if _, err := LoadTargets(e); err == nil || !strings.Contains(err.Error(), file) {
 		t.Errorf("without the file: %v", err)
 	}
 	for _, c := range []struct{ body, claude, space string }{
@@ -41,7 +44,7 @@ func TestLoadTargets(t *testing.T) {
 		{`{"plans": {}}`, "", ""},
 	} {
 		os.WriteFile(file, []byte(c.body), 0o600)
-		if got, err := LoadTargets(); got.ClaudePage != c.claude || got.SpacePage != c.space || err != nil {
+		if got, err := LoadTargets(e); got.ClaudePage != c.claude || got.SpacePage != c.space || err != nil {
 			t.Errorf("%s: %+v %v", c.body, got, err)
 		}
 	}
@@ -52,7 +55,7 @@ func TestLoadTargets(t *testing.T) {
 		`{"agentPlans": {"spacePage": "page/../x"}}`, `{"agentPlans": {"spacePage": ""}}`,
 		`not json`, `{"agentPlans": {"claudePage": ["x"]}}`} {
 		os.WriteFile(file, []byte(body), 0o600)
-		if got, err := LoadTargets(); got != (Targets{}) || err == nil {
+		if got, err := LoadTargets(e); got != (Targets{}) || err == nil {
 			t.Errorf("%s: %+v %v", body, got, err)
 		}
 	}

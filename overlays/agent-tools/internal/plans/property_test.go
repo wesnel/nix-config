@@ -123,7 +123,7 @@ func TestProperties(t *testing.T) {
 	// A plan whose log has never recorded a property is not compared.
 	t.Run("never logged", func(t *testing.T) {
 		c := testConfig(t)
-		made, err := c.New(NewOptions{Title: "Old", Slug: "old"}, day)
+		made, err := c.New(t.Context(), NewOptions{Title: "Old", Slug: "old"}, day)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -211,7 +211,7 @@ func TestRemoveFromProperty(t *testing.T) {
 		c := testConfig(t)
 		p := newPlan(t, c, "x")
 		addItems(t, p.file(""), "** Distribution", "P1")
-		if _, err := c.New(NewOptions{Title: "Part", Parent: p.file(""), Part: "P1", Branches: []string{"loop..flag", "main..other"}}, day); err != nil {
+		if _, err := c.New(t.Context(), NewOptions{Title: "Part", Parent: p.file(""), Part: "P1", Branches: []string{"loop..flag", "main..other"}}, day); err != nil {
 			t.Fatal(err)
 		}
 		if err := p.RemoveFromProperty("P1", "BRANCHES", "main..other", "It is plan y's work.", day); err != nil {

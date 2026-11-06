@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wesnel/agent-tools/internal/env"
 )
 
 // fakeGh stands in for `gh api graphql`, logging each call on a line: it
@@ -62,23 +64,29 @@ const reply = `{"data": {
   ]}
 }}`
 
+// fake is fakeGh answering with a reply, in the Env tests give the code
+// under test.
 type fake struct {
 	log, reply string
+	env        env.Env
 }
 
-// fakeGitHub puts fakeGh on PATH answering with text.
+// fakeGitHub puts fakeGh on the PATH of a new Env, answering with text.
 func fakeGitHub(t *testing.T, text string) *fake {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "bin")
 	os.MkdirAll(bin, 0o755)
 	os.WriteFile(filepath.Join(bin, "gh"), []byte(fakeGh), 0o755)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	f := &fake{log: filepath.Join(t.TempDir(), "gh.log"), reply: filepath.Join(t.TempDir(), "reply.json")}
 	os.WriteFile(f.reply, []byte(text), 0o644)
-	t.Setenv("FAKE_GH_LOG", f.log)
-	t.Setenv("FAKE_GH_REPLY", f.reply)
-	t.Setenv("FAKE_GH_FAIL", "")
+	f.env = env.Process().Set("PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"FAKE_GH_LOG="+f.log, "FAKE_GH_REPLY="+f.reply, "FAKE_GH_FAIL=")
 	return f
+}
+
+// ctx is a context carrying f's Env.
+func (f *fake) ctx(t *testing.T) context.Context {
+	return env.With(t.Context(), f.env)
 }
 
 func (f *fake) calls(t *testing.T) int {
@@ -88,24 +96,25 @@ func (f *fake) calls(t *testing.T) int {
 }
 
 // reviewRoot puts the review records' directory, agent-tools/reviews
-// under $XDG_STATE_HOME, in a new one.
-func reviewRoot(t *testing.T) string {
+// under $XDG_STATE_HOME of f's Env, in a new one.
+func (f *fake) reviewRoot(t *testing.T) string {
 	t.Helper()
 	state := t.TempDir()
-	t.Setenv("XDG_STATE_HOME", state)
+	f.env = f.env.Set("XDG_STATE_HOME=" + state)
 	return filepath.Join(state, "agent-tools", "reviews")
 }
 
 var now = time.Date(2026, 10, 16, 12, 0, 0, 0, time.Local)
 
 func TestGitHub(t *testing.T) {
-	fakeGitHub(t, reply)
-	root := reviewRoot(t)
+	t.Parallel()
+	f := fakeGitHub(t, reply)
+	root := f.reviewRoot(t)
 	record := filepath.Join(root, "p", "q", strings.Repeat("0", 40)+".."+head1+".org")
 	os.MkdirAll(filepath.Dir(record), 0o755)
 	os.WriteFile(record, []byte("{}"), 0o644)
 
-	g, stale, err := GitHubAt(context.Background(), filepath.Join(t.TempDir(), "github.json"), now)
+	g, stale, err := GitHubAt(f.ctx(t), filepath.Join(t.TempDir(), "github.json"), now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,24 +140,25 @@ func TestGitHub(t *testing.T) {
 // A read within a minute of the last fetch reads the cache, and a failed
 // fetch falls back on the last good result, stale.
 func TestCache(t *testing.T) {
+	t.Parallel()
 	f := fakeGitHub(t, reply)
-	reviewRoot(t)
+	f.reviewRoot(t)
 	cache := filepath.Join(t.TempDir(), "github.json")
-	if _, _, err := GitHubAt(context.Background(), cache, now); err != nil {
+	if _, _, err := GitHubAt(f.ctx(t), cache, now); err != nil {
 		t.Fatal(err)
 	}
-	g, stale, err := GitHubAt(context.Background(), cache, now.Add(30*time.Second))
+	g, stale, err := GitHubAt(f.ctx(t), cache, now.Add(30*time.Second))
 	if err != nil || f.calls(t) != 1 || stale || g == nil || !g.At.Equal(now) {
 		t.Errorf("within a minute: %d calls, stale %v, GitHub %+v, %v", f.calls(t), stale, g, err)
 	}
 
-	t.Setenv("FAKE_GH_FAIL", "1")
-	g, stale, err = GitHubAt(context.Background(), cache, now.Add(2*time.Minute))
+	f.env = f.env.Set("FAKE_GH_FAIL=1")
+	g, stale, err = GitHubAt(f.ctx(t), cache, now.Add(2*time.Minute))
 	if err == nil || f.calls(t) != 2 || !stale || g == nil || !g.At.Equal(now) || len(g.Mine) != 2 {
 		t.Errorf("after a failed fetch: %d calls, stale %v, GitHub %+v, %v", f.calls(t), stale, g, err)
 	}
 
-	g, _, err = GitHubAt(context.Background(), filepath.Join(t.TempDir(), "github.json"), now)
+	g, _, err = GitHubAt(f.ctx(t), filepath.Join(t.TempDir(), "github.json"), now)
 	if err == nil || g != nil {
 		t.Errorf("without a cache: GitHub %+v, %v", g, err)
 	}
@@ -169,9 +179,11 @@ var hostile = []string{
 // page alone: a branch or login is never asked for, and a repository name,
 // state or head that is not one is dropped or kept as "unknown".
 func TestShapes(t *testing.T) {
+	t.Parallel()
 	for i, h := range hostile {
 		// Numbered, as a test's name is part of its temporary directory's.
 		t.Run(fmt.Sprint(i), func(t *testing.T) {
+			t.Parallel()
 			q := func(s string) string { return strings.ReplaceAll(strings.ReplaceAll(s, `\`, `\\`), "\n", `\n`) }
 			text := `{"data": {
   "viewer": {"login": "` + q(h) + `"},
@@ -196,9 +208,9 @@ func TestShapes(t *testing.T) {
      "reviewRequests": {"nodes": []}, "timelineItems": {"nodes": []}}
   ]}
 }}`
-			fakeGitHub(t, text)
-			reviewRoot(t)
-			g, _, err := GitHubAt(context.Background(), filepath.Join(t.TempDir(), "github.json"), now)
+			f := fakeGitHub(t, text)
+			f.reviewRoot(t)
+			g, _, err := GitHubAt(f.ctx(t), filepath.Join(t.TempDir(), "github.json"), now)
 			if err != nil {
 				t.Fatal(err)
 			}

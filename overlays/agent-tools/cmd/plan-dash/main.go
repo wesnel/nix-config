@@ -17,6 +17,7 @@ import (
 	"github.com/wesnel/agent-tools/internal/agentplans"
 	"github.com/wesnel/agent-tools/internal/cli"
 	"github.com/wesnel/agent-tools/internal/dashboard"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/export"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/plans"
@@ -104,28 +105,31 @@ and the documents it wrote, as COLLECTION/ID. Exits 1 when GitHub or a
 plan could not be read, after writing the rest.
 `
 
-func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
+func main() {
+	os.Exit(run(env.With(context.Background(), env.Process()), os.Args[1:], os.Stdout, os.Stderr))
+}
 
-func run(args []string, stdout, stderr io.Writer) int {
+// run is plan-dash with args, in the Env of ctx.
+func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && cli.IsHelp(args[0]) {
 		fmt.Fprint(stdout, usage)
 		return 0
 	}
 	if len(args) == 1 && args[0] == "export" {
-		return exportDocs(stdout, stderr)
+		return exportDocs(ctx, stdout, stderr)
 	}
 	if len(args) == 1 && args[0] == "watch" {
-		return watch(stdout, stderr)
+		return watch(ctx, stdout, stderr)
 	}
 	if len(args) == 1 && args[0] == "page" || len(args) == 2 && args[0] == "page" && args[1] == "published" {
-		return page(len(args) == 2, stdout, stderr)
+		return page(env.From(ctx), len(args) == 2, stdout, stderr)
 	}
 	if len(args) == 1 && args[0] == "prime" {
-		fmt.Fprintln(stdout, prime())
+		fmt.Fprintln(stdout, prime(env.From(ctx)))
 		return 0
 	}
 	if len(args) == 1 && args[0] == "space" {
-		return publishSpace(stdout, stderr)
+		return publishSpace(ctx, stdout, stderr)
 	}
 	fmt.Fprint(stderr, usage)
 	return 2
@@ -134,29 +138,30 @@ func run(args []string, stdout, stderr io.Writer) int {
 // publishSpace mirrors the export to the machine's Space page. It takes no
 // arguments: the page is the operator's config, and the block the state
 // the guard keeps sessions from writing.
-func publishSpace(stdout, stderr io.Writer) int {
-	targets, err := agentplans.LoadTargets()
+func publishSpace(ctx context.Context, stdout, stderr io.Writer) int {
+	e := env.From(ctx)
+	targets, err := agentplans.LoadTargets(e)
 	if err != nil {
 		return cli.Report("plan-dash", nil, err, 0, stdout, stderr)
 	}
 	if targets.SpacePage == "" {
 		return cli.Report("plan-dash", space.Result{Status: "unconfigured"}, nil, 0, stdout, stderr)
 	}
-	html, err := export.Snapshot(agentplans.Out())
+	html, err := export.Snapshot(agentplans.Out(e))
 	if err != nil {
 		return cli.Report("plan-dash", nil, err, 0, stdout, stderr)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	p := space.Publisher{Dial: space.Codex(agentplans.Dir()), StateFile: agentplans.SpaceStateFile(), Dir: agentplans.Dir()}
+	p := space.Publisher{Dial: space.Codex(agentplans.Dir(e)), StateFile: agentplans.SpaceStateFile(e), Dir: agentplans.Dir(e)}
 	result, err := p.Publish(ctx, targets.SpacePage, html)
 	return cli.Report("plan-dash", result, err, 0, stdout, stderr)
 }
 
 // prime is what the dashboard session is told when it starts, clears or
 // compacts: its page, its skill, and that the page's content is data.
-func prime() string {
-	targets, err := agentplans.LoadTargets()
+func prime(e env.Env) string {
+	targets, err := agentplans.LoadTargets(e)
 	if err != nil || targets.ClaudePage == "" {
 		return "This is the Agent plans dashboard session, but its page is not configured: the operator names it in " +
 			"the machine's config, as wgn.home.llm.agentPlans.claudePage. Load the `agent-plans` skill and follow only its " +
@@ -170,34 +175,35 @@ func prime() string {
 // needs publishing, or, with published, records the page written as
 // published. It takes no other arguments: what it writes is the page
 // built into it.
-func page(published bool, stdout, stderr io.Writer) int {
+func page(e env.Env, published bool, stdout, stderr io.Writer) int {
 	if published {
-		err := export.MarkPublished(agentplans.PageFile(), agentplans.PublishedFile())
+		err := export.MarkPublished(agentplans.PageFile(e), agentplans.PublishedFile(e))
 		return cli.Report("plan-dash", struct {
 			File string `json:"file"`
-		}{agentplans.PageFile()}, err, 0, stdout, stderr)
+		}{agentplans.PageFile(e)}, err, 0, stdout, stderr)
 	}
-	changed, err := export.WritePage(agentplans.PageFile(), agentplans.PublishedFile())
+	changed, err := export.WritePage(agentplans.PageFile(e), agentplans.PublishedFile(e))
 	return cli.Report("plan-dash", struct {
 		File         string          `json:"file"`
 		Changed      bool            `json:"changed"`
 		Capabilities json.RawMessage `json:"capabilities"`
-	}{agentplans.PageFile(), changed, json.RawMessage(agentplans.Capabilities)}, err, 0, stdout, stderr)
+	}{agentplans.PageFile(e), changed, json.RawMessage(agentplans.Capabilities)}, err, 0, stdout, stderr)
 }
 
 // watch runs watch until it is stopped. It takes no arguments: the
 // dashboard session runs it under Monitor, and nothing it is given can
 // change what it prints.
-func watch(stdout, stderr io.Writer) int {
-	c, err := plans.Load()
+func watch(ctx context.Context, stdout, stderr io.Writer) int {
+	e := env.From(ctx)
+	c, err := plans.Load(e)
 	if err != nil {
 		return cli.Report("plan-dash", nil, err, 0, stdout, stderr)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, os.Interrupt)
 	defer stop()
-	cache := filepath.Join(hostpaths.StateHome(), "plan-dash", "github.json")
-	w := dashboard.Watch{Dir: agentplans.Dir(), Config: c, Now: time.Now, Out: stdout,
-		Sync: c.SyncState, Pull: c.Pull,
+	cache := filepath.Join(hostpaths.StateHome(e), "plan-dash", "github.json")
+	w := dashboard.Watch{Dir: agentplans.Dir(e), Config: c, Now: time.Now, Out: stdout,
+		Sync: func() (plans.SyncState, error) { return c.SyncState(ctx) }, Pull: func() { c.Pull(ctx) },
 		GitHub: func(now time.Time) (export.GitHub, error) { return export.GitHubOf(ctx, cache, now) },
 		Wait: func(ctx context.Context, d time.Duration) bool {
 			select {
@@ -215,15 +221,15 @@ func watch(stdout, stderr io.Writer) int {
 
 // exportDocs runs export. It takes no arguments: the dashboard session may
 // run it, and nothing it is given can steer what is written where.
-func exportDocs(stdout, stderr io.Writer) int {
-	c, err := plans.Load()
+func exportDocs(ctx context.Context, stdout, stderr io.Writer) int {
+	c, err := plans.Load(env.From(ctx))
 	if err != nil {
 		return cli.Report("plan-dash", nil, err, 0, stdout, stderr)
 	}
-	state := hostpaths.StateHome()
+	state := hostpaths.StateHome(env.From(ctx))
 	dir := filepath.Join(state, "agent-plans", "out")
 	now := time.Now()
-	e, err := export.Collect(context.Background(), c, filepath.Join(state, "plan-dash", "github.json"), now)
+	e, err := export.Collect(ctx, c, filepath.Join(state, "plan-dash", "github.json"), now)
 	err = errors.Join(err, export.Write(dir, e))
 	result := struct {
 		Dir            string    `json:"dir"`

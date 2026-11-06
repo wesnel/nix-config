@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
@@ -50,15 +51,12 @@ const (
 	guardOff   = "The guard and its hooks are the operator's configuration, and stay on. Put the change you want in your report for the operator."
 )
 
-// home is the user's home directory, which ~ and $HOME name.
-var home, _ = os.UserHomeDir()
+// homeDir is the user's home directory, which ~ and $HOME name: $HOME of
+// ctx's Env, as os.UserHomeDir reads it, "" where it is unset.
+func homeDir(ctx context.Context) string { return env.From(ctx).Get("HOME") }
 
 // secretName is an environment variable that likely holds a credential.
 var secretName = regexp.MustCompile(`(?i)token|key|secret|password|credential`)
-
-// environ is the guard's own environment, which a session's commands share;
-// tests replace it.
-var environ = os.Environ
 
 // grepFlags are the grep options an environment search may take, none of
 // which reads a pattern from elsewhere or inverts the match.
@@ -75,7 +73,7 @@ var grepFlags = set("-E", "-G", "-F", "-n", "-c", "-o", "-q", "-s", "-w", "-x", 
 // and | are literal. Where the two syntaxes could still differ, so that grep
 // matches more than Go (a backslash, a brace, a newline, a basic pattern's
 // ^ or $ away from its ends, or two pattern syntaxes at once), it refuses.
-func envSearch(text string, calls []call) bool {
+func envSearch(ctx context.Context, text string, calls []call) bool {
 	segs := segments(text)
 	if len(segs) != 2 || len(calls) != 2 || !strings.HasPrefix(text, segs[0]) || text[len(segs[0]):] != "|"+segs[1] {
 		return false
@@ -156,7 +154,8 @@ func envSearch(text string, calls []call) bool {
 	if err != nil {
 		return false
 	}
-	for _, kv := range environ() {
+	// The guard's own environment, which a session's commands share.
+	for _, kv := range env.From(ctx).Environ() {
 		if name, _, _ := strings.Cut(kv, "="); secretName.MatchString(name) && re.MatchString(kv) {
 			return false
 		}
@@ -166,12 +165,12 @@ func envSearch(text string, calls []call) bool {
 
 // guardFile reports whether path holds the hooks that run the guard, or
 // its settings.
-func guardFile(path string) bool {
-	if agentToolsConfig(path) {
+func guardFile(ctx context.Context, path string) bool {
+	if agentToolsConfig(ctx, path) {
 		return true
 	}
 	for _, p := range []string{".codex/config.toml", ".codex/hooks.json"} {
-		if path == filepath.Join(home, p) {
+		if path == filepath.Join(homeDir(ctx), p) {
 			return true
 		}
 	}
@@ -184,12 +183,13 @@ var claudeSettings = regexp.MustCompile(`(^|/)\.claude/settings[^/]*\.json$`)
 // expanded, and relative to dir, cleaned. Cleaning takes `link/..` away
 // by spelling, where the file system climbs from where the link leads:
 // physical(rawPath(word, dir)) is the path the file system walks.
-func expandPath(word, dir string) string {
-	return filepath.Clean(rawPath(word, dir))
+func expandPath(ctx context.Context, word, dir string) string {
+	return filepath.Clean(rawPath(ctx, word, dir))
 }
 
 // rawPath is expandPath's path before it is cleaned.
-func rawPath(word, dir string) string {
+func rawPath(ctx context.Context, word, dir string) string {
+	home := homeDir(ctx)
 	for _, h := range []string{"${HOME}", "$HOME"} {
 		if word == h || strings.HasPrefix(word, h+"/") {
 			word = home + strings.TrimPrefix(word, h)
@@ -208,49 +208,49 @@ func rawPath(word, dir string) string {
 // not about GitHub. dir is where it runs, "" when the guard cannot tell.
 // The program is the named call's; the paths and redirections are read
 // from every word.
-func checkSession(c call, dir string) string {
+func checkSession(ctx context.Context, c call, dir string) string {
 	words, p := c.words, c.named()
 	name, args := base(p.words[0]), p.words[1:]
 	if versionedEmacsclient.MatchString(name) {
 		name = "emacsclient"
 	}
 	for _, w := range words {
-		if reason := checkSecretPath(w, dir); reason != "" {
+		if reason := checkSecretPath(ctx, w, dir); reason != "" {
 			return reason
 		}
 	}
 	redirected := redirections(words)
 	for _, target := range redirected {
-		if guardFile(expandPath(target, dir)) {
+		if guardFile(ctx, expandPath(ctx, target, dir)) {
 			return guardOff
 		}
 	}
-	for _, target := range changedFiles(name, args, redirected) {
-		if reason := checkSecretWrite(target, dir); reason != "" {
+	for _, target := range changedFiles(ctx, name, args, redirected) {
+		if reason := checkSecretWrite(ctx, target, dir); reason != "" {
 			return reason
 		}
 	}
-	if reason := checkPlanLogWrite(name, args, redirected, dir); reason != "" {
+	if reason := checkPlanLogWrite(ctx, name, args, redirected, dir); reason != "" {
 		return reason
 	}
-	if reason := checkAgentSettingsShell(name, args, redirected, dir); reason != "" {
+	if reason := checkAgentSettingsShell(ctx, name, args, redirected, dir); reason != "" {
 		return reason
 	}
-	if reason := checkSpaceStateShell(name, args, redirected, dir); reason != "" {
+	if reason := checkSpaceStateShell(ctx, name, args, redirected, dir); reason != "" {
 		return reason
 	}
-	if reason := checkShellEdit(name, args, redirected, dir); reason != "" {
+	if reason := checkShellEdit(ctx, name, args, redirected, dir); reason != "" {
 		return reason
 	}
 	// Again with the variables the line assigned followed. The words as
 	// written are judged too, above: an assignment that may not have run,
 	// after || or &&, only adds a path to judge.
 	if words := assignedWords(c); words != nil {
-		if reason := checkShellEdit(name, words[1:], redirections(words), dir); reason != "" {
+		if reason := checkShellEdit(ctx, name, words[1:], redirections(words), dir); reason != "" {
 			return reason
 		}
 	}
-	if gitConfigShellWrite(name, args, redirected, dir) {
+	if gitConfigShellWrite(ctx, name, args, redirected, dir) {
 		return gitConfigShell
 	}
 	has := func(flags ...string) bool {
@@ -436,7 +436,7 @@ func checkSession(c call, dir string) string {
 				return killing
 			}
 		}
-		if sshTouch(name, args, dir) {
+		if sshTouch(ctx, name, args, dir) {
 			return keyTouch
 		}
 	case "launchctl":
@@ -452,7 +452,7 @@ func checkSession(c call, dir string) string {
 		_, _, alternate, ok := emacsclientSockets(args)
 		fallback, set := envValue(c.env, "ALTERNATE_EDITOR")
 		if !set {
-			fallback, set = os.LookupEnv("ALTERNATE_EDITOR")
+			fallback, set = env.From(ctx).Lookup("ALTERNATE_EDITOR")
 		}
 		if alternate != nil {
 			fallback, set = *alternate, true
@@ -476,7 +476,7 @@ func checkSession(c call, dir string) string {
 				"skill says."
 		}
 		// A batch Emacs's own server is the default one, the operator's.
-		if emacsBatchServerCall(emacsBatchLisp(args, dir)) {
+		if emacsBatchServerCall(emacsBatchLisp(ctx, args, dir)) {
 			return emacsBatchServer
 		}
 	case "rm", "trash", "trash-scratch", "chmod", "chown", "chgrp", "mv":
@@ -487,13 +487,13 @@ func checkSession(c call, dir string) string {
 		// Only paths named literally, or by ~ or $HOME: the guard does not
 		// resolve a relative path, which would put every build under /nix.
 		for _, a := range positional() {
-			if protectedTree(expandPath(a, ""), recursive) {
+			if protectedTree(ctx, expandPath(ctx, a, ""), recursive) {
 				return destroying
 			}
 		}
 		if name != "chmod" && name != "chown" && name != "chgrp" {
 			for _, a := range positional() {
-				if guardFile(expandPath(a, dir)) {
+				if guardFile(ctx, expandPath(ctx, a, dir)) {
 					return guardOff
 				}
 			}
@@ -504,7 +504,7 @@ func checkSession(c call, dir string) string {
 				if strings.HasPrefix(a, "-") {
 					break
 				}
-				if protectedTree(expandPath(a, ""), true) {
+				if protectedTree(ctx, expandPath(ctx, a, ""), true) {
 					return destroying
 				}
 			}
@@ -514,7 +514,7 @@ func checkSession(c call, dir string) string {
 			break
 		}
 		for _, t := range writeTargets(name, args) {
-			if guardFile(expandPath(t, dir)) {
+			if guardFile(ctx, expandPath(ctx, t, dir)) {
 				return guardOff
 			}
 		}
@@ -531,11 +531,11 @@ func checkSession(c call, dir string) string {
 		}
 	}
 	if name == "rm" || name == "unlink" || name == "find" && has("-delete") {
-		if slices.Contains(loadSettings().ExcludedCommands, "trash-scratch *") {
+		if slices.Contains(loadSettings(ctx).ExcludedCommands, "trash-scratch *") {
 			return "The configured trash-scratch wrapper moves validated untracked worktree and session scratch paths to the Trash. " +
 				"Run `trash-scratch PATH...` as a command of its own in place of rm, unlink or find -delete."
 		}
-		if trashOnPath() {
+		if trashOnPath(env.From(ctx)) {
 			return useTrash
 		}
 	}
@@ -739,7 +739,7 @@ const readsTerminal = "This reads its input from the terminal, which Codex keeps
 // terminalReader reports whether a command line is one command that reads
 // its input from the terminal: a shell or REPL with nothing to run, or a
 // program that reads standard input, with none redirected or piped in.
-func terminalReader(text string) bool {
+func terminalReader(ctx context.Context, text string) bool {
 	var calls []call
 	for _, segment := range segments(text) {
 		if words, expands := split(segment); len(words) > 0 {
@@ -760,7 +760,7 @@ func terminalReader(text string) bool {
 		return !contains(c.words, "-a") && !contains(c.words, "--arg-file")
 	}
 	var found *call
-	unwrap(calls[0], visitor{
+	unwrap(ctx, calls[0], visitor{
 		script: func(string) string { return "" },
 		call:   func(c call) string { found = &c; return "" },
 	})
@@ -991,7 +991,7 @@ var (
 // emacsBatchLisp is the Lisp an Emacs call runs that the guard can read:
 // its arguments, and each file it loads that is there to read, -l, --load
 // or --script, whose contents count up to a megabyte.
-func emacsBatchLisp(args []string, dir string) string {
+func emacsBatchLisp(ctx context.Context, args []string, dir string) string {
 	var b strings.Builder
 	b.WriteString(strings.Join(args, " "))
 	for i, a := range args {
@@ -1005,7 +1005,7 @@ func emacsBatchLisp(args []string, dir string) string {
 		if file == "" {
 			continue
 		}
-		if f, err := os.Open(expandPath(file, dir)); err == nil {
+		if f, err := os.Open(expandPath(ctx, file, dir)); err == nil {
 			data, _ := io.ReadAll(io.LimitReader(f, 1<<20))
 			f.Close()
 			b.WriteString("\n")
@@ -1292,13 +1292,14 @@ func checkKill(args []string) string {
 // protectedTree reports whether path is the home directory, the root, or
 // in the Nix store or the operator's keys; a glob counts as its directory.
 // The home directory and the root count only for a recursive operation.
-func protectedTree(path string, recursive bool) bool {
+func protectedTree(ctx context.Context, path string, recursive bool) bool {
 	for strings.HasSuffix(path, "/*") || path != "/" && strings.HasSuffix(path, "*") {
 		path = filepath.Dir(path)
 	}
 	inside := func(root string) bool {
 		return path == root || strings.HasPrefix(path, root+"/")
 	}
+	home := homeDir(ctx)
 	switch {
 	case inside("/nix"), inside(filepath.Join(home, ".ssh")), inside(filepath.Join(home, ".gnupg")):
 		return true
@@ -1313,8 +1314,8 @@ func protectedTree(path string, recursive bool) bool {
 // as written and as the file system walks it (physical), so a link to a
 // credential is one and `link/..` climbs from where the link leads; and a
 // credential is matched by file identity too (credentialUnder).
-func checkSecretPath(word, dir string) string {
-	return secretPath(word, dir, false)
+func checkSecretPath(ctx context.Context, word, dir string) string {
+	return secretPath(ctx, word, dir, false)
 }
 
 // checkSecretWrite is checkSecretPath for a path a command or tool creates
@@ -1322,25 +1323,25 @@ func checkSecretPath(word, dir string) string {
 // tool's path. There a name outside ASCII in a credential's own directory
 // is refused too, since the volume may fold it to the credential's
 // (Reaches).
-func checkSecretWrite(word, dir string) string {
-	return secretPath(word, dir, true)
+func checkSecretWrite(ctx context.Context, word, dir string) string {
+	return secretPath(ctx, word, dir, true)
 }
 
 // secretPath is checkSecretPath, or with creating checkSecretWrite.
-func secretPath(word, dir string, creating bool) string {
+func secretPath(ctx context.Context, word, dir string, creating bool) string {
 	var candidates []string
 	for _, w := range []string{word, afterEquals(word)} {
 		// @FILE is a file's contents to curl (-d @FILE) and gh (-F k=@FILE).
 		for _, v := range []string{w, strings.TrimPrefix(w, "@")} {
 			if v != "" {
-				candidates = append(candidates, expandPath(v, dir), physical(rawPath(v, dir)))
+				candidates = append(candidates, expandPath(ctx, v, dir), physical(rawPath(ctx, v, dir)))
 			}
 		}
 	}
 	if slices.ContainsFunc(candidates, envFile) {
 		return secretRead
 	}
-	secrets := credentialPaths()
+	secrets := credentialPaths(ctx)
 	for _, path := range candidates {
 		for _, p := range secrets {
 			if credentialUnder(path, p, creating) {
@@ -1415,26 +1416,26 @@ const planWrite = "This is a plan file, which agents change through agent-plan a
 // planLog reports whether path is a plan's log, or the lock file that
 // records its state, in the plans directory agent-plan's config names. A
 // relative path counts, since where it is cannot be told.
-func planLog(path string) bool {
-	return plans.IsLog(filepath.Base(path)) && inPlans(path)
+func planLog(ctx context.Context, path string) bool {
+	return plans.IsLog(filepath.Base(path)) && inPlans(ctx, path)
 }
 
 // planFile reports whether path is a plan's file, a part's or a
 // workstream's in the plans directory, as planLog does for a log.
-func planFile(path string) bool {
+func planFile(ctx context.Context, path string) bool {
 	base := filepath.Base(path)
-	return (plans.IsPlan(base) || plans.IsWorkstream(base)) && inPlans(path)
+	return (plans.IsPlan(base) || plans.IsWorkstream(base)) && inPlans(ctx, path)
 }
 
 // inPlans reports whether path is in the plans directory agent-plan's
 // config names, or is relative.
-func inPlans(path string) bool {
+func inPlans(ctx context.Context, path string) bool {
 	if !filepath.IsAbs(path) {
 		return true
 	}
 	parent := filepath.Dir(path)
 	real, err := filepath.EvalSymlinks(parent)
-	for _, d := range plansDirs() {
+	for _, d := range plansDirs(ctx) {
 		if parent == d || err == nil && real == d {
 			return true
 		}
@@ -1445,9 +1446,9 @@ func inPlans(path string) bool {
 // plansDirs are the plans directory agent-plan's config names, or its
 // default when the config cannot be read, as named and as its symlinks
 // resolve.
-func plansDirs() []string {
-	dir := plans.DefaultDir(home)
-	if c, err := plans.Load(); err == nil {
+func plansDirs(ctx context.Context) []string {
+	dir := plans.DefaultDir(homeDir(ctx))
+	if c, err := plans.Load(env.From(ctx)); err == nil {
 		dir = c.Dir
 	}
 	out := []string{filepath.Clean(dir)}
@@ -1460,14 +1461,14 @@ func plansDirs() []string {
 // nearPlans reports, for path, absolute, whether it is the plans directory
 // or inside it, and whether it holds it, as named or as its symlinks
 // resolve.
-func nearPlans(path string) (inside, holds bool) {
+func nearPlans(ctx context.Context, path string) (inside, holds bool) {
 	names := []string{filepath.Clean(path)}
 	if real, err := filepath.EvalSymlinks(path); err == nil {
 		names = append(names, real)
 	} else if parent, err := filepath.EvalSymlinks(filepath.Dir(path)); err == nil {
 		names = append(names, filepath.Join(parent, filepath.Base(path)))
 	}
-	for _, d := range plansDirs() {
+	for _, d := range plansDirs(ctx) {
 		for _, p := range names {
 			inside = inside || p == d || strings.HasPrefix(p, d+"/")
 			holds = holds || p == "/" || strings.HasPrefix(d, p+"/")
@@ -1482,7 +1483,7 @@ func nearPlans(path string) (inside, holds bool) {
 // variable or a command's output), any of which may hold either; and a
 // tar or unzip extracting there, or a ditto copying there. changedFiles
 // names only the directory.
-func checkCopyIntoPlans(name string, args []string, dir string) string {
+func checkCopyIntoPlans(ctx context.Context, name string, args []string, dir string) string {
 	var unpackInto []string
 	switch name {
 	case "tar", "gtar", "bsdtar":
@@ -1511,7 +1512,7 @@ func checkCopyIntoPlans(name string, args []string, dir string) string {
 		}
 	}
 	for _, d := range unpackInto {
-		if inside, _ := nearPlans(expandPath(d, dir)); inside {
+		if inside, _ := nearPlans(ctx, expandPath(ctx, d, dir)); inside {
 			return planWrite
 		}
 	}
@@ -1537,7 +1538,7 @@ func checkCopyIntoPlans(name string, args []string, dir string) string {
 		dests, sources = positional[len(positional)-1:], positional[:len(positional)-1]
 	}
 	for _, d := range dests {
-		if inside, _ := nearPlans(expandPath(d, dir)); !inside {
+		if inside, _ := nearPlans(ctx, expandPath(ctx, d, dir)); !inside {
 			continue
 		}
 		for _, s := range sources {
@@ -1548,7 +1549,7 @@ func checkCopyIntoPlans(name string, args []string, dir string) string {
 			if plans.IsPlan(base) || plans.IsWorkstream(base) || recursive || strings.HasSuffix(s, "/") || base == "." || strings.ContainsAny(s, "*?[{$`") {
 				return planWrite
 			}
-			if info, err := os.Stat(expandPath(s, dir)); err == nil && info.IsDir() {
+			if info, err := os.Stat(expandPath(ctx, s, dir)); err == nil && info.IsDir() {
 				return planWrite
 			}
 		}
@@ -1559,7 +1560,7 @@ func checkCopyIntoPlans(name string, args []string, dir string) string {
 // checkPlanCheckout denies a git checkout or restore of a path that is a
 // plan's file or log, a glob in the plans directory, or a directory that is
 // or holds it, all of which git writes from history.
-func checkPlanCheckout(sub string, rest []string, dir string) string {
+func checkPlanCheckout(ctx context.Context, sub string, rest []string, dir string) string {
 	if sub != "checkout" && sub != "restore" || dir == "" {
 		return ""
 	}
@@ -1572,12 +1573,12 @@ func checkPlanCheckout(sub string, rest []string, dir string) string {
 		case a == "--" || strings.HasPrefix(a, "-"):
 			continue
 		}
-		path := expandPath(a, dir)
-		inside, holds := nearPlans(path)
+		path := expandPath(ctx, a, dir)
+		inside, holds := nearPlans(ctx, path)
 		switch {
-		case planLog(path):
+		case planLog(ctx, path):
 			return appendOnly
-		case planFile(path), holds, isPlansDir(path), inside && strings.ContainsAny(filepath.Base(path), "*?["):
+		case planFile(ctx, path), holds, isPlansDir(ctx, path), inside && strings.ContainsAny(filepath.Base(path), "*?["):
 			return planWrite
 		}
 	}
@@ -1585,9 +1586,9 @@ func checkPlanCheckout(sub string, rest []string, dir string) string {
 }
 
 // isPlansDir reports whether path is the plans directory itself.
-func isPlansDir(path string) bool {
+func isPlansDir(ctx context.Context, path string) bool {
 	real, err := filepath.EvalSymlinks(path)
-	for _, d := range plansDirs() {
+	for _, d := range plansDirs(ctx) {
 		if filepath.Clean(path) == d || err == nil && real == d {
 			return true
 		}
@@ -1601,15 +1602,15 @@ func isPlansDir(path string) bool {
 // misses these: emacsclient evaluating Lisp that saves a buffer, an editor
 // run as a filter (ex, vim -c), patch given a plan file inside its diff,
 // and a path the shell builds from variables.
-func checkPlanLogWrite(name string, args, redirected []string, dir string) string {
-	if reason := checkCopyIntoPlans(name, args, dir); reason != "" {
+func checkPlanLogWrite(ctx context.Context, name string, args, redirected []string, dir string) string {
+	if reason := checkCopyIntoPlans(ctx, name, args, dir); reason != "" {
 		return reason
 	}
-	for _, t := range changedFiles(name, args, redirected) {
-		if planLog(expandPath(t, dir)) {
+	for _, t := range changedFiles(ctx, name, args, redirected) {
+		if planLog(ctx, expandPath(ctx, t, dir)) {
 			return appendOnly
 		}
-		if planFile(expandPath(t, dir)) {
+		if planFile(ctx, expandPath(ctx, t, dir)) {
 			return planWrite
 		}
 	}
@@ -1626,7 +1627,7 @@ func checkPlanLogWrite(name string, args, redirected []string, dir string) strin
 // goimports read their options from the words as given, since a quoted
 // value such as the rule '<-a -> <-b' reads as a redirection once its
 // quotes are gone.
-func changedFiles(name string, args, redirected []string) []string {
+func changedFiles(ctx context.Context, name string, args, redirected []string) []string {
 	given := args
 	args = withoutRedirections(args)
 	targets := editTargets(name, args, redirected)
@@ -1687,7 +1688,7 @@ func changedFiles(name string, args, redirected []string) []string {
 	case "gofmt", "goimports":
 		targets = append(targets, goFormatWrites(given, contains(args, "-w"))...)
 	case "go":
-		targets = append(targets, goWrites(args)...)
+		targets = append(targets, goWrites(ctx, args)...)
 	case "nix", "nix-build":
 		targets = append(targets, nixWrites(name, args)...)
 	case "make", "gmake":
@@ -1839,7 +1840,7 @@ func tarExtracts(args []string) bool {
 // goWrites are the files and directories a go command writes: its -o
 // output, its test profiles, and "." for the commands that rewrite source
 // or go.mod in the package it runs in.
-func goWrites(args []string) []string {
+func goWrites(ctx context.Context, args []string) []string {
 	if len(args) == 0 {
 		return nil
 	}
@@ -1875,10 +1876,10 @@ func goWrites(args []string) []string {
 			out = append(out, ".")
 		}
 	case "install":
-		out = append(out, goDir("GOBIN", "bin"))
+		out = append(out, goDir(ctx, "GOBIN", "bin"))
 	case "clean":
 		if slices.ContainsFunc(args, func(a string) bool { return strings.HasSuffix(a, "cache") }) {
-			out = append(out, goDir("GOCACHE", "cache"), goDir("GOMODCACHE", "pkg/mod"))
+			out = append(out, goDir(ctx, "GOCACHE", "cache"), goDir(ctx, "GOMODCACHE", "pkg/mod"))
 		} else {
 			out = append(out, ".")
 		}
@@ -1889,13 +1890,14 @@ func goWrites(args []string) []string {
 // goDir is the directory the environment variable names, or the one under
 // GOPATH (or ~/go) that the go command uses in its place: where go install
 // and go clean write.
-func goDir(variable, under string) string {
-	if dir := os.Getenv(variable); filepath.IsAbs(dir) {
+func goDir(ctx context.Context, variable, under string) string {
+	e := env.From(ctx)
+	if dir := e.Get(variable); filepath.IsAbs(dir) {
 		return dir
 	}
-	gopath := os.Getenv("GOPATH")
+	gopath := e.Get("GOPATH")
 	if !filepath.IsAbs(gopath) {
-		gopath = filepath.Join(home, "go")
+		gopath = filepath.Join(homeDir(ctx), "go")
 	}
 	return filepath.Join(gopath, under)
 }
@@ -1938,19 +1940,19 @@ const gitConfigShell = "Git config changes go through `git config`, whose keys a
 // ln, install, rsync, truncate or dd onto it, or sed, perl or awk in
 // place. A source's name inside a destination counts only where the
 // destination is a directory, so copying a git config out passes.
-func gitConfigShellWrite(name string, args, redirected []string, dir string) bool {
-	return shellWrites(name, args, redirected, dir, func(path string) bool { return gitConfigFile(path, dir) })
+func gitConfigShellWrite(ctx context.Context, name string, args, redirected []string, dir string) bool {
+	return shellWrites(ctx, name, args, redirected, dir, func(path string) bool { return gitConfigFile(ctx, path, dir) })
 }
 
 // shellWrites reports whether a command, run in dir, writes a file
 // protected reports, read as gitConfigShellWrite reads a write.
-func shellWrites(name string, args, redirected []string, dir string, protected func(path string) bool) bool {
+func shellWrites(ctx context.Context, name string, args, redirected []string, dir string, protected func(path string) bool) bool {
 	targets := editTargets(name, args, redirected)
 	if set("tee", "cp", "mv", "ln", "install", "rsync", "truncate", "dd")[name] || inPlace(name, args) {
 		written := writeTargets(name, args)
 		for _, t := range written {
 			if len(written) > 0 && t != written[0] && filepath.Dir(t) == written[0] {
-				if info, err := os.Stat(expandPath(written[0], dir)); err != nil || !info.IsDir() {
+				if info, err := os.Stat(expandPath(ctx, written[0], dir)); err != nil || !info.IsDir() {
 					continue
 				}
 			}
@@ -1958,7 +1960,7 @@ func shellWrites(name string, args, redirected []string, dir string, protected f
 		}
 	}
 	for _, t := range targets {
-		if !strings.HasPrefix(t, "&") && !strings.HasPrefix(t, "-") && protected(expandPath(t, dir)) {
+		if !strings.HasPrefix(t, "&") && !strings.HasPrefix(t, "-") && protected(expandPath(ctx, t, dir)) {
 			return true
 		}
 	}
@@ -1968,9 +1970,9 @@ func shellWrites(name string, args, redirected []string, dir string, protected f
 // checkShellEdit denies a command, run in dir, that writes an existing file
 // (editTargets) wherever it is. Output written to a new file is capturing,
 // not editing.
-func checkShellEdit(name string, args, redirected []string, dir string) string {
+func checkShellEdit(ctx context.Context, name string, args, redirected []string, dir string) string {
 	for _, t := range editTargets(name, args, redirected) {
-		if path := expandPath(t, dir); trackedFile(path) {
+		if path := expandPath(ctx, t, dir); trackedFile(ctx, path) {
 			return fmt.Sprintf(shellEdit, t)
 		} else if existingFile(path) {
 			return fmt.Sprintf(shellEditInPlace, t)
@@ -2090,7 +2092,7 @@ func oneLinerWrites(name string, args []string) []string {
 
 // trackedFile reports whether path is a file git tracks, outside the
 // scratch roots, that the repository's ignore rules do not name.
-func trackedFile(path string) bool {
+func trackedFile(ctx context.Context, path string) bool {
 	if !filepath.IsAbs(path) {
 		return false
 	}
@@ -2101,7 +2103,7 @@ func trackedFile(path string) bool {
 	if err != nil {
 		return false
 	}
-	for _, root := range scratchRoots() {
+	for _, root := range scratchRoots(env.From(ctx)) {
 		for _, r := range []string{root, realPath(root)} {
 			if r != "" && (real == r || strings.HasPrefix(real, strings.TrimSuffix(r, "/")+"/")) {
 				return false
@@ -2109,10 +2111,10 @@ func trackedFile(path string) bool {
 		}
 	}
 	g, name := gitState{dir: filepath.Dir(real)}, filepath.Base(real)
-	if _, ok := g.run("ls-files", "--error-unmatch", "--", name); !ok {
+	if _, ok := g.run(ctx, "ls-files", "--error-unmatch", "--", name); !ok {
 		return false
 	}
-	_, ignored := g.run("check-ignore", "-q", "--no-index", "--", name)
+	_, ignored := g.run(ctx, "check-ignore", "-q", "--no-index", "--", name)
 	return !ignored
 }
 
@@ -2125,9 +2127,9 @@ func realPath(path string) string {
 	return real
 }
 
-// trashOnPath reports whether trash is on the hook's PATH.
-var trashOnPath = func() bool {
-	_, err := exec.LookPath("trash")
+// trashOnPath reports whether trash is on e's PATH, the hook's.
+func trashOnPath(e env.Env) bool {
+	_, err := e.LookPath("trash")
 	return err == nil
 }
 
@@ -2135,10 +2137,10 @@ const useTrash = "`trash` is on PATH here, and moves files to the Trash, where t
 	"Use `trash PATH...` in place of rm, unlink or find -delete (`find ... -print0 | xargs -0 trash`)."
 
 // scratchRoots are the directories a shell command may write files in,
-// tracked or not: the session's temporary directories.
-var scratchRoots = func() []string {
+// tracked or not: the session's temporary directories, $TMPDIR as e has it.
+var scratchRoots = func(e env.Env) []string {
 	roots := []string{"/tmp", "/private/tmp"}
-	if dir := os.Getenv("TMPDIR"); dir != "" {
+	if dir := e.Get("TMPDIR"); dir != "" {
 		roots = append(roots, dir)
 	}
 	return roots
@@ -2163,42 +2165,42 @@ func redirections(words []string) []string {
 
 // checkFileTool checks a call to a file-editing tool: Claude Code's Edit,
 // Write, MultiEdit and NotebookEdit, and Codex's apply_patch.
-func checkFileTool(tool string, toolInput json.RawMessage, dir string) string {
+func checkFileTool(ctx context.Context, tool string, toolInput json.RawMessage, dir string) string {
 	changes, err := fileChanges(tool, toolInput)
 	if err != nil {
 		return unreadable
 	}
 	for _, c := range changes {
-		path := expandPath(c.path, dir)
-		if reason := checkSecretPath(path, dir); reason != "" {
+		path := expandPath(ctx, c.path, dir)
+		if reason := checkSecretPath(ctx, path, dir); reason != "" {
 			return reason
 		}
-		if reason := checkSecretWrite(path, dir); reason != "" {
+		if reason := checkSecretWrite(ctx, path, dir); reason != "" {
 			return reason
 		}
-		if planLog(path) {
+		if planLog(ctx, path) {
 			return appendOnly
 		}
-		if planFile(path) {
+		if planFile(ctx, path) {
 			return planWrite
 		}
 		if reason := checkFileAgentSettings(path, dir); reason != "" {
 			return reason
 		}
-		if spaceStateFile(path) {
+		if spaceStateFile(ctx, path) {
 			return spaceState
 		}
-		if reason := gitConfigAlias(path, dir, c.text); reason != "" {
+		if reason := gitConfigAlias(ctx, path, dir, c.text); reason != "" {
 			return reason
 		}
 		switch {
-		case unscanned(path, dir):
+		case unscanned(ctx, path, dir):
 			return configUnscanned
-		case sharedConfigFile(path, dir):
+		case sharedConfigFile(ctx, path, dir):
 			return sharedConfig
-		case strings.HasSuffix(path, ".codex/hooks.json") && guardFile(path), agentToolsConfig(path):
+		case strings.HasSuffix(path, ".codex/hooks.json") && guardFile(ctx, path), agentToolsConfig(ctx, path):
 			return guardOff
-		case guardFile(path):
+		case guardFile(ctx, path):
 			existing, _ := os.ReadFile(path)
 			for _, text := range []string{c.text, string(existing)} {
 				if strings.Contains(text, "hooks") || strings.Contains(text, "disableAllHooks") {
@@ -2276,18 +2278,18 @@ type gitState struct {
 
 // signs reports whether a commit written by the command would be signed, by
 // the configuration it would read; false where the guard cannot tell.
-func (g gitState) signs() bool {
-	out, ok := g.query("config", "--bool", "commit.gpgsign")
+func (g gitState) signs(ctx context.Context) bool {
+	out, ok := g.query(ctx, "config", "--bool", "commit.gpgsign")
 	return ok && out == "true"
 }
 
 // query runs git in g.dir with the command's configuration and
 // assignments, as the command itself would read them.
-func (g gitState) query(args ...string) (string, bool) {
+func (g gitState) query(ctx context.Context, args ...string) (string, bool) {
 	if g.dir == "" {
 		return "", false
 	}
-	return timedGit(append(gitenv.Without(os.Environ()), g.env...),
+	return timedGit(ctx, append(gitenv.Without(env.From(ctx).Environ()), g.env...),
 		append(append(append([]string{}, g.config...), "-C", g.dir), args...)...)
 }
 
@@ -2359,12 +2361,12 @@ func sshURL(url string) bool {
 // remoteURL is the URL git fetches repo from, a remote's name or a URL, as
 // `git ls-remote --get-url` resolves it with url.<base>.insteadOf; repo
 // itself where git cannot say. "" is the default remote.
-func (g gitState) remoteURL(repo string) string {
+func (g gitState) remoteURL(ctx context.Context, repo string) string {
 	args := []string{"ls-remote", "--get-url"}
 	if repo != "" {
 		args = append(args, repo)
 	}
-	if out, ok := g.query(args...); ok && out != "" {
+	if out, ok := g.query(ctx, args...); ok && out != "" {
 		return out
 	}
 	return repo
@@ -2372,28 +2374,28 @@ func (g gitState) remoteURL(repo string) string {
 
 // remoteNames are the remotes name stands for: the members of the group
 // remotes.<name>, and name itself.
-func (g gitState) remoteNames(name string) []string {
-	members, _ := g.query("config", "--get-all", "remotes."+name)
+func (g gitState) remoteNames(ctx context.Context, name string) []string {
+	members, _ := g.query(ctx, "config", "--get-all", "remotes."+name)
 	return append(strings.Fields(members), name)
 }
 
 // allRemotes are the repository's remotes.
-func (g gitState) allRemotes() []string {
-	out, _ := g.query("remote")
+func (g gitState) allRemotes(ctx context.Context) []string {
+	out, _ := g.query(ctx, "remote")
 	return strings.Fields(out)
 }
 
 // submoduleURLs are the URLs of the repository's submodules, in its config
 // and in .gitmodules; one relative to the superproject is its default
 // remote's.
-func (g gitState) submoduleURLs() []string {
+func (g gitState) submoduleURLs(ctx context.Context) []string {
 	var urls []string
 	lists := []string{}
-	if out, ok := g.query("config", "--get-regexp", `^submodule\..*\.url$`); ok {
+	if out, ok := g.query(ctx, "config", "--get-regexp", `^submodule\..*\.url$`); ok {
 		lists = append(lists, out)
 	}
-	if top, ok := g.query("rev-parse", "--show-toplevel"); ok {
-		if out, ok := g.query("config", "-f", filepath.Join(top, ".gitmodules"), "--get-regexp", `^submodule\..*\.url$`); ok {
+	if top, ok := g.query(ctx, "rev-parse", "--show-toplevel"); ok {
+		if out, ok := g.query(ctx, "config", "-f", filepath.Join(top, ".gitmodules"), "--get-regexp", `^submodule\..*\.url$`); ok {
 			lists = append(lists, out)
 		}
 	}
@@ -2401,7 +2403,7 @@ func (g gitState) submoduleURLs() []string {
 		for _, line := range strings.Split(list, "\n") {
 			if _, url, ok := strings.Cut(line, " "); ok {
 				if strings.HasPrefix(url, "./") || strings.HasPrefix(url, "../") {
-					url = g.remoteURL("")
+					url = g.remoteURL(ctx, "")
 				}
 				urls = append(urls, url)
 			}
@@ -2413,7 +2415,7 @@ func (g gitState) submoduleURLs() []string {
 // overSSH reports whether `git sub rest...` contacts a remote, and would
 // reach one over SSH: fetch, pull, ls-remote, clone, archive --remote, the
 // remote verbs that read the remote, and submodule update and add.
-func overSSH(sub string, rest []string, g gitState) bool {
+func overSSH(ctx context.Context, sub string, rest []string, g gitState) bool {
 	has := func(flags ...string) bool {
 		for _, w := range rest {
 			if set(flags...)[strings.SplitN(w, "=", 2)[0]] {
@@ -2431,7 +2433,7 @@ func overSSH(sub string, rest []string, g gitState) bool {
 	case "fetch", "pull":
 		switch {
 		case has("--all"):
-			repos = g.allRemotes()
+			repos = g.allRemotes(ctx)
 		case has("--multiple"):
 			repos = p
 		case len(p) == 0:
@@ -2462,7 +2464,7 @@ func overSSH(sub string, rest []string, g gitState) bool {
 		case "update":
 			repos = names
 			if len(repos) == 0 {
-				repos = g.allRemotes()
+				repos = g.allRemotes(ctx)
 			}
 		case "show":
 			if !has("-n") {
@@ -2480,16 +2482,16 @@ func overSSH(sub string, rest []string, g gitState) bool {
 		case len(p) > 1 && p[0] == "add":
 			repos = p[1:2]
 		case len(p) > 0 && p[0] == "update":
-			repos = g.submoduleURLs()
+			repos = g.submoduleURLs(ctx)
 		}
 	}
 	for _, repo := range repos {
 		names := []string{repo}
 		if repo != "" && !sshURL(repo) {
-			names = g.remoteNames(repo)
+			names = g.remoteNames(ctx, repo)
 		}
 		for _, name := range names {
-			if sshURL(g.remoteURL(name)) {
+			if sshURL(g.remoteURL(ctx, name)) {
 				return true
 			}
 		}
@@ -2504,7 +2506,7 @@ var sshValueFlags = map[string]string{"ssh": "BbcDEeFIiJLlmOopQRSWw", "scp": "cD
 // sshTouch reports whether ssh, scp or sftp with these arguments logs in to
 // one of touchHosts, by the name given or the HostName ssh's config gives
 // it.
-func sshTouch(name string, args []string, dir string) bool {
+func sshTouch(ctx context.Context, name string, args []string, dir string) bool {
 	values := sshValueFlags[name]
 	var config []string // -F, for ssh -G
 	var destinations []string
@@ -2532,7 +2534,7 @@ func sshTouch(name string, args []string, dir string) bool {
 				value = args[i]
 			}
 			if flag == 'F' {
-				config = []string{"-F", expandPath(value, dir)}
+				config = []string{"-F", expandPath(ctx, value, dir)}
 			}
 			break
 		}
@@ -2548,7 +2550,7 @@ func sshTouch(name string, args []string, dir string) bool {
 		if touchHosts[strings.ToLower(host)] {
 			return true
 		}
-		out, err := exec.Command("ssh", append(append([]string{"-G"}, config...), host)...).Output()
+		out, err := env.Command(ctx, "ssh", append(append([]string{"-G"}, config...), host)...).Output()
 		if err != nil {
 			continue
 		}
@@ -2604,7 +2606,7 @@ const signingOn = "Signing needs the operator's hardware key, which nobody is he
 // checkSigning denies a command that would write a signed commit, which
 // waits for a key touch: commit.gpgsign is on where it runs, or it asks for
 // a signature.
-func checkSigning(sub string, rest []string, g gitState) string {
+func checkSigning(ctx context.Context, sub string, rest []string, g gitState) string {
 	none, writes := commitWriters[sub]
 	if !writes {
 		return ""
@@ -2618,7 +2620,7 @@ func checkSigning(sub string, rest []string, g gitState) string {
 			asked = true
 		}
 	}
-	if !asked && !g.signs() {
+	if !asked && !g.signs(ctx) {
 		return ""
 	}
 	return fmt.Sprintf(signingOn, sub, sub)
@@ -2626,19 +2628,34 @@ func checkSigning(sub string, rest []string, g gitState) string {
 
 // run runs git in g.dir without the command's configuration, as the guard
 // itself reads the repository.
-func (g gitState) run(args ...string) (string, bool) {
+func (g gitState) run(ctx context.Context, args ...string) (string, bool) {
 	if g.dir == "" {
 		return "", false
 	}
-	return timedGit(gitenv.Without(os.Environ()), append([]string{"-C", g.dir}, args...)...)
+	return timedGit(ctx, gitenv.Without(env.From(ctx).Environ()), append([]string{"-C", g.dir}, args...)...)
 }
 
-// gitStalled records that a git the guard ran did not answer within
-// repoTimeout, as one reading a FIFO at .git/config does not. The call is
-// then refused (judged), and every later git of the same hook fails at
-// once, so the hook ends within Claude Code's own timeout however many
-// gits its rules would run.
-var gitStalled atomic.Bool
+// stallKey is the context key of a call's stall record (gitStalled).
+type stallKey struct{}
+
+// withStallRecord is ctx with a stall record of its own, for one call.
+func withStallRecord(ctx context.Context) context.Context {
+	return context.WithValue(ctx, stallKey{}, new(atomic.Bool))
+}
+
+// gitStalled records that a git the guard ran for the call ctx carries did
+// not answer within repoTimeout, as one reading a FIFO at .git/config does
+// not. The call is then refused (judged), and every later git of the same
+// call fails at once, so the hook ends within Claude Code's own timeout
+// however many gits its rules would run. Each call has a record of its own,
+// so calls judged at once, as tests make them, keep apart; a context
+// without one gets one that nothing else reads.
+func gitStalled(ctx context.Context) *atomic.Bool {
+	if s, ok := ctx.Value(stallKey{}).(*atomic.Bool); ok {
+		return s
+	}
+	return new(atomic.Bool)
+}
 
 // stalledGit is why a call is refused when a git the guard ran there
 // stalled.
@@ -2646,33 +2663,35 @@ const stalledGit = "Git did not answer within the guard's deadline in this repos
 	"such as .git/config, is a FIFO or on a hung file system, so the guard cannot check this call. " +
 	"Look at what is there with `ls -la .git`, or put the command in your report for the operator."
 
-// timedGit runs git with env and args, its output trimmed and whether it
-// succeeded, within repoTimeout; a git that does not finish in time is
-// killed, and it or a child that keeps its output open after it marks
-// gitStalled.
-func timedGit(env []string, args ...string) (string, bool) {
-	if gitStalled.Load() {
+// timedGit runs git, found on the PATH of ctx's Env, with the variables
+// vars and args, its output trimmed and whether it succeeded, within
+// repoTimeout; a git that does not finish in time is killed, and it or a
+// child that keeps its output open after it marks gitStalled.
+func timedGit(ctx context.Context, vars []string, args ...string) (string, bool) {
+	stalled := gitStalled(ctx)
+	if stalled.Load() {
 		return "", false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), repoTimeout)
+	ctx, cancel := context.WithTimeout(ctx, repoTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Env = env
+	cmd := env.Command(ctx, "git", args...)
+	cmd.Env = vars
 	cmd.WaitDelay = repoTimeout
 	out, err := cmd.Output()
 	if ctx.Err() != nil || errors.Is(err, exec.ErrWaitDelay) {
-		gitStalled.Store(true)
+		stalled.Store(true)
 		return "", false
 	}
 	return strings.TrimSpace(string(out)), err == nil
 }
 
-// judged is what judge says of a call, with gitStalled cleared first: a
-// call it allows is refused all the same when a git it ran stalled.
-func judged(judge func() string) string {
-	gitStalled.Store(false)
-	reason := judge()
-	if reason == "" && gitStalled.Load() {
+// judged is what judge says of a call, given ctx with a stall record of
+// its own (gitStalled): a call it allows is refused all the same when a git
+// it ran stalled.
+func judged(ctx context.Context, judge func(context.Context) string) string {
+	ctx = withStallRecord(ctx)
+	reason := judge(ctx)
+	if reason == "" && gitStalled(ctx).Load() {
 		return stalledGit
 	}
 	return reason
@@ -2680,11 +2699,11 @@ func judged(judge func() string) string {
 
 // main reports whether dir is a repository's main worktree, or may be:
 // a directory the guard cannot tell counts as one.
-func (g gitState) main() bool {
+func (g gitState) main(ctx context.Context) bool {
 	if g.dir == "" {
 		return true
 	}
-	out, ok := g.run("rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir")
+	out, ok := g.run(ctx, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir")
 	if !ok {
 		return false
 	}
@@ -2695,7 +2714,7 @@ func (g gitState) main() bool {
 // checkGitSession checks a git command against the rules for every
 // session that need the repository's state: destroying the main checkout's
 // work and losing history.
-func checkGitSession(sub string, rest []string, g gitState) string {
+func checkGitSession(ctx context.Context, sub string, rest []string, g gitState) string {
 	has := func(flags ...string) bool {
 		for _, w := range rest {
 			for _, f := range flags {
@@ -2743,15 +2762,15 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 		sub == "switch" && has("-f", "--force", "--discard-changes"),
 		sub == "clean" && (short("f") || has("--force")),
 		sub == "stash" && has("-u", "--include-untracked", "-a", "--all"):
-		if g.main() {
+		if g.main(ctx) {
 			return mainCheckout
 		}
 	case sub == "add" && (has("-A", "--all") || everything()):
-		if g.main() {
+		if g.main(ctx) {
 			return sweeping
 		}
-	case (sub == "switch" || sub == "checkout") && changesBranch(sub, rest, g):
-		if g.main() {
+	case (sub == "switch" || sub == "checkout") && changesBranch(ctx, sub, rest, g):
+		if g.main(ctx) {
 			return "Changing branch in the repository's main checkout moves the operator's working tree under them. " +
 				"Work in a worktree of your own (`git worktree add ../PATH BRANCH`), or ask the operator."
 		}
@@ -2771,7 +2790,7 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 			if strings.HasPrefix(b, "-") {
 				continue
 			}
-			if g.unpushed("refs/heads/" + b) {
+			if g.unpushed(ctx, "refs/heads/"+b) {
 				return historyLoss
 			}
 		}
@@ -2780,7 +2799,7 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 			if strings.HasPrefix(p, "-") {
 				continue
 			}
-			if (gitState{dir: expandPath(p, g.dir)}).dirty() {
+			if (gitState{dir: expandPath(ctx, p, g.dir)}).dirty(ctx) {
 				return historyLoss
 			}
 		}
@@ -2790,15 +2809,15 @@ func checkGitSession(sub string, rest []string, g gitState) string {
 
 // unpushed reports whether ref has commits no remote-tracking branch has,
 // or may have: a ref git cannot read counts.
-func (g gitState) unpushed(ref string) bool {
-	out, ok := g.run("rev-list", "--max-count=1", ref, "--not", "--remotes")
+func (g gitState) unpushed(ctx context.Context, ref string) bool {
+	out, ok := g.run(ctx, "rev-list", "--max-count=1", ref, "--not", "--remotes")
 	return !ok || out != ""
 }
 
 // dirty reports whether the worktree at g.dir has changes or untracked
 // files, or may have: a directory git cannot read counts.
-func (g gitState) dirty() bool {
-	out, ok := g.run("status", "--porcelain")
+func (g gitState) dirty(ctx context.Context) bool {
+	out, ok := g.run(ctx, "status", "--porcelain")
 	return !ok || out != ""
 }
 
@@ -2808,7 +2827,7 @@ const discardWorktree = "Removing this worktree with discard_changes deletes unc
 // checkExitWorktree denies Claude Code's ExitWorktree when it would discard
 // the worktree at dir and its branch while they hold work found nowhere
 // else.
-func checkExitWorktree(toolInput json.RawMessage, dir string) string {
+func checkExitWorktree(ctx context.Context, toolInput json.RawMessage, dir string) string {
 	var in struct {
 		Action         string `json:"action"`
 		DiscardChanges bool   `json:"discard_changes"`
@@ -2819,7 +2838,7 @@ func checkExitWorktree(toolInput json.RawMessage, dir string) string {
 	if in.Action != "remove" || !in.DiscardChanges {
 		return ""
 	}
-	if g := (gitState{dir: dir}); g.dirty() || g.unpushed("HEAD") {
+	if g := (gitState{dir: dir}); g.dirty(ctx) || g.unpushed(ctx, "HEAD") {
 		return discardWorktree
 	}
 	return ""
@@ -2862,7 +2881,7 @@ func untaggedStash(args []string) bool {
 // changesBranch reports whether `git switch` or `git checkout` with these
 // arguments moves the worktree to another branch or commit, rather than
 // detaching where it is or checking out files.
-func changesBranch(sub string, args []string, g gitState) bool {
+func changesBranch(ctx context.Context, sub string, args []string, g gitState) bool {
 	var positional []string
 	for _, a := range args {
 		switch {
@@ -2883,7 +2902,7 @@ func changesBranch(sub string, args []string, g gitState) bool {
 	if positional[0] == "-" {
 		return true
 	}
-	_, commit := g.run("rev-parse", "--verify", "-q", positional[0]+"^{commit}")
+	_, commit := g.run(ctx, "rev-parse", "--verify", "-q", positional[0]+"^{commit}")
 	return commit
 }
 

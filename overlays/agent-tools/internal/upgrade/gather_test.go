@@ -1,6 +1,7 @@
 package upgrade
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gh"
 )
 
@@ -45,7 +47,9 @@ done
 `
 
 type world struct {
-	o           Options
+	o Options
+	// env is the environment the fakes run in, which ctx carries.
+	env         env.Env
 	log, store  string
 	mods        string
 	mu          sync.Mutex
@@ -68,8 +72,13 @@ func (w *world) calls(t *testing.T) (github []string, programs string) {
 	return append([]string{}, w.requests...), string(data)
 }
 
-// setWorld puts fake nix and go first on PATH, serves GitHub's API from a
-// test server, and gives Options a cache and clones of the test's own.
+// ctx carries w's Env.
+func (w *world) ctx(t *testing.T) context.Context { return env.With(t.Context(), w.env) }
+
+// setWorld puts fake nix and go first on the PATH of an Env, serves
+// GitHub's API from a test server, and gives Options a cache and clones
+// of the test's own. It sets the package's storeDir and gh's API, which
+// keeps a test that calls it serial.
 func setWorld(t *testing.T) *world {
 	t.Helper()
 	root, _ := filepath.EvalSymlinks(t.TempDir())
@@ -83,11 +92,8 @@ func setWorld(t *testing.T) *world {
 	// fake's variables.
 	goScript := strings.NewReplacer("$FAKE_LOG", w.log, "$FAKE_MODS", w.mods).Replace(fakeGo)
 	os.WriteFile(filepath.Join(bin, "go"), []byte(goScript), 0o755)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("FAKE_LOG", w.log)
-	t.Setenv("FAKE_STORE", w.store)
-	t.Setenv("FAKE_MODS", w.mods)
-	t.Setenv("GH_TOKEN", "test-token")
+	w.env = env.Process().Set("PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "FAKE_LOG="+w.log,
+		"FAKE_STORE="+w.store, "FAKE_MODS="+w.mods, "GH_TOKEN=test-token")
 	old := storeDir
 	storeDir = w.store + "/"
 	t.Cleanup(func() { storeDir = old })
@@ -189,7 +195,7 @@ func TestGatherFlake(t *testing.T) {
 	w.releases = `[{"tag_name": "v1.2", "name": "later", "body": "after", "published_at": "2023-11-20T00:00:00Z"},
 		{"tag_name": "v1.1", "name": "one", "body": "Drops the old flag.", "published_at": "2023-11-15T12:00:00Z"},
 		{"tag_name": "v1.0", "name": "zero", "body": "before", "published_at": "2023-11-01T00:00:00Z"}]`
-	got := Gather(t.Context(), []Pin{flakePin("acme", "lib", old, next)}, w.o)
+	got := Gather(w.ctx(t), []Pin{flakePin("acme", "lib", old, next)}, w.o)
 	if len(got) != 1 || !got[0].Read() || len(got[0].Texts) != 3 {
 		t.Fatalf("gathered %+v", got)
 	}
@@ -241,7 +247,7 @@ func TestGatherPrivateRepos(t *testing.T) {
 			w.tree(t, c.owner, "lib", next, "sha256-n=", "CHANGELOG.md=# 1.1\n\n# 1.0\n")
 			w.private[c.owner+"/lib"] = c.private
 			w.o.Private, w.o.Own = c.patterns, c.own
-			got := Gather(t.Context(), []Pin{flakePin(c.owner, "lib", old, next)}, w.o)
+			got := Gather(w.ctx(t), []Pin{flakePin(c.owner, "lib", old, next)}, w.o)
 			requests, programs := w.calls(t)
 			if len(got) != 1 || got[0].Read() != c.read || !strings.Contains(got[0].Why, c.why) {
 				t.Fatalf("gathered %+v", got)
@@ -262,7 +268,7 @@ func TestGatherCompareAndTags(t *testing.T) {
 		{"tag_name": "v5.0.1", "name": "", "body": "Old.", "published_at": "2024-01-01T00:00:00Z"}]`
 	p := Pin{Key: "ci.yml#actions/setup-go", Kind: "action", Owner: "actions", Repo: "setup-go", Old: "aaaaaaa", New: "bbbbbbb",
 		OldRef: "aaaaaaa", NewRef: "bbbbbbb", OldTag: "v5.0.1", NewTag: "v5.1.0"}
-	got := Gather(t.Context(), []Pin{p}, w.o)
+	got := Gather(w.ctx(t), []Pin{p}, w.o)
 	if len(got) != 1 || len(got[0].Texts) != 2 {
 		t.Fatalf("gathered %+v", got)
 	}
@@ -282,7 +288,7 @@ func TestGatherCompareAndTags(t *testing.T) {
 	w2 := setWorld(t)
 	w2.releases = w.releases
 	w2.o.Limits.Calls = 1
-	got = Gather(t.Context(), []Pin{p}, w2.o)
+	got = Gather(w2.ctx(t), []Pin{p}, w2.o)
 	if requests, _ := w2.calls(t); len(requests) != 1 || len(got[0].Texts) != 1 {
 		t.Errorf("with one call: requests %v, texts %+v", requests, got[0].Texts)
 	}
@@ -296,7 +302,7 @@ func TestGatherNixpkgs(t *testing.T) {
 	notes := "nixos/doc/manual/release-notes/rl-2611.section.md="
 	w.tree(t, "nixos", "nixpkgs", old, "sha256-o=", notes+"# 26.11\n")
 	w.tree(t, "nixos", "nixpkgs", next, "sha256-n=", notes+"# 26.11\n\n- services.x.enable is renamed\n")
-	got := Gather(t.Context(), []Pin{flakePin("nixos", "nixpkgs", old, next)}, w.o)
+	got := Gather(w.ctx(t), []Pin{flakePin("nixos", "nixpkgs", old, next)}, w.o)
 	if len(got) != 1 || len(got[0].Texts) != 2 {
 		t.Fatalf("gathered %+v", got)
 	}
@@ -312,7 +318,7 @@ func TestGatherNixpkgs(t *testing.T) {
 
 	// Without the clone, GitHub's comparison gives the counts alone.
 	w2 := setWorld(t)
-	got = Gather(t.Context(), []Pin{flakePin("nixos", "nixpkgs", old, next)}, w2.o)
+	got = Gather(w2.ctx(t), []Pin{flakePin("nixos", "nixpkgs", old, next)}, w2.o)
 	if requests, _ := w2.calls(t); len(requests) != 1 || !strings.Contains(requests[0], "/compare/") {
 		t.Errorf("requests %v", requests)
 	}
@@ -330,7 +336,7 @@ func TestGatherHashMismatch(t *testing.T) {
 	p := flakePin("acme", "lib", "aaaaaaa", "bbbbbbb")
 	p.OldTime, p.NewTime = time.Time{}, time.Time{}
 	w.compareBody = `{"message": "Not Found"}`
-	got := Gather(t.Context(), []Pin{p}, w.o)
+	got := Gather(w.ctx(t), []Pin{p}, w.o)
 	if len(got) != 1 || len(got[0].Texts) != 1 || strings.Contains(got[0].Texts[0].Body, "new") {
 		t.Fatalf("gathered %+v", got)
 	}
@@ -340,7 +346,7 @@ func TestGatherHashMismatch(t *testing.T) {
 	w2.tree(t, "acme", "lib", "aaaaaaa", "sha256-o=", "NEWS=old\n")
 	w2.tree(t, "acme", "lib", "bbbbbbb", "sha256-forged=", "NEWS=new\n")
 	w2.compareBody = "not json"
-	got = Gather(t.Context(), []Pin{p}, w2.o)
+	got = Gather(w2.ctx(t), []Pin{p}, w2.o)
 	if got[0].Read() || !strings.Contains(got[0].Why, "sha256-forged=") || !strings.Contains(got[0].Why, "local clone: none at") {
 		t.Errorf("gathered %+v", got)
 	}
@@ -355,7 +361,7 @@ func TestGatherGoModule(t *testing.T) {
 	p := Pin{Key: "go.mod#github.com/a/b", Kind: "go-module", Module: "github.com/a/b", Owner: "a", Repo: "b",
 		Old: "v1.0.0", New: "v1.1.0", OldRef: "v1.0.0", NewRef: "v1.1.0", OldTag: "v1.0.0", NewTag: "v1.1.0"}
 	w.releases = `[]`
-	got := Gather(t.Context(), []Pin{p}, w.o)
+	got := Gather(w.ctx(t), []Pin{p}, w.o)
 	if len(got) != 1 || !got[0].Read() || !strings.Contains(got[0].Texts[0].Body, "+- Renames Run to Start") {
 		t.Fatalf("gathered %+v", got)
 	}
@@ -378,7 +384,7 @@ func TestGatherGoModule(t *testing.T) {
 	writeFiles(t, filepath.Join(w3.mods, "github.com_a_b_v2@v2.0.0"), "CHANGELOG.md=## 2.0.0\n- Drops Run\n\n## 1.9.0\n")
 	major := Pin{Key: "go.mod#github.com/a/b/v2", Kind: "go-module", Module: "github.com/a/b/v2", OldModule: "github.com/a/b",
 		Owner: "a", Repo: "b", Old: "v1.9.0", New: "v2.0.0", OldRef: "v1.9.0", NewRef: "v2.0.0"}
-	got = Gather(t.Context(), []Pin{major}, w3.o)
+	got = Gather(w3.ctx(t), []Pin{major}, w3.o)
 	if _, programs := w3.calls(t); len(got) != 1 || !got[0].Read() || !strings.Contains(got[0].Texts[0].Body, "+- Drops Run") ||
 		!strings.Contains(programs, "-- github.com/a/b@v1.9.0 github.com/a/b/v2@v2.0.0 ") {
 		t.Errorf("a major version: %+v\n%s", got, programs)
@@ -390,7 +396,7 @@ func TestGatherGoModule(t *testing.T) {
 	writeFiles(t, filepath.Join(w5.mods, "github.com_fork1_c@v1.0.0"), "CHANGELOG.md=## 1.0.0\n")
 	writeFiles(t, filepath.Join(w5.mods, "github.com_fork2_c@v1.0.0"), "CHANGELOG.md=## 1.0.0\n- Forked\n")
 	forked := goModulePin("go.mod#github.com/x/c", "go.mod", "github.com/fork1/c", "v1.0.0", "github.com/fork2/c", "v1.0.0")
-	got = Gather(t.Context(), []Pin{forked}, w5.o)
+	got = Gather(w5.ctx(t), []Pin{forked}, w5.o)
 	if _, programs := w5.calls(t); len(got) != 1 || !got[0].Read() || !strings.Contains(got[0].Texts[0].Body, "+- Forked") ||
 		!strings.Contains(programs, "-- github.com/fork1/c@v1.0.0 github.com/fork2/c@v1.0.0 ") {
 		t.Errorf("a replacement retargeted: %+v\n%s", got, programs)
@@ -399,7 +405,7 @@ func TestGatherGoModule(t *testing.T) {
 	// A module path that would be a flag is never passed to go.
 	w4 := setWorld(t)
 	flag := Pin{Key: "go.mod#-x", Kind: "go-module", Module: "-modfile=/tmp/x", Old: "v1.0.0", New: "v1.1.0"}
-	if got = Gather(t.Context(), []Pin{flag}, w4.o); got[0].Read() {
+	if got = Gather(w4.ctx(t), []Pin{flag}, w4.o); got[0].Read() {
 		t.Errorf("a flag as a module: %+v", got)
 	}
 	if _, programs := w4.calls(t); programs != "" {
@@ -413,7 +419,7 @@ func TestGatherGoModule(t *testing.T) {
 		writeFiles(t, filepath.Join(w2.mods, "github.com_a_b@v1.0.0"), "CHANGELOG.md=## 1.0.0\n")
 		writeFiles(t, filepath.Join(w2.mods, "github.com_a_b@v1.1.0"), "CHANGELOG.md=## 1.1.0\n")
 		w2.o.Private = private
-		got = Gather(t.Context(), []Pin{p}, w2.o)
+		got = Gather(w2.ctx(t), []Pin{p}, w2.o)
 		requests, programs := w2.calls(t)
 		if programs != "" || !got[0].Read() || len(got[0].Texts) != 1 || !strings.Contains(got[0].Texts[0].Source, "comparison") ||
 			strings.Join(requests, " ") != "/repos/a/b/releases /repos/a/b/compare/v1.0.0...v1.1.0" {
@@ -421,7 +427,7 @@ func TestGatherGoModule(t *testing.T) {
 		}
 		w2.compareBody = "not json"
 		w2.o.Cache = t.TempDir()
-		if got = Gather(t.Context(), []Pin{p}, w2.o); got[0].Read() || !strings.Contains(got[0].Why, "private module") {
+		if got = Gather(w2.ctx(t), []Pin{p}, w2.o); got[0].Read() || !strings.Contains(got[0].Why, "private module") {
 			t.Errorf("private %s with GitHub failing: %+v", private, got)
 		}
 		if _, programs := w2.calls(t); programs != "" {
@@ -433,18 +439,16 @@ func TestGatherGoModule(t *testing.T) {
 // The private modules are the config's review.privateModules, ngrok's
 // where it names none, with those Go's settings name.
 func TestDefaultPrivateModules(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "bin")
 	os.MkdirAll(bin, 0o755)
 	// go env prints each variable asked for on a line of its own.
 	os.WriteFile(filepath.Join(bin, "go"), []byte("#!/bin/sh\n[ \"$*\" = \"env GOPRIVATE GONOPROXY GONOSUMDB\" ] || exit 64\n"+
 		"printf 'goenv.example/x\\n\\nnosum.example\\n'\n"), 0o755)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("GONOPROXY", "envproxy.example")
-	t.Setenv("GOPRIVATE", "")
-	t.Setenv("GONOSUMDB", "")
 	config := filepath.Join(dir, "config.json")
-	t.Setenv("AGENT_TOOLS_CONFIG", config)
+	ctx := env.With(t.Context(), env.Process().Set("PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"GONOPROXY=envproxy.example", "GOPRIVATE=", "GONOSUMDB=", "AGENT_TOOLS_CONFIG="+config))
 	const ngrok = "github.com/ngrok/*,github.com/ngrok-private/*,go.ngrok.com/*,"
 	const goSettings = "envproxy.example,goenv.example/x,nosum.example"
 	for _, c := range []struct{ config, want string }{
@@ -458,7 +462,7 @@ func TestDefaultPrivateModules(t *testing.T) {
 		if c.config != "" {
 			os.WriteFile(config, []byte(c.config), 0o644)
 		}
-		o := DefaultOptions(t.Context())
+		o := DefaultOptions(ctx)
 		if o.Private != c.want {
 			t.Errorf("config %q: private %q, want %q", c.config, o.Private, c.want)
 		}
@@ -480,7 +484,7 @@ func TestGatherNever(t *testing.T) {
 		{Key: "go.mod#go", Kind: "go", Old: "1.25", New: "1.26"},
 		{Key: "flake.lock#added", Kind: "flake", Type: "github", Owner: "o", Repo: "r", New: "b"},
 	}
-	got := Gather(t.Context(), pins, w.o)
+	got := Gather(w.ctx(t), pins, w.o)
 	if len(got) != 3 {
 		t.Fatalf("gathered %+v; an added pin has nothing to gather", got)
 	}
@@ -503,7 +507,7 @@ func TestGatherHostileNames(t *testing.T) {
 		{Key: "b", Kind: "action", Owner: "o", Repo: "r", Old: "a", New: "b", OldRef: "--upload-pack=x", NewRef: "b"},
 		{Key: "c", Kind: "action", Owner: "o", Repo: "r", Old: "a", New: "b", OldRef: "a..b", NewRef: "b"},
 	} {
-		got := Gather(t.Context(), []Pin{p}, w.o)
+		got := Gather(w.ctx(t), []Pin{p}, w.o)
 		if got[0].Read() {
 			t.Errorf("%+v gathered %+v", p, got)
 		}
@@ -523,7 +527,7 @@ func TestGatherLimits(t *testing.T) {
 		return Pin{Key: name, Kind: "action", Owner: "o", Repo: name, Old: "aaaaaaa", New: "bbbbbbb", OldRef: "aaaaaaa", NewRef: "bbbbbbb"}
 	}
 	w.o.Limits = Limits{Pins: 3, Text: 1000, Total: 1500, Calls: 2}
-	got := Gather(t.Context(), []Pin{pin("one"), pin("two"), pin("three"), pin("four")}, w.o)
+	got := Gather(w.ctx(t), []Pin{pin("one"), pin("two"), pin("three"), pin("four")}, w.o)
 	if len(got) != 4 {
 		t.Fatalf("gathered %+v", got)
 	}
@@ -546,8 +550,8 @@ func TestGatherLimits(t *testing.T) {
 func TestGatherCache(t *testing.T) {
 	w := setWorld(t)
 	p := Pin{Key: "x", Kind: "action", Owner: "o", Repo: "r", Old: "aaaaaaa", New: "bbbbbbb", OldRef: "aaaaaaa", NewRef: "bbbbbbb"}
-	first := Gather(t.Context(), []Pin{p}, w.o)
-	again := Gather(t.Context(), []Pin{p}, w.o)
+	first := Gather(w.ctx(t), []Pin{p}, w.o)
+	again := Gather(w.ctx(t), []Pin{p}, w.o)
 	requests, _ := w.calls(t)
 	if !first[0].Read() || len(requests) != 1 {
 		t.Fatalf("first %+v, requests %v", first, requests)
@@ -565,13 +569,14 @@ func TestGatherCache(t *testing.T) {
 	}
 	// Other versions are another entry.
 	p.New, p.NewRef = "ccccccc", "ccccccc"
-	Gather(t.Context(), []Pin{p}, w.o)
+	Gather(w.ctx(t), []Pin{p}, w.o)
 	if requests, _ := w.calls(t); len(requests) != 2 {
 		t.Errorf("other versions came from the cache: requests %v", requests)
 	}
 }
 
 func TestMatchPrefixPatterns(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		patterns, module string
 		want             bool

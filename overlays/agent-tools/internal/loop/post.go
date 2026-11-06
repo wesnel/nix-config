@@ -2,6 +2,7 @@ package loop
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -18,8 +19,8 @@ import (
 // Draft writes body as the drafted answer to thread id, with outcome, in
 // the thread's PR record, in a people-mode loop. It is the one command that
 // takes a person's thread; only the operator posts the draft, with Post.
-func Draft(id, body, outcome string) (any, error) {
-	if err := requireMode("draft", "people"); err != nil {
+func Draft(ctx context.Context, id, body, outcome string) (any, error) {
+	if err := requireMode(ctx, "draft", "people"); err != nil {
 		return nil, err
 	}
 	if !slices.Contains(record.Outcomes, outcome) {
@@ -39,24 +40,24 @@ func Draft(id, body, outcome string) (any, error) {
 	if err := redact.Outgoing(body); err != nil {
 		return nil, err
 	}
-	policy, err := newThreadPolicy()
+	policy, err := newThreadPolicy(ctx)
 	if err != nil {
 		return nil, err
 	}
-	thread, err := policy.read(id)
+	thread, err := policy.read(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	// The draft is posted as written, so it is checked before the record
 	// keeps it.
-	threads, err := prThreads(policy.repo.Slug, thread.pr)
+	threads, err := prThreads(ctx, policy.repo.Slug, thread.pr)
 	if err != nil {
 		return nil, err
 	}
 	if err := checkPublic("the draft", body, append(threads, id), "run `pr-loop draft` again"); err != nil {
 		return nil, err
 	}
-	path, err := prFile(policy.repo, thread.pr)
+	path, err := prFile(ctx, policy.repo, thread.pr)
 	if err != nil {
 		return nil, err
 	}
@@ -94,19 +95,19 @@ type PostResult struct {
 // in has a posted answer, the people whose threads those are are asked to
 // review again. It is the operator's: the guard refuses it to agents, and
 // it refuses where no terminal can be opened.
-func Post(number int, threads []string) (any, error) {
+func Post(ctx context.Context, number int, threads []string) (any, error) {
 	tty, err := openTTY()
 	if err != nil {
 		return nil, refuse("`pr-loop post` asks the operator on the terminal before each reply, and /dev/tty cannot be "+
 			"opened here (%v); the operator runs it from a terminal of their own", err)
 	}
 	defer tty.Close()
-	policy, err := newThreadPolicy()
+	policy, err := newThreadPolicy(ctx)
 	if err != nil {
 		return nil, err
 	}
 	repo := policy.repo
-	path, err := prFile(repo, number)
+	path, err := prFile(ctx, repo, number)
 	if err != nil {
 		return nil, err
 	}
@@ -148,28 +149,28 @@ func Post(number int, threads []string) (any, error) {
 		if err := redact.Outgoing(body); err != nil {
 			return results, fmt.Errorf("the draft for %s: %w", t.ID, err)
 		}
-		thread, err := policy.read(t.ID)
+		thread, err := policy.read(ctx, t.ID)
 		if err != nil {
 			return results, err
 		}
 		if thread.pr != number {
 			return results, refuse("%s is on #%d, not #%d; rerun `pr-loop threads %d` to fix the record", t.ID, thread.pr, number, number)
 		}
-		if result.URL, err = postReply(number, t.ID, body); err != nil {
+		if result.URL, err = postReply(ctx, number, t.ID, body); err != nil {
 			return results, err
 		}
 		if err := markPosted(path, t.ID, body); err != nil {
 			return results, err
 		}
 		if (outcome == "fix" || outcome == "rebut") && !thread.resolved {
-			if err := resolveThread(number, t.ID); err != nil {
+			if err := resolveThread(ctx, number, t.ID); err != nil {
 				return results, err
 			}
 			result.Resolved = true
 		}
 		results = append(results, result)
 	}
-	rerequested, err := rerequest(repo, path, number)
+	rerequested, err := rerequest(ctx, repo, path, number)
 	if err != nil {
 		return results, err
 	}
@@ -195,12 +196,12 @@ func markPosted(path, id, body string) error {
 // rerequest asks the people whose threads on PR number those are to review
 // again, once each unresolved thread a person commented in has a posted
 // answer, and returns whom it asked.
-func rerequest(repo *Repo, path string, number int) ([]string, error) {
+func rerequest(ctx context.Context, repo *Repo, path string, number int) ([]string, error) {
 	p, err := record.ReadPR(path)
 	if err != nil {
 		return nil, err
 	}
-	bots, err := botsFor(repo.Slug)
+	bots, err := botsFor(ctx, repo.Slug)
 	if err != nil {
 		return nil, err
 	}
@@ -225,7 +226,7 @@ func rerequest(repo *Repo, path string, number int) ([]string, error) {
 		}
 	}
 	for _, person := range people {
-		if err := requestReviewer(repo.Slug, number, person); err != nil {
+		if err := requestReviewer(ctx, repo.Slug, number, person); err != nil {
 			return nil, fmt.Errorf("asking %s to review #%d again: %w", person, number, err)
 		}
 	}

@@ -6,13 +6,17 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/wesnel/agent-tools/internal/env"
 )
 
 // account/rateLimits/read's result names each window by its length:
 // primary and secondary are whichever windows the account has.
 func TestFromCodexRateLimits(t *testing.T) {
+	t.Parallel()
 	now := time.Unix(1793250000, 0)
 	t.Run("the operator's reply", func(t *testing.T) {
+		t.Parallel()
 		r, ok := FromCodexRateLimits(fixture(t, "codex-ratelimits.json"), now)
 		want := []Window{
 			{Name: "5h", Used: 0, ResetsAt: 1793268465, ObservedAt: 1793250000},
@@ -42,6 +46,7 @@ func TestFromCodexRateLimits(t *testing.T) {
 		{"not JSON", `{`, nil},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			r, ok := FromCodexRateLimits([]byte(c.result), now)
 			if ok != (c.want != nil) || !reflect.DeepEqual(r, c.want) {
 				t.Errorf("got %+v, %v; want %+v", r, ok, c.want)
@@ -53,8 +58,12 @@ func TestFromCodexRateLimits(t *testing.T) {
 // The Codex account's windows are kept apart from Claude's, which quota-stop
 // reads for Claude Code sessions.
 func TestCodexFile(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", "/state")
-	if got := CodexFile(); got != filepath.Join("/state", "agent-plan", "codex-usage.json") || got == File() {
-		t.Errorf("CodexFile() = %q, File() = %q", got, File())
+	t.Parallel()
+	e := env.New("", "XDG_STATE_HOME=/state")
+	if got := CodexFile(e); got != filepath.Join("/state", "agent-plan", "codex-usage.json") || got == File(e) {
+		t.Errorf("CodexFile() = %q, File() = %q", got, File(e))
+	}
+	if got := File(e); got != filepath.Join("/state", "agent-plan", "usage.json") {
+		t.Errorf("File() = %q, want it under the Env's state directory", got)
 	}
 }

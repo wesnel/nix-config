@@ -9,8 +9,9 @@ import (
 )
 
 // operatorClone makes a clone of r as the operator's own, with origin on
-// GitHub as o/r unless origin names another, and runs the test from it.
-func operatorClone(t *testing.T, r *remote, origin string) string {
+// GitHub as o/r unless origin names another, and has f's Env run the review
+// from it.
+func operatorClone(t *testing.T, f *fakeGitHub, r *remote, origin string) string {
 	t.Helper()
 	parent, _ := filepath.EvalSymlinks(t.TempDir())
 	home := filepath.Join(parent, "home")
@@ -19,7 +20,7 @@ func operatorClone(t *testing.T, r *remote, origin string) string {
 		origin = "https://github.com/o/r.git"
 	}
 	gitT(t, home, "remote", "set-url", "origin", origin)
-	t.Chdir(home)
+	f.env = f.env.In(home)
 	return home
 }
 
@@ -31,7 +32,7 @@ func TestFetchIntoClone(t *testing.T) {
 	t.Run("reviews in a worktree of the clone", func(t *testing.T) {
 		r := newRemote(t, nil)
 		f := setUpPR(t, r)
-		home := operatorClone(t, r, "")
+		home := operatorClone(t, f, r, "")
 		write(t, filepath.Join(home, ".git", "info", "agents.json"), `{"test": "go test ./...", "testFiles": ["*_test.go"]}`)
 		os.Chmod(filepath.Join(home, ".git", "info", "agents.json"), 0o644)
 		marker := filepath.Join(t.TempDir(), "hook-ran")
@@ -45,7 +46,7 @@ func TestFetchIntoClone(t *testing.T) {
 		before := gitT(t, home, "rev-parse", "HEAD")
 
 		var log bytes.Buffer
-		sp, err := resolveSource(t.Context(), must(parseSource("o/r#7")), true, &log)
+		sp, err := resolveSource(f.ctx(t), must(parseSource(f.ctx(t), "o/r#7")), true, &log)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -56,8 +57,8 @@ func TestFetchIntoClone(t *testing.T) {
 			t.Errorf("refs/pr-review/7/head is %s, not %s", got, r.head)
 		}
 		gitT(t, home, "rev-parse", "--verify", "refs/pr-review/7/base")
-		if rel, err := filepath.Rel(Root(), sp.top); err != nil || strings.HasPrefix(rel, "..") {
-			t.Errorf("the review's worktree %s is not under the cache %s", sp.top, Root())
+		if rel, err := filepath.Rel(Root(f.env), sp.top); err != nil || strings.HasPrefix(rel, "..") {
+			t.Errorf("the review's worktree %s is not under the cache %s", sp.top, Root(f.env))
 		}
 		common, _ := filepath.EvalSymlinks(gitT(t, sp.top, "rev-parse", "--path-format=absolute", "--git-common-dir"))
 		if common != filepath.Join(home, ".git") {
@@ -84,7 +85,7 @@ func TestFetchIntoClone(t *testing.T) {
 		}
 
 		// A reviewer's checkout is a worktree of the same clone.
-		wt, remove, err := worktree(t.Context(), must(parseSource("o/r#7")), sp)
+		wt, remove, err := worktree(f.ctx(t), must(parseSource(f.ctx(t), "o/r#7")), sp)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -115,10 +116,10 @@ func TestFetchIntoClone(t *testing.T) {
 	t.Run("pins the head", func(t *testing.T) {
 		r := newRemote(t, nil)
 		f := setUpPR(t, r)
-		home := operatorClone(t, r, "")
+		home := operatorClone(t, f, r, "")
 		f.pr["headRefOid"] = r.base
 		var log bytes.Buffer
-		if _, err := resolveSource(t.Context(), must(parseSource("o/r#7")), true, &log); err == nil ||
+		if _, err := resolveSource(f.ctx(t), must(parseSource(f.ctx(t), "o/r#7")), true, &log); err == nil ||
 			!strings.Contains(err.Error(), r.base) {
 			t.Fatalf("a head that moved was accepted: %v", err)
 		}
@@ -140,18 +141,18 @@ func TestFetchIntoClone(t *testing.T) {
 	} {
 		t.Run("falls back: "+c.name, func(t *testing.T) {
 			r := newRemote(t, nil)
-			setUpPR(t, r)
-			home := operatorClone(t, r, c.origin)
+			f := setUpPR(t, r)
+			home := operatorClone(t, f, r, c.origin)
 			if c.config != nil {
 				gitT(t, home, append([]string{"config"}, c.config...)...)
 			}
 			var log bytes.Buffer
-			sp, err := resolveSource(t.Context(), must(parseSource("o/r#7")), true, &log)
+			sp, err := resolveSource(f.ctx(t), must(parseSource(f.ctx(t), "o/r#7")), true, &log)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer sp.release()
-			if sp.top != filepath.Join(Root(), "o", "r", "7", "clone") {
+			if sp.top != filepath.Join(Root(f.env), "o", "r", "7", "clone") {
 				t.Errorf("reviewed in %s, not the cache's clone", sp.top)
 			}
 			if out := log.String(); !strings.Contains(out, c.says) || !strings.Contains(out, "no agent settings") {

@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/wesnel/agent-tools/internal/env"
 )
 
 // git runs git in dir with the test process's environment, as a package's own
@@ -170,7 +172,30 @@ func TestIsolateRefusesTheNetwork(t *testing.T) {
 	})
 }
 
+// TestWithNoConfig covers an Env that reads no git configuration but the
+// repository's, as SetNoConfig leaves this process's: the variables that
+// give configuration are gone, NoConfig is set, and the rest, its location
+// and directory too, is kept.
+func TestWithNoConfig(t *testing.T) {
+	t.Parallel()
+	before := env.New("/work", "GIT_DIR=/r/.git", "PATH=/bin", "GIT_CONFIG_GLOBAL=/home/u/.gitconfig", "GIT_CONFIG=/c",
+		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=include.path", "GIT_CONFIG_VALUE_0=/secret",
+		"GIT_CONFIG_PARAMETERS='core.pager'='x'", "GIT_CONFIGURED=kept", "GIT_CONFIG_NOSYSTEM=0")
+	got := WithNoConfig(before)
+	if s := strings.Join(got.Environ(), " "); s != "GIT_DIR=/r/.git PATH=/bin GIT_CONFIGURED=kept "+
+		"GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1" {
+		t.Errorf("WithNoConfig: %s", s)
+	}
+	if got.Dir() != "/work" {
+		t.Errorf("WithNoConfig moved to %q", got.Dir())
+	}
+	if before.Get("GIT_CONFIG") != "/c" {
+		t.Error("WithNoConfig changed the Env it was given")
+	}
+}
+
 func TestWithout(t *testing.T) {
+	t.Parallel()
 	env := []string{"GIT_DIR=/r/.git", "PATH=/bin", "GIT_WORK_TREE=/r", "GIT_DIRECTORY=x", "GIT_CONFIG_GLOBAL=/dev/null"}
 	if got := strings.Join(Without(env), " "); got != "PATH=/bin GIT_DIRECTORY=x GIT_CONFIG_GLOBAL=/dev/null" {
 		t.Errorf("Without: %s", got)
@@ -181,6 +206,7 @@ func TestWithout(t *testing.T) {
 // configuration but the repository's: the caller's own global file, its
 // `git -c` pairs and its location are gone, and nothing else is.
 func TestWithoutConfig(t *testing.T) {
+	t.Parallel()
 	env := []string{"GIT_DIR=/r/.git", "PATH=/bin", "GIT_CONFIG_GLOBAL=/home/u/.gitconfig", "GIT_CONFIG=/c",
 		"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=include.path", "GIT_CONFIG_VALUE_0=/secret",
 		"GIT_CONFIG_PARAMETERS='core.pager'='x'", "GIT_CONFIGURED=kept", "GIT_ATTR_NOSYSTEM=1"}

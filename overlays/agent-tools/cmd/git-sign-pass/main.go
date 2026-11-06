@@ -4,12 +4,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/cli"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/signpass"
@@ -139,30 +141,31 @@ func main() {
 		}
 		signpass.NotifyID = *notify
 	}
-	result, err := pass(*base, *resume, *push, *setUpstream, flags.Args())
+	ctx := env.With(context.Background(), env.Process())
+	result, err := pass(ctx, *base, *resume, *push, *setUpstream, flags.Args())
 	code := cli.Report("git-sign-pass", result, err, 0, os.Stdout, os.Stderr)
 	if *notify != "" {
-		if _, nerr := signpass.Notify(*notify, result, err, time.Now()); nerr != nil {
+		if _, nerr := signpass.Notify(ctx, *notify, result, err, time.Now()); nerr != nil {
 			fmt.Fprintf(os.Stderr, "git-sign-pass: --notify %s: the result is not logged: %s\n", *notify, nerr)
 		}
 	}
 	os.Exit(code)
 }
 
-// pass runs the pass the arguments ask for.
-func pass(base string, resume, push, setUpstream bool, branches []string) (any, error) {
-	if err := git.CheckLocation(); err != nil {
+// pass runs the pass the arguments ask for, in ctx's Env.
+func pass(ctx context.Context, base string, resume, push, setUpstream bool, branches []string) (any, error) {
+	if err := git.In(ctx).CheckLocation(); err != nil {
 		return nil, err
 	}
-	if err := git.CheckConfig(""); err != nil {
+	if err := git.In(ctx).CheckConfig(""); err != nil {
 		return nil, err
 	}
 	switch {
 	case resume && len(branches) == 1:
-		return signpass.Resume(branches[0], push, setUpstream)
+		return signpass.Resume(ctx, branches[0], push, setUpstream)
 	case len(branches) > 0:
-		return signpass.Plan(base, branches, push, setUpstream)
+		return signpass.Plan(ctx, base, branches, push, setUpstream)
 	default:
-		return signpass.Run(base, resume, push, setUpstream)
+		return signpass.Run(ctx, base, resume, push, setUpstream)
 	}
 }

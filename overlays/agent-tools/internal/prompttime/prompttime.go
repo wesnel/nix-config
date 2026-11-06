@@ -11,15 +11,17 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/wesnel/agent-tools/internal/env"
 )
 
 // DefaultDir is where Remind keeps the time of each session's last message
-// from the operator, in agent-tools' state directory.
-func DefaultDir() string {
-	dir := os.Getenv("XDG_STATE_HOME")
+// from the operator, in agent-tools' state directory under e's
+// $XDG_STATE_HOME, or ~/.local/state where that is not absolute.
+func DefaultDir(e env.Env) string {
+	dir := e.Get("XDG_STATE_HOME")
 	if !filepath.IsAbs(dir) {
-		home, _ := os.UserHomeDir()
-		dir = filepath.Join(home, ".local", "state")
+		dir = filepath.Join(e.Get("HOME"), ".local", "state")
 	}
 	return filepath.Join(dir, "agent-tools", "prompts")
 }

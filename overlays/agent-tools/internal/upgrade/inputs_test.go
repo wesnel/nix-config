@@ -1,7 +1,6 @@
 package upgrade
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,6 +25,7 @@ func keys(pins []Pin) string {
 // What an input resolves to is a pin, whichever node holds it: an input
 // pointed at another node moves though no node does.
 func TestFlakeInputEdges(t *testing.T) {
+	t.Parallel()
 	a, b := strings.Repeat("a", 40), strings.Repeat("b", 40)
 	swap := func(rootTo, hmTo string) []byte {
 		return []byte(`{"nodes": {"nixpkgs": ` + flakeNode("nixos", a, "") + `, "nixpkgs_2": ` + flakeNode("nixos", b, "") +
@@ -91,11 +91,9 @@ func TestCloneCommands(t *testing.T) {
 	w := setWorld(t)
 	old, next := w.clone(t, "acme", "lib")
 	p := Pin{Owner: "acme", Repo: "lib", OldRef: old, NewRef: next}
-	for k, v := range map[string]string{"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.abbrev", "GIT_CONFIG_VALUE_0": "40",
-		"GIT_CONFIG_PARAMETERS": "'core.abbrev'='40'"} {
-		t.Setenv(k, v)
-	}
-	text, err := cloneLog(t.Context(), w.o.Clones, p)
+	w.env = w.env.Set("GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=core.abbrev", "GIT_CONFIG_VALUE_0=40",
+		"GIT_CONFIG_PARAMETERS='core.abbrev'='40'")
+	text, err := cloneLog(w.ctx(t), w.o.Clones, p)
 	if err != nil || strings.Contains(text.Body, next) || !strings.Contains(text.Body, next[:7]+" Drop the old flag") {
 		t.Errorf("with the environment's config: %q, %v", text.Body, err)
 	}
@@ -109,7 +107,7 @@ func TestCloneCommands(t *testing.T) {
 	t.Cleanup(func() { cloneTimeout = old2 })
 	done := make(chan error, 1)
 	go func() {
-		_, err := cloneLog(context.Background(), w.o.Clones, p)
+		_, err := cloneLog(w.ctx(t), w.o.Clones, p)
 		done <- err
 	}()
 	select {
@@ -126,6 +124,7 @@ func TestCloneCommands(t *testing.T) {
 
 // A refused cache says why, naming the directory and the mode it needs.
 func TestCacheRefusedSays(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "upgrade")
 	os.Mkdir(dir, 0o755)
 	os.Chmod(dir, 0o755)

@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/operatorkey"
@@ -56,7 +57,16 @@ func bakeOperatorProfile(t *testing.T, configHome string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hostpaths.Bake(t, configHome, state)
+	bake(t, configHome, state)
+}
+
+// bake bakes configHome and stateHome in for the rest of the test, through
+// the process environment, which the loop reads hostpaths from. Empty ones
+// bake nothing in.
+func bake(t *testing.T, configHome, stateHome string) {
+	t.Helper()
+	t.Setenv(hostpaths.TestConfigHomeEnv, configHome)
+	t.Setenv(hostpaths.TestStateHomeEnv, stateHome)
 }
 
 func sshOperatorProfile(t *testing.T, dir string) (string, []string) {
@@ -129,11 +139,11 @@ func TestOpenAuthorityFailure(t *testing.T) {
 	for _, name := range []string{"missing profile", "malformed include", "blocked include", "blocked public key"} {
 		t.Run(name, func(t *testing.T) {
 			f, dir := pushedOperatorBranch(t)
-			home := hostpaths.BakedConfigHome()
+			home := hostpaths.BakedConfigHome(env.Process())
 			config := filepath.Join(home, "git", "config")
 			switch name {
 			case "missing profile":
-				hostpaths.Bake(t, filepath.Join(t.TempDir(), ".config"), t.TempDir())
+				bake(t, filepath.Join(t.TempDir(), ".config"), t.TempDir())
 			case "blocked public key":
 				public := filepath.Join(filepath.Dir(home), ".ssh", "operator.pub")
 				if err := os.Remove(public); err != nil {
@@ -158,7 +168,7 @@ func TestOpenAuthorityFailure(t *testing.T) {
 				operatorVerificationTimeout = 100 * time.Millisecond
 				t.Cleanup(func() { operatorVerificationTimeout = old })
 			}
-			_, err := Open("feat", "", "Add feat", "Why it is needed.", false)
+			_, err := Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", false)
 			if len(f.calls) != 0 {
 				t.Fatalf("authority failure wrote to GitHub: %v", f.calls)
 			}
@@ -184,7 +194,7 @@ func TestOpenAuthorityFailure(t *testing.T) {
 
 func TestOperatorVerifierCanceled(t *testing.T) {
 	_, dir := pushedOperatorBranch(t)
-	configHome := hostpaths.BakedConfigHome()
+	configHome := hostpaths.BakedConfigHome(env.Process())
 	config := filepath.Join(configHome, "git", "config")
 	program, err := exec.LookPath("ssh-keygen")
 	if err != nil {
@@ -210,7 +220,7 @@ func TestOperatorVerifierCanceled(t *testing.T) {
 		t.Fatal(err)
 	}
 	gitIn(t, dir, "config", "--file", config, "gpg.ssh.program", verifier)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(git.At(t.Context(), dir), 5*time.Second)
 	defer cancel()
 	pid := make(chan int, 1)
 	reader := bufio.NewReader(ready)
@@ -406,7 +416,7 @@ func TestOpenOperatorOpenPGP(t *testing.T) {
 				gitIn(t, dir, "config", "--file", config, setting[0], setting[1])
 			}
 			if keyboxd {
-				hostpaths.Bake(t, configHome, filepath.Join(home, "state"))
+				bake(t, configHome, filepath.Join(home, "state"))
 			} else {
 				bakeOperatorProfile(t, configHome)
 			}
@@ -502,7 +512,7 @@ func TestOpenOperatorOpenPGP(t *testing.T) {
 				}
 				t.Setenv("GNUPG_BUILD_ROOT", buildRoot)
 			}
-			_, err = Open("feat", "", "Add feat", "Why it is needed.", false)
+			_, err = Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", false)
 			if keyboxd {
 				if buildRootWasSet {
 					t.Setenv("GNUPG_BUILD_ROOT", oldBuildRoot)
@@ -692,13 +702,13 @@ func TestOpenOperatorSignature(t *testing.T) {
 				}
 				gitIn(t, dir, "config", "gpg.ssh.program", fake)
 			case "unbaked":
-				hostpaths.Bake(t, "", "")
+				bake(t, "", "")
 				t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 			}
 			if name != "object identity" {
 				published(t, f, dir, "feat")
 			}
-			_, err := Open("feat", "", "Add feat", "Why it is needed.", false)
+			_, err := Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", false)
 			if want {
 				if err != nil || strings.Join(f.calls, " ") != "createPullRequest" {
 					t.Fatalf("authorized: error %v, mutations %v", err, f.calls)

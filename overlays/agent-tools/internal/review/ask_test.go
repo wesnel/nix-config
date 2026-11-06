@@ -14,11 +14,11 @@ import (
 )
 
 // askCodex runs `git delegate ask` with args, and returns its exit
-// status, its answer and stderr.
-func askCodex(t *testing.T, args ...string) (int, map[string]any, string) {
+// status, its answer and stderr, in f's Env.
+func (f *fixture) askCodex(t *testing.T, args ...string) (int, map[string]any, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := Main(t.Context(), append([]string{"ask"}, args...), strings.NewReader(""), &stdout, &stderr)
+	code := Main(f.ctx(t), append([]string{"ask"}, args...), strings.NewReader(""), &stdout, &stderr)
 	var out map[string]any
 	if stdout.Len() > 0 {
 		if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
@@ -44,8 +44,8 @@ func askFixture(t *testing.T, withCodex bool) *fixture {
 func TestAsk(t *testing.T) {
 	t.Run("answers from the named files alone", func(t *testing.T) {
 		f := askFixture(t, true)
-		t.Setenv("FAKE_CODEX", "answer")
-		code, out, stderr := askCodex(t, "--model", "fake-model", "--question", ".git/question.md", "code.txt", "docs/design.md")
+		f.setenv("FAKE_CODEX", "answer")
+		code, out, stderr := f.askCodex(t, "--model", "fake-model", "--question", ".git/question.md", "code.txt", "docs/design.md")
 		if code != 0 {
 			t.Fatalf("exit %d\n%s", code, stderr)
 		}
@@ -77,7 +77,7 @@ func TestAsk(t *testing.T) {
 	t.Run("a Claude reviewer", func(t *testing.T) {
 		f := askFixture(t, true)
 		f.claudeSays(t, "security-reviewer", claudeResult(map[string]any{"answer": "Keep it in the flag set.", "unverified": []string{}}, "done"))
-		code, out, stderr := askCodex(t, "--reviewer", "security", "--question", ".git/question.md", "code.txt")
+		code, out, stderr := f.askCodex(t, "--reviewer", "security", "--question", ".git/question.md", "code.txt")
 		if code != 0 || out["answer"] != "Keep it in the flag set." || out["reviewer"] != "security" {
 			t.Fatalf("exit %d, %v\n%s", code, out, stderr)
 		}
@@ -92,10 +92,10 @@ func TestAsk(t *testing.T) {
 	// elsewhere.
 	t.Run("a file swapped for a link after the check", func(t *testing.T) {
 		f := askFixture(t, true)
-		t.Setenv("FAKE_CODEX", "answer")
-		t.Setenv("FAKE_CODEX_COPY", "code.txt")
+		f.setenv("FAKE_CODEX", "answer")
+		f.setenv("FAKE_CODEX_COPY", "code.txt")
 		top := run(t, f.repo, "git", "rev-parse", "--show-toplevel")
-		files, err := named(top, []string{"code.txt"})
+		files, err := named(f.env, top, []string{"code.txt"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -114,7 +114,7 @@ func TestAsk(t *testing.T) {
 
 	t.Run("Codex unavailable", func(t *testing.T) {
 		f := askFixture(t, false)
-		code, _, stderr := askCodex(t, "--question", ".git/question.md", "code.txt")
+		code, _, stderr := f.askCodex(t, "--question", ".git/question.md", "code.txt")
 		reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-delegate:")
 		if code != 4 || !strings.Contains(reason, "sub-agent") || !refusal.SaysInstead(reason) {
 			t.Errorf("exit %d, %q", code, stderr)
@@ -126,12 +126,12 @@ func TestAsk(t *testing.T) {
 	// copied for Codex.
 	t.Run("redacted", func(t *testing.T) {
 		f := askFixture(t, true)
-		t.Setenv("FAKE_CODEX", "answer")
-		t.Setenv("FAKE_CODEX_COPY", "docs/design.md")
+		f.setenv("FAKE_CODEX", "answer")
+		f.setenv("FAKE_CODEX_COPY", "docs/design.md")
 		token := "ghp_" + strings.Repeat("c", 36)
 		os.WriteFile(filepath.Join(f.repo, ".git", "question.md"), []byte("Is "+token+" safe here?\n"), 0o644)
 		os.WriteFile(filepath.Join(f.repo, "docs", "design.md"), []byte("The token is "+token+".\n"), 0o644)
-		if code, _, stderr := askCodex(t, "--question", ".git/question.md", "docs/design.md"); code != 0 {
+		if code, _, stderr := f.askCodex(t, "--question", ".git/question.md", "docs/design.md"); code != 0 {
 			t.Fatalf("exit %d\n%s", code, stderr)
 		}
 		for _, sent := range []string{"prompt", "copy"} {
@@ -203,7 +203,7 @@ func TestAsk(t *testing.T) {
 		} {
 			t.Run(c.name, func(t *testing.T) {
 				f := askFixture(t, true)
-				t.Setenv("FAKE_CODEX", "answer")
+				f.setenv("FAKE_CODEX", "answer")
 				scratch, _ := filepath.EvalSymlinks(t.TempDir())
 				secrets := filepath.Join(scratch, "secrets")
 				os.MkdirAll(secrets, 0o700)
@@ -213,8 +213,11 @@ func TestAsk(t *testing.T) {
 				config := filepath.Join(t.TempDir(), "config.json")
 				data, _ := json.Marshal(map[string]any{"guard": map[string]any{"credentialPaths": []string{secrets}}})
 				os.WriteFile(config, data, 0o600)
+				f.setenv("AGENT_TOOLS_CONFIG", config)
+				// The guard's credential paths, which checkedfile reads,
+				// still come from this process's environment.
 				t.Setenv("AGENT_TOOLS_CONFIG", config)
-				code, _, stderr := askCodex(t, "--question", c.place(t, f, scratch, secrets), "code.txt")
+				code, _, stderr := f.askCodex(t, "--question", c.place(t, f, scratch, secrets), "code.txt")
 				_, ran := os.Stat(filepath.Join(f.log, "prompt"))
 				if c.ok && code != 0 {
 					t.Errorf("exit %d\n%s", code, stderr)
@@ -232,13 +235,13 @@ func TestAsk(t *testing.T) {
 
 	t.Run("refused/a hard link to a file elsewhere", func(t *testing.T) {
 		f := askFixture(t, true)
-		t.Setenv("FAKE_CODEX", "answer")
+		f.setenv("FAKE_CODEX", "answer")
 		secret := filepath.Join(t.TempDir(), "secret")
 		os.WriteFile(secret, []byte("hunter2\n"), 0o600)
 		if err := os.Link(secret, filepath.Join(f.repo, "linked.txt")); err != nil {
 			t.Fatal(err)
 		}
-		code, _, stderr := askCodex(t, "--question", ".git/question.md", "linked.txt")
+		code, _, stderr := f.askCodex(t, "--question", ".git/question.md", "linked.txt")
 		reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-delegate:refused: ")
 		if code != 2 || !refusal.SaysInstead(reason) {
 			t.Errorf("exit %d, %q", code, stderr)
@@ -258,8 +261,8 @@ func TestAsk(t *testing.T) {
 	} {
 		t.Run("refused/"+name, func(t *testing.T) {
 			f := askFixture(t, true)
-			t.Setenv("FAKE_CODEX", "answer")
-			code, _, stderr := askCodex(t, args...)
+			f.setenv("FAKE_CODEX", "answer")
+			code, _, stderr := f.askCodex(t, args...)
 			reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-delegate:refused: ")
 			if code != 2 || !refusal.SaysInstead(reason) {
 				t.Errorf("%v: exit %d, %q", args, code, stderr)
@@ -287,9 +290,9 @@ func TestAsk(t *testing.T) {
 	} {
 		t.Run("refused/"+name, func(t *testing.T) {
 			f := askFixture(t, true)
-			t.Setenv("FAKE_CODEX", "answer")
+			f.setenv("FAKE_CODEX", "answer")
 			arg := place(t, f)
-			code, _, stderr := askCodex(t, "--question", ".git/question.md", arg)
+			code, _, stderr := f.askCodex(t, "--question", ".git/question.md", arg)
 			reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-delegate:refused: ")
 			if code != 2 || !strings.Contains(reason, "outside the repository") || !refusal.SaysInstead(reason) {
 				t.Errorf("%s: exit %d, %q", arg, code, stderr)

@@ -1,9 +1,11 @@
 package guard
 
 import (
+	"context"
 	"path/filepath"
 
 	"github.com/wesnel/agent-tools/internal/agentplans"
+	"github.com/wesnel/agent-tools/internal/env"
 )
 
 // spaceState is why a write to the Space publisher's state is refused: it
@@ -14,9 +16,9 @@ const spaceState = "The Space publisher's state names the block it replaces, so 
 
 // spaceStateFile reports whether path is the Space publisher's state, as
 // written, through its links or, where names fold, in any case, or a
-// link to it, there yet or not.
-func spaceStateFile(path string) bool {
-	state := agentplans.SpaceStateFile()
+// link to it, there yet or not. The state is where the Env of ctx puts it.
+func spaceStateFile(ctx context.Context, path string) bool {
+	state := agentplans.SpaceStateFile(env.From(ctx))
 	return fold(filepath.Clean(path)) == fold(filepath.Clean(state)) || fold(physical(path)) == fold(physical(state)) ||
 		Reaches(path, state, false)
 }
@@ -24,14 +26,15 @@ func spaceStateFile(path string) bool {
 // checkSpaceStateShell is spaceState for a command that writes the state:
 // by a redirection or a tool's output, or by writing a directory that
 // holds it, such as an archive's extraction.
-func checkSpaceStateShell(name string, args, redirected []string, dir string) string {
-	if shellWrites(name, args, redirected, dir, spaceStateFile) {
+func checkSpaceStateShell(ctx context.Context, name string, args, redirected []string, dir string) string {
+	isState := func(path string) bool { return spaceStateFile(ctx, path) }
+	if shellWrites(ctx, name, args, redirected, dir, isState) {
 		return spaceState
 	}
-	state := agentplans.SpaceStateFile()
-	for _, value := range changedFiles(name, args, redirected) {
-		path := expandPath(value, dir)
-		if spaceStateFile(path) || Reaches(state, path, true) {
+	state := agentplans.SpaceStateFile(env.From(ctx))
+	for _, value := range changedFiles(ctx, name, args, redirected) {
+		path := expandPath(ctx, value, dir)
+		if isState(path) || Reaches(state, path, true) {
 			return spaceState
 		}
 	}

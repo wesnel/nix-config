@@ -31,17 +31,22 @@ func overlapFixture(t *testing.T) *fixture {
 	run(t, f.repo, "git", "update-ref", "refs/remotes/origin/main", f.base)
 	run(t, f.repo, "git", "update-ref", "refs/heads/merged", f.base)
 	run(t, f.repo, "git", "switch", "-q", "-c", "work")
+	// date is the committer date of the commits branch makes, which ago
+	// sets.
+	var date []string
 	branch := func(name, file, content, subject, ref string) {
 		t.Helper()
 		run(t, f.repo, "git", "switch", "-q", "-c", "tmp-"+name, f.base)
 		os.WriteFile(filepath.Join(f.repo, file), []byte(content), 0o644)
 		run(t, f.repo, "git", "add", file)
-		run(t, f.repo, "git", "commit", "-q", "-m", subject)
+		runWith(t, date, f.repo, "git", "commit", "-q", "-m", subject)
 		run(t, f.repo, "git", "update-ref", ref, "HEAD")
 		run(t, f.repo, "git", "switch", "-q", "work")
 		run(t, f.repo, "git", "branch", "-q", "-D", "tmp-"+name)
 	}
-	ago := func(d time.Duration) { t.Setenv("GIT_COMMITTER_DATE", time.Now().Add(-d).Format(time.RFC3339)) }
+	ago := func(d time.Duration) {
+		date = []string{"GIT_COMMITTER_DATE=" + time.Now().Add(-d).Format(time.RFC3339)}
+	}
 	ago(time.Hour)
 	branch("other", "code.txt", "z\n", "Drop the check", "refs/heads/other")
 	branch("unrelated", "x.txt", "x\n", "Add x", "refs/heads/unrelated")
@@ -58,22 +63,24 @@ func overlapFixture(t *testing.T) *fixture {
 	c := plans.Config{Dir: filepath.Join(t.TempDir(), "agents"), Host: "box"}
 	config := filepath.Join(t.TempDir(), "config.json")
 	os.WriteFile(config, must(json.Marshal(map[string]any{"plans": c})), 0o644)
+	f.setenv("AGENT_TOOLS_CONFIG", config)
+	// plans.HostBranches still reads this process's environment.
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
-	if _, err := c.New(plans.NewOptions{Title: "Plan", Slug: "plan", Branches: []string{"main..planned"}}, time.Now()); err != nil {
+	if _, err := c.New(t.Context(), plans.NewOptions{Title: "Plan", Slug: "plan", Branches: []string{"main..planned"}}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(t.TempDir(), "bin")
 	os.MkdirAll(bin, 0o755)
 	os.WriteFile(filepath.Join(bin, "gh"), []byte(fakeGh), 0o755)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("FAKE_GH_LOG", filepath.Join(t.TempDir(), "gh.log"))
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	f.setenv("PATH", bin+string(os.PathListSeparator)+f.env.Get("PATH"))
+	f.setenv("FAKE_GH_LOG", filepath.Join(t.TempDir(), "gh.log"))
+	f.setenv("XDG_CACHE_HOME", t.TempDir())
 	return f
 }
 
 func overlapText(t *testing.T, f *fixture) string {
 	t.Helper()
-	r, err := resolve(f.repo, f.base+"..work")
+	r, err := resolve(f.ctx(t), f.repo, f.base+"..work")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +115,7 @@ func TestOverlap(t *testing.T) {
 		}
 		// Asked again within the hour, gh is not.
 		overlapText(t, f)
-		log, _ := os.ReadFile(os.Getenv("FAKE_GH_LOG"))
+		log, _ := os.ReadFile(f.env.Get("FAKE_GH_LOG"))
 		if calls := strings.Count(string(log), "pr list"); calls != 1 {
 			t.Errorf("gh ran %d times", calls)
 		}
@@ -116,14 +123,14 @@ func TestOverlap(t *testing.T) {
 
 	t.Run("review-loop session", func(t *testing.T) {
 		f := overlapFixture(t)
-		t.Setenv("PR_LOOP_SESSION", "1")
+		f.setenv("PR_LOOP_SESSION", "1")
 		text := overlapText(t, f)
 		expectRefs(t, text, "refs/heads/other", "refs/remotes/origin/planned", "refs/remotes/origin/pr-branch",
 			"refs/remotes/origin/stale")
 		if !strings.Contains(text, "recent, pull request state unknown") {
 			t.Errorf("the list does not say what it does not know:\n%s", text)
 		}
-		if _, err := os.Stat(os.Getenv("FAKE_GH_LOG")); err == nil {
+		if _, err := os.Stat(f.env.Get("FAKE_GH_LOG")); err == nil {
 			t.Error("gh ran in a review-loop session")
 		}
 	})
@@ -154,7 +161,7 @@ func TestOverlap(t *testing.T) {
 		}
 		t.Cleanup(func() { overlapNow = time.Now })
 		text := overlapText(t, f)
-		if _, err := os.Stat(os.Getenv("FAKE_GH_LOG")); err == nil {
+		if _, err := os.Stat(f.env.Get("FAKE_GH_LOG")); err == nil {
 			t.Error("gh ran past the budget")
 		}
 		if len(listed(text)) != 0 || !strings.Contains(text, "not checked within the time allowed") {

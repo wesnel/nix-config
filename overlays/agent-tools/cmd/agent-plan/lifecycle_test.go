@@ -33,9 +33,11 @@ func checkouts(t *testing.T) (main, linked string) {
 }
 
 func TestLifecycle(t *testing.T) {
+	t.Parallel()
 	for _, source := range []string{"startup", "resume", "clear", "fork"} {
 		t.Run("Codex "+source, func(t *testing.T) {
-			c := setup(t)
+			t.Parallel()
+			ctx, c := setup(t)
 			worktree, err := filepath.EvalSymlinks(t.TempDir())
 			if err != nil {
 				t.Fatal(err)
@@ -43,12 +45,12 @@ func TestLifecycle(t *testing.T) {
 			if out, err := exec.CommandContext(t.Context(), "git", "init", "--quiet", worktree).CombinedOutput(); err != nil {
 				t.Fatalf("git init: %v %s", err, out)
 			}
-			other, err := c.New(plans.NewOptions{Title: "Claude work", Slug: "claude-work",
+			other, err := c.New(ctx, plans.NewOptions{Title: "Claude work", Slug: "claude-work",
 				Sessions: []string{"claude:same-id"}, Harness: "claude", Worktrees: []string{worktree}}, time.Now())
 			if err != nil {
 				t.Fatal(err)
 			}
-			made, err := c.New(plans.NewOptions{Title: "Codex work", Slug: "codex-work",
+			made, err := c.New(ctx, plans.NewOptions{Title: "Codex work", Slug: "codex-work",
 				Goal:     "Keep this Codex goal. " + strings.Repeat("bounded context ", 2000),
 				Sessions: []string{"codex:same-id"}, Harness: "codex", Worktrees: []string{worktree}}, time.Now())
 			if err != nil {
@@ -65,7 +67,7 @@ func TestLifecycle(t *testing.T) {
 			input := fmt.Sprintf(`{"hook_event_name":"SessionStart","session_id":"same-id","source":%q,"cwd":%q}`, source, worktree)
 			var previous string
 			for i := 0; i < 2; i++ {
-				code, out, errs := agentPlan(t, input, "find", "--hook", "--harness", "codex")
+				code, out, errs := agentPlan(ctx, t, input, "find", "--hook", "--harness", "codex")
 				var payload struct {
 					Specific struct {
 						Event   string `json:"hookEventName"`
@@ -99,25 +101,26 @@ func TestLifecycle(t *testing.T) {
 	}
 
 	t.Run("Codex clear leaves Claude handover for Claude", func(t *testing.T) {
-		c := setup(t)
-		made, err := c.New(plans.NewOptions{Title: "Claude work", Slug: "claude-work",
+		t.Parallel()
+		ctx, c := setup(t)
+		made, err := c.New(ctx, plans.NewOptions{Title: "Claude work", Slug: "claude-work",
 			Sessions: []string{"claude:before"}, Harness: "claude"}, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := c.New(plans.NewOptions{Title: "Codex work", Slug: "codex-work",
+		if _, err := c.New(ctx, plans.NewOptions{Title: "Codex work", Slug: "codex-work",
 			Sessions: []string{"codex:before"}, Harness: "codex"}, time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		end := `{"hook_event_name":"SessionEnd","session_id":"before","reason":"clear","cwd":"/nowhere"}`
-		if code, _, errs := agentPlan(t, end, "find", "--hook"); code != 0 {
+		if code, _, errs := agentPlan(ctx, t, end, "find", "--hook"); code != 0 {
 			t.Fatalf("Claude session end: %d %s", code, errs)
 		}
 		clear := `{"hook_event_name":"SessionStart","session_id":"after","source":"clear","cwd":"/nowhere"}`
-		if code, out, errs := agentPlan(t, clear, "find", "--hook", "--harness", "codex"); code != 0 || out != "" {
+		if code, out, errs := agentPlan(ctx, t, clear, "find", "--hook", "--harness", "codex"); code != 0 || out != "" {
 			t.Errorf("Codex consumed Claude handover: %d %s %s", code, out, errs)
 		}
-		if code, out, errs := agentPlan(t, clear, "find", "--hook"); code != 0 || !strings.Contains(out, made.Plan) {
+		if code, out, errs := agentPlan(ctx, t, clear, "find", "--hook"); code != 0 || !strings.Contains(out, made.Plan) {
 			t.Errorf("Claude handover was lost: %d %s %s", code, out, errs)
 		}
 		data, err := os.ReadFile(made.File)
@@ -127,12 +130,13 @@ func TestLifecycle(t *testing.T) {
 	})
 
 	t.Run("ambiguous Codex workspace does not choose a plan", func(t *testing.T) {
-		c := setup(t)
+		t.Parallel()
+		ctx, c := setup(t)
 		_, worktree := checkouts(t)
 		var files []string
 		before := map[string]string{}
 		for _, slug := range []string{"first", "second"} {
-			made, err := c.New(plans.NewOptions{Title: slug, Slug: slug, Worktrees: []string{worktree},
+			made, err := c.New(ctx, plans.NewOptions{Title: slug, Slug: slug, Worktrees: []string{worktree},
 				Goal: "Do not select this goal arbitrarily."}, time.Now())
 			if err != nil {
 				t.Fatal(err)
@@ -147,7 +151,7 @@ func TestLifecycle(t *testing.T) {
 			}
 		}
 		input := fmt.Sprintf(`{"hook_event_name":"SessionStart","session_id":"new","source":"clear","cwd":%q}`, worktree)
-		code, out, errs := agentPlan(t, input, "find", "--hook", "--harness", "codex")
+		code, out, errs := agentPlan(ctx, t, input, "find", "--hook", "--harness", "codex")
 		if code != 0 || !strings.Contains(out, files[0]) || !strings.Contains(out, files[1]) || strings.Contains(out, "Do not select this goal") {
 			t.Errorf("ambiguous lookup must list candidates without selecting one: %d %s %s", code, out, errs)
 		}
@@ -162,31 +166,34 @@ func TestLifecycle(t *testing.T) {
 	// A main checkout is named by many plans, as Locate says, so a Codex
 	// session starting there whose own session no plan names gets none.
 	t.Run("Codex in a main checkout gets no plan", func(t *testing.T) {
-		c := setup(t)
+		t.Parallel()
+		ctx, c := setup(t)
 		main, _ := checkouts(t)
-		if _, err := c.New(plans.NewOptions{Title: "Main work", Slug: "main-work",
+		if _, err := c.New(ctx, plans.NewOptions{Title: "Main work", Slug: "main-work",
 			Goal: "Not this session's.", Worktrees: []string{main}}, time.Now()); err != nil {
 			t.Fatal(err)
 		}
 		input := fmt.Sprintf(`{"hook_event_name":"SessionStart","session_id":"new","source":"startup","cwd":%q}`, main)
-		if code, out, errs := agentPlan(t, input, "find", "--hook", "--harness", "codex"); code != 0 || out != "" {
+		if code, out, errs := agentPlan(ctx, t, input, "find", "--hook", "--harness", "codex"); code != 0 || out != "" {
 			t.Errorf("a main checkout matched a plan: %d %q %s", code, out, errs)
 		}
 	})
 
 	for _, input := range []string{`null`, `{}`, `{"hook_event_name":"Stop","session_id":"x","source":"resume"}`, `{"hook_event_name":"SessionEnd","session_id":"x","reason":"clear"}`, `{"hook_event_name":"SessionStart","session_id":"x","source":"unknown"}`} {
 		t.Run("malformed "+input, func(t *testing.T) {
-			setup(t)
-			if code, out, errs := agentPlan(t, input, "find", "--hook", "--harness", "codex"); code == 0 || out != "" || errs == "" {
+			t.Parallel()
+			ctx, _ := setup(t)
+			if code, out, errs := agentPlan(ctx, t, input, "find", "--hook", "--harness", "codex"); code == 0 || out != "" || errs == "" {
 				t.Errorf("malformed event accepted: %d %q %q", code, out, errs)
 			}
 		})
 	}
 
 	t.Run("invalid hook harness", func(t *testing.T) {
-		setup(t)
+		t.Parallel()
+		ctx, _ := setup(t)
 		input := `{"hook_event_name":"SessionStart","session_id":"x","source":"resume"}`
-		if code, out, errs := agentPlan(t, input, "find", "--hook", "--harness", "other"); code == 0 || out != "" || errs == "" {
+		if code, out, errs := agentPlan(ctx, t, input, "find", "--hook", "--harness", "other"); code == 0 || out != "" || errs == "" {
 			t.Errorf("unsupported harness accepted: %d %q %q", code, out, errs)
 		}
 	})

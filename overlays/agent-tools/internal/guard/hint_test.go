@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
@@ -19,6 +20,7 @@ import (
 // fresh repository and plan, which names the sessions s1 and s2, and makes
 // the edits that come before the one it checks.
 func TestBranchHint(t *testing.T) {
+	t.Parallel()
 	// hinting makes a repository, main, with a linked worktree on feature,
 	// under root, and the plan, and returns a function that runs the
 	// baseline hook on a file edit and returns the context it adds and its
@@ -35,18 +37,18 @@ func TestBranchHint(t *testing.T) {
 		config := filepath.Join(root, "config.json")
 		data, _ := json.Marshal(map[string]any{"plans": c})
 		os.WriteFile(config, data, 0o644)
-		t.Setenv("AGENT_TOOLS_CONFIG", config)
-		if _, err := c.New(plans.NewOptions{Title: "Add the loop", Slug: "loop", Sessions: []string{"claude:s1", "claude:s2"}},
+		if _, err := c.New(t.Context(), plans.NewOptions{Title: "Add the loop", Slug: "loop", Sessions: []string{"claude:s1", "claude:s2"}},
 			time.Now()); err != nil {
 			t.Fatal(err)
 		}
+		ctx := withVars(guardCtx(t), "AGENT_TOOLS_CONFIG="+config)
 
 		edit = func(session, tool, path string) (context, decision string) {
 			t.Helper()
 			event, _ := json.Marshal(map[string]any{"session_id": session, "tool_name": tool, "cwd": main,
 				"tool_input": map[string]string{"file_path": path, "old_string": "a", "new_string": "b", "content": "c"}})
 			var out bytes.Buffer
-			Main([]string{"--baseline"}, bytes.NewReader(event), &out, io.Discard)
+			mainIn(ctx, []string{"--baseline"}, bytes.NewReader(event), &out, io.Discard)
 			if out.Len() == 0 {
 				return "", ""
 			}
@@ -66,6 +68,7 @@ func TestBranchHint(t *testing.T) {
 	}
 
 	t.Run("first edit", func(t *testing.T) {
+		t.Parallel()
 		_, main, _, edit := hinting(t)
 		if c, _ := edit("s1", "Edit", filepath.Join(main, "a.go")); c != "" {
 			t.Errorf("first edit: %q", c)
@@ -73,6 +76,7 @@ func TestBranchHint(t *testing.T) {
 	})
 
 	t.Run("same branch", func(t *testing.T) {
+		t.Parallel()
 		_, main, _, edit := hinting(t)
 		edit("s1", "Edit", filepath.Join(main, "a.go"))
 		if c, _ := edit("s1", "Write", filepath.Join(main, "sub", "new.go")); c != "" {
@@ -81,6 +85,7 @@ func TestBranchHint(t *testing.T) {
 	})
 
 	t.Run("another worktree", func(t *testing.T) {
+		t.Parallel()
 		_, main, linked, edit := hinting(t)
 		edit("s1", "Edit", filepath.Join(main, "a.go"))
 		edit("s1", "Write", filepath.Join(main, "sub", "new.go"))
@@ -91,6 +96,7 @@ func TestBranchHint(t *testing.T) {
 	})
 
 	t.Run("another session's first edit", func(t *testing.T) {
+		t.Parallel()
 		_, main, linked, edit := hinting(t)
 		edit("s1", "MultiEdit", filepath.Join(linked, "b.go"))
 		if c, _ := edit("s2", "Edit", filepath.Join(main, "a.go")); c != "" {
@@ -99,6 +105,7 @@ func TestBranchHint(t *testing.T) {
 	})
 
 	t.Run("another branch in the same worktree", func(t *testing.T) {
+		t.Parallel()
 		_, main, linked, edit := hinting(t)
 		edit("s1", "Edit", filepath.Join(main, "a.go"))
 		edit("s1", "MultiEdit", filepath.Join(linked, "b.go"))
@@ -109,6 +116,7 @@ func TestBranchHint(t *testing.T) {
 	})
 
 	t.Run("no session", func(t *testing.T) {
+		t.Parallel()
 		_, main, linked, edit := hinting(t)
 		edit("", "Edit", filepath.Join(linked, "b.go"))
 		if c, _ := edit("", "Edit", filepath.Join(main, "a.go")); c != "" {
@@ -117,6 +125,7 @@ func TestBranchHint(t *testing.T) {
 	})
 
 	t.Run("outside any repository", func(t *testing.T) {
+		t.Parallel()
 		root, main, _, edit := hinting(t)
 		edit("s1", "Edit", filepath.Join(main, "a.go"))
 		if c, _ := edit("s1", "Edit", filepath.Join(root, "outside.txt")); c != "" {
@@ -125,6 +134,7 @@ func TestBranchHint(t *testing.T) {
 	})
 
 	t.Run("a denial", func(t *testing.T) {
+		t.Parallel()
 		_, main, linked, edit := hinting(t)
 		edit("s1", "Edit", filepath.Join(linked, "b.go"))
 		if _, d := edit("s1", "Edit", filepath.Join(main, ".git", "config")); d != "deny" {
@@ -133,6 +143,7 @@ func TestBranchHint(t *testing.T) {
 	})
 
 	t.Run("a session without a plan", func(t *testing.T) {
+		t.Parallel()
 		_, main, linked, edit := hinting(t)
 		edit("s9", "Edit", filepath.Join(main, "a.go"))
 		if c, _ := edit("s9", "Edit", filepath.Join(linked, "b.go")); c != "" {
@@ -142,15 +153,19 @@ func TestBranchHint(t *testing.T) {
 
 	// The plan's log holds each change of branch, and only those.
 	t.Run("the plan's log", func(t *testing.T) {
-		_, main, linked, edit := hinting(t)
+		t.Parallel()
+		root, main, linked, edit := hinting(t)
 		edit("s1", "Edit", filepath.Join(main, "a.go"))
 		edit("s1", "Edit", filepath.Join(main, "b.go"))
 		edit("s1", "Edit", filepath.Join(linked, "b.go"))
 		gitIn(t, linked, "switch", "-q", "--detach")
 		edit("s1", "Edit", filepath.Join(linked, "b.go"))
 		edit("s2", "Edit", filepath.Join(linked, "b.go"))
-		c, _ := plans.Load()
-		p, _, _ := c.Locate("s1", "")
+		c, err := plans.Load(env.New("", "HOME="+root, "AGENT_TOOLS_CONFIG="+filepath.Join(root, "config.json")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, _, _ := c.Locate(t.Context(), "s1", "")
 		events, _ := p.Events()
 		var got []string
 		for _, e := range events {

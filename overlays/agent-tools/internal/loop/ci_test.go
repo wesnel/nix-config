@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os/exec"
@@ -42,7 +43,7 @@ func contexts(checks []fakeCheck) any {
 	return map[string]any{"statusCheckRollup": map[string]any{"contexts": map[string]any{"nodes": nodes}}}
 }
 
-func (f *fakeCI) graphQL(query string, vars map[string]any, out any) error {
+func (f *fakeCI) graphQL(_ context.Context, query string, vars map[string]any, out any) error {
 	head := func(n int, pr *fakeCIPR) map[string]any {
 		return map[string]any{"number": n, "state": pr.state, "isCrossRepository": pr.cross, "author": map[string]any{"login": pr.author}}
 	}
@@ -83,12 +84,10 @@ func (f *fakeCI) graphQL(query string, vars map[string]any, out any) error {
 }
 
 // ciRepo makes a checkout of o/r on branch feat, whose PR is 1, with a clock
-// that sleeps without waiting.
+// that sleeps without waiting. It sets the package's clock and git.Dir,
+// process-wide, so its tests run alone.
 func ciRepo(t *testing.T) *fakeCI {
 	t.Helper()
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv(ModeEnv, "")
 	dir := t.TempDir()
 	gitIn(t, dir, "init", "-q", "-b", "main")
 	gitIn(t, dir, "remote", "add", "origin", "https://github.com/o/r.git")
@@ -119,7 +118,7 @@ func ciRepo(t *testing.T) *fakeCI {
 
 func targets(t *testing.T, args ...string) ([]int, error) {
 	t.Helper()
-	_, numbers, err := ciTargets(args)
+	_, numbers, err := ciTargets(t.Context(), args)
 	return numbers, err
 }
 
@@ -200,7 +199,7 @@ func testWaitCIKeysOnTheNewHead(t *testing.T) {
 	f := ciRepo(t)
 	f.checks["a1"] = passing
 	f.prs[1].branchOid = "a2"
-	ci, err := ciStatus("o/r", 1, "")
+	ci, err := ciStatus(t.Context(), "o/r", 1, "")
 	if err != nil || ci.State != "awaitingHead" || ci.ExpectedOid != "a2" || len(ci.Failed)+len(ci.Pending) != 0 {
 		t.Errorf("a lagging head: %+v, %v", ci, err)
 	}
@@ -217,7 +216,7 @@ func testWaitCIKeysOnTheNewHead(t *testing.T) {
 			f.checks["a2"] = []fakeCheck{{name: "build", status: "COMPLETED", conclusion: "FAILURE", job: 7}}
 		}
 	}
-	result, settled, err := WaitCI(nil, "", time.Hour, time.Minute, 3*time.Minute)
+	result, settled, err := WaitCI(t.Context(), nil, "", time.Hour, time.Minute, 3*time.Minute)
 	if err != nil || !settled || result.Result != "failed" || polls != 4 {
 		t.Fatalf("wait: %+v, settled %v, %v after %d polls", result, settled, err, polls)
 	}
@@ -235,7 +234,7 @@ func testWaitCITimesOut(t *testing.T) {
 		f := ciRepo(t)
 		f.checks["a1"] = passing
 		start := now()
-		result, settled, err := WaitCI([]string{"feat"}, sha, 5*time.Minute, 2*time.Minute, 0)
+		result, settled, err := WaitCI(t.Context(), []string{"feat"}, sha, 5*time.Minute, 2*time.Minute, 0)
 		if err != nil || settled || result.Result != "timedOut" {
 			t.Fatalf("wait: %+v, settled %v, %v", result, settled, err)
 		}
@@ -250,7 +249,7 @@ func testWaitCITimesOut(t *testing.T) {
 	t.Run("--sha with two PRs", func(t *testing.T) {
 		f := ciRepo(t)
 		f.checks["a1"] = passing
-		if _, _, err := WaitCI([]string{"1", "feat"}, sha, 0, 0, 0); !refused(err) {
+		if _, _, err := WaitCI(t.Context(), []string{"1", "feat"}, sha, 0, 0, 0); !refused(err) {
 			t.Errorf("--sha with two PRs: %v", err)
 		}
 	})
@@ -258,7 +257,7 @@ func testWaitCITimesOut(t *testing.T) {
 	// Within its grace, a head without checks is still waiting for them.
 	t.Run("no checks within the grace", func(t *testing.T) {
 		ciRepo(t)
-		result, settled, _ := WaitCI(nil, "", time.Minute, time.Minute, 3*time.Minute)
+		result, settled, _ := WaitCI(t.Context(), nil, "", time.Minute, time.Minute, 3*time.Minute)
 		if settled || result.Result != "timedOut" || result.PRs[0].State != "none" {
 			t.Errorf("no checks within the grace: %+v %+v", result, result.PRs[0])
 		}
@@ -271,7 +270,7 @@ func testWaitCINoChecks(t *testing.T) {
 	t.Run("on the head", func(t *testing.T) {
 		ciRepo(t)
 		start := now()
-		result, settled, err := WaitCI(nil, "", time.Hour, time.Minute, 3*time.Minute)
+		result, settled, err := WaitCI(t.Context(), nil, "", time.Hour, time.Minute, 3*time.Minute)
 		if err != nil || !settled || result.Result != "noChecks" || result.PRs[0].State != "none" {
 			t.Fatalf("no checks: %+v, settled %v, %v", result, settled, err)
 		}
@@ -293,7 +292,7 @@ func testWaitCINoChecks(t *testing.T) {
 			}
 		}
 		start := now()
-		result, settled, _ := WaitCI(nil, "", time.Hour, time.Minute, 3*time.Minute)
+		result, settled, _ := WaitCI(t.Context(), nil, "", time.Hour, time.Minute, 3*time.Minute)
 		if !settled || result.Result != "noChecks" || result.PRs[0].HeadOid != "a2" {
 			t.Errorf("no checks on the new head: %+v", result)
 		}
@@ -314,7 +313,7 @@ func testWaitCINoChecks(t *testing.T) {
 			}
 		}
 		start := now()
-		if result, _, _ := WaitCI(nil, "", time.Hour, time.Minute, 3*time.Minute); result.Result != "noChecks" {
+		if result, _, _ := WaitCI(t.Context(), nil, "", time.Hour, time.Minute, 3*time.Minute); result.Result != "noChecks" {
 			t.Errorf("after a second push: %+v", result)
 		}
 		if waited := now().Sub(start); waited != 5*time.Minute {
@@ -333,7 +332,7 @@ func testWaitCINoChecks(t *testing.T) {
 				f.checks["a3"] = passing
 			}
 		}
-		if result, _, _ := WaitCI(nil, "", time.Hour, time.Minute, 3*time.Minute); result.Result != "passed" {
+		if result, _, _ := WaitCI(t.Context(), nil, "", time.Hour, time.Minute, 3*time.Minute); result.Result != "passed" {
 			t.Errorf("checks within the grace: %+v", result)
 		}
 	})
@@ -345,7 +344,7 @@ func testWaitCINoChecks(t *testing.T) {
 		f.prs[1].headOid, f.prs[1].branchOid = "a4", "a4"
 		f.prs[5] = &fakeCIPR{author: "me", state: "OPEN", head: "other", headOid: "e1", branchOid: "e1"}
 		f.checks["e1"] = []fakeCheck{{name: "build", status: "COMPLETED", conclusion: "FAILURE", job: 1}}
-		if result, settled, _ := WaitCI([]string{"1", "5"}, "", time.Hour, time.Minute, 0); !settled || result.Result != "failed" {
+		if result, settled, _ := WaitCI(t.Context(), []string{"1", "5"}, "", time.Hour, time.Minute, 0); !settled || result.Result != "failed" {
 			t.Errorf("a failure beside no checks: %+v", result)
 		}
 	})
@@ -372,7 +371,7 @@ func testWaitCIComparesWithTheBase(t *testing.T) {
 	t.Run("failure the base shares", func(t *testing.T) {
 		f := onBase(t)
 		f.checks["a1"] = append(failing("lint"), passing...)
-		result, settled, err := WaitCI(nil, "", 0, 0, 0)
+		result, settled, err := WaitCI(t.Context(), nil, "", 0, 0, 0)
 		if err != nil || !settled || result.Result != "failedOnBase" || result.PRs[0].Failed[0].OnBase != "failed" {
 			t.Errorf("a failure the base shares: %+v, %v", result, err)
 		}
@@ -381,7 +380,7 @@ func testWaitCIComparesWithTheBase(t *testing.T) {
 	t.Run("failures of the PR's own", func(t *testing.T) {
 		f := onBase(t)
 		f.checks["a1"] = failing("lint", "test (unit)", "new")
-		result, _, _ := WaitCI(nil, "", 0, 0, 0)
+		result, _, _ := WaitCI(t.Context(), nil, "", 0, 0, 0)
 		onBase := map[string]string{}
 		for _, c := range result.PRs[0].Failed {
 			onBase[c.Name] = c.OnBase
@@ -396,6 +395,7 @@ func testWaitCIComparesWithTheBase(t *testing.T) {
 }
 
 func TestShellQuote(t *testing.T) {
+	t.Parallel()
 	t.Run("apostrophe and substitution remain literal", func(t *testing.T) {
 		for _, shell := range []string{"sh", "fish"} {
 			t.Run(shell, func(t *testing.T) {

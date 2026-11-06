@@ -16,10 +16,11 @@ import (
 	"github.com/wesnel/agent-tools/internal/usage"
 )
 
-func runAvailability(t *testing.T, args ...string) (int, string) {
+// runAvailability runs `git delegate availability` with args, in f's Env.
+func (f *fixture) runAvailability(t *testing.T, args ...string) (int, string) {
 	t.Helper()
 	var out, errs bytes.Buffer
-	code := Main(t.Context(), append([]string{"availability"}, args...), strings.NewReader(""), &out, &errs)
+	code := Main(f.ctx(t), append([]string{"availability"}, args...), strings.NewReader(""), &out, &errs)
 	return code, out.String() + errs.String()
 }
 
@@ -36,20 +37,20 @@ func TestProviderAvailability(t *testing.T) {
 	for _, provider := range []string{"claude", "codex"} {
 		t.Run(provider, func(t *testing.T) {
 			f := askFixture(t, true)
-			if code, out := runAvailability(t, "--disable", provider); code != 0 {
+			if code, out := f.runAvailability(t, "--disable", provider); code != 0 {
 				t.Fatalf("disable provider: exit %d, %s", code, out)
 			}
 			for _, reviewer := range []string{provider, "diagram"} {
-				code, _, errs := runDelegate(t, "--reviewer", reviewer, "--plan", f.plan, f.base+"..HEAD")
+				code, _, errs := f.runDelegate(t, "--reviewer", reviewer, "--plan", f.plan, f.base+"..HEAD")
 				if code != 4 || !strings.Contains(errs, "primary harness") {
 					t.Errorf("%s must request native fallback: exit %d, %s", reviewer, code, errs)
 				}
 			}
-			if code, _, errs := askCodex(t, "--reviewer", provider, "--question", ".git/question.md", "code.txt"); code != 4 {
+			if code, _, errs := f.askCodex(t, "--reviewer", provider, "--question", ".git/question.md", "code.txt"); code != 4 {
 				t.Errorf("disabled design question: exit %d, %s", code, errs)
 			}
 			if provider == "claude" {
-				code, _, errs := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
+				code, _, errs := f.runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
 				if code != 4 {
 					t.Errorf("disabled focus: exit %d, %s", code, errs)
 				}
@@ -57,19 +58,19 @@ func TestProviderAvailability(t *testing.T) {
 			} else {
 				noProviderCall(t, f, "calls", "diagrammer-runs")
 			}
-			if code, out := runAvailability(t, "--clear", provider); code != 0 {
+			if code, out := f.runAvailability(t, "--clear", provider); code != 0 {
 				t.Fatalf("clear: %d %s", code, out)
 			}
-			t.Setenv("FAKE_CODEX", "answer")
+			f.setenv("FAKE_CODEX", "answer")
 			f.claudeSays(t, "adversarial-reviewer", claudeResult(map[string]any{"answer": "Recovered.", "unverified": []string{}}, ""))
-			if code, _, errs := askCodex(t, "--reviewer", provider, "--question", ".git/question.md", "code.txt"); code != 0 {
+			if code, _, errs := f.askCodex(t, "--reviewer", provider, "--question", ".git/question.md", "code.txt"); code != 0 {
 				t.Fatalf("cleared provider did not run: %d %s", code, errs)
 			}
 		})
 	}
 	t.Run("validate provider", func(t *testing.T) {
-		setUp(t, true)
-		if code, _ := runAvailability(t, "--disable", "../other"); code != 2 {
+		f := setUp(t, true)
+		if code, _ := f.runAvailability(t, "--disable", "../other"); code != 2 {
 			t.Fatalf("invalid provider: %d", code)
 		}
 	})
@@ -79,7 +80,7 @@ func TestQuotaFallback(t *testing.T) {
 	t.Run("quota after a schema error still requests fallback", func(t *testing.T) {
 		f := setUp(t, true)
 		f.claudeSays(t, "security-reviewer", claudeResult(nil, "No JSON."), `{"is_error":true,"errors":["API Error: 429 rate_limit_error"]}`)
-		code, _, errs := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
+		code, _, errs := f.runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
 		if code != 4 || !strings.Contains(errs, "primary harness") || !strings.Contains(errs, "--print-prompt") {
 			t.Fatalf("lost fallback: %d %s", code, errs)
 		}
@@ -88,26 +89,26 @@ func TestQuotaFallback(t *testing.T) {
 	t.Run("Claude suppresses retry guide and later commands", func(t *testing.T) {
 		f := askFixture(t, true)
 		f.claudeSays(t, "security-reviewer", `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"You've hit your limit · resets later"}`)
-		code, _, errs := runDelegate(t, "--reviewer", "security", "--reviewer", "guide", "--plan", f.plan, f.base+"..HEAD")
+		code, _, errs := f.runDelegate(t, "--reviewer", "security", "--reviewer", "guide", "--plan", f.plan, f.base+"..HEAD")
 		if code != 4 || !strings.Contains(errs, "quota") {
 			t.Fatalf("quota: %d %s", code, errs)
 		}
 		if got := strings.TrimSpace(f.claudeLog(t, "security-reviewer", "runs")); got != "1" {
 			t.Fatalf("quota was retried: %s", got)
 		}
-		if code, _, errs := askCodex(t, "--reviewer", "claude", "--question", ".git/question.md", "code.txt"); code != 4 {
+		if code, _, errs := f.askCodex(t, "--reviewer", "claude", "--question", ".git/question.md", "code.txt"); code != 4 {
 			t.Fatalf("subsequent ask: %d %s", code, errs)
 		}
 		noProviderCall(t, f, "review-guide-runs", "adversarial-reviewer-runs")
 	})
 	t.Run("Codex terminal event blocks later invocations", func(t *testing.T) {
 		f := askFixture(t, true)
-		t.Setenv("FAKE_CODEX", "quota")
-		if code, _, errs := askCodex(t, "--question", ".git/question.md", "code.txt"); code != 4 || !strings.Contains(errs, "quota") {
+		f.setenv("FAKE_CODEX", "quota")
+		if code, _, errs := f.askCodex(t, "--question", ".git/question.md", "code.txt"); code != 4 || !strings.Contains(errs, "quota") {
 			t.Fatalf("quota ask: %d %s", code, errs)
 		}
 		before := string(must(os.ReadFile(filepath.Join(f.log, "calls"))))
-		if code, _, errs := runDelegate(t, "--reviewer", "codex", "--plan", f.plan, f.base+"..HEAD"); code != 4 {
+		if code, _, errs := f.runDelegate(t, "--reviewer", "codex", "--plan", f.plan, f.base+"..HEAD"); code != 4 {
 			t.Fatalf("later review: %d %s", code, errs)
 		}
 		if after := string(must(os.ReadFile(filepath.Join(f.log, "calls")))); after != before {
@@ -116,15 +117,15 @@ func TestQuotaFallback(t *testing.T) {
 	})
 	t.Run("tool output is not quota evidence", func(t *testing.T) {
 		f := askFixture(t, true)
-		t.Setenv("FAKE_CODEX", "quota-prose")
-		askCodex(t, "--question", ".git/question.md", "code.txt")
-		t.Setenv("FAKE_CODEX", "answer")
-		if code, _, errs := askCodex(t, "--question", ".git/question.md", "code.txt"); code != 0 {
+		f.setenv("FAKE_CODEX", "quota-prose")
+		f.askCodex(t, "--question", ".git/question.md", "code.txt")
+		f.setenv("FAKE_CODEX", "answer")
+		if code, _, errs := f.askCodex(t, "--question", ".git/question.md", "code.txt"); code != 0 {
 			t.Fatalf("tool output disabled Codex: %d %s", code, errs)
 		}
 		f.claudeSays(t, "adversarial-reviewer", claudeResult(map[string]any{"answer": "You've hit your limit is the example text.", "unverified": []string{}}, ""))
 		for range 2 {
-			if code, _, errs := askCodex(t, "--reviewer", "claude", "--question", ".git/question.md", "code.txt"); code != 0 {
+			if code, _, errs := f.askCodex(t, "--reviewer", "claude", "--question", ".git/question.md", "code.txt"); code != 0 {
 				t.Fatalf("successful prose disabled Claude: %d %s", code, errs)
 			}
 		}
@@ -148,12 +149,12 @@ func TestClaudeQuotaCode(t *testing.T) {
 				"structured_output": map[string]any{"answer": "The file is sufficient.", "unverified": []string{}},
 			}))
 			f.claudeSays(t, "adversarial-reviewer", string(out))
-			code, _, errs := askCodex(t, "--reviewer", "claude", "--question", ".git/question.md", "code.txt")
+			code, _, errs := f.askCodex(t, "--reviewer", "claude", "--question", ".git/question.md", "code.txt")
 			if tc.quota && (code != 4 || !strings.Contains(errs, "quota")) {
 				t.Fatalf("structured exhaustion was not recognized: %d %s", code, errs)
 			}
 			f.claudeSays(t, "adversarial-reviewer", claudeResult(map[string]any{"answer": "Recovered.", "unverified": []string{}}, ""))
-			code, _, errs = askCodex(t, "--reviewer", "claude", "--question", ".git/question.md", "code.txt")
+			code, _, errs = f.askCodex(t, "--reviewer", "claude", "--question", ".git/question.md", "code.txt")
 			wantCode, wantRuns := 0, "2"
 			if tc.quota {
 				wantCode, wantRuns = 4, "1"
@@ -173,7 +174,7 @@ func TestClaudeQuotaMessages(t *testing.T) {
 			f := setUp(t, true)
 			out := must(json.Marshal(map[string]any{"type": "result", "is_error": true, "result": message}))
 			f.claudeSays(t, "security-reviewer", string(out))
-			code, _, errs := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
+			code, _, errs := f.runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
 			if code != 4 || !strings.Contains(errs, "quota") {
 				t.Fatalf("unrecognized exhaustion: %d %s", code, errs)
 			}
@@ -188,15 +189,15 @@ func TestClaudeQuotaMessages(t *testing.T) {
 func TestFallbackPrompts(t *testing.T) {
 	f := askFixture(t, true)
 	for _, p := range []string{"claude", "codex"} {
-		if code, out := runAvailability(t, "--disable", p); code != 0 {
+		if code, out := f.runAvailability(t, "--disable", p); code != 0 {
 			t.Fatalf("disable: %d %s", code, out)
 		}
 	}
-	code, prompt, errs := delegateCmd(t, "ask", "--print-prompt", "--question", ".git/question.md", "code.txt", "docs/design.md")
+	code, prompt, errs := f.delegateCmd(t, "ask", "--print-prompt", "--question", ".git/question.md", "code.txt", "docs/design.md")
 	if code != 0 || !strings.Contains(prompt, askContract) || !strings.Contains(prompt, "Two ways to add the flag.") || !strings.Contains(prompt, "a\nb\nc\n") {
 		t.Fatalf("design fallback lacks contract or file snapshot: %d %s\n%s", code, errs, prompt)
 	}
-	code, prompt, errs = delegateCmd(t, "--print-prompt", "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
+	code, prompt, errs = f.delegateCmd(t, "--print-prompt", "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
 	if strings.Contains(prompt, "Every citation has already been checked mechanically") || !strings.Contains(prompt, "Without mechanical results") {
 		t.Error("fallback claims checks that it did not run instead of assigning them to the critic")
 	}
@@ -212,20 +213,20 @@ func TestDiagramQuota(t *testing.T) {
 	for _, stage := range []string{"drawing", "critique", "redraw"} {
 		t.Run(stage, func(t *testing.T) {
 			f := setUp(t, true)
-			t.Setenv("FAKE_CODEX", "critique")
-			t.Setenv("FAKE_CHECKED", `["N1","N2","E1"]`)
+			f.setenv("FAKE_CODEX", "critique")
+			f.setenv("FAKE_CHECKED", `["N1","N2","E1"]`)
 			quota := `{"is_error":true,"result":"You've hit your limit"}`
 			switch stage {
 			case "drawing":
 				f.claudeSays(t, "diagrammer", quota)
 			case "critique":
 				f.claudeSays(t, "diagrammer", diagramsReply(codeDiagram(f.tip, 3)))
-				t.Setenv("FAKE_CODEX", "quota")
+				f.setenv("FAKE_CODEX", "quota")
 			case "redraw":
 				f.claudeSays(t, "diagrammer", diagramsReply(codeDiagram(f.tip, 3)), quota)
-				t.Setenv("FAKE_CODEX", "fault")
+				f.setenv("FAKE_CODEX", "fault")
 			}
-			code, _, errs := runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
+			code, _, errs := f.runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
 			if code != 4 || !strings.Contains(errs, "quota") || !strings.Contains(errs, "--print-prompt") {
 				t.Fatalf("quota was reported as a completed diagram review: %d %s", code, errs)
 			}
@@ -239,18 +240,18 @@ func TestDiagramQuota(t *testing.T) {
 func TestKnownClaudeQuota(t *testing.T) {
 	f := setUp(t, true)
 	now := time.Now()
-	if err := usage.Record(usage.File(), []usage.Window{{Name: "7d", Used: 100, ResetsAt: now.Add(time.Hour).Unix(), ObservedAt: now.Add(-time.Hour).Unix()}}); err != nil {
+	if err := usage.Record(usage.File(f.env), []usage.Window{{Name: "7d", Used: 100, ResetsAt: now.Add(time.Hour).Unix(), ObservedAt: now.Add(-time.Hour).Unix()}}); err != nil {
 		t.Fatal(err)
 	}
-	if code, _, errs := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD"); code != 4 {
+	if code, _, errs := f.runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD"); code != 4 {
 		t.Fatalf("known quota: %d %s", code, errs)
 	}
 	noProviderCall(t, f, "security-reviewer-runs", "review-guide-runs")
 	// Replace the test's snapshot with a window whose reset has passed.
-	if err := os.WriteFile(usage.File(), []byte(`{"seven_day":{"used_percentage":100,"resets_at":1,"observed_at":1}}`), 0o600); err != nil {
+	if err := os.WriteFile(usage.File(f.env), []byte(`{"seven_day":{"used_percentage":100,"resets_at":1,"observed_at":1}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code, _, errs := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD"); code != 0 {
+	if code, _, errs := f.runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD"); code != 0 {
 		t.Fatalf("expired window prevented recovery: %d %s", code, errs)
 	}
 }
@@ -279,10 +280,10 @@ func TestQuotaStop(t *testing.T) {
 			f.config(t, map[string]any{"delegate": delegate})
 			now := time.Now()
 			reset := now.Add(time.Hour)
-			if err := usage.Record(usage.File(), []usage.Window{{Name: "5h", Used: c.used, ResetsAt: reset.Unix(), ObservedAt: now.Unix()}}); err != nil {
+			if err := usage.Record(usage.File(f.env), []usage.Window{{Name: "5h", Used: c.used, ResetsAt: reset.Unix(), ObservedAt: now.Unix()}}); err != nil {
 				t.Fatal(err)
 			}
-			code, _, errs := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
+			code, _, errs := f.runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
 			if c.runs {
 				if code != 0 {
 					t.Fatalf("exit %d under the stop: %s", code, errs)
@@ -326,9 +327,9 @@ func TestRateLimit(t *testing.T) {
 			start := time.Unix(1_900_000_000, 0)
 			f := setUp(t, true)
 			f.claudeSays(t, "security-reviewer", result)
-			a := newAvailability()
+			a := newAvailability(f.env)
 			a.now = func() time.Time { return start }
-			_, err := ClaudeRun(t.Context(), Claude{Checkout: f.repo, Agent: "security-reviewer", Prompt: "p", Schema: Schema,
+			_, err := ClaudeRun(f.ctx(t), Claude{Checkout: f.repo, Agent: "security-reviewer", Prompt: "p", Schema: Schema,
 				Timeout: time.Minute, Log: io.Discard, availability: a})
 			var unavailable providerUnavailable
 			if !errors.As(err, &unavailable) {
@@ -337,7 +338,7 @@ func TestRateLimit(t *testing.T) {
 			for _, c := range []struct {
 				name string
 				a    *availability
-			}{{"this invocation", a}, {"a later one", newAvailability()}} {
+			}{{"this invocation", a}, {"a later one", newAvailability(f.env)}} {
 				if !blocked(t, c.a, shared.Claude, start, pause-time.Second) {
 					t.Errorf("%s: Claude was called again within the pause", c.name)
 				}
@@ -348,17 +349,17 @@ func TestRateLimit(t *testing.T) {
 		})
 	}
 	t.Run("codex", func(t *testing.T) {
-		askFixture(t, true)
-		t.Setenv("FAKE_CODEX", "ratelimit")
+		f := askFixture(t, true)
+		f.setenv("FAKE_CODEX", "ratelimit")
 		// ask runs on the real clock.
 		start := time.Now()
-		if code, _, errs := askCodex(t, "--question", ".git/question.md", "code.txt"); code != 4 {
+		if code, _, errs := f.askCodex(t, "--question", ".git/question.md", "code.txt"); code != 4 {
 			t.Fatalf("rate-limited ask: exit %d, %s", code, errs)
 		}
-		if !blocked(t, newAvailability(), shared.Codex, start, 0) {
+		if !blocked(t, newAvailability(f.env), shared.Codex, start, 0) {
 			t.Error("Codex was not held after a 429")
 		}
-		if blocked(t, newAvailability(), shared.Codex, start, pause+time.Minute) {
+		if blocked(t, newAvailability(f.env), shared.Codex, start, pause+time.Minute) {
 			t.Error("Codex was still held after the pause")
 		}
 	})
@@ -367,28 +368,28 @@ func TestRateLimit(t *testing.T) {
 func TestAvailabilityState(t *testing.T) {
 	t.Run("corrupt state refuses calls and explicit clear repairs it", func(t *testing.T) {
 		f := askFixture(t, true)
-		path := filepath.Join(os.Getenv("XDG_STATE_HOME"), "agent-tools", "review-availability", "codex.json")
+		path := filepath.Join(f.env.Get("XDG_STATE_HOME"), "agent-tools", "review-availability", "codex.json")
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(path, []byte(`{"reason":"unrecognized"}`), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if code, _, errs := askCodex(t, "--question", ".git/question.md", "code.txt"); code != 4 || !strings.Contains(errs, "state") {
+		if code, _, errs := f.askCodex(t, "--question", ".git/question.md", "code.txt"); code != 4 || !strings.Contains(errs, "state") {
 			t.Fatalf("bad state: %d %s", code, errs)
 		}
 		noProviderCall(t, f, "calls")
-		if code, out := runAvailability(t, "--clear", "codex"); code != 0 {
+		if code, out := f.runAvailability(t, "--clear", "codex"); code != 0 {
 			t.Fatalf("clear: %d %s", code, out)
 		}
-		t.Setenv("FAKE_CODEX", "answer")
-		if code, _, errs := askCodex(t, "--question", ".git/question.md", "code.txt"); code != 0 {
+		f.setenv("FAKE_CODEX", "answer")
+		if code, _, errs := f.askCodex(t, "--question", ".git/question.md", "code.txt"); code != 0 {
 			t.Fatalf("recovery: %d %s", code, errs)
 		}
 	})
 	t.Run("failed persistence still suppresses later stages", func(t *testing.T) {
 		f := setUp(t, true)
-		path := filepath.Join(os.Getenv("XDG_STATE_HOME"), "agent-tools", "review-availability")
+		path := filepath.Join(f.env.Get("XDG_STATE_HOME"), "agent-tools", "review-availability")
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -396,7 +397,7 @@ func TestAvailabilityState(t *testing.T) {
 			t.Fatal(err)
 		}
 		f.claudeSays(t, "security-reviewer", `{"is_error":true,"result":"You've hit your limit"}`)
-		code, _, errs := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
+		code, _, errs := f.runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
 		if code != 4 || !strings.Contains(errs, "could not remember") {
 			t.Fatalf("state write failure: %d %s", code, errs)
 		}
@@ -407,14 +408,14 @@ func TestAvailabilityState(t *testing.T) {
 		var wg sync.WaitGroup
 		for _, p := range []string{"claude", "codex", "claude", "codex"} {
 			wg.Go(func() {
-				if code, out := runAvailability(t, "--disable", p); code != 0 {
+				if code, out := f.runAvailability(t, "--disable", p); code != 0 {
 					t.Errorf("disable %s: %d %s", p, code, out)
 				}
 			})
 		}
 		wg.Wait()
 		for _, p := range []string{"claude", "codex"} {
-			if code, _, errs := askCodex(t, "--reviewer", p, "--question", ".git/question.md", "code.txt"); code != 4 {
+			if code, _, errs := f.askCodex(t, "--reviewer", p, "--question", ".git/question.md", "code.txt"); code != 4 {
 				t.Errorf("lost %s: %d %s", p, code, errs)
 			}
 		}

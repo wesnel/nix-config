@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 )
 
@@ -98,13 +99,13 @@ func (c Config) gitRaw(ctx context.Context, args ...string) (string, error) {
 	return c.gitRawAs(ctx, nil, args...)
 }
 
-func (c Config) gitRawAs(ctx context.Context, env []string, args ...string) (string, error) {
+func (c Config) gitRawAs(ctx context.Context, extra []string, args ...string) (string, error) {
 	pre := []string{"-C", c.repo(), "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"}
 	if c.SSHConfig != "" {
 		pre = append(pre, "-c", "core.sshCommand="+c.sshCommand())
 	}
 	cmd := exec.CommandContext(ctx, "git", append(pre, args...)...)
-	cmd.Env = append(append(gitenv.Without(os.Environ()), "GIT_TERMINAL_PROMPT=0"), env...)
+	cmd.Env = append(append(gitenv.Without(env.From(ctx).Environ()), "GIT_TERMINAL_PROMPT=0"), extra...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -118,8 +119,8 @@ func (c Config) sshCommand() string { return "ssh -F " + c.SSHConfig }
 
 // inRepo reports whether the plans directory's repository exists, with its
 // top level where the config says.
-func (c Config) inRepo() bool {
-	top, err := c.git(context.Background(), "rev-parse", "--show-toplevel")
+func (c Config) inRepo(ctx context.Context) bool {
+	top, err := c.git(ctx, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return false
 	}
@@ -278,10 +279,11 @@ func (c Config) target(ctx context.Context) (string, error) {
 // of the operator's is ever sent or re-committed, whatever they do in the
 // repository meanwhile. With PullOnly it only takes the other hosts' plans,
 // and never catches up.
-func (c Config) Sync(o SyncOptions) (Synced, error) {
+func (c Config) Sync(ctx context.Context, o SyncOptions) (Synced, error) {
+	ctx = context.WithoutCancel(ctx)
 	time.Sleep(o.Settle)
 	s := Synced{Repo: c.repo()}
-	if !c.inRepo() {
+	if !c.inRepo(ctx) {
 		s.Skipped = fmt.Sprintf("%s is not a git repository's top level; `agent-plan init` clones it", c.repo())
 		return s, nil
 	}
@@ -290,7 +292,6 @@ func (c Config) Sync(o SyncOptions) (Synced, error) {
 		return s, err
 	}
 	defer lock.Close()
-	ctx := context.Background()
 	branch, err := c.target(ctx)
 	if err != nil {
 		return s, err
@@ -684,8 +685,9 @@ func (c Config) inProgress(ctx context.Context) (string, error) {
 // Pull takes the other hosts' plans, quietly and briefly, as Sync's
 // PullOnly does, and gives up on anything else, including a sync in
 // progress or a repository this process may not write.
-func (c Config) Pull() {
-	if !c.inRepo() || !c.writableGitDir() {
+func (c Config) Pull(ctx context.Context) {
+	ctx = context.WithoutCancel(ctx)
+	if !c.inRepo(ctx) || !c.writableGitDir(ctx) {
 		return
 	}
 	lock, err := c.lockSync(true)
@@ -693,7 +695,7 @@ func (c Config) Pull() {
 		return
 	}
 	defer lock.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), pullTimeout)
+	ctx, cancel := context.WithTimeout(ctx, pullTimeout)
 	defer cancel()
 	branch, err := c.target(ctx)
 	if err != nil {
@@ -711,11 +713,11 @@ func (c Config) Pull() {
 // HEAD that touches p's log: for another host's plan, when its last change
 // arrived, since a log's own times carry no zone. It is zero outside a
 // repository or without such a commit.
-func (c Config) Committed(p Plan) (time.Time, error) {
-	if !c.inRepo() {
+func (c Config) Committed(ctx context.Context, p Plan) (time.Time, error) {
+	ctx = context.WithoutCancel(ctx)
+	if !c.inRepo(ctx) {
 		return time.Time{}, nil
 	}
-	ctx := context.Background()
 	if _, err := c.git(ctx, "rev-parse", "-q", "--verify", "HEAD"); err != nil {
 		return time.Time{}, nil
 	}
@@ -752,13 +754,13 @@ type SyncState struct {
 }
 
 // SyncState reads the repository alone, never the remote.
-func (c Config) SyncState() (SyncState, error) {
+func (c Config) SyncState(ctx context.Context) (SyncState, error) {
+	ctx = context.WithoutCancel(ctx)
 	var s SyncState
-	if !c.inRepo() {
+	if !c.inRepo(ctx) {
 		return s, nil
 	}
 	s.Repo = true
-	ctx := context.Background()
 	if path, err := c.git(ctx, "rev-parse", "--git-path", "FETCH_HEAD"); err == nil {
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(c.repo(), path)
@@ -812,8 +814,8 @@ func (c Config) SyncState() (SyncState, error) {
 
 // writableGitDir reports whether this process may write the repository's
 // git directory, which a sandbox's may not.
-func (c Config) writableGitDir() bool {
-	dir, err := c.git(context.Background(), "rev-parse", "--absolute-git-dir")
+func (c Config) writableGitDir(ctx context.Context) bool {
+	dir, err := c.git(ctx, "rev-parse", "--absolute-git-dir")
 	if err != nil {
 		return false
 	}
@@ -829,10 +831,10 @@ func (c Config) writableGitDir() bool {
 // clone makes the notes repository where it is missing, through SSHConfig's
 // ssh, and configures it, or an existing one. It returns why it did not
 // clone, if it did not.
-func (c Config) clone() (cloned bool, note string, err error) {
+func (c Config) clone(ctx context.Context) (cloned bool, note string, err error) {
 	repo := c.repo()
-	if c.inRepo() {
-		return false, "", c.configure()
+	if c.inRepo(ctx) {
+		return false, "", c.configure(ctx)
 	}
 	if c.Remote == "" {
 		return false, "", nil
@@ -858,14 +860,14 @@ func (c Config) clone() (cloned bool, note string, err error) {
 	if c.SSHConfig != "" {
 		args = append(args, "-c", "core.sshCommand="+c.sshCommand())
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	timed, cancel := context.WithTimeout(ctx, gitTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", append(args, "clone", "-q", c.Remote, repo)...)
-	cmd.Env = append(gitenv.Without(os.Environ()), "GIT_TERMINAL_PROMPT=0")
+	cmd := exec.CommandContext(timed, "git", append(args, "clone", "-q", c.Remote, repo)...)
+	cmd.Env = append(gitenv.Without(env.From(ctx).Environ()), "GIT_TERMINAL_PROMPT=0")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return false, fmt.Sprintf("cloning %s failed, so plans are not synced: %s", c.Remote, strings.TrimSpace(string(out))), nil
 	}
-	return true, "", c.configure()
+	return true, "", c.configure(ctx)
 }
 
 // clearInitFiles removes only the exact ignore file and directory chain
@@ -921,8 +923,8 @@ func (c Config) clearInitFiles() (bool, error) {
 // sign-pass refuses the repository, since sync and clone pass SSHConfig's
 // ssh on each command; it takes out the one an earlier configure wrote for
 // this SSHConfig, and leaves any other.
-func (c Config) configure() error {
-	ctx := context.Background()
+func (c Config) configure(ctx context.Context) error {
+	ctx = context.WithoutCancel(ctx)
 	if _, err := c.git(ctx, "config", "--local", "commit.gpgsign", "false"); err != nil {
 		return err
 	}

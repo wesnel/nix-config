@@ -4,6 +4,7 @@
 package sshmux
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
@@ -35,19 +37,30 @@ func longest(base string) int {
 }
 
 // Mux is a pass's private directory of control sockets, one per push URL,
-// and the ssh command git would run, which pushes share them through.
+// the ssh command git would run, which pushes share them through, and the
+// environment that command runs in.
 type Mux struct {
 	dir, ssh string
+	env      env.Env
+}
+
+// tempDir is the directory os.TempDir names, from e's TMPDIR.
+func tempDir(e env.Env) string {
+	if dir := e.Get("TMPDIR"); dir != "" {
+		return dir
+	}
+	return "/tmp"
 }
 
 // Check refuses when a socket under TMPDIR would be too long for a Unix
 // socket path, which ssh cannot bind. fix ends the refusal, saying how to
-// carry on once TMPDIR is shorter.
-func Check(fix string) error {
-	if !takesOptions(command()) {
+// carry on once TMPDIR is shorter. It reads the environment, and the
+// config git reads, under ctx.
+func Check(ctx context.Context, fix string) error {
+	if !takesOptions(ctx, command(ctx)) {
 		return nil
 	}
-	base := filepath.Clean(os.TempDir())
+	base := filepath.Clean(tempDir(env.From(ctx)))
 	if n, limit := longest(base), len(syscall.RawSockaddrUnix{}.Path)-1; n > limit {
 		return refusal.New("SSH's shared connections would need socket paths of up to %d bytes under %s (TMPDIR), "+
 			"more than the %d a Unix socket takes; set a shorter TMPDIR, as `env TMPDIR=/tmp` before the command does, "+
@@ -59,19 +72,20 @@ func Check(fix string) error {
 // Open makes the pass's directory, after Check. It returns nil, which shares
 // nothing, for an ssh that takes no OpenSSH options: GIT_SSH_VARIANT or
 // ssh.variant simple, plink, putty or tortoiseplink, or a plink by name.
-func Open(fix string) (*Mux, error) {
-	ssh := command()
-	if !takesOptions(ssh) {
+func Open(ctx context.Context, fix string) (*Mux, error) {
+	ssh := command(ctx)
+	if !takesOptions(ctx, ssh) {
 		return nil, nil
 	}
-	if err := Check(fix); err != nil {
+	if err := Check(ctx, fix); err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp("", pattern)
+	e := env.From(ctx)
+	dir, err := os.MkdirTemp(tempDir(e), pattern)
 	if err != nil {
 		return nil, err
 	}
-	return &Mux{dir: dir, ssh: ssh}, nil
+	return &Mux{dir: dir, ssh: ssh, env: e}, nil
 }
 
 // Env is the environment for a push to the pass's push URL n: the ssh
@@ -95,33 +109,36 @@ func (m *Mux) Close() {
 	entries, _ := os.ReadDir(m.dir)
 	for _, e := range entries {
 		// As git runs an ssh command: through sh, with the arguments after it.
-		exec.Command("sh", "-c", m.ssh+` "$@"`, "ssh",
-			"-o", "ControlPath="+filepath.Join(m.dir, e.Name()), "-O", "exit", "sign-pass").Run()
+		cmd := exec.Command("sh", "-c", m.ssh+` "$@"`, "ssh",
+			"-o", "ControlPath="+filepath.Join(m.dir, e.Name()), "-O", "exit", "sign-pass")
+		cmd.Env, cmd.Dir = m.env.Environ(), m.env.Dir()
+		cmd.Run()
 	}
 	os.RemoveAll(m.dir)
 }
 
-// command is the ssh command git would run, as a shell command: from
-// GIT_SSH_COMMAND, core.sshCommand, GIT_SSH (a program), or ssh.
-func command() string {
-	if c := os.Getenv("GIT_SSH_COMMAND"); c != "" {
+// command is the ssh command git would run under ctx, as a shell command:
+// from GIT_SSH_COMMAND, core.sshCommand, GIT_SSH (a program), or ssh.
+func command(ctx context.Context) string {
+	e := env.From(ctx)
+	if c := e.Get("GIT_SSH_COMMAND"); c != "" {
 		return c
 	}
-	if c, _ := git.Run("config", "--get", "core.sshCommand"); c != "" {
+	if c, _ := git.In(ctx).Run("config", "--get", "core.sshCommand"); c != "" {
 		return c
 	}
-	if p := os.Getenv("GIT_SSH"); p != "" {
+	if p := e.Get("GIT_SSH"); p != "" {
 		return quote(p)
 	}
 	return "ssh"
 }
 
 // takesOptions reports whether git counts the ssh command as OpenSSH, which
-// takes -o options, as its ssh.variant settings and name tell.
-func takesOptions(cmd string) bool {
-	variant := os.Getenv("GIT_SSH_VARIANT")
+// takes -o options, as its ssh.variant settings under ctx and name tell.
+func takesOptions(ctx context.Context, cmd string) bool {
+	variant := env.From(ctx).Get("GIT_SSH_VARIANT")
 	if variant == "" {
-		variant, _ = git.Run("config", "--get", "ssh.variant")
+		variant, _ = git.In(ctx).Run("config", "--get", "ssh.variant")
 	}
 	switch strings.ToLower(variant) {
 	case "simple", "plink", "putty", "tortoiseplink":

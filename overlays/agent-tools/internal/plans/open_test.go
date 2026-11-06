@@ -24,7 +24,7 @@ func openFixture(t *testing.T) (Config, Plan, Plan) {
 	insertUnder(t, p.file(""), "** Steps", "*** TODO Write the loop\n:PROPERTIES:\n:CUSTOM_ID: S1\n:END:\n"+
 		"*** TODO Test the loop\n:PROPERTIES:\n:CUSTOM_ID: S2\n:AFTER: S1\n:END:\n")
 	addItems(t, p.file(""), "** Distribution", "P1")
-	if _, err := c.New(NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day); err != nil {
+	if _, err := c.New(t.Context(), NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day); err != nil {
 		t.Fatal(err)
 	}
 	must := func(_ any, err error) {
@@ -43,12 +43,12 @@ func openFixture(t *testing.T) (Config, Plan, Plan) {
 	must(p.Followup(FollowupOptions{Title: "Done already", FoundIn: "S1"}, day))
 	must(p.Log(Event{Kind: "done", Item: "F2"}, day))
 	must(p.Log(Event{Kind: "handed-back", Item: "P1", Summary: "ready to sign", Command: "git sign-pass", Dir: "/w/loop"}, later))
-	must(c.RequestSign(SignRequest{Session: "abc", Branches: []string{"loop"}}, later))
-	signed, err := c.RequestSign(SignRequest{Session: "abc", Branches: []string{"old"}}, day)
+	must(c.RequestSign(t.Context(), SignRequest{Session: "abc", Branches: []string{"loop"}}, later))
+	signed, err := c.RequestSign(t.Context(), SignRequest{Session: "abc", Branches: []string{"old"}}, day)
 	must(nil, err)
 	must(c.RecordSign(signed, SignResult{Exit: 0, Summary: "1 signed"}, day))
 
-	made, err := c.New(NewOptions{Title: "Parked work", Slug: "parked", Status: "halted"}, day)
+	made, err := c.New(t.Context(), NewOptions{Title: "Parked work", Slug: "parked", Status: "halted"}, day)
 	must(nil, err)
 	halted, err := c.Open(made.Plan)
 	must(nil, err)
@@ -57,7 +57,7 @@ func openFixture(t *testing.T) (Config, Plan, Plan) {
 	must(halted.Followup(FollowupOptions{Title: "Forgotten idea", FoundIn: "S1"}, later))
 
 	mac := Config{Dir: c.Dir, Host: "mac"}
-	made, err = mac.New(NewOptions{Title: "Their plan", Slug: "theirs"}, day)
+	made, err = mac.New(t.Context(), NewOptions{Title: "Their plan", Slug: "theirs"}, day)
 	must(nil, err)
 	theirs, err := mac.Open(made.Plan)
 	must(nil, err)
@@ -185,12 +185,12 @@ func TestOpenItems(t *testing.T) {
 	// a workstream's file.
 	t.Run("by workstream", func(t *testing.T) {
 		c := testConfig(t)
-		tooling, err := c.NewWorkstream("Agent tooling", "The agent tools.")
+		tooling, err := c.NewWorkstream(t.Context(), "Agent tooling", "The agent tools.")
 		if err != nil {
 			t.Fatal(err)
 		}
 		mac := Config{Dir: c.Dir, Host: "mac"}
-		if _, err := mac.NewWorkstream("Codex parity", ""); err != nil {
+		if _, err := mac.NewWorkstream(t.Context(), "Codex parity", ""); err != nil {
 			t.Fatal(err)
 		}
 		// Their names order them d, c, b, a, newest first.
@@ -201,7 +201,7 @@ func TestOpenItems(t *testing.T) {
 		}
 		a, b, cp, d := plan("a", "agent-tooling"), plan("b", ""), plan("c", "codex-parity"), plan("d", "agent-tooling")
 		addItems(t, a.file(""), "** Distribution", "P1")
-		if _, err := c.New(NewOptions{Title: "Part", Parent: a.file(""), Part: "P1"}, day); err != nil {
+		if _, err := c.New(t.Context(), NewOptions{Title: "Part", Parent: a.file(""), Part: "P1"}, day); err != nil {
 			t.Fatal(err)
 		}
 		addItems(t, a.file("P1"), "** Steps", "P1.S1")

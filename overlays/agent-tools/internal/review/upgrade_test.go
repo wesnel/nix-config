@@ -71,7 +71,7 @@ func setUpUpgrade(t *testing.T) *upgradeFixture {
 	}))
 	t.Cleanup(srv.Close)
 	t.Cleanup(gh.SetAPI(srv.URL))
-	t.Setenv("GH_TOKEN", "test-token")
+	f.setenv("GH_TOKEN", "test-token")
 	u.opts = upgrade.Options{Cache: filepath.Join(root, "cache"), Clones: filepath.Join(root, "clones"), Limits: upgrade.DefaultLimits}
 	old2 := upgradeOptions
 	upgradeOptions = func(context.Context) upgrade.Options { return u.opts }
@@ -91,7 +91,7 @@ func (u *upgradeFixture) says(t *testing.T, reply string) {
 // review runs an upgrade review of the fixture's range.
 func (u *upgradeFixture) review(t *testing.T) (int, output, string) {
 	t.Helper()
-	code, out, stderr := runDelegate(t, "--reviewer", "upgrade", "--plan", u.plan, u.given)
+	code, out, stderr := u.runDelegate(t, "--reviewer", "upgrade", "--plan", u.plan, u.given)
 	return code, out.review("upgrade"), stderr
 }
 
@@ -169,14 +169,14 @@ func TestFocusUpgrade(t *testing.T) {
 	t.Run("settled", func(t *testing.T) {
 		u := setUpUpgrade(t)
 		u.says(t, upgradeReply(t, u.lib))
-		code, first, stderr := runDelegate(t, "--reviewer", "upgrade", "--plan", u.plan, u.given)
+		code, first, stderr := u.runDelegate(t, "--reviewer", "upgrade", "--plan", u.plan, u.given)
 		if code != 3 {
 			t.Fatalf("exit %d\n%s", code, stderr)
 		}
-		if code, _, stderr := delegateCmd(t, "settle", u.given, u.private, "fix"); code != 0 {
+		if code, _, stderr := u.delegateCmd(t, "settle", u.given, u.private, "fix"); code != 0 {
 			t.Fatalf("settle: exit %d\n%s", code, stderr)
 		}
-		if code, _, stderr := runDelegate(t, "--reviewer", "upgrade", "--plan", u.plan, u.given); code != 3 {
+		if code, _, stderr := u.runDelegate(t, "--reviewer", "upgrade", "--plan", u.plan, u.given); code != 3 {
 			t.Fatalf("exit %d\n%s", code, stderr)
 		}
 		rec := must(record.ReadRange(first.Record))
@@ -229,7 +229,7 @@ func TestFocusUpgrade(t *testing.T) {
 		u := setUpUpgrade(t)
 		os.MkdirAll(u.opts.Cache, 0o755)
 		os.Chmod(u.opts.Cache, 0o755)
-		code, stdout, stderr := delegateCmd(t, "--print-prompt", "--reviewer", "upgrade", "--plan", u.plan, u.given)
+		code, stdout, stderr := u.delegateCmd(t, "--print-prompt", "--reviewer", "upgrade", "--plan", u.plan, u.given)
 		if code != 0 || !strings.Contains(stdout, "Rename programs.lib.extraConfig to settings") ||
 			!strings.Contains(stderr, "the cache directory is refused") || !strings.Contains(stderr, "mode 0700") {
 			t.Fatalf("exit %d\n%s\n%s", code, stderr, stdout)
@@ -293,6 +293,7 @@ func TestFocusUpgrade(t *testing.T) {
 // reader could take for the end of a line but a newline, and names with
 // no line break or backtick at all.
 func TestUpstreamSeparators(t *testing.T) {
+	t.Parallel()
 	if got := plain("a`b c d\u0085e\nf\x1bg"); got != "a?b?c?d?e?f?g" {
 		t.Errorf("plain: %q", got)
 	}
@@ -305,6 +306,7 @@ func TestUpstreamSeparators(t *testing.T) {
 // and a pin standing for others is read by any of their keys, which the
 // prompt lists.
 func TestUpgradeReadKeys(t *testing.T) {
+	t.Parallel()
 	diffOnly := upgrade.Pin{Key: "flake.nix", File: "flake.nix", Kind: "flake-nix", Old: "a", New: "b"}
 	merged := upgrade.Pin{Key: "flake.lock#input hm/nixpkgs", Covers: []string{"flake.lock#input nixpkgs"}, File: "flake.lock",
 		Kind: "flake", Owner: "nixos", Repo: "nixpkgs", Old: "a", New: "b"}
@@ -346,7 +348,7 @@ func TestUpgradeOwnChange(t *testing.T) {
 			r := newRemote(t, nil)
 			fake := setUpPR(t, r)
 			fake.viewer, fake.pr["author"] = "me", c.author
-			if pr, err := Fetch(t.Context(), "o/r", 7, ""); err != nil || pr.Own != c.own {
+			if pr, err := Fetch(fake.ctx(t), "o/r", 7, ""); err != nil || pr.Own != c.own {
 				t.Errorf("%s: own %v, %v", c.name, pr != nil && pr.Own, err)
 			}
 		}
@@ -364,15 +366,15 @@ func TestUpgradeOwnChange(t *testing.T) {
 		t.Cleanup(srv.Close)
 		t.Cleanup(gh.SetAPI(srv.URL))
 		u.opts.Private = "github.com/acme/*"
-		r := must(resolve(u.repo, u.given))
+		r := must(resolve(u.ctx(t), u.repo, u.given))
 		for _, own := range []bool{true, false} {
 			r.own = own
-			ups := must(gatherUpgrades(t.Context(), r, os.Stderr))
+			ups := must(gatherUpgrades(u.ctx(t), r, os.Stderr))
 			if read := ups.gathered[0].Read(); read != own {
 				t.Errorf("own %v: the named private repository read %v: %+v", own, read, ups.gathered[0])
 			}
 		}
-		if r := must(resolveSource(t.Context(), must(parseSource(u.given)), true, os.Stderr)); !r.own {
+		if r := must(resolveSource(u.ctx(t), must(parseSource(u.ctx(t), u.given)), true, os.Stderr)); !r.own {
 			t.Error("a range of this repository is not the operator's own")
 		}
 	})

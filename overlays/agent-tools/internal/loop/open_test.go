@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os/exec"
@@ -21,7 +22,7 @@ type fakeOpen struct {
 	calls   []string
 }
 
-func (f *fakeOpen) graphQL(query string, vars map[string]any, out any) error {
+func (f *fakeOpen) graphQL(_ context.Context, query string, vars map[string]any, out any) error {
 	var data any
 	switch {
 	case strings.Contains(query, "viewer { login }"):
@@ -75,9 +76,8 @@ func (f *fakeOpen) graphQL(query string, vars map[string]any, out any) error {
 // the checkout.
 func pushedBranch(t *testing.T) (*fakeOpen, string) {
 	t.Helper()
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv(ModeEnv, "")
+	// The signature checks of internal/signpass and operatorkey read the
+	// state directory from the process.
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	dir := t.TempDir()
 	gitIn(t, dir, "init", "-q", "-b", "main")
@@ -111,7 +111,7 @@ func published(t *testing.T, f *fakeOpen, dir, branch string) {
 func TestOpenPushed(t *testing.T) {
 	t.Run("missing local branch preserves lookup error", func(t *testing.T) {
 		f, _ := pushedBranch(t)
-		_, err := Open("gone", "", "Add feat", "Why it is needed.", false)
+		_, err := Open(t.Context(), "gone", "", "Add feat", "Why it is needed.", false)
 		var command *exec.ExitError
 		if !errors.As(err, &command) || len(f.calls) != 0 {
 			t.Fatalf("missing local branch: %v, mutations %v", err, f.calls)
@@ -119,7 +119,7 @@ func TestOpenPushed(t *testing.T) {
 	})
 	t.Run("refused/unsigned matching author", func(t *testing.T) {
 		f, _ := pushedBranch(t)
-		_, err := Open("feat", "", "Add feat", "Why it is needed.", false)
+		_, err := Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", false)
 		var refusal Refusal
 		if !errors.As(err, &refusal) || len(f.calls) != 0 {
 			t.Fatalf("unsigned branch with matching author: error %v, mutations %v", err, f.calls)
@@ -127,7 +127,7 @@ func TestOpenPushed(t *testing.T) {
 	})
 	t.Run("opens it", func(t *testing.T) {
 		f, _ := pushedOperatorBranch(t)
-		result, err := Open("feat", "", "Add feat", "Why it is needed.", false)
+		result, err := Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -142,7 +142,7 @@ func TestOpenPushed(t *testing.T) {
 
 	t.Run("dry run", func(t *testing.T) {
 		f, _ := pushedOperatorBranch(t)
-		result, err := Open("feat", "", "Add feat", "Why it is needed.", true)
+		result, err := Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -155,7 +155,7 @@ func TestOpenPushed(t *testing.T) {
 	t.Run("a failed pull request leaves the branch", func(t *testing.T) {
 		f, _ := pushedOperatorBranch(t)
 		f.failPR = true
-		if _, err := Open("feat", "", "Add feat", "Why it is needed.", false); err == nil || strings.Contains(err.Error(), "deleted") {
+		if _, err := Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", false); err == nil || strings.Contains(err.Error(), "deleted") {
 			t.Errorf("a failed pull request: %v", err)
 		}
 		if got := strings.Join(f.calls, " "); got != "createPullRequest" {
@@ -167,7 +167,7 @@ func TestOpenPushed(t *testing.T) {
 		f, dir := pushedBranch(t)
 		gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "Add x.")
 		published(t, f, dir, "feat")
-		_, err := Open("feat", "", "Add feat", "Why it is needed.", false)
+		_, err := Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", false)
 		if _, ok := err.(Refusal); !ok || !strings.Contains(err.Error(), "Add x.") || len(f.calls) != 0 {
 			t.Errorf("a pushed commit ending in a period: %v, calls %v", err, f.calls)
 		}
@@ -193,7 +193,7 @@ func TestOpenPushed(t *testing.T) {
 		t.Run("refused/"+name, func(t *testing.T) {
 			f, dir := pushedOperatorBranch(t)
 			c.change(t, f, dir)
-			_, err := Open("feat", "", "Add feat", "Why it is needed.", false)
+			_, err := Open(t.Context(), "feat", "", "Add feat", "Why it is needed.", false)
 			var policy Refusal
 			if !errors.As(err, &policy) || !strings.Contains(err.Error(), c.says) || len(f.calls) != 0 {
 				t.Errorf("%s: %v, calls %v", name, err, f.calls)

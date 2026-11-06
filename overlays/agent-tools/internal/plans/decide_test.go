@@ -172,7 +172,7 @@ func TestDecide(t *testing.T) {
 func TestStatusLine(t *testing.T) {
 	t.Run("the session's open questions", func(t *testing.T) {
 		c, _ := openQuestions(t)
-		if got := c.StatusLine([]byte(`{"session_id":"abc","cwd":"/nowhere","workspace":{"current_dir":"/nowhere"}}`)); got != "3 open questions · /questions" {
+		if got := c.StatusLine(t.Context(), []byte(`{"session_id":"abc","cwd":"/nowhere","workspace":{"current_dir":"/nowhere"}}`)); got != "3 open questions · /questions" {
 			t.Errorf("status line %q", got)
 		}
 	})
@@ -184,7 +184,7 @@ func TestStatusLine(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			c, _ := openQuestions(t)
-			if got := c.StatusLine([]byte(in)); got != "" {
+			if got := c.StatusLine(t.Context(), []byte(in)); got != "" {
 				t.Errorf("%q: status line %q", in, got)
 			}
 		})
@@ -197,17 +197,17 @@ func TestStatusLine(t *testing.T) {
 		top := linked[0]
 		sub := filepath.Join(top, "lisp")
 		os.MkdirAll(sub, 0o755)
-		made, err := c.New(NewOptions{Title: "T", Slug: "x", Worktrees: []string{top}}, day)
+		made, err := c.New(t.Context(), NewOptions{Title: "T", Slug: "x", Worktrees: []string{top}}, day)
 		if err != nil {
 			t.Fatal(err)
 		}
 		insertUnder(t, made.File, "** Questions", question("Q1", "Keep it?", ""))
 		in, _ := json.Marshal(map[string]string{"cwd": sub})
-		if got := c.StatusLine(in); got != "1 open question · /questions" {
+		if got := c.StatusLine(t.Context(), in); got != "1 open question · /questions" {
 			t.Errorf("status line %q", got)
 		}
 		elsewhere, _ := json.Marshal(map[string]string{"cwd": t.TempDir()})
-		if got := c.StatusLine(elsewhere); got != "" {
+		if got := c.StatusLine(t.Context(), elsewhere); got != "" {
 			t.Errorf("status line outside the worktree %q", got)
 		}
 	})
@@ -222,7 +222,7 @@ func TestStatusLine(t *testing.T) {
 		insertUnder(t, here, "** Questions", question("Q1", "Keep it?", ""))
 		locatePlan(t, c, "newer", day.Add(time.Hour), nil, []string{"claude:abc"})
 		in, _ := json.Marshal(map[string]string{"session_id": "abc", "cwd": linked[0]})
-		if got := c.StatusLine(in); got != "1 open question · /questions" {
+		if got := c.StatusLine(t.Context(), in); got != "1 open question · /questions" {
 			t.Errorf("status line %q, want the question of the plan naming the worktree", got)
 		}
 	})

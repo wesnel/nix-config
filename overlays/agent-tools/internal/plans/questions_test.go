@@ -14,7 +14,7 @@ func openQuestions(t *testing.T) (Config, Plan) {
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
 	addItems(t, p.file(""), "** Distribution", "P1")
-	if _, err := c.New(NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day); err != nil {
+	if _, err := c.New(t.Context(), NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day); err != nil {
 		t.Fatal(err)
 	}
 	insertUnder(t, p.file(""), "** Questions", "*** ASK Which branch is the base?\n:PROPERTIES:\n:ID: Q1\n:RECOMMENDATION: main\n:END:\n"+

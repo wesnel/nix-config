@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/wesnel/agent-tools/internal/cli"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/guard"
 	"github.com/wesnel/agent-tools/internal/review"
@@ -91,7 +92,7 @@ func (a mcpArgs) opt(argv []string, flag, name string) []string {
 }
 
 func prLoopTool(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
-	return run(argv[0], argv[1:], strings.NewReader(""), stdout, stderr)
+	return run(ctx, argv[0], argv[1:], strings.NewReader(""), stdout, stderr)
 }
 
 func delegateTool(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
@@ -263,7 +264,7 @@ func githubProfile(ctx context.Context, argv []string, stdout, stderr io.Writer)
 			Pronouns *string `json:"pronouns"`
 		} `json:"user"`
 	}
-	err := gh.GraphQL(`query($login: String!) { user(login: $login) { name pronouns } }`, map[string]any{"login": argv[0]}, &data)
+	err := gh.GraphQL(ctx, `query($login: String!) { user(login: $login) { name pronouns } }`, map[string]any{"login": argv[0]}, &data)
 	if err == nil && data.User == nil {
 		err = fmt.Errorf("GitHub has no user %s", argv[0])
 	}
@@ -438,7 +439,7 @@ var mcpProtocols = []string{"2025-06-18", "2025-03-26", "2024-11-05"}
 // mcpMain serves MCP on stdin and stdout until stdin ends. The commands
 // the tools run write to os.Stdout and read os.Stdin in places, as on a
 // terminal, so those point at stderr and nothing while it serves.
-func mcpMain(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func mcpMain(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) != 0 {
 		fmt.Fprintln(stderr, "pr-loop mcp takes no arguments")
 		return 2
@@ -450,7 +451,7 @@ func mcpMain(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	defer null.Close()
 	os.Stdin, os.Stdout = null, os.Stderr
-	if err := serveMCP(context.Background(), stdin, stdout); err != nil {
+	if err := serveMCP(ctx, stdin, stdout); err != nil {
 		fmt.Fprintln(stderr, "pr-loop mcp:", err)
 		return 1
 	}
@@ -548,18 +549,25 @@ func callTool(ctx context.Context, name string, raw map[string]any, threadID str
 	if err != nil {
 		return refused(err)
 	}
+	// The call runs in the worktree, and what it runs takes it for the
+	// Codex session's own, as the commands Codex runs do: in the Env of
+	// its context, and in this process too, since the loop and git
+	// delegate still read some of both from the process.
+	e := env.From(ctx)
 	if worktree != "" {
 		if err := os.Chdir(worktree); err != nil {
 			return refused(err)
 		}
+		e = e.In(worktree)
 	}
-	// What the call runs takes it for the Codex session's own, as the
-	// commands Codex runs do.
 	if threadID != "" {
 		os.Setenv("CODEX_THREAD_ID", threadID)
+		e = e.Set("CODEX_THREAD_ID=" + threadID)
 	} else {
 		os.Unsetenv("CODEX_THREAD_ID")
+		e = e.Without("CODEX_THREAD_ID")
 	}
+	ctx = env.With(ctx, e)
 	var stdout, stderr bytes.Buffer
 	code := t.run(ctx, t.argv(args), &stdout, &stderr)
 	return map[string]any{"isError": code != 0 && code != 3 && code != 4, "content": []any{

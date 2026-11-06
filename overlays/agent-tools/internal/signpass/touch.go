@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"regexp"
@@ -14,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 )
 
@@ -153,8 +153,8 @@ var NotifyID string
 // resumeCommand is the command that resumes the pass on branch, as one line
 // to run in fish or a POSIX shell. The branch goes last: flag parsing stops
 // at the first argument that is not a flag.
-func resumeCommand(branch string, push, setUpstream bool) string {
-	cmd := self() + " --resume"
+func resumeCommand(ctx context.Context, branch string, push, setUpstream bool) string {
+	cmd := self(ctx) + " --resume"
 	switch {
 	case setUpstream:
 		cmd += " --set-upstream"
@@ -168,19 +168,25 @@ func resumeCommand(branch string, push, setUpstream bool) string {
 }
 
 // self is how to run this program again: `git sign-pass` when the
-// git-sign-pass on PATH is this program, and otherwise its path, since an
-// older or newer install on PATH may not understand what this one saved.
-func self() string {
+// git-sign-pass on the PATH of ctx's Env is this program, and otherwise its
+// path, since an older or newer install on PATH may not understand what
+// this one saved.
+func self(ctx context.Context) string {
+	e := env.From(ctx)
 	exe, err := os.Executable()
 	if err != nil {
-		if exe, err = exec.LookPath(os.Args[0]); err != nil {
-			exe = os.Args[0]
+		// A name with a slash is a path already.
+		exe = os.Args[0]
+		if !strings.Contains(exe, "/") {
+			if found, err := e.LookPath(exe); err == nil {
+				exe = found
+			}
 		}
 	}
 	if abs, err := filepath.Abs(exe); err == nil {
 		exe = abs
 	}
-	if onPath, err := exec.LookPath("git-sign-pass"); err == nil {
+	if onPath, err := e.LookPath("git-sign-pass"); err == nil {
 		a, aerr := os.Stat(onPath)
 		b, berr := os.Stat(exe) //nolint:gosec // this program's own path, only compared with another
 		if aerr == nil && berr == nil && os.SameFile(a, b) {

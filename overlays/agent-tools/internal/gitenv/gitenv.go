@@ -8,6 +8,8 @@ import (
 	"os"
 	"slices"
 	"strings"
+
+	"github.com/wesnel/agent-tools/internal/env"
 )
 
 // Location is the environment that would point git somewhere other than the
@@ -43,6 +45,20 @@ func WithoutConfig(env []string) []string {
 		}
 	}
 	return append(out, NoConfig...)
+}
+
+// WithNoConfig is e for git, and every program started in it, that must
+// read no git configuration but the repository's own: without every
+// variable that gives git configuration, and with NoConfig. Unlike
+// WithoutConfig, it keeps Location.
+func WithNoConfig(e env.Env) env.Env {
+	var names []string
+	for _, kv := range e.Environ() {
+		if name, _, _ := strings.Cut(kv, "="); handsConfig(name) {
+			names = append(names, name)
+		}
+	}
+	return e.Without(names...).Set(NoConfig...)
 }
 
 // SetNoConfig makes this process's environment, and that of every program

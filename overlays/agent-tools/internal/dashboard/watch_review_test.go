@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/export"
 	"github.com/wesnel/agent-tools/internal/record"
 )
@@ -16,7 +17,7 @@ import (
 // changing prints LineRecord at the next look, and one of another pull
 // request nothing.
 func TestWatchReviews(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Parallel()
 	c, _, p := watchFixture(t)
 	s := newScript(t, c, p)
 	gh := export.GitHub{At: "2026-10-17T10:00:00Z", Mine: []export.PR{{Repo: "o/r", Number: 7, Title: "Add the loop", CI: "none"}}}
@@ -30,7 +31,7 @@ func TestWatchReviews(t *testing.T) {
 	base, head := strings.Repeat("0", 40), strings.Repeat("1", 40)
 	writeRecord := func(owner, repo string, pr int, title string) func() {
 		return func() {
-			path, err := record.RangeFile(owner, repo, base, head)
+			path, err := record.RangeFile(env.From(s.ctx), owner, repo, base, head)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -76,7 +77,7 @@ func TestWatchReviews(t *testing.T) {
 
 // A GitHub read that fails waits the five minutes too, and prints nothing.
 func TestWatchReviewsFailing(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Parallel()
 	c, _, p := watchFixture(t)
 	s := newScript(t, c, p)
 	reads := 0

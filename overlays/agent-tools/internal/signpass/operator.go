@@ -21,8 +21,8 @@ var (
 )
 
 // objectGit runs git in objectView.
-func objectGit(args ...string) (string, error) {
-	return git.RunEnv(objectView, append(append([]string{}, objectArgs...), args...)...)
+func objectGit(ctx context.Context, args ...string) (string, error) {
+	return git.In(ctx).RunEnv(objectView, append(append([]string{}, objectArgs...), args...)...)
 }
 
 // gate refuses the push of r to url, before it, unless url's branch is

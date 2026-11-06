@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
 	"github.com/wesnel/agent-tools/internal/plans"
@@ -191,8 +192,18 @@ func (f *fixture) config(t *testing.T, settings map[string]any) {
 	settings["plans"] = f.plans
 	config := filepath.Join(t.TempDir(), "config.json")
 	os.WriteFile(config, must(json.Marshal(settings)), 0o644)
+	f.setenv("AGENT_TOOLS_CONFIG", config)
+	// plans.Load, which reads the plan's Goal, still reads this process's
+	// environment, so the config is named there too, and a test with a
+	// fixture stays serial until it takes a context.
 	t.Setenv("AGENT_TOOLS_CONFIG", config)
 }
+
+// setenv sets name to value in f's Env.
+func (f *fixture) setenv(name, value string) { f.env = f.env.Set(name + "=" + value) }
+
+// ctx carries f's Env.
+func (f *fixture) ctx(t *testing.T) context.Context { return env.With(t.Context(), f.env) }
 
 // writeGatewayConfig writes agent-tools' config as writeConfig does, and
 // names a model provider for Codex, as the llm module does on a machine
@@ -225,7 +236,7 @@ func (f *fixture) addPart(t *testing.T) string {
 		time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	created, err := f.plans.New(plans.NewOptions{Title: "Third line", Parent: f.plan, Part: "P1"}, time.Now())
+	created, err := f.plans.New(t.Context(), plans.NewOptions{Title: "Third line", Parent: f.plan, Part: "P1"}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,13 +281,25 @@ type fixture struct {
 	// whose Goal is the review's goal statement.
 	plans plans.Config
 	plan  string
+	// env is the environment delegate runs in: its directory the
+	// repository, and its PATH the fakes'.
+	env env.Env
 }
+
+// identity is the author and committer of the fixtures' commits.
+var identity = []string{"GIT_AUTHOR_NAME=T", "GIT_AUTHOR_EMAIL=t@e", "GIT_COMMITTER_NAME=T", "GIT_COMMITTER_EMAIL=t@e"}
 
 func run(t *testing.T, dir string, name string, args ...string) string {
 	t.Helper()
+	return runWith(t, nil, dir, name, args...)
+}
+
+// runWith is run with extra added to its environment.
+func runWith(t *testing.T, extra []string, dir string, name string, args ...string) string {
+	t.Helper()
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
-	cmd.Env = gitenv.Without(os.Environ())
+	cmd.Env = append(append(gitenv.Without(os.Environ()), identity...), extra...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s %v: %v\n%s", name, args, err, out)
@@ -290,25 +313,22 @@ func run(t *testing.T, dir string, name string, args ...string) string {
 // fake claude replies to a security review with no findings.
 func setUp(t *testing.T, withCodex bool) *fixture {
 	t.Helper()
-	for k, v := range map[string]string{
-		"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1",
-		"GIT_AUTHOR_NAME": "T", "GIT_AUTHOR_EMAIL": "t@e", "GIT_COMMITTER_NAME": "T", "GIT_COMMITTER_EMAIL": "t@e",
-		"PR_LOOP_SESSION": "", "CODEX_SANDBOX": "", "CODEX_THREAD_ID": "", "FAKE_CODEX": "", "FAKE_CODEX_COPY": "", "CLAUDECODE": "1",
-		"XDG_STATE_HOME": t.TempDir(), "XDG_CACHE_HOME": t.TempDir(),
-	} {
-		t.Setenv(k, v)
-	}
 	f := &fixture{repo: t.TempDir(), log: t.TempDir(),
 		plans: plans.Config{Dir: filepath.Join(t.TempDir(), "agents"), Host: "box"}}
+	f.env = env.Process().In(f.repo).Set(append([]string{
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+		"PR_LOOP_SESSION=", "CODEX_SANDBOX=", "CODEX_THREAD_ID=", "FAKE_CODEX=", "FAKE_CODEX_COPY=", "CLAUDECODE=1",
+		"XDG_STATE_HOME=" + t.TempDir(), "XDG_CACHE_HOME=" + t.TempDir(),
+	}, identity...)...)
 	f.writeConfig(t)
-	created, err := f.plans.New(plans.NewOptions{Title: "Grow the code", Slug: "grow",
+	created, err := f.plans.New(t.Context(), plans.NewOptions{Title: "Grow the code", Slug: "grow",
 		Goal: "Grow the code to three lines."}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.plan = created.Plan
-	t.Setenv("FAKE_CODEX_LOG", f.log)
-	t.Setenv("FAKE_CLAUDE_LOG", f.log)
+	f.setenv("FAKE_CODEX_LOG", f.log)
+	f.setenv("FAKE_CLAUDE_LOG", f.log)
 	f.claudeSays(t, "security-reviewer", claudeResult(securityReply(), "Reviewed."))
 	f.claudeSays(t, "review-guide", claudeResult(map[string]any{"chunks": []any{}, "unverified": []any{}}, "Walked."))
 	run(t, f.repo, "git", "init", "-q", "-b", "main")
@@ -335,8 +355,7 @@ func setUp(t *testing.T, withCodex bool) *fixture {
 			path = append(path, dir)
 		}
 	}
-	t.Setenv("PATH", strings.Join(path, string(os.PathListSeparator)))
-	t.Chdir(f.repo)
+	f.setenv("PATH", strings.Join(path, string(os.PathListSeparator)))
 	return f
 }
 
@@ -378,11 +397,11 @@ func (r runOutput) review(reviewer string) output {
 	return output{}
 }
 
-// runDelegate runs `git delegate` with args.
-func runDelegate(t *testing.T, args ...string) (int, runOutput, string) {
+// runDelegate runs `git delegate` with args, in f's Env.
+func (f *fixture) runDelegate(t *testing.T, args ...string) (int, runOutput, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := Main(t.Context(), args, strings.NewReader(""), &stdout, &stderr)
+	code := Main(f.ctx(t), args, strings.NewReader(""), &stdout, &stderr)
 	var out runOutput
 	if stdout.Len() > 0 {
 		if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
@@ -393,10 +412,10 @@ func runDelegate(t *testing.T, args ...string) (int, runOutput, string) {
 }
 
 // freshReview runs `git delegate` with args and returns Codex's part of
-// the review.
-func freshReview(t *testing.T, args ...string) (int, output, string) {
+// the review, in f's Env.
+func (f *fixture) freshReview(t *testing.T, args ...string) (int, output, string) {
 	t.Helper()
-	code, out, stderr := runDelegate(t, args...)
+	code, out, stderr := f.runDelegate(t, args...)
 	return code, out.review("codex"), stderr
 }
 
@@ -411,7 +430,7 @@ func (f *fixture) checkCleanedUp(t *testing.T) {
 	if list := run(t, f.repo, "git", "worktree", "list", "--porcelain"); strings.Count(list, "worktree ") != 1 {
 		t.Errorf("worktrees left behind:\n%s", list)
 	}
-	for _, dir := range []string{filepath.Join(f.repo, ".git", "delegate"), filepath.Join(Root(), "o", "r", "work")} {
+	for _, dir := range []string{filepath.Join(f.repo, ".git", "delegate"), filepath.Join(Root(f.env), "o", "r", "work")} {
 		if left, _ := os.ReadDir(dir); len(left) != 0 {
 			t.Errorf("files left under %s: %v", dir, left)
 		}
@@ -429,7 +448,7 @@ func TestCodex(t *testing.T) {
 
 func testCodexReview(t *testing.T) {
 	f := setUp(t, true)
-	code, out, stderr := freshReview(t, "--model", "fake-model", "--plan", f.plan, f.base+"..HEAD")
+	code, out, stderr := f.freshReview(t, "--model", "fake-model", "--plan", f.plan, f.base+"..HEAD")
 	if code != 3 {
 		t.Fatalf("exit %d, want 3 for findings\n%s", code, stderr)
 	}
@@ -475,9 +494,9 @@ func testCodexReview(t *testing.T) {
 // reaches neither the review's worktree nor Codex.
 func testCodexGitDirUnderReview(t *testing.T) {
 	f := setUp(t, true)
-	t.Setenv("FAKE_CODEX", "none")
-	t.Setenv("GIT_DIR", filepath.Join(f.repo, ".git"))
-	if code, _, stderr := freshReview(t, "--plan", f.plan, f.base+"..HEAD"); code != 0 {
+	f.setenv("FAKE_CODEX", "none")
+	f.setenv("GIT_DIR", filepath.Join(f.repo, ".git"))
+	if code, _, stderr := f.freshReview(t, "--plan", f.plan, f.base+"..HEAD"); code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
 	if location, _ := os.ReadFile(filepath.Join(f.log, "location")); len(location) != 0 {
@@ -489,18 +508,18 @@ func testCodexGitDirUnderReview(t *testing.T) {
 // GIT_DIR naming another repository is refused.
 func testCodexGitDirElsewhere(t *testing.T) {
 	f := setUp(t, true)
-	t.Setenv("FAKE_CODEX", "none")
-	gitenvtest.Decoy(t)
-	os.Unsetenv("GIT_WORK_TREE")
-	if code, _, stderr := freshReview(t, "--plan", f.plan, f.base+"..HEAD"); code != 2 || !strings.Contains(stderr, "GIT_DIR") {
+	f.setenv("FAKE_CODEX", "none")
+	decoy, _ := gitenvtest.DecoyEnv(t)
+	f.setenv("GIT_DIR", filepath.Join(decoy, ".git"))
+	if code, _, stderr := f.freshReview(t, "--plan", f.plan, f.base+"..HEAD"); code != 2 || !strings.Contains(stderr, "GIT_DIR") {
 		t.Errorf("GIT_DIR naming another repository: exit %d\n%s", code, stderr)
 	}
 }
 
 func testCodexNoFindings(t *testing.T) {
 	f := setUp(t, true)
-	t.Setenv("FAKE_CODEX", "none")
-	if code, out, stderr := freshReview(t, "--plan", f.plan, f.base+".."+f.tip); code != 0 || len(out.Findings) != 0 {
+	f.setenv("FAKE_CODEX", "none")
+	if code, out, stderr := f.freshReview(t, "--plan", f.plan, f.base+".."+f.tip); code != 0 || len(out.Findings) != 0 {
 		t.Errorf("exit %d, findings %v\n%s", code, out.Findings, stderr)
 	}
 	f.checkCleanedUp(t)
@@ -512,14 +531,14 @@ func testCodexNoFindings(t *testing.T) {
 // sandbox starts before it reviews.
 func testCodexConfinement(t *testing.T) {
 	f := setUp(t, true)
-	t.Setenv("FAKE_CODEX", "none")
+	f.setenv("FAKE_CODEX", "none")
 	tools := t.TempDir()
 	link := filepath.Join(t.TempDir(), "tools")
 	if err := os.Symlink(tools, link); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", os.Getenv("PATH")+string(os.PathListSeparator)+link)
-	if code, _, stderr := freshReview(t, "--plan", f.plan, f.base+"..HEAD"); code != 0 {
+	f.setenv("PATH", f.env.Get("PATH")+string(os.PathListSeparator)+link)
+	if code, _, stderr := f.freshReview(t, "--plan", f.plan, f.base+"..HEAD"); code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
 	path := filepath.SplitList(string(must(os.ReadFile(filepath.Join(f.log, "path")))))
@@ -571,7 +590,7 @@ func testCodexConfinement(t *testing.T) {
 		t.Errorf("the sandbox was not tried with the review's permissions in %s: %q", wt, sandboxArgs)
 	}
 	common := run(t, f.repo, "git", "rev-parse", "--path-format=absolute", "--git-common-dir")
-	codex := must(filepath.EvalSymlinks(must(exec.LookPath("codex"))))
+	codex := must(filepath.EvalSymlinks(must(f.env.LookPath("codex"))))
 	entries := regexp.MustCompile(`"([^"]+)"=("[a-z]+"|\{[^}]*\})`).FindAllStringSubmatch(filesystem, -1)
 	readable := map[string]bool{}
 	for _, e := range entries {
@@ -612,9 +631,9 @@ func testCodexFailures(t *testing.T) {
 	} {
 		t.Run(c.mode, func(t *testing.T) {
 			f := setUp(t, true)
-			t.Setenv("FAKE_CODEX", c.mode)
+			f.setenv("FAKE_CODEX", c.mode)
 			args := append(append([]string{"--plan", f.plan}, c.args...), f.base+"..HEAD")
-			if code, _, stderr := freshReview(t, args...); code != 4 {
+			if code, _, stderr := f.freshReview(t, args...); code != 4 {
 				t.Errorf("exit %d, want 4\n%s", code, stderr)
 			}
 			f.checkCleanedUp(t)
@@ -653,10 +672,10 @@ func TestUnavailable(t *testing.T) {
 				f.writeGatewayConfig(t, c.gateway)
 			}
 			for k, v := range c.env {
-				t.Setenv(k, v)
+				f.setenv(k, v)
 			}
 			args := append(append([]string{"--plan", f.plan}, c.args...), f.base+"..HEAD")
-			code, _, stderr := freshReview(t, args...)
+			code, _, stderr := f.freshReview(t, args...)
 			if code != c.want {
 				t.Fatalf("exit %d, want %d\n%s", code, c.want, stderr)
 			}
@@ -691,8 +710,8 @@ func TestGateway(t *testing.T) {
 		if gateway {
 			f.writeGatewayConfig(t, "ngrok-ai")
 		}
-		t.Setenv("FAKE_CODEX", "none")
-		code, out, stderr := freshReview(t, append(append([]string{"--plan", f.plan}, args...), f.base+"..HEAD")...)
+		f.setenv("FAKE_CODEX", "none")
+		code, out, stderr := f.freshReview(t, append(append([]string{"--plan", f.plan}, args...), f.base+"..HEAD")...)
 		if code != 0 {
 			t.Fatalf("exit %d, want 0\n%s", code, stderr)
 		}
@@ -840,7 +859,7 @@ func testRedCheckNotOnHost(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := setUp(t, true)
-			t.Setenv("FAKE_CODEX", "none")
+			f.setenv("FAKE_CODEX", "none")
 			marker := filepath.Join(t.TempDir(), "ran")
 			writeSettings(t, f, `{"test": "touch `+marker+`; false", "build": "touch `+marker+`", `+
 				`"testFiles": ["*_test.txt"]}`)
@@ -851,7 +870,7 @@ func testRedCheckNotOnHost(t *testing.T) {
 
 			var stdout, stderr bytes.Buffer
 			args := append(append([]string{}, c.args...), "--plan", f.plan, f.base+"..HEAD")
-			if code := Main(t.Context(), args, nil, &stdout, &stderr); code != 0 {
+			if code := Main(f.ctx(t), args, nil, &stdout, &stderr); code != 0 {
 				t.Fatalf("exit %d\n%s", code, stderr.String())
 			}
 			if _, err := os.Stat(marker); err == nil {
@@ -877,7 +896,7 @@ func TestPrintPrompt(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	args := []string{"--print-prompt", "--plan", f.plan, "--items", ".git/items.md", f.base + "..HEAD"}
-	if code := Main(t.Context(), args, nil, &stdout, &stderr); code != 0 {
+	if code := Main(f.ctx(t), args, nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr.String())
 	}
 	prompt := stdout.String()
@@ -900,10 +919,10 @@ func TestPrintPrompt(t *testing.T) {
 // the items and earlier findings do.
 func TestGoalRedacted(t *testing.T) {
 	f := setUp(t, true)
-	t.Setenv("FAKE_CODEX", "none")
+	f.setenv("FAKE_CODEX", "none")
 	token := "ghp_" + strings.Repeat("d", 36)
 	f.setGoal(t, "", "Grow the code; the CI token "+token+" stays out.")
-	if code, _, stderr := freshReview(t, "--plan", f.plan, f.base+"..HEAD"); code != 0 {
+	if code, _, stderr := f.freshReview(t, "--plan", f.plan, f.base+"..HEAD"); code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
 	prompt := string(must(os.ReadFile(filepath.Join(f.log, "prompt"))))
@@ -934,10 +953,10 @@ func TestGoalFromPlan(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := setUp(t, true)
-			t.Setenv("FAKE_CODEX", "none")
+			f.setenv("FAKE_CODEX", "none")
 			part := f.addPart(t)
 			args := append(c.plan(f.plan, part), f.base+"..HEAD")
-			if code, _, stderr := freshReview(t, args...); code != 0 {
+			if code, _, stderr := f.freshReview(t, args...); code != 0 {
 				t.Fatalf("exit %d\n%s", code, stderr)
 			}
 			prompt := string(must(os.ReadFile(filepath.Join(f.log, "prompt"))))
@@ -955,10 +974,10 @@ func TestGoalHint(t *testing.T) {
 	f := setUp(t, true)
 	f.plans.Dir = filepath.Join(t.TempDir(), "my plans", "agents")
 	f.writeConfig(t)
-	f.plan = must(f.plans.New(plans.NewOptions{Title: "Grow the code", Slug: "grow", Goal: "Grow the code."}, time.Now())).Plan
+	f.plan = must(f.plans.New(t.Context(), plans.NewOptions{Title: "Grow the code", Slug: "grow", Goal: "Grow the code."}, time.Now())).Plan
 	f.addPart(t)
-	t.Setenv("FAKE_CODEX", "unauthenticated")
-	code, _, stderr := runDelegate(t, "--reviewer", "codex", "--plan", f.plan, "--part", "P1", f.base+"..HEAD")
+	f.setenv("FAKE_CODEX", "unauthenticated")
+	code, _, stderr := f.runDelegate(t, "--reviewer", "codex", "--plan", f.plan, "--part", "P1", f.base+"..HEAD")
 	want := "`git delegate --print-prompt --reviewer codex --plan '" + f.plan + "' --part P1 " + f.base + "..HEAD`"
 	if code != 4 || !strings.Contains(stderr, want) {
 		t.Errorf("exit %d, want the hint %s\n%s", code, want, stderr)
@@ -975,7 +994,7 @@ func TestRefusals(t *testing.T) {
 	}{
 		{"no goal", func(t *testing.T, f *fixture) []string { return []string{f.base + "..HEAD"} }, "--plan"},
 		{"empty goal", func(t *testing.T, f *fixture) []string {
-			created := must(f.plans.New(plans.NewOptions{Title: "No goal", Slug: "no-goal"}, time.Now()))
+			created := must(f.plans.New(t.Context(), plans.NewOptions{Title: "No goal", Slug: "no-goal"}, time.Now()))
 			return []string{"--plan", created.Plan, f.base + "..HEAD"}
 		}, "agent-plan section"},
 		{"not a plan", func(t *testing.T, f *fixture) []string {
@@ -1011,7 +1030,7 @@ func TestRefusals(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			f := setUp(t, true)
 			args := c.args(t, f)
-			code, _, stderr := freshReview(t, args...)
+			code, _, stderr := f.freshReview(t, args...)
 			reason := strings.TrimPrefix(strings.TrimSpace(stderr), "git-delegate: refused: ")
 			if code != 2 || !refusal.SaysInstead(reason) || !strings.Contains(reason, c.says) {
 				t.Errorf("%v: exit %d, %q", args, code, stderr)

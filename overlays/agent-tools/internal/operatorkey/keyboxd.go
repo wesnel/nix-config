@@ -108,7 +108,7 @@ func (p Profile) keyboxdPublicKeys(ctx context.Context, database string) ([]byte
 	}
 	// Keeping this home directly under protected state avoids Darwin's short
 	// Unix socket path limit; it has no persistent contents.
-	client, err := privateStateDir("", ".gpg-")
+	client, err := privateStateDir(ctx, "", ".gpg-")
 	if err != nil {
 		return nil, err
 	}

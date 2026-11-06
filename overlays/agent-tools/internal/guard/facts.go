@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
@@ -26,7 +28,7 @@ type gitCall struct {
 }
 
 // gitCalls are the git commands text runs, started in dir.
-func gitCalls(text, dir string, depth int) []gitCall {
+func gitCalls(ctx context.Context, text, dir string, depth int) []gitCall {
 	if depth > maxDepth {
 		return nil
 	}
@@ -34,7 +36,7 @@ func gitCalls(text, dir string, depth int) []gitCall {
 	cwd := dir
 	v := visitor{
 		script: func(text string) string {
-			out = append(out, gitCalls(text, cwd, depth+1)...)
+			out = append(out, gitCalls(ctx, text, cwd, depth+1)...)
 			return ""
 		},
 		call: func(c call) string {
@@ -43,13 +45,13 @@ func gitCalls(text, dir string, depth int) []gitCall {
 			switch {
 			case len(w) == 0 || c.expands[0]:
 			case w[0] == "cd" || w[0] == "pushd":
-				cwd = cdTarget(c, cwd)
+				cwd = cdTarget(ctx, c, cwd)
 			case base(w[0]) == "git":
 				where, i := cwd, 1
 				for i < len(w) && strings.HasPrefix(w[i], "-") {
 					switch {
 					case w[i] == "-C" && i+1 < len(w):
-						if where = expandPath(w[i+1], where); !filepath.IsAbs(where) {
+						if where = expandPath(ctx, w[i+1], where); !filepath.IsAbs(where) {
 							where = ""
 						}
 					case w[i] == "--git-dir" || w[i] == "--work-tree" || strings.HasPrefix(w[i], "--git-dir=") || strings.HasPrefix(w[i], "--work-tree="):
@@ -69,7 +71,7 @@ func gitCalls(text, dir string, depth int) []gitCall {
 	}
 	for _, segment := range segments(text) {
 		if words, expands := split(segment); len(words) > 0 {
-			unwrap(call{words: words, expands: expands}, v)
+			unwrap(ctx, call{words: words, expands: expands}, v)
 		}
 	}
 	return out
@@ -77,8 +79,8 @@ func gitCalls(text, dir string, depth int) []gitCall {
 
 // toplevel is the top level of the worktree dir is in, free of symlinks,
 // or "".
-func toplevel(dir string) string {
-	top, ok := gitState{dir: dir}.run("rev-parse", "--show-toplevel")
+func toplevel(ctx context.Context, dir string) string {
+	top, ok := gitState{dir: dir}.run(ctx, "rev-parse", "--show-toplevel")
 	if !ok {
 		return ""
 	}
@@ -169,7 +171,7 @@ func newBranch(g gitCall) (name, start string, switched bool) {
 }
 
 // newWorktree is the worktree a `git worktree add` made, or "".
-func newWorktree(g gitCall) string {
+func newWorktree(ctx context.Context, g gitCall) string {
 	if g.sub != "worktree" || len(g.args) < 2 || g.args[0] != "add" {
 		return ""
 	}
@@ -178,7 +180,7 @@ func newWorktree(g gitCall) string {
 		switch a := g.args[i]; {
 		case a == "--":
 			if i+1 < len(g.args) {
-				return expandPath(g.args[i+1], g.dir)
+				return expandPath(ctx, g.args[i+1], g.dir)
 			}
 			return ""
 		case strings.HasPrefix(a, "-"):
@@ -186,7 +188,7 @@ func newWorktree(g gitCall) string {
 				i++
 			}
 		default:
-			return expandPath(a, g.dir)
+			return expandPath(ctx, a, g.dir)
 		}
 	}
 	return ""
@@ -199,23 +201,23 @@ func newWorktree(g gitCall) string {
 // (plans.Config.RecordCommit). A commit, branch or pull request recorded
 // links the plan to the plans that hard evidence relates it to
 // (plans.Config.LinkEvidence). Every failure leaves the plan as it was.
-func recordFacts(session, cwd, command string, texts []string, now time.Time) (context []string) {
-	c, err := plans.Load()
+func recordFacts(ctx context.Context, session, cwd, command string, texts []string, now time.Time) (context []string) {
+	c, err := plans.Load(env.From(ctx))
 	if err != nil {
 		return nil
 	}
 	at := func(dir string) (plans.Plan, string, bool) {
 		top := ""
 		if dir != "" {
-			top = toplevel(dir)
+			top = toplevel(ctx, dir)
 		}
-		return c.Locate(session, top)
+		return c.Locate(ctx, session, top)
 	}
 	output := strings.Join(texts, "\n")
-	for _, g := range gitCalls(command, cwd, 0) {
+	for _, g := range gitCalls(ctx, command, cwd, 0) {
 		if g.sub == "commit" {
 			for _, m := range summaryLine.FindAllStringSubmatch(output, -1) {
-				if _, ok := (gitState{dir: g.dir}).run("cat-file", "-e", m[2]+"^{commit}"); !ok {
+				if _, ok := (gitState{dir: g.dir}).run(ctx, "cat-file", "-e", m[2]+"^{commit}"); !ok {
 					continue
 				}
 				branch := m[1]
@@ -226,16 +228,16 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 				if strings.ContainsAny(who, " \t\r\n") {
 					who = ""
 				}
-				top := toplevel(g.dir)
+				top := toplevel(ctx, g.dir)
 				e := plans.Event{Branch: branch, Commit: m[3], Summary: m[3], Worktree: top}
-				if identity, err := plans.CommitIdentity(top, m[2]); err == nil {
+				if identity, err := plans.CommitIdentity(ctx, top, m[2]); err == nil {
 					e.Repository, e.Revision = identity.Repository, identity.Revision
 				}
-				p, created, err := c.RecordCommit(who, top, e, now)
+				p, created, err := c.RecordCommit(ctx, who, top, e, now)
 				if err != nil {
 					continue
 				}
-				c.LinkEvidence(p.File(), now)
+				c.LinkEvidence(ctx, p.File(), now)
 				if created {
 					context = append(context, fmt.Sprintf("No plan named this session or worktree, so %s was made for this commit. "+
 						"Write its goal and steps with `agent-plan section` and `agent-plan step` as the plan-work skill says, or, if the work belongs to another plan, say so in your report.", p.File()))
@@ -253,8 +255,8 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 			continue
 		}
 		state := gitState{dir: g.dir}
-		if path := newWorktree(g); path != "" {
-			if real, err := filepath.EvalSymlinks(path); err == nil && toplevel(real) == real {
+		if path := newWorktree(ctx, g); path != "" {
+			if real, err := filepath.EvalSymlinks(path); err == nil && toplevel(ctx, real) == real {
 				if p, part, ok := at(g.dir); ok {
 					p.AddToProperty(part, "WORKTREES", real, now)
 				}
@@ -265,18 +267,18 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 			continue
 		}
 		if switched {
-			if current, _ := state.run("branch", "--show-current"); current != name {
+			if current, _ := state.run(ctx, "branch", "--show-current"); current != name {
 				continue
 			}
 			if start == "" {
-				start, _ = state.run("rev-parse", "--abbrev-ref", "@{-1}")
+				start, _ = state.run(ctx, "rev-parse", "--abbrev-ref", "@{-1}")
 			}
 		} else {
-			if _, ok := state.run("rev-parse", "--verify", "-q", "refs/heads/"+name); !ok {
+			if _, ok := state.run(ctx, "rev-parse", "--verify", "-q", "refs/heads/"+name); !ok {
 				continue
 			}
 			if start == "" {
-				start, _ = state.run("branch", "--show-current")
+				start, _ = state.run(ctx, "branch", "--show-current")
 			}
 		}
 		value := name
@@ -285,11 +287,11 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 		}
 		if p, part, ok := at(g.dir); ok {
 			if added, _ := p.AddToProperty(part, "BRANCHES", value, now); added {
-				c.LinkEvidence(p.File(), now)
+				c.LinkEvidence(ctx, p.File(), now)
 			}
 		}
 	}
-	who := pushers(command, 0)
+	who := pushers(ctx, command, 0)
 	if len(who) == 0 {
 		return
 	}
@@ -301,7 +303,7 @@ func recordFacts(session, cwd, command string, texts []string, now time.Time) (c
 		if url, isURL := result["url"].(string); isURL && result["pr"] != nil {
 			branch, _ := result["branch"].(string)
 			if added, _ := p.AddToProperty(part, "PULL_REQUESTS", url, now); added {
-				c.LinkEvidence(p.File(), now)
+				c.LinkEvidence(ctx, p.File(), now)
 			}
 			p.Record(part, plans.Event{Kind: "pushed", Branch: branch, Summary: "opened " + url}, now)
 			return

@@ -1,6 +1,7 @@
 package signpass
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
@@ -16,8 +18,9 @@ import (
 // Resume or Plan returned, in the plan whose log requested it (see
 // plans.RecordSign), and returns that plan's file. The exit status is the
 // one the command exits with: 0, 2 for a refusal, 1 for any other error.
-func Notify(id string, result any, err error, now time.Time) (string, error) {
-	c, lerr := plans.Load()
+// The plans are those the agent-tools config of ctx's Env names.
+func Notify(ctx context.Context, id string, result any, err error, now time.Time) (string, error) {
+	c, lerr := plans.Load(env.From(ctx))
 	if lerr != nil {
 		return "", lerr
 	}

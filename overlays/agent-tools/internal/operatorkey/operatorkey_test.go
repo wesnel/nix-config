@@ -1,6 +1,7 @@
 package operatorkey
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -9,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/refusal"
@@ -43,6 +44,7 @@ const operator = "0123456789ABCDEF0123456789ABCDEF01234567"
 // whose Unix socket the sandbox the tests may run in refuses, so a stand-in
 // for gpg in the profile prints the status gpg prints for each.
 func TestVerifyMarks(t *testing.T) {
+	t.Parallel()
 	valid := func(fpr string) string {
 		return "VALIDSIG " + fpr + " 2023-11-14 1700000000 0 4 0 22 8 00 " + fpr
 	}
@@ -61,7 +63,8 @@ func TestVerifyMarks(t *testing.T) {
 		{"expired key", []string{"EXPKEYSIG 89ABCDEF01234567 T <t@e>", valid(operator)}, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			stub := pgpProfile(t)
+			t.Parallel()
+			stub, ctx := pgpProfile(t)
 			script := "#!/bin/sh\necho '[GNUPG:] NEWSIG'\n"
 			for _, s := range c.status {
 				script += "echo '[GNUPG:] " + s + "'\n"
@@ -78,8 +81,8 @@ func TestVerifyMarks(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			base, tip := pgpRepo(t)
-			n, err := Verify(t.Context(), tip, []string{base})
+			ctx, base, tip := pgpRepo(t, ctx)
+			n, err := Verify(ctx, tip, []string{base})
 			if c.ok {
 				if err != nil || n != 1 {
 					t.Errorf("a good signature by the operator's key: %d, %v", n, err)
@@ -98,10 +101,11 @@ func TestVerifyMarks(t *testing.T) {
 	}
 }
 
+// Not parallel: it replaces defaultEnvProgram for the package.
 func TestVerifyEnvironmentProgram(t *testing.T) {
 	for _, name := range []string{"configured", "symlink", "missing"} {
 		t.Run(name, func(t *testing.T) {
-			stub := pgpProfile(t)
+			stub, ctx := pgpProfile(t)
 			script := "#!/bin/sh\n" +
 				"[ -z \"${OPERATOR_ENV_CANARY+x}\" ] || exit 1\n" +
 				"[ \"$HOME\" = \"$GNUPGHOME\" ] && [ \"$TMPDIR\" = \"$GNUPGHOME\" ] || exit 1\n" +
@@ -134,9 +138,9 @@ func TestVerifyEnvironmentProgram(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			t.Setenv("OPERATOR_ENV_CANARY", "inherited")
-			base, tip := pgpRepo(t)
-			n, err := Verify(t.Context(), tip, []string{base})
+			ctx = env.With(ctx, env.From(ctx).Set("OPERATOR_ENV_CANARY=inherited"))
+			ctx, base, tip := pgpRepo(t, ctx)
+			n, err := Verify(ctx, tip, []string{base})
 			if name == "missing" {
 				var r refusal.Refusal
 				if !errors.As(err, &r) || !strings.Contains(err.Error(), "protected environment program") {
@@ -155,8 +159,9 @@ func TestVerifyEnvironmentProgram(t *testing.T) {
 }
 
 // pgpProfile bakes in an OpenPGP operator profile for operator, verified by
-// the stand-in program it returns the path of, in the protected config home.
-func pgpProfile(t *testing.T) string {
+// the stand-in program it returns the path of, in the protected config home,
+// which the context it returns bakes in.
+func pgpProfile(t *testing.T) (string, context.Context) {
 	t.Helper()
 	home, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -180,13 +185,13 @@ func pgpProfile(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hostpaths.Bake(t, configHome, state)
-	return stub
+	return stub, env.With(t.Context(), env.Process().Set(hostpaths.TestBaked(configHome, state)...))
 }
 
 // pgpRepo is a repository with an unsigned base commit and, on it, tip, a
-// commit with an OpenPGP signature header; the package's git runs there.
-func pgpRepo(t *testing.T) (base, tip string) {
+// commit with an OpenPGP signature header; the package's git runs there
+// under the context it returns, ctx in that repository.
+func pgpRepo(t *testing.T, ctx context.Context) (_ context.Context, base, tip string) {
 	t.Helper()
 	repo := t.TempDir()
 	run := func(stdin string, args ...string) string {
@@ -208,7 +213,5 @@ func pgpRepo(t *testing.T) (base, tip string) {
 		"committer T <t@e> 1700000000 +0000\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n " +
 		"iHUEABYKAB0WIQQAAAAAAAAAAAAAAAAAAAAAAAAAAAUCZQAAAAAACgkQAAAAAAAAAAAA\n =AAAA\n -----END PGP SIGNATURE-----\n\nSigned\n"
 	tip = run(object, "hash-object", "-t", "commit", "-w", "--stdin")
-	git.Dir = repo
-	t.Cleanup(func() { git.Dir = "" })
-	return base, tip
+	return env.With(ctx, env.From(ctx).In(repo)), base, tip
 }

@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,7 +43,7 @@ func (f *fakeStacks) chains(numbers []int) bool {
 	return true
 }
 
-func (f *fakeStacks) rest(method, path string, body, out any) error {
+func (f *fakeStacks) rest(_ context.Context, method, path string, body, out any) error {
 	f.writes = append(f.writes, method+" "+path)
 	if f.conflicts > 0 {
 		f.conflicts--
@@ -96,7 +97,7 @@ func (f *fakeStacks) stackOf(number int) int {
 	return 0
 }
 
-func (f *fakeStacks) graphQL(query string, vars map[string]any, out any) error {
+func (f *fakeStacks) graphQL(_ context.Context, query string, vars map[string]any, out any) error {
 	var data any
 	switch {
 	case strings.Contains(query, "viewer { login }"):
@@ -144,8 +145,6 @@ func (f *fakeStacks) graphQL(query string, vars map[string]any, out any) error {
 // not stacked; 8 (g, on a); and 6 (x, on main) by josh.
 func stacksRepo(t *testing.T) *fakeStacks {
 	t.Helper()
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	dir := t.TempDir()
 	gitIn(t, dir, "init", "-q", "-b", "main")
 	gitIn(t, dir, "remote", "add", "origin", "https://github.com/o/r.git")
@@ -181,7 +180,7 @@ func refusedWell(err error) bool {
 func TestLink(t *testing.T) {
 	t.Run("onto the top of an existing stack", func(t *testing.T) {
 		f := stacksRepo(t)
-		got, err := Link([]string{"3", "d"})
+		got, err := Link(t.Context(), []string{"3", "d"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -198,7 +197,7 @@ func TestLink(t *testing.T) {
 		t.Run("again/"+strings.Join(args, " "), func(t *testing.T) {
 			f := stacksRepo(t)
 			f.stacks[10] = []int{1, 2, 3, 4}
-			got, err := Link(args)
+			got, err := Link(t.Context(), args)
 			if err != nil || len(f.writes) != 0 {
 				t.Errorf("again %v: %v, writes %v", args, err, f.writes)
 			} else if r := got.(map[string]any); r["stack"] != 10 || fmt.Sprint(r["added"]) != "[]" {
@@ -211,7 +210,7 @@ func TestLink(t *testing.T) {
 	t.Run("new stack after a 409", func(t *testing.T) {
 		f := stacksRepo(t)
 		f.conflicts = 1
-		if _, err := Link([]string{"5", "7"}); err != nil {
+		if _, err := Link(t.Context(), []string{"5", "7"}); err != nil {
 			t.Fatalf("after a 409: %v", err)
 		}
 		if s := f.stackOf(5); s == 0 || fmt.Sprint(f.stacks[s]) != "[5 7]" || len(f.writes) != 2 {
@@ -230,7 +229,7 @@ func TestLink(t *testing.T) {
 	} {
 		t.Run("refused/"+name, func(t *testing.T) {
 			f := stacksRepo(t)
-			if _, err := Link(args); !refusedWell(err) {
+			if _, err := Link(t.Context(), args); !refusedWell(err) {
 				t.Errorf("%s: %v", name, err)
 			}
 			if len(f.writes) != 0 {
@@ -243,7 +242,7 @@ func TestLink(t *testing.T) {
 	t.Run("GitHub's 422", func(t *testing.T) {
 		f := stacksRepo(t)
 		f.fail = &gh.StatusError{Code: 422}
-		if _, err := Link([]string{"5", "7"}); err == nil || refused(err) || len(f.writes) != 1 {
+		if _, err := Link(t.Context(), []string{"5", "7"}); err == nil || refused(err) || len(f.writes) != 1 {
 			t.Errorf("a 422: %v, writes %v", err, f.writes)
 		}
 	})
@@ -251,7 +250,7 @@ func TestLink(t *testing.T) {
 	t.Run("two 409s", func(t *testing.T) {
 		f := stacksRepo(t)
 		f.conflicts = 2
-		if _, err := Link([]string{"5", "7"}); err == nil || len(f.writes) != 2 {
+		if _, err := Link(t.Context(), []string{"5", "7"}); err == nil || len(f.writes) != 2 {
 			t.Errorf("two 409s: %v, writes %v", err, f.writes)
 		}
 	})
@@ -266,7 +265,7 @@ func TestStackOpened(t *testing.T) {
 		repo := &Repo{Slug: "o/r", Default: "main", Viewer: "me"}
 		return func(n int, head, base string) map[string]any {
 			f.prs[n] = &fakeStackPR{head: head, base: base, author: "me", state: "OPEN", draft: true}
-			return stackOpened(repo, head, base, n)
+			return stackOpened(context.Background(), repo, head, base, n)
 		}
 	}
 
@@ -316,7 +315,7 @@ func TestStack(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			stacksRepo(t)
-			got, err := Stack(arg)
+			got, err := Stack(t.Context(), arg)
 			if err != nil {
 				t.Fatalf("stack %q: %v", arg, err)
 			}
@@ -338,7 +337,7 @@ func TestStack(t *testing.T) {
 
 	t.Run("unstacked PR", func(t *testing.T) {
 		stacksRepo(t)
-		got, err := Stack("c")
+		got, err := Stack(t.Context(), "c")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -350,7 +349,7 @@ func TestStack(t *testing.T) {
 	for _, arg := range []string{"6", "x", "99"} {
 		t.Run("refused/"+arg, func(t *testing.T) {
 			stacksRepo(t)
-			if _, err := Stack(arg); !refused(err) || !refusal.SaysInstead(err.Error()) {
+			if _, err := Stack(t.Context(), arg); !refused(err) || !refusal.SaysInstead(err.Error()) {
 				t.Errorf("stack %q: %v", arg, err)
 			}
 		})

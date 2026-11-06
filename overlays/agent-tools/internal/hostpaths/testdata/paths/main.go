@@ -4,11 +4,13 @@ package main
 import (
 	"fmt"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
 func main() {
-	fmt.Println(hostpaths.ConfigHome())
-	fmt.Println(hostpaths.StateHome())
-	fmt.Println(hostpaths.ConfigFile("AGENT_TOOLS_CONFIG", "agent-tools/config.json"))
+	e := env.Process()
+	fmt.Println(hostpaths.ConfigHome(e))
+	fmt.Println(hostpaths.StateHome(e))
+	fmt.Println(hostpaths.ConfigFile(e, "AGENT_TOOLS_CONFIG", "agent-tools/config.json"))
 }

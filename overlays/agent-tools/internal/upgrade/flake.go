@@ -309,11 +309,12 @@ func flakePins(file string, old, next []byte) []Pin {
 // the flake.lock beside it, which CI holds to it (--no-update-lock-file):
 // where that lock's pins move, or the flake may set nixConfig, which no
 // lock records, the change is one flakeNixPin, its diff read whole;
-// otherwise it is the Nix file it also is, as nixPins reads one.
-func flakeNixPins(top, base, tip, file, old, next string) []Pin {
+// otherwise it is the Nix file it also is, as nixPins reads one. g runs
+// git.
+func flakeNixPins(g git.Where, top, base, tip, file, old, next string) []Pin {
 	lock := path.Join(path.Dir(file), "flake.lock")
-	lockOld, _ := git.Bytes(nil, "-C", top, "cat-file", "blob", base+":"+lock)
-	lockNext, _ := git.Bytes(nil, "-C", top, "cat-file", "blob", tip+":"+lock)
+	lockOld, _ := g.Bytes(nil, "-C", top, "cat-file", "blob", base+":"+lock)
+	lockNext, _ := g.Bytes(nil, "-C", top, "cat-file", "blob", tip+":"+lock)
 	if pinscan.FlakeConfigured(old, next) || len(flakePins(lock, lockOld, lockNext)) > 0 {
 		return flakeNixPin(file, old, next)
 	}

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/guard"
 	quota "github.com/wesnel/agent-tools/internal/usage"
 )
@@ -34,7 +35,7 @@ var stopAllows = []string{"Read", "Grep", "Glob", "ToolSearch", "Skill", "AskUse
 // codexQuotaStop says, and exits 2 where Claude Code's exits 1: Codex runs
 // a tool whose hook exits 1, and blocks one whose hook exits 2 with a
 // reason on stderr.
-func quotaStop(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func quotaStop(e env.Env, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("agent-plan quota-stop", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	harness := flags.String("harness", "claude", "")
@@ -67,13 +68,13 @@ func quotaStop(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	json.Unmarshal(readAll(stdin), &in)
 	if codex {
-		return codexQuotaStop(in.Tool, in.Input.Command, in.AgentID != "", *threshold, stdout, stderr)
+		return codexQuotaStop(e, in.Tool, in.Input.Command, in.AgentID != "", *threshold, stdout, stderr)
 	}
 	if slices.Contains(stopAllows, in.Tool) || in.Tool == "Bash" && guard.ExcludedAlone(in.Input.Command, []string{"agent-plan"}) {
 		return 0
 	}
 	now := time.Now()
-	w, over := quota.Over(quota.Load(quota.File()), float64(*threshold), now)
+	w, over := quota.Over(quota.Load(quota.File(e)), float64(*threshold), now)
 	if !over {
 		return 0
 	}
@@ -121,12 +122,12 @@ var codexStopAllows = []string{"update_plan", "request_user_input", "wait_agent"
 // in quota.CodexFile. Codex has no tool that schedules a later turn, so
 // the refusal tells the session to end its turn for the operator to resume
 // it after the reset, and a sub-agent to end its turn with its report.
-func codexQuotaStop(tool, command string, subagent bool, threshold int, stdout, stderr io.Writer) int {
+func codexQuotaStop(e env.Env, tool, command string, subagent bool, threshold int, stdout, stderr io.Writer) int {
 	if slices.Contains(codexStopAllows, tool) || tool == "Bash" && guard.ExcludedAlone(command, []string{"agent-plan"}) {
 		return 0
 	}
 	now := time.Now()
-	w, over := quota.Over(quota.Load(quota.CodexFile()), float64(threshold), now)
+	w, over := quota.Over(quota.Load(quota.CodexFile(e)), float64(threshold), now)
 	if !over {
 		return 0
 	}

@@ -3,6 +3,7 @@ package gh
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/wesnel/agent-tools/internal/env"
 )
 
 // api is where every call goes, with the user's token: GitHub's API, or a
@@ -39,18 +42,26 @@ var (
 	client    = &http.Client{Timeout: 2 * time.Minute}
 )
 
-// Token is $GH_TOKEN, $GITHUB_TOKEN, or what `gh auth token` prints.
-func Token() (string, error) {
-	tokenOnce.Do(func() {
-		for _, name := range []string{"GH_TOKEN", "GITHUB_TOKEN"} {
-			if v := os.Getenv(name); v != "" {
-				token = v
-				return
-			}
+// Command is gh with args, killed when ctx is done, run in Outside with the
+// variables of ctx's Env and the gh its $PATH finds.
+func Command(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := env.Command(ctx, "gh", args...)
+	cmd.Dir = Outside
+	return cmd
+}
+
+// Token is $GH_TOKEN or $GITHUB_TOKEN of ctx's Env, or else what `gh auth
+// token` prints, run once in this process, with the Env of the first ctx
+// that needs it.
+func Token(ctx context.Context) (string, error) {
+	e := env.From(ctx)
+	for _, name := range []string{"GH_TOKEN", "GITHUB_TOKEN"} {
+		if v := e.Get(name); v != "" {
+			return v, nil
 		}
-		cmd := exec.Command("gh", "auth", "token")
-		cmd.Dir = Outside
-		out, err := cmd.Output()
+	}
+	tokenOnce.Do(func() {
+		out, err := Command(ctx, "auth", "token").Output()
 		if err != nil {
 			tokenErr = fmt.Errorf("no GitHub login: `gh auth token` failed: %w", err)
 			return
@@ -64,8 +75,8 @@ func Token() (string, error) {
 // for.
 const defaultVersion = "2022-11-28"
 
-func do(method, url string, body any, accept, version string, transport *http.Client, limit int64) ([]byte, error) {
-	tok, err := Token()
+func do(ctx context.Context, method, url string, body any, accept, version string, transport *http.Client, limit int64) ([]byte, error) {
+	tok, err := Token(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -127,15 +138,16 @@ func Slug(url string) string {
 	return ""
 }
 
-// REST sends a JSON body (nil for none) and decodes the reply into out (nil to discard).
-func REST(method, path string, body, out any) error {
-	return RESTVersion(defaultVersion, method, path, body, out)
+// REST sends a JSON body (nil for none) and decodes the reply into out (nil
+// to discard). Every call here authenticates with Token(ctx).
+func REST(ctx context.Context, method, path string, body, out any) error {
+	return RESTVersion(ctx, defaultVersion, method, path, body, out)
 }
 
 // RESTVersion is REST for an endpoint GitHub serves only under a later API
 // version, named in GitHub's documentation of the endpoint.
-func RESTVersion(version, method, path string, body, out any) error {
-	data, err := do(method, api+"/"+strings.TrimPrefix(path, "/"), body, "application/vnd.github+json", version, client, 0)
+func RESTVersion(ctx context.Context, version, method, path string, body, out any) error {
+	data, err := do(ctx, method, api+"/"+strings.TrimPrefix(path, "/"), body, "application/vnd.github+json", version, client, 0)
 	if err != nil || out == nil || len(data) == 0 {
 		return err
 	}
@@ -143,21 +155,21 @@ func RESTVersion(version, method, path string, body, out any) error {
 }
 
 // Raw returns a GET response body as is, following redirects.
-func Raw(path string) ([]byte, error) {
-	return do("GET", api+"/"+strings.TrimPrefix(path, "/"), nil, "application/vnd.github+json", defaultVersion, client, 0)
+func Raw(ctx context.Context, path string) ([]byte, error) {
+	return do(ctx, "GET", api+"/"+strings.TrimPrefix(path, "/"), nil, "application/vnd.github+json", defaultVersion, client, 0)
 }
 
 // Read returns at most 16 MiB from an API path, refusing redirects and
 // oversized responses instead of following URLs or returning partial content.
-func Read(path, accept string) ([]byte, error) {
+func Read(ctx context.Context, path, accept string) ([]byte, error) {
 	transport := *client
 	transport.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return do("GET", api+"/"+strings.TrimPrefix(path, "/"), nil, accept, defaultVersion, &transport, 16<<20)
+	return do(ctx, "GET", api+"/"+strings.TrimPrefix(path, "/"), nil, accept, defaultVersion, &transport, 16<<20)
 }
 
 // GraphQL runs a query and decodes its data into out.
-func GraphQL(query string, variables map[string]any, out any) error {
-	data, err := do("POST", api+"/graphql", map[string]any{"query": query, "variables": variables}, "application/json", defaultVersion, client, 0)
+func GraphQL(ctx context.Context, query string, variables map[string]any, out any) error {
+	data, err := do(ctx, "POST", api+"/graphql", map[string]any{"query": query, "variables": variables}, "application/json", defaultVersion, client, 0)
 	if err != nil {
 		return err
 	}

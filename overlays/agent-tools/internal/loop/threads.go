@@ -1,11 +1,13 @@
 package loop
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/record"
 )
@@ -61,7 +63,7 @@ const commentFields = `totalCount pageInfo { hasNextPage endCursor } nodes { aut
 // comments reads every comment of thread id, from first, its first page,
 // on: a thread read in part could hide a person's comment, so a page that
 // fails, or a count that differs from GitHub's total, is an error.
-func comments(id string, first commentPage) ([]ThreadComment, error) {
+func comments(ctx context.Context, id string, first commentPage) ([]ThreadComment, error) {
 	var out []ThreadComment
 	page := first
 	for {
@@ -78,7 +80,7 @@ func comments(id string, first commentPage) ([]ThreadComment, error) {
 		var data struct {
 			Node *struct{ Comments commentPage }
 		}
-		err := graphQL(`query($id: ID!, $after: String) { node(id: $id) { ... on PullRequestReviewThread {
+		err := graphQL(ctx, `query($id: ID!, $after: String) { node(id: $id) { ... on PullRequestReviewThread {
 			comments(first: 100, after: $after) { `+commentFields+` } } } }`,
 			map[string]any{"id": id, "after": page.PageInfo.EndCursor}, &data)
 		if err != nil {
@@ -104,12 +106,12 @@ func isBot(bots []*Bot, c ThreadComment) bool {
 // Threads lists a PR's unresolved review threads (all of them with all),
 // and writes every thread, resolved or not, with every comment, to the PR's
 // review record (internal/record), keeping the drafts the record holds.
-func Threads(number int, all bool) (any, error) {
-	repo, err := repository()
+func Threads(ctx context.Context, number int, all bool) (any, error) {
+	repo, err := repository(ctx)
 	if err != nil {
 		return nil, err
 	}
-	threads, err := RefreshThreads(repo.Slug, number)
+	threads, err := RefreshThreads(ctx, repo.Slug, number)
 	if err != nil {
 		return nil, err
 	}
@@ -124,9 +126,10 @@ func Threads(number int, all bool) (any, error) {
 
 // RefreshThreads reads every review thread of pull request number of slug,
 // owner/name, with every comment, and writes them to the PR's review record
-// as Threads does. git delegate refreshes a pull request's record with it.
-func RefreshThreads(slug string, number int) ([]Thread, error) {
-	bots, err := botsFor(slug)
+// as Threads does, in the record directory and with the bots of ctx's Env.
+// git delegate refreshes a pull request's record with it.
+func RefreshThreads(ctx context.Context, slug string, number int) ([]Thread, error) {
+	bots, err := botsFor(ctx, slug)
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +157,7 @@ func RefreshThreads(slug string, number int) ([]Thread, error) {
 				}
 			}
 		}
-		err := graphQL(`query($owner: String!, $name: String!, $number: Int!, $after: String) {
+		err := graphQL(ctx, `query($owner: String!, $name: String!, $number: Int!, $after: String) {
 			repository(owner: $owner, name: $name) { pullRequest(number: $number) {
 				reviewThreads(first: 50, after: $after) {
 					pageInfo { hasNextPage endCursor }
@@ -168,7 +171,7 @@ func RefreshThreads(slug string, number int) ([]Thread, error) {
 		page := data.Repository.PullRequest.ReviewThreads
 		for _, t := range page.Nodes {
 			thread := Thread{ID: t.ID, Path: t.Path, Line: t.Line, Outdated: t.IsOutdated, Resolved: t.IsResolved, Reviewer: "human"}
-			if thread.Comments, err = comments(t.ID, t.Comments); err != nil {
+			if thread.Comments, err = comments(ctx, t.ID, t.Comments); err != nil {
 				return nil, err
 			}
 			if len(thread.Comments) > 0 && isBot(bots, thread.Comments[0]) {
@@ -182,7 +185,7 @@ func RefreshThreads(slug string, number int) ([]Thread, error) {
 		next := page.PageInfo.EndCursor
 		cursor = &next
 	}
-	if err := writeThreads(&Repo{Slug: slug}, number, threads); err != nil {
+	if err := writeThreads(ctx, &Repo{Slug: slug}, number, threads); err != nil {
 		return nil, err
 	}
 	return threads, nil
@@ -193,8 +196,8 @@ var unsafeLogin = regexp.MustCompile(`[^A-Za-z0-9_.-]`)
 
 // writeThreads replaces the threads in PR number's record with threads,
 // keeping each one's draft.
-func writeThreads(repo *Repo, number int, threads []Thread) error {
-	path, err := prFile(repo, number)
+func writeThreads(ctx context.Context, repo *Repo, number int, threads []Thread) error {
+	path, err := prFile(ctx, repo, number)
 	if err != nil {
 		return err
 	}
@@ -224,9 +227,11 @@ func writeThreads(repo *Repo, number int, threads []Thread) error {
 	})
 }
 
-func prFile(repo *Repo, number int) (string, error) {
+// prFile is PR number's record in repo, under the state directory of ctx's
+// Env.
+func prFile(ctx context.Context, repo *Repo, number int) (string, error) {
 	owner, name, _ := strings.Cut(repo.Slug, "/")
-	return record.PRFile(owner, name, number)
+	return record.PRFile(env.From(ctx), owner, name, number)
 }
 
 // threadPolicy decides which review threads may be answered: only those on
@@ -241,8 +246,8 @@ type threadPolicy struct {
 	loaded  bool
 }
 
-func newThreadPolicy() (*threadPolicy, error) {
-	repo, err := repository()
+func newThreadPolicy(ctx context.Context) (*threadPolicy, error) {
+	repo, err := repository(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +264,7 @@ type threadCheck struct {
 
 // read reads thread id with every comment, refusing one that is not on an
 // open PR by the authenticated user in this repository.
-func (p *threadPolicy) read(id string) (*threadCheck, error) {
+func (p *threadPolicy) read(ctx context.Context, id string) (*threadCheck, error) {
 	var data struct {
 		Node *struct {
 			IsResolved  bool
@@ -272,7 +277,7 @@ func (p *threadPolicy) read(id string) (*threadCheck, error) {
 			Comments commentPage
 		}
 	}
-	err := graphQL(`query($id: ID!) { node(id: $id) { ... on PullRequestReviewThread {
+	err := graphQL(ctx, `query($id: ID!) { node(id: $id) { ... on PullRequestReviewThread {
 		isResolved
 		pullRequest { number state author { login } repository { nameWithOwner } }
 		comments(first: 100) { `+commentFields+` }
@@ -290,7 +295,7 @@ func (p *threadPolicy) read(id string) (*threadCheck, error) {
 	case pr.State != "OPEN" || pr.Author.Login != p.repo.Viewer:
 		return nil, refuse("#%d is not an open pull request by %s, which pr-loop never writes to; leave it to the operator", pr.Number, p.repo.Viewer)
 	}
-	all, err := comments(id, data.Node.Comments)
+	all, err := comments(ctx, id, data.Node.Comments)
 	if err != nil {
 		return nil, err
 	}
@@ -299,14 +304,14 @@ func (p *threadPolicy) read(id string) (*threadCheck, error) {
 
 // check is read, refusing a thread with a comment by anyone but a
 // configured bot and the authenticated user.
-func (p *threadPolicy) check(id string) (*threadCheck, error) {
-	thread, err := p.read(id)
+func (p *threadPolicy) check(ctx context.Context, id string) (*threadCheck, error) {
+	thread, err := p.read(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if !p.loaded {
 		p.loaded = true
-		p.bots, p.botsErr = botsFor(p.repo.Slug)
+		p.bots, p.botsErr = botsFor(ctx, p.repo.Slug)
 	}
 	if p.botsErr != nil {
 		return nil, p.botsErr
@@ -322,11 +327,11 @@ func (p *threadPolicy) check(id string) (*threadCheck, error) {
 }
 
 // postReply replies in thread id, on PR pr, and logs the reply.
-func postReply(pr int, id, body string) (string, error) {
+func postReply(ctx context.Context, pr int, id, body string) (string, error) {
 	var data struct {
 		AddPullRequestReviewThreadReply struct{ Comment struct{ URL string } }
 	}
-	err := graphQL(`mutation($input: AddPullRequestReviewThreadReplyInput!) {
+	err := graphQL(ctx, `mutation($input: AddPullRequestReviewThreadReplyInput!) {
 		addPullRequestReviewThreadReply(input: $input) { comment { url } } }`,
 		map[string]any{"input": map[string]any{"pullRequestReviewThreadId": id, "body": body}}, &data)
 	if err == nil {
@@ -336,8 +341,8 @@ func postReply(pr int, id, body string) (string, error) {
 }
 
 // resolveThread resolves thread id, on PR pr, and logs it.
-func resolveThread(pr int, id string) error {
-	err := graphQL(`mutation($id: ID!) { resolveReviewThread(input: { threadId: $id }) { thread { isResolved } } }`,
+func resolveThread(ctx context.Context, pr int, id string) error {
+	err := graphQL(ctx, `mutation($id: ID!) { resolveReviewThread(input: { threadId: $id }) { thread { isResolved } } }`,
 		map[string]any{"id": id}, nil)
 	if err == nil {
 		logEvent(plans.Event{Kind: "resolved", Summary: fmt.Sprintf("thread %s on #%d", id, pr)})
@@ -347,29 +352,29 @@ func resolveThread(pr int, id string) error {
 
 // Reply posts body inside a review thread the policy allows, in a
 // bots-mode loop.
-func Reply(id, body string) (any, error) {
-	if err := requireMode("reply", "bots"); err != nil {
+func Reply(ctx context.Context, id, body string) (any, error) {
+	if err := requireMode(ctx, "reply", "bots"); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(body) == "" {
 		return nil, refuse("the reply is empty; pass its text with `--body-file FILE`, or on stdin with `--body-file -`")
 	}
-	policy, err := newThreadPolicy()
+	policy, err := newThreadPolicy(ctx)
 	if err != nil {
 		return nil, err
 	}
-	check, err := policy.check(id)
+	check, err := policy.check(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	threads, err := prThreads(policy.repo.Slug, check.pr)
+	threads, err := prThreads(ctx, policy.repo.Slug, check.pr)
 	if err != nil {
 		return nil, err
 	}
 	if err := checkPublic("the reply", body, append(threads, id), "run `pr-loop reply` again"); err != nil {
 		return nil, err
 	}
-	url, err := postReply(check.pr, id, body)
+	url, err := postReply(ctx, check.pr, id, body)
 	if err != nil {
 		return nil, err
 	}
@@ -378,12 +383,12 @@ func Reply(id, body string) (any, error) {
 
 // Resolve resolves a thread the policy allows, once its last comment is the
 // user's reply, so no thread is closed without an answer.
-func Resolve(id string) (any, error) {
-	policy, err := newThreadPolicy()
+func Resolve(ctx context.Context, id string) (any, error) {
+	policy, err := newThreadPolicy(ctx)
 	if err != nil {
 		return nil, err
 	}
-	check, err := policy.check(id)
+	check, err := policy.check(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -391,7 +396,7 @@ func Resolve(id string) (any, error) {
 		return nil, refuse("the last comment in %s is from %s, so it has no answer yet; reply with `pr-loop reply %s` before resolving",
 			id, check.lastAuthor, id)
 	}
-	if err := resolveThread(check.pr, id); err != nil {
+	if err := resolveThread(ctx, check.pr, id); err != nil {
 		return nil, err
 	}
 	return map[string]string{"resolved": id}, nil

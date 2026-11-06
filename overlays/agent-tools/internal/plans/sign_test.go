@@ -25,7 +25,7 @@ func TestRequestSign(t *testing.T) {
 		if _, err := p.SetOwner(worktree, "builder", day); err != nil {
 			t.Fatal(err)
 		}
-		id, err := c.RequestSign(SignRequest{Session: "new-session", Worktree: worktree, Branches: []string{"loop"}}, day)
+		id, err := c.RequestSign(t.Context(), SignRequest{Session: "new-session", Worktree: worktree, Branches: []string{"loop"}}, day)
 		if err != nil || !strings.HasPrefix(id, p.Name+".") {
 			t.Fatalf("ownership-only request: %q, %v", id, err)
 		}
@@ -41,14 +41,14 @@ func TestRequestSign(t *testing.T) {
 
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
-	id, err := c.RequestSign(SignRequest{Session: "abc", Branches: []string{"loop", "flag"}}, day)
+	id, err := c.RequestSign(t.Context(), SignRequest{Session: "abc", Branches: []string{"loop", "flag"}}, day)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(id, p.Name+".") || !signID.MatchString(id) {
 		t.Errorf("ID %q does not name plan %s", id, p.Name)
 	}
-	again, _ := c.RequestSign(SignRequest{Session: "abc"}, day)
+	again, _ := c.RequestSign(t.Context(), SignRequest{Session: "abc"}, day)
 	if again == id {
 		t.Errorf("two requests share ID %q", id)
 	}
@@ -59,13 +59,13 @@ func TestRequestSign(t *testing.T) {
 		}
 	}
 
-	_, err = c.RequestSign(SignRequest{Session: "zzz", Worktree: "/elsewhere"}, day)
+	_, err = c.RequestSign(t.Context(), SignRequest{Session: "zzz", Worktree: "/elsewhere"}, day)
 	isRefusal(t, "a session with no plan", err)
-	_, err = c.RequestSign(SignRequest{Worktree: "/w/loop"}, day)
+	_, err = c.RequestSign(t.Context(), SignRequest{Worktree: "/w/loop"}, day)
 	isRefusal(t, "no session", err)
-	_, err = c.RequestSign(SignRequest{Session: "abc", Worktree: "w/loop"}, day)
+	_, err = c.RequestSign(t.Context(), SignRequest{Session: "abc", Worktree: "w/loop"}, day)
 	isRefusal(t, "a relative worktree", err)
-	_, err = c.RequestSign(SignRequest{Session: "abc", Worktree: "/w/loop", Base: "two words"}, day)
+	_, err = c.RequestSign(t.Context(), SignRequest{Session: "abc", Worktree: "/w/loop", Base: "two words"}, day)
 	isRefusal(t, "a base with a space", err)
 }
 
@@ -80,15 +80,15 @@ func testRequestSignPlan(t *testing.T) {
 			if out, err := exec.Command("git", "-C", worktree, "init", "-q", "-b", "topic").CombinedOutput(); err != nil {
 				t.Fatalf("git init: %v %s", err, out)
 			}
-			selected, err := c.New(NewOptions{Title: "Selected", Slug: "selected"}, day)
+			selected, err := c.New(t.Context(), NewOptions{Title: "Selected", Slug: "selected"}, day)
 			if err != nil {
 				t.Fatal(err)
 			}
-			implicit, err := c.New(NewOptions{Title: "Implicit", Slug: "implicit", Sessions: []string{"codex:handoff"}, Worktrees: []string{worktree}}, day)
+			implicit, err := c.New(t.Context(), NewOptions{Title: "Implicit", Slug: "implicit", Sessions: []string{"codex:handoff"}, Worktrees: []string{worktree}}, day)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if picked, _, ok := c.Locate("codex:handoff", worktree); !ok || picked.Name != implicit.ID {
+			if picked, _, ok := c.Locate(t.Context(), "codex:handoff", worktree); !ok || picked.Name != implicit.ID {
 				t.Fatalf("fixture has no competing located plan: %+v, %v", picked, ok)
 			}
 			target := selected.Plan
@@ -100,7 +100,7 @@ func testRequestSignPlan(t *testing.T) {
 			case "foreign host":
 				foreign := c
 				foreign.Host = "away"
-				made, err := foreign.New(NewOptions{Title: "Foreign", Slug: "foreign"}, day)
+				made, err := foreign.New(t.Context(), NewOptions{Title: "Foreign", Slug: "foreign"}, day)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -108,7 +108,7 @@ func testRequestSignPlan(t *testing.T) {
 			case "missing":
 				target = filepath.Join(c.Dir, "missing.box.org")
 			case "outside", "symlink outside":
-				made, err := testConfig(t).New(NewOptions{Title: "Outside", Slug: "outside"}, day)
+				made, err := testConfig(t).New(t.Context(), NewOptions{Title: "Outside", Slug: "outside"}, day)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -140,7 +140,7 @@ func testRequestSignPlan(t *testing.T) {
 				}
 				before[file] = string(data)
 			}
-			id, err := c.RequestSign(SignRequest{Plan: target, Session: "codex:handoff", Worktree: worktree,
+			id, err := c.RequestSign(t.Context(), SignRequest{Plan: target, Session: "codex:handoff", Worktree: worktree,
 				Branches: []string{"topic", "other"}, Base: "parent-feature"}, day)
 			if refused {
 				if id != "" || err == nil {
@@ -193,11 +193,11 @@ func testRequestSignPlan(t *testing.T) {
 func TestRequestSignWhere(t *testing.T) {
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
-	if _, err := c.RequestSign(SignRequest{Session: "abc", Worktree: "/w/loop", Branches: []string{"loop"}, Base: "diagrams"}, day); err != nil {
+	if _, err := c.RequestSign(t.Context(), SignRequest{Session: "abc", Worktree: "/w/loop", Branches: []string{"loop"}, Base: "diagrams"}, day); err != nil {
 		t.Fatal(err)
 	}
 	for _, base := range []string{"main", "origin/main", "refs/heads/main", "refs/remotes/origin/main"} {
-		if _, err := c.RequestSign(SignRequest{Session: "abc", Worktree: "/w/loop", Branches: []string{"loop"}, Base: base}, day); err != nil {
+		if _, err := c.RequestSign(t.Context(), SignRequest{Session: "abc", Worktree: "/w/loop", Branches: []string{"loop"}, Base: base}, day); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -221,7 +221,7 @@ func TestRequestSignWhere(t *testing.T) {
 func TestRecordSign(t *testing.T) {
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
-	id, _ := c.RequestSign(SignRequest{Session: "abc", Branches: []string{"loop"}}, day)
+	id, _ := c.RequestSign(t.Context(), SignRequest{Session: "abc", Branches: []string{"loop"}}, day)
 	file, err := c.RecordSign(id, SignResult{Exit: 2, Summary: "this worktree has uncommitted changes"}, day)
 	if err != nil || file != p.File() {
 		t.Fatalf("record: %q %v", file, err)
@@ -252,7 +252,7 @@ func TestDeliverSigns(t *testing.T) {
 	t.Run("explicit unassociated plan", func(t *testing.T) {
 		c := testConfig(t)
 		implicit := newPlan(t, c, "implicit")
-		selected, err := c.New(NewOptions{Title: "Selected", Slug: "selected"}, day)
+		selected, err := c.New(t.Context(), NewOptions{Title: "Selected", Slug: "selected"}, day)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -260,7 +260,7 @@ func TestDeliverSigns(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		id, err := c.RequestSign(SignRequest{Plan: selected.Plan, Session: "abc"}, day)
+		id, err := c.RequestSign(t.Context(), SignRequest{Plan: selected.Plan, Session: "abc"}, day)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -283,7 +283,7 @@ func TestDeliverSigns(t *testing.T) {
 	})
 	c := testConfig(t)
 	p := newPlan(t, c, "x")
-	id, _ := c.RequestSign(SignRequest{Session: "abc", Branches: []string{"loop"}}, day)
+	id, _ := c.RequestSign(t.Context(), SignRequest{Session: "abc", Branches: []string{"loop"}}, day)
 	if got := c.DeliverSigns("abc", "", day); len(got) != 0 {
 		t.Fatalf("delivered before the pass finished: %+v", got)
 	}
@@ -321,7 +321,7 @@ func TestDeliverSigns(t *testing.T) {
 func TestDeliverStale(t *testing.T) {
 	c := testConfig(t)
 	newPlan(t, c, "x")
-	id, _ := c.RequestSign(SignRequest{Session: "abc"}, day)
+	id, _ := c.RequestSign(t.Context(), SignRequest{Session: "abc"}, day)
 	c.RecordSign(id, SignResult{Exit: 0, Summary: "1 signed"}, day)
 	got := c.DeliverSigns("abc", "", day.Add(25*time.Hour))
 	if len(got) != 1 || !got[0].Stale {
@@ -331,7 +331,7 @@ func TestDeliverStale(t *testing.T) {
 	if !strings.Contains(line, "stale") || !strings.Contains(line, "no follow-up") || !strings.Contains(line, "1 signed") {
 		t.Errorf("line %q", line)
 	}
-	id2, _ := c.RequestSign(SignRequest{Session: "abc"}, day)
+	id2, _ := c.RequestSign(t.Context(), SignRequest{Session: "abc"}, day)
 	c.RecordSign(id2, SignResult{Exit: 0, Summary: "1 signed"}, day)
 	if got := c.DeliverSigns("abc", "", day.Add(23*time.Hour)); len(got) != 1 || got[0].Stale {
 		t.Errorf("a result under a day old: %+v", got)
@@ -342,7 +342,7 @@ func TestDeliverStale(t *testing.T) {
 func TestDeliverSignsConcurrently(t *testing.T) {
 	c := testConfig(t)
 	newPlan(t, c, "x")
-	id, _ := c.RequestSign(SignRequest{Session: "abc"}, day)
+	id, _ := c.RequestSign(t.Context(), SignRequest{Session: "abc"}, day)
 	c.RecordSign(id, SignResult{Exit: 0, Summary: "1 signed"}, day)
 	var wg sync.WaitGroup
 	counts := make([]int, 16)
@@ -368,7 +368,7 @@ func TestDeliverSignsConcurrently(t *testing.T) {
 func TestSignResults(t *testing.T) {
 	c := testConfig(t)
 	newPlan(t, c, "x")
-	id, _ := c.RequestSign(SignRequest{Session: "abc"}, day)
+	id, _ := c.RequestSign(t.Context(), SignRequest{Session: "abc"}, day)
 	if got, err := c.SignResults(id, false, day); err != nil || len(got) != 0 {
 		t.Fatalf("before the pass: %+v %v", got, err)
 	}
@@ -416,12 +416,12 @@ func TestRemindSignResult(t *testing.T) {
 		t.Run(c2.name, func(t *testing.T) {
 			c := testConfig(t)
 			newPlan(t, c, "x")
-			id, err := c.RequestSign(SignRequest{Session: "abc", Branches: []string{"loop"}}, time.Now())
+			id, err := c.RequestSign(t.Context(), SignRequest{Session: "abc", Branches: []string{"loop"}}, time.Now())
 			if err != nil {
 				t.Fatal(err)
 			}
 			c.RecordSign(id, SignResult{Exit: 0, Summary: "1 signed; pushed loop"}, time.Now())
-			out := c.Remind(c2.event)
+			out := c.Remind(t.Context(), c2.event)
 			want := "sign-pass " + id + " signed: 1 signed; pushed loop"
 			var got struct {
 				Specific struct {
@@ -441,7 +441,7 @@ func TestRemindSignResult(t *testing.T) {
 					t.Errorf("want %s's additionalContext %q, got %s", c2.format, want, out)
 				}
 			}
-			if again := c.Remind(c2.event); len(again) != 0 {
+			if again := c.Remind(t.Context(), c2.event); len(again) != 0 {
 				t.Errorf("delivered twice: %s", again)
 			}
 		})

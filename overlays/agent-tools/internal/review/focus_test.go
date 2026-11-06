@@ -18,6 +18,7 @@ import (
 // the general contract split at its one "## Checks" line, then ROUTE.md;
 // and each focus's reviewer type to that agent.
 func TestFocusContracts(t *testing.T) {
+	t.Parallel()
 	const heading = "\n## Checks\n"
 	if n := strings.Count(Contract, heading); n != 1 {
 		t.Fatalf("reviewer.md has %d %q lines; the Nix split needs one", n, strings.TrimSpace(heading))
@@ -42,7 +43,7 @@ func TestFocusContracts(t *testing.T) {
 func TestFocusAgentNamed(t *testing.T) {
 	f := setUp(t, true)
 	f.config(t, map[string]any{})
-	code, _, stderr := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
+	code, _, stderr := f.runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
 	if code != 4 || !strings.Contains(stderr, "start a new `security-reviewer` sub-agent on what `git delegate --print-prompt "+
 		"--reviewer security") {
 		t.Errorf("exit %d\n%s", code, stderr)
@@ -100,7 +101,7 @@ func TestSecurityReviewer(t *testing.T) {
 	t.Run("checked", func(t *testing.T) {
 		f := setUp(t, true)
 		f.claudeSays(t, "security-reviewer", claudeResult(securityReply(finding), "Reviewed."))
-		code, run, stderr := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
+		code, run, stderr := f.runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
 		out := run.review("security")
 		if code != 3 || out.Focus != "security" || len(out.Findings) != 1 || out.Findings[0]["id"] != "security-1" ||
 			out.Findings[0]["kind"] != "vulnerability" || out.Findings[0]["finding"] != "F1" || len(run.Reviews) != 1 {
@@ -162,7 +163,7 @@ func TestSecurityReviewer(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			f := setUp(t, true)
 			f.claudeSays(t, "security-reviewer", c.outs...)
-			code, run, stderr := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
+			code, run, stderr := f.runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
 			if code != c.code {
 				t.Fatalf("exit %d, want %d\n%s", code, c.code, stderr)
 			}
@@ -192,11 +193,11 @@ func TestSecurityReviewer(t *testing.T) {
 		global, included := filepath.Join(dir, "gitconfig"), filepath.Join(dir, "included")
 		os.WriteFile(included, nil, 0o600)
 		run(t, dir, "git", "config", "--file", global, "include.path", included)
-		t.Setenv("GIT_CONFIG_GLOBAL", global)
-		t.Setenv("GIT_CONFIG_NOSYSTEM", "")
-		t.Setenv("FAKE_CLAUDE_DENY", included)
-		t.Setenv("FAKE_CLAUDE_RANGE", f.base+".."+f.tip)
-		code, run, stderr := runDelegate(t, "--reviewer", "security", "--reviewer", "guide", "--plan", f.plan, f.base+"..HEAD")
+		f.setenv("GIT_CONFIG_GLOBAL", global)
+		f.setenv("GIT_CONFIG_NOSYSTEM", "")
+		f.setenv("FAKE_CLAUDE_DENY", included)
+		f.setenv("FAKE_CLAUDE_RANGE", f.base+".."+f.tip)
+		code, run, stderr := f.runDelegate(t, "--reviewer", "security", "--reviewer", "guide", "--plan", f.plan, f.base+"..HEAD")
 		if code != 0 || run.review("security").Focus != "security" {
 			t.Fatalf("exit %d, %+v\n%s", code, run, stderr)
 		}
@@ -211,7 +212,7 @@ func TestSecurityReviewer(t *testing.T) {
 	t.Run("no delegate config", func(t *testing.T) {
 		f := setUp(t, true)
 		f.config(t, map[string]any{})
-		code, run, stderr := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
+		code, run, stderr := f.runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
 		if code != 4 || len(run.NotRun) != 1 || !strings.Contains(run.NotRun[0]["why"], "delegate.agents") {
 			t.Errorf("exit %d, %+v\n%s", code, run, stderr)
 		}
@@ -219,7 +220,7 @@ func TestSecurityReviewer(t *testing.T) {
 
 	t.Run("an unknown type", func(t *testing.T) {
 		f := setUp(t, true)
-		code, _, stderr := runDelegate(t, "--reviewer", "style", "--plan", f.plan, f.base+"..HEAD")
+		code, _, stderr := f.runDelegate(t, "--reviewer", "style", "--plan", f.plan, f.base+"..HEAD")
 		refused(t, "an unknown type", code, stderr)
 	})
 }
@@ -238,8 +239,9 @@ func TestThreatNotesPrompt(t *testing.T) {
 	printed := func(t *testing.T, f *fixture) (int, string, string) {
 		t.Helper()
 		var stdout, stderr strings.Builder
-		code := Main(t.Context(), []string{"--print-prompt", "--reviewer", "security", "--plan", f.plan, f.base + "..HEAD"},
+		code := Main(f.ctx(t), []string{"--print-prompt", "--reviewer", "security", "--plan", f.plan, f.base + "..HEAD"},
 			nil, &stdout, &stderr)
+
 		return code, stdout.String(), stderr.String()
 	}
 
@@ -270,6 +272,7 @@ func TestThreatNotesPrompt(t *testing.T) {
 // which carry CI logs and threads, reach the reviewer with known secret
 // shapes taken out.
 func TestRedCheckRedacted(t *testing.T) {
+	t.Parallel()
 	text := prompt(inputs{r: &span{given: "a..b", base: "a", tip: "b"}, goal: "g",
 		redCheck: `{"output": "AWS_SECRET_KEY=hunter2 and AKIA` + strings.Repeat("Q", 16) + `"}`,
 		items:    "CI log: Authorization: Bearer itemsecret1",
@@ -289,7 +292,7 @@ func TestRedCheckRedacted(t *testing.T) {
 func TestFocusPrompt(t *testing.T) {
 	f := setUp(t, false)
 	var stdout, stderr strings.Builder
-	if code := Main(t.Context(), []string{"--print-prompt", "--reviewer", "security", "--plan", f.plan, f.base + "..HEAD"},
+	if code := Main(f.ctx(t), []string{"--print-prompt", "--reviewer", "security", "--plan", f.plan, f.base + "..HEAD"},
 		nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr.String())
 	}

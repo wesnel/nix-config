@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
@@ -22,6 +23,7 @@ func tokens(fs []Finding) []string {
 }
 
 func TestCheck(t *testing.T) {
+	t.Parallel()
 	session := "0b6c2f3e-1111-2222-3333-444455556666"
 	for _, c := range []struct {
 		name string
@@ -65,6 +67,7 @@ func TestCheck(t *testing.T) {
 			[]string{"tZ1Cm", "D188"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := tokens(Check(c.text, c.ctx)); !slices.Equal(got, c.want) {
 				t.Errorf("Check(%q) = %q, want %q", c.text, got, c.want)
 			}
@@ -75,6 +78,7 @@ func TestCheck(t *testing.T) {
 // Replies a reviewer would write, which name code, commits, tickets and
 // links, pass.
 func TestCheckPasses(t *testing.T) {
+	t.Parallel()
 	ctx := Context{Threads: []string{thread}, PlanIDs: []string{"S2", "F1", "P1"}}
 	for _, text := range []string{
 		"Fixed in 1a2b3c4: `resolveSymlinks` now calls `filepath.EvalSymlinks` before comparing, so a symlinked `~/.local` resolves to its target.",
@@ -104,6 +108,7 @@ func TestCheckPasses(t *testing.T) {
 }
 
 func TestRefusal(t *testing.T) {
+	t.Parallel()
 	got := Refusal("the reply", Check("Fixed per D188 (tZ1Cm).", Context{}), "run `pr-loop reply` again")
 	for _, want := range []string{`the reply names "D188" (a plan's ID) and "tZ1Cm" (a review thread's short key)`,
 		"never seen", "URL", "short SHA", "key"} {
@@ -123,9 +128,10 @@ func TestRefusal(t *testing.T) {
 // the GitHub repositories a checkout's remotes fetch from; what a
 // repository's files say never makes it one.
 func TestIn(t *testing.T) {
+	t.Parallel()
 	config := filepath.Join(t.TempDir(), "config.json")
 	os.WriteFile(config, []byte(`{"publicText": {"harnessRepos": ["o/Harness"]}}`), 0o644)
-	t.Setenv("AGENT_TOOLS_CONFIG", config)
+	ctx := env.With(t.Context(), env.Process().Set("AGENT_TOOLS_CONFIG="+config))
 
 	dir := t.TempDir()
 	run := func(args ...string) {
@@ -138,22 +144,44 @@ func TestIn(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "README.md"), []byte("Run `pr-loop` here.\n"), 0o644)
 	run("add", "README.md")
 	run("-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-qm", "Start")
-	if In(dir).Harness {
+	if In(ctx, dir).Harness {
 		t.Error("a repository without remotes that names pr-loop is the harness's")
 	}
 	run("remote", "add", "origin", "https://github.com/o/product.git")
-	if In(dir).Harness {
+	if In(ctx, dir).Harness {
 		t.Error("a product repository that names pr-loop is the harness's")
 	}
 	run("remote", "add", "upstream", "git@github.com:o/harness.git")
-	if !In(dir).Harness {
+	if !In(ctx, dir).Harness {
 		t.Error("a checkout of a listed repository is not the harness's")
 	}
-	t.Setenv("AGENT_TOOLS_CONFIG", filepath.Join(t.TempDir(), "absent.json"))
-	if In(dir).Harness {
+	absent := env.With(t.Context(), env.Process().Set("AGENT_TOOLS_CONFIG="+filepath.Join(t.TempDir(), "absent.json")))
+	if In(absent, dir).Harness {
 		t.Error("without a config, a repository is the harness's")
 	}
-	if In(t.TempDir()).Harness {
+	if In(ctx, t.TempDir()).Harness {
 		t.Error("a directory outside any repository is the harness's")
+	}
+}
+
+// The home and temporary directories a reader cannot open are those of the
+// context's Env; a TMPDIR of /tmp alone is none.
+func TestInPaths(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name, tmp string
+		want      []string
+	}{
+		{"a temporary directory of its own", "/var/folders/xy/T/", []string{"/Users/someone", "/var/folders/xy/T"}},
+		{"/tmp alone", "/tmp/", []string{"/Users/someone"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := env.With(t.Context(), env.Process().Set("HOME=/Users/someone", "TMPDIR="+c.tmp))
+			paths := In(ctx, t.TempDir()).Paths
+			if len(paths) < len(c.want) || !slices.Equal(paths[:len(c.want)], c.want) {
+				t.Errorf("Paths = %q, want %q first", paths, c.want)
+			}
+		})
 	}
 }

@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"os"
 	"strings"
 
@@ -13,12 +14,12 @@ import (
 // no fixup, and exactly the files it has now, so a conflict, a stray commit
 // or a fixup in the wrong branch shows up before the operator's
 // `git sign-pass --push`. It changes no branch.
-func SignCheck() (any, error) {
-	repo, err := repository()
+func SignCheck(ctx context.Context) (any, error) {
+	repo, err := repository(ctx)
 	if err != nil {
 		return nil, err
 	}
-	prs, err := openPRs(repo)
+	prs, err := openPRs(ctx, repo)
 	if err != nil {
 		return nil, err
 	}
@@ -58,14 +59,14 @@ func SignCheck() (any, error) {
 		if stack.Trees[b], err = git.Run("rev-parse", "refs/heads/"+b+"^{tree}"); err != nil {
 			return nil, err
 		}
-		commits, err := commitsBetween(below, "refs/heads/"+b)
+		commits, err := commitsBetween(ctx, below, "refs/heads/"+b)
 		if err != nil {
 			return nil, err
 		}
 		stack.Commits[b] = own(commits)
 		below = "refs/heads/" + b
 	}
-	if err := rehearse(stack); err != nil {
+	if err := rehearse(ctx, stack); err != nil {
 		return nil, err
 	}
 	return map[string]any{"verified": "squashing the fixups leaves every branch with its own commits and the same files",
@@ -84,7 +85,7 @@ type signedStack struct {
 
 // rehearse squashes the stack, unsigned, in a throwaway worktree and checks
 // the result, so a conflict or a stray commit shows up before any key touch.
-func rehearse(stack *signedStack) error {
+func rehearse(ctx context.Context, stack *signedStack) error {
 	scratch, err := os.MkdirTemp("", "pr-loop-rehearsal-")
 	if err != nil {
 		return err
@@ -130,7 +131,7 @@ func rehearse(stack *signedStack) error {
 			base = squashed[at-1]
 		}
 		end := squashed[at+len(want)-1]
-		if err := matches(want, base, end, b); err != nil {
+		if err := matches(ctx, want, base, end, b); err != nil {
 			return err
 		}
 		if tree, _ := git.Run("rev-parse", end+"^{tree}"); tree != stack.Trees[b] {

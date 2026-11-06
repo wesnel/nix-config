@@ -1,6 +1,7 @@
 package plans
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"sort"
@@ -15,8 +16,9 @@ var revisionPattern = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 var repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
 // CommitIdentity resolves ref in top and uses its GitHub origin as a portable identity.
-func CommitIdentity(top, ref string) (Event, error) {
-	url, err := git.Run("-C", top, "remote", "get-url", "origin")
+func CommitIdentity(ctx context.Context, top, ref string) (Event, error) {
+	g := git.In(ctx)
+	url, err := g.Run("-C", top, "remote", "get-url", "origin")
 	if err != nil {
 		return Event{}, err
 	}
@@ -24,14 +26,14 @@ func CommitIdentity(top, ref string) (Event, error) {
 	if !repositoryPattern.MatchString(repository) {
 		return Event{}, refusal.New("origin has no portable owner/name identity")
 	}
-	revision, err := git.Run("-C", top, "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
+	revision, err := g.Run("-C", top, "rev-parse", "--verify", "--end-of-options", ref+"^{commit}")
 	if err != nil {
 		return Event{}, err
 	}
 	if !revisionPattern.MatchString(revision) {
 		return Event{}, refusal.New("git returned an invalid full revision")
 	}
-	subject, err := git.Run("-C", top, "show", "-s", "--format=%s", revision)
+	subject, err := g.Run("-C", top, "show", "-s", "--format=%s", revision)
 	return Event{Repository: repository, Revision: revision, Commit: subject, Worktree: top}, err
 }
 
@@ -189,7 +191,7 @@ func (a aliases) resolve(repository, revision string) string {
 
 // RecordRewrites appends aliases to this host's located plan, once each.
 // Readable plans of every host share the aliases; mirrored logs are never edited.
-func (c Config) RecordRewrites(session, top, repository string, rewrites map[string]string, now time.Time) error {
+func (c Config) RecordRewrites(ctx context.Context, session, top, repository string, rewrites map[string]string, now time.Time) error {
 	if !repositoryPattern.MatchString(repository) {
 		return refusal.New("rewrites need a portable owner/name repository")
 	}
@@ -254,10 +256,10 @@ func (c Config) RecordRewrites(session, top, repository string, rewrites map[str
 	if ok {
 		p = *holder
 	} else {
-		p, part, ok = c.Locate(session, top)
+		p, part, ok = c.Locate(ctx, session, top)
 	}
 	if !ok {
-		p, part, _, err = c.unplanned(session, top, now)
+		p, part, _, err = c.unplanned(ctx, session, top, now)
 		if err != nil {
 			return err
 		}

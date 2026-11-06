@@ -43,9 +43,9 @@ func TestDispatch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, _ := routedFixture(t, `{}`)
-			t.Setenv("FAKE_CODEX", "none")
+			f.setenv("FAKE_CODEX", "none")
 			args := append(slices.Clone(tc.args), "--plan", f.plan, "HEAD~1..HEAD")
-			code, out, stderr := runDelegate(t, args...)
+			code, out, stderr := f.runDelegate(t, args...)
 			var got []string
 			for _, review := range out.Reviews {
 				got = append(got, review.Reviewer)
@@ -63,9 +63,9 @@ func TestDispatch(t *testing.T) {
 func TestRouting(t *testing.T) {
 	t.Run("scan and reviewer", func(t *testing.T) {
 		f, exec := routedFixture(t, `{}`)
-		t.Setenv("FAKE_CODEX", "routed")
+		f.setenv("FAKE_CODEX", "routed")
 		// BASE above the commit that runs a program.
-		code, run_, stderr := runDelegate(t, "--plan", f.plan, "HEAD~1..HEAD")
+		code, run_, stderr := f.runDelegate(t, "--plan", f.plan, "HEAD~1..HEAD")
 		out := run_.review("codex")
 		if code != 0 {
 			t.Fatalf("exit %d\n%s", code, stderr)
@@ -85,9 +85,9 @@ func TestRouting(t *testing.T) {
 
 	t.Run("named only by the reviewer", func(t *testing.T) {
 		f, _ := routedFixture(t, `{}`)
-		t.Setenv("FAKE_CODEX", "routed")
+		f.setenv("FAKE_CODEX", "routed")
 		run(t, f.repo, "git", "update-ref", "refs/remotes/origin/main", "HEAD~1")
-		code, run_, stderr := runDelegate(t, "--plan", f.plan, "HEAD~1..HEAD")
+		code, run_, stderr := f.runDelegate(t, "--plan", f.plan, "HEAD~1..HEAD")
 		if code != 0 || len(run_.Reviews) != 1 || run_.review("security").Reviewer != "" ||
 			!strings.Contains(stderr, "run `git delegate --reviewer security --plan "+f.plan+" HEAD~1..HEAD`") {
 			t.Errorf("exit %d, %+v\n%s", code, run_, stderr)
@@ -96,9 +96,9 @@ func TestRouting(t *testing.T) {
 
 	t.Run("operator rules", func(t *testing.T) {
 		f, exec := routedFixture(t, `{"routes": [{"route": "security", "paths": ["code.txt"], "why": "the code"}]}`)
-		t.Setenv("FAKE_CODEX", "none")
+		f.setenv("FAKE_CODEX", "none")
 		grow := run(t, f.repo, "git", "rev-parse", f.tip)
-		code, out, stderr := freshReview(t, "--plan", f.plan, f.base+"..HEAD")
+		code, out, stderr := f.freshReview(t, "--plan", f.plan, f.base+"..HEAD")
 		if code != 0 || len(out.Routes) != 1 || !slices.Equal(out.Routes[0].Commits, []string{grow, exec}) {
 			t.Errorf("exit %d, routes %+v\n%s", code, out.Routes, stderr)
 		}
@@ -106,9 +106,9 @@ func TestRouting(t *testing.T) {
 
 	t.Run("nothing to route", func(t *testing.T) {
 		f, _ := routedFixture(t, `{}`)
-		t.Setenv("FAKE_CODEX", "none")
+		f.setenv("FAKE_CODEX", "none")
 		run(t, f.repo, "git", "update-ref", "refs/remotes/origin/main", "HEAD~1")
-		code, out, stderr := freshReview(t, "--plan", f.plan, "HEAD~1..HEAD")
+		code, out, stderr := f.freshReview(t, "--plan", f.plan, "HEAD~1..HEAD")
 		if code != 0 || len(out.Routes) != 0 || strings.Contains(stderr, "security") {
 			t.Errorf("exit %d, routes %+v\n%s", code, out.Routes, stderr)
 		}
@@ -118,10 +118,10 @@ func TestRouting(t *testing.T) {
 	// than leave out the test settings beside them.
 	t.Run("a broken rule", func(t *testing.T) {
 		f, _ := routedFixture(t, `{"test": "go test ./...", "testFiles": ["*_test.go"], "routes": [{"route": "security", "why": "nothing"}]}`)
-		t.Setenv("FAKE_CODEX", "none")
+		f.setenv("FAKE_CODEX", "none")
 		for _, args := range [][]string{{"--print-prompt"}, nil} {
 			var stdout, stderr strings.Builder
-			code := Main(t.Context(), append(args, "--plan", f.plan, "HEAD~1..HEAD"), nil, &stdout, &stderr)
+			code := Main(f.ctx(t), append(args, "--plan", f.plan, "HEAD~1..HEAD"), nil, &stdout, &stderr)
 			if code != 2 || !strings.Contains(stderr.String(), "refused") || !strings.Contains(stderr.String(), "fix the rule") ||
 				strings.Contains(stdout.String(), "no test settings") {
 				t.Errorf("%v: exit %d\n%s\n%s", args, code, stdout.String(), stderr.String())
@@ -132,6 +132,7 @@ func TestRouting(t *testing.T) {
 
 // The reply's routes are held to the routes a focused review exists for.
 func TestSchemaRoutes(t *testing.T) {
+	t.Parallel()
 	var schema struct {
 		Required   []string `json:"required"`
 		Properties struct {
@@ -165,7 +166,7 @@ func TestSharedFilePrompt(t *testing.T) {
 	run(t, f.repo, "git", "add", "lib.rs")
 	run(t, f.repo, "git", "commit", "-q", "-m", "Add lib")
 	var stdout, stderr strings.Builder
-	if code := Main(t.Context(), []string{"--print-prompt", "--plan", f.plan, f.base + "..HEAD"}, nil, &stdout, &stderr); code != 0 {
+	if code := Main(f.ctx(t), []string{"--print-prompt", "--plan", f.plan, f.base + "..HEAD"}, nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "shared-file") || !strings.Contains(stdout.String(), "- lib.rs\n") {

@@ -2,12 +2,14 @@ package loop
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"testing"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/record"
 )
 
@@ -36,20 +38,19 @@ func useTTY(t *testing.T, answers string) *fakeTTY {
 func draftedRepo(t *testing.T) (*fakeGitHub, *[]string) {
 	t.Helper()
 	f := fakeRepo(t)
-	t.Setenv(ModeEnv, "people")
-	if _, err := Threads(2, true); err != nil {
+	people := f.in("people")
+	if _, err := Threads(people, 2, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Draft("human2", "Fixed in \"Check the input\".", "fix"); err != nil {
+	if _, err := Draft(people, "human2", "Fixed in \"Check the input\".", "fix"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Draft("bot2", "Not a problem: the input is checked above.", "rebut"); err != nil {
+	if _, err := Draft(people, "bot2", "Not a problem: the input is checked above.", "rebut"); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv(ModeEnv, "")
 	var requested []string
 	old := requestReviewer
-	requestReviewer = func(slug string, number int, reviewer string) error {
+	requestReviewer = func(_ context.Context, slug string, number int, reviewer string) error {
 		requested = append(requested, reviewer)
 		return nil
 	}
@@ -60,9 +61,8 @@ func draftedRepo(t *testing.T) (*fakeGitHub, *[]string) {
 func TestDraft(t *testing.T) {
 	t.Run("people mode only", func(t *testing.T) {
 		for _, mode := range []string{"", "bots"} {
-			fakeRepo(t)
-			t.Setenv(ModeEnv, mode)
-			if _, err := Draft("human2", "x", "fix"); !refusedWell(err) {
+			f := fakeRepo(t)
+			if _, err := Draft(f.in(mode), "human2", "x", "fix"); !refusedWell(err) {
 				t.Errorf("mode %q: %v", mode, err)
 			}
 		}
@@ -70,7 +70,7 @@ func TestDraft(t *testing.T) {
 
 	t.Run("written to the record", func(t *testing.T) {
 		f, _ := draftedRepo(t)
-		path, _ := record.PRFile("o", "r", 2)
+		path, _ := record.PRFile(env.From(f.ctx), "o", "r", 2)
 		p, err := record.ReadPR(path)
 		if err != nil {
 			t.Fatal(err)
@@ -91,9 +91,8 @@ func TestDraft(t *testing.T) {
 		"a thread not in record": {"human1", "x", "fix"},
 	} {
 		t.Run("refused/"+name, func(t *testing.T) {
-			fakeRepo(t)
-			t.Setenv(ModeEnv, "people")
-			if _, err := Draft(args[0], args[1], args[2]); err == nil {
+			f := fakeRepo(t)
+			if _, err := Draft(f.in("people"), args[0], args[1], args[2]); err == nil {
 				t.Errorf("%s was drafted", name)
 			}
 		})
@@ -107,13 +106,12 @@ func TestDraft(t *testing.T) {
 		"over the cap":        strings.Repeat("a", record.TextCap+1),
 	} {
 		t.Run("changed by the record/"+name, func(t *testing.T) {
-			draftedRepo(t)
-			t.Setenv(ModeEnv, "people")
-			_, err := Draft("human2", body, "fix")
+			f, _ := draftedRepo(t)
+			_, err := Draft(f.in("people"), "human2", body, "fix")
 			if !refusedWell(err) || !strings.Contains(err.Error(), "other than as written") {
 				t.Errorf("%s: %v", name, err)
 			}
-			path, _ := record.PRFile("o", "r", 2)
+			path, _ := record.PRFile(env.From(f.ctx), "o", "r", 2)
 			p, err := record.ReadPR(path)
 			if err != nil {
 				t.Fatal(err)
@@ -132,7 +130,7 @@ func TestPost(t *testing.T) {
 	t.Run("confirmed", func(t *testing.T) {
 		f, requested := draftedRepo(t)
 		tty := useTTY(t, "y\ny\n")
-		got, err := Post(2, nil)
+		got, err := Post(f.ctx, 2, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -145,14 +143,14 @@ func TestPost(t *testing.T) {
 		if fmt.Sprint(f.resolved) != "[bot2 human2]" || fmt.Sprint(*requested) != "[josh]" {
 			t.Errorf("resolved %v, requested %v, got %v", f.resolved, *requested, got)
 		}
-		path, _ := record.PRFile("o", "r", 2)
+		path, _ := record.PRFile(env.From(f.ctx), "o", "r", 2)
 		p, _ := record.ReadPR(path)
 		if p.Threads[2].Draft.Posted.IsZero() || p.Threads[0].Draft.Posted.IsZero() {
 			t.Errorf("not marked posted: %+v", p.Threads)
 		}
 		// Posted drafts are not offered again.
 		useTTY(t, "y\n")
-		if _, err := Post(2, nil); err != nil || len(f.replies) != 2 {
+		if _, err := Post(f.ctx, 2, nil); err != nil || len(f.replies) != 2 {
 			t.Errorf("posting again: %v, %v", err, f.replies)
 		}
 	})
@@ -160,7 +158,7 @@ func TestPost(t *testing.T) {
 	t.Run("n skips", func(t *testing.T) {
 		f, requested := draftedRepo(t)
 		useTTY(t, "n\ny\n")
-		if _, err := Post(2, nil); err != nil {
+		if _, err := Post(f.ctx, 2, nil); err != nil {
 			t.Fatal(err)
 		}
 		if _, ok := f.replies["bot2"]; ok || f.replies["human2"] == "" {
@@ -174,7 +172,7 @@ func TestPost(t *testing.T) {
 	t.Run("named threads alone", func(t *testing.T) {
 		f, requested := draftedRepo(t)
 		useTTY(t, "y\n")
-		if _, err := Post(2, []string{"bot2"}); err != nil {
+		if _, err := Post(f.ctx, 2, []string{"bot2"}); err != nil {
 			t.Fatal(err)
 		}
 		if len(f.replies) != 1 || f.replies["bot2"] == "" || len(*requested) != 0 {
@@ -187,7 +185,7 @@ func TestPost(t *testing.T) {
 		old := openTTY
 		openTTY = func() (io.ReadWriteCloser, error) { return nil, errors.New("device not configured") }
 		t.Cleanup(func() { openTTY = old })
-		if _, err := Post(2, nil); !refusedWell(err) || len(f.replies) != 0 {
+		if _, err := Post(f.ctx, 2, nil); !refusedWell(err) || len(f.replies) != 0 {
 			t.Errorf("no terminal: %v, %v", err, f.replies)
 		}
 	})

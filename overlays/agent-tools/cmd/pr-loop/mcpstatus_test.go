@@ -43,7 +43,7 @@ func TestMCPStatus(t *testing.T) {
 			t.Setenv("AGENT_TOOLS_CONFIG", config)
 			t.Chdir(t.TempDir())
 			var stdout, stderr bytes.Buffer
-			code := run("mcp-status", []string{"--hook"}, strings.NewReader(`{"hook_event_name":"SessionStart","source":"startup"}`), &stdout, &stderr)
+			code := run(t.Context(), "mcp-status", []string{"--hook"}, strings.NewReader(`{"hook_event_name":"SessionStart","source":"startup"}`), &stdout, &stderr)
 			if code != 0 {
 				t.Fatalf("exit %d\n%s", code, stderr.String())
 			}
@@ -110,7 +110,7 @@ func TestMCPStatusTimeouts(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			done := make(chan int, 1)
 			go func() {
-				done <- run("mcp-status", nil, strings.NewReader(""), &stdout, &stderr)
+				done <- run(t.Context(), "mcp-status", nil, strings.NewReader(""), &stdout, &stderr)
 			}()
 			select {
 			case code := <-done:

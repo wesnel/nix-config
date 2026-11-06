@@ -19,7 +19,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -29,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 )
 
@@ -73,13 +73,19 @@ const (
 // denial it cannot write, goes to stderr with exit 2, Claude Code's status
 // for a blocked call, and a tool input it cannot read is denied.
 func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return mainIn(env.With(context.Background(), env.Process()), args, stdin, stdout, stderr)
+}
+
+// mainIn is Main run under the Env of ctx: its variables and working
+// directory stand for the guard's own.
+func mainIn(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	who := baseline
 	switch {
 	case len(args) == 1 && args[0] == "--baseline":
 	case len(args) == 1 && args[0] == "--reviewer":
 		who = reviewer
 	case len(args) == 1 && args[0] == "--post":
-		return post(stdin, stdout)
+		return post(withStallRecord(ctx), stdin, stdout)
 	default:
 		fmt.Fprintf(stderr, "pr-loop guard: takes --baseline, --reviewer or --post; got %q\n", args)
 		return 1
@@ -90,11 +96,11 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if in.Cwd == "" {
-		in.Cwd, _ = os.Getwd()
+		in.Cwd = env.From(ctx).Dir()
 	}
 	hint := ""
-	reason := judged(func() string {
-		reason := checkSubagentStash(in)
+	reason := judged(ctx, func(ctx context.Context) string {
+		reason := checkSubagentStash(ctx, in)
 		// Claude Code's shell, where its sandbox's exclusions apply; Codex
 		// sets TurnID, and has none, nor has a headless reviewer, whose
 		// hook is --reviewer.
@@ -104,13 +110,13 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		json.Unmarshal(in.ToolInput, &shell)
 		if reason == "" && claudeShell {
-			reason = checkExcludedAlone(shell.Command)
+			reason = checkExcludedAlone(ctx, shell.Command)
 		}
 		if reason == "" {
-			reason = check(in.ToolName, in.ToolInput, who, in.Cwd)
+			reason = check(ctx, in.ToolName, in.ToolInput, who, in.Cwd)
 		}
 		if reason == "" && claudeShell {
-			reason = checkPlainGh(shell.Command)
+			reason = checkPlainGh(ctx, shell.Command)
 		}
 		if reason == "" && in.TurnID != "" && (in.ToolName == "Bash" || in.ToolName == "exec_command") {
 			// Codex alone keeps a command's terminal for write_stdin.
@@ -118,16 +124,16 @@ func Main(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				Command string `json:"command"`
 			}
 			json.Unmarshal(in.ToolInput, &args)
-			if terminalReader(args.Command) {
+			if terminalReader(ctx, args.Command) {
 				reason = readsTerminal
 			}
 		}
 		if reason == "" {
-			reason = checkOwner(in)
+			reason = checkOwner(ctx, in)
 		}
 		// The hint runs git too, so it is judged with the rest.
 		if reason == "" && (in.ToolName == "Edit" || in.ToolName == "Write" || in.ToolName == "MultiEdit") {
-			hint = branchHint(in.SessionID, in.ToolInput, in.Cwd)
+			hint = branchHint(ctx, in.SessionID, in.ToolInput, in.Cwd)
 		}
 		return reason
 	})
@@ -169,18 +175,18 @@ const unreadable = "The guard cannot read this call's input, so it cannot check 
 	"argument under its documented name and type, or put the command in your report for the operator."
 
 // CheckBaseline returns why a tool call by an ordinary session, run in the
-// current directory, is denied, or "" to allow it.
-func CheckBaseline(tool string, toolInput json.RawMessage) string {
-	dir, _ := os.Getwd()
-	return judged(func() string { return check(tool, toolInput, baseline, dir) })
+// working directory of ctx's Env, is denied, or "" to allow it.
+func CheckBaseline(ctx context.Context, tool string, toolInput json.RawMessage) string {
+	dir := env.From(ctx).Dir()
+	return judged(ctx, func(ctx context.Context) string { return check(ctx, tool, toolInput, baseline, dir) })
 }
 
 // CheckReviewer is CheckBaseline for a reviewer, which only reads: it is also
 // denied git commands that change the repository and every pr-loop command
 // but the reading ones, and is told so whichever rule a call breaks.
-func CheckReviewer(tool string, toolInput json.RawMessage) string {
-	dir, _ := os.Getwd()
-	return judged(func() string { return check(tool, toolInput, reviewer, dir) })
+func CheckReviewer(ctx context.Context, tool string, toolInput json.RawMessage) string {
+	dir := env.From(ctx).Dir()
+	return judged(ctx, func(ctx context.Context) string { return check(ctx, tool, toolInput, reviewer, dir) })
 }
 
 // check returns a denial's reason, which reaches the agent verbatim: a first
@@ -188,7 +194,7 @@ func CheckReviewer(tool string, toolInput json.RawMessage) string {
 // backticks or handing the step to the operator. A reason that only says no
 // sends the agent looking for another way through. TestCheck and TestPolicy
 // hold every reason to this.
-func check(tool string, toolInput json.RawMessage, who role, dir string) string {
+func check(ctx context.Context, tool string, toolInput json.RawMessage, who role, dir string) string {
 	if service, name, mcp := mcpTool(tool); mcp {
 		return checkMCP(service, name, who)
 	}
@@ -204,7 +210,7 @@ func check(tool string, toolInput json.RawMessage, who role, dir string) string 
 		if json.Unmarshal(toolInput, &args) != nil {
 			return unreadable
 		}
-		return command(args.Command, 0, who, dir, checkout, args.RunInBackground)
+		return command(ctx, args.Command, 0, who, dir, checkout, args.RunInBackground)
 	case tool == "Monitor":
 		// Claude Code's Monitor runs a command as Bash does.
 		var args struct {
@@ -213,7 +219,7 @@ func check(tool string, toolInput json.RawMessage, who role, dir string) string 
 		if json.Unmarshal(toolInput, &args) != nil {
 			return unreadable
 		}
-		return command(args.Command, 0, who, dir, checkout, true)
+		return command(ctx, args.Command, 0, who, dir, checkout, true)
 	case tool == "local_shell":
 		// Codex's local_shell runs an argv, which the guard reads as the
 		// command line that would run it.
@@ -233,13 +239,13 @@ func check(tool string, toolInput json.RawMessage, who role, dir string) string 
 			if json.Unmarshal(args.Command, &line) != nil {
 				return unreadable
 			}
-			return command(line, 0, who, dir, checkout, false)
+			return command(ctx, line, 0, who, dir, checkout, false)
 		}
 		quoted := make([]string, len(argv))
 		for i, a := range argv {
 			quoted[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
 		}
-		return command(strings.Join(quoted, " "), 0, who, dir, checkout, false)
+		return command(ctx, strings.Join(quoted, " "), 0, who, dir, checkout, false)
 	case tool == "write_stdin":
 		// Codex's write_stdin types chars into a session exec_command
 		// started, which may be a shell; the session runs on its own, so a
@@ -250,17 +256,17 @@ func check(tool string, toolInput json.RawMessage, who role, dir string) string 
 		if json.Unmarshal(toolInput, &args) != nil {
 			return unreadable
 		}
-		if reason := command(args.Chars, 0, who, dir, checkout, true); reason != "" {
+		if reason := command(ctx, args.Chars, 0, who, dir, checkout, true); reason != "" {
 			return typed + reason
 		}
 		return ""
 	case tool == "ExitWorktree":
-		return checkExitWorktree(toolInput, dir)
+		return checkExitWorktree(ctx, toolInput, dir)
 	case tool == "Edit" || tool == "Write" || tool == "MultiEdit" || tool == "NotebookEdit" || tool == "apply_patch":
-		if reason := checkLoopSettings(tool, toolInput, dir); reason != "" {
+		if reason := checkLoopSettings(ctx, tool, toolInput, dir); reason != "" {
 			return reason
 		}
-		return checkFileTool(tool, toolInput, dir)
+		return checkFileTool(ctx, tool, toolInput, dir)
 	}
 	return ""
 }
@@ -275,7 +281,7 @@ const maxDepth = 3
 
 // command judges a command line run in dir, from a call made in checkout,
 // in the background when background is set.
-func command(text string, depth int, who role, dir, checkout string, background bool) string {
+func command(ctx context.Context, text string, depth int, who role, dir, checkout string, background bool) string {
 	if depth > maxDepth {
 		return ""
 	}
@@ -294,7 +300,7 @@ func command(text string, depth int, who role, dir, checkout string, background 
 		}
 	}
 	// The dump in `env | grep PATTERN` is checked with its search.
-	if envSearch(text, calls) {
+	if envSearch(ctx, text, calls) {
 		calls, backgrounds, ends, tops = calls[1:], backgrounds[1:], ends[1:], tops[1:]
 	}
 	// A file a gh call reads is what the guard sees only when nothing else
@@ -316,7 +322,7 @@ func command(text string, depth int, who role, dir, checkout string, background 
 	v := visitor{
 		script: func(text string) string {
 			for _, cwd := range w.here {
-				if reason := command(text, depth+1, who, cwd, checkout, bg); reason != "" {
+				if reason := command(ctx, text, depth+1, who, cwd, checkout, bg); reason != "" {
 					return reason
 				}
 			}
@@ -328,12 +334,12 @@ func command(text string, depth int, who role, dir, checkout string, background 
 				// command starts, before it changes directory.
 				if len(p.words) < len(c.words) {
 					for _, cwd := range w.here {
-						if reason := program(c, who, files, cwd, checkout); reason != "" {
+						if reason := program(ctx, c, who, files, cwd, checkout); reason != "" {
 							return reason
 						}
 					}
 				}
-				w.cd(p, end)
+				w.cd(ctx, p, end)
 				return ""
 			}
 			if !bg && longSleep(c.named()) {
@@ -346,7 +352,7 @@ func command(text string, depth int, who role, dir, checkout string, background 
 				assigned = unset(assigned, c.words[1:])
 			}
 			for _, cwd := range w.here {
-				if reason := program(c, who, files, cwd, checkout); reason != "" {
+				if reason := program(ctx, c, who, files, cwd, checkout); reason != "" {
 					return reason
 				}
 			}
@@ -355,8 +361,8 @@ func command(text string, depth int, who role, dir, checkout string, background 
 	}
 	for i, c := range calls {
 		bg, end, top = backgrounds[i], ends[i], tops[i]
-		w.begin(c)
-		if reason := unwrap(c, v); reason != "" {
+		w.begin(ctx, c)
+		if reason := unwrap(ctx, c, v); reason != "" {
 			return reason
 		}
 		w.next(end)
@@ -383,28 +389,28 @@ func unset(assigned, args []string) []string {
 // is unknown and the target relative. Of what the shell expands, the guard
 // takes $TMPDIR and $HOME, which it knows, and leaves the rest to the
 // shell.
-func cdTarget(c call, cwd string) string {
+func cdTarget(ctx context.Context, c call, cwd string) string {
 	args, expands := c.words[1:], c.expands[1:]
 	for len(args) > 0 && strings.HasPrefix(args[0], "-") && args[0] != "-" {
 		args, expands = args[1:], expands[1:]
 	}
 	if len(args) == 0 {
-		return home
+		return homeDir(ctx)
 	}
 	word := args[0]
 	if expands[0] {
-		if word = shellPath(word, true); strings.ContainsAny(word, "$`") {
+		if word = shellPath(ctx, word, true); strings.ContainsAny(word, "$`") {
 			return ""
 		}
 	}
 	if word == "-" {
 		return ""
 	}
-	path := expandPath(word, cwd)
+	path := expandPath(ctx, word, cwd)
 	// A .. after a link climbs from where the link leads, which cleaning
 	// the spelling would not.
 	if strings.Contains("/"+word+"/", "/../") {
-		path = physical(rawPath(word, cwd))
+		path = physical(rawPath(ctx, word, cwd))
 	}
 	if !filepath.IsAbs(path) {
 		return ""
@@ -415,20 +421,20 @@ func cdTarget(c call, cwd string) string {
 // program judges a call once unwrap has found the program it runs, in dir,
 // from a call made in checkout. The rules after checkSession go by the
 // program, which follows any redirections before it (call.named).
-func program(c call, who role, files, dir, checkout string) string {
+func program(ctx context.Context, c call, who role, files, dir, checkout string) string {
 	if reason := checkEnv(c.env); reason != "" {
 		return reason
 	}
 	if reason := checkNgrokEnv(c); reason != "" {
 		return reason
 	}
-	if reason := checkLoopStart(c.named(), dir); reason != "" {
+	if reason := checkLoopStart(ctx, c.named(), dir); reason != "" {
 		return reason
 	}
 	if len(c.words) == 0 || c.expands[0] && c.named().expands[0] {
 		return ""
 	}
-	if reason := checkSession(c, dir); reason != "" {
+	if reason := checkSession(ctx, c, dir); reason != "" {
 		return reason
 	}
 	if c = c.named(); c.expands[0] {
@@ -437,14 +443,14 @@ func program(c call, who role, files, dir, checkout string) string {
 	words := c.words
 	switch name := base(words[0]); {
 	case name == "git":
-		return checkGit(words, c.expands, c.env, who, dir, checkout, c.fed)
+		return checkGit(ctx, words, c.expands, c.env, who, dir, checkout, c.fed)
 	case name == "gh":
 		if reason := checkGh(words[1:], c.expands[1:], files, who); reason != "" && who == reviewer {
 			return reviewerReport
 		} else if reason != "" {
 			return reason
 		}
-		return checkPublicGh(words[1:], c.expands[1:], dir)
+		return checkPublicGh(ctx, words[1:], c.expands[1:], dir)
 	case name == "pr-loop":
 		return checkPrLoop(words[1:], who)
 	case name == "git-delegate" && who == reviewer:
@@ -663,14 +669,14 @@ const includeConfig = "A git config include makes git read a file this session c
 // file with an [alias] section, in the text written or already there, as
 // an included file may hold, gains no `!`. dir is the session's, as
 // gitConfigFile takes it.
-func gitConfigAlias(path, dir, text string) string {
+func gitConfigAlias(ctx context.Context, path, dir, text string) string {
 	existing := ""
 	if f, err := os.Open(path); err == nil {
 		data, _ := io.ReadAll(io.LimitReader(f, 1<<20))
 		f.Close()
 		existing = string(data)
 	}
-	if !gitConfigFile(path, dir) {
+	if !gitConfigFile(ctx, path, dir) {
 		if (aliasSection.MatchString(text) || aliasSection.MatchString(existing)) && strings.Contains(text, "!") {
 			return shellAlias
 		}
@@ -696,14 +702,15 @@ func gitConfigAlias(path, dir, text string) string {
 // submodule's git directory (inModules), counts too, as written or with
 // its links resolved, in any case where names fold it, for files and
 // directories that are not there yet.
-func gitConfigFile(path, dir string) bool {
+func gitConfigFile(ctx context.Context, path, dir string) bool {
 	if filepath.IsAbs(path) {
-		config := os.Getenv("XDG_CONFIG_HOME")
+		home := homeDir(ctx)
+		config := env.From(ctx).Get("XDG_CONFIG_HOME")
 		if !filepath.IsAbs(config) {
 			config = filepath.Join(home, ".config")
 		}
 		known := []string{filepath.Join(home, ".gitconfig"), filepath.Join(config, "git", "config")}
-		dirs, complete := gitDirsFor(path, dir)
+		dirs, complete := gitDirsFor(ctx, path, dir)
 		if !complete {
 			return true // a git directory the guard did not look at may hold it
 		}
@@ -736,9 +743,9 @@ func gitConfigFile(path, dir string) bool {
 // for a file not there yet, config or a name outside ASCII in a .git
 // directory or a submodule's git directory (inModules), as written or
 // with its links resolved, in any case where names fold it.
-func sharedConfigFile(path, dir string) bool {
+func sharedConfigFile(ctx context.Context, path, dir string) bool {
 	if filepath.IsAbs(path) {
-		dirs, complete := gitDirsFor(path, dir)
+		dirs, complete := gitDirsFor(ctx, path, dir)
 		if !complete {
 			return true // a git directory the guard did not look at may hold it
 		}
@@ -794,7 +801,7 @@ func inModules(dir string) bool {
 // directory of dir's repository and every submodule's git directory under
 // them (submoduleGitDirs). complete is false when there were more of those
 // than the guard looks at.
-func gitDirsFor(path, dir string) (dirs []string, complete bool) {
+func gitDirsFor(ctx context.Context, path, dir string) (dirs []string, complete bool) {
 	complete = true
 	for d := filepath.Dir(physical(path)); ; d = filepath.Dir(d) {
 		if info, err := os.Stat(filepath.Join(d, ".git")); err == nil && info.IsDir() {
@@ -809,7 +816,7 @@ func gitDirsFor(path, dir string) (dirs []string, complete bool) {
 	}
 	if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
 		if st, ok := info.Sys().(*syscall.Stat_t); ok && st.Nlink > 1 {
-			if out, ok := (gitState{dir: dir}).run("rev-parse", "--path-format=absolute", "--git-dir",
+			if out, ok := (gitState{dir: dir}).run(ctx, "rev-parse", "--path-format=absolute", "--git-dir",
 				"--git-common-dir"); ok {
 				for _, g := range strings.Split(out, "\n") {
 					subs, all := submoduleGitDirs(g)
@@ -866,11 +873,11 @@ var submoduleScanLimit = 1000
 // unscanned reports whether path, written from a session in dir, is a hard
 // link the guard cannot rule out being a git config, since there are more
 // submodule git directories than it looks at (gitDirsFor).
-func unscanned(path, dir string) bool {
+func unscanned(ctx context.Context, path, dir string) bool {
 	if !filepath.IsAbs(path) {
 		return false
 	}
-	_, complete := gitDirsFor(path, dir)
+	_, complete := gitDirsFor(ctx, path, dir)
 	return !complete
 }
 
@@ -1096,7 +1103,7 @@ func branchWrites(args []string) bool {
 // where, with the assignments env made for it, in a call made in checkout,
 // the hook's directory. expands says which words the shell expands, and
 // fed that xargs adds more.
-func checkGit(words []string, expands []bool, env []string, who role, dir, checkout string, fed bool) string {
+func checkGit(ctx context.Context, words []string, expands []bool, env []string, who role, dir, checkout string, fed bool) string {
 	i := 1
 	var config []string // the -c and --config-env options, for gitState.signs
 	located := false    // --git-dir or --work-tree names the repository
@@ -1113,10 +1120,10 @@ func checkGit(words []string, expands []bool, env []string, who role, dir, check
 			key, _, _ = strings.Cut(strings.TrimPrefix(w, "--config-env="), "=")
 			config = append(config, w)
 		case w == "-C" && i+1 < len(words):
-			if dir = expandPath(words[i+1], dir); !filepath.IsAbs(dir) {
+			if dir = expandPath(ctx, words[i+1], dir); !filepath.IsAbs(dir) {
 				dir = ""
 			}
-			physical = physicalPath(physical, shellPath(words[i+1], i+1 < len(expands) && expands[i+1]))
+			physical = physicalPath(physical, shellPath(ctx, words[i+1], i+1 < len(expands) && expands[i+1]))
 		case w == "--git-dir" || w == "--work-tree" || strings.HasPrefix(w, "--git-dir=") || strings.HasPrefix(w, "--work-tree="):
 			dir = ""
 			located = true
@@ -1137,7 +1144,7 @@ func checkGit(words []string, expands []bool, env []string, who role, dir, check
 		return nestedReview
 	}
 	if who == reviewer && !gitRead(sub, rest) {
-		repo, ok := scratchRepo(sub, rest, expands[min(i+1, len(expands)):], physical, checkout, env)
+		repo, ok := scratchRepo(ctx, sub, rest, expands[min(i+1, len(expands)):], physical, checkout, env)
 		if located || !ok {
 			return reviewerGit
 		}
@@ -1145,13 +1152,13 @@ func checkGit(words []string, expands []bool, env []string, who role, dir, check
 		// is, such as never signing.
 		who, dir = baseline, repo
 	}
-	if reason := checkPlanCheckout(sub, rest, dir); reason != "" {
+	if reason := checkPlanCheckout(ctx, sub, rest, dir); reason != "" {
 		return reason
 	}
-	if reason := checkGitAgentSettings(sub, rest, expands[min(i+1, len(expands)):], physical, checkout); reason != "" {
+	if reason := checkGitAgentSettings(ctx, sub, rest, expands[min(i+1, len(expands)):], physical, checkout); reason != "" {
 		return reason
 	}
-	if reason := checkGitSession(sub, rest, gitState{dir: dir}); reason != "" {
+	if reason := checkGitSession(ctx, sub, rest, gitState{dir: dir}); reason != "" {
 		return reason
 	}
 	has := func(flags ...string) bool {
@@ -1172,7 +1179,7 @@ func checkGit(words []string, expands []bool, env []string, who role, dir, check
 		return keyTouch
 	case sub == "push":
 		return "Publishing a branch is the operator's step, signed with their key. Open a new branch as a draft PR with `pr-loop open`, or end your report with `git sign-pass --push` for the operator to run."
-	case overSSH(sub, rest, gitState{dir: dir, config: config, env: env}):
+	case overSSH(ctx, sub, rest, gitState{dir: dir, config: config, env: env}):
 		return keyTouch
 	case sub == "remote" && len(rest) > 0 && (rest[0] == "add" || rest[0] == "set-url"):
 		return remotes
@@ -1207,7 +1214,7 @@ func checkGit(words []string, expands []bool, env []string, who role, dir, check
 			}
 		}
 	}
-	if reason := checkSigning(sub, rest, gitState{dir: dir, config: config, env: env}); reason != "" {
+	if reason := checkSigning(ctx, sub, rest, gitState{dir: dir, config: config, env: env}); reason != "" {
 		return reason
 	}
 	return ""
@@ -1215,7 +1222,7 @@ func checkGit(words []string, expands []bool, env []string, who role, dir, check
 
 // scratchRepo reports whether a reviewer's git command sub, with these
 // arguments (expands saying which the shell expands) and the assignments
-// env made for it, run in dir as git reaches it, works only in a
+// vars made for it, run in dir as git reaches it, works only in a
 // repository the reviewer made for itself, and returns that repository's
 // directory: the one init or clone makes, else dir. That directory, each
 // file the command writes outside it, and the git directory, common
@@ -1224,11 +1231,11 @@ func checkGit(words []string, expands []bool, env []string, who role, dir, check
 // to. A copy of a worktree, whose .git file leads back to the reviewed
 // repository, or a link into the checkout, therefore never passes. No push or pack sent to another repository
 // passes, nor a variable naming another repository's directories.
-func scratchRepo(sub string, rest []string, expands []bool, dir, checkout string, env []string) (string, bool) {
+func scratchRepo(ctx context.Context, sub string, rest []string, expands []bool, dir, checkout string, vars []string) (string, bool) {
 	if dir == "" || checkout == "" || set("push", "send-pack", "receive-pack")[sub] {
 		return "", false
 	}
-	for _, kv := range env {
+	for _, kv := range vars {
 		name, _, _ := strings.Cut(kv, "=")
 		if set("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR")[name] {
 			return "", false
@@ -1236,19 +1243,19 @@ func scratchRepo(sub string, rest []string, expands []bool, dir, checkout string
 	}
 	// The checkout, and the repository it belongs to, wherever that is.
 	reviewed := []string{checkout}
-	if common, ok := (gitState{dir: checkout}).run("rev-parse", "--path-format=absolute", "--git-common-dir"); ok {
+	if common, ok := (gitState{dir: checkout}).run(ctx, "rev-parse", "--path-format=absolute", "--git-common-dir"); ok {
 		reviewed = append(reviewed, common)
 	}
 	free := func(path string) bool {
 		return path != "" &&
 			!slices.ContainsFunc(reviewed, func(r string) bool { return within(path, r) || within(r, path) }) &&
-			slices.ContainsFunc(scratchRoots(), func(root string) bool { return within(path, root) })
+			slices.ContainsFunc(scratchRoots(env.From(ctx)), func(root string) bool { return within(path, root) })
 	}
-	repo, outputs := gitTargets(sub, rest, expands, dir)
+	repo, outputs := gitTargets(ctx, sub, rest, expands, dir)
 	if !free(repo) || slices.ContainsFunc(outputs, func(path string) bool { return !free(path) }) {
 		return "", false
 	}
-	opened, ok := openedRepo(repo)
+	opened, ok := openedRepo(ctx, repo)
 	if !ok || slices.ContainsFunc(opened, func(path string) bool { return !free(path) }) {
 		return "", false
 	}
@@ -1265,17 +1272,17 @@ var repoTimeout = 5 * time.Second
 // exist or holds no repository yet, which init or clone makes. ok is false
 // when git fails there for any other reason, or takes longer than
 // repoTimeout.
-func openedRepo(dir string) (paths []string, ok bool) {
+func openedRepo(ctx context.Context, dir string) (paths []string, ok bool) {
 	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
 		return nil, true
 	} else if err != nil {
 		return nil, false
 	}
 	run := func(args ...string) (string, string, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), repoTimeout)
+		ctx, cancel := context.WithTimeout(ctx, repoTimeout)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = append(gitenv.Without(os.Environ()), "LC_ALL=C")
+		cmd := env.Command(ctx, "git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(gitenv.Without(cmd.Env), "LC_ALL=C")
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		out, err := cmd.Output()
@@ -1309,17 +1316,17 @@ const configUnread = "Git's configuration is named here as a file the guard cann
 // file at path, as git reads them, within repoTimeout. A file that is
 // missing, named by a relative or expanded path, or unreadable, and one
 // that includes another, is refused with the reason.
-func configFileEntries(path string) (entries [][2]string, reason string) {
+func configFileEntries(ctx context.Context, path string) (entries [][2]string, reason string) {
 	if !filepath.IsAbs(path) || strings.ContainsAny(path, "$`") {
 		return nil, configUnread
 	}
 	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
 		return nil, configUnread
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), repoTimeout)
+	ctx, cancel := context.WithTimeout(ctx, repoTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "config", "--file", path, "--null", "--list")
-	cmd.Env = append(gitenv.Without(os.Environ()), "LC_ALL=C")
+	cmd := env.Command(ctx, "git", "config", "--file", path, "--null", "--list")
+	cmd.Env = append(gitenv.Without(cmd.Env), "LC_ALL=C")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, configUnread
@@ -1339,8 +1346,8 @@ func configFileEntries(path string) (entries [][2]string, reason string) {
 // gitTargets are the repository a git command sub, run in dir, works in
 // (the one init or clone makes, else dir) and the files and directories it
 // writes outside it, as git reaches each from dir.
-func gitTargets(sub string, args []string, expands []bool, dir string) (repo string, outputs []string) {
-	path := func(j int) string { return physicalPath(dir, shellPath(args[j], j < len(expands) && expands[j])) }
+func gitTargets(ctx context.Context, sub string, args []string, expands []bool, dir string) (repo string, outputs []string) {
+	path := func(j int) string { return physicalPath(dir, shellPath(ctx, args[j], j < len(expands) && expands[j])) }
 	// The path an option at j gives, as `-o X`, `-oX`, `--long X` or
 	// `--long=X`; short may be "".
 	valueOf := func(j int, short, long string) (string, bool) {
@@ -1349,9 +1356,9 @@ func gitTargets(sub string, args []string, expands []bool, dir string) (repo str
 		case (short != "" && a == short || a == long) && j+1 < len(args):
 			return path(j + 1), true
 		case strings.HasPrefix(a, long+"="):
-			return physicalPath(dir, shellPath(strings.TrimPrefix(a, long+"="), j < len(expands) && expands[j])), true
+			return physicalPath(dir, shellPath(ctx, strings.TrimPrefix(a, long+"="), j < len(expands) && expands[j])), true
 		case short != "" && len(a) > len(short) && strings.HasPrefix(a, short) && !strings.HasPrefix(a, "--"):
-			return physicalPath(dir, shellPath(a[len(short):], j < len(expands) && expands[j])), true
+			return physicalPath(dir, shellPath(ctx, a[len(short):], j < len(expands) && expands[j])), true
 		}
 		return "", false
 	}
@@ -1455,8 +1462,8 @@ func physicalPath(base, p string) string {
 // shellPath is word, a path as a command line gives it, with $HOME and ~
 // in their place, as expandPath has them, and $TMPDIR where the shell
 // expands the word.
-func shellPath(word string, expanded bool) string {
-	if tmp := os.Getenv("TMPDIR"); expanded && tmp != "" {
+func shellPath(ctx context.Context, word string, expanded bool) string {
+	if tmp := env.From(ctx).Get("TMPDIR"); expanded && tmp != "" {
 		for _, v := range []string{"${TMPDIR}", "$TMPDIR"} {
 			if word == v || strings.HasPrefix(word, v+"/") {
 				word = strings.TrimSuffix(tmp, "/") + strings.TrimPrefix(word, v)
@@ -1464,6 +1471,7 @@ func shellPath(word string, expanded bool) string {
 			}
 		}
 	}
+	home := homeDir(ctx)
 	for _, h := range []string{"${HOME}", "$HOME"} {
 		if word == h || strings.HasPrefix(word, h+"/") {
 			word = home + strings.TrimPrefix(word, h)

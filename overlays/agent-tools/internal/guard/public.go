@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -35,7 +36,7 @@ var inlineBody = regexp.MustCompile(`\b(?:body|title)\s*:\s*"((?:[^"\\]|\\.)*)"`
 // --input, or a body written into its GraphQL. A file is read relative to
 // dir; text the guard cannot read, from stdin, the shell or a file it
 // cannot open, goes unchecked here.
-func checkPublicGh(args []string, expanded []bool, dir string) string {
+func checkPublicGh(ctx context.Context, args []string, expanded []bool, dir string) string {
 	var texts []string
 	var words []string
 	for i := 0; i < len(args); i++ {
@@ -48,14 +49,14 @@ func checkPublicGh(args []string, expanded []bool, dir string) string {
 	}
 	switch {
 	case len(words) >= 2 && (words[0] == "pr" || words[0] == "issue") && ghTextVerbs[words[1]]:
-		texts = ghTexts(args, expanded, dir)
+		texts = ghTexts(ctx, args, expanded, dir)
 	case len(words) >= 1 && words[0] == "api":
-		texts = apiTexts(args, expanded, dir)
+		texts = apiTexts(ctx, args, expanded, dir)
 	}
 	if len(texts) == 0 {
 		return ""
 	}
-	findings := publictext.Check(strings.Join(texts, "\n\n"), publictext.In(dir))
+	findings := publictext.Check(strings.Join(texts, "\n\n"), publictext.In(ctx, dir))
 	if len(findings) == 0 {
 		return ""
 	}
@@ -63,7 +64,7 @@ func checkPublicGh(args []string, expanded []bool, dir string) string {
 }
 
 // ghTexts are the texts a pull request or issue command's flags give.
-func ghTexts(args []string, expanded []bool, dir string) []string {
+func ghTexts(ctx context.Context, args []string, expanded []bool, dir string) []string {
 	var texts []string
 	for i := 0; i < len(args); i++ {
 		name, value, attached := strings.Cut(args[i], "=")
@@ -84,7 +85,7 @@ func ghTexts(args []string, expanded []bool, dir string) []string {
 		}
 		if !file {
 			texts = append(texts, value)
-		} else if data, err := readText(dir, value); err == nil {
+		} else if data, err := readText(ctx, dir, value); err == nil {
 			texts = append(texts, string(data))
 		}
 	}
@@ -92,7 +93,7 @@ func ghTexts(args []string, expanded []bool, dir string) []string {
 }
 
 // apiTexts are the texts a `gh api` call's fields and input give.
-func apiTexts(args []string, expanded []bool, dir string) []string {
+func apiTexts(ctx context.Context, args []string, expanded []bool, dir string) []string {
 	var texts []string
 	for i := 0; i < len(args); i++ {
 		flag, value, at := args[i], "", i
@@ -112,7 +113,7 @@ func apiTexts(args []string, expanded []bool, dir string) []string {
 		case "-f", "-F", "--field", "--raw-field":
 			key, v, _ := strings.Cut(value, "=")
 			if (flag == "-F" || flag == "--field") && strings.HasPrefix(v, "@") {
-				data, err := readText(dir, v[1:])
+				data, err := readText(ctx, dir, v[1:])
 				if err != nil {
 					continue
 				}
@@ -125,7 +126,7 @@ func apiTexts(args []string, expanded []bool, dir string) []string {
 				texts = append(texts, graphQLTexts(v)...)
 			}
 		case "--input":
-			data, err := readText(dir, value)
+			data, err := readText(ctx, dir, value)
 			if err != nil {
 				continue
 			}
@@ -181,11 +182,11 @@ func jsonTexts(doc any) []string {
 
 // readText reads a regular file of at most a mebibyte, through any
 // symlinks, path being relative to dir; never stdin.
-func readText(dir, path string) ([]byte, error) {
+func readText(ctx context.Context, dir, path string) ([]byte, error) {
 	if path == "" || path == "-" {
 		return nil, errors.New("stdin")
 	}
-	path = expandPath(path, dir)
+	path = expandPath(ctx, path, dir)
 	if !filepath.IsAbs(path) {
 		return nil, errors.New("no directory to read it in")
 	}

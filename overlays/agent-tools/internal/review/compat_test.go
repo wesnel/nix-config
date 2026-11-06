@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"encoding/json"
 	"maps"
 	"os"
@@ -61,6 +62,7 @@ func compatSays(t *testing.T, f *fixture, reply string) {
 // Each known route has a focused review and a reviewer type, and each
 // focused review a known route.
 func TestFocusesKnown(t *testing.T) {
+	t.Parallel()
 	if got := slices.Sorted(maps.Keys(focuses)); !slices.Equal(got, slices.Sorted(slices.Values(routes.Known))) {
 		t.Errorf("focuses %v, routes %v", got, routes.Known)
 	}
@@ -78,8 +80,9 @@ func TestFocusCompat(t *testing.T) {
 	t.Run("checked", func(t *testing.T) {
 		f := setUp(t, true)
 		compatSays(t, f, compatReply(t, checkedOf(t, "compat", "")))
-		code, run, stderr := runDelegate(t, "--reviewer", "compat", "--plan", f.plan, "--description",
+		code, run, stderr := f.runDelegate(t, "--reviewer", "compat", "--plan", f.plan, "--description",
 			description(t, f, reverting), f.base+"..HEAD")
+
 		out := run.review("compat")
 		if code != 3 || out.Focus != "compat" || len(out.Findings) != 1 || out.Findings[0]["id"] != "compat-1" ||
 			out.Findings[0]["kind"] != "incompatible" {
@@ -119,8 +122,9 @@ func TestFocusCompat(t *testing.T) {
 	t.Run("a category left out", func(t *testing.T) {
 		f := setUp(t, true)
 		compatSays(t, f, compatReply(t, checkedOf(t, "compat", "reverting")))
-		code, run, stderr := runDelegate(t, "--reviewer", "compat", "--plan", f.plan, "--description",
+		code, run, stderr := f.runDelegate(t, "--reviewer", "compat", "--plan", f.plan, "--description",
 			description(t, f, reverting), f.base+"..HEAD")
+
 		if code != 4 || len(run.NotRun) != 1 || run.NotRun[0]["reviewer"] != "compat" || !strings.Contains(stderr, "reverting") {
 			t.Errorf("exit %d, %+v\n%s", code, run, stderr)
 		}
@@ -134,7 +138,7 @@ func TestFocusCompat(t *testing.T) {
 		must(0, json.Unmarshal([]byte(compatReply(t, "[]")), &reply))
 		reply["checked"] = Categories
 		f.claudeSays(t, "security-reviewer", claudeResult(reply, ""))
-		code, run, stderr := runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
+		code, run, stderr := f.runDelegate(t, "--reviewer", "security", "--plan", f.plan, f.base+"..HEAD")
 		if out := run.review("security"); code != 0 || len(out.Findings) != 0 || len(out.Dropped) != 1 {
 			t.Errorf("exit %d, %+v\n%s", code, run, stderr)
 		}
@@ -152,7 +156,7 @@ func TestFocusCompat(t *testing.T) {
 				description(t, f, "Grows the code.\n\n## Reverting\n\n## Limits\n\nNone.\n"), given},
 			"no description, printed": {"--print-prompt", "--reviewer", "compat", "--plan", f.plan, given},
 		} {
-			code, _, stderr := runDelegate(t, args...)
+			code, _, stderr := f.runDelegate(t, args...)
 			refused(t, what, code, stderr)
 			if !strings.Contains(stderr, "description") || strings.Contains(stderr, "usage:") {
 				t.Errorf("%s: %s", what, stderr)
@@ -165,8 +169,9 @@ func TestFocusCompat(t *testing.T) {
 
 	t.Run("printed", func(t *testing.T) {
 		f := setUp(t, false)
-		code, stdout, stderr := delegateCmd(t, "--print-prompt", "--reviewer", "compat", "--plan", f.plan,
+		code, stdout, stderr := f.delegateCmd(t, "--print-prompt", "--reviewer", "compat", "--plan", f.plan,
 			"--description", description(t, f, reverting), f.base+"..HEAD")
+
 		if code != 0 || !strings.Contains(stdout, "This is a compatibility review") ||
 			!strings.Contains(stdout, "no reader keeps the third line") {
 			t.Errorf("exit %d\n%s\n%s", code, stdout, stderr)
@@ -178,11 +183,11 @@ func TestFocusCompat(t *testing.T) {
 	t.Run("candidate without a description", func(t *testing.T) {
 		f := setUp(t, true)
 		writeSettings(t, f, `{"routes": [{"route": "compat", "paths": ["code.txt"], "why": "it is read"}]}`)
-		t.Setenv("FAKE_CODEX", "none")
+		f.setenv("FAKE_CODEX", "none")
 		// The change is a branch's, from where main stands.
 		run(t, f.repo, "git", "checkout", "-q", "-b", "feat")
 		run(t, f.repo, "git", "branch", "-f", "main", f.base)
-		code, run, stderr := runDelegate(t, "--reviewer", "compat", "--plan", f.plan, f.base+"..HEAD")
+		code, run, stderr := f.runDelegate(t, "--reviewer", "compat", "--plan", f.plan, f.base+"..HEAD")
 		if code != 2 {
 			t.Fatalf("exit %d, %+v\n%s", code, run, stderr)
 		}
@@ -190,7 +195,7 @@ func TestFocusCompat(t *testing.T) {
 			strings.Contains(stderr, "--print-prompt --reviewer compat") || strings.Contains(stderr, "outside any sandbox") {
 			t.Errorf("stderr:\n%s", stderr)
 		}
-		code, _, stderr = runDelegate(t, "--plan", f.plan, f.base+"..HEAD")
+		code, _, stderr = f.runDelegate(t, "--plan", f.plan, f.base+"..HEAD")
 		if code != 0 || !strings.Contains(stderr, "run `git delegate --reviewer compat --plan "+f.plan+" --description FILE "+
 			f.base+"..HEAD`") {
 			t.Errorf("exit %d\n%s", code, stderr)
@@ -201,8 +206,8 @@ func TestFocusCompat(t *testing.T) {
 	// given, its goal included.
 	t.Run("a hint that runs", func(t *testing.T) {
 		f := setUp(t, true)
-		t.Setenv("FAKE_CODEX", "unauthenticated")
-		code, _, stderr := runDelegate(t, "--reviewer", "codex", "--plan", f.plan, f.base+"..HEAD")
+		f.setenv("FAKE_CODEX", "unauthenticated")
+		code, _, stderr := f.runDelegate(t, "--reviewer", "codex", "--plan", f.plan, f.base+"..HEAD")
 		if code != 4 || !strings.Contains(stderr, "`git delegate --print-prompt --reviewer codex --plan "+f.plan+" "+f.base+"..HEAD`") {
 			t.Errorf("exit %d\n%s", code, stderr)
 		}
@@ -213,8 +218,9 @@ func TestFocusCompat(t *testing.T) {
 	t.Run("the agent type named", func(t *testing.T) {
 		f := setUp(t, true)
 		f.config(t, map[string]any{})
-		code, _, stderr := runDelegate(t, "--reviewer", "compat", "--plan", f.plan, "--description",
+		code, _, stderr := f.runDelegate(t, "--reviewer", "compat", "--plan", f.plan, "--description",
 			description(t, f, reverting), f.base+"..HEAD")
+
 		if code != 4 || !strings.Contains(stderr, "start a new `compat-reviewer` sub-agent on what `git delegate "+
 			"--print-prompt --reviewer compat --plan "+f.plan+" --description FILE "+f.base+"..HEAD` prints") {
 			t.Errorf("exit %d\n%s", code, stderr)
@@ -228,18 +234,18 @@ func TestFocusCompat(t *testing.T) {
 		r := newRemote(t, nil)
 		gh := setUpPR(t, r)
 		old := refreshThreads
-		refreshThreads = func(string, int) ([]loop.Thread, error) { return nil, nil }
+		refreshThreads = func(context.Context, string, int) ([]loop.Thread, error) { return nil, nil }
 		t.Cleanup(func() { refreshThreads = old })
 		compatSays(t, f, `{"findings": [], "unverified": [], "checked": `+checkedOf(t, "compat", "")+`}`)
 
-		code, _, stderr := runDelegate(t, "--reviewer", "compat", "o/r#7")
+		code, _, stderr := f.runDelegate(t, "--reviewer", "compat", "o/r#7")
 		refused(t, "a pull request without a Reverting section", code, stderr)
 		if !strings.Contains(stderr, "the description of o/r#7") {
 			t.Errorf("the refusal does not name the pull request's description: %s", stderr)
 		}
 
 		gh.pr["body"] = reverting
-		if code, run, stderr := runDelegate(t, "--reviewer", "compat", "o/r#7"); code != 0 || run.review("compat").Focus != "compat" {
+		if code, run, stderr := f.runDelegate(t, "--reviewer", "compat", "o/r#7"); code != 0 || run.review("compat").Focus != "compat" {
 			t.Fatalf("exit %d, %+v\n%s", code, run, stderr)
 		}
 		if args := claudeArgs(t, f, "compat-reviewer", 1); !strings.Contains(args[len(args)-1], "no reader keeps the third line") {
@@ -247,7 +253,7 @@ func TestFocusCompat(t *testing.T) {
 		}
 
 		gh.pr["body"] = "No section."
-		if code, _, stderr := runDelegate(t, "--reviewer", "compat", "--description", description(t, f, reverting),
+		if code, _, stderr := f.runDelegate(t, "--reviewer", "compat", "--description", description(t, f, reverting),
 			"o/r#7"); code != 0 {
 			t.Errorf("--description in place of the pull request's: exit %d\n%s", code, stderr)
 		}

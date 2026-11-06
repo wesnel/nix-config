@@ -9,14 +9,15 @@ import (
 	"io"
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	shared "github.com/wesnel/agent-tools/internal/availability"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/record"
@@ -43,7 +44,12 @@ type span struct {
 	own bool
 	// cleanup, where set, removes what resolving r made.
 	cleanup func()
+	// env is the environment the review runs in: its context's Env.
+	env env.Env
 }
+
+// git runs git in r's Env.
+func (r *span) git() git.Where { return git.In(env.With(context.Background(), r.env)) }
 
 // release removes what resolving r made, once the review is done with it.
 func (r *span) release() {
@@ -55,38 +61,37 @@ func (r *span) release() {
 // settings are the agent settings of the clone r is in: for a pull
 // request, the operator's clone's, or none in its own bare clone.
 func (r *span) settings() (*repos.Settings, error) {
-	git.Dir = r.top
-	defer func() { git.Dir = "" }()
-	return repos.Lookup()
+	return repos.Lookup(git.At(env.With(context.Background(), r.env), r.top))
 }
 
 // resolve resolves the range given in the repository at dir, or, for "", the
-// one containing the process's directory.
-func resolve(dir, given string) (*span, error) {
+// one containing the directory of ctx's Env, in which the review runs.
+func resolve(ctx context.Context, dir, given string) (*span, error) {
 	base, tip, ok := strings.Cut(given, "..")
 	if !ok || strings.HasPrefix(tip, ".") || base == "" || tip == "" {
 		return nil, refusal.New("%q is not a range BASE..TIP; pass the range whose commits make up the change, "+
 			"such as `origin/main..HEAD`", given)
 	}
-	r := &span{given: given, top: dir}
+	r := &span{given: given, top: dir, env: env.From(ctx)}
+	g := r.git()
 	var err error
 	if r.top == "" {
-		if r.top, err = git.Toplevel(); err != nil {
+		if r.top, err = g.Toplevel(); err != nil {
 			return nil, err
 		}
 	}
-	if r.common, err = git.Run("-C", r.top, "rev-parse", "--path-format=absolute", "--git-common-dir"); err != nil {
+	if r.common, err = g.Run("-C", r.top, "rev-parse", "--path-format=absolute", "--git-common-dir"); err != nil {
 		return nil, err
 	}
 	for _, p := range []struct {
 		rev  string
 		into *string
 	}{{base, &r.base}, {tip, &r.tip}} {
-		if *p.into, err = git.Run("-C", r.top, "rev-parse", "--verify", "--end-of-options", p.rev+"^{commit}"); err != nil {
+		if *p.into, err = g.Run("-C", r.top, "rev-parse", "--verify", "--end-of-options", p.rev+"^{commit}"); err != nil {
 			return nil, err
 		}
 	}
-	if r.commits, err = git.Run("-C", r.top, "log", "--reverse", "--format=%H %s", r.base+".."+r.tip); err != nil {
+	if r.commits, err = g.Run("-C", r.top, "log", "--reverse", "--format=%H %s", r.base+".."+r.tip); err != nil {
 		return nil, err
 	}
 	if r.commits == "" {
@@ -96,44 +101,48 @@ func resolve(dir, given string) (*span, error) {
 	return r, nil
 }
 
-// readFile reads path, or stdin for "-".
-func readFile(path string, stdin io.Reader) (string, error) {
+// readFile reads path, relative to the directory of e where it is
+// relative, or stdin for "-".
+func readFile(e env.Env, path string, stdin io.Reader) (string, error) {
 	var data []byte
 	var err error
 	if path == "-" {
 		data, err = io.ReadAll(stdin)
 	} else {
-		data, err = os.ReadFile(path)
+		data, err = os.ReadFile(inDir(e, path))
 	}
 	return string(data), err
 }
 
-func generalReviewer() string {
-	if os.Getenv("CODEX_SANDBOX") != "" || os.Getenv("CODEX_THREAD_ID") != "" {
+// generalReviewer is the other family than the harness e says the caller
+// runs in.
+func generalReviewer(e env.Env) string {
+	if e.Get("CODEX_SANDBOX") != "" || e.Get("CODEX_THREAD_ID") != "" {
 		return "claude"
 	}
 	return "codex"
 }
 
-// unavailable says why Codex may not or cannot review from here, or "".
-// Its account's availability is the caller's to check.
-func unavailable() string {
-	if _, err := exec.LookPath("codex"); err != nil {
+// unavailable says why Codex may not or cannot review from here, in ctx's
+// Env, or "". Its account's availability is the caller's to check.
+func unavailable(ctx context.Context) string {
+	e := env.From(ctx)
+	if _, err := e.LookPath("codex"); err != nil {
 		return "codex is not on PATH"
 	}
-	config, err := loadDelegateConfig()
+	config, err := loadDelegateConfig(e)
 	switch {
 	case err != nil:
-		return fmt.Sprintf("agent-tools' config %s cannot be read: %v", repos.Path(), err)
+		return fmt.Sprintf("agent-tools' config %s cannot be read: %v", repos.Path(e), err)
 	case config.Codex != nil:
 		// The provider's auth command stands in for Codex's login, which
 		// `codex login status` checks.
 		if _, err := config.Codex.args(); err != nil {
-			return fmt.Sprintf("agent-tools' config %s: %v", repos.Path(), err)
+			return fmt.Sprintf("agent-tools' config %s: %v", repos.Path(e), err)
 		}
 		return ""
 	}
-	if err := exec.Command("codex", "login", "status").Run(); err != nil {
+	if err := env.Command(ctx, "codex", "login", "status").Run(); err != nil {
 		return "codex is not signed in (`codex login status` fails)"
 	}
 	return ""
@@ -298,9 +307,10 @@ type CodexReply struct {
 // confinement says. It returns an Unconfined where Codex's sandbox cannot
 // start confined to the checkout.
 func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
+	e := env.From(ctx)
 	a := c.availability
 	if a == nil {
-		a = newAvailability()
+		a = newAvailability(e)
 	}
 	if err := a.check(shared.Codex); err != nil {
 		return nil, err
@@ -312,7 +322,8 @@ func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 	}
 	run := c.Git
 	if run == nil {
-		run = func(args ...string) (string, error) { return git.Run(append([]string{"-C", c.Checkout}, args...)...) }
+		g := git.In(ctx)
+		run = func(args ...string) (string, error) { return g.Run(append([]string{"-C", c.Checkout}, args...)...) }
 	}
 	head, err := run("rev-parse", "--verify", "HEAD")
 	if err != nil {
@@ -328,7 +339,7 @@ func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 	}
 	// Codex runs helpers in its sandbox by executing itself, from the path
 	// it was started by, so start it by a path the sandbox lets it read.
-	codex, err := exec.LookPath("codex")
+	codex, err := e.LookPath("codex")
 	if err == nil {
 		codex, err = filepath.EvalSymlinks(codex)
 	}
@@ -339,7 +350,7 @@ func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 	if err != nil {
 		return nil, err
 	}
-	config, err := loadDelegateConfig()
+	config, err := loadDelegateConfig(e)
 	if err != nil {
 		return nil, err
 	}
@@ -358,10 +369,10 @@ func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 	defer cancel()
 	// Codex's sandbox does not start inside another macOS sandbox; Codex
 	// must then not run at all, rather than run its commands unconfined.
-	env := append(gitenv.Without(os.Environ()), "PATH="+realDirs(os.Getenv("PATH")))
-	probe := exec.CommandContext(ctx, codex, append(append([]string{"sandbox"}, confined...),
+	vars := append(gitenv.Without(e.Environ()), "PATH="+realDirs(e.Get("PATH")))
+	probe := env.Command(ctx, codex, append(append([]string{"sandbox"}, confined...),
 		"-P", profile, "-C", c.Checkout, "--", "git", "rev-parse", "--verify", "HEAD")...)
-	probe.Env = env
+	probe.Env = vars
 	var probeErr bytes.Buffer
 	probe.Stderr = &probeErr
 	if out, err := probe.Output(); err != nil || strings.TrimSpace(string(out)) != head {
@@ -374,12 +385,15 @@ func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 	if model != "" {
 		args = append(args, "-m", model)
 	}
-	cmd := exec.CommandContext(ctx, codex, append(args, "-")...)
+	cmd := env.Command(ctx, codex, append(args, "-")...)
 	cmd.Dir = c.Checkout
-	cmd.Env = env
+	cmd.Env = vars
 	cmd.Stdin = strings.NewReader(c.Prompt)
-	events := &failureEvents{w: c.Log}
-	cmd.Stdout, cmd.Stderr = events, c.Log
+	// Codex's stdout and stderr are copied by goroutines of their own, and
+	// both reach c.Log, which need not be safe for concurrent writes.
+	log := &lockedWriter{w: c.Log}
+	events := &failureEvents{w: log}
+	cmd.Stdout, cmd.Stderr = events, log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
 		stopGroup(cmd.Process.Pid, 5*time.Second)
@@ -403,6 +417,18 @@ func CodexRun(ctx context.Context, c Codex) (*CodexReply, error) {
 		return nil, fmt.Errorf("codex left no reply: %w", err)
 	}
 	return &CodexReply{Text: string(data), Model: model}, nil
+}
+
+// lockedWriter writes to w one Write at a time.
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }
 
 // stopGroup kills the process group pgid until it is empty, or for at most
@@ -577,7 +603,7 @@ var kinds = map[string]bool{"goal-unmet": true, "bug": true, "regression": true,
 // focus, so that settling one never names a general review's.
 func validate(reply string, r *span, wt, focusName string, fc *focus) (*Output, error) {
 	blob := func(path string) ([]byte, error) {
-		return git.Bytes(nil, "-C", r.top, "cat-file", "blob", r.tip+":"+path)
+		return r.git().Bytes(nil, "-C", r.top, "cat-file", "blob", r.tip+":"+path)
 	}
 	return validateWith(reply, r.given, r.tip, blob, wt, focusName, fc)
 }

@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/wesnel/agent-tools/internal/cli"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 )
 
@@ -42,10 +43,10 @@ func init() {
 // planTool runs only the sibling shipped with this server, even when the
 // server was started through a profile symlink or PATH holds another CLI.
 func planTool(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
-	if err := git.CheckLocation(); err != nil {
+	if err := git.In(ctx).CheckLocation(); err != nil {
 		return cli.Report("agent-plan", nil, err, 0, stdout, stderr)
 	}
-	if err := git.CheckConfig(""); err != nil {
+	if err := git.In(ctx).CheckConfig(""); err != nil {
 		return cli.Report("agent-plan", nil, err, 0, stdout, stderr)
 	}
 	exe, err := os.Executable()
@@ -57,6 +58,8 @@ func planTool(ctx context.Context, argv []string, stdout, stderr io.Writer) int 
 		return 1
 	}
 	cmd := exec.CommandContext(ctx, filepath.Join(filepath.Dir(exe), "agent-plan"), argv...)
+	e := env.From(ctx)
+	cmd.Env, cmd.Dir = e.Environ(), e.Dir()
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	if err := cmd.Run(); err != nil {
 		var exit *exec.ExitError

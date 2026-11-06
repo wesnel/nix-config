@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -10,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
@@ -44,15 +46,16 @@ type botConfig struct {
 	Repos              []string          `json:"repos"`
 }
 
-// configPath is pr-loop's config: pr-loop/config.json under the XDG config
-// directory, or $PR_LOOP_CONFIG where hostpaths allows it.
-func configPath() string {
-	return hostpaths.ConfigFile("PR_LOOP_CONFIG", filepath.Join("pr-loop", "config.json"))
+// configPath is pr-loop's config: pr-loop/config.json under e's XDG config
+// directory, or e's $PR_LOOP_CONFIG where hostpaths allows it.
+func configPath(e env.Env) string {
+	return hostpaths.ConfigFile(e, "PR_LOOP_CONFIG", filepath.Join("pr-loop", "config.json"))
 }
 
-// botsFor returns the configured bots that apply to a repository, by name.
-func botsFor(slug string) ([]*Bot, error) {
-	p := configPath()
+// botsFor returns the configured bots that apply to a repository, by name,
+// from the config of ctx's Env.
+func botsFor(ctx context.Context, slug string) ([]*Bot, error) {
+	p := configPath(env.From(ctx))
 	data, err := os.ReadFile(p)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, refuse("no review bots are configured, which takes %s; ask the operator to configure them", p)

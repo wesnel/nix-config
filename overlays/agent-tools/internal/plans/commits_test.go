@@ -6,7 +6,9 @@ import (
 )
 
 func TestCommitAssociations(t *testing.T) {
+	t.Parallel()
 	t.Run("retry after a partial chained rewrite", func(t *testing.T) {
+		t.Parallel()
 		c := testConfig(t)
 		repo := commitRepo(t)
 		p := newPlan(t, c, "partial")
@@ -20,7 +22,7 @@ func TestCommitAssociations(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if err := c.RecordRewrites("session", repo, "o/r", map[string]string{b: d, x: y}, day); err != nil {
+		if err := c.RecordRewrites(t.Context(), "session", repo, "o/r", map[string]string{b: d, x: y}, day); err != nil {
 			t.Fatal(err)
 		}
 		got, err := c.ResolveCommit("o/r", x)
@@ -29,6 +31,7 @@ func TestCommitAssociations(t *testing.T) {
 		}
 	})
 	t.Run("rewrites go to the plan holding the commit", func(t *testing.T) {
+		t.Parallel()
 		c := testConfig(t)
 		repo := commitRepo(t)
 		p := newPlan(t, c, "holder")
@@ -37,7 +40,7 @@ func TestCommitAssociations(t *testing.T) {
 			t.Fatal(err)
 		}
 		before, _, _ := c.Plans()
-		if err := c.RecordRewrites("", repo, "o/r", map[string]string{a: b}, day); err != nil {
+		if err := c.RecordRewrites(t.Context(), "", repo, "o/r", map[string]string{a: b}, day); err != nil {
 			t.Fatal(err)
 		}
 		after, _, _ := c.Plans()
@@ -50,6 +53,7 @@ func TestCommitAssociations(t *testing.T) {
 		}
 	})
 	t.Run("an unmoved commit does not choose the plan", func(t *testing.T) {
+		t.Parallel()
 		a, b, d := strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("d", 40)
 		// Plans made on the same day sort by slug, so each order puts the
 		// unmoved commit's plan first once.
@@ -63,7 +67,7 @@ func TestCommitAssociations(t *testing.T) {
 			if _, err := moved.Record("", Event{Kind: "committed", Commit: "Signed", Repository: "o/r", Revision: b}, day); err != nil {
 				t.Fatal(err)
 			}
-			if err := c.RecordRewrites("", repo, "o/r", map[string]string{a: a, b: d}, day); err != nil {
+			if err := c.RecordRewrites(t.Context(), "", repo, "o/r", map[string]string{a: a, b: d}, day); err != nil {
 				t.Fatal(err)
 			}
 			events, _ := moved.Events()
@@ -73,6 +77,7 @@ func TestCommitAssociations(t *testing.T) {
 		}
 	})
 	t.Run("host owned idempotent rewrites", func(t *testing.T) {
+		t.Parallel()
 		c := testConfig(t)
 		repo := commitRepo(t)
 		remote := c
@@ -84,7 +89,7 @@ func TestCommitAssociations(t *testing.T) {
 		}
 		before, _ := p.Events()
 		for range 2 {
-			if err := c.RecordRewrites("session", repo, "o/r", map[string]string{a: b}, day); err != nil {
+			if err := c.RecordRewrites(t.Context(), "session", repo, "o/r", map[string]string{a: b}, day); err != nil {
 				t.Fatal(err)
 			}
 		}

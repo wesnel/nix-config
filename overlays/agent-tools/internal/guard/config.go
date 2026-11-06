@@ -1,11 +1,13 @@
 package guard
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/repos"
 )
@@ -31,11 +33,12 @@ var builtCredentialPaths []string
 // credentialPaths are the path prefixes of credentials: the config's, or
 // without them the built-in ones, which stand in where the config is
 // absent, as in a sandbox guest or on a host before its first switch. With neither, everything under the home directory is one.
-func credentialPaths() []string {
-	paths := loadSettings().CredentialPaths
+func credentialPaths(ctx context.Context) []string {
+	paths := loadSettings(ctx).CredentialPaths
 	if len(paths) == 0 {
 		paths = builtCredentialPaths
 	}
+	home := homeDir(ctx)
 	if len(paths) == 0 {
 		return []string{home + "/"}
 	}
@@ -53,12 +56,13 @@ func credentialPaths() []string {
 // the guard's settings: the file repos.Path names, or anything in
 // agent-tools' directory under the XDG config directory, as hostpaths has
 // it or as the guard's environment does.
-func agentToolsConfig(path string) bool {
-	base := os.Getenv("XDG_CONFIG_HOME")
+func agentToolsConfig(ctx context.Context, path string) bool {
+	e := env.From(ctx)
+	base := e.Get("XDG_CONFIG_HOME")
 	if !filepath.IsAbs(base) {
-		base = filepath.Join(home, ".config")
+		base = filepath.Join(homeDir(ctx), ".config")
 	}
-	return path == filepath.Clean(repos.Path()) || inAgentTools(path, base, hostpaths.ConfigHome())
+	return path == filepath.Clean(repos.Path(e)) || inAgentTools(path, base, hostpaths.ConfigHome(e))
 }
 
 // inAgentTools reports whether path is in agent-tools' directory under one
@@ -73,13 +77,13 @@ func inAgentTools(path string, bases ...string) bool {
 	return false
 }
 
-// loadSettings reads the guard's settings; a config that is missing or
-// unreadable gives none.
-func loadSettings() settings {
+// loadSettings reads the guard's settings from the config the Env of ctx
+// names; a config that is missing or unreadable gives none.
+func loadSettings(ctx context.Context) settings {
 	var file struct {
 		Guard settings `json:"guard"`
 	}
-	if data, err := os.ReadFile(repos.Path()); err == nil {
+	if data, err := os.ReadFile(repos.Path(env.From(ctx))); err == nil {
 		json.Unmarshal(data, &file)
 	}
 	return file.Guard

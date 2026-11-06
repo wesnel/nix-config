@@ -20,19 +20,31 @@ import (
 // not reach the decoy runs git with gitenv.Without(os.Environ()).
 func Decoy(t testing.TB) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir, vars := DecoyEnv(t)
+	for _, kv := range vars {
+		name, value, _ := strings.Cut(kv, "=")
+		t.Setenv(name, value)
+	}
+	return dir
+}
+
+// DecoyEnv is Decoy for a test that hands the code under test an Env of its
+// own rather than setting the process's: it returns the decoy and the
+// variables, GIT_DIR and GIT_WORK_TREE, that point git at it, and sets
+// nothing.
+func DecoyEnv(t testing.TB) (dir string, vars []string) {
+	t.Helper()
+	dir = t.TempDir()
 	run(t, dir, "init", "-q", "-b", "main")
 	run(t, dir, "-c", "user.name=T", "-c", "user.email=t@e", "-c", "commit.gpgsign=false",
 		"commit", "-q", "--allow-empty", "-m", "decoy")
 	before := snapshot(t, dir)
-	t.Setenv("GIT_DIR", filepath.Join(dir, ".git"))
-	t.Setenv("GIT_WORK_TREE", dir)
 	t.Cleanup(func() {
 		if after := snapshot(t, dir); after != before {
 			t.Errorf("the repository GIT_DIR names changed:\n--- before\n%s\n--- after\n%s", before, after)
 		}
 	})
-	return dir
+	return dir, []string{"GIT_DIR=" + filepath.Join(dir, ".git"), "GIT_WORK_TREE=" + dir}
 }
 
 func snapshot(t testing.TB, dir string) string {

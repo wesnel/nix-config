@@ -2,6 +2,7 @@ package guard
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -15,6 +16,7 @@ import (
 )
 
 func TestSessionEdits(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, session, target, branch, command, association, file, reason string
 		noPlan, newer, sessionOnly, fixture, reclaim                      bool
@@ -63,13 +65,12 @@ func TestSessionEdits(t *testing.T) {
 		{name: "remove another session worktree from main", session: "s2", target: "MAIN", association: "LINKED", command: "git worktree remove LINKED", deny: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			root, _ := filepath.EvalSymlinks(t.TempDir())
 			main, linked, scratch := filepath.Join(root, "main"), filepath.Join(root, "linked"), filepath.Join(root, "scratch")
 			os.MkdirAll(scratch, 0o755)
 			os.Mkdir(main, 0o755)
-			old := scratchRoots
-			scratchRoots = func() []string { return []string{scratch} }
-			t.Cleanup(func() { scratchRoots = old })
+			ctx := withVars(guardCtx(t), "TMPDIR="+scratch)
 			gitIn(t, main, "init", "-q", "-b", "base")
 			gitIn(t, main, "commit", "-q", "--allow-empty", "-m", "base")
 			gitIn(t, main, "worktree", "add", "-q", "-b", "task", linked)
@@ -115,10 +116,10 @@ func TestSessionEdits(t *testing.T) {
 			config := filepath.Join(root, "config.json")
 			data, _ := json.Marshal(map[string]any{"plans": c})
 			os.WriteFile(config, data, 0o600)
-			t.Setenv("AGENT_TOOLS_CONFIG", config)
+			ctx = withVars(ctx, "AGENT_TOOLS_CONFIG="+config)
 			now := time.Now()
 			if other {
-				if _, err := c.New(plans.NewOptions{Title: "Other", Slug: "other", Worktrees: []string{parked}, Sessions: []string{"codex:s2"}}, now.Add(-time.Second)); err != nil {
+				if _, err := c.New(t.Context(), plans.NewOptions{Title: "Other", Slug: "other", Worktrees: []string{parked}, Sessions: []string{"codex:s2"}}, now.Add(-time.Second)); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -127,7 +128,7 @@ func TestSessionEdits(t *testing.T) {
 				if tc.association != "" {
 					association = paths.Replace(tc.association)
 				}
-				made, err := c.New(plans.NewOptions{Title: "Task", Slug: "task", Worktrees: []string{association}, Sessions: []string{"codex:s1"}}, now)
+				made, err := c.New(t.Context(), plans.NewOptions{Title: "Task", Slug: "task", Worktrees: []string{association}, Sessions: []string{"codex:s1"}}, now)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -147,7 +148,7 @@ func TestSessionEdits(t *testing.T) {
 					if tc.sessionOnly {
 						o.Worktrees, o.Sessions = []string{main}, []string{"codex:s1"}
 					}
-					if _, err := c.New(o, now.Add(time.Second)); err != nil {
+					if _, err := c.New(t.Context(), o, now.Add(time.Second)); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -162,7 +163,7 @@ func TestSessionEdits(t *testing.T) {
 			}
 			data, _ = json.Marshal(event)
 			var out bytes.Buffer
-			Main([]string{"--baseline"}, bytes.NewReader(data), &out, io.Discard)
+			mainIn(ctx, []string{"--baseline"}, bytes.NewReader(data), &out, io.Discard)
 			if denied := strings.Contains(out.String(), `"deny"`); denied != tc.deny {
 				t.Fatalf("deny=%v, want %v: %s", denied, tc.deny, out.String())
 			}
@@ -174,24 +175,21 @@ func TestSessionEdits(t *testing.T) {
 }
 
 func TestOwners(t *testing.T) {
+	t.Parallel()
 	// owned makes a repository, main, with linked worktrees: linked, which a
 	// plan in a plans directory of the test's own gives to agent a1, and
 	// sibling, which it gives to a3. Scratch is a directory beside them that
-	// stands for the session's temporary directories.
-	owned := func(t *testing.T) *strings.Replacer {
+	// stands for the session's temporary directories, $TMPDIR in the Env of
+	// the context it returns.
+	owned := func(t *testing.T) (context.Context, *strings.Replacer) {
 		t.Helper()
 		root, _ := filepath.EvalSymlinks(t.TempDir())
 		c := plans.Config{Dir: filepath.Join(root, "agents"), Host: "box"}
 		config := filepath.Join(root, "config.json")
 		data, _ := json.Marshal(map[string]any{"plans": c})
 		os.WriteFile(config, data, 0o644)
-		t.Setenv("AGENT_TOOLS_CONFIG", config)
 		scratch := filepath.Join(root, "scratch")
 		os.Mkdir(scratch, 0o755)
-		old := scratchRoots
-		scratchRoots = func() []string { return []string{scratch} }
-		t.Cleanup(func() { scratchRoots = old })
-		t.Setenv("TMPDIR", scratch)
 
 		main, linked, sibling := filepath.Join(root, "main"), filepath.Join(root, "linked"), filepath.Join(root, "sibling")
 		os.Mkdir(main, 0o755)
@@ -209,7 +207,7 @@ func TestOwners(t *testing.T) {
 		// Links in scratch into the sibling's worktree and the main checkout.
 		os.Symlink(sibling, filepath.Join(scratch, "to-sibling"))
 		os.Symlink(main, filepath.Join(scratch, "to-main"))
-		made, err := c.New(plans.NewOptions{Title: "X", Slug: "x"}, time.Now())
+		made, err := c.New(t.Context(), plans.NewOptions{Title: "X", Slug: "x"}, time.Now())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -219,7 +217,7 @@ func TestOwners(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		return strings.NewReplacer("MAIN", main, "LINKED", linked, "SIBLING", sibling, "PARKED", parked,
+		return withVars(guardCtx(t), "TMPDIR="+scratch, "AGENT_TOOLS_CONFIG="+config), strings.NewReplacer("MAIN", main, "LINKED", linked, "SIBLING", sibling, "PARKED", parked,
 			"THROWAWAY", throwaway, "SCRATCH", scratch, "PLANS", c.Dir, "LOOSE", filepath.Join(root, "loose"))
 	}
 
@@ -417,10 +415,11 @@ func TestOwners(t *testing.T) {
 		{"owner's touch in submodule foreach from the main checkout", true, `{"tool_name":"Bash","agent_id":"a1","cwd":"MAIN","tool_input":{"command":"git submodule foreach 'touch a.go'"}}`, []string{"LINKED"}},
 	} {
 		t.Run(caseName(e.deny, e.name), func(t *testing.T) {
-			paths := owned(t)
+			t.Parallel()
+			ctx, paths := owned(t)
 			event := paths.Replace(e.json)
 			var out bytes.Buffer
-			Main([]string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
+			mainIn(ctx, []string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
 			denied := strings.Contains(out.String(), `"deny"`)
 			if denied != e.deny {
 				t.Fatalf("%s: deny=%v, output %s", event, denied, out.String())
@@ -445,6 +444,19 @@ func TestOwners(t *testing.T) {
 			}
 		})
 	}
+	// go install writes where the guard's own $GOBIN names: in scratch, the
+	// owner may run it.
+	t.Run(caseName(false, "owner's go install with GOBIN in scratch"), func(t *testing.T) {
+		t.Parallel()
+		ctx, paths := owned(t)
+		ctx = withVars(ctx, "GOBIN="+paths.Replace("SCRATCH/bin"))
+		event := paths.Replace(`{"tool_name":"Bash","agent_id":"a1","cwd":"LINKED","tool_input":{"command":"go install ./cmd/x"}}`)
+		var out bytes.Buffer
+		mainIn(ctx, []string{"--baseline"}, strings.NewReader(event), &out, io.Discard)
+		if out.Len() != 0 {
+			t.Errorf("%s: %s", event, out.String())
+		}
+	})
 }
 
 // stashRepos is a repository with a linked worktree, under the returned
@@ -472,6 +484,7 @@ var stashRepos = sync.OnceValues(func() (string, error) {
 // writes or restores an entry is denied, where the main thread is held to
 // tagged entries alone.
 func TestSubagentStash(t *testing.T) {
+	t.Parallel()
 	linked := filepath.Join(fixture(t, stashRepos), "linked")
 
 	claude := func(command string) string {
@@ -515,8 +528,9 @@ func TestSubagentStash(t *testing.T) {
 		{"main thread's git stash apply 3f2a9c1", false, mainThread("git stash apply 3f2a9c1")},
 	} {
 		t.Run(caseName(e.deny, e.name), func(t *testing.T) {
+			t.Parallel()
 			var out bytes.Buffer
-			Main([]string{"--baseline"}, strings.NewReader(e.json), &out, io.Discard)
+			mainIn(guardCtx(t), []string{"--baseline"}, strings.NewReader(e.json), &out, io.Discard)
 			denied := strings.Contains(out.String(), `"deny"`)
 			if denied != e.deny {
 				t.Errorf("%s: deny=%v, output %s", e.json, denied, out.String())

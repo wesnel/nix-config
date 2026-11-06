@@ -17,7 +17,7 @@ func TestFollowup(t *testing.T) {
 		p := newPlan(t, c, "x")
 		addItems(t, p.file(""), "** Steps", "S1")
 		addItems(t, p.file(""), "** Distribution", "P1")
-		if _, err := c.New(NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day); err != nil {
+		if _, err := c.New(t.Context(), NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day); err != nil {
 			t.Fatal(err)
 		}
 		return p

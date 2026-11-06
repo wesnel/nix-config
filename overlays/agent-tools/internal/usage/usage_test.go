@@ -26,12 +26,15 @@ func fixture(t *testing.T, name string) []byte {
 // Claude Code's status line input carries the account's windows once the
 // session has had a response.
 func TestFromClaudeStatus(t *testing.T) {
+	t.Parallel()
 	t.Run("before the first response", func(t *testing.T) {
+		t.Parallel()
 		if r, ok := FromClaudeStatus(fixture(t, "claude-statusline-first.json"), at); ok {
 			t.Errorf("reading %+v from an input without rate_limits", r)
 		}
 	})
 	t.Run("after it", func(t *testing.T) {
+		t.Parallel()
 		r, ok := FromClaudeStatus(fixture(t, "claude-statusline.json"), at)
 		want := []Window{
 			{Name: "5h", Used: 100, ResetsAt: 1792032000, ObservedAt: 1792021200},
@@ -42,6 +45,7 @@ func TestFromClaudeStatus(t *testing.T) {
 		}
 	})
 	t.Run("not JSON", func(t *testing.T) {
+		t.Parallel()
 		if _, ok := FromClaudeStatus([]byte("{"), at); ok {
 			t.Error("a reading from broken input")
 		}
@@ -71,6 +75,7 @@ func readFile(t *testing.T, file string) map[string]onDisk {
 // Record keeps each window's highest reading and its latest sighting until
 // a later window replaces it, however sessions' status lines interleave.
 func TestRecord(t *testing.T) {
+	t.Parallel()
 	const resets = 1792032000
 	// record writes a reading of the 5h window, used percent, resetting
 	// at resetsAt, seen at observed.
@@ -95,6 +100,7 @@ func TestRecord(t *testing.T) {
 	}
 
 	t.Run("the first reading", func(t *testing.T) {
+		t.Parallel()
 		got := readFile(t, start(t))
 		want := map[string]onDisk{
 			"five_hour": {Used: 60, ResetsAt: resets, ObservedAt: 100},
@@ -120,6 +126,7 @@ func TestRecord(t *testing.T) {
 		{"an earlier window changes nothing", 99, resets - 5*3600, 200, onDisk{60, resets, 100}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			file := start(t)
 			record(t, file, c.used, c.resetsAt, c.observed)
 			got := readFile(t, file)
@@ -136,6 +143,7 @@ func TestRecord(t *testing.T) {
 	// version it opened, never the new one half written: Record replaces
 	// the file rather than writing into it.
 	t.Run("a reader keeps the version it opened", func(t *testing.T) {
+		t.Parallel()
 		file := start(t)
 		before, err := os.ReadFile(file)
 		if err != nil {
@@ -164,6 +172,7 @@ func TestRecord(t *testing.T) {
 // leave the latest window stored: no Record writes over another's newer
 // window with what it loaded before that one was written.
 func TestRecordConcurrent(t *testing.T) {
+	t.Parallel()
 	const resets, writers, rounds = 1792032000, 8, 50
 	for round := range rounds {
 		file := filepath.Join(t.TempDir(), "usage.json")

@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/export"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/record"
@@ -126,7 +127,7 @@ func (w Watch) Run(ctx context.Context) error {
 		}
 		var lines []string
 		next := st
-		hash, err := w.hash(now)
+		hash, err := w.hash(ctx, now)
 		if err == nil && hash != st.Hash && (!st.Started || now.Sub(st.Printed) >= quiet) {
 			next.Hash = hash
 			if st.Started {
@@ -150,7 +151,7 @@ func (w Watch) Run(ctx context.Context) error {
 		for _, d := range digests {
 			next.Digests = append(next.Digests, d.name)
 		}
-		lines = append(lines, w.reviews(now, st, &next)...)
+		lines = append(lines, w.reviews(ctx, now, st, &next)...)
 		next.Started = true
 		if !sameState(st, next) {
 			data, err := json.Marshal(next)
@@ -184,8 +185,9 @@ func sameState(a, b watchState) bool {
 // lines what changed since st asks for: LineReviews where the pull
 // requests the page lists changed, and LineRecord where a record of one
 // appeared or changed. A read that fails changes nothing but the time of
-// the next read: retrying sooner would make a rate limit worse.
-func (w Watch) reviews(now time.Time, st watchState, next *watchState) []string {
+// the next read: retrying sooner would make a rate limit worse. The records
+// are those of ctx's Env.
+func (w Watch) reviews(ctx context.Context, now time.Time, st watchState, next *watchState) []string {
 	if w.GitHub == nil {
 		return nil
 	}
@@ -227,7 +229,7 @@ func (w Watch) reviews(now time.Time, st watchState, next *watchState) []string 
 	records := map[string]string{}
 	changed := false
 	for pr := range next.Records {
-		h := recordsHash(pr)
+		h := recordsHash(env.From(ctx), pr)
 		records[pr] = h
 		if old, ok := st.Records[pr]; st.Started && ok && old != h {
 			changed = true
@@ -241,14 +243,15 @@ func (w Watch) reviews(now time.Time, st watchState, next *watchState) []string 
 }
 
 // recordsHash is the hash of pr's review records, OWNER/NAME#N: its range
-// records and its threads' record, by name and content; "" for none.
-func recordsHash(pr string) string {
+// records and its threads' record, by name and content, in e's record
+// directory; "" for none.
+func recordsHash(e env.Env, pr string) string {
 	slug, n, _ := strings.Cut(pr, "#")
 	owner, repo, _ := strings.Cut(slug, "/")
 	if !record.ValidName(owner) || !record.ValidName(repo) {
 		return ""
 	}
-	dir := filepath.Join(record.Dir(), owner, repo)
+	dir := filepath.Join(record.Dir(e), owner, repo)
 	entries, _ := os.ReadDir(dir)
 	sum := sha256.New()
 	found := false
@@ -276,9 +279,9 @@ func recordsHash(pr string) string {
 // hash is the hash of what an export at now would put on the page of the
 // plans and their sync, without what changes when nothing the page shows
 // does: when each plan's log last changed, when the export ran, and when
-// this host last pushed or fetched.
-func (w Watch) hash(now time.Time) (string, error) {
-	ps, failed, err := export.Plans(w.Config, now)
+// this host last pushed or fetched. Git runs in ctx's Env.
+func (w Watch) hash(ctx context.Context, now time.Time) (string, error) {
+	ps, failed, err := export.Plans(ctx, w.Config, now)
 	if ps == nil {
 		return "", err
 	}

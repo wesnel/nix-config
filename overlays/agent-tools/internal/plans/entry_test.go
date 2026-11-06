@@ -14,7 +14,7 @@ func entryPlan(t *testing.T) (Config, Plan) {
 	p := newPlan(t, c, "x")
 	addItems(t, p.file(""), "** Steps", "S1", "S2")
 	addItems(t, p.file(""), "** Distribution", "P1")
-	if _, err := c.New(NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day); err != nil {
+	if _, err := c.New(t.Context(), NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := p.Ask(AskOptions{Question: "Keep it?", Recommendation: "yes"}, day); err != nil {
@@ -98,7 +98,7 @@ func TestAddEntry(t *testing.T) {
 		if text := fileText(t, p.file("")); !strings.Contains(text, want) {
 			t.Errorf("plan:\n%s", text)
 		}
-		if _, err := c.New(NewOptions{Title: "Write path", Parent: p.file(""), Part: "P2"}, day); err != nil {
+		if _, err := c.New(t.Context(), NewOptions{Title: "Write path", Parent: p.file(""), Part: "P2"}, day); err != nil {
 			t.Errorf("the new part's file: %v", err)
 		}
 	})

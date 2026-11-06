@@ -167,7 +167,7 @@ func testStatusLineAfter(t *testing.T) {
 
 	t.Run("one askable of two", func(t *testing.T) {
 		c, _ := waiting(t)
-		if got := c.StatusLine([]byte(`{"session_id":"abc"}`)); got != "1 open question · /questions" {
+		if got := c.StatusLine(t.Context(), []byte(`{"session_id":"abc"}`)); got != "1 open question · /questions" {
 			t.Errorf("status line %q", got)
 		}
 	})
@@ -178,7 +178,7 @@ func testStatusLineAfter(t *testing.T) {
 		if _, err := p.Decide("Q1", DecideOptions{Answer: "yes"}, day); err != nil {
 			t.Fatal(err)
 		}
-		if got := c.StatusLine([]byte(`{"session_id":"abc"}`)); got != "1 open question · /questions" {
+		if got := c.StatusLine(t.Context(), []byte(`{"session_id":"abc"}`)); got != "1 open question · /questions" {
 			t.Errorf("status line after Q1 %q", got)
 		}
 	})
@@ -302,7 +302,7 @@ func testStatusReadySteps(t *testing.T) {
 		c := testConfig(t)
 		p := newPlan(t, c, "x")
 		addItems(t, p.file(""), "** Distribution", "P1")
-		made, err := c.New(NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day)
+		made, err := c.New(t.Context(), NewOptions{Title: "Part", Parent: p.file(""), Part: "P1"}, day)
 		if err != nil {
 			t.Fatal(err)
 		}

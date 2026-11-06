@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
@@ -59,9 +60,9 @@ func FromClaudeStatus(input []byte, now time.Time) ([]Window, bool) {
 }
 
 // File is where Record keeps the windows: agent-plan/usage.json in the
-// state directory.
-func File() string {
-	return filepath.Join(hostpaths.StateHome(), "agent-plan", "usage.json")
+// state directory of e.
+func File(e env.Env) string {
+	return filepath.Join(hostpaths.StateHome(e), "agent-plan", "usage.json")
 }
 
 // stored is one window in File, under its rate_limits key.

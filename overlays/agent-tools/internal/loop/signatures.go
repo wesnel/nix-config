@@ -15,7 +15,7 @@ var operatorVerificationTimeout = 30 * time.Second
 // ownCommits authenticates the PR's actual range, not the mutable tracking
 // refs used to avoid uploading objects GitHub already has.
 func ownCommits(branch, base, tip string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), operatorVerificationTimeout)
+	ctx, cancel := context.WithTimeout(git.WithDir(context.Background()), operatorVerificationTimeout)
 	defer cancel()
 	n, err := operatorkey.Verify(ctx, tip, []string{base})
 	if err == nil && n == 0 {
@@ -33,7 +33,7 @@ func ownCommits(branch, base, tip string) error {
 // a signature in its format. It writes nothing, for pr-loop next; open
 // still proves them.
 func operatorFormatSigned(branch, base, tip string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), operatorVerificationTimeout)
+	ctx, cancel := context.WithTimeout(git.WithDir(context.Background()), operatorVerificationTimeout)
 	defer cancel()
 	ctx = git.KillingTree(ctx)
 	err := func() error {

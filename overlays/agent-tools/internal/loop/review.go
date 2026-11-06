@@ -1,8 +1,8 @@
 package loop
 
 import (
+	"context"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
@@ -38,7 +38,7 @@ var generated = regexp.MustCompile(`Comments generated:\*\*\s*(\d+)`)
 
 // reviewStatus is each configured bot's standing on PR number, for viewer,
 // the authenticated user, whose trigger comments ask comment bots.
-func reviewStatus(slug string, number int, viewer string) (*Review, error) {
+func reviewStatus(ctx context.Context, slug string, number int, viewer string) (*Review, error) {
 	owner, name, _ := strings.Cut(slug, "/")
 	var data struct {
 		Repository struct {
@@ -60,7 +60,7 @@ func reviewStatus(slug string, number int, viewer string) (*Review, error) {
 			}
 		}
 	}
-	err := graphQL(`query($owner: String!, $name: String!, $number: Int!) {
+	err := graphQL(ctx, `query($owner: String!, $name: String!, $number: Int!) {
 		repository(owner: $owner, name: $name) { pullRequest(number: $number) {
 			isDraft headRefName headRefOid
 			reviewRequests(first: 20) { nodes { requestedReviewer { ... on Bot { login } ... on User { login } } } }
@@ -71,7 +71,7 @@ func reviewStatus(slug string, number int, viewer string) (*Review, error) {
 		return nil, err
 	}
 	pr := data.Repository.PullRequest
-	bots, err := botsFor(slug)
+	bots, err := botsFor(ctx, slug)
 	if err != nil {
 		return nil, err
 	}
@@ -81,14 +81,14 @@ func reviewStatus(slug string, number int, viewer string) (*Review, error) {
 			requested = append(requested, r.RequestedReviewer.Login)
 		}
 	}
-	open, unanswered, err := openThreads(slug, number, bots)
+	open, unanswered, err := openThreads(ctx, slug, number, bots)
 	if err != nil {
 		return nil, err
 	}
 	var mine []issueComment
 	for _, bot := range bots {
 		if bot.Request.Comment != "" {
-			if mine, err = viewerComments(slug, number, viewer); err != nil {
+			if mine, err = viewerComments(ctx, slug, number, viewer); err != nil {
 				return nil, err
 			}
 			break
@@ -140,7 +140,7 @@ func reviewStatus(slug string, number int, viewer string) (*Review, error) {
 // started them, as `pr-loop threads` labels them, with people's under "",
 // and the bots' threads whose last comment is a bot's. It reads every page:
 // a request is gated on these counts.
-func openThreads(slug string, number int, bots []*Bot) (open, unanswered map[string]int, err error) {
+func openThreads(ctx context.Context, slug string, number int, bots []*Bot) (open, unanswered map[string]int, err error) {
 	owner, name, _ := strings.Cut(slug, "/")
 	open, unanswered = map[string]int{}, map[string]int{}
 	author := func(nodes []struct{ Author *login }) string {
@@ -168,7 +168,7 @@ func openThreads(slug string, number int, bots []*Bot) (open, unanswered map[str
 				}
 			}
 		}
-		err := graphQL(`query($owner: String!, $name: String!, $number: Int!, $after: String) {
+		err := graphQL(ctx, `query($owner: String!, $name: String!, $number: Int!, $after: String) {
 			repository(owner: $owner, name: $name) { pullRequest(number: $number) {
 				reviewThreads(first: 100, after: $after) {
 					pageInfo { hasNextPage endCursor }
@@ -205,22 +205,22 @@ func openThreads(slug string, number int, bots []*Bot) (open, unanswered map[str
 
 // Status is CI, each bot's review of the head, and open threads, for the
 // PRs ciTargets resolves.
-func Status(args []string) (any, error) {
-	repo, err := repository()
+func Status(ctx context.Context, args []string) (any, error) {
+	repo, err := repository(ctx)
 	if err != nil {
 		return nil, err
 	}
-	numbers, err := targetsIn(repo, args)
+	numbers, err := targetsIn(ctx, repo, args)
 	if err != nil {
 		return nil, err
 	}
 	var out []map[string]any
 	for _, n := range numbers {
-		review, err := reviewStatus(repo.Slug, n, repo.Viewer)
+		review, err := reviewStatus(ctx, repo.Slug, n, repo.Viewer)
 		if err != nil {
 			return nil, err
 		}
-		ci, err := ciStatus(repo.Slug, n, "")
+		ci, err := ciStatus(ctx, repo.Slug, n, "")
 		if err != nil {
 			return nil, err
 		}
@@ -237,19 +237,19 @@ func Status(args []string) (any, error) {
 // every new head, drafts included. A comment bot's earlier trigger comment
 // is deleted before the new one is posted. acceptFailures names the CI
 // failures this call accepts as not the PR's, for this call alone.
-func Request(args, onlyBots, acceptFailures []string) (any, error) {
-	if err := requireMode("request", "bots"); err != nil {
+func Request(ctx context.Context, args, onlyBots, acceptFailures []string) (any, error) {
+	if err := requireMode(ctx, "request", "bots"); err != nil {
 		return nil, err
 	}
-	repo, err := repository()
+	repo, err := repository(ctx)
 	if err != nil {
 		return nil, err
 	}
-	numbers, err := targetsIn(repo, args)
+	numbers, err := targetsIn(ctx, repo, args)
 	if err != nil {
 		return nil, err
 	}
-	bots, err := botsFor(repo.Slug)
+	bots, err := botsFor(ctx, repo.Slug)
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +259,7 @@ func Request(args, onlyBots, acceptFailures []string) (any, error) {
 	}
 	log := []string{}
 	for _, number := range numbers {
-		ci, err := ciStatus(repo.Slug, number, "")
+		ci, err := ciStatus(ctx, repo.Slug, number, "")
 		if err != nil {
 			return nil, err
 		}
@@ -281,7 +281,7 @@ func Request(args, onlyBots, acceptFailures []string) (any, error) {
 				"review. If a failure is shown not to be this PR's, waiving it is the operator's call: put the evidence in "+
 				"the report, with `pr-loop request --accept-failure NAME %d` for them to run", number, strings.Join(own, ", "), number)
 		}
-		review, err := reviewStatus(repo.Slug, number, repo.Viewer)
+		review, err := reviewStatus(ctx, repo.Slug, number, repo.Viewer)
 		if err != nil {
 			return nil, err
 		}
@@ -312,17 +312,17 @@ func Request(args, onlyBots, acceptFailures []string) (any, error) {
 		}
 		for _, bot := range ask {
 			if bot.Request.Reviewer != "" {
-				if err := requestReviewer(repo.Slug, number, bot.Request.Reviewer); err != nil {
+				if err := requestReviewer(ctx, repo.Slug, number, bot.Request.Reviewer); err != nil {
 					return nil, fmt.Errorf("requesting %s on #%d: %w", bot.Name, number, err)
 				}
 			} else {
 				if err := redact.Outgoing(bot.Request.Comment); err != nil {
 					return nil, fmt.Errorf("bot %s's request.comment: %w", bot.Name, err)
 				}
-				if _, err := deleteTriggers(repo, number, []string{bot.Request.Comment}); err != nil {
+				if _, err := deleteTriggers(ctx, repo, number, []string{bot.Request.Comment}); err != nil {
 					return nil, err
 				}
-				err := commentsREST("POST", fmt.Sprintf("repos/%s/issues/%d/comments", repo.Slug, number),
+				err := commentsREST(ctx, "POST", fmt.Sprintf("repos/%s/issues/%d/comments", repo.Slug, number),
 					map[string]string{"body": bot.Request.Comment}, nil)
 				if err != nil {
 					return nil, err
@@ -334,11 +334,10 @@ func Request(args, onlyBots, acceptFailures []string) (any, error) {
 	return log, nil
 }
 
-// requestReviewer asks reviewer to review PR number in slug. Tests that fake
-// GitHub replace it.
-var requestReviewer = func(slug string, number int, reviewer string) error {
-	cmd := exec.Command("gh", "pr", "edit", fmt.Sprint(number), "--repo", slug, "--add-reviewer", reviewer)
-	cmd.Dir = gh.Outside
+// requestReviewer asks reviewer to review PR number in slug, with the gh of
+// ctx's Env. Tests that fake GitHub replace it.
+var requestReviewer = func(ctx context.Context, slug string, number int, reviewer string) error {
+	cmd := gh.Command(ctx, "pr", "edit", fmt.Sprint(number), "--repo", slug, "--add-reviewer", reviewer)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%w: %s", err, out)
 	}
@@ -347,12 +346,12 @@ var requestReviewer = func(slug string, number int, reviewer string) error {
 
 // WaitReviews blocks until requested reviews land. It reports settled=false
 // at the deadline rather than failing.
-func WaitReviews(args []string, timeout, interval time.Duration) (any, bool, error) {
-	repo, err := repository()
+func WaitReviews(ctx context.Context, args []string, timeout, interval time.Duration) (any, bool, error) {
+	repo, err := repository(ctx)
 	if err != nil {
 		return nil, false, err
 	}
-	numbers, err := targetsIn(repo, args)
+	numbers, err := targetsIn(ctx, repo, args)
 	if err != nil {
 		return nil, false, err
 	}
@@ -361,7 +360,7 @@ func WaitReviews(args []string, timeout, interval time.Duration) (any, bool, err
 		var statuses []any
 		settled := true
 		for _, n := range numbers {
-			review, err := reviewStatus(repo.Slug, n, repo.Viewer)
+			review, err := reviewStatus(ctx, repo.Slug, n, repo.Viewer)
 			if err != nil {
 				return nil, false, err
 			}

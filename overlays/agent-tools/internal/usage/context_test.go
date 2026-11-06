@@ -9,6 +9,7 @@ import (
 // The status line input carries each Claude Code session's context size
 // and cache warmth.
 func TestSessionContext(t *testing.T) {
+	t.Parallel()
 	input := fixture(t, "claude-statusline.json")
 	const id = "61b2faa6-8f5d-40d9-b846-205b90ff107f"
 
@@ -23,6 +24,7 @@ func TestSessionContext(t *testing.T) {
 	}
 
 	t.Run("heavy", func(t *testing.T) {
+		t.Parallel()
 		if why := want.Heavy(at); why != "" {
 			t.Errorf("a small warm context is heavy: %q", why)
 		}

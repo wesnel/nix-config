@@ -7,6 +7,7 @@
 package plans
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/refusal"
 	"github.com/wesnel/agent-tools/internal/repos"
 )
@@ -98,32 +100,33 @@ func notesRepo(home string) string {
 // none: agents/plans in the operator's notes repository.
 func DefaultDir(home string) string { return filepath.Join(notesRepo(home), "agents", "plans") }
 
-// Load reads the config, defaulting to this machine's short host name and
-// to DefaultDir, in the notes repository, which is then the plans'
-// repository too.
-func Load() (Config, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return Config{}, err
+// Load reads the config e names, defaulting to this machine's short host
+// name and to DefaultDir under e's HOME, in the notes repository, which is
+// then the plans' repository too.
+func Load(e env.Env) (Config, error) {
+	home := e.Get("HOME")
+	if home == "" {
+		return Config{}, errors.New("$HOME is not defined")
 	}
 	host, _ := os.Hostname()
 	host, _, _ = strings.Cut(host, ".")
 	c := Config{Dir: DefaultDir(home), Repo: notesRepo(home), Host: host}
-	data, err := os.ReadFile(repos.Path())
+	file := repos.Path(e)
+	data, err := os.ReadFile(file)
 	if errors.Is(err, fs.ErrNotExist) {
 		return c, nil
 	}
 	if err != nil {
 		return Config{}, err
 	}
-	var file struct {
+	var config struct {
 		Plans Config `json:"plans"`
 	}
-	if err := json.Unmarshal(data, &file); err != nil {
-		return Config{}, fmt.Errorf("%s: %w", repos.Path(), err)
+	if err := json.Unmarshal(data, &config); err != nil {
+		return Config{}, fmt.Errorf("%s: %w", file, err)
 	}
 	dir, repo, host := c.Dir, c.Repo, c.Host
-	c = file.Plans
+	c = config.Plans
 	if c.Dir == "" {
 		c.Dir = dir
 		if c.Repo == "" {
@@ -135,7 +138,7 @@ func Load() (Config, error) {
 	}
 	if !filepath.IsAbs(c.Dir) || !hostPattern.MatchString(c.Host) || (c.Repo != "" && !filepath.IsAbs(c.Repo)) ||
 		(c.Templates != "" && !filepath.IsAbs(c.Templates)) {
-		return Config{}, fmt.Errorf("%s: plans.dir, plans.repo and plans.templates must be absolute and plans.host a plain name without dots: %+v", repos.Path(), c)
+		return Config{}, fmt.Errorf("%s: plans.dir, plans.repo and plans.templates must be absolute and plans.host a plain name without dots: %+v", file, c)
 	}
 	return c, nil
 }
@@ -177,9 +180,9 @@ type Created struct {
 }
 
 // linkEvidence is made with the links LinkEvidence writes in its plan.
-func (c Config) linkEvidence(made Created, now time.Time) Created {
+func (c Config) linkEvidence(ctx context.Context, made Created, now time.Time) Created {
 	var err error
-	if made.Linked, err = c.LinkEvidence(made.Plan, now); err != nil {
+	if made.Linked, err = c.LinkEvidence(ctx, made.Plan, now); err != nil {
 		made.Unlinked = err.Error()
 	}
 	return made
@@ -206,8 +209,8 @@ func checkWords(what string, values []string) error {
 // New creates a plan, or with Parent and Part, a part's plan file beside
 // its parent's. A new plan's name is <time>-<slug>, its time now as
 // YYYYMMDDHHMMSS, with -2, -3 and so on for a slug this host already used
-// that second.
-func (c Config) New(o NewOptions, now time.Time) (Created, error) {
+// that second. Git runs in ctx's Env.
+func (c Config) New(ctx context.Context, o NewOptions, now time.Time) (Created, error) {
 	if strings.TrimSpace(o.Title) == "" {
 		return Created{}, refusal.New("a plan needs a title. Pass one with `--title`")
 	}
@@ -229,12 +232,12 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 		return Created{}, refusal.New("a template starts a plan, not a part. Make the part without `--template`, and copy what it needs into its file")
 	}
 	if o.Parent != "" || o.Part != "" {
-		return c.newPart(o, now)
+		return c.newPart(ctx, o, now)
 	}
 	if !slugPattern.MatchString(o.Slug) {
 		return Created{}, refusal.New("slug %q is not lower-case words joined by hyphens. Pass one such as `--slug add-run-loop`", o.Slug)
 	}
-	ws, err := c.workstreamFor(o)
+	ws, err := c.workstreamFor(ctx, o)
 	if err != nil {
 		return Created{}, err
 	}
@@ -261,7 +264,7 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 	// A plan is written even where the notes repository could not be
 	// cloned, unsynced, with Init's note as the warning. The plan then
 	// keeps a later clone out of the directory, as any file there does.
-	ready, err := c.Init()
+	ready, err := c.Init(ctx)
 	if err != nil {
 		return Created{}, err
 	}
@@ -298,10 +301,10 @@ func (c Config) New(o NewOptions, now time.Time) (Created, error) {
 	if err != nil {
 		return Created{}, err
 	}
-	return c.linkEvidence(Created{Plan: p.file(""), File: p.file(""), ID: p.Name, Log: p.log(), Note: ready.Note}, now), nil
+	return c.linkEvidence(ctx, Created{Plan: p.file(""), File: p.file(""), ID: p.Name, Log: p.log(), Note: ready.Note}, now), nil
 }
 
-func (c Config) newPart(o NewOptions, now time.Time) (Created, error) {
+func (c Config) newPart(ctx context.Context, o NewOptions, now time.Time) (Created, error) {
 	if o.Parent == "" || !partPattern.MatchString(o.Part) {
 		return Created{}, refusal.New("a part needs its parent plan and a part ID such as P1. Pass both, as `--parent PLAN --part P1`")
 	}
@@ -342,7 +345,7 @@ func (c Config) newPart(o NewOptions, now time.Time) (Created, error) {
 		return Created{}, err
 	}
 	// A part's branches are its plan's evidence.
-	return c.linkEvidence(Created{Plan: p.file(""), File: file, ID: o.Part, Log: p.log()}, now), err
+	return c.linkEvidence(ctx, Created{Plan: p.file(""), File: file, ID: o.Part, Log: p.log()}, now), err
 }
 
 var nonTag = regexp.MustCompile(`[^A-Za-z0-9_@#%]`)
@@ -459,7 +462,9 @@ const ignore = "*.lock\n"
 // inside it. A clone deferred or rejected leaves the plans directory alone.
 // Remote-configured calls hold a repository bootstrap lock outside that
 // directory, so recovery and cloning are serialized even before it exists.
-func (c Config) Init() (Ready, error) {
+// Git runs in ctx's Env, and runs on when ctx is cancelled.
+func (c Config) Init(ctx context.Context) (Ready, error) {
+	ctx = context.WithoutCancel(ctx)
 	r := Ready{Dir: c.Dir, Repo: c.repo()}
 	if c.Remote != "" {
 		parent := filepath.Dir(c.repo())
@@ -473,7 +478,7 @@ func (c Config) Init() (Ready, error) {
 		defer lock.Close()
 	}
 	var err error
-	if r.Cloned, r.Note, err = c.clone(); err != nil {
+	if r.Cloned, r.Note, err = c.clone(ctx); err != nil {
 		return r, err
 	}
 	if r.Note != "" {
@@ -798,9 +803,10 @@ func readPlan(path string) ([]byte, error) {
 }
 
 // HostBranches are the branches this host's plans name in BRANCHES, their
-// own and their parts', newest plan first, each once.
-func HostBranches() []string {
-	c, err := Load()
+// own and their parts', newest plan first, each once, from the config e
+// names.
+func HostBranches(e env.Env) []string {
+	c, err := Load(e)
 	if err != nil {
 		return nil
 	}
@@ -836,9 +842,9 @@ func HostBranches() []string {
 // worktree containing dir with its branch only if it is a linked worktree.
 // A repository's main checkout and the branch checked out there are named
 // by many plans, as Locate says, so they match none.
-func Here(session, dir string) FindOptions {
+func Here(ctx context.Context, session, dir string) FindOptions {
 	o := FindOptions{Session: session}
-	if top, branch := checkout(dir); linkedWorktree(top) {
+	if top, branch := checkout(ctx, dir); linkedWorktree(ctx, top) {
 		o.Worktree, o.Branch = top, branch
 	}
 	return o

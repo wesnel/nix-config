@@ -2,9 +2,9 @@ package loop
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"fmt"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -26,17 +26,17 @@ import (
 // adds must be a fixup of the PR's own; a draft takes any commit. Each
 // object GitHub creates is compared with the local SHA before any branch
 // moves.
-func Push(branches []string, leases map[string]string, dryRun bool) (any, error) {
-	if os.Getenv(ModeEnv) == "people" {
+func Push(ctx context.Context, branches []string, leases map[string]string, dryRun bool) (any, error) {
+	if mode(ctx) == "people" {
 		return nil, refuse("in a people-mode review loop the operator pushes, after reading the fixups, with " +
 			"`git sign-pass --push`. Only the operator starts a loop, with `review-loop --harness claude|codex --bots|--people`; " +
 			"commit the fixups and say in the report that they wait for that push")
 	}
-	repo, err := repository()
+	repo, err := repository(ctx)
 	if err != nil {
 		return nil, err
 	}
-	prs, err := openPRs(repo)
+	prs, err := openPRs(ctx, repo)
 	if err != nil {
 		return nil, err
 	}
@@ -95,15 +95,15 @@ func Push(branches []string, leases map[string]string, dryRun bool) (any, error)
 			return nil, err
 		}
 		if !pr.IsDraft {
-			before, err := commitsBetween(remoteParent, expected)
+			before, err := commitsBetween(ctx, remoteParent, expected)
 			if err != nil {
 				return nil, err
 			}
-			now, err := commitsBetween(localParent, local)
+			now, err := commitsBetween(ctx, localParent, local)
 			if err != nil {
 				return nil, err
 			}
-			if err := checkFixups(b, own(before), now); err != nil {
+			if err := checkFixups(ctx, b, own(before), now); err != nil {
 				return nil, err
 			}
 			if err := checkPatches(b, remoteParent, expected, localParent, local); err != nil {
@@ -139,7 +139,7 @@ func Push(branches []string, leases map[string]string, dryRun bool) (any, error)
 		return map[string]any{"wouldUpdate": would, "objects": objects.counts()}, nil
 	}
 
-	calls, err := objects.upload(repo.Slug)
+	calls, err := objects.upload(ctx, repo.Slug)
 	if err != nil {
 		return nil, err
 	}
@@ -150,7 +150,7 @@ func Push(branches []string, leases map[string]string, dryRun bool) (any, error)
 	// leaves the next push to carry on from it.
 	pushed := map[string]string{}
 	for _, u := range updates {
-		err = graphQL(`mutation($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }`,
+		err = graphQL(ctx, `mutation($input: UpdateRefsInput!) { updateRefs(input: $input) { clientMutationId } }`,
 			map[string]any{"input": map[string]any{"repositoryId": repo.ID, "refUpdates": []map[string]any{
 				{"name": "refs/heads/" + u.branch, "afterOid": u.after, "beforeOid": u.before, "force": true}}}}, nil)
 		if err != nil {
@@ -277,7 +277,7 @@ func (s *objectSet) counts() map[string]int {
 
 // upload creates the objects through the Git Database API, children before
 // the trees and commits that name them, and returns the number of API calls.
-func (s *objectSet) upload(slug string) (int, error) {
+func (s *objectSet) upload(ctx context.Context, slug string) (int, error) {
 	up := &uploader{slug: slug, missingTrees: map[string]bool{}, done: map[string]bool{}}
 	for sha, kind := range s.kinds {
 		if kind == "tree" {
@@ -286,20 +286,20 @@ func (s *objectSet) upload(slug string) (int, error) {
 	}
 	for _, sha := range s.order {
 		if s.kinds[sha] == "blob" {
-			if err := up.blob(sha); err != nil {
+			if err := up.blob(ctx, sha); err != nil {
 				return up.calls, err
 			}
 		}
 	}
 	for _, sha := range s.order {
 		if s.kinds[sha] == "tree" && !up.done[sha] {
-			if err := up.tree(sha); err != nil {
+			if err := up.tree(ctx, sha); err != nil {
 				return up.calls, err
 			}
 		}
 	}
 	for _, sha := range s.commits {
-		if err := up.commit(sha); err != nil {
+		if err := up.commit(ctx, sha); err != nil {
 			return up.calls, err
 		}
 	}
@@ -313,10 +313,10 @@ type uploader struct {
 	calls        int
 }
 
-func (u *uploader) post(kind string, body any) (string, error) {
+func (u *uploader) post(ctx context.Context, kind string, body any) (string, error) {
 	u.calls++
 	var reply struct{ SHA string }
-	if err := objectsREST("POST", fmt.Sprintf("repos/%s/git/%s", u.slug, kind), body, &reply); err != nil {
+	if err := objectsREST(ctx, "POST", fmt.Sprintf("repos/%s/git/%s", u.slug, kind), body, &reply); err != nil {
 		return "", err
 	}
 	return reply.SHA, nil
@@ -330,7 +330,7 @@ func (u *uploader) expect(kind, want, got string) error {
 	return nil
 }
 
-func (u *uploader) blob(sha string) error {
+func (u *uploader) blob(ctx context.Context, sha string) error {
 	content, err := git.Bytes(nil, "cat-file", "blob", sha)
 	if err != nil {
 		return err
@@ -339,14 +339,14 @@ func (u *uploader) blob(sha string) error {
 	if bytes.HasPrefix(content, []byte("version https://git-lfs.github.com/spec/")) {
 		return refuse("blob %s is a Git LFS pointer, whose object the GitHub API cannot upload; hand this push to the operator", sha)
 	}
-	got, err := u.post("blobs", map[string]string{"content": base64.StdEncoding.EncodeToString(content), "encoding": "base64"})
+	got, err := u.post(ctx, "blobs", map[string]string{"content": base64.StdEncoding.EncodeToString(content), "encoding": "base64"})
 	if err != nil {
 		return err
 	}
 	return u.expect("blob", sha, got)
 }
 
-func (u *uploader) tree(sha string) error {
+func (u *uploader) tree(ctx context.Context, sha string) error {
 	out, err := git.Bytes(nil, "ls-tree", "-z", sha)
 	if err != nil {
 		return err
@@ -360,7 +360,7 @@ func (u *uploader) tree(sha string) error {
 		fields := strings.Fields(string(meta))
 		mode, kind, child := fields[0], fields[1], fields[2]
 		if kind == "tree" && u.missingTrees[child] && !u.done[child] {
-			if err := u.tree(child); err != nil {
+			if err := u.tree(ctx, child); err != nil {
 				return err
 			}
 		}
@@ -369,7 +369,7 @@ func (u *uploader) tree(sha string) error {
 	if len(entries) == 0 {
 		return refuse("tree %s is empty, which the API cannot create; hand this push to the operator", sha)
 	}
-	got, err := u.post("trees", map[string]any{"tree": entries})
+	got, err := u.post(ctx, "trees", map[string]any{"tree": entries})
 	if err != nil {
 		return err
 	}
@@ -425,7 +425,7 @@ func commitBody(sha string, raw []byte) (map[string]any, error) {
 	return body, nil
 }
 
-func (u *uploader) commit(sha string) error {
+func (u *uploader) commit(ctx context.Context, sha string) error {
 	raw, err := git.Bytes(nil, "cat-file", "commit", sha)
 	if err != nil {
 		return err
@@ -434,7 +434,7 @@ func (u *uploader) commit(sha string) error {
 	if err != nil {
 		return err
 	}
-	got, err := u.post("commits", body)
+	got, err := u.post(ctx, "commits", body)
 	if err != nil {
 		return err
 	}

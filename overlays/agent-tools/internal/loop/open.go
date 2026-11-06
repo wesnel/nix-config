@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -19,7 +20,7 @@ type remoteView struct {
 	PRs   map[string]*PR    // head branch to an open same-repository PR
 }
 
-func viewRemote(repo *Repo, branch, base string) (*remoteView, error) {
+func viewRemote(ctx context.Context, repo *Repo, branch, base string) (*remoteView, error) {
 	owner, name, _ := strings.Cut(repo.Slug, "/")
 	type ref struct{ Target struct{ Oid string } }
 	type prs struct{ Nodes []*PR }
@@ -29,7 +30,7 @@ func viewRemote(repo *Repo, branch, base string) (*remoteView, error) {
 			HeadPRs, BasePRs prs
 		}
 	}
-	err := graphQL(`query($owner: String!, $name: String!, $head: String!, $base: String!, $headRef: String!, $baseRef: String!) {
+	err := graphQL(ctx, `query($owner: String!, $name: String!, $head: String!, $base: String!, $headRef: String!, $baseRef: String!) {
 		repository(owner: $owner, name: $name) {
 			head: ref(qualifiedName: $headRef) { target { oid } }
 			base: ref(qualifiedName: $baseRef) { target { oid } }
@@ -96,7 +97,7 @@ func checkOpen(repo *Repo, view *remoteView, branch, base, local string) (string
 // its base as GitHub has it, so the pull request shows only its own commits.
 // For a branch onGitHub, its own remote-tracking refs are not among those
 // commits, so the pull request's commits are still counted and linted.
-func checkLocal(repo *Repo, branch, base, baseOid, local string, onGitHub bool) (string, []string, error) {
+func checkLocal(ctx context.Context, repo *Repo, branch, base, baseOid, local string, onGitHub bool) (string, []string, error) {
 	var known []string
 	if git.OK("cat-file", "-e", baseOid+"^{commit}") {
 		known = append(known, baseOid)
@@ -135,7 +136,7 @@ func checkLocal(repo *Repo, branch, base, baseOid, local string, onGitHub bool) 
 		return "", nil, refuse("%s has no commits that GitHub lacks, so there is nothing to open; "+
 			"commit the change first, or say in the report that nothing changed", branch)
 	}
-	if err := lintNew(branch, local, known); err != nil {
+	if err := lintNew(ctx, branch, local, known); err != nil {
 		return "", nil, err
 	}
 	return local, known, nil
@@ -182,8 +183,8 @@ func unmergedParent(repo *Repo, remotes []string, branch, base, local string, ba
 // lintNew refuses unless the commits local has and known lacks pass
 // history.LintMessage: each fold as it is, and the rest as the signing
 // pass will leave them.
-func lintNew(branch, local string, known []string) error {
-	commits, err := history.Log(append([]string{local, "--not"}, known...)...)
+func lintNew(ctx context.Context, branch, local string, known []string) error {
+	commits, err := history.Log(git.WithDir(ctx), append([]string{local, "--not"}, known...)...)
 	if err != nil {
 		return err
 	}
@@ -194,7 +195,7 @@ func lintNew(branch, local string, known []string) error {
 		}
 	}
 	for _, c := range check {
-		if problems := history.LintMessage(c.Message); len(problems) > 0 {
+		if problems := history.LintMessage(ctx, c.Message); len(problems) > 0 {
 			return refuse("%s's commit %q has a message where %s. Fix it before opening: reword a commit with an amend! commit "+
 				"(`git -c commit.gpgsign=false commit --allow-empty -m 'amend! SUBJECT' -m 'NEW MESSAGE'`), "+
 				"or commit a fixup again without what is wrong, then run `pr-loop open` again",
@@ -255,7 +256,7 @@ type opening struct {
 // ownCommits for Open, which proves them in a directory of the protected
 // state home, and operatorFormatSigned for pr-loop next, which writes
 // nothing.
-func planOpen(repo *Repo, view *remoteView, branch, base string, own func(branch, base, tip string) error) (*opening, error) {
+func planOpen(ctx context.Context, repo *Repo, view *remoteView, branch, base string, own func(branch, base, tip string) error) (*opening, error) {
 	tip, err := git.Run("rev-parse", "--verify", "-q", "refs/heads/"+branch)
 	if err != nil {
 		return nil, err
@@ -265,7 +266,7 @@ func planOpen(repo *Repo, view *remoteView, branch, base string, own func(branch
 		return nil, err
 	}
 	o := &opening{branch: branch, base: base, onGitHub: view.Heads[branch] != "", objects: &objectSet{}}
-	local, known, err := checkLocal(repo, branch, base, baseOid, tip, o.onGitHub)
+	local, known, err := checkLocal(ctx, repo, branch, base, baseOid, tip, o.onGitHub)
 	if err != nil {
 		return nil, err
 	}
@@ -280,7 +281,7 @@ func planOpen(repo *Repo, view *remoteView, branch, base string, own func(branch
 		// makes is made here.
 		absent := strings.Repeat("0", 40)
 		update := pushguard.Update{LocalRef: "refs/heads/" + branch, Local: local, RemoteRef: "refs/heads/" + branch, Remote: absent}
-		if err := pushguard.Check("https://github.com/"+repo.Slug, []pushguard.Update{update}, pushguard.GitHub()); err != nil {
+		if err := pushguard.Check(git.WithDir(context.Background()), "https://github.com/"+repo.Slug, []pushguard.Update{update}, pushguard.GitHub()); err != nil {
 			return nil, err
 		}
 		if o.objects, err = missingObjects([]string{local}, known); err != nil {
@@ -304,14 +305,14 @@ func (o *opening) dryRun() map[string]any {
 // GitHub, since open did not create it. It never marks the pull request ready
 // for review. A dry run says what it would open, with onGitHub, and the
 // objects it would upload.
-func Open(branch, base, title, body string, dryRun bool) (any, error) {
+func Open(ctx context.Context, branch, base, title, body string, dryRun bool) (any, error) {
 	if strings.TrimSpace(title) == "" {
 		return nil, errors.New("open needs --title")
 	}
 	if err := checkPublic("the pull request's title and description", title+"\n\n"+body, nil, "run `pr-loop open` again"); err != nil {
 		return nil, err
 	}
-	repo, err := repository()
+	repo, err := repository(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -323,11 +324,11 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 	if base == "" {
 		base = repo.Default
 	}
-	view, err := viewRemote(repo, branch, base)
+	view, err := viewRemote(ctx, repo, branch, base)
 	if err != nil {
 		return nil, err
 	}
-	o, err := planOpen(repo, view, branch, base, ownCommits)
+	o, err := planOpen(ctx, repo, view, branch, base, ownCommits)
 	if err != nil {
 		return nil, err
 	}
@@ -338,13 +339,13 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 
 	calls, refID := 0, ""
 	if !o.onGitHub {
-		if calls, err = o.objects.upload(repo.Slug); err != nil {
+		if calls, err = o.objects.upload(ctx, repo.Slug); err != nil {
 			return nil, err
 		}
 		var created struct {
 			CreateRef struct{ Ref struct{ ID string } }
 		}
-		err = graphQL(`mutation($input: CreateRefInput!) { createRef(input: $input) { ref { id } } }`,
+		err = graphQL(ctx, `mutation($input: CreateRefInput!) { createRef(input: $input) { ref { id } } }`,
 			map[string]any{"input": map[string]any{"repositoryId": repo.ID, "name": "refs/heads/" + branch, "oid": local}}, &created)
 		if err != nil {
 			return nil, err
@@ -360,7 +361,7 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 			}
 		}
 	}
-	err = graphQL(`mutation($input: CreatePullRequestInput!) {
+	err = graphQL(ctx, `mutation($input: CreatePullRequestInput!) {
 		createPullRequest(input: $input) { pullRequest { number url isDraft } }
 	}`, map[string]any{"input": map[string]any{"repositoryId": repo.ID, "baseRefName": base, "headRefName": branch,
 		"title": title, "body": body, "draft": true}}, &opened)
@@ -370,7 +371,7 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 	if err != nil {
 		// Without a pull request the branch open created is outside every
 		// later check, so it is taken back down.
-		undo := graphQL(`mutation($input: DeleteRefInput!) { deleteRef(input: $input) { clientMutationId } }`,
+		undo := graphQL(ctx, `mutation($input: DeleteRefInput!) { deleteRef(input: $input) { clientMutationId } }`,
 			map[string]any{"input": map[string]any{"refId": refID}}, nil)
 		if undo != nil {
 			return nil, fmt.Errorf("opening the pull request failed (%w), and deleting %s from GitHub again failed too: %v", err, branch, undo)
@@ -389,7 +390,7 @@ func Open(branch, base, title, body string, dryRun bool) (any, error) {
 	}
 	result := map[string]any{"pr": pr.Number, "url": pr.URL, "draft": pr.IsDraft, "branch": branch, "base": base,
 		"head": local, "apiCalls": calls + 1}
-	for k, v := range stackOpened(repo, branch, base, pr.Number) {
+	for k, v := range stackOpened(ctx, repo, branch, base, pr.Number) {
 		result[k] = v
 	}
 	return result, nil

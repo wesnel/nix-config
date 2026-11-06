@@ -54,7 +54,7 @@ func TestRemind(t *testing.T) {
 		t.Run(c2.name, func(t *testing.T) {
 			c := testConfig(t)
 			p := newPlan(t, c, "x")
-			out := string(c.Remind([]byte(c2.event)))
+			out := string(c.Remind(t.Context(), []byte(c2.event)))
 			if c2.want == nil {
 				if out != "" {
 					t.Errorf("%s: printed %q", c2.name, out)

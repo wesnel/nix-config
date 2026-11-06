@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 	"github.com/wesnel/agent-tools/internal/repos"
 )
@@ -37,7 +39,7 @@ var namers = set("read", "mapfile", "readarray", "getopts", "export", "declare",
 // spelling is a compound call, which matches no excluded command, since
 // Claude Code matches an exclusion against the text of the call, so it
 // runs sandboxed without the token.
-func checkLoopStart(c call, dir string) string {
+func checkLoopStart(ctx context.Context, c call, dir string) string {
 	for _, kv := range c.env {
 		if name, _, _ := strings.Cut(kv, "="); loopVars[name] {
 			return loopStart
@@ -49,7 +51,7 @@ func checkLoopStart(c call, dir string) string {
 	if !c.expands[0] && (base(c.words[0]) == "review-loop" || base(c.words[0]) == "claude-review-loop") {
 		return loopStart
 	}
-	if !c.expands[0] && harnessLoopStart(c, dir) {
+	if !c.expands[0] && harnessLoopStart(ctx, c, dir) {
 		return loopStart
 	}
 	setter := !c.expands[0] && (base(c.words[0]) == "set" || base(c.words[0]) == "launchctl")
@@ -80,7 +82,7 @@ func checkLoopStart(c call, dir string) string {
 // which every word is a prompt. A value the shell expands, or a file it
 // cannot read, counts as naming them; a file that does not exist names
 // nothing.
-func harnessLoopStart(c call, dir string) bool {
+func harnessLoopStart(ctx context.Context, c call, dir string) bool {
 	harness := base(c.words[0])
 	if harness != "claude" && harness != "codex" {
 		return false
@@ -99,7 +101,7 @@ func harnessLoopStart(c call, dir string) bool {
 			value, expands = c.words[i], c.expands[i]
 		}
 		if expands {
-			if value = shellPath(value, true); strings.ContainsAny(value, "$`") {
+			if value = shellPath(ctx, value, true); strings.ContainsAny(value, "$`") {
 				return true
 			}
 		}
@@ -110,9 +112,9 @@ func harnessLoopStart(c call, dir string) bool {
 		case option == "--settings" && strings.HasPrefix(strings.TrimSpace(value), "{"):
 			named = namesLoopVar(value)
 		case option == "--settings":
-			named = fileNamesLoopVar(expandPath(value, dir))
+			named = fileNamesLoopVar(expandPath(ctx, value, dir))
 		case option == "--profile":
-			codexHome, known := codexHome(c.env, dir)
+			codexHome, known := codexHome(ctx, c.env, dir)
 			named = !known || fileNamesLoopVar(filepath.Join(codexHome, value+".config.toml"))
 		}
 		if named {
@@ -146,23 +148,23 @@ func harnessOption(harness, w string) (option, value string, joined bool) {
 }
 
 // codexHome is the directory Codex reads its config and profiles from:
-// $CODEX_HOME as the call sets it, or as the guard's environment has it,
-// else ~/.codex. known is false when the call sets it to what the shell
-// expands.
-func codexHome(env []string, dir string) (path string, known bool) {
-	value, set := os.LookupEnv("CODEX_HOME")
-	for _, kv := range env {
+// $CODEX_HOME as the call's assignments vars set it, or as the guard's
+// environment, ctx's Env, has it, else ~/.codex. known is false when the
+// call sets it to what the shell expands.
+func codexHome(ctx context.Context, vars []string, dir string) (path string, known bool) {
+	value, set := env.From(ctx).Lookup("CODEX_HOME")
+	for _, kv := range vars {
 		if name, v, _ := strings.Cut(kv, "="); name == "CODEX_HOME" {
-			value, set = shellPath(v, true), true
+			value, set = shellPath(ctx, v, true), true
 		}
 	}
 	switch {
 	case !set || value == "":
-		return filepath.Join(home, ".codex"), true
+		return filepath.Join(homeDir(ctx), ".codex"), true
 	case strings.ContainsAny(value, "$`"):
 		return "", false
 	}
-	return expandPath(value, dir), true
+	return expandPath(ctx, value, dir), true
 }
 
 // namesLoopVar reports whether text names a loop variable.
@@ -188,13 +190,13 @@ func fileNamesLoopVar(path string) bool {
 // checkLoopSettings refuses a file tool's write naming a loop variable in a
 // settings file a session takes its environment from, which would start
 // the next session there as a loop.
-func checkLoopSettings(tool string, toolInput json.RawMessage, dir string) string {
+func checkLoopSettings(ctx context.Context, tool string, toolInput json.RawMessage, dir string) string {
 	changes, err := fileChanges(tool, toolInput)
 	if err != nil {
 		return unreadable
 	}
 	for _, c := range changes {
-		if !settingsFile(expandPath(c.path, dir)) {
+		if !settingsFile(ctx, expandPath(ctx, c.path, dir)) {
 			continue
 		}
 		for name := range loopVars {
@@ -213,8 +215,8 @@ func checkLoopSettings(tool string, toolInput json.RawMessage, dir string) strin
 // directory in each directory above path, a folded spelling of one
 // included. A file with another name, a hard link, could be any of them
 // wherever it sits, so it counts as one.
-func settingsFile(path string) bool {
-	if guardFile(path) {
+func settingsFile(ctx context.Context, path string) bool {
+	if guardFile(ctx, path) {
 		return true
 	}
 	at := physical(path)
@@ -229,6 +231,7 @@ func settingsFile(path string) bool {
 			return true
 		}
 	}
+	e, home := env.From(ctx), homeDir(ctx)
 	roots := []string{home}
 	for q := filepath.Dir(at); ; q = filepath.Dir(q) {
 		roots = append(roots, q)
@@ -243,17 +246,17 @@ func settingsFile(path string) bool {
 		}
 	}
 	targets = append(targets, filepath.Join(home, ".codex", "config.toml"), filepath.Join(home, ".codex", "hooks.json"),
-		repos.Path())
+		repos.Path(e))
 	for _, t := range targets {
 		if Reaches(path, t, false) {
 			return true
 		}
 	}
-	config := os.Getenv("XDG_CONFIG_HOME")
+	config := e.Get("XDG_CONFIG_HOME")
 	if !filepath.IsAbs(config) {
 		config = filepath.Join(home, ".config")
 	}
-	for _, base := range []string{config, hostpaths.ConfigHome()} {
+	for _, base := range []string{config, hostpaths.ConfigHome(e)} {
 		if Reaches(path, filepath.Join(base, "agent-tools"), true) {
 			return true
 		}

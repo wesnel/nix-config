@@ -16,6 +16,7 @@ import (
 
 	"github.com/wesnel/agent-tools/internal/checkedfile"
 	"github.com/wesnel/agent-tools/internal/cli"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/guard"
@@ -74,8 +75,9 @@ type Answer struct {
 
 // ask runs `git delegate ask` with args and returns its exit status.
 func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	e := env.From(ctx)
 	flags := flag.NewFlagSet(name+" ask", flag.ContinueOnError)
-	reviewer := flags.String("reviewer", generalReviewer(), "")
+	reviewer := flags.String("reviewer", generalReviewer(e), "")
 	question := flags.String("question", "", "")
 	model := flags.String("model", "", "")
 	timeout := flags.Int("timeout", 900, "")
@@ -107,17 +109,18 @@ func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return report(nil, refusal.New("the reviewer reads only the files a question names, and none is named; "+
 			"pass each file the answer rests on, as `git delegate ask --question %s PATH...`", *question), 0)
 	}
-	if err := git.CheckConfig(""); err != nil {
+	g := git.In(ctx)
+	if err := g.CheckConfig(""); err != nil {
 		return report(nil, err, 0)
 	}
-	top, err := git.Toplevel()
+	top, err := g.Toplevel()
 	if err == nil {
 		top, err = filepath.EvalSymlinks(top)
 	}
 	if err != nil {
 		return report(nil, err, 0)
 	}
-	text, err := questionText(top, *question, stdin)
+	text, err := questionText(e, top, *question, stdin)
 	if err != nil {
 		return report(nil, err, 0)
 	}
@@ -125,7 +128,7 @@ func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		return report(nil, refusal.New("the question %s is empty; write the question into it and pass `--question %s` again",
 			*question, *question), 0)
 	}
-	files, err := named(top, paths)
+	files, err := named(e, top, paths)
 	if err != nil {
 		return report(nil, err, 0)
 	}
@@ -136,7 +139,7 @@ func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		}
 		return 0
 	}
-	if why := runnable(newAvailability(), ty); why != "" {
+	if why := runnable(ctx, newAvailability(e), ty); why != "" {
 		fmt.Fprintf(stderr, "%s: the %s reviewer cannot answer here: %s. Ask a new sub-agent that only reads instead, "+
 			"in the primary harness with a fresh context: add `--print-prompt` to this ask command, with %s and the same "+
 			"files, for its contract and file snapshots, and give it none of your own reasoning.\n", name, *reviewer, why, *question)
@@ -161,6 +164,14 @@ func ask(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	return report(out, nil, 0)
 }
 
+// inDir is path, taken relative to the directory of e where it is relative.
+func inDir(e env.Env, path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(e.Dir(), path)
+}
+
 // scratchRoots are the directories outside the repository a question may
 // be written in.
 var scratchRoots = guard.ScratchRoots
@@ -168,13 +179,13 @@ var scratchRoots = guard.ScratchRoots
 // questionText is the question in the file path names, or on stdin for
 // "-". Codex is sent it as it is, so the file, where its symlinks lead,
 // must be in the repository at top or a scratch root, and not a
-// credential.
-func questionText(top, path string, stdin io.Reader) (string, error) {
+// credential. A relative path is relative to the directory of e.
+func questionText(e env.Env, top, path string, stdin io.Reader) (string, error) {
 	if path == "-" {
 		data, err := io.ReadAll(stdin)
 		return string(data), err
 	}
-	data, err := checkedfile.Read(path, append([]string{top}, scratchRoots()...))
+	data, err := checkedfile.Read(inDir(e, path), append([]string{top}, scratchRoots()...))
 	write := "write the question to a file of its own under $TMPDIR or in the repository, and pass that as `--question FILE`"
 	switch {
 	case errors.Is(err, checkedfile.ErrLinked):
@@ -201,18 +212,15 @@ type askFile struct {
 	data []byte
 }
 
-// named reads each path, relative to the process's directory or absolute,
+// named reads each path, relative to the directory of e or absolute,
 // refusing one that is not a regular file in the repository at top. top
 // has its symlinks resolved, and the check is made on the path the kernel
 // has for the file opened, so a link leading out of the repository is
 // refused and what is read is the file checked.
-func named(top string, paths []string) ([]askFile, error) {
+func named(e env.Env, top string, paths []string) ([]askFile, error) {
 	var out []askFile
 	for _, p := range paths {
-		abs, err := filepath.Abs(p)
-		if err != nil {
-			return nil, err
-		}
+		abs := filepath.Clean(inDir(e, p))
 		f, real, err := checkedfile.Open(abs)
 		if errors.Is(err, checkedfile.ErrLinked) {
 			return nil, linked(abs)
@@ -243,7 +251,8 @@ func named(top string, paths []string) ([]askFile, error) {
 // repository however it ends.
 func askIn(ctx context.Context, top, text string, files []askFile, reviewer string, ty reviewerType, model string,
 	timeout time.Duration, log io.Writer) (*Answer, error) {
-	common, err := git.Run("-C", top, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	g := git.In(ctx)
+	common, err := g.Run("-C", top, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +282,7 @@ func askIn(ctx context.Context, top, text string, files []askFile, reviewer stri
 	// A repository of its own, which none of the user's configuration
 	// reaches, so that committing signs nothing and runs no hook.
 	run := func(args ...string) (string, error) {
-		return git.RunEnv(gitenv.NoConfig,
+		return g.RunEnv(gitenv.NoConfig,
 			append([]string{"-C", tree, "-c", "user.name=delegate", "-c", "user.email=delegate@localhost",
 				"-c", "commit.gpgsign=false"}, args...)...)
 	}

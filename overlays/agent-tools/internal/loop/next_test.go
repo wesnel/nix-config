@@ -11,13 +11,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
 // nextStep is the one step Next gives for branch.
 func nextStep(t *testing.T, branch string) NextStep {
 	t.Helper()
-	steps, err := Next([]string{branch})
+	steps, err := Next(t.Context(), []string{branch})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +277,7 @@ func TestNext(t *testing.T) {
 	t.Run("the current branch by default, and the text", func(t *testing.T) {
 		f, _ := pushedBranch(t)
 		f.prs["feat"] = 7
-		steps, err := Next(nil)
+		steps, err := Next(t.Context(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -333,7 +334,7 @@ func TestNextWritesNothing(t *testing.T) {
 				t.Fatal(err)
 			}
 			gitIn(t, dir, "config", "gpg.ssh.program", verifier)
-			dirs := []string{hostpaths.BakedConfigHome(), hostpaths.BakedStateHome(), os.Getenv("XDG_STATE_HOME"), filepath.Join(dir, ".git")}
+			dirs := []string{hostpaths.BakedConfigHome(env.Process()), hostpaths.BakedStateHome(env.Process()), os.Getenv("XDG_STATE_HOME"), filepath.Join(dir, ".git")}
 			before := files(t, append(dirs, gnupg)...)
 			readOnly(t, dirs...)
 			step := nextStep(t, "feat")

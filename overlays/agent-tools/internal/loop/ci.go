@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -97,7 +98,7 @@ func (r *rollup) checks() []Check {
 // ciStatus reports the checks on a PR's head commit, compared with its base.
 // The head is expected to be want, or by default the head branch's tip on
 // GitHub, which a push moves at once while the PR's head follows later.
-func ciStatus(slug string, number int, want string) (*CI, error) {
+func ciStatus(ctx context.Context, slug string, number int, want string) (*CI, error) {
 	owner, name, _ := strings.Cut(slug, "/")
 	vars := map[string]any{"owner": owner, "name": name, "number": number}
 	var data struct {
@@ -114,7 +115,7 @@ func ciStatus(slug string, number int, want string) (*CI, error) {
 			}
 		}
 	}
-	err := graphQL(fmt.Sprintf(`query($owner: String!, $name: String!, $number: Int!) {
+	err := graphQL(ctx, fmt.Sprintf(`query($owner: String!, $name: String!, $number: Int!) {
 		repository(owner: $owner, name: $name) { pullRequest(number: $number) {
 			headRefName headRefOid headRef { target { oid } }
 			baseRef { target { ... on Commit { statusCheckRollup { contexts(first: 100) { nodes { %s } } } } } }
@@ -138,7 +139,7 @@ func ciStatus(slug string, number int, want string) (*CI, error) {
 		}
 	}
 	vars["oid"] = pr.HeadRefOid
-	err = graphQL(fmt.Sprintf(`query($owner: String!, $name: String!, $number: Int!, $oid: GitObjectID!) {
+	err = graphQL(ctx, fmt.Sprintf(`query($owner: String!, $name: String!, $number: Int!, $oid: GitObjectID!) {
 		repository(owner: $owner, name: $name) {
 			object(oid: $oid) { ... on Commit { statusCheckRollup { contexts(first: 100) { nodes { %s } } } } }
 		}
@@ -195,14 +196,14 @@ func shellQuote(s string) string {
 }
 
 // CIStatuses reports CI on the heads of the PRs ciTargets resolves.
-func CIStatuses(args []string) (any, error) {
-	slug, numbers, err := ciTargets(args)
+func CIStatuses(ctx context.Context, args []string) (any, error) {
+	slug, numbers, err := ciTargets(ctx, args)
 	if err != nil {
 		return nil, err
 	}
 	out := []*CI{}
 	for _, n := range numbers {
-		ci, err := ciStatus(slug, n, "")
+		ci, err := ciStatus(ctx, slug, n, "")
 		if err != nil {
 			return nil, err
 		}
@@ -233,8 +234,8 @@ var (
 // A head that has no checks grace after WaitCI first sees it as the PR's
 // expected head counts as finished, with no checks; the grace restarts when
 // the head moves, since a new head's checks take time to register.
-func WaitCI(args []string, sha string, timeout, interval, grace time.Duration) (*CIWait, bool, error) {
-	slug, numbers, err := ciTargets(args)
+func WaitCI(ctx context.Context, args []string, sha string, timeout, interval, grace time.Duration) (*CIWait, bool, error) {
+	slug, numbers, err := ciTargets(ctx, args)
 	if err != nil {
 		return nil, false, err
 	}
@@ -257,7 +258,7 @@ func WaitCI(args []string, sha string, timeout, interval, grace time.Duration) (
 		out := &CIWait{Result: "passed", PRs: []*CI{}}
 		settled, noChecks := true, false
 		for _, n := range numbers {
-			ci, err := ciStatus(slug, n, want)
+			ci, err := ciStatus(ctx, slug, n, want)
 			if err != nil {
 				return nil, false, err
 			}
@@ -312,13 +313,13 @@ func fullOid(rev string) (string, error) {
 var escapes = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[@-_]`)
 
 // Logs returns the end of a failed GitHub Actions job's log on a PR's head.
-func Logs(pr string, check string, lines int) (string, error) {
-	slug, numbers, err := ciTargets([]string{pr})
+func Logs(ctx context.Context, pr string, check string, lines int) (string, error) {
+	slug, numbers, err := ciTargets(ctx, []string{pr})
 	if err != nil {
 		return "", err
 	}
 	number := numbers[0]
-	ci, err := ciStatus(slug, number, "")
+	ci, err := ciStatus(ctx, slug, number, "")
 	if err != nil {
 		return "", err
 	}
@@ -329,7 +330,7 @@ func Logs(pr string, check string, lines int) (string, error) {
 		if c.Job == 0 {
 			return "", refuse("%s is not a GitHub Actions job, so pr-loop cannot fetch its log; name %s in the report for the operator", check, c.URL)
 		}
-		raw, err := gh.Raw(fmt.Sprintf("repos/%s/actions/jobs/%d/logs", slug, c.Job))
+		raw, err := gh.Raw(ctx, fmt.Sprintf("repos/%s/actions/jobs/%d/logs", slug, c.Job))
 		if err != nil {
 			return "", err
 		}
@@ -350,23 +351,23 @@ func Logs(pr string, check string, lines int) (string, error) {
 // read, each named by number or by branch: each must be an open PR by the
 // authenticated user in this checkout's repository, by default the current
 // branch's.
-func ciTargets(args []string) (string, []int, error) {
-	repo, err := repository()
+func ciTargets(ctx context.Context, args []string) (string, []int, error) {
+	repo, err := repository(ctx)
 	if err != nil {
 		return "", nil, err
 	}
-	numbers, err := targetsIn(repo, args)
+	numbers, err := targetsIn(ctx, repo, args)
 	return repo.Slug, numbers, err
 }
 
 // targetsIn is ciTargets in repo.
-func targetsIn(repo *Repo, args []string) ([]int, error) {
+func targetsIn(ctx context.Context, repo *Repo, args []string) ([]int, error) {
 	if len(args) == 0 {
 		branch, err := currentBranch()
 		if err != nil {
 			return nil, err
 		}
-		n, err := branchPR(repo, branch)
+		n, err := branchPR(ctx, repo, branch)
 		if err != nil {
 			return nil, err
 		}
@@ -377,9 +378,9 @@ func targetsIn(repo *Repo, args []string) ([]int, error) {
 		n, ok := prNumber(a)
 		var err error
 		if ok {
-			err = checkPR(repo, n)
+			err = checkPR(ctx, repo, n)
 		} else {
-			n, err = branchPR(repo, a)
+			n, err = branchPR(ctx, repo, a)
 		}
 		if err != nil {
 			return nil, err
@@ -408,12 +409,12 @@ func (p *prHead) byViewer(repo *Repo) bool {
 const prHeadFields = `number state isCrossRepository author { login }`
 
 // checkPR refuses a number that is not an open PR by the viewer in repo.
-func checkPR(repo *Repo, number int) error {
+func checkPR(ctx context.Context, repo *Repo, number int) error {
 	owner, name, _ := strings.Cut(repo.Slug, "/")
 	var data struct {
 		Repository struct{ PullRequest *prHead }
 	}
-	err := graphQL(`query($owner: String!, $name: String!, $number: Int!) {
+	err := graphQL(ctx, `query($owner: String!, $name: String!, $number: Int!) {
 		repository(owner: $owner, name: $name) { pullRequest(number: $number) { `+prHeadFields+` } }
 	}`, map[string]any{"owner": owner, "name": name, "number": number}, &data)
 	if err == nil && !data.Repository.PullRequest.byViewer(repo) {
@@ -425,7 +426,7 @@ func checkPR(repo *Repo, number int) error {
 
 // branchPR finds the open PR by the viewer whose head is local's upstream
 // branch, when that is on repo, or else the branch named local on GitHub.
-func branchPR(repo *Repo, local string) (int, error) {
+func branchPR(ctx context.Context, repo *Repo, local string) (int, error) {
 	remotes, err := githubRemotes()
 	if err != nil {
 		return 0, err
@@ -442,7 +443,7 @@ func branchPR(repo *Repo, local string) (int, error) {
 			PullRequests struct{ Nodes []*prHead }
 		}
 	}
-	err = graphQL(`query($owner: String!, $name: String!, $head: String!) {
+	err = graphQL(ctx, `query($owner: String!, $name: String!, $head: String!) {
 		repository(owner: $owner, name: $name) {
 			pullRequests(headRefName: $head, states: [OPEN], first: 20) { nodes { `+prHeadFields+` } }
 		}

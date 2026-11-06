@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/wesnel/agent-tools/internal/env"
 )
 
 // fakeCodexAppServer stands in for `codex app-server`, which would reach the
@@ -33,9 +36,12 @@ func fakeCodexAppServer() int {
 	return 0
 }
 
-// fakeCodexOnPath puts a codex on PATH that answers with the 5h window at
-// used percent, resetting at resets.
-func fakeCodexOnPath(t *testing.T, used float64, resets time.Time) {
+// fakeCodexOnPath is setup's context, with a codex on PATH that answers
+// with the 5h window at used percent, resetting at resets. codex-usage
+// finds codex, and codexrate starts it, through this process's
+// environment, so the fake goes there too, and a test that uses it runs
+// alone.
+func fakeCodexOnPath(t *testing.T, used float64, resets time.Time) context.Context {
 	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
@@ -45,15 +51,20 @@ func fakeCodexOnPath(t *testing.T, used float64, resets time.Time) {
 	if err := os.Symlink(exe, filepath.Join(bin, "codex")); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", bin)
-	t.Setenv("AGENT_PLAN_FAKE_CODEX", "1")
-	t.Setenv("FAKE_CODEX_USED", strconv.FormatFloat(used, 'f', -1, 64))
-	t.Setenv("FAKE_CODEX_RESETS", strconv.FormatInt(resets.Unix(), 10))
+	vars := map[string]string{"PATH": bin, "AGENT_PLAN_FAKE_CODEX": "1",
+		"FAKE_CODEX_USED": strconv.FormatFloat(used, 'f', -1, 64), "FAKE_CODEX_RESETS": strconv.FormatInt(resets.Unix(), 10)}
+	ctx, _ := setup(t)
+	for name, value := range vars {
+		t.Setenv(name, value)
+		ctx = withVars(ctx, name+"="+value)
+	}
+	return ctx
 }
 
-func codexUsageFile(t *testing.T) string {
-	t.Helper()
-	return filepath.Join(os.Getenv("XDG_STATE_HOME"), "agent-plan", "codex-usage.json")
+// codexUsageFile is where codex-usage records, under the state directory
+// of ctx's Env.
+func codexUsageFile(ctx context.Context) string {
+	return filepath.Join(env.From(ctx).Get("XDG_STATE_HOME"), "agent-plan", "codex-usage.json")
 }
 
 // codex-usage records the Codex account's windows from codex app-server,
@@ -61,12 +72,11 @@ func codexUsageFile(t *testing.T) string {
 func TestCodexUsage(t *testing.T) {
 	resets := time.Now().Add(2 * time.Hour).Truncate(time.Minute)
 	t.Run("recorded", func(t *testing.T) {
-		setup(t)
-		fakeCodexOnPath(t, 95, resets)
-		if code, out, errs := agentPlan(t, "", "codex-usage"); code != 0 {
+		ctx := fakeCodexOnPath(t, 95, resets)
+		if code, out, errs := agentPlan(ctx, t, "", "codex-usage"); code != 0 {
 			t.Fatalf("codex-usage: %d %q %q", code, out, errs)
 		}
-		data, err := os.ReadFile(codexUsageFile(t))
+		data, err := os.ReadFile(codexUsageFile(ctx))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -76,17 +86,19 @@ func TestCodexUsage(t *testing.T) {
 				t.Errorf("codex-usage.json %s lacks %s", data, want)
 			}
 		}
-		if _, err := os.Stat(usageFile(t)); err == nil {
+		if _, err := os.Stat(usageFile(ctx)); err == nil {
 			t.Error("codex-usage wrote Claude's usage.json")
 		}
 	})
 	t.Run("no codex", func(t *testing.T) {
-		setup(t)
-		t.Setenv("PATH", t.TempDir())
-		if code, _, errs := agentPlan(t, "", "codex-usage"); code == 0 || errs == "" {
+		ctx, _ := setup(t)
+		empty := t.TempDir()
+		t.Setenv("PATH", empty)
+		ctx = withVars(ctx, "PATH="+empty)
+		if code, _, errs := agentPlan(ctx, t, "", "codex-usage"); code == 0 || errs == "" {
 			t.Errorf("codex-usage without codex: %d %q", code, errs)
 		}
-		if _, err := os.Stat(codexUsageFile(t)); err == nil {
+		if _, err := os.Stat(codexUsageFile(ctx)); err == nil {
 			t.Error("recorded without a reading")
 		}
 	})

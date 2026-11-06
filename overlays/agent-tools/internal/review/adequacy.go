@@ -12,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/redact"
 	"github.com/wesnel/agent-tools/internal/redcheck"
 	"github.com/wesnel/agent-tools/internal/refusal"
@@ -93,7 +92,7 @@ func testAdequacy(r *span, file string, data []byte, log io.Writer) (*adequacy, 
 			file, result.Test, result.Build, result.TestFiles, settings.Test, settings.Build, settings.TestFiles, r.base, r.tip)
 	}
 	// Oldest first, and without merges, as red-check checks them.
-	out, err := git.Run("-C", r.top, "rev-list", "--reverse", "--no-merges", r.base+".."+r.tip)
+	out, err := r.git().Run("-C", r.top, "rev-list", "--reverse", "--no-merges", r.base+".."+r.tip)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +203,7 @@ func testDiff(r *span, settings *repos.Settings, commit string) ([]string, []byt
 	}
 	diff := func(extra ...string) ([]byte, error) {
 		args := append([]string{"-C", r.top, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames"}, extra...)
-		return git.Bytes(nil, append(append(args, commit+"^", commit, "--"), pathspecs...)...)
+		return r.git().Bytes(nil, append(append(args, commit+"^", commit, "--"), pathspecs...)...)
 	}
 	names, err := diff("--name-only", "-z")
 	if err != nil {
@@ -233,7 +232,7 @@ func untested(r *span, settings *repos.Settings, commit string) (*Finding, error
 	if err != nil || len(files) == 0 {
 		return nil, err
 	}
-	subject, _ := git.Run("-C", r.top, "log", "-1", "--format=%s", commit)
+	subject, _ := r.git().Run("-C", r.top, "log", "-1", "--format=%s", commit)
 	id := mechanicalPrefix + testKey(patch)
 	f := &Finding{ID: id, Kind: "untested", Reviewer: "red-check",
 		Claim: fmt.Sprintf("The tests %s %q changes pass without the rest of that commit, so they do not test it.",
@@ -264,7 +263,7 @@ func shortList(commits []string) string {
 // exists at TIP and is not empty there, or leaves its Path "".
 func (f *Finding) place(r *span, commit string, files []string) {
 	for _, file := range files {
-		data, err := git.Bytes(nil, "-C", r.top, "cat-file", "blob", r.tip+":"+file)
+		data, err := r.git().Bytes(nil, "-C", r.top, "cat-file", "blob", r.tip+":"+file)
 		if err != nil {
 			continue
 		}
@@ -298,7 +297,7 @@ func testKey(diff []byte) string {
 // firstChanged is the first line commit adds or changes in file, as the
 // commit has it, or 0.
 func firstChanged(r *span, commit, file string) int {
-	out, err := git.Bytes(nil, "-C", r.top, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames",
+	out, err := r.git().Bytes(nil, "-C", r.top, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames",
 		"-U0", commit+"^", commit, "--", ":(literal)"+file)
 	if err != nil {
 		return 0

@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/wesnel/agent-tools/internal/env"
 )
 
 // NewestRange returns the range record in owner/repo of pull request pr
@@ -15,9 +17,9 @@ import (
 // It returns nil where there is none. A record of the pull request that
 // fails its structure check fails NewestRange with a *DriftError, since
 // when it was reviewed cannot be read; a record of another pull request is
-// passed over.
-func NewestRange(owner, repo string, pr int, except string) (*Range, string, error) {
-	listed, err := Ranges(owner, repo, "")
+// passed over. The records are those in Dir(e).
+func NewestRange(e env.Env, owner, repo string, pr int, except string) (*Range, string, error) {
+	listed, err := Ranges(e, owner, repo, "")
 	if err != nil {
 		return nil, "", err
 	}
@@ -56,12 +58,12 @@ type Listed struct {
 // Ranges lists the range records in owner/repo whose file name has base as
 // its BASE, or every one where base is "", in file name order. A record
 // that cannot be read is listed with its Err, so each caller decides
-// whether to pass over it.
-func Ranges(owner, repo, base string) ([]Listed, error) {
+// whether to pass over it. The records are those in Dir(e).
+func Ranges(e env.Env, owner, repo, base string) ([]Listed, error) {
 	if err := checkRepo(owner, repo); err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(Dir(), owner, repo)
+	dir := filepath.Join(Dir(e), owner, repo)
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil

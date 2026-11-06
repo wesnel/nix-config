@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"strings"
 
 	"github.com/wesnel/agent-tools/internal/git"
@@ -11,7 +12,7 @@ import (
 // where it names what publictext finds, knowing threads as the review
 // threads its author has seen. then is what to do once it is rewritten.
 func checkPublic(what, text string, threads []string, then string) error {
-	ctx := publictext.In(git.Dir)
+	ctx := publictext.In(context.Background(), git.Dir)
 	ctx.Threads = append(ctx.Threads, threads...)
 	if reason := publictext.Refusal(what, publictext.Check(text, ctx), then); reason != "" {
 		return refuse("%s", reason)
@@ -21,11 +22,11 @@ func checkPublic(what, text string, threads []string, then string) error {
 
 // checkReplies refuses the replies of plan, checks being their threads',
 // unless every one passes checkPublic, naming each that does not.
-func checkReplies(slug string, plan []PlannedReply, checks []*threadCheck) error {
+func checkReplies(ctx context.Context, slug string, plan []PlannedReply, checks []*threadCheck) error {
 	threads := map[int][]string{}
 	for i, r := range plan {
 		if _, ok := threads[checks[i].pr]; !ok {
-			ids, err := prThreads(slug, checks[i].pr)
+			ids, err := prThreads(ctx, slug, checks[i].pr)
 			if err != nil {
 				return err
 			}
@@ -46,7 +47,7 @@ func checkReplies(slug string, plan []PlannedReply, checks []*threadCheck) error
 }
 
 // prThreads are the IDs of every review thread on PR number in slug.
-func prThreads(slug string, number int) ([]string, error) {
+func prThreads(ctx context.Context, slug string, number int) ([]string, error) {
 	owner, name, _ := strings.Cut(slug, "/")
 	var ids []string
 	var cursor *string
@@ -64,7 +65,7 @@ func prThreads(slug string, number int) ([]string, error) {
 				}
 			}
 		}
-		err := graphQL(`query($owner: String!, $name: String!, $number: Int!, $after: String) {
+		err := graphQL(ctx, `query($owner: String!, $name: String!, $number: Int!, $after: String) {
 			repository(owner: $owner, name: $name) { pullRequest(number: $number) {
 				reviewThreads(first: 100, after: $after) { pageInfo { hasNextPage endCursor } nodes { id } }
 			} }

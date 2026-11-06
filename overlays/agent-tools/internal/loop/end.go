@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -15,7 +16,7 @@ type issueComment struct {
 
 // viewerComments lists viewer's top-level comments on PR number, oldest
 // first, reading every page.
-func viewerComments(slug string, number int, viewer string) ([]issueComment, error) {
+func viewerComments(ctx context.Context, slug string, number int, viewer string) ([]issueComment, error) {
 	owner, name, _ := strings.Cut(slug, "/")
 	var out []issueComment
 	var cursor *string
@@ -38,7 +39,7 @@ func viewerComments(slug string, number int, viewer string) ([]issueComment, err
 				}
 			}
 		}
-		err := graphQL(`query($owner: String!, $name: String!, $number: Int!, $after: String) {
+		err := graphQL(ctx, `query($owner: String!, $name: String!, $number: Int!, $after: String) {
 			repository(owner: $owner, name: $name) { pullRequest(number: $number) {
 				comments(first: 100, after: $after) {
 					pageInfo { hasNextPage endCursor }
@@ -76,8 +77,8 @@ func lastTrigger(comments []issueComment, trigger string) *issueComment {
 
 // deleteTriggers deletes the authenticated user's top-level comments on PR
 // number whose body is one of triggers, and returns how many it deleted.
-func deleteTriggers(repo *Repo, number int, triggers []string) (int, error) {
-	comments, err := viewerComments(repo.Slug, number, repo.Viewer)
+func deleteTriggers(ctx context.Context, repo *Repo, number int, triggers []string) (int, error) {
+	comments, err := viewerComments(ctx, repo.Slug, number, repo.Viewer)
 	if err != nil {
 		return 0, err
 	}
@@ -86,7 +87,7 @@ func deleteTriggers(repo *Repo, number int, triggers []string) (int, error) {
 		if !contains(triggers, c.Body) {
 			continue
 		}
-		if err := commentsREST("DELETE", fmt.Sprintf("repos/%s/issues/comments/%d", repo.Slug, c.ID), nil, nil); err != nil {
+		if err := commentsREST(ctx, "DELETE", fmt.Sprintf("repos/%s/issues/comments/%d", repo.Slug, c.ID), nil, nil); err != nil {
 			return deleted, err
 		}
 		deleted++
@@ -98,16 +99,16 @@ func deleteTriggers(repo *Repo, number int, triggers []string) (int, error) {
 // is a configured bot's request.comment, on the PRs ciTargets resolves.
 // request deletes its own earlier one too, so a loop that never ends
 // leaves one comment per bot, not one per round.
-func End(args []string) (any, error) {
-	repo, err := repository()
+func End(ctx context.Context, args []string) (any, error) {
+	repo, err := repository(ctx)
 	if err != nil {
 		return nil, err
 	}
-	numbers, err := targetsIn(repo, args)
+	numbers, err := targetsIn(ctx, repo, args)
 	if err != nil {
 		return nil, err
 	}
-	bots, err := botsFor(repo.Slug)
+	bots, err := botsFor(ctx, repo.Slug)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +120,7 @@ func End(args []string) (any, error) {
 	}
 	out := map[string]int{}
 	for _, n := range numbers {
-		deleted, err := deleteTriggers(repo, n, triggers)
+		deleted, err := deleteTriggers(ctx, repo, n, triggers)
 		if err != nil {
 			return nil, err
 		}

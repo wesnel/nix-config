@@ -9,6 +9,7 @@ const replyFile = "\n=== thread bot1 resolve\n\nFixed in abc123:\n\n```go\n=== n
 	"=== thread bot2\nDeferred: out of scope.\n  indented\n\n\n=== thread done2 resolve\nAlready done.\n"
 
 func TestParseReplies(t *testing.T) {
+	t.Parallel()
 	t.Run("sections", func(t *testing.T) {
 		plan, err := ParseReplies(replyFile)
 		if err != nil {
@@ -57,12 +58,11 @@ func TestParseReplies(t *testing.T) {
 func TestReplyAll(t *testing.T) {
 	t.Run("replies and resolves", func(t *testing.T) {
 		f := fakeRepo(t)
-		t.Setenv(ModeEnv, "bots")
 		plan, err := ParseReplies(replyFile)
 		if err != nil {
 			t.Fatal(err)
 		}
-		results, err := ReplyAll(plan)
+		results, err := ReplyAll(f.in("bots"), plan)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -86,20 +86,20 @@ func TestReplyAll(t *testing.T) {
 
 	t.Run("outside a bots-mode loop", func(t *testing.T) {
 		f := fakeRepo(t)
-		if _, err := ReplyAll([]PlannedReply{{Thread: "bot1", Body: "a"}}); !refused(err) || len(f.replies) != 0 {
+		if _, err := ReplyAll(f.ctx, []PlannedReply{{Thread: "bot1", Body: "a"}}); !refused(err) || len(f.replies) != 0 {
 			t.Errorf("replied outside a loop: %v, %v", err, f.replies)
 		}
 	})
 
 	t.Run("checks every thread first", func(t *testing.T) {
 		f := fakeRepo(t)
-		t.Setenv(ModeEnv, "bots")
+		ctx := f.in("bots")
 		plan := []PlannedReply{{Thread: "bot1", Body: "a"}, {Thread: "theirs", Body: "b"}, {Thread: "bot2", Body: "c"}, {Thread: "closed", Body: "d"}}
-		_, err := ReplyAll(plan)
+		_, err := ReplyAll(ctx, plan)
 		if !refused(err) || !strings.Contains(err.Error(), "#3") || !strings.Contains(err.Error(), "#4") {
 			t.Errorf("refusal should name every bad thread: %v", err)
 		}
-		_, err = ReplyAll([]PlannedReply{{Thread: "bot1", Body: "a"}, {Thread: "missing", Body: "b"}, {Thread: "theirs", Body: "c"}})
+		_, err = ReplyAll(ctx, []PlannedReply{{Thread: "bot1", Body: "a"}, {Thread: "missing", Body: "b"}, {Thread: "theirs", Body: "c"}})
 		if err == nil || !strings.Contains(err.Error(), "missing:") || !strings.Contains(err.Error(), "theirs:") {
 			t.Errorf("an unknown thread should be reported with the rest: %v", err)
 		}
@@ -110,8 +110,7 @@ func TestReplyAll(t *testing.T) {
 
 	t.Run("a reply file naming a person's thread", func(t *testing.T) {
 		f := fakeRepo(t)
-		t.Setenv(ModeEnv, "bots")
-		if _, err := ReplyAll([]PlannedReply{{Thread: "bot1", Body: "a"}, {Thread: "human1", Body: "b"}}); !refused(err) {
+		if _, err := ReplyAll(f.in("bots"), []PlannedReply{{Thread: "bot1", Body: "a"}, {Thread: "human1", Body: "b"}}); !refused(err) {
 			t.Errorf("a reply file reached a person: %v", err)
 		}
 		if len(f.replies) != 0 {
@@ -121,9 +120,8 @@ func TestReplyAll(t *testing.T) {
 
 	t.Run("reports where it stopped", func(t *testing.T) {
 		f := fakeRepo(t)
-		t.Setenv(ModeEnv, "bots")
 		f.failReply = "bot2"
-		_, err := ReplyAll([]PlannedReply{{Thread: "bot1", Body: "a", Resolve: true}, {Thread: "bot2", Body: "b"}, {Thread: "answered1", Body: "c"}})
+		_, err := ReplyAll(f.in("bots"), []PlannedReply{{Thread: "bot1", Body: "a", Resolve: true}, {Thread: "bot2", Body: "b"}, {Thread: "answered1", Body: "c"}})
 		if err == nil || !strings.Contains(err.Error(), "bot2") || !strings.Contains(err.Error(), `"thread":"bot1"`) {
 			t.Errorf("error should name the failed thread and what was done: %v", err)
 		}

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
@@ -108,7 +109,9 @@ func golden(t *testing.T, name string, got []byte) {
 // The renderer writes the golden files byte for byte, and each parses back
 // to the record it was rendered from.
 func TestGolden(t *testing.T) {
+	t.Parallel()
 	t.Run("range", func(t *testing.T) {
+		t.Parallel()
 		want := fixtureRange()
 		data, err := want.Render()
 		if err != nil {
@@ -124,6 +127,7 @@ func TestGolden(t *testing.T) {
 		}
 	})
 	t.Run("pr", func(t *testing.T) {
+		t.Parallel()
 		want := fixturePR()
 		data, err := want.Render()
 		if err != nil {
@@ -141,32 +145,34 @@ func TestGolden(t *testing.T) {
 }
 
 func TestPaths(t *testing.T) {
+	t.Parallel()
 	state := t.TempDir()
-	hostpaths.Bake(t, t.TempDir(), state)
-	if got, want := Dir(), filepath.Join(state, "agent-tools", "reviews"); got != want {
+	e := env.New(t.TempDir(), hostpaths.TestBaked(t.TempDir(), state)...)
+	if got, want := Dir(e), filepath.Join(state, "agent-tools", "reviews"); got != want {
 		t.Errorf("Dir() = %s, want %s", got, want)
 	}
-	if got, err := RangeFile("owner", "repo", base, head); err != nil || got != filepath.Join(Dir(), "owner", "repo", base+".."+head+".org") {
+	if got, err := RangeFile(e, "owner", "repo", base, head); err != nil || got != filepath.Join(Dir(e), "owner", "repo", base+".."+head+".org") {
 		t.Errorf("RangeFile = %s, %v", got, err)
 	}
-	if got, err := PRFile("owner", "repo.js", 12); err != nil || got != filepath.Join(Dir(), "owner", "repo.js", "pr-12.org") {
+	if got, err := PRFile(e, "owner", "repo.js", 12); err != nil || got != filepath.Join(Dir(e), "owner", "repo.js", "pr-12.org") {
 		t.Errorf("PRFile = %s, %v", got, err)
 	}
 	for _, bad := range [][2]string{{"..", "repo"}, {"owner", "../x"}, {"own/er", "repo"}, {"", "repo"}, {".git", "x"}} {
-		if _, err := PRFile(bad[0], bad[1], 1); err == nil {
+		if _, err := PRFile(e, bad[0], bad[1], 1); err == nil {
 			t.Errorf("PRFile(%q, %q) is not refused", bad[0], bad[1])
 		}
 	}
-	if _, err := RangeFile("owner", "repo", base[:12], head); err == nil {
+	if _, err := RangeFile(e, "owner", "repo", base[:12], head); err == nil {
 		t.Error("a short SHA is not refused")
 	}
-	if _, err := PRFile("owner", "repo", 0); err == nil {
+	if _, err := PRFile(e, "owner", "repo", 0); err == nil {
 		t.Error("PR 0 is not refused")
 	}
 }
 
 // Writers holding the lock in turn lose no update.
 func TestConcurrentWriters(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "owner", "repo", "pr-12.org")
 	const writers = 20
 	var wg sync.WaitGroup
@@ -201,6 +207,7 @@ func TestConcurrentWriters(t *testing.T) {
 // A hand edit is refused with the drift error, which names the part, and
 // the file is left as it was.
 func TestDriftRefused(t *testing.T) {
+	t.Parallel()
 	data, err := fixtureRange().Render()
 	if err != nil {
 		t.Fatal(err)
@@ -215,6 +222,7 @@ func TestDriftRefused(t *testing.T) {
 		{"local variables", "#+title: review\n", "#+title: review -*- eval: (x) -*-\n", "the file's header"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			edited := strings.Replace(string(data), tc.from, tc.to, 1)
 			if edited == string(data) {
 				t.Fatalf("%q is not in the fixture", tc.from)
@@ -262,6 +270,7 @@ var renderedHeading = regexp.MustCompile(`^(\* (Review|Pull request)|\*\* (Walkt
 
 // Untrusted text cannot start a heading, a link or file variables.
 func TestUntrustedText(t *testing.T) {
+	t.Parallel()
 	hostile := "* TODO forged\n#+end_example\n** Findings\n,* already escaped\n  #+begin_src emacs-lisp\n" +
 		"[[elisp:(kill-emacs)][click]]\nLocal Variables:\neval: (kill-emacs)\nEnd:\n-*- mode: emacs-lisp -*-\n" +
 		"LOCAL VARIABLES:\n-*-*-"
@@ -306,6 +315,7 @@ func TestUntrustedText(t *testing.T) {
 }
 
 func TestTextCaps(t *testing.T) {
+	t.Parallel()
 	r := fixtureRange()
 	r.Title = strings.Repeat("é", 300)
 	r.Findings[0].Evidence = strings.Repeat("😀", TextCap)
@@ -327,6 +337,7 @@ func TestTextCaps(t *testing.T) {
 
 // The renderer refuses what it cannot write as given.
 func TestRenderRefuses(t *testing.T) {
+	t.Parallel()
 	for name, edit := range map[string]func(r *Range){
 		"short SHA":        func(r *Range) { r.Head = head[:12] },
 		"bad repo":         func(r *Range) { r.Repo = "owner" },
@@ -339,6 +350,7 @@ func TestRenderRefuses(t *testing.T) {
 		"bad side":         func(r *Range) { r.Findings[0].Side = "both" },
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			r := fixtureRange()
 			edit(r)
 			if _, err := r.Render(); err == nil {
@@ -366,6 +378,7 @@ var oddPaths = []string{"app/[id]/page.tsx", "app/(group)/page.tsx", "docs/Q&A.m
 // Any path is written, without a link where none can hold it, and reads
 // back whole.
 func TestOddPaths(t *testing.T) {
+	t.Parallel()
 	for _, path := range oddPaths {
 		r := fixtureRange()
 		r.Walkthrough[0].Hunks[0].Path = path
@@ -419,6 +432,7 @@ func TestOddPaths(t *testing.T) {
 // A reason that cleans to nothing leaves a record every later write and
 // read takes.
 func TestEmptyReason(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "r.org")
 	if err := Update(path, func(r *Range) error {
 		*r = *fixtureRange()
@@ -436,6 +450,7 @@ func TestEmptyReason(t *testing.T) {
 }
 
 func TestCounts(t *testing.T) {
+	t.Parallel()
 	if got, want := fixtureRange().Counts(), (Counts{Open: 1, Deferred: 1, Operator: 1}); got != want {
 		t.Errorf("range counts %+v, want %+v", got, want)
 	}
@@ -447,6 +462,7 @@ func TestCounts(t *testing.T) {
 // A new file starts from the zero record, and an error from apply writes
 // nothing.
 func TestUpdate(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "owner", "repo", base+".."+head+".org")
 	if err := Update(path, func(r *Range) error { return errors.New("no") }); err == nil {
 		t.Fatal("apply's error is lost")

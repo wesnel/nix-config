@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -13,7 +14,7 @@ import (
 // squash the branch back to exactly those commits. amend! and squash! are
 // refused because they rewrite the PR's commit messages, which the signing
 // pass then refuses.
-func checkFixups(branch string, original, now []Commit) error {
+func checkFixups(ctx context.Context, branch string, original, now []Commit) error {
 	subjects := map[string]bool{}
 	for _, c := range original {
 		subjects[subject(c.Message)] = true
@@ -30,7 +31,7 @@ func checkFixups(branch string, original, now []Commit) error {
 		case !subjects[target]:
 			stray = append(stray, fmt.Sprintf("%q fixes up a commit that is not one of %s's", subject(c.Message), branch))
 		default:
-			if problems := history.LintMessage(c.Message); len(problems) > 0 {
+			if problems := history.LintMessage(ctx, c.Message); len(problems) > 0 {
 				stray = append(stray, fmt.Sprintf("%q has a message where %s; its review details go in Review-* trailers alone",
 					subject(c.Message), strings.Join(problems, ", and ")))
 			}

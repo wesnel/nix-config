@@ -18,6 +18,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+
+	"github.com/wesnel/agent-tools/internal/env"
 )
 
 // Title is the visualization's title, and its embed's alt text.
@@ -64,13 +66,14 @@ type Publisher struct {
 	Dir string
 }
 
-// Codex starts `codex app-server` in dir, found on PATH.
+// Codex starts `codex app-server` in dir, found on the PATH of ctx's Env
+// and run with its variables.
 func Codex(dir string) func(context.Context) (io.ReadWriteCloser, error) {
 	return func(ctx context.Context) (io.ReadWriteCloser, error) {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return nil, err
 		}
-		cmd := exec.CommandContext(ctx, "codex", "app-server", "--listen", "stdio://")
+		cmd := env.Command(ctx, "codex", "app-server", "--listen", "stdio://")
 		cmd.Dir = dir
 		in, err := cmd.StdinPipe()
 		if err != nil {

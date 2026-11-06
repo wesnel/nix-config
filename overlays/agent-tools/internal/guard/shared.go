@@ -1,8 +1,11 @@
 package guard
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
+
+	"github.com/wesnel/agent-tools/internal/env"
 )
 
 // IsCredential reports whether the absolute, clean path is a secret as the
@@ -15,7 +18,8 @@ func IsCredential(path string) bool {
 	if envFile(path) {
 		return true
 	}
-	for _, p := range credentialPaths() {
+	// Its callers, in other packages, have no Env to pass yet.
+	for _, p := range credentialPaths(env.With(context.Background(), env.Process())) {
 		if credentialUnder(path, p, false) {
 			return true
 		}
@@ -32,4 +36,4 @@ func envFile(path string) bool {
 
 // ScratchRoots are the session's temporary directories, where an agent
 // writes files that are not the repository's.
-func ScratchRoots() []string { return scratchRoots() }
+func ScratchRoots() []string { return scratchRoots(env.Process()) }

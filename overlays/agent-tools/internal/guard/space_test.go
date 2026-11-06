@@ -9,15 +9,17 @@ import (
 	"testing"
 
 	"github.com/wesnel/agent-tools/internal/agentplans"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/hostpaths"
 )
 
 // The Space publisher's state names the block it replaces, so no session
 // writes it: by any name for it, before its directory exists or after.
 func TestSpaceState(t *testing.T) {
-	root := fakeHome(t)
-	hostpaths.Bake(t, filepath.Join(root, "config"), filepath.Join(root, "state"))
-	file := agentplans.SpaceStateFile()
+	t.Parallel()
+	ctx, root := fakeHome(t)
+	ctx = withVars(ctx, hostpaths.TestBaked(filepath.Join(root, "config"), filepath.Join(root, "state"))...)
+	file := agentplans.SpaceStateFile(env.From(ctx))
 	alias := filepath.Join(t.TempDir(), "root-alias")
 	if err := os.Symlink(root, alias); err != nil {
 		t.Fatal(err)
@@ -27,7 +29,7 @@ func TestSpaceState(t *testing.T) {
 	}
 	write := func(path string) string {
 		input, _ := json.Marshal(map[string]string{"file_path": path, "content": "{}"})
-		return CheckBaseline("Write", input)
+		return CheckBaseline(ctx, "Write", input)
 	}
 	rel, _ := filepath.Rel(root, file)
 	paths := []string{file, filepath.Dir(file) + "/./" + filepath.Base(file), filepath.Join(alias, rel)}
@@ -38,7 +40,7 @@ func TestSpaceState(t *testing.T) {
 		if write(path) == "" {
 			t.Errorf("Write %s before the directory exists", path)
 		}
-		if judge(t, root, "echo {} > "+path) == "" {
+		if judge(ctx, root, "echo {} > "+path) == "" {
 			t.Errorf("a redirection to %s", path)
 		}
 	}
@@ -61,11 +63,11 @@ func TestSpaceState(t *testing.T) {
 			t.Errorf("Write %s", path)
 		}
 	}
-	if reason := judge(t, root, "git diff --output="+file); reason == "" {
+	if reason := judge(ctx, root, "git diff --output="+file); reason == "" {
 		t.Error("git diff's output to the state")
 	}
 	// Beside it, a file of another name is written as any other.
-	if other := filepath.Join(filepath.Dir(file), "out", "x.json"); write(other) != "" || judge(t, root, "echo {} > "+other) != "" {
+	if other := filepath.Join(filepath.Dir(file), "out", "x.json"); write(other) != "" || judge(ctx, root, "echo {} > "+other) != "" {
 		t.Errorf("a file beside the state: %s", write(other))
 	}
 }
@@ -74,9 +76,10 @@ func TestSpaceState(t *testing.T) {
 // archive's extraction or a recursive copy, is refused; one that only
 // reads it, or writes elsewhere, is not.
 func TestSpaceStateDirectoryWrites(t *testing.T) {
-	root := fakeHome(t)
-	hostpaths.Bake(t, filepath.Join(root, "config"), filepath.Join(root, "state"))
-	dest, work := filepath.Dir(agentplans.SpaceStateFile()), t.TempDir()
+	t.Parallel()
+	ctx, root := fakeHome(t)
+	ctx = withVars(ctx, hostpaths.TestBaked(filepath.Join(root, "config"), filepath.Join(root, "state"))...)
+	dest, work := filepath.Dir(agentplans.SpaceStateFile(env.From(ctx))), t.TempDir()
 	if err := os.MkdirAll(dest, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +104,8 @@ func TestSpaceStateDirectoryWrites(t *testing.T) {
 		{"copy elsewhere", work, "cp -R fixture " + filepath.Join(work, "safe"), false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			if reason := judge(t, c.dir, c.command); (reason != "") != c.deny {
+			t.Parallel()
+			if reason := judge(ctx, c.dir, c.command); (reason != "") != c.deny {
 				t.Errorf("deny %v: %q", c.deny, reason)
 			}
 		})

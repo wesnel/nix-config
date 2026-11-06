@@ -3,16 +3,17 @@ package review
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/plans"
@@ -58,13 +59,14 @@ type candidate struct {
 // text, so the list is fenced and redacted.
 func overlapSection(r *span) string {
 	deadline := overlapNow().Add(overlapBudget)
-	loop := os.Getenv("PR_LOOP_SESSION") != ""
+	loop := r.env.Get("PR_LOOP_SESSION") != ""
+	g := r.git()
 	base := routes.MergeBase(r.top, r.tip)
 	if base == "" {
 		base = r.base
 	}
 	changed := lines(r, "diff", "--name-only", "--no-renames", base, r.tip)
-	current, _ := git.Run("-C", r.top, "branch", "--show-current")
+	current, _ := g.Run("-C", r.top, "branch", "--show-current")
 	defaultRef := routes.DefaultRef(r.top)
 
 	// Finding the candidates counts against the budget as checking them
@@ -84,7 +86,7 @@ func overlapSection(r *span) string {
 			unchecked++
 			return
 		}
-		out, err := git.Run("-C", r.top, "for-each-ref", "--format=%(objectname) %(committerdate:unix)", ref)
+		out, err := g.Run("-C", r.top, "for-each-ref", "--format=%(objectname) %(committerdate:unix)", ref)
 		tip, unix, ok := strings.Cut(out, " ")
 		if err != nil || !ok {
 			return
@@ -100,16 +102,16 @@ func overlapSection(r *span) string {
 		add(ref, 0, "local", false)
 	}
 	remotes := remotesOf(r)
-	for _, b := range plans.HostBranches() {
+	for _, b := range plans.HostBranches(env.Process()) {
 		if over() {
 			unchecked++
 			continue
 		}
-		if git.OK("-C", r.top, "rev-parse", "--verify", "-q", "refs/heads/"+b) {
+		if g.OK("-C", r.top, "rev-parse", "--verify", "-q", "refs/heads/"+b) {
 			add("refs/heads/"+b, 1, "named in a plan", false)
 		}
 		for name := range remotes {
-			if git.OK("-C", r.top, "rev-parse", "--verify", "-q", "refs/remotes/"+name+"/"+b) {
+			if g.OK("-C", r.top, "rev-parse", "--verify", "-q", "refs/remotes/"+name+"/"+b) {
 				add("refs/remotes/"+name+"/"+b, 1, "named in a plan", true)
 			}
 		}
@@ -134,7 +136,7 @@ func overlapSection(r *span) string {
 					"branches are left out.\n", slug)
 				continue
 			}
-			prs, err := openPRs(slug, deadline.Sub(overlapNow()))
+			prs, err := openPRs(r.env, slug, deadline.Sub(overlapNow()))
 			if err != nil {
 				note += fmt.Sprintf("The open pull requests of %s could not be listed (%v), so remote branches are left out.\n", slug, err)
 				continue
@@ -149,7 +151,7 @@ func overlapSection(r *span) string {
 					continue
 				}
 				for name, s := range remotes {
-					if s == slug && git.OK("-C", r.top, "rev-parse", "--verify", "-q", "refs/remotes/"+name+"/"+pr.HeadRefName) {
+					if s == slug && g.OK("-C", r.top, "rev-parse", "--verify", "-q", "refs/remotes/"+name+"/"+pr.HeadRefName) {
 						add("refs/remotes/"+name+"/"+pr.HeadRefName, 2, fmt.Sprintf("open pull request #%d", pr.Number), true)
 					}
 				}
@@ -167,7 +169,7 @@ func overlapSection(r *span) string {
 			unchecked++
 			continue
 		}
-		if git.OK("-C", r.top, "merge-base", "--is-ancestor", c.tip, r.tip) {
+		if g.OK("-C", r.top, "merge-base", "--is-ancestor", c.tip, r.tip) {
 			continue
 		}
 		cands = append(cands, c)
@@ -191,7 +193,7 @@ func overlapSection(r *span) string {
 			unchecked += len(cands) - i
 			break
 		}
-		mb, err := git.Run("-C", r.top, "merge-base", c.tip, r.tip)
+		mb, err := g.Run("-C", r.top, "merge-base", c.tip, r.tip)
 		if err != nil {
 			continue
 		}
@@ -239,7 +241,7 @@ func overlapSection(r *span) string {
 
 // lines is the output of git args in r's repository, a line each.
 func lines(r *span, args ...string) []string {
-	out, err := git.Run(append([]string{"-C", r.top}, args...)...)
+	out, err := r.git().Run(append([]string{"-C", r.top}, args...)...)
 	if err != nil || out == "" {
 		return nil
 	}
@@ -247,10 +249,21 @@ func lines(r *span, args ...string) []string {
 }
 
 // remotesOf maps each remote of r's repository that fetches from GitHub to
-// its owner/name.
+// its owner/name; none where they cannot be read.
 func remotesOf(r *span) map[string]string {
+	out, _ := remotesAt(r.git(), r.top)
+	return out
+}
+
+// remotesAt maps each remote of the repository at top, as g's git reads
+// it, that fetches from GitHub to its owner/name.
+func remotesAt(g git.Where, top string) (map[string]string, error) {
+	text, err := g.Run("-C", top, "remote", "-v")
+	if err != nil {
+		return nil, err
+	}
 	out := map[string]string{}
-	for _, line := range lines(r, "remote", "-v") {
+	for _, line := range strings.Split(text, "\n") {
 		f := strings.Fields(line)
 		if len(f) == 3 && f[2] == "(fetch)" {
 			if slug := gh.Slug(f[1]); slug != "" {
@@ -258,7 +271,7 @@ func remotesOf(r *span) map[string]string {
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 // fetched says how long ago r's repository last fetched.
@@ -278,13 +291,14 @@ type openPR struct {
 
 // openPRs are slug's open pull requests, by `gh pr list` given at most
 // timeout and 20 seconds, kept for prCacheFor in agent-tools' directory
-// under the XDG cache directory.
-func openPRs(slug string, timeout time.Duration) ([]openPR, error) {
-	cache := os.Getenv("XDG_CACHE_HOME")
+// under the XDG cache directory: e's, as gh is the one e's PATH finds, run
+// in e.
+func openPRs(e env.Env, slug string, timeout time.Duration) ([]openPR, error) {
+	cache := e.Get("XDG_CACHE_HOME")
 	if cache == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, err
+		home := e.Get("HOME")
+		if home == "" {
+			return nil, errors.New("$HOME is not defined")
 		}
 		cache = filepath.Join(home, ".cache")
 	}
@@ -297,12 +311,10 @@ func openPRs(slug string, timeout time.Duration) ([]openPR, error) {
 			return prs, nil
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), min(timeout, 20*time.Second))
+	ctx, cancel := context.WithTimeout(env.With(context.Background(), e), min(timeout, 20*time.Second))
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "gh", "pr", "list", "--repo", slug, "--state", "open", "--json", "headRefName,number",
-		"--limit", strconv.Itoa(prListLimit))
-	cmd.Dir = gh.Outside
-	data, err := cmd.Output()
+	data, err := gh.Command(ctx, "pr", "list", "--repo", slug, "--state", "open", "--json", "headRefName,number",
+		"--limit", strconv.Itoa(prListLimit)).Output()
 	if err != nil {
 		return nil, err
 	}

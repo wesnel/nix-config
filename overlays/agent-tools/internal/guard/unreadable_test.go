@@ -11,6 +11,7 @@ import (
 // event with exit 2, Claude Code's status for a blocked call, and a tool
 // input with a denial, where it would otherwise be judged as empty.
 func TestUnreadable(t *testing.T) {
+	t.Parallel()
 	var out, errs bytes.Buffer
 	if code := Main([]string{"--baseline"}, strings.NewReader("{not json"), &out, &errs); code != 2 ||
 		!strings.Contains(errs.String(), "cannot read") || out.Len() != 0 {
@@ -24,6 +25,7 @@ func TestUnreadable(t *testing.T) {
 		"local_shell with a number":          {"tool_name": "local_shell", "tool_input": map[string]any{"command": 3}},
 	} {
 		t.Run(caseName(true, name), func(t *testing.T) {
+			t.Parallel()
 			data, _ := json.Marshal(event)
 			var out bytes.Buffer
 			if code := Main([]string{"--baseline"}, bytes.NewReader(data), &out, &bytes.Buffer{}); code != 0 {

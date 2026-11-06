@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 )
 
@@ -33,30 +34,31 @@ func safe() []string {
 	}
 }
 
-// environment is the process's environment without anything that points
-// git at a repository or at configuration, and with neither the user's nor
-// the system's config or attributes: the user's defines filters, such as Git
-// LFS's, which a pull request's .gitattributes would otherwise run here, and
-// includes a secret. extra is added last.
-func environment(extra []string) []string {
-	var env []string
-	for _, kv := range gitenv.WithoutConfig(os.Environ()) {
+// environment is vars, the caller's environment, without anything that
+// points git at a repository or at configuration, and with neither the
+// user's nor the system's config or attributes: the user's defines filters,
+// such as Git LFS's, which a pull request's .gitattributes would otherwise
+// run here, and includes a secret. extra is added last.
+func environment(vars, extra []string) []string {
+	var out []string
+	for _, kv := range gitenv.WithoutConfig(vars) {
 		name, _, _ := strings.Cut(kv, "=")
 		if strings.HasPrefix(name, "GIT_ATTR") ||
 			name == "GIT_TERMINAL_PROMPT" || name == "GIT_ASKPASS" || name == "SSH_ASKPASS" || name == "GIT_EXEC_PATH" {
 			continue
 		}
-		env = append(env, kv)
+		out = append(out, kv)
 	}
-	return append(append(env, "GIT_ATTR_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "GIT_LFS_SKIP_SMUDGE=1"), extra...)
+	return append(append(out, "GIT_ATTR_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "GIT_LFS_SKIP_SMUDGE=1"), extra...)
 }
 
-// gitCommand is git in dir with the safe configuration. env is added to
-// environment's, and is where a credential helper goes, never argv.
-func gitCommand(ctx context.Context, dir string, env []string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "git", append(safe(), args...)...)
+// gitCommand is git in dir with the safe configuration, found and run in
+// ctx's Env as environment says. extra is added to environment's, and is
+// where a credential helper goes, never argv.
+func gitCommand(ctx context.Context, dir string, extra []string, args ...string) *exec.Cmd {
+	cmd := env.Command(ctx, "git", append(safe(), args...)...)
 	cmd.Dir = dir
-	cmd.Env = environment(env)
+	cmd.Env = environment(cmd.Env, extra)
 	return cmd
 }
 
@@ -90,9 +92,9 @@ func Checkout(ctx context.Context, clone, dir, rev string) error {
 // of it. Where git cannot, it removes the two itself, the record found
 // through the checkout's .git file, and prunes nothing else: the clone may
 // be the operator's, whose other worktrees' records are not the review's
-// to drop.
-func RemoveCheckout(clone, dir string) {
-	ctx := context.Background()
+// to drop. git runs in ctx's Env, and runs to the end though ctx is done.
+func RemoveCheckout(ctx context.Context, clone, dir string) {
+	ctx = context.WithoutCancel(ctx)
 	if _, err := gitRun(ctx, clone, "worktree", "remove", "--force", "--force", dir); err == nil {
 		return
 	}

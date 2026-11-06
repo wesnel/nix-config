@@ -34,10 +34,10 @@ func diagramsReply(ds ...map[string]any) string {
 // show renders as Mermaid; one citing a line that is not there is dropped.
 func TestDiagrams(t *testing.T) {
 	f := setUp(t, true)
-	t.Setenv("FAKE_CODEX", "critique")
-	t.Setenv("FAKE_CHECKED", `["N1", "N2", "E1"]`)
+	f.setenv("FAKE_CODEX", "critique")
+	f.setenv("FAKE_CHECKED", `["N1", "N2", "E1"]`)
 	f.claudeSays(t, "diagrammer", diagramsReply(codeDiagram(f.tip, 3), codeDiagram(f.tip, 9)))
-	code, out, stderr := runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
+	code, out, stderr := f.runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
@@ -57,7 +57,7 @@ func TestDiagrams(t *testing.T) {
 		t.Error("the diagrammer was not given its contract")
 	}
 
-	code, stdout, stderr := delegateCmd(t, "show", f.base+"..HEAD")
+	code, stdout, stderr := f.delegateCmd(t, "show", f.base+"..HEAD")
 	if code != 0 {
 		t.Fatalf("show: exit %d\n%s", code, stderr)
 	}
@@ -75,12 +75,12 @@ func TestDiagrams(t *testing.T) {
 // again, and the redraw kept as corrected when that critique passes.
 func TestDiagramRedrawn(t *testing.T) {
 	f := setUp(t, true)
-	t.Setenv("FAKE_CODEX", "fault-once")
-	t.Setenv("FAKE_CHECKED", `["N1", "N2", "E1"]`)
+	f.setenv("FAKE_CODEX", "fault-once")
+	f.setenv("FAKE_CHECKED", `["N1", "N2", "E1"]`)
 	redrawn := codeDiagram(f.tip, 3)
 	redrawn["title"] = "The code, redrawn"
 	f.claudeSays(t, "diagrammer", diagramsReply(codeDiagram(f.tip, 3)), diagramsReply(redrawn))
-	code, out, stderr := runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
+	code, out, stderr := f.runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
@@ -104,12 +104,12 @@ func TestDiagramRedrawn(t *testing.T) {
 // unresolved, with the first critique's findings about it.
 func TestDiagramUnresolved(t *testing.T) {
 	f := setUp(t, true)
-	t.Setenv("FAKE_CODEX", "fault")
-	t.Setenv("FAKE_CHECKED", `["N1", "N2", "E1"]`)
+	f.setenv("FAKE_CODEX", "fault")
+	f.setenv("FAKE_CHECKED", `["N1", "N2", "E1"]`)
 	redrawn := codeDiagram(f.tip, 3)
 	redrawn["title"] = "The code, redrawn"
 	f.claudeSays(t, "diagrammer", diagramsReply(codeDiagram(f.tip, 3)), diagramsReply(redrawn))
-	code, out, stderr := runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
+	code, out, stderr := f.runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
 	if code != 3 {
 		t.Fatalf("exit %d\n%s", code, stderr)
 	}
@@ -134,10 +134,10 @@ func TestDiagramInconclusive(t *testing.T) {
 	for mode, why := range map[string]string{"unsure": "could not verify", "misfault": "was dropped"} {
 		t.Run(mode, func(t *testing.T) {
 			f := setUp(t, true)
-			t.Setenv("FAKE_CODEX", mode)
-			t.Setenv("FAKE_CHECKED", `["N1", "N2", "E1"]`)
+			f.setenv("FAKE_CODEX", mode)
+			f.setenv("FAKE_CHECKED", `["N1", "N2", "E1"]`)
 			f.claudeSays(t, "diagrammer", diagramsReply(codeDiagram(f.tip, 3)))
-			code, out, stderr := runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
+			code, out, stderr := f.runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
 			if code != 0 {
 				t.Fatalf("exit %d\n%s", code, stderr)
 			}
@@ -156,14 +156,14 @@ func TestDiagramInconclusive(t *testing.T) {
 // same title keeping its ID.
 func TestDiagramRerun(t *testing.T) {
 	f := setUp(t, true)
-	t.Setenv("FAKE_CODEX", "critique")
-	t.Setenv("FAKE_CHECKED", `["N1", "N2", "E1"]`)
+	f.setenv("FAKE_CODEX", "critique")
+	f.setenv("FAKE_CHECKED", `["N1", "N2", "E1"]`)
 	other := codeDiagram(f.tip, 3)
 	other["title"] = "Another view"
 	f.claudeSays(t, "diagrammer", diagramsReply(codeDiagram(f.tip, 3)), diagramsReply(other, codeDiagram(f.tip, 3)))
 	var rec *record.Range
 	for range 2 {
-		code, out, stderr := runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
+		code, out, stderr := f.runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
 		if code != 0 {
 			t.Fatalf("exit %d\n%s", code, stderr)
 		}
@@ -179,6 +179,7 @@ func TestDiagramRerun(t *testing.T) {
 }
 
 func TestReplaceDiagrams(t *testing.T) {
+	t.Parallel()
 	old := []record.Diagram{{ID: "D1", Title: "a"}, {ID: "D3", Title: "b"}}
 	got := replaceDiagrams(old, []record.Diagram{{Title: "c"}, {Title: "b"}, {Title: "d"}})
 	var ids []string
@@ -193,8 +194,8 @@ func TestReplaceDiagrams(t *testing.T) {
 // A diagram review needs Codex for its critic.
 func TestDiagramsWithoutCodex(t *testing.T) {
 	f := setUp(t, true)
-	t.Setenv("FAKE_CODEX", "unauthenticated")
-	code, out, stderr := runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
+	f.setenv("FAKE_CODEX", "unauthenticated")
+	code, out, stderr := f.runDelegate(t, "--reviewer", "diagram", "--plan", f.plan, f.base+"..HEAD")
 	if code != 4 || len(out.NotRun) != 1 || out.NotRun[0]["reviewer"] != "diagram" {
 		t.Errorf("exit %d, %+v\n%s", code, out, stderr)
 	}

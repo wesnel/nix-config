@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/gitenv"
 	"github.com/wesnel/agent-tools/internal/gitenv/gitenvtest"
 	"github.com/wesnel/agent-tools/internal/refusal"
@@ -39,16 +40,20 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// testCtx carries the Env Do runs in: git with no user or system
+// configuration, go offline with this toolchain and no workspace, and
+// extra.
+func testCtx(t *testing.T, extra ...string) context.Context {
+	t.Helper()
+	vars := []string{"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GOFLAGS=-mod=mod", "GOPROXY=off",
+		"GOTOOLCHAIN=local", "GOWORK=off"}
+	return env.With(t.Context(), env.Process().Set(append(vars, extra...)...))
+}
+
 // newRepo makes a module whose Add subtracts, committed on main, with an
 // uncommitted file standing in for the caller's work in progress.
 func newRepo(t *testing.T) string {
 	t.Helper()
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("GOFLAGS", "-mod=mod")
-	t.Setenv("GOPROXY", "off")
-	t.Setenv("GOTOOLCHAIN", "local")
-	t.Setenv("GOWORK", "off")
 	dir := t.TempDir()
 	gitIn(t, dir, "init", "-q", "-b", "main")
 	write(t, dir, "go.mod", "module example.com/m\n\ngo 1.21\n")
@@ -124,7 +129,8 @@ func snapshot(t *testing.T, dir string) string {
 	}, "\n")
 }
 
-func check(t *testing.T, dir, rev string, opts Options) *Result {
+// check runs Do on rev of the module at dir, in testCtx's Env with extra.
+func check(t *testing.T, dir, rev string, opts Options, extra ...string) *Result {
 	t.Helper()
 	opts.Dir = dir
 	if opts.Test == "" {
@@ -134,7 +140,7 @@ func check(t *testing.T, dir, rev string, opts Options) *Result {
 		opts.TestFiles = goTests
 	}
 	defer untouched(t, dir)()
-	result, err := Do(t.Context(), rev, opts)
+	result, err := Do(testCtx(t, extra...), rev, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +156,9 @@ func only(t *testing.T, r *Result) *Check {
 }
 
 func TestVerdict(t *testing.T) {
+	t.Parallel()
 	t.Run("fails without the fix", func(t *testing.T) {
+		t.Parallel()
 		dir, fix := fixedRepo(t)
 		r := check(t, dir, "HEAD", Options{Build: goVet, Lines: 5})
 		c := only(t, r)
@@ -178,6 +186,7 @@ func TestVerdict(t *testing.T) {
 	// Without a build command, a failure cannot be told from a failure to
 	// build, which is weak evidence.
 	t.Run("without a build command", func(t *testing.T) {
+		t.Parallel()
 		dir, _ := fixedRepo(t)
 		r := check(t, dir, "HEAD", Options{})
 		if c := only(t, r); c.Verdict != FailsWithoutChange || c.Build != nil || r.Exit() != ExitUnproven {
@@ -188,6 +197,7 @@ func TestVerdict(t *testing.T) {
 	})
 
 	t.Run("passes either way", func(t *testing.T) {
+		t.Parallel()
 		dir := newRepo(t)
 		write(t, dir, "calc.go", fixedAdd)
 		write(t, dir, "calc_test.go", "package m\n\nimport \"testing\"\n\nfunc TestAddZero(t *testing.T) {\n\tif Add(0, 0) != 0 {\n\t\tt.Fatal()\n\t}\n}\n")
@@ -200,6 +210,7 @@ func TestVerdict(t *testing.T) {
 	})
 
 	t.Run("fails with the change", func(t *testing.T) {
+		t.Parallel()
 		dir := newRepo(t)
 		write(t, dir, "calc.go", "package m\n\nfunc Add(a, b int) int { return a * b }\n")
 		write(t, dir, "calc_test.go", addTest)
@@ -212,6 +223,7 @@ func TestVerdict(t *testing.T) {
 	})
 
 	t.Run("no test files", func(t *testing.T) {
+		t.Parallel()
 		dir := newRepo(t)
 		write(t, dir, "calc.go", fixedAdd)
 		commit(t, dir, "Make Add add")
@@ -224,6 +236,7 @@ func TestVerdict(t *testing.T) {
 	})
 
 	t.Run("only tests", func(t *testing.T) {
+		t.Parallel()
 		dir := newRepo(t)
 		write(t, dir, "calc.go", fixedAdd)
 		commit(t, dir, "Make Add add")
@@ -235,6 +248,7 @@ func TestVerdict(t *testing.T) {
 	})
 
 	t.Run("needs the new code to build", func(t *testing.T) {
+		t.Parallel()
 		dir := newRepo(t)
 		write(t, dir, "mul.go", "package m\n\nfunc Mul(a, b int) int { return a * b }\n")
 		write(t, dir, "mul_test.go", "package m\n\nimport \"testing\"\n\nfunc TestMul(t *testing.T) {\n\tif Mul(2, 3) != 6 {\n\t\tt.Fatal()\n\t}\n}\n")
@@ -252,6 +266,7 @@ func TestVerdict(t *testing.T) {
 }
 
 func TestFixups(t *testing.T) {
+	t.Parallel()
 	// withFixup makes a module with two commits after base, the second
 	// untested and wrong, and a tested fixup! of it.
 	withFixup := func(t *testing.T) (dir, base, fixup string) {
@@ -268,6 +283,7 @@ func TestFixups(t *testing.T) {
 	}
 
 	t.Run("of a range", func(t *testing.T) {
+		t.Parallel()
 		dir, base, fixup := withFixup(t)
 		r := check(t, dir, base+"..HEAD", Options{Fixups: true})
 		if c := only(t, r); c.Commit != fixup || c.Verdict != FailsWithoutChange || r.Exit() != ExitUnproven {
@@ -276,6 +292,7 @@ func TestFixups(t *testing.T) {
 	})
 
 	t.Run("whole range without --fixups", func(t *testing.T) {
+		t.Parallel()
 		dir, base, _ := withFixup(t)
 		r := check(t, dir, base+"..HEAD", Options{})
 		if len(r.Commits) != 3 || r.Exit() != ExitUnproven {
@@ -284,26 +301,30 @@ func TestFixups(t *testing.T) {
 	})
 
 	t.Run("without a range", func(t *testing.T) {
+		t.Parallel()
 		dir, _, _ := withFixup(t)
-		if _, err := Do(t.Context(), "HEAD", Options{Dir: dir, Test: goTest, TestFiles: goTests, Fixups: true}); err == nil {
+		if _, err := Do(testCtx(t), "HEAD", Options{Dir: dir, Test: goTest, TestFiles: goTests, Fixups: true}); err == nil {
 			t.Error("--fixups without a range was accepted")
 		}
 	})
 }
 
 func TestCleanup(t *testing.T) {
+	t.Parallel()
 	// The test command breaks the throwaway worktree, so that moving it to
 	// the commit fails.
 	t.Run("on failure", func(t *testing.T) {
+		t.Parallel()
 		dir, _ := fixedRepo(t)
 		defer untouched(t, dir)()
-		_, err := Do(t.Context(), "HEAD", Options{Dir: dir, Test: "rm .git; exit 1", TestFiles: goTests})
+		_, err := Do(testCtx(t), "HEAD", Options{Dir: dir, Test: "rm .git; exit 1", TestFiles: goTests})
 		if err == nil {
 			t.Fatal("a broken worktree was not reported")
 		}
 	})
 
 	t.Run("on interrupt", func(t *testing.T) {
+		t.Parallel()
 		dir, _ := fixedRepo(t)
 		// The test command starts a child that runs until it is stopped,
 		// then writes a line to started; reading the line is the cue to
@@ -312,7 +333,7 @@ func TestCleanup(t *testing.T) {
 		if err := syscall.Mkfifo(started, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		ctx, cancel := context.WithCancel(t.Context())
+		ctx, cancel := context.WithCancel(testCtx(t))
 		t.Cleanup(cancel)
 		go func() {
 			if f, err := os.Open(started); err == nil {
@@ -334,6 +355,7 @@ func TestCleanup(t *testing.T) {
 	})
 
 	t.Run("on interrupt, while the test command forks", func(t *testing.T) {
+		t.Parallel()
 		dir, _ := fixedRepo(t)
 		// The test command records its process group, then starts children
 		// without pause, sending the cue to interrupt the check among them,
@@ -344,7 +366,7 @@ func TestCleanup(t *testing.T) {
 		if err := syscall.Mkfifo(started, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		ctx, cancel := context.WithCancel(t.Context())
+		ctx, cancel := context.WithCancel(testCtx(t))
 		t.Cleanup(cancel)
 		go func() {
 			if f, err := os.Open(started); err == nil {
@@ -377,20 +399,35 @@ func TestCleanup(t *testing.T) {
 // The repository checked is the one opts.Dir names, or else the one git finds
 // from the process's directory, whatever repository the environment names.
 func TestRepository(t *testing.T) {
+	t.Parallel()
 	t.Run("named by Dir", func(t *testing.T) {
+		t.Parallel()
 		dir, fix := fixedRepo(t)
-		gitenvtest.Decoy(t)
-		if c := only(t, check(t, dir, "HEAD", Options{})); c.Commit != fix || c.Verdict != FailsWithoutChange {
+		_, decoy := gitenvtest.DecoyEnv(t)
+		if c := only(t, check(t, dir, "HEAD", Options{}, decoy...)); c.Commit != fix || c.Verdict != FailsWithoutChange {
 			t.Errorf("with GIT_DIR naming another repository: %s %s", c.Commit, c.Verdict)
 		}
 	})
 
+	// The test command runs without the variables that name the caller's
+	// repository, and with the rest of the context's Env.
+	t.Run("the test command's environment", func(t *testing.T) {
+		t.Parallel()
+		dir, fix := fixedRepo(t)
+		_, decoy := gitenvtest.DecoyEnv(t)
+		test := `[ -z "$GIT_DIR" ] && [ -z "$GIT_WORK_TREE" ] && [ "$REDCHECK_SAYS" = yes ] && ` + goTest
+		c := only(t, check(t, dir, "HEAD", Options{Test: test}, append(decoy, "REDCHECK_SAYS=yes")...))
+		if c.Commit != fix || c.Verdict != FailsWithoutChange {
+			t.Errorf("verdict %s, with %+v, without %+v", c.Verdict, c.With, c.Without)
+		}
+	})
+
 	t.Run("found from a directory GIT_DIR does not name", func(t *testing.T) {
+		t.Parallel()
 		dir, _ := fixedRepo(t)
-		gitenvtest.Decoy(t)
-		os.Unsetenv("GIT_WORK_TREE")
-		t.Chdir(dir)
-		_, err := Do(t.Context(), "HEAD", Options{Test: goTest, TestFiles: goTests})
+		decoy, _ := gitenvtest.DecoyEnv(t)
+		ctx := env.With(t.Context(), env.From(testCtx(t)).In(dir).Set("GIT_DIR="+filepath.Join(decoy, ".git")))
+		_, err := Do(ctx, "HEAD", Options{Test: goTest, TestFiles: goTests})
 		if _, ok := err.(refusal.Refusal); !ok {
 			t.Errorf("found from a directory GIT_DIR does not name: %v", err)
 		}
@@ -398,6 +435,7 @@ func TestRepository(t *testing.T) {
 }
 
 func TestRefusals(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name string
 		opts Options
@@ -406,17 +444,19 @@ func TestRefusals(t *testing.T) {
 		{"no test files", Options{Test: goTest}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			opts := c.opts
 			opts.Dir = newRepo(t)
-			if _, err := Do(t.Context(), "HEAD", opts); err == nil {
+			if _, err := Do(testCtx(t), "HEAD", opts); err == nil {
 				t.Errorf("%+v was accepted", opts)
 			}
 		})
 	}
 
 	t.Run("root commit", func(t *testing.T) {
+		t.Parallel()
 		dir := newRepo(t)
-		if _, err := Do(t.Context(), "HEAD", Options{Dir: dir, Test: goTest, TestFiles: goTests}); err == nil {
+		if _, err := Do(testCtx(t), "HEAD", Options{Dir: dir, Test: goTest, TestFiles: goTests}); err == nil {
 			t.Error("a root commit was accepted")
 		}
 	})

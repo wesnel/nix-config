@@ -1,14 +1,16 @@
 package guard
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/wesnel/agent-tools/internal/env"
 )
 
 // post is `pr-loop guard --post`, after a shell call: the PostToolUse of
@@ -18,7 +20,7 @@ import (
 // command's JSON output. After a command that opens or edits a pull
 // request, and on a session's first commit, it adds the line that hands
 // over the skill whose rules apply. Otherwise it prints nothing.
-func post(stdin io.Reader, stdout io.Writer) int {
+func post(ctx context.Context, stdin io.Reader, stdout io.Writer) int {
 	var in struct {
 		ToolInput    json.RawMessage `json:"tool_input"`
 		ToolResponse json.RawMessage `json:"tool_response"`
@@ -36,15 +38,15 @@ func post(stdin io.Reader, stdout io.Writer) int {
 		return 0
 	}
 	if in.Cwd == "" {
-		in.Cwd, _ = os.Getwd()
+		in.Cwd = env.From(ctx).Dir()
 	}
 	texts := responseTexts(in.ToolResponse)
-	lines := recordFacts(in.SessionID, in.Cwd, args.Command, texts, time.Now())
-	if targets := pushedTo(texts); len(targets) > 0 && pushes(args.Command, 0) {
+	lines := recordFacts(ctx, in.SessionID, in.Cwd, args.Command, texts, time.Now())
+	if targets := pushedTo(texts); len(targets) > 0 && pushes(ctx, args.Command, 0) {
 		lines = append(lines, fmt.Sprintf("You just pushed to GitHub. Start `pr-loop wait ci %s` in the background now, "+
 			"and act on its result as the signing-pass skill's \"After a push\" says.", strings.Join(targets, " ")))
 	}
-	if writesPullRequest(args.Command, 0) {
+	if writesPullRequest(ctx, args.Command, 0) {
 		lines = append(lines, pullRequestRules)
 	}
 	if len(lines) == 0 {
@@ -62,14 +64,14 @@ const pullRequestRules = "You just opened or edited a pull request. Load the `pu
 
 // writesPullRequest reports whether a command line runs `gh pr create`,
 // `gh pr edit` or `pr-loop open`.
-func writesPullRequest(text string, depth int) bool {
+func writesPullRequest(ctx context.Context, text string, depth int) bool {
 	if depth > maxDepth {
 		return false
 	}
 	found := false
 	v := visitor{
 		script: func(text string) string {
-			found = found || writesPullRequest(text, depth+1)
+			found = found || writesPullRequest(ctx, text, depth+1)
 			return ""
 		},
 		call: func(c call) string {
@@ -89,7 +91,7 @@ func writesPullRequest(text string, depth int) bool {
 	}
 	for _, segment := range segments(text) {
 		if words, expands := split(segment); len(words) > 0 {
-			unwrap(call{words: words, expands: expands}, v)
+			unwrap(ctx, call{words: words, expands: expands}, v)
 		}
 	}
 	return found
@@ -97,19 +99,21 @@ func writesPullRequest(text string, depth int) bool {
 
 // pushes reports whether a command line runs a command that pushes to
 // GitHub (pushers).
-func pushes(text string, depth int) bool { return len(pushers(text, depth)) > 0 }
+func pushes(ctx context.Context, text string, depth int) bool {
+	return len(pushers(ctx, text, depth)) > 0
+}
 
 // pushers are the commands a command line runs that push to GitHub, each
 // once: `pr-loop open` or `pr-loop push` without --dry-run, or
 // `git sign-pass` with --push or --set-upstream.
-func pushers(text string, depth int) map[string]bool {
+func pushers(ctx context.Context, text string, depth int) map[string]bool {
 	found := map[string]bool{}
 	if depth > maxDepth {
 		return found
 	}
 	v := visitor{
 		script: func(text string) string {
-			for name := range pushers(text, depth+1) {
+			for name := range pushers(ctx, text, depth+1) {
 				found[name] = true
 			}
 			return ""
@@ -145,7 +149,7 @@ func pushers(text string, depth int) map[string]bool {
 	}
 	for _, segment := range segments(text) {
 		if words, expands := split(segment); len(words) > 0 {
-			unwrap(call{words: words, expands: expands}, v)
+			unwrap(ctx, call{words: words, expands: expands}, v)
 		}
 	}
 	return found

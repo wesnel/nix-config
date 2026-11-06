@@ -4,16 +4,19 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/wesnel/agent-tools/internal/cli"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/guard"
 	"github.com/wesnel/agent-tools/internal/loop"
@@ -219,15 +222,17 @@ func main() {
 		fmt.Fprint(os.Stdout, usage)
 		os.Exit(0)
 	}
+	ctx := env.With(context.Background(), env.Process())
 	if args[0] == "mcp" {
 		// Not in run, which its tools call.
-		os.Exit(mcpMain(args[1:], os.Stdin, os.Stdout, os.Stderr))
+		os.Exit(mcpMain(ctx, args[1:], os.Stdin, os.Stdout, os.Stderr))
 	}
-	os.Exit(run(args[0], args[1:], os.Stdin, os.Stdout, os.Stderr))
+	os.Exit(run(ctx, args[0], args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
-// run runs command with args and returns its exit status.
-func run(command string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+// run runs command with args, in the Env of ctx, and returns its exit
+// status.
+func run(ctx context.Context, command string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	var (
 		dryRun   = flags.Bool("dry-run", false, "")
@@ -255,16 +260,16 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		return guard.Main(args, stdin, stdout, stderr)
 	}
 	if command == "mcp-status" {
-		return mcpStatus(args, stdout, stderr)
+		return mcpStatus(ctx, args, stdout, stderr)
 	}
 	if code, ok := cli.Parse(flags, interleave(args), usage, stdout, stderr); !ok {
 		return code
 	}
 	rest := flags.Args()
-	if err := git.CheckLocation(); err != nil {
+	if err := git.In(ctx).CheckLocation(); err != nil {
 		return cli.Report("pr-loop", nil, err, 0, stdout, stderr)
 	}
-	if err := git.CheckConfig(""); err != nil {
+	if err := git.In(ctx).CheckConfig(""); err != nil {
 		return cli.Report("pr-loop", nil, err, 0, stdout, stderr)
 	}
 	need := func(n int) error {
@@ -315,11 +320,11 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			break
 		}
 		if text, err = body(); err == nil {
-			result, err = loop.Open(branch, *base, *title, text, *dryRun)
+			result, err = loop.Open(ctx, branch, *base, *title, text, *dryRun)
 		}
 	case "next":
 		var steps []loop.NextStep
-		if steps, err = loop.Next(rest); err == nil && !*asJSON {
+		if steps, err = loop.Next(ctx, rest); err == nil && !*asJSON {
 			fmt.Fprint(stdout, loop.FormatNext(steps))
 			return 0
 		}
@@ -333,9 +338,9 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		if len(rest) == 1 {
 			target = rest[0]
 		}
-		result, err = loop.Stack(target)
+		result, err = loop.Stack(ctx, target)
 	case "link":
-		result, err = loop.Link(rest)
+		result, err = loop.Link(ctx, rest)
 	case "merge":
 		if len(rest) > 1 {
 			err = errors.New("merge takes at most one PR or branch, the top of what to merge; see pr-loop --help")
@@ -345,7 +350,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		if len(rest) == 1 {
 			target = rest[0]
 		}
-		result, err = loop.Merge(target, *method)
+		result, err = loop.Merge(ctx, target, *method)
 	case "push":
 		byBranch := map[string]string{}
 		for _, l := range leases {
@@ -357,33 +362,33 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 			byBranch[b] = oid
 		}
 		if err == nil {
-			result, err = loop.Push(rest, byBranch, *dryRun)
+			result, err = loop.Push(ctx, rest, byBranch, *dryRun)
 		}
 	case "threads":
 		if err = need(1); err == nil {
 			var n int
 			if n, err = number(rest[0]); err == nil {
-				result, err = loop.Threads(n, *all)
+				result, err = loop.Threads(ctx, n, *all)
 			}
 		}
 	case "reply":
 		if *from != "" {
-			result, err = replyFrom(*from, *bodyFile, rest, stdin)
+			result, err = replyFrom(ctx, *from, *bodyFile, rest, stdin)
 		} else if err = need(1); err == nil {
 			var text string
 			if text, err = body(); err == nil {
-				result, err = loop.Reply(rest[0], text)
+				result, err = loop.Reply(ctx, rest[0], text)
 			}
 		}
 	case "resolve":
 		if err = need(1); err == nil {
-			result, err = loop.Resolve(rest[0])
+			result, err = loop.Resolve(ctx, rest[0])
 		}
 	case "draft":
 		if err = need(1); err == nil {
 			var text string
 			if text, err = body(); err == nil {
-				result, err = loop.Draft(rest[0], text, *outcome)
+				result, err = loop.Draft(ctx, rest[0], text, *outcome)
 			}
 		}
 	case "post":
@@ -393,18 +398,18 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		var n int
 		if n, err = number(rest[0]); err == nil {
-			result, err = loop.Post(n, rest[1:])
+			result, err = loop.Post(ctx, n, rest[1:])
 		}
 	case "request":
-		result, err = loop.Request(rest, bots, accepted)
+		result, err = loop.Request(ctx, rest, bots, accepted)
 	case "status":
-		result, err = loop.Status(rest)
+		result, err = loop.Status(ctx, rest)
 	case "ci":
-		result, err = loop.CIStatuses(rest)
+		result, err = loop.CIStatuses(ctx, rest)
 	case "logs":
 		if err = need(2); err == nil {
 			var text string
-			if text, err = loop.Logs(rest[0], rest[1], *lines); err == nil {
+			if text, err = loop.Logs(ctx, rest[0], rest[1], *lines); err == nil {
 				fmt.Fprintln(stdout, text)
 				return 0
 			}
@@ -423,7 +428,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		switch {
 		case target == "ci":
 			var w *loop.CIWait
-			w, settled, err = loop.WaitCI(rest, *sha, wait, every, time.Duration(*grace)*time.Second)
+			w, settled, err = loop.WaitCI(ctx, rest, *sha, wait, every, time.Duration(*grace)*time.Second)
 			result = w
 			if err == nil && w.Result == "noChecks" {
 				code = 4
@@ -431,7 +436,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		case ciOnly:
 			err = errors.New("--sha and --grace are for wait ci")
 		default:
-			result, settled, err = loop.WaitReviews(rest, wait, every)
+			result, settled, err = loop.WaitReviews(ctx, rest, wait, every)
 		}
 		if !settled {
 			code = 3
@@ -443,15 +448,22 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		if len(rest) == 1 {
 			// The repository is identified from where the command runs.
-			if err = os.Chdir(rest[0]); err != nil {
+			// loop.SetupCommand reads it from this process's directory,
+			// so the process moves there too.
+			dir := rest[0]
+			if !filepath.IsAbs(dir) {
+				dir = filepath.Join(env.From(ctx).Dir(), dir)
+			}
+			if err = os.Chdir(dir); err != nil {
 				break
 			}
-			if err = git.CheckConfig(""); err != nil {
+			ctx = env.With(ctx, env.From(ctx).In(dir))
+			if err = git.In(ctx).CheckConfig(""); err != nil {
 				break
 			}
 		}
 		var dir string
-		if dir, err = git.Toplevel(); err != nil {
+		if dir, err = git.In(ctx).Toplevel(); err != nil {
 			break
 		}
 		var setup *loop.Setup
@@ -460,16 +472,16 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 		}
 		runs := []loop.SetupRun{}
 		if setup.Command != "" {
-			runs = loop.RunSetup(setup.Command, []string{dir}, stderr)
+			runs = loop.RunSetup(ctx, setup.Command, []string{dir}, stderr)
 		}
 		result = map[string]any{"settings": setup.Settings, "command": setup.Command, "runs": runs}
 		code = setupFailures(runs, stderr)
 	case "setup-command":
 		result, err = loop.SetupCommand()
 	case "sign-check":
-		result, err = loop.SignCheck()
+		result, err = loop.SignCheck(ctx)
 	case "end":
-		result, err = loop.End(rest)
+		result, err = loop.End(ctx, rest)
 	default:
 		fmt.Fprint(stderr, usage)
 		return 2
@@ -484,7 +496,7 @@ func run(command string, args []string, stdin io.Reader, stdout, stderr io.Write
 }
 
 // replyFrom posts the replies in a reply file (- for stdin).
-func replyFrom(path, bodyFile string, rest []string, stdin io.Reader) (any, error) {
+func replyFrom(ctx context.Context, path, bodyFile string, rest []string, stdin io.Reader) (any, error) {
 	if bodyFile != "" || len(rest) != 0 {
 		return nil, errors.New("reply --from takes no THREAD and no --body-file; the file names the threads")
 	}
@@ -507,7 +519,7 @@ func replyFrom(path, bodyFile string, rest []string, stdin io.Reader) (any, erro
 			return nil, fmt.Errorf("the reply to %s: %w", r.Thread, err)
 		}
 	}
-	return loop.ReplyAll(plan)
+	return loop.ReplyAll(ctx, plan)
 }
 
 // setupFailures names each failed run and returns 1 if there was one.

@@ -1,6 +1,7 @@
 package plans
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -123,7 +124,7 @@ func settle(lines []string, id, state, answer, decidedBy, supersedes string, now
 // questions of that plan the operator can answer now, or nothing. It reads
 // only this host's plan files and git, never the network, and says nothing
 // on any error.
-func (c Config) StatusLine(input []byte) string {
+func (c Config) StatusLine(ctx context.Context, input []byte) string {
 	var in struct {
 		SessionID string `json:"session_id"`
 		Cwd       string `json:"cwd"`
@@ -135,8 +136,8 @@ func (c Config) StatusLine(input []byte) string {
 	if in.SessionID != "" {
 		session = "claude:" + in.SessionID
 	}
-	top, _ := checkout(in.Cwd)
-	p, _, found := c.Locate(session, top)
+	top, _ := checkout(ctx, in.Cwd)
+	p, _, found := c.Locate(ctx, session, top)
 	if !found {
 		return ""
 	}

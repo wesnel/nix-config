@@ -12,6 +12,7 @@ import (
 // line naming a hash, a rev, a URL, a version or a fetcher that no pin
 // covers makes a file-level nix-unread pin.
 func TestNixFailClosed(t *testing.T) {
+	t.Parallel()
 	for name, c := range map[string][2]string{
 		"comment swallows": {
 			"{ src = fetchurl {\n  url = \"https://e.example/foo-1.0.tgz\";\n  # see x = \"\n  hash = \"sha256-OLD\";\n}; }\n",
@@ -124,6 +125,7 @@ func TestNixFailClosed(t *testing.T) {
 // Every Nix change that has a pin routes to the upgrade review: the
 // routing reads what the scanner reads.
 func TestNixRouted(t *testing.T) {
+	t.Parallel()
 	for name, c := range map[string][2]string{
 		"fetchGit ref": {"{\n  src = builtins.fetchGit {\n    url = \"https://x/y\";\n    ref = \"release-1\";\n  };\n}\n",
 			"{\n  src = builtins.fetchGit {\n    url = \"https://x/y\";\n    ref = \"release-2\";\n  };\n}\n"},
@@ -166,7 +168,7 @@ func TestNixRouted(t *testing.T) {
 		repo := newRepo(t)
 		base := commit(t, repo, "base", "x.nix="+c[0])
 		tip := commit(t, repo, "tip", "x.nix="+c[1])
-		pins, err := Pins(repo, base, tip)
+		pins, err := Pins(t.Context(), repo, base, tip)
 		if err != nil || len(pins) == 0 {
 			t.Errorf("%s: no pin (%v)", name, err)
 			continue
@@ -181,6 +183,7 @@ func TestNixRouted(t *testing.T) {
 // go.mod and go.work are read as the go command reads them: comments,
 // tabs and a parenthesis against the keyword included.
 func TestGoModParsed(t *testing.T) {
+	t.Parallel()
 	for name, c := range map[string][2]string{
 		"require( comment": {"module m\n\ngo 1.22\n\nrequire( // deps\n\tgolang.org/x/mod v0.20.0\n)\n",
 			"module m\n\ngo 1.22\n\nrequire( // deps\n\tgolang.org/x/mod v0.21.0\n)\n"},
@@ -229,6 +232,7 @@ func TestGoModParsed(t *testing.T) {
 // changed line naming uses or docker:// that no pin covers makes a
 // file-level actions-unread pin.
 func TestActionsFailClosed(t *testing.T) {
+	t.Parallel()
 	for name, c := range map[string][2]string{
 		"flow":       {"jobs:\n  a:\n    steps: [{uses: actions/checkout@v4}]\n", "jobs:\n  a:\n    steps: [{uses: evil/checkout@main}]\n"},
 		"flow item":  {"jobs:\n  a:\n    steps:\n      - {uses: actions/checkout@v4}\n", "jobs:\n  a:\n    steps:\n      - {uses: actions/checkout@main}\n"},

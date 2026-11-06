@@ -1,15 +1,19 @@
 package signpass
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/wesnel/agent-tools/internal/env"
 )
 
 // RangeStart calls a commit unsigned as git does, by the commit object
 // alone: one with no signature header for the repository's object format
 // is unsigned, and a shallow file cannot hide one below a signed commit.
 func TestRangeStart(t *testing.T) {
+	t.Parallel()
 	// headed writes a commit on parent whose only signature header is
 	// header, and returns its ID.
 	headed := func(t *testing.T, repo, parent, header string) string {
@@ -23,35 +27,38 @@ func TestRangeStart(t *testing.T) {
 		}
 		return gitIn(t, repo, "hash-object", "--literally", "-t", "commit", "-w", file)
 	}
-	repo := func(t *testing.T) string {
+	// repo makes a repository and a context whose Env is in it.
+	repo := func(t *testing.T) (context.Context, string) {
 		t.Helper()
 		dir := t.TempDir()
 		gitIn(t, dir, "init", "-q", "-b", "main")
 		gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "base")
-		useDir(t, dir)
-		return dir
+		return env.With(t.Context(), env.Process().In(dir)), dir
 	}
 	t.Run("a signature header for another object format", func(t *testing.T) {
-		dir := repo(t)
+		t.Parallel()
+		ctx, dir := repo(t)
 		tip := headed(t, dir, "main", "gpgsig-sha256")
-		start, _, err := RangeStart("main", tip)
+		start, _, err := RangeStart(ctx, "main", tip)
 		if want := gitIn(t, dir, "rev-parse", "main"); err != nil || start != tip+"^" || gitIn(t, dir, "rev-parse", start) != want {
 			t.Errorf("RangeStart = %q, %v; want %s^, the commit git marks N", start, err, tip)
 		}
 	})
 	t.Run("a commit signed in a SHA-256 repository", func(t *testing.T) {
+		t.Parallel()
 		dir := t.TempDir()
-		t.Setenv("GIT_CONFIG_GLOBAL", signingConfig(t, dir))
+		ctx, global := signingConfig(t, dir)
 		gitIn(t, dir, "init", "-q", "-b", "main", "--object-format=sha256")
 		gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "base")
-		useDir(t, dir)
-		signedCommit(t, "")
-		if start, _, err := RangeStart("main~1", "main"); err != nil || start != "" {
+		ctx = env.With(ctx, env.From(ctx).In(dir).Set("GIT_CONFIG_GLOBAL="+global))
+		signedCommit(t, ctx, "")
+		if start, _, err := RangeStart(ctx, "main~1", "main"); err != nil || start != "" {
 			t.Errorf("RangeStart = %q, %v; want nothing to sign", start, err)
 		}
 	})
 	t.Run("a shallow file over an unsigned commit", func(t *testing.T) {
-		dir := repo(t)
+		t.Parallel()
+		ctx, dir := repo(t)
 		gitIn(t, dir, "switch", "-qc", "one")
 		gitIn(t, dir, "commit", "-q", "--allow-empty", "-m", "Unsigned")
 		unsigned := gitIn(t, dir, "rev-parse", "HEAD")
@@ -59,7 +66,7 @@ func TestRangeStart(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, ".git", "shallow"), []byte(tip+"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		start, _, err := RangeStart("main", tip)
+		start, _, err := RangeStart(ctx, "main", tip)
 		if err != nil || start != unsigned+"^" {
 			t.Errorf("RangeStart = %q, %v; want %s^", start, err, unsigned)
 		}

@@ -103,7 +103,7 @@ func testSyncConcurrentEdit(t *testing.T) {
 	mac := hosts["mac"]
 	repo := filepath.Dir(mac.Dir)
 	f := newPlan(t, mac, "x").file("")
-	if got, err := mac.Sync(SyncOptions{}); err != nil || !got.Pushed {
+	if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
 		t.Fatalf("initial sync: %+v, %v", got, err)
 	}
 	before, err := os.ReadFile(f)
@@ -135,7 +135,7 @@ func testSyncConcurrentEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if got, err := mac.Sync(SyncOptions{}); err != nil || !got.Pushed || got.Behind != "" {
+	if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed || got.Behind != "" {
 		t.Errorf("sync after concurrent edit: %+v, %v", got, err)
 	}
 	raced(t, ran)
@@ -149,7 +149,7 @@ func testSyncConcurrentEdit(t *testing.T) {
 	if sent := gitIn(t, repo, "show", "origin/main:agents/"+filepath.Base(f)); sent != want {
 		t.Errorf("published plan: %q; want %q", sent, want)
 	}
-	if got, err := mac.Sync(SyncOptions{}); err != nil || got.Behind != "" {
+	if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || got.Behind != "" {
 		t.Errorf("next sync: %+v, %v", got, err)
 	}
 	atOrigin(t, mac)
@@ -166,12 +166,12 @@ func testSyncCatchesUpAfterItsPush(t *testing.T) {
 	repo := filepath.Dir(mac.Dir)
 	f := newPlan(t, mac, "x").file("")
 	ran := raceAt(t, repo, "push", "printf 'newer\\n' >> '"+f+"'")
-	if got, err := mac.Sync(SyncOptions{}); err != nil || !got.Pushed {
+	if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
 		t.Fatalf("sync: %+v, %v", got, err)
 	}
 	raced(t, ran)
 	newer, _ := os.ReadFile(f)
-	if got, err := mac.Sync(SyncOptions{}); err != nil || !got.Pushed {
+	if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
 		t.Errorf("the next sync: %+v, %v", got, err)
 	}
 	if sent := gitIn(t, repo, "show", "origin/main:agents/"+filepath.Base(f)); sent != string(newer) {
@@ -233,7 +233,7 @@ func testSyncCatchUp(t *testing.T) {
 			repo := filepath.Dir(mac.Dir)
 			f := newPlan(t, mac, "x").file("")
 			rel := "agents/" + filepath.Base(f)
-			if got, err := mac.Sync(SyncOptions{}); err != nil || !got.Pushed {
+			if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
 				t.Fatalf("sync: %+v, %v", got, err)
 			}
 			// Origin gets a newer version of mac's plan, as a push of
@@ -294,7 +294,7 @@ func testSyncCatchUp(t *testing.T) {
 				}
 				return
 			}
-			got, err := mac.Sync(SyncOptions{})
+			got, err := mac.Sync(t.Context(), SyncOptions{})
 			if err != nil {
 				t.Fatalf("sync: %v", err)
 			}
@@ -359,7 +359,7 @@ func TestSyncHelper(t *testing.T) {
 	if !ok {
 		t.Skip("run by killed")
 	}
-	if _, err := (Config{Dir: dir, Host: host}).Sync(SyncOptions{}); err != nil {
+	if _, err := (Config{Dir: dir, Host: host}).Sync(t.Context(), SyncOptions{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -394,7 +394,7 @@ func testSyncLeavesOperatorCommits(t *testing.T) {
 			_, hosts := guarded(t, "mac", "box")
 			mac, box := hosts["mac"], hosts["box"]
 			newPlan(t, box, "y")
-			if got, err := box.Sync(SyncOptions{}); err != nil || !got.Pushed {
+			if got, err := box.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
 				t.Fatalf("box's sync: %+v, %v", got, err)
 			}
 			repo := filepath.Dir(mac.Dir)
@@ -412,7 +412,7 @@ func testSyncLeavesOperatorCommits(t *testing.T) {
 			}
 			newPlan(t, mac, "x")
 			for _, o := range []SyncOptions{{PullOnly: true}, {}} {
-				got, err := mac.Sync(o)
+				got, err := mac.Sync(t.Context(), o)
 				if err != nil || got.Pushed || got.Behind == "" {
 					t.Errorf("sync %+v over the operator's commit: %+v, %v", o, got, err)
 				}
@@ -489,13 +489,13 @@ func testSyncLeavesRacingCommit(t *testing.T) {
 			_, hosts := guarded(t, "mac", "box")
 			mac, box := hosts["mac"], hosts["box"]
 			newPlan(t, box, "y")
-			if got, err := box.Sync(SyncOptions{}); err != nil || !got.Pushed {
+			if got, err := box.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
 				t.Fatalf("box's sync: %+v, %v", got, err)
 			}
 			repo := filepath.Dir(mac.Dir)
 			ran := raceAt(t, repo, word, "git -c commit.gpgsign=false commit -q --allow-empty -m 'Racing operator commit'")
 			newPlan(t, mac, "x")
-			got, err := mac.Sync(SyncOptions{})
+			got, err := mac.Sync(t.Context(), SyncOptions{})
 			raced(t, ran)
 			t.Logf("sync: %+v, %v", got, err)
 			operatorsCommit(t, repo, "Racing operator commit")
@@ -525,13 +525,13 @@ func testSyncSendsNothingBehind(t *testing.T) {
 		mac := hosts["mac"]
 		repo := filepath.Dir(mac.Dir)
 		newPlan(t, mac, "x")
-		if got, err := mac.Sync(SyncOptions{}); err != nil || !got.Pushed {
+		if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
 			t.Fatalf("mac's sync: %+v, %v", got, err)
 		}
 		sent := gitIn(t, repo, "rev-parse", "origin/main")
 		gitIn(t, repo, "checkout", "-q", "--detach", "HEAD~1")
 		newPlan(t, mac, "z")
-		if got, err := mac.Sync(SyncOptions{}); err != nil || got.Pushed || got.Behind == "" {
+		if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || got.Pushed || got.Behind == "" {
 			t.Errorf("sync from an older commit: %+v, %v", got, err)
 		}
 		if now := gitIn(t, repo, "rev-parse", "origin/main"); now != sent {
@@ -545,12 +545,12 @@ func testSyncSendsNothingBehind(t *testing.T) {
 		repo := filepath.Dir(mac.Dir)
 		x := newPlan(t, mac, "x")
 		addItems(t, x.file(""), "** Steps", "S1")
-		if got, err := mac.Sync(SyncOptions{}); err != nil || !got.Pushed {
+		if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
 			t.Fatalf("mac's sync: %+v, %v", got, err)
 		}
 		gitIn(t, repo, "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "Operator, unpushed")
 		newPlan(t, box, "y")
-		if got, err := box.Sync(SyncOptions{}); err != nil || !got.Pushed {
+		if got, err := box.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
 			t.Fatalf("box's sync: %+v, %v", got, err)
 		}
 		gitIn(t, repo, "fetch", "-q")
@@ -562,7 +562,7 @@ func testSyncSendsNothingBehind(t *testing.T) {
 			if step == "after a stash" {
 				gitIn(t, repo, "stash", "-q")
 			}
-			if got, err := mac.Sync(SyncOptions{}); err != nil || got.Pushed || got.Behind == "" {
+			if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || got.Pushed || got.Behind == "" {
 				t.Errorf("sync %s: %+v, %v", step, got, err)
 			}
 			if now := gitIn(t, repo, "rev-parse", "origin/main"); now != before {
@@ -595,11 +595,11 @@ func testSyncLeavesIndex(t *testing.T) {
 			mac, box := hosts["mac"], hosts["box"]
 			repo := filepath.Dir(mac.Dir)
 			x := newPlan(t, mac, "x")
-			if got, err := mac.Sync(SyncOptions{}); err != nil || !got.Pushed {
+			if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
 				t.Fatalf("mac's sync: %+v, %v", got, err)
 			}
 			y := newPlan(t, box, "y")
-			if got, err := box.Sync(SyncOptions{}); err != nil || !got.Pushed {
+			if got, err := box.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
 				t.Fatalf("box's sync: %+v, %v", got, err)
 			}
 			if collide {
@@ -607,7 +607,7 @@ func testSyncLeavesIndex(t *testing.T) {
 			}
 			rel := staged(t, mac, x)
 			before := gitIn(t, repo, "show", ":"+rel)
-			got, err := mac.Sync(SyncOptions{PullOnly: true})
+			got, err := mac.Sync(t.Context(), SyncOptions{PullOnly: true})
 			if err != nil || got.Behind == "" {
 				t.Errorf("pull: %+v, %v", got, err)
 			}
@@ -622,7 +622,7 @@ func testSyncLeavesIndex(t *testing.T) {
 		mac, box := hosts["mac"], hosts["box"]
 		repo := filepath.Dir(mac.Dir)
 		x := newPlan(t, mac, "x")
-		if got, err := mac.Sync(SyncOptions{}); err != nil || !got.Pushed {
+		if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
 			t.Fatalf("mac's sync: %+v, %v", got, err)
 		}
 		f := x.file("")
@@ -635,10 +635,10 @@ func testSyncLeavesIndex(t *testing.T) {
 		gitIn(t, repo, "-c", "commit.gpgsign=false", "merge", "-q", "--no-ff", "--no-commit", "side")
 		before := gitIn(t, repo, "diff", "--cached", "--name-only")
 		newPlan(t, box, "y")
-		if got, err := box.Sync(SyncOptions{}); err != nil || !got.Pushed {
+		if got, err := box.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
 			t.Fatalf("box's sync: %+v, %v", got, err)
 		}
-		got, err := mac.Sync(SyncOptions{PullOnly: true})
+		got, err := mac.Sync(t.Context(), SyncOptions{PullOnly: true})
 		if err != nil || got.Behind == "" {
 			t.Errorf("pull: %+v, %v", got, err)
 		}
@@ -655,7 +655,7 @@ func testSyncLeavesIndex(t *testing.T) {
 		// The operator commits through an index of their own just as
 		// sync fast-forwards to what it sent.
 		ran := raceAt(t, repo, "merge", "git update-ref HEAD $(git commit-tree HEAD^{tree} -p HEAD -m 'Racing operator commit')")
-		got, err := mac.Sync(SyncOptions{})
+		got, err := mac.Sync(t.Context(), SyncOptions{})
 		raced(t, ran)
 		if err != nil || !got.Pushed || got.Behind == "" {
 			t.Errorf("sync: %+v, %v", got, err)
@@ -673,7 +673,7 @@ func testSyncDoesNotForce(t *testing.T) {
 	repo, other := filepath.Dir(mac.Dir), filepath.Dir(box.Dir)
 	newPlan(t, mac, "x")
 	ran := raceAt(t, repo, "push", "git -C '"+other+"' -c commit.gpgsign=false commit -q --allow-empty -m Moved && git -C '"+other+"' push -q origin HEAD:main")
-	got, err := mac.Sync(SyncOptions{})
+	got, err := mac.Sync(t.Context(), SyncOptions{})
 	raced(t, ran)
 	if err == nil || got.Pushed {
 		t.Errorf("sync after origin moved: %+v, %v", got, err)
@@ -706,7 +706,7 @@ func testSyncKeepsEditsAndRacingCommit(t *testing.T) {
 	gitIn(t, other, "push", "-q", "origin", "main")
 	newPlan(t, mac, "x")
 	ran := raceAt(t, repo, "merge-base", "git -c commit.gpgsign=false commit -q --allow-empty -m 'Racing operator commit'")
-	got, err := mac.Sync(SyncOptions{})
+	got, err := mac.Sync(t.Context(), SyncOptions{})
 	raced(t, ran)
 	t.Logf("sync: %+v, %v", got, err)
 	operatorsCommit(t, repo, "Racing operator commit")
@@ -725,14 +725,14 @@ func testSyncLeavesSwitchedBranch(t *testing.T) {
 	gitIn(t, repo, "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "Undone")
 	gitIn(t, repo, "reset", "-q", "--soft", start)
 	newPlan(t, box, "y")
-	if got, err := box.Sync(SyncOptions{}); err != nil || !got.Pushed {
+	if got, err := box.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
 		t.Fatalf("box's sync: %+v, %v", got, err)
 	}
 	gitIn(t, repo, "fetch", "-q")
 	gitIn(t, repo, "branch", "work", "origin/main")
 	work := strings.TrimSpace(gitIn(t, repo, "rev-parse", "work"))
 	ran := raceAt(t, repo, "merge-base", "git switch -q work")
-	got, err := mac.Sync(SyncOptions{PullOnly: true})
+	got, err := mac.Sync(t.Context(), SyncOptions{PullOnly: true})
 	raced(t, ran)
 	t.Logf("sync: %+v, %v", got, err)
 	if now := strings.TrimSpace(gitIn(t, repo, "rev-parse", "work")); now != work {
@@ -827,11 +827,11 @@ func testSyncThroughPushGuard(t *testing.T) {
 	}
 
 	newPlan(t, box, "y")
-	if got, err := box.Sync(SyncOptions{}); err != nil || !got.Pushed {
+	if got, err := box.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
 		t.Fatalf("box's sync: %+v, %v", got, err)
 	}
 	newPlan(t, mac, "x")
-	if got, err := mac.Sync(SyncOptions{}); err != nil || !got.Pushed {
+	if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
 		t.Fatalf("mac's sync, rebased onto box's: %+v, %v", got, err)
 	}
 	untouched(t, mac)
@@ -873,7 +873,7 @@ func testSyncAuthor(t *testing.T) {
 				gitIn(t, repo, "config", kv[0], kv[1])
 			}
 			newPlan(t, mac, "x")
-			if got, err := mac.Sync(SyncOptions{}); err != nil || !got.Pushed {
+			if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
 				t.Fatalf("sync: %+v, %v", got, err)
 			}
 			if got := strings.TrimSpace(gitIn(t, repo, "log", "-1", "--format=%an <%ae> %cn <%ce>", "origin/main")); got != tc.want {
@@ -894,7 +894,7 @@ func testSyncTwoHosts(t *testing.T) {
 	if _, err := mine.Log(Event{Kind: "started", Item: "S1"}, day); err != nil {
 		t.Fatal(err)
 	}
-	got, err := mac.Sync(SyncOptions{})
+	got, err := mac.Sync(t.Context(), SyncOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -904,7 +904,7 @@ func testSyncTwoHosts(t *testing.T) {
 	atOrigin(t, mac)
 	untouched(t, mac)
 	theirs := newPlan(t, box, "y")
-	if got, err := box.Sync(SyncOptions{}); err != nil || !got.Pushed {
+	if got, err := box.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
 		t.Fatalf("box's sync: %+v, %v", got, err)
 	}
 	atOrigin(t, box)
@@ -912,7 +912,7 @@ func testSyncTwoHosts(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(box.Dir, "20261014130500-x.mac.org")); err != nil {
 		t.Errorf("box did not get mac's plan: %v", err)
 	}
-	if got, err := mac.Sync(SyncOptions{PullOnly: true}); err != nil || got.Pushed || len(got.Committed) != 0 {
+	if got, err := mac.Sync(t.Context(), SyncOptions{PullOnly: true}); err != nil || got.Pushed || len(got.Committed) != 0 {
 		t.Fatalf("mac's pull: %+v, %v", got, err)
 	}
 	untouched(t, mac)
@@ -936,14 +936,14 @@ func testSyncTwoHosts(t *testing.T) {
 		}
 	}
 	// Nothing new: no commit, no push.
-	if got, err := mac.Sync(SyncOptions{}); err != nil || got.Pushed || len(got.Committed) != 0 {
+	if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || got.Pushed || len(got.Committed) != 0 {
 		t.Errorf("a sync with nothing to send: %+v, %v", got, err)
 	}
 	// A plan changed since it was last sent, and so modified against HEAD.
 	if _, err := mine.Log(Event{Kind: "done", Item: "S1"}, day); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := mac.Sync(SyncOptions{}); err != nil || !got.Pushed || len(got.Committed) != 2 {
+	if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed || len(got.Committed) != 2 {
 		t.Errorf("mac's second sync: %+v, %v", got, err)
 	}
 	atOrigin(t, mac)
@@ -955,14 +955,14 @@ func testSyncTwoHosts(t *testing.T) {
 func testSyncWorkstreams(t *testing.T) {
 	origin, hosts := notes(t, "mac", "box")
 	mac, box := hosts["mac"], hosts["box"]
-	if _, err := mac.NewWorkstream("Agent tooling", "The agent tools."); err != nil {
+	if _, err := mac.NewWorkstream(t.Context(), "Agent tooling", "The agent tools."); err != nil {
 		t.Fatal(err)
 	}
-	got, err := mac.Sync(SyncOptions{})
+	got, err := mac.Sync(t.Context(), SyncOptions{})
 	if err != nil || !got.Pushed || strings.Join(got.Committed, " ") != "agents/workstream-agent-tooling.mac.org" {
 		t.Fatalf("mac's sync: %+v, %v", got, err)
 	}
-	if _, err := box.Sync(SyncOptions{}); err != nil {
+	if _, err := box.Sync(t.Context(), SyncOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	ws, err := box.Workstreams()
@@ -993,11 +993,11 @@ func testSyncWithoutRepository(t *testing.T) {
 	t.Parallel()
 	c := testConfig(t)
 	newPlan(t, c, "x")
-	got, err := c.Sync(SyncOptions{})
+	got, err := c.Sync(t.Context(), SyncOptions{})
 	if err != nil || got.Skipped == "" || got.Pushed {
 		t.Errorf("sync outside a repository: %+v, %v", got, err)
 	}
-	c.Pull()
+	c.Pull(t.Context())
 }
 
 // Find, status and new pull first, quietly, so another host's plans are
@@ -1013,10 +1013,10 @@ func testPullTakes(t *testing.T) {
 	_, hosts := notesAsIs(t, "mac", "box")
 	mac, box := hosts["mac"], hosts["box"]
 	theirs := newPlan(t, box, "y")
-	if _, err := box.Sync(SyncOptions{}); err != nil {
+	if _, err := box.Sync(t.Context(), SyncOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	mac.Pull()
+	mac.Pull(t.Context())
 	if _, err := mac.Open(filepath.Join(mac.Dir, filepath.Base(theirs.file("")))); err != nil {
 		t.Errorf("after a pull: %v", err)
 	}
@@ -1031,15 +1031,15 @@ func testPullLeavesEditsUnstaged(t *testing.T) {
 	mac, box := hosts["mac"], hosts["box"]
 	repo := filepath.Dir(mac.Dir)
 	x := newPlan(t, mac, "x")
-	if got, err := mac.Sync(SyncOptions{}); err != nil || !got.Pushed {
+	if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
 		t.Fatalf("mac's sync: %+v, %v", got, err)
 	}
 	addItems(t, x.file(""), "** Steps", "S1")
 	newPlan(t, box, "y")
-	if got, err := box.Sync(SyncOptions{}); err != nil || !got.Pushed {
+	if got, err := box.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
 		t.Fatalf("box's sync: %+v, %v", got, err)
 	}
-	mac.Pull()
+	mac.Pull(t.Context())
 	if head, origin := gitIn(t, repo, "rev-parse", "HEAD"), gitIn(t, repo, "rev-parse", "origin/main"); head != origin {
 		t.Errorf("the pull did not fast-forward: HEAD %s, origin %s", head, origin)
 	}
@@ -1059,7 +1059,7 @@ func TestSyncState(t *testing.T) {
 	mac, box := hosts["mac"], hosts["box"]
 	state := func(c Config) SyncState {
 		t.Helper()
-		s, err := c.SyncState()
+		s, err := c.SyncState(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1074,7 +1074,7 @@ func TestSyncState(t *testing.T) {
 	}
 	pushed := time.Date(2026, 10, 15, 9, 30, 0, 0, time.UTC)
 	t.Setenv("GIT_COMMITTER_DATE", pushed.Format(time.RFC3339))
-	if _, err := box.Sync(SyncOptions{}); err != nil {
+	if _, err := box.Sync(t.Context(), SyncOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	s := state(box)
@@ -1084,10 +1084,10 @@ func TestSyncState(t *testing.T) {
 
 	t.Setenv("GIT_COMMITTER_DATE", pushed.Add(time.Hour).Format(time.RFC3339))
 	newPlan(t, mac, "y")
-	if _, err := mac.Sync(SyncOptions{}); err != nil {
+	if _, err := mac.Sync(t.Context(), SyncOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	box.Pull()
+	box.Pull(t.Context())
 	if s := state(box); !s.Pushed.Equal(pushed) || s.Unsynced {
 		t.Errorf("after mac's plan arrived: %+v", s)
 	}
@@ -1156,20 +1156,20 @@ func testSyncStateStagedSendsOnce(t *testing.T) {
 	_, hosts := notes(t, "mac")
 	mac := hosts["mac"]
 	x := newPlan(t, mac, "x")
-	if got, err := mac.Sync(SyncOptions{}); err != nil || !got.Pushed {
+	if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || !got.Pushed {
 		t.Fatalf("first sync: %+v, %v", got, err)
 	}
 	addItems(t, x.file(""), "** Steps", "S1")
 	gitIn(t, filepath.Dir(mac.Dir), "add", "--", x.file(""))
-	got, err := mac.Sync(SyncOptions{})
+	got, err := mac.Sync(t.Context(), SyncOptions{})
 	if err != nil || !got.Pushed || got.Behind != "changes to plan files are staged" {
 		t.Errorf("the sync with the change staged: %+v, %v", got, err)
 	}
 	addItems(t, x.file(""), "** Steps", "S2")
-	if got, err := mac.Sync(SyncOptions{}); err != nil || got.Pushed {
+	if got, err := mac.Sync(t.Context(), SyncOptions{}); err != nil || got.Pushed {
 		t.Errorf("the sync after it: %+v, %v", got, err)
 	}
-	if s, err := mac.SyncState(); err != nil || !s.Staged || !s.Unsynced {
+	if s, err := mac.SyncState(t.Context()); err != nil || !s.Staged || !s.Unsynced {
 		t.Errorf("state: %+v, %v", s, err)
 	}
 }
@@ -1193,7 +1193,7 @@ func testSyncStateDuringOwnSync(t *testing.T) {
 	}
 	ran := raceAt(t, repo, "--ff-only", "echo > '"+started+"'; read x < '"+release+"'")
 	synced, reached := make(chan error, 1), make(chan struct{})
-	go func() { _, err := mac.Sync(SyncOptions{}); synced <- err }()
+	go func() { _, err := mac.Sync(t.Context(), SyncOptions{}); synced <- err }()
 	go func() { os.ReadFile(started); close(reached) }()
 	select {
 	case <-reached:
@@ -1205,7 +1205,7 @@ func testSyncStateDuringOwnSync(t *testing.T) {
 	}
 	read := make(chan SyncState, 1)
 	go func() {
-		s, err := mac.SyncState()
+		s, err := mac.SyncState(t.Context())
 		if err != nil {
 			t.Error(err)
 		}
@@ -1249,7 +1249,7 @@ func cloning(t *testing.T) (c Config, root, key string) {
 func testInitCloneWithoutKey(t *testing.T) {
 	t.Parallel()
 	c, root, key := cloning(t)
-	got, err := c.Init()
+	got, err := c.Init(t.Context())
 	if err != nil || got.Cloned || !strings.Contains(got.Note, key) {
 		t.Errorf("without the key: %+v, %v", got, err)
 	}
@@ -1262,7 +1262,7 @@ func testInitCloneWithoutKey(t *testing.T) {
 	if err := os.WriteFile(key, []byte("fixture key\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := c.Init(); err != nil || !got.Cloned {
+	if got, err := c.Init(t.Context()); err != nil || !got.Cloned {
 		t.Errorf("retry with the key: %+v, %v", got, err)
 	}
 }
@@ -1275,7 +1275,7 @@ func testInitCloneWithKey(t *testing.T) {
 	c, root, key := cloning(t)
 	os.WriteFile(key, []byte("private\n"), 0o600)
 	for i := 0; i < 2; i++ {
-		got, err := c.Init()
+		got, err := c.Init(t.Context())
 		if err != nil || got.Cloned != (i == 0) || got.Repo != filepath.Join(root, "notes") {
 			t.Errorf("Init %d: %+v, %v", i, got, err)
 		}
@@ -1297,14 +1297,14 @@ func testInitCloneRetry(t *testing.T) {
 	}
 	origin := c.Remote
 	c.Remote = t.TempDir()
-	if got, err := c.Init(); err != nil || got.Cloned || !strings.Contains(got.Note, "failed") {
+	if got, err := c.Init(t.Context()); err != nil || got.Cloned || !strings.Contains(got.Note, "failed") {
 		t.Fatalf("rejected clone: %+v, %v", got, err)
 	}
 	if _, err := os.Stat(c.Dir); !os.IsNotExist(err) {
 		t.Fatalf("rejected clone created the plans directory: %v", err)
 	}
 	c.Remote = origin
-	if got, err := c.Init(); err != nil || !got.Cloned {
+	if got, err := c.Init(t.Context()); err != nil || !got.Cloned {
 		t.Errorf("retry with origin: %+v, %v", got, err)
 	}
 }
@@ -1329,7 +1329,7 @@ func testInitCloneLeftovers(t *testing.T) {
 				t.Fatal(err)
 			}
 			for i := 0; i < 2; i++ {
-				if got, err := c.Init(); err != nil || got.Cloned != (i == 0) || got.Note != "" {
+				if got, err := c.Init(t.Context()); err != nil || got.Cloned != (i == 0) || got.Note != "" {
 					t.Fatalf("init %d with generated leftovers: %+v, %v", i, got, err)
 				}
 			}
@@ -1387,7 +1387,7 @@ func testInitClonePreserves(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if got, err := c.Init(); err != nil || got.Cloned || got.Note == "" {
+			if got, err := c.Init(t.Context()); err != nil || got.Cloned || got.Note == "" {
 				t.Fatalf("init with %s: %+v, %v", what, got, err)
 			}
 			if marker {
@@ -1484,7 +1484,7 @@ exec "$INIT_TEST_REAL_GIT" "$@"
 	init := func() <-chan result {
 		ch := make(chan result, 1)
 		go func() {
-			r, err := c.Init()
+			r, err := c.Init(t.Context())
 			ch <- result{r, err}
 		}()
 		return ch
@@ -1580,7 +1580,7 @@ func testInitConverges(t *testing.T) {
 			t.Parallel()
 			c, root, key := cloning(t)
 			os.WriteFile(key, []byte("private\n"), 0o600)
-			if _, err := c.Init(); err != nil {
+			if _, err := c.Init(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			repo := filepath.Join(root, "notes")
@@ -1597,7 +1597,7 @@ func testInitConverges(t *testing.T) {
 			configFile := filepath.Join(repo, ".git", "config")
 			var first []byte
 			for i := 0; i < 2; i++ {
-				if got, err := c.Init(); err != nil || got.Cloned {
+				if got, err := c.Init(t.Context()); err != nil || got.Cloned {
 					t.Fatalf("Init %d: %+v, %v", i, got, err)
 				}
 				data, _ := os.ReadFile(configFile)

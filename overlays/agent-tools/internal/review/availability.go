@@ -2,6 +2,7 @@ package review
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 
 	shared "github.com/wesnel/agent-tools/internal/availability"
 	"github.com/wesnel/agent-tools/internal/cli"
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/usage"
 )
 
@@ -28,6 +30,9 @@ func (e providerUnavailable) Error() string { return string(e.provider) + " unav
 type availability struct {
 	blocked map[shared.Provider]held
 	now     func() time.Time
+	// env is the environment the holds, quota windows and config are
+	// found through.
+	env env.Env
 }
 
 type held struct {
@@ -35,8 +40,8 @@ type held struct {
 	err   error
 }
 
-func newAvailability() *availability {
-	return &availability{blocked: make(map[shared.Provider]held), now: time.Now}
+func newAvailability(e env.Env) *availability {
+	return &availability{blocked: make(map[shared.Provider]held), now: time.Now, env: e}
 }
 
 func (a *availability) check(p shared.Provider) error {
@@ -44,7 +49,7 @@ func (a *availability) check(p shared.Provider) error {
 	if b, ok := a.blocked[p]; ok && b.state.Active(now) {
 		return b.err
 	}
-	s, err := shared.Check(p, now)
+	s, err := shared.Check(a.env, p, now)
 	if err != nil {
 		return providerUnavailable{p, fmt.Sprintf("cannot read availability state: %v; use `git delegate availability --clear %s` after checking it", err, p)}
 	}
@@ -52,7 +57,7 @@ func (a *availability) check(p shared.Provider) error {
 		return providerUnavailable{p, s.String() + "; use `git delegate availability --clear " + string(p) + "` after recovery"}
 	}
 	if p == shared.Claude {
-		return quotaStop(now)
+		return quotaStop(a.env, now)
 	}
 	return nil
 }
@@ -61,13 +66,13 @@ func (a *availability) check(p shared.Provider) error {
 // quota-stop holds a session by, which their settings carry no hook for:
 // while a window usage.File recorded within usage.Fresh, and that has not
 // reset, is at or above delegate.quotaStop. A config it cannot read sets no
-// stop; claudeMissing reports it.
-func quotaStop(now time.Time) error {
-	c, err := loadDelegateConfig()
+// stop; claudeMissing reports it. The config and usage.File are e's.
+func quotaStop(e env.Env, now time.Time) error {
+	c, err := loadDelegateConfig(e)
 	if err != nil || c.QuotaStop == nil {
 		return nil
 	}
-	w, over := usage.Over(usage.Load(usage.File()), float64(*c.QuotaStop), now)
+	w, over := usage.Over(usage.Load(usage.File(e)), float64(*c.QuotaStop), now)
 	if !over {
 		return nil
 	}
@@ -87,12 +92,12 @@ func (a *availability) failed(p shared.Provider, why shared.Reason) error {
 		s.Until = now.Add(shared.RateLimitPause).Unix()
 	}
 	if p == shared.Claude {
-		if observed := shared.ClaudeQuota(now); observed.Reason != "" {
+		if observed := shared.ClaudeQuota(a.env, now); observed.Reason != "" {
 			s = observed
 		}
 	}
 	reason := "failed for " + string(why) + "; " + s.String()
-	if err := shared.Hold(p, s, now); err != nil {
+	if err := shared.Hold(a.env, p, s, now); err != nil {
 		reason += fmt.Sprintf("; could not remember it for later commands: %v; keep this provider disabled in the primary harness", err)
 	}
 	err := providerUnavailable{p, reason}
@@ -117,7 +122,8 @@ recent quota window is at or above wgn.home.claude.quotaStop, which
                exhausted Claude quota window still holds until its reset
 `
 
-func availabilityCommand(args []string, stdout, stderr io.Writer) int {
+func availabilityCommand(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	e := env.From(ctx)
 	flags := flag.NewFlagSet(name+" availability", flag.ContinueOnError)
 	disable := flags.String("disable", "", "")
 	clear := flags.String("clear", "", "")
@@ -136,16 +142,16 @@ func availabilityCommand(args []string, stdout, stderr io.Writer) int {
 		}
 		var err error
 		if *disable != "" {
-			err = shared.Hold(selected, shared.State{Reason: shared.Disabled}, time.Now())
+			err = shared.Hold(e, selected, shared.State{Reason: shared.Disabled}, time.Now())
 		} else {
-			err = shared.Clear(selected)
+			err = shared.Clear(e, selected)
 		}
 		if err != nil {
 			return cli.Report(name, nil, err, 0, stdout, stderr)
 		}
 	}
 	status := map[shared.Provider]string{}
-	a := newAvailability()
+	a := newAvailability(e)
 	for _, p := range []shared.Provider{shared.Claude, shared.Codex} {
 		status[p] = "available"
 		if err := a.check(p); err != nil {

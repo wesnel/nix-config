@@ -2,6 +2,7 @@ package guard
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/plans"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
@@ -36,6 +38,7 @@ func caseName(deny bool, what string) string {
 }
 
 func TestCheck(t *testing.T) {
+	t.Parallel()
 	t.Run("commands", testCheckCommands)
 	t.Run("wrapped commands", testCheckWrappedCommands)
 	t.Run("GraphQL query sources", testCheckGraphQLQuerySources)
@@ -47,6 +50,7 @@ func TestCheck(t *testing.T) {
 // defines to run a shell command, however git config is reached, and to
 // letting other aliases and settings be set.
 func testCheckShellAliasSet(t *testing.T) {
+	t.Parallel()
 	for command, deny := range map[string]bool{
 		"git config alias.zz '!echo z'":                     true,
 		"git config --global alias.yy '!echo y'":            true,
@@ -62,7 +66,7 @@ func testCheckShellAliasSet(t *testing.T) {
 		"git config --worktree pull.rebase true":            false,
 	} {
 		input, _ := json.Marshal(map[string]string{"command": command})
-		if reason := CheckBaseline("Bash", input); (reason == shellAlias) != deny {
+		if reason := CheckBaseline(guardCtx(t), "Bash", input); (reason == shellAlias) != deny {
 			t.Errorf("%q: reason %q, want shell alias refused %v", command, reason, deny)
 		}
 	}
@@ -71,19 +75,20 @@ func testCheckShellAliasSet(t *testing.T) {
 // testCheckOperatorAlias holds the guard to running an alias the
 // operator's git config defines, as their own shorthand.
 func testCheckOperatorAlias(t *testing.T) {
+	t.Parallel()
 	config := filepath.Join(t.TempDir(), "gitconfig")
 	if err := os.WriteFile(config, []byte("[alias]\n\tlg = log --oneline --graph\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("GIT_CONFIG_GLOBAL", config)
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	ctx := withVars(guardCtx(t), "GIT_CONFIG_GLOBAL="+config, "GIT_CONFIG_NOSYSTEM=1")
 	input, _ := json.Marshal(map[string]string{"command": "git lg"})
-	if reason := CheckBaseline("Bash", input); reason != "" {
+	if reason := CheckBaseline(ctx, "Bash", input); reason != "" {
 		t.Errorf("`git lg` refused: %q", reason)
 	}
 }
 
 func testCheckCommands(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		deny    bool
 		tool    string
@@ -143,8 +148,9 @@ func testCheckCommands(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(caseName(c.deny, strings.TrimSpace(c.tool+" "+c.command)), func(t *testing.T) {
+			t.Parallel()
 			input, _ := json.Marshal(map[string]string{"command": c.command})
-			reason := CheckBaseline(c.tool, input)
+			reason := CheckBaseline(guardCtx(t), c.tool, input)
 			if (reason != "") != c.deny {
 				t.Errorf("%s %q: deny=%v, reason %q", c.tool, c.command, !c.deny, reason)
 			}
@@ -159,6 +165,7 @@ func testCheckCommands(t *testing.T) {
 // shell keyword or flags the shell combines, which the guard reads as the
 // command it runs, and configuration handed to git through the environment.
 func testCheckWrappedCommands(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		deny    bool
 		command string
@@ -243,8 +250,9 @@ func testCheckWrappedCommands(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
+			t.Parallel()
 			input, _ := json.Marshal(map[string]string{"command": c.command})
-			reason := CheckBaseline("Bash", input)
+			reason := CheckBaseline(guardCtx(t), "Bash", input)
 			if (reason != "") != c.deny {
 				t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
 			}
@@ -289,6 +297,7 @@ func queryFiles(t *testing.T) (root, workspace string) {
 // cannot read. ROOT and WORKSPACE in a command stand for the directories
 // queryFiles makes.
 func testCheckGraphQLQuerySources(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		deny    bool
 		command string
@@ -323,11 +332,11 @@ func testCheckGraphQLQuerySources(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
+			t.Parallel()
 			root, workspace := queryFiles(t)
-			t.Chdir(workspace)
 			command := strings.NewReplacer("ROOT", root, "WORKSPACE", workspace).Replace(c.command)
 			input, _ := json.Marshal(map[string]string{"command": command})
-			reason := CheckBaseline("Bash", input)
+			reason := CheckBaseline(inDir(guardCtx(t), workspace), "Bash", input)
 			if (reason != "") != c.deny {
 				t.Errorf("%q: deny=%v, reason %q", command, !c.deny, reason)
 			}
@@ -340,12 +349,12 @@ func testCheckGraphQLQuerySources(t *testing.T) {
 	// The hook event's cwd, not the guard's, is where a relative file is.
 	for file, deny := range map[string]bool{"write.graphql": true, "read.graphql": false} {
 		t.Run(caseName(deny, "from the event's cwd/"+file), func(t *testing.T) {
+			t.Parallel()
 			root, workspace := queryFiles(t)
-			t.Chdir(root)
 			event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "cwd": workspace,
 				"tool_input": map[string]string{"command": "gh api graphql -F query=@" + file}})
 			var out bytes.Buffer
-			Main([]string{"--baseline"}, bytes.NewReader(event), &out, io.Discard)
+			mainIn(inDir(guardCtx(t), root), []string{"--baseline"}, bytes.NewReader(event), &out, io.Discard)
 			if (out.Len() != 0) != deny {
 				t.Errorf("%s from the event's cwd: deny=%v, output %s", file, !deny, out.String())
 			}
@@ -359,13 +368,14 @@ func testCheckGraphQLQuerySources(t *testing.T) {
 // agent sees, must say what to do instead; a rule's `why` is for whoever
 // maintains it and reaches no agent.
 func TestPolicy(t *testing.T) {
+	t.Parallel()
 	data, err := os.ReadFile("policy.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The examples name no repository, so they run outside one, as in the
 	// Nix build; a checkout's remotes would decide `git fetch origin`.
-	t.Chdir(t.TempDir())
+	ctx := inDir(guardCtx(t), t.TempDir())
 	var rules []struct {
 		Why   string   `json:"why"`
 		Scope string   `json:"scope"`
@@ -377,11 +387,12 @@ func TestPolicy(t *testing.T) {
 	if err := dec.Decode(&rules); err != nil {
 		t.Fatal(err)
 	}
-	checks := map[role]func(string, json.RawMessage) string{baseline: CheckBaseline, reviewer: CheckReviewer}
+	checks := map[role]func(context.Context, string, json.RawMessage) string{baseline: CheckBaseline, reviewer: CheckReviewer}
 	names := map[role]string{baseline: "baseline", reviewer: "reviewer"}
 	scopes := map[string]role{"baseline": baseline, "reviewer": reviewer}
 	for _, r := range rules {
 		t.Run(r.Why, func(t *testing.T) {
+			t.Parallel()
 			if len(r.Deny) == 0 || len(r.Allow) == 0 {
 				t.Errorf("%s: needs examples both ways", r.Why)
 			}
@@ -400,7 +411,7 @@ func TestPolicy(t *testing.T) {
 						if denied {
 							held = who >= scope
 						}
-						reason := check("Bash", input)
+						reason := check(ctx, "Bash", input)
 						if got := reason != ""; held && got != want {
 							t.Errorf("%s: guard deny=%v for the %s's %q", r.Why, got, names[who], command)
 						}
@@ -415,7 +426,7 @@ func TestPolicy(t *testing.T) {
 }
 
 func TestBaseline(t *testing.T) {
-	t.Chdir(t.TempDir())
+	t.Parallel()
 	t.Run("commands", testBaselineCommands)
 	t.Run("roles", testBaselineRoles)
 	t.Run("formats", testBaselineFormats)
@@ -425,6 +436,7 @@ func TestBaseline(t *testing.T) {
 // examples do not, and the baseline's allowances that a loop role does not
 // share.
 func testBaselineCommands(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		deny    bool
 		command string
@@ -558,11 +570,12 @@ func testBaselineCommands(t *testing.T) {
 	}
 	// Outside any repository, as in the Nix build; a checkout's remotes
 	// would decide `git fetch origin`.
-	t.Chdir(t.TempDir())
+	ctx := inDir(guardCtx(t), t.TempDir())
 	for _, c := range cases {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
+			t.Parallel()
 			input, _ := json.Marshal(map[string]string{"command": c.command})
-			reason := CheckBaseline("Bash", input)
+			reason := CheckBaseline(ctx, "Bash", input)
 			if (reason != "") != c.deny {
 				t.Errorf("%q: deny=%v, reason %q", c.command, !c.deny, reason)
 			}
@@ -577,6 +590,8 @@ func testBaselineCommands(t *testing.T) {
 // the one a reviewer agent's definition adds, which also keeps it to
 // reading. A call's agent type changes neither.
 func testBaselineRoles(t *testing.T) {
+	t.Parallel()
+	ctx := inDir(guardCtx(t), t.TempDir())
 	for _, c := range []struct {
 		deny    bool
 		hook    string
@@ -599,10 +614,11 @@ func testBaselineRoles(t *testing.T) {
 		{false, "--reviewer", "gh pr view 1"},
 	} {
 		t.Run(caseName(c.deny, c.hook+" "+c.command), func(t *testing.T) {
+			t.Parallel()
 			event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "agent_type": "adversarial-reviewer",
 				"tool_input": map[string]string{"command": c.command}})
 			var out, errs bytes.Buffer
-			if code := Main([]string{c.hook}, bytes.NewReader(event), &out, &errs); code != 0 {
+			if code := mainIn(ctx, []string{c.hook}, bytes.NewReader(event), &out, &errs); code != 0 {
 				t.Errorf("%s %q: exit %d: %s", c.hook, c.command, code, errs.String())
 			}
 			if denied := strings.Contains(out.String(), `"permissionDecision":"deny"`); denied != c.deny {
@@ -616,6 +632,8 @@ func testBaselineRoles(t *testing.T) {
 // calls it: Claude Code with its agent_type, Codex with turn_id and no
 // agent.
 func testBaselineFormats(t *testing.T) {
+	t.Parallel()
+	ctx := inDir(guardCtx(t), t.TempDir())
 	for _, c := range []struct {
 		name, event, want string
 	}{
@@ -628,8 +646,9 @@ func testBaselineFormats(t *testing.T) {
 		{"Codex patch of code", `{"tool_name":"apply_patch","turn_id":"t","tool_input":{"command":"*** Begin Patch\n*** Update File: main.go\n@@\n-a\n+b\n*** End Patch\n"}}`, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			var out, errs bytes.Buffer
-			if code := Main([]string{"--baseline"}, strings.NewReader(c.event), &out, &errs); code != 0 {
+			if code := mainIn(ctx, []string{"--baseline"}, strings.NewReader(c.event), &out, &errs); code != 0 {
 				t.Errorf("%s: exit %d: %s", c.event, code, errs.String())
 			}
 			if (c.want == "" && out.Len() != 0) || !strings.Contains(out.String(), c.want) {
@@ -639,8 +658,9 @@ func testBaselineFormats(t *testing.T) {
 	}
 
 	t.Run("unknown flag", func(t *testing.T) {
+		t.Parallel()
 		var out, errs bytes.Buffer
-		if code := Main([]string{"--only", "reviewer"}, strings.NewReader(`{"tool_name":"Bash"}`), &out, &errs); code == 0 {
+		if code := mainIn(ctx, []string{"--only", "reviewer"}, strings.NewReader(`{"tool_name":"Bash"}`), &out, &errs); code == 0 {
 			t.Errorf("an unknown flag was accepted: %s", out.String())
 		}
 	})
@@ -650,7 +670,8 @@ func testBaselineFormats(t *testing.T) {
 // checkout: every other command, or a reading one's writing form, is
 // denied.
 func TestReviewerGit(t *testing.T) {
-	t.Chdir(t.TempDir())
+	t.Parallel()
+	ctx := inDir(guardCtx(t), t.TempDir())
 	for _, c := range []struct {
 		deny    bool
 		command string
@@ -712,8 +733,9 @@ func TestReviewerGit(t *testing.T) {
 		{false, "git grep -n foo -- ."},
 	} {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
+			t.Parallel()
 			input, _ := json.Marshal(map[string]string{"command": c.command})
-			reason := CheckReviewer("Bash", input)
+			reason := CheckReviewer(ctx, "Bash", input)
 			if (reason != "") != c.deny {
 				t.Errorf("%q: deny=%v, %q", c.command, reason != "", reason)
 			}
@@ -727,6 +749,7 @@ func TestReviewerGit(t *testing.T) {
 // through a copy of the worktree's .git file, a link, core.worktree, or a
 // file it writes.
 func TestReviewerScratchRepo(t *testing.T) {
+	t.Parallel()
 	// The checkout is a linked worktree of a repository outside scratch.
 	repo, checkout, scratch := filepath.Join(t.TempDir(), "repo"), filepath.Join(t.TempDir(), "w"), t.TempDir()
 	gitIn(t, filepath.Dir(repo), "init", "-q", "-b", "main", repo)
@@ -735,7 +758,7 @@ func TestReviewerScratchRepo(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(checkout, "sub"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("TMPDIR", scratch)
+	ctx := withVars(guardCtx(t), "TMPDIR="+scratch)
 	dir := func(name string) string {
 		d := filepath.Join(scratch, name)
 		if err := os.MkdirAll(d, 0o700); err != nil {
@@ -767,11 +790,15 @@ func TestReviewerScratchRepo(t *testing.T) {
 	gitIn(t, elsewhere, "init", "-q")
 	gitIn(t, elsewhere, "config", "core.worktree", checkout)
 	inner := dir("repo") // a checkout inside scratch
+	// A temporary directory of this test's that is not under the guard's
+	// $TMPDIR, scratch, though it may be under this process's.
+	notScratch := t.TempDir()
 	for _, c := range []struct {
 		deny    bool
 		cwd     string
 		command string
 	}{
+		{true, checkout, "git -C " + notScratch + " init"},
 		{false, checkout, "git -C " + x + " init"},
 		{false, checkout, "git -C " + x + " -c commit.gpgsign=false commit -m x"},
 		{false, checkout, "cd " + x + " && git add f && git commit -m x"},
@@ -836,9 +863,9 @@ func TestReviewerScratchRepo(t *testing.T) {
 		{true, checkout, "git -C " + x + " init " + checkout + "/sub2"},
 	} {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
-			t.Chdir(c.cwd)
+			t.Parallel()
 			input, _ := json.Marshal(map[string]string{"command": c.command})
-			reason := CheckReviewer("Bash", input)
+			reason := CheckReviewer(inDir(ctx, c.cwd), "Bash", input)
 			if (reason != "") != c.deny || c.deny && reason != reviewerGit {
 				t.Errorf("%q in %s: %q", c.command, c.cwd, reason)
 			}
@@ -851,8 +878,9 @@ func TestReviewerScratchRepo(t *testing.T) {
 // every session: what the guard denies typed alone, it denies there. An
 // alias it cannot read, or an included file of settings, is refused.
 func TestGitShellAlias(t *testing.T) {
+	t.Parallel()
 	scratch := t.TempDir()
-	t.Setenv("TMPDIR", scratch)
+	ctx := withVars(guardCtx(t), "TMPDIR="+scratch)
 	// Configuration files a command may name as git's global or system one.
 	for name, text := range map[string]string{
 		"alias":   "[alias]\n\tp = !git push\n",
@@ -864,10 +892,10 @@ func TestGitShellAlias(t *testing.T) {
 		}
 	}
 	checkout := t.TempDir()
-	t.Chdir(checkout)
+	ctx = inDir(ctx, checkout)
 	for _, c := range []struct {
 		deny    bool
-		check   func(string, json.RawMessage) string
+		check   func(context.Context, string, json.RawMessage) string
 		command string
 	}{
 		{true, CheckBaseline, "git -c alias.p='!git push origin HEAD' p"},
@@ -913,8 +941,9 @@ func TestGitShellAlias(t *testing.T) {
 		{true, CheckReviewer, "V='!git -C " + checkout + " commit -m x' git -C " + scratch + " --config-env=alias.zz=V zz"},
 	} {
 		t.Run(caseName(c.deny, c.command), func(t *testing.T) {
+			t.Parallel()
 			input, _ := json.Marshal(map[string]string{"command": c.command})
-			if reason := c.check("Bash", input); (reason != "") != c.deny {
+			if reason := c.check(ctx, "Bash", input); (reason != "") != c.deny {
 				t.Errorf("%q: deny=%v, %q", c.command, reason != "", reason)
 			}
 		})
@@ -929,10 +958,11 @@ func TestGitShellAlias(t *testing.T) {
 		"cd $TMPDIR/nope; echo x > zz",
 	} {
 		t.Run(caseName(true, command), func(t *testing.T) {
+			t.Parallel()
 			event, _ := json.Marshal(map[string]any{"tool_name": "Bash", "agent_type": "adversarial-reviewer",
 				"agent_id": "a1", "cwd": checkout, "tool_input": map[string]string{"command": command}})
 			var out bytes.Buffer
-			Main([]string{"--baseline"}, bytes.NewReader(event), &out, io.Discard)
+			mainIn(ctx, []string{"--baseline"}, bytes.NewReader(event), &out, io.Discard)
 			if !strings.Contains(out.String(), `"deny"`) {
 				t.Errorf("%q: %s", command, out.String())
 			}
@@ -950,11 +980,11 @@ func TestOpenedRepo(t *testing.T) {
 	if err := os.Mkdir(empty, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if paths, ok := openedRepo(own); !ok || len(paths) != 3 {
+	if paths, ok := openedRepo(guardCtx(t), own); !ok || len(paths) != 3 {
 		t.Errorf("a repository of its own: %q, %v", paths, ok)
 	}
 	for _, dir := range []string{empty, filepath.Join(scratch, "missing")} {
-		if paths, ok := openedRepo(dir); !ok || len(paths) != 0 {
+		if paths, ok := openedRepo(guardCtx(t), dir); !ok || len(paths) != 0 {
 			t.Errorf("no repository yet in %s: %q, %v", dir, paths, ok)
 		}
 	}
@@ -968,15 +998,38 @@ func TestOpenedRepo(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(fake, "git"), []byte(script), 0o700); err != nil {
 				t.Fatal(err)
 			}
-			t.Setenv("PATH", fake)
 			old := repoTimeout
 			repoTimeout = 200 * time.Millisecond
 			t.Cleanup(func() { repoTimeout = old })
-			if paths, ok := openedRepo(own); ok {
+			if paths, ok := openedRepo(withVars(guardCtx(t), "PATH="+fake), own); ok {
 				t.Errorf("git %s: %q passed", name, paths)
 			}
 		})
 	}
+
+	// A git found in a relative PATH entry is refused with exec.ErrDot, as
+	// exec.LookPath refuses it, though the same git answers from an absolute
+	// entry.
+	t.Run("relative PATH entry", func(t *testing.T) {
+		answers := t.TempDir()
+		if err := os.WriteFile(filepath.Join(answers, "git"), []byte("#!/bin/sh\necho /x\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if paths, ok := openedRepo(withVars(guardCtx(t), "PATH="+answers), own); !ok || len(paths) != 2 {
+			t.Fatalf("a git in an absolute entry: %q, %v; want its two answers", paths, ok)
+		}
+		wd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		rel, err := filepath.Rel(wd, answers)
+		if err != nil {
+			t.Skipf("no relative path from %s to %s: %v", wd, answers, err)
+		}
+		if paths, ok := openedRepo(withVars(guardCtx(t), "PATH="+rel), own); ok {
+			t.Errorf("a git in a relative entry ran: %q", paths)
+		}
+	})
 }
 
 // TestGitDeadline holds the hook to a deadline in a repository whose git
@@ -1002,10 +1055,7 @@ func TestGitDeadline(t *testing.T) {
 	})
 	old := repoTimeout
 	repoTimeout = 500 * time.Millisecond
-	t.Cleanup(func() {
-		repoTimeout = old
-		gitStalled.Store(false)
-	})
+	t.Cleanup(func() { repoTimeout = old })
 	bash := func(command string) map[string]any {
 		return map[string]any{"tool_name": "Bash", "cwd": repo, "tool_input": map[string]string{"command": command}}
 	}
@@ -1016,12 +1066,12 @@ func TestGitDeadline(t *testing.T) {
 		"a sub-agent's edit": {"tool_name": "Write", "cwd": repo, "agent_id": "a1",
 			"tool_input": map[string]string{"file_path": filepath.Join(repo, "notes.txt"), "content": "x"}},
 	} {
-		t.Run(caseName(true, name), func(t *testing.T) { hookRefusesWithin(t, event, unstalled) })
+		t.Run(caseName(true, name), func(t *testing.T) { hookRefusesWithin(t, guardCtx(t), event, unstalled) })
 	}
 	// Each commit on the line has a git of its own run for it, eight
 	// deadlines in all were each to wait out its own.
 	t.Run(caseName(true, "several queries"), func(t *testing.T) {
-		hookRefusesWithin(t, bash(strings.Repeat("git commit -m x; ", 7)+"git commit -m x"), 3*repoTimeout)
+		hookRefusesWithin(t, guardCtx(t), bash(strings.Repeat("git commit -m x; ", 7)+"git commit -m x"), 3*repoTimeout)
 	})
 	// A git whose child keeps its output open after it exits, as an
 	// fsmonitor hook may, is waited for no longer than a git that hangs.
@@ -1037,8 +1087,9 @@ func TestGitDeadline(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(fake, "git"), []byte(script), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		t.Setenv("PATH", fake+string(os.PathListSeparator)+os.Getenv("PATH"))
-		hookRefusesWithin(t, map[string]any{"tool_name": "Bash", "cwd": plain,
+		ctx := guardCtx(t)
+		ctx = withVars(ctx, "PATH="+fake+string(os.PathListSeparator)+env.From(ctx).Get("PATH"))
+		hookRefusesWithin(t, ctx, map[string]any{"tool_name": "Bash", "cwd": plain,
 			"tool_input": map[string]string{"command": "git commit -m x"}}, 3*repoTimeout)
 	})
 	// branchHint, which runs once every rule has passed, reads the branch
@@ -1055,8 +1106,7 @@ func TestGitDeadline(t *testing.T) {
 		config := filepath.Join(root, "config.json")
 		data, _ := json.Marshal(map[string]any{"plans": c})
 		os.WriteFile(config, data, 0o644)
-		t.Setenv("AGENT_TOOLS_CONFIG", config)
-		if _, err := c.New(plans.NewOptions{Title: "Add the loop", Slug: "loop", Sessions: []string{"claude:s1"}},
+		if _, err := c.New(t.Context(), plans.NewOptions{Title: "Add the loop", Slug: "loop", Sessions: []string{"claude:s1"}},
 			time.Now()); err != nil {
 			t.Fatal(err)
 		}
@@ -1072,10 +1122,11 @@ func TestGitDeadline(t *testing.T) {
 		edit := map[string]any{"tool_name": "Write", "cwd": plain, "session_id": "s1",
 			"tool_input": map[string]string{"file_path": filepath.Join(plain, "notes.txt"), "content": "x"}}
 		data, _ = json.Marshal(edit)
-		Main([]string{"--baseline"}, bytes.NewReader(data), io.Discard, io.Discard)
-		t.Setenv("PATH", fake+string(os.PathListSeparator)+os.Getenv("PATH"))
-		hookRefusesWithin(t, edit, unstalled)
-		p, _, ok := c.Locate("s1", "")
+		ctx := withVars(guardCtx(t), "AGENT_TOOLS_CONFIG="+config)
+		mainIn(ctx, []string{"--baseline"}, bytes.NewReader(data), io.Discard, io.Discard)
+		ctx = withVars(ctx, "PATH="+fake+string(os.PathListSeparator)+env.From(ctx).Get("PATH"))
+		hookRefusesWithin(t, ctx, edit, unstalled)
+		p, _, ok := c.Locate(t.Context(), "s1", "")
 		if !ok {
 			t.Fatal("the session's plan is not found")
 		}
@@ -1096,16 +1147,16 @@ func TestGitDeadline(t *testing.T) {
 // take, however loaded the machine: ten deadlines of the tests' own.
 const unstalled = 5 * time.Second
 
-// hookRefusesWithin runs the baseline hook on event and fails unless it
-// denies it, saying what to do instead, within limit.
-func hookRefusesWithin(t *testing.T, event map[string]any, limit time.Duration) {
+// hookRefusesWithin runs the baseline hook, under the Env of ctx, on event
+// and fails unless it denies it, saying what to do instead, within limit.
+func hookRefusesWithin(t *testing.T, ctx context.Context, event map[string]any, limit time.Duration) {
 	t.Helper()
 	data, _ := json.Marshal(event)
 	var out bytes.Buffer
 	done := make(chan time.Duration, 1)
 	start := time.Now()
 	go func() {
-		Main([]string{"--baseline"}, bytes.NewReader(data), &out, io.Discard)
+		mainIn(ctx, []string{"--baseline"}, bytes.NewReader(data), &out, io.Discard)
 		done <- time.Since(start)
 	}()
 	select {
@@ -1131,11 +1182,13 @@ func hookRefusesWithin(t *testing.T, event map[string]any, limit time.Duration) 
 // TestReviewerReasons holds every denial a reviewer meets to the one thing
 // it should do instead, wherever the rule it broke comes from.
 func TestReviewerReasons(t *testing.T) {
+	t.Parallel()
 	for _, command := range []string{"git push origin x", "git commit -m x", "gh pr comment 1 -b hi",
 		"git sign-pass", "pr-loop reply T --body-file -"} {
 		t.Run(command, func(t *testing.T) {
+			t.Parallel()
 			input, _ := json.Marshal(map[string]string{"command": command})
-			if reason := CheckReviewer("Bash", input); !strings.HasPrefix(reason, "A reviewer only reads.") || !saysInstead(reason) {
+			if reason := CheckReviewer(guardCtx(t), "Bash", input); !strings.HasPrefix(reason, "A reviewer only reads.") || !saysInstead(reason) {
 				t.Errorf("%q: %q", command, reason)
 			}
 		})
@@ -1143,7 +1196,8 @@ func TestReviewerReasons(t *testing.T) {
 }
 
 func TestFormats(t *testing.T) {
-	t.Chdir(t.TempDir())
+	t.Parallel()
+	ctx := inDir(guardCtx(t), t.TempDir())
 	for _, c := range []struct {
 		name, event, want string
 	}{
@@ -1153,8 +1207,9 @@ func TestFormats(t *testing.T) {
 		{"ls", `{"tool_name":"Bash","tool_input":{"command":"ls"}}`, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			var out bytes.Buffer
-			Main([]string{"--baseline"}, strings.NewReader(c.event), &out, io.Discard)
+			mainIn(ctx, []string{"--baseline"}, strings.NewReader(c.event), &out, io.Discard)
 			if (c.want == "" && out.Len() != 0) || !strings.Contains(out.String(), c.want) {
 				t.Errorf("%s: printed %s", c.event, out.String())
 			}

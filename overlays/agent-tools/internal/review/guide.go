@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/wesnel/agent-tools/internal/git"
 	"github.com/wesnel/agent-tools/internal/record"
 )
 
@@ -31,7 +30,7 @@ type Chunk struct {
 // diffHunks are the hunks of `git diff BASE TIP` for r, as a reader of it
 // sees them, by the lines of each side.
 func diffHunks(r *span) ([]record.Hunk, error) {
-	out, err := git.Bytes(nil, "-C", r.top, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames",
+	out, err := r.git().Bytes(nil, "-C", r.top, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames",
 		r.base, r.tip)
 	if err != nil {
 		return nil, err

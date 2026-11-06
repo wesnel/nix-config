@@ -1,6 +1,7 @@
 package loop
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -15,23 +16,23 @@ import (
 const stacksVersion = "2026-03-10"
 
 // stacksREST changes stacks; tests replace it to fake GitHub.
-var stacksREST = func(method, path string, body, out any) error {
-	return gh.RESTVersion(stacksVersion, method, path, body, out)
+var stacksREST = func(ctx context.Context, method, path string, body, out any) error {
+	return gh.RESTVersion(ctx, stacksVersion, method, path, body, out)
 }
 
 // Link puts open PRs by the user, named by number or branch bottom first and
 // each based on the one before, into one GitHub stack: onto the top of the
 // stack the lowest is already in or is based on, or else into a new one.
 // PRs already in that stack, in that order, are left as they are.
-func Link(targets []string) (any, error) {
+func Link(ctx context.Context, targets []string) (any, error) {
 	if len(targets) == 0 {
 		return nil, errors.New("link takes the PRs to stack, bottom first; see pr-loop --help")
 	}
-	repo, err := repository()
+	repo, err := repository(ctx)
 	if err != nil {
 		return nil, err
 	}
-	prs, err := openPRs(repo)
+	prs, err := openPRs(ctx, repo)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +48,7 @@ func Link(targets []string) (any, error) {
 		}
 		chain = append(chain, pr)
 	}
-	return link(repo, prs, chain)
+	return link(ctx, repo, prs, chain)
 }
 
 // StackEntry describes one PR of a stack.
@@ -66,12 +67,12 @@ type StackEntry struct {
 // Stack describes the stack of open PRs containing target, a PR or its
 // branch (default: HEAD), as their bases chain them, and GitHub's record of
 // the stack target is in.
-func Stack(target string) (any, error) {
-	repo, err := repository()
+func Stack(ctx context.Context, target string) (any, error) {
+	repo, err := repository(ctx)
 	if err != nil {
 		return nil, err
 	}
-	prs, err := openPRs(repo)
+	prs, err := openPRs(ctx, repo)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +80,7 @@ func Stack(target string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	record, err := githubStack(repo, prs[branch].Number)
+	record, err := githubStack(ctx, repo, prs[branch].Number)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +106,7 @@ func Stack(target string) (any, error) {
 }
 
 // link puts chain, bottom first, into one GitHub stack, as Link describes.
-func link(repo *Repo, prs map[string]*PR, chain []*PR) (map[string]any, error) {
+func link(ctx context.Context, repo *Repo, prs map[string]*PR, chain []*PR) (map[string]any, error) {
 	for i := 1; i < len(chain); i++ {
 		below, pr := chain[i-1], chain[i]
 		if pr.BaseRefName != below.HeadRefName {
@@ -118,7 +119,7 @@ func link(repo *Repo, prs map[string]*PR, chain []*PR) (map[string]any, error) {
 	stacks := make([]*GitHubStack, len(chain))
 	for i, pr := range chain {
 		var err error
-		if stacks[i], err = githubStack(repo, pr.Number); err != nil {
+		if stacks[i], err = githubStack(ctx, repo, pr.Number); err != nil {
 			return nil, err
 		}
 	}
@@ -151,7 +152,7 @@ func link(repo *Repo, prs map[string]*PR, chain []*PR) (map[string]any, error) {
 			return nil, refuse(aboveTop, top.Number, target.PRs[at+k].PR, target.Number, top.Number, target.Number)
 		}
 	} else if below := prs[chain[0].BaseRefName]; below != nil {
-		s, err := githubStack(repo, below.Number)
+		s, err := githubStack(ctx, repo, below.Number)
 		if err != nil {
 			return nil, err
 		}
@@ -173,7 +174,7 @@ func link(repo *Repo, prs map[string]*PR, chain []*PR) (map[string]any, error) {
 				"a stack of one; name the pull requests to stack bottom first, as `pr-loop link LOWER UPPER`", added[0])
 		}
 		var created struct{ Number int }
-		if err := stackWrite("POST", fmt.Sprintf("repos/%s/stacks", repo.Slug), body, &created); err != nil {
+		if err := stackWrite(ctx, "POST", fmt.Sprintf("repos/%s/stacks", repo.Slug), body, &created); err != nil {
 			return nil, err
 		}
 		return map[string]any{"stack": created.Number, "added": added, "created": true}, nil
@@ -186,7 +187,7 @@ func link(repo *Repo, prs map[string]*PR, chain []*PR) (map[string]any, error) {
 				"the stack alone; name the stack in the report for the operator", target.Number, m.PR, repo.Viewer)
 		}
 	}
-	if err := stackWrite("POST", fmt.Sprintf("repos/%s/stacks/%d/add", repo.Slug, target.Number), body, nil); err != nil {
+	if err := stackWrite(ctx, "POST", fmt.Sprintf("repos/%s/stacks/%d/add", repo.Slug, target.Number), body, nil); err != nil {
 		return nil, err
 	}
 	return map[string]any{"stack": target.Number, "added": added}, nil
@@ -208,12 +209,12 @@ func position(s *GitHubStack, number int) int {
 
 // stackWrite changes a stack, trying once more when GitHub answers 409
 // because another request is changing the stack.
-func stackWrite(method, path string, body, out any) error {
-	err := stacksREST(method, path, body, out)
+func stackWrite(ctx context.Context, method, path string, body, out any) error {
+	err := stacksREST(ctx, method, path, body, out)
 	var status *gh.StatusError
 	if errors.As(err, &status) && status.Code == 409 {
 		sleep(2 * time.Second)
-		err = stacksREST(method, path, body, out)
+		err = stacksREST(ctx, method, path, body, out)
 	}
 	return err
 }
@@ -222,7 +223,7 @@ func stackWrite(method, path string, body, out any) error {
 // branch on base, into the GitHub stack of the PR whose head is base. It
 // returns what to add to open's result: the stack, or why the PR is in none
 // and how to stack it later, since the PR stays open either way.
-func stackOpened(repo *Repo, branch, base string, number int) map[string]any {
+func stackOpened(ctx context.Context, repo *Repo, branch, base string, number int) map[string]any {
 	if base == repo.Default {
 		return nil
 	}
@@ -234,7 +235,7 @@ func stackOpened(repo *Repo, branch, base string, number int) map[string]any {
 		}
 		return map[string]any{"unstacked": reason}
 	}
-	prs, err := openPRs(repo)
+	prs, err := openPRs(ctx, repo)
 	if err != nil {
 		return later(err)
 	}
@@ -247,7 +248,7 @@ func stackOpened(repo *Repo, branch, base string, number int) map[string]any {
 	opened.Author.Login = repo.Viewer
 	// Search may not list a PR this new.
 	prs[branch] = opened
-	stacked, err := link(repo, prs, []*PR{below, opened})
+	stacked, err := link(ctx, repo, prs, []*PR{below, opened})
 	if err != nil {
 		return later(err)
 	}
@@ -297,7 +298,7 @@ func prBranch(repo *Repo, prs map[string]*PR, target string) (string, error) {
 
 // githubStack is the stack GitHub has pull request number in, bottom first,
 // or nil.
-func githubStack(repo *Repo, number int) (*GitHubStack, error) {
+func githubStack(ctx context.Context, repo *Repo, number int) (*GitHubStack, error) {
 	owner, name, _ := strings.Cut(repo.Slug, "/")
 	var data struct {
 		Repository struct {
@@ -322,7 +323,7 @@ func githubStack(repo *Repo, number int) (*GitHubStack, error) {
 			}
 		}
 	}
-	err := graphQL(`query($owner: String!, $name: String!, $number: Int!) {
+	err := graphQL(ctx, `query($owner: String!, $name: String!, $number: Int!) {
 		repository(owner: $owner, name: $name) { pullRequest(number: $number) {
 			stack { number baseRefName entries(first: 100) { nodes { position
 				pullRequest { number headRefName baseRefName state isDraft url } } } }

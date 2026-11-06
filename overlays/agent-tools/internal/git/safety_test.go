@@ -1,6 +1,7 @@
 package git
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,9 +18,9 @@ import (
 // either git reads the config file itself, either of which a FIFO nothing
 // writes stalls.
 func TestCheckConfigTimeout(t *testing.T) {
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	// Not parallel: it shortens ConfigTimeout for the package.
 	dir := t.TempDir()
+	ctx := under(t, dir, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	gitIn(t, dir, "init", "-q", "-b", "main")
 	config := filepath.Join(dir, ".git", "config")
 	if err := os.Remove(config); err != nil {
@@ -32,7 +33,7 @@ func TestCheckConfigTimeout(t *testing.T) {
 	ConfigTimeout = time.Second
 	t.Cleanup(func() { ConfigTimeout = old })
 	done := make(chan error, 1)
-	go func() { done <- CheckConfig(dir) }()
+	go func() { done <- In(ctx).CheckConfig(dir) }()
 	select {
 	case err := <-done:
 		if err == nil || !strings.Contains(err.Error(), dir) {
@@ -59,8 +60,8 @@ func gitIn(t *testing.T, dir string, args ...string) string {
 
 // planted makes a repository with what a sandboxed agent could write into
 // .git: a hook and an fsmonitor that each create the returned marker file.
-// The package's commands act on it for the rest of the test.
-func planted(t *testing.T) (dir, marker string) {
+// The package's commands act on it under the context it returns.
+func planted(t *testing.T) (ctx context.Context, dir, marker string) {
 	t.Helper()
 	dir = t.TempDir()
 	gitIn(t, dir, "init", "-q", "-b", "main")
@@ -70,26 +71,25 @@ func planted(t *testing.T) (dir, marker string) {
 	hook := filepath.Join(dir, ".git", "hooks", "post-checkout")
 	os.WriteFile(hook, []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755)
 	gitIn(t, dir, "config", "core.fsmonitor", "touch "+marker+"; false")
-	useDir(t, dir)
-	return dir, marker
+	return under(t, dir, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1"), dir, marker
 }
 
 // TestHardening checks that this package's git neither runs what an agent
 // planted in .git nor proceeds past config that names a program.
 func TestHardening(t *testing.T) {
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Parallel()
 
 	t.Run("hooks and the fsmonitor do not run", func(t *testing.T) {
-		dir, marker := planted(t)
-		if _, err := Run("worktree", "add", "-q", filepath.Join(dir, "wt"), "feature"); err != nil {
+		t.Parallel()
+		ctx, dir, marker := planted(t)
+		if _, err := In(ctx).Run("worktree", "add", "-q", filepath.Join(dir, "wt"), "feature"); err != nil {
 			t.Fatal(err)
 		}
-		Run("status", "--porcelain")
+		In(ctx).Run("status", "--porcelain")
 		if _, err := os.Stat(marker); err == nil {
 			t.Error("a hook or the fsmonitor ran")
 		}
-		if err := CheckConfig(dir); err != nil {
+		if err := In(ctx).CheckConfig(dir); err != nil {
 			t.Errorf("hooks and the fsmonitor are neutralised, not refused: %v", err)
 		}
 	})
@@ -97,18 +97,20 @@ func TestHardening(t *testing.T) {
 	for _, key := range []string{"core.sshCommand", "filter.x.clean", "diff.x.textconv", "credential.helper", "gpg.program", "include.path", "url.https://evil/.insteadOf", "hook.x.command", "trailer.x.cmd", "trailer.x.command",
 		"gpg.ssh.defaultKeyCommand", "core.alternateRefsCommand"} {
 		t.Run("refuses "+key, func(t *testing.T) {
-			dir, _ := planted(t)
+			t.Parallel()
+			ctx, dir, _ := planted(t)
 			gitIn(t, dir, "config", key, "x")
-			if err := CheckConfig(dir); err == nil {
+			if err := In(ctx).CheckConfig(dir); err == nil {
 				t.Errorf("%s was accepted", key)
 			}
 		})
 	}
 
 	t.Run("allows trailer metadata", func(t *testing.T) {
-		dir, _ := planted(t)
+		t.Parallel()
+		ctx, dir, _ := planted(t)
 		gitIn(t, dir, "config", "trailer.x.key", "Reviewed-by")
-		if err := CheckConfig(dir); err != nil {
+		if err := In(ctx).CheckConfig(dir); err != nil {
 			t.Errorf("ordinary trailer metadata refused: %v", err)
 		}
 	})
@@ -117,19 +119,21 @@ func TestHardening(t *testing.T) {
 	// command when it starts with !.
 	for value, refused := range map[string]bool{"!touch x": true, " !touch x": true, "rebase": false} {
 		t.Run("submodule update "+value, func(t *testing.T) {
-			dir, _ := planted(t)
+			t.Parallel()
+			ctx, dir, _ := planted(t)
 			gitIn(t, dir, "config", "submodule.x.update", value)
-			if err := CheckConfig(dir); (err != nil) != refused {
+			if err := In(ctx).CheckConfig(dir); (err != nil) != refused {
 				t.Errorf("CheckConfig: %v, want refusal %v", err, refused)
 			}
 		})
 	}
 
 	t.Run("checks worktree config", func(t *testing.T) {
-		dir, _ := planted(t)
+		t.Parallel()
+		ctx, dir, _ := planted(t)
 		gitIn(t, dir, "config", "extensions.worktreeConfig", "true")
 		gitIn(t, dir, "config", "--worktree", "core.sshCommand", "x")
-		if err := CheckConfig(dir); err == nil {
+		if err := In(ctx).CheckConfig(dir); err == nil {
 			t.Error("worktree config was not checked")
 		}
 	})

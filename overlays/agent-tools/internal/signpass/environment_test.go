@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wesnel/agent-tools/internal/env"
 	"github.com/wesnel/agent-tools/internal/plans"
 )
 
@@ -24,7 +25,7 @@ func TestPlanEnvironment(t *testing.T) {
 			t.Fatalf("%s is not isolated under the test home", name)
 		}
 	}
-	c, err := plans.Load()
+	c, err := plans.Load(env.Process())
 	if err != nil {
 		t.Fatal(err)
 	}

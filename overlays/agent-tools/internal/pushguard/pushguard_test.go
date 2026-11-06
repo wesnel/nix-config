@@ -1,12 +1,18 @@
 package pushguard
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"testing"
 
-	"github.com/wesnel/agent-tools/internal/git"
+	"github.com/wesnel/agent-tools/internal/env"
+	"github.com/wesnel/agent-tools/internal/gh"
 	"github.com/wesnel/agent-tools/internal/refusal"
 )
 
@@ -25,9 +31,9 @@ const zero = "0000000000000000000000000000000000000000"
 
 // fork builds a checkout whose origin is a private fork of a public
 // upstream: upstream's history is public, the fork's own commits are not.
-// It returns the checkout, the fork's private commit and a new commit on
-// public history, and points the package's git at the checkout.
-func fork(t *testing.T) (dir, private, fix string) {
+// It returns a context whose Env is in the checkout, the checkout, the
+// fork's private commit and a new commit on public history.
+func fork(t *testing.T) (ctx context.Context, dir, private, fix string) {
 	t.Helper()
 	dir = t.TempDir()
 	run(t, dir, "init", "-q", "-b", "main")
@@ -43,19 +49,17 @@ func fork(t *testing.T) (dir, private, fix string) {
 	run(t, dir, "switch", "-q", "-c", "fix", base)
 	run(t, dir, "commit", "-q", "--allow-empty", "-m", "new public fix")
 	fix = run(t, dir, "rev-parse", "HEAD")
-	git.Dir = dir
-	t.Cleanup(func() { git.Dir = "" })
-	return dir, private, fix
+	ctx = env.With(t.Context(), env.Process().In(dir).Set("GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1"))
+	return ctx, dir, private, fix
 }
 
 func TestCheck(t *testing.T) {
-	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Parallel()
 
 	// Stands in for GitHub's visibility lookup, which reaches outside the
 	// machine.
 	visibility := map[string]bool{"org/public": true, "org/other-public": true, "org/private": false}
-	lookup := func(slug string) (bool, error) {
+	lookup := func(_ context.Context, slug string) (bool, error) {
 		public, ok := visibility[slug]
 		if !ok {
 			return false, errors.New("offline")
@@ -90,16 +94,45 @@ func TestCheck(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			dir, private, fix := fork(t)
+			t.Parallel()
+			ctx, dir, private, fix := fork(t)
 			if c.allow != "" {
 				run(t, dir, "config", AllowKey, c.allow)
 			}
-			err := Check(c.url, c.updates(private, fix), lookup)
+			err := Check(ctx, c.url, c.updates(private, fix), lookup)
 			var r refusal.Refusal
 			if c.refused != errors.As(err, &r) {
 				t.Errorf("refused = %v, want %v (err: %v)", err != nil, c.refused, err)
 			}
 		})
+	}
+}
+
+// TestGitHub holds the GitHub lookup to the Env of the context Check runs
+// in: it authenticates with that Env's GH_TOKEN. Not parallel: it points
+// the gh package at a server of its own.
+func TestGitHub(t *testing.T) {
+	// Stands in for GitHub, which is outside the machine: it says a
+	// repository is private only to a caller with the Env's token.
+	const token = "pushguard-test-token"
+	var asked atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+token {
+			http.Error(w, `{"message":"Bad credentials"}`, http.StatusUnauthorized)
+			return
+		}
+		asked.Add(1)
+		fmt.Fprint(w, `{"private":true}`)
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(gh.SetAPI(srv.URL))
+	ctx, _, _, fix := fork(t)
+	ctx = env.With(ctx, env.From(ctx).Set("GH_TOKEN="+token))
+	if err := Check(ctx, "https://github.com/org/hidden", []Update{{"refs/heads/x", fix, "refs/heads/x", zero}}, GitHub()); err != nil {
+		t.Errorf("a push to a repository GitHub calls private, asked with the Env's token: %v", err)
+	}
+	if asked.Load() == 0 {
+		t.Error("GitHub was never asked with the Env's token")
 	}
 }
 
